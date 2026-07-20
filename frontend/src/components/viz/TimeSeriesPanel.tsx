@@ -391,6 +391,10 @@ export function TimeSeriesPanel({
       ] as uPlot.Axis[],
       cursor: {
         x: true, y: true, focus: { prox: 15 },
+        // v0.9.128 (operatör: "line'ların noktası hareket etmiyor") — imleçle
+        // çizgi üstünde kayan belirgin hover noktası (OverviewChart/RPS emsali
+        // size:7). Default cursor.points belirsizdi; açıkça göster.
+        points: { show: true, size: 6 },
         drag: { x: true, y: false, setScale: true },
         // v0.9.84 (madde 4) — line/area modda hover en yakın DOLU örneğe
         // snap'ler (±2 bucket); bars/stacked kendi hizasında kalır.

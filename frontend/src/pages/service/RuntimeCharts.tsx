@@ -62,7 +62,10 @@ interface LineSpec {
 // default) + service.instance.id (UUID son çare). Etiket önceliği
 // podLineLabel'da okunabilir pod adına yeğler.
 const POD_GROUP = 'resource.k8s.pod.name,resource.host.name,resource.service.instance.id';
-interface CardSpec { key: string; title: string; unit: string; lines: LineSpec[] }
+// mode (v0.9.128, operatör talebi) — memory kartları (heap/committed, MB) =
+// area (dolu kapasite okunur); GC pause / thread / object COUNT kartları =
+// line (dolgu yanıltıcı, "biriken alan" anlamı yok). Verilmezse 'area'.
+interface CardSpec { key: string; title: string; unit: string; lines: LineSpec[]; mode?: 'area' | 'line' }
 
 // v0.9.95 — 30+ pod'lu servisler için üst sınır yükseldi (eski 8, operatör
 // "sadece 8 pod gösteriyor"); pod çizgilerinin rengini TimeSeriesPanel'in
@@ -80,11 +83,11 @@ const FAMILY_CARDS: Record<string, CardSpec[]> = {
       // pod çizgisi limite yaklaşınca "doldu" gözle okunur.
       { metric: 'jvm.memory.limit', label: 'limit', color: 'var(--err)', filters: HEAP, scale: MB, ref: true },
     ] },
-    { key: 'gc', title: 'GC pause by pod (avg)', unit: ' ms', lines: [
+    { key: 'gc', title: 'GC pause by pod (avg)', unit: ' ms', mode: 'line', lines: [
       { metric: 'jvm.gc.duration', label: 'gc', color: 'var(--warn)',
         groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel, scale: 1000 },
     ] },
-    { key: 'threads', title: 'Threads (by pod)', unit: '', lines: [
+    { key: 'threads', title: 'Threads (by pod)', unit: '', mode: 'line', lines: [
       { metric: 'jvm.thread.count', label: 'threads', color: 'var(--teal)',
         groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel },
     ] },
@@ -98,7 +101,7 @@ const FAMILY_CARDS: Record<string, CardSpec[]> = {
       { metric: 'process.runtime.dotnet.gc.committed_memory.size', label: 'committed', color: 'var(--purple)',
         groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel, scale: MB },
     ] },
-    { key: 'threads', title: 'ThreadPool threads (by pod)', unit: '', lines: [
+    { key: 'threads', title: 'ThreadPool threads (by pod)', unit: '', mode: 'line', lines: [
       { metric: 'process.runtime.dotnet.thread_pool.threads.count', label: 'threads', color: 'var(--teal)',
         groupBy: POD_GROUP, fanout: true, labelOf: podLineLabel },
     ] },
@@ -109,10 +112,10 @@ const FAMILY_CARDS: Record<string, CardSpec[]> = {
       { metric: 'process.runtime.go.mem.heap_sys', label: 'sys', color: 'var(--purple)', scale: MB },
       { metric: 'process.runtime.go.mem.heap_alloc', label: 'alloc', color: 'var(--teal)', scale: MB },
     ] },
-    { key: 'gc', title: 'GC pause (avg)', unit: ' ms', lines: [
+    { key: 'gc', title: 'GC pause (avg)', unit: ' ms', mode: 'line', lines: [
       { metric: 'process.runtime.go.gc.pause_ns', label: 'pause', color: 'var(--warn)', scale: 1 / 1e6 },
     ] },
-    { key: 'objects', title: 'Heap objects', unit: '', lines: [
+    { key: 'objects', title: 'Heap objects', unit: '', mode: 'line', lines: [
       { metric: 'process.runtime.go.mem.heap_objects', label: 'objects', color: 'var(--teal)' },
     ] },
   ],
@@ -271,7 +274,7 @@ export function RuntimeCharts({ service, from, to, onZoom }: {
                 <TimeSeriesPanel
                   series={series}
                   height={240}
-                  mode="area"
+                  mode={card.mode ?? 'area'}
                   syncKey={`runtime:${service}`}
                   onZoom={onZoom}
                   smooth

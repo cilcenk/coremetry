@@ -846,13 +846,18 @@ func main() {
 	// who disabled AI in Settings stays disabled across a restart.
 	copilotSvc.Configure(cfg.AI.Provider, cfg.AI.APIKey, cfg.AI.Model, cfg.AI.BaseURL, false, true)
 	if err := copilotSvc.LoadPersisted(ctx, store); err != nil {
-		if err := ragSvc.LoadPersisted(ctx, store); err != nil {
-			log.Printf("[rag] load persisted: %v", err)
-		}
-		go ragSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 		log.Printf("[copilot] load persisted config: %v", err)
 	}
 	go copilotSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.9.136 (scale-audit 2026-07-20) — RAG hydration + refresh were
+	// mis-nested INSIDE the copilot-error branch, so on the normal path
+	// (copilot loads fine) operator RAG config saved via the UI never
+	// applied at boot and follower pods never synced. Dedented to run
+	// unconditionally, mirroring copilot's own load+refresh above.
+	if err := ragSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[rag] load persisted: %v", err)
+	}
+	go ragSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	if copilotSvc.Active() {
 		p, m, b, _, _, _ := copilotSvc.Snapshot()
 		if b != "" {

@@ -179,7 +179,7 @@ func (s *Store) queryHistogramPercentileGrouped(ctx context.Context, f MetricQue
 	parts := make([]string, len(f.GroupBy))
 	var gkArgs []any
 	for i, k := range f.GroupBy {
-		expr, args := groupKeyExpr(k, true) // op_group metric dim değil → true
+		expr, args := groupKeyExprMetric(k)
 		parts[i] = expr
 		gkArgs = append(gkArgs, args...)
 	}

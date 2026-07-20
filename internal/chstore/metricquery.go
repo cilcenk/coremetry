@@ -80,7 +80,7 @@ func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, err
 		for i, k := range f.GroupBy {
 			// metric_points path: op_group isn't a metric dimension, so pass
 			// true to keep the expression byte-identical to pre-v0.8.187.
-			expr, args := groupKeyExpr(k, true)
+			expr, args := groupKeyExprMetric(k)
 			parts[i] = expr
 			groupArgs = append(groupArgs, args...)
 		}
@@ -218,11 +218,12 @@ func (s *Store) MetricAttrKeys(ctx context.Context, metric, service string, sinc
 	if metric == "" {
 		return nil, nil
 	}
-	cutoff := time.Now().Add(-since)
+	now := time.Now()
+	cutoff := now.Add(-since)
 	q := `SELECT DISTINCT arrayJoin(attr_keys) AS k
 	      FROM metric_points
-	      WHERE metric = ? AND time >= ?`
-	args := []any{metric, cutoff}
+	      WHERE metric = ? AND time >= ? AND time <= ?`
+	args := []any{metric, cutoff, now}
 	if service != "" {
 		q += ` AND service_name = ?`
 		args = append(args, service)
@@ -252,7 +253,7 @@ func (s *Store) MetricLabelValues(ctx context.Context, metric, key string, since
 	if metric == "" || key == "" {
 		return nil, nil
 	}
-	expr, args := groupKeyExpr(key, true) // metric_points labels; op_group inert here
+	expr, args := groupKeyExprMetric(key)
 	cutoff := time.Now().Add(-since)
 	queryArgs := append(args, metric, cutoff)
 	rows, err := s.conn.Query(ctx,

@@ -270,6 +270,25 @@ var metricPointsWellKnown = map[string]string{
 const metricEnvExpr = "coalesce(nullIf(res_values[indexOf(res_keys, 'deployment.environment.name')], ''), " +
 	"res_values[indexOf(res_keys, 'deployment.environment')])"
 
+// groupKeyExprMetric is groupKeyExpr for a metric_points GROUP BY (v0.9.126,
+// review fix). The generic groupKeyExpr resolves against the SPANS wellKnown
+// map, whose columns (http_method, db_system, kind, status_code, name, …) do
+// NOT exist on metric_points — so a datapoint attr like http.method reached the
+// GROUP BY as a nonexistent column → ClickHouse code 47 → 500. That is the
+// v0.8.381 filter-path incident on the GROUP BY path, and PromQL without()
+// makes it unavoidable (it auto-discovers + groups by every attr key). Here
+// only service/host/deployment.environment resolve to real columns; everything
+// else is a datapoint-attr array lookup.
+func groupKeyExprMetric(key string) (string, []any) {
+	if strings.HasPrefix(key, "resource.") {
+		return "toString(res_values[indexOf(res_keys, ?)])", []any{strings.TrimPrefix(key, "resource.")}
+	}
+	if col, ok := metricPointsWellKnown[key]; ok {
+		return "toString(" + col + ")", nil
+	}
+	return "toString(attr_values[indexOf(attr_keys, ?)])", []any{key}
+}
+
 // ApplyMetricFilters is ApplyFilters for metric_points reads
 // (v0.8.381): identical semantics, metric-aware column resolution.
 func ApplyMetricFilters(wc *whereClause, filters []FilterExpr) {

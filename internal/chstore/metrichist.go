@@ -21,6 +21,27 @@ type HistogramSeries struct {
 	Skipped int        `json:"skipped"` // series dropped for mismatched bounds
 }
 
+// maxHistogramBuckets bounds the Go-side time-bucket allocation in the
+// histogram assembly (accum[nTime][nBuckets]). 5000 is well beyond any panel's
+// pixel width, so raising a caller's step to fit costs no visible resolution.
+const maxHistogramBuckets = 5000
+
+// clampHistogramStep raises stepSec, if needed, so a (spanSec / stepSec) time-
+// bucket count stays ≤ maxHistogramBuckets — the memory guard for a
+// caller-pinned tiny step over a wide window (PromQL Phase-2 review, CRITICAL).
+// A no-op for sane windows; only bites the pathological step=1 / multi-year
+// case. stepSec ≤ 0 (auto) is left to the auto-step resolver.
+func clampHistogramStep(spanSec float64, stepSec int) int {
+	if stepSec <= 0 || spanSec <= 0 {
+		return stepSec
+	}
+	minStep := int(math.Ceil(spanSec / float64(maxHistogramBuckets)))
+	if minStep > stepSec {
+		return minStep
+	}
+	return stepSec
+}
+
 // QueryMetricHistogram reads explicit-histogram metric_points over a window
 // and returns a time × bucket heatmap + per-time-bucket percentiles.
 // Cumulative-temporality series are delta'd PER SERIES before binning so the
@@ -54,6 +75,14 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 	if stepSec <= 0 {
 		stepSec = autoStepSeconds(f.To.Sub(f.From).Seconds())
 	}
+	// v0.9.114 (PromQL Phase-2 review, CRITICAL) — cap the Go-side time-bucket
+	// allocation (accum[nTime][nBuckets] below) against a CALLER-PINNED tiny
+	// step over a wide window. The CH LIMIT/max_execution_time bound the SCAN,
+	// not this post-processing; without this, ?step=1&from=<years-ago> made
+	// nTime ~1e9 and OOM'd the single binary (reachable via /api/metrics/promql
+	// AND the sibling /api/metrics/histogram). Raising the step keeps nTime
+	// under maxHistogramBuckets — you can't render more points than that anyway.
+	stepSec = clampHistogramStep(f.To.Sub(f.From).Seconds(), stepSec)
 
 	rows, err := s.conn.Query(ctx, `
 		SELECT toUnixTimestamp64Nano(time) AS t,

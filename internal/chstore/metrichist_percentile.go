@@ -110,6 +110,10 @@ func (s *Store) QueryMetricHistogramPercentile(ctx context.Context, f MetricQuer
 	if iv := s.metricExportInterval(ctx, f.Name, f.Service); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
+	// v0.9.114 (review CRITICAL) — cap Go-side nTime alloc against a
+	// caller-pinned tiny step + wide window (the grouped path builds its own
+	// accum; the global path is protected inside QueryMetricHistogram).
+	f.StepSeconds = clampHistogramStep(f.To.Sub(f.From).Seconds(), f.StepSeconds)
 
 	// groupBy'lı sorgular gruplarını KAYBETMEZ: her grup kendi bucket
 	// dağılımından percentile alır (yoksa tüm gruplar tek global satıra

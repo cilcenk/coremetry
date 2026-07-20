@@ -894,16 +894,17 @@ export function TimeSeriesPanel({
 
 // ── Interactive legend table ────────────────────────────────────────────────
 // v0.9.99 (operatör: çok-pod'lu servisler) — >8 seride lejand VARSAYILAN
-// KAPALI (30+ pod'da sayfa aşırı uzuyordu); tıkla-aç başlık. Az-serili
-// grafiklerde (Explore) açık kalır — kısa lejand sayfa-boyu sorunu değil.
-const LEGEND_COLLAPSE_THRESHOLD = 8;
+// KAPALI (30+ pod'da sayfa aşırı uzuyordu); tıkla-aç başlık.
+// v0.9.111 (operatör talebi 2026-07-20) — series lejantı HER ZAMAN default
+// kapalı; isteyen ▶ ile açar. JVM/GC pod-bazlı grafiklerde çok seri var,
+// lejant sayfayı uzatıyordu; default-collapsed ile grafikler kompakt kalır.
 function TimeSeriesLegend({ rows, isVisible, onToggle }: {
   rows: LegendRow[];
   visTick: number;                                  // re-render trigger only
   isVisible: (dataIdx0: number) => boolean;
   onToggle: (dataIdx0: number, additive: boolean) => void;
 }) {
-  const [collapsed, setCollapsed] = useState(rows.length > LEGEND_COLLAPSE_THRESHOLD);
+  const [collapsed, setCollapsed] = useState(true);
   return (
     <div style={{ marginTop: 8 }}>
       <button type="button" onClick={() => setCollapsed(c => !c)}

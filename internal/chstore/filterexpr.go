@@ -17,6 +17,7 @@ type FilterExpr struct {
 // Allowed operator set. Anything else is rejected at parse time.
 var allowedOps = map[string]bool{
 	"=": true, "!=": true,
+	"=~": true, "!~": true, // PromQL regex matchers (v0.9.118) → CH match()
 	"LIKE": true, "NOT LIKE": true,
 	"IN": true, "NOT IN": true,
 	">": true, ">=": true, "<": true, "<=": true,
@@ -209,6 +210,20 @@ func (f FilterExpr) sql(alias string, wellKnown map[string]string) (string, []an
 		}
 		args = append(args, "%"+f.Values[0]+"%")
 		return lhs + " " + op + " ?", args, nil
+
+	case "=~", "!~":
+		// PromQL regex matchers → ClickHouse match() (both RE2). PromQL fully
+		// anchors the pattern (must match the WHOLE label value); match() does
+		// not, so wrap in ^(?:…)$. lhs coerced to String for attr/column parity.
+		if len(f.Values) != 1 {
+			return "", nil, fmt.Errorf("op %s needs exactly one value", op)
+		}
+		args = append(args, "^(?:"+f.Values[0]+")$")
+		m := "match(toString(" + lhs + "), ?)"
+		if op == "!~" {
+			return "NOT (" + m + ")", args, nil
+		}
+		return m, args, nil
 
 	default: // =, !=, comparison ops
 		if len(f.Values) != 1 {

@@ -106,6 +106,28 @@ func TestEvalRouting(t *testing.T) {
 	if len(fs.lastFilter.Filters) != 1 || fs.lastFilter.Filters[0].Key != "service.name" || fs.lastFilter.Filters[0].Op != "!=" {
 		t.Errorf("job!= should be a service.name != filter, got %+v", fs.lastFilter.Filters)
 	}
+
+	// regex matchers (v0.9.118) → FilterExpr with =~ / !~ (CH match()).
+	fs = &fakeStore{}
+	mustEval(t, fs, `http_requests{code=~"5..",method!~"GET|HEAD"}`)
+	if len(fs.lastFilter.Filters) != 2 {
+		t.Fatalf("regex matchers → %d filters, want 2", len(fs.lastFilter.Filters))
+	}
+	if fs.lastFilter.Filters[0].Op != "=~" || fs.lastFilter.Filters[0].Values[0] != "5.." {
+		t.Errorf("code=~ → %+v, want Op ==~ value 5..", fs.lastFilter.Filters[0])
+	}
+	if fs.lastFilter.Filters[1].Op != "!~" {
+		t.Errorf("method!~ → Op %q, want !~", fs.lastFilter.Filters[1].Op)
+	}
+	// regex on the service label goes through the filter (not the = shortcut).
+	fs = &fakeStore{}
+	mustEval(t, fs, `up{service.name=~"api.*"}`)
+	if fs.lastFilter.Service != "" {
+		t.Errorf("service.name=~ must not use the = shortcut, got Service=%q", fs.lastFilter.Service)
+	}
+	if len(fs.lastFilter.Filters) != 1 || fs.lastFilter.Filters[0].Op != "=~" {
+		t.Errorf("service.name=~ should be a =~ filter, got %+v", fs.lastFilter.Filters)
+	}
 }
 
 func TestEvalAggregation(t *testing.T) {
@@ -184,7 +206,6 @@ func TestEvalCapsAndErrors(t *testing.T) {
 		{`topk(5, foo)`, "not supported yet"},            // topk deferred
 		{`avg(rate(foo[5m]))`, "only sum"},               // avg-of-rate deferred
 		{`sum(a + b)`, "can only aggregate"},             // complex inner deferred
-		{`foo{bar=~"x.*"}`, "regex matcher"},             // regex deferred
 		{`histogram_quantile(0.9, foo)`, "0.5, 0.95"},    // unsupported quantile
 		{`histogram_quantile(0.95, sum(foo))`, "Phase 3"},// nested hist arg
 		{`rate(foo)`, "range vector"},                    // rate needs a matrix

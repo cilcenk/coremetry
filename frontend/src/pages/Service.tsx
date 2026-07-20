@@ -13,13 +13,11 @@ import { OperationsTable } from './service/OperationsTable';
 import { ServiceClusterBreakdown } from './service/ServiceClusterBreakdown';
 import { ServiceLatencyHeatmap } from './service/ServiceLatencyHeatmap';
 import { Spinner, Empty } from '@/components/Spinner';
-import { ServiceStructure } from '@/components/ServiceStructure';
 import { ServiceCharts } from '@/components/ServiceCharts';
 import { LazyMount } from '@/components/LazyMount';
 import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
-import { ServiceAttrsPanel } from '@/components/ServiceAttrsPanel';
 import { DetailsPropsStrip } from './service/DetailsPropsStrip';
 import { RpsByOperation } from './service/RpsByOperation';
 import { api } from '@/lib/api';
@@ -534,7 +532,9 @@ function ServiceDetailInner() {
                   <RpsByOperation operations={operations} range={range}
                     onOpenOperations={() => setTab('operations')} />
                 </div>
-                <div className="dtl-sech">Data &amp; structure</div>
+                {/* v0.9.141 (operatör) — Structure paneli kaldırıldı; bölüm
+                    yalnız DB sorgularına indi, başlık "Database" oldu. */}
+                <div className="dtl-sech">Database</div>
                 <div className="ov-grid dtl-cols ov-mb">
                   <LazyMount minHeight={300}>
                     <DBQueriesPanel service={svc}
@@ -542,17 +542,12 @@ function ServiceDetailInner() {
                                     to={rangeNs.to}
                                     defaultOpen />
                   </LazyMount>
-                  <LazyMount minHeight={300}>
-                    <ServiceStructure service={svc} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
-                  </LazyMount>
                 </div>
                 <div className="dtl-sech">Runtime &amp; rollouts</div>
+                {/* v0.9.141 (operatör) — Attributes-emitted paneli kaldırıldı. */}
                 <div className="ov-grid dtl-cols ov-mb">
                   <LazyMount minHeight={140}>
                     <ServiceClusterBreakdown service={svc} range={range} />
-                  </LazyMount>
-                  <LazyMount minHeight={120}>
-                    <ServiceAttrsPanel service={svc} range={range} />
                   </LazyMount>
                 </div>
                 {/* Recent rollouts — #deploys anchor preserved so the

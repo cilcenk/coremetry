@@ -1517,6 +1517,11 @@ export const api = {
   // MetricQueryParams (agg/groupBy ignored server-side for histograms).
   metricHistogram: (params: MetricQueryParams) =>
     get<HistogramResult | null>(`/api/metrics/histogram?${qs(params)}`),
+  // v0.9.116 (F4 Phase 5) — PromQL range query. Returns the same
+  // SpanMetricSeries[] shape as metricQuery; a 400 body carries the parse
+  // error, other errors bubble the eval message.
+  metricPromql: (params: { query: string; from?: number; to?: number; step?: number; maxDataPoints?: number }) =>
+    get<SpanMetricSeries[] | null>(`/api/metrics/promql?${qs({ maxDataPoints: 1500, ...params })}`),
   // v0.8.356 — sort/dir: server-side global ordering (whitelisted
   // backend-side; ORDER BY runs before the LIMIT so "top by p95" is
   // the true global top-N, not the top-N-by-calls page reordered).

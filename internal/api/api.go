@@ -641,6 +641,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/metrics/names", s.getMetricNames)
 	mux.HandleFunc("GET /api/metrics", s.getMetrics)
 	mux.HandleFunc("GET /api/metrics/query", s.queryMetric)
+	// v0.9.11x (F4 Phase 2) — PromQL range query over the OTel metric store.
+	mux.HandleFunc("GET /api/metrics/promql", s.queryPromQL)
 	// v0.8.53 (doorway D4) — server-side descriptor resolution. A
 	// MetricQuery descriptor rides as ?m=<base64url(JSON)> (the same
 	// codec the frontend deep links use) and the resolver picks the

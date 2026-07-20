@@ -155,6 +155,9 @@ func (s *Server) addIncidentNote(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// v0.9.135 (scale-audit 2026-07-20) — every mutation audits (CLAUDE.md
+	// invariant); the sibling ack/resolve handlers audit, note didn't.
+	s.audit(r, "incident.note", "incident", id, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

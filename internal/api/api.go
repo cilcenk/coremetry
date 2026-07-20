@@ -477,7 +477,10 @@ func (s *Server) Start() error {
 	// v0.8.383 — distinct deploy_env values in the window; feeds the
 	// global Topbar environment picker (env-separation Phase 1).
 	mux.HandleFunc("GET /api/environments", s.getEnvironments)
-	mux.HandleFunc("GET /api/admin/system-stats", s.getSystemStats)
+	// v0.9.135 (scale-audit 2026-07-20) — admin-only, matching the rest of
+	// /api/admin/* (ingest drop counters + disk/per-table stats are operator
+	// internals; the handler itself had no role check).
+	mux.HandleFunc("GET /api/admin/system-stats", auth.RequireRole(auth.RoleAdmin, s.getSystemStats))
 	// v0.5.328 — ClickHouse self-stats: slow queries, in-flight
 	// merges, part-count hotspots, replication queue lag. Admin
 	// only — same gate the rest of /admin/* uses.
@@ -489,7 +492,9 @@ func (s *Server) Start() error {
 	// {optimized, explanation}.
 	mux.HandleFunc("POST /api/admin/clickhouse/optimize-query", auth.RequireRole(auth.RoleAdmin, s.copilotOptimizeCHQuery))
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
-	mux.HandleFunc("GET /api/admin/redis-stats", s.getRedisStats)
+	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
+	// only AdminStats reads it, handler had no role check.
+	mux.HandleFunc("GET /api/admin/redis-stats", auth.RequireRole(auth.RoleAdmin, s.getRedisStats))
 	mux.HandleFunc("GET /api/admin/cache-stats", auth.RequireRole(auth.RoleAdmin, s.getCacheStats))
 	mux.HandleFunc("GET /api/admin/cardinality", auth.RequireRole(auth.RoleAdmin, s.getCardinality))
 	// SSE event stream — long-lived connection, fans out

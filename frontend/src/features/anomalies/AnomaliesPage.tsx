@@ -153,7 +153,6 @@ export default function ProblemsPage() {
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [search]);
-  const [, setServices] = useState<string[]>([]);
   const [users, setUsers] = useState<UserRow[]>([]);
   const [data, setData] = useState<ExceptionGroup[] | null | undefined>(undefined);
   // v0.8.485 (sadeleştirme #3) — refetch'te tablo boşalmaz: önceki sayfa
@@ -267,10 +266,6 @@ export default function ProblemsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, service, ownerTeam, sreTeam, page, sortSig, committedSearch]);
 
-  useEffect(() => {
-    api.services({ from: 0, to: 0 })
-      .then(s => setServices((s ?? []).map(x => x.name))).catch(() => {});
-  }, []);
 
   useEffect(() => {
     if (!isAdmin) return;

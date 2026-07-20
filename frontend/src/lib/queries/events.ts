@@ -29,7 +29,9 @@ export function useNotificationLog(filter: {
   return useQuery({
     queryKey: [...EVENTS_KEY, 'notifications', filter],
     queryFn: async () => (await api.notificationLog(filter)) ?? [],
-    staleTime: 15_000,
+    // staleTime trails the 30s interval (scale-audit 2026-07-20) so a
+    // notifications-tab re-mount inside the window doesn't double-fetch.
+    staleTime: 25_000,
     refetchInterval: 30_000,
   });
 }

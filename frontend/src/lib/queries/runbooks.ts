@@ -79,7 +79,9 @@ export function useRunbookExecution(execId: string) {
     queryKey: [...EXEC_KEY, 'one', execId],
     queryFn: () => api.runbookExecution(execId),
     enabled: !!execId,
-    staleTime: 5_000,
+    // staleTime trails the 10s live-run poll (scale-audit 2026-07-20) so a
+    // re-mount mid-run doesn't refetch early; bounded to active executions.
+    staleTime: 8_000,
     refetchInterval: (q) => {
       const d = q.state.data as RunbookExecution | undefined;
       return d && EXEC_TERMINAL.includes(d.status) ? false : 10_000;

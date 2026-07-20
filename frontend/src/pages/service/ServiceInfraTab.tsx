@@ -70,26 +70,18 @@ export function ServiceInfraTab({ service, range, onZoom }: {
     queryFn: () => api.clusterSources(),
     staleTime: 300_000,
   });
-  // ServiceClusterBreakdown ile paylaşılan key — tek round-trip.
-  const svcClustersQ = useQuery({
-    queryKey: ['service-clusters', service, from, to],
-    queryFn: () => api.serviceClusters(service, from, to),
-    enabled: !!service && from > 0,
-    staleTime: 30_000,
-  });
-  // v0.9.56 (operatör: breakdown'dan gidince de çalışmıyor) — span
-  // attr'ları cluster çözemiyorsa (attr yok / ad Thanos kaynağıyla
-  // uyuşmuyor) TÜM kaynaklara bakılır; çipler yalnız eşleşen pod
-  // bulunan cluster'ları gösterir. Kaynak sayısı Settings'te sınırlı
-  // olduğundan fan-out bounded, sorgular Clusters cache'ini paylaşır.
-  const matched = useMemo(() => {
-    const sources = sourcesQ.data?.clusters ?? [];
-    const thanos = new Set(sources);
-    const viaSpans = (svcClustersQ.data?.clusters ?? [])
-      .map(c => c.cluster)
-      .filter(c => thanos.has(c));
-    return viaSpans.length > 0 ? viaSpans : sources;
-  }, [sourcesQ.data, svcClustersQ.data]);
+  // Cluster keşfi TÜM etkin Thanos kaynaklarını tarar (v0.9.138 — operatör:
+  // "ocpma çıkıyor, ocpmb çıkmıyor"). ÖNCEDEN (v0.9.56) span-türetimli
+  // cluster listesine kilitleniyordu: span'lar EN AZ BİR cluster çözerse
+  // YALNIZ onları tarar, span'ı cluster-attr TAŞIMAYAN (ya da adı Thanos
+  // kaynağıyla uyuşmayan) bir cluster hiç sorgulanmaz, servis orada koşsa
+  // bile çip olarak çıkmazdı — all-or-nothing hata. Span-türetimi cluster
+  // adında güvenilmez olduğundan cluster SEÇİMİNDE kullanılmaz; hangi
+  // cluster'da servisin pod'u olduğunu precise pod-eşleşmesi
+  // (podMatchesService, v0.9.130) belirler → clustersWithPods çipleri.
+  // Kaynak sayısı Settings'te sınırlı (fan-out bounded, Clusters cache'i
+  // paylaşılır). serviceClusters yalnız ServiceClusterBreakdown'da kullanılır.
+  const matched = useMemo(() => sourcesQ.data?.clusters ?? [], [sourcesQ.data]);
 
   // Cluster başına deployment (podNames üyeliği) + pod metrikleri —
   // Clusters sayfasıyla AYNI cache slotları (tekrar fetch yok).
@@ -218,7 +210,7 @@ export function ServiceInfraTab({ service, range, onZoom }: {
   });
 
   // ── Kapılar (hook'lardan SONRA) ──
-  if (metaQ.isPending || sourcesQ.isPending || svcClustersQ.isPending) return <Spinner />;
+  if (metaQ.isPending || sourcesQ.isPending) return <Spinner />;
   if ((sourcesQ.data?.clusters ?? []).length === 0) {
     return <Empty icon="▦" title="No Thanos clusters configured">
       Add a remote cluster under Settings → Remote clusters to see pod-level infrastructure here.

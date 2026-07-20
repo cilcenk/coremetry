@@ -12,6 +12,11 @@ import (
 	"github.com/cilcenk/coremetry/internal/promql"
 )
 
+// maxPromQLQueryLen caps the raw query length before parsing (review CRITICAL,
+// v0.9.122). Real PromQL is well under a KB; 8KB leaves generous headroom while
+// stopping a megabyte-scale nested-paren DoS.
+const maxPromQLQueryLen = 8192
+
 // queryPromQL backs GET /api/metrics/promql?query=&from=&to=&step=&maxDataPoints=
 // — an industry-standard PromQL range query over the OTel metric store
 // (F4). Parses + evaluates via internal/promql: the HYBRID model — leaf
@@ -33,6 +38,13 @@ func (s *Server) queryPromQL(w http.ResponseWriter, r *http.Request) {
 	query := strings.TrimSpace(q.Get("query"))
 	if query == "" {
 		writePromQLError(w, http.StatusBadRequest, "query is required")
+		return
+	}
+	// Reject an oversized query BEFORE parsing (review CRITICAL): a huge
+	// deeply-nested string would otherwise cost 100s of MB to parse or crash
+	// the process via stack overflow. Real PromQL is tiny; 8KB is generous.
+	if len(query) > maxPromQLQueryLen {
+		writePromQLError(w, http.StatusBadRequest, "query too long")
 		return
 	}
 	// Parse up front so a SYNTAX error is a clean 400 (the common user error),

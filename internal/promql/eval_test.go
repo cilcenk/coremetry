@@ -167,6 +167,55 @@ func TestEvalAggregation(t *testing.T) {
 	}
 }
 
+func TestEvalTopK(t *testing.T) {
+	mk := func(label string, v float64) chstore.SpanMetricSeries {
+		return chstore.SpanMetricSeries{GroupKey: []string{label}, Points: []chstore.SpanMetricPoint{{Time: 1, Value: v}}}
+	}
+	four := func() []chstore.SpanMetricSeries {
+		return []chstore.SpanMetricSeries{mk("a", 10), mk("b", 50), mk("c", 30), mk("d", 5)}
+	}
+
+	// topk(2, …) keeps the 2 highest-by-max series: b(50), c(30).
+	fs := &fakeStore{ret: four()}
+	s, err := EvalString(context.Background(), fs, `topk(2, sum by(svc)(foo))`, EvalOptions{FromNs: 1, ToNs: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s) != 2 || s[0].GroupKey[0] != "b" || s[1].GroupKey[0] != "c" {
+		t.Errorf("topk(2) = %v, want [b c]", groupKeys(s))
+	}
+
+	// bottomk(2, …) keeps the 2 lowest: d(5), a(10).
+	fs = &fakeStore{ret: four()}
+	s, _ = EvalString(context.Background(), fs, `bottomk(2, sum by(svc)(foo))`, EvalOptions{FromNs: 1, ToNs: 2})
+	if len(s) != 2 || s[0].GroupKey[0] != "d" || s[1].GroupKey[0] != "a" {
+		t.Errorf("bottomk(2) = %v, want [d a]", groupKeys(s))
+	}
+
+	// k >= series count → all returned; k <= 0 → empty; by(…) on topk → error.
+	fs = &fakeStore{ret: four()}
+	if s, _ := EvalString(context.Background(), fs, `topk(10, sum by(svc)(foo))`, EvalOptions{FromNs: 1, ToNs: 2}); len(s) != 4 {
+		t.Errorf("topk(10) of 4 = %d, want 4", len(s))
+	}
+	fs = &fakeStore{ret: four()}
+	if s, _ := EvalString(context.Background(), fs, `topk(0, foo)`, EvalOptions{FromNs: 1, ToNs: 2}); len(s) != 0 {
+		t.Errorf("topk(0) = %d, want 0", len(s))
+	}
+	if _, err := EvalString(context.Background(), &fakeStore{}, `topk(2, foo) by (le)`, EvalOptions{FromNs: 1, ToNs: 2}); err == nil {
+		t.Errorf("topk by(…) should error (deferred)")
+	}
+}
+
+func groupKeys(s []chstore.SpanMetricSeries) []string {
+	out := make([]string, len(s))
+	for i, x := range s {
+		if len(x.GroupKey) > 0 {
+			out[i] = x.GroupKey[0]
+		}
+	}
+	return out
+}
+
 func TestEvalScalarFunctions(t *testing.T) {
 	// abs(x) applies per-point over the fetched series.
 	fs := &fakeStore{ret: []chstore.SpanMetricSeries{{Points: []chstore.SpanMetricPoint{{Time: 1, Value: -5}, {Time: 2, Value: 3}}}}}
@@ -204,7 +253,6 @@ func TestEvalCapsAndErrors(t *testing.T) {
 		{`foo[5m]`, "must be inside a function"},         // bare range vector
 		{`rate(a[5m]) / rate(b[5m])`, "Phase 4"},         // binary deferred
 		{`sum without (pod) (foo)`, "without"},           // without deferred
-		{`topk(5, foo)`, "not supported yet"},            // topk deferred
 		{`avg(rate(foo[5m]))`, "only sum"},               // avg-of-rate deferred
 		{`sum(a + b)`, "can only aggregate"},             // complex inner deferred
 		{`histogram_quantile(1.5, foo)`, "out of range"}, // quantile out of [0,1]

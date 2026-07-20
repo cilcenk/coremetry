@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 	"time"
 
@@ -234,10 +235,15 @@ func (ev *evaluator) evalCall(c *Call) ([]chstore.SpanMetricSeries, error) {
 // per-series Go path / binary ops of a later phase.
 func (ev *evaluator) evalAggregate(a *AggregateExpr) ([]chstore.SpanMetricSeries, error) {
 	op := strings.ToLower(a.Op)
+	// topk/bottomk operate on the evaluated inner VECTOR (usually itself a
+	// bounded sum by(…)), selecting the k highest/lowest series in Go.
+	if op == "topk" || op == "bottomk" {
+		return ev.evalTopK(a, op)
+	}
 	switch op {
 	case "sum", "avg", "min", "max":
 	default:
-		return nil, fmt.Errorf("promql: aggregation %q is not supported yet (have: sum/avg/min/max by(…))", a.Op)
+		return nil, fmt.Errorf("promql: aggregation %q is not supported yet (have: sum/avg/min/max/topk/bottomk)", a.Op)
 	}
 	if a.Without {
 		return nil, fmt.Errorf("promql: without(…) is not supported yet — use by(…)")
@@ -292,6 +298,58 @@ func aggLeaf(e Expr) (leaf *VectorSelector, isRate bool, rateMode string, err er
 	default:
 		return nil, false, "", fmt.Errorf("promql: can only aggregate a metric selector or rate()/increase() for now, got %s", e.String())
 	}
+}
+
+// evalTopK evaluates topk/bottomk: eval the inner vector (typically an already-
+// bounded sum by(…)), then keep the k series with the highest/lowest value. To
+// avoid the per-timestamp flapping of true PromQL topk (a series can enter/leave
+// the set over time), we rank by each series' MAX value over the window — the
+// stable "show me the k worst" semantics operators actually want. A by(…) on the
+// topk itself (per-group top-k) is deferred.
+func (ev *evaluator) evalTopK(a *AggregateExpr, op string) ([]chstore.SpanMetricSeries, error) {
+	if len(a.Grouping) > 0 {
+		return nil, fmt.Errorf("promql: %s by(…) (per-group) is not supported yet — use %s(k, sum by(…)(…))", op, op)
+	}
+	kn, ok := a.Param.(*NumberLiteral)
+	if !ok {
+		return nil, fmt.Errorf("promql: %s(k, vector) — k must be a scalar", op)
+	}
+	k := int(kn.Val)
+	if k <= 0 {
+		return []chstore.SpanMetricSeries{}, nil
+	}
+	inner, err := ev.eval(a.Expr)
+	if err != nil {
+		return nil, err
+	}
+	if k >= len(inner) {
+		return inner, nil
+	}
+	type ranked struct {
+		s chstore.SpanMetricSeries
+		v float64
+	}
+	rs := make([]ranked, len(inner))
+	for i, s := range inner {
+		m := math.Inf(-1)
+		for _, p := range s.Points {
+			if p.Value > m {
+				m = p.Value
+			}
+		}
+		rs[i] = ranked{s, m}
+	}
+	sort.SliceStable(rs, func(i, j int) bool {
+		if op == "topk" {
+			return rs[i].v > rs[j].v
+		}
+		return rs[i].v < rs[j].v
+	})
+	out := make([]chstore.SpanMetricSeries, 0, k)
+	for i := 0; i < k && i < len(rs); i++ {
+		out = append(out, rs[i].s)
+	}
+	return out, nil
 }
 
 // selectorFilter converts a VectorSelector to a bounded MetricQueryFilter,

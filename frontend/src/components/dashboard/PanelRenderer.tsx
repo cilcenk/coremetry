@@ -107,6 +107,8 @@ export function applyVarsToMetric(cfg: MetricPanelConfig, vars?: Record<string, 
     service:    expand(cfg.service, vars),
     groupBy:    expand(cfg.groupBy, vars),
     filters:    expand(cfg.filters, vars),
+    // PromQL mode uses the PromQL-aware expansion (matcher-strip on empty var).
+    promql:     cfg.promql ? expandPromqlVars(cfg.promql, vars) : cfg.promql,
   };
 }
 
@@ -162,9 +164,11 @@ function applyVarsToHeatmap(cfg: HeatmapPanelConfig, vars?: Record<string, strin
 //      label="" would match only empty-label series, not all.
 //   2. Remaining ${var} tokens are substituted in place.
 //   3. Dangling commas from a stripped first/last matcher are tidied.
-export function applyVarsToPromql(cfg: PromqlPanelConfig, vars?: Record<string, string>): PromqlPanelConfig {
-  if (!vars || !cfg.query) return cfg;
-  let q = cfg.query.replace(
+// expandPromqlVars — the PromQL-aware ${var} expansion shared by the PromQL
+// panel and the metric panel's PromQL mode (see applyVarsToPromql's rationale).
+export function expandPromqlVars(query: string, vars?: Record<string, string>): string {
+  if (!vars || !query) return query;
+  let q = query.replace(
     /,?\s*[\w.]+\s*(?:=~|!~|=|!=)\s*"\$\{([^}]+)\}"/g,
     (m, name: string) => {
       const v = vars[name];
@@ -172,8 +176,12 @@ export function applyVarsToPromql(cfg: PromqlPanelConfig, vars?: Record<string, 
     },
   );
   q = q.replace(/\$\{([^}]+)\}/g, (_, name: string) => vars[name] ?? '');
-  q = q.replace(/\{\s*,/g, '{').replace(/,\s*\}/g, '}').replace(/,\s*,/g, ',');
-  return { ...cfg, query: q };
+  return q.replace(/\{\s*,/g, '{').replace(/,\s*\}/g, '}').replace(/,\s*,/g, ',');
+}
+
+export function applyVarsToPromql(cfg: PromqlPanelConfig, vars?: Record<string, string>): PromqlPanelConfig {
+  if (!vars || !cfg.query) return cfg;
+  return { ...cfg, query: expandPromqlVars(cfg.query, vars) };
 }
 
 // ── Metric line chart ───────────────────────────────────────────────────────
@@ -196,8 +204,23 @@ function MetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
   // OR when the bundle returned neither series nor error for
   // this panel (e.g. the panel was added after the bundle
   // request was built — rare but real during edit flow).
-  const hasOverride = dataOverride && (dataOverride.series !== undefined || dataOverride.error);
+  // PromQL mode (v0.9.121) — the panel is driven by a raw PromQL query instead
+  // of the builder (config carries a `promql` string, even if empty while the
+  // operator is switching modes). Own-fetch (the dashboard bundle only
+  // prefetches builder metrics); takes precedence over any stale override.
+  const promqlMode = cfg.promql !== undefined;
+  const hasOverride = !promqlMode && dataOverride && (dataOverride.series !== undefined || dataOverride.error);
   useEffect(() => {
+    if (promqlMode) {
+      if (!cfg.promql!.trim()) { setSeries(undefined); setError('Configure a PromQL query'); return; }
+      const { from, to } = timeRangeToNs(range);
+      const step = effectivePanelStep(cfg.step, (to - from) / 1e9, widthPx);
+      if (step === null) return;
+      setSeries(undefined); setError(null);
+      api.metricPromql({ query: cfg.promql!, from, to, step })
+        .then(s => setSeries(s ?? [])).catch(e => setError(e.message));
+      return;
+    }
     if (hasOverride) {
       if (dataOverride!.error) {
         setSeries(undefined);
@@ -309,11 +332,14 @@ function PromqlPanel({ cfg, range, syncKey, onZoom }: {
   }, [debouncedQuery, cfg.step, range, widthPx]);
 
   if (error) return <PanelError msg={error} />;
+  const viz = cfg.viz ?? 'line';
   return (
     <div ref={ref}>
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
-        : <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} />}
+        : viz === 'line'
+          ? <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} />
+          : <DashboardViz series={series} viz={viz} height={280} unit={cfg.unit} />}
     </div>
   );
 }

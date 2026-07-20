@@ -2221,6 +2221,10 @@ export interface MetricPanelConfig {
   service?: string;
   agg?: string;            // avg | sum | p95 | p99 | …
   groupBy?: string;        // comma-sep keys
+  // v0.9.121 (F4) — when set, the panel is driven by this raw PromQL query
+  // (/api/metrics/promql) INSTEAD of the metricName/agg/groupBy builder; the
+  // editor toggles Builder ↔ PromQL. Empty/absent = builder mode (unchanged).
+  promql?: string;
   // Bucket seconds. Absent/0 = auto — width-aware since GRAN-C (v0.8.248):
   // resolved from the panel's pixel budget (panelStep.ts), floored by the
   // backend's min-step clamp (v0.8.243). Optional on purpose: dashboards

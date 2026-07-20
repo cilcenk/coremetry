@@ -156,6 +156,32 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   const redStatus: 'loading' | 'error' | 'ready' =
     seriesQ.isLoading ? 'loading' : seriesQ.isError ? 'error' : 'ready';
 
+  // v0.9.129 (operatör: "kafkalar hesaplanmasın response time süresinde") —
+  // response-time percentilleri kafka messaging span'lerini (publish + consume,
+  // msg_system='kafka') HARİÇ hesaplar. AYRI sorgu bilinçli: throughput/error
+  // tüm span'lerde kalır (bir kafka-consumer servisin RPS'i kafka'sız sıfır
+  // görünmesin) — yalnız latency giden/mesaj kafka'sından arınır. Read-side DSL
+  // (messaging.system → msg_system, filterexpr allowedOps'ta '!='); MV'ye
+  // dokunmaz (kapsam = servis Overview). Kafka-dışı span'de msg_system='' →
+  // '' != 'kafka' → true → korunur.
+  const latencyQ = useQuery({
+    queryKey: ['service-overview-latency-nokafka', service, from, to],
+    queryFn: () => api.spanMetricBatch({
+      from, to,
+      dsl: `service.name = "${service.replace(/"/g, '\\"')}" AND messaging.system != "kafka"`,
+      aggs: [
+        { name: 'p99', agg: 'p99', field: 'duration_ms' },
+        { name: 'p95', agg: 'p95', field: 'duration_ms' },
+        { name: 'p50', agg: 'p50', field: 'duration_ms' },
+      ],
+    }),
+    enabled: !!service,
+    staleTime: 30_000,
+  });
+  const lat = latencyQ.data;
+  const latStatus: 'loading' | 'error' | 'ready' =
+    latencyQ.isLoading ? 'loading' : latencyQ.isError ? 'error' : 'ready';
+
   const deploysQ = useServiceDeploys(service, from, to);
   // The single deploy marker drawn on the charts = the latest deploy inside
   // the window (the design shows one ▼ flag).
@@ -212,10 +238,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           <KpiTile lab="Failure rate" val={`${info.errorRate.toFixed(2)}%`} accent="var(--err)" spark={vals(s?.error_rate)} delta={computeDelta(vals(s?.error_rate))} goodWhenUp={false} />
         </MetricPanel>
         <MetricPanel compact title="Response time · P99" metricQuery={mkLatency('p99', 'stat')}>
-          <KpiTile lab="Response time · P99" val={info.p99DurationMs.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(s?.p99)} delta={computeDelta(vals(s?.p99))} goodWhenUp={false} />
+          <KpiTile lab="Response time · P99" val={(vals(lat?.p99).slice(-1)[0] ?? info.p99DurationMs).toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} />
         </MetricPanel>
         <MetricPanel compact title="Response time · median" metricQuery={mkLatency('p50', 'stat')}>
-          <KpiTile lab="Response time · median" val={(vals(s?.p50).slice(-1)[0] ?? info.avgDurationMs).toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(s?.p50)} delta={computeDelta(vals(s?.p50))} goodWhenUp={false} />
+          <KpiTile lab="Response time · median" val={(vals(lat?.p50).slice(-1)[0] ?? info.avgDurationMs).toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(lat?.p50)} delta={computeDelta(vals(lat?.p50))} goodWhenUp={false} />
         </MetricPanel>
         {/* Apdex has no calls_total/duration descriptor analogue in the
             spanmetrics pipeline (it's a composite of latency thresholds), so it
@@ -228,10 +254,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           its viz:'line' descriptor through the compact MetricPanel doorway. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={redStatus} onZoom={onZoom} xRange={xRange} lines={[
-            { series: s?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
-            { series: s?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
-            { series: s?.p99 ?? [], color: 'var(--err)', label: 'P99' },
+          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} xRange={xRange} lines={[
+            { series: lat?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
+            { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
+            { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
           ]} />
         </MetricPanel>
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>

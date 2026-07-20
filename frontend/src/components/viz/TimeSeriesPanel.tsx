@@ -4,12 +4,13 @@ import 'uplot/dist/uPlot.min.css';
 import { downsampleXY } from '@/lib/perf/lttb';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { escapeHTML } from '@/lib/utils';
-import { placeTooltip } from '@/components/MultiLineChart';
+import { placeTooltip } from '@/lib/chartTooltip';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { timeSeriesPanelBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar as resolveColor } from '@/lib/chart/resolveVar';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
+import { useChartEngine } from '@/lib/chart/engine';
 import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
@@ -33,6 +34,15 @@ import type { ChartAnnotation } from '@/lib/types';
 //
 // Points arrive in unix NANOSECONDS (matches the metric/spanmetric API shape);
 // we convert to unix seconds for uPlot's time axis once, here.
+//
+// v0.9.131 (chart-consolidation Adım 3) — new uPlot / destroy / ResizeObserver /
+// setData fast-path (v0.9.78-79 zoom-koruma) İSKELETİ engine.ts::useChartEngine'e
+// çıkarıldı; bu bileşen artık en zengin PRESET. Kendine özgü opts (dual-axis,
+// line/area/bars/stacked, exemplar ◆, event annotation, LTTB, cursorBus,
+// controlled zoom/focus/hidden) preset'te kalır. Motorun afterBuild (kontrollü
+// zoom/focus re-apply + exemplar-tık dinleyici), afterData (zoom re-apply) ve
+// refitScales (dual+log-farkında y refit) kancaları burada tam sınanır.
+// DAVRANIŞ birebir korunur (OVC/TC/MLC ile aynı seam).
 
 const MAX_POINTS = 2000;
 
@@ -154,7 +164,6 @@ export function TimeSeriesPanel({
   zoomWindow, hiddenLabels, focusedLabel, onCursorTime, onExemplarClick, xRange,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const plotRef = useRef<uPlot | null>(null);
   // Live per-series visibility, kept in a ref so legend clicks don't rebuild
   // the chart (setSeries(idx,{show}) is <1ms; React state would force a rebuild).
   const visibleRef = useRef<boolean[]>([]);
@@ -272,20 +281,15 @@ export function TimeSeriesPanel({
     renderable: series.length > 0 && prepared.times.length > 0,
   });
 
-  // Build / re-create effect — runs only when the build signature or the theme
-  // flips, NOT on a data-only poll (that rides the setData fast-path below).
-  // Reads the current data bundle through bundleRef so a rebuild paints fresh
-  // data without listing it as a dep.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    plotRef.current?.destroy();
-    plotRef.current = null;
+  // buildOptions — renkleri REBUILD ANINDA çöz (motor tema flip'te yeniden
+  // çağırır); eski build effect'in opts'unun birebiri. width motordan gelir.
+  // el motor tarafından garanti (renderable && el varken çağrılır).
+  const buildOptions = (width: number): uPlot.Options => {
+    const el = containerRef.current!;
 
+    // visibility'yi rebuild'de resetle (series `show` bunu okur) — controlled
+    // hiddenLabels varsa ondan tohumla. Yalnız rebuild'de; setData'ya dokunmaz.
     visibleRef.current = series.map(s => !(hiddenRef.current?.has(s.label)));
-
-    const { times, data } = bundleRef.current;
-    if (series.length === 0 || times.length === 0) return;
 
     const css = getComputedStyle(document.documentElement);
     const text3 = css.getPropertyValue('--text3').trim() || '#484f58';
@@ -293,12 +297,13 @@ export function TimeSeriesPanel({
     const bg1 = css.getPropertyValue('--bg1').trim() || '#0d1117';  // exemplar ◆ halo
 
     const stacked = mode === 'stacked';
+    const { times } = bundleRef.current;
 
     const colors = series.map(s => resolveColor(s.color ?? seriesColor(s.label)));
     const yScaleKey = (s: TSSeries) => (s.axis === 'right' ? 'yr' : 'y');
 
     const opts: uPlot.Options = {
-      width: el.clientWidth || 600,
+      width,
       height,
       // v0.9.93 (uPlot Aşama 3) — stacked bant dolguları arası saç-teli
       // beyaz çizgileri kaldırır (pxAlign:0 dolguları sürekli hizalar);
@@ -709,26 +714,29 @@ export function TimeSeriesPanel({
       },
     };
 
-    plotRef.current = new uPlot(opts, data, el);
+    return opts;
+  };
 
-    // Re-apply parent-controlled zoom + focus onto the fresh uPlot (the
-    // controlled-prop effects below only fire when the PROPS change).
+  // afterBuild (motor: new uPlot SONRASI) — kontrollü zoom + focus'u taze
+  // uPlot'a yeniden uygula (controlled-prop effect'leri yalnız PROP değişince
+  // ateşler) + exemplar ◆ tıkla→trace dinleyicisini over'a bağla. Cleanup
+  // gerekmez: motor rebuild/unmount'ta u.destroy() over'ı DOM'dan kaldırır,
+  // dinleyici GC'lenir (eski build-effect'in explicit removeEventListener'ının
+  // yerine — tek instance başına tek dinleyici).
+  const afterBuild = (u: uPlot) => {
     if (zoomRef.current) {
-      plotRef.current.setScale('x', { min: zoomRef.current.from, max: zoomRef.current.to });
+      u.setScale('x', { min: zoomRef.current.from, max: zoomRef.current.to });
     }
     if (focusedRef.current != null) {
       const fi = series.findIndex(s => s.label === focusedRef.current);
-      if (fi >= 0) plotRef.current.setSeries(fi + 1, { focus: true });
+      if (fi >= 0) u.setSeries(fi + 1, { focus: true });
     }
-
-    // explore-v2 Phase 3.2 — click an exemplar ◆ to open its trace. Hit-test in
-    // over-relative px (valToPos without canvasPixels = the over element's
-    // offset basis), so the click lines up with the rendered glyphs.
-    const over = plotRef.current.over;
-    const onExemplarClickDom = (ev: MouseEvent) => {
-      const u = plotRef.current;
+    // explore-v2 Phase 3.2 — hit-test over-relative px (valToPos without
+    // canvasPixels = over element's offset basis), so the click lines up.
+    const over = u.over;
+    over.addEventListener('click', (ev: MouseEvent) => {
       const cb = exemplarClickRef.current;
-      if (!u || !cb) return;
+      if (!cb) return;
       let hitId: string | null = null;
       let bestD = 100; // 10px squared tolerance
       const clickSeries = seriesRef.current;
@@ -744,51 +752,66 @@ export function TimeSeriesPanel({
         }
       }
       if (hitId) cb(hitId);
-    };
-    over.addEventListener('click', onExemplarClickDom);
-
-    const ro = new ResizeObserver(() => {
-      const u = plotRef.current;
-      if (u && el.clientWidth) u.setSize({ width: el.clientWidth, height });
     });
-    ro.observe(el);
+  };
 
-    return () => {
-      over.removeEventListener('click', onExemplarClickDom);
-      ro.disconnect();
-      plotRef.current?.destroy();
-      plotRef.current = null;
-    };
-    // Deps (v0.8.531): the pure build signature (series shape + mode + axes +
-    // overlays + zoom PRESENCE + point tier) and the theme tick. Everything
-    // callback-shaped (onZoom / onExemplarClick / onCursorTime) and every
-    // controlled prop (zoomWindow / hiddenLabels / focusedLabel) is read live
-    // through refs / its own effect, so a fresh arrow or a hover never churns a
-    // rebuild. Series POINT VALUES + exemplar positions ride the setData
-    // fast-path below.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [buildSig, themeTick]);
-
-  // Data fast-path (v0.8.531 / perf #5+#15) — a poll changes only the point
-  // VALUES / exemplar positions, not the series shape/mode/axes/overlays, so
-  // buildSig is unchanged and the build effect above does NOT run. Push the
-  // fresh (stacked-aware) data into the live plot with setData() — a <1ms
-  // redraw that keeps the hover cursor, isolation, and legend — instead of
-  // destroy()+new uPlot(). Guard on column count: a series add/remove is a
-  // rebuild (which owns the data this commit); setData with a mismatched width
-  // would throw. setData(resetScales default true) refits y and resets x to the
-  // full range, so re-apply the parent's controlled zoom window afterwards
-  // exactly as the rebuild path does via zoomRef — otherwise a 30s poll would
-  // yank the operator out of a drag-zoom.
-  useEffect(() => {
-    const u = plotRef.current;
-    if (!u) return;
-    if (u.data.length !== bundle.data.length) return;
-    u.setData(bundle.data);
+  // afterData (motor: setData fast-path SONRASI) — kontrollü zoom penceresini
+  // yeniden uygula (audit §5 risk #2: setData x'i full-range'e resetler, 30s
+  // poll operatörü drag-zoom'dan atmasın). Motor zoomlu dalda x'i zaten korur;
+  // bu, controlled window için idempotent güvence + isXZoomed'in kaçırdığı
+  // full-range'e-eşit pencere kenar durumunu kapatır.
+  const afterData = (u: uPlot) => {
     if (zoomRef.current) {
       u.setScale('x', { min: zoomRef.current.from, max: zoomRef.current.to });
     }
-  }, [bundle]);
+  };
+
+  // refitScales (motor: zoomlu fast-path'te y'yi elle refit — setData(false)
+  // y'yi resetlemez). TSP y-ekseni {} (uPlot-auto) / log + dual (y/yr); motorun
+  // default [0,max*1.1] refit'i bunu ÜRETMEZ ve log'da min:0 geçersizdir. Bu
+  // yüzden her eksenin uPlot-init'te normalize ettiği KENDİ range fonksiyonunu,
+  // görünür serilerin veri min/max'ıyla çağırıp setData(true)'nun auto
+  // davranışını BİREBİR üretiriz (linear + log, gizli seri hariç — uPlot da
+  // gizliyi range'e katmaz).
+  const refitScales = (u: uPlot, data: uPlot.AlignedData) => {
+    const refit = (key: string, idxs: number[]) => {
+      let dmin = Infinity, dmax = -Infinity;
+      for (const si of idxs) {
+        if (!visibleRef.current[si - 1]) continue;
+        const col = data[si] as (number | null)[] | undefined;
+        if (!col) continue;
+        for (const v of col) {
+          if (v != null && isFinite(v)) { if (v < dmin) dmin = v; if (v > dmax) dmax = v; }
+        }
+      }
+      if (dmin === Infinity) return; // görünür veri yok → dokunma (uPlot da öyle)
+      const rf = (u.scales[key] as { range?: unknown } | undefined)?.range;
+      if (typeof rf === 'function') {
+        const [lo, hi] = (rf as (u: uPlot, mn: number, mx: number, k: string) => [number, number])(u, dmin, dmax, key);
+        u.setScale(key, { min: lo, max: hi });
+      }
+    };
+    const leftIdxs: number[] = [];
+    const rightIdxs: number[] = [];
+    series.forEach((s, i) => (s.axis === 'right' ? rightIdxs : leftIdxs).push(i + 1));
+    refit('y', leftIdxs);
+    if (hasRight) refit('yr', rightIdxs);
+  };
+
+  // Yaşam döngüsü motorda (v0.9.131) — new uPlot / destroy / ResizeObserver /
+  // setData fast-path (zoom-koruma). buildOptions/afterBuild/afterData/
+  // refitScales specRef'ten canlı okunur; tetikleyici yalnız buildSig+themeTick
+  // (rebuild) ve bundle.data (fast-path).
+  const plotRef = useChartEngine(containerRef, {
+    signature: buildSig,
+    height,
+    renderable: series.length > 0 && prepared.times.length > 0,
+    data: bundle.data,
+    buildOptions,
+    afterBuild,
+    afterData,
+    refitScales,
+  }, themeTick);
 
   // Double-click resets the zoom to the full data range (Grafana parity).
   useEffect(() => {
@@ -803,6 +826,7 @@ export function TimeSeriesPanel({
     };
     el.addEventListener('dblclick', onDbl);
     return () => el.removeEventListener('dblclick', onDbl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── explore-v2 controlled props — applied to the LIVE uPlot, no rebuild ──
@@ -818,6 +842,7 @@ export function TimeSeriesPanel({
       const xs = u.data[0];
       if (xs && xs.length) u.setScale('x', { min: xs[0] as number, max: xs[xs.length - 1] as number });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [zoomWindow]);
 
   // Controlled visibility — diff against visibleRef so we only touch series
@@ -833,6 +858,7 @@ export function TimeSeriesPanel({
       }
     });
     setVisTick(t => t + 1);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hiddenLabels, series]);
 
   // Controlled focus — uPlot's focus.alpha dims everything else.
@@ -845,6 +871,7 @@ export function TimeSeriesPanel({
     }
     const i = series.findIndex(s => s.label === focusedLabel);
     if (i >= 0) u.setSeries(i + 1, { focus: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusedLabel, series]);
 
   // Legend interaction — isolate-on-click (second click restores all);

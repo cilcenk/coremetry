@@ -266,6 +266,7 @@ export function RuntimeCharts({ service, from, to, onZoom }: {
                 <TimeSeriesPanel
                   series={series}
                   height={240}
+                  mode="area"
                   syncKey={`runtime:${service}`}
                   onZoom={onZoom}
                   smooth

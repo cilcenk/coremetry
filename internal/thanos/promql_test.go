@@ -179,10 +179,16 @@ func TestJMXTrendQuery(t *testing.T) {
 			[]string{`rate(jvm_gc_collection_seconds_sum{`, `[5m])`, `sum by (pod)`}},
 		{"counter _total rate", jmxTrendQuery("prod", "app", "jvm_classes_loaded_total", true),
 			[]string{`rate(jvm_classes_loaded_total{`, `[5m])`}},
-		{"jboss datasource gauge", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", true),
-			[]string{`sum by (pod) (jboss_pool_in_use_count{`}},
+		{"jboss datasource → data_source grouping", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", true),
+			[]string{`sum by (data_source) (jboss_pool_in_use_count{`}},
+		{"jvm → pod grouping", jmxTrendQuery("prod", "app", "jvm_memory_bytes_used", true),
+			[]string{`sum by (pod) (`}},
 		{"regex meta kaçışı", jmxTrendQuery("ns", "svc.v2", "jvm_threads_current", true),
 			[]string{`pod=~"svc\\.v2-.*"`}},
+	}
+	// grouping label metriğe göre: jboss_ → data_source, jvm_ → pod.
+	if jmxGroupLabel("jboss_pool_in_use_count") != "data_source" || jmxGroupLabel("jvm_threads_current") != "pod" {
+		t.Errorf("jmxGroupLabel yanlış")
 	}
 	for _, c := range cases {
 		for _, w := range c.want {

@@ -1300,6 +1300,7 @@ func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, depl
 	if err != nil {
 		return nil, err
 	}
+	nameLabel := jmxGroupLabel(metric) // jboss_ → data_source, jvm_ → pod
 	type acc struct {
 		pts  []ValuePoint
 		sum  float64
@@ -1309,7 +1310,7 @@ func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, depl
 	for _, ser := range series {
 		name := ""
 		if byPod {
-			name = ser.Metric["pod"]
+			name = ser.Metric[nameLabel]
 		}
 		pts := make([]ValuePoint, 0, len(ser.Values))
 		sum := 0.0

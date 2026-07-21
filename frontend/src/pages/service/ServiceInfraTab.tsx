@@ -389,7 +389,8 @@ export function ServiceInfraTab({ service, range, onZoom }: {
                   title={`${m}${clamped ? ' (last 6h)' : ''}`}
                   byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
                   by={jmxBy[m] ?? !isJboss} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
-                  series={data} seriesName={m} unit={unit} onZoom={onZoom} />
+                  series={data} seriesName={m} unit={unit}
+                  maxSeries={isJboss ? 40 : undefined} onZoom={onZoom} />
               );
             })}
           </div>

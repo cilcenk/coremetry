@@ -95,7 +95,10 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
                           {open && (
                             <tr>
                               <td colSpan={colCount} style={{ padding: 0, background: 'var(--bg)' }}>
-                                <PodJmxInline cluster={r.cluster} ns={effNs} deploy={effDeploy}
+                                {/* ns = pod'un KENDİ namespace'i (r.namespace);
+                                    JMX selector namespace+pod ikisini de eşler,
+                                    çok-namespace serviste effNs yanlış olurdu. */}
+                                <PodJmxInline cluster={r.cluster} ns={r.namespace || effNs} deploy={effDeploy}
                                   pod={r.pod} cFrom={cFrom} cTo={cTo} onFull={() => onOpenPod(r)} />
                               </td>
                             </tr>

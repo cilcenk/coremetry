@@ -48,6 +48,11 @@ function PodDetail() {
   const service = sp.get('service') ?? '';
   // deploy yalnız JMX keşfi için gerekir; verilmezse pod adından türet.
   const deploy = sp.get('deploy') || (pod ? podWorkloadName(pod) : '');
+  // ?from= geri-breadcrumb etiketini sürer (drill kaynağı): metrics →
+  // "Metrics", infra/clusters/vars. → "Infrastructure" (v0.9.152).
+  const drillFrom = sp.get('from') ?? '';
+  const backTab = drillFrom === 'metrics' ? 'metrics' : 'infra';
+  const backLabel = drillFrom === 'metrics' ? 'Metrics' : 'Infrastructure';
   const [range, setRange] = useUrlRange('1h');
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const xRange = useMemo(() => ({ from: from / 1e9, to: to / 1e9 }), [from, to]);
@@ -143,10 +148,10 @@ function PodDetail() {
       <div id="content">
         {/* Geri + kimlik + KPI başlık satırı */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-          <Link to={service ? `/service?name=${encodeURIComponent(service)}&tab=infra` : '/clusters'} className="sec" style={{
+          <Link to={service ? `/service?name=${encodeURIComponent(service)}&tab=${backTab}` : '/clusters'} className="sec" style={{
             padding: '5px 12px', border: '1px solid var(--border)', borderRadius: 6,
             fontSize: 12, color: 'var(--text)', textDecoration: 'none',
-          }}>← {service ? `${service} · Infrastructure` : 'Clusters'}</Link>
+          }}>← {service ? `${service} · ${backLabel}` : 'Clusters'}</Link>
           <Stat label="Cluster" value={cluster} />
           <Stat label="Namespace" value={namespace || '—'} />
           {row?.phase && <span className={`badge ${podPhaseBadge(row.phase)}`}>{row.phase}</span>}

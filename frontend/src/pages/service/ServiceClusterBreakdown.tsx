@@ -77,13 +77,21 @@ export function ServiceClusterBreakdown({ service, range }: {
 
   return (
     <div style={{ marginBottom: 14 }}>
+      {/* v0.9.142 (operatör: "breakdown 7-8 cluster'da takılı") — bu panel
+          RED'i TRACE'lerden hesaplar (FROM spans), yani yalnız trace'i
+          Coremetry'ye ULAŞAN cluster'ları gösterebilir; metrik-yalnızca
+          (Thanos) cluster'lar Infrastructure sekmesinde çıkar. Başlık +
+          tooltip bunu açık eder ki "eksik cluster" yanılgısı olmasın. */}
       <div style={{
         fontSize: 11, fontWeight: 700, marginBottom: 6, color: 'var(--text2)',
         textTransform: 'uppercase', letterSpacing: 0.4,
-      }}>
+      }}
+        title={'RED per cluster is computed from traces — only clusters whose ' +
+          'traces reach Coremetry appear here. A service running in more clusters ' +
+          '(metrics/JMX only) shows those under the Infrastructure tab.'}>
         Per-cluster breakdown <span style={{
           fontWeight: 400, color: 'var(--text3)', textTransform: 'none',
-        }}>· {clusters.length} clusters</span>
+        }}>· {clusters.length} cluster{clusters.length === 1 ? '' : 's'} with traces</span>
       </div>
       <div className="table-wrap">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>

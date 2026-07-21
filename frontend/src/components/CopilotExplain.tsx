@@ -74,6 +74,23 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
     }
   };
 
+  // Explain→chat köprüsü (v0.9.165): açıklamayı okuduktan sonra tek tıkla
+  // Copilot chat'te devam et — konuya uygun bir soruyla açılır (guided router
+  // service-health'i doğrudan yakalar; diğerleri tool/RAG yoluyla best-effort).
+  const chatSeed = () => {
+    switch (kind) {
+      case 'service-health': return `${id} servisinin sağlığı nasıl?`;
+      case 'problem':        return `Bu problemin kök nedeni ne? (problem ${id})`;
+      case 'runbook':        return `${id} runbook'unun adımlarını özetle`;
+      case 'anomaly':        return `Bu anomaliyi açıkla (${id})`;
+      case 'incident':       return `Bu incident'i açıkla (${id})`;
+      case 'span':           return `Bu span'i açıkla (${id})`;
+      default:               return `Bu trace'i açıkla (${id})`;
+    }
+  };
+  const askInChat = () =>
+    window.dispatchEvent(new CustomEvent('coremetry:ai-ask', { detail: { question: chatSeed() } }));
+
   return (
     <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
       <Button variant="secondary" size="sm" onClick={run} disabled={busy}
@@ -106,6 +123,16 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
             </div>
           )}
           {text}
+          <div style={{ marginTop: 8 }}>
+            <button type="button" onClick={askInChat}
+              title="Copilot chat'te bu konuda devam et"
+              style={{
+                all: 'unset', cursor: 'pointer', fontSize: 11, color: 'var(--accent2)',
+                display: 'inline-flex', alignItems: 'center', gap: 4,
+              }}>
+              💬 Chat'te devam et →
+            </button>
+          </div>
         </div>
       )}
     </div>

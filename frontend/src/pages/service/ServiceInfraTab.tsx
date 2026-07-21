@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useServicesMetadata } from '@/lib/queries';
@@ -8,7 +8,6 @@ import { Card } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { MetricArea } from '@/pages/clusters/MetricArea';
-import { PodDrawer } from '@/pages/clusters/PodDrawer';
 import { PromQLList } from '@/pages/clusters/PromQLList';
 import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, fmtBps, podPhaseBadge, restartColor } from '@/pages/clusters/thresholds';
@@ -22,9 +21,9 @@ import type { ClusterPodRow, TimeRange } from '@/lib/types';
 // (metadata deriver, v0.8.436/v0.9.25) Thanos'taki pod'larını cluster
 // dağılımıyla gösterir: eşleşme notu, cluster çipleri, KPI satırı,
 // CPU/Mem Total/By-pod grafikleri (MetricArea), cluster-gruplu pod
-// tablosu ve Clusters'la AYNI PodDrawer ("Open in Clusters →" pivotlu).
-// Tüm görseller best-effort görünmez-düşer; fetch yalnız sekme
-// aktifken (bileşen ancak o zaman mount olur).
+// tablosu; pod satırına tıklama TAM /pod detay sayfasına gider (v0.9.151,
+// eski drawer kaldırıldı). Tüm görseller best-effort görünmez-düşer; fetch
+// yalnız sekme aktifken (bileşen ancak o zaman mount olur).
 
 // dominantNamespace — eşleşen pod'ların en sık namespace'i (v0.9.56):
 // metadata ns türetilememişse grafik sorgularının namespace parametresi
@@ -60,6 +59,7 @@ export function ServiceInfraTab({ service, range, onZoom }: {
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
 }) {
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
   const metaQ = useServicesMetadata();
@@ -220,18 +220,14 @@ export function ServiceInfraTab({ service, range, onZoom }: {
   )].filter(Boolean).sort();
   const effJds = reconcile(jds, dsOptions);
 
-  // ?pod=c|ns|p — Clusters'la aynı drawer kimlik biçimi.
-  const podParam = params.get('pod');
-  const openPod = (r: ClusterPodRow) => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.set('pod', `${r.cluster}|${r.namespace}|${r.pod}`);
-    return next;
-  }, { replace: true });
-  const closePod = () => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.delete('pod');
-    return next;
-  }, { replace: true });
+  // v0.9.151 — pod'a tıklama artık cramped drawer yerine TAM /pod detay
+  // sayfasına gider (H.Polat önerisi, "onun yerine ... tek bir detay sayfa").
+  // service RED'i, effDeploy JMX keşfini, pod'un kendi namespace'i selector'ı
+  // sürer. Eski ?pod= drawer kaldırıldı.
+  const openPod = (r: ClusterPodRow) => navigate('/pod?' + new URLSearchParams({
+    cluster: r.cluster, namespace: r.namespace, pod: r.pod,
+    service, deploy: effDeploy,
+  }).toString());
 
   const dt = useDataTable<ClusterPodRow>({
     storageKey: 'service-infra-pods', columns: POD_COLS,
@@ -304,28 +300,20 @@ export function ServiceInfraTab({ service, range, onZoom }: {
 
   return (
     <>
-      {/* Drill breadcrumb (v0.9.147, operatör) — Infra içi iz: All clusters ›
-          cluster › pod, URL ?icluster / ?pod'dan. Yalnız drill varken görünür;
-          her segment tıkla-geri (birleşik setParams, replace:true). */}
-      {(() => {
-        const bits = podParam ? podParam.split('|') : null; // [cluster, ns, pod]
-        const dCluster = icluster || (bits ? bits[0] : '');
-        const dPod = bits ? bits[2] : '';
-        if (!dCluster && !dPod) return null;
+      {/* Drill breadcrumb (v0.9.147, pod segmenti v0.9.151'de kalktı — pod
+          tıklaması artık /pod tam sayfasına gider, bu tab'ta ?pod= yok):
+          All clusters › cluster, URL ?icluster'dan. Yalnız çip filtresi
+          varken görünür (tıkla-geri, replace:true). */}
+      {icluster && (() => {
         const link: React.CSSProperties = { all: 'unset', cursor: 'pointer', color: 'var(--accent2)' };
         const sep = <span style={{ color: 'var(--text3)' }}>›</span>;
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, marginBottom: 10 }}>
-            <button type="button" style={link} title="Clear cluster + pod filter"
-              onClick={() => setParams(prev => { const n = new URLSearchParams(prev); n.delete('icluster'); n.delete('pod'); return n; }, { replace: true })}>
+            <button type="button" style={link} title="Clear cluster filter"
+              onClick={() => setICluster('')}>
               All clusters
             </button>
-            {dCluster && <>{sep}
-              <button type="button" style={link} className="mono" title={`Filter to ${dCluster}`}
-                onClick={() => setParams(prev => { const n = new URLSearchParams(prev); n.set('icluster', dCluster); n.delete('pod'); return n; }, { replace: true })}>
-                {dCluster}
-              </button></>}
-            {dPod && <>{sep}<span className="mono" style={{ color: 'var(--text)' }}>{dPod}</span></>}
+            {sep}<span className="mono" style={{ color: 'var(--text)' }}>{icluster}</span>
           </div>
         );
       })()}
@@ -517,14 +505,6 @@ export function ServiceInfraTab({ service, range, onZoom }: {
         </Card>
       </div>
 
-      {/* Pod drawer — Clusters'la AYNI bileşen + Clusters pivotu. */}
-      {podParam && (() => {
-        const [c, pns, p] = podParam.split('|');
-        if (!c || !pns || !p) return null;
-        const row = rows.find(r => r.cluster === c && r.namespace === pns && r.pod === p);
-        return <PodDrawer cluster={c} namespace={pns} pod={p} row={row}
-          range={range} onClose={closePod} clustersLink />;
-      })()}
     </>
   );
 }

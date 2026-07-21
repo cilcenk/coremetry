@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { ChartSpline } from 'lucide-react';
 import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
@@ -7,7 +7,8 @@ import { netTrendToSeries } from '@/pages/clusters/trendSeries';
 import { Gauge } from '@/pages/clusters/Gauge';
 import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
 import { safePct, restartColor, fmtCores, fmtBps, podPhaseBadge } from '@/pages/clusters/thresholds';
-import { PodDrawer, TREND_WINDOWS } from '@/pages/clusters/PodDrawer';
+import { TREND_WINDOWS } from '@/pages/clusters/TrendPanel';
+import { podWorkloadName } from '@/pages/clusters/podWorkload';
 import { PromQLList } from '@/pages/clusters/PromQLList';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MiniBar } from '@/pages/clusters/MiniBar';
@@ -111,8 +112,9 @@ function pctTitle(what: string, ofLimit?: number, ofReq?: number): string {
 }
 
 export default function ClustersPage() {
-  const [range, setRange] = useUrlRange('15m'); // yalnız drawer trendi
+  const [range, setRange] = useUrlRange('15m'); // inline namespace/pod trendi
   const [params, setParams] = useSearchParams();
+  const navigate = useNavigate();
 
   const sourcesQ = useQuery({
     queryKey: ['cluster-sources'],
@@ -172,18 +174,13 @@ export default function ClustersPage() {
     return next;
   }, { replace: true });
 
-  // ?pod=<cluster>|<namespace>|<pod> — drawer kimliği.
-  const podParam = params.get('pod');
-  const openPod = (r: ClusterPodRow) => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.set('pod', `${r.cluster}|${r.namespace}|${r.pod}`);
-    return next;
-  }, { replace: true });
-  const closePod = () => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.delete('pod');
-    return next;
-  }, { replace: true });
+  // v0.9.151 — pod'a tıklama artık cramped drawer yerine TAM /pod detay
+  // sayfasına gider (H.Polat önerisi). r.service (eşleşen Coremetry servisi,
+  // boş olabilir) RED'i, pod adından türetilen deploy JMX keşfini sürer.
+  const openPod = (r: ClusterPodRow) => navigate('/pod?' + new URLSearchParams({
+    cluster: r.cluster, namespace: r.namespace, pod: r.pod,
+    service: r.service ?? '', deploy: podWorkloadName(r.pod),
+  }).toString());
 
   // Genel görünüm: yalnız summary fan-out'u (skaler, kart başına).
   const summaryQs = useQueries({
@@ -1096,15 +1093,6 @@ export default function ClustersPage() {
           const [c, ns] = nsDrawerParam.split('|');
           if (!c || !ns) return null;
           return <NamespaceDrawer cluster={c} namespace={ns} range={range} onClose={closeNsDrawer} />;
-        })()}
-        {podParam && (() => {
-          const [c, ns, p] = podParam.split('|');
-          if (!c || !ns || !p) return null;
-          // Satır listede zaten yüklüyse drawer'a "current" kırılımı
-          // için veriyoruz — deep-link'te satır henüz gelmemişse
-          // drawer trend'le yetinir (ek istek YOK).
-          const row = rows.find(r => r.cluster === c && r.namespace === ns && r.pod === p);
-          return <PodDrawer cluster={c} namespace={ns} pod={p} row={row} range={range} onClose={closePod} />;
         })()}
       </div>
     </>

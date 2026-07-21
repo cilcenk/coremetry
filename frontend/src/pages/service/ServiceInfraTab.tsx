@@ -13,6 +13,7 @@ import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, fmtBps, podPhaseBadge, restartColor } from '@/pages/clusters/thresholds';
 import { podMatchesService } from '@/pages/clusters/podWorkload';
 import { dsToken, reconcile, applyDsIsolate } from '@/pages/service/jmxSelectors';
+import { podDetailPath } from '@/pages/service/podDetailPath';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
@@ -224,10 +225,13 @@ export function ServiceInfraTab({ service, range, onZoom }: {
   // sayfasına gider (H.Polat önerisi, "onun yerine ... tek bir detay sayfa").
   // service RED'i, effDeploy JMX keşfini, pod'un kendi namespace'i selector'ı
   // sürer. Eski ?pod= drawer kaldırıldı.
-  const openPod = (r: ClusterPodRow) => navigate('/pod?' + new URLSearchParams({
+  // Pod'a tıkla → /pod tam detay. podDetailPath ?range'i taşır (v0.9.152
+  // review: brush'lanmış pencere localStorage'a yazılmaz, drill'de geçmezse
+  // /pod 1h'e düşer; /traces & /logs drill'leri de range taşır).
+  const openPod = (r: ClusterPodRow) => navigate(podDetailPath({
     cluster: r.cluster, namespace: r.namespace, pod: r.pod,
-    service, deploy: effDeploy,
-  }).toString());
+    service, deploy: effDeploy, range: params.get('range'), from: 'infra',
+  }));
 
   const dt = useDataTable<ClusterPodRow>({
     storageKey: 'service-infra-pods', columns: POD_COLS,

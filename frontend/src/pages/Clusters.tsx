@@ -9,6 +9,7 @@ import { PhaseDonut } from '@/pages/clusters/PhaseDonut';
 import { safePct, restartColor, fmtCores, fmtBps, podPhaseBadge } from '@/pages/clusters/thresholds';
 import { TREND_WINDOWS } from '@/pages/clusters/TrendPanel';
 import { podWorkloadName } from '@/pages/clusters/podWorkload';
+import { podDetailPath } from '@/pages/service/podDetailPath';
 import { PromQLList } from '@/pages/clusters/PromQLList';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MiniBar } from '@/pages/clusters/MiniBar';
@@ -177,10 +178,11 @@ export default function ClustersPage() {
   // v0.9.151 — pod'a tıklama artık cramped drawer yerine TAM /pod detay
   // sayfasına gider (H.Polat önerisi). r.service (eşleşen Coremetry servisi,
   // boş olabilir) RED'i, pod adından türetilen deploy JMX keşfini sürer.
-  const openPod = (r: ClusterPodRow) => navigate('/pod?' + new URLSearchParams({
+  const openPod = (r: ClusterPodRow) => navigate(podDetailPath({
     cluster: r.cluster, namespace: r.namespace, pod: r.pod,
     service: r.service ?? '', deploy: podWorkloadName(r.pod),
-  }).toString());
+    range: params.get('range'), from: 'clusters',
+  }));
 
   // Genel görünüm: yalnız summary fan-out'u (skaler, kart başına).
   const summaryQs = useQueries({

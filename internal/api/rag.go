@@ -34,6 +34,11 @@ const (
 	// ragScoreFloor — en iyi chunk bu kosinüs benzerliğinin altındaysa
 	// soru doküman sorusu DEĞİLDİR; serbest döngüye düşülür.
 	ragScoreFloor = 0.35
+	// ragKeywordFloor (v0.9.162 review) — BM25 köprüsünde en iyi chunk sorgu
+	// terimlerinin bu kesrinden azını içeriyorsa alaka zayıf; grounding yapma,
+	// serbest tool döngüsüne bırak (tek terimlik tesadüfi eşleşme chat'i
+	// kaçırmasın). 0.5 = terimlerin en az yarısı whole-token eşleşmeli.
+	ragKeywordFloor = 0.5
 )
 
 func (s *Server) registerRAGRoutes(mux *http.ServeMux) {
@@ -130,15 +135,19 @@ func (s *Server) listRAGDocuments(w http.ResponseWriter, r *http.Request) {
 	if docs == nil {
 		docs = []chstore.RagDocument{}
 	}
-	writeJSON(w, map[string]any{"documents": docs, "ready": s.rag.Ready()})
+	// ready = semantik (embed) hazır; enabled = RAG açık (text-only keyword
+	// modu dahil, v0.9.162). Frontend enabled && !ready → "keyword modu" hint'i.
+	writeJSON(w, map[string]any{"documents": docs, "ready": s.rag.Ready(), "enabled": s.rag.Enabled()})
 }
 
 // uploadRAGDocument — multipart (file alanı, md/txt) veya JSON
 // {name, text}. Chunk + embed + replace tek istekte; embedding
-// endpoint'i hazır değilse 503 döner (yükleme yarım kalmaz).
+// RAG etkin değilse 503. v0.9.162: kapı Ready() DEĞİL Enabled() — embedding
+// endpoint'i yoksa doküman text-only girer (keyword retrieval), yükleme
+// bloklanmaz (review: eski Ready() kapısı text-only ingest'i erişilmez yapmıştı).
 func (s *Server) uploadRAGDocument(w http.ResponseWriter, r *http.Request) {
-	if !s.rag.Ready() {
-		http.Error(w, "embedding endpoint yapılandırılmamış (Settings → AI → RAG)", http.StatusServiceUnavailable)
+	if !s.rag.Enabled() {
+		http.Error(w, "RAG etkin değil (Settings → AI → RAG)", http.StatusServiceUnavailable)
 		return
 	}
 	name, text, err := readRAGUpload(r)
@@ -296,7 +305,11 @@ func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs
 		}
 	}
 	if len(hits) == 0 {
-		if h, e := s.store.TopKRagChunksByContent(ctx, question, topK); e == nil {
+		// Keyword floor (v0.9.162 review): en iyi hit terimlerin ≥yarısını
+		// whole-token içermiyorsa alaka zayıf → grounding yapma, serbest
+		// döngüye bırak (tesadüfi tek-terim eşleşmesi chat'i kaçırmasın).
+		if h, e := s.store.TopKRagChunksByContent(ctx, question, topK); e == nil &&
+			len(h) > 0 && h[0].Score >= ragKeywordFloor {
 			hits = h
 		}
 	}
@@ -339,8 +352,8 @@ func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs
 // kaynaklarını bir kez tarar. Manuel buton + 30 dk'lık leader-gated
 // tick aynı yolu kullanır. Sonuç özetini döner; audit'li.
 func (s *Server) syncRAGSources(w http.ResponseWriter, r *http.Request) {
-	if !s.rag.Ready() {
-		http.Error(w, "embedding endpoint yapılandırılmamış", http.StatusServiceUnavailable)
+	if !s.rag.Enabled() {
+		http.Error(w, "RAG etkin değil", http.StatusServiceUnavailable)
 		return
 	}
 	res := s.ragSyncPass(r.Context())
@@ -423,7 +436,7 @@ func (s *Server) StartRAGSync(ctx context.Context, lock cache.Lock) {
 	leader := cache.NewLeaderHolder(lock, "coremetry:lock:rag-sync", cache.LeaderTTL(interval))
 	leader.Start(ctx)
 	tick := func() {
-		if !leader.IsLeader() || !s.rag.Ready() || len(s.rag.Snapshot().Sources) == 0 {
+		if !leader.IsLeader() || !s.rag.Enabled() || len(s.rag.Snapshot().Sources) == 0 {
 			return
 		}
 		s.ragSyncPass(ctx)

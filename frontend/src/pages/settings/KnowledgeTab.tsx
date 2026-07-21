@@ -102,14 +102,18 @@ export function KnowledgeTab() {
     <div style={{ maxWidth: 640 }}>
       <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
         Doküman soru-cevap (RAG)
-        {cfg.enabled && cfg.endpoint
-          ? <span className="badge b-ok" style={{ marginLeft: 8 }}>aktif</span>
-          : <span className="badge b-gray" style={{ marginLeft: 8 }}>kapalı</span>}
+        {!cfg.enabled
+          ? <span className="badge b-gray" style={{ marginLeft: 8 }}>kapalı</span>
+          : cfg.endpoint
+            ? <span className="badge b-ok" style={{ marginLeft: 8 }}>aktif · semantik</span>
+            : <span className="badge b-warn" style={{ marginLeft: 8 }}>aktif · keyword modu</span>}
       </h2>
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 12 }}>
         Runbook / prosedür / mimari dokümanlarını yükle; Copilot chat sorulara bu
-        dokümanlardan <b>kaynak atıflı</b> cevap versin. OpenAI-uyumlu bir
-        <code> /v1/embeddings</code> endpoint'i gerekir (vLLM/KServe'de bge-m3 önerilir).
+        dokümanlardan <b>kaynak atıflı</b> cevap versin. <b>Embedding endpoint'i
+        olmadan da çalışır</b> (keyword/BM25 modu, v0.9.162); OpenAI-uyumlu bir
+        <code> /v1/embeddings</code> (vLLM/KServe'de bge-m3) eklersen retrieval
+        semantiğe (TR↔EN recall) yükselir.
       </p>
 
       <Row>
@@ -210,8 +214,8 @@ export function KnowledgeTab() {
             Kaynakları kaydet
           </Button>
           <Button variant="secondary" size="sm" type="button"
-            disabled={busy || !cfg.enabled || !cfg.endpoint}
-            title={!cfg.endpoint ? 'Önce embedding endpoint girip kaydet' : 'Tüm kaynakları şimdi tara'}
+            disabled={busy || !cfg.enabled}
+            title={cfg.endpoint ? 'Tüm kaynakları şimdi tara' : 'Tüm kaynakları tara (keyword modu — embedding yok)'}
             onClick={async () => {
               setBusy(true); setMsg(null);
               try {
@@ -232,8 +236,8 @@ export function KnowledgeTab() {
         <input ref={fileRef} type="file" accept=".md,.txt" style={{ display: 'none' }}
                onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); }} />
         <Button variant="secondary" size="sm" type="button"
-          disabled={busy || !cfg.enabled || !cfg.endpoint}
-          title={!cfg.endpoint ? 'Önce embedding endpoint girip kaydet' : 'md / txt yükle (≤5MB)'}
+          disabled={busy || !cfg.enabled}
+          title={cfg.endpoint ? 'md / txt yükle (≤5MB)' : 'md / txt yükle (≤5MB) — keyword modu, embedding yok'}
           onClick={() => fileRef.current?.click()}>
           ⬆ Doküman yükle
         </Button>

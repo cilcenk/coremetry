@@ -8,7 +8,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { ServiceOverview } from './service/Overview';
 import { ServiceTracesTab, ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
 import { ServiceInfraTab } from './service/ServiceInfraTab';
-import { ServiceMetricsTab } from './service/ServiceMetricsTab';
+import { ServicePodsTab } from './service/ServicePodsTab';
 import { OperationsTable } from './service/OperationsTable';
 import { ServiceClusterBreakdown } from './service/ServiceClusterBreakdown';
 import { ServiceLatencyHeatmap } from './service/ServiceLatencyHeatmap';
@@ -33,7 +33,7 @@ const SINCE_MAP: Record<string, string> = {
   '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
 };
 
-type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 'topology' | 'infra' | 'metrics';
+type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 'topology' | 'infra' | 'pods';
 
 function ServiceDetailInner() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -99,7 +99,7 @@ function ServiceDetailInner() {
     : tabParam === 'logs' ? 'logs'
     : tabParam === 'topology' ? 'topology'
     : tabParam === 'infra' ? 'infra'
-    : tabParam === 'metrics' ? 'metrics'
+    : (tabParam === 'pods' || tabParam === 'metrics') ? 'pods'
     : 'overview';
   // v0.5.307 — scroll to a hash anchor (#deploys, etc.) once
   // the Details tab body actually exists in the DOM. Browser
@@ -480,9 +480,9 @@ function ServiceDetailInner() {
                   toMs: Math.round(toUnixSec * 1000),
                 });
               }} />}
-            {/* v0.9.139 — Metrics sekmesi: Overview'dan taşınan OTel runtime
-                çizelgeleri (Faz 1); Faz 2'de JBoss JMX panelleri eklenecek. */}
-            {tab === 'metrics' && <ServiceMetricsTab service={svc} range={range}
+            {/* v0.9.158 — "Pods" sekmesi (eski Metrics): cluster açılır pod
+                grupları + JVM/JBoss JMX panelleri + OTel runtime çizelgeleri. */}
+            {tab === 'pods' && <ServicePodsTab service={svc} range={range}
               onZoom={(fromUnixSec, toUnixSec) => {
                 setRange({
                   preset: 'custom',
@@ -645,7 +645,7 @@ function TabStrip({ tab, onChange, opCount }: {
     { key: 'operations', label: 'Operations', hint: opCount > 0 ? `${opCount}` : undefined },
     { key: 'details',    label: 'Details' },
     { key: 'infra',      label: 'Infrastructure' },
-    { key: 'metrics',    label: 'Metrics' },
+    { key: 'pods',       label: 'Pods' },
     { key: 'topology',   label: 'Topology' },
     { key: 'traces',     label: 'Traces' },
     { key: 'logs',       label: 'Logs' },

@@ -15,6 +15,7 @@ import { PromQLList } from '@/pages/clusters/PromQLList';
 import { promQuote } from '@/pages/clusters/promQuote';
 import { podWorkloadName } from '@/pages/clusters/podWorkload';
 import { fmtCores, podPhaseBadge } from '@/pages/clusters/thresholds';
+import type { ClusterPodRow } from '@/lib/types';
 
 // Pod detay sayfası (v0.9.151) — H.Polat önerisi: pod'a tıklayınca cramped
 // drawer YERİNE tam sayfa. Üç kaynak tek yerde, hepsi POD'a scope'lu:
@@ -42,8 +43,8 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function PodDetail() {
   const [sp] = useSearchParams();
-  const cluster = sp.get('cluster') ?? '';
-  const namespace = sp.get('namespace') ?? '';
+  const clusterParam = sp.get('cluster') ?? '';
+  const nsParam = sp.get('namespace') ?? '';
   const pod = sp.get('pod') ?? '';
   const service = sp.get('service') ?? '';
   // deploy yalnız JMX keşfi için gerekir; verilmezse pod adından türet.
@@ -66,17 +67,35 @@ function PodDetail() {
     return { cFrom: from, cTo: to, clamped: false };
   }, [from, to]);
 
-  // Pod satırı (phase/cpu/mem/restarts başlığı) — cluster pod listesinden;
-  // deep-link'te henüz gelmemişse başlık o alanları atlar (ek istek yok).
-  const podsQ = useQuery({
-    queryKey: ['cluster-pods', cluster],
-    queryFn: () => api.clusterPods(cluster),
-    staleTime: 60_000, retry: 1, enabled: !!cluster,
+  // cluster/namespace çözümü (v0.9.153): Infra/Clusters drill'i cluster'ı
+  // taşır (tek fetch); Metrics drill'i YALNIZ service+pod taşır → pod'un
+  // hangi cluster'da olduğunu tüm Thanos kaynaklarında arayarak çöz. row da
+  // (phase/cpu/mem başlığı) buradan gelir. cluster çözülene dek RED zaten
+  // çalışır (service+pod), yalnız infra/JMX bekler — kademeli.
+  const sourcesQ = useQuery({
+    queryKey: ['cluster-sources'],
+    queryFn: () => api.clusterSources(),
+    staleTime: 300_000, enabled: !clusterParam && !!pod,
   });
-  const row = useMemo(
-    () => (podsQ.data?.pods ?? []).find(p => p.namespace === namespace && p.pod === pod),
-    [podsQ.data, namespace, pod],
+  const searchClusters = useMemo(
+    () => (clusterParam ? [clusterParam] : (sourcesQ.data?.clusters ?? [])),
+    [clusterParam, sourcesQ.data],
   );
+  const podsQs = useQueries({
+    queries: searchClusters.map(c => ({
+      queryKey: ['cluster-pods', c],
+      queryFn: () => api.clusterPods(c),
+      staleTime: 60_000, retry: 1,
+    })),
+  });
+  const { cluster, namespace, row } = useMemo<{ cluster: string; namespace: string; row: ClusterPodRow | undefined }>(() => {
+    for (let i = 0; i < searchClusters.length; i++) {
+      const found = (podsQs[i]?.data?.pods ?? []).find(
+        p => p.pod === pod && (!nsParam || p.namespace === nsParam));
+      if (found) return { cluster: searchClusters[i], namespace: found.namespace, row: found };
+    }
+    return { cluster: clusterParam, namespace: nsParam, row: undefined };
+  }, [searchClusters, podsQs, pod, nsParam, clusterParam]);
 
   // Per-pod RED — Overview.tsx'in iki batch'ini birebir aynala + host.name.
   const podScope = `service.name = "${service.replace(/"/g, '\\"')}" AND host.name = "${pod.replace(/"/g, '\\"')}"`;
@@ -133,11 +152,11 @@ function PodDetail() {
     })),
   });
 
-  if (!cluster || !pod) {
+  if (!pod) {
     return (
       <>
         <Topbar title="Pod" />
-        <div id="content"><Empty icon="—" title="Pod belirtilmedi (cluster + pod parametreleri gerekli)." /></div>
+        <div id="content"><Empty icon="—" title="Pod belirtilmedi (pod parametresi gerekli)." /></div>
       </>
     );
   }
@@ -184,11 +203,17 @@ function PodDetail() {
           <Empty icon="—" title="Bu pod bir Coremetry servisine eşlenmedi — RED metrikleri yok (infra + JVM aşağıda)." />
         )}
 
-        {/* Infra — tek-pod CPU/Mem trend (drawer'dan taşındı) */}
-        <h3 style={{ fontSize: 13, margin: '18px 0 8px' }}>
-          Infrastructure · <span className="mono">{cluster}</span>
-        </h3>
-        <ThanosTrendPanel cluster={cluster} namespace={namespace} pod={pod} row={row} fromNs={cFrom} toNs={cTo} />
+        {/* Infra — tek-pod CPU/Mem trend (drawer'dan taşındı). cluster
+            çözülene dek (Metrics drill'i cluster taşımaz → Thanos'ta aranır)
+            gizli; bulunamazsa hiç gösterilmez (görünmez-düşer). */}
+        {cluster && (
+          <>
+            <h3 style={{ fontSize: 13, margin: '18px 0 8px' }}>
+              Infrastructure · <span className="mono">{cluster}</span>
+            </h3>
+            <ThanosTrendPanel cluster={cluster} namespace={namespace} pod={pod} row={row} fromNs={cFrom} toNs={cTo} />
+          </>
+        )}
 
         {/* JVM / JBoss JMX — pod'a filtreli */}
         {jmxMetrics.length > 0 && (

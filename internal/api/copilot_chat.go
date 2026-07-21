@@ -50,6 +50,13 @@ Use the provided tools to ground EVERY factual claim in live data — never inve
 
 type chatRequest struct {
 	Messages []copilot.ChatMessage `json:"messages"`
+	// Context (v0.9.164) — frontend'in bulunduğu sayfadan geçirdiği ipucu
+	// (context-awareness): mesaj bir servis ADI taşımıyorsa guided router bu
+	// servisi varsayılan alır ("neden yavaş?" checkout sayfasında → checkout).
+	// Şeffaf: chat banner'ı "checkout servisindesin" der.
+	Context struct {
+		Service string `json:"service,omitempty"`
+	} `json:"context,omitempty"`
 }
 
 // copilotChat is the SSE chat endpoint. Runs the agentic loop and
@@ -120,7 +127,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// frontier models; the 2B-class primary target (qwen3.5-2b) can't
 	// drive the 5-round × 11-schema loop reliably at all. No match →
 	// the free tool loop below runs UNCHANGED.
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages); handled {
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service); handled {
 		emit("done", map[string]bool{"ok": gok})
 		return
 	}

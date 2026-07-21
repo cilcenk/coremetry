@@ -1162,12 +1162,15 @@ export const api = {
     messages: import('./types').ChatMessage[],
     onEvent: (e: import('./types').ChatStreamEvent) => void,
     signal?: AbortSignal,
+    // v0.9.164 — context-awareness: bulunulan sayfanın servisi; mesaj servis
+    // adı taşımıyorsa guided router bunu varsayılan alır.
+    contextService?: string,
   ): Promise<void> => {
     const r = await fetch(API_BASE + '/api/copilot/chat', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages }),
+      body: JSON.stringify(contextService ? { messages, context: { service: contextService } } : { messages }),
       signal,
     });
     if (!r.ok || !r.body) {

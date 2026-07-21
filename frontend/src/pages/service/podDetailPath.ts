@@ -17,7 +17,7 @@ export function podDetailPath(opts: {
   service?: string;
   deploy?: string;
   range?: string | null;
-  from?: 'infra' | 'metrics' | 'clusters';
+  from?: 'infra' | 'pods' | 'metrics' | 'clusters';
 }): string {
   const q = new URLSearchParams();
   if (opts.cluster) q.set('cluster', opts.cluster);

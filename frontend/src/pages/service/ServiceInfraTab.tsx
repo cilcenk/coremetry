@@ -74,7 +74,7 @@ export function ServiceInfraTab({ service, range, onZoom }: {
     const next = new URLSearchParams(prev);
     next.set('tab', 'pods');
     return next;
-  });
+  }, { replace: true }); // setTab/setICluster deseni — history kirletme (v0.9.159 review)
   const chartClick = (key: 'cpu' | 'mem') => ({
     role: 'button' as const, tabIndex: 0,
     onClick: () => scrollToChart(key),

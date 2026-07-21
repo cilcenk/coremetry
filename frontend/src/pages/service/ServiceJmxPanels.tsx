@@ -13,8 +13,8 @@ import type { ClusterPodRow } from '@/lib/types';
 // keşfedilen her jvm_/jboss_ metriği için MetricArea; jpod (backend $pod
 // filtresi) + jds (client datasource izolesi) URL kaynak-of-truth. Metrik
 // yoksa görünmez-düşer (null).
-export function ServiceJmxPanels({ cluster, effNs, effDeploy, cFrom, cTo, clamped, rows, onZoom }: {
-  cluster: string;
+export function ServiceJmxPanels({ clusters, effNs, effDeploy, cFrom, cTo, clamped, rows, onZoom }: {
+  clusters: string[];
   effNs: string;
   effDeploy: string;
   cFrom: number;
@@ -25,6 +25,11 @@ export function ServiceJmxPanels({ cluster, effNs, effDeploy, cFrom, cTo, clampe
 }) {
   const [params, setParams] = useSearchParams();
   const [jmxBy, setJmxBy] = useState<Record<string, boolean>>({});
+  // Çok-cluster serviste JMX cluster'ı seçilebilir (Pods sekmesinde çip yok,
+  // review v0.9.159: eskiden clustersWithPods[0]'a sabitti → diğer cluster'lar
+  // erişilemezdi). Seçili cluster listede yoksa ilkine düşer.
+  const [pickCluster, setPickCluster] = useState('');
+  const cluster = (pickCluster && clusters.includes(pickCluster)) ? pickCluster : (clusters[0] ?? '');
   const enabled = !!cluster && !!effNs && !!effDeploy;
   const jpod = params.get('jpod') ?? '';
   const jds = params.get('jds') ?? '';
@@ -71,7 +76,16 @@ export function ServiceJmxPanels({ cluster, effNs, effDeploy, cFrom, cTo, clampe
           JVM / JBoss (JMX) · <span className="mono">{cluster}</span>
           <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {jmxMetrics.length} metrics</span>
         </h3>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11, color: 'var(--text3)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11, color: 'var(--text3)', flexWrap: 'wrap' }}>
+          {clusters.length > 1 && (
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+              Cluster
+              <select value={cluster} onChange={e => setPickCluster(e.target.value)}
+                style={{ fontSize: 11, maxWidth: 220 }} title="JMX panellerinin cluster'ı">
+                {clusters.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </label>
+          )}
           {podOptions.length > 0 && (
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               Pod
@@ -94,7 +108,10 @@ export function ServiceJmxPanels({ cluster, effNs, effDeploy, cFrom, cTo, clampe
           )}
         </div>
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      {/* minmax(0,1fr): uPlot grafikleri grid kolonunu min-content'ün altına
+          sıkıştırabilsin — aksi halde geniş panel sayfayı yana taşırıyordu
+          (operatör "expand'da paneller yana kayıyor", v0.9.159). */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14 }}>
         {jmxMetrics.map((m, i) => {
           const data = jmxPanelQs[i]?.data?.series;
           if (!data || data.length === 0) return null;

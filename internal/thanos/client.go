@@ -1300,7 +1300,7 @@ func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, depl
 	if err != nil {
 		return nil, err
 	}
-	nameLabel := jmxGroupLabel(metric) // jboss_ → data_source, jvm_ → pod
+	byClause, nameLabels := jmxGrouping(metric, byPod)
 	type acc struct {
 		pts  []ValuePoint
 		sum  float64
@@ -1308,10 +1308,15 @@ func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, depl
 	}
 	all := make([]acc, 0, len(series))
 	for _, ser := range series {
-		name := ""
-		if byPod {
-			name = ser.Metric[nameLabel]
+		// Ad = nameLabels'ın DOLU değerleri " · " ile (coalesce: regular DS
+		// data_source, XA DS xa_data_source, pod eklenirse sonuna).
+		var parts []string
+		for _, l := range nameLabels {
+			if v := ser.Metric[l]; v != "" {
+				parts = append(parts, v)
+			}
 		}
+		name := strings.Join(parts, " · ")
 		pts := make([]ValuePoint, 0, len(ser.Values))
 		sum := 0.0
 		for _, pair := range ser.Values {
@@ -1324,7 +1329,9 @@ func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, depl
 			all = append(all, acc{pts: pts, sum: sum / float64(len(pts)), name: name})
 		}
 	}
-	if byPod && len(all) > maxTrendSeries {
+	// top-N YALNIZ saf pod grouping'te (jvm by pod, çok pod olabilir);
+	// datasource serilerini KESME (operatör: 5-10+ datasource hepsi görünsün).
+	if byClause == "pod" && len(all) > maxTrendSeries {
 		sort.Slice(all, func(i, j int) bool {
 			if all[i].sum != all[j].sum {
 				return all[i].sum > all[j].sum

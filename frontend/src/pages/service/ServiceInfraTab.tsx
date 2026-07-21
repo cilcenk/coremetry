@@ -356,11 +356,14 @@ export function ServiceInfraTab({ service, range, onZoom }: {
               const data = jmxPanelQs[i]?.data?.series;
               if (!data || data.length === 0) return null;
               const unit = m.includes('bytes') ? 'bytes' : m.includes('seconds') ? 's' : undefined;
+              // jboss datasource: off = By datasource (data_source+xa_data_source),
+              // on = By pod (pod başına datasource). jvm: off = Total, on = By pod.
+              const isJboss = m.startsWith('jboss_');
               return (
                 <MetricArea key={m}
                   title={`${m}${clamped ? ' (last 6h)' : ''}`}
-                  byLabel={m.startsWith('jboss_') ? 'By datasource' : 'By pod'}
-                  by={jmxBy[m] ?? true} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
+                  byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
+                  by={jmxBy[m] ?? !isJboss} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
                   series={data} seriesName={m} unit={unit} onZoom={onZoom} />
               );
             })}

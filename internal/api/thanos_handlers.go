@@ -398,11 +398,44 @@ func (s *Server) getClusterDeployTrend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// getClusterJMXTrend — GET /api/clusters/jmx-trend?cluster=X&ns=Y&
-// deploy=Z&metric=heap|nonheap|gc|threads|ds_inuse|ds_active|ds_available&
-// byPod=0|1&from=&to= (v0.9.140, Service→Metrics sekmesi). deploy-trend'in
-// JBoss/JVM JMX aynası; metric sabit bir anahtar kümesinden (ValidJMXMetric
-// kapısı — ham metrik adı DIŞARIDAN alınmaz, sorgu şekli sunucuda).
+// getClusterJMXMetrics — GET /api/clusters/jmx-metrics?cluster=X&ns=Y&
+// deploy=Z (v0.9.144, auto-discovery). Servisin o cluster'da taşıdığı
+// jvm_/jboss_ metrik ADLARINI döner (boş = JMX yok). Service→Infrastructure
+// sekmesi bununla panel listesini keşfeder.
+func (s *Server) getClusterJMXMetrics(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query()
+	name := strings.TrimSpace(q.Get("cluster"))
+	ns := strings.TrimSpace(q.Get("ns"))
+	deploy := strings.TrimSpace(q.Get("deploy"))
+	if name == "" || ns == "" || deploy == "" {
+		http.Error(w, "cluster, ns and deploy query params required", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	key := fmt.Sprintf("cluster-jmx-metrics:%s:%s:%s:%s", name, ns, deploy, clusterCfgDigest(cfg))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		names, err := s.thanos.JMXMetricNames(qctx, cfg, ns, deploy)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "namespace": ns, "deployment": deploy, "metrics": names}, nil
+	})
+}
+
+// getClusterJMXTrend — GET /api/clusters/jmx-trend?cluster=X&ns=Y&deploy=Z&
+// metric=<jvm_*|jboss_*>&byPod=0|1&from=&to= (v0.9.140, auto-discovery
+// v0.9.144). Keşfedilen bir JMX metriğinin trendi; metric HAM ad ama
+// ValidJMXMetric (^(jvm|jboss)_[a-z0-9_]+$) ile enjeksiyona karşı kapılı.
 func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
 		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
@@ -410,9 +443,10 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	name := strings.TrimSpace(q.Get("cluster"))
-	service := strings.TrimSpace(q.Get("service"))
-	if name == "" || service == "" {
-		http.Error(w, "cluster and service query params required", http.StatusBadRequest)
+	ns := strings.TrimSpace(q.Get("ns"))
+	deploy := strings.TrimSpace(q.Get("deploy"))
+	if name == "" || ns == "" || deploy == "" {
+		http.Error(w, "cluster, ns and deploy query params required", http.StatusBadRequest)
 		return
 	}
 	metric := strings.TrimSpace(q.Get("metric"))
@@ -430,16 +464,16 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 	if to.Sub(from) > 6*time.Hour {
 		from = to.Add(-6 * time.Hour)
 	}
-	key := fmt.Sprintf("cluster-jmx-trend:%s:%s:%s:%t:%s:%s",
-		name, service, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to))
+	key := fmt.Sprintf("cluster-jmx-trend:%s:%s:%s:%s:%t:%s:%s",
+		name, ns, deploy, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		series, err := s.thanos.JMXTrend(qctx, cfg, service, metric, byPod, from, to)
+		series, err := s.thanos.JMXTrend(qctx, cfg, ns, deploy, metric, byPod, from, to)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"cluster": name, "service": service,
+		return map[string]any{"cluster": name, "namespace": ns, "deployment": deploy,
 			"metric": metric, "byPod": byPod, "series": series}, nil
 	})
 }

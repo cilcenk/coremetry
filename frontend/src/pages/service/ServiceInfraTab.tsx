@@ -161,6 +161,26 @@ export function ServiceInfraTab({ service, range, onZoom }: {
     staleTime: 60_000, retry: 1, enabled: trendOK,
   });
 
+  // JVM/JBoss JMX auto-discovery (v0.9.144, operatör: "Thanos'taki jvm
+  // metrikleri yine Infrastructure altında gözüksün"). chartCluster'da
+  // servisin taşıdığı jvm_/jboss_ metrik ADLARINI keşfet (aynı effNs/effDeploy
+  // cAdvisor selector'ı) — SABİT ad listesi YOK — her biri için pod-başı
+  // MetricArea. `_total`/`_sum` sayaçları backend'de rate'lenir.
+  const [jmxBy, setJmxBy] = useState<Record<string, boolean>>({});
+  const jmxMetricsQ = useQuery({
+    queryKey: ['jmx-metrics', chartCluster, effNs, effDeploy],
+    queryFn: () => api.clusterJmxMetrics(chartCluster, effNs, effDeploy),
+    staleTime: 60_000, retry: 1, enabled: trendOK,
+  });
+  const jmxMetrics = useMemo(() => jmxMetricsQ.data?.metrics ?? [], [jmxMetricsQ.data]);
+  const jmxPanelQs = useQueries({
+    queries: jmxMetrics.map(m => ({
+      queryKey: ['jmx-trend', chartCluster, effNs, effDeploy, m, jmxBy[m] ?? true, cFrom, cTo],
+      queryFn: () => api.clusterJmxTrend(chartCluster, effNs, effDeploy, m, jmxBy[m] ?? true, cFrom, cTo),
+      staleTime: 60_000, retry: 1,
+    })),
+  });
+
   // ?pod=c|ns|p — Clusters'la aynı drawer kimlik biçimi.
   const podParam = params.get('pod');
   const openPod = (r: ClusterPodRow) => setParams(prev => {
@@ -321,6 +341,30 @@ export function ServiceInfraTab({ service, range, onZoom }: {
               series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
           </div>
         </div>
+      )}
+
+      {/* JVM/JBoss (JMX) · Thanos auto-discovery (v0.9.144). Keşfedilen her
+          jvm_/jboss_ metriği için pod-başı MetricArea; serisi boş → görünmez. */}
+      {jmxMetrics.length > 0 && (
+        <>
+          <h3 style={{ fontSize: 13, margin: '18px 0 8px' }}>
+            JVM / JBoss (JMX) · <span className="mono">{chartCluster}</span>
+            <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {jmxMetrics.length} metrics</span>
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            {jmxMetrics.map((m, i) => {
+              const data = jmxPanelQs[i]?.data?.series;
+              if (!data || data.length === 0) return null;
+              const unit = m.includes('bytes') ? 'bytes' : m.includes('seconds') ? 's' : undefined;
+              return (
+                <MetricArea key={m}
+                  title={`${m}${clamped ? ' (last 6h)' : ''}`}
+                  byLabel="By pod" by={jmxBy[m] ?? true} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
+                  series={data} seriesName={m} unit={unit} onZoom={onZoom} />
+              );
+            })}
+          </div>
+        </>
       )}
 
       {/* Pod tablosu — cluster-gruplu (Cluster kolonu + çip filtresi). */}

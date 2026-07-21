@@ -20,7 +20,7 @@ import type {
   TempoSnapshot, TempoSettingsInput,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
-  ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse, ClusterDeployTrendResponse, ClusterJMXTrendResponse, JMXMetricKey,
+  ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse, ClusterDeployTrendResponse, ClusterJMXTrendResponse, ClusterJMXMetricsResponse,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
   RelationResponse, RelationKind, FilterExpr,
@@ -976,12 +976,16 @@ export const api = {
     get<ClusterDeployTrendResponse>(`/api/clusters/deploy-trend?cluster=${encodeURIComponent(cluster)}` +
       `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
       `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
-  // v0.9.140 — Service→Metrics JBoss/JVM JMX trendi. Selector v0.9.143:
-  // job=service (JMX serilerinde job=service-name, pod=host_name).
-  clusterJmxTrend: (cluster: string, service: string, metric: JMXMetricKey, byPod: boolean, fromNs: number, toNs: number) =>
+  // v0.9.144 — Service→Infra JBoss/JVM JMX auto-discovery: servisin bir
+  // cluster'da taşıdığı jvm_/jboss_ metrik adları.
+  clusterJmxMetrics: (cluster: string, ns: string, deploy: string) =>
+    get<ClusterJMXMetricsResponse>(`/api/clusters/jmx-metrics?cluster=${encodeURIComponent(cluster)}` +
+      `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}`),
+  // Keşfedilen bir JMX metriğinin trendi (metric = ham jvm_*/jboss_* ad).
+  clusterJmxTrend: (cluster: string, ns: string, deploy: string, metric: string, byPod: boolean, fromNs: number, toNs: number) =>
     get<ClusterJMXTrendResponse>(`/api/clusters/jmx-trend?cluster=${encodeURIComponent(cluster)}` +
-      `&service=${encodeURIComponent(service)}` +
-      `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
+      `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
+      `&metric=${encodeURIComponent(metric)}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
   clusterNetworkTrend: (cluster: string, fromNs: number, toNs: number) =>
     get<ClusterNetworkTrendResponse>(`/api/clusters/network-trend?cluster=${encodeURIComponent(cluster)}` +
       `&from=${fromNs}&to=${toNs}`),

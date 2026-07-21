@@ -161,31 +161,28 @@ func TestDeployTrendQuery(t *testing.T) {
 	}
 }
 
-// TestJMXTrendQuery (v0.9.140, selector v0.9.143) — Service→Metrics JBoss/
-// JVM JMX sorgu şekli. Selector JMX-özel (operatör 2026-07-21): job=service
-// (regex-anchored), pod = host_name label; cAdvisor pod=/container= YOK.
-// JVM adları jmx_exporter standardı; datasource `jboss_` + data_source
-// grouping. Regex-meta kaçışı korunur.
+// TestJMXTrendQuery (v0.9.140, auto-discovery v0.9.144) — Service→Infra
+// JBoss/JVM JMX sorgu şekli. Selector kube-prometheus/cAdvisor düzlemi
+// (operatör 2026-07-21): container=~".*",namespace,pod=~"<deploy>-.*",
+// group by pod. Metrik adı HAM (keşfedilmiş); sayaç (_total/_sum) rate.
 func TestJMXTrendQuery(t *testing.T) {
 	cases := []struct {
 		name string
 		q    string
 		want []string
 	}{
-		{"heap byPod", jmxTrendQuery("bsa-login", "heap", true),
-			[]string{`sum by (host_name) (jvm_memory_bytes_used{area="heap",`, `job=~"^bsa-login$"`}},
-		{"nonheap total", jmxTrendQuery("bsa-login", "nonheap", false),
-			[]string{`sum(jvm_memory_bytes_used{area="nonheap",`, `job=~"^bsa-login$"`}},
-		{"gc rate", jmxTrendQuery("d", "gc", true),
-			[]string{`rate(jvm_gc_collection_seconds_sum{`, `sum by (host_name)`}},
-		{"threads", jmxTrendQuery("d", "threads", true),
-			[]string{`jvm_threads_current{`, `sum by (host_name)`}},
-		{"ds_inuse data_source grouping", jmxTrendQuery("d", "ds_inuse", true),
-			[]string{`jboss_pool_in_use_count{`, `sum by (data_source)`}},
-		{"ds_active", jmxTrendQuery("d", "ds_active", true),
-			[]string{`jboss_pool_active_count{`, `sum by (data_source)`}},
-		{"regex meta kaçışı", jmxTrendQuery("svc.v2", "heap", true),
-			[]string{`job=~"^svc\\.v2$"`}},
+		{"gauge byPod", jmxTrendQuery("prod", "app", "jvm_memory_bytes_used", true),
+			[]string{`sum by (pod) (jvm_memory_bytes_used{`, `container=~".*"`, `namespace="prod"`, `pod=~"app-.*"`}},
+		{"gauge total", jmxTrendQuery("prod", "app", "jvm_threads_current", false),
+			[]string{`sum(jvm_threads_current{`, `pod=~"app-.*"`}},
+		{"counter _sum rate", jmxTrendQuery("prod", "app", "jvm_gc_collection_seconds_sum", true),
+			[]string{`rate(jvm_gc_collection_seconds_sum{`, `[5m])`, `sum by (pod)`}},
+		{"counter _total rate", jmxTrendQuery("prod", "app", "jvm_classes_loaded_total", true),
+			[]string{`rate(jvm_classes_loaded_total{`, `[5m])`}},
+		{"jboss datasource gauge", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", true),
+			[]string{`sum by (pod) (jboss_pool_in_use_count{`}},
+		{"regex meta kaçışı", jmxTrendQuery("ns", "svc.v2", "jvm_threads_current", true),
+			[]string{`pod=~"svc\\.v2-.*"`}},
 	}
 	for _, c := range cases {
 		for _, w := range c.want {
@@ -194,19 +191,24 @@ func TestJMXTrendQuery(t *testing.T) {
 			}
 		}
 	}
-	// JMX selector cAdvisor pod=/container= TAŞIMAMALI (yanlış düzlem).
-	if q := jmxTrendQuery("d", "heap", true); strings.Contains(q, "container!=") || strings.Contains(q, "pod=~") || strings.Contains(q, "instance=~") {
-		t.Errorf("JMX sorgusu cAdvisor/instance selector taşımamalı: %q", q)
+	// jvm_gc..._count GAUGE kalmalı (jboss "_count" gauge'dur, rate DEĞİL).
+	if q := jmxTrendQuery("ns", "d", "jboss_pool_in_use_count", true); strings.Contains(q, "rate(") {
+		t.Errorf("_count gauge olmalı, rate'lenmemeli: %q", q)
 	}
-	// datasource → data_source, JVM → host_name (pod).
-	if jmxTrendNameLabel("ds_inuse") != "data_source" {
-		t.Errorf("ds_inuse name label data_source olmalı")
+	// Discovery sorgusu __name__ filtresi + selector taşır.
+	if d := jmxDiscoveryQuery("prod", "app"); !strings.Contains(d, `count by (__name__)`) ||
+		!strings.Contains(d, `__name__=~"(jvm|jboss)_.*"`) || !strings.Contains(d, `pod=~"app-.*"`) {
+		t.Errorf("jmxDiscoveryQuery yanlış: %q", d)
 	}
-	if jmxTrendNameLabel("heap") != "host_name" {
-		t.Errorf("heap name label host_name olmalı")
+	// ValidJMXMetric: yalnız jvm_/jboss_ + [a-z0-9_]; enjeksiyon reddedilir.
+	for _, ok := range []string{"jvm_memory_bytes_used", "jboss_pool_in_use_count"} {
+		if !ValidJMXMetric(ok) {
+			t.Errorf("ValidJMXMetric(%q) true olmalı", ok)
+		}
 	}
-	// ValidJMXMetric kapısı: bilinen anahtarlar geçer, uydurma reddedilir.
-	if !ValidJMXMetric("heap") || ValidJMXMetric("cpu") || ValidJMXMetric("") {
-		t.Errorf("ValidJMXMetric kapısı yanlış")
+	for _, bad := range []string{"", "cpu", "container_cpu_usage", "jvm_x} or vector(1)", "jvm-dash", "JVM_UPPER", "jvm_x{a=1}"} {
+		if ValidJMXMetric(bad) {
+			t.Errorf("ValidJMXMetric(%q) false olmalı (enjeksiyon/kapı)", bad)
+		}
 	}
 }

@@ -455,9 +455,15 @@ func jmxGrouping(metric string, byPod bool) (byClause string, nameLabels []strin
 }
 
 // jmxTrendQuery — keşfedilen bir metriğin trendi. Sayaç (_total/_sum)
-// rate'lenir, gerisi gauge; grouping jmxGrouping'e göre.
-func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
+// rate'lenir, gerisi gauge; grouping jmxGrouping'e göre. podFilter dolu
+// ise (Grafana $pod, v0.9.149) selector deploy-prefix yerine o tek pod'a
+// daralır — panel seçili pod'un JMX'ini gösterir.
+func jmxTrendQuery(namespace, deploy, metric string, byPod bool, podFilter string) string {
 	sel := jmxSelector(namespace, deploy)
+	if podFilter != "" {
+		sel = fmt.Sprintf(`container=~".*",namespace="%s",pod="%s"`,
+			escapeLabelValue(namespace), escapeLabelValue(podFilter))
+	}
 	var expr string
 	if strings.HasSuffix(metric, "_total") || strings.HasSuffix(metric, "_sum") {
 		expr = fmt.Sprintf(`rate(%s{%s}[5m])`, metric, sel)

@@ -1288,10 +1288,10 @@ func (s *Service) JMXMetricNames(ctx context.Context, c ClusterConfig, namespace
 // + Go-tarafı top-8 seçimi (topk'siz), tek fark seri adının `pod` label'ından
 // okunması ve JMX-özel selector (jmxTrendQuery). Metrik ailesi yoksa boş
 // döner; UI grafiği gizler (görünmez-düşer).
-func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, from, to time.Time) ([]NamedSeries, error) {
+func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, podFilter string, from, to time.Time) ([]NamedSeries, error) {
 	step := stepForWindow(from, to)
 	params := url.Values{
-		"query": {jmxTrendQuery(namespace, deploy, metric, byPod)},
+		"query": {jmxTrendQuery(namespace, deploy, metric, byPod, podFilter)},
 		"start": {fmt.Sprintf("%d", from.Unix())},
 		"end":   {fmt.Sprintf("%d", to.Unix())},
 		"step":  {fmt.Sprintf("%d", step)},

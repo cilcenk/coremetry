@@ -1096,8 +1096,7 @@ export interface ClusterDeployTrendResponse {
 export type JMXMetricKey = 'heap' | 'nonheap' | 'gc' | 'threads' | 'ds_inuse' | 'ds_active' | 'ds_available';
 export interface ClusterJMXTrendResponse {
   cluster: string;
-  namespace: string;
-  deployment: string;
+  service: string;
   metric: JMXMetricKey;
   byPod: boolean;
   series: ClusterNamedSeries[] | null;

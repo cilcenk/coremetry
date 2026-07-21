@@ -976,10 +976,11 @@ export const api = {
     get<ClusterDeployTrendResponse>(`/api/clusters/deploy-trend?cluster=${encodeURIComponent(cluster)}` +
       `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
       `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
-  // v0.9.140 — Service→Metrics sekmesi JBoss/JVM JMX trendi.
-  clusterJmxTrend: (cluster: string, ns: string, deploy: string, metric: JMXMetricKey, byPod: boolean, fromNs: number, toNs: number) =>
+  // v0.9.140 — Service→Metrics JBoss/JVM JMX trendi. Selector v0.9.143:
+  // job=service (JMX serilerinde job=service-name, pod=host_name).
+  clusterJmxTrend: (cluster: string, service: string, metric: JMXMetricKey, byPod: boolean, fromNs: number, toNs: number) =>
     get<ClusterJMXTrendResponse>(`/api/clusters/jmx-trend?cluster=${encodeURIComponent(cluster)}` +
-      `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
+      `&service=${encodeURIComponent(service)}` +
       `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
   clusterNetworkTrend: (cluster: string, fromNs: number, toNs: number) =>
     get<ClusterNetworkTrendResponse>(`/api/clusters/network-trend?cluster=${encodeURIComponent(cluster)}` +

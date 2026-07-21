@@ -1267,10 +1267,10 @@ func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, d
 // jmxTrendNameLabel'dan okunması (JVM→instance, XA-datasource→data_source)
 // ve JMX-özel selector (jmxTrendQuery). Metrik ailesi yoksa boş döner; UI
 // grafiği gizler (görünmez-düşer).
-func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, from, to time.Time) ([]NamedSeries, error) {
+func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, service, metric string, byPod bool, from, to time.Time) ([]NamedSeries, error) {
 	step := stepForWindow(from, to)
 	params := url.Values{
-		"query": {jmxTrendQuery(namespace, deploy, metric, byPod)},
+		"query": {jmxTrendQuery(service, metric, byPod)},
 		"start": {fmt.Sprintf("%d", from.Unix())},
 		"end":   {fmt.Sprintf("%d", to.Unix())},
 		"step":  {fmt.Sprintf("%d", step)},

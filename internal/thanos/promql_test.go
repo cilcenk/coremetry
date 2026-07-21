@@ -179,16 +179,25 @@ func TestJMXTrendQuery(t *testing.T) {
 			[]string{`rate(jvm_gc_collection_seconds_sum{`, `[5m])`, `sum by (pod)`}},
 		{"counter _total rate", jmxTrendQuery("prod", "app", "jvm_classes_loaded_total", true),
 			[]string{`rate(jvm_classes_loaded_total{`, `[5m])`}},
-		{"jboss datasource → data_source grouping", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", true),
-			[]string{`sum by (data_source) (jboss_pool_in_use_count{`}},
+		{"jboss off → data_source+xa grouping", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", false),
+			[]string{`sum by (data_source, xa_data_source) (jboss_pool_in_use_count{`}},
+		{"jboss on → pod+data_source+xa grouping", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", true),
+			[]string{`sum by (pod, data_source, xa_data_source) (`}},
 		{"jvm → pod grouping", jmxTrendQuery("prod", "app", "jvm_memory_bytes_used", true),
 			[]string{`sum by (pod) (`}},
 		{"regex meta kaçışı", jmxTrendQuery("ns", "svc.v2", "jvm_threads_current", true),
 			[]string{`pod=~"svc\\.v2-.*"`}},
 	}
-	// grouping label metriğe göre: jboss_ → data_source, jvm_ → pod.
-	if jmxGroupLabel("jboss_pool_in_use_count") != "data_source" || jmxGroupLabel("jvm_threads_current") != "pod" {
-		t.Errorf("jmxGroupLabel yanlış")
+	// jmxGrouping: jboss_ regular+XA (data_source+xa_data_source, XA'lar
+	// kaybolmasın); jvm_ pod. off/on doğru byClause.
+	if b, _ := jmxGrouping("jboss_pool_in_use_count", false); b != "data_source, xa_data_source" {
+		t.Errorf("jboss off grouping yanlış: %q", b)
+	}
+	if b, _ := jmxGrouping("jboss_pool_in_use_count", true); b != "pod, data_source, xa_data_source" {
+		t.Errorf("jboss on grouping yanlış: %q", b)
+	}
+	if b, _ := jmxGrouping("jvm_threads_current", true); b != "pod" {
+		t.Errorf("jvm grouping yanlış: %q", b)
 	}
 	for _, c := range cases {
 		for _, w := range c.want {

@@ -8,9 +8,12 @@ import type { ClusterNamedSeries } from '@/lib/types';
 // CPU/Mem kartlarından çıkarıldı (v0.9.35 ResToggleHeader'ın genel
 // hali): Servis → Infrastructure sekmesi aynı kartı "By pod"
 // etiketiyle kullanır. Seri yoksa null döner — görünmez-düşer.
-export function MetricArea({ title, byLabel, by, onToggle, series, seriesName, unit, height = 180, onZoom }: {
+export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle, series, seriesName, unit, height = 180, onZoom }: {
   title: string;
   byLabel: string; // "By node" | "By pod" — toggle'ın sağ şıkkı
+  // v0.9.146 — sol şık etiketi (varsayılan "Total"); jboss datasource
+  // panelleri "By datasource" (off=data_source, on=pod+data_source) yapar.
+  totalLabel?: string;
   by: boolean;
   onToggle: (v: boolean) => void;
   series: ClusterNamedSeries[] | null | undefined;
@@ -28,7 +31,7 @@ export function MetricArea({ title, byLabel, by, onToggle, series, seriesName, u
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <span>{title}</span>
         <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
-          {([['Total', false], [byLabel, true]] as const).map(([label, v]) => (
+          {([[totalLabel, false], [byLabel, true]] as const).map(([label, v]) => (
             <button key={label} type="button"
               onClick={e => { e.stopPropagation(); onToggle(v); }}
               style={{

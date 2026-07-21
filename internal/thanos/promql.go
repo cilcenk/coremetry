@@ -428,20 +428,34 @@ func jmxDiscoveryQuery(namespace, deploy string) string {
 		jmxSelector(namespace, deploy))
 }
 
-// jmxGroupLabel — per-seri grouping label'ı (v0.9.145, operatör: "bir
-// projede 5-10+ datasource olabilir"): jboss_ datasource metrikleri POOL
-// başına (data_source), jvm_ metrikleri POD başına. Böylece bir XA-
-// datasource panelinde her datasource ayrı seri (Grafana transform'undaki
-// datasource-adı görünümü), JVM panelinde her pod ayrı seri.
-func jmxGroupLabel(metric string) string {
+// jmxGrouping — (metric, byPod) → PromQL "sum by (...)" grouping ifadesi ve
+// seri adının okunacağı label listesi (v0.9.145/146). jboss_ datasource
+// metrikleri HER ZAMAN data_source taşır (operatör: bir projede 5-10+
+// datasource); toggle POD boyutunu EKLER:
+//   jboss + off (By datasource) → by (data_source)       ad = data_source
+//   jboss + on  (By pod)        → by (pod, data_source)   ad = "data_source · pod"
+//   jvm   + off (Total)         → sum()                   ad = ""
+//   jvm   + on  (By pod)        → by (pod)                ad = pod
+// byClause boş = total (sum). nameLabels boş = tek toplam seri.
+func jmxGrouping(metric string, byPod bool) (byClause string, nameLabels []string) {
 	if strings.HasPrefix(metric, "jboss_") {
-		return "data_source"
+		// WildFly regular datasource'u `data_source`, XA datasource'u
+		// `xa_data_source` label'ında taşır (operatör: XA'lar bulunmuyordu,
+		// sadece SQL geliyordu). İKİSİNİ birden grupla; ad non-empty olanı
+		// (coalesce) alır — böylece regular + XA aynı panelde ayrı seriler.
+		if byPod {
+			return "pod, data_source, xa_data_source", []string{"data_source", "xa_data_source", "pod"}
+		}
+		return "data_source, xa_data_source", []string{"data_source", "xa_data_source"}
 	}
-	return "pod"
+	if byPod {
+		return "pod", []string{"pod"}
+	}
+	return "", nil
 }
 
 // jmxTrendQuery — keşfedilen bir metriğin trendi. Sayaç (_total/_sum)
-// rate'lenir, gerisi gauge; grouping jmxGroupLabel'a göre (byPod) ya da total.
+// rate'lenir, gerisi gauge; grouping jmxGrouping'e göre.
 func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
 	sel := jmxSelector(namespace, deploy)
 	var expr string
@@ -450,8 +464,8 @@ func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
 	} else {
 		expr = fmt.Sprintf(`%s{%s}`, metric, sel)
 	}
-	if byPod {
-		return fmt.Sprintf(`sum by (%s) (%s)`, jmxGroupLabel(metric), expr)
+	if byClause, _ := jmxGrouping(metric, byPod); byClause != "" {
+		return fmt.Sprintf(`sum by (%s) (%s)`, byClause, expr)
 	}
 	return "sum(" + expr + ")"
 }

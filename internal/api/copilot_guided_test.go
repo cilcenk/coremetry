@@ -104,7 +104,7 @@ func TestRouteGuidedIntent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := routeGuidedIntent(tc.msg, guidedTestServices, guidedTestEnvs)
+			got := routeGuidedIntent(tc.msg, guidedTestServices, guidedTestEnvs, "")
 			if got.Intent != tc.intent {
 				t.Fatalf("intent: got %q want %q (msg %q)", got.Intent, tc.intent, tc.msg)
 			}
@@ -478,5 +478,33 @@ func TestRenderLogErrorsEvidenceTR(t *testing.T) {
 	empty := renderLogErrorsEvidenceTR(nil, nil, "", 3600)
 	if !strings.Contains(empty, "bu pencerede log yok") || !strings.Contains(empty, "eşleşme yok") {
 		t.Fatalf("empty render = %q", empty)
+	}
+}
+
+// v0.9.164 — context-awareness: mesaj servis adı taşımıyorsa geçerli
+// sayfa-servisi (ctxService) varsayılan alınır; mesajdaki açık servis
+// ezmez; katalog-dışı ctx yok sayılır.
+func TestRouteGuidedIntentContext(t *testing.T) {
+	cases := []struct {
+		name, msg, ctx string
+		intent         guidedIntent
+		service        string
+	}{
+		{"slow no-entity → ctx svc", "neden yavaş", "checkout-service", guidedSlowTraces, "checkout-service"},
+		{"error no-entity + ctx → health", "hataları var mı", "checkout-service", guidedServiceHealth, "checkout-service"},
+		{"explicit svc wins over ctx", "payment-service hataları", "checkout-service", guidedServiceHealth, "payment-service"},
+		{"invalid ctx ignored", "neden yavaş", "nonexistent-service", guidedSlowTraces, ""},
+		{"no ctx unchanged", "neden yavaş", "", guidedSlowTraces, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := routeGuidedIntent(tc.msg, guidedTestServices, guidedTestEnvs, tc.ctx)
+			if got.Intent != tc.intent {
+				t.Fatalf("intent: got %q want %q", got.Intent, tc.intent)
+			}
+			if got.Service != tc.service {
+				t.Fatalf("service: got %q want %q", got.Service, tc.service)
+			}
+		})
 	}
 }

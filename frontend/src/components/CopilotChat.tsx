@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
@@ -69,6 +70,19 @@ export function CopilotChat() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  // Context-awareness (v0.9.164) — bulunulan sayfanın servisi. Mesaj servis
+  // adı taşımıyorsa backend guided router bunu varsayılan alır ("neden yavaş?"
+  // servis sayfasında → o servis). Banner scope'u şeffaf gösterir.
+  const loc = useLocation();
+  const [sp] = useSearchParams();
+  const currentService = useMemo(() => {
+    if (loc.pathname === '/service' || loc.pathname === '/service/backtrace') {
+      return sp.get('name') || sp.get('service') || '';
+    }
+    if (loc.pathname === '/pod') return sp.get('service') || '';
+    return '';
+  }, [loc.pathname, sp]);
+
   useEffect(() => {
     api.copilotConfig().then(c => setEnabled(c.enabled)).catch(() => setEnabled(false));
   }, []);
@@ -125,7 +139,7 @@ export function CopilotChat() {
         } else if (e.kind === 'done') {
           patchLast(t => ({ ...t, pending: false }));
         }
-      }, ac.signal);
+      }, ac.signal, currentService || undefined);
     } catch (err) {
       patchLast(t => ({ ...t, error: err instanceof Error ? err.message : String(err), pending: false }));
     } finally {
@@ -184,6 +198,17 @@ export function CopilotChat() {
             <Button variant="ghost" size="sm" onClick={() => setOpen(false)}
               title="Kapat">✕</Button>
           </div>
+
+          {/* Context banner (v0.9.164) — bulunulan servis, scope şeffaflığı. */}
+          {currentService && (
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 6, fontSize: 11,
+              color: 'var(--text2)', background: 'var(--accent-soft)',
+              padding: '5px 14px', borderBottom: '1px solid var(--border)',
+            }}>
+              📍 <b className="mono" style={{ color: 'var(--accent2)' }}>{currentService}</b> · sorular bu servise scope'lanır
+            </div>
+          )}
 
           {/* Messages */}
           <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>

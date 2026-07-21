@@ -301,11 +301,24 @@ func extractEnvEntity(msg string, envs []string) string {
 // routeGuidedIntent is THE router: normalized keyword matching over
 // the five shapes, most-specific first. Pure — table-tested in
 // copilot_guided_test.go with Turkish + English variants.
-func routeGuidedIntent(raw string, services, envs []string) guidedRoute {
+func routeGuidedIntent(raw string, services, envs []string, ctxService string) guidedRoute {
 	msg := normalizeGuidedMsg(raw)
 	toks := guidedTokens(msg)
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
+	// Context-awareness (v0.9.164): mesaj bir servis ADI taşımıyorsa ve
+	// frontend geçerli (katalogda olan) bir sayfa-servisi geçirmişse onu
+	// varsayılan al — "neden yavaş?" checkout sayfasında → checkout. Şeffaf:
+	// banner scope'u söyler. Mesajda açık servis varsa ELLEMEZ (kullanıcı
+	// başka servisi kastediyorsa context ezmez).
+	if svc == "" && ctxService != "" {
+		for _, s := range services {
+			if s == ctxService {
+				svc = ctxService
+				break
+			}
+		}
+	}
 	switch {
 	case hasSlowTraceSignal(msg):
 		return guidedRoute{guidedSlowTraces, svc, env}
@@ -414,7 +427,7 @@ KURALLAR:
 // prefetch fails — the caller then runs the free tool loop unchanged.
 // handled=true means the exchange is complete (answer or error
 // emitted); ok mirrors the `done` event's success flag.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage) (handled, ok bool) {
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService string) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -423,7 +436,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	if !hasGuidedSignal(norm) {
 		return false, false // zero-cost fast path: no catalogue read
 	}
-	route := routeGuidedIntent(question, s.guidedServiceNames(ctx), s.guidedEnvNames(ctx))
+	route := routeGuidedIntent(question, s.guidedServiceNames(ctx), s.guidedEnvNames(ctx), ctxService)
 	if route.Intent == guidedNone {
 		return false, false
 	}

@@ -171,22 +171,28 @@ func TestJMXTrendQuery(t *testing.T) {
 		q    string
 		want []string
 	}{
-		{"gauge byPod", jmxTrendQuery("prod", "app", "jvm_memory_bytes_used", true),
+		{"gauge byPod", jmxTrendQuery("prod", "app", "jvm_memory_bytes_used", true, ""),
 			[]string{`sum by (pod) (jvm_memory_bytes_used{`, `container=~".*"`, `namespace="prod"`, `pod=~"app-.*"`}},
-		{"gauge total", jmxTrendQuery("prod", "app", "jvm_threads_current", false),
+		{"gauge total", jmxTrendQuery("prod", "app", "jvm_threads_current", false, ""),
 			[]string{`sum(jvm_threads_current{`, `pod=~"app-.*"`}},
-		{"counter _sum rate", jmxTrendQuery("prod", "app", "jvm_gc_collection_seconds_sum", true),
+		{"counter _sum rate", jmxTrendQuery("prod", "app", "jvm_gc_collection_seconds_sum", true, ""),
 			[]string{`rate(jvm_gc_collection_seconds_sum{`, `[5m])`, `sum by (pod)`}},
-		{"counter _total rate", jmxTrendQuery("prod", "app", "jvm_classes_loaded_total", true),
+		{"counter _total rate", jmxTrendQuery("prod", "app", "jvm_classes_loaded_total", true, ""),
 			[]string{`rate(jvm_classes_loaded_total{`, `[5m])`}},
-		{"jboss off → data_source+xa grouping", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", false),
+		{"jboss off → data_source+xa grouping", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", false, ""),
 			[]string{`sum by (data_source, xa_data_source) (jboss_pool_in_use_count{`}},
-		{"jboss on → pod+data_source+xa grouping", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", true),
+		{"jboss on → pod+data_source+xa grouping", jmxTrendQuery("prod", "app", "jboss_pool_in_use_count", true, ""),
 			[]string{`sum by (pod, data_source, xa_data_source) (`}},
-		{"jvm → pod grouping", jmxTrendQuery("prod", "app", "jvm_memory_bytes_used", true),
+		{"jvm → pod grouping", jmxTrendQuery("prod", "app", "jvm_memory_bytes_used", true, ""),
 			[]string{`sum by (pod) (`}},
-		{"regex meta kaçışı", jmxTrendQuery("ns", "svc.v2", "jvm_threads_current", true),
+		{"regex meta kaçışı", jmxTrendQuery("ns", "svc.v2", "jvm_threads_current", true, ""),
 			[]string{`pod=~"svc\\.v2-.*"`}},
+		// v0.9.149 — podFilter dolu: selector deploy-prefix yerine o tek
+		// pod'a daralır (Grafana $pod); değer kaçışlanır.
+		{"pod filter → tek pod", jmxTrendQuery("prod", "app", "jvm_memory_bytes_used", true, "app-7d9f-x2"),
+			[]string{`pod="app-7d9f-x2"`}},
+		{"pod filter enjeksiyon kaçışı", jmxTrendQuery("prod", "app", "jvm_threads_current", false, `p"} or vector(1`),
+			[]string{`pod="p\"} or vector(1"`}},
 	}
 	// jmxGrouping: jboss_ regular+XA (data_source+xa_data_source, XA'lar
 	// kaybolmasın); jvm_ pod. off/on doğru byClause.
@@ -207,7 +213,7 @@ func TestJMXTrendQuery(t *testing.T) {
 		}
 	}
 	// jvm_gc..._count GAUGE kalmalı (jboss "_count" gauge'dur, rate DEĞİL).
-	if q := jmxTrendQuery("ns", "d", "jboss_pool_in_use_count", true); strings.Contains(q, "rate(") {
+	if q := jmxTrendQuery("ns", "d", "jboss_pool_in_use_count", true, ""); strings.Contains(q, "rate(") {
 		t.Errorf("_count gauge olmalı, rate'lenmemeli: %q", q)
 	}
 	// Discovery sorgusu __name__ filtresi + selector taşır.

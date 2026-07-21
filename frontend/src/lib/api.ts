@@ -982,10 +982,12 @@ export const api = {
     get<ClusterJMXMetricsResponse>(`/api/clusters/jmx-metrics?cluster=${encodeURIComponent(cluster)}` +
       `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}`),
   // Keşfedilen bir JMX metriğinin trendi (metric = ham jvm_*/jboss_* ad).
-  clusterJmxTrend: (cluster: string, ns: string, deploy: string, metric: string, byPod: boolean, fromNs: number, toNs: number) =>
+  // pod dolu ise (Grafana $pod, v0.9.149) sorgu o tek pod'a daralır.
+  clusterJmxTrend: (cluster: string, ns: string, deploy: string, metric: string, byPod: boolean, fromNs: number, toNs: number, pod = '') =>
     get<ClusterJMXTrendResponse>(`/api/clusters/jmx-trend?cluster=${encodeURIComponent(cluster)}` +
       `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
-      `&metric=${encodeURIComponent(metric)}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
+      `&metric=${encodeURIComponent(metric)}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}` +
+      (pod ? `&pod=${encodeURIComponent(pod)}` : '')),
   clusterNetworkTrend: (cluster: string, fromNs: number, toNs: number) =>
     get<ClusterNetworkTrendResponse>(`/api/clusters/network-trend?cluster=${encodeURIComponent(cluster)}` +
       `&from=${fromNs}&to=${toNs}`),

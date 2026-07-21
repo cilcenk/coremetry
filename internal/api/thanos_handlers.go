@@ -455,6 +455,9 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	byPod := q.Get("byPod") == "1"
+	// ?pod= — Grafana $pod (v0.9.149): dolu ise sorgu o tek pod'a daralır
+	// (label değeri jmxTrendQuery'de escapeLabelValue ile kaçışlanır).
+	pod := strings.TrimSpace(q.Get("pod"))
 	cfg, ok := s.thanos.ClusterByName(name)
 	if !ok {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
@@ -464,17 +467,17 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 	if to.Sub(from) > 6*time.Hour {
 		from = to.Add(-6 * time.Hour)
 	}
-	key := fmt.Sprintf("cluster-jmx-trend:%s:%s:%s:%s:%t:%s:%s",
-		name, ns, deploy, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to))
+	key := fmt.Sprintf("cluster-jmx-trend:%s:%s:%s:%s:%t:%s:%s:%s",
+		name, ns, deploy, metric, byPod, pod, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		series, err := s.thanos.JMXTrend(qctx, cfg, ns, deploy, metric, byPod, from, to)
+		series, err := s.thanos.JMXTrend(qctx, cfg, ns, deploy, metric, byPod, pod, from, to)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"cluster": name, "namespace": ns, "deployment": deploy,
-			"metric": metric, "byPod": byPod, "series": series}, nil
+			"metric": metric, "byPod": byPod, "pod": pod, "series": series}, nil
 	})
 }
 

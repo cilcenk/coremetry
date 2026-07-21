@@ -167,6 +167,18 @@ export function ServiceInfraTab({ service, range, onZoom }: {
   // cAdvisor selector'ı) — SABİT ad listesi YOK — her biri için pod-başı
   // MetricArea. `_total`/`_sum` sayaçları backend'de rate'lenir.
   const [jmxBy, setJmxBy] = useState<Record<string, boolean>>({});
+  // v0.9.149 — Pod + Datasource seçiciler (Grafana $pod/$datasource,
+  // operatör "pod ve datasource"). jpod = BACKEND filtre (sorgu tek pod'a
+  // daralır, tüm paneller o pod'un JMX'ini gösterir); jds = CLIENT-SIDE
+  // izole (By-datasource serisini render'da süzer, re-fetch yok). İkisi de
+  // URL kaynak-of-truth (replace:true).
+  const jpod = params.get('jpod') ?? '';
+  const jds = params.get('jds') ?? '';
+  const setJmxParam = (key: 'jpod' | 'jds', v: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set(key, v); else next.delete(key);
+    return next;
+  }, { replace: true });
   const jmxMetricsQ = useQuery({
     queryKey: ['jmx-metrics', chartCluster, effNs, effDeploy],
     queryFn: () => api.clusterJmxMetrics(chartCluster, effNs, effDeploy),
@@ -174,12 +186,29 @@ export function ServiceInfraTab({ service, range, onZoom }: {
   });
   const jmxMetrics = useMemo(() => jmxMetricsQ.data?.metrics ?? [], [jmxMetricsQ.data]);
   const jmxPanelQs = useQueries({
-    queries: jmxMetrics.map(m => ({
-      queryKey: ['jmx-trend', chartCluster, effNs, effDeploy, m, jmxBy[m] ?? true, cFrom, cTo],
-      queryFn: () => api.clusterJmxTrend(chartCluster, effNs, effDeploy, m, jmxBy[m] ?? true, cFrom, cTo),
-      staleTime: 60_000, retry: 1,
-    })),
+    // byPod varsayılanı render toggle'ıyla AYNI olmalı (jboss→By datasource,
+    // jvm→By pod): eskiden sorgu `?? true` çekiyordu ama toggle jboss'ta
+    // `?? false` gösteriyordu — veri/etiket uyuşmazlığı (v0.9.149 düzeltme).
+    // jpod dolu ise sorgu o pod'a daralır.
+    queries: jmxMetrics.map(m => {
+      const byPod = jmxBy[m] ?? !m.startsWith('jboss_');
+      return {
+        queryKey: ['jmx-trend', chartCluster, effNs, effDeploy, m, byPod, jpod, cFrom, cTo],
+        queryFn: () => api.clusterJmxTrend(chartCluster, effNs, effDeploy, m, byPod, cFrom, cTo, jpod),
+        staleTime: 60_000, retry: 1,
+      };
+    }),
   });
+  // Pod seçici opsiyonları — chartCluster'daki eşleşen pod'lar. Datasource
+  // token = seri adının ilk ' · ' bileşeni (pod HER ZAMAN sona eklenir →
+  // By-datasource "MyDS", By-pod "MyDS · pod" ikisinde de ilk token
+  // datasource); jboss panellerinden toplanır. dsToken izolede de kullanılır.
+  const podOptions = [...new Set(rows.filter(r => r.cluster === chartCluster).map(r => r.pod))].sort();
+  const dsToken = (name: string) => name.split(' · ')[0];
+  const dsOptions = [...new Set(
+    jmxMetrics.flatMap((m, i) =>
+      m.startsWith('jboss_') ? (jmxPanelQs[i]?.data?.series ?? []).map(s => dsToken(s.name)) : []),
+  )].filter(Boolean).sort();
 
   // ?pod=c|ns|p — Clusters'la aynı drawer kimlik biçimi.
   const podParam = params.get('pod');
@@ -372,10 +401,36 @@ export function ServiceInfraTab({ service, range, onZoom }: {
           jvm_/jboss_ metriği için pod-başı MetricArea; serisi boş → görünmez. */}
       {jmxMetrics.length > 0 && (
         <>
-          <h3 style={{ fontSize: 13, margin: '18px 0 8px' }}>
-            JVM / JBoss (JMX) · <span className="mono">{chartCluster}</span>
-            <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {jmxMetrics.length} metrics</span>
-          </h3>
+          <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, margin: '18px 0 8px', flexWrap: 'wrap' }}>
+            <h3 style={{ fontSize: 13, margin: 0 }}>
+              JVM / JBoss (JMX) · <span className="mono">{chartCluster}</span>
+              <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {jmxMetrics.length} metrics</span>
+            </h3>
+            {/* v0.9.149 — Pod (backend $pod) + Datasource (client izole)
+                seçiciler. Boş liste → gizli (görünmez-düşer). */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11, color: 'var(--text3)' }}>
+              {podOptions.length > 0 && (
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  Pod
+                  <select value={jpod} onChange={e => setJmxParam('jpod', e.target.value)}
+                    style={{ fontSize: 11, maxWidth: 220 }} title="Grafana $pod — sorguyu tek pod'a daraltır">
+                    <option value="">All pods</option>
+                    {podOptions.map(p => <option key={p} value={p}>{p}</option>)}
+                  </select>
+                </label>
+              )}
+              {dsOptions.length > 0 && (
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+                  Datasource
+                  <select value={jds} onChange={e => setJmxParam('jds', e.target.value)}
+                    style={{ fontSize: 11, maxWidth: 220 }} title="Grafana $datasource — panelleri seçili datasource'a izole eder">
+                    <option value="">All datasources</option>
+                    {dsOptions.map(d => <option key={d} value={d}>{d}</option>)}
+                  </select>
+                </label>
+              )}
+            </div>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             {jmxMetrics.map((m, i) => {
               const data = jmxPanelQs[i]?.data?.series;
@@ -384,12 +439,16 @@ export function ServiceInfraTab({ service, range, onZoom }: {
               // jboss datasource: off = By datasource (data_source+xa_data_source),
               // on = By pod (pod başına datasource). jvm: off = Total, on = By pod.
               const isJboss = m.startsWith('jboss_');
+              // jds seçiliyse jboss panelini o datasource'a izole et (client
+              // taraf, re-fetch yok — dsToken ilk ' · ' bileşeni).
+              const shown = (isJboss && jds) ? data.filter(s => dsToken(s.name) === jds) : data;
+              if (shown.length === 0) return null;
               return (
                 <MetricArea key={m}
                   title={`${m}${clamped ? ' (last 6h)' : ''}`}
                   byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
                   by={jmxBy[m] ?? !isJboss} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
-                  series={data} seriesName={m} unit={unit}
+                  series={shown} seriesName={m} unit={unit}
                   maxSeries={isJboss ? 40 : undefined} onZoom={onZoom} />
               );
             })}

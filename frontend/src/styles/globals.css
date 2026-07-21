@@ -1,18 +1,23 @@
 :root {
-  /* ── Dark theme (default) — GitHub-style ─────────────────────────────── */
-  --bg0: #0d1117;
-  --bg1: #161b22;
-  --bg2: #21262d;
-  --bg3: #2d333b;
+  /* ── Dark theme (default) — GitHub Dark Dimmed ───────────────────────────
+     v0.9.167: softened from the near-black GitHub-dark (#0d1117 floor) to the
+     "dimmed" ladder — page floor lifts to #1c2128, cards to #22272e. Reads as
+     a lighter, easier dark while the elevation contrast (page<card<hover) and
+     the brand/accent/semantic hues are unchanged. Operator: "biraz daha light
+     dark". */
+  --bg0: #1c2128;
+  --bg1: #22272e;
+  --bg2: #2d333b;
+  --bg3: #373e47;
   /* --bg is an alias for the page-chrome background (matches
      #topbar / #content / drawer panels). 15+ components used
      var(--bg) before this alias existed and silently rendered
      transparent — fix is one-line, no per-component churn. */
-  --bg:  #0d1117;
-  --border: #30363d;
-  --text: #e6edf3;
-  --text2: #8b949e;
-  --text3: #484f58;
+  --bg:  #1c2128;
+  --border: #444c56;
+  --text: #d5dde5;
+  --text2: #909dab;
+  --text3: #636e7b;
 
   /* Brand — Corporate red, used sparingly: logo, primary CTAs, key brand surfaces. */
   --brand:  #E30613;
@@ -35,7 +40,7 @@
   --orange: #f0883e;
   --teal:   #39c5cf;
   --accent-soft:   color-mix(in srgb, var(--accent) 16%, transparent);
-  --border-strong: #484f58;
+  --border-strong: #545d68;
   --shadow-pop:    0 8px 24px rgba(0, 0, 0, .45);
   --shadow-sm:     0 1px 2px rgba(0, 0, 0, .25);
 
@@ -47,9 +52,9 @@
        --green→--ok  --amber→--warn  --red→--err  --primary→--accent
        --text-2→--text2  --text-3→--text3 (faintest → --text-faint below)
      Only the genuinely-missing levels are defined here, in both themes. */
-  --accent-bg:     #15243b;  /* soft solid accent fill — focus ring, selected-row rail, active chip (design --primary-bg) */
-  --accent-border: #1f3a5e;  /* accent hairline — selected-row / active border (design --primary-border) */
-  --text-faint:    #484f58;  /* 4th text level below --text3 — micro labels, disabled hints (design --text-faint) */
+  --accent-bg:     #22314a;  /* soft solid accent fill — focus ring, selected-row rail, active chip (design --primary-bg) */
+  --accent-border: #2c4a70;  /* accent hairline — selected-row / active border (design --primary-border) */
+  --text-faint:    #545d68;  /* 4th text level below --text3 — micro labels, disabled hints (design --text-faint) */
   --shadow-md:     0 6px 20px rgba(0, 0, 0, .45);  /* drawers / popovers, between --shadow-sm and --shadow-pop */
   --radius-sm: 6px;
   --radius:    8px;

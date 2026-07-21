@@ -13,6 +13,7 @@ import { PromQLList } from '@/pages/clusters/PromQLList';
 import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, fmtBps, podPhaseBadge, restartColor } from '@/pages/clusters/thresholds';
 import { podMatchesService } from '@/pages/clusters/podWorkload';
+import { dsToken, reconcile, applyDsIsolate } from '@/pages/service/jmxSelectors';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
@@ -185,30 +186,39 @@ export function ServiceInfraTab({ service, range, onZoom }: {
     staleTime: 60_000, retry: 1, enabled: trendOK,
   });
   const jmxMetrics = useMemo(() => jmxMetricsQ.data?.metrics ?? [], [jmxMetricsQ.data]);
+  // Pod seçici opsiyonları — chartCluster VE effNs eşleşen pod'lar. effNs
+  // süzgeci ŞART: backend sorgusu namespace="effNs" ile sabitler, başka
+  // namespace'teki bir pod seçilse hiç eşleşmez (review #4/#6). effJpod:
+  // seçili pod artık listede yoksa (cluster değişti / pod deploy'da yeniden
+  // adlandı / paylaşılan URL) YOK SAY → "All pods" — bayat jpod tüm bölümü
+  // boşaltıyordu (review #2/#5). URL'yi reaktif YAZMAYIZ (bir-yön-oku
+  // tuzağı, v0.8.253/256); render+sorgu için türetiriz.
+  const podOptions = [...new Set(
+    rows.filter(r => r.cluster === chartCluster && r.namespace === effNs).map(r => r.pod),
+  )].sort();
+  const effJpod = reconcile(jpod, podOptions);
   const jmxPanelQs = useQueries({
     // byPod varsayılanı render toggle'ıyla AYNI olmalı (jboss→By datasource,
     // jvm→By pod): eskiden sorgu `?? true` çekiyordu ama toggle jboss'ta
     // `?? false` gösteriyordu — veri/etiket uyuşmazlığı (v0.9.149 düzeltme).
-    // jpod dolu ise sorgu o pod'a daralır.
+    // effJpod dolu ise sorgu o pod'a daralır.
     queries: jmxMetrics.map(m => {
       const byPod = jmxBy[m] ?? !m.startsWith('jboss_');
       return {
-        queryKey: ['jmx-trend', chartCluster, effNs, effDeploy, m, byPod, jpod, cFrom, cTo],
-        queryFn: () => api.clusterJmxTrend(chartCluster, effNs, effDeploy, m, byPod, cFrom, cTo, jpod),
+        queryKey: ['jmx-trend', chartCluster, effNs, effDeploy, m, byPod, effJpod, cFrom, cTo],
+        queryFn: () => api.clusterJmxTrend(chartCluster, effNs, effDeploy, m, byPod, cFrom, cTo, effJpod),
         staleTime: 60_000, retry: 1,
       };
     }),
   });
-  // Pod seçici opsiyonları — chartCluster'daki eşleşen pod'lar. Datasource
-  // token = seri adının ilk ' · ' bileşeni (pod HER ZAMAN sona eklenir →
-  // By-datasource "MyDS", By-pod "MyDS · pod" ikisinde de ilk token
-  // datasource); jboss panellerinden toplanır. dsToken izolede de kullanılır.
-  const podOptions = [...new Set(rows.filter(r => r.cluster === chartCluster).map(r => r.pod))].sort();
-  const dsToken = (name: string) => name.split(' · ')[0];
+  // dsOptions jboss panel serilerinin datasource token'larından (dsToken);
+  // effJds bayat değeri (re-fetch'te kaybolan datasource) YOK SAYAR → tüm
+  // datasource'lar (review #3). Saf mantık jmxSelectors.ts + testli.
   const dsOptions = [...new Set(
     jmxMetrics.flatMap((m, i) =>
       m.startsWith('jboss_') ? (jmxPanelQs[i]?.data?.series ?? []).map(s => dsToken(s.name)) : []),
   )].filter(Boolean).sort();
+  const effJds = reconcile(jds, dsOptions);
 
   // ?pod=c|ns|p — Clusters'la aynı drawer kimlik biçimi.
   const podParam = params.get('pod');
@@ -412,7 +422,7 @@ export function ServiceInfraTab({ service, range, onZoom }: {
               {podOptions.length > 0 && (
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   Pod
-                  <select value={jpod} onChange={e => setJmxParam('jpod', e.target.value)}
+                  <select value={effJpod} onChange={e => setJmxParam('jpod', e.target.value)}
                     style={{ fontSize: 11, maxWidth: 220 }} title="Grafana $pod — sorguyu tek pod'a daraltır">
                     <option value="">All pods</option>
                     {podOptions.map(p => <option key={p} value={p}>{p}</option>)}
@@ -422,7 +432,7 @@ export function ServiceInfraTab({ service, range, onZoom }: {
               {dsOptions.length > 0 && (
                 <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                   Datasource
-                  <select value={jds} onChange={e => setJmxParam('jds', e.target.value)}
+                  <select value={effJds} onChange={e => setJmxParam('jds', e.target.value)}
                     style={{ fontSize: 11, maxWidth: 220 }} title="Grafana $datasource — panelleri seçili datasource'a izole eder">
                     <option value="">All datasources</option>
                     {dsOptions.map(d => <option key={d} value={d}>{d}</option>)}
@@ -439,9 +449,12 @@ export function ServiceInfraTab({ service, range, onZoom }: {
               // jboss datasource: off = By datasource (data_source+xa_data_source),
               // on = By pod (pod başına datasource). jvm: off = Total, on = By pod.
               const isJboss = m.startsWith('jboss_');
-              // jds seçiliyse jboss panelini o datasource'a izole et (client
-              // taraf, re-fetch yok — dsToken ilk ' · ' bileşeni).
-              const shown = (isJboss && jds) ? data.filter(s => dsToken(s.name) === jds) : data;
+              // effJds seçiliyse jboss panelini o datasource'a izole et (client
+              // taraf, re-fetch yok). applyDsIsolate YALNIZ gerçekten datasource
+              // taşıyan panellere uygular: undertow/threads/transactions gibi
+              // datasource'suz jboss metrikleri (tek boş-adlı seri) izolede
+              // GİZLENMEZ (review #1). Saf mantık jmxSelectors.ts + testli.
+              const shown = isJboss ? applyDsIsolate(data, effJds) : data;
               if (shown.length === 0) return null;
               return (
                 <MetricArea key={m}

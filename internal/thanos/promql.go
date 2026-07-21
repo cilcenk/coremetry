@@ -428,8 +428,20 @@ func jmxDiscoveryQuery(namespace, deploy string) string {
 		jmxSelector(namespace, deploy))
 }
 
-// jmxTrendQuery — keşfedilen bir metriğin pod-başı trendi. Sayaç (_total/
-// _sum) rate'lenir, gerisi gauge; grouping pod başına (byPod) ya da total.
+// jmxGroupLabel — per-seri grouping label'ı (v0.9.145, operatör: "bir
+// projede 5-10+ datasource olabilir"): jboss_ datasource metrikleri POOL
+// başına (data_source), jvm_ metrikleri POD başına. Böylece bir XA-
+// datasource panelinde her datasource ayrı seri (Grafana transform'undaki
+// datasource-adı görünümü), JVM panelinde her pod ayrı seri.
+func jmxGroupLabel(metric string) string {
+	if strings.HasPrefix(metric, "jboss_") {
+		return "data_source"
+	}
+	return "pod"
+}
+
+// jmxTrendQuery — keşfedilen bir metriğin trendi. Sayaç (_total/_sum)
+// rate'lenir, gerisi gauge; grouping jmxGroupLabel'a göre (byPod) ya da total.
 func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
 	sel := jmxSelector(namespace, deploy)
 	var expr string
@@ -439,7 +451,7 @@ func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
 		expr = fmt.Sprintf(`%s{%s}`, metric, sel)
 	}
 	if byPod {
-		return fmt.Sprintf(`sum by (pod) (%s)`, expr)
+		return fmt.Sprintf(`sum by (%s) (%s)`, jmxGroupLabel(metric), expr)
 	}
 	return "sum(" + expr + ")"
 }

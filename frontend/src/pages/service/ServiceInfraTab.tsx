@@ -359,7 +359,8 @@ export function ServiceInfraTab({ service, range, onZoom }: {
               return (
                 <MetricArea key={m}
                   title={`${m}${clamped ? ' (last 6h)' : ''}`}
-                  byLabel="By pod" by={jmxBy[m] ?? true} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
+                  byLabel={m.startsWith('jboss_') ? 'By datasource' : 'By pod'}
+                  by={jmxBy[m] ?? true} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
                   series={data} seriesName={m} unit={unit} onZoom={onZoom} />
               );
             })}

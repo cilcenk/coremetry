@@ -403,17 +403,17 @@ func deployTrendQuery(namespace, deploy, metric string, byPod bool) string {
 
 // ── JMX/JVM trend queries (v0.9.140, Service→Metrics sekmesi) ───────────
 // JBoss 8.x / JVM JMX metrikleri Thanos'tan (Prometheus JMX exporter).
-// deployTrendQuery'nin JMX aynası ama SELECTOR FARKLI (operatör doğruladı
-// 2026-07-20): JMX serileri pod'u `instance=` label'ında taşır (cAdvisor
-// `pod=` değil), `container` label'ı yok, `namespace` var, XA-datasource
-// pool'u `data_source=` label'ında. JVM adları jmx_exporter STANDARDI
-// ("jvm standart"). JBoss datasource adları `jboss_` prefix + `data_source`
-// label (operatör onaylı); tam ad BEST-GUESS — prod'da uymazsa panel
-// görünmez-düşer, adı BURADAN tek satır düzelt.
-//   sel = namespace="<ns>",instance=~"<deploy>-.*"
-func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
-	sel := fmt.Sprintf(`namespace="%s",instance=~"%s-.*"`,
-		escapeLabelValue(namespace), escapeLabelValue(regexp.QuoteMeta(deploy)))
+// SELECTOR (operatör düzeltmesi 2026-07-21): JMX serileri `job` label'ında
+// SERVICE adını, `host_name` label'ında POD'u taşır. Yani deployment/pod-
+// prefix'e gerek yok — doğrudan servis adıyla filtrele:
+//   sel = job=~"^<service>$"   (regex-anchored, meta-escaped)
+//   grouping: JVM → host_name (pod), XA-datasource → data_source (pool)
+// JVM adları jmx_exporter STANDARDI ("jvm standart"). JBoss datasource
+// adları `jboss_` prefix + `data_source` label (operatör onaylı); tam ad
+// BEST-GUESS — prod'da uymazsa panel görünmez-düşer, adı BURADAN tek
+// satır düzelt.
+func jmxTrendQuery(service, metric string, byPod bool) string {
+	sel := fmt.Sprintf(`job=~"^%s$"`, escapeLabelValue(regexp.QuoteMeta(service)))
 	var expr string
 	switch metric {
 	case "heap":
@@ -441,14 +441,14 @@ func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
 }
 
 // jmxTrendNameLabel — JMXTrend'in per-seri adını (ve grouping'i) hangi
-// label'dan okuyacağı: JVM metrikleri pod başına (instance), XA-datasource
-// pool başına (data_source).
+// label'dan okuyacağı: JVM metrikleri pod başına (host_name), XA-datasource
+// pool başına (data_source). (operatör 2026-07-21: pod = host_name)
 func jmxTrendNameLabel(metric string) string {
 	switch metric {
 	case "ds_inuse", "ds_active", "ds_available":
 		return "data_source"
 	default:
-		return "instance"
+		return "host_name"
 	}
 }
 

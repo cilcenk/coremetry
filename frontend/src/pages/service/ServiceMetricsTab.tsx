@@ -1,24 +1,24 @@
 import { useMemo, useState } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { useServicesMetadata } from '@/lib/queries';
 import { RuntimeCharts } from './RuntimeCharts';
 import { MetricArea } from '@/pages/clusters/MetricArea';
 import { timeRangeToNs } from '@/lib/utils';
 import { Spinner, Empty } from '@/components/Spinner';
 import type { TimeRange, JMXMetricKey } from '@/lib/types';
 
-// ServiceMetricsTab (v0.9.139/140) — servis detayının "Metrics" sekmesi.
+// ServiceMetricsTab (v0.9.139/140/143) — servis detayının "Metrics" sekmesi.
 //
 // Faz 1 (v0.9.139): Overview'dan taşınan OTel dil-runtime çizelgeleri
 // (RuntimeCharts — JVM heap/GC/threads · .NET · Go, kaynağı CH).
 //
-// Faz 2 (v0.9.140): Thanos'tan JBoss 8.x / JVM JMX panelleri (Prometheus
-// JMX exporter). Infra sekmesiyle AYNI keşif prensibi: TÜM etkin Thanos
-// kaynakları taranır (v0.9.138), servisin JBoss JMX'i (heap probe) DÖNEN
-// cluster'lar çip olur; hangi cluster'da veri olduğunu sorgunun kendisi
-// belirler. JMX selector `{namespace, instance=~"<deploy>-.*"}` (operatör
-// doğruladı: instance=pod, namespace var, data_source=pool).
+// Faz 2 (v0.9.140, selector v0.9.143): Thanos'tan JBoss 8.x / JVM JMX
+// panelleri (Prometheus JMX exporter). JMX serileri `job` label'ında
+// SERVICE adını, `host_name` label'ında POD'u taşır (operatör 2026-07-21)
+// → doğrudan `job=~"^<service>$"` ile filtrelenir; namespace/deploy
+// metadata'sına gerek YOK. Infra sekmesiyle aynı keşif prensibi (v0.9.138):
+// TÜM etkin Thanos kaynakları heap-probe'lanır, servisin JMX'i DÖNEN
+// cluster'lar çip olur.
 
 interface JmxPanel {
   key: JMXMetricKey;
@@ -45,10 +45,6 @@ export function ServiceMetricsTab({ service, range, onZoom }: {
   // from/to unix NS — RuntimeCharts parent ile aynı RQ anahtarını paylaşır.
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
-  const metaQ = useServicesMetadata();
-  const ns = metaQ.data?.[service]?.namespace ?? '';
-  const deploy = metaQ.data?.[service]?.deployment ?? '';
-
   const sourcesQ = useQuery({
     queryKey: ['cluster-sources'],
     queryFn: () => api.clusterSources(),
@@ -63,20 +59,17 @@ export function ServiceMetricsTab({ service, range, onZoom }: {
     return { cFrom: from, cTo: to, clamped: false };
   }, [from, to]);
 
-  // JMX namespace+deployment metadata'dan gelir (selector'ın çekirdeği).
-  const jmxOK = ns !== '' && deploy !== '';
-
   // Keşif probe'u: cluster başına heap (total) — seri dönen cluster'da
-  // servisin JBoss JMX'i var. Kaynak sayısı Settings'te sınırlı (bounded);
-  // Clusters/Infra cache'iyle aynı slot değil ama 60s cache'li.
+  // servisin JBoss JMX'i var (job=~"^<service>$"). Kaynak sayısı Settings'te
+  // sınırlı (bounded); 60s cache'li.
   const probeQs = useQueries({
     queries: sources.map(c => ({
-      queryKey: ['jmx-trend', c, ns, deploy, 'heap', false, cFrom, cTo],
-      queryFn: () => api.clusterJmxTrend(c, ns, deploy, 'heap', false, cFrom, cTo),
-      staleTime: 60_000, retry: 1, enabled: jmxOK,
+      queryKey: ['jmx-trend', c, service, 'heap', false, cFrom, cTo],
+      queryFn: () => api.clusterJmxTrend(c, service, 'heap', false, cFrom, cTo),
+      staleTime: 60_000, retry: 1,
     })),
   });
-  const probing = jmxOK && probeQs.some(q => q.isPending);
+  const probing = probeQs.some(q => q.isPending);
   const clustersWithJmx = useMemo(
     () => sources.filter((_c, i) => (probeQs[i]?.data?.series?.length ?? 0) > 0),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -93,9 +86,9 @@ export function ServiceMetricsTab({ service, range, onZoom }: {
 
   const panelQs = useQueries({
     queries: JMX_PANELS.map(p => ({
-      queryKey: ['jmx-trend', chartCluster, ns, deploy, p.key, isBy(p), cFrom, cTo],
-      queryFn: () => api.clusterJmxTrend(chartCluster, ns, deploy, p.key, isBy(p), cFrom, cTo),
-      staleTime: 60_000, retry: 1, enabled: jmxOK && chartCluster !== '',
+      queryKey: ['jmx-trend', chartCluster, service, p.key, isBy(p), cFrom, cTo],
+      queryFn: () => api.clusterJmxTrend(chartCluster, service, p.key, isBy(p), cFrom, cTo),
+      staleTime: 60_000, retry: 1, enabled: chartCluster !== '',
     })),
   });
 
@@ -105,29 +98,23 @@ export function ServiceMetricsTab({ service, range, onZoom }: {
 
       {/* ── JBoss (JMX) · Thanos ─────────────────────────────────────── */}
       <h3 style={{ fontSize: 13, margin: '20px 0 4px' }}>JBoss (JMX) · Thanos</h3>
-      {/* Yükleme guard'ı (adversarial review v0.9.140) — metadata/sources
-          pending'ken yanlış terminal boş-durum flash'ini önler; RuntimeCharts
-          üstte zaten render oldu, yalnız bu bölüm bekler. */}
-      {(metaQ.isPending || sourcesQ.isPending) ? (
+      {/* Yükleme guard'ı (adversarial review) — sources pending'ken yanlış
+          terminal boş-durum flash'ini önler; RuntimeCharts üstte zaten
+          render oldu, yalnız bu bölüm bekler. */}
+      {sourcesQ.isPending ? (
         <Spinner />
       ) : sources.length === 0 ? (
         <Empty icon="▦" title="No Thanos clusters configured">
           Add a remote cluster under Settings → Remote clusters to see JBoss/JVM JMX metrics here.
-        </Empty>
-      ) : !jmxOK ? (
-        <Empty icon="▦" title="No k8s metadata for this service">
-          JBoss JMX metrics need the service's <span className="mono">k8s.namespace</span> +{' '}
-          <span className="mono">deployment</span> (from spans) to build the{' '}
-          <span className="mono">{'{namespace, instance=~"<deploy>-.*"}'}</span> selector.
         </Empty>
       ) : probing && clustersWithJmx.length === 0 ? (
         <Spinner />
       ) : clustersWithJmx.length === 0 ? (
         <Empty icon="▦" title="No JBoss JMX series">
           No <span className="mono">jvm_*</span> / <span className="mono">jboss_*</span> series matched{' '}
-          <span className="mono">{'{namespace="' + ns + '", instance=~"' + deploy + '-.*"}'}</span> on any
-          Thanos cluster. Check the JMX exporter is scraping this deployment (pod carried as{' '}
-          <span className="mono">instance</span>).
+          <span className="mono">{'job=~"^' + service + '$"'}</span> on any Thanos cluster. Check the JMX
+          exporter is scraping this service (service carried as <span className="mono">job</span>, pod as{' '}
+          <span className="mono">host_name</span>).
         </Empty>
       ) : (
         <>

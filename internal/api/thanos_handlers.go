@@ -410,10 +410,9 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	name := strings.TrimSpace(q.Get("cluster"))
-	ns := strings.TrimSpace(q.Get("ns"))
-	deploy := strings.TrimSpace(q.Get("deploy"))
-	if name == "" || ns == "" || deploy == "" {
-		http.Error(w, "cluster, ns and deploy query params required", http.StatusBadRequest)
+	service := strings.TrimSpace(q.Get("service"))
+	if name == "" || service == "" {
+		http.Error(w, "cluster and service query params required", http.StatusBadRequest)
 		return
 	}
 	metric := strings.TrimSpace(q.Get("metric"))
@@ -431,16 +430,16 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 	if to.Sub(from) > 6*time.Hour {
 		from = to.Add(-6 * time.Hour)
 	}
-	key := fmt.Sprintf("cluster-jmx-trend:%s:%s:%s:%s:%t:%s:%s",
-		name, ns, deploy, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to))
+	key := fmt.Sprintf("cluster-jmx-trend:%s:%s:%s:%t:%s:%s",
+		name, service, metric, byPod, clusterCfgDigest(cfg), cacheBucket(from, to))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		series, err := s.thanos.JMXTrend(qctx, cfg, ns, deploy, metric, byPod, from, to)
+		series, err := s.thanos.JMXTrend(qctx, cfg, service, metric, byPod, from, to)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"cluster": name, "namespace": ns, "deployment": deploy,
+		return map[string]any{"cluster": name, "service": service,
 			"metric": metric, "byPod": byPod, "series": series}, nil
 	})
 }

@@ -2047,3 +2047,12 @@ thead th:hover .th-remove { opacity: 1; }
 .pb-tl li.warn::after { background: var(--warn); }
 .pb-tl li.ok::after { background: var(--ok); }
 .pb-tl li.accent::after { background: var(--accent); }
+
+/* Coremetry AI (Copilot) — animasyonlu sparkline logo + streaming imleç (v0.9.163) */
+@keyframes cm-ai-draw { 0% { stroke-dashoffset: 64; } 55% { stroke-dashoffset: 0; } 100% { stroke-dashoffset: 0; } }
+@keyframes cm-ai-blink { 50% { opacity: 0; } }
+.cm-ai-spark { stroke-dasharray: 64; stroke-dashoffset: 64; animation: cm-ai-draw 2.6s ease-in-out infinite; }
+.cm-ai-cursor { display: inline-block; width: 6px; height: 13px; background: var(--accent2); vertical-align: -2px; border-radius: 1px; margin-left: 1px; animation: cm-ai-blink 1s steps(2) infinite; }
+.cm-ai-fab { transition: transform .18s, box-shadow .18s; }
+.cm-ai-fab:hover { transform: scale(1.08); }
+@media (prefers-reduced-motion: reduce) { .cm-ai-spark, .cm-ai-cursor { animation: none; } .cm-ai-spark { stroke-dashoffset: 0; } }

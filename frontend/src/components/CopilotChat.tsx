@@ -93,6 +93,21 @@ export function CopilotChat() {
 
   useEffect(() => () => abortRef.current?.abort(), []);
 
+  // Explain→chat köprüsü (v0.9.165): sayfalardaki "chat'te devam et" bir global
+  // event atar; chat açılır + soruyu sorar. sendRef her render güncellenir
+  // (send closure'ı taze); listener stabil ref üstünden en güncel send'i çağırır.
+  const sendRef = useRef<(q: string) => void>(() => {});
+  useEffect(() => {
+    const h = (e: Event) => {
+      const q = (e as CustomEvent<{ question?: string }>).detail?.question;
+      if (!q) return;
+      setOpen(true);
+      sendRef.current(q);
+    };
+    window.addEventListener('coremetry:ai-ask', h);
+    return () => window.removeEventListener('coremetry:ai-ask', h);
+  }, []);
+
   if (!enabled) return null;
 
   const rate = (idx: number, verdict: 1 | -1) => {
@@ -147,6 +162,7 @@ export function CopilotChat() {
       abortRef.current = null;
     }
   };
+  sendRef.current = send; // Explain→chat köprüsü en güncel send'i çağırsın.
 
   // Follow-up çipleri yalnız son tur TAMAMLANMIŞ bir asistan cevabıysa görünür.
   const last = turns[turns.length - 1];

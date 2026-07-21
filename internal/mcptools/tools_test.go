@@ -105,3 +105,32 @@ func TestEnvArgAdditive(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.160 — get_problem_root_cause tool: problem_id ZORUNLU (boş id her
+// anchor'ı tarar) + string + açıklama root-cause hipotezini vaat etmeli.
+// ToolList hem MCP hem in-app copilot'u besler → kontrat ikisini de bağlar.
+func TestGetProblemRootCauseTool(t *testing.T) {
+	tool := toolByName(t, ToolList(Deps{}), "get_problem_root_cause")
+	props := schemaProps(t, tool)
+	pid, ok := props["problem_id"].(map[string]any)
+	if !ok {
+		t.Fatal("get_problem_root_cause: problem_id property missing")
+	}
+	if pid["type"] != "string" {
+		t.Fatalf("problem_id type = %v, want string", pid["type"])
+	}
+	req, _ := tool.InputSchema["required"].([]any)
+	found := false
+	for _, r := range req {
+		if r == "problem_id" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("get_problem_root_cause: problem_id must be in required[]")
+	}
+	d := strings.ToLower(tool.Description)
+	if !strings.Contains(d, "root-cause") && !strings.Contains(d, "root cause") {
+		t.Fatal("description must explain it returns the root-cause hypothesis")
+	}
+}

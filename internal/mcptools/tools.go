@@ -95,6 +95,7 @@ func ToolList(d Deps) []mcp.Tool {
 		listServicesTool(d),
 		getServiceHealthTool(d),
 		listProblemsTool(d),
+		getProblemRootCauseTool(d),
 		listAnomaliesTool(d),
 		searchLogsTool(d),
 		getTraceTool(d),
@@ -330,6 +331,66 @@ func listServicesTool(d Deps) mcp.Tool {
 				res["env"] = a.Env // echo the applied narrowing
 			}
 			return res, nil
+		},
+	}
+}
+
+// ─── get_problem_root_cause ────────────────────────────────────
+// v0.9.160 — expose the worker-synthesized RootCauseHypothesis (the same
+// correlation intelligence the UI shows on the problem row) to external MCP
+// agents AND the in-app copilot (ToolList feeds both). Read-only, one
+// pre-computed lookup; never re-synthesizes on read (honest computed:false).
+
+type getProblemRootCauseArgs struct {
+	ProblemID string `json:"problem_id"`
+}
+
+func getProblemRootCauseTool(d Deps) mcp.Tool {
+	return mcp.Tool{
+		Name:        "get_problem_root_cause",
+		Description: "Return Coremetry's synthesized root-cause hypothesis for a Problem: the #1 suspect service, a confidence score (0-1, honestly low when evidence is thin), the full ranked list of candidate causes (each with a blended score and the topology hop-path from the anchor), and the recent deploy the correlator weighted (if any). This is the SAME correlation intelligence the UI shows on the problem row — call it after list_problems to answer 'what caused problem X?' without manually cross-referencing deploys, error spikes, and downstream timeouts. Read-only and cheap (one pre-computed lookup). Returns computed=false when the worker has not synthesized a hypothesis for this problem yet.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"problem_id": map[string]any{
+					"type":        "string",
+					"description": "The Problem id (the 'id' field from list_problems). Required.",
+				},
+			},
+			"required": []any{"problem_id"},
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			var a getProblemRootCauseArgs
+			if len(raw) > 0 {
+				if err := json.Unmarshal(raw, &a); err != nil {
+					return nil, fmt.Errorf("decode args: %w", err)
+				}
+			}
+			if a.ProblemID == "" {
+				return nil, fmt.Errorf("problem_id is required")
+			}
+			h, err := d.Store.GetHypothesis(ctx, "problem", a.ProblemID)
+			if err != nil {
+				return nil, err
+			}
+			if h == nil {
+				return map[string]any{
+					"problemId": a.ProblemID,
+					"computed":  false,
+					"note":      "No root-cause hypothesis synthesized yet — the correlator worker computes these shortly after a problem opens. Retry later, or investigate manually with list_problems / get_service_health.",
+				}, nil
+			}
+			return map[string]any{
+				"problemId":    a.ProblemID,
+				"computed":     true,
+				"service":      h.Service,
+				"topSuspect":   h.TopSuspect,
+				"topScore":     h.TopScore,
+				"confidence":   h.Confidence,
+				"candidates":   h.Candidates,
+				"recentDeploy": h.RecentDeploy,
+				"computedAt":   h.ComputedAt,
+			}, nil
 		},
 	}
 }

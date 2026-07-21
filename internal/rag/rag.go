@@ -89,10 +89,17 @@ func (s *Service) Configure(c Config) {
 	}
 }
 
-// Ready — RAG yolu ancak endpoint + model girilmiş ve etkinken açılır.
+// Ready — SEMANTİK yol (embed): endpoint + model girilmiş ve etkin.
 func (s *Service) Ready() bool {
 	c := s.Snapshot()
 	return c.Enabled && strings.TrimSpace(c.Endpoint) != "" && strings.TrimSpace(c.Model) != ""
+}
+
+// Enabled — RAG etkin mi (embedding endpoint'i ŞART DEĞİL). v0.9.162:
+// ingest/crawl bununla kapılanır; endpoint yoksa doküman METİN-ONLY girer
+// (BM25 keyword retrieval çalışır, Ready ise ayrıca embed'lenir).
+func (s *Service) Enabled() bool {
+	return s.Snapshot().Enabled
 }
 
 func (s *Service) EffectiveTopK() int {

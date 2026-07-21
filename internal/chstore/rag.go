@@ -172,13 +172,15 @@ func (s *Store) TopKRagChunks(ctx context.Context, queryEmbedding []float32, k i
 	return out, rows.Err()
 }
 
-// ── BM25/keyword köprüsü (v0.9.161) — bge-m3 (embedding) yapılandırılmadan
-// doküman grounding çalışsın. content üzerinde sorgu terimlerini
-// positionCaseInsensitiveUTF8 ile (substring → Türkçe eklerinde de recall)
-// arar, en çok BENZERSİZ terim eşleşen k chunk'ı döner. Score = eşleşen
-// terim / toplam terim (0..1, LEXICAL — cosine DEĞİL; embedding gelince
-// TopKRagChunks semantiğe yükseltir). Düşük hacim (yüzlerce chunk) ama yine
-// LIMIT + max_execution_time (invariant).
+// ── BM25/keyword köprüsü (v0.9.161, v0.9.162 precision) — bge-m3 (embedding)
+// yapılandırılmadan doküman grounding çalışsın. content üzerinde sorgu
+// terimlerini WORD-BOUNDARY hasTokenCaseInsensitive ile arar (v0.9.162 review:
+// substring 'rate'∈'generate' gibi parça-eşleşmeler alakasız dokümanı grounding
+// yapıp chat tool-loop'unu bastırıyordu — false-positive yanlış cevap verir,
+// miss ise doğru fallthrough; precision > recall, recall'u bge-m3 çözer). En
+// çok terim eşleşen k chunk; score = eşleşen/toplam terim (0..1, LEXICAL —
+// cosine DEĞİL). Çağıran ragChatAnswer bir de floor uygular. LIMIT +
+// max_execution_time (invariant).
 
 var ragStopwords = map[string]bool{
 	// TR
@@ -225,7 +227,7 @@ func (s *Store) TopKRagChunksByContent(ctx context.Context, query string, k int)
 	parts := make([]string, len(terms))
 	args := make([]any, 0, len(terms)+1)
 	for i, t := range terms {
-		parts[i] = "(positionCaseInsensitiveUTF8(content, ?) > 0)"
+		parts[i] = "hasTokenCaseInsensitive(content, ?)"
 		args = append(args, t)
 	}
 	// score = eşleşen terim sayısı / toplam terim (CH `/` her zaman Float64).

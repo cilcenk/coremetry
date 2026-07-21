@@ -265,6 +265,31 @@ export function ServiceInfraTab({ service, range, onZoom }: {
 
   return (
     <>
+      {/* Drill breadcrumb (v0.9.147, operatör) — Infra içi iz: All clusters ›
+          cluster › pod, URL ?icluster / ?pod'dan. Yalnız drill varken görünür;
+          her segment tıkla-geri (birleşik setParams, replace:true). */}
+      {(() => {
+        const bits = podParam ? podParam.split('|') : null; // [cluster, ns, pod]
+        const dCluster = icluster || (bits ? bits[0] : '');
+        const dPod = bits ? bits[2] : '';
+        if (!dCluster && !dPod) return null;
+        const link: React.CSSProperties = { all: 'unset', cursor: 'pointer', color: 'var(--accent2)' };
+        const sep = <span style={{ color: 'var(--text3)' }}>›</span>;
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, marginBottom: 10 }}>
+            <button type="button" style={link} title="Clear cluster + pod filter"
+              onClick={() => setParams(prev => { const n = new URLSearchParams(prev); n.delete('icluster'); n.delete('pod'); return n; }, { replace: true })}>
+              All clusters
+            </button>
+            {dCluster && <>{sep}
+              <button type="button" style={link} className="mono" title={`Filter to ${dCluster}`}
+                onClick={() => setParams(prev => { const n = new URLSearchParams(prev); n.set('icluster', dCluster); n.delete('pod'); return n; }, { replace: true })}>
+                {dCluster}
+              </button></>}
+            {dPod && <>{sep}<span className="mono" style={{ color: 'var(--text)' }}>{dPod}</span></>}
+          </div>
+        );
+      })()}
       <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
         {ns && deploy ? (
           <>Pods matched to <span className="mono">{service}</span> via{' '}

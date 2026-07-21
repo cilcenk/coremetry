@@ -3,7 +3,10 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
+	"unicode"
 )
 
 // rag.go — v0.8.438 RAG (doküman soru-cevap) depo katmanı.
@@ -153,6 +156,89 @@ func (s *Store) TopKRagChunks(ctx context.Context, queryEmbedding []float32, k i
 		k = 20
 	}
 	rows, err := s.conn.Query(ctx, ragTopKSQL, queryEmbedding, queryEmbedding, k)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RagHit
+	for rows.Next() {
+		var h RagHit
+		if err := rows.Scan(&h.DocID, &h.DocName, &h.Source, &h.SourceRef,
+			&h.ChunkIdx, &h.Content, &h.Score); err != nil {
+			return nil, err
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// ── BM25/keyword köprüsü (v0.9.161) — bge-m3 (embedding) yapılandırılmadan
+// doküman grounding çalışsın. content üzerinde sorgu terimlerini
+// positionCaseInsensitiveUTF8 ile (substring → Türkçe eklerinde de recall)
+// arar, en çok BENZERSİZ terim eşleşen k chunk'ı döner. Score = eşleşen
+// terim / toplam terim (0..1, LEXICAL — cosine DEĞİL; embedding gelince
+// TopKRagChunks semantiğe yükseltir). Düşük hacim (yüzlerce chunk) ama yine
+// LIMIT + max_execution_time (invariant).
+
+var ragStopwords = map[string]bool{
+	// TR
+	"ve": true, "ile": true, "için": true, "bir": true, "bu": true, "şu": true,
+	"nasıl": true, "nedir": true, "neden": true, "hangi": true, "var": true,
+	"mı": true, "mi": true, "mu": true, "mü": true, "ama": true, "veya": true,
+	// EN
+	"the": true, "and": true, "for": true, "with": true, "how": true, "what": true,
+	"why": true, "which": true, "does": true, "this": true, "that": true, "are": true,
+}
+
+// ragQueryTerms — sorguyu keyword retrieval terimlerine indirger: küçük harf,
+// harf/rakam-dışı ayraç, <3 harf + stopword ele, dedup, tavan 12.
+func ragQueryTerms(query string) []string {
+	q := strings.ToLower(query)
+	seen := make(map[string]bool)
+	var terms []string
+	for _, tok := range strings.FieldsFunc(q, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	}) {
+		if len([]rune(tok)) < 3 || ragStopwords[tok] || seen[tok] {
+			continue
+		}
+		seen[tok] = true
+		terms = append(terms, tok)
+		if len(terms) >= 12 {
+			break
+		}
+	}
+	return terms
+}
+
+func (s *Store) TopKRagChunksByContent(ctx context.Context, query string, k int) ([]RagHit, error) {
+	terms := ragQueryTerms(query)
+	if len(terms) == 0 {
+		return nil, nil
+	}
+	if k < 1 {
+		k = 5
+	}
+	if k > 20 {
+		k = 20
+	}
+	parts := make([]string, len(terms))
+	args := make([]any, 0, len(terms)+1)
+	for i, t := range terms {
+		parts[i] = "(positionCaseInsensitiveUTF8(content, ?) > 0)"
+		args = append(args, t)
+	}
+	// score = eşleşen terim sayısı / toplam terim (CH `/` her zaman Float64).
+	scoreExpr := "(" + strings.Join(parts, " + ") + ") / " + strconv.Itoa(len(terms))
+	q := `SELECT doc_id, doc_name, source, source_ref, chunk_idx, content, score FROM (
+		SELECT doc_id, doc_name, source, source_ref, chunk_idx, content, ` + scoreExpr + ` AS score
+		FROM rag_chunks FINAL
+	) WHERE score > 0
+	ORDER BY score DESC, chunk_idx ASC
+	LIMIT ?
+	SETTINGS max_execution_time = 5`
+	args = append(args, k)
+	rows, err := s.conn.Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

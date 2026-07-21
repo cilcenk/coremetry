@@ -178,9 +178,17 @@ func (s *Server) ragIngestDocumentHashed(ctx context.Context, docID, name, sourc
 	if len(pieces) == 0 {
 		return 0, fmt.Errorf("dokümandan metin çıkarılamadı")
 	}
-	embs, err := s.rag.Embed(ctx, pieces)
-	if err != nil {
-		return 0, err
+	// Embedding OPSİYONEL (v0.9.161 BM25 köprüsü): embed endpoint (bge-m3)
+	// yapılandırılmamışsa doküman METİN-ONLY girer — keyword retrieval
+	// (TopKRagChunksByContent) çalışır. bge-m3 gelince yeniden yükleme
+	// embedding'i doldurur (aynı doc_id → ReplacingMergeTree devralır).
+	embs := make([][]float32, len(pieces)) // nil embeddings = text-only
+	if s.rag != nil && s.rag.Ready() {
+		e, err := s.rag.Embed(ctx, pieces)
+		if err != nil {
+			return 0, err
+		}
+		embs = e
 	}
 	chunks := make([]chstore.RagChunk, len(pieces))
 	for i := range pieces {
@@ -262,20 +270,37 @@ const ragSystemPrompt = `Sen Coremetry'nin doküman asistanısın. SADECE sana v
 // kapalı / doküman yok / soru dokümanlarla ilgisiz (skor tabanı) —
 // akış aynen devam eder.
 func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage) (handled, ok bool) {
-	if s.rag == nil || !s.rag.Ready() {
+	if s.rag == nil {
 		return false, false
 	}
 	question := lastUserText(msgs)
 	if strings.TrimSpace(question) == "" {
 		return false, false
 	}
-	qEmb, err := s.rag.Embed(ctx, []string{question})
-	if err != nil || len(qEmb) != 1 {
-		log.Printf("[rag] soru embed: %v", err)
-		return false, false // embedding düşükse chat'i kilitleme
+	topK := s.rag.EffectiveTopK()
+
+	// Retrieval: bge-m3 yapılandırılmışsa SEMANTİK (cosine, floor'lu); değilse
+	// veya boşsa BM25 KÖPRÜSÜ (keyword, v0.9.161) — doküman grounding
+	// embedding'süz de çalışsın. Keyword hit'leri lexical skorlu (cosine floor
+	// uygulanmaz; TopKRagChunksByContent zaten ≥1 terim eşleşenleri döner =
+	// alaka kapısı, alakasız soru 0 hit → chat serbest-tool döngüsüne düşer).
+	var hits []chstore.RagHit
+	if s.rag.Ready() {
+		if qEmb, err := s.rag.Embed(ctx, []string{question}); err == nil && len(qEmb) == 1 {
+			if h, e := s.store.TopKRagChunks(ctx, qEmb[0], topK); e == nil &&
+				len(h) > 0 && h[0].Score >= ragScoreFloor {
+				hits = h
+			}
+		} else if err != nil {
+			log.Printf("[rag] soru embed: %v — keyword'e düşülüyor", err)
+		}
 	}
-	hits, err := s.store.TopKRagChunks(ctx, qEmb[0], s.rag.EffectiveTopK())
-	if err != nil || len(hits) == 0 || hits[0].Score < ragScoreFloor {
+	if len(hits) == 0 {
+		if h, e := s.store.TopKRagChunksByContent(ctx, question, topK); e == nil {
+			hits = h
+		}
+	}
+	if len(hits) == 0 {
 		return false, false
 	}
 

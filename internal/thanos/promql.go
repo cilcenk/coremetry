@@ -401,65 +401,48 @@ func deployTrendQuery(namespace, deploy, metric string, byPod bool) string {
 	return "sum(" + expr + ")"
 }
 
-// ── JMX/JVM trend queries (v0.9.140, Service→Metrics sekmesi) ───────────
-// JBoss 8.x / JVM JMX metrikleri Thanos'tan (Prometheus JMX exporter).
-// SELECTOR (operatör düzeltmesi 2026-07-21): JMX serileri `job` label'ında
-// SERVICE adını, `host_name` label'ında POD'u taşır. Yani deployment/pod-
-// prefix'e gerek yok — doğrudan servis adıyla filtrele:
-//   sel = job=~"^<service>$"   (regex-anchored, meta-escaped)
-//   grouping: JVM → host_name (pod), XA-datasource → data_source (pool)
-// JVM adları jmx_exporter STANDARDI ("jvm standart"). JBoss datasource
-// adları `jboss_` prefix + `data_source` label (operatör onaylı); tam ad
-// BEST-GUESS — prod'da uymazsa panel görünmez-düşer, adı BURADAN tek
-// satır düzelt.
-func jmxTrendQuery(service, metric string, byPod bool) string {
-	sel := fmt.Sprintf(`job=~"^%s$"`, escapeLabelValue(regexp.QuoteMeta(service)))
+// ── JMX/JVM discovery + trend (v0.9.140, auto-discovery v0.9.144) ───────
+// Operatör: Thanos'ta servisin jvm_/jboss_ metriklerini AUTO-DISCOVER edip
+// Infrastructure sekmesi altında göster. SABİT metrik-adı listesi YOK —
+// __name__=~"(jvm|jboss)_.*" keşfi + metrik başına generic trend. SELECTOR
+// (operatör 2026-07-21, kesin): kube-prometheus/cAdvisor düzlemi
+// (deployTrendQuery ile aynı): container=~".*",namespace="<ns>",
+// pod=~"<deploy>-.*". Ham metrik adı DIŞARIDAN gelir → jmxMetricNameRe ile
+// doğrulanır (PromQL enjeksiyonuna karşı; yalnız jvm_/jboss_ + [a-z0-9_]).
+
+var jmxMetricNameRe = regexp.MustCompile(`^(jvm|jboss)_[a-z0-9_]+$`)
+
+// ValidJMXMetric — ham metrik adının güvenli JMX adı olup olmadığı.
+func ValidJMXMetric(m string) bool { return jmxMetricNameRe.MatchString(m) }
+
+// jmxSelector — servisin JMX serilerinin cAdvisor-düzlem selector'ı.
+func jmxSelector(namespace, deploy string) string {
+	return fmt.Sprintf(`container=~".*",namespace="%s",pod=~"%s-.*"`,
+		escapeLabelValue(namespace), escapeLabelValue(regexp.QuoteMeta(deploy)))
+}
+
+// jmxDiscoveryQuery — servisin taşıdığı jvm_/jboss_ metrik ADLARINI say
+// (count by (__name__)). Boş dönerse cluster'da servisin JMX'i yok.
+func jmxDiscoveryQuery(namespace, deploy string) string {
+	return fmt.Sprintf(`count by (__name__) ({__name__=~"(jvm|jboss)_.*",%s})`,
+		jmxSelector(namespace, deploy))
+}
+
+// jmxTrendQuery — keşfedilen bir metriğin pod-başı trendi. Sayaç (_total/
+// _sum) rate'lenir, gerisi gauge; grouping pod başına (byPod) ya da total.
+func jmxTrendQuery(namespace, deploy, metric string, byPod bool) string {
+	sel := jmxSelector(namespace, deploy)
 	var expr string
-	switch metric {
-	case "heap":
-		expr = fmt.Sprintf(`jvm_memory_bytes_used{area="heap",%s}`, sel)
-	case "nonheap":
-		expr = fmt.Sprintf(`jvm_memory_bytes_used{area="nonheap",%s}`, sel)
-	case "gc":
-		// Summary _sum'ın rate'i = saniyede GC'de geçen saniye (pause yükü).
-		expr = fmt.Sprintf(`rate(jvm_gc_collection_seconds_sum{%s}[5m])`, sel)
-	case "threads":
-		expr = fmt.Sprintf(`jvm_threads_current{%s}`, sel)
-	case "ds_inuse":
-		expr = fmt.Sprintf(`jboss_pool_in_use_count{%s}`, sel)
-	case "ds_active":
-		expr = fmt.Sprintf(`jboss_pool_active_count{%s}`, sel)
-	case "ds_available":
-		expr = fmt.Sprintf(`jboss_pool_available_count{%s}`, sel)
-	default:
-		expr = fmt.Sprintf(`jvm_memory_bytes_used{area="heap",%s}`, sel)
+	if strings.HasSuffix(metric, "_total") || strings.HasSuffix(metric, "_sum") {
+		expr = fmt.Sprintf(`rate(%s{%s}[5m])`, metric, sel)
+	} else {
+		expr = fmt.Sprintf(`%s{%s}`, metric, sel)
 	}
 	if byPod {
-		return fmt.Sprintf(`sum by (%s) (%s)`, jmxTrendNameLabel(metric), expr)
+		return fmt.Sprintf(`sum by (pod) (%s)`, expr)
 	}
 	return "sum(" + expr + ")"
 }
-
-// jmxTrendNameLabel — JMXTrend'in per-seri adını (ve grouping'i) hangi
-// label'dan okuyacağı: JVM metrikleri pod başına (host_name), XA-datasource
-// pool başına (data_source). (operatör 2026-07-21: pod = host_name)
-func jmxTrendNameLabel(metric string) string {
-	switch metric {
-	case "ds_inuse", "ds_active", "ds_available":
-		return "data_source"
-	default:
-		return "host_name"
-	}
-}
-
-// jmxMetricKeys — geçerli JMX metrik anahtarları (handler doğrulaması).
-var jmxMetricKeys = map[string]bool{
-	"heap": true, "nonheap": true, "gc": true, "threads": true,
-	"ds_inuse": true, "ds_active": true, "ds_available": true,
-}
-
-// ValidJMXMetric — handler'ın metric parametresi kapısı.
-func ValidJMXMetric(m string) bool { return jmxMetricKeys[m] }
 
 // stripPodSuffixes — eşleme aileleri yokken pod adından iş yükü adı
 // sezgiseli: Deployment pod'u <ad>-<rs-hash 8-10 hex>-<5 rasgele>,

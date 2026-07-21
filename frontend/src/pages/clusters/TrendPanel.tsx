@@ -6,6 +6,16 @@ import { api } from '@/lib/api';
 import { limitThresholds, thanosPodSeriesToSeries, thanosTrendToSeries } from './trendSeries';
 import type { ClusterPodRow } from '@/lib/types';
 
+// TREND_WINDOWS — trend panelinin ?tw= yerel pencere seçenekleri ('' = sayfa
+// range'i). URL'de yaşar: link'le paylaşılınca pencere korunur. (v0.9.151'de
+// silinen PodDrawer.tsx'ten buraya taşındı — trend penceresi bu modülün işi.)
+export const TREND_WINDOWS = [
+  { key: '', label: 'Page range' },
+  { key: '15m', label: '15m', ns: 15 * 60 * 1e9 },
+  { key: '1h', label: '1h', ns: 3600 * 1e9 },
+  { key: '6h', label: '6h', ns: 6 * 3600 * 1e9 },
+] as const;
+
 // ThanosTrendPanel — Thanos trend grafiklerinin YERLEŞİM-BAĞIMSIZ
 // modülü (v0.9.4, trend-upgrade audit §2). Bugün drawer'da, yarın
 // sekmeli detay layout'unda AYNI bileşen mount edilir — taşıma sıfır.

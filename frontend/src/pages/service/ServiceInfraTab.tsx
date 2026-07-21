@@ -6,14 +6,15 @@ import { useServicesMetadata } from '@/lib/queries';
 import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
 import { Card } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable } from '@/components/DataTable';
 import { MetricArea } from '@/pages/clusters/MetricArea';
 import { PromQLList } from '@/pages/clusters/PromQLList';
 import { promQuote } from '@/pages/clusters/promQuote';
-import { fmtCores, fmtBps, podPhaseBadge, restartColor } from '@/pages/clusters/thresholds';
+import { fmtCores, restartColor } from '@/pages/clusters/thresholds';
 import { podMatchesService } from '@/pages/clusters/podWorkload';
 import { dsToken, reconcile, applyDsIsolate } from '@/pages/service/jmxSelectors';
 import { podDetailPath } from '@/pages/service/podDetailPath';
+import { ServiceClusterPods } from '@/pages/service/ServiceClusterPods';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
@@ -41,9 +42,10 @@ function dominantNamespace(rows: ClusterPodRow[]): string {
   return best;
 }
 
+// v0.9.155 — Cluster kolonu kaldırıldı: pod listesi artık cluster'a göre
+// açılır grup (ServiceClusterPods), cluster grup başlığında.
 const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
-  { id: 'cluster',  label: 'Cluster',  sortValue: r => r.cluster,  naturalDir: 'asc', width: 140 },
-  { id: 'pod',      label: 'Pod',      sortValue: r => r.pod,      naturalDir: 'asc', width: 280 },
+  { id: 'pod',      label: 'Pod',      sortValue: r => r.pod,      naturalDir: 'asc', width: 300 },
   { id: 'phase',    label: 'Status',   sortValue: r => r.phase ?? '', naturalDir: 'asc', width: 100 },
   { id: 'cpuCores', label: 'CPU',      sortValue: r => r.cpuCores, numeric: true, width: 90 },
   { id: 'memBytes', label: 'Memory',   sortValue: r => r.memBytes, numeric: true, width: 100 },
@@ -461,7 +463,9 @@ export function ServiceInfraTab({ service, range, onZoom }: {
         </>
       )}
 
-      {/* Pod tablosu — cluster-gruplu (Cluster kolonu + çip filtresi). */}
+      {/* Pod listesi — cluster'a göre AÇILIR GRUP (v0.9.155, mock A): her
+          cluster kart, tıkla-kapat; pod satırı tıkla → yerinde JVM/JBoss JMX
+          paneli (PodJmxInline) + "Tam detay → /pod". Sıralama/resize dt'de. */}
       <h3 ref={podsRef} style={{ fontSize: 13, margin: '18px 0 8px', ...flashStyle('pods') }}>
         Pods ({visRows.length}{icluster ? ` in ${icluster}` : ''})
       </h3>
@@ -470,31 +474,8 @@ export function ServiceInfraTab({ service, range, onZoom }: {
           The Thanos pod list has no pods for this namespace/deployment right now.
         </Empty>
       ) : (
-        <div className="table-wrap">
-          <table style={{ tableLayout: 'fixed', width: '100%' }}>
-            <DataTableColgroup dt={dt} />
-            <DataTableHead dt={dt} />
-            <tbody>
-              {dt.sortedRows.map(r => (
-                <tr key={`${r.cluster}|${r.pod}`}
-                  onClick={() => openPod(r)}
-                  title="Open pod detail"
-                  style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
-                  <td className="mono" style={{ fontSize: 12 }}>{r.cluster}</td>
-                  <td className="mono" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.pod}>{r.pod}</td>
-                  <td>{r.phase
-                    ? <span className={`badge ${podPhaseBadge(r.phase)}`}>{r.phase}</span>
-                    : <span style={{ color: 'var(--text3)' }}>—</span>}</td>
-                  <td className="num mono">{fmtCores(r.cpuCores)}</td>
-                  <td className="num mono">{fmtBytes(r.memBytes)}</td>
-                  <td className="num mono">{(r.netInBps ?? 0) > 0 ? fmtBps(r.netInBps!) : '—'}</td>
-                  <td className="num mono">{(r.netOutBps ?? 0) > 0 ? fmtBps(r.netOutBps!) : '—'}</td>
-                  <td className="num mono" style={{ color: restartColor(r.restarts ?? 0) }}>{r.restarts ?? 0}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ServiceClusterPods dt={dt} effNs={effNs} effDeploy={effDeploy}
+          cFrom={cFrom} cTo={cTo} colCount={POD_COLS.length} onOpenPod={openPod} />
       )}
 
       {/* Servis-kapsamlı PromQL (§8) — display-only, promQuote'lu. */}

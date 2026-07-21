@@ -7634,6 +7634,16 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 		Status     string  `json:"status,omitempty"`
 		StatusMsg  string  `json:"statusMsg,omitempty"`
 	}
+	// Trace penceresi (log sorgusu için) — cap'ten ÖNCE, tüm span'lar üstünden.
+	minT, maxT := spans[0].StartTime, spans[0].EndTime
+	for _, sp := range spans {
+		if sp.StartTime < minT {
+			minT = sp.StartTime
+		}
+		if sp.EndTime > maxT {
+			maxT = sp.EndTime
+		}
+	}
 	cap := 100
 	if len(spans) > cap {
 		spans = spans[:cap] // bound the prompt; large traces still get a useful summary from the head
@@ -7650,7 +7660,49 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 		compact = append(compact, l)
 	}
 	payload, _ := json.Marshal(compact)
-	user := fmt.Sprintf("Trace %s with %d spans:\n```json\n%s\n```", id, len(compact), string(payload))
+
+	// Trace'in LOGLARI — SADECE kullanıcı bu explain'i tetiklediğinde, log
+	// store'a TEK sorgu (poll/proaktif YOK; operatör isteği v0.9.166).
+	// Elastic loglarında stacktrace'ler span event'lerinden zengin
+	// olabildiğinden trace + logları BİRLİKTE yorumlatırız. Pencere trace
+	// span'larından ±1dk, bounded limit 30, hata-öncelikli, gövde/stack
+	// truncate'li (2B prompt bütçesi). Log store yok/yavaş/boşsa sessizce
+	// trace-only'e düşer — explain'i asla düşürmez.
+	var logsBlock string
+	if s.logs != nil {
+		from := time.Unix(0, minT).Add(-time.Minute)
+		to := time.Unix(0, maxT).Add(time.Minute)
+		lctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
+		if page, lerr := logstore.LogsForTrace(lctx, s.logs, id, from, to, 30); lerr == nil && page != nil && len(page.Logs) > 0 {
+			type liteLog struct {
+				Sev    string `json:"sev,omitempty"`
+				Svc    string `json:"svc,omitempty"`
+				ExType string `json:"exType,omitempty"`
+				Stack  string `json:"stack,omitempty"`
+				Body   string `json:"body,omitempty"`
+			}
+			logs := page.Logs
+			sort.SliceStable(logs, func(i, j int) bool { return logs[i].Severity > logs[j].Severity })
+			ll := make([]liteLog, 0, 15)
+			for _, lg := range logs {
+				if len(ll) >= 15 {
+					break
+				}
+				e := liteLog{Sev: lg.SeverityText, Svc: lg.ServiceName, Body: truncate(lg.Body, 600)}
+				if lg.Attributes != nil {
+					e.ExType = lg.Attributes["exception.type"]
+					e.Stack = truncate(lg.Attributes["exception.stacktrace"], 900)
+				}
+				ll = append(ll, e)
+			}
+			if lp, e := json.Marshal(ll); e == nil {
+				logsBlock = fmt.Sprintf("\n\nBu trace'in ilişkili LOGLARI (log store; stacktrace burada span event'lerinden zengin olabilir), yüksek severity önce:\n```json\n%s\n```\n\nTrace waterfall'ı VE logları BİRLİKTE yorumla — hata/stacktrace varsa kök nedeni logdaki stacktrace + exception.type'a dayandır ve ilgili span'ın StatusMsg'ıyla eşleştir.", string(lp))
+			}
+		}
+		cancel()
+	}
+
+	user := fmt.Sprintf("Trace %s with %d spans:\n```json\n%s\n```%s", id, len(compact), string(payload), logsBlock)
 	out, err := s.copilotExplain(r, copilot.SystemPromptTrace(), user)
 	if err != nil {
 		writeErr(w, err)

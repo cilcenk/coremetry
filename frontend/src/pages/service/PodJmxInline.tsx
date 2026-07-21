@@ -63,7 +63,7 @@ export function PodJmxInline({ cluster, ns, deploy, pod, cFrom, cTo, onFull }: {
       ) : !anyData ? (
         <div style={{ fontSize: 12, color: 'var(--text3)' }}>Bu pod için JMX serisi yok (pencerede veri gelmemiş olabilir).</div>
       ) : (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
           {metrics.map((m, i) => {
             const data = panelQs[i]?.data?.series;
             if (!data || data.length === 0) return null;

@@ -49,11 +49,13 @@ function PodDetail() {
   const service = sp.get('service') ?? '';
   // deploy yalnız JMX keşfi için gerekir; verilmezse pod adından türet.
   const deploy = sp.get('deploy') || (pod ? podWorkloadName(pod) : '');
-  // ?from= geri-breadcrumb etiketini sürer (drill kaynağı): metrics →
-  // "Metrics", infra/clusters/vars. → "Infrastructure" (v0.9.152).
+  // ?from= geri-breadcrumb etiketini sürer (drill kaynağı, v0.9.159):
+  // pods/metrics → "Pods" sekmesi (v0.9.158 rename), infra → "Infrastructure".
+  // clusters → /clusters sayfası (aşağıda service boşsa zaten oraya gider).
   const drillFrom = sp.get('from') ?? '';
-  const backTab = drillFrom === 'metrics' ? 'metrics' : 'infra';
-  const backLabel = drillFrom === 'metrics' ? 'Metrics' : 'Infrastructure';
+  const toPods = drillFrom === 'pods' || drillFrom === 'metrics';
+  const backTab = toPods ? 'pods' : 'infra';
+  const backLabel = toPods ? 'Pods' : 'Infrastructure';
   const [range, setRange] = useUrlRange('1h');
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const xRange = useMemo(() => ({ from: from / 1e9, to: to / 1e9 }), [from, to]);

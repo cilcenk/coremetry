@@ -48,19 +48,21 @@ export function ServicePodsTab({ service, range, onZoom }: {
     rows, initialSort: { id: 'cpuCores', dir: 'desc' },
   });
 
-  // Pod'a tıkla → /pod tam detay (?range taşınır, from='pods' → geri-breadcrumb).
+  // Pod'a tıkla → /pod tam detay (?range taşınır, from='pods' → geri-breadcrumb
+  // "← <svc> · Pods" ve ?tab=pods'a döner, v0.9.159 review).
   const openPod = (r: ClusterPodRow) => navigate(podDetailPath({
     cluster: r.cluster, namespace: r.namespace, pod: r.pod,
-    service, deploy: effDeploy, range: params.get('range'), from: 'infra',
+    service, deploy: effDeploy, range: params.get('range'), from: 'pods',
   }));
 
-  // ── Kapılar (hook'lardan SONRA) ──
-  if (metaQ.isPending || sourcesPending) return <Spinner />;
-
-  const jmxCluster = clustersWithPods[0] ?? '';
+  // Pod bölümü Thanos keşfine kapılı; RuntimeCharts (OTel, Thanos'suz) HER
+  // ZAMAN render — erken-return ardında değil (review v0.9.159 #2): cold-nav'da
+  // sources beklerken heap/GC grafikleri de gizlenmesin.
   return (
     <>
-      {noClusters ? (
+      {(metaQ.isPending || sourcesPending) ? (
+        <Spinner />
+      ) : noClusters ? (
         <Empty icon="▦" title="No Thanos clusters configured">
           Add a remote cluster under Settings → Remote clusters to see pod-level metrics here.
         </Empty>
@@ -81,8 +83,9 @@ export function ServicePodsTab({ service, range, onZoom }: {
           <ServiceClusterPods dt={dt} effNs={effNs} effDeploy={effDeploy}
             cFrom={cFrom} cTo={cTo} colCount={POD_COLS.length} onOpenPod={openPod} />
 
-          {/* 2) JVM / JBoss JMX panelleri (servis-seviyesi, ilk cluster). */}
-          <ServiceJmxPanels cluster={jmxCluster} effNs={effNs} effDeploy={effDeploy}
+          {/* 2) JVM / JBoss JMX panelleri (servis-seviyesi; çok-cluster'da
+              iç cluster seçici, review v0.9.159 #4). */}
+          <ServiceJmxPanels clusters={clustersWithPods} effNs={effNs} effDeploy={effDeploy}
             cFrom={cFrom} cTo={cTo} clamped={clamped} rows={rows} onZoom={onZoom} />
         </>
       )}

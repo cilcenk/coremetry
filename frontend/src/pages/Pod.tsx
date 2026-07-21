@@ -15,7 +15,7 @@ import { PromQLList } from '@/pages/clusters/PromQLList';
 import { promQuote } from '@/pages/clusters/promQuote';
 import { podWorkloadName } from '@/pages/clusters/podWorkload';
 import { fmtCores, podPhaseBadge } from '@/pages/clusters/thresholds';
-import type { ClusterPodRow } from '@/lib/types';
+import { resolvePodCluster } from '@/pages/service/podResolve';
 
 // Pod detay sayfası (v0.9.151) — H.Polat önerisi: pod'a tıklayınca cramped
 // drawer YERİNE tam sayfa. Üç kaynak tek yerde, hepsi POD'a scope'lu:
@@ -88,14 +88,10 @@ function PodDetail() {
       staleTime: 60_000, retry: 1,
     })),
   });
-  const { cluster, namespace, row } = useMemo<{ cluster: string; namespace: string; row: ClusterPodRow | undefined }>(() => {
-    for (let i = 0; i < searchClusters.length; i++) {
-      const found = (podsQs[i]?.data?.pods ?? []).find(
-        p => p.pod === pod && (!nsParam || p.namespace === nsParam));
-      if (found) return { cluster: searchClusters[i], namespace: found.namespace, row: found };
-    }
-    return { cluster: clusterParam, namespace: nsParam, row: undefined };
-  }, [searchClusters, podsQs, pod, nsParam, clusterParam]);
+  const { cluster, namespace, row } = useMemo(
+    () => resolvePodCluster(searchClusters, podsQs.map(q => q.data?.pods), pod, nsParam, clusterParam),
+    [searchClusters, podsQs, pod, nsParam, clusterParam],
+  );
 
   // Per-pod RED — Overview.tsx'in iki batch'ini birebir aynala + host.name.
   const podScope = `service.name = "${service.replace(/"/g, '\\"')}" AND host.name = "${pod.replace(/"/g, '\\"')}"`;

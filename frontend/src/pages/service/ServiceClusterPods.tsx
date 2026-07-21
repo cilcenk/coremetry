@@ -57,7 +57,7 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
               <span style={{ color: 'var(--text3)', display: 'inline-block', width: 12,
                 transform: isCol ? 'rotate(-90deg)' : 'none', transition: 'transform .15s' }}>▾</span>
               <span className="mono" style={{ fontWeight: 600, fontSize: 13 }}>{cluster}</span>
-              <span className={`badge ${health === 'ok' ? 'b-ok' : 'b-err'}`}>{pods.length} pods</span>
+              <span className={`badge ${health === 'ok' ? 'b-ok' : health === 'warn' ? 'b-warn' : 'b-err'}`}>{pods.length} pods</span>
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center', fontSize: 12, color: 'var(--text3)' }}>
                 <span>CPU <b className="mono" style={{ color: 'var(--text)' }}>{fmtCores(cpuSum)}</b></span>
                 <span>Mem <b className="mono" style={{ color: 'var(--text)' }}>{fmtBytes(memSum)}</b></span>

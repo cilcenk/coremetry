@@ -236,7 +236,7 @@ export function ServiceInfraTab({ service, range, onZoom }: {
   }));
 
   const dt = useDataTable<ClusterPodRow>({
-    storageKey: 'service-infra-pods', columns: POD_COLS,
+    storageKey: 'service-infra-pods-v2', columns: POD_COLS, // v0.9.157: 'cluster' kolonu kalktı, bayat sort/width sıfırla
     rows: visRows, initialSort: { id: 'cpuCores', dir: 'desc' },
   });
 

@@ -117,10 +117,13 @@ function computeChartData(
   unit: string | undefined,
   compareSeries: SpanMetricSeries[] | undefined,
   compareOffsetNs: number | undefined,
+  maxSeries: number,
 ): ChartData {
   const compareEnabled = (compareSeries?.length ?? 0) > 0 && (compareOffsetNs ?? 0) > 0;
-  // Fold the long tail into "others" so >8-series charts stay legible.
-  const eff = foldTopN(series, unit);
+  // Fold the long tail into "others" so >N-series charts stay legible.
+  // maxSeries lets a caller raise N (e.g. JBoss datasource panels want
+  // every datasource, no "others" cut — v0.9.148 operator-reported).
+  const eff = foldTopN(series, unit, maxSeries);
 
   // Shift compare-series timestamps forward by the offset so a point from
   // "24h ago" lands at the same X position as the matching current-period
@@ -157,11 +160,15 @@ function computeChartData(
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
   compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
-  selectedOps, onLegendClick, xRange,
+  selectedOps, onLegendClick, xRange, maxSeries,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
   height?: number;
+  // Fold threshold — series past this count collapse into "others"
+  // (default 8). Raise it for panels that must show every series with
+  // no tail cut, e.g. JBoss datasource breakdowns (v0.9.148).
+  maxSeries?: number;
   // Optional per-series colour override keyed by the joined label. Returns a
   // CSS colour (e.g. var(--accent) or #rrggbb) to win over the default stable
   // seriesColor palette, or undefined to fall through to it. Lets a caller
@@ -276,8 +283,8 @@ export function MultiLineChart({
   // bundle to the build effect's once-registered hooks without listing data in
   // the build deps (which would defeat the fast-path).
   const bundle = useMemo(
-    () => computeChartData(series, unit, compareSeries, compareOffsetNs),
-    [series, unit, compareSeries, compareOffsetNs],
+    () => computeChartData(series, unit, compareSeries, compareOffsetNs, maxSeries ?? 8),
+    [series, unit, compareSeries, compareOffsetNs, maxSeries],
   );
   const bundleRef = useRef(bundle);
   bundleRef.current = bundle;

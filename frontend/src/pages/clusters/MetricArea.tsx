@@ -8,7 +8,7 @@ import type { ClusterNamedSeries } from '@/lib/types';
 // CPU/Mem kartlarından çıkarıldı (v0.9.35 ResToggleHeader'ın genel
 // hali): Servis → Infrastructure sekmesi aynı kartı "By pod"
 // etiketiyle kullanır. Seri yoksa null döner — görünmez-düşer.
-export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle, series, seriesName, unit, height = 180, onZoom }: {
+export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle, series, seriesName, unit, height = 180, maxSeries, onZoom }: {
   title: string;
   byLabel: string; // "By node" | "By pod" — toggle'ın sağ şıkkı
   // v0.9.146 — sol şık etiketi (varsayılan "Total"); jboss datasource
@@ -20,6 +20,9 @@ export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle,
   seriesName: string; // Total modunda tek serinin legend adı
   unit?: string;
   height?: number;
+  // v0.9.148 — MultiLineChart fold eşiği; jboss datasource panelleri
+  // tüm datasource'ları göstersin diye yüksek verilir (others kesme yok).
+  maxSeries?: number;
   // v0.9.58 — drag-seçim global time picker'a yazılsın (operatör
   // isteği): MultiLineChart'ın onZoom'u aynen iletilir; çağıran
   // setRange({preset:'custom', fromMs, toMs}) yapar (Service.tsx emsali).
@@ -43,7 +46,7 @@ export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle,
         </span>
       </div>
     }>
-      <MultiLineChart series={namedSeriesToSeries(series, seriesName)} height={height} unit={unit} onZoom={onZoom} />
+      <MultiLineChart series={namedSeriesToSeries(series, seriesName)} height={height} unit={unit} maxSeries={maxSeries} onZoom={onZoom} />
     </Card>
   );
 }

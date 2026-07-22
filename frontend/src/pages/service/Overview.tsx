@@ -10,6 +10,7 @@ import { MetricPanel } from '@/components/MetricPanel';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
 import { ServiceNeighbors } from '@/components/ServiceNeighbors';
 import { metricQuery, type MetricQuery } from '@/lib/metricQuery';
+import { firstNum } from './overviewKpi';
 
 // Service Overview (v0.7.92+) — Dynatrace-style at-a-glance APM view, ported
 // from the design handoff. The new tab on /service?name=<svc> (becomes the
@@ -207,8 +208,22 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
     ];
   }, [s]);
 
-  if (!info) return null;
-  const rps = info.spanCount / windowSec;
+  // v0.9.170 (operatör-bildirimi: cluster çözülemeyen / metrik-yoğun
+  // servislerde "bütün Service Overview boş"). Service-summary bundle (info)
+  // null olsa da Overview BLANK dönmez — headline sayılar RED/latency
+  // batch'inden türetilir (service.name üzerinden, cluster-BAĞIMSIZ); info
+  // yalnız fallback. Böylece service_summary_5m'de satırı olmayan bir servis
+  // bile veri varsa dolar, hiç yoksa boş-durum gösterir — asla tümden
+  // boşalmaz. (Eski davranış: `if (!info) return null` → komple blank.)
+  const rateNow = vals(s?.rate).slice(-1)[0];
+  const errNow = vals(s?.error_rate).slice(-1)[0];
+  const p99Now = vals(lat?.p99).slice(-1)[0];
+  const p50Now = vals(lat?.p50).slice(-1)[0];
+  const rps = firstNum(info ? info.spanCount / windowSec : undefined, rateNow);
+  const errorRatePct = firstNum(info ? info.errorRate : undefined, errNow);
+  const p99Ms = firstNum(p99Now, info?.p99DurationMs);
+  const p50Ms = firstNum(p50Now, info?.avgDurationMs);
+  const apdexVal = info?.apdex ?? null;
 
   // "Every metric is a doorway" (Phase C) — canonical descriptors for each KPI
   // + RED chart. The SAME object that the panel carries is what the Explorer
@@ -234,18 +249,19 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(s?.rate)} delta={computeDelta(vals(s?.rate))} goodWhenUp />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('stat')}>
-          <KpiTile lab="Failure rate" val={`${info.errorRate.toFixed(2)}%`} accent="var(--err)" spark={vals(s?.error_rate)} delta={computeDelta(vals(s?.error_rate))} goodWhenUp={false} />
+          <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(s?.error_rate)} delta={computeDelta(vals(s?.error_rate))} goodWhenUp={false} />
         </MetricPanel>
         <MetricPanel compact title="Response time · P99" metricQuery={mkLatency('p99', 'stat')}>
-          <KpiTile lab="Response time · P99" val={(vals(lat?.p99).slice(-1)[0] ?? info.p99DurationMs).toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} />
+          <KpiTile lab="Response time · P99" val={p99Ms.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} />
         </MetricPanel>
         <MetricPanel compact title="Response time · median" metricQuery={mkLatency('p50', 'stat')}>
-          <KpiTile lab="Response time · median" val={(vals(lat?.p50).slice(-1)[0] ?? info.avgDurationMs).toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(lat?.p50)} delta={computeDelta(vals(lat?.p50))} goodWhenUp={false} />
+          <KpiTile lab="Response time · median" val={p50Ms.toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(lat?.p50)} delta={computeDelta(vals(lat?.p50))} goodWhenUp={false} />
         </MetricPanel>
         {/* Apdex has no calls_total/duration descriptor analogue in the
             spanmetrics pipeline (it's a composite of latency thresholds), so it
-            stays a plain tile — no doorway. */}
-        <KpiTile lab="Apdex" val={(info.apdex ?? 0).toFixed(2)} accent="var(--ok)" />
+            stays a plain tile — no doorway. '—' when the summary bundle is
+            absent (no spanmetrics apdex source). */}
+        <KpiTile lab="Apdex" val={apdexVal != null ? apdexVal.toFixed(2) : '—'} accent="var(--ok)" />
       </div>
 
       {/* RED charts row — response time / throughput / failure rate, each

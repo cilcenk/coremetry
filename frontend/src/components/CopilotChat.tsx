@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import type { ChatMessage } from '@/lib/types';
+import { useOpenCriticalCount } from '@/lib/queries';
 
 // CopilotChat (v0.6.53, v0.9.163 interaktif) — global in-app AI assistant.
 // Sağ-alt animasyonlu sparkline logo (operatör seçimi B) bir drawer açar;
@@ -64,6 +65,9 @@ function mdLite(raw: string): string {
 export function CopilotChat() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [open, setOpen] = useState(false);
+  // v0.9.169 — proaktif rozet: açık KRİTİK problem sayısı (chat kapalıyken
+  // FAB'da kırmızı rozet). Yalnız copilot açıkken pollar; RQ tab gizliyken durur.
+  const criticalOpen = useOpenCriticalCount({ enabled: enabled === true }).data ?? 0;
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -176,8 +180,8 @@ export function CopilotChat() {
         <button
           className="cm-ai-fab"
           onClick={() => setOpen(true)}
-          title="Coremetry AI'a sor"
-          aria-label="Coremetry AI"
+          title={criticalOpen > 0 ? `Coremetry AI — ${criticalOpen} açık kritik problem` : "Coremetry AI'a sor"}
+          aria-label={criticalOpen > 0 ? `Coremetry AI, ${criticalOpen} açık kritik problem` : 'Coremetry AI'}
           style={{
             position: 'fixed', right: 18, bottom: 18, zIndex: 60,
             width: 48, height: 48, borderRadius: 24,
@@ -187,6 +191,16 @@ export function CopilotChat() {
             cursor: 'pointer', boxShadow: '0 2px 14px rgba(0,0,0,0.3)',
           }}>
           <AiMark size={26} />
+          {criticalOpen > 0 && (
+            <span aria-hidden="true" style={{
+              position: 'absolute', top: -3, right: -3,
+              minWidth: 18, height: 18, padding: '0 5px', boxSizing: 'border-box',
+              borderRadius: 9, background: 'var(--err)', color: '#fff',
+              fontSize: 10, fontWeight: 700, lineHeight: '14px',
+              display: 'grid', placeItems: 'center',
+              border: '2px solid var(--bg1)',
+            }}>{criticalOpen > 9 ? '9+' : criticalOpen}</span>
+          )}
         </button>
       )}
 

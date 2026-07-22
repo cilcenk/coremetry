@@ -164,7 +164,7 @@ export function DeployHistoryPanel({ service }: { service: string }) {
                           <Button variant="secondary" size="sm"
                             onClick={() => askCopilot(r)}
                             style={{ color: 'var(--accent2)' }}
-                            title="Ask Copilot whether this rollout looks clean, regressed, or rollback-worthy">
+                            title="Ask CoSRE whether this rollout looks clean, regressed, or rollback-worthy">
                             ✨ {st.kind === 'err' ? 'Re-ask' : 'Explain'} rollout
                           </Button>
                         )}
@@ -186,7 +186,7 @@ export function DeployHistoryPanel({ service }: { service: string }) {
                               fontSize: 10, color: 'var(--accent2)',
                               textTransform: 'uppercase', letterSpacing: 0.4,
                               marginBottom: 6, fontWeight: 600,
-                            }}>✨ Copilot</div>
+                            }}>✨ CoSRE</div>
                             {st.text}
                           </div>
                         )}

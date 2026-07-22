@@ -270,8 +270,8 @@ export default function SlowQueriesPage() {
                                   <Button variant="secondary" size="sm"
                                     onClick={() => askCopilot(key, r)}
                                     style={{ color: 'var(--accent2)' }}
-                                    title="Ask Copilot for the likely cause + one concrete remediation">
-                                    ✨ {ex === 'idle' ? 'Explain' : 'Re-ask'} Copilot
+                                    title="Ask CoSRE for the likely cause + one concrete remediation">
+                                    ✨ {ex === 'idle' ? 'Explain' : 'Re-ask'} CoSRE
                                   </Button>
                                 );
                               })()}
@@ -305,7 +305,7 @@ export default function SlowQueriesPage() {
                                     fontSize: 10, color: 'var(--accent2)',
                                     textTransform: 'uppercase', letterSpacing: 0.4,
                                     marginBottom: 6, fontWeight: 600,
-                                  }}>✨ Copilot</div>
+                                  }}>✨ CoSRE</div>
                                   {ex.text}
                                 </div>
                               );

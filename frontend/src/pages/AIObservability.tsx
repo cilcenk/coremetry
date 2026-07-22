@@ -82,7 +82,7 @@ export default function AIObservabilityPage() {
       <Topbar title="AI observability" range={range} onRangeChange={setRange} />
       <div id="content">
         <div style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 12 }}>
-          Every Copilot Explain call lands here — latency, tokens, status,
+          Every CoSRE call lands here — latency, tokens, status,
           per-surface breakdown. Prompt + response samples (≤4KB) are kept
           for inspection. Admin-only.
         </div>
@@ -91,7 +91,7 @@ export default function AIObservabilityPage() {
         {stats === undefined && <Spinner />}
         {stats === null && (
           <Empty icon="✗" title="Failed to load AI stats">
-            Check that the Copilot is configured and that ai_calls table exists.
+            Check that CoSRE is configured and that ai_calls table exists.
           </Empty>
         )}
         {stats && (() => {

@@ -84,7 +84,7 @@ const PAGES: Result[] = [
   { kind: 'page', label: 'System · SQL',           hint: 'Raw CH query console', to: '/system/sql' },
   { kind: 'page', label: 'System · Query',         hint: 'Query console', to: '/system/query' },
   { kind: 'page', label: 'System · Status page',   hint: 'Components + subscribers', to: '/system/status-page' },
-  { kind: 'page', label: 'AI observability', hint: 'Copilot usage + cost', to: '/ai' },
+  { kind: 'page', label: 'AI observability', hint: 'CoSRE usage + cost', to: '/ai' },
   // Meta
   { kind: 'page', label: 'Settings',    hint: 'AI / SMTP / retention / theme', to: '/settings' },
   { kind: 'page', label: 'Users',       hint: 'Role + team management', to: '/users' },

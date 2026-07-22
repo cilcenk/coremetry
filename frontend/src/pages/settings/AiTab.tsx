@@ -53,8 +53,8 @@ export function AITab() {
       setMsg({
         kind: 'ok',
         text: !next.enabled
-          ? (next.hasKey ? 'Saved — Copilot disabled (key kept).' : 'Saved — Copilot disabled.')
-          : (next.hasKey || (provider === 'openai' && baseUrl) ? 'Saved — Copilot is live.' : 'Saved — Copilot dormant (no key).'),
+          ? (next.hasKey ? 'Saved — CoSRE disabled (key kept).' : 'Saved — CoSRE disabled.')
+          : (next.hasKey || (provider === 'openai' && baseUrl) ? 'Saved — CoSRE is live.' : 'Saved — CoSRE dormant (no key).'),
       });
     } catch (err) {
       setMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Save failed' });
@@ -64,7 +64,7 @@ export function AITab() {
   };
 
   const clearKey = async () => {
-    if (!confirm('Remove the saved API key? Copilot buttons will disappear until a new key is set.')) return;
+    if (!confirm('Remove the saved API key? CoSRE buttons will disappear until a new key is set.')) return;
     setBusy(true); setMsg(null);
     try {
       const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled });
@@ -72,7 +72,7 @@ export function AITab() {
       setSkipTls(next.skipTls ?? false);
       setEnabled(next.enabled ?? true);
       setApiKey('');
-      setMsg({ kind: 'ok', text: 'Key cleared — Copilot is dormant.' });
+      setMsg({ kind: 'ok', text: 'Key cleared — CoSRE is dormant.' });
     } catch (err) {
       setMsg({ kind: 'err', text: err instanceof Error ? err.message : 'Clear failed' });
     } finally {
@@ -122,7 +122,7 @@ export function AITab() {
 
   return (
     <div style={{ maxWidth: 640 }}>
-      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>AI Copilot</h2>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>CoSRE</h2>
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Inline natural-language explanations for traces, Problems and exceptions.
         Pick a provider, paste your key, save — buttons appear automatically on the
@@ -150,7 +150,7 @@ export function AITab() {
                     ? `Provider: ${providerLabel} — ready.`
                     : `Provider: ${providerLabel} (no auth) — ready at ${baseUrl}.`)
                 : configured
-                  ? `Provider: ${providerLabel} — credentials kept, AI Copilot turned off.`
+                  ? `Provider: ${providerLabel} — credentials kept, CoSRE turned off.`
                   : 'Not configured. Paste a key (or set a local endpoint URL) below.'}
             </span>
           </div>
@@ -172,9 +172,9 @@ export function AITab() {
                  onChange={e => setEnabled(e.target.checked)}
                  style={{ marginTop: 2 }} />
           <div>
-            <div>Enable AI Copilot</div>
+            <div>Enable CoSRE</div>
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, lineHeight: 1.5 }}>
-              Master switch. Uncheck + Save to turn AI Copilot off
+              Master switch. Uncheck + Save to turn CoSRE off
               without removing the stored key — the background
               problem-explainer stops, the ✨ Explain buttons hide,
               and AI endpoints return 503. Re-check + Save to resume.

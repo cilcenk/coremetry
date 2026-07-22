@@ -182,23 +182,36 @@ func (s *Server) ragIngestDocument(ctx context.Context, docID, name, source, sou
 	return s.ragIngestDocumentHashed(ctx, docID, name, source, sourceRef, uploadedBy, text, "")
 }
 
+// embedOrTextOnly (v0.9.173) — per-chunk embeddings when the embed endpoint is
+// Ready AND responds; otherwise nil embeddings (text-only keyword ingest). A
+// down / misconfigured bge-m3 must NOT block upload (operator-reported: upload
+// HARD-FAIL'ed when the endpoint was set but unreachable). The document still
+// lands in keyword mode; a later re-upload fills embeddings (same doc_id,
+// ReplacingMergeTree). len(result) == len(pieces) always; result[i] may be nil.
+func embedOrTextOnly(pieces []string, ready bool, embed func([]string) ([][]float32, error)) [][]float32 {
+	if ready {
+		if e, err := embed(pieces); err == nil {
+			return e
+		} else {
+			log.Printf("[rag] embed failed — ingesting %d chunk(s) text-only (keyword mode): %v", len(pieces), err)
+		}
+	}
+	return make([][]float32, len(pieces)) // nil per chunk = text-only
+}
+
 func (s *Server) ragIngestDocumentHashed(ctx context.Context, docID, name, source, sourceRef, uploadedBy, text, srcHash string) (int, error) {
 	pieces := rag.ChunkText(text)
 	if len(pieces) == 0 {
 		return 0, fmt.Errorf("dokümandan metin çıkarılamadı")
 	}
-	// Embedding OPSİYONEL (v0.9.161 BM25 köprüsü): embed endpoint (bge-m3)
-	// yapılandırılmamışsa doküman METİN-ONLY girer — keyword retrieval
-	// (TopKRagChunksByContent) çalışır. bge-m3 gelince yeniden yükleme
-	// embedding'i doldurur (aynı doc_id → ReplacingMergeTree devralır).
-	embs := make([][]float32, len(pieces)) // nil embeddings = text-only
-	if s.rag != nil && s.rag.Ready() {
-		e, err := s.rag.Embed(ctx, pieces)
-		if err != nil {
-			return 0, err
-		}
-		embs = e
-	}
+	// Embedding OPSİYONEL (v0.9.161 BM25 köprüsü + v0.9.173 dayanıklılık): embed
+	// endpoint (bge-m3) yapılandırılmamışsa VEYA erişilemiyorsa doküman
+	// METİN-ONLY girer — keyword retrieval (TopKRagChunksByContent) çalışır.
+	// Embed başarısızlığı upload'ı ARTIK bloklamaz (operatör-bildirimi). bge-m3
+	// gelince yeniden yükleme embedding'i doldurur (aynı doc_id → RMT devralır).
+	embs := embedOrTextOnly(pieces,
+		s.rag != nil && s.rag.Ready(),
+		func(p []string) ([][]float32, error) { return s.rag.Embed(ctx, p) })
 	chunks := make([]chstore.RagChunk, len(pieces))
 	for i := range pieces {
 		chunks[i] = chstore.RagChunk{

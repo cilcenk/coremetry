@@ -65,6 +65,12 @@ spec:
       port: {{ .Values.service.grpcPort }}
       targetPort: otlp-grpc
       protocol: TCP
+    {{- if .Values.service.otlpHttp }}
+    - name: otlp-http
+      port: {{ .Values.service.otlpHttpPort | default 4318 }}
+      targetPort: otlp-http
+      protocol: TCP
+    {{- end }}
     {{- end }}
 ---
 {{/* v0.8.171 — headless Service for in-cluster gRPC round-robin to the OTLP
@@ -121,6 +127,15 @@ spec:
       port: {{ .Values.service.httpPort }}
       targetPort: http
       protocol: TCP
+    {{- if .Values.service.otlpHttp }}
+    # OTLP/HTTP — dedicated :4318 listener on ingest pods (POST /v1/*), separate
+    # from the Web UI/REST on httpPort. Serves ONLY OTLP (no UI, no auth). HTTPS
+    # is edge-terminated at the Route/Ingress/LB; the binary speaks plain HTTP.
+    - name: otlp-http
+      port: {{ .Values.service.otlpHttpPort | default 4318 }}
+      targetPort: otlp-http
+      protocol: TCP
+    {{- end }}
 ---
 apiVersion: v1
 kind: Service

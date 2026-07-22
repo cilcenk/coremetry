@@ -80,6 +80,11 @@ spec:
             - name: otlp-grpc
               containerPort: 4317
               protocol: TCP
+            {{- if .Values.service.otlpHttp }}
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+            {{- end }}
           env:
             - name: COREMETRY_JWT_SECRET
               valueFrom:

@@ -442,6 +442,9 @@ func main() {
 	// grpcHandle stays nil on non-ingest roles; GRPCHandle.Shutdown is
 	// nil-safe, so the ordered teardown below needs no role branching.
 	var grpcHandle *otlp.GRPCHandle
+	// otlpHTTPHandle stays nil on non-ingest roles / when the dedicated
+	// OTLP/HTTP listener is disabled; HTTPHandle.Shutdown is nil-safe (v0.9.168).
+	var otlpHTTPHandle *otlp.HTTPHandle
 	ing := otlp.NewIngester(spanConsumer, logConsumer, metricConsumer)
 	ing.SetExemplars(exemplarConsumer)
 	// require_trace_context default true — a stored exemplar exists to be
@@ -493,6 +496,21 @@ func main() {
 			// A dead OTLP listener on an ingest pod is not a degraded
 			// mode — fail loud so the orchestrator restarts us.
 			log.Fatalf("[grpc] %v", gerr)
+		}
+
+		// ── Dedicated OTLP/HTTP server (:4318, plain HTTP) ──
+		// v0.9.168 — a standalone OTLP/HTTP listener on the OTel-convention
+		// port, separate from the Web UI/REST on :8088. Serves ONLY /v1/*
+		// (no UI, no auth), so cross-cluster collectors push OTLP/HTTP without
+		// reaching the login-gated UI. Speaks PLAIN HTTP — TLS is terminated at
+		// the edge (OpenShift Route edge termination / Ingress / LB), never
+		// in-binary. Empty addr disables it (OTLP/HTTP still answers on :8088).
+		if cfg.Listen.OTLPHTTP != "" {
+			var herr error
+			otlpHTTPHandle, herr = otlp.StartHTTP(cfg.Listen.OTLPHTTP, ing)
+			if herr != nil {
+				log.Fatalf("[otlp-http] %v", herr)
+			}
 		}
 	}
 
@@ -1084,6 +1102,7 @@ func main() {
 	//      exemplars + span_links used to be skipped entirely, racing
 	//      their final flush against process exit.
 	grpcHandle.Shutdown(10 * time.Second)
+	otlpHTTPHandle.Shutdown(10 * time.Second) // v0.9.168 — dedicated :4318 listener (nil-safe)
 	sctx, scancel := context.WithTimeout(context.Background(), 10*time.Second)
 	if err := srv.Shutdown(sctx); err != nil {
 		log.Printf("[http] shutdown: %v", err)

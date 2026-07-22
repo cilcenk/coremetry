@@ -75,10 +75,17 @@ var trackedMetrics = []string{"error_rate", "p99_ms", "request_rate"}
 type metricPolicy struct {
 	direction string  // "up" | "down" | "both" — which side opens an anomaly
 	floorPct  float64 // relative-change floor: |current-median|/max(|median|,eps)
+	// absFloor — mutlak-değer tabanı (v0.9.180). Yükseliş yönlü bir anomali,
+	// current metrik bu değerin ALTINDAysa AÇILMAZ — göreli floor'un
+	// yakalayamadığı "0 tabandan minik sıçrama" boşluğunu kapatır. error_rate=1
+	// (%): yüksek hacimde birkaç mutlak hata (rate ~%0), küçük-MAD baseline'da
+	// yüksek z üretse bile Problem'e dönmez (operatör: "milyonlarca istekte
+	// 1-2-3 hata problem olmasın"). 0 = mutlak taban yok. Düşüşleri etkilemez.
+	absFloor float64
 }
 
 var metricPolicies = map[string]metricPolicy{
-	"error_rate":   {direction: "up", floorPct: 0.10},   // only rising errors matter
+	"error_rate":   {direction: "up", floorPct: 0.10, absFloor: 1.0}, // rising errors only; <%1 = birkaç-hata gürültüsü, açma
 	"p99_ms":       {direction: "up", floorPct: 0.10},   // only rising latency matters
 	"request_rate": {direction: "both", floorPct: 0.15}, // drop AND spike both matter
 }
@@ -139,6 +146,13 @@ func decideAnomaly(metric string, z, current, median float64) anomalyDecision {
 	}
 	relChange := math.Abs(current-median) / math.Max(math.Abs(median), magnitudeEps)
 	if !dirOpen || relChange < pol.floorPct {
+		return anomalyDecision{}
+	}
+	// Mutlak-değer tabanı (v0.9.180): yükseliş yönlü bir anomali current bu
+	// tabanın ALTINDAysa açılmaz — yüksek hacimde birkaç hata (error_rate ~%0)
+	// küçük-MAD baseline'da yüksek z üretse bile Problem yaratmaz. Yalnız SPIKE
+	// (z>0) tarafına uygulanır; düşüşler (request_rate drop) etkilenmez.
+	if z > 0 && pol.absFloor > 0 && current < pol.absFloor {
 		return anomalyDecision{}
 	}
 	dropped := z < 0

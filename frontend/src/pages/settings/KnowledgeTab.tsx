@@ -98,6 +98,26 @@ export function KnowledgeTab() {
     } finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
   };
 
+  // Metin yapıştır (v0.9.176) — tarayıcıdan (OneNote/wiki/herhangi) kopyalanan
+  // içeriği doküman olarak ekler. Backend'in {name,text} JSON yolunu kullanır;
+  // dosya/token/connector gerekmez, air-gapped uyumlu.
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteName, setPasteName] = useState('');
+  const [pasteText, setPasteText] = useState('');
+  const pasteDoc = async () => {
+    const name = pasteName.trim(), text = pasteText.trim();
+    if (!name || !text) { setMsg({ kind: 'err', text: 'İsim ve metin zorunlu.' }); return; }
+    setBusy(true); setMsg(null);
+    try {
+      const r = await api.uploadRagText(name, text);
+      setMsg({ kind: 'ok', text: `${name}: ${r.chunks} parça indekslendi.` });
+      setPasteName(''); setPasteText(''); setPasteOpen(false);
+      load();
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally { setBusy(false); }
+  };
+
   return (
     <div style={{ maxWidth: 640 }}>
       <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>
@@ -231,7 +251,7 @@ export function KnowledgeTab() {
         </div>
       </div>
 
-      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Dokümanlar</h3>
         <input ref={fileRef} type="file" accept=".md,.txt,.pdf" style={{ display: 'none' }}
                onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); }} />
@@ -241,7 +261,31 @@ export function KnowledgeTab() {
           onClick={() => fileRef.current?.click()}>
           ⬆ Doküman yükle
         </Button>
+        <Button variant="secondary" size="sm" type="button"
+          disabled={busy || !cfg.enabled}
+          title="Tarayıcıdan (OneNote / wiki) kopyalanan metni yapıştır — dosya/token gerekmez"
+          onClick={() => setPasteOpen(o => !o)}>
+          📋 Metin yapıştır
+        </Button>
       </div>
+      {pasteOpen && (
+        <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 640 }}>
+          <input value={pasteName} onChange={e => setPasteName(e.target.value)}
+            placeholder="Doküman adı (ör. OneNote — DB failover runbook)"
+            style={{ padding: '7px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 13 }} />
+          <textarea value={pasteText} onChange={e => setPasteText(e.target.value)}
+            placeholder="OneNote sayfasında Ctrl+A → Ctrl+C, buraya yapıştır…" rows={8}
+            style={{ padding: '8px 10px', background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', fontSize: 13, fontFamily: 'inherit', resize: 'vertical' }} />
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="primary" size="sm" type="button"
+              disabled={busy || !cfg.enabled || !pasteName.trim() || !pasteText.trim()}
+              onClick={() => void pasteDoc()}>
+              Ekle
+            </Button>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>{pasteText.length.toLocaleString()} karakter</span>
+          </div>
+        </div>
+      )}
 
       {docs === undefined && <Spinner />}
       {docs === null && <Empty icon="📄" title="Doküman listesi yüklenemedi" />}

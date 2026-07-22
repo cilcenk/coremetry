@@ -33,6 +33,13 @@ export function KnowledgeTab() {
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  // Metin yapıştır (v0.9.176) state'i — TÜM hook'lar erken-return'lerden
+  // (if cfg===undefined return <Spinner/>) ÖNCE olmalı. v0.9.178 fix
+  // (operatör-bildirimi): bu useState'ler return'lerden SONRAYDI → hook-order
+  // ihlali → RAG ayarları sekmesi açılınca crash.
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteName, setPasteName] = useState('');
+  const [pasteText, setPasteText] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
   const load = () => {
@@ -98,12 +105,8 @@ export function KnowledgeTab() {
     } finally { setBusy(false); if (fileRef.current) fileRef.current.value = ''; }
   };
 
-  // Metin yapıştır (v0.9.176) — tarayıcıdan (OneNote/wiki/herhangi) kopyalanan
-  // içeriği doküman olarak ekler. Backend'in {name,text} JSON yolunu kullanır;
-  // dosya/token/connector gerekmez, air-gapped uyumlu.
-  const [pasteOpen, setPasteOpen] = useState(false);
-  const [pasteName, setPasteName] = useState('');
-  const [pasteText, setPasteText] = useState('');
+  // pasteDoc — yapıştırılan metni doküman olarak ekler ({name,text} JSON
+  // yolu; ilgili state yukarıda, erken-return'lerden ÖNCE tanımlı).
   const pasteDoc = async () => {
     const name = pasteName.trim(), text = pasteText.trim();
     if (!name || !text) { setMsg({ kind: 'err', text: 'İsim ve metin zorunlu.' }); return; }
@@ -129,7 +132,7 @@ export function KnowledgeTab() {
             : <span className="badge b-warn" style={{ marginLeft: 8 }}>aktif · keyword modu</span>}
       </h2>
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 12 }}>
-        Runbook / prosedür / mimari dokümanlarını yükle; Copilot chat sorulara bu
+        Runbook / prosedür / mimari dokümanlarını yükle; CoSRE chat sorulara bu
         dokümanlardan <b>kaynak atıflı</b> cevap versin. <b>Embedding endpoint'i
         olmadan da çalışır</b> (keyword/BM25 modu, v0.9.162); OpenAI-uyumlu bir
         <code> /v1/embeddings</code> (vLLM/KServe'de bge-m3) eklersen retrieval

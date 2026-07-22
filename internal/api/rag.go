@@ -261,8 +261,8 @@ func readRAGUpload(r *http.Request) (name, text string, err error) {
 	}
 	defer f.Close()
 	low := strings.ToLower(hdr.Filename)
-	if !strings.HasSuffix(low, ".md") && !strings.HasSuffix(low, ".txt") {
-		return "", "", fmt.Errorf("v1 yalnız .md / .txt kabul eder (%s)", hdr.Filename)
+	if !strings.HasSuffix(low, ".md") && !strings.HasSuffix(low, ".txt") && !strings.HasSuffix(low, ".pdf") {
+		return "", "", fmt.Errorf(".md / .txt / .pdf kabul edilir (%s)", hdr.Filename)
 	}
 	b, err := io.ReadAll(io.LimitReader(f, ragMaxUploadBytes+1))
 	if err != nil {
@@ -270,6 +270,19 @@ func readRAGUpload(r *http.Request) (name, text string, err error) {
 	}
 	if len(b) > ragMaxUploadBytes {
 		return "", "", fmt.Errorf("dosya %dMB tavanını aşıyor", ragMaxUploadBytes>>20)
+	}
+	// PDF (v0.9.175) — metin katmanını çıkar; taranmış/görüntü PDF (metin yok)
+	// açıkça reddedilir (OCR desteklenmiyor). rag.LooksLikePDF %PDF- magic'i de
+	// yakalar (uzantı yanlışsa).
+	if rag.LooksLikePDF(b, "", hdr.Filename) {
+		text, perr := rag.ExtractPDFText(b)
+		if perr != nil {
+			return "", "", fmt.Errorf("PDF metni çıkarılamadı: %w", perr)
+		}
+		if strings.TrimSpace(text) == "" {
+			return "", "", fmt.Errorf("PDF'de metin katmanı yok (taranmış/görüntü PDF olabilir — OCR desteklenmiyor)")
+		}
+		return hdr.Filename, text, nil
 	}
 	return hdr.Filename, string(b), nil
 }

@@ -233,11 +233,11 @@ export function KnowledgeTab() {
 
       <div style={{ marginTop: 16, display: 'flex', alignItems: 'center', gap: 10 }}>
         <h3 style={{ fontSize: 13, fontWeight: 600, margin: 0 }}>Dokümanlar</h3>
-        <input ref={fileRef} type="file" accept=".md,.txt" style={{ display: 'none' }}
+        <input ref={fileRef} type="file" accept=".md,.txt,.pdf" style={{ display: 'none' }}
                onChange={e => { const f = e.target.files?.[0]; if (f) void upload(f); }} />
         <Button variant="secondary" size="sm" type="button"
           disabled={busy || !cfg.enabled}
-          title={cfg.endpoint ? 'md / txt yükle (≤5MB)' : 'md / txt yükle (≤5MB) — keyword modu, embedding yok'}
+          title={cfg.endpoint ? 'md / txt / pdf yükle (≤5MB)' : 'md / txt / pdf yükle (≤5MB) — keyword modu, embedding yok'}
           onClick={() => fileRef.current?.click()}>
           ⬆ Doküman yükle
         </Button>

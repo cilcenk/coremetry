@@ -35,7 +35,7 @@ const FOLLOWUPS = [
   'Son deploy\'un etkisi?',
 ];
 
-// Coremetry AI markası — çizilen gradient sparkline (APM göndermesi, varyant B).
+// CoSRE markası — çizilen gradient sparkline (APM göndermesi, varyant B).
 function AiMark({ size = 26 }: { size?: number }) {
   const gid = useId();
   return (
@@ -180,8 +180,8 @@ export function CopilotChat() {
         <button
           className="cm-ai-fab"
           onClick={() => setOpen(true)}
-          title={criticalOpen > 0 ? `Coremetry AI — ${criticalOpen} açık kritik problem` : "Coremetry AI'a sor"}
-          aria-label={criticalOpen > 0 ? `Coremetry AI, ${criticalOpen} açık kritik problem` : 'Coremetry AI'}
+          title={criticalOpen > 0 ? `CoSRE — ${criticalOpen} açık kritik problem` : "CoSRE'ye sor"}
+          aria-label={criticalOpen > 0 ? `CoSRE, ${criticalOpen} açık kritik problem` : 'CoSRE'}
           style={{
             position: 'fixed', right: 18, bottom: 18, zIndex: 60,
             width: 48, height: 48, borderRadius: 24,
@@ -219,7 +219,7 @@ export function CopilotChat() {
             padding: '10px 14px', borderBottom: '1px solid var(--border)',
           }}>
             <AiMark size={18} />
-            <span style={{ fontWeight: 600, fontSize: 13 }}>Coremetry AI</span>
+            <span style={{ fontWeight: 600, fontSize: 13 }}>CoSRE</span>
             <span style={{ flex: 1 }} />
             {turns.length > 0 && (
               <Button variant="secondary" size="sm" onClick={() => setTurns([])}
@@ -278,7 +278,7 @@ export function CopilotChat() {
             <input
               value={input}
               onChange={e => setInput(e.target.value)}
-              placeholder="Coremetry AI'a sor…"
+              placeholder="CoSRE'ye sor…"
               disabled={busy}
               autoFocus
               style={{

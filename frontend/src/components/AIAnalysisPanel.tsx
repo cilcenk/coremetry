@@ -37,7 +37,7 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
     <div className="card" style={{ marginTop: 12 }}>
       <div className="ov-card-h">
         <h3 style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
-          <IconSparkles size={14} /> AI Analizi
+          <IconSparkles size={14} /> CoSRE Analizi
         </h3>
         <span className="ov-sub">{service}</span>
         {state === 'done' && (

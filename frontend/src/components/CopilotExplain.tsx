@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { IconSparkles } from './icons';
 
 // CopilotExplain — drop-in Explain button that calls the
-// Coremetry AI copilot endpoint for the given subject and renders the
+// CoSRE (copilot) endpoint for the given subject and renders the
 // reply inline beneath the button. Self-hides when the copilot is
 // not configured (no API key on the server).
 //
@@ -115,7 +115,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
         }}>
           <div style={{ fontSize: 10, color: 'var(--accent2)', marginBottom: 6, fontWeight: 700, letterSpacing: '.5px',
                         display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <IconSparkles size={11} /> {kind === 'runbook' ? 'RUNBOOK' : 'COPILOT'}
+            <IconSparkles size={11} /> {kind === 'runbook' ? 'RUNBOOK' : 'CoSRE'}
           </div>
           {meta && (
             <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8, fontStyle: 'italic' }}>

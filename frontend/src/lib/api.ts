@@ -1152,6 +1152,14 @@ export const api = {
       method: 'POST', body: fd,
     });
   },
+  // uploadRagText — yapıştırılan metni doküman olarak ekler (backend'in
+  // JSON {name,text} yolu; readRAGUpload). OneNote/wiki gibi tarayıcıdan
+  // kopyalanan içerik için — dosya/token/connector gerekmez (v0.9.176).
+  uploadRagText: (name: string, text: string) =>
+    request<{ docId: string; chunks: number }>('/api/rag/documents', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, text }),
+    }),
   syncRagSources: () =>
     request<{ sources: number; pages: number; indexed: number; skipped: number; pruned: number; errors?: string[] }>(
       '/api/rag/sync', { method: 'POST' }),

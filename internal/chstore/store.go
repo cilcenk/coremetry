@@ -1747,6 +1747,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		// type so an admin can target any of email / slack /
 		// teams / zoomchat / webhook to a specific team.
 		`ALTER TABLE notification_channels ADD COLUMN IF NOT EXISTS match_rules String DEFAULT '{}'`,
+		// source_hash (v0.9.174) — RAG doküman dedup/senkron hash'i. Wiki-crawler
+		// v2 için ragChunksDDL'e sonradan eklendi ama eski kurulumların rag_chunks
+		// tablosu onsuz oluşturulmuştu (CREATE TABLE IF NOT EXISTS mevcut tabloyu
+		// ALTER etmez) → ReplaceDocumentChunks'ın INSERT'i (source_hash bound)
+		// external kurulumda code-16 "No such column source_hash" ile 500 dönüyordu
+		// (operatör-bildirimi: düz .txt upload + "Doküman listesi yüklenemedi").
+		// rag_chunks hv-değil (wrapper/_local ayrımı YOK) → execDDL→adaptDDL yalnız
+		// ON CLUSTER enjekte eder; INSERT-bound kolon güvenli çünkü op_group'un
+		// wrapper-only tehlikesi (v0.8.186) burada geçerli değil. DEFAULT '' eski
+		// satırları doldurur.
+		`ALTER TABLE rag_chunks ADD COLUMN IF NOT EXISTS source_hash String DEFAULT ''`,
 		// Spans columns needed by v0.5.102+ topology queries. Older
 		// installs whose spans table was created before these
 		// fields existed in CREATE TABLE would otherwise return

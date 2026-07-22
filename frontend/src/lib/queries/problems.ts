@@ -60,3 +60,21 @@ export function useOpenProblemCount(env?: string) {
     staleTime: 25_000,
   });
 }
+
+// useOpenCriticalCount (v0.9.169) — open CRITICAL count for the AI launcher's
+// proactive dot. Deliberately narrower than useOpenProblemCount (all-open,
+// which drives the sidebar /problems badge): the AI nudge fires ONLY on open
+// critical problems, so the FAB dot means "something needs attention NOW" —
+// not "a P3 lingers". Same 30s cadence; React Query pauses the poll while the
+// tab is hidden. `enabled:false` keeps it dormant when the copilot is off.
+export function useOpenCriticalCount(opts?: { env?: string; enabled?: boolean }) {
+  return useQuery<{ count: number }, Error, number>({
+    queryKey: ['problems', 'count', { status: 'open', severity: 'critical', env: opts?.env || '' }],
+    queryFn: async () =>
+      (await api.problemsCount({ status: 'open', severity: 'critical', env: opts?.env || undefined })) ?? { count: 0 },
+    select: (r) => r.count,
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+    enabled: opts?.enabled ?? true,
+  });
+}

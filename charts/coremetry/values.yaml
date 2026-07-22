@@ -131,6 +131,15 @@ service:
   type: ClusterIP
   httpPort: 8088        # Web UI + REST API + direct OTLP/HTTP fallback
   grpcPort: 4317        # OTLP/gRPC ingest (apps + collector forward here)
+  # v0.9.168 — dedicated OTLP/HTTP listener on the OTel-convention port 4318
+  # (ingest / monolithic pods). Serves ONLY /v1/{traces,metrics,logs} — no Web
+  # UI, no auth — so external collectors push OTLP/HTTP straight to :4318
+  # without reaching the login-gated UI on :8088. HTTPS is edge-terminated at
+  # the Route/Ingress/LB (the binary speaks plain HTTP — no in-binary cert).
+  # Set false to omit the containerPort + Service port (also set env
+  # COREMETRY_OTLP_HTTP_ADDR=off to stop the binary listening at all).
+  otlpHttp: true
+  otlpHttpPort: 4318
   annotations: {}
   # v0.6.21 — session affinity for MCP server sessions + SSE
   # streams. Pre-v0.6.21 the Service load-balanced every request

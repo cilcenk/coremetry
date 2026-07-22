@@ -1,8 +1,11 @@
 package otlp
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -243,6 +246,65 @@ func HTTPHandler(ing *Ingester) http.Handler {
 	mux.HandleFunc("POST /v1/logs", ing.handleLogs)
 	mux.HandleFunc("POST /v1/metrics", ing.handleMetrics)
 	return mux
+}
+
+// HTTPHandle wraps the dedicated OTLP/HTTP server so main can drain it on
+// shutdown, symmetric with GRPCHandle (v0.9.168).
+type HTTPHandle struct{ srv *http.Server }
+
+// Shutdown drains the dedicated OTLP/HTTP listener, bounded by `grace` — same
+// contract as GRPCHandle.Shutdown so main's ordered teardown treats both
+// symmetrically. Nil-safe (nil on non-ingest roles / when disabled).
+func (h *HTTPHandle) Shutdown(grace time.Duration) {
+	if h == nil || h.srv == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	if err := h.srv.Shutdown(ctx); err != nil {
+		log.Printf("[otlp-http] graceful stop exceeded %s — forcing: %v", grace, err)
+		_ = h.srv.Close()
+	}
+}
+
+// StartHTTP starts a DEDICATED OTLP/HTTP listener on addr serving ONLY the OTLP
+// ingest routes (POST /v1/{traces,logs,metrics}) — no Web UI, no REST, no auth
+// middleware — so a cross-cluster collector pushes straight to the standard
+// OTel port (:4318) without reaching the login-gated UI that shares :8088.
+// Serves plain HTTP; TLS is terminated at the edge (OpenShift Route edge
+// termination / Ingress / LB), never in-binary. Binds synchronously so a port
+// clash fails boot loud (an ingest pod with a dead OTLP listener is not a
+// degraded mode), then serves in a goroutine and returns a handle main drains
+// on SIGTERM — symmetric with StartGRPC (v0.9.168).
+func StartHTTP(addr string, ing *Ingester) (*HTTPHandle, error) {
+	lis, err := net.Listen("tcp", addr)
+	if err != nil {
+		return nil, fmt.Errorf("listen %s: %w", addr, err)
+	}
+	srv := &http.Server{
+		Handler: HTTPHandler(ing),
+		// Bound every phase of a request: the auth-free, edge-reachable OTLP
+		// port must not be wedgeable by slow-body (slowloris) or idle
+		// keep-alive exhaustion. The gRPC sibling gets this via MaxConnectionAge;
+		// the HTTP one needs explicit timeouts (v0.9.168 review). ReadTimeout
+		// caps the WHOLE request (headers + body), so a dribbled body can't pin
+		// a goroutine+FD indefinitely; IdleTimeout reaps idle keep-alives. Body
+		// size is already bounded at 32 MiB per request by readProto's
+		// io.LimitReader (same cap as the gRPC MaxRecvMsgSize), so a single
+		// request's memory is bounded; these timeouts bound its TIME + lifetime.
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    1 << 20,
+	}
+	log.Printf("[otlp-http] listening on %s", addr)
+	go func() {
+		if serr := srv.Serve(lis); serr != nil && serr != http.ErrServerClosed {
+			log.Printf("[otlp-http] serve: %v", serr)
+		}
+	}()
+	return &HTTPHandle{srv: srv}, nil
 }
 
 func (ing *Ingester) handleTraces(w http.ResponseWriter, r *http.Request) {

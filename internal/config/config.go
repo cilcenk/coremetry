@@ -274,6 +274,15 @@ type OIDCConfig struct {
 type ListenConfig struct {
 	HTTP string `yaml:"http"`
 	GRPC string `yaml:"grpc"`
+	// OTLPHTTP is a DEDICATED OTLP/HTTP listener (POST /v1/{traces,logs,metrics}),
+	// bound separately from HTTP (which also serves the Web UI + REST API on the
+	// same socket). Default ":4318" — the OTel-convention port — so external
+	// collectors push OTLP/HTTP to the standard port WITHOUT reaching the
+	// login-gated UI that shares :8088. Empty disables it (OTLP/HTTP still
+	// answers on HTTP/:8088). Only started in the ingest role. Serves plain
+	// HTTP — TLS is terminated at the edge (OpenShift Route edge termination /
+	// Ingress / LB), never in-binary. v0.9.168.
+	OTLPHTTP string `yaml:"otlp_http"`
 }
 
 // CHConfig describes the ClickHouse connection. `Addr` accepts either
@@ -359,7 +368,7 @@ type IngestionConfig struct {
 }
 
 var defaults = Config{
-	Listen: ListenConfig{HTTP: ":8088", GRPC: ":4317"},
+	Listen: ListenConfig{HTTP: ":8088", GRPC: ":4317", OTLPHTTP: ":4318"},
 	ClickHouse: CHConfig{
 		Addr: "127.0.0.1:9000", Database: "coremetry",
 		// MaxOpenConns 0 = "derive from the ingest flush fan-out" — see
@@ -437,6 +446,28 @@ func resolveLogAnomalyEnabled(env string, current bool) bool {
 	default:
 		return current
 	}
+}
+
+// resolveOTLPHTTPAddr applies COREMETRY_OTLP_HTTP_ADDR to the dedicated
+// OTLP/HTTP listener's address. Empty env → keep current (the :4318 default);
+// "off"/"none"/"-" (case-insensitive) → disable the listener (""); anything
+// else → the new listen address. An env var can't express an empty-string
+// override, hence the sentinel tokens. v0.9.168.
+func resolveOTLPHTTPAddr(env, current string) string {
+	// Trim FIRST so both the disable tokens AND the address are whitespace-
+	// tolerant — a k8s Secret populated via `echo ":4318" | base64` delivers a
+	// trailing "\n" that would otherwise reach net.Listen verbatim and
+	// crashloop the ingest pod at boot (v0.9.168 review). Whitespace-only →
+	// treated as unset (keep current default).
+	env = strings.TrimSpace(env)
+	if env == "" {
+		return current
+	}
+	switch strings.ToLower(env) {
+	case "off", "none", "-":
+		return ""
+	}
+	return env
 }
 
 func Load(path string) (*Config, error) {
@@ -517,6 +548,10 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("COREMETRY_GRPC_ADDR"); v != "" {
 		cfg.Listen.GRPC = v
 	}
+	// COREMETRY_OTLP_HTTP_ADDR — dedicated OTLP/HTTP listen address (default
+	// :4318). Set to "off" / "none" / "-" to disable the listener entirely
+	// (an env var can't express an empty-string override). v0.9.168.
+	cfg.Listen.OTLPHTTP = resolveOTLPHTTPAddr(os.Getenv("COREMETRY_OTLP_HTTP_ADDR"), cfg.Listen.OTLPHTTP)
 	// Ingest capacity (v0.8.204) — tunable WITHOUT a config file, for installs
 	// where apps push OTLP straight to :4317. The gRPC receiver returns
 	// ResourceExhausted ("buffer full") when the queue can't drain to CH fast

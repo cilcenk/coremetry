@@ -1,6 +1,7 @@
 package otlp
 
 import (
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -421,7 +422,23 @@ func (ing *Ingester) handleMetrics(w http.ResponseWriter, r *http.Request) {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 func readProto(r *http.Request, msg proto.Message) error {
-	body, err := io.ReadAll(io.LimitReader(r.Body, 32<<20))
+	// OTLP/HTTP exporters default to gzip compression (Content-Encoding: gzip);
+	// without transparently decompressing, ReadAll yields the COMPRESSED bytes
+	// and the Unmarshal below fails → HTTP 400 (operator-reported "otlphttp
+	// export → 400", v0.9.171). gRPC handles grpc-encoding itself; the HTTP
+	// receiver must do it here.
+	var src io.Reader = r.Body
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Content-Encoding")), "gzip") {
+		gz, err := gzip.NewReader(r.Body)
+		if err != nil {
+			return fmt.Errorf("gzip reader: %w", err)
+		}
+		defer gz.Close()
+		src = gz
+	}
+	// LimitReader on the (decompressed) stream bounds memory at 32 MiB — a gzip
+	// bomb is truncated to 32 MiB and fails decode gracefully, never OOMs.
+	body, err := io.ReadAll(io.LimitReader(src, 32<<20))
 	if err != nil {
 		return err
 	}

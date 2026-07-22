@@ -125,7 +125,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
           {text}
           <div style={{ marginTop: 8 }}>
             <button type="button" onClick={askInChat}
-              title="Copilot chat'te bu konuda devam et"
+              title="CoSRE chat'te bu konuda devam et"
               style={{
                 all: 'unset', cursor: 'pointer', fontSize: 11, color: 'var(--accent2)',
                 display: 'inline-flex', alignItems: 'center', gap: 4,

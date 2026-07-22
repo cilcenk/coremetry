@@ -49,7 +49,7 @@ const TABS: SettingsTab[] = [
   { slug: 'team-routing', label: 'Team routing', Comp: TeamRoutingTab },
   { slug: 'api-tokens',   label: 'API Tokens', Comp: ApiTokensTab },
   { slug: 'maintenance', label: 'Maintenance windows',   Comp: MaintenanceTab },
-  { slug: 'ai',          label: 'AI Copilot',            Comp: AITab },
+  { slug: 'ai',          label: 'CoSRE',                 Comp: AITab },
   // v0.8.491 — RAG/doküman/wiki bölümü AI Copilot'tan kendi sekmesine
   // ayrıldı (operatör onaylı sadeleştirme #5); davranış birebir aynı.
   { slug: 'knowledge',   label: 'Knowledge (RAG)',       Comp: KnowledgeTab },

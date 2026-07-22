@@ -68,6 +68,8 @@ export function CopilotChat() {
   // v0.9.169 — proaktif rozet: açık KRİTİK problem sayısı (chat kapalıyken
   // FAB'da kırmızı rozet). Yalnız copilot açıkken pollar; RQ tab gizliyken durur.
   const criticalOpen = useOpenCriticalCount({ enabled: enabled === true }).data ?? 0;
+  // v0.9.182 — Alternatif A: sayfa-içi tam-boy expand (operatör seçimi).
+  const [expanded, setExpanded] = useState(false);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -207,11 +209,16 @@ export function CopilotChat() {
       {/* Drawer */}
       {open && (
         <div style={{
-          position: 'fixed', right: 18, bottom: 18, zIndex: 60,
-          width: 'min(420px, calc(100vw - 36px))', height: 'min(620px, calc(100vh - 100px))',
+          position: 'fixed', zIndex: 60,
           display: 'flex', flexDirection: 'column',
           background: 'var(--bg1)', border: '1px solid var(--border)',
-          borderRadius: 10, boxShadow: '0 4px 24px rgba(0,0,0,0.4)',
+          boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
+          transition: 'width .16s, height .16s',
+          // Alternatif A (v0.9.182): genişken içerik alanını doldurur (sidebar
+          // ~208px + topbar ~56px görünür kalır); değilse sağ-alt drawer.
+          ...(expanded
+            ? { top: 56, left: 208, right: 12, bottom: 12, borderRadius: 12 }
+            : { right: 18, bottom: 18, width: 'min(420px, calc(100vw - 36px))', height: 'min(620px, calc(100vh - 100px))', borderRadius: 10 }),
         }}>
           {/* Header */}
           <div style={{
@@ -221,6 +228,9 @@ export function CopilotChat() {
             <AiMark size={18} />
             <span style={{ fontWeight: 600, fontSize: 13 }}>CoSRE</span>
             <span style={{ flex: 1 }} />
+            <Button variant="ghost" size="sm" onClick={() => setExpanded(e => !e)}
+              title={expanded ? "Drawer'a küçült" : 'Tam sayfa genişlet'}>
+              {expanded ? '⊟' : '⤢'}</Button>
             {turns.length > 0 && (
               <Button variant="secondary" size="sm" onClick={() => setTurns([])}
                 title="Konuşmayı temizle">Temizle</Button>

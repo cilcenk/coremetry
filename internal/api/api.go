@@ -9054,6 +9054,13 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	// EqualFold/empty-means-all semantics as the inbox.
 	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
 	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
+	// Cluster filter (v0.9.181) — narrows to problems whose service touched
+	// the selected cluster (p.Clusters, enriched at read time by
+	// EnrichProblemsWithClusters). Post-enrich + full-set → correct across the
+	// whole result, not just the loaded page (server-paged table discipline).
+	// Empty = all clusters. (clusterFilter, not `cluster` — that name is the
+	// imported cluster package.)
+	clusterFilter := strings.TrimSpace(q.Get("cluster"))
 	f := chstore.ProblemFilter{
 		Status: q.Get("status"), Service: q.Get("service"),
 		Severity: q.Get("severity"), Priority: prios,
@@ -9073,8 +9080,8 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	for _, p := range prios {
 		prioMap[p] = true
 	}
-	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:limit=%d",
-		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Env, f.Limit)
+	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:cluster=%s:limit=%d",
+		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Env, clusterFilter, f.Limit)
 	// v0.8.471 — count ile aynı gerekçe (liste p95 903ms/max 3s → STALE ~10ms).
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
 		probs, err := s.store.ListProblems(ctx, f)
@@ -9147,6 +9154,21 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 			for _, p := range probs {
 				if matchesTeamFilter(p.OwnerTeam, p.SRETeam, ownerTeam, sreTeam) {
 					keep = append(keep, p)
+				}
+			}
+			probs = keep
+		}
+		// Cluster filter (v0.9.181) — keep problems whose service touched the
+		// selected cluster. p.Clusters is set by EnrichProblemsWithClusters
+		// above; empty selection = all clusters. AND'd with the other filters.
+		if clusterFilter != "" {
+			keep := probs[:0]
+			for _, p := range probs {
+				for _, c := range p.Clusters {
+					if c == clusterFilter {
+						keep = append(keep, p)
+						break
+					}
 				}
 			}
 			probs = keep

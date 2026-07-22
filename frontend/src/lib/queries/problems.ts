@@ -23,6 +23,10 @@ export function useProblems(filter: {
   // (rows whose service ran in the env in the last hour + global
   // service-less alerts). Part of the key via the filter object.
   env?: string;
+  // Cluster filter (v0.9.181) — narrows to problems whose service touched
+  // this cluster (server-side, post-enrich on p.clusters). Part of the key
+  // via the filter object.
+  cluster?: string;
   limit?: number;
 }) {
   return useQuery<Problem[]>({

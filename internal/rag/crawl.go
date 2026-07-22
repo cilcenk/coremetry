@@ -82,11 +82,19 @@ func Crawl(ctx context.Context, httpc *http.Client, src CrawlSource) ([]CrawledP
 			return out, ctx.Err()
 		case <-tick.C: // nezaket hızı
 		}
-		body, err := fetchPage(ctx, httpc, it.u, src)
+		body, plainText, err := fetchPage(ctx, httpc, it.u, src)
 		if err != nil {
 			continue // tek sayfa hatası taramayı durdurmaz
 		}
-		title, text, links := extractHTML(body, it.u)
+		var title, text string
+		var links []*url.URL
+		if plainText {
+			// PDF (v0.9.175) — body ZATEN çıkarılmış metin; HTML parse yok,
+			// link taraması yok (başlık aşağıda URL'e düşer).
+			text = body
+		} else {
+			title, text, links = extractHTML(body, it.u)
+		}
 		if len([]rune(text)) >= crawlMinTextLen {
 			sum := sha256.Sum256([]byte(text))
 			out = append(out, CrawledPage{
@@ -112,12 +120,12 @@ func Crawl(ctx context.Context, httpc *http.Client, src CrawlSource) ([]CrawledP
 	return out, nil
 }
 
-func fetchPage(ctx context.Context, httpc *http.Client, u *url.URL, src CrawlSource) (string, error) {
+func fetchPage(ctx context.Context, httpc *http.Client, u *url.URL, src CrawlSource) (string, bool, error) {
 	fctx, cancel := context.WithTimeout(ctx, crawlFetchTO)
 	defer cancel()
 	req, err := http.NewRequestWithContext(fctx, http.MethodGet, u.String(), nil)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	req.Header.Set("User-Agent", "coremetry-rag-crawler/1.0")
 	if h := strings.TrimSpace(src.AuthHeader); h != "" {
@@ -131,21 +139,44 @@ func fetchPage(ctx context.Context, httpc *http.Client, u *url.URL, src CrawlSou
 	}
 	resp, err := httpc.Do(req)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("http %d", resp.StatusCode)
+		return "", false, fmt.Errorf("http %d", resp.StatusCode)
 	}
 	ct := resp.Header.Get("Content-Type")
+	// PDF (v0.9.175) — content-type application/pdf veya .pdf yolu. Metni çıkar
+	// (HTML'den büyük cap); plainText=true → çağıran HTML parse + link
+	// taramasını atlar. Uzak linkten PDF alma bu yolla çalışır.
+	if strings.Contains(strings.ToLower(ct), "application/pdf") ||
+		strings.HasSuffix(strings.ToLower(u.Path), ".pdf") {
+		b, err := io.ReadAll(io.LimitReader(resp.Body, pdfReadMax))
+		if err != nil {
+			return "", false, err
+		}
+		text, perr := ExtractPDFText(b)
+		if perr != nil {
+			return "", false, perr
+		}
+		return text, true, nil
+	}
 	if ct != "" && !strings.Contains(ct, "html") && !strings.Contains(ct, "text/plain") {
-		return "", fmt.Errorf("içerik türü atlandı: %s", ct)
+		return "", false, fmt.Errorf("içerik türü atlandı: %s", ct)
 	}
 	b, err := io.ReadAll(io.LimitReader(resp.Body, crawlPageMax))
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
-	return string(b), nil
+	// Yanlış etiketlenmiş PDF (%PDF- magic ama içerik-türü PDF değil).
+	if LooksLikePDF(b, ct, u.Path) {
+		text, perr := ExtractPDFText(b)
+		if perr != nil {
+			return "", false, perr
+		}
+		return text, true, nil
+	}
+	return string(b), false, nil
 }
 
 // extractHTML — ana metin + başlık + linkler. script/style/nav/header/

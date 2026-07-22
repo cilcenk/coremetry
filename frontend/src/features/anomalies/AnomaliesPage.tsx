@@ -681,6 +681,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // already-filtered result would collapse the list to the pick.
   const [ownerTeam, setOwnerTeam] = useState('');
   const [sreTeam, setSreTeam] = useState('');
+  const [cluster, setCluster] = useState(''); // v0.9.181 — cluster filtresi (server-side, p.clusters)
   const catalogQ = useServicesMetadata();
   // v0.8.330 — case-insensitive team options (see teamOptionsCI).
   const ownerTeamOptions = useMemo(
@@ -711,6 +712,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     ownerTeam: ownerTeam || undefined,
     sreTeam: sreTeam || undefined,
     env: env || undefined,
+    cluster: cluster || undefined,
     limit: 200,
   });
   const data: Problem[] | null | undefined = problemsQ.isLoading
@@ -718,6 +720,12 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     : problemsQ.isError
       ? null
       : (problemsQ.data ?? []);
+  // Cluster filter options (v0.9.181) — distinct clusters across the loaded
+  // problems. The narrowing itself runs server-side over the FULL set (not
+  // page-limited); these options are just the picker's convenience list.
+  const clusterOptions = useMemo(
+    () => [...new Set((data ?? []).flatMap(p => p.clusters ?? []))].filter(Boolean).sort(),
+    [data]);
 
   const open = data?.filter(p => p.status === 'open').length ?? 0;
   const resolved = data?.filter(p => p.status === 'resolved').length ?? 0;
@@ -843,6 +851,20 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             <option key={t} value={t}>{t}</option>
           ))}
         </select>
+        {/* Cluster filter (v0.9.181) — narrows to problems whose service
+            touched the picked cluster (server-side over the full set). Only
+            shown when the loaded problems carry cluster labels. */}
+        {(clusterOptions.length > 0 || cluster) && (
+          <select value={cluster}
+            onChange={e => setCluster(e.target.value)}
+            aria-label="Filter by cluster"
+            style={{ minWidth: 130 }}>
+            <option value="">All clusters</option>
+            {clusterOptions.map(c => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+          </select>
+        )}
         {/* Env hint chip (v0.8.387) — non-interactive: the pick lives in
             the Topbar EnvPicker; this only surfaces the SEMANTICS so an
             operator doesn't read the rows as per-env values. */}

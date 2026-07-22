@@ -1653,7 +1653,7 @@ export const api = {
   // env (v0.8.387) — the global Topbar picker, service-scoped on
   // problems: the server keeps rows whose service ran in the env in
   // the last hour (plus service-less global alerts).
-  problems: (params: { status?: string; service?: string; severity?: string; priority?: string[]; ownerTeam?: string; sreTeam?: string; env?: string; limit?: number }) =>
+  problems: (params: { status?: string; service?: string; severity?: string; priority?: string[]; ownerTeam?: string; sreTeam?: string; env?: string; cluster?: string; limit?: number }) =>
     get<Problem[] | null>(`/api/problems?${qs({ ...params, priority: params.priority?.join(',') })}`),
   // v0.5.398 — sidebar-badge count endpoint. Returns just the
   // matching row count, no rows. Replaces the prior approach

@@ -2,6 +2,7 @@ package otlp
 
 import (
 	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"fmt"
 	"io"
@@ -21,6 +22,8 @@ import (
 	logscollpb "go.opentelemetry.io/proto/otlp/collector/logs/v1"
 	metricscollpb "go.opentelemetry.io/proto/otlp/collector/metrics/v1"
 	tracecollpb "go.opentelemetry.io/proto/otlp/collector/trace/v1"
+
+	"github.com/klauspost/compress/zstd"
 
 	"github.com/cilcenk/coremetry/internal/acache"
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -421,23 +424,56 @@ func (ing *Ingester) handleMetrics(w http.ResponseWriter, r *http.Request) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-func readProto(r *http.Request, msg proto.Message) error {
-	// OTLP/HTTP exporters default to gzip compression (Content-Encoding: gzip);
-	// without transparently decompressing, ReadAll yields the COMPRESSED bytes
-	// and the Unmarshal below fails → HTTP 400 (operator-reported "otlphttp
-	// export → 400", v0.9.171). gRPC handles grpc-encoding itself; the HTTP
-	// receiver must do it here.
-	var src io.Reader = r.Body
-	if strings.EqualFold(strings.TrimSpace(r.Header.Get("Content-Encoding")), "gzip") {
+// decompressBody wraps the request body with a decoder for whatever
+// Content-Encoding an OTLP/HTTP exporter applied. gzip is the otlphttp default;
+// zstd and zlib/deflate are the other standard confighttp compressions. An
+// empty / identity encoding passes through. Unknown encodings are rejected
+// (→ 400) rather than silently mis-decoded. The returned cleanup MUST be
+// called. (v0.9.171 gzip → v0.9.172 full "native" compression coverage.)
+func decompressBody(r *http.Request) (io.Reader, func(), error) {
+	switch strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding"))) {
+	case "", "identity":
+		return r.Body, func() {}, nil
+	case "gzip":
 		gz, err := gzip.NewReader(r.Body)
 		if err != nil {
-			return fmt.Errorf("gzip reader: %w", err)
+			return nil, nil, fmt.Errorf("gzip reader: %w", err)
 		}
-		defer gz.Close()
-		src = gz
+		return gz, func() { _ = gz.Close() }, nil
+	case "zstd":
+		// Concurrency 1 → decode in the request goroutine, no extra goroutines
+		// per request on the ingest hot path. Close() frees the decoder.
+		zr, err := zstd.NewReader(r.Body, zstd.WithDecoderConcurrency(1))
+		if err != nil {
+			return nil, nil, fmt.Errorf("zstd reader: %w", err)
+		}
+		return zr, zr.Close, nil
+	case "deflate", "zlib":
+		zl, err := zlib.NewReader(r.Body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("deflate/zlib reader: %w", err)
+		}
+		return zl, func() { _ = zl.Close() }, nil
+	default:
+		return nil, nil, fmt.Errorf("unsupported Content-Encoding %q", r.Header.Get("Content-Encoding"))
 	}
-	// LimitReader on the (decompressed) stream bounds memory at 32 MiB — a gzip
-	// bomb is truncated to 32 MiB and fails decode gracefully, never OOMs.
+}
+
+func readProto(r *http.Request, msg proto.Message) error {
+	// OTLP/HTTP exporters may compress the body (gzip is the otlphttp default;
+	// zstd + zlib/deflate are the other standard compressions). Decode it
+	// transparently — without this the still-compressed bytes reach Unmarshal
+	// and every export fails with HTTP 400 (operator-reported: v0.9.171 gzip,
+	// v0.9.172 zstd/deflate). gRPC handles grpc-encoding itself; the HTTP
+	// receiver must do it here.
+	src, done, err := decompressBody(r)
+	if err != nil {
+		return err
+	}
+	defer done()
+	// LimitReader on the (decompressed) stream bounds memory at 32 MiB — a
+	// compression bomb is truncated to 32 MiB and fails decode gracefully,
+	// never OOMs.
 	body, err := io.ReadAll(io.LimitReader(src, 32<<20))
 	if err != nil {
 		return err

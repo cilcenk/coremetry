@@ -648,7 +648,14 @@ func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string
 			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
 		}
 	}
-	src := fmt.Sprintf("servis RED özeti + baseline + en sık hatalar + deploy işaretçileri + açık problemler (son %s)", fmtAgoTR(rangeS))
+	// v0.9.183 — CoSRE grafik: yanıta yapılandırılmış bir ```chart``` bloğu
+	// ekle; frontend (CosreChart) bunu mevcut uPlot motoruyla GERÇEK
+	// telemetriden çizer (LLM değil, spanMetricBatch). Servis-sağlık
+	// headline'ı = error_rate. Blok görsel olarak dokümana gömülü değildir;
+	// eski istemci parse edemezse düz metin olarak görünür (zararsız).
+	fmt.Fprintf(&b, "\n```chart\n{\"title\":%q,\"service\":%q,\"agg\":\"error_rate\",\"rangeS\":%d}\n```\n",
+		service+" · error_rate", service, rangeS)
+	src := fmt.Sprintf("servis RED özeti + baseline + en sık hatalar + deploy işaretçileri + açık problemler + grafik (son %s)", fmtAgoTR(rangeS))
 	if env != "" {
 		src += fmt.Sprintf("; RED tüm ortamlar, problemler ortam: %s", env)
 	}

@@ -1,10 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import type { ChatMessage } from '@/lib/types';
 import { useOpenCriticalCount } from '@/lib/queries';
+import { CosreChart, type CosreChartSpec } from './CosreChart';
 
 // CopilotChat (v0.6.53, v0.9.163 interaktif) — global in-app AI assistant.
 // Sağ-alt animasyonlu sparkline logo (operatör seçimi B) bir drawer açar;
@@ -60,6 +61,36 @@ function mdLite(raw: string): string {
   return escapeHTML(raw)
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+}
+
+// renderMessage (v0.9.183) — asistan metnini ```chart {json}``` bloklarına göre
+// böler: metin parçaları mdLite ile, chart blokları canlı <CosreChart> ile
+// çizilir. Blok, backend guided-health tarafından DETERMİNİSTİK üretilir (LLM
+// biçimlemesine güvenmeyiz — gemma4 küçük model). Akış sürerken kapanmamış bir
+// blok JSON.parse'ı fail eder → o tur düz metin görünür, blok tamamlanınca
+// grafiğe döner (kademeli). Bozuk/eksik spec sessizce atlanır (asla crash).
+function renderMessage(text: string) {
+  const re = /```chart\s*([\s\S]*?)```/g;
+  const out: ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) {
+      out.push(<span key={i++} dangerouslySetInnerHTML={{ __html: mdLite(text.slice(last, m.index)) }} />);
+    }
+    try {
+      const spec = JSON.parse(m[1].trim()) as CosreChartSpec;
+      if (spec && typeof spec.service === 'string' && typeof spec.agg === 'string') {
+        out.push(<CosreChart key={i++} spec={spec} />);
+      }
+    } catch { /* kapanmamış/bozuk blok — atla (akış sürüyor olabilir) */ }
+    last = re.lastIndex;
+  }
+  if (last < text.length) {
+    out.push(<span key={i++} dangerouslySetInnerHTML={{ __html: mdLite(text.slice(last)) }} />);
+  }
+  return out.length ? <>{out}</> : <span dangerouslySetInnerHTML={{ __html: mdLite(text) }} />;
 }
 
 export function CopilotChat() {
@@ -342,9 +373,10 @@ function ChatBubble({ turn, onRate }: { turn: Turn; onRate?: (v: 1 | -1) => void
         ) : isUser ? (
           turn.text
         ) : turn.text ? (
-          // Asistan metni: hafif markdown (escape'li) + akış sürüyorsa imleç.
+          // Asistan metni: hafif markdown (escape'li) + gömülü canlı grafikler
+          // (```chart``` blokları) + akış sürüyorsa imleç.
           <>
-            <span dangerouslySetInnerHTML={{ __html: mdLite(turn.text) }} />
+            {renderMessage(turn.text)}
             {turn.pending && <span className="cm-ai-cursor" />}
           </>
         ) : turn.pending ? (

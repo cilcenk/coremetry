@@ -30,6 +30,12 @@ func TestDecideAnomaly_Directional(t *testing.T) {
 		// Relative floor: a 3σ move that's proportionally tiny must NOT open
 		// (error_rate 1.00 → 1.05 = 5% < 10% floor, even at z=4).
 		{"below relative floor", "error_rate", 4.0, 1.05, 1.0, false, "", ""},
+		// Absolute-value floor (v0.9.180, operator-reported): a few errors among
+		// millions of requests → error_rate ~0% off a ~0 baseline → huge z + huge
+		// relChange, but current is below the 1% absFloor → must NOT open. A real
+		// ≥1% spike still opens (critical at z≥5).
+		{"few errors below absFloor", "error_rate", 6.0, 0.3, 0.0, false, "", ""},
+		{"real spike above absFloor", "error_rate", 6.0, 3.0, 0.0, true, "critical", "spiked"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

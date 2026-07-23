@@ -324,6 +324,22 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	//     Streams partial aggregates instead of buffering whole
 	//     result sets — irrelevant on single-node setups but
 	//     harmless and improves big external CH clusters.
+	// v0.9.184 — per-query memory limits, env-overridable (cfg.*, default
+	// to the built-ins). On a big external cluster the 4GB default cap
+	// tripped CH code 241 on a fleet-wide aggregation; operators raise
+	// COREMETRY_CH_MAX_MEMORY_USAGE to match node RAM without a rebuild.
+	maxMem := int64(4_000_000_000)
+	if cfg.MaxMemoryUsage > 0 {
+		maxMem = cfg.MaxMemoryUsage
+	}
+	extGroupBy := int64(1_000_000_000)
+	if cfg.MaxBytesExternalGroupBy > 0 {
+		extGroupBy = cfg.MaxBytesExternalGroupBy
+	}
+	extSort := int64(1_000_000_000)
+	if cfg.MaxBytesExternalSort > 0 {
+		extSort = cfg.MaxBytesExternalSort
+	}
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:        hosts,
 		Auth:        clickhouse.Auth{Database: cfg.Database, Username: cfg.Username, Password: cfg.Password},
@@ -343,9 +359,9 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		ConnMaxLifetime: time.Hour,
 		Settings: clickhouse.Settings{
 			"max_execution_time":                       60,
-			"max_memory_usage":                         4_000_000_000,
-			"max_bytes_before_external_group_by":       1_000_000_000,
-			"max_bytes_before_external_sort":           1_000_000_000,
+			"max_memory_usage":                         maxMem,
+			"max_bytes_before_external_group_by":       extGroupBy,
+			"max_bytes_before_external_sort":           extSort,
 			"distributed_aggregation_memory_efficient": 1,
 		},
 	})

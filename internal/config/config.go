@@ -336,6 +336,19 @@ type CHConfig struct {
 	// with the cluster to set; set this true to run in degraded mode anyway
 	// (raw-spans reads only). v0.8.213.
 	AllowUnsetCluster bool `yaml:"allow_unset_cluster"`
+
+	// Per-query memory limits (v0.9.184) — env-tunable so a large
+	// external cluster can raise the conservative built-in defaults
+	// (4GB cap / 1GB spill / 1GB sort) without a rebuild. 0 = keep the
+	// default. A fleet-wide aggregation (errors-inbox refresh) hit the
+	// 4GB cap with CH code 241 "memory limit exceeded" on a big prod
+	// cluster whose nodes have far more RAM than 4GB.
+	//   COREMETRY_CH_MAX_MEMORY_USAGE
+	//   COREMETRY_CH_MAX_BYTES_EXTERNAL_GROUP_BY
+	//   COREMETRY_CH_MAX_BYTES_EXTERNAL_SORT
+	MaxMemoryUsage          int64 `yaml:"max_memory_usage"`
+	MaxBytesExternalGroupBy int64 `yaml:"max_bytes_external_group_by"`
+	MaxBytesExternalSort    int64 `yaml:"max_bytes_external_sort"`
 }
 
 // Hosts splits Addr on commas and trims surrounding whitespace, so
@@ -535,6 +548,24 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("COREMETRY_CH_ALLOW_UNSET_CLUSTER"); v == "true" || v == "1" {
 		cfg.ClickHouse.AllowUnsetCluster = true
+	}
+	// v0.9.184 — per-query CH memory limits, env-tunable (bytes). Prod's
+	// external cluster raises these to match node RAM; local/default keep
+	// the conservative 4GB/1GB/1GB built-ins. Only positive values apply.
+	if v := os.Getenv("COREMETRY_CH_MAX_MEMORY_USAGE"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			cfg.ClickHouse.MaxMemoryUsage = n
+		}
+	}
+	if v := os.Getenv("COREMETRY_CH_MAX_BYTES_EXTERNAL_GROUP_BY"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			cfg.ClickHouse.MaxBytesExternalGroupBy = n
+		}
+	}
+	if v := os.Getenv("COREMETRY_CH_MAX_BYTES_EXTERNAL_SORT"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			cfg.ClickHouse.MaxBytesExternalSort = n
+		}
 	}
 	if v := os.Getenv("COREMETRY_HTTP_ADDR"); v != "" {
 		cfg.Listen.HTTP = v

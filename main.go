@@ -1239,6 +1239,19 @@ func newNamespaceResolver(ch *chstore.Store) func(context.Context, string) strin
 // lifetime + refreshes the lease in the background; ticks just
 // check IsLeader and skip when not leader. Other pods sit idle
 // instead of executing redundant work.
+// nextExceptionRefreshSince runs one errors-inbox refresh pass and
+// returns the window for the NEXT pass. The window ALWAYS advances to a
+// 5-min trailing slice — after success OR failure — which is the
+// v0.9.188 contract: a persistently-failing 24h first-tick (prod OOM /
+// CH code 241) must NOT wedge the loop retrying the same window forever
+// (the inbox would then never reach the cheap 5-min steady state, and
+// no new exception ever lands). Extracted from the loop so main_test.go
+// pins the advance-regardless-of-error behaviour.
+func nextExceptionRefreshSince(refresh func(time.Time) (int, error), since, now time.Time) (nextSince time.Time, n int, err error) {
+	n, err = refresh(since)
+	return now.Add(-5 * time.Minute), n, err
+}
+
 func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache.Lock) {
 	const lockKey = "coremetry:lock:exception-refresher"
 	const interval = 60 * time.Second
@@ -1264,17 +1277,15 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 		if !leader.IsLeader() {
 			return
 		}
-		n, err := store.RefreshExceptionGroups(ctx, since)
-		// Advance the trailing window BEFORE handling the result
-		// (v0.9.188 — operator-reported: prod'da yeni exception'lar hiç
-		// görünmüyordu). Root cause: ilk tick 24h tarar; milyar-span
-		// ölçeğinde bu pass OOM olur (CH code 241) ve `since` YALNIZ
-		// BAŞARIDA ilerlediği için loop aynı patlayan 24h penceresini her
-		// tick sonsuza dek tekrarlıyordu — inbox hiç ucuz 5dk steady
-		// state'e ulaşamadı, hiçbir yeni exception düşmedi. Sonucu ne
-		// olursa olsun ilerletmek: başarısız backfill best-effort atlanır,
-		// bir sonraki tick'in 5dk penceresi inbox'ı bugünden ileri ısıtır.
-		since = time.Now().Add(-5 * time.Minute)
+		// v0.9.188 — pencere HER pass'te ilerler (nextExceptionRefreshSince
+		// helper'ında açıklandı): başarısız 24h ilk-tick loop'u aynı
+		// pencerede sonsuza kilitlemesin diye `since` sonuç ne olursa olsun
+		// 5dk trailing'e taşınır.
+		var n int
+		var err error
+		since, n, err = nextExceptionRefreshSince(
+			func(s time.Time) (int, error) { return store.RefreshExceptionGroups(ctx, s) },
+			since, time.Now())
 		if err != nil {
 			log.Printf("[errors-inbox] refresh: %v", err)
 			return

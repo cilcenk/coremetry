@@ -12,10 +12,12 @@ import "testing"
 func TestEvalWindow_Dwell(t *testing.T) {
 	const median, mad = 100.0, 5.0 // z = madScale*(v-100)/5
 	const (
-		spike  = 140.0 // z ≈ 5.40 → open (up)
+		// v0.9.193 P1-only: spike artık ≥criticalZ(6) olmalı ki açılsın
+		// (140 → z≈5.40 warning-grade idi, artık sessiz).
+		spike  = 150.0 // z ≈ 6.75 → open (up, critical)
 		normal = 101.0 // z ≈ 0.13 → not open, resolved
-		bigUp  = 126.0 // z ≈ 3.51 → open up
-		bigDn  = 74.0  // z ≈ -3.51 → open down
+		bigUp  = 126.0 // z ≈ 3.51 → warning-grade (artık açılmaz; flap testinde yön için)
+		bigDn  = 74.0  // z ≈ -3.51 → request_rate düşüşü critical açılır
 	)
 
 	// Single transient spike (only the most recent bucket) must NOT open.

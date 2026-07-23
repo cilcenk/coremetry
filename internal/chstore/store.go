@@ -904,6 +904,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			min_samples  UInt32       DEFAULT 0,
 			cooldown_sec UInt32       DEFAULT 0,
 			log_query    String       DEFAULT '',     -- saved-search log alert (v0.5.242)
+			watcher_json String       DEFAULT '',     -- imported ES Watcher definition, verbatim (v0.9.x)
 			created_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
@@ -1592,6 +1593,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		// defined KQL → rate-threshold" rules. Evaluator
 		// switches paths based on len(log_query) > 0.
 		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS log_query String DEFAULT ''`,
+		// v0.9.x — ES Watcher birebir-JSON import (Faz-1). The verbatim
+		// PUT _watcher/watch body; empty for native rules. The evaluator
+		// switches to the watcher path on len(watcher_json) > 0, exactly
+		// like the log_query switch above. alert_rules is a low-volume
+		// state table (not in highVolumeTables) so adaptDDL injects
+		// ON CLUSTER on distributed installs — no _local hazard, same
+		// shape as the runbook_url/for_sec ALTERs. Plain String (free
+		// JSON text — never LowCardinality).
+		`ALTER TABLE alert_rules ADD COLUMN IF NOT EXISTS watcher_json String DEFAULT ''`,
 		// v0.5.244 — Drain-extracted log templates ledger. Puller
 		// goroutine pulls a sample of recent logs every 5min,
 		// runs them through the Drain-3 templater, upserts the

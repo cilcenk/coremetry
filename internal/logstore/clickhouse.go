@@ -2,6 +2,7 @@ package logstore
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -416,6 +417,15 @@ func (s *CHStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, err
 	_ = ctx
 	_ = q
 	return nil, fmt.Errorf("EQL is Elasticsearch-only (ClickHouse backend has no equivalent)")
+}
+
+// RawSearch — CH stub (v0.9.x, watcher import Faz-1). An imported
+// watcher's search body is ES query DSL; CH cannot execute it. The
+// typed error follows the EQLSearch precedent so the evaluator logs
+// a clean "not supported on this backend" instead of firing wrong.
+func (s *CHStore) RawSearch(ctx context.Context, indices []string, body json.RawMessage, trackTotalCap int) (int64, error) {
+	_, _, _, _ = ctx, indices, body, trackTotalCap
+	return 0, fmt.Errorf("watcher raw search is Elasticsearch-only (ClickHouse backend cannot execute an ES search body)")
 }
 
 // Indices — CH stub (v0.5.466). Single physical table on the

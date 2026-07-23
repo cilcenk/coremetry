@@ -59,6 +59,10 @@ type Server struct {
 	// chPing* back the 5s-cached CH reachability read on /api/health
 	// (v0.8.339) — see chReachable.
 	chPingMu sync.Mutex
+	// watcherImportMu serialises the watcher import's name-collision
+	// check + insert (v0.9.x, review F8) — closes the same-pod TOCTOU;
+	// see importWatcher for the cross-pod posture.
+	watcherImportMu sync.Mutex
 	// meUsers — /api/auth/me'nin 30s kullanıcı cache'i (v0.8.519,
 	// perf raporu #7); her kullanıcı-yazma yolu clear() çağırır.
 	meUsers *meCache
@@ -723,6 +727,11 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/alert-rules/{id}/enable", auth.RequireAnyRole(editorRoles, s.enableAlertRule))
 	mux.HandleFunc("POST   /api/alert-rules/{id}/disable", auth.RequireAnyRole(editorRoles, s.disableAlertRule))
 	mux.HandleFunc("GET    /api/alert-rules/baseline", auth.RequireAnyRole(editorRoles, s.getAlertBaseline))
+	// ES Watcher import (Faz-1) — raw PUT _watcher/watch body →
+	// projected alert rule (Metric="watcher") with a field-by-field
+	// mapping report; dryRun previews without persisting. Same gate
+	// as the alert-rule CRUD it feeds.
+	mux.HandleFunc("POST   /api/watchers/import", auth.RequireAnyRole(editorRoles, s.importWatcher))
 	// Runbooks (v0.7.0) — operator-authored executable procedures.
 	// GET list/detail open so viewers see them read-only (invariant #7);
 	// every write gated to editor+. Executions + agent dispatch land next.
@@ -9355,6 +9364,19 @@ func (s *Server) createAlertRule(w http.ResponseWriter, r *http.Request) {
 	}
 	if rule.ID == "" {
 		rule.ID = newID(8)
+	} else if existing, err := s.store.GetAlertRule(r.Context(), rule.ID); err == nil && existing != nil {
+		// v0.9.x (review F13) — POST with a caller-supplied id that
+		// already exists would blind whole-row-replace the rule
+		// (ReplacingMergeTree) and silently wipe watcher_json: the PUT
+		// path's preservation guard never runs on create. Narrowest
+		// fix that keeps id-supplying config scripts working for NEW
+		// ids: creates never overwrite — update goes through PUT.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("an alert rule with id %q already exists — use PUT /api/alert-rules/%s to update it", rule.ID, rule.ID),
+		})
+		return
 	}
 	rule.BuiltIn = false
 	rule.CreatedAt = time.Now().UnixNano()
@@ -9387,6 +9409,14 @@ func (s *Server) updateAlertRule(w http.ResponseWriter, r *http.Request) {
 	rule.ID = existing.ID
 	rule.BuiltIn = existing.BuiltIn
 	rule.CreatedAt = existing.CreatedAt
+	// v0.9.x — whole-row replace carry: the UI edit payload doesn't
+	// round-trip the imported ES Watcher definition; an empty value
+	// here means "not editing it", never "clear it" (same preservation
+	// posture as builtIn/createdAt above, and as stored secrets in
+	// Settings). Watcher rules lose their evaluation source otherwise.
+	if rule.WatcherJSON == "" {
+		rule.WatcherJSON = existing.WatcherJSON
+	}
 	if err := s.store.UpsertAlertRule(r.Context(), rule); err != nil {
 		writeErr(w, err)
 		return

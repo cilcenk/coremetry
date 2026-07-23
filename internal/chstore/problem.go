@@ -58,8 +58,17 @@ type AlertRule struct {
 	// shorthand (level:error, pod:my-pod) is rewritten by the
 	// ES backend's expandShorthand so the same query works
 	// against any shipping pipeline.
-	LogQuery  string `json:"logQuery,omitempty"`
-	CreatedAt int64  `json:"createdAt"` // unix nanoseconds
+	LogQuery string `json:"logQuery,omitempty"`
+	// WatcherJSON (v0.9.x) — the verbatim ES Watcher definition
+	// (PUT _watcher/watch body) this rule was imported from. When
+	// set, the evaluator runs the watcher path (internal/watcher
+	// parse → logstore.RawSearch count → compare) instead of the
+	// span-metric or log-query paths. Stored raw so the definition
+	// round-trips byte-identical regardless of what the parser
+	// models. Empty for every native rule. Metric="watcher" by
+	// convention so the rules table renders consistently.
+	WatcherJSON string `json:"watcherJson,omitempty"`
+	CreatedAt   int64  `json:"createdAt"` // unix nanoseconds
 }
 
 type Problem struct {
@@ -733,7 +742,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		       cooldown_sec, log_query, toUnixTimestamp64Nano(created_at)
+		       cooldown_sec, log_query, watcher_json, toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL
 		ORDER BY created_at DESC`)
 	if err != nil {
@@ -747,7 +756,7 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 		if err := rows.Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator,
 			&r.Threshold, &r.WindowSec, &r.Severity, &enabled, &builtIn,
 			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec,
-			&r.LogQuery, &r.CreatedAt); err != nil {
+			&r.LogQuery, &r.WatcherJSON, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		r.Enabled = enabled == 1
@@ -795,14 +804,14 @@ func (s *Store) UpsertAlertRule(ctx context.Context, r AlertRule) error {
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO alert_rules
 		(id, name, service, metric, comparator, threshold, window_sec,
 		 severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		 cooldown_sec, log_query, created_at, version)`)
+		 cooldown_sec, log_query, watcher_json, created_at, version)`)
 	if err != nil {
 		return err
 	}
 	if err := batch.Append(r.ID, r.Name, r.Service, r.Metric, r.Comparator,
 		r.Threshold, r.WindowSec, r.Severity, enabled, builtIn,
 		r.RunbookURL, r.ForSec, r.MinSamples, r.CooldownSec, r.LogQuery,
-		time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
+		r.WatcherJSON, time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
 		return err
 	}
 	if err := batch.Send(); err != nil {
@@ -847,12 +856,12 @@ func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error)
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, name, service, metric, comparator, threshold, window_sec,
 		       severity, enabled, built_in, runbook_url, for_sec, min_samples,
-		       cooldown_sec, log_query, toUnixTimestamp64Nano(created_at)
+		       cooldown_sec, log_query, watcher_json, toUnixTimestamp64Nano(created_at)
 		FROM alert_rules FINAL WHERE id = ? LIMIT 1`, id).
 		Scan(&r.ID, &r.Name, &r.Service, &r.Metric, &r.Comparator, &r.Threshold,
 			&r.WindowSec, &r.Severity, &enabled, &builtIn,
 			&r.RunbookURL, &r.ForSec, &r.MinSamples, &r.CooldownSec,
-			&r.LogQuery, &r.CreatedAt)
+			&r.LogQuery, &r.WatcherJSON, &r.CreatedAt)
 	if err != nil {
 		return nil, err
 	}

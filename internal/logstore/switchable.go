@@ -2,6 +2,7 @@ package logstore
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"time"
 )
@@ -75,6 +76,10 @@ func (s *Switchable) Histogram(ctx context.Context, f Filter, bucketSec int, gro
 
 func (s *Switchable) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, error) {
 	return s.Current().EQLSearch(ctx, q)
+}
+
+func (s *Switchable) RawSearch(ctx context.Context, indices []string, body json.RawMessage, trackTotalCap int) (int64, error) {
+	return s.Current().RawSearch(ctx, indices, body, trackTotalCap)
 }
 
 func (s *Switchable) Indices(ctx context.Context) ([]IndexInfo, error) {

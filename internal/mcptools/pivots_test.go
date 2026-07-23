@@ -125,6 +125,9 @@ func (s *stubLogStore) Histogram(context.Context, logstore.Filter, int, string) 
 func (s *stubLogStore) EQLSearch(context.Context, logstore.EQLQuery) ([]logstore.EQLSequence, error) {
 	return nil, nil
 }
+func (s *stubLogStore) RawSearch(context.Context, []string, json.RawMessage, int) (int64, error) {
+	return 0, nil
+}
 func (s *stubLogStore) Indices(context.Context) ([]logstore.IndexInfo, error) { return nil, nil }
 func (s *stubLogStore) FieldValues(context.Context, string, string, int) ([]string, error) {
 	return nil, nil

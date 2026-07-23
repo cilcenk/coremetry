@@ -5,7 +5,7 @@ import type {
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, EndpointDetail, EndpointSplitResponse, ServiceAttrsResponse,
-  AlertRule, Problem,
+  AlertRule, Problem, WatcherImportResult,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
@@ -1781,6 +1781,19 @@ export const api = {
     request<void>(`/api/alert-rules/${id}/enable`, { method: 'POST' }),
   disableAlertRule: (id: string) =>
     request<void>(`/api/alert-rules/${id}/disable`, { method: 'POST' }),
+  // ES Watcher import (Faz-1) — `watchText` is the operator's LITERAL
+  // textarea paste: the raw string travels verbatim inside a JSON
+  // string (review F5 — a client-side parse→stringify round-trip
+  // silently rounds integers above 2^53 and reformats the
+  // definition). The server normalizes Kibana DevTools
+  // """triple-quoted""" strings and stores the normalized JSON.
+  // dryRun previews the mapping report without persisting anything.
+  importWatcher: (body: { name: string; watchText: string; dryRun: boolean }) =>
+    request<WatcherImportResult>('/api/watchers/import', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 
   // ── Runbooks (v0.7.0) ──────────────────────────────────────────────────────
   runbooks: () => get<Runbook[] | null>('/api/runbooks'),

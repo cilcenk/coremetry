@@ -314,6 +314,101 @@ func renderServiceSnapshot(cx *aiServiceContext) string {
 	return b.String()
 }
 
+// ── Operation-level context (v0.9.184) — the operasyon twin of the
+// service context. CoSRE answers "GET /orders nasıl" / "bu operasyonun
+// durumu" by scoping RED to a single span name. All numbers come from
+// operation_summary_5m via ONE GetOperationSummaryCompared call, which
+// carries both the current window AND the prior-equal-window baseline
+// (Prior* fields) — so unlike buildServiceContext we don't run two
+// aggregate reads. No raw spans leave the server. ───────────────────
+
+type aiOperationContext struct {
+	Service     string     `json:"service"`
+	Operation   string     `json:"operation"`
+	RangeS      int64      `json:"rangeS"`
+	Current     aiRED      `json:"current"`
+	Baseline    aiRED      `json:"baseline"`
+	HasBaseline bool       `json:"hasBaseline"`
+	Apdex       float64    `json:"apdex"`
+	Deploys     []aiDeploy `json:"deploys"`
+}
+
+// buildOperationContext summarises a single (service, operation) RED
+// window + its baseline from operation_summary_5m. operation is the raw
+// span name (normalized=false) so it matches the frontend `?op=` value
+// and the chart's `name = "..."` DSL.
+func (s *Server) buildOperationContext(ctx context.Context, service, operation string, from, to time.Time) *aiOperationContext {
+	span := to.Sub(from)
+	winSec := span.Seconds()
+	cx := &aiOperationContext{Service: service, Operation: operation, RangeS: int64(winSec)}
+
+	rows, err := s.store.GetOperationSummaryCompared(ctx, service, 0, from, to, false)
+	if err != nil {
+		return cx
+	}
+	var row *chstore.OperationSummary
+	for i := range rows {
+		if rows[i].Name == operation {
+			row = &rows[i]
+			break
+		}
+	}
+	if row == nil {
+		return cx
+	}
+	cx.Current = aiRED{
+		Spans: row.SpanCount, ErrorCount: row.ErrorCount, ErrorRate: row.ErrorRate,
+		AvgMs: row.AvgMs, P50Ms: row.P50Ms, P95Ms: row.P95Ms, P99Ms: row.P99Ms,
+	}
+	if winSec > 0 {
+		cx.Current.Rate = float64(row.SpanCount) / winSec
+	}
+	cx.Apdex = row.Apdex
+	if row.HasPrior {
+		cx.HasBaseline = true
+		cx.Baseline = aiRED{
+			Spans: row.PriorSpanCount, ErrorCount: row.PriorErrorCount, ErrorRate: row.PriorErrorRate,
+			AvgMs: row.PriorAvgMs, P50Ms: row.PriorP50Ms, P95Ms: row.PriorP95Ms, P99Ms: row.PriorP99Ms,
+		}
+		// Baseline.Rate KASITLI olarak set edilmez (v0.9.187): prior
+		// pencere GetOperationSummaryCompared'da sınır bucket'ı atıldığı
+		// için current ile aynı winSec'e bölmek asimetrik/yanıltıcı olur;
+		// renderOperationSnapshot baseline rate göstermiyor zaten.
+	}
+	// Deploy markers are service-level (a deploy touches every operation).
+	if deps, derr := s.store.GetServiceDeploys(ctx, service, from, to); derr == nil {
+		for _, d := range deps {
+			cx.Deploys = append(cx.Deploys, aiDeploy{Version: d.Version, TimeUnixNs: d.TimeUnixNs})
+		}
+	}
+	return cx
+}
+
+// renderOperationSnapshot mirrors renderServiceSnapshot for a single
+// operation (compact Turkish; field order/labels affect the narration).
+func renderOperationSnapshot(cx *aiOperationContext) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Operasyon: %s / %s (son %d dakika)\n", cx.Service, cx.Operation, cx.RangeS/60)
+	c := cx.Current
+	fmt.Fprintf(&b, "RED: rate=%.2f req/s, error=%.2f%% (%d hata), p50=%.0fms, p95=%.0fms, p99=%.0fms, apdex=%.2f\n",
+		c.Rate, c.ErrorRate, c.ErrorCount, c.P50Ms, c.P95Ms, c.P99Ms, cx.Apdex)
+	if cx.HasBaseline {
+		bl := cx.Baseline
+		fmt.Fprintf(&b, "Baseline (önceki %d dk): error=%.2f%%, p99=%.0fms, p50=%.0fms\n",
+			cx.RangeS/60, bl.ErrorRate, bl.P99Ms, bl.P50Ms)
+	} else {
+		b.WriteString("Baseline: önceki pencerede bu operasyon için veri yok.\n")
+	}
+	if len(cx.Deploys) > 0 {
+		var parts []string
+		for _, d := range cx.Deploys {
+			parts = append(parts, d.Version)
+		}
+		fmt.Fprintf(&b, "Deploy(lar) (servis geneli): %s\n", strings.Join(parts, ", "))
+	}
+	return b.String()
+}
+
 // parseServiceAnalysis tolerantly extracts the JSON verdict (same fence-stripping
 // as the system analysis). Returns nil on unparseable output.
 func parseServiceAnalysis(raw string) *serviceAnalysis {

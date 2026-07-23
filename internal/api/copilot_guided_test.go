@@ -508,3 +508,39 @@ func TestRouteGuidedIntentContext(t *testing.T) {
 		})
 	}
 }
+
+// v0.9.184 — operation-scope resolver (pure core of resolveGuidedOperation).
+// Text-match wins over context; longest op wins; bare verbs (len<6) never
+// match; the ?op= fallback needs BOTH a signal word AND a live-list hit.
+func TestPickGuidedOperation(t *testing.T) {
+	ops := []string{"GET", "GET /orders", "GET /orders/:id", "POST /pay", "SELECT users"}
+	cases := []struct {
+		name string
+		msg  string
+		ctx  string
+		want string
+	}{
+		{"text match full op", "GET /orders/:id nasıl", "", "GET /orders/:id"},
+		{"longest op wins", "get /orders/:id durumu nedir", "", "GET /orders/:id"},
+		{"shorter op when only it matches", "get /orders yavaş mı", "", "GET /orders"},
+		{"bare verb never matches", "get isteği neden yavaş", "", ""},
+		{"ctx op with signal word", "bu operasyonun durumu ne", "POST /pay", "POST /pay"},
+		{"ctx op via endpoint word", "bu endpoint neden yavaş", "SELECT users", "SELECT users"},
+		{"ctx op but no signal word", "checkout neden yavaş", "POST /pay", ""},
+		{"ctx op not in live list", "bu operasyon nasıl", "DELETE /gone", ""},
+		{"text match beats ctx op", "get /orders/:id nasıl", "POST /pay", "GET /orders/:id"},
+		{"empty ops", "GET /orders nasıl", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			list := ops
+			if tc.name == "empty ops" {
+				list = nil
+			}
+			got := pickGuidedOperation(normalizeGuidedMsg(tc.msg), list, tc.ctx)
+			if got != tc.want {
+				t.Fatalf("got %q want %q (msg %q ctx %q)", got, tc.want, tc.msg, tc.ctx)
+			}
+		})
+	}
+}

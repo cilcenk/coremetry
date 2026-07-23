@@ -59,6 +59,12 @@ const (
 	guidedSlowTraces    guidedIntent = "slow_traces"
 	guidedDeployImpact  guidedIntent = "deploy_impact"
 	guidedLogErrors     guidedIntent = "log_errors"
+	// guidedFamilyHealth (v0.9.192) — a family-of-services ask:
+	// "mobile bff'lerde hangisinde hata var". No single service
+	// resolves, but the message's name-fragments (mobile + bff) match
+	// 2+ live services as bounded name segments → one MV read compares
+	// the family's RED side by side.
+	guidedFamilyHealth guidedIntent = "family_health"
 )
 
 type guidedRoute struct {
@@ -73,6 +79,9 @@ type guidedRoute struct {
 	// (env-separation Phase 4 pending) — those bundles SAY so in the
 	// evidence instead of silently ignoring the ask.
 	Env string
+	// Family (v0.9.192) — the resolved service list for a
+	// guidedFamilyHealth route ("mobile bff'ler"); nil otherwise.
+	Family []string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -306,12 +315,24 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 	toks := guidedTokens(msg)
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
+	// Family resolution (v0.9.192 — operator-reported: "mobile
+	// bff'lerde hangisinde hata var" servis bulamıyordu): tek servis
+	// çözülmediyse ve soru sağlık/hata/problem şekilliyse, mesajın
+	// ad-parçaları (mobile + bff) 2+ canlı servisi aile olarak
+	// yakalayabilir. Açık tek-servis eşleşmesi HER ZAMAN aileden önce
+	// gelir (svc != "" iken hiç denenmez).
+	var family []string
+	if svc == "" && (hasHealthSignal(toks) || hasErrorSignal(toks) || hasProblemSignal(toks)) {
+		family = extractServiceFamily(msg, services, envs)
+	}
 	// Context-awareness (v0.9.164): mesaj bir servis ADI taşımıyorsa ve
 	// frontend geçerli (katalogda olan) bir sayfa-servisi geçirmişse onu
 	// varsayılan al — "neden yavaş?" checkout sayfasında → checkout. Şeffaf:
 	// banner scope'u söyler. Mesajda açık servis varsa ELLEMEZ (kullanıcı
-	// başka servisi kastediyorsa context ezmez).
-	if svc == "" && ctxService != "" {
+	// başka servisi kastediyorsa context ezmez). Aile yakalandıysa da
+	// ELLEMEZ — "mobile bff'ler" sorusu checkout sayfasında checkout'a
+	// daralmamalı.
+	if svc == "" && len(family) == 0 && ctxService != "" {
 		for _, s := range services {
 			if s == ctxService {
 				svc = ctxService
@@ -321,19 +342,88 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 	}
 	switch {
 	case hasSlowTraceSignal(msg):
-		return guidedRoute{guidedSlowTraces, svc, env}
+		return guidedRoute{Intent: guidedSlowTraces, Service: svc, Env: env}
 	case hasDeploySignal(toks):
-		return guidedRoute{guidedDeployImpact, svc, env}
+		return guidedRoute{Intent: guidedDeployImpact, Service: svc, Env: env}
 	case hasLogSignal(toks) && hasErrorSignal(toks):
-		return guidedRoute{guidedLogErrors, svc, env}
+		return guidedRoute{Intent: guidedLogErrors, Service: svc, Env: env}
+	case len(family) >= 2:
+		return guidedRoute{Intent: guidedFamilyHealth, Env: env, Family: family}
 	case hasProblemSignal(toks):
-		return guidedRoute{guidedProblems, svc, env}
+		return guidedRoute{Intent: guidedProblems, Service: svc, Env: env}
 	case svc != "" && (hasHealthSignal(toks) || hasErrorSignal(toks)):
-		return guidedRoute{guidedServiceHealth, svc, env}
+		return guidedRoute{Intent: guidedServiceHealth, Service: svc, Env: env}
 	case hasErrorSignal(toks):
-		return guidedRoute{guidedProblems, "", env}
+		return guidedRoute{Intent: guidedProblems, Env: env}
 	}
-	return guidedRoute{guidedNone, "", ""}
+	return guidedRoute{}
+}
+
+// extractServiceFamily resolves a family-of-services ask against the
+// LIVE service list (v0.9.192). Fragments = message tokens that occur
+// inside ≥1 service name as a BOUNDED segment ("mobile", "bff" inside
+// "mobile-overview-bff-prod"; separators -_.). The family = services
+// containing ALL fragments. <2 matches → nil (single-service paths
+// already handle 1; zero fragments = not a name-shaped ask). >40 →
+// nil: a lone generic fragment ("prod") must not claim the fleet.
+func extractServiceFamily(msg string, services, envs []string) []string {
+	envTok := map[string]bool{}
+	for _, e := range envs {
+		envTok[strings.ToLower(e)] = true
+	}
+	var frags []string
+	for _, t := range guidedTokens(msg) {
+		if len(t) < 3 || guidedStopwords[t] || envTok[t] || !asciiNameToken(t) {
+			continue
+		}
+		for _, svc := range services {
+			if segmentInName(strings.ToLower(svc), t) {
+				frags = append(frags, t)
+				break
+			}
+		}
+	}
+	if len(frags) == 0 {
+		return nil
+	}
+	var fam []string
+	for _, svc := range services {
+		ls := strings.ToLower(svc)
+		all := true
+		for _, f := range frags {
+			if !segmentInName(ls, f) {
+				all = false
+				break
+			}
+		}
+		if all {
+			fam = append(fam, svc)
+		}
+	}
+	if len(fam) < 2 || len(fam) > 40 {
+		return nil
+	}
+	return fam
+}
+
+// segmentInName reports whether t occurs in name as a whole segment —
+// bounded by -_. separators or the name's ends ("bff" matches
+// "mobile-bff-prod", never "rebuff-svc").
+func segmentInName(name, t string) bool {
+	for start := 0; ; {
+		i := strings.Index(name[start:], t)
+		if i < 0 {
+			return false
+		}
+		i += start
+		leftOK := i == 0 || name[i-1] == '-' || name[i-1] == '_' || name[i-1] == '.'
+		r := i + len(t)
+		rightOK := r == len(name) || name[r] == '-' || name[r] == '_' || name[r] == '.'
+		if leftOK && rightOK {
+			return true
+		}
+		start = i + 1
+	}
 }
 
 // guidedRangeRe extracts "son 2 saat" / "last 30 minutes" style
@@ -459,6 +549,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		} else {
 			evidence, sources, err = s.guidedServiceHealthBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 		}
+	case guidedFamilyHealth:
+		evidence, sources, err = s.guidedFamilyHealthBundle(ctx, emit, route.Family, route.Env, from, to, rangeS)
 	case guidedSlowTraces:
 		evidence, sources, err = s.guidedSlowTracesBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedDeployImpact:
@@ -714,6 +806,65 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 	if env != "" {
 		src += fmt.Sprintf("; problemler ortam: %s", env)
 	}
+	return b.String(), src, nil
+}
+
+// guidedFamilyHealthBundle (v0.9.192) — compares a service FAMILY's RED
+// side by side ("mobile bff'lerde hangisinde hata var"). ONE MV read
+// (GetServicesAggFilteredIn with the family as the serviceIn allowlist)
+// — no per-service fan-out. Evidence is error-ranked so the narration
+// can answer "hangisinde" directly; the worst service gets a live
+// error_rate chart.
+func (s *Server) guidedFamilyHealthBundle(ctx context.Context, emit func(string, any), family []string, env string, from, to time.Time, rangeS int64) (string, string, error) {
+	if argsB, merr := json.Marshal(map[string]any{"services": family}); merr == nil {
+		emitGuidedStep(emit, "family_context", string(argsB))
+	}
+	rows, err := s.store.GetServicesAggFilteredIn(ctx, from, to, "", family, "", "", len(family), 0)
+	if err != nil {
+		return "", "", err
+	}
+	// Most-broken first: errors desc, then error-rate, then traffic.
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].ErrorCount != rows[j].ErrorCount {
+			return rows[i].ErrorCount > rows[j].ErrorCount
+		}
+		if rows[i].ErrorRate != rows[j].ErrorRate {
+			return rows[i].ErrorRate > rows[j].ErrorRate
+		}
+		return rows[i].SpanCount > rows[j].SpanCount
+	})
+
+	var b strings.Builder
+	if env != "" {
+		fmt.Fprintf(&b, "Not: RED değerleri tüm ortamların toplamı; %q ortam daraltması bu karşılaştırmada uygulanmıyor.\n", env)
+	}
+	fmt.Fprintf(&b, "Servis ailesi (%d servis, son %d dakika), hata sayısına göre sıralı:\n", len(family), rangeS/60)
+	const maxRows = 12
+	winSec := float64(rangeS)
+	for i, r := range rows {
+		if i >= maxRows {
+			fmt.Fprintf(&b, "… ve %d servis daha (hepsi daha az hatalı).\n", len(rows)-maxRows)
+			break
+		}
+		rate := 0.0
+		if winSec > 0 {
+			rate = float64(r.SpanCount) / winSec
+		}
+		fmt.Fprintf(&b, "- %s: rate=%.1f req/s, error=%.2f%% (%d hata), p99=%.0fms\n",
+			r.Name, rate, r.ErrorRate, r.ErrorCount, r.P99Ms)
+	}
+	if len(rows) == 0 {
+		b.WriteString("Bu pencerede ailenin hiçbir servisinden span verisi yok.\n")
+	}
+	// Worst-offender chart: the family question is about errors, so the
+	// top row (errors-ranked) gets the live error_rate card.
+	if len(rows) > 0 && rows[0].ErrorCount > 0 {
+		b.WriteString(chartFence(guidedChartSpec{
+			Title: rows[0].Name + " · error_rate", Service: rows[0].Name,
+			Agg: "error_rate", RangeS: rangeS,
+		}))
+	}
+	src := fmt.Sprintf("servis ailesi RED karşılaştırması — %d servis tek MV okuması (son %s)", len(family), fmtAgoTR(rangeS))
 	return b.String(), src, nil
 }
 

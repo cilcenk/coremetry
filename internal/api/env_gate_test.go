@@ -45,7 +45,7 @@ func TestServicesUseMV_EnvDisqualifies(t *testing.T) {
 
 func TestServicesListKey_CarriesEnv(t *testing.T) {
 	key := func(env string) string {
-		return servicesListKey(false, 50, 0, "b", "", "spanCount", "desc", "", "", "", env, false)
+		return servicesListKey(false, 50, 0, "b", "", "spanCount", "desc", "", "", "", env, "", false)
 	}
 	uat, prep, all := key("uat"), key("prep"), key("")
 	if uat == prep || uat == all || prep == all {

@@ -116,6 +116,14 @@ export default function ServicesPage() {
     return p.get('cluster') ?? '';
   });
   const [clusterOptions, setClusterOptions] = useState<string[]>([]);
+  // Namespace filter (v0.9.189) — derived service namespace
+  // (service.namespace / k8s.namespace.name via service_metadata).
+  // Init from ?namespace= for deep-links, same one-way URL read as cluster.
+  const [namespace, setNamespace] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    return p.get('namespace') ?? '';
+  });
+  const [namespaceOptions, setNamespaceOptions] = useState<string[]>([]);
 
   // serviceFilter is the picker's draft — typing / dropdown picks
   // mutate it freely and the in-memory `sorted` re-filter narrows
@@ -187,7 +195,7 @@ export default function ServicesPage() {
   // pagination handles the long tail without scaling cost.
 
   useEffect(() => {
-    const sig = JSON.stringify([committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env]);
+    const sig = JSON.stringify([committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace]);
     if (page !== 0 && fetchSigRef.current !== null && fetchSigRef.current !== sig) {
       // Sayfa-dışı bir girdi değişti ama page hâlâ eski: reset effect'i
       // birazdan page=0 yapacak; bu turdaki fetch boşa gider — atla.
@@ -239,6 +247,10 @@ export default function ServicesPage() {
       // conjunct on the raw path, so the page is correct across
       // pagination, not just the loaded 50 rows.
       env: env || undefined,
+      // Namespace filter (v0.9.189) — server resolves it to the
+      // service-name allowlist (catalog), so the page is correct across
+      // pagination and stays on the MV fast path (unlike cluster/env).
+      namespace: namespace || undefined,
       withTotal: '1',
     }).then(resp => {
       if (cancelled) return;
@@ -258,12 +270,12 @@ export default function ServicesPage() {
       }
     }).catch(() => { if (!cancelled) { setData(null); setRefreshing(false); setHasMore(false); } });
     return () => { cancelled = true; };
-  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env]);
+  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace]);
 
   // Reset to page 0 whenever the search filter, time range,
   // sort, or team / cluster / env filter changes — staying on page 5
   // of an old result set when the operator re-orders is jarring.
-  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env]);
+  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace]);
 
   // Pre-fetch the cluster options on first mount and whenever
   // the time range changes. The /api/clusters response is
@@ -273,6 +285,8 @@ export default function ServicesPage() {
     const { from, to } = timeRangeToNs(range);
     api.clusters(from, to).then(r => setClusterOptions(r?.clusters ?? []))
       .catch(() => setClusterOptions([]));
+    api.namespaces(from, to).then(r => setNamespaceOptions(r?.namespaces ?? []))
+      .catch(() => setNamespaceOptions([]));
   }, [range]);
 
   // Service combobox options come from the loaded data itself.
@@ -463,6 +477,17 @@ export default function ServicesPage() {
               <option value="">All clusters{clusterOptions.length > 0 ? ` (${clusterOptions.length})` : ''}</option>
               {clusterOptions.map(c => (
                 <option key={c} value={c}>{c}</option>
+              ))}
+            </select>
+            <select value={namespace}
+              onChange={e => setNamespace(e.target.value)}
+              style={{ minWidth: 160 }}
+              title={namespaceOptions.length === 0
+                ? 'No namespaces detected — set service.namespace / k8s.namespace.name on your OTel SDK resource attrs'
+                : `${namespaceOptions.length} namespace${namespaceOptions.length === 1 ? '' : 's'} detected`}>
+              <option value="">All namespaces{namespaceOptions.length > 0 ? ` (${namespaceOptions.length})` : ''}</option>
+              {namespaceOptions.map(ns => (
+                <option key={ns} value={ns}>{ns}</option>
               ))}
             </select>
             <label style={{ display: 'flex', alignItems: 'center', gap: 5,

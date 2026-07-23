@@ -124,6 +124,11 @@ export const api = {
     // v0.8.385). Same raw-fallback semantics as cluster, but the
     // conjunct is a typed LowCardinality column (cheaper).
     env?: string;
+    // Namespace filter (v0.9.189) — derived service namespace
+    // (service.namespace / k8s.namespace.name via service_metadata).
+    // Resolved server-side into the service-name allowlist like the
+    // team filters, so it keeps the MV fast path (unlike cluster/env).
+    namespace?: string;
     // v0.7.44 — opt-in distinct-service total for the First/Last pager.
     // Default off keeps the hot path count-free.
     withTotal?: '1';
@@ -141,6 +146,11 @@ export const api = {
   // selector on the service detail page.
   clusters: (fromNs: number, toNs: number) =>
     get<{ clusters: string[] }>(`/api/clusters?from=${fromNs}&to=${toNs}`),
+  // Distinct derived namespaces (service_metadata.Namespace) — options
+  // for the /services namespace filter (v0.9.189). Catalog-sourced,
+  // no span scan; 5-min cached server-side.
+  namespaces: (fromNs: number, toNs: number) =>
+    get<{ namespaces: string[] }>(`/api/namespaces?from=${fromNs}&to=${toNs}`),
   // Distinct deployment environments (spans.deploy_env) — options for
   // the global Topbar env picker (v0.8.383). Deliberately param-less:
   // the server defaults to a 24h window and clamps the enumeration

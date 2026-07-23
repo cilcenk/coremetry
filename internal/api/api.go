@@ -458,6 +458,7 @@ func (s *Server) Start() error {
 	// REST API
 	mux.HandleFunc("GET /api/services", s.getServices)
 	mux.HandleFunc("GET /api/clusters", s.getClusters)
+	mux.HandleFunc("GET /api/namespaces", s.getNamespaces)
 	// v0.8.576 — Thanos-backed remote-cluster pod metrikleri
 	// (/clusters yüzeyi). Fan-out istemcide: sayfa cluster başına
 	// ayrı istek atar, her cluster kendi cache slotunda (audit §6).
@@ -1366,6 +1367,38 @@ func (s *Server) getClusters(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getNamespaces returns the distinct derived namespaces across the
+// service catalog — the option list for the Services-page namespace
+// filter (v0.9.189). Sourced from service_metadata.Namespace (the
+// deriver coalesces service.namespace AND k8s.namespace.name), so it
+// costs NO span scan — a catalog read (~thousands of rows), 5-min
+// cached like getClusters. Small LowCardinality set → plain <select>.
+func (s *Server) getNamespaces(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, 24*time.Hour)
+	key := "namespaces:" + cacheBucket(from, to)
+	s.serveCached(w, r, key, 5*time.Minute, func(ctx context.Context) (any, error) {
+		catalog, err := s.store.ListServiceMetadata(ctx)
+		if err != nil {
+			return nil, err
+		}
+		seen := map[string]struct{}{}
+		names := []string{}
+		for _, md := range catalog {
+			ns := strings.TrimSpace(md.Namespace)
+			if ns == "" {
+				continue
+			}
+			if _, ok := seen[ns]; ok {
+				continue
+			}
+			seen[ns] = struct{}{}
+			names = append(names, ns)
+		}
+		sort.Strings(names)
+		return map[string]any{"namespaces": names}, nil
+	})
+}
+
 // getEnvironments returns the distinct deployment environments
 // (spans.deploy_env) observed in the requested window — the option
 // list for the global Topbar env picker (v0.8.383, env-separation
@@ -1428,9 +1461,9 @@ func servicesUseMV(window time.Duration, cluster, env string) bool {
 // inputs (hash-all-inputs rule; the v0.5.187 class). env joined in
 // v0.8.385 — without it an env-filtered page would cross-poison the
 // unfiltered one inside the same 30s bucket.
-func servicesListKey(useMV bool, limit, offset int, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env string, withTotal bool) string {
-	return fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:bucket=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s:cl=%s:env=%s:wt=%t",
-		useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, withTotal)
+func servicesListKey(useMV bool, limit, offset int, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace string, withTotal bool) string {
+	return fmt.Sprintf("services:mv=%t:limit=%d:offset=%d:bucket=%s:name=%s:sort=%s:dir=%s:ot=%s:st=%s:cl=%s:env=%s:ns=%s:wt=%t",
+		useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal)
 }
 
 func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
@@ -1480,6 +1513,12 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// Topbar picker's ?env=. Narrows to spans.deploy_env with the
 	// same raw-fallback semantics as cluster (the MV has no env dim).
 	env := strings.TrimSpace(q.Get("env"))
+	// Namespace filter (v0.9.189) — narrows to services whose DERIVED
+	// namespace (service_metadata.Namespace, coalesced by the deriver
+	// from service.namespace AND k8s.namespace.name) matches. Resolved
+	// via the catalog into the serviceIn allowlist like ownerTeam/sreTeam
+	// — so, UNLIKE cluster/env, it does NOT disqualify the MV fast path.
+	namespace := strings.TrimSpace(q.Get("namespace"))
 	if from.IsZero() {
 		from = time.Now().Add(-since)
 	}
@@ -1506,7 +1545,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// is the slowest part — see the limit+1 hasMore trick below).
 	withTotal := q.Get("withTotal") == "1"
 	bucket := cacheBucket(from, to)
-	key := servicesListKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, withTotal)
+	key := servicesListKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal)
 	// 30s cache. The 5m-MV-backed query is already sub-second on
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
@@ -1516,7 +1555,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		// the catalog. Bounded by catalog size (~thousands),
 		// not span volume; effectively free.
 		var serviceIn []string
-		if ownerTeam != "" || sreTeam != "" {
+		if ownerTeam != "" || sreTeam != "" || namespace != "" {
 			catalog, cerr := s.store.ListServiceMetadata(ctx)
 			if cerr != nil {
 				return nil, fmt.Errorf("catalog: %w", cerr)
@@ -1526,6 +1565,9 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 					continue
 				}
 				if sreTeam != "" && md.SRETeam != sreTeam {
+					continue
+				}
+				if namespace != "" && md.Namespace != namespace {
 					continue
 				}
 				serviceIn = append(serviceIn, name)

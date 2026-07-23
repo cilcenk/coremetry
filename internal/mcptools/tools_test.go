@@ -97,6 +97,10 @@ func TestEnvArgAdditive(t *testing.T) {
 		"list_anomalies", "search_logs", "get_trace", "query_metric",
 		"get_logs_for_trace", "get_exemplar_traces", "get_linked_traces",
 		"get_metrics_for_span",
+		// CoSRE Faz-2 — render_chart's spanMetricBatch read (frontend)
+		// has no env conjunct; an env property here would promise a
+		// filter the chart can't apply.
+		"render_chart",
 	}
 	for _, name := range envBlind {
 		tool := toolByName(t, tools, name)
@@ -132,5 +136,107 @@ func TestGetProblemRootCauseTool(t *testing.T) {
 	d := strings.ToLower(tool.Description)
 	if !strings.Contains(d, "root-cause") && !strings.Contains(d, "root cause") {
 		t.Fatal("description must explain it returns the root-cause hypothesis")
+	}
+}
+
+// CoSRE Faz-2 — render_chart: the model PICKS the chart, the server
+// (copilot_chat.go) emits the deterministic ```chart``` block. The
+// schema below is the LLM's whole contract; the metric enum MUST stay
+// 1:1 with CosreChart's AGG_META keys (frontend) — an unknown agg
+// silently falls back to 'rate' there.
+func TestRenderChartTool(t *testing.T) {
+	tool := toolByName(t, ToolList(Deps{}), "render_chart")
+	props := schemaProps(t, tool)
+
+	// service: string + the ONLY required property.
+	svc, ok := props["service"].(map[string]any)
+	if !ok {
+		t.Fatal("render_chart: service property missing")
+	}
+	if svc["type"] != "string" {
+		t.Fatalf("service type = %v, want string", svc["type"])
+	}
+	req, ok := tool.InputSchema["required"].([]string)
+	if !ok || len(req) != 1 || req[0] != "service" {
+		t.Fatalf("required = %v, want [service]", tool.InputSchema["required"])
+	}
+
+	// metric enum ↔ CosreChart AGG_META keys, exactly, in order.
+	met, ok := props["metric"].(map[string]any)
+	if !ok {
+		t.Fatal("render_chart: metric property missing")
+	}
+	enum, ok := met["enum"].([]string)
+	if !ok {
+		t.Fatalf("metric enum missing or wrong type: %v", met["enum"])
+	}
+	want := []string{"rate", "error_rate", "p50", "p95", "p99"}
+	if len(enum) != len(want) {
+		t.Fatalf("metric enum = %v, want %v", enum, want)
+	}
+	for i := range want {
+		if enum[i] != want[i] {
+			t.Fatalf("metric enum[%d] = %q, want %q (must mirror CosreChart AGG_META)", i, enum[i], want[i])
+		}
+	}
+
+	// range_s carries the 7d cap so the LLM can't fan a 90d scan.
+	rs, ok := props["range_s"].(map[string]any)
+	if !ok {
+		t.Fatal("render_chart: range_s property missing")
+	}
+	if rs["maximum"] != 604800 {
+		t.Fatalf("range_s maximum = %v, want 604800", rs["maximum"])
+	}
+
+	// Every property needs a description — an un-described property
+	// gets guessed wrong by the LLM (/mcp-tools skill rule).
+	for name, p := range props {
+		pm, _ := p.(map[string]any)
+		if desc, _ := pm["description"].(string); desc == "" {
+			t.Fatalf("property %q has no description", name)
+		}
+	}
+}
+
+// normalizeRenderChart is the pure validation core of render_chart:
+// metric default + whitelist, range_s default + 7d clamp.
+func TestNormalizeRenderChart(t *testing.T) {
+	cases := []struct {
+		name       string
+		in         renderChartArgs
+		wantMetric string
+		wantRange  int
+		wantErr    bool
+	}{
+		{"defaults", renderChartArgs{Service: "checkout"}, "error_rate", 1800, false},
+		{"explicit p99", renderChartArgs{Service: "checkout", Metric: "p99", RangeS: 3600}, "p99", 3600, false},
+		{"rate passes", renderChartArgs{Service: "checkout", Metric: "rate"}, "rate", 1800, false},
+		{"p50 passes", renderChartArgs{Service: "checkout", Metric: "p50"}, "p50", 1800, false},
+		{"p95 passes", renderChartArgs{Service: "checkout", Metric: "p95"}, "p95", 1800, false},
+		{"unknown metric rejected", renderChartArgs{Service: "checkout", Metric: "p999"}, "", 0, true},
+		{"avg is not chartable", renderChartArgs{Service: "checkout", Metric: "avg"}, "", 0, true},
+		{"range clamped to 7d", renderChartArgs{Service: "checkout", RangeS: 99999999}, "error_rate", 7 * 86400, false},
+		{"negative range → default", renderChartArgs{Service: "checkout", RangeS: -5}, "error_rate", 1800, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, errMsg := normalizeRenderChart(tc.in)
+			if tc.wantErr {
+				if errMsg == "" {
+					t.Fatalf("want error for metric %q, got none (normalized to %q)", tc.in.Metric, got.Metric)
+				}
+				return
+			}
+			if errMsg != "" {
+				t.Fatalf("unexpected error: %s", errMsg)
+			}
+			if got.Metric != tc.wantMetric {
+				t.Fatalf("metric = %q, want %q", got.Metric, tc.wantMetric)
+			}
+			if got.RangeS != tc.wantRange {
+				t.Fatalf("rangeS = %d, want %d", got.RangeS, tc.wantRange)
+			}
+		})
 	}
 }

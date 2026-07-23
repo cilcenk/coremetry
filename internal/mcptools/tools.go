@@ -45,6 +45,11 @@
 //   - get_linked_traces
 //   - get_metrics_for_span
 //
+// CoSRE Faz-2 (structured chart cards):
+//   - render_chart — the model PICKS which live RED chart to show;
+//     the chat server emits the deterministic ```chart``` block
+//     (copilot_chat.go), the UI draws it from real telemetry.
+//
 // Env-awareness (v0.8.398, AI audit): list_services, get_service_health
 // and list_problems accept an OPTIONAL `env` arg (deployment
 // environment, spans.deploy_env — int/uat/prep style values) because
@@ -106,6 +111,9 @@ func ToolList(d Deps) []mcp.Tool {
 		getExemplarTracesTool(d),
 		getLinkedTracesTool(d),
 		getMetricsForSpanTool(d),
+		// CoSRE Faz-2 — structured chart cards (chart selection is the
+		// model's, rendering is the server's — see copilot_chat.go).
+		renderChartTool(d),
 	}
 }
 
@@ -747,6 +755,132 @@ func queryMetricTool(d Deps) mcp.Tool {
 				return nil, err
 			}
 			return map[string]any{"series": series, "count": len(series)}, nil
+		},
+	}
+}
+
+// ─── render_chart ──────────────────────────────────────────────
+// CoSRE Faz-2 — MCP-backed structured chart cards. The model calls
+// this to show the operator a LIVE chart; the handler only validates
+// + acknowledges. The chart itself is emitted server-side: the chat
+// loop (internal/api/copilot_chat.go) turns the validated spec into a
+// deterministic ```chart``` fence, and the frontend (CosreChart.tsx)
+// draws it from real telemetry via spanMetricBatch. A gemma4-class
+// small model never formats chart JSON itself.
+//
+// The metric whitelist MUST stay 1:1 with CosreChart's AGG_META keys
+// (rate|error_rate|p50|p95|p99) — an unknown agg silently falls back
+// to 'rate' on the frontend.
+
+// renderChartMetrics is the agg whitelist — mirror of CosreChart's
+// AGG_META keys.
+var renderChartMetrics = map[string]bool{
+	"rate": true, "error_rate": true, "p50": true, "p95": true, "p99": true,
+}
+
+type renderChartArgs struct {
+	Service   string `json:"service"`
+	Operation string `json:"operation,omitempty"`
+	Metric    string `json:"metric,omitempty"`
+	RangeS    int    `json:"range_s,omitempty"`
+}
+
+// normalizeRenderChart applies the metric default + whitelist and the
+// range_s clamp (default 30min, cap 7d — same band as rangeWindow).
+// Pure — table-tested in tools_test.go. errMsg != "" means the metric
+// is not chartable; the caller returns it as {ok:false, error} so the
+// LLM can self-correct instead of getting an opaque tool error.
+func normalizeRenderChart(a renderChartArgs) (norm renderChartArgs, errMsg string) {
+	if a.Metric == "" {
+		a.Metric = "error_rate"
+	}
+	if !renderChartMetrics[a.Metric] {
+		return a, fmt.Sprintf("unknown metric %q — must be one of rate, error_rate, p50, p95, p99", a.Metric)
+	}
+	if a.RangeS <= 0 {
+		a.RangeS = 1800
+	}
+	if a.RangeS > 7*86400 {
+		a.RangeS = 7 * 86400
+	}
+	return a, ""
+}
+
+func renderChartTool(d Deps) mcp.Tool {
+	return mcp.Tool{
+		Name:        "render_chart",
+		Description: "Show the operator a LIVE chart of one RED metric (request rate, error rate, or a latency percentile) for a service, optionally narrowed to one operation. Call this when the operator asks to SEE a graph ('grafiğini göster', 'çiz', 'plot the error rate') or when a visual trend answers better than numbers. The server validates the service name and acknowledges; the chat UI then draws the chart from live telemetry — do NOT describe the data points or draw ASCII charts yourself. Cheap: one service-name lookup, no span scan. Outside the in-app chat (plain MCP clients) it returns the validated chart spec without rendering.",
+		InputSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"service": map[string]any{
+					"type":        "string",
+					"description": "Exact service name to chart. Required. Must be an existing service — check with list_services if unsure.",
+				},
+				"operation": map[string]any{
+					"type":        "string",
+					"description": "Optional operation (span name) to narrow the chart to one endpoint, e.g. 'GET /orders/:id'. Empty = whole service.",
+				},
+				"metric": map[string]any{
+					"type":        "string",
+					"enum":        []string{"rate", "error_rate", "p50", "p95", "p99"},
+					"description": "Which series to chart: rate (req/s), error_rate (%), or a latency percentile (ms). Default error_rate.",
+				},
+				"range_s": map[string]any{
+					"type":        "integer",
+					"minimum":     0,
+					"maximum":     604800,
+					"description": "Chart window in seconds. Default 1800 (30min), max 604800 (7d).",
+				},
+			},
+			"required": []string{"service"},
+		},
+		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
+			var a renderChartArgs
+			if err := json.Unmarshal(raw, &a); err != nil {
+				return nil, fmt.Errorf("decode args: %w", err)
+			}
+			if a.Service == "" {
+				return nil, fmt.Errorf("service is required")
+			}
+			a, emsg := normalizeRenderChart(a)
+			if emsg != "" {
+				return map[string]any{"ok": false, "error": emsg}, nil
+			}
+			// Validate the service EXISTS under its exact name so the UI
+			// never renders an empty chart for a hallucinated one. Same
+			// picker-backed MV read the ServicePicker uses (cheap DISTINCT);
+			// the ILIKE-substring result is exact-matched in Go — "checkout"
+			// must not pass on the strength of "checkout-v2" existing.
+			names, _, err := d.Store.ListServiceNames(ctx, a.Service, 50, 0)
+			if err != nil {
+				return nil, err
+			}
+			found := false
+			for _, n := range names {
+				if n == a.Service {
+					found = true
+					break
+				}
+			}
+			if !found {
+				return map[string]any{
+					"ok":    false,
+					"error": fmt.Sprintf("service %q not found — check the exact name with list_services", a.Service),
+				}, nil
+			}
+			// spec keys mirror the frontend CosreChartSpec (service /
+			// operation / agg / rangeS) — copilot_chat.go re-parses this
+			// exact shape to build the ```chart``` fence.
+			spec := map[string]any{"service": a.Service, "agg": a.Metric, "rangeS": a.RangeS}
+			if a.Operation != "" {
+				spec["operation"] = a.Operation
+			}
+			return map[string]any{
+				"ok":   true,
+				"spec": spec,
+				"note": "grafik render edildi — operatörün sohbetine canlı veriyle gömülecek; veriyi ayrıca metinle tarif etme, ASCII grafik çizme.",
+			}, nil
 		},
 	}
 }

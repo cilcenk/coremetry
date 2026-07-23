@@ -662,7 +662,12 @@ func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string
 	// headline'ı = error_rate. Blok görsel olarak dokümana gömülü değildir;
 	// eski istemci parse edemezse düz metin olarak görünür (zararsız).
 	b.WriteString(chartFence(guidedChartSpec{Title: service + " · error_rate", Service: service, Agg: "error_rate", RangeS: rangeS}))
-	src := fmt.Sprintf("servis RED özeti + baseline + en sık hatalar + deploy işaretçileri + açık problemler + grafik (son %s)", fmtAgoTR(rangeS))
+	// CoSRE Faz-2 — ikinci deterministik kart: p99 latency. Guided yol
+	// tool çağrısı yapamayan küçük modelde (gemma4) de zengin görsel
+	// versin diye server iki kart basar; serbest döngüdeki eşdeğeri
+	// render_chart tool'udur (copilot_chat.go).
+	b.WriteString(chartFence(guidedChartSpec{Title: service + " · p99", Service: service, Agg: "p99", RangeS: rangeS}))
+	src := fmt.Sprintf("servis RED özeti + baseline + en sık hatalar + deploy işaretçileri + açık problemler + grafikler (son %s)", fmtAgoTR(rangeS))
 	if env != "" {
 		src += fmt.Sprintf("; RED tüm ortamlar, problemler ortam: %s", env)
 	}

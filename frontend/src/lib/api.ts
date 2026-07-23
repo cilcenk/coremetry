@@ -1,6 +1,6 @@
 import type {
   PurgeResult,
-  Service, ServiceEdge, TracesResponse, TraceDetailResponse,
+  Service, ServiceEdge, TracesResponse, TracesExtrasResponse, TraceDetailResponse,
   LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
@@ -388,6 +388,14 @@ export const api = {
     get<string[] | null>(`/api/operations?${qs({ ...r, service })}`),
 
   traces:    (params: TracesParams)  => get<TracesResponse>(`/api/traces?${qs(params)}`),
+  // FAZ 2 (traces attribute columns) — phase-2-only enrichment: fetch the
+  // selected attribute columns for an EXPLICIT page of trace ids, bounded
+  // by the visible rows' real min/max timestamps (ns). Same GET /api/traces
+  // endpoint; the traceIds param makes the server skip phase-1 entirely and
+  // switch the response shape to { extras }. Deliberately a separate method
+  // (not a TracesParams field) so the response type stays honest.
+  tracesExtras: (p: { traceIds: string; extraAttrs: string; from: number; to: number }) =>
+    get<TracesExtrasResponse>(`/api/traces?${qs(p)}`),
   tracesAggregate: (params: AggregateParams) =>
     get<AggregateRow[] | null>(`/api/traces/aggregate?${qs(params)}`),
   // Span-relationship / structural query (Gap 3). Parent + child predicate

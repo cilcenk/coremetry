@@ -1898,6 +1898,10 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// requested columns with a SECOND, bounded query that fetches the attrs for
 	// ONLY the page's ~50 trace_ids via the idx_trace bloom skip index — so a
 	// column add stays sub-second regardless of total span volume.
+	// FAZ 2 (docs/audit/traces-attribute-columns.md §6A) — fillTraceExtras is
+	// now the COMMON phase-2 of BOTH paths (raw list no longer inlines the
+	// projection) and is time-bounded by the page rows' real min/max
+	// timestamps, so partition pruning + the trace_id bloom compose.
 	if !f.From.IsZero() && !f.To.IsZero() &&
 		f.To.Sub(f.From) >= 5*time.Minute &&
 		f.Search == "" && f.TraceID == "" &&
@@ -1913,16 +1917,14 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
 		if err == nil {
 			if len(f.ExtraAttrs) > 0 {
+				// FAZ 2 — phase-2 failure is now a hard error: the raw path
+				// no longer inlines the projection, so falling through would
+				// only re-run the SAME bounded phase-2 query and fail again.
 				if ferr := s.fillTraceExtras(ctx, out, f.ExtraAttrs); ferr != nil {
-					// Non-fatal: fall through to the raw path (which projects the
-					// attrs inline) rather than return rows missing their columns.
-					log.Printf("[chstore] trace extras fill failed, falling back to raw: %v", ferr)
-				} else {
-					return out, total, hasMore, nil
+					return nil, 0, false, fmt.Errorf("trace extras: %w", ferr)
 				}
-			} else {
-				return out, total, hasMore, nil
 			}
+			return out, total, hasMore, nil
 		} else {
 			// On error fall through to raw path — log it so a regression in the
 			// MV pipeline doesn't silently leave us on the slow path forever.
@@ -2072,79 +2074,19 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// is "skip".
 	pageLimit := f.Limit + 1
 
-	// Build optional projections for user-requested attribute columns.
-	//
-	// Two paths depending on the key:
-	//   - well-known semconv key with a dedicated structured column
-	//     (http.method → http_method, db.system → db_system, etc.):
-	//     use the indexed LowCardinality column. Cheap.
-	//   - everything else: array lookup against attr_values via
-	//     attr_values[indexOf(attr_keys, ?)], with a fallback to
-	//     res_values[indexOf(res_keys, ?)] so resource-level attrs
-	//     (service.namespace, k8s.pod.name, etc.) also work.
-	//
-	// Keys flow as `?` parameters; HTTP-layer sanitisation already
-	// rejected anything outside [a-zA-Z0-9._-] so the SELECT can't be
-	// poisoned even if a clickhouse-go quirk changed.
-	extraSelect := ""
-	extraArgs := []any{}
-	for i, key := range f.ExtraAttrs {
-		if col, ok := WellKnownTraceCol[key]; ok {
-			extraSelect += fmt.Sprintf(", any(%s) AS extra_%d", col, i)
-			continue
-		}
-		extraSelect += fmt.Sprintf(
-			", anyIf(coalesce("+
-				"nullIf(attr_values[indexOf(attr_keys, ?)], ''),"+
-				"nullIf(res_values[indexOf(res_keys, ?)], '')"+
-				"), has(attr_keys, ?) OR has(res_keys, ?)) AS extra_%d",
-			i,
-		)
-		extraArgs = append(extraArgs, key, key, key, key)
-	}
-
-	// Note: use if() not ternary ? : — ClickHouse treats ? as a param placeholder
-	// v0.5.351 — root_name/root_svc fallback. When the WHERE
-	// filter (service / name search) excludes the real root
-	// span (because it lives in a different service or has a
-	// different name), anyIf(parent_id='') returns empty and
-	// the trace row renders blank. Fall back to ANY span's
-	// name/service so the operator at least sees a label — the
-	// trace detail view still shows the full trace on click.
-	querySQL := `
-		SELECT trace_id,
-		       coalesce(
-		         nullIf(anyIf(name, (parent_id = '' OR parent_id = '0000000000000000')), ''),
-		         any(name)
-		       )                                       AS root_name,
-		       coalesce(
-		         nullIf(anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000')), ''),
-		         any(service_name)
-		       )                                       AS root_svc,
-		       min(time)                               AS trace_start,
-		       (max(toUnixTimestamp64Nano(time) + duration) -
-		        toUnixTimestamp64Nano(min(time))) / 1e6 AS dur_ms,
-		       count()                                 AS span_count,
-		       max(if(status_code = 'error', 1, 0))    AS has_error` +
-		extraSelect + `
-		FROM spans ` + wc.sql() + `
-		GROUP BY trace_id` + havingSQL + `
-		ORDER BY ` + sortCol + ` ` + order + `
-		LIMIT ? OFFSET ?
-		SETTINGS
-		  max_execution_time = 60,
-		  optimize_read_in_order = 1,
-		  optimize_aggregation_in_order = 1,
-		  distributed_product_mode = 'global',
-		  ` + tracesSpillSettings
+	// FAZ 2 (docs/audit/traces-attribute-columns.md §6A) — the raw list is
+	// NARROW by construction now: attribute extras are NEVER inlined into
+	// this query. The old inline projection decompressed the four fat
+	// attr/res array columns for EVERY span in the window (before LIMIT) —
+	// measured 6.97× read_bytes on the audit's local run. Extras ride the
+	// common, bounded phase-2 (fillTraceExtras) after the page is known.
+	querySQL := buildGetTracesListSQL(wc.sql(), havingSQL, sortCol, order)
 
 	// Argument order matches placeholder order in the SQL:
-	//   1. SELECT projections (extra attribute columns)
-	//   2. WHERE  predicates (time / service / DSL filters)
-	//   3. HAVING predicates (RequireServices fan-in)
-	//   4. LIMIT / OFFSET
-	args := append([]any{}, extraArgs...)
-	args = append(args, wc.args...)
+	//   1. WHERE  predicates (time / service / DSL filters)
+	//   2. HAVING predicates (RequireServices fan-in)
+	//   3. LIMIT / OFFSET
+	args := append([]any{}, wc.args...)
 	args = append(args, havingArgs...)
 	args = append(args, pageLimit, f.Offset)
 	rows, err := s.conn.Query(ctx, querySQL, args...)
@@ -2158,25 +2100,11 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		var t TraceRow
 		var hasErr uint8
 		var ts time.Time
-		// Scan the fixed columns first, then peel off one extra string
-		// per requested attribute. The driver expects every column to
-		// have a destination, so the extras slice is sized exactly.
-		extras := make([]string, len(f.ExtraAttrs))
-		dest := []any{&t.TraceID, &t.RootName, &t.ServiceName, &ts, &t.DurationMs, &t.SpanCount, &hasErr}
-		for i := range extras {
-			dest = append(dest, &extras[i])
-		}
-		if err := rows.Scan(dest...); err != nil {
+		if err := rows.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts, &t.DurationMs, &t.SpanCount, &hasErr); err != nil {
 			return nil, 0, false, err
 		}
 		t.StartTime = ts.UnixNano()
 		t.HasError = hasErr == 1
-		if len(extras) > 0 {
-			t.Extras = make(map[string]string, len(extras))
-			for i, k := range f.ExtraAttrs {
-				t.Extras[k] = extras[i]
-			}
-		}
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {
@@ -2186,7 +2114,57 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	if hasMore {
 		out = out[:f.Limit]
 	}
+	// Common phase-2: extras for the trimmed page only (≤ Limit ids), bounded
+	// by the page rows' real min/max timestamps. Also serves the CSV export
+	// path — there the id list is up to 50k rows, but the derived bounds stay
+	// within the export's list window, so the phase-2 scan is window-bounded
+	// (audit §8) while pruning as tightly as the rows allow.
+	if len(f.ExtraAttrs) > 0 {
+		if err := s.fillTraceExtras(ctx, out, f.ExtraAttrs); err != nil {
+			return nil, 0, false, fmt.Errorf("trace extras: %w", err)
+		}
+	}
 	return out, total, hasMore, nil
+}
+
+// buildGetTracesListSQL assembles the raw-path phase-1 (narrow) list query.
+// Pure — pinned by traces_extras_test.go so the FAZ 2 invariant ("the raw
+// list never touches attr_values/res_values") cannot silently regress.
+//
+// Note: use if() not ternary ? : — ClickHouse treats ? as a param placeholder
+// v0.5.351 — root_name/root_svc fallback. When the WHERE
+// filter (service / name search) excludes the real root
+// span (because it lives in a different service or has a
+// different name), anyIf(parent_id='') returns empty and
+// the trace row renders blank. Fall back to ANY span's
+// name/service so the operator at least sees a label — the
+// trace detail view still shows the full trace on click.
+func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
+	return `
+		SELECT trace_id,
+		       coalesce(
+		         nullIf(anyIf(name, (parent_id = '' OR parent_id = '0000000000000000')), ''),
+		         any(name)
+		       )                                       AS root_name,
+		       coalesce(
+		         nullIf(anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000')), ''),
+		         any(service_name)
+		       )                                       AS root_svc,
+		       min(time)                               AS trace_start,
+		       (max(toUnixTimestamp64Nano(time) + duration) -
+		        toUnixTimestamp64Nano(min(time))) / 1e6 AS dur_ms,
+		       count()                                 AS span_count,
+		       max(if(status_code = 'error', 1, 0))    AS has_error
+		FROM spans ` + whereSQL + `
+		GROUP BY trace_id` + havingSQL + `
+		ORDER BY ` + sortCol + ` ` + order + `
+		LIMIT ? OFFSET ?
+		SETTINGS
+		  max_execution_time = 60,
+		  optimize_read_in_order = 1,
+		  optimize_aggregation_in_order = 1,
+		  distributed_product_mode = 'global',
+		  ` + tracesSpillSettings
 }
 
 // getTracesFromMV implements the two-stage fast path:
@@ -2210,19 +2188,43 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 // scale; if an operator needs an exact ordering across the
 // full window they can drop the service filter or narrow
 // the time range.
-// fillTraceExtras fetches the user-selected attribute columns for a page of
-// trace rows and writes them into each row's Extras map. Bounded by the page
-// size — WHERE trace_id IN (page ids) rides the idx_trace bloom skip index — so
-// it stays cheap regardless of total span volume. Attribute resolution mirrors
-// the raw path's extraSelect (well-known semconv key → structured column;
-// otherwise attr_values/res_values array lookup). (v0.8.77)
-func (s *Store) fillTraceExtras(ctx context.Context, rows []TraceRow, attrs []string) error {
-	if len(rows) == 0 || len(attrs) == 0 {
-		return nil
-	}
+// traceAttrMaterialized maps attribute keys to promoted NATIVE columns on
+// the spans table (FAZ 2C prep, docs/audit/traces-attribute-columns.md).
+// Ships EMPTY: entries appear only once the corresponding
+// `ALTER TABLE spans ADD COLUMN … MATERIALIZED attr_values[indexOf(…)]`
+// migration has actually been applied (and, on distributed setups, the
+// hasXCol boot probe confirmed the column — the cluster-column precedent,
+// see clusterExpr / distributed-column-safety).
+//
+// Deliberately a SEPARATE layer above WellKnownTraceCol rather than merged
+// into it: WellKnown maps OTel SEMCONV keys to typed columns that exist in
+// the schema since day one (always safe to reference), while this map holds
+// operator-promoted CUSTOM keys whose columns exist only after an optional,
+// per-install migration. Merging the two would let a semconv rename or an
+// unapplied migration silently poison the other class; the projection
+// generator consults this map first, then delegates to WellKnown, then
+// falls back to the array lookup — one code path, three cost tiers.
+var traceAttrMaterialized = map[string]string{}
+
+// traceExtrasProjection builds the extras SELECT fragment for the requested
+// attribute keys plus its bind args. Resolution order per key:
+//  1. traceAttrMaterialized — promoted native column (cheapest; anyIf skips
+//     empty values so the "first non-empty across the trace's spans"
+//     semantics match the array path exactly),
+//  2. WellKnownTraceCol — semconv key with a dedicated structured column,
+//  3. attr_values[indexOf(attr_keys, ?)] with res_values fallback — the
+//     generic (4-fat-array-column) path.
+//
+// Keys flow as `?` parameters; HTTP-layer sanitisation (isSafeAttrKey)
+// already rejected anything outside [a-zA-Z0-9._-]. Pure — table-tested.
+func traceExtrasProjection(attrs []string) (string, []any) {
 	sel := ""
-	projArgs := []any{}
+	args := []any{}
 	for i, key := range attrs {
+		if col, ok := traceAttrMaterialized[key]; ok {
+			sel += fmt.Sprintf(", anyIf(%s, %s != '') AS extra_%d", col, col, i)
+			continue
+		}
 		if col, ok := WellKnownTraceCol[key]; ok {
 			sel += fmt.Sprintf(", any(%s) AS extra_%d", col, i)
 			continue
@@ -2232,25 +2234,113 @@ func (s *Store) fillTraceExtras(ctx context.Context, rows []TraceRow, attrs []st
 				"nullIf(attr_values[indexOf(attr_keys, ?)], ''),"+
 				"nullIf(res_values[indexOf(res_keys, ?)], '')"+
 				"), has(attr_keys, ?) OR has(res_keys, ?)) AS extra_%d", i)
-		projArgs = append(projArgs, key, key, key, key)
+		args = append(args, key, key, key, key)
 	}
-	holders := make([]string, len(rows))
-	idArgs := make([]any, len(rows))
-	for i, r := range rows {
-		holders[i] = "?"
-		idArgs[i] = r.TraceID
-	}
-	sql := "SELECT trace_id" + sel +
-		" FROM spans WHERE trace_id IN (" + strings.Join(holders, ",") + ")" +
-		" GROUP BY trace_id SETTINGS max_execution_time = 15"
-	args := append(append([]any{}, projArgs...), idArgs...)
+	return sel, args
+}
 
+// traceExtrasSQL assembles the phase-2 extras query for nIDs trace ids.
+// FAZ 2 hard bounds (the pre-fix query violated the CLAUDE.md spans rule):
+//   - time-bounded WHERE — placed BEFORE the id IN-list so partition
+//     pruning and the idx_trace bloom compose instead of the bloom
+//     filtering ALL retention's granules,
+//   - LIMIT nIDs — GROUP BY trace_id over an id IN-list can't exceed nIDs
+//     groups anyway; the LIMIT is the safety belt the rule demands,
+//   - max_execution_time (kept from the original).
+//
+// Placeholder order: projection args (SELECT) → from, to → ids.
+// Pure — table-tested.
+func traceExtrasSQL(nIDs int, attrs []string) (string, []any) {
+	sel, projArgs := traceExtrasProjection(attrs)
+	holders := strings.TrimSuffix(strings.Repeat("?,", nIDs), ",")
+	sql := "SELECT trace_id" + sel +
+		" FROM spans WHERE time >= ? AND time <= ? AND trace_id IN (" + holders + ")" +
+		" GROUP BY trace_id" +
+		fmt.Sprintf(" LIMIT %d", nIDs) +
+		" SETTINGS max_execution_time = 15"
+	return sql, projArgs
+}
+
+// traceExtrasToSlack pads the phase-2 upper time bound: a trace's LAST span
+// can start after the recorded trace end (late/async spans, clock skew, MV
+// bucket staleness on the fast path), so the exact max(start+dur) bound
+// could drop it from the anyIf scan. 5 minutes matches the MV bucket width.
+const traceExtrasToSlack = 5 * time.Minute
+
+// traceExtrasWindow applies the phase-2 slack to a raw [from, to] bound.
+// The lower bound stays exact — no span can start before its trace's
+// min(time) by definition. Pure — table-tested.
+func traceExtrasWindow(from, to time.Time) (time.Time, time.Time) {
+	return from, to.Add(traceExtrasToSlack)
+}
+
+// traceExtrasBounds derives the phase-2 raw time window from phase-1 rows:
+// min(trace_start) .. max(trace_start + duration). Callers pass the result
+// through TraceExtras, which applies traceExtrasWindow. Pure — table-tested.
+func traceExtrasBounds(rows []TraceRow) (time.Time, time.Time) {
+	var minStart, maxEnd int64
+	for i, r := range rows {
+		end := r.StartTime + int64(r.DurationMs*1e6)
+		if i == 0 || r.StartTime < minStart {
+			minStart = r.StartTime
+		}
+		if i == 0 || end > maxEnd {
+			maxEnd = end
+		}
+	}
+	return time.Unix(0, minStart).UTC(), time.Unix(0, maxEnd).UTC()
+}
+
+// traceExtrasChunkIDs caps the id IN-list of ONE phase-2 query. Same math
+// as traceStage2MaxIDs (v0.8.363, found via self-telemetry): clickhouse-go
+// interpolates bind args client-side at ~35 bytes per id and the server
+// parses at most max_query_size (256 KiB). 5000 ids ≈ 175 KiB leaves room
+// for the projection fragment + time bounds. Only the CSV-export path (up
+// to 50k rows) ever exceeds one chunk — the UI page is ≤50 ids.
+const traceExtrasChunkIDs = 5000
+
+// TraceExtras fetches the requested attribute keys for an EXPLICIT trace-id
+// set within [from, to] (+slack) and returns them keyed by trace id. Every
+// requested key is present in each returned trace's map ('' when absent) so
+// callers can distinguish "fetched, empty" from "not fetched". Id sets past
+// traceExtrasChunkIDs run as sequential chunked queries (export path).
+//
+// This is the single phase-2 implementation (FAZ 2): GetTraces' MV and raw
+// paths reach it through fillTraceExtras (bounds derived from the page
+// rows), and the /api/traces?traceIds= enrichment path calls it directly
+// (bounds supplied by the client from the visible rows).
+func (s *Store) TraceExtras(ctx context.Context, ids, attrs []string, from, to time.Time) (map[string]map[string]string, error) {
+	out := make(map[string]map[string]string, len(ids))
+	if len(ids) == 0 || len(attrs) == 0 {
+		return out, nil
+	}
+	from, to = traceExtrasWindow(from, to)
+	for start := 0; start < len(ids); start += traceExtrasChunkIDs {
+		end := start + traceExtrasChunkIDs
+		if end > len(ids) {
+			end = len(ids)
+		}
+		if err := s.traceExtrasChunk(ctx, ids[start:end], attrs, from, to, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// traceExtrasChunk runs one bounded phase-2 query for ≤ traceExtrasChunkIDs
+// ids and merges the rows into out.
+func (s *Store) traceExtrasChunk(ctx context.Context, ids, attrs []string, from, to time.Time, out map[string]map[string]string) error {
+	sql, projArgs := traceExtrasSQL(len(ids), attrs)
+	args := append([]any{}, projArgs...)
+	args = append(args, from, to)
+	for _, id := range ids {
+		args = append(args, id)
+	}
 	qrows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
 	defer qrows.Close()
-	byID := make(map[string][]string, len(rows))
 	for qrows.Next() {
 		var id string
 		extras := make([]string, len(attrs))
@@ -2262,9 +2352,32 @@ func (s *Store) fillTraceExtras(ctx context.Context, rows []TraceRow, attrs []st
 		if err := qrows.Scan(dest...); err != nil {
 			return err
 		}
-		byID[id] = extras
+		m := make(map[string]string, len(attrs))
+		for i, k := range attrs {
+			m[k] = extras[i]
+		}
+		out[id] = m
 	}
-	if err := qrows.Err(); err != nil {
+	return qrows.Err()
+}
+
+// fillTraceExtras is the common phase-2 of BOTH GetTraces paths (FAZ 2):
+// fetches the user-selected attribute columns for a page of trace rows and
+// writes them into each row's Extras map. Bounds come from the page rows'
+// REAL min/max timestamps (traceExtrasBounds), so even a 30-day list window
+// scans only the partitions the page actually touches; the id IN-list rides
+// the idx_trace bloom skip index within them. (v0.8.77, rebounded FAZ 2.)
+func (s *Store) fillTraceExtras(ctx context.Context, rows []TraceRow, attrs []string) error {
+	if len(rows) == 0 || len(attrs) == 0 {
+		return nil
+	}
+	ids := make([]string, len(rows))
+	for i, r := range rows {
+		ids[i] = r.TraceID
+	}
+	from, to := traceExtrasBounds(rows)
+	byID, err := s.TraceExtras(ctx, ids, attrs, from, to)
+	if err != nil {
 		return err
 	}
 	for i := range rows {
@@ -2275,10 +2388,8 @@ func (s *Store) fillTraceExtras(ctx context.Context, rows []TraceRow, attrs []st
 		if rows[i].Extras == nil {
 			rows[i].Extras = make(map[string]string, len(attrs))
 		}
-		for j, key := range attrs {
-			if j < len(ex) {
-				rows[i].Extras[key] = ex[j]
-			}
+		for _, key := range attrs {
+			rows[i].Extras[key] = ex[key]
 		}
 	}
 	return nil

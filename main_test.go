@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -133,5 +135,41 @@ func TestExampleRunbooks(t *testing.T) {
 		if !kinds[k] {
 			t.Errorf("example runbooks don't demonstrate step kind %q", k)
 		}
+	}
+}
+
+// v0.9.191 — regression pin for the v0.9.188 errors-inbox loop wedge.
+// Operator-reported: prod'da yeni exception'lar hiç görünmüyordu.
+// Root cause: the tick advanced `since` ONLY on success, so a
+// persistently-failing 24h first-tick (prod-scale OOM, CH code 241)
+// retried the SAME window forever and the inbox never reached the
+// cheap 5-min steady state. The contract under test: the window
+// advances to now-5m after failure exactly as after success.
+func TestNextExceptionRefreshSinceAdvancesOnError(t *testing.T) {
+	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
+	backfill := now.Add(-24 * time.Hour)
+	want := now.Add(-5 * time.Minute)
+
+	fail := func(s time.Time) (int, error) {
+		if !s.Equal(backfill) {
+			t.Fatalf("refresh got window %v, want the 24h backfill %v", s, backfill)
+		}
+		return 0, errors.New("code: 241, memory limit exceeded")
+	}
+	next, n, err := nextExceptionRefreshSince(fail, backfill, now)
+	if err == nil || n != 0 {
+		t.Fatalf("expected the refresh error to propagate, got n=%d err=%v", n, err)
+	}
+	if !next.Equal(want) {
+		t.Fatalf("since after FAILED pass = %v, want %v (the v0.9.188 wedge: it must advance)", next, want)
+	}
+
+	okFn := func(s time.Time) (int, error) { return 7, nil }
+	next2, n2, err2 := nextExceptionRefreshSince(okFn, next, now)
+	if err2 != nil || n2 != 7 {
+		t.Fatalf("success pass: n=%d err=%v", n2, err2)
+	}
+	if !next2.Equal(want) {
+		t.Fatalf("since after success = %v, want %v", next2, want)
 	}
 }

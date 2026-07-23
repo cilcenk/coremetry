@@ -3228,6 +3228,10 @@ func (s *Server) getOperations(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
+	// FAZ 2 — ?traceIds= skips phase-1 and serves bounded extras only (traces_extras.go).
+	if s.serveTracesExtras(w, r) {
+		return
+	}
 	q := r.URL.Query()
 	f := chstore.TraceFilter{
 		Service:  q.Get("service"),
@@ -3283,23 +3287,8 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 	// OR/nested group disqualifies the MV fast-path). filterGroup rides the
 	// raw query string so the "traces:"+RawQuery cache key already hashes it.
 	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
-	// Extra attribute columns. Comma-separated keys requested by the
-	// /traces UI's column manager. Strict allow-list on characters
-	// (alphanumeric + . _ -) so even though the value flows in as a
-	// `?` param, no surprises end up in user-visible output. Cap at
-	// 8 columns to keep the SELECT projection bounded.
-	if extras := q.Get("extraAttrs"); extras != "" {
-		for _, k := range strings.Split(extras, ",") {
-			k = strings.TrimSpace(k)
-			if k == "" || !isSafeAttrKey(k) {
-				continue
-			}
-			f.ExtraAttrs = append(f.ExtraAttrs, k)
-			if len(f.ExtraAttrs) >= 8 {
-				break
-			}
-		}
-	}
+	// Extra attribute columns — shared parser in traces_extras.go (FAZ 2).
+	f.ExtraAttrs = parseExtraAttrs(q)
 	// count mode — opt-in for the expensive count(DISTINCT trace_id):
 	//   skip   (default) — no count; UI shows ">=N+1" when the page is full
 	//   approx           — count over top N+1 trace_ids only (fast)
@@ -3399,18 +3388,7 @@ func (s *Server) exportTracesCSV(w http.ResponseWriter, r *http.Request) {
 	// v0.8.x gap-2 — grouped builder parity with /api/traces so a CSV export
 	// matches exactly what's on screen.
 	f.FilterRoot = parseFilterGroup(q.Get("filterGroup"))
-	if extras := q.Get("extraAttrs"); extras != "" {
-		for _, k := range strings.Split(extras, ",") {
-			k = strings.TrimSpace(k)
-			if k == "" || !isSafeAttrKey(k) {
-				continue
-			}
-			f.ExtraAttrs = append(f.ExtraAttrs, k)
-			if len(f.ExtraAttrs) >= 8 {
-				break
-			}
-		}
-	}
+	f.ExtraAttrs = parseExtraAttrs(q)
 
 	rows, _, _, err := s.store.GetTraces(r.Context(), f)
 	if err != nil {

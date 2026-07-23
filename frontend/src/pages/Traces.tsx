@@ -40,6 +40,7 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
+import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries, RelationFilter, RelationKind } from '@/lib/types';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
@@ -88,6 +89,13 @@ const COL_W: Record<string, number> = {
   time: 168, service: 130, operation: 300, duration: 200, spans: 72, status: 84,
 };
 const ATTR_W = 160;
+// FAZ 2B — default attribute-column set (operator decision 2026-07-23:
+// ONLY the fixed columns by default; attribute columns are opt-in, so a
+// fresh session always gets the fastest narrow list). Selection precedence
+// on load: URL ?cols= (shareable source of truth) → localStorage
+// (per-browser continuity) → this default.
+const DEFAULT_TRACE_COLUMNS: string[] = [];
+const EXTRA_COLS_LS_KEY = 'traces-extra-cols';
 // Shared value-suggestion seeds for the advanced filter builders (flat +
 // grouped). Hoisted so both render paths use the identical hints.
 const FILTER_SUGGESTED_VALUES: Record<string, string[]> = {
@@ -205,8 +213,27 @@ function TracesPageInner() {
   // back to flat-AND naturally falls back to the legacy `filters=` param.
   const grouped = advGroup !== null;
   const advGroupParam = useMemo(() => encodeFilterGroup(advGroup), [advGroup]);
-  const [extraCols, setExtraCols] = useState<string[]>(
-    () => (searchParams.get('cols') ?? '').split(',').map(s => s.trim()).filter(Boolean));
+  const [extraCols, setExtraCols] = useState<string[]>(() => {
+    // URL ?cols= wins; then the persisted per-browser selection; then the
+    // default (empty — FAZ 2B operator decision). The URL-write effect
+    // below re-serialises whichever source won, so the URL stays the
+    // shareable source of truth after mount.
+    const url = (searchParams.get('cols') ?? '').split(',').map(s => s.trim()).filter(Boolean);
+    if (url.length) return url;
+    try {
+      const stored: unknown = JSON.parse(localStorage.getItem(EXTRA_COLS_LS_KEY) ?? 'null');
+      if (Array.isArray(stored)) {
+        const cols = stored.filter((c): c is string => typeof c === 'string' && c !== '');
+        if (cols.length) return cols.slice(0, 8);
+      }
+    } catch { /* corrupt storage → default */ }
+    return DEFAULT_TRACE_COLUMNS;
+  });
+  // Persist every column-selection change (add AND remove) so the next
+  // fresh /traces visit restores it without a URL.
+  useEffect(() => {
+    try { localStorage.setItem(EXTRA_COLS_LS_KEY, JSON.stringify(extraCols)); } catch { /* private mode */ }
+  }, [extraCols]);
 
   // Relations view (Gap 3) — structural query state. URL-reflected so a
   // shared link reproduces the parent/child predicates + kind + direct flag.
@@ -343,7 +370,10 @@ function TracesPageInner() {
       // active; flat-AND encodes to '' so the legacy filters path stays in use.
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
-      extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
+      // FAZ 2 — the list fetch is ALWAYS narrow (no extraAttrs): attribute
+      // columns arrive via the phase-2 enrichment effect below, so a column
+      // toggle never re-runs this (window-wide) query. extraCols is
+      // deliberately NOT a dep here for the same reason.
       count: showTotal && !traceIdExact ? 'exact' : 'skip',
     }).then(d => { if (!cancelled) { setData(d); setRefreshing(false); } }).catch((e: unknown) => {
       if (cancelled) return;
@@ -352,7 +382,50 @@ function TracesPageInner() {
       setRefreshing(false);
     });
     return () => { cancelled = true; };
-  }, [view, listRangeNs, sort, order, page, filter, env, advFilters, advGroupParam, extraCols, showTotal, retryNonce]);
+  }, [view, listRangeNs, sort, order, page, filter, env, advFilters, advGroupParam, showTotal, retryNonce]);
+
+  // ── Extras enrichment (FAZ 2 — docs/audit/traces-attribute-columns.md
+  // §6B). Fires when the page rows are in and attribute columns are
+  // selected: ONE light call fetches the still-missing keys for exactly the
+  // visible trace ids, time-bounded by the rows' REAL min/max timestamps
+  // (the server pads the upper bound). Column REMOVAL never fetches — the
+  // column simply leaves colIds. mergeTraceExtras stamps every requested
+  // key ('' fallback), so missingExtraKeys converges to [] and this effect
+  // can never re-fire in a loop.
+  useEffect(() => {
+    if (view !== 'list' && view !== 'relations') return;
+    if (!extraCols.length) return;
+    const rows = data?.traces;
+    if (!rows?.length) return;
+    const missing = missingExtraKeys(rows, extraCols);
+    if (!missing.length) return;
+    let from = Infinity, to = -Infinity;
+    for (const r of rows) {
+      if (r.startTime < from) from = r.startTime;
+      const end = r.startTime + r.durationMs * 1e6;
+      if (end > to) to = end;
+    }
+    let cancelled = false;
+    // v0.9.195 review-fix: istek kapsamındaki id seti closure'da sabitlenir —
+    // bayat bir yanıt, bu arada DEĞİŞMİŞ bir sayfanın satırlarını asla
+    // fetched-empty ('') damgalayamaz (kapsam-dışı satırlar dokunulmaz kalır,
+    // sonraki turda yeniden istenir).
+    const requestedIds = new Set(rows.map(r => r.traceId));
+    api.tracesExtras({
+      traceIds: rows.map(r => r.traceId).join(','),
+      extraAttrs: missing.join(','),
+      // -1ms guard: startTime ns exceed Number's integer precision, so the
+      // rounded `from` could land a hair above the true earliest span.
+      from: Math.floor(from - 1e6),
+      to: Math.ceil(to),
+    }).then(res => {
+      if (cancelled) return;
+      setData(d => d ? { ...d, traces: mergeTraceExtras(d.traces, missing, res.extras ?? {}, requestedIds) } : d);
+    }).catch(() => {
+      // Non-fatal: cells keep their "—" placeholder; the next list load retries.
+    });
+    return () => { cancelled = true; };
+  }, [view, data, extraCols]);
 
   // ── Relations fetch (Gap 3) ────────────────────────────────────────────────
   // Structural self-join over raw spans. Fires only in relations view, and

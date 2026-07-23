@@ -1546,6 +1546,15 @@ export interface TracesResponse {
   rankedWithinRecent?: number;
 }
 
+// FAZ 2 (traces attribute columns) — response of the phase-2-only
+// GET /api/traces?traceIds= enrichment call: attribute values keyed by
+// trace id, then by requested attribute key. Every requested key is
+// present per trace ('' when the trace doesn't carry it) so the client
+// can mark it fetched and never refetch in a loop.
+export interface TracesExtrasResponse {
+  extras: Record<string, Record<string, string>>;
+}
+
 export interface SpanEvent {
   name: string;
   timeNano: number;

@@ -1265,6 +1265,16 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 			return
 		}
 		n, err := store.RefreshExceptionGroups(ctx, since)
+		// Advance the trailing window BEFORE handling the result
+		// (v0.9.188 — operator-reported: prod'da yeni exception'lar hiç
+		// görünmüyordu). Root cause: ilk tick 24h tarar; milyar-span
+		// ölçeğinde bu pass OOM olur (CH code 241) ve `since` YALNIZ
+		// BAŞARIDA ilerlediği için loop aynı patlayan 24h penceresini her
+		// tick sonsuza dek tekrarlıyordu — inbox hiç ucuz 5dk steady
+		// state'e ulaşamadı, hiçbir yeni exception düşmedi. Sonucu ne
+		// olursa olsun ilerletmek: başarısız backfill best-effort atlanır,
+		// bir sonraki tick'in 5dk penceresi inbox'ı bugünden ileri ısıtır.
+		since = time.Now().Add(-5 * time.Minute)
 		if err != nil {
 			log.Printf("[errors-inbox] refresh: %v", err)
 			return
@@ -1272,7 +1282,6 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 		if n > 0 {
 			log.Printf("[errors-inbox] refreshed %d groups", n)
 		}
-		since = time.Now().Add(-5 * time.Minute)
 
 		// Stale-sweep every 6th tick (≈ every 6 min). Hourly
 		// would be fine too; 6-min keeps the operator-visible

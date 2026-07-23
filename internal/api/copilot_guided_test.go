@@ -544,3 +544,56 @@ func TestPickGuidedOperation(t *testing.T) {
 		})
 	}
 }
+
+// v0.9.192 — operator-reported: "mobile bff'lerde hangisinde hata var"
+// hiçbir servisi bulamıyordu (boşluklu aile adı ne tam-ad ne
+// unique-prefix eşleşir). Aile çıkarımı: ad-parçası token'ları (mobile,
+// bff) HEPSİNİ bounded segment olarak içeren 2+ servis = aile.
+func TestExtractServiceFamily(t *testing.T) {
+	services := []string{
+		"mobile-overview-bff-prod", "mobile-loan-bff-prod",
+		"mobile-gateway-prod", "checkout-service", "rebuff-svc",
+	}
+	envs := []string{"uat", "prep"}
+	cases := []struct {
+		name string
+		msg  string
+		want int // beklenen aile boyu (0 = nil)
+	}{
+		{"mobile bff family", "mobile bff'lerde hangisinde hata var", 2},
+		{"single fragment bff", "bff'lerde hata var mı", 2},
+		{"segment not substring", "buff servisleri nasıl", 0}, // "rebuff-svc" içindeki bff'i almaz
+		{"mobile alone = 3 family", "mobile servislerinde hata var mı", 3},
+		{"no name fragment", "hata var mı", 0},
+		{"env token excluded", "uat hataları", 0},
+		{"full name is not family", "mobile-loan-bff-prod hataları", 0}, // tam ad tek token = tek servis segmenti → aile değil (extractServiceEntity zaten çözer)
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := extractServiceFamily(normalizeGuidedMsg(tc.msg), services, envs)
+			if len(got) != tc.want {
+				t.Fatalf("family=%v (n=%d), want n=%d (msg %q)", got, len(got), tc.want, tc.msg)
+			}
+		})
+	}
+}
+
+// Router seviyesi: aile sorusu guidedFamilyHealth'e gider; açık tek
+// servis adı aileden ÖNCE kazanır; sayfa-context aile sorusunu ezmez.
+func TestRouteGuidedIntentFamily(t *testing.T) {
+	services := []string{"mobile-overview-bff-prod", "mobile-loan-bff-prod", "checkout-service"}
+	got := routeGuidedIntent("mobile bff'lerde hangisinde hata var", services, nil, "")
+	if got.Intent != guidedFamilyHealth || len(got.Family) != 2 {
+		t.Fatalf("family route: got intent=%q family=%v", got.Intent, got.Family)
+	}
+	// Açık tek servis adı → service_health, aile değil.
+	got = routeGuidedIntent("mobile-loan-bff-prod hataları", services, nil, "")
+	if got.Intent != guidedServiceHealth || got.Service != "mobile-loan-bff-prod" {
+		t.Fatalf("explicit name must win: got intent=%q service=%q", got.Intent, got.Service)
+	}
+	// Sayfa-context (checkout) aile sorusunu checkout'a DARALTMAZ.
+	got = routeGuidedIntent("mobile bff'lerde hangisinde hata var", services, nil, "checkout-service")
+	if got.Intent != guidedFamilyHealth {
+		t.Fatalf("ctx must not override family ask: got intent=%q service=%q", got.Intent, got.Service)
+	}
+}

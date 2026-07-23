@@ -56,6 +56,10 @@ type chatRequest struct {
 	// Şeffaf: chat banner'ı "checkout servisindesin" der.
 	Context struct {
 		Service string `json:"service,omitempty"`
+		// Operation (v0.9.184) — the ?op= the operator is viewing on a
+		// service page; lets a bare "bu operasyonun durumu" scope RED to
+		// that span name (guided router's operation fallback).
+		Operation string `json:"operation,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -127,7 +131,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// frontier models; the 2B-class primary target (qwen3.5-2b) can't
 	// drive the 5-round × 11-schema loop reliably at all. No match →
 	// the free tool loop below runs UNCHANGED.
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service); handled {
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation); handled {
 		emit("done", map[string]bool{"ok": gok})
 		return
 	}

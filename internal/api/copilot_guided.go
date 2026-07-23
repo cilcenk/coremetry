@@ -427,7 +427,7 @@ KURALLAR:
 // prefetch fails — the caller then runs the free tool loop unchanged.
 // handled=true means the exchange is complete (answer or error
 // emitted); ok mirrors the `done` event's success flag.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService string) (handled, ok bool) {
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation string) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -450,7 +450,15 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	case guidedProblems:
 		evidence, sources, err = s.guidedProblemsBundle(ctx, emit, route.Service, route.Env)
 	case guidedServiceHealth:
-		evidence, sources, err = s.guidedServiceHealthBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
+		// v0.9.184 — operasyon-scope yükseltmesi: soru belirli bir
+		// operasyonu adlandırıyorsa (ya da operatör bir operasyon
+		// sayfasındaysa) RED'i o span-name'e daraltıp operasyon
+		// bundle'ına yönlendir; aksi halde servis-geneli kalır.
+		if op := s.resolveGuidedOperation(ctx, route.Service, question, ctxOperation); op != "" {
+			evidence, sources, err = s.guidedOperationHealthBundle(ctx, emit, route.Service, op, route.Env, from, to, rangeS)
+		} else {
+			evidence, sources, err = s.guidedServiceHealthBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
+		}
 	case guidedSlowTraces:
 		evidence, sources, err = s.guidedSlowTracesBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedDeployImpact:
@@ -653,13 +661,177 @@ func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string
 	// telemetriden çizer (LLM değil, spanMetricBatch). Servis-sağlık
 	// headline'ı = error_rate. Blok görsel olarak dokümana gömülü değildir;
 	// eski istemci parse edemezse düz metin olarak görünür (zararsız).
-	fmt.Fprintf(&b, "\n```chart\n{\"title\":%q,\"service\":%q,\"agg\":\"error_rate\",\"rangeS\":%d}\n```\n",
-		service+" · error_rate", service, rangeS)
+	b.WriteString(chartFence(guidedChartSpec{Title: service + " · error_rate", Service: service, Agg: "error_rate", RangeS: rangeS}))
 	src := fmt.Sprintf("servis RED özeti + baseline + en sık hatalar + deploy işaretçileri + açık problemler + grafik (son %s)", fmtAgoTR(rangeS))
 	if env != "" {
 		src += fmt.Sprintf("; RED tüm ortamlar, problemler ortam: %s", env)
 	}
 	return b.String(), src, nil
+}
+
+// guidedOperationHealthBundle (v0.9.184) — the operasyon twin of the
+// service-health bundle. Scopes RED to a single span name + emits a
+// live operasyon-scoped chart (name = "..." DSL). Problems stay
+// service-level (no operation-scoped Problem row exists) and the
+// evidence says so.
+func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(string, any), service, operation, env string, from, to time.Time, rangeS int64) (string, string, error) {
+	if argsB, merr := json.Marshal(map[string]string{"service": service, "operation": operation}); merr == nil {
+		emitGuidedStep(emit, "operation_context", string(argsB))
+	}
+	cx := s.buildOperationContext(ctx, service, operation, from, to)
+	var b strings.Builder
+	if env != "" {
+		fmt.Fprintf(&b, "Not: RED tüm ortamların toplamı; açık problemler %q ortamına daraltıldı.\n", env)
+	}
+	b.WriteString(renderOperationSnapshot(cx))
+	if cx.Current.Spans == 0 {
+		b.WriteString("Bu pencerede bu operasyon için span verisi yok.\n")
+	}
+
+	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
+	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
+	if perr == nil {
+		probs = chstore.EnrichProblemsWithPriority(probs)
+		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
+		if len(probs) == 0 {
+			b.WriteString("Servis düzeyinde açık problem yok.\n")
+		} else {
+			b.WriteString("Servis düzeyinde açık problemler (operasyon-özel değil):\n")
+			b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
+		}
+	}
+
+	// v0.9.184 — operasyon-scoped canlı grafik: error_rate headline.
+	// Frontend (CosreChart) bunu spanMetricBatch(name = "op") ile çizer.
+	b.WriteString(chartFence(guidedChartSpec{Title: operation + " · error_rate", Service: service, Operation: operation, Agg: "error_rate", RangeS: rangeS}))
+
+	src := fmt.Sprintf("operasyon RED özeti + baseline + servis açık problemleri + grafik (son %s)", fmtAgoTR(rangeS))
+	if env != "" {
+		src += fmt.Sprintf("; problemler ortam: %s", env)
+	}
+	return b.String(), src, nil
+}
+
+// guidedChartSpec is the deterministic chart block CoSRE emits inside a
+// ```chart``` fence. json.Marshal (v0.9.187) — NOT fmt %q, which is
+// strconv.Quote: a service/operation name with a control char produces
+// \a / \x1b escapes that are invalid JSON, so the frontend's JSON.parse
+// throws and the chart is silently dropped. Marshal keeps the block
+// valid for any name.
+type guidedChartSpec struct {
+	Title     string `json:"title"`
+	Service   string `json:"service"`
+	Operation string `json:"operation,omitempty"`
+	Agg       string `json:"agg"`
+	RangeS    int64  `json:"rangeS"`
+}
+
+func chartFence(spec guidedChartSpec) string {
+	j, err := json.Marshal(spec)
+	if err != nil {
+		return ""
+	}
+	return "\n```chart\n" + string(j) + "\n```\n"
+}
+
+// resolveGuidedOperation upgrades a service-health question to an
+// operation-scoped one. Two signals, precision over recall:
+//  1. the question TEXT contains a live operation name of the service
+//     (bounded substring, len ≥ 6 to skip bare verbs) — the strongest,
+//     "GET /orders/:id nasıl";
+//  2. the operator is ON an operation page (ctxOperation from ?op=) AND
+//     the message has an operation-signal word ("bu operasyonun durumu").
+//
+// Returns "" (→ service-level) when neither fires, so "checkout nasıl"
+// stays a service answer. The op-name list is Redis-cached 60s.
+func (s *Server) resolveGuidedOperation(ctx context.Context, service, raw, ctxOperation string) string {
+	if service == "" {
+		return ""
+	}
+	return pickGuidedOperation(normalizeGuidedMsg(raw), s.guidedOperationNames(ctx, service), ctxOperation)
+}
+
+// pickGuidedOperation is the PURE core of resolveGuidedOperation (table-
+// tested in copilot_guided_test.go). msg is already normalized; ops is
+// the live operation-name list; ctxOperation is the ?op= the operator is
+// viewing. Longest text-matched op wins; else the ctx op iff a signal
+// word is present AND it's a real op; else "".
+func pickGuidedOperation(msg string, ops []string, ctxOperation string) string {
+	best := ""
+	for _, op := range ops {
+		if len(op) < 6 || !opNameDistinctive(op) {
+			continue
+		}
+		// indexBounded (not strings.Contains) so an op name never matches
+		// INSIDE a word/service token — same word-boundary discipline the
+		// service matcher uses ("mobile-bff" ∉ "mobile-bff-uat").
+		if indexBounded(msg, normalizeGuidedMsg(op)) >= 0 && len(op) > len(best) {
+			best = op
+		}
+	}
+	if best != "" {
+		return best
+	}
+	if ctxOperation != "" && hasThisOperationSignal(msg) {
+		for _, op := range ops {
+			if op == ctxOperation {
+				return ctxOperation // guard a stale ?op= against the live list
+			}
+		}
+	}
+	return ""
+}
+
+// opNameDistinctive — the op name carries a structural separator
+// (space/slash/dot/colon) that real APM span names have ("GET /orders",
+// "SELECT users", "svc.Method/Call") but a bare business word
+// ("checkout", "payment") does not. Free-text matching a BARE word
+// collides with the service-identifying token that resolved the service
+// (asking "checkout neden yavaş?" is a SERVICE question, not the span
+// named "checkout"), so bare-word ops are reachable only via the ?op=
+// context fallback, never text-match. (v0.9.184 review-fix.)
+func opNameDistinctive(op string) bool {
+	return strings.ContainsAny(op, " /.:")
+}
+
+// hasThisOperationSignal — the message DEICTICALLY points at one
+// operation ("bu operasyon", "this endpoint"). Used ONLY for the ?op=
+// context fallback. Demonstrative-scoped on purpose: a bare noun like
+// "işlem"/"route" also appears in whole-service asks ("tüm işlemler
+// nasıl?") which must NOT be narrowed to the viewed op. (v0.9.184
+// review-fix — plural/bare-noun false-trigger.)
+func hasThisOperationSignal(msg string) bool {
+	for _, kw := range []string{
+		"bu operasyon", "bu endpoint", "bu işlem", "bu islem",
+		"bu uç nokta", "bu uc nokta", "bu servis çağrısı",
+		"şu operasyon", "su operasyon", "this operation", "this endpoint",
+	} {
+		if strings.Contains(msg, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// guidedOperationNames returns a service's live operation (span-name)
+// list for entity extraction, Redis-cached 60s per service. Soft-fails
+// to nil (→ resolveGuidedOperation returns "", service-level answer).
+func (s *Server) guidedOperationNames(ctx context.Context, service string) []string {
+	key := "copilot:guided:opnames:" + service
+	if b, ok, _ := s.cache.Get(ctx, key); ok && len(b) > 0 {
+		var names []string
+		if json.Unmarshal(b, &names) == nil {
+			return names
+		}
+	}
+	names, _, err := s.store.ListOperationNames(ctx, service, "", 500, 0)
+	if err != nil {
+		return nil
+	}
+	if b, merr := json.Marshal(names); merr == nil {
+		_ = s.cache.Set(ctx, key, b, 60*time.Second)
+	}
+	return names
 }
 
 // (c) "en yavaş/slowest traces [service]" → duration-ranked trace

@@ -1173,12 +1173,22 @@ export const api = {
     // v0.9.164 — context-awareness: bulunulan sayfanın servisi; mesaj servis
     // adı taşımıyorsa guided router bunu varsayılan alır.
     contextService?: string,
+    // v0.9.184 — seçili operasyon (?op=); "bu operasyonun durumu" RED'i o
+    // span-name'e daraltır (guided operation fallback).
+    contextOperation?: string,
   ): Promise<void> => {
+    const context =
+      contextService || contextOperation
+        ? {
+            ...(contextService ? { service: contextService } : {}),
+            ...(contextOperation ? { operation: contextOperation } : {}),
+          }
+        : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {
       method: 'POST',
       credentials: 'include',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(contextService ? { messages, context: { service: contextService } } : { messages }),
+      body: JSON.stringify(context ? { messages, context } : { messages }),
       signal,
     });
     if (!r.ok || !r.body) {

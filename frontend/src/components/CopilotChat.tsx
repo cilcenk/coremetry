@@ -119,6 +119,15 @@ export function CopilotChat() {
     if (loc.pathname === '/pod') return sp.get('service') || '';
     return '';
   }, [loc.pathname, sp]);
+  // Operation-awareness (v0.9.184) — servis sayfasında seçili ?op=. "bu
+  // operasyonun durumu" gibi bir soru guided router'da RED'i o span-name'e
+  // daraltır (resolveGuidedOperation'ın context fallback'i).
+  const currentOp = useMemo(() => {
+    if (loc.pathname === '/service' || loc.pathname === '/service/backtrace') {
+      return sp.get('op') || '';
+    }
+    return '';
+  }, [loc.pathname, sp]);
 
   useEffect(() => {
     api.copilotConfig().then(c => setEnabled(c.enabled)).catch(() => setEnabled(false));
@@ -191,7 +200,7 @@ export function CopilotChat() {
         } else if (e.kind === 'done') {
           patchLast(t => ({ ...t, pending: false }));
         }
-      }, ac.signal, currentService || undefined);
+      }, ac.signal, currentService || undefined, currentOp || undefined);
     } catch (err) {
       patchLast(t => ({ ...t, error: err instanceof Error ? err.message : String(err), pending: false }));
     } finally {

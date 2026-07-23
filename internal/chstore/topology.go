@@ -559,120 +559,25 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 	// empty the node falls back to the flat `db:<system>` form.
 	// External peer hosts keep the prior `ext:<service>` shape
 	// since peer_service IS the canonical external name.
+	// v0.9.186 — analyzer-portable restructure (prod CH 26.2 code 60 fix).
+	// Eski biçimde per-row WITH-alias zinciri (infra_host/unanswered/child…)
+	// dış WITH clause'daydı; CH 26.x yeni analyzer'ı GLOBAL NOT IN
+	// alt-sorgusunun `FROM spans`'ini o WITH scope'uyla karıştırıp remote
+	// shard'da "Unknown table expression identifier 'spans'" (code 60)
+	// veriyordu (allow_experimental_analyzer=0 ise code 215 — o yüzden
+	// analyzer kapatma değil). Çözüm: tüm per-row hesaplar İÇ SELECT'te
+	// materialize edilir, dış sorgu düz kolonlarla aggregate eder — WITH
+	// scope karışıklığı ortadan kalkar. Çıktı iki analyzer modunda da
+	// birebir aynı (24.8 single+distributed doğrulandı; 26.2 reproduce).
 	if err := s.conn.Exec(ctx, `
 		INSERT INTO topology_edges_5m
 			(time_bucket, parent_service, child_node, node_kind,
 			 protocol, top_labels, distinct_labels, calls,
 			 sum_duration_ns, p99_ms, errors,
 			 parent_env, child_env, version)
-		WITH
-			coalesce(
-				nullIf(peer_service, ''),
-				nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
-				nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
-				''
-			) AS infra_host,
-			-- v0.8.448 — leaf-client tespiti (external fallback için):
-			-- server-kind bir child'ı OLAN client span'ın hedefi
-			-- enstrümante bir servistir — o kenarı cross-service pass
-			-- üretir; external adayı yalnız CEVAPSIZ (leaf) client'lar.
-			-- Set penceresi bucket sonundan 5 dk taşar: sınırda başlayan
-			-- client'ın child'ı bir sonraki bucket'a düşebilir. Set
-			-- boyutu 5 dk'lık server-span parent_id'leri (~1-2M @ 1B/gün,
-			-- hash set olarak onlarca MB) — worker pass'i, hot path değil.
-			span_id GLOBAL NOT IN (
-				SELECT parent_id FROM spans
-				WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
-				  AND kind = 'server' AND parent_id != ''
-			) AS unanswered,
-			-- v0.5.410 — derive parent_env from resource attrs.
-			-- child_env stays empty for infra targets — db/queue/
-			-- external nodes don't inherit the caller's env (they
-			-- ARE cross-env infra).
-			` + topoEnvChainSQL("") + ` AS p_env,
-			-- v0.7.31 — messaging.destination (topic) so each Kafka topic is a
-			-- DISTINCT queue node (queue:<system>:<topic>) instead of every
-			-- topic on a broker collapsing into one queue:<system> hairball.
-			-- Operator-reported: a broadcast topic (bsa.kafka.core.cache.refresh)
-			-- fanned out to thousands of consumers and tangled the whole graph;
-			-- separating topics lets it be muted/collapsed surgically. The
-			-- attr_values[indexOf(...)] lookup mirrors what messaging_summary_5m
-			-- already pays — and this is the 5-min worker aggregation, off the
-			-- hot read path.
-			coalesce(
-				nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
-				nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
-				''
-			) AS msg_dest,
-			multiIf(
-				db_system  != '' AND infra_host != '',
-					concat('db:',    db_system, '@', infra_host),
-				db_system  != '',
-					concat('db:',    db_system),
-				-- v0.5.411 — messaging branch scoped to non-consumer spans only
-				-- (consumer spans get the queue → consumer pass below).
-				-- v0.7.31 — topic-aware: prefer the destination so topics
-				-- separate; fall back to broker host, then bare system.
-				msg_system != '' AND kind != 'consumer' AND msg_dest != '',
-					concat('queue:', msg_system, ':', msg_dest),
-				msg_system != '' AND kind != 'consumer' AND infra_host != '',
-					concat('queue:', msg_system, '@', infra_host),
-				msg_system != '' AND kind != 'consumer',
-					concat('queue:', msg_system),
-				peer_service != '' AND kind = 'client',
-					concat('ext:', peer_service),
-				-- v0.8.448 — semconv fallback: hedefini yalnız
-				-- server.address / net.peer.name ile adlandıran HTTP/RPC
-				-- client'ları (standart semconv; peer.service opt-in bir
-				-- ipucu, çoğu SDK hiç set etmez). Üç kapı: leaf-only
-				-- (unanswered — cevabı olan çağrı internal'dır), http/rpc
-				-- şekilli (başıboş TCP client'ı düğüm yapma), ve bilinen
-				-- servis adı asla (cevap span'ı bu pass'ten SONRA gelen
-				-- sınır yarışına kemer-askı; /external read tarafı da
-				-- aynı seti eler).
-				kind = 'client' AND infra_host != ''
-					AND (http_method != '' OR rpc_system != '')
-					AND unanswered
-					AND infra_host GLOBAL NOT IN (
-						SELECT DISTINCT service_name FROM service_summary_5m
-						WHERE time_bucket >= toDateTime(?, 'UTC')
-					),
-					concat('ext:', infra_host),
-				''
-			) AS child,
-			-- proto/kind_out child'dan türetilir (alias zinciri) —
-			-- external dalı iki kez yazıp ıraksama riski almak yerine.
-			multiIf(
-				db_system  != '', 'db',
-				msg_system != '', 'kafka',
-				startsWith(child, 'ext:'), 'http',
-				''
-			) AS proto,
-			multiIf(
-				db_system  != '', 'db',
-				msg_system != '', 'queue',
-				startsWith(child, 'ext:'), 'external',
-				''
-			) AS kind_out,
-			-- Label format: include the instance/host (peer_service)
-			-- when present so the edge detail panel surfaces "which
-			-- postgres instance is hot" without forcing a separate
-			-- query. Falls back to system+operation when peer is
-			-- empty so labels stay informative on older spans.
-			multiIf(
-				http_method != '', concat(http_method, ' ',
-					if(http_route != '', http_route, name)),
-				db_system   != '' AND peer_service != '',
-					concat(db_system, '@', peer_service, ' ', name),
-				db_system   != '', concat(db_system, ' ', name),
-				msg_system  != '' AND peer_service != '',
-					concat(msg_system, '@', peer_service, ' ', name),
-				msg_system  != '', concat(msg_system, ' ', name),
-				name
-			) AS label
 		SELECT
 			toDateTime(?, 'UTC') AS time_bucket,
-			service_name         AS parent_service,
+			parent_service,
 			child                AS child_node,
 			kind_out             AS node_kind,
 			proto                AS protocol,
@@ -686,21 +591,132 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			any(p_env)           AS parent_env,
 			''                   AS child_env,
 			toUInt64(?)          AS version
-		FROM spans
-		WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
-		  AND child != ''
+		FROM (
+			SELECT
+				service_name AS parent_service,
+				coalesce(
+					nullIf(peer_service, ''),
+					nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+					nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+					''
+				) AS infra_host,
+				-- v0.8.448 — leaf-client tespiti (external fallback için):
+				-- server-kind bir child'ı OLAN client span'ın hedefi
+				-- enstrümante bir servistir — o kenarı cross-service pass
+				-- üretir; external adayı yalnız CEVAPSIZ (leaf) client'lar.
+				-- Set penceresi bucket sonundan 5 dk taşar: sınırda başlayan
+				-- client'ın child'ı bir sonraki bucket'a düşebilir. Set
+				-- boyutu 5 dk'lık server-span parent_id'leri (~1-2M @ 1B/gün,
+				-- hash set olarak onlarca MB) — worker pass'i, hot path değil.
+				span_id GLOBAL NOT IN (
+					SELECT parent_id FROM spans
+					WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+					  AND kind = 'server' AND parent_id != ''
+				) AS unanswered,
+				-- v0.5.410 — derive parent_env from resource attrs.
+				-- child_env stays empty for infra targets — db/queue/
+				-- external nodes don't inherit the caller's env (they
+				-- ARE cross-env infra).
+				` + topoEnvChainSQL("") + ` AS p_env,
+				-- v0.7.31 — messaging.destination (topic) so each Kafka topic is a
+				-- DISTINCT queue node (queue:<system>:<topic>) instead of every
+				-- topic on a broker collapsing into one queue:<system> hairball.
+				-- Operator-reported: a broadcast topic (bsa.kafka.core.cache.refresh)
+				-- fanned out to thousands of consumers and tangled the whole graph;
+				-- separating topics lets it be muted/collapsed surgically. The
+				-- attr_values[indexOf(...)] lookup mirrors what messaging_summary_5m
+				-- already pays — and this is the 5-min worker aggregation, off the
+				-- hot read path.
+				coalesce(
+					nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
+					nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
+					''
+				) AS msg_dest,
+				multiIf(
+					db_system  != '' AND infra_host != '',
+						concat('db:',    db_system, '@', infra_host),
+					db_system  != '',
+						concat('db:',    db_system),
+					-- v0.5.411 — messaging branch scoped to non-consumer spans only
+					-- (consumer spans get the queue → consumer pass below).
+					-- v0.7.31 — topic-aware: prefer the destination so topics
+					-- separate; fall back to broker host, then bare system.
+					msg_system != '' AND kind != 'consumer' AND msg_dest != '',
+						concat('queue:', msg_system, ':', msg_dest),
+					msg_system != '' AND kind != 'consumer' AND infra_host != '',
+						concat('queue:', msg_system, '@', infra_host),
+					msg_system != '' AND kind != 'consumer',
+						concat('queue:', msg_system),
+					peer_service != '' AND kind = 'client',
+						concat('ext:', peer_service),
+					-- v0.8.448 — semconv fallback: hedefini yalnız
+					-- server.address / net.peer.name ile adlandıran HTTP/RPC
+					-- client'ları (standart semconv; peer.service opt-in bir
+					-- ipucu, çoğu SDK hiç set etmez). Üç kapı: leaf-only
+					-- (unanswered — cevabı olan çağrı internal'dır), http/rpc
+					-- şekilli (başıboş TCP client'ı düğüm yapma), ve bilinen
+					-- servis adı asla (cevap span'ı bu pass'ten SONRA gelen
+					-- sınır yarışına kemer-askı; /external read tarafı da
+					-- aynı seti eler).
+					kind = 'client' AND infra_host != ''
+						AND (http_method != '' OR rpc_system != '')
+						AND unanswered
+						AND infra_host GLOBAL NOT IN (
+							SELECT DISTINCT service_name FROM service_summary_5m
+							WHERE time_bucket >= toDateTime(?, 'UTC')
+						),
+						concat('ext:', infra_host),
+					''
+				) AS child,
+				-- proto/kind_out child'dan türetilir (alias zinciri) —
+				-- external dalı iki kez yazıp ıraksama riski almak yerine.
+				multiIf(
+					db_system  != '', 'db',
+					msg_system != '', 'kafka',
+					startsWith(child, 'ext:'), 'http',
+					''
+				) AS proto,
+				multiIf(
+					db_system  != '', 'db',
+					msg_system != '', 'queue',
+					startsWith(child, 'ext:'), 'external',
+					''
+				) AS kind_out,
+				-- Label format: include the instance/host (peer_service)
+				-- when present so the edge detail panel surfaces "which
+				-- postgres instance is hot" without forcing a separate
+				-- query. Falls back to system+operation when peer is
+				-- empty so labels stay informative on older spans.
+				multiIf(
+					http_method != '', concat(http_method, ' ',
+						if(http_route != '', http_route, name)),
+					db_system   != '' AND peer_service != '',
+						concat(db_system, '@', peer_service, ' ', name),
+					db_system   != '', concat(db_system, ' ', name),
+					msg_system  != '' AND peer_service != '',
+						concat(msg_system, '@', peer_service, ' ', name),
+					msg_system  != '', concat(msg_system, ' ', name),
+					name
+				) AS label,
+				name,
+				duration,
+				status_code
+			FROM spans
+			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
+		)
+		WHERE child != ''
 		  AND ` + topoNoiseExcludeSQL("name") + `
 		  AND ` + topoNoiseExcludeSQL("msg_dest") + `
 		GROUP BY parent_service, child, proto, kind_out
 		SETTINGS max_execution_time = 120,
 		         distributed_product_mode = 'global'`,
-		// v0.8.448 — arg sırası SQL'deki ? sırasını izler: önce WITH
-		// (unanswered set penceresi + bilinen-servis lookback'i), sonra
-		// SELECT (time_bucket, version), sonra WHERE penceresi.
-		bucketStart.Unix(), end.Add(5*time.Minute).Unix(),
-		bucketStart.Add(-time.Hour).Unix(),
+		// v0.9.186 — arg sırası restructure ile değişti: DIŞ SELECT önce
+		// (time_bucket, version), sonra İÇ SELECT (unanswered penceresi,
+		// bilinen-servis lookback'i, iç WHERE penceresi).
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),
+		bucketStart.Unix(), end.Add(5*time.Minute).Unix(),
+		bucketStart.Add(-time.Hour).Unix(),
 		bucketStart.Unix(), end.Unix(),
 	); err != nil {
 		return fmt.Errorf("topology bucket infra pass: %w", err)

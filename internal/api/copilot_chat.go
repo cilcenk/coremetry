@@ -46,7 +46,7 @@ const (
 // doesn't hallucinate service names / metrics.
 const chatSystemPrompt = `You are Coremetry's in-app observability assistant. You help operators investigate their own telemetry: services, traces, logs, metrics, problems, and anomalies.
 
-Use the provided tools to ground EVERY factual claim in live data — never invent service names, error rates, or trace IDs. When a question needs data, call a tool; when you have enough, answer concisely. Prefer specific numbers ("p99 was 2,130ms", "23 traces") over vague prose. Time windows: tools take range_s (seconds back from now); default to 1800 (30m) unless the operator says otherwise. If a tool returns nothing, say so plainly rather than guessing. Keep answers short and scannable — lead with the answer, then the supporting evidence.` + copilot.AnswerInTurkish
+Use the provided tools to ground EVERY factual claim in live data — never invent service names, error rates, or trace IDs. When a question needs data, call a tool; when you have enough, answer concisely. Prefer specific numbers ("p99 was 2,130ms", "23 traces") over vague prose. Time windows: tools take range_s (seconds back from now); default to 1800 (30m) unless the operator says otherwise. If a tool returns nothing, say so plainly rather than guessing. Keep answers short and scannable — lead with the answer, then the supporting evidence. When the operator asks to SEE a chart or a visual trend would help, call render_chart — the UI draws it live; never draw ASCII charts or describe individual data points.` + copilot.AnswerInTurkish
 
 type chatRequest struct {
 	Messages []copilot.ChatMessage `json:"messages"`
@@ -157,6 +157,23 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	// CoSRE Faz-2 — render_chart server-side emission: the model PICKS
+	// the chart by calling the render_chart tool; the SERVER builds the
+	// deterministic ```chart``` fence from the handler's VALIDATED spec
+	// (chartFence, copilot_guided.go) and appends it to the final
+	// answer. A gemma4-class small model never formats chart JSON, and
+	// a hallucinated service/metric never reaches the UI (the handler
+	// returns ok:false for those). Blocks accumulate across rounds,
+	// deduped by service+operation+agg.
+	var chartBlocks []string
+	chartSeen := map[string]bool{}
+	appendCharts := func(text string) string {
+		if len(chartBlocks) == 0 {
+			return text
+		}
+		return strings.TrimRight(text, "\n") + "\n" + strings.Join(chartBlocks, "")
+	}
+
 	conv := req.Messages
 	var totalIn, totalOut uint32
 	var lastErr error
@@ -171,9 +188,10 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			emit("error", map[string]string{"error": err.Error()})
 			break
 		}
-		// No tool calls → this turn's text is the final answer.
+		// No tool calls → this turn's text is the final answer (plus any
+		// chart blocks accumulated from earlier render_chart rounds).
 		if len(turn.ToolCalls) == 0 {
-			finalText = turn.Text
+			finalText = appendCharts(turn.Text)
 			emit("answer", map[string]string{"text": finalText, "exchangeId": exchangeID})
 			break
 		}
@@ -194,6 +212,15 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			out, herr := runChatTool(ctx, h, tc.Input)
+			// CoSRE Faz-2 — intercept render_chart: parse the handler's
+			// validated output (never tc.Input — the model's raw args may
+			// name a service that doesn't exist) into a ```chart``` fence.
+			if tc.Name == "render_chart" && herr == nil {
+				if block, key := chatChartBlock(out); block != "" && !chartSeen[key] {
+					chartSeen[key] = true
+					chartBlocks = append(chartBlocks, block)
+				}
+			}
 			tr := copilot.ToolResult{CallID: tc.ID, Name: tc.Name}
 			if herr != nil {
 				tr.IsError = true
@@ -217,7 +244,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				lastErr = err2
 				emit("error", map[string]string{"error": err2.Error()})
 			} else {
-				finalText = turn2.Text
+				finalText = appendCharts(turn2.Text)
 				emit("answer", map[string]string{"text": finalText, "exchangeId": exchangeID})
 			}
 		}
@@ -250,6 +277,39 @@ func runChatTool(ctx context.Context, h func(context.Context, json.RawMessage) (
 		return "", merr
 	}
 	return string(b), nil
+}
+
+// chatChartBlock (CoSRE Faz-2) parses the render_chart handler's output
+// — the server-VALIDATED spec, not the model's raw tool input — and
+// returns the deterministic ```chart``` fence (chartFence,
+// copilot_guided.go) plus a service+operation+agg dedup key. Empty
+// block = not renderable (ok:false, malformed, or incomplete spec).
+// Pure — table-tested in copilot_chat_test.go.
+func chatChartBlock(out string) (block, key string) {
+	var rc struct {
+		OK   bool `json:"ok"`
+		Spec struct {
+			Service   string `json:"service"`
+			Operation string `json:"operation"`
+			Agg       string `json:"agg"`
+			RangeS    int64  `json:"rangeS"`
+		} `json:"spec"`
+	}
+	if err := json.Unmarshal([]byte(out), &rc); err != nil || !rc.OK || rc.Spec.Service == "" || rc.Spec.Agg == "" {
+		return "", ""
+	}
+	titleBase := rc.Spec.Service
+	if rc.Spec.Operation != "" {
+		titleBase = rc.Spec.Operation
+	}
+	fence := chartFence(guidedChartSpec{
+		Title:     titleBase + " · " + rc.Spec.Agg,
+		Service:   rc.Spec.Service,
+		Operation: rc.Spec.Operation,
+		Agg:       rc.Spec.Agg,
+		RangeS:    rc.Spec.RangeS,
+	})
+	return fence, rc.Spec.Service + "\x00" + rc.Spec.Operation + "\x00" + rc.Spec.Agg
 }
 
 // lastUserText pulls the most recent user-typed message for the

@@ -37,9 +37,14 @@ const (
 	// (the most-recent bucket back inside the band clears it — see the detector;
 	// a single-bucket dip can't re-open thanks to the 3-bucket dwell, so it
 	// doesn't flap).
-	openZ        = 3.5    // |z| above this opens an anomaly
-	resolveZ     = 1.5    // and below this clears it
-	criticalZ    = 5.0    // |z| above this escalates warning → critical
+	openZ    = 3.5 // |z| above this opens an anomaly
+	resolveZ = 1.5 // and below this clears it
+	// v0.9.193 — operatör (prod): P2/P3 anomali gürültüsü çok; yalnız
+	// P1-sınıfı gelsin + o da sertleşsin. criticalZ 5→6 ve decideAnomaly
+	// artık YALNIZ critical verdict'te açıyor (warning-grade anomali hiç
+	// Problem olmaz). request_rate DÜŞÜŞÜ istisna: trafik kaybı z'den
+	// bağımsız critical'dır ve openZ'de açılmaya devam eder.
+	criticalZ = 6.0 // |z| above this escalates warning → critical
 	dwellBuckets = 3      // consecutive buckets that must all fire to open (anti-flap)
 	minSamples   = 12     // need at least this many baseline buckets
 	madScale     = 0.6745 // scales MAD to a normal-dist stdev (modified z-score)
@@ -166,6 +171,13 @@ func decideAnomaly(metric string, z, current, median float64) anomalyDecision {
 	}
 	if metric == "request_rate" && dropped {
 		severity = "critical" // traffic loss is more serious than a spike
+	}
+	// v0.9.193 — P1-only gate (operatör: prod'da P2/P3 anomali gürültüsü).
+	// warning-grade verdict Problem açmaz; dwell sayacına da girmez —
+	// yalnız critical-sınıfı sapmalar (≥criticalZ, ya da trafik kaybı)
+	// anomali üretir. resolve bandı değişmedi.
+	if severity != "critical" {
+		return anomalyDecision{}
 	}
 	return anomalyDecision{open: true, severity: severity, direction: dir}
 }

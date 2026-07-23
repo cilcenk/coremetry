@@ -101,7 +101,10 @@ func TestFlatBaselineFloor(t *testing.T) {
 		wantSev  string
 	}{
 		{"%0 → sürekli %30: critical açılır", []float64{30, 30, 30}, true, "critical"},
-		{"%0 → sürekli %3: warning açılır", []float64{3, 3, 3}, true, "warning"},
+		// v0.9.193 P1-only: %3 (z≈4, warning-grade) artık AÇILMAZ; flat-0
+		// tabanda critical eşiği ≈ %4.45 (0.5 taban × 6σ / 0.6745).
+		{"%0 → sürekli %3: artık sessiz (P1-only)", []float64{3, 3, 3}, false, ""},
+		{"%0 → sürekli %5: critical açılır", []float64{5, 5, 5}, true, "critical"},
 		{"%0 → %1 kıpırtısı: sessiz", []float64{1, 1, 1}, false, ""},
 		{"tek bucket blip: dwell açtırmaz", []float64{0, 30, 0}, false, ""},
 		{"gerçekten düz seri: sessiz", []float64{0, 0, 0}, false, ""},

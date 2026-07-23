@@ -19,13 +19,16 @@ func TestDecideAnomaly_Directional(t *testing.T) {
 	}{
 		// p99 is "up"-only: a 3σ DROP is good news → must NOT open.
 		{"p99 drop ignored", "p99_ms", -4.0, 50, 100, false, "", ""},
-		{"p99 spike opens", "p99_ms", 4.0, 200, 100, true, "warning", "spiked"},
+		// v0.9.193 — P1-only gate (operatör: prod'da P2/P3 anomali gürültüsü):
+		// warning-grade z (openZ..criticalZ arası) artık HİÇ açılmaz; yalnız
+		// ≥criticalZ(6) spike'lar ve request_rate düşüşleri Problem üretir.
+		{"p99 warning-grade spike stays closed", "p99_ms", 4.0, 200, 100, false, "", ""},
 		{"p99 huge spike critical", "p99_ms", 6.0, 400, 100, true, "critical", "spiked"},
-		// error_rate "up"-only.
-		{"error_rate spike opens", "error_rate", 3.5, 5, 1, true, "warning", "spiked"},
+		{"error_rate warning-grade spike stays closed", "error_rate", 3.5, 5, 1, false, "", ""},
 		{"error_rate drop ignored", "error_rate", -3.5, 0.1, 1, false, "", ""},
-		// request_rate "both": spike → warning, drop → critical (traffic loss).
-		{"rps spike opens warning", "request_rate", 3.5, 1500, 1000, true, "warning", "spiked"},
+		// request_rate "both": warning-grade spike closed; drop → critical
+		// (traffic loss) hâlâ openZ'de açılır.
+		{"rps warning-grade spike stays closed", "request_rate", 3.5, 1500, 1000, false, "", ""},
 		{"rps drop opens critical", "request_rate", -3.5, 500, 1000, true, "critical", "dropped"},
 		// Relative floor: a 3σ move that's proportionally tiny must NOT open
 		// (error_rate 1.00 → 1.05 = 5% < 10% floor, even at z=4).

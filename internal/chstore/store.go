@@ -340,6 +340,13 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	if cfg.MaxBytesExternalSort > 0 {
 		extSort = cfg.MaxBytesExternalSort
 	}
+	// v0.9.185 — surface the EFFECTIVE per-query limits at boot so an
+	// operator can confirm a COREMETRY_CH_MAX_MEMORY_USAGE override
+	// actually took (a rejected value logs a [config] WARNING and this
+	// line still shows the default — the two together make a failed
+	// override unmistakable).
+	log.Printf("[chstore] per-query memory limits: max_memory_usage=%d, external_group_by=%d, external_sort=%d bytes",
+		maxMem, extGroupBy, extSort)
 	conn, err := clickhouse.Open(&clickhouse.Options{
 		Addr:        hosts,
 		Auth:        clickhouse.Auth{Database: cfg.Database, Username: cfg.Username, Password: cfg.Password},

@@ -355,6 +355,25 @@ type CHConfig struct {
 // the chart can hand us a single env var with multiple seeds.
 func (c CHConfig) Hosts() []string { return splitCSV(c.Addr) }
 
+// chBytesEnv reads a positive plain-integer byte count from env into
+// dst. On a non-integer / non-positive value it WARNS (v0.9.185) rather
+// than silently discarding — operators reach for k8s "12Gi"/"12G"
+// memory syntax, which ParseInt rejects; a silent drop would leave the
+// default 4GB cap (and the code-241 empty-inbox symptom) in place with
+// zero diagnostic. Empty (unset) is the normal no-op — no warning.
+func chBytesEnv(key string, dst *int64) {
+	v := os.Getenv(key)
+	if v == "" {
+		return
+	}
+	if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+		*dst = n
+		return
+	}
+	log.Printf("[config] WARNING: %s=%q geçersiz — bayt cinsinden düz tamsayı bekleniyor "+
+		"(ör. 12000000000; \"12Gi\"/\"12G\" DEĞİL). Yoksayılıyor, mevcut varsayılan korunuyor.", key, v)
+}
+
 type RetentionConfig struct {
 	SpansDays   int `yaml:"spans_days"`
 	LogsDays    int `yaml:"logs_days"`
@@ -551,22 +570,13 @@ func Load(path string) (*Config, error) {
 	}
 	// v0.9.184 — per-query CH memory limits, env-tunable (bytes). Prod's
 	// external cluster raises these to match node RAM; local/default keep
-	// the conservative 4GB/1GB/1GB built-ins. Only positive values apply.
-	if v := os.Getenv("COREMETRY_CH_MAX_MEMORY_USAGE"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			cfg.ClickHouse.MaxMemoryUsage = n
-		}
-	}
-	if v := os.Getenv("COREMETRY_CH_MAX_BYTES_EXTERNAL_GROUP_BY"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			cfg.ClickHouse.MaxBytesExternalGroupBy = n
-		}
-	}
-	if v := os.Getenv("COREMETRY_CH_MAX_BYTES_EXTERNAL_SORT"); v != "" {
-		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-			cfg.ClickHouse.MaxBytesExternalSort = n
-		}
-	}
+	// the conservative 4GB/1GB/1GB built-ins. v0.9.185 — chBytesEnv WARNS
+	// on a non-integer value instead of silently discarding it (operators
+	// reach for k8s "12Gi" syntax; a silent drop leaves the 4GB cap and
+	// the code-241 symptom in place with no diagnostic).
+	chBytesEnv("COREMETRY_CH_MAX_MEMORY_USAGE", &cfg.ClickHouse.MaxMemoryUsage)
+	chBytesEnv("COREMETRY_CH_MAX_BYTES_EXTERNAL_GROUP_BY", &cfg.ClickHouse.MaxBytesExternalGroupBy)
+	chBytesEnv("COREMETRY_CH_MAX_BYTES_EXTERNAL_SORT", &cfg.ClickHouse.MaxBytesExternalSort)
 	if v := os.Getenv("COREMETRY_HTTP_ADDR"); v != "" {
 		cfg.Listen.HTTP = v
 	}

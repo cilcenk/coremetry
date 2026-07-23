@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 	"time"
 
@@ -30,6 +31,9 @@ func (stubLogStore) Histogram(context.Context, logstore.Filter, int, string) ([]
 }
 func (stubLogStore) EQLSearch(context.Context, logstore.EQLQuery) ([]logstore.EQLSequence, error) {
 	return nil, nil
+}
+func (stubLogStore) RawSearch(context.Context, []string, json.RawMessage, int) (int64, error) {
+	return 0, nil
 }
 func (stubLogStore) Indices(context.Context) ([]logstore.IndexInfo, error) { return nil, nil }
 func (stubLogStore) FieldValues(context.Context, string, string, int) ([]string, error) {

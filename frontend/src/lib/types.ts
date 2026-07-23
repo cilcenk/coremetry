@@ -1876,7 +1876,45 @@ export interface AlertRule {
   // of running the span-derived Metric path. Operator-defined
   // anomaly coverage to complement the curated regex detector.
   logQuery?: string;
+  // Imported ES Watcher definition (Faz-1). When set the evaluator
+  // runs the watcher path instead of the metric/log-query paths;
+  // metric === 'watcher' by convention. Stored verbatim server-side.
+  watcherJson?: string;
   createdAt: number;
+}
+
+// ── ES Watcher import (Faz-1) ───────────────────────────────────────────────
+// POST /api/watchers/import — dry-run returns the mapping report only;
+// live import adds imported/ruleId. Findings mirror internal/watcher.
+
+export type WatcherSupport = 'supported' | 'partial' | 'unsupported';
+
+export interface WatcherFinding {
+  field: string;
+  status: WatcherSupport;
+  reason: string;
+}
+
+// Projection preview — the exact fields the imported rule will run with.
+export interface WatcherRulePreview {
+  name: string;
+  comparator: string;
+  threshold: number;
+  windowSec: number;
+  cooldownSec: number;
+}
+
+export interface WatcherImportReport {
+  findings: WatcherFinding[];
+  enabled: boolean;
+  disabledReason?: string;
+  rule: WatcherRulePreview;
+}
+
+export interface WatcherImportResult {
+  report: WatcherImportReport;
+  imported?: boolean;
+  ruleId?: string;
 }
 
 // ── Runbooks (v0.7.0) ───────────────────────────────────────────────────────

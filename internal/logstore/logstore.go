@@ -14,6 +14,7 @@ package logstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -338,6 +339,19 @@ type Store interface {
 	// specific and the CH frontend hides the panel when the
 	// backend reports non-ES.
 	EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, error)
+
+	// RawSearch executes an operator-supplied ES search body
+	// VERBATIM against the given indices and returns the total hit
+	// count — the executable core of the imported ES Watcher path
+	// (v0.9.x, Faz-1). The ES backend injects cost guards on top of
+	// the untouched query (size:0, per-body soft timeout, capped
+	// track_total_hits ≥ trackTotalCap, 24h range fallback when the
+	// body has no range clause); callers pass trackTotalCap =
+	// threshold*2 so a compare above the ES 10k count saturation is
+	// counted correctly. Empty indices fall back to the configured
+	// index pattern. CH backend returns an "unsupported" error —
+	// an ES DSL body has no CH execution path (EQL precedent).
+	RawSearch(ctx context.Context, indices []string, body json.RawMessage, trackTotalCap int) (int64, error)
 
 	// Indices lists the log indices the backend currently has,
 	// with health + size + ILM lifecycle info per index. Powers

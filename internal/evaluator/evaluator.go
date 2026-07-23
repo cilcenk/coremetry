@@ -50,6 +50,15 @@ type Evaluator struct {
 	// clocks survive leader failover + rolling deploys (v0.8.354 —
 	// HA audit 🟡#2; see stamps.go). nil or Noop = in-memory only.
 	stamps cache.Cache
+
+	// watcherLastRun paces imported ES watcher rules (v0.9.x) on
+	// their own schedule interval: a 5m-interval watch runs when
+	// due, not on every 1m tick. In-memory only by design — a
+	// leader change resets the clocks and the worst case is one
+	// early re-run (accepted trade-off; the monitor runner's
+	// interval_sec pacing has the same shape). Guarded by watcherMu.
+	watcherLastRun map[string]time.Time
+	watcherMu      sync.Mutex
 }
 
 type breachKey struct {
@@ -65,13 +74,14 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 		interval = time.Minute
 	}
 	return &Evaluator{
-		store:        store,
-		interval:     interval,
-		lock:         lock,
-		leader:       cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(interval)),
-		notifier:     notifier,
-		breachSince:  make(map[breachKey]time.Time),
-		lastResolved: make(map[breachKey]time.Time),
+		store:          store,
+		interval:       interval,
+		lock:           lock,
+		leader:         cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(interval)),
+		notifier:       notifier,
+		breachSince:    make(map[breachKey]time.Time),
+		lastResolved:   make(map[breachKey]time.Time),
+		watcherLastRun: make(map[string]time.Time),
 	}
 }
 
@@ -348,6 +358,14 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 			e.evaluateLogQuery(ctx, r)
 			continue
 		}
+		// Imported ES watcher rules (v0.9.x) evaluate ONCE per rule for
+		// the same reason: the watch body carries its own filters and
+		// the resulting Problem has no service dimension. Paced on the
+		// watch's schedule interval inside evaluateWatcher.
+		if r.WatcherJSON != "" {
+			e.evaluateWatcher(ctx, r)
+			continue
+		}
 		for _, svc := range ruleEvalTargets(r, serviceNames) {
 			e.evaluateOne(ctx, r, svc, pre, openSnap)
 		}
@@ -492,6 +510,13 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 	// guard because log_query rules use service="".
 	if r.LogQuery != "" {
 		e.evaluateLogQuery(ctx, r)
+		return
+	}
+	// Same defensive hoist for imported watcher rules (v0.9.x) —
+	// evaluateAll never routes them here, but a direct caller must
+	// not fall through to the span-metric path with metric="watcher".
+	if r.WatcherJSON != "" {
+		e.evaluateWatcher(ctx, r)
 		return
 	}
 	if service == "" {
@@ -732,80 +757,14 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 		log.Printf("[evaluator] log_query measure %s: %v", r.ID, err)
 		return
 	}
-	value := float64(page.Total)
-	breached := compare(value, r.Comparator, r.Threshold)
-
-	// Sustained-breach + cooldown machinery same as the metric
-	// path — key on (rule, "" service) so the maps stay
-	// segregated from per-service rules. Stamps ride the same
-	// Redis mirror as the metric path (v0.8.354).
-	key := breachKey{RuleID: r.ID, Service: ""}
-	if breached && r.ForSec > 0 {
-		first, existing := e.breachStart(ctx, key, now, r.ForSec)
-		if !existing {
-			return
-		}
-		if now.Sub(first) < time.Duration(r.ForSec)*time.Second {
-			return
-		}
-	}
-	if !breached {
-		e.clearBreach(ctx, key)
-	}
-
-	open, err := e.store.FindOpenProblem(ctx, r.ID, "")
-	hasOpen := err == nil && open != nil && open.ID != ""
-
-	switch {
-	case breached && !hasOpen:
-		if r.CooldownSec > 0 {
-			if rt, seen := e.resolvedAt(ctx, key); seen && now.Sub(rt) < time.Duration(r.CooldownSec)*time.Second {
-				return
-			}
-		}
-		p := chstore.Problem{
-			ID:          newID(),
-			RuleID:      r.ID,
-			RuleName:    r.Name,
-			Severity:    r.Severity,
-			Service:     "",
-			Metric:      "log_query",
-			Value:       value,
-			Threshold:   r.Threshold,
-			Status:      "open",
-			Description: fmt.Sprintf("log_query matched %d in last %s (threshold %s %.0f) — query: %s",
-				page.Total, window, r.Comparator, r.Threshold, r.LogQuery),
-			StartedAt:   now.UnixNano(),
-		}
-		if err := e.store.UpsertProblem(ctx, p); err != nil {
-			log.Printf("[evaluator] open log-query problem: %v", err)
-			return
-		}
-		log.Printf("[evaluator] PROBLEM OPENED (log_query): %s = %d (threshold %s %.0f)",
-			r.Name, page.Total, r.Comparator, r.Threshold)
-		if _, err := e.store.AttachProblemToIncident(ctx, p); err != nil {
-			log.Printf("[evaluator] log-query incident attach: %v", err)
-		}
-		if e.notifier != nil {
-			go e.notifier.SendProblemAlert(context.Background(), p)
-		}
-	case breached && hasOpen:
-		open.Value = value
-		if err := e.store.UpsertProblem(ctx, *open); err != nil {
-			log.Printf("[evaluator] refresh log-query problem: %v", err)
-		}
-	case !breached && hasOpen:
-		resolvedAt := now.UnixNano()
-		open.Status = "resolved"
-		open.ResolvedAt = &resolvedAt
-		open.Value = value
-		if err := e.store.UpsertProblem(ctx, *open); err != nil {
-			log.Printf("[evaluator] resolve log-query problem: %v", err)
-		} else {
-			e.stampResolved(ctx, key, now, r.CooldownSec)
-			log.Printf("[evaluator] PROBLEM RESOLVED (log_query): %s", r.Name)
-		}
-	}
+	// Sustained-breach + cooldown + open/refresh/resolve machinery is
+	// shared with the imported-watcher path (v0.9.x) — see
+	// settleCountAlert in watcher_eval.go, extracted verbatim from
+	// this function. Key stays (rule, "" service); stamps ride the
+	// same Redis mirror as the metric path (v0.8.354).
+	desc := fmt.Sprintf("log_query matched %d in last %s (threshold %s %.0f) — query: %s",
+		page.Total, window, r.Comparator, r.Threshold, r.LogQuery)
+	e.settleCountAlert(ctx, r, now, float64(page.Total), "log_query", desc)
 }
 
 // Escalation thresholds — how long a problem can stay open at

@@ -78,7 +78,8 @@ func (t *tickMeasures) countFor(windowSec int) (counts map[string]uint64, failed
 
 // collectMeasureKeys extracts the DISTINCT (metric, windowSec) pairs the
 // enabled span-metric rules need, plus the distinct windows the
-// MinSamples gate counts over. Log-query rules never measure spans;
+// MinSamples gate counts over. Log-query and imported-watcher rules
+// never measure spans (their metric strings aren't span metrics);
 // sub-5m windows stay on the per-service raw path; the count windows only
 // include rules whose gate actually runs (MinSamples > 0 AND a
 // sample-floor metric — v0.8.314 exempts absolutes). Sorted so the tick's
@@ -87,7 +88,7 @@ func collectMeasureKeys(rules []chstore.AlertRule) (measures []measureKey, count
 	seen := make(map[measureKey]bool)
 	seenW := make(map[int]bool)
 	for _, r := range rules {
-		if !r.Enabled || r.LogQuery != "" {
+		if !r.Enabled || r.LogQuery != "" || r.WatcherJSON != "" {
 			continue
 		}
 		if !useSummaryMV(time.Duration(r.WindowSec) * time.Second) {

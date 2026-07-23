@@ -19,6 +19,7 @@ import {
 import { ThresholdField } from './alerts/ThresholdField';
 import { ConditionPreview } from './alerts/ConditionPreview';
 import { NoisyRulesPanel } from './alerts/NoisyRulesPanel';
+import { WatcherImportModal } from './alerts/WatcherImportModal';
 
 export default function AlertsPage() {
   const { user } = useAuth();
@@ -30,6 +31,9 @@ export default function AlertsPage() {
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
   const [range, setRange] = useUrlRange('30m');
   const [showForm, setShowForm] = useState(false);
+  // ES Watcher import modal (Faz-1) — ephemeral by design, no URL
+  // param: a transient paste-and-go flow, not a shareable view.
+  const [showImport, setShowImport] = useState(false);
   const [draft, setDraft] = useState<Partial<AlertRule>>(emptyDraft);
   // User-saved presets (v0.5.157). Loaded once per mount; mutations
   // re-fetch eagerly so the strip stays accurate without polling.
@@ -176,16 +180,17 @@ export default function AlertsPage() {
   const rulesQ = useAlertRules();
   const rulesAll = rulesQ.isLoading ? undefined : rulesQ.data ?? [];
   // v0.5.305 — filter chip strip: All / Metric / Watcher.
-  // Watchers = saved-search log alerts (metric='log_query');
+  // Watchers = saved-search log alerts (metric='log_query') PLUS
+  // imported ES Watcher definitions (metric='watcher', Faz-1);
   // operators asked to see them on this page alongside metric
   // rules with a clear visual scope.
   const [ruleKind, setRuleKind] = useState<'all' | 'metric' | 'watcher'>('all');
+  const isWatcherRule = (r: AlertRule) => r.metric === 'log_query' || r.metric === 'watcher';
   const rules = !rulesAll ? undefined : rulesAll.filter(r => {
     if (ruleKind === 'all') return true;
-    const isWatcher = r.metric === 'log_query';
-    return ruleKind === 'watcher' ? isWatcher : !isWatcher;
+    return ruleKind === 'watcher' ? isWatcherRule(r) : !isWatcherRule(r);
   });
-  const watcherCount = rulesAll?.filter(r => r.metric === 'log_query').length ?? 0;
+  const watcherCount = rulesAll?.filter(isWatcherRule).length ?? 0;
   const metricCount  = (rulesAll?.length ?? 0) - watcherCount;
   const createRule = useCreateAlertRule();
   const updateRule = useUpdateAlertRule();
@@ -253,12 +258,24 @@ export default function AlertsPage() {
             can be edited or disabled to taste.
           </span>
           {canEdit && (
-            <Button variant="primary" onClick={() => showForm ? cancelForm() : setShowForm(true)}
-                    style={{ marginLeft: 'auto' }}>
-              {showForm ? 'Cancel' : '+ New alert rule'}
-            </Button>
+            <>
+              <Button variant="secondary" onClick={() => setShowImport(true)}
+                      style={{ marginLeft: 'auto' }}
+                      title="Paste an Elasticsearch Watcher definition (PUT _watcher/watch body) and import it as an alert rule">
+                ⤓ Import ES watcher
+              </Button>
+              <Button variant="primary" onClick={() => showForm ? cancelForm() : setShowForm(true)}>
+                {showForm ? 'Cancel' : '+ New alert rule'}
+              </Button>
+            </>
           )}
         </div>
+
+        {showImport && (
+          <WatcherImportModal
+            onClose={() => setShowImport(false)}
+            onImported={() => rulesQ.refetch()} />
+        )}
 
         {/* Noisy-rules report — surfaces rules that have opened
             problems most often in the last 24h with a one-click
@@ -503,7 +520,7 @@ export default function AlertsPage() {
                 onClick={() => setRuleKind(t.key)}
                 variant={ruleKind === t.key ? 'primary' : 'secondary'}
                 title={t.key === 'watcher'
-                  ? 'Saved log-search alerts created via /logs Create watcher'
+                  ? 'Saved log-search alerts (/logs Create watcher) + imported ES Watcher definitions'
                   : t.key === 'metric'
                   ? 'Metric-threshold alerts (RPS / error rate / p99 / etc.)'
                   : 'All alert rules'}>
@@ -552,13 +569,21 @@ export default function AlertsPage() {
                   // the saved query in the Condition column so
                   // the operator can tell at a glance which row
                   // is a watcher vs a metric alert.
+                  // Faz-1 — imported ES Watcher definitions use
+                  // metric='watcher': same badge family, condition
+                  // rendered as the projected hits.total compare.
                   const isWatcher = r.metric === 'log_query';
+                  const isEsWatcher = r.metric === 'watcher';
                   return (
                   <tr key={r.id} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' }}>
                     <td><b>{r.name}</b></td>
-                    <td className="mono">{r.service || (isWatcher ? '— logs —' : '— all —')}</td>
+                    <td className="mono">{r.service || (isWatcher || isEsWatcher ? '— logs —' : '— all —')}</td>
                     <td className="mono" style={{ maxWidth: 380 }}>
-                      {isWatcher ? (
+                      {isEsWatcher ? (
+                        <span title={r.watcherJson}>
+                          hits.total {r.comparator} {r.threshold}
+                        </span>
+                      ) : isWatcher ? (
                         <>
                           <code title={r.logQuery}
                             style={{
@@ -584,7 +609,9 @@ export default function AlertsPage() {
                       ? <span className="badge b-ok">ON</span>
                       : <span className="badge b-gray">OFF</span>}</td>
                     <td>
-                      {isWatcher
+                      {isEsWatcher
+                        ? <span className="badge b-info" title="Imported ES Watcher definition — evaluated against the log backend; the raw watch JSON is stored verbatim">ES WATCHER</span>
+                        : isWatcher
                         ? <span className="badge b-info" title="Saved log-search alert created via /logs Create watcher">WATCHER</span>
                         : r.builtIn
                           ? <span className="badge b-info">BUILT-IN</span>

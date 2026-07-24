@@ -8,12 +8,9 @@ export const PRESET_SECONDS: Record<string, number> = {
   '24h': 86400,  '2d':  172800, '7d':  604800,  '30d': 2592000,
 };
 
-export const PRESET_LABELS: Record<string, string> = {
-  '5m':  'Last 5 minutes',   '15m': 'Last 15 minutes', '30m': 'Last 30 minutes',
-  '1h':  'Last 1 hour',      '3h':  'Last 3 hours',    '6h':  'Last 6 hours',
-  '12h': 'Last 12 hours',    '24h': 'Last 24 hours',   '2d':  'Last 2 days',
-  '7d':  'Last 7 days',      '30d': 'Last 30 days',
-};
+// Preset display labels live in lib/i18n.ts ('range.5m' … 'range.30d',
+// EN + TR) since the Grafana-parity picker; keep the keys in lockstep
+// with PRESET_SECONDS above.
 
 // Converts a TimeRange to absolute nanosecond bounds for API queries.
 export function timeRangeToNs(range: TimeRange): { from: number; to: number } {
@@ -26,16 +23,6 @@ export function timeRangeToNs(range: TimeRange): { from: number; to: number } {
     from: Math.floor((now - secs * 1000) * 1_000_000),
     to: now * 1_000_000,
   };
-}
-
-// Compact label for the picker button.
-export function timeRangeLabel(r: TimeRange): string {
-  if (r.preset === 'custom' && r.fromMs && r.toMs) {
-    const fmt = (ms: number) => new Date(ms).toLocaleString('en-GB',
-      { dateStyle: 'short', timeStyle: 'short' });
-    return `${fmt(r.fromMs)} → ${fmt(r.toMs)}`;
-  }
-  return PRESET_LABELS[r.preset] ?? r.preset;
 }
 
 export function fmtNum(n: number): string {

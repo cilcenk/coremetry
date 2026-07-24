@@ -1,23 +1,62 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { TimeRange } from '@/lib/types';
-import { PRESET_LABELS, PRESET_SECONDS, timeRangeLabel } from '@/lib/utils';
-import { IconClock } from './icons';
+import { PRESET_SECONDS } from '@/lib/utils';
+import { decodeRange, encodeRange } from '@/lib/urlState';
+import { getRaw, setRaw } from '@/lib/storage';
+import { useLang, useT } from '@/lib/i18n';
+import {
+  DOW_SHORT, MONTHS_LONG, QUICK_PRESETS, RECENTS_KEY,
+  absRangeLabel, calendarGrid, dayClickRange, formatDateTime, formatTimeOfDay,
+  parseDateTime, parseRecents, pushRecent, resolveRangeMs, utcOffsetLabel,
+  withTimeOfDay, zoomOutRange, type CalCell,
+} from '@/lib/rangePicker';
+import { Button } from './ui/Button';
+import { IconClock, IconZoomOut } from './icons';
 
-const PRESETS = Object.keys(PRESET_SECONDS);
-
+// Grafana-parity global time picker (2026-07-24 brief). One button shows the
+// current window ("Son 30 dakika" / "24 Tem 08:00 → 24 Tem 12:30"); clicking
+// opens the two-column Grafana panel:
+//   LEFT  — absolute range: From/To datetime inputs + native time inputs, a
+//           hand-rolled mini month calendar (day click → From, second click →
+//           To), Apply, and the last-4 recently used ranges.
+//   RIGHT — the 11 quick presets (5m…30d, all pre-existing in the TimeRange
+//           contract — no codec/timeRangeToNs change was needed).
+// A magnifier-minus button next to the picker widens the window 2× around a
+// fixed center (preset drops to custom), and the panel footer shows the
+// browser's UTC offset. Deliberately OUT OF SCOPE per the brief: the `now-6h`
+// text grammar (the old free-text expression inputs were replaced by absolute
+// datetime inputs) and a global refresh-interval dropdown.
+//
+// All writes go through the SAME onChange the presets always used — pages
+// clear their zoom stacks on out-of-band range changes (v0.9.201), so the
+// picker needs no zoom-stack awareness of its own.
 export function TimeRangePicker({ value, onChange }: {
   value: TimeRange;
   onChange: (r: TimeRange) => void;
 }) {
+  const t = useT();
+  const lang = useLang();
   const [open, setOpen] = useState(false);
   const [fromInput, setFromInput] = useState('');
   const [toInput, setToInput] = useState('');
-  const [error, setError] = useState('');
+  const [error, setError] = useState('');      // i18n key, '' = none
+  const [recents, setRecents] = useState<string[]>([]);
+  const [cal, setCal] = useState(() => {
+    const d = new Date();
+    return { y: d.getFullYear(), m: d.getMonth() };
+  });
+  // True between the first and second calendar day clicks — the two-click
+  // From→To flow. Typing in either input breaks out of it.
+  const [calPending, setCalPending] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   const fromInputRef = useRef<HTMLInputElement>(null);
   // Refs to every preset button so we can auto-focus the active
   // one on open and walk through them with ArrowUp/ArrowDown.
   const presetRefs = useRef<(HTMLButtonElement | null)[]>([]);
+
+  const fromMs = useMemo(() => parseDateTime(fromInput), [fromInput]);
+  const toMs = useMemo(() => parseDateTime(toInput), [toInput]);
+  const cells = useMemo(() => calendarGrid(cal.y, cal.m), [cal]);
 
   useEffect(() => {
     if (!open) return;
@@ -30,22 +69,19 @@ export function TimeRangePicker({ value, onChange }: {
     document.addEventListener('mousedown', onDoc);
     document.addEventListener('keydown', onKey);
     // Auto-focus on open. Land on the currently-active preset so
-    // ArrowUp/Down + Enter is the fast path; if the operator is
-    // already on a custom range or no preset matches, fall back
-    // to the "From" input so typing `now-2h` works without
-    // clicking. Deferred to next tick — the panel mounts after
+    // ArrowUp/Down + Enter is the fast path; on a custom range fall
+    // back to the "From" input so refining the window starts typing
+    // immediately. Deferred to next tick — the panel mounts after
     // openPanel() flips `open` true.
-    const t = setTimeout(() => {
-      const activeIdx = PRESETS.indexOf(value.preset);
-      const target = activeIdx >= 0
-        ? presetRefs.current[activeIdx]
-        : (presetRefs.current[0] ?? fromInputRef.current);
+    const timer = setTimeout(() => {
+      const activeIdx = QUICK_PRESETS.indexOf(value.preset);
+      const target = activeIdx >= 0 ? presetRefs.current[activeIdx] : fromInputRef.current;
       target?.focus();
     }, 0);
     return () => {
       document.removeEventListener('mousedown', onDoc);
       document.removeEventListener('keydown', onKey);
-      clearTimeout(t);
+      clearTimeout(timer);
     };
   }, [open, value.preset]);
 
@@ -56,247 +92,205 @@ export function TimeRangePicker({ value, onChange }: {
   const onPresetKey = (i: number) => (e: React.KeyboardEvent<HTMLButtonElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
-      const next = (i + 1) % PRESETS.length;
-      presetRefs.current[next]?.focus();
+      presetRefs.current[(i + 1) % QUICK_PRESETS.length]?.focus();
     } else if (e.key === 'ArrowUp') {
       e.preventDefault();
-      const prev = (i - 1 + PRESETS.length) % PRESETS.length;
-      presetRefs.current[prev]?.focus();
+      presetRefs.current[(i - 1 + QUICK_PRESETS.length) % QUICK_PRESETS.length]?.focus();
     } else if (e.key === 'Home') {
       e.preventDefault();
       presetRefs.current[0]?.focus();
     } else if (e.key === 'End') {
       e.preventDefault();
-      presetRefs.current[PRESETS.length - 1]?.focus();
+      presetRefs.current[QUICK_PRESETS.length - 1]?.focus();
     }
   };
 
   const openPanel = () => {
     setError('');
-    if (value.preset === 'custom' && value.fromMs && value.toMs) {
-      setFromInput(formatAbsolute(value.fromMs));
-      setToInput(formatAbsolute(value.toMs));
-    } else {
-      const secs = PRESET_SECONDS[value.preset] ?? 86400;
-      setFromInput(`now-${shortDur(secs)}`);
-      setToInput('now');
-    }
+    setCalPending(false);
+    const now = Date.now();
+    const abs = resolveRangeMs(value, now);
+    setFromInput(formatDateTime(abs.fromMs));
+    setToInput(formatDateTime(abs.toMs));
+    const d = new Date(abs.toMs);
+    setCal({ y: d.getFullYear(), m: d.getMonth() });
+    setRecents(parseRecents(getRaw(RECENTS_KEY)));
     setOpen(true);
   };
 
-  const applyPreset = (p: string) => { onChange({ preset: p }); setOpen(false); };
-
-  const applyCustom = () => {
-    const fromMs = parseTimeExpr(fromInput);
-    const toMs   = parseTimeExpr(toInput);
-    if (fromMs === null)            { setError('Invalid "From" — try `now-1h` or `2024-05-02 12:00`'); return; }
-    if (toMs === null)              { setError('Invalid "To" — try `now`'); return; }
-    if (toMs <= fromMs)             { setError('"To" must be after "From"'); return; }
-    if (toMs - fromMs > 365*86400_000) { setError('Range too large (max 1 year)'); return; }
-    setError('');
-    onChange({ preset: 'custom', fromMs, toMs });
+  // Every APPLY path (preset, custom, recent click) records the range in the
+  // last-4 recents list. Zoom-out intentionally does not — repeated widening
+  // would flood the list with throwaway windows.
+  const apply = (r: TimeRange) => {
+    setRaw(RECENTS_KEY, JSON.stringify(
+      pushRecent(parseRecents(getRaw(RECENTS_KEY)), encodeRange(r)),
+    ));
+    onChange(r);
     setOpen(false);
   };
 
-  const setQuick = (which: 'from' | 'to', expr: string) => {
-    if (which === 'from') setFromInput(expr); else setToInput(expr);
+  const applyCustom = () => {
+    if (fromMs === null) { setError('trp.errFrom'); return; }
+    if (toMs === null) { setError('trp.errTo'); return; }
+    if (toMs <= fromMs) { setError('trp.errOrder'); return; }
+    if (toMs - fromMs > 365 * 86400_000) { setError('trp.errMax'); return; }
     setError('');
+    apply({ preset: 'custom', fromMs, toMs });
+  };
+
+  const onDayClick = (c: CalCell) => {
+    const start = new Date(c.y, c.m, c.d, 0, 0, 0, 0).getTime();
+    const end = new Date(c.y, c.m, c.d, 23, 59, 59, 999).getTime();
+    const next = dayClickRange({ fromMs: calPending ? fromMs : null, toMs: null }, start, end);
+    setFromInput(formatDateTime(next.fromMs));
+    // While the To click is pending, To tracks the clicked day's end — a
+    // single click + Apply therefore selects the whole day, and the inputs
+    // never show an inverted window mid-flow.
+    setToInput(formatDateTime(next.toMs ?? end));
+    setCalPending(next.toMs === null);
+    setError('');
+  };
+
+  const shiftMonth = (delta: number) =>
+    setCal(c => {
+      const d = new Date(c.y, c.m + delta, 1);
+      return { y: d.getFullYear(), m: d.getMonth() };
+    });
+
+  const onTimeChange = (which: 'from' | 'to') => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const [base, set] = which === 'from'
+      ? [fromMs, setFromInput] : [toMs, setToInput];
+    if (base === null || !e.target.value) return;
+    const ms = withTimeOfDay(base, e.target.value);
+    if (ms !== null) { set(formatDateTime(ms)); setError(''); }
+  };
+
+  const rangeLabel = (r: TimeRange): string => {
+    if (r.preset === 'custom' && r.fromMs && r.toMs) {
+      return absRangeLabel(r.fromMs, r.toMs, lang, Date.now());
+    }
+    return PRESET_SECONDS[r.preset] ? t('range.' + r.preset) : r.preset;
+  };
+
+  const today = new Date();
+  const dayCellClass = (c: CalCell): string => {
+    const cls = ['trp-cal-day'];
+    if (!c.inMonth) cls.push('out');
+    if (c.y === today.getFullYear() && c.m === today.getMonth() && c.d === today.getDate()) {
+      cls.push('today');
+    }
+    const cs = new Date(c.y, c.m, c.d, 0, 0, 0, 0).getTime();
+    const ce = new Date(c.y, c.m, c.d, 23, 59, 59, 999).getTime();
+    const isFrom = fromMs !== null && fromMs >= cs && fromMs <= ce;
+    const isTo = toMs !== null && toMs >= cs && toMs <= ce;
+    if (isFrom || isTo) cls.push('sel');
+    else if (fromMs !== null && toMs !== null && cs <= toMs && ce >= fromMs) cls.push('inrange');
+    return cls.join(' ');
   };
 
   return (
     <div ref={ref} className="trp">
-      <button className="trp-btn sec" onClick={() => (open ? setOpen(false) : openPanel())}
-              style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <IconClock />
-        <span>{timeRangeLabel(value)}</span>
-        <span style={{ marginLeft: 2, color: 'var(--text2)' }}>▾</span>
-      </button>
+      <Button variant="secondary" className="trp-btn"
+        onClick={() => (open ? setOpen(false) : openPanel())}
+        leftIcon={<IconClock />}
+        rightIcon={<span style={{ color: 'var(--text2)' }}>▾</span>}>
+        {rangeLabel(value)}
+      </Button>
+      <Button variant="secondary" className="trp-zoom"
+        title={t('trp.zoomOut')} aria-label={t('trp.zoomOut')}
+        onClick={() => onChange(zoomOutRange(value, Date.now()))}>
+        <IconZoomOut />
+      </Button>
       {open && (
         <div className="trp-panel" role="dialog">
-          <div className="trp-presets">
-            <div className="trp-section-title">Quick ranges</div>
-            {PRESETS.map((p, i) => (
-              <button key={p}
-                ref={el => { presetRefs.current[i] = el; }}
-                className={'trp-preset' + (value.preset === p ? ' active' : '')}
-                onClick={() => applyPreset(p)}
-                onKeyDown={onPresetKey(i)}>
-                {PRESET_LABELS[p]}
-              </button>
-            ))}
-          </div>
-          <div className="trp-custom">
-            <div className="trp-section-title">Absolute range</div>
+          <div className="trp-body">
+            <div className="trp-custom">
+              <div className="trp-section-title">{t('trp.absoluteRange')}</div>
 
-            {/* v0.7.45 — Operator-requested (Grafana-style): pick a single day
-                → From/To snap to that day's 00:00:00 → 23:59:59.999 and apply
-                immediately. Native datetime-local can't expose a day
-                double-click, so this dedicated day picker delivers the intent
-                in one click; the From/To calendars below stay for precise
-                sub-day ranges. */}
-            <label>
-              Whole day
-              <input type="date" className="trp-cal"
-                title="Pick a day — sets the range to that day's start → end"
-                onChange={e => {
-                  const day = e.target.value; // YYYY-MM-DD (local)
-                  if (!day) return;
-                  const [y, mo, d] = day.split('-').map(Number);
-                  onChange({
-                    preset: 'custom',
-                    fromMs: new Date(y, mo - 1, d, 0, 0, 0, 0).getTime(),
-                    toMs:   new Date(y, mo - 1, d, 23, 59, 59, 999).getTime(),
-                  });
-                  setOpen(false);
-                }} />
-            </label>
+              <label>
+                {t('trp.from')}
+                <div className="trp-row">
+                  <input ref={fromInputRef} type="text" value={fromInput} spellCheck={false}
+                    onChange={e => { setFromInput(e.target.value); setCalPending(false); setError(''); }}
+                    onKeyDown={e => e.key === 'Enter' && applyCustom()}
+                    placeholder="2026-07-24 08:00:00" />
+                  <input type="time" step={1} className="trp-time"
+                    value={fromMs !== null ? formatTimeOfDay(fromMs) : ''}
+                    onChange={onTimeChange('from')} />
+                </div>
+              </label>
 
-            {/* From — text expression input + calendar picker.
-                Native datetime-local gives the user the Grafana-
-                style calendar + hour/minute spinner without
-                pulling in a date library. Picking a date writes
-                an absolute YYYY-MM-DD HH:MM:SS string into the
-                text input; users who prefer typing `now-1h` keep
-                that path untouched. */}
-            <label>
-              From
-              <div style={{ display: 'flex', gap: 4 }}>
-                <input ref={fromInputRef} type="text" value={fromInput} spellCheck={false}
-                  onChange={e => { setFromInput(e.target.value); setError(''); }}
-                  onKeyDown={e => e.key === 'Enter' && applyCustom()}
-                  placeholder="now-1h  or  2026-05-02 12:00"
-                  style={{ flex: 1, minWidth: 0 }} />
-                <input type="datetime-local"
-                  value={toLocalDatetime(fromInput)}
-                  onChange={e => {
-                    const v = fromLocalDatetime(e.target.value);
-                    if (v) { setFromInput(v); setError(''); }
-                  }}
-                  className="trp-cal"
-                  title="Pick from calendar" />
+              <label>
+                {t('trp.to')}
+                <div className="trp-row">
+                  <input type="text" value={toInput} spellCheck={false}
+                    onChange={e => { setToInput(e.target.value); setCalPending(false); setError(''); }}
+                    onKeyDown={e => e.key === 'Enter' && applyCustom()}
+                    placeholder="2026-07-24 12:30:00" />
+                  <input type="time" step={1} className="trp-time"
+                    value={toMs !== null ? formatTimeOfDay(toMs) : ''}
+                    onChange={onTimeChange('to')} />
+                </div>
+              </label>
+
+              <div className="trp-calwrap">
+                <div className="trp-cal-head">
+                  <button className="trp-cal-nav" aria-label={t('trp.prevMonth')}
+                    onClick={() => shiftMonth(-1)}>‹</button>
+                  <span className="trp-cal-title">{MONTHS_LONG[lang][cal.m]} {cal.y}</span>
+                  <button className="trp-cal-nav" aria-label={t('trp.nextMonth')}
+                    onClick={() => shiftMonth(1)}>›</button>
+                </div>
+                <div className="trp-cal-grid">
+                  {DOW_SHORT[lang].map(d => (
+                    <span key={d} className="trp-cal-dow">{d}</span>
+                  ))}
+                  {cells.map(c => (
+                    <button key={`${c.y}-${c.m}-${c.d}`} className={dayCellClass(c)}
+                      onClick={() => onDayClick(c)}>
+                      {c.d}
+                    </button>
+                  ))}
+                </div>
               </div>
-              <div className="trp-quick">
-                {['now-15m', 'now-1h', 'now-6h', 'now-1d', 'now-7d'].map(q => (
-                  <button key={q} className="trp-chip" onClick={() => setQuick('from', q)}>{q}</button>
-                ))}
-              </div>
-              <span className="trp-preview">{previewLabel(fromInput)}</span>
-            </label>
 
-            <label>
-              To
-              <div style={{ display: 'flex', gap: 4 }}>
-                <input type="text" value={toInput} spellCheck={false}
-                  onChange={e => { setToInput(e.target.value); setError(''); }}
-                  onKeyDown={e => e.key === 'Enter' && applyCustom()}
-                  placeholder="now  or  2026-05-02 13:00"
-                  style={{ flex: 1, minWidth: 0 }} />
-                <input type="datetime-local"
-                  value={toLocalDatetime(toInput)}
-                  onChange={e => {
-                    const v = fromLocalDatetime(e.target.value);
-                    if (v) { setToInput(v); setError(''); }
-                  }}
-                  className="trp-cal"
-                  title="Pick from calendar" />
-              </div>
-              <div className="trp-quick">
-                {['now', 'now-15m', 'now-1h'].map(q => (
-                  <button key={q} className="trp-chip" onClick={() => setQuick('to', q)}>{q}</button>
-                ))}
-              </div>
-              <span className="trp-preview">{previewLabel(toInput)}</span>
-            </label>
+              {error && <div className="trp-error">{t(error)}</div>}
 
-            {error && <div className="trp-error">{error}</div>}
+              <div className="trp-actions">
+                <Button size="sm" onClick={applyCustom}>{t('trp.applyRange')}</Button>
+              </div>
 
-            <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-              <button onClick={applyCustom}>Apply</button>
-              <button className="sec" onClick={() => setOpen(false)}>Cancel</button>
+              {recents.length > 0 && (
+                <div className="trp-recents">
+                  <div className="trp-section-title">{t('trp.recentRanges')}</div>
+                  {recents.map(enc => (
+                    <button key={enc} className="trp-preset"
+                      onClick={() => apply(decodeRange(enc, { preset: '30m' }))}>
+                      {rangeLabel(decodeRange(enc, { preset: enc }))}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+
+            <div className="trp-presets">
+              <div className="trp-section-title">{t('trp.quickRanges')}</div>
+              {QUICK_PRESETS.map((p, i) => (
+                <button key={p}
+                  ref={el => { presetRefs.current[i] = el; }}
+                  className={'trp-preset' + (value.preset === p ? ' active' : '')}
+                  onClick={() => apply({ preset: p })}
+                  onKeyDown={onPresetKey(i)}>
+                  {t('range.' + p)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="trp-foot">
+            {t('trp.browserTime')} ({utcOffsetLabel(-new Date().getTimezoneOffset())})
           </div>
         </div>
       )}
     </div>
   );
-}
-
-// ── Time expression parser ────────────────────────────────────────────────────
-//
-// Accepted forms:
-//   "now"                                          → Date.now()
-//   "now-1h", "now+30m", "now-15m", "now-1d"       → relative offset
-//   "2026-05-02 12:00", "2026-05-02T12:00:00Z"     → absolute (Date.parse)
-//   epoch seconds (10-digit) or epoch millis       → numeric
-const UNIT_MS: Record<string, number> = {
-  s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000, w: 7 * 86_400_000,
-};
-
-function parseTimeExpr(raw: string): number | null {
-  const s = raw.trim();
-  if (!s) return null;
-  if (s === 'now') return Date.now();
-
-  const rel = s.match(/^now\s*([-+])\s*(\d+)\s*([smhdw])$/i);
-  if (rel) {
-    const sign = rel[1] === '-' ? -1 : 1;
-    const n    = parseInt(rel[2], 10);
-    const u    = UNIT_MS[rel[3].toLowerCase()];
-    return Date.now() + sign * n * u;
-  }
-
-  // ISO / SQL-ish absolute. Allow "YYYY-MM-DD HH:mm" by inserting T.
-  const norm = /^\d{4}-\d{2}-\d{2}\s\d{2}:\d{2}/.test(s) ? s.replace(' ', 'T') : s;
-  const ms = Date.parse(norm);
-  if (!isNaN(ms)) return ms;
-
-  const num = Number(s);
-  if (!isNaN(num) && num > 0) return num > 1e12 ? num : num * 1000;
-
-  return null;
-}
-
-function previewLabel(s: string): string {
-  const ms = parseTimeExpr(s);
-  if (ms === null) return ' ';
-  return formatAbsolute(ms);
-}
-
-function formatAbsolute(ms: number): string {
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function shortDur(secs: number): string {
-  if (secs % 86400 === 0) return `${secs/86400}d`;
-  if (secs % 3600 === 0)  return `${secs/3600}h`;
-  if (secs % 60 === 0)    return `${secs/60}m`;
-  return `${secs}s`;
-}
-
-// `<input type="datetime-local">` expects "YYYY-MM-DDTHH:MM" (no
-// timezone, no seconds). toLocalDatetime resolves the current text
-// expression — whether it's `now-1h`, an epoch number, or an
-// absolute ISO/SQL string — into that format. fromLocalDatetime
-// reverses: takes the picker's "YYYY-MM-DDTHH:MM" and returns the
-// absolute "YYYY-MM-DD HH:MM:SS" form our text parser already
-// accepts. Returning '' from toLocalDatetime makes the picker
-// render empty (browser shows the placeholder).
-function toLocalDatetime(textExpr: string): string {
-  const ms = parseTimeExpr(textExpr);
-  if (ms === null) return '';
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-function fromLocalDatetime(value: string): string | null {
-  if (!value) return null;
-  // value is local time, no TZ; reuse parseTimeExpr which understands
-  // "YYYY-MM-DDTHH:MM" via Date.parse.
-  const ms = Date.parse(value);
-  if (isNaN(ms)) return null;
-  const d = new Date(ms);
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }

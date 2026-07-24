@@ -33,9 +33,15 @@ var availablePages = []AvailablePage{
 	{ID: "/anomalies", Label: "nav.anomalies", Group: "navGroup.triage"},
 
 	{ID: "/services", Label: "nav.services", Group: "navGroup.services"},
-	{ID: "/topology", Label: "nav.topology", Group: "navGroup.services"},
+	{ID: "/endpoints", Label: "nav.endpoints", Group: "navGroup.services"},
+	{ID: "/clusters", Label: "nav.clusters", Group: "navGroup.services"},
 	{ID: "/databases", Label: "nav.databases", Group: "navGroup.services"},
 	{ID: "/messaging", Label: "nav.messaging", Group: "navGroup.services"},
+	// v0.8.219 retired /topology in favour of /service-map. The catalogue
+	// kept offering the dead ID, so a role granted "topology" was redirected
+	// off /service-map by the AppShell guard — auth.normalisePages remaps the
+	// stored value.
+	{ID: "/service-map", Label: "nav.topology", Group: "navGroup.services"},
 
 	{ID: "/traces", Label: "nav.traces", Group: "navGroup.signals"},
 	{ID: "/metrics", Label: "nav.metrics", Group: "navGroup.signals"},
@@ -48,9 +54,12 @@ var availablePages = []AvailablePage{
 
 	{ID: "/alerts", Label: "nav.alerts", Group: "navGroup.alerting"},
 	{ID: "/monitors", Label: "nav.monitors", Group: "navGroup.alerting"},
+	{ID: "/watchers", Label: "nav.watchers", Group: "navGroup.alerting"},
 	{ID: "/slos", Label: "nav.slos", Group: "navGroup.alerting"},
 
-	{ID: "/admin/stats", Label: "nav.system", Group: "navGroup.system"},
+	// The sidebar links /system (the tabbed shell); /admin/stats is the
+	// pre-v0.8 path and never matched the guard. Same remap treatment.
+	{ID: "/system", Label: "nav.system", Group: "navGroup.system"},
 }
 
 // availablePageIDs returns just the IDs as a lookup set — used by the

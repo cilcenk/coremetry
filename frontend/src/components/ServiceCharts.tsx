@@ -15,7 +15,8 @@ import { stepForWidth } from '@/lib/chartStep';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { isResolverEligible, serviceRedDescriptors } from '@/lib/resolverEligibility';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
-import type { SpanMetricSeries, TimeRange } from '@/lib/types';
+import type { ChartTimeRegion } from '@/lib/chart/overlays';
+import type { Problem, SpanMetricSeries, TimeRange } from '@/lib/types';
 
 // ServiceCharts — three core trend panels for the focused
 // service: throughput (RPS by operation), error rate (%) by
@@ -31,7 +32,7 @@ import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 // crosshair on the other two — Datadog dashboard convention,
 // turns the three panels into one synchronised view.
 
-export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '', onOpScopeChange, windowNs }: {
+export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '', onOpScopeChange, windowNs, problems }: {
   service: string;
   range: TimeRange;
   // onZoom — drag-to-select range on any of the three RED
@@ -54,6 +55,10 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
   // ms farkıyla FARKLI RQ anahtarı üretiyor ve bundle'ın deploys
   // seed'i hiç tutmuyordu (v480'deki RED-prefetch sınıfının ikizi).
   windowNs?: { from: number; to: number };
+  // Grafana-parite M3 — sayfanın ZATEN elindeki problem listesi (Service.tsx
+  // service-bundle'ı; ek fetch YOK). Açık problem pencereleri üç RED paneline
+  // x-bölgesi (kırmızı gölge + üst şerit + P1/severity etiketi) olarak biner.
+  problems?: Problem[];
 }) {
   // Memoise the time bounds so a render doesn't churn the
   // query keys (same trick the Logs page uses — Date.now() in
@@ -284,6 +289,21 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
     };
   }, [slosQ.data, service]);
 
+  // Grafana-parite M3 — açık problem pencereleri → chart x-bölgeleri.
+  // toSec AÇIK problemde pencere SONUna sabitlenir ('now' her render değişip
+  // build imzasını churn eder; bölge zaten canlı x-ölçeğine kırpılıyor).
+  // startedAt pencereden eskiyse drawTimeRegions sola kırpar.
+  const problemRegions = useMemo<ChartTimeRegion[] | undefined>(() => {
+    const open = (problems ?? []).filter(p => p.status === 'open' && p.service === service);
+    if (open.length === 0) return undefined;
+    return open.map(p => ({
+      fromSec: p.startedAt / 1e9,
+      toSec: to / 1e9,
+      color: 'var(--err)',
+      label: p.priority ?? p.severity.toUpperCase(),
+    }));
+  }, [problems, service, to]);
+
   const syncKey = `service:${service}`;
 
   // Spike → exemplar (v0.7.22). Clicking a point/peak on the
@@ -463,6 +483,7 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
               <MultiLineChart xRange={xRangeSec} series={rpsSeries ?? []} unit="rps"
                               height={180}
                               deploys={deployMarkers}
+                              regions={problemRegions}
                               syncKey={syncKey}
                               compareSeries={rpsPrev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
@@ -480,6 +501,7 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               height={180}
                               deploys={deployMarkers}
                               thresholds={errorThresholds}
+                              regions={problemRegions}
                               syncKey={syncKey}
                               compareSeries={errPrev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
@@ -498,6 +520,7 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               height={180}
                               deploys={deployMarkers}
                               thresholds={latencyThresholds}
+                              regions={problemRegions}
                               syncKey={syncKey}
                               compareSeries={p99Prev ?? undefined}
                               compareOffsetNs={compareOffsetNs}

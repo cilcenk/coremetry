@@ -16,6 +16,7 @@ import { isAdditiveUnit } from '@/lib/chart/legendStats';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
 import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
+import { drawThresholds, drawTimeRegions, type ChartTimeRegion } from '@/lib/chart/overlays';
 
 // v0.9.131 (chart-consolidation Adım 3) — TimeSeriesPanel artık placeTooltip'i
 // doğrudan lib/chartTooltip'ten alıyor (MLC↔TSP bağımlılığı koptu, audit §4);
@@ -163,7 +164,7 @@ function computeChartData(
 }
 
 export function MultiLineChart({
-  series, unit, height = 320, deploys, thresholds, syncKey, onZoom, onZoomReset,
+  series, unit, height = 320, deploys, thresholds, regions, syncKey, onZoom, onZoomReset,
   compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
   selectedOps, onLegendClick, xRange, maxSeries,
 }: {
@@ -189,6 +190,10 @@ export function MultiLineChart({
   // breached the threshold is visually obvious without
   // requiring the operator to read tick marks.
   thresholds?: Threshold[];
+  // Grafana-parite M3 — problem/anomali x-bölgeleri (arka-plan gölge + üst
+  // şerit + etiket; lib/chart/overlays.ts). Servis RED panelleri açık
+  // problem pencerelerini geçirir; valToPos canlı ölçeği okur → zoom-doğru.
+  regions?: ChartTimeRegion[];
   // syncKey — when set, multiple charts on the same page sync
   // their cursor positions. Hovering one chart paints the
   // crosshair on every chart sharing the key. Datadog /
@@ -354,7 +359,7 @@ export function MultiLineChart({
     hasZoom: !!onZoom,
     hasBucketClick: !!onBucketClick,
     compareOffsetNs, compareLabel,
-    deploys, thresholds,
+    deploys, thresholds, regions,
     // v0.9.100 (Adım 4) — colorOf, motora göçte artık build-effect dep'i değil;
     // her label'ın çözülen override rengini imzaya kat (yoksa null; folded
     // "others" tail colorOf'u yok sayar → null). Böylece motorun [signature,
@@ -636,56 +641,33 @@ export function MultiLineChart({
             });
           },
         ] : [],
-        // Overlay draw hooks — paint deploy markers (dashed
-        // vertical lines) AND threshold lines (dashed horizontal
-        // lines + tinted breach band) after uPlot's own series
-        // render so the overlays sit on top of fills. Combined
-        // into a single hook so we only register one handler.
-        draw: (deploys && deploys.length > 0) || (thresholds && thresholds.length > 0) ? [
+        // Overlay draw hooks — paint problem/anomaly time-regions
+        // (background-most), threshold lines (dashed horizontal
+        // lines + tinted breach band) AND deploy markers (dashed
+        // vertical lines) after uPlot's own series render so the
+        // overlays sit on top of fills. Combined into a single
+        // hook so we only register one handler.
+        draw: (deploys && deploys.length > 0) || (thresholds && thresholds.length > 0) || (regions && regions.length > 0) ? [
           (u) => {
             const ctx = u.ctx;
             ctx.save();
 
+            // ── Problem/anomali bölgeleri (Grafana-parite M3) ──
+            // En arkada; threshold/deploy üstüne biner.
+            if (regions && regions.length > 0) drawTimeRegions(u, regions);
+
             // ── Threshold lines ──────────────────────────────
             //
-            // For each threshold, paint a horizontal dashed line
-            // and a faint tinted band ABOVE the line (the
-            // "breach zone"). Severity = warn → amber, err →
-            // red. Label sits at the right edge.
+            // Grafana-parite M3 — eski yerel blok (TSP ile birebir kopyaydı)
+            // paylaşımlı drawThresholds'a delege. Severity → renk eşlemesi
+            // (warn → amber, err → red) burada kalır; band %7 globalAlpha,
+            // sağ-kenar etiket — görsel birebir.
             if (thresholds && thresholds.length > 0) {
-              const yMin = u.scales.y.min ?? 0;
-              const yMax = u.scales.y.max ?? 0;
-              ctx.font = '10px ui-monospace, monospace';
-              for (const th of thresholds) {
-                if (th.value < yMin || th.value > yMax) continue;
-                const colour = th.severity === 'err' ? errCol : warnCol;
-                const y = u.valToPos(th.value, 'y', true);
-                // Tinted breach band above the line — token color at 7% via
-                // globalAlpha (canvas fillStyle can't color-mix reliably).
-                ctx.globalAlpha = 0.07;
-                ctx.fillStyle = colour;
-                ctx.fillRect(u.bbox.left, u.bbox.top, u.bbox.width, y - u.bbox.top);
-                ctx.globalAlpha = 1;
-                // The line itself.
-                ctx.strokeStyle = colour;
-                ctx.fillStyle = colour;
-                ctx.lineWidth = 1.2;
-                ctx.setLineDash([6, 4]);
-                ctx.beginPath();
-                ctx.moveTo(u.bbox.left, y);
-                ctx.lineTo(u.bbox.left + u.bbox.width, y);
-                ctx.stroke();
-                // Label at the right edge.
-                if (th.label) {
-                  ctx.setLineDash([]);
-                  const labelW = ctx.measureText(th.label).width;
-                  ctx.fillText(
-                    th.label,
-                    u.bbox.left + u.bbox.width - labelW - 4,
-                    y - 4,
-                  );
-                }
-              }
+              drawThresholds(u, thresholds.map(th => ({
+                value: th.value,
+                label: th.label,
+                color: th.severity === 'err' ? errCol : warnCol,
+              })));
             }
 
             // ── Deploy markers ───────────────────────────────

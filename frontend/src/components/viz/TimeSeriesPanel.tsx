@@ -15,6 +15,7 @@ import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
 import { toggleSeriesVisibility, isolateSeriesVisibility } from '@/lib/chart/legendVisibility';
+import { drawThresholds, drawTimeRegions, type ChartTimeRegion } from '@/lib/chart/overlays';
 import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
@@ -98,6 +99,10 @@ interface TimeSeriesPanelProps {
   // re-clamps to the live x-scale.
   events?: ChartAnnotation[];
   thresholds?: TSThreshold[];
+  // Grafana-parite M3 — problem/anomali x-bölgeleri (arka-plan gölge + üst
+  // şerit + etiket; lib/chart/overlays.ts). valToPos canlı ölçeği okur →
+  // zoom'la doğru konumlanır.
+  regions?: ChartTimeRegion[];
   height: number;
   mode?: TSMode;               // default 'line'
   logScale?: boolean;          // log10 on the y-axes
@@ -149,10 +154,8 @@ function withAlpha(hex: string, aa: string): string {
   return /^#[0-9a-fA-F]{6}$/.test(hex) ? hex + aa : hex;
 }
 
-// toHex — coerce a resolved colour to #rrggbb (for the breach-band tint), else ''.
-function toHex(c: string): string {
-  return /^#[0-9a-fA-F]{6}$/.test(c.trim()) ? c.trim() : '';
-}
+// toHex (breach-band tint yardımcısı) Grafana-parite M3'te kalktı — threshold
+// bandı artık lib/chart/overlays.ts::drawThresholds'ta (globalAlpha yolu).
 
 // legendStat — per-series last/min/max/avg over the raw data so the numbers
 // match the points the operator hovers. uPlot series index is 1-based.
@@ -168,7 +171,7 @@ interface LegendRow {
 }
 
 export function TimeSeriesPanel({
-  series, deploys, events, thresholds, height, mode = 'line', logScale, syncKey, onZoom, onZoomReset, hideLegend, smooth,
+  series, deploys, events, thresholds, regions, height, mode = 'line', logScale, syncKey, onZoom, onZoomReset, hideLegend, smooth,
   zoomWindow, hiddenLabels, focusedLabel, onCursorTime, onExemplarClick, xRange,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -300,7 +303,7 @@ export function TimeSeriesPanel({
   const buildSig = timeSeriesPanelBuildSignature({
     series,
     mode, logScale, syncKey, hasZoom: !!onZoom, height,
-    deploys, events, thresholds,
+    deploys, events, thresholds, regions,
     hasExemplars: series.some(s => (s.exemplars?.length ?? 0) > 0),
     pointsTier: prepared.times.length <= 100 ? 2 : prepared.times.length <= 300 ? 1 : 0,
     renderable: series.length > 0 && prepared.times.length > 0,
@@ -448,36 +451,26 @@ export function TimeSeriesPanel({
         // Drag-zoom → sayfaya devir; paylaşımlı cursorOpts hook'u (4px eşik,
         // sıralı sec aralığı, gri band temizliği). Only set when onZoom exists.
         ...(cz.setSelect ? { setSelect: cz.setSelect } : {}),
-        // Overlay draw — thresholds (line + breach band) then deploy annotations.
-        ...(((thresholds && thresholds.length > 0) || (deploys && deploys.length > 0) || (events && events.length > 0) || series.some(s => s.exemplars && s.exemplars.length > 0)) ? { draw: [
+        // Overlay draw — regions (background-most), thresholds (line + breach
+        // band), then deploy annotations.
+        ...(((thresholds && thresholds.length > 0) || (regions && regions.length > 0) || (deploys && deploys.length > 0) || (events && events.length > 0) || series.some(s => s.exemplars && s.exemplars.length > 0)) ? { draw: [
           (u) => {
             const ctx = u.ctx;
             ctx.save();
 
+            // Grafana-parite M3 — problem/anomali bölgeleri en arkada
+            // (gölge, üstüne threshold/deploy/exemplar biner).
+            if (regions && regions.length > 0) drawTimeRegions(u, regions);
+
+            // Grafana-parite M3 — eski yerel threshold bloğu (MLC ile birebir
+            // kopyaydı) paylaşımlı drawThresholds'a delege. Renk çözümü + '14'
+            // hex-alfa bandının alfa eşdeğeri (0x14/255) aynen korunur.
             if (thresholds && thresholds.length > 0) {
-              const yMin = u.scales.y.min ?? 0;
-              const yMax = u.scales.y.max ?? 0;
-              ctx.font = '10px ui-monospace, monospace';
-              for (const th of thresholds) {
-                if (th.value < yMin || th.value > yMax) continue;
-                const colour = resolveColor(th.color ?? 'var(--warn)') || '#f0b352';
-                const y = u.valToPos(th.value, 'y', true);
-                ctx.fillStyle = withAlpha(toHex(colour), '14') || 'rgba(240,179,82,0.07)';
-                ctx.fillRect(u.bbox.left, u.bbox.top, u.bbox.width, y - u.bbox.top);
-                ctx.strokeStyle = colour;
-                ctx.fillStyle = colour;
-                ctx.lineWidth = 1.2;
-                ctx.setLineDash([6, 4]);
-                ctx.beginPath();
-                ctx.moveTo(u.bbox.left, y);
-                ctx.lineTo(u.bbox.left + u.bbox.width, y);
-                ctx.stroke();
-                if (th.label) {
-                  ctx.setLineDash([]);
-                  const labelW = ctx.measureText(th.label).width;
-                  ctx.fillText(th.label, u.bbox.left + u.bbox.width - labelW - 4, y - 4);
-                }
-              }
+              drawThresholds(u, thresholds.map(th => ({
+                value: th.value,
+                label: th.label,
+                color: resolveColor(th.color ?? 'var(--warn)') || '#f0b352',
+              })), { bandAlpha: 0x14 / 255 });
             }
 
             if (deploys && deploys.length > 0) {

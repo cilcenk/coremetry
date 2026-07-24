@@ -535,6 +535,7 @@ function ServiceDetailInner() {
                 <div className="dtl-sech">Performance</div>
                 <ServiceCharts service={svc} range={range} windowNs={rangeNs}
                   opScope={opScope} onOpScopeChange={setOpScope}
+                  problems={problems}
                   onZoom={handleZoom} onZoomReset={handleZoomReset} />
                 <div className="ov-grid dtl-cols ov-mb">
                   <LazyMount minHeight={360}>

@@ -15,6 +15,7 @@ import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
+import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { TrendDelta } from '@/components/TrendDelta';
 import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
@@ -104,6 +105,31 @@ export default function EndpointsPage() {
   const [params, setParams] = useSearchParams();
   // Global time window (UX#2) — URL-persisted + carried across pages.
   const [range, setRange] = useUrlRange('30m');
+  // Madde 4 sweep — modal RED grafiklerinin drag-zoom'u global range'e
+  // yazar; çift-tık GERİ-YIĞINI Service.tsx v0.9.199 deseninin birebiri
+  // (out-of-band range değişimi yığını geçersizleştirir).
+  const zoomStackRef = useRef<TimeRange[]>([]);
+  const rangeRef = useRef(range); rangeRef.current = range;
+  const zoomWroteRef = useRef(false);
+  useEffect(() => {
+    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
+    zoomStackRef.current = [];
+  }, [range.preset, range.fromMs, range.toMs]);
+  const handleZoom = (fromUnixSec: number, toUnixSec: number) => {
+    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
+    zoomWroteRef.current = true;
+    setRange({
+      preset: 'custom',
+      fromMs: Math.round(fromUnixSec * 1000),
+      toMs: Math.round(toUnixSec * 1000),
+    });
+  };
+  const handleZoomReset = () => {
+    const { stack, view } = popZoom(zoomStackRef.current);
+    zoomStackRef.current = stack;
+    if (view) { zoomWroteRef.current = true; setRange(view); return; }
+    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '30m' }); }
+  };
   // Global env filter (v0.8.385, env-separation Phase 2) — written by
   // the Topbar EnvPicker. Forwarded to /api/endpoints, where it forces
   // the bounded raw-spans path with a deploy_env conjunct (the
@@ -302,6 +328,19 @@ export default function EndpointsPage() {
   const totalCalls = (rows ?? []).reduce((s, r) => s + r.calls, 0);
   const totalErrors = (rows ?? []).reduce((s, r) => s + r.errors, 0);
   const totalErrorRate = totalCalls > 0 ? (totalErrors / totalCalls) * 100 : 0;
+
+  // v0.9.206 review-fix — modal'daki satırın MEVCUT range'e ait taze
+  // kopyası. Zoom range'i yeniden yazınca endpoint taze top-N'den
+  // düşebilir (limit varsayılanı 100); o durumda click-time `detail`
+  // satırına sessiz geri düşmek, bucketsToSeries'in ESKİ pencere
+  // sayaçlarını YENİ eksene yayıp yeni bucket genişliğine bölmesi
+  // demekti (30m→5m zoom'da rps 6x şişik, taze veri gibi). Kimlik/
+  // başlık bayat satırdan kalabilir; time-series üretimini modal
+  // rowIsStale ile keser.
+  const freshDetailRow = detail
+    ? (rows ?? []).find(x =>
+        x.service === detail.service && x.path === detail.path && x.method === detail.method)
+    : undefined;
 
   return (
     <>
@@ -587,7 +626,16 @@ export default function EndpointsPage() {
             </div>
           </>
         )}
-        <EndpointMetricModal row={detail} onClose={() => setDetail(null)} range={range} />
+        {/* Madde 4 sweep — zoom range'i değiştirince modal'daki satır bayat
+            kalmasın: aynı (service,path,method) satırının TAZE kopyası
+            rows'tan yeniden bulunur (drawer'ın v0.8.360 find deseni).
+            v0.9.206 review-fix — taze kopya YOKSA grafikler bayat satırdan
+            üretilmez (rowIsStale); modal açık kalır, kimlik/başlık durur. */}
+        <EndpointMetricModal
+          row={detail ? freshDetailRow ?? detail : null}
+          rowIsStale={!!detail && !freshDetailRow}
+          onClose={() => setDetail(null)} range={range}
+          onZoom={handleZoom} onZoomReset={handleZoomReset} />
         {/* v0.8.360 — route-scoped drill-down drawer. row may be
             undefined on a stale deep-link (endpoint not in the loaded
             page) — the drawer soft-falls back and still loads its
@@ -621,16 +669,33 @@ export default function EndpointsPage() {
 // crosshair sync, and tooltip per series — the same uPlot
 // affordances the Metrics / Explore pages use.
 function EndpointMetricModal({
-  row, onClose, range,
-}: { row: EndpointRow | null; onClose: () => void; range: TimeRange }) {
+  row, rowIsStale, onClose, range, onZoom, onZoomReset,
+}: {
+  row: EndpointRow | null; onClose: () => void; range: TimeRange;
+  // v0.9.206 review-fix — true = row, MEVCUT range'in sonuçlarında
+  // bulunamayan bayat click-time satırı. Kimlik/başlık ondan çizilir
+  // ama time-series ondan ÜRETİLMEZ: bucketsToSeries eski pencere
+  // bucket'larını yeni eksene yayıp yeni bucket genişliğine böler
+  // (rps pencere oranı kadar şişer).
+  rowIsStale?: boolean;
+  // Madde 4 sweep — modal grafiklerinde drag-zoom → sayfa range'i,
+  // çift-tık → sayfa zoom geri-yığını (MetricTile üzerinden MLC'ye iner).
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
+}) {
   // Hooks must run unconditionally — call useMemo before any
   // early return (React rules-of-hooks).
   const series = useMemo(() => {
-    if (!row) return { calls: [], errors: [], p99: [] };
+    // v0.9.206 review-fix — bayat satırdan seri fabrikasyonu yok;
+    // boş seri MetricTile'ın "no data" boş hâlini düşürür.
+    if (!row || rowIsStale) return { calls: [], errors: [], p99: [] };
     return bucketsToSeries(row, range);
-  }, [row, range]);
+  }, [row, rowIsStale, range]);
 
   if (!row) return <Modal open={false} onClose={onClose} />;
+  // v0.9.206 review-fix — bayat satırda boş hâl mesajı sebebi söyler.
+  const emptyLabel = rowIsStale
+    ? 'no data for this endpoint in the zoomed window' : undefined;
   const peakCalls = (row.sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
   const totalErrs = (row.errorsSparkline ?? []).reduce((s, v) => s + v, 0);
   const maxP99 = (row.p99Sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
@@ -665,8 +730,12 @@ function EndpointMetricModal({
           big={fmtNum(row.calls)}
           sub={`peak ${fmtNum(peakCalls)} / bucket`}
           series={series.calls}
+          unit="rps"
           service={row.service}
           range={range}
+          emptyLabel={emptyLabel}
+          onZoom={onZoom}
+          onZoomReset={onZoomReset}
         />
         <MetricTile
           label="Errors"
@@ -674,8 +743,12 @@ function EndpointMetricModal({
           sub={`${row.errorRate.toFixed(2)}% rate`}
           subCls={errCls}
           series={series.errors}
+          unit="%"
           service={row.service}
           range={range}
+          emptyLabel={emptyLabel}
+          onZoom={onZoom}
+          onZoomReset={onZoomReset}
         />
         <MetricTile
           label="P99 latency"
@@ -685,6 +758,9 @@ function EndpointMetricModal({
           unit="ms"
           service={row.service}
           range={range}
+          emptyLabel={emptyLabel}
+          onZoom={onZoom}
+          onZoomReset={onZoomReset}
         />
       </div>
       <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
@@ -712,7 +788,7 @@ function EndpointMetricModal({
 }
 
 function MetricTile({
-  label, big, sub, subCls, series, unit, service, range,
+  label, big, sub, subCls, series, unit, service, range, emptyLabel, onZoom, onZoomReset,
 }: {
   label: string; big: string; sub: string; subCls?: string;
   series: SpanMetricSeries[]; unit?: string;
@@ -720,6 +796,11 @@ function MetricTile({
   // EventMarkers on its chart. Optional so the component stays
   // usable on pages that don't have an event story yet.
   service?: string; range?: TimeRange;
+  // v0.9.206 review-fix — boş hâl mesajı override'ı (bayat-satır hâli).
+  emptyLabel?: string;
+  // Madde 4 sweep — drag-zoom → sayfa range'i, çift-tık → geri-yığın.
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
 }) {
   // Compute window bounds once; the EventMarkers component
   // already memoises internally, but pre-computing here keeps
@@ -746,6 +827,8 @@ function MetricTile({
             unit={unit}
             height={140}
             syncKey="endpoints-detail"
+            onZoom={onZoom}
+            onZoomReset={onZoomReset}
           />
           {bounds && (
             <EventMarkers
@@ -759,7 +842,7 @@ function MetricTile({
         <div style={{
           height: 140, display: 'flex', alignItems: 'center',
           justifyContent: 'center', color: 'var(--text3)', fontSize: 11,
-        }}>no data in window</div>
+        }}>{emptyLabel ?? 'no data in window'}</div>
       )}
     </div>
   );
@@ -785,14 +868,28 @@ function bucketsToSeries(row: EndpointRow, range: TimeRange): {
     return { calls: [], errors: [], p99: [] };
   }
   const bucketNs = (to - from) / n;
+  const bucketSec = bucketNs / 1e9;
   const timeAtBucket = (i: number) => from + bucketNs * i + bucketNs / 2;
   const buildPoints = (arr: number[]) => arr.map((v, i) => ({
     time: timeAtBucket(i),
     value: v,
   }));
+  // Madde 4 sweep — Calls/Errors birimsiz HAM SAYAÇTI ("12500" neyin
+  // nesi?). Calls per-bucket sayacı bucket genişliğine bölünüp gerçek
+  // rps olur; Errors, calls'a oranlanıp error % olur (calls=0 → 0%).
+  // Tile başlık istatistikleri (total/peak) ham sayaçtan okumaya devam
+  // eder — yalnız chart eksen/tooltip'i orana döner (Datadog dili).
+  const rpsPoints = calls.map((v, i) => ({
+    time: timeAtBucket(i),
+    value: bucketSec > 0 ? v / bucketSec : v,
+  }));
+  const errPctPoints = errs.map((v, i) => ({
+    time: timeAtBucket(i),
+    value: (calls[i] ?? 0) > 0 ? (v / calls[i]) * 100 : 0,
+  }));
   return {
-    calls: calls.length ? [{ groupKey: ['calls'], points: buildPoints(calls) }] : [],
-    errors: errs.length ? [{ groupKey: ['errors'], points: buildPoints(errs) }] : [],
+    calls: calls.length ? [{ groupKey: ['calls'], points: rpsPoints }] : [],
+    errors: errs.length ? [{ groupKey: ['errors'], points: errPctPoints }] : [],
     p99: p99s.length ? [{ groupKey: ['p99 ms'], points: buildPoints(p99s) }] : [],
   };
 }

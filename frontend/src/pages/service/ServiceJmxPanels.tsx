@@ -13,7 +13,10 @@ import type { ClusterPodRow } from '@/lib/types';
 // keşfedilen her jvm_/jboss_ metriği için MetricArea; jpod (backend $pod
 // filtresi) + jds (client datasource izolesi) URL kaynak-of-truth. Metrik
 // yoksa görünmez-düşer (null).
-export function ServiceJmxPanels({ clusters, effNs, effDeploy, cFrom, cTo, clamped, rows, onZoom, onZoomReset }: {
+export function ServiceJmxPanels({ service, clusters, effNs, effDeploy, cFrom, cTo, clamped, rows, onZoom, onZoomReset }: {
+  // Madde 4 sweep — RuntimeCharts'ın `runtime:${service}` crosshair grubuna
+  // katılmak için servis adı (aynı sekmedeki heap/GC panelleriyle senkron).
+  service: string;
   clusters: string[];
   effNs: string;
   effDeploy: string;
@@ -127,7 +130,8 @@ export function ServiceJmxPanels({ clusters, effNs, effDeploy, cFrom, cTo, clamp
               byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
               by={jmxBy[m] ?? !isJboss} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
               series={shown} seriesName={m} unit={unit}
-              maxSeries={isJboss ? 40 : undefined} onZoom={onZoom} onZoomReset={onZoomReset} />
+              maxSeries={isJboss ? 40 : undefined} onZoom={onZoom} onZoomReset={onZoomReset}
+              syncKey={`runtime:${service}`} />
           );
         })}
       </div>

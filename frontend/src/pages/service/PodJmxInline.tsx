@@ -71,8 +71,11 @@ export function PodJmxInline({ cluster, ns, deploy, pod, cFrom, cTo, onFull }: {
             const isJboss = m.startsWith('jboss_');
             return (
               <Card key={m} header={m}>
+                {/* Madde 4 sweep — pod'un JMX panelleri ortak crosshair
+                    grubu (Pod.tsx JMX bölümüyle aynı anahtar). */}
                 <MultiLineChart series={namedSeriesToSeries(data, m)} height={130}
-                  unit={unit} maxSeries={isJboss ? 40 : undefined} />
+                  unit={unit} maxSeries={isJboss ? 40 : undefined}
+                  syncKey={`podjmx:${pod}`} />
               </Card>
             );
           })}

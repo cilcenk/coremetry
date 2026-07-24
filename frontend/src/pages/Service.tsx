@@ -518,6 +518,7 @@ function ServiceDetailInner() {
                 onWiden={() => setRange({ preset: '1h' })}
                 normalized={normalized}
                 onToggleNormalized={setNormalized}
+                onZoom={handleZoom} onZoomReset={handleZoomReset}
                 loading={opsLoading} />
             )}
             {tab === 'details' && (

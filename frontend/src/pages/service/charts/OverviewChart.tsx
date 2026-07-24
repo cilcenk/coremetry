@@ -13,7 +13,10 @@ import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { StatsLegend } from '@/components/chart/StatsLegend';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
-import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
+import {
+  toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility,
+  visibilityFor, loadLegendVisibility, saveLegendVisibility,
+} from '@/lib/chart/legendVisibility';
 import { drawThresholds, drawTimeRegions, type ChartThreshold, type ChartTimeRegion } from '@/lib/chart/overlays';
 import { placeTooltip } from '@/lib/chartTooltip';
 
@@ -65,10 +68,16 @@ interface Props {
   syncKey?: string;
   // v0.9.83 pin — v0.9.94'te inert (veriye-fit revert); imza korunuyor.
   xRange?: XPin | null;
+  // Grafana-parite madde 4 (legend persist) — kullanıcı lejant seçimi bu
+  // anahtar altında localStorage'da kalıcı; rebuild'de geri uygulanır.
+  // Kullanıcı seçimi her zaman defaultHidden'ı ezer.
+  legendStorageKey?: string;
+  // Kayıtlı seçim yokken gizli başlayacak etiketler (latency default'u p99).
+  defaultHidden?: readonly string[];
 }
 
 export function OverviewChart({
-  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', thresholds, regions, onZoom, onZoomReset, syncKey, xRange,
+  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', thresholds, regions, onZoom, onZoomReset, syncKey, xRange, legendStorageKey, defaultHidden,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   // onZoom in a ref (v0.8.520 pattern) so the once-per-build setSelect hook
@@ -354,11 +363,23 @@ export function OverviewChart({
     data: built.data,
     buildOptions,
     // Grafana-parite #2 — rebuild: pin çözülür (tooltip DOM'u yaşar ama
-    // içerik bayatlardı) + lejant görünürlüğü sıfırlanır (MLC emsali) + pin
-    // tık dinleyicisi TAZE u.over'a bağlanır (eskisi destroy ile gitti).
+    // içerik bayatlardı) + pin tık dinleyicisi TAZE u.over'a bağlanır
+    // (eskisi destroy ile gitti). Madde 4 (legend persist) — görünürlük
+    // artık visibilityFor'dan: kalıcı kullanıcı seçimi > defaultHidden >
+    // hepsi görünür (anahtar/default yokken eski null-reset'in birebiri).
     afterBuild: u => {
       if (pinRef.current != null) unpinTooltip();
-      visRef.current = null; setLegendVis(null);
+      const vis = visibilityFor(
+        series.map(s => s.label),
+        legendStorageKey ? loadLegendVisibility(legendStorageKey) : null,
+        defaultHidden,
+      );
+      if (vis.some(v => !v)) {
+        visRef.current = vis; setLegendVis(vis);
+        vis.forEach((show, k) => { if (!show) u.setSeries(k + 1, { show: false }); });
+      } else {
+        visRef.current = null; setLegendVis(null);
+      }
       placeFlag(u);
       attachPinListener(u);
     },
@@ -391,6 +412,9 @@ export function OverviewChart({
     visRef.current = next;
     setLegendVis(next);
     next.forEach((show, k) => u.setSeries(k + 1, { show }));
+    // Madde 4 (legend persist) — kullanıcı seçimi anında kalıcılaşır
+    // (hepsi-görünür de [] olarak açıkça yazılır ki default'u ezsin).
+    if (legendStorageKey) saveLegendVisibility(legendStorageKey, series.map(s => s.label), next);
   };
 
   return (

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Sparkline } from '@/components/Sparkline';
 import { MultiLineChart } from '@/components/MultiLineChart';
+import { EventMarkers } from '@/components/EventMarkers';
 import { Modal } from '@/components/ui';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
@@ -51,10 +52,14 @@ const OP_COLS: DataTableColumn<OperationSummary>[] = [
   // devam edebilir gerekirse.
 ];
 
-export function OperationsTable({ service, rows, range, preset, onWiden, normalized, onToggleNormalized, loading }: {
+export function OperationsTable({ service, rows, range, preset, onWiden, normalized, onToggleNormalized, onZoom, onZoomReset, loading }: {
   service: string;
   rows: OperationSummary[];
   range: TimeRange;
+  // Madde 4 sweep — modal RED grafiklerinin drag-zoom'u sayfa range'ine
+  // (Service.tsx handleZoom), çift-tık geri-yığınına (handleZoomReset).
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
   // v0.5.292 — when the table comes back empty (typically
   // because the user's 15m default window had no traffic),
   // surface a one-click "widen to 1h" CTA rather than the
@@ -86,6 +91,16 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   // sparkline + companion errors/p99 sparklines added in the
   // same release.
   const [opDetail, setOpDetail] = useState<OperationSummary | null>(null);
+
+  // v0.9.206 review-fix — modal satırının MEVCUT range'e ait taze
+  // kopyası. Modal içinden zoom sayfa range'ini yeniden yazınca op
+  // taze rows'tan düşebilir (top-N cutoff / zoom diliminde span yok);
+  // o durumda bayat opDetail satırına sessiz geri düşmek, seri
+  // memo'sunun ESKİ pencere bucket'larını timeRangeToNs(range) ile
+  // YENİ eksene yaymasıydı (yanlış zamanlara çizilen değerler, YENİ
+  // pencerenin EventMarkers'ıyla yan yana). Kimlik/başlık bayat
+  // satırdan kalabilir; time-series üretimini modal opIsStale ile keser.
+  const freshOpRow = opDetail ? rows.find(x => x.name === opDetail.name) : undefined;
 
   // v0.5.313 — Operator-reported: drill-down used to land on
   // /traces (familiar view with the trace list + aggregate
@@ -419,11 +434,19 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
           </tbody>
         </table>
       </div>
+      {/* Madde 4 sweep — zoom range'i değiştirince modal'daki satır bayat
+          kalmasın: aynı operasyonun TAZE kopyası rows'tan yeniden bulunur
+          (Endpoints modal deseni).
+          v0.9.206 review-fix — taze kopya YOKSA grafikler bayat satırdan
+          üretilmez (opIsStale); modal açık kalır, kimlik/başlık durur. */}
       <OperationMetricModal
         service={service}
-        op={opDetail}
+        op={opDetail ? freshOpRow ?? opDetail : null}
+        opIsStale={!!opDetail && !freshOpRow}
         onClose={() => setOpDetail(null)}
         range={range}
+        onZoom={onZoom}
+        onZoomReset={onZoomReset}
       />
     </div>
   );
@@ -437,15 +460,29 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
 // to /service per-operation rows so the operator gets the same
 // reading affordance everywhere they see a sparkline.
 function OperationMetricModal({
-  service, op, onClose, range,
+  service, op, opIsStale, onClose, range, onZoom, onZoomReset,
 }: {
   service: string;
   op: OperationSummary | null;
+  // v0.9.206 review-fix — true = op, MEVCUT range'in sonuçlarında
+  // bulunamayan bayat click-time satırı. Kimlik/başlık ondan çizilir
+  // ama time-series ondan ÜRETİLMEZ: seri memo'su eski pencere
+  // bucket'larına yeni pencereden zaman damgası uydururdu.
+  opIsStale?: boolean;
   onClose: () => void;
   range: TimeRange;
+  // Madde 4 sweep — tile MLC'lerine iner (drag-zoom → sayfa range'i).
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
 }) {
+  // Madde 4 sweep — EventMarkers overlay penceresi (Endpoints MetricTile
+  // emsali): deploy/incident dikey çizgileri "p99 spike deploy'dan mı"
+  // sorusunu modal'dan çıkmadan yanıtlar.
+  const bounds = useMemo(() => timeRangeToNs(range), [range]);
   const series = useMemo(() => {
-    if (!op) return { calls: [] as SpanMetricSeries[], errors: [] as SpanMetricSeries[], p99: [] as SpanMetricSeries[] };
+    // v0.9.206 review-fix — bayat satırdan seri fabrikasyonu yok;
+    // boş seri OpMetricTile'ın "no data" boş hâlini düşürür.
+    if (!op || opIsStale) return { calls: [] as SpanMetricSeries[], errors: [] as SpanMetricSeries[], p99: [] as SpanMetricSeries[] };
     const { from, to } = timeRangeToNs(range);
     const calls = op.sparkline ?? [];
     const errs = op.errorsSparkline ?? [];
@@ -462,9 +499,12 @@ function OperationMetricModal({
       errors: errs.length ? [{ groupKey: ['errors'], points: pts(errs) }] : [],
       p99: p99s.length ? [{ groupKey: ['p99 ms'], points: pts(p99s) }] : [],
     };
-  }, [op, range]);
+  }, [op, opIsStale, range]);
 
   if (!op) return <Modal open={false} onClose={onClose} />;
+  // v0.9.206 review-fix — bayat satırda boş hâl mesajı sebebi söyler.
+  const emptyLabel = opIsStale
+    ? 'no data for this operation in the zoomed window' : undefined;
   const peakCalls = (op.sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
   const totalErrs = (op.errorsSparkline ?? []).reduce((s, v) => s + v, 0);
   const maxP99 = (op.p99Sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
@@ -523,15 +563,18 @@ function OperationMetricModal({
       }}>
         <OpMetricTile label="Calls" big={fmtNum(op.spanCount)}
           sub={`peak ${fmtNum(peakCalls)} / bucket`}
-          series={series.calls} />
+          series={series.calls} emptyLabel={emptyLabel}
+          service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
         <OpMetricTile label="Errors" big={fmtNum(op.errorCount)}
           sub={`${op.errorRate.toFixed(2)}% rate`}
           subCls={errCls}
-          series={series.errors} />
+          series={series.errors} emptyLabel={emptyLabel}
+          service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
         <OpMetricTile label="P99 latency"
           big={`${op.p99DurationMs.toFixed(0)} ms`}
           sub={`peak ${maxP99.toFixed(0)} ms · avg ${op.avgDurationMs.toFixed(0)} ms`}
-          series={series.p99} unit="ms" />
+          series={series.p99} unit="ms" emptyLabel={emptyLabel}
+          service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
       </div>
       <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
         Hover any chart to read the bucket value; crosshair syncs
@@ -567,10 +610,17 @@ function OperationMetricModal({
 }
 
 function OpMetricTile({
-  label, big, sub, subCls, series, unit,
+  label, big, sub, subCls, series, unit, service, bounds, emptyLabel, onZoom, onZoomReset,
 }: {
   label: string; big: string; sub: string; subCls?: string;
   series: SpanMetricSeries[]; unit?: string;
+  // Madde 4 sweep — EventMarkers overlay (Endpoints MetricTile emsali) +
+  // drag-zoom → sayfa range'i / çift-tık → geri-yığın.
+  service?: string; bounds?: { from: number; to: number };
+  // v0.9.206 review-fix — boş hâl mesajı override'ı (bayat-satır hâli).
+  emptyLabel?: string;
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
 }) {
   return (
     <div style={{
@@ -584,12 +634,18 @@ function OpMetricTile({
         color: subCls === 'err' ? 'var(--err)' : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
       }}>{sub}</div>
       {series.length > 0 && series[0].points.length > 0 ? (
-        <MultiLineChart series={series} unit={unit} height={140} syncKey="op-detail" />
+        <div style={{ position: 'relative' }}>
+          <MultiLineChart series={series} unit={unit} height={140} syncKey="op-detail"
+            onZoom={onZoom} onZoomReset={onZoomReset} />
+          {bounds && (
+            <EventMarkers fromNs={bounds.from} toNs={bounds.to} service={service || undefined} />
+          )}
+        </div>
       ) : (
         <div style={{
           height: 140, display: 'flex', alignItems: 'center',
           justifyContent: 'center', color: 'var(--text3)', fontSize: 11,
-        }}>no data in window</div>
+        }}>{emptyLabel ?? 'no data in window'}</div>
       )}
     </div>
   );

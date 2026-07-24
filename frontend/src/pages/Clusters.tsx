@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { ChartSpline } from 'lucide-react';
@@ -25,6 +25,8 @@ import { api } from '@/lib/api';
 import { useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { encodeRange } from '@/lib/urlState';
+import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterDeploymentRow, ClusterAlertRow, ClusterSummary, TimeRange } from '@/lib/types';
@@ -234,11 +236,47 @@ export default function ClustersPage() {
   const liveMs = live ? 10_000 : undefined;
   // v0.9.58 — grafik drag-seçimi global time picker'a yazar (operatör
   // isteği; Service.tsx onZoom emsali). setRange useUrlRange'ten.
-  const chartZoom = (fromUnixSec: number, toUnixSec: number) => setRange({
-    preset: 'custom',
-    fromMs: Math.round(fromUnixSec * 1000),
-    toMs: Math.round(toUnixSec * 1000),
-  });
+  // Madde 4 sweep — Service.tsx v0.9.199 GERİ-YIĞIN deseninin birebiri:
+  // zoom öncesi görünüm yığına iter, çift-tık (chartZoomReset) bir adım
+  // geri; out-of-band range değişimi (Topbar preset) yığını geçersizleştirir.
+  const zoomStackRef = useRef<TimeRange[]>([]);
+  const rangeRef = useRef(range); rangeRef.current = range;
+  const zoomWroteRef = useRef(false);
+  useEffect(() => {
+    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
+    zoomStackRef.current = [];
+  }, [range.preset, range.fromMs, range.toMs]);
+  // v0.9.206 review-fix — range yazımı TEK URLSearchParams yazımı oldu
+  // ki NamespaceDrawer ?tw= silmesini AYNI yazıma katabilsin
+  // (opts.clearTw): react-router'da aynı-tick functional updater'lar
+  // render-anı snapshot'ından beslenir (yazımlar zincirlenmez), ayrı
+  // setTw('') + setRange çağrılarında son yazan kazanıp tw'yi hayatta
+  // bırakıyordu — drawer grafiği tw'den pencerelendiğinden zoom ölü
+  // görünüyor, sayfa range'i overlay arkasında sessizce değişiyordu.
+  // setRange yerine doğrudan setParams güvenli: custom range
+  // persistableRange dışı, localStorage yazımı zaten no-op'tu.
+  // clearTw opt-in kalır — sayfa grafiği zoom'u operatörün kalıcı tw
+  // tercihini silmemeli (v0.9.17 "tw bilinçli kalır").
+  const chartZoom = useCallback((fromUnixSec: number, toUnixSec: number, opts?: { clearTw?: boolean }) => {
+    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
+    zoomWroteRef.current = true;
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (opts?.clearTw) next.delete('tw');
+      next.set('range', encodeRange({
+        preset: 'custom',
+        fromMs: Math.round(fromUnixSec * 1000),
+        toMs: Math.round(toUnixSec * 1000),
+      }));
+      return next;
+    }, { replace: true });
+  }, [setParams]);
+  const chartZoomReset = useCallback(() => {
+    const { stack, view } = popZoom(zoomStackRef.current);
+    zoomStackRef.current = stack;
+    if (view) { zoomWroteRef.current = true; setRange(view); return; }
+    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '15m' }); }
+  }, [setRange]);
   // v0.9.43 (review MAJÖR) — trend pencere ilerletici: [from,to]
   // memo'su Date.now()'u mount'ta bir kez yakalıyordu; live modda
   // 10s'lik her refetch AYNI geçmiş pencereyi sorguluyor (Prometheus
@@ -1052,11 +1090,15 @@ export default function ClustersPage() {
                     {/* v0.9.58 — drag-seçim global range'e yazar
                         (Service.tsx emsali; sayfa range'i zaten
                         useUrlRange'ten geliyor). */}
+                    {/* Madde 4 sweep — ortak 'clusters' crosshair grubu +
+                        çift-tık zoom geri-yığını (chartZoomReset). */}
                     <MetricArea title="CPU usage (cores)" byLabel="By node"
-                      by={cpuByNode} onToggle={setCpuByNode} onZoom={chartZoom}
+                      by={cpuByNode} onToggle={setCpuByNode} onZoom={chartZoom} onZoomReset={chartZoomReset}
+                      syncKey="clusters"
                       series={cpuTrendQ.data?.series} seriesName="CPU" />
                     <MetricArea title="Memory usage" byLabel="By node"
-                      by={memByNode} onToggle={setMemByNode} onZoom={chartZoom}
+                      by={memByNode} onToggle={setMemByNode} onZoom={chartZoom} onZoomReset={chartZoomReset}
+                      syncKey="clusters"
                       series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
                   </div>
                 )}
@@ -1064,8 +1106,12 @@ export default function ClustersPage() {
                     (node_network erişilemezse bölüm hiç görünmez). */}
                 {section === 'overview' && (netTrendQ.data?.trend?.length ?? 0) > 0 && (
                   <Card header={`Network throughput${netClamped ? ' (last 6h)' : ''}`} style={{ marginTop: 14 }}>
+                    {/* Madde 4 sweep — eksen/tooltip byte birimi (değerler
+                        Bps; seri etiketleri "(B/s)" taşır) + drag-zoom
+                        global range'e, çift-tık geri-yığınına. */}
                     <MultiLineChart
                       series={netTrendToSeries(netTrendQ.data!.trend!)}
+                      unit="bytes" onZoom={chartZoom} onZoomReset={chartZoomReset}
                       height={200} />
                   </Card>
                 )}
@@ -1094,7 +1140,8 @@ export default function ClustersPage() {
         {nsDrawerParam && (() => {
           const [c, ns] = nsDrawerParam.split('|');
           if (!c || !ns) return null;
-          return <NamespaceDrawer cluster={c} namespace={ns} range={range} onClose={closeNsDrawer} />;
+          return <NamespaceDrawer cluster={c} namespace={ns} range={range} onClose={closeNsDrawer}
+            onZoom={chartZoom} onZoomReset={chartZoomReset} />;
         })()}
       </div>
     </>
@@ -1105,11 +1152,15 @@ export default function ClustersPage() {
 // (v0.9.5, trend-upgrade audit T3): PodDrawer'ın aynası, panel
 // multi-pod modda (top-10 seri + "Top N of M" etiketi). Yalnız
 // açılınca fetch; ?tw= pencere seçicisi pod drawer'ıyla ortak.
-function NamespaceDrawer({ cluster, namespace, range, onClose }: {
+function NamespaceDrawer({ cluster, namespace, range, onClose, onZoom, onZoomReset }: {
   cluster: string;
   namespace: string;
   range: TimeRange;
   onClose: () => void;
+  // Madde 4 sweep — trend drag-zoom sayfa range'ine, çift-tık geri-yığınına.
+  // v0.9.206 review-fix: opts.clearTw → ?tw= silme range ile aynı yazımda.
+  onZoom?: (fromUnixSec: number, toUnixSec: number, opts?: { clearTw?: boolean }) => void;
+  onZoomReset?: () => void;
 }) {
   const [params, setParams] = useSearchParams();
   const tw = params.get('tw') ?? '';
@@ -1146,8 +1197,18 @@ function NamespaceDrawer({ cluster, namespace, range, onClose }: {
             ))}
           </select>
         </div>
+        {/* Madde 4 sweep — drawer'da zoom sayfa range'ine yazar; ?tw= yerel
+            penceresi zoom'un görünmesini engellemesin diye '' (Page range)'e
+            döndürülür. v0.9.206 review-fix: silme ayrı setTw('') çağrısı
+            DEĞİL, range ile aynı yazım (opts.clearTw) — aynı-tick iki
+            setParams'ta son yazan kazanıp tw'yi bırakıyor, drawer grafiği
+            yeniden pencerelenmiyordu. Çift-tık da simetrik: tw aktifken
+            sayfa yığınını görünmez poplamak yerine yerel pencereyi Page
+            range'e döndürür; yığın ancak tw=''ken yürür. */}
         <ThanosTrendPanel cluster={cluster} namespace={namespace}
-          fromNs={from} toNs={to} />
+          fromNs={from} toNs={to}
+          onZoom={onZoom ? (f, t) => onZoom(f, t, { clearTw: true }) : undefined}
+          onZoomReset={onZoomReset ? () => { if (tw) { setTw(''); return; } onZoomReset(); } : undefined} />
       </DrawerSection>
     </Drawer>
   );

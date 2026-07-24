@@ -371,6 +371,13 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   const [newDashName, setNewDashName] = useState('');
   const [savingDash, setSavingDash] = useState(false);
 
+  // Madde 4 sweep — builder önizlemesinin YEREL zoom penceresi (unix sec).
+  // Drag-seçim fetch tetiklemez (Explore zoomWindow deseni): TSP'nin
+  // kontrollü zoomWindow'una iner, çift-tık null'a döndürür (tam aralık).
+  // Sayfa range'i değişince bayat pencere temizlenir.
+  const [zoomWindow, setZoomWindow] = useState<{ from: number; to: number } | null>(null);
+  useEffect(() => { setZoomWindow(null); }, [from, to]);
+
   // Debounced copy of the model that actually drives the fetch + URL write,
   // so typing/clicking doesn't fire a query per keystroke (v0.5.184 posture).
   const [debounced, setDebounced] = useState(model);
@@ -592,6 +599,9 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
         groupBy: q.groupBy.length ? q.groupBy.join(',') : undefined,
         step: q.step || undefined,
         filters: q.filters.length ? encodeFilters(q.filters) : undefined,
+        // Madde 4 sweep — metriğin katalog birimi panelle taşınır;
+        // PanelRenderer MLC eksen/tooltip'ine geçirir.
+        unit: q.unit || undefined,
       },
     }));
   const openDash = () => {
@@ -728,7 +738,10 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
         ) : (
           <TimeSeriesPanel series={chartSeries} height={340} deploys={deploys}
             mode={model.viz} logScale={model.logScale} syncKey="mqe-preview"
-            xRange={{ from: from / 1e9, to: to / 1e9 }} />
+            xRange={{ from: from / 1e9, to: to / 1e9 }}
+            zoomWindow={zoomWindow}
+            onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
+            onZoomReset={() => setZoomWindow(null)} />
         )}
       </div>
 

@@ -87,7 +87,7 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
 
           {/* 2) JVM / JBoss JMX panelleri (servis-seviyesi; çok-cluster'da
               iç cluster seçici, review v0.9.159 #4). */}
-          <ServiceJmxPanels clusters={clustersWithPods} effNs={effNs} effDeploy={effDeploy}
+          <ServiceJmxPanels service={service} clusters={clustersWithPods} effNs={effNs} effDeploy={effDeploy}
             cFrom={cFrom} cTo={cTo} clamped={clamped} rows={rows} onZoom={onZoom} onZoomReset={onZoomReset} />
         </>
       )}

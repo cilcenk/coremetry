@@ -15,7 +15,10 @@ import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { isAdditiveUnit } from '@/lib/chart/legendStats';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
-import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
+import {
+  toggleSeriesVisibility, isolateSeriesVisibility,
+  visibilityFor, loadLegendVisibility, saveLegendVisibility,
+} from '@/lib/chart/legendVisibility';
 import { drawThresholds, drawTimeRegions, type ChartTimeRegion } from '@/lib/chart/overlays';
 
 // v0.9.131 (chart-consolidation Adım 3) — TimeSeriesPanel artık placeTooltip'i
@@ -166,7 +169,7 @@ function computeChartData(
 export function MultiLineChart({
   series, unit, height = 320, deploys, thresholds, regions, syncKey, onZoom, onZoomReset,
   compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
-  selectedOps, onLegendClick, xRange, maxSeries,
+  selectedOps, onLegendClick, xRange, maxSeries, legendStorageKey, defaultHidden,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -247,6 +250,16 @@ export function MultiLineChart({
   // v0.9.83 (uPlot Aşama 2 madde 2) — x-eksenini sorgu penceresine sabitle
   // (unix sec); zoom isteği aynen geçer. Verilmezse eski davranış.
   xRange?: XPin | null;
+  // Grafana-parite madde 4 (legend persist) — verilirse kullanıcı lejant
+  // seçimi bu anahtar altında localStorage'da KALICI (gizli etiket listesi;
+  // lib/chart/legendVisibility persist katmanı) ve rebuild'de geri uygulanır.
+  // Kullanıcı seçimi her zaman defaultHidden'ı ezer. Kontrollü modda
+  // (selectedOps/onLegendClick) yok sayılır — kontrollü sürücü kazanır.
+  legendStorageKey?: string;
+  // Kayıtlı kullanıcı seçimi YOKKEN gizli başlayacak etiketler (operatör
+  // default'u: latency panellerinde p99). Hepsi-gizli'ye yol açarsa çekirdek
+  // kuralı hepsini geri getirir.
+  defaultHidden?: readonly string[];
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   // plotRef, motorun döndürdüğü uPlot örneğidir (aşağıda useChartEngine ile
@@ -871,12 +884,38 @@ export function MultiLineChart({
     data: bundle.data,
     buildOptions,
     // Grafana-parite #2 — rebuild: pin çözülür (tooltip DOM'u yaşar ama
-    // içerik bayatlardı) + pin tık dinleyicisi taze u.over'a bağlanır;
-    // visibleRef reset'i eski davranışın aynısı (resetSeriesVisibility'ye
-    // delege — kaynak tek).
+    // içerik bayatlardı) + pin tık dinleyicisi taze u.over'a bağlanır.
+    // Madde 4 (legend persist) — rebuild görünürlüğü artık visibilityFor'dan:
+    // kalıcı kullanıcı seçimi > defaultHidden > hepsi görünür (eski
+    // resetSeriesVisibility davranışının üst kümesi; anahtar/default yokken
+    // birebir aynı "hepsi görünür"). Kontrollü modda (selectedOps sürücüsü)
+    // persist devre dışı — series `show` zaten isVis(label)'dan geliyor.
     afterBuild: u => {
       if (pinRef.current != null) unpinTooltip();
-      visibleRef.current = resetSeriesVisibility(bundle.allSeries.length);
+      const controlled = selectedOps != null || !!onLegendClick;
+      let vis: boolean[];
+      if (controlled) {
+        vis = bundle.labels.map(l => selectedOps == null || selectedOps.has(l));
+      } else {
+        // v0.9.206 review-fix: kalıcı-seçim/default çözümü yalnız GERÇEK
+        // seriler (eff dilimi) üzerinden — restore-all kuralı compare ghost
+        // satırlarını saymasın (save tarafı da yalnız eff dilimini yazar).
+        // Ghost, görünürlüğü ham-etiket ikizinden alır; current'ta ikizi
+        // olmayan ghost (ör. "others"a katlanan seri) görünür kalır.
+        const effLen = bundle.eff.length;
+        const realLabels = bundle.labels.slice(0, effLen);
+        const realVis = visibilityFor(
+          realLabels,
+          legendStorageKey ? loadLegendVisibility(legendStorageKey) : null,
+          defaultHidden,
+        );
+        vis = bundle.labels.map((l, i) =>
+          i < effLen ? realVis[i] : (realVis[realLabels.indexOf(l)] ?? true));
+      }
+      visibleRef.current = vis;
+      if (!controlled) {
+        for (let i = 0; i < vis.length; i++) if (!vis[i]) u.setSeries(i + 1, { show: false });
+      }
       attachPinListener(u);
     },
     // Grafana-parite M1 — çift-tık: sayfa geri-yığınına devret (spec canlı
@@ -949,6 +988,21 @@ export function MultiLineChart({
         visible[i] = next[i];
         u.setSeries(i + 1, { show: next[i] });
       }
+      // Madde 4 (legend persist) — kullanıcı seçimi anında kalıcılaşır
+      // (hepsi-görünür de [] olarak açıkça yazılır ki default'u ezsin).
+      // v0.9.206 review-fix: yalnız GERÇEK seriler (eff dilimi) kayda girer —
+      // compare ghost ikizleri ham etiketi paylaşır; tam listeyle isolate,
+      // izole edilen etiketi de (ikizi gizli diye) kayda sokuyor, seçim
+      // round-trip'te all-visible'a çözülüyor ve p99 default'u kalıcı
+      // eziliyordu.
+      if (legendStorageKey) {
+        const effLen = bundleRef.current.eff.length;
+        saveLegendVisibility(
+          legendStorageKey,
+          labelsRef.current.slice(0, effLen),
+          next.slice(0, effLen),
+        );
+      }
     };
     el.addEventListener('click', onClick, true);
     return () => el.removeEventListener('click', onClick, true);
@@ -959,7 +1013,7 @@ export function MultiLineChart({
     // appended compare rows. plotRef is useChartEngine's stable
     // ref (never re-identifies) → intentionally NOT a dep (v0.9.100).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [series.length, compareSeries?.length]);
+  }, [series.length, compareSeries?.length, legendStorageKey]);
 
   // Apply the controlled selection to the live plot WITHOUT a rebuild
   // (zoom + cursor survive). Matches by operation label so sibling

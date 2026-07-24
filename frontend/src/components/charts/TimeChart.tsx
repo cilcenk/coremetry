@@ -9,6 +9,7 @@ import { yRangeHeadroom } from '@/lib/chart/yRange';
 import { yRefitScale } from '@/lib/chart/zoomState';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { useChartEngine } from '@/lib/chart/engine';
+import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { StatsLegend } from '@/components/chart/StatsLegend';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
@@ -51,6 +52,10 @@ interface Props {
   rightUnit?: string;
   deployMarkers?: number[];         // unix seconds → dashed red vlines
   onBrush?: (fromMs: number, toMs: number) => void;
+  // Grafana-parite M1 — çift-tık: sayfa geri-yığını bir adım pop eder.
+  // Verilmezse no-op (mevcut davranış; TC'nin drag'i setScale:false, yerel
+  // zoom yok — geri alma tamamen sayfa katmanının işi).
+  onZoomReset?: () => void;
   syncKey?: string;                 // uPlot.sync group for cross-chart crosshair
   fmtLeft?: (v: number) => string;  // y label formatter (left)
   fmtRight?: (v: number) => string; // y label formatter (right)
@@ -68,7 +73,7 @@ interface Props {
 
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
-  deployMarkers, onBrush, syncKey, fmtLeft, fmtRight, fmtX, xRange,
+  deployMarkers, onBrush, onZoomReset, syncKey, fmtLeft, fmtRight, fmtX, xRange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ttRef = useRef<HTMLDivElement>(null);
@@ -163,12 +168,25 @@ export function TimeChart({
     ];
     if (hasRight) axes.push(yAxis('y2', 1, fmtRightRef, false, rightUnit));
 
+    // Grafana-parite M1 — drag(+sync)+setSelect paylaşımlı buildCursorOpts'tan.
+    // TC şekli birebir: drag x yalnız onBrush varken, setScale:false (zoom
+    // isteği parent'a gider, yerel rescale yok), 2px eşik, ms'e çevirip
+    // onBrushRef'ten canlı çağrı.
+    const cz = buildCursorOpts({
+      syncKey,
+      dragX: !!onBrush,
+      setScale: false,
+      minWidthPx: 2,
+      onZoom: onBrush
+        ? (f, t) => onBrushRef.current?.(Math.round(f * 1000), Math.round(t * 1000))
+        : undefined,
+    });
+
     return {
       width,
       height,
       cursor: {
         x: true, y: false, points: { show: true, size: 7 },
-        drag: { x: !!onBrush, y: false, setScale: false },
         // v0.9.84 (madde 4) — seyrek (null'lu) line/area seride hover en
         // yakın DOLU örneğe snap'ler (±2 bucket, sınırsız arama yok).
         dataIdx: (u, sidx, idx) => {
@@ -176,7 +194,7 @@ export function TimeChart({
           if (!st || st.type === 'bar') return idx;
           return nearestFilledIdx(u.data[sidx] as (number | null)[], idx, 2);
         },
-        ...(syncKey ? { sync: { key: syncKey } } : {}),
+        ...cz.cursor,
       },
       legend: { show: false },
       scales: {
@@ -204,14 +222,7 @@ export function TimeChart({
         }),
       ],
       hooks: {
-        setSelect: onBrush ? [u => {
-          const w = u.select.width;
-          if (w < 2) return;
-          const a = u.posToVal(u.select.left, 'x');
-          const b = u.posToVal(u.select.left + w, 'x');
-          onBrushRef.current?.(Math.round(a * 1000), Math.round(b * 1000));
-          u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
-        }] : undefined,
+        setSelect: cz.setSelect,
         setCursor: [u => {
           const tt = ttRef.current;
           if (!tt) return;
@@ -279,6 +290,9 @@ export function TimeChart({
     renderable: times.length >= 2 && series.length > 0,
     data: chartData,
     buildOptions,
+    // Grafana-parite M1 — çift-tık: sayfa geri-yığınına devret (spec canlı
+    // okunur, ref gerekmez; verilmezse motor no-op).
+    onZoomReset,
     refitScales: (u, data) => {
       const leftIdxs: number[] = [];
       const rightIdxs: number[] = [];

@@ -20,10 +20,12 @@ import type { TimeRange } from '@/lib/types';
 // pod listesi (açılır grup) + JVM/JBoss JMX panelleri Pods sekmesine TAŞINDI
 // (ServicePodsTab). Pod-envanteri paylaşılan useServicePods hook'undan (Pods
 // ile aynı veri). KPI "Pods"/"Restarts" kartları artık Pods sekmesine götürür.
-export function ServiceInfraTab({ service, range, onZoom }: {
+export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
   service: string;
   range: TimeRange;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Service.tsx zoom geri-yığınını pop eder.
+  onZoomReset?: () => void;
 }) {
   const [params, setParams] = useSearchParams();
   const {
@@ -199,12 +201,12 @@ export function ServiceInfraTab({ service, range, onZoom }: {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
           <div ref={cpuChartRef} style={flashStyle('cpu')}>
             <MetricArea title={`CPU (cores) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
-              by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom}
+              by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom} onZoomReset={onZoomReset}
               series={cpuTrendQ.data?.series} seriesName="CPU" />
           </div>
           <div ref={memChartRef} style={flashStyle('mem')}>
             <MetricArea title={`Memory · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
-              by={memByPod} onToggle={setMemByPod} onZoom={onZoom}
+              by={memByPod} onToggle={setMemByPod} onZoom={onZoom} onZoomReset={onZoomReset}
               series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
           </div>
         </div>

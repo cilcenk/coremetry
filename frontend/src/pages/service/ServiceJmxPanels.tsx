@@ -13,7 +13,7 @@ import type { ClusterPodRow } from '@/lib/types';
 // keşfedilen her jvm_/jboss_ metriği için MetricArea; jpod (backend $pod
 // filtresi) + jds (client datasource izolesi) URL kaynak-of-truth. Metrik
 // yoksa görünmez-düşer (null).
-export function ServiceJmxPanels({ clusters, effNs, effDeploy, cFrom, cTo, clamped, rows, onZoom }: {
+export function ServiceJmxPanels({ clusters, effNs, effDeploy, cFrom, cTo, clamped, rows, onZoom, onZoomReset }: {
   clusters: string[];
   effNs: string;
   effDeploy: string;
@@ -22,6 +22,8 @@ export function ServiceJmxPanels({ clusters, effNs, effDeploy, cFrom, cTo, clamp
   clamped: boolean;
   rows: ClusterPodRow[];
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Service.tsx zoom geri-yığınını pop eder.
+  onZoomReset?: () => void;
 }) {
   const [params, setParams] = useSearchParams();
   const [jmxBy, setJmxBy] = useState<Record<string, boolean>>({});
@@ -125,7 +127,7 @@ export function ServiceJmxPanels({ clusters, effNs, effDeploy, cFrom, cTo, clamp
               byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
               by={jmxBy[m] ?? !isJboss} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
               series={shown} seriesName={m} unit={unit}
-              maxSeries={isJboss ? 40 : undefined} onZoom={onZoom} />
+              maxSeries={isJboss ? 40 : undefined} onZoom={onZoom} onZoomReset={onZoomReset} />
           );
         })}
       </div>

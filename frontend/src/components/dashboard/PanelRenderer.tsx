@@ -30,7 +30,7 @@ export type PanelDataOverride = {
   error?: string;
 } | undefined;
 
-export function PanelRenderer({ panel, range, vars, syncKey, onZoom, dataOverride }: {
+export function PanelRenderer({ panel, range, vars, syncKey, onZoom, onZoomReset, dataOverride }: {
   panel: Panel;
   range: TimeRange;
   // Resolved values for the dashboard's variables (Grafana-style
@@ -48,6 +48,9 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, dataOverrid
   // every panel re-fetches for the new window. Receives unix
   // seconds.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Dashboard.tsx zoom geri-yığınını pop
+  // eder (chart çizen panellere aynen iletilir).
+  onZoomReset?: () => void;
   // Pre-fetched data from the dashboard bundle endpoint. When
   // provided, MetricPanel / SpanMetricPanel use it instead of
   // firing their own /api/{metrics,spans}/metric round trip.
@@ -68,9 +71,9 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, dataOverrid
   const effectiveDataOverride = panel.rangeOverride ? undefined : dataOverride;
   switch (panel.type) {
     case 'metric':
-      return <MetricPanel cfg={applyVarsToMetric(panel.config as MetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} dataOverride={effectiveDataOverride} />;
+      return <MetricPanel cfg={applyVarsToMetric(panel.config as MetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} dataOverride={effectiveDataOverride} />;
     case 'spanmetric':
-      return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} dataOverride={effectiveDataOverride} />;
+      return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} dataOverride={effectiveDataOverride} />;
     case 'stat':
       return <StatPanel cfg={applyVarsToStat(panel.config as StatPanelConfig, vars)} range={effectiveRange} />;
     case 'gauge':
@@ -78,7 +81,7 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, dataOverrid
     case 'heatmap':
       return <HeatmapPanel cfg={applyVarsToHeatmap(panel.config as HeatmapPanelConfig, vars)} range={effectiveRange} />;
     case 'promql':
-      return <PromqlPanel cfg={applyVarsToPromql(panel.config as PromqlPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} />;
+      return <PromqlPanel cfg={applyVarsToPromql(panel.config as PromqlPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />;
     case 'markdown':
       return <MarkdownPanel cfg={panel.config as MarkdownPanelConfig} />;
     case 'row':
@@ -186,9 +189,10 @@ export function applyVarsToPromql(cfg: PromqlPanelConfig, vars?: Record<string, 
 
 // ── Metric line chart ───────────────────────────────────────────────────────
 
-function MetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
+function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }: {
   cfg: MetricPanelConfig; range: TimeRange; syncKey?: string;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
   dataOverride?: PanelDataOverride;
 }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
@@ -252,7 +256,7 @@ function MetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
     <div ref={ref}>
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
-        : <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} />}
+        : <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />}
     </div>
   );
 }
@@ -297,9 +301,10 @@ function HeatmapPanel({ cfg, range }: {
 // A dashboard chart driven by a raw PromQL query (/api/metrics/promql, the
 // Phase 1-3 engine). Own-fetch, width-aware step, standard loading/empty/error
 // states; a parse/eval error surfaces inline (the backend message).
-function PromqlPanel({ cfg, range, syncKey, onZoom }: {
+function PromqlPanel({ cfg, range, syncKey, onZoom, onZoomReset }: {
   cfg: PromqlPanelConfig; range: TimeRange; syncKey?: string;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
 }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
@@ -338,7 +343,7 @@ function PromqlPanel({ cfg, range, syncKey, onZoom }: {
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
         : viz === 'line'
-          ? <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} />
+          ? <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />
           : <DashboardViz series={series} viz={viz} height={280} unit={cfg.unit} />}
     </div>
   );
@@ -346,9 +351,10 @@ function PromqlPanel({ cfg, range, syncKey, onZoom }: {
 
 // ── Span metric line chart ──────────────────────────────────────────────────
 
-function SpanMetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
+function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }: {
   cfg: SpanMetricPanelConfig; range: TimeRange; syncKey?: string;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
   dataOverride?: PanelDataOverride;
 }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
@@ -390,7 +396,7 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, dataOverride }: {
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
         : viz === 'line'
-          ? <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} />
+          ? <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />
           : <DashboardViz series={series} viz={viz} height={280} />}
     </div>
   );

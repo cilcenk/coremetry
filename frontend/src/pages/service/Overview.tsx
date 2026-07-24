@@ -43,6 +43,8 @@ interface Props {
   // ?range=. Passed down to every ChartCard/OverviewChart (mirrors the
   // sibling Performance/ServiceCharts wiring in Service.tsx).
   onZoom?: (fromSec: number, toSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Service.tsx zoom geri-yığınını pop eder.
+  onZoomReset?: () => void;
   // v0.9.83 — sorgu penceresi (unix sec): x-ekseni pencereye sabitlenir.
   xRange?: { from: number; to: number } | null;
 }
@@ -122,7 +124,7 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp }: {
 
 // ChartCard v0.9.87'de charts/ChartCard.tsx'e taşındı (Runtime paneli de kullanır).
 
-export function ServiceOverview({ service, range, windowNs, info, operations, onZoom }: Props) {
+export function ServiceOverview({ service, range, windowNs, info, operations, onZoom, onZoomReset }: Props) {
   // v0.8.480 — üst sayfa pencereyi çözdüyse AYNISI kullanılır: RED
   // prefetch'in RQ anahtarı ancak böyle tutar (timeRangeToNs göreli
   // aralıkta Date.now()'a bağlı, iki ayrı hesap anahtar kaçırır).
@@ -131,6 +133,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   const windowSec = Math.max(1, (to - from) / 1e9);
   // v0.9.83 — grafiklerin x-ekseni sorgu penceresine sabitlenir (madde 2).
   const xRange = useMemo(() => ({ from: from / 1e9, to: to / 1e9 }), [from, to]);
+  // Grafana-parite M1 — ServiceCharts.tsx ile AYNI sync key: Service
+  // sayfasındaki TÜM grafikler (Overview RED üçlüsü + Details/Performance)
+  // tek crosshair'le birlikte gezinir.
+  const chartSync = `service:${service}`;
 
   // One batched span-metric call: rate + error_rate + p99 + p50 over the
   // same WHERE (service.name = svc). Feeds the KPI sparklines + RED charts.
@@ -269,17 +275,17 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           its viz:'line' descriptor through the compact MetricPanel doorway. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} xRange={xRange} lines={[
+          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={[
             { series: lat?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
             { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
             { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
           ]} />
         </MetricPanel>
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>
-          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} onZoom={onZoom} xRange={xRange} lines={throughputBands} />
+          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={throughputBands} />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
-          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} onZoom={onZoom} xRange={xRange} lines={[
+          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={[
             { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
           ]} />
         </MetricPanel>

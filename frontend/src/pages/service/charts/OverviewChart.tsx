@@ -8,6 +8,7 @@ import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { useChartEngine } from '@/lib/chart/engine';
+import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { StatsLegend } from '@/components/chart/StatsLegend';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { placeTooltip } from '@/lib/chartTooltip';
@@ -43,12 +44,20 @@ interface Props {
   deployLabel?: string;       // e.g. "v1.0.0"
   // v0.8.534 — drag-select zoom → parent range (fromSec, toSec).
   onZoom?: (fromSec: number, toSec: number) => void;
+  // Grafana-parite M1 — çift-tık: sayfa geri-yığını bir adım pop eder
+  // (Service.tsx handleZoomReset). Verilmezse eski davranış (uPlot yerleşik
+  // autoscale dblclick'i — no-op'a yakın, URL'e dokunmaz).
+  onZoomReset?: () => void;
+  // Grafana-parite M1 — kardeş grafiklerle imleç senkronu (uPlot.sync).
+  // Service sayfası `service:${svc}` geçirir (ServiceCharts ile AYNI key —
+  // Overview + Details grafiklerinin tümü birlikte gezinir).
+  syncKey?: string;
   // v0.9.83 pin — v0.9.94'te inert (veriye-fit revert); imza korunuyor.
   xRange?: XPin | null;
 }
 
 export function OverviewChart({
-  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', onZoom, xRange,
+  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', onZoom, onZoomReset, syncKey, xRange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   // onZoom in a ref (v0.8.520 pattern) so the once-per-build setSelect hook
@@ -85,6 +94,7 @@ export function OverviewChart({
     height, mode, unit, deployAtSec, deployLabel,
     renderable: times.length >= 2 && series.length > 0,
     hasZoom: !!onZoom,
+    syncKey,
   });
 
   // Repositions the DOM ▼ deploy flag (above the canvas) at the marker x.
@@ -131,13 +141,21 @@ export function OverviewChart({
       },
     };
 
+    // Grafana-parite M1 — drag(+sync)+setSelect artık paylaşımlı
+    // buildCursorOpts'tan (davranış birebir: x-only drag, setScale:true,
+    // 4px kazara-drag eşiği, onZoom ref'ten canlı).
+    const cz = buildCursorOpts({
+      syncKey,
+      onZoom: onZoom ? (f, t) => onZoomRef.current?.(f, t) : undefined,
+    });
+
     return {
       width,
       height,
       cursor: {
         x: true, y: false, points: { show: true, size: 7 },
         // v0.8.534 — x-only drag-zoom with instant local rescale.
-        drag: { x: true, y: false, setScale: true },
+        ...cz.cursor,
       },
       legend: { show: false },
       // v0.9.93 (uPlot Aşama 3) — stacked'te pxAlign:0 komşu bant dolguları
@@ -196,18 +214,9 @@ export function OverviewChart({
         : undefined,
       hooks: {
         // v0.8.534 — drag-zoom release → hand [from,to] (unix sec) to parent
-        // (updates ?range=); reset the grey band. Only when onZoom is set.
-        setSelect: onZoom ? [
-          (u: uPlot) => {
-            const sel = u.select;
-            if (!sel || sel.width < 4) return; // tiny accidental drag
-            const x0 = u.posToVal(sel.left, 'x');
-            const x1 = u.posToVal(sel.left + sel.width, 'x');
-            if (!isFinite(x0) || !isFinite(x1)) return;
-            onZoomRef.current?.(Math.min(x0, x1), Math.max(x0, x1));
-            u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
-          },
-        ] : undefined,
+        // (updates ?range=); reset the grey band. Only when onZoom is set
+        // (cz.setSelect onZoom yokken undefined — motor key'i ayıklar).
+        setSelect: cz.setSelect,
         setCursor: [
           u => {
             const tt = ttRef.current;
@@ -259,6 +268,8 @@ export function OverviewChart({
 
   // Yaşam döngüsü motorda (v0.9.97). refitScales verilmez → varsayılan tüm
   // seriler tek y eksenine (OVC tek eksenli); flag üç noktada da yeniden konumlanır.
+  // onZoomReset (Grafana-parite M1): motorun dblclick listener'ı sayfanın
+  // geri-yığını pop'unu çağırır; spec canlı okunduğundan ref gerekmez.
   useChartEngine(hostRef, {
     signature: buildSig,
     height,
@@ -268,6 +279,7 @@ export function OverviewChart({
     afterBuild: placeFlag,
     afterData: placeFlag,
     onResize: placeFlag,
+    onZoomReset,
   }, themeTick);
 
   return (

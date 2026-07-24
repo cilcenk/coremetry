@@ -15,7 +15,7 @@ const SYNC_KEY = 'explore-v2';
 const PANEL_HEIGHT = 200;
 
 export const QueryPanel = memo(function QueryPanel({
-  panel, mode, hiddenLabels, focusedLabel, zoomWindow, onZoom, onExemplarClick, logScale, onPin, xRange,
+  panel, mode, hiddenLabels, focusedLabel, zoomWindow, onZoom, onZoomReset, onExemplarClick, logScale, onPin, xRange,
 }: {
   panel: PanelData;
   mode: TSMode;
@@ -24,6 +24,8 @@ export const QueryPanel = memo(function QueryPanel({
   zoomWindow: { from: number; to: number } | null;
   xRange?: { from: number; to: number } | null;
   onZoom: (fromSec: number, toSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Explore'un lokal zoom geri-yığınını pop eder.
+  onZoomReset?: () => void;
   onExemplarClick?: (traceId: string) => void;
   logScale?: boolean;   // v0.8.418 (DE3) — TimeSeriesPanel's log10 y-axis
   // v0.8.419 (DE4) — pin this query to a dashboard. Absent for formula
@@ -92,7 +94,8 @@ export const QueryPanel = memo(function QueryPanel({
           focusedLabel={focusedLabel}
           onCursorTime={publishCursor}
           onExemplarClick={onExemplarClick}
-          onZoom={onZoom} />
+          onZoom={onZoom}
+          onZoomReset={onZoomReset} />
       )}
     </div>
   );

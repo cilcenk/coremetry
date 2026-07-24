@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
@@ -25,7 +25,8 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { keys } from '@/lib/queries/keys';
-import type { Service, Problem, OperationSummary, SLORow } from '@/lib/types';
+import type { Service, Problem, OperationSummary, SLORow, TimeRange } from '@/lib/types';
+import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 
 const SINCE_MAP: Record<string, string> = {
   '5m': '5m', '10m': '10m', '15m': '15m', '30m': '30m',
@@ -47,6 +48,41 @@ function ServiceDetailInner() {
   const queryClient = useQueryClient();
   // Global time window (UX#2) — URL-persisted + carried across pages.
   const [range, setRange] = useUrlRange('30m');
+  // Grafana-parite M1 — drag-zoom GERİ-YIĞINI (çift-tık = bir adım geri).
+  // EFEMER ref state, URL'e yazılmaz: range yazımları replace:true olduğundan
+  // browser history zoom adımlarını zaten biriktirmiyor; yığını URL'e koymak
+  // copy-link / SavedViews sözleşmesini zoom-geçmişiyle kirletirdi.
+  // rangeRef: handler'lar useCallback-stabil kalsın diye canlı range okunur
+  // (v0.8.520 — fresh-arrow onZoom tüm panel alt-ağacını yeniden çiziyordu).
+  const zoomStackRef = useRef<TimeRange[]>([]);
+  const rangeRef = useRef(range); rangeRef.current = range;
+  // v0.9.199 review-fix — out-of-band range değişimi (Topbar preset seçimi,
+  // mutlak aralık) yığını GEÇERSİZLEŞTİRİR: bayat pre-zoom girdisi, operatörün
+  // yeni seçiminin üstüne çift-tıkla geri yazılamaz. zoomWroteRef yalnız
+  // zoom-sistemi yazımlarını işaretler; onların dışındaki her range değişimi
+  // yığını sıfırlar.
+  const zoomWroteRef = useRef(false);
+  useEffect(() => {
+    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
+    zoomStackRef.current = [];
+  }, [range.preset, range.fromMs, range.toMs]);
+  const handleZoom = useCallback((fromUnixSec: number, toUnixSec: number) => {
+    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
+    zoomWroteRef.current = true;
+    setRange({
+      preset: 'custom',
+      fromMs: Math.round(fromUnixSec * 1000),
+      toMs: Math.round(toUnixSec * 1000),
+    });
+  }, [setRange]);
+  const handleZoomReset = useCallback(() => {
+    const { stack, view } = popZoom(zoomStackRef.current);
+    zoomStackRef.current = stack;
+    if (view) { zoomWroteRef.current = true; setRange(view); return; }
+    // Yığın boş: zoom'lu (custom) penceredeysek preset default'a dön (derin
+    // linkle gelen custom dahil); zoom yokken çift-tık HİÇBİR ŞEY yapmaz.
+    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '30m' }); }
+  }, [setRange]);
   const [pinned, setPinned] = useState(false);
   // v0.7.89 — record this service in the recently-viewed MRU (powers
   // the Cmd-K pivot rotation) and reflect its pinned state for the
@@ -461,35 +497,17 @@ function ServiceDetailInner() {
 
             {tab === 'overview' && (
               <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations}
-                onZoom={(fromUnixSec, toUnixSec) => {
-                  setRange({
-                    preset: 'custom',
-                    fromMs: Math.round(fromUnixSec * 1000),
-                    toMs: Math.round(toUnixSec * 1000),
-                  });
-                }} />
+                onZoom={handleZoom} onZoomReset={handleZoomReset} />
             )}
             {tab === 'traces' && <ServiceTracesTab service={svc} range={range} />}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}
             {tab === 'topology' && <ServiceTopologyTab service={svc} range={range} />}
             {tab === 'infra' && <ServiceInfraTab service={svc} range={range}
-              onZoom={(fromUnixSec, toUnixSec) => {
-                setRange({
-                  preset: 'custom',
-                  fromMs: Math.round(fromUnixSec * 1000),
-                  toMs: Math.round(toUnixSec * 1000),
-                });
-              }} />}
+              onZoom={handleZoom} onZoomReset={handleZoomReset} />}
             {/* v0.9.158 — "Pods" sekmesi (eski Metrics): cluster açılır pod
                 grupları + JVM/JBoss JMX panelleri + OTel runtime çizelgeleri. */}
             {tab === 'pods' && <ServicePodsTab service={svc} range={range}
-              onZoom={(fromUnixSec, toUnixSec) => {
-                setRange({
-                  preset: 'custom',
-                  fromMs: Math.round(fromUnixSec * 1000),
-                  toMs: Math.round(toUnixSec * 1000),
-                });
-              }} />}
+              onZoom={handleZoom} onZoomReset={handleZoomReset} />}
             {/* v0.9.63 — v0.9.62'nin sekme-tepesi RED üçlüsü OPERATÖR
                 KARARIYLA geri alındı ("gereksiz olmuş"): grafikler
                 Details'te (Performance) yaşar, Operations sekmesi
@@ -517,13 +535,7 @@ function ServiceDetailInner() {
                 <div className="dtl-sech">Performance</div>
                 <ServiceCharts service={svc} range={range} windowNs={rangeNs}
                   opScope={opScope} onOpScopeChange={setOpScope}
-                  onZoom={(fromUnixSec, toUnixSec) => {
-                    setRange({
-                      preset: 'custom',
-                      fromMs: Math.round(fromUnixSec * 1000),
-                      toMs: Math.round(toUnixSec * 1000),
-                    });
-                  }} />
+                  onZoom={handleZoom} onZoomReset={handleZoomReset} />
                 <div className="ov-grid dtl-cols ov-mb">
                   <LazyMount minHeight={360}>
                     <ServiceLatencyHeatmap service={svc} range={range}

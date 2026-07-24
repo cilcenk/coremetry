@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
-import { timeRangeToNs, fmtNum, isMessagingDep, tsShort } from '@/lib/utils';
+import { timeRangeToNs, fmtNum, isMessagingDep } from '@/lib/utils';
 import type { TimeRange, LogRow, ServiceMap } from '@/lib/types';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
@@ -12,76 +12,15 @@ import { LogTable } from '@/components/LogTable';
 import { TopologyPillGraph, type PillNode, type PillEdge, type PillLevel } from '@/components/TopologyPillGraph';
 import { FocusedNeighborhood } from '@/components/topology/FocusedNeighborhood';
 
-// Service-scoped Traces / Logs / Topology tabs — the design's tab strip
-// beyond Overview/Operations/Details. All read-only, all reuse the
-// app-wide primitives (LogsHistogram / LogTable / TopologyPillGraph) so the
+// Service-scoped Logs / Topology tabs — the design's tab strip beyond
+// Overview/Operations/Details. All read-only, all reuse the app-wide
+// primitives (LogsHistogram / LogTable / TopologyPillGraph) so the
 // operator's eye builds the same scan pattern as the standalone surfaces.
+//
+// v0.9.212 — the Traces tab that used to live here is gone: it was a 25-row
+// "slowest traces" table plus an "Open in Traces →" link, and the service
+// header's ⋮ Traces chip already lands on that same page.
 
-// ── Traces: slowest traces for this service ─────────────────────────────
-export function ServiceTracesTab({ service, range }: { service: string; range: TimeRange }) {
-  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
-  const rangeParam = encodeRange(range);
-  const q = useQuery({
-    queryKey: ['service-tab-traces', service, from, to],
-    queryFn: () => api.traces({ service, from, to, sort: 'duration', order: 'desc', limit: 25, count: 'skip' }),
-    enabled: !!service,
-    staleTime: 30_000,
-  });
-  const traces = q.data?.traces ?? [];
-  const maxDur = useMemo(() => Math.max(1, ...traces.map(t => t.durationMs)), [traces]);
-
-  return (
-    <div className="card" style={{ marginTop: 4 }}>
-      <div className="ov-card-h">
-        <h3>Slowest traces</h3>
-        <span className="ov-right">
-          <Link className="ov-sub" to={`/traces?service=${encodeURIComponent(service)}&range=${rangeParam}`}>Open in Traces →</Link>
-        </span>
-      </div>
-      {q.isLoading ? (
-        <div className="ov-card-b"><Spinner /></div>
-      ) : traces.length === 0 ? (
-        <div className="ov-card-b"><Empty icon="⋮" title="No traces in this window" /></div>
-      ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ tableLayout: 'fixed', width: '100%' }}>
-            <colgroup>
-              <col style={{ width: 150 }} /><col style={{ width: 132 }} /><col /><col style={{ width: 70 }} />
-              <col style={{ width: 80 }} /><col style={{ width: 160 }} />
-            </colgroup>
-            <thead><tr>
-              <th style={{ textAlign: 'left' }}>Trace</th>
-              <th style={{ textAlign: 'left' }}>Started</th>
-              <th style={{ textAlign: 'left' }}>Root operation</th>
-              <th className="num">Spans</th>
-              <th className="num">Status</th>
-              <th className="num">Duration</th>
-            </tr></thead>
-            <tbody>
-              {traces.map(t => (
-                <tr key={t.traceId} style={{ cursor: 'pointer' }}>
-                  <td><Link className="mono" style={{ color: 'var(--accent)' }} to={`/trace?id=${t.traceId}`}>{t.traceId.slice(0, 16)}…</Link></td>
-                  <td className="mono" style={{ color: 'var(--text2)', fontSize: 11.5, whiteSpace: 'nowrap' }} title={tsShort(t.startTime)}>{tsShort(t.startTime)}</td>
-                  <td><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={t.rootName}>{t.rootName || '—'}</span></td>
-                  <td className="num">{t.spanCount}</td>
-                  <td className="num"><span className={`badge ${t.hasError ? 'b-err' : 'b-ok'}`}>{t.hasError ? 'ERROR' : 'OK'}</span></td>
-                  <td>
-                    <div className="ov-barcell">
-                      <span className="mono" style={{ minWidth: 56 }}>{t.durationMs.toFixed(0)} ms</span>
-                      <span className="ov-minibar"><i style={{ width: `${(t.durationMs / maxDur) * 100}%`, background: t.hasError ? 'var(--err)' : 'var(--accent)' }} /></span>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Logs: full scoped log view (search + level facets + volume + table) ──
 type Lvl = 'error' | 'warn' | 'info' | 'debug';
 const LVL_ORDER: Lvl[] = ['error', 'warn', 'info', 'debug'];
 

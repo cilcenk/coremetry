@@ -1,12 +1,13 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { encodeRange } from '@/lib/urlState';
 import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
 import { Button } from '@/components/ui/Button';
 import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/recentServices';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { ServiceOverview } from './service/Overview';
-import { ServiceTracesTab, ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
+import { ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
 import { ServiceInfraTab } from './service/ServiceInfraTab';
 import { ServicePodsTab } from './service/ServicePodsTab';
 import { OperationsTable } from './service/OperationsTable';
@@ -34,10 +35,16 @@ const SINCE_MAP: Record<string, string> = {
   '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
 };
 
-type ServiceTab = 'overview' | 'operations' | 'details' | 'traces' | 'logs' | 'topology' | 'infra' | 'pods';
+// v0.9.212 — 'traces' retired. The tab was a 25-row "slowest traces" table
+// plus an "Open in Traces →" link, while the header's ⋮ Traces drill chip
+// already lands on the same service-scoped /traces page (where the column is
+// sortable). A stale ?tab=traces link redirects there rather than 404ing to
+// the default tab.
+type ServiceTab = 'overview' | 'operations' | 'details' | 'logs' | 'topology' | 'infra' | 'pods';
 
 function ServiceDetailInner() {
   const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
   // Canonical key is `name` (every in-app link uses /service?name=…); also accept
   // `service` so a hand-typed /service?service=X resolves instead of showing
   // "Missing service name" (operator-reported, v0.8.219).
@@ -131,12 +138,22 @@ function ServiceDetailInner() {
   const tabParam = searchParams.get('tab');
   const tab: ServiceTab = tabParam === 'operations' ? 'operations'
     : tabParam === 'details' ? 'details'
-    : tabParam === 'traces' ? 'traces'
     : tabParam === 'logs' ? 'logs'
     : tabParam === 'topology' ? 'topology'
     : tabParam === 'infra' ? 'infra'
     : (tabParam === 'pods' || tabParam === 'metrics') ? 'pods'
     : 'overview';
+  // v0.9.212 — a bookmarked ?tab=traces would otherwise land silently on
+  // Overview, which reads as "my link broke". Send it where the tab used to
+  // go instead: the service-scoped /traces page, window carried.
+  useEffect(() => {
+    if (tabParam !== 'traces' || !svc) return;
+    navigate(
+      `/traces?service=${encodeURIComponent(svc)}&range=${encodeRange(range)}`,
+      { replace: true },
+    );
+  }, [tabParam, svc, range, navigate]);
+
   // v0.5.307 — scroll to a hash anchor (#deploys, etc.) once
   // the Details tab body actually exists in the DOM. Browser
   // doesn't auto-scroll because the target node is rendered
@@ -490,7 +507,6 @@ function ServiceDetailInner() {
               <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations}
                 onZoom={handleZoom} onZoomReset={handleZoomReset} />
             )}
-            {tab === 'traces' && <ServiceTracesTab service={svc} range={range} />}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} />}
             {tab === 'topology' && <ServiceTopologyTab service={svc} range={range} />}
             {tab === 'infra' && <ServiceInfraTab service={svc} range={range}
@@ -637,7 +653,6 @@ function TabStrip({ tab, onChange, opCount }: {
     { key: 'infra',      label: 'Infrastructure' },
     { key: 'pods',       label: 'Pods' },
     { key: 'topology',   label: 'Topology' },
-    { key: 'traces',     label: 'Traces' },
     { key: 'logs',       label: 'Logs' },
   ];
   return (

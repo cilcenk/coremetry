@@ -10,8 +10,12 @@ import { chartBuildSignature } from '@/lib/chartBuildSig';
 import { useChartEngine } from '@/lib/chart/engine';
 import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
+import { yRefitScale } from '@/lib/chart/zoomState';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { isAdditiveUnit } from '@/lib/chart/legendStats';
+import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
+import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
 
 // v0.9.131 (chart-consolidation Adım 3) — TimeSeriesPanel artık placeTooltip'i
 // doğrudan lib/chartTooltip'ten alıyor (MLC↔TSP bağımlılığı koptu, audit §4);
@@ -283,6 +287,47 @@ export function MultiLineChart({
   // the setData fast-path): a toggle re-creates the plot with fresh hex.
   const themeTick = useThemeTick();
 
+  // ── Grafana-parite #2: tooltip pin ────────────────────────────────────────
+  // pinRef: pinli veri index'i (null = pin yok); ikinci tık/Esc çözer.
+  // Pin tetiği (MLC): onBucketClick YOKKEN düz tık; onBucketClick VARKEN
+  // (spike→exemplar düz tıkın sahibi, v0.7.22) Alt+tık pinler — bucket-click
+  // dinleyicisi Alt'lı tıkı atlar, iki jest çakışmaz. PİNLİYKEN düz tık
+  // yine buraya düşer ve UNPIN eder (paylaşımlı "tık / Esc çözer" ipucu
+  // yalan söylemesin — review 8/8 #7); bucket dinleyicisi pinli tıkı işlemez.
+  // Legend tıkları ayrı subtree'de (u.over dışı), pin dinleyicisine ulaşmaz.
+  const pinRef = useRef<number | null>(null);
+  // mousedown→click yatay mesafe kaynağı — pin VE bucket-click dinleyicileri
+  // aynı dragPx'i okur (u.select.width, setSelect hook'unda sıfırlandığından
+  // click anında güvenilmez — review 8/8 #4).
+  const downXRef = useRef<number | null>(null);
+  const unpinTooltip = () => {
+    pinRef.current = null;
+    const tip = hostRef.current?.querySelector('.uplot-tooltip') as HTMLDivElement | null;
+    if (tip) clearPinStyle(tip, 'opacity');
+  };
+  const attachPinListener = (u: uPlot) => {
+    u.over.addEventListener('mousedown', e => { downXRef.current = e.clientX; });
+    u.over.addEventListener('dblclick', () => unpinTooltip());
+    u.over.addEventListener('click', e => {
+      if (bucketClickRef.current && !e.altKey && pinRef.current == null) return; // düz tık bucket-click'in
+      const tip = hostRef.current?.querySelector('.uplot-tooltip') as HTMLDivElement | null;
+      if (!tip) return;
+      const d = decidePinClick({
+        pinnedIdx: pinRef.current, cursorIdx: u.cursor.idx,
+        dragPx: downXRef.current == null ? 0 : Math.abs(e.clientX - downXRef.current),
+        detail: e.detail,
+      });
+      if (d.action === 'unpin') unpinTooltip();
+      else if (d.action === 'pin' && tip.style.opacity === '1') { pinRef.current = d.idx; applyPinStyle(tip); }
+    });
+  };
+  // Esc → pin çöz.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []); // unpinTooltip yalnız ref'lere dokunur — stable
+
   // Memoised data bundle — the single prep pass feeding BOTH the build effect
   // and the setData fast-path. Keyed on the data inputs only, so a poll (fresh
   // `series` identity) recomputes it exactly once. bundleRef exposes the live
@@ -533,12 +578,25 @@ export function MultiLineChart({
         // to uPlot's `over` element once at build time; resolves
         // the clicked time to the enclosing bucket window in ns
         // and hands it off. A click that's really the tail of a
-        // drag-zoom (select width > 4px) is ignored so the two
-        // gestures don't fight.
+        // drag-zoom is ignored so the two gestures don't fight —
+        // measured as the pin path's mousedown→click distance
+        // (downXRef; u.select is already reset by the setSelect
+        // hook when the click lands, so its width is useless here
+        // — review 8/8 #4: a drag-zoom release must NOT open the
+        // exemplar drawer).
         ready: onBucketClick ? [
           (u) => {
-            u.over.addEventListener('click', () => {
-              if (u.select && u.select.width > 4) return; // was a drag, not a click
+            u.over.addEventListener('click', (ev: MouseEvent) => {
+              // Grafana-parite #2 — Alt+tık tooltip PIN'in tetiği (bucket-click
+              // varken düz tık burada kalır); Alt'lı tık bucket'ı atlar.
+              if (ev.altKey) return;
+              // Pinliyken düz tık pin dinleyicisinin (UNPIN); bucket'a düşmez
+              // (review 8/8 #7 — "tık çözer" ipucu ile tutarlı).
+              if (pinRef.current != null) return;
+              // Çift-tıkın click'leri zoom-geri jestine ait (review 8/8 #3b).
+              if (ev.detail > 1) return;
+              const dragPx = downXRef.current == null ? 0 : Math.abs(ev.clientX - downXRef.current);
+              if (dragPx >= 4) return; // was a drag, not a click
               const left = u.cursor.left ?? -1;
               if (left < 0) return;
               const xSec = u.posToVal(left, 'x'); // unix seconds at cursor
@@ -692,6 +750,9 @@ export function MultiLineChart({
               }
             }
             if (!tip) return;
+            // Grafana-parite #2 — pinliyken tooltip donuk: içerik/pozisyon
+            // dokunulmaz (crosshair + yPill yaşamaya devam eder).
+            if (pinRef.current != null) return;
             const idx = u.cursor.idx;
             if (idx == null || idx < 0) {
               tip.style.opacity = '0';
@@ -707,35 +768,35 @@ export function MultiLineChart({
             const hh = d.getHours().toString().padStart(2, '0');
             const mm = d.getMinutes().toString().padStart(2, '0');
             const ss = d.getSeconds().toString().padStart(2, '0');
-            // Build per-series rows. Skip null values so
-            // gaps in one series don't push down rows from
-            // others. Sort by value desc so the hottest
-            // series shows on top — same behaviour we had
-            // in the Chart.js tooltip.
-            type Row = { label: string; color: string; v: number };
-            const rows: Row[] = [];
+            // Per-series rows — Grafana-parite #2: sıralama + format artık
+            // paylaşımlı sortedTooltipRows'ta (null-drop + değer DESC stable
+            // + fmtSmart birim). Davranış birebir eski yerel kopya: aynı DESC
+            // sıra, aynı fmtSmart(v, unit) çıktısı; boş seri satırdan düşer.
             // Live eff — the fast-path may have swapped the data without a
             // rebuild. Count + labels are guaranteed unchanged by the build
             // signature, so this only ever reads the current window's groupKeys
             // while u.data supplies the fresh values.
             const effRows = bundleRef.current.eff;
-            for (let i = 0; i < effRows.length; i++) {
-              const yArr = u.data[i + 1];
-              if (!yArr) continue;
+            const rows = sortedTooltipRows(effRows.map((s, i) => {
+              const label = s.groupKey.length ? s.groupKey.join(' / ') : 'value';
               // v0.9.84 (madde 4) — seri başına snap'lenmiş idx (dataIdx).
               const si = u.cursor.idxs?.[i + 1] ?? idx;
-              const v = yArr[si];
-              if (v == null) continue;
-              const s = effRows[i];
-              const label = s.groupKey.length ? s.groupKey.join(' / ') : 'value';
-              rows.push({ label, color: colorFor(label), v: v as number });
-            }
+              return {
+                label, color: colorFor(label),
+                // Grafana-parite #2 — lejanttan gizlenen seri tooltip'ten de
+                // düşer (value null → model satırı atar; OVC/TC/TSP paritesi,
+                // review 8/8 #6) — bold-nearest seçimi de artık yalnız çizili
+                // satırlar üzerinde koşar. visibleRef ↔ eff index-hizalı
+                // (compare satırları allSeries'te eff'ten SONRA gelir).
+                value: visibleRef.current[i] === false ? null
+                  : ((u.data[i + 1] as (number | null)[] | undefined)?.[si] ?? null),
+                unit,
+              };
+            }));
             if (rows.length === 0) {
               tip.style.opacity = '0';
               return;
             }
-            rows.sort((a, b) => b.v - a.v);
-            const fmt = (n: number) => fmtSmart(n, unit);
             // Find the nearest deploy marker within ~12px of
             // the cursor's x — close enough that the operator
             // is clearly hovering "the deploy line" not
@@ -773,7 +834,7 @@ export function MultiLineChart({
             if (isFinite(yAtCursor) && rows.length) {
               let best = Infinity;
               for (const r of rows) {
-                const dy = Math.abs(r.v - yAtCursor);
+                const dy = Math.abs(r.value - yAtCursor);
                 if (dy < best) { best = dy; boldLabel = r.label; }
               }
             }
@@ -786,7 +847,7 @@ export function MultiLineChart({
                 return `<div style="display:flex;gap:8px;align-items:center;line-height:1.5;${wt}">` +
                   `<span style="display:inline-block;width:8px;height:8px;background:${r.color};border-radius:2px;flex-shrink:0"></span>` +
                   `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px" title="${lbl}">${lbl}</span>` +
-                  `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${fmt(r.v)}</span>` +
+                  `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${r.text}</span>` +
                 `</div>`;
               }).join('');
             tip.style.opacity = '1';
@@ -814,25 +875,41 @@ export function MultiLineChart({
 
   // Yaşam döngüsü motorda (v0.9.100, chart-consolidation Adım 4). new uPlot /
   // destroy / ResizeObserver / setData fast-path + v0.9.78/79 drag-zoom-koruma
-  // İSKELETİ engine.ts::useChartEngine'de tek kopya. MLC tek y ekseni →
-  // refitScales VERİLMEZ: motor varsayılanı (tüm seriler 1..n tek y eksenine
-  // yRefitScale) eski fast-path'in birebiri. afterBuild: rebuild isolation'ı
-  // sıfırlar (allSeries hepsi görünür) — eski build effect'in visibleRef
-  // reset'i; data-only fast-path setData ile series `show` flag'lerini KORUR,
-  // o yüzden reset yalnız rebuild'de. MLC'de DOM deploy bayrağı yok →
-  // afterData/onResize gereksiz. colorOf artık imzada (colorOverrides), o
-  // yüzden motorun [signature, themeTick] tetikleyicisi eski
-  // [buildSig, colorOf, themeTick]'i birebir karşılar.
+  // İSKELETİ engine.ts::useChartEngine'de tek kopya. afterBuild: rebuild
+  // isolation'ı sıfırlar (allSeries hepsi görünür) — eski build effect'in
+  // visibleRef reset'i; data-only fast-path setData ile series `show`
+  // flag'lerini KORUR, o yüzden reset yalnız rebuild'de. MLC'de DOM deploy
+  // bayrağı yok → afterData/onResize gereksiz. colorOf artık imzada
+  // (colorOverrides), o yüzden motorun [signature, themeTick] tetikleyicisi
+  // eski [buildSig, colorOf, themeTick]'i birebir karşılar.
   const plotRef = useChartEngine(hostRef, {
     signature: buildSig,
     height,
     renderable: bundle.eff.length > 0 || bundle.compareEnabled,
     data: bundle.data,
     buildOptions,
-    afterBuild: () => { visibleRef.current = bundle.allSeries.map(() => true); },
+    // Grafana-parite #2 — rebuild: pin çözülür (tooltip DOM'u yaşar ama
+    // içerik bayatlardı) + pin tık dinleyicisi taze u.over'a bağlanır;
+    // visibleRef reset'i eski davranışın aynısı (resetSeriesVisibility'ye
+    // delege — kaynak tek).
+    afterBuild: u => {
+      if (pinRef.current != null) unpinTooltip();
+      visibleRef.current = resetSeriesVisibility(bundle.allSeries.length);
+      attachPinListener(u);
+    },
     // Grafana-parite M1 — çift-tık: sayfa geri-yığınına devret (spec canlı
     // okunur; verilmezse motor no-op, uPlot yerleşik autoscale'i sürer).
     onZoomReset,
+    // Grafana-parite #2 — zoomlu fast-path y-refit'i yalnız GÖRÜNÜR serilerle
+    // (OVC deseni; review 8/8 #5). Motor varsayılanı TÜM 1..n kolonlarını
+    // katar ve izole edilmiş seride y-ölçeğini gizli serinin max'ına
+    // fırlatırdı. Hepsi görünürken varsayılanın birebiri; index hizası:
+    // u.data kolonu i ↔ visibleRef[i-1] (allSeries sırası, compare dahil).
+    refitScales: (u, data) => {
+      const idxs: number[] = [];
+      for (let i = 1; i < data.length; i++) if (visibleRef.current[i - 1] !== false) idxs.push(i);
+      if (idxs.length) u.setScale('y', yRefitScale(data as (number | null)[][], idxs));
+    },
   }, themeTick);
 
   // Click-to-isolate: hide every other series on first click,
@@ -875,40 +952,20 @@ export function MultiLineChart({
 
       const u = plotRef.current;
       const visible = visibleRef.current;
-      // v0.5.364 — Ctrl/Cmd+click is additive: flip THIS series'
-      // visibility without touching the others, so an operator
-      // can hand-pick a subset (e.g. "show only ops A + C of 12").
-      // Plain click stays isolate-on-click for the one-line view
-      // operators reach for most often.
+      // v0.5.364 — Ctrl/Cmd+click is additive (flip THIS series only, so an
+      // operator can hand-pick a subset); plain click stays isolate-on-click
+      // (second click on the isolated one restores all). Both iterate the
+      // FULL visible[] (current + compare — the v0.5.364 fix).
+      // Grafana-parite #2 — karar artık paylaşımlı legendVisibility
+      // çekirdeğinde (aynı semantik + "hepsi gizliyse hepsini geri getir"
+      // kuralı additive uçta); uygulama eskisi gibi setSeries, rebuild yok.
       const additive = e.ctrlKey || e.metaKey;
-      if (additive) {
-        const next = !visible[dataIdx];
-        visible[dataIdx] = next;
-        u.setSeries(dataIdx + 1, { show: next });
-        return;
-      }
-      // Decide: are we currently in "all visible" or "isolated
-      // to one"? If the clicked one is the only visible (or
-      // the click is on a hidden series), we're in isolation
-      // territory and the next click restores everything.
-      // v0.5.364 — iterate the full visible[] (current +
-      // compare). Pre-fix the loop stopped at series.length so
-      // a compare-on isolate left every compare line visible
-      // alongside the isolated current one.
-      const totalCount = visible.length;
-      const onlyThisVisible = visible[dataIdx]
-        && visible.every((v, i) => i === dataIdx ? true : !v);
-      if (onlyThisVisible) {
-        for (let i = 0; i < totalCount; i++) {
-          visible[i] = true;
-          u.setSeries(i + 1, { show: true });
-        }
-      } else {
-        for (let i = 0; i < totalCount; i++) {
-          const show = i === dataIdx;
-          visible[i] = show;
-          u.setSeries(i + 1, { show });
-        }
+      const next = additive
+        ? toggleSeriesVisibility(visible, dataIdx)
+        : isolateSeriesVisibility(visible, dataIdx);
+      for (let i = 0; i < next.length; i++) {
+        visible[i] = next[i];
+        u.setSeries(i + 1, { show: next[i] });
       }
     };
     el.addEventListener('click', onClick, true);

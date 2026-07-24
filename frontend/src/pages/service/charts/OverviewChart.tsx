@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
@@ -6,11 +6,14 @@ import { fmtXTicks, fmtAxisTick } from '@/lib/chartFmt';
 import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
+import { yRefitScale } from '@/lib/chart/zoomState';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { useChartEngine } from '@/lib/chart/engine';
 import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { StatsLegend } from '@/components/chart/StatsLegend';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
+import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
 import { placeTooltip } from '@/lib/chartTooltip';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
@@ -67,6 +70,50 @@ export function OverviewChart({
   const ttRef = useRef<HTMLDivElement>(null);
   const flagRef = useRef<HTMLDivElement>(null);
   const themeTick = useThemeTick();
+
+  // ── Grafana-parite #2: tooltip pin + interaktif lejant ──────────────────
+  // pinRef: pinli veri index'i (null = pin yok). Tıkla→tooltip sabitlenir
+  // (imleç gezse de kalır, metin seçilebilir), ikinci tık/Esc çözer; karar
+  // çekirdeği lib/chart/tooltipPin.ts.
+  const pinRef = useRef<number | null>(null);
+  const unpinTooltip = () => {
+    pinRef.current = null;
+    if (ttRef.current) clearPinStyle(ttRef.current, 'display');
+  };
+  // visRef: lejant görünürlüğü (null = hepsi görünür); legendVis aynı değerin
+  // React aynası (StatsLegend satır dim'i için). Rebuild'de sıfırlanır (MLC
+  // visibleRef emsali — tema flip'i de rebuild'dir).
+  const visRef = useRef<boolean[] | null>(null);
+  const [legendVis, setLegendVis] = useState<boolean[] | null>(null);
+
+  // Pin tetiği (OVC): çizim alanına DÜZ TIK — bu preset'te düz tık boştaydı
+  // (drag = zoom, çift tık = reset). mousedown→click yatay mesafesi drag
+  // kuyruğunu eler (u.select, setSelect hook'unda sıfırlandığından güvenilmez);
+  // detail çift-tık click'lerini eler, dblclick pin'i çözer (zoom-geri sonrası
+  // pinli bayat tooltip kalamaz — review 8/8 #3).
+  const attachPinListener = (u: uPlot) => {
+    let downX: number | null = null;
+    u.over.addEventListener('mousedown', e => { downX = e.clientX; });
+    u.over.addEventListener('dblclick', () => unpinTooltip());
+    u.over.addEventListener('click', e => {
+      const tt = ttRef.current;
+      if (!tt) return;
+      const d = decidePinClick({
+        pinnedIdx: pinRef.current, cursorIdx: u.cursor.idx,
+        dragPx: downX == null ? 0 : Math.abs(e.clientX - downX),
+        detail: e.detail,
+      });
+      if (d.action === 'unpin') unpinTooltip();
+      else if (d.action === 'pin' && tt.style.display !== 'none') { pinRef.current = d.idx; applyPinStyle(tt); }
+    });
+  };
+
+  // Esc → pin çöz (pinli değilken no-op).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []); // unpinTooltip yalnız ref'lere dokunur — stable
 
   // uPlot aligned data (stacked-aware) — memoised on the data inputs + mode.
   // Tooltip reads RAW per-series values, so keep the raw series in a ref too.
@@ -221,6 +268,9 @@ export function OverviewChart({
           u => {
             const tt = ttRef.current;
             if (!tt) return;
+            // Grafana-parite #2 — pinliyken tooltip donuk: içerik/pozisyon
+            // dokunulmaz (imleç gezinir, crosshair yaşar).
+            if (pinRef.current != null) return;
             const idx = u.cursor.idx;
             if (idx == null || u.cursor.left == null || u.cursor.left < 0) { tt.style.display = 'none'; return; }
             const xs = u.data[0] as number[];
@@ -232,8 +282,15 @@ export function OverviewChart({
             // v0.9.101 (Grafana-parity Adım 1) — sorted "all series" tooltip via
             // the shared model: value desc + fmtSmart units (was naive in-order
             // toFixed); empty series drop out.
+            // Grafana-parite #2 — lejanttan gizlenen seri tooltip'ten de
+            // düşer (value null → model satırı atar); hiçbir seri
+            // gizlenmemişse (visRef null) birebir eski davranış.
             const rows = sortedTooltipRows(
-              series.map((s, i) => ({ label: s.label, color: colors[i], value: raw[i]?.data[idx] ?? null, unit })),
+              series.map((s, i) => ({
+                label: s.label, color: colors[i],
+                value: visRef.current?.[i] === false ? null : (raw[i]?.data[idx] ?? null),
+                unit,
+              })),
             );
             if (rows.length === 0) { tt.style.display = 'none'; return; }
             const ts = new Date(tSec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -270,17 +327,51 @@ export function OverviewChart({
   // seriler tek y eksenine (OVC tek eksenli); flag üç noktada da yeniden konumlanır.
   // onZoomReset (Grafana-parite M1): motorun dblclick listener'ı sayfanın
   // geri-yığını pop'unu çağırır; spec canlı okunduğundan ref gerekmez.
-  useChartEngine(hostRef, {
+  const plotRef = useChartEngine(hostRef, {
     signature: buildSig,
     height,
     renderable: times.length >= 2 && series.length > 0,
     data: built.data,
     buildOptions,
-    afterBuild: placeFlag,
+    // Grafana-parite #2 — rebuild: pin çözülür (tooltip DOM'u yaşar ama
+    // içerik bayatlardı) + lejant görünürlüğü sıfırlanır (MLC emsali) + pin
+    // tık dinleyicisi TAZE u.over'a bağlanır (eskisi destroy ile gitti).
+    afterBuild: u => {
+      if (pinRef.current != null) unpinTooltip();
+      visRef.current = null; setLegendVis(null);
+      placeFlag(u);
+      attachPinListener(u);
+    },
     afterData: placeFlag,
     onResize: placeFlag,
     onZoomReset,
+    // Grafana-parite #2 — zoomlu fast-path y-refit'i yalnız GÖRÜNÜR
+    // serilerle (uPlot'un kendi autoscale'i de gizli seriyi katmaz); hepsi
+    // görünürken motor varsayılanının (tüm 1..n idx) birebiri.
+    refitScales: (u, data) => {
+      const idxs: number[] = [];
+      for (let i = 1; i < data.length; i++) if (visRef.current?.[i - 1] !== false) idxs.push(i);
+      if (idxs.length) u.setScale('y', yRefitScale(data as (number | null)[][], idxs));
+    },
   }, themeTick);
+
+  // Lejant tıkı → görünürlük (Grafana-parite #2): düz tık isolate (yalnız o
+  // seri), Ctrl/Cmd toggle (gizle/göster) — MLC/TSP v0.5.364 + Grafana ile
+  // aynı jest dili (review 8/8 #8); semantik lib/chart/legendVisibility.ts
+  // (+ hepsi-gizliyse-geri-getir kuralı). Uygulama setSeries — rebuild yok,
+  // zoom/imleç yaşar; y ekseni görünür seriye göre autoscale olur. Not:
+  // stacked modda gizleme YIĞINI yeniden hesaplamaz, yalnız o katmanın
+  // çizgisi/bandı gizlenir (setSeries sözleşmesi).
+  const handleLegendToggle = (i: number, additive: boolean) => {
+    const u = plotRef.current;
+    if (!u) return;
+    const cur = visRef.current ?? resetSeriesVisibility(series.length);
+    if (i < 0 || i >= cur.length) return;
+    const next = additive ? toggleSeriesVisibility(cur, i) : isolateSeriesVisibility(cur, i);
+    visRef.current = next;
+    setLegendVis(next);
+    next.forEach((show, k) => u.setSeries(k + 1, { show }));
+  };
 
   return (
     <>
@@ -291,8 +382,13 @@ export function OverviewChart({
           <div ref={flagRef} className="ov-deploy-flag" style={{ top: 0, display: 'none' }}>▼ {deployLabel}</div>
         )}
       </div>
-      {/* v0.9.103 (Grafana-parity #1) — grafik altında seri istatistikleri */}
-      <StatsLegend series={series.map(s => ({ label: s.label, color: s.color, values: s.data, unit }))} />
+      {/* v0.9.103 (Grafana-parity #1) — grafik altında seri istatistikleri;
+          Grafana-parite #2 — interaktif: tık gizle/göster, Ctrl/Cmd izole. */}
+      <StatsLegend
+        series={series.map(s => ({ label: s.label, color: s.color, values: s.data, unit }))}
+        isVisible={i => legendVis?.[i] ?? true}
+        onToggle={handleLegendToggle}
+      />
     </>
   );
 }

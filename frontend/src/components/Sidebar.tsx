@@ -9,7 +9,7 @@ import { TelescopeIcon } from './TelescopeIcon';
 import {
   Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
-  LayoutDashboard, Bell, Target, CircleGauge, Search, Hash,
+  LayoutDashboard, Bell, Target, CircleGauge, Search, Hash, Eye,
   Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
@@ -101,6 +101,9 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: 'navGroup.alerting',
     items: [
       { href: '/alerts',   label: 'nav.alerts',   icon: Bell },
+      // v0.9.196 — imported ES watcher fleet gets its own surface
+      // (~300 watchers in prod); the Alerts page keeps its chip.
+      { href: '/watchers', label: 'nav.watchers', icon: Eye },
       { href: '/slos',     label: 'nav.slos',     icon: Target },
       // v0.8.517 — /events sidebar'dan gizlendi (operatör: "sadece
       // gizle"). Rota + sayfa + ⌘K'dan event oluşturma YAŞIYOR;

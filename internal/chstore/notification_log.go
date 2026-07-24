@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"strings"
 	"time"
 )
 
@@ -136,6 +137,73 @@ func buildNotificationLogQuery(from, to time.Time, kind string, limit, offset in
 		LIMIT ? OFFSET ?
 		SETTINGS max_execution_time = 10`
 	args = append(args, limit, offset)
+	return q, args
+}
+
+// ListNotificationLogByRelated reads the sends recorded for a SET of
+// related ids (v0.9.196 — the /watchers history drawer joins one
+// rule's problem ids to their notification rows). Newest-first,
+// bounded to the table's 90-day retention window so the read keeps
+// its sent_at ORDER BY prefix predicate. An empty id set returns nil
+// without touching CH.
+func (s *Store) ListNotificationLogByRelated(ctx context.Context, relatedIDs []string, limit int) ([]NotificationLog, error) {
+	if len(relatedIDs) == 0 {
+		return nil, nil
+	}
+	q, args := buildNotificationLogRelatedQuery(relatedIDs, time.Now().Add(-90*24*time.Hour), limit)
+	rows, err := s.conn.Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NotificationLog
+	for rows.Next() {
+		var e NotificationLog
+		var ok uint8
+		if err := rows.Scan(
+			&e.ID, &e.SentAt, &e.ChannelKind, &e.ChannelName,
+			&e.Target, &e.Subject, &e.BodyPreview,
+			&e.RelatedKind, &e.RelatedID, &ok, &e.Error,
+		); err != nil {
+			return nil, err
+		}
+		e.OK = ok == 1
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// buildNotificationLogRelatedQuery is the pure SQL builder for
+// ListNotificationLogByRelated — extracted (like
+// buildNotificationLogQuery above) so the mandatory read bounds
+// (time-bounded WHERE + LIMIT + max_execution_time) and the literal
+// IN placeholder expansion are table-testable without a live CH.
+// The IN list is bound placeholders, not a subquery, so no GLOBAL IN
+// concern on distributed installs.
+func buildNotificationLogRelatedQuery(relatedIDs []string, since time.Time, limit int) (string, []any) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	holders := make([]string, len(relatedIDs))
+	args := make([]any, 0, len(relatedIDs)+2)
+	args = append(args, since)
+	for i, id := range relatedIDs {
+		holders[i] = "?"
+		args = append(args, id)
+	}
+	q := `
+		SELECT id,
+		       toUnixTimestamp64Nano(sent_at),
+		       channel_kind, channel_name, target,
+		       subject, body_preview,
+		       related_kind, related_id, ok, error
+		FROM notification_log
+		WHERE sent_at >= ?
+		  AND related_id IN (` + strings.Join(holders, ",") + `)
+		ORDER BY sent_at DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10`
+	args = append(args, limit)
 	return q, args
 }
 

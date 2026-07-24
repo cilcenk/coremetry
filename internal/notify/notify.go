@@ -475,14 +475,31 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 		Metadata: md,
 		Clusters: p.Clusters,
 	}
+	relKind := problemRelatedKind(p)
 	for _, c := range channels {
 		if !c.MatchRules.MatchesProblem(in) {
 			continue
 		}
-		if err := n.sendOne(ctx, c, p, "problem", p.ID); err != nil {
+		if err := n.sendOne(ctx, c, p, relKind, p.ID); err != nil {
 			log.Printf("[notify] %s (%s): %v", c.Name, c.Type, err)
 		}
 	}
+}
+
+// problemRelatedKind classifies the notification_log related_kind for
+// a problem fan-out (v0.9.196 — /watchers surface). Problems opened
+// by an imported ES watcher rule are stamped Problem.Metric="watcher"
+// at open time (evaluator settleCountAlert via evaluateWatcher), so
+// no rule lookup is needed here: those sends log related_kind=
+// "watcher" and the /events chip + /watchers history drawer can slice
+// watcher notifications directly. Everything else keeps the original
+// "problem" kind. related_id stays the problem id in BOTH cases —
+// the watcher history join goes problems(rule_id) → related_id.
+func problemRelatedKind(p chstore.Problem) string {
+	if p.Metric == "watcher" {
+		return "watcher"
+	}
+	return "problem"
 }
 
 // teamRoutingChannelName tags team-routing sends in notification_log —
@@ -536,8 +553,20 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 	// "İlk defa" — one mail per problem lifetime. The severity-bump
 	// path re-enters SendProblemAlert with status=open for the SAME
 	// problem id; the successful first send gates every retry.
-	if seen, err := n.store.HasNotification(ctx, "problem", p.ID, teamRoutingChannelName); err == nil && seen {
+	// problemRelatedKind keeps the dedup key aligned with what
+	// sendOne records below (watcher problems log kind="watcher").
+	if seen, err := n.store.HasNotification(ctx, problemRelatedKind(p), p.ID, teamRoutingChannelName); err == nil && seen {
 		return
+	}
+	// v0.9.196 rollout-transition (review-fix): watcher problem'lerinin
+	// ESKİ bildirimleri related_kind='problem' ile kayıtlı — yalnız yeni
+	// 'watcher' anahtarına bakmak, upgrade anında açık duran problem'e
+	// KOPYA team-mail attırırdı. Eski anahtara da bak; eski kayıtlar
+	// 90g TTL ile aktıkça bu dal doğal ölür.
+	if problemRelatedKind(p) == "watcher" {
+		if seen, err := n.store.HasNotification(ctx, "problem", p.ID, teamRoutingChannelName); err == nil && seen {
+			return
+		}
 	}
 	cfg, err := json.Marshal(EmailChannelConfig{Recipients: to})
 	if err != nil {
@@ -548,7 +577,7 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 		Type:   "email",
 		Config: cfg,
 	}
-	if err := n.sendOne(ctx, ch, p, "problem", p.ID); err != nil {
+	if err := n.sendOne(ctx, ch, p, problemRelatedKind(p), p.ID); err != nil {
 		log.Printf("[notify] team-routing (%s → %d rcpt): %v", p.Service, len(to), err)
 	}
 }

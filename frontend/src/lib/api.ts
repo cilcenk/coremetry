@@ -5,7 +5,7 @@ import type {
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, EndpointDetail, EndpointSplitResponse, ServiceAttrsResponse,
-  AlertRule, Problem, WatcherImportResult,
+  AlertRule, Problem, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
@@ -1802,6 +1802,13 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  // /watchers page (v0.9.196) — per-rule problems rollup for the list
+  // (60s server cache) + one rule's fire/notify/resolve history for
+  // the drawer (30s server cache; fetch on OPEN only, never per-row).
+  watchersSummary: () =>
+    get<Record<string, WatcherSummaryEntry>>('/api/watchers/summary'),
+  watcherHistory: (id: string) =>
+    get<WatcherHistory>(`/api/watchers/${encodeURIComponent(id)}/history`),
 
   // ── Runbooks (v0.7.0) ──────────────────────────────────────────────────────
   runbooks: () => get<Runbook[] | null>('/api/runbooks'),

@@ -49,6 +49,10 @@ const Problems          = lazy(() => import('./features/anomalies'));
 const Anomalies         = lazy(() => import('./features/anomalies/AnomalyStreamsPage'));
 const Inbox             = lazy(() => import('./pages/Inbox'));
 const Alerts            = lazy(() => import('./pages/Alerts'));
+// v0.9.196 — dedicated surface for the imported ES watcher fleet
+// (~300 in prod). The Alerts page keeps its Watcher chip; /watchers
+// adds the summary list + per-watcher fire/notify/resolve history.
+const Watchers          = lazy(() => import('./pages/Watchers'));
 const Slos              = lazy(() => import('./pages/Slos'));
 const Monitors          = lazy(() => import('./pages/Monitors'));
 const Profiling         = lazy(() => import('./pages/Profiling'));
@@ -138,6 +142,7 @@ export default function App() {
             <Route path="/anomalies"      element={<Anomalies />} />
             <Route path="/exceptions"     element={<Navigate to="/problems" replace />} />
             <Route path="/alerts"         element={<Alerts />} />
+            <Route path="/watchers"       element={<Watchers />} />
             <Route path="/slos"           element={<Slos />} />
             <Route path="/monitors"       element={<Monitors />} />
             <Route path="/events"         element={<Events />} />

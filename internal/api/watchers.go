@@ -24,6 +24,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -198,4 +199,166 @@ func (s *Server) importWatcher(w http.ResponseWriter, r *http.Request) {
 	}
 	s.audit(r, "watcher.import", "alert_rule", rule.ID, rule.Name)
 	writeJSON(w, map[string]any{"imported": true, "ruleId": rule.ID, "report": report})
+}
+
+// ── /watchers read surface (v0.9.196) ───────────────────────────────
+//
+// The dedicated /watchers page lists the imported watcher rules from
+// the EXISTING /api/alert-rules endpoint (client-side metric=='watcher'
+// filter — a few hundred rows). The two endpoints below add what that
+// list can't know:
+//
+//	GET /api/watchers/summary      — per-rule problems rollup
+//	                                 (lastFire / fires24h / openNow)
+//	                                 + the structural disabled reason,
+//	                                 ONE bounded GROUP BY query for the
+//	                                 whole fleet (never per-row calls).
+//	GET /api/watchers/{id}/history — one rule's fire/resolve timeline:
+//	                                 problems(rule_id) joined to their
+//	                                 notification_log rows.
+//
+// Both are read-only (no audit) and open to any signed-in role —
+// viewers see watcher state read-only, same as /api/alert-rules.
+
+// watcherSummaryEntry is one rule's row in the summary response.
+type watcherSummaryEntry struct {
+	LastFire int64  `json:"lastFire"` // unix ns; 0 = never fired
+	Fires24h uint64 `json:"fires24h"`
+	OpenNow  bool   `json:"openNow"`
+	// DisabledReason — the structural reason a disabled watcher can't
+	// run (script condition, no executable search, …), recomputed from
+	// the stored definition. Empty for enabled rules AND for rules the
+	// operator disabled by hand (the UI shows a generic tooltip then).
+	DisabledReason string `json:"disabledReason,omitempty"`
+}
+
+// watcherDisabledReason recomputes the import-time disabled verdict
+// from the stored definition. The reason was never persisted on the
+// rule row (only shown in the import report), so the list surface
+// re-derives it — ≤ a few hundred JSON parses behind a 60s cache.
+// Enabled rules answer "" without parsing. Pure — table-tested.
+func watcherDisabledReason(r chstore.AlertRule) string {
+	if r.Enabled || r.WatcherJSON == "" {
+		return ""
+	}
+	wt, err := watcher.Parse([]byte(r.WatcherJSON))
+	if err != nil {
+		return "stored definition does not parse: " + err.Error()
+	}
+	if _, rep, err := watcher.ToRule(wt, []byte(r.WatcherJSON)); err == nil {
+		return rep.DisabledReason // "" when the operator disabled a runnable watch by hand
+	}
+	return ""
+}
+
+// buildWatcherSummaries zero-fills the problems rollup against the
+// rule list so EVERY watcher rule answers (a watcher that never fired
+// still gets a row) and non-watcher rules never leak in. Pure —
+// table-tested.
+func buildWatcherSummaries(rules []chstore.AlertRule, sums map[string]chstore.WatcherSummary) map[string]watcherSummaryEntry {
+	out := make(map[string]watcherSummaryEntry)
+	for _, r := range rules {
+		if r.Metric != "watcher" {
+			continue
+		}
+		s := sums[r.ID] // zero value when the rule never opened a problem
+		out[r.ID] = watcherSummaryEntry{
+			LastFire:       s.LastFire,
+			Fires24h:       s.Fires24h,
+			OpenNow:        s.OpenNow,
+			DisabledReason: watcherDisabledReason(r),
+		}
+	}
+	return out
+}
+
+// GET /api/watchers/summary — rule_id → rollup for the /watchers
+// list. ONE problems GROUP BY + the in-process-cached rules list; no
+// request inputs, so the cache key is a constant (nothing to hash).
+func (s *Server) watchersSummary(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "watchers:summary", 60*time.Second, func(ctx context.Context) (any, error) {
+		rules, err := s.store.ListAlertRules(ctx)
+		if err != nil {
+			return nil, err
+		}
+		sums, err := s.store.WatcherProblemSummaries(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return buildWatcherSummaries(rules, sums), nil
+	})
+}
+
+// watcherHistoryResponse is the /api/watchers/{id}/history envelope:
+// the rule's recent problems (fire = startedAt, resolve = resolvedAt)
+// plus every notification recorded for those problem ids. Slices are
+// always non-nil so the client never branches on null.
+type watcherHistoryResponse struct {
+	Problems      []chstore.Problem         `json:"problems"`
+	Notifications []chstore.NotificationLog `json:"notifications"`
+}
+
+// GET /api/watchers/{id}/history — one watcher's timeline. Existence
+// (+ watcher-ness) is checked against the in-process-cached rules list
+// so a bad deep-link 404s without a CH round-trip.
+func (s *Server) watcherHistory(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+		return
+	}
+	rules, err := s.store.ListAlertRules(r.Context())
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	found := watcherRuleExists(rules, id)
+	if !found {
+		// v0.9.196 review-fix — multi-replica taze-import yarışı: import
+		// başka pod'a düştüyse bu pod'un 30s'lik in-process rule cache'i
+		// yeni watcher'ı henüz görmez ve taze import'a 404 döner ("import
+		// bozuk" izlenimi). Miss yolunda BİR kez cache'i düşürüp yeniden
+		// listele; hot path cache'ten sürmeye devam eder.
+		s.store.InvalidateAlertRulesCache()
+		if fresh, ferr := s.store.ListAlertRules(r.Context()); ferr == nil {
+			found = watcherRuleExists(fresh, id)
+		}
+	}
+	if !found {
+		http.Error(w, `{"error":"watcher not found"}`, http.StatusNotFound)
+		return
+	}
+	// Cache key hashes all inputs: the id (limits are fixed constants).
+	s.serveCached(w, r, "watchers:history:"+id, 30*time.Second, func(ctx context.Context) (any, error) {
+		problems, err := s.store.ListProblems(ctx, chstore.ProblemFilter{RuleID: id, Limit: 50})
+		if err != nil {
+			return nil, err
+		}
+		ids := make([]string, 0, len(problems))
+		for _, p := range problems {
+			ids = append(ids, p.ID)
+		}
+		notifs, err := s.store.ListNotificationLogByRelated(ctx, ids, 100)
+		if err != nil {
+			return nil, err
+		}
+		if problems == nil {
+			problems = []chstore.Problem{}
+		}
+		if notifs == nil {
+			notifs = []chstore.NotificationLog{}
+		}
+		return watcherHistoryResponse{Problems: problems, Notifications: notifs}, nil
+	})
+}
+
+// watcherRuleExists reports whether id names a watcher rule in the list —
+// the shared predicate of watcherHistory's cached + cache-bypassed checks.
+func watcherRuleExists(rules []chstore.AlertRule, id string) bool {
+	for _, rule := range rules {
+		if rule.ID == id && rule.Metric == "watcher" {
+			return true
+		}
+	}
+	return false
 }

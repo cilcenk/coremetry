@@ -69,6 +69,88 @@ func TestBuildNotificationLogQuery_KindFilter(t *testing.T) {
 	}
 }
 
+// v0.9.196 — /watchers history drawer: notification rows are joined
+// to one rule's problems via related_id IN (…). Same bound contract
+// as the list query (time-bounded WHERE on the sent_at prefix +
+// LIMIT + max_execution_time, no FINAL) plus one shape rule: the IN
+// list must be bound placeholders — a literal subquery would need
+// GLOBAL IN on distributed installs.
+func TestBuildNotificationLogRelatedQuery_Bounds(t *testing.T) {
+	since := time.Date(2026, 4, 22, 0, 0, 0, 0, time.UTC)
+	ids := []string{"p-1", "p-2", "p-3"}
+
+	sql, args := buildNotificationLogRelatedQuery(ids, since, 100)
+
+	mustContain := []string{
+		"sent_at >= ?",             // time bound on the ORDER BY prefix
+		"related_id IN (?,?,?)",    // one placeholder per id, no subquery
+		"ORDER BY sent_at DESC",    // newest-first
+		"LIMIT ?",                  // bounded row count
+		"max_execution_time",       // wall-clock cap
+		"FROM notification_log",    // plain MergeTree
+	}
+	for _, frag := range mustContain {
+		if !strings.Contains(sql, frag) {
+			t.Errorf("query missing required fragment %q\nSQL:\n%s", frag, sql)
+		}
+	}
+	if strings.Contains(sql, "FINAL") {
+		t.Errorf("notification_log is a plain MergeTree; read must not use FINAL\nSQL:\n%s", sql)
+	}
+	// Args: since, then each id in order, then limit.
+	want := []any{since, "p-1", "p-2", "p-3", 100}
+	if len(args) != len(want) {
+		t.Fatalf("expected %d args, got %d: %v", len(want), len(args), args)
+	}
+	for i := range want {
+		if args[i] != want[i] {
+			t.Errorf("args[%d] = %v, want %v", i, args[i], want[i])
+		}
+	}
+}
+
+// Limit clamps mirror the list query: non-positive / oversized → 100.
+func TestBuildNotificationLogRelatedQuery_LimitClamp(t *testing.T) {
+	since := time.Unix(1000, 0).UTC()
+	cases := []struct {
+		name      string
+		limit     int
+		wantLimit int
+	}{
+		{"zero limit -> 100", 0, 100},
+		{"negative limit -> 100", -1, 100},
+		{"oversized limit -> 100", 10000, 100},
+		{"in-range kept", 250, 250},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, args := buildNotificationLogRelatedQuery([]string{"x"}, since, tc.limit)
+			if got := args[len(args)-1]; got != tc.wantLimit {
+				t.Errorf("limit = %v, want %d", got, tc.wantLimit)
+			}
+		})
+	}
+}
+
+// v0.9.196 — the /watchers list rollup. The SQL is a const; pin the
+// mandatory bounds (LIMIT + max_execution_time), the FINAL read on
+// the ReplacingMergeTree problems table, and the watcher-only scope.
+func TestWatcherSummarySQL_Bounds(t *testing.T) {
+	mustContain := []string{
+		"FROM problems FINAL",       // ReplacingMergeTree state read
+		"metric = 'watcher'",        // watcher problems only
+		"GROUP BY rule_id",          // one row per rule
+		"countIf(started_at >= ?)",  // trailing-24h fire count is bind-bounded
+		"LIMIT 2000",                // bounded group count
+		"max_execution_time",        // wall-clock cap
+	}
+	for _, frag := range mustContain {
+		if !strings.Contains(watcherSummarySQL, frag) {
+			t.Errorf("watcherSummarySQL missing required fragment %q\nSQL:\n%s", frag, watcherSummarySQL)
+		}
+	}
+}
+
 // limit/offset are clamped: non-positive or oversized limit falls back
 // to 100; negative offset to 0. Guards the pagination bound.
 func TestBuildNotificationLogQuery_LimitClamp(t *testing.T) {

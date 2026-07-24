@@ -234,3 +234,85 @@ func TestBuildWatcherImportWatchText(t *testing.T) {
 		}
 	})
 }
+
+// ── /watchers read surface (v0.9.196) ───────────────────────────────
+
+// buildWatcherSummaries: every metric=='watcher' rule answers (zero-
+// filled when it never fired), non-watcher rules never leak in, and
+// the structural disabled reason only appears on disabled rules whose
+// stored definition actually can't run.
+func TestBuildWatcherSummaries(t *testing.T) {
+	rules := []chstore.AlertRule{
+		{ID: "w1", Metric: "watcher", Enabled: true, WatcherJSON: fullWatch},
+		{ID: "w2", Metric: "watcher", Enabled: true, WatcherJSON: fullWatch},   // never fired
+		{ID: "w3", Metric: "watcher", Enabled: false, WatcherJSON: scriptWatch}, // structurally disabled
+		{ID: "w4", Metric: "watcher", Enabled: false, WatcherJSON: fullWatch},  // operator-disabled, runnable
+		{ID: "m1", Metric: "error_rate", Enabled: true},                        // not a watcher
+	}
+	sums := map[string]chstore.WatcherSummary{
+		"w1": {RuleID: "w1", LastFire: 1700, Fires24h: 3, OpenNow: true},
+		"m1": {RuleID: "m1", LastFire: 9999, Fires24h: 9}, // must be ignored
+	}
+
+	got := buildWatcherSummaries(rules, sums)
+
+	if len(got) != 4 {
+		t.Fatalf("expected 4 watcher entries, got %d: %v", len(got), got)
+	}
+	if _, leaked := got["m1"]; leaked {
+		t.Fatal("non-watcher rule m1 leaked into the summary")
+	}
+	if e := got["w1"]; e.LastFire != 1700 || e.Fires24h != 3 || !e.OpenNow || e.DisabledReason != "" {
+		t.Fatalf("w1 rollup wrong: %+v", e)
+	}
+	if e := got["w2"]; e.LastFire != 0 || e.Fires24h != 0 || e.OpenNow {
+		t.Fatalf("never-fired w2 must be zero-filled, got %+v", e)
+	}
+	if e := got["w3"]; e.DisabledReason == "" {
+		t.Fatal("script-condition watch must carry a structural disabled reason")
+	}
+	if e := got["w4"]; e.DisabledReason != "" {
+		t.Fatalf("operator-disabled runnable watch must have empty reason (UI shows generic tooltip), got %q", e.DisabledReason)
+	}
+}
+
+// watcherDisabledReason edge shapes: enabled rules never parse; a
+// broken stored definition reports the parse failure instead of
+// panicking or answering blank.
+func TestWatcherDisabledReason(t *testing.T) {
+	cases := []struct {
+		name string
+		rule chstore.AlertRule
+		want func(t *testing.T, got string)
+	}{
+		{"enabled rule answers empty without parsing", chstore.AlertRule{Enabled: true, WatcherJSON: "{not json"},
+			func(t *testing.T, got string) {
+				if got != "" {
+					t.Fatalf("want empty, got %q", got)
+				}
+			}},
+		{"no stored definition answers empty", chstore.AlertRule{Enabled: false},
+			func(t *testing.T, got string) {
+				if got != "" {
+					t.Fatalf("want empty, got %q", got)
+				}
+			}},
+		{"broken JSON reports the parse failure", chstore.AlertRule{Enabled: false, WatcherJSON: "{not json"},
+			func(t *testing.T, got string) {
+				if !strings.Contains(got, "does not parse") {
+					t.Fatalf("want parse-failure reason, got %q", got)
+				}
+			}},
+		{"script condition reports the structural reason", chstore.AlertRule{Enabled: false, WatcherJSON: scriptWatch},
+			func(t *testing.T, got string) {
+				if got == "" {
+					t.Fatal("want a structural reason, got empty")
+				}
+			}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.want(t, watcherDisabledReason(tc.rule))
+		})
+	}
+}

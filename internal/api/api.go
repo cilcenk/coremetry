@@ -732,6 +732,13 @@ func (s *Server) Start() error {
 	// mapping report; dryRun previews without persisting. Same gate
 	// as the alert-rule CRUD it feeds.
 	mux.HandleFunc("POST   /api/watchers/import", auth.RequireAnyRole(editorRoles, s.importWatcher))
+	// /watchers page reads (v0.9.196) — per-rule problems rollup for
+	// the list (ONE bounded GROUP BY, never N per-row calls) + one
+	// rule's fire/notify/resolve history for the drawer. Read-only,
+	// any signed-in role (viewers see watcher state read-only). The
+	// literal /summary segment out-ranks {id} in the Go 1.22 mux.
+	mux.HandleFunc("GET    /api/watchers/summary", s.watchersSummary)
+	mux.HandleFunc("GET    /api/watchers/{id}/history", s.watcherHistory)
 	// Runbooks (v0.7.0) — operator-authored executable procedures.
 	// GET list/detail open so viewers see them read-only (invariant #7);
 	// every write gated to editor+. Executions + agent dispatch land next.

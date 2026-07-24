@@ -1,4 +1,4 @@
-import { useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
@@ -13,6 +13,8 @@ import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { StatsLegend } from '@/components/chart/StatsLegend';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
+import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
 import { placeTooltip } from '@/lib/chartTooltip';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Per-series type
@@ -87,6 +89,46 @@ export function TimeChart({
   const fmtRightRef = useRef(fmtRight); fmtRightRef.current = fmtRight;
   const fmtXRef = useRef(fmtX); fmtXRef.current = fmtX;
   const themeTick = useThemeTick();
+
+  // ── Grafana-parite #2: tooltip pin + interaktif lejant (OVC ile aynı) ────
+  const pinRef = useRef<number | null>(null);
+  const unpinTooltip = () => {
+    pinRef.current = null;
+    if (ttRef.current) clearPinStyle(ttRef.current, 'display');
+  };
+  const visRef = useRef<boolean[] | null>(null);
+  const [legendVis, setLegendVis] = useState<boolean[] | null>(null);
+
+  // Pin tetiği (TC): çizim alanına DÜZ TIK — düz tık bu preset'te boştaydı
+  // (drag = brush yalnız onBrush'la, çift tık = reset). mousedown→click
+  // mesafesi brush kuyruğunu eler — eşik TC'nin brush eşiğiyle AYNI (2px,
+  // buildCursorOpts minWidthPx:2): brush'ın ateşlediği her drag pin'den de
+  // elenir, 2-4px "hem brush hem pin" aralığı kapanır (review 8/8 #2).
+  // detail çift-tık click'lerini eler, dblclick pin'i çözer (#3).
+  const attachPinListener = (u: uPlot) => {
+    let downX: number | null = null;
+    u.over.addEventListener('mousedown', e => { downX = e.clientX; });
+    u.over.addEventListener('dblclick', () => unpinTooltip());
+    u.over.addEventListener('click', e => {
+      const tt = ttRef.current;
+      if (!tt) return;
+      const d = decidePinClick({
+        pinnedIdx: pinRef.current, cursorIdx: u.cursor.idx,
+        dragPx: downX == null ? 0 : Math.abs(e.clientX - downX),
+        dragThresholdPx: 2,
+        detail: e.detail,
+      });
+      if (d.action === 'unpin') unpinTooltip();
+      else if (d.action === 'pin' && tt.style.display !== 'none') { pinRef.current = d.idx; applyPinStyle(tt); }
+    });
+  };
+
+  // Esc → pin çöz.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []); // unpinTooltip yalnız ref'lere dokunur — stable
 
   // uPlot's aligned data — memoised on the DATA inputs only so a poll recomputes
   // it once and either seeds a rebuild (structure changed) or rides setData.
@@ -226,6 +268,9 @@ export function TimeChart({
         setCursor: [u => {
           const tt = ttRef.current;
           if (!tt) return;
+          // Grafana-parite #2 — pinliyken tooltip donuk (içerik/pozisyon
+          // dokunulmaz; crosshair yaşamaya devam eder).
+          if (pinRef.current != null) return;
           const idx = u.cursor.idx;
           if (idx == null || u.cursor.left == null || u.cursor.left < 0) { tt.style.display = 'none'; return; }
           // Read x + values LIVE from u.data — the setData fast-path may have
@@ -249,7 +294,10 @@ export function TimeChart({
             const si = u.cursor.idxs?.[i + 1] ?? idx;
             return {
               label: s.label, color: colors[i],
-              value: (u.data[i + 1] as (number | null)[])?.[si] ?? null,
+              // Grafana-parite #2 — lejanttan gizlenen seri tooltip'ten de
+              // düşer (value null → model satırı atar).
+              value: visRef.current?.[i] === false ? null
+                : ((u.data[i + 1] as (number | null)[])?.[si] ?? null),
               unit: s.axis === 'right' ? rightUnit : leftUnit,
             };
           }));
@@ -284,25 +332,51 @@ export function TimeChart({
   // zoomlu fast-path'te y (left seriler) + y2 (right seriler) ayrı refit
   // (motorun batch/setData(false)'i içinde çağrılır). series canlı okunur;
   // chartData zaten series'ten türer → [chartData] dep'i yeterli.
-  useChartEngine(hostRef, {
+  const plotRef = useChartEngine(hostRef, {
     signature: buildSig,
     height,
     renderable: times.length >= 2 && series.length > 0,
     data: chartData,
     buildOptions,
+    // Grafana-parite #2 — rebuild: pin çözülür + lejant görünürlüğü
+    // sıfırlanır (MLC emsali) + pin tık dinleyicisi taze u.over'a bağlanır.
+    afterBuild: u => {
+      if (pinRef.current != null) unpinTooltip();
+      visRef.current = null; setLegendVis(null);
+      attachPinListener(u);
+    },
     // Grafana-parite M1 — çift-tık: sayfa geri-yığınına devret (spec canlı
     // okunur, ref gerekmez; verilmezse motor no-op).
     onZoomReset,
     refitScales: (u, data) => {
       const leftIdxs: number[] = [];
       const rightIdxs: number[] = [];
-      series.forEach((s, i) => (s.axis === 'right' ? rightIdxs : leftIdxs).push(i + 1));
-      u.setScale('y', yRefitScale(data as (number | null)[][], leftIdxs));
+      series.forEach((s, i) => {
+        // Grafana-parite #2 — gizli seri y-refit'e girmez (uPlot'un görünür-
+        // seri autoscale'i ile uyum); hepsi görünürken eski davranışın birebiri.
+        if (visRef.current?.[i] === false) return;
+        (s.axis === 'right' ? rightIdxs : leftIdxs).push(i + 1);
+      });
+      if (leftIdxs.length) u.setScale('y', yRefitScale(data as (number | null)[][], leftIdxs));
       if (rightIdxs.length && u.scales.y2) {
         u.setScale('y2', yRefitScale(data as (number | null)[][], rightIdxs));
       }
     },
   }, themeTick);
+
+  // Lejant tıkı → görünürlük (Grafana-parite #2, OVC ile aynı sözleşme):
+  // düz tık isolate, Ctrl/Cmd toggle — MLC/TSP v0.5.364 + Grafana ile aynı
+  // jest dili (review 8/8 #8); semantik lib/chart/legendVisibility.ts.
+  const handleLegendToggle = (i: number, additive: boolean) => {
+    const u = plotRef.current;
+    if (!u) return;
+    const cur = visRef.current ?? resetSeriesVisibility(series.length);
+    if (i < 0 || i >= cur.length) return;
+    const next = additive ? toggleSeriesVisibility(cur, i) : isolateSeriesVisibility(cur, i);
+    visRef.current = next;
+    setLegendVis(next);
+    next.forEach((show, k) => u.setSeries(k + 1, { show }));
+  };
 
   return (
     <>
@@ -311,11 +385,16 @@ export function TimeChart({
         <div ref={ttRef} className="ov-tt" style={{ display: 'none' }} />
       </div>
       {/* v0.9.103 (Grafana-parity #1) — grafik altında seri istatistikleri;
-          birim seri-başı (dual eksende left/right). */}
-      <StatsLegend series={series.map(s => ({
-        label: s.label, color: s.color, values: s.data,
-        unit: s.axis === 'right' ? rightUnit : leftUnit,
-      }))} />
+          birim seri-başı (dual eksende left/right). Grafana-parite #2 —
+          interaktif: tık gizle/göster, Ctrl/Cmd izole. */}
+      <StatsLegend
+        series={series.map(s => ({
+          label: s.label, color: s.color, values: s.data,
+          unit: s.axis === 'right' ? rightUnit : leftUnit,
+        }))}
+        isVisible={i => legendVis?.[i] ?? true}
+        onToggle={handleLegendToggle}
+      />
     </>
   );
 }

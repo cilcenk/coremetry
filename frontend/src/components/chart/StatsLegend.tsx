@@ -13,7 +13,12 @@ import { seriesStats, isAdditiveUnit } from '@/lib/chart/legendStats';
 //
 // Sum/Σ + "Toplam" satırı yalnız TOPLANABİLİR birimde (rps/sayaç/bytes);
 // ms/s/% gizlenir. Her seri kendi birimine göre (TC dual-axis: left/right).
-// İzole/gizle tıklaması opsiyonel (onToggle verilirse satır tıklanabilir).
+// İzole/gizle tıklaması opsiyonel (onToggle verilirse satır tıklanabilir):
+// düz tık = isolate (yalnız o seri), Ctrl/Cmd-tık = toggle (gizle/göster) —
+// MLC/TSP'nin yerleşik v0.5.364 sözleşmesi + Grafana kontratıyla AYNI jest
+// dili (review 8/8 #8 — tek uygulama içinde ters eşleme olmaz); işlem
+// semantiği lib/chart/legendVisibility.ts'te, jest→işlem eşlemesi caller'da
+// (OVC/TC handleLegendToggle).
 
 const LEGEND_COLLAPSE_THRESHOLD = 8;
 
@@ -26,7 +31,10 @@ export interface StatsLegendSeries {
 
 export function StatsLegend({ series, onToggle, isVisible }: {
   series: StatsLegendSeries[];
-  onToggle?: (i: number) => void;              // opsiyonel izole/gizle
+  // Opsiyonel gizle/izole — additive true = Ctrl/Cmd-tık (toggle: gizle/
+  // göster); düz tık (false) = isolate (yalnız o seri). MLC/TSP v0.5.364
+  // jest sözleşmesinin aynısı.
+  onToggle?: (i: number, additive: boolean) => void;
   isVisible?: (i: number) => boolean;
 }) {
   const [collapsed, setCollapsed] = useState(series.length > LEGEND_COLLAPSE_THRESHOLD);
@@ -77,9 +85,9 @@ export function StatsLegend({ series, onToggle, isVisible }: {
                 const on = isVisible ? isVisible(i) : true;
                 return (
                   <tr key={s.label + i}
-                    onClick={onToggle ? e => { e.preventDefault(); onToggle(i); } : undefined}
+                    onClick={onToggle ? e => { e.preventDefault(); onToggle(i, e.ctrlKey || e.metaKey); } : undefined}
                     style={{ opacity: on ? 1 : 0.4, cursor: onToggle ? 'pointer' : 'default' }}
-                    title={onToggle ? 'Tıkla: bu seriyi izole/aç-kapat' : undefined}>
+                    title={onToggle ? 'Tıkla: yalnız bu seri · Ctrl/Cmd-tık: gizle/göster' : undefined}>
                     <td style={{ ...td, textAlign: 'left', color: 'var(--text2)', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'inherit' }}>
                       <span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: s.color, marginRight: 7, verticalAlign: 'middle' }} />
                       <span style={{ verticalAlign: 'middle' }}>{s.label}</span>

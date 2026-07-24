@@ -12,6 +12,9 @@ import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { useChartEngine } from '@/lib/chart/engine';
 import { buildCursorOpts } from '@/lib/chart/cursorOpts';
+import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
+import { toggleSeriesVisibility, isolateSeriesVisibility } from '@/lib/chart/legendVisibility';
 import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
@@ -206,6 +209,23 @@ export function TimeSeriesPanel({
   // changed; with the fast-path a poll no longer rebuilds, so this is now
   // required for a theme toggle to repaint the strokes.
   const themeTick = useThemeTick();
+
+  // ── Grafana-parite #2: tooltip pin ──────────────────────────────────────
+  // pinRef: pinli veri index'i (null = pin yok). Tetik (TSP): çizim alanına
+  // DÜZ TIK — exemplar ◆ isabeti ÖNCELİKLİ (trace açar, pin devreye girmez);
+  // ikinci tık/Esc çözer. Dinleyici afterBuild'de (aşağıda), tek kopya.
+  const pinRef = useRef<number | null>(null);
+  const unpinTooltip = () => {
+    pinRef.current = null;
+    const tip = containerRef.current?.querySelector('.tsp-tooltip') as HTMLDivElement | null;
+    if (tip) clearPinStyle(tip, 'opacity');
+  };
+  // Esc → pin çöz.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []); // unpinTooltip yalnız ref'lere dokunur — stable
 
   // Downsample each series to ≤2000 points BEFORE uPlot (gap-aware), then
   // re-align onto a union x grid. Memoised on series identity so we don't
@@ -581,6 +601,10 @@ export function TimeSeriesPanel({
               cursorTimeRef.current(cx != null && isFinite(cx) ? cx : null);
             }
             if (!tip) return;
+            // Grafana-parite #2 — pinliyken tooltip donuk: içerik/pozisyon
+            // dokunulmaz (cursorTime kanalı + yPill + crosshair yaşar —
+            // Explore GroupTable sürücüsü etkilenmez).
+            if (pinRef.current != null) return;
             if (idx == null || idx < 0) { tip.style.opacity = '0'; return; }
             const xVal = u.data[0][idx];
             if (xVal == null) { tip.style.opacity = '0'; return; }
@@ -590,25 +614,25 @@ export function TimeSeriesPanel({
             const ss = d.getSeconds().toString().padStart(2, '0');
 
             // Per-series rows from RAW values (stacked panels show real layer
-            // value, not cumulative). Skip nulls + hidden series.
-            type Row = { label: string; color: string; v: number; unit: string };
-            const rows: Row[] = [];
+            // value, not cumulative). Grafana-parite #2 — sıralama + format
+            // paylaşımlı sortedTooltipRows'ta (null-drop + değer DESC stable
+            // + fmtSmart seri-birimi); gizli seri value:null ile satırdan
+            // düşer. Davranış birebir eski yerel kopya.
             // Stacked draws cumulative into u.data, so read the RAW layer value
             // from the live bundle ref (fresh on the fast-path); non-stacked is
             // raw already, so read it straight off u.data. Labels/colours/units
             // are structural (rebuild on change) — safe to close over.
             const rawY = bundleRef.current.ySeries;
-            for (let i = 0; i < series.length; i++) {
-              if (!visibleRef.current[i]) continue;
+            const rows = sortedTooltipRows(series.map((s, i) => {
               // v0.9.84 (madde 4) — dataIdx snap'i seri başına idxs'te; tooltip
               // aynı dolu örneği okur (seyrek seri artık "—" değil).
               const si = u.cursor.idxs?.[i + 1] ?? idx;
-              const v = stacked ? rawY[i]?.[idx] : (u.data[i + 1] as (number | null)[])?.[si];
-              if (v == null) continue;
-              rows.push({ label: series[i].label, color: colors[i], v: v as number, unit: series[i].unit ?? anyUnit });
-            }
+              const v = !visibleRef.current[i] ? null
+                : stacked ? rawY[i]?.[idx]
+                : (u.data[i + 1] as (number | null)[])?.[si];
+              return { label: s.label, color: colors[i], value: v, unit: s.unit ?? anyUnit };
+            }));
             if (rows.length === 0) { tip.style.opacity = '0'; return; }
-            rows.sort((a, b) => b.v - a.v);
 
             let deployRow = '';
             if (deploys && deploys.length > 0) {
@@ -693,7 +717,7 @@ export function TimeSeriesPanel({
                 return `<div style="display:flex;gap:8px;align-items:center;line-height:1.5">` +
                   `<span style="display:inline-block;width:8px;height:8px;background:${r.color};border-radius:2px;flex-shrink:0"></span>` +
                   `<span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:240px" title="${lbl}">${lbl}</span>` +
-                  `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${fmtSmart(r.v, r.unit)}</span>` +
+                  `<span style="font-family:ui-monospace,monospace;font-variant-numeric:tabular-nums">${r.text}</span>` +
                 `</div>`;
               }).join('');
             tip.style.opacity = '1';
@@ -726,6 +750,9 @@ export function TimeSeriesPanel({
   // dinleyici GC'lenir (eski build-effect'in explicit removeEventListener'ının
   // yerine — tek instance başına tek dinleyici).
   const afterBuild = (u: uPlot) => {
+    // Grafana-parite #2 — rebuild: pin çözülür (tooltip DOM'u yaşar ama
+    // içerik bayatlardı; dinleyici aşağıda taze over'a bağlanır).
+    if (pinRef.current != null) unpinTooltip();
     if (zoomRef.current) {
       u.setScale('x', { min: zoomRef.current.from, max: zoomRef.current.to });
     }
@@ -736,24 +763,45 @@ export function TimeSeriesPanel({
     // explore-v2 Phase 3.2 — hit-test over-relative px (valToPos without
     // canvasPixels = over element's offset basis), so the click lines up.
     const over = u.over;
+    let downX: number | null = null;
+    over.addEventListener('mousedown', ev => { downX = ev.clientX; });
+    // Grafana-parite #2 — çift-tık (zoom-geri) pin'i deterministik çözer:
+    // zoom-geri sonrası pinli bayat tooltip kalamaz, jitter'lı re-pin
+    // senaryosu kapanır (review 8/8 #3).
+    over.addEventListener('dblclick', () => unpinTooltip());
     over.addEventListener('click', (ev: MouseEvent) => {
+      // 1) exemplar ◆ ÖNCELİKLİ — mevcut davranış birebir (isabet → trace aç).
       const cb = exemplarClickRef.current;
-      if (!cb) return;
-      let hitId: string | null = null;
-      let bestD = 100; // 10px squared tolerance
-      const clickSeries = seriesRef.current;
-      for (let si = 0; si < clickSeries.length; si++) {
-        const exs = clickSeries[si].exemplars;
-        if (!exs || !visibleRef.current[si]) continue;
-        const sk = clickSeries[si].axis === 'right' ? 'yr' : 'y';
-        for (const ex of exs) {
-          const px = u.valToPos(ex.time / 1e9, 'x');
-          const py = u.valToPos(ex.value, sk);
-          const d = (px - ev.offsetX) ** 2 + (py - ev.offsetY) ** 2;
-          if (d < bestD) { bestD = d; hitId = ex.traceId; }
+      if (cb) {
+        let hitId: string | null = null;
+        let bestD = 100; // 10px squared tolerance
+        const clickSeries = seriesRef.current;
+        for (let si = 0; si < clickSeries.length; si++) {
+          const exs = clickSeries[si].exemplars;
+          if (!exs || !visibleRef.current[si]) continue;
+          const sk = clickSeries[si].axis === 'right' ? 'yr' : 'y';
+          for (const ex of exs) {
+            const px = u.valToPos(ex.time / 1e9, 'x');
+            const py = u.valToPos(ex.value, sk);
+            const d = (px - ev.offsetX) ** 2 + (py - ev.offsetY) ** 2;
+            if (d < bestD) { bestD = d; hitId = ex.traceId; }
+          }
         }
+        if (hitId) { cb(hitId); return; }
       }
-      if (hitId) cb(hitId);
+      // 2) Grafana-parite #2 — düz tık tooltip'i PIN'ler / ikinci tık çözer.
+      // mousedown→click mesafesi drag-zoom kuyruğunu eler (u.select,
+      // setSelect hook'unda sıfırlandığından güvenilmez); detail çift-tık
+      // click'lerini eler (yukarıdaki dblclick dinleyicisi pin'i çözer).
+      const tip = containerRef.current?.querySelector('.tsp-tooltip') as HTMLDivElement | null;
+      if (!tip) return;
+      const d = decidePinClick({
+        pinnedIdx: pinRef.current, cursorIdx: u.cursor.idx,
+        dragPx: downX == null ? 0 : Math.abs(ev.clientX - downX),
+        detail: ev.detail,
+      });
+      if (d.action === 'unpin') unpinTooltip();
+      else if (d.action === 'pin' && tip.style.opacity === '1') { pinRef.current = d.idx; applyPinStyle(tip); }
     });
   };
 
@@ -876,22 +924,19 @@ export function TimeSeriesPanel({
   // Legend interaction — isolate-on-click (second click restores all);
   // Ctrl/Cmd-click toggles only that series. Bypasses React state for the
   // chart; bumps visTick so the legend re-paints its dim state.
+  // Grafana-parite #2 — isolate/toggle kararı paylaşımlı legendVisibility
+  // çekirdeğinde (aynı semantik + "hepsi gizliyse hepsini geri getir" kuralı
+  // additive uçta); uygulama eskisi gibi setSeries (fark eden seriler),
+  // rebuild yok.
   const toggleSeries = (dataIdx0: number, additive: boolean) => {
     const u = plotRef.current;
-    const visible = visibleRef.current;
     if (!u) return;
-    if (additive) {
-      const next = !visible[dataIdx0];
-      visible[dataIdx0] = next;
-      u.setSeries(dataIdx0 + 1, { show: next });
-    } else {
-      const onlyThisVisible = visible[dataIdx0] && visible.every((v, i) => (i === dataIdx0 ? true : !v));
-      if (onlyThisVisible) {
-        for (let i = 0; i < visible.length; i++) { visible[i] = true; u.setSeries(i + 1, { show: true }); }
-      } else {
-        for (let i = 0; i < visible.length; i++) { const show = i === dataIdx0; visible[i] = show; u.setSeries(i + 1, { show }); }
-      }
-    }
+    const next = additive
+      ? toggleSeriesVisibility(visibleRef.current, dataIdx0)
+      : isolateSeriesVisibility(visibleRef.current, dataIdx0);
+    next.forEach((show, i) => {
+      if (visibleRef.current[i] !== show) { visibleRef.current[i] = show; u.setSeries(i + 1, { show }); }
+    });
     setVisTick(t => t + 1);
   };
 

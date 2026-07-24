@@ -79,3 +79,34 @@ describe('sortedTooltipRows — fmtSmart units', () => {
     expect(row.value).toBe(42);
   });
 });
+
+// Review 8/8 #6 (madde-2) — lejanttan gizlenen seri tooltip'ten düşer. Dört
+// preset de aynı deseni kullanır: gizli seride value:null geçilir ve model
+// satırı atar (MLC visibleRef[i]===false → null; OVC/TC visRef; TSP
+// !visibleRef[i]). Bu tablo, MLC'nin izole senaryosunu (11/12 gizli) pinler:
+// tooltip yalnız görünür seriyi listeler, bold-nearest seçimi gizli (çizili
+// olmayan) bir seriye asla düşemez — çünkü satır hiç üretilmez.
+describe('sortedTooltipRows — legend-hidden series (value forced null) drop', () => {
+  const visible = [false, true, false]; // MLC visibleRef mirror: only idx 1 on
+  const raw = [
+    { label: 'hidden-big', color: '#1', value: 1000 },
+    { label: 'visible-small', color: '#2', value: 5 },
+    { label: 'hidden-mid', color: '#3', value: 400 },
+  ];
+
+  it('hidden series (11/12 isolate case) never reach the tooltip rows', () => {
+    const rows = sortedTooltipRows(raw.map((r, i) => ({
+      ...r,
+      value: visible[i] === false ? null : r.value, // the shared preset mapping
+    })));
+    expect(rows.map(r => r.label)).toEqual(['visible-small']);
+  });
+
+  it('with nothing hidden the mapping is a no-op (verbatim old behaviour)', () => {
+    const rows = sortedTooltipRows(raw.map((r, i) => ({
+      ...r,
+      value: ([true, true, true] as boolean[])[i] === false ? null : r.value,
+    })));
+    expect(rows.map(r => r.label)).toEqual(['hidden-big', 'hidden-mid', 'visible-small']); // DESC
+  });
+});

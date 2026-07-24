@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { useSlowQueries } from '@/lib/queries';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
+import { tracesPivotHref } from '@/lib/pivotHref';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { encodeStmtParam, decodeStmtParam } from '@/pages/slowqueries/stmtParam';
@@ -255,7 +256,10 @@ export default function SlowQueriesPage() {
                                 const f = encodeFilters([
                                   { k: 'db.statement', op: 'LIKE', v: [snippet] },
                                 ]);
-                                return `/traces?view=list&rootOnly=false&service=${encodeURIComponent(r.service)}&filters=${encodeURIComponent(f)}`;
+                                return tracesPivotHref({
+                                  window: range, service: r.service,
+                                  filters: f, view: 'list',
+                                });
                               })()}>
                                 Search traces with this query →
                               </Link>

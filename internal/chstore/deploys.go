@@ -294,15 +294,17 @@ func (s *Store) ComputeDeployImpact(
 	return out, nil
 }
 
-func (s *Store) GetServiceDeploys(
-	ctx context.Context, service string, from, to time.Time,
-) ([]Deploy, error) {
-	// v0.5.278 — same placeholder filter + image-tag fallback
-	// as GetRecentDeploys. The service detail page's Deploy
-	// History panel was the loudest victim of the
-	// "0.0.1-SNAPSHOT" Maven default — every restart looked
-	// like a deploy.
-	sql := `
+// deployLookback (v0.9.205) — bir sürümün pencere İÇİNDE mi başladığını
+// ayırt etmek için pencerenin gerisine bakılan tampon. 48h: günlük
+// batch servislerinin sessiz aralıklarını da örter; service+time PK
+// budaması ile taranan dilim servis-scoped kalır.
+const deployLookback = 48 * time.Hour
+
+// serviceDeploysSQL — GetServiceDeploys'un gövdesi; const olarak dışarıda
+// ki deploys_test.go pencere-içi-başlangıç sözleşmesini (HAVING
+// first_seen_ns >= ?) shape-assert edebilsin (v0.9.205 regresyon pini).
+// Arg sırası: service, scanFrom(=from-deployLookback), to, fromNs.
+const serviceDeploysSQL = `
 		SELECT
 			` + effectiveVersionExpr + `                     AS version,
 			toUnixTimestamp64Nano(min(time))                 AS first_seen_ns,
@@ -319,11 +321,32 @@ func (s *Store) GetServiceDeploys(
 		    OR has(res_keys, 'helm.chart.version'))
 		GROUP BY version
 		HAVING version != ''
+		   AND first_seen_ns >= ?
 		ORDER BY first_seen_ns ASC
 		LIMIT 50
 		SETTINGS max_execution_time = 15,
-		         ` + s.shardSkipSetting()
-	rows, err := s.conn.Query(ctx, sql, service, from, to)
+		         `
+
+func (s *Store) GetServiceDeploys(
+	ctx context.Context, service string, from, to time.Time,
+) ([]Deploy, error) {
+	// v0.5.278 — same placeholder filter + image-tag fallback
+	// as GetRecentDeploys. The service detail page's Deploy
+	// History panel was the loudest victim of the
+	// "0.0.1-SNAPSHOT" Maven default — every restart looked
+	// like a deploy.
+	//
+	// v0.9.205 (operator-reported) — SABİT sürüm sahte marker'ı:
+	// image-tag'siz bir serviste zincir service.version'a düşer
+	// ("2.1.6.Final-redhat-00001" gibi bir artifact sürümü, hiç
+	// değişmez); pencere-içi min(time) her pencerenin SOL KENARINA
+	// bir "deploy" işaretçisi basıyordu. Fix: 48h lookback'li tarama +
+	// HAVING first_seen >= pencere-başı — yalnız pencere İÇİNDE
+	// gerçekten BAŞLAYAN sürümler (gerçek rollout'lar) döner; sabit
+	// sürüm lookback'te görünür olduğundan elenir. (GetRecentDeploys
+	// banner'ında aynı sınıf vacuous filtre duruyor — ayrı iş.)
+	sql := serviceDeploysSQL + s.shardSkipSetting()
+	rows, err := s.conn.Query(ctx, sql, service, from.Add(-deployLookback), to, from.UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("query deploys: %w", err)
 	}

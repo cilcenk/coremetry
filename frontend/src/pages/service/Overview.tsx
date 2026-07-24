@@ -5,6 +5,7 @@ import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
 import type { ChartThreshold } from '@/lib/chart/overlays';
+import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { OpsCard, DbCard } from './OverviewTables';
 import { MetricPanel } from '@/components/MetricPanel';
@@ -180,6 +181,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
         { name: 'p99', agg: 'p99', field: 'duration_ms' },
         { name: 'p95', agg: 'p95', field: 'duration_ms' },
         { name: 'p50', agg: 'p50', field: 'duration_ms' },
+        // Madde 4 sweep (operatör onayı) — latency paneline avg serisi;
+        // default görünürlük avg+P50+P95 açık / P99 gizli (aşağıda
+        // defaultLatencyHidden), kullanıcı lejant seçimi kalıcı ve ezer.
+        { name: 'avg', agg: 'avg', field: 'duration_ms' },
       ],
     }),
     enabled: !!service,
@@ -298,7 +303,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           its viz:'line' descriptor through the compact MetricPanel doorway. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={[
+          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+            legendStorageKey="ov-response-time"
+            defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
+            lines={[
+            { series: lat?.avg ?? [], color: 'var(--teal)', label: 'avg' },
             { series: lat?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
             { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
             { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },

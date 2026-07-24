@@ -256,7 +256,9 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }:
     <div ref={ref}>
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
-        : <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />}
+        // Madde 4 sweep — cfg.unit eksene/tooltip'e iner (promql paneli
+        // pariteli; yokluğu = eski birimsiz davranış).
+        : <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />}
     </div>
   );
 }
@@ -396,7 +398,9 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
         : viz === 'line'
-          ? <MultiLineChart series={series} height={280} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />
+          // Madde 4 sweep — cfg.unit MLC'ye iner. DashboardViz (SVG bar/
+          // area) kapsam DIŞI bırakıldı (madde 13 notu — ayrı SVG motoru).
+          ? <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />
           : <DashboardViz series={series} viz={viz} height={280} />}
     </div>
   );

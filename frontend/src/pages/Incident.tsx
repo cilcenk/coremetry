@@ -55,17 +55,25 @@ function Inner() {
     const to = incQ.data?.resolvedAt ?? Date.now() * 1_000_000;
     return { from, to };
   }, [incQ.data?.startedAt, incQ.data?.resolvedAt, incQ.data?.id]);
+  // Madde 4 sweep — impact grafiğinde drag-zoom: incident penceresini yerel
+  // olarak daraltır (bu sayfada global range yok; pencere incident'tan
+  // türetilir). Zoom effWin'i değiştirir → impact + deploy sorguları dar
+  // pencereyle yeniden çözülür; çift-tık tam incident penceresine döner;
+  // incident değişince pencere sıfırlanır.
+  const [zoomWin, setZoomWin] = useState<{ from: number; to: number } | null>(null);
+  useEffect(() => { setZoomWin(null); }, [id]);
+  const effWin = zoomWin ?? win;
   const impactMq = useMemo(() => metricQuery({
     source: 'spanmetrics', metric: 'calls_total', agg: 'error_rate', unit: '%',
     filters: { 'service.name': svc },
   }), [svc]);
   const impactQ = useQuery({
-    queryKey: ['incident-impact', svc, win.from, win.to],
-    queryFn: () => api.resolveMetric(impactMq, { from: win.from, to: win.to }),
-    enabled: !!svc && win.from > 0,
+    queryKey: ['incident-impact', svc, effWin.from, effWin.to],
+    queryFn: () => api.resolveMetric(impactMq, { from: effWin.from, to: effWin.to }),
+    enabled: !!svc && effWin.from > 0,
     staleTime: 30_000,
   });
-  const deploysQ = useServiceDeploys(svc, win.from, win.to);
+  const deploysQ = useServiceDeploys(svc, effWin.from, effWin.to);
 
   const refresh = () => {
     qc.invalidateQueries({ queryKey: keys.incidents.one(id) });
@@ -97,7 +105,7 @@ function Inner() {
   const impactTimes = impactSeries.map(p => p.time / 1e9);
   const impactData = impactSeries.map(p => p.value);
   const deploy = (() => {
-    const ds = (deploysQ.data ?? []).filter(d => d.timeUnixNs >= win.from && d.timeUnixNs <= win.to);
+    const ds = (deploysQ.data ?? []).filter(d => d.timeUnixNs >= effWin.from && d.timeUnixNs <= effWin.to);
     if (!ds.length) return null;
     const latest = ds.reduce((a, b) => (b.timeUnixNs > a.timeUnixNs ? b : a));
     return { sec: latest.timeUnixNs / 1e9, label: latest.version };
@@ -182,13 +190,27 @@ function Inner() {
                 <div className="ov-card-h"><h3>Impact</h3><span className="ov-sub">{svc} · error rate</span></div>
                 <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
                   {impactTimes.length < 2 ? (
-                    <div style={{ height: 110, display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 12 }}>
-                      {impactQ.isLoading ? 'Loading…' : 'No data in this window'}
+                    // v0.9.206 review-fix: this branch unmounts the chart — and
+                    // with it the dblclick onZoomReset target — so a zoom that
+                    // resolved to an empty/1-point slice needs a visible way out.
+                    <div style={{ height: 110, display: 'grid', placeItems: 'center', alignContent: 'center', gap: 8, color: 'var(--text3)', fontSize: 12 }}>
+                      <span>{impactQ.isLoading ? 'Loading…' : 'No data in this window'}</span>
+                      {zoomWin != null && !impactQ.isLoading && (
+                        <Button variant="ghost" size="sm" onClick={() => setZoomWin(null)}>↩ Reset zoom</Button>
+                      )}
                     </div>
                   ) : (
                     <OverviewChart times={impactTimes} height={110} mode="area" unit="%"
                       series={[{ label: 'error rate', color: 'var(--err)', data: impactData }]}
-                      deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label} />
+                      deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label}
+                      onZoom={(f, t) => {
+                        // v0.9.206 review-fix: ProblemDetail precedent (v >= 2
+                        // ? v : occAll) — ignore a brush spanning <2 of the
+                        // plotted points; it can only dead-end the chart.
+                        if (impactTimes.filter(s => s >= f && s <= t).length < 2) return;
+                        setZoomWin({ from: Math.round(f * 1e9), to: Math.round(t * 1e9) });
+                      }}
+                      onZoomReset={() => setZoomWin(null)} />
                   )}
                 </div>
               </div>

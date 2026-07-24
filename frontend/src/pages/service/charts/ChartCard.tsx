@@ -12,7 +12,7 @@ import { OverviewChart, type OvChartSeries } from './OverviewChart';
 // alignToUnion). Hizasız seriler index-kaymasıyla yanlış zamana çizilir.
 export interface ChartLine { series: SpanMetricSeries[]; color: string; label: string }
 
-export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom, onZoomReset, syncKey, xRange, thresholds, regions }: {
+export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom, onZoomReset, syncKey, xRange, thresholds, regions, legendStorageKey, defaultHidden }: {
   title: string; lines: ChartLine[]; unit: string;
   mode?: 'line' | 'area' | 'stacked'; deploy?: { sec: number; label: string } | null;
   // RED series fetch state — distinguishes loading/error from a genuinely
@@ -30,6 +30,10 @@ export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 
   // OverviewChart'a aynen iletilir (Overview failure-rate SLO eşiği).
   thresholds?: ChartThreshold[];
   regions?: ChartTimeRegion[];
+  // Grafana-parite madde 4 (legend persist + latency default'u) —
+  // OverviewChart'a aynen iletilir.
+  legendStorageKey?: string;
+  defaultHidden?: readonly string[];
 }) {
   const times = useMemo(() => {
     const base = lines.find(l => (l.series[0]?.points ?? []).length)?.series[0]?.points ?? [];
@@ -60,7 +64,8 @@ export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 
           <OverviewChart times={times} series={ovSeries} unit={unit} mode={mode}
             deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label}
             thresholds={thresholds} regions={regions}
-            onZoom={onZoom} onZoomReset={onZoomReset} syncKey={syncKey} xRange={xRange} />
+            onZoom={onZoom} onZoomReset={onZoomReset} syncKey={syncKey} xRange={xRange}
+            legendStorageKey={legendStorageKey} defaultHidden={defaultHidden} />
         )}
       </div>
     </div>

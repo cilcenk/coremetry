@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { useServiceDeploys } from '@/lib/queries';
 import { Spinner } from '@/components/Spinner';
 import { TimeSeriesPanel, type TSSeries } from '@/components/viz/TimeSeriesPanel';
 import type { FilterExpr, SpanMetricSeries } from '@/lib/types';
@@ -151,6 +152,17 @@ export function RuntimeCharts({ service, from, to, onZoom, onZoomReset }: {
   // kimliği aşağıdaki useMemo'ları boşa tetiklerdi (eslint exhaustive-deps).
   const cards = useMemo(() => (family ? FAMILY_CARDS[family] : []), [family]);
 
+  // Madde 4 sweep — deploy ▼ marker'ları runtime panellerine: "heap spike
+  // deploy'dan mı?" bir bakışta okunsun. AYNI (service, from, to) anahtarı
+  // ServiceCharts'ın useServiceDeploys'uyla RQ-dedupe olur — ek istek yok.
+  // TSP `deploys` bare unix-ns bekler; memo, taze dizi kimliğinin rebuild
+  // tetiklemesini önler.
+  const deploysQ = useServiceDeploys(service, from, to);
+  const deployNs = useMemo(() => {
+    const d = deploysQ.data;
+    return d && d.length ? d.map(x => x.timeUnixNs) : undefined;
+  }, [deploysQ.data]);
+
   // Kart başına değil ÇİZGİ başına sorgu (metrik+filtre+groupBy farklı).
   const specs = useMemo(
     () => cards.flatMap(c => c.lines.map(l => ({ card: c, line: l }))),
@@ -278,6 +290,7 @@ export function RuntimeCharts({ service, from, to, onZoom, onZoomReset }: {
                   height={240}
                   mode={card.mode ?? 'area'}
                   syncKey={`runtime:${service}`}
+                  deploys={deployNs}
                   onZoom={onZoom}
                   onZoomReset={onZoomReset}
                   smooth

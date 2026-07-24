@@ -14,6 +14,8 @@ import { timeRangeToNs } from '@/lib/utils';
 import { stepForWidth } from '@/lib/chartStep';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { isResolverEligible, serviceRedDescriptors } from '@/lib/resolverEligibility';
+import { metricQuery } from '@/lib/metricQuery';
+import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import type { Problem, SpanMetricSeries, TimeRange } from '@/lib/types';
@@ -90,6 +92,16 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
     () => serviceRedDescriptors(service, opScope || undefined),
     [service, opScope]);
   const { rps: rpsMq, err: errMq, p99: p99Mq } = red;
+  // Madde 4 sweep (operatör onayı) — scoped duration-band paneline avg
+  // çizgisi: band p50/p90/p95/p99 verir, avg ayrı (eligible-by-construction)
+  // descriptor'la gelir ve 'avg' etiketiyle aynı panele biner. By-op modda
+  // (etiketler operasyon adları) avg anlamsız → null.
+  const avgMq = useMemo(
+    () => opScope ? metricQuery({
+      metric: 'duration_milliseconds_bucket', agg: 'avg', unit: 'ms',
+      filters: { 'service.name': service, name: opScope }, groupBy: [],
+    }) : null,
+    [service, opScope]);
 
   const [rpsSeries, setRpsSeries] = useState<SpanMetricSeries[] | null>(null);
   const [errSeries, setErrSeries] = useState<SpanMetricSeries[] | null>(null);
@@ -155,10 +167,15 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
     (fromNs: number, toNs: number): Promise<{
       rate: SpanMetricSeries[]; error_rate: SpanMetricSeries[]; p99: SpanMetricSeries[];
     }> => {
+      // Madde 4 sweep — scoped modda avg serisi 'avg' etiketiyle latency
+      // slot'una eklenir (band'ın p50/p90/p95/p99 çizgilerinin yanına).
+      const tagAvg = (s: SpanMetricSeries[]): SpanMetricSeries[] =>
+        s.map(x => ({ ...x, groupKey: ['avg'] }));
       const viaLegacy = () => {
         // Operation scope rides the DSL too; the 5m fallback has no
         // band (its tdigest is 3-quantile), so the latency slot stays
-        // a single p99 line there — honest degradation, never blank.
+        // a single p99 line there (+ avg, madde 4) — honest degradation,
+        // never blank.
         let dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
         if (opScope) dsl += ` AND name = "${opScope.replace(/"/g, '\\"')}"`;
         // Batch — one CH pass for rate + error_rate + p99 over the same
@@ -170,26 +187,31 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
             { name: 'rate',       agg: 'rate' },
             { name: 'error_rate', agg: 'error_rate' },
             { name: 'p99',        agg: 'p99', field: 'duration_ms' },
+            ...(opScope ? [{ name: 'avg', agg: 'avg', field: 'duration_ms' }] : []),
           ],
         }).then(res => ({
-          rate: res.rate ?? [], error_rate: res.error_rate ?? [], p99: res.p99 ?? [],
+          rate: res.rate ?? [], error_rate: res.error_rate ?? [],
+          p99: [...tagAvg(res.avg ?? []), ...(res.p99 ?? [])],
         }));
       };
-      const eligible = isResolverEligible(rpsMq) && isResolverEligible(errMq) && isResolverEligible(p99Mq);
+      const eligible = isResolverEligible(rpsMq) && isResolverEligible(errMq) && isResolverEligible(p99Mq)
+        && (!avgMq || isResolverEligible(avgMq));
       if (!eligible) return viaLegacy();
       const r = { from: fromNs, to: toNs };
       return Promise.all([
         api.resolveMetric(rpsMq, r, { step: effStep }),
         api.resolveMetric(errMq, r, { step: effStep }),
         api.resolveMetric(p99Mq, r, { step: effStep }),
-      ]).then(([rps, err, p99]) => ({
+        avgMq ? api.resolveMetric(avgMq, r, { step: effStep }) : Promise.resolve(null),
+      ]).then(([rps, err, p99, avg]) => ({
         // .series is byte-identical to the spanMetric shape (D5 contract) —
         // MultiLineChart consumes it unchanged. null result = genuinely no
         // data (not an error) → empty, matching the legacy path.
-        rate: rps?.series ?? [], error_rate: err?.series ?? [], p99: p99?.series ?? [],
+        rate: rps?.series ?? [], error_rate: err?.series ?? [],
+        p99: [...tagAvg(avg?.series ?? []), ...(p99?.series ?? [])],
       })).catch(() => viaLegacy());
     },
-    [service, opScope, rpsMq, errMq, p99Mq, effStep],
+    [service, opScope, rpsMq, errMq, p99Mq, avgMq, effStep],
   );
 
   useEffect(() => {
@@ -516,12 +538,22 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
         <ChartCard title={durTitle}>
           <MetricPanel compact menuOnly title={durTitle} metricQuery={p99Mq}>
             <div style={{ position: 'relative' }}>
+              {/* Madde 4 sweep — scoped band panelinde operatör default'u:
+                  avg+p50+p95 açık, p99 GİZLİ (SLO latency threshold'u p99'a
+                  bağlıysa p99 açık kalır); kullanıcı lejant seçimi
+                  localStorage'da kalıcı ve default'u ezer. By-op modda
+                  (etiketler operasyon adları) devre dışı. */}
               <MultiLineChart xRange={xRangeSec} series={p99Series ?? []} unit="ms"
                               height={180}
                               deploys={deployMarkers}
                               thresholds={latencyThresholds}
                               regions={problemRegions}
                               syncKey={syncKey}
+                              legendStorageKey={opScope ? 'svc-duration-band' : undefined}
+                              defaultHidden={opScope
+                                ? defaultLatencyHidden(['avg', 'p50', 'p90', 'p95', 'p99'],
+                                    { keepP99: !!latencyThresholds })
+                                : undefined}
                               compareSeries={p99Prev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
                               compareLabel={compareLabel}

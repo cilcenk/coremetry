@@ -1,8 +1,10 @@
-import { Suspense, useMemo } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
+import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { timeRangeToNs, fmtBytes } from '@/lib/utils';
 import { Topbar } from '@/components/Topbar';
 import { Card } from '@/components/ui';
@@ -60,6 +62,32 @@ function PodDetail() {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const xRange = useMemo(() => ({ from: from / 1e9, to: to / 1e9 }), [from, to]);
 
+  // Madde 4 sweep — drag-zoom GERİ-YIĞINI (Service.tsx v0.9.199 deseninin
+  // birebiri): zoom öncesi görünüm yığına iter, çift-tık bir adım geri;
+  // out-of-band range değişimi (Topbar preset) yığını geçersizleştirir.
+  const zoomStackRef = useRef<import('@/lib/types').TimeRange[]>([]);
+  const rangeRef = useRef(range); rangeRef.current = range;
+  const zoomWroteRef = useRef(false);
+  useEffect(() => {
+    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
+    zoomStackRef.current = [];
+  }, [range.preset, range.fromMs, range.toMs]);
+  const handleZoom = useCallback((fromUnixSec: number, toUnixSec: number) => {
+    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
+    zoomWroteRef.current = true;
+    setRange({
+      preset: 'custom',
+      fromMs: Math.round(fromUnixSec * 1000),
+      toMs: Math.round(toUnixSec * 1000),
+    });
+  }, [setRange]);
+  const handleZoomReset = useCallback(() => {
+    const { stack, view } = popZoom(zoomStackRef.current);
+    zoomStackRef.current = stack;
+    if (view) { zoomWroteRef.current = true; setRange(view); return; }
+    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '1h' }); }
+  }, [setRange]);
+
   // Sunucu 6h clamp — Infra/JMX Thanos sorgularıyla aynı dürüstlük (Clusters/
   // ServiceInfraTab emsali). RED spans tarafında clamp YOK (raw-spans zaten
   // bounded + auto-sample); yalnız Thanos eksenlerine uygulanır.
@@ -113,6 +141,8 @@ function PodDetail() {
       { name: 'p99', agg: 'p99', field: 'duration_ms' },
       { name: 'p95', agg: 'p95', field: 'duration_ms' },
       { name: 'p50', agg: 'p50', field: 'duration_ms' },
+      // Madde 4 sweep — avg serisi (Overview latency batch'iyle ayna kalır).
+      { name: 'avg', agg: 'avg', field: 'duration_ms' },
     ] }),
     enabled: redEnabled, staleTime: 30_000,
   });
@@ -186,7 +216,11 @@ function PodDetail() {
               <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {service}</span>
             </h3>
             <div className="ov-grid ov-charts-3 ov-mb">
-              <ChartCard title="Response time" unit=" ms" mode="line" status={latStatus} onZoom={undefined} xRange={xRange} lines={[
+              <ChartCard title="Response time" unit=" ms" mode="line" status={latStatus} onZoom={undefined} xRange={xRange}
+                legendStorageKey="pod-response-time"
+                defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
+                lines={[
+                { series: lat?.avg ?? [], color: 'var(--teal)', label: 'avg' },
                 { series: lat?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
                 { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
                 { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
@@ -209,7 +243,10 @@ function PodDetail() {
             <h3 style={{ fontSize: 13, margin: '18px 0 8px' }}>
               Infrastructure · <span className="mono">{cluster}</span>
             </h3>
-            <ThanosTrendPanel cluster={cluster} namespace={namespace} pod={pod} row={row} fromNs={cFrom} toNs={cTo} />
+            {/* Madde 4 sweep — trend drag-zoom sayfa range'ine yazar,
+                çift-tık geri-yığını pop eder (audit §2.4 kararı güncellendi). */}
+            <ThanosTrendPanel cluster={cluster} namespace={namespace} pod={pod} row={row} fromNs={cFrom} toNs={cTo}
+              onZoom={handleZoom} onZoomReset={handleZoomReset} />
           </>
         )}
 
@@ -228,8 +265,12 @@ function PodDetail() {
                 const isJboss = m.startsWith('jboss_');
                 return (
                   <Card key={m} header={m}>
+                    {/* Madde 4 sweep — pod'un JMX panelleri ortak crosshair
+                        grubu (PodJmxInline ile aynı anahtar) + drag-zoom
+                        sayfa range'ine, çift-tık geri-yığınına. */}
                     <MultiLineChart series={namedSeriesToSeries(data, m)} height={180}
-                      unit={unit} maxSeries={isJboss ? 40 : undefined} />
+                      unit={unit} maxSeries={isJboss ? 40 : undefined}
+                      syncKey={`podjmx:${pod}`} onZoom={handleZoom} onZoomReset={handleZoomReset} />
                   </Card>
                 );
               })}

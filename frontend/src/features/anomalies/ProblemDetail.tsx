@@ -149,7 +149,21 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     queryFn: () => api.exceptionGroupOccurrences(group.fingerprint),
     staleTime: 30_000,
   });
-  const occ = occQ.data ?? [];
+  const occAll = occQ.data ?? [];
+  // Madde 4 sweep — histogram üstünde drag-brush = YEREL zoom penceresi
+  // (M3 regions'ın devamı). Occurrences ucu range parametresi almaz (grubun
+  // tüm penceresi tek fetch'te gelir) → sayfa range'i yok; zoom, gelen
+  // bucket'ların istemci tarafında pencereye kırpılmasıdır. Çift-tık tam
+  // aralığa döner; grup değişince pencere sıfırlanır. 2'den az bucket
+  // bırakan aşırı dar brush yok sayılır (chart ≥2 x-noktası ister).
+  const [zoomMs, setZoomMs] = useState<{ from: number; to: number } | null>(null);
+  useEffect(() => { setZoomMs(null); }, [group.fingerprint]);
+  const occ = useMemo(() => {
+    if (!zoomMs) return occAll;
+    const f = zoomMs.from * 1e6, t = zoomMs.to * 1e6; // ms → ns
+    const v = occAll.filter(p => p.time >= f && p.time <= t);
+    return v.length >= 2 ? v : occAll;
+  }, [occAll, zoomMs]);
   // Memoize the TimeChart inputs on occQ.data: the effect deps include
   // times/series, so per-render arrays would tear down and rebuild the
   // uPlot on EVERY state change (e.g. the Copy button's `copied` flip) —
@@ -261,7 +275,9 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
               {occQ.isLoading ? 'Loading…' : 'No occurrences to chart.'}
             </div>
           ) : (
-            <TimeChart times={occTimes} series={occSeries} height={110} regions={probRegions} />
+            <TimeChart times={occTimes} series={occSeries} height={110} regions={probRegions}
+              onBrush={(fromMs, toMs) => setZoomMs({ from: fromMs, to: toMs })}
+              onZoomReset={() => setZoomMs(null)} />
           )}
         </div>
       </div>

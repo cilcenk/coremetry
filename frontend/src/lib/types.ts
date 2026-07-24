@@ -1461,13 +1461,15 @@ export interface OperationSummary {
   p95DurationMs: number;
   p99DurationMs: number;
   apdex: number;
-  // Fixed-length call-rate buckets over the same window as the
-  // aggregate (chstore.SparklineBuckets = 30). Rendered inline in
+  // Call-rate buckets over the same window as the aggregate — up to
+  // chstore.SparklineBuckets (120) slots; the MV-grain floor makes
+  // short windows ship fewer, real slots, so derive the axis from
+  // array length (M4 granular sparklines). Rendered inline in
   // the table as a small SVG so the operator can spot a slow-burn
   // vs. spike pattern without leaving the page.
   sparkline?: number[];
   // v0.5.392 — companion error + p99 sparklines on the same
-  // 30-bucket grid. Drives the per-row metric drill-in modal on
+  // bucket grid. Drives the per-row metric drill-in modal on
   // the service detail page; both are optional (older backends
   // / raw-spans path may omit them).
   errorsSparkline?: number[];
@@ -1933,6 +1935,10 @@ export interface WatcherSummaryEntry {
   lastFire: number;   // unix ns of the newest fire; 0 = never fired
   fires24h: number;   // problems opened in the trailing 24h
   openNow: boolean;   // an open/acknowledged problem exists right now
+  // M4 granular sparklines — the same trailing-24h fires split into 24
+  // one-hour slots, oldest→newest (slot 23 = the last hour). Absent
+  // for rules that never fired; the list cell degrades to the count.
+  firesHourly?: number[];
   // Structural can't-run reason recomputed from the stored definition
   // for DISABLED rules (script condition, no executable search, …).
   // Absent for enabled rules and for hand-disabled runnable watches.
@@ -2323,6 +2329,11 @@ export interface MetricPanelConfig {
   // saved before v0.8.248 have no step field and decode straight to auto.
   step?: number;
   filters?: string;        // JSON FilterExpr[]
+  // Madde 4 sweep — y-ekseni/tooltip birimi ("ms", "%", "rps", "bytes"…).
+  // PanelRenderer MultiLineChart'a geçirir (eskiden yalnız promql panelinde
+  // vardı); Metrics builder'ın "Add to dashboard"u metriğin katalog
+  // birimiyle doldurur. Yokluğu = birimsiz (eski davranış).
+  unit?: string;
 }
 export interface SpanMetricPanelConfig {
   agg: string;             // count | error_rate | p95 | …
@@ -2331,6 +2342,8 @@ export interface SpanMetricPanelConfig {
   dsl?: string;            // multi-line DSL (AND-joined)
   filters?: string;        // JSON FilterExpr[]
   step?: number;           // bucket seconds; absent/0 = width-aware auto (see MetricPanelConfig.step)
+  // Madde 4 sweep — y-ekseni/tooltip birimi (MetricPanelConfig.unit ikizi).
+  unit?: string;
   // Visualization shape. Grafana-style: 'line' is the default,
   // 'bar' / 'stacked-bar' for discrete buckets (good for counts
   // per period), 'area' / 'stacked-area' for cumulative-style
@@ -2709,10 +2722,11 @@ export interface SpanMetricServiceRow {
   // count/sum/max).
   p50Ms?: number;
   p99Ms?: number;
-  // 30-bucket call-rate sparkline across the window. Used by
-  // the Span Metrics table to render an inline mini-chart per
-  // row so the operator sees the shape of traffic without
-  // opening the full /metrics chart.
+  // Call-rate sparkline across the window (variable length —
+  // derive the axis from the array). Used by the Span Metrics
+  // table to render an inline mini-chart per row so the operator
+  // sees the shape of traffic without opening the full /metrics
+  // chart.
   sparkline?: number[];
   callsMetric?: string;
   durationMetric?: string;

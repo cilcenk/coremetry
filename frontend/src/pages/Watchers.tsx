@@ -4,7 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button, Drawer, DrawerSection } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
-import { useAlertRules, useWatchersSummary, useWatcherHistory } from '@/lib/queries';
+import { useAlertRules, useWatchersSummary, useWatcherHistory, useEnableAlertRule, useDisableAlertRule, useUpdateAlertRule } from '@/lib/queries';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { AlertRule, WatcherSummaryEntry } from '@/lib/types';
@@ -61,6 +61,10 @@ function watchIndices(watcherJson?: string): string {
 export default function WatchersPage() {
   const { user } = useAuth();
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
+  // v0.9.197 — satırdan hızlı enable/disable (300 watcher'da Alerts'e
+  // gidip gelmemek için). Mutation'lar rules query'sini invalidate eder.
+  const enableRule = useEnableAlertRule();
+  const disableRule = useDisableAlertRule();
   const [showImport, setShowImport] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
   const selectedId = searchParams.get('watcher');
@@ -171,6 +175,16 @@ export default function WatchersPage() {
                         ? <span className="badge b-ok">ON</span>
                         : <span className="badge b-gray"
                             title={r.disabledReason || 'Disabled by operator'}>OFF</span>}
+                      {canEdit && (
+                        <Button variant="secondary" size="sm"
+                          style={{ marginLeft: 6 }}
+                          onClick={e => {
+                            e.stopPropagation(); // satır tıklaması drawer açmasın
+                            (r.enabled ? disableRule : enableRule).mutate(r.id);
+                          }}>
+                          {r.enabled ? 'Disable' : 'Enable'}
+                        </Button>
+                      )}
                     </td>
                     <td style={{ fontSize: 12, whiteSpace: 'nowrap' }}
                         title={r.lastFire ? tsLong(r.lastFire) : undefined}>
@@ -205,6 +219,10 @@ function WatcherHistoryDrawer({ watcher, onClose }: {
 }) {
   const historyQ = useWatcherHistory(watcher.id);
   const history = historyQ.isPending ? undefined : historyQ.isError ? null : historyQ.data;
+  // v0.9.197 — drawer-içi severity düzenleme (kanal minSeverity uyumu).
+  const { user } = useAuth();
+  const canEdit = user?.role === 'admin' || user?.role === 'editor';
+  const updateRule = useUpdateAlertRule();
 
   const timeline: WatcherTimelineEntry[] = useMemo(
     () => history ? buildWatcherTimeline(history.problems, history.notifications) : [],
@@ -263,7 +281,20 @@ function WatcherHistoryDrawer({ watcher, onClose }: {
           <span style={{ color: 'var(--text3)' }}>Index</span>
           <span className="mono">{indices || '—'}</span>
           <span style={{ color: 'var(--text3)' }}>Severity</span>
-          <span>{watcher.severity}</span>
+          <span>
+            {canEdit ? (
+              // v0.9.197 — kanal minSeverity eşleşmesi için kritik ayar:
+              // import default'u warning; kanalın minSeverity=critical ise
+              // watcher bildirimi o kanala gitmez. Değişiklik rule'a yazılır
+              // (watcherJson korunur — carry guard), evaluator hemen kullanır.
+              <select value={watcher.severity}
+                disabled={updateRule.isPending}
+                onChange={e => updateRule.mutate({ id: watcher.id, patch: { ...watcher, severity: e.target.value } })}>
+                <option value="warning">warning</option>
+                <option value="critical">critical</option>
+              </select>
+            ) : watcher.severity}
+          </span>
           <span style={{ color: 'var(--text3)' }}>Cooldown</span>
           <span>{watcher.cooldownSec ? fmtDurShort(watcher.cooldownSec) : '—'}</span>
           <span style={{ color: 'var(--text3)' }}>Status</span>
@@ -271,6 +302,19 @@ function WatcherHistoryDrawer({ watcher, onClose }: {
             {watcher.enabled
               ? <span style={{ color: 'var(--ok)' }}>● enabled</span>
               : <span style={{ color: 'var(--text2)' }}>○ disabled{watcher.disabledReason ? ` — ${watcher.disabledReason}` : ''}</span>}
+          </span>
+          <span style={{ color: 'var(--text3)' }}>Notifies</span>
+          <span>
+            {/* v0.9.197 — bu watcher'ın fire'ı ŞU AN hangi kanallara gider.
+                Boşsa görünür uyarı: severity/minSeverity uyumsuzluğu ya da
+                servis-kısıtlı kanallar service'siz problem'i dışlıyor. */}
+            {history === undefined ? '…'
+              : !history || !history.channels?.length
+                ? <span style={{ color: 'var(--warn)' }}>⚠ no matching channels — check channel minSeverity / match rules</span>
+                : history.channels.map(c => (
+                    <span key={c.name} className="badge b-info" style={{ marginRight: 4 }}
+                      title={c.kind}>{c.name}</span>
+                  ))}
           </span>
         </div>
       </DrawerSection>

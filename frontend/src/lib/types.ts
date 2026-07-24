@@ -1945,6 +1945,14 @@ export interface WatcherSummaryEntry {
 export interface WatcherHistory {
   problems: Problem[];
   notifications: NotificationLogEntry[];
+  // v0.9.197 — bu watcher'ın bir fire'ı ŞU AN hangi kanallara giderdi
+  // (enabled + minSeverity + match-rule süzgeçlerinden geçenler).
+  channels: WatcherChannelInfo[];
+}
+
+export interface WatcherChannelInfo {
+  name: string;
+  kind: string;
 }
 
 // ── Runbooks (v0.7.0) ───────────────────────────────────────────────────────

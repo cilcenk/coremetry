@@ -9,6 +9,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { CallerRow, TimeRange } from '@/lib/types';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { tracesPivotHref } from '@/lib/pivotHref';
 
 // Dynatrace-style "service consumers" / backtrace view. One row per
 // distinct (caller service × pod/instance × client IP × user-agent)
@@ -187,7 +188,11 @@ function BacktraceInner() {
                             actually show. (view=list is the default tab since
                             v0.7.37 but kept explicit.) */}
                         <Link
-                          to={`/traces?services=${encodeURIComponent(r.callerService)},${encodeURIComponent(svc)}&view=list&rootOnly=false`}
+                          to={tracesPivotHref({
+                            window: range,
+                            services: [r.callerService, svc],
+                            view: 'list',
+                          })}
                           title={`Traces where ${r.callerService} called ${svc}`}
                           style={{
                             fontSize: 11, padding: '3px 10px',

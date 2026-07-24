@@ -6,6 +6,7 @@ import { CopilotExplain } from '@/components/CopilotExplain';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { fmtNum, tsLong } from '@/lib/utils';
+import { tracesPivotHref } from '@/lib/pivotHref';
 import type { AnomalyEvent } from '@/lib/types';
 
 // AnomalyDetailDrawer — v0.8.267, operator-requested: "Anomalies
@@ -85,6 +86,17 @@ export function AnomalyDetailDrawer({ event, onClose }: {
     p.set('range', `custom:${Math.round(chartRange.from / 1e6)}-${Math.round(chartRange.to / 1e6)}`);
     return `/logs?${p.toString()}`;
   }, [event.service, chartRange]);
+
+  // v0.9.213 — the error-traces pivot used to carry only the service, so
+  // /traces opened on the operator's sticky range (useUrlRange) instead of
+  // the spike. On an anomaly older than that range the list came back EMPTY,
+  // which reads as "no error traces" rather than "wrong window". Same spike
+  // bounds as logsHref above.
+  const tracesHref = useMemo(() => tracesPivotHref({
+    window: { fromNs: chartRange.from, toNs: chartRange.to },
+    service: event.service,
+    hasError: true,
+  }), [event.service, chartRange]);
 
   // v0.8.499 (sadeleştirme #2, 5/5) — kabuk ui/Drawer'a taşındı:
   // overlay/Esc/✕ tek evden; başlık ve gövde (ES-cost sözleşmesi
@@ -185,10 +197,10 @@ export function AnomalyDetailDrawer({ event, onClose }: {
                 olduğundan hata izleri (çoğu non-root span) boş
                 listeleniyordu; hasError linki root filtresini kapatır. */}
             {event.kind === 'trace_op' && event.service && (
-              <Link to={`/traces?service=${encodeURIComponent(event.service)}&hasError=true&rootOnly=false`}
+              <Link to={tracesHref}
                 className="sec"
                 style={{ fontSize: 12, padding: '4px 10px', textDecoration: 'none' }}
-                title="Open error traces for this service">
+                title="Open error traces for this service, scoped to the spike window">
                 ⋮ Error traces ↗
               </Link>
             )}

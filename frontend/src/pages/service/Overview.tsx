@@ -3,7 +3,8 @@ import { useQuery } from '@tanstack/react-query';
 import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
-import { useServiceDeploys } from '@/lib/queries';
+import { useServiceDeploys, useSLOs } from '@/lib/queries';
+import type { ChartThreshold } from '@/lib/chart/overlays';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { OpsCard, DbCard } from './OverviewTables';
 import { MetricPanel } from '@/components/MetricPanel';
@@ -188,6 +189,28 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   const latStatus: 'loading' | 'error' | 'ready' =
     latencyQ.isLoading ? 'loading' : latencyQ.isError ? 'error' : 'ready';
 
+  // Grafana-parite M3 — failure-rate paneline SLO hata-bütçesi eşiği.
+  // ServiceCharts'ın error-rate threshold KAYNAĞININ aynısı (useSLOs →
+  // availability SLO → (1-target)·100), OverviewChart'ın yeni thresholds
+  // prop'uyla çizilir; alert eşiğiyle grafik arasında görsel bağ kurulur.
+  // useSLOs RQ-dedupe'lu — Performance sekmesindeki ServiceCharts ile aynı
+  // sorguyu paylaşır, ek yük yok.
+  const slosQ = useSLOs();
+  const failureThresholds = useMemo<ChartThreshold[] | undefined>(() => {
+    const t: ChartThreshold[] = [];
+    for (const slo of slosQ.data ?? []) {
+      if (slo.service !== service || slo.sliType !== 'availability') continue;
+      const errBudgetPct = (1 - slo.target) * 100;
+      const opSuffix = slo.operation ? ` (${slo.operation})` : '';
+      t.push({
+        value: errBudgetPct,
+        label: `err ≤ ${errBudgetPct.toFixed(2)}%${opSuffix}`,
+        color: 'var(--err)',
+      });
+    }
+    return t.length > 0 ? t : undefined;
+  }, [slosQ.data, service]);
+
   const deploysQ = useServiceDeploys(service, from, to);
   // The single deploy marker drawn on the charts = the latest deploy inside
   // the window (the design shows one ▼ flag).
@@ -285,7 +308,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={throughputBands} />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
-          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={[
+          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+            thresholds={failureThresholds} lines={[
             { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
           ]} />
         </MetricPanel>

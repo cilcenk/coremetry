@@ -11,6 +11,7 @@ import { RootCausePanel } from '@/components/RootCausePanel';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { IconSparkles } from '@/components/icons';
 import { TimeChart } from '@/components/charts/TimeChart';
+import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import { statusColor } from '@/lib/statusColor';
 import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
@@ -159,6 +160,25 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     key: 'occ', label: 'occurrences', data: occ.map(p => p.count),
     color: statusColor('warn'), type: 'bar' as const,
   }], [occ]);
+  // Grafana-parite M3 — problemin penceresi (firstSeen → resolvedAt | grafik
+  // sonu) histograma x-bölgesi olarak biner: kırmızı gölge + üst şerit +
+  // durum etiketi (mockup "P1 problem penceresi" dili). Çözülmüş grupta bölge
+  // resolvedAt'te BİTER — kuyruktaki temiz kesim "burada çözüldü" okunur.
+  // Açık grupta uç, grafiğin son bucket'ına sabit ('now' imza churn'ü yok);
+  // memo'lu — Copy/state re-render'ı TimeChart rebuild'i tetiklemez.
+  const probRegions = useMemo<ChartTimeRegion[] | undefined>(() => {
+    if (occTimes.length === 0) return undefined;
+    const endSec = group.resolvedAt
+      ? group.resolvedAt / 1e9
+      : occTimes[occTimes.length - 1];
+    const r: ChartTimeRegion = {
+      fromSec: group.firstSeen / 1e9,
+      toSec: endSec,
+      color: 'var(--err)',
+      label: STATE_LABEL[state] ?? 'OPEN',
+    };
+    return r.toSec > r.fromSec ? [r] : undefined;
+  }, [occTimes, group.firstSeen, group.resolvedAt, state]);
 
   // Representative stack = the first sample that carries one.
   const stack = samples.find(s => s.stacktrace)?.stacktrace ?? '';
@@ -241,7 +261,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
               {occQ.isLoading ? 'Loading…' : 'No occurrences to chart.'}
             </div>
           ) : (
-            <TimeChart times={occTimes} series={occSeries} height={110} />
+            <TimeChart times={occTimes} series={occSeries} height={110} regions={probRegions} />
           )}
         </div>
       </div>

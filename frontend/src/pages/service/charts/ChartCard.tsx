@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Spinner } from '@/components/Spinner';
 import type { SpanMetricSeries } from '@/lib/types';
+import type { ChartThreshold, ChartTimeRegion } from '@/lib/chart/overlays';
 import { OverviewChart, type OvChartSeries } from './OverviewChart';
 
 // ChartCard (v0.9.87'de Overview.tsx'ten çıkarıldı — Runtime paneli de
@@ -11,7 +12,7 @@ import { OverviewChart, type OvChartSeries } from './OverviewChart';
 // alignToUnion). Hizasız seriler index-kaymasıyla yanlış zamana çizilir.
 export interface ChartLine { series: SpanMetricSeries[]; color: string; label: string }
 
-export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom, onZoomReset, syncKey, xRange }: {
+export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom, onZoomReset, syncKey, xRange, thresholds, regions }: {
   title: string; lines: ChartLine[]; unit: string;
   mode?: 'line' | 'area' | 'stacked'; deploy?: { sec: number; label: string } | null;
   // RED series fetch state — distinguishes loading/error from a genuinely
@@ -25,6 +26,10 @@ export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 
   syncKey?: string;
   // v0.9.83 — sorgu penceresi (unix sec): x-ekseni pencereye sabitlenir.
   xRange?: { from: number; to: number } | null;
+  // Grafana-parite M3 — eşik çizgileri + problem/anomali x-bölgeleri;
+  // OverviewChart'a aynen iletilir (Overview failure-rate SLO eşiği).
+  thresholds?: ChartThreshold[];
+  regions?: ChartTimeRegion[];
 }) {
   const times = useMemo(() => {
     const base = lines.find(l => (l.series[0]?.points ?? []).length)?.series[0]?.points ?? [];
@@ -54,6 +59,7 @@ export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 
         ) : (
           <OverviewChart times={times} series={ovSeries} unit={unit} mode={mode}
             deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label}
+            thresholds={thresholds} regions={regions}
             onZoom={onZoom} onZoomReset={onZoomReset} syncKey={syncKey} xRange={xRange} />
         )}
       </div>

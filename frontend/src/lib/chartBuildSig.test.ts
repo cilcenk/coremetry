@@ -304,3 +304,66 @@ describe('timeSeriesPanelBuildSignature — structure/option change forces a reb
     expect(timeSeriesPanelBuildSignature(input)).not.toBe(timeSeriesPanelBuildSignature(tspBase));
   });
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Grafana-parite M3 — x-bölgeleri (problem/anomali pencereleri) her dört
+// imzada + renk-tabanlı thresholds TC/OVC'de. Draw hook'lar/plugin'ler bölge
+// ve eşik DİZİLERİNİ build anında closure'lar; kontrat: aynı-değerli taze
+// dizi (30s poll) imzayı OYNATMAZ (fast-path), değer değişimi (yeni problem
+// penceresi / eşik) imzayı OYNATIR (rebuild → taze closure).
+describe('Grafana-parite M3 — regions + colour-thresholds in the signatures', () => {
+  const region = { fromSec: 1_700_000_000, toSec: 1_700_003_600, color: 'var(--err)', label: 'P1' };
+  const cth = { value: 1.5, label: 'err ≤ 1.50%', color: 'var(--err)' };
+
+  it('MLC: fresh regions array, same values → identical signature', () => {
+    expect(chartBuildSignature({ ...base, regions: [{ ...region }] }))
+      .toBe(chartBuildSignature({ ...base, regions: [{ ...region }] }));
+  });
+  it('MLC: undefined vs empty regions normalise equal', () => {
+    expect(chartBuildSignature({ ...base, regions: undefined }))
+      .toBe(chartBuildSignature({ ...base, regions: [] }));
+  });
+  it('MLC: region window changed → different signature', () => {
+    expect(chartBuildSignature({ ...base, regions: [{ ...region, toSec: 1_700_007_200 }] }))
+      .not.toBe(chartBuildSignature({ ...base, regions: [{ ...region }] }));
+  });
+  it('MLC: region appears (none→some) → different signature', () => {
+    expect(chartBuildSignature({ ...base, regions: [region] }))
+      .not.toBe(chartBuildSignature(base));
+  });
+
+  it('TC: fresh thresholds/regions, same values → identical signature', () => {
+    expect(timeChartBuildSignature({ ...tcBase, thresholds: [{ ...cth }], regions: [{ ...region }] }))
+      .toBe(timeChartBuildSignature({ ...tcBase, thresholds: [{ ...cth }], regions: [{ ...region }] }));
+  });
+  it('TC: threshold value changed → different signature', () => {
+    expect(timeChartBuildSignature({ ...tcBase, thresholds: [{ ...cth, value: 3 }] }))
+      .not.toBe(timeChartBuildSignature({ ...tcBase, thresholds: [cth] }));
+  });
+  it('TC: region label changed → different signature', () => {
+    expect(timeChartBuildSignature({ ...tcBase, regions: [{ ...region, label: 'OPEN' }] }))
+      .not.toBe(timeChartBuildSignature({ ...tcBase, regions: [region] }));
+  });
+
+  it('OVC: fresh thresholds/regions, same values → identical signature', () => {
+    expect(overviewChartBuildSignature({ ...ovBase, thresholds: [{ ...cth }], regions: [{ ...region }] }))
+      .toBe(overviewChartBuildSignature({ ...ovBase, thresholds: [{ ...cth }], regions: [{ ...region }] }));
+  });
+  it('OVC: threshold appears (none→some) → different signature', () => {
+    expect(overviewChartBuildSignature({ ...ovBase, thresholds: [cth] }))
+      .not.toBe(overviewChartBuildSignature(ovBase));
+  });
+  it('OVC: region colour changed → different signature', () => {
+    expect(overviewChartBuildSignature({ ...ovBase, regions: [{ ...region, color: 'var(--warn)' }] }))
+      .not.toBe(overviewChartBuildSignature({ ...ovBase, regions: [region] }));
+  });
+
+  it('TSP: fresh regions, same values → identical signature', () => {
+    expect(timeSeriesPanelBuildSignature({ ...tspBase, regions: [{ ...region }] }))
+      .toBe(timeSeriesPanelBuildSignature({ ...tspBase, regions: [{ ...region }] }));
+  });
+  it('TSP: region window changed → different signature', () => {
+    expect(timeSeriesPanelBuildSignature({ ...tspBase, regions: [{ ...region, fromSec: 1 }] }))
+      .not.toBe(timeSeriesPanelBuildSignature({ ...tspBase, regions: [region] }));
+  });
+});

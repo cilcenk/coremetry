@@ -39,6 +39,30 @@ export interface ChartSigThreshold {
   severity?: 'warn' | 'err';
 }
 
+// Grafana-parite M3 — problem/anomali x-bölgesi (lib/chart/overlays.ts
+// ChartTimeRegion). Draw hook'lar build anında kablolanır ve bölge DİZİSİNİ
+// closure'larlar; değer değişimi (yeni problem penceresi) rebuild ister.
+// Deploys/thresholds gibi DEĞERE göre digest edilir — her render'da taze ama
+// aynı-değerli dizi geçiren çağıran fast-path'i bozmaz.
+export interface ChartSigRegion {
+  fromSec: number;
+  toSec: number;
+  color?: string;
+  label?: string;
+}
+const regionsDigest = (rs?: ChartSigRegion[]) =>
+  (rs ?? []).map(r => [r.fromSec, r.toSec, r.color ?? '', r.label ?? '']);
+
+// Grafana-parite M3 — OVC/TC'nin yeni renk-tabanlı threshold prop'u
+// (overlays.ts ChartThreshold; TSP zaten aynı şekli kendi imzasında taşır).
+export interface ChartSigColorThreshold {
+  value: number;
+  label?: string;
+  color?: string;
+}
+const colorThresholdsDigest = (ts?: ChartSigColorThreshold[]) =>
+  (ts ?? []).map(t => [t.value, t.label ?? '', t.color ?? '']);
+
 export interface ChartBuildSigInput {
   // Combined effective + compare series labels, in render order. Captures
   // series COUNT, NAMES, and ORDER in one field — the whole reason a poll's
@@ -58,6 +82,8 @@ export interface ChartBuildSigInput {
   compareLabel?: string;
   deploys?: ChartSigDeploy[];
   thresholds?: ChartSigThreshold[];
+  // Grafana-parite M3 — problem/anomali x-bölgeleri (değere göre digest).
+  regions?: ChartSigRegion[];
   // v0.9.100 (Adım 4) — per-label colour overrides, resolved from the caller's
   // colorOf(label) at render (null where absent / for the folded "others"
   // tail). Parallel to `labels`; a label change already moves the signature, so
@@ -82,6 +108,7 @@ export function chartBuildSignature(p: ChartBuildSigInput): string {
     (p.deploys ?? []).map(d => [d.timeUnixNs, d.label, d.description ?? '']),
     (p.thresholds ?? []).map(t => [t.value, t.label ?? '', t.severity ?? 'warn']),
     p.colorOverrides ?? [],
+    regionsDigest(p.regions),
   ]);
 }
 
@@ -120,6 +147,10 @@ export interface TimeChartSigInput {
   hasFmtRight: boolean;
   hasFmtX: boolean;
   renderable: boolean;
+  // Grafana-parite M3 — threshold çizgileri + problem/anomali x-bölgeleri.
+  // Overlay plugin build anında dizileri closure'lar; değer değişimi rebuild.
+  thresholds?: ChartSigColorThreshold[];
+  regions?: ChartSigRegion[];
 }
 export function timeChartBuildSignature(p: TimeChartSigInput): string {
   return JSON.stringify([
@@ -131,6 +162,8 @@ export function timeChartBuildSignature(p: TimeChartSigInput): string {
     p.syncKey ?? '',
     p.hasBrush, p.hasFmtLeft, p.hasFmtRight, p.hasFmtX,
     p.renderable,
+    colorThresholdsDigest(p.thresholds),
+    regionsDigest(p.regions),
   ]);
 }
 
@@ -157,6 +190,9 @@ export interface OverviewChartSigInput {
   // Grafana-parite M1 — cursor.sync build anında kablolanır (MLC/TC/TSP
   // emsali): key değişimi/gelişi rebuild ister.
   syncKey?: string;
+  // Grafana-parite M3 — threshold çizgileri + problem/anomali x-bölgeleri.
+  thresholds?: ChartSigColorThreshold[];
+  regions?: ChartSigRegion[];
 }
 export function overviewChartBuildSignature(p: OverviewChartSigInput): string {
   return JSON.stringify([
@@ -169,6 +205,8 @@ export function overviewChartBuildSignature(p: OverviewChartSigInput): string {
     p.renderable,
     !!p.hasZoom,
     p.syncKey ?? '',
+    colorThresholdsDigest(p.thresholds),
+    regionsDigest(p.regions),
   ]);
 }
 
@@ -204,6 +242,9 @@ export interface TSPBuildSigInput {
   deploys?: number[];
   events?: { timeUnixNs: number; kind: string; label?: string }[];
   thresholds?: { value: number; label?: string; color?: string }[];
+  // Grafana-parite M3 — problem/anomali x-bölgeleri (draw hook kaydı +
+  // closure'ı build anında; değer değişimi rebuild ister).
+  regions?: ChartSigRegion[];
   hasExemplars: boolean;
   pointsTier: number;
   renderable: boolean;
@@ -222,5 +263,6 @@ export function timeSeriesPanelBuildSignature(p: TSPBuildSigInput): string {
     p.hasExemplars,
     p.pointsTier,
     p.renderable,
+    regionsDigest(p.regions),
   ]);
 }

@@ -15,6 +15,7 @@ import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
 import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
+import { drawThresholds, drawTimeRegions, type ChartThreshold, type ChartTimeRegion } from '@/lib/chart/overlays';
 import { placeTooltip } from '@/lib/chartTooltip';
 
 // TimeChart (v0.8.91) — the ONE time-series primitive. Per-series type
@@ -53,6 +54,14 @@ interface Props {
   leftUnit?: string;
   rightUnit?: string;
   deployMarkers?: number[];         // unix seconds → dashed red vlines
+  // Grafana-parite M3 — yatay eşik çizgileri (kesikli çizgi + ihlal bandı +
+  // etiket; lib/chart/overlays.ts, TSP/MLC ile aynı görsel dil). Sol ('y')
+  // eksene çizilir. Renk default'u var(--warn).
+  thresholds?: ChartThreshold[];
+  // Grafana-parite M3 — problem/anomali x-bölgeleri (arka-plan gölge + üst
+  // şerit + etiket). ProblemDetail problem penceresini geçirir; valToPos
+  // canlı ölçeği okur → zoom/brush'ta doğru konum.
+  regions?: ChartTimeRegion[];
   onBrush?: (fromMs: number, toMs: number) => void;
   // Grafana-parite M1 — çift-tık: sayfa geri-yığını bir adım pop eder.
   // Verilmezse no-op (mevcut davranış; TC'nin drag'i setScale:false, yerel
@@ -75,7 +84,7 @@ interface Props {
 
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
-  deployMarkers, onBrush, onZoomReset, syncKey, fmtLeft, fmtRight, fmtX, xRange,
+  deployMarkers, thresholds, regions, onBrush, onZoomReset, syncKey, fmtLeft, fmtRight, fmtX, xRange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ttRef = useRef<HTMLDivElement>(null);
@@ -145,6 +154,9 @@ export function TimeChart({
     height, leftUnit, rightUnit, deployMarkers, syncKey,
     hasBrush: !!onBrush, hasFmtLeft: !!fmtLeft, hasFmtRight: !!fmtRight, hasFmtX: !!fmtX,
     renderable: times.length >= 2 && series.length > 0,
+    // Grafana-parite M3 — overlay plugin dizileri build anında closure'lar;
+    // değer değişimi (yeni eşik / problem penceresi) rebuild ister.
+    thresholds, regions,
   });
 
   // buildOptions — renkleri REBUILD ANINDA çöz (tema flip'te motor yeniden
@@ -157,11 +169,20 @@ export function TimeChart({
 
     const barPath = uPlot.paths.bars!({ size: [0.86, Infinity], align: 0 });
 
-    // Deploy markers — dashed red vlines under the series. Drawn in a hook so
-    // they re-paint on every redraw (incl. setData), tracking the live x-scale.
+    // Overlay plugin — regions (background-most) + threshold lines (Grafana-
+    // parite M3) + dashed red deploy vlines. Drawn in a hook so they re-paint
+    // on every redraw (incl. setData), tracking the live x/y scales.
     const deployPlugin: uPlot.Plugin = {
       hooks: {
         draw: u => {
+          if (regions?.length) drawTimeRegions(u, regions);
+          if (thresholds?.length) {
+            drawThresholds(u, thresholds.map(th => ({
+              value: th.value,
+              label: th.label,
+              color: resolveVar(th.color ?? 'var(--warn)'),
+            })));
+          }
           if (!deployMarkers?.length) return;
           const ctx = u.ctx;
           ctx.save();

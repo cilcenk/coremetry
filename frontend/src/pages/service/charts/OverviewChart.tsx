@@ -14,6 +14,7 @@ import { StatsLegend } from '@/components/chart/StatsLegend';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
 import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
+import { drawThresholds, drawTimeRegions, type ChartThreshold, type ChartTimeRegion } from '@/lib/chart/overlays';
 import { placeTooltip } from '@/lib/chartTooltip';
 
 // OverviewChart (v0.7.94) — the compact RED chart for the Service Overview.
@@ -45,6 +46,13 @@ interface Props {
   unit?: string;              // " ms", "%", " req/s" …
   deployAtSec?: number | null; // deploy time (unix sec) → dashed vline + flag
   deployLabel?: string;       // e.g. "v1.0.0"
+  // Grafana-parite M3 — yatay eşik çizgileri (kesikli çizgi + ihlal bandı +
+  // etiket; lib/chart/overlays.ts, TSP/MLC ile aynı görsel dil). Overview
+  // failure-rate paneli SLO hata bütçesini geçirir. Renk default var(--warn).
+  thresholds?: ChartThreshold[];
+  // Grafana-parite M3 — problem/anomali x-bölgeleri (arka-plan gölge + üst
+  // şerit + etiket). valToPos canlı ölçeği okur → zoom'la doğru konum.
+  regions?: ChartTimeRegion[];
   // v0.8.534 — drag-select zoom → parent range (fromSec, toSec).
   onZoom?: (fromSec: number, toSec: number) => void;
   // Grafana-parite M1 — çift-tık: sayfa geri-yığını bir adım pop eder
@@ -60,7 +68,7 @@ interface Props {
 }
 
 export function OverviewChart({
-  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', onZoom, onZoomReset, syncKey, xRange,
+  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', thresholds, regions, onZoom, onZoomReset, syncKey, xRange,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   // onZoom in a ref (v0.8.520 pattern) so the once-per-build setSelect hook
@@ -142,6 +150,9 @@ export function OverviewChart({
     renderable: times.length >= 2 && series.length > 0,
     hasZoom: !!onZoom,
     syncKey,
+    // Grafana-parite M3 — overlay plugin dizileri build anında closure'lar;
+    // değer değişimi (yeni eşik / problem penceresi) rebuild ister.
+    thresholds, regions,
   });
 
   // Repositions the DOM ▼ deploy flag (above the canvas) at the marker x.
@@ -165,11 +176,20 @@ export function OverviewChart({
     const purple = resolveVar('var(--purple)');
     const stacked = mode === 'stacked';
 
-    // Dashed-purple deploy marker, drawn under the series (re-paints on every
-    // redraw incl. setData, tracking the live x-scale).
+    // Overlay plugin — regions (background-most) + threshold lines (Grafana-
+    // parite M3) + the dashed-purple deploy marker (re-paints on every redraw
+    // incl. setData, tracking the live x/y scales).
     const deployPlugin: uPlot.Plugin = {
       hooks: {
         draw: u => {
+          if (regions?.length) drawTimeRegions(u, regions);
+          if (thresholds?.length) {
+            drawThresholds(u, thresholds.map(th => ({
+              value: th.value,
+              label: th.label,
+              color: resolveVar(th.color ?? 'var(--warn)'),
+            })));
+          }
           if (deployAtSec == null) return;
           const ctx = u.ctx;
           const x = Math.round(u.valToPos(deployAtSec, 'x', true));

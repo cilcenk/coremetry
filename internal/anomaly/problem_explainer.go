@@ -98,6 +98,14 @@ func (e *ProblemExplainer) tickIfLeader(ctx context.Context) {
 	if !e.leader.IsLeader() {
 		return
 	}
+	// v0.9.200 — kota devre-kesici: sağlayıcı 429 verdiyse bu arka-plan
+	// tüketicisi 1 saat susar; kalan/yenilenen kota operatörün interaktif
+	// çağrılarına (analiz butonu, CoSRE) kalır. Gemini free-tier'lı test
+	// ortamında "Bağlamı gör çalışıyor ama analiz 429" şikâyetinin kökü:
+	// bu işçi kotayı arka planda tüketiyordu.
+	if e.copilot.QuotaBackoffActive() {
+		return
+	}
 	e.run(ctx)
 }
 

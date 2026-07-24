@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { tsShort } from '@/lib/utils';
+import { aiErrorHint } from '@/lib/aiErrors';
 import { IconSparkles } from './icons';
 import type { ServiceAnalysisResponse } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
@@ -68,7 +69,9 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
             <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
               {/AI copilot not configured/i.test(errMsg)
                 ? 'Bir AI modeli yapılandırılmamış. Settings → AI bölümünden kendi modelinizi tanımlayın.'
-                : errMsg}
+                // v0.9.200 — sağlayıcı hataları (429/kota, timeout, ağ) ham
+                // JSON blob'u yerine dostane ipucuyla gösterilir.
+                : (aiErrorHint(errMsg) ?? errMsg)}
             </div>
             <button className="sec" onClick={() => run(false)}>Tekrar dene</button>
           </div>

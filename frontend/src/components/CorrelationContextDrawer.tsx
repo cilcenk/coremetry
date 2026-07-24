@@ -8,6 +8,7 @@ import { ServiceTimeline } from '@/components/traces/ServiceTimeline';
 import { TraceLogList, severityBuckets } from '@/components/traces/TraceLogList';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
+import { servicePivotHref } from '@/pages/explore/urlCodec';
 import type {
   PivotAnchor,
   CorrelationContext,
@@ -400,7 +401,7 @@ function MetricsLens({ ctx, onReAnchor }: { ctx: CorrelationContext; onReAnchor:
 
   const exploreHref =
     service != null
-      ? `/explore?service=${encodeURIComponent(service)}&from=${ctx.anchor.fromNs}&to=${ctx.anchor.toNs}`
+      ? servicePivotHref(service, ctx.anchor.fromNs, ctx.anchor.toNs)
       : undefined;
 
   const charts: { label: string; unit: string }[] = [

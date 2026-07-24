@@ -296,6 +296,17 @@ func (s *Server) watchersSummary(w http.ResponseWriter, r *http.Request) {
 type watcherHistoryResponse struct {
 	Problems      []chstore.Problem         `json:"problems"`
 	Notifications []chstore.NotificationLog `json:"notifications"`
+	// Channels (v0.9.197) — the notification channels a fire of THIS
+	// watcher would currently route to (enabled + minSeverity satisfied
+	// + match rules pass for a service-less problem). Drawer's
+	// "notifies →" line; answers "bildirim nereye gidiyor" without a
+	// trip to Settings.
+	Channels []watcherChannelInfo `json:"channels"`
+}
+
+type watcherChannelInfo struct {
+	Name string `json:"name"`
+	Kind string `json:"kind"`
 }
 
 // GET /api/watchers/{id}/history — one watcher's timeline. Existence
@@ -312,8 +323,8 @@ func (s *Server) watcherHistory(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	found := watcherRuleExists(rules, id)
-	if !found {
+	watcherRule := findWatcherRule(rules, id)
+	if watcherRule == nil {
 		// v0.9.196 review-fix — multi-replica taze-import yarışı: import
 		// başka pod'a düştüyse bu pod'un 30s'lik in-process rule cache'i
 		// yeni watcher'ı henüz görmez ve taze import'a 404 döner ("import
@@ -321,10 +332,10 @@ func (s *Server) watcherHistory(w http.ResponseWriter, r *http.Request) {
 		// listele; hot path cache'ten sürmeye devam eder.
 		s.store.InvalidateAlertRulesCache()
 		if fresh, ferr := s.store.ListAlertRules(r.Context()); ferr == nil {
-			found = watcherRuleExists(fresh, id)
+			watcherRule = findWatcherRule(fresh, id)
 		}
 	}
-	if !found {
+	if watcherRule == nil {
 		http.Error(w, `{"error":"watcher not found"}`, http.StatusNotFound)
 		return
 	}
@@ -348,8 +359,35 @@ func (s *Server) watcherHistory(w http.ResponseWriter, r *http.Request) {
 		if notifs == nil {
 			notifs = []chstore.NotificationLog{}
 		}
-		return watcherHistoryResponse{Problems: problems, Notifications: notifs}, nil
+		// v0.9.197 — "bildirimler nereye gider": watcher problem'i
+		// SERVICE'SİZ açılır (evaluateWatcher Service:""), dolayısıyla
+		// rule severity'sini karşılayan + servis-kısıtı bu problem'i
+		// dışlamayan enabled kanallar eşleşir. Severity düzenlemesi
+		// ≤30s cache gecikmesiyle yansır (kabul).
+		sev := watcherRule.Severity
+		if sev == "" {
+			sev = "warning"
+		}
+		channels := []watcherChannelInfo{}
+		if chans, cerr := s.store.EnabledChannelsForSeverity(ctx, sev); cerr == nil {
+			for _, c := range chans {
+				if c.MatchRules.MatchesProblem(chstore.MatchInput{Service: ""}) {
+					channels = append(channels, watcherChannelInfo{Name: c.Name, Kind: c.Type})
+				}
+			}
+		}
+		return watcherHistoryResponse{Problems: problems, Notifications: notifs, Channels: channels}, nil
 	})
+}
+
+// findWatcherRule returns the watcher rule with the given id, nil if absent.
+func findWatcherRule(rules []chstore.AlertRule, id string) *chstore.AlertRule {
+	for i := range rules {
+		if rules[i].ID == id && rules[i].Metric == "watcher" {
+			return &rules[i]
+		}
+	}
+	return nil
 }
 
 // watcherRuleExists reports whether id names a watcher rule in the list —

@@ -74,6 +74,19 @@ type Schedule struct {
 	Other    []string `json:"-"`
 }
 
+// HasTimezone — trigger.schedule bir timezone anahtarı taşıyor mu
+// (ES 8.13+; UnmarshalJSON bilinmeyen anahtarları Other'a düşürür).
+// v0.9.202: timezone'lu cron takvim yoluna ALINMAZ — UTC pacing ES'in
+// tz-aware ateşlemesinden saatlerce kayar (kanıtlı 3h drift).
+func (s *Schedule) HasTimezone() bool {
+	for _, k := range s.Other {
+		if strings.EqualFold(k, "timezone") {
+			return true
+		}
+	}
+	return false
+}
+
 // UnmarshalJSON tolerates the ES shapes: interval as string or
 // number-of-seconds, cron as string or []string, plus any other
 // schedule kind recorded by name.
@@ -373,6 +386,180 @@ var hitsTotalPaths = map[string]bool{
 	"ctx.payload.hits.total.value": true,
 }
 
+// Faz-2 (v0.9.x): compare / array_compare paths under the search
+// response's aggregations are also executable — the evaluator fetches
+// the payload via logstore.RawSearchPayload and walks the dotted path.
+const (
+	payloadPathPrefix = "ctx.payload."
+	aggPathPrefix     = "ctx.payload.aggregations."
+)
+
+func isAggPath(path string) bool {
+	return strings.HasPrefix(path, aggPathPrefix) && len(path) > len(aggPathPrefix)
+}
+
+// ── Executable condition projection (Faz-2) ─────────────────────────────────
+
+// CondKind classifies how the evaluator obtains the value it compares.
+type CondKind int
+
+const (
+	// CondAlways — no condition / always / empty compare: fires
+	// whenever the search runs (hits.total >= 0).
+	CondAlways CondKind = iota
+	// CondHitsTotal — compare on ctx.payload.hits.total(.value).
+	CondHitsTotal
+	// CondAggValue — compare on a ctx.payload.aggregations.… path.
+	CondAggValue
+	// CondArrayCompare — array_compare over an aggregations array:
+	// fires when ANY element matches (value = MAX of the matches).
+	CondArrayCompare
+)
+
+// ConditionSpec is the executable projection of the watch condition.
+// Path/ArrayPath come back PAYLOAD-RELATIVE (the "ctx.payload."
+// prefix stripped) so the evaluator can walk the RawSearchPayload
+// result — {"hits":{"total":{"value":N}},"aggregations":{…}} —
+// directly. Comparator is in the evaluator's set (> >= < <=).
+type ConditionSpec struct {
+	Kind       CondKind
+	Path       string // CondAggValue: dotted payload path
+	ArrayPath  string // CondArrayCompare: path to the array
+	ItemPath   string // CondArrayCompare: per-element path ("" = the element itself)
+	Comparator string
+	Threshold  float64
+}
+
+// ConditionSpec projects the condition onto the executable subset.
+// ok=false means the condition cannot run (script / never /
+// unsupported path / non-numeric value…) — Validate carries the
+// operator-facing reason; this is the machine-facing twin.
+func (w *Watch) ConditionSpec() (ConditionSpec, bool) {
+	if w == nil {
+		return ConditionSpec{}, false
+	}
+	c := w.Condition
+	if c == nil {
+		// ES semantics: no condition = always.
+		return ConditionSpec{Kind: CondAlways, Comparator: ">=", Threshold: 0}, true
+	}
+	if len(c.Script) > 0 || c.Never {
+		return ConditionSpec{}, false
+	}
+	if len(c.ArrayCompare) > 0 {
+		spec, err := parseArrayCompare(c.ArrayCompare)
+		if err != nil {
+			return ConditionSpec{}, false
+		}
+		return spec, true
+	}
+	if c.Always || len(c.Compare) == 0 {
+		return ConditionSpec{Kind: CondAlways, Comparator: ">=", Threshold: 0}, true
+	}
+	if len(c.Compare) > 1 {
+		return ConditionSpec{}, false
+	}
+	for path, clause := range c.Compare {
+		if len(clause) != 1 {
+			return ConditionSpec{}, false
+		}
+		for op, val := range clause {
+			cmp, ok := compareOps[op]
+			if !ok {
+				return ConditionSpec{}, false
+			}
+			n, isNum := val.(float64)
+			if !isNum {
+				return ConditionSpec{}, false
+			}
+			switch {
+			case hitsTotalPaths[path]:
+				return ConditionSpec{Kind: CondHitsTotal, Comparator: cmp, Threshold: n}, true
+			case isAggPath(path):
+				return ConditionSpec{
+					Kind:       CondAggValue,
+					Path:       strings.TrimPrefix(path, payloadPathPrefix),
+					Comparator: cmp,
+					Threshold:  n,
+				}, true
+			}
+		}
+	}
+	return ConditionSpec{}, false
+}
+
+// parseArrayCompare decodes the ES condition.array_compare shape in
+// the Faz-2 subset:
+//
+//	{"ctx.payload.aggregations.X.buckets": {
+//	    "path": "doc_count",
+//	    "gte":  {"value": N, "quantifier": "some"}}}
+//
+// Exactly one array path (must be under ctx.payload.aggregations.),
+// exactly one operator from the compare set, a plain-numeric value,
+// and quantifier absent/"some" (ANY element matching fires — "all"
+// has different semantics and stays unsupported). The error text is
+// the Unsupported reason shown on the Validate report.
+func parseArrayCompare(raw json.RawMessage) (ConditionSpec, error) {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return ConditionSpec{}, fmt.Errorf("array_compare: %w", err)
+	}
+	if len(top) != 1 {
+		return ConditionSpec{}, fmt.Errorf("array_compare needs exactly one array path, got %d", len(top))
+	}
+	for arrayPath, clauseRaw := range top {
+		if !isAggPath(arrayPath) {
+			return ConditionSpec{}, fmt.Errorf("array_compare path %q is not under ctx.payload.aggregations.", arrayPath)
+		}
+		var clause map[string]json.RawMessage
+		if err := json.Unmarshal(clauseRaw, &clause); err != nil {
+			return ConditionSpec{}, fmt.Errorf("array_compare clause: %w", err)
+		}
+		spec := ConditionSpec{
+			Kind:      CondArrayCompare,
+			ArrayPath: strings.TrimPrefix(arrayPath, payloadPathPrefix),
+		}
+		ops := 0
+		for k, v := range clause {
+			if k == "path" {
+				if err := json.Unmarshal(v, &spec.ItemPath); err != nil {
+					return ConditionSpec{}, fmt.Errorf("array_compare path field: %w", err)
+				}
+				continue
+			}
+			cmp, ok := compareOps[k]
+			if !ok {
+				return ConditionSpec{}, fmt.Errorf("array_compare operator %q has no equivalent (supported: gte gt lte lt)", k)
+			}
+			ops++
+			if ops > 1 {
+				return ConditionSpec{}, fmt.Errorf("array_compare supports exactly one comparison operator per clause")
+			}
+			var body struct {
+				Value      any    `json:"value"`
+				Quantifier string `json:"quantifier"`
+			}
+			if err := json.Unmarshal(v, &body); err != nil {
+				return ConditionSpec{}, fmt.Errorf("array_compare %s: %w", k, err)
+			}
+			n, isNum := body.Value.(float64)
+			if !isNum {
+				return ConditionSpec{}, fmt.Errorf("array_compare value %v is not a plain number (mustache/date-math not evaluated)", body.Value)
+			}
+			if body.Quantifier != "" && body.Quantifier != "some" {
+				return ConditionSpec{}, fmt.Errorf("array_compare quantifier %q not supported (only some — any element matching fires)", body.Quantifier)
+			}
+			spec.Comparator, spec.Threshold = cmp, n
+		}
+		if ops == 0 {
+			return ConditionSpec{}, fmt.Errorf("array_compare clause has no comparison operator")
+		}
+		return spec, nil
+	}
+	return ConditionSpec{}, fmt.Errorf("array_compare: empty clause") // unreachable, len check above
+}
+
 // Validate produces the field-by-field mapping report for a parsed
 // watch. It never mutates the watch.
 func Validate(w *Watch) Report {
@@ -408,12 +595,38 @@ func Validate(w *Watch) Report {
 				rep.add("trigger.schedule.cron", Supported,
 					fmt.Sprintf("cron %q maps to a fixed %s interval (cron→interval eşlendi); evaluated every %s",
 						s.Cron[0], time.Duration(sec)*time.Second, time.Duration(sec)*time.Second))
+			} else if parseableCrons(s.Cron) {
+				// Faz-2: calendar-shaped crons in the ParseCron subset
+				// run on their OWN schedule (next-fire due check, UTC —
+				// ES Watcher parity). v0.9.202 review-fix: verdict,
+				// CalendarCron'un GERÇEK kapılarıyla birebir — timezone'lu
+				// ya da saniye-bazlı cron takvim yoluna girmez, rapor da
+				// Supported DEMEZ (kendi-içinde-çelişik rapor sınıfı).
+				switch {
+				case s.HasTimezone():
+					rep.add("trigger.schedule.cron", Unsupported,
+						"cron timezone modellenmedi — UTC'de koşturmak ES'in tz-aware ateşlemesinden saatlerce kayardı; kural sürekli (5m default) değerlendirilir. UTC'ye çevrilmiş bir cron ile yeniden import edin")
+				case !cronSecondsZero(s.Cron):
+					rep.add("trigger.schedule.cron", Unsupported,
+						"saniye-bazlı cron (saniye alanı ≠ 0) 1dk değerlendirme tick'iyle temsil edilemez; kural sürekli (5m default) değerlendirilir")
+				default:
+					rep.add("trigger.schedule.cron", Supported,
+						fmt.Sprintf("takvim cron %q — kendi zamanlamasında değerlendirilir (next-fire due check, UTC)",
+							strings.Join(s.Cron, " | ")))
+				}
 			} else {
 				rep.add("trigger.schedule.cron", Unsupported,
-					"only fixed-rate cron patterns (every N minutes/hours) map in Faz-1; the rule evaluates continuously (5m default window) instead")
+					"cron expression outside the supported Quartz subset (L/W/# calendar specials are not modelled); the rule evaluates continuously (5m default window) instead")
 			}
 		}
 		for _, k := range s.Other {
+			if strings.EqualFold(k, "timezone") {
+				// v0.9.202 — doğru metin: timezone cron'u sürekli-moda düşürür
+				// (yukarıdaki cron verdict'iyle tutarlı), "yalnız interval" değil.
+				rep.add("trigger.schedule.timezone", Unsupported,
+					"cron timezones are not modelled; the rule evaluates continuously (5m default) instead")
+				continue
+			}
 			rep.add("trigger.schedule."+k, Unsupported,
 				"only interval schedules run in Faz-1; the rule evaluates continuously instead")
 		}
@@ -560,17 +773,30 @@ func validateCondition(c *Condition, rep *Report) {
 			"no condition = ES always; mapped to hits.total >= 0 (fires whenever the search runs)")
 		return
 	}
-	// script / array_compare have no engine — the rule cannot run.
+	// script has no engine — the rule cannot run.
 	if len(c.Script) > 0 {
 		rep.add("condition.script", Unsupported,
 			"no Painless engine in Coremetry; the rule imports disabled")
 		rep.disable("script condition cannot be evaluated")
 		return
 	}
+	// array_compare (Faz-2): the ES bucket-compare shape is executable
+	// against the search's aggregations payload; anything outside the
+	// subset keeps the Faz-1 disable.
 	if len(c.ArrayCompare) > 0 {
-		rep.add("condition.array_compare", Unsupported,
-			"array_compare needs aggregation payload access (Faz-2); the rule imports disabled")
-		rep.disable("array_compare condition cannot be evaluated")
+		spec, err := parseArrayCompare(c.ArrayCompare)
+		if err != nil {
+			rep.add("condition.array_compare", Unsupported,
+				fmt.Sprintf("array_compare outside the executable subset (%v) — supported shape: one ctx.payload.aggregations.… array path, path field, one of gte/gt/lte/lt with a numeric value, quantifier some; the rule imports disabled", err))
+			rep.disable("array_compare condition outside the supported subset")
+			return
+		}
+		item := spec.ItemPath
+		if item == "" {
+			item = "the element itself"
+		}
+		rep.add("condition.array_compare", Supported,
+			fmt.Sprintf("fires when ANY element of %s matches %s %s %g — the Problem value is the MAX of the matching elements", spec.ArrayPath, item, spec.Comparator, spec.Threshold))
 		return
 	}
 	if c.Never {
@@ -593,10 +819,10 @@ func validateCondition(c *Condition, rep *Report) {
 		return
 	}
 	for path, clause := range c.Compare {
-		if !hitsTotalPaths[path] {
+		if !hitsTotalPaths[path] && !isAggPath(path) {
 			rep.add("condition.compare", Unsupported,
-				fmt.Sprintf("only the ctx.payload.hits.total path is evaluated in Faz-1 (got %q); imports disabled", path))
-			rep.disable("compare path is not hits.total")
+				fmt.Sprintf("only the ctx.payload.hits.total and ctx.payload.aggregations.… paths are evaluated (got %q); imports disabled", path))
+			rep.disable("compare path is not hits.total or an aggregation value")
 			return
 		}
 		if len(clause) != 1 {
@@ -619,8 +845,14 @@ func validateCondition(c *Condition, rep *Report) {
 				rep.disable("compare value is not numeric")
 				return
 			}
-			rep.add("condition.compare", Supported,
-				fmt.Sprintf("hits.total %s threshold — evaluated via a guarded count search", cmp))
+			if hitsTotalPaths[path] {
+				rep.add("condition.compare", Supported,
+					fmt.Sprintf("hits.total %s threshold — evaluated via a guarded count search", cmp))
+			} else {
+				// Faz-2: aggregation value compare.
+				rep.add("condition.compare", Supported,
+					fmt.Sprintf("aggregation value %s %s threshold — read from the guarded search's aggregations payload", path, cmp))
+			}
 		}
 	}
 }
@@ -659,22 +891,14 @@ func ToRule(w *Watch, raw []byte) (chstore.AlertRule, Report, error) {
 	}
 
 	// Comparator + threshold. always / no-condition → ">= 0"
-	// (unconditional fire when the search runs). A disabled rule keeps
+	// (unconditional fire when the search runs). Faz-2: agg-value and
+	// array_compare conditions project their comparator/threshold the
+	// same way (Metric stays "watcher"). A disabled rule keeps
 	// whatever could be mapped so a later manual enable behaves
 	// predictably (the report already told the operator what's off).
 	r.Comparator, r.Threshold = ">=", 0
-	if c := w.Condition; c != nil && len(c.Compare) == 1 && !c.Never && len(c.Script) == 0 && len(c.ArrayCompare) == 0 {
-		for path, clause := range c.Compare {
-			if hitsTotalPaths[path] && len(clause) == 1 {
-				for op, val := range clause {
-					if cmp, ok := compareOps[op]; ok {
-						if n, isNum := val.(float64); isNum {
-							r.Comparator, r.Threshold = cmp, n
-						}
-					}
-				}
-			}
-		}
+	if spec, ok := w.ConditionSpec(); ok {
+		r.Comparator, r.Threshold = spec.Comparator, spec.Threshold
 	}
 	return r, rep, nil
 }

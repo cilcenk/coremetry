@@ -866,7 +866,11 @@ func (n *Notifier) buildEmailHTML(p chstore.Problem) string {
 	b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="` + font + `;padding:12px 0 0;font-size:16px;font-weight:600;color:#111827">` +
 		esc(p.Service) + ` — ` + esc(p.RuleName) + `</td></tr>`)
 	if p.Description != "" {
-		b.WriteString(`<tr><td style="` + font + `;padding:8px 0 0;font-size:13px;color:#374151;line-height:1.5">` + esc(p.Description) + `</td></tr>`)
+		// v0.9.202 review-fix — çok satırlı Description (watcher Örnekler
+		// bloğu) email'de tek satıra yapışmasın: escape SONRASI newline'lar
+		// <br> olur (escape önce → injection imkânsız).
+		b.WriteString(`<tr><td style="` + font + `;padding:8px 0 0;font-size:13px;color:#374151;line-height:1.5">` +
+			strings.ReplaceAll(esc(p.Description), "\n", "<br>") + `</td></tr>`)
 	}
 	b.WriteString(`</table>`)
 	b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:16px 0 0">`)

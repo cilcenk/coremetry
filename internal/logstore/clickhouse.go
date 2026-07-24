@@ -428,6 +428,22 @@ func (s *CHStore) RawSearch(ctx context.Context, indices []string, body json.Raw
 	return 0, fmt.Errorf("watcher raw search is Elasticsearch-only (ClickHouse backend cannot execute an ES search body)")
 }
 
+// RawSearchPayload — CH stub (v0.9.x, watcher Faz-2). Same posture as
+// RawSearch: an ES DSL body (and its aggregations payload) has no CH
+// execution path.
+func (s *CHStore) RawSearchPayload(ctx context.Context, indices []string, body json.RawMessage, trackTotalCap int) (json.RawMessage, int64, error) {
+	_, _, _, _ = ctx, indices, body, trackTotalCap
+	return nil, 0, fmt.Errorf("watcher raw search is Elasticsearch-only (ClickHouse backend cannot execute an ES search body)")
+}
+
+// RawSearchSamples — CH stub (v0.9.x, watcher Faz-2). The evaluator
+// treats sample errors soft, so on a CH backend fires simply carry no
+// examples.
+func (s *CHStore) RawSearchSamples(ctx context.Context, indices []string, body json.RawMessage, n int) ([]string, error) {
+	_, _, _, _ = ctx, indices, body, n
+	return nil, fmt.Errorf("watcher sample search is Elasticsearch-only (ClickHouse backend cannot execute an ES search body)")
+}
+
 // Indices — CH stub (v0.5.466). Single physical table on the
 // CH backend; per-shard / part-level surface is on the existing
 // /admin/clickhouse page. Returning nil makes /admin/elastic

@@ -185,11 +185,22 @@ func TestValidateConditions(t *testing.T) {
 		{"compare gte", `{"compare": {"ctx.payload.hits.total": {"gte": 100}}}`, false, "condition.compare", Supported},
 		{"compare hits.total.value path", `{"compare": {"ctx.payload.hits.total.value": {"gt": 5}}}`, false, "condition.compare", Supported},
 		{"compare eq unsupported", `{"compare": {"ctx.payload.hits.total": {"eq": 100}}}`, true, "condition.compare", Unsupported},
-		{"compare non-total path", `{"compare": {"ctx.payload.aggregations.err.value": {"gte": 1}}}`, true, "condition.compare", Unsupported},
+		// Faz-2: the ctx.payload.aggregations. prefix is executable.
+		{"compare agg value path", `{"compare": {"ctx.payload.aggregations.err_count.value": {"gte": 100}}}`, false, "condition.compare", Supported},
+		{"compare nested agg path", `{"compare": {"ctx.payload.aggregations.by_svc.buckets.0.doc_count": {"gt": 5}}}`, false, "condition.compare", Supported},
+		{"compare non-total non-agg path", `{"compare": {"ctx.payload.took": {"gte": 1}}}`, true, "condition.compare", Unsupported},
+		{"compare agg eq still unsupported", `{"compare": {"ctx.payload.aggregations.err.value": {"eq": 1}}}`, true, "condition.compare", Unsupported},
 		{"compare multiple ops", `{"compare": {"ctx.payload.hits.total": {"gte": 1, "lte": 9}}}`, true, "condition.compare", Unsupported},
 		{"compare mustache value", `{"compare": {"ctx.payload.hits.total": {"gte": "{{ctx.metadata.limit}}"}}}`, true, "condition.compare", Unsupported},
 		{"script disables", `{"script": {"source": "ctx.payload.hits.total > 10"}}`, true, "condition.script", Unsupported},
-		{"array_compare disables", `{"array_compare": {"ctx.payload.aggregations.x.buckets": {"path": "doc_count", "gte": {"value": 25}}}}`, true, "condition.array_compare", Unsupported},
+		// Faz-2: the ES array_compare shape over agg buckets fires when
+		// ANY bucket matches (value = max of the matching buckets).
+		{"array_compare supported", `{"array_compare": {"ctx.payload.aggregations.x.buckets": {"path": "doc_count", "gte": {"value": 25}}}}`, false, "condition.array_compare", Supported},
+		{"array_compare quantifier some supported", `{"array_compare": {"ctx.payload.aggregations.x.buckets": {"path": "doc_count", "gte": {"value": 25, "quantifier": "some"}}}}`, false, "condition.array_compare", Supported},
+		{"array_compare quantifier all unsupported", `{"array_compare": {"ctx.payload.aggregations.x.buckets": {"path": "doc_count", "gte": {"value": 25, "quantifier": "all"}}}}`, true, "condition.array_compare", Unsupported},
+		{"array_compare non-agg path unsupported", `{"array_compare": {"ctx.payload.hits.hits": {"path": "_score", "gte": {"value": 1}}}}`, true, "condition.array_compare", Unsupported},
+		{"array_compare non-numeric value unsupported", `{"array_compare": {"ctx.payload.aggregations.x.buckets": {"path": "doc_count", "gte": {"value": "{{ctx.metadata.n}}"}}}}`, true, "condition.array_compare", Unsupported},
+		{"array_compare eq op unsupported", `{"array_compare": {"ctx.payload.aggregations.x.buckets": {"path": "doc_count", "eq": {"value": 25}}}}`, true, "condition.array_compare", Unsupported},
 		{"always supported", `{"always": {}}`, false, "condition.always", Supported},
 		{"never imports disabled", `{"never": {}}`, true, "condition.never", Supported},
 	}
@@ -299,8 +310,10 @@ func TestValidateActions(t *testing.T) {
 	}
 }
 
+// Faz-2: only crons OUTSIDE the ParseCron subset (L/W/# calendar
+// specials) stay Unsupported; they still never disable the rule.
 func TestValidateCronUnsupported(t *testing.T) {
-	w, err := Parse([]byte(`{"trigger": {"schedule": {"cron": "0 0 2 * * ?"}}, "input": {"search": {"request": {"body": {}}}}, "condition": {"always": {}}}`))
+	w, err := Parse([]byte(`{"trigger": {"schedule": {"cron": "0 0 8 L * ?"}}, "input": {"search": {"request": {"body": {}}}}, "condition": {"always": {}}}`))
 	if err != nil {
 		t.Fatalf("Parse: %v", err)
 	}
@@ -310,6 +323,30 @@ func TestValidateCronUnsupported(t *testing.T) {
 	}
 	if rep.Disabled {
 		t.Fatal("cron alone must not disable (continuous evaluation approximates it)")
+	}
+}
+
+// Faz-2: calendar-shaped crons in the ParseCron subset are Supported —
+// the watch is evaluated on its own schedule (takvim cron), not mapped
+// to an interval.
+func TestValidateCronCalendarSupported(t *testing.T) {
+	for _, expr := range []string{"0 0 2 * * ?", "0 30 9 ? * MON-FRI", "0 0 12 1 * ?"} {
+		w, err := Parse([]byte(`{"trigger": {"schedule": {"cron": "` + expr + `"}}, "input": {"search": {"request": {"body": {"query": {"match_all": {}}}}}}, "condition": {"always": {}}}`))
+		if err != nil {
+			t.Fatalf("Parse: %v", err)
+		}
+		rep := Validate(w)
+		if !hasFinding(rep, "trigger.schedule.cron", Supported) {
+			t.Fatalf("calendar cron %q must report Supported, got %+v", expr, rep.Findings)
+		}
+		for _, f := range rep.Findings {
+			if f.Field == "trigger.schedule.cron" && !strings.Contains(f.Reason, "kendi zamanlamasında") {
+				t.Fatalf("calendar cron finding must say it runs on its own schedule: %q", f.Reason)
+			}
+		}
+		if rep.Disabled {
+			t.Fatalf("calendar cron must not disable: %q", rep.DisabledReason)
+		}
 	}
 }
 
@@ -598,6 +635,104 @@ func TestToRuleComparatorMapping(t *testing.T) {
 				t.Fatalf("got %q/%v, want %q/%v", r.Comparator, r.Threshold, tt.wantCmp, tt.wantThr)
 			}
 		})
+	}
+}
+
+// ConditionSpec — Faz-2 executable projection of the condition. Paths
+// come back payload-relative (the "ctx.payload." prefix stripped) so
+// the evaluator can walk the RawSearchPayload result directly.
+func TestConditionSpec(t *testing.T) {
+	base := `{"trigger": {"schedule": {"interval": "5m"}}, "input": {"search": {"request": {"body": {"query": {"match_all": {}}}}}}, "condition": %s}`
+	tests := []struct {
+		name   string
+		cond   string
+		wantOK bool
+		want   ConditionSpec
+	}{
+		{"hits.total", `{"compare": {"ctx.payload.hits.total": {"gte": 100}}}`, true,
+			ConditionSpec{Kind: CondHitsTotal, Comparator: ">=", Threshold: 100}},
+		{"hits.total.value spelling", `{"compare": {"ctx.payload.hits.total.value": {"lt": 5}}}`, true,
+			ConditionSpec{Kind: CondHitsTotal, Comparator: "<", Threshold: 5}},
+		{"agg value path", `{"compare": {"ctx.payload.aggregations.err_count.value": {"gte": 100}}}`, true,
+			ConditionSpec{Kind: CondAggValue, Path: "aggregations.err_count.value", Comparator: ">=", Threshold: 100}},
+		{"array_compare over buckets", `{"array_compare": {"ctx.payload.aggregations.by_svc.buckets": {"path": "doc_count", "gte": {"value": 25}}}}`, true,
+			ConditionSpec{Kind: CondArrayCompare, ArrayPath: "aggregations.by_svc.buckets", ItemPath: "doc_count", Comparator: ">=", Threshold: 25}},
+		{"array_compare without item path compares the element", `{"array_compare": {"ctx.payload.aggregations.vals.buckets": {"lte": {"value": 3}}}}`, true,
+			ConditionSpec{Kind: CondArrayCompare, ArrayPath: "aggregations.vals.buckets", ItemPath: "", Comparator: "<=", Threshold: 3}},
+		{"always", `{"always": {}}`, true,
+			ConditionSpec{Kind: CondAlways, Comparator: ">=", Threshold: 0}},
+		{"script not executable", `{"script": {"source": "return true"}}`, false, ConditionSpec{}},
+		{"never not executable", `{"never": {}}`, false, ConditionSpec{}},
+		{"eq not executable", `{"compare": {"ctx.payload.hits.total": {"eq": 3}}}`, false, ConditionSpec{}},
+		{"non-payload path not executable", `{"compare": {"ctx.payload.took": {"gte": 1}}}`, false, ConditionSpec{}},
+		{"array_compare quantifier all not executable", `{"array_compare": {"ctx.payload.aggregations.x.buckets": {"path": "doc_count", "gte": {"value": 1, "quantifier": "all"}}}}`, false, ConditionSpec{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w, err := Parse([]byte(strings.ReplaceAll(base, "%s", tt.cond)))
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			got, ok := w.ConditionSpec()
+			if ok != tt.wantOK {
+				t.Fatalf("ok = %v, want %v (spec %+v)", ok, tt.wantOK, got)
+			}
+			if ok && got != tt.want {
+				t.Fatalf("spec = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+	// nil condition is ES "always".
+	w, err := Parse([]byte(`{"input": {"search": {"request": {"body": {"query": {"match_all": {}}}}}}}`))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if got, ok := w.ConditionSpec(); !ok || got.Kind != CondAlways {
+		t.Fatalf("nil condition spec = %+v ok=%v, want CondAlways", got, ok)
+	}
+}
+
+// Faz-2: an agg-compare watch imports ENABLED with threshold/comparator
+// projected from the agg condition; Metric stays "watcher".
+func TestToRuleAggCompare(t *testing.T) {
+	raw := []byte(`{"trigger": {"schedule": {"interval": "5m"}}, "input": {"search": {"request": {"indices": ["app-*"], "body": {"query": {"match_all": {}}, "aggs": {"err_count": {"sum": {"field": "errors"}}}}}}}, "condition": {"compare": {"ctx.payload.aggregations.err_count.value": {"gt": 250}}}}`)
+	w, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	r, rep, err := ToRule(w, raw)
+	if err != nil {
+		t.Fatalf("ToRule: %v", err)
+	}
+	if rep.Disabled {
+		t.Fatalf("agg-compare watch must import enabled: %q", rep.DisabledReason)
+	}
+	if !r.Enabled || r.Metric != "watcher" {
+		t.Fatalf("Enabled/Metric = %v/%q, want true/watcher", r.Enabled, r.Metric)
+	}
+	if r.Comparator != ">" || r.Threshold != 250 {
+		t.Fatalf("comparator/threshold = %q/%v, want >/250 (projected from the agg condition)", r.Comparator, r.Threshold)
+	}
+}
+
+func TestToRuleArrayCompare(t *testing.T) {
+	raw := []byte(`{"trigger": {"schedule": {"interval": "5m"}}, "input": {"search": {"request": {"body": {"query": {"match_all": {}}, "aggs": {"by_svc": {"terms": {"field": "service"}}}}}}}, "condition": {"array_compare": {"ctx.payload.aggregations.by_svc.buckets": {"path": "doc_count", "gte": {"value": 100}}}}}`)
+	w, err := Parse(raw)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	r, rep, err := ToRule(w, raw)
+	if err != nil {
+		t.Fatalf("ToRule: %v", err)
+	}
+	if rep.Disabled {
+		t.Fatalf("array_compare watch must import enabled: %q", rep.DisabledReason)
+	}
+	if !r.Enabled || r.Metric != "watcher" {
+		t.Fatalf("Enabled/Metric = %v/%q, want true/watcher", r.Enabled, r.Metric)
+	}
+	if r.Comparator != ">=" || r.Threshold != 100 {
+		t.Fatalf("comparator/threshold = %q/%v, want >=/100 (projected from array_compare)", r.Comparator, r.Threshold)
 	}
 }
 

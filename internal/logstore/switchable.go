@@ -82,6 +82,14 @@ func (s *Switchable) RawSearch(ctx context.Context, indices []string, body json.
 	return s.Current().RawSearch(ctx, indices, body, trackTotalCap)
 }
 
+func (s *Switchable) RawSearchPayload(ctx context.Context, indices []string, body json.RawMessage, trackTotalCap int) (json.RawMessage, int64, error) {
+	return s.Current().RawSearchPayload(ctx, indices, body, trackTotalCap)
+}
+
+func (s *Switchable) RawSearchSamples(ctx context.Context, indices []string, body json.RawMessage, n int) ([]string, error) {
+	return s.Current().RawSearchSamples(ctx, indices, body, n)
+}
+
 func (s *Switchable) Indices(ctx context.Context) ([]IndexInfo, error) {
 	return s.Current().Indices(ctx)
 }

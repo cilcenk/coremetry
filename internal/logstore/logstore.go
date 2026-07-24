@@ -353,6 +353,25 @@ type Store interface {
 	// an ES DSL body has no CH execution path (EQL precedent).
 	RawSearch(ctx context.Context, indices []string, body json.RawMessage, trackTotalCap int) (int64, error)
 
+	// RawSearchPayload — same guarded search as RawSearch (one shared
+	// core), returning additionally the ctx.payload-shaped response
+	// subset ({"hits":{"total":{"value":N}},"aggregations":{…}},
+	// aggregations verbatim) for the Faz-2 agg-path watcher
+	// conditions (compare / array_compare on
+	// ctx.payload.aggregations.…). Watches without agg conditions
+	// stay on RawSearch. CH backend: "unsupported" error.
+	RawSearchPayload(ctx context.Context, indices []string, body json.RawMessage, trackTotalCap int) (json.RawMessage, int64, error)
+
+	// RawSearchSamples fetches up to n (clamped ≤5) documents
+	// matching the watch's query and returns one single-line
+	// ≤200-char summary per hit — the examples embedded into the
+	// Problem description when a watcher FIRES (Faz-2, ES Watcher
+	// action-payload parity). Guarded like RawSearch (timeout, 24h
+	// fallback window) plus restricted _source and newest-first
+	// sort; errors are SOFT for the caller — a broken sample fetch
+	// must never block the fire. CH backend: "unsupported" error.
+	RawSearchSamples(ctx context.Context, indices []string, body json.RawMessage, n int) ([]string, error)
+
 	// Indices lists the log indices the backend currently has,
 	// with health + size + ILM lifecycle info per index. Powers
 	// /admin/elastic so the operator sees at a glance which

@@ -764,7 +764,9 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 	// same Redis mirror as the metric path (v0.8.354).
 	desc := fmt.Sprintf("log_query matched %d in last %s (threshold %s %.0f) — query: %s",
 		page.Total, window, r.Comparator, r.Threshold, r.LogQuery)
-	e.settleCountAlert(ctx, r, now, float64(page.Total), "log_query", desc)
+	// nil enricher: the log_query path embeds no fire-time samples —
+	// behaviour pinned since v0.5.242.
+	e.settleCountAlert(ctx, r, now, float64(page.Total), "log_query", desc, nil)
 }
 
 // Escalation thresholds — how long a problem can stay open at

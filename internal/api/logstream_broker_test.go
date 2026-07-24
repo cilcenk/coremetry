@@ -35,6 +35,12 @@ func (stubLogStore) EQLSearch(context.Context, logstore.EQLQuery) ([]logstore.EQ
 func (stubLogStore) RawSearch(context.Context, []string, json.RawMessage, int) (int64, error) {
 	return 0, nil
 }
+func (stubLogStore) RawSearchPayload(context.Context, []string, json.RawMessage, int) (json.RawMessage, int64, error) {
+	return nil, 0, nil
+}
+func (stubLogStore) RawSearchSamples(context.Context, []string, json.RawMessage, int) ([]string, error) {
+	return nil, nil
+}
 func (stubLogStore) Indices(context.Context) ([]logstore.IndexInfo, error) { return nil, nil }
 func (stubLogStore) FieldValues(context.Context, string, string, int) ([]string, error) {
 	return nil, nil

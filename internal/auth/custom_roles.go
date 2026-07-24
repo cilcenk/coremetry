@@ -198,6 +198,16 @@ func copyRole(r CustomRole) CustomRole {
 
 // normalisePages sorts + dedupes the page list so two equivalent
 // roles persist identically (avoids audit-log churn on no-op saves).
+// legacyPageIDs remaps page IDs the catalogue used to offer onto the routes
+// the sidebar actually links today. Without the remap a role granted the old
+// ID keeps the stored value forever and the AppShell guard — which compares
+// against live pathnames — redirects the user straight back off the page.
+// Applied on both read and write, so a role heals the first time it is loaded.
+var legacyPageIDs = map[string]string{
+	"/topology":    "/service-map", // v0.8.219 retired /topology
+	"/admin/stats": "/system",      // /system is the tabbed shell the sidebar links
+}
+
 func normalisePages(in []string) []string {
 	seen := make(map[string]struct{}, len(in))
 	out := make([]string, 0, len(in))
@@ -205,6 +215,9 @@ func normalisePages(in []string) []string {
 		p = strings.TrimSpace(p)
 		if p == "" {
 			continue
+		}
+		if to, ok := legacyPageIDs[p]; ok {
+			p = to
 		}
 		if _, dup := seen[p]; dup {
 			continue

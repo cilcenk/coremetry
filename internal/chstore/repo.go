@@ -2206,6 +2206,16 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 // falls back to the array lookup — one code path, three cost tiers.
 var traceAttrMaterialized = map[string]string{}
 
+// registerTraceAttrMaterialized populates the promoted-column map at BOOT
+// (migrate, after the probe confirms the columns resolve — v0.9.198). Boot-
+// only by contract: it runs before the API serves, so the lock-free reads in
+// traceExtrasProjection stay safe (the hasExCols/hasClusterCol precedent).
+func registerTraceAttrMaterialized(cols map[string]string) {
+	for k, col := range cols {
+		traceAttrMaterialized[k] = col
+	}
+}
+
 // traceExtrasProjection builds the extras SELECT fragment for the requested
 // attribute keys plus its bind args. Resolution order per key:
 //  1. traceAttrMaterialized — promoted native column (cheapest; anyIf skips

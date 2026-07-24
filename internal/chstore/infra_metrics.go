@@ -99,9 +99,11 @@ func (s *Store) GetInfraMetrics(ctx context.Context, service string, since, buck
 		since = 10 * time.Minute
 	}
 	if bucket <= 0 {
-		// Auto-scale: ~30 buckets across the window so sparklines
-		// stay legible without overwhelming payload.
-		bucket = since / 30
+		// Auto-scale: up to SparklineBuckets slots across the window
+		// (single-source grid — granular-sparklines sweep M4); the
+		// 10s floor keeps short windows on real metric resolution
+		// and the payload bounded.
+		bucket = since / SparklineBuckets
 		if bucket < 10*time.Second {
 			bucket = 10 * time.Second
 		}

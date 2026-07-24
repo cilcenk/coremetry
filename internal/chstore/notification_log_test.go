@@ -143,6 +143,12 @@ func TestWatcherSummarySQL_Bounds(t *testing.T) {
 		"countIf(started_at >= ?)",  // trailing-24h fire count is bind-bounded
 		"LIMIT 2000",                // bounded group count
 		"max_execution_time",        // wall-clock cap
+		// Granular-sparklines sweep (M4): hourly fire distribution is a
+		// 24-slot elementwise sum — aggregate-only (no schema change),
+		// with the same since bound guarding the intDiv slot projection.
+		"sumForEach",
+		"range(0, 24)",
+		"started_at >= ?\n\t         AND intDiv(toUnixTimestamp64Nano(started_at) - ?, 3600000000000)",
 	}
 	for _, frag := range mustContain {
 		if !strings.Contains(watcherSummarySQL, frag) {

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Sparkline } from '@/components/Sparkline';
 import { Button, Drawer, DrawerSection } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { useAlertRules, useWatchersSummary, useWatcherHistory, useEnableAlertRule, useDisableAlertRule, useUpdateAlertRule } from '@/lib/queries';
@@ -37,6 +38,9 @@ type WatcherRow = AlertRule & {
   lastFire: number;
   fires24h: number;
   openNow: boolean;
+  // M4 granular sparklines — 24 one-hour slots (oldest→newest) behind
+  // the fires24h count; absent when the rule never fired.
+  firesHourly?: number[];
   disabledReason?: string;
 };
 
@@ -95,7 +99,9 @@ export default function WatchersPage() {
     { id: 'schedule',  label: 'Schedule',    sortValue: r => r.windowSec, naturalDir: 'asc',  width: 100 },
     { id: 'status',    label: 'Status',      sortValue: r => (r.enabled ? 1 : 0), naturalDir: 'desc', width: 90 },
     { id: 'lastFire',  label: 'Last fire',   sortValue: r => r.lastFire,  naturalDir: 'desc', width: 150 },
-    { id: 'fires24h',  label: 'Fires (24h)', sortValue: r => r.fires24h,  naturalDir: 'desc', numeric: true, width: 100 },
+    // M4 — genişlik 100→132: saat-bazlı fire dağılım mini-bar'ı sayının
+    // yanına sığsın (yalnız-sayı hücresi dağılımı gizliyordu).
+    { id: 'fires24h',  label: 'Fires (24h)', sortValue: r => r.fires24h,  naturalDir: 'desc', numeric: true, width: 132 },
   ], []);
   const dt = useDataTable<WatcherRow>({
     storageKey: 'watchers', columns: cols,
@@ -192,7 +198,18 @@ export default function WatchersPage() {
                       {r.openNow && <span className="badge b-err" style={{ marginLeft: 6 }}>OPEN</span>}
                     </td>
                     <td className="num mono" style={{ fontSize: 12 }}>
-                      {r.fires24h > 0 ? r.fires24h : <span style={{ color: 'var(--text3)' }}>0</span>}
+                      {/* M4 — sayı yerine saat-bazlı dağılım: 24 slotluk
+                          mini-bar (mode='count') + toplam. Rollup'ı
+                          olmayan / hiç fire etmemiş satır sayıya düşer. */}
+                      <span style={{ display: 'inline-flex', alignItems: 'center',
+                                     gap: 8, justifyContent: 'flex-end' }}>
+                        {r.firesHourly?.some(v => v > 0) && (
+                          <Sparkline mode="count" values={r.firesHourly}
+                            width={64} height={16} color="var(--purple)"
+                            title={`Fires per hour — last 24h (oldest → newest), total ${r.fires24h}`} />
+                        )}
+                        {r.fires24h > 0 ? r.fires24h : <span style={{ color: 'var(--text3)' }}>0</span>}
+                      </span>
                     </td>
                   </tr>
                 ))}

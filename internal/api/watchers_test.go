@@ -249,8 +249,11 @@ func TestBuildWatcherSummaries(t *testing.T) {
 		{ID: "w4", Metric: "watcher", Enabled: false, WatcherJSON: fullWatch},  // operator-disabled, runnable
 		{ID: "m1", Metric: "error_rate", Enabled: true},                        // not a watcher
 	}
+	hourly := make([]uint64, 24)
+	hourly[23] = 2
+	hourly[7] = 1
 	sums := map[string]chstore.WatcherSummary{
-		"w1": {RuleID: "w1", LastFire: 1700, Fires24h: 3, OpenNow: true},
+		"w1": {RuleID: "w1", LastFire: 1700, Fires24h: 3, OpenNow: true, FiresHourly: hourly},
 		"m1": {RuleID: "m1", LastFire: 9999, Fires24h: 9}, // must be ignored
 	}
 
@@ -265,8 +268,17 @@ func TestBuildWatcherSummaries(t *testing.T) {
 	if e := got["w1"]; e.LastFire != 1700 || e.Fires24h != 3 || !e.OpenNow || e.DisabledReason != "" {
 		t.Fatalf("w1 rollup wrong: %+v", e)
 	}
+	// Granular-sparklines sweep (M4): the 24-slot hourly distribution
+	// passes through untouched — the frontend mini-bar derives its axis
+	// from the array, so reordering or re-slicing here would lie.
+	if e := got["w1"]; len(e.FiresHourly) != 24 || e.FiresHourly[23] != 2 || e.FiresHourly[7] != 1 {
+		t.Fatalf("w1 hourly distribution must pass through verbatim, got %v", e.FiresHourly)
+	}
 	if e := got["w2"]; e.LastFire != 0 || e.Fires24h != 0 || e.OpenNow {
 		t.Fatalf("never-fired w2 must be zero-filled, got %+v", e)
+	}
+	if e := got["w2"]; e.FiresHourly != nil {
+		t.Fatalf("never-fired w2 must omit the hourly array (omitempty), got %v", e.FiresHourly)
 	}
 	if e := got["w3"]; e.DisabledReason == "" {
 		t.Fatal("script-condition watch must carry a structural disabled reason")

@@ -570,6 +570,10 @@ export default function ServicesPage() {
                         spark={aggBuckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
                         color="var(--err)"
                         title="Aggregate error rate (weighted by spans)"
+                        // M4 — eşikli mini-bar: %1 üstü bucket kırmızı,
+                        // %0.7-1 arası amber, normaller soluk gri.
+                        mode="bars"
+                        threshold={1}
                         onClick={() => goToExplore('', 'error_rate')} />
                       </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
@@ -671,6 +675,9 @@ export default function ServicesPage() {
                           spark={buckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
                           color="var(--err)"
                           title={`Error rate (%) for ${s.name}`}
+                          // M4 — eşikli mini-bar (bkz. agg satırı).
+                          mode="bars"
+                          threshold={1}
                           onClick={() => goToExplore(s.name, 'error_rate')} />
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
@@ -731,13 +738,18 @@ export default function ServicesPage() {
 // thin gap between the value text and the SVG doesn't double-fire
 // (row-level handler + sparkline handler).
 function SparkCell({
-  value, spark, color, title, onClick,
+  value, spark, color, title, onClick, mode, threshold,
 }: {
   value: React.ReactNode;
   spark: number[];
   color: string;
   title: string;
   onClick: () => void;
+  // M4 granular sparklines — trend cells ride the 'area' default
+  // (gradyan + uç-nokta); the error-rate column opts into 'bars' with
+  // a threshold so breach buckets read red/amber at a glance.
+  mode?: 'area' | 'bars' | 'count';
+  threshold?: number;
 }) {
   return (
     // Whole-cell click target (value + sparkline) so the operator can
@@ -754,6 +766,8 @@ function SparkCell({
         color={color}
         title={`${title} — click to chart in Explore`}
         onClick={onClick}
+        mode={mode}
+        threshold={threshold}
       />
     </span>
   );

@@ -872,12 +872,53 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 	return out, rows.Err()
 }
 
-// SparklineBuckets is the fixed bucket count for the inline call-rate
-// sparkline on each operations-table row. 30 strikes the balance between
-// detail (a 30-min window with 1-min resolution shows minute-level
-// micro-spikes) and SVG width budget (~80px / 30 ≈ 2.7px/bucket — wide
-// enough to be readable, narrow enough to fit beside the numeric cols).
-const SparklineBuckets = 30
+// SparklineBuckets is the MAXIMUM slot count for the inline sparklines
+// (operations table, endpoints, infra metrics). Granular-sparklines
+// sweep (M4, 2026-07-24 — operator: "sadece çizgisel gösteriyor, daha
+// granüle olsun"): 30 → 120, so a 24h window renders 12-min slots
+// instead of 48-min mush. This constant is the SINGLE source for every
+// sparkline grid; the frontend derives the axis from array length, so
+// variable-length arrays are safe (GetEndpointsMV precedent).
+const SparklineBuckets = 120
+
+// sparklineGrid computes the sparkline slot width + slot count for a
+// winSec-second window over a source whose native resolution is
+// grainSec (300 for the 5-min summary MVs, 60/10 for the spanmetrics
+// tiers, 1 for raw spans). The slot width is always an INTEGER
+// MULTIPLE of the grain (v0.9.207, review finding 6): MV rows sit on
+// exact grainSec boundaries, so a non-multiple width (24h/120 = 720s
+// over the 300s operations MV) aliases deterministically — intDiv
+// packs 3 MV rows into some slots and 2 into others, and steady
+// traffic renders as a periodic fake 1.5-2x spike on every sparkline.
+// Rounding the ceil(win/N) width UP to the next grain multiple makes
+// every full slot cover the same number of MV buckets; callers anchor
+// the intDiv origin on a grain boundary so slot edges land on bucket
+// edges. Short windows return FEWER, real slots (slot == MV bucket —
+// the pre-sweep sub-grain comb, 1h @ 30 slots = 12 filled 18 zero,
+// stays fixed) and long windows cap at SparklineBuckets. Fewer,
+// honest slots beat more, sawtoothed slots: the frontend derives the
+// axis from array length, so n < SparklineBuckets is safe. Callers
+// size their arrays with n — never with the constant.
+func sparklineGrid(winSec, grainSec int64) (bucketSec int64, n int) {
+	if grainSec < 1 {
+		grainSec = 1
+	}
+	if winSec < 1 {
+		return grainSec, 1
+	}
+	bucketSec = (winSec + int64(SparklineBuckets) - 1) / int64(SparklineBuckets)
+	// Round UP to a grain multiple — this also enforces the >= grain
+	// floor the pre-v0.9.207 code had.
+	bucketSec = (bucketSec + grainSec - 1) / grainSec * grainSec
+	n = int((winSec + bucketSec - 1) / bucketSec)
+	if n < 1 {
+		n = 1
+	}
+	if n > SparklineBuckets {
+		n = SparklineBuckets
+	}
+	return bucketSec, n
+}
 
 // latSparkCap — avg/p50/p95 latency serileri yalnız ilk N satıra
 // (v0.9.64, review perf bulgusu): satırlar span_count desc sıralı,
@@ -992,18 +1033,18 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		return out, nil
 	}
 
-	// Second pass: per-bucket counts for the inline sparkline.
-	// The MV bucket is 5 min so we densify into SparklineBuckets
-	// slots; for a 1h window that's 12 source buckets → 30
-	// sparkline slots (each MV bucket fills 2-3 slots).
-	winSec := int64(winEnd.Sub(winStart).Seconds())
+	// Second pass: per-bucket counts for the inline sparkline. The
+	// grid is grain-multiple-aligned (sparklineGrid, v0.9.207): a 1h
+	// window ships 12 REAL slots (slot == MV bucket), a 24h window
+	// 96 × 15-min slots. Window measured from bucketStart — the
+	// same aligned origin the bidx projection uses — so the bucket
+	// containing a misaligned winStart isn't pushed past the last
+	// slot and dropped.
+	winSec := int64(winEnd.Sub(bucketStart).Seconds())
 	if winSec <= 0 {
 		return out, nil
 	}
-	bucketSec := (winSec + int64(SparklineBuckets) - 1) / int64(SparklineBuckets)
-	if bucketSec < 1 {
-		bucketSec = 1
-	}
+	bucketSec, nBuckets := sparklineGrid(winSec, 300)
 	// v0.9.60 — quantile merge 0.99'dan (0.5,0.95,0.99)'a genişledi +
 	// slot başına süre toplamı (avg serisi için): Elastic-parity latency
 	// hücresinin percentile-seçicili sparkline'ı. Aynı tek scan.
@@ -1050,17 +1091,17 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		// detay modalı onları okur).
 		wantLat := i < latSparkCap
 		if out[i].Sparkline == nil {
-			out[i].Sparkline = make([]uint64, SparklineBuckets)
-			out[i].ErrorsSparkline = make([]uint64, SparklineBuckets)
-			out[i].P99Sparkline = make([]float64, SparklineBuckets)
+			out[i].Sparkline = make([]uint64, nBuckets)
+			out[i].ErrorsSparkline = make([]uint64, nBuckets)
+			out[i].P99Sparkline = make([]float64, nBuckets)
 			if wantLat {
-				out[i].P95Sparkline = make([]float64, SparklineBuckets)
-				out[i].P50Sparkline = make([]float64, SparklineBuckets)
-				out[i].AvgSparkline = make([]float64, SparklineBuckets)
-				sumByIdx[i] = make([]float64, SparklineBuckets)
+				out[i].P95Sparkline = make([]float64, nBuckets)
+				out[i].P50Sparkline = make([]float64, nBuckets)
+				out[i].AvgSparkline = make([]float64, nBuckets)
+				sumByIdx[i] = make([]float64, nBuckets)
 			}
 		}
-		if bidx >= 0 && int(bidx) < SparklineBuckets {
+		if bidx >= 0 && int(bidx) < nBuckets {
 			out[i].Sparkline[bidx] += c
 			out[i].ErrorsSparkline[bidx] += e
 			// Per-bucket quantiles — pick the max across coalesced MV
@@ -1082,7 +1123,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		}
 	}
 	for i, sums := range sumByIdx {
-		for b := 0; b < SparklineBuckets; b++ {
+		for b := 0; b < nBuckets; b++ {
 			if out[i].Sparkline[b] > 0 {
 				out[i].AvgSparkline[b] = round2(sums[b] / float64(out[i].Sparkline[b]))
 			}
@@ -1314,14 +1355,10 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	if winSec <= 0 {
 		return out, nil
 	}
-	// Bucket size: enough seconds so that ⌈winSec / bucketSec⌉ ≤ SparklineBuckets.
-	// `(winSec + N - 1) / N` is integer-ceil; +1 floor guards against the
-	// degenerate case where winSec < SparklineBuckets (each row gets its
-	// own bucket and any extras are empty trailing slots).
-	bucketSec := (winSec + int64(SparklineBuckets) - 1) / int64(SparklineBuckets)
-	if bucketSec < 1 {
-		bucketSec = 1
-	}
+	// Raw spans have second resolution, so the grid runs at grain=1:
+	// even a sub-5-min window gets real per-slot data. n falls out of
+	// sparklineGrid (≤ SparklineBuckets); arrays are sized with it.
+	bucketSec, nBuckets := sparklineGrid(winSec, 1)
 
 	names := make([]string, 0, len(out))
 	idxByName := make(map[string]int, len(out))
@@ -1388,15 +1425,15 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 			continue
 		}
 		if out[i].Sparkline == nil {
-			out[i].Sparkline = make([]uint64, SparklineBuckets)
-			out[i].ErrorsSparkline = make([]uint64, SparklineBuckets)
-			out[i].P99Sparkline = make([]float64, SparklineBuckets)
-			out[i].P95Sparkline = make([]float64, SparklineBuckets)
-			out[i].P50Sparkline = make([]float64, SparklineBuckets)
-			out[i].AvgSparkline = make([]float64, SparklineBuckets)
-			rawSums[i] = make([]float64, SparklineBuckets)
+			out[i].Sparkline = make([]uint64, nBuckets)
+			out[i].ErrorsSparkline = make([]uint64, nBuckets)
+			out[i].P99Sparkline = make([]float64, nBuckets)
+			out[i].P95Sparkline = make([]float64, nBuckets)
+			out[i].P50Sparkline = make([]float64, nBuckets)
+			out[i].AvgSparkline = make([]float64, nBuckets)
+			rawSums[i] = make([]float64, nBuckets)
 		}
-		if bidx >= 0 && int(bidx) < SparklineBuckets {
+		if bidx >= 0 && int(bidx) < nBuckets {
 			out[i].Sparkline[bidx] += c
 			out[i].ErrorsSparkline[bidx] += e
 			rawSums[i][bidx] += safeF(sumMs)
@@ -1412,7 +1449,7 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		}
 	}
 	for i, sums := range rawSums {
-		for b := 0; b < SparklineBuckets; b++ {
+		for b := 0; b < nBuckets; b++ {
 			if out[i].Sparkline[b] > 0 {
 				out[i].AvgSparkline[b] = round2(sums[b] / float64(out[i].Sparkline[b]))
 			}

@@ -36,14 +36,15 @@ type EndpointRow struct {
 	P50Ms     float64 `json:"p50Ms"`
 	P95Ms     float64 `json:"p95Ms"`
 	ReqPerMin float64 `json:"reqPerMin"`
-	// v0.5.370 — call-rate sparkline (30 buckets across the
-	// requested window). Lets the operator eye-scan "is this
-	// endpoint steady / spiking / dying" from the table row
+	// v0.5.370 — call-rate sparkline (≤ SparklineBuckets slots across
+	// the requested window; MV grain floors the slot width so short
+	// windows ship fewer, real slots). Lets the operator eye-scan
+	// "is this endpoint steady / spiking / dying" from the table row
 	// without a chart drill-in. Bucketing happens server-side
 	// so the JSON payload size stays bounded regardless of
 	// window width.
 	Sparkline []float64 `json:"sparkline,omitempty"`
-	// v0.5.387 — errors + p99 sparklines on the same 30-bucket
+	// v0.5.387 — errors + p99 sparklines on the same bucket
 	// grid so the row-level drill-in modal can render all three
 	// RED dimensions without a second round-trip. Same payload
 	// shape as Sparkline; one float per bucket. Both fields
@@ -313,14 +314,56 @@ func (s *Store) spanmetricsSourceFor(table string) string {
 	return table
 }
 
+// spanmetrics10sSafeAgeSec — guaranteed retention floor of the
+// spanmetrics_10s tier. Its TTL is `toDate(time_bucket) + INTERVAL
+// 2 DAY` (store.go): a bucket written late on day D is dropped at
+// D+2 00:00, barely over 24h later, so 24h is the oldest window
+// START the tier is GUARANTEED to still cover regardless of CH
+// server timezone or merge timing. (v0.9.207, review finding 9.)
+const spanmetrics10sSafeAgeSec = int64(24 * 3600)
+
+// endpointsSparkGrid picks the spanmetrics tier and the sparkline
+// grid for the /endpoints MV read (v0.9.207, review findings 5+9).
+//
+// Tier: spanmetrics_10s only when (a) the 1m grain would coarsen
+// the ideal slot — windowSec/SparklineBuckets < 60, i.e. windows
+// under 2h — AND (b) the window START (fromAgeSec) sits inside the
+// 10s tier's guaranteed retention. The pre-v0.9.207 gate tested
+// window LENGTH only, so a short absolute window over old data
+// (Endpoints drag-zoom on a 3-day-old incident) read the
+// TTL-evicted 10s MV and returned a fully empty table — aggregates
+// AND sparklines read the same source, and GetEndpoints has no
+// empty-result raw fallback. Historical short windows now stay on
+// spanmetrics_1m (30-day TTL): coarser slots, but data. The old
+// `windowSec <= 2d` clause is gone — dead code, the <60 clause
+// already caps the window at 2h.
+//
+// Grid: sparklineGrid with the chosen tier's grain, so the slot
+// width is an exact grain multiple (finding 5: 30m/120 = 15s slots
+// over the 10s MV put 2 MV rows in even slots, 1 in odd — steady
+// traffic rendered as a full-window 2:1 sawtooth). The caller
+// anchors the intDiv origin on a minute boundary, which is
+// grain-aligned for BOTH tiers.
+func endpointsSparkGrid(windowSec, fromAgeSec int64) (sourceMV string, bucketSec int64, n int) {
+	sourceMV = "spanmetrics_1m"
+	grain := int64(60)
+	if windowSec/SparklineBuckets < 60 && fromAgeSec <= spanmetrics10sSafeAgeSec {
+		sourceMV = "spanmetrics_10s"
+		grain = 10
+	}
+	bucketSec, n = sparklineGrid(windowSec, grain)
+	return sourceMV, bucketSec, n
+}
+
 // GetEndpointsMV is the spanmetrics_1m-backed /endpoints read
 // (v0.8.356). One MV scan produces the whole table: RED counts via
 // countMerge/countIfMerge/sumMerge, TRUE window p50/p95/p99 via a
 // two-level tdigest merge (per-bucket -MergeState in the CTE, final
 // -Merge across buckets — the raw CTE could only max() per-bucket
-// p99s), and the three 30-bucket sparklines rebuilt from the MV's
-// 1-minute time_bucket series. Sparkline buckets floor at the MV
-// grain (1min): a 5m window ships 5 buckets, not 30 — the frontend
+// p99s), and the three ≤SparklineBuckets-slot sparklines rebuilt from the MV's
+// time_bucket series. Tier + slot width come from endpointsSparkGrid
+// (v0.9.207): slots are exact multiples of the chosen tier's grain
+// and short windows ship fewer, real slots — the frontend
 // bucketsToSeries derives the axis from array length, so variable
 // length is safe.
 //
@@ -339,34 +382,23 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		return nil, errEndpointsMVEnv
 	}
 	// Align the window start to the MV grain so the first bucket is
-	// wholly inside [from, to] rather than half-clipped.
+	// wholly inside [from, to] rather than half-clipped. A minute
+	// boundary is also a 10s boundary, so this origin is grain-
+	// aligned for BOTH spanmetrics tiers.
 	from := q.From.Truncate(time.Minute)
 	windowSec := q.To.Unix() - from.Unix()
 	if windowSec <= 0 {
 		windowSec = 60
 	}
-	// 30 sparkline buckets. v0.9.27 (second-resolution audit R2):
-	// kısa pencerede 10s tier'ından oku — 5dk penceresi 60s tabanında
-	// yalnız 5 bucket alıyordu, artık 10s'te 30 bucket. 10s tier
-	// http_route TAŞIR (route-scoped sorgu uyumlu; canlı kolon
-	// paritesi doğrulandı) ve 2g TTL'li — pencere ≤2g VE 1m taban
-	// bucket'ı kabalaştırıyorsa (windowSec/30 < 60) 10s'e geç.
-	// ClickHouse span-metrik 10s tabanı (operatör kararı) burada da:
-	// grain 10'un altına inilmez.
-	sourceMV := "spanmetrics_1m"
-	minGrain := int64(60)
-	if windowSec <= 2*24*3600 && windowSec/30 < 60 {
-		sourceMV = "spanmetrics_10s"
-		minGrain = 10
-	}
-	bucketSec := windowSec / 30
-	if bucketSec < minGrain {
-		bucketSec = minGrain
-	}
-	nBuckets := int((windowSec + bucketSec - 1) / bucketSec)
-	if nBuckets < 1 {
-		nBuckets = 1
-	}
+	// Tier + slot grid (v0.9.207, review findings 5+9; supersedes the
+	// v0.9.27 inline tier switch): spanmetrics_10s only for windows
+	// that are BOTH short enough to profit from it AND young enough
+	// to sit inside that tier's retention; slot width always an exact
+	// multiple of the chosen tier's grain. 10s tier http_route TAŞIR
+	// (route-scoped sorgu uyumlu; canlı kolon paritesi doğrulandı);
+	// grain 10'un altına inilmez (operatör kararı).
+	sourceMV, bucketSec, nBuckets := endpointsSparkGrid(
+		windowSec, time.Now().Unix()-from.Unix())
 
 	// Group-by projection: raw route by default, ID-collapsed
 	// signature when the operator toggles "group by shape". The
@@ -657,9 +689,10 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 	// (service, path) collapses the buckets, sums the counts,
 	// derives error_rate + avg, merges the per-bucket tdigest
 	// states into true window p50/p95/p99 (v0.8.356), and
-	// arrayMap-rebuilds the dense 30-element sparkline from the
-	// sparse (b_idx, b_vals) groupArrays.
-	const sparkBuckets = 30
+	// arrayMap-rebuilds the dense sparkBuckets-element sparkline from
+	// the sparse (b_idx, b_vals) groupArrays. Grid rides the single
+	// SparklineBuckets source (granular-sparklines sweep M4).
+	const sparkBuckets = SparklineBuckets
 	bucketNs := (to.UnixNano() - from.UnixNano()) / int64(sparkBuckets)
 	if bucketNs <= 0 {
 		bucketNs = 1

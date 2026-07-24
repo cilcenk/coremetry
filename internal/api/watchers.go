@@ -225,6 +225,10 @@ type watcherSummaryEntry struct {
 	LastFire int64  `json:"lastFire"` // unix ns; 0 = never fired
 	Fires24h uint64 `json:"fires24h"`
 	OpenNow  bool   `json:"openNow"`
+	// FiresHourly — trailing-24h fires split into 24 one-hour slots,
+	// oldest→newest (granular-sparklines sweep M4). Absent for rules
+	// that never fired; the list cell degrades to the bare count.
+	FiresHourly []uint64 `json:"firesHourly,omitempty"`
 	// DisabledReason — the structural reason a disabled watcher can't
 	// run (script condition, no executable search, …), recomputed from
 	// the stored definition. Empty for enabled rules AND for rules the
@@ -266,6 +270,7 @@ func buildWatcherSummaries(rules []chstore.AlertRule, sums map[string]chstore.Wa
 			LastFire:       s.LastFire,
 			Fires24h:       s.Fires24h,
 			OpenNow:        s.OpenNow,
+			FiresHourly:    s.FiresHourly,
 			DisabledReason: watcherDisabledReason(r),
 		}
 	}

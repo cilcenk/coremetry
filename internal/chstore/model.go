@@ -156,11 +156,13 @@ type SpanLinkRow struct {
 // span name within a single service. Apdex is computed against the same
 // 200ms threshold used by GetServices so the numbers are comparable.
 //
-// Sparkline carries a fixed-length call-rate histogram (uint64 per
-// bucket) over the same window as the aggregate row. Length is
-// SparklineBuckets (see repo.go) — the frontend renders it as an inline
-// SVG so the operator can spot a slow-burn vs. spike pattern at a glance
-// without leaving the table.
+// Sparkline carries a call-rate histogram (uint64 per bucket) over the
+// same window as the aggregate row. Length is ≤ SparklineBuckets — the
+// sparklineGrid helper (repo.go) floors the slot width at the source's
+// native grain, so short windows ship fewer, REAL slots. The frontend
+// renders it as an inline SVG (axis derived from array length) so the
+// operator can spot a slow-burn vs. spike pattern at a glance without
+// leaving the table.
 type OperationSummary struct {
 	Name       string   `json:"name"`
 	SpanCount  uint64   `json:"spanCount"`

@@ -119,6 +119,35 @@ const EN: Catalog = {
   'sev.info':     'INFO',
   'sev.open':     'OPEN',
   'sev.resolved': 'RESOLVED',
+
+  // Time range picker (Grafana-parity panel)
+  'trp.quickRanges':   'Quick ranges',
+  'trp.absoluteRange': 'Absolute time range',
+  'trp.from':          'From',
+  'trp.to':            'To',
+  'trp.applyRange':    'Apply time range',
+  'trp.recentRanges':  'Recently used',
+  'trp.browserTime':   'Browser time',
+  'trp.zoomOut':       'Zoom out (2×)',
+  'trp.prevMonth':     'Previous month',
+  'trp.nextMonth':     'Next month',
+  'trp.errFrom':       'Invalid "From" — use YYYY-MM-DD HH:mm:ss',
+  'trp.errTo':         'Invalid "To" — use YYYY-MM-DD HH:mm:ss',
+  'trp.errOrder':      '"To" must be after "From"',
+  'trp.errMax':        'Range too large (max 1 year)',
+
+  // Quick-range labels (keys mirror PRESET_SECONDS in lib/utils.ts)
+  'range.5m':  'Last 5 minutes',
+  'range.15m': 'Last 15 minutes',
+  'range.30m': 'Last 30 minutes',
+  'range.1h':  'Last 1 hour',
+  'range.3h':  'Last 3 hours',
+  'range.6h':  'Last 6 hours',
+  'range.12h': 'Last 12 hours',
+  'range.24h': 'Last 24 hours',
+  'range.2d':  'Last 2 days',
+  'range.7d':  'Last 7 days',
+  'range.30d': 'Last 30 days',
 };
 
 const TR: Catalog = {
@@ -224,6 +253,35 @@ const TR: Catalog = {
   'sev.info':     'BİLGİ',
   'sev.open':     'AÇIK',
   'sev.resolved': 'ÇÖZÜLDÜ',
+
+  // Time range picker (Grafana-parity panel)
+  'trp.quickRanges':   'Hızlı aralıklar',
+  'trp.absoluteRange': 'Mutlak zaman aralığı',
+  'trp.from':          'Başlangıç',
+  'trp.to':            'Bitiş',
+  'trp.applyRange':    'Zaman aralığını uygula',
+  'trp.recentRanges':  'Son kullanılanlar',
+  'trp.browserTime':   'Tarayıcı saati',
+  'trp.zoomOut':       'Uzaklaş (2×)',
+  'trp.prevMonth':     'Önceki ay',
+  'trp.nextMonth':     'Sonraki ay',
+  'trp.errFrom':       'Geçersiz "Başlangıç" — YYYY-AA-GG SS:dd:ss kullanın',
+  'trp.errTo':         'Geçersiz "Bitiş" — YYYY-AA-GG SS:dd:ss kullanın',
+  'trp.errOrder':      '"Bitiş", "Başlangıç"tan sonra olmalı',
+  'trp.errMax':        'Aralık çok büyük (en fazla 1 yıl)',
+
+  // Quick-range labels
+  'range.5m':  'Son 5 dakika',
+  'range.15m': 'Son 15 dakika',
+  'range.30m': 'Son 30 dakika',
+  'range.1h':  'Son 1 saat',
+  'range.3h':  'Son 3 saat',
+  'range.6h':  'Son 6 saat',
+  'range.12h': 'Son 12 saat',
+  'range.24h': 'Son 24 saat',
+  'range.2d':  'Son 2 gün',
+  'range.7d':  'Son 7 gün',
+  'range.30d': 'Son 30 gün',
 };
 
 const CATALOGS: Record<Lang, Catalog> = { en: EN, tr: TR };
@@ -274,6 +332,16 @@ export function setUserLang(lang: Lang | null): void {
   window.dispatchEvent(new Event(USER_LANG_EVENT));
 }
 
+// useLang resolves the EFFECTIVE language: user-picked
+// (localStorage) → branding default → English. Exported for
+// components that need locale-aware formatting beyond catalog
+// lookups (e.g. TimeRangePicker's month/weekday tables).
+export function useLang(): Lang {
+  const brand = useBranding();
+  const userLang = useUserLang();
+  return userLang ?? (brand.language === 'tr' ? 'tr' : 'en');
+}
+
 // useT returns a translator scoped to the effective language.
 // Priority: user-picked (localStorage) → branding default →
 // English fallback. Hook so any of those layers changing
@@ -281,10 +349,7 @@ export function setUserLang(lang: Lang | null): void {
 // clicks the picker → USER_LANG_EVENT fires) flows through
 // every consumer without a manual reload.
 export function useT(): (key: string) => string {
-  const brand = useBranding();
-  const userLang = useUserLang();
-  const lang: Lang = userLang ?? (brand.language === 'tr' ? 'tr' : 'en');
-  const cat = CATALOGS[lang];
+  const cat = CATALOGS[useLang()];
   return (key: string) => cat[key] ?? EN[key] ?? key;
 }
 

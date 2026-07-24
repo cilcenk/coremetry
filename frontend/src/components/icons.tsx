@@ -164,6 +164,16 @@ export const IconClock = (p: IconProps) => (
   </Svg>
 );
 
+// IconZoomOut — magnifier-minus, Grafana's "widen the time range"
+// affordance next to the range picker (Lucide zoom-out geometry).
+export const IconZoomOut = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="M21 21l-4.35-4.35" />
+    <path d="M8 11h6" />
+  </Svg>
+);
+
 // IconFlame — profiling / hot-path indicator. Replaces the
 // 🔥 emoji used as a quick stand-in on Profile / SpanDetail.
 export const IconFlame = (p: IconProps) => (

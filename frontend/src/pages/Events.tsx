@@ -9,7 +9,7 @@ import { timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { NotificationLogEntry, TimeRange } from '@/lib/types';
+import type { NotificationLogEntry } from '@/lib/types';
 
 // v0.6.15 — Operator events list/delete UI.
 //
@@ -106,10 +106,30 @@ export default function EventsPage() {
 
 // ── Notifications tab ────────────────────────────────────────────────
 function NotificationsTab({ from, to }: { from: number; to: number }) {
-  const [kind, setKind] = useState('');
+  // v0.9.196 review-fix — URL = source of truth: her iki filtre de
+  // ?nkind= / ?related= üzerinden yaşar (replace:true, yabancı paramlar
+  // korunur, boş değer paramı siler) — kopyalanan link aynı görünümü verir.
+  const [sp, setSp] = useSearchParams();
+  const kind = sp.get('nkind') ?? '';
+  const related = sp.get('related') ?? '';
+  const setUrlParam = (key: string, v: string) => setSp(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set(key, v); else next.delete(key);
+    return next;
+  }, { replace: true });
+  const setKind = (v: string) => setUrlParam('nkind', v);
+  // related-kind filter. Watcher-fired notifications land with
+  // relatedKind='watcher' (notify.problemRelatedKind), so the operator
+  // can slice the feed to just the watcher fleet. Pure client-side:
+  // relatedKind already rides every row — no extra query.
+  const setRelated = (v: string) => setUrlParam('related', v);
   const q = useNotificationLog({ from, to, kind: kind || undefined, limit: 500 });
-  const data: NotificationLogEntry[] | null | undefined =
-    q.isPending ? undefined : q.isError ? null : (q.data ?? []);
+  const data = useMemo<NotificationLogEntry[] | null | undefined>(
+    () => q.isPending ? undefined : q.isError ? null : (q.data ?? []),
+    [q.isPending, q.isError, q.data]);
+  const rows = useMemo<NotificationLogEntry[] | null | undefined>(
+    () => (data && related) ? data.filter(n => n.relatedKind === related) : data,
+    [data, related]);
 
   const cols = useMemo<DataTableColumn<NotificationLogEntry>[]>(() => [
     { id: 'time',    label: 'Sent',    sortValue: n => n.sentAt,      naturalDir: 'desc', width: 130 },
@@ -121,7 +141,7 @@ function NotificationsTab({ from, to }: { from: number; to: number }) {
   ], []);
   const dt = useDataTable<NotificationLogEntry>({
     storageKey: 'notiflog', columns: cols,
-    rows: data ?? [], initialSort: { id: 'time', dir: 'desc' },
+    rows: rows ?? [], initialSort: { id: 'time', dir: 'desc' },
   });
 
   return (
@@ -133,22 +153,29 @@ function NotificationsTab({ from, to }: { from: number; to: number }) {
           {['email', 'slack', 'mattermost', 'teams', 'zoomchat', 'webhook', 'whatsapp'].map(k =>
             <option key={k} value={k}>{k}</option>)}
         </select>
+        <span style={{ fontSize: 12, color: 'var(--text2)' }}>Related:</span>
+        <select value={related} onChange={e => setRelated(e.target.value)}
+          title="What triggered the notification — watcher = imported ES Watcher fires (see /watchers)">
+          <option value="">(all)</option>
+          {['problem', 'watcher', 'runbook', 'test'].map(k =>
+            <option key={k} value={k}>{k}</option>)}
+        </select>
         <span style={{ flex: 1 }} />
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-          {data?.length ?? 0} notifications · everything the alert pipeline sent
+          {rows?.length ?? 0} notifications · everything the alert pipeline sent
         </span>
       </div>
 
-      {data === undefined && <Spinner />}
-      {data === null && <Empty icon="⚠" title="Failed to load the notification log" />}
-      {data && data.length === 0 && (
+      {rows === undefined && <Spinner />}
+      {rows === null && <Empty icon="⚠" title="Failed to load the notification log" />}
+      {rows && rows.length === 0 && (
         <Empty icon="✉" title="No notifications in this window">
           When an alert rule fires (or an operator sends a channel test),
           every email / Slack / Teams / Zoom / webhook delivery lands here
           with its outcome. Configure channels under Settings → Notifications.
         </Empty>
       )}
-      {data && data.length > 0 && (
+      {rows && rows.length > 0 && (
         <div className="table-wrap">
           <table style={{ tableLayout: 'fixed', width: '100%' }}>
             <DataTableColgroup dt={dt} />
@@ -174,6 +201,16 @@ function NotificationsTab({ from, to }: { from: number; to: number }) {
                         style={{ color: 'var(--accent2)', fontSize: 11 }}
                         title="Open the problem this notification was sent for">
                         problem ↗
+                      </Link>
+                    ) : n.relatedKind === 'watcher' && n.relatedId ? (
+                      // v0.9.196 — watcher-fired sends: badge marks the
+                      // source; relatedId is still the problem id, so the
+                      // link lands on the problem the fire opened.
+                      <Link to={`/problems?problem=${encodeURIComponent(n.relatedId)}`}
+                        style={{ fontSize: 11, textDecoration: 'none' }}
+                        title="Sent by an imported ES watcher — open the problem the fire opened (the watcher's history lives on /watchers)">
+                        <span className="badge b-watcher">WATCHER</span>
+                        <span style={{ color: 'var(--accent2)', marginLeft: 5 }}>↗</span>
                       </Link>
                     ) : (
                       <span style={{ fontSize: 11, color: 'var(--text3)' }}>{n.relatedKind || '—'}</span>

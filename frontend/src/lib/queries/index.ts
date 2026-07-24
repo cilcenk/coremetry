@@ -37,6 +37,7 @@ export {
   useCreateAlertRule, useUpdateAlertRule,
   useDeleteAlertRule, useEnableAlertRule, useDisableAlertRule,
 } from './alerts';
+export { useWatchersSummary, useWatcherHistory } from './watchers';
 export {
   useRunbooks, useRunbook,
   useCreateRunbook, useUpdateRunbook,

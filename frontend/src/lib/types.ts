@@ -1926,6 +1926,27 @@ export interface WatcherImportResult {
   ruleId?: string;
 }
 
+// ── /watchers page (v0.9.196) ───────────────────────────────────────────────
+// GET /api/watchers/summary — rule_id → rollup, ONE bounded problems
+// GROUP BY for the whole fleet (never per-row history calls).
+export interface WatcherSummaryEntry {
+  lastFire: number;   // unix ns of the newest fire; 0 = never fired
+  fires24h: number;   // problems opened in the trailing 24h
+  openNow: boolean;   // an open/acknowledged problem exists right now
+  // Structural can't-run reason recomputed from the stored definition
+  // for DISABLED rules (script condition, no executable search, …).
+  // Absent for enabled rules and for hand-disabled runnable watches.
+  disabledReason?: string;
+}
+
+// GET /api/watchers/{id}/history — one rule's drawer timeline: recent
+// problems (fire = startedAt, resolve = resolvedAt) + the notification
+// rows recorded for those problem ids (related_kind='watcher').
+export interface WatcherHistory {
+  problems: Problem[];
+  notifications: NotificationLogEntry[];
+}
+
 // ── Runbooks (v0.7.0) ───────────────────────────────────────────────────────
 // Operator-authored executable procedures (OneUptime model). A Runbook is an
 // ordered list of steps; automated steps (http/javascript/bash) run on the

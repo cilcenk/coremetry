@@ -779,6 +779,12 @@ func (s *Store) ListAlertRules(ctx context.Context) ([]AlertRule, error) {
 	return out, nil
 }
 
+// InvalidateAlertRulesCache — exported wrapper (v0.9.196): the watcher
+// history endpoint's 404 miss-path drops this pod's 30s rule cache once
+// before answering "not found", so a fresh import served by ANOTHER pod
+// doesn't 404 here for up to a cache TTL.
+func (s *Store) InvalidateAlertRulesCache() { s.invalidateAlertRules() }
+
 // invalidateAlertRules clears the cache so the next ListAlertRules re-reads
 // after a write (Upsert / Delete / SetEnabled). Cheap; called off the
 // operator-action path, not the hot read path.
@@ -881,6 +887,10 @@ type ProblemFilter struct {
 	// anomaly-detector entries (rule_id = "anomaly:…") and skip
 	// the rule-driven Problems.
 	RuleIDPrefix string
+	// RuleID narrows to the problems of ONE rule, exactly (v0.9.196 —
+	// the /watchers history drawer: fire/resolve timeline of a single
+	// imported watcher rule). Exact match, unlike RuleIDPrefix.
+	RuleID string
 	// Priority — P1/P2/P3 subset to keep. Empty = no filter.
 	// Applied post-EnrichProblemsWithPriority because priority is
 	// computed at read time (v0.5.210), not a CH column. ListProblems
@@ -948,6 +958,9 @@ func (s *Store) CountProblems(ctx context.Context, f ProblemFilter) (uint64, err
 	if f.RuleIDPrefix != "" {
 		wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix)
 	}
+	if f.RuleID != "" {
+		wc.add("rule_id = ?", f.RuleID)
+	}
 	s.envScopeProblems(ctx, &wc, f.Env) // v0.8.387 — same conjunct as ListProblems, badge agrees
 	row := s.conn.QueryRow(ctx, `
 		SELECT count()
@@ -973,6 +986,9 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	}
 	if f.RuleIDPrefix != "" {
 		wc.add("startsWith(rule_id, ?)", f.RuleIDPrefix)
+	}
+	if f.RuleID != "" {
+		wc.add("rule_id = ?", f.RuleID)
 	}
 	s.envScopeProblems(ctx, &wc, f.Env) // v0.8.387 — service-scoped env narrowing (env_members.go)
 	if f.Limit == 0 {

@@ -589,6 +589,10 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .b-info { background: color-mix(in srgb, var(--info) 15%, transparent); color: var(--info); }
 .b-mut { background: var(--accent-soft); color: var(--text2); }
 .b-gray { background: var(--bg3); color: var(--text2); }
+/* Watcher-sourced rows (/watchers page + /events chip, v0.9.196) —
+   purple keeps them visually distinct from problem (err) and channel
+   (info) badges; token-level, re-resolves per theme like every b-*. */
+.b-watcher { background: color-mix(in srgb, var(--purple) 15%, transparent); color: var(--purple); }
 
 /* Severity */
 .s-trace { color: var(--text3); } .s-debug { color: var(--text2); } .s-info { color: var(--info); }

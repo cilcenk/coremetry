@@ -14,7 +14,7 @@
 // Pure module (no React) — table-driven tests in urlCodec.test.ts exercise
 // every legacy shape.
 
-import { decodeFilters, isFlatAndGroup } from '@/lib/urlState';
+import { decodeFilters, encodeRange, isFlatAndGroup } from '@/lib/urlState';
 import { decodeMetricQuery, type MetricQuery } from '@/lib/metricQuery';
 import type { FilterExpr, FilterGroup } from '@/lib/types';
 import {
@@ -70,6 +70,40 @@ export function metricCatalogueHref(
   };
   const state: BuilderState = { queries: [q], formula: '', viz: 'line', step: 0 };
   return `/explore?q=${encodeURIComponent(encodeBuilder(state))}`;
+}
+
+// servicePivotHref — canonical /explore deep-link for the cross-signal pivot
+// drawer's "open in Explore" affordance: the anchor's service scoped over the
+// anchor's exact window, seeded as the D5 RED trio (rate / error_rate / p99)
+// so the three charts the drawer just showed are the three charts Explore
+// opens with.
+//
+// Emits ?q= (+ ?range=custom:), NOT the bare ?service=&from=&to= shape the
+// drawer used before: seedFromLegacyParams gates the legacy branch on a
+// builder-shaped param (agg/field/groupBy/filters/dsl/viz/step/metric/topN/
+// compare), so a URL carrying only service/from/to fell through to null and
+// the operator landed on an EMPTY builder with the stored 30m range — losing
+// exactly the context the pivot exists to carry.
+export function servicePivotHref(service: string, fromNs: number, toNs: number): string {
+  const mk = (letter: string, agg: string): BuilderQuery => ({
+    ...blankQuery(letter),
+    agg,
+    metric: spanNeedsField(agg) ? 'duration_ms' : '',
+    scope: service,
+    splitBy: ['service.name'],
+  });
+  const state: BuilderState = {
+    queries: [mk('A', 'rate'), mk('B', 'error_rate'), mk('C', 'p99')],
+    formula: '', viz: 'line', step: 0,
+  };
+  const q = `q=${encodeURIComponent(encodeBuilder(state))}`;
+  const fromMs = Math.floor(fromNs / 1e6);
+  const toMs = Math.ceil(toNs / 1e6);
+  // A non-positive or inverted window can't be encoded as custom: — fall back
+  // to the operator's stored range rather than emitting a bogus one.
+  if (!(fromMs > 0 && toMs > fromMs)) return `/explore?${q}`;
+  const range = encodeRange({ preset: 'custom', fromMs, toMs });
+  return `/explore?${q}&range=${encodeURIComponent(range)}`;
 }
 
 // decodeFgInline — narrow an already-parsed ?q= `fg` value into a FilterGroup.

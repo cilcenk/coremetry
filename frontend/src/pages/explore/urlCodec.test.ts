@@ -8,10 +8,12 @@
 //     pages link with the old params forever).
 
 import { describe, it, expect } from 'vitest';
-import { encodeBuilder, decodeBuilder, seedFromLegacyParams, metricCatalogueHref } from './urlCodec';
+import {
+  encodeBuilder, decodeBuilder, seedFromLegacyParams, metricCatalogueHref, servicePivotHref,
+} from './urlCodec';
 import { defaultBuilderState, blankQuery, type BuilderState } from './model';
 import { encodeMetricQuery, metricQuery } from '@/lib/metricQuery';
-import { encodeFilters } from '@/lib/urlState';
+import { encodeFilters, decodeRange } from '@/lib/urlState';
 
 describe('?q= codec round-trip', () => {
   it('default state survives', () => {
@@ -261,5 +263,53 @@ describe('metricCatalogueHref → ?q= round-trip', () => {
     expect(a.metric).toBe('process.cpu.utilization');
     expect(a.agg).toBe('avg');
     expect(a.scope).toBe('');
+  });
+});
+
+// v0.9.208 — the cross-signal pivot drawer's "open in Explore" link emitted
+// ?service=&from=&to=, which seedFromLegacyParams gates OUT (none of those
+// three is a builder-shaped param), so the operator landed on an empty builder
+// with the stored 30m range. These tests pin the producer AGAINST the consumer
+// so the two can never drift apart again.
+describe('servicePivotHref → ?q= round-trip', () => {
+  const params = (href: string) => new URLSearchParams(href.slice(href.indexOf('?') + 1));
+  const decode = (href: string) => seedFromLegacyParams(params(href));
+
+  const FROM_NS = 1_700_000_000_000_000_000;
+  const TO_NS = 1_700_000_900_000_000_000; // +15 min
+
+  it('seeds the RED trio scoped to the service', () => {
+    const st = decode(servicePivotHref('checkout-svc', FROM_NS, TO_NS));
+    expect(st).not.toBeNull();
+    expect(st!.queries.map(q => q.agg)).toEqual(['rate', 'error_rate', 'p99']);
+    for (const q of st!.queries) {
+      expect(q.scope).toBe('checkout-svc');
+      expect(q.source).toBe('span');
+    }
+    // p99 needs a field. rate / error_rate don't read one, and the ?q= codec
+    // omits a blank metric (urlCodec.ts:40) so decode restores the span
+    // default — harmless, but pinned so the normalisation stays deliberate.
+    expect(st!.queries[2].metric).toBe('duration_ms');
+    expect(st!.queries[0].metric).toBe('duration_ms');
+  });
+
+  it('carries the anchor window as range=custom:<fromMs>-<toMs>', () => {
+    const range = params(servicePivotHref('checkout-svc', FROM_NS, TO_NS)).get('range');
+    expect(range).toBe('custom:1700000000000-1700000900000');
+    expect(decodeRange(range, { preset: '30m' })).toEqual({
+      preset: 'custom', fromMs: 1_700_000_000_000, toMs: 1_700_000_900_000,
+    });
+  });
+
+  it('omits range when the window is empty or inverted', () => {
+    expect(params(servicePivotHref('checkout-svc', TO_NS, FROM_NS)).get('range')).toBeNull();
+    expect(params(servicePivotHref('checkout-svc', 0, 0)).get('range')).toBeNull();
+    // …but the query itself still seeds, so the pivot never lands blank.
+    expect(decode(servicePivotHref('checkout-svc', 0, 0))!.queries).toHaveLength(3);
+  });
+
+  it('survives a service name that needs URL encoding', () => {
+    const st = decode(servicePivotHref('checkout/v2 svc', FROM_NS, TO_NS));
+    expect(st!.queries[0].scope).toBe('checkout/v2 svc');
   });
 });

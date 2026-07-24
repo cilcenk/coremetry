@@ -70,6 +70,23 @@ audit:
 # the user's login footer + service.version on the OTel
 # browser SDK would silently read "dev" again any time
 # someone runs compose directly.
+# v0.9.210 — build-ONLY target. The release flow needs a freshly
+# built image; it does NOT need a second Coremetry running. Using
+# `docker-up` for that side-effect kept resurrecting the compose
+# app on :8088 next to the minikube one on :8090 — two complete
+# environments, two ClickHouses, one operator. `make image` builds
+# and tags exactly like docker-up does, and starts nothing.
+#
+# Use `make docker-up` when you actually want the compose stack.
+.PHONY: image
+image: .env-version
+	docker compose build coremetry
+	@IMG=$$(docker compose images coremetry --quiet 2>/dev/null | head -1); \
+	  if [ -n "$$IMG" ]; then \
+	    docker tag "$$IMG" coremetry:latest && \
+	      echo "[make] tagged $$IMG as coremetry:latest"; \
+	  fi
+
 docker-up: .env-version
 	# v0.6.26 — dropped `--profile demo` from the default up
 	# target. Operator-reported: java-demo / jboss-demo / go-demo

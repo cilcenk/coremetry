@@ -129,12 +129,19 @@ on the commit.
 
 ### 7. Kick off the rebuild
 
-Start `make docker-up` in the **background** so the user can keep
+Start `make image` in the **background** so the user can keep
 working while the image rebuilds:
 
 ```
-make docker-up
+make image
 ```
+
+**Use `make image`, NOT `make docker-up`** (v0.9.210). `docker-up`
+also starts the compose stack, which stands a second Coremetry up
+on :8088 next to the minikube one on :8090 — two full environments
+with two ClickHouses. The local environment is minikube; the
+release flow only needs the image built and tagged. Reach for
+`make docker-up` only when the compose stack itself is the goal.
 
 Use `run_in_background: true` on the Bash call. The runtime will
 notify when it completes (~30-60s). Do NOT wait inline — that

@@ -64,6 +64,15 @@ type Service struct {
 	// by default; toggled via the Settings UI.
 	skipTLS bool
 
+	// quotaUntil (v0.9.200) — provider-quota devre kesici. Bir çağrı
+	// 429/quota hatası döndüğünde 1 saat ileri damgalanır; ARKA PLAN
+	// tüketicileri (problem-explainer) QuotaBackoffActive'ken tick'i
+	// sessizce atlar ki kalan kota interaktif çağrılara (analiz, CoSRE)
+	// kalsın. İnteraktif yollar ETKİLENMEZ — denerler; başarılı olursa
+	// kota dönmüş demektir ve pencere sonunda kesici kendiliğinden
+	// kapanır. Kota-olmayan hatalar (timeout, 5xx) kesiciyi AÇMAZ.
+	quotaUntil time.Time
+
 	// enabled — master on/off switch INDEPENDENT of whether creds
 	// are stored (wf: enable/disable toggle). Configured() means
 	// "has creds"; Active() means "enabled AND configured". The
@@ -343,7 +352,49 @@ func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) 
 	}
 
 	s.recordNarration(ctx, started, provider, model, baseURL, systemPrompt, userPrompt, out, inputTokens, outputTokens, err)
+	s.noteProviderError(err)
 	return out, err
+}
+
+// isQuotaErr — sağlayıcı kota/hız-limiti hatası mı? (Gemini free tier
+// "429 ... quota", OpenAI "rate limit", Google RESOURCE_EXHAUSTED.)
+// Saf + table-tested; timeout/5xx gibi geçici hatalar kota SAYILMAZ.
+func isQuotaErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, kw := range []string{" 429", "429:", "quota", "rate limit", "rate_limit", "resource_exhausted", "too many requests"} {
+		if strings.Contains(msg, kw) {
+			return true
+		}
+	}
+	return false
+}
+
+// noteProviderError arms the quota circuit-breaker on a quota-class
+// error (v0.9.200). 1h pencere: free-tier günlük kotalar dakikalarla
+// düzelmez; interaktif çağrılar yine de denediği için erken dönüş
+// operatörü bekletmez.
+func (s *Service) noteProviderError(err error) {
+	if !isQuotaErr(err) {
+		return
+	}
+	s.mu.Lock()
+	if time.Now().After(s.quotaUntil) {
+		s.quotaUntil = time.Now().Add(time.Hour)
+		log.Printf("[copilot] provider quota hit (429) — background AI consumers paused for 1h so interactive calls keep the remaining quota")
+	}
+	s.mu.Unlock()
+}
+
+// QuotaBackoffActive reports whether the quota circuit-breaker window
+// is open. Background consumers (problem-explainer) skip their tick
+// while true; interactive surfaces ignore it.
+func (s *Service) QuotaBackoffActive() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return time.Now().Before(s.quotaUntil)
 }
 
 // recordNarration emits the single ai_calls row for a one-shot

@@ -81,6 +81,7 @@ func (s *Service) StreamText(ctx context.Context, systemPrompt, userPrompt strin
 		out, inputTokens, outputTokens, err = s.streamAnthropicWithUsage(ctx, systemPrompt, userPrompt, onDelta)
 	}
 	s.recordNarration(ctx, started, provider, model, baseURL, systemPrompt, userPrompt, out, inputTokens, outputTokens, err)
+	s.noteProviderError(err) // v0.9.200 — kota devre-kesici (Explain ile aynı)
 	return out, err
 }
 

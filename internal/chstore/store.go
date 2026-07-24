@@ -2198,6 +2198,42 @@ func (s *Store) migrate(ctx context.Context) error {
 		log.Printf("[chstore] exception columns not resolvable on spans (%v) — exception reads fall back to the JSON_VALUE expression path (expected on an external Distributed cluster with cluster_name unset)", exErr)
 	}
 
+	// attr_channel_code / attr_function_code — v0.9.198 (FAZ 2C,
+	// docs/audit/traces-attribute-columns.md §10): the two operator-promoted
+	// trace-list attribute columns. MATERIALIZED from the attr arrays so the
+	// /traces extras phase-2 reads ONE narrow LowCardinality column instead
+	// of decompressing the 4 fat array columns (measured 6.97x read_bytes on
+	// the array path). ex_*/db_stmt_hash precedent end to end: no INSERT
+	// projection change, Distributed forwarding drops them, old parts compute
+	// at read time, external-Distributed-unset skips the ALTER, and the boot
+	// probe below gates the read side (distributed-column-safety — the map
+	// stays EMPTY and the projection falls back to the array path when the
+	// columns aren't resolvable).
+	attrColAlters := []string{
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS attr_channel_code LowCardinality(String) MATERIALIZED attr_values[indexOf(attr_keys, 'CHANNEL_CODE')]`,
+		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS attr_function_code LowCardinality(String) MATERIALIZED attr_values[indexOf(attr_keys, 'FUNCTION_CODE')]`,
+	}
+	if s.spansIsExternalDistributed(ctx) {
+		log.Printf("[chstore] external Distributed `spans` with cluster_name unset — SKIPPING promoted attribute column ALTERs; /traces extras stay on the array path")
+	} else {
+		for _, a := range attrColAlters {
+			if err := s.execDDL(ctx, a); err != nil {
+				return fmt.Errorf("alter table (promoted attr cols): %w", err)
+			}
+		}
+	}
+	acRows, acErr := s.conn.Query(ctx,
+		`SELECT attr_channel_code, attr_function_code FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(acRows, acErr)
+	if acErr == nil {
+		registerTraceAttrMaterialized(map[string]string{
+			"CHANNEL_CODE":  "attr_channel_code",
+			"FUNCTION_CODE": "attr_function_code",
+		})
+	} else {
+		log.Printf("[chstore] promoted attribute columns not resolvable on spans (%v) — /traces extras use the array path (expected until the ALTER lands on every shard)", acErr)
+	}
+
 	// Defensive recovery (mirrors the op_group guard, v0.8.186): when
 	// db_stmt_hash is genuinely absent, DROP db_statement_summary_5m if it
 	// lingers from a prior boot. Its SELECT references db_stmt_hash, so its

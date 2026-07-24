@@ -285,5 +285,8 @@ Feedback `distributed-column-safety`: yeni spans kolonu okuyan HER sorgu yolu
    array kolonları da okunur — kazanım yeni part'larda kalır).
 4. **MV yok:** bu kolonlar hiçbir MV'ye girmiyor → `dropCombinedMV` /
    MODIFY QUERY riski yok; ALTER tek başına yeterli.
-5. Kod migration'ı **ÇALIŞTIRMAZ** — bu bölüm, operatör onayıyla ayrı bir
-   v0.9.X diliminde uygulanmak üzere hazır bekler.
+5. **UYGULANDI — v0.9.198:** ALTER'lar migrate'e eklendi (ex_* emsal bloğu,
+   external-Distributed-unset atlama + boot probe + koşullu map kaydı).
+   Lokal doğrulama: kolonlar MATERIALIZED oluştu, yeni part'larda native yol
+   ~%26 daha az read_bytes (668 vs 902 KiB, 10dk penceresi); eski part'lar
+   okuma anında hesaplar, retention akışıyla tam kazanım.

@@ -188,7 +188,7 @@ export function buildPanels(
   return out;
 }
 
-export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onExemplarClick, logScale, onPin, pinnableLetters, xRange }: {
+export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZoom, onZoomReset, onExemplarClick, logScale, onPin, pinnableLetters, xRange }: {
   panels: PanelData[];
   viz: 'line' | 'area' | 'bars' | 'stacked';
   hiddenKeys: Set<string>;          // `${letter}:${label}`
@@ -197,6 +197,9 @@ export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZo
   // v0.9.83 — sorgu penceresi (unix sec); panellerin x-ekseni buna sabitlenir.
   xRange?: { from: number; to: number } | null;
   onZoom: (fromSec: number, toSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Explore'un lokal zoom geri-yığınını pop
+  // eder (bir adım geri; yığın boşken tam görünüme döner).
+  onZoomReset?: () => void;
   onExemplarClick?: (traceId: string) => void;   // open an exemplar ◆ trace
   logScale?: boolean;               // v0.8.418 (DE3) — log10 y-axis, all panels
   // v0.8.419 (DE4) — pin a query to a dashboard. pinnableLetters gates the
@@ -226,6 +229,7 @@ export function PanelStack({ panels, viz, hiddenKeys, focusKey, zoomWindow, onZo
           zoomWindow={zoomWindow}
           xRange={xRange}
           onZoom={onZoom}
+          onZoomReset={onZoomReset}
           onExemplarClick={onExemplarClick}
           logScale={logScale}
           onPin={onPin && !p.isFormula && pinnableLetters?.has(p.letter)

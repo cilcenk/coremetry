@@ -11,7 +11,7 @@ import { OverviewChart, type OvChartSeries } from './OverviewChart';
 // alignToUnion). Hizasız seriler index-kaymasıyla yanlış zamana çizilir.
 export interface ChartLine { series: SpanMetricSeries[]; color: string; label: string }
 
-export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom, xRange }: {
+export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 'ready', onZoom, onZoomReset, syncKey, xRange }: {
   title: string; lines: ChartLine[]; unit: string;
   mode?: 'line' | 'area' | 'stacked'; deploy?: { sec: number; label: string } | null;
   // RED series fetch state — distinguishes loading/error from a genuinely
@@ -19,6 +19,10 @@ export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 
   status?: 'loading' | 'error' | 'ready';
   // v0.8.534 — threaded to OverviewChart for drag-zoom → global range.
   onZoom?: (fromSec: number, toSec: number) => void;
+  // Grafana-parite M1 — çift-tık geri (sayfa yığını) + kardeş grafiklerle
+  // imleç senkron key'i; ikisi de OverviewChart'a aynen iletilir.
+  onZoomReset?: () => void;
+  syncKey?: string;
   // v0.9.83 — sorgu penceresi (unix sec): x-ekseni pencereye sabitlenir.
   xRange?: { from: number; to: number } | null;
 }) {
@@ -49,7 +53,8 @@ export function ChartCard({ title, lines, unit, mode = 'line', deploy, status = 
           </div>
         ) : (
           <OverviewChart times={times} series={ovSeries} unit={unit} mode={mode}
-            deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label} onZoom={onZoom} xRange={xRange} />
+            deployAtSec={deploy?.sec ?? null} deployLabel={deploy?.label}
+            onZoom={onZoom} onZoomReset={onZoomReset} syncKey={syncKey} xRange={xRange} />
         )}
       </div>
     </div>

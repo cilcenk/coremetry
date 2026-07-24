@@ -8,6 +8,7 @@ import { placeTooltip } from '@/lib/chartTooltip';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { chartBuildSignature } from '@/lib/chartBuildSig';
 import { useChartEngine } from '@/lib/chart/engine';
+import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { isAdditiveUnit } from '@/lib/chart/legendStats';
@@ -158,7 +159,7 @@ function computeChartData(
 }
 
 export function MultiLineChart({
-  series, unit, height = 320, deploys, thresholds, syncKey, onZoom,
+  series, unit, height = 320, deploys, thresholds, syncKey, onZoom, onZoomReset,
   compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
   selectedOps, onLegendClick, xRange, maxSeries,
 }: {
@@ -195,6 +196,11 @@ export function MultiLineChart({
   // update its TimeRange state and re-fetch. Without this the
   // drag still works as a visual zoom but doesn't propagate.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // onZoomReset (Grafana-parite M1) — çift-tık: sayfa geri-yığını bir adım
+  // pop eder (Service/Dashboard handleZoomReset). Verilmezse mevcut davranış:
+  // uPlot'un yerleşik dblclick autoscale'i (yerel zoom'u tam veri aralığına
+  // döndürür), URL'e dokunmaz.
+  onZoomReset?: () => void;
   // onBucketClick — v0.7.22. "Spike → exemplar": a plain click
   // (not a drag) on the chart resolves the clicked time-bucket
   // window in NANOSECONDS and hands it to the caller, which
@@ -375,6 +381,15 @@ export function MultiLineChart({
       return additive ? { ...base, 'Σ': fmt1(sum) } : base;
     };
 
+    // Grafana-parite M1 — drag(+sync)+setSelect paylaşımlı buildCursorOpts'tan
+    // (davranış birebir: 4px eşik, onZoomRef'ten canlı çağrı, setScale yalnız
+    // onZoom varken; hasZoom presence build imzasında).
+    const cz = buildCursorOpts({
+      syncKey,
+      setScale: !!onZoom,
+      onZoom: onZoom ? (f, t) => onZoomRef.current?.(f, t) : undefined,
+    });
+
     const opts: uPlot.Options = {
       // width motordan gelir (el.clientWidth || 320); ilk paint'te 0 ise motor
       // 320 verir, ResizeObserver sonraki layout'ta düzeltir (OVC/TC ile aynı).
@@ -495,19 +510,11 @@ export function MultiLineChart({
         // v0.9.84 (madde 4) — hover en yakın DOLU örneğe snap (±2 bucket);
         // union ekseninin null'ları tooltip'te "—" üretmesin.
         dataIdx: (u, sidx, idx) => nearestFilledIdx(u.data[sidx] as (number | null)[], idx, 2),
-        // Drag-zoom: x-axis only. uPlot's built-in select
-        // mechanism + setScale=true handles the visual zoom;
-        // onZoom (below, in hooks.setSelect) propagates the
-        // chosen range to the page so it can update its
-        // TimeRange and re-fetch. Click-only behaviour is
-        // unchanged (drag is from > 5 px movement).
-        drag: { x: true, y: false, setScale: !!onZoom },
-        // Sync cursors across charts that share a key. Two
-        // chart instances on the same page with the same
-        // syncKey will paint the same crosshair simultaneously
-        // when the operator hovers either one — Grafana /
-        // Datadog dashboard pattern.
-        sync: syncKey ? { key: syncKey } : undefined,
+        // Grafana-parite M1 — drag+sync paylaşımlı buildCursorOpts'tan;
+        // MLC şekli birebir: x-only drag, setScale yalnız onZoom varken
+        // (yerel görsel zoom + sayfaya devir), sync key'li kardeşlerle
+        // crosshair senkronu (Grafana / Datadog dashboard pattern).
+        ...cz.cursor,
       },
       // live:false — the columns are range stats (Last/Min/Max/Avg via
       // series.values), not the cursor value; the floating tooltip is the
@@ -515,25 +522,11 @@ export function MultiLineChart({
       // to the visible window.
       legend: { show: true, live: false, markers: { width: 2 } },
       hooks: {
-        // Drag-zoom callback — fires when the operator
-        // releases a horizontal selection. Convert from uPlot
-        // pixel select to data-space (unix seconds) and hand
-        // off to the page; the page is responsible for
-        // updating its time-range state and refetching.
-        setSelect: onZoom ? [
-          (u) => {
-            const sel = u.select;
-            if (!sel || sel.width < 4) return; // ignore tiny accidental drags
-            const x0 = u.posToVal(sel.left, 'x');
-            const x1 = u.posToVal(sel.left + sel.width, 'x');
-            if (!isFinite(x0) || !isFinite(x1)) return;
-            onZoomRef.current?.(Math.min(x0, x1), Math.max(x0, x1));
-            // Reset the visual selection after the parent
-            // takes over the new range — otherwise the grey
-            // band sticks around until the next click.
-            u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
-          },
-        ] : [],
+        // Drag-zoom callback — fires when the operator releases a horizontal
+        // selection; paylaşımlı cursorOpts hook'u sec aralığını çıkarır,
+        // sayfaya devreder ve gri bandı temizler. onZoom yokken [] (eski
+        // davranış — uPlot `in hooks` kontrolü boş dizide no-op).
+        setSelect: cz.setSelect ?? [],
         // Spike → exemplar click hook (v0.7.22). OPT-IN: only
         // registered when onBucketClick is set, so non-exemplar
         // callers are untouched. Attaches a plain-click listener
@@ -837,6 +830,9 @@ export function MultiLineChart({
     data: bundle.data,
     buildOptions,
     afterBuild: () => { visibleRef.current = bundle.allSeries.map(() => true); },
+    // Grafana-parite M1 — çift-tık: sayfa geri-yığınına devret (spec canlı
+    // okunur; verilmezse motor no-op, uPlot yerleşik autoscale'i sürer).
+    onZoomReset,
   }, themeTick);
 
   // Click-to-isolate: hide every other series on first click,

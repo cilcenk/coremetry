@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
@@ -18,6 +18,7 @@ import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
+import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { TimeRange, FilterExpr, LatencyHeatmap as Heatmap } from '@/lib/types';
 import {
@@ -106,6 +107,23 @@ function ExploreInner() {
 
   // Ephemeral interaction state — NOT in the URL (plan state model).
   const [zoomWindow, setZoomWindow] = useState<{ from: number; to: number } | null>(null);
+  // Grafana-parite M1 — lokal zoom GERİ-YIĞINI (çift-tık = bir adım geri).
+  // zoomWindow URL'e taşınmıyor (o ayrı karar); yığın da aynı efemer sınıfta.
+  // zoomWindowRef: TSP'nin setSelect hook'u build anındaki onZoom closure'ını
+  // tutar — zoom öncesi pencereyi ref'ten okumak stale-push'u önler.
+  const zoomStackRef = useRef<Array<{ from: number; to: number } | null>>([]);
+  const zoomWindowRef = useRef(zoomWindow); zoomWindowRef.current = zoomWindow;
+  const handlePanelZoom = useCallback((f: number, t: number) => {
+    zoomStackRef.current = pushZoom(zoomStackRef.current, zoomWindowRef.current);
+    setZoomWindow({ from: f, to: t });
+  }, []);
+  const handlePanelZoomReset = useCallback(() => {
+    const { stack, view } = popZoom(zoomStackRef.current);
+    zoomStackRef.current = stack;
+    // Yığın boşsa (ya da ilk zoom'un öncesi itilmişse) view null → tam
+    // görünüme dön; zoom yokken zaten null → state değişmez (no-op).
+    setZoomWindow(view ?? null);
+  }, []);
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(() => new Set());
   const [focusKey, setFocusKey] = useState<string | null>(null);
   // Correlated Signals (task #6) — the exemplar ◆ click opens the pivot drawer
@@ -362,6 +380,9 @@ function ExploreInner() {
       fromMs: Math.floor(zoomWindow.from * 1000),
       toMs: Math.ceil(zoomWindow.to * 1000),
     });
+    // Pencere sayfa aralığına terfi etti — lokal zoom yığını artık eski
+    // aralığa işaret eder, temizle (çift-tık bayat pencereye dönmesin).
+    zoomStackRef.current = [];
     setZoomWindow(null);
   };
 
@@ -676,7 +697,7 @@ name ~ checkout`}
                   }}>
                     <span>🔍 Zoom aktif — tüm paneller senkron</span>
                     <Button variant="secondary" size="sm"
-                      onClick={() => setZoomWindow(null)}>Sıfırla</Button>
+                      onClick={() => { zoomStackRef.current = []; setZoomWindow(null); }}>Sıfırla</Button>
                     <Button variant="secondary" size="sm"
                       onClick={fetchZoomWindow}
                       title="Zoom penceresini sayfa aralığı yap — backend daha ince bucket'larla yeniden sorgular">
@@ -693,7 +714,8 @@ name ~ checkout`}
                     focusKey={focusKey}
                     zoomWindow={zoomWindow}
                     xRange={xRangeSec}
-                    onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
+                    onZoom={handlePanelZoom}
+                    onZoomReset={handlePanelZoomReset}
                     onExemplarClick={(id) => setCorrelateAnchor({ kind: 'trace', traceId: id })}
                     pinnableLetters={pinnableLetters}
                     onPin={letter => {

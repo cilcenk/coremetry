@@ -43,6 +43,13 @@ export interface ChartEngineSpec {
   // Verilmezse VARSAYILAN: tüm seriler (1..n) tek y eksenine yRefitScale.
   // TimeChart dual-eksende (y/y2) bunu override eder.
   refitScales?(u: uPlot, data: uPlot.AlignedData): void;
+  // Çift-tık (Grafana-parite M1) — "zoom'dan bir adım geri" niyeti. Motor
+  // URL BİLMEZ: host'a mount'ta bağlanan tek dblclick listener'ı yalnız bu
+  // callback'i çağırır (specRef'ten CANLI okunur); sayfa katmanı geri-yığını
+  // pop edip range'i geri yazar (TSP verilmediğinde eski yerel tam-aralık
+  // reset'ine düşer). Verilmezse no-op — uPlot'un yerleşik dblclick
+  // autoscale davranışı zaten aynen sürer (mevcut default bozulmaz).
+  onZoomReset?(): void;
 }
 
 // useChartEngine — iskeleti sahiplenir; preset'in uPlot örneğine ref döner.
@@ -98,6 +105,27 @@ export function useChartEngine(
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [spec.signature, themeTick]);
+
+  // Çift-tık listener'ı — MOUNT'ta bir kez host div'e (host rebuild'ler
+  // boyunca sabit React elemanı; uPlot over'ı ise her rebuild'de yenilenir,
+  // o yüzden host'a bağlamak re-register derdini sıfırlar). Canlı spec okunur;
+  // onZoomReset vermeyen preset'te no-op.
+  useEffect(() => {
+    const el = hostRef.current;
+    if (!el) return;
+    const onDbl = (e: MouseEvent) => {
+      // v0.9.199 review-fix: yalnız ÇİZİM ALANI (.u-over) çift-tıkı zoom
+      // geri-alır — MLC'nin host-İÇİ legend'i (click-to-isolate bölgesi)
+      // ve eksen olukları eskisi gibi inert kalır; legend'e çift-tık
+      // sayfa range'ine asla dokunmaz. .u-over kontrolü canlı uPlot
+      // DOM'una karşı, bayat instance derdi yok.
+      if (!(e.target instanceof Element) || !e.target.closest('.u-over')) return;
+      specRef.current.onZoomReset?.();
+    };
+    el.addEventListener('dblclick', onDbl);
+    return () => el.removeEventListener('dblclick', onDbl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Data fast-path (v0.8.531 + v0.9.78/79) — poll yalnız nokta DEĞERLERİNİ
   // değiştirir; buildSig aynı, build effect çalışmaz. Zoomluysa (x

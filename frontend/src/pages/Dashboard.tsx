@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useMemo, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -19,6 +19,7 @@ import type {
 } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
 import { serializeDashboard, suggestedFilename } from '@/lib/dashboardIO';
+import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 
 // Wrapper handles the Suspense requirement of useSearchParams() in App
 // Router with static export.
@@ -39,16 +40,39 @@ function Inner() {
   // by presence, but keeping this referentially stable also spares the panel
   // subtree a needless re-render. setRange is itself stable (useUrlRange) and
   // the closure captures no `range`, so there's no stale-window risk.
+  // Grafana-parite M1 — drag-zoom GERİ-YIĞINI (çift-tık = bir adım geri).
+  // EFEMER ref state, URL'e yazılmaz: range yazımları replace:true olduğundan
+  // browser history zoom adımlarını zaten biriktirmiyor; yığını URL'e koymak
+  // copy-link / SavedViews sözleşmesini zoom-geçmişiyle kirletirdi.
+  const zoomStackRef = useRef<TimeRange[]>([]);
+  const rangeRef = useRef(range); rangeRef.current = range;
+  // v0.9.199 review-fix — out-of-band range değişimi (Topbar seçimi) yığını
+  // geçersizleştirir (Service.tsx'teki desenin aynısı).
+  const zoomWroteRef = useRef(false);
+  useEffect(() => {
+    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
+    zoomStackRef.current = [];
+  }, [range.preset, range.fromMs, range.toMs]);
   const handleZoom = useCallback((fromUnixSec: number, toUnixSec: number) => {
     // Dynatrace-style click-drag-to-zoom: dragging a horizontal range on any
     // panel updates the dashboard's time range so every panel re-fetches for
     // the new window. Without this the chart visually zoomed but the metric
     // queries still covered the full original window — confusing.
+    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
+    zoomWroteRef.current = true;
     setRange({
       preset: 'custom',
       fromMs: Math.round(fromUnixSec * 1000),
       toMs: Math.round(toUnixSec * 1000),
     });
+  }, [setRange]);
+  const handleZoomReset = useCallback(() => {
+    const { stack, view } = popZoom(zoomStackRef.current);
+    zoomStackRef.current = stack;
+    if (view) { zoomWroteRef.current = true; setRange(view); return; }
+    // Yığın boş: zoom'lu (custom) penceredeysek preset default'a dön; zoom
+    // yokken çift-tık HİÇBİR ŞEY yapmaz (mevcut davranış).
+    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '30m' }); }
   }, [setRange]);
   const [doc, setDoc] = useState<Dashboard | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
@@ -351,6 +375,7 @@ function Inner() {
             onDeletePanel={deletePanel}
             onMovePanel={movePanel}
             onZoom={handleZoom}
+            onZoomReset={handleZoomReset}
             dashboardId={id}
             bundlePanelData={bundlePanelData} />
         )}
@@ -428,7 +453,7 @@ function normalizePanels(raw: unknown): Panel[] {
 // not persisted across reloads (matches Grafana's default behaviour;
 // add a localStorage layer if users start asking for it).
 function DashboardGrid({
-  panels, range, vars, editing, onEditPanel, onDeletePanel, onMovePanel, onZoom, dashboardId, bundlePanelData,
+  panels, range, vars, editing, onEditPanel, onDeletePanel, onMovePanel, onZoom, onZoomReset, dashboardId, bundlePanelData,
 }: {
   panels: Panel[];
   range: TimeRange;
@@ -442,6 +467,8 @@ function DashboardGrid({
   // new range. Receives unix-seconds bounds, parent owns the
   // TimeRange state.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // Grafana-parite M1 — çift-tık: dashboard zoom geri-yığınını pop eder.
+  onZoomReset?: () => void;
   // Cursor-sync key passed to every chart panel — every chart on
   // the dashboard hovers in lockstep so the operator reads 8
   // panels as one view.
@@ -602,6 +629,7 @@ function DashboardGrid({
                     <PanelRenderer panel={p} range={range} vars={vars}
                                    syncKey={`dashboard:${dashboardId}`}
                                    onZoom={onZoom}
+                                   onZoomReset={onZoomReset}
                                    dataOverride={bundlePanelData[p.id]} />
                   </div>
                 ))}

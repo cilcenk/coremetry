@@ -29,10 +29,12 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'restarts', label: 'Restarts', sortValue: r => r.restarts ?? 0, numeric: true, width: 84 },
 ];
 
-export function ServicePodsTab({ service, range, onZoom }: {
+export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
   service: string;
   range: TimeRange;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Service.tsx zoom geri-yığınını pop eder.
+  onZoomReset?: () => void;
 }) {
   const [params] = useSearchParams();
   const navigate = useNavigate();
@@ -86,13 +88,13 @@ export function ServicePodsTab({ service, range, onZoom }: {
           {/* 2) JVM / JBoss JMX panelleri (servis-seviyesi; çok-cluster'da
               iç cluster seçici, review v0.9.159 #4). */}
           <ServiceJmxPanels clusters={clustersWithPods} effNs={effNs} effDeploy={effDeploy}
-            cFrom={cFrom} cTo={cTo} clamped={clamped} rows={rows} onZoom={onZoom} />
+            cFrom={cFrom} cTo={cTo} clamped={clamped} rows={rows} onZoom={onZoom} onZoomReset={onZoomReset} />
         </>
       )}
 
       {/* 3) OTel dil-runtime (heap/GC/threads by pod) — servis-scoped, her zaman. */}
       <div style={{ marginTop: 20 }}>
-        <RuntimeCharts service={service} from={from} to={to} onZoom={onZoom} />
+        <RuntimeCharts service={service} from={from} to={to} onZoom={onZoom} onZoomReset={onZoomReset} />
       </div>
     </>
   );

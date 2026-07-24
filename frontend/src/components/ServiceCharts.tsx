@@ -31,7 +31,7 @@ import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 // crosshair on the other two — Datadog dashboard convention,
 // turns the three panels into one synchronised view.
 
-export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeChange, windowNs }: {
+export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '', onOpScopeChange, windowNs }: {
   service: string;
   range: TimeRange;
   // onZoom — drag-to-select range on any of the three RED
@@ -40,6 +40,9 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
   // re-fetch for the selected window. Same shape uPlot
   // emits (unix seconds).
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Service.tsx zoom geri-yığınını pop eder
+  // (üç RED paneline aynen iletilir).
+  onZoomReset?: () => void;
   // v0.8.415 (Tempo-parity T3) — operation scope is CONTROLLED by
   // the parent (Service.tsx owns it as the ?op= URL param, house
   // rule: URL is the source of truth) so the latency heatmap and a
@@ -464,7 +467,8 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
                               compareSeries={rpsPrev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
                               compareLabel={compareLabel}
-                              onZoom={onZoom} />
+                              onZoom={onZoom}
+                              onZoomReset={onZoomReset} />
               <EventMarkers fromNs={from} toNs={to} service={service} />
             </div>
           </MetricPanel>
@@ -481,6 +485,7 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
                               compareOffsetNs={compareOffsetNs}
                               compareLabel={compareLabel}
                               onZoom={onZoom}
+                              onZoomReset={onZoomReset}
                               onBucketClick={onErrorBucketClick} />
               <EventMarkers fromNs={from} toNs={to} service={service} />
             </div>
@@ -498,6 +503,7 @@ export function ServiceCharts({ service, range, onZoom, opScope = '', onOpScopeC
                               compareOffsetNs={compareOffsetNs}
                               compareLabel={compareLabel}
                               onZoom={onZoom}
+                              onZoomReset={onZoomReset}
                               onBucketClick={onLatencyBucketClick} />
               <EventMarkers fromNs={from} toNs={to} service={service} />
             </div>

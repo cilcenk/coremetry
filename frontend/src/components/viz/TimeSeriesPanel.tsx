@@ -11,6 +11,7 @@ import { resolveVar as resolveColor } from '@/lib/chart/resolveVar';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { useChartEngine } from '@/lib/chart/engine';
+import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import type { ChartAnnotation } from '@/lib/types';
 
 // TimeSeriesPanel (v0.8 Phase 1A — Grafana-grade) — the single chart primitive
@@ -101,6 +102,10 @@ interface TimeSeriesPanelProps {
   // Optional drag-zoom propagation. Receives unix SECONDS. When omitted the
   // drag still zooms visually (setScale) and double-click resets.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  // onZoomReset (Grafana-parite M1) — çift-tık "bir adım geri" sahipliğini
+  // sayfa katmanına devreder (Explore zoomWindow pop'u; Service/Dashboard
+  // ?range= pop'u). VERİLMEZSE eski yerel davranış: tam veri aralığına dön.
+  onZoomReset?: () => void;
   // Hide the built-in legend table (e.g. when the parent renders its own).
   hideLegend?: boolean;
   // ── explore-v2 controlled props — all applied rebuild-free via effects ──
@@ -160,7 +165,7 @@ interface LegendRow {
 }
 
 export function TimeSeriesPanel({
-  series, deploys, events, thresholds, height, mode = 'line', logScale, syncKey, onZoom, hideLegend, smooth,
+  series, deploys, events, thresholds, height, mode = 'line', logScale, syncKey, onZoom, onZoomReset, hideLegend, smooth,
   zoomWindow, hiddenLabels, focusedLabel, onCursorTime, onExemplarClick, xRange,
 }: TimeSeriesPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -302,6 +307,11 @@ export function TimeSeriesPanel({
     const colors = series.map(s => resolveColor(s.color ?? seriesColor(s.label)));
     const yScaleKey = (s: TSSeries) => (s.axis === 'right' ? 'yr' : 'y');
 
+    // Grafana-parite M1 — drag(+sync)+setSelect paylaşımlı buildCursorOpts'tan
+    // (davranış birebir: x-only drag + setScale:true, 4px eşik; onZoom
+    // buildOptions closure'ından — rebuild'de tazelenir, mevcut sözleşme).
+    const cz = buildCursorOpts({ syncKey, onZoom });
+
     const opts: uPlot.Options = {
       width,
       height,
@@ -400,14 +410,14 @@ export function TimeSeriesPanel({
         // çizgi üstünde kayan belirgin hover noktası (OverviewChart/RPS emsali
         // size:7). Default cursor.points belirsizdi; açıkça göster.
         points: { show: true, size: 6 },
-        drag: { x: true, y: false, setScale: true },
         // v0.9.84 (madde 4) — line/area modda hover en yakın DOLU örneğe
         // snap'ler (±2 bucket); bars/stacked kendi hizasında kalır.
         ...(mode === 'line' || mode === 'area' ? {
           dataIdx: (u: uPlot, sidx: number, idx: number) =>
             nearestFilledIdx(u.data[sidx] as (number | null)[], idx, 2),
         } : {}),
-        sync: syncKey ? { key: syncKey } : undefined,
+        // Grafana-parite M1 — drag+sync paylaşımlı buildCursorOpts'tan.
+        ...cz.cursor,
       },
       legend: { show: false }, // our own interactive legend table renders below
       focus: { alpha: 0.35 }, // dim non-focused series (cursor prox + focusedLabel)
@@ -415,17 +425,9 @@ export function TimeSeriesPanel({
       // set to undefined still passes the `in` check and crashes on
       // hooks[evName].forEach. Only set keys that actually have handlers.
       hooks: {
-        ...(onZoom ? { setSelect: [
-          (u) => {
-            const sel = u.select;
-            if (!sel || sel.width < 4) return;
-            const x0 = u.posToVal(sel.left, 'x');
-            const x1 = u.posToVal(sel.left + sel.width, 'x');
-            if (!isFinite(x0) || !isFinite(x1)) return;
-            onZoom(Math.min(x0, x1), Math.max(x0, x1));
-            u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
-          },
-        ] } : {}),
+        // Drag-zoom → sayfaya devir; paylaşımlı cursorOpts hook'u (4px eşik,
+        // sıralı sec aralığı, gri band temizliği). Only set when onZoom exists.
+        ...(cz.setSelect ? { setSelect: cz.setSelect } : {}),
         // Overlay draw — thresholds (line + breach band) then deploy annotations.
         ...(((thresholds && thresholds.length > 0) || (deploys && deploys.length > 0) || (events && events.length > 0) || series.some(s => s.exemplars && s.exemplars.length > 0)) ? { draw: [
           (u) => {
@@ -811,23 +813,20 @@ export function TimeSeriesPanel({
     afterBuild,
     afterData,
     refitScales,
-  }, themeTick);
-
-  // Double-click resets the zoom to the full data range (Grafana parity).
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onDbl = () => {
+    // Çift-tık (Grafana-parite M1) — dinleyici artık MOTORDA (tek kopya,
+    // 4 preset ortak). Sahiplik: sayfa geri-yığını verdiyse (onZoomReset)
+    // karar onun — Explore zoomWindow pop'u / Service-Dashboard ?range=
+    // pop'u; verilmediyse ESKİ yerel davranış birebir: tam veri aralığına
+    // dön (v0.8 Phase 1A "double-click reset"). Spec canlı okunur.
+    onZoomReset: () => {
+      if (onZoomReset) { onZoomReset(); return; }
       const u = plotRef.current;
       if (!u) return;
       const xs = u.data[0];
       if (!xs || xs.length === 0) return;
       u.setScale('x', { min: xs[0] as number, max: xs[xs.length - 1] as number });
-    };
-    el.addEventListener('dblclick', onDbl);
-    return () => el.removeEventListener('dblclick', onDbl);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    },
+  }, themeTick);
 
   // ── explore-v2 controlled props — applied to the LIVE uPlot, no rebuild ──
 

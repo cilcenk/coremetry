@@ -232,6 +232,9 @@ describe('overviewChartBuildSignature — structure/option change forces a rebui
     // wired at build time only when onZoom exists, so a none→some flip must
     // rebuild to register them.
     ['zoom presence toggled on', { ...ovBase, hasZoom: true }],
+    // Grafana-parite M1 — cursor.sync build anında kablolanır; key
+    // gelişi/değişimi rebuild ister (Service sayfası imleç senkronu).
+    ['sync key added', { ...ovBase, syncKey: 'service:api' }],
   ];
   it.each(diff)('%s → different signature', (_n, input) => {
     expect(overviewChartBuildSignature(input)).not.toBe(overviewChartBuildSignature(ovBase));

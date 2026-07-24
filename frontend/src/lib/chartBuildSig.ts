@@ -154,6 +154,9 @@ export interface OverviewChartSigInput {
   // wired at build time only when onZoom is passed, so a none→some
   // transition must rebuild.
   hasZoom?: boolean;
+  // Grafana-parite M1 — cursor.sync build anında kablolanır (MLC/TC/TSP
+  // emsali): key değişimi/gelişi rebuild ister.
+  syncKey?: string;
 }
 export function overviewChartBuildSignature(p: OverviewChartSigInput): string {
   return JSON.stringify([
@@ -165,6 +168,7 @@ export function overviewChartBuildSignature(p: OverviewChartSigInput): string {
     p.deployLabel ?? '',
     p.renderable,
     !!p.hasZoom,
+    p.syncKey ?? '',
   ]);
 }
 

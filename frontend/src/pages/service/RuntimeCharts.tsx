@@ -131,11 +131,13 @@ function familyOf(language: string | undefined): string | null {
 
 const FAMILY_TITLE: Record<string, string> = { jvm: 'JVM', dotnet: '.NET', go: 'Go' };
 
-export function RuntimeCharts({ service, from, to, onZoom }: {
+export function RuntimeCharts({ service, from, to, onZoom, onZoomReset }: {
   service: string;
   from: number; // unix ns (parent'ın çözülmüş penceresi — RQ anahtarı hizalı)
   to: number;
   onZoom?: (fromSec: number, toSec: number) => void;
+  // Grafana-parite M1 — çift-tık: Service.tsx zoom geri-yığınını pop eder.
+  onZoomReset?: () => void;
 }) {
   // Parent Service.tsx ile AYNI anahtar → RQ cache'inden dolar, ek istek yok.
   const runtimeQ = useQuery({
@@ -277,6 +279,7 @@ export function RuntimeCharts({ service, from, to, onZoom }: {
                   mode={card.mode ?? 'area'}
                   syncKey={`runtime:${service}`}
                   onZoom={onZoom}
+                  onZoomReset={onZoomReset}
                   smooth
                 />
               )}

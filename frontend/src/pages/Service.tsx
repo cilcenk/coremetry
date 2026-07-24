@@ -21,7 +21,7 @@ import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { DetailsPropsStrip } from './service/DetailsPropsStrip';
 import { RpsByOperation } from './service/RpsByOperation';
 import { api } from '@/lib/api';
-import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { timeRangeToNs } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { keys } from '@/lib/queries/keys';
@@ -331,15 +331,23 @@ function ServiceDetailInner() {
       <div id="content">
         {/* Service identity header (design handoff app.jsx .svc-head): big
             status dot + bare service name + runtime badge + health pill. */}
+        {/* v0.9.211 — identity row absorbed the catalog pill (was its own
+            block below) and dropped the HEALTHY/WARNING/CRITICAL word: the
+            status dot already carries that, on the SAME threshold. The KPI
+            chips that used to sit in the toolbar are gone too — Overview's
+            tiles are the one place a service's RED numbers live, with a
+            delta and a single latency definition. Those chips disagreed
+            with this dot (chip warned at >0, dot/badge at >1: a 0.5%-error
+            service rendered a green dot next to an orange "Errors 0.50%")
+            and their P99 included kafka spans while the Overview tile 200px
+            below excluded them. */}
         {info && (
           <div className="svc-head">
             <div className="svc-title">
               <span className={`ov-dot ${info.errorRate > 5 ? 'red' : info.errorRate > 1 ? 'amber' : 'green'}`} style={{ width: 12, height: 12 }} />
               <h1>{svc}</h1>
               {runtimeQ.data && <ServiceRuntimeBadge rt={runtimeQ.data} compact />}
-              <span className={`badge ${info.errorRate > 5 ? 'b-err' : info.errorRate > 1 ? 'b-warn' : 'b-ok'}`}>
-                {info.errorRate > 5 ? 'CRITICAL' : info.errorRate > 1 ? 'WARNING' : 'HEALTHY'}
-              </span>
+              <ServiceCatalogPill service={svc} />
             </div>
           </div>
         )}
@@ -348,15 +356,6 @@ function ServiceDetailInner() {
             padding: '5px 12px', border: '1px solid var(--border)',
             borderRadius: 6, fontSize: 12, color: 'var(--text)', textDecoration: 'none',
           }}>← All services</Link>
-          {info && (
-            <>
-              <KPI label="Spans" value={fmtNum(info.spanCount)} />
-              <KPI label="Errors" value={`${info.errorRate.toFixed(2)}%`}
-                cls={info.errorRate > 5 ? 'err' : info.errorRate > 0 ? 'warn' : 'ok'} />
-              <KPI label="Avg" value={`${info.avgDurationMs.toFixed(1)}ms`} />
-              <KPI label="P99" value={`${info.p99DurationMs.toFixed(1)}ms`} />
-            </>
-          )}
           {/* Drill chips (v0.5.463) — DrillButton standardises the
               "view in X" cross-page navigation pattern; service +
               range propagate so the destination starts where the
@@ -385,14 +384,6 @@ function ServiceDetailInner() {
               label="∿ Anomalies" />
           </div>
         </div>
-        {/* Service catalog metadata — owner team / oncall /
-            runbook / repo. Operator-curated; falls back to a
-            single "+ Add catalog metadata" CTA when empty.
-            Editor+ role can edit inline. */}
-        <div style={{ marginBottom: 12 }}>
-          <ServiceCatalogPill service={svc} />
-        </div>
-
         {/* v0.6.51 — SLO health strip. Unifies SLO status into the
             service detail page (was /slos-only). One chip per SLO:
             target, current SLI, budget bar, burn-rate badge. Click
@@ -577,21 +568,6 @@ function ServiceDetailInner() {
         )}
       </div>
     </>
-  );
-}
-
-function KPI({ label, value, cls }: { label: string; value: string; cls?: string }) {
-  return (
-    <div style={{
-      padding: '4px 12px', border: '1px solid var(--border)',
-      borderRadius: 6, background: 'var(--bg1)', fontSize: 12,
-    }}>
-      <span style={{ color: 'var(--text2)' }}>{label}: </span>
-      <b style={{
-        color: cls === 'err' ? 'var(--err)' : cls === 'warn' ? 'var(--warn)'
-          : cls === 'ok' ? 'var(--ok)' : 'var(--text)',
-      }}>{value}</b>
-    </div>
   );
 }
 

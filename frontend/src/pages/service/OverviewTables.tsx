@@ -50,7 +50,10 @@ export function OpsCard({ service, range, operations }: {
       <div className="ov-card-h">
         <h3>Operations</h3>
         <span className="ov-right">
-          <Link className="ov-sub" to={`/service?name=${encodeURIComponent(service)}&range=${rangeParam}`}>
+          {/* v0.9.211 — carry &tab=operations. Without it the link resolves
+              to the default tab, i.e. straight back to the Overview the
+              operator clicked "View all" from. */}
+          <Link className="ov-sub" to={`/service?name=${encodeURIComponent(service)}&range=${rangeParam}&tab=operations`}>
             View all {operations.length} →
           </Link>
         </span>

@@ -61,7 +61,7 @@ export function VolumeChart({
       {/* v0.9.103 (Grafana-parity #1) — renk-anahtarı kaldırıldı; TimeChart
           artık altında StatsLegend (swatch+label+istatistik) gösteriyor.
           Yalnız bucket/sürükle ipucu üstte kalır (StatsLegend'de yok). */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8, fontSize: 10.5, color: 'var(--text-faint)' }}>
+      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4, fontSize: 10.5, color: 'var(--text-faint)' }}>
         <span style={{ fontFamily: 'var(--font-mono, ui-monospace)' }}>spans / {bucketMin}m bucket · sürükle = zaman seç</span>
       </div>
 
@@ -79,6 +79,11 @@ export function VolumeChart({
           onBrush={onBrush}
           fmtRight={fmtDurRight}
           xRange={xRange}
+          // v0.9.245 — istatistik tablosu kapalı başlar. Bu sayfada asıl iş
+          // ALTTAKİ trace listesi; üç serilik bir istatistik tablosunun
+          // listeyi ekranın dışına itmesi yanlış öncelik (operatör raporu).
+          // Toggle duruyor, isteyen tek tıkla açıyor.
+          legendCollapsed
         />
       )}
     </div>

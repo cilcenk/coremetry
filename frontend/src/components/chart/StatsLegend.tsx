@@ -29,15 +29,21 @@ export interface StatsLegendSeries {
   unit?: string;
 }
 
-export function StatsLegend({ series, onToggle, isVisible }: {
+export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed }: {
   series: StatsLegendSeries[];
+  // v0.9.245 — eşikten BAĞIMSIZ olarak kapalı başlat. Traces histogramında
+  // tam 3 seri var, yani LEGEND_COLLAPSE_THRESHOLD hiç devreye girmiyor ve
+  // istatistik tablosu ~150px'i kalıcı olarak yiyor; asıl iş olan trace
+  // tablosu ekranın altına düşüyordu (operatör raporu). Toggle yerinde
+  // duruyor, tek değişen açılış durumu.
+  defaultCollapsed?: boolean;
   // Opsiyonel gizle/izole — additive true = Ctrl/Cmd-tık (toggle: gizle/
   // göster); düz tık (false) = isolate (yalnız o seri). MLC/TSP v0.5.364
   // jest sözleşmesinin aynısı.
   onToggle?: (i: number, additive: boolean) => void;
   isVisible?: (i: number) => boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(series.length > LEGEND_COLLAPSE_THRESHOLD);
+  const [collapsed, setCollapsed] = useState(defaultCollapsed ?? series.length > LEGEND_COLLAPSE_THRESHOLD);
   if (series.length === 0) return null;
 
   const stats = series.map(s => seriesStats(s.values));

@@ -76,15 +76,23 @@ interface Props {
   fmtX?: (tsSec: number) => string;
   // v0.9.83 pin — v0.9.94'te inert (veriye-fit revert); imza korunuyor.
   xRange?: XPin | null;
+  // v0.9.245 — istatistik lejantını kapalı başlat (StatsLegend eşiğini
+  // atlar). Trace listesi gibi ASIL içeriğin ekranın üstünde kalması
+  // gereken sayfalar için.
+  legendCollapsed?: boolean;
 }
 
 // v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a çıkarıldı
 // (OVC ile byte-identical'dı). v0.9.102 (#3) — local kfmt yerine paylaşılan
 // fmtAxisTick (birim-farkında, SI); tek tick formatlayıcı tüm panellerde.
 
+// Bir barın çizilebileceği en büyük piksel genişliği (v0.9.245).
+const MAX_BAR_PX = 18;
+
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
   deployMarkers, thresholds, regions, onBrush, onZoomReset, syncKey, fmtLeft, fmtRight, fmtX, xRange,
+  legendCollapsed,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ttRef = useRef<HTMLDivElement>(null);
@@ -167,7 +175,14 @@ export function TimeChart({
     const text3 = resolveVar('var(--text3)');
     const hasRight = series.some(s => s.axis === 'right');
 
-    const barPath = uPlot.paths.bars!({ size: [0.86, Infinity], align: 0 });
+    // v0.9.245 — bar genişliğine TAVAN. `Infinity` (maks yok) demek, bucket
+    // sayısı azaldıkça barın kartın genişliğini paylaşması demekti: 30 dakikada
+    // 7 bucket ~150px'lik bloklar üretiyordu ve grafik bir histogramdan çok
+    // renkli sütunlara benziyordu (operatör: "barlar çok büyük"). Grafana da
+    // maxBarWidth ile aynı tavanı koyar. Oran (0.86) korunuyor, yani bucket
+    // yoğunken davranış birebir aynı — tavan yalnız seyrek bucket'ta devreye
+    // girer.
+    const barPath = uPlot.paths.bars!({ size: [0.86, MAX_BAR_PX], align: 0 });
 
     // Overlay plugin — regions (background-most) + threshold lines (Grafana-
     // parite M3) + dashed red deploy vlines. Drawn in a hook so they re-paint
@@ -209,7 +224,10 @@ export function TimeChart({
     const yAxis = (scale: string, side: 0 | 1, fmtRef: React.MutableRefObject<((v: number) => string) | undefined>, showGrid: boolean, unit: string): uPlot.Axis => ({
       scale, side, stroke: text3, size: 38, font: '10px ui-monospace, monospace',
       grid: showGrid ? { stroke: gridc, width: 1, dash: [3, 4] } : { show: false },
-      ticks: { show: false },
+      // v0.9.245 — kısa tick çentikleri. Etiketler eksene "yapışık" durduğu
+      // için hangi sayının hangi çizgiye ait olduğu okunmuyordu (operatör:
+      // "x y aksisleri belli belirsiz").
+      ticks: { show: true, stroke: gridc, width: 1, size: 3 },
       splits: u => { const mx = (u.scales[scale].max ?? 1); return [0, mx / 2, mx]; },
       // Consumer fmtLeft/fmtRight still wins; v0.9.102 (Grafana-parity #3) the
       // FALLBACK is now the shared unit-aware fmtAxisTick (was local kfmt) —
@@ -219,7 +237,14 @@ export function TimeChart({
 
     const axes: uPlot.Axis[] = [
       {
-        stroke: text3, grid: { show: false }, ticks: { show: false }, size: 20,
+        stroke: text3,
+        // v0.9.245 — DİKEY gridline + tick. Zaman ekseninde hiç çizgi yoktu,
+        // yani bir bar'ın hangi dakikaya düştüğü ancak hover ile anlaşılıyordu.
+        // Y ekseniyle aynı faint token + aynı dash, böylece ızgara tek bir
+        // görsel dil oluyor.
+        grid: { stroke: gridc, width: 1, dash: [3, 4] },
+        ticks: { show: true, stroke: gridc, width: 1, size: 3 },
+        size: 20,
         font: '10px ui-monospace, monospace',
         // v0.8.402 — house day-boundary formatter (fmtXTicks stamps MM-DD on
         // the first tick of each new day); space thins ticks so wider
@@ -415,6 +440,7 @@ export function TimeChart({
         }))}
         isVisible={i => legendVis?.[i] ?? true}
         onToggle={handleLegendToggle}
+        defaultCollapsed={legendCollapsed}
       />
     </>
   );

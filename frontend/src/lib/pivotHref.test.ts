@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tracesPivotHref } from './pivotHref';
+import { tracesPivotHref, messagingTracesHref } from './pivotHref';
 import { decodeRange } from './urlState';
 
 // v0.9.213 — the cross-signal pivot into /traces dropped its time window in
@@ -80,5 +80,74 @@ describe('tracesPivotHref', () => {
     const p = params(href);
     expect(p.get('service')).toBe('checkout/v2 svc');
     expect(p.get('search')).toBe('GET /a b?c=1');
+  });
+});
+
+// v0.9.256 — operatör: "messaging kısmında tracelere erişemiyorum."
+//
+// Link ölüydü. Yalnız `messaging.destination.name` filtreliyordu, ama
+// messaging MV'si destination'ı ÜÇ kademeli coalesce ile üretiyor
+// (messaging.destination.name → messaging.destination → peer_service).
+// Canlı prod verisinde son 1 saatte `.name` SIFIR satır, eski
+// `messaging.destination` 1280 satır; 17 topic'in hepsinde has_name_attr=0.
+// Yani link yapısal olarak hiçbir zaman sonuç dönemezdi.
+//
+// Sözleşme: MV bir alanı N ad altında arıyorsa, o satırdan çıkan pivot da
+// N adın hepsini sormak zorunda. Tek ada daralmak, var olamayacak satırlara
+// işaret eden bir link üretir.
+describe('messagingTracesHref', () => {
+  const w = { preset: '1h' } as never;
+
+  function decodeGroup(href: string) {
+    const g = new URLSearchParams(href.split('?')[1]).get('filterGroup');
+    return g ? JSON.parse(decodeURIComponent(g)) : null;
+  }
+
+  it('destination için MV coalesce zincirinin ÜÇ adını da OR ile sorar', () => {
+    const g = decodeGroup(messagingTracesHref({ window: w, system: 'kafka', destination: 'transfer.posted' }));
+    const or = (g.groups ?? []).find((x: { join: string }) => x.join === 'OR');
+    expect(or).toBeTruthy();
+    expect(or.filters.map((f: { k: string }) => f.k)).toEqual([
+      'messaging.destination.name',
+      'messaging.destination',
+      'peer.service',
+    ]);
+    for (const f of or.filters) expect(f.v).toEqual(['transfer.posted']);
+  });
+
+  it('pencereyi HER ZAMAN taşır — ikinci bağımsız boş-sonuç kaynağı buydu', () => {
+    const href = messagingTracesHref({ window: w, system: 'kafka', destination: 't' });
+    expect(new URLSearchParams(href.split('?')[1]).get('range')).toBeTruthy();
+  });
+
+  it('rootOnly=false — mesajlaşma span’i ÇOCUK span’dir', () => {
+    const href = messagingTracesHref({ window: w, system: 'kafka', destination: 't' });
+    expect(new URLSearchParams(href.split('?')[1]).get('rootOnly')).toBe('false');
+  });
+
+  // encodeFilterGroup düz-AND grubu için '' döner (urlState back-compat).
+  // Bu dal kodlanmasaydı `messaging.system` de düşerdi ve link FİLTRESİZ bir
+  // trace listesine giderdi — ölü linkten beter, YANLIŞ link.
+  it("destination 'unknown' ise OR grubu basılmaz ama messaging.system KAYBOLMAZ", () => {
+    const q = new URLSearchParams(
+      messagingTracesHref({ window: w, system: 'kafka', destination: 'unknown' }).split('?')[1]);
+    expect(q.get('filterGroup')).toBeNull();
+    const flat = JSON.parse(decodeURIComponent(q.get('filters') ?? '[]'));
+    expect(flat.map((f: { k: string }) => f.k)).toContain('messaging.system');
+  });
+
+  it('rol ve operasyon verilince AND dalına girer', () => {
+    const g = decodeGroup(messagingTracesHref({
+      window: w, system: 'kafka', destination: 't', role: 'consumer', operation: 't process',
+    }));
+    const ks = g.filters.map((f: { k: string }) => f.k);
+    expect(ks).toContain('kind');
+    expect(ks).toContain('name');
+  });
+
+  it('filterGroup varken filters ASLA basılmaz (/traces sözleşmesi)', () => {
+    const q = new URLSearchParams(messagingTracesHref({ window: w, system: 'kafka', destination: 't' }).split('?')[1]);
+    expect(q.get('filterGroup')).toBeTruthy();
+    expect(q.get('filters')).toBeNull();
   });
 });

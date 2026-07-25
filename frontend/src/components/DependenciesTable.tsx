@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { messagingTracesHref } from '@/lib/pivotHref';
 import { Link } from 'react-router-dom';
 import { Empty } from './Spinner';
 import { Sparkline } from './Sparkline';
@@ -225,11 +226,19 @@ export function DependenciesTable({
           ? `peer.service = "${r.instance}"` : '');
       return `/explore?dsl=${encodeURIComponent(dsl)}&mode=advanced&result=traces`;
     }
-    const dsl =
-      `messaging.system = "${r.system}"\n` +
-      (r.destination && r.destination !== 'unknown'
-        ? `messaging.destination.name = "${r.destination}"` : '');
-    return `/explore?dsl=${encodeURIComponent(dsl)}&mode=advanced&result=traces`;
+    // v0.9.256 (operatör: "messaging kısmında tracelere erişemiyorum") —
+    // bu link ÖLÜYDÜ. Yalnız `messaging.destination.name` filtreliyordu; MV
+    // ise üç kademeli coalesce ile üretiyor ve canlı veride o alan SIFIR
+    // satır (eski `messaging.destination` 1280). Üstüne `range=` de
+    // taşımıyordu, yani hedef kendi 30dk varsayılanına düşüyordu. Artık
+    // paylaşılan helper: üç adın hepsini OR'luyor + pencereyi taşıyor +
+    // /traces'e gidiyor (opak /explore DSL'i yerine, orada operatör
+    // filtreleri çip olarak GÖRÜP düzenleyebiliyor).
+    return messagingTracesHref({
+      window: range,
+      system: r.system,
+      destination: r.destination ?? '',
+    });
   };
 
   // #1 + #6 — fetch per-row RED trends on range change. Kept

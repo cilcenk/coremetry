@@ -134,8 +134,12 @@ export default function MessagingPage() {
         <div style={{ marginBottom: 14, fontSize: 12, color: 'var(--text2)' }}>
           Every queue / topic the platform's services produced to or consumed from
           in the selected window. Derived from spans with a populated
-          {' '}<code>messaging.system</code> attribute. Click a row to drill into
-          matching traces.
+          {' '}<code>messaging.system</code> attribute. {/* v0.9.256 — eski metin
+          "Click a row to drill into matching traces" diyordu; satır DRAWER
+          açıyor, trace'e gitmiyor. Yanlış vaat, operatörün "trace'e
+          erişemiyorum" şikayetinin bir parçasıydı. */}
+          Satıra tıkla → yayıncılar, tüketiciler ve uçtan uca gecikme;
+          trace'ler için satırdaki destination bağlantısını kullan.
         </div>
         {q.isPending && <Spinner />}
         {q.isError && (

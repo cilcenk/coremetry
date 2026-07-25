@@ -104,7 +104,11 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		limit = 200
 	}
 
-	cacheKey := fmt.Sprintf("inbox:status=%s:svc=%s:owner=%s:sre=%s:env=%s:limit=%d",
+	// v0.9.221 — :v2: marks the response-shape change (bare array → object
+	// with the total). Without the bump a pre-upgrade array could still be
+	// sitting under this key and would deserialize into the new shape as an
+	// empty page.
+	cacheKey := fmt.Sprintf("inbox:v2:status=%s:svc=%s:owner=%s:sre=%s:env=%s:limit=%d",
 		statusFilter, service, ownerTeam, sreTeam, env, limit)
 	s.serveCached(w, r, cacheKey, 10*time.Second, func(ctx context.Context) (any, error) {
 		items := make([]InboxItem, 0, 256)
@@ -249,10 +253,22 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			}
 			return items[i].LastSeen > items[j].LastSeen
 		})
+		// v0.9.221 — the cap used to truncate SILENTLY: the response was a
+		// bare array, so 200 rows looked identical whether that was the whole
+		// queue or the top slice of 900. Since the sort above is priority-desc,
+		// what fell off was the low-priority tail — the operator cleared the
+		// visible list and believed the queue was empty. CLAUDE.md's "no
+		// silent caps" rule; the total travels with the page now.
+		total := len(items)
 		if len(items) > limit {
 			items = items[:limit]
 		}
-		return items, nil
+		return map[string]any{
+			"items":     items,
+			"total":     total,
+			"limit":     limit,
+			"truncated": total > limit,
+		}, nil
 	})
 }
 

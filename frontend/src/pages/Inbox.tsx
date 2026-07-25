@@ -113,7 +113,13 @@ export default function InboxPage() {
     limit: 300,
   });
   const data: InboxItem[] | null | undefined =
-    inboxQ.isPending ? undefined : inboxQ.isError ? null : inboxQ.data ?? [];
+    inboxQ.isPending ? undefined : inboxQ.isError ? null : inboxQ.data?.items ?? [];
+  // v0.9.221 — the server caps the queue; say so rather than letting 300 rows
+  // pass for the whole thing. Sorted priority-desc, so what fell off is the
+  // low-priority tail — exactly the part an operator would assume was empty.
+  const capped = !inboxQ.isPending && !inboxQ.isError && inboxQ.data?.truncated
+    ? { shown: inboxQ.data.items.length, total: inboxQ.data.total }
+    : null;
 
   // The drawer's selected row, resolved from ?item= against the loaded list.
   // Uses the full (pre-facet) list so a deep-link to a row hidden by the
@@ -277,6 +283,15 @@ export default function InboxPage() {
               ? 'Widen the priority / kind filter to see more.'
               : 'Nothing needs your attention right now.'}
           </Empty>
+        )}
+        {capped && (
+          <div style={{ marginBottom: 8 }}>
+            <span className="badge b-warn"
+              title="The server ranks the whole queue by priority and returns the top slice. The rows beyond the cap are the LOWEST priority ones — narrow by service, team or environment to reach them.">
+              ⚠ {capped.total} kalemden ilk {capped.shown}'i gösteriliyor —
+              öncelik sırasına göre kırpıldı
+            </span>
+          </div>
         )}
         {filtered && filtered.length > 0 && (
           // NOT VirtualTable: rows are variable-height (DetailLine renders a

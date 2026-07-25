@@ -23,6 +23,13 @@ import type { InboxItem, InboxKind } from '@/lib/types';
 const PRIO_ALL = ['P1', 'P2', 'P3'] as const;
 const PRIO_DEFAULT = ['P1', 'P2'] as const;
 const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'anomaly'];
+// v0.9.254 — 'ignored' yalnızca exception gruplarını gösterir (problem'ler
+// MUTE'lanır, anomaliler SILENCE'lanır — farklı fiiller, farklı state).
+// Ayrı bir pivot olması bilinçli: susturmak kasıtlı bir eylem, o satırları
+// günlük 'all' görünümüne geri dökmek operatörün sustuğu gürültüyü geri
+// getirirdi.
+type InboxStatus = 'open' | 'all' | 'ignored';
+const STATUS_PIVOTS: readonly InboxStatus[] = ['open', 'all', 'ignored'];
 
 // /inbox — unified triage view (v0.5.211). Merges Problems +
 // Exception groups + Anomaly events server-side with a normalised
@@ -60,7 +67,14 @@ export default function InboxPage() {
   // one-way-read bug class (v0.8.256/265/267) can't exist here, and Copy link
   // reproduces the exact triage view. Defaults (P1+P2, all kinds) are the codec
   // fallback for an absent param, so a bare /inbox lands on the intended view.
-  const statusFilter: 'open' | 'all' = searchParams.get('status') === 'all' ? 'all' : 'open';
+  // v0.9.254 — 'ignored' pivotu eklendi. Susturulmuş exception grupları
+  // BAŞKA hiçbir pivotta görünmüyordu (store varsayılanı da 'all' da onları
+  // eliyor), ve bunları geri açan tek yüzey /problems'ın Ignored sekmesiydi.
+  // O sayfa kalkarsa susturma kalıcı ve geri alınamaz hale gelirdi.
+  const statusFilter: InboxStatus =
+    searchParams.get('status') === 'all' ? 'all'
+      : searchParams.get('status') === 'ignored' ? 'ignored'
+        : 'open';
   const rawPrio = searchParams.get('prio');
   const rawKind = searchParams.get('kind');
   const prioSet = useMemo(() => new Set(decodeCsvSet(rawPrio, PRIO_ALL, PRIO_DEFAULT)), [rawPrio]);
@@ -96,7 +110,7 @@ export default function InboxPage() {
       return p;
     }, { replace: true });
   };
-  const setStatusFilter = (s: 'open' | 'all') => setParam('status', s === 'all' ? 'all' : null);
+  const setStatusFilter = (s: InboxStatus) => setParam('status', s === 'open' ? null : s);
   // Multi-select toggles keep the min-1 invariant (can't deselect everything),
   // then serialise the set back to the URL (default selection → param removed).
   const togglePrio = (p: string) => {
@@ -271,7 +285,7 @@ export default function InboxPage() {
             stay pushed right with margin-left:auto. */}
         <div className="facetbar">
           {/* Status pivot — single-select */}
-          {(['open', 'all'] as const).map(s => (
+          {STATUS_PIVOTS.map(s => (
             <span key={s} onClick={() => setStatusFilter(s)}
               className={`facet${statusFilter === s ? ' on' : ''}`}>
               {s === 'open' ? 'Open / Active' : 'All'}

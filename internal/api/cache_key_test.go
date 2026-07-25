@@ -79,3 +79,63 @@ func TestExcludeKeyDigest_LargerSetDistinctness(t *testing.T) {
 		t.Fatalf("v0.5.187 regression: 5-element sets differing in one entry collided")
 	}
 }
+
+// v0.9.251 — the /api/inbox free-text search (`q`) must be part of the
+// cache key.
+//
+// This is the v0.5.187 collision class with a new vector. There, a Set
+// was summarised by its LENGTH, so two different sets shared a key and
+// cross-poisoned. Here the input is a search box: if `q` changed the
+// rows but not the key, the first operator to search "timeout" would
+// poison the shared entry and the next operator's unfiltered request
+// would be served their filtered page — with the badge counting one
+// number and the list showing another.
+func TestInboxListKeyIncludesSearch(t *testing.T) {
+	base := inboxListKey("open", "", "", "", "", "", 200)
+
+	t.Run("search term changes the key", func(t *testing.T) {
+		if got := inboxListKey("open", "", "timeout", "", "", "", 200); got == base {
+			t.Errorf("q=timeout produced the same key as an empty search: %q", got)
+		}
+	})
+
+	t.Run("different terms never collide", func(t *testing.T) {
+		seen := map[string]string{}
+		for _, term := range []string{"", "timeout", "OOMKilled", "504", "time", "out"} {
+			k := inboxListKey("open", "", term, "", "", "", 200)
+			if prev, dup := seen[k]; dup {
+				t.Errorf("q=%q collides with q=%q on key %q", term, prev, k)
+			}
+			seen[k] = term
+		}
+	})
+
+	t.Run("search is independent of the service filter", func(t *testing.T) {
+		// `service` and `q` are separate inputs that AND together
+		// server-side; swapping which one carries a value must not
+		// produce the same key.
+		a := inboxListKey("open", "api", "", "", "", "", 200)
+		b := inboxListKey("open", "", "api", "", "", "", 200)
+		if a == b {
+			t.Errorf("service=api and q=api share a key %q — they filter different fields", a)
+		}
+	})
+
+	t.Run("every other input still separates", func(t *testing.T) {
+		seen := map[string]string{}
+		for name, k := range map[string]string{
+			"base":   base,
+			"status": inboxListKey("all", "", "", "", "", "", 200),
+			"svc":    inboxListKey("open", "api", "", "", "", "", 200),
+			"owner":  inboxListKey("open", "", "", "team-a", "", "", 200),
+			"sre":    inboxListKey("open", "", "", "", "sre-a", "", 200),
+			"env":    inboxListKey("open", "", "", "", "", "prod", 200),
+			"limit":  inboxListKey("open", "", "", "", "", "", 50),
+		} {
+			if prev, dup := seen[k]; dup {
+				t.Errorf("%s collides with %s on key %q", name, prev, k)
+			}
+			seen[k] = name
+		}
+	})
+}

@@ -65,6 +65,11 @@ export default function InboxPage() {
     () => new Set(decodeCsvSet(rawKind, KIND_ALL, KIND_ALL) as InboxKind[]),
     [rawKind]);
   const serviceFilter = searchParams.get('service') ?? '';
+  // v0.9.251 — the search box drives `q` (service + title + source),
+  // not `service`. `service` is still read so an older shared link
+  // keeps narrowing exactly as it did; the two AND together
+  // server-side.
+  const searchFilter = searchParams.get('q') ?? '';
   const ownerFilter = searchParams.get('owner') ?? '';
   const sreFilter = searchParams.get('sre') ?? '';
   // Drawer selection is one more URL-backed facet (v0.8.292): ?item=<inboxId>.
@@ -94,6 +99,7 @@ export default function InboxPage() {
     setParam('kind', encodeCsvSet(next, KIND_ALL, KIND_ALL));
   };
   const setServiceFilter = (v: string) => setParam('service', v || null);
+  const setSearchFilter = (v: string) => setParam('q', v || null);
   const setOwnerFilter = (v: string) => setParam('owner', v || null);
   const setSreFilter = (v: string) => setParam('sre', v || null);
   const openDrawer = (it: InboxItem) => setParam('item', it.id);
@@ -107,6 +113,7 @@ export default function InboxPage() {
   const inboxQ = useInbox({
     status: statusFilter,
     service: serviceFilter || undefined,
+    q: searchFilter || undefined,
     ownerTeam: ownerFilter || undefined,
     sreTeam: sreFilter || undefined,
     env: env || undefined,
@@ -269,10 +276,25 @@ export default function InboxPage() {
             {sreOptions.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
 
-          <input ref={searchRef} value={serviceFilter}
-            onChange={e => setServiceFilter(e.target.value)}
-            placeholder="Filter by service…"
-            style={{ fontSize: 12, padding: '4px 8px', minWidth: 180 }} />
+          {/* v0.9.251 — one box, matched SERVER-side across service +
+              title + source. Title was the gap: with thousands of open
+              items an operator could narrow to a service but never to
+              "timeout" or "OOMKilled". Client-side filtering wouldn't
+              have worked either — the list is a server-capped top slice,
+              so a term present only on row 900 would never arrive. */}
+          <input ref={searchRef} value={searchFilter}
+            onChange={e => setSearchFilter(e.target.value)}
+            placeholder="Search service, title, source…"
+            title="Case-insensitive substring match across the service, the title and the source label."
+            style={{ fontSize: 12, padding: '4px 8px', minWidth: 220 }} />
+          {serviceFilter && (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 11, background: 'var(--bg3)', border: '1px solid var(--border)' }}
+              title="Service filter carried in the URL (?service=). Narrows on top of the search box.">
+              service: {serviceFilter}
+              <button type="button" title="Remove" onClick={() => setServiceFilter('')}
+                style={{ background: 'transparent', border: 'none', color: 'var(--text3)', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1 }}>×</button>
+            </span>
+          )}
         </div>
 
         {data === undefined && <TableSkeleton cols={6} wideFirst />}

@@ -25,18 +25,18 @@ import (
 // blend, same age column, same assignee column. The per-source
 // pages still exist as drill-down targets.
 type InboxItem struct {
-	ID             string   `json:"id"`              // composite: "<kind>:<nativeId>"
-	Kind           string   `json:"kind"`            // problem | exception | anomaly
-	Source         string   `json:"source"`          // human label: "Alert rule" / "Exception" / "Anomaly"
-	Priority       string   `json:"priority"`        // P1 | P2 | P3
-	PriorityReason string   `json:"priorityReason"`
-	Severity       string   `json:"severity"`        // critical | warning | info
-	Service        string   `json:"service"`
-	Title          string   `json:"title"`           // rule name / exception type / pattern
-	Description    string   `json:"description"`
-	StartedAt      int64    `json:"startedAt"`       // unix ns
-	LastSeen       int64    `json:"lastSeen"`        // unix ns; for problems == StartedAt
-	Assignee       string   `json:"assignee,omitempty"`
+	ID             string `json:"id"`       // composite: "<kind>:<nativeId>"
+	Kind           string `json:"kind"`     // problem | exception | anomaly
+	Source         string `json:"source"`   // human label: "Alert rule" / "Exception" / "Anomaly"
+	Priority       string `json:"priority"` // P1 | P2 | P3
+	PriorityReason string `json:"priorityReason"`
+	Severity       string `json:"severity"` // critical | warning | info
+	Service        string `json:"service"`
+	Title          string `json:"title"` // rule name / exception type / pattern
+	Description    string `json:"description"`
+	StartedAt      int64  `json:"startedAt"` // unix ns
+	LastSeen       int64  `json:"lastSeen"`  // unix ns; for problems == StartedAt
+	Assignee       string `json:"assignee,omitempty"`
 	// OwnerTeam + SRETeam attached server-side from
 	// service_metadata so the inbox can render team chips
 	// without each row firing a per-service lookup. Empty when
@@ -44,11 +44,11 @@ type InboxItem struct {
 	// what's auto-set on Problem.Assignee at open time;
 	// surfacing it on every row (even exceptions / anomalies)
 	// keeps the column meaningful across kinds.
-	OwnerTeam      string   `json:"ownerTeam,omitempty"`
-	SRETeam        string   `json:"sreTeam,omitempty"`
-	Status         string   `json:"status"`          // open | acknowledged | resolved (problems);
-	                                                  // open | regressed (exceptions); active | cleared (anomalies)
-	Clusters       []string `json:"clusters,omitempty"`
+	OwnerTeam string `json:"ownerTeam,omitempty"`
+	SRETeam   string `json:"sreTeam,omitempty"`
+	Status    string `json:"status"` // open | acknowledged | resolved (problems);
+	// open | regressed (exceptions); active | cleared (anomalies)
+	Clusters []string `json:"clusters,omitempty"`
 	// Kind-specific drill-down hints. Only one is populated per
 	// row. Keeps the JSON shape skinny — frontend reads exactly
 	// the one matching `kind`.
@@ -74,7 +74,7 @@ type InboxExceptionRef struct {
 
 type InboxAnomalyRef struct {
 	ID           string  `json:"id"`
-	Kind         string  `json:"kind"`         // "log_pattern" | "trace_op"
+	Kind         string  `json:"kind"` // "log_pattern" | "trace_op"
 	Pattern      string  `json:"pattern"`
 	PeakRatio    float64 `json:"peakRatio"`
 	CurrentRatio float64 `json:"currentRatio"`
@@ -89,6 +89,14 @@ type InboxAnomalyRef struct {
 func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	service := strings.TrimSpace(q.Get("service"))
+	// v0.9.251 — free-text triage search. `service` stays a
+	// service-only substring filter (older shared links and other
+	// callers depend on it); `q` is the broader one the page's single
+	// search box drives, matching the service, the TITLE and the
+	// source label. Title was the gap: with thousands of open items an
+	// operator could narrow to a service but never to "timeout" or
+	// "OOMKilled".
+	search := strings.TrimSpace(q.Get("q"))
 	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
 	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
 	// v0.8.387 — global ?env= picker, service-scoped semantics shared
@@ -109,8 +117,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// with the total). Without the bump a pre-upgrade array could still be
 	// sitting under this key and would deserialize into the new shape as an
 	// empty page.
-	cacheKey := fmt.Sprintf("inbox:v2:status=%s:svc=%s:owner=%s:sre=%s:env=%s:limit=%d",
-		statusFilter, service, ownerTeam, sreTeam, env, limit)
+	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit)
 	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
 	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
 	// at 30s too, so each poll arrived at age = 30s + previous latency —
@@ -189,6 +196,26 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			filtered := items[:0]
 			for _, it := range items {
 				if strings.Contains(strings.ToLower(it.Service), needle) {
+					filtered = append(filtered, it)
+				}
+			}
+			items = filtered
+		}
+
+		// v0.9.251 — free-text search across the fields an operator
+		// actually reads in the row: service, title, and the source
+		// label ("Alert rule" / "Exception" / "Anomaly"). Applied on
+		// the merged set like the service filter above, so all three
+		// kinds match identically. Case-insensitive substring — no
+		// tokenising: triage titles are short and operators paste
+		// fragments ("OOMKill", "504") rather than words.
+		if search != "" {
+			needle := strings.ToLower(search)
+			filtered := items[:0]
+			for _, it := range items {
+				if strings.Contains(strings.ToLower(it.Service), needle) ||
+					strings.Contains(strings.ToLower(it.Title), needle) ||
+					strings.Contains(strings.ToLower(it.Source), needle) {
 					filtered = append(filtered, it)
 				}
 			}
@@ -314,6 +341,20 @@ func (s *Server) inboxCount(w http.ResponseWriter, r *http.Request) {
 // inboxCountKey is shared by the handler and the warm loop (api.go) so the
 // pre-warmed payload and the served one can never diverge.
 func inboxCountKey(env string) string { return "inbox:count:env=" + env }
+
+// inboxListKey builds the /api/inbox cache key. Pure + hoisted so
+// cache_key-style tests can pin it (canonical: cache_key_test.go).
+//
+// EVERY input that changes the response is in the key. v0.9.251 added
+// `q`: a free-text search that altered the rows but not the key would
+// hand one operator's filtered page to another operator's unfiltered
+// request — the v0.5.187 cross-poisoning shape, with a search box as
+// the vector. The `:v2:` prefix marks the v0.9.221 response-shape
+// change (bare array → object with the total).
+func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit int) string {
+	return fmt.Sprintf("inbox:v2:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d",
+		status, service, search, ownerTeam, sreTeam, env, limit)
+}
 
 // computeInboxCount — rozet toplamının tek hesabı; hem inboxCount
 // handler'ı hem 25s warm-loop (v0.8.473) aynı fonksiyonu çağırır ki
@@ -463,10 +504,10 @@ func problemToInbox(p chstore.Problem) InboxItem {
 // so the formula is bespoke but the bucket targets the same
 // "now / today / when-convenient" semantics:
 //
-//   P1 — fresh (last_seen ≤ 5min) AND occurrences ≥ 500
-//   P2 — fresh (last_seen ≤ 1h)   AND occurrences ≥ 100
-//        OR regressed (state="regressed")
-//   P3 — everything else
+//	P1 — fresh (last_seen ≤ 5min) AND occurrences ≥ 500
+//	P2 — fresh (last_seen ≤ 1h)   AND occurrences ≥ 100
+//	     OR regressed (state="regressed")
+//	P3 — everything else
 //
 // "Fresh + high-volume" is the post-deploy spike pattern the
 // oncall most wants to see; everything else is review-able
@@ -520,9 +561,9 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 // the peak for ranking — "worst hit so far" predicts how much
 // the operator should care, even if the burst has subsided.
 //
-//   P1 — peak ≥ 5x baseline (extraordinary spike)
-//   P2 — peak ≥ 2x baseline (clear anomaly worth a look)
-//   P3 — everything else (mostly cleared / mild)
+//	P1 — peak ≥ 5x baseline (extraordinary spike)
+//	P2 — peak ≥ 2x baseline (clear anomaly worth a look)
+//	P3 — everything else (mostly cleared / mild)
 //
 // Anomaly events don't have severity in the data model, so we
 // derive one from the ratio bucket and surface it for visual

@@ -19,7 +19,7 @@ function fmtDurRight(v: number): string {
 }
 
 export function VolumeChart({
-  count, errors, p50, height = 140, onBrush, xRange,
+  count, errors, p50, height = 140, onBrush, xRange, header, headerRight,
 }: {
   count: SpanMetricSeries[] | null;
   errors: SpanMetricSeries[] | null;
@@ -28,6 +28,15 @@ export function VolumeChart({
   onBrush?: (fromMs: number, toMs: number) => void;
   // v0.9.83 — sorgu penceresi (unix sec); histogram x-ekseni buna sabitlenir.
   xRange?: { from: number; to: number } | null;
+  // v0.9.246 — kartın başlık şeridine gömülen içerik (Volume/Latency anahtarı
+  // + pencere istatistikleri). Grafiği kontrol eden düğme grafiğin İÇİNDE
+  // durur; daha önce kartın üstünde ayrı bir satırdı ve trace tablosunu
+  // aşağı itiyordu.
+  header?: React.ReactNode;
+  // Aynı şeridin SAĞ ucu — pencere istatistikleri (TOTAL / ERROR SPANS /
+  // ERR RATE / P50 MAX). Ayrı slot, çünkü aradaki bucket ipucu ikisinin
+  // ortasına giriyor.
+  headerRight?: React.ReactNode;
 }) {
   const { times, series, bucketMin } = useMemo(() => {
     const cPts = count?.[0]?.points ?? [];
@@ -61,8 +70,14 @@ export function VolumeChart({
       {/* v0.9.103 (Grafana-parity #1) — renk-anahtarı kaldırıldı; TimeChart
           artık altında StatsLegend (swatch+label+istatistik) gösteriyor.
           Yalnız bucket/sürükle ipucu üstte kalır (StatsLegend'de yok). */}
-      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4, fontSize: 10.5, color: 'var(--text-faint)' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 4, fontSize: 10.5, color: 'var(--text-faint)' }}>
+        {header}
         <span style={{ fontFamily: 'var(--font-mono, ui-monospace)' }}>spans / {bucketMin}m bucket · sürükle = zaman seç</span>
+        {headerRight && (
+          <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+            {headerRight}
+          </span>
+        )}
       </div>
 
       {times.length === 0 ? (

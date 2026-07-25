@@ -705,68 +705,78 @@ function TracesPageInner() {
         <SavedViewsBar page="traces" />
 
         {/* Header viz — Volume / Latency toggle (list view only; both derive
-            from the live, filtered list rows). */}
-        {view === 'list' && (
-          <>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 8, flexWrap: 'wrap' }}>
+            from the live, filtered list rows).
+
+            v0.9.246 (onaylı düzen sadeleştirmesi, Seçenek A) — bu blok
+            önce KARTIN ÜSTÜNDE ayrı bir satırdı. Grafiği kontrol eden
+            anahtar ve o grafiğin istatistikleri artık kartın kendi başlık
+            şeridinde: Grafana/Datadog'un panel-başlığı deseni, ve trace
+            tablosu ~37px yukarı geliyor. Tek düğüm olarak kurulup iki
+            grafik dalına da veriliyor — kip değişince şerit kaymıyor. */}
+        {view === 'list' && (() => {
+          const vizToggle = (
+            <>
               <div className="segmented">
                 <button className={viz === 'volume' ? 'active' : ''} onClick={() => setViz('volume')}>Volume</button>
                 <button className={viz === 'latency' ? 'active' : ''} onClick={() => setViz('latency')}>Latency</button>
               </div>
-              <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-                {viz === 'volume' ? 'Span volume' : 'Latency distribution'}
-              </span>
               {brushPrev && (
                 <Button variant="secondary" size="sm" onClick={clearBrush} title="Restore the previous time range">
                   Clear selection ✕
                 </Button>
               )}
-              {/* RED stat group — mono, right-aligned, over the filtered rows. */}
-              <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
-                <HeaderStat label="TOTAL" value={fmtNum(headerStats.total)} />
-                {/* v0.9.222 — scope spelled out. This counts error SPANS
-                    across the whole window; the "Errors N" quick-chip below
-                    counts error TRACES on the loaded page. Both were right
-                    and both said "Errors", so 12.4k sitting a few hundred
-                    pixels above 3 read as a broken number. */}
-                <HeaderStat label="ERROR SPANS" value={fmtNum(headerStats.err)}
-                  tone={headerStats.err > 0 ? 'err' : undefined}
-                  title="Seçili pencerenin tamamındaki hatalı SPAN sayısı — yüklü satırlardan bağımsız, gerçek trafiği tarif eder." />
-                <HeaderStat label="ERR RATE" value={`${headerStats.errRate.toFixed(2)}%`} tone={headerStats.errRate > 0 ? 'err' : undefined} />
-                <HeaderStat label="P50 MAX" value={headerStats.p50Max ? fmtDur(headerStats.p50Max) : '—'} tone="warn" />
-              </div>
+            </>
+          );
+          // RED stat group — mono, right-aligned, over the filtered rows.
+          const vizStats = (
+            <>
+              <HeaderStat label="TOTAL" value={fmtNum(headerStats.total)} />
+              {/* v0.9.222 — scope spelled out. This counts error SPANS
+                  across the whole window; the "Errors N" quick-chip below
+                  counts error TRACES on the loaded page. Both were right
+                  and both said "Errors", so 12.4k sitting a few hundred
+                  pixels above 3 read as a broken number. */}
+              <HeaderStat label="ERROR SPANS" value={fmtNum(headerStats.err)}
+                tone={headerStats.err > 0 ? 'err' : undefined}
+                title="Seçili pencerenin tamamındaki hatalı SPAN sayısı — yüklü satırlardan bağımsız, gerçek trafiği tarif eder." />
+              <HeaderStat label="ERR RATE" value={`${headerStats.errRate.toFixed(2)}%`} tone={headerStats.errRate > 0 ? 'err' : undefined} />
+              <HeaderStat label="P50 MAX" value={headerStats.p50Max ? fmtDur(headerStats.p50Max) : '—'} tone="warn" />
+            </>
+          );
+          return data === undefined ? (
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10, height: 192, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+              <Spinner />
             </div>
-
-            {data === undefined ? (
-              <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10, height: 192, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Spinner />
+          ) : viz === 'volume' ? (
+            // slimmer + recedes — it's the brush/overview "tool", not the
+            // headline chart; the RED strip below carries the filtered numbers.
+            <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null} height={140} onBrush={applyBrush}
+              xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }}
+              header={vizToggle} headerRight={vizStats} />
+          ) : (
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, padding: '0 2px', flexWrap: 'wrap' }}>
+                {vizToggle}
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text3)' }}>
+                  <span style={{ width: 8, height: 8, background: 'var(--accent)', borderRadius: 8 }} /> ok
+                  <span style={{ width: 8, height: 8, background: 'var(--err)', borderRadius: 8, marginLeft: 8 }} /> error
+                  <span style={{ marginLeft: 8 }}>· drag to brush · y = duration (log)</span>
+                </span>
+                <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
+                  {vizStats}
+                </span>
               </div>
-            ) : viz === 'volume' ? (
-              // slimmer + recedes — it's the brush/overview "tool", not the
-              // headline chart; the RED strip below carries the filtered numbers.
-              <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null} height={140} onBrush={applyBrush}
-                xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }} />
-            ) : (
-              <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 8, padding: '0 2px' }}>
-                  <span style={{ fontSize: 11, color: 'var(--text2)', fontWeight: 700, letterSpacing: '0.5px', textTransform: 'uppercase' }}>
-                    Latency distribution
-                  </span>
-                  <span style={{ flex: 1 }} />
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 10, color: 'var(--text3)' }}>
-                    <span style={{ width: 8, height: 8, background: 'var(--accent)', borderRadius: 8 }} /> ok
-                    <span style={{ width: 8, height: 8, background: 'var(--err)', borderRadius: 8, marginLeft: 8 }} /> error
-                    <span style={{ marginLeft: 8 }}>· drag to brush a time range · y = duration (log)</span>
-                  </span>
-                </div>
-                <LatencyScatter rows={displayRows} onOpen={openTrace} onBrush={applyBrush} />
-              </div>
-            )}
-          </>
-        )}
+              <LatencyScatter rows={displayRows} onOpen={openTrace} onBrush={applyBrush} />
+            </div>
+          );
+        })()}
 
-        {/* View toggle + trace-id lookup */}
-        <div className="controls" style={{ marginBottom: 8, alignItems: 'center' }}>
+        {/* View toggle + query fields + trace-id lookup — ONE row (v0.9.246,
+            onaylı Seçenek A). Görünüm kipi ve sorgu alanları iki ayrı
+            `.controls` sırasındaydı; ikisi de "hangi trace'ler" sorusunu
+            yanıtladığı için tek şeritte topluluyor (~43px kazanç). `.controls`
+            zaten flex-wrap, dar ekranda ikinci satıra kırılır. */}
+        <div className="controls" data-shortcut-search style={{ marginBottom: 8, alignItems: 'center' }}>
           <div className="segmented">
             <button onClick={() => setView('list')} className={view === 'list' ? 'active' : ''}>Traces</button>
             <button onClick={() => setView('aggregate')} className={view === 'aggregate' ? 'active' : ''}>Aggregated</button>
@@ -827,6 +837,23 @@ function TracesPageInner() {
             </>
           )}
 
+          {/* Sorgu alanları — relations görünümünde RelationBuilder sorguyu
+              devraldığı için gizli (eski ayrı satırın koşuluyla aynı). */}
+          {view !== 'relations' && (
+            <>
+              <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
+                placeholder="Service…" width={170} onEnter={(v) => apply(v)} />
+              <OperationPicker service={draft.service} value={draft.search}
+                onChange={v => setDraft({ ...draft, search: v })}
+                placeholder="Operation…" width={240} onEnter={() => apply()} />
+              <input ref={filterInputRef} placeholder="Min ms" value={draft.minMs}
+                onChange={e => setDraft({ ...draft, minMs: e.target.value })} type="number" style={{ width: 72 }} />
+              <input placeholder="Max ms" value={draft.maxMs}
+                onChange={e => setDraft({ ...draft, maxMs: e.target.value })} type="number" style={{ width: 72 }} />
+              <Button variant="primary" size="sm" onClick={() => apply()}>Search</Button>
+            </>
+          )}
+
           <div className="trace-lookup" style={{ marginLeft: 'auto' }}>
             <span className="tl-icon" aria-hidden><IconSearch size={14} /></span>
             <input placeholder="Trace ID…" title="Paste a full 32-character trace ID"
@@ -852,30 +879,59 @@ function TracesPageInner() {
           />
         )}
 
-        {/* Filters — hidden in relations view (RelationBuilder owns the query). */}
-        {view !== 'relations' && (
-        <div className="controls" data-shortcut-search>
-          <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
-            placeholder="Service…" width={170} onEnter={(v) => apply(v)} />
-          <OperationPicker service={draft.service} value={draft.search}
-            onChange={v => setDraft({ ...draft, search: v })}
-            placeholder="Operation…" width={240} onEnter={() => apply()} />
-          <input ref={filterInputRef} placeholder="Min ms" value={draft.minMs}
-            onChange={e => setDraft({ ...draft, minMs: e.target.value })} type="number" style={{ width: 72 }} />
-          <input placeholder="Max ms" value={draft.maxMs}
-            onChange={e => setDraft({ ...draft, maxMs: e.target.value })} type="number" style={{ width: 72 }} />
-          <label style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text2)', cursor: 'pointer' }}>
-            <input type="checkbox" checked={draft.hasError} onChange={e => setDraft({ ...draft, hasError: e.target.checked })} />
-            Errors only
-          </label>
-          <label style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text2)', cursor: 'pointer' }}
-            title="Hide partial traces — only show traces whose root span landed in storage">
-            <input type="checkbox" checked={draft.rootOnly} onChange={e => setDraft({ ...draft, rootOnly: e.target.checked })} />
-            Root traces
-          </label>
-          <Button variant="primary" size="sm" onClick={() => apply()}>Search</Button>
-          <Button variant="secondary" size="sm" onClick={reset}>Reset</Button>
+        {/* Sonucu daraltma şeridi (v0.9.246, onaylı Seçenek A) — toggle'lar,
+            hızlı kısayollar, Reset ve CSV tek sırada. Errors only / Root
+            traces artık checkbox değil chip: `apply()` zaten son düzenlemeden
+            250ms sonra kendiliğinden çalıştığı için (auto-apply effect,
+            yukarıda) chip'e dönüşüm DAVRANIŞI DEĞİŞTİRMİYOR — sadece hızlı
+            kısayollarla aynı görsel dili konuşuyorlar.
 
+            İki grup ayrı ayrımla duruyor: SOLDAKİLER sunucu filtresi (tüm
+            pencereye uygulanır, yeniden sorgu tetikler), SAĞDAKİLER yüklü
+            sayfayı istemci tarafında daraltır. Aynı görünüp farklı kapsamda
+            çalışmasınlar diye aralarına ince bir ayraç kondu.
+
+            Şerit relations görünümünde gizli. traces.length koşulu SADECE
+            hızlı kısayolları sarıyor: Reset ve CSV liste boşken de erişilebilir
+            kalmalı, fazla dar bir filtreyi ancak öyle geri alırsın. */}
+        {view !== 'relations' && (
+          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
+            <QuickChip active={draft.hasError} tone="err"
+              onClick={() => setDraft({ ...draft, hasError: !draft.hasError })}
+              title="Yalnız hatalı trace'ler. SUNUCU filtresi — seçili pencerenin tamamına uygulanır ve sorguyu yeniden çalıştırır.">
+              Errors only
+            </QuickChip>
+            <QuickChip active={draft.rootOnly}
+              onClick={() => setDraft({ ...draft, rootOnly: !draft.rootOnly })}
+              title="Kök span'i depoya düşmüş trace'ler — yarım trace'leri gizler. SUNUCU filtresi.">
+              Root traces
+            </QuickChip>
+
+            {view === 'list' && traces.length > 0 && (
+              <>
+                <span aria-hidden style={{ width: 1, alignSelf: 'stretch', margin: '2px 4px', background: 'var(--border)' }} />
+                <QuickChip active={quick === 'err'} onClick={() => setQuick(quick === 'err' ? null : 'err')} tone="err"
+                  title="Yüklü satırlar arasındaki hatalı TRACE sayısı — tıkla, listeyi onlara indir. Yukarıdaki ERROR SPANS pencerenin tamamını sayar, bu yüzden iki sayı farklıdır.">
+                  Errors {errCount} <span style={{ opacity: 0.65 }}>/ yüklü</span>
+                </QuickChip>
+                <QuickChip active={quick === 'slow'} onClick={() => setQuick(quick === 'slow' ? null : 'slow')}>
+                  Slow &gt;1s
+                </QuickChip>
+                {topSvcs.map(s => (
+                  <QuickChip key={s} active={quick === s} dot={svcColor(s)} onClick={() => setQuick(quick === s ? null : s)}>
+                    {s}
+                  </QuickChip>
+                ))}
+              </>
+            )}
+
+            <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+              {view === 'list' && data && (
+                <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>
+                  {displayRows.length} of {traces.length} traces
+                </span>
+              )}
+              <Button variant="secondary" size="sm" onClick={reset}>Reset</Button>
           {/* CSV export — committed filter set. */}
           <a className="sec"
             href={`/api/traces/export.csv?${(() => {
@@ -901,30 +957,7 @@ function TracesPageInner() {
             style={{ padding: '5px 10px', fontSize: 12, textDecoration: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--accent2)', background: 'var(--bg2)' }}>
             ⬇ CSV
           </a>
-
-          {view === 'list' && data && (
-            <span style={{ marginLeft: 'auto', fontSize: 11.5, color: 'var(--text3)' }}>
-              {displayRows.length} of {traces.length} traces
             </span>
-          )}
-        </div>
-        )}
-
-        {/* Quick-filter chips. */}
-        {view === 'list' && traces.length > 0 && (
-          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-            <QuickChip active={quick === 'err'} onClick={() => setQuick(quick === 'err' ? null : 'err')} tone="err"
-              title="Yüklü satırlar arasındaki hatalı TRACE sayısı — tıkla, listeyi onlara indir. Yukarıdaki ERROR SPANS pencerenin tamamını sayar, bu yüzden iki sayı farklıdır.">
-              Errors {errCount} <span style={{ opacity: 0.65 }}>/ yüklü</span>
-            </QuickChip>
-            <QuickChip active={quick === 'slow'} onClick={() => setQuick(quick === 'slow' ? null : 'slow')}>
-              Slow &gt;1s
-            </QuickChip>
-            {topSvcs.map(s => (
-              <QuickChip key={s} active={quick === s} dot={svcColor(s)} onClick={() => setQuick(quick === s ? null : s)}>
-                {s}
-              </QuickChip>
-            ))}
           </div>
         )}
 
@@ -1273,7 +1306,7 @@ function TracesEmpty({ service, search, range, onSwitchView }: {
             <Button variant="secondary" size="sm" onClick={onSwitchView} style={{ marginLeft: 4 }}>Switch to Aggregate view →</Button>
           </>
         ) : (
-          <>Try widening the time range, dropping the service or search filter, or unticking "Root traces". If even an unfiltered query is empty, check ingest health at <Link to="/system/stats" style={{ color: 'var(--accent2)' }}>system stats</Link>.</>
+          <>Try widening the time range, dropping the service or search filter, or turning off the "Root traces" chip. If even an unfiltered query is empty, check ingest health at <Link to="/system/stats" style={{ color: 'var(--accent2)' }}>system stats</Link>.</>
         )}
       </div>
     </Empty>

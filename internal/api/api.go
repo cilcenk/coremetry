@@ -6179,6 +6179,12 @@ func (s *Server) testSMTPSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
 		return
 	}
+	// v0.9.235 — this sends real mail to an operator-supplied ARBITRARY
+	// recipient and left no trace. "Who mailed this address from our SMTP
+	// relay, and when" had no answer. The recipient is the whole point of
+	// the record, so it goes in the details.
+	details, _ := json.Marshal(map[string]any{"recipient": body.Recipient})
+	s.audit(r, "settings.smtp.test", "settings", "smtp", string(details))
 	writeJSON(w, map[string]string{"status": "sent"})
 }
 
@@ -6475,6 +6481,14 @@ func (s *Server) listZoomChannels(w http.ResponseWriter, r *http.Request) {
 			err.Error(), mustMarshal(channels)), http.StatusBadGateway)
 		return
 	}
+	// v0.9.235 — accepts an un-saved Zoom clientSecret in the body and calls
+	// out to Zoom with it; that is a credential-bearing egress and deserves
+	// a row. accountID identifies WHICH tenant was probed; the secret and
+	// the channel list itself never touch the audit details.
+	zDetails, _ := json.Marshal(map[string]any{
+		"accountId": accID, "channels": len(channels),
+	})
+	s.audit(r, "channel.zoom.list", "channel", body.ChannelID, string(zDetails))
 	writeJSON(w, map[string]any{"channels": channels})
 }
 
@@ -6500,6 +6514,11 @@ func (s *Server) testChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":%q}`, err.Error()), http.StatusBadGateway)
 		return
 	}
+	// v0.9.235 — fires a REAL notification into the configured Slack /
+	// Teams / Zoom / webhook target and left no audit row. Type and name
+	// only: the channel config can hold a secret, so it stays out.
+	details, _ := json.Marshal(map[string]any{"type": c.Type, "name": c.Name})
+	s.audit(r, "channel.test", "channel", c.ID, string(details))
 	writeJSON(w, map[string]string{"status": "sent"})
 }
 

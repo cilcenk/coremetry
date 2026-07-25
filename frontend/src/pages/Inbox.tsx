@@ -1,4 +1,7 @@
-import { useMemo, useRef } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+import { Button } from '@/components/ui';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Users, Shield } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
@@ -70,6 +73,14 @@ export default function InboxPage() {
   // keeps narrowing exactly as it did; the two AND together
   // server-side.
   const searchFilter = searchParams.get('q') ?? '';
+  // v0.9.252 — bulk triage selection. Deliberately NOT in the URL: a
+  // shared link should reproduce the VIEW, not a half-finished
+  // multi-select someone else is about to act on. Named `picked` to
+  // stay clear of `selected`, which is the DRAWER's row (?item=).
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkNote, setBulkNote] = useState<string | null>(null);
+  const qc = useQueryClient();
   const ownerFilter = searchParams.get('owner') ?? '';
   const sreFilter = searchParams.get('sre') ?? '';
   // Drawer selection is one more URL-backed facet (v0.8.292): ?item=<inboxId>.
@@ -171,6 +182,54 @@ export default function InboxPage() {
     onOpen: openDrawer,
     searchRef,
   });
+
+  // Selection resolves against the rows actually on screen, so a row
+  // that got resolved out from under the operator stops being counted
+  // as acknowledgeable.
+  const pickedRows = useMemo(
+    () => (filtered ?? []).filter((r: InboxItem) => picked.has(r.id)),
+    [filtered, picked]);
+  const selCount = pickedRows.length;
+  const ackProblemIds = pickedRows
+    .filter((r: InboxItem) => r.kind === 'problem' && r.problem)
+    .map((r: InboxItem) => r.problem!.id);
+  const ackExceptionFps = pickedRows
+    .filter((r: InboxItem) => r.kind === 'exception' && r.exception)
+    .map((r: InboxItem) => r.exception!.fingerprint);
+  const ackable = ackProblemIds.length + ackExceptionFps.length;
+  const skipped = selCount - ackable;
+  const allPickedOnScreen = (filtered?.length ?? 0) > 0
+    && (filtered ?? []).every((r: InboxItem) => picked.has(r.id));
+
+  const toggleRow = (id: string) => setPicked(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const bulkAcknowledge = async () => {
+    setBulkBusy(true); setBulkNote(null);
+    // Both calls go out before either result is inspected: they hit
+    // different stores, and a failure in one must not cancel the other
+    // half of the operator's gesture.
+    const [pRes, eRes] = await Promise.allSettled([
+      ackProblemIds.length ? api.acknowledgeProblems(ackProblemIds) : Promise.resolve(null),
+      ackExceptionFps.length ? api.setExceptionGroupStatesBulk(ackExceptionFps, 'acknowledged') : Promise.resolve(null),
+    ]);
+    const okProblems = pRes.status === 'fulfilled' ? ackProblemIds.length : 0;
+    const okExceptions = eRes.status === 'fulfilled'
+      ? ((eRes.value as { applied: number } | null)?.applied ?? 0)
+      : 0;
+    const errs = [pRes, eRes].filter(r => r.status === 'rejected').length;
+    setBulkNote(errs
+      ? `${okProblems + okExceptions} onaylandı, ${errs} istek başarısız`
+      : `${okProblems + okExceptions} onaylandı`);
+    setPicked(new Set());
+    // The server already dropped the cached list + badge; refetch so
+    // the rows leave the screen instead of lingering a poll cycle.
+    qc.invalidateQueries({ queryKey: ['inbox'] });
+    setBulkBusy(false);
+  };
 
   const counts = useMemo(() => {
     const out: Record<string, number> = { P1: 0, P2: 0, P3: 0,
@@ -297,6 +356,40 @@ export default function InboxPage() {
           )}
         </div>
 
+        {/* v0.9.252 — bulk acknowledge. Appears only with a selection so
+            the toolbar above stays quiet during normal triage.
+
+            Scope is explicit rather than silent: problems and exception
+            groups both have an "acknowledged" state and are sent to
+            their respective BULK endpoints (one request, one audit row
+            each); anomalies have no ack — they are silenced, which is a
+            different decision — so they are counted out loud instead of
+            being dropped without a word. */}
+        {selCount > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+            padding: '8px 12px', marginBottom: 8, borderRadius: 6,
+            background: 'var(--bg2)', border: '1px solid var(--accent)',
+          }}>
+            <b style={{ fontSize: 12 }}>{selCount} seçili</b>
+            <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+              {ackable} onaylanabilir
+              {skipped > 0 && ` · ${skipped} anomali atlanacak (onay değil, susturma gerektirir)`}
+            </span>
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+              {bulkNote && <span style={{ fontSize: 11, color: 'var(--text2)' }}>{bulkNote}</span>}
+              <Button variant="primary" size="sm" disabled={bulkBusy || ackable === 0}
+                onClick={bulkAcknowledge}>
+                {bulkBusy ? 'Onaylanıyor…' : `Onayla (${ackable})`}
+              </Button>
+              <Button variant="secondary" size="sm" disabled={bulkBusy}
+                onClick={() => { setPicked(new Set()); setBulkNote(null); }}>
+                Seçimi temizle
+              </Button>
+            </span>
+          </div>
+        )}
+
         {data === undefined && <TableSkeleton cols={6} wideFirst />}
         {data === null && <Empty icon="!" title="Failed to load inbox" />}
         {filtered && filtered.length === 0 && (
@@ -322,8 +415,28 @@ export default function InboxPage() {
           // >100-row paint cheap while letting each row size to its content.
           <div className="table-wrap">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
-              <DataTableColgroup dt={dt} />
-              <DataTableHead dt={dt} />
+              {/* leading={[34]} — the primitive owns the <colgroup>; a
+                  second one alongside it is invalid markup and the
+                  browser silently keeps only the first. */}
+              <DataTableColgroup dt={dt} leading={[34]} />
+              <DataTableHead dt={dt} leading={
+                <th style={{ width: 34, textAlign: 'center' }}>
+                  {/* Select-all covers the rows CURRENTLY on screen, not the
+                      whole server-side queue — the list is a capped top
+                      slice, so "all" can only honestly mean what is
+                      visible. */}
+                  <input type="checkbox" aria-label="Görünen satırların hepsini seç"
+                    title="Görünen satırların hepsini seç"
+                    checked={allPickedOnScreen}
+                    ref={el => { if (el) el.indeterminate = selCount > 0 && !allPickedOnScreen; }}
+                    onChange={() => setPicked(prev => {
+                      if (allPickedOnScreen) return new Set();
+                      const next = new Set(prev);
+                      for (const r of (filtered ?? [])) next.add(r.id);
+                      return next;
+                    })} />
+                </th>
+              } />
               <tbody>
                 {dt.sortedRows.map((it, i) => (
                   <tr key={it.id}
@@ -335,6 +448,14 @@ export default function InboxPage() {
                       contentVisibility: 'auto',
                       containIntrinsicSize: 'auto 44px',
                     }}>
+                    <td style={{ textAlign: 'center' }}
+                      onClick={e => { e.stopPropagation(); }}>
+                      {/* stopPropagation: the row itself opens the triage
+                          drawer, and ticking a box must not also navigate. */}
+                      <input type="checkbox" checked={picked.has(it.id)}
+                        aria-label={`Seç: ${it.title}`}
+                        onChange={() => toggleRow(it.id)} />
+                    </td>
                     <td>
                       <PriorityBadge p={it.priority} reason={it.priorityReason} />
                     </td>

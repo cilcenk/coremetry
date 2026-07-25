@@ -702,6 +702,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET    /api/exception-groups/{fp}/samples", s.getExceptionGroupSamples)
 	mux.HandleFunc("GET    /api/exception-groups/{fp}/occurrences", s.getExceptionGroupOccurrences)
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/state", auth.RequireAnyRole(editorRoles, s.setExceptionGroupState))
+	// v0.9.252 — bulk sibling of the route above. Same gate, same
+	// invalidations, ONE audit row for the whole batch.
+	mux.HandleFunc("POST   /api/exception-groups/state", auth.RequireAnyRole(editorRoles, s.setExceptionGroupStateBulk))
 	mux.HandleFunc("POST   /api/exception-groups/{fp}/assign", auth.RequireAnyRole(editorRoles, s.assignExceptionGroup))
 	mux.HandleFunc("GET    /api/services/{name}/operations", s.svcOperationSummary)
 	mux.HandleFunc("GET    /api/services/{name}/span-breakdown", s.svcSpanBreakdown)
@@ -7109,6 +7112,74 @@ func (s *Server) getExceptionGroupOccurrences(w http.ResponseWriter, r *http.Req
 	s.serveCached(w, r, "exc-occ:"+fp, 30*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.GetExceptionOccurrences(ctx, fp)
 	})
+}
+
+// setExceptionGroupStateBulk applies one state to many exception
+// groups (v0.9.252). The triage list's bulk-acknowledge needs it:
+// looping the single-fingerprint route client-side would fire N
+// requests, N cache invalidations and N audit rows for one operator
+// gesture, and a failure halfway would leave the batch half-applied
+// with no record of the intent.
+//
+// Partial success is reported, not hidden: a fingerprint that fails
+// mid-batch does not abort the rest, and the response carries both
+// counts so the UI can say "42 acknowledged, 3 failed" instead of a
+// bare error over a mostly-successful action.
+func (s *Server) setExceptionGroupStateBulk(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Fingerprints []string `json:"fingerprints"`
+		State        string   `json:"state"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	switch body.State {
+	case chstore.ExStateNew, chstore.ExStateAcknowledged,
+		chstore.ExStateResolved, chstore.ExStateIgnored:
+		// ok
+	default:
+		http.Error(w, `{"error":"invalid state"}`, http.StatusBadRequest)
+		return
+	}
+	// Cap the batch. The list this is driven from is server-capped at
+	// 500, so a larger request is a malformed client, not a real
+	// gesture — and each fingerprint is its own CH write.
+	const maxBulkExceptionState = 500
+	if len(body.Fingerprints) == 0 {
+		http.Error(w, `{"error":"fingerprints required"}`, http.StatusBadRequest)
+		return
+	}
+	if len(body.Fingerprints) > maxBulkExceptionState {
+		http.Error(w, `{"error":"too many fingerprints"}`, http.StatusBadRequest)
+		return
+	}
+
+	var applied int
+	var failed []string
+	for _, fp := range body.Fingerprints {
+		if fp == "" {
+			continue
+		}
+		if err := s.store.SetExceptionGroupState(r.Context(), fp, body.State); err != nil {
+			log.Printf("[exception-groups] bulk state %s: %v", fp, err)
+			failed = append(failed, fp)
+			continue
+		}
+		applied++
+	}
+
+	// Same three invalidations as the single route — the badge and the
+	// list must both drop the rows immediately (v0.8.455 / v0.8.472 /
+	// v0.9.234), otherwise a bulk ack looks like it did nothing for a
+	// whole TTL window.
+	s.cacheInvalidatePrefix(r.Context(), "exc-groups:")
+	s.cacheInvalidatePrefix(r.Context(), "inbox:count")
+	s.cacheInvalidatePrefix(r.Context(), "inbox:v2")
+	s.audit(r, "exception_group.set_state_bulk", "exception_group", "",
+		fmt.Sprintf(`{"state":%q,"requested":%d,"applied":%d,"failed":%d}`,
+			body.State, len(body.Fingerprints), applied, len(failed)))
+	writeJSON(w, map[string]any{"applied": applied, "failed": len(failed)})
 }
 
 func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) {

@@ -1691,6 +1691,15 @@ export const api = {
     get<ExceptionSample[] | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
   exceptionGroupOccurrences: (fingerprint: string) =>
     get<OccurrencePoint[] | null>(`/api/exception-groups/${fingerprint}/occurrences`),
+  // v0.9.252 — bulk sibling. One request, one audit row, one set of
+  // cache invalidations for a whole triage gesture; returns partial
+  // counts so the UI can report "42 acknowledged, 3 failed".
+  setExceptionGroupStatesBulk: (fingerprints: string[], state: ExceptionGroupState) =>
+    request<{ applied: number; failed: number }>(`/api/exception-groups/state`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fingerprints, state }),
+    }),
   setExceptionGroupState: (fingerprint: string, state: ExceptionGroupState) =>
     request<void>(`/api/exception-groups/${fingerprint}/state`, {
       method: 'POST',

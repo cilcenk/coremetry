@@ -1,0 +1,674 @@
+<title>Coremetry · /databases — DT-parity mockup</title>
+<style>
+/* ══════════════════════════════════════════════════════════════════════
+   Tokens — kopyası frontend/src/styles/globals.css (v0.9.167 dark-dimmed
+   + Primer light). Uydurma renk YOK; her değer repodaki değişkenin aynısı.
+   ══════════════════════════════════════════════════════════════════════ */
+:root {
+  --bg0:#1c2128; --bg1:#22272e; --bg2:#2d333b; --bg3:#373e47; --bg:#1c2128;
+  --border:#444c56; --text:#d5dde5; --text2:#909dab; --text3:#636e7b;
+  --brand:#E30613; --brand2:#ff2333;
+  --accent:#388bfd; --accent2:#58a6ff;
+  --ok:#3fb950; --err:#ff5252; --warn:#d29922; --info:#79c0ff;
+  --purple:#a371f7; --orange:#f0883e; --teal:#39c5cf;
+  --accent-soft:color-mix(in srgb, var(--accent) 16%, transparent);
+  --border-strong:#545d68;
+  --shadow-pop:0 8px 24px rgba(0,0,0,.45);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.25);
+  --shadow-md:0 6px 20px rgba(0,0,0,.45);
+  --accent-bg:#22314a; --accent-border:#2c4a70; --text-faint:#545d68;
+  --radius-sm:6px; --radius:8px; --radius-lg:12px;
+  color-scheme: dark;
+}
+/* Sistem açık temadaysa ve kullanıcı data-theme ile bir seçim yapmadıysa. */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg0:#ffffff; --bg1:#f6f8fa; --bg2:#eaeef2; --bg3:#d0d7de; --bg:#ffffff;
+    --border:#d0d7de; --text:#1f2328; --text2:#59636e; --text3:#818b98;
+    --accent:#0969da; --accent2:#0550ae;
+    --ok:#1a7f37; --err:#cf222e; --warn:#9a6700; --info:#0969da;
+    --purple:#8250df; --orange:#bc4c00; --teal:#137775;
+    --accent-soft:rgba(9,105,218,.10); --border-strong:#afb8c1;
+    --shadow-pop:0 8px 24px rgba(20,30,45,.14);
+    --shadow-sm:0 1px 2px rgba(20,30,45,.05);
+    --shadow-md:0 4px 16px rgba(20,30,45,.08);
+    --accent-bg:#ddf4ff; --accent-border:#b6e3ff; --text-faint:#a9b1ba;
+    color-scheme: light;
+  }
+}
+/* Tema toggle'ı kökü damgalar — her iki yönde de kazanır. */
+:root[data-theme="light"] {
+  --bg0:#ffffff; --bg1:#f6f8fa; --bg2:#eaeef2; --bg3:#d0d7de; --bg:#ffffff;
+  --border:#d0d7de; --text:#1f2328; --text2:#59636e; --text3:#818b98;
+  --accent:#0969da; --accent2:#0550ae;
+  --ok:#1a7f37; --err:#cf222e; --warn:#9a6700; --info:#0969da;
+  --purple:#8250df; --orange:#bc4c00; --teal:#137775;
+  --accent-soft:rgba(9,105,218,.10); --border-strong:#afb8c1;
+  --shadow-pop:0 8px 24px rgba(20,30,45,.14);
+  --shadow-sm:0 1px 2px rgba(20,30,45,.05);
+  --shadow-md:0 4px 16px rgba(20,30,45,.08);
+  --accent-bg:#ddf4ff; --accent-border:#b6e3ff; --text-faint:#a9b1ba;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg0:#1c2128; --bg1:#22272e; --bg2:#2d333b; --bg3:#373e47; --bg:#1c2128;
+  --border:#444c56; --text:#d5dde5; --text2:#909dab; --text3:#636e7b;
+  --accent:#388bfd; --accent2:#58a6ff;
+  --ok:#3fb950; --err:#ff5252; --warn:#d29922; --info:#79c0ff;
+  --purple:#a371f7; --orange:#f0883e; --teal:#39c5cf;
+  --accent-soft:color-mix(in srgb, var(--accent) 16%, transparent);
+  --border-strong:#545d68;
+  --shadow-pop:0 8px 24px rgba(0,0,0,.45);
+  --shadow-sm:0 1px 2px rgba(0,0,0,.25);
+  --shadow-md:0 6px 20px rgba(0,0,0,.45);
+  --accent-bg:#22314a; --accent-border:#2c4a70; --text-faint:#545d68;
+  color-scheme: dark;
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{background:var(--bg0);color:var(--text);font:13px/1.5 -apple-system,'Segoe UI',sans-serif;overflow-x:hidden}
+a{color:var(--accent2);text-decoration:none}
+a:hover{text-decoration:underline}
+code,.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
+
+#app{display:flex;min-height:100vh}
+#sidebar{width:184px;flex-shrink:0;background:var(--bg1);border-right:1px solid var(--border);padding:12px 0}
+#sidebar .logo{display:flex;align-items:center;gap:8px;padding:2px 14px 14px;font-weight:700;font-size:14px}
+#sidebar .logo i{width:9px;height:9px;border-radius:2px;background:var(--brand);display:block}
+#sidebar .grp{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:var(--text3);padding:12px 14px 4px;font-weight:700}
+#sidebar a.nav{display:block;padding:5px 14px;font-size:12.5px;color:var(--text2)}
+#sidebar a.nav:hover{background:var(--bg2);color:var(--text);text-decoration:none}
+#sidebar a.nav.active{color:var(--accent2);background:var(--accent-soft);box-shadow:inset 2px 0 0 var(--accent)}
+
+#main{flex:1;min-width:0;display:flex;flex-direction:column}
+#topbar{padding:10px 20px;border-bottom:1px solid var(--border);background:var(--bg1);
+        display:flex;align-items:center;gap:12px;flex-shrink:0}
+#topbar h1{font-size:15px;font-weight:600;flex:1;min-width:0}
+.topbar-prefs{display:flex;gap:6px;align-items:center}
+.topbar-prefs-sep{width:1px;height:18px;background:var(--border)}
+#content{flex:1;padding:20px;min-width:0}
+
+/* Kontroller + atomlar */
+.controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+input,select{background:var(--bg2);border:1px solid var(--border);color:var(--text);
+  border-radius:6px;padding:5px 10px;font-size:13px;outline:none;font-family:inherit}
+button{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:5px 14px;
+  font-size:13px;cursor:pointer;font-family:inherit}
+button.sec{background:var(--bg3);color:var(--text);border:1px solid var(--border)}
+button.ghost{background:transparent;color:var(--text2);border:1px solid transparent}
+button.sm{padding:3px 9px;font-size:11px;border-radius:4px}
+button.accent{background:var(--accent-soft);color:var(--accent2);border:1px solid var(--accent-border)}
+.card{background:var(--bg1);border:1px solid var(--border);border-radius:8px;padding:14px;box-shadow:var(--shadow-sm)}
+.chip{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border:1px solid var(--border);
+  border-radius:20px;font-size:11.5px;color:var(--text2);background:var(--bg0)}
+.chip b{color:var(--text);font-weight:600}
+.badge{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:6px;
+  font-size:11px;font-weight:700;font-variant-numeric:tabular-nums}
+.b-ok{background:color-mix(in srgb,var(--ok) 15%,transparent);color:var(--ok)}
+.b-err{background:color-mix(in srgb,var(--err) 15%,transparent);color:var(--err)}
+.b-warn{background:color-mix(in srgb,var(--warn) 15%,transparent);color:var(--warn)}
+.b-info{background:color-mix(in srgb,var(--info) 15%,transparent);color:var(--info)}
+.b-gray{background:var(--bg3);color:var(--text2)}
+
+/* Tablo */
+.table-wrap{border:1px solid var(--border);border-radius:8px;overflow-x:auto;overflow-y:hidden;background:var(--bg0)}
+table{width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed}
+thead th{padding:9px 12px;text-align:left;font-weight:700;color:var(--text3);font-size:10px;
+  text-transform:uppercase;letter-spacing:.06em;border-bottom:1px solid var(--border);
+  user-select:none;white-space:nowrap;position:relative}
+thead th.sortable{cursor:pointer}
+thead th.sorted{color:var(--accent2)}
+thead th .rz{position:absolute;top:0;right:0;width:6px;height:100%;cursor:col-resize}
+thead th .rz:hover{background:var(--accent);opacity:.5}
+tbody tr{border-bottom:1px solid var(--border);cursor:pointer}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:var(--bg2)}
+tbody td{padding:9px 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums}
+
+/* Sistem rozeti — DependenciesTable/SystemBadge tonlarının aynısı */
+.sysb{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:4px;
+  font-size:11px;font-weight:600;font-family:ui-monospace,SFMono-Regular,monospace}
+.sysb.pg{background:rgba(51,103,145,.18);color:#5b8fb9;border:1px solid #5b8fb933}
+.sysb.ora{background:rgba(216,72,57,.18);color:#d84839;border:1px solid #d8483933}
+.sysb.my{background:rgba(0,117,143,.18);color:#21a0a0;border:1px solid #21a0a033}
+.sysb.rd{background:rgba(220,38,38,.18);color:#dc2626;border:1px solid #dc262633}
+.sysb.mg{background:rgba(76,175,80,.18);color:#5cb85c;border:1px solid #5cb85c33}
+.sysb.es{background:rgba(0,127,127,.18);color:#1a8c8c;border:1px solid #1a8c8c33}
+.dbchip{font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);
+  border:1px solid var(--border);color:var(--text2);font-family:ui-monospace,SFMono-Regular,monospace}
+.recvchip{margin-left:6px;font-size:9px;padding:1px 6px;border-radius:3px;font-weight:600;
+  background:color-mix(in srgb,var(--accent) 15%,transparent);color:var(--accent2);
+  font-family:ui-monospace,SFMono-Regular,monospace;text-transform:uppercase;letter-spacing:.5px}
+
+/* YENİ rozeti — mockup'a özgü işaret; önerilen ek yüzeyleri boyar. */
+.new{display:inline-flex;align-items:center;gap:3px;padding:0 5px;border-radius:3px;
+  font-size:8.5px;font-weight:800;letter-spacing:.09em;text-transform:uppercase;
+  background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent2);
+  border:1px solid var(--accent-border);vertical-align:middle;line-height:15px;
+  font-family:-apple-system,'Segoe UI',sans-serif}
+th .new{margin-left:5px}
+.newcol{background:color-mix(in srgb,var(--accent) 6%,transparent)}
+.newpanel{border:1px solid var(--accent-border);border-radius:8px;padding:12px 14px;
+  background:color-mix(in srgb,var(--accent) 4%,var(--bg1));margin-bottom:14px}
+.newpanel > .h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;
+  color:var(--text2);margin-bottom:8px}
+
+/* Delta rozeti — components/TrendDelta.tsx birebir */
+.delta{margin-left:4px;font-size:9px;font-family:ui-monospace,monospace;
+  display:inline-flex;align-items:center;gap:1px}
+.delta.up-bad{color:var(--err)} .delta.dn-good{color:var(--ok)}
+.delta.up-neu{color:var(--accent2)} .delta.flat{color:var(--text3)}
+
+/* Stat kutucuğu — features/dependencies/panels/shared.tsx */
+.stat{background:var(--bg2);border:1px solid var(--border);border-radius:6px;padding:8px 10px}
+.stat .l{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.4px;font-weight:600}
+.stat .v{font-size:16px;font-weight:700;font-family:ui-monospace,SFMono-Regular,monospace}
+.statgrid{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:10px}
+
+/* Drawer bölüm başlığı */
+.sec-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;
+  margin-bottom:6px;color:var(--text2)}
+.sec-h .dot{width:8px;height:8px;border-radius:2px;background:var(--accent2)}
+.axl{font-size:9px;fill:var(--text3);font-family:ui-monospace,SFMono-Regular,monospace}
+
+/* Doygunluk metresi (Health kolonu) */
+.meter{width:52px;height:5px;border-radius:3px;background:var(--bg3);overflow:hidden;display:inline-block;vertical-align:middle}
+.meter i{display:block;height:100%;border-radius:3px}
+
+/* Pivot linki — .ud-pill türevi */
+.pivot{display:inline-flex;align-items:center;gap:7px;padding:7px 10px;border:1px solid var(--border);
+  border-radius:8px;background:var(--bg0);font-size:12px;font-weight:600;color:var(--text);white-space:nowrap}
+.pivot:hover{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft);text-decoration:none}
+.pivot .m{font-family:ui-monospace,SFMono-Regular,monospace;font-size:10.5px;color:var(--text3);font-weight:500}
+
+.legend{display:flex;gap:16px;align-items:center;flex-wrap:wrap;font-size:11.5px;color:var(--text2);
+  border:1px dashed var(--border);border-radius:6px;padding:9px 12px;margin-bottom:16px;background:var(--bg1)}
+.legend b{color:var(--text)}
+.sec-title{font-size:13px;font-weight:700;margin-bottom:4px;color:var(--text)}
+.sec-sub{margin-bottom:12px;font-size:12px;color:var(--text2)}
+.oldnote{font-size:11px;color:var(--text3);border-left:2px solid var(--border);
+  padding:2px 0 2px 8px;margin-bottom:8px}
+.oldnote s{color:var(--text-faint)}
+</style>
+<div id="app">
+
+  <!-- ── Sidebar (bağlam; mockup'ta statik) ─────────────────────────── -->
+  <nav id="sidebar">
+    <div class="logo"><i></i> Coremetry</div>
+    <div class="grp">Observe</div>
+    <a class="nav" href="#">Services</a>
+    <a class="nav" href="#">Endpoints</a>
+    <a class="nav" href="#">Traces</a>
+    <a class="nav" href="#">Logs</a>
+    <div class="grp">Dependencies</div>
+    <a class="nav active" href="#">Databases</a>
+    <a class="nav" href="#">Messaging</a>
+    <a class="nav" href="#">Topology</a>
+    <div class="grp">Triage</div>
+    <a class="nav" href="#">Problems</a>
+    <a class="nav" href="#">Exceptions</a>
+  </nav>
+
+  <div id="main">
+    <!-- ── Topbar (mevcut) ─────────────────────────────────────────── -->
+    <div id="topbar">
+      <h1>Databases</h1>
+      <select style="font-size:12px" aria-label="Env"><option>All envs</option><option>prod</option></select>
+      <select style="font-size:12px" aria-label="Range"><option>Last 6h</option></select>
+      <div class="topbar-prefs-sep"></div>
+      <span class="chip mono" title="LiveTicker"><span style="color:var(--ok)">●</span> 84.2k sp/s</span>
+      <div class="topbar-prefs">
+        <button class="ghost sm" title="Dil">TR</button>
+        <button class="ghost sm" title="Yoğunluk">▤</button>
+        <button class="ghost sm" id="themeBtn" title="Tema">◐</button>
+      </div>
+    </div>
+
+    <div id="content">
+
+      <div class="legend">
+        <span><b>Mockup okuma kılavuzu.</b></span>
+        <span><span class="badge b-gray">bugün canlıda</span> ana tablo, filtreler ve drawer akışı <b>aynen korunur</b></span>
+        <span><span class="new">Yeni</span> yalnızca <b>ek</b> kolon / panel / pivot — hiçbir mevcut kolon yeri değişmiyor, hiçbir düzen yeniden tasarlanmıyor</span>
+      </div>
+
+      <!-- ── Filtre şeridi (mevcut) + Compare toggle (YENİ #3) ──────── -->
+      <div class="controls">
+        <select style="font-size:12px"><option>All types</option><option>postgresql</option><option>oracle</option></select>
+        <select style="font-size:12px"><option>All db names</option></select>
+        <button class="sec sm">Clear</button>
+        <a href="#" class="pivot" style="padding:5px 12px;font-size:12px;color:var(--accent2)">🐢 Slow queries →</a>
+        <label class="chip" style="cursor:pointer;border-color:var(--accent-border);background:var(--accent-soft);color:var(--text)">
+          <input type="checkbox" checked style="width:13px;height:13px;padding:0;accent-color:var(--accent)">
+          Compare vs prior <span class="new">Yeni</span>
+        </label>
+        <span style="margin-left:auto;font-size:11px;color:var(--text3)">7 of 7 · pencere 6h · önceki 6h ile karşılaştırılıyor</span>
+      </div>
+
+      <div class="sec-title">Called from services (7)</div>
+      <div class="sec-sub">
+        Derived from spans with a populated <code>db.system</code> attribute.
+        Click a row to drill into matching traces.
+      </div>
+
+      <!-- ══ ANA TABLO — mevcut düzen + 2 ek kolon ════════════════════ -->
+      <div class="table-wrap">
+        <table>
+          <colgroup>
+            <col style="width:24px"><col style="width:132px"><col style="width:112px"><col style="width:196px">
+            <col style="width:104px"><col style="width:96px"><col style="width:92px">
+            <col style="width:86px"><col style="width:86px"><col style="width:92px">
+            <col style="width:140px"><col style="width:150px"><col style="width:210px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th aria-label="Expand"></th>
+              <th class="sortable">System<span class="rz"></span></th>
+              <th class="sortable">Database<span class="rz"></span></th>
+              <th class="sortable">Instance<span class="rz"></span></th>
+              <th class="sortable sorted num">Calls ↓<span class="rz"></span></th>
+              <th class="sortable num">Err %<span class="rz"></span></th>
+              <th class="sortable num">Avg<span class="rz"></span></th>
+              <th class="sortable num newcol">P50<span class="new">Yeni</span><span class="rz"></span></th>
+              <th class="sortable num newcol">P95<span class="new">Yeni</span><span class="rz"></span></th>
+              <th class="sortable num">P99<span class="rz"></span></th>
+              <th>Trend<span class="rz"></span></th>
+              <th class="newcol">Health<span class="new">Yeni</span><span class="rz"></span></th>
+              <th>Top callers</th>
+            </tr>
+          </thead>
+          <tbody id="mainBody">
+            <!-- satırlar JS ile — veri şekli gerçekçi (log-normal gecikme, diurnal hacim) -->
+          </tbody>
+        </table>
+      </div>
+
+      <div style="height:24px"></div>
+
+      <div class="sec-title">DB receiver instances (3)</div>
+      <div class="sec-sub">
+        OpenTelemetry database-receiver instances — discovered from
+        <code>oracledb.* / postgresql.* / mysql.* / redis.*</code> metric_points.
+        Expand a row to see receiver-specific drill-downs.
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <colgroup>
+            <col style="width:24px"><col style="width:132px"><col style="width:112px"><col style="width:196px">
+            <col style="width:104px"><col style="width:96px"><col style="width:92px">
+            <col style="width:86px"><col style="width:86px"><col style="width:92px">
+            <col style="width:140px"><col style="width:150px"><col style="width:210px">
+          </colgroup>
+          <thead>
+            <tr>
+              <th aria-label="Expand"></th>
+              <th class="sortable">System<span class="rz"></span></th>
+              <th class="sortable">Database<span class="rz"></span></th>
+              <th class="sortable">Instance<span class="rz"></span></th>
+              <th class="sortable num">Calls<span class="rz"></span></th>
+              <th class="sortable num">Err %<span class="rz"></span></th>
+              <th class="sortable num">Avg<span class="rz"></span></th>
+              <th class="sortable num newcol">P50<span class="new">Yeni</span><span class="rz"></span></th>
+              <th class="sortable num newcol">P95<span class="new">Yeni</span><span class="rz"></span></th>
+              <th class="sortable num">P99<span class="rz"></span></th>
+              <th>Trend<span class="rz"></span></th>
+              <th class="sortable newcol">Health<span class="new">Yeni</span><span class="rz"></span></th>
+              <th>Top callers</th>
+            </tr>
+          </thead>
+          <tbody id="recvBody"></tbody>
+        </table>
+      </div>
+
+      <div style="height:20px"></div>
+      <div style="font-size:11px;color:var(--text3);max-width:900px">
+        <b style="color:var(--text2)">Mockup notu.</b>
+        Receiver satırlarının RED değerleri bugün her zaman 0 dönüyor
+        (<code>dependencies.go:766-771</code>) ve panelde “0 çağrı, %0 hata” <i>sağlıklı</i>
+        gibi okunuyor. Health kolonu bu satırların tek dürüst sinyalini
+        (doygunluk + açık problem) satır seviyesine çıkarır; RED hücreleri
+        “—” olarak kalır, sahte sıfır gösterilmez.
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════════════════════════════════
+   Gerçekçi veri üretimi — tohumlu PRNG (determinist), log-normal gecikme
+   ve diurnal hacim. Grafikler statik SVG ile TEMSİLİ; gerçek üründe uPlot.
+   Harici istek yok.
+   ══════════════════════════════════════════════════════════════════════ */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);
+  t=t+Math.imul(t^t>>>7,61|t)^t;return ((t^t>>>14)>>>0)/4294967296}}
+function gauss(r){let u=0,v=0;while(!u)u=r();while(!v)v=r();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v)}
+
+const N = 72;              // 6 saat / 5dk kova = 72 nokta (db_summary_5m grid'i)
+const INC = [46, 59];      // olay penceresi
+
+/* Bir satırın RED serisi. diurnal taban + log-normal gecikme + olay. */
+function redSeries(seed, opt){
+  const r = mulberry32(seed), o = Object.assign({rps:40,p99:120,err:0.1,incident:false}, opt);
+  const calls=[], p99=[], err=[];
+  for(let i=0;i<N;i++){
+    const t = i/N;
+    const diurnal = 0.72 + 0.42*Math.sin(t*Math.PI*1.55 - 0.45);   // sabah→öğle tırmanışı
+    let c = o.rps * diurnal * (1 + 0.05*gauss(r));
+    let p = o.p99 * Math.exp(0.20*gauss(r));                        // log-normal kuyruk
+    let e = Math.max(0, o.err + 0.05*gauss(r));
+    if(o.incident && i>=INC[0] && i<=INC[1]){
+      const k = 1 - Math.abs((i-(INC[0]+INC[1])/2)/((INC[1]-INC[0])/2));  // üçgen zarf
+      c *= (1 - 0.42*k);        // doygunluk throughput'u kısar
+      p *= (1 + 7.4*k);         // kuyruk patlar
+      e += 8.6*k;               // hata oranı yükselir
+    }
+    calls.push(c); p99.push(p); err.push(e);
+  }
+  return {calls,p99,err};
+}
+
+/* ── SVG yardımcıları ─────────────────────────────────────────────── */
+function scale(vals,w,h,padTop,padBot,forceMax){
+  const max = forceMax || Math.max.apply(null, vals)*1.12 || 1;
+  const ih = h-padTop-padBot;
+  return {max, x:i=>i*(w/(vals.length-1)), y:v=>padTop+ih-(v/max)*ih};
+}
+function linePath(vals,s){return vals.map((v,i)=>(i?'L':'M')+s.x(i).toFixed(1)+' '+s.y(v).toFixed(1)).join(' ')}
+function areaPath(vals,s,h,padBot){
+  return linePath(vals,s)+' L'+s.x(vals.length-1).toFixed(1)+' '+(h-padBot)+' L0 '+(h-padBot)+' Z';
+}
+function fmtN(n){return n>=1e6?(n/1e6).toFixed(2)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(Math.round(n))}
+
+/* 120x20 sparkline — mevcut Trend kolonu (DEĞİŞMİYOR) */
+function sparkSVG(vals,color){
+  const w=120,h=20,s=scale(vals,w,h,2,2);
+  return '<svg viewBox="0 0 '+w+' '+h+'" width="'+w+'" height="'+h+'" preserveAspectRatio="none">'
+   +'<path d="'+areaPath(vals,s,h,2)+'" style="fill:'+color+';opacity:.15"/>'
+   +'<path d="'+linePath(vals,s)+'" style="fill:none;stroke:'+color+';stroke-width:1.2"/></svg>';
+}
+
+/* Büyük panel grafiği — uPlot yerine temsilî SVG (çizgi/alan/bar + grid) */
+function bigChart(vals,opts){
+  const w=840,h=opts.h||78,padT=8,padB=14;
+  const s=scale(vals,w,h,padT,padB);
+  let g='';
+  for(let k=1;k<=2;k++){const y=padT+(h-padT-padB)*(k/3);
+    g+='<line x1="0" y1="'+y.toFixed(1)+'" x2="'+w+'" y2="'+y.toFixed(1)+'" style="stroke:var(--border);stroke-width:.5;opacity:.6"/>';}
+  // olay bandı — tüm grafiklerde aynı x aralığı
+  const bx=s.x(INC[0]), bw=s.x(INC[1])-s.x(INC[0]);
+  g+='<rect x="'+bx.toFixed(1)+'" y="0" width="'+bw.toFixed(1)+'" height="'+(h-padB)+'" style="fill:var(--err);opacity:.07"/>';
+  let body='';
+  if(opts.bars){
+    const bwid=(w/vals.length)*0.72;
+    body=vals.map((v,i)=>{const y=s.y(v);
+      return '<rect x="'+(s.x(i)-bwid/2).toFixed(1)+'" y="'+y.toFixed(1)+'" width="'+bwid.toFixed(1)
+        +'" height="'+Math.max(0,(h-padB)-y).toFixed(1)+'" style="fill:'+opts.color+';opacity:'+(v>1?'.85':'.45')+'"/>'}).join('');
+  }else{
+    body='<path d="'+areaPath(vals,s,h,padB)+'" style="fill:'+opts.color+';opacity:.13"/>'
+        +'<path d="'+linePath(vals,s)+'" style="fill:none;stroke:'+opts.color+';stroke-width:1.4"/>';
+  }
+  const axis='<line x1="0" y1="'+(h-padB)+'" x2="'+w+'" y2="'+(h-padB)+'" style="stroke:var(--border);stroke-width:1"/>'
+    +'<text class="axl" x="2" y="'+(padT+7)+'">'+opts.fmt(s.max)+'</text>'
+    +'<text class="axl" x="2" y="'+(h-padB-2)+'">0</text>';
+  return '<svg viewBox="0 0 '+w+' '+h+'" width="100%" height="'+h+'" preserveAspectRatio="none" style="display:block">'
+    +g+body+axis+'</svg>';
+}
+
+/* ── Satır verisi ─────────────────────────────────────────────────── */
+const rows = [
+  {sys:'postgresql',cls:'pg',db:'billing',   inst:'pg-prod-01.db.svc', calls:1284930, err:0.42, avg:3.8, p50:1.9, p95:12.4, p99:128.6,
+   d:{calls:+18,err:-6,avg:+2,p50:0,p95:+11,p99:+34}, seed:11, base:{rps:59,p99:128,err:0.4},
+   health:{kind:'sat',pct:61,tone:'ok',label:'backends 61%'}, callers:['billing-api','invoice-worker','ledger-svc'],extra:2},
+
+  {sys:'redis',cls:'rd',db:null,             inst:'redis-cache-0.svc', calls:4120880, err:0.00, avg:0.4, p50:0.3, p95:0.9, p99:2.1,
+   d:{calls:+6,err:0,avg:0,p50:0,p95:0,p99:+7}, seed:22, base:{rps:190,p99:2.1,err:0.0},
+   health:{kind:'none'}, callers:['api-gateway','session-svc','cart-svc'],extra:6},
+
+  {sys:'oracle',cls:'ora',db:'CRMPRD',       inst:'ora-crm-scan.corp', calls:318442, err:2.14, avg:18.6, p50:6.2, p95:74.0, p99:912.4,
+   d:{calls:-14,err:+412,avg:+126,p50:+18,p95:+188,p99:+306}, seed:33, base:{rps:14.7,p99:118,err:0.2,incident:true},
+   health:{kind:'sat',pct:94,tone:'err',label:'sessions 94%',prob:'P1'}, callers:['crm-api','crm-batch','notification-svc'],extra:1,
+   open:true},
+
+  {sys:'postgresql',cls:'pg',db:'orders',    inst:'pg-prod-01.db.svc', calls:842110, err:0.08, avg:2.4, p50:1.4, p95:7.9, p99:41.2,
+   d:{calls:+9,err:0,avg:0,p50:0,p95:+6,p99:+12}, seed:44, base:{rps:39,p99:41,err:0.1},
+   health:{kind:'sat',pct:61,tone:'ok',label:'backends 61%'}, callers:['order-api','fulfilment-svc'],extra:0},
+
+  {sys:'mysql',cls:'my',db:'inventory',      inst:'mysql-inv.svc', calls:221004, err:0.02, avg:5.1, p50:2.8, p95:18.2, p99:66.9,
+   d:{calls:-3,err:0,avg:0,p50:0,p95:0,p99:+9}, seed:55, base:{rps:10.2,p99:67,err:0.05},
+   health:{kind:'sat',pct:78,tone:'warn',label:'conns 78%'}, callers:['inventory-svc','stock-sync'],extra:0},
+
+  {sys:'mongodb',cls:'mg',db:'sessions',     inst:'mongo-rs0.svc', calls:96551, err:0.11, avg:3.2, p50:1.7, p95:9.9, p99:34.7,
+   d:{calls:+4,err:0,avg:0,p50:0,p95:0,p99:0}, seed:66, base:{rps:4.5,p99:35,err:0.1},
+   health:{kind:'none'}, callers:['session-svc'],extra:0},
+
+  {sys:'elasticsearch',cls:'es',db:'logs-*', inst:'es-search.svc', calls:44120, err:0.35, avg:22.4, p50:11.0, p95:78.5, p99:210.3,
+   d:{calls:+31,err:+18,avg:+9,p50:+7,p95:+22,p99:+41}, seed:77, base:{rps:2.0,p99:210,err:0.35},
+   health:{kind:'prob',prob:'P3'}, callers:['search-api','log-explorer'],extra:0},
+];
+
+const recvRows = [
+  {sys:'oracle',cls:'ora',db:'CRMPRD',inst:'ora-crm-scan.corp',seed:33,
+   health:{kind:'sat',pct:94,tone:'err',label:'sessions 94%',prob:'P1'}},
+  {sys:'postgresql',cls:'pg',db:null,inst:'pg-prod-01.db.svc',seed:11,
+   health:{kind:'sat',pct:61,tone:'ok',label:'backends 61%'}},
+  {sys:'mysql',cls:'my',db:null,inst:'mysql-inv.svc',seed:55,
+   health:{kind:'sat',pct:78,tone:'warn',label:'max_used_conns 78%'}},
+];
+
+/* delta rozeti (TrendDelta ile aynı eşik: |Δ| < %5 → nötr “·”) */
+function delta(pct,kind){
+  if(pct===undefined) return '';
+  if(Math.abs(pct)<5) return '<span class="delta flat">·</span>';
+  const up=pct>0;
+  const cls = kind==='lowerBetter' ? (up?'up-bad':'dn-good') : (up?'up-neu':'flat');
+  return '<span class="delta '+cls+'" title="Önceki 6h penceresine göre">'+(up?'▲':'▼')+Math.abs(pct)+'%</span>';
+}
+function healthCell(h){
+  if(!h || h.kind==='none') return '<span style="color:var(--text3)">—</span>';
+  let out='';
+  if(h.kind==='sat'){
+    const c = h.tone==='err'?'var(--err)':h.tone==='warn'?'var(--warn)':'var(--ok)';
+    out += '<span class="meter" title="'+h.label+'"><i style="width:'+h.pct+'%;background:'+c+'"></i></span>'
+        +  '<span class="badge b-'+h.tone+'" style="margin-left:6px;font-size:9px">'+h.pct+'%</span>';
+  }
+  if(h.prob){
+    out += '<a href="#" class="badge b-err" style="margin-left:6px;font-size:9px" '
+        +  'title="Açık problem — /problems’a filtreli git">'+h.prob+'</a>';
+  }
+  return out;
+}
+function sysBadge(r){return '<span class="sysb '+r.cls+'"><span aria-hidden style="font-size:10px">⛁</span>'+r.sys+'</span>'}
+function dbCell(v){return v?'<span class="dbchip">⛁ '+v+'</span>':'<span style="color:var(--text3)">—</span>'}
+
+/* ── Ana tablo satırları ──────────────────────────────────────────── */
+const body = document.getElementById('mainBody');
+let html='';
+rows.forEach(function(r){
+  const s = redSeries(r.seed, r.base);
+  const errTone = r.err>5?'err':r.err>0?'warn':'ok';
+  const sparkColor = errTone==='err'?'var(--err)':errTone==='warn'?'var(--warn)':'var(--accent2)';
+  const curP99 = s.p99[N-1], curErr = s.err[N-1], curRps = s.calls[N-1];
+  const p99Tone = curP99>500?'err':curP99>200?'warn':'ok';
+  html += '<tr'+(r.open?' style="background:var(--bg2)"':'')+'>'
+    + '<td style="color:var(--text3);text-align:center">'+(r.open?'▾':'▸')+'</td>'
+    + '<td>'+sysBadge(r)+'</td>'
+    + '<td>'+dbCell(r.db)+'</td>'
+    + '<td><a href="#" class="mono" style="font-weight:500">'+r.inst+'</a></td>'
+    + '<td class="num mono">'+fmtN(r.calls)+delta(r.d.calls,'neutral')+'</td>'
+    + '<td class="num mono"><span class="badge b-'+errTone+'">'+r.err.toFixed(2)+'%</span>'+delta(r.d.err,'lowerBetter')+'</td>'
+    + '<td class="num mono">'+r.avg.toFixed(1)+'ms'+delta(r.d.avg,'lowerBetter')+'</td>'
+    + '<td class="num mono newcol">'+r.p50.toFixed(1)+'ms'+delta(r.d.p50,'lowerBetter')+'</td>'
+    + '<td class="num mono newcol">'+r.p95.toFixed(1)+'ms'+delta(r.d.p95,'lowerBetter')+'</td>'
+    + '<td class="num mono">'+r.p99.toFixed(1)+'ms'+delta(r.d.p99,'lowerBetter')+'</td>'
+    + '<td><div style="display:flex;flex-direction:column;gap:3px">'
+      + sparkSVG(s.calls, sparkColor)
+      + '<div style="display:flex;gap:4px">'
+        + '<span class="badge b-'+p99Tone+'" style="font-size:9px">'+curP99.toFixed(0)+'ms</span>'
+        + (curErr>0.05?'<span class="badge b-'+(curErr>5?'err':'warn')+'" style="font-size:9px">'+curErr.toFixed(1)+'%</span>':'')
+      + '</div></div></td>'
+    + '<td class="newcol">'+healthCell(r.health)+'</td>'
+    + '<td style="font-size:11px">'
+      + r.callers.map(function(c){return '<a href="#" class="mono">'+c+'</a>'}).join('<span style="color:var(--text3)">, </span>')
+      + (r.extra?'<span style="color:var(--text3)"> +'+r.extra+'</span>':'')
+    + '</td></tr>';
+
+  if(r.open) html += drawer(r, s);
+});
+body.innerHTML = html;
+
+/* ── Genişletilmiş satır = drawer (mevcut akış + 3 ek yüzey) ──────── */
+function drawer(r, s){
+  const stmts = [
+    {q:'UPDATE crm_case SET state = :1, updated_at = SYSDATE WHERE case_id = :2',
+     hash:'9f3c1ab0', n:61220, err:3.41, avg:42.8, p95:310.4, p99:1024.0, max:4820, bad:true},
+    {q:'SELECT * FROM v_customer_360 WHERE msisdn = :1',
+     hash:'2b77e4d1', n:48006, err:0.00, avg:88.2, p95:402.1, p99:780.5, max:2140},
+    {q:'SELECT /*+ INDEX(c IDX_CUST_STAT) */ c.id, c.status FROM customers c WHERE c.branch_id = :1 AND c.updated_at > :2',
+     hash:'c410aa93', n:128904, err:0.02, avg:6.4, p95:41.0, p99:88.2, max:1210},
+    {q:'MERGE INTO campaign_target t USING (SELECT :1 id FROM dual) s ON (t.id = s.id) WHEN MATCHED THEN UPDATE SET …',
+     hash:'71d0f58e', n:12880, err:0.09, avg:120.4, p95:640.2, p99:1402.7, max:3910},
+    {q:'INSERT INTO crm_audit (case_id, actor, action, ts) VALUES (:1, :2, :3, SYSTIMESTAMP)',
+     hash:'0ac6b312', n:39551, err:0.01, avg:2.1, p95:9.4, p99:22.0, max:190},
+  ];
+  const callers = [
+    {svc:'crm-batch',   pod:'crm-batch-7d9c4-hk2ql', n:141920, err:4.02, avg:38.1, p99:1180.4},
+    {svc:'crm-api',     pod:'crm-api-5f7b8-2xnpd',   n:118004, err:0.31, avg:9.8,  p99:214.6},
+    {svc:'crm-api',     pod:'crm-api-5f7b8-qm4rt',   n:41118,  err:0.28, avg:9.4,  p99:208.1},
+    {svc:'notification-svc', pod:'notif-6c4d9-vv8kz', n:17400, err:0.04, avg:4.2,  p99:61.9},
+  ];
+
+  return '<tr><td colspan="13" style="background:var(--bg1);padding:14px 16px;border-top:1px solid var(--border);white-space:normal">'
+
+  /* kapat (mevcut) */
+  + '<div style="display:flex;justify-content:flex-end"><button class="ghost sm" title="Kapat (Esc)">✕</button></div>'
+
+  /* ── mevcut stat şeridi + YENİ #4 exemplar pivotları ───────────── */
+  + '<div style="display:flex;gap:14px;align-items:stretch;margin-bottom:14px;flex-wrap:wrap">'
+    + '<div class="statgrid" style="flex:1;min-width:560px">'
+      + '<div class="stat"><div class="l">Calls</div><div class="v">318,442</div></div>'
+      + '<div class="stat"><div class="l">Errors</div><div class="v">6,814</div></div>'
+      + '<div class="stat"><div class="l">Err rate</div><div class="v" style="color:var(--err)">2.14%</div></div>'
+      + '<div class="stat"><div class="l">Avg</div><div class="v">18.6 ms</div></div>'
+      + '<div class="stat"><div class="l">P99</div><div class="v" style="color:var(--err)">912.4 ms</div></div>'
+    + '</div>'
+    + '<div style="border:1px solid var(--accent-border);border-radius:8px;padding:9px 11px;'
+      + 'background:color-mix(in srgb,var(--accent) 4%,var(--bg1));display:flex;flex-direction:column;gap:7px">'
+      + '<div style="display:flex;align-items:center;gap:7px;font-size:10px;font-weight:700;'
+        + 'color:var(--text3);text-transform:uppercase;letter-spacing:.4px">Kanıt <span class="new">Yeni</span></div>'
+      + '<a href="#" class="pivot">🐢 En yavaş trace <span class="m">4.82 s</span> →</a>'
+      + '<a href="#" class="pivot">✖ Hatalı trace <span class="m">ORA-00060</span> →</a>'
+    + '</div>'
+  + '</div>'
+
+  /* ── YENİ #5: RED zaman serisi paneli (uPlot) ──────────────────── */
+  + '<div class="newpanel">'
+    + '<div class="h">RED over the window · 5-min buckets <span class="new">Yeni</span>'
+      + '<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3)">'
+        + 'kaynak: <code>/api/databases/trends</code> — bugün <b>zaten dönüyor</b>, ön yüz yalnız rps’i çiziyor</span></div>'
+    + '<div style="display:grid;gap:2px">'
+      + chartRow('Calls / s', bigChart(s.calls,{color:'var(--accent2)',h:76,fmt:function(v){return v.toFixed(0)+'/s'}}))
+      + chartRow('P99 ms',    bigChart(s.p99,  {color:'var(--warn)', h:70,fmt:function(v){return v.toFixed(0)+'ms'}}))
+      + chartRow('Err %',     bigChart(s.err,  {color:'var(--err)',  h:54,bars:true,fmt:function(v){return v.toFixed(1)+'%'}}))
+    + '</div>'
+    + '<div style="display:flex;gap:14px;margin-top:6px;padding-left:104px;font-size:9px;'
+      + 'color:var(--text3);font-family:ui-monospace,SFMono-Regular,monospace;justify-content:space-between;max-width:940px">'
+      + '<span>08:00</span><span>09:00</span><span>10:00</span><span>11:00</span><span>12:00</span><span>13:00</span><span>14:00</span></div>'
+    + '<div style="margin-top:7px;font-size:11px;color:var(--text2)">'
+      + '<span class="badge b-err" style="font-size:9px">olay</span> '
+      + '11:50–12:55 — <b>hata önce, gecikme sonra değil</b>: p99 12:02’de tırmanmaya başlıyor, '
+      + 'hata oranı 12:06’da takip ediyor, throughput <b>düşüyor</b> (doygunluk imzası, yük artışı değil).'
+    + '</div>'
+  + '</div>'
+
+  /* mevcut: wait/lock şeridi (receiver metrikleri) */
+  + '<div class="sec-h"><span class="dot" style="background:var(--text3)"></span>'
+    + 'Wait &amp; lock (oracledb receiver) <span class="badge b-gray" style="font-size:9px">bugün canlıda</span></div>'
+  + '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">'
+    + '<span class="chip">User I/O <b>41%</b></span><span class="chip">Concurrency <b>28%</b></span>'
+    + '<span class="chip">Commit <b>17%</b></span><span class="chip">Application <b>9%</b></span>'
+    + '<span class="chip">Locks held <b>12</b></span>'
+  + '</div>'
+
+  /* mevcut: By client (service + pod) */
+  + '<div class="sec-h"><span class="dot"></span>By client (service + pod) · 4 rows '
+    + '<span class="badge b-gray" style="font-size:9px">bugün canlıda</span></div>'
+  + '<div class="table-wrap" style="margin-bottom:14px">'
+    + '<table><colgroup><col style="width:200px"><col style="width:240px"><col style="width:100px">'
+      + '<col style="width:90px"><col style="width:90px"><col style="width:90px"></colgroup>'
+    + '<thead><tr><th class="sortable">Service</th><th class="sortable">Pod / host</th>'
+      + '<th class="sortable sorted num">Calls ↓</th><th class="sortable num">Err %</th>'
+      + '<th class="sortable num">Avg</th><th class="sortable num">P99</th></tr></thead><tbody>'
+    + callers.map(function(c){
+        const t=c.err>5?'err':c.err>0?'warn':'ok';
+        return '<tr><td class="mono">'+c.svc+'</td><td class="mono" style="color:var(--text2)">'+c.pod+'</td>'
+          +'<td class="num mono">'+c.n.toLocaleString('en-US')+'</td>'
+          +'<td class="num"><span class="badge b-'+t+'">'+c.err.toFixed(2)+'%</span></td>'
+          +'<td class="num mono">'+c.avg.toFixed(1)+'ms</td><td class="num mono">'+c.p99.toFixed(1)+'ms</td></tr>'})
+      .join('')
+    + '</tbody></table></div>'
+
+  /* ── YENİ #6: statement tablosu (MV kaynaklı, sıralanabilir) ───── */
+  + '<div class="newpanel">'
+    + '<div class="h">Statements · 5 of 128 <span class="new">Yeni</span>'
+      + '<span style="margin-left:auto;font-weight:400;font-size:11px;color:var(--text3)">'
+        + 'kaynak: <code>db_statement_summary_5m</code> (MV-first)</span></div>'
+    + '<div class="oldnote">Bugün: <s>ham <code>spans</code> GROUP BY · ilk 80 karakterle kimlik · '
+      + 'sıralanamaz · p95/p99/hata yok · bütçe dolarsa sessizce boş</s> → kalıcı '
+      + '<code>stmt_hash</code>, tam kantiller, <code>useDataTable</code> ve <code>/databases/slow-queries?stmt=…</code> pivotu.</div>'
+    + '<div class="table-wrap">'
+      + '<table><colgroup><col style="width:430px"><col style="width:92px"><col style="width:86px">'
+        + '<col style="width:82px"><col style="width:82px"><col style="width:86px"><col style="width:82px"><col style="width:78px"></colgroup>'
+      + '<thead><tr><th class="sortable">Statement</th><th class="sortable num">Calls</th>'
+        + '<th class="sortable num">Err %</th><th class="sortable num">Avg</th>'
+        + '<th class="sortable num">P95</th><th class="sortable sorted num">P99 ↓</th>'
+        + '<th class="sortable num">Max</th><th></th></tr></thead><tbody>'
+      + stmts.slice().sort(function(a,b){return b.p99-a.p99}).map(function(t){
+          const tone=t.err>5?'err':t.err>0?'warn':'ok';
+          return '<tr><td class="mono" style="color:var(--text)" title="'+t.q.replace(/"/g,'&quot;')+'">'
+            + '<span style="color:var(--text3);font-size:10px">'+t.hash+'</span> '+t.q+'</td>'
+            + '<td class="num mono">'+t.n.toLocaleString('en-US')+'</td>'
+            + '<td class="num"><span class="badge b-'+tone+'">'+t.err.toFixed(2)+'%</span></td>'
+            + '<td class="num mono">'+t.avg.toFixed(1)+'ms</td>'
+            + '<td class="num mono">'+t.p95.toFixed(1)+'ms</td>'
+            + '<td class="num mono"'+(t.bad?' style="color:var(--err);font-weight:700"':'')+'>'+t.p99.toFixed(1)+'ms</td>'
+            + '<td class="num mono" style="color:var(--text2)">'+(t.max/1000).toFixed(2)+'s</td>'
+            + '<td><a href="#" style="font-size:10px" title="Kalıcı stmt_hash ile D2 detay drawer’ı">detay →</a></td></tr>'})
+        .join('')
+      + '</tbody></table></div>'
+  + '</div>'
+
+  + '</td></tr>';
+}
+function chartRow(label, svg){
+  return '<div style="display:flex;align-items:stretch;gap:10px">'
+    + '<div style="width:94px;flex:none;font-size:9px;font-weight:700;color:var(--text3);'
+      + 'text-transform:uppercase;letter-spacing:.5px;padding-top:6px;text-align:right">'+label+'</div>'
+    + '<div style="flex:1;min-width:0">'+svg+'</div></div>';
+}
+
+/* ── Receiver tablosu ─────────────────────────────────────────────── */
+document.getElementById('recvBody').innerHTML = recvRows.map(function(r){
+  return '<tr><td style="color:var(--text3);text-align:center">▸</td>'
+   + '<td>'+sysBadge(r)+'<span class="recvchip">via receiver</span></td>'
+   + '<td>'+dbCell(r.db)+'</td>'
+   + '<td><a href="#" class="mono" style="font-weight:500">'+r.inst+'</a></td>'
+   + ['calls','err','avg','p50','p95','p99'].map(function(c,i){
+       return '<td class="num mono'+(i===3||i===4?' newcol':'')+'" style="color:var(--text3)">—</td>'}).join('')
+   + '<td><span style="color:var(--text3);font-size:11px">—</span></td>'
+   + '<td class="newcol">'+healthCell(r.health)+'</td>'
+   + '<td><span style="color:var(--text3)">—</span></td></tr>';
+}).join('');
+
+/* Tema toggle — kökü damgalar (uygulamadaki ThemeToggle davranışı) */
+document.getElementById('themeBtn').addEventListener('click', function(){
+  const cur = document.documentElement.getAttribute('data-theme');
+  const next = cur === 'light' ? 'dark' : cur === 'dark' ? 'light'
+    : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'light' : 'dark');
+  document.documentElement.setAttribute('data-theme', next);
+});
+</script>

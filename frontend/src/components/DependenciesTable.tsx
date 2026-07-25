@@ -7,6 +7,7 @@ import { TrendDelta } from './TrendDelta';
 import { Button } from './ui/Button';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { trendsEnabled } from '@/lib/depsTable';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -203,7 +204,18 @@ export function DependenciesTable({
     // #1 — non-sortable RED sparkline column. No sortValue so the
     // shared DataTable head renders it as a plain (un-clickable)
     // header. Body cell joins the row to its DBTrend via trendFor.
-    { id: 'trend', label: 'Trend', width: 140 },
+    //
+    // v0.9.258 — DB-only. The trend data comes from
+    // /api/databases/trends → db_summary_5m, whose MV is defined
+    // `WHERE db_system != ''` (store.go:2513). A messaging span
+    // carries messaging.system and leaves db_system empty, so a
+    // queue row's join key (`kafka|orders-topic|`) can never exist
+    // in that table. On /messaging this column rendered the muted
+    // '—' 100% of the time while the page paid a LIMIT 200000 scan
+    // for it on every range change.
+    ...(trendsEnabled(kind)
+      ? [{ id: 'trend', label: 'Trend', width: 140 } as DataTableColumn<DepRow>]
+      : []),
     { id: 'callers', label: 'Top callers', width: 240 },
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [hasClusterCol, kind]);
@@ -252,6 +264,11 @@ export function DependenciesTable({
   // the join.
   useEffect(() => {
     let live = true;
+    // v0.9.258 — the fetch is DB-only, but the hook itself stays
+    // unconditional (see the stable-hook-order note above). null,
+    // not undefined: undefined is the "loading" state and would
+    // park a spinner on a column that isn't even rendered.
+    if (!trendsEnabled(kind)) { setTrends(null); return; }
     setTrends(undefined);
     const { from, to } = timeRangeToNs(range);
     api.dbTrends(from, to)
@@ -270,7 +287,7 @@ export function DependenciesTable({
       })
       .catch(() => { if (live) setTrends(null); });
     return () => { live = false; };
-  }, [range]);
+  }, [range, kind]);
 
   // trendFor — join one overview row to its DBTrend. Match on
   // (system, instance, dbName) exactly; fall back to
@@ -482,9 +499,11 @@ export function DependenciesTable({
                         a mouse-over. Under it, compact p99 + err
                         chips surface the latest-bucket gauge. '—'
                         when no trend joins (or trends failed/loading). */}
-                    <td onClick={e => e.stopPropagation()}>
-                      <TrendCell trend={trendFor(r)} loading={trends === undefined} />
-                    </td>
+                    {trendsEnabled(kind) && (
+                      <td onClick={e => e.stopPropagation()}>
+                        <TrendCell trend={trendFor(r)} loading={trends === undefined} />
+                      </td>
+                    )}
                     <td style={{ fontSize: 11 }} onClick={e => e.stopPropagation()}>
                       {r.callers.length === 0
                         ? <span style={{ color: 'var(--text3)' }}>—</span>
@@ -502,10 +521,15 @@ export function DependenciesTable({
                   </tr>
                   {isOpen && (
                     <tr>
-                      {/* colSpan tracks the conditional columns: base 9
-                          + cluster + Database (db) + produce/consume/p50
-                          (queue, v0.8.364). */}
-                      <td colSpan={9 + (hasClusterCol ? 1 : 0) + (kind === 'db' ? 1 : 0) + (kind === 'queue' ? 3 : 0)} style={{
+                      {/* v0.9.258 — derived from the column list instead of
+                          hand-counted. The old arithmetic (base 9 + cluster
+                          + Database + produce/consume/p50) was already one
+                          too high — db without cluster gave 10 for 9 real
+                          columns — which browsers silently clamp, so it
+                          never showed. Making the Trend column conditional
+                          would have skewed it again; depCols is the single
+                          source the header and colgroup already use. */}
+                      <td colSpan={depCols.length} style={{
                         background: 'var(--bg1)', padding: '12px 16px',
                         borderTop: '1px solid var(--border)',
                       }}>

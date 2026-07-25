@@ -8547,10 +8547,19 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 	// New operations — the set that appeared in `after` but
 	// not in `before`. Capped at 10 for the prompt; the chip
 	// row also shows the count.
+	// v0.9.231 (scale-audit) — groupArrayIf RETAINS duplicates: it
+	// materialised one String per matching ROW into each array before
+	// arrayDistinct ever ran. Over the ±6h window this handler allows, on a
+	// busy service at 1B spans/day, that is tens of millions of strings held
+	// in memory — max_execution_time bounds wall clock, not memory, and this
+	// route is viewer-baseline. groupUniqArrayIf(N) dedupes as it goes and
+	// caps the state, which is the form every other site in the codebase
+	// uses (podservice.go, deploys.go, hosts.go, topology.go). 200 is far
+	// past the 10 the prompt keeps.
 	opsRows, err := s.store.Conn().Query(r.Context(), `
 		WITH
-		  groupArrayIf(name, time < ? AND name != '')   AS bef_ops,
-		  groupArrayIf(name, time >= ? AND name != '')  AS aft_ops
+		  groupUniqArrayIf(200)(name, time < ? AND name != '')   AS bef_ops,
+		  groupUniqArrayIf(200)(name, time >= ? AND name != '')  AS aft_ops
 		SELECT arrayDistinct(arrayFilter(x -> NOT has(bef_ops, x), aft_ops)) AS new_ops
 		FROM spans
 		WHERE service_name = ? AND time >= ? AND time <= ?

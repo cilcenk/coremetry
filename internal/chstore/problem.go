@@ -1450,7 +1450,13 @@ func (s *Store) CalleesOf(ctx context.Context, service string, since time.Durati
 		  AND peer_service != ''
 		  AND kind IN ('client', 'producer')
 		GROUP BY callee
-		ORDER BY calls DESC`, cutoff, service)
+		ORDER BY calls DESC
+		-- v0.9.231 (scale-audit) — had neither, so it inherited the 60s
+		-- connection default while the only caller keeps just the top 5
+		-- (api.go, root-cause callees). Matches the sibling query in that
+		-- same handler, which already carries LIMIT + a 5s ceiling.
+		LIMIT 20
+		SETTINGS max_execution_time = 5`, cutoff, service)
 	if err != nil {
 		return nil, err
 	}

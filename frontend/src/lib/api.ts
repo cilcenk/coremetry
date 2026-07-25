@@ -1293,7 +1293,12 @@ export const api = {
     env?: string; // v0.8.387 — service-scoped, same semantics as /api/problems
     limit?: number;
   } = {}) =>
-    get<import('./types').InboxItem[] | null>(`/api/inbox?${qs(params)}`),
+    // v0.9.221 — was a bare array; the page had no way to tell a full queue
+    // from the top slice of a truncated one.
+    get<{
+      items: import('./types').InboxItem[];
+      total: number; limit: number; truncated: boolean;
+    } | null>(`/api/inbox?${qs(params)}`),
   // v0.8.288 — the single triage badge total (not-resolved problems + open
   // exception groups + active anomalies). COUNT-only, 10s server cache.
   // v0.9.219 — env-scoped like every other triage read; without it the badge

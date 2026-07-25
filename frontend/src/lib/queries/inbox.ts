@@ -2,6 +2,15 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { InboxItem } from '@/lib/types';
 
+// v0.9.221 — one page of the triage queue. `total` is the pre-cap count, so
+// the UI can say "200 of 912" instead of implying it showed everything.
+export type InboxPage = {
+  items: InboxItem[];
+  total: number;
+  limit: number;
+  truncated: boolean;
+};
+
 // Unified triage inbox (v0.5.211) — Problems + Exception groups +
 // Anomaly events merged server-side with the P1/P2/P3 priority
 // blend. Priority/kind chips filter client-side on the page; only
@@ -12,9 +21,13 @@ export function useInbox(filter: {
   env?: string; // v0.8.387 — global picker, service-scoped (matches /problems)
   limit?: number;
 }) {
-  return useQuery<InboxItem[]>({
+  return useQuery<InboxPage>({
     queryKey: ['inbox', 'list', filter],
-    queryFn: async () => (await api.inbox(filter)) ?? [],
+    // v0.9.221 — the endpoint returns { items, total, truncated } now; a null
+    // body normalises to an empty, non-truncated page so callers never branch
+    // on undefined.
+    queryFn: async () => (await api.inbox(filter))
+      ?? { items: [], total: 0, limit: 0, truncated: false },
     // v0.9.220 — the list had NO polling while the sidebar badge above it
     // refreshed every 30s, so a new problem bumped the badge to 48 while the
     // rows underneath stayed at 47 until a manual reload: the one surface

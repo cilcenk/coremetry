@@ -2457,7 +2457,14 @@ func (s *Server) getServiceNeighbors(w http.ResponseWriter, r *http.Request) {
 
 	key := fmt.Sprintf("service-neighbors:svc=%s:since=%s:samples=%d",
 		name, since, samples)
-	s.serveCached(w, r, key, time.Hour, func(ctx context.Context) (any, error) {
+	// v0.9.227 (operatör) — 1h → 24h. Bir servisin komşuluğu deploy
+	// temposunda değişir, dakika temposunda değil; 1 saat gereğinden sık
+	// yeniden hesaplatıyordu. serveCached'in SWR'ı bunu güvenli kılıyor:
+	// TTL geçse bile kayıt staleFactor×TTL boyunca ANINDA servis edilir ve
+	// arka planda tazelenir (singleflight ile tekilleştirilmiş), yani uzun
+	// TTL "eski veri" değil "ilk isteyen bekleme" demek. Taze veri şart
+	// olduğunda ?refresh=1 okumayı atlar.
+	s.serveCached(w, r, key, 24*time.Hour, func(ctx context.Context) (any, error) {
 		upstream, downstream, sampledFrom, totalSpans, err := s.store.ServiceNeighbors(
 			ctx, name, since, samples)
 		if err != nil {

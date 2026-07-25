@@ -162,11 +162,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
     enabled: !!service,
     staleTime: 30_000,
   });
-  const s = seriesQ.data;
-  // RED fetch state for the chart cards (KPI tiles render their numbers from
-  // `info` immediately, so they don't gate on this).
-  const redStatus: 'loading' | 'error' | 'ready' =
-    seriesQ.isLoading ? 'loading' : seriesQ.isError ? 'error' : 'ready';
+  // v0.9.253 — seriesQ is now FALLBACK-ONLY. Every rendered RED number and
+  // series reads the entry-scoped query below; this all-span one survives
+  // solely to cover a service with no server/consumer spans at all (see
+  // usingAllSpans). It keeps the MV fast path (no `kind` filter), so the
+  // extra call is the cheap one of the pair. Its `s` / `redStatus` bindings
+  // are gone because nothing renders from them any more — reintroducing
+  // either is the tell that a panel has drifted back to all-span numbers.
 
   // v0.9.240 (operatör: "kafka 0.1ms olduğu için medyan hep 1ms çıkıyor") —
   // response-time artık GİRİŞ span'lerinden hesaplanıyor (server + consumer),
@@ -183,14 +185,25 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   // v0.9.129'un korumaya çalıştığı "kafka-consumer servis sıfır görünmesin"
   // kaygısını doğru şekilde karşılayan yer burası.
   //
-  // AYRI sorgu olması v0.9.129'dan devralınan bilinçli karar: throughput ve
-  // error tüm span'lerde kalıyor, yalnız latency daralıyor.
+  // v0.9.253 (operatör, GENEL İLKE: "giriş spanleri üzerinden hesaplansın
+  // aynı dynatrace gibi") — throughput ve error rate de bu sorguya taşındı.
+  // v0.9.240'ta bilerek dışarıda bırakılmışlardı çünkü etki büyüktü ve
+  // ölçülmeden değiştirilmemeliydi: demo veride rps 1.6 → 0.2 (8× DÜŞER),
+  // error rate %2.03 → %9.79 (5× ÇIKAR). İkisi de yanlış değil — servisin
+  // KENDİ istekleri sayılınca hata oranı da o istekler üzerinden hesaplanır;
+  // eski sayı, on binlerce 0.2ms'lik DB çağrısıyla seyreltilmiş olandı.
+  //
+  // Ek istek YOK: `kind` filtresi MV fast-path'ini zaten devre dışı bırakıyor
+  // (service_summary_5m'de kind boyutu yok), yani bu sorgu hâlihazırda ham
+  // span okuyordu. Aynı sorguya iki agg eklemek ek round-trip getirmiyor.
   const latencyQ = useQuery({
-    queryKey: ['service-overview-latency-entry', service, from, to],
+    queryKey: ['service-overview-entry-red', service, from, to],
     queryFn: () => api.spanMetricBatch({
       from, to,
       dsl: entryLatencyDSL(service),
       aggs: [
+        { name: 'rate', agg: 'rate' },
+        { name: 'error_rate', agg: 'error_rate' },
         { name: 'p99', agg: 'p99', field: 'duration_ms' },
         { name: 'p95', agg: 'p95', field: 'duration_ms' },
         { name: 'p50', agg: 'p50', field: 'duration_ms' },
@@ -215,8 +228,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   const lat = usingAllSpans ? seriesQ.data : latencyQ.data;
   const latStatus: 'loading' | 'error' | 'ready' =
     latencyQ.isLoading ? 'loading' : latencyQ.isError ? 'error' : 'ready';
-  // What the latency panel is actually measuring — rendered next to the
-  // title so the definition is never implicit.
+  // What the RED panel is actually measuring — rendered next to each title so
+  // the definition is never implicit. v0.9.253: this now describes throughput
+  // and failure rate too, not just latency; all three read the same series.
   const latScopeNote = usingAllSpans
     ? 'tüm span’ler — bu serviste giriş span’i (server/consumer) yok'
     : 'giriş span’leri (server + consumer) — servisin kendi işi';
@@ -258,16 +272,21 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   // #3). Error band = rate × err%, OK band = the remainder; they stack to the
   // total rate. (A 4xx-vs-5xx split would need an HTTP-status MV dimension.)
   const throughputBands = useMemo<ChartLine[]>(() => {
-    const ratePts = s?.rate?.[0]?.points ?? [];
-    const erPts = s?.error_rate?.[0]?.points ?? [];
-    if (ratePts.length < 2) return [{ series: s?.rate ?? [], color: 'var(--accent)', label: 'req/s' }];
+    // v0.9.253 — `lat` is the entry-scoped series when the service has entry
+    // spans, and the all-span series when it doesn't (usingAllSpans). Reading
+    // through it keeps throughput, error rate and latency on ONE population:
+    // a chart showing entry-span latency above all-span throughput would be
+    // two different services stacked on one card.
+    const ratePts = lat?.rate?.[0]?.points ?? [];
+    const erPts = lat?.error_rate?.[0]?.points ?? [];
+    if (ratePts.length < 2) return [{ series: lat?.rate ?? [], color: 'var(--accent)', label: 'req/s' }];
     const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
     const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
     return [
       { series: [{ groupKey: [], points: okPts }], color: 'var(--ok)', label: 'OK' },
       { series: [{ groupKey: [], points: errPts }], color: 'var(--err)', label: 'Errors' },
     ];
-  }, [s]);
+  }, [lat]);
 
   // v0.9.170 (operatör-bildirimi: cluster çözülemeyen / metrik-yoğun
   // servislerde "bütün Service Overview boş"). Service-summary bundle (info)
@@ -276,12 +295,21 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   // yalnız fallback. Böylece service_summary_5m'de satırı olmayan bir servis
   // bile veri varsa dolar, hiç yoksa boş-durum gösterir — asla tümden
   // boşalmaz. (Eski davranış: `if (!info) return null` → komple blank.)
-  const rateNow = vals(s?.rate).slice(-1)[0];
-  const errNow = vals(s?.error_rate).slice(-1)[0];
+  const rateNow = vals(lat?.rate).slice(-1)[0];
+  const errNow = vals(lat?.error_rate).slice(-1)[0];
   const p99Now = vals(lat?.p99).slice(-1)[0];
   const p50Now = vals(lat?.p50).slice(-1)[0];
-  const rps = firstNum(info ? info.spanCount / windowSec : undefined, rateNow);
-  const errorRatePct = firstNum(info ? info.errorRate : undefined, errNow);
+  // v0.9.253 — ENTRY series first, `info` only as the fallback. `info` comes
+  // from service_summary_5m, which has no `kind` dimension, so it can only
+  // ever report the all-span number. Preferring it would have left the tiles
+  // saying one thing while the chart under them said another.
+  //
+  // KNOWN DIVERGENCE, deliberate and temporary: /services and the SLO
+  // availability path still read that MV, so their numbers stay all-span
+  // until the MV gains entry_count_state / entry_error_count_state columns.
+  // See feedback-entry-span-principle.
+  const rps = firstNum(rateNow, info ? info.spanCount / windowSec : undefined);
+  const errorRatePct = firstNum(errNow, info ? info.errorRate : undefined);
   const p99Ms = firstNum(p99Now, info?.p99DurationMs);
   const p50Ms = firstNum(p50Now, info?.avgDurationMs);
   const apdexVal = info?.apdex ?? null;
@@ -307,10 +335,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           ⋮ + body-click → Explore); the tile body renders verbatim. */}
       <div className="ov-grid ov-kpis ov-mb">
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('stat')}>
-          <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(s?.rate)} delta={computeDelta(vals(s?.rate))} goodWhenUp />
+          <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(lat?.rate)} delta={computeDelta(vals(lat?.rate))} goodWhenUp note={latScopeNote} />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('stat')}>
-          <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(s?.error_rate)} delta={computeDelta(vals(s?.error_rate))} goodWhenUp={false} />
+          <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(lat?.error_rate)} delta={computeDelta(vals(lat?.error_rate))} goodWhenUp={false} note={latScopeNote} />
         </MetricPanel>
         <MetricPanel compact title="Response time · P99" metricQuery={mkLatency('p99', 'stat')}>
           <KpiTile lab="Response time · P99" val={p99Ms.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} note={latScopeNote} />
@@ -341,12 +369,15 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           ]} />
         </MetricPanel>
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>
-          <ChartCard title="Throughput" unit=" req/s" mode="stacked" deploy={deploy} status={redStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={throughputBands} />
+          {/* v0.9.253 — status ve seri artık ENTRY sorgusundan. Kart üstündeki
+              KPI giriş span'lerini sayarken altındaki grafiğin tüm span'leri
+              çizmesi, aynı kartta iki farklı servisi üst üste koymak olurdu. */}
+          <ChartCard title={usingAllSpans ? 'Throughput · tüm span’ler' : 'Throughput · giriş'} unit=" req/s" mode="stacked" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={throughputBands} />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
-          <ChartCard title="Failure rate" unit="%" mode="area" deploy={deploy} status={redStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+          <ChartCard title={usingAllSpans ? 'Failure rate · tüm span’ler' : 'Failure rate · giriş'} unit="%" mode="area" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
             thresholds={failureThresholds} lines={[
-            { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
+            { series: lat?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
           ]} />
         </MetricPanel>
       </div>

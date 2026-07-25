@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"html"
 	"io"
 	"io/fs"
@@ -4633,12 +4634,62 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 		StepSeconds: body.Step,
 		Aggs:        specs,
 	}
-	out, err := s.store.QuerySpanMetricMulti(r.Context(), f)
-	if err != nil {
-		writeErr(w, err)
-		return
+	// v0.9.229 — this endpoint had NO cache at all. It is the Service
+	// Overview's main payload (the page fires TWO of these: the RED bundle
+	// and the kafka-excluded latency set), and every load, range change and
+	// remount ran the full multi-aggregation over raw spans. Measured on a
+	// 9-service local demo the repeats never dropped below ~80ms because
+	// nothing was ever served from cache; at real scale that is the page's
+	// dominant cost. Operator: "Service Overview eskiye göre daha geç
+	// yükleniyor / redisi çok kullandığımızı düşünmüyorum" — for this
+	// endpoint that was literally true.
+	//
+	// 30s soft TTL matches the client's staleTime, so a back-navigation
+	// inside the window is free; serveCached's SWR keeps it usable to 90s
+	// with a background refresh, and there is no poll on this query so the
+	// TTL×staleFactor ≤ interval trap (v0.9.228) can't apply here.
+	s.serveCached(w, r, spanMetricBatchKey(body.From, body.To, body.Step, body.GroupBy,
+		string(body.Filters), body.DSL, specs), 30*time.Second,
+		func(ctx context.Context) (any, error) {
+			return s.store.QuerySpanMetricMulti(ctx, f)
+		})
+}
+
+// spanMetricBatchKey hashes EVERY input that changes the result: the
+// minute-bucketed window (raw ns would never repeat, so an unbucketed key
+// caches nothing), step, group-by set, the filter JSON, the DSL, and each
+// agg's (name, aggregation, field) triple.
+//
+// The aggs are sorted before hashing so two callers asking for the same
+// metrics in a different order share one entry, and every component is
+// NUL-separated — without the separator "rate"+"p99" and "ratep"+"99"
+// would collide, the v0.5.187 rule applied to strings. Fields are hashed
+// individually rather than summarised by count, which is the same rule
+// applied to the set.
+func spanMetricBatchKey(fromNs, toNs int64, step int, groupBy []string,
+	filters, dsl string, aggs []chstore.SpanMetricAggSpec) string {
+	h := fnv.New64a()
+	write := func(parts ...string) {
+		for _, p := range parts {
+			h.Write([]byte(p))
+			h.Write([]byte{0})
+		}
 	}
-	writeJSON(w, out)
+	gb := append([]string(nil), groupBy...)
+	sort.Strings(gb)
+	for _, g := range gb {
+		write("gb", g)
+	}
+	write("f", filters, "dsl", dsl)
+	specs := append([]chstore.SpanMetricAggSpec(nil), aggs...)
+	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
+	for _, a := range specs {
+		write("a", a.Name, a.Aggregation, a.Field)
+	}
+	return fmt.Sprintf("span-metric-batch:from=%d:to=%d:step=%d:h=%x",
+		time.Unix(0, fromNs).Truncate(time.Minute).UnixNano(),
+		time.Unix(0, toNs).Truncate(time.Minute).UnixNano(),
+		step, h.Sum64())
 }
 
 // dashboardsData multiplexes N panel data requests into one

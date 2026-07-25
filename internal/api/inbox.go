@@ -84,7 +84,8 @@ type InboxAnomalyRef struct {
 // Kept aggressively bounded — at 1000s of services, an inbox
 // that returns 5k items isn't actionable. Default cap 200,
 // max 500; the operator filters by priority/service/kind to
-// shrink further. Cached 10s (matches Problems list cadence).
+// shrink further. Cached 15s — see the TTL comment at the
+// serveCached call below for why it can't be 10.
 func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	service := strings.TrimSpace(q.Get("service"))
@@ -110,7 +111,18 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// empty page.
 	cacheKey := fmt.Sprintf("inbox:v2:status=%s:svc=%s:owner=%s:sre=%s:env=%s:limit=%d",
 		statusFilter, service, ownerTeam, sreTeam, env, limit)
-	s.serveCached(w, r, cacheKey, 10*time.Second, func(ctx context.Context) (any, error) {
+	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
+	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
+	// at 30s too, so each poll arrived at age = 30s + previous latency —
+	// always PAST the window, on an already-evicted key. Every single poll
+	// therefore paid the full cold path: 8 sequential CH round-trips
+	// (ListProblems → 3 enrichers → exceptions → anomalies → env members →
+	// service metadata) inside the request. At 15s the window is 45s > 30s,
+	// so the poll lands on STALE and returns in ~10ms while refreshing behind
+	// it. Identical arithmetic to problems-count (api.go:9020), problems-list
+	// (api.go:9132) and inbox-count (below) — the list was the one endpoint
+	// that never got it.
+	s.serveCached(w, r, cacheKey, 15*time.Second, func(ctx context.Context) (any, error) {
 		items := make([]InboxItem, 0, 256)
 
 		// v0.5.245 — service filter is now case-insensitive

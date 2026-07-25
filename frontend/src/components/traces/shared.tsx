@@ -84,17 +84,22 @@ export function DurationBar({ ms, err, max }: { ms: number; err: boolean; max: n
 // and the global `button:hover` rule out-specifies `.facet:hover` — the
 // existing .facet chips are all <span role="button">s for that reason.
 export function QuickChip({
-  active, onClick, children, dot, tone,
+  active, onClick, children, dot, tone, title,
 }: {
   active: boolean;
   onClick: () => void;
   children: ReactNode;
   dot?: string;
   tone?: 'err';
+  // v0.9.222 — a chip's count is scoped to the LOADED rows; when a
+  // window-wide stat sits nearby the two look contradictory unless the
+  // scope is stated.
+  title?: string;
 }) {
   return (
     <button
       type="button"
+      title={title}
       onClick={onClick}
       style={{
         display: 'inline-flex',

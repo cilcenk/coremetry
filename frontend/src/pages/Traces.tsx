@@ -129,10 +129,10 @@ function sortAccessor(col: SortColumn): (r: TraceRow) => number | string {
 // HeaderStat — one mono stat in the header group right of the Volume|Latency
 // toggle (TOTAL · ERRORS · ERR RATE · P99 MAX). Replaces the deleted standalone
 // RED panel; `tone` colours the value (err → red, warn → amber).
-function HeaderStat({ label, value, tone }: { label: string; value: string; tone?: 'err' | 'warn' }) {
+function HeaderStat({ label, value, tone, title }: { label: string; value: string; tone?: 'err' | 'warn'; title?: string }) {
   const color = tone === 'err' ? 'var(--err)' : tone === 'warn' ? 'var(--warn)' : 'var(--text)';
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 44 }}>
+    <div title={title} style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: 44 }}>
       <span style={{
         fontSize: 14, fontWeight: 700, color, lineHeight: 1.1,
         fontVariantNumeric: 'tabular-nums', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
@@ -716,7 +716,14 @@ function TracesPageInner() {
               {/* RED stat group — mono, right-aligned, over the filtered rows. */}
               <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 18, flexWrap: 'wrap' }}>
                 <HeaderStat label="TOTAL" value={fmtNum(headerStats.total)} />
-                <HeaderStat label="ERRORS" value={fmtNum(headerStats.err)} tone={headerStats.err > 0 ? 'err' : undefined} />
+                {/* v0.9.222 — scope spelled out. This counts error SPANS
+                    across the whole window; the "Errors N" quick-chip below
+                    counts error TRACES on the loaded page. Both were right
+                    and both said "Errors", so 12.4k sitting a few hundred
+                    pixels above 3 read as a broken number. */}
+                <HeaderStat label="ERROR SPANS" value={fmtNum(headerStats.err)}
+                  tone={headerStats.err > 0 ? 'err' : undefined}
+                  title="Seçili pencerenin tamamındaki hatalı SPAN sayısı — yüklü satırlardan bağımsız, gerçek trafiği tarif eder." />
                 <HeaderStat label="ERR RATE" value={`${headerStats.errRate.toFixed(2)}%`} tone={headerStats.errRate > 0 ? 'err' : undefined} />
                 <HeaderStat label="P50 MAX" value={headerStats.p50Max ? fmtDur(headerStats.p50Max) : '—'} tone="warn" />
               </div>
@@ -898,8 +905,9 @@ function TracesPageInner() {
         {/* Quick-filter chips. */}
         {view === 'list' && traces.length > 0 && (
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-            <QuickChip active={quick === 'err'} onClick={() => setQuick(quick === 'err' ? null : 'err')} tone="err">
-              Errors {errCount}
+            <QuickChip active={quick === 'err'} onClick={() => setQuick(quick === 'err' ? null : 'err')} tone="err"
+              title="Yüklü satırlar arasındaki hatalı TRACE sayısı — tıkla, listeyi onlara indir. Yukarıdaki ERROR SPANS pencerenin tamamını sayar, bu yüzden iki sayı farklıdır.">
+              Errors {errCount} <span style={{ opacity: 0.65 }}>/ yüklü</span>
             </QuickChip>
             <QuickChip active={quick === 'slow'} onClick={() => setQuick(quick === 'slow' ? null : 'slow')}>
               Slow &gt;1s

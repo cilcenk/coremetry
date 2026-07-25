@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
 import { api } from '@/lib/api';
+import { entryLatencyDSL } from '@/lib/entrySpans';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
 import type { ChartThreshold } from '@/lib/chart/overlays';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
@@ -97,9 +98,12 @@ function OvSparkline({ data, color }: { data: number[]; color: string }) {
   );
 }
 
-function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp }: {
+function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp, note }: {
   lab: string; val: string; unit?: string; accent: string; spark?: number[];
   delta?: Delta | null; goodWhenUp?: boolean;
+  // v0.9.240 — hover text stating WHAT the number is measured over. Latency
+  // tiles carry the entry-span scope so the definition isn't folklore.
+  note?: string;
 }) {
   // Color by whether the move is GOOD for this metric (README §Status
   // semantics): throughput/apdex up = good (green); failure/latency up =
@@ -109,7 +113,7 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp }: {
     ? `ov-delta ${delta.dir}${goodWhenUp && delta.dir === 'up' ? ' good' : ''}${goodWhenUp && delta.dir === 'down' ? ' bad' : ''}`
     : '';
   return (
-    <div className="card ov-kpi">
+    <div className="card ov-kpi" title={note}>
       <div className="ov-kpi-accent" style={{ background: accent }} />
       <div className="ov-lab">{lab}</div>
       <div className="ov-val">{val}{unit && <span className="ov-unit">{unit}</span>}</div>
@@ -164,19 +168,28 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   const redStatus: 'loading' | 'error' | 'ready' =
     seriesQ.isLoading ? 'loading' : seriesQ.isError ? 'error' : 'ready';
 
-  // v0.9.129 (operatör: "kafkalar hesaplanmasın response time süresinde") —
-  // response-time percentilleri kafka messaging span'lerini (publish + consume,
-  // msg_system='kafka') HARİÇ hesaplar. AYRI sorgu bilinçli: throughput/error
-  // tüm span'lerde kalır (bir kafka-consumer servisin RPS'i kafka'sız sıfır
-  // görünmesin) — yalnız latency giden/mesaj kafka'sından arınır. Read-side DSL
-  // (messaging.system → msg_system, filterexpr allowedOps'ta '!='); MV'ye
-  // dokunmaz (kapsam = servis Overview). Kafka-dışı span'de msg_system='' →
-  // '' != 'kafka' → true → korunur.
+  // v0.9.240 (operatör: "kafka 0.1ms olduğu için medyan hep 1ms çıkıyor") —
+  // response-time artık GİRİŞ span'lerinden hesaplanıyor (server + consumer),
+  // yani servisin kendi işi; yaptığı DB/HTTP çağrıları değil.
+  //
+  // v0.9.129 aynı sorunu Kafka'yı çıkararak çözmeye çalışmıştı, ama yetmedi:
+  // asıl kütle Kafka değil CLIENT span'leri. Operatörün prod servisinde en
+  // yoğun operasyonlar 700K/440K/270K çağrılık SELECT'ler, hepsi 0.2-0.4ms —
+  // gerçek istekler bu kalabalığın içinde binde birlik azınlık, medyan da
+  // onların değil veritabanı çağrılarının medyanı oluyordu. Kanıt: Kafka
+  // çıkarıldığı hâlde P50 hâlâ 0.59ms görünüyordu.
+  //
+  // consumer BİLEREK dahil — kuyruk mesajı işlemek de servisin kendi işi, ve
+  // v0.9.129'un korumaya çalıştığı "kafka-consumer servis sıfır görünmesin"
+  // kaygısını doğru şekilde karşılayan yer burası.
+  //
+  // AYRI sorgu olması v0.9.129'dan devralınan bilinçli karar: throughput ve
+  // error tüm span'lerde kalıyor, yalnız latency daralıyor.
   const latencyQ = useQuery({
-    queryKey: ['service-overview-latency-nokafka', service, from, to],
+    queryKey: ['service-overview-latency-entry', service, from, to],
     queryFn: () => api.spanMetricBatch({
       from, to,
-      dsl: `service.name = "${service.replace(/"/g, '\\"')}" AND messaging.system != "kafka"`,
+      dsl: entryLatencyDSL(service),
       aggs: [
         { name: 'p99', agg: 'p99', field: 'duration_ms' },
         { name: 'p95', agg: 'p95', field: 'duration_ms' },
@@ -190,9 +203,23 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
     enabled: !!service,
     staleTime: 30_000,
   });
-  const lat = latencyQ.data;
+  // v0.9.240 — fallback. A pure batch / producer service emits no server and
+  // no consumer spans, so the entry query legitimately returns nothing. Going
+  // blank there would trade one wrong number for no number, so we fall back to
+  // the all-span series (`s`, already fetched for throughput — no extra
+  // request) and SAY SO in the panel instead of quietly changing what the
+  // chart means.
+  const entryHasData = (latencyQ.data?.p50 ?? []).some(
+    ser => (ser.points ?? []).some(p => p.value != null));
+  const usingAllSpans = !latencyQ.isLoading && !latencyQ.isError && !entryHasData;
+  const lat = usingAllSpans ? seriesQ.data : latencyQ.data;
   const latStatus: 'loading' | 'error' | 'ready' =
     latencyQ.isLoading ? 'loading' : latencyQ.isError ? 'error' : 'ready';
+  // What the latency panel is actually measuring — rendered next to the
+  // title so the definition is never implicit.
+  const latScopeNote = usingAllSpans
+    ? 'tüm span’ler — bu serviste giriş span’i (server/consumer) yok'
+    : 'giriş span’leri (server + consumer) — servisin kendi işi';
 
   // Grafana-parite M3 — failure-rate paneline SLO hata-bütçesi eşiği.
   // ServiceCharts'ın error-rate threshold KAYNAĞININ aynısı (useSLOs →
@@ -286,10 +313,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(s?.error_rate)} delta={computeDelta(vals(s?.error_rate))} goodWhenUp={false} />
         </MetricPanel>
         <MetricPanel compact title="Response time · P99" metricQuery={mkLatency('p99', 'stat')}>
-          <KpiTile lab="Response time · P99" val={p99Ms.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} />
+          <KpiTile lab="Response time · P99" val={p99Ms.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} note={latScopeNote} />
         </MetricPanel>
         <MetricPanel compact title="Response time · median" metricQuery={mkLatency('p50', 'stat')}>
-          <KpiTile lab="Response time · median" val={p50Ms.toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(lat?.p50)} delta={computeDelta(vals(lat?.p50))} goodWhenUp={false} />
+          <KpiTile lab="Response time · median" val={p50Ms.toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(lat?.p50)} delta={computeDelta(vals(lat?.p50))} goodWhenUp={false} note={latScopeNote} />
         </MetricPanel>
         {/* Apdex has no calls_total/duration descriptor analogue in the
             spanmetrics pipeline (it's a composite of latency thresholds), so it
@@ -303,7 +330,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           its viz:'line' descriptor through the compact MetricPanel doorway. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title="Response time" unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+          <ChartCard title={usingAllSpans ? 'Response time · tüm span\u2019ler' : 'Response time · giriş'} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
             legendStorageKey="ov-response-time"
             defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
             lines={[

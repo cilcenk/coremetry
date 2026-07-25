@@ -1,0 +1,878 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1600">
+<title>Endpoints — DT-parity mockup (v0.9.256 üzerine)</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   Token blokları frontend/src/styles/globals.css'ten BİREBİR alındı.
+   Uydurma renk yok — her değer var(--token) üzerinden okunur.
+   Tema sırası: :root = dark → prefers-color-scheme:light (data-theme yokken)
+   → :root[data-theme="light"] / :root[data-theme="dark"] açık override.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --bg0: #1c2128; --bg1: #22272e; --bg2: #2d333b; --bg3: #373e47; --bg: #1c2128;
+  --border: #444c56; --text: #d5dde5; --text2: #909dab; --text3: #636e7b;
+  --brand: #E30613; --brand2: #ff2333;
+  --accent: #388bfd; --accent2: #58a6ff;
+  --ok: #3fb950; --err: #ff5252; --warn: #d29922; --info: #79c0ff;
+  --purple: #a371f7; --orange: #f0883e; --teal: #39c5cf;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --border-strong: #545d68;
+  --shadow-pop: 0 8px 24px rgba(0,0,0,.45);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.25);
+  --accent-bg: #22314a; --accent-border: #2c4a70; --text-faint: #545d68;
+  --shadow-md: 0 6px 20px rgba(0,0,0,.45);
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg0: #ffffff; --bg1: #f6f8fa; --bg2: #eaeef2; --bg3: #d0d7de; --bg: #ffffff;
+    --border: #d0d7de; --text: #1f2328; --text2: #59636e; --text3: #818b98;
+    --brand: #E30613; --brand2: #ff2333;
+    --accent: #0969da; --accent2: #0550ae;
+    --ok: #1a7f37; --err: #cf222e; --warn: #9a6700; --info: #0969da;
+    --purple: #8250df; --orange: #bc4c00; --teal: #137775;
+    --accent-soft: rgba(9,105,218,.10); --border-strong: #afb8c1;
+    --shadow-pop: 0 8px 24px rgba(20,30,45,.14);
+    --shadow-sm: 0 1px 2px rgba(20,30,45,.05);
+    --accent-bg: #ddf4ff; --accent-border: #b6e3ff; --text-faint: #a9b1ba;
+    --shadow-md: 0 4px 16px rgba(20,30,45,.08);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg0: #ffffff; --bg1: #f6f8fa; --bg2: #eaeef2; --bg3: #d0d7de; --bg: #ffffff;
+  --border: #d0d7de; --text: #1f2328; --text2: #59636e; --text3: #818b98;
+  --brand: #E30613; --brand2: #ff2333;
+  --accent: #0969da; --accent2: #0550ae;
+  --ok: #1a7f37; --err: #cf222e; --warn: #9a6700; --info: #0969da;
+  --purple: #8250df; --orange: #bc4c00; --teal: #137775;
+  --accent-soft: rgba(9,105,218,.10); --border-strong: #afb8c1;
+  --shadow-pop: 0 8px 24px rgba(20,30,45,.14);
+  --shadow-sm: 0 1px 2px rgba(20,30,45,.05);
+  --accent-bg: #ddf4ff; --accent-border: #b6e3ff; --text-faint: #a9b1ba;
+  --shadow-md: 0 4px 16px rgba(20,30,45,.08);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg0: #1c2128; --bg1: #22272e; --bg2: #2d333b; --bg3: #373e47; --bg: #1c2128;
+  --border: #444c56; --text: #d5dde5; --text2: #909dab; --text3: #636e7b;
+  --accent: #388bfd; --accent2: #58a6ff;
+  --ok: #3fb950; --err: #ff5252; --warn: #d29922; --info: #79c0ff;
+  --purple: #a371f7; --orange: #f0883e; --teal: #39c5cf;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --border-strong: #545d68;
+  --accent-bg: #22314a; --accent-border: #2c4a70; --text-faint: #545d68;
+  color-scheme: dark;
+}
+
+/* ── globals.css taban kuralları ─────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg0); color: var(--text);
+       font: 13px/1.5 -apple-system, 'Segoe UI', sans-serif; }
+a { color: var(--accent2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+#topbar { padding: 10px 20px; border-bottom: 1px solid var(--border);
+          background: var(--bg1); display: flex; align-items: center; gap: 12px; }
+#topbar h1 { font-size: 15px; font-weight: 600; }
+#content { padding: 20px; }
+
+.controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+input, select { background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 5px 10px; font-size: 13px; outline: none; font-family: inherit; }
+button { background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 5px 14px; font-size: 13px; cursor: pointer; font-family: inherit; }
+button.sec { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+button.ghost { background: transparent; color: var(--text2); border: 1px solid transparent; }
+button.sm { padding: 3px 9px; font-size: 11px; border-radius: 4px; }
+
+.row { display: flex; flex-direction: row; align-items: center; }
+.gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
+
+.card { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px;
+        padding: 14px; box-shadow: var(--shadow-sm); }
+
+.tab-strip { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.tab-strip > button { background: transparent; border: none; border-radius: 0;
+  border-bottom: 2px solid transparent; color: var(--text2); font-size: 13px; font-weight: 500;
+  padding: 8px 14px; margin-bottom: -1px; cursor: pointer; }
+.tab-strip > button:hover { color: var(--text); }
+.tab-strip > button.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+
+.table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; overflow-y: hidden; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+thead th { padding: 9px 12px; text-align: left; font-weight: 700; color: var(--text3);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  border-bottom: 1px solid var(--border); user-select: none; white-space: nowrap; }
+thead th.sortable { cursor: pointer; }
+thead th.sorted { color: var(--accent2); }
+thead th .sort-arrow { margin-left: 4px; opacity: .7; }
+tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--bg2); }
+tbody td { padding: 9px 12px; max-width: 320px; white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis; }
+th.sticky-right, td.sticky-right { position: sticky; right: 0; z-index: 2;
+  background: var(--bg0); box-shadow: -6px 0 8px -8px rgba(0,0,0,.5); }
+tbody tr:hover td.sticky-right { background: var(--bg2); }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+  border-radius: 6px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.b-ok   { background: color-mix(in srgb, var(--ok) 15%, transparent);   color: var(--ok); }
+.b-err  { background: color-mix(in srgb, var(--err) 15%, transparent);  color: var(--err); }
+.b-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.b-info { background: color-mix(in srgb, var(--info) 15%, transparent); color: var(--info); }
+.b-gray { background: var(--bg3); color: var(--text2); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: 20px; font-size: 11.5px;
+  color: var(--text2); background: var(--bg0); }
+.chip .k { color: var(--text3); }
+.chip b { color: var(--text); font-weight: 600; }
+
+.ov-barcell { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; width: 100%; }
+.ov-minibar { height: 6px; border-radius: 3px; background: var(--bg2); overflow: hidden; flex: 1; max-width: 90px; }
+.ov-minibar i { display: block; height: 100%; border-radius: 3px; }
+.ov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+
+/* ── Mockup-only kabuk (mk-*) — üründe yok, sadece anlatım için ──── */
+.mk-banner { padding: 14px 20px; border-bottom: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(227,6,19,.10) 0%, transparent 60%); }
+.mk-banner h2 { font-size: 14px; font-weight: 800; letter-spacing: .01em; }
+.mk-banner p { font-size: 11.5px; color: var(--text2); margin-top: 3px; max-width: 980px; }
+.mk-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mk-legend .chip { font-size: 11px; }
+.mk-new { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px;
+  border-radius: 4px; font-size: 9px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; background: var(--accent-bg); color: var(--accent2);
+  border: 1px solid var(--accent-border); white-space: nowrap; vertical-align: 1px; }
+.mk-sup { font-size: 8.5px; font-weight: 800; color: var(--accent2);
+  background: var(--accent-bg); border: 1px solid var(--accent-border);
+  border-radius: 3px; padding: 0 3px; margin-left: 4px; vertical-align: 2px;
+  letter-spacing: 0; text-transform: none; }
+.mk-note { font-size: 11px; color: var(--text2); border-left: 2px solid var(--accent);
+  background: var(--accent-soft); padding: 6px 10px; border-radius: 0 6px 6px 0;
+  margin: 6px 0 12px; }
+.mk-note b { color: var(--text); }
+.mk-sec { display: flex; align-items: center; gap: 10px; margin: 22px 0 10px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 1.1px;
+  text-transform: uppercase; color: var(--text3); }
+.mk-sec::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.mk-cols { display: grid; grid-template-columns: 640px minmax(420px, 1fr); gap: 16px; align-items: start; }
+.mk-drawer { width: 620px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg1); box-shadow: var(--shadow-md); overflow: hidden; }
+.mk-drawer-h { display: flex; align-items: center; gap: 8px; padding: 12px 14px;
+  border-bottom: 1px solid var(--border); background: var(--bg1); }
+.mk-drawer-b { padding: 12px 14px 18px; }
+.mk-sect { font-size: 12px; font-weight: 700; color: var(--text2); margin: 16px 0 8px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mk-stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin-bottom: 14px; }
+.mk-stat { padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg1); }
+.mk-stat .l { font-size: 10px; color: var(--text3); margin-bottom: 2px; }
+.mk-stat .v { font-size: 15px; font-weight: 600; font-family: ui-monospace, monospace; }
+.mk-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px,1fr)); gap: 12px; margin-bottom: 14px; }
+.mk-kpi { padding: 8px 14px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg1); }
+.mk-kpi .l { font-size: 11px; color: var(--text2); margin-bottom: 2px; }
+.mk-kpi .v { font-size: 22px; font-weight: 600; }
+.mk-kpi .s { font-size: 11px; color: var(--text3); margin-top: 2px; }
+.mk-hist { display: flex; align-items: flex-end; gap: 2px; height: 96px; padding: 0 2px;
+  border-bottom: 1px solid var(--border); }
+.mk-hist i { flex: 1; min-width: 3px; background: var(--accent); opacity: .85; border-radius: 2px 2px 0 0; display: block; }
+.mk-axis { display: flex; justify-content: space-between; font-size: 9px; color: var(--text3);
+  font-family: ui-monospace, monospace; margin-top: 2px; }
+.mk-foot { margin-top: 8px; font-size: 11px; color: var(--text3); }
+.mk-themebtns { margin-left: auto; display: flex; gap: 4px; }
+.mk-pane { display: none; }
+.mk-pane.on { display: block; }
+</style>
+</head>
+<body>
+
+<!-- ══════════ Mockup açıklama şeridi (üründe yoktur) ══════════ -->
+<div class="mk-banner">
+  <div class="row gap-3">
+    <div>
+      <h2>/endpoints — Dynatrace/Datadog parite mockup'ı <span class="mk-new">6 yeni yüzey</span></h2>
+      <p>
+        Mevcut sayfa <b>aynen duruyor</b>: üst şerit, filtre satırı, KPI'lar ve ana tablo v0.9.256'daki
+        düzeniyle. Eklenen her şey <span class="mk-new">yeni</span> rozetiyle işaretli — yeni kolon,
+        yeni sekme, yeni drawer bölümü, yeni satır-içi kısayol. Ana tablonun yerine geçen bir düzen yok.
+        Grafikler temsilî statik SVG (üründe uPlot).
+      </p>
+    </div>
+    <div class="mk-themebtns">
+      <button class="sec sm" onclick="document.documentElement.removeAttribute('data-theme')">Auto</button>
+      <button class="sec sm" onclick="document.documentElement.setAttribute('data-theme','dark')">Dark</button>
+      <button class="sec sm" onclick="document.documentElement.setAttribute('data-theme','light')">Light</button>
+    </div>
+  </div>
+  <div class="mk-legend">
+    <span class="chip"><span class="mk-new">N1</span> Giriş-noktası sekmeleri: HTTP | RPC &amp; Messaging</span>
+    <span class="chip"><span class="mk-new">N2</span> P90 + Spread + vs Baseline kolonları (varsayılan gizli)</span>
+    <span class="chip"><span class="mk-new">N3</span> Satırdan exemplar: ⚡ en yavaş · ✖ en kötü hata</span>
+    <span class="chip"><span class="mk-new">N4</span> Drawer: "Süre nereye gidiyor" — Downstream | Callers</span>
+    <span class="chip"><span class="mk-new">N5</span> Drawer: Baseline paneli (7 gün aynı-slot medyan bandı)</span>
+    <span class="chip"><span class="mk-new">N6</span> Scope chip + Explore pivotu + kaydedilmiş görünümler</span>
+  </div>
+</div>
+
+<!-- ══════════ Mevcut Topbar (değişmez) ══════════ -->
+<div id="topbar">
+  <h1>Endpoints</h1>
+  <select class="env-picker" style="max-width:180px"><option>env: uat</option></select>
+  <button class="sec sm" style="padding:5px 10px;font-size:12px">🕐 Last 30 m ▾</button>
+  <span class="row gap-2" style="margin-left:auto;font-size:11px;color:var(--text3)">
+    <span class="ov-dot" style="background:var(--ok)"></span> live · 4.2k spans/s
+  </span>
+  <button class="ghost sm">🌗</button>
+</div>
+
+<div id="content">
+
+  <!-- ══════════ N6a — SavedViewsBar (YENİ: bileşen var, bu sayfada import bile edilmemiş) ══════════ -->
+  <div class="row gap-2" style="flex-wrap:wrap;margin-bottom:10px">
+    <span style="font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;font-weight:700">
+      Saved views <span class="mk-new">Yeni · N6</span>
+    </span>
+    <button class="sec sm">1 · Checkout 5xx</button>
+    <button class="sec sm" style="border-color:var(--accent);color:var(--accent2);background:var(--accent-soft)">2 · UAT slow routes</button>
+    <button class="sec sm">3 · Payments p99</button>
+    <span class="badge b-gray" style="font-size:9px">● modified</span>
+    <button class="ghost sm" title="Kaydedilmiş görünüme dön">↺</button>
+    <button class="sec sm" style="margin-left:auto">+ Save view</button>
+    <button class="sec sm">🔗 Copy link</button>
+  </div>
+
+  <!-- ══════════ N1 — Giriş noktası sekmeleri ══════════ -->
+  <div class="tab-strip">
+    <button class="active" onclick="mkTab(this,'pane-http')">HTTP <span class="badge b-gray" style="font-size:9px;margin-left:6px">100</span></button>
+    <button onclick="mkTab(this,'pane-rpc')">RPC &amp; Messaging
+      <span class="badge b-gray" style="font-size:9px;margin-left:6px">46</span>
+      <span class="mk-new" style="margin-left:6px">Yeni · N1</span></button>
+  </div>
+  <div class="mk-note">
+    <b>N1:</b> bugün sayfa <code>http_route != ''</code> ile sınırlı — gRPC ve Kafka consumer giriş noktaları
+    hiç görünmüyor, alt not bunu söylemiyor bile. <code>spanmetrics_1m</code> zaten <code>name</code> ve
+    <code>kind</code> dim'lerini taşıyor; ikinci sekme aynı kolon setini (service, name, kind) anahtarıyla gösterir.
+    HTTP sekmesi bit-bit bugünküyle aynı kalır.
+  </div>
+
+  <!-- ══════════ Mevcut kontrol şeridi (değişmez) ══════════ -->
+  <div class="controls">
+    <select style="width:200px"><option>All services…</option></select>
+    <input value="" placeholder="Filter by path (substring)…" style="width:280px;font-size:12px">
+    <select style="min-width:160px"><option>All clusters (3)</option></select>
+    <span style="color:var(--text3);font-size:12px;margin-left:auto">
+      Top 100 by calls <span style="color:var(--warn);margin-left:6px">(capped)</span>
+    </span>
+    <select style="font-size:12px"><option>top 100</option></select>
+    <label style="font-size:11px;display:flex;align-items:center;gap:4px">
+      <input type="checkbox" style="padding:0"> Compare vs prior</label>
+    <label style="font-size:11px;display:flex;align-items:center;gap:4px">
+      <input type="checkbox" style="padding:0"> Group by shape</label>
+    <button class="sm" style="background:var(--bg2);border:1px solid var(--border);color:var(--text2)">⚡ Worst by impact</button>
+    <button class="sm" style="background:var(--bg2);border:1px solid var(--border);color:var(--text2)">
+      ▦ Columns <span class="badge b-info" style="font-size:9px;margin-left:4px">+3</span></button>
+  </div>
+
+  <!-- ══════════ Mevcut KPI şeridi (değişmez) ══════════ -->
+  <div class="mk-kpis">
+    <div class="mk-kpi"><div class="l">Endpoints</div><div class="v">100</div></div>
+    <div class="mk-kpi"><div class="l">Total calls</div><div class="v">1,649,180</div></div>
+    <div class="mk-kpi"><div class="l">Errors</div>
+      <div class="v" style="color:var(--text)">15,039</div><div class="s">0.91%</div></div>
+  </div>
+
+  <!-- ══════════ HTTP sekmesi = MEVCUT ANA TABLO (+ 3 yeni kolon, + satır-içi exemplar) ══════ -->
+  <div id="pane-http" class="mk-pane on">
+  <div class="table-wrap">
+    <table style="table-layout:fixed;width:100%;min-width:1690px">
+      <colgroup>
+        <col style="width:22px"><col style="width:146px"><col style="width:228px"><col style="width:62px">
+        <col style="width:84px"><col style="width:74px"><col style="width:92px"><col style="width:150px">
+        <col style="width:78px"><col style="width:74px"><col style="width:66px"><col style="width:72px">
+        <col style="width:66px"><col style="width:72px"><col style="width:80px"><col style="width:96px">
+        <col style="width:116px"><col style="width:108px">
+      </colgroup>
+      <thead>
+        <tr>
+          <th></th>
+          <th class="sortable">Service</th>
+          <th class="sortable">Path</th>
+          <th>Method</th>
+          <th class="sortable sorted num">Calls <span class="sort-arrow">↓</span></th>
+          <th class="sortable num">Errors</th>
+          <th class="sortable num">Error rate</th>
+          <th>Status</th>
+          <th class="sortable num">Req/min</th>
+          <th class="sortable num">Avg</th>
+          <th class="sortable num">P50</th>
+          <th class="sortable num" title="MV zaten quantilesTDigestState(0.5, 0.9, 0.95, 0.99) hesaplıyor — index 2 hiç okunmuyordu">
+            P90<span class="mk-sup">N2</span></th>
+          <th class="sortable num">P95</th>
+          <th class="sortable num">P99</th>
+          <th class="num" title="p99 / p50 — kuyruk ağırlığı: 'herkese mi yavaş yoksa kuyruk mu ağır'">
+            Spread<span class="mk-sup">N2</span></th>
+          <th class="sortable num" title="Aynı saat / gün-sınıfı, önceki 7 günün medyanına göre p99 z-skoru">
+            vs Baseline<span class="mk-sup">N2</span></th>
+          <th>Trend</th>
+          <th class="sticky-right">Traces<span class="mk-sup">N3</span></th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- satır 1 -->
+        <tr>
+          <td style="text-align:center;color:var(--text3)">›</td>
+          <td><a class="mono" href="#">checkout-api</a></td>
+          <td class="mono" title="/api/checkout/{id}/submit">/api/checkout/{id}/submit</td>
+          <td class="mono" style="font-size:11px;color:var(--text2)">POST</td>
+          <td class="num mono">128,430</td>
+          <td class="num mono">4,112</td>
+          <td class="num mono"><span class="badge b-warn">3.20%</span></td>
+          <td><span style="display:inline-flex;gap:4px">
+            <span class="badge b-ok">2xx 124k</span><span class="badge b-warn">4xx 3.1k</span><span class="badge b-err">5xx 1.0k</span></span></td>
+          <td class="num mono">4,281</td>
+          <td class="num mono">88.4 ms</td>
+          <td class="num mono">42 ms</td>
+          <td class="num mono">210 ms</td>
+          <td class="num mono">340 ms</td>
+          <td class="num mono">912 ms</td>
+          <td class="num mono"><span class="badge b-warn">21.7×</span></td>
+          <td class="num mono"><span class="badge b-err">+3.4 σ</span></td>
+          <td><svg width="100" height="22" aria-label="calls trend"><polyline fill="none" stroke="var(--warn)" stroke-width="1.5" points="0.0,13.0 3.4,11.3 6.8,15.8 10.2,16.6 13.7,17.0 17.1,16.6 20.5,17.5 23.9,20.2 27.3,20.8 30.7,21.0 34.1,19.4 37.6,19.3 41.0,18.5 44.4,17.5 47.8,17.8 51.2,19.3 54.6,17.9 58.0,11.8 61.4,12.7 64.9,13.2 68.3,8.6 71.7,11.3 75.1,12.6 78.5,9.5 81.9,13.8 85.3,11.7 88.8,2.0 92.2,14.9 95.6,3.6 99.0,14.5"/></svg></td>
+          <td class="sticky-right">
+            <a href="#" style="font-size:11px">view →</a>
+            <a href="#" title="En yavaş trace (spanmetrics_1m slow_exemplar_state)" style="margin-left:6px">⚡</a>
+            <a href="#" title="En kötü hata trace'i (error_exemplar_state)" style="margin-left:4px;color:var(--err)">✖</a>
+          </td>
+        </tr>
+        <!-- satır 2 — err tinted (errorRate >= 5) -->
+        <tr style="background:color-mix(in srgb, var(--err) 7%, transparent)">
+          <td style="text-align:center;color:var(--text3)">›</td>
+          <td><a class="mono" href="#">payments-api</a></td>
+          <td class="mono" title="/api/payments/charge">/api/payments/charge</td>
+          <td class="mono" style="font-size:11px;color:var(--text2)">POST</td>
+          <td class="num mono">96,210</td>
+          <td class="num mono">6,180</td>
+          <td class="num mono"><span class="badge b-err">6.42%</span></td>
+          <td><span style="display:inline-flex;gap:4px">
+            <span class="badge b-ok">2xx 90k</span><span class="badge b-warn">4xx 1.2k</span><span class="badge b-err">5xx 5.0k</span></span></td>
+          <td class="num mono">3,207</td>
+          <td class="num mono">142.0 ms</td>
+          <td class="num mono">61 ms</td>
+          <td class="num mono">380 ms</td>
+          <td class="num mono">610 ms</td>
+          <td class="num mono">1,840 ms</td>
+          <td class="num mono"><span class="badge b-err">30.2×</span></td>
+          <td class="num mono"><span class="badge b-err">+5.1 σ</span></td>
+          <td><svg width="100" height="22"><polyline fill="none" stroke="var(--err)" stroke-width="1.5" points="0.0,11.8 3.4,8.8 6.8,12.6 10.2,10.0 13.7,5.5 17.1,8.4 20.5,14.2 23.9,6.8 27.3,15.0 30.7,15.7 34.1,11.0 37.6,13.1 41.0,13.2 44.4,14.1 47.8,14.9 51.2,14.6 54.6,18.9 58.0,19.3 61.4,2.3 64.9,5.7 68.3,5.9 71.7,2.0 75.1,20.6 78.5,18.2 81.9,20.1 85.3,20.7 88.8,21.0 92.2,15.9 95.6,13.1 99.0,14.7"/></svg></td>
+          <td class="sticky-right" style="background:color-mix(in srgb, var(--err) 7%, var(--bg0))">
+            <a href="#" style="font-size:11px">view →</a>
+            <a href="#" title="En yavaş trace" style="margin-left:6px">⚡</a>
+            <a href="#" title="En kötü hata trace'i" style="margin-left:4px;color:var(--err)">✖</a>
+          </td>
+        </tr>
+        <!-- satır 3 -->
+        <tr>
+          <td style="text-align:center;color:var(--text3)">›</td>
+          <td><a class="mono" href="#">orders-api</a></td>
+          <td class="mono">/api/orders</td>
+          <td class="mono" style="font-size:11px;color:var(--text2)">GET</td>
+          <td class="num mono">412,880</td>
+          <td class="num mono">1,240</td>
+          <td class="num mono"><span class="badge b-ok">0.30%</span></td>
+          <td><span style="display:inline-flex;gap:4px">
+            <span class="badge b-ok">2xx 411k</span><span class="badge b-warn">4xx 1.1k</span><span class="badge b-err">5xx 140</span></span></td>
+          <td class="num mono">13,762</td>
+          <td class="num mono">28.6 ms</td>
+          <td class="num mono">19 ms</td>
+          <td class="num mono">62 ms</td>
+          <td class="num mono">88 ms</td>
+          <td class="num mono">190 ms</td>
+          <td class="num mono"><span class="badge b-gray">10.0×</span></td>
+          <td class="num mono"><span class="badge b-ok">+0.4 σ</span></td>
+          <td><svg width="100" height="22"><polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,21.0 3.4,19.4 6.8,20.9 10.2,19.3 13.7,20.1 17.1,19.7 20.5,15.1 23.9,15.3 27.3,10.9 30.7,15.8 34.1,14.4 37.6,13.6 41.0,12.7 44.4,11.2 47.8,15.8 51.2,10.3 54.6,14.9 58.0,11.8 61.4,2.0 64.9,12.3 68.3,13.2 71.7,11.7 75.1,13.5 78.5,16.2 81.9,11.3 85.3,16.7 88.8,15.0 92.2,18.2 95.6,16.2 99.0,17.9"/></svg></td>
+          <td class="sticky-right">
+            <a href="#" style="font-size:11px">view →</a>
+            <a href="#" title="En yavaş trace" style="margin-left:6px">⚡</a>
+            <a href="#" title="En kötü hata trace'i" style="margin-left:4px;color:var(--err)">✖</a>
+          </td>
+        </tr>
+        <!-- satır 4 -->
+        <tr>
+          <td style="text-align:center;color:var(--text3)">›</td>
+          <td><a class="mono" href="#">orders-api</a></td>
+          <td class="mono">/api/orders/{id}</td>
+          <td class="mono" style="font-size:11px;color:var(--text2)">GET</td>
+          <td class="num mono">388,120</td>
+          <td class="num mono">902</td>
+          <td class="num mono"><span class="badge b-ok">0.23%</span></td>
+          <td><span style="display:inline-flex;gap:4px">
+            <span class="badge b-ok">2xx 387k</span><span class="badge b-gray">3xx 1.4k</span><span class="badge b-warn">4xx 780</span></span></td>
+          <td class="num mono">12,937</td>
+          <td class="num mono">21.4 ms</td>
+          <td class="num mono">14 ms</td>
+          <td class="num mono">44 ms</td>
+          <td class="num mono">61 ms</td>
+          <td class="num mono">128 ms</td>
+          <td class="num mono"><span class="badge b-gray">9.1×</span></td>
+          <td class="num mono"><span class="badge b-ok">−0.2 σ</span></td>
+          <td><svg width="100" height="22"><polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,21.0 3.4,20.6 6.8,19.0 10.2,21.0 13.7,14.9 17.1,17.5 20.5,17.0 23.9,14.5 27.3,12.3 30.7,12.8 34.1,12.0 37.6,12.9 41.0,11.9 44.4,11.3 47.8,9.6 51.2,8.0 54.6,11.8 58.0,2.0 61.4,8.8 64.9,4.1 68.3,10.2 71.7,14.0 75.1,13.1 78.5,13.9 81.9,12.2 85.3,16.3 88.8,16.4 92.2,19.4 95.6,18.7 99.0,19.6"/></svg></td>
+          <td class="sticky-right">
+            <a href="#" style="font-size:11px">view →</a>
+            <a href="#" title="En yavaş trace" style="margin-left:6px">⚡</a>
+            <a href="#" title="En kötü hata trace'i" style="margin-left:4px;color:var(--err)">✖</a>
+          </td>
+        </tr>
+        <!-- satır 5 -->
+        <tr>
+          <td style="text-align:center;color:var(--text3)">›</td>
+          <td><a class="mono" href="#">inventory-svc</a></td>
+          <td class="mono">/api/inventory/{sku}</td>
+          <td class="mono" style="font-size:11px;color:var(--text2)">GET</td>
+          <td class="num mono">274,500</td>
+          <td class="num mono">88</td>
+          <td class="num mono"><span class="badge b-ok">0.03%</span></td>
+          <td><span style="display:inline-flex;gap:4px">
+            <span class="badge b-ok">2xx 274k</span><span class="badge b-warn">4xx 86</span></span></td>
+          <td class="num mono">9,150</td>
+          <td class="num mono">12.8 ms</td>
+          <td class="num mono">9.0 ms</td>
+          <td class="num mono">26 ms</td>
+          <td class="num mono">34 ms</td>
+          <td class="num mono">71 ms</td>
+          <td class="num mono"><span class="badge b-gray">7.9×</span></td>
+          <td class="num mono"><span class="badge b-ok">+0.1 σ</span></td>
+          <td><svg width="100" height="22"><polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,10.2 3.4,3.1 6.8,6.9 10.2,4.6 13.7,6.7 17.1,8.1 20.5,7.1 23.9,2.0 27.3,3.4 30.7,6.8 34.1,5.4 37.6,13.7 41.0,3.7 44.4,12.6 47.8,16.3 51.2,13.1 54.6,16.3 58.0,14.0 61.4,15.2 64.9,20.5 68.3,21.0 71.7,19.9 75.1,20.2 78.5,18.9 81.9,19.1 85.3,16.6 88.8,16.5 92.2,15.5 95.6,15.6 99.0,12.9"/></svg></td>
+          <td class="sticky-right">
+            <a href="#" style="font-size:11px">view →</a>
+            <a href="#" title="En yavaş trace" style="margin-left:6px">⚡</a>
+            <a href="#" title="En kötü hata trace'i" style="margin-left:4px;color:var(--err)">✖</a>
+          </td>
+        </tr>
+        <!-- satır 6 -->
+        <tr>
+          <td style="text-align:center;color:var(--text3)">›</td>
+          <td><a class="mono" href="#">user-api</a></td>
+          <td class="mono">/api/auth/login</td>
+          <td class="mono" style="font-size:11px;color:var(--text2)">POST</td>
+          <td class="num mono">61,340</td>
+          <td class="num mono">1,905</td>
+          <td class="num mono"><span class="badge b-warn">3.11%</span></td>
+          <td><span style="display:inline-flex;gap:4px">
+            <span class="badge b-ok">2xx 59.4k</span><span class="badge b-warn">4xx 1.8k</span><span class="badge b-err">5xx 105</span></span></td>
+          <td class="num mono">2,045</td>
+          <td class="num mono">64.2 ms</td>
+          <td class="num mono">38 ms</td>
+          <td class="num mono">128 ms</td>
+          <td class="num mono">190 ms</td>
+          <td class="num mono">402 ms</td>
+          <td class="num mono"><span class="badge b-gray">10.6×</span></td>
+          <td class="num mono"><span class="badge b-warn">+1.9 σ</span></td>
+          <td><svg width="100" height="22"><polyline fill="none" stroke="var(--warn)" stroke-width="1.5" points="0.0,21.0 3.4,20.0 6.8,19.6 10.2,20.9 13.7,18.3 17.1,18.8 20.5,19.4 23.9,17.9 27.3,20.4 30.7,2.0 34.1,6.1 37.6,7.3 41.0,2.6 44.4,14.3 47.8,14.6 51.2,14.3 54.6,18.0 58.0,11.3 61.4,10.6 64.9,16.2 68.3,9.0 71.7,11.8 75.1,15.5 78.5,11.4 81.9,17.9 85.3,16.5 88.8,16.1 92.2,13.5 95.6,18.6 99.0,18.3"/></svg></td>
+          <td class="sticky-right">
+            <a href="#" style="font-size:11px">view →</a>
+            <a href="#" title="En yavaş trace" style="margin-left:6px">⚡</a>
+            <a href="#" title="En kötü hata trace'i" style="margin-left:4px;color:var(--err)">✖</a>
+          </td>
+        </tr>
+        <!-- satır 7 -->
+        <tr>
+          <td style="text-align:center;color:var(--text3)">›</td>
+          <td><a class="mono" href="#">cart-api</a></td>
+          <td class="mono">/api/cart</td>
+          <td class="mono" style="font-size:11px;color:var(--text2)">GET</td>
+          <td class="num mono">198,760</td>
+          <td class="num mono">210</td>
+          <td class="num mono"><span class="badge b-ok">0.11%</span></td>
+          <td><span style="display:inline-flex;gap:4px">
+            <span class="badge b-ok">2xx 198k</span><span class="badge b-warn">4xx 200</span></span></td>
+          <td class="num mono">6,625</td>
+          <td class="num mono">18.9 ms</td>
+          <td class="num mono">12 ms</td>
+          <td class="num mono">38 ms</td>
+          <td class="num mono">52 ms</td>
+          <td class="num mono">104 ms</td>
+          <td class="num mono"><span class="badge b-gray">8.7×</span></td>
+          <td class="num mono"><span class="badge b-ok">0.0 σ</span></td>
+          <td><svg width="100" height="22"><polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,13.0 3.4,21.0 6.8,20.9 10.2,20.6 13.7,18.6 17.1,16.8 20.5,17.4 23.9,17.3 27.3,19.8 30.7,15.6 34.1,13.1 37.6,16.0 41.0,7.9 44.4,10.4 47.8,12.8 51.2,9.7 54.6,11.9 58.0,4.5 61.4,6.7 64.9,6.8 68.3,3.6 71.7,7.4 75.1,2.0 78.5,5.3 81.9,8.8 85.3,4.9 88.8,8.7 92.2,14.5 95.6,11.0 99.0,17.4"/></svg></td>
+          <td class="sticky-right">
+            <a href="#" style="font-size:11px">view →</a>
+            <a href="#" title="En yavaş trace" style="margin-left:6px">⚡</a>
+            <a href="#" title="En kötü hata trace'i" style="margin-left:4px;color:var(--err)">✖</a>
+          </td>
+        </tr>
+        <!-- satır 8 -->
+        <tr>
+          <td style="text-align:center;color:var(--text3)">›</td>
+          <td><a class="mono" href="#">search-api</a></td>
+          <td class="mono">/api/search</td>
+          <td class="mono" style="font-size:11px;color:var(--text2)">GET</td>
+          <td class="num mono">88,940</td>
+          <td class="num mono">402</td>
+          <td class="num mono"><span class="badge b-ok">0.45%</span></td>
+          <td><span style="display:inline-flex;gap:4px">
+            <span class="badge b-ok">2xx 88.5k</span><span class="badge b-warn">4xx 390</span><span class="badge b-err">5xx 12</span></span></td>
+          <td class="num mono">2,965</td>
+          <td class="num mono">210.3 ms</td>
+          <td class="num mono">96 ms</td>
+          <td class="num mono">520 ms</td>
+          <td class="num mono">780 ms</td>
+          <td class="num mono">2,140 ms</td>
+          <td class="num mono"><span class="badge b-warn">22.3×</span></td>
+          <td class="num mono"><span class="badge b-warn">+2.6 σ</span></td>
+          <td><svg width="100" height="22"><polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,20.5 3.4,20.4 6.8,21.0 10.2,20.6 13.7,20.2 17.1,20.3 20.5,20.1 23.9,20.5 27.3,20.4 30.7,20.6 34.1,20.6 37.6,18.4 41.0,19.1 44.4,19.1 47.8,19.3 51.2,16.5 54.6,17.1 58.0,18.3 61.4,18.1 64.9,17.7 68.3,16.8 71.7,3.7 75.1,2.0 78.5,3.9 81.9,11.3 85.3,16.2 88.8,15.7 92.2,18.5 95.6,17.2 99.0,18.4"/></svg></td>
+          <td class="sticky-right">
+            <a href="#" style="font-size:11px">view →</a>
+            <a href="#" title="En yavaş trace" style="margin-left:6px">⚡</a>
+            <a href="#" title="En kötü hata trace'i" style="margin-left:4px;color:var(--err)">✖</a>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="mk-foot">
+    Path source priority: <code>http.route</code> (templated) → <code>url.path</code> → <code>http.target</code>.
+    Server / consumer spans only — outbound client spans count under the callee's row.
+    P50/P90/P95/P99 are true window quantiles (tdigest).
+  </div>
+  <div class="mk-note" style="margin-top:10px">
+    <b>N2:</b> üç kolon da varsayılan <b>gizli</b> (ColumnToggle'dan açılır) — görünen varsayılan tablo bugünküyle
+    birebir aynı. <b>P90</b> MV'de zaten hesaplanıyor (<code>quantilesTDigestState(0.5, 0.9, 0.95, 0.99)</code>,
+    index 2 hiç okunmuyordu) · <b>Spread</b> = p99/p50, saf istemci hesabı · <b>vs Baseline</b> aynı saat/gün-sınıfı
+    7 günlük medyana göre z-skor.
+    &nbsp;&nbsp;<b>N3:</b> ⚡ / ✖ satır-içi exemplar linkleri <code>spanmetrics_1m</code>'in
+    <code>slow_exemplar_state</code> / <code>error_exemplar_state</code> kolonlarını liste sorgusunun
+    <i>zaten taradığı</i> gruplamadan okur — yeni tarama yok, iki ek merge.
+  </div>
+  </div><!-- /pane-http -->
+
+  <!-- ══════════ N1 — ikinci sekme içeriği ══════════ -->
+  <div id="pane-rpc" class="mk-pane">
+    <div class="table-wrap">
+      <table style="table-layout:fixed;width:100%;min-width:1100px">
+        <colgroup><col style="width:150px"><col style="width:300px"><col style="width:96px"><col style="width:90px">
+          <col style="width:80px"><col style="width:92px"><col style="width:84px"><col style="width:72px">
+          <col style="width:72px"><col style="width:76px"><col style="width:110px"></colgroup>
+        <thead><tr>
+          <th class="sortable">Service</th><th class="sortable">Entry point (span name)</th><th>Kind</th>
+          <th class="sortable sorted num">Calls <span class="sort-arrow">↓</span></th><th class="num">Errors</th>
+          <th class="num">Error rate</th><th class="num">Req/min</th><th class="num">P50</th>
+          <th class="num">P95</th><th class="num">P99</th><th>Trend</th>
+        </tr></thead>
+        <tbody>
+          <tr><td><a class="mono" href="#">payments-api</a></td>
+            <td class="mono">payments.v1.PaymentService/Charge</td>
+            <td><span class="badge b-info" style="font-size:9px">rpc · server</span></td>
+            <td class="num mono">42,180</td><td class="num mono">610</td>
+            <td class="num mono"><span class="badge b-warn">1.45%</span></td>
+            <td class="num mono">1,406</td><td class="num mono">44 ms</td>
+            <td class="num mono">210 ms</td><td class="num mono">640 ms</td>
+            <td><svg width="100" height="22"><polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,21.0 3.4,19.4 6.8,20.9 10.2,19.3 13.7,20.1 17.1,19.7 20.5,15.1 23.9,15.3 27.3,10.9 30.7,15.8 34.1,14.4 37.6,13.6 41.0,12.7 44.4,11.2 47.8,15.8 51.2,10.3 54.6,14.9 58.0,11.8 61.4,2.0 64.9,12.3 68.3,13.2 71.7,11.7 75.1,13.5 78.5,16.2 81.9,11.3 85.3,16.7 88.8,15.0 92.2,18.2 95.6,16.2 99.0,17.9"/></svg></td></tr>
+          <tr><td><a class="mono" href="#">orders-api</a></td>
+            <td class="mono">orders.checkout-events receive</td>
+            <td><span class="badge b-info" style="font-size:9px">consumer</span></td>
+            <td class="num mono">88,940</td><td class="num mono">1,204</td>
+            <td class="num mono"><span class="badge b-warn">1.35%</span></td>
+            <td class="num mono">2,965</td><td class="num mono">18 ms</td>
+            <td class="num mono">96 ms</td><td class="num mono">410 ms</td>
+            <td><svg width="100" height="22"><polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,10.2 3.4,3.1 6.8,6.9 10.2,4.6 13.7,6.7 17.1,8.1 20.5,7.1 23.9,2.0 27.3,3.4 30.7,6.8 34.1,5.4 37.6,13.7 41.0,3.7 44.4,12.6 47.8,16.3 51.2,13.1 54.6,16.3 58.0,14.0 61.4,15.2 64.9,20.5 68.3,21.0 71.7,19.9 75.1,20.2 78.5,18.9 81.9,19.1 85.3,16.6 88.8,16.5 92.2,15.5 95.6,15.6 99.0,12.9"/></svg></td></tr>
+          <tr><td><a class="mono" href="#">inventory-svc</a></td>
+            <td class="mono">inventory.stock-updates process</td>
+            <td><span class="badge b-info" style="font-size:9px">consumer</span></td>
+            <td class="num mono">61,220</td><td class="num mono">41</td>
+            <td class="num mono"><span class="badge b-ok">0.07%</span></td>
+            <td class="num mono">2,041</td><td class="num mono">9.0 ms</td>
+            <td class="num mono">24 ms</td><td class="num mono">88 ms</td>
+            <td><svg width="100" height="22"><polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,13.0 3.4,21.0 6.8,20.9 10.2,20.6 13.7,18.6 17.1,16.8 20.5,17.4 23.9,17.3 27.3,19.8 30.7,15.6 34.1,13.1 37.6,16.0 41.0,7.9 44.4,10.4 47.8,12.8 51.2,9.7 54.6,11.9 58.0,4.5 61.4,6.7 64.9,6.8 68.3,3.6 71.7,7.4 75.1,2.0 78.5,5.3 81.9,8.8 85.3,4.9 88.8,8.7 92.2,14.5 95.6,11.0 99.0,17.4"/></svg></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="mk-foot">
+      RPC &amp; Messaging sekmesi <code>spanmetrics_1m</code>'i (service_name, name, kind) anahtarıyla okur —
+      <code>kind IN ('server','consumer')</code>, <code>http_route = ''</code>. Kuyruk tarafı için
+      <code>messaging_summary_5m</code> / <code>messaging_caller_summary_5m</code> hazır.
+    </div>
+  </div>
+
+  <!-- ══════════ Drawer + yan panel ══════════ -->
+  <div class="mk-sec">Satır tıklaması → detay drawer'ı (?endpoint=checkout-api|/api/checkout/{id}/submit)</div>
+  <div class="mk-cols">
+
+    <div class="mk-drawer">
+      <!-- Drawer başlığı: MEVCUT + N6 scope chip + Explore pivotu -->
+      <div class="mk-drawer-h">
+        <span class="badge b-gray" style="font-size:10px">POST</span>
+        <span class="mono" style="font-size:13px;font-weight:600">/api/checkout/{id}/submit</span>
+        <span class="chip" style="font-size:10px;padding:2px 8px" title="Tablo ile drawer artık AYNI kapsamı okuyor">
+          <span class="k">scope</span><b>env=uat</b><span class="k">·</span><b>cluster=ocp-prod-1</b>
+          <span class="mk-new">Yeni · N6</span></span>
+        <a href="#" style="font-size:11px;margin-left:auto;white-space:nowrap">Open in Explore →
+          <span class="mk-new">Yeni · N6</span></a>
+        <a href="#" class="mono" style="font-size:11px">checkout-api</a>
+      </div>
+
+      <div class="mk-drawer-b">
+        <!-- MEVCUT: RED şeridi -->
+        <div class="mk-stats">
+          <div class="mk-stat"><div class="l">Calls</div><div class="v">128,430</div></div>
+          <div class="mk-stat"><div class="l">Errors</div><div class="v" style="color:var(--warn)">4,112</div></div>
+          <div class="mk-stat"><div class="l">Err rate</div><div class="v" style="color:var(--warn)">3.20%</div></div>
+          <div class="mk-stat"><div class="l">Avg</div><div class="v">88.4 ms</div></div>
+          <div class="mk-stat"><div class="l">P99</div><div class="v">912 ms</div></div>
+        </div>
+
+        <!-- MEVCUT: latency dağılımı (+ N2'nin drawer yarısı: spread rozeti) -->
+        <div class="mk-sect">Latency distribution
+          <span class="badge b-warn" style="font-size:9px" title="p99 / p50 = 912 / 42">spread 21.7×
+            <span class="mk-sup" style="margin-left:2px">N2</span></span>
+        </div>
+        <div class="mk-hist">
+          <i style="height:1%"></i><i style="height:2%"></i><i style="height:5%"></i><i style="height:11%"></i>
+          <i style="height:22%"></i><i style="height:40%"></i><i style="height:63%"></i><i style="height:85%"></i>
+          <i style="height:100%"></i><i style="height:93%"></i><i style="height:72%"></i><i style="height:50%"></i>
+          <i style="height:33%"></i><i style="height:21%"></i><i style="height:13%"></i><i style="height:9%"></i>
+          <i style="height:7%"></i><i style="height:9%"></i><i style="height:14%"></i><i style="height:17%"></i>
+          <i style="height:12%"></i><i style="height:6%"></i><i style="height:3%"></i><i style="height:1%"></i>
+        </div>
+        <div class="mk-axis"><span>1.0ms</span><span>64ms</span><span>4.1s</span></div>
+        <div style="font-size:10px;color:var(--text3);margin-top:4px">128,430 spans · log-scale duration bins</div>
+
+        <!-- ══════ N4 — YENİ bölüm: süre nereye gidiyor ══════ -->
+        <div class="mk-sect">Where the time goes <span class="mk-new">Yeni · N4</span></div>
+        <div class="tab-strip" style="margin-bottom:8px">
+          <button class="active" onclick="mkTab(this,'pane-down')">Downstream</button>
+          <button onclick="mkTab(this,'pane-callers')">Callers</button>
+        </div>
+
+        <div id="pane-down" class="mk-pane on">
+          <div class="table-wrap">
+            <table style="table-layout:fixed;width:100%">
+              <colgroup><col style="width:150px"><col style="width:62px"><col style="width:58px">
+                <col style="width:62px"><col style="width:56px"><col style="width:100px"></colgroup>
+              <thead><tr>
+                <th class="sortable">Downstream</th><th class="num">/req</th><th class="num">Avg</th>
+                <th class="num sorted">P99 <span class="sort-arrow">↓</span></th><th class="num">Err %</th>
+                <th class="num">Süre payı</th>
+              </tr></thead>
+              <tbody>
+                <tr><td><span class="ov-dot" style="background:var(--accent);margin-right:6px"></span>
+                    <a class="mono" href="#">payments-api</a></td>
+                  <td class="num mono">1.00</td><td class="num mono">61 ms</td>
+                  <td class="num mono">402 ms</td>
+                  <td class="num mono"><span class="badge b-warn" style="font-size:9px">2.10%</span></td>
+                  <td class="num"><span class="ov-barcell"><span class="ov-minibar"><i style="width:100%;background:var(--accent)"></i></span>
+                    <span class="mono" style="font-size:11px">44%</span></span></td></tr>
+                <tr><td><span class="ov-dot" style="background:var(--teal);margin-right:6px"></span>
+                    <span class="mono">postgres · orders</span></td>
+                  <td class="num mono">3.20</td><td class="num mono">18 ms</td>
+                  <td class="num mono">96 ms</td>
+                  <td class="num mono"><span class="badge b-ok" style="font-size:9px">0.00%</span></td>
+                  <td class="num"><span class="ov-barcell"><span class="ov-minibar"><i style="width:43%;background:var(--teal)"></i></span>
+                    <span class="mono" style="font-size:11px">19%</span></span></td></tr>
+                <tr><td><span class="ov-dot" style="background:var(--bg3);margin-right:6px"></span>
+                    <span class="mono" style="color:var(--text2)">self (checkout-api)</span></td>
+                  <td class="num mono">—</td><td class="num mono">24 ms</td>
+                  <td class="num mono">—</td><td class="num mono">—</td>
+                  <td class="num"><span class="ov-barcell"><span class="ov-minibar"><i style="width:50%;background:var(--text3)"></i></span>
+                    <span class="mono" style="font-size:11px">22%</span></span></td></tr>
+                <tr><td><span class="ov-dot" style="background:var(--purple);margin-right:6px"></span>
+                    <a class="mono" href="#">inventory-svc</a></td>
+                  <td class="num mono">0.98</td><td class="num mono">12 ms</td>
+                  <td class="num mono">71 ms</td>
+                  <td class="num mono"><span class="badge b-ok" style="font-size:9px">0.03%</span></td>
+                  <td class="num"><span class="ov-barcell"><span class="ov-minibar"><i style="width:27%;background:var(--purple)"></i></span>
+                    <span class="mono" style="font-size:11px">12%</span></span></td></tr>
+                <tr><td><span class="ov-dot" style="background:var(--orange);margin-right:6px"></span>
+                    <span class="mono">redis · session</span></td>
+                  <td class="num mono">2.10</td><td class="num mono">1.2 ms</td>
+                  <td class="num mono">6 ms</td>
+                  <td class="num mono"><span class="badge b-ok" style="font-size:9px">0.00%</span></td>
+                  <td class="num"><span class="ov-barcell"><span class="ov-minibar"><i style="width:7%;background:var(--orange)"></i></span>
+                    <span class="mono" style="font-size:11px">3%</span></span></td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="font-size:10px;color:var(--text3);margin-top:6px">
+            Route-kapsamlı ≤200 trace örneğinden; pencere = sayfanın range'i (DependencyStrip'in sabit 1 saatinden farklı).
+            Süre payı = downstream span sürelerinin toplam giriş-span süresine oranı.
+          </div>
+        </div>
+
+        <div id="pane-callers" class="mk-pane">
+          <div class="table-wrap">
+            <table style="table-layout:fixed;width:100%">
+              <colgroup><col style="width:132px"><col style="width:150px"><col style="width:72px">
+                <col style="width:56px"><col style="width:66px"><col style="width:68px"></colgroup>
+              <thead><tr>
+                <th class="sortable">Caller</th><th>Caller operation</th>
+                <th class="num sorted">Calls <span class="sort-arrow">↓</span></th>
+                <th class="num">Pay</th><th class="num">Err %</th><th class="num">P99</th>
+              </tr></thead>
+              <tbody>
+                <tr><td><a class="mono" href="#">web-bff</a></td><td class="mono" style="font-size:11px">POST /checkout</td>
+                  <td class="num mono">78,420</td><td class="num mono">61%</td>
+                  <td class="num mono"><span class="badge b-warn" style="font-size:9px">3.4%</span></td>
+                  <td class="num mono">980 ms</td></tr>
+                <tr><td><a class="mono" href="#">mobile-bff</a></td><td class="mono" style="font-size:11px">POST /v2/checkout</td>
+                  <td class="num mono">34,610</td><td class="num mono">27%</td>
+                  <td class="num mono"><span class="badge b-warn" style="font-size:9px">2.8%</span></td>
+                  <td class="num mono">1,020 ms</td></tr>
+                <tr><td><a class="mono" href="#">partner-gateway</a></td><td class="mono" style="font-size:11px">POST /partner/checkout</td>
+                  <td class="num mono">11,900</td><td class="num mono">9%</td>
+                  <td class="num mono"><span class="badge b-err" style="font-size:9px">4.1%</span></td>
+                  <td class="num mono">1,240 ms</td></tr>
+                <tr><td><a class="mono" href="#">checkout-cron</a></td><td class="mono" style="font-size:11px">retry-batch</td>
+                  <td class="num mono">3,500</td><td class="num mono">3%</td>
+                  <td class="num mono"><span class="badge b-ok" style="font-size:9px">0.9%</span></td>
+                  <td class="num mono">640 ms</td></tr>
+              </tbody>
+            </table>
+          </div>
+          <div style="font-size:10px;color:var(--text3);margin-top:6px">
+            Aynı trace örneğinin parent kenarları yürünerek çıkarılır — ek sorgu maliyeti yok.
+            Satırlar <code>/service?name=</code> ve <code>/traces</code>'e pivotlar.
+          </div>
+        </div>
+
+        <!-- ══════ N5 — YENİ bölüm: baseline ══════ -->
+        <div class="mk-sect">Baseline <span class="mk-new">Yeni · N5</span>
+          <span class="badge b-err" style="font-size:9px">p99 +2.4 σ · 12 dk</span></div>
+        <svg viewBox="0 0 548 150" width="100%" height="150" preserveAspectRatio="none"
+             style="display:block;border:1px solid var(--border);border-radius:6px;background:var(--bg0)">
+          <!-- 7 günlük aynı-slot p25–p75 bandı -->
+          <polygon points="0.0,85.2 7.7,85.1 15.4,84.9 23.2,84.5 30.9,84.0 38.6,83.3 46.3,82.5 54.0,81.6 61.7,80.6 69.5,79.5 77.2,78.2 84.9,76.9 92.6,75.5 100.3,74.0 108.1,72.5 115.8,70.9 123.5,69.3 131.2,67.7 138.9,66.0 146.6,64.4 154.4,62.8 162.1,61.3 169.8,59.8 177.5,58.4 185.2,57.0 193.0,55.7 200.7,54.6 208.4,53.5 216.1,52.6 223.8,51.7 231.5,51.0 239.3,50.5 247.0,50.1 254.7,49.8 262.4,49.7 270.1,49.7 277.9,49.9 285.6,50.2 293.3,50.7 301.0,51.3 308.7,52.1 316.5,52.9 324.2,53.9 331.9,55.0 339.6,56.3 347.3,57.6 355.0,59.0 362.8,60.4 370.5,61.9 378.2,63.5 385.9,65.1 393.6,66.7 401.4,68.4 409.1,70.0 416.8,71.6 424.5,73.1 432.2,74.6 439.9,76.1 447.7,77.5 455.4,78.8 463.1,80.0 470.8,81.1 478.5,82.0 486.3,82.9 494.0,83.6 501.7,84.2 509.4,84.7 517.1,85.0 524.8,85.1 532.6,85.2 540.3,85.2 548.0,85.2 548.0,103.5 540.3,103.5 532.6,103.5 524.8,103.4 517.1,103.3 509.4,103.2 501.7,102.9 494.0,102.5 486.3,102.1 478.5,101.6 470.8,101.0 463.1,100.3 455.4,99.6 447.7,98.8 439.9,97.9 432.2,97.0 424.5,96.1 416.8,95.2 409.1,94.2 401.4,93.2 393.6,92.2 385.9,91.2 378.2,90.3 370.5,89.3 362.8,88.4 355.0,87.5 347.3,86.6 339.6,85.8 331.9,85.1 324.2,84.4 316.5,83.8 308.7,83.3 301.0,82.8 293.3,82.5 285.6,82.2 277.9,82.0 270.1,81.9 262.4,81.8 254.7,81.9 247.0,82.1 239.3,82.3 231.5,82.7 223.8,83.1 216.1,83.6 208.4,84.2 200.7,84.8 193.0,85.5 185.2,86.3 177.5,87.1 169.8,88.0 162.1,88.9 154.4,89.9 146.6,90.8 138.9,91.8 131.2,92.8 123.5,93.8 115.8,94.8 108.1,95.7 100.3,96.7 92.6,97.6 84.9,98.4 77.2,99.2 69.5,100.0 61.7,100.7 54.0,101.3 46.3,101.9 38.6,102.3 30.9,102.7 23.2,103.0 15.4,103.3 7.7,103.4 0.0,103.5" fill="var(--accent-soft)" stroke="none"/>
+          <!-- 7 günlük medyan -->
+          <polyline points="0.0,95.4 7.7,95.3 15.4,95.2 23.2,94.9 30.9,94.5 38.6,94.0 46.3,93.4 54.0,92.6 61.7,91.8 69.5,91.0 77.2,90.0 84.9,88.9 92.6,87.8 100.3,86.7 108.1,85.5 115.8,84.3 123.5,83.0 131.2,81.7 138.9,80.5 146.6,79.2 154.4,78.0 162.1,76.8 169.8,75.6 177.5,74.5 185.2,73.4 193.0,72.4 200.7,71.5 208.4,70.7 216.1,69.9 223.8,69.3 231.5,68.8 239.3,68.3 247.0,68.0 254.7,67.8 262.4,67.7 270.1,67.7 277.9,67.9 285.6,68.1 293.3,68.5 301.0,69.0 308.7,69.6 316.5,70.2 324.2,71.0 331.9,71.9 339.6,72.8 347.3,73.9 355.0,74.9 362.8,76.1 370.5,77.3 378.2,78.5 385.9,79.7 393.6,81.0 401.4,82.3 409.1,83.5 416.8,84.8 424.5,86.0 432.2,87.2 439.9,88.3 447.7,89.4 455.4,90.4 463.1,91.3 470.8,92.2 478.5,93.0 486.3,93.6 494.0,94.2 501.7,94.7 509.4,95.0 517.1,95.3 524.8,95.4 532.6,95.4 540.3,95.4 548.0,95.4" fill="none" stroke="var(--text3)" stroke-width="1.2" stroke-dasharray="4 3"/>
+          <!-- bugünkü p99 -->
+          <polyline points="0.0,96.8 7.7,94.4 15.4,94.3 23.2,93.1 30.9,94.4 38.6,95.9 46.3,96.3 54.0,89.7 61.7,97.8 69.5,92.6 77.2,92.9 84.9,88.7 92.6,89.4 100.3,88.1 108.1,82.8 115.8,86.1 123.5,86.8 131.2,78.2 138.9,77.3 146.6,74.6 154.4,75.9 162.1,79.5 169.8,70.8 177.5,76.1 185.2,72.7 193.0,76.9 200.7,74.2 208.4,68.7 216.1,66.9 223.8,69.1 231.5,63.0 239.3,68.7 247.0,76.7 254.7,65.5 262.4,76.7 270.1,74.9 277.9,69.8 285.6,65.6 293.3,66.1 301.0,70.2 308.7,68.0 316.5,75.6 324.2,59.9 331.9,73.0 339.6,73.4 347.3,74.8 355.0,70.3 362.8,55.9 370.5,39.3 378.2,29.5 385.9,19.4 393.6,8.1 401.4,7.5 409.1,7.6 416.8,18.2 424.5,13.2 432.2,29.1 439.9,35.4 447.7,57.4 455.4,75.1 463.1,91.5 470.8,89.3 478.5,92.7 486.3,96.1 494.0,96.2 501.7,99.8 509.4,91.3 517.1,91.3 524.8,98.7 532.6,97.8 540.3,97.4 548.0,97.0" fill="none" stroke="var(--accent)" stroke-width="1.6"/>
+          <!-- bandın üstüne taşan bölüm -->
+          <polyline points="339.6,73.4 347.3,74.8 355.0,70.3 362.8,55.9 370.5,39.3 378.2,29.5 385.9,19.4 393.6,8.1 401.4,7.5 409.1,7.6 416.8,18.2 424.5,13.2 432.2,29.1 439.9,35.4 447.7,57.4 455.4,75.1 463.1,91.5 470.8,89.3 478.5,92.7" fill="none" stroke="var(--err)" stroke-width="2"/>
+          <!-- deploy işareti (mevcut EventMarkers) -->
+          <line x1="355.0" y1="0" x2="355.0" y2="132" stroke="var(--purple)"
+                stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="355.0" y="145" fill="var(--purple)" font-size="9"
+                font-family="ui-monospace, monospace" text-anchor="middle">deploy v2.3.1</text>
+        </svg>
+        <div class="row gap-3" style="margin-top:6px;flex-wrap:wrap;font-size:10.5px;color:var(--text2)">
+          <span class="row" style="gap:6px"><i style="width:14px;height:2px;background:var(--accent);display:inline-block"></i> bugün p99</span>
+          <span class="row" style="gap:6px"><i style="width:14px;height:2px;background:var(--text3);display:inline-block"></i> 7 gün aynı-slot medyan</span>
+          <span class="row" style="gap:6px"><i style="width:14px;height:8px;background:var(--accent-soft);border:1px solid var(--accent-border);display:inline-block"></i> p25–p75 bandı</span>
+          <span class="row" style="gap:6px"><i style="width:14px;height:2px;background:var(--err);display:inline-block"></i> bant dışı</span>
+        </div>
+        <div style="font-size:10px;color:var(--text3);margin-top:6px">
+          Pazartesi 14:20'de p99 1,355 ms — aynı saat/gün-sınıfı 7 günlük medyan 699 ms.
+          Yani "sabah trafiği normal, bu sapma değil" ile "3× sapma" ayrımı gözle değil sayıyla.
+        </div>
+
+        <!-- MEVCUT bölümler (kısaltılmış) -->
+        <div class="mk-sect">Status breakdown</div>
+        <div class="row gap-2" style="flex-wrap:wrap">
+          <span class="badge b-ok">2xx 124,218</span><span class="badge b-warn">4xx 3,100</span>
+          <span class="badge b-err">5xx 1,012</span>
+          <span style="width:1px;height:14px;background:var(--border);margin:0 4px"></span>
+          <span class="mono" style="font-size:10px;color:var(--text2)">200×124,218</span>
+          <span class="mono" style="font-size:10px;color:var(--text2)">409×2,410</span>
+          <span class="mono" style="font-size:10px;color:var(--text2)">503×781</span>
+        </div>
+
+        <div class="mk-sect">Top exceptions</div>
+        <div style="display:flex;flex-direction:column;gap:6px;font-size:11px">
+          <div class="row gap-2"><span class="badge b-err" style="font-size:9px">×781</span>
+            <a class="mono" href="#">PaymentTimeoutException</a>
+            <span style="color:var(--text3);overflow:hidden;text-overflow:ellipsis">upstream payments-api did not respond in 3000ms</span></div>
+          <div class="row gap-2"><span class="badge b-err" style="font-size:9px">×231</span>
+            <a class="mono" href="#">OptimisticLockException</a>
+            <span style="color:var(--text3);overflow:hidden;text-overflow:ellipsis">row was updated by another transaction</span></div>
+        </div>
+
+        <div class="mk-sect">Failing traces
+          <span style="font-weight:400;font-size:11px">
+            <a href="#" style="margin-right:10px">slowest →</a>
+            <a href="#" style="color:var(--err)">worst error →</a></span></div>
+        <div style="display:flex;flex-direction:column;gap:4px;font-size:11px">
+          <div class="row gap-2"><a class="mono" href="#">7f3a91c4e0b25d18…</a>
+            <span class="mono">3,214.6 ms</span><span class="badge b-err" style="font-size:9px">503</span>
+            <span style="color:var(--text3)">payments call timed out</span></div>
+          <div class="row gap-2"><a class="mono" href="#">c81d40aa9b6f2e70…</a>
+            <span class="mono">2,880.1 ms</span><span class="badge b-err" style="font-size:9px">500</span>
+            <span style="color:var(--text3)">optimistic lock · 3 error spans</span></div>
+        </div>
+
+        <div class="mk-sect">Split by attribute</div>
+        <select style="font-size:12px"><option>Pick an attribute…</option></select>
+      </div>
+    </div>
+
+    <!-- Yan sütun: neyin değişmediği + yeni yüzeylerin özeti -->
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px">Değişmeyenler</div>
+        <ul style="font-size:11.5px;color:var(--text2);line-height:1.75;padding-left:16px">
+          <li>Ana tablonun kolon sırası, sıralaması, satır tıklaması, ▶ genişletme.</li>
+          <li>Kontrol şeridi (ServicePicker, path filtresi, cluster, limit, compare, shape, impact, ColumnToggle).</li>
+          <li>KPI şeridi ve alt not.</li>
+          <li>Sparkline tıklaması → 3 uPlot'lu RED modalı (drag-zoom + çift-tık geri).</li>
+          <li>Drawer'ın 5 mevcut bölümü ve sıraları — yeni bölümler <b>araya değil</b>, latency dağılımından
+              sonra ekleniyor.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px">Yeni yüzeyler → veri kaynağı</div>
+        <table style="font-size:11px">
+          <tbody>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">N1</span> HTTP | RPC &amp; Messaging</td>
+              <td class="mono" style="font-size:10.5px">spanmetrics_1m (name, kind)</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">N2</span> P90 · Spread · vs Baseline</td>
+              <td class="mono" style="font-size:10.5px">spanmetrics_1m tdigest idx 2 + 7g slot</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">N3</span> ⚡ / ✖ exemplar</td>
+              <td class="mono" style="font-size:10.5px">slow_/error_exemplar_state</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">N4</span> Downstream | Callers</td>
+              <td class="mono" style="font-size:10.5px">route-kapsamlı trace örneği (≤200)</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">N5</span> Baseline bandı</td>
+              <td class="mono" style="font-size:10.5px">spanmetrics_1m, 7×aynı slot</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">N6</span> scope · Explore · saved views</td>
+              <td class="mono" style="font-size:10.5px">deploy_env kolonu · saved_views</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;margin-bottom:6px">Bu mockup'ta OLMAYANLAR</div>
+        <div style="font-size:11.5px;color:var(--text2);line-height:1.7">
+          Deploy öncesi/sonrası versiyon karşılaştırması (Split-by'a kolon eklemesi) ve endpoint-bazlı
+          apdex/SLO rozeti gap listesinde var ama bu turda çizilmedi: ilki mevcut Split-by tablosunun içine
+          giriyor, ikincisi <code>spanmetrics_1m</code>'e iki yeni state kolonu (rolling-deploy okuma-hatası
+          penceresi) gerektiriyor. Detay brief'te.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mk-foot" style="margin-top:22px;padding-top:12px;border-top:1px solid var(--border)">
+    Mockup — <code>scratchpad/dt-parity/endpoints-mockup.html</code>. Hiçbir ürün dosyası değiştirilmedi.
+    Renkler yalnızca <code>globals.css</code> token'larından; grafikler temsilî statik SVG (üründe uPlot).
+  </div>
+</div>
+
+<script>
+// Mockup-only: sekme değiştirme (üründe URL state'e yazılır).
+function mkTab(btn, paneId) {
+  var strip = btn.parentElement;
+  var buttons = strip.querySelectorAll('button');
+  for (var i = 0; i < buttons.length; i++) buttons[i].classList.remove('active');
+  btn.classList.add('active');
+  var scope = strip.parentElement;
+  var panes = scope.querySelectorAll(':scope > .mk-pane');
+  for (var j = 0; j < panes.length; j++) panes[j].classList.remove('on');
+  var target = document.getElementById(paneId);
+  if (target) target.classList.add('on');
+}
+</script>
+</body>
+</html>

@@ -10,6 +10,27 @@ import (
 	"time"
 )
 
+// traceFetchPad widens the second-pass window around a set of trace ids
+// picked by a first pass.
+//
+// v0.9.231 — three "SELECT … WHERE trace_id IN (…)" second passes carried
+// no time predicate at all. `spans` is PARTITION BY toDate(time) with only
+// a bloom filter on trace_id, so an unbounded IN makes ClickHouse run index
+// analysis over EVERY daily partition in retention — 30 days × 1B spans/day
+// — and the filter's 1% false-positive rate, multiplied across 200-500 ids,
+// drags in millions of spurious granules per call. Bounding the second pass
+// to the first pass's window prunes that to a handful of partitions.
+//
+// The pad exists because a trace SELECTED for having a span inside the
+// window can have other spans just outside it; clamping to exactly the
+// selection window would drop them and break the parent/child edge walk.
+// An hour is far past any realistic trace duration while still pruning
+// 30 days down to window+2h. A pathological multi-hour trace can still lose
+// a straggler span — acceptable on surfaces that are explicitly
+// sample-based, and the alternative (per-trace window lookup, as GetTrace
+// does at repo.go) costs a round trip per id.
+const traceFetchPad = time.Hour
+
 // AggSpanNode is one position in the multi-trace aggregated tree
 // returned by AggregateServiceStructure. A node identifies a unique
 // `(parent path → service → operation)` triple — every span across
@@ -37,7 +58,11 @@ type AggSpanNode struct {
 // GetSpansForTraces fetches every span belonging to the supplied
 // trace IDs in a single round-trip. Used by the structure
 // aggregator to avoid N round-trips per sample.
-func (s *Store) GetSpansForTraces(ctx context.Context, traceIDs []string) ([]SpanRow, error) {
+// from/to bound the scan to the window the trace ids were picked from
+// (padded by traceFetchPad). A zero `from` means "unbounded" and is kept
+// only for callers that genuinely have no window; every in-tree caller
+// passes one.
+func (s *Store) GetSpansForTraces(ctx context.Context, traceIDs []string, from, to time.Time) ([]SpanRow, error) {
 	if len(traceIDs) == 0 {
 		return nil, nil
 	}
@@ -47,6 +72,11 @@ func (s *Store) GetSpansForTraces(ctx context.Context, traceIDs []string) ([]Spa
 		holders[i] = "?"
 		args[i] = id
 	}
+	timeClause := ""
+	if !from.IsZero() {
+		timeClause = "\n\t\t  AND time >= ? AND time <= ?"
+		args = append(args, from.Add(-traceFetchPad), to.Add(traceFetchPad))
+	}
 	query := fmt.Sprintf(`
 		SELECT trace_id, span_id, parent_id, name, kind, service_name, host_name,
 		       time, duration, status_code, status_msg,
@@ -54,9 +84,9 @@ func (s *Store) GetSpansForTraces(ctx context.Context, traceIDs []string) ([]Spa
 		       events, scope_name,
 		       db_system, db_statement, http_method, http_route, http_status, peer_service
 		FROM spans
-		WHERE trace_id IN (%s)
+		WHERE trace_id IN (%s)%s
 		ORDER BY trace_id, time ASC
-		SETTINGS max_execution_time = 30`, strings.Join(holders, ","))
+		SETTINGS max_execution_time = 30`, strings.Join(holders, ","), timeClause)
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -152,8 +182,10 @@ func (s *Store) AggregateServiceStructure(
 		return nil, 0, 0, nil
 	}
 
-	// Step 2: bulk fetch every span across those traces.
-	spans, err := s.GetSpansForTraces(ctx, traceIDs)
+	// Step 2: bulk fetch every span across those traces, bounded to the same
+	// window step 1 sampled from (v0.9.231 — was an unbounded IN).
+	winFrom := time.Now().Add(-since)
+	spans, err := s.GetSpansForTraces(ctx, traceIDs, winFrom, time.Now())
 	if err != nil {
 		return nil, 0, 0, err
 	}

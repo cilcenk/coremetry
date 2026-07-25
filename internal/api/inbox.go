@@ -49,6 +49,19 @@ type InboxItem struct {
 	Status    string `json:"status"` // open | acknowledged | resolved (problems);
 	// open | regressed (exceptions); active | cleared (anomalies)
 	Clusters []string `json:"clusters,omitempty"`
+
+	// v0.9.255 — enrichment results the inbox was already PAYING for and
+	// then dropping. listInbox runs EnrichProblemsWithRunbooks /
+	// WithDeploys before mapping (three CH round-trips per poll), but
+	// problemToInbox never copied the results out, so every triage row
+	// arrived without the two facts an operator reaches for first:
+	// "is there a runbook" and "did something just deploy". The queries
+	// were billed and the answers thrown away.
+	//
+	// Problem-kind only for now: exceptions and anomalies have their own
+	// deploy correlation paths and are not enriched on this route.
+	RunbookURL   string                `json:"runbookUrl,omitempty"`
+	RecentDeploy *chstore.RecentDeploy `json:"recentDeploy,omitempty"`
 	// Kind-specific drill-down hints. Only one is populated per
 	// row. Keeps the JSON shape skinny — frontend reads exactly
 	// the one matching `kind`.
@@ -530,6 +543,10 @@ func problemToInbox(p chstore.Problem) InboxItem {
 		Assignee:       p.Assignee,
 		Status:         p.Status,
 		Clusters:       p.Clusters,
+		// v0.9.255 — see the field comments: these were computed by the
+		// enrichment chain in listInbox and then discarded here.
+		RunbookURL:   p.RunbookURL,
+		RecentDeploy: p.RecentDeploy,
 		Problem: &InboxProblemRef{
 			ID: p.ID, RuleID: p.RuleID, Metric: p.Metric,
 			Value: p.Value, Threshold: p.Threshold,

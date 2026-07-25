@@ -3,6 +3,8 @@ package evaluator
 import (
 	"testing"
 	"time"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
 // v0.8.309 — regression: the critical-page storm. Two refresh paths
@@ -36,7 +38,11 @@ func TestEffectiveSeverity(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			if got := effectiveSeverity(c.computed, c.openFor); got != c.want {
+			// v0.9.248 — the ladder's windows moved into settings.
+			// This v0.8.309 contract is about the FLOOR, not the
+			// window values, so it runs against the defaults, which
+			// are the same 15/30 constants it was written for.
+			if got := effectiveSeverity(c.computed, c.openFor, chstore.DefaultProblemEscalation()); got != c.want {
 				t.Fatalf("effectiveSeverity(%q, %s) = %q, want %q", c.computed, c.openFor, got, c.want)
 			}
 		})

@@ -922,6 +922,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("PUT /api/settings/retention", auth.RequireRole(auth.RoleAdmin, s.putRetention))
 	mux.HandleFunc("GET /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.getAnomalyPromotion))
 	mux.HandleFunc("PUT /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.putAnomalyPromotion))
+	mux.HandleFunc("GET /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.getProblemEscalation))
+	mux.HandleFunc("PUT /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.putProblemEscalation))
 	mux.HandleFunc("GET /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.getAISettings))
 	mux.HandleFunc("PUT /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.putAISettings))
 	// External Tempo backend — admin-only because the token grants
@@ -7741,6 +7743,54 @@ func (s *Server) putAnomalyPromotion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "settings.anomaly_promotion.update", "settings", "anomaly_promotion", fmt.Sprintf(`{"minPeakRatio":%v,"criticalPeakRatio":%v,"minSustainedSec":%v,"minCount":%v}`, c.MinPeakRatio, c.CriticalPeakRatio, c.MinSustainedSec, c.MinCount))
+	writeJSON(w, c)
+}
+
+// getProblemEscalation returns the age-based escalation config that
+// drives escalateStaleProblems. Defaults live in chstore so a
+// never-edited install reports the pre-v0.9.248 15min/30min ladder.
+func (s *Server) getProblemEscalation(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.store.GetProblemEscalation(r.Context()))
+}
+
+// putProblemEscalation validates + persists the escalation windows.
+// The evaluator picks them up on its own (the sweep reads through a
+// short-lived memo), so no restart.
+//
+// Bounds are deliberately loose at the top end — an operator who
+// wants "never escalate before 12h" is expressing a real policy, not
+// a typo. The floor is 60s because anything shorter escalates inside
+// a single evaluator tick, which reads as "it opened at critical"
+// and makes the ladder meaningless.
+func (s *Server) putProblemEscalation(w http.ResponseWriter, r *http.Request) {
+	var c chstore.ProblemEscalationConfig
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if c.InfoToWarningSec < 60 || c.InfoToWarningSec > 7*24*3600 {
+		http.Error(w, "infoToWarningSec must be between 60 and 604800", http.StatusBadRequest)
+		return
+	}
+	if c.WarningToCriticalSec < 60 || c.WarningToCriticalSec > 7*24*3600 {
+		http.Error(w, "warningToCriticalSec must be between 60 and 604800", http.StatusBadRequest)
+		return
+	}
+	// critical before warning would let an `info` problem jump
+	// straight past `warning`. Reject rather than silently reorder —
+	// the read-side clamp exists for legacy rows, not for hiding a
+	// typo the operator could fix.
+	if c.WarningToCriticalSec < c.InfoToWarningSec {
+		http.Error(w, "warningToCriticalSec must be >= infoToWarningSec", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SaveProblemEscalation(r.Context(), c); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.audit(r, "settings.problem_escalation.update", "settings", "problem_escalation",
+		fmt.Sprintf(`{"enabled":%v,"infoToWarningSec":%v,"warningToCriticalSec":%v}`,
+			c.Enabled, c.InfoToWarningSec, c.WarningToCriticalSec))
 	writeJSON(w, c)
 }
 

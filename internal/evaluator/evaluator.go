@@ -31,6 +31,16 @@ type Evaluator struct {
 	leader   *cache.LeaderHolder // v0.5.429
 	notifier *notify.Notifier
 
+	// escCfg memoises the age-escalation settings (v0.9.248). The
+	// per-service reconcile paths (db_capacity, runtime_pods) clamp
+	// to the escalation floor on EVERY sample, and GetSetting is an
+	// uncached CH query with FINAL — without a memo one tick would
+	// fan out into a system_settings read per service. escMu guards
+	// it the same way breachMu guards breachSince.
+	escMu  sync.Mutex
+	escCfg chstore.ProblemEscalationConfig
+	escAt  time.Time
+
 	// breachSince tracks when a (rule, service) tuple first
 	// breached its threshold. Used by the v0.5.127 sustained-
 	// breach gate (AlertRule.ForSec): a problem only opens once
@@ -865,7 +875,30 @@ func appendStaleSuffix(desc string) string {
 	return desc + suffix
 }
 
+// escalationCfg returns the age-escalation settings, memoised for
+// escalationMemoTTL. The evaluator tick is longer than the TTL, so a
+// settings change still lands within one tick while a single pass
+// never re-reads.
+func (e *Evaluator) escalationCfg(ctx context.Context) chstore.ProblemEscalationConfig {
+	const escalationMemoTTL = 20 * time.Second
+	e.escMu.Lock()
+	defer e.escMu.Unlock()
+	if !e.escAt.IsZero() && time.Since(e.escAt) < escalationMemoTTL {
+		return e.escCfg
+	}
+	e.escCfg = e.store.GetProblemEscalation(ctx)
+	e.escAt = time.Now()
+	return e.escCfg
+}
+
 func (e *Evaluator) escalateStaleProblems(ctx context.Context) {
+	// One read per sweep — every problem in this pass is judged
+	// against the same snapshot, so a mid-sweep settings change can't
+	// escalate half the fleet under old windows and half under new.
+	esc := e.escalationCfg(ctx)
+	if !esc.Enabled {
+		return
+	}
 	problems, err := e.store.ListProblems(ctx, chstore.ProblemFilter{
 		Status: "open",
 		Limit:  500,
@@ -878,7 +911,7 @@ func (e *Evaluator) escalateStaleProblems(ctx context.Context) {
 	for i := range problems {
 		p := problems[i]
 		openFor := now.Sub(time.Unix(0, p.StartedAt))
-		next := nextSeverity(p.Severity, openFor)
+		next := nextSeverity(p.Severity, openFor, esc)
 		if next == "" || next == p.Severity {
 			continue
 		}
@@ -939,6 +972,9 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 	if !cfg.Enabled {
 		return
 	}
+	// Same snapshot discipline as the escalation sweep — the promoted
+	// severity is clamped to the age floor, so it needs the windows.
+	esc := e.escalationCfg(ctx)
 	minSustained := time.Duration(cfg.MinSustainedSec) * time.Second
 
 	events, err := e.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
@@ -1004,7 +1040,7 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 		// ratio-derived severity every tick (page storm); the backdated
 		// StartedAt on promotion also made a fresh problem double-page
 		// (promote at warning + escalate to critical in one pass).
-		sev = effectiveSeverity(sev, time.Since(time.Unix(0, startedAt)))
+		sev = effectiveSeverity(sev, time.Since(time.Unix(0, startedAt)), esc)
 		p := chstore.Problem{
 			ID:          id,
 			RuleID:      ruleID,
@@ -1059,8 +1095,8 @@ func truncate(s string, n int) string {
 // re-paged every tick — the critical-notification storm. Routing the
 // recompute through this clamp means an escalated problem can never dip
 // back below its floor, so the sweep finds nothing to re-fire on.
-func effectiveSeverity(computed string, openFor time.Duration) string {
-	if next := nextSeverity(computed, openFor); next != "" {
+func effectiveSeverity(computed string, openFor time.Duration, cfg chstore.ProblemEscalationConfig) string {
+	if next := nextSeverity(computed, openFor, cfg); next != "" {
 		return next
 	}
 	return computed
@@ -1072,17 +1108,30 @@ func effectiveSeverity(computed string, openFor time.Duration) string {
 // idempotent: a problem already at critical never returns
 // a higher tier; one that hasn't crossed any threshold yet
 // returns "".
-func nextSeverity(cur string, openFor time.Duration) string {
+//
+// v0.9.248 — windows come from the operator's escalation settings
+// (were hard-coded 15 min / 30 min). cfg.Enabled == false disables
+// the climb entirely: severity then stays wherever the rule that
+// opened the Problem put it. Callers pass the config the sweep read
+// once, so every problem in one pass is judged against the same
+// snapshot.
+func nextSeverity(cur string, openFor time.Duration, cfg chstore.ProblemEscalationConfig) string {
+	if !cfg.Enabled {
+		return ""
+	}
+	cfg = chstore.NormalizeProblemEscalation(cfg)
+	toWarning := time.Duration(cfg.InfoToWarningSec) * time.Second
+	toCritical := time.Duration(cfg.WarningToCriticalSec) * time.Second
 	switch strings.ToLower(cur) {
 	case "info":
-		if openFor >= escalateWarningToCriticalAfter {
+		if openFor >= toCritical {
 			return "critical"
 		}
-		if openFor >= escalateInfoToWarningAfter {
+		if openFor >= toWarning {
 			return "warning"
 		}
 	case "warning":
-		if openFor >= escalateWarningToCriticalAfter {
+		if openFor >= toCritical {
 			return "critical"
 		}
 	}

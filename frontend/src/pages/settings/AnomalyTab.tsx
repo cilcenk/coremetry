@@ -132,6 +132,110 @@ export function AnomalyPromotionTab() {
         </Button>
         {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
       </div>
+
+      <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
+      <EscalationSection />
+    </div>
+  );
+}
+
+// ── Age-based escalation (v0.9.248) ─────────────────────────────
+//
+// Lives on this tab rather than its own because an operator arrives
+// here asking one question — "why am I getting so many pages?" — and
+// the two halves of the answer are the promotion gate above and this
+// ladder. It is NOT scoped to anomalies though: every open Problem
+// climbs it, whichever rule opened it. The copy says so, because
+// putting it under a heading called "Anomaly auto-promotion" would
+// otherwise imply a narrower blast radius than it has.
+//
+// The windows were hard-coded 15 min / 30 min until now, which meant
+// tightening promotion barely helped: anything that got through
+// escalated itself to critical half an hour later and re-fired the
+// notify channel on the way (escalateStaleProblems calls
+// SendProblemAlert on every bump).
+function EscalationSection() {
+  type Esc = { enabled: boolean; infoToWarningSec: number; warningToCriticalSec: number };
+  const [cfg, setCfg] = useState<Esc | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    api.getProblemEscalation()
+      .then(c => setCfg(c))
+      .catch(err => setFlash({ kind: 'err', text: humanize(err) }));
+  }, []);
+
+  const save = async () => {
+    if (!cfg) return;
+    setBusy(true); setFlash(null);
+    try {
+      const saved = await api.putProblemEscalation(cfg);
+      setCfg(saved);
+      setFlash({ kind: 'ok', text: 'Saved — next evaluator tick picks it up automatically.' });
+    } catch (err) {
+      setFlash({ kind: 'err', text: humanize(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const mins = (sec: number) => `${Math.round(sec / 60)} min`;
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Age-based escalation</h2>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 18, lineHeight: 1.55 }}>
+        An open Problem nobody acks climbs the severity ladder on its own:
+        info &rarr; warning &rarr; critical. Each bump re-fires the notify channel, so
+        severity-gated pagers hear about it again. This applies to <b>every</b> Problem,
+        not just promoted anomalies &mdash; turn it off if &quot;still open after 30
+        minutes&quot; is normal for your fleet.
+      </p>
+
+      {!cfg ? (
+        flash ? <FlashBox kind={flash.kind}>{flash.text}</FlashBox> : <Spinner />
+      ) : (
+        <>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+            <input type="checkbox" checked={cfg.enabled}
+              onChange={e => setCfg({ ...cfg, enabled: e.target.checked })} />
+            <span style={{ fontSize: 13, color: 'var(--text)' }}>
+              Escalate open Problems as they age
+            </span>
+          </label>
+
+          <div style={{ display: 'grid', gap: 12, opacity: cfg.enabled ? 1 : 0.5 }}>
+            <Field label="info → warning after (seconds)">
+              <input type="number" min={60} max={604800} step={60}
+                value={cfg.infoToWarningSec}
+                onChange={e => setCfg({ ...cfg, infoToWarningSec: Number(e.target.value) })}
+                disabled={!cfg.enabled} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Currently {mins(cfg.infoToWarningSec)}. Default 900s (15 min).
+              </div>
+            </Field>
+
+            <Field label="warning → critical after (seconds)">
+              <input type="number" min={cfg.infoToWarningSec} max={604800} step={60}
+                value={cfg.warningToCriticalSec}
+                onChange={e => setCfg({ ...cfg, warningToCriticalSec: Number(e.target.value) })}
+                disabled={!cfg.enabled} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Currently {mins(cfg.warningToCriticalSec)}. Default 1800s (30 min).
+                Must be &ge; the info &rarr; warning window.
+              </div>
+            </Field>
+          </div>
+
+          <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="primary" onClick={save} disabled={busy}>
+              {busy ? 'Saving…' : 'Save'}
+            </Button>
+            {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
+          </div>
+        </>
+      )}
     </div>
   );
 }

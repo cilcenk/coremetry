@@ -1957,17 +1957,96 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			deps, err := s.store.GetServiceDeploys(ctx, svc, from, to)
-			if err != nil {
-				log.Printf("[svc-bundle] deploys %s: %v", svc, err)
-				return
-			}
-			out.Deploys = deps
+			out.Deploys = s.serviceDeploysNonBlocking(ctx, svc, from, to)
 		}()
 
 		wg.Wait()
 		return out, nil
 	})
+}
+
+// deployCacheTTL — deploy markers move on a ROLLOUT cadence (hours),
+// not a request cadence, so a value that is minutes stale reads
+// identically to a fresh one.
+const deployCacheTTL = 10 * time.Minute
+
+// deployFillBudget — ceiling on the background fill. Sits just above
+// serviceDeploysSQL's own `max_execution_time = 15` so ClickHouse, not
+// the Go context, is what reports a timeout (a CH-side abort names the
+// query in system.query_log; a Go-side cancel just says "context
+// canceled").
+const deployFillBudget = 20 * time.Second
+
+// deployWindowBucket snaps the bundle window to a 5-minute grid for the
+// deploys cache key. cacheBucket's 30s grid is right for per-request
+// data, but a rolling `to=now` window would mint a fresh key on every
+// poll — the expensive fill would be recomputed forever and never
+// actually reused. Deploy history at 5-minute granularity is
+// indistinguishable to an operator.
+func deployWindowBucket(from, to time.Time) string {
+	const grid = 5 * time.Minute
+	return fmt.Sprintf("%d_%d", from.Truncate(grid).UnixNano(), to.Truncate(grid).UnixNano())
+}
+
+// serviceDeploysNonBlocking returns the service's deploy markers from
+// cache, and on a miss kicks a background fill instead of waiting for
+// one.
+//
+// v0.9.244 (operator-reported: /api/services/<svc>/bundle took 17.41s in
+// prod). Of the bundle's four fan-out legs this is the only one that
+// scans RAW spans, and it scans a 48h lookback (deployLookback — the
+// v0.9.205 phantom-marker fix) under `max_execution_time = 15`. At prod
+// span volume it burned the full 15s for essentially every service, and
+// because the fan-out joins on wg.Wait() that single leg gated the whole
+// response while the other three finished in ~200ms.
+//
+// Measured on local CH (2026-07-25): the query costs ~58ms over 205k
+// rows and is linear in rows scanned — the per-row cost is dominated by
+// decompressing res_keys/res_values, and ClickHouse already does a good
+// job on the multiIf (a fingerprint-first rewrite benchmarked SLOWER,
+// 65ms, so it was dropped). Prod's 15s therefore means tens of millions
+// of rows per service, which no query-shape change fixes. Making the
+// slot async is what actually returns the bundle to the speed of its
+// fast legs; a version/deploy MV is the real fix for the query itself
+// and is queued separately.
+//
+// A nil slot is already the established degradation here — the previous
+// code left out.Deploys nil on any error and the Deploy History panel
+// renders empty rather than breaking. So a cold first view loses nothing
+// it wasn't already losing in prod, and every later view is a cache hit.
+func (s *Server) serviceDeploysNonBlocking(
+	ctx context.Context, svc string, from, to time.Time,
+) []chstore.Deploy {
+	key := fmt.Sprintf("svc-deploys:v1:svc=%s:w=%s", svc, deployWindowBucket(from, to))
+	if raw, ok, err := s.cache.Get(ctx, key); err == nil && ok && len(raw) > 0 {
+		var deps []chstore.Deploy
+		if json.Unmarshal(raw, &deps) == nil {
+			return deps
+		}
+	}
+	go func() {
+		// singleflight under the cache key: one service watched by
+		// several operators (or polled by one tab) must not fan out
+		// into N concurrent 48h scans.
+		_, _, _ = s.sf.Do("fill:"+key, func() (any, error) {
+			// Fresh context — the request that triggered this fill has
+			// already returned, so the request context is cancelled.
+			fctx, cancel := context.WithTimeout(context.Background(), deployFillBudget)
+			defer cancel()
+			deps, err := s.store.GetServiceDeploys(fctx, svc, from, to)
+			if err != nil {
+				log.Printf("[svc-deploys] fill %s: %v", svc, err)
+				return nil, err
+			}
+			body, err := json.Marshal(deps)
+			if err != nil {
+				log.Printf("[svc-deploys] marshal %s: %v", svc, err)
+				return nil, err
+			}
+			return nil, s.cache.Set(fctx, key, body, deployCacheTTL)
+		})
+	}()
+	return nil
 }
 
 func (s *Server) getServiceStructure(w http.ResponseWriter, r *http.Request) {

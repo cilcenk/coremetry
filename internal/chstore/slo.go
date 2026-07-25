@@ -207,25 +207,48 @@ func (s *Store) ComputeSLOBurnSeries(ctx context.Context, o SLO, days int) ([]Bu
 	}
 	since := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 
-	var goodExpr string
-	switch o.SLIType {
-	case SLITypeAvailability:
-		goodExpr = "countIf(status_code != 'error')"
-	case SLITypeLatency:
-		goodExpr = fmt.Sprintf("countIf(duration <= %f)", o.ThresholdMs*1e6)
-	default:
-		return nil, fmt.Errorf("unknown sli_type: %s", o.SLIType)
-	}
-	q := `
+	// v0.9.237 (scale-audit M3) — availability rides the summary MV, the
+	// same routing ComputeSLOStatus (v0.8.200) and ComputeSLOBurnRate
+	// (v0.9.231) already use. The MV's 5m buckets roll up to days with a
+	// plain toStartOfDay on time_bucket, so the day series is identical
+	// while the scan drops from N days of raw spans to a state merge.
+	//
+	// toUInt64(greatest(...)) is NOT cosmetic: the bare subtraction yields
+	// Int64 and the driver refuses Int64 → *uint64 at SCAN time. That is
+	// exactly the bug v0.9.232 found in the two sibling functions, where it
+	// had silently blanked every availability SLO for a month.
+	var q string
+	args := []any{o.Service, since}
+	if o.SLIType == SLITypeAvailability {
+		mv := "service_summary_5m"
+		nameClause := ""
+		if o.Operation != "" {
+			mv = "operation_summary_5m"
+			nameClause = " AND name = ?"
+		}
+		q = `
+		SELECT toStartOfDay(time_bucket) AS bucket,
+		       countMerge(span_count_state) AS total,
+		       toUInt64(greatest(countMerge(span_count_state) - countIfMerge(error_count_state), 0)) AS good
+		FROM ` + mv + `
+		WHERE service_name = ? AND time_bucket >= ?` + nameClause
+		if o.Operation != "" {
+			args = append(args, o.Operation)
+		}
+	} else if o.SLIType == SLITypeLatency {
+		// Per-span threshold compare — no MV pre-computes it.
+		q = `
 		SELECT toStartOfDay(time)            AS bucket,
 		       count()                       AS total,
-		       ` + goodExpr + `              AS good
+		       ` + fmt.Sprintf("countIf(duration <= %f)", o.ThresholdMs*1e6) + ` AS good
 		FROM spans
 		WHERE service_name = ? AND time >= ?`
-	args := []any{o.Service, since}
-	if o.Operation != "" {
-		q += ` AND name = ?`
-		args = append(args, o.Operation)
+		if o.Operation != "" {
+			q += ` AND name = ?`
+			args = append(args, o.Operation)
+		}
+	} else {
+		return nil, fmt.Errorf("unknown sli_type: %s", o.SLIType)
 	}
 	q += `
 		GROUP BY bucket

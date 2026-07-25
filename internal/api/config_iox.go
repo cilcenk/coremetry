@@ -209,7 +209,15 @@ func (s *Server) importConfig(w http.ResponseWriter, r *http.Request) {
 	// publishConfigReload covers multi-pod via Pub/Sub; the
 	// in-process subscriber wired by reloadConfigOnSignal picks
 	// up the local-pod broadcast too.
-	for _, svc := range []string{"copilot", "ldap", "tempo", "pipeline", "kibana"} {
+	// v0.9.237 — "kibana" was in this list but has no reload case and no
+	// in-memory state (it is read fresh from system_settings), so it was a
+	// no-op that made the list look more complete than it was. Dropped, and
+	// the three services that DO hydrate but were missing are added:
+	// logstore, thanos, custom_roles. An import that rewrites roles must not
+	// leave peers enforcing the old set for 30s (v0.9.233).
+	for _, svc := range []string{
+		"copilot", "ldap", "tempo", "pipeline", "logstore", "thanos", "custom_roles",
+	} {
 		s.publishConfigReload(r.Context(), svc)
 	}
 

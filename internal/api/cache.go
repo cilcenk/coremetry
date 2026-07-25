@@ -489,6 +489,23 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload logstore: %v", err)
 			}
 		}
+	// v0.9.237 — putThanosSettings has published "thanos" since it shipped,
+	// but there was no case for it: the signal fell into default: and was
+	// dropped, so peer pods converged on their 30s poll instead of the
+	// sub-50ms the publish was written for. A publish with no listener reads
+	// as working right up until someone measures it.
+	case "thanos":
+		if s.thanos != nil {
+			if err := s.thanos.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload thanos: %v", err)
+			}
+		}
+	case "rag":
+		if s.rag != nil {
+			if err := s.rag.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload rag: %v", err)
+			}
+		}
 	// v0.9.233 — custom roles had no reload case, and the gap failed OPEN.
 	// userPayload only emits customRolePages when CustomRolePages(name)
 	// returns non-nil; a peer pod that hasn't polled yet returns nil, the

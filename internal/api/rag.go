@@ -118,6 +118,9 @@ func (s *Server) putRAGConfig(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// v0.9.237 — was the only hydrating config service that never broadcast,
+	// so peers kept the old embedding endpoint/model until their 30s poll.
+	s.publishConfigReload(r.Context(), "rag")
 	details, _ := json.Marshal(map[string]any{
 		"endpoint": body.Endpoint, "model": body.Model,
 		"enabled": body.Enabled, "topK": body.TopK, "sources": len(body.Sources),

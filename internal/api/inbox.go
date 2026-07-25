@@ -104,8 +104,26 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// env in the last hour, plus service-less (global) rows. Applied
 	// post-merge so all three sources filter identically.
 	env := strings.TrimSpace(q.Get("env"))
-	statusFilter := strings.TrimSpace(q.Get("status")) // open (default) | all
-	if statusFilter == "" {
+	// open (default) | all | ignored
+	//
+	// v0.9.254 — `ignored` added. Until now an exception group silenced
+	// with Ignore was reachable from NO inbox pivot: pickExceptionState
+	// returned "" for both open and all, and the store's default view
+	// excludes ignored (exception_inbox.go). The only surface that could
+	// show them — and the only place with an Unignore button — was the
+	// /problems page's Ignored tab. Retiring that page without this
+	// would have made ignoring PERMANENT and irreversible: a group
+	// silenced by mistake could never be found again.
+	//
+	// `ignored` is its own pivot rather than folding into `all` on
+	// purpose. Ignoring is a deliberate silencing act; dumping those
+	// rows back into the everyday "all" view would re-add exactly the
+	// noise the operator silenced.
+	statusFilter := strings.TrimSpace(q.Get("status"))
+	switch statusFilter {
+	case "open", "all", "ignored":
+		// ok
+	default:
 		statusFilter = "open"
 	}
 	limit := parseInt(q.Get("limit"), 200)
@@ -140,14 +158,25 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// "java" now matches "java-demo", "java-frontend",
 		// etc. without remembering the exact service name.
 		// ── Problems ─────────────────────────────────────────────
-		probs, err := s.store.ListProblems(ctx, chstore.ProblemFilter{
-			Status: pickStatus(statusFilter), Limit: 200,
-		})
-		if err != nil {
-			return nil, err
+		//
+		// v0.9.254 — skipped entirely on the `ignored` pivot. That view is
+		// exception-only: Problems are MUTED and anomalies are SILENCED,
+		// different verbs backed by different state, so folding them in
+		// would make one view mean three things. Skipping also keeps four
+		// CH round-trips (list + three enrichers) off a rarely-opened view.
+		var probs []chstore.Problem
+		if statusFilter != "ignored" {
+			var err error
+			probs, err = s.store.ListProblems(ctx, chstore.ProblemFilter{
+				Status: pickStatus(statusFilter), Limit: 200,
+			})
+			if err != nil {
+				return nil, err
+			}
 		}
 		// Same enrichment chain Problems UI runs through, so the
-		// derived priority lines up exactly.
+		// derived priority lines up exactly. No-ops on the empty slice
+		// the `ignored` pivot leaves behind.
 		probs = s.store.EnrichProblemsWithRunbooks(ctx, probs)
 		probs = s.store.EnrichProblemsWithClusters(ctx, probs, time.Hour)
 		probs = s.store.EnrichProblemsWithDeploys(ctx, probs, 30*time.Minute)
@@ -176,9 +205,13 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// ── Anomaly events ───────────────────────────────────────
 		// 24h window matches the Anomalies page default. ListAnomaly
 		// EventsByService isn't a thing — filter client-side.
-		evs, err := s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{Limit: 200})
-		if err != nil {
-			return nil, err
+		var evs []chstore.AnomalyEvent
+		if statusFilter != "ignored" {
+			var err error
+			evs, err = s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{Limit: 200})
+			if err != nil {
+				return nil, err
+			}
 		}
 		for _, e := range evs {
 			if statusFilter == "open" && e.Status != "active" {
@@ -451,10 +484,16 @@ func pickStatus(inboxStatus string) string {
 }
 
 func pickExceptionState(inboxStatus string) string {
-	if inboxStatus == "all" {
-		return "" // store default excludes 'ignored'
+	switch inboxStatus {
+	case "ignored":
+		// v0.9.254 — the ONLY pivot that reaches silenced groups. The
+		// store's default view (and therefore "all") excludes them.
+		return chstore.ExStateIgnored
+	case "all":
+		return "" // store default — still excludes 'ignored'
+	default:
+		return "open"
 	}
-	return "open"
 }
 
 func priorityRank(p string) int {

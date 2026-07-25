@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   inboxActionsForKind,
+  exceptionStateActions,
   rootCauseAnchor,
   resolveSelectedItem,
   buildAnomalySilenceBody,
@@ -39,18 +40,55 @@ function mk(kind: InboxKind, over: Partial<InboxItem> = {}): InboxItem {
 describe('inboxActionsForKind', () => {
   it('problem exposes acknowledge + assign + root cause + open', () => {
     expect(inboxActionsForKind('problem')).toEqual({
-      acknowledge: true, assign: true, mute: false, rootCause: true, openSource: true,
+      acknowledge: true, assign: true, mute: false, rootCause: true, openSource: true, setState: false,
     });
   });
   it('anomaly exposes mute + root cause + open (no ack/assign)', () => {
     expect(inboxActionsForKind('anomaly')).toEqual({
-      acknowledge: false, assign: false, mute: true, rootCause: true, openSource: true,
+      acknowledge: false, assign: false, mute: true, rootCause: true, openSource: true, setState: false,
     });
   });
-  it('exception exposes only open source (no rc endpoint, no mutations)', () => {
+  // v0.9.254 — exceptions gained setState. Before this they exposed ONLY the
+  // escape hatch, so a group silenced with Ignore could not be un-ignored from
+  // the unified inbox at all.
+  it('exception exposes setState + open source (still no rc endpoint)', () => {
     expect(inboxActionsForKind('exception')).toEqual({
-      acknowledge: false, assign: false, mute: false, rootCause: false, openSource: true,
+      acknowledge: false, assign: false, mute: false, rootCause: false, openSource: true, setState: true,
     });
+  });
+});
+
+// v0.9.254 — the transition set is the guard against the irreversible-ignore
+// hole. The one case that MUST hold forever: a group in `ignored` is offered a
+// way back.
+describe('exceptionStateActions', () => {
+  it('ignored offers un-ignore — the whole point', () => {
+    const acts = exceptionStateActions('ignored');
+    expect(acts).toHaveLength(1);
+    expect(acts[0]).toEqual({ to: 'new', label: 'Un-ignore' });
+  });
+  it('resolved offers reopen', () => {
+    expect(exceptionStateActions('resolved')).toEqual([{ to: 'new', label: 'Reopen' }]);
+  });
+  it('new offers acknowledge / resolve / ignore', () => {
+    expect(exceptionStateActions('new').map(a => a.to)).toEqual(['acknowledged', 'resolved', 'ignored']);
+  });
+  it('regressed behaves like new', () => {
+    expect(exceptionStateActions('regressed').map(a => a.to))
+      .toEqual(exceptionStateActions('new').map(a => a.to));
+  });
+  it('acknowledged drops the redundant acknowledge', () => {
+    expect(exceptionStateActions('acknowledged').map(a => a.to)).toEqual(['resolved', 'ignored']);
+  });
+  it('never offers a transition to the state it is already in', () => {
+    for (const st of ['new', 'acknowledged', 'resolved', 'ignored', 'regressed']) {
+      expect(exceptionStateActions(st).map(a => a.to)).not.toContain(st);
+    }
+  });
+  it('unknown state falls back to a usable set, not an empty one', () => {
+    // Being unable to act on a row is worse than one redundant button.
+    expect(exceptionStateActions(undefined).length).toBeGreaterThan(0);
+    expect(exceptionStateActions('weird').length).toBeGreaterThan(0);
   });
 });
 

@@ -8,15 +8,22 @@ import type { InboxItem, InboxKind } from './types';
 // InboxActionMatrix — which inline triage affordances a kind exposes. Problems
 // acknowledge/assign (api.acknowledgeProblems / api.setProblemAssignee),
 // anomalies mute (api.createAnomalySilence). Only problem + anomaly have a
-// root-cause fan-out endpoint; exceptions have neither an rc endpoint nor a
-// mutation, so they get only the "Open source →" escape hatch. Every kind keeps
-// the deep-link.
+// root-cause fan-out endpoint. Every kind keeps the deep-link.
+//
+// v0.9.254 — `setState` added for exceptions. The old comment here claimed
+// exceptions had "neither an rc endpoint nor a mutation"; the rc half is still
+// true, the mutation half was never true — POST /api/exception-groups/{fp}/state
+// has existed all along (api.go:704). Because the drawer never exposed it, the
+// ONLY place to un-ignore a silenced group was the /problems page's Ignored
+// tab, which made ignoring effectively irreversible from the unified inbox.
 export interface InboxActionMatrix {
   acknowledge: boolean;
   assign: boolean;
   mute: boolean;
   rootCause: boolean;
   openSource: boolean;
+  /** Exception groups: resolve / ignore / un-ignore / reopen. */
+  setState: boolean;
 }
 
 export function inboxActionsForKind(kind: InboxKind): InboxActionMatrix {
@@ -26,7 +33,34 @@ export function inboxActionsForKind(kind: InboxKind): InboxActionMatrix {
     mute: kind === 'anomaly',
     rootCause: kind === 'problem' || kind === 'anomaly',
     openSource: true,
+    setState: kind === 'exception',
   };
+}
+
+/**
+ * exceptionStateActions — which state transitions to offer for a group in
+ * `state`. Deliberately NOT a free-form dropdown: the transitions an operator
+ * actually performs are few, and a select listing the current state as an
+ * option invites a no-op write plus an audit row that says nothing happened.
+ *
+ * An unknown/absent state falls back to the full set rather than to none —
+ * being unable to act on a row is worse than offering one redundant button,
+ * and this is the path a silenced group reaches when the pivot is wrong.
+ */
+export function exceptionStateActions(state?: string): Array<{ to: string; label: string }> {
+  const RESOLVE = { to: 'resolved', label: 'Resolve' };
+  const IGNORE = { to: 'ignored', label: 'Ignore' };
+  const REOPEN = { to: 'new', label: 'Reopen' };
+  const UNIGNORE = { to: 'new', label: 'Un-ignore' };
+  const ACK = { to: 'acknowledged', label: 'Acknowledge' };
+  switch (state) {
+    case 'ignored':    return [UNIGNORE];
+    case 'resolved':   return [REOPEN];
+    case 'acknowledged': return [RESOLVE, IGNORE];
+    case 'new':
+    case 'regressed':  return [ACK, RESOLVE, IGNORE];
+    default:           return [ACK, RESOLVE, IGNORE, REOPEN];
+  }
 }
 
 // rootCauseAnchor — the anchor RootCauseRibbon needs, keyed on the NATIVE

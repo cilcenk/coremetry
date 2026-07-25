@@ -1301,7 +1301,8 @@ export const api = {
   // Exception groups + Anomaly events server-side with a
   // common priority blend; returns at most `limit` items.
   inbox: (params: {
-    status?: 'open' | 'all'; service?: string;
+    // v0.9.254 — 'ignored' pivotu: susturulmuş exception grupları.
+    status?: 'open' | 'all' | 'ignored'; service?: string;
     // v0.9.251 — free-text triage search (service + title + source).
     // `service` stays the narrower service-only filter for older
     // shared links; the page's search box drives this.

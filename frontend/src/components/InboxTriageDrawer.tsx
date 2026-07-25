@@ -13,10 +13,11 @@ import { DEFAULT_DURATIONS } from '@/lib/actions';
 import { tsLong } from '@/lib/utils';
 import {
   inboxActionsForKind,
+  exceptionStateActions,
   rootCauseAnchor,
   buildAnomalySilenceBody,
 } from '@/lib/inboxDrawer';
-import type { InboxItem } from '@/lib/types';
+import type { InboxItem, ExceptionGroupState } from '@/lib/types';
 
 // InboxTriageDrawer — v0.8.292 (Option B slice 3): the /inbox row-click opens
 // this right-side drawer so the operator triages WITHOUT leaving the inbox,
@@ -180,11 +181,38 @@ function InboxActions({ item, onClose, onOpenSource }: {
     assignMut.mutate(v.trim());
   };
 
-  const anyErr = ackMut.isError || assignMut.isError || muteMut.isError;
+  // v0.9.254 — exception state transitions. The endpoint has existed since
+  // the Errors Inbox shipped; the drawer just never called it, which is what
+  // made Ignore a one-way door from the unified inbox.
+  const stateMut = useMutation({
+    mutationFn: (to: string) =>
+      api.setExceptionGroupState(item.exception ? item.exception.fingerprint : '', to as ExceptionGroupState),
+    onSuccess: (_d, to) => {
+      invalidateInbox();
+      qc.invalidateQueries({ queryKey: keys.exceptions.all });
+      // Un-ignore / reopen put the row BACK into the default view, so the
+      // operator should stay and keep working it. Resolve / ignore take it
+      // out — same close-on-terminal-action rule ack and mute follow.
+      if (to !== 'new') onClose();
+    },
+  });
+
+  const anyErr = ackMut.isError || assignMut.isError || muteMut.isError || stateMut.isError;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        {isEditor && matrix.setState && item.exception && exceptionStateActions(item.status).map(a => (
+          <Button key={`${a.to}:${a.label}`}
+            variant={a.label === 'Un-ignore' || a.label === 'Reopen' ? 'primary' : 'secondary'}
+            size="sm"
+            title={a.label === 'Un-ignore'
+              ? 'Bu grubu susturmadan çıkar — varsayılan görünüme geri döner'
+              : undefined}
+            loading={stateMut.isPending} onClick={() => stateMut.mutate(a.to)}>
+            {a.label}
+          </Button>
+        ))}
         {isEditor && matrix.acknowledge && (
           <Button variant="primary" size="sm"
             loading={ackMut.isPending} onClick={() => ackMut.mutate()}>

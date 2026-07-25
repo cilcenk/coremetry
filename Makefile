@@ -81,10 +81,19 @@ audit:
 .PHONY: image
 image: .env-version
 	docker compose build coremetry
-	@IMG=$$(docker compose images coremetry --quiet 2>/dev/null | head -1); \
-	  if [ -n "$$IMG" ]; then \
-	    docker tag "$$IMG" coremetry:latest && \
-	      echo "[make] tagged $$IMG as coremetry:latest"; \
+	@# The re-tag reads the VERSION-tagged image directly rather than
+	@# `docker compose images` — that command reports CONTAINER state, so it
+	@# returns nothing when no compose container exists (which is the normal
+	@# case now that the local environment is minikube-only, v0.9.210). The
+	@# old form failed silently behind an `if [ -n "$$IMG" ]`, leaving
+	@# coremetry:latest pointing at a stale build. compose's build.tags
+	@# already emits both tags; this stays as the belt-and-braces for older
+	@# compose versions where build.tags is unreliable.
+	@if docker image inspect "coremetry:$(VERSION)" >/dev/null 2>&1; then \
+	    docker tag "coremetry:$(VERSION)" coremetry:latest && \
+	      echo "[make] tagged coremetry:$(VERSION) as coremetry:latest"; \
+	  else \
+	    echo "[make] WARN: coremetry:$(VERSION) not found after build — coremetry:latest NOT updated"; \
 	  fi
 
 docker-up: .env-version

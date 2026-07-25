@@ -847,6 +847,40 @@ function LogsInner() {
           }} />
 
         {data === undefined && <TableSkeleton rows={12} cols={5} />}
+        {/* v0.9.215 — the error leg of the tri-state used to render NOTHING:
+            data===null fell through every branch below, so a rejected query
+            (malformed KQL, ES timeout, backend down) left a blank page under
+            the toolbar. The operator reads that as "no logs", not "your
+            query didn't run" — and keeps widening the range against a query
+            that can never succeed. */}
+        {data === null && (
+          <Empty icon="⚠" title="Query failed">
+            <div style={{ marginTop: 6, color: 'var(--text2)' }}>
+              The logs backend rejected this query or didn’t answer in time.
+              {staticQ.error instanceof Error && staticQ.error.message && (
+                <div className="mono" style={{
+                  marginTop: 8, padding: '6px 9px', fontSize: 11.5,
+                  background: 'var(--bg2)', border: '1px solid var(--border)',
+                  borderRadius: 6, color: 'var(--err)', whiteSpace: 'pre-wrap',
+                  overflowWrap: 'anywhere',
+                }}>
+                  {staticQ.error.message}
+                </div>
+              )}
+              <div style={{ marginTop: 8 }}>
+                Most often the search text isn’t valid KQL — check quotes and
+                field names (<code>level:error AND service.name:"checkout"</code>),
+                or clear the search box to confirm the backend answers at all.
+              </div>
+              <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
+                <Button variant="secondary" size="sm" onClick={() => staticQ.refetch()}>
+                  ↻ Retry
+                </Button>
+                <Button variant="ghost" size="sm" onClick={reset}>Clear filters</Button>
+              </div>
+            </div>
+          </Empty>
+        )}
         {data && logs.length === 0 && (
           filter.traceId ? (
             <Empty icon="≡" title="No logs match this trace">

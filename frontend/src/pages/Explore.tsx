@@ -6,6 +6,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { HeatmapCellExemplars, type HeatmapCellRef } from '@/components/HeatmapCellExemplars';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
+import { useAuth } from '@/components/AuthProvider';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { BubbleUpPanel } from '@/components/BubbleUpPanel';
 import { ShareButton } from '@/components/ShareButton';
@@ -133,9 +134,19 @@ function ExploreInner() {
   // v0.8.419 (DE4) — pin-to-dashboard modal state: the Panel converted
   // from a builder query, ready to append to a chosen dashboard.
   const [pinPanel, setPinPanel] = useState<import('@/lib/types').Panel | null>(null);
+  // v0.9.236 — the pin button was rendered for EVERY role. A viewer could
+  // open the modal, fill it in, and get the editor-gated 403 back as raw
+  // text in the error line. Every other mutation surface in the app gates
+  // on role (Alerts, Watchers, Slos, Monitors, Dashboards, Incidents,
+  // Runbooks, the ⌘K registry); Explore had no useAuth at all. Empty set →
+  // PanelStack passes onPin={undefined} → no button.
+  const { user } = useAuth();
+  const canPin = user?.role === 'admin' || user?.role === 'editor';
   const pinnableLetters = useMemo(
-    () => new Set(builder.queries.filter(isPinnable).map(q => q.letter)),
-    [builder.queries]);
+    () => (canPin
+      ? new Set(builder.queries.filter(isPinnable).map(q => q.letter))
+      : new Set<string>()),
+    [builder.queries, canPin]);
 
   // ── Traces / repeats console state (pre-v2, unchanged shapes) ────────────
   const [filters, setFilters] = useState<FilterExpr[]>(

@@ -3171,13 +3171,27 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 				// Explicit q — exact filtered scan (ILIKE + has + time bound +
 				// max_execution_time keep it bounded), so a long-tail value on a
 				// high-cardinality key is always reachable.
+				// v0.9.242 (scale-audit M4) — the ILIKE used to sit in HAVING,
+				// i.e. AFTER the GROUP BY: ClickHouse built a hash table over
+				// EVERY distinct value of the key and only then threw away the
+				// non-matching ones. On a high-cardinality key that grouping is
+				// the whole cost, and this is a typeahead running under a 30s
+				// ceiling — 150× the hot-endpoint budget.
+				//
+				// Moving the predicate ahead of the GROUP BY is exact, not an
+				// approximation: same rows in, same rows out (verified against
+				// live CH, identical result sets). The sibling no-q branch
+				// above still needs its sample bound because it has no
+				// predicate to narrow with; this one does.
 				sql = fmt.Sprintf(`
-					SELECT %s[indexOf(%s, ?)] AS v, count() AS c
-					FROM spans
-					WHERE %s
-					  AND has(%s, ?)
+					SELECT v, count() AS c FROM (
+					    SELECT %s[indexOf(%s, ?)] AS v
+					    FROM spans
+					    WHERE %s
+					      AND has(%s, ?)
+					)
+					WHERE v != '' AND v ILIKE ?
 					GROUP BY v
-					HAVING v != '' AND v ILIKE ?
 					ORDER BY c DESC
 					LIMIT ?
 					SETTINGS max_execution_time = 30`, arrVals, arrKeys, timeWhere, arrKeys)

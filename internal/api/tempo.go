@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -368,16 +369,27 @@ func (s *Server) collectTagValues(ctx context.Context, key string) ([]string, er
 	default:
 		// Generic attribute lookup (try span attrs first, fall back to resource).
 		key2 := strings.TrimPrefix(strings.TrimPrefix(key, "span."), "resource.")
-		sql = `
+		// v0.9.242 (scale-audit M5) — both legs gained a has() prefilter.
+		// Without it each leg materialised an indexOf lookup for EVERY span in
+		// 24h, including the overwhelming majority that don't carry the key at
+		// all, and then DISTINCT'ed the result — twice. Under a 5s ceiling
+		// that doesn't degrade gracefully at 1B spans/day, it just always
+		// times out, which makes the Tempo tag API look empty rather than
+		// slow. has() short-circuits the lookup so absent-key rows cost
+		// nothing; it is the same guard the native /api/attribute-values path
+		// has always used.
+		sql = fmt.Sprintf(`
 			SELECT DISTINCT v FROM (
 			    SELECT attr_values[indexOf(attr_keys, ?)] AS v FROM spans
-			    WHERE time > now() - INTERVAL 24 HOUR
+			    WHERE time > now() - INTERVAL 24 HOUR AND has(attr_keys, ?)
+			    LIMIT %[1]d
 			    UNION ALL
 			    SELECT res_values[indexOf(res_keys, ?)] AS v FROM spans
-			    WHERE time > now() - INTERVAL 24 HOUR
+			    WHERE time > now() - INTERVAL 24 HOUR AND has(res_keys, ?)
+			    LIMIT %[1]d
 			) WHERE v != '' ORDER BY v LIMIT 500
-			SETTINGS max_execution_time = 5`
-		args = []any{key2, key2}
+			SETTINGS max_execution_time = 5`, attrValuesSampleRows)
+		args = []any{key2, key2, key2, key2}
 	}
 	rows, err := s.store.Conn().Query(ctx, sql, args...)
 	if err != nil { return nil, err }

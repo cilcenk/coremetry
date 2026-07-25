@@ -9,10 +9,9 @@ import { BreakdownBar } from '@/components/KindBadge';
 import { CopyButton } from '@/components/CopyButton';
 import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
-import { useUrlRange } from '@/lib/useUrlRange';
 import { tsLong, fmtNum } from '@/lib/utils';
 import { diffFlame } from '@/lib/flameDiff';
-import type { ProfileDetail, ProfileRow, TimeRange } from '@/lib/types';
+import type { ProfileDetail, ProfileRow } from '@/lib/types';
 
 // /profile renders one profile's flamegraph by default. When
 // the URL carries `?baseline=<id>` we fetch a second profile,
@@ -30,7 +29,6 @@ function ProfileDetailInner() {
   const id = searchParams.get('id') ?? '';
   const baselineId = searchParams.get('baseline') ?? '';
 
-  const [range, setRange] = useUrlRange('30m');
   const [data, setData] = useState<ProfileDetail | null | undefined>(undefined);
   const [baseData, setBaseData] = useState<ProfileDetail | null | undefined>(undefined);
   // Picker state — datalist of recent profiles for the same
@@ -84,7 +82,7 @@ function ProfileDetailInner() {
 
   return (
     <>
-      <Topbar title="Profile" range={range} onRangeChange={setRange} />
+      <Topbar title="Profile" />
       <div id="content">
         <div style={{ marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <button className="sec" onClick={() => navigate(-1)}>← Back</button>

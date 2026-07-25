@@ -10,7 +10,6 @@ import {
   useDeleteAlertRule, useEnableAlertRule, useDisableAlertRule,
 } from '@/lib/queries';
 import { api } from '@/lib/api';
-import { useUrlRange } from '@/lib/useUrlRange';
 import type { AlertRule } from '@/lib/types';
 import {
   METRICS, COMPARATORS, SEVERITIES, WINDOWS, emptyDraft, TEMPLATES,
@@ -29,7 +28,6 @@ export default function AlertsPage() {
   // editorRoles, but the UI advertised write access). Invariant #7:
   // viewer SEES state read-only — rules render, mutations hide.
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
-  const [range, setRange] = useUrlRange('30m');
   const [showForm, setShowForm] = useState(false);
   // ES Watcher import modal (Faz-1) — ephemeral by design, no URL
   // param: a transient paste-and-go flow, not a shareable view.
@@ -250,7 +248,7 @@ export default function AlertsPage() {
 
   return (
     <>
-      <Topbar title="Alert rules" range={range} onRangeChange={setRange} />
+      <Topbar title="Alert rules" />
       <div id="content">
         <div className="controls" style={{ marginBottom: 14 }}>
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>

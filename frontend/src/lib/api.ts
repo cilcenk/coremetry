@@ -462,6 +462,7 @@ export const api = {
   // the Logs source on /explore. 30s server-side cache.
   logsTimeseries: (params: {
     service?: string;
+    cluster?: string; // v0.9.216 — toolbar cluster select; the table honoured it, this endpoint didn't
     env?: string; // v0.8.400 — global ?env= deployment-environment filter
     search?: string;
     from?: number;

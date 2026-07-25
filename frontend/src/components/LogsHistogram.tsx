@@ -16,6 +16,7 @@ import { severityBandOf } from '@/lib/severityBand';
 
 type Filter = {
   service: string;
+  cluster?: string; // v0.9.216 — was absent, so the chart ignored the toolbar's cluster select
   env?: string; // v0.8.400 — global ?env= deployment-environment filter
   search: string;
   severity: number;
@@ -93,6 +94,7 @@ export function LogsHistogram({ range, filter, onRangeSelect }: {
     api.logsTimeseries({
       from: range.from, to: range.to,
       service: filter.service || undefined,
+      cluster: filter.cluster || undefined, // v0.9.216
       env:     filter.env     || undefined, // v0.8.400 — global env filter
       search:  filter.search  || undefined,
       severity: filter.severity > 0 ? filter.severity : undefined,
@@ -102,7 +104,7 @@ export function LogsHistogram({ range, filter, onRangeSelect }: {
     })
       .then(d => setData(d ?? []))
       .catch(() => setData(null));
-  }, [range.from, range.to, filter.service, filter.env, filter.search, filter.severity, filter.traceId]);
+  }, [range.from, range.to, filter.service, filter.cluster, filter.env, filter.search, filter.severity, filter.traceId]);
 
   const stack = useMemo(() => buildStack(data ?? []), [data]);
   // x-axis time ticks (unix ns → clock). Hooks must precede the early

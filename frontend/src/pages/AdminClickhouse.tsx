@@ -6,8 +6,6 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum, fmtBytes } from '@/lib/utils';
 import { useClickhouseHealth } from '@/lib/queries';
-import { useUrlRange } from '@/lib/useUrlRange';
-import type { TimeRange } from '@/lib/types';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
 // slow queries, in-flight merges, part hotspots, replication lag.
@@ -163,7 +161,6 @@ const SHARD_POLICY_COLS: DataTableColumn<ShardPolicyRow>[] = [
 ];
 
 export default function AdminClickhousePage() {
-  const [range, setRange] = useUrlRange('30m');
   // 10s poll via the hook's refetchInterval; hidden tabs pause
   // automatically (refetchIntervalInBackground defaults false).
   const healthQ = useClickhouseHealth();
@@ -205,7 +202,7 @@ export default function AdminClickhousePage() {
 
   return (
     <>
-      <Topbar title="ClickHouse" range={range} onRangeChange={setRange} />
+      <Topbar title="ClickHouse" />
       <div id="content">
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',

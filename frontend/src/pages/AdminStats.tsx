@@ -4,7 +4,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useSystemStats, useTraceContext, keys } from '@/lib/queries';
-import { useUrlRange } from '@/lib/useUrlRange';
 import { api } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -57,7 +56,6 @@ const HISTORY_COLS: DataTableColumn<HistoryRow>[] = [
 //   3. Per-table ClickHouse storage with compression ratio.
 export default function AdminStatsPage() {
   // Topbar wants a TimeRange even though this page doesn't use it.
-  const [range, setRange] = useUrlRange('30m');
   const qc = useQueryClient();
 
   // Health probe — its own poll cycle (30s) so a slow systemStats
@@ -126,7 +124,7 @@ export default function AdminStatsPage() {
 
   return (
     <>
-      <Topbar title="System" range={range} onRangeChange={setRange} />
+      <Topbar title="System" />
       <div id="content">
         {/* ── Live status banner + components ────────────────────── */}
         <SectionHeader title="Live status"

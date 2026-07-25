@@ -20,6 +20,19 @@ type Store struct {
 	cfg  config.CHConfig
 	ret  config.RetentionConfig
 
+	// service_version_5m readiness latch (v0.9.249). A materialized
+	// view only populates from inserts made after it exists, so for
+	// the first deployLookback after an upgrade the rollup can't
+	// answer "was this version already running before the window?" —
+	// see deployMVCovers in deploys.go for why reading it early would
+	// re-open the v0.9.205 phantom-marker bug. Latches true once the
+	// MV's history spans the lookback; deployMVProbedAt throttles the
+	// probe during the warm-up so each deploys read doesn't add a
+	// query.
+	deployMVMu       sync.Mutex
+	deployMVReady    bool
+	deployMVProbedAt time.Time
+
 	// hasClusterCol records whether the spans table the read path
 	// actually resolves against carries the materialized `cluster`
 	// column (v0.8.132). When chstore owns the DDL (single node, or a
@@ -2585,6 +2598,49 @@ func (s *Store) migrate(ctx context.Context) error {
 		 FROM spans
 		 WHERE db_stmt_hash != 0
 		 GROUP BY db_system, db_name, service_name, stmt_hash, time_bucket`,
+
+		// service_version_5m (v0.9.249) — per-(service, version, 5min)
+		// deploy rollup. Exists because GetServiceDeploys had to scan RAW
+		// spans over a 48h lookback (deployLookback, the v0.9.205
+		// phantom-marker fix) and burned its whole 15s budget on every
+		// prod service, gating the /bundle response behind it.
+		//
+		// The cost was never the row scan — measured on live CH, a bare
+		// count over the same window is ~30ms while the version
+		// expression pushes it to ~430ms, because effectiveVersionExpr
+		// runs 14 indexOf() array probes PER ROW. An MV moves that work
+		// to insert time, once per incoming block, and collapses the
+		// read to (service, version, bucket) rows: ~2 versions x 288
+		// buckets per service per day instead of tens of millions of
+		// spans.
+		//
+		// minState(time) rather than min(time_bucket) so a deploy marker
+		// keeps exact placement — the bucket alone would round every
+		// rollout to a 5-minute grid.
+		//
+		// Registered in highVolumeTables + defaultShardPolicy +
+		// tablesWithoutTraceID day one (v0.5.426 / v0.8.375 lesson).
+		`CREATE MATERIALIZED VIEW IF NOT EXISTS service_version_5m
+		 ENGINE = AggregatingMergeTree
+		 PARTITION BY toDate(time_bucket)
+		 ORDER BY (service_name, version, time_bucket)
+		 TTL toDate(time_bucket) + INTERVAL 45 DAY
+		 SETTINGS index_granularity = 8192
+		 AS SELECT
+		   service_name,
+		   ` + effectiveVersionExpr + `                 AS version,
+		   toStartOfInterval(time, INTERVAL 5 MINUTE)    AS time_bucket,
+		   minState(time)                                AS first_seen_state,
+		   countState()                                  AS span_count_state
+		 FROM spans
+		 WHERE (has(res_keys, 'service.version')
+		     OR has(res_keys, 'container.image.tag')
+		     OR has(res_keys, 'k8s.container.image.tag')
+		     OR has(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')
+		     OR has(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')
+		     OR has(res_keys, 'k8s.deployment.labels.version')
+		     OR has(res_keys, 'helm.chart.version'))
+		 GROUP BY service_name, version, time_bucket`,
 
 		// spanmetrics_calls_5m: per-(service, status_code, 5min)
 		// pre-aggregation of the spanmetrics processor's calls

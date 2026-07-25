@@ -292,6 +292,9 @@ var tablesWithoutTraceID = map[string]bool{
 	"db_statement_summary_5m": true,
 	// v0.8.396 — metric-name catalog: (service, metric) rows, no trace_id.
 	"metric_catalog": true,
+	// v0.9.249 — service/version rollup: (service_name, version,
+	// time_bucket) + min/count states. No trace_id projected.
+	"service_version_5m": true,
 	"topology_edges_5m":    true,
 	"topology_op_edges_5m": true,
 	// v0.5.435 — MVs/aggregates that join highVolumeTables in
@@ -391,6 +394,11 @@ var defaultShardPolicy = map[string]string{
 	// `WHERE stmt_hash = ?`. toString because cityHash64 wants the same
 	// arg shape the exemplars fingerprint policy uses for a UInt64.
 	"db_statement_summary_5m": "cityHash64(toString(stmt_hash))",
+	// v0.9.249 — deploy/version rollup. Reads are always
+	// `WHERE service_name = ?` (GetServiceDeploys is per-service), so
+	// service_name is the honest key even though the MV's own writes
+	// land shard-local via the insert trigger.
+	"service_version_5m": "cityHash64(service_name)",
 	// v0.5.435 — remaining sharded MVs/aggregates. For MVs the
 	// shard key is largely decorative (auto-triggered writes land
 	// local, reads always fan-out via Distributed) but is honest
@@ -932,6 +940,13 @@ var highVolumeTables = map[string]bool{
 	// (prod /api/metrics/names timeout fix): registered day one per
 	// the same D1 rule.
 	"metric_catalog": true,
+	// v0.9.249 — deploy/version rollup, an MV reading FROM spans like
+	// its db_* siblings. Registered DAY ONE alongside defaultShardPolicy
+	// and tablesWithoutTraceID: v0.5.426 is exactly the bug where a
+	// table made it into one registry but not the other, so adaptDDL
+	// never renamed it to `_local`, no Distributed wrapper was emitted,
+	// and every bare-name read returned ONE shard's slice.
+	"service_version_5m": true,
 	// v0.5.435 — remaining sharded MVs/aggregates the post-v0.5.426
 	// /scale-audit revealed. Same gap shape: bare-name Replicated
 	// per shard, no Distributed wrapper → cluster reads silently

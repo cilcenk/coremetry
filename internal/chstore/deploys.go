@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -345,6 +346,19 @@ func (s *Store) GetServiceDeploys(
 	// gerçekten BAŞLAYAN sürümler (gerçek rollout'lar) döner; sabit
 	// sürüm lookback'te görünür olduğundan elenir. (GetRecentDeploys
 	// banner'ında aynı sınıf vacuous filtre duruyor — ayrı iş.)
+	// v0.9.249 — MV fast path when service_version_5m covers the whole
+	// lookback; otherwise the raw-spans query below (see
+	// deployMVCovers for why the coverage check matters).
+	if s.deployMVCovers(ctx, from.Add(-deployLookback)) {
+		out, err := s.serviceDeploysFromMV(ctx, service, from, to)
+		if err == nil {
+			return out, nil
+		}
+		// Soft-fail to the raw path: a malformed/absent MV must
+		// degrade to the slower-but-correct query, not to an error.
+		log.Printf("[deploys] MV path %s: %v — falling back to raw spans", service, err)
+	}
+
 	sql := serviceDeploysSQL + s.shardSkipSetting()
 	rows, err := s.conn.Query(ctx, sql, service, from.Add(-deployLookback), to, from.UnixNano())
 	if err != nil {
@@ -611,4 +625,104 @@ func podSample(xs []string, n int) []string {
 		return xs
 	}
 	return xs[:n]
+}
+
+// ── service_version_5m fast path (v0.9.249) ─────────────────────────
+
+// serviceVersionMVSQL mirrors serviceDeploysSQL's contract against the
+// rollup: same HAVING first_seen >= window-start gate (v0.9.205
+// phantom-marker fix), same ordering, same cap. Arg order: service,
+// scanFrom(=from-deployLookback), to, fromNs.
+const serviceVersionMVSQL = `
+	SELECT version,
+	       toUnixTimestamp64Nano(minMerge(first_seen_state)) AS first_seen_ns,
+	       countMerge(span_count_state)                      AS span_count
+	FROM service_version_5m
+	WHERE service_name = ?
+	  AND time_bucket >= ? AND time_bucket <= ?
+	GROUP BY version
+	HAVING version != ''
+	   AND first_seen_ns >= ?
+	ORDER BY first_seen_ns ASC
+	LIMIT 50
+	SETTINGS max_execution_time = 10, `
+
+func (s *Store) serviceDeploysFromMV(
+	ctx context.Context, service string, from, to time.Time,
+) ([]Deploy, error) {
+	rows, err := s.conn.Query(ctx, serviceVersionMVSQL+s.shardSkipSetting(),
+		service, from.Add(-deployLookback), to, from.UnixNano())
+	if err != nil {
+		return nil, fmt.Errorf("query service_version_5m: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Deploy{}
+	for rows.Next() {
+		var d Deploy
+		var spanCnt uint64
+		if err := rows.Scan(&d.Version, &d.TimeUnixNs, &spanCnt); err != nil {
+			return nil, err
+		}
+		d.Service = service
+		d.SpanCount = int(spanCnt)
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// deployMVCovers reports whether service_version_5m holds data going
+// back at least as far as `need`.
+//
+// This gate is the whole reason the MV can ship without a backfill. A
+// materialized view only populates from inserts made AFTER it exists,
+// so for the first deployLookback (48h) after an upgrade the lookback
+// window is partially empty — and a version that was already running
+// would have no rows before `from`, making it look like it STARTED
+// in the window. That is precisely the v0.9.205 phantom-deploy-marker
+// bug, and reading the MV early would re-open it for two days. So
+// until the MV's own history spans the lookback, reads stay on the
+// raw-spans path (which v0.9.244 already moved off the request's
+// critical path).
+//
+// The probe is GLOBAL, not per-service, on purpose: a service that
+// genuinely started emitting an hour ago has a recent min(time_bucket)
+// through no fault of the MV, and a per-service check would pin every
+// young service to the slow path forever. What we actually want to
+// know is how long the MV itself has been running.
+//
+// Latches once satisfied — the MV only accumulates, so the answer can
+// never go back to false while the process lives, and the probe stops
+// running after the first success.
+func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
+	s.deployMVMu.Lock()
+	defer s.deployMVMu.Unlock()
+	if s.deployMVReady {
+		return true
+	}
+	// Re-probing on every miss would add a query to each deploys read
+	// during the 48h warm-up; once a minute is plenty.
+	if !s.deployMVProbedAt.IsZero() && time.Since(s.deployMVProbedAt) < time.Minute {
+		return false
+	}
+	s.deployMVProbedAt = time.Now()
+
+	var earliest time.Time
+	err := s.conn.QueryRow(ctx, `
+		SELECT min(time_bucket) FROM service_version_5m
+		SETTINGS max_execution_time = 5, `+s.shardSkipSetting()).Scan(&earliest)
+	if err != nil {
+		// Table missing (pre-migration binary, or an operator dropped
+		// it) or CH blip — stay on the raw path, which is always
+		// correct.
+		return false
+	}
+	// A zero/absent min means the MV exists but has no rows yet.
+	if earliest.IsZero() || earliest.After(need) {
+		return false
+	}
+	s.deployMVReady = true
+	log.Printf("[deploys] service_version_5m covers the %s lookback (earliest bucket %s) — using the MV path",
+		deployLookback, earliest.UTC().Format(time.RFC3339))
+	return true
 }

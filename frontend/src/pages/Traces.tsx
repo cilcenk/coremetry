@@ -85,10 +85,18 @@ const COL_LABEL: Record<string, string> = {
   time: 'Time', service: 'Service', operation: 'Operation',
   duration: 'Duration', spans: 'Spans', status: 'Status',
 };
+// Default widths are tuned so the fixed columns PLUS two attribute columns
+// fit a 1440px laptop without horizontal scroll (v0.9.243 — operator-reported:
+// "columns don't fit, I always have to scroll right"). Budget at 1440px:
+// ~220 sidebar + ~40 page padding leaves ~1180. Fixed 864 + 30 leading row-
+// marker + 2×130 attrs = 1154. Every cell already ellipsises with a title
+// tooltip (globals.css tbody td), so narrower never means "silently lost".
+// Widths are user-resizable and persist per browser; these are only the
+// starting points for an operator who has never dragged a column edge.
 const COL_W: Record<string, number> = {
-  time: 168, service: 130, operation: 300, duration: 200, spans: 72, status: 84,
+  time: 168, service: 130, operation: 260, duration: 150, spans: 72, status: 84,
 };
-const ATTR_W = 160;
+const ATTR_W = 130;
 // FAZ 2B — default attribute-column set (operator decision 2026-07-23:
 // ONLY the fixed columns by default; attribute columns are opt-in, so a
 // fresh session always gets the fastest narrow list). Selection precedence
@@ -1135,8 +1143,12 @@ function renderTraceCell(id: string, t: TraceRow, visibleMax: number) {
     case 'spans':     return <>{t.spanCount}</>;
     case 'status':    return t.hasError ? <span className="badge b-err">ERROR</span> : <span className="badge b-ok">OK</span>;
     default: {
+      // Attribute-column values render at the SAME size as every other cell
+      // (v0.9.243 — operator-reported: channel_code / function_code looked
+      // smaller than OPERATION). `.mono` and `table` are both 12px; the old
+      // inline fontSize:11 was the only thing making these cells odd.
       const v = t.extras?.[id] ?? '';
-      return <span className="mono" style={{ fontSize: 11, color: v ? 'var(--text2)' : 'var(--text3)' }} title={v || ''}>{v || '—'}</span>;
+      return <span className="mono" style={{ color: v ? 'var(--text2)' : 'var(--text3)' }} title={v || ''}>{v || '—'}</span>;
     }
   }
 }

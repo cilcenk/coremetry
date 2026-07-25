@@ -55,7 +55,15 @@ export default function ServiceMapPage() {
   // deep-link (from Endpoints / service tabs / the redirect) by seeding focus
   // from the URL. The auto-pick effect below skips when focus is already set.
   const [searchParams, setSearchParams] = useSearchParams();
-  const [focus, setFocus] = useState<string>(() => searchParams.get('focus') ?? '');
+  // v0.9.225 — Operator-reported: "Focus seçili gelmiyor". Auto-pick below
+  // needs the FULL map before it can name the busiest service, so on a bare
+  // /service-map the focus (and the cheap neighbourhood query that depends on
+  // it) waited on the single slowest request the page makes. Seeding from the
+  // last focus starts that query immediately. URL still wins — a deep-link
+  // must never be overridden by a remembered pick. A stale name self-corrects:
+  // the auto-pick effect below replaces it once the map proves it's gone.
+  const [focus, setFocus] = useState<string>(
+    () => searchParams.get('focus') ?? getRaw(STORAGE_KEYS.topoFocus) ?? '');
   // v0.8.469 — odak modunda görünüm seçimi (Topology sekmesindeki v0.8.467
   // ikizinin aynısı; AYNI ?tview= parametresi + AYNI kalıcı tercih, iki
   // yüzey tek karar). Odaksız genel harita hep Flow — sampled yapı
@@ -88,6 +96,7 @@ export default function ServiceMapPage() {
   const commitFocus = (v: string) => {
     setFocus(v);
     setAutoFocused(true);
+    setRaw(STORAGE_KEYS.topoFocus, v); // v0.9.225 — next visit starts here
     setSearchParams(prev => {
       const p = new URLSearchParams(prev);
       if (v) p.set('focus', v); else p.delete('focus');
@@ -103,13 +112,21 @@ export default function ServiceMapPage() {
   const [autoFocused, setAutoFocused] = useState(false);
   useEffect(() => {
     const nodes = mapQ.data?.nodes ?? [];
-    if (autoFocused || focus || !mapQ.data || nodes.length === 0) return;
+    if (autoFocused || !mapQ.data || nodes.length === 0) return;
     const real = nodes
       .filter(n => !n.kind)
       .sort((a, b) => b.spanCount - a.spanCount);
-    if (real.length > 0) {
-      commitFocus(real[0].service);
+    if (real.length === 0) return;
+    // v0.9.225 — a focus seeded from localStorage can name a service that has
+    // since been retired or fallen out of the window; without this check the
+    // operator would land on a permanently empty graph with no hint why. The
+    // URL is exempt: a deep-link to a currently-silent service is a legitimate
+    // "why is this quiet" question, not a stale preference.
+    if (focus) {
+      const fromUrl = searchParams.get('focus');
+      if (fromUrl || real.some(n => n.service === focus)) return;
     }
+    commitFocus(real[0].service);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mapQ.data, autoFocused, focus]);
   // Normalise nodes/edges to arrays even when the API returns
@@ -434,13 +451,23 @@ export default function ServiceMapPage() {
         {focus && view === 'structure' && <SampledStructureTopology service={focus} />}
 
         {(!focus || view === 'flow') && <>
-        {data === undefined && <Spinner />}
-        {data === null && (
+        {/* v0.9.225 — Operator-reported: "ilk açılışta çok bekletiyor".
+            These gates read `data` — the FULL sampled map — even when a focus
+            is set and `filtered` (the focus neighbourhood) is what actually
+            gets drawn below. Measured on a 9-service local demo: the full map
+            takes ~1.4s cold, the neighbourhood ~0.2s, and they run SERIALLY
+            because auto-focus can't pick until the map lands. So the operator
+            sat on a spinner for a graph already in hand — and the gap only
+            widens with service count, which is exactly the operator's point
+            that one service's flow topology shouldn't cost that much.
+            The gates now follow the map being rendered. */}
+        {!filtered && data === undefined && <Spinner />}
+        {!filtered && data === null && (
           <Empty icon="!" title="Failed to load service map">
             Check that ClickHouse is reachable and the spans table has recent data.
           </Empty>
         )}
-        {data && data.nodes.length === 0 && (
+        {filtered && filtered.nodes.length === 0 && (
           <Empty icon="◯" title="No services in this window">
             Try widening the time range or check whether OTLP ingest is flowing
             (System → ClickHouse stats).

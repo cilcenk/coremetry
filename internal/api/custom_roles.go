@@ -56,6 +56,14 @@ func (s *Server) upsertCustomRole(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// v0.9.233 — tell peer pods NOW. Without this the only convergence was
+	// the 30s role poll, and the window failed OPEN: a peer that hasn't
+	// polled returns nil pages, so the payload omits customRolePages and the
+	// client reads that as "unrestricted". Creating a restricted role
+	// therefore handed out FULL access on every other pod for up to a
+	// minute. Local pods also clear their /api/auth/me cache below.
+	s.publishConfigReload(r.Context(), "custom_roles")
+	s.meUsers.clear()
 	details, _ := json.Marshal(map[string]any{"name": body.Name, "pages": body.Pages})
 	s.audit(r, "role.upsert", "custom_role", body.Name, string(details))
 	writeJSON(w, body)
@@ -91,6 +99,12 @@ func (s *Server) deleteCustomRole(w http.ResponseWriter, r *http.Request) {
 			s.meUsers.clear() // v0.8.519
 		}
 	}
+	// v0.9.233 — same broadcast as upsert. Delete is the LESS dangerous
+	// direction (users fall back to unrestricted viewer by design), but a
+	// peer still holding the deleted role would keep enforcing a set the
+	// admin just removed, so the two pods disagree either way.
+	s.publishConfigReload(r.Context(), "custom_roles")
+	s.meUsers.clear()
 	s.audit(r, "role.delete", "custom_role", name, "")
 	writeJSON(w, map[string]string{"status": "ok"})
 }

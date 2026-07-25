@@ -489,6 +489,20 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload logstore: %v", err)
 			}
 		}
+	// v0.9.233 — custom roles had no reload case, and the gap failed OPEN.
+	// userPayload only emits customRolePages when CustomRolePages(name)
+	// returns non-nil; a peer pod that hasn't polled yet returns nil, the
+	// field is omitted, and the frontend reads an absent list as "no
+	// restriction" (AppShell.tsx: `if (!allowed) return`). So for up to the
+	// 30s role poll — stacked on the 30s /api/auth/me cache, which is
+	// pod-local — a restricted viewer on another pod saw the FULL sidebar.
+	// meUsers must be cleared too, or the reloaded pages sit behind a
+	// cached payload that still omits them.
+	case "custom_roles":
+		if err := s.auth.LoadPersistedCustomRoles(ctx, s.store); err != nil {
+			log.Printf("[cache] config-reload custom_roles: %v", err)
+		}
+		s.meUsers.clear()
 	default:
 		// Unknown service — silently ignore so a forward-compat
 		// peer publishing a config key the older pod doesn't

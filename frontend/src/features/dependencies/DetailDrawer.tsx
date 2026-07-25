@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { messagingTracesHref } from '@/lib/pivotHref';
 import { Link } from 'react-router-dom';
 import { Spinner } from '@/components/Spinner';
 import { Sparkline } from '@/components/Sparkline';
@@ -321,16 +322,28 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
                                 (it's the DB-side aggregate), so we
                                 scope on db.statement LIKE + rootOnly=
                                 false and leave service unset. */}
-                            {kind === 'db' && (
-                              <Link to={statementTracesHref(o.statement)}
-                                title="Find traces running this statement (LIKE-prefix, best-effort)"
-                                style={{
-                                  marginLeft: 8, fontSize: 10, whiteSpace: 'nowrap',
-                                  color: 'var(--accent2)', fontWeight: 500,
-                                }}>
-                                → traces
-                              </Link>
-                            )}
+                            {/* v0.9.256 — bu bağlantı `kind === 'db'` ile
+                                kapalıydı, yani mesajlaşmadaki EN doğal pivot
+                                (bu operasyonun trace'leri) tek satır kod
+                                yüzünden yoktu. DB tarafı statement'a göre
+                                LIKE-öneki ile; kuyruk tarafı destination +
+                                operasyon adına göre tam eşleşme — ikisi farklı
+                                sorgu, o yüzden ayrı helper'lar. */}
+                            <Link to={kind === 'db'
+                              ? statementTracesHref(o.statement)
+                              : messagingTracesHref({
+                                window: range, system, destination: name,
+                                operation: o.statement,
+                              })}
+                              title={kind === 'db'
+                                ? 'Find traces running this statement (LIKE-prefix, best-effort)'
+                                : 'Bu operasyonun trace\'lerini aç'}
+                              style={{
+                                marginLeft: 8, fontSize: 10, whiteSpace: 'nowrap',
+                                color: 'var(--accent2)', fontWeight: 500,
+                              }}>
+                              → traces
+                            </Link>
                           </>
                         )
                         : <span style={{ color: 'var(--text3)' }}>(empty)</span>}

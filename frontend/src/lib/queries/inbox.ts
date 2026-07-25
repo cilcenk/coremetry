@@ -17,6 +17,7 @@ export type InboxPage = {
 // the server-side filters participate in the key.
 export function useInbox(filter: {
   status?: 'open' | 'all'; service?: string;
+  q?: string; // v0.9.251 — free-text search (service + title + source)
   ownerTeam?: string; sreTeam?: string;
   env?: string; // v0.8.387 — global picker, service-scoped (matches /problems)
   limit?: number;

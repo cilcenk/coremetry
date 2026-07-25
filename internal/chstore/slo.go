@@ -97,6 +97,23 @@ func (s *Store) DeleteSLO(ctx context.Context, id string) error {
 	return s.conn.Exec(ctx, `ALTER TABLE slos DELETE WHERE id = ?`, id)
 }
 
+// sloLatencyEntryWhere scopes a latency SLI to the spans where the service
+// ANSWERS something, mirroring lib/entrySpans.ts on the read side (v0.9.241).
+//
+// A latency SLI counts "spans under the threshold ÷ all spans". Over the full
+// span population that denominator is dominated by the service's own outbound
+// calls — DB clients at a fraction of a millisecond, hundreds of thousands of
+// them — so the ratio measures the database, not the service. Measured in
+// production on one service over an hour: 241,919 entry spans, all-span SLI
+// 99.99%, entry-span SLI 99.85%. The gap is small HERE only because this
+// service's real p99 (99ms) already sits under its 150ms threshold; on a
+// service whose entry spans are slow, the all-span form hides the breach
+// entirely behind the client-span majority.
+//
+// server + consumer, same as the UI: handling a request and processing a
+// queue message are both the service's own work.
+const sloLatencyEntryWhere = " AND kind IN ('server','consumer')"
+
 // ComputeSLOStatus derives total/good counts within the SLO's rolling window.
 // Availability reads the summary MV (count + error per 5m bucket — no raw-spans
 // scan); latency needs a per-span threshold compare so it reads `spans`, bounded
@@ -141,7 +158,7 @@ func (s *Store) ComputeSLOStatus(ctx context.Context, o SLO) (*SLOStatus, error)
 		// don't pre-compute, so raw spans, but BOUNDED (this was an uncapped
 		// 30-day scan before v0.8.200). service_name + time prefix-prunes.
 		q := "SELECT count() AS total, countIf(duration <= ?) AS good FROM spans " +
-			"WHERE service_name = ? AND time >= ?"
+			"WHERE service_name = ? AND time >= ?" + sloLatencyEntryWhere
 		args := []any{o.ThresholdMs * 1e6, o.Service, since}
 		if o.Operation != "" {
 			q += " AND name = ?"
@@ -242,7 +259,7 @@ func (s *Store) ComputeSLOBurnSeries(ctx context.Context, o SLO, days int) ([]Bu
 		       count()                       AS total,
 		       ` + fmt.Sprintf("countIf(duration <= %f)", o.ThresholdMs*1e6) + ` AS good
 		FROM spans
-		WHERE service_name = ? AND time >= ?`
+		WHERE service_name = ? AND time >= ?` + sloLatencyEntryWhere
 		if o.Operation != "" {
 			q += ` AND name = ?`
 			args = append(args, o.Operation)
@@ -419,6 +436,13 @@ func (s *Store) ComputeSLOBurnRate(ctx context.Context, o SLO, window time.Durat
 		q := `SELECT count() AS total, ` + goodExpr + ` AS good
 	      FROM spans
 	      WHERE service_name = ? AND time >= ?`
+		// v0.9.241 — entry scope on LATENCY only. Availability's raw branch is
+		// the sub-5m fallback for the MV path above, and the MV carries no kind
+		// dimension; filtering here would make the two windows of the same SLO
+		// disagree, which is worse than the distortion.
+		if o.SLIType == SLITypeLatency {
+			q += sloLatencyEntryWhere
+		}
 		args := []any{o.Service, since}
 		if o.Operation != "" {
 			q += ` AND name = ?`

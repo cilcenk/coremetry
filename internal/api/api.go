@@ -2545,6 +2545,14 @@ func (s *Server) getServiceNeighbors(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	since := parseDuration(r.URL.Query().Get("since"), time.Hour)
+	// v0.9.257 — ceiling, mirroring getServiceBlastRadius above. ServiceNeighbors
+	// picks the top-N traces with GROUP BY trace_id over raw `spans`; left
+	// unbounded a 720h window blows max_execution_time and the panel just errors
+	// out. Callers clamp too (rangeToSince in lib/utils.ts) and SAY they clamped
+	// — this is the server-side backstop for anyone who doesn't.
+	if since > 24*time.Hour {
+		since = 24 * time.Hour
+	}
 	samples := parseInt(r.URL.Query().Get("samples"), 50)
 
 	key := fmt.Sprintf("service-neighbors:svc=%s:since=%s:samples=%d",

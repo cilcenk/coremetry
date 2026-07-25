@@ -7729,11 +7729,18 @@ func (s *Server) putAnomalyPromotion(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "minCount must be between 1 and 1000000", http.StatusBadRequest)
 		return
 	}
+	// v0.9.247 — a critical cut-off BELOW the promotion gate would
+	// silently make every promoted anomaly critical. Reject it here
+	// rather than let the read-side clamp hide the operator's typo.
+	if c.CriticalPeakRatio < c.MinPeakRatio || c.CriticalPeakRatio > 1000 {
+		http.Error(w, "criticalPeakRatio must be between minPeakRatio and 1000", http.StatusBadRequest)
+		return
+	}
 	if err := s.store.SaveAnomalyPromotion(r.Context(), c); err != nil {
 		writeErr(w, err)
 		return
 	}
-	s.audit(r, "settings.anomaly_promotion.update", "settings", "anomaly_promotion", fmt.Sprintf(`{"minPeakRatio":%v,"minSustainedSec":%v,"minCount":%v}`, c.MinPeakRatio, c.MinSustainedSec, c.MinCount))
+	s.audit(r, "settings.anomaly_promotion.update", "settings", "anomaly_promotion", fmt.Sprintf(`{"minPeakRatio":%v,"criticalPeakRatio":%v,"minSustainedSec":%v,"minCount":%v}`, c.MinPeakRatio, c.CriticalPeakRatio, c.MinSustainedSec, c.MinCount))
 	writeJSON(w, c)
 }
 

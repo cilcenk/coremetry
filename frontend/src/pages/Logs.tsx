@@ -340,10 +340,13 @@ function LogsInner() {
   const volumeEnabled = (from !== undefined && to !== undefined) || !!filter.traceId;
   const volumeBucket = useMemo(() => pickVolumeBucket(from, to), [from, to]);
   const volumeQ = useQuery({
-    queryKey: ['logs', 'sev-volume', from, to, filter.service, env, compiledSearch, filter.traceId, filter.hasTrace, volumeBucket],
+    // v0.9.216 — cluster joins the key AND the request: without it the chips
+    // counted every cluster while the table below showed one.
+    queryKey: ['logs', 'sev-volume', from, to, filter.service, filter.cluster, env, compiledSearch, filter.traceId, filter.hasTrace, volumeBucket],
     queryFn: () => api.logsTimeseries({
       from, to,
       service: filter.service || undefined,
+      cluster: filter.cluster || undefined,
       env:     env || undefined, // v0.8.400 — global env filter
       search:  compiledSearch || undefined,
       traceId: filter.traceId || undefined,

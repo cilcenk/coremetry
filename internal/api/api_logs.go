@@ -206,9 +206,12 @@ func logsFieldStatsKey(field string, f logstore.Filter, fromRaw, toRaw string) s
 		fromRaw, toRaw, f.Search)
 }
 
+// v0.9.216 — cluster joined the filter set, so it MUST join the key: a
+// cluster-scoped histogram served from an unscoped entry (or vice versa)
+// inside the 30s TTL is the v0.5.187 cross-poisoning class exactly.
 func logsTimeseriesKey(f logstore.Filter, fromRaw, toRaw string, bucketSec int, groupBy string) string {
-	return fmt.Sprintf("logs-ts:svc=%s:env=%s:sev=%d:trace=%s:ht=%t:from=%s:to=%s:b=%d:g=%s:q=%s",
-		f.Service, f.Env, f.SeverityMin, f.TraceID, f.HasTrace, fromRaw, toRaw,
+	return fmt.Sprintf("logs-ts:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:ht=%t:from=%s:to=%s:b=%d:g=%s:q=%s",
+		f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.HasTrace, fromRaw, toRaw,
 		bucketSec, groupBy, f.Search)
 }
 
@@ -705,7 +708,12 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	sev, _ := strconv.Atoi(q.Get("severity"))
 	f := logstore.Filter{
-		Service:     q.Get("service"),
+		Service: q.Get("service"),
+		// v0.9.216 — cluster was missing here while /api/logs (the table)
+		// honoured it, so the toolbar's cluster select narrowed the rows but
+		// NOT the histogram above them or the severity chips beside them:
+		// three numbers on one screen, two different populations.
+		Cluster:     q.Get("cluster"),
 		Env:         strings.TrimSpace(q.Get("env")), // v0.8.400 — env-separation Phase 4
 		Search:      q.Get("search"),
 		From:        parseTime(q.Get("from")),

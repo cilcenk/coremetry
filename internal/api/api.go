@@ -7021,6 +7021,11 @@ func (s *Server) setExceptionGroupState(w http.ResponseWriter, r *http.Request) 
 	// ANINDA görünmeli (resolve edilen satır 5s asılı kalmasın).
 	s.cacheInvalidatePrefix(r.Context(), "exc-groups:")
 	s.cacheInvalidatePrefix(r.Context(), "inbox:count") // v0.8.472
+	// v0.9.234 — the LIST too, not just the badge: dropping only the count
+	// left the sidebar number falling instantly while /inbox kept the
+	// resolved row for the whole TTL window (the badge-vs-list divergence
+	// v0.9.219/220 closed from the other two directions).
+	s.cacheInvalidatePrefix(r.Context(), "inbox:v2")
 	s.audit(r, "exception_group.set_state", "exception_group", r.PathValue("fp"), fmt.Sprintf(`{"state":%q}`, body.State))
 	writeJSON(w, map[string]string{"status": "ok"})
 }
@@ -9341,6 +9346,7 @@ func (s *Server) setProblemAssignee(w http.ResponseWriter, r *http.Request) {
 	// the assignee chip must show on every replica's next /problems read.
 	s.cacheInvalidatePrefix(r.Context(), "problems")
 	s.cacheInvalidatePrefix(r.Context(), "inbox:count") // v0.8.472 — rozet anında güncellensin
+	s.cacheInvalidatePrefix(r.Context(), "inbox:v2")    // v0.9.234 — liste de
 	// v0.8.289 (operator request) — when a Problem is assigned to a PERSON
 	// (email assignee) and it actually changed, email them the assignment.
 	if prev != nil {
@@ -9407,6 +9413,7 @@ func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {
 	// 5s TTL × SWR stale window (~15s of a "still open" ghost).
 	s.cacheInvalidatePrefix(r.Context(), "problems")
 	s.cacheInvalidatePrefix(r.Context(), "inbox:count") // v0.8.472 — rozet anında güncellensin
+	s.cacheInvalidatePrefix(r.Context(), "inbox:v2")    // v0.9.234 — liste de
 	writeJSON(w, map[string]any{"acknowledged": n})
 }
 

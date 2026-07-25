@@ -129,6 +129,13 @@ func (s *Server) createAnomalySilence(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	// v0.9.234 — the silence set is an INPUT to the cached anomaly reads
+	// (both closures call ActiveSilencedFingerprints and filter on it) but
+	// rides neither the key nor an invalidation, so a just-muted anomaly
+	// kept showing — or a just-unmuted one stayed hidden — for the TTL
+	// window. Topology solves the same shape by hashing its hidden-pattern
+	// set into the key; here a prefix drop is cheaper and mutations are rare.
+	s.cacheInvalidatePrefix(r.Context(), "anomaly:")
 	s.audit(r, "anomaly_silence.create", "anomaly_silence", id,
 		fmt.Sprintf(`{"fp":%q,"kind":%q,"service":%q,"durationSec":%d,"reason":%q}`,
 			body.Fingerprint, body.Kind, body.Service, body.DurationSec, body.Reason))
@@ -146,6 +153,7 @@ func (s *Server) deleteAnomalySilence(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	s.cacheInvalidatePrefix(r.Context(), "anomaly:") // v0.9.234
 	s.audit(r, "anomaly_silence.delete", "anomaly_silence", id, "")
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -177,6 +185,7 @@ func (s *Server) bulkDeleteAnomalySilences(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	details, _ := json.Marshal(map[string]any{"ids": body.IDs, "deleted": n})
+	s.cacheInvalidatePrefix(r.Context(), "anomaly:") // v0.9.234
 	s.audit(r, "anomaly_silence.bulk_delete", "anomaly_silence", "", string(details))
 	writeJSON(w, map[string]any{"deleted": n})
 }

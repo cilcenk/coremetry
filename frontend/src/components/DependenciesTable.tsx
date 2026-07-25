@@ -399,9 +399,20 @@ export function DependenciesTable({
                             style={{ fontFamily: 'monospace', fontSize: 12, fontWeight: 500 }}
                             title={r.instance === 'unknown'
                               ? `peer.service was empty on these spans — label sourced from ${r.dbName && r.dbName !== 'default' ? 'db.name' : 'fallback'}`
-                              : 'Open in Explore (spans pre-filtered)'}>
+                              : kind === 'queue'
+                                ? 'Open the traces on this topic (same window, editable filter chips)'
+                                : 'Open in Explore (spans pre-filtered)'}>
                         {nameOf(r) || <span style={{ color: 'var(--text3)' }}>(anonymous)</span>}
                       </Link>
+                      {/* v0.9.257 — the destination label WAS the only
+                          trace pivot on the row, and a bare monospace
+                          name does not read as an action; the tooltip
+                          still said "Explore" after v0.9.256 moved the
+                          target to /traces. The glyph makes the
+                          affordance visible without adding a column. */}
+                      {kind === 'queue' && (
+                        <span aria-hidden style={{ marginLeft: 4, fontSize: 10, color: 'var(--text3)' }}>↗</span>
+                      )}
                       {/* v0.5.349 — surface a small chip when the
                           label is a fallback so the operator
                           knows the peer.service attribute is

@@ -150,4 +150,24 @@ describe('messagingTracesHref', () => {
     expect(q.get('filterGroup')).toBeTruthy();
     expect(q.get('filters')).toBeNull();
   });
+
+  // v0.9.257 — drawer'ın "Failed traces" eylemi. hasError'ı eklemek
+  // destination OR grubunu ya da pencereyi DÜŞÜRMEMELİ: üçü birden
+  // gitmezse link ya konu-dışı hatalara ya da boş listeye açılır, ki
+  // v0.9.256'nın kapattığı sınıfın aynısıdır.
+  it('hasError, destination OR grubunu ve pencereyi KORUYARAK eklenir', () => {
+    const href = messagingTracesHref({
+      window: w, system: 'kafka', destination: 'transfer.posted', hasError: true,
+    });
+    const q = new URLSearchParams(href.split('?')[1]);
+    expect(q.get('hasError')).toBe('true');
+    expect(q.get('range')).toBeTruthy();
+    expect(q.get('rootOnly')).toBe('false');
+    const or = (decodeGroup(href).groups ?? []).find((x: { join: string }) => x.join === 'OR');
+    expect(or.filters.map((f: { k: string }) => f.k)).toEqual([
+      'messaging.destination.name',
+      'messaging.destination',
+      'peer.service',
+    ]);
+  });
 });

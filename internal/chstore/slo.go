@@ -124,7 +124,13 @@ func (s *Store) ComputeSLOStatus(ctx context.Context, o SLO) (*SLOStatus, error)
 			args = append(args, o.Operation)
 		}
 		q := "SELECT countMerge(span_count_state) AS total, " +
-			"countMerge(span_count_state) - countIfMerge(error_count_state) AS good " +
+			// v0.9.232 — the bare subtraction yields Int64 in ClickHouse, and the
+			// driver refuses Int64 → *uint64. It failed at SCAN time, was logged
+			// and swallowed, so every availability SLO had silently shown no
+			// status since v0.8.200. greatest(...,0) keeps the cast total —
+			// errors are a subset of spans, so it can only ever clamp a
+			// merge-skew underflow.
+			"toUInt64(greatest(countMerge(span_count_state) - countIfMerge(error_count_state), 0)) AS good " +
 			"FROM " + mv + " WHERE service_name = ? AND time_bucket >= ?" + nameClause +
 			" SETTINGS max_execution_time = 20"
 		if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &good); err != nil {
@@ -362,7 +368,13 @@ func (s *Store) ComputeSLOBurnRate(ctx context.Context, o SLO, window time.Durat
 			args = append(args, o.Operation)
 		}
 		q := "SELECT countMerge(span_count_state) AS total, " +
-			"countMerge(span_count_state) - countIfMerge(error_count_state) AS good " +
+			// v0.9.232 — the bare subtraction yields Int64 in ClickHouse, and the
+			// driver refuses Int64 → *uint64. It failed at SCAN time, was logged
+			// and swallowed, so every availability SLO had silently shown no
+			// status since v0.8.200. greatest(...,0) keeps the cast total —
+			// errors are a subset of spans, so it can only ever clamp a
+			// merge-skew underflow.
+			"toUInt64(greatest(countMerge(span_count_state) - countIfMerge(error_count_state), 0)) AS good " +
 			"FROM " + mv + " WHERE service_name = ? AND time_bucket >= ?" + nameClause +
 			" SETTINGS max_execution_time = 10"
 		if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &good); err != nil {

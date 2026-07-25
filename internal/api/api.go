@@ -9798,6 +9798,18 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		"span_links_dropped":      s.ing.SpanLinks.Dropped(),
 		"span_links_write_failed": s.ing.SpanLinks.WriteFailed(),
 		"clickhouse":              map[bool]string{true: "ok", false: "unreachable"}[chOK],
+		// v0.9.238 — which roles THIS pod actually runs. In distributed mode
+		// the api and ingest Deployments answer the same hostname through
+		// different Services, and until now nothing in the response said
+		// which one you reached: a 501 from /v1/traces was the only clue,
+		// and only if you happened to POST OTLP at it. Two consequences this
+		// surfaces directly — the browser RUM exporter pointing at an
+		// api-role pod, and "why is this endpoint slow" questions where the
+		// first thing to establish is which pod answered.
+		"roles": map[string]bool{
+			"ingest": !s.roleIngestOff,
+			"api":    !s.roleAPIOff,
+		},
 	}
 	w.Header().Set("Content-Type", "application/json")
 	if code != http.StatusOK {

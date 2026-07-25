@@ -31,6 +31,10 @@ export const STORAGE_KEYS = {
   exploreHistory:   'coremetry-explore-history',
   sqlBackend:       'coremetry-sql-backend',
   topoViewMode:     'coremetry-topo-view', // v0.8.467 — structure|flow kalıcı tercihi
+  // v0.9.225 — son odaklanılan servis. Auto-pick tüm haritanın gelmesini
+  // beklediği için ilk boyama gereksiz yere o sorguya bağlanıyordu; hatırlanan
+  // odak, komşuluk sorgusunu harita daha yoldayken başlatır.
+  topoFocus:        'coremetry-topo-focus',
   announcementDismissed: 'coremetry-announcement-dismissed', // v0.8.486 — kapatılan duyuru revizyonu
   finopsCostPerTbMo: 'coremetry.finops.costPerTbMo',
   inboxPrio:        'inbox.prio',

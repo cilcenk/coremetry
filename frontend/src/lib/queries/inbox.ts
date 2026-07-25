@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type { InboxItem } from '@/lib/types';
 
@@ -15,6 +15,19 @@ export function useInbox(filter: {
   return useQuery<InboxItem[]>({
     queryKey: ['inbox', 'list', filter],
     queryFn: async () => (await api.inbox(filter)) ?? [],
+    // v0.9.220 — the list had NO polling while the sidebar badge above it
+    // refreshed every 30s, so a new problem bumped the badge to 48 while the
+    // rows underneath stayed at 47 until a manual reload: the one surface
+    // that is supposed to be the operator's live queue was the stalest thing
+    // on screen. 30s/25s matches the badge and /problems exactly, so the two
+    // can't drift apart again. React Query pauses refetchInterval on hidden
+    // tabs, satisfying the document.hidden house rule.
+    refetchInterval: 30_000,
+    staleTime: 25_000,
+    // Keep the previous page on screen while a filter change refetches —
+    // a triage list that blinks to a skeleton on every chip click reads as
+    // slower than it is (the v0.8.478/479 keep-data pattern).
+    placeholderData: keepPreviousData,
   });
 }
 

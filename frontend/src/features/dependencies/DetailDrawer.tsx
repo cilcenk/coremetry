@@ -109,6 +109,36 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
 
   return (
     <div>
+      {/* v0.9.257 (operator-reported, second round: "messaging
+          sayfasından tracelere ulaşamıyorum bulamıyorum") — v0.9.256
+          repaired the link but left it UNFINDABLE. A row click opens
+          THIS drawer, and the drawer had no trace affordance at all:
+          the only pivots were the destination label in the row (whose
+          tooltip still advertised Explore) and two links buried below
+          the fold. So the operator landed here and had nowhere to go.
+          A dead link and an invisible link fail identically from the
+          operator's chair. The action sits ABOVE the stat strip because
+          the drawer is the landing surface, not a leaf. */}
+      {kind === 'queue' && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          <Link className="ud-pill"
+                to={messagingTracesHref({ window: range, system, destination: name })}
+                title="Open the traces behind this topic — same window, filters shown as editable chips">
+            View traces →
+          </Link>
+          {data.errorCount > 0 && (
+            <Link className="ud-pill"
+                  style={{ color: 'var(--err)' }}
+                  to={messagingTracesHref({
+                    window: range, system, destination: name, hasError: true,
+                  })}
+                  title="Only the failing spans on this topic">
+              Failed traces ({fmtNum(data.errorCount)}) →
+            </Link>
+          )}
+        </div>
+      )}
+
       {/* Aggregate strip on top — same numbers as the row but
           repeated here so the drawer reads on its own when
           screenshotted into a postmortem. */}

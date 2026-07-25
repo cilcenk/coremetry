@@ -689,7 +689,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 
 /* Duration share — % chip at the right end of the row-name column. */
-.wf-pct { flex-shrink: 0; font-family: ui-monospace, monospace; font-size: 9.5px; color: var(--text3); margin-left: 6px; }
 
 /* Service-color stripe down the left edge — Tempo's primary signal for
    identifying which service this span belongs to. Always visible, fixed
@@ -807,7 +806,6 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   line-height: 1.4;
 }
 
-.wf-err-dot { color: var(--err); font-size: 11px; flex-shrink: 0; margin-left: 4px; line-height: 1; }
 
 /* Tree connector lines — vertical guides for ancestor depths plus an
    L-shape elbow joining the row to its parent. Tempo (Grafana 11+)

@@ -1172,6 +1172,11 @@ export interface InboxItem {
   sreTeam?: string;
   status: string;
   clusters?: string[];
+  // v0.9.255 — enrichment sonuçları. Backend bunları ZATEN hesaplıyordu
+  // (EnrichProblemsWithRunbooks / WithDeploys, poll başına üç CH turu) ama
+  // satıra kopyalamıyordu: sorgu faturalanıp cevap çöpe gidiyordu.
+  runbookUrl?: string;
+  recentDeploy?: { service: string; version: string; timeUnixNs: number };
   problem?: {
     id: string; ruleId: string; metric: string;
     value: number; threshold: number;

@@ -8,12 +8,13 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { useInbox } from '@/lib/queries';
-import { tsLong, fmtFixed } from '@/lib/utils';
+import { tsLong, fmtFixed, fmtAgoNs } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
+import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { resolveSelectedItem } from '@/lib/inboxDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
@@ -271,6 +272,12 @@ export default function InboxPage() {
     <>
       <Topbar title="Inbox" showEnv />
       <div id="content">
+        {/* v0.9.255 — kayıtlı görünümler. Backend `page`'i serbest string alıyor,
+            yani bu tek satır; birleşik triage yüzeyinin /problems'ın yerini
+            tutabilmesi için gereken paritenin en ucuz parçası.
+            #content'in İÇİNDE — Traces/Explore ile aynı yerleşim; dışarıda
+            konteyner padding'i almaz. */}
+        <SavedViewsBar page="inbox" />
         <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 14 }}>
           Everything needing a human — Problems (alert rules), open Exception
           groups, and active Anomaly detections. Default view: <b>P1 + P2</b>
@@ -516,10 +523,45 @@ export default function InboxPage() {
                       )}
                     </td>
                     <td>
-                      <div style={{ fontWeight: 600, marginBottom: 2 }}>{it.title}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', marginBottom: 2 }}>
+                        <span style={{ fontWeight: 600 }}>{it.title}</span>
+                        {/* v0.9.255 — durum rozeti. `status` alanı telde vardı ama
+                            hiç çizilmiyordu: "all" pivotunda çözülmüş bir satır
+                            yenisiyle birebir aynı görünüyordu. */}
+                        <StatusBadge s={it.status} />
+                        {/* Bunlar backend'in ZATEN hesaplayıp attığı iki bilgi
+                            (v0.9.255). Operatörün bir satırda ilk aradığı şeyler:
+                            "runbook var mı" ve "az önce deploy oldu mu". */}
+                        {it.runbookUrl && (
+                          <a href={it.runbookUrl} target="_blank" rel="noreferrer"
+                            onClick={e => e.stopPropagation()}
+                            className="badge b-info" title="Runbook aç">📕 runbook</a>
+                        )}
+                        {it.recentDeploy && (
+                          <span className="badge b-warn"
+                            title={`${it.recentDeploy.service} ${it.recentDeploy.version} — ${tsLong(it.recentDeploy.timeUnixNs)}`}>
+                            ⟳ deploy {it.recentDeploy.version}
+                          </span>
+                        )}
+                      </div>
                       <DetailLine it={it} />
                     </td>
-                    <td className="mono" style={{ fontSize: 11 }}>{tsLong(it.lastSeen)}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>
+                      {tsLong(it.lastSeen)}
+                      {/* v0.9.255 — YAŞ. `startedAt` telde vardı, hiç çizilmiyordu:
+                          bir satırın 3 dakikadır mı yoksa 3 gündür mi açık olduğu
+                          triage sırasının en güçlü sinyallerinden biri ve operatör
+                          onu göremiyordu.
+
+                          Problem kind'ında backend LastSeen = StartedAt yazıyor
+                          (inbox.go), yani ikisi eşitse "ilk görülme" satırı bir
+                          şey söylemez — o yüzden yalnız GERÇEKTEN farklıysa
+                          gösteriliyor. Yaş her kaynakta anlamlı, o hep var. */}
+                      <div style={{ color: 'var(--text3)', marginTop: 2 }}>
+                        {fmtAgoNs(it.startedAt)}
+                        {it.startedAt !== it.lastSeen && ` · ilk ${tsLong(it.startedAt)}`}
+                      </div>
+                    </td>
                     <td>
                       {it.assignee
                         ? <AssigneePill v={it.assignee} />
@@ -553,6 +595,25 @@ function PriorityBadge({ p, reason }: { p: 'P1' | 'P2' | 'P3'; reason?: string }
       {p}
     </span>
   );
+}
+
+// v0.9.255 — durum rozeti. Üç kaynağın state sözlükleri farklı (problem:
+// open/acknowledged/resolved, exception: new/acknowledged/resolved/ignored/
+// regressed, anomaly: active/resolved), o yüzden eşleme tonlara göre yapılıyor,
+// kaynağa göre değil. Bilinmeyen bir durum GİZLENMEZ — ham hâliyle gri basılır,
+// çünkü tanımadığımız bir durumu yok saymak operatöre satırın durumu yokmuş
+// gibi gösterirdi.
+function StatusBadge({ s }: { s?: string }) {
+  if (!s) return null;
+  const k = s.toLowerCase();
+  const tone =
+    k === 'resolved' ? 'b-ok'
+      : k === 'ignored' ? 'b-gray'
+        : k === 'acknowledged' ? 'b-info'
+          : k === 'regressed' ? 'b-err'
+            : k === 'open' || k === 'active' || k === 'new' ? 'b-warn'
+              : 'b-gray';
+  return <span className={`badge ${tone}`} title={`Durum: ${s}`}>{k}</span>;
 }
 
 function AssigneePill({ v }: { v: string }) {

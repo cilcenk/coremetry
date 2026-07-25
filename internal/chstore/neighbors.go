@@ -75,10 +75,15 @@ func (s *Store) ServiceNeighbors(
 		holders[i] = "?"
 		args[i] = id
 	}
+	// v0.9.231 — bounded to the window step 1 sampled from (padded). Without
+	// a time predicate this ran bloom-filter analysis over every daily
+	// partition in retention; see traceFetchPad in aggregate.go.
+	args = append(args, time.Now().Add(-since-traceFetchPad), time.Now().Add(traceFetchPad))
 	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
 		SELECT trace_id, span_id, parent_id, service_name
 		FROM spans
 		WHERE trace_id IN (%s)
+		  AND time >= ? AND time <= ?
 		SETTINGS max_execution_time = 30`, strings.Join(holders, ",")), args...)
 	if err != nil {
 		return nil, nil, 0, 0, err

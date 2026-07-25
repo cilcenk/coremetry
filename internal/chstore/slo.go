@@ -340,26 +340,59 @@ func (s *Store) ComputeSLOBurnRate(ctx context.Context, o SLO, window time.Durat
 		return 0, 0, fmt.Errorf("slo service is required")
 	}
 	since := time.Now().Add(-window)
-	var goodExpr string
-	switch o.SLIType {
-	case SLITypeAvailability:
-		goodExpr = "countIf(status_code != 'error')"
-	case SLITypeLatency:
-		goodExpr = fmt.Sprintf("countIf(duration <= %f)", o.ThresholdMs*1e6)
-	default:
-		return 0, 0, fmt.Errorf("unknown sli_type: %s", o.SLIType)
-	}
-	q := `SELECT count() AS total, ` + goodExpr + ` AS good
+	var total, good uint64
+
+	// v0.9.231 (scale-audit) — the availability branch read raw `spans`
+	// while its sibling ComputeSLOStatus has ridden the summary MVs since
+	// v0.8.200. That mattered more here, not less: the burn evaluator calls
+	// this FOUR times per SLO per tick (two policies × long/short window,
+	// internal/evaluator/slo_burn.go), serially across every SLO, over
+	// windows up to 24h. countMerge/countIfMerge over 5m buckets give the
+	// identical ratio.
+	//
+	// Sub-5m windows can't be reconstructed from 5m buckets, so those still
+	// go raw — the same boundary UseSummaryMV draws for the evaluator.
+	if o.SLIType == SLITypeAvailability && UseSummaryMV(window) {
+		mv := "service_summary_5m"
+		nameClause := ""
+		args := []any{o.Service, MVWindowStart(time.Now(), window)}
+		if o.Operation != "" {
+			mv = "operation_summary_5m"
+			nameClause = " AND name = ?"
+			args = append(args, o.Operation)
+		}
+		q := "SELECT countMerge(span_count_state) AS total, " +
+			"countMerge(span_count_state) - countIfMerge(error_count_state) AS good " +
+			"FROM " + mv + " WHERE service_name = ? AND time_bucket >= ?" + nameClause +
+			" SETTINGS max_execution_time = 10"
+		if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &good); err != nil {
+			return 0, 0, err
+		}
+	} else {
+		var goodExpr string
+		switch o.SLIType {
+		case SLITypeAvailability:
+			goodExpr = "countIf(status_code != 'error')"
+		case SLITypeLatency:
+			// Per-span threshold compare — no MV pre-computes it.
+			goodExpr = fmt.Sprintf("countIf(duration <= %f)", o.ThresholdMs*1e6)
+		default:
+			return 0, 0, fmt.Errorf("unknown sli_type: %s", o.SLIType)
+		}
+		// v0.9.231 — was inheriting the 60s connection default, twice the
+		// ceiling every sibling read sets.
+		q := `SELECT count() AS total, ` + goodExpr + ` AS good
 	      FROM spans
 	      WHERE service_name = ? AND time >= ?`
-	args := []any{o.Service, since}
-	if o.Operation != "" {
-		q += ` AND name = ?`
-		args = append(args, o.Operation)
-	}
-	var total, good uint64
-	if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &good); err != nil {
-		return 0, 0, err
+		args := []any{o.Service, since}
+		if o.Operation != "" {
+			q += ` AND name = ?`
+			args = append(args, o.Operation)
+		}
+		q += ` SETTINGS max_execution_time = 10`
+		if err := s.conn.QueryRow(ctx, q, args...).Scan(&total, &good); err != nil {
+			return 0, 0, err
+		}
 	}
 	if total == 0 {
 		return 0, 0, nil

@@ -345,11 +345,16 @@ func (s *Store) getServiceMapAt(
 		args[i] = id
 	}
 
+	// v0.9.231 — bounded to the window step 1 sampled from (padded). Without
+	// a time predicate this ran bloom-filter analysis over every daily
+	// partition in retention; see traceFetchPad in aggregate.go.
+	args = append(args, winStart.Add(-traceFetchPad), winEnd.Add(traceFetchPad))
 	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
 		SELECT trace_id, span_id, parent_id, service_name, status_code,
 		       db_system, peer_service, kind
 		FROM spans
 		WHERE trace_id IN (%s)
+		  AND time >= ? AND time <= ?
 		SETTINGS max_execution_time = 30`, strings.Join(holders, ",")), args...)
 	if err != nil {
 		return nil, err

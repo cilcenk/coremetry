@@ -1347,9 +1347,16 @@ func (s *Server) warmDependenciesCache() {
 		// future so the next request a few seconds later still
 		// matches the same key.
 		landingFrom := to.Add(-15 * time.Minute)
-		landingKey := fmt.Sprintf(
-			"services:mv=true:limit=50:offset=0:bucket=%s:name=:sort=errorRate:dir=desc:ot=:st=:cl=",
-			cacheBucket(landingFrom, to))
+		// v0.9.231 (scale-audit) — this string used to be hand-written and had
+		// gone stale: servicesListKey grew :env=:ns=:wt= and the warm key never
+		// did, so the handler always looked up a key the warmer never wrote.
+		// The entry was unreachable — a fleet-wide MV scan every 25s that
+		// nothing ever read, while the landing page (the whole reason this
+		// warmer exists) still paid a cold scan on every login. Building it
+		// through the same function the handler uses means they cannot drift
+		// again.
+		landingKey := servicesListKey(true, 50, 0, cacheBucket(landingFrom, to),
+			"", "errorRate", "desc", "", "", "", "", "", false)
 		warm("services-landing", landingKey, 30*time.Second,
 			func(ctx context.Context) (any, error) {
 				list, err := s.store.GetServicesAggFiltered(ctx,

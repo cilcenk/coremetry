@@ -105,6 +105,7 @@ export default function MessagingPage() {
         avgDurationMs: d.avgDurationMs,
         p99DurationMs: d.p99DurationMs,
         p50DurationMs: d.p50DurationMs,
+        p95DurationMs: d.p95DurationMs,
         producePerMin: (d.produceCount ?? 0) / windowMins,
         consumePerMin: (d.consumeCount ?? 0) / windowMins,
         produceCount: d.produceCount,

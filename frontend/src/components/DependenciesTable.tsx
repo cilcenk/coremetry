@@ -57,6 +57,12 @@ export interface DepRow {
   produceErrors?: number;
   consumeErrors?: number;
   p50DurationMs?: number;
+  // v0.9.259 — p95 rode the /api/messaging payload from the day the
+  // MV shipped (dependencies.go:863, index 2 of the 3-wide state) and
+  // was declared in types.ts, but DepRow never carried it so nothing
+  // could render it. There is deliberately no priorP95Ms twin below:
+  // MessagingInstance only computes PriorP50Ms / PriorP99Ms.
+  p95DurationMs?: number;
   // Prior equal-length window (compare=prior) — undefined when the
   // row had no prior twin, so delta badges stay hidden.
   priorSpanCount?: number;
@@ -198,7 +204,13 @@ export function DependenciesTable({
     // v0.8.364 — P50 alongside P99 (queue-only; the DB grid keeps
     // its existing shape). Same TDigest state the MV always had.
     ...(kind === 'queue'
-      ? [{ id: 'p50', label: 'P50', sortValue: (r: DepRow) => r.p50DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 } as DataTableColumn<DepRow>]
+      ? [
+          { id: 'p50', label: 'P50', sortValue: (r: DepRow) => r.p50DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 } as DataTableColumn<DepRow>,
+          // v0.9.259 — P95 between P50 and P99 so the row reads
+          // Avg → P50 → P95 → P99 left to right. Zero backend and zero
+          // ClickHouse cost: the value was already in the payload.
+          { id: 'p95', label: 'P95', sortValue: (r: DepRow) => r.p95DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 } as DataTableColumn<DepRow>,
+        ]
       : []),
     { id: 'p99', label: 'P99', sortValue: r => r.p99DurationMs, numeric: true, naturalDir: NATURAL.p99, width: 90 },
     // #1 — non-sortable RED sparkline column. No sortValue so the
@@ -486,6 +498,20 @@ export function DependenciesTable({
                           : <>{r.p50DurationMs.toFixed(1)}ms</>}
                         {compare && r.p50DurationMs !== undefined
                           && <TrendDelta cur={r.p50DurationMs} prior={r.priorP50Ms} kind="lowerBetter" />}
+                      </td>
+                    )}
+                    {/* v0.9.259 — P95 was already being selected, marshalled
+                        and typed; it just had nowhere to land. No TrendDelta
+                        here on purpose: MessagingInstance carries only
+                        PriorP50Ms / PriorP99Ms (dependencies.go:96-97), so a
+                        prior for P95 does not exist. TrendDelta would render
+                        null for it, but binding to a field that is never
+                        populated implies a comparison the data can't make. */}
+                    {kind === 'queue' && (
+                      <td className="mono" style={{ textAlign: 'right' }}>
+                        {r.p95DurationMs === undefined
+                          ? <span style={{ color: 'var(--text3)' }}>—</span>
+                          : <>{r.p95DurationMs.toFixed(1)}ms</>}
                       </td>
                     )}
                     <td className="mono" style={{ textAlign: 'right' }}>

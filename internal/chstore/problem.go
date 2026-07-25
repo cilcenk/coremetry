@@ -922,7 +922,13 @@ type ProblemFilter struct {
 // CountProblemsInStatuses — inbox rozetinin open+acknowledged toplamı
 // TEK FINAL taramasında (v0.8.472 perf dalga-1 #2; önceden iki ayrı
 // CountProblems çağrısıydı). Statüler sabit enum, IN bind'li.
-func (s *Store) CountProblemsInStatuses(ctx context.Context, statuses []string) (uint64, error) {
+// envServices scopes the count to an environment, mirroring the inbox
+// list's envKeepsRow exactly: a service-LESS (global) row always counts,
+// otherwise the service must be an env member. nil = no env constraint;
+// a non-nil EMPTY slice means the env resolved to no services, so only
+// global rows count — the nil-vs-empty distinction is load-bearing here
+// the same way it is for the team filter (v0.9.219).
+func (s *Store) CountProblemsInStatuses(ctx context.Context, statuses []string, envServices []string) (uint64, error) {
 	if len(statuses) == 0 {
 		return 0, nil
 	}
@@ -932,10 +938,19 @@ func (s *Store) CountProblemsInStatuses(ctx context.Context, statuses []string) 
 		holders[i] = "?"
 		args[i] = st
 	}
+	envSQL := ""
+	if envServices != nil {
+		if len(envServices) == 0 {
+			envSQL = " AND service = ''"
+		} else {
+			envSQL = " AND (service = '' OR service IN ?)"
+			args = append(args, envServices)
+		}
+	}
 	row := s.conn.QueryRow(ctx, `
 		SELECT count()
 		FROM problems FINAL
-		WHERE status IN (`+strings.Join(holders, ",")+`)
+		WHERE status IN (`+strings.Join(holders, ",")+`)`+envSQL+`
 		SETTINGS max_execution_time = 5`, args...)
 	var n uint64
 	if err := row.Scan(&n); err != nil {

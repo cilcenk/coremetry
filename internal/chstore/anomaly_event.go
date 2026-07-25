@@ -166,15 +166,28 @@ type ListAnomalyEventsFilter struct {
 // "active" — i.e. last_seen fresher than activeAge (the same derivation the
 // list/detail reads use). For the /inbox badge (v0.8.288): a cheap COUNT(*)
 // FINAL on the small state table, no row scan. activeAge 0 → 10m default.
-func (s *Store) CountActiveAnomalyEvents(ctx context.Context, activeAge time.Duration) (uint64, error) {
+// envServices follows the same nil/empty contract as
+// CountProblemsInStatuses: nil = unscoped, empty = env resolved to no
+// services (only service-less rows count), otherwise membership.
+func (s *Store) CountActiveAnomalyEvents(ctx context.Context, activeAge time.Duration, envServices []string) (uint64, error) {
 	if activeAge == 0 {
 		activeAge = 10 * time.Minute
+	}
+	args := []any{int64(activeAge.Seconds())}
+	envSQL := ""
+	if envServices != nil {
+		if len(envServices) == 0 {
+			envSQL = " AND service = ''"
+		} else {
+			envSQL = " AND (service = '' OR service IN ?)"
+			args = append(args, envServices)
+		}
 	}
 	var n uint64
 	err := s.conn.QueryRow(ctx, `
 		SELECT count() FROM anomaly_events FINAL
-		WHERE last_seen >= now64() - INTERVAL ? SECOND`,
-		int64(activeAge.Seconds()),
+		WHERE last_seen >= now64() - INTERVAL ? SECOND`+envSQL,
+		args...,
 	).Scan(&n)
 	return n, err
 }

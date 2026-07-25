@@ -22,10 +22,13 @@ export function useInbox(filter: {
 // three inbox sources. Cheap COUNT endpoint; 30s poll (React Query pauses it
 // on a hidden tab), 25s stale to match. `select` narrows to the number so the
 // badge consumer stays a plain count.
-export function useInboxCount() {
+// v0.9.219 — env joins the key AND the request. useInbox() already took env;
+// this one didn't, so with an env picked the sidebar badge counted every
+// environment while the page behind it showed one.
+export function useInboxCount(env?: string) {
   return useQuery<{ count: number; problems: number; exceptions: number; anomalies: number }, Error, number>({
-    queryKey: ['inbox', 'count'],
-    queryFn: async () => (await api.inboxCount()) ?? { count: 0, problems: 0, exceptions: 0, anomalies: 0 },
+    queryKey: ['inbox', 'count', env ?? ''],
+    queryFn: async () => (await api.inboxCount(env)) ?? { count: 0, problems: 0, exceptions: 0, anomalies: 0 },
     select: (r) => r.count,
     refetchInterval: 30_000,
     staleTime: 25_000,

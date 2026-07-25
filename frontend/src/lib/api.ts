@@ -1296,8 +1296,11 @@ export const api = {
     get<import('./types').InboxItem[] | null>(`/api/inbox?${qs(params)}`),
   // v0.8.288 — the single triage badge total (not-resolved problems + open
   // exception groups + active anomalies). COUNT-only, 10s server cache.
-  inboxCount: () =>
-    get<{ count: number; problems: number; exceptions: number; anomalies: number }>(`/api/inbox/count`),
+  // v0.9.219 — env-scoped like every other triage read; without it the badge
+  // counted all environments while the page it links to showed one.
+  inboxCount: (env?: string) =>
+    get<{ count: number; problems: number; exceptions: number; anomalies: number }>(
+      `/api/inbox/count${env ? `?env=${encodeURIComponent(env)}` : ''}`),
   setProblemAssignee: (id: string, assignee: string) =>
     request<{ id: string; assignee: string }>(`/api/problems/${encodeURIComponent(id)}/assignee`, {
       method: 'PATCH',

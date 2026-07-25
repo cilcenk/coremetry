@@ -1701,6 +1701,10 @@ export interface MetricPoint {
 
 export interface HealthInfo {
   status: string;
+  // v0.9.238 — which roles the answering pod runs. Absent on pre-v0.9.238
+  // servers, so every consumer must treat `undefined` as "unknown", never
+  // as "false" (main.tsx's RUM gate fails open on it).
+  roles?: { ingest: boolean; api: boolean };
   spans_queued: number;
   logs_queued: number;
   metrics_queued: number;

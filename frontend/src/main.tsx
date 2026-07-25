@@ -45,9 +45,39 @@ function rumEnabled(): boolean {
 // Firing on idle means it never competes with the initial render + first
 // data fetch (TTFI budget <1.5s). Trade-off: the earliest fetch spans
 // before idle may be missed — acceptable for self-observability.
+// v0.9.238 — the exporter posts to same-origin /v1/traces, but in a
+// distributed install the browser reaches the API Deployment, which never
+// starts the ingest consumers: otlpRouteGuard answers 501 and the batch
+// processor retries every 5s for the life of the tab. Operator-observed in
+// prod as repeated failing `traces` requests eating connection slots on an
+// already-saturated page.
+//
+// /api/health reports the pod's roles (v0.9.238), so ask before wiring
+// anything — and keep the "never even fetch the otel chunk" property by
+// probing BEFORE the dynamic import.
+//
+// Fails OPEN on purpose: an older server without the field, or a health
+// request that doesn't land, leaves RUM enabled exactly as before. A
+// telemetry feature must not switch itself off because one probe failed.
+async function ingestReachable(): Promise<boolean> {
+  try {
+    const { api } = await import('./lib/api');
+    const roles = (await api.health())?.roles;
+    return typeof roles?.ingest === 'boolean' ? roles.ingest : true;
+  } catch {
+    return true;
+  }
+}
+
 function bootOtel() {
   if (!rumEnabled()) return;
-  void import('./lib/browserOtel').then(m => m.initOtel()).catch(() => {});
+  void ingestReachable().then(ok => {
+    if (!ok) {
+      console.info('[coremetry] RUM off: this pod does not run the ingest role');
+      return;
+    }
+    return import('./lib/browserOtel').then(m => m.initOtel());
+  }).catch(() => {});
 }
 if ('requestIdleCallback' in window) {
   window.requestIdleCallback(bootOtel, { timeout: 3000 });

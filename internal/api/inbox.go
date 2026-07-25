@@ -272,13 +272,46 @@ func (s *Server) inboxCount(w http.ResponseWriter, r *http.Request) {
 	// max(). TTL 10s→15s: SWR penceresi 45s > 30s poll — rozet STALE
 	// yolundan <10ms döner; problem/exception mutasyonları inbox:count'u
 	// anında düşürür (read-your-writes).
-	s.serveCached(w, r, "inbox:count", 15*time.Second, s.computeInboxCount)
+	// v0.9.219 — env joins the key. The badge used to ignore ?env= while the
+	// inbox LIST honoured it, so with an env picked the sidebar said 47 and
+	// the page it linked to showed 12. Cache invalidation is prefix-based
+	// (cacheInvalidatePrefix "inbox:count"), so every env variant still
+	// drops on a problem/exception mutation.
+	env := strings.TrimSpace(r.URL.Query().Get("env"))
+	s.serveCached(w, r, inboxCountKey(env), 15*time.Second, func(ctx context.Context) (any, error) {
+		return s.computeInboxCountFor(ctx, env)
+	})
 }
+
+// inboxCountKey is shared by the handler and the warm loop (api.go) so the
+// pre-warmed payload and the served one can never diverge.
+func inboxCountKey(env string) string { return "inbox:count:env=" + env }
 
 // computeInboxCount — rozet toplamının tek hesabı; hem inboxCount
 // handler'ı hem 25s warm-loop (v0.8.473) aynı fonksiyonu çağırır ki
 // ısıtılan payload ile canlı payload asla ıraksamasın.
 func (s *Server) computeInboxCount(ctx context.Context) (any, error) {
+	return s.computeInboxCountFor(ctx, "")
+}
+
+// computeInboxCountFor scopes the badge to an environment using the SAME
+// semantics as the inbox list (envKeepsRow): a service-less row always
+// counts, otherwise the service must be an env member.
+//
+// On an env-map error the count stays UNFILTERED — identical to the list's
+// soft-fail (inbox.go:184) and for the same reason: a transient CH blip must
+// never hide a firing P1 behind a badge that silently reads 0.
+func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, error) {
+	// nil = no env constraint. Non-nil (possibly empty) = constrain.
+	var envServices []string
+	if env != "" {
+		if members, err := s.store.EnvMemberServices(ctx, env); err == nil {
+			envServices = members
+			if envServices == nil {
+				envServices = []string{} // resolved, but empty — keep it non-nil
+			}
+		}
+	}
 	var (
 		probN, anN uint64
 		exN        int64
@@ -286,17 +319,29 @@ func (s *Server) computeInboxCount(ctx context.Context) (any, error) {
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		var err error
-		probN, err = s.store.CountProblemsInStatuses(gctx, []string{"open", "acknowledged"})
+		probN, err = s.store.CountProblemsInStatuses(gctx, []string{"open", "acknowledged"}, envServices)
+		return err
+	})
+	g.Go(func() error {
+		// Exception groups always carry a service (they're derived from
+		// spans), so there is no service-less bucket to preserve here: an
+		// env that resolves to no services can only mean zero. The shared
+		// filter treats an empty Services slice as "no constraint", so that
+		// case is short-circuited rather than passed down.
+		if envServices != nil && len(envServices) == 0 {
+			exN = 0
+			return nil
+		}
+		var err error
+		exN, err = s.store.CountExceptionGroups(gctx, chstore.ExceptionGroupFilter{
+			State:    pickExceptionState("open"),
+			Services: envServices,
+		})
 		return err
 	})
 	g.Go(func() error {
 		var err error
-		exN, err = s.store.CountExceptionGroups(gctx, chstore.ExceptionGroupFilter{State: pickExceptionState("open")})
-		return err
-	})
-	g.Go(func() error {
-		var err error
-		anN, err = s.store.CountActiveAnomalyEvents(gctx, 0)
+		anN, err = s.store.CountActiveAnomalyEvents(gctx, 0, envServices)
 		return err
 	})
 	if err := g.Wait(); err != nil {

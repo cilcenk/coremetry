@@ -153,7 +153,7 @@ export function Sidebar() {
   const openProblems = useOpenProblemCount(env).data ?? 0;
   // v0.8.288 (Option B) — the /inbox triage badge sums all three sources
   // (not-resolved problems + open exceptions + active anomalies).
-  const inboxCount = useInboxCount().data ?? 0;
+  const inboxCount = useInboxCount(env).data ?? 0;
   // Footer only shows when the backend is unreachable — pre-v0.5.0
   // it always rendered the queue depths, which on a quiet
   // deployment read as a permanent "spans: 0 · logs: 0" line

@@ -79,6 +79,35 @@ func TestServiceVersionMVQueryShape(t *testing.T) {
 	})
 }
 
+// v0.9.250 regression pin — the cold-start coverage probe must read the
+// AGGREGATE STATE's minimum, never the bucket label.
+//
+// Found by running the DDL against a live cluster right after creating the
+// view: min(time_bucket) reported 14:55:00 while the earliest real datum
+// was 14:58:32 — 212 seconds of coverage the MV did not actually have,
+// because a span ingested at 14:58 lands in the bucket NAMED 14:55.
+//
+// Against a 48h lookback a few minutes sounds harmless, but it is a hole
+// of exactly the kind the gate exists to close: a version whose only
+// pre-window activity fell inside that gap has no MV rows before the
+// window start and reads as a fresh deploy — the v0.9.205 phantom marker,
+// which is the whole reason deployLookback exists.
+func TestDeployMVCoverageProbeUsesStateMin(t *testing.T) {
+	// The probe lives in deployMVCovers; assert on the source of truth
+	// it queries. A future edit that "simplifies" this back to the
+	// cheaper bucket column silently reopens the gap.
+	src := deployMVCoverageProbeSQL
+	if !strings.Contains(src, "minMerge(first_seen_state)") {
+		t.Error("coverage probe must use minMerge(first_seen_state) — the exact earliest datum")
+	}
+	if strings.Contains(src, "min(time_bucket)") {
+		t.Error("coverage probe uses min(time_bucket): the bucket LABEL overstates coverage by up to one bucket width (v0.9.250)")
+	}
+	if !strings.Contains(src, "max_execution_time") {
+		t.Error("coverage probe has no max_execution_time")
+	}
+}
+
 // The MV must be registered in ALL THREE cluster registries on day one.
 // v0.5.426 is the incident where a table reached one registry but not the
 // others: adaptDDL never renamed it to `_local`, no Distributed wrapper

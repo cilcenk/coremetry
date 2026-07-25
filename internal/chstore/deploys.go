@@ -694,6 +694,12 @@ func (s *Store) serviceDeploysFromMV(
 // Latches once satisfied — the MV only accumulates, so the answer can
 // never go back to false while the process lives, and the probe stops
 // running after the first success.
+// deployMVCoverageProbeSQL — hoisted as a const so deploys_mv_test.go can
+// pin WHICH column the gate trusts (v0.9.250).
+const deployMVCoverageProbeSQL = `
+	SELECT minMerge(first_seen_state) FROM service_version_5m
+	SETTINGS max_execution_time = 5, `
+
 func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 	s.deployMVMu.Lock()
 	defer s.deployMVMu.Unlock()
@@ -707,10 +713,20 @@ func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 	}
 	s.deployMVProbedAt = time.Now()
 
+	// minMerge(first_seen_state), NOT min(time_bucket) — v0.9.250.
+	// The bucket LABEL overstates coverage by up to one bucket width: a
+	// span ingested at 14:58 lands in the bucket named 14:55, so a
+	// freshly-created MV reports coverage from 14:55 while its earliest
+	// real datum is 14:58. Verified on a live cluster right after
+	// creating the view: min(time_bucket) said 14:55:00, the actual
+	// first_seen was 14:58:37. Five minutes is nothing against a 48h
+	// lookback, but it is a hole of exactly the kind this gate exists
+	// to close — a version whose only pre-window activity fell in that
+	// gap would read as a fresh deploy. The state's own min is exact,
+	// and the probe latches, so the extra read happens once.
 	var earliest time.Time
-	err := s.conn.QueryRow(ctx, `
-		SELECT min(time_bucket) FROM service_version_5m
-		SETTINGS max_execution_time = 5, `+s.shardSkipSetting()).Scan(&earliest)
+	err := s.conn.QueryRow(ctx,
+		deployMVCoverageProbeSQL+s.shardSkipSetting()).Scan(&earliest)
 	if err != nil {
 		// Table missing (pre-migration binary, or an operator dropped
 		// it) or CH blip — stay on the raw path, which is always

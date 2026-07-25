@@ -767,6 +767,19 @@ export const api = {
   getAnomalyPromotion: () =>
     get<{ enabled: boolean; minPeakRatio: number; criticalPeakRatio: number; minSustainedSec: number; minCount: number }>(
       `/api/settings/anomaly-promotion`),
+  // v0.9.248 — age-based escalation (escalateStaleProblems). Separate
+  // key from anomaly promotion because it applies to EVERY Problem,
+  // not just promoted anomalies.
+  getProblemEscalation: () =>
+    get<{ enabled: boolean; infoToWarningSec: number; warningToCriticalSec: number }>(
+      `/api/settings/problem-escalation`),
+  putProblemEscalation: (c: {
+    enabled: boolean; infoToWarningSec: number; warningToCriticalSec: number;
+  }) =>
+    request<typeof c>(`/api/settings/problem-escalation`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
   putAnomalyPromotion: (c: {
     enabled: boolean; minPeakRatio: number; criticalPeakRatio: number; minSustainedSec: number; minCount: number;
   }) =>

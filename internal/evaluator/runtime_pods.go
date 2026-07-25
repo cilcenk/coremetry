@@ -195,7 +195,7 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 		// Canlı değer + severity tazele (warning critical'e kötüleşebilir);
 		// StartedAt korunur; yaş-bazlı eskalasyon tabanına clamp (v0.8.309).
 		r.existing.Value = r.value
-		r.existing.Severity = effectiveSeverity(r.severity, time.Since(time.Unix(0, r.existing.StartedAt)))
+		r.existing.Severity = effectiveSeverity(r.severity, time.Since(time.Unix(0, r.existing.StartedAt)), e.escalationCfg(ctx))
 		r.existing.Threshold = r.threshold
 		r.existing.Description = r.reason
 		if err := e.store.UpsertProblem(ctx, *r.existing); err != nil {

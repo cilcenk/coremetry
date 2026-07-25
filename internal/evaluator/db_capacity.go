@@ -267,7 +267,7 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 		// re-paged 60s later — the storm (87% tablespace = a critical
 		// page per minute, for hours).
 		existing.Value = pct
-		existing.Severity = effectiveSeverity(sev, time.Since(time.Unix(0, existing.StartedAt)))
+		existing.Severity = effectiveSeverity(sev, time.Since(time.Unix(0, existing.StartedAt)), e.escalationCfg(ctx))
 		existing.Threshold = capacityThreshold(c, sev)
 		existing.Description = capacityReason(c, s.Instance, s.Subkey, pct)
 		if err := e.store.UpsertProblem(ctx, *existing); err != nil {

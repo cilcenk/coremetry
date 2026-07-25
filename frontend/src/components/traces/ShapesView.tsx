@@ -125,7 +125,15 @@ export function ShapesView({ range, service }: { range: TimeRange; service?: str
               return (
                 <tr key={r.signature}
                   onClick={() => r.exemplar && navigate(`/trace?id=${r.exemplar}`)}
-                  style={{ cursor: r.exemplar ? 'pointer' : 'default' }}
+                  // v0.9.236 — shapes group a 1000-trace sample by
+                  // (service, rootName); at 1000s of services × 10000s of
+                  // operations that barely collapses, so an unfiltered
+                  // /traces?view=shapes painted ~1000 unguarded rows. Same
+                  // treatment TracesResult already applies to this row shape.
+                  style={{
+                    cursor: r.exemplar ? 'pointer' : 'default',
+                    contentVisibility: 'auto', containIntrinsicSize: 'auto 34px',
+                  }}
                   title={r.exemplar ? 'Open an exemplar trace for this shape' : undefined}>
                   <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>

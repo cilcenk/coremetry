@@ -325,8 +325,14 @@ function AlignedDiff({ aQ, bQ }: {
                   : delta < 0
                     ? 'var(--ok)'
                     : 'var(--text3)';
+              // v0.9.236 — one row per aligned span pair across two FULL
+              // traces, uncapped on either side; a 2000-span pair blocked
+              // first paint. The file's own note proposed VirtualList, but
+              // these rows are variable-height so content-visibility is the
+              // right tool — same as TraceWaterfall on this data.
               return (
-                <tr key={p.pathKey}>
+                <tr key={p.pathKey}
+                  style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
                   <td className="mono num" style={{ color: tone, whiteSpace: 'nowrap' }}>
                     {delta == null
                       ? '—'

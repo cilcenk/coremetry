@@ -30,7 +30,6 @@ export const STORAGE_KEYS = {
   spanPanelWidth:   'coremetry-span-panel-w',
   exploreHistory:   'coremetry-explore-history',
   sqlBackend:       'coremetry-sql-backend',
-  topoViewMode:     'coremetry-topo-view', // v0.8.467 — structure|flow kalıcı tercihi
   // v0.9.225 — son odaklanılan servis. Auto-pick tüm haritanın gelmesini
   // beklediği için ilk boyama gereksiz yere o sorguya bağlanıyordu; hatırlanan
   // odak, komşuluk sorgusunu harita daha yoldayken başlatır.

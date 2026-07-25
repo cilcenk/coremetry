@@ -26,15 +26,25 @@ const ALWAYS_ALLOWED = new Set(['/', '/login', '/profile', '/public-status', '/p
 // compare); a `/dashboards` allows `/dashboard` (singular detail).
 // Anything not in the allowed list (or in ALWAYS_ALLOWED) returns
 // false → the guard redirects to the first allowed page.
-function isPathAllowed(pathname: string, allowedPages: string[]): boolean {
+export function isPathAllowed(pathname: string, allowedPages: string[]): boolean {
   if (ALWAYS_ALLOWED.has(pathname)) return true;
   for (const p of allowedPages) {
     if (pathname === p) return true;
     if (pathname.startsWith(p + '/')) return true;
     if (p === '/traces' && pathname.startsWith('/trace')) return true;
     if (p === '/dashboards' && pathname.startsWith('/dashboard')) return true;
-    if (p === '/services' && pathname.startsWith('/service')) return true;
-    if (p === '/databases' && pathname.startsWith('/databases/')) return true;
+    // v0.9.230 — was startsWith('/service'), which also matched
+    // /service-map. Services and Topology are SEPARATE checkboxes in the
+    // custom-role grid (internal/api/pages.go), so an admin who unchecked
+    // Topology was still handing it over with Services.
+    if (p === '/services' && (pathname === '/service' || pathname.startsWith('/service/'))) return true;
+    // v0.9.230 — list pages whose detail route is a sibling, not a
+    // sub-path: granting the list left every row click bouncing back to
+    // the first allowed page. /clusters → /pod surfaced with v0.9.209,
+    // which made /clusters grantable for the first time.
+    if (p === '/incidents' && pathname === '/incident') return true;
+    if (p === '/runbooks' && (pathname === '/runbook' || pathname === '/runbook-exec')) return true;
+    if (p === '/clusters' && pathname === '/pod') return true;
   }
   return false;
 }

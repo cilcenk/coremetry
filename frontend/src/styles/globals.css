@@ -1590,6 +1590,33 @@ button.accent.copied {
 [data-density="dense"] h1, [data-density="dense"] h2 { font-size: 13px; }
 [data-density="dense"] h3 { font-size: 12px; }
 
+/* ── Panel chrome (v0.9.224) ──────────────────────────────────
+   The tiers above reached tables, controls, badges and headings but
+   never the PANELS those live in, so the control only half-worked: on
+   dense a table dropped to 10px/2px while the KPI tiles above it still
+   claimed 118px each with 27px numerals — the operator asked for more
+   rows per screen and got a denser table under unchanged chrome.
+   Padding and the KPI tile's two size drivers (min-height + value
+   size) now follow the tier. Nothing here changes layout structure:
+   same grid, same order, same components. */
+[data-density="spacious"] .card       { padding: 18px; }
+[data-density="spacious"] .ov-card-h  { padding: 16px 20px; }
+[data-density="spacious"] .ov-card-b  { padding: 20px; }
+[data-density="spacious"] .ov-kpi     { padding: 18px 20px 20px; min-height: 132px; }
+
+[data-density="compact"] .card        { padding: 10px; }
+[data-density="compact"] .ov-card-h   { padding: 9px 12px; }
+[data-density="compact"] .ov-card-b   { padding: 11px; }
+[data-density="compact"] .ov-kpi      { padding: 10px 12px 12px; min-height: 96px; }
+[data-density="compact"] .ov-kpi .ov-val { font-size: 22px; }
+
+[data-density="dense"] .card          { padding: 7px; }
+[data-density="dense"] .ov-card-h     { padding: 6px 9px; }
+[data-density="dense"] .ov-card-b     { padding: 8px; }
+[data-density="dense"] .ov-kpi        { padding: 7px 9px 9px; min-height: 76px; }
+[data-density="dense"] .ov-kpi .ov-val { font-size: 18px; }
+[data-density="dense"] .ov-card-h h3  { font-size: 12px; }
+
 /* Slide-in animations for the /problems triage drawer (v0.5.80)
    and any future right-side panel. fadeIn covers the backdrop,
    slideInRight covers the drawer body. Short 120-180ms so the

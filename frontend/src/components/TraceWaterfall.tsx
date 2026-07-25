@@ -686,9 +686,9 @@ export function TraceWaterfall({
                     ×{groupCount}
                   </span>
                 )}
-                {s.statusCode === 'error' && (
-                  <span className="wf-err-dot" title="Error">●</span>
-                )}
+                {/* v0.9.217 — the red error dot is gone: the row already
+                    carries the error twice (the .wf-err row tint and the red
+                    bar), so this was a third encoding of the same fact. */}
                 {(() => {
                   // v0.8.407 — "logs in context": correlated log/event
                   // count for THIS span; click opens the Logs tab.
@@ -709,9 +709,11 @@ export function TraceWaterfall({
                     </span>
                   );
                 })()}
-                <span className="wf-pct" title="Share of total trace duration">
-                  {durPctLabel}%
-                </span>
+                {/* v0.9.217 — the % label is gone: it was the bar's own
+                    length rendered as a number, and showing that ratio
+                    visually is the whole point of a waterfall. The exact
+                    share still rides the row tooltip alongside duration and
+                    offset. */}
               </div>
             </div>
 
@@ -727,7 +729,9 @@ export function TraceWaterfall({
                   `${displayName}\n${s.serviceName}\n` +
                   `start: ${fmtClock(s.startTime)}  (+${fmtNs(s.startTime - minT)})\n` +
                   `end:   ${fmtClock(s.endTime)}\n` +
-                  `dur:   ${fmtNs(dur)} (${durMs.toFixed(2)}ms)`
+                  // v0.9.217 — the share moved here from the row's inline
+                  // % label. Removing that label must not lose the number.
+                  `dur:   ${fmtNs(dur)} (${durMs.toFixed(2)}ms, ${durPctLabel}% of trace)`
                 }
                 style={{
                   left: `${startPct}%`, width: `${widthPct}%`, background: color,

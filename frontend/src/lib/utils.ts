@@ -25,6 +25,55 @@ export function timeRangeToNs(range: TimeRange): { from: number; to: number } {
   };
 }
 
+// rangeToSince — TimeRange → a duration string the Go backend can
+// actually parse, plus the effective window so the caller can LABEL it.
+//
+// v0.9.257. Closes two silent-wrong-data traps:
+//
+//  1. Go's time.ParseDuration has no day unit. `internal/api.parseDuration`
+//     falls back to the endpoint default when parsing fails, so sending
+//     '7d' — a real PRESET_SECONDS key — silently yields 1h of data with
+//     nothing in the UI admitting it. pages/service/Overview.tsx shipped
+//     exactly that table ('2d': '2d', '7d': '7d'); Service.tsx and
+//     ServiceBacktrace.tsx kept correct hand-written copies ('7d': '168h').
+//     Emitting hours for anything ≥ 1d removes the trap for good.
+//  2. Sampled / expensive endpoints need a ceiling. `capSeconds` clamps
+//     AND reports `capped`, so the caller renders "24h (capped)" instead
+//     of narrowing the window behind the operator's back — the same
+//     silent lie as (1), one layer up.
+//
+// Fallback is 1h, NOT timeRangeToNs's 24h: every call site this replaced
+// spelled `?? '1h'`, and these endpoints sample raw spans, so the cheap
+// window is the safe default for an unrecognised preset.
+export function rangeToSince(
+  range: TimeRange,
+  capSeconds?: number,
+): { since: string; seconds: number; capped: boolean } {
+  let secs: number;
+  // `!= null`, not truthiness: timeRangeToNs above spells this `&&`, which
+  // drops a fromMs of 0 into the preset branch. Harmless there today (0 ms
+  // is 1970) but it is the wrong test, and it silently returns the WRONG
+  // window rather than failing — exactly the class of bug this helper exists
+  // to kill. Caught by the '91s' case in utils.test.ts.
+  if (range.preset === 'custom' && range.fromMs != null && range.toMs != null) {
+    secs = Math.max(1, Math.round((range.toMs - range.fromMs) / 1000));
+  } else {
+    secs = PRESET_SECONDS[range.preset] ?? 3600;
+  }
+  const capped = capSeconds !== undefined && secs > capSeconds;
+  if (capped) secs = capSeconds as number;
+  return { since: goDuration(secs), seconds: secs, capped };
+}
+
+// goDuration — whole seconds → the largest EXACT h/m/s unit. Never emits
+// 'd' (see rangeToSince trap 1). Inexact values keep seconds rather than
+// rounding, so a custom range never silently widens or narrows.
+function goDuration(secs: number): string {
+  if (secs % 3600 === 0) return `${secs / 3600}h`;
+  if (secs % 60 === 0) return `${secs / 60}m`;
+  return `${secs}s`;
+}
+
 export function fmtNum(n: number): string {
   if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
   if (n >= 1e3) return (n / 1e3).toFixed(1) + 'K';

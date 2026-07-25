@@ -11,7 +11,7 @@ import { EventMarkers } from '@/components/EventMarkers';
 import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useEndpoints, useClusters } from '@/lib/queries';
-import { timeRangeToNs, fmtNum } from '@/lib/utils';
+import { timeRangeToNs, rangeToSince, fmtNum } from '@/lib/utils';
 import { encodeRange } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
@@ -199,7 +199,17 @@ export default function EndpointsPage() {
   // downstream. Cached per-service so expanding 3 endpoints of
   // the same service hits the network once.
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
-  const [depsByService, setDepsByService] = useState<Record<string, import('@/lib/types').NeighborStat[]>>({});
+  // v0.9.257 — keyed `${service}@${since}`; value carries sampledFrom so the
+  // strip can state how many traces the counts came from instead of implying
+  // they are fleet totals.
+  const [depsByService, setDepsByService] = useState<Record<string, {
+    deps: import('@/lib/types').NeighborStat[]; sampledFrom: number;
+  }>>({});
+  // Window for the dependency strip. Capped at 24h: this endpoint samples the
+  // top-N traces out of raw `spans`, so a 7d/30d selection would run a
+  // GROUP BY trace_id across the whole window and hit max_execution_time.
+  // `capped` is rendered, so the narrowing is stated rather than silent.
+  const dep = rangeToSince(range, 86_400);
 
   // v0.5.417 — toggle a row's dependency strip + lazy-load the
   // downstream neighbours for its service. Cache is per-service
@@ -211,14 +221,19 @@ export default function EndpointsPage() {
       if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey);
       return next;
     });
-    // Lazy-fetch dependencies the first time we expand this svc.
-    if (!depsByService[service]) {
-      api.serviceNeighbors(service, '1h', 100, false)
+    // v0.9.257 — cache key is (service, window), not service alone. The old
+    // key meant the FIRST window an operator expanded stuck to that service
+    // for the rest of the session: changing the page range refetched every
+    // other panel but left this strip showing the original numbers, with no
+    // spinner and no visible change to hint at it.
+    const ck = `${service}@${dep.since}`;
+    if (!depsByService[ck]) {
+      api.serviceNeighbors(service, dep.since, 100, false)
         .then(r => setDepsByService(prev => ({
-          ...prev, [service]: r?.downstream ?? [],
+          ...prev, [ck]: { deps: r?.downstream ?? [], sampledFrom: r?.sampledFrom ?? 0 },
         })))
         .catch(() => setDepsByService(prev => ({
-          ...prev, [service]: [],
+          ...prev, [ck]: { deps: [], sampledFrom: 0 },
         })));
     }
   };
@@ -601,7 +616,8 @@ export default function EndpointsPage() {
                           <td colSpan={visibleCols.size} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
                             <DependencyStrip
                               service={r.service}
-                              deps={depsByService[r.service]} />
+                              window={dep.since} capped={dep.capped}
+                              entry={depsByService[`${r.service}@${dep.since}`]} />
                           </td>
                         </tr>
                       )}
@@ -943,21 +959,39 @@ function StatusBreakdown({ r }: { r: EndpointRow }) {
 // from /api/services/{svc}/neighbors is fast (cached at
 // backend) and operationally informative ("this endpoint's
 // service hits postgres + redis + payments-api").
-function DependencyStrip({ service, deps }: {
+//
+// v0.9.257 — the strip used to hardcode since='1h' while labelling itself
+// "last 1h". Self-consistent, but every OTHER panel on the page followed the
+// range picker, so an operator on a 24h page read 1h of dependencies and had
+// no way to tell. Three things were wrong and all three are props now:
+//   · the window is the page range (clamped, see the caller), not a constant;
+//   · the counts are call-edges inside a biased sample of the LARGEST traces,
+//     not the fleet totals "N spans … in the last 1h" claimed they were;
+//   · the per-service cache ignored the window, so the first-expanded range
+//     pinned that service's numbers for the rest of the session.
+function DependencyStrip({ service, window: win, capped, entry }: {
   service: string;
-  deps?: import('@/lib/types').NeighborStat[];
+  // Effective window actually queried, already clamped — always rendered, so
+  // it can never drift from the data the way the old hardcoded "1h" did.
+  window: string;
+  capped: boolean;
+  entry?: { deps: import('@/lib/types').NeighborStat[]; sampledFrom: number };
 }) {
-  if (deps === undefined) {
+  if (entry === undefined) {
     return (
       <span style={{ fontSize: 11, color: 'var(--text3)' }}>
         Loading {service}'s dependencies…
       </span>
     );
   }
+  const { deps, sampledFrom } = entry;
   if (deps.length === 0) {
     return (
       <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-        No downstream calls observed for {service} in the last 1h.
+        No downstream calls observed for {service} in the last {win}
+        {sampledFrom > 0
+          ? ` (sampled ${sampledFrom} trace${sampledFrom === 1 ? '' : 's'}).`
+          : '.'}
       </span>
     );
   }
@@ -967,17 +1001,24 @@ function DependencyStrip({ service, deps }: {
       display: 'flex', flexDirection: 'column', gap: 6,
       fontSize: 11,
     }}>
+      {/* v0.9.257 — states the real window AND that the counts are
+          sample-scoped. The counts are crossing call-edges seen inside the
+          sampled traces, and ServiceNeighbors picks those traces with
+          ORDER BY count() DESC — the BIGGEST traces, not a uniform sample.
+          "top 5 by span volume" over an unqualified window read as a fleet
+          ranking; it is not one. */}
       <div style={{
         fontSize: 10, color: 'var(--text3)',
         textTransform: 'uppercase', letterSpacing: 0.4,
       }}>
-        {service} → downstream (last 1h, top 5 by span volume)
+        {service} → downstream · last {win}{capped && ' (capped)'} · top 5 of {deps.length}
+        {sampledFrom > 0 && ` · sampled ${sampledFrom} largest trace${sampledFrom === 1 ? '' : 's'}`}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         {top.map((d, i) => (
           <Link key={i}
             to={`/service?name=${encodeURIComponent(d.service)}`}
-            title={`${fmtNum(d.spanCount)} spans across ${fmtNum(d.traceCount)} traces in the last 1h`}
+            title={`${service} → ${d.service}\n${fmtNum(d.spanCount)} call${d.spanCount === 1 ? '' : 's'} across ${fmtNum(d.traceCount)} of the ${sampledFrom} sampled traces (last ${win})`}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,
               padding: '3px 8px', borderRadius: 12,
@@ -986,7 +1027,7 @@ function DependencyStrip({ service, deps }: {
               fontSize: 10, textDecoration: 'none',
             }}>
             <span style={{ fontWeight: 600 }}>{d.service}</span>
-            <span style={{ color: 'var(--text3)' }}>{fmtNum(d.spanCount)} sp</span>
+            <span style={{ color: 'var(--text3)' }}>{fmtNum(d.spanCount)} calls</span>
           </Link>
         ))}
         {deps.length > 5 && (

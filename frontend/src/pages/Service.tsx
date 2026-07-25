@@ -29,11 +29,10 @@ import { keys } from '@/lib/queries/keys';
 import type { Service, Problem, OperationSummary, SLORow, TimeRange } from '@/lib/types';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 
-const SINCE_MAP: Record<string, string> = {
-  '5m': '5m', '10m': '10m', '15m': '15m', '30m': '30m',
-  '1h': '1h', '3h': '3h', '6h': '6h', '12h': '12h',
-  '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
-};
+// v0.9.257 — SINCE_MAP deleted: it had no remaining reader here, and the
+// dormant copy is how the divergence spread (pages/service/Overview.tsx
+// inherited a mutated version that emitted Go-unparseable '7d'). The live
+// callers use rangeToSince() in lib/utils.ts.
 
 // v0.9.212 — 'traces' retired. The tab was a 25-row "slowest traces" table
 // plus an "Open in Traces →" link, while the header's ⋮ Traces drill chip

@@ -9,6 +9,7 @@ import {
   fmtNs,
   fmtNum,
   isMessagingDep,
+  rangeToSince,
   substituteVars,
   timeRangeToNs,
 } from './utils';
@@ -56,6 +57,66 @@ describe('timeRangeToNs', () => {
     vi.setSystemTime(NOW_MS);
     const r = { preset: 'custom', fromMs: 1_000, toMs: 2_000 } as TimeRange;
     expect(timeRangeToNs(r)).toEqual({ from: 1_000_000_000, to: 2_000_000_000 });
+  });
+});
+
+describe('rangeToSince', () => {
+  // v0.9.257 regression. pages/service/Overview.tsx mapped '2d'→'2d' and
+  // '7d'→'7d'; Go's time.ParseDuration rejects the day unit, so
+  // internal/api.parseDuration returned the endpoint default (1h) and the
+  // neighbours panel silently showed 1h of data for a 7d selection.
+  // Service.tsx / ServiceBacktrace.tsx carried the CORRECT table by hand —
+  // these cases pin the helper to that known-good output.
+  const table: Array<[string, string]> = [
+    ['5m', '5m'], ['15m', '15m'], ['30m', '30m'],
+    ['1h', '1h'], ['3h', '3h'], ['6h', '6h'], ['12h', '12h'],
+    ['24h', '24h'],
+    // The three that were broken — days must come out as hours.
+    ['2d', '48h'], ['7d', '168h'], ['30d', '720h'],
+  ];
+  it.each(table)('%s → %s', (preset, want) => {
+    expect(rangeToSince({ preset } as TimeRange).since).toBe(want);
+  });
+
+  // The actual defect was a PARSE failure, not a wrong number. Assert the
+  // grammar directly so a future preset ('90d', '1w') can't reintroduce a
+  // unit the backend silently discards.
+  it.each(table)('%s emits a Go-parseable unit (never d)', (preset) => {
+    const { since } = rangeToSince({ preset } as TimeRange);
+    expect(since).toMatch(/^\d+[hms]$/);
+    expect(since).not.toMatch(/d/);
+  });
+
+  it('unknown preset falls back to 1h, not 24h', () => {
+    // Diverges from timeRangeToNs on purpose: these endpoints sample raw
+    // spans, so an unrecognised preset must pick the CHEAP window.
+    expect(rangeToSince({ preset: 'bogus' } as TimeRange).since).toBe('1h');
+  });
+
+  it('custom range uses the actual span, clock-independent', () => {
+    const r = { preset: 'custom', fromMs: 1_000_000, toMs: 1_000_000 + 7200_000 } as TimeRange;
+    expect(rangeToSince(r).since).toBe('2h');
+  });
+
+  it('custom range that is not a whole minute keeps seconds', () => {
+    // Rounding up to '2m' would query a wider window than the operator
+    // selected; rounding down would miss spans at the edge.
+    const r = { preset: 'custom', fromMs: 0, toMs: 90_500 } as TimeRange;
+    expect(rangeToSince(r).since).toBe('91s');
+  });
+
+  it('cap clamps and REPORTS it so the caller can label honestly', () => {
+    const capped = rangeToSince({ preset: '7d' } as TimeRange, 86_400);
+    expect(capped).toEqual({ since: '24h', seconds: 86_400, capped: true });
+  });
+
+  it('cap leaves a window already under the ceiling untouched', () => {
+    const under = rangeToSince({ preset: '6h' } as TimeRange, 86_400);
+    expect(under).toEqual({ since: '6h', seconds: 21_600, capped: false });
+  });
+
+  it('cap boundary: exactly at the ceiling is not "capped"', () => {
+    expect(rangeToSince({ preset: '24h' } as TimeRange, 86_400).capped).toBe(false);
   });
 });
 

@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useServiceBacktrace } from '@/lib/queries';
-import { fmtNum, hashColor, tsLong } from '@/lib/utils';
+import { fmtNum, hashColor, tsLong, rangeToSince } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { CallerRow, TimeRange } from '@/lib/types';
@@ -16,11 +16,10 @@ import { tracesPivotHref } from '@/lib/pivotHref';
 // combination calling the inspected service, with RED stats so the
 // operator can pinpoint which client is driving load or errors.
 
-const SINCE_MAP: Record<string, string> = {
-  '5m': '5m', '10m': '10m', '15m': '15m', '30m': '30m',
-  '1h': '1h', '3h': '3h', '6h': '6h', '12h': '12h',
-  '24h': '24h', '2d': '48h', '7d': '168h', '30d': '720h',
-};
+// v0.9.257 — local SINCE_MAP replaced by rangeToSince() in lib/utils.ts.
+// This copy was correct; the point is that it no longer has to be. No cap
+// here: the backtrace endpoint already served '720h' for a 30d selection and
+// this change keeps that byte-identical.
 
 // Columns for the shared sortable + resizable DataTable.
 const BACKTRACE_COLS: DataTableColumn<CallerRow>[] = [
@@ -47,7 +46,7 @@ function BacktraceInner() {
   // Keyed on (service, since) — the hook skips the fetch entirely
   // when svc is empty (the "Missing service name" branch below).
   const btQ = useServiceBacktrace(svc, {
-    since: SINCE_MAP[range.preset] ?? '1h',
+    since: rangeToSince(range).since,
     limit: 200,
   });
   // Memoized so the tri-state mapping keeps a stable identity for

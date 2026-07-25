@@ -14,9 +14,14 @@ import type { NeighborStat } from '@/lib/types';
 // Each chip carries a (×N traces · M calls) badge so the operator
 // reads call frequency at a glance. Panel starts collapsed; the
 // first open lazy-fetches the data, identical to ServiceStructure.
-export function ServiceNeighbors({ service, since = '10m', defaultOpen = false }: {
+export function ServiceNeighbors({ service, since = '10m', capped = false, defaultOpen = false }: {
   service: string;
   since?: string;
+  // v0.9.257 — true when the caller clamped `since` below the operator's
+  // selected range (this panel samples raw spans; see NEIGHBORS_CAP_S in
+  // pages/service/Overview.tsx). Surfaced in the header so a narrowed
+  // window is stated, not silent.
+  capped?: boolean;
   // v0.5.294 — when true, the panel renders expanded on first
   // paint instead of waiting for the operator to click the
   // header. Used from the Service detail Details tab where
@@ -68,6 +73,7 @@ export function ServiceNeighbors({ service, since = '10m', defaultOpen = false }
         {open && data && (
           <span style={{ fontSize: 11, color: 'var(--text3)' }}>
             {upstream.length} upstream · {downstream.length} downstream
+            {' · '}last {since}{capped && ' (capped)'}
             {' · '}sampled from {data.sampledFrom} trace{data.sampledFrom === 1 ? '' : 's'}
             {' · '}{fmtNum(data.totalSpans)} spans inspected
           </span>
@@ -79,7 +85,7 @@ export function ServiceNeighbors({ service, since = '10m', defaultOpen = false }
             tabIndex={0}
             onClick={e => { e.stopPropagation(); setRefreshTick(t => t + 1); }}
             onKeyDown={e => { if (e.key === 'Enter') { e.stopPropagation(); setRefreshTick(t => t + 1); } }}
-            title="Bypass the 1h cache and recompute now"
+            title="Bypass the cached result and recompute now"
             style={{
               fontSize: 11, color: 'var(--accent2)',
               background: 'var(--bg3)', border: '1px solid var(--border)',

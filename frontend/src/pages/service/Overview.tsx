@@ -1,7 +1,7 @@
 import { useId, useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
-import { timeRangeToNs } from '@/lib/utils';
+import { timeRangeToNs, rangeToSince } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { entryLatencyDSL } from '@/lib/entrySpans';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
@@ -27,14 +27,20 @@ import { firstNum } from './overviewKpi';
 // flat two-column Neighbors block is replaced by the richer
 // ServiceNeighbors panel that used to open the Details tab.
 
-// Maps TimeRange presets to the `since` window ServiceNeighbors
-// expects (same table Service.tsx / ServiceBacktrace.tsx keep —
-// local on purpose: importing from Service.tsx would cycle).
-const SINCE_MAP: Record<string, string> = {
-  '5m': '5m', '15m': '15m', '30m': '30m', '1h': '1h',
-  '3h': '3h', '6h': '6h', '12h': '12h', '24h': '24h',
-  '2d': '2d', '7d': '7d',
-};
+// v0.9.257 — the local SINCE_MAP is gone; rangeToSince() in lib/utils.ts
+// replaces it. This copy had drifted from the correct ones in Service.tsx /
+// ServiceBacktrace.tsx: it mapped '2d'→'2d' and '7d'→'7d', which Go's
+// time.ParseDuration rejects, so the neighbours panel silently rendered the
+// endpoint's 1h default for a 2d/7d selection. '30d' was missing entirely
+// and fell through the same `?? '1h'` hole.
+//
+// The window is also capped at 24h now: ServiceNeighbors samples the top-N
+// traces out of raw `spans`, and an uncapped 720h GROUP BY trace_id would
+// blow max_execution_time on a busy prod service. 24h is already the widest
+// window this panel served before (the '24h' preset), so the ceiling adds no
+// new worst case — and rangeToSince reports `capped` so the panel SAYS it
+// narrowed rather than quietly narrowing.
+const NEIGHBORS_CAP_S = 86_400;
 
 interface Props {
   windowNs?: { from: number; to: number };
@@ -136,6 +142,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
   // aralıkta Date.now()'a bağlı, iki ayrı hesap anahtar kaçırır).
   const computed = useMemo(() => timeRangeToNs(range), [range]);
   const { from, to } = windowNs ?? computed;
+  // Neighbours window — clock-free, but hoisted so the two props read one
+  // computation instead of two calls that could drift apart.
+  const nb = rangeToSince(range, NEIGHBORS_CAP_S);
   const windowSec = Math.max(1, (to - from) / 1e9);
   // v0.9.83 — grafiklerin x-ekseni sorgu penceresine sabitlenir (madde 2).
   const xRange = useMemo(() => ({ from: from / 1e9, to: to / 1e9 }), [from, to]);
@@ -390,7 +399,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           to open the Details tab, moved here v0.8.366 (operator: the
           Details version "daha güzel gösteriyor"); the flat two-column
           Neighbors block it replaces is gone. Full graph on /topology. */}
-      <ServiceNeighbors service={service} since={SINCE_MAP[range.preset] ?? '1h'} defaultOpen />
+      <ServiceNeighbors service={service} since={nb.since} capped={nb.capped} defaultOpen />
 
       {/* AI Analizi — auto-sends this service + selected window (v0.8.89). */}
       <AIAnalysisPanel service={service} rangeS={Math.round((to - from) / 1e9)} />

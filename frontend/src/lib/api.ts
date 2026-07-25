@@ -765,10 +765,10 @@ export const api = {
   // so an install that never PUTs the endpoint keeps the
   // pre-tunable behaviour.
   getAnomalyPromotion: () =>
-    get<{ enabled: boolean; minPeakRatio: number; minSustainedSec: number; minCount: number }>(
+    get<{ enabled: boolean; minPeakRatio: number; criticalPeakRatio: number; minSustainedSec: number; minCount: number }>(
       `/api/settings/anomaly-promotion`),
   putAnomalyPromotion: (c: {
-    enabled: boolean; minPeakRatio: number; minSustainedSec: number; minCount: number;
+    enabled: boolean; minPeakRatio: number; criticalPeakRatio: number; minSustainedSec: number; minCount: number;
   }) =>
     request<typeof c>(`/api/settings/anomaly-promotion`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },

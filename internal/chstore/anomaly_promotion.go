@@ -35,6 +35,21 @@ type AnomalyPromotionConfig struct {
 	// MinCount — absolute volume floor. A 100× ratio on 2
 	// occurrences is meaningless.
 	MinCount uint64 `json:"minCount"`
+	// CriticalPeakRatio — the ratio at or above which a promoted
+	// anomaly opens at `critical` instead of `warning`
+	// (v0.9.247). This was a hard-coded 20 in the evaluator, which
+	// made the severity split invisible AND created a trap: an
+	// operator tightening MinPeakRatio to 20+ to get FEWER pages
+	// silently made every surviving promotion a critical one, so
+	// the change was louder, not quieter. Now the two are
+	// independent — raise MinPeakRatio to cut volume, raise
+	// CriticalPeakRatio to cut how much of it pages.
+	//
+	// Must be >= MinPeakRatio to mean anything (enforced at the
+	// API boundary); equal means "everything promoted is
+	// critical", which is a legitimate choice for a small
+	// hand-curated set.
+	CriticalPeakRatio float64 `json:"criticalPeakRatio"`
 
 	// Seasonal* — consumed by the anomaly DETECTOR's seasonal
 	// baseline (internal/anomaly), NOT the promotion sweep. They
@@ -67,6 +82,10 @@ func DefaultAnomalyPromotion() AnomalyPromotionConfig {
 		MinPeakRatio:    5.0,
 		MinSustainedSec: 5 * 60,
 		MinCount:        10,
+		// 20 — the evaluator's former hard-coded critical cut-off,
+		// kept as the default so an install that never visits the
+		// setting keeps its existing severity split (v0.9.247).
+		CriticalPeakRatio: 20.0,
 		// Mirror the anomaly-detector compile-time defaults
 		// (internal/anomaly: seasonalDays / seasonalMinSamples /
 		// seasonalNeighborBuckets). chstore can't import anomaly
@@ -106,6 +125,17 @@ func (s *Store) GetAnomalyPromotion(ctx context.Context) AnomalyPromotionConfig 
 	}
 	if c.MinCount == 0 {
 		c.MinCount = d.MinCount
+	}
+	// Rows written before v0.9.247 don't carry this field. Absent /
+	// zero → the historical 20. Also clamp UP to MinPeakRatio: a
+	// critical cut-off BELOW the promotion gate would mean every
+	// promoted anomaly is critical, which is exactly the surprise
+	// this field exists to remove.
+	if c.CriticalPeakRatio <= 0 {
+		c.CriticalPeakRatio = d.CriticalPeakRatio
+	}
+	if c.CriticalPeakRatio < c.MinPeakRatio {
+		c.CriticalPeakRatio = c.MinPeakRatio
 	}
 	// Seasonal knobs: zero/absent (older saved rows written before
 	// v0.8.250 don't carry these fields, or a partial PUT omits

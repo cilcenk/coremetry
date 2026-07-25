@@ -923,8 +923,11 @@ const promoteAnomalyRuleID = "anomaly-auto:"
 // and just bumps its last-seen via UpsertProblem.
 //
 // Severity ladder:
-//   • peakRatio ≥ 10  → warning  (the standard auto-promote tier)
-//   • peakRatio ≥ 20  → critical (genuine "wake someone")
+//   • peakRatio ≥ MinPeakRatio      → warning  (the auto-promote tier)
+//   • peakRatio ≥ CriticalPeakRatio → critical (genuine "wake someone")
+//
+// Both come from the operator's anomaly-promotion settings
+// (v0.9.247); the critical cut-off used to be a hard-coded 20.
 //
 // The escalation sweep above can still bump these higher
 // over time if the operator doesn't ack.
@@ -964,8 +967,12 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 		if now.Sub(time.Unix(0, ev.StartedAt)) < minSustained {
 			continue
 		}
+		// v0.9.247 — cut-off comes from config (was a hard-coded 20).
+		// GetAnomalyPromotion guarantees it is >= MinPeakRatio, so
+		// "everything promoted is critical" only happens when the
+		// operator actually asks for it.
 		sev := "warning"
-		if ev.PeakRatio >= 20 {
+		if ev.PeakRatio >= cfg.CriticalPeakRatio {
 			sev = "critical"
 		}
 		ruleID := promoteAnomalyRuleID + ev.ID

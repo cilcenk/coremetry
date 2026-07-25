@@ -15,7 +15,7 @@ import { Field, FlashBox, humanize } from './shared';
 // feature for a chatty detector without changing thresholds.
 export function AnomalyPromotionTab() {
   type Cfg = {
-    enabled: boolean; minPeakRatio: number;
+    enabled: boolean; minPeakRatio: number; criticalPeakRatio: number;
     minSustainedSec: number; minCount: number;
   };
   const [cfg, setCfg] = useState<Cfg | null>(null);
@@ -78,6 +78,29 @@ export function AnomalyPromotionTab() {
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
             5× = pattern is occurring at least 5 times more than its
             rolling baseline. Default 5.
+          </div>
+        </Field>
+
+        {/* v0.9.247 — severity cut-off, previously a hard-coded 20 in the
+            evaluator. It sat invisibly ABOVE the promotion gate, so an
+            operator raising "minimum peak ratio" to 20+ to get FEWER pages
+            silently turned every surviving promotion critical. Surfacing it
+            makes the two decisions independent: the gate controls HOW MANY
+            promote, this controls how many of those page. */}
+        <Field label="Critical at peak ratio (x baseline)">
+          <input type="number" min={cfg.minPeakRatio} max={1000} step={0.5}
+            value={cfg.criticalPeakRatio}
+            onChange={e => setCfg({ ...cfg, criticalPeakRatio: Number(e.target.value) })}
+            disabled={!cfg.enabled} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            At or above this ratio a promoted anomaly opens as <b>critical</b>;
+            below it, <b>warning</b>. Must be &ge; the minimum peak ratio &mdash;
+            setting them equal means every promoted anomaly pages. Default 20.
+            {cfg.criticalPeakRatio <= cfg.minPeakRatio && (
+              <div style={{ color: 'var(--warn)', marginTop: 4 }}>
+                Su an esit: promote edilen HER anomali critical acilir.
+              </div>
+            )}
           </div>
         </Field>
 

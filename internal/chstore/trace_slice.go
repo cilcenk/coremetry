@@ -316,6 +316,26 @@ func (s *Store) runTraceStage2(
 					continue
 				}
 			}
+			// v0.9.298 — make the NEXT occurrence self-diagnosing.
+			//
+			// The prod 241 could not be reproduced: measured on the live
+			// cluster, this statement with a 5,000-id IN list costs a
+			// FLAT 24 MiB — unchanged across a 5.4x row range (3.26M →
+			// 605K) and across max_threads 1 → 32. Its cost is bounded by
+			// the id set and the group count, both capped at
+			// traceRecencySliceN. So a 4.15 GiB execution is not this
+			// shape, and every explanation for it so far has been a
+			// guess.
+			//
+			// These four numbers settle it without a second round trip:
+			// an EMPTY id list means the narrowing branch was skipped and
+			// Stage 2 aggregated the whole window (millions of groups,
+			// which WOULD reach gigabytes); a full one means the driver
+			// is elsewhere and the window span says where to look.
+			log.Printf("[traces] stage2 FAILED: err=%v ids=%d window=%s..%s span=%s limit=%d offset=%d narrowed=%d",
+				rerr, len(idArgs),
+				from.Format(time.RFC3339), f.To.Format(time.RFC3339),
+				f.To.Sub(from), pageLimit, f.Offset, narrowed)
 			return nil, false, fmt.Errorf("stage2: %w", rerr)
 		}
 

@@ -182,7 +182,18 @@ function ExploreInner() {
     () => parseInt(searchParams.get('minRepeats') ?? '5', 10) || 5);
   const [repeats, setRepeats] = useState<import('@/lib/types').RepeatedSpanRow[] | null | undefined>(undefined);
   const [traces, setTraces] = useState<import('@/lib/types').TraceRow[] | null | undefined>(undefined);
-  const [traceTotal, setTraceTotal] = useState(0);
+  const [traceTotal, setTraceTotal] = useState<number | undefined>(undefined);
+  const [traceHasMore, setTraceHasMore] = useState(false);
+  // v0.9.284 — the counting mode is a QUERY, not a decoration. It used
+  // to be pinned to 'approx' so the footer could render "of ~M", and
+  // that single field held the trace_summary_5m fast path shut
+  // (repo.go gates the MV on CountMode skip/""): the same unfiltered
+  // search /traces answered from the MV, /explore answered from raw
+  // spans. Default 'skip'; the exact count is opt-in behind the same
+  // "Show total" affordance /traces uses, and lives in the URL so a
+  // shared view keeps the choice.
+  const [showTotal, setShowTotal] = useState(
+    () => searchParams.get('count') === 'exact');
   const [traceLimit, setTraceLimit] = useState(
     () => parseInt(searchParams.get('limit') ?? '50', 10) || 50);
   const [extraCols, setExtraCols] = useState<string[]>(
@@ -234,6 +245,10 @@ function ExploreInner() {
         ['dsl',     mode === 'advanced' ? dslDebounced : ''],
         ['mode',    mode === 'advanced' ? 'advanced' : ''],
         ['limit',   resultMode === 'traces' && traceLimit !== 50 ? traceLimit : ''],
+        // v0.9.284 — the count choice is part of the shared view. Only
+        // the non-default is written, so an ordinary URL stays clean and
+        // the MV fast path is what a fresh link gets.
+        ['count',   resultMode === 'traces' && showTotal ? 'exact' : ''],
         ['cols',    resultMode === 'traces' ? extraCols.join(',') : ''],
         ['groupBy', resultMode === 'repeats' ? repeatGroupBy.join(',') : ''],
         ['minRepeats', resultMode === 'repeats' && repeatMin !== 5 ? repeatMin : ''],
@@ -267,7 +282,7 @@ function ExploreInner() {
     // searchParams intentionally omitted: it's only read for the
     // metrics/logs passthrough whose values never change while mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, resultMode, debounced, filters, dslDebounced, mode, range, traceLimit, extraCols, repeatMin, repeatGroupBy, legacyViz, navigate, saveHistory]);
+  }, [source, resultMode, debounced, filters, dslDebounced, mode, range, traceLimit, showTotal, extraCols, repeatMin, repeatGroupBy, legacyViz, navigate, saveHistory]);
 
   // Service options for the traces/repeats filter suggestions. Gated on
   // hasParams (entry screen fires no workspace fetches — Phase-1 finding).
@@ -348,10 +363,15 @@ function ExploreInner() {
         from, to,
         sort: 'time', order: 'desc',
         limit: traceLimit,
-        count: 'approx',
+        count: showTotal ? 'exact' : 'skip',
         extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
       })
-        .then(r => { if (!cancelled) { setTraces(r.traces ?? []); setTraceTotal(r.total ?? 0); } })
+        .then(r => {
+          if (cancelled) return;
+          setTraces(r.traces ?? []);
+          setTraceTotal(r.total);
+          setTraceHasMore(r.hasMore ?? false);
+        })
         .catch(err => {
           if (cancelled) return;
           setTraces(null);
@@ -375,7 +395,7 @@ function ExploreInner() {
         });
     }
     return () => { cancelled = true; };
-  }, [resultMode, range, filters, dslDebounced, mode, traceLimit, extraCols, repeatMin, repeatGroupBy, hasParams, source]);
+  }, [resultMode, range, filters, dslDebounced, mode, traceLimit, showTotal, extraCols, repeatMin, repeatGroupBy, hasParams, source]);
 
   // ── Builder mutators ──────────────────────────────────────────────────────
   const setQuery = (i: number, q: BuilderState['queries'][number]) =>
@@ -641,16 +661,33 @@ name ~ checkout`}
               <select value={traceLimit} onChange={e => setTraceLimit(Number(e.target.value))}>
                 {[20, 50, 100, 200, 500, 1000, 2000, 5000].map(n => <option key={n} value={n}>{n} traces</option>)}
               </select>
-              {traces && traceTotal > 0 && (
+              {traces && traceTotal !== undefined && traceTotal > 0 && (
                 <span style={{
                   color: traces.length >= traceLimit && traceTotal > traces.length
                     ? 'var(--err)' : 'var(--text2)',
                   fontSize: 12, fontWeight: 600,
                 }}>
-                  Showing {fmtNum(traces.length)} of ~{fmtNum(traceTotal)}
+                  Showing {fmtNum(traces.length)} of {fmtNum(traceTotal)}
                   {traces.length >= traceLimit && traceTotal > traces.length && (
                     <> — raise limit to see more</>
                   )}
+                </span>
+              )}
+              {/* v0.9.284 — uncounted is the DEFAULT now, so it gets a
+                  first-class label instead of rendering nothing. "50+"
+                  is what the page actually knows; the count is one
+                  click away. */}
+              {traces && traces.length > 0 && traceTotal === undefined && (
+                <span style={{
+                  color: traceHasMore ? 'var(--err)' : 'var(--text2)',
+                  fontSize: 12, fontWeight: 600,
+                }}>
+                  Showing {fmtNum(traces.length)}{traceHasMore ? '+' : ''}
+                  {' · '}
+                  <a href="#" onClick={e => { e.preventDefault(); setShowTotal(true); }}
+                    title="Run an exact count(DISTINCT trace_id) over the window — can be slow at scale">
+                    count total
+                  </a>
                 </span>
               )}
               <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 'auto' }}>
@@ -864,6 +901,8 @@ name ~ checkout`}
           <TracesResult
             traces={traces}
             traceTotal={traceTotal}
+            traceHasMore={traceHasMore}
+            onShowTotal={() => setShowTotal(true)}
             extraCols={extraCols}
             setExtraCols={setExtraCols} />
         )}

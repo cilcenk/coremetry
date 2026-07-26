@@ -47,11 +47,18 @@ const ATTR_PREFIX = 'attr:';
 export function TracesResult({
   traces,
   traceTotal,
+  traceHasMore,
+  onShowTotal,
   extraCols,
   setExtraCols,
 }: {
   traces: TraceRow[] | null | undefined;
-  traceTotal: number;
+  // v0.9.284 — undefined = not counted (the default 'skip' mode). The
+  // header must say so rather than render a 0, which reads as "no other
+  // traces exist" — the blind-spot class this page keeps producing.
+  traceTotal: number | undefined;
+  traceHasMore: boolean;
+  onShowTotal: () => void;
   extraCols: string[];
   setExtraCols: (cols: string[]) => void;
 }) {
@@ -80,8 +87,17 @@ export function TracesResult({
       {traces && traces.length > 0 && (
         <>
           <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 8 }}>
-            Showing <b style={{ color: 'var(--accent2)' }}>{traces.length}</b> of {fmtNum(traceTotal)} traces
-            {traces.length < traceTotal && <> · raise the limit to see more</>}
+            Showing <b style={{ color: 'var(--accent2)' }}>{traces.length}</b>
+            {traceTotal !== undefined ? (
+              <> of {fmtNum(traceTotal)} traces
+                {traces.length < traceTotal && <> · raise the limit to see more</>}</>
+            ) : (
+              <>{traceHasMore ? '+' : ''} traces{' · '}
+                <a href="#" onClick={e => { e.preventDefault(); onShowTotal(); }}
+                  title="Run an exact count(DISTINCT trace_id) over the window — can be slow at scale">
+                  Show total
+                </a></>
+            )}
           </div>
           <div className="table-wrap">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>

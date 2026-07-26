@@ -39,3 +39,34 @@ export function accumulatePage<T extends { id: number | string }>(
   const drop = merged.length - cap;
   return { rows: merged.slice(drop), dropped: drop };
 }
+
+/** The row shape narrowLoaded reads. Structural, so it accepts LogRow. */
+export interface NarrowableRow {
+  body?: string;
+  serviceName?: string;
+  severityText?: string;
+  traceId?: string;
+}
+
+/**
+ * Narrow ALREADY-LOADED rows by a substring (v0.9.294).
+ *
+ * This is deliberately client-side and deliberately local: it filters
+ * the buffer in the page, it does NOT re-query. That is the whole
+ * point — today every narrowing costs a full round trip to
+ * Elasticsearch, and at 10B docs/day the cheapest query is the one you
+ * do not send. The caller MUST label it as filtering loaded rows, or
+ * the operator reads a local subset as a window-wide answer.
+ *
+ * Matches case-insensitively across the fields the table actually
+ * shows, so what the operator sees is what gets searched.
+ */
+export function narrowLoaded<T extends NarrowableRow>(rows: T[], needle: string): T[] {
+  const n = needle.trim().toLowerCase();
+  if (!n) return rows;
+  return rows.filter(r =>
+    (r.body ?? '').toLowerCase().includes(n) ||
+    (r.serviceName ?? '').toLowerCase().includes(n) ||
+    (r.severityText ?? '').toLowerCase().includes(n) ||
+    (r.traceId ?? '').toLowerCase().includes(n));
+}

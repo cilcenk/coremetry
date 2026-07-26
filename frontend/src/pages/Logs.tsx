@@ -28,7 +28,7 @@ import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass, rangeToSince } from '@/lib/utils';
 import { severityBandOf } from '@/lib/severityBand';
-import { accumulatePage } from '@/lib/logAccumulate';
+import { accumulatePage, narrowLoaded } from '@/lib/logAccumulate';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
   extractHighlightTerms,
@@ -226,6 +226,11 @@ function LogsInner() {
   // (v0.7.17 — the v0.7.15 SSE push tailer was reverted: its LIMIT-per-tick
   // fetch dropped logs on a busy service at 10B logs/day.)
   const [live, setLive] = useState(false);
+  // v0.9.294 — "narrow within results". Ephemeral on purpose: it is a
+  // reading aid over the current buffer, not part of the query, so it
+  // does NOT go in the URL (a shared link must reproduce the QUERY, and
+  // the recipient's buffer is a different set of rows).
+  const [narrow, setNarrow] = useState('');
 
   // Sync filter state from URL params. Covers (a) static-prerender →
   // CSR hydration, where useState initializes against empty
@@ -569,7 +574,13 @@ function LogsInner() {
   // back to the page rows in the one render before the
   // accumulator effect fills (or while a placeholder shows the
   // previous slice during a filter change).
-  const logs = live ? (data?.logs ?? []) : (accRows.length > 0 ? accRows : (data?.logs ?? []));
+  const loadedRows = live ? (data?.logs ?? []) : (accRows.length > 0 ? accRows : (data?.logs ?? []));
+  // v0.9.294 — "narrow within results": a LOCAL filter over the rows
+  // already in the page. Zero backend calls; today every narrowing is a
+  // full round trip, and at 10B docs/day the cheapest query is the one
+  // you don't send. Labelled explicitly below — a local subset read as
+  // a window-wide answer would be the worst kind of wrong here.
+  const logs = useMemo(() => narrowLoaded(loadedRows, narrow), [loadedRows, narrow]);
   const total = data?.total ?? 0;
 
   // j/k row navigation — same pattern as /services and /traces.
@@ -967,6 +978,49 @@ function LogsInner() {
               </div>
             </Empty>
           )
+        )}
+        {/* v0.9.294 — narrow within results. Sits directly above the
+            table because it acts on the table, and it says LOADED in
+            the placeholder: this filters the rows already in the page,
+            it does not re-query. Every narrowing used to cost a full
+            round trip to Elasticsearch; at 10B docs/day the cheapest
+            query is the one you don't send. */}
+        {data && loadedRows.length > 0 && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            marginBottom: 8, fontSize: 11.5,
+          }}>
+            <input
+              value={narrow}
+              onChange={e => setNarrow(e.target.value)}
+              placeholder={`Filter the ${loadedRows.length.toLocaleString()} loaded rows… (no new query)`}
+              title="Filters the rows already loaded into this page — body, service, severity and trace id. It does NOT search the rest of the window; widen the query above for that."
+              style={{
+                flex: '0 1 340px', fontSize: 11.5, padding: '3px 8px',
+                background: 'var(--bg0)', color: 'var(--text1)',
+                border: '1px solid var(--border)', borderRadius: 4,
+              }} />
+            {narrow.trim() && (
+              <>
+                <span style={{ color: logs.length === 0 ? 'var(--warn)' : 'var(--text2)' }}>
+                  {logs.length.toLocaleString()} of {loadedRows.length.toLocaleString()} loaded rows match
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => setNarrow('')}>clear</Button>
+              </>
+            )}
+          </div>
+        )}
+        {/* A local filter that hides everything must not read as "no
+            logs exist" — that state belongs to the query, not to this
+            reading aid. */}
+        {data && loadedRows.length > 0 && logs.length === 0 && narrow.trim() !== '' && (
+          <div style={{
+            fontSize: 12, color: 'var(--text2)', padding: '10px 4px', marginBottom: 8,
+          }}>
+            None of the {loadedRows.length.toLocaleString()} loaded rows contain
+            {' '}<b>{narrow.trim()}</b>. This only searches what is already on the page —
+            put the term in the query above to search the whole window.
+          </div>
         )}
         {data && logs.length > 0 && (
           <>

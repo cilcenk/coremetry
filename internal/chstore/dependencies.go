@@ -127,6 +127,31 @@ const clusterExpr = `coalesce(
 	'(default)'
 )`
 
+// dbInstanceExpr reproduces db_summary_5m's own `instance` identity on RAW
+// spans, verbatim (store.go:2494-2502). Kept as a shared constant for the same
+// reason clusterExpr above is: a raw query that spells this chain differently
+// resolves the SAME physical database to a DIFFERENT name, and the two halves
+// of one drawer then disagree.
+//
+// v0.9.274 — the Top-statements scan used to AND `peer_service = ?` here, one
+// rung of the six. Any instance the MV named from a later rung matched zero
+// spans, so the drawer showed a span count and callers (both MV-sourced, hence
+// coalesced) beside an EMPTY Top statements table. Measured live: the
+// clickhouse row's predicate matched 0 spans where the real identity matched
+// 4659. Same defect as the dead row link fixed in v0.9.268, on the backend.
+//
+// The 'unknown' case needs no special branch: when every rung is empty the
+// expression yields the literal 'unknown', which is exactly what the MV stores.
+const dbInstanceExpr = `coalesce(
+	nullIf(peer_service, ''),
+	nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'db.host')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''),
+	nullIf(service_name, ''),
+	'unknown'
+)`
+
 // DBCallerBreakdown is one row of the per-(service, pod)
 // breakdown shown in the DB detail drawer. Pod is derived from
 // resource.host.name on the calling span — k8s pod name on
@@ -227,16 +252,12 @@ func (s *Store) GetDatabaseDetail(
 	if to.IsZero() {
 		to = time.Now()
 	}
-	// instance == "unknown" maps to "peer_service is empty"; the
-	// instance string is otherwise compared verbatim against
-	// peer_service so a typo in the URL doesn't accidentally
-	// match more spans than intended.
-	instancePredicate := "peer_service = ?"
+	// v0.9.274 — the raw scans below now resolve instance the SAME way the MV
+	// does (dbInstanceExpr). The old two-branch form compared only peer_service
+	// and needed a special "unknown" case; the coalesce collapses both, because
+	// it yields the literal 'unknown' precisely when every rung is empty.
+	instancePredicate := dbInstanceExpr + " = ?"
 	instanceArg := instance
-	if instance == "unknown" {
-		instancePredicate = "(peer_service = '' OR peer_service IS NULL)"
-		instanceArg = ""
-	}
 
 	// Initialize empty slices so the JSON marshal emits [] rather
 	// than null — the SPA's drawer does `[...data.callers]` /
@@ -255,6 +276,13 @@ func (s *Store) GetDatabaseDetail(
 	// branch — the MV coalesces that case into 'unknown' at
 	// INSERT time, so the read path can compare on plain string
 	// equality.
+	// v0.9.274 — snap the window start DOWN to the MV's 5-minute grid, exactly
+	// as GetDatabases does for the row this drawer was opened from. Without it
+	// an unaligned `from` half-clips the first bucket and the drawer reads LOWER
+	// than the row it is explaining — up to five minutes of traffic missing, on
+	// the same screen, with no way to tell which number is right.
+	bucketStart := from.Truncate(5 * time.Minute)
+
 	mvInstance := instance
 	if instance == "" {
 		mvInstance = "unknown"
@@ -273,7 +301,7 @@ func (s *Store) GetDatabaseDetail(
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND db_system = ? AND instance = ?
 		SETTINGS max_execution_time = 8`,
-		from, to, system, mvInstance)
+		bucketStart, to, system, mvInstance)
 	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p50Ms, &p95Ms, &p99Ms); err != nil {
 		return nil, err
 	}
@@ -304,7 +332,7 @@ func (s *Store) GetDatabaseDetail(
 		ORDER BY countMerge(span_count_state) DESC
 		LIMIT 500
 		SETTINGS max_execution_time = 8`,
-		from, to, system, mvInstance)
+		bucketStart, to, system, mvInstance)
 	if err != nil {
 		return out, nil // partial result fine — overview-only mode
 	}

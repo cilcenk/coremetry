@@ -165,14 +165,39 @@ func (s *Store) traceRecencySlice(
 			return nil, time.Time{}, false, rerr
 		}
 
-		// Fewer rows than asked for means the server had no more to give:
-		// the slice covers the whole window and the ranking is global.
-		exhausted = scanned < budget
+		// v0.9.296 — `scanned < budget` conflated TWO different endings,
+		// and the common one was being read as the rare one.
+		//
+		// The row loop above BREAKS as soon as it has `want` distinct
+		// ids, which happens well before the budget is consumed (a real
+		// replay: 5,000 ids after 7,954 of 15,000 rows). So on every
+		// ordinary page `scanned < budget` was true, "exhausted" was
+		// true, and two things followed that should not have:
+		//
+		//   1. cut = f.From — Stage 2's whole reason for existing is
+		//      that the id set prunes NOTHING (EXPLAIN: 215/218 granules
+		//      kept), so the time floor is its only bound. Handing it
+		//      f.From meant it re-read the entire requested window every
+		//      time. Measured on 7 days: 1,611,504 rows / 1.0-3.5 s with
+		//      the collapsed floor vs 24,460 rows / 93 ms with the real
+		//      one. The v0.9.278 narrowing has never once engaged.
+		//   2. RankedWithin was zeroed, which the UI reads as "this
+		//      ordering is global". It was not: a non-time sort ranks
+		//      inside the newest-N slice, and the honesty hint built to
+		//      say so has never been shown.
+		//
+		// Getting enough ids is SUCCESS, not exhaustion. Only running
+		// out of server rows without filling `want` is exhaustion.
+		gotEnough := len(ids) >= want
+		exhausted = !gotEnough && scanned < budget
 		cut = last
-		if exhausted || len(ids) >= want {
-			if exhausted {
-				cut = f.From
-			}
+		if exhausted {
+			// Genuinely no more rows: the slice does cover the window,
+			// so the ranking really is global and Stage 2 may not
+			// narrow below what the caller asked for.
+			cut = f.From
+		}
+		if exhausted || gotEnough {
 			return ids, cut, exhausted, nil
 		}
 		next, ok := traceSliceRetryBudget(scanned, len(ids), want)

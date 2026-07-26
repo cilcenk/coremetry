@@ -26,6 +26,19 @@ type DBQueryStat struct {
 	// operator sees actual values, not just placeholders.
 	SampleStatement string `json:"sampleStatement"`
 	DBSystem        string `json:"dbSystem"`
+	// v0.9.272 — the actual database this statement ran against (Oracle
+	// service name / SID, PostgreSQL or MongoDB database name), not the engine
+	// word. The DB column read "oracle" for every row while the operator's
+	// instances are named COREBANK / CARDS / DWH; db.name carried those names
+	// all along and the query folded them away.
+	//
+	// DBNameCount is how many DISTINCT databases this (service, statement)
+	// pair touched in the window. Grouping deliberately still folds db_name —
+	// changing row identity would change the row COUNT of a daily triage
+	// table — so the name shown is a representative one, and a count above 1
+	// is surfaced rather than hidden behind an arbitrary any().
+	DBName          string `json:"dbName"`
+	DBNameCount     uint64 `json:"dbNameCount"`
 	// Span counts + latency stats for the bucket.
 	Count      int     `json:"count"`
 	AvgMs      float64 `json:"avgMs"`
@@ -100,6 +113,8 @@ func slowQueriesGlobalSQL(where, shardSetting string) string {
 			)                                          AS norm_stmt,
 			any(db_statement)                          AS sample_stmt,
 			any(db_system)                             AS db_sys,
+			any(coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default'))   AS db_nm,
+			uniqExact(coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default')) AS db_n,
 			count()                                    AS cnt,
 			avg(duration / 1e6)                        AS avg_ms,
 			quantile(0.5)(duration / 1e6)              AS p50_ms,
@@ -143,6 +158,11 @@ func slowQueriesGlobalMVSQL(where string) string {
 			stmt_hash,
 			anyMerge(sample_stmt_state)                 AS sample_stmt,
 			any(db_system)                              AS db_sys,
+			-- Aliased db_nm, never db_name: with a db_name WHERE filter present
+			-- ClickHouse resolves the WHERE identifier to the SELECT alias and
+			-- rejects with code 184 — the v0.8.362 incident, one column over.
+			any(db_name)                                AS db_nm,
+			uniqExact(db_name)                          AS db_n,
 			countMerge(span_count_state)                AS cnt,
 			countIfMerge(error_count_state)             AS err_cnt,
 			sumMerge(duration_sum_state) / 1e6          AS total_ms,
@@ -158,7 +178,7 @@ func slowQueriesGlobalMVSQL(where string) string {
 }
 
 func (s *Store) GetSlowQueriesGlobal(
-	ctx context.Context, from, to time.Time, dbSystem string, limit int,
+	ctx context.Context, from, to time.Time, dbSystem, dbName string, limit int,
 ) ([]SlowQueryRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
@@ -170,7 +190,7 @@ func (s *Store) GetSlowQueriesGlobal(
 	// installs where the db_stmt_hash column couldn't land (external
 	// Distributed cluster with cluster_name unset — probe-driven).
 	if slowQueriesUseMV(s.hasDBStmtHashCol, from, to) {
-		return s.getSlowQueriesGlobalMV(ctx, from, to, dbSystem, limit)
+		return s.getSlowQueriesGlobalMV(ctx, from, to, dbSystem, dbName, limit)
 	}
 	const placeholder = "__P__"
 	var wc whereClause
@@ -179,6 +199,12 @@ func (s *Store) GetSlowQueriesGlobal(
 	wc.add("db_statement != ''")
 	if dbSystem != "" {
 		wc.add("db_system = ?", dbSystem)
+	}
+	// v0.9.272 — narrowing by the actual database. On the raw path this is an
+	// attribute lookup, so it is a post-granule row predicate: it costs one
+	// indexOf per candidate row and does not widen the scan.
+	if dbName != "" {
+		wc.add("coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default') = ?", dbName)
 	}
 	sql := slowQueriesGlobalSQL(wc.sql(), s.shardSkipSetting())
 	args := append(wc.args, limit)
@@ -192,7 +218,8 @@ func (s *Store) GetSlowQueriesGlobal(
 		var r SlowQueryRow
 		var cnt, errCnt uint64
 		if err := rows.Scan(&r.Service, &r.Statement, &r.SampleStatement,
-			&r.DBSystem, &cnt, &r.AvgMs, &r.P50Ms, &r.P95Ms, &r.P99Ms, &r.MaxMs, &errCnt); err != nil {
+			&r.DBSystem, &r.DBName, &r.DBNameCount,
+			&cnt, &r.AvgMs, &r.P50Ms, &r.P95Ms, &r.P99Ms, &r.MaxMs, &errCnt); err != nil {
 			return nil, err
 		}
 		r.Count = int(cnt)
@@ -219,7 +246,7 @@ func (s *Store) GetSlowQueriesGlobal(
 // safeF on every merged float: TDigest/aggregate merges can yield NaN on
 // edge-case states and encoding/json rejects NaN (the v0.5.301 500-class).
 func (s *Store) getSlowQueriesGlobalMV(
-	ctx context.Context, from, to time.Time, dbSystem string, limit int,
+	ctx context.Context, from, to time.Time, dbSystem, dbName string, limit int,
 ) ([]SlowQueryRow, error) {
 	// Snap the window start DOWN to the MV's 5-minute grid so a rolling
 	// window covers whole buckets (the GetDBTrends trick — an unaligned
@@ -230,6 +257,12 @@ func (s *Store) getSlowQueriesGlobalMV(
 	wc.add("time_bucket <= ?", to)
 	if dbSystem != "" {
 		wc.add("db_system = ?", dbSystem)
+	}
+	// db_name is a real column here AND sits in the MV's ORDER BY prefix
+	// (db_system, db_name, service_name, stmt_hash) — this filter is
+	// index-friendly, not just a row predicate.
+	if dbName != "" {
+		wc.add("db_name = ?", dbName)
 	}
 	sql := slowQueriesGlobalMVSQL(wc.sql())
 	args := append(wc.args, limit)
@@ -244,6 +277,7 @@ func (s *Store) getSlowQueriesGlobalMV(
 		var stmtHash, cnt, errCnt uint64
 		var totalMs, p50, p95, p99, maxMs float64
 		if err := rows.Scan(&r.Service, &stmtHash, &r.SampleStatement, &r.DBSystem,
+			&r.DBName, &r.DBNameCount,
 			&cnt, &errCnt, &totalMs, &p50, &p95, &p99, &maxMs); err != nil {
 			return nil, err
 		}
@@ -316,6 +350,8 @@ func (s *Store) GetTopDBQueries(
 			)                                          AS norm_stmt,
 			any(db_statement)                          AS sample_stmt,
 			any(db_system)                             AS db_system,
+			any(coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default'))   AS db_nm,
+			uniqExact(coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default')) AS db_n,
 			count()                                    AS cnt,
 			avg(duration / 1e6)                        AS avg_ms,
 			quantile(0.5)(duration / 1e6)              AS p50_ms,
@@ -344,6 +380,7 @@ func (s *Store) GetTopDBQueries(
 		var cnt uint64
 		var errCnt uint64
 		if err := rows.Scan(&r.Statement, &r.SampleStatement, &r.DBSystem,
+			&r.DBName, &r.DBNameCount,
 			&cnt, &r.AvgMs, &r.P50Ms, &r.P95Ms, &r.P99Ms, &r.MaxMs, &errCnt); err != nil {
 			return nil, err
 		}

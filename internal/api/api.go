@@ -2441,12 +2441,18 @@ func (s *Server) getSlowQueriesGlobal(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
 	q := r.URL.Query()
 	dbSystem := strings.TrimSpace(q.Get("db_system"))
+	// v0.9.272 — narrow by the actual database (Oracle service name / SID,
+	// PostgreSQL or MongoDB database name), not just the engine.
+	dbName := strings.TrimSpace(q.Get("db_name"))
 	limit, _ := strconv.Atoi(q.Get("limit"))
-	key := fmt.Sprintf("slow-queries-global:from=%d:to=%d:sys=%s:limit=%d",
+	// dbName is part of the cache key: leaving it out would serve one
+	// database's rows for another's request — the cross-poisoning class
+	// CLAUDE.md calls out (v0.5.187).
+	key := fmt.Sprintf("slow-queries-global:from=%d:to=%d:sys=%s:db=%s:limit=%d",
 		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute),
-		dbSystem, limit)
+		dbSystem, dbName, limit)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetSlowQueriesGlobal(ctx, from, to, dbSystem, limit)
+		return s.store.GetSlowQueriesGlobal(ctx, from, to, dbSystem, dbName, limit)
 	})
 }
 

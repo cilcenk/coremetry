@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
+import type { GoDuration } from '@/lib/utils';
 import type {
   CardinalityReport, SystemStats,
   StatusPageConfig, StatusComponent, StatusSubscriber,
@@ -104,7 +105,7 @@ export function useSqlSchema(enabled = true) {
 // ── Audit log ─────────────────────────────────────────────
 
 export function useAuditLog(
-  since = '24h',
+  since: GoDuration = '24h',
   filters: { actor?: string; action?: string; target?: string } = {},
 ) {
   return useQuery({

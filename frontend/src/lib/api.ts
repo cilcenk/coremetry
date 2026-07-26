@@ -28,6 +28,9 @@ import type {
   OtlpExemplar, TraceLinks,
 } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
+// GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
+// which has no day unit; see the type's comment in utils.ts.
+import type { GoDuration } from './utils';
 
 // Empty base = same origin (works in production where Go serves both UI and API).
 // In dev, Next.js rewrites /api/* to http://localhost:8088 (see next.config.mjs).
@@ -187,7 +190,7 @@ export const api = {
   // nodes — Grafana-Drilldown style. Each unique `(parent_path,
   // service, displayName)` triple appears once with `×N` for tight
   // loops / fan-outs.
-  serviceStructure: (svc: string, since = '1h', samples = 50, internalOnly = false) =>
+  serviceStructure: (svc: string, since: GoDuration = '1h', samples = 50, internalOnly = false) =>
     get<{
       service: string;
       roots?: import('./types').AggSpanNode[];
@@ -201,7 +204,7 @@ export const api = {
   // parent/child edge analysis. Pass refresh=true to bypass the
   // 1h cache when the operator knows the topology has shifted
   // (new service / pod / route just deployed).
-  serviceNeighbors: (svc: string, since = '1h', samples = 50, refresh = false) =>
+  serviceNeighbors: (svc: string, since: GoDuration = '1h', samples = 50, refresh = false) =>
     get<{
       service: string;
       upstream?: import('./types').NeighborStat[];
@@ -213,20 +216,20 @@ export const api = {
   // v0.6.29 — Blast radius for an open Problem. Returns upstream
   // callers + their RPS + cascade-flag (caller has own open
   // problem). Sorted cascading-first, then by calls desc.
-  serviceBlastRadius: (svc: string, since = '1h') =>
+  serviceBlastRadius: (svc: string, since: GoDuration = '1h') =>
     get<import('./types').BlastRadius>(
       `/api/services/${encodeURIComponent(svc)}/blast-radius?since=${since}`),
 
   // Curated runtime / process timeseries (cpu / memory / rps /
   // runtime) for the inspected service's pods. Powers the infra
   // correlation panel on /service?name=…. 30s server-side cache.
-  serviceInfraMetrics: (svc: string, since = '15m') =>
+  serviceInfraMetrics: (svc: string, since: GoDuration = '15m') =>
     get<import('./types').InfraMetricSeries[]>(
       `/api/services/${encodeURIComponent(svc)}/infra?since=${since}`),
 
   // Per-pod CPU/memory rows for the Overview "Instances" card — one row
   // per host_name emitting metrics for the service. 30s server-side cache.
-  serviceInstances: (svc: string, since = '15m') =>
+  serviceInstances: (svc: string, since: GoDuration = '15m') =>
     get<import('./types').ServiceInstance[] | null>(
       `/api/services/${encodeURIComponent(svc)}/instances?since=${since}`),
 
@@ -249,7 +252,7 @@ export const api = {
   // Global service-level topology graph — nodes + directed edges
   // derived from sampled recent traces. Powers the /service-map
   // page; 30s server-side cache.
-  serviceMap: (since = '15m', samples = 200, diff?: string, topN = 0) => {
+  serviceMap: (since: GoDuration = '15m', samples = 200, diff?: string, topN = 0) => {
     // diff is an optional "compare-to" duration (e.g. "24h"). When
     // set, the backend returns the current topology with new /
     // removed nodes/edges flagged against that baseline window.
@@ -358,7 +361,7 @@ export const api = {
   // Distinct attribute keys observed on recent spans — drives the
   // FilterBuilder autocomplete so custom attrs (function_code etc.)
   // surface as suggestions in addition to the hardcoded list.
-  attributeKeys: (since = '1h', limit = 500, filters?: string, filterGroup?: string) => {
+  attributeKeys: (since: GoDuration = '1h', limit = 500, filters?: string, filterGroup?: string) => {
     // v0.5.261 — optional filter context. When the operator has
     // active filters in /explore, pass them through so the
     // suggester returns attribute keys with data UNDER those
@@ -381,7 +384,7 @@ export const api = {
   // top-200 by count; with it, an operator hunting a long-tail
   // value (specific http.url, db.statement fragment) can find
   // it without scrolling.
-  attributeValues: (key: string, since = '1h', limit = 200, q?: string, range?: { from: number; to: number }) =>
+  attributeValues: (key: string, since: GoDuration = '1h', limit = 200, q?: string, range?: { from: number; to: number }) =>
     get<{ value: string; count: number }[] | null>(
       `/api/attribute-values?${qs({ key, since, limit, q, from: range?.from, to: range?.to })}`),
   operations: (service: string, r: RangeParams) =>
@@ -523,7 +526,7 @@ export const api = {
   // status, so the operator can tell at a glance whether an
   // event is ongoing or has subsided. Backed by the
   // anomaly_events ReplacingMergeTree.
-  anomalyEvents:       (since = '24h', limit = 200) =>
+  anomalyEvents:       (since: GoDuration = '24h', limit = 200) =>
     get<import('./types').AnomalyEvent[]>(`/api/anomalies/events?since=${since}&limit=${limit}`),
 
   // Active anomalies autocomplete — backs the Cmd-K silence
@@ -577,12 +580,12 @@ export const api = {
     }),
 
   // Audit log (admin-only read).
-  auditLog: (since = '24h', filters: { actor?: string; action?: string; target?: string; targetId?: string } = {}) =>
+  auditLog: (since: GoDuration = '24h', filters: { actor?: string; action?: string; target?: string; targetId?: string } = {}) =>
     get<import('./types').AuditEntry[]>(`/api/admin/audit?${qs({ since, ...filters })}`),
   // Alert-tuning noisy-rules report (v0.5.131). Cached server-
   // side 5 min so a burst of operators viewing it during morning
   // triage doesn't re-run the GROUP BY.
-  alertTuningNoisyRules: (since = '24h', limit = 30) =>
+  alertTuningNoisyRules: (since: GoDuration = '24h', limit = 30) =>
     get<{
       rules: Array<import('./types').NoisyRule>;
       from: number; to: number; sinceSec: number;
@@ -1633,7 +1636,7 @@ export const api = {
     if (opts?.spark === false) params.set('spark', '0');
     return get<SpanMetricsServicesResponse>(`/api/spanmetrics/services?${params.toString()}`);
   },
-  metricLabels: (metric: string, key: string, since = '24h') =>
+  metricLabels: (metric: string, key: string, since: GoDuration = '24h') =>
     get<string[] | null>(`/api/metrics/labels?metric=${encodeURIComponent(metric)}&key=${encodeURIComponent(key)}&since=${since}`),
 
   profiles:        (params: ProfilesParams) => get<ProfileRow[] | null>(`/api/profiles?${qs(params)}`),

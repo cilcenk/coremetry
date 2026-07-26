@@ -71,7 +71,7 @@ export default function ServiceMapPage() {
   // so the whole-production map isn't an unreadable hairball. 0 = no cap (full
   // sampled graph). Server-side prune — the browser never receives the long tail.
   const [topN, setTopN] = useState(0);
-  const since = (PRESETS.find(p => p.key === range.preset)?.secs ?? 900) + 's';
+  const since = `${PRESETS.find(p => p.key === range.preset)?.secs ?? 900}s` as const;
 
   const mapQ = useServiceMap(since, samples, diff || undefined, topN);
   // Single focus-commit path (v0.8.265, operator-reported "Focus

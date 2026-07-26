@@ -161,6 +161,8 @@ export function OraclePanel({ instance, range }: { instance: string; range: Time
         <OracleMetricDrillModal
           drill={drill}
           range={range}
+          instance={instance}
+          engine="oracle"
           onClose={() => setDrill(null)} />
       )}
     </div>

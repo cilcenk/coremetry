@@ -136,7 +136,7 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
         </>
       )}
       {drill && (
-        <OracleMetricDrillModal drill={drill} range={range} onClose={() => setDrill(null)} />
+        <OracleMetricDrillModal drill={drill} range={range} instance={instance} engine="postgresql" onClose={() => setDrill(null)} />
       )}
     </div>
   );

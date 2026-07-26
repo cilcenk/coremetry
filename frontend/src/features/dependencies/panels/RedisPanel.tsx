@@ -123,7 +123,7 @@ export function RedisPanel({ instance, range }: { instance: string; range: TimeR
         </>
       )}
       {drill && (
-        <OracleMetricDrillModal drill={drill} range={range} onClose={() => setDrill(null)} />
+        <OracleMetricDrillModal drill={drill} range={range} instance={instance} engine="redis" onClose={() => setDrill(null)} />
       )}
     </div>
   );

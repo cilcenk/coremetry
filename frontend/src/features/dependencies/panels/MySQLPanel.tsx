@@ -106,7 +106,7 @@ export function MySQLPanel({ instance, range }: { instance: string; range: TimeR
         </>
       )}
       {drill && (
-        <OracleMetricDrillModal drill={drill} range={range} onClose={() => setDrill(null)} />
+        <OracleMetricDrillModal drill={drill} range={range} instance={instance} engine="mysql" onClose={() => setDrill(null)} />
       )}
     </div>
   );

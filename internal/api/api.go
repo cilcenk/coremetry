@@ -4058,14 +4058,23 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	agg := q.Get("agg")
 	groupByRaw := q.Get("groupBy")
 	filtersRaw := q.Get("filters")
+	// v0.9.279 — DB receiver drill scoping. Not expressible as an ordinary
+	// filter: the receivers disagree about where the instance identity lives,
+	// so it compiles to a per-engine OR (dbInstanceScopeClause). Both go in
+	// the cache key — without them one instance's chart would be served for
+	// another's request, the cross-poisoning class CLAUDE.md calls out.
+	inst := strings.TrimSpace(q.Get("instance"))
+	engine := strings.TrimSpace(q.Get("engine"))
 	from := parseTime(q.Get("from"))
 	to := parseTime(q.Get("to"))
-	key := fmt.Sprintf("metric-query:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:from=%d:to=%d",
-		name, svc, agg, step, maxDP, groupByRaw, filtersRaw, from.Unix()/60, to.Unix()/60)
+	key := fmt.Sprintf("metric-query:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d",
+		name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.QueryMetric(ctx, chstore.MetricQueryFilter{
 			Name:          name,
 			Service:       svc,
+			Instance:      inst,
+			Engine:        engine,
 			Filters:       parseFilters(filtersRaw),
 			GroupBy:       splitNonEmpty(groupByRaw, ','),
 			Aggregation:   agg,

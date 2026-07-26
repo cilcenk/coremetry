@@ -400,32 +400,6 @@ function ServiceDetailInner() {
               label="∿ Anomalies" />
           </div>
         </div>
-        {/* v0.6.51 — SLO health strip. Unifies SLO status into the
-            service detail page (was /slos-only). One chip per SLO:
-            target, current SLI, budget bar, burn-rate badge. Click
-            jumps to /slos. Hidden when the service has no SLOs. */}
-        {slos.length > 0 && (
-          <div style={{
-            border: '1px solid var(--border)', background: 'var(--bg1)',
-            borderRadius: 6, padding: 12, marginBottom: 14,
-          }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-              <span style={{ fontWeight: 600, fontSize: 13 }}>
-                ◉ SLOs ({slos.length})
-              </span>
-              <span style={{ flex: 1 }} />
-              <Link to="/slos" style={{ fontSize: 11 }}>Manage in SLOs →</Link>
-            </div>
-            <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 8,
-            }}>
-              {slos.map(o => (
-                <ServiceSLOChip key={o.id} slo={o} />
-              ))}
-            </div>
-          </div>
-        )}
-
         {openProbs.length > 0 && (
           // Red PROBLEM CALLOUT (design handoff app.jsx .prob-callout) —
           // token-only: a soft red-tinted panel (color-mix keeps it derived
@@ -578,6 +552,36 @@ function ServiceDetailInner() {
                   </LazyMount>
                 </div>
               </>
+            )}
+
+            {/* v0.6.51 — SLO health strip. Unifies SLO status into the
+                service detail page (was /slos-only). One chip per SLO:
+                target, current SLI, budget bar, burn-rate badge. Click
+                jumps to /slos. Hidden when the service has no SLOs.
+                v0.9.282 (operatör) — strip sekme şeridinin ÜSTÜNDEYDİ,
+                her sekmede ilk gövde öğesini aşağı itiyordu ("gereksiz
+                yer kaplıyor"). Artık içeriğin en altında: SLO'lar hâlâ
+                her sekmede görünür, ama triage tablosu tepeyi alır. */}
+            {slos.length > 0 && (
+              <div style={{
+                border: '1px solid var(--border)', background: 'var(--bg1)',
+                borderRadius: 6, padding: 12, marginTop: 14,
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span style={{ fontWeight: 600, fontSize: 13 }}>
+                    ◉ SLOs ({slos.length})
+                  </span>
+                  <span style={{ flex: 1 }} />
+                  <Link to="/slos" style={{ fontSize: 11 }}>Manage in SLOs →</Link>
+                </div>
+                <div style={{
+                  display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: 8,
+                }}>
+                  {slos.map(o => (
+                    <ServiceSLOChip key={o.id} slo={o} />
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         )}

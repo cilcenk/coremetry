@@ -98,7 +98,7 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
                           metric: 'postgresql.database.size',
                           label: `Database · ${d.name}`,
                           unit: 'B',
-                          filters: [{ key: 'database', op: '=', value: d.name }],
+                          filters: [{ k: 'database', op: '=', v: [d.name] }],
                         })}
                         style={{ cursor: 'pointer' }}>
                         <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11, fontWeight: 600 }}>{d.name}</td>

@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -241,13 +242,28 @@ func (f FilterExpr) sql(alias string, wellKnown map[string]string) (string, []an
 	}
 }
 
-// ApplyFilters appends each filter as a separate WHERE conjunct, skipping
-// (and logging) any that fail to compile.
+// ApplyFilters appends each filter as a separate WHERE conjunct, skipping any
+// that fail to compile.
+//
+// v0.9.269 — the skip is now LOGGED. It used to be silent, justified by
+// "UI validates first", and that assumption was false: the DB drill modal
+// sent `{key, op, value}` while this struct binds `{k, op, v}` by JSON tag,
+// so Key arrived empty, SQL() returned "missing key", and every filter was
+// dropped here without a trace. The chart then rendered UNFILTERED under a
+// modal that displayed the filter chip. A dropped filter does not produce an
+// empty result an operator would question — it produces a WIDER one that
+// looks perfectly plausible, which is the worst way for this to fail.
+//
+// Skipping (rather than erroring) is kept deliberately: a hard failure here
+// would take down every caller for one malformed clause. But it must not be
+// invisible.
 func ApplyFilters(wc *whereClause, filters []FilterExpr) {
 	for _, f := range filters {
 		sql, args, err := f.SQL()
 		if err != nil || sql == "" {
-			continue // silently skip — UI validates first
+			log.Printf("[filter] DROPPED span filter key=%q op=%q values=%d: %v — "+
+				"result is UNFILTERED for this clause", f.Key, f.Op, len(f.Values), err)
+			continue
 		}
 		wc.add(sql, args...)
 	}
@@ -295,6 +311,10 @@ func ApplyMetricFilters(wc *whereClause, filters []FilterExpr) {
 	for _, f := range filters {
 		sql, args, err := f.SQLForMetricPoints()
 		if err != nil || sql == "" {
+			// See ApplyFilters above — this is the path the DB drill modal
+			// fell down, silently, for every filter it ever sent.
+			log.Printf("[filter] DROPPED metric filter key=%q op=%q values=%d: %v — "+
+				"result is UNFILTERED for this clause", f.Key, f.Op, len(f.Values), err)
 			continue
 		}
 		wc.add(sql, args...)

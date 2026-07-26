@@ -99,7 +99,7 @@ export function RedisPanel({ instance, range }: { instance: string; range: TimeR
                     onClick={() => setDrill({
                       metric: 'redis.db.keys',
                       label: `Keyspace ${k.name}`,
-                      filters: [{ key: 'db', op: '=', value: k.name }],
+                      filters: [{ k: 'db', op: '=', v: [k.name] }],
                     })}
                     style={{
                       all: 'unset', cursor: 'pointer',

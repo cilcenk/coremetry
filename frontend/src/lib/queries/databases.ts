@@ -4,9 +4,10 @@ import type { SlowQueryRow } from '@/lib/types';
 
 // Global slow-query catalog (v0.5.165) for /databases/slow-queries.
 // One row per (service, normalised statement) ordered by total
-// wall-clock time; optional db_system narrows to one engine.
+// wall-clock time; optional db_system narrows to one engine and
+// db_name (v0.9.272) to one actual database.
 export function useSlowQueries(params: {
-  from?: number; to?: number; db_system?: string; limit?: number;
+  from?: number; to?: number; db_system?: string; db_name?: string; limit?: number;
 }) {
   return useQuery<SlowQueryRow[]>({
     queryKey: ['databases', 'slow-queries', params],

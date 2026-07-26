@@ -21,7 +21,11 @@ import type { SlowQueryRow, TimeRange } from '@/lib/types';
 // first paint is unchanged; the operator can now re-sort/resize any.
 const SLOW_COLS: DataTableColumn<SlowQueryRow>[] = [
   { id: 'service',    label: 'Service',                sortValue: r => r.service,    naturalDir: 'asc', width: 180 },
-  { id: 'dbSystem',   label: 'DB',                     sortValue: r => r.dbSystem,   naturalDir: 'asc', width: 90 },
+  { id: 'dbSystem',   label: 'Engine',                 sortValue: r => r.dbSystem,   naturalDir: 'asc', width: 90 },
+  // v0.9.272 — the column that used to say "oracle" on every row now says
+  // which database it actually was. 'Engine' above keeps the old value under
+  // an honest label rather than being repurposed.
+  { id: 'dbName',     label: 'Database',               sortValue: r => r.dbName ?? '', naturalDir: 'asc', width: 130 },
   { id: 'statement',  label: 'Statement (normalised)', sortValue: r => r.statement,  naturalDir: 'asc', width: 380 },
   { id: 'count',      label: 'Calls',      sortValue: r => r.count,      numeric: true, width: 90 },
   { id: 'avgMs',      label: 'Avg ms',     sortValue: r => r.avgMs,      numeric: true, width: 90 },
@@ -51,12 +55,14 @@ type ExplainState = 'idle' | 'busy' | { text: string } | { error: string };
 export default function SlowQueriesPage() {
   const [range, setRange] = useUrlRange('1h');
   const [dbSystem, setDbSystem] = useState('');
+  const [dbName, setDbName] = useState('');
   // Bounds memoized on [range] so the query key stays stable across
   // renders (the v0.5.184 incident shape).
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const rowsQ = useSlowQueries({
     from, to,
     db_system: dbSystem || undefined,
+    db_name: dbName || undefined,
     limit: 200,
   });
   const rows: SlowQueryRow[] | null | undefined =
@@ -91,6 +97,11 @@ export default function SlowQueriesPage() {
 
   const systems = rows
     ? Array.from(new Set(rows.map(r => r.dbSystem).filter(Boolean))).sort()
+    : [];
+  // Same shape as `systems` above. 'default' is the MV's own sentinel for a
+  // span that carried no db.name, so it is offered but reads as what it is.
+  const dbNames = rows
+    ? Array.from(new Set(rows.map(r => r.dbName).filter(Boolean))).sort()
     : [];
 
   // v0.8.378 — URL-first statement detail drawer (Stage-2 slice D2).
@@ -146,8 +157,20 @@ export default function SlowQueriesPage() {
             <option value="">All databases</option>
             {systems.map(s => <option key={s} value={s}>{s}</option>)}
           </select>
-          {dbSystem && (
-            <Button variant="secondary" size="sm" onClick={() => setDbSystem('')}>Clear</Button>
+          {/* v0.9.272 — narrowing by the real database, which is the question an
+              operator actually has ("what is slow on COREBANK"), not "what is
+              slow on Oracle". Options come from the rows currently loaded, the
+              same way the engine picker works; the filter itself is applied
+              SERVER-side so it narrows the query rather than the page. */}
+          <select value={dbName} onChange={e => setDbName(e.target.value)}
+            style={{ fontSize: 12, padding: '3px 8px' }}
+            aria-label="Filter by database">
+            <option value="">All db names</option>
+            {dbNames.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+          {(dbSystem || dbName) && (
+            <Button variant="secondary" size="sm"
+              onClick={() => { setDbSystem(''); setDbName(''); }}>Clear</Button>
           )}
           <Link to="/databases" className="sec"
             style={{ marginLeft: 'auto', fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}>
@@ -211,6 +234,23 @@ export default function SlowQueriesPage() {
                         <td>
                           <span className="badge b-gray mono">{r.dbSystem || '?'}</span>
                         </td>
+                        {/* v0.9.272 — the database itself. dbNameCount > 1 means this
+                            (service, statement) pair ran against more than one, and the
+                            name shown is one of them: grouping still folds db_name, so
+                            the ambiguity is stated instead of silently resolved. */}
+                        <td className="mono" style={{ fontSize: 11 }}>
+                          {r.dbName
+                            ? <>
+                                {r.dbName}
+                                {r.dbNameCount > 1 && (
+                                  <span style={{ color: 'var(--text3)', marginLeft: 4 }}
+                                        title={`This statement ran against ${r.dbNameCount} databases in this window; showing one of them.`}>
+                                    +{r.dbNameCount - 1}
+                                  </span>
+                                )}
+                              </>
+                            : <span style={{ color: 'var(--text3)' }}>—</span>}
+                        </td>
                         <td style={{
                           fontFamily: 'ui-monospace, SFMono-Regular, monospace',
                           fontSize: 11, color: 'var(--text)',
@@ -232,7 +272,7 @@ export default function SlowQueriesPage() {
                         <tr key={key + ':sample'}>
                           {/* v0.9.265 — 10, not 9: the P50 column landed
                               between Avg and P99. */}
-                          <td colSpan={10} style={{
+                          <td colSpan={11} style={{
                             background: 'var(--bg2)', padding: 12,
                           }}>
                             <div style={{

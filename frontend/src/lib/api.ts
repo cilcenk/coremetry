@@ -707,7 +707,7 @@ export const api = {
   // Global slow-query catalog (v0.5.165). One row per
   // (service, normalised statement) ordered by total wall-clock
   // time. Optional db_system narrows to one engine.
-  slowQueries: (params: { from?: number; to?: number; db_system?: string; limit?: number }) =>
+  slowQueries: (params: { from?: number; to?: number; db_system?: string; db_name?: string; limit?: number }) =>
     get<import('./types').SlowQueryRow[]>(`/api/databases/slow-queries?${qs(params)}`),
   // v0.8.378 — statement detail drill-down (Stage-2 slice D2). One
   // payload with per-section null tolerance, keyed on the v0.8.375

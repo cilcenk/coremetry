@@ -3337,6 +3337,15 @@ export interface DBQueryStat {
   sampleStatement: string;
   dbSystem: string;
   count: number;
+  // v0.9.272 — the actual database (Oracle service name / SID, PostgreSQL or
+  // MongoDB db name). The DB column showed dbSystem, i.e. the engine word, so
+  // every Oracle row read "oracle" while the real databases are named
+  // COREBANK / CARDS / DWH. dbNameCount > 1 means this (service, statement)
+  // pair touched more than one database in the window and dbName is one of
+  // them — grouping still folds db_name, so the count is shown rather than
+  // silently picking a winner.
+  dbName: string;
+  dbNameCount: number;
   avgMs: number;
   // v0.9.265 — P50 separates "slow for everyone" from "slow in the tail",
   // which avg alone cannot: avg is dragged upward by the same tail. All

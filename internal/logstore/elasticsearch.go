@@ -35,13 +35,20 @@ import (
 type esCursor struct {
 	Pit  string `json:"p,omitempty"`
 	Sort []any  `json:"s"`
+	// Asc (v0.9.295) — the direction this token was minted in.
+	// search_after compares against the CURRENT sort, so replaying a
+	// newest-first position while sorting oldest-first pages away from
+	// what the operator is reading and returns a plausible, wrong
+	// slice. Omitted for the default so pre-v0.9.295 tokens decode as
+	// what they were: DESC.
+	Asc bool `json:"a,omitempty"`
 }
 
-func encodeESCursor(pit string, sortVals []any) string {
+func encodeESCursor(pit string, sortVals []any, ascending bool) string {
 	if len(sortVals) == 0 {
 		return ""
 	}
-	b, err := json.Marshal(esCursor{Pit: pit, Sort: sortVals})
+	b, err := json.Marshal(esCursor{Pit: pit, Sort: sortVals, Asc: ascending})
 	if err != nil {
 		return ""
 	}
@@ -52,19 +59,19 @@ func encodeESCursor(pit string, sortVals []any) string {
 // id + sort-values array to feed `search_after`. Returns ok=false for
 // an empty / malformed token (incl. the pre-v0.7.88 bare-array format)
 // so the caller falls back to a fresh first-page read.
-func decodeESCursor(tok string) (pit string, sortVals []any, ok bool) {
+func decodeESCursor(tok string) (pit string, sortVals []any, ascending, ok bool) {
 	if tok == "" {
-		return "", nil, false
+		return "", nil, false, false
 	}
 	b, err := base64.RawURLEncoding.DecodeString(tok)
 	if err != nil {
-		return "", nil, false
+		return "", nil, false, false
 	}
 	var c esCursor
 	if err := json.Unmarshal(b, &c); err != nil || len(c.Sort) == 0 {
-		return "", nil, false
+		return "", nil, false, false
 	}
-	return c.Pit, c.Sort, true
+	return c.Pit, c.Sort, c.Asc, true
 }
 
 // retryPlainOnPITDenial reports whether a failed PIT-mode search should
@@ -1316,12 +1323,20 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// honoured only on a non-cursor read — the cursor round-trips the
 	// prior page's DESC sort values, so flipping mid-paging is incoherent.
 	// Used by the /logs Context "after" window (v0.7.83).
+	// v0.9.295 — direction is honoured WITH a cursor now: the token
+	// states which direction it was minted in, and a mismatch drops it
+	// (below) instead of being silently obeyed in the wrong order.
 	sortDir := "desc"
-	if f.Ascending && f.Cursor == "" {
+	if f.Ascending {
 		sortDir = "asc"
 	}
 
-	pitID, afterSort, hasCursor := decodeESCursor(f.Cursor)
+	pitID, afterSort, cursorAsc, hasCursor := decodeESCursor(f.Cursor)
+	if hasCursor && cursorAsc != f.Ascending {
+		// Costs a return to page one — visible — instead of a wrong
+		// page, which is not. Same contract as the CH backend.
+		pitID, afterSort, hasCursor = "", nil, false
+	}
 	if !hasCursor {
 		afterSort = nil
 		if s.pitDenied.Load() {
@@ -1518,7 +1533,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// 2m keep_alive.
 	next := ""
 	if esRetainPIT(len(out), limit, f.WantCursor) {
-		next = encodeESCursor(pitID, lastSort)
+		next = encodeESCursor(pitID, lastSort, f.Ascending)
 		// Handed to the caller — the next search_after page needs this
 		// PIT alive, so don't let the deferred close fire (v0.8.3).
 		retainPIT = true

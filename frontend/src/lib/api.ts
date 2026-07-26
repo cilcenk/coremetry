@@ -2371,6 +2371,12 @@ export interface LogsParams {
   // treat as an opaque token. qs() drops it when empty so the
   // first page is a no-cursor request.
   after?: string;
+  // asc (v0.9.295) — oldest-first. Both backends have supported the
+  // direction since v0.7.83 but only the Context modal ever asked for
+  // it. The cursor carries its own direction, so a token minted in one
+  // order is dropped rather than replayed in the other — which is why
+  // the UI must reset paging when this flips.
+  asc?: boolean;
   // paging (v0.9.286) — "I will use nextCursor". The ES backend keeps a
   // Point-in-Time alive whenever it returns a cursor, so a caller that
   // reads one page and walks away pins segment readers for 2 minutes.

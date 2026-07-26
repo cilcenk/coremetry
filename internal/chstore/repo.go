@@ -3603,16 +3603,30 @@ const logsRowKeyExpr = "cityHash64(service_name, severity_num, severity_text, bo
 // vice versa) fails to decode rather than silently mis-paging.
 // RowKey is the unsigned cityHash64 of logsRowKeyExpr for the last
 // row of the prior page.
+//
+// v0.9.295 — the token also carries the DIRECTION it was minted in.
+// The keyset is a strict inequality, so a cursor from a newest-first
+// page paged in oldest-first order walks the wrong way and returns a
+// plausible, wrong slice. Before, direction was simply ignored while a
+// cursor was present; now the mismatch is DETECTED and the cursor is
+// dropped, which costs the operator a return to page one instead of a
+// silently wrong page.
 type LogsCursor struct {
-	TimeNs int64
-	RowKey uint64
+	TimeNs    int64
+	RowKey    uint64
+	Ascending bool
 }
 
 // EncodeLogsCursor renders a (timeNs, rowKey) position as the opaque
 // base64 token the API layer round-trips. Kept as a pure function so
 // the roundtrip is unit-testable (CLAUDE.md #11).
-func EncodeLogsCursor(timeNs int64, rowKey uint64) string {
+func EncodeLogsCursor(timeNs int64, rowKey uint64, ascending bool) string {
 	raw := "ch|" + strconv.FormatInt(timeNs, 10) + "|" + strconv.FormatUint(rowKey, 10)
+	// A 4th field marks oldest-first. Omitted for the default so tokens
+	// minted before v0.9.295 keep decoding as what they were: DESC.
+	if ascending {
+		raw += "|a"
+	}
 	return base64.RawURLEncoding.EncodeToString([]byte(raw))
 }
 
@@ -3629,10 +3643,9 @@ func DecodeLogsCursor(tok string) (LogsCursor, bool) {
 		return LogsCursor{}, false
 	}
 	s := string(b)
-	// Expect "ch|<ns>|<rowkey>" — both tail fields are numeric so a
-	// plain 3-way split is unambiguous.
-	parts := strings.SplitN(s, "|", 3)
-	if len(parts) != 3 || parts[0] != "ch" {
+	// Expect "ch|<ns>|<rowkey>" with an optional "|a" direction flag.
+	parts := strings.Split(s, "|")
+	if len(parts) < 3 || len(parts) > 4 || parts[0] != "ch" {
 		return LogsCursor{}, false
 	}
 	ns, err := strconv.ParseInt(parts[1], 10, 64)
@@ -3643,7 +3656,16 @@ func DecodeLogsCursor(tok string) (LogsCursor, bool) {
 	if err != nil {
 		return LogsCursor{}, false
 	}
-	return LogsCursor{TimeNs: ns, RowKey: rk}, true
+	asc := false
+	if len(parts) == 4 {
+		if parts[3] != "a" {
+			// An unknown 4th field is a token from a future/other
+			// encoder — reject rather than guess its meaning.
+			return LogsCursor{}, false
+		}
+		asc = true
+	}
+	return LogsCursor{TimeNs: ns, RowKey: rk, Ascending: asc}, true
 }
 
 // logsKeysetPredicate returns the SQL fragment + positional args for
@@ -3663,6 +3685,13 @@ func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
 	if !hasCursor {
 		return "", nil
 	}
+	// v0.9.295 — direction. Oldest-first pages forward through GREATER
+	// positions; the comparison flips wholesale, both legs, or the
+	// boundary row is re-returned or skipped.
+	cmp := "<"
+	if c.Ascending {
+		cmp = ">"
+	}
 	// Compare the nanosecond instant as Int64 via toUnixTimestamp64Nano —
 	// NOT a bare time.Time. clickhouse-go/v2 formats a positional
 	// time.Time arg at SECONDS scale, so a bare `time = ?` against the
@@ -3674,7 +3703,7 @@ func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
 	// matches the codebase's ns-precise convention. The From/To window
 	// bounds stay on raw `time` so they still prune granules via the
 	// time skip index — this extra predicate just refines within them.
-	sql := "(toUnixTimestamp64Nano(time) < ? OR (toUnixTimestamp64Nano(time) = ? AND " + logsRowKeyExpr + " < ?))"
+	sql := "(toUnixTimestamp64Nano(time) " + cmp + " ? OR (toUnixTimestamp64Nano(time) = ? AND " + logsRowKeyExpr + " " + cmp + " ?))"
 	return sql, []interface{}{c.TimeNs, c.TimeNs, c.RowKey}
 }
 
@@ -3800,6 +3829,18 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	// first page (empty cursor) keeps OFFSET semantics for callers
 	// that page by offset.
 	cur, hasCursor := DecodeLogsCursor(f.Cursor)
+	// v0.9.295 — a cursor minted in the OTHER direction is dropped, not
+	// obeyed and not silently ignored. The keyset is a strict
+	// inequality: replaying a newest-first position while paging
+	// oldest-first walks away from the rows the operator is reading and
+	// returns a plausible, wrong slice. The UI resets paging when the
+	// direction flips, so this only fires for a hand-built or
+	// bookmarked URL — and there it costs a return to page one, which
+	// is visible, rather than a wrong page, which is not.
+	if hasCursor && cur.Ascending != f.Ascending {
+		hasCursor = false
+		cur = LogsCursor{}
+	}
 	keysetSQL, keysetArgs := logsKeysetPredicate(cur, hasCursor)
 	if keysetSQL != "" {
 		wc.add(keysetSQL, keysetArgs...)
@@ -3817,7 +3858,11 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	// honoured only on a non-cursor read — the keyset cursor encodes a
 	// strict DESC boundary, so ASC + cursor would be incoherent. Used by
 	// the /logs Context "after" window (v0.7.83).
-	ascending := f.Ascending && !hasCursor
+	// v0.9.295 — direction is honoured WITH a cursor now, because the
+	// cursor states which direction it was minted in. A cursor whose
+	// direction disagrees with the request is dropped upstream, so by
+	// here the two always agree.
+	ascending := f.Ascending
 	orderDir := "DESC"
 	if ascending {
 		orderDir = "ASC"
@@ -3875,12 +3920,14 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	}
 
 	// NextCursor only when the page came back full — a short page is
-	// the last page, so no cursor (the UI stops paging). Never on an
-	// ascending read: the cursor encoding + keyset are DESC-only, and
-	// the only ascending caller (Context "after" window) doesn't page.
+	// the last page, so no cursor (the UI stops paging).
+	//
+	// v0.9.295 — ascending reads now page too. The token carries its
+	// direction so a cursor minted oldest-first can never be replayed
+	// newest-first (DecodeLogsCursor + the mismatch drop above).
 	next := ""
-	if len(out) == f.Limit && !ascending {
-		next = EncodeLogsCursor(lastTimeNs, lastRowKey)
+	if len(out) == f.Limit {
+		next = EncodeLogsCursor(lastTimeNs, lastRowKey, ascending)
 	}
 	return out, total, next, nil
 }

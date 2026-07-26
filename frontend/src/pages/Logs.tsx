@@ -28,6 +28,7 @@ import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass, rangeToSince } from '@/lib/utils';
 import { severityBandOf } from '@/lib/severityBand';
+import { accumulatePage } from '@/lib/logAccumulate';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
   extractHighlightTerms,
@@ -58,6 +59,14 @@ const LOG_SHARE_TITLE =
 // `bucket` is the canonical severity-band name (matches the names
 // the /api/logs/timeseries?groupBy=severity backend returns, see
 // LogsHistogram) that we sum counts into for this chip's badge.
+// ACC_CAP — ceiling on rows held by the static list's "Load more"
+// accumulation (v0.9.292). The live tail has had LIVE_CAP since it
+// shipped; the static list accumulated without limit, so twenty clicks
+// meant two thousand live rows whose React tree and per-row highlight
+// transform both scale linearly. 2000 is generous — past that the
+// answer is a narrower filter, not more scrolling.
+const ACC_CAP = 2000;
+
 const LVL_FACETS: Array<{ key: string; label: string; min: number }> = [
   { key: 'error', label: 'ERROR', min: 17 },
   { key: 'warn',  label: 'WARN',  min: 13 },
@@ -151,7 +160,10 @@ function LogsInner() {
   // old result set is meaningless against a new one — v0.7.81).
   const [cursor, setCursor] = useState('');
   const [accRows, setAccRows] = useState<LogRow[]>([]);
-  const resetPaging = () => { setCursor(''); setAccRows([]); };
+  // v0.9.292 — how many rows the accumulation cap has dropped off the
+  // top in this browsing session. Surfaced, never silent.
+  const [accDropped, setAccDropped] = useState(0);
+  const resetPaging = () => { setCursor(''); setAccRows([]); setAccDropped(0); };
   const [filter, setFilter] = useState({
     service: '', cluster: '', search: '', severity: 0, traceId: '', spanId: '',
     // hasTrace (v0.8.406 — operator ask): keep only rows with a trace
@@ -451,9 +463,21 @@ function LogsInner() {
     if (live || !staticQ.data || staticQ.isPlaceholderData) return;
     const page = staticQ.data.logs ?? [];
     setAccRows(prev => {
-      if (!cursor) return page;
-      const seen = new Set(prev.map(r => r.id));
-      return [...prev, ...page.filter(r => !seen.has(r.id))];
+      if (!cursor) { setAccDropped(0); return page; }
+      const { rows, dropped } = accumulatePage(prev, page, ACC_CAP);
+      // v0.9.292 — accumulation was UNCAPPED: 20 "Load more" clicks =
+      // 2000 live rows, and while content-visibility keeps painting
+      // cheap (LogTable), the React tree and the per-row highlight
+      // transform (highlightSegments) grow linearly. The live tail has
+      // had LIVE_CAP since it shipped; the static list never got one.
+      //
+      // The window slides FORWARD, dropping from the front. The
+      // operator clicking "Load more" is reading downward, so the rows
+      // they just asked for are the ones to keep — but rows leaving the
+      // top is exactly the kind of silent disappearance this page keeps
+      // getting wrong, so the count is surfaced below the table.
+      if (dropped > 0) setAccDropped(d => d + dropped);
+      return rows;
     });
   }, [staticQ.data, staticQ.isPlaceholderData, cursor, live]);
 
@@ -990,6 +1014,16 @@ function LogsInner() {
                   showing {logs.length.toLocaleString()} of {total.toLocaleString()}
                   {staticQ.data?.totalIsLowerBound ? '+' : ''}
                 </span>
+                {/* v0.9.292 — the accumulation window slid forward. Rows
+                    leaving the top without a word is the silent-loss
+                    class this page keeps producing; say it and say the
+                    remedy. */}
+                {accDropped > 0 && (
+                  <span style={{ color: 'var(--warn)' }}
+                    title={`"Load more" keeps at most ${ACC_CAP.toLocaleString()} rows in the page so it stays responsive. ${accDropped.toLocaleString()} earlier (newer) rows have scrolled out of the buffer — narrow the time range or the filter to see a slice that fits.`}>
+                    · {accDropped.toLocaleString()} earlier rows dropped from the buffer
+                  </span>
+                )}
               </div>
             )}
           </>

@@ -26,7 +26,7 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getRaw, setRaw } from '@/lib/storage';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
-import { tsShort, timeRangeToNs, sevName, sevClass } from '@/lib/utils';
+import { tsShort, timeRangeToNs, sevName, sevClass, rangeToSince } from '@/lib/utils';
 import { severityBandOf } from '@/lib/severityBand';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
@@ -129,6 +129,13 @@ function LogsInner() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [range, setRange] = useUrlRange('30m');
+  // v0.9.291 — the window handed to the KQL autocomplete. Memoised on
+  // the range, never computed bare in JSX (v0.5.184: a bare
+  // range→duration call in the tree is a new object each render and
+  // refetches forever). The server clamps this to 7d and snaps it to
+  // the hour, so it is a hint about what the operator is looking at,
+  // not a contract.
+  const autocompleteSince = useMemo(() => rangeToSince(range).since, [range]);
   // v0.8.400 (env-separation Phase 4) — /logs consumes the GLOBAL
   // Topbar ?env= picker. Read-only here (the picker writes); every
   // backend round-trip below (list, histogram, facet counts, fields
@@ -583,6 +590,11 @@ function LogsInner() {
             </select>
           )}
           <KqlSearchInput
+            // v0.9.291 — the autocomplete's term-dictionary walk is
+            // bounded by the window the operator is actually looking at.
+            // Memoised: a bare rangeToSince(range) in JSX is the
+            // infinite-refetch shape (v0.5.184).
+            since={autocompleteSince}
             value={draft.search}
             onChange={v => setDraft({ ...draft, search: v })}
             onSubmit={apply}

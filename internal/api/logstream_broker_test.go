@@ -42,7 +42,7 @@ func (stubLogStore) RawSearchSamples(context.Context, []string, json.RawMessage,
 	return nil, nil
 }
 func (stubLogStore) Indices(context.Context) ([]logstore.IndexInfo, error) { return nil, nil }
-func (stubLogStore) FieldValues(context.Context, string, string, int) ([]string, error) {
+func (stubLogStore) FieldValues(context.Context, string, string, int, time.Time, time.Time) ([]string, error) {
 	return nil, nil
 }
 func (stubLogStore) FieldStats(context.Context, logstore.Filter, string, int) (*logstore.FieldStatsResult, error) {

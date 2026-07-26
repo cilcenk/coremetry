@@ -599,9 +599,14 @@ export const api = {
   // Top values of one keyword field prefix-matched against `q`.
   // Backs the /logs search box autocomplete (v0.5.464). Returns
   // an empty list on CH backend or invalid field — caller tolerates.
-  logsFieldValues: (field: string, q: string, limit = 20) =>
+  // v0.9.291 — `since` bounds the term-dictionary walk. Without it the
+  // ES backend prefix-scanned every index in retention on every
+  // keystroke. Server clamps to 7d and snaps the window to the hour, so
+  // passing the page's own range here is a hint, not a contract.
+  logsFieldValues: (field: string, q: string, limit = 20, since?: string) =>
     get<{ values: string[] }>(
-      `/api/logs/field-values?field=${encodeURIComponent(field)}&q=${encodeURIComponent(q)}&limit=${limit}`),
+      `/api/logs/field-values?field=${encodeURIComponent(field)}&q=${encodeURIComponent(q)}&limit=${limit}` +
+      (since ? `&since=${encodeURIComponent(since)}` : '')),
   // ES index inventory for /admin/elastic — per-index name, doc
   // count, size, health, ILM phase/policy. CH backend returns
   // empty indices list (page shows "not Elasticsearch" state).

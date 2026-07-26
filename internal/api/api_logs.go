@@ -541,9 +541,29 @@ func (s *Server) getLogsFieldValues(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	key := fmt.Sprintf("logs-field-values:%s:%s:%d", field, prefix, limit)
+	// v0.9.291 — the window, and a CEILING on it.
+	//
+	// This is a SUGGESTION list for a filter box, not a measurement: a
+	// value that fell out of the window is one the operator types by
+	// hand, not a wrong number on a chart. That is what makes narrowing
+	// acceptable here and not in, say, the audit log (v0.9.261), where
+	// the same silence hid records. Identical reasoning to the metric
+	// sibling in v0.9.275.
+	//
+	// SNAPPED to whole hours before it reaches the key. The KQL box
+	// fires on a 180ms keystroke debounce, so every prefix is already a
+	// distinct key; letting a live `to=now` in as well would make every
+	// entry unique and the cache purely decorative. Snapping costs at
+	// most an hour of staleness on an autocomplete list.
+	since := parseDuration(q.Get("since"), 24*time.Hour)
+	if since > 7*24*time.Hour {
+		since = 7 * 24 * time.Hour
+	}
+	to := time.Now().Truncate(time.Hour)
+	from := to.Add(-since)
+	key := fmt.Sprintf("logs-field-values:%s:%s:%d:since=%s:to=%d", field, prefix, limit, since, to.Unix())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		vals, err := s.logs.FieldValues(ctx, field, prefix, limit)
+		vals, err := s.logs.FieldValues(ctx, field, prefix, limit, from, to)
 		if err != nil {
 			// Surfaced to the pod log (the UI swallows it below, so this is the
 			// only place an ES authz/_terms_enum error on field-values shows up).

@@ -171,11 +171,49 @@ jobs:
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@latest
           "$(go env GOPATH)/bin/govulncheck" ./...
-      # --audit-level=high: moderate advisories don't block (10 exist with
-      # no non-major fix); critical/high do.
+      # Policy unchanged: HIGH + CRITICAL block, moderate does not (10 exist
+      # with no non-major fix). What changed (v0.9.266) is that a gate can no
+      # longer be turned red by the advisory endpoint having a bad day —
+      # exactly the failure mode the Trivy comment below records for v0.9.74.
+      #
+      # `npm audit` exits non-zero for TWO unrelated reasons: it found
+      # vulnerabilities, or it could not reach/parse the advisory API. The old
+      # one-liner could not tell them apart. Since 2026-07-25 the quick-audit
+      # endpoint has been returning `400 Invalid package tree` in CI and
+      # malformed gzip locally, while announcing its own retirement in the
+      # same breath ("This endpoint is being retired. Use the bulk advisory
+      # endpoint instead."). The tree is fine — `npm ci --dry-run` resolves
+      # clean — so the build was red for an outage, with no security signal
+      # either way. That trains people to ignore a red gate, which is worse
+      # than the outage.
+      #
+      # So: parse the report. A real report enforces high+critical. An
+      # unreachable endpoint warns loudly AND still verifies lockfile
+      # integrity, which is the one thing the 400 actually accused us of and
+      # the old step never really checked.
       - name: npm audit (frontend deps)
         working-directory: frontend
-        run: npm audit --audit-level=high
+        run: |
+          set +e
+          raw=$(npm audit --json 2>/tmp/npm-audit.err)
+          set -e
+          if printf '%s' "$raw" | jq -e '.metadata.vulnerabilities' >/dev/null 2>&1; then
+            hi=$(printf '%s' "$raw" | jq '.metadata.vulnerabilities.high + .metadata.vulnerabilities.critical')
+            echo "npm audit: $hi high/critical advisories"
+            if [ "$hi" -gt 0 ]; then
+              printf '%s' "$raw" | jq '.vulnerabilities | to_entries[] | select(.value.severity=="high" or .value.severity=="critical") | {name: .key, severity: .value.severity, via: .value.via, fixAvailable: .value.fixAvailable}'
+              echo "::error::npm audit found $hi high/critical advisories"
+              exit 1
+            fi
+          else
+            echo "::warning::npm audit could not run — advisory endpoint unreachable or returned a malformed body. Dependency tree integrity is still enforced below."
+            head -5 /tmp/npm-audit.err || true
+            # The 400 claims "Invalid package tree" — check that claim for real.
+            # This DOES fail the build if package-lock.json and package.json
+            # genuinely disagree.
+            npm ci --dry-run >/dev/null
+            echo "lockfile verified: package-lock.json resolves clean against package.json"
+          fi
       # Trivy filesystem scan: catches vulnerable pinned versions in go.sum /
       # package-lock.json that govulncheck's reachability filter skips, plus
       # any leaked secret / misconfig. exit-code 1 on HIGH/CRITICAL — the

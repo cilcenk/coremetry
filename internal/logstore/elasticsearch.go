@@ -1407,11 +1407,10 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 
 	var raw struct {
-		PitID string `json:"pit_id"`
-		Hits  struct {
-			Total struct {
-				Value int `json:"value"`
-			} `json:"total"`
+		esSearchEnvelope // v0.9.288 — timed_out + _shards
+		PitID            string `json:"pit_id"`
+		Hits             struct {
+			Total esTotal `json:"total"`
 			Hits []struct {
 				ID     string         `json:"_id"`
 				Source map[string]any `json:"_source"`
@@ -1471,7 +1470,22 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		log.Printf("[es-debug] zero hits for trace_id=%q span_id=%q service=%q index=%v query=%s",
 			f.TraceID, f.SpanID, f.Service, queryIdx, string(body))
 	}
-	return &Page{Total: raw.Hits.Total.Value, Logs: out, NextCursor: next, EnvUnapplied: envUnapplied}, nil
+	// v0.9.288 — state what this answer could not do. Partiality is
+	// logged as well as returned: the pod log is where an operator
+	// correlates a suspicious histogram dip with a soft timeout.
+	if d := raw.describe(); d != "" {
+		log.Printf("[logstore-es] PARTIAL search result (%s) — every count below is a subset (service=%q, search=%q)",
+			d, f.Service, f.Search)
+	}
+	return &Page{
+		Total:             raw.Hits.Total.Value,
+		Logs:              out,
+		NextCursor:        next,
+		EnvUnapplied:      envUnapplied,
+		Partial:           raw.partial(),
+		ShardsFailed:      raw.Shards.Failed,
+		TotalIsLowerBound: raw.Hits.Total.isLowerBound(),
+	}, nil
 }
 
 // searchForward is the live-tail read (Filter.SinceNs > 0): a plain
@@ -1534,7 +1548,8 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 			parseESError("tail search", res, s.cfg.Index))
 	}
 	var raw struct {
-		Hits struct {
+		esSearchEnvelope // v0.9.288 — a tail that silently dropped a shard
+		Hits             struct {
 			Hits []struct {
 				ID     string         `json:"_id"`
 				Source map[string]any `json:"_source"`
@@ -1549,7 +1564,13 @@ func (s *ESStore) searchForward(ctx context.Context, f Filter) (*Page, error) {
 	for _, h := range raw.Hits.Hits {
 		out = append(out, s.mapHit(h.ID, h.Source, h.Fields, f.TraceID, f.SpanID))
 	}
-	return &Page{Total: len(out), Logs: out}, nil
+	// v0.9.288 — the live tail's Page has no Total to qualify, but a
+	// dropped shard means rows are MISSING from the stream, which is
+	// the one place an operator would never suspect it.
+	if d := raw.describe(); d != "" {
+		log.Printf("[logstore-es] PARTIAL tail read (%s) — rows are missing from the live stream (service=%q)", d, f.Service)
+	}
+	return &Page{Total: len(out), Logs: out, Partial: raw.partial(), ShardsFailed: raw.Shards.Failed}, nil
 }
 
 // Histogram runs a date_histogram aggregation against ES,
@@ -1835,10 +1856,21 @@ func (s *ESStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 	}
 
 	var raw struct {
-		Aggregations map[string]any `json:"aggregations"`
+		esSearchEnvelope                // v0.9.288
+		Aggregations     map[string]any `json:"aggregations"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decode ES histogram: %w", err)
+	}
+	// v0.9.288 — the histogram's wire shape is a bare array with no room
+	// for a flag, so the chart reads its partiality signal from the LIST
+	// response beside it (same window, same filters). Logged here
+	// regardless: a dip in the chart that is a soft timeout rather than
+	// a traffic drop is the single most misleading thing this surface
+	// can draw, and the pod log is where it becomes provable.
+	if d := raw.describe(); d != "" {
+		log.Printf("[logstore-es] PARTIAL histogram (%s) — buckets are a subset; a dip here may be the timeout, not traffic (service=%q, groupBy=%q)",
+			d, f.Service, groupBy)
 	}
 
 	parseBuckets := func(a any) []LogPoint {
@@ -2026,7 +2058,8 @@ func (s *ESStore) CountPatterns(
 
 	var raw struct {
 		Responses []struct {
-			Aggregations struct {
+			esSearchEnvelope // v0.9.288 — per sub-response in the _msearch
+			Aggregations     struct {
 				Cur struct {
 					DocCount  float64 `json:"doc_count"`
 					ByService struct {
@@ -2065,6 +2098,14 @@ func (s *ESStore) CountPatterns(
 			// Sub-query failed (e.g. service.name.keyword not
 			// mapped). Leave zero stats; detector skips it.
 			continue
+		}
+		// v0.9.288 — a sub-response can also SUCCEED partially: soft
+		// timeout or a failed shard gives a real number that is simply
+		// too low. The pattern detector compares Cur against Base, so a
+		// partial Cur reads as "this pattern calmed down" — a false
+		// negative that hides the incident it exists to find.
+		if d := r.describe(); d != "" {
+			log.Printf("[logstore-es] PARTIAL pattern count (%s) — cur/base ratio for slot %d is understated", d, i)
 		}
 		stats := PatternStats{
 			Cur:  uint64(r.Aggregations.Cur.DocCount),

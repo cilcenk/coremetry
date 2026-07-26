@@ -1674,6 +1674,19 @@ export interface LogsResponse {
   // results are env-UNFILTERED; /logs renders a warning chip instead of
   // silently implying a narrowed view (v0.8.398 honesty pattern).
   envUnapplied?: boolean;
+  // ── Honesty envelope (v0.9.288), ES backend only ────────────────
+  // partial — ES hit its 10s SOFT timeout or lost shards, so it
+  // returned what it had computed. Every count here is a subset. At
+  // 10B docs/day this is the realistic outcome of a heavy search, not
+  // an edge case, and it used to be presented as a complete answer.
+  partial?: boolean;
+  // shardsFailed — how many shards did not answer.
+  shardsFailed?: number;
+  // totalIsLowerBound — `total` is "at least", not "exactly". ES is
+  // asked for track_total_hits: 10000 and answers relation "gte" past
+  // that cap. The identical field from the CH backend IS exact, so the
+  // label has to say which one it is.
+  totalIsLowerBound?: boolean;
 }
 
 // /api/notifications/log (v0.8.247 backend, v0.8.263 UI) — one sent

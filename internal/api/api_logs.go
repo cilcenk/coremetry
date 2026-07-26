@@ -379,6 +379,19 @@ func logsSearchPayload(page *logstore.Page) map[string]interface{} {
 	if page.EnvUnapplied {
 		out["envUnapplied"] = true
 	}
+	// v0.9.288 — the honesty envelope. Emitted only when set, exactly
+	// like envUnapplied, so an ordinary complete answer stays the same
+	// bytes on the wire. The CH backend never sets these: its count()
+	// is exact and it has no soft timeout or shards.
+	if page.Partial {
+		out["partial"] = true
+	}
+	if page.ShardsFailed > 0 {
+		out["shardsFailed"] = page.ShardsFailed
+	}
+	if page.TotalIsLowerBound {
+		out["totalIsLowerBound"] = true
+	}
 	return out
 }
 

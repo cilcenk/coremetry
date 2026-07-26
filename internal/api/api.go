@@ -4111,6 +4111,18 @@ func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
 func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), 24*time.Hour)
+	// v0.9.275 — ceiling on the window. This is a SUGGESTION list for a filter
+	// picker, not a measurement: a label value that fell out of the window is
+	// one the operator types by hand, it is not a wrong number on a chart.
+	// That is what makes narrowing acceptable HERE and not in, say, the audit
+	// log (v0.9.261), where the same silence hid records.
+	//
+	// Clamped in the handler rather than the store so the cache key reflects
+	// the window that was actually queried — otherwise `since=30d` and
+	// `since=7d` would occupy two keys holding identical bodies.
+	if since > 7*24*time.Hour {
+		since = 7 * 24 * time.Hour
+	}
 	metric, lkey := q.Get("metric"), q.Get("key")
 	key := fmt.Sprintf("metric-labels:m=%s:k=%s:since=%s", metric, lkey, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {

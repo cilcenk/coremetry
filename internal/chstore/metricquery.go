@@ -254,14 +254,30 @@ func (s *Store) MetricLabelValues(ctx context.Context, metric, key string, since
 		return nil, nil
 	}
 	expr, args := groupKeyExprMetric(key)
-	cutoff := time.Now().Add(-since)
-	queryArgs := append(args, metric, cutoff)
+	// v0.9.275 — this query had NONE of the three bounds its sibling
+	// MetricAttrKeys carries ten lines above (time <= ?, LIMIT,
+	// max_execution_time). The LIMIT it did have bounds nothing that matters:
+	// ClickHouse computes the DISTINCT over the whole window BEFORE applying
+	// LIMIT 200, so the work scales with the window, not with the answer.
+	//
+	// The real bound is max_execution_time. On a 1000-service install a shared
+	// metric (jvm.memory.used) means a multi-GB Array(String) read, and the
+	// SWR refresh runs on a 20s background context — so the ceiling was 20
+	// seconds of ClickHouse, not infinity, but nothing was stopping it sooner.
+	//
+	// time <= ? is honest parity rather than protection: metric_points is
+	// PARTITION BY toDate(time) and there are no future partitions, so it
+	// prunes nothing. Included so the two siblings read the same.
+	now := time.Now()
+	cutoff := now.Add(-since)
+	queryArgs := append(args, metric, cutoff, now)
 	rows, err := s.conn.Query(ctx,
 		`SELECT DISTINCT `+expr+` AS v
 		 FROM metric_points
-		 WHERE metric = ? AND time >= ?
+		 WHERE metric = ? AND time >= ? AND time <= ?
 		 ORDER BY v
-		 LIMIT 200`, queryArgs...)
+		 LIMIT 200
+		 SETTINGS max_execution_time = 5`, queryArgs...)
 	if err != nil {
 		return nil, err
 	}

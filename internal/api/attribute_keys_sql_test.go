@@ -15,7 +15,7 @@ func TestAttributeKeysSQL(t *testing.T) {
 	noFilter := attributeKeysSQL("", attrKeysSampleRows)
 	for _, want := range []string{
 		"LIMIT 200000",                          // inner sample bound
-		"max_execution_time = 30",               // wall-clock cap
+		"max_execution_time = 25",               // wall-clock cap
 		"time >= now() - toIntervalSecond(?)",   // time-bounded WHERE on indexed col
 		"arrayJoin(attr_keys)",
 		"arrayJoin(res_keys)",

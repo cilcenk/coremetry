@@ -104,7 +104,7 @@ func TestSeasonalBaselineSQLShape(t *testing.T) {
 		"circular wrap (far side)":  "86400 - abs(",
 		"per-service row cap":       "LIMIT 700 BY service_name",
 		"overall row cap":           "LIMIT 14000000",
-		"execution-time bound":      "max_execution_time = 30",
+		"execution-time bound":      "max_execution_time = 25",
 	}
 	for label, sub := range mustContain {
 		if !strings.Contains(sql, sub) {

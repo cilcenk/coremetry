@@ -996,7 +996,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		GROUP BY `+nameCol+`
 		ORDER BY span_count DESC
 		LIMIT 500
-		SETTINGS max_execution_time = 30,
+		SETTINGS max_execution_time = 25,
 		         optimize_read_in_order = 1,
 		         optimize_aggregation_in_order = 1,
 		         `+s.shardSkipSetting()+`, `+mvQuantileMemSettings,
@@ -1060,7 +1060,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		FROM `+mvTable+`
 		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
 		GROUP BY `+nameCol+`, bidx
-		SETTINGS max_execution_time = 30,
+		SETTINGS max_execution_time = 25,
 		         `+s.shardSkipSetting()+`, `+mvQuantileMemSettings,
 		bucketStart, bucketSec, service, bucketStart, winEnd)
 	if err != nil {
@@ -1489,7 +1489,8 @@ func (s *Store) GetOperations(ctx context.Context, service string, since time.Du
 		 FROM spans `+wc.sql()+`
 		 GROUP BY name
 		 ORDER BY c DESC
-		 LIMIT 500`, wc.args...)
+		 LIMIT 500
+		 SETTINGS max_execution_time = 10`, wc.args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3089,7 +3090,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	//    the outer GROUP BY bounded too.
 	// 2) Outer: aggregate across the bounded trace set per
 	//    group bucket.
-	// SETTINGS max_execution_time = 30 protects the UI thread —
+	// SETTINGS max_execution_time = 25 protects the UI thread —
 	// a misconfigured filter that fans out across a giant
 	// window terminates with an error rather than wedging a
 	// page-load forever.
@@ -3164,7 +3165,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	sql += `
 		ORDER BY ` + sortCol + ` ` + order + `
 		LIMIT ?
-		SETTINGS max_execution_time = 30, max_threads = 8`
+		SETTINGS max_execution_time = 25, max_threads = 8`
 	args = append(args, f.Limit)
 
 	rows, err := s.conn.Query(ctx, sql, args...)
@@ -3652,7 +3653,7 @@ func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
 // (SAFE-CORE) hardened it for billion-row scale:
 //
 //   - Bounded LIMIT (capped at logsMaxLimit) + SETTINGS
-//     max_execution_time = 30 — CLAUDE.md hard constraint that was
+//     max_execution_time = 25 — CLAUDE.md hard constraint that was
 //     missing before (the count() + main SELECT could full-scan
 //     unbounded).
 //   - STABLE sort: ORDER BY time DESC, <rowKey> DESC, where rowKey is
@@ -3760,7 +3761,7 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	// max_execution_time so a heavy window can't stall the request.
 	var total uint64
 	if err := s.conn.QueryRow(ctx,
-		"SELECT count() FROM logs "+wc.sql()+" SETTINGS max_execution_time = 30",
+		"SELECT count() FROM logs "+wc.sql()+" SETTINGS max_execution_time = 25",
 		wc.args...).Scan(&total); err != nil {
 		return nil, 0, "", err
 	}
@@ -3802,7 +3803,7 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 		FROM logs `+wc.sql()+`
 		ORDER BY time `+orderDir+`, `+logsRowKeyExpr+` `+orderDir+`
 		LIMIT ? OFFSET ?
-		SETTINGS max_execution_time = 30`, args...)
+		SETTINGS max_execution_time = 25`, args...)
 	if err != nil {
 		return nil, 0, "", err
 	}
@@ -4013,7 +4014,7 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 	if !defaultUnlimited {
 		if err := s.conn.QueryRow(ctx,
 			"SELECT count(DISTINCT metric) FROM metric_points "+wc.sql()+
-				" SETTINGS max_execution_time = 30",
+				" SETTINGS max_execution_time = 25",
 			wc.args...).Scan(&total); err != nil {
 			return nil, 0, err
 		}
@@ -4027,7 +4028,7 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 		query += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
-	query += " SETTINGS max_execution_time = 30"
+	query += " SETTINGS max_execution_time = 25"
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err

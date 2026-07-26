@@ -111,7 +111,7 @@ func (s *Store) GetTraceShapes(ctx context.Context, f TraceShapesFilter) ([]Trac
 		GROUP BY shape_hash
 		ORDER BY sample_count DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		serviceFilter)
 
 	// Placeholder order: inner-time (from, to), sample divisor, optional

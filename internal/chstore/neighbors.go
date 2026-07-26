@@ -46,7 +46,7 @@ func (s *Store) ServiceNeighbors(
 		GROUP BY trace_id
 		ORDER BY count() DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30,
+		SETTINGS max_execution_time = 25,
 		         `+s.shardSkipSetting(),
 		service, int64(since.Seconds()), sampleCount)
 	if err != nil {
@@ -84,7 +84,7 @@ func (s *Store) ServiceNeighbors(
 		FROM spans
 		WHERE trace_id IN (%s)
 		  AND time >= ? AND time <= ?
-		SETTINGS max_execution_time = 30`, strings.Join(holders, ",")), args...)
+		SETTINGS max_execution_time = 25`, strings.Join(holders, ",")), args...)
 	if err != nil {
 		return nil, nil, 0, 0, err
 	}

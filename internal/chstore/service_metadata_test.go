@@ -91,7 +91,7 @@ func TestDeriveNamespaceSQLShape(t *testing.T) {
 		"time >= ? AND time <= ?",
 		"LIMIT 2000000",
 		"LIMIT 10000",
-		"SETTINGS max_execution_time = 30",
+		"SETTINGS max_execution_time = 25",
 		"has(res_keys, 'service.namespace')",
 		"has(res_keys, 'k8s.namespace.name')",
 		"has(attr_keys, 'service.namespace')",

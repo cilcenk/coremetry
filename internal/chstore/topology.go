@@ -44,7 +44,7 @@ func (s *Store) GetTopologyEdges(ctx context.Context, from, to time.Time, limit 
 		GROUP BY parent_service, parent_op, child_service, child_op
 		ORDER BY calls DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		from, to, from, to, limit,
 	)
 	if err != nil {
@@ -169,7 +169,7 @@ func (s *Store) GetRootFlows(ctx context.Context, from, to time.Time, limit int)
 		GROUP BY rt.root_service, rt.root_op
 		ORDER BY trace_count DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		from, to, from, to, limit,
 	)
 	if err != nil {
@@ -318,7 +318,7 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 		GROUP BY parent_service, child, proto, kind_out
 		ORDER BY calls DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30,
+		SETTINGS max_execution_time = 25,
 		         distributed_product_mode = 'global'`,
 		rootService, rootOp, from, to,
 		from, to, limit,
@@ -1237,7 +1237,7 @@ func (s *Store) GetServiceTopologyEdges(ctx context.Context, from, to time.Time,
 		GROUP BY parent_service, child_service, protocol
 		ORDER BY calls DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		from, to, from, to, limit,
 	)
 	if err != nil {
@@ -1301,7 +1301,7 @@ func (s *Store) GetServiceTopologyEdges(ctx context.Context, from, to time.Time,
 		GROUP BY parent_service, child, proto, kind_out
 		ORDER BY calls DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		from, to, limit,
 	)
 	if err != nil {

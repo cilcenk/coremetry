@@ -241,7 +241,7 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`, step, groupSelect, aggExpr, wc.sql())
+		SETTINGS max_execution_time = 25`, step, groupSelect, aggExpr, wc.sql())
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {
@@ -410,7 +410,7 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		step, groupSelect, aggExpr, strings.Join(whereClauses, " AND "))
 
 	rows, err := s.conn.Query(ctx, sql, args...)
@@ -635,7 +635,7 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		step, groupSelect, aggExpr, strings.Join(whereClauses, " AND "))
 
 	rows, err := s.conn.Query(ctx, sql, args...)
@@ -781,7 +781,7 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		strings.Join(selectParts, ",\n        "),
 		strings.Join(whereClauses, " AND "))
 
@@ -960,7 +960,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		strings.Join(selectParts, ", "),
 		wc.sql())
 

@@ -165,7 +165,7 @@ func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window ti
 		)
 		ORDER BY cur_errs DESC
 		LIMIT 200
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		curStart, baseStart, alignedNow, windowRatio,
 	)
 	if err != nil {

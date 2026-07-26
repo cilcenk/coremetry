@@ -126,7 +126,7 @@ func slowQueriesGlobalSQL(where, shardSetting string) string {
 		GROUP BY service_name, norm_stmt
 		ORDER BY (cnt * avg_ms) DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30,
+		SETTINGS max_execution_time = 25,
 		         ` + shardSetting
 }
 
@@ -174,7 +174,7 @@ func slowQueriesGlobalMVSQL(where string) string {
 		GROUP BY service_name, stmt_hash
 		ORDER BY total_ms DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`
+		SETTINGS max_execution_time = 25`
 }
 
 func (s *Store) GetSlowQueriesGlobal(
@@ -366,7 +366,7 @@ func (s *Store) GetTopDBQueries(
 		GROUP BY norm_stmt
 		ORDER BY (cnt * avg_ms) DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30,
+		SETTINGS max_execution_time = 25,
 		         ` + s.shardSkipSetting()
 	rows, err := s.conn.Query(ctx, sql, service, from, to, limit)
 	if err != nil {

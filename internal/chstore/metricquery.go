@@ -111,7 +111,7 @@ func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, err
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`, step, groupSelect, aggExpr, wc.sql())
+		SETTINGS max_execution_time = 25`, step, groupSelect, aggExpr, wc.sql())
 	return sql, wc.args, nil
 }
 

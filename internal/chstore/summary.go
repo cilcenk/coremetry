@@ -69,7 +69,7 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 	var total uint64
 	if err := s.conn.QueryRow(ctx,
 		"SELECT count(DISTINCT name) FROM operation_summary_5m "+wc.sql()+
-			" SETTINGS max_execution_time = 30",
+			" SETTINGS max_execution_time = 25",
 		wc.args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -84,7 +84,7 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 	rows, err := s.conn.Query(ctx,
 		"SELECT DISTINCT name FROM operation_summary_5m "+wc.sql()+
 			" ORDER BY name LIMIT ? OFFSET ?"+
-			" SETTINGS max_execution_time = 30",
+			" SETTINGS max_execution_time = 25",
 		args...)
 	if err != nil {
 		return nil, 0, err
@@ -114,7 +114,7 @@ func (s *Store) ListActiveServiceNames(ctx context.Context, window time.Duration
 		FROM service_summary_5m
 		WHERE time_bucket >= now() - INTERVAL ? SECOND
 		LIMIT 20000
-		SETTINGS max_execution_time = 30`, int64(window.Seconds()))
+		SETTINGS max_execution_time = 25`, int64(window.Seconds()))
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 	var total uint64
 	if err := s.conn.QueryRow(ctx,
 		"SELECT count(DISTINCT service_name) FROM service_summary_5m"+where+
-			" SETTINGS max_execution_time = 30",
+			" SETTINGS max_execution_time = 25",
 		args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
@@ -177,7 +177,7 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 	rows, err := s.conn.Query(ctx,
 		"SELECT DISTINCT service_name FROM service_summary_5m"+where+
 			" ORDER BY service_name LIMIT ? OFFSET ?"+
-			" SETTINGS max_execution_time = 30",
+			" SETTINGS max_execution_time = 25",
 		args...)
 	if err != nil {
 		return nil, 0, err
@@ -384,7 +384,7 @@ func (s *Store) CountServicesAgg(ctx context.Context, from, to time.Time, nameMa
 		SELECT toUInt64(uniqExact(service_name))
 		FROM service_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?`+nameClause+`
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		args...).Scan(&n)
 	if err != nil {
 		return 0, err
@@ -456,7 +456,7 @@ func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time
 		WHERE time_bucket >= ? AND time_bucket <= ?`+nameClause+`
 		GROUP BY service_name
 		ORDER BY `+servicesAggSortExpr(sort, dir)+limitClause+`
-		SETTINGS max_execution_time = 30, `+mvQuantileMemSettings,
+		SETTINGS max_execution_time = 25, `+mvQuantileMemSettings,
 		args...)
 	if err != nil {
 		return nil, err
@@ -520,7 +520,7 @@ func (s *Store) GetServiceSummary5mFor(ctx context.Context, services []string, f
 		WHERE time_bucket >= ? AND time_bucket <= ?`+svcFilter+`
 		GROUP BY service_name, time_bucket
 		ORDER BY service_name, time_bucket
-		SETTINGS max_execution_time = 30`, args...)
+		SETTINGS max_execution_time = 25`, args...)
 	if err != nil {
 		return nil, err
 	}

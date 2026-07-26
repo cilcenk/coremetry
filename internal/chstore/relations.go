@@ -30,7 +30,7 @@ import (
 //   5. Predicate-count cap (≤ relMaxPredicates per side) is enforced by the
 //      HTTP layer so a crafted URL can't fan out the predicate list.
 //
-// max_execution_time = 30 is the final backstop.
+// max_execution_time = 25 is the final backstop.
 
 // RelationKind selects the structural operator.
 type RelationKind string
@@ -65,7 +65,7 @@ const relMaxLimit = 500
 // than OOM-ing the node, runs the parallel_hash algorithm, and backstops with
 // a 30s execution ceiling. These are NON-NEGOTIABLE; relations_test.go pins
 // their presence.
-const relJoinSettings = "max_execution_time = 30, join_algorithm = 'parallel_hash', max_bytes_in_join = 536870912"
+const relJoinSettings = "max_execution_time = 25, join_algorithm = 'parallel_hash', max_bytes_in_join = 536870912"
 
 // RelationFilter is the input to GetTracesByRelation.
 type RelationFilter struct {

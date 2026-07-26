@@ -532,7 +532,7 @@ func buildAllBucketsQuery(vexpr string) string {
 		ORDER BY service_name, t
 		LIMIT 1000 BY service_name
 		LIMIT 20000000
-		SETTINGS max_execution_time = 30`, vexpr)
+		SETTINGS max_execution_time = 25`, vexpr)
 }
 
 // fetchAllBuckets runs buildAllBucketsQuery once for a metric and returns the
@@ -658,7 +658,7 @@ func buildAllSeasonalQuery(vexpr string) string {
 		ORDER BY service_name, t
 		LIMIT 700 BY service_name
 		LIMIT 14000000
-		SETTINGS max_execution_time = 30`, vexpr, sodExpr, classExpr)
+		SETTINGS max_execution_time = 25`, vexpr, sodExpr, classExpr)
 }
 
 // fetchAllSeasonal runs buildAllSeasonalQuery once for a metric and returns the

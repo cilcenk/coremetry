@@ -33,7 +33,7 @@ func TestBuildAllBucketsQueryShape(t *testing.T) {
 		"complete-buckets upper":  "time_bucket < ?",
 		"per-service row cap":     "LIMIT 1000 BY service_name",
 		"overall row cap":         "LIMIT 20000000",
-		"execution-time bound":    "max_execution_time = 30",
+		"execution-time bound":    "max_execution_time = 25",
 		"deterministic order":     "ORDER BY service_name, t",
 	}
 	for label, sub := range mustContain {

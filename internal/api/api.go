@@ -3117,7 +3117,7 @@ func attributeKeysSQL(extra string, sampleRows int) string {
 		GROUP BY scope, k
 		ORDER BY c DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`, extra, sampleRows, extra, sampleRows)
+		SETTINGS max_execution_time = 25`, extra, sampleRows, extra, sampleRows)
 }
 
 // getAttributeValues returns the most-frequent values observed for a
@@ -3233,7 +3233,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 				HAVING 1=1%s
 				ORDER BY c DESC
 				LIMIT ?
-				SETTINGS max_execution_time = 30`, col, timeWhere, col, havingQ)
+				SETTINGS max_execution_time = 25`, col, timeWhere, col, havingQ)
 			args = append([]any{}, timeArgs...)
 			if likeFilter != "" {
 				args = append(args, likeFilter)
@@ -3262,7 +3262,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 					GROUP BY v
 					ORDER BY c DESC
 					LIMIT ?
-					SETTINGS max_execution_time = 30`, arrVals, arrKeys, timeWhere, arrKeys, attrValuesSampleRows)
+					SETTINGS max_execution_time = 25`, arrVals, arrKeys, timeWhere, arrKeys, attrValuesSampleRows)
 				args = append([]any{key}, timeArgs...)
 				args = append(args, key, limit)
 			} else {
@@ -3292,7 +3292,7 @@ func (s *Server) getAttributeValues(w http.ResponseWriter, r *http.Request) {
 					GROUP BY v
 					ORDER BY c DESC
 					LIMIT ?
-					SETTINGS max_execution_time = 30`, arrVals, arrKeys, timeWhere, arrKeys)
+					SETTINGS max_execution_time = 25`, arrVals, arrKeys, timeWhere, arrKeys)
 				args = append([]any{key}, timeArgs...)
 				args = append(args, key, likeFilter, limit)
 			}

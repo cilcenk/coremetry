@@ -186,8 +186,20 @@ export function GaugeStat({ label, usage, limit, sub, onClick }: {
 // crosshair, axis formatting, legend). Filters ride through
 // to /api/metrics/query so a tablespace row chart only shows
 // that tablespace's usage, not every tablespace's blended.
-export function OracleMetricDrillModal({ drill, range, onClose }: {
+export function OracleMetricDrillModal({ drill, range, instance, engine, onClose }: {
   drill: OracleDrill;
+  // v0.9.279 — the panel already knows both; passing them here rather than
+  // stamping them onto every DrillSpec keeps four call sites instead of the
+  // dozen-odd places a drill is constructed.
+  //
+  // Without them the chart blended every instance of the engine: an install
+  // with two Oracle databases drew one line that belonged to neither. It is
+  // NOT expressible as an ordinary filter — service_name names the RECEIVER,
+  // so both instances share it (measured: oracledb-receiver for both), and the
+  // discriminating key differs per receiver family. The backend compiles it to
+  // a per-engine OR; see dbInstanceScopeClause.
+  instance: string;
+  engine: 'oracle' | 'postgresql' | 'mysql' | 'redis';
   range: TimeRange;
   onClose: () => void;
 }) {
@@ -201,12 +213,14 @@ export function OracleMetricDrillModal({ drill, range, onClose }: {
     api.metricQuery({
       name: drill.metric,
       filters: filterArg,
+      instance,
+      engine,
       agg: 'avg',
       from, to,
     })
       .then(r => setSeries(r ?? []))
       .catch(() => setSeries(null));
-  }, [drill, range]);
+  }, [drill, range, instance, engine]);
 
   return (
     <div onClick={onClose} style={{

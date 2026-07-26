@@ -12,6 +12,12 @@ import (
 type MetricQueryFilter struct {
 	Name        string       // metric name (required)
 	Service     string       // shortcut filter on service_name
+	// Instance + Engine — v0.9.279, DB receiver drill scoping. service_name
+	// cannot do this job: it names the RECEIVER, so every instance of an
+	// engine shares one value. See dbInstanceScopeClause for why it takes an
+	// engine and why the predicate is an OR.
+	Instance string
+	Engine   string
 	Filters     []FilterExpr // arbitrary attribute filters (resource.X / span.X also supported)
 	GroupBy     []string     // 0..N attribute keys → multi-line series
 	Aggregation string       // avg | sum | min | max | last | p50 | p95 | p99 (default: avg)
@@ -51,6 +57,13 @@ func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, err
 	wc.add("metric = ?", f.Name)
 	if f.Service != "" {
 		wc.add("service_name = ?", f.Service)
+	}
+	if clause, n := dbInstanceScopeClause(f.Engine, f.Instance); clause != "" {
+		args := make([]any, n)
+		for i := range args {
+			args[i] = f.Instance
+		}
+		wc.add(clause, args...)
 	}
 	wc.add("time >= ?", f.From)
 	wc.add("time <= ?", f.To)

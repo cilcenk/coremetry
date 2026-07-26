@@ -2217,6 +2217,12 @@ export interface AuthConfigResponse {
 export interface MetricQueryParams {
   name: string;
   service?: string;
+  // v0.9.279 — DB receiver drill scoping. Not a normal filter: service_name
+  // names the RECEIVER, so every instance of an engine shares it; the
+  // discriminating key differs per receiver family and the backend compiles
+  // the pair into an OR (dbInstanceScopeClause).
+  instance?: string;
+  engine?: 'oracle' | 'postgresql' | 'mysql' | 'redis';
   filters?: string;     // JSON FilterExpr[]
   groupBy?: string;     // comma-sep
   agg?: string;         // avg | sum | min | max | last | p50 | p95 | p99

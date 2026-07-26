@@ -4011,30 +4011,88 @@ func (s *Store) listMetricNamesFromCatalog(ctx context.Context, service, pattern
 // non-empty catalog is authoritative (no fallback): the raw scan
 // would only re-find metrics silent for 7+ days, which the picker
 // hides by design.
+// metricCatalogHasRows probes whether metric_catalog holds ANYTHING at
+// all — one row off a small state table behind a 5s cap. It is the only
+// way to tell "this search matched nothing" (authoritative) from "the
+// catalog hasn't populated yet" (the fresh-upgrade window the raw
+// fallback exists for).
+//
+// A failed probe answers false, i.e. it degrades to the pre-v0.9.285
+// behaviour: fall back. The probe must never be the reason a working
+// install stops answering.
+func (s *Store) metricCatalogHasRows(ctx context.Context) bool {
+	var any uint8
+	if err := s.conn.QueryRow(ctx,
+		`SELECT count() > 0 FROM metric_catalog LIMIT 1 SETTINGS max_execution_time = 5`,
+	).Scan(&any); err != nil {
+		return false
+	}
+	return any == 1
+}
+
+// metricNamesSource is the outcome of decideMetricNamesSource.
+type metricNamesSource int
+
+const (
+	// metricNamesUseCatalog — trust what the catalog returned, empty or not.
+	metricNamesUseCatalog metricNamesSource = iota
+	// metricNamesRawScan — run the bounded raw metric_points scan.
+	metricNamesRawScan
+)
+
+// decideMetricNamesSource encodes WHEN the raw metric_points scan is
+// allowed to run. It is deliberately a named function over three
+// booleans rather than an inline condition: the v0.9.285 bug was a
+// missing row in exactly this table (empty result + populated catalog +
+// no search terms fell through to the raw scan), and an inline
+// condition is where that kind of gap hides.
+//
+// The raw scan is the most expensive query this page can issue — the
+// subject of two prod incidents — so it runs only when the catalog
+// genuinely cannot answer: it errored, or it is empty.
+func decideMetricNamesSource(catalogErr error, rows int, catalogHasRows bool) metricNamesSource {
+	if catalogErr != nil {
+		return metricNamesRawScan // catalog unreadable — nothing else to try
+	}
+	if rows > 0 {
+		return metricNamesUseCatalog
+	}
+	if catalogHasRows {
+		// Empty RESULT over a populated catalog: authoritative. The raw
+		// scan carries the same lookback bound, so it could only
+		// re-find metrics the catalog deliberately hides — at full cost.
+		return metricNamesUseCatalog
+	}
+	return metricNamesRawScan // genuinely empty catalog (fresh upgrade)
+}
+
 func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, limit, offset int) ([]MetricInfo, int, error) {
 	defaultUnlimited := limit == 0 && offset == 0 && pattern == ""
 	if limit <= 0 {
 		limit = 200
 	}
 
-	if out, total, err := s.listMetricNamesFromCatalog(ctx, service, pattern, limit, offset, defaultUnlimited); err == nil {
-		if len(out) > 0 {
-			return out, total, nil
-		}
-		// Empty catalog result: authoritative for a SEARCH (the
-		// catalog itself has rows), fallback-worthy when the whole
-		// catalog is empty (fresh upgrade window).
-		if pattern != "" || service != "" {
-			var any uint8
-			if err := s.conn.QueryRow(ctx,
-				`SELECT count() > 0 FROM metric_catalog LIMIT 1 SETTINGS max_execution_time = 5`,
-			).Scan(&any); err == nil && any == 1 {
-				return out, total, nil
-			}
-		}
-		log.Printf("[chstore] metric_catalog empty — falling back to the raw metric-name scan (fills within minutes of first ingest)")
+	catOut, catTotal, catalogErr := s.listMetricNamesFromCatalog(ctx, service, pattern, limit, offset, defaultUnlimited)
+	// v0.9.285 — the probe now runs UNCONDITIONALLY. It used to sit
+	// behind `pattern != "" || service != ""`, which excluded the one
+	// call that matters most: /metrics' FIRST PAINT sends both empty
+	// (Metrics.tsx), so the probe never ran and the page went straight
+	// to the raw metric_points scan — the exact query of two prod
+	// incidents (v0.8.311, v0.8.396). An empty catalog RESULT is not an
+	// empty CATALOG, and only the probe can tell the two apart. The
+	// probe is skipped when the catalog already answered with rows or
+	// errored, so it costs nothing on the hot path.
+	hasRows := false
+	if catalogErr == nil && len(catOut) == 0 {
+		hasRows = s.metricCatalogHasRows(ctx)
+	}
+	if decideMetricNamesSource(catalogErr, len(catOut), hasRows) == metricNamesUseCatalog {
+		return catOut, catTotal, nil
+	}
+	if catalogErr != nil {
+		log.Printf("[chstore] metric_catalog read failed (%v) — falling back to the raw metric-name scan", catalogErr)
 	} else {
-		log.Printf("[chstore] metric_catalog read failed (%v) — falling back to the raw metric-name scan", err)
+		log.Printf("[chstore] metric_catalog empty — falling back to the raw metric-name scan (fills within minutes of first ingest)")
 	}
 
 	wc := buildMetricNamesWhere(service, pattern, time.Now().Add(-metricNameLookback))

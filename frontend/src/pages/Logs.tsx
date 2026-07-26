@@ -473,6 +473,7 @@ function LogsInner() {
   // Feeds the left LogFieldsPanel's "Available fields" group. CH
   // backend returns an empty list (its shape is fixed).
   const [fields, setFields] = useState<string[]>([]);
+  const [fieldsTotal, setFieldsTotal] = useState<number | undefined>(undefined);
 
   // Kibana deep-link config (v0.5.236). Loaded once on mount;
   // when disabled or unconfigured, buildKibanaURL returns null
@@ -485,8 +486,14 @@ function LogsInner() {
   }, []);
   useEffect(() => {
     api.logsFields()
-      .then(d => { setFields(d.fields ?? []); })
-      .catch(() => { setFields([]); });
+      .then(d => {
+        setFields(d.fields ?? []);
+        // v0.9.292 — the mapping's REAL path count. The backend caps
+        // the list; the rail says "first N of M" rather than implying
+        // the cap is the whole mapping.
+        setFieldsTotal(d.total);
+      })
+      .catch(() => { setFields([]); setFieldsTotal(undefined); });
   }, []);
   const apply = () => { resetPaging(); setFilter(draft); writeUrl(draft, filters); };
   const reset = () => {
@@ -858,6 +865,7 @@ function LogsInner() {
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
           <LogFieldsPanel
             fields={fields}
+            fieldsTotal={fieldsTotal}
             columns={logCols}
             scope={fieldStatsScope}
             onToggleColumn={toggleColumn}

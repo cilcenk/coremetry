@@ -105,9 +105,14 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
 }
 
 export function LogFieldsPanel({
-  fields, columns, scope, onToggleColumn, onPillAdd, onPillExclude,
+  fields, fieldsTotal, columns, scope, onToggleColumn, onPillAdd, onPillExclude,
 }: {
   fields: string[];          // available fields from the backend mapping
+  // v0.9.292 — how many paths the mapping actually had. The backend
+  // caps the list (dynamic mapping at 10B docs/day routinely produces
+  // four-digit field counts); a clipped list rendered without saying so
+  // would read as "these are the fields".
+  fieldsTotal?: number;
   columns: string[];         // active dynamic table columns
   scope: FieldStatsScope;
   onToggleColumn: (id: string) => void;
@@ -169,6 +174,14 @@ export function LogFieldsPanel({
           display: 'flex', alignItems: 'center', gap: 4,
           padding: '2px 4px', borderRadius: 4, cursor: 'pointer',
           fontSize: 11.5,
+          // v0.9.292 — the rail is a >100-row list inside a 70vh
+          // scroller and was rendering flat: no virtualisation, no
+          // content-visibility, no cap. It was the ONE place on /logs
+          // that broke the rule the log table itself follows. Rows are
+          // uniform, so content-visibility skips layout+paint for the
+          // off-screen ones at zero structural cost.
+          contentVisibility: 'auto',
+          containIntrinsicSize: '0 22px',
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
           background: expandedField === f ? 'var(--accent-soft)' : 'transparent',
           color: removable ? 'var(--accent2)' : 'var(--text2)',
@@ -219,6 +232,15 @@ export function LogFieldsPanel({
         </div>
       )}
       {available.map(f => fieldRow(f, false))}
+      {/* v0.9.292 — say it when the mapping was clipped. Silence here
+          would read as "this is every field", which is the same
+          wrong-because-unstated class as the ES honesty envelope. */}
+      {typeof fieldsTotal === 'number' && fieldsTotal > fields.length && (
+        <div style={{ fontSize: 10.5, color: 'var(--text3)', padding: '6px 4px 0' }}
+          title={`This index mapping exposes ${fieldsTotal.toLocaleString()} field paths. The list is capped so the rail stays responsive — type above to find one that isn't shown.`}>
+          first {fields.length.toLocaleString()} of {fieldsTotal.toLocaleString()} fields · search to narrow
+        </div>
+      )}
     </div>
   );
 }

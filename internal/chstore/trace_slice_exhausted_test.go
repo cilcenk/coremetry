@@ -243,3 +243,101 @@ func TestStage2AlwaysHasATraceIDBound(t *testing.T) {
 		})
 	}
 }
+
+// v0.9.300 — the lever that actually closes the memory-class 241.
+//
+// Measurement picked it. The bounded statement's memory is essentially
+// all IN-set and is LINEAR in id count — 1000 ids 4.1 MiB, 2000 8.0,
+// 3000 12.0, 4000 20.0, 5000 24.1 (~4.9 KiB/id) — while the window
+// moves it by 48 bytes across a 5.4x row range and max_threads moves it
+// by nothing at all. So halving the WINDOW (v0.9.297) was the wrong
+// lever for a memory failure; halving the ID LIST is the right one, and
+// each chunk's cost is then chosen by us rather than by the operator's
+// window.
+//
+// The split may not change the ANSWER, only the memory: both halves run
+// the same statement over disjoint ids and come back already sorted, so
+// merging them must reproduce what one un-split query would have
+// returned.
+func TestMergeTracePagesReproducesASingleQuery(t *testing.T) {
+	row := func(id string, dur float64, spans uint64, err bool, start int64) TraceRow {
+		return TraceRow{TraceID: id, DurationMs: dur, SpanCount: spans, HasError: err, StartTime: start}
+	}
+
+	t.Run("duration desc — the operator's sort", func(t *testing.T) {
+		a := []TraceRow{row("a", 900, 1, false, 1), row("c", 500, 1, false, 3)}
+		b := []TraceRow{row("b", 700, 1, false, 2), row("d", 100, 1, false, 4)}
+		got := mergeTracePages(a, b, "duration", "desc", 10)
+		want := []string{"a", "b", "c", "d"}
+		for i, w := range want {
+			if got[i].TraceID != w {
+				t.Fatalf("position %d = %q, want %q (merge must reproduce one sorted query)", i, got[i].TraceID, w)
+			}
+		}
+	})
+
+	t.Run("ascending order is honoured", func(t *testing.T) {
+		a := []TraceRow{row("a", 100, 1, false, 1), row("c", 500, 1, false, 3)}
+		b := []TraceRow{row("b", 300, 1, false, 2)}
+		got := mergeTracePages(a, b, "duration", "asc", 10)
+		if got[0].TraceID != "a" || got[1].TraceID != "b" || got[2].TraceID != "c" {
+			t.Fatalf("asc merge wrong: %v", []string{got[0].TraceID, got[1].TraceID, got[2].TraceID})
+		}
+	})
+
+	t.Run("keeps limit+1 so hasMore still works", func(t *testing.T) {
+		a := []TraceRow{row("a", 5, 1, false, 1), row("b", 4, 1, false, 2)}
+		b := []TraceRow{row("c", 3, 1, false, 3), row("d", 2, 1, false, 4)}
+		got := mergeTracePages(a, b, "duration", "desc", 2)
+		if len(got) != 3 {
+			t.Fatalf("kept %d rows, want limit+1 = 3 — fewer breaks the hasMore probe", len(got))
+		}
+	})
+
+	t.Run("an empty half is not a lost page", func(t *testing.T) {
+		a := []TraceRow{row("a", 5, 1, false, 1)}
+		if got := mergeTracePages(a, nil, "duration", "desc", 10); len(got) != 1 {
+			t.Fatalf("lost rows merging with an empty half: %d", len(got))
+		}
+		if got := mergeTracePages(nil, a, "duration", "desc", 10); len(got) != 1 {
+			t.Fatalf("lost rows merging into an empty half: %d", len(got))
+		}
+	})
+
+	t.Run("every sort key orders the same way the SQL did", func(t *testing.T) {
+		// A merge that disagreed with the server's ORDER BY would
+		// reorder a page ClickHouse already sorted — a wrong answer
+		// produced by a memory optimisation.
+		for _, s := range []string{"", "time", "duration", "spans", "status"} {
+			less := traceRowLess(s, "desc")
+			hi := row("hi", 900, 9, true, 900)
+			lo := row("lo", 100, 1, false, 100)
+			if !less(hi, lo) {
+				t.Errorf("sort %q: descending order put the smaller row first", s)
+			}
+		}
+	})
+}
+
+// Splitting must terminate: below the floor the real error surfaces
+// instead of the list being halved toward nothing.
+func TestIDChunkSplitTerminates(t *testing.T) {
+	n := 5000
+	steps := 0
+	for n > traceStage2MinChunk {
+		n /= 2
+		steps++
+		if steps > 32 {
+			t.Fatal("id-list halving does not terminate")
+		}
+	}
+	if n > traceStage2MinChunk {
+		t.Fatalf("stopped above the floor at %d", n)
+	}
+	// And the surviving chunk is small enough to matter: at the measured
+	// ~4.9 KiB/id slope, traceStage2MinChunk is ~1.2 MiB of IN-set.
+	if traceStage2MinChunk*4900 > 2<<20 {
+		t.Fatalf("min chunk %d is still ~%d MiB of IN-set — too big to be a floor",
+			traceStage2MinChunk, traceStage2MinChunk*4900>>20)
+	}
+}

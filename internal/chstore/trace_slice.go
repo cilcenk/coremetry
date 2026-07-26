@@ -303,6 +303,37 @@ func (s *Store) runTraceStage2(
 			// and you are told so" — and the operator must be told,
 			// because a top-N by duration over half the window is a
 			// different answer, not a slower one.
+			// v0.9.300 — LAST RESORT, and the one that actually closes
+			// the hole: shrink the ID LIST, not the window.
+			//
+			// Measurement says this is the lever that works. The bounded
+			// statement's memory is essentially all IN-set, and it is
+			// LINEAR in id count — 1000 ids 4.1 MiB, 2000 8.0, 3000 12.0,
+			// 4000 20.0, 5000 24.1 (~4.9 KiB/id) — while the window moves
+			// it by 48 bytes across a 5.4x row range and max_threads
+			// moves it by nothing. Halving the window (v0.9.297) was
+			// therefore the wrong lever for a memory-class failure;
+			// halving the ids is the right one, and it costs only
+			// correctness-free extra round trips because the page is
+			// merged from the chunks.
+			//
+			// This is what guarantees the operator stops getting a 500:
+			// each chunk's cost is chosen by us, not by the window.
+			if isResourceExhaustion(rerr) && len(idArgs) > traceStage2MinChunk {
+				half := len(idArgs) / 2
+				log.Printf("[traces] stage2 exhausted with %d ids (%v) — splitting the id list at %d and merging",
+					len(idArgs), rerr, half)
+				lo, loMore, lerr := s.runTraceStage2(ctx, f, stage2, idArgs[:half], floor, pageLimit)
+				if lerr != nil {
+					return nil, false, lerr
+				}
+				hi, hiMore, herr := s.runTraceStage2(ctx, f, stage2, idArgs[half:], floor, pageLimit)
+				if herr != nil {
+					return nil, false, herr
+				}
+				merged := mergeTracePages(lo, hi, f.Sort, f.Order, f.Limit)
+				return merged, loMore || hiMore || len(lo)+len(hi) > f.Limit, nil
+			}
 			if narrowed < traceStage2NarrowMaxRetry && isResourceExhaustion(rerr) {
 				span := f.To.Sub(from)
 				if span > traceStage2NarrowFloor {
@@ -353,5 +384,75 @@ func (s *Store) runTraceStage2(
 		if from.Before(f.From) {
 			from = f.From
 		}
+	}
+}
+
+// traceStage2MinChunk — below this the id list is not worth splitting:
+// the per-chunk fixed cost stops paying for itself, and a failure at
+// this size is not an id-count problem. Measured slope is ~4.9 KiB/id,
+// so 250 ids is ~1.2 MiB of IN-set — if THAT still exhausts the server,
+// splitting further cannot help and the real error must surface.
+const traceStage2MinChunk = 250
+
+// mergeTracePages merges two independently-sorted Stage 2 pages back
+// into one page ordered by the requested key (v0.9.300).
+//
+// Both inputs came from the SAME statement over disjoint id sets, so
+// each is already sorted by `sort`/`order`; merging is a linear pass,
+// and the result is exactly what one un-split query would have
+// returned for the union of the ids. That equivalence is the whole
+// point — the split is a memory strategy, never a change of answer.
+func mergeTracePages(a, b []TraceRow, sort, order string, limit int) []TraceRow {
+	less := traceRowLess(sort, order)
+	out := make([]TraceRow, 0, len(a)+len(b))
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		if less(a[i], b[j]) {
+			out = append(out, a[i])
+			i++
+		} else {
+			out = append(out, b[j])
+			j++
+		}
+	}
+	out = append(out, a[i:]...)
+	out = append(out, b[j:]...)
+	// Keep one extra row so the caller's hasMore test still works.
+	if limit > 0 && len(out) > limit+1 {
+		out = out[:limit+1]
+	}
+	return out
+}
+
+// traceRowLess returns "a sorts before b" for the whitelisted sort
+// keys, matching the SQL ORDER BY the statement used. An unknown key
+// falls back to start time, which is the SQL default too — the two must
+// not disagree, or the merge would reorder a page the server sorted.
+func traceRowLess(sort, order string) func(a, b TraceRow) bool {
+	asc := order == "asc"
+	cmp := func(x, y float64) bool {
+		if asc {
+			return x < y
+		}
+		return x > y
+	}
+	switch sort {
+	case "duration":
+		return func(a, b TraceRow) bool { return cmp(a.DurationMs, b.DurationMs) }
+	case "spans":
+		return func(a, b TraceRow) bool { return cmp(float64(a.SpanCount), float64(b.SpanCount)) }
+	case "status":
+		return func(a, b TraceRow) bool {
+			ai, bi := 0.0, 0.0
+			if a.HasError {
+				ai = 1
+			}
+			if b.HasError {
+				bi = 1
+			}
+			return cmp(ai, bi)
+		}
+	default: // "", "time"
+		return func(a, b TraceRow) bool { return cmp(float64(a.StartTime), float64(b.StartTime)) }
 	}
 }

@@ -18,6 +18,13 @@ import (
 type SystemStats struct {
 	Snapshot  SystemSnapshot `json:"snapshot"`
 	Tables    []TableStat    `json:"tables"`
+	// Disks (v0.9.289, operator ask) — the CAPACITY of the volumes
+	// ClickHouse writes to, which is a different question from Tables
+	// above. Tables says how much room Coremetry's data occupies;
+	// Disks says how much room is left. Retention settings are only
+	// meaningful against the second one, and until now the operator had
+	// to ssh to the node to find it.
+	Disks     []DiskStat     `json:"disks"`
 	History   []DayStat      `json:"history"`
 	Ingest    IngestRates    `json:"ingest"`
 	Drops     IngestDrops    `json:"drops"`
@@ -125,6 +132,51 @@ type SystemSnapshot struct {
 	TotalDiskBytes  uint64 `json:"totalDiskBytes"`
 }
 
+// DiskStat is one volume ClickHouse can write to, as reported by
+// system.disks (v0.9.289, operator ask: "can I see the disk usage of
+// the server ClickHouse runs on").
+//
+// This is capacity, not occupancy: TotalBytes/FreeBytes come from the
+// filesystem, so they include everything on that volume, not just
+// Coremetry's tables. That is the point — the question behind it is
+// "will ingest run out of room", and the answer depends on the whole
+// disk. system.disks is metadata; the read is instant at any scale.
+//
+// Host is populated only on a cluster() fan-out; on a single node it
+// stays empty and the UI shows one unlabelled row.
+type DiskStat struct {
+	Host       string `json:"host,omitempty"`
+	Name       string `json:"name"`
+	Path       string `json:"path"`
+	TotalBytes uint64 `json:"totalBytes"`
+	FreeBytes  uint64 `json:"freeBytes"`
+	// UnreservedBytes — free space minus what merges and inserts in
+	// flight have already claimed. It is the honest "can I write
+	// another part right now" figure and is always ≤ FreeBytes.
+	UnreservedBytes uint64 `json:"unreservedBytes"`
+	// KeepFreeBytes — the operator-configured reserve CH refuses to
+	// dip into. Effective capacity is TotalBytes - KeepFreeBytes.
+	KeepFreeBytes uint64 `json:"keepFreeBytes"`
+}
+
+// UsedBytes is the occupied portion of the volume.
+func (d DiskStat) UsedBytes() uint64 {
+	if d.TotalBytes < d.FreeBytes {
+		return 0
+	}
+	return d.TotalBytes - d.FreeBytes
+}
+
+// UsedPct is how full the volume is, 0..100. Zero-capacity disks
+// (a disk CH reports but cannot stat) answer 0 rather than dividing by
+// zero — an unknown must not render as "100% full" and page someone.
+func (d DiskStat) UsedPct() float64 {
+	if d.TotalBytes == 0 {
+		return 0
+	}
+	return float64(d.UsedBytes()) / float64(d.TotalBytes) * 100
+}
+
 type TableStat struct {
 	Table            string `json:"table"`
 	Rows             uint64 `json:"rows"`
@@ -228,6 +280,40 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 		rows.Close()
 	} else {
 		log.Printf("[sysstats] storage query: %v — surfacing dashboard with empty Tables", err)
+	}
+
+	// ── Disk capacity (v0.9.289, operator ask) ──────────────────
+	// system.disks is metadata — no scan, instant at any volume. Same
+	// LOCAL-table caveat as system.parts above: on an external
+	// Distributed cluster a plain read sees only the connected shard's
+	// node, so with cluster_name set we fan out one replica per shard
+	// and label each row with its host. Without it we report the node
+	// we happen to be connected to, which is honest as far as it goes.
+	//
+	// Failure is NOT fatal: a credential without access to system.disks
+	// just leaves the section empty, exactly like the storage query
+	// above. /admin/stats must never go blank over an optional panel.
+	disksSource, diskHost := "system.disks", "''"
+	if cn := strings.TrimSpace(s.cfg.ClusterName); cn != "" {
+		disksSource, diskHost = "cluster('"+cn+"', system.disks)", "hostName()"
+	}
+	if drows, derr := s.conn.Query(ctx, fmt.Sprintf(`
+		SELECT %s AS host, name, path,
+		       total_space, free_space, unreserved_space, keep_free_space
+		FROM %s
+		ORDER BY host, name
+		SETTINGS max_execution_time = 5`, diskHost, disksSource)); derr == nil {
+		for drows.Next() {
+			var d DiskStat
+			if err := drows.Scan(&d.Host, &d.Name, &d.Path,
+				&d.TotalBytes, &d.FreeBytes, &d.UnreservedBytes, &d.KeepFreeBytes); err != nil {
+				break
+			}
+			out.Disks = append(out.Disks, d)
+		}
+		drows.Close()
+	} else {
+		log.Printf("[sysstats] disks query: %v — surfacing dashboard without disk capacity", derr)
 	}
 
 	// ── Span / error counts via the 5m aggregate MV ─────────────

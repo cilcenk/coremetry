@@ -160,9 +160,16 @@ func TestSharedCallerBreakdownProducersAllProjectP95(t *testing.T) {
 	s := string(src)
 
 	producers := strings.Count(s, "var b DBCallerBreakdown")
-	withP95 := strings.Count(s, "&bAvg, &bP95, &bP99")
+	withP95 := strings.Count(s, "&bAvg, &bP50, &bP95, &bP99")
 	assigns := strings.Count(s, "b.P95Ms = *bP95")
 	projections := strings.Count(s, "AS p95_ms")
+	// v0.9.273 — p50 is checked too. The v0.9.263 guard watched p95 ONLY, so
+	// when the shared struct gained P95 but not P50 the drawer ended up showing
+	// three percentiles in its aggregate strip and two in every caller row, and
+	// nothing here objected. A guard that covers one column of a grid is a
+	// guard with a hole in it.
+	withP50 := strings.Count(s, "&bAvg, &bP50,")
+	assignsP50 := strings.Count(s, "b.P50Ms = *bP50")
 
 	if producers < 2 {
 		t.Fatalf("expected at least 2 DBCallerBreakdown producers, found %d — "+
@@ -176,6 +183,12 @@ func TestSharedCallerBreakdownProducersAllProjectP95(t *testing.T) {
 	if assigns != producers {
 		t.Errorf("%d producers but %d assign b.P95Ms — a scanned-but-unassigned p95 silently stays 0",
 			producers, assigns)
+	}
+	if withP50 != producers || assignsP50 != producers {
+		t.Errorf("%d producers but %d scan p50 and %d assign it — the percentile grid must be\n"+
+			"complete in EVERY producer, or the drawer shows three values in its aggregate strip\n"+
+			"and two in each caller row (the v0.9.263 miss, caught by live verification not by this test).",
+			producers, withP50, assignsP50)
 	}
 	// Each caller query needs its own projection, and the two detail
 	// aggregates plus the two overview queries have theirs as well.

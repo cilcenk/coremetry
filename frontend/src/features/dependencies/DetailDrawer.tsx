@@ -468,9 +468,11 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
     { id: 'calls',   label: 'Calls', sortValue: r => r.spanCount,     numeric: true, naturalDir: 'desc', width: 90 },
     { id: 'errRate', label: 'Err %', sortValue: r => r.errorRate,     numeric: true, naturalDir: 'desc', width: 90 },
     { id: 'avg',     label: 'Avg',   sortValue: r => r.avgDurationMs, numeric: true, naturalDir: 'desc', width: 84 },
-    // v0.9.263 — P95 on the shared DBCallerBreakdown. BOTH producer queries
-    // (databases callers + messaging callers) project it; if only one did,
-    // the other drawer would render a hard 0.0ms here.
+    // v0.9.273 — P50, and v0.9.263 P95, on the shared DBCallerBreakdown. BOTH
+    // producer queries project them; if only one did, the other drawer would
+    // render a hard 0.0ms here. Order matches the aggregate strip above:
+    // Avg → P50 → P95 → P99.
+    { id: 'p50',     label: 'P50',   sortValue: r => r.p50DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 },
     { id: 'p95',     label: 'P95',   sortValue: r => r.p95DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 },
     { id: 'p99',     label: 'P99',   sortValue: r => r.p99DurationMs, numeric: true, naturalDir: 'desc', width: 84 },
   ], [hasRole]);
@@ -549,6 +551,11 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
                       </span>
                     </td>
                     <td className="num mono">{c.avgDurationMs.toFixed(1)}ms</td>
+                    <td className="num mono">
+                      {c.p50DurationMs === undefined
+                        ? <span style={{ color: 'var(--text3)' }}>—</span>
+                        : <>{c.p50DurationMs.toFixed(1)}ms</>}
+                    </td>
                     <td className="num mono">
                       {c.p95DurationMs === undefined
                         ? <span style={{ color: 'var(--text3)' }}>—</span>

@@ -320,6 +320,9 @@ export interface DBCallerBreakdown {
   errorCount: number;
   errorRate: number;
   avgDurationMs: number;
+  // v0.9.273 — p50 completes the grid; it was missed when p95 landed, so the
+  // drawer showed three percentiles in its aggregate strip and two per row.
+  p50DurationMs?: number;
   // v0.9.263 — p95 off the same merge. Optional: BOTH producer queries
   // (databases + messaging callers) project it, but a warm cached
   // payload from an older backend will not.

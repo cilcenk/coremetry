@@ -29,6 +29,7 @@ import { api } from '@/lib/api';
 import { tsShort, timeRangeToNs, sevName, sevClass, rangeToSince } from '@/lib/utils';
 import { severityBandOf } from '@/lib/severityBand';
 import { accumulatePage, narrowLoaded } from '@/lib/logAccumulate';
+import { logsToCSV, logsToNDJSON, downloadText, exportFilename } from '@/lib/logsExport';
 import {
   compileSearch, toggleFilter, encodeFiltersParam, parseFiltersParam,
   extractHighlightTerms,
@@ -1029,6 +1030,31 @@ function LogsInner() {
                   {logs.length.toLocaleString()} of {loadedRows.length.toLocaleString()} loaded rows match
                 </span>
                 <Button variant="ghost" size="sm" onClick={() => setNarrow('')}>clear</Button>
+              </>
+            )}
+            {/* v0.9.302 — export what is ALREADY loaded. Zero backend
+                calls: these rows are in the page, and re-asking
+                Elasticsearch for bytes the browser holds would be the
+                most expensive way to produce a file. Exports what the
+                operator SEES — the local narrow filter included — so
+                the file matches the screen it came from. A synchronous
+                unbounded export is deliberately not offered. */}
+            {logs.length > 0 && (
+              <>
+                <span style={{ color: 'var(--text3)' }}>·</span>
+                <span style={{ color: 'var(--text3)' }}
+                  title={`Downloads the ${logs.length.toLocaleString()} rows currently in the page — not the whole query. Load more first if you need more, or narrow the query.`}>
+                  export
+                </span>
+                <Button variant="ghost" size="sm"
+                  onClick={() => downloadText(logsToCSV(logs), exportFilename('csv'), 'text/csv;charset=utf-8')}>
+                  CSV
+                </Button>
+                <Button variant="ghost" size="sm"
+                  title="One JSON object per line — unambiguous for bodies containing commas, quotes or newlines, and what log pipelines ingest."
+                  onClick={() => downloadText(logsToNDJSON(logs), exportFilename('ndjson'), 'application/x-ndjson')}>
+                  NDJSON
+                </Button>
               </>
             )}
             <span style={{ flex: 1 }} />

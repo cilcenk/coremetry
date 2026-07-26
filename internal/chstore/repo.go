@@ -1887,6 +1887,26 @@ const tracesSpillSettings = "max_bytes_before_external_group_by = 536870912, max
 // that would have rendered. useHLL swaps count(DISTINCT) for the
 // HyperLogLog implementation on wide windows (~1% margin); it is
 // meaningless for the LIMIT-wrapped approx shape, which has no DISTINCT.
+// stage2NeedsSafetySlice reports whether Stage 2 is about to run with
+// NO trace-id bound — the one shape in this file that can reach
+// gigabytes, and the only surviving explanation for the operator's
+// 4.15 GiB (v0.9.299).
+//
+// Named and exported to the test package on purpose: the guard used to
+// be an inline condition with a test that MIRRORED it, which proves the
+// mirror, not the code. Everything that decides whether the expensive
+// statement can be built now goes through here.
+func stage2NeedsSafetySlice(serviceSubquery bool, holders string) bool {
+	return !serviceSubquery && holders == ""
+}
+
+// stage2IsBounded is the invariant that must hold when the statement is
+// handed to ClickHouse: one of the two bounds is present. False here
+// means an unbounded `GROUP BY trace_id` over the whole window.
+func stage2IsBounded(serviceSubquery bool, holders string) bool {
+	return serviceSubquery || holders != ""
+}
+
 // countModeAllowsMV reports whether the requested count mode leaves the
 // trace_summary_5m fast path open. Only the modes needing NO window-wide
 // aggregation qualify: "skip" and the empty default. "approx" and
@@ -2841,7 +2861,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// aggregation-free and reads the sorting-key prefix, so it is cheap
 	// at any window — it is exactly what the normal path uses. After
 	// this, the unbounded shape is unreachable by construction.
-	if !serviceSubquery && holders == "" {
+	if stage2NeedsSafetySlice(serviceSubquery, holders) {
 		log.Printf("[traces] stage2 had NO trace-id bound (sort=%q, window=%s) — "+
 			"Stage 1 left it unset; building the recency slice here rather than "+
 			"aggregating the whole window", f.Sort, f.To.Sub(f.From))

@@ -756,7 +756,7 @@ function TracesPageInner() {
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 8,
               // v0.9.301 — the skeleton must match the real card, or the
               // table jumps on every load. Tracks the persisted height.
-              height: chartTall ? 192 : 116,
+              height: chartTall ? 192 : 152,
               display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Spinner />
             </div>
@@ -764,7 +764,7 @@ function TracesPageInner() {
             // slimmer + recedes — it's the brush/overview "tool", not the
             // headline chart; the RED strip below carries the filtered numbers.
             <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null}
-              height={chartTall ? 140 : 64} onBrush={applyBrush}
+              height={chartTall ? 140 : 100} onBrush={applyBrush}
               xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }}
               header={vizToggle}
               headerRight={<>{vizStats}
@@ -879,6 +879,25 @@ function TracesPageInner() {
                 onChange={e => setDraft({ ...draft, minMs: e.target.value })} type="number" style={{ width: 72 }} />
               <input placeholder="Max ms" value={draft.maxMs}
                 onChange={e => setDraft({ ...draft, maxMs: e.target.value })} type="number" style={{ width: 72 }} />
+              {/* v0.9.303 (operatör) — Errors only / Root traces artık
+                  Search'ün SOLUNDA, kendi satırlarında değil. İkisi de
+                  SUNUCU filtresi, yani tam olarak yanlarındaki alanlarla
+                  aynı şeyi yapıyorlar: sorguyu yeniden çalıştırırlar. Ayrı
+                  bir şeritte durmaları onları istemci-taraflı hızlı
+                  kısayollarla aynı görsel dile sokuyordu ve bir satır
+                  yüksekliği yiyordu. */}
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                title="Yalnız hatalı trace'ler. SUNUCU filtresi — seçili pencerenin tamamına uygulanır ve sorguyu yeniden çalıştırır.">
+                <input type="checkbox" checked={draft.hasError}
+                  onChange={() => setDraft({ ...draft, hasError: !draft.hasError })} />
+                <span style={{ color: draft.hasError ? 'var(--err)' : 'var(--text2)' }}>Errors</span>
+              </label>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 11.5, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                title="Kök span'i depoya düşmüş trace'ler — yarım trace'leri gizler. SUNUCU filtresi.">
+                <input type="checkbox" checked={draft.rootOnly}
+                  onChange={() => setDraft({ ...draft, rootOnly: !draft.rootOnly })} />
+                <span style={{ color: draft.rootOnly ? 'var(--accent2)' : 'var(--text2)' }}>Root</span>
+              </label>
               <Button variant="primary" size="sm" onClick={() => apply()}>Search</Button>
             </>
           )}
@@ -908,37 +927,26 @@ function TracesPageInner() {
           />
         )}
 
-        {/* Sonucu daraltma şeridi (v0.9.246, onaylı Seçenek A) — toggle'lar,
-            hızlı kısayollar, Reset ve CSV tek sırada. Errors only / Root
-            traces artık checkbox değil chip: `apply()` zaten son düzenlemeden
-            250ms sonra kendiliğinden çalıştığı için (auto-apply effect,
-            yukarıda) chip'e dönüşüm DAVRANIŞI DEĞİŞTİRMİYOR — sadece hızlı
-            kısayollarla aynı görsel dili konuşuyorlar.
+        {/* İstemci-taraflı daraltma şeridi.
+            v0.9.303 (operatör) — sunucu filtreleri (Errors only / Root
+            traces) buradan Search satırına taşındı, çünkü yaptıkları şey
+            oradaki alanlarla aynı: sorguyu yeniden çalıştırmak. Burada
+            kalanların hepsi YÜKLÜ SAYFAYI daraltıyor, hiçbiri yeni sorgu
+            atmıyor — tek kapsam olduğu için iki grubu ayıran ayraç da
+            kalktı, ve şerit bir satır yüksekliği bırakıp gitti.
 
-            İki grup ayrı ayrımla duruyor: SOLDAKİLER sunucu filtresi (tüm
-            pencereye uygulanır, yeniden sorgu tetikler), SAĞDAKİLER yüklü
-            sayfayı istemci tarafında daraltır. Aynı görünüp farklı kapsamda
-            çalışmasınlar diye aralarına ince bir ayraç kondu.
-
-            Şerit relations görünümünde gizli. traces.length koşulu SADECE
-            hızlı kısayolları sarıyor: Reset ve CSV liste boşken de erişilebilir
-            kalmalı, fazla dar bir filtreyi ancak öyle geri alırsın. */}
+            traces.length koşulu SADECE hızlı kısayolları sarıyor: Reset ve
+            CSV liste boşken de erişilebilir kalmalı, fazla dar bir filtreyi
+            ancak öyle geri alırsın. */}
         {view !== 'relations' && (
           <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-            <QuickChip active={draft.hasError} tone="err"
-              onClick={() => setDraft({ ...draft, hasError: !draft.hasError })}
-              title="Yalnız hatalı trace'ler. SUNUCU filtresi — seçili pencerenin tamamına uygulanır ve sorguyu yeniden çalıştırır.">
-              Errors only
-            </QuickChip>
-            <QuickChip active={draft.rootOnly}
-              onClick={() => setDraft({ ...draft, rootOnly: !draft.rootOnly })}
-              title="Kök span'i depoya düşmüş trace'ler — yarım trace'leri gizler. SUNUCU filtresi.">
-              Root traces
-            </QuickChip>
-
+            {/* v0.9.303 — sunucu filtreleri (Errors only / Root traces)
+                Search satırına taşındı; bu şeritte artık YALNIZ istemci
+                taraflı hızlı kısayollar var. İki kapsamı ayırmak için
+                konmuş ayraç da bu yüzden gereksizleşti — şeridin tamamı
+                tek kapsam. */}
             {view === 'list' && traces.length > 0 && (
               <>
-                <span aria-hidden style={{ width: 1, alignSelf: 'stretch', margin: '2px 4px', background: 'var(--border)' }} />
                 <QuickChip active={quick === 'err'} onClick={() => setQuick(quick === 'err' ? null : 'err')} tone="err"
                   title="Yüklü satırlar arasındaki hatalı TRACE sayısı — tıkla, listeyi onlara indir. Yukarıdaki ERROR SPANS pencerenin tamamını sayar, bu yüzden iki sayı farklıdır.">
                   Errors {errCount} <span style={{ opacity: 0.65 }}>/ yüklü</span>

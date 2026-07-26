@@ -257,6 +257,11 @@ export interface DBInstance {
   errorCount: number;
   errorRate: number;
   avgDurationMs: number;
+  // v0.9.262 — same TDigest state as p99, indices 1 and 2. Optional: a warm
+  // cached payload from a pre-v0.9.262 backend lacks them mid-rolling-deploy,
+  // and receiver-discovered rows (source='receiver') have no quantiles at all.
+  p50DurationMs?: number;
+  p95DurationMs?: number;
   p99DurationMs: number;
   callers: string[];
   // Source: empty / 'spans' = derived from application traffic

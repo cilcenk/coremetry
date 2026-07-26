@@ -240,7 +240,7 @@ func (s *Store) ServiceCallers(
 		GROUP BY caller_service, caller_host, caller_instance, client_address, user_agent
 		ORDER BY calls DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30,
+		SETTINGS max_execution_time = 25,
 		         join_use_nulls = 0,
 		         `+s.shardSkipSetting()+`,
 		         distributed_product_mode = 'global'`,

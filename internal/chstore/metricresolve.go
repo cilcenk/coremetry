@@ -392,7 +392,7 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		step, groupSelect, aggExpr, exemplarCols, s.spanmetricsSourceFor(tier.table), strings.Join(conds, " AND "))
 
 	rows, err := s.conn.Query(ctx, sql, args...)
@@ -554,7 +554,7 @@ func (s *Store) resolveBand(ctx context.Context, q MetricResolveQuery, step int)
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		step, groupSelect, bandProjection(), exemplarCols, s.spanmetricsSourceFor(tier.table), strings.Join(conds, " AND "))
 
 	rows, err := s.conn.Query(ctx, sql, args...)

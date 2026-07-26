@@ -312,7 +312,7 @@ func (s *Store) getServiceMapAt(
 		GROUP BY trace_id
 		ORDER BY count() DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		winStart, winEnd, sampleCount)
 	if err != nil {
 		return nil, err
@@ -355,7 +355,7 @@ func (s *Store) getServiceMapAt(
 		FROM spans
 		WHERE trace_id IN (%s)
 		  AND time >= ? AND time <= ?
-		SETTINGS max_execution_time = 30`, strings.Join(holders, ",")), args...)
+		SETTINGS max_execution_time = 25`, strings.Join(holders, ",")), args...)
 	if err != nil {
 		return nil, err
 	}

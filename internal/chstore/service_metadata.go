@@ -307,7 +307,7 @@ FROM (
 GROUP BY service_name
 ORDER BY service_name
 LIMIT 10000
-SETTINGS max_execution_time = 30`
+SETTINGS max_execution_time = 25`
 
 // DeriveServiceTeams returns service → dominant {owner, sre} team derived from
 // span/resource attributes over the window. Services emitting none of the four
@@ -451,7 +451,7 @@ FROM (
 GROUP BY service_name
 ORDER BY service_name
 LIMIT 10000
-SETTINGS max_execution_time = 30`
+SETTINGS max_execution_time = 25`
 
 // DeriveServiceNamespaces returns service → dominant namespace over the
 // window; services emitting neither attribute are omitted.
@@ -516,7 +516,7 @@ FROM (
 GROUP BY service_name
 ORDER BY service_name
 LIMIT 10000
-SETTINGS max_execution_time = 30`
+SETTINGS max_execution_time = 25`
 
 // DeriveServiceDeployments — servis → baskın deployment adı.
 func (s *Store) DeriveServiceDeployments(ctx context.Context, since time.Duration) (map[string]string, error) {

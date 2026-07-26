@@ -34,7 +34,7 @@ func TestSlowQueriesGlobalMVSQL(t *testing.T) {
 		// Reads the MV, not raw spans (the MV-bypass invariant).
 		"FROM db_statement_summary_5m",
 		// Bounds discipline: time-bounded WHERE + LIMIT + execution cap.
-		"time_bucket >= ?", "time_bucket <= ?", "LIMIT ?", "max_execution_time = 30",
+		"time_bucket >= ?", "time_bucket <= ?", "LIMIT ?", "max_execution_time = 25",
 		// The optional system filter itself.
 		"db_system = ?",
 		// Correct finalisers for the MV's aggregate states — countMerge on

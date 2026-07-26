@@ -464,7 +464,7 @@ func (p *Plan) SQLPreview(from, to time.Time) string {
 		for _, g := range p.GroupBy {
 			fmt.Fprintf(&b, ", %s", sqlAlias(g))
 		}
-		b.WriteString("\nORDER BY bucket\nSETTINGS max_execution_time = 30")
+		b.WriteString("\nORDER BY bucket\nSETTINGS max_execution_time = 25")
 	case TableMetrics:
 		fmt.Fprintf(&b, "SELECT toStartOfInterval(time, INTERVAL %d SECOND) AS bucket", bucketSecs)
 		for _, g := range p.GroupBy {
@@ -487,7 +487,7 @@ func (p *Plan) SQLPreview(from, to time.Time) string {
 		for _, g := range p.GroupBy {
 			fmt.Fprintf(&b, ", %s", sqlAlias(g))
 		}
-		b.WriteString("\nORDER BY bucket\nSETTINGS max_execution_time = 30")
+		b.WriteString("\nORDER BY bucket\nSETTINGS max_execution_time = 25")
 	}
 	return b.String()
 }

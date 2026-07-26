@@ -48,7 +48,7 @@ func TestBuildMetricQuerySQL_CHBounds(t *testing.T) {
 		"time <= ?",
 		"GROUP BY bucket, gk",
 		"LIMIT 50000",
-		"SETTINGS max_execution_time = 30",
+		"SETTINGS max_execution_time = 25",
 	}
 
 	for _, tc := range cases {

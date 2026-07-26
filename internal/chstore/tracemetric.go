@@ -153,7 +153,7 @@ func (s *Store) resolveTraceMetric(ctx context.Context, q MetricResolveQuery, st
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		step, groupSelect, aggExpr, exemplarCols, inner, outerWhere)
 
 	rows, err := s.conn.Query(ctx, sql, args...)

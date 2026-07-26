@@ -201,7 +201,7 @@ func (s *Store) queryHistogramPercentileGrouped(ctx context.Context, f MetricQue
 	        FROM metric_points ` + wc.sql() + `
 	        ORDER BY t
 	        LIMIT 200000
-	        SETTINGS max_execution_time = 30`
+	        SETTINGS max_execution_time = 25`
 
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {

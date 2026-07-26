@@ -66,7 +66,7 @@ func (s *Store) NoisyRules(ctx context.Context, from, to time.Time, limit int) (
 		GROUP BY rule_id
 		ORDER BY open_count DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		chDateTime64Arg(from),
 		chDateTime64Arg(to),
 		limit,

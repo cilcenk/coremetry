@@ -30,7 +30,7 @@ func TestSlowQueriesGlobalSQLNoAliasShadow(t *testing.T) {
 	}
 
 	// The filter itself and the bounds survive.
-	for _, want := range []string{"db_system = ?", "time >= ?", "LIMIT ?", "max_execution_time = 30"} {
+	for _, want := range []string{"db_system = ?", "time >= ?", "LIMIT ?", "max_execution_time = 25"} {
 		if !strings.Contains(sql, want) {
 			t.Errorf("SQL missing %q\n--- SQL ---\n%s", want, sql)
 		}

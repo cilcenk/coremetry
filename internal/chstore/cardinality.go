@@ -94,7 +94,7 @@ func (s *Store) GetCardinality(ctx context.Context) (*CardinalityReport, error) 
 		GROUP BY service_name
 		ORDER BY rows DESC
 		LIMIT 30
-		SETTINGS max_execution_time = 30`); err == nil {
+		SETTINGS max_execution_time = 25`); err == nil {
 		for rows.Next() {
 			var r TopRow
 			if rows.Scan(&r.Name, &r.Rows) == nil {
@@ -113,7 +113,7 @@ func (s *Store) GetCardinality(ctx context.Context) (*CardinalityReport, error) 
 		GROUP BY metric
 		ORDER BY rows DESC
 		LIMIT 30
-		SETTINGS max_execution_time = 30`); err == nil {
+		SETTINGS max_execution_time = 25`); err == nil {
 		for rows.Next() {
 			var r TopRow
 			if rows.Scan(&r.Name, &r.Rows) == nil {
@@ -150,7 +150,7 @@ func (s *Store) GetCardinality(ctx context.Context) (*CardinalityReport, error) 
 		GROUP BY key
 		ORDER BY distinct_values DESC
 		LIMIT 30
-		SETTINGS max_execution_time = 30`); err == nil {
+		SETTINGS max_execution_time = 25`); err == nil {
 		for rows.Next() {
 			var r AttrKeyRow
 			if rows.Scan(&r.Key, &r.DistinctValues, &r.Occurrences) == nil {
@@ -174,7 +174,7 @@ func (s *Store) GetCardinality(ctx context.Context) (*CardinalityReport, error) 
 		GROUP BY table, name
 		ORDER BY compressed DESC
 		LIMIT 30
-		SETTINGS max_execution_time = 30`); err == nil {
+		SETTINGS max_execution_time = 25`); err == nil {
 		for rows.Next() {
 			var r ColumnRow
 			if rows.Scan(&r.Table, &r.Column, &r.CompressedBytes, &r.UncompressedBytes) == nil {

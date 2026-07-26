@@ -91,7 +91,7 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 		`+wc.sql()+`
 		ORDER BY t
 		LIMIT 200000
-		SETTINGS max_execution_time = 30`, wc.args...)
+		SETTINGS max_execution_time = 25`, wc.args...)
 	if err != nil {
 		return nil, fmt.Errorf("histogram query: %w", err)
 	}

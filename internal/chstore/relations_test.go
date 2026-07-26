@@ -291,7 +291,7 @@ func assertJoinSpill(t *testing.T, sql string) {
 	if !strings.Contains(sql, "max_bytes_in_join = 536870912") {
 		t.Fatalf("self-join MUST spill (max_bytes_in_join) to avoid OOM; got: %s", sql)
 	}
-	if !strings.Contains(sql, "max_execution_time = 30") {
+	if !strings.Contains(sql, "max_execution_time = 25") {
 		t.Fatalf("self-join MUST carry max_execution_time backstop; got: %s", sql)
 	}
 }

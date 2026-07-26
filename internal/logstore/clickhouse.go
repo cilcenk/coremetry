@@ -270,7 +270,7 @@ func (s *CHStore) Histogram(ctx context.Context, f Filter, bucketSec int, groupB
 		WHERE %s AND (%s) GLOBAL IN (SELECT g FROM top_groups)
 		GROUP BY g, bucket
 		ORDER BY g, bucket
-		SETTINGS max_execution_time = 30,
+		SETTINGS max_execution_time = 25,
 		         distributed_product_mode = 'global'`,
 		groupExpr, wc,
 		groupExpr, bucketSec, wc, groupExpr)

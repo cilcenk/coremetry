@@ -86,7 +86,7 @@ func (s *Store) GetSpansForTraces(ctx context.Context, traceIDs []string, from, 
 		FROM spans
 		WHERE trace_id IN (%s)%s
 		ORDER BY trace_id, time ASC
-		SETTINGS max_execution_time = 30`, strings.Join(holders, ","), timeClause)
+		SETTINGS max_execution_time = 25`, strings.Join(holders, ","), timeClause)
 
 	rows, err := s.conn.Query(ctx, query, args...)
 	if err != nil {
@@ -163,7 +163,7 @@ func (s *Store) AggregateServiceStructure(
 		GROUP BY trace_id
 		ORDER BY count() DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		service, int64(since.Seconds()), sampleCount)
 	if err != nil {
 		return nil, 0, 0, err

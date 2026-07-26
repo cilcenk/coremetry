@@ -102,7 +102,7 @@ func (s *Store) BubbleUp(
 		  count() AS base_total
 		FROM spans
 		%s
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		selectionPredicate(selection), wcBase.sql())
 	if err := s.conn.QueryRow(ctx, totalsSQL,
 		append(selectionPredicateArgs(selection), wcBase.args...)...,
@@ -132,7 +132,7 @@ func (s *Store) BubbleUp(
 		GROUP BY k
 		ORDER BY c DESC
 		LIMIT 30
-		SETTINGS max_execution_time = 30`, wcSel.sql())
+		SETTINGS max_execution_time = 25`, wcSel.sql())
 	keysRows, err := s.conn.Query(ctx, keysSQL, wcSel.args...)
 	if err != nil {
 		return nil, fmt.Errorf("bubbleup keys: %w", err)

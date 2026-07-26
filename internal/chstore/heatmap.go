@@ -153,7 +153,7 @@ func (s *Store) latencyHeatmapWhere(
 		GROUP BY t_bucket, d_bin
 		ORDER BY t_bucket, d_bin
 		LIMIT 100000
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		stepSec, totalBins-1, minLogMs, subBins, wc.sql())
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)

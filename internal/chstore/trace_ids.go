@@ -38,7 +38,7 @@ func (s *Store) DistinctTraceIDsForFilters(ctx context.Context, filters []Filter
 		SELECT DISTINCT trace_id
 		FROM spans %s
 		LIMIT ?
-		SETTINGS max_execution_time = 30`,
+		SETTINGS max_execution_time = 25`,
 		wc.sql())
 	args := append([]any{}, wc.args...)
 	args = append(args, limit)

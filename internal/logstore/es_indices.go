@@ -10,12 +10,21 @@ package logstore
 // when NO name carries a date suffix the narrowing falls back to the
 // raw pattern. Listing errors also fall back — index resolution must
 // never be the reason a query fails.
+//
+// v0.9.283 — on a DATA-STREAM cluster the rule above was a no-op: a
+// backing index is named ".ds-<stream>-<date>-<generation>", the
+// `$`-anchored date suffix matched nothing, and every read fell back
+// to the bare pattern. Backing indices are narrowed by generation
+// coverage (dsCoverage) rather than by their own stamp, because the
+// stamp is the rollover date, not the data's date.
 
 import (
 	"context"
 	"encoding/json"
 	"log"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -27,18 +36,124 @@ import (
 // names: "app-2026.06.10" (Logstash/Filebeat default) or "app-2026-06-10".
 var esDateSuffix = regexp.MustCompile(`(\d{4})[.-](\d{2})[.-](\d{2})$`)
 
+// esDataStreamName matches a data-stream backing index:
+// ".ds-<stream>-<YYYY.MM.DD>-<generation>". The day stamp sits in the
+// MIDDLE and the name ends with the rollover generation, which is why
+// the `$`-anchored esDateSuffix never matched one — see the v0.9.283
+// note on dsCoverage.
+var esDataStreamName = regexp.MustCompile(`^\.ds-(.+)-(\d{4})[.-](\d{2})[.-](\d{2})-(\d+)$`)
+
 const esIndexCacheTTL = 5 * time.Minute
 
+// esIndexCacheNegTTL throttles retries after a FAILED listing. Without
+// it a credential lacking the `monitor` privilege fires one extra
+// _cat/indices per /logs request, forever — the listing is only cached
+// on success (v0.9.283). Short so the privilege being granted is
+// noticed within a minute.
+const esIndexCacheNegTTL = 30 * time.Second
+
+// esListingSuppressed reports whether a failed-listing window is still
+// open, i.e. the _cat/indices round-trip must be skipped entirely.
+// Pure so both branches are exercised without a live cluster.
+func esListingSuppressed(failedAt, now time.Time) bool {
+	return !failedAt.IsZero() && now.Sub(failedAt) < esIndexCacheNegTTL
+}
+
+// dsBacking is one parsed data-stream backing index.
+type dsBacking struct {
+	name   string
+	stream string
+	day    time.Time
+	gen    int
+}
+
+// parseDataStreamBacking decomposes ".ds-<stream>-<date>-<generation>".
+// The stream capture is greedy, so a hyphenated stream name keeps its
+// full identity (".ds-app-checkout-prod-2026.07.03-000001" → stream
+// "app-checkout-prod") and a stream whose own name contains a date
+// still binds the LAST date to the rollover stamp.
+func parseDataStreamBacking(n string) (dsBacking, bool) {
+	m := esDataStreamName.FindStringSubmatch(n)
+	if m == nil {
+		return dsBacking{}, false
+	}
+	day, err := time.Parse("2006-01-02", m[2]+"-"+m[3]+"-"+m[4])
+	if err != nil {
+		return dsBacking{}, false
+	}
+	gen, err := strconv.Atoi(m[5])
+	if err != nil {
+		return dsBacking{}, false
+	}
+	return dsBacking{name: n, stream: m[1], day: day, gen: gen}, true
+}
+
+// dsCoverage decides which data-stream backing indices can hold
+// documents in [fromDay, toDay].
+//
+// v0.9.283 — a backing index CANNOT be filtered by its own day stamp:
+// that stamp is the ROLLOVER date, so index N holds documents from
+// day(N) until the next rollover, and with size-triggered rollover
+// that span is arbitrarily long. Filtering by the stamp would silently
+// drop the one index that actually holds the window — the worst
+// failure mode this file has, worse than the fan-out it fixes.
+//
+// Coverage comes from the generation ordering instead: within a stream,
+// index N covers [day(N), day(N+1)] and the newest is open-ended. Two
+// rollovers on the same day both stay (day precision cannot separate
+// them). This needs no extra ES call — the generation is already in the
+// name we listed.
+func dsCoverage(backings []dsBacking, fromDay, toDay time.Time) map[string]bool {
+	byStream := map[string][]dsBacking{}
+	for _, b := range backings {
+		byStream[b.stream] = append(byStream[b.stream], b)
+	}
+	keep := make(map[string]bool, len(backings))
+	for _, list := range byStream {
+		sort.Slice(list, func(i, j int) bool { return list[i].gen < list[j].gen })
+		for i, b := range list {
+			if b.day.After(toDay) {
+				continue // rolled over after the window closed
+			}
+			// Closed by its successor's creation day, inclusive: on that
+			// day both indices were being written to.
+			if i+1 < len(list) && list[i+1].day.Before(fromDay) {
+				continue
+			}
+			keep[b.name] = true
+		}
+	}
+	return keep
+}
+
 // narrowIndices filters concrete index names to those that can hold
-// documents in [from, to] (UTC calendar days). Undated names are always
-// kept. ok=false when no name carries a parsable date suffix — the
-// caller falls back to the raw pattern.
+// documents in [from, to] (UTC calendar days). Three families, each by
+// its own rule: data-stream backing indices by generation coverage
+// (dsCoverage), classic dailies by their trailing day stamp, and
+// undated names unconditionally. ok=false when NO name carries a
+// parsable date in either family — the caller falls back to the raw
+// pattern.
 func narrowIndices(names []string, from, to time.Time) ([]string, bool) {
 	fromDay := from.UTC().Truncate(24 * time.Hour)
 	toDay := to.UTC().Truncate(24 * time.Hour)
-	out := make([]string, 0, len(names))
-	dated := false
+
+	backings := make([]dsBacking, 0, len(names))
 	for _, n := range names {
+		if b, ok := parseDataStreamBacking(n); ok {
+			backings = append(backings, b)
+		}
+	}
+	keepDS := dsCoverage(backings, fromDay, toDay)
+
+	out := make([]string, 0, len(names))
+	dated := len(backings) > 0
+	for _, n := range names {
+		if _, isDS := parseDataStreamBacking(n); isDS {
+			if keepDS[n] {
+				out = append(out, n)
+			}
+			continue
+		}
 		m := esDateSuffix.FindStringSubmatch(n)
 		if m == nil {
 			out = append(out, n)
@@ -75,9 +190,10 @@ func clampWindow(from, to time.Time) (time.Time, time.Time) {
 }
 
 type esIndexCache struct {
-	mu      sync.RWMutex
-	names   []string
-	fetched time.Time
+	mu       sync.RWMutex
+	names    []string
+	fetched  time.Time
+	failedAt time.Time
 }
 
 // resolveIndexTemplate substitutes the {service} / {namespace}
@@ -198,6 +314,14 @@ func (s *ESStore) cachedIndexNames(ctx context.Context) []string {
 		s.idxCache.mu.RUnlock()
 		return names
 	}
+	// v0.9.283 — a recent FAILURE is cached too. The listing is a
+	// best-effort optimisation (callers fall back to the raw pattern),
+	// so retrying it on every single request only adds ES load at the
+	// exact moment ES is already refusing us.
+	if esListingSuppressed(s.idxCache.failedAt, time.Now()) {
+		s.idxCache.mu.RUnlock()
+		return nil
+	}
 	s.idxCache.mu.RUnlock()
 
 	req := esapi.CatIndicesRequest{
@@ -207,16 +331,19 @@ func (s *ESStore) cachedIndexNames(ctx context.Context) []string {
 	}
 	res, err := req.Do(ctx, s.cli)
 	if err != nil {
+		s.noteIndexListFailure()
 		return nil
 	}
 	defer res.Body.Close()
 	if res.IsError() {
+		s.noteIndexListFailure()
 		return nil
 	}
 	var rows []struct {
 		Index string `json:"index"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&rows); err != nil {
+		s.noteIndexListFailure()
 		return nil
 	}
 	names := make([]string, 0, len(rows))
@@ -225,6 +352,16 @@ func (s *ESStore) cachedIndexNames(ctx context.Context) []string {
 	}
 	s.idxCache.mu.Lock()
 	s.idxCache.names, s.idxCache.fetched = names, time.Now()
+	s.idxCache.failedAt = time.Time{}
 	s.idxCache.mu.Unlock()
 	return names
+}
+
+// noteIndexListFailure opens the negative-cache window so the next
+// esIndexCacheNegTTL of requests skip the listing entirely instead of
+// each firing their own failing _cat/indices.
+func (s *ESStore) noteIndexListFailure() {
+	s.idxCache.mu.Lock()
+	s.idxCache.failedAt = time.Now()
+	s.idxCache.mu.Unlock()
 }

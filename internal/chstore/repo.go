@@ -2668,6 +2668,10 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// traceStage1LightSQL. Filters ride the same HAVING so the top-N ids
 	// are correct; Stage 2 then merges the full states for ~stage1Limit
 	// ids instead of the whole window. Deep offsets grow the id budget.
+	// Zero means "no narrowing" — Stage 2 then uses f.From, i.e. today's
+	// behaviour. Only the aggregation-free slice sets it, because only it
+	// knows where the slice was actually cut.
+	var stage2Floor time.Time
 	if f.Service == "" && holders == "" {
 		s1f := f
 		ranked := traceSortRecencySliced(f.Sort)
@@ -2693,7 +2697,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		// merged state and there is nothing to gain by rewriting them here.
 		errorsOnly := len(having) == 1 && having[0] == "countMerge(error_count_state) > 0"
 		if budgetOK && (len(having) == 0 || errorsOnly) {
-			ids, _, exhausted, serr := s.traceRecencySlice(ctx, s1f, budget, errorsOnly)
+			ids, cut, exhausted, serr := s.traceRecencySlice(ctx, s1f, budget, errorsOnly)
 			if serr != nil {
 				return nil, 0, false, serr
 			}
@@ -2703,6 +2707,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			traceIDs = ids
 			holders = strings.Repeat("?,", len(ids))
 			holders = holders[:len(holders)-1]
+			stage2Floor = cut
 			if ranked && f.RankedWithin != nil {
 				// Report the REAL slice, not the constant. When the slice
 				// exhausted the window the ordering is global, so the "ranked
@@ -2793,38 +2798,35 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		       (maxMerge(trace_end_state) -
 		        toUnixTimestamp64Nano(minMerge(trace_start_state))) / 1e6  AS dur_ms,
 		       countMerge(span_count_state)                                AS span_count,
-		       toUInt8(countMerge(error_count_state) > 0)                  AS has_error
+		       toUInt8(countMerge(error_count_state) > 0)                  AS has_error,
+		       min(time_bucket)                                            AS first_bucket
 		FROM trace_summary_5m
 		WHERE ` + traceIDClause + `time_bucket >= ? AND time_bucket <= ?
 		GROUP BY trace_id` + havingSQL + `
 		ORDER BY ` + sortExpr + ` ` + order + `
 		LIMIT ? OFFSET ?
-		SETTINGS max_execution_time = 15,
+		SETTINGS max_execution_time = 12,
 		         optimize_read_in_order = 1,
 		         optimize_aggregation_in_order = 1`
 
-	args := append([]any{}, idArgs...)
-	args = append(args, f.From, f.To, pageLimit, f.Offset)
-	rows2, err := s.conn.Query(ctx, stage2, args...)
+	// v0.9.278 — Stage 2's floor. `trace_id IN (...)` prunes NOTHING on its
+	// own: trace_summary_5m carries no skip index on trace_id (the "uses the
+	// bloom filter on trace_id" note in store.go is stale — that bloom is on
+	// `spans`). EXPLAIN indexes=1 with a 4996-element set kept 208/210
+	// granules. The time floor is what prunes; measured 1,145,778 read rows
+	// before, 99,094 after, same ids.
+	//
+	// But narrowing the floor can CLIP: a trace with rows below it loses part
+	// of its own aggregate, so trace_start / dur_ms / span_count / has_error
+	// come back wrong — the exact silent-wrong-number class this codebase
+	// keeps getting bitten by. A fixed lookback would be an ASSUMPTION, and
+	// one this install cannot test: the widest trace bucket-span measured
+	// locally is 5 minutes and ZERO of 565,546 traces exceed it. So we do not
+	// assume — we DETECT, by asking Stage 2 for min(time_bucket) and widening
+	// the floor if any returned row sits on it.
+	out, hasMore, err := s.runTraceStage2(ctx, f, stage2, idArgs, stage2Floor, pageLimit)
 	if err != nil {
-		return nil, 0, false, fmt.Errorf("stage2: %w", err)
-	}
-	defer rows2.Close()
-	out := []TraceRow{}
-	for rows2.Next() {
-		var t TraceRow
-		var hasErr uint8
-		var ts time.Time
-		if err := rows2.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts, &t.DurationMs, &t.SpanCount, &hasErr); err != nil {
-			return nil, 0, false, err
-		}
-		t.StartTime = ts.UnixNano()
-		t.HasError = hasErr != 0
-		out = append(out, t)
-	}
-	hasMore := len(out) > f.Limit
-	if hasMore {
-		out = out[:f.Limit]
+		return nil, 0, false, err
 	}
 	return out, 0, hasMore, nil
 }

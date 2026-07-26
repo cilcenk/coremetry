@@ -314,6 +314,79 @@ export default function AdminStatsPage() {
             {/* ── API multi-tier cache effectiveness ──────────────── */}
             <ApiCachePanel data={cacheStats} />
 
+            {/* ── Disk capacity (v0.9.289, operator ask) ──────────────
+                Sits directly ABOVE per-table storage because it answers
+                the question that one raises: the table list says how
+                much room the data occupies, this says how much is left.
+                Only retention can be judged against the second number,
+                and until now finding it meant an ssh to the node.
+                Hidden entirely when the credential can't read
+                system.disks — an optional panel never blanks the page. */}
+            {!!data.disks?.length && (
+              <div style={{
+                background: 'var(--bg1)', border: '1px solid var(--border)',
+                borderRadius: 8, padding: 14, marginBottom: 18,
+              }}>
+                <SectionHeader
+                  title="ClickHouse disk capacity"
+                  sub="Filesystem-level, from system.disks — covers everything on the volume, not just Coremetry's tables." />
+                <div style={{ display: 'grid', gap: 12 }}>
+                  {data.disks.map((d, i) => {
+                    const used = Math.max(0, d.totalBytes - d.freeBytes);
+                    const pct = d.totalBytes > 0 ? (used / d.totalBytes) * 100 : 0;
+                    // Thresholds are about HEADROOM, not neatness: past
+                    // 90% a merge can fail to find room for its output
+                    // part, which stalls ingest rather than degrading it.
+                    const tone = pct >= 90 ? 'var(--err)' : pct >= 75 ? 'var(--warn)' : 'var(--ok)';
+                    return (
+                      <div key={`${d.host}/${d.name}/${i}`}>
+                        <div style={{
+                          display: 'flex', alignItems: 'baseline', gap: 8,
+                          fontSize: 12, marginBottom: 4,
+                        }}>
+                          <b>{d.name}</b>
+                          {d.host && <span style={{ color: 'var(--text2)' }}>@ {d.host}</span>}
+                          <span style={{
+                            color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', fontSize: 11,
+                          }}>{d.path}</span>
+                          <span style={{ flex: 1 }} />
+                          <span style={{ color: tone, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                            {pct.toFixed(1)}% full
+                          </span>
+                          <span style={{ color: 'var(--text2)', fontVariantNumeric: 'tabular-nums' }}>
+                            {fmtBytes(used)} / {fmtBytes(d.totalBytes)}
+                          </span>
+                        </div>
+                        <div style={{
+                          height: 8, borderRadius: 4, overflow: 'hidden',
+                          background: 'color-mix(in srgb, var(--text3) 22%, transparent)',
+                        }}>
+                          <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: tone }} />
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 4 }}>
+                          {fmtBytes(d.freeBytes)} free
+                          {/* unreserved < free means merges/inserts in
+                              flight have already claimed the difference —
+                              the number that decides whether the NEXT
+                              part can be written. */}
+                          {d.unreservedBytes < d.freeBytes && (
+                            <span title="Free space minus what in-flight merges and inserts have already reserved. This is what the next part actually has to work with.">
+                              {' · '}{fmtBytes(d.unreservedBytes)} unreserved
+                            </span>
+                          )}
+                          {d.keepFreeBytes > 0 && (
+                            <span title="Operator-configured reserve ClickHouse refuses to dip into (keep_free_space_bytes).">
+                              {' · '}{fmtBytes(d.keepFreeBytes)} kept free
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* ── Per-table storage ───────────────────────────────── */}
             <div style={{
               background: 'var(--bg1)', border: '1px solid var(--border)',

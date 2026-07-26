@@ -3163,6 +3163,25 @@ export interface SystemStats {
     oldestNs: number;
     newestNs: number;
   }[];
+  // v0.9.289 (operator ask) — capacity of the volumes ClickHouse writes
+  // to, from system.disks. Distinct from `tables` above: that says how
+  // much room Coremetry's data OCCUPIES, this says how much is LEFT,
+  // including everything else on the same filesystem. Retention only
+  // means something against the second number. Absent when the
+  // credential cannot read system.disks — the panel hides, the page
+  // does not break.
+  disks?: {
+    host?: string;   // set only on a cluster() fan-out
+    name: string;
+    path: string;
+    totalBytes: number;
+    freeBytes: number;
+    // free space minus what in-flight merges/inserts already claimed —
+    // the honest "can I write another part right now" figure
+    unreservedBytes: number;
+    // operator-configured reserve CH refuses to dip into
+    keepFreeBytes: number;
+  }[];
   history: {
     day: string;
     spans: number;

@@ -3338,6 +3338,11 @@ export interface DBQueryStat {
   dbSystem: string;
   count: number;
   avgMs: number;
+  // v0.9.265 — P50 separates "slow for everyone" from "slow in the tail",
+  // which avg alone cannot: avg is dragged upward by the same tail. All
+  // three producing queries project it (see the alignment guard in
+  // internal/chstore/quantile_ordinal_test.go).
+  p50Ms: number;
   p95Ms: number;
   p99Ms: number;
   maxMs: number;

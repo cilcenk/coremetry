@@ -185,6 +185,39 @@ func TestSharedCallerBreakdownProducersAllProjectP95(t *testing.T) {
 	}
 }
 
+// DBQueryStat is filled by THREE queries in dbqueries.go — the raw
+// slow-queries builder, the MV builder, and GetTopDBQueries (raw-only, behind
+// /service top statements). It exposes p50/p95/p99 as plain float64, so a
+// producer missing one projection renders "0.00ms" rather than a blank.
+//
+// v0.9.265 — the pre-existing builder tests (dbqueries_sql_test.go,
+// dbqueries_mv_test.go) pin finalisers, filters and bounds but say nothing
+// about which percentiles each query projects, which is why adding p50 did
+// not disturb them. This asserts the alignment directly: every query that
+// reports p95 and p99 must also report p50.
+func TestDBQueryStatProducersProjectEveryPercentile(t *testing.T) {
+	src, err := os.ReadFile("dbqueries.go")
+	if err != nil {
+		t.Fatalf("read dbqueries.go: %v", err)
+	}
+	s := string(src)
+
+	p50 := strings.Count(s, "AS p50_ms")
+	p95 := strings.Count(s, "AS p95_ms")
+	p99 := strings.Count(s, "AS p99_ms")
+
+	if p95 < 3 {
+		t.Fatalf("expected 3+ DBQueryStat producers projecting p95, found %d — the queries moved "+
+			"and this guard is no longer aimed at anything", p95)
+	}
+	if p50 != p95 || p50 != p99 {
+		t.Errorf("percentile projections are misaligned: p50=%d p95=%d p99=%d.\n"+
+			"All three fill the same DBQueryStat, whose fields are plain float64 — the query\n"+
+			"missing a projection does not blank the cell, it renders 0.00ms. Every producer\n"+
+			"(raw slow-queries, MV, GetTopDBQueries) must project all three.", p50, p95, p99)
+	}
+}
+
 // The two families must stay distinguishable. If someone "harmonizes"
 // spanmetrics down to 3-wide, every 4-wide read site (endpoints p95 at index 3,
 // p99 at index 4) silently shifts by one — p95 becomes p90, p99 becomes p95.

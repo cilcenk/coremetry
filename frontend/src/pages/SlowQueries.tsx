@@ -25,6 +25,8 @@ const SLOW_COLS: DataTableColumn<SlowQueryRow>[] = [
   { id: 'statement',  label: 'Statement (normalised)', sortValue: r => r.statement,  naturalDir: 'asc', width: 380 },
   { id: 'count',      label: 'Calls',      sortValue: r => r.count,      numeric: true, width: 90 },
   { id: 'avgMs',      label: 'Avg ms',     sortValue: r => r.avgMs,      numeric: true, width: 90 },
+  // v0.9.265 — P50 next to Avg so a row reads "typical" then "tail".
+  { id: 'p50Ms',      label: 'P50 ms',     sortValue: r => r.p50Ms,      numeric: true, width: 90 },
   { id: 'p99Ms',      label: 'P99 ms',     sortValue: r => r.p99Ms,      numeric: true, width: 90 },
   { id: 'totalMs',    label: 'Total time', sortValue: r => r.totalMs,    numeric: true, width: 110 },
   { id: 'errorCount', label: 'Errors',     sortValue: r => r.errorCount, numeric: true, width: 90 },
@@ -217,6 +219,7 @@ export default function SlowQueriesPage() {
                         }}>{r.statement}</td>
                         <td className="num mono">{fmtNum(r.count)}</td>
                         <td className="num mono">{r.avgMs.toFixed(1)}</td>
+                        <td className="num mono">{r.p50Ms.toFixed(1)}</td>
                         <td className="num mono" style={{ color: p99Color }}>
                           {r.p99Ms.toFixed(0)}
                         </td>
@@ -227,7 +230,9 @@ export default function SlowQueriesPage() {
                       </tr>
                       {isExpanded && (
                         <tr key={key + ':sample'}>
-                          <td colSpan={9} style={{
+                          {/* v0.9.265 — 10, not 9: the P50 column landed
+                              between Avg and P99. */}
+                          <td colSpan={10} style={{
                             background: 'var(--bg2)', padding: 12,
                           }}>
                             <div style={{
@@ -263,7 +268,7 @@ export default function SlowQueriesPage() {
                               })()}>
                                 Search traces with this query →
                               </Link>
-                              <span>Max: {r.maxMs.toFixed(0)} ms · P95: {r.p95Ms.toFixed(0)} ms</span>
+                              <span>Max: {r.maxMs.toFixed(0)} ms · P95: {r.p95Ms.toFixed(0)} ms · P50: {r.p50Ms.toFixed(0)} ms</span>
                               <span style={{ flex: 1 }} />
                               {(() => {
                                 const ex = explains[key] ?? 'idle';

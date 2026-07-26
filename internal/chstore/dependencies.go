@@ -29,6 +29,17 @@ type DBInstance struct {
 	ErrorCount uint64   `json:"errorCount"`
 	ErrorRate  float64  `json:"errorRate"` // 0..100
 	AvgMs      float64  `json:"avgDurationMs"`
+	// v0.9.262 — P50/P95 read off the SAME db_summary_5m TDigest state that
+	// already produced P99 (indices 1 and 2 of the 3-wide (0.5, 0.95, 0.99)
+	// arg list). CH evaluates the identical quantilesTDigestMerge
+	// subexpression once, so surfacing them costs no extra scan.
+	//
+	// Caveat: discoverReceiverInstances builds DBInstance rows from
+	// metric_points, which carry no quantiles at all — those rows leave all
+	// three at 0 and are tagged Source="receiver". The frontend badges them;
+	// do not read a 0 here as "this database is fast".
+	P50Ms      float64  `json:"p50DurationMs"`
+	P95Ms      float64  `json:"p95DurationMs"`
 	P99Ms      float64  `json:"p99DurationMs"`
 	Callers    []string `json:"callers"` // top-5 calling services
 	// Source telegraphs the data origin. Empty / "spans" =
@@ -613,6 +624,8 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		       countMerge(error_count_state)                                         AS error_count,
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0)                           AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
@@ -634,12 +647,17 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 		// scan into pointers and coalesce. A row with span_count=0
 		// shouldn't appear given our ORDER BY but the defensive
 		// guard is essentially free.
-		var avgMs, p99Ms *float64
-		if err := rows.Scan(&r.System, &r.Instance, &r.DBName, &r.SpanCount, &r.ErrorCount, &avgMs, &p99Ms); err != nil {
+		// Scan is POSITIONAL — the pointer order must track the SELECT
+		// order exactly, or every later column shifts by one.
+		var avgMs, p50Ms, p95Ms, p99Ms *float64
+		if err := rows.Scan(&r.System, &r.Instance, &r.DBName, &r.SpanCount, &r.ErrorCount,
+			&avgMs, &p50Ms, &p95Ms, &p99Ms); err != nil {
 			return nil, err
 		}
 		// v0.5.301 — NaN/Inf scrub before JSON marshal.
 		r.AvgMs = safeF(avgMs)
+		r.P50Ms = safeF(p50Ms)
+		r.P95Ms = safeF(p95Ms)
 		r.P99Ms = safeF(p99Ms)
 		if r.SpanCount > 0 {
 			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100

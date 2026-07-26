@@ -18,3 +18,30 @@ export type DepKind = 'db' | 'queue';
 export function trendsEnabled(kind: DepKind): boolean {
   return kind === 'db';
 }
+
+// latencyMissing — is there genuinely no latency measurement for this cell?
+//
+// v0.9.262. Two different absences, one honest answer ('—', never 0.0ms):
+//
+//  · 'receiver' rows come from discoverReceiverInstances, which reads
+//    metric_points and carries no duration data whatsoever. The Go struct
+//    fields are plain float64, so they marshal as 0 rather than being
+//    omitted — the cell printed "0.0ms" and a database with zero application
+//    traffic sorted to the top as the fastest thing on the page, flatly
+//    contradicting the "receiver" badge rendered beside its own name.
+//  · undefined means a warm cached payload from a backend older than the
+//    field (rolling deploy).
+//
+// Zero is a legitimate measurement in principle, so this deliberately does
+// NOT treat v === 0 as missing on span-derived rows — only the source tells
+// us the value was never measured.
+//
+// Written as a type predicate (`v is number`) rather than a boolean
+// `latencyMissing`, so the caller's else-branch narrows and can call
+// `v.toFixed()` without a non-null assertion.
+export function latencyPresent(
+  source: 'spans' | 'receiver' | undefined,
+  v: number | undefined,
+): v is number {
+  return source !== 'receiver' && v !== undefined;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { trendsEnabled, type DepKind } from './depsTable';
+import { trendsEnabled, latencyPresent, type DepKind } from './depsTable';
 
 // v0.9.258 regression. DependenciesTable declared the Trend column and
 // fired its /api/databases/trends fetch unconditionally, for both kinds.
@@ -25,5 +25,38 @@ describe('trendsEnabled', () => {
     // style preference: re-enabling it would restore both the dead
     // column and the wasted scan.
     expect(trendsEnabled('queue')).toBe(false);
+  });
+});
+
+// v0.9.262 regression. Receiver-discovered rows have no duration data at all,
+// but the Go fields are plain float64 and marshal as 0 — so the grid printed
+// "0.0ms" and a database with zero application traffic read as the fastest
+// row on the page, contradicting its own "receiver" badge.
+describe('latencyPresent', () => {
+  const cases: Array<[string, 'spans' | 'receiver' | undefined, number | undefined, boolean]> = [
+    ['receiver row, zero value → absent',           'receiver',  0,         false],
+    ['receiver row, nonzero value → still absent',  'receiver',  12.5,      false],
+    ['span row, value undefined → absent',          'spans',     undefined, false],
+    ['no source, value undefined → absent',         undefined,   undefined, false],
+    ['span row with a real value → present',        'spans',     12.5,      true],
+    ['no source but value present → present',       undefined,   12.5,      true],
+  ];
+  it.each(cases)('%s', (_label, source, v, want) => {
+    expect(latencyPresent(source, v)).toBe(want);
+  });
+
+  it('a measured 0 on a span row IS present', () => {
+    // A genuine sub-0.05ms p50 rounds to 0.0 and is a real measurement.
+    // Only the SOURCE tells us a value was never measured — treating
+    // value-zero as absent would hide real (very fast) rows behind '—'.
+    expect(latencyPresent('spans', 0)).toBe(true);
+  });
+
+  it('receiver rows are absent regardless of value — the 0.0ms defect', () => {
+    // discoverReceiverInstances builds rows from metric_points with no
+    // duration data; the Go fields are plain float64 so they marshal as 0.
+    // Rendering that as "0.0ms" made a database with zero application
+    // traffic sort to the top as the fastest row on the page.
+    expect(latencyPresent('receiver', 0)).toBe(false);
   });
 });

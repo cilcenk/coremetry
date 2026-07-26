@@ -93,6 +93,11 @@ export default function DatabasesPage() {
     errorCount: d.errorCount,
     errorRate: d.errorRate,
     avgDurationMs: d.avgDurationMs,
+    // toRow copies EXPLICITLY — a field missing here never reaches the table,
+    // however well-populated the payload is (v0.9.259's dead-P95 lesson on
+    // /messaging was exactly this).
+    p50DurationMs: d.p50DurationMs,
+    p95DurationMs: d.p95DurationMs,
     p99DurationMs: d.p99DurationMs,
     callers: d.callers ?? [],
     source: d.source,

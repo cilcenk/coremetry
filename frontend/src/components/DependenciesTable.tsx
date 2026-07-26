@@ -7,7 +7,7 @@ import { TrendDelta } from './TrendDelta';
 import { Button } from './ui/Button';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
-import { trendsEnabled } from '@/lib/depsTable';
+import { trendsEnabled, latencyPresent } from '@/lib/depsTable';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -201,17 +201,13 @@ export function DependenciesTable({
       : []),
     { id: 'errorRate', label: 'Err %', sortValue: r => r.errorRate, numeric: true, naturalDir: NATURAL.errorRate, width: 96 },
     { id: 'avg', label: 'Avg', sortValue: r => r.avgDurationMs, numeric: true, naturalDir: NATURAL.avg, width: 90 },
-    // v0.8.364 — P50 alongside P99 (queue-only; the DB grid keeps
-    // its existing shape). Same TDigest state the MV always had.
-    ...(kind === 'queue'
-      ? [
-          { id: 'p50', label: 'P50', sortValue: (r: DepRow) => r.p50DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 } as DataTableColumn<DepRow>,
-          // v0.9.259 — P95 between P50 and P99 so the row reads
-          // Avg → P50 → P95 → P99 left to right. Zero backend and zero
-          // ClickHouse cost: the value was already in the payload.
-          { id: 'p95', label: 'P95', sortValue: (r: DepRow) => r.p95DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 } as DataTableColumn<DepRow>,
-        ]
-      : []),
+    // P50 + P95 alongside P99. v0.8.364 added P50 for queues only; v0.9.259
+    // added P95 there; v0.9.262 opens both to the DB grid too, since
+    // db_summary_5m carries the identical 3-wide TDigest state and
+    // GetDatabases now projects indices 1 and 2 off the same merge — no extra
+    // ClickHouse scan on either page. Order reads Avg → P50 → P95 → P99.
+    { id: 'p50', label: 'P50', sortValue: (r: DepRow) => r.p50DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 },
+    { id: 'p95', label: 'P95', sortValue: (r: DepRow) => r.p95DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 },
     { id: 'p99', label: 'P99', sortValue: r => r.p99DurationMs, numeric: true, naturalDir: NATURAL.p99, width: 90 },
     // #1 — non-sortable RED sparkline column. No sortValue so the
     // shared DataTable head renders it as a plain (un-clickable)
@@ -487,37 +483,27 @@ export function DependenciesTable({
                       <span className={`badge b-${errCls}`}>{r.errorRate.toFixed(2)}%</span>
                       {compare && <TrendDelta cur={r.errorCount} prior={r.priorErrorCount} kind="lowerBetter" />}
                     </td>
-                    <td className="mono" style={{ textAlign: 'right' }}>
-                      {r.avgDurationMs.toFixed(1)}ms
-                      {compare && <TrendDelta cur={r.avgDurationMs} prior={r.priorAvgMs} kind="lowerBetter" />}
-                    </td>
-                    {kind === 'queue' && (
-                      <td className="mono" style={{ textAlign: 'right' }}>
-                        {r.p50DurationMs === undefined
-                          ? <span style={{ color: 'var(--text3)' }}>—</span>
-                          : <>{r.p50DurationMs.toFixed(1)}ms</>}
-                        {compare && r.p50DurationMs !== undefined
-                          && <TrendDelta cur={r.p50DurationMs} prior={r.priorP50Ms} kind="lowerBetter" />}
-                      </td>
-                    )}
-                    {/* v0.9.259 — P95 was already being selected, marshalled
-                        and typed; it just had nowhere to land. No TrendDelta
-                        here on purpose: MessagingInstance carries only
-                        PriorP50Ms / PriorP99Ms (dependencies.go:96-97), so a
-                        prior for P95 does not exist. TrendDelta would render
-                        null for it, but binding to a field that is never
-                        populated implies a comparison the data can't make. */}
-                    {kind === 'queue' && (
-                      <td className="mono" style={{ textAlign: 'right' }}>
-                        {r.p95DurationMs === undefined
-                          ? <span style={{ color: 'var(--text3)' }}>—</span>
-                          : <>{r.p95DurationMs.toFixed(1)}ms</>}
-                      </td>
-                    )}
-                    <td className="mono" style={{ textAlign: 'right' }}>
-                      {r.p99DurationMs.toFixed(1)}ms
-                      {compare && <TrendDelta cur={r.p99DurationMs} prior={r.priorP99Ms} kind="lowerBetter" />}
-                    </td>
+                    {/* v0.9.262 — every latency cell goes through LatencyCell,
+                        which renders '—' for a receiver-discovered row. Those
+                        rows are built from metric_points and carry NO duration
+                        data; the Go fields are plain float64, so they marshal
+                        as 0 and used to print "0.0ms" — a database with no
+                        application traffic reading as instant. The badge next
+                        to the system name said "receiver", but the numbers
+                        contradicted it. Adding P50/P95 would have doubled that
+                        lie, so all four cells are fixed together (SENTEZ #5,
+                        "receiver RED'i —"). */}
+                    <LatencyCell v={r.avgDurationMs} row={r}
+                      delta={compare && <TrendDelta cur={r.avgDurationMs} prior={r.priorAvgMs} kind="lowerBetter" />} />
+                    <LatencyCell v={r.p50DurationMs} row={r}
+                      delta={compare && r.p50DurationMs !== undefined
+                        && <TrendDelta cur={r.p50DurationMs} prior={r.priorP50Ms} kind="lowerBetter" />} />
+                    {/* No TrendDelta on P95 on purpose: neither MessagingInstance
+                        nor DBInstance computes a PriorP95Ms (only P50/P99), so
+                        binding one would imply a comparison the data can't make. */}
+                    <LatencyCell v={r.p95DurationMs} row={r} />
+                    <LatencyCell v={r.p99DurationMs} row={r}
+                      delta={compare && <TrendDelta cur={r.p99DurationMs} prior={r.priorP99Ms} kind="lowerBetter" />} />
                     {/* #1 Trend + #6 health chips. Sparkline plots
                         the call-rate (rps) over the window; it flips
                         red/amber when the trend's CURRENT error rate
@@ -621,6 +607,38 @@ function KindRateCell({ perMin, count, errors, priorPerMin, compare, what }: {
         </span>
       )}
       {compare && <TrendDelta cur={perMin ?? 0} prior={priorPerMin} kind="neutral" />}
+    </td>
+  );
+}
+
+// LatencyCell — one right-aligned monospace duration cell, with the honest
+// no-data case built in (v0.9.262).
+//
+// Two distinct absences collapse to the same '—':
+//   · source === 'receiver' — the row came from discoverReceiverInstances,
+//     which reads metric_points and has no duration data at all. The Go
+//     fields are plain float64, so they marshal as 0 and the cell used to
+//     print "0.0ms": a database with zero application traffic rendering as
+//     the fastest row on the page, directly contradicting its own badge.
+//   · undefined — a warm cached payload from a backend that predates the
+//     field (rolling deploy).
+//
+// Both mean "no measurement", and neither is 0 ms.
+function LatencyCell({ v, row, delta }: {
+  v?: number;
+  row: DepRow;
+  delta?: React.ReactNode;
+}) {
+  const present = latencyPresent(row.source, v);
+  return (
+    <td className="mono" style={{ textAlign: 'right' }}>
+      {present
+        ? <>{v.toFixed(1)}ms</>
+        : <span style={{ color: 'var(--text3)' }}
+                title={row.source === 'receiver'
+                  ? 'Receiver-discovered — no application spans, so no latency measurement'
+                  : 'Not reported by this backend version'}>—</span>}
+      {present && delta}
     </td>
   );
 }

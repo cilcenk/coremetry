@@ -35,6 +35,12 @@ type Filter = {
   severity: number;
   traceId: string;
   spanId: string;
+  // v0.9.287 — was absent, exactly like `cluster` before v0.9.216, and
+  // with the same consequence: "◆ With trace" narrowed the severity
+  // chips and the table but NOT the chart between them. The parent
+  // already spreads the value in; only the type and the request were
+  // missing it.
+  hasTrace?: boolean;
 };
 
 type Series = { name: string; points: { t: number; v: number }[] };
@@ -64,14 +70,16 @@ export function LogsHistogram({ range, filter, onRangeSelect }: {
       search:  filter.search  || undefined,
       severity: filter.severity > 0 ? filter.severity : undefined,
       traceId: filter.traceId || undefined,
+      hasTrace: filter.hasTrace || undefined, // v0.9.287
       groupBy: 'severity',
       bucketSec: pickBucket(range),
     })
       .then(d => setData(d ?? []))
       .catch(() => setData(null));
-  }, [range.from, range.to, filter.service, filter.cluster, filter.env, filter.search, filter.severity, filter.traceId]);
+  }, [range.from, range.to, filter.service, filter.cluster, filter.env, filter.search, filter.severity, filter.traceId, filter.hasTrace]);
 
-  const { times, series, totals } = useMemo(() => collapse(data ?? []), [data]);
+  const { times, series, totals } = useMemo(
+    () => collapse(data ?? [], filter.severity > 0), [data, filter.severity]);
 
   if (data === undefined) return <div style={{ height: 104, marginBottom: 10 }} />;
   if (data === null || times.length === 0) return null;
@@ -89,7 +97,15 @@ export function LogsHistogram({ range, filter, onRangeSelect }: {
         {/* The hand-drawn version's only hint that it was draggable was a
             crosshair cursor. Say it. */}
         <span>
-          {totals.error > 0 && `${fmtPct(totals.ratePct)} hata · `}
+          {totals.ratePct !== null && totals.error > 0 && `${fmtPct(totals.ratePct)} hata · `}
+          {/* v0.9.287 — a severity floor narrows the denominator, so the
+              rate isn't the error rate any more. Say that instead of
+              printing a plausible wrong number (or nothing at all). */}
+          {totals.ratePct === null && filter.severity > 0 && (
+            <span title="Hata oranı tüm loglara göre hesaplanır. Seviye süzgeci açıkken payda zaten süzülmüş oluyor, o yüzden oran gösterilmiyor — süzgeci kaldırınca geri gelir.">
+              seviye süzgeci açık — oran yok ·{' '}
+            </span>
+          )}
           sürükle = zaman seç · çift tık = geri
         </span>
       </div>
@@ -132,11 +148,16 @@ function fmtPct(v: number): string {
 // vocabularies) so every name resolves through severityBandOf — the same
 // classifier the chips and badges use, so the chart can never disagree
 // with the numbers beside it.
-export function collapse(input: Series[]) {
+//
+// severityFiltered (v0.9.287) — the caller applied a severity floor, so
+// the rows we got back are already a subset. The error RATE is
+// undefined against that denominator and is withheld rather than
+// guessed; totals.ratePct goes null for the same reason.
+export function collapse(input: Series[], severityFiltered = false) {
   const empty = {
     times: [] as number[],
     series: [] as TimeChartSeries[],
-    totals: { all: 0, error: 0, ratePct: 0 },
+    totals: { all: 0, error: 0, ratePct: null as number | null },
   };
   if (input.length === 0) return empty;
 
@@ -161,7 +182,19 @@ export function collapse(input: Series[]) {
 
   // Rate is null (a gap, not a zero) in buckets with no logs at all —
   // 0/0 is "we don't know", and drawing it as 0% invents a clean window.
-  const rate: (number | null)[] = all.map((n, i) => (n > 0 ? (err[i] / n) * 100 : null));
+  //
+  // v0.9.287 — and null for the WHOLE series when a severity floor is
+  // active, because then `all` is not the population the rate is about.
+  // err/all was being read off a denominator the filter had already
+  // narrowed: at ERROR the line pinned to a flat 100% (every remaining
+  // log is an error) and the red bars sat exactly on the grey ones; at
+  // WARN it silently became error/(warn+error) — a number that looks
+  // perfectly reasonable and is not the error rate. Clicking ERROR is
+  // this page's most frequent action, so this was the most-seen wrong
+  // number on the surface.
+  const rate: (number | null)[] = severityFiltered
+    ? all.map(() => null)
+    : all.map((n, i) => (n > 0 ? (err[i] / n) * 100 : null));
 
   const sumAll = all.reduce((a, b) => a + b, 0);
   const sumErr = err.reduce((a, b) => a + b, 0);
@@ -185,6 +218,12 @@ export function collapse(input: Series[]) {
   return {
     times: tsNs.map(t => Math.round(t / 1e9)), // ns → unix sec
     series,
-    totals: { all: sumAll, error: sumErr, ratePct: sumAll > 0 ? (sumErr / sumAll) * 100 : 0 },
+    totals: {
+      all: sumAll,
+      error: sumErr,
+      // v0.9.287 — same reasoning as the series: under a severity floor
+      // this ratio is not the error rate, so it is withheld, not shown.
+      ratePct: severityFiltered || sumAll === 0 ? null : (sumErr / sumAll) * 100,
+    },
   };
 }

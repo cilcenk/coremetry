@@ -76,12 +76,71 @@ describe('collapse', () => {
   it('returns an empty, non-throwing shape for no data', () => {
     expect(collapse([]).times).toEqual([]);
     expect(collapse([S('INFO', [])]).times).toEqual([]);
-    expect(collapse([]).totals).toEqual({ all: 0, error: 0, ratePct: 0 });
+    // v0.9.287 — was pinned at ratePct 0. The empty shape is exactly
+    // the 0/0 this file already refuses to draw as 0% ("drawing it as
+    // 0% invents a clean window"); null is that same principle applied
+    // to the whole-window case, and the header renders nothing for it.
+    expect(collapse([]).totals).toEqual({ all: 0, error: 0, ratePct: null });
   });
 
   it('draws total under error under rate — overlay order is load-bearing', () => {
     const r = collapse([S('INFO', [[T0, 10]]), S('ERROR', [[T0, 1]])]);
     expect(r.series.map(s => s.key)).toEqual(['total', 'error', 'rate']);
     expect(r.series[2].axis).toBe('right');
+  });
+});
+
+// v0.9.287 — the error-rate line was err/all, and `all` is whatever the
+// query returned. With a severity floor active the backend has ALREADY
+// dropped everything below it, so that denominator is not the
+// population an error rate is about:
+//   • at ERROR every remaining log is an error → the line pinned to a
+//     flat 100% and the red bars sat exactly on the grey ones;
+//   • at WARN it silently became error/(warn+error) — a number that
+//     looks perfectly reasonable and is not the error rate.
+// Clicking ERROR is this page's most frequent action, so this was the
+// most-seen wrong number on the surface. The rate is now withheld
+// rather than guessed.
+describe('collapse under a severity filter', () => {
+  const rows = [
+    S('WARN',  [[T0, 30], [T1, 20]]),
+    S('ERROR', [[T0, 10], [T1, 5]]),
+  ];
+
+  it('withholds the rate series when the population is pre-filtered', () => {
+    const r = collapse(rows, true);
+    const rate = r.series.find(s => s.key === 'rate')!;
+    expect(rate.data).toEqual([null, null]);
+  });
+
+  it('withholds the summary rate too, so the header cannot print it', () => {
+    expect(collapse(rows, true).totals.ratePct).toBeNull();
+  });
+
+  it('still draws the counts — only the ratio is unknowable', () => {
+    const r = collapse(rows, true);
+    expect(r.series.find(s => s.key === 'total')!.data).toEqual([40, 25]);
+    expect(r.series.find(s => s.key === 'error')!.data).toEqual([10, 5]);
+    expect(r.totals).toMatchObject({ all: 65, error: 15 });
+  });
+
+  it('computes the rate normally when nothing is filtered', () => {
+    const r = collapse(rows, false);
+    const rate = r.series.find(s => s.key === 'rate')!;
+    expect(rate.data).toEqual([25, 20]);           // 10/40, 5/25
+    expect(r.totals.ratePct).toBeCloseTo(15 / 65 * 100);
+  });
+
+  it('defaults to unfiltered so existing callers are unchanged', () => {
+    expect(collapse(rows).totals.ratePct).toBeCloseTo(15 / 65 * 100);
+  });
+
+  it('keeps the empty-bucket gap distinct from the filtered case', () => {
+    // 0/0 was already null (a gap, not a clean window). Both reasons
+    // produce null; neither may produce 0.
+    const r = collapse([S('INFO', [[T0, 0], [T1, 7]])], false);
+    const rate = r.series.find(s => s.key === 'rate')!;
+    expect(rate.data[0]).toBeNull();
+    expect(rate.data[1]).toBe(0);
   });
 });

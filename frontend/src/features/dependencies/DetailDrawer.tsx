@@ -15,6 +15,14 @@ import { MySQLPanel } from './panels/MySQLPanel';
 import { RedisPanel } from './panels/RedisPanel';
 import { WaitLockStrip, isWaitLockEngine } from './panels/WaitLockStrip';
 
+// msOrDash — v0.9.263. A duration the backend didn't send is '—', never
+// "0.0 ms". These fields are optional precisely because a warm cached payload
+// from a pre-v0.9.263 backend lacks them during a rolling deploy, and 0.0 ms
+// would read as "instantaneous" rather than "not reported".
+function msOrDash(v?: number): string {
+  return v === undefined ? '—' : `${v.toFixed(1)} ms`;
+}
+
 // DetailDrawer fetches and renders the per-(service, pod) caller
 // breakdown + top operations for one (system, instance) tuple.
 // Lazy — only fires when the row is expanded; bounded server-
@@ -151,6 +159,13 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
         <Stat label="Err rate"  value={`${data.errorRate.toFixed(2)}%`}
               tone={data.errorRate > 5 ? 'err' : data.errorRate > 0 ? 'warn' : 'ok'} />
         <Stat label="Avg"       value={`${data.avgDurationMs.toFixed(1)} ms`} />
+        {/* v0.9.263 — P50 / P95 come off the SAME db_caller_summary_5m /
+            messaging_caller_summary_5m TDigest merge that already produced
+            P99 (indices 1 and 2 of the 3-wide state), so the drawer answers
+            "typical vs tail" without a second query. '—' rather than 0.0 ms
+            when a warm cached payload predates the fields. */}
+        <Stat label="P50"       value={msOrDash(data.p50DurationMs)} />
+        <Stat label="P95"       value={msOrDash(data.p95DurationMs)} />
         <Stat label="P99"       value={`${data.p99DurationMs.toFixed(1)} ms`} />
       </div>
 
@@ -453,6 +468,10 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
     { id: 'calls',   label: 'Calls', sortValue: r => r.spanCount,     numeric: true, naturalDir: 'desc', width: 90 },
     { id: 'errRate', label: 'Err %', sortValue: r => r.errorRate,     numeric: true, naturalDir: 'desc', width: 90 },
     { id: 'avg',     label: 'Avg',   sortValue: r => r.avgDurationMs, numeric: true, naturalDir: 'desc', width: 84 },
+    // v0.9.263 — P95 on the shared DBCallerBreakdown. BOTH producer queries
+    // (databases callers + messaging callers) project it; if only one did,
+    // the other drawer would render a hard 0.0ms here.
+    { id: 'p95',     label: 'P95',   sortValue: r => r.p95DurationMs ?? 0, numeric: true, naturalDir: 'desc', width: 84 },
     { id: 'p99',     label: 'P99',   sortValue: r => r.p99DurationMs, numeric: true, naturalDir: 'desc', width: 84 },
   ], [hasRole]);
 
@@ -530,6 +549,11 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
                       </span>
                     </td>
                     <td className="num mono">{c.avgDurationMs.toFixed(1)}ms</td>
+                    <td className="num mono">
+                      {c.p95DurationMs === undefined
+                        ? <span style={{ color: 'var(--text3)' }}>—</span>
+                        : <>{c.p95DurationMs.toFixed(1)}ms</>}
+                    </td>
                     <td className="num mono">{c.p99DurationMs.toFixed(1)}ms</td>
                   </tr>
                 );

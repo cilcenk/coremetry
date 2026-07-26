@@ -142,6 +142,49 @@ func quantileForAlias(alias string) (float64, bool) {
 	return 0, false
 }
 
+// DBCallerBreakdown is filled by TWO queries — the /databases caller
+// breakdown and the /messaging one — and its percentile fields are plain
+// float64, not pointers. A producer that forgets a projection therefore does
+// not blank the cell: it marshals 0 and the drawer prints "0.0ms", a
+// plausible wrong number on exactly the panel an SRE opens to find a slow
+// caller. Both queries must project every percentile the struct exposes.
+//
+// v0.9.263 — pinned as an EQUALITY between the number of scan targets and the
+// number of scans, so adding a third producer without the projection fails
+// here rather than in prod.
+func TestSharedCallerBreakdownProducersAllProjectP95(t *testing.T) {
+	src, err := os.ReadFile("dependencies.go")
+	if err != nil {
+		t.Fatalf("read dependencies.go: %v", err)
+	}
+	s := string(src)
+
+	producers := strings.Count(s, "var b DBCallerBreakdown")
+	withP95 := strings.Count(s, "&bAvg, &bP95, &bP99")
+	assigns := strings.Count(s, "b.P95Ms = *bP95")
+	projections := strings.Count(s, "AS p95_ms")
+
+	if producers < 2 {
+		t.Fatalf("expected at least 2 DBCallerBreakdown producers, found %d — "+
+			"the struct or its call sites moved and this guard is no longer aimed at anything", producers)
+	}
+	if withP95 != producers {
+		t.Errorf("%d DBCallerBreakdown producers but only %d scan p95 — the ones that don't\n"+
+			"will render a hard 0.0ms in the drawer (non-pointer float64, so it is a WRONG\n"+
+			"NUMBER, not a blank). Every producer must SELECT and Scan p95_ms.", producers, withP95)
+	}
+	if assigns != producers {
+		t.Errorf("%d producers but %d assign b.P95Ms — a scanned-but-unassigned p95 silently stays 0",
+			producers, assigns)
+	}
+	// Each caller query needs its own projection, and the two detail
+	// aggregates plus the two overview queries have theirs as well.
+	if projections < producers {
+		t.Errorf("only %d `AS p95_ms` projections for %d producers — a Scan without a matching\n"+
+			"SELECT column shifts EVERY later column by one position", projections, producers)
+	}
+}
+
 // The two families must stay distinguishable. If someone "harmonizes"
 // spanmetrics down to 3-wide, every 4-wide read site (endpoints p95 at index 3,
 // p99 at index 4) silently shifts by one — p95 becomes p90, p99 becomes p95.

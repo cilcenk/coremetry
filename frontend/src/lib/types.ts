@@ -320,6 +320,10 @@ export interface DBCallerBreakdown {
   errorCount: number;
   errorRate: number;
   avgDurationMs: number;
+  // v0.9.263 — p95 off the same merge. Optional: BOTH producer queries
+  // (databases + messaging callers) project it, but a warm cached
+  // payload from an older backend will not.
+  p95DurationMs?: number;
   p99DurationMs: number;
 }
 
@@ -354,6 +358,10 @@ export interface DBDetail {
   errorCount: number;
   errorRate: number;
   avgDurationMs: number;
+  // v0.9.263 — same merge as p99, indices 1 and 2. Optional for the
+  // same rolling-deploy reason as MessagingDetail below.
+  p50DurationMs?: number;
+  p95DurationMs?: number;
   p99DurationMs: number;
   callers: DBCallerBreakdown[];
   topOps: DBOpStat[];
@@ -394,6 +402,10 @@ export interface MessagingDetail {
   errorCount: number;
   errorRate: number;
   avgDurationMs: number;
+  // v0.9.263 — same merge as p99. Optional: a pre-v0.9.263 backend
+  // omits them mid-rolling-deploy, and the drawer renders "—".
+  p50DurationMs?: number;
+  p95DurationMs?: number;
   p99DurationMs: number;
   callers: DBCallerBreakdown[];
   topOps: DBOpStat[];

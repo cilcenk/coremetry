@@ -146,6 +146,14 @@ type DBCallerBreakdown struct {
 	ErrorCount uint64  `json:"errorCount"`
 	ErrorRate  float64 `json:"errorRate"`
 	AvgMs      float64 `json:"avgDurationMs"`
+	// v0.9.263 — P95 off the same 3-wide TDigest state (index 2).
+	//
+	// ⚠️ This struct is filled by TWO queries — the /databases caller
+	// breakdown and the /messaging one — and P95Ms is a plain float64, not
+	// a pointer. A path that fails to SELECT it marshals 0 and the drawer
+	// prints "0.0ms": a plausible wrong number, not a visible blank. Both
+	// queries must always project it; a third producer must too.
+	P95Ms      float64 `json:"p95DurationMs"`
 	P99Ms      float64 `json:"p99DurationMs"`
 }
 
@@ -168,6 +176,9 @@ type DBDetail struct {
 	ErrorCount uint64              `json:"errorCount"`
 	ErrorRate  float64             `json:"errorRate"`
 	AvgMs      float64             `json:"avgDurationMs"`
+	// v0.9.263 — same db_caller_summary_5m merge as P99, indices 1 and 2.
+	P50Ms      float64             `json:"p50DurationMs"`
+	P95Ms      float64             `json:"p95DurationMs"`
 	P99Ms      float64             `json:"p99DurationMs"`
 	Callers    []DBCallerBreakdown `json:"callers"`
 	TopOps     []DBOpStat          `json:"topOps"`
@@ -243,23 +254,28 @@ func (s *Store) GetDatabaseDetail(
 	if instance == "" {
 		mvInstance = "unknown"
 	}
-	var avgMs, p99Ms *float64
+	// Scan is POSITIONAL — pointer order must mirror the SELECT exactly.
+	var avgMs, p50Ms, p95Ms, p99Ms *float64
 	row := s.conn.QueryRow(ctx, `
 		SELECT countMerge(span_count_state),
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND db_system = ? AND instance = ?
 		SETTINGS max_execution_time = 8`,
 		from, to, system, mvInstance)
-	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p99Ms); err != nil {
+	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p50Ms, &p95Ms, &p99Ms); err != nil {
 		return nil, err
 	}
 	// v0.5.301 — NaN/Inf scrub before JSON marshal.
 	out.AvgMs = safeF(avgMs)
+	out.P50Ms = safeF(p50Ms)
+	out.P95Ms = safeF(p95Ms)
 	out.P99Ms = safeF(p99Ms)
 	if out.SpanCount > 0 {
 		out.ErrorRate = float64(out.ErrorCount) / float64(out.SpanCount) * 100
@@ -273,6 +289,7 @@ func (s *Store) GetDatabaseDetail(
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
@@ -288,12 +305,15 @@ func (s *Store) GetDatabaseDetail(
 	defer rows.Close()
 	for rows.Next() {
 		var b DBCallerBreakdown
-		var bAvg, bP99 *float64
-		if err := rows.Scan(&b.Service, &b.Pod, &b.SpanCount, &b.ErrorCount, &bAvg, &bP99); err != nil {
+		var bAvg, bP95, bP99 *float64
+		if err := rows.Scan(&b.Service, &b.Pod, &b.SpanCount, &b.ErrorCount, &bAvg, &bP95, &bP99); err != nil {
 			continue
 		}
 		if bAvg != nil {
 			b.AvgMs = *bAvg
+		}
+		if bP95 != nil {
+			b.P95Ms = *bP95
 		}
 		if bP99 != nil {
 			b.P99Ms = *bP99
@@ -364,6 +384,9 @@ type MessagingDetail struct {
 	ErrorCount  uint64              `json:"errorCount"`
 	ErrorRate   float64             `json:"errorRate"`
 	AvgMs       float64             `json:"avgDurationMs"`
+	// v0.9.263 — same merge as P99, indices 1 and 2. No extra scan.
+	P50Ms       float64             `json:"p50DurationMs"`
+	P95Ms       float64             `json:"p95DurationMs"`
 	P99Ms       float64             `json:"p99DurationMs"`
 	Callers     []DBCallerBreakdown `json:"callers"` // same shape — service / pod / RED
 	TopOps      []DBOpStat          `json:"topOps"`  // statement = span name (send / receive / process)
@@ -425,23 +448,28 @@ func (s *Store) GetMessagingDetail(
 	// MV materialises cluster + destination at INSERT time so
 	// the read path can use plain string equality. cluster
 	// "(default)" matches the implicit-cluster bucket.
-	var avgMs, p99Ms *float64
+	// Scan is POSITIONAL — pointer order must mirror the SELECT exactly.
+	var avgMs, p50Ms, p95Ms, p99Ms *float64
 	row := s.conn.QueryRow(ctx, `
 		SELECT countMerge(span_count_state),
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND msg_system = ? AND cluster = ? AND destination = ?
 		SETTINGS max_execution_time = 8`,
 		from, to, system, cluster, destination)
-	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p99Ms); err != nil {
+	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p50Ms, &p95Ms, &p99Ms); err != nil {
 		return nil, err
 	}
 	// v0.5.301 — NaN/Inf scrub before JSON marshal.
 	out.AvgMs = safeF(avgMs)
+	out.P50Ms = safeF(p50Ms)
+	out.P95Ms = safeF(p95Ms)
 	out.P99Ms = safeF(p99Ms)
 	if out.SpanCount > 0 {
 		out.ErrorRate = float64(out.ErrorCount) / float64(out.SpanCount) * 100
@@ -458,6 +486,7 @@ func (s *Store) GetMessagingDetail(
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
@@ -473,12 +502,15 @@ func (s *Store) GetMessagingDetail(
 	defer rows.Close()
 	for rows.Next() {
 		var b DBCallerBreakdown
-		var bAvg, bP99 *float64
-		if err := rows.Scan(&b.Service, &b.Pod, &b.Role, &b.SpanCount, &b.ErrorCount, &bAvg, &bP99); err != nil {
+		var bAvg, bP95, bP99 *float64
+		if err := rows.Scan(&b.Service, &b.Pod, &b.Role, &b.SpanCount, &b.ErrorCount, &bAvg, &bP95, &bP99); err != nil {
 			continue
 		}
 		if bAvg != nil {
 			b.AvgMs = *bAvg
+		}
+		if bP95 != nil {
+			b.P95Ms = *bP95
 		}
 		if bP99 != nil {
 			b.P99Ms = *bP99

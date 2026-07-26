@@ -405,15 +405,37 @@ func logsSearchPayload(page *logstore.Page) map[string]interface{} {
 // Cached 60s — mappings rarely change and an open /logs tab
 // re-fetches on focus.
 func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
+	// v0.9.292 — prefer the bounded form, which reports how many paths
+	// the mapping really had. A silently clipped list would read as
+	// "these are the fields"; the panel says "first N of M" instead.
+	type boundedFielder interface {
+		ListFieldsBounded(ctx context.Context) (logstore.ListFieldsResult, error)
+	}
 	type fielder interface {
 		ListFields(ctx context.Context) ([]string, error)
 	}
 	s.serveCached(w, r, "logs-fields", 60*time.Second, func(ctx context.Context) (any, error) {
 		// Unwrap (v0.8.232): the Switchable wrapper doesn't forward
 		// optional capabilities — assert on the live inner store.
-		f, ok := logstore.Unwrap(s.logs).(fielder)
+		inner := logstore.Unwrap(s.logs)
+		if bf, ok := inner.(boundedFielder); ok {
+			res, err := bf.ListFieldsBounded(ctx)
+			if err != nil {
+				log.Printf("[logs] field discovery failed (backend=%s): %v", s.logs.Backend(), err)
+				return nil, err
+			}
+			if res.Fields == nil {
+				res.Fields = []string{}
+			}
+			return map[string]any{
+				"fields":  res.Fields,
+				"total":   res.Total,
+				"backend": s.logs.Backend(),
+			}, nil
+		}
+		f, ok := inner.(fielder)
 		if !ok {
-			return map[string]any{"fields": []string{}, "backend": s.logs.Backend()}, nil
+			return map[string]any{"fields": []string{}, "total": 0, "backend": s.logs.Backend()}, nil
 		}
 		fields, err := f.ListFields(ctx)
 		if err != nil {
@@ -423,7 +445,7 @@ func (s *Server) getLogsFields(w http.ResponseWriter, r *http.Request) {
 		if fields == nil {
 			fields = []string{}
 		}
-		return map[string]any{"fields": fields, "backend": s.logs.Backend()}, nil
+		return map[string]any{"fields": fields, "total": len(fields), "backend": s.logs.Backend()}, nil
 	})
 }
 

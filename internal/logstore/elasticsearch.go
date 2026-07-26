@@ -493,17 +493,56 @@ func (s *ESStore) Backend() string { return "elasticsearch" }
 //
 // Results are alphabetised; an empty cache for ~60s tolerates
 // the typical fleet of operators loading /logs together.
+// listFieldsMax caps how many field paths one answer may carry.
+//
+// v0.9.292 — there was no cap at all, and the panel rendered the list
+// flat. With dynamic mapping at 10B docs/day a four-digit field count is
+// routine, so this was the one place on /logs that violated the
+// >100-rows rule (the log table itself does it correctly). The cap is
+// generous: the panel is a discovery aid, and past a few hundred paths
+// an operator searches rather than scrolls.
+const listFieldsMax = 500
+
+// ListFieldsResult carries the truncation honestly. A silently clipped
+// list would read as "these are the fields", which is the same
+// wrong-because-unstated class as the ES honesty envelope (v0.9.288).
+type ListFieldsResult struct {
+	Fields []string `json:"fields"`
+	// Total — how many distinct paths the mapping actually had, before
+	// the cap. Equal to len(Fields) when nothing was dropped.
+	Total int `json:"total"`
+}
+
 func (s *ESStore) ListFields(ctx context.Context) ([]string, error) {
-	req := esapi.IndicesGetMappingRequest{
-		Index: []string{s.cfg.Index},
-	}
-	res, err := req.Do(ctx, s.cli)
+	res, err := s.ListFieldsBounded(ctx)
 	if err != nil {
 		return nil, err
 	}
+	return res.Fields, nil
+}
+
+// ListFieldsBounded is ListFields with the truncation reported.
+//
+// v0.9.292 — the mapping GET also stops going to the BARE index
+// pattern. On a data-stream cluster that fetched every backing index's
+// mapping in retention to answer a question about what fields exist
+// today; queryIndices narrows it to the recent window the same way
+// every other read narrows. Older indices can carry paths that no
+// longer appear, but this is a discovery hint for a filter box, not an
+// inventory — the same reasoning that bounds field-values (v0.9.291).
+func (s *ESStore) ListFieldsBounded(ctx context.Context) (ListFieldsResult, error) {
+	to := time.Now()
+	indices := s.queryIndices(ctx, Filter{From: to.Add(-24 * time.Hour), To: to})
+	req := esapi.IndicesGetMappingRequest{
+		Index: indices,
+	}
+	res, err := req.Do(ctx, s.cli)
+	if err != nil {
+		return ListFieldsResult{}, err
+	}
 	defer res.Body.Close()
 	if res.IsError() {
-		return nil, fmt.Errorf("get mapping: %s", res.String())
+		return ListFieldsResult{}, fmt.Errorf("get mapping: %s", res.String())
 	}
 	var body map[string]struct {
 		Mappings struct {
@@ -511,7 +550,7 @@ func (s *ESStore) ListFields(ctx context.Context) ([]string, error) {
 		} `json:"mappings"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
-		return nil, err
+		return ListFieldsResult{}, err
 	}
 	seen := map[string]struct{}{}
 	for _, idx := range body {
@@ -522,7 +561,13 @@ func (s *ESStore) ListFields(ctx context.Context) ([]string, error) {
 		out = append(out, k)
 	}
 	sortStrings(out)
-	return out, nil
+	// Truncate AFTER sorting so the cap is a stable prefix of the same
+	// alphabetical list every time, not an arbitrary map-order sample.
+	total := len(out)
+	if len(out) > listFieldsMax {
+		out = out[:listFieldsMax]
+	}
+	return ListFieldsResult{Fields: out, Total: total}, nil
 }
 
 // EQLSearch runs ES Event Query Language sequence detection.

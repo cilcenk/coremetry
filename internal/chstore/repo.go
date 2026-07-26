@@ -1871,6 +1871,39 @@ func buildGetTracesWhere(f TraceFilter) whereClause {
 // memory-constrained nodes; nodes with ample RAM rarely reach the threshold.
 const tracesSpillSettings = "max_bytes_before_external_group_by = 536870912, max_bytes_before_external_sort = 536870912"
 
+// traceCountSettings builds the SETTINGS clause for a trace-count query.
+//
+// v0.9.284 — every count branch now spills at the same threshold as the
+// LIST query it is counting. The "approx" branch used to carry only
+// max_execution_time, so it hit code 241 EARLIER than the list whose
+// results it was counting: the operator saw a memory error for a page
+// that would have rendered. useHLL swaps count(DISTINCT) for the
+// HyperLogLog implementation on wide windows (~1% margin); it is
+// meaningless for the LIMIT-wrapped approx shape, which has no DISTINCT.
+// countModeAllowsMV reports whether the requested count mode leaves the
+// trace_summary_5m fast path open. Only the modes needing NO window-wide
+// aggregation qualify: "skip" and the empty default. "approx" and
+// "exact" both wrap a `GROUP BY trace_id` over raw spans, so serving the
+// LIST from the MV would save nothing — the expensive query still runs
+// beside it.
+//
+// v0.9.284 — /explore pinned "approx" on every traces search purely to
+// render a "of ~M" footer label, and that one field held this gate shut.
+// The same unfiltered query /traces answered from the MV, /explore
+// answered from raw spans. Named + tested so the gate cannot close
+// again as a side effect of a UI label.
+func countModeAllowsMV(mode string) bool {
+	return mode == "skip" || mode == ""
+}
+
+func traceCountSettings(useHLL bool) string {
+	s := "SETTINGS max_execution_time = 25, "
+	if useHLL {
+		s += "count_distinct_implementation = 'uniq', "
+	}
+	return s + tracesSpillSettings
+}
+
 // searchHaystack is the per-span text the free-text trace search scans:
 // operation name + HTTP method + route + every span-attr value, space-joined
 // into one string so the operator's words match whichever field carries them.
@@ -1951,7 +1984,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		!f.FilterRoot.hasPredicate() &&
 		len(f.RequireServices) == 0 &&
 		len(f.TraceIDs) == 0 &&
-		(f.CountMode == "skip" || f.CountMode == "") {
+		countModeAllowsMV(f.CountMode) {
 		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
 		if err == nil {
 			if len(f.ExtraAttrs) > 0 {
@@ -2060,8 +2093,8 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			cap = 100
 		}
 		approxSQL := fmt.Sprintf(
-			"SELECT count() FROM (SELECT trace_id FROM spans %s GROUP BY trace_id%s LIMIT %d) SETTINGS max_execution_time = 25",
-			wc.sql(), havingSQL, cap,
+			"SELECT count() FROM (SELECT trace_id FROM spans %s GROUP BY trace_id%s LIMIT %d) %s",
+			wc.sql(), havingSQL, cap, traceCountSettings(false),
 		)
 		countArgs := append([]any{}, wc.args...)
 		countArgs = append(countArgs, havingArgs...)
@@ -2082,12 +2115,8 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// as "~12K" vs "exactly 12,547". The 24h cutoff keeps short-
 		// window operator-facing counts exactly precise where the
 		// extra cost is negligible.
-		var settings string
-		if !f.From.IsZero() && !f.To.IsZero() && f.To.Sub(f.From) > 24*time.Hour {
-			settings = "SETTINGS max_execution_time = 25, count_distinct_implementation = 'uniq', " + tracesSpillSettings
-		} else {
-			settings = "SETTINGS max_execution_time = 25, " + tracesSpillSettings
-		}
+		settings := traceCountSettings(
+			!f.From.IsZero() && !f.To.IsZero() && f.To.Sub(f.From) > 24*time.Hour)
 		var countSQL string
 		var countArgs []any
 		if havingSQL != "" {

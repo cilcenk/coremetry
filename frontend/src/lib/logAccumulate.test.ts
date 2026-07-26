@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { accumulatePage } from './logAccumulate';
+import { accumulatePage, narrowLoaded } from './logAccumulate';
 
 // v0.9.292 — "Load more" accumulated without any ceiling: twenty clicks
 // meant two thousand live rows, and while content-visibility keeps
@@ -90,5 +90,59 @@ describe('accumulatePage', () => {
     expect(total).toBe(2000);
     // And what's held is the tail, i.e. what the operator paged to.
     expect(acc[acc.length - 1].id).toBe(3999);
+  });
+});
+
+// v0.9.294 — "narrow within results" filters the rows ALREADY in the
+// page instead of re-querying. Every narrowing used to cost a full
+// round trip to Elasticsearch, and at 10B docs/day the cheapest query
+// is the one you don't send.
+//
+// The danger is not the filtering, it is the reading: a local subset
+// presented as a window-wide answer would be the worst kind of wrong
+// on this surface. The UI labels it; these pin the matching itself.
+describe('narrowLoaded', () => {
+  const sample = [
+    { id: 1, body: 'connection Timeout on upstream', serviceName: 'checkout', severityText: 'ERROR', traceId: 'abc123' },
+    { id: 2, body: 'user logged in', serviceName: 'auth', severityText: 'INFO', traceId: 'def456' },
+    { id: 3, body: 'retrying', serviceName: 'timeout-worker', severityText: 'WARN', traceId: 'aaa999' },
+  ];
+
+  it('returns everything for an empty needle', () => {
+    expect(narrowLoaded(sample, '')).toHaveLength(3);
+    expect(narrowLoaded(sample, '   ')).toHaveLength(3);
+  });
+
+  it('matches the body case-insensitively', () => {
+    expect(narrowLoaded(sample, 'timeout').map(r => r.id)).toEqual([1, 3]);
+    expect(narrowLoaded(sample, 'TIMEOUT').map(r => r.id)).toEqual([1, 3]);
+  });
+
+  it('matches the service name', () => {
+    expect(narrowLoaded(sample, 'checkout').map(r => r.id)).toEqual([1]);
+  });
+
+  it('matches severity and trace id — the other columns on screen', () => {
+    expect(narrowLoaded(sample, 'warn').map(r => r.id)).toEqual([3]);
+    expect(narrowLoaded(sample, 'def4').map(r => r.id)).toEqual([2]);
+  });
+
+  it('returns an empty list rather than falling back to everything', () => {
+    // Silently showing all rows when nothing matches would read as
+    // "your filter found everything".
+    expect(narrowLoaded(sample, 'nothing-matches-this')).toEqual([]);
+  });
+
+  it('tolerates rows with missing fields', () => {
+    const sparse = [{ id: 9 }, { id: 10, body: 'hit' }];
+    expect(narrowLoaded(sparse, 'hit').map(r => r.id)).toEqual([10]);
+  });
+
+  it('preserves order — the buffer is newest-first and must stay so', () => {
+    expect(narrowLoaded(sample, 'e').map(r => r.id)).toEqual(
+      sample.filter(r =>
+        r.body.toLowerCase().includes('e') || r.serviceName.toLowerCase().includes('e') ||
+        r.severityText.toLowerCase().includes('e') || r.traceId.toLowerCase().includes('e'),
+      ).map(r => r.id));
   });
 });

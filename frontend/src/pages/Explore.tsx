@@ -154,6 +154,27 @@ function ExploreInner() {
   const [mode, setMode] = useState<'builder' | 'advanced'>(
     () => (searchParams.get('mode') === 'advanced' ? 'advanced' : 'builder'));
   const [dsl, setDsl] = useState(() => searchParams.get('dsl') ?? '');
+  // v0.9.270 — debounced copy, mirroring the builder's own 300ms above.
+  //
+  // The textarea fed `dsl` STRAIGHT into the fetch effect's dep list, so every
+  // keystroke fired what this app's own handler calls "the heaviest uncached
+  // read" (internal/api/api.go:3429). Server-side caching cannot absorb it:
+  // the key is "traces:" + r.URL.RawQuery (api.go:3442), so each prefix is a
+  // distinct key — a guaranteed MISS, and singleflight has nothing to
+  // deduplicate. Worse, ANY filter disqualifies the trace_summary_5m fast
+  // path (repo.go:1949 requires len(f.Filters) == 0), so each of those misses
+  // is a raw GROUP BY trace_id.
+  //
+  // The damage is not "one wasted query per character" — it is filling the
+  // ClickHouse read pool while an operator types, which is what starves the
+  // hot endpoints that share it. The builder was given this exact treatment
+  // when it was written; the advanced console predates it (v0.8.113) and was
+  // never covered.
+  const [dslDebounced, setDslDebounced] = useState(dsl);
+  useEffect(() => {
+    const t = window.setTimeout(() => setDslDebounced(dsl), 300);
+    return () => clearTimeout(t);
+  }, [dsl]);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [repeatGroupBy, setRepeatGroupBy] = useState<string[]>(
     () => (searchParams.get('groupBy') ?? '').split(',').filter(Boolean));
@@ -210,7 +231,7 @@ function ExploreInner() {
       queryEntries = [
         ['result',  resultMode],
         ['filters', mode === 'builder' ? encodeFilters(filters) : ''],
-        ['dsl',     mode === 'advanced' ? dsl : ''],
+        ['dsl',     mode === 'advanced' ? dslDebounced : ''],
         ['mode',    mode === 'advanced' ? 'advanced' : ''],
         ['limit',   resultMode === 'traces' && traceLimit !== 50 ? traceLimit : ''],
         ['cols',    resultMode === 'traces' ? extraCols.join(',') : ''],
@@ -236,13 +257,17 @@ function ExploreInner() {
         ? `${source} explorer`
         : resultMode === 'metric'
           ? builderDesc(debounced)
-          : legacyHistoryDesc({ resultMode, mode, dsl, filters, repeatMin, repeatGroupBy });
+          // dslDebounced, not dsl: the history entry must describe the query
+          // that actually ran, and this effect now wakes on the debounced
+          // value. Reading the live one would label the entry with a keystroke
+          // that was never sent.
+          : legacyHistoryDesc({ resultMode, mode, dsl: dslDebounced, filters, repeatMin, repeatGroupBy });
       saveHistory(desc, next);
     }
     // searchParams intentionally omitted: it's only read for the
     // metrics/logs passthrough whose values never change while mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, resultMode, debounced, filters, dsl, mode, range, traceLimit, extraCols, repeatMin, repeatGroupBy, legacyViz, navigate, saveHistory]);
+  }, [source, resultMode, debounced, filters, dslDebounced, mode, range, traceLimit, extraCols, repeatMin, repeatGroupBy, legacyViz, navigate, saveHistory]);
 
   // Service options for the traces/repeats filter suggestions. Gated on
   // hasParams (entry screen fires no workspace fetches — Phase-1 finding).
@@ -314,7 +339,7 @@ function ExploreInner() {
     let cancelled = false; // v0.8.300 — stale-overwrite guard
     const { from, to } = timeRangeToNs(range);
     const filterArg = mode === 'builder' && filters.length ? JSON.stringify(filters) : undefined;
-    const dslArg    = mode === 'advanced' && dsl.trim() ? dsl : undefined;
+    const dslArg    = mode === 'advanced' && dslDebounced.trim() ? dslDebounced : undefined;
 
     if (resultMode === 'traces') {
       setTraces(undefined);
@@ -350,7 +375,7 @@ function ExploreInner() {
         });
     }
     return () => { cancelled = true; };
-  }, [resultMode, range, filters, dsl, mode, traceLimit, extraCols, repeatMin, repeatGroupBy, hasParams, source]);
+  }, [resultMode, range, filters, dslDebounced, mode, traceLimit, extraCols, repeatMin, repeatGroupBy, hasParams, source]);
 
   // ── Builder mutators ──────────────────────────────────────────────────────
   const setQuery = (i: number, q: BuilderState['queries'][number]) =>
@@ -365,6 +390,9 @@ function ExploreInner() {
   // Result-mode switch — entering traces/repeats from the builder carries
   // query A's narrowing along when the legacy console is still empty.
   const switchResultMode = (m: ResultMode) => {
+    // Deliberately the LIVE dsl, not the debounced copy: this is an event
+    // handler, and "is the console empty?" must answer for what the operator
+    // has typed right now, not for what has been sent yet.
     if (m !== 'metric' && resultMode === 'metric' && filters.length === 0 && !dsl.trim()) {
       const a = builder.queries.find(produces);
       if (a) {

@@ -81,6 +81,25 @@ func retryPlainOnPITDenial(usePIT bool, status int) bool {
 // reclaimed quickly at billion-doc scale.
 const esPITKeepAlive = "2m"
 
+// esRetainPIT decides whether a completed search hands its
+// Point-in-Time to the caller (as a NextCursor) instead of releasing it
+// immediately.
+//
+// Two conditions, and BOTH matter. A full page means there may be more
+// to fetch — but at 10B docs/day the first page is always full, so on
+// its own it says nothing about whether anyone will ask. The caller's
+// declared intent (WantCursor) is what makes retention worth two
+// minutes of pinned segment readers.
+//
+// v0.9.286 — retention used to hinge on fullness alone, so every
+// read-and-abandon search leaked a PIT, and the Drain puller leaked one
+// per tick, forever. Leaked PITs are named in this file as an amplifier
+// of the v0.8.3 ES incident; the error paths were fixed then, this one
+// was not.
+func esRetainPIT(got, limit int, wantCursor bool) bool {
+	return wantCursor && got == limit
+}
+
 // openPIT opens a Point-in-Time over the log index. Paging within a PIT
 // is what lets the `_shard_doc` tiebreak give a stable, per-doc-unique
 // total order for search_after (plain `_doc` shifts on refresh/merge and
@@ -1420,8 +1439,15 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// no cursor (the UI stops paging). Encodes the PIT id + the last hit's
 	// sort values for the next search_after. On the last page in PIT mode,
 	// release the PIT now rather than waiting for keep_alive to expire.
+	// v0.9.286 — a full page is NOT evidence the caller will page. At
+	// 10B docs/day the first page is always full, so this branch used to
+	// retain a PIT for every read-and-abandon search (and for the Drain
+	// puller's 5-minute tick, which discards the cursor outright). The
+	// caller now declares intent; without it the deferred close releases
+	// the PIT immediately instead of pinning segment readers for the
+	// 2m keep_alive.
 	next := ""
-	if len(out) == limit {
+	if esRetainPIT(len(out), limit, f.WantCursor) {
 		next = encodeESCursor(pitID, lastSort)
 		// Handed to the caller — the next search_after page needs this
 		// PIT alive, so don't let the deferred close fire (v0.8.3).

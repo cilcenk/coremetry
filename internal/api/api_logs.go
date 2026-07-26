@@ -221,9 +221,14 @@ func logsTimeseriesKey(f logstore.Filter, fromRaw, toRaw string, bucketSec int, 
 // cross-poison the unfiltered one inside the 15s TTL (the v0.5.187
 // class; pinned by logs_env_key_test.go).
 func logsSearchKey(f logstore.Filter, fromRaw, toRaw string) string {
-	return fmt.Sprintf("logs:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:lim=%d:off=%d:cur=%s:q=%s",
+	// v0.9.286 — WantCursor is part of the key. It changes the RESPONSE
+	// (nextCursor present or empty), so sharing an entry across the two
+	// would let a drawer's cursorless payload be served to the paging
+	// list, which then cannot advance. Same hash-ALL-inputs rule that
+	// v0.5.187 was written for.
+	return fmt.Sprintf("logs:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:lim=%d:off=%d:cur=%s:pg=%t:q=%s",
 		f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID, f.HasTrace,
-		fromRaw, toRaw, f.Limit, f.Offset, f.Cursor, f.Search)
+		fromRaw, toRaw, f.Limit, f.Offset, f.Cursor, f.WantCursor, f.Search)
 }
 
 func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
@@ -245,6 +250,14 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 		// v0.7.22 (SAFE-CORE) — opaque keyset cursor. The UI passes
 		// back the prior response's nextCursor; backend-owned format.
 		Cursor: q.Get("after"),
+		// v0.9.286 — paging INTENT, declared by the caller. Only the
+		// interactive /logs list pages (useLogs sends paging=1); the
+		// trace drawers, the service Logs tab and the span detail read
+		// one page and drop the cursor. Without the declaration the ES
+		// backend retained a Point-in-Time for all of them. `after`
+		// being present is intent by itself — a client already on page
+		// 2 will want page 3.
+		WantCursor: parseBoolParam(q.Get("paging")) || q.Get("after") != "",
 	}
 	// v0.8.x — cache the static log search (15s). This was the ONLY ES-backed
 	// read still hitting Elasticsearch uncached on every request; the live edge

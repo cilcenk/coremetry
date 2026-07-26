@@ -64,6 +64,24 @@ type Filter struct {
 	HasTrace    bool
 	Limit       int
 	Offset      int
+	// WantCursor (v0.9.286) — the caller DECLARES it intends to page.
+	//
+	// The ES backend opens a Point-in-Time per uncached search and keeps
+	// it alive (2m) whenever it hands back a NextCursor, so the next
+	// search_after lands on a stable snapshot. It decided that purely
+	// from "was the page full?", which is true for essentially every
+	// first page at scale — so every ordinary read-and-abandon search
+	// pinned segment readers for two minutes, and the Drain puller did
+	// it from a timer every 5 minutes. Leaked PITs are named in
+	// elasticsearch.go as an amplifier of the v0.8.3 ES incident; the
+	// error paths were fixed then, the never-paged path was not.
+	//
+	// Zero value = no cursor, no PIT retained. Set it ONLY if you will
+	// actually use Page.NextCursor — a caller that discards the cursor
+	// and sets this true is asking the cluster to hold segments for
+	// nothing. Both backends honour it, so the contract does not differ
+	// by backend.
+	WantCursor  bool
 	// Cursor (v0.7.22, SAFE-CORE) — opaque keyset paging token.
 	// When non-empty the backend decodes its OWN format and pages
 	// AFTER the encoded position instead of using Offset. The API

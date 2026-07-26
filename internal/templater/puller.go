@@ -104,6 +104,12 @@ func (p *Puller) tick(ctx context.Context) {
 		From:  now.Add(-p.interval),
 		To:    now,
 		Limit: p.sample,
+		// v0.9.286 — stated, not inherited: this sample never pages,
+		// it drops page.NextCursor on the floor. It is also the worst
+		// place to retain a Point-in-Time — a timer firing every
+		// `interval` with a full 1000-row page, i.e. a leaked PIT on
+		// every tick for as long as the process lives.
+		WantCursor: false,
 	})
 	if err != nil {
 		log.Printf("[templater] pull: %v", err)

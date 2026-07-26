@@ -25,6 +25,9 @@ type SystemStats struct {
 	// meaningful against the second one, and until now the operator had
 	// to ssh to the node to find it.
 	Disks     []DiskStat     `json:"disks"`
+	// Servers (v0.9.290, operator ask) — live memory/CPU pressure per
+	// ClickHouse node, alongside the disk capacity above.
+	Servers   []ServerStat   `json:"servers"`
 	History   []DayStat      `json:"history"`
 	Ingest    IngestRates    `json:"ingest"`
 	Drops     IngestDrops    `json:"drops"`
@@ -130,6 +133,73 @@ type SystemSnapshot struct {
 	Services24h     uint64 `json:"services24h"`
 	Operations24h   uint64 `json:"operations24h"`
 	TotalDiskBytes  uint64 `json:"totalDiskBytes"`
+}
+
+// ServerStat is one ClickHouse node's live resource utilisation
+// (v0.9.290, operator ask: "can I see the ClickHouse server's memory
+// and CPU utilisation too"). Companion to DiskStat — same panel, same
+// question one layer up: not "is the data too big" but "is the node
+// under pressure right now".
+//
+// Everything here comes from system.asynchronous_metrics /
+// system.metrics / system.server_settings, which are in-memory
+// counters. The read is instant and independent of data volume.
+type ServerStat struct {
+	Host string `json:"host,omitempty"`
+
+	// ── Memory ──────────────────────────────────────────────────
+	OSMemoryTotal     uint64 `json:"osMemoryTotal"`
+	OSMemoryAvailable uint64 `json:"osMemoryAvailable"`
+	// MemoryResident — the ClickHouse process's RSS, i.e. its share of
+	// the node. Compare against OSMemoryTotal to see whether CH is the
+	// pressure or merely living next to it.
+	MemoryResident uint64 `json:"memoryResident"`
+	// MemoryTracking — what CH's own allocator accounting believes is
+	// in use. Diverges from RSS by cached/freed-but-unreturned pages.
+	MemoryTracking uint64 `json:"memoryTracking"`
+	// MaxServerMemory / MaxQueryMemory — the two ceilings that produce
+	// a code-241 "Query memory limit exceeded". Surfaced because that
+	// error names a number the operator otherwise has to go find on the
+	// node; 0 = unlimited.
+	MaxServerMemory uint64 `json:"maxServerMemory"`
+	MaxQueryMemory  uint64 `json:"maxQueryMemory"`
+
+	// ── CPU ─────────────────────────────────────────────────────
+	// Normalised per core, so 1.0 = every core saturated regardless of
+	// core count. Rendered as a percentage.
+	CPUUser   float64 `json:"cpuUser"`
+	CPUSystem float64 `json:"cpuSystem"`
+	CPUIOWait float64 `json:"cpuIoWait"`
+	LoadAvg1  float64 `json:"loadAvg1"`
+
+	// ── Activity ────────────────────────────────────────────────
+	RunningQueries uint64  `json:"runningQueries"`
+	RunningMerges  uint64  `json:"runningMerges"`
+	UptimeSec      float64 `json:"uptimeSec"`
+}
+
+// MemoryUsedPct is how much of the NODE's memory is in use (not just
+// ClickHouse's share). Unknown capacity answers 0 rather than dividing
+// by zero — same rule as DiskStat.UsedPct.
+func (s ServerStat) MemoryUsedPct() float64 {
+	if s.OSMemoryTotal == 0 || s.OSMemoryAvailable > s.OSMemoryTotal {
+		return 0
+	}
+	return float64(s.OSMemoryTotal-s.OSMemoryAvailable) / float64(s.OSMemoryTotal) * 100
+}
+
+// CPUBusyPct sums the non-idle normalised CPU time. Clamped to 100:
+// the three counters are sampled independently and can momentarily sum
+// past 1.0, which must not overflow a gauge.
+func (s ServerStat) CPUBusyPct() float64 {
+	pct := (s.CPUUser + s.CPUSystem + s.CPUIOWait) * 100
+	if pct < 0 {
+		return 0
+	}
+	if pct > 100 {
+		return 100
+	}
+	return pct
 }
 
 // DiskStat is one volume ClickHouse can write to, as reported by
@@ -315,6 +385,16 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 	} else {
 		log.Printf("[sysstats] disks query: %v — surfacing dashboard without disk capacity", derr)
 	}
+
+	// ── Server utilisation (v0.9.290, operator ask) ─────────────
+	// Three system tables, one round trip, folded to (host, key, value)
+	// so adding a counter later is a one-line change instead of a new
+	// query. All three are in-memory counters — instant at any volume,
+	// and unaffected by how much data the cluster holds.
+	//
+	// Same LOCAL-table + cluster() treatment as the two blocks above.
+	// Failure is non-fatal: the panel hides, /admin/stats still renders.
+	out.Servers = s.collectServerStats(ctx)
 
 	// ── Span / error counts via the 5m aggregate MV ─────────────
 	// countMerge over AggregateFunction state is cheap; partition

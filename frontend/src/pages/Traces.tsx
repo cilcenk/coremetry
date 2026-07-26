@@ -1124,6 +1124,15 @@ function TracesPageInner() {
                   {/* v0.8.369 — Dynatrace-style honesty hint: non-time
                       sorts rank within the newest-N slice, not the
                       whole window. */}
+                  {/* v0.9.297 — the backend could not afford the window
+                      the operator picked and halved it. Loud, not a
+                      footnote: these rows answer a DIFFERENT question. */}
+                  {data?.narrowedFromNs ? (
+                    <span className="badge b-err" style={{ marginLeft: 6 }}
+                      title={'This query ran out of memory or time over the range you selected, so the backend answered over a shorter, more recent window instead of failing.\nThe list below is NOT your full range — narrow the range or add a filter for an answer that covers it.'}>
+                      ⚠ shortened to {new Date(data.narrowedFromNs / 1e6).toLocaleString()} →
+                    </span>
+                  ) : null}
                   {data?.rankedWithinRecent ? (
                     <span title={`For speed, ${sort} ranks the newest ${data.rankedWithinRecent.toLocaleString()} traces in the window — an older trace beyond that slice won't appear. Sort by time for the full window.`}
                       style={{ marginLeft: 6, color: 'var(--text3)' }}>

@@ -1,6 +1,9 @@
 package chstore
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 // v0.9.296 — operator-reported, /traces?range=7d&sort=duration returned
 // HTTP 500 (CH code 241). The diagnosis found that Stage 2's time floor
@@ -118,5 +121,71 @@ func TestOldExhaustionExpressionMisreadsTheCommonCase(t *testing.T) {
 	}
 	if old == fixed {
 		t.Fatal("fixed expression is indistinguishable from the broken one")
+	}
+}
+
+// v0.9.297 — a Stage 2 that runs out of resources now halves its window
+// and retries instead of handing the operator an HTTP 500 with a
+// ClickHouse stack trace where a trace list should be.
+//
+// The classification has to come first: a query that asked for more
+// than it was granted can succeed unchanged over a smaller window; a
+// malformed one cannot, and retrying it just burns the budget twice.
+func TestResourceExhaustionClassification(t *testing.T) {
+	retryable := []string{
+		"stage2: code: 241, message: Memory limit exceeded: would use 4.15 GiB, maximum: 3.73 GiB",
+		"code: 159, message: Timeout exceeded: elapsed 12.1 seconds",
+		"code: 394, message: Query was cancelled",
+		"code: 202, message: Too many simultaneous queries",
+		"read tcp 10.0.0.1:9000: i/o timeout",
+		"context deadline exceeded",
+		"MEMORY LIMIT EXCEEDED", // matching is case-insensitive
+	}
+	for _, msg := range retryable {
+		if !isResourceExhaustion(errString(msg)) {
+			t.Errorf("must retry on a smaller window: %q", msg)
+		}
+	}
+
+	// These describe a BROKEN query. A smaller window changes nothing,
+	// so retrying only doubles the cost of the same failure.
+	notRetryable := []string{
+		"code: 47, message: Unknown identifier: dur_ms",
+		"code: 62, message: Syntax error at position 262126",
+		"code: 60, message: Table coremetry.trace_summary_5m doesn't exist",
+		"code: 516, message: Authentication failed",
+		"",
+	}
+	for _, msg := range notRetryable {
+		if msg == "" {
+			if isResourceExhaustion(nil) {
+				t.Error("a nil error is not exhaustion")
+			}
+			continue
+		}
+		if isResourceExhaustion(errString(msg)) {
+			t.Errorf("must NOT retry — a smaller window cannot fix it: %q", msg)
+		}
+	}
+}
+
+// The halving must converge, and must stop before the window is too
+// small to hold anything. Two halvings take a 7-day ask to ~1.75 days,
+// which is still a useful answer; a third would be guessing.
+func TestWindowHalvingConverges(t *testing.T) {
+	span := 7 * 24 * time.Hour
+	for i := 0; i < traceStage2NarrowMaxRetry; i++ {
+		if span <= traceStage2NarrowFloor {
+			t.Fatalf("halving stopped early at %v — a 7-day ask must survive %d retries", span, traceStage2NarrowMaxRetry)
+		}
+		span /= 2
+	}
+	if span < 24*time.Hour {
+		t.Fatalf("after %d halvings a 7-day ask is down to %v — too little to be a useful answer", traceStage2NarrowMaxRetry, span)
+	}
+	// And the floor genuinely stops a tiny window from being halved to
+	// nothing: a 20-minute ask is already below it.
+	if 20*time.Minute > traceStage2NarrowFloor {
+		t.Fatalf("floor %v does not protect a short window", traceStage2NarrowFloor)
 	}
 }

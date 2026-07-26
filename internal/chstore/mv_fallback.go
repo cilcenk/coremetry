@@ -25,6 +25,41 @@ import "strings"
 // ELIGIBLE, preserving the historical behaviour for anything not classified —
 // the point is to stop retrying the failures we KNOW are hopeless, not to
 // invent a new gate for everything else.
+// resourceExhaustionMarkers — the ways ClickHouse (or the transport)
+// says "this query wanted more than it was allowed", as opposed to
+// "this query is wrong". Shared so the two callers that care cannot
+// drift apart: mvFallbackEligible (don't retry on raw, it's worse) and
+// isResourceExhaustion (do retry, on a smaller window).
+var resourceExhaustionMarkers = []string{
+	"code: 159", // TIMEOUT_EXCEEDED / max_execution_time
+	"code: 241", // MEMORY_LIMIT_EXCEEDED
+	"code: 394", // QUERY_WAS_CANCELLED
+	"code: 202", // TOO_MANY_SIMULTANEOUS_QUERIES
+	"timeout_exceeded",
+	"memory limit exceeded",
+	"query was cancelled",
+	// The transport giving up mid-stream.
+	"i/o timeout",
+	"context deadline exceeded",
+}
+
+// isResourceExhaustion reports whether an error means the query asked
+// for more resources than it was granted. Such a query can succeed
+// unchanged over a SMALLER window; a malformed one cannot, which is
+// why the distinction has to be made before retrying anything.
+func isResourceExhaustion(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	for _, m := range resourceExhaustionMarkers {
+		if strings.Contains(msg, m) {
+			return true
+		}
+	}
+	return false
+}
+
 func mvFallbackEligible(err error) bool {
 	if err == nil {
 		return false
@@ -32,19 +67,7 @@ func mvFallbackEligible(err error) bool {
 	msg := strings.ToLower(err.Error())
 
 	// Resource exhaustion — retrying on raw makes it strictly worse.
-	for _, hopeless := range []string{
-		"code: 159", // TIMEOUT_EXCEEDED / max_execution_time
-		"code: 241", // MEMORY_LIMIT_EXCEEDED
-		"code: 394", // QUERY_WAS_CANCELLED
-		"code: 202", // TOO_MANY_SIMULTANEOUS_QUERIES
-		"timeout_exceeded",
-		"memory limit exceeded",
-		"query was cancelled",
-		// The transport giving up mid-stream. The raw path would re-enter the
-		// same wall with less budget left than the MV read had.
-		"i/o timeout",
-		"context deadline exceeded",
-	} {
+	for _, hopeless := range resourceExhaustionMarkers {
 		if strings.Contains(msg, hopeless) {
 			return false
 		}

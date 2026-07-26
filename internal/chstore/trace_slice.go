@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 )
 
@@ -216,6 +217,14 @@ const (
 	// Then x8, x64, clamped at f.From. Two retries is enough: the third
 	// expansion already exceeds any window this page offers.
 	traceSliceLookbackMaxRetry = 2
+
+	// v0.9.297 — bounded recovery when Stage 2 runs out of resources.
+	// Two halvings take a 7-day ask down to ~1.75 days, which is a
+	// useful answer; a third would be guessing at what the operator
+	// meant. The floor stops the recursion from producing a window too
+	// small to contain anything.
+	traceStage2NarrowMaxRetry = 2
+	traceStage2NarrowFloor    = 30 * time.Minute
 )
 
 // runTraceStage2 executes Stage 2 with a narrowed time floor and widens that
@@ -243,6 +252,7 @@ func (s *Store) runTraceStage2(
 		}
 	}
 
+	narrowed := 0
 	for attempt := 0; ; attempt++ {
 		args := append([]any{}, idArgs...)
 		args = append(args, from, f.To, pageLimit, f.Offset)
@@ -278,6 +288,34 @@ func (s *Store) runTraceStage2(
 		// correctness bug on its own, and it would have turned every failure of
 		// the narrowing above into a silently truncated list.
 		if rerr := rows.Err(); rerr != nil {
+			// v0.9.297 — operator-reported: 7 days + a non-time sort
+			// returned HTTP 500 (code 241) and NOTHING else. A query
+			// that asked for more than it was granted can succeed
+			// unchanged over a smaller window, so halve the window and
+			// retry rather than handing the operator an exception and a
+			// stack trace where a trace list should be.
+			//
+			// This is a floor under the failure, not a diagnosis: the
+			// exact prod driver is still unproven (locally the statement
+			// is flat at ~25 MiB across a 66x row range, so it does not
+			// reproduce here). What IS certain is that a bounded retry
+			// turns "you get nothing" into "you get the most recent half,
+			// and you are told so" — and the operator must be told,
+			// because a top-N by duration over half the window is a
+			// different answer, not a slower one.
+			if narrowed < traceStage2NarrowMaxRetry && isResourceExhaustion(rerr) {
+				span := f.To.Sub(from)
+				if span > traceStage2NarrowFloor {
+					narrowed++
+					from = f.To.Add(-span / 2)
+					if f.NarrowedFrom != nil {
+						*f.NarrowedFrom = from
+					}
+					log.Printf("[traces] stage2 exhausted resources (%v) — halving the window to %s and retrying (attempt %d/%d)",
+						rerr, from.Format(time.RFC3339), narrowed, traceStage2NarrowMaxRetry)
+					continue
+				}
+			}
 			return nil, false, fmt.Errorf("stage2: %w", rerr)
 		}
 

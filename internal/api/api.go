@@ -3452,11 +3452,22 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 		// UI can hint honestly (0 = exact/global ordering served).
 		rankedWithin := 0
 		f.RankedWithin = &rankedWithin
+		// v0.9.297 — OUT param: set when Stage 2 exhausted its resources
+		// and the window had to be halved to answer at all. Emitted only
+		// when it actually moved, exactly like rankedWithinRecent.
+		var narrowedFrom time.Time
+		f.NarrowedFrom = &narrowedFrom
 		traces, total, hasMore, err := s.store.GetTraces(ctx, f)
 		if err != nil {
 			return nil, err
 		}
 		resp := map[string]interface{}{"traces": traces, "hasMore": hasMore}
+		if !narrowedFrom.IsZero() {
+			// The operator asked about a window this query could not
+			// afford. Say which window actually answered — a top-N over
+			// a smaller one is a different answer, not a slower one.
+			resp["narrowedFromNs"] = narrowedFrom.UnixNano()
+		}
 		if rankedWithin > 0 {
 			resp["rankedWithinRecent"] = rankedWithin
 		}

@@ -1571,6 +1571,11 @@ export interface TracesResponse {
   // window — the UI shows a "ranked within newest N" hint. Absent =
   // exact/global ordering.
   rankedWithinRecent?: number;
+  // v0.9.297 — present when the backend could NOT afford the requested
+  // window and halved it to answer at all. The rows below describe
+  // [narrowedFromNs, to], not the range the operator picked; a top-N
+  // over a smaller window is a different answer, not a slower one.
+  narrowedFromNs?: number;
 }
 
 // FAZ 2 (traces attribute columns) — response of the phase-2-only

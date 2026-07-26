@@ -1718,6 +1718,13 @@ type TraceFilter struct {
 	// show the "ranked within newest N" hint honestly — it stays 0
 	// when the raw path (or an unsliced sort) served the request.
 	RankedWithin *int
+	// NarrowedFrom (v0.9.297) — OUT param. Set when Stage 2 ran out of
+	// resources and the window had to be halved to answer at all. The
+	// caller MUST surface it: a top-N over half the requested window is
+	// a DIFFERENT answer, not a slower one, and presenting it as the
+	// operator's question silently answered is the failure mode this
+	// codebase keeps paying for.
+	NarrowedFrom *time.Time
 	// CountMode controls the cost/accuracy of the total-rows badge:
 	//
 	//	"skip"    no DISTINCT count at all — the cheapest path. The caller

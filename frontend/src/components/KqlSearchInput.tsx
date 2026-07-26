@@ -35,6 +35,12 @@ interface KqlSearchInputProps {
   placeholder?: string;
   title?: string;
   width?: number | string;
+  // v0.9.291 — the page's current range, as a Go duration ("6h", "7d").
+  // Bounds the ES term-dictionary walk behind the autocomplete: without
+  // it the lookup prefix-scanned every index in retention on every
+  // keystroke. Optional — the server clamps and defaults on its own, so
+  // a caller that omits it still gets a bounded query, just a wider one.
+  since?: string;
 }
 
 interface TokenInfo {
@@ -94,7 +100,7 @@ function quoteIfNeeded(v: string): string {
 }
 
 export function KqlSearchInput({
-  value, onChange, onSubmit, placeholder, title, width = 380,
+  value, onChange, onSubmit, placeholder, title, width = 380, since,
 }: KqlSearchInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [cursor, setCursor] = useState(0);
@@ -123,7 +129,7 @@ export function KqlSearchInput({
     setLoading(true);
     const t = window.setTimeout(async () => {
       try {
-        const r = await api.logsFieldValues(token.field, token.valuePrefix, 12);
+        const r = await api.logsFieldValues(token.field, token.valuePrefix, 12, since);
         if (cancelled) return;
         const vs = r?.values ?? [];
         setValues(vs);
@@ -136,7 +142,7 @@ export function KqlSearchInput({
       }
     }, 180);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [token?.field, token?.valuePrefix]);
+  }, [token?.field, token?.valuePrefix, since]);
 
   const insertValue = (v: string) => {
     if (!token) return;

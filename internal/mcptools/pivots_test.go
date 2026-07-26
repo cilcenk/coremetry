@@ -135,7 +135,7 @@ func (s *stubLogStore) RawSearchSamples(context.Context, []string, json.RawMessa
 	return nil, nil
 }
 func (s *stubLogStore) Indices(context.Context) ([]logstore.IndexInfo, error) { return nil, nil }
-func (s *stubLogStore) FieldValues(context.Context, string, string, int) ([]string, error) {
+func (s *stubLogStore) FieldValues(context.Context, string, string, int, time.Time, time.Time) ([]string, error) {
 	return nil, nil
 }
 func (s *stubLogStore) FieldStats(context.Context, logstore.Filter, string, int) (*logstore.FieldStatsResult, error) {

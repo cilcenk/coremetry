@@ -435,7 +435,13 @@ type Store interface {
 	// lookups; CH backend returns [] for now (CH-native
 	// DISTINCT-with-LIKE is straightforward but the KQL search
 	// box is Kibana-flavoured already, less urgent on CH).
-	FieldValues(ctx context.Context, field, prefix string, limit int) ([]string, error)
+	// v0.9.291 — from/to bound the lookup. Without them the ES
+	// implementation walked the term dictionary of every index in
+	// retention on every keystroke; the window is what makes the cost
+	// track the operator's question instead of the cluster's age.
+	// Zero bounds clamp to the last 10 minutes (clampWindow), same as
+	// every other read in this package.
+	FieldValues(ctx context.Context, field, prefix string, limit int, from, to time.Time) ([]string, error)
 
 	// FieldStats returns the top-N values of one field within the
 	// filtered window, with per-value counts and the total doc count

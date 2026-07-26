@@ -94,8 +94,8 @@ func (s *Switchable) Indices(ctx context.Context) ([]IndexInfo, error) {
 	return s.Current().Indices(ctx)
 }
 
-func (s *Switchable) FieldValues(ctx context.Context, field, prefix string, limit int) ([]string, error) {
-	return s.Current().FieldValues(ctx, field, prefix, limit)
+func (s *Switchable) FieldValues(ctx context.Context, field, prefix string, limit int, from, to time.Time) ([]string, error) {
+	return s.Current().FieldValues(ctx, field, prefix, limit, from, to)
 }
 
 func (s *Switchable) FieldStats(ctx context.Context, f Filter, field string, limit int) (*FieldStatsResult, error) {

@@ -878,26 +878,52 @@ func (s *ESStore) enrichILM(ctx context.Context, byName map[string]*IndexInfo) e
 // Falls back to the bare field on failure. Case-insensitive
 // matching is supported by _terms_enum natively (unlike
 // query_string per v0.5.231).
-func (s *ESStore) FieldValues(ctx context.Context, field, prefix string, limit int) ([]string, error) {
+// v0.9.291 — the window. This request used to go to the BARE index
+// pattern with no index_filter and no time bound at all: a prefix walk
+// over the term dictionary of every index in retention, warm/cold/frozen
+// included. Its cost scaled with index count × field cardinality and
+// NEVER with the operator's window — and the KQL box fires it on a
+// 180ms keystroke debounce, so it was the most frequent unbounded read
+// on the surface. This is the log sibling of the treatment
+// MetricLabelValues got in v0.9.275; it never reached logs.
+//
+// Two bounds, both needed. queryIndices narrows the index LIST the same
+// way every other read does (and, since v0.9.283, that actually works
+// on a data-stream cluster). index_filter tells ES the window inside
+// each surviving index, so it can skip shards whose range cannot match
+// — _terms_enum honours it natively.
+func (s *ESStore) FieldValues(ctx context.Context, field, prefix string, limit int, from, to time.Time) ([]string, error) {
 	if field == "" {
 		return nil, nil
 	}
 	if limit <= 0 || limit > 100 {
 		limit = 20
 	}
+	from, to = clampWindow(from, to)
+	indices := s.queryIndices(ctx, Filter{From: from, To: to})
 	try := func(f string) ([]string, error) {
 		body := map[string]any{
 			"field":            f,
 			"string":           prefix,
 			"size":             limit,
 			"case_insensitive": true,
+			// Shard-level skip: ES evaluates this against each shard's
+			// range before walking any term dictionary.
+			"index_filter": map[string]any{
+				"range": map[string]any{
+					s.fields.Timestamp: map[string]any{
+						"gte": from.UnixMilli(),
+						"lte": to.UnixMilli(),
+					},
+				},
+			},
 		}
 		raw, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
 		}
 		req := esapi.TermsEnumRequest{
-			Index: []string{s.cfg.Index},
+			Index: indices,
 			Body:  bytes.NewReader(raw),
 		}
 		res, err := req.Do(ctx, s.cli)

@@ -472,7 +472,7 @@ func (s *CHStore) Indices(ctx context.Context) ([]IndexInfo, error) {
 // A CH-native implementation (SELECT DISTINCT field WHERE
 // field LIKE prefix% LIMIT) can land as a follow-up if
 // operators report wanting it.
-func (s *CHStore) FieldValues(ctx context.Context, field, prefix string, limit int) ([]string, error) {
+func (s *CHStore) FieldValues(ctx context.Context, field, prefix string, limit int, from, to time.Time) ([]string, error) {
 	_ = ctx
 	_ = field
 	_ = prefix

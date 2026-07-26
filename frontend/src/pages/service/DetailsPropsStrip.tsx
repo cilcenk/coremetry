@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { timeRangeToNs, tsRel } from '@/lib/utils';
+import { timeRangeToNs, tsRel, rangeToSince } from '@/lib/utils';
 import type { TimeRange } from '@/lib/types';
 
 // DetailsPropsStrip — v0.8.370 (operator-approved mockup): the
@@ -51,9 +51,15 @@ export function DetailsPropsStrip({ service, range }: { service: string; range: 
     queryFn: () => api.serviceEnvironments(service, from, to),
     enabled: !!service, staleTime: STALE, retry: false,
   });
+  // v0.9.261 — was `range.preset` straight through. The preset vocabulary
+  // includes '2d' / '7d' / '30d', which Go's time.ParseDuration rejects, so
+  // internal/api.parseDuration fell back to this endpoint's 15-MINUTE default:
+  // picking a 7-day window quietly showed a quarter hour of instances. It also
+  // never handled 'custom'. rangeToSince covers both and can only emit h/m/s.
+  const instancesSince = rangeToSince(range).since;
   const instancesQ = useQuery({
-    queryKey: ['svc-instances-strip', service, range.preset],
-    queryFn: () => api.serviceInstances(service, range.preset || '15m'),
+    queryKey: ['svc-instances-strip', service, instancesSince],
+    queryFn: () => api.serviceInstances(service, instancesSince),
     enabled: !!service, staleTime: STALE, retry: false,
   });
 

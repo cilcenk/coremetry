@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
+import type { GoDuration } from '@/lib/utils';
 import type { Service, ServiceMap, InfraMetricSeries, NeighborStat, ServiceRuntime, Deploy, ServiceMetadata } from '@/lib/types';
 
 // /api/services + related — the topology side of the app.
@@ -31,7 +32,7 @@ export function useServiceNames(q?: string) {
   });
 }
 
-export function useServiceMap(since: string, samples: number, diff?: string, topN = 0) {
+export function useServiceMap(since: GoDuration, samples: number, diff?: string, topN = 0) {
   // `diff` (e.g. "24h", "1h") asks the backend to also return a
   // baseline-vs-current topology delta. Empty string / undefined
   // means "current snapshot only". Encoded as part of the
@@ -47,7 +48,7 @@ export function useServiceMap(since: string, samples: number, diff?: string, top
   });
 }
 
-export function useServiceInfra(svc: string, since: string) {
+export function useServiceInfra(svc: string, since: GoDuration) {
   return useQuery<InfraMetricSeries[]>({
     queryKey: keys.services.infra(svc, since),
     queryFn: async () => (await api.serviceInfraMetrics(svc, since)) ?? [],
@@ -142,7 +143,7 @@ export function useClusters(from: number, to: number) {
   });
 }
 
-export function useServiceNeighbors(svc: string, since: string, samples: number) {
+export function useServiceNeighbors(svc: string, since: GoDuration, samples: number) {
   return useQuery({
     queryKey: keys.services.neighbors(svc, since, samples),
     queryFn: () => api.serviceNeighbors(svc, since, samples),

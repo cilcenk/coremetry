@@ -244,7 +244,7 @@ function ExecutionsTab({ runbookId }: { runbookId: string }) {
 function AuditTab({ runbookId, isAdmin }: { runbookId: string; isAdmin: boolean }) {
   const q = useQuery({
     queryKey: ['runbook-audit', runbookId],
-    queryFn: () => api.auditLog('30d', { targetId: runbookId }),
+    queryFn: () => api.auditLog('720h', { targetId: runbookId }),
     enabled: isAdmin,
     staleTime: 30_000,
   });

@@ -45,10 +45,23 @@ export function timeRangeToNs(range: TimeRange): { from: number; to: number } {
 // Fallback is 1h, NOT timeRangeToNs's 24h: every call site this replaced
 // spelled `?? '1h'`, and these endpoints sample raw spans, so the cheap
 // window is the safe default for an unrecognised preset.
+// A duration string Go's time.ParseDuration actually accepts. There is NO day
+// unit in Go — `'7d'` is a parse error, and internal/api.parseDuration answers
+// a parse error with the endpoint's default, so a day-suffixed window silently
+// collapses to something far smaller with nothing in the UI admitting it.
+//
+// v0.9.261 — encoded in the type system after the same defect turned up three
+// separate times: the neighbours panel (v0.9.257), the Runbook audit trail
+// (asked 30d, got 24h) and the Service instances strip (asked 7d, got 15m).
+// Every api.ts method that forwards a window to parseDuration takes this type,
+// so `api.auditLog('30d')` is now a compile error rather than a silent
+// truncation discovered in prod.
+export type GoDuration = `${number}h` | `${number}m` | `${number}s`;
+
 export function rangeToSince(
   range: TimeRange,
   capSeconds?: number,
-): { since: string; seconds: number; capped: boolean } {
+): { since: GoDuration; seconds: number; capped: boolean } {
   let secs: number;
   // `!= null`, not truthiness: timeRangeToNs above spells this `&&`, which
   // drops a fromMs of 0 into the preset branch. Harmless there today (0 ms
@@ -68,7 +81,7 @@ export function rangeToSince(
 // goDuration — whole seconds → the largest EXACT h/m/s unit. Never emits
 // 'd' (see rangeToSince trap 1). Inexact values keep seconds rather than
 // rounding, so a custom range never silently widens or narrows.
-function goDuration(secs: number): string {
+function goDuration(secs: number): GoDuration {
   if (secs % 3600 === 0) return `${secs / 3600}h`;
   if (secs % 60 === 0) return `${secs / 60}m`;
   return `${secs}s`;

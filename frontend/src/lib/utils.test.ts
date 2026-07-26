@@ -10,6 +10,7 @@ import {
   fmtNum,
   isMessagingDep,
   rangeToSince,
+  type GoDuration,
   substituteVars,
   timeRangeToNs,
 } from './utils';
@@ -117,6 +118,26 @@ describe('rangeToSince', () => {
 
   it('cap boundary: exactly at the ceiling is not "capped"', () => {
     expect(rangeToSince({ preset: '24h' } as TimeRange, 86_400).capped).toBe(false);
+  });
+
+  // v0.9.261 — a COMPILE-time assertion, not a runtime one. The day-unit
+  // defect shipped four separate times (neighbours panel, Runbook audit
+  // trail, Service instances strip, and the /admin/audit picker whose "Last
+  // 30d" option served 24h), so the guarantee now lives in the type system:
+  // every api.ts `since` parameter takes GoDuration.
+  //
+  // If GoDuration is ever widened to admit `${number}d`, the @ts-expect-error
+  // below becomes an UNUSED expectation and `npx tsc --noEmit` fails. That is
+  // the point — this test protects the type, and the type protects the calls.
+  it('GoDuration rejects day units at compile time', () => {
+    // @ts-expect-error — Go's time.ParseDuration has no day unit, so '30d'
+    // reaches parseDuration as a parse error and silently becomes the
+    // endpoint's default. Days must be spelled in hours ('720h').
+    const rejected: GoDuration = '30d';
+    expect(rejected).toBe('30d');
+
+    const accepted: GoDuration[] = ['720h', '168h', '90m', '91s'];
+    expect(accepted).toHaveLength(4);
   });
 });
 

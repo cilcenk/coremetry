@@ -4,7 +4,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { useAuditLog } from '@/lib/queries';
-import { tsLong } from '@/lib/utils';
+import { tsLong, type GoDuration } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { AuditEntry } from '@/lib/types';
@@ -69,7 +69,11 @@ export default function AuditPage() {
   const [actor, setActor] = useState('');
   const [action, setAction] = useState('');
   const [target, setTarget] = useState('');
-  const [since, setSince] = useState('24h');
+  // v0.9.261 — GoDuration, and the 7d/30d option values are now hours.
+  // Go's time.ParseDuration has no day unit, so `since=30d` failed to parse
+  // and internal/api.parseDuration answered with its 24h default: the picker
+  // said "Last 30d" while the table showed one day, with nothing admitting it.
+  const [since, setSince] = useState<GoDuration>('24h');
   // v0.5.348 — free-text search across every visible column.
   // Filters client-side after the backend filter pass; lets
   // the operator "grep" within the current window without
@@ -158,11 +162,11 @@ export default function AuditPage() {
       <Topbar title="Audit log" />
       <div id="content">
         <div className="controls" style={{ marginBottom: 8 }}>
-          <select value={since} onChange={e => setSince(e.target.value)} aria-label="Time range">
+          <select value={since} onChange={e => setSince(e.target.value as GoDuration)} aria-label="Time range">
             <option value="1h">Last 1h</option>
             <option value="24h">Last 24h</option>
-            <option value="7d">Last 7d</option>
-            <option value="30d">Last 30d</option>
+            <option value="168h">Last 7d</option>
+            <option value="720h">Last 30d</option>
           </select>
           <input placeholder="Actor (email or id)…" aria-label="Filter by actor (email or id)"
             value={actor} onChange={e => setActor(e.target.value)} style={{ width: 220 }} />

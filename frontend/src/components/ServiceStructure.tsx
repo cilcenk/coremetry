@@ -4,7 +4,7 @@ import { AggregateFlame } from './AggregateFlame';
 import { AggregateTopology } from './AggregateTopology';
 import { Spinner } from './Spinner';
 import { api } from '@/lib/api';
-import { fmtNum } from '@/lib/utils';
+import { fmtNum, type GoDuration } from '@/lib/utils';
 import type { AggSpanNode } from '@/lib/types';
 
 // Grafana-Drilldown-style multi-trace path-aggregated structure.
@@ -37,7 +37,7 @@ type Scope = 'cross' | 'internal';
 
 export function ServiceStructure({ service, since = '10m', defaultOpen = false }: {
   service: string;
-  since?: string;
+  since?: GoDuration;
   // v0.5.294 — render expanded on first paint when the caller
   // has already signalled "show me details" (Service detail
   // Details tab). Lazy-fetch still happens inside the open

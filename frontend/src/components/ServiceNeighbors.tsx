@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Spinner } from './Spinner';
 import { api } from '@/lib/api';
-import { hashColor, fmtNum } from '@/lib/utils';
+import { hashColor, fmtNum, type GoDuration } from '@/lib/utils';
 import type { NeighborStat } from '@/lib/types';
 
 // Service-level upstream / downstream summary derived from sampled
@@ -16,7 +16,7 @@ import type { NeighborStat } from '@/lib/types';
 // first open lazy-fetches the data, identical to ServiceStructure.
 export function ServiceNeighbors({ service, since = '10m', capped = false, defaultOpen = false }: {
   service: string;
-  since?: string;
+  since?: GoDuration;
   // v0.9.257 — true when the caller clamped `since` below the operator's
   // selected range (this panel samples raw spans; see NEIGHBORS_CAP_S in
   // pages/service/Overview.tsx). Surfaced in the header so a narrowed

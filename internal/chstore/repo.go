@@ -2684,7 +2684,36 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 			s1f.Sort, s1f.Order = "time", "desc"
 			budget, budgetOK = traceRecencySliceN, true
 		}
-		if s1, ok := traceStage1LightSQL(s1f, having); ok && budgetOK {
+		// v0.9.277 — the aggregation-free slice, for the shape the operator
+		// actually hits: no HAVING, i.e. no rootOnly / minMs / maxMs. That is
+		// every default page load and every wide-window browse, and it is the
+		// case that was returning HTTP 500. hasError rides it too via a
+		// row-level prefilter; the remaining aggregate filters keep the old
+		// Stage 1 unchanged, because their predicates genuinely need the
+		// merged state and there is nothing to gain by rewriting them here.
+		errorsOnly := len(having) == 1 && having[0] == "countMerge(error_count_state) > 0"
+		if budgetOK && (len(having) == 0 || errorsOnly) {
+			ids, _, exhausted, serr := s.traceRecencySlice(ctx, s1f, budget, errorsOnly)
+			if serr != nil {
+				return nil, 0, false, serr
+			}
+			if len(ids) == 0 {
+				return []TraceRow{}, 0, false, nil
+			}
+			traceIDs = ids
+			holders = strings.Repeat("?,", len(ids))
+			holders = holders[:len(holders)-1]
+			if ranked && f.RankedWithin != nil {
+				// Report the REAL slice, not the constant. When the slice
+				// exhausted the window the ordering is global, so the "ranked
+				// within newest N" hint must not appear at all rather than
+				// appear with a number that isn't true.
+				*f.RankedWithin = len(ids)
+				if exhausted {
+					*f.RankedWithin = 0
+				}
+			}
+		} else if s1, ok := traceStage1LightSQL(s1f, having); ok && budgetOK {
 			rows1, err := s.conn.Query(ctx, s1, f.From, f.To, budget)
 			if err != nil {
 				return nil, 0, false, fmt.Errorf("stage1-light: %w", err)

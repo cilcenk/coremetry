@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"encoding/base64"
+	"strings"
 	"testing"
 )
 
@@ -50,7 +51,7 @@ func TestLogsCursorRoundtrip(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tok := EncodeLogsCursor(tc.timeNs, tc.rowKey)
+			tok := EncodeLogsCursor(tc.timeNs, tc.rowKey, false)
 			if tok == "" {
 				t.Fatalf("EncodeLogsCursor returned empty token")
 			}
@@ -177,7 +178,7 @@ func TestLogsCursorLastPageContract(t *testing.T) {
 // is testable without a CH connection.
 func nextCursorFor(rowsLen, limit int, lastTimeNs int64, lastRowKey uint64) string {
 	if rowsLen == limit {
-		return EncodeLogsCursor(lastTimeNs, lastRowKey)
+		return EncodeLogsCursor(lastTimeNs, lastRowKey, false)
 	}
 	return ""
 }
@@ -201,4 +202,91 @@ func containsSub(haystack, needle string) bool {
 		}
 	}
 	return false
+}
+
+// v0.9.295 — the cursor carries the DIRECTION it was minted in.
+//
+// Before, direction was simply ignored while a cursor was present
+// (`f.Ascending && !hasCursor`), so the list had no way to offer
+// oldest-first at all. Honouring it naively would have been worse: the
+// keyset is a STRICT inequality, so replaying a newest-first position
+// while paging oldest-first walks away from the rows the operator is
+// reading and returns a plausible, wrong slice — the silent-wrong class
+// this codebase keeps paying for.
+func TestLogsCursorCarriesDirection(t *testing.T) {
+	for _, asc := range []bool{false, true} {
+		tok := EncodeLogsCursor(1700000000123456789, 42, asc)
+		got, ok := DecodeLogsCursor(tok)
+		if !ok {
+			t.Fatalf("asc=%v: token did not round-trip", asc)
+		}
+		if got.Ascending != asc {
+			t.Fatalf("asc=%v: decoded Ascending = %v", asc, got.Ascending)
+		}
+		if got.TimeNs != 1700000000123456789 || got.RowKey != 42 {
+			t.Fatalf("asc=%v: position corrupted: %+v", asc, got)
+		}
+	}
+	// The two directions must not produce the same token, or the
+	// mismatch check upstream has nothing to detect.
+	if EncodeLogsCursor(1, 2, false) == EncodeLogsCursor(1, 2, true) {
+		t.Fatal("direction must change the token")
+	}
+}
+
+// Tokens minted before v0.9.295 have no direction field and MUST keep
+// decoding as what they were — newest-first. A bookmarked link or an
+// in-flight page from the previous build must not start paging backwards.
+func TestLogsCursorBackCompatDefaultsToDescending(t *testing.T) {
+	legacy := base64.RawURLEncoding.EncodeToString([]byte("ch|1700000000123456789|42"))
+	got, ok := DecodeLogsCursor(legacy)
+	if !ok {
+		t.Fatal("a pre-v0.9.295 token must still decode")
+	}
+	if got.Ascending {
+		t.Fatal("a token without a direction field is newest-first, not oldest-first")
+	}
+}
+
+// An unknown 4th field is a token from some other encoder. Rejecting it
+// costs a first-page read; guessing its meaning costs a wrong page.
+func TestLogsCursorRejectsUnknownDirectionFlag(t *testing.T) {
+	for _, bad := range []string{"ch|1|2|z", "ch|1|2|", "ch|1|2|a|b"} {
+		tok := base64.RawURLEncoding.EncodeToString([]byte(bad))
+		if _, ok := DecodeLogsCursor(tok); ok {
+			t.Fatalf("%q must not decode", bad)
+		}
+	}
+}
+
+// The keyset comparison flips wholesale — BOTH legs. Flipping only the
+// time leg would re-return or skip the boundary row whenever a run of
+// rows shares one nanosecond, which is exactly what the rowKey leg
+// exists to prevent (v0.7.23).
+func TestLogsKeysetPredicateFlipsBothLegs(t *testing.T) {
+	desc, dArgs := logsKeysetPredicate(LogsCursor{TimeNs: 7, RowKey: 9}, true)
+	asc, aArgs := logsKeysetPredicate(LogsCursor{TimeNs: 7, RowKey: 9, Ascending: true}, true)
+
+	if strings.Count(desc, "<") != 2 {
+		t.Fatalf("newest-first must compare strictly less on both legs: %q", desc)
+	}
+	if strings.Count(asc, ">") != 2 {
+		t.Fatalf("oldest-first must compare strictly greater on both legs: %q", asc)
+	}
+	if strings.Contains(asc, "<") {
+		t.Fatalf("oldest-first predicate still carries a descending comparison: %q", asc)
+	}
+	// Only the comparison changes; the bound values are the same position.
+	if len(dArgs) != len(aArgs) {
+		t.Fatalf("arg count diverged: %d vs %d", len(dArgs), len(aArgs))
+	}
+	for i := range dArgs {
+		if dArgs[i] != aArgs[i] {
+			t.Fatalf("arg %d diverged: %v vs %v", i, dArgs[i], aArgs[i])
+		}
+	}
+	// And no cursor still means no predicate, in either direction.
+	if sql, _ := logsKeysetPredicate(LogsCursor{Ascending: true}, false); sql != "" {
+		t.Fatalf("first page must apply no keyset, got %q", sql)
+	}
 }

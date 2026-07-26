@@ -231,6 +231,28 @@ function LogsInner() {
   // does NOT go in the URL (a shared link must reproduce the QUERY, and
   // the recipient's buffer is a different set of rows).
   const [narrow, setNarrow] = useState('');
+  // v0.9.295 — sort direction. Both backends have honoured oldest-first
+  // since v0.7.83, but only the Context modal ever asked; the list had
+  // no control. In the URL so a shared link reproduces the order.
+  const [asc, setAsc] = useState(() => searchParams.get('asc') === '1');
+  // Flipping direction MUST reset paging: the keyset cursor is a strict
+  // inequality tied to its direction, so a token minted newest-first is
+  // meaningless oldest-first. The backend drops a mismatched token
+  // rather than obeying it (v0.9.295), so without this the operator
+  // would silently bounce back to page one — resetting here makes that
+  // the intended behaviour instead of a surprise.
+  const toggleAsc = () => {
+    setAsc(v => {
+      const next = !v;
+      setSearchParams(prev => {
+        const p = new URLSearchParams(prev);
+        if (next) p.set('asc', '1'); else p.delete('asc');
+        return p;
+      }, { replace: true });
+      return next;
+    });
+    resetPaging();
+  };
 
   // Sync filter state from URL params. Covers (a) static-prerender →
   // CSR hydration, where useState initializes against empty
@@ -347,6 +369,7 @@ function LogsInner() {
     traceId: filter.traceId || undefined,
     spanId:  filter.spanId  || undefined,
     hasTrace: filter.hasTrace || undefined, // v0.8.406 — trace-only filter
+    asc: asc || undefined, // v0.9.295 — oldest-first
   });
 
   // Level-facet counts. A per-severity timeseries query feeds the
@@ -1007,6 +1030,20 @@ function LogsInner() {
                 </span>
                 <Button variant="ghost" size="sm" onClick={() => setNarrow('')}>clear</Button>
               </>
+            )}
+            <span style={{ flex: 1 }} />
+            {/* v0.9.295 — sort direction. Both backends have honoured
+                oldest-first since v0.7.83; only the Context modal ever
+                asked for it, so the list never had the control. Hidden
+                in live tail, where "oldest first" has no meaning — the
+                stream is by definition newest-arriving. */}
+            {!live && (
+              <Button variant="secondary" size="sm" onClick={toggleAsc}
+                title={asc
+                  ? 'Showing oldest first. Click for newest first. Changing the direction returns you to the first page — the keyset cursor is tied to the order it was created in.'
+                  : 'Showing newest first. Click for oldest first — useful for reading an incident forwards from where it started. Returns you to the first page.'}>
+                {asc ? '↑ oldest first' : '↓ newest first'}
+              </Button>
             )}
           </div>
         )}

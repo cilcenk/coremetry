@@ -259,9 +259,12 @@ func logsSearchKey(f logstore.Filter, fromRaw, toRaw string) string {
 	// would let a drawer's cursorless payload be served to the paging
 	// list, which then cannot advance. Same hash-ALL-inputs rule that
 	// v0.5.187 was written for.
-	return fmt.Sprintf("logs:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:lim=%d:off=%d:cur=%s:pg=%t:q=%s",
+	// v0.9.295 — direction is in the key. Same rows, opposite order is a
+	// DIFFERENT answer; sharing an entry would serve one operator's
+	// newest-first page to another asking for oldest-first.
+	return fmt.Sprintf("logs:svc=%s:clu=%s:env=%s:sev=%d:trace=%s:span=%s:ht=%t:from=%s:to=%s:lim=%d:off=%d:cur=%s:pg=%t:asc=%t:q=%s",
 		f.Service, f.Cluster, f.Env, f.SeverityMin, f.TraceID, f.SpanID, f.HasTrace,
-		fromRaw, toRaw, f.Limit, f.Offset, f.Cursor, f.WantCursor, f.Search)
+		fromRaw, toRaw, f.Limit, f.Offset, f.Cursor, f.WantCursor, f.Ascending, f.Search)
 }
 
 func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
@@ -291,6 +294,12 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 		// being present is intent by itself — a client already on page
 		// 2 will want page 3.
 		WantCursor: parseBoolParam(q.Get("paging")) || q.Get("after") != "",
+		// v0.9.295 — oldest-first. Both backends have supported it since
+		// v0.7.83 but only the Context modal ever set it; the list had no
+		// way to ask. The cursor now carries its direction, so paging in
+		// either order is coherent (a mismatched token is dropped rather
+		// than obeyed).
+		Ascending: parseBoolParam(q.Get("asc")),
 	}
 	// v0.8.x — cache the static log search (15s). This was the ONLY ES-backed
 	// read still hitting Elasticsearch uncached on every request; the live edge

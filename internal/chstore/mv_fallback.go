@@ -33,10 +33,10 @@ func mvFallbackEligible(err error) bool {
 
 	// Resource exhaustion — retrying on raw makes it strictly worse.
 	for _, hopeless := range []string{
-		"code: 159",  // TIMEOUT_EXCEEDED / max_execution_time
-		"code: 241",  // MEMORY_LIMIT_EXCEEDED
-		"code: 394",  // QUERY_WAS_CANCELLED
-		"code: 202",  // TOO_MANY_SIMULTANEOUS_QUERIES
+		"code: 159", // TIMEOUT_EXCEEDED / max_execution_time
+		"code: 241", // MEMORY_LIMIT_EXCEEDED
+		"code: 394", // QUERY_WAS_CANCELLED
+		"code: 202", // TOO_MANY_SIMULTANEOUS_QUERIES
 		"timeout_exceeded",
 		"memory limit exceeded",
 		"query was cancelled",

@@ -23,7 +23,7 @@ import type {
   ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse, ClusterDeployTrendResponse, ClusterJMXTrendResponse, ClusterJMXMetricsResponse,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
-  RelationResponse, RelationKind, FilterExpr,
+ FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
   OtlpExemplar, TraceLinks,
 } from './types';
@@ -404,28 +404,6 @@ export const api = {
   // Span-relationship / structural query (Gap 3). Parent + child predicate
   // sets are JSON-encoded into the query string; the backend runs a bounded
   // self-join over raw spans and returns the resolved trace rows.
-  tracesByRelation: (params: {
-    parent: FilterExpr[];
-    child: FilterExpr[];
-    kind: RelationKind;
-    direct: boolean;
-    from?: number;
-    to?: number;
-    limit?: number;
-    sort?: string;
-    order?: string;
-  }) =>
-    get<RelationResponse>(`/api/traces/relations?${qs({
-      parent: params.parent.length ? JSON.stringify(params.parent) : undefined,
-      child: params.child.length ? JSON.stringify(params.child) : undefined,
-      kind: params.kind,
-      direct: params.direct ? 'true' : undefined,
-      from: params.from,
-      to: params.to,
-      limit: params.limit,
-      sort: params.sort,
-      order: params.order,
-    })}`),
   trace:     (id: string)            => get<TraceDetailResponse>(`/api/traces/${id}`),
 
   // v0.8.332 (pivot Phase 3) — real OTLP exemplars for a metric window

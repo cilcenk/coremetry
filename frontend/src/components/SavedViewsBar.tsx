@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/components/AuthProvider';
 import { Button } from '@/components/ui/Button';
@@ -30,7 +31,13 @@ function normaliseQS(qs: string): string {
 //   - Anyone signed in can save personal views.
 //   - Admins can flip "shared" so everyone on the team sees it.
 //   - You can only delete your own views (admins can delete any).
-export function SavedViewsBar({ page }: { page: string }) {
+export function SavedViewsBar({ page, right }: {
+  page: string;
+  // v0.9.304 — trailing slot, right-aligned on the same line. /traces
+  // parks Reset + CSV here: they are page-level actions, and the strip
+  // they used to sit in was removed as a whole row (operator).
+  right?: ReactNode;
+}) {
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
@@ -251,6 +258,11 @@ export function SavedViewsBar({ page }: { page: string }) {
           <Button size="sm" onClick={save}>
             Save
           </Button>
+        </span>
+      )}
+      {right && (
+        <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          {right}
         </span>
       )}
     </div>

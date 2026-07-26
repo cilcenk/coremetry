@@ -27,7 +27,6 @@ import { OperationPicker } from '@/components/OperationPicker';
 import { ServicePicker } from '@/components/ServicePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
-import { RelationBuilder } from '@/components/RelationBuilder';
 import { Button } from '@/components/ui/Button';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
@@ -42,15 +41,18 @@ import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFil
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
-import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries, RelationFilter, RelationKind } from '@/lib/types';
+import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries } from '@/lib/types';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
 import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { MiniWaterfall } from '@/components/traces/MiniWaterfall';
 import { ShapesView } from '@/components/traces/ShapesView';
-import { SvcBadge, DurationBar, QuickChip, svcColor, fmtDur } from '@/components/traces/shared';
+import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
 
-type View = 'list' | 'aggregate' | 'shapes' | 'relations';
+// v0.9.304 (operatör) — 'relations' kaldırıldı. Yapısal self-join
+// sorgusu ham spans üzerinde koşuyordu, yani sayfadaki en pahalı okuma
+// yoluydu ve kullanılmıyordu.
+type View = 'list' | 'aggregate' | 'shapes';
 type GroupBy =
   | 'operation' | 'service' | 'kind' | 'status'
   | 'http_method' | 'http_route' | 'http_status'
@@ -164,7 +166,9 @@ function TracesPageInner() {
   const [env] = useUrlEnv();
   const [view, setView] = useState<View>(() => {
     const v = searchParams.get('view');
-    return v === 'aggregate' || v === 'shapes' || v === 'relations' ? v : 'list';
+    // Kayıtlı bir görünüm ?view=relations taşıyorsa listeye düşer —
+    // ölü bir sekmeye değil.
+    return v === 'aggregate' || v === 'shapes' ? v : 'list';
   });
 
   // List view server sort.
@@ -244,26 +248,6 @@ function TracesPageInner() {
     try { localStorage.setItem(EXTRA_COLS_LS_KEY, JSON.stringify(extraCols)); } catch { /* private mode */ }
   }, [extraCols]);
 
-  // Relations view (Gap 3) — structural query state. URL-reflected so a
-  // shared link reproduces the parent/child predicates + kind + direct flag.
-  const [relation, setRelation] = useState<RelationFilter>(() => {
-    const parseSet = (raw: string | null): FilterExpr[] => {
-      if (!raw) return [];
-      try { const v = JSON.parse(raw); return Array.isArray(v) ? v : []; } catch { return []; }
-    };
-    const k = searchParams.get('relKind');
-    const kind: RelationKind = k === 'descendant-of' || k === 'sequence' ? k : 'child-of';
-    return {
-      parent: parseSet(searchParams.get('relParent')),
-      child: parseSet(searchParams.get('relChild')),
-      kind,
-      direct: searchParams.get('relDirect') === 'true',
-    };
-  });
-  // relNonce bumps on "Run" so the relation fetch re-fires even when the
-  // predicate sets are unchanged (operator re-runs after a data window shift).
-  const [relNonce, setRelNonce] = useState(0);
-  const [relErr, setRelErr] = useState<string | null>(null);
 
   // Header viz mode + interaction state.
   // v0.9.301 — overview-chart height, persisted. Slim is the default:
@@ -275,7 +259,6 @@ function TracesPageInner() {
     setChartTall(v => { setRaw(STORAGE_KEYS.tracesChartTall, v ? '0' : '1'); return !v; });
   };
   const [viz, setViz] = useState<'volume' | 'latency'>(() => searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
-  const [quick, setQuick] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
   // Scatter brush narrows the page range; stash the pre-brush range for restore.
@@ -336,16 +319,12 @@ function TracesPageInner() {
       ['filters',  advGroupParam ? '' : encodeFilters(advFilters)],
       ['filterGroup', advGroupParam],
       ['cols',     extraCols.join(',')],
-      ['relKind',   view === 'relations' && relation.kind !== 'child-of' ? relation.kind : ''],
-      ['relDirect', view === 'relations' && relation.direct ? 'true' : ''],
-      ['relParent', view === 'relations' && relation.parent.length ? JSON.stringify(relation.parent) : ''],
-      ['relChild',  view === 'relations' && relation.child.length ? JSON.stringify(relation.child) : ''],
     ]);
     const target = qs ? `?${qs}` : '';
     if (typeof window !== 'undefined' && target !== window.location.search) {
       navigate(`/traces${target}`, { preventScrollReset: true, replace: true });
     }
-  }, [range, env, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, advFilters, advGroupParam, extraCols, relation, navigate]);
+  }, [range, env, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, advFilters, advGroupParam, extraCols, navigate]);
 
   // ── List fetch ───────────────────────────────────────────────────────────
   const listRangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -410,7 +389,7 @@ function TracesPageInner() {
   // key ('' fallback), so missingExtraKeys converges to [] and this effect
   // can never re-fire in a loop.
   useEffect(() => {
-    if (view !== 'list' && view !== 'relations') return;
+    if (view !== 'list') return;
     if (!extraCols.length) return;
     const rows = data?.traces;
     if (!rows?.length) return;
@@ -444,50 +423,6 @@ function TracesPageInner() {
     return () => { cancelled = true; };
   }, [view, data, extraCols]);
 
-  // ── Relations fetch (Gap 3) ────────────────────────────────────────────────
-  // Structural self-join over raw spans. Fires only in relations view, and
-  // only on an explicit Run (relNonce) or a range/sort change — NOT on every
-  // predicate keystroke (the self-join is the codebase's most expensive read;
-  // we never fire it implicitly). Result rows land in the SAME `data` state
-  // the list table renders, so the result list is byte-identical to List view.
-  const relRangeNs = useMemo(() => timeRangeToNs(range), [range]);
-  useEffect(() => {
-    if (view !== 'relations') return;
-    // Nothing to run until the operator has entered at least one predicate.
-    if (relation.parent.length === 0 && relation.child.length === 0) {
-      setData(null);
-      setRelErr(null);
-      return;
-    }
-    if (dataRef.current && dataRef.current.traces?.length) {
-      setRefreshing(true);
-    } else {
-      setData(undefined);
-    }
-    setRelErr(null);
-    const { from, to } = relRangeNs;
-    let cancelled = false;
-    api.tracesByRelation({
-      parent: relation.parent,
-      child: relation.child,
-      kind: relation.kind,
-      direct: relation.direct,
-      from, to, limit: 50, sort, order,
-    }).then(res => {
-      if (cancelled) return;
-      // Adapt RelationResponse → TracesResponse so the shared list render
-      // (gated on view === 'list' || 'relations') consumes it unchanged.
-      setData({ traces: res.traces ?? [], hasMore: res.hasMore });
-    }).catch((e: unknown) => {
-      if (cancelled) return;
-      setRelErr(e instanceof Error ? e.message : 'Relation query failed');
-      setData(null);
-    });
-    return () => { cancelled = true; };
-  // relation.parent/child are intentionally NOT deps — the query only re-runs
-  // on explicit Run (relNonce) or range/sort change, never per keystroke.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view, relRangeNs, sort, order, relation.kind, relation.direct, relNonce]);
 
   // v0.8.72 — TRUE span volume over the selected window (not the 50-row table
   // page). Aggregated count/errors/p99 per ~30 buckets, mirroring the table's
@@ -587,7 +522,7 @@ function TracesPageInner() {
   const reset = () => {
     const empty = { service: '', search: '', traceId: '', minMs: '', maxMs: '', hasError: false, rootOnly: false, requireServices: [] as string[] };
     setDraft(empty); setFilter(empty); setPage(0);
-    setAdvFilters([]); setAdvGroup(null); setQuick(null); setExpanded(null);
+    setAdvFilters([]); setAdvGroup(null); setExpanded(null);
   };
   const toggleAggSort = (col: AggSort) => {
     if (aggSort === col) setAggOrder(aggOrder === 'desc' ? 'asc' : 'desc');
@@ -599,21 +534,9 @@ function TracesPageInner() {
   const hasMore = data?.hasMore ?? false;
 
   // Quick-filter chips narrow the CURRENT page client-side (instant).
-  const topSvcs = useMemo(() => {
-    const seen: string[] = [];
-    for (const t of traces) {
-      if (t.serviceName && !seen.includes(t.serviceName)) seen.push(t.serviceName);
-      if (seen.length >= 4) break;
-    }
-    return seen;
-  }, [traces]);
-  const errCount = useMemo(() => traces.filter(t => t.hasError).length, [traces]);
-  const displayRows = useMemo(() => {
-    if (!quick) return traces;
-    if (quick === 'err') return traces.filter(t => t.hasError);
-    if (quick === 'slow') return traces.filter(t => t.durationMs > 1000);
-    return traces.filter(t => t.serviceName === quick);
-  }, [traces, quick]);
+  // v0.9.304 — istemci-taraflı hızlı kısayol şeridi kaldırıldı, yani
+  // görüntülenen satırlar artık her zaman sunucunun döndürdükleri.
+  const displayRows = traces;
   const visibleMax = useMemo(() => displayRows.reduce((m, t) => Math.max(m, t.durationMs), 0), [displayRows]);
 
   // Header RED stats over the live filtered rows (the stat group right of the
@@ -633,7 +556,6 @@ function TracesPageInner() {
 
   // Reset transient state on a new query / page.
   useEffect(() => { setExpanded(null); }, [page, filter, advFilters, advGroupParam, range, view]);
-  useEffect(() => { if (quick) setQuick(null); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [filter, advFilters, advGroupParam, range, view]);
 
   const openTrace = (t: TraceRow) => navigate(`/trace?id=${t.traceId}`);
 
@@ -711,7 +633,62 @@ function TracesPageInner() {
       <Topbar title="Traces" range={range}
         onRangeChange={(r) => { setBrushPrev(null); setRange(r); }} />
       <div id="content">
-        <SavedViewsBar page="traces" />
+        {/* v0.9.304 (operatör) — Trace ID araması sayfanın SAĞ ÜSTÜNE,
+            zaman aralığı seçicisinin hemen altına taşındı. Filtre satırının
+            içinde marginLeft:auto ile duruyordu ve oradaki alanlarla aynı
+            şey sanılıyordu; oysa bir trace id ARAMASI değil bir ATLAYIŞTIR
+            — diğer her alanı geçersiz kılar ve tek bir trace'e gider. */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 8 }}>
+            <div className="trace-lookup">
+              <span className="tl-icon" aria-hidden><IconSearch size={14} /></span>
+              <input placeholder="Trace ID…" title="Paste a full 32-character trace ID"
+                value={draft.traceId}
+                onChange={e => setDraft({ ...draft, traceId: e.target.value })}
+                onKeyDown={e => e.key === 'Enter' && apply()} />
+              {draft.traceId && (
+                <button className="tl-clear" type="button" title="Clear"
+                  onClick={() => { setDraft({ ...draft, traceId: '' }); setFilter({ ...filter, traceId: '' }); }}>✕</button>
+              )}
+              <button className="tl-go" type="button" onClick={() => apply()}>Go</button>
+            </div>
+        </div>
+
+        {/* v0.9.304 (operatör) — "Errors N / Slow >1s / servis pill'leri"
+            şeridi TAMAMEN kaldırıldı; Reset ve CSV buraya, "Save current
+            view" ile aynı hizaya taşındı. O şerit bir satır yüksekliği
+            yiyordu ve içindekiler zaten istemci-taraflı kısayollardı —
+            sunucu filtreleri v0.9.303'te Search satırına gitmişti, geriye
+            kalan iki sayfa-seviyesi eylem için ayrı bir satır tutmanın
+            gerekçesi kalmamıştı. */}
+        <SavedViewsBar page="traces" right={
+          <>
+            <Button variant="secondary" size="sm" onClick={reset}>Reset</Button>
+            <a className="sec"
+            href={`/api/traces/export.csv?${(() => {
+              const { from, to } = exportRangeNs;
+              const p = new URLSearchParams();
+              p.set('from', String(from)); p.set('to', String(to));
+              if (filter.service)  p.set('service',  filter.service);
+              if (filter.search)   p.set('search',   filter.search);
+              if (filter.traceId)  p.set('traceId',  filter.traceId);
+              if (filter.minMs)    p.set('minMs',    filter.minMs);
+              if (filter.maxMs)    p.set('maxMs',    filter.maxMs);
+              if (filter.hasError) p.set('hasError', 'true');
+              if (filter.rootOnly) p.set('rootOnly', 'true');
+              if (env) p.set('env', env); // v0.8.383 — export matches the on-screen env filter
+              if (filter.requireServices.length) p.set('services', filter.requireServices.join(','));
+              if (advFilters.length) p.set('filters', JSON.stringify(advFilters));
+              if (extraCols.length)  p.set('extraAttrs', extraCols.join(','));
+              if (sort)  p.set('sort', sort);
+              if (order) p.set('order', order);
+              return p.toString();
+            })()}`}
+            download title="Download up to 10k matching traces as CSV (postmortem / audit use)"
+            style={{ padding: '5px 10px', fontSize: 12, textDecoration: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--accent2)', background: 'var(--bg2)' }}>
+              ⬇ CSV
+            </a>
+          </>
+        } />
 
         {/* Header viz — Volume / Latency toggle (list view only; both derive
             from the live, filtered list rows).
@@ -813,10 +790,6 @@ function TracesPageInner() {
               title="Cluster traces by their (service, operation) signature — find dominant call patterns at a glance">
               Shapes
             </button>
-            <button onClick={() => setView('relations')} className={view === 'relations' ? 'active' : ''}
-              title="Structural query — find traces by span relationships: child-of / descendant-of / sequence (e.g. frontend → payment direct child)">
-              Relations
-            </button>
           </div>
           {view === 'aggregate' && (
             <>
@@ -866,10 +839,6 @@ function TracesPageInner() {
             </>
           )}
 
-          {/* Sorgu alanları — relations görünümünde RelationBuilder sorguyu
-              devraldığı için gizli (eski ayrı satırın koşuluyla aynı). */}
-          {view !== 'relations' && (
-            <>
               <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
                 placeholder="Service…" width={170} onEnter={(v) => apply(v)} />
               <OperationPicker service={draft.service} value={draft.search}
@@ -899,104 +868,9 @@ function TracesPageInner() {
                 <span style={{ color: draft.rootOnly ? 'var(--accent2)' : 'var(--text2)' }}>Root</span>
               </label>
               <Button variant="primary" size="sm" onClick={() => apply()}>Search</Button>
-            </>
-          )}
-
-          <div className="trace-lookup" style={{ marginLeft: 'auto' }}>
-            <span className="tl-icon" aria-hidden><IconSearch size={14} /></span>
-            <input placeholder="Trace ID…" title="Paste a full 32-character trace ID"
-              value={draft.traceId}
-              onChange={e => setDraft({ ...draft, traceId: e.target.value })}
-              onKeyDown={e => e.key === 'Enter' && apply()} />
-            {draft.traceId && (
-              <button className="tl-clear" type="button" title="Clear"
-                onClick={() => { setDraft({ ...draft, traceId: '' }); setFilter({ ...filter, traceId: '' }); }}>✕</button>
-            )}
-            <button className="tl-go" type="button" onClick={() => apply()}>Go</button>
-          </div>
         </div>
 
-        {/* Relations view — structural query builder replaces the flat filter
-            row. Drives the bounded self-join (GET /api/traces/relations). */}
-        {view === 'relations' && (
-          <RelationBuilder
-            value={relation}
-            onChange={setRelation}
-            onRun={() => setRelNonce(n => n + 1)}
-            running={data === undefined}
-          />
-        )}
 
-        {/* İstemci-taraflı daraltma şeridi.
-            v0.9.303 (operatör) — sunucu filtreleri (Errors only / Root
-            traces) buradan Search satırına taşındı, çünkü yaptıkları şey
-            oradaki alanlarla aynı: sorguyu yeniden çalıştırmak. Burada
-            kalanların hepsi YÜKLÜ SAYFAYI daraltıyor, hiçbiri yeni sorgu
-            atmıyor — tek kapsam olduğu için iki grubu ayıran ayraç da
-            kalktı, ve şerit bir satır yüksekliği bırakıp gitti.
-
-            traces.length koşulu SADECE hızlı kısayolları sarıyor: Reset ve
-            CSV liste boşken de erişilebilir kalmalı, fazla dar bir filtreyi
-            ancak öyle geri alırsın. */}
-        {view !== 'relations' && (
-          <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', alignItems: 'center', marginBottom: 8 }}>
-            {/* v0.9.303 — sunucu filtreleri (Errors only / Root traces)
-                Search satırına taşındı; bu şeritte artık YALNIZ istemci
-                taraflı hızlı kısayollar var. İki kapsamı ayırmak için
-                konmuş ayraç da bu yüzden gereksizleşti — şeridin tamamı
-                tek kapsam. */}
-            {view === 'list' && traces.length > 0 && (
-              <>
-                <QuickChip active={quick === 'err'} onClick={() => setQuick(quick === 'err' ? null : 'err')} tone="err"
-                  title="Yüklü satırlar arasındaki hatalı TRACE sayısı — tıkla, listeyi onlara indir. Yukarıdaki ERROR SPANS pencerenin tamamını sayar, bu yüzden iki sayı farklıdır.">
-                  Errors {errCount} <span style={{ opacity: 0.65 }}>/ yüklü</span>
-                </QuickChip>
-                <QuickChip active={quick === 'slow'} onClick={() => setQuick(quick === 'slow' ? null : 'slow')}>
-                  Slow &gt;1s
-                </QuickChip>
-                {topSvcs.map(s => (
-                  <QuickChip key={s} active={quick === s} dot={svcColor(s)} onClick={() => setQuick(quick === s ? null : s)}>
-                    {s}
-                  </QuickChip>
-                ))}
-              </>
-            )}
-
-            <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-              {view === 'list' && data && (
-                <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>
-                  {displayRows.length} of {traces.length} traces
-                </span>
-              )}
-              <Button variant="secondary" size="sm" onClick={reset}>Reset</Button>
-          {/* CSV export — committed filter set. */}
-          <a className="sec"
-            href={`/api/traces/export.csv?${(() => {
-              const { from, to } = exportRangeNs;
-              const p = new URLSearchParams();
-              p.set('from', String(from)); p.set('to', String(to));
-              if (filter.service)  p.set('service',  filter.service);
-              if (filter.search)   p.set('search',   filter.search);
-              if (filter.traceId)  p.set('traceId',  filter.traceId);
-              if (filter.minMs)    p.set('minMs',    filter.minMs);
-              if (filter.maxMs)    p.set('maxMs',    filter.maxMs);
-              if (filter.hasError) p.set('hasError', 'true');
-              if (filter.rootOnly) p.set('rootOnly', 'true');
-              if (env) p.set('env', env); // v0.8.383 — export matches the on-screen env filter
-              if (filter.requireServices.length) p.set('services', filter.requireServices.join(','));
-              if (advFilters.length) p.set('filters', JSON.stringify(advFilters));
-              if (extraCols.length)  p.set('extraAttrs', extraCols.join(','));
-              if (sort)  p.set('sort', sort);
-              if (order) p.set('order', order);
-              return p.toString();
-            })()}`}
-            download title="Download up to 10k matching traces as CSV (postmortem / audit use)"
-            style={{ padding: '5px 10px', fontSize: 12, textDecoration: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--accent2)', background: 'var(--bg2)' }}>
-            ⬇ CSV
-          </a>
-            </span>
-          </div>
-        )}
 
         {/* requireServices banner. */}
         {filter.requireServices.length > 0 && (
@@ -1020,10 +894,7 @@ function TracesPageInner() {
             to the grouped AND/OR builder for (A OR B) AND C queries (gap-2).
             flat→grouped seeds the group's top-level leaves from the current
             chips; grouped→flat flattens them back (OR / nested structure has no
-            flat representation). The whole block is hidden in the relations
-            view (gap-3), which has its own predicate builders. v0.8.x. */}
-        {view !== 'relations' && (
-          <>
+            flat representation). v0.8.x. */}
           <div className="row gap-2" style={{ alignItems: 'center', justifyContent: 'flex-end', marginBottom: -4 }}>
             {!grouped ? (
               <Button variant="ghost" size="sm"
@@ -1050,12 +921,8 @@ function TracesPageInner() {
               onChange={setAdvGroup}
               suggestedValues={FILTER_SUGGESTED_VALUES} />
           )}
-          </>
-        )}
 
-        {/* List + Relations views share the result table (Relations populates
-            the same `data` state, so the render below is identical). */}
-        {(view === 'list' || view === 'relations') && data === undefined && <TableSkeleton rows={10} cols={7} />}
+        {view === 'list' && data === undefined && <TableSkeleton rows={10} cols={7} />}
         {view === 'list' && listErr && (
           <Empty icon="⚠" title="Query failed">
             <p>The trace query errored or timed out. Try a narrower time range, then retry.</p>
@@ -1063,36 +930,10 @@ function TracesPageInner() {
             <Button variant="secondary" size="sm" onClick={() => setRetryNonce(n => n + 1)}>↻ Retry</Button>
           </Empty>
         )}
-        {view === 'relations' && relErr && (
-          <Empty icon="⚠" title="Relation query failed">
-            <p>The structural self-join errored or timed out. Try a narrower time range or fewer predicates, then re-run.</p>
-            <p className="mono" style={{ fontSize: 12, color: 'var(--text2)', wordBreak: 'break-word', margin: '8px 0' }}>{relErr}</p>
-            <Button variant="secondary" size="sm" onClick={() => setRelNonce(n => n + 1)}>↻ Retry</Button>
-          </Empty>
-        )}
-        {view === 'relations' && !relErr && data === null && relation.parent.length === 0 && relation.child.length === 0 && (
-          <Empty icon="⮑" title="Build a structural query">
-            <p style={{ color: 'var(--text2)' }}>
-              Add a predicate to the parent and/or child builder above, pick a relation
-              kind (child-of / descendant-of / sequence), then Run. Example:
-              parent <code>service.name = frontend</code>, child <code>service.name = payment</code>,
-              kind <b>child of</b> finds traces where frontend directly calls payment.
-            </p>
-          </Empty>
-        )}
-        {view === 'relations' && !relErr && data && traces.length === 0 && (
-          <Empty icon="∅" title="No traces match this relationship">
-            <p style={{ color: 'var(--text2)' }}>
-              No traces in this window where the parent/child predicates hold under
-              the chosen relation. Widen the time range, relax a predicate, or switch
-              to a looser kind (descendant-of / sequence).
-            </p>
-          </Empty>
-        )}
         {view === 'list' && !listErr && data && traces.length === 0 && (
           <TracesEmpty service={filter.service} search={filter.search} range={range} onSwitchView={() => setView('aggregate')} />
         )}
-        {(view === 'list' || view === 'relations') && data && traces.length > 0 && (
+        {view === 'list' && data && traces.length > 0 && (
           <div style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
             aria-busy={refreshing}>
             {/* Column toolbar — attribute columns are added via "+ Column"

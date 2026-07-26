@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
-import type { TimeRange, OracleMetrics } from '@/lib/types';
+import type { TimeRange, OracleMetrics, FilterExpr } from '@/lib/types';
 import {
   Stat, GaugeStat, OracleMetricDrillModal, TopSQLTable, HostLink, fmtBytes,
   WaitClassesBar,
@@ -30,8 +30,8 @@ export function OraclePanel({ instance, range }: { instance: string; range: Time
       .catch(() => setData(null));
   }, [instance, range]);
 
-  const tsFilters = (name: string) =>
-    [{ key: 'tablespace_name' as const, op: '=' as const, value: name }];
+  const tsFilters = (name: string): FilterExpr[] =>
+    [{ k: 'tablespace_name', op: '=', v: [name] }];
 
   return (
     <div style={{

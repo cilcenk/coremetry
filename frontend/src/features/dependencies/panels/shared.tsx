@@ -5,6 +5,7 @@ import { MultiLineChart } from '@/components/MultiLineChart';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
+import type { FilterExpr } from '@/lib/types';
 import { metricCatalogueHref } from '@/pages/explore/urlCodec';
 import { Button } from '@/components/ui/Button';
 import type { TimeRange, SpanMetricSeries } from '@/lib/types';
@@ -23,7 +24,15 @@ export type OracleDrill = {
   metric: string;                    // e.g. 'oracledb.sessions.usage'
   label: string;                     // human-readable for the modal title
   unit?: string;                     // ms / % / bytes — feeds the chart's fmtSmart
-  filters?: { key: string; op: '='; value: string }[]; // tablespace_name=SYSTEM etc.
+  // v0.9.269 — MUST be the shared FilterExpr shape ({k, op, v[]}). It used
+  // to be a lookalike `{key, op, value}`, which the Go side
+  // (internal/chstore/filterexpr.go:11-15) binds by JSON TAG: `key` and
+  // `value` matched nothing, Key came through empty, SQLForMetricPoints
+  // returned "missing key", and ApplyMetricFilters swallowed the error with
+  // `continue`. The chart drew UNFILTERED while this modal printed the
+  // filter chip above it — the UI asserting a filter that was never applied.
+  // Typing it as FilterExpr makes the drift a compile error.
+  filters?: FilterExpr[];        // e.g. tablespace_name = SYSTEM
 };
 
 export function Stat({ label, value, tone, onClick, sub }: {
@@ -219,7 +228,7 @@ export function OracleMetricDrillModal({ drill, range, onClose }: {
           }}>{drill.metric}</code>
           {drill.filters && drill.filters.length > 0 && (
             <span style={{ fontSize: 10, color: 'var(--text3)' }}>
-              {drill.filters.map(f => `${f.key} ${f.op} "${f.value}"`).join(' · ')}
+              {drill.filters.map(f => `${f.k} ${f.op} "${f.v.join(', ')}"`).join(' · ')}
             </span>
           )}
           <span style={{ marginLeft: 'auto' }}>

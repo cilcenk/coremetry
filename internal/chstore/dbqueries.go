@@ -29,6 +29,14 @@ type DBQueryStat struct {
 	// Span counts + latency stats for the bucket.
 	Count      int     `json:"count"`
 	AvgMs      float64 `json:"avgMs"`
+	// v0.9.264 — P50 answers "is this query slow for everyone, or is it a
+	// tail problem?", which avg alone can't (avg is dragged by the tail).
+	//
+	// ⚠️ THREE queries fill this struct: the raw slow-queries builder, the
+	// MV builder, and GetTopDBQueries (raw-only, /service top statements).
+	// P50Ms is a plain float64, so a producer that omits the projection
+	// renders "0.00ms" — a wrong number, not a blank. All three project it.
+	P50Ms      float64 `json:"p50Ms"`
 	P95Ms      float64 `json:"p95Ms"`
 	P99Ms      float64 `json:"p99Ms"`
 	MaxMs      float64 `json:"maxMs"`
@@ -94,6 +102,7 @@ func slowQueriesGlobalSQL(where, shardSetting string) string {
 			any(db_system)                             AS db_sys,
 			count()                                    AS cnt,
 			avg(duration / 1e6)                        AS avg_ms,
+			quantile(0.5)(duration / 1e6)              AS p50_ms,
 			quantile(0.95)(duration / 1e6)             AS p95_ms,
 			quantile(0.99)(duration / 1e6)             AS p99_ms,
 			max(duration / 1e6)                        AS max_ms,
@@ -137,6 +146,7 @@ func slowQueriesGlobalMVSQL(where string) string {
 			countMerge(span_count_state)                AS cnt,
 			countIfMerge(error_count_state)             AS err_cnt,
 			sumMerge(duration_sum_state) / 1e6          AS total_ms,
+			arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
 			arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 			arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms,
 			maxMerge(duration_max_state) / 1e6          AS max_ms
@@ -182,7 +192,7 @@ func (s *Store) GetSlowQueriesGlobal(
 		var r SlowQueryRow
 		var cnt, errCnt uint64
 		if err := rows.Scan(&r.Service, &r.Statement, &r.SampleStatement,
-			&r.DBSystem, &cnt, &r.AvgMs, &r.P95Ms, &r.P99Ms, &r.MaxMs, &errCnt); err != nil {
+			&r.DBSystem, &cnt, &r.AvgMs, &r.P50Ms, &r.P95Ms, &r.P99Ms, &r.MaxMs, &errCnt); err != nil {
 			return nil, err
 		}
 		r.Count = int(cnt)
@@ -232,9 +242,9 @@ func (s *Store) getSlowQueriesGlobalMV(
 	for rows.Next() {
 		var r SlowQueryRow
 		var stmtHash, cnt, errCnt uint64
-		var totalMs, p95, p99, maxMs float64
+		var totalMs, p50, p95, p99, maxMs float64
 		if err := rows.Scan(&r.Service, &stmtHash, &r.SampleStatement, &r.DBSystem,
-			&cnt, &errCnt, &totalMs, &p95, &p99, &maxMs); err != nil {
+			&cnt, &errCnt, &totalMs, &p50, &p95, &p99, &maxMs); err != nil {
 			return nil, err
 		}
 		r.Count = int(cnt)
@@ -243,6 +253,7 @@ func (s *Store) getSlowQueriesGlobalMV(
 		if cnt > 0 {
 			r.AvgMs = r.TotalMs / float64(cnt)
 		}
+		r.P50Ms = safeF(&p50)
 		r.P95Ms = safeF(&p95)
 		r.P99Ms = safeF(&p99)
 		r.MaxMs = safeF(&maxMs)
@@ -307,6 +318,7 @@ func (s *Store) GetTopDBQueries(
 			any(db_system)                             AS db_system,
 			count()                                    AS cnt,
 			avg(duration / 1e6)                        AS avg_ms,
+			quantile(0.5)(duration / 1e6)              AS p50_ms,
 			quantile(0.95)(duration / 1e6)             AS p95_ms,
 			quantile(0.99)(duration / 1e6)             AS p99_ms,
 			max(duration / 1e6)                        AS max_ms,
@@ -332,7 +344,7 @@ func (s *Store) GetTopDBQueries(
 		var cnt uint64
 		var errCnt uint64
 		if err := rows.Scan(&r.Statement, &r.SampleStatement, &r.DBSystem,
-			&cnt, &r.AvgMs, &r.P95Ms, &r.P99Ms, &r.MaxMs, &errCnt); err != nil {
+			&cnt, &r.AvgMs, &r.P50Ms, &r.P95Ms, &r.P99Ms, &r.MaxMs, &errCnt); err != nil {
 			return nil, err
 		}
 		r.Count = int(cnt)

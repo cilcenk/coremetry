@@ -66,7 +66,12 @@ export function VolumeChart({
   }, [count, errors, p50]);
 
   return (
-    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
+    // v0.9.301 — tighter card. The chart is the brush/overview TOOL for
+    // the table below it (this file has said so since v0.9.246); at
+    // 12px padding + 10px margin around a 140px plot it read as the
+    // headline instead, and the trace rows — the point of the page —
+    // started below the fold. Operator-reported.
+    <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 10px', marginBottom: 8 }}>
       {/* v0.9.103 (Grafana-parity #1) — renk-anahtarı kaldırıldı; TimeChart
           artık altında StatsLegend (swatch+label+istatistik) gösteriyor.
           Yalnız bucket/sürükle ipucu üstte kalır (StatsLegend'de yok). */}

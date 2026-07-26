@@ -41,6 +41,7 @@ import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
+import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries, RelationFilter, RelationKind } from '@/lib/types';
 
 import { VolumeChart } from '@/components/traces/VolumeChart';
@@ -265,6 +266,14 @@ function TracesPageInner() {
   const [relErr, setRelErr] = useState<string | null>(null);
 
   // Header viz mode + interaction state.
+  // v0.9.301 — overview-chart height, persisted. Slim is the default:
+  // Dynatrace keeps this strip thin because the TABLE is the page, and
+  // the operator reported the same thing ("traceler az satır çıkıyor").
+  const [chartTall, setChartTall] = useState(
+    () => getRaw(STORAGE_KEYS.tracesChartTall) === '1');
+  const toggleChartTall = () => {
+    setChartTall(v => { setRaw(STORAGE_KEYS.tracesChartTall, v ? '0' : '1'); return !v; });
+  };
   const [viz, setViz] = useState<'volume' | 'latency'>(() => searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
   const [quick, setQuick] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -744,15 +753,35 @@ function TracesPageInner() {
             </>
           );
           return data === undefined ? (
-            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10, height: 192, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 8,
+              // v0.9.301 — the skeleton must match the real card, or the
+              // table jumps on every load. Tracks the persisted height.
+              height: chartTall ? 192 : 116,
+              display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Spinner />
             </div>
           ) : viz === 'volume' ? (
             // slimmer + recedes — it's the brush/overview "tool", not the
             // headline chart; the RED strip below carries the filtered numbers.
-            <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null} height={140} onBrush={applyBrush}
+            <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null}
+              height={chartTall ? 140 : 64} onBrush={applyBrush}
               xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }}
-              header={vizToggle} headerRight={vizStats} />
+              header={vizToggle}
+              headerRight={<>{vizStats}
+                {/* v0.9.301 — the chart's own size control, in its header
+                    strip. The comment two lines up has always said this is
+                    the brush/overview TOOL, not the headline chart; at
+                    140px it did not behave like one and the trace table —
+                    the thing the page is for — started below the fold. */}
+                <button type="button" onClick={toggleChartTall}
+                  title={chartTall
+                    ? 'Shrink the overview chart so more traces fit on screen'
+                    : 'Expand the overview chart'}
+                  style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: 'var(--text3)', fontSize: 11, padding: '0 2px', marginLeft: 4,
+                  }}>{chartTall ? '⌃ shrink' : '⌄ expand'}</button>
+              </>} />
           ) : (
             <div style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 8, padding: 12, marginBottom: 10 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, padding: '0 2px', flexWrap: 'wrap' }}>

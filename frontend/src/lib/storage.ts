@@ -24,6 +24,11 @@ export const STORAGE_KEYS = {
   recentServices:   'coremetry.recentServices',
   pinnedServices:   'coremetry.pinnedServices',
   recentMetrics:    'coremetry.recentMetrics',
+  // v0.9.301 — /traces histogram height. Dynatrace keeps the trace
+  // list's overview chart a THIN brush strip so the table gets the
+  // page; ours was a 140px headline that pushed rows below the fold.
+  // Slim by default, expandable, and the choice sticks.
+  tracesChartTall: 'coremetry.tracesChartTall',
   sidebarWidth:     'coremetry-sidebar-w',
   sidebarCollapsed: 'coremetry-sidebar-collapsed',
   sidebarGroups:    'coremetry-sidebar-groups',

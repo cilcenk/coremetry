@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { messagingTracesHref } from '@/lib/pivotHref';
+import { messagingTracesHref, dbTracesHref } from '@/lib/pivotHref';
 import { Link } from 'react-router-dom';
 import { Empty } from './Spinner';
 import { Sparkline } from './Sparkline';
@@ -240,11 +240,20 @@ export function DependenciesTable({
   // messaging it's messaging.system + messaging.destination.name.
   const exploreHref = (r: DepRow) => {
     if (kind === 'db') {
-      const dsl =
-        `db.system = "${r.system}"\n` +
-        (r.instance && r.instance !== 'unknown'
-          ? `peer.service = "${r.instance}"` : '');
-      return `/explore?dsl=${encodeURIComponent(dsl)}&mode=advanced&result=traces`;
+      // v0.9.268 — this link was DEAD for any row the MV named from a rung
+      // below peer_service, and it is the unfixed sibling of the messaging
+      // bug repaired in v0.9.256, in this very function. It hard-coded
+      // `peer.service = <instance>` while db_summary_5m resolves instance
+      // through a SIX-way coalesce. Measured on live data: the clickhouse
+      // row had 2201 spans in a 30-minute window and the link matched 0.
+      // It also carried no window, so the destination fell back to its own
+      // default range. Both fixed by the shared helper.
+      return dbTracesHref({
+        window: range,
+        system: r.system,
+        instance: r.instance ?? '',
+        dbName: r.dbName,
+      });
     }
     // v0.9.256 (operatör: "messaging kısmında tracelere erişemiyorum") —
     // bu link ÖLÜYDÜ. Yalnız `messaging.destination.name` filtreliyordu; MV

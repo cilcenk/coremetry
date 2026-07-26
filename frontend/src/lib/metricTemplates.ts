@@ -101,6 +101,25 @@ const TEMPLATES: MetricTemplate[] = [
     threshold: { value: 0.85, cmp: '>', reason: 'CPU > 85% sustained = saturation' },
     description: 'Avg CPU, split by host. Threshold: 85%.',
   },
+  // v0.9.271 — language-runtime levels. These arrive as OTel `sum` with
+  // is_monotonic=0 (updowncounters): goroutine counts, heap bytes, live object
+  // counts. They are LEVELS, not accumulations, so summing them over a window
+  // is meaningless. They need a name rule because monotonicity does not reach
+  // the frontend at all: metric_catalog carries only instrument
+  // (internal/chstore/store.go:2942) and MetricInfo has no is_monotonic field
+  // (internal/chstore/model.go:298-303).
+  //
+  // Measured on live data: every non-monotonic `sum` in the catalogue is in
+  // this family — 9 of 9. Without this rule the fallback fix below would flip
+  // them from avg to sum, which is WORSE than the bug it fixes: avg(heap_alloc)
+  // is at least a meaningful number, sum(heap_alloc) over a window is noise.
+  {
+    id: 'Runtime level',
+    match: /^process\.runtime\.[a-z]+\.(mem\.|goroutines|threads|cgo\.)/i,
+    agg: 'last',
+    groupBy: ['host.name'],
+    description: 'Current runtime level (heap, goroutines), split by host.',
+  },
   {
     id: 'Memory usage',
     match: /^(system|process|container|jvm)\.memory\.(usage|used)$|memory_bytes|memory_used/i,
@@ -183,15 +202,33 @@ const TEMPLATES: MetricTemplate[] = [
 ];
 
 // Map MetricInfo.type → reasonable fallback when no template matches.
-// OTel types: counter, updowncounter, gauge, histogram, summary.
+//
+// v0.9.271 — this dictionary was DEAD for most of the catalogue. It branched on
+// 'counter' and 'updowncounter', which the ingest never writes: the only writer
+// of Instrument is internal/otlp/convert.go:267, and its whole vocabulary is
+// gauge (:288) · sum (:295) · histogram (:314) · exp_histogram (:341) ·
+// summary (:363). So 'sum' and 'exp_histogram' fell through to `default: avg`.
+//
+// Measured on the live catalogue: 79 of 114 metrics (69.3%) are `sum`. Every
+// one of them opened in Explore aggregated as avg — for a counter that is not
+// a preference, it is wrong.
+//
+// `sum` covers BOTH OTel counters and updowncounters, and the distinction
+// (is_monotonic) does not reach the frontend — metric_catalog does not carry it
+// (internal/chstore/store.go:2938-2946). Defaulting to 'sum' is right for the
+// monotonic majority (70 of 79 live); the non-monotonic 9 are all
+// process.runtime.* and are caught by the 'Runtime level' template above,
+// which runs FIRST. If a future non-monotonic sum appears outside that family
+// it will aggregate as sum until either a name rule or is_monotonic plumbing
+// covers it — that is the known, bounded cost of not changing the MV.
 function fallbackForType(type: string): { agg: MetricTemplate['agg']; description: string } {
   switch ((type || '').toLowerCase()) {
-    case 'histogram':    return { agg: 'p99',  description: 'Histogram → p99 (override if you want avg/p50).' };
-    case 'summary':      return { agg: 'p99',  description: 'Summary → p99.' };
-    case 'counter':      return { agg: 'sum',  description: 'Counter → sum over window.' };
-    case 'updowncounter':
-    case 'gauge':        return { agg: 'last', description: 'Gauge → last value.' };
-    default:             return { agg: 'avg',  description: '' };
+    case 'histogram':     return { agg: 'p99',  description: 'Histogram → p99 (override if you want avg/p50).' };
+    case 'exp_histogram': return { agg: 'p99',  description: 'Exponential histogram → p99.' };
+    case 'summary':       return { agg: 'p99',  description: 'Summary → p99.' };
+    case 'sum':           return { agg: 'sum',  description: 'Counter → sum over window.' };
+    case 'gauge':         return { agg: 'last', description: 'Gauge → last value.' };
+    default:              return { agg: 'avg',  description: '' };
   }
 }
 

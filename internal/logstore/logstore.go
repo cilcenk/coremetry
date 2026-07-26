@@ -157,6 +157,34 @@ type Page struct {
 	// view (the v0.8.398 honesty pattern). Never set by the CH backend
 	// (the res-array conjunct always applies).
 	EnvUnapplied bool `json:"envUnapplied,omitempty"`
+	// ── Honesty envelope (v0.9.288) ─────────────────────────────────
+	// Every ES log query carries a SOFT timeout (10s). The entire point
+	// of a soft timeout is that ES returns what it has computed so far
+	// and says `timed_out: true` — and none of the decode structs read
+	// that field, so a partial answer was presented as a complete one.
+	// At 10B docs/day a heavy search timing out is the REALISTIC
+	// outcome, not the edge case: the dip in the histogram is the
+	// timeout, not a traffic drop, and a red shard is silently
+	// subtracted from every number on screen.
+	//
+	// Zero cost — these are already in the response body; they were
+	// simply thrown away. Same contract as EnvUnapplied: the backend
+	// states what it could not do, the UI shows it, nothing is guessed.
+
+	// Partial — ES hit its soft timeout, or shards failed. Counts and
+	// rows below are a subset of the true answer.
+	Partial bool `json:"partial,omitempty"`
+	// ShardsFailed — how many shards did not answer. Non-zero means
+	// every number here is missing that shard's contribution.
+	ShardsFailed int `json:"shardsFailed,omitempty"`
+	// TotalIsLowerBound — Total is "at least this", not "exactly this".
+	// ES is asked for track_total_hits: 10000 (counting every matching
+	// doc is precisely what you avoid at billion-doc scale), so it
+	// answers relation "gte" once the count reaches the cap. Without
+	// this flag "10,000" read as an exact figure — while the SAME label
+	// on the CH backend really is an exact count(). One string, two
+	// backends, two meanings, neither stated.
+	TotalIsLowerBound bool `json:"totalIsLowerBound,omitempty"`
 }
 
 // EQLQuery — parameters for an Event Query Language sequence

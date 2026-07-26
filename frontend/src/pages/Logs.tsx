@@ -680,6 +680,24 @@ function LogsInner() {
           </div>
         )}
 
+        {/* v0.9.288 — honesty envelope. Every ES log query carries a 10s
+            SOFT timeout, whose whole purpose is that ES returns what it
+            computed and says timed_out. Nothing decoded that field, so a
+            partial answer looked identical to a complete one — and at
+            10B docs/day a heavy search timing out is the realistic
+            outcome. Same chip language as the env warning above; absent
+            entirely on the CH backend, which has neither. */}
+        {!live && !!staticQ.data?.partial && (
+          <div style={{ marginBottom: 10 }}>
+            <span className="badge b-warn"
+              title={'Elasticsearch did not finish this query: it hit the soft timeout (10s) and/or lost shards, and returned the part it had computed.\nEVERY number on this page is a subset — the row count, the severity chips and the histogram above them.\nA dip in the chart may be this timeout rather than a drop in traffic.\nNarrow the window, add a service filter, or make the search more selective.'}>
+              ⚠ partial result — ES returned what it had computed
+              {(staticQ.data.shardsFailed ?? 0) > 0 &&
+                ` · ${staticQ.data.shardsFailed} shard${staticQ.data.shardsFailed === 1 ? '' : 's'} did not answer`}
+            </span>
+          </div>
+        )}
+
         {/* Filter pill bar (Discover revamp step 1). One pill per
             structured field filter; free text stays in the search
             box. ≠ toggles NOT (red tone), ◐ disables without
@@ -940,8 +958,17 @@ function LogsInner() {
                     {staticQ.isFetching ? 'Loading…' : '↓ Load more'}
                   </Button>
                 )}
-                <span>
+                {/* v0.9.288 — "of 10,000" was a lie on the ES backend:
+                    track_total_hits is capped at 10,000 (counting every
+                    matching doc is exactly what you avoid at billion-doc
+                    scale), so ES answers relation "gte" and stops. The
+                    same label from ClickHouse is a real count(). The
+                    backend now says which, and the "+" says it here. */}
+                <span title={staticQ.data?.totalIsLowerBound
+                  ? 'Elasticsearch stops counting at 10,000 matches — the true total is at least this, possibly far more. Narrow the window or the filters for an exact figure.'
+                  : undefined}>
                   showing {logs.length.toLocaleString()} of {total.toLocaleString()}
+                  {staticQ.data?.totalIsLowerBound ? '+' : ''}
                 </span>
               </div>
             )}

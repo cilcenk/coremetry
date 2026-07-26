@@ -314,6 +314,114 @@ export default function AdminStatsPage() {
             {/* ── API multi-tier cache effectiveness ──────────────── */}
             <ApiCachePanel data={cacheStats} />
 
+            {/* ── Node pressure (v0.9.290, operator ask) ──────────────
+                Memory + CPU of the ClickHouse nodes themselves. Sits
+                above disk capacity because it explains a FAILING query,
+                not a filling volume — and the per-query ceiling shown
+                here is the exact number a code-241 quotes back. */}
+            {!!data.servers?.length && (
+              <div style={{
+                background: 'var(--bg1)', border: '1px solid var(--border)',
+                borderRadius: 8, padding: 14, marginBottom: 18,
+              }}>
+                <SectionHeader
+                  title="ClickHouse node pressure"
+                  sub="Live memory and CPU from system.asynchronous_metrics — in-memory counters, independent of data volume." />
+                <div style={{ display: 'grid', gap: 14 }}>
+                  {data.servers.map((n, i) => {
+                    const memUsed = n.osMemoryTotal > 0
+                      ? Math.max(0, n.osMemoryTotal - n.osMemoryAvailable) : 0;
+                    const memPct = n.osMemoryTotal > 0 ? (memUsed / n.osMemoryTotal) * 100 : 0;
+                    const memTone = memPct >= 90 ? 'var(--err)' : memPct >= 75 ? 'var(--warn)' : 'var(--ok)';
+                    // The three CPU counters are sampled independently and
+                    // DO sum past 100% in practice (observed 131% while
+                    // load average was 2.15). Each is drawn on its own so
+                    // the saturation never hides which one is high.
+                    const cpu = [
+                      { k: 'user', v: n.cpuUser, c: 'var(--accent)' },
+                      { k: 'system', v: n.cpuSystem, c: 'var(--warn)' },
+                      { k: 'io wait', v: n.cpuIoWait, c: 'var(--err)' },
+                    ];
+                    return (
+                      <div key={`${n.host}/${i}`} style={{
+                        borderTop: i > 0 ? '1px solid var(--border)' : undefined,
+                        paddingTop: i > 0 ? 12 : 0,
+                      }}>
+                        <div style={{
+                          display: 'flex', alignItems: 'baseline', gap: 8,
+                          fontSize: 12, marginBottom: 6,
+                        }}>
+                          <b>{n.host || 'ClickHouse'}</b>
+                          <span style={{ color: 'var(--text3)', fontSize: 11 }}>
+                            load {n.loadAvg1.toFixed(2)} · {n.runningQueries} queries · {n.runningMerges} merges
+                          </span>
+                          <span style={{ flex: 1 }} />
+                          <span style={{ color: 'var(--text3)', fontSize: 11 }}>
+                            up {(n.uptimeSec / 86400).toFixed(1)}d
+                          </span>
+                        </div>
+
+                        {/* Memory */}
+                        <div style={{
+                          display: 'flex', gap: 8, fontSize: 11,
+                          color: 'var(--text2)', marginBottom: 4,
+                        }}>
+                          <span style={{ color: memTone, fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                            {memPct.toFixed(1)}% memory
+                          </span>
+                          <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+                            {fmtBytes(memUsed)} / {fmtBytes(n.osMemoryTotal)}
+                          </span>
+                          <span style={{ flex: 1 }} />
+                          <span title="The ClickHouse process's own resident set — its share of the node, as opposed to everything else running there.">
+                            CH {fmtBytes(n.memoryResident)}
+                          </span>
+                        </div>
+                        <div style={{
+                          height: 8, borderRadius: 4, overflow: 'hidden', marginBottom: 8,
+                          background: 'color-mix(in srgb, var(--text3) 22%, transparent)',
+                        }}>
+                          <div style={{ width: `${Math.min(100, memPct)}%`, height: '100%', background: memTone }} />
+                        </div>
+
+                        {/* CPU — three independent bars, not one sum */}
+                        <div style={{ display: 'grid', gap: 3 }}>
+                          {cpu.map(c => (
+                            <div key={c.k} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ fontSize: 10, color: 'var(--text3)', width: 52 }}>{c.k}</span>
+                              <div style={{
+                                flex: 1, height: 6, borderRadius: 3, overflow: 'hidden',
+                                background: 'color-mix(in srgb, var(--text3) 22%, transparent)',
+                              }}>
+                                <div style={{
+                                  width: `${Math.min(100, Math.max(0, c.v * 100))}%`,
+                                  height: '100%', background: c.c,
+                                }} />
+                              </div>
+                              <span style={{
+                                fontSize: 10, color: 'var(--text2)', width: 44,
+                                textAlign: 'right', fontVariantNumeric: 'tabular-nums',
+                              }}>{(c.v * 100).toFixed(0)}%</span>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* The ceilings a code-241 quotes back. */}
+                        {(n.maxServerMemory > 0 || n.maxQueryMemory > 0) && (
+                          <div style={{ fontSize: 11, color: 'var(--text2)', marginTop: 6 }}
+                            title="A query that exceeds these fails with ClickHouse code 241, 'Query memory limit exceeded'. The error message quotes exactly this number.">
+                            limits:
+                            {n.maxServerMemory > 0 && <> server {fmtBytes(n.maxServerMemory)}</>}
+                            {n.maxQueryMemory > 0 && <> · per query {fmtBytes(n.maxQueryMemory)}</>}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* ── Disk capacity (v0.9.289, operator ask) ──────────────
                 Sits directly ABOVE per-table storage because it answers
                 the question that one raises: the table list says how

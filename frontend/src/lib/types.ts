@@ -3182,6 +3182,31 @@ export interface SystemStats {
     // operator-configured reserve CH refuses to dip into
     keepFreeBytes: number;
   }[];
+  // v0.9.290 (operator ask) — live per-node pressure, from
+  // system.asynchronous_metrics / system.metrics / system.server_settings.
+  // In-memory counters, so the read is independent of data volume.
+  servers?: {
+    host?: string;   // set only on a cluster() fan-out
+    osMemoryTotal: number;
+    osMemoryAvailable: number;
+    memoryResident: number;   // the ClickHouse process's RSS
+    memoryTracking: number;   // what CH's own allocator accounting sees
+    // The two ceilings that produce a code-241 "Query memory limit
+    // exceeded". 0 = unlimited. Surfaced because that error quotes a
+    // number the operator otherwise has to go find on the node.
+    maxServerMemory: number;
+    maxQueryMemory: number;
+    // Normalised per core (1.0 = every core saturated). Sampled
+    // independently, so the three can sum past 1.0 — show them
+    // separately rather than as one clamped total.
+    cpuUser: number;
+    cpuSystem: number;
+    cpuIoWait: number;
+    loadAvg1: number;
+    runningQueries: number;
+    runningMerges: number;
+    uptimeSec: number;
+  }[];
   history: {
     day: string;
     spans: number;

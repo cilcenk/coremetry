@@ -2366,6 +2366,13 @@ export interface LogsParams {
   // treat as an opaque token. qs() drops it when empty so the
   // first page is a no-cursor request.
   after?: string;
+  // paging (v0.9.286) — "I will use nextCursor". The ES backend keeps a
+  // Point-in-Time alive whenever it returns a cursor, so a caller that
+  // reads one page and walks away pins segment readers for 2 minutes.
+  // Set by useLogs (the interactive /logs list, the only surface with a
+  // Load-more); the trace drawers, the service Logs tab and span detail
+  // deliberately omit it.
+  paging?: boolean;
 }
 
 export interface MetricsParams {

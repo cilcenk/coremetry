@@ -17,10 +17,16 @@ import type { LogsResponse } from '@/lib/types';
 // because the queryKey (params incl. cursor) changes. refetchOnWindowFocus
 // off stops the tab-focus PIT churn outright. (No effect on CH backend
 // correctness — it just fetches less.)
+// v0.9.286 — this hook IS the paging surface (/logs, the only list with
+// a Load-more), so it declares paging intent here rather than at each
+// call site. Everything else reaches /api/logs through api.logs()
+// directly, reads one page and drops the cursor; those callers now cost
+// the ES cluster no retained Point-in-Time.
 export function useLogs(params: LogsParams) {
+  const pagingParams: LogsParams = { ...params, paging: true };
   return useQuery<LogsResponse>({
-    queryKey: ['logs', 'list', params],
-    queryFn: () => api.logs(params),
+    queryKey: ['logs', 'list', pagingParams],
+    queryFn: () => api.logs(pagingParams),
     staleTime: 15_000,
     refetchOnWindowFocus: false,
     // v0.8.260 — "Load more" accumulation on /logs: a cursor change

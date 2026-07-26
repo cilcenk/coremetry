@@ -85,6 +85,15 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		}
 		out = append(out, rec)
 	}
+	// v0.9.286 — WantCursor is honoured here too. A CH cursor costs
+	// nothing to mint (no PIT, no held segments), so gating it buys no
+	// resources on this backend — it buys ONE contract. Divergent
+	// backend semantics behind the same Filter is this repo's recurring
+	// bug class; a caller that declares no paging intent gets no cursor,
+	// whichever store answers.
+	if !f.WantCursor {
+		next = ""
+	}
 	return &Page{Total: int(total), Logs: out, NextCursor: next}, nil
 }
 

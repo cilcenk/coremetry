@@ -183,3 +183,92 @@ func (s *Store) traceRecencySlice(
 	}
 	return ids, cut, exhausted, nil
 }
+
+// Stage-2 floor narrowing with clipping detection — v0.9.278.
+const (
+	// First attempt looks back 12 buckets (1 hour) below the slice cut.
+	traceSliceLookbackBuckets = 12
+	// Then x8, x64, clamped at f.From. Two retries is enough: the third
+	// expansion already exceeds any window this page offers.
+	traceSliceLookbackMaxRetry = 2
+)
+
+// runTraceStage2 executes Stage 2 with a narrowed time floor and widens that
+// floor if the result shows any sign of clipping.
+//
+// floor is the bucket the recency slice was cut at; the zero value means "do
+// not narrow" and Stage 2 runs over f.From..f.To exactly as before.
+//
+// The correctness hazard being managed: narrowing the floor means a trace whose
+// rows extend below it contributes only PART of its own aggregate, so
+// trace_start, dur_ms, span_count and has_error all come back wrong — quietly,
+// with no error and a perfectly plausible-looking row. Rather than assume a
+// lookback is "enough", Stage 2 returns min(time_bucket) per trace and we widen
+// whenever a returned row sits on the floor.
+func (s *Store) runTraceStage2(
+	ctx context.Context, f TraceFilter, stage2 string, idArgs []any,
+	floor time.Time, pageLimit int,
+) ([]TraceRow, bool, error) {
+	from := f.From
+	lookback := time.Duration(traceSliceLookbackBuckets) * 5 * time.Minute
+	if !floor.IsZero() {
+		from = floor.Add(-lookback)
+		if from.Before(f.From) {
+			from = f.From
+		}
+	}
+
+	for attempt := 0; ; attempt++ {
+		args := append([]any{}, idArgs...)
+		args = append(args, from, f.To, pageLimit, f.Offset)
+		rows, err := s.conn.Query(ctx, stage2, args...)
+		if err != nil {
+			return nil, false, fmt.Errorf("stage2: %w", err)
+		}
+		out := []TraceRow{}
+		clipped := false
+		for rows.Next() {
+			var t TraceRow
+			var hasErr uint8
+			var ts, firstBucket time.Time
+			if serr := rows.Scan(&t.TraceID, &t.RootName, &t.ServiceName, &ts,
+				&t.DurationMs, &t.SpanCount, &hasErr, &firstBucket); serr != nil {
+				rows.Close()
+				return nil, false, serr
+			}
+			t.StartTime = ts.UnixNano()
+			t.HasError = hasErr != 0
+			// Sitting ON the floor means rows may exist just below it.
+			if !firstBucket.After(from) {
+				clipped = true
+			}
+			out = append(out, t)
+		}
+		rows.Close()
+		// v0.9.278 — this check did not exist. ClickHouse sends the header
+		// block immediately, so a Stage 2 exception (159 timeout, 241 memory)
+		// arrives DURING streaming: Query() succeeds, Next() simply returns
+		// false, and the caller returned a short or empty page with err == nil
+		// and HTTP 200. A timeout rendered as "no traces found". That is a
+		// correctness bug on its own, and it would have turned every failure of
+		// the narrowing above into a silently truncated list.
+		if rerr := rows.Err(); rerr != nil {
+			return nil, false, fmt.Errorf("stage2: %w", rerr)
+		}
+
+		// Widening is pointless once the floor IS the requested window start:
+		// nothing can be clipped by a floor the caller asked for.
+		if !clipped || from.Equal(f.From) || attempt >= traceSliceLookbackMaxRetry {
+			hasMore := len(out) > f.Limit
+			if hasMore {
+				out = out[:f.Limit]
+			}
+			return out, hasMore, nil
+		}
+		lookback *= 8
+		from = floor.Add(-lookback)
+		if from.Before(f.From) {
+			from = f.From
+		}
+	}
+}

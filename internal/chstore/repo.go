@@ -1962,10 +1962,27 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 				}
 			}
 			return out, total, hasMore, nil
-		} else {
-			// On error fall through to raw path — log it so a regression in the
-			// MV pipeline doesn't silently leave us on the slow path forever.
+		} else if mvFallbackEligible(err) {
+			// Fall through to raw path — log it so a regression in the MV
+			// pipeline doesn't silently leave us on the slow path forever.
 			log.Printf("[chstore] trace_summary fast path failed, falling back to raw: %v", err)
+		} else {
+			// v0.9.276 — do NOT retry a resource failure on the raw path.
+			//
+			// This unconditional fallback is what turned a slow query into the
+			// operator's HTTP 500. When the MV read aborts on time or memory,
+			// the raw path is asked to do THE SAME WORK over billions of raw
+			// spans — GROUP BY trace_id, where `spans` is ORDER BY
+			// (service_name, time) so trace_id misaligns there too. That query
+			// carries max_execution_time = 25 but the client ReadTimeout is 30s
+			// and clickhouse-go arms it ONCE per read phase without refreshing
+			// on progress packets, so on a wide window it cannot finish either.
+			//
+			// The operator therefore waited out the MV guard, then waited out
+			// the client, and got a transport "i/o timeout" instead of the
+			// ClickHouse error that actually explains the failure. Two slow
+			// queries instead of one, and the real cause hidden.
+			return nil, 0, false, fmt.Errorf("traces: %w", err)
 		}
 	}
 
@@ -2042,7 +2059,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 			cap = 100
 		}
 		approxSQL := fmt.Sprintf(
-			"SELECT count() FROM (SELECT trace_id FROM spans %s GROUP BY trace_id%s LIMIT %d) SETTINGS max_execution_time = 30",
+			"SELECT count() FROM (SELECT trace_id FROM spans %s GROUP BY trace_id%s LIMIT %d) SETTINGS max_execution_time = 25",
 			wc.sql(), havingSQL, cap,
 		)
 		countArgs := append([]any{}, wc.args...)
@@ -2066,9 +2083,9 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		// extra cost is negligible.
 		var settings string
 		if !f.From.IsZero() && !f.To.IsZero() && f.To.Sub(f.From) > 24*time.Hour {
-			settings = "SETTINGS max_execution_time = 30, count_distinct_implementation = 'uniq', " + tracesSpillSettings
+			settings = "SETTINGS max_execution_time = 25, count_distinct_implementation = 'uniq', " + tracesSpillSettings
 		} else {
-			settings = "SETTINGS max_execution_time = 30, " + tracesSpillSettings
+			settings = "SETTINGS max_execution_time = 25, " + tracesSpillSettings
 		}
 		var countSQL string
 		var countArgs []any
@@ -2197,7 +2214,7 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 		ORDER BY ` + sortCol + ` ` + order + `
 		LIMIT ? OFFSET ?
 		SETTINGS
-		  max_execution_time = 60,
+		  max_execution_time = 25,
 		  optimize_read_in_order = 1,
 		  optimize_aggregation_in_order = 1,
 		  distributed_product_mode = 'global',

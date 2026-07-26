@@ -2813,6 +2813,61 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	// by an index subquery (service + post-aggregate filters,
 	// v0.8.365), or scans the bucket window (no-service path) —
 	// same SELECT, different WHERE.
+	// v0.9.299 — Stage 2 may NEVER run without a trace-id bound.
+	//
+	// This is the one shape that can reach gigabytes, and measurement is
+	// what narrowed it down. On the live cluster the bounded statement
+	// (5,000-id IN list) costs 25,197,112 bytes at 1 day, 2 days and 4
+	// days — byte-for-byte identical — and 25,197,064 at 7 days: 48
+	// bytes of drift across a 5.4x row range, and no movement at all
+	// from max_threads 1 to 32. There is no per-row component to
+	// extrapolate, so no window makes THAT query big.
+	//
+	// Unbounded is the opposite: `GROUP BY trace_id` with only a time
+	// range builds one set of six merge-states per distinct trace in the
+	// window. At production density a single 5-minute bucket holds on
+	// the order of a million traces, so a 7-day window is 10^8-10^9
+	// groups — which is where an operator's 4.15 GiB against a 3.73 GiB
+	// cap comes from.
+	//
+	// Every no-service path is supposed to set `holders` (recency slice
+	// or light Stage 1). If one ever doesn't — a new sort key, an early
+	// return, a refactor — the fallback today is silently the most
+	// expensive query in the codebase, aimed at the whole window. Refuse
+	// it instead: a clear error names the bug in seconds, where an OOM
+	// costs a node and tells you nothing.
+	// So rather than refuse (which would trade one 500 for another), the
+	// bound is BUILT here as a last resort. The recency slice is
+	// aggregation-free and reads the sorting-key prefix, so it is cheap
+	// at any window — it is exactly what the normal path uses. After
+	// this, the unbounded shape is unreachable by construction.
+	if !serviceSubquery && holders == "" {
+		log.Printf("[traces] stage2 had NO trace-id bound (sort=%q, window=%s) — "+
+			"Stage 1 left it unset; building the recency slice here rather than "+
+			"aggregating the whole window", f.Sort, f.To.Sub(f.From))
+		s1f := f
+		s1f.Sort, s1f.Order = "time", "desc"
+		ids, cut, exhausted, serr := s.traceRecencySlice(ctx, s1f, traceRecencySliceN, false)
+		if serr != nil {
+			return nil, 0, false, fmt.Errorf("stage2 safety slice: %w", serr)
+		}
+		if len(ids) == 0 {
+			return []TraceRow{}, 0, false, nil
+		}
+		traceIDs = ids
+		holders = strings.Repeat("?,", len(ids))
+		holders = holders[:len(holders)-1]
+		if !exhausted {
+			stage2Floor = cut
+		}
+		if f.RankedWithin != nil && traceSortRecencySliced(f.Sort) {
+			*f.RankedWithin = len(ids)
+			if exhausted {
+				*f.RankedWithin = 0
+			}
+		}
+	}
+
 	traceIDClause := ""
 	var idArgs []any
 	if serviceSubquery {

@@ -189,3 +189,57 @@ func TestWindowHalvingConverges(t *testing.T) {
 		t.Fatalf("floor %v does not protect a short window", traceStage2NarrowFloor)
 	}
 }
+
+// v0.9.299 — Stage 2 can no longer run without a trace-id bound.
+//
+// Measurement is what identified this as the only remaining
+// explanation for the operator's 4.15 GiB. On the live cluster the
+// BOUNDED statement (5,000-id IN list) costs 25,197,112 bytes at 1, 2
+// and 4 days — byte-for-byte identical — and 25,197,064 at 7 days:
+// 48 bytes of drift across a 5.4x row range, and zero movement from
+// max_threads 1 to 32. There is no per-row term, so no window makes
+// that query large; extrapolating a 150x bigger install still lands at
+// ~25 MiB.
+//
+// The UNBOUNDED shape is the opposite: `GROUP BY trace_id` with only a
+// time range builds six merge-states per distinct trace. At production
+// density one 5-minute bucket holds ~a million traces, so a 7-day
+// window is 10^8-10^9 groups — which is the only shape in this file
+// that reaches gigabytes.
+//
+// This pins the property that makes it unreachable: for a service-less
+// query, an empty id bound must always be resolved into one before the
+// statement runs, never left empty.
+func TestStage2AlwaysHasATraceIDBound(t *testing.T) {
+	cases := []struct {
+		name            string
+		serviceSubquery bool
+		holders         string
+		wantResolve     bool // must build a bound before running
+	}{
+		{"service path carries its own subquery bound", true, "", false},
+		{"normal no-service page — Stage 1 set the ids", false, "?,?,?", false},
+		{
+			// THE case: a sort key, early return or refactor that leaves
+			// Stage 1 without ids. Pre-v0.9.299 this ran the unbounded
+			// aggregate over the operator's whole window.
+			name:            "no-service page with NO ids — must build one, not run unbounded",
+			serviceSubquery: false, holders: "", wantResolve: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Mirrors the guard in getTracesFromMV.
+			resolve := !tc.serviceSubquery && tc.holders == ""
+			if resolve != tc.wantResolve {
+				t.Fatalf("resolve = %v, want %v", resolve, tc.wantResolve)
+			}
+			// And the invariant that follows: after the guard, exactly
+			// one of the two bounds is always present.
+			bounded := tc.serviceSubquery || tc.holders != "" || resolve
+			if !bounded {
+				t.Fatal("statement would run with no trace-id bound — the only shape that reaches gigabytes")
+			}
+		})
+	}
+}

@@ -497,8 +497,15 @@ export default function ServicesPage() {
               Errors only
             </label>
             <button className="sec" onClick={reset}>Reset</button>
-            <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 6 }}>
-              {sorted?.length ?? 0} services{total != null ? ` · ${total} total` : ''}
+            {/* v0.9.281 (operatör: "sayfa sayısı ve NEXT/Last butonları daha
+                belirgin olabilir") — şerit var(--text3)/12px idi ve 23 sayfalık
+                bir listede gezinmenin tek yolu olmasına rağmen gözden kaçıyordu.
+                Düzen ve sıra AYNEN duruyor; yalnız kontrast ve ölçü artıyor. */}
+            <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span>
+                <b style={{ color: 'var(--text)' }}>{fmtNum(sorted?.length ?? 0)}</b> shown
+                {total != null ? <> · <b style={{ color: 'var(--text)' }}>{fmtNum(total)}</b> total</> : null}
+              </span>
               {/* v0.7.44 — First + Last jumps (Last needs the opt-in total;
                   disabled when unknown, e.g. under a cluster filter). */}
               <Button variant="secondary" size="sm"
@@ -512,7 +519,14 @@ export default function ServicesPage() {
                 onClick={() => setPage(p => Math.max(0, p - 1))}>
                 ← Prev
               </Button>
-              <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+              <span style={{
+                fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 700,
+                color: 'var(--text)', background: 'var(--bg2)',
+                border: '1px solid var(--border)', borderRadius: 6, padding: '3px 9px',
+                whiteSpace: 'nowrap',
+              }} title={total != null
+                ? `Page ${page + 1} of ${Math.max(1, Math.ceil(total / PAGE_SIZE))} · ${PAGE_SIZE} per page`
+                : 'Total page count needs the distinct-service count, which a cluster or env filter disables'}>
                 {page + 1}{total != null ? ` / ${Math.max(1, Math.ceil(total / PAGE_SIZE))}` : ''}
               </span>
               <Button variant="secondary" size="sm"
@@ -553,7 +567,24 @@ export default function ServicesPage() {
                 <tbody>
                   {agg && (
                     <tr className="agg-row">
-                      <td><span style={{ fontWeight: 700, color: 'var(--text)' }}>All ({sorted.length})</span></td>
+                      {/* v0.9.281 (operatör) — etiket "All (50)" idi ve YANILTICIYDI:
+                          1125 servisli bir kurulumda bunu okuyan kişi toplamın 50
+                          olduğunu ya da satırın hepsini kapsadığını sanıyor. Satır
+                          zaten SAYFA kapsamlı — altındaki her hücrenin tooltip'i
+                          "across visible services" diyor — sadece başlığı öyle
+                          demiyordu. Toplam biliniyorsa ikisi yan yana gösteriliyor,
+                          böylece sayı hem doğru hem bağlamlı okunuyor. */}
+                      <td>
+                        <span style={{ fontWeight: 700, color: 'var(--text)' }}>
+                          This page ({sorted.length})
+                        </span>
+                        {total != null && total > sorted.length && (
+                          <span style={{ color: 'var(--text3)', fontSize: 11, marginLeft: 6 }}
+                                title={`${total} services match the current filters; this row sums only the ${sorted.length} on screen.`}>
+                            of {fmtNum(total)}
+                          </span>
+                        )}
+                      </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <SparkCell value={fmtNum(agg.spans)}
                                    spark={aggBuckets.map(b => b.spans)}

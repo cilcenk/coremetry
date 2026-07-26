@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tracesPivotHref, messagingTracesHref } from './pivotHref';
+import { tracesPivotHref, messagingTracesHref, dbTracesHref } from './pivotHref';
 import { decodeRange } from './urlState';
 
 // v0.9.213 — the cross-signal pivot into /traces dropped its time window in
@@ -169,5 +169,64 @@ describe('messagingTracesHref', () => {
       'messaging.destination',
       'peer.service',
     ]);
+  });
+});
+
+// v0.9.268 — messagingTracesHref ile AYNI sözleşme, aynı fonksiyondaki
+// düzeltilmemiş kardeş. db_summary_5m instance'ı ALTI basamaklı coalesce ile
+// çözüyor (store.go:2494-2502); eski link yalnız peer.service soruyordu.
+// Canlı ölçüm: clickhouse satırı 30 dakikalık pencerede 2201 span taşıyordu,
+// link 0 eşleşme buluyordu — çünkü o ad service_name basamağından geliyor.
+describe('dbTracesHref', () => {
+  const w = { preset: '1h' } as never;
+
+  function q(href: string) { return new URLSearchParams(href.split('?')[1]); }
+  function decodeGroup(href: string) {
+    const g = q(href).get('filterGroup');
+    return g ? JSON.parse(decodeURIComponent(g)) : null;
+  }
+
+  it('instance için MV coalesce zincirinin ALTI adını da OR ile sorar', () => {
+    const g = decodeGroup(dbTracesHref({ window: w, system: 'clickhouse', instance: 'coremetry-monolithic' }));
+    const or = (g.groups ?? []).find((x: { join: string }) => x.join === 'OR');
+    expect(or).toBeTruthy();
+    expect(or.filters.map((f: { k: string }) => f.k)).toEqual([
+      'peer.service', 'server.address', 'net.peer.name',
+      'db.host', 'db.name', 'service.name',
+    ]);
+    for (const f of or.filters) expect(f.v).toEqual(['coremetry-monolithic']);
+  });
+
+  it('service.name basamağı ŞART — canlıda ölü olan tam bu satırdı', () => {
+    // Bu vaka ayrı duruyor çünkü hatanın kendisi: instance adı çağıran
+    // servisten geliyorsa (DB'yi adlandıracak hiçbir attribute yoksa)
+    // peer.service ile aranmak sıfır satır döndürür.
+    const g = decodeGroup(dbTracesHref({ window: w, system: 'clickhouse', instance: 'coremetry-monolithic' }));
+    const or = g.groups.find((x: { join: string }) => x.join === 'OR');
+    expect(or.filters.some((f: { k: string }) => f.k === 'service.name')).toBe(true);
+  });
+
+  it('pencereyi HER ZAMAN taşır', () => {
+    expect(q(dbTracesHref({ window: w, system: 'postgresql', instance: 'postgres' })).get('range')).toBeTruthy();
+  });
+
+  it('rootOnly=false — DB span’i CLIENT ÇOCUK span’dir', () => {
+    expect(q(dbTracesHref({ window: w, system: 'postgresql', instance: 'postgres' })).get('rootOnly')).toBe('false');
+  });
+
+  it("dbName verilirse AND'e girer, 'default' sentinel'i girmez", () => {
+    const withName = decodeGroup(dbTracesHref({ window: w, system: 'postgresql', instance: 'postgres', dbName: 'ledger' }));
+    expect(withName.filters.map((f: { k: string }) => f.k)).toContain('db.name');
+    const withDefault = decodeGroup(dbTracesHref({ window: w, system: 'postgresql', instance: 'postgres', dbName: 'default' }));
+    expect(withDefault.filters.map((f: { k: string }) => f.k)).not.toContain('db.name');
+  });
+
+  it("instance 'unknown' ise OR basılmaz ama db.system KAYBOLMAZ", () => {
+    // Düz-AND grubunda encodeFilterGroup '' döner; bu dal kodlanmasa link
+    // FİLTRESİZ bir trace listesine giderdi — ölü linkten beter.
+    const p = q(dbTracesHref({ window: w, system: 'postgresql', instance: 'unknown' }));
+    expect(p.get('filterGroup')).toBeNull();
+    const flat = JSON.parse(decodeURIComponent(p.get('filters') ?? '[]'));
+    expect(flat.map((f: { k: string }) => f.k)).toContain('db.system');
   });
 });

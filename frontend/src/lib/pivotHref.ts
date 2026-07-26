@@ -141,3 +141,70 @@ export function messagingTracesHref(p: {
       : { filters: encodeFilters(root.filters as never) }),
   });
 }
+
+// dbTracesHref — v0.9.268. The /databases sibling of messagingTracesHref, and
+// it exists for the same reason: the row's `instance` is not one attribute,
+// it is whichever of SIX the MV managed to find first.
+//
+// db_summary_5m resolves instance as (internal/chstore/store.go:2494-2502):
+//   peer_service → server.address → net.peer.name → db.host → db.name
+//   → service_name → 'unknown'
+//
+// The old link filtered `peer.service` alone, so any row whose name came from
+// a later rung landed on an empty trace list — which reads as "this database
+// has no traces" rather than "the filter missed". Proven on live data: the
+// clickhouse row carried 2201 spans in a 30-minute window and its link
+// matched 0, because that instance is named from service_name (Coremetry's
+// own self-telemetry calling ClickHouse), never from peer_service.
+//
+// service.name is a well-known filter key (filterexpr.go:30 → service_name),
+// so all six rungs fit in one OR group.
+export function dbTracesHref(p: {
+  window: TracesPivot['window'];
+  system: string;
+  instance: string;
+  /** MV's db_name dimension; 'default' is its own not-found sentinel. */
+  dbName?: string;
+  service?: string;
+  hasError?: boolean;
+}): string {
+  const instanceFilters = [
+    { k: 'peer.service', op: '=', v: [p.instance] },
+    { k: 'server.address', op: '=', v: [p.instance] },
+    { k: 'net.peer.name', op: '=', v: [p.instance] },
+    { k: 'db.host', op: '=', v: [p.instance] },
+    { k: 'db.name', op: '=', v: [p.instance] },
+    { k: 'service.name', op: '=', v: [p.instance] },
+  ];
+  const root = {
+    join: 'AND',
+    filters: [
+      { k: 'db.system', op: '=', v: [p.system] },
+      // 'default' is the MV's fallback for a span with no db.name — pinning
+      // it would filter on a literal no span carries.
+      ...(p.dbName && p.dbName !== 'default'
+        ? [{ k: 'db.name', op: '=', v: [p.dbName] }]
+        : []),
+    ],
+    // 'unknown' is likewise the MV's own not-found label, not a real value.
+    ...(p.instance && p.instance !== 'unknown'
+      ? { groups: [{ join: 'OR', filters: instanceFilters }] }
+      : {}),
+  };
+  // Same flat-AND trap as messagingTracesHref: encodeFilterGroup returns ''
+  // for a group with no nested OR, which is exactly what this builds when the
+  // instance is 'unknown'. Encoding into filterGroup alone would drop
+  // db.system too and open an UNFILTERED trace list.
+  const grouped = encodeFilterGroup(root as never);
+  return tracesPivotHref({
+    window: p.window,
+    service: p.service,
+    hasError: p.hasError,
+    // A DB span is a CLIENT child — the rootOnly default would list nothing.
+    rootOnly: false,
+    view: 'list',
+    ...(grouped
+      ? { filterGroup: grouped }
+      : { filters: encodeFilters(root.filters as never) }),
+  });
+}

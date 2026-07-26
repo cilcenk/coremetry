@@ -1,0 +1,1109 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1600">
+<title>Explore — DT-parity mockup (v0.9.266 üzerine)</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════════════
+   Token blokları frontend/src/styles/globals.css'ten BİREBİR alındı.
+   Uydurma renk yok — her değer var(--token) üzerinden okunur.
+   Tema sırası: :root = dark → prefers-color-scheme:light (data-theme yokken)
+   → :root[data-theme="light"] / :root[data-theme="dark"] açık override.
+   Kardeş dosya: endpoints-mockup.html — aynı token adları, aynı mk-* kabuğu.
+   ═══════════════════════════════════════════════════════════════════════ */
+:root {
+  --bg0: #1c2128; --bg1: #22272e; --bg2: #2d333b; --bg3: #373e47; --bg: #1c2128;
+  --border: #444c56; --text: #d5dde5; --text2: #909dab; --text3: #636e7b;
+  --brand: #E30613; --brand2: #ff2333;
+  --accent: #388bfd; --accent2: #58a6ff;
+  --ok: #3fb950; --err: #ff5252; --warn: #d29922; --info: #79c0ff;
+  --purple: #a371f7; --orange: #f0883e; --teal: #39c5cf;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --border-strong: #545d68;
+  --shadow-pop: 0 8px 24px rgba(0,0,0,.45);
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.25);
+  --accent-bg: #22314a; --accent-border: #2c4a70; --text-faint: #545d68;
+  --shadow-md: 0 6px 20px rgba(0,0,0,.45);
+  --radius-sm: 6px; --radius: 8px; --radius-lg: 12px;
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg0: #ffffff; --bg1: #f6f8fa; --bg2: #eaeef2; --bg3: #d0d7de; --bg: #ffffff;
+    --border: #d0d7de; --text: #1f2328; --text2: #59636e; --text3: #818b98;
+    --brand: #E30613; --brand2: #ff2333;
+    --accent: #0969da; --accent2: #0550ae;
+    --ok: #1a7f37; --err: #cf222e; --warn: #9a6700; --info: #0969da;
+    --purple: #8250df; --orange: #bc4c00; --teal: #137775;
+    --accent-soft: rgba(9,105,218,.10); --border-strong: #afb8c1;
+    --shadow-pop: 0 8px 24px rgba(20,30,45,.14);
+    --shadow-sm: 0 1px 2px rgba(20,30,45,.05);
+    --accent-bg: #ddf4ff; --accent-border: #b6e3ff; --text-faint: #a9b1ba;
+    --shadow-md: 0 4px 16px rgba(20,30,45,.08);
+    color-scheme: light;
+  }
+}
+:root[data-theme="light"] {
+  --bg0: #ffffff; --bg1: #f6f8fa; --bg2: #eaeef2; --bg3: #d0d7de; --bg: #ffffff;
+  --border: #d0d7de; --text: #1f2328; --text2: #59636e; --text3: #818b98;
+  --brand: #E30613; --brand2: #ff2333;
+  --accent: #0969da; --accent2: #0550ae;
+  --ok: #1a7f37; --err: #cf222e; --warn: #9a6700; --info: #0969da;
+  --purple: #8250df; --orange: #bc4c00; --teal: #137775;
+  --accent-soft: rgba(9,105,218,.10); --border-strong: #afb8c1;
+  --shadow-pop: 0 8px 24px rgba(20,30,45,.14);
+  --shadow-sm: 0 1px 2px rgba(20,30,45,.05);
+  --accent-bg: #ddf4ff; --accent-border: #b6e3ff; --text-faint: #a9b1ba;
+  --shadow-md: 0 4px 16px rgba(20,30,45,.08);
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --bg0: #1c2128; --bg1: #22272e; --bg2: #2d333b; --bg3: #373e47; --bg: #1c2128;
+  --border: #444c56; --text: #d5dde5; --text2: #909dab; --text3: #636e7b;
+  --accent: #388bfd; --accent2: #58a6ff;
+  --ok: #3fb950; --err: #ff5252; --warn: #d29922; --info: #79c0ff;
+  --purple: #a371f7; --orange: #f0883e; --teal: #39c5cf;
+  --accent-soft: color-mix(in srgb, var(--accent) 16%, transparent);
+  --border-strong: #545d68;
+  --accent-bg: #22314a; --accent-border: #2c4a70; --text-faint: #545d68;
+  color-scheme: dark;
+}
+
+/* ── globals.css taban kuralları ─────────────────────────────────── */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg0); color: var(--text);
+       font: 13px/1.5 -apple-system, 'Segoe UI', sans-serif; }
+a { color: var(--accent2); text-decoration: none; }
+a:hover { text-decoration: underline; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+
+#topbar { padding: 10px 20px; border-bottom: 1px solid var(--border);
+          background: var(--bg1); display: flex; align-items: center; gap: 12px; }
+#topbar h1 { font-size: 15px; font-weight: 600; }
+#content { padding: 20px; }
+
+.controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; align-items: center; }
+input, select, textarea { background: var(--bg2); border: 1px solid var(--border); color: var(--text);
+  border-radius: 6px; padding: 5px 10px; font-size: 13px; outline: none; font-family: inherit; }
+button { background: var(--accent); color: #fff; border: none; border-radius: 6px;
+  padding: 5px 14px; font-size: 13px; cursor: pointer; font-family: inherit; }
+button.sec { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+button.ghost { background: transparent; color: var(--text2); border: 1px solid transparent; }
+button.sm { padding: 3px 9px; font-size: 11px; border-radius: 4px; }
+
+.row { display: flex; flex-direction: row; align-items: center; }
+.gap-2 { gap: 8px; } .gap-3 { gap: 12px; }
+
+.card { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px;
+        padding: 14px; box-shadow: var(--shadow-sm); }
+
+/* globals.css .segmented — Explore'un tüm kontrol dili bunun üstünde */
+.segmented { display: inline-flex; border: 1px solid var(--border); border-radius: 6px;
+  overflow: hidden; background: var(--bg2); }
+.segmented > button { background: transparent; border: none; border-radius: 0;
+  border-right: 1px solid var(--border); color: var(--text2); font-size: 13px;
+  font-weight: 500; padding: 6px 14px; cursor: pointer; }
+.segmented > button:last-child { border-right: none; }
+.segmented > button:hover { color: var(--text); background: var(--bg3); }
+.segmented > button.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.segmented > button.sm2 { padding: 4px 9px; font-size: 11.5px; }
+
+.tab-strip { display: flex; gap: 2px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+.tab-strip > button { background: transparent; border: none; border-radius: 0;
+  border-bottom: 2px solid transparent; color: var(--text2); font-size: 13px; font-weight: 500;
+  padding: 8px 14px; margin-bottom: -1px; cursor: pointer; }
+.tab-strip > button:hover { color: var(--text); }
+.tab-strip > button.active { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
+
+.table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; overflow-y: hidden; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+thead th { padding: 9px 12px; text-align: left; font-weight: 700; color: var(--text3);
+  font-size: 10px; text-transform: uppercase; letter-spacing: .06em;
+  border-bottom: 1px solid var(--border); user-select: none; white-space: nowrap; }
+thead th.sortable { cursor: pointer; }
+thead th.sorted { color: var(--accent2); }
+thead th .sort-arrow { margin-left: 4px; opacity: .7; }
+tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; }
+tbody tr:last-child { border-bottom: none; }
+tbody tr:hover { background: var(--bg2); }
+tbody td { padding: 9px 12px; max-width: 340px; white-space: nowrap;
+           overflow: hidden; text-overflow: ellipsis; vertical-align: top; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px;
+  border-radius: 6px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.b-ok   { background: color-mix(in srgb, var(--ok) 15%, transparent);   color: var(--ok); }
+.b-err  { background: color-mix(in srgb, var(--err) 15%, transparent);  color: var(--err); }
+.b-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.b-info { background: color-mix(in srgb, var(--info) 15%, transparent); color: var(--info); }
+.b-gray { background: var(--bg3); color: var(--text2); }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px;
+  border: 1px solid var(--border); border-radius: 20px; font-size: 11.5px;
+  color: var(--text2); background: var(--bg0); }
+.chip .k { color: var(--text3); }
+.chip b { color: var(--text); font-weight: 600; }
+
+.trp-error { background: color-mix(in srgb, var(--err) 8%, transparent);
+  border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
+  color: var(--err); padding: 6px 8px; border-radius: 4px; font-size: 11px; }
+
+/* ── Mockup-only kabuk (mk-*) — üründe yok, sadece anlatım için ──── */
+.mk-banner { padding: 14px 20px; border-bottom: 1px solid var(--border);
+  background: linear-gradient(135deg, rgba(227,6,19,.10) 0%, transparent 60%); }
+.mk-banner h2 { font-size: 14px; font-weight: 800; letter-spacing: .01em; }
+.mk-banner p { font-size: 11.5px; color: var(--text2); margin-top: 3px; max-width: 1040px; }
+.mk-legend { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.mk-legend .chip { font-size: 11px; }
+.mk-new { display: inline-flex; align-items: center; gap: 4px; padding: 1px 6px;
+  border-radius: 4px; font-size: 9px; font-weight: 800; letter-spacing: .06em;
+  text-transform: uppercase; background: var(--accent-bg); color: var(--accent2);
+  border: 1px solid var(--accent-border); white-space: nowrap; vertical-align: 1px; }
+.mk-fix { background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok); border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
+.mk-sup { font-size: 8.5px; font-weight: 800; color: var(--accent2);
+  background: var(--accent-bg); border: 1px solid var(--accent-border);
+  border-radius: 3px; padding: 0 3px; margin-left: 4px; vertical-align: 2px;
+  letter-spacing: 0; text-transform: none; }
+.mk-note { font-size: 11px; color: var(--text2); border-left: 2px solid var(--accent);
+  background: var(--accent-soft); padding: 6px 10px; border-radius: 0 6px 6px 0;
+  margin: 6px 0 12px; }
+.mk-note b { color: var(--text); }
+.mk-note.warn { border-left-color: var(--warn); background: color-mix(in srgb, var(--warn) 9%, transparent); }
+.mk-sec { display: flex; align-items: center; gap: 10px; margin: 26px 0 10px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: 1.1px;
+  text-transform: uppercase; color: var(--text3); }
+.mk-sec::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+.mk-cols { display: grid; grid-template-columns: minmax(0,1fr) 340px; gap: 16px; align-items: start; }
+.mk-console { background: var(--bg2); border: 1px solid var(--border);
+  border-radius: 8px; margin-bottom: 12px; }
+.mk-zone { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 12px; border-top: 1px solid var(--border); }
+.mk-zone:first-child { border-top: none; }
+.mk-zl { width: 64px; flex-shrink: 0; font-size: 10.5px; font-weight: 700;
+  letter-spacing: .5px; color: var(--text3); text-transform: uppercase; }
+.mk-vdiv { width: 1px; align-self: stretch; background: var(--border); margin: 0 2px; }
+.mk-panel { background: var(--bg1); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px 8px; margin-bottom: 12px; }
+.mk-ph { display: flex; align-items: center; gap: 8px; font-size: 11px;
+  color: var(--text2); margin-bottom: 6px; flex-wrap: wrap; }
+.mk-letter { display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 4px; flex-shrink: 0;
+  background: var(--accent2); color: var(--bg); border: 1px solid var(--accent2);
+  font-size: 11px; font-weight: 700; }
+.mk-letter.f { background: var(--bg3); color: var(--text2); border: 1px dashed var(--border); }
+.mk-chartwrap { position: relative; }
+.mk-tip { position: absolute; z-index: 4; background: var(--bg1);
+  border: 1px solid var(--border-strong); border-radius: 6px;
+  box-shadow: var(--shadow-pop); padding: 7px 9px; font-size: 11px; min-width: 264px; }
+.mk-tip .h { display: flex; align-items: center; gap: 6px; font-size: 10px;
+  color: var(--text3); border-bottom: 1px solid var(--border); padding-bottom: 4px; margin-bottom: 5px; }
+.mk-tiprow { display: grid; grid-template-columns: 9px 1fr auto auto; gap: 6px;
+  align-items: center; padding: 1.5px 0; }
+.mk-tiprow .nm { color: var(--text2); overflow: hidden; text-overflow: ellipsis; }
+.mk-tiprow .vl { font-family: ui-monospace, monospace; font-size: 11px; color: var(--text); }
+.mk-tiprow a { font-size: 10px; white-space: nowrap; }
+.mk-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.mk-lanes { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.mk-lane { border: 1px solid var(--border); border-radius: 8px; background: var(--bg1);
+  overflow: hidden; display: flex; flex-direction: column; }
+.mk-lane-h { padding: 8px 12px; border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 600; }
+.mk-lane-b { padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.mk-step { font-size: 10.5px; color: var(--text3); text-transform: uppercase;
+  letter-spacing: .5px; font-weight: 700; }
+.mk-url { font-family: ui-monospace, monospace; font-size: 10.5px; color: var(--text2);
+  background: var(--bg0); border: 1px solid var(--border); border-radius: 5px;
+  padding: 6px 8px; word-break: break-all; line-height: 1.55; }
+.mk-url b { color: var(--ok); }
+.mk-url s { color: var(--err); text-decoration-color: var(--err); }
+.mk-land { border: 1px dashed var(--border-strong); border-radius: 6px;
+  background: var(--bg0); padding: 9px 10px; font-size: 11px; }
+.mk-arrow { text-align: center; color: var(--text3); font-size: 14px; line-height: 1; }
+.mk-two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.mk-half { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg1); }
+.mk-half > .t { padding: 6px 10px; font-size: 10.5px; font-weight: 700; letter-spacing: .5px;
+  text-transform: uppercase; border-bottom: 1px solid var(--border); }
+.mk-half > .t.now { color: var(--err); background: color-mix(in srgb, var(--err) 8%, transparent); }
+.mk-half > .t.next { color: var(--ok); background: color-mix(in srgb, var(--ok) 8%, transparent); }
+.mk-blank { height: 118px; display: grid; place-items: center; color: var(--text-faint);
+  font-size: 11px; font-style: italic; }
+.mk-empty { height: 118px; display: grid; place-items: center; text-align: center; padding: 10px; }
+.mk-empty .ic { font-size: 20px; color: var(--text3); }
+.mk-empty .ti { font-size: 12px; font-weight: 600; margin-top: 4px; }
+.mk-empty .su { font-size: 11px; color: var(--text3); margin-top: 2px; max-width: 300px; }
+.mk-spin { width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  animation: mkspin 1s linear infinite; }
+@keyframes mkspin { to { transform: rotate(360deg); } }
+.mk-foot { margin-top: 8px; font-size: 11px; color: var(--text3); }
+.mk-themebtns { margin-left: auto; display: flex; gap: 4px; }
+.mk-pane { display: none; }
+.mk-pane.on { display: block; }
+.mk-legendrow { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 6px;
+  font-size: 10.5px; color: var(--text2); align-items: center; }
+.mk-legendrow i { width: 14px; height: 2px; display: inline-block; margin-right: 5px; vertical-align: 2px; }
+@media (max-width: 1180px) { .mk-cols { grid-template-columns: 1fr; } .mk-two { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+
+<!-- ══════════ Mockup açıklama şeridi (üründe yoktur) ══════════ -->
+<div class="mk-banner">
+  <div class="row gap-3">
+    <div>
+      <h2>/explore — Dynatrace Data-Explorer parite mockup'ı
+        <span class="mk-new">8 dilim + 6 pivot düzeltmesi</span></h2>
+      <p>
+        Analiz katmanı <b>aynen duruyor</b>: A–D çoklu sorgu, formül, OR/nested filtre grupları, 16 span agg'ı,
+        9 viz, heatmap + BubbleUp, çift-tık-geri, tooltip pin, CSV, pin, kaydedilmiş görünümler — hepsi
+        v0.9.266'daki düzeniyle. Eklenen her şey <span class="mk-new">yeni</span> rozetiyle ve brief'teki
+        dilim kimliğiyle işaretli. Bu tur <b>yeni analiz yeteneği değil</b>: sorgunun kendi durumu hakkındaki
+        dürüstlüğü (hangi depo cevapladı, efektif interval ne, kaç seri düştü, sorgu patladı mı) ve
+        <b>içeri pivotların link bütünlüğü</b>. Grafikler temsilî statik SVG (üründe uPlot).
+      </p>
+    </div>
+    <div class="mk-themebtns">
+      <button class="sec sm" onclick="document.documentElement.removeAttribute('data-theme')">Auto</button>
+      <button class="sec sm" onclick="document.documentElement.setAttribute('data-theme','dark')">Dark</button>
+      <button class="sec sm" onclick="document.documentElement.setAttribute('data-theme','light')">Light</button>
+    </div>
+  </div>
+  <div class="mk-legend">
+    <span class="chip"><span class="mk-new">X1</span> Advanced-DSL kutusuna 300 ms debounce (görünmez)</span>
+    <span class="chip"><span class="mk-new">X2</span> Sonuç alanının 6 kör noktası: hata / boş / yükleniyor</span>
+    <span class="chip"><span class="mk-new">X3</span> Provenance: efektif step + DOĞRU tier rozeti</span>
+    <span class="chip"><span class="mk-new">X4</span> Tamamlanmamış bucket — iki kenarda soluk bant</span>
+    <span class="chip"><span class="mk-new">X5</span> <code>rate</code> / <code>increase</code> agg listesine</span>
+    <span class="chip"><span class="mk-new">X6</span> Problem bantları (<code>regions</code>) + kapatma anahtarı</span>
+    <span class="chip"><span class="mk-new">X7</span> Bucket → kayıtlar, <b>pinli tooltip satırı</b> olarak</span>
+    <span class="chip"><span class="mk-new">X8</span> Kesinti dürüstlüğü: <code>totalSeries</code> + kesildi bayrağı</span>
+    <span class="chip"><span class="mk-new mk-fix">P1–P6</span> İçeri pivotlar: 1 ölü link, 4 pencere kaybı, 1 kök sebep</span>
+  </div>
+</div>
+
+<!-- ══════════ Mevcut Topbar (değişmez) ══════════ -->
+<div id="topbar">
+  <h1>Explore</h1>
+  <select style="max-width:180px"><option>env: uat</option></select>
+  <button class="sec sm" style="padding:5px 10px;font-size:12px">🕐 Last 6 h ▾</button>
+  <span class="row gap-2" style="margin-left:auto;font-size:11px;color:var(--text3)">
+    <span style="width:8px;height:8px;border-radius:50%;background:var(--ok);display:inline-block"></span>
+    live · 4.2k spans/s
+  </span>
+  <button class="ghost sm">🌗</button>
+</div>
+
+<div id="content">
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       1) SORGU KONSOLU — mevcut zone düzeni (Source / Show / Ask /
+          A–D satırları / Formula). Kolon sırası ve etkileşim aynen.
+       ══════════════════════════════════════════════════════════════════ -->
+  <div class="mk-sec">1 · Sorgu konsolu — mevcut zone düzeni, iki noktada ek</div>
+
+  <div class="mk-console">
+
+    <!-- SOURCE zone — MEVCUT -->
+    <div class="mk-zone">
+      <span class="mk-zl">Source</span>
+      <div class="segmented">
+        <button class="active">Spans</button><button>Metrics</button><button>Logs</button>
+      </div>
+      <span style="flex:1"></span>
+      <button class="sec sm">1 · Checkout p99</button>
+      <button class="sec sm" style="border-color:var(--accent);color:var(--accent2);background:var(--accent-soft)">2 · Payments rate</button>
+      <button class="sec sm">+ Save view</button>
+      <button class="sec sm">🔗 Share</button>
+    </div>
+
+    <!-- SHOW zone — MEVCUT (result mode + VizRail + Step + Top + log y) -->
+    <div class="mk-zone">
+      <span class="mk-zl">Show</span>
+      <div class="segmented">
+        <button>⋮ Traces</button><button class="active">∿ Metric</button><button>⟳ Repeats</button>
+      </div>
+      <span class="mk-vdiv"></span>
+      <div class="segmented">
+        <button class="sm2 active">∿ Line</button><button class="sm2">◪ Area</button>
+        <button class="sm2">▮ Bars</button><button class="sm2">▟ Stacked</button>
+        <button class="sm2"># Stat</button><button class="sm2">≣ Top list</button>
+        <button class="sm2">◔ Pie</button><button class="sm2">▤ Table</button>
+        <button class="sm2">▦ Heatmap</button>
+      </div>
+      <span style="color:var(--text2);font-size:12px;margin-left:4px">Step:</span>
+      <select style="font-size:12px"><option>auto</option></select>
+      <span style="color:var(--text2);font-size:12px;margin-left:4px">Top:</span>
+      <select style="font-size:12px"><option>50</option></select>
+      <div class="segmented" style="margin-left:4px"><button class="sm2">log y</button></div>
+      <span style="flex:1"></span>
+    </div>
+
+    <!-- ASK zone — MEVCUT -->
+    <div class="mk-zone">
+      <span class="mk-zl">Ask</span>
+      <input style="flex:1;min-width:240px;font-size:12px"
+             placeholder="Son 1 saatte checkout-api'de 500 dönen yavaş istekler…">
+      <button class="sec sm">Uygula</button>
+    </div>
+
+    <!-- QUERY A — MEVCUT satır düzeni; X5 rozeti agg select'inde -->
+    <div class="mk-zone" style="align-items:flex-start">
+      <span class="mk-letter" style="margin-top:2px">A</span>
+      <div class="segmented" style="margin-top:1px">
+        <button class="sm2 active">Spans</button><button class="sm2">Metric</button>
+      </div>
+      <select style="font-size:12px"><option>p99</option></select>
+      <span style="color:var(--text2);font-size:12px">of</span>
+      <select style="font-size:12px"><option>duration_ms</option></select>
+      <select style="font-size:12px;min-width:150px"><option>tüm servisler</option></select>
+      <div style="flex:1;min-width:220px;display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+        <span class="chip"><span class="k">kind</span> = <b>server</b> <span style="color:var(--text3)">✕</span></span>
+        <span class="chip"><span class="k">deployment.environment</span> = <b>uat</b> <span style="color:var(--text3)">✕</span></span>
+        <button class="ghost sm">+ filtre</button>
+        <span style="flex:1"></span>
+        <button class="ghost sm">⊞ Group (AND/OR)</button>
+      </div>
+      <span style="color:var(--text2);font-size:12px">Split:</span>
+      <select style="font-size:12px"><option>service.name</option></select>
+      <span style="color:var(--text3);padding:2px 6px">×</span>
+    </div>
+
+    <!-- QUERY B — metric-source; X5 burada -->
+    <div class="mk-zone" style="align-items:flex-start">
+      <span class="mk-letter" style="margin-top:2px">B</span>
+      <div class="segmented" style="margin-top:1px">
+        <button class="sm2">Spans</button><button class="sm2 active">Metric</button>
+      </div>
+      <select style="font-size:12px;min-width:230px"><option>http.server.request.count · sum</option></select>
+      <select style="font-size:12px;border-color:var(--accent);background:var(--accent-soft);color:var(--accent)">
+        <option>rate</option></select>
+      <span class="mk-new">Yeni · X5</span>
+      <select style="font-size:12px;min-width:150px"><option>tüm servisler</option></select>
+      <div style="flex:1;min-width:200px">
+        <span class="chip"><span class="k">http.status_code</span> ≥ <b>500</b> <span style="color:var(--text3)">✕</span></span>
+      </div>
+      <span style="color:var(--text2);font-size:12px">Split:</span>
+      <select style="font-size:12px"><option>service.name</option></select>
+      <span style="color:var(--text3);padding:2px 6px">×</span>
+    </div>
+
+    <!-- FORMULA zone — MEVCUT -->
+    <div class="mk-zone">
+      <span class="mk-zl">Formula</span>
+      <input style="flex:1;min-width:200px;font-family:ui-monospace,monospace;font-size:11.5px"
+             placeholder="ör. A / B — harflerle serbest ifade">
+      <span class="mk-vdiv"></span>
+      <button class="sec sm">+ Sorgu</button>
+    </div>
+
+    <!-- ADVANCED DSL — Traces/Repeats modunun konsolu; X1 burada -->
+    <div class="mk-zone" style="align-items:flex-start">
+      <span class="mk-zl" style="margin-top:5px">Filter</span>
+      <div class="segmented" style="margin-top:1px">
+        <button class="sm2">Builder</button><button class="sm2 active">Advanced</button>
+      </div>
+      <div style="flex:1;min-width:280px">
+        <textarea rows="3" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace;font-size:11.5px;resize:vertical"
+>duration > 500ms
+service.name = "checkout-api"
+http.status_code >= 500</textarea>
+        <div style="margin-top:4px;font-size:11px;color:var(--text3);display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+          <span>Conditions are AND-joined · prefix with <code>resource.</code> or <code>span.</code> to scope ·
+            <code>duration</code> accepts <code>500ms</code>, <code>1.5s</code>, <code>2m</code></span>
+          <span class="badge b-info" style="font-size:9px">⏱ 300 ms sonra sorgulanır
+            <span class="mk-sup" style="margin-left:2px">X1</span></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mk-note warn">
+    <b>X1 — görsel olarak hiçbir şey.</b> Bugün bu <code>&lt;textarea&gt;</code> her tuş vuruşunda hem fetch
+    effect'ini hem URL yazıcısını tetikliyor; sunucu tarafı önbellek anahtarı ham <code>RawQuery</code>
+    olduğu için her ön-ek <b>garantili MISS</b> ve herhangi bir filtre <code>trace_summary_5m</code> hızlı
+    yolunu diskalifiye ediyor → ham <code>GROUP BY trace_id</code>. Handler'ın kendi yorumu bunu
+    <i>"the heaviest uncached read"</i> diye adlandırıyor. Başlık <b>"karakter başına bir tarama" DEĞİL</b>
+    — kısmi girdinin çoğu DSL parse'ında 400 alıyor. Gerçek gerekçe: kaza sorguları nihai sorgudan
+    <b>daha geniş</b> (<code>duration &gt; 5</code> birimsiz → penceredeki her span) ve 24 bağlantılık
+    <code>MaxOpenConns</code> havuzunu doldurup <code>/api/health</code> · <code>/api/services</code> ·
+    <code>/api/problems</code>'in &lt;50 ms sıcak bütçesini patlatıyor. İptal yolu da yok: soket sorgu
+    bitene kadar açık kalıyor ve her çöp anahtar L1+Redis'e 20 s TTL ile yazılıyor.
+    Çözüm builder'ın zaten kullandığı desen: <code>dslDebounced</code> state aynası, <b>iki</b> effect'e
+    birden bağlı (fetch + URL). Builder modu ve <code>useQueryHistory</code> dokunulmuyor.
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       2) SONUÇ ALANI — paneller
+       ══════════════════════════════════════════════════════════════════ -->
+  <div class="mk-sec">2 · Sonuç alanı — panel yığını (X3 · X4 · X6 · X7 · X8)</div>
+
+  <div class="mk-cols">
+    <div>
+
+      <!-- Zoom şeridi — MEVCUT -->
+      <div class="row gap-2" style="margin-bottom:8px;font-size:12px;color:var(--text2);flex-wrap:wrap">
+        <span>🔍 Zoom aktif — tüm paneller senkron</span>
+        <button class="sec sm">Sıfırla</button>
+        <button class="sec sm">Bu pencereyi getir →</button>
+        <span style="flex:1"></span>
+        <!-- X6 kapatma anahtarı -->
+        <label style="display:flex;align-items:center;gap:5px;font-size:11px;padding:2px 8px;
+                      border:1px solid var(--accent-border);border-radius:20px;background:var(--accent-soft)">
+          <input type="checkbox" checked style="padding:0"> Problem bantları
+          <span class="mk-new">Yeni · X6</span>
+        </label>
+      </div>
+
+      <!-- ═══ PANEL A ═══ -->
+      <div class="mk-panel">
+        <div class="mk-ph">
+          <span class="mk-letter">A</span>
+          <span style="color:var(--accent2);font-weight:600">p99(duration_ms) by service.name</span>
+          <span style="flex:1"></span>
+          <!-- MEVCUT sayaç metni + X8 dürüst etiketi + X3 provenance soneki -->
+          <span style="color:var(--text3)">
+            4 seri · <span title="Sunucu tarafı top-N: alan bazlı kırpma — KASITLI">+46 daha (alan bazlı kırpıldı)</span>
+            <span style="color:var(--text2)" title="X8: trim ÖNCESİ gerçek seri sayısı — bugün metric yolunda undefined">
+              · 1.412 seriden 50'si<span class="mk-sup">X8</span></span>
+            · ms
+            <span style="color:var(--text2)"
+                  title="X3: istenen step 1 s, clampMetricStep 10 s tabanına yükseltti · veri service_summary_5m'in tdigest'inden">
+              · 10 s bucket <span style="color:var(--text3)">(1 s istendi)</span> · service_summary_5m<span class="mk-sup">X3</span></span>
+          </span>
+          <button class="ghost sm" title="Dashboard'a pinle">📌</button>
+        </div>
+
+        <div class="mk-chartwrap">
+          <svg viewBox="0 0 760 176" width="100%" height="196" preserveAspectRatio="none"
+               style="display:block;background:var(--bg0);border:1px solid var(--border);border-radius:6px">
+            <!-- ═══ X4 — tamamlanmamış bucket bantları (nötr, şeritsiz varyant) ═══ -->
+            <rect x="0" y="0" width="11" height="176" fill="var(--text3)" opacity=".13"/>
+            <rect x="741" y="0" width="19" height="176" fill="var(--text3)" opacity=".13"/>
+            <line x1="741" y1="0" x2="741" y2="176" stroke="var(--text3)" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>
+            <line x1="11" y1="0" x2="11" y2="176" stroke="var(--text3)" stroke-width="1" stroke-dasharray="3 3" opacity=".7"/>
+
+            <!-- ═══ X6 — problem bandı (ProblemDetail/Service'teki drawTimeRegions) ═══ -->
+            <rect x="321" y="0" width="150" height="176" fill="var(--err)" opacity=".10"/>
+            <line x1="321" y1="0" x2="321" y2="176" stroke="var(--err)" stroke-width="1" opacity=".55"/>
+            <line x1="471" y1="0" x2="471" y2="176" stroke="var(--err)" stroke-width="1" opacity=".55"/>
+
+            <!-- yatay ızgara -->
+            <line x1="0" y1="44" x2="760" y2="44" stroke="var(--border)" stroke-width=".6"/>
+            <line x1="0" y1="88" x2="760" y2="88" stroke="var(--border)" stroke-width=".6"/>
+            <line x1="0" y1="132" x2="760" y2="132" stroke="var(--border)" stroke-width=".6"/>
+
+            <!-- seriler -->
+            <polyline fill="none" stroke="var(--err)" stroke-width="1.6" points="0.0,112.1 10.7,112.4 21.4,119.7 32.1,119.8 42.8,113.7 53.5,114.5 64.2,111.8 74.9,109.8 85.6,117.3 96.3,101.3 107.0,101.3 117.7,109.7 128.5,110.0 139.2,108.2 149.9,110.8 160.6,109.1 171.3,107.4 182.0,110.5 192.7,108.3 203.4,107.9 214.1,109.6 224.8,112.3 235.5,115.0 246.2,108.9 256.9,110.2 267.6,108.9 278.3,112.5 289.0,112.2 299.7,111.5 310.4,116.4 321.1,121.6 331.8,95.5 342.5,75.2 353.2,45.4 363.9,31.3 374.6,21.0 385.4,12.8 396.1,11.4 406.8,8.4 417.5,21.8 428.2,32.7 438.9,54.6 449.6,79.6 460.3,98.3 471.0,126.9 481.7,122.8 492.4,122.1 503.1,127.9 513.8,122.4 524.5,120.5 535.2,121.8 545.9,124.3 556.6,117.9 567.3,117.8 578.0,116.5 588.7,120.8 599.4,113.5 610.1,110.7 620.8,115.4 631.5,105.1 642.3,112.6 653.0,114.4 663.7,114.1 674.4,110.4 685.1,108.4 695.8,115.4 706.5,107.1 717.2,112.6 727.9,113.7 738.6,112.7 749.3,145.4 760.0,150.5"/>
+            <polyline fill="none" stroke="var(--orange)" stroke-width="1.4" points="0.0,141.9 10.7,142.7 21.4,142.5 32.1,139.7 42.8,137.9 53.5,136.9 64.2,144.7 74.9,138.9 85.6,139.4 96.3,139.5 107.0,142.7 117.7,139.6 128.5,134.6 139.2,142.0 149.9,137.8 160.6,142.3 171.3,138.4 182.0,137.7 192.7,138.4 203.4,138.8 214.1,143.3 224.8,139.1 235.5,142.2 246.2,140.6 256.9,139.8 267.6,140.8 278.3,140.5 289.0,143.3 299.7,140.5 310.4,143.9 321.1,141.1 331.8,132.5 342.5,129.7 353.2,120.9 363.9,117.4 374.6,108.9 385.4,104.4 396.1,106.1 406.8,103.7 417.5,109.9 428.2,120.2 438.9,120.5 449.6,127.5 460.3,139.6 471.0,151.3 481.7,152.9 492.4,148.2 503.1,147.5 513.8,147.5 524.5,148.0 535.2,149.9 545.9,141.6 556.6,144.4 567.3,141.0 578.0,149.8 588.7,144.1 599.4,146.2 610.1,146.3 620.8,139.2 631.5,141.3 642.3,143.2 653.0,143.1 663.7,141.2 674.4,135.4 685.1,138.3 695.8,140.5 706.5,142.9 717.2,134.5 727.9,137.2 738.6,140.0 749.3,159.4 760.0,159.7"/>
+            <polyline fill="none" stroke="var(--accent)" stroke-width="1.4" points="0.0,156.8 10.7,157.9 21.4,155.7 32.1,154.9 42.8,157.5 53.5,155.3 64.2,153.8 74.9,154.2 85.6,155.2 96.3,152.7 107.0,156.5 117.7,156.9 128.5,154.2 139.2,153.5 149.9,153.6 160.6,153.6 171.3,154.6 182.0,152.2 192.7,157.8 203.4,151.7 214.1,155.3 224.8,157.0 235.5,155.3 246.2,152.8 256.9,154.9 267.6,158.5 278.3,156.5 289.0,158.0 299.7,158.0 310.4,158.0 321.1,163.0 331.8,154.6 342.5,154.4 353.2,154.5 363.9,151.7 374.6,151.0 385.4,148.5 396.1,152.6 406.8,150.4 417.5,153.1 428.2,156.6 438.9,157.5 449.6,157.4 460.3,158.9 471.0,159.1 481.7,163.1 492.4,158.5 503.1,157.7 513.8,157.7 524.5,158.4 535.2,160.3 545.9,158.2 556.6,157.2 567.3,157.5 578.0,157.9 588.7,156.5 599.4,158.3 610.1,158.2 620.8,156.5 631.5,153.3 642.3,151.3 653.0,155.0 663.7,155.1 674.4,153.9 685.1,155.4 695.8,154.5 706.5,153.5 717.2,153.9 727.9,151.9 738.6,152.2 749.3,165.7 760.0,167.1"/>
+            <polyline fill="none" stroke="var(--teal)" stroke-width="1.4" points="0.0,166.0 10.7,164.7 21.4,166.8 32.1,166.7 42.8,165.1 53.5,165.4 64.2,165.4 74.9,164.7 85.6,164.6 96.3,164.7 107.0,164.0 117.7,164.2 128.5,163.7 139.2,165.1 149.9,164.4 160.6,163.5 171.3,164.6 182.0,165.3 192.7,163.9 203.4,164.4 214.1,164.5 224.8,166.2 235.5,163.6 246.2,164.6 256.9,164.0 267.6,164.4 278.3,166.9 289.0,166.3 299.7,165.2 310.4,167.6 321.1,166.1 331.8,166.3 342.5,164.5 353.2,166.3 363.9,163.5 374.6,164.3 385.4,165.7 396.1,166.7 406.8,163.9 417.5,166.7 428.2,164.7 438.9,166.2 449.6,166.6 460.3,166.6 471.0,167.4 481.7,168.6 492.4,168.0 503.1,168.2 513.8,168.3 524.5,167.2 535.2,167.0 545.9,166.5 556.6,167.2 567.3,166.7 578.0,166.2 588.7,165.8 599.4,165.9 610.1,166.8 620.8,165.9 631.5,165.0 642.3,165.8 653.0,165.4 663.7,164.6 674.4,165.5 685.1,165.6 695.8,166.4 706.5,165.8 717.2,164.5 727.9,165.3 738.6,165.3 749.3,170.9 760.0,171.3"/>
+
+            <!-- MEVCUT exemplar ◆ (resolver yolundan) -->
+            <path d="M385.4 12.8 l4 4 -4 4 -4 -4 z" fill="var(--warn)"/>
+            <path d="M492.4 122.1 l4 4 -4 4 -4 -4 z" fill="var(--warn)"/>
+
+            <!-- X7 — pinli imleç -->
+            <line x1="396.1" y1="0" x2="396.1" y2="176" stroke="var(--accent2)" stroke-width="1"/>
+            <circle cx="396.1" cy="11.4" r="3" fill="var(--err)"/>
+            <circle cx="396.1" cy="106.1" r="3" fill="var(--orange)"/>
+            <circle cx="396.1" cy="152.6" r="3" fill="var(--accent)"/>
+            <circle cx="396.1" cy="166.7" r="3" fill="var(--teal)"/>
+          </svg>
+
+          <!-- X4 kenar etiketleri (SVG dışında, ölçek bağımsız) -->
+          <span style="position:absolute;right:6px;top:5px;font-size:9px;color:var(--text3);
+                       background:var(--bg1);border:1px solid var(--border);border-radius:3px;padding:1px 5px">
+            bucket dolmadı<span class="mk-sup">X4</span></span>
+          <span style="position:absolute;left:14px;top:5px;font-size:9px;color:var(--text3);
+                       background:var(--bg1);border:1px solid var(--border);border-radius:3px;padding:1px 5px">
+            kısmi ilk bucket<span class="mk-sup">X4</span></span>
+          <!-- X6 bant etiketi -->
+          <span style="position:absolute;left:44%;bottom:6px;font-size:9px;color:var(--err);
+                       background:color-mix(in srgb, var(--err) 12%, var(--bg1));
+                       border:1px solid color-mix(in srgb, var(--err) 40%, transparent);
+                       border-radius:3px;padding:1px 5px">
+            P1 · checkout-api p99 breach<span class="mk-sup">X6</span></span>
+
+          <!-- ═══ X7 — PİNLİ TOOLTIP: satır başına "bu bucket'taki trace'ler" ═══ -->
+          <div class="mk-tip" style="left:53%;top:4px">
+            <div class="h">
+              <span class="mono">14:22:30</span>
+              <span>· 10 s bucket</span>
+              <span style="flex:1"></span>
+              <span class="badge b-info" style="font-size:9px">📌 pinli</span>
+            </div>
+            <div class="mk-tiprow"><span class="mk-dot" style="background:var(--err)"></span>
+              <span class="nm">checkout-api</span><span class="vl">2.614 ms</span>
+              <a href="#">trace'ler →<span class="mk-sup">X7</span></a></div>
+            <div class="mk-tiprow"><span class="mk-dot" style="background:var(--orange)"></span>
+              <span class="nm">payments-api</span><span class="vl">1.290 ms</span>
+              <a href="#">trace'ler →</a></div>
+            <div class="mk-tiprow"><span class="mk-dot" style="background:var(--accent)"></span>
+              <span class="nm">orders-api</span><span class="vl">412 ms</span>
+              <a href="#">trace'ler →</a></div>
+            <div class="mk-tiprow"><span class="mk-dot" style="background:var(--teal)"></span>
+              <span class="nm">inventory-svc</span><span class="vl">180 ms</span>
+              <a href="#">trace'ler →</a></div>
+            <div style="border-top:1px solid var(--border);margin-top:5px;padding-top:4px;
+                        font-size:9.5px;color:var(--text3);line-height:1.5">
+              Link = <code>/traces</code> · sorgu A'nın <code>filterGroup</code>'u
+              + <code>service.name = &lt;satır&gt;</code> + pencere 14:22:30–14:22:40.<br>
+              Düz tıklama <b>çalınmıyor</b>: o jest hâlâ exemplar ◆ / tooltip pin.
+            </div>
+          </div>
+        </div>
+
+        <div class="mk-legendrow">
+          <span><i style="background:var(--err)"></i>checkout-api</span>
+          <span><i style="background:var(--orange)"></i>payments-api</span>
+          <span><i style="background:var(--accent)"></i>orders-api</span>
+          <span><i style="background:var(--teal)"></i>inventory-svc</span>
+          <span style="color:var(--text3)">◆ exemplar (mevcut)</span>
+          <span style="color:var(--text3)">
+            <i style="background:var(--text3);opacity:.45;height:8px;width:12px"></i>tamamlanmamış bucket
+            <span class="mk-sup">X4</span></span>
+          <span style="color:var(--text3)">
+            <i style="background:color-mix(in srgb, var(--err) 30%, transparent);height:8px;width:12px"></i>problem
+            <span class="mk-sup">X6</span></span>
+        </div>
+      </div>
+
+      <!-- ═══ PANEL B — metric-source rate; X5 + X8 kesinti bayrağı ═══ -->
+      <div class="mk-panel">
+        <div class="mk-ph">
+          <span class="mk-letter">B</span>
+          <span style="color:var(--accent2);font-weight:600">rate(http.server.request.count) by service.name</span>
+          <span class="mk-new">Yeni · X5</span>
+          <span style="flex:1"></span>
+          <span style="color:var(--text3)">
+            3 seri
+            <span style="color:var(--text2)" title="X8: LIMIT 50000 satır kesimi — KAZA, trim değil">
+              · <span class="badge b-warn" style="font-size:9px">⚠ 12 seri LIMIT'te kesildi<span class="mk-sup">X8</span></span></span>
+            · req/s<span style="color:var(--warn)" title="X5 riski: metric kaynağında rate birimi türetilmiyor — By → By/s">*</span>
+            <span style="color:var(--text2)" title="X3: metric yolu clampStepToExport uyguluyor">
+              · 60 s bucket · metric_points<span class="mk-sup">X3</span></span>
+          </span>
+          <button class="ghost sm">📌</button>
+        </div>
+        <div class="mk-chartwrap">
+          <svg viewBox="0 0 760 120" width="100%" height="130" preserveAspectRatio="none"
+               style="display:block;background:var(--bg0);border:1px solid var(--border);border-radius:6px">
+            <rect x="0" y="0" width="11" height="120" fill="var(--text3)" opacity=".13"/>
+            <rect x="741" y="0" width="19" height="120" fill="var(--text3)" opacity=".13"/>
+            <rect x="321" y="0" width="150" height="120" fill="var(--err)" opacity=".10"/>
+            <line x1="0" y1="40" x2="760" y2="40" stroke="var(--border)" stroke-width=".6"/>
+            <line x1="0" y1="80" x2="760" y2="80" stroke="var(--border)" stroke-width=".6"/>
+            <polyline fill="none" stroke="var(--accent)" stroke-width="1.5" points="0.0,14.7 10.7,15.7 21.4,11.7 32.1,14.0 42.8,13.8 53.5,14.3 64.2,8.9 74.9,14.0 85.6,18.3 96.3,14.9 107.0,17.0 117.7,16.3 128.5,15.2 139.2,20.1 149.9,18.3 160.6,17.9 171.3,20.9 182.0,20.3 192.7,19.5 203.4,18.6 214.1,21.8 224.8,25.2 235.5,26.6 246.2,23.0 256.9,24.8 267.6,20.9 278.3,26.5 289.0,29.3 299.7,27.1 310.4,29.8 321.1,68.9 331.8,71.2 342.5,70.0 353.2,73.2 363.9,71.8 374.6,70.4 385.4,73.4 396.1,72.3 406.8,71.0 417.5,73.4 428.2,73.8 438.9,71.5 449.6,71.3 460.3,70.8 471.0,70.2 481.7,31.8 492.4,30.4 503.1,32.2 513.8,27.3 524.5,29.5 535.2,25.4 545.9,29.0 556.6,27.1 567.3,28.5 578.0,24.0 588.7,22.4 599.4,26.6 610.1,19.3 620.8,19.0 631.5,22.5 642.3,19.2 653.0,17.4 663.7,19.3 674.4,16.4 685.1,15.5 695.8,17.9 706.5,18.6 717.2,17.9 727.9,15.1 738.6,15.6 749.3,76.0 760.0,76.7"/>
+            <polyline fill="none" stroke="var(--purple)" stroke-width="1.4" points="0.0,51.4 10.7,47.6 21.4,45.2 32.1,47.7 42.8,48.6 53.5,45.1 64.2,48.1 74.9,47.6 85.6,48.4 96.3,48.3 107.0,48.1 117.7,46.4 128.5,45.3 139.2,46.1 149.9,47.2 160.6,47.8 171.3,49.7 182.0,49.5 192.7,48.6 203.4,51.8 214.1,52.6 224.8,51.8 235.5,57.2 246.2,52.1 256.9,53.6 267.6,53.6 278.3,56.2 289.0,56.4 299.7,53.9 310.4,59.6 321.1,57.5 331.8,55.5 342.5,57.1 353.2,62.2 363.9,61.0 374.6,61.5 385.4,60.0 396.1,59.1 406.8,59.1 417.5,56.3 428.2,58.2 438.9,57.1 449.6,60.4 460.3,59.5 471.0,60.7 481.7,63.1 492.4,59.5 503.1,60.2 513.8,55.4 524.5,57.7 535.2,56.2 545.9,57.3 556.6,55.0 567.3,56.7 578.0,54.7 588.7,51.7 599.4,50.3 610.1,54.3 620.8,50.7 631.5,52.4 642.3,54.1 653.0,51.7 663.7,53.5 674.4,49.6 685.1,49.8 695.8,50.4 706.5,51.8 717.2,46.3 727.9,47.7 738.6,44.4 749.3,90.6 760.0,90.4"/>
+            <polyline fill="none" stroke="var(--teal)" stroke-width="1.4" points="0.0,90.6 10.7,89.9 21.4,92.3 32.1,91.1 42.8,90.9 53.5,90.6 64.2,91.6 74.9,90.4 85.6,90.0 96.3,90.3 107.0,92.6 117.7,91.0 128.5,92.8 139.2,90.5 149.9,91.2 160.6,90.7 171.3,90.8 182.0,90.9 192.7,92.4 203.4,94.0 214.1,92.9 224.8,94.5 235.5,92.7 246.2,93.3 256.9,94.8 267.6,93.9 278.3,93.5 289.0,93.7 299.7,95.6 310.4,95.2 321.1,95.0 331.8,95.1 342.5,93.8 353.2,97.9 363.9,96.4 374.6,97.2 385.4,97.2 396.1,95.4 406.8,94.7 417.5,97.0 428.2,97.5 438.9,94.6 449.6,97.6 460.3,97.8 471.0,96.6 481.7,95.5 492.4,95.7 503.1,95.5 513.8,93.9 524.5,93.5 535.2,96.1 545.9,93.6 556.6,93.1 567.3,91.9 578.0,94.7 588.7,92.9 599.4,93.0 610.1,93.2 620.8,92.7 631.5,93.9 642.3,92.4 653.0,91.3 663.7,91.3 674.4,90.5 685.1,90.9 695.8,91.5 706.5,90.6 717.2,91.2 727.9,90.0 738.6,91.3 749.3,108.6 760.0,108.5"/>
+          </svg>
+        </div>
+        <div class="mk-foot" style="margin-top:6px">
+          <span class="badge b-warn" style="font-size:9px">⚠</span>
+          <b>X5 ön koşulu:</b> <code>scope</code> boş — kapsamsız rate 1000 serviste
+          <code>LIMIT 50000</code> kuyruğundan <b>tam seriler</b> düşürür ve düşenler Go tarafı toplamanın
+          İÇİNE girer → sessizce eksik sayılmış, tamamen normal görünen bir grafik.
+          Bu yüzden X5 ya X8'den <b>sonra</b> gider ya da bu rozetle.
+        </div>
+      </div>
+
+      <!-- MEVCUT GroupTable — değişmez -->
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th class="sortable sorted">Seri <span class="sort-arrow">↓</span></th>
+            <th class="num">@imleç</th><th class="num">Son</th><th class="num">Ort</th>
+            <th class="num">Maks</th><th class="num">Bucket</th>
+          </tr></thead>
+          <tbody>
+            <tr><td><span class="mk-letter" style="width:15px;height:15px;font-size:9px;vertical-align:-2px">A</span>
+                <span class="mono" style="margin-left:6px">checkout-api</span></td>
+              <td class="num mono">2.614 ms</td><td class="num mono">742 ms</td><td class="num mono">1.180 ms</td>
+              <td class="num mono">2.776 ms</td><td class="num mono">72</td></tr>
+            <tr><td><span class="mk-letter" style="width:15px;height:15px;font-size:9px;vertical-align:-2px">A</span>
+                <span class="mono" style="margin-left:6px">payments-api</span></td>
+              <td class="num mono">1.290 ms</td><td class="num mono">510 ms</td><td class="num mono">618 ms</td>
+              <td class="num mono">1.402 ms</td><td class="num mono">72</td></tr>
+            <tr><td><span class="mk-letter f" style="width:15px;height:15px;font-size:9px;vertical-align:-2px">B</span>
+                <span class="mono" style="margin-left:6px">checkout-api</span></td>
+              <td class="num mono">3.980 req/s</td><td class="num mono">4.210 req/s</td><td class="num mono">3.640 req/s</td>
+              <td class="num mono">4.980 req/s</td><td class="num mono">72</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="mk-foot">
+        GroupTable · sıralama ve kolon genişlikleri <code>useDataTable</code> ile kalıcı · CSV dışa aktarım
+        şeridi aynen. Bu tablo <b>değişmiyor</b> — X3/X4/X8 yalnız panel başlığına ve çizime dokunuyor.
+      </div>
+    </div>
+
+    <!-- Yan sütun -->
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px">Değişmeyenler</div>
+        <ul style="font-size:11.5px;color:var(--text2);line-height:1.75;padding-left:16px">
+          <li>Zone düzeni (Source / Show / Ask / A–D / Formula / Filter) ve sıraları.</li>
+          <li>VizRail'in 9 viz'i, Step / Top / log y kontrolleri, <code>?q=</code> codec'i.</li>
+          <li>Çift-tık-geri, tooltip pin, x-ekseni drag-select — <b>hiçbir jest yeniden atanmıyor</b>.</li>
+          <li>Heatmap + BubbleUp kutu seçimi, exemplar ◆, CSV, 📌 pin, kaydedilmiş görünümler.</li>
+          <li>GroupTable kolonları ve satır etkileşimi (hover = odak, tık = gizle).</li>
+          <li>Builder modu ve <code>useQueryHistory</code> — X1 yalnız DSL textarea'sı.</li>
+        </ul>
+      </div>
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px">Yeni yüzeyler → veri kaynağı</div>
+        <table style="font-size:11px">
+          <tbody>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">X1</span> DSL debounce</td>
+              <td class="mono" style="font-size:10.5px">yeni veri yok — state aynası</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">X2</span> hata / boş / yükleniyor</td>
+              <td class="mono" style="font-size:10.5px">saf istemci durumu</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">X3</span> step + tier rozeti</td>
+              <td class="mono" style="font-size:10.5px">MetricResolveResult.Tier/StepSeconds</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">X4</span> yarım bucket bandı</td>
+              <td class="mono" style="font-size:10.5px">dönen bucket zaman farkı</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">X5</span> rate / increase</td>
+              <td class="mono" style="font-size:10.5px">QueryMetricRate (hazır)</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">X6</span> problem bantları</td>
+              <td class="mono" style="font-size:10.5px">ProblemFilter{From,To} gerekiyor</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">X7</span> bucket → kayıtlar</td>
+              <td class="mono" style="font-size:10.5px">/api/traces + filterGroup</td></tr>
+            <tr style="cursor:default"><td style="color:var(--text2)"><span class="mk-new">X8</span> kesinti dürüstlüğü</td>
+              <td class="mono" style="font-size:10.5px">/api/metrics/query → zarf</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;margin-bottom:6px">X3'ün önündeki KATİL</div>
+        <div style="font-size:11.5px;color:var(--text2);line-height:1.7">
+          Tier string'i bugün <b>yalan söylüyor</b>: fallback dalı <code>Tier:"spans"</code> sabitliyor ama
+          çağırdığı <code>QuerySpanMetric</code> içeride <code>service_summary_5m</code> /
+          <code>operation_summary_5m</code>'e route ediyor. Yukarıdaki A paneli rozeti bu yüzden
+          <b>service_summary_5m</b> diyor — düzeltilmiş hâli.
+          <b>Deponun yanlış raporlandığı bir provenance rozeti, hiç rozet olmamasından kötüdür.</b>
+        </div>
+      </div>
+      <div class="card">
+        <div style="font-size:12px;font-weight:700;margin-bottom:6px">Bu mockup'ta OLMAYANLAR</div>
+        <div style="font-size:11.5px;color:var(--text2);line-height:1.7">
+          DQL benzeri metin sorgu dili, <code>fieldsSummary</code> facet kenar çubuğu, takvim hizalı
+          karşılaştırma (<code>compare</code> D5'in bilinçli düşürdüğü param), Davis forecast bandı,
+          honeycomb viz'i, top-N kuyruğu için <code>other</code> bucket'ı, pre/post-aggregation filtre
+          yerleşimi. Gerekçeleri brief §4'te — hepsi ayrı karar.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       3) X2 — sonuç alanının kör noktaları
+       ══════════════════════════════════════════════════════════════════ -->
+  <div class="mk-sec">3 · X2 — sonuç alanının altı kör noktası: bugün üçü de bembeyaz alan</div>
+
+  <div class="mk-two">
+    <div class="mk-half">
+      <div class="t now">Bugün · backend 500 döndü</div>
+      <div class="mk-blank">(React hiçbir şey çizmiyor)</div>
+      <div style="padding:8px 10px;border-top:1px solid var(--border);font-size:10.5px;color:var(--text3)">
+        <code>setTraces(null)</code> + <code>setQueryError(msg.includes('DSL') ? msg : null)</code> →
+        <code>null</code> ne Spinner ne Empty dalına düşüyor. Üstelik <code>queryError</code>'ın TEK render
+        noktası advanced DSL bloğunun içinde — builder modunda mount noktası bile yok.
+      </div>
+    </div>
+    <div class="mk-half">
+      <div class="t next">Öneri · X2</div>
+      <div class="mk-empty" style="height:118px;align-content:center">
+        <div class="trp-error" style="text-align:left;max-width:440px">
+          <b>Sorgu başarısız — A</b><br>
+          Request timed out after 60s — try a narrower time range or fewer filters<br>
+          <span style="opacity:.8">HTTP 504 · /api/traces · CH max_execution_time</span>
+        </div>
+        <div style="margin-top:8px"><button class="sec sm">Tekrar dene</button>
+          <button class="sec sm" style="margin-left:6px">Aralığı daralt</button></div>
+      </div>
+      <div style="padding:8px 10px;border-top:1px solid var(--border);font-size:10.5px;color:var(--text3)">
+        Hata metni <b>yüzeye çıkıyor</b>: 1B span/gün'de en olası hata tam olarak
+        <code>DEFAULT_REQUEST_TIMEOUT_MS</code> mesajı ve bugün üç çağrı yerinde de yere atılıyor.
+        401 zaten global — regresyon riski yok.
+      </div>
+    </div>
+  </div>
+
+  <div class="mk-two" style="margin-top:12px">
+    <div class="mk-half">
+      <div class="t now">Bugün · table/stat/toplist/pie boş sonuç</div>
+      <div class="mk-blank">(boş sayfa — <code>rows.length === 0 → return null</code>)</div>
+      <div style="padding:8px 10px;border-top:1px solid var(--border);font-size:10.5px;color:var(--text3)">
+        <code>viz='table'</code>'da GroupTable görünümün KENDİSİ → sayfa tamamen boş. Aynı bileşenlerin
+        <b>hiç loading göstergesi yok</b>: ilk mount'ta <code>loading:true</code> panel 0 satır üretiyor →
+        yüklenirken de boş, boşken de boş, ayırt edilemiyor.
+      </div>
+    </div>
+    <div class="mk-half">
+      <div class="t next">Öneri · X2 — üç ayrı durum</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:0">
+        <div class="mk-empty" style="height:118px;border-right:1px solid var(--border)">
+          <div class="mk-spin"></div>
+          <div class="su" style="margin-top:8px">Sorgu koşuyor…</div>
+        </div>
+        <div class="mk-empty" style="height:118px">
+          <div class="ic">◎</div>
+          <div class="ti">Bu pencerede veri yok</div>
+          <div class="su">Aralığı genişlet veya filtreleri azalt</div>
+        </div>
+      </div>
+      <div style="padding:8px 10px;border-top:1px solid var(--border);font-size:10.5px;color:var(--text3)">
+        Sıra <b>önce</b> <code>panels.some(p =&gt; p.loading)</code>, sonra boş — yoksa her soğuk yüklemede
+        "veri yok" yanıp söner. "boş → <code>&lt;Empty&gt;</code>" <b>koşulsuz yapılamaz</b>: GroupTable
+        line/area/bars'ta refakatçi tablo ve orada QueryPanel zaten kendi boş metnini basıyor → üst üste
+        iki boş durum. Prop ya da çağrı-yeri koşulu şart.
+      </div>
+    </div>
+  </div>
+
+  <div class="mk-note">
+    <b>X2'nin diğer üç noktası.</b> (3) heatmap hatası bugün <i>"veri yok, aralığı genişlet"</i> diye
+    çiziliyor — <code>setHeatmap(null)</code> hem null gövdeyi hem reddedilen promise'i eşliyor; gerçek-boş
+    hâl ayrı dal, yani <code>null</code> ağırlıklı olarak <b>HATA</b> yolu. Heatmap'e kendi
+    <code>heatmapError</code> state'i gerekiyor — <i>"mevcut şekli ungate et"</i> yanlış, çünkü heatmap
+    modunda builder sorguları hiç koşmuyor (<code>builderFrom = 0</code>) ve <code>builderError</code>
+    yapısal olarak hep <code>null</code>. (5) <code>panels.length === 0 &amp;&amp; anyLoading</code>
+    dalı <b>ölü kod</b> — <code>anyProduces ⟹ panels.length ≥ 1</code>. (6) stat/toplist/pie/table'ın
+    loading göstergesi yok. Ship-checklist md.11 için saf
+    <code>resultState(data, error, loading) → 'loading'|'empty'|'error'|'ok'</code> yardımcısı çıkarılsın.
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       4) İÇERİ PİVOTLAR — sparkline tıklaması / grafik drill-in nereye iniyor
+       ══════════════════════════════════════════════════════════════════ -->
+  <div class="mk-sec">4 · İçeri pivotlar — sparkline tıklaması ve grafik drill-in'i NEREYE iniyor</div>
+
+  <div class="mk-note">
+    12 canlı üretici, 5 URL lehçesi. Aşağıdaki dört şerit operatörün sorduğu şeyi gösteriyor:
+    <b>bir sparkline'a ya da grafiğe tıkladığında /explore'un ne gördüğü.</b>
+    Doğru olan (P7) referans olarak solda — <b>ona dokunulmayacak</b>. Sağdaki üçü bugün
+    ya ölü ya pencereyi düşürüyor.
+  </div>
+
+  <div class="mk-lanes">
+
+    <!-- ─────────── LANE 1 — DOĞRU (P7) ─────────── -->
+    <div class="mk-lane" style="border-color:color-mix(in srgb, var(--ok) 45%, var(--border))">
+      <div class="mk-lane-h">
+        <span class="badge b-ok">DOĞRU</span>
+        <span>/services sparkline tıklaması</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--text3)">P7 · referans</span>
+      </div>
+      <div class="mk-lane-b">
+        <div class="mk-step">1 · kaynak</div>
+        <div class="row gap-2" style="background:var(--bg0);border:1px solid var(--border);
+             border-radius:6px;padding:7px 9px">
+          <span class="mono" style="font-size:11px;flex:1">checkout-api</span>
+          <svg width="100" height="22" style="cursor:pointer"><polyline fill="none" stroke="var(--warn)"
+            stroke-width="1.5" points="0.0,13.5 3.4,13.0 6.8,12.6 10.2,10.0 13.7,11.4 17.1,11.0 20.5,10.2 23.9,10.6 27.3,10.3 30.7,10.3 34.1,12.8 37.6,12.0 41.0,10.6 44.4,13.3 47.8,11.6 51.2,16.1 54.6,15.4 58.0,18.0 61.4,2.0 64.9,4.4 68.3,2.0 71.7,2.1 75.1,5.4 78.5,2.0 81.9,13.6 85.3,12.2 88.8,12.0 92.2,11.0 95.6,8.6 99.0,11.6"/></svg>
+          <span class="badge b-err" style="font-size:9px">p99 ↑</span>
+        </div>
+        <div class="mk-arrow">↓</div>
+        <div class="mk-step">2 · üretilen URL</div>
+        <div class="mk-url">/explore?<b>range=custom:1769...-1769...</b><br>&amp;filters=service.name%3Dcheckout-api<br>&amp;result=metric&amp;q=…</div>
+        <div class="mk-arrow">↓</div>
+        <div class="mk-step">3 · iniş</div>
+        <div class="mk-land">
+          <div class="row gap-2" style="margin-bottom:6px">
+            <span class="badge b-ok" style="font-size:9px">14:18 – 14:33</span>
+            <span style="font-size:10.5px;color:var(--text2)">operatörün baktığı pencere</span>
+          </div>
+          <svg viewBox="0 0 240 44" width="100%" height="44" preserveAspectRatio="none"
+               style="display:block;background:var(--bg1);border-radius:4px">
+            <rect x="88" y="0" width="72" height="44" fill="var(--err)" opacity=".10"/>
+            <polyline fill="none" stroke="var(--err)" stroke-width="1.5"
+              points="0,34 20,33 40,35 60,32 80,30 100,14 120,6 140,9 160,20 180,31 200,33 220,32 240,34"/>
+          </svg>
+          <div style="font-size:10.5px;color:var(--text3);margin-top:5px">
+            Sivri ekranda. <code>['range', encodeRange(range)]</code> — üretici pencereyi
+            <b>zorunlu argüman</b> olarak taşıyor.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─────────── LANE 2 — ÖLÜ (P1) ─────────── -->
+    <div class="mk-lane" style="border-color:color-mix(in srgb, var(--err) 55%, var(--border))">
+      <div class="mk-lane-h">
+        <span class="badge b-err">ÖLÜ</span>
+        <span>/databases DB satırı → Explore</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--text3)">P1 · canlı CH'de kanıtlı</span>
+      </div>
+      <div class="mk-lane-b">
+        <div class="mk-step">1 · kaynak</div>
+        <div class="row gap-2" style="background:var(--bg0);border:1px solid var(--border);
+             border-radius:6px;padding:7px 9px;font-size:11px">
+          <span class="badge b-info" style="font-size:9px">postgres</span>
+          <span class="mono" style="flex:1">host-A · orders</span>
+          <span class="mono" style="color:var(--text3)">p99 96 ms</span>
+        </div>
+        <div class="mk-arrow">↓</div>
+        <div class="mk-step">2 · üretilen URL (bugün)</div>
+        <div class="mk-url">/explore?dsl=db.system+%3D+"postgres"%0A<s>peer.service+%3D+"host-A"</s><br>&amp;mode=advanced&amp;result=traces<br><span style="color:var(--err)">↑ range YOK · db.name düşürülmüş</span></div>
+        <div class="mk-arrow">↓</div>
+        <div class="mk-step">3 · iniş</div>
+        <div class="mk-land" style="border-color:color-mix(in srgb, var(--err) 50%, transparent)">
+          <div class="mk-empty" style="height:76px">
+            <div class="ic" style="color:var(--err)">◎</div>
+            <div class="ti" style="font-size:11px">0 trace</div>
+            <div class="su" style="font-size:10px">No data for this query</div>
+          </div>
+          <div style="font-size:10.5px;color:var(--text3);margin-top:5px;border-top:1px solid var(--border);padding-top:5px">
+            <code>db_summary_5m.instance</code> altı adımlı coalesce
+            (<code>peer_service → server.address → net.peer.name → db.host → db.name → service_name</code>),
+            link YALNIZ <code>peer.service</code> filtreliyor.
+            Canlı: <code>db_system='clickhouse'</code> → <b>8985 span</b>,
+            <code>peer_service='coremetry-monolithic'</code> → <b>0</b>.
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─────────── LANE 3 — PENCERE KAYBI (P2) ─────────── -->
+    <div class="mk-lane" style="border-color:color-mix(in srgb, var(--warn) 55%, var(--border))">
+      <div class="mk-lane-h">
+        <span class="badge b-warn">PENCERE KAYBI</span>
+        <span>/metrics kataloğu → Explore</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--text3)">P2 · %100 deterministik</span>
+      </div>
+      <div class="mk-lane-b">
+        <div class="mk-step">1 · kaynak — sayfa 24 saate ayarlı</div>
+        <div class="row gap-2" style="background:var(--bg0);border:1px solid var(--border);
+             border-radius:6px;padding:7px 9px;font-size:11px">
+          <span class="mono" style="flex:1">jvm.gc.pause</span>
+          <span class="badge b-gray" style="font-size:9px">🕐 Last 24 h</span>
+        </div>
+        <div class="mk-arrow">↓</div>
+        <div class="mk-step">2 · üretilen URL</div>
+        <div class="mk-url">/explore?metric=jvm.gc.pause&amp;agg=p95&amp;source=metrics<br><span style="color:var(--warn)">↑ metricCatalogueHref'in hiç pencere parametresi YOK</span></div>
+        <div class="mk-arrow">↓</div>
+        <div class="mk-step">3 · iniş</div>
+        <div class="mk-land" style="border-color:color-mix(in srgb, var(--warn) 50%, transparent)">
+          <div class="row gap-2" style="margin-bottom:6px">
+            <span class="badge b-warn" style="font-size:9px">🕐 Last 30 m</span>
+            <span style="font-size:10.5px;color:var(--text2)">24 saatlik sivri ekran dışı</span>
+          </div>
+          <svg viewBox="0 0 240 44" width="100%" height="44" preserveAspectRatio="none"
+               style="display:block;background:var(--bg1);border-radius:4px">
+            <polyline fill="none" stroke="var(--accent)" stroke-width="1.5"
+              points="0,33 20,34 40,32 60,33 80,31 100,34 120,32 140,33 160,31 180,34 200,32 220,33 240,32"/>
+            <text x="120" y="18" fill="var(--text3)" font-size="9" text-anchor="middle"
+                  font-family="ui-monospace, monospace">düz çizgi — olay burada değil</text>
+          </svg>
+          <div style="font-size:10.5px;color:var(--text3);margin-top:5px">
+            <code>storedRangeString()</code> maskeleyemiyor: /metrics range'ini
+            <b>ne URL'e ne localStorage'a</b> yazıyor (P6).
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ─────────── LANE 4 — PENCERE İKİ KEZ ATILIYOR (P3) ─────────── -->
+    <div class="mk-lane" style="border-color:color-mix(in srgb, var(--warn) 55%, var(--border))">
+      <div class="mk-lane-h">
+        <span class="badge b-warn">PENCERE KAYBI ×2</span>
+        <span>/service grafik ⋮ → Explore</span>
+        <span style="margin-left:auto;font-size:10px;color:var(--text3)">P3 · 10 kapı</span>
+      </div>
+      <div class="mk-lane-b">
+        <div class="mk-step">1 · kaynak — 90 saniyelik olaya drag-zoom</div>
+        <div style="background:var(--bg0);border:1px solid var(--border);border-radius:6px;padding:7px 9px">
+          <svg viewBox="0 0 240 40" width="100%" height="40" preserveAspectRatio="none" style="display:block">
+            <rect x="96" y="0" width="46" height="40" fill="var(--accent)" opacity=".18"/>
+            <polyline fill="none" stroke="var(--accent)" stroke-width="1.5"
+              points="0,31 20,30 40,32 60,29 80,28 100,12 120,5 140,11 160,26 180,30 200,31 220,29 240,30"/>
+          </svg>
+          <div style="font-size:10px;color:var(--text3);margin-top:3px">
+            <code>handleZoom → setRange({ preset: 'custom', … })</code> — geçici chart state DEĞİL,
+            sayfanın gerçek range'i.
+          </div>
+        </div>
+        <div class="mk-arrow">↓</div>
+        <div class="mk-step">2 · üretilen URL</div>
+        <div class="mk-url">/explore?m=eyJtZXRyaWMiOiJodHRwLnNlcnZlci5k…<br>&amp;<s>edit=1</s><br><span style="color:var(--warn)">↑ metricExploreHref range yazmıyor · seedFromMetricDescriptor mq.range'e dokunmuyor · edit=1 ölü</span></div>
+        <div class="mk-arrow">↓</div>
+        <div class="mk-step">3 · iniş</div>
+        <div class="mk-land" style="border-color:color-mix(in srgb, var(--warn) 50%, transparent)">
+          <div class="row gap-2" style="margin-bottom:6px">
+            <span class="badge b-warn" style="font-size:9px">🕐 Last 30 m</span>
+            <span style="font-size:10.5px;color:var(--text2)">olay 3 saat önceydi</span>
+          </div>
+          <svg viewBox="0 0 240 44" width="100%" height="44" preserveAspectRatio="none"
+               style="display:block;background:var(--bg1);border-radius:4px">
+            <polyline fill="none" stroke="var(--accent)" stroke-width="1.5"
+              points="0,30 20,31 40,29 60,32 80,30 100,29 120,31 140,30 160,32 180,29 200,31 220,30 240,31"/>
+          </svg>
+          <div style="font-size:10.5px;color:var(--text3);margin-top:5px">
+            <code>persistableRange</code> <code>custom:</code> pencereleri <b>bilinçli</b> persist etmiyor
+            (v0.8.409 operatör hatası) → localStorage bu deliği kapatamıyor. "Copy link" de aynı delikte.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="mk-note" style="margin-top:14px">
+    <b>P1'in düzeltmesi <code>/explore</code>'a değil <code>/traces</code>'e gidiyor</b> — v0.9.257 emsali:
+    operatör orada yüklemleri çip olarak GÖRÜP düzenleyebiliyor, <code>/explore</code> DSL'i opak.
+    ⚠️ <code>/explore</code> linkiyle OR zaten <b>mümkün değil</b>: <code>ParseDSL</code> sadece-AND
+    (<code>splitDSLAnd</code> yalnız <code>" AND "</code> böler) ve Explore yalnız düz <code>filters</code>
+    okuyor. Yani bu dilim <i>"satır tıklaması artık Explore açmıyor"</i>u İÇERİYOR — emsal var, ama açıkça
+    söylensin. <b>Backend ikizi:</b> <code>dependencies.go</code>'daki
+    <code>instancePredicate := "peer_service = ?"</code> aynı ölü filtreyi Top-statements taramasına
+    AND'liyor — drawer aynı satır için caller'ları ve P99'u gösterip <b>Top statements'ı boş</b> gösteriyor.
+    İkisi düzeltilmezse yüzeyin yarısı düzelir.
+  </div>
+
+  <!-- P4 + P6 -->
+  <div class="mk-two" style="margin-top:14px">
+    <div class="mk-half">
+      <div class="t now">P4 · Explore'un KENDİ giriş kartları range'i atıyor</div>
+      <div style="padding:12px">
+        <div class="row gap-2" style="margin-bottom:10px">
+          <span class="badge b-gray" style="font-size:9px">🕐 Last 24 h</span>
+          <span style="font-size:11px;color:var(--text2)">paramsız /explore giriş ekranında seçildi</span>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+          <div style="border:1px solid var(--border);border-radius:6px;padding:9px;background:var(--bg0)">
+            <div style="font-size:11.5px;font-weight:600">Neden yavaş?</div>
+            <div style="font-size:10.5px;color:var(--text3);margin-top:3px">
+              → <code>navigate('/explore' + c.to)</code><br>
+              <span style="color:var(--err)">mutlak yol — tüm query string'i, range dahil, değiştiriyor</span><br>
+              iniş: <b>Last 30 m</b>
+            </div>
+          </div>
+          <div style="border:1px solid color-mix(in srgb, var(--ok) 45%, var(--border));border-radius:6px;padding:9px;background:var(--bg0)">
+            <div style="font-size:11.5px;font-weight:600">Son sorgular halkası</div>
+            <div style="font-size:10.5px;color:var(--text3);margin-top:3px">
+              → tam search string'ini replay ediyor<br>
+              <span style="color:var(--ok)">kayıpsız</span><br>
+              iniş: <b>Last 24 h</b>
+            </div>
+          </div>
+        </div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:10px;border-top:1px solid var(--border);padding-top:8px">
+          Aynı ekranda iki farklı davranış. Kart tıklaması URL'i "meaningful" yapıyor →
+          <code>ExplorePage</code> anahtarı entry→workspace çevirip <code>ExploreInner</code>'ı
+          <b>remount</b> ediyor → initializer range'siz URL'e karşı yeniden koşuyor.
+          <b>Düzeltme:</b> <code>QuestionCards</code>'a <code>range</code> geçir, <code>c.to</code>'ya
+          <code>&amp;range=</code> ekle. <span class="mk-new mk-fix">P4</span>
+        </div>
+      </div>
+    </div>
+    <div class="mk-half">
+      <div class="t next">P6 · kök sebep — iki yetim sayfa</div>
+      <div style="padding:12px">
+        <div class="table-wrap" style="border:none">
+          <table>
+            <thead><tr><th>Sayfa</th><th>range kaynağı</th><th>geri yazıyor mu</th></tr></thead>
+            <tbody>
+              <tr style="cursor:default"><td class="mono">22 sayfa</td>
+                <td class="mono" style="font-size:10.5px">useUrlRange</td>
+                <td><span class="badge b-ok">evet · sticky</span></td></tr>
+              <tr style="cursor:default"><td class="mono">pages/Metrics.tsx</td>
+                <td class="mono" style="font-size:10.5px">yerel useState</td>
+                <td><span class="badge b-err">hayır</span></td></tr>
+              <tr style="cursor:default"><td class="mono">pages/Explore.tsx</td>
+                <td class="mono" style="font-size:10.5px">yerel useState</td>
+                <td><span class="badge b-err">hayır</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="font-size:10.5px;color:var(--text3);margin-top:10px;line-height:1.7">
+          İkisi de <code>storedRangeString()</code>'i <b>OKUYOR</b>, hiç geri <b>YAZMIYOR</b> —
+          ve tam olarak şikâyetin kaynağı (<code>/metrics</code>) ile hedefi (<code>/explore</code>).
+          Sonuçlar: /metrics'te F5 pencereyi kaybediyor · Explore → başka sayfa kaybediyor ·
+          giriş ekranı Topbar seçimi downstream'e görünmez (P4'ün maskelenmemesinin sebebi).
+          Explore için yetimlik <b>doğru</b> (kendi yazıcısı <code>setSearchParams</code> ile kavga eder),
+          ama <b>Metrics'in bespoke yazıcısı hiç yok</b> — sadece persist etmiyor.
+          <b>Öneri (P1'den sonra ilk):</b> önce bu ikisini persist et, <b>sonra</b> href'leri
+          mutlak-pencere (<code>custom:</code>) vakası için yamala.
+          <span class="mk-new mk-fix">P6 → P2</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════
+       5) Sıra
+       ══════════════════════════════════════════════════════════════════ -->
+  <div class="mk-sec">5 · Önerilen sıra — bug &gt; perf &gt; feature</div>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th style="width:34px" class="num">#</th><th style="width:230px">Dilim</th>
+        <th style="width:90px">Efor</th><th>Neden bu sırada</th>
+      </tr></thead>
+      <tbody>
+        <tr style="cursor:default"><td class="num mono">1</td>
+          <td><span class="mk-new mk-fix">P1</span> /databases ölü linki + <code>dependencies.go</code> ikizi</td>
+          <td class="mono">~yarım gün</td>
+          <td style="white-space:normal">Operatörün bir kez bildirdiği hatanın aynısı, bugün provably sıfır satır döndürüyor.</td></tr>
+        <tr style="cursor:default"><td class="num mono">2</td>
+          <td><span class="mk-new">X1</span> DSL debounce</td>
+          <td class="mono">~1 saat</td>
+          <td style="white-space:normal">En yüksek oran. CH okuma havuzunu koruyan tek dosyalık değişiklik.</td></tr>
+        <tr style="cursor:default"><td class="num mono">3</td>
+          <td><span class="mk-new mk-fix">P6 + P2</span> range persist + zorunlu pencere argümanı</td>
+          <td class="mono">~yarım gün</td>
+          <td style="white-space:normal">Şikâyet sınıfını iki yönde birden öldürüyor; P3/P4'ün maliyetini düşürüyor.</td></tr>
+        <tr style="cursor:default"><td class="num mono">4</td>
+          <td><span class="mk-new">X2</span> sonuç alanının kör noktaları</td>
+          <td class="mono">~yarım gün</td>
+          <td style="white-space:normal">Backend hatası "veri yok" diye raporlanıyor — doğruluk hatası, kozmetik değil.</td></tr>
+        <tr style="cursor:default"><td class="num mono">5</td>
+          <td><span class="mk-new">X5</span> rate / increase (iki string)</td>
+          <td class="mono">~1 saat</td>
+          <td style="white-space:normal">Dashboard MQE'siyle parite, sıfır risk — <b>ama</b> kapsamsız rate uyarısı ya X8 sonrası.</td></tr>
+        <tr style="cursor:default"><td class="num mono">6</td>
+          <td><span class="mk-new mk-fix">P3 + P4 + P5</span> kalan pencere kayıpları</td>
+          <td class="mono">~1 gün</td>
+          <td style="white-space:normal">Prop yolu (descriptor'a DEĞİL — önbellek anahtarı ham <code>m</code> blob'undan kuruluyor), 10 kapı birden.</td></tr>
+        <tr style="cursor:default"><td class="num mono">7</td>
+          <td><span class="mk-new">X8</span> kesinti dürüstlüğü (zarf göçü)</td>
+          <td class="mono">~1 gün</td>
+          <td style="white-space:normal">X5'in sessiz-eksik-rate riskini kapatıyor; X3'ün geniş versiyonuyla ortak göç. Backend ÖNCE, FE sonra.</td></tr>
+        <tr style="cursor:default"><td class="num mono">8</td>
+          <td><span class="mk-new">X3</span> provenance rozeti</td>
+          <td class="mono">~1 gün</td>
+          <td style="white-space:normal"><code>Tier:"spans"</code> yalanı ÖNCE düzeltilir; yanlış depo raporlayan rozet net-negatif.</td></tr>
+        <tr style="cursor:default"><td class="num mono">9</td>
+          <td><span class="mk-new">X4</span> tamamlanmamış bucket</td>
+          <td class="mono">~yarım gün</td>
+          <td style="white-space:normal">Step <b>dönen bucket farklarından</b> türetilir, <code>effStep</code>'ten DEĞİL (üç sunucu clamp'i onu eziyor); nötr renk + şeritsiz varyant.</td></tr>
+        <tr style="cursor:default"><td class="num mono">10</td>
+          <td><span class="mk-new">X7-öncü</span> <code>switchResultMode</code>'un <code>filterGroup</code> düşürmesi</td>
+          <td class="mono">~1 saat</td>
+          <td style="white-space:normal">Tek dosya; OR-grup sorgularında Traces sekmesi bugün panelden <b>geniş</b> küme gösteriyor.</td></tr>
+        <tr style="cursor:default"><td class="num mono">11</td>
+          <td><span class="mk-new">X6</span> problem bantları (ucuz sürüm)</td>
+          <td class="mono">~yarım gün</td>
+          <td style="white-space:normal">Modest parite; vaat edilen değer <code>ProblemFilter{From,To}</code> + overlap yüklemi istiyor (§4).</td></tr>
+        <tr style="cursor:default"><td class="num mono">12</td>
+          <td><span class="mk-new">X7</span> bucket → kayıtlar (pinli tooltip satırı)</td>
+          <td class="mono">1.5–2 gün</td>
+          <td style="white-space:normal">En büyük dilim; jesti çalmadan, pencere clamp'i / servis-pin kapısıyla. Devralınan hata: pencere &gt;5 dk'da <code>from</code> 5 dakikalık sınıra <b>aşağı</b> yuvarlanıyor.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="mk-foot" style="margin-top:22px;padding-top:12px;border-top:1px solid var(--border)">
+    Mockup — <code>scratchpad/dt-parity/explore-mockup.html</code>. Hiçbir ürün dosyası değiştirilmedi.
+    Renkler yalnızca <code>globals.css</code> token'larından; grafikler temsilî statik SVG (üründe uPlot).
+    Kardeş dosya: <code>scratchpad/dt-parity/endpoints-mockup.html</code> · brief:
+    <code>scratchpad/dt-parity/explore-brief.md</code> (kaynak sürüm v0.9.266).
+  </div>
+</div>
+
+<!-- Tek JS: banner'daki üç tema düğmesinin inline onclick'i (data-theme set/remove).
+     Başka script yok — sayfa tamamen statik. -->
+</body>
+</html>

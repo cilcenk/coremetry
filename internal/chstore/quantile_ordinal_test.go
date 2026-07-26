@@ -255,3 +255,54 @@ func TestQuantileFamilyWidthsAreStable(t *testing.T) {
 			"quantiles depending on which tier the query picked.", fourWide, n)
 	}
 }
+
+// v0.9.274 — the drawer's raw scans must resolve `instance` the SAME way
+// db_summary_5m does, or the drawer disagrees with the row it was opened from.
+//
+// Measured live before the fix: for the clickhouse row, whose instance is named
+// from the service_name rung, the old `peer_service = ?` predicate matched 0
+// spans while the real identity matched 4659 — so the drawer rendered a span
+// count and a caller list (both MV-sourced) beside an EMPTY Top statements
+// table. This is the backend twin of the dead row link fixed in v0.9.268.
+func TestDBInstanceExprMatchesTheMVIdentity(t *testing.T) {
+	ddl, err := os.ReadFile("store.go")
+	if err != nil {
+		t.Fatalf("read store.go: %v", err)
+	}
+	// Every rung the MV coalesces, in order. If the MV gains or reorders one,
+	// this test fails until the raw expression is brought back in step.
+	rungs := []string{
+		"nullIf(peer_service, '')",
+		"nullIf(attr_values[indexOf(attr_keys, 'server.address')], '')",
+		"nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], '')",
+		"nullIf(attr_values[indexOf(attr_keys, 'db.host')], '')",
+		"nullIf(attr_values[indexOf(attr_keys, 'db.name')], '')",
+		"nullIf(service_name, '')",
+	}
+	for _, r := range rungs {
+		if !strings.Contains(string(ddl), r) {
+			t.Errorf("db_summary_5m no longer coalesces %s — the MV moved and dbInstanceExpr\n"+
+				"is now resolving a DIFFERENT identity than the rows it must match", r)
+		}
+		if !strings.Contains(dbInstanceExpr, r) {
+			t.Errorf("dbInstanceExpr is missing rung %s — any instance named from it will match\n"+
+				"zero spans in the raw scans, leaving the drawer half-populated", r)
+		}
+	}
+	// Order matters: coalesce returns the FIRST non-empty rung, so a permuted
+	// chain silently renames instances rather than failing.
+	prev := -1
+	for _, r := range rungs {
+		i := strings.Index(dbInstanceExpr, r)
+		if i <= prev {
+			t.Fatalf("dbInstanceExpr rungs are out of order at %s — coalesce takes the FIRST\n"+
+				"non-empty value, so reordering renames instances silently", r)
+		}
+		prev = i
+	}
+	if !strings.HasSuffix(strings.TrimSpace(dbInstanceExpr), "'unknown'\n)") &&
+		!strings.Contains(dbInstanceExpr, "'unknown'") {
+		t.Error("dbInstanceExpr must end in the 'unknown' sentinel — it is what makes the " +
+			"instance=\"unknown\" case work without a special branch")
+	}
+}

@@ -220,6 +220,39 @@ func logsTimeseriesKey(f logstore.Filter, fromRaw, toRaw string, bucketSec int, 
 // joined the filter set and an env-filtered response must never
 // cross-poison the unfiltered one inside the 15s TTL (the v0.5.187
 // class; pinned by logs_env_key_test.go).
+// logsHistogramMaxBuckets caps how many buckets one /api/logs/timeseries
+// answer may contain. A time chart is ~2000px at its widest, so beyond
+// this the extra buckets are aggregation work and wire bytes nobody can
+// see. Generous on purpose: the UI's own heuristic asks for ~2,880 on a
+// 30-day window and must never be clamped by accident.
+const logsHistogramMaxBuckets = 5000
+
+// floorBucketByWindow raises bucketSec until the window yields at most
+// logsHistogramMaxBuckets buckets. Unbounded windows (either bound
+// zero) pass through — the filter path bounds those separately.
+//
+// v0.9.287 — the endpoint clamped bucketSec to [1, 86400], which bounds
+// the VALUE and says nothing about the COUNT: bucketSec=1 over 30 days
+// is 2.6M buckets × 6 severity bands.
+func floorBucketByWindow(bucketSec int, from, to time.Time) int {
+	if from.IsZero() || to.IsZero() {
+		return bucketSec
+	}
+	span := to.Sub(from)
+	if span <= 0 {
+		return bucketSec
+	}
+	// CEILING division: span/max truncates down, which leaves the count
+	// just OVER the cap (24h/5000 = 17s → 5,082 buckets). Rounding the
+	// bucket up is what actually bounds the count.
+	spanSec := int(span.Seconds())
+	minSec := (spanSec + logsHistogramMaxBuckets - 1) / logsHistogramMaxBuckets
+	if minSec > bucketSec {
+		return minSec
+	}
+	return bucketSec
+}
+
 func logsSearchKey(f logstore.Filter, fromRaw, toRaw string) string {
 	// v0.9.286 — WantCursor is part of the key. It changes the RESPONSE
 	// (nextCursor present or empty), so sharing an entry across the two
@@ -747,6 +780,15 @@ func (s *Server) getLogsTimeseries(w http.ResponseWriter, r *http.Request) {
 	if bucketSec > 86400 {
 		bucketSec = 86400
 	}
+	// v0.9.287 — the two clamps above bound the VALUE, not the bucket
+	// COUNT, and the count is what the backend aggregates and the wire
+	// carries. bucketSec=1 over a 30-day window is 2.6M buckets × 6
+	// severity bands; nothing renders it and nothing asked for it. Floor
+	// the bucket by the window so the count is bounded by the window's
+	// own size. The UI's heuristic never reaches this (its widest ask is
+	// ~2,880 buckets on a 30-day window) — this catches hand-built URLs
+	// and saved views from a wider range.
+	bucketSec = floorBucketByWindow(bucketSec, f.From, f.To)
 	groupBy := strings.TrimSpace(q.Get("groupBy"))
 	key := logsTimeseriesKey(f, q.Get("from"), q.Get("to"), bucketSec, groupBy)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {

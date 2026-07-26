@@ -146,6 +146,11 @@ type DBCallerBreakdown struct {
 	ErrorCount uint64  `json:"errorCount"`
 	ErrorRate  float64 `json:"errorRate"`
 	AvgMs      float64 `json:"avgDurationMs"`
+	// v0.9.273 — P50 completes the grid. It was missed in v0.9.263: the detail
+	// AGGREGATE above gained P50/P95 but this per-caller struct only gained
+	// P95, so the drawer showed three percentiles at the top and two per row.
+	// The data was free the whole time — same merge, index 1.
+	P50Ms      float64 `json:"p50DurationMs"`
 	// v0.9.263 — P95 off the same 3-wide TDigest state (index 2).
 	//
 	// ⚠️ This struct is filled by TWO queries — the /databases caller
@@ -289,6 +294,7 @@ func (s *Store) GetDatabaseDetail(
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
@@ -305,12 +311,15 @@ func (s *Store) GetDatabaseDetail(
 	defer rows.Close()
 	for rows.Next() {
 		var b DBCallerBreakdown
-		var bAvg, bP95, bP99 *float64
-		if err := rows.Scan(&b.Service, &b.Pod, &b.SpanCount, &b.ErrorCount, &bAvg, &bP95, &bP99); err != nil {
+		var bAvg, bP50, bP95, bP99 *float64
+		if err := rows.Scan(&b.Service, &b.Pod, &b.SpanCount, &b.ErrorCount, &bAvg, &bP50, &bP95, &bP99); err != nil {
 			continue
 		}
 		if bAvg != nil {
 			b.AvgMs = *bAvg
+		}
+		if bP50 != nil {
+			b.P50Ms = *bP50
 		}
 		if bP95 != nil {
 			b.P95Ms = *bP95
@@ -486,6 +495,7 @@ func (s *Store) GetMessagingDetail(
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
 		         / nullIf(countMerge(span_count_state), 0) AS avg_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6 AS p50_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_caller_summary_5m
@@ -502,12 +512,15 @@ func (s *Store) GetMessagingDetail(
 	defer rows.Close()
 	for rows.Next() {
 		var b DBCallerBreakdown
-		var bAvg, bP95, bP99 *float64
-		if err := rows.Scan(&b.Service, &b.Pod, &b.Role, &b.SpanCount, &b.ErrorCount, &bAvg, &bP95, &bP99); err != nil {
+		var bAvg, bP50, bP95, bP99 *float64
+		if err := rows.Scan(&b.Service, &b.Pod, &b.Role, &b.SpanCount, &b.ErrorCount, &bAvg, &bP50, &bP95, &bP99); err != nil {
 			continue
 		}
 		if bAvg != nil {
 			b.AvgMs = *bAvg
+		}
+		if bP50 != nil {
+			b.P50Ms = *bP50
 		}
 		if bP95 != nil {
 			b.P95Ms = *bP95

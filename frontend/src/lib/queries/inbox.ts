@@ -17,6 +17,11 @@ export type InboxPage = {
   // read as an empty queue. Optional so a pre-upgrade cached body still
   // deserializes.
   scanCapped?: boolean;
+  // v0.9.320 — the applied occurrence floor and what it hid. Counted AFTER
+  // every other narrow, so it means "rows that passed everything else and
+  // failed only the floor" — an inflated hidden count is its own lie.
+  minOcc?: number;
+  hiddenByMinOcc?: number;
 };
 
 // Unified triage inbox (v0.5.211) — Problems + Exception groups +
@@ -30,6 +35,7 @@ export function useInbox(filter: {
   env?: string; // v0.8.387 — global picker, service-scoped (matches /problems)
   limit?: number;
   sort?: string; dir?: 'asc' | 'desc'; // v0.9.319 — server-side ranking
+  minOcc?: number; // v0.9.320 — occurrence floor (0 = show all)
 }) {
   return useQuery<InboxPage>({
     queryKey: ['inbox', 'list', filter],

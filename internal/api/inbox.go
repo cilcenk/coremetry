@@ -149,12 +149,19 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// but priority silently answered a different question than the one the
 	// header claimed. Ids match the frontend COLS exactly.
 	sortID, sortDir := normalizeInboxSort(q.Get("sort"), q.Get("dir"))
+	// v0.9.320 — occurrence floor, the /problems one (v0.9.315) finally
+	// applied to the surface that is supposed to REPLACE /problems. Operator:
+	// "1 defa Java timeout aldığı için problems'ta exception gözüküyor" —
+	// and the merged triage queue was showing exactly the same one-off rows.
+	// Negative/absent → the default floor; an explicit 0 means "show all"
+	// and is honoured, which is why this can't use parseInt's default alone.
+	minOcc := normalizeInboxMinOcc(q.Get("minOcc"))
 
 	// v0.9.221 — :v2: marks the response-shape change (bare array → object
 	// with the total). Without the bump a pre-upgrade array could still be
 	// sitting under this key and would deserialize into the new shape as an
 	// empty page.
-	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir)
+	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc)
 	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
 	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
 	// at 30s too, so each poll arrived at age = 30s + previous latency —
@@ -359,6 +366,10 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			items = filtered
 		}
 
+		// Occurrence floor — last narrow, so `hidden` is honest (see
+		// applyInboxMinOcc).
+		items, hiddenByMinOcc := applyInboxMinOcc(items, minOcc)
+
 		// Rank the WHOLE candidate set before the cap (v0.9.318 scan fix +
 		// v0.9.319 server sort). Sorting after the cap would rank a page,
 		// which is the same lie the filters used to tell.
@@ -384,6 +395,11 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			// the first is true — that combination is precisely the case
 			// where an empty table must not be read as an empty queue.
 			"scanCapped": scanCapped,
+			// Never silent: the floor says what it hid so the UI can offer
+			// those rows in one click. A rare exception that fires once can
+			// still be the important one.
+			"minOcc":         minOcc,
+			"hiddenByMinOcc": hiddenByMinOcc,
 		}, nil
 	})
 }
@@ -467,9 +483,58 @@ func inboxSourceLimit(limit int, narrowed bool) int {
 // request — the v0.5.187 cross-poisoning shape, with a search box as
 // the vector. The `:v2:` prefix marks the v0.9.221 response-shape
 // change (bare array → object with the total).
-func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit int, sortID, sortDir string) string {
-	return fmt.Sprintf("inbox:v3:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s",
-		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir)
+func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit int, sortID, sortDir string, minOcc uint64) string {
+	return fmt.Sprintf("inbox:v3:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d",
+		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc)
+}
+
+// inboxDefaultMinOcc — a group has to have fired this many times before it
+// counts as something to triage. A one-shot failure is a fact about the
+// window, not a problem. Matches the /problems floor so the two surfaces
+// can't disagree about what "noise" means.
+const inboxDefaultMinOcc = 5
+
+// normalizeInboxMinOcc parses ?minOcc=. Absent → the default floor; an
+// explicit "0" → no floor ("show all"), which is the affordance that keeps
+// the filtering non-silent. Garbage → the default, never an error: a
+// hand-edited URL should still open a usable queue.
+func normalizeInboxMinOcc(raw string) uint64 {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return inboxDefaultMinOcc
+	}
+	n := parseInt(raw, -1)
+	if n < 0 {
+		return inboxDefaultMinOcc
+	}
+	return uint64(n)
+}
+
+// applyInboxMinOcc drops exception rows below the floor and reports how many
+// it hid.
+//
+// Exception-kind only: Problems come from alert rules and anomalies from
+// detectors — neither carries an occurrence count, and silently dropping a
+// firing P1 alert because it fired once would be the opposite of triage.
+//
+// Applied LAST, after every narrow, so the hidden count means "rows that
+// passed everything else and failed only the floor". Counting at map time
+// would overstate it by including rows the service/env filter would have
+// removed anyway — and an inflated "42 hidden" is its own kind of lie.
+func applyInboxMinOcc(items []InboxItem, minOcc uint64) ([]InboxItem, int) {
+	if minOcc == 0 {
+		return items, 0
+	}
+	kept := items[:0]
+	hidden := 0
+	for _, it := range items {
+		if it.Kind == "exception" && it.Exception != nil && it.Exception.Occurrences < minOcc {
+			hidden++
+			continue
+		}
+		kept = append(kept, it)
+	}
+	return kept, hidden
 }
 
 // inboxSortDefault is the historical rank: priority desc, most-recent first

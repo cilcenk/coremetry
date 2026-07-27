@@ -160,3 +160,58 @@ func TestSortInboxItemsTiebreakStaysTriageOrder(t *testing.T) {
 		}
 	}
 }
+
+// ── v0.9.320 — occurrence floor ──────────────────────────────────────────
+//
+// The floor shipped on /problems in v0.9.315 but not on the Inbox, which is
+// the surface meant to REPLACE it. Operator: "1 defa Java timeout aldığı için
+// problems'ta exception gözüküyor" — the merged queue had the same one-offs.
+
+func TestNormalizeInboxMinOcc(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want uint64
+	}{
+		{"", inboxDefaultMinOcc},   // absent → the floor
+		{"0", 0},                   // explicit "show all" is honoured
+		{"10", 10},                 // the strip's second rung
+		{"  7 ", 7},                // whitespace from a pasted URL
+		{"-3", inboxDefaultMinOcc}, // nonsense → default, never an error
+		{"abc", inboxDefaultMinOcc},
+	}
+	for _, tc := range cases {
+		if got := normalizeInboxMinOcc(tc.raw); got != tc.want {
+			t.Errorf("normalizeInboxMinOcc(%q) = %d, want %d", tc.raw, got, tc.want)
+		}
+	}
+}
+
+func TestApplyInboxMinOcc(t *testing.T) {
+	items := []InboxItem{
+		{ID: "exc-1", Kind: "exception", Exception: &InboxExceptionRef{Occurrences: 1}},
+		{ID: "exc-9", Kind: "exception", Exception: &InboxExceptionRef{Occurrences: 9}},
+		{ID: "exc-5", Kind: "exception", Exception: &InboxExceptionRef{Occurrences: 5}},
+		// An alert-rule Problem that fired ONCE is still a firing problem.
+		// Neither problems nor anomalies carry an occurrence count, and
+		// dropping a P1 because it fired once is the opposite of triage.
+		{ID: "prob", Kind: "problem", Priority: "P1"},
+		{ID: "anom", Kind: "anomaly"},
+		// Defensive: an exception row with no ref must not be dropped by a
+		// nil dereference guard that silently means "below the floor".
+		{ID: "exc-nil", Kind: "exception"},
+	}
+	kept, hidden := applyInboxMinOcc(append([]InboxItem(nil), items...), 5)
+	if hidden != 1 {
+		t.Errorf("hidden = %d, want 1 (only exc-1 is below 5)", hidden)
+	}
+	got := inboxIDs(kept)
+	if got != "exc-9exc-5probanomexc-nil" {
+		t.Errorf("kept = %q, want the 1-occurrence exception dropped and nothing else", got)
+	}
+
+	// Floor 0 = show all: no filtering, no hidden count, same slice.
+	all, none := applyInboxMinOcc(append([]InboxItem(nil), items...), 0)
+	if none != 0 || len(all) != len(items) {
+		t.Errorf("minOcc=0 filtered: kept %d/%d, hidden %d", len(all), len(items), none)
+	}
+}

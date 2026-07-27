@@ -98,6 +98,26 @@ export default function InboxPage() {
   const qc = useQueryClient();
   const ownerFilter = searchParams.get('owner') ?? '';
   const sreFilter = searchParams.get('sre') ?? '';
+  // v0.9.320 — occurrence floor, same semantics and same default as
+  // /problems (v0.9.315) so the two surfaces can't disagree about what
+  // counts as noise. URL-borne like every other facet here, so a saved view
+  // and a shared link carry the threshold too.
+  //
+  // NOT silent: the strip below states the floor, says how many rows it hid
+  // (the server counts them AFTER every other narrow, so the number is the
+  // honest one), and "show all" is a single click. A rare exception that
+  // fired once can still be the important one.
+  const minOcc = (() => {
+    const raw = searchParams.get('minOcc');
+    if (raw === null) return 5;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 5;
+  })();
+  const setMinOcc = (v: number) => setSearchParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v === 5) next.delete('minOcc'); else next.set('minOcc', String(v));
+    return next;
+  }, { replace: true });
   // Drawer selection is one more URL-backed facet (v0.8.292): ?item=<inboxId>.
   // Deep-linking /inbox?item=<id> opens the drawer; closing deletes the key.
   const selectedId = searchParams.get('item');
@@ -155,6 +175,7 @@ export default function InboxPage() {
     limit: 300,
     sort: srvSort.id ?? 'priority',
     dir: srvSort.dir,
+    minOcc,
   });
   const data: InboxItem[] | null | undefined =
     inboxQ.isPending ? undefined : inboxQ.isError ? null : inboxQ.data?.items ?? [];
@@ -172,6 +193,7 @@ export default function InboxPage() {
   const anyFilter = !!(serviceFilter || searchFilter || ownerFilter || sreFilter || env);
   const scanCapped = !inboxQ.isPending && !inboxQ.isError
     && !!inboxQ.data?.scanCapped && anyFilter;
+  const hiddenByMinOcc = inboxQ.data?.hiddenByMinOcc ?? 0;
 
   // The drawer's selected row, resolved from ?item= against the loaded list.
   // Uses the full (pre-facet) list so a deep-link to a row hidden by the
@@ -445,6 +467,30 @@ export default function InboxPage() {
               ? 'Widen the priority / kind filter to see more.'
               : 'Nothing needs your attention right now.'}
           </Empty>
+        )}
+        {!inboxQ.isPending && !inboxQ.isError && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            fontSize: 11.5, color: 'var(--text3)', marginBottom: 8,
+          }}>
+            {minOcc > 0 ? (
+              <>
+                <span title="Bir kez düşen bir exception bu pencere hakkında bir olgudur, triage edilecek bir problem değil. Eşiğin altındakiler gizli — hepsini görmek için tıkla.">
+                  Showing groups with <b style={{ color: 'var(--text2)' }}>{minOcc}+</b> occurrences
+                  {hiddenByMinOcc > 0 && <> — <b style={{ color: 'var(--text2)' }}>{hiddenByMinOcc}</b> hidden</>}
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => setMinOcc(0)}>show all</Button>
+                {minOcc !== 10 && (
+                  <Button variant="ghost" size="sm" onClick={() => setMinOcc(10)}>10+</Button>
+                )}
+              </>
+            ) : (
+              <>
+                <span>Showing <b style={{ color: 'var(--text2)' }}>every</b> row, including one-off exceptions</span>
+                <Button variant="ghost" size="sm" onClick={() => setMinOcc(5)}>5+ only</Button>
+              </>
+            )}
+          </div>
         )}
         {scanCapped && (
           <div style={{ marginBottom: 8 }}>

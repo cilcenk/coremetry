@@ -34,6 +34,10 @@ type EndpointRow struct {
 	// req/min throughput (calls / window minutes) so the operator
 	// compares endpoints across window widths.
 	P50Ms     float64 `json:"p50Ms"`
+	// P90Ms (v0.9.305) — the percentile between "typical" and "tail".
+	// The MV already produced it; only the raw path's quantile family
+	// had to be widened to expose it.
+	P90Ms     float64 `json:"p90Ms"`
 	P95Ms     float64 `json:"p95Ms"`
 	ReqPerMin float64 `json:"reqPerMin"`
 	// v0.5.370 — call-rate sparkline (≤ SparklineBuckets slots across
@@ -454,6 +458,7 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		       sum(bv_err) * 100.0 / nullIf(sum(bv), 0)         AS error_rate,
 		       sum(bv_sum_dur) / nullIf(sum(bv), 0) / 1e6       AS avg_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 2) / 1e6 AS p90_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 3) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 4) / 1e6 AS p99_ms,
 		       arrayMap(i ->
@@ -482,11 +487,11 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 	out := []EndpointRow{}
 	for rows.Next() {
 		var r EndpointRow
-		var errRate, avgMs, p50Ms, p95Ms, p99Ms *float64
+		var errRate, avgMs, p50Ms, p90Ms, p95Ms, p99Ms *float64
 		var sparkline, errorsSparkline, p99Sparkline []float64
 		if err := rows.Scan(
 			&r.Service, &r.Path,
-			&r.Calls, &r.Errors, &errRate, &avgMs, &p50Ms, &p95Ms, &p99Ms,
+			&r.Calls, &r.Errors, &errRate, &avgMs, &p50Ms, &p90Ms, &p95Ms, &p99Ms,
 			&sparkline, &errorsSparkline, &p99Sparkline,
 		); err != nil {
 			return nil, err
@@ -494,6 +499,7 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		r.ErrorRate = safeF(errRate)
 		r.AvgMs = safeF(avgMs)
 		r.P50Ms = safeF(p50Ms)
+		r.P90Ms = safeF(p90Ms)
 		r.P95Ms = safeF(p95Ms)
 		r.P99Ms = safeF(p99Ms)
 		r.ReqPerMin = float64(r.Calls) / windowMin
@@ -741,7 +747,12 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 		         countIf(` + statusExpr + ` BETWEEN 500 AND 599) AS bv_5xx,
 		         sum(duration)                                   AS bv_sum_dur,
 		         quantileTDigest(0.99)(duration) / 1e6           AS bv_p99,
-		         quantilesTDigestState(0.5, 0.95, 0.99)(duration) AS q_state,
+		         -- v0.9.305 — aile 0.9'u İÇERECEK şekilde genişletildi. MV
+		         -- yolu zaten (0.5, 0.9, 0.95, 0.99) üretiyordu; ham yol 3'lü
+		         -- kalsaydı P90 kolonu ya boş kalır ya da KAYMIŞ bir ordinal
+		         -- okurdu (3'lüde index 2 = p95). Genişletince p95/p99'un
+		         -- ordinalleri de 2/3 → 3/4 kaydı.
+		         quantilesTDigestState(0.5, 0.9, 0.95, 0.99)(duration) AS q_state,
 		         anyHeavy(http_method)                           AS bv_method
 		  FROM spans
 		  WHERE time >= ? AND time <= ?
@@ -756,9 +767,10 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 		       sum(bv_err)                                      AS errors,
 		       sum(bv_err) * 100.0 / nullIf(sum(bv), 0)         AS error_rate,
 		       sum(bv_sum_dur) / nullIf(sum(bv), 0) / 1e6       AS avg_ms,
-		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(q_state), 1) / 1e6 AS p50_ms,
-		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(q_state), 2) / 1e6 AS p95_ms,
-		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(q_state), 3) / 1e6 AS p99_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 2) / 1e6 AS p90_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 3) / 1e6 AS p95_ms,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(q_state), 4) / 1e6 AS p99_ms,
 		       sum(bv_2xx)                                      AS http_2xx,
 		       sum(bv_3xx)                                      AS http_3xx,
 		       sum(bv_4xx)                                      AS http_4xx,
@@ -789,11 +801,11 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 	out := []EndpointRow{}
 	for rows.Next() {
 		var r EndpointRow
-		var avgMs, p50Ms, p95Ms, p99Ms, errRate *float64
+		var avgMs, p50Ms, p90Ms, p95Ms, p99Ms, errRate *float64
 		var sparkline, errorsSparkline, p99Sparkline []float64
 		if err := rows.Scan(
 			&r.Service, &r.Path, &r.Method,
-			&r.Calls, &r.Errors, &errRate, &avgMs, &p50Ms, &p95Ms, &p99Ms,
+			&r.Calls, &r.Errors, &errRate, &avgMs, &p50Ms, &p90Ms, &p95Ms, &p99Ms,
 			&r.Http2xx, &r.Http3xx, &r.Http4xx, &r.Http5xx,
 			&sparkline, &errorsSparkline, &p99Sparkline,
 		); err != nil {
@@ -802,6 +814,7 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 		r.ErrorRate = safeF(errRate)
 		r.AvgMs = safeF(avgMs)
 		r.P50Ms = safeF(p50Ms)
+		r.P90Ms = safeF(p90Ms)
 		r.P95Ms = safeF(p95Ms)
 		r.P99Ms = safeF(p99Ms)
 		r.ReqPerMin = float64(r.Calls) / windowMin

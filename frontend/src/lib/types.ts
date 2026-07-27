@@ -2626,6 +2626,10 @@ export interface EndpointRow {
   // deploy page against an older backend renders "—" instead of
   // crashing on undefined.toFixed.
   p50Ms?: number;
+  // v0.9.305 — the percentile between "typical" and "tail". The MV
+  // already produced it; the raw path's quantile family was widened
+  // to expose it. Optional for the same rolling-deploy reason.
+  p90Ms?: number;
   p95Ms?: number;
   reqPerMin?: number;
   // v0.5.371 — 30-bucket call-rate sparkline across the

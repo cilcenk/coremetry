@@ -12,7 +12,7 @@ import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useEndpoints, useClusters } from '@/lib/queries';
 import { timeRangeToNs, rangeToSince, fmtNum } from '@/lib/utils';
-import { encodeRange } from '@/lib/urlState';
+import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
@@ -638,7 +638,7 @@ export default function EndpointsPage() {
                               the service filter, this returns every
                               trace that includes a call on this
                               endpoint. */}
-                          <Link to={tracesLink(r, range)}
+                          <Link to={tracesLink(r, range, env, cluster)}
                                 style={{ fontSize: 11, color: 'var(--accent2)' }}>
                             view →
                           </Link>
@@ -687,6 +687,7 @@ export default function EndpointsPage() {
           row={detail ? freshDetailRow ?? detail : null}
           rowIsStale={!!detail && !freshDetailRow}
           onClose={() => setDetail(null)} range={range}
+          env={env} cluster={cluster}
           onZoom={handleZoom} onZoomReset={handleZoomReset} />
         {/* v0.8.360 — route-scoped drill-down drawer. row may be
             undefined on a stale deep-link (endpoint not in the loaded
@@ -723,9 +724,12 @@ export default function EndpointsPage() {
 // crosshair sync, and tooltip per series — the same uPlot
 // affordances the Metrics / Explore pages use.
 function EndpointMetricModal({
-  row, rowIsStale, onClose, range, onZoom, onZoomReset,
+  row, rowIsStale, onClose, range, env, cluster, onZoom, onZoomReset,
 }: {
   row: EndpointRow | null; onClose: () => void; range: TimeRange;
+  // v0.9.307 — the scope this modal's row was read under, so its
+  // pivots ask the same question the table did.
+  env?: string; cluster?: string;
   // v0.9.206 review-fix — true = row, MEVCUT range'in sonuçlarında
   // bulunamayan bayat click-time satırı. Kimlik/başlık ondan çizilir
   // ama time-series ondan ÜRETİLMEZ: bucketsToSeries eski pencere
@@ -825,10 +829,21 @@ function EndpointMetricModal({
       </div>
       <div style={{ display: 'flex', gap: 10 }}>
         <Link
-          to={tracesLink(row, range)}
+          to={tracesLink(row, range, env, cluster)}
           style={{ fontSize: 12, color: 'var(--accent2)' }}
         >
           View traces →
+        </Link>
+        {/* v0.9.307 (brief N6b) — http.route is a resolver tier
+            dimension, so Explore answers this from the spanmetrics
+            rollups: zero new queries, and the p99 series arrives
+            already grouped by the route this modal is about. */}
+        <Link
+          to={exploreLink(row, range, 'p99', env, cluster)}
+          title="Open this route's p99 in Explore — charted from the metric rollups, where you can add dimensions or compare against another query."
+          style={{ fontSize: 12, color: 'var(--accent2)' }}
+        >
+          Open in Explore →
         </Link>
         <Link
           to={`/service?name=${encodeURIComponent(row.service)}`}
@@ -948,11 +963,46 @@ function bucketsToSeries(row: EndpointRow, range: TimeRange): {
   };
 }
 
-function tracesLink(r: EndpointRow, range: TimeRange): string {
+// v0.9.307 — env/cluster ride the pivot. Without them a row read
+// under env=uat opened an UNFILTERED trace list: the pivot silently
+// widened the question it was launched from, which is the same
+// silent-scope class v0.9.306 closed inside the drawer.
+function tracesLink(r: EndpointRow, range: TimeRange, env?: string, cluster?: string): string {
   return `/traces?service=${encodeURIComponent(r.service)}` +
     `&search=${encodeURIComponent(r.path)}` +
     `&range=${encodeURIComponent(encodeRange(range))}` +
+    (env ? `&env=${encodeURIComponent(env)}` : '') +
+    (cluster ? `&cluster=${encodeURIComponent(cluster)}` : '') +
     `&view=list&rootOnly=false`;
+}
+
+// exploreLink — "Open in Explore →" (v0.9.307, brief N6b).
+//
+// Zero new queries: http.route is already a resolver tier dimension
+// (TIER_DIM_KEYS), so Explore answers this from the spanmetrics
+// rollups rather than raw spans. The URL is the SAME legacy
+// ?result=metric shape OperationsTable already emits — no new scheme
+// invented, and seedFromLegacyParams decodes it unchanged.
+//
+// env rides along for the same reason it rides tracesLink: a pivot
+// must carry the scope it was launched from, or it answers a wider
+// question than the one on screen.
+function exploreLink(
+  r: EndpointRow, range: TimeRange, agg: string, env?: string, cluster?: string,
+): string {
+  const filters = encodeFilters([
+    { k: 'service.name', op: '=', v: [r.service] },
+    { k: 'http.route', op: '=', v: [r.path] },
+  ]);
+  return `/explore?${buildQuery([
+    ['range', encodeRange(range)],
+    ['filters', filters],
+    ['agg', agg],
+    ['field', 'duration_ms'],
+    ['result', 'metric'],
+    ['env', env ?? ''],
+    ['cluster', cluster ?? ''],
+  ])}`;
 }
 
 // StatusBreakdown — inline 2xx / 3xx / 4xx / 5xx pills for one

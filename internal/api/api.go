@@ -6979,6 +6979,12 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 		Dir:    q.Get("dir"),
 		Limit:  parseInt(q.Get("limit"), 50),
 		Offset: parseInt(q.Get("offset"), 0),
+		// v0.9.315 (operator-reported) — occurrence floor. The list was
+		// filling with one-off exceptions: a single Java socket timeout
+		// rendered a row indistinguishable from a sustained outage.
+		// Default 0 keeps every existing caller unchanged; the Problems
+		// UI sends its own floor and tells the operator what it hid.
+		MinOccurrences: uint64(parseInt(q.Get("minOccurrences"), 0)),
 	}
 	ownerTeam, sreTeam := q.Get("ownerTeam"), q.Get("sreTeam")
 	// v0.8.455 — ana triage yüzeyi (list+count, 2-3 CH sorgusu) artık

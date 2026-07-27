@@ -40,9 +40,9 @@ const TABS: { key: string; label: string; hint: string }[] = [
 // ORDER BY runs in ClickHouse across the whole paginated set). The
 // DataTable column ids below are exactly these values, so dt.sort.id
 // forwards straight to the fetch after a sanitize.
-type SortKey = 'state' | 'type' | 'service' | 'firstSeen' | 'lastSeen' | 'assignee';
+type SortKey = 'state' | 'type' | 'service' | 'occurrences' | 'firstSeen' | 'lastSeen' | 'assignee';
 const SORT_KEYS: readonly SortKey[] =
-  ['state', 'type', 'service', 'firstSeen', 'lastSeen', 'assignee'];
+  ['state', 'type', 'service', 'occurrences', 'firstSeen', 'lastSeen', 'assignee'];
 const DEFAULT_EXC_SORT = { id: 'lastSeen' as SortKey, dir: 'desc' as const };
 
 // Exception inbox columns — shared DataTable primitive in serverSort
@@ -56,13 +56,7 @@ const EXC_COLS: DataTableColumn<ExceptionGroup>[] = [
   { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 100 },
   { id: 'type',        label: 'Exception',   sortValue: g => g.type,        naturalDir: 'asc',  width: 400 },
   { id: 'service',     label: 'Service',     sortValue: g => g.service,     naturalDir: 'asc',  width: 150 },
-  // v0.9.314 (operatör) — OCCURRENCES kolonu kaldırıldı. Triage
-  // listesinde "1 · 2 · 3" gibi sayılar kafa karıştırıyordu: bir
-  // exception GRUBUNUN kaç kez düştüğü, o grubun ne kadar ACİL
-  // olduğunu söylemiyor (tek seferlik bir OOM, gürültülü bir
-  // retry'dan beterdir) ve satır taramasında öncelik sinyaliymiş
-  // gibi okunuyordu. Sayı kaybolmadı — satır açılınca panel
-  // başlığında duruyor, yani "exception'da görünsün" isteği karşılanıyor.
+  { id: 'occurrences', label: 'Occurrences', sortValue: g => g.occurrences, numeric: true,      width: 100 },
   { id: 'firstSeen',   label: 'First seen',  sortValue: g => g.firstSeen,   width: 150 },
   { id: 'lastSeen',    label: 'Last seen',   sortValue: g => g.lastSeen,    width: 150 },
   { id: 'assignee',    label: 'Assignee',    sortValue: g => g.assignee,    naturalDir: 'asc',  width: 160 },
@@ -116,6 +110,29 @@ export default function ProblemsPage() {
   // triage link reproduces the exact team slice, mirroring /inbox's
   // ?owner=/?sre= (v0.8.310). Resolved server-side to member services
   // so the narrowing is correct across the whole paginated set.
+  // v0.9.315 (operatör) — occurrence eşiği. Prod'da liste tek seferlik
+  // exception'larla doluyordu: bir kez düşen Java socket timeout'u,
+  // sürmekte olan bir kesintiyle aynı görünen bir satır üretiyordu.
+  // Operatör: "gerçek sorun 5-10 adetten fazla occurrence olan
+  // problemler". Varsayılan 5; ?minOcc= ile URL'de, yani kaydedilen
+  // görünüm ve paylaşılan link eşiği de taşıyor.
+  //
+  // Süzgeç GİZLİ DEĞİL: şerit hangi eşiğin uygulandığını yazıyor ve
+  // "show all" tek tık. Bir kez düşen nadir bir exception gerçekten
+  // önemli olan olabilir; onu söylemeden saklamak bu deponun tekrar
+  // eden hata sınıfı.
+  const minOcc = (() => {
+    const raw = searchParams.get('minOcc');
+    if (raw === null) return 5;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? n : 5;
+  })();
+  const setMinOcc = (v: number) => setSearchParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v === 5) next.delete('minOcc'); else next.set('minOcc', String(v));
+    next.delete('page');
+    return next;
+  }, { replace: true });
   const ownerTeam = searchParams.get('owner') || '';
   const sreTeam   = searchParams.get('sre')   || '';
   const page    = Math.max(0, parseInt(searchParams.get('page') || '0', 10) || 0);
@@ -247,6 +264,7 @@ export default function ProblemsPage() {
       sort: sortBy, dir: sortDir,
       q: committedSearch || undefined,
       limit: PAGE_SIZE, offset: page * PAGE_SIZE,
+      minOccurrences: minOcc > 0 ? minOcc : undefined, // v0.9.315
     })
       .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); setRefreshing(false); })
       .catch(() => { setData(null); setRefreshing(false); });
@@ -270,7 +288,7 @@ export default function ProblemsPage() {
     }
     refreshExceptionGroups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, service, ownerTeam, sreTeam, page, sortSig, committedSearch]);
+  }, [tab, service, ownerTeam, sreTeam, page, sortSig, committedSearch, minOcc]);
 
 
   useEffect(() => {
@@ -453,6 +471,34 @@ export default function ProblemsPage() {
             )}
           </Empty>
         )}
+        {/* v0.9.315 (operatör) — occurrence eşiği ŞERİDİ. Süzgecin
+            kendisi kadar önemli: bir kez düşen nadir bir exception
+            gerçekten önemli olan olabilir, ve onu söylemeden saklamak
+            bu deponun tekrar eden hata sınıfı. Eşik yazılı, kaldırmak
+            tek tık. */}
+        {data && (
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 8,
+            fontSize: 11.5, color: 'var(--text3)', marginBottom: 8,
+          }}>
+            {minOcc > 0 ? (
+              <>
+                <span title="Bir kez düşen bir exception bu pencere hakkında bir olgudur, triage edilecek bir problem değil. Eşiğin altındakiler gizli — hepsini görmek için tıkla.">
+                  Showing groups with <b style={{ color: 'var(--text2)' }}>{minOcc}+</b> occurrences
+                </span>
+                <Button variant="ghost" size="sm" onClick={() => setMinOcc(0)}>show all</Button>
+                {minOcc !== 10 && (
+                  <Button variant="ghost" size="sm" onClick={() => setMinOcc(10)}>10+</Button>
+                )}
+              </>
+            ) : (
+              <>
+                <span>Showing <b style={{ color: 'var(--text2)' }}>every</b> group, including one-off exceptions</span>
+                <Button variant="ghost" size="sm" onClick={() => setMinOcc(5)}>5+ only</Button>
+              </>
+            )}
+          </div>
+        )}
         {data && filtered.length > 0 && (
           <div className="table-wrap"
             style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
@@ -521,6 +567,9 @@ export default function ProblemsPage() {
                             style={{ fontFamily: 'monospace', fontSize: 11 }}>
                             {g.service}
                           </Link>
+                        </td>
+                        <td className="mono" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--err)' }}>
+                          {fmtNum(Number(g.occurrences))}
                         </td>
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.firstSeen)}</td>
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.lastSeen)}</td>

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Drawer } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
-import { useEndpointDetail, useEndpointSplit } from '@/lib/queries';
+import { useEndpointDetail, useEndpointSplit, useEndpointDownstream } from '@/lib/queries';
 import { fmtNum, timeRangeToNs, tsLong } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, EndpointRow, EndpointDetail, EndpointSplitValue } from '@/lib/types';
@@ -141,6 +141,11 @@ export function EndpointDetailDrawer({ refObj, row, range, compare, env, cluster
           {detail && (
             <>
               <HistogramSection detail={detail} />
+              {/* v0.9.311 (brief N4) — directly under the latency
+                  distribution, because it is the next question that
+                  distribution raises: the histogram says HOW slow, this
+                  says WHERE the slowness is. */}
+              <WhereTheTimeGoesSection refObj={refObj} from={from} to={to} env={env} cluster={cluster} />
               <StatusSection detail={detail} />
               <ExceptionsSection detail={detail} />
               <FailingTracesSection detail={detail} />
@@ -508,5 +513,130 @@ function SplitSection({ refObj, from, to, env, cluster }: {
         </div>
       )}
     </div>
+  );
+}
+
+// WhereTheTimeGoesSection — v0.9.311 (brief N4).
+//
+// The drawer could say a route's p99 was 900ms and not where those
+// 900ms went. This splits the route's time across what it calls, shows
+// who calls it, and — separately — how much of it is spent in a
+// database at ANY depth.
+//
+// The two lists are NEVER summed. `downstream` holds direct children,
+// which sum to the sampled entry duration; `backends` holds DB time
+// found anywhere below, which is already INSIDE those children. Live
+// data made that split necessary: a gateway route's 659ms had one
+// direct child (account-service, 645ms) whose own child was a 623ms
+// Oracle query. "645ms in account-service" is true and nearly useless.
+function WhereTheTimeGoesSection({ refObj, from, to, env, cluster }: {
+  refObj: EndpointRef; from: number; to: number; env?: string; cluster?: string;
+}) {
+  const [tab, setTab] = useState<'downstream' | 'callers'>('downstream');
+  const q = useEndpointDownstream({
+    service: refObj.service, path: refObj.path, from, to,
+    ...(refObj.sig ? { sig: '1' as const } : {}),
+    ...(env ? { env } : {}),
+    ...(cluster ? { cluster } : {}),
+  });
+  const d = q.data;
+  const rows = tab === 'downstream' ? (d?.downstream ?? []) : (d?.callers ?? []);
+  const total = d?.totalMs ?? 0;
+
+  return (
+    <section style={{ marginTop: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+        <h4 style={{ margin: 0, fontSize: 12, fontWeight: 700 }}>Where the time goes</h4>
+        <div className="tab-strip" style={{ fontSize: 11 }}>
+          <button className={tab === 'downstream' ? 'active' : ''}
+            onClick={() => setTab('downstream')}>Downstream</button>
+          <button className={tab === 'callers' ? 'active' : ''}
+            onClick={() => setTab('callers')}>Callers</button>
+        </div>
+        <span style={{ flex: 1 }} />
+        {/* The honesty label the brief made mandatory. A share computed
+            from N traces is not a window-wide measurement, and the only
+            thing separating the two on screen is this sentence. */}
+        {d && d.sampledFrom > 0 && (
+          <span style={{ fontSize: 10.5, color: 'var(--text3)' }}
+            title={`Sampled from the ${d.sampledFrom} SLOWEST traces of this route in the window — ordered by duration so the sample represents the tail you opened this drawer about. These shares are not a window-wide measurement.`}>
+            sampled · {d.sampledFrom} traces
+          </span>
+        )}
+      </div>
+
+      {q.isPending && <div style={{ fontSize: 11, color: 'var(--text3)' }}>Sampling traces…</div>}
+      {q.isError && <div style={{ fontSize: 11, color: 'var(--err)' }}>Could not sample this route's traces.</div>}
+      {d && d.sampledFrom === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+          No traces for this route in the window — widen the range.
+        </div>
+      )}
+
+      {d && d.sampledFrom > 0 && rows.length === 0 && (
+        <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+          {tab === 'downstream'
+            ? 'This route calls nothing else — all of its time is its own.'
+            : 'No caller spans in the sample: this route is entered directly, or the callers are not instrumented.'}
+        </div>
+      )}
+
+      {rows.map(e => {
+        const pct = total > 0 ? (e.shareMs / total) * 100 : 0;
+        const tone = e.kind === 'self' ? 'var(--text3)'
+          : e.kind === 'db' ? 'var(--warn)' : 'var(--accent2)';
+        return (
+          <div key={`${e.kind}/${e.name}`} style={{ marginBottom: 5 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 6, fontSize: 11 }}>
+              <span className="mono" style={{ color: tone, fontWeight: 600 }}>{e.name}</span>
+              <span style={{ color: 'var(--text3)', fontSize: 10 }}>{e.kind}</span>
+              <span style={{ flex: 1 }} />
+              {e.errors > 0 && (
+                <span style={{ color: 'var(--err)' }}>{e.errors} err</span>
+              )}
+              <span style={{ color: 'var(--text2)', fontVariantNumeric: 'tabular-nums' }}>
+                p99 {e.p99Ms.toFixed(0)}ms
+              </span>
+              <span style={{ color: 'var(--text1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                {pct.toFixed(0)}%
+              </span>
+            </div>
+            <div style={{
+              height: 5, borderRadius: 3, overflow: 'hidden',
+              background: 'color-mix(in srgb, var(--text3) 20%, transparent)',
+            }}>
+              <div style={{ width: `${Math.min(100, pct)}%`, height: '100%', background: tone }} />
+            </div>
+          </div>
+        );
+      })}
+
+      {/* Backends: DB time at ANY depth. Separate on purpose — see the
+          function comment. Only on the Downstream tab, where the
+          question "and how much of THAT is the database" belongs. */}
+      {tab === 'downstream' && d && d.backends.length > 0 && (
+        <div style={{ marginTop: 8, paddingTop: 6, borderTop: '1px dashed var(--border)' }}>
+          <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 4 }}
+            title="Database and broker time found ANYWHERE beneath this route, including inside the services above. Shown separately because that time is already counted in its parent's share — adding the two lists together would count the same milliseconds twice.">
+            of which, in backends (any depth)
+          </div>
+          {d.backends.map(b => (
+            <div key={b.name} style={{
+              display: 'flex', alignItems: 'baseline', gap: 6,
+              fontSize: 11, marginBottom: 2,
+            }}>
+              <span className="mono" style={{ color: 'var(--warn)' }}>{b.name}</span>
+              <span style={{ flex: 1 }} />
+              <span style={{ color: 'var(--text2)', fontVariantNumeric: 'tabular-nums' }}>
+                {b.calls} calls · p99 {b.p99Ms.toFixed(0)}ms
+              </span>
+              <span style={{ color: 'var(--text1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+                {total > 0 ? ((b.shareMs / total) * 100).toFixed(0) : 0}%
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }

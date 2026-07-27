@@ -4,7 +4,7 @@ import type {
   LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
-  SpanMetricsServicesResponse, EndpointRow, EndpointDetail, EndpointSplitResponse, ServiceAttrsResponse,
+  SpanMetricsServicesResponse, EndpointRow, EndpointDetail, EndpointSplitResponse, EndpointDownstream, ServiceAttrsResponse,
   AlertRule, Problem, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
@@ -1601,6 +1601,11 @@ export const api = {
   // the route while the table showed one: two truths, one screen.
   endpointDetail: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }) =>
     get<EndpointDetail>(`/api/endpoints/detail?${qs(params)}`),
+  // v0.9.311 (brief N4) — "Where the time goes". SAMPLED over the
+  // route's slowest traces; two raw-spans passes behind a 60s server
+  // cache, so this is fetch-on-open and never polled.
+  endpointDownstream: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }) =>
+    get<EndpointDownstream>(`/api/endpoints/downstream?${qs(params)}`),
   // v0.8.360 — split-by: top-10 values of one whitelisted attribute
   // with RED each. `by` must match the backend whitelist
   // (chstore.EndpointSplitDims — mirrored in ENDPOINT_SPLIT_DIMS).

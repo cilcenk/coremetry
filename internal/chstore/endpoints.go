@@ -9,6 +9,13 @@ import (
 
 // errEndpointsMVEnv — GetEndpointsMV's refusal when called with an
 // env filter (v0.8.385). See the guard inside GetEndpointsMV.
+// errEndpointsRPCRaw — the RPC entry tab combined with a cluster/env
+// filter (v0.9.313). Both force the raw-spans path, which has no
+// non-HTTP entry projection. Surfaced to the operator, never silently
+// answered with an empty table.
+var errEndpointsRPCRaw = errors.New(
+	"the RPC & Messaging tab needs the spanmetrics MV, which a cluster or env filter disables — clear that filter to list non-HTTP entry points")
+
 var errEndpointsMVEnv = errors.New(
 	"endpoints MV path cannot filter by env: spanmetrics_1m has no deploy_env dimension — route through GetEndpoints (raw fallback)")
 
@@ -52,6 +59,10 @@ type EndpointRow struct {
 	//
 	// Omitted from JSON when empty so the raw path (cluster/env, which
 	// has no exemplar states) simply ships rows without them.
+	// Kind (v0.9.313, brief N1) — the entry span's kind on the RPC tab
+	// ("server" for gRPC, "consumer" for a queue). Empty on the HTTP
+	// tab, where the kind is implied by the route.
+	Kind string `json:"kind,omitempty"`
 	SlowTraceID  string `json:"slowTraceId,omitempty"`
 	ErrorTraceID string `json:"errorTraceId,omitempty"`
 	// v0.5.370 — call-rate sparkline (≤ SparklineBuckets slots across
@@ -142,6 +153,21 @@ func opSigWrap(expr string) string {
 // its runs — same ordering contract as the consts above).
 func opSigArgs() []any { return []any{OpSigReUUID, OpSigReHex, OpSigReNum} }
 
+// EntryKind selects which inbound surface /endpoints lists (v0.9.313,
+// brief N1). Before this the page showed only HTTP routes and said
+// nothing about the rest, so gRPC server and Kafka consumer entry
+// points were invisible rather than merely absent.
+type EntryKind string
+
+const (
+	// EntryHTTP — http_route-bearing inbound spans. The default, and
+	// byte-for-byte the pre-v0.9.313 table.
+	EntryHTTP EntryKind = "http"
+	// EntryRPC — inbound spans WITHOUT an http_route: gRPC servers and
+	// message consumers, keyed on the span name.
+	EntryRPC EntryKind = "rpc"
+)
+
 // EndpointsQuery bundles the /endpoints read inputs (v0.8.356) —
 // the arg list outgrew a flat signature when server-side sort +
 // the MV/raw dispatch landed.
@@ -164,6 +190,9 @@ type EndpointsQuery struct {
 	// top-N by calls and the client re-sorted that page — "top by p95"
 	// was really "top-N-by-calls, reordered".
 	Sort, Dir string
+	// Entry (v0.9.313, brief N1) — which inbound surface to list.
+	// Empty = EntryHTTP, so every existing caller keeps today's rows.
+	Entry EntryKind
 	// SkipStatus skips the raw-spans status/method sidecar — set by the
 	// compare=prior read, which only needs calls/errors/avg/p99 for the
 	// delta merge.
@@ -295,6 +324,21 @@ func (s *Store) GetEndpoints(ctx context.Context, q EndpointsQuery) ([]EndpointR
 		q.To = time.Now()
 	}
 	if q.forcesRaw() {
+		// v0.9.313 (brief N1) — the RPC tab has NO raw equivalent: the
+		// raw path keys on http_route, and reproducing it would mean a
+		// second projection over rpc_system / rpc_method / messaging_*
+		// attributes. Rather than write that, refuse EXPLICITLY.
+		//
+		// The alternative — running the HTTP raw query anyway — returns
+		// an empty table under a tab labelled "RPC & Messaging", i.e.
+		// "you have no gRPC entry points" when the truth is "this
+		// combination cannot be answered". That silent-empty is exactly
+		// the class this whole slice exists to remove; a stated refusal
+		// costs the operator one sentence, an invisible one costs them
+		// a wrong conclusion.
+		if q.Entry == EntryRPC {
+			return nil, errEndpointsRPCRaw
+		}
 		return s.getEndpointsRaw(ctx, q)
 	}
 	return s.GetEndpointsMV(ctx, q)
@@ -423,14 +467,37 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 	// signature transform is a plain string rewrite over the MV's
 	// http_route dimension, and tdigest states merge exactly across
 	// the collapsed groups — so the toggle rides the MV too.
-	pathProj := "http_route"
+	// v0.9.313 (brief N1) — entry-point KIND.
+	//
+	// The page has always filtered `http_route != ''`, so gRPC server
+	// and Kafka consumer entry points were not merely unlisted, they
+	// were invisible — and nothing said so. An operator reading this
+	// table came away with "these are all my entry points", which is an
+	// incomplete truth, the same silent class as the drawer's scope
+	// (v0.9.306). It also cut against the standing entry-span principle:
+	// a service's inbound surface is server AND consumer.
+	//
+	// The MV needs nothing new. Its ORDER BY is already
+	// (service_name, name, kind, status_code, http_route, time_bucket),
+	// so `name` and `kind` are live dimensions that simply never
+	// reached the projection. Same query, different WHERE.
+	dimCol := "http_route"
+	entryWhere := " AND kind NOT IN ('client', 'producer') AND http_route != ''"
+	if q.Entry == EntryRPC {
+		// Non-HTTP inbound: the span's own name is the entry identity.
+		dimCol = "name"
+		entryWhere = " AND kind IN ('server', 'consumer') AND http_route = ''"
+	}
+	pathProj := dimCol
 	if q.BySignature {
-		pathProj = opSigWrap("http_route")
+		// The shape toggle MUST apply to `name` too: a badly
+		// instrumented service puts ids in the span name
+		// ("GET /orders/8421"), and without the collapse the RPC tab
+		// drowns in a long tail of one-call rows.
+		pathProj = opSigWrap(dimCol)
 	}
 
-	where := "time_bucket >= ? AND time_bucket <= ?" +
-		" AND kind NOT IN ('client', 'producer')" +
-		" AND http_route != ''"
+	where := "time_bucket >= ? AND time_bucket <= ?" + entryWhere
 	// Placeholder order follows appearance in the SQL text: the
 	// signature-regex args (inside pathProj, when present) and the
 	// intDiv bucket args sit in the SELECT list, BEFORE the WHERE.

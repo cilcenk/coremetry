@@ -84,6 +84,10 @@ function spreadOf(r: EndpointRow): number {
 // the fetch. New MV-backed columns: Req/min, P50, P95.
 const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   { id: 'service',   label: 'Service',    sortValue: r => r.service,   naturalDir: 'asc', width: 150 },
+  // v0.9.313 — the header reads "Path" on the HTTP surface and
+  // "Operation" on the RPC one: the column carries http.route there and
+  // the span NAME here, and calling a gRPC method a "path" would be a
+  // small lie repeated on every row.
   { id: 'path',      label: 'Path',       sortValue: r => r.path,      naturalDir: 'asc', width: 260 },
   { id: 'method',    label: 'Method',     width: 68 },
   { id: 'calls',     label: 'Calls',      sortValue: r => r.calls,     numeric: true, width: 84 },
@@ -221,6 +225,17 @@ export default function EndpointsPage() {
     if (v) next.set('shape', '1'); else next.delete('shape');
     return next;
   }, { replace: true });
+  // v0.9.313 (brief N1) — which inbound surface the table lists.
+  // In the URL (replace:true) so a saved view and a copied link come
+  // back on the same tab; one-way reads are the recurring bug class
+  // here (v0.8.253/256/265/267).
+  const entry: 'http' | 'rpc' = params.get('entry') === 'rpc' ? 'rpc' : 'http';
+  const setEntry = (v: 'http' | 'rpc') => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v === 'rpc') next.set('entry', 'rpc'); else next.delete('entry');
+    return next;
+  }, { replace: true });
+
   // v0.5.406 — row expansion + per-service dependency cache.
   // Clicking the "▶" chevron on a row reveals a strip showing
   // which services this endpoint's service typically calls
@@ -328,8 +343,13 @@ export default function EndpointsPage() {
   // the persisted sort id to the fetch regardless of visibility —
   // same contract as the never-rendered impact column.
   const visibleColumns = useMemo(
-    () => ENDPOINT_COLS.filter(c => c.headerHidden || visibleCols.has(c.id)),
-    [visibleCols]);
+    () => ENDPOINT_COLS
+      .filter(c => c.headerHidden || visibleCols.has(c.id))
+      // v0.9.313 — "Path" is http.route; on the RPC surface the same
+      // column carries the span NAME, and calling a gRPC method a path
+      // would be a small lie repeated on every row.
+      .map(c => (c.id === 'path' && entry === 'rpc' ? { ...c, label: 'Operation' } : c)),
+    [visibleCols, entry]);
   // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
   // row, Enter/o open its service detail, "/" focuses the path filter.
   const dt = useDataTable<EndpointRow>({
@@ -358,6 +378,7 @@ export default function EndpointsPage() {
     groupBy: bySignature ? 'signature' : undefined,
     sort: sortBy,
     dir: sortDir,
+    entry: entry === 'rpc' ? 'rpc' : undefined, // v0.9.313
   });
   const rows: EndpointRow[] | null | undefined =
     rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data ?? [];
@@ -398,6 +419,25 @@ export default function EndpointsPage() {
             so this is one import and one line: no new schema, no new
             endpoint, no new state. */}
         <SavedViewsBar page="endpoints" />
+        {/* v0.9.313 (brief N1) — the table filtered `http_route != ''`
+            from day one, so gRPC servers and queue consumers were not
+            merely unlisted, they were INVISIBLE and nothing said so.
+            An operator read "these are all my entry points" and got an
+            incomplete truth. Two tabs, one MV: `name` and `kind` were
+            already dimensions on it, they simply never reached the
+            projection. */}
+        <div className="tab-strip" style={{ marginBottom: 10, fontSize: 12 }}>
+          <button className={entry === 'http' ? 'active' : ''}
+            onClick={() => setEntry('http')}
+            title="Inbound requests carrying an http.route — the table as it has always been.">
+            HTTP
+          </button>
+          <button className={entry === 'rpc' ? 'active' : ''}
+            onClick={() => setEntry('rpc')}
+            title="Inbound spans WITHOUT an http.route: gRPC servers and message consumers, keyed on the span name. These never appeared on this page before.">
+            RPC &amp; Messaging
+          </button>
+        </div>
         <div className="controls" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
           <ServicePicker value={service} onChange={setService}
             placeholder="All services…" width={200} />
@@ -491,7 +531,18 @@ export default function EndpointsPage() {
         {rows === undefined && <TableSkeleton cols={8} wideFirst />}
         {rows === null && (
           <Empty icon="⚠" title="Failed to load endpoints">
-            The backend /api/endpoints request errored.
+            {/* v0.9.313 — the RPC surface needs the spanmetrics MV,
+                which a cluster or env filter disables. The backend
+                refuses that combination EXPLICITLY rather than running
+                the HTTP raw query and rendering an empty table under an
+                "RPC & Messaging" heading — "you have no gRPC entry
+                points" when the truth is "this cannot be answered".
+                Surface the reason here so the refusal is actionable. */}
+            {entry === 'rpc' && (cluster || env)
+              ? <>The <b>RPC &amp; Messaging</b> tab needs the spanmetrics rollups, which the
+                  {cluster ? ' cluster' : ''}{cluster && env ? ' and' : ''}{env ? ' env' : ''} filter
+                  disables. Clear it to list non-HTTP entry points, or switch back to HTTP.</>
+              : 'The backend /api/endpoints request errored.'}
           </Empty>
         )}
         {rows && rows.length === 0 && (

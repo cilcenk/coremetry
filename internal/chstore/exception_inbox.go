@@ -312,6 +312,22 @@ func (s *Store) GetExceptionGroup(ctx context.Context, fingerprint string) (*Exc
 }
 
 type ExceptionGroupFilter struct {
+	// MinOccurrences (v0.9.315, operator-reported) — hide groups that
+	// have fired fewer than this many times.
+	//
+	// The Problems list was filling with one-off exceptions: a single
+	// Java socket timeout produced a row that looked exactly like a
+	// sustained outage. Operator: "gerçek sorun 5-10 adetten fazla
+	// occurrence olan problemler". A one-shot failure is a fact about
+	// the window, not a problem to triage.
+	//
+	// Zero = no floor, which is what every non-Problems caller keeps.
+	// The filtering is NEVER silent: the caller reports how many rows
+	// this hid so the UI can offer them in one click — a rare exception
+	// that fires once can still be the important one, and hiding it
+	// without saying so is the failure mode this codebase keeps paying
+	// for.
+	MinOccurrences uint64
 	State    string // empty = all (except ignored)
 	Service  string
 	Assignee string
@@ -355,6 +371,9 @@ func buildExceptionGroupWhere(f ExceptionGroupFilter) whereClause {
 	} else {
 		// Default view excludes ignored — they're explicitly silenced.
 		wc.add("state != ?", ExStateIgnored)
+	}
+	if f.MinOccurrences > 0 {
+		wc.add("occurrences >= ?", f.MinOccurrences)
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)

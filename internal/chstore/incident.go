@@ -99,6 +99,42 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 	return out, rows.Err()
 }
 
+// CountIncidentsInStatuses returns how many incidents sit in the given
+// statuses — the /inbox badge's fourth term (v0.9.321).
+//
+// The badge has to count the same rows the list shows or the two disagree,
+// which is the bug this codebase keeps re-fixing (v0.9.219 did it for env).
+// COUNT-only on a small state table with FINAL, run in parallel with the
+// other three terms.
+//
+// envServices follows the shared contract: nil = unscoped, empty = the env
+// resolved to no services (only service-less rows count), otherwise
+// membership. Incidents CAN be service-less — an incident declared across
+// several services has no single owner — so unlike exception groups the
+// empty case is a real query, not a short-circuit to zero.
+func (s *Store) CountIncidentsInStatuses(ctx context.Context, statuses []string, envServices []string) (uint64, error) {
+	if len(statuses) == 0 {
+		return 0, nil
+	}
+	args := []any{statuses}
+	envSQL := ""
+	if envServices != nil {
+		if len(envServices) == 0 {
+			envSQL = " AND service = ''"
+		} else {
+			envSQL = " AND (service = '' OR service IN (?))"
+			args = append(args, envServices)
+		}
+	}
+	var n uint64
+	row := s.conn.QueryRow(ctx,
+		`SELECT count() FROM incidents FINAL WHERE status IN (?)`+envSQL, args...)
+	if err := row.Scan(&n); err != nil {
+		return 0, err
+	}
+	return n, nil
+}
+
 func (s *Store) GetIncident(ctx context.Context, id string) (*Incident, error) {
 	rows, err := s.ListIncidents(ctx, IncidentFilter{Limit: 1000})
 	if err != nil {

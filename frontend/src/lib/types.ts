@@ -1171,11 +1171,15 @@ export interface KibanaSettings {
 // groups + Anomaly events into one ranked list with a normalised
 // priority bucket so operators stop tab-hopping. Each kind keeps
 // its own drill-down ref (only one populated per row).
-export type InboxKind = 'problem' | 'exception' | 'anomaly';
+// v0.9.321 — 'incident' joins the union. A declared Incident is the one
+// triage object a HUMAN created on purpose, and it was the only source the
+// merged queue never showed: an operator working from /inbox could miss an
+// open incident entirely while the sidebar's own /incidents badge counted it.
+export type InboxKind = 'problem' | 'exception' | 'anomaly' | 'incident';
 export interface InboxItem {
   id: string;             // composite "<kind>:<nativeId>"
   kind: InboxKind;
-  source: string;         // "Alert rule" | "Exception" | "Anomaly"
+  source: string;         // "Alert rule" | "Exception" | "Anomaly" | "Incident"
   priority: 'P1' | 'P2' | 'P3';
   priorityReason: string;
   severity: string;
@@ -1209,6 +1213,7 @@ export interface InboxItem {
     id: string; kind: string; pattern: string;
     peakRatio: number; currentRatio: number;
   };
+  incident?: { id: string; severity: string; status: string };
 }
 
 // Role hierarchy used everywhere. `editor` was introduced for the

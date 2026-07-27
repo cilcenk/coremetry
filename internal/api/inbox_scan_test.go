@@ -1,6 +1,11 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
+)
 
 // inbox_scan_test.go — v0.9.318. Pins the per-source candidate ceiling.
 //
@@ -213,5 +218,94 @@ func TestApplyInboxMinOcc(t *testing.T) {
 	all, none := applyInboxMinOcc(append([]InboxItem(nil), items...), 0)
 	if none != 0 || len(all) != len(items) {
 		t.Errorf("minOcc=0 filtered: kept %d/%d, hidden %d", len(all), len(items), none)
+	}
+}
+
+// ── v0.9.321 — incidents as the fourth source ────────────────────────────
+
+func TestInboxKeepsIncident(t *testing.T) {
+	cases := []struct {
+		incident, inbox string
+		want            bool
+	}{
+		{"open", "open", true},
+		{"acknowledged", "open", true}, // still open, just picked up
+		{"resolved", "open", false},
+		{"resolved", "all", true},
+		// Defensive: a row written before the status field existed must never
+		// be silently hidden.
+		{"", "open", true},
+	}
+	for _, tc := range cases {
+		if got := inboxKeepsIncident(tc.incident, tc.inbox); got != tc.want {
+			t.Errorf("inboxKeepsIncident(%q,%q) = %v, want %v",
+				tc.incident, tc.inbox, got, tc.want)
+		}
+	}
+}
+
+func TestIncidentToInbox(t *testing.T) {
+	cases := []struct {
+		name, severity, status, wantPrio string
+	}{
+		{"critical unacked", "critical", "open", "P1"},
+		{"warning unacked", "warning", "open", "P2"},
+		{"info unacked", "info", "open", "P3"},
+		// Acknowledged = somebody is on it. Weaker claim on attention than an
+		// untouched one, but still open — one rung down, not out of the queue.
+		{"critical acked", "critical", "acknowledged", "P2"},
+		{"warning acked", "warning", "acknowledged", "P3"},
+		{"info acked", "info", "acknowledged", "P3"},
+		// An unknown severity must not vanish or become urgent.
+		{"unknown severity", "", "open", "P3"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			it := incidentToInbox(chstore.Incident{
+				ID: "inc-1", Title: "checkout down", Severity: tc.severity,
+				Status: tc.status, Service: "checkout", StartedAt: 100, UpdatedAt: 900,
+			})
+			if it.Priority != tc.wantPrio {
+				t.Errorf("priority = %s, want %s (reason %q)", it.Priority, tc.wantPrio, it.PriorityReason)
+			}
+			if it.PriorityReason == "" {
+				t.Error("every row ships a reason — see CLAUDE.md triage")
+			}
+			if it.Kind != "incident" || it.ID != "incident:inc-1" {
+				t.Errorf("kind/id = %s/%s", it.Kind, it.ID)
+			}
+			if it.Incident == nil || it.Incident.ID != "inc-1" {
+				t.Error("drill-down ref missing — the row would open nothing")
+			}
+			if it.LastSeen != 900 {
+				t.Errorf("lastSeen = %d, want the updated_at (900)", it.LastSeen)
+			}
+		})
+	}
+
+	// A never-updated incident must not sort as epoch-old: lastSeen falls
+	// back to when it started.
+	it := incidentToInbox(chstore.Incident{ID: "i", StartedAt: 500, UpdatedAt: 0})
+	if it.LastSeen != 500 {
+		t.Errorf("lastSeen fallback = %d, want startedAt 500", it.LastSeen)
+	}
+}
+
+// v0.9.321 — the invalidation prefix must NOT carry the response-shape
+// version. v0.9.319 bumped the key to :v3 while every mutation site still
+// dropped "inbox:v2", so acknowledging a problem left it in the queue for a
+// full TTL and nothing failed loudly. The prefix must match both the list key
+// and the count key.
+func TestInboxListCachePrefixMatchesKeys(t *testing.T) {
+	listKey := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5)
+	if !strings.HasPrefix(listKey, inboxListCachePrefix) {
+		t.Errorf("list key %q is not dropped by prefix %q", listKey, inboxListCachePrefix)
+	}
+	if !strings.HasPrefix(inboxCountKey("prod"), inboxListCachePrefix) {
+		t.Errorf("count key %q is not dropped by prefix %q", inboxCountKey("prod"), inboxListCachePrefix)
+	}
+	// It must not be so broad that it drops unrelated namespaces.
+	if strings.HasPrefix("exc-groups:foo", inboxListCachePrefix) {
+		t.Error("prefix is too broad — it would drop unrelated cache entries")
 	}
 }

@@ -63,6 +63,7 @@ func (s *Server) createIncident(w http.ResponseWriter, r *http.Request) {
 		Body: "Manually created",
 	})
 	s.audit(r, "incident.create", "incident", inc.ID, fmt.Sprintf(`{"title":%q}`, inc.Title))
+	s.invalidateInboxCaches(r)
 	writeJSON(w, inc)
 }
 
@@ -79,6 +80,7 @@ func (s *Server) updateIncident(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.audit(r, "incident.update", "incident", id, "")
+	s.invalidateInboxCaches(r)
 	writeJSON(w, inc)
 }
 
@@ -108,6 +110,7 @@ func (s *Server) ackIncident(w http.ResponseWriter, r *http.Request) {
 		IncidentID: id, Kind: "ack", Actor: actor, Body: "Incident acknowledged",
 	})
 	s.audit(r, "incident.ack", "incident", id, "")
+	s.invalidateInboxCaches(r)
 	writeJSON(w, inc)
 }
 
@@ -133,6 +136,7 @@ func (s *Server) resolveIncident(w http.ResponseWriter, r *http.Request) {
 		IncidentID: id, Kind: "resolved", Actor: actorOf(r), Body: "Incident resolved",
 	})
 	s.audit(r, "incident.resolve", "incident", id, "")
+	s.invalidateInboxCaches(r)
 	writeJSON(w, inc)
 }
 

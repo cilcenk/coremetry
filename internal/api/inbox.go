@@ -68,6 +68,17 @@ type InboxItem struct {
 	Problem   *InboxProblemRef   `json:"problem,omitempty"`
 	Exception *InboxExceptionRef `json:"exception,omitempty"`
 	Anomaly   *InboxAnomalyRef   `json:"anomaly,omitempty"`
+	Incident  *InboxIncidentRef  `json:"incident,omitempty"`
+}
+
+// InboxIncidentRef — v0.9.321. A declared Incident is the one triage object
+// a HUMAN created on purpose, and it was the only source the merged queue
+// never showed: an operator working from /inbox could miss an open incident
+// entirely while the sidebar's own /incidents badge counted it.
+type InboxIncidentRef struct {
+	ID       string `json:"id"`
+	Severity string `json:"severity"`
+	Status   string `json:"status"`
 }
 
 type InboxProblemRef struct {
@@ -268,6 +279,26 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			items = append(items, anomalyToInbox(e))
+		}
+
+		// ── Incidents ────────────────────────────────────────────
+		// v0.9.321 — the fourth source. Skipped on `ignored` for the same
+		// reason Problems and anomalies are: that pivot is exception-only
+		// (muting a group is a different verb from resolving an incident).
+		if statusFilter != "ignored" {
+			incs, err := s.store.ListIncidents(ctx, chstore.IncidentFilter{Limit: srcLimit})
+			if err != nil {
+				return nil, err
+			}
+			if len(incs) >= srcLimit {
+				scanCapped = true
+			}
+			for _, inc := range incs {
+				if !inboxKeepsIncident(inc.Status, statusFilter) {
+					continue
+				}
+				items = append(items, incidentToInbox(inc))
+			}
 		}
 
 		// v0.5.245 — case-insensitive substring service filter
@@ -488,6 +519,31 @@ func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit
 		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc)
 }
 
+// inboxListCachePrefix is what a mutation drops to make the list re-read.
+//
+// v0.9.321 — deliberately VERSION-FREE. Every mutation site used to hardcode
+// "inbox:v2", so when v0.9.319 bumped the key to :v3 for the sort input, the
+// invalidations silently stopped matching anything: acknowledging a problem
+// left the queue showing it for the full TTL, and nothing failed. The version
+// suffix exists to stop a stale response SHAPE deserializing into a new
+// reader — it was never meant to be part of the invalidation contract, and
+// coupling the two means the next bump re-breaks this the same way.
+//
+// "inbox:" also covers "inbox:count", which every one of these sites already
+// invalidates on the adjacent line.
+const inboxListCachePrefix = "inbox:"
+
+// invalidateInboxCaches drops the badge + list so a mutation is visible on
+// the next read instead of up to a TTL later (read-your-writes).
+//
+// v0.9.321 — incidents are an inbox source now, so their handlers owe this
+// the same way problem/exception handlers always have. Acknowledging an
+// incident and watching it sit in the queue for another 15s is the kind of
+// staleness that makes an operator stop trusting the queue.
+func (s *Server) invalidateInboxCaches(r *http.Request) {
+	s.cacheInvalidatePrefix(r.Context(), inboxListCachePrefix)
+}
+
 // inboxDefaultMinOcc — a group has to have fired this many times before it
 // counts as something to triage. A one-shot failure is a fact about the
 // window, not a problem. Matches the /problems floor so the two surfaces
@@ -665,8 +721,8 @@ func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, err
 		}
 	}
 	var (
-		probN, anN uint64
-		exN        int64
+		probN, anN, incN uint64
+		exN              int64
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -696,17 +752,86 @@ func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, err
 		anN, err = s.store.CountActiveAnomalyEvents(gctx, 0, envServices)
 		return err
 	})
+	g.Go(func() error {
+		// v0.9.321 — the list gained incidents, so the badge must too. A
+		// badge that counts three of four sources disagrees with the page it
+		// links to, which is exactly the drift v0.9.219 fixed for env.
+		// Statuses match inboxKeepsIncident's "open" pivot.
+		var err error
+		incN, err = s.store.CountIncidentsInStatuses(gctx, []string{"open", "acknowledged"}, envServices)
+		return err
+	})
 	if err := g.Wait(); err != nil {
 		return nil, err
 	}
 	problems := probN
 	exceptions := uint64(exN)
 	return map[string]any{
-		"count":      problems + exceptions + anN,
+		"count":      problems + exceptions + anN + incN,
 		"problems":   problems,
 		"exceptions": exceptions,
 		"anomalies":  anN,
+		"incidents":  incN,
 	}, nil
+}
+
+// incidentToInbox maps a declared Incident onto the unified row.
+//
+// Priority comes from the declared severity rather than the derived blend the
+// Problems path uses: a human already made the call when they opened the
+// incident, so re-deriving it from thresholds would second-guess the only
+// signal here that isn't inferred.
+func incidentToInbox(inc chstore.Incident) InboxItem {
+	prio, reason := "P3", "Declared incident"
+	switch inc.Severity {
+	case "critical":
+		prio, reason = "P1", "Declared incident, critical"
+	case "warning":
+		prio, reason = "P2", "Declared incident, warning"
+	}
+	// An acknowledged incident is BEING worked, which is a weaker claim on
+	// attention than one nobody has picked up — but it is still open, so it
+	// drops one rung rather than out of the queue.
+	if inc.Status == "acknowledged" {
+		switch prio {
+		case "P1":
+			prio, reason = "P2", "Declared incident, critical — acknowledged"
+		case "P2":
+			prio, reason = "P3", "Declared incident, warning — acknowledged"
+		}
+	}
+	last := inc.UpdatedAt
+	if last == 0 {
+		last = inc.StartedAt
+	}
+	return InboxItem{
+		ID:             "incident:" + inc.ID,
+		Kind:           "incident",
+		Source:         "Incident",
+		Priority:       prio,
+		PriorityReason: reason,
+		Severity:       inc.Severity,
+		Service:        inc.Service,
+		Title:          inc.Title,
+		Description:    inc.Summary,
+		StartedAt:      inc.StartedAt,
+		LastSeen:       last,
+		Assignee:       inc.Assignee,
+		Status:         inc.Status,
+		Clusters:       inc.Clusters,
+		Incident:       &InboxIncidentRef{ID: inc.ID, Severity: inc.Severity, Status: inc.Status},
+	}
+}
+
+// inboxKeepsIncident mirrors inboxKeepsProblem: IncidentFilter.Status takes a
+// single value, so open+acknowledged can't be expressed in SQL and the narrow
+// happens here. Same defensive shape — an empty status counts as active, so a
+// row written before the field existed is never silently hidden.
+func inboxKeepsIncident(incidentStatus, inboxStatus string) bool {
+	if inboxStatus == "all" {
+		return true
+	}
+	return incidentStatus != "resolved"
 }
 
 // inboxKeepsProblem decides whether a Problem row belongs in the inbox at the

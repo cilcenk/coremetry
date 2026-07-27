@@ -23,7 +23,7 @@ import type { InboxItem, InboxKind } from '@/lib/types';
 // kinds; both are the "default" the URL codec omits so a fresh link stays clean.
 const PRIO_ALL = ['P1', 'P2', 'P3'] as const;
 const PRIO_DEFAULT = ['P1', 'P2'] as const;
-const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'anomaly'];
+const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'anomaly', 'incident'];
 // v0.9.254 — 'ignored' yalnızca exception gruplarını gösterir (problem'ler
 // MUTE'lanır, anomaliler SILENCE'lanır — farklı fiiller, farklı state).
 // Ayrı bir pivot olması bilinçli: susturmak kasıtlı bir eylem, o satırları
@@ -219,6 +219,11 @@ export default function InboxPage() {
       navigate(`/problems?tab=open&exception=${encodeURIComponent(it.exception.fingerprint)}`);
     } else if (it.kind === 'anomaly' && it.anomaly) {
       navigate(`/anomalies?event=${encodeURIComponent(it.anomaly.id)}`);
+    } else if (it.kind === 'incident' && it.incident) {
+      // The incident DETAIL route (/incident?id=), not the list — the row
+      // already told the operator the incident exists; the click is a request
+      // for the response timeline.
+      navigate(`/incident?id=${encodeURIComponent(it.incident.id)}`);
     }
   };
 
@@ -359,10 +364,11 @@ export default function InboxPage() {
           })}
 
           {/* Kind chips — multi-select */}
-          {(['problem', 'exception', 'anomaly'] as const).map(k => {
+          {(['problem', 'exception', 'anomaly', 'incident'] as const).map(k => {
             const label = k === 'problem' ? 'Problems'
                        : k === 'exception' ? 'Exceptions'
-                       : 'Anomalies';
+                       : k === 'anomaly' ? 'Anomalies'
+                       : 'Incidents';
             return (
               <span key={k} onClick={() => toggleKind(k)}
                 className={`facet${kindSet.has(k) ? ' on' : ''}`}>
@@ -734,6 +740,17 @@ function DetailLine({ it }: { it: InboxItem }) {
               : it.exception.message}
           </div>
         )}
+      </div>
+    );
+  }
+  if (it.kind === 'incident' && it.incident) {
+    return (
+      <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+        <span className={`badge ${it.incident.status === 'acknowledged' ? 'b-warn' : 'b-err'}`}>
+          {it.incident.status}
+        </span>
+        {it.priorityReason && <span> · {it.priorityReason}</span>}
+        {it.description && <div style={{ marginTop: 2, color: 'var(--text2)' }}>{it.description}</div>}
       </div>
     );
   }

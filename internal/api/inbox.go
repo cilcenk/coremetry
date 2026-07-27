@@ -220,7 +220,9 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		if statusFilter != "ignored" {
 			var err error
 			probs, err = s.store.ListProblems(ctx, chstore.ProblemFilter{
-				Status: pickStatus(statusFilter), Limit: srcLimit,
+				Status:      pickStatus(statusFilter),
+				NotStatuses: pickExcludedStatuses(statusFilter),
+				Limit:       srcLimit,
 			})
 			if err != nil {
 				return nil, err
@@ -246,14 +248,15 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// ── Exception groups ─────────────────────────────────────
+		excLimit := inboxEffectiveLimit(srcLimit, inboxExcStoreMax)
 		exFilter := chstore.ExceptionGroupFilter{
-			State: pickExceptionState(statusFilter), Limit: srcLimit,
+			State: pickExceptionState(statusFilter), Limit: excLimit,
 		}
 		exGroups, err := s.store.ListExceptionGroups(ctx, exFilter)
 		if err != nil {
 			return nil, err
 		}
-		if len(exGroups) >= srcLimit {
+		if len(exGroups) >= excLimit {
 			scanCapped = true
 		}
 		for _, g := range exGroups {
@@ -286,11 +289,14 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// reason Problems and anomalies are: that pivot is exception-only
 		// (muting a group is a different verb from resolving an incident).
 		if statusFilter != "ignored" {
-			incs, err := s.store.ListIncidents(ctx, chstore.IncidentFilter{Limit: srcLimit})
+			incLimit := inboxEffectiveLimit(srcLimit, inboxIncStoreMax)
+			incs, err := s.store.ListIncidents(ctx, chstore.IncidentFilter{
+				NotStatuses: pickExcludedStatuses(statusFilter), Limit: incLimit,
+			})
 			if err != nil {
 				return nil, err
 			}
-			if len(incs) >= srcLimit {
+			if len(incs) >= incLimit {
 				scanCapped = true
 			}
 			for _, inc := range incs {
@@ -472,6 +478,31 @@ func inboxCountKey(env string) string { return "inbox:count:env=" + env }
 // 2000-row slice off one is a state-table read, not a spans scan.
 const inboxNarrowScan = 2000
 const inboxBaseScan = 200
+
+// The per-source ceilings the STORE enforces, which inboxSourceLimit cannot
+// exceed no matter what it asks for:
+//   ListExceptionGroups clamps Limit > 500 down to 500   (exception_inbox.go)
+//   ListIncidents collapses Limit > 1000 to 200          (incident.go)
+//   ListProblems / ListAnomalyEvents bind Limit straight through (no clamp)
+//
+// v0.9.322 — these matter because the honesty probe was `len(rows) >= srcLimit`.
+// Asking for 2000 and receiving the store's 500 made that comparison FALSE, so
+// the one source most likely to be truncated was also the one that could never
+// raise the flag. The probe now compares against what the store will actually
+// return.
+const inboxExcStoreMax = 500
+const inboxIncStoreMax = 1000
+const inboxNoStoreMax = 0 // sources that honour the requested limit
+
+// inboxEffectiveLimit is what a source will actually return at most: the
+// requested scan, capped by that store's own ceiling. Pass inboxNoStoreMax for
+// sources with no clamp.
+func inboxEffectiveLimit(want, storeMax int) int {
+	if storeMax > 0 && want > storeMax {
+		return storeMax
+	}
+	return want
+}
 
 // inboxSourceLimit decides how many rows to pull from EACH source before the
 // merge.
@@ -727,7 +758,7 @@ func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, err
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
 		var err error
-		probN, err = s.store.CountProblemsInStatuses(gctx, []string{"open", "acknowledged"}, envServices)
+		probN, err = s.store.CountProblemsNotInStatuses(gctx, inboxDoneStatuses, envServices)
 		return err
 	})
 	g.Go(func() error {
@@ -741,9 +772,20 @@ func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, err
 			return nil
 		}
 		var err error
+		// v0.9.322 — the badge must apply the SAME occurrence floor the list
+		// applies by default (v0.9.320), or the sidebar promises rows the page
+		// then hides: locally badge 4 vs list 3, and on prod — where one-off
+		// exceptions are the bulk of the table — the gap is thousands.
+		//
+		// The DEFAULT floor specifically, not the operator's current ?minOcc=:
+		// the badge is global and the page param is per-view. Anchoring to the
+		// default means "show all" makes the page show MORE than the badge,
+		// never fewer — the harmless direction. A badge larger than the page
+		// it links to is the one that reads as a broken count.
 		exN, err = s.store.CountExceptionGroups(gctx, chstore.ExceptionGroupFilter{
-			State:    pickExceptionState("open"),
-			Services: envServices,
+			State:          pickExceptionState("open"),
+			Services:       envServices,
+			MinOccurrences: inboxDefaultMinOcc,
 		})
 		return err
 	})
@@ -758,7 +800,7 @@ func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, err
 		// links to, which is exactly the drift v0.9.219 fixed for env.
 		// Statuses match inboxKeepsIncident's "open" pivot.
 		var err error
-		incN, err = s.store.CountIncidentsInStatuses(gctx, []string{"open", "acknowledged"}, envServices)
+		incN, err = s.store.CountIncidentsNotInStatuses(gctx, inboxDoneStatuses, envServices)
 		return err
 	})
 	if err := g.Wait(); err != nil {
@@ -847,14 +889,40 @@ func inboxKeepsProblem(problemStatus, inboxStatus string) bool {
 	return problemStatus != "resolved"
 }
 
+// inboxDoneStatuses is the ONE definition of "finished, stop showing it",
+// shared by the inbox list and the inbox badge, for Problems and Incidents.
+//
+// v0.9.322 — sharing it is the point. The badge narrowed in SQL while the
+// list fetched EVERY status and dropped the resolved ones in Go after the
+// LIMIT. On an install with a long history the two cannot agree, and locally
+// they didn't: badge 29, list 2.
+//
+// It is an EXCLUSION rather than an allow-list because that is what the Go
+// keepers already say — "anything that isn't resolved still needs a human".
+// An allow-list would silently drop a row with an unrecognised or empty
+// status, which is exactly the defensive case those keepers exist for; my
+// first attempt at this fix used one and the agreement test caught it.
+var inboxDoneStatuses = []string{"resolved"}
+
+// pickExcludedStatuses returns the SQL-side exclusion for the given inbox
+// pivot. nil on "all" — that pivot exists to show resolved rows. The Go-side
+// keepers still run afterwards: they are cheap, and they keep the pivot
+// semantics readable in one place rather than only in SQL.
+func pickExcludedStatuses(inboxStatus string) []string {
+	if inboxStatus == "all" {
+		return nil
+	}
+	return inboxDoneStatuses
+}
+
 func pickStatus(inboxStatus string) string {
 	if inboxStatus == "all" {
 		return ""
 	}
 	// ProblemFilter.Status takes a single value — "open" picks
-	// open only, missing acknowledged. The Problems page handles
-	// this by passing "" and filtering client-side; we do the
-	// same here so the inbox sees both buckets.
+	// open only, missing acknowledged. The multi-value narrow now rides on
+	// Statuses (v0.9.322); this stays empty so the two don't AND together
+	// into "open AND (open|acknowledged)".
 	return ""
 }
 

@@ -201,6 +201,16 @@ func chPlaceholders(n int) string {
 	return strings.TrimRight(strings.Repeat("?,", n), ",")
 }
 
+// toAnySlice widens a []string into the []any a query bind needs. Hoisted so
+// the several IN/NOT IN builders don't each grow their own loop.
+func toAnySlice(ss []string) []any {
+	out := make([]any, len(ss))
+	for i, s := range ss {
+		out[i] = s
+	}
+	return out
+}
+
 // assembleDBWaitLock folds the raw per-metric rates + mode rows into
 // the common model. rates carries ONLY metrics that had points in
 // the window (absent key = family absent → nil pointer, the honesty

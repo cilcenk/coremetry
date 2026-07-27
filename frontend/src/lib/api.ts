@@ -1596,12 +1596,15 @@ export const api = {
   // v0.8.360 — endpoint detail drill-down (Stage-2 slice E2). One
   // payload with per-section null tolerance; sig=1 marks path as an
   // ID-collapsed signature (the table's "group by shape" mode).
-  endpointDetail: (params: { service: string; path: string; from: number; to: number; sig?: '1' }) =>
+  // v0.9.306 — env/cluster carry the SAME scope the table row was
+  // computed under. Without them the drawer aggregated every env for
+  // the route while the table showed one: two truths, one screen.
+  endpointDetail: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }) =>
     get<EndpointDetail>(`/api/endpoints/detail?${qs(params)}`),
   // v0.8.360 — split-by: top-10 values of one whitelisted attribute
   // with RED each. `by` must match the backend whitelist
   // (chstore.EndpointSplitDims — mirrored in ENDPOINT_SPLIT_DIMS).
-  endpointSplit: (params: { service: string; path: string; by: string; from: number; to: number; sig?: '1' }) =>
+  endpointSplit: (params: { service: string; path: string; by: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }) =>
     get<EndpointSplitResponse>(`/api/endpoints/split?${qs(params)}`),
   serviceAttrs: (service: string, from: number, to: number, opts?: { top?: number; samples?: number }) =>
     get<ServiceAttrsResponse>(

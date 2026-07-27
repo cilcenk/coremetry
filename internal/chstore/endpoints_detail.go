@@ -40,6 +40,17 @@ type EndpointDetailQuery struct {
 	Path        string
 	BySignature bool
 	From, To    time.Time
+	// Env / Cluster (v0.9.306) — the SAME scope the table row was
+	// computed under.
+	//
+	// Operator-reported silent-filter bug: with env=uat selected the
+	// table showed uat numbers, but opening a row aggregated EVERY env
+	// for that route — prod included. Two different truths on one
+	// screen, and nothing said so. The drawer's reads are raw spans and
+	// deploy_env is a typed LowCardinality column, so carrying the
+	// scope costs a conjunct, not a schema change.
+	Env     string
+	Cluster string
 }
 
 // endpointRoutePred appends the route-scoping predicate for q.Path.
@@ -61,13 +72,25 @@ func endpointRoutePred(wc *whereClause, path string, bySig bool) {
 // in this file starts from: time window on the PK, service on the PK
 // prefix, inbound kinds only (client/producer spans count under the
 // callee — the v0.5.386 posture the table uses), route match.
-func endpointDetailWhere(q EndpointDetailQuery) whereClause {
+func (s *Store) endpointDetailWhere(q EndpointDetailQuery) whereClause {
 	wc := whereClause{}
 	wc.add("time >= ?", q.From)
 	wc.add("time <= ?", q.To)
 	wc.add("service_name = ?", q.Service)
 	wc.add("kind NOT IN ('client', 'producer')")
 	endpointRoutePred(&wc, q.Path, q.BySignature)
+	// v0.9.306 — the drawer answers about the SAME slice the row did.
+	// Same conjuncts the table's raw path uses (endpointsRawFilters):
+	// deploy_env is typed, the cluster derive is the shared expression.
+	// The cluster-member pre-narrowing is deliberately NOT repeated —
+	// these reads are already pinned to one service by the PK prefix,
+	// which is exactly the case that narrowing skips.
+	if q.Env != "" {
+		wc.add("deploy_env = ?", q.Env)
+	}
+	if q.Cluster != "" {
+		wc.add(s.clusterExpr()+" = ?", q.Cluster)
+	}
 	return wc
 }
 
@@ -131,7 +154,7 @@ type EndpointStatus struct {
 // HTTP spans / SDKs that never set http.status_code) are excluded so
 // the map doesn't lead with a meaningless "0".
 func (s *Store) EndpointStatusBreakdown(ctx context.Context, q EndpointDetailQuery) (*EndpointStatus, error) {
-	wc := endpointDetailWhere(q)
+	wc := s.endpointDetailWhere(q)
 	wc.add("http_status > 0")
 	args := append([]any{}, wc.args...)
 	args = append(args, 50)
@@ -272,7 +295,7 @@ func (s *Store) EndpointFailingTraces(ctx context.Context, q EndpointDetailQuery
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
-	wc := endpointDetailWhere(q)
+	wc := s.endpointDetailWhere(q)
 	wc.add("status_code = 'error'")
 	args := append([]any{}, wc.args...)
 	args = append(args, limit)
@@ -439,7 +462,7 @@ func (s *Store) EndpointSplit(ctx context.Context, q EndpointDetailQuery, by str
 	if limit <= 0 || limit > 50 {
 		limit = 10
 	}
-	wc := endpointDetailWhere(q)
+	wc := s.endpointDetailWhere(q)
 	wc.add(expr + " != ''")
 	if by == "status_code" {
 		// OTel's default for never-set span status — noise, same

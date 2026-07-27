@@ -60,17 +60,21 @@ func endpointKeyDigest(service, path string) string {
 
 // endpointDetailKey builds the /api/endpoints/detail cache key from ALL
 // inputs: (service, path) digest, signature flag, minute-bucketed window.
-func endpointDetailKey(service, path string, sig bool, from, to time.Time) string {
-	return fmt.Sprintf("endpoints-detail:sp=%s:sig=%v:from=%d:to=%d",
-		endpointKeyDigest(service, path), sig,
+// v0.9.306 — env/cluster are IN the key. They change the answer, so
+// sharing an entry across scopes would serve one operator's uat drawer
+// to another looking at prod — the v0.5.187 cross-poisoning class, and
+// the very inconsistency this slice exists to remove.
+func endpointDetailKey(service, path string, sig bool, from, to time.Time, env, cluster string) string {
+	return fmt.Sprintf("endpoints-detail:sp=%s:sig=%v:env=%s:clu=%s:from=%d:to=%d",
+		endpointKeyDigest(service, path), sig, env, cluster,
 		pivotMinuteBucket(from), pivotMinuteBucket(to))
 }
 
 // endpointSplitKey builds the /api/endpoints/split cache key — the detail
 // inputs plus the split dimension.
-func endpointSplitKey(service, path string, sig bool, by string, from, to time.Time) string {
-	return fmt.Sprintf("endpoints-split:sp=%s:sig=%v:by=%s:from=%d:to=%d",
-		endpointKeyDigest(service, path), sig, by,
+func endpointSplitKey(service, path string, sig bool, by string, from, to time.Time, env, cluster string) string {
+	return fmt.Sprintf("endpoints-split:sp=%s:sig=%v:by=%s:env=%s:clu=%s:from=%d:to=%d",
+		endpointKeyDigest(service, path), sig, by, env, cluster,
 		pivotMinuteBucket(from), pivotMinuteBucket(to))
 }
 
@@ -125,12 +129,16 @@ func (s *Server) getEndpointDetail(w http.ResponseWriter, r *http.Request) {
 	}
 	sig := q.Get("sig") == "1"
 	from, to := parseFromTo(r, time.Hour)
+	// v0.9.306 — the scope the table row was computed under.
+	env := strings.TrimSpace(q.Get("env"))
+	cluster := strings.TrimSpace(q.Get("cluster"))
 
-	key := endpointDetailKey(service, path, sig, from, to)
+	key := endpointDetailKey(service, path, sig, from, to, env, cluster)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		eq := chstore.EndpointDetailQuery{
 			Service: service, Path: path, BySignature: sig,
 			From: from, To: to,
+			Env: env, Cluster: cluster,
 		}
 		out := endpointDetailPayload{
 			Service: service, Path: path,
@@ -207,12 +215,15 @@ func (s *Server) getEndpointSplit(w http.ResponseWriter, r *http.Request) {
 	}
 	sig := q.Get("sig") == "1"
 	from, to := parseFromTo(r, time.Hour)
+	env := strings.TrimSpace(q.Get("env"))
+	cluster := strings.TrimSpace(q.Get("cluster"))
 
-	key := endpointSplitKey(service, path, sig, by, from, to)
+	key := endpointSplitKey(service, path, sig, by, from, to, env, cluster)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		eq := chstore.EndpointDetailQuery{
 			Service: service, Path: path, BySignature: sig,
 			From: from, To: to,
+			Env: env, Cluster: cluster,
 		}
 		rows, err := s.store.EndpointSplit(ctx, eq, by, 10)
 		if err != nil {

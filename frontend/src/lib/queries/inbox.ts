@@ -1,5 +1,6 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { keys } from './keys';
 import type { InboxItem } from '@/lib/types';
 
 // v0.9.221 — one page of the triage queue. `total` is the pre-cap count, so
@@ -54,7 +55,7 @@ export function useInbox(filter: {
 // environment while the page behind it showed one.
 export function useInboxCount(env?: string) {
   return useQuery<{ count: number; problems: number; exceptions: number; anomalies: number }, Error, number>({
-    queryKey: ['inbox', 'count', env ?? ''],
+    queryKey: keys.inbox.count(env),
     queryFn: async () => (await api.inboxCount(env)) ?? { count: 0, problems: 0, exceptions: 0, anomalies: 0 },
     select: (r) => r.count,
     refetchInterval: 30_000,

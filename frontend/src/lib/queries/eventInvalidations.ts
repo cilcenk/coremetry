@@ -15,12 +15,17 @@ export type EventKind =
 
 export function eventInvalidations(kind: EventKind | string): QueryKey[] {
   switch (kind) {
+    // v0.9.317 — keys.inbox.all joins BOTH arms. The Inbox aggregates
+    // exactly these sources, so every event that changes one of them
+    // changes the Inbox's list AND its sidebar badge; without this it
+    // learned about them on its own 30s poll, making the landing
+    // surface the last to know.
     case 'problem.open':
     case 'problem.resolve':
-      return [keys.problems.all, keys.anomalies.metrics, keys.incidents.all];
+      return [keys.problems.all, keys.anomalies.metrics, keys.incidents.all, keys.inbox.all];
     case 'anomaly.open':
     case 'anomaly.clear':
-      return [keys.anomalies.all];
+      return [keys.anomalies.all, keys.inbox.all];
     default:
       return [];
   }
@@ -36,5 +41,6 @@ export function catchupInvalidations(): QueryKey[] {
     keys.anomalies.all,
     keys.anomalies.metrics,
     keys.incidents.all,
+    keys.inbox.all,
   ];
 }

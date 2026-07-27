@@ -56,3 +56,22 @@ export function useEndpointSplit(
     staleTime: 30_000,
   });
 }
+
+// v0.9.311 (brief N4) — "Where the time goes". Two raw-spans passes
+// behind a 60s server cache, so this is the most expensive read the
+// drawer can issue.
+//
+// Fetch-on-OPEN and NEVER polled, like useEndpointDetail: the drawer
+// is a point-in-time drill-down. staleTime matches the server TTL so
+// re-opening the same endpoint inside it costs nothing — the ES-cost
+// discipline applied to a sampled CH walk.
+export function useEndpointDownstream(
+  params: Parameters<typeof api.endpointDownstream>[0] | null,
+) {
+  return useQuery({
+    queryKey: ['endpoints', 'downstream', params],
+    queryFn: async () => api.endpointDownstream(params!),
+    enabled: params !== null,
+    staleTime: 60_000,
+  });
+}

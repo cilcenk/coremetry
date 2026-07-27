@@ -2670,6 +2670,42 @@ export interface EndpointRow {
   priorP99Ms?: number;
 }
 
+// EndpointWhereTheTimeGoes — v0.9.311 (brief N4). Where one route's
+// latency actually goes, plus who calls it.
+//
+// SAMPLED, not measured: no MV carries route→downstream, so the
+// backend walks the route's SLOWEST traces in the window and splits
+// their time. sampledFrom is the trace count behind every number here
+// and the UI is required to show it — a share derived from 200 traces
+// must never read as a window-wide measurement.
+export interface EndpointEdge {
+  name: string;
+  /** service | db | messaging | self — drives the icon, no re-derivation. */
+  kind: string;
+  calls: number;
+  avgMs: number;
+  p99Ms: number;
+  errors: number;
+  /** Total ms this edge accounts for across the sample. */
+  shareMs: number;
+}
+
+export interface EndpointDownstream {
+  /** Direct children of the route's span — these sum to totalMs. */
+  downstream: EndpointEdge[];
+  callers: EndpointEdge[];
+  /**
+   * Database / broker time at ANY depth, deliberately OUTSIDE the
+   * share arithmetic: a grandchild's time is already inside its
+   * parent's, so listing it as a sibling would double-count the same
+   * milliseconds. Rendered as a nested breakdown, labelled as one.
+   */
+  backends: EndpointEdge[];
+  sampledFrom: number;
+  /** The sampled entry spans' total duration — the share denominator. */
+  totalMs: number;
+}
+
 // EndpointDetail — v0.8.360 (Stage-2 slice E2). One payload for the
 // /endpoints detail drawer, mirroring internal/api/endpoints_detail.go's
 // endpointDetailPayload. Sections are NULL-TOLERANT by contract: a

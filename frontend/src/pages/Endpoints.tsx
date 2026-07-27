@@ -699,6 +699,8 @@ export default function EndpointsPage() {
               x.service === endpointRef.service && x.path === endpointRef.path)}
             range={range}
             compare={compare}
+            env={env}
+            cluster={cluster}
             onClose={closeEndpoint}
           />
         )}

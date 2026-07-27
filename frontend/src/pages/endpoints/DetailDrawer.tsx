@@ -31,7 +31,7 @@ import { trimHistogram, type EndpointRef } from './endpointParam';
 //     exceptions (each → /problems?exception= deep link)
 //   • top failing traces → /trace?id= pivots + slow/error exemplars
 //   • split-by — whitelisted attribute select + top-10 RED table
-export function EndpointDetailDrawer({ refObj, row, range, compare, onClose }: {
+export function EndpointDetailDrawer({ refObj, row, range, compare, env, cluster, onClose }: {
   refObj: EndpointRef;
   // The matching table row when it's in the loaded page — drives the
   // header RED strip + prior-window deltas. undefined on stale
@@ -40,12 +40,20 @@ export function EndpointDetailDrawer({ refObj, row, range, compare, onClose }: {
   row: EndpointRow | undefined;
   range: TimeRange;
   compare: boolean;
+  // v0.9.306 — the scope the TABLE was computed under. Operator-reported:
+  // with env=uat selected the table showed uat numbers while this drawer
+  // aggregated every env for the route, prod included. Two different
+  // truths on one screen, and nothing said which was which.
+  env?: string;
+  cluster?: string;
   onClose: () => void;
 }) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const detailQ = useEndpointDetail({
     service: refObj.service, path: refObj.path, from, to,
     ...(refObj.sig ? { sig: '1' as const } : {}),
+    ...(env ? { env } : {}),
+    ...(cluster ? { cluster } : {}),
   });
   const detail: EndpointDetail | null | undefined =
     detailQ.isPending ? undefined : detailQ.isError ? null : detailQ.data;
@@ -62,6 +70,18 @@ export function EndpointDetailDrawer({ refObj, row, range, compare, onClose }: {
           <span className="badge b-info" style={{ fontSize: 10 }}
             title="Grouped by shape — IDs in the path are collapsed to :id; the sections below aggregate every matching raw route.">
             shape
+          </span>
+        )}
+        {/* v0.9.306 — SCOPE chip. The drawer now narrows to the same
+            env/cluster the table row was computed under; before, it
+            silently aggregated every env and the two numbers on screen
+            disagreed. Applying the filter is only half the fix — saying
+            it is the other half, because an unlabelled narrowing is the
+            same class of lie in the opposite direction. */}
+        {(env || cluster) && (
+          <span className="badge b-info" style={{ fontSize: 10 }}
+            title="These sections cover only the scope selected above the table — the same slice the row's numbers came from.">
+            {env && `env=${env}`}{env && cluster && ' · '}{cluster && `cluster=${cluster}`}
           </span>
         )}
         <span className="mono" style={{
@@ -124,7 +144,7 @@ export function EndpointDetailDrawer({ refObj, row, range, compare, onClose }: {
               <StatusSection detail={detail} />
               <ExceptionsSection detail={detail} />
               <FailingTracesSection detail={detail} />
-              <SplitSection refObj={refObj} from={from} to={to} />
+              <SplitSection refObj={refObj} from={from} to={to} env={env} cluster={cluster} />
             </>
           )}
         </div>
@@ -422,13 +442,15 @@ const SPLIT_COLS: DataTableColumn<EndpointSplitValue>[] = [
 // SplitSection — pick a whitelisted attribute, get its top-10 values
 // with RED each. Fetches ONLY once a dimension is picked (enabled
 // gate in useEndpointSplit) so opening the drawer costs nothing here.
-function SplitSection({ refObj, from, to }: {
-  refObj: EndpointRef; from: number; to: number;
+function SplitSection({ refObj, from, to, env, cluster }: {
+  refObj: EndpointRef; from: number; to: number; env?: string; cluster?: string;
 }) {
   const [by, setBy] = useState('');
   const splitQ = useEndpointSplit(by ? {
     service: refObj.service, path: refObj.path, by, from, to,
     ...(refObj.sig ? { sig: '1' as const } : {}),
+    ...(env ? { env } : {}),
+    ...(cluster ? { cluster } : {}),
   } : null);
   const rows = splitQ.data?.values ?? [];
   const dt = useDataTable<EndpointSplitValue>({

@@ -46,20 +46,20 @@ func TestEndpointKeyDigestBoundaries(t *testing.T) {
 func TestEndpointDetailKeyInputs(t *testing.T) {
 	from := time.Date(2026, 7, 7, 10, 30, 12, 0, time.UTC)
 	to := time.Date(2026, 7, 7, 11, 30, 47, 0, time.UTC)
-	base := endpointDetailKey("checkout", "/orders/:id", false, from, to)
+	base := endpointDetailKey("checkout", "/orders/:id", false, from, to, "", "")
 
 	// Same minute, different seconds → SAME key (shared upstream trip).
 	if got := endpointDetailKey("checkout", "/orders/:id", false,
-		from.Add(20*time.Second), to.Add(-30*time.Second)); got != base {
+		from.Add(20*time.Second), to.Add(-30*time.Second), "", ""); got != base {
 		t.Errorf("same-minute window changed the key: %s vs %s", got, base)
 	}
 	// Every other input must move the key.
 	variants := map[string]string{
-		"sig":     endpointDetailKey("checkout", "/orders/:id", true, from, to),
-		"path":    endpointDetailKey("checkout", "/orders", false, from, to),
-		"service": endpointDetailKey("payments", "/orders/:id", false, from, to),
-		"from":    endpointDetailKey("checkout", "/orders/:id", false, from.Add(time.Minute), to),
-		"to":      endpointDetailKey("checkout", "/orders/:id", false, from, to.Add(time.Minute)),
+		"sig":     endpointDetailKey("checkout", "/orders/:id", true, from, to, "", ""),
+		"path":    endpointDetailKey("checkout", "/orders", false, from, to, "", ""),
+		"service": endpointDetailKey("payments", "/orders/:id", false, from, to, "", ""),
+		"from":    endpointDetailKey("checkout", "/orders/:id", false, from.Add(time.Minute), to, "", ""),
+		"to":      endpointDetailKey("checkout", "/orders/:id", false, from, to.Add(time.Minute), "", ""),
 	}
 	for name, k := range variants {
 		if k == base {
@@ -71,8 +71,8 @@ func TestEndpointDetailKeyInputs(t *testing.T) {
 func TestEndpointSplitKeyInputs(t *testing.T) {
 	from := time.Date(2026, 7, 7, 10, 0, 0, 0, time.UTC)
 	to := from.Add(time.Hour)
-	a := endpointSplitKey("checkout", "/orders", false, "http.method", from, to)
-	b := endpointSplitKey("checkout", "/orders", false, "host.name", from, to)
+	a := endpointSplitKey("checkout", "/orders", false, "http.method", from, to, "", "")
+	b := endpointSplitKey("checkout", "/orders", false, "host.name", from, to, "", "")
 	if a == b {
 		t.Errorf("split dimension not in key: %s", a)
 	}

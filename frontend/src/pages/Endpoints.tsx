@@ -107,7 +107,10 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   // laptop widths and the horizontal scrollbar sits below 2000 rows, so
   // the trailing drill-through was effectively invisible (operator
   // report). 64px also clipped "view →" (content+padding ≈ 66px).
-  { id: 'traces',    label: 'Traces',     width: 76, stickyRight: true },
+  // v0.9.310 — widened from 76: the cell now carries the two exemplar
+  // jumps beside "view →". 76px was already the fix for clipping that
+  // one link (v0.8.573), so three affordances need the room.
+  { id: 'traces',    label: 'Traces',     width: 118, stickyRight: true },
   { id: 'impact',    label: 'Impact',     sortValue: impactOf, headerHidden: true },
 ];
 
@@ -648,10 +651,40 @@ export default function EndpointsPage() {
                               the service filter, this returns every
                               trace that includes a call on this
                               endpoint. */}
-                          <Link to={tracesLink(r, range, env, cluster)}
-                                style={{ fontSize: 11, color: 'var(--accent2)' }}>
-                            view →
-                          </Link>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                            <Link to={tracesLink(r, range, env, cluster)}
+                                  style={{ fontSize: 11, color: 'var(--accent2)' }}>
+                              view →
+                            </Link>
+                            {/* v0.9.310 (brief N3) — jump STRAIGHT to the
+                                slowest / worst-error trace for this route.
+                                "view →" lands on a filtered list the
+                                operator must then re-scan by eye; these two
+                                ids are already in the MV's argMax exemplar
+                                states, so the row read costs nothing extra
+                                to carry them.
+
+                                Rendered only when present. Empty means "no
+                                exemplar in this window" — forward-only
+                                states, a healthy window, or the raw
+                                cluster/env path which has no states at all
+                                — and a disabled placeholder would imply a
+                                trace exists that we won't show. */}
+                            {r.slowTraceId && (
+                              <Link to={`/trace?id=${encodeURIComponent(r.slowTraceId)}`}
+                                    title="Open the SLOWEST trace of this endpoint in the selected window. Falls outside the window? The trace may have aged past span retention — the MV keeps exemplars longer than the raw spans."
+                                    style={{ fontSize: 11, color: 'var(--warn)', textDecoration: 'none' }}>
+                                ⚡
+                              </Link>
+                            )}
+                            {r.errorTraceId && (
+                              <Link to={`/trace?id=${encodeURIComponent(r.errorTraceId)}`}
+                                    title="Open the slowest ERRORED trace of this endpoint in the selected window."
+                                    style={{ fontSize: 11, color: 'var(--err)', textDecoration: 'none' }}>
+                                ✖
+                              </Link>
+                            )}
+                          </span>
                         </td>}
                       </tr>
                       {isExpanded && (

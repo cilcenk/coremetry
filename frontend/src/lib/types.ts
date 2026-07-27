@@ -2632,6 +2632,13 @@ export interface EndpointRow {
   p90Ms?: number;
   p95Ms?: number;
   reqPerMin?: number;
+  // v0.9.310 (brief N3) — the slowest / worst-error trace for this
+  // (service, route, window), resolved from the MV's argMax exemplar
+  // states. ABSENT means "no exemplar in this window", not "none
+  // exists": the states are forward-only and the error one is empty
+  // for a healthy window. Render no link rather than a placeholder.
+  slowTraceId?: string;
+  errorTraceId?: string;
   // v0.5.371 — 30-bucket call-rate sparkline across the
   // requested window. Same shape as OperationSummary.sparkline
   // and the spanmetrics sparkline — the operator learns the

@@ -51,6 +51,15 @@ export const keys = {
     metadata:    ['services', 'metadata'] as const,
   },
 
+  // v0.9.317 — the Inbox's keys were never registered here, only
+  // inline in inbox.ts. That is why the Inbox was absent from every SSE
+  // invalidation list and sat on a 30s poll while the per-source pages
+  // it aggregates refreshed in under a second: the STALEST triage
+  // surface was the one meant to be the daily landing page.
+  inbox: {
+    all:   ['inbox'] as const,
+    count: (env?: string) => ['inbox', 'count', env ?? ''] as const,
+  },
   problems: {
     all:         ['problems'] as const,
     list:        (filter: { status?: string; service?: string; ownerTeam?: string; sreTeam?: string; env?: string; limit?: number }) =>

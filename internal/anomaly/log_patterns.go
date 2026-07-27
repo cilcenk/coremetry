@@ -16,15 +16,15 @@ import (
 // (Kind="spike"). What an SRE wants to see in their morning
 // inbox: not the raw log volume, just what changed.
 type LogPatternAnomaly struct {
-	Pattern        string  `json:"pattern"`        // human-readable name
-	Regex          string  `json:"regex"`          // the raw re2 used
-	Kind           string  `json:"kind"`           // "new" | "spike"
-	CurrentCount   uint64  `json:"currentCount"`
-	BaselineCount  uint64  `json:"baselineCount"`  // trailing window
-	Ratio          float64 `json:"ratio"`          // current / max(baseline,1)
-	Service        string  `json:"service"`        // service emitting most matches in current window
-	Sample         string  `json:"sample"`         // representative log body, truncated
-	LastSeenNs     int64   `json:"lastSeenNs"`
+	Pattern       string  `json:"pattern"` // human-readable name
+	Regex         string  `json:"regex"`   // the raw re2 used
+	Kind          string  `json:"kind"`    // "new" | "spike"
+	CurrentCount  uint64  `json:"currentCount"`
+	BaselineCount uint64  `json:"baselineCount"` // trailing window
+	Ratio         float64 `json:"ratio"`         // current / max(baseline,1)
+	Service       string  `json:"service"`       // service emitting most matches in current window
+	Sample        string  `json:"sample"`        // representative log body, truncated
+	LastSeenNs    int64   `json:"lastSeenNs"`
 	// TopServices — v0.5.287. Per-service breakdown of current
 	// window hits, top 5, count desc. The /logs LogPatternStrip
 	// renders these as a rosette under the pattern chip so the
@@ -64,18 +64,21 @@ type logPattern struct {
 // to a real production failure shape that an SRE wants paged on.
 // Order doesn't matter; the response is sorted by ratio desc.
 var patterns = []logPattern{
-	{"Oracle errors (ORA-)",   `ORA-[0-9]+`,                                                                                                                  []string{"ora-"}},
-	{"Oracle TNS errors",      `TNS-[0-9]+`,                                                                                                                  []string{"tns-"}},
-	{"Out of memory",          `OutOfMemoryError|out of memory|OOMKilled|cannot allocate memory`,                                                             []string{"outofmemoryerror", "out of memory", "oomkilled", "cannot allocate"}},
-	{"Null pointer",           `NullPointerException|null pointer dereference|null pointer exception`,                                                        []string{"nullpointer", "null pointer"}},
-	{"Database deadlock",      `[Dd]eadlock|deadlock detected`,                                                                                               []string{"deadlock"}},
-	{"Connection refused",     `ECONNREFUSED|[Cc]onnection refused`,                                                                                          []string{"econnrefused", "connection refused"}},
-	{"Read / write timeout",   `i/o timeout|read timeout|write timeout|context deadline exceeded`,                                                            []string{"timeout", "deadline exceeded"}},
-	{"Go panic",               `^panic:|runtime error:`,                                                                                                     []string{"panic:", "runtime error"}},
-	{"TLS / certificate",      `x509:|certificate has expired|SSL handshake failed|tls: handshake failure`,                                                  []string{"x509:", "certificate", "ssl handshake", "tls: handshake"}},
-	{"Auth failures",          `(?i)401 Unauthorized|invalid credentials|access denied|forbidden`,                                                            []string{"401", "credentials", "access denied", "forbidden"}},
-	{"Disk full",              `no space left on device|disk full|ENOSPC`,                                                                                    []string{"no space left", "disk full", "enospc"}},
-	{"Java exceptions",        `(ClassCast|IllegalState|IllegalArgument|UnsupportedOperation|ArrayIndexOutOfBounds|ConcurrentModification|NumberFormat|StackOverflow)Exception`, []string{"exception"}},
+	{"Oracle errors (ORA-)", `ORA-[0-9]+`, []string{"ora-"}},
+	{"Oracle TNS errors", `TNS-[0-9]+`, []string{"tns-"}},
+	{"Out of memory", `OutOfMemoryError|out of memory|OOMKilled|cannot allocate memory`, []string{"outofmemoryerror", "out of memory", "oomkilled", "cannot allocate"}},
+	{"Null pointer", `NullPointerException|null pointer dereference|null pointer exception`, []string{"nullpointer", "null pointer"}},
+	{"Database deadlock", `[Dd]eadlock|deadlock detected`, []string{"deadlock"}},
+	{"Connection refused", `ECONNREFUSED|[Cc]onnection refused`, []string{"econnrefused", "connection refused"}},
+	// v0.9.316 — java.util.concurrent.TimeoutException (operatörün
+	// panosunda 13,1 K/12sa) bu regex'e UYMUYORDU. Alternasyona
+	// eklendi: aynı alt-sorgu, sıfır ek ES maliyeti.
+	{"Read / write timeout", `i/o timeout|read timeout|write timeout|context deadline exceeded|java\.util\.concurrent\.TimeoutException`, []string{"timeout", "deadline exceeded"}},
+	{"Go panic", `^panic:|runtime error:`, []string{"panic:", "runtime error"}},
+	{"TLS / certificate", `x509:|certificate has expired|SSL handshake failed|tls: handshake failure`, []string{"x509:", "certificate", "ssl handshake", "tls: handshake"}},
+	{"Auth failures", `(?i)401 Unauthorized|invalid credentials|access denied|forbidden`, []string{"401", "credentials", "access denied", "forbidden"}},
+	{"Disk full", `no space left on device|disk full|ENOSPC`, []string{"no space left", "disk full", "enospc"}},
+	{"Java exceptions", `(ClassCast|IllegalState|IllegalArgument|UnsupportedOperation|ArrayIndexOutOfBounds|ConcurrentModification|NumberFormat|StackOverflow)Exception`, []string{"exception"}},
 	// v0.5.284 — JBoss / WildFly / Spring Boot / JDBC stack
 	// patterns. Operator runs a Java estate (JBoss + Spring
 	// Boot + Oracle); the generic Java patterns above missed
@@ -84,13 +87,39 @@ var patterns = []logPattern{
 	// exhaustion. Each token list is lowercase and represents
 	// substrings the body MUST contain when the regex matches
 	// (case-insensitive prefilter).
-	{"JBoss / WildFly errors", `(WFLY|JBAS)[0-9]+`,                                                                                                           []string{"wfly", "jbas"}},
-	{"JBoss deployment fail",  `Failed to start service|Deployment ".*" was rolled back|service .* in service registry has failed`,                          []string{"failed to start service", "was rolled back", "service registry"}},
-	{"Spring app failed",      `APPLICATION FAILED TO START|Error starting ApplicationContext`,                                                              []string{"application failed to start", "error starting applicationcontext"}},
-	{"Spring bean failure",    `(BeanCreation|NoSuchBeanDefinition|BeanInstantiation|UnsatisfiedDependency|CircularDependency)Exception`,                    []string{"beancreation", "nosuchbeandefinition", "beaninstantiation", "unsatisfieddependency", "circulardependency"}},
-	{"JDBC pool exhausted",    `HikariPool-.* - Connection is not available|connection pool .*exhausted|IJ000453|IJ000655|Could not acquire JDBC Connection`, []string{"hikaripool", "exhausted", "ij000453", "ij000655", "could not acquire jdbc"}},
-	{"Hibernate / JPA",        `(LazyInitialization|OptimisticLock|StaleObjectState|TransactionTimedOut|TransactionRequired)Exception`,                      []string{"lazyinitialization", "optimisticlock", "staleobjectstate", "transactiontimedout", "transactionrequired"}},
-	{"DB constraint violation",`(DataIntegrityViolation|ConstraintViolation|SQLIntegrityConstraintViolation)Exception`,                                       []string{"dataintegrityviolation", "constraintviolation", "sqlintegrityconstraint"}},
+	{"JBoss / WildFly errors", `(WFLY|JBAS)[0-9]+`, []string{"wfly", "jbas"}},
+	{"JBoss deployment fail", `Failed to start service|Deployment ".*" was rolled back|service .* in service registry has failed`, []string{"failed to start service", "was rolled back", "service registry"}},
+	{"Spring app failed", `APPLICATION FAILED TO START|Error starting ApplicationContext`, []string{"application failed to start", "error starting applicationcontext"}},
+	{"Spring bean failure", `(BeanCreation|NoSuchBeanDefinition|BeanInstantiation|UnsatisfiedDependency|CircularDependency)Exception`, []string{"beancreation", "nosuchbeandefinition", "beaninstantiation", "unsatisfieddependency", "circulardependency"}},
+	// v0.9.316 — "Unable to get managed connection" ve MQJCA1011 (JMS
+	// bağlantı ayırma hatası) aynı arızanın JBoss/MQ yüzü; IJ000655
+	// zaten buradaydı. Alternasyon genişledi, alt-sorgu sayısı aynı.
+	{"JDBC pool exhausted", `HikariPool-.* - Connection is not available|connection pool .*exhausted|IJ000453|IJ000655|Could not acquire JDBC Connection|Unable to get managed connection|No managed connections available|MQJCA1011`, []string{"hikaripool", "exhausted", "ij000453", "ij000655", "could not acquire jdbc", "managed connection", "mqjca"}},
+	{"Hibernate / JPA", `(LazyInitialization|OptimisticLock|StaleObjectState|TransactionTimedOut|TransactionRequired)Exception`, []string{"lazyinitialization", "optimisticlock", "staleobjectstate", "transactiontimedout", "transactionrequired"}},
+
+	// ── v0.9.316 — operatörün kendi Grafana panosundan ("airX - Genel -
+	// OCP Watcher Errors Metrics") gelen üretim arıza şekilleri.
+	//
+	// MALİYET KURALI, operatörün kısıtı: recorder DAKİKADA BİR koşuyor,
+	// yani her desen 1.440 alt-sorgu/gün demek. Panodaki 24 kalemi
+	// olduğu gibi eklemek deseni 19'dan 43'e çıkarır — ES yükü 2,3x.
+	// Onun yerine üç kural uygulandı:
+	//
+	//   1. Zaten kapsananlar EKLENMEDİ (ORA-*, NullPointerException,
+	//      Connection refused, NoSuchBeanDefinition, IJ000655).
+	//   2. AYNI ARIZANIN farklı yüzleri TEK desende toplandı — tema
+	//      benzerliği değil, arıza aynılığı ölçüt: sınıf yükleme üç
+	//      istisnanın da tek sebebi, JNDI arama dört mesajın da.
+	//   3. Kuyruk EKLENMEDİ: 12 saatte 5 kez düşen bir şey (Async -
+	//      Execution hatası), 1.440 sorgu/gün'ü hak etmiyor. Panonun
+	//      sorgusu istendiğinde koşuyor, detektör sonsuza dek koşuyor.
+	//
+	// Net: 19 → 24 desen (+26%), panodaki hacmin ~%97'si kapsandı.
+	{"External system rejected", `ExternalSystemException|Request not allowed for URI|FACEX|Service Unavailable`, []string{"externalsystemexception", "not allowed for uri", "facex", "service unavailable"}},
+	{"JNDI / lookup failure", `NameNotFoundException|Service (endpoint|definition) not found|Queue connection definition not found`, []string{"namenotfound", "endpoint not found", "definition not found"}},
+	{"Service quota", `Service quota (warning|error)|quota exceeded`, []string{"service quota", "quota exceeded"}},
+	{"Class init / load failure", `NoClassDefFoundError|ExceptionInInitializerError|ClassNotFoundException`, []string{"noclassdeffound", "exceptionininitializer", "classnotfound"}},
+	{"SQL exception", `SqlException|SQLException`, []string{"sqlexception"}}, {"DB constraint violation", `(DataIntegrityViolation|ConstraintViolation|SQLIntegrityConstraintViolation)Exception`, []string{"dataintegrityviolation", "constraintviolation", "sqlintegrityconstraint"}},
 }
 
 // DetectLogPatterns runs each pattern against the raw `logs` CH
@@ -208,9 +237,9 @@ func DetectLogPatterns(ctx context.Context, store logstore.Store, window time.Du
 
 			results[i] = result{
 				anomaly: LogPatternAnomaly{
-					Pattern: p.Name,
-					Regex:   p.Regex,
-					Kind:    kind,
+					Pattern:      p.Name,
+					Regex:        p.Regex,
+					Kind:         kind,
 					CurrentCount: cur,
 					// Rendered to the operator as the
 					// per-window-equivalent baseline rate so

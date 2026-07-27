@@ -13,6 +13,7 @@ import { api } from '@/lib/api';
 import { useEndpoints, useClusters } from '@/lib/queries';
 import { timeRangeToNs, rangeToSince, fmtNum } from '@/lib/utils';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
+import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
@@ -385,6 +386,15 @@ export default function EndpointsPage() {
     <>
       <Topbar title="Endpoints" range={range} onRangeChange={setRange} />
       <div id="content">
+        {/* v0.9.308 (brief N6c) — the page's whole selection already
+            lives in the URL: service, search, cluster, limit, compare,
+            shape, ?cols=, ?endpoint= and the s_endpoints sort pair.
+            Two comments in this file name SavedViewsBar as the REASON
+            that was done — the bar itself was simply never mounted.
+            Persistence rides the existing saved_views(page='…') table,
+            so this is one import and one line: no new schema, no new
+            endpoint, no new state. */}
+        <SavedViewsBar page="endpoints" />
         <div className="controls" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
           <ServicePicker value={service} onChange={setService}
             placeholder="All services…" width={200} />

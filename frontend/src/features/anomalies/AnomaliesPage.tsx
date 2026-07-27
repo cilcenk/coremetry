@@ -40,9 +40,9 @@ const TABS: { key: string; label: string; hint: string }[] = [
 // ORDER BY runs in ClickHouse across the whole paginated set). The
 // DataTable column ids below are exactly these values, so dt.sort.id
 // forwards straight to the fetch after a sanitize.
-type SortKey = 'state' | 'type' | 'service' | 'occurrences' | 'firstSeen' | 'lastSeen' | 'assignee';
+type SortKey = 'state' | 'type' | 'service' | 'firstSeen' | 'lastSeen' | 'assignee';
 const SORT_KEYS: readonly SortKey[] =
-  ['state', 'type', 'service', 'occurrences', 'firstSeen', 'lastSeen', 'assignee'];
+  ['state', 'type', 'service', 'firstSeen', 'lastSeen', 'assignee'];
 const DEFAULT_EXC_SORT = { id: 'lastSeen' as SortKey, dir: 'desc' as const };
 
 // Exception inbox columns — shared DataTable primitive in serverSort
@@ -56,7 +56,13 @@ const EXC_COLS: DataTableColumn<ExceptionGroup>[] = [
   { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 100 },
   { id: 'type',        label: 'Exception',   sortValue: g => g.type,        naturalDir: 'asc',  width: 400 },
   { id: 'service',     label: 'Service',     sortValue: g => g.service,     naturalDir: 'asc',  width: 150 },
-  { id: 'occurrences', label: 'Occurrences', sortValue: g => g.occurrences, numeric: true,      width: 100 },
+  // v0.9.314 (operatör) — OCCURRENCES kolonu kaldırıldı. Triage
+  // listesinde "1 · 2 · 3" gibi sayılar kafa karıştırıyordu: bir
+  // exception GRUBUNUN kaç kez düştüğü, o grubun ne kadar ACİL
+  // olduğunu söylemiyor (tek seferlik bir OOM, gürültülü bir
+  // retry'dan beterdir) ve satır taramasında öncelik sinyaliymiş
+  // gibi okunuyordu. Sayı kaybolmadı — satır açılınca panel
+  // başlığında duruyor, yani "exception'da görünsün" isteği karşılanıyor.
   { id: 'firstSeen',   label: 'First seen',  sortValue: g => g.firstSeen,   width: 150 },
   { id: 'lastSeen',    label: 'Last seen',   sortValue: g => g.lastSeen,    width: 150 },
   { id: 'assignee',    label: 'Assignee',    sortValue: g => g.assignee,    naturalDir: 'asc',  width: 160 },
@@ -486,14 +492,19 @@ export default function ProblemsPage() {
                         <td>
                           <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 600, fontSize: 11.5, color: 'var(--err)' }}>
                             {g.type}
-                            {/* "NEW" badge: first observed in the
-                                last hour. Highest-signal column
-                                for an SRE scanning the inbox in
-                                the morning — these are the ones
-                                that didn't exist yesterday. */}
+                            {/* First observed within the last hour —
+                                the highest-signal marker for an SRE
+                                scanning the list in the morning: these
+                                did not exist yesterday.
+
+                                v0.9.314 — was labelled "NEW", which now
+                                belongs to the STATE column. "<1h" says
+                                literally what it means and cannot be
+                                read as a triage state. */}
                             {Date.now() - g.firstSeen / 1e6 < 60 * 60 * 1000 && (
-                              <span className="badge b-warn" style={{ fontSize: 9, padding: '0 5px' }}>
-                                NEW
+                              <span className="badge b-warn" style={{ fontSize: 9, padding: '0 5px' }}
+                                title="First seen within the last hour — this exception did not exist before that.">
+                                &lt;1h
                               </span>
                             )}
                           </div>
@@ -510,9 +521,6 @@ export default function ProblemsPage() {
                             style={{ fontFamily: 'monospace', fontSize: 11 }}>
                             {g.service}
                           </Link>
-                        </td>
-                        <td className="mono" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--err)' }}>
-                          {fmtNum(Number(g.occurrences))}
                         </td>
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.firstSeen)}</td>
                         <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.lastSeen)}</td>
@@ -543,7 +551,7 @@ export default function ProblemsPage() {
                             background: 'var(--bg1)', padding: '10px 16px',
                             borderTop: '1px solid var(--border)',
                           }}>
-                            <SamplesPanel fingerprint={g.fingerprint} />
+                            <SamplesPanel fingerprint={g.fingerprint} occurrences={Number(g.occurrences)} />
                           </td>
                         </tr>
                       )}
@@ -1201,9 +1209,12 @@ function PriorityBadge({ p, reason }: { p?: 'P1' | 'P2' | 'P3'; reason?: string 
 // SamplesPanel — fetches recent occurrences for the group and lists them
 // as collapsible cards. Stacktraces are folded by default; trace/span IDs
 // link out to the waterfall.
-function SamplesPanel({ fingerprint }: { fingerprint: string }) {
+function SamplesPanel({ fingerprint, occurrences }: { fingerprint: string; occurrences?: number }) {
   const [samples, setSamples] = useState<ExceptionSample[] | null | undefined>(undefined);
   const [limit, setLimit] = useState(10);
+  // v0.9.314 — the total the table no longer shows. Kept here rather
+  // than dropped: how often a group fires is real context ONCE you are
+  // looking at the group, it was only misleading as a scan-time column.
 
   useEffect(() => {
     setSamples(undefined);
@@ -1222,6 +1233,12 @@ function SamplesPanel({ fingerprint }: { fingerprint: string }) {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', marginBottom: 8 }}>
         <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
+          {occurrences != null && occurrences > 0 && (
+            <span style={{ color: 'var(--err)', marginRight: 6 }}
+              title="Total times this exception group has fired in the window. Shown here rather than as a table column: as a column it read like a priority signal, and it isn't — a single OOM outranks a noisy retry loop.">
+              {fmtNum(occurrences)}×
+            </span>
+          )}
           Recent occurrences
         </span>
         {distinct > 1 && (
@@ -1336,14 +1353,18 @@ function StateBadge({ s }: { s: ExceptionGroupState }) {
     s === 'acknowledged' ? 'b-info' :
     s === 'resolved'     ? 'b-ok'   :
                            'b-gray';
-  // v0.8.382 (operator-reported): the untriaged state used to render
-  // "NEW" — the same word as the yellow first-seen-recently badge next
-  // to the exception type, so genuinely-new arrivals were
-  // indistinguishable from merely-untriaged weeks-old groups. The
-  // STATE is "nobody triaged this yet" → OPEN; NEW stays reserved for
-  // the first-seen marker.
-  const label = s === 'new' ? 'OPEN' : s.toUpperCase();
-  return <span className={`badge ${cls}`} title={s === 'new' ? 'Untriaged (state: new)' : undefined}>{label}</span>;
+  // v0.9.314 (operatör) — untriaged reads NEW again, which is what the
+  // column actually stores (exception_groups.state DEFAULT 'new').
+  //
+  // v0.8.382 had renamed it to OPEN for a real reason: the word
+  // collided with the yellow first-seen-recently chip beside the
+  // exception type, so a weeks-old untriaged group looked identical to
+  // something that arrived this morning. Flipping the label back alone
+  // would restore exactly that confusion — so the CHIP was renamed to
+  // "<1h" in the same change. One word, one meaning: NEW = nobody has
+  // triaged this; <1h = this did not exist an hour ago.
+  const label = s.toUpperCase();
+  return <span className={`badge ${cls}`} title={s === 'new' ? 'Untriaged — nobody has acknowledged, resolved or ignored this yet' : undefined}>{label}</span>;
 }
 
 function humanize(err: unknown): string {

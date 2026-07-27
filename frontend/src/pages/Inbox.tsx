@@ -153,6 +153,14 @@ export default function InboxPage() {
   const capped = !inboxQ.isPending && !inboxQ.isError && inboxQ.data?.truncated
     ? { shown: inboxQ.data.items.length, total: inboxQ.data.total }
     : null;
+  // v0.9.318 — the scan itself hit its ceiling, so the filters above ran over
+  // a slice of the candidates rather than all of them. Worth saying ONLY when
+  // a filter is actually active: unfiltered, the priority-ranked page is the
+  // honest top of the queue and `capped` already covers it. Filtered, silence
+  // would let "no results" mean "none exist".
+  const anyFilter = !!(serviceFilter || searchFilter || ownerFilter || sreFilter || env);
+  const scanCapped = !inboxQ.isPending && !inboxQ.isError
+    && !!inboxQ.data?.scanCapped && anyFilter;
 
   // The drawer's selected row, resolved from ?item= against the loaded list.
   // Uses the full (pre-facet) list so a deep-link to a row hidden by the
@@ -419,6 +427,15 @@ export default function InboxPage() {
               ? 'Widen the priority / kind filter to see more.'
               : 'Nothing needs your attention right now.'}
           </Empty>
+        )}
+        {scanCapped && (
+          <div style={{ marginBottom: 8 }}>
+            <span className="badge b-warn"
+              title="Her kaynaktan sınırlı sayıda aday okunuyor. Filtre bu adaylar üzerinde çalıştı — sonuç boşsa 'hiç yok' demek değil, 'taranan adaylar içinde yok' demek. Servis, takım veya ortam ile daralt.">
+              ⚠ Filtre taranan adaylar üzerinde çalıştı — kuyruk bundan
+              büyük olabilir
+            </span>
+          </div>
         )}
         {capped && (
           <div style={{ marginBottom: 8 }}>

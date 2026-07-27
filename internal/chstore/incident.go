@@ -46,6 +46,12 @@ type IncidentEvent struct {
 
 type IncidentFilter struct {
 	Status   string
+	// NotStatuses — statuses to EXCLUDE, applied in SQL so the LIMIT bites on
+	// the rows that will be shown. See ProblemFilter.NotStatuses: on an
+	// install whose incident history is 99% resolved (local: 994 of the
+	// newest 1000), ORDER BY started_at DESC LIMIT 300 returned almost
+	// nothing open and the inbox list disagreed with its own badge — 2 vs 29.
+	NotStatuses []string
 	Service  string
 	Severity string
 	Limit    int
@@ -59,6 +65,9 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 	var wc whereClause
 	if f.Status != "" {
 		wc.add("status = ?", f.Status)
+	}
+	if len(f.NotStatuses) > 0 {
+		wc.add("status NOT IN ("+chPlaceholders(len(f.NotStatuses))+")", toAnySlice(f.NotStatuses)...)
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)
@@ -99,8 +108,11 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 	return out, rows.Err()
 }
 
-// CountIncidentsInStatuses returns how many incidents sit in the given
+// CountIncidentsNotInStatuses returns how many incidents are NOT in the given
 // statuses — the /inbox badge's fourth term (v0.9.321).
+//
+// v0.9.322: exclusion rather than an allow-list, so it classifies every
+// status exactly as the list's Go keeper does. See ProblemFilter.NotStatuses.
 //
 // The badge has to count the same rows the list shows or the two disagree,
 // which is the bug this codebase keeps re-fixing (v0.9.219 did it for env).
@@ -112,11 +124,12 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 // membership. Incidents CAN be service-less — an incident declared across
 // several services has no single owner — so unlike exception groups the
 // empty case is a real query, not a short-circuit to zero.
-func (s *Store) CountIncidentsInStatuses(ctx context.Context, statuses []string, envServices []string) (uint64, error) {
-	if len(statuses) == 0 {
-		return 0, nil
+func (s *Store) CountIncidentsNotInStatuses(ctx context.Context, exclude []string, envServices []string) (uint64, error) {
+	args := toAnySlice(exclude)
+	statusSQL := "1"
+	if len(exclude) > 0 {
+		statusSQL = "status NOT IN (" + chPlaceholders(len(exclude)) + ")"
 	}
-	args := []any{statuses}
 	envSQL := ""
 	if envServices != nil {
 		if len(envServices) == 0 {
@@ -128,7 +141,8 @@ func (s *Store) CountIncidentsInStatuses(ctx context.Context, statuses []string,
 	}
 	var n uint64
 	row := s.conn.QueryRow(ctx,
-		`SELECT count() FROM incidents FINAL WHERE status IN (?)`+envSQL, args...)
+		`SELECT count() FROM incidents FINAL WHERE `+statusSQL+envSQL+
+			` SETTINGS max_execution_time = 5`, args...)
 	if err := row.Scan(&n); err != nil {
 		return 0, err
 	}

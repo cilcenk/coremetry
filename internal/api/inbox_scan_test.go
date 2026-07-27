@@ -309,3 +309,105 @@ func TestInboxListCachePrefixMatchesKeys(t *testing.T) {
 		t.Error("prefix is too broad — it would drop unrelated cache entries")
 	}
 }
+
+// ── v0.9.322 — badge/list status agreement ───────────────────────────────
+//
+// Found by running the deployed build against real data: the badge said 29
+// open incidents while the list showed 2.
+//
+// Cause: the badge counted `status IN (...)` in SQL, while the list fetched
+// EVERY status ordered by started_at DESC, applied the LIMIT, and only then
+// dropped the resolved rows in Go. On an install whose history is 99%
+// resolved (local: 994 of the newest 1000 incidents), the LIMIT was entirely
+// consumed by resolved rows and the open ones never entered the window.
+//
+// The narrow now runs in SQL for both, from ONE shared status set. This test
+// pins the invariant that made them disagree: the SQL narrow and the Go
+// keeper must classify every status identically. If they ever drift, the
+// badge and the list drift with them.
+func TestInboxStatusNarrowMatchesKeepers(t *testing.T) {
+	inSQLNarrow := func(status string) bool {
+		for _, s := range inboxDoneStatuses {
+			if s == status {
+				return false // excluded by SQL
+			}
+		}
+		return true
+	}
+	// Every status either source can hold, including the empty one written
+	// before the field existed and a value neither side knows.
+	for _, status := range []string{"open", "acknowledged", "resolved", "", "investigating"} {
+		sql := inSQLNarrow(status)
+		if got := inboxKeepsProblem(status, "open"); got != sql {
+			t.Errorf("problem status %q: SQL narrow keeps=%v but Go keeper keeps=%v — badge and list will disagree",
+				status, sql, got)
+		}
+		if got := inboxKeepsIncident(status, "open"); got != sql {
+			t.Errorf("incident status %q: SQL narrow keeps=%v but Go keeper keeps=%v — badge and list will disagree",
+				status, sql, got)
+		}
+	}
+}
+
+func TestPickExcludedStatuses(t *testing.T) {
+	// "all" must apply NO narrow — the pivot exists to show resolved rows.
+	if got := pickExcludedStatuses("all"); got != nil {
+		t.Errorf(`pickExcludedStatuses("all") = %v, want nil (no narrow)`, got)
+	}
+	for _, pivot := range []string{"open", "ignored", ""} {
+		if got := pickExcludedStatuses(pivot); len(got) != len(inboxDoneStatuses) {
+			t.Errorf("pickExcludedStatuses(%q) = %v, want the shared done set", pivot, got)
+		}
+	}
+	// The set must NOT contain the empty status. Excluding '' would hide rows
+	// written before the status field existed — the exact defensive case the
+	// Go keepers were written for.
+	for _, s := range inboxDoneStatuses {
+		if s == "" {
+			t.Error("inboxDoneStatuses excludes status-less rows — they would vanish silently")
+		}
+	}
+}
+
+// v0.9.322 — the honesty probe has to compare against what the store will
+// ACTUALLY return, not what the handler asked for.
+//
+// Found by an audit of the v0.9.312→321 diff: inboxSourceLimit returns 2000
+// under any narrow, but ListExceptionGroups clamps Limit to 500 and
+// ListIncidents collapses anything over 1000 to 200. `len(rows) >= 2000` is
+// then false for the two sources most likely to be truncated — so the source
+// that WAS capped is exactly the one that could never say so, and the page
+// stayed silent while answering over a slice.
+func TestInboxEffectiveLimit(t *testing.T) {
+	cases := []struct {
+		name           string
+		want, storeMax int
+		expect         int
+	}{
+		{"exceptions clamp the wide scan", inboxNarrowScan, inboxExcStoreMax, 500},
+		{"incidents clamp the wide scan", inboxNarrowScan, inboxIncStoreMax, 1000},
+		{"unclamped source gets what it asked for", inboxNarrowScan, inboxNoStoreMax, inboxNarrowScan},
+		{"base scan is under every ceiling", inboxBaseScan, inboxExcStoreMax, inboxBaseScan},
+		{"a page of 300 is under every ceiling", 300, inboxExcStoreMax, 300},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := inboxEffectiveLimit(tc.want, tc.storeMax); got != tc.expect {
+				t.Errorf("inboxEffectiveLimit(%d, %d) = %d, want %d",
+					tc.want, tc.storeMax, got, tc.expect)
+			}
+		})
+	}
+
+	// The property that makes the probe honest: the effective limit is
+	// reachable. If it ever exceeded the store ceiling, `len(rows) >= limit`
+	// could not fire even on a fully truncated read.
+	for _, storeMax := range []int{inboxExcStoreMax, inboxIncStoreMax} {
+		for _, want := range []int{50, 200, 300, 500, 2000, 5000} {
+			if got := inboxEffectiveLimit(want, storeMax); got > storeMax {
+				t.Errorf("effective limit %d exceeds store ceiling %d — the cap flag could never fire",
+					got, storeMax)
+			}
+		}
+	}
+}

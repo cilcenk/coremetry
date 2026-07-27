@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sort"
-	"strings"
 	"time"
 )
 
@@ -880,6 +879,17 @@ func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error)
 
 type ProblemFilter struct {
 	Status   string // "open" | "resolved" | ""
+	// NotStatuses — statuses to EXCLUDE, applied in SQL so the narrow bites
+	// BEFORE the LIMIT. Status (singular) stays for callers that want exactly
+	// one bucket; the two AND together if both are set.
+	//
+	// v0.9.322 — deliberately an EXCLUSION, not an allow-list. The inbox's Go
+	// keepers are written as "anything that isn't resolved still needs a
+	// human", so a row with an unrecognised (or empty) status survives on
+	// purpose. An allow-list in SQL would contradict that and silently drop
+	// exactly those rows — and, worse, drop them from the LIST while the
+	// badge still counted them.
+	NotStatuses []string
 	Service  string
 	Severity string
 	// RuleIDPrefix narrows to rules whose id starts with the given
@@ -919,7 +929,9 @@ type ProblemFilter struct {
 // FINAL on the spans is the same as the list path so the merged
 // dedup result is what counts; using a plain count() would
 // double-count rows mid-merge.
-// CountProblemsInStatuses — inbox rozetinin open+acknowledged toplamı
+// CountProblemsNotInStatuses — inbox rozetinin "hâlâ insan bekleyen" toplamı.
+// v0.9.322: izin listesi yerine DIŞLAMA — liste tarafındaki Go süzgeciyle
+// birebir aynı sınıflandırma, yoksa rozet ve liste ayrışıyor.
 // TEK FINAL taramasında (v0.8.472 perf dalga-1 #2; önceden iki ayrı
 // CountProblems çağrısıydı). Statüler sabit enum, IN bind'li.
 // envServices scopes the count to an environment, mirroring the inbox
@@ -928,15 +940,11 @@ type ProblemFilter struct {
 // a non-nil EMPTY slice means the env resolved to no services, so only
 // global rows count — the nil-vs-empty distinction is load-bearing here
 // the same way it is for the team filter (v0.9.219).
-func (s *Store) CountProblemsInStatuses(ctx context.Context, statuses []string, envServices []string) (uint64, error) {
-	if len(statuses) == 0 {
-		return 0, nil
-	}
-	holders := make([]string, len(statuses))
-	args := make([]any, len(statuses))
-	for i, st := range statuses {
-		holders[i] = "?"
-		args[i] = st
+func (s *Store) CountProblemsNotInStatuses(ctx context.Context, exclude []string, envServices []string) (uint64, error) {
+	args := toAnySlice(exclude)
+	statusSQL := "1"
+	if len(exclude) > 0 {
+		statusSQL = "status NOT IN (" + chPlaceholders(len(exclude)) + ")"
 	}
 	envSQL := ""
 	if envServices != nil {
@@ -950,7 +958,7 @@ func (s *Store) CountProblemsInStatuses(ctx context.Context, statuses []string, 
 	row := s.conn.QueryRow(ctx, `
 		SELECT count()
 		FROM problems FINAL
-		WHERE status IN (`+strings.Join(holders, ",")+`)`+envSQL+`
+		WHERE `+statusSQL+envSQL+`
 		SETTINGS max_execution_time = 5`, args...)
 	var n uint64
 	if err := row.Scan(&n); err != nil {
@@ -992,6 +1000,18 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	var wc whereClause
 	if f.Status != "" {
 		wc.add("status = ?", f.Status)
+	}
+	// v0.9.322 — push the "not resolved" narrow into SQL.
+	//
+	// The inbox used to pass Status:"" (a single-value column can't express
+	// two buckets) and drop resolved rows in Go AFTER the LIMIT. On an install
+	// with a long history that is a silent scope bug: ORDER BY started_at DESC
+	// LIMIT 300 over a table that is 99% resolved returns ~300 resolved rows
+	// and two open ones, so the queue showed 2 while the badge — which did
+	// narrow in SQL — said 29. The LIMIT has to apply to the rows that will
+	// actually be shown.
+	if len(f.NotStatuses) > 0 {
+		wc.add("status NOT IN ("+chPlaceholders(len(f.NotStatuses))+")", toAnySlice(f.NotStatuses)...)
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)

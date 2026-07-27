@@ -143,12 +143,18 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	if limit <= 0 || limit > 500 {
 		limit = 200
 	}
+	// v0.9.319 — server-side sort. The page sorted the RETURNED rows
+	// client-side, so "Last seen ascending" meant "the oldest of the
+	// priority-ranked top 300", not "the oldest in the queue". Every column
+	// but priority silently answered a different question than the one the
+	// header claimed. Ids match the frontend COLS exactly.
+	sortID, sortDir := normalizeInboxSort(q.Get("sort"), q.Get("dir"))
 
 	// v0.9.221 — :v2: marks the response-shape change (bare array → object
 	// with the total). Without the bump a pre-upgrade array could still be
 	// sitting under this key and would deserialize into the new shape as an
 	// empty page.
-	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit)
+	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir)
 	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
 	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
 	// at 30s too, so each poll arrived at age = 30s + previous latency —
@@ -163,7 +169,11 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// v0.9.318 — every narrowing filter below runs on the MERGED list, so the
 	// per-source fetch has to cover the candidates those narrows will cut
 	// down. See inboxSourceLimit.
-	narrowed := service != "" || search != "" || env != "" || ownerTeam != "" || sreTeam != ""
+	// A non-default sort needs the candidates too: ordering a truncated slice
+	// by a key the truncation did not use returns the top of the SLICE, not
+	// the top of the queue.
+	narrowed := service != "" || search != "" || env != "" || ownerTeam != "" || sreTeam != "" ||
+		sortID != inboxSortDefault || sortDir != "desc"
 	srcLimit := inboxSourceLimit(limit, narrowed)
 
 	s.serveCached(w, r, cacheKey, 15*time.Second, func(ctx context.Context) (any, error) {
@@ -349,15 +359,10 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			items = filtered
 		}
 
-		// Stable rank: priority desc, then most-recent-activity.
-		sort.SliceStable(items, func(i, j int) bool {
-			ri := priorityRank(items[i].Priority)
-			rj := priorityRank(items[j].Priority)
-			if ri != rj {
-				return ri > rj
-			}
-			return items[i].LastSeen > items[j].LastSeen
-		})
+		// Rank the WHOLE candidate set before the cap (v0.9.318 scan fix +
+		// v0.9.319 server sort). Sorting after the cap would rank a page,
+		// which is the same lie the filters used to tell.
+		sortInboxItems(items, sortID, sortDir)
 		// v0.9.221 — the cap used to truncate SILENTLY: the response was a
 		// bare array, so 200 rows looked identical whether that was the whole
 		// queue or the top slice of 900. Since the sort above is priority-desc,
@@ -462,9 +467,111 @@ func inboxSourceLimit(limit int, narrowed bool) int {
 // request — the v0.5.187 cross-poisoning shape, with a search box as
 // the vector. The `:v2:` prefix marks the v0.9.221 response-shape
 // change (bare array → object with the total).
-func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit int) string {
-	return fmt.Sprintf("inbox:v2:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d",
-		status, service, search, ownerTeam, sreTeam, env, limit)
+func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit int, sortID, sortDir string) string {
+	return fmt.Sprintf("inbox:v3:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s",
+		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir)
+}
+
+// inboxSortDefault is the historical rank: priority desc, most-recent first
+// within a priority. Preserved exactly so an operator who never touches a
+// header sees the page they saw before v0.9.319.
+const inboxSortDefault = "priority"
+
+// normalizeInboxSort validates the ?sort=/?dir= pair against the columns the
+// page actually renders. Anything unknown falls back to the default rather
+// than erroring: a stale link from an older build must still open a usable
+// queue, not a 400.
+func normalizeInboxSort(id, dir string) (string, string) {
+	switch id {
+	case "priority", "source", "service", "detail", "lastSeen", "assignee":
+	default:
+		id = inboxSortDefault
+	}
+	if dir != "asc" {
+		dir = "desc"
+	}
+	return id, dir
+}
+
+// sortInboxItems ranks the merged triage set in place.
+//
+// Every branch keeps the priority-desc, lastSeen-desc tiebreak underneath, so
+// two rows equal on the chosen column still arrive in triage order instead of
+// whatever order the three sources happened to merge in. Stable on top of
+// that, so repeated polls don't shuffle equal rows under the operator's
+// cursor.
+func sortInboxItems(items []InboxItem, id, dir string) {
+	asc := dir == "asc"
+	less := func(a, b InboxItem) bool {
+		switch id {
+		case "source":
+			if a.Source != b.Source {
+				return a.Source < b.Source
+			}
+		case "service":
+			if !strings.EqualFold(a.Service, b.Service) {
+				return strings.ToLower(a.Service) < strings.ToLower(b.Service)
+			}
+		case "detail":
+			if !strings.EqualFold(a.Title, b.Title) {
+				return strings.ToLower(a.Title) < strings.ToLower(b.Title)
+			}
+		case "lastSeen":
+			if a.LastSeen != b.LastSeen {
+				return a.LastSeen < b.LastSeen
+			}
+		case "assignee":
+			if a.Assignee != b.Assignee {
+				return a.Assignee < b.Assignee
+			}
+		default: // priority
+			ra, rb := priorityRank(a.Priority), priorityRank(b.Priority)
+			if ra != rb {
+				return ra < rb
+			}
+		}
+		// Tiebreak — ALWAYS triage order, never reversed with dir. A page
+		// sorted by service ascending should still show P1 above P3 inside
+		// one service; flipping the tiebreak with the header would bury the
+		// urgent row at the bottom of its own group.
+		ra, rb := priorityRank(a.Priority), priorityRank(b.Priority)
+		if ra != rb {
+			return ra > rb
+		}
+		return a.LastSeen > b.LastSeen
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		if asc {
+			return less(items[i], items[j])
+		}
+		// Descending is the mirror of the primary key only; the tiebreak
+		// above is already triage-ordered, so re-running less() with the
+		// arguments swapped would invert it too. Compare primaries here and
+		// fall through to less() when they are equal.
+		if inboxPrimaryEqual(items[i], items[j], id) {
+			return less(items[i], items[j])
+		}
+		return less(items[j], items[i])
+	})
+}
+
+// inboxPrimaryEqual reports whether two rows tie on the chosen sort column —
+// the point at which the (never-reversed) triage tiebreak takes over.
+func inboxPrimaryEqual(a, b InboxItem, id string) bool {
+	switch id {
+	case "source":
+		return a.Source == b.Source
+	case "service":
+		return strings.EqualFold(a.Service, b.Service)
+	case "detail":
+		return strings.EqualFold(a.Title, b.Title)
+	case "lastSeen":
+		return a.LastSeen == b.LastSeen
+	case "assignee":
+		return a.Assignee == b.Assignee
+	default:
+		return priorityRank(a.Priority) == priorityRank(b.Priority)
+	}
 }
 
 // computeInboxCount — rozet toplamının tek hesabı; hem inboxCount

@@ -29,6 +29,7 @@ export function useInbox(filter: {
   ownerTeam?: string; sreTeam?: string;
   env?: string; // v0.8.387 — global picker, service-scoped (matches /problems)
   limit?: number;
+  sort?: string; dir?: 'asc' | 'desc'; // v0.9.319 — server-side ranking
 }) {
   return useQuery<InboxPage>({
     queryKey: ['inbox', 'list', filter],

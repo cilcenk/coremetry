@@ -1296,12 +1296,16 @@ export const api = {
     ownerTeam?: string; sreTeam?: string;
     env?: string; // v0.8.387 — service-scoped, same semantics as /api/problems
     limit?: number;
+    // v0.9.319 — server-side sort. Ranking happens over the whole candidate
+    // set BEFORE the cap, so the sort decides which rows come back, not just
+    // their order; it is part of the cache key server-side for that reason.
+    sort?: string; dir?: 'asc' | 'desc';
   } = {}) =>
     // v0.9.221 — was a bare array; the page had no way to tell a full queue
     // from the top slice of a truncated one.
     get<{
       items: import('./types').InboxItem[];
-      total: number; limit: number; truncated: boolean;
+      total: number; limit: number; truncated: boolean; scanCapped?: boolean;
     } | null>(`/api/inbox?${qs(params)}`),
   // v0.8.288 — the single triage badge total (not-resolved problems + open
   // exception groups + active anomalies). COUNT-only, 10s server cache.

@@ -1831,6 +1831,10 @@ export interface MetricExemplar {
   groupKey: string[];                  // matches the series it annotates
   slowTraceId?: string;
   errorTraceId?: string;
+  // v0.9.313 (brief N1) — the entry span's kind on the RPC surface
+  // ("server" for gRPC, "consumer" for a queue). Absent on the HTTP
+  // surface, where the kind is implied by the route.
+  kind?: string;
 }
 
 // AI per-service analysis (POST /api/copilot/analyze-service, v0.8.85+). The

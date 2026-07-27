@@ -2637,9 +2637,12 @@ func (s *Server) getServiceAttrs(w http.ResponseWriter, r *http.Request) {
 // inputs (hash-all-inputs rule; the v0.5.187 class). env joined in
 // v0.8.385 — without it an env-filtered table would cross-poison the
 // unfiltered one inside the same 30s bucket.
-func endpointsListKey(bucket, service, search, cluster, env string, limit int, compare, bySignature bool, sortBy, sortDir string) string {
-	return fmt.Sprintf("endpoints:%s:%s:%s:%s:env=%s:%d:cmp=%v:sig=%v:sort=%s:dir=%s",
-		bucket, service, search, cluster, env, limit, compare, bySignature, sortBy, sortDir)
+// v0.9.313 — entry joins the key: the HTTP and RPC tabs are DIFFERENT
+// row sets from the same endpoint, so sharing an entry would serve one
+// tab's table under the other's heading.
+func endpointsListKey(bucket, service, search, cluster, env string, limit int, compare, bySignature bool, sortBy, sortDir, entry string) string {
+	return fmt.Sprintf("endpoints:%s:%s:%s:%s:env=%s:%d:cmp=%v:sig=%v:sort=%s:dir=%s:entry=%s",
+		bucket, service, search, cluster, env, limit, compare, bySignature, sortBy, sortDir, entry)
 }
 
 // getEndpoints — v0.5.365. Per-endpoint RED rollup driven from
@@ -2687,7 +2690,14 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 	// Rides the cache key like every other input.
 	sortBy := q.Get("sort")
 	sortDir := q.Get("dir")
-	key := endpointsListKey(cacheBucket(from, to), service, search, cluster, env, limit, compare, bySignature, sortBy, sortDir)
+	// v0.9.313 (brief N1) — which inbound surface. Unknown values fall
+	// back to http so a hand-edited URL lands on the familiar table
+	// rather than an empty one.
+	entry := chstore.EntryHTTP
+	if strings.TrimSpace(r.URL.Query().Get("entry")) == "rpc" {
+		entry = chstore.EntryRPC
+	}
+	key := endpointsListKey(cacheBucket(from, to), service, search, cluster, env, limit, compare, bySignature, sortBy, sortDir, string(entry))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.8.356 — default path reads the spanmetrics_1m MV; the raw
 		// CTE survives only behind the cluster + env filters
@@ -2698,6 +2708,7 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 			Service: service, Search: search, Cluster: cluster, Env: env,
 			Limit: limit, BySignature: bySignature,
 			Sort: sortBy, Dir: sortDir,
+			Entry: entry,
 		}
 		rows, err := s.store.GetEndpoints(ctx, eq)
 		if err != nil {

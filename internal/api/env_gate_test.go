@@ -62,7 +62,7 @@ func TestServicesListKey_CarriesEnv(t *testing.T) {
 
 func TestEndpointsListKey_CarriesEnv(t *testing.T) {
 	key := func(env string) string {
-		return endpointsListKey("b", "", "", "", env, 500, false, false, "calls", "desc")
+		return endpointsListKey("b", "", "", "", env, 500, false, false, "calls", "desc", "http")
 	}
 	uat, prep, all := key("uat"), key("prep"), key("")
 	if uat == prep || uat == all || prep == all {

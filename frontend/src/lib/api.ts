@@ -1591,7 +1591,10 @@ export const api = {
   // the true global top-N, not the top-N-by-calls page reordered).
   // env (v0.8.385): the global Topbar picker — like cluster it forces
   // the backend's raw-spans path (spanmetrics_1m has no env dim).
-  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; env?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature'; sort?: string; dir?: 'asc' | 'desc' }) =>
+  endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; env?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature'; sort?: string; dir?: 'asc' | 'desc';
+    // v0.9.313 (brief N1) — which inbound surface. Omitted = http, the
+    // pre-v0.9.313 table.
+    entry?: 'rpc' }) =>
     get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`),
   // v0.8.360 — endpoint detail drill-down (Stage-2 slice E2). One
   // payload with per-section null tolerance; sig=1 marks path as an

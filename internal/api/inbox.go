@@ -160,8 +160,19 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// it. Identical arithmetic to problems-count (api.go:9020), problems-list
 	// (api.go:9132) and inbox-count (below) — the list was the one endpoint
 	// that never got it.
+	// v0.9.318 — every narrowing filter below runs on the MERGED list, so the
+	// per-source fetch has to cover the candidates those narrows will cut
+	// down. See inboxSourceLimit.
+	narrowed := service != "" || search != "" || env != "" || ownerTeam != "" || sreTeam != ""
+	srcLimit := inboxSourceLimit(limit, narrowed)
+
 	s.serveCached(w, r, cacheKey, 15*time.Second, func(ctx context.Context) (any, error) {
 		items := make([]InboxItem, 0, 256)
+		// scanCapped: a source came back exactly full, so there were more
+		// candidates than we looked at and the narrow below is answering over
+		// a slice. Travels with the response — the "no silent caps" rule
+		// (v0.9.221) applied to the SCAN, not just the final page.
+		scanCapped := false
 
 		// v0.5.245 — service filter is now case-insensitive
 		// substring across all three sources. Per-source SQL
@@ -181,10 +192,13 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		if statusFilter != "ignored" {
 			var err error
 			probs, err = s.store.ListProblems(ctx, chstore.ProblemFilter{
-				Status: pickStatus(statusFilter), Limit: 200,
+				Status: pickStatus(statusFilter), Limit: srcLimit,
 			})
 			if err != nil {
 				return nil, err
+			}
+			if len(probs) >= srcLimit {
+				scanCapped = true
 			}
 		}
 		// Same enrichment chain Problems UI runs through, so the
@@ -205,11 +219,14 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 
 		// ── Exception groups ─────────────────────────────────────
 		exFilter := chstore.ExceptionGroupFilter{
-			State: pickExceptionState(statusFilter), Limit: 200,
+			State: pickExceptionState(statusFilter), Limit: srcLimit,
 		}
 		exGroups, err := s.store.ListExceptionGroups(ctx, exFilter)
 		if err != nil {
 			return nil, err
+		}
+		if len(exGroups) >= srcLimit {
+			scanCapped = true
 		}
 		for _, g := range exGroups {
 			items = append(items, exceptionToInbox(g))
@@ -221,9 +238,12 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		var evs []chstore.AnomalyEvent
 		if statusFilter != "ignored" {
 			var err error
-			evs, err = s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{Limit: 200})
+			evs, err = s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{Limit: srcLimit})
 			if err != nil {
 				return nil, err
+			}
+			if len(evs) >= srcLimit {
+				scanCapped = true
 			}
 		}
 		for _, e := range evs {
@@ -353,6 +373,12 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			"total":     total,
 			"limit":     limit,
 			"truncated": total > limit,
+			// scanCapped says "there were more candidates than I looked at",
+			// which is a DIFFERENT statement from truncated ("more matches
+			// than I returned"). Under a search the second can be false while
+			// the first is true — that combination is precisely the case
+			// where an empty table must not be read as an empty queue.
+			"scanCapped": scanCapped,
 		}, nil
 	})
 }
@@ -387,6 +413,45 @@ func (s *Server) inboxCount(w http.ResponseWriter, r *http.Request) {
 // inboxCountKey is shared by the handler and the warm loop (api.go) so the
 // pre-warmed payload and the served one can never diverge.
 func inboxCountKey(env string) string { return "inbox:count:env=" + env }
+
+// inboxNarrowScan is the per-source candidate ceiling used when a narrowing
+// filter is active. All three sources are small ReplacingMergeTree state
+// tables (problems, exception_groups, anomaly_events) read with FINAL — a
+// 2000-row slice off one is a state-table read, not a spans scan.
+const inboxNarrowScan = 2000
+const inboxBaseScan = 200
+
+// inboxSourceLimit decides how many rows to pull from EACH source before the
+// merge.
+//
+// v0.9.318 — until now this was a hardcoded 200 per source while every
+// narrowing filter (service / q / env / owner / sre) ran on the MERGED list
+// AFTERWARDS. That ordering is a lie of exactly the shape this codebase keeps
+// paying for: the filter narrows a slice that was already truncated, so a row
+// matching "OOMKill" sitting at rank 400 of its source is invisible — the
+// operator searches, sees an empty table, and concludes the queue is clean.
+// The filter looked like it searched the queue; it searched the first page.
+//
+// Two independent defects fixed here:
+//
+//   - narrowed → scan the candidate set, not a page of it. The narrow can only
+//     REMOVE rows, so to answer honestly you need the candidates first.
+//   - unnarrowed → per-source must at least cover the requested limit. With
+//     200/source a limit=300 request (which is what the page asks for) could
+//     not be satisfied from a single source even when that source held 300
+//     genuinely open rows.
+//
+// Pure so the arithmetic is pinned by test rather than by reading the handler.
+func inboxSourceLimit(limit int, narrowed bool) int {
+	n := inboxBaseScan
+	if narrowed {
+		n = inboxNarrowScan
+	}
+	if limit > n {
+		n = limit
+	}
+	return n
+}
 
 // inboxListKey builds the /api/inbox cache key. Pure + hoisted so
 // cache_key-style tests can pin it (canonical: cache_key_test.go).

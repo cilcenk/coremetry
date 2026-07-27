@@ -10,6 +10,13 @@ export type InboxPage = {
   total: number;
   limit: number;
   truncated: boolean;
+  // v0.9.318 — "there were more CANDIDATES than the server looked at", which
+  // is a different statement from `truncated` ("more matches than it
+  // returned"). Under a search the second can be false while the first is
+  // true, and that combination is exactly when an empty table must not be
+  // read as an empty queue. Optional so a pre-upgrade cached body still
+  // deserializes.
+  scanCapped?: boolean;
 };
 
 // Unified triage inbox (v0.5.211) — Problems + Exception groups +

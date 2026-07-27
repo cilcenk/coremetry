@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import { serviceGraphToMap } from '@/lib/serviceGraphAdapter';
 import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { encodeRange } from '@/lib/urlState';
 import type { TimeRange, ServiceMap, ServiceMapNode } from '@/lib/types';
 
 const PRESETS: { key: TimeRange['preset']; secs: number; label: string }[] = [
@@ -273,6 +274,27 @@ export default function ServiceMapPage() {
                     borderRadius: 6,
                   }}>
               View {focus} detail →
+            </Link>
+          )}
+          {/* v0.9.309 (brief N6d) — the map answers "which service",
+              the endpoints table answers "which ROUTE of it". Until now
+              /endpoints was reachable only from the sidebar and the
+              command palette, so an investigation that started on the
+              map never descended to per-route RED. range rides along;
+              a pivot must ask the question the screen it left asked
+              (v0.9.307). */}
+          {focus && focusNode && (
+            <Link to={`/endpoints?service=${encodeURIComponent(focus)}&range=${encodeURIComponent(encodeRange(range))}`}
+                  className="sec"
+                  title="Per-route RED for this service — calls, errors, P50/P90/P95/P99 and spread per endpoint"
+                  style={{
+                    fontSize: 12, padding: '3px 10px',
+                    textDecoration: 'none',
+                    color: 'var(--text)',
+                    border: '1px solid var(--border)',
+                    borderRadius: 6,
+                  }}>
+              {focus} endpoints →
             </Link>
           )}
 

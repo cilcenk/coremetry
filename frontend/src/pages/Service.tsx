@@ -6,6 +6,7 @@ import { DrillButton } from '@/components/DrillButton';
 import { Button } from '@/components/ui/Button';
 import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/recentServices';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { ServiceOverview } from './service/Overview';
 import { ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
 import { ServiceInfraTab } from './service/ServiceInfraTab';
@@ -54,6 +55,11 @@ function ServiceDetailInner() {
   const queryClient = useQueryClient();
   // Global time window (UX#2) — URL-persisted + carried across pages.
   const [range, setRange] = useUrlRange('30m');
+  // v0.9.309 — read-only here, for the Endpoints drill below. A pivot
+  // that drops the global env scope asks a wider question than the
+  // screen it left (the v0.9.306/307 lesson); DrillButton builds a
+  // fresh URL, so anything not passed is lost on navigation.
+  const [env] = useUrlEnv();
   // Grafana-parite M1 — drag-zoom GERİ-YIĞINI (çift-tık = bir adım geri).
   // EFEMER ref state, URL'e yazılmaz: range yazımları replace:true olduğundan
   // browser history zoom adımlarını zaten biriktirmiyor; yığını URL'e koymak
@@ -392,6 +398,17 @@ function ServiceDetailInner() {
             <DrillButton to="/logs" params={{ service: svc }} range={range}
               title="Logs filtered to this service"
               label="≡ Logs" />
+            {/* v0.9.309 (brief N6d) — /endpoints had NO contextual way
+                in: the page was reachable only from the sidebar and the
+                command palette, so an incident investigation never
+                descended to the per-route table. This is the drill an
+                operator wants right after "which service" — "which
+                ROUTE of it". env rides along for the same reason it
+                rides every other pivot since v0.9.307: a link must ask
+                the question the screen it left was asking. */}
+            <DrillButton to="/endpoints" params={{ service: svc, env: env || undefined }} range={range}
+              title="Per-route RED for this service — calls, errors, P50/P90/P95/P99 and spread per endpoint"
+              label="⇄ Endpoints" />
             <DrillButton to="/problems" params={{ service: svc }}
               title="Open problems for this service"
               label="⚠ Problems" />

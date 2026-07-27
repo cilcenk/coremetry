@@ -12,7 +12,7 @@ import { tsLong, fmtFixed, fmtAgoNs } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup, resolveInitialSort } from '@/components/DataTable';
 import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { resolveSelectedItem } from '@/lib/inboxDrawer';
@@ -136,6 +136,15 @@ export default function InboxPage() {
   // less global alerts), same semantics as /problems. Hint chip in
   // the facet bar spells it out.
   const [env] = useUrlEnv();
+  // v0.9.319 — the sort now runs on the SERVER, before the cap. Seeded from
+  // the same precedence useDataTable restores with (resolveInitialSort), so
+  // the first fetch and the header arrow agree at mount instead of the page
+  // showing a lastSeen arrow over a priority-ranked response. onSortChange
+  // below keeps them in step afterwards.
+  const [srvSort, setSrvSort] = useState(() =>
+    resolveInitialSort('inbox', new URLSearchParams(window.location.search).get('s_inbox'),
+      { id: 'priority', dir: 'desc' as const }));
+
   const inboxQ = useInbox({
     status: statusFilter,
     service: serviceFilter || undefined,
@@ -144,6 +153,8 @@ export default function InboxPage() {
     sreTeam: sreFilter || undefined,
     env: env || undefined,
     limit: 300,
+    sort: srvSort.id ?? 'priority',
+    dir: srvSort.dir,
   });
   const data: InboxItem[] | null | undefined =
     inboxQ.isPending ? undefined : inboxQ.isError ? null : inboxQ.data?.items ?? [];
@@ -194,14 +205,21 @@ export default function InboxPage() {
   // ordering (P1 first, newest within priority). Hook is unconditional.
   // onOpen + searchRef wire the app-wide keyboard nav (j/k select,
   // Enter/o open the source surface, "/" focuses the filter).
-  const inboxRows = useMemo(
-    () => (filtered ? [...filtered].sort((a, b) => b.lastSeen - a.lastSeen) : []),
-    [filtered]);
+  // v0.9.319 — the lastSeen pre-sort is GONE. It existed to make the
+  // primitive's client-side stable sort reproduce "P1 first, newest within
+  // priority"; the server now ranks the whole candidate set before capping,
+  // so re-ordering here would corrupt the order the cap was applied in.
+  const inboxRows = filtered ?? [];
   const dt = useDataTable<InboxItem>({
     storageKey: 'inbox',
     columns: INBOX_COLS,
     rows: inboxRows,
     initialSort: { id: 'priority', dir: 'desc' },
+    // serverSort: the ORDER BY happens in the handler over the FULL candidate
+    // set, so sortedRows is the response verbatim. Client-side sorting would
+    // rank the page — the same lie the filters told before v0.9.318.
+    serverSort: true,
+    onSortChange: setSrvSort,
     onOpen: openDrawer,
     searchRef,
   });

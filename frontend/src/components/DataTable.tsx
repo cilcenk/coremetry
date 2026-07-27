@@ -96,7 +96,7 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
   const urlKey = `s_${storageKey}`;
   const urlSort = searchParams.get(urlKey);
   const [sort, setSortState] = useState<SortState>(() =>
-    parseSortParam(urlSort) ?? urlSortFallback ?? getItem(sortLSKey, initialSort ?? { id: null, dir: 'desc' }));
+    resolveInitialSort(storageKey, urlSort, initialSort, urlSortFallback));
   const [colWidths, setColWidths] = useState<Record<string, number>>(() =>
     getItem(widthLSKey, {}));
 
@@ -189,6 +189,29 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
   );
 
   return { columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout, nav, rowProps };
+}
+
+// resolveInitialSort — the precedence the hook restores a sort with, hoisted
+// so a page can ask the SAME question before the hook exists.
+//
+// v0.9.319 — serverSort pages have a chicken-and-egg problem: the fetch needs
+// the sort, but the sort lives in a hook that needs the fetched rows. The
+// Inbox resolves it by seeding its query state from this function, so the
+// first request and the header arrow agree at mount. Duplicating the
+// precedence at the call site instead would drift the moment this order
+// changes.
+//
+// Order: URL `s_<storageKey>` (a shared link reproduces the sender's sort) >
+// urlSortFallback (an older URL schema the page decoded — still link intent) >
+// localStorage (the viewer's personal default) > initialSort.
+export function resolveInitialSort(
+  storageKey: string,
+  urlSort: string | null,
+  initialSort?: SortState,
+  urlSortFallback?: SortState | null,
+): SortState {
+  return parseSortParam(urlSort) ?? urlSortFallback
+    ?? getItem(dtSortKey(storageKey), initialSort ?? { id: null, dir: 'desc' });
 }
 
 // ColResizeHandle — drop-in resize grip for tables that keep their OWN

@@ -91,10 +91,10 @@ func TestExcludeKeyDigest_LargerSetDistinctness(t *testing.T) {
 // would be served their filtered page — with the badge counting one
 // number and the list showing another.
 func TestInboxListKeyIncludesSearch(t *testing.T) {
-	base := inboxListKey("open", "", "", "", "", "", 200)
+	base := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc")
 
 	t.Run("search term changes the key", func(t *testing.T) {
-		if got := inboxListKey("open", "", "timeout", "", "", "", 200); got == base {
+		if got := inboxListKey("open", "", "timeout", "", "", "", 200, "priority", "desc"); got == base {
 			t.Errorf("q=timeout produced the same key as an empty search: %q", got)
 		}
 	})
@@ -102,7 +102,7 @@ func TestInboxListKeyIncludesSearch(t *testing.T) {
 	t.Run("different terms never collide", func(t *testing.T) {
 		seen := map[string]string{}
 		for _, term := range []string{"", "timeout", "OOMKilled", "504", "time", "out"} {
-			k := inboxListKey("open", "", term, "", "", "", 200)
+			k := inboxListKey("open", "", term, "", "", "", 200, "priority", "desc")
 			if prev, dup := seen[k]; dup {
 				t.Errorf("q=%q collides with q=%q on key %q", term, prev, k)
 			}
@@ -114,8 +114,8 @@ func TestInboxListKeyIncludesSearch(t *testing.T) {
 		// `service` and `q` are separate inputs that AND together
 		// server-side; swapping which one carries a value must not
 		// produce the same key.
-		a := inboxListKey("open", "api", "", "", "", "", 200)
-		b := inboxListKey("open", "", "api", "", "", "", 200)
+		a := inboxListKey("open", "api", "", "", "", "", 200, "priority", "desc")
+		b := inboxListKey("open", "", "api", "", "", "", 200, "priority", "desc")
 		if a == b {
 			t.Errorf("service=api and q=api share a key %q — they filter different fields", a)
 		}
@@ -125,12 +125,18 @@ func TestInboxListKeyIncludesSearch(t *testing.T) {
 		seen := map[string]string{}
 		for name, k := range map[string]string{
 			"base":   base,
-			"status": inboxListKey("all", "", "", "", "", "", 200),
-			"svc":    inboxListKey("open", "api", "", "", "", "", 200),
-			"owner":  inboxListKey("open", "", "", "team-a", "", "", 200),
-			"sre":    inboxListKey("open", "", "", "", "sre-a", "", 200),
-			"env":    inboxListKey("open", "", "", "", "", "prod", 200),
-			"limit":  inboxListKey("open", "", "", "", "", "", 50),
+			"status": inboxListKey("all", "", "", "", "", "", 200, "priority", "desc"),
+			"svc":    inboxListKey("open", "api", "", "", "", "", 200, "priority", "desc"),
+			"owner":  inboxListKey("open", "", "", "team-a", "", "", 200, "priority", "desc"),
+			"sre":    inboxListKey("open", "", "", "", "sre-a", "", 200, "priority", "desc"),
+			"env":    inboxListKey("open", "", "", "", "", "prod", 200, "priority", "desc"),
+			"limit":  inboxListKey("open", "", "", "", "", "", 50, "priority", "desc"),
+			// v0.9.319 — sort joins the key. Two operators on the same
+			// filters but different sorts must not share a cached page: the
+			// server ranks BEFORE the cap, so the sort changes which rows
+			// come back, not just their order.
+			"sortCol": inboxListKey("open", "", "", "", "", "", 200, "lastSeen", "desc"),
+			"sortDir": inboxListKey("open", "", "", "", "", "", 200, "priority", "asc"),
 		} {
 			if prev, dup := seen[k]; dup {
 				t.Errorf("%s collides with %s on key %q", name, prev, k)

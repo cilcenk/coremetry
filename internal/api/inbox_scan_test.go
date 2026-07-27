@@ -63,3 +63,100 @@ func TestInboxSourceLimitNarrowNeverShrinks(t *testing.T) {
 		}
 	}
 }
+
+// ── v0.9.319 — server-side sort ──────────────────────────────────────────
+//
+// The page sorted the RETURNED rows client-side. Since the server ranks by
+// priority and caps, "Last seen ascending" meant "the oldest of the
+// priority-ranked top 300" — not "the oldest in the queue". Every column but
+// priority answered a different question than its header claimed.
+
+func TestNormalizeInboxSort(t *testing.T) {
+	cases := []struct{ inID, inDir, wantID, wantDir string }{
+		{"", "", "priority", "desc"},
+		{"lastSeen", "asc", "lastSeen", "asc"},
+		{"service", "desc", "service", "desc"},
+		// A stale link from an older build must open a usable queue, not a
+		// 400 — unknown falls back rather than erroring.
+		{"occurrences", "asc", "priority", "asc"},
+		{"'; DROP", "asc", "priority", "asc"},
+		// Anything that isn't exactly "asc" is descending.
+		{"lastSeen", "sideways", "lastSeen", "desc"},
+	}
+	for _, tc := range cases {
+		gotID, gotDir := normalizeInboxSort(tc.inID, tc.inDir)
+		if gotID != tc.wantID || gotDir != tc.wantDir {
+			t.Errorf("normalizeInboxSort(%q,%q) = (%q,%q), want (%q,%q)",
+				tc.inID, tc.inDir, gotID, gotDir, tc.wantID, tc.wantDir)
+		}
+	}
+}
+
+func inboxFixture() []InboxItem {
+	return []InboxItem{
+		{ID: "a", Priority: "P3", Service: "checkout", Title: "zeta", LastSeen: 300, Source: "Anomaly"},
+		{ID: "b", Priority: "P1", Service: "Payments", Title: "alpha", LastSeen: 100, Source: "Exception"},
+		{ID: "c", Priority: "P2", Service: "checkout", Title: "beta", LastSeen: 200, Source: "Alert rule"},
+		{ID: "d", Priority: "P1", Service: "billing", Title: "gamma", LastSeen: 400, Source: "Exception"},
+	}
+}
+
+func inboxIDs(items []InboxItem) string {
+	out := ""
+	for _, it := range items {
+		out += it.ID
+	}
+	return out
+}
+
+func TestSortInboxItems(t *testing.T) {
+	cases := []struct {
+		name, id, dir, want string
+	}{
+		// The historical rank, unchanged: P1 first, newest within a priority.
+		// An operator who never touches a header must see the old page.
+		{"default", "priority", "desc", "dbca"},
+		{"priority asc", "priority", "asc", "acdb"},
+		{"lastSeen asc", "lastSeen", "asc", "bcad"},
+		{"lastSeen desc", "lastSeen", "desc", "dacb"},
+		// Case-insensitive: "Payments" must not sort before "billing" just
+		// because of a capital P.
+		{"service asc", "service", "asc", "dca", // billing, checkout×2, Payments
+			},
+		{"detail asc", "detail", "asc", "bcda"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			items := inboxFixture()
+			sortInboxItems(items, tc.id, tc.dir)
+			got := inboxIDs(items)
+			if tc.name == "service asc" {
+				// billing(d) < checkout(c,a) < Payments(b) — the point is that
+				// Payments lands LAST despite the capital.
+				if got != "dcab" {
+					t.Errorf("service asc = %q, want %q", got, "dcab")
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("sort(%s,%s) = %q, want %q", tc.id, tc.dir, got, tc.want)
+			}
+		})
+	}
+}
+
+// The triage tiebreak must NEVER flip with the header. Inside one service, a
+// P1 stays above a P3 in both directions — otherwise sorting by service
+// descending buries the urgent row at the bottom of its own group.
+func TestSortInboxItemsTiebreakStaysTriageOrder(t *testing.T) {
+	for _, dir := range []string{"asc", "desc"} {
+		items := []InboxItem{
+			{ID: "low", Priority: "P3", Service: "checkout", LastSeen: 900},
+			{ID: "high", Priority: "P1", Service: "checkout", LastSeen: 100},
+		}
+		sortInboxItems(items, "service", dir)
+		if items[0].ID != "high" {
+			t.Errorf("dir=%s: tiebreak inverted — got %s first, want the P1", dir, items[0].ID)
+		}
+	}
+}

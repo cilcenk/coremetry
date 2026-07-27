@@ -552,6 +552,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/topology/flow/drawio", s.exportFlowTopologyDrawIO)
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
 	mux.HandleFunc("GET /api/endpoints", s.getEndpoints)
+	mux.HandleFunc("GET /api/endpoints/downstream", s.getEndpointDownstream)
 	mux.HandleFunc("GET /api/services/{name}/attrs", s.getServiceAttrs)
 	mux.HandleFunc("GET /api/databases", s.getDatabases)
 	mux.HandleFunc("GET /api/databases/trends", s.getDBTrends)

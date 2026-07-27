@@ -28,9 +28,14 @@ const EN: Catalog = {
   'navGroup.community':   'Community',
 
   // Sidebar
-  'nav.inbox':       'Inbox',
+  // v0.9.323 — triage merge. The merged queue takes the name operators
+  // already use for "the thing I work from"; the per-source pages it
+  // aggregates are drill-downs now, not competing queues. 'nav.inbox' keeps
+  // its key (the route is unchanged) so saved views, notification deep links
+  // and dashboard markdown all keep working — only the LABEL moved.
+  'nav.inbox':       'Problems',
   'nav.incidents':   'Incidents',
-  'nav.problems':    'Problems',
+  'nav.problems':    'Exceptions',
   'nav.anomalies':   'Anomalies',
   'nav.analysis':    'Analysis',
   'nav.services':    'Services',
@@ -161,9 +166,9 @@ const TR: Catalog = {
   'navGroup.management': 'Yönetim',
 
   // Sidebar
-  'nav.inbox':       'Gelen kutusu',
+  'nav.inbox':       'Sorunlar',
   'nav.incidents':   'Olaylar',
-  'nav.problems':    'Sorunlar',
+  'nav.problems':    'Exception grupları',
   'nav.anomalies':   'Anomaliler',
   'nav.analysis':    'Sistem Analizi',
   'nav.services':    'Servisler',

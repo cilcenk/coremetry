@@ -264,7 +264,16 @@ export default function InboxPage() {
   const ackExceptionFps = pickedRows
     .filter((r: InboxItem) => r.kind === 'exception' && r.exception)
     .map((r: InboxItem) => r.exception!.fingerprint);
-  const ackable = ackProblemIds.length + ackExceptionFps.length;
+  // v0.9.323 — incidents joined the queue in v0.9.321 but not the bulk
+  // action: their rows got a checkbox, select-all included them, and then
+  // Onayla silently did nothing for them while the counter reported them as
+  // "anomali atlanacak" — naming the wrong kind. Acknowledging an incident is
+  // exactly what bulk ack means ("I'm on it"), and the endpoint already
+  // exists, so they are ackable rather than excluded.
+  const ackIncidentIds = pickedRows
+    .filter((r: InboxItem) => r.kind === 'incident' && r.incident)
+    .map((r: InboxItem) => r.incident!.id);
+  const ackable = ackProblemIds.length + ackExceptionFps.length + ackIncidentIds.length;
   const skipped = selCount - ackable;
   const allPickedOnScreen = (filtered?.length ?? 0) > 0
     && (filtered ?? []).every((r: InboxItem) => picked.has(r.id));
@@ -280,18 +289,29 @@ export default function InboxPage() {
     // Both calls go out before either result is inspected: they hit
     // different stores, and a failure in one must not cancel the other
     // half of the operator's gesture.
-    const [pRes, eRes] = await Promise.allSettled([
+    const [pRes, eRes, iRes] = await Promise.allSettled([
       ackProblemIds.length ? api.acknowledgeProblems(ackProblemIds) : Promise.resolve(null),
       ackExceptionFps.length ? api.setExceptionGroupStatesBulk(ackExceptionFps, 'acknowledged') : Promise.resolve(null),
+      // No bulk incident endpoint — one POST each, settled together so a
+      // single failure doesn't discard the rest of the gesture.
+      ackIncidentIds.length
+        ? Promise.allSettled(ackIncidentIds.map(id => api.ackIncident(id)))
+        : Promise.resolve(null),
     ]);
     const okProblems = pRes.status === 'fulfilled' ? ackProblemIds.length : 0;
     const okExceptions = eRes.status === 'fulfilled'
       ? ((eRes.value as { applied: number } | null)?.applied ?? 0)
       : 0;
-    const errs = [pRes, eRes].filter(r => r.status === 'rejected').length;
+    const incResults = iRes.status === 'fulfilled'
+      ? ((iRes.value as PromiseSettledResult<unknown>[] | null) ?? [])
+      : [];
+    const okIncidents = incResults.filter(r => r.status === 'fulfilled').length;
+    const failedIncidents = incResults.length - okIncidents;
+    const errs = [pRes, eRes].filter(r => r.status === 'rejected').length + failedIncidents;
+    const ok = okProblems + okExceptions + okIncidents;
     setBulkNote(errs
-      ? `${okProblems + okExceptions} onaylandı, ${errs} istek başarısız`
-      : `${okProblems + okExceptions} onaylandı`);
+      ? `${ok} onaylandı, ${errs} istek başarısız`
+      : `${ok} onaylandı`);
     setPicked(new Set());
     // The server already dropped the cached list + badge; refetch so
     // the rows leave the screen instead of lingering a poll cycle.
@@ -301,7 +321,7 @@ export default function InboxPage() {
 
   const counts = useMemo(() => {
     const out: Record<string, number> = { P1: 0, P2: 0, P3: 0,
-      problem: 0, exception: 0, anomaly: 0 };
+      problem: 0, exception: 0, anomaly: 0, incident: 0 };
     for (const it of data ?? []) {
       out[it.priority] = (out[it.priority] ?? 0) + 1;
       out[it.kind] = (out[it.kind] ?? 0) + 1;
@@ -323,7 +343,10 @@ export default function InboxPage() {
 
   return (
     <>
-      <Topbar title="Inbox" showEnv />
+      {/* v0.9.323 — triage merge: this page IS the queue now, so it carries
+          the name. The route stays /inbox so saved views, notification deep
+          links and dashboard markdown keep resolving — only the label moved. */}
+      <Topbar title="Problems" showEnv />
       <div id="content">
         {/* v0.9.255 — kayıtlı görünümler. Backend `page`'i serbest string alıyor,
             yani bu tek satır; birleşik triage yüzeyinin /problems'ın yerini
@@ -449,6 +472,8 @@ export default function InboxPage() {
             <b style={{ fontSize: 12 }}>{selCount} seçili</b>
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>
               {ackable} onaylanabilir
+              {/* Only anomalies are unackable now (v0.9.323) — problems,
+                  exception groups and incidents all have an ack path. */}
               {skipped > 0 && ` · ${skipped} anomali atlanacak (onay değil, susturma gerektirir)`}
             </span>
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -466,10 +491,14 @@ export default function InboxPage() {
         )}
 
         {data === undefined && <TableSkeleton cols={6} wideFirst />}
-        {data === null && <Empty icon="!" title="Failed to load inbox" />}
+        {data === null && <Empty icon="!" title="Failed to load the queue" />}
         {filtered && filtered.length === 0 && (
-          <Empty icon="✓" title="Inbox clear">
-            {prioSet.size < 3 || kindSet.size < 3
+          <Empty icon="✓" title="Queue clear">
+            {/* v0.9.323 — compare against the vocabulary SIZE, not a literal.
+                The kind list grew to four in v0.9.321 while this still read
+                `< 3`, so hiding exactly one kind produced "nothing needs your
+                attention" while a filter was actively narrowing the queue. */}
+            {prioSet.size < PRIO_ALL.length || kindSet.size < KIND_ALL.length
               ? 'Widen the priority / kind filter to see more.'
               : 'Nothing needs your attention right now.'}
           </Empty>

@@ -1,13 +1,13 @@
 import { Link } from 'react-router-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useEffect, useRef, useState } from 'react';
-import { useHealth, useOpenProblemCount, useInboxCount } from '@/lib/queries';
+import { useHealth, useInboxCount } from '@/lib/queries';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useT } from '@/lib/i18n';
 import { getRaw, setRaw, getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { TelescopeIcon } from './TelescopeIcon';
 import {
-  Inbox, TriangleAlert, CircleAlert, Activity, Boxes, Webhook, Workflow, Database,
+  Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Search, Hash, Eye,
   Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, type LucideIcon,
@@ -54,12 +54,26 @@ const NAV_GROUPS: NavGroup[] = [
       { href: '/inbox',     label: 'nav.inbox',     icon: Inbox },
     ],
   },
+  // v0.9.323 — triage merge, operator decision. /inbox above is now the ONE
+  // queue: it aggregates Problems + Exception groups + Anomaly events +
+  // Incidents, is SSE-live (v0.9.317), searches the candidate set rather than
+  // a page (v0.9.318), sorts server-side (v0.9.319) and applies the same
+  // occurrence floor its badge counts (v0.9.320/322). Until those five gaps
+  // closed it was WEAKER than the pages it would replace, which is why the
+  // merge waited on them rather than leading.
+  //
+  // Exceptions and Anomalies leave the sidebar but keep their routes: rows in
+  // the queue still drill into them, shared links still resolve, and nothing
+  // about them is deleted. Same shape as the v0.8.49x simplification pass
+  // (profiling / monitors / external / hosts) — hidden from nav, code alive.
+  //
+  // Incidents STAYS. It is not a drill-down: declaring an incident and writing
+  // a postmortem are jobs the queue does not offer, so hiding it would remove
+  // the only way to reach them.
   {
     titleKey: 'navGroup.triage',
     items: [
       { href: '/incidents', label: 'nav.incidents', icon: TriangleAlert },
-      { href: '/problems',  label: 'nav.problems',  icon: CircleAlert },
-      { href: '/anomalies', label: 'nav.anomalies', icon: Activity },
     ],
   },
   {
@@ -146,13 +160,14 @@ export function Sidebar() {
   // Problems section, so the sidebar badge and the page row
   // count never drift.
   const healthQ = useHealth();
-  // v0.8.387 — the /problems badge follows the global env picker so
-  // the number it shows equals the rows the env-filtered /problems
-  // page renders (service-scoped semantics, resolved server-side).
   const [env] = useUrlEnv();
-  const openProblems = useOpenProblemCount(env).data ?? 0;
-  // v0.8.288 (Option B) — the /inbox triage badge sums all three sources
-  // (not-resolved problems + open exceptions + active anomalies).
+  // v0.9.323 — the separate open-problems poll is GONE with the /problems nav
+  // entry. Keeping the hook would have left a 30s query running forever for a
+  // badge that no longer renders anywhere.
+  // v0.8.288 (Option B) — the triage badge sums all four sources
+  // (not-resolved problems + open exception groups + active anomalies +
+  // open incidents, v0.9.321), with the same occurrence floor the list
+  // applies by default (v0.9.322).
   const inboxCount = useInboxCount(env).data ?? 0;
   // Footer only shows when the backend is unreachable — pre-v0.5.0
   // it always rendered the queue depths, which on a quiet
@@ -344,7 +359,6 @@ export function Sidebar() {
                 onToggle={() => toggleGroup(group.titleKey)}
                 showLabels={showLabels}
                 pathname={pathname}
-                openProblems={openProblems}
                 inboxCount={inboxCount}
                 t={t} />
             );
@@ -454,7 +468,7 @@ export function Sidebar() {
 // children stacked since the chevron interaction makes no
 // sense at 56px wide.
 function NavGroupBlock({
-  titleKey, items, isOpen, onToggle, showLabels, pathname, openProblems, inboxCount, t,
+  titleKey, items, isOpen, onToggle, showLabels, pathname, inboxCount, t,
 }: {
   titleKey: string;
   items: NavItem[];
@@ -462,14 +476,12 @@ function NavGroupBlock({
   onToggle: () => void;
   showLabels: boolean;
   pathname: string;
-  openProblems: number;
   inboxCount: number;
   t: (key: string) => string;
 }) {
-  // navBadge — the count rendered on a nav entry: /inbox → the triage total,
-  // /problems → open problems. 0 renders nothing.
-  const navBadge = (href: string): number =>
-    href === '/inbox' ? inboxCount : href === '/problems' ? openProblems : 0;
+  // navBadge — the count rendered on a nav entry. Only the merged triage
+  // queue carries one now (v0.9.323); 0 renders nothing.
+  const navBadge = (href: string): number => (href === '/inbox' ? inboxCount : 0);
   // Icon-only sidebar: skip the group header (no place for it),
   // render every link inline. Operator still navigates by icon
   // memory in this mode.
@@ -483,11 +495,7 @@ function NavGroupBlock({
             style={{ justifyContent: 'center', padding: '10px 0' }}>
             <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
             {navBadge(n.href) > 0 && (
-              <span className="nav-dot" title={
-                n.href === '/inbox'
-                  ? `${navBadge(n.href)} triage items`
-                  : `${navBadge(n.href)} open problems`
-              } />
+              <span className="nav-dot" title={`${navBadge(n.href)} triage items`} />
             )}
           </Link>
         ))}

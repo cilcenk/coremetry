@@ -353,7 +353,7 @@ export default function ProblemsPage() {
   if (detail) {
     return (
       <>
-        <Topbar title="Problems" showEnv />
+        <Topbar title="Exceptions" showEnv />
         <ProblemDetail
           group={detail}
           isAdmin={isAdmin}
@@ -369,11 +369,11 @@ export default function ProblemsPage() {
   if (excParam && excNotFound) {
     return (
       <>
-        <Topbar title="Problems" showEnv />
+        <Topbar title="Exceptions" showEnv />
         <div id="content">
           <Empty icon="❓" title="Exception not found">
             Bu exception grubu artık mevcut değil.{' '}
-            <Button variant="secondary" size="sm" onClick={closeExcDetail}>← Problems</Button>
+            <Button variant="secondary" size="sm" onClick={closeExcDetail}>← Exceptions</Button>
           </Empty>
         </div>
       </>
@@ -382,7 +382,7 @@ export default function ProblemsPage() {
   if (excParam && !excNotFound) {
     return (
       <>
-        <Topbar title="Problems" showEnv />
+        <Topbar title="Exceptions" showEnv />
         <div id="content"><Spinner /></div>
       </>
     );
@@ -391,12 +391,14 @@ export default function ProblemsPage() {
   // v0.8.426/428 — a firing alert problem opens as a Variant-B
   // full-page detail on the same route (?problem=<id>). The classic
   // table list stays MOUNTED underneath (display:none) so facet /
-  // team / bulk-selection state survives "← Problems" / Esc.
+  // team / bulk-selection state survives "← Exceptions" / Esc.
   const problemParam = searchParams.get('problem');
 
   return (
     <>
-      {!problemParam && <Topbar title="Problems" showEnv />}
+      {/* v0.9.323 — this list is exception GROUPS; "Problems" now names the
+          merged triage queue at /inbox. Same page, same route, honest label. */}
+      {!problemParam && <Topbar title="Exceptions" showEnv />}
       {/* Hidden (NOT unmounted) while the full-page detail is open — the
           duplicate #content id is inert here: nothing on this route calls
           getElementById('content') (useContentWidth is dashboard-only). */}
@@ -1190,7 +1192,9 @@ function AlertProblemHost({ id, isAdmin, onBack }: {
   const p = cached ?? (q.data ?? []).find(x => x.id === id);
   return (
     <>
-      <Topbar title="Problems" showEnv />
+      {/* Singular: this is ONE problem, reached from a notification deep
+          link. Plural "Problems" is the merged queue (v0.9.323). */}
+      <Topbar title="Problem" showEnv />
       {p ? (
         <AlertProblemDetail
           problem={p}
@@ -1204,7 +1208,7 @@ function AlertProblemHost({ id, isAdmin, onBack }: {
         <div id="content">
           <Empty icon="⚠" title="Problemler yüklenemedi">
             <Button variant="secondary" size="sm" onClick={() => { void q.refetch(); }}>Tekrar dene</Button>{' '}
-            <Button variant="secondary" size="sm" onClick={onBack}>← Problems</Button>
+            <Button variant="secondary" size="sm" onClick={onBack}>← Exceptions</Button>
           </Empty>
         </div>
       ) : (
@@ -1212,7 +1216,7 @@ function AlertProblemHost({ id, isAdmin, onBack }: {
           <Empty icon="❓" title="Problem not found">
             Bu problem kaydı artık listede yok — çözülüp 200-satır penceresinin
             dışına düşmüş olabilir.{' '}
-            <Button variant="secondary" size="sm" onClick={onBack}>← Problems</Button>
+            <Button variant="secondary" size="sm" onClick={onBack}>← Exceptions</Button>
           </Empty>
         </div>
       )}

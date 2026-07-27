@@ -55,6 +55,23 @@ function impactOf(r: EndpointRow): number {
   return r.calls * r.p99Ms * errFactor;
 }
 
+// spreadOf — p99 / p50 (v0.9.305). Latency SHAPE, not level.
+//
+// A single percentile tells you how slow, never how the slowness is
+// distributed. Spread near 1 means the whole distribution moved: every
+// caller is slow, so look at the dependency, the pool, the node. Spread
+// high means most calls are fine and a tail is dragging: look at retries,
+// GC pauses, a cold cache, one bad shard. Same p99, opposite causes.
+//
+// Derived from columns already on the row — zero query cost. Returns 0
+// when p50 is missing or zero: a ratio with no denominator sorts to the
+// bottom rather than to Infinity.
+function spreadOf(r: EndpointRow): number {
+  const p50 = r.p50Ms ?? 0;
+  if (p50 <= 0) return 0;
+  return r.p99Ms / p50;
+}
+
 // Columns for the shared sortable + resizable DataTable primitive.
 // Body order must match these (non-sortable Method/Status/Trend/Traces
 // omit sortValue but still resize). `impact` is headerHidden — the
@@ -75,8 +92,15 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   { id: 'reqPerMin', label: 'Req/min',    sortValue: r => r.reqPerMin ?? 0, numeric: true, width: 84 },
   { id: 'avgMs',     label: 'Avg',        sortValue: r => r.avgMs,     numeric: true, width: 78 },
   { id: 'p50Ms',     label: 'P50',        sortValue: r => r.p50Ms ?? 0, numeric: true, width: 72 },
+  { id: 'p90Ms',     label: 'P90',        sortValue: r => r.p90Ms ?? 0, numeric: true, width: 72 },
   { id: 'p95Ms',     label: 'P95',        sortValue: r => r.p95Ms ?? 0, numeric: true, width: 72 },
   { id: 'p99Ms',     label: 'P99',        sortValue: r => r.p99Ms,     numeric: true, width: 72 },
+  // v0.9.305 — Spread = p99/p50. Purely derived, zero query cost, and
+  // it answers a question no single percentile does: is this endpoint
+  // slow for EVERYONE (spread near 1, the whole distribution moved) or
+  // does it have a heavy TAIL (spread high, most calls fine)? Those two
+  // have different causes and different fixes.
+  { id: 'spread',    label: 'Spread',     sortValue: spreadOf, numeric: true, width: 76 },
   { id: 'trend',     label: 'Trend',      width: 120 },
   // v0.8.573 — pinned to the right edge: the 14-column table overflows
   // laptop widths and the horizontal scrollbar sits below 2000 rows, so
@@ -91,7 +115,7 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
 // URLs) falls back to calls DESC before it reaches the fetch.
 const SORT_KEYS = [
   'service', 'path', 'calls', 'errors', 'errorRate',
-  'avgMs', 'p50Ms', 'p95Ms', 'p99Ms', 'reqPerMin', 'impact',
+  'avgMs', 'p50Ms', 'p90Ms', 'p95Ms', 'p99Ms', 'reqPerMin', 'impact',
 ] as const;
 const DEFAULT_ENDPOINTS_SORT = { id: 'calls', dir: 'desc' as const };
 
@@ -564,10 +588,22 @@ export default function EndpointsPage() {
                           {compare && <TrendDelta cur={r.avgMs} prior={r.priorAvgMs} kind="lowerBetter" />}
                         </td>}
                         {visibleCols.has('p50Ms') && <td className="num mono">{fmtMs(r.p50Ms)}</td>}
+                        {visibleCols.has('p90Ms') && <td className="num mono">{fmtMs(r.p90Ms)}</td>}
                         {visibleCols.has('p95Ms') && <td className="num mono">{fmtMs(r.p95Ms)}</td>}
                         {visibleCols.has('p99Ms') && <td className="num mono">
                           {r.p99Ms.toFixed(0)} ms
                           {compare && <TrendDelta cur={r.p99Ms} prior={r.priorP99Ms} kind="lowerBetter" />}
+                        </td>}
+                        {visibleCols.has('spread') && <td className="num mono"
+                          title="p99 ÷ p50 — the SHAPE of the latency, not its level.\nNear 1: the whole distribution moved, every caller is slow (dependency, pool, node).\nHigh: most calls are fine and a tail is dragging (retries, GC, cold cache, one bad shard).\nSame p99, opposite causes.">
+                          {(() => {
+                            const sp = spreadOf(r);
+                            if (sp <= 0) return <span style={{ color: 'var(--text3)' }}>—</span>;
+                            // Tone marks SHAPE, never slowness: a fast endpoint
+                            // with a heavy tail should still read as tail-heavy.
+                            const tone = sp >= 10 ? 'var(--err)' : sp >= 4 ? 'var(--warn)' : 'var(--text2)';
+                            return <span style={{ color: tone }}>{sp < 10 ? sp.toFixed(1) : Math.round(sp)}×</span>;
+                          })()}
                         </td>}
                         {visibleCols.has('trend') && <td>
                           <button

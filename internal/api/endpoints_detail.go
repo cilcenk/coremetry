@@ -72,6 +72,15 @@ func endpointDetailKey(service, path string, sig bool, from, to time.Time, env, 
 
 // endpointSplitKey builds the /api/endpoints/split cache key — the detail
 // inputs plus the split dimension.
+// v0.9.311 (brief N4) — "Where the time goes". Snapped to the same
+// minute bucket as its siblings so a drawer re-open inside the TTL
+// doesn't re-run TWO raw-spans passes.
+func endpointDownstreamKey(service, path string, sig bool, from, to time.Time, env, cluster string) string {
+	return fmt.Sprintf("endpoints-downstream:sp=%s:sig=%v:env=%s:clu=%s:from=%d:to=%d",
+		endpointKeyDigest(service, path), sig, env, cluster,
+		pivotMinuteBucket(from), pivotMinuteBucket(to))
+}
+
 func endpointSplitKey(service, path string, sig bool, by string, from, to time.Time, env, cluster string) string {
 	return fmt.Sprintf("endpoints-split:sp=%s:sig=%v:by=%s:env=%s:clu=%s:from=%d:to=%d",
 		endpointKeyDigest(service, path), sig, by, env, cluster,
@@ -233,5 +242,41 @@ func (s *Server) getEndpointSplit(w http.ResponseWriter, r *http.Request) {
 			rows = []chstore.EndpointSplitRow{}
 		}
 		return map[string]any{"by": by, "values": rows}, nil
+	})
+}
+
+// getEndpointDownstream serves GET /api/endpoints/downstream —
+//
+//	?service=<name>&path=<route>&from=&to=&sig=1&env=&cluster=
+//
+// The drawer's "Where the time goes" section (v0.9.311, brief N4).
+// Sampled by construction: no MV carries route→downstream, so this
+// walks a bounded sample of the route's SLOWEST traces and splits
+// their time. The payload states the sample size; the UI must render
+// it, because a share computed from 200 traces is not a window-wide
+// measurement and must not read as one.
+//
+// 60s cache: the read is two raw-spans passes, which is exactly the
+// shape that must not fire on every drawer re-open.
+func (s *Server) getEndpointDownstream(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	service := strings.TrimSpace(q.Get("service"))
+	path := q.Get("path")
+	if service == "" || path == "" {
+		http.Error(w, "service and path required", http.StatusBadRequest)
+		return
+	}
+	sig := q.Get("sig") == "1"
+	from, to := parseFromTo(r, time.Hour)
+	env := strings.TrimSpace(q.Get("env"))
+	cluster := strings.TrimSpace(q.Get("cluster"))
+
+	key := endpointDownstreamKey(service, path, sig, from, to, env, cluster)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.EndpointWhereTheTimeGoes(ctx, chstore.EndpointDetailQuery{
+			Service: service, Path: path, BySignature: sig,
+			From: from, To: to,
+			Env: env, Cluster: cluster,
+		})
 	})
 }

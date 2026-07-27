@@ -40,6 +40,20 @@ type EndpointRow struct {
 	P90Ms     float64 `json:"p90Ms"`
 	P95Ms     float64 `json:"p95Ms"`
 	ReqPerMin float64 `json:"reqPerMin"`
+	// SlowTraceID / ErrorTraceID (v0.9.310, brief N3) — the slowest and
+	// worst-error trace for THIS (service, route, window), off the MV's
+	// argMax exemplar states.
+	//
+	// Empty means "no exemplar in this window", not "none exists": the
+	// states are forward-only (written after the MV was created) and
+	// the error one is empty for a healthy window. The UI renders no
+	// link at all rather than a dash — same soft degrade the drawer has
+	// used since v0.8.564.
+	//
+	// Omitted from JSON when empty so the raw path (cluster/env, which
+	// has no exemplar states) simply ships rows without them.
+	SlowTraceID  string `json:"slowTraceId,omitempty"`
+	ErrorTraceID string `json:"errorTraceId,omitempty"`
 	// v0.5.370 — call-rate sparkline (≤ SparklineBuckets slots across
 	// the requested window; MV grain floors the slot width so short
 	// windows ship fewer, real slots). Lets the operator eye-scan
@@ -446,7 +460,16 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		         countIfMerge(error_state)                        AS bv_err,
 		         sumMerge(duration_sum_state)                     AS bv_sum_dur,
 		         arrayElement(quantilesTDigestMerge(0.5, 0.9, 0.95, 0.99)(duration_q_state), 4) / 1e6 AS bv_p99,
-		         quantilesTDigestMergeState(0.5, 0.9, 0.95, 0.99)(duration_q_state) AS q_state
+		         quantilesTDigestMergeState(0.5, 0.9, 0.95, 0.99)(duration_q_state) AS q_state,
+		         -- v0.9.310 (brief N3) — exemplar trace ids, two-level
+		         -- merge like q_state above. NO new scan: the same MV
+		         -- rows are already being read for the RED counts; these
+		         -- are two more aggregate states over them. Both tiers
+		         -- endpointsSparkGrid can pick (1m / 10s) carry them and
+		         -- carry http_route; only the 1s tier drops the route,
+		         -- and this read never selects it.
+		         argMaxMergeState(slow_exemplar_state)    AS slow_ex_state,
+		         argMaxIfMergeState(error_exemplar_state) AS err_ex_state
 		  FROM ` + s.spanmetricsSourceFor(sourceMV) + `
 		  WHERE ` + where + `
 		  GROUP BY service_name, path, b
@@ -472,7 +495,9 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		       arrayMap(i ->
 		         toFloat64(coalesce(arrayElement(groupArray(bv_p99), indexOf(groupArray(b), i)), 0)),
 		         range(0, ?)
-		       )                                                AS p99_sparkline
+		       )                                                AS p99_sparkline,
+		       argMaxMerge(slow_ex_state)                       AS slow_trace_id,
+		       argMaxIfMerge(err_ex_state)                      AS error_trace_id
 		FROM per_bucket
 		GROUP BY service_name, path
 		` + endpointsOrderBy(q.Sort, q.Dir) + `
@@ -493,6 +518,7 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 			&r.Service, &r.Path,
 			&r.Calls, &r.Errors, &errRate, &avgMs, &p50Ms, &p90Ms, &p95Ms, &p99Ms,
 			&sparkline, &errorsSparkline, &p99Sparkline,
+			&r.SlowTraceID, &r.ErrorTraceID,
 		); err != nil {
 			return nil, err
 		}

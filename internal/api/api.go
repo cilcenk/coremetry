@@ -9414,11 +9414,47 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	for _, p := range prios {
 		prioMap[p] = true
 	}
-	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:cluster=%s:limit=%d",
-		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Env, clusterFilter, f.Limit)
+	// v0.9.342 — priority cannot move into SQL (it is computed at read time
+	// from the enriched values), so the candidate scan widens instead. Picking
+	// P1 used to return "the P1s among the newest 100", not "the newest 100
+	// P1s": on prod, with ~800 open problems, a P1 selection could show a
+	// fraction of what exists and nothing said so.
+	sqlLimit := problemScanLimit(f.Limit, len(prios) > 0 && len(prios) < 3)
+	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:cluster=%s:limit=%d:scan=%d",
+		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Env, clusterFilter, f.Limit, sqlLimit)
 	// v0.8.471 — count ile aynı gerekçe (liste p95 903ms/max 3s → STALE ~10ms).
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
-		probs, err := s.store.ListProblems(ctx, f)
+		// v0.9.342 — team and cluster both resolve to a SERVICE SET, so they
+		// go into SQL where the LIMIT can respect them. They used to run in
+		// Go over the already-capped page, which is the defect family swept
+		// out of the triage queue in v0.9.322/330/335/336: a filter applied
+		// after a LIMIT answers over a slice, and the rows the operator asked
+		// for may never have entered the window.
+		//
+		// Resolution failures leave the filter OFF rather than narrowing to
+		// nothing: a catalog blip must not silently empty the page.
+		scan := f
+		scan.Limit = sqlLimit
+		if ownerTeam != "" || sreTeam != "" {
+			if mds, err := s.store.ListServiceMetadata(ctx); err == nil {
+				scan.Services = servicesForTeam(mds, ownerTeam, sreTeam)
+			}
+		}
+		if clusterFilter != "" {
+			if cm, err := s.store.GetServiceClusterMap(ctx, time.Hour); err == nil {
+				inCluster := make([]string, 0, 32)
+				for svc, cs := range cm {
+					for _, c := range cs {
+						if c == clusterFilter {
+							inCluster = append(inCluster, svc)
+							break
+						}
+					}
+				}
+				scan.Services = intersectServices(scan.Services, inCluster)
+			}
+		}
+		probs, err := s.store.ListProblems(ctx, scan)
 		if err != nil {
 			return nil, err
 		}
@@ -9477,12 +9513,12 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 			}
 			probs = keep
 		}
-		// Team filter (v0.8.290) — owner/SRE narrowing applied AFTER
-		// enrichment, same EqualFold / empty-means-all semantics the
-		// inbox uses (matchesTeamFilter, table-tested). AND'd across
-		// the two axes. Runs before the RootCause fan-out below so
-		// that batch join only covers the rows the operator will
-		// actually see.
+		// Team filter — v0.9.342 pushed this into SQL (scan.Services above).
+		// Kept as a second pass because the SQL narrow is skipped when the
+		// catalog read fails, and because a service can be added to a team
+		// between the two reads. Cheap over an already-capped page; it is no
+		// longer the ONLY place the filter applies, which is what made the
+		// page lie.
 		if ownerTeam != "" || sreTeam != "" {
 			keep := probs[:0]
 			for _, p := range probs {
@@ -9492,9 +9528,10 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 			}
 			probs = keep
 		}
-		// Cluster filter (v0.9.181) — keep problems whose service touched the
-		// selected cluster. p.Clusters is set by EnrichProblemsWithClusters
-		// above; empty selection = all clusters. AND'd with the other filters.
+		// Cluster filter (v0.9.181) — likewise pushed into SQL in v0.9.342 and
+		// kept here as the exact-membership check: the SQL set comes from the
+		// service→cluster map, this reads the per-problem enrichment, and the
+		// two can differ at the edges of the 1h window.
 		if clusterFilter != "" {
 			keep := probs[:0]
 			for _, p := range probs {

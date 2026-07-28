@@ -68,16 +68,25 @@ var webFS embed.FS
 //     the ARG so even a forgotten ldflag still surfaces.
 //  3. Default "dev".
 //
-// v0.5.394 — the COREMETRY_VERSION env var override was removed.
-// Operator-reported confusion: a stale env value (in compose .env
-// or k8s manifest) would silently mask the actual running binary's
-// build tag and the login page + /api/version would report the
-// override, not what the image actually is. Removing the override
-// makes the version a single source of truth tied to the image
-// build itself. Helm operators who want to stamp an alternate
-// version can write to /app/VERSION at deploy time via an
-// initContainer; the file path is stable.
+// v0.5.394 removed a COREMETRY_VERSION env override because a stale
+// env value silently MASKED the real build tag: the login page and
+// /api/version reported the override and nothing said so.
+//
+// v0.9.339 brings it back, operator-requested — but not silently.
+// The override sets what is DISPLAYED; the built-in tag is still
+// resolved and still reported, and /api/version says when the two
+// disagree. That keeps the v0.5.394 incident closed (a stale env can
+// no longer pretend to be the image) while giving the operator the
+// thing they actually need: a version they can correct from the
+// deployment without rebuilding.
+//
+// BuildVersion is what the image really is: ldflag, then
+// /app/VERSION, then "dev". Version is what gets shown.
 var Version = "dev"
+
+// BuildVersion is the tag baked into this binary, never overridden.
+// Kept separate so an override can be reported AS an override.
+var BuildVersion = "dev"
 
 // v0.5.488 — runMode gates which subsystems boot. Single binary,
 // four roles: "all" (default; current monolithic behaviour),
@@ -148,19 +157,29 @@ func splitCSVEnv(name string) []string {
 }
 
 func init() {
-	if Version != "" && Version != "dev" {
-		return
-	}
-	// Try a few well-known paths — image puts it at /app/VERSION;
-	// CWD-based dev builds may have it next to the binary.
-	for _, p := range []string{"/app/VERSION", "VERSION", "VERSION.txt"} {
-		if b, err := os.ReadFile(p); err == nil {
-			v := strings.TrimSpace(string(b))
-			if v != "" {
-				Version = v
-				return
+	if Version == "" || Version == "dev" {
+		// Try a few well-known paths — image puts it at /app/VERSION;
+		// CWD-based dev builds may have it next to the binary.
+		for _, p := range []string{"/app/VERSION", "VERSION", "VERSION.txt"} {
+			if b, err := os.ReadFile(p); err == nil {
+				v := strings.TrimSpace(string(b))
+				if v != "" {
+					Version = v
+					break
+				}
 			}
 		}
+	}
+	// Whatever we resolved above IS the build identity — record it before
+	// any override can touch it.
+	BuildVersion = Version
+
+	// v0.9.339 — COREMETRY_VERSION overrides what is DISPLAYED.
+	// BuildVersion above is untouched, so /api/version can report both and
+	// flag the disagreement; a stale env can annoy, but it can no longer
+	// pass itself off as the image (the v0.5.394 failure).
+	if v := strings.TrimSpace(os.Getenv("COREMETRY_VERSION")); v != "" {
+		Version = v
 	}
 }
 
@@ -1037,6 +1056,7 @@ func main() {
 	}
 	srv.SetPipeline(pipelineEng)
 	srv.SetVersion(Version)
+	srv.SetBuildVersion(BuildVersion)
 	srv.SetBackgroundConfig(cfg.Background)
 	srv.SetTempo(tempoSvc)
 	srv.SetThanos(thanosSvc)

@@ -176,7 +176,30 @@ export default function InboxPage() {
   const setSearchFilter = (v: string) => setParam('q', v || null);
   const setOwnerFilter = (v: string) => setParam('owner', v || null);
   const setSreFilter = (v: string) => setParam('sre', v || null);
-  const openDrawer = (it: InboxItem) => setParam('item', it.id);
+  // v0.9.341 — an EXCEPTION row opens its full detail page, not the drawer.
+  //
+  // Operator: "Eskiden occurrences görürdüm, şimdi göremiyorum exception'a
+  // tıkladığımda. Ayrı sayfa açılıyordu, hatta onu istiyorum."
+  //
+  // This is a rejected pattern coming back by the side door. A drawer for
+  // exception detail was tried in v0.9.508 and REVERTED in v0.9.510: the
+  // standing decision is that exception detail is a FULL PAGE in the classic
+  // v0.9.425 layout. The merged triage queue (v0.9.323) then routed every
+  // row — exceptions included — through the in-place drawer, which shows a
+  // count and three buttons. The occurrences-over-time chart, the stack trace
+  // and the sample traces all live on the page, so clicking the row lost
+  // exactly what the operator opens an exception to see.
+  //
+  // Other kinds keep the drawer: it exists so a Problem or an anomaly can be
+  // acked without leaving the queue (v0.8.292), and neither has a richer
+  // destination that the drawer is hiding.
+  const openDrawer = (it: InboxItem) => {
+    if (it.kind === 'exception' && it.exception) {
+      navigate(`/problems?exc=${encodeURIComponent(it.exception.fingerprint)}`);
+      return;
+    }
+    setParam('item', it.id);
+  };
   const closeDrawer = () => setParam('item', null);
 
   // Global env picker (v0.8.387) — service-scoped: the server keeps

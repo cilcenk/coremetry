@@ -486,6 +486,19 @@ export const api = {
   status: ()                         => get<SystemStatus>(`/api/status`),
   // Build-tag — unauthenticated, so the login page can render it
   // before the operator has a session.
+  // v0.9.344 — priority/severity chip counts over the UNFILTERED problem set.
+  //
+  // The endpoint has existed since the priority buckets shipped and was never
+  // called: the page computed its chip counts from `data`, which is the
+  // response to a request that already carried ?priority=. With the default
+  // P1+P2 selection the P3 chip therefore read 0 forever, and an operator
+  // could not discover that P3 problems existed at all.
+  //
+  // It deliberately takes no priority param — that is the whole point — and
+  // is server-cached 5s on a key shared across viewers.
+  problemBuckets: (params: { status?: string; service?: string; env?: string } = {}) =>
+    get<{ severity: Record<string, number>; priority: Record<string, number>; total: number } | null>(
+      `/api/problems/buckets?${qs(params)}`),
   version: ()                        => get<{ version: string }>(`/api/version`),
 
   // Log-pattern anomalies (ORA-, OOM, NPE, deadlock, panic, …) —

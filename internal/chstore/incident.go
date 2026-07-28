@@ -45,6 +45,10 @@ type IncidentEvent struct {
 }
 
 type IncidentFilter struct {
+	// ID narrows to exactly one incident (v0.9.332). Exists so GetIncident
+	// can ask the database for the row it wants instead of paging the newest
+	// N and scanning in Go — see the comment there.
+	ID       string
 	Status   string
 	// NotStatuses — statuses to EXCLUDE, applied in SQL so the LIMIT bites on
 	// the rows that will be shown. See ProblemFilter.NotStatuses: on an
@@ -63,6 +67,9 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 		limit = 200
 	}
 	var wc whereClause
+	if f.ID != "" {
+		wc.add("id = ?", f.ID)
+	}
 	if f.Status != "" {
 		wc.add("status = ?", f.Status)
 	}
@@ -149,17 +156,35 @@ func (s *Store) CountIncidentsNotInStatuses(ctx context.Context, exclude []strin
 	return n, nil
 }
 
+// GetIncident returns one incident by id, or (nil, nil) when it genuinely
+// does not exist.
+//
+// v0.9.332 — this used to fetch the newest 1000 incidents and linear-scan
+// them in Go. Any incident outside that window was INVISIBLE and the function
+// returned (nil, nil) — indistinguishable from "deleted". Locally there are
+// 7,539 incidents, so ~87% of them could not be fetched at all; prod is
+// deeper still.
+//
+// Everything that reads one incident was affected, and all of it failed
+// quietly: the auto-resolve cascade skipped old incidents (`inc == nil →
+// continue`), which is why the orphan fix in this same release closed them
+// one at a time instead of all at once; Acknowledge / Resolve / Update
+// answered 404 on anything older; the detail page opened empty.
+//
+// It now asks the database for the row it wants. Same scan code as the list
+// (one filter field) rather than a second hand-rolled query that could drift.
 func (s *Store) GetIncident(ctx context.Context, id string) (*Incident, error) {
-	rows, err := s.ListIncidents(ctx, IncidentFilter{Limit: 1000})
+	if id == "" {
+		return nil, nil
+	}
+	rows, err := s.ListIncidents(ctx, IncidentFilter{ID: id, Limit: 1})
 	if err != nil {
 		return nil, err
 	}
-	for _, i := range rows {
-		if i.ID == id {
-			return &i, nil
-		}
+	if len(rows) == 0 {
+		return nil, nil
 	}
-	return nil, nil
+	return &rows[0], nil
 }
 
 // UpsertIncident takes a pointer so auto-generated IDs flow back to the
@@ -436,6 +461,11 @@ type OpenIncidentRollup struct {
 	ProblemCount  int
 	Unresolved    int
 	MaxResolvedAt int64 // unix ns of the latest attached-problem resolution; 0 if none
+	// StartedAt (v0.9.332) lets the cascade tell a freshly-created incident
+	// whose problem has not attached YET from one that has been sitting
+	// unattached for days. Without it, resolving on problemCount == 0 would
+	// race every creation.
+	StartedAt int64
 }
 
 // OpenIncidentRollups returns, for every OPEN incident, the number of attached
@@ -447,16 +477,31 @@ type OpenIncidentRollup struct {
 // per-incident lookups, keeps the 1-minute sweep cheap; the state tables are
 // small and the joins are LIMIT- + time-bounded.
 func (s *Store) OpenIncidentRollups(ctx context.Context) ([]OpenIncidentRollup, error) {
+	// v0.9.332 — LEFT JOIN, and acknowledged incidents included.
+	//
+	// Both joins were INNER, so an incident with no attached problem — or one
+	// whose attached problems had aged out of `problems` — produced NO ROW
+	// here at all. The cascade never saw it, so it could never resolve it,
+	// so it stayed open forever. Measured locally: 26 of 32 open incidents
+	// were in exactly that state, the oldest four days old. That is the
+	// mechanism behind the operator's "çok fazla incident var, yanıltıcı
+	// oluyor" — they accumulate and nothing can ever close them.
+	//
+	// `status = 'open'` also excluded ACKNOWLEDGED incidents: someone picking
+	// one up made it immortal too. Acknowledging says "I'm looking", not
+	// "never close this"; the set now matches inboxKeepsIncident and the
+	// badge (anything not resolved).
 	rows, err := s.conn.Query(ctx, `
 		SELECT i.id AS id,
-		       toInt32(count())                                              AS n,
-		       toInt32(countIf(p.status != 'resolved'))                      AS unresolved,
+		       toInt64(toUnixTimestamp64Nano(i.started_at))                  AS started,
+		       toInt32(countIf(p.id != ''))                                  AS n,
+		       toInt32(countIf(p.id != '' AND p.status != 'resolved'))        AS unresolved,
 		       ifNull(max(toUnixTimestamp64Nano(p.resolved_at)), toInt64(0)) AS max_resolved
 		FROM incidents i FINAL
-		INNER JOIN incident_problems ip FINAL ON ip.incident_id = i.id
-		INNER JOIN problems p FINAL ON p.id = ip.problem_id
-		WHERE i.status = 'open'
-		GROUP BY i.id
+		LEFT JOIN incident_problems ip FINAL ON ip.incident_id = i.id
+		LEFT JOIN problems p FINAL ON p.id = ip.problem_id
+		WHERE i.status != 'resolved'
+		GROUP BY i.id, i.started_at
 		LIMIT 5000
 		SETTINGS max_execution_time = 15, distributed_product_mode = 'global'`)
 	if err != nil {
@@ -467,7 +512,7 @@ func (s *Store) OpenIncidentRollups(ctx context.Context) ([]OpenIncidentRollup, 
 	for rows.Next() {
 		var ro OpenIncidentRollup
 		var n, unresolved int32
-		if err := rows.Scan(&ro.ID, &n, &unresolved, &ro.MaxResolvedAt); err != nil {
+		if err := rows.Scan(&ro.ID, &ro.StartedAt, &n, &unresolved, &ro.MaxResolvedAt); err != nil {
 			return nil, err
 		}
 		ro.ProblemCount = int(n)

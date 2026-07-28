@@ -452,9 +452,47 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 // remain unresolved. endedAt is the latest problem-clear time so the resolved
 // incident's started→ended interval reflects the real impact window; it falls
 // back to `now` when no clear timestamp is recorded. Pure for unit testing.
+// incidentOrphanGrace — how long an incident with NO attached problem is left
+// alone before the cascade closes it.
+//
+// The window exists for one reason: AttachProblemToIncident creates the
+// incident and then binds the problem to it in a second statement. Between
+// those two a rollup sees zero attached problems, and resolving there would
+// close incidents the instant they open. An hour is far longer than that gap
+// and far shorter than the days these were surviving.
+const incidentOrphanGrace = time.Hour
+
 func incidentCascadeDecision(problemCount, unresolved int, maxResolvedAt, now int64) (resolve bool, endedAt int64) {
-	if problemCount == 0 || unresolved > 0 {
+	return incidentCascadeDecisionAt(problemCount, unresolved, maxResolvedAt, now, now)
+}
+
+// incidentCascadeDecisionAt decides whether an OPEN incident should
+// auto-resolve because everything driving it has cleared, and at what end
+// time. Pure for unit testing.
+//
+// v0.9.332 — problemCount == 0 used to mean "never resolve". Combined with
+// the rollup's INNER JOINs (which did not even EMIT such incidents) that made
+// an unattached incident immortal: measured locally, 26 of 32 open incidents
+// had no attached problem, the oldest four days old. They accumulate, they
+// dominate the triage queue, and nothing can ever close them — the operator's
+// "çok fazla incident var, yanıltıcı oluyor".
+//
+// Now: nothing unresolved is attached → resolve, provided either something WAS
+// attached (the original case) or the incident has outlived the grace window
+// that protects the create→bind gap.
+func incidentCascadeDecisionAt(problemCount, unresolved int, maxResolvedAt, startedAt, now int64) (resolve bool, endedAt int64) {
+	if unresolved > 0 {
 		return false, 0
+	}
+	if problemCount == 0 {
+		// Never attached to anything. Only close it once we are past the
+		// window where "not attached yet" is the honest explanation.
+		if startedAt == 0 || now-startedAt < int64(incidentOrphanGrace) {
+			return false, 0
+		}
+		// No problem-clear timestamp exists for an incident that never had
+		// a problem, so `now` is the only honest end time.
+		return true, now
 	}
 	if maxResolvedAt > 0 {
 		return true, maxResolvedAt
@@ -474,13 +512,17 @@ func (e *Evaluator) cascadeResolveIncidents(ctx context.Context) {
 	}
 	now := time.Now().UnixNano()
 	for _, ro := range rollups {
-		resolve, endedAt := incidentCascadeDecision(ro.ProblemCount, ro.Unresolved, ro.MaxResolvedAt, now)
+		resolve, endedAt := incidentCascadeDecisionAt(ro.ProblemCount, ro.Unresolved, ro.MaxResolvedAt, ro.StartedAt, now)
 		if !resolve {
 			continue
 		}
 		inc, err := e.store.GetIncident(ctx, ro.ID)
 		if err != nil || inc == nil || inc.Status == "resolved" {
 			continue
+		}
+		reason := "auto-resolved: all attached problems cleared"
+		if ro.ProblemCount == 0 {
+			reason = "auto-resolved: no problem ever attached (orphaned past the grace window)"
 		}
 		inc.Status = "resolved"
 		inc.ResolvedAt = &endedAt
@@ -493,9 +535,15 @@ func (e *Evaluator) cascadeResolveIncidents(ctx context.Context) {
 			Time:       endedAt,
 			Kind:       "resolved",
 			Actor:      "system",
-			Body:       "auto-resolved: all attached problems cleared",
+			Body:       reason,
 		})
-		log.Printf("[evaluator] INCIDENT AUTO-RESOLVED: %s (%d problems, all cleared)", inc.ID, ro.ProblemCount)
+		// The log says WHICH rule closed it: "0 problems, all cleared" read as
+		// a contradiction in the one case that matters most.
+		if ro.ProblemCount == 0 {
+			log.Printf("[evaluator] INCIDENT AUTO-RESOLVED: %s (orphaned — no problem ever attached)", inc.ID)
+		} else {
+			log.Printf("[evaluator] INCIDENT AUTO-RESOLVED: %s (%d problems, all cleared)", inc.ID, ro.ProblemCount)
+		}
 	}
 }
 

@@ -511,9 +511,21 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		args = append(args, q.Service)
 	}
 	if q.Search != "" {
-		// Filter on the raw route (like the raw path filters the raw
+		// Filter on the raw DIMENSION (like the raw path filters the raw
 		// pathExpr) so normalization only affects clustering.
-		where += " AND positionCaseInsensitive(http_route, ?) > 0"
+		//
+		// v0.9.324 — this was hardcoded to `http_route`, which the RPC tab
+		// pins to '' as its very definition of "non-HTTP inbound". So
+		// positionCaseInsensitive('', <term>) > 0 was false for every row the
+		// tab can produce: search on RPC & Messaging could not return a
+		// result, ever. The operator sees their gRPC and Kafka entry points,
+		// types a term to narrow, gets an empty table, and reads it as "there
+		// are none" — the silent-empty class this slice was written to
+		// remove, re-introduced by the slice itself (v0.9.313).
+		//
+		// dimCol is `http_route` on the HTTP tab and `name` on the RPC tab,
+		// so both now filter the column they actually display.
+		where += " AND positionCaseInsensitive(" + dimCol + ", ?) > 0"
 		args = append(args, q.Search)
 	}
 	args = append(args, nBuckets, nBuckets, nBuckets, q.Limit)

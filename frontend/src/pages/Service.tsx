@@ -21,7 +21,6 @@ import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { DetailsPropsStrip } from './service/DetailsPropsStrip';
-import { RpsByOperation } from './service/RpsByOperation';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -531,17 +530,31 @@ function ServiceDetailInner() {
                     operations summary. */}
                 <DetailsPropsStrip service={svc} range={range} />
                 <div className="dtl-sech">Performance</div>
+                {/* v0.9.348 — rootOnly: bu paneller servisin KENDİ giriş
+                    noktalarını çiziyor artık, dışarı yaptığı çağrıları değil.
+                    Filtresiz hâlde api-gateway'in grafiği
+                    account-service/ListAccounts gibi GİDEN çağrıları kendi
+                    yüküymüş gibi gösteriyordu (ölçüm: 22 seri, yalnız 14'ü
+                    bu servisin ucu). Overview'a AÇILMADI — orada operatörün
+                    kendi "giriş / tüm span'ler" ayrımı var. */}
                 <ServiceCharts service={svc} range={range} windowNs={rangeNs}
                   opScope={opScope} onOpScopeChange={setOpScope}
-                  problems={problems}
+                  problems={problems} rootOnly
                   onZoom={handleZoom} onZoomReset={handleZoomReset} />
                 <div className="ov-grid dtl-cols ov-mb">
                   <LazyMount minHeight={360}>
                     <ServiceLatencyHeatmap service={svc} range={range}
                                            operation={opScope} />
                   </LazyMount>
-                  <RpsByOperation operations={operations} range={range}
-                    onOpenOperations={() => setTab('operations')} />
+                  {/* v0.9.348 — "RPS by operation" çubuk listesi kaldırıldı.
+                      Hemen ÜSTÜNDEKİ grafik zaten operasyon başına RPS
+                      çiziyor; liste aynı veriyi ZAMAN EKSENİ OLMADAN tekrar
+                      gösteriyordu (ne zaman yükseldi, deploy'la çakıştı mı,
+                      bozulan hata oranı mı gecikme mi — hiçbirini
+                      söyleyemiyordu) ve root filtresi olmadığı için client
+                      çağrılarını servisin kendi yükü gibi karıştırıyordu.
+                      Kaldırılması bir sorgu eklemiyor: listenin hiç kendi
+                      sorgusu yoktu (v0.8.370 "ZERO new fetches"). */}
                 </div>
                 {/* v0.9.141 (operatör) — Structure paneli kaldırıldı; bölüm
                     yalnız DB sorgularına indi, başlık "Database" oldu. */}

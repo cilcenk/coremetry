@@ -1037,9 +1037,42 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 		log.Printf("[evaluator] anomaly promotion: list events: %v", err)
 		return
 	}
+	// v0.9.337 — honour the operator's mute HERE, not just on the two list
+	// endpoints.
+	//
+	// Muting an anomaly wrote a row that only api.go:10132 and :10236 ever
+	// read, so it hid the fingerprint from two lists and nothing else. The
+	// promotion sweep never consulted it: a muted fingerprint kept becoming a
+	// Problem, kept attaching to an incident, and kept paging. The operator
+	// gave an explicit instruction and the loudest path ignored it — which is
+	// a large part of "prodta çok anomali var".
+	//
+	// This is NOT learned suppression: no history, no score, no decay. It is
+	// one operator gesture with an expiry that ActiveSilencedFingerprints
+	// already enforces (until_at > now), so a lapsed mute stops suppressing
+	// on the very next sweep with no un-learning to get wrong.
+	//
+	// Soft-fail to "nothing muted": a CH blip must never silently suppress
+	// promotion. Failing OPEN here means the worst case is the noise the
+	// operator already has, not a missed page.
+	muted, mErr := e.store.ActiveSilencedFingerprints(ctx)
+	if mErr != nil {
+		log.Printf("[evaluator] anomaly promotion: silence list (promoting unfiltered): %v", mErr)
+		muted = nil
+	}
 	now := time.Now()
 	for _, ev := range events {
 		if ev.Status != "active" {
+			continue
+		}
+		if muted[ev.ID] {
+			// ev.ID IS the fingerprint (recorder.go builds it with
+			// FingerprintAnomaly), the same key the mute was written under.
+			// Logged rather than skipped in silence: a suppressed promotion
+			// is a decision, and an operator debugging "why did this not
+			// page" needs to find it.
+			log.Printf("[evaluator] anomaly promotion SKIPPED (muted): %s · %s · %s",
+				ev.Service, ev.Kind, ev.Pattern)
 			continue
 		}
 		if ev.PeakRatio < cfg.MinPeakRatio {

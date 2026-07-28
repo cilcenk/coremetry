@@ -39,6 +39,11 @@ const DBQ_COLS: DataTableColumn<DBQueryStat>[] = [
   { id: 'traces',     label: '',       width: 90 },
 ];
 
+// Kaç normalleştirilmiş statement gösterilir. Sunucu ağırlığa göre sıralı
+// döndürüyor, yani kırpılan kuyruk EN HAFİF olanlar — ama bu, kırpmanın
+// söylenmemesini haklı çıkarmaz (v0.9.349).
+const DBQ_LIMIT = 100;
+
 export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
   service: string;
   from: number;
@@ -51,14 +56,30 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [data, setData] = useState<DBQueryStat[] | null | undefined>(undefined);
+  // v0.9.349 — "daha fazlası var mı" sondası. Bkz. fetch aşağıda.
+  const [capped, setCapped] = useState(false);
   const [expandedIdx, setExpandedIdx] = useState<number | null>(null);
 
   useEffect(() => {
     if (!open || !service) return;
     setData(undefined);
-    api.serviceDBQueries(service, { from, to, limit: 100 })
-      .then(rows => setData(rows ?? []))
-      .catch(() => setData(null));
+    // v0.9.349 — limit+1 sondası (/services'in probeLimit deseni).
+    //
+    // Panel 100 satır çekiyor ve bunu HİÇBİR YERDE söylemiyordu: 100'den
+    // fazla farklı statement'ı olan bir serviste en ağır 100'ü gösterip
+    // "sorgularımın hepsi bu" diye okunuyordu. CLAUDE.md'nin sessiz-kırpma
+    // yasağı; bu oturumda aynı kural inbox listesinde (v0.9.221), aday
+    // taramasında (v0.9.318) ve /services süzgeçlerinde (v0.9.344) uygulandı.
+    //
+    // Bir fazlasını istemek "tam 100 var" ile "100'den fazla var"ı ayırt
+    // ediyor — `rows.length === 100` tek başına ikisini ayıramaz.
+    api.serviceDBQueries(service, { from, to, limit: DBQ_LIMIT + 1 })
+      .then(rows => {
+        const all = rows ?? [];
+        setCapped(all.length > DBQ_LIMIT);
+        setData(all.slice(0, DBQ_LIMIT));
+      })
+      .catch(() => { setCapped(false); setData(null); });
   }, [open, service, from, to]);
 
   // Shared sortable + resizable table. Client sort — the panel holds
@@ -95,6 +116,14 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
         {open && data && data.length > 0 && (
           <span style={{ fontSize: 11, color: 'var(--text3)' }}>
             {data.length} normalised statement{data.length === 1 ? '' : 's'}
+          </span>
+        )}
+        {/* v0.9.349 — sınır varsa görünür olacak. Yalnız GERÇEKTEN kırpıldıysa
+            çıkıyor: tam 100 statement'ı olan bir servis uyarı görmüyor. */}
+        {open && capped && (
+          <span className="badge b-warn"
+            title={`En ağır ${DBQ_LIMIT} statement gösteriliyor — bu serviste daha fazlası var. Sıralama sunucuda, yani kırpılan kuyruk en hafif olanlar.`}>
+            ⚠ ilk {DBQ_LIMIT}
           </span>
         )}
         <span style={{ flex: 1 }} />

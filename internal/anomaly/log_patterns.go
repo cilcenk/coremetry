@@ -63,6 +63,49 @@ type logPattern struct {
 // patterns are intentionally curated — every line here corresponds
 // to a real production failure shape that an SRE wants paged on.
 // Order doesn't matter; the response is sorted by ratio desc.
+// Qualification floors — v0.9.327, operator (prod): "daha sıkı kuralları
+// olsun, prodta çok daha az tetiklensin. Anomaly olmasa da şu an event
+// oluşuyor."
+//
+// Measured before the change: the median firing log_pattern event carried
+// current_count = 3, i.e. the floor WAS the trigger. Three matching lines is
+// not an incident at 10B logs/day; and a "12×" over a baseline of a quarter
+// line per window is small-number arithmetic, not a spike.
+//
+// No denominator exists here the way trace_ops has calls — a pattern count
+// has no natural per-request base — so the two levers are the count and the
+// ratio, both raised. Kept numerically identical to the trace_op floors so
+// the two detectors don't disagree about what "enough to matter" means.
+const (
+	logPatternMinCount = 10
+	logPatternMinRatio = 3.0
+)
+
+// qualifyLogPattern decides whether one pattern's current-window count is an
+// event, and of which kind. Returns ("", 0) when it does not qualify.
+//
+// Extracted pure in v0.9.327 so the thresholds are table-testable — the same
+// contract classifyTraceOps already had ("kesin eşik/kind sınıflaması Go'da,
+// tablo-testli"). Living inside a closure is how the old floors drifted apart
+// between the two branches without anything noticing.
+//
+// basePerWindow is the trailing baseline already normalized to the current
+// window's length, so both branches compare like with like.
+func qualifyLogPattern(cur uint64, basePerWindow float64) (kind string, ratio float64) {
+	if cur < logPatternMinCount {
+		return "", 0
+	}
+	if basePerWindow == 0 {
+		// Brand-new pattern this window: nothing to divide by, the count
+		// itself is the magnitude.
+		return "new", float64(cur)
+	}
+	if r := float64(cur) / basePerWindow; r >= logPatternMinRatio {
+		return "spike", r
+	}
+	return "", 0
+}
+
 var patterns = []logPattern{
 	{"Oracle errors (ORA-)", `ORA-[0-9]+`, []string{"ora-"}},
 	{"Oracle TNS errors", `TNS-[0-9]+`, []string{"tns-"}},
@@ -213,25 +256,8 @@ func DetectLogPatterns(ctx context.Context, store logstore.Store, window time.Du
 			windowRatio := float64(window) / float64(baseLookback)
 			basePerWindow := float64(base) * windowRatio
 
-			var (
-				ratio float64
-				kind  string
-			)
-			switch {
-			case basePerWindow == 0 && cur >= 3:
-				// Brand-new pattern this window. cur >= 3 floor
-				// suppresses single-line noise (a one-off OOM in
-				// a quiet hour rarely needs a page) without
-				// requiring sustained volume to register.
-				ratio = float64(cur)
-				kind = "new"
-			// v0.9.47 — cur >= 3 tabanı "new" dalıyla simetrik:
-			// base=1'e karşı cur=2 teknik olarak 2× ama tek satırlık
-			// gürültü; operatör 1-2 occurrence'ın event olmasını istemiyor.
-			case basePerWindow > 0 && cur >= 3 && float64(cur)/basePerWindow >= 2.0:
-				ratio = float64(cur) / basePerWindow
-				kind = "spike"
-			default:
+			kind, ratio := qualifyLogPattern(cur, basePerWindow)
+			if kind == "" {
 				return
 			}
 

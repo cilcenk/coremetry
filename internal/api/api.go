@@ -8153,17 +8153,17 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	probs, err := s.store.ListProblems(r.Context(), chstore.ProblemFilter{Limit: 1000})
+	// v0.9.343 — ask for the row, don't page the newest 1000 and scan.
+	//
+	// This paged ListProblems(Limit: 1000) and linear-scanned in Go, so any
+	// problem outside the newest 1000 answered "problem not found" — the same
+	// answer as "deleted", for a row the operator is looking at. Identical
+	// shape to the v0.9.332 GetIncident bug, with the right primitive
+	// (GetProblem, WHERE id = ?) already sitting in the same package.
+	p, err := s.store.GetProblem(r.Context(), id)
 	if err != nil {
 		writeErr(w, err)
 		return
-	}
-	var p *chstore.Problem
-	for i := range probs {
-		if probs[i].ID == id {
-			p = &probs[i]
-			break
-		}
 	}
 	if p == nil {
 		http.Error(w, "problem not found", http.StatusNotFound)
@@ -8291,25 +8291,24 @@ func (s *Server) copilotExplainIncident(w http.ResponseWriter, r *http.Request) 
 	}
 	// Pull attached problems so the prompt carries the actual
 	// signals that opened the incident, not just the title.
-	// Two-stage lookup: IncidentProblems returns IDs only;
-	// resolve full rows via a bounded ListProblems pass.
+	// Two-stage lookup: IncidentProblems returns IDs only, then the rows.
 	// Capped at 8 to keep the prompt size reasonable.
+	//
+	// v0.9.343 — the second stage used to page ListProblems(Limit: 2000) and
+	// keep the wanted subset, so an attached problem older than the newest
+	// 2000 silently vanished from the prompt: the model was told the incident
+	// had FEWER attached problems than it does, and answered confidently on
+	// the smaller set. Fails quiet — it degrades the explanation instead of
+	// erroring. Now the ids go into the query.
 	pIDs, _ := s.store.IncidentProblems(r.Context(), id)
-	wantIDs := map[string]bool{}
-	for i, pid := range pIDs {
-		if i >= 8 {
-			break
-		}
-		wantIDs[pid] = true
+	if len(pIDs) > 8 {
+		pIDs = pIDs[:8]
 	}
 	var probs []chstore.Problem
-	if len(wantIDs) > 0 {
-		all, _ := s.store.ListProblems(r.Context(), chstore.ProblemFilter{Limit: 2000})
-		for i := range all {
-			if wantIDs[all[i].ID] {
-				probs = append(probs, all[i])
-			}
-		}
+	if len(pIDs) > 0 {
+		probs, _ = s.store.ListProblems(r.Context(), chstore.ProblemFilter{
+			IDs: pIDs, Limit: len(pIDs),
+		})
 	}
 	var probLines string
 	for _, p := range probs {
@@ -8340,23 +8339,19 @@ func (s *Server) copilotExplainAnomaly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	// ListAnomalyEvents is bounded; for a single-id lookup we
-	// scan the recent window. Anomalies have short retention
-	// (30d) so the universe is small.
-	events, err := s.store.ListAnomalyEvents(r.Context(), chstore.ListAnomalyEventsFilter{
-		SinceNs: time.Now().Add(-30 * 24 * time.Hour).UnixNano(),
-		Limit:   2000,
-	})
+	// v0.9.343 — ask for the row, don't page 30 days and scan.
+	//
+	// The old comment argued "anomalies have short retention (30d) so the
+	// universe is small", but the read was capped at 2000 rows AND — since
+	// v0.9.326 — ordered `status = 'active' DESC, last_seen DESC`. So a
+	// CLEARED anomaly past the 2000th row could not be explained: the handler
+	// answered "anomaly not found" for a row the operator had open in front
+	// of them. GetAnomalyEvent does WHERE id = ?, which is both correct and
+	// cheaper than the window it replaces.
+	ev, err := s.store.GetAnomalyEvent(r.Context(), id, 0)
 	if err != nil {
 		writeErr(w, err)
 		return
-	}
-	var ev *chstore.AnomalyEvent
-	for i := range events {
-		if events[i].ID == id {
-			ev = &events[i]
-			break
-		}
 	}
 	if ev == nil {
 		http.Error(w, "anomaly not found", http.StatusNotFound)
@@ -8537,17 +8532,17 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	probs, err := s.store.ListProblems(r.Context(), chstore.ProblemFilter{Limit: 1000})
+	// v0.9.343 — ask for the row, don't page the newest 1000 and scan.
+	//
+	// This paged ListProblems(Limit: 1000) and linear-scanned in Go, so any
+	// problem outside the newest 1000 answered "problem not found" — the same
+	// answer as "deleted", for a row the operator is looking at. Identical
+	// shape to the v0.9.332 GetIncident bug, with the right primitive
+	// (GetProblem, WHERE id = ?) already sitting in the same package.
+	p, err := s.store.GetProblem(r.Context(), id)
 	if err != nil {
 		writeErr(w, err)
 		return
-	}
-	var p *chstore.Problem
-	for i := range probs {
-		if probs[i].ID == id {
-			p = &probs[i]
-			break
-		}
 	}
 	if p == nil {
 		http.Error(w, "problem not found", http.StatusNotFound)

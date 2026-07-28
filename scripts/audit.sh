@@ -256,6 +256,49 @@ else
     printf "${GRN}✓ clean${NC}\n"
 fi
 
+# ─── CHECK 8: filter applied AFTER a LIMIT (v0.9.322→343) ───
+# The defect family that produced 12 of the 40 releases in
+# v0.9.301..340, and the one this script could not see.
+#
+# Shape: a store call carries a Limit, and the caller then
+# picks rows out of the returned slice in Go. The LIMIT is
+# spent on rows the caller is about to discard, so the ones
+# it wanted may never have entered the window — and nothing
+# errors. Real instances: the inbox badge said 29 open
+# incidents while the list showed 2 (v0.9.322); GetIncident
+# paged the newest 1000 and ~87% of incidents were
+# unfetchable (v0.9.332); three copilot handlers answered
+# "not found" for any row outside their page (v0.9.343).
+#
+# Narrow on purpose: only the id-lookup form (Limit, then a
+# loop comparing an .ID and breaking out). Broad heuristics
+# here drown in false positives; this one has been verified
+# to flag every known instance of the family and nothing
+# else. Warning, not critical — the correct fix is usually a
+# by-id primitive, and a legitimate small-N scan exists.
+hr
+echo "CHECK 8 — filter/scan after a LIMIT (v0.9.322→343)"
+hits=$(awk '
+    FNR == 1 { lim = 0 }
+    # A function boundary closes the window: a Limit in one function says
+    # nothing about an id comparison in the next one.
+    /^func / { lim = 0 }
+    /Limit:[[:space:]]*[0-9a-zA-Z_]+/ { lim = FNR }
+    # Compare against a VALUE, not an empty-string guard — `if i.ID == ""`
+    # is a nil check, not a scan.
+    /\.ID ==|\.Fingerprint ==/ && !/== ""/ {
+        if (lim > 0 && FNR - lim <= 15) {
+            printf "%s:%d — Limit at line %d, then a Go-side id scan\n", FILENAME, FNR, lim
+            lim = 0
+        }
+    }
+' internal/api/*.go internal/chstore/*.go 2>/dev/null | filter_ignored || true)
+if [ -n "$hits" ]; then
+    while IFS= read -r line; do warn "$line"; done <<< "$hits"
+else
+    printf "${GRN}✓ clean${NC}\n"
+fi
+
 # ─── Summary ────────────────────────────────────────────────
 hr
 SUPPRESSED=$(awk '{ s += $1 } END { print s+0 }' "$SUPPRESS_LOG")

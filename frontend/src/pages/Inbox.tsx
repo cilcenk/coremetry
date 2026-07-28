@@ -66,6 +66,15 @@ const INBOX_COLS: DataTableColumn<InboxItem>[] = [
   { id: 'source',   label: 'Source',   sortValue: it => it.source,           naturalDir: 'asc', width: 100 },
   { id: 'service',  label: 'Service',  sortValue: it => it.service,          naturalDir: 'asc', width: 190 },
   { id: 'detail',   label: 'Detail',   sortValue: it => it.title,            naturalDir: 'asc', width: 380 },
+  // v0.9.331 — Occurrences is back. The operator insisted on keeping this
+  // column on /problems (v0.9.315: "ben occurences kolonu kalkmasını
+  // istemedim"); when the merged queue took over the Problems name in
+  // v0.9.323 the column did not come with it. On a triage list the number
+  // answers the question the row cannot: is this sustained, or did it fire
+  // once. It sits next to Detail because that is the comparison the eye makes.
+  { id: 'occurrences', label: 'Occurrences',
+    sortValue: it => it.exception?.occurrences ?? 0,
+    naturalDir: 'desc', numeric: true, width: 110 },
   { id: 'lastSeen', label: 'Last seen', sortValue: it => it.lastSeen,        naturalDir: 'desc', width: 170 },
   { id: 'assignee', label: 'Assignee', sortValue: it => it.assignee ?? '',   naturalDir: 'asc', width: 150 },
 ];
@@ -732,6 +741,12 @@ export default function InboxPage() {
                         )}
                       </div>
                       <DetailLine it={it} />
+                    </td>
+                    <td className="mono"
+                      style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {it.exception
+                        ? it.exception.occurrences.toLocaleString()
+                        : <span style={{ color: 'var(--text3)' }}>—</span>}
                     </td>
                     <td className="mono" style={{ fontSize: 11 }}>
                       {tsLong(it.lastSeen)}

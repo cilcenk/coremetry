@@ -752,7 +752,12 @@ const inboxSortDefault = "priority"
 // queue, not a 400.
 func normalizeInboxSort(id, dir string) (string, string) {
 	switch id {
-	case "priority", "source", "service", "detail", "lastSeen", "assignee":
+	case "priority", "source", "service", "detail", "lastSeen", "assignee",
+		// v0.9.331 — occurrences. The column the operator insisted on keeping
+		// (v0.9.315) came back on the merged queue, and a column that can't be
+		// sorted on a triage list is half a column: "which of these is
+		// actually sustained" is the question the number exists to answer.
+		"occurrences":
 	default:
 		id = inboxSortDefault
 	}
@@ -793,6 +798,10 @@ func sortInboxItems(items []InboxItem, id, dir string) {
 			if a.Assignee != b.Assignee {
 				return a.Assignee < b.Assignee
 			}
+		case "occurrences":
+			if inboxOccurrences(a) != inboxOccurrences(b) {
+				return inboxOccurrences(a) < inboxOccurrences(b)
+			}
 		default: // priority
 			ra, rb := priorityRank(a.Priority), priorityRank(b.Priority)
 			if ra != rb {
@@ -824,6 +833,17 @@ func sortInboxItems(items []InboxItem, id, dir string) {
 	})
 }
 
+// inboxOccurrences is the row's occurrence count, or 0 for the kinds that
+// don't have one. Problems come from alert-rule firings and incidents are
+// declared by a human — neither counts occurrences, so they sort as 0 and
+// render as "—" rather than pretending to a number they don't have.
+func inboxOccurrences(it InboxItem) uint64 {
+	if it.Exception != nil {
+		return it.Exception.Occurrences
+	}
+	return 0
+}
+
 // inboxPrimaryEqual reports whether two rows tie on the chosen sort column —
 // the point at which the (never-reversed) triage tiebreak takes over.
 func inboxPrimaryEqual(a, b InboxItem, id string) bool {
@@ -838,6 +858,8 @@ func inboxPrimaryEqual(a, b InboxItem, id string) bool {
 		return a.LastSeen == b.LastSeen
 	case "assignee":
 		return a.Assignee == b.Assignee
+	case "occurrences":
+		return inboxOccurrences(a) == inboxOccurrences(b)
 	default:
 		return priorityRank(a.Priority) == priorityRank(b.Priority)
 	}

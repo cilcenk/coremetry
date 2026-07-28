@@ -616,7 +616,20 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	if !q.SkipStatus && len(out) > 0 {
+	// v0.9.325 — the sidecar is HTTP-only, and on the RPC tab it was a
+	// guaranteed-empty raw-spans scan on every page load.
+	//
+	// It exists to fill the 2xx/3xx/4xx/5xx pills and the Method chip from
+	// the http_status / http_method columns. The RPC surface has neither:
+	// gRPC and Kafka entry points carry no HTTP status class. Worse, its
+	// IN-list is keyed on `http_route` while RPC rows carry the span NAME in
+	// Path, so `http_route IN ('SanctionsScreeningV2.Screen', …)` matched
+	// nothing — a bounded-but-real scan of the external Distributed spans
+	// table, per page load, to fill columns that cannot apply.
+	//
+	// Skipped rather than re-keyed: filling it correctly would still be
+	// asking a table for HTTP classes that don't exist for these spans.
+	if !q.SkipStatus && len(out) > 0 && q.Entry != EntryRPC {
 		// Best-effort decoration: a sidecar failure degrades the Status
 		// pills / Method chip to "—" instead of failing the whole table
 		// (the RED columns above are already final).

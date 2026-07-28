@@ -110,3 +110,26 @@ func TestSearchFiltersTheDisplayedDimension(t *testing.T) {
 		t.Error("dimCol must be http_route on the HTTP surface and name on the RPC surface")
 	}
 }
+
+// v0.9.325 — the HTTP status sidecar must not run on the RPC surface.
+//
+// It fills the 2xx/3xx/4xx/5xx pills and the Method chip from http_status /
+// http_method. gRPC and Kafka entry points have neither. And it keys its
+// IN-list on `http_route` while RPC rows carry the span NAME in Path, so the
+// predicate matched nothing: a real scan of the external Distributed spans
+// table on every page load, to fill columns that cannot apply.
+//
+// Bounded-and-empty is still work. On prod that is a per-page-load fan-out
+// bought for a guaranteed zero rows.
+func TestStatusSidecarSkippedOnRPCSurface(t *testing.T) {
+	src := mustReadSource(t, "endpoints.go")
+
+	if !strings.Contains(src, `if !q.SkipStatus && len(out) > 0 && q.Entry != EntryRPC {`) {
+		t.Error("the HTTP status sidecar must be skipped on the RPC surface — its columns cannot apply and its route IN-list cannot match")
+	}
+	// The sidecar itself stays http_route-keyed on purpose; pin that so a
+	// future edit doesn't "fix" it into running against RPC rows.
+	if !strings.Contains(src, `pathProj := "http_route"`) {
+		t.Error("the sidecar is HTTP-keyed by design; if this changes, revisit the RPC skip above")
+	}
+}

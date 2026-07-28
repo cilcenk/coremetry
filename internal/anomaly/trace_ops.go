@@ -21,6 +21,11 @@ type TraceOpAnomaly struct {
 	CurrentErrors  uint64  `json:"currentErrors"`
 	BaselineErrors uint64  `json:"baselineErrors"`
 	Ratio          float64 `json:"ratio"`         // current / max(baseline, 1)
+	// CurrentCalls — the denominator the qualification now insists on
+	// (v0.9.327). Shipping it means the row can say "42 errors of 3,100
+	// calls" instead of a bare count the operator has to go look up.
+	CurrentCalls uint64  `json:"currentCalls"`
+	ErrorShare   float64 `json:"errorShare"` // CurrentErrors / CurrentCalls, 0..1
 	SampleTraceID  string  `json:"sampleTraceId"` // representative trace for one-click drill-in
 	LastSeenNs     int64   `json:"lastSeenNs"`
 }
@@ -32,7 +37,40 @@ type traceOpBucket struct {
 	Operation string
 	CurErrs   uint64
 	BaseErrs  uint64 // RAW baseline count over the whole lookback (un-normalized)
+	CurCalls  uint64 // total calls in the current window — the denominator
 }
+
+// Qualification thresholds — v0.9.327, operator (prod): "active anomalyler
+// daha sıkı kuralları olsun, prodta çok daha az tetiklensin. Anomaly olmasa
+// da şu an event oluşuyor."
+//
+// Measured at the time of the change: the median firing event carried
+// current_count = 3-4, minimum 3. That is what the old floor allowed, and at
+// prod volume it is not an anomaly — it is arithmetic on small numbers. A
+// "12× spike" of three errors against a baseline of a quarter-error is noise
+// wearing a big multiplier.
+const (
+	// traceOpMinErrs — absolute floor. Under a handful of errors in a
+	// five-minute window, nothing above is worth an operator's attention at
+	// 1000s of services.
+	traceOpMinErrs = 10
+
+	// traceOpMinRatio — a real baseline has to be beaten by more than the
+	// diurnal wobble. 2× is inside normal day/night variation for most
+	// operations; 3× is not.
+	traceOpMinRatio = 3.0
+
+	// traceOpMinErrShare — THE missing rule. Both detectors qualified on
+	// error COUNT alone and never looked at the denominator, so 3 errors out
+	// of 500,000 calls opened an event exactly like 3 errors out of 3.
+	//
+	// 1% is not a new invention: it is the SAME floor this codebase's metric
+	// policy already applies to error_rate ("<%1 = birkaç-hata gürültüsü,
+	// açma", anomaly.go metricPolicies absFloor). Extending it here makes the
+	// two detectors agree about what counts as an error problem instead of
+	// contradicting each other.
+	traceOpMinErrShare = 0.01
+)
 
 // classifyTraceOps applies the qualification thresholds and produces
 // the sorted anomaly list. Pure — the v0.8.504 MV rewrite extracted it
@@ -50,24 +88,33 @@ func classifyTraceOps(rows []traceOpBucket, windowRatio float64) []TraceOpAnomal
 		if r.CurErrs == 0 {
 			continue
 		}
+		// v0.9.327 — the two floors that apply to EVERY branch, checked once
+		// up front rather than repeated into each case (which is how the
+		// old `>= 3` drifted between them).
+		if r.CurErrs < traceOpMinErrs {
+			continue
+		}
+		// Share floor. A zero denominator means the MV had errors but no
+		// call count for the pair — refuse rather than divide: an unknown
+		// denominator is not evidence of a high rate.
+		if r.CurCalls == 0 || float64(r.CurErrs)/float64(r.CurCalls) < traceOpMinErrShare {
+			continue
+		}
 		basePerWindow := uint64(float64(r.BaseErrs) * windowRatio)
 		var kind string
 		var ratio float64
 		switch {
-		case r.BaseErrs == 0 && r.CurErrs >= 3:
+		case r.BaseErrs == 0:
 			kind, ratio = "new_error", float64(r.CurErrs)
-		case r.BaseErrs > 0 && basePerWindow == 0:
+		case basePerWindow == 0:
 			// Baseline var ama pencere-normalize edilince sıfıra
 			// yuvarlanıyor (çok seyrek tarihî hata). Eski SQL bu dalda
 			// cur/(base*ratio) ile KALİFİYE eder (payda <1 → oran şişer),
 			// raporlanan ratio'yu ise cur olarak verirdi — birebir aynı.
-			// v0.9.47 — CurErrs >= 3 tabanı (operatör: 1-2 occurrence
-			// anlık blip'tir, event olmasın; new_error'ın 3 tabanıyla
-			// simetrik).
-			if r.CurErrs >= 3 && float64(r.CurErrs)/(float64(r.BaseErrs)*windowRatio) >= 2 {
+			if float64(r.CurErrs)/(float64(r.BaseErrs)*windowRatio) >= traceOpMinRatio {
 				kind, ratio = "error_spike", float64(r.CurErrs)
 			}
-		case basePerWindow > 0 && r.CurErrs >= 3 && float64(r.CurErrs)/float64(basePerWindow) >= 2:
+		case float64(r.CurErrs)/float64(basePerWindow) >= traceOpMinRatio:
 			kind, ratio = "error_spike", float64(r.CurErrs)/float64(basePerWindow)
 		}
 		if kind == "" {
@@ -78,6 +125,8 @@ func classifyTraceOps(rows []traceOpBucket, windowRatio float64) []TraceOpAnomal
 			Operation:      r.Operation,
 			Kind:           kind,
 			CurrentErrors:  r.CurErrs,
+			CurrentCalls:   r.CurCalls,
+			ErrorShare:     float64(r.CurErrs) / float64(r.CurCalls),
 			BaselineErrors: basePerWindow,
 			Ratio:          ratio,
 		})
@@ -148,25 +197,33 @@ func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window ti
 	// sınıflaması Go'da (classifyTraceOps, tablo-testli).
 	rows, err := conn.Query(ctx, `
 		SELECT service_name, name,
-		       sumIf(errs, is_cur = 1)  AS cur_errs,
-		       sumIf(errs, is_cur = 0)  AS base_errs
+		       sumIf(errs,  is_cur = 1) AS cur_errs,
+		       sumIf(errs,  is_cur = 0) AS base_errs,
+		       sumIf(calls, is_cur = 1) AS cur_calls
 		FROM (
 		  SELECT service_name, name,
 		         time_bucket >= ? AS is_cur,
-		         countIfMerge(error_count_state) AS errs
+		         countIfMerge(error_count_state) AS errs,
+		         countMerge(span_count_state)    AS calls
 		  FROM operation_summary_5m
 		  WHERE time_bucket >= ? AND time_bucket < ?
 		  GROUP BY service_name, name, is_cur
 		)
 		GROUP BY service_name, name
-		HAVING cur_errs > 0 AND (
-		  (base_errs = 0 AND cur_errs >= 3) OR
-		  (base_errs > 0 AND cur_errs >= 2 * base_errs * ?)
-		)
+		-- v0.9.327 — the coarse filter now carries the SAME floors the Go
+		-- classifier applies. It used to be deliberately looser, which meant
+		-- the LIMIT 200 filled with pairs Go would then reject: the ranking
+		-- was spent on rows that could never qualify. Same lesson as the
+		-- inbox status narrow (v0.9.322) — the LIMIT has to bite on rows
+		-- that can actually survive.
+		HAVING cur_errs >= ? AND cur_calls > 0
+		   AND cur_errs >= ? * cur_calls
+		   AND ((base_errs = 0) OR (cur_errs >= ? * base_errs * ?))
 		ORDER BY cur_errs DESC
 		LIMIT 200
 		SETTINGS max_execution_time = 25`,
-		curStart, baseStart, alignedNow, windowRatio,
+		curStart, baseStart, alignedNow,
+		traceOpMinErrs, traceOpMinErrShare, traceOpMinRatio, windowRatio,
 	)
 	if err != nil {
 		return nil, err
@@ -176,7 +233,7 @@ func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window ti
 	buckets := []traceOpBucket{}
 	for rows.Next() {
 		var b traceOpBucket
-		if err := rows.Scan(&b.Service, &b.Operation, &b.CurErrs, &b.BaseErrs); err != nil {
+		if err := rows.Scan(&b.Service, &b.Operation, &b.CurErrs, &b.BaseErrs, &b.CurCalls); err != nil {
 			return nil, err
 		}
 		buckets = append(buckets, b)

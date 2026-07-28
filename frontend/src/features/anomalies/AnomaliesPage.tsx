@@ -12,7 +12,7 @@ import { ArrowDownToLine, Users, ChevronRight, ChevronDown, CornerDownRight } fr
 import { Button } from '@/components/ui/Button';
 import { IconBell, IconSparkles } from '@/components/icons';
 import { useProblems, useServicesMetadata, keys } from '@/lib/queries';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type UserRow } from '@/lib/api';
 import { fmtNum, fmtFixed, tsLong } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
@@ -779,6 +779,30 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     : problemsQ.isError
       ? null
       : (problemsQ.data ?? []);
+  // v0.9.344 — chip counts come from the UNFILTERED set, server-side.
+  //
+  // They used to be `data.filter(...)`, and `data` is the response to a
+  // request that already carried ?priority=. So with the default P1+P2
+  // selection the P3 chip read 0 forever and an operator could not discover
+  // that P3 problems existed — the comment above the chips even claimed
+  // "Counts reflect the unfiltered set". Same defect as v0.9.330 on the
+  // merged queue, on the page that kept the old name.
+  //
+  // /api/problems/buckets was built for exactly this and had never been
+  // called (orphaned since the priority buckets shipped): it takes no
+  // priority param by design and is server-cached 5s on a shared key. It
+  // mirrors every OTHER filter, so the counts describe the same population
+  // the rows are drawn from.
+  const bucketsQ = useQuery({
+    queryKey: ['problem-buckets', statusFilter, serviceFilter, env],
+    queryFn: () => api.problemBuckets({
+      status: statusFilter === 'all' ? undefined : statusFilter,
+      service: serviceFilter || undefined,
+      env: env || undefined,
+    }),
+    staleTime: 5_000,
+    refetchInterval: 30_000,
+  });
   // Cluster filter options (v0.9.181) — distinct clusters across the loaded
   // problems. The narrowing itself runs server-side over the FULL set (not
   // page-limited); these options are just the picker's convenience list.
@@ -871,11 +895,15 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
         })}
         {/* Priority chip filter (v0.5.210) — defaults to P1+P2 so the
             operator's first paint is signal, not noise. Click P3 to
-            widen. Counts reflect the unfiltered set. */}
+            widen. Counts reflect the unfiltered set — and since v0.9.344
+            they actually do: they come from /api/problems/buckets, which
+            takes no priority param. Deriving them from `data` meant the
+            deselected chip could only ever read 0. */}
         {(['P1', 'P2', 'P3'] as const).map(pp => {
           const on = prioSet.has(pp);
           const tint = pp === 'P1' ? ' f-err' : pp === 'P2' ? ' f-warn' : '';
-          const count = data?.filter(d => (d.priority ?? 'P3') === pp).length ?? 0;
+          const count = bucketsQ.data?.priority?.[pp]
+            ?? (data?.filter(d => (d.priority ?? 'P3') === pp).length ?? 0);
           return (
             <span key={pp} onClick={() => togglePrio(pp)}
               title={on ? `Hide ${pp}` : `Show ${pp}`}

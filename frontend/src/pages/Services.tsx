@@ -497,6 +497,21 @@ export default function ServicesPage() {
               Errors only
             </label>
             <button className="sec" onClick={reset}>Reset</button>
+            {/* v0.9.344 — say which page these three actually narrow.
+                errorsOnly / minSpans / minP99 run in the BROWSER, over the 50
+                rows the server sent for the current page. At 1000s of
+                services "Errors only" can empty page 1 while erroring
+                services sit on page 7, and nothing on screen said so — the
+                same misreading the triage queue kept producing before its
+                filters moved into SQL (v0.9.322/330/335/336/342).
+                Pushing these into the query is the real fix and is queued;
+                until then the affordance must not imply a global answer. */}
+            {(errorsOnly || minSpans || minP99) && (hasMore || page > 0) && (
+              <span className="badge b-warn"
+                title="Bu üç süzgeç tarayıcıda, yalnız GÖRÜNEN sayfanın satırlarına uygulanıyor. Diğer sayfalarda eşleşen servisler olabilir. Servis adı ve takım süzgeçleri sunucuda çalışır, tüm kataloğu kapsar.">
+                ⚠ bu sayfada süzülüyor
+              </span>
+            )}
             {/* v0.9.281 (operatör: "sayfa sayısı ve NEXT/Last butonları daha
                 belirgin olabilir") — şerit var(--text3)/12px idi ve 23 sayfalık
                 bir listede gezinmenin tek yolu olmasına rağmen gözden kaçıyordu.

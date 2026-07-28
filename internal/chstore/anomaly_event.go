@@ -212,7 +212,19 @@ func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter
 		       if(last_seen >= now64() - INTERVAL ? SECOND, 'active', 'cleared') AS status
 		FROM anomaly_events FINAL
 		WHERE toUnixTimestamp64Nano(last_seen) >= ?
-		ORDER BY status DESC, last_seen DESC
+		-- v0.9.326 — this used to order by the status STRING descending,
+		-- which puts CLEARED FIRST.
+		-- ClickHouse compares these lexically and 'active' < 'cleared', so
+		-- descending is the exact inverse of the intent. Every caller wants
+		-- the firing ones: the inbox keeps only active rows, the evaluator
+		-- and root-cause worker act on them, /anomalies leads with them.
+		-- With the LIMIT filled by cleared rows first, a busy window pushes
+		-- the active ones off the end entirely — the list shows none while
+		-- CountActiveAnomalyEvents (a SQL count, no ordering) still reports
+		-- them. Local, 24h: 181 cleared vs 10 active — 191 of a 200 default.
+		-- One more day of history and the active rows vanish silently.
+		-- Written as a boolean so the lexical trap can't come back.
+		ORDER BY status = 'active' DESC, last_seen DESC
 		LIMIT ?`,
 		int64(f.ActiveAge.Seconds()),
 		since,

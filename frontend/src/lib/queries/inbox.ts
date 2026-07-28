@@ -22,6 +22,10 @@ export type InboxPage = {
   // failed only the floor" — an inflated hidden count is its own lie.
   minOcc?: number;
   hiddenByMinOcc?: number;
+  // v0.9.330 — facet totals computed server-side over the pre-facet, pre-cap
+  // set. The chips MUST render from these: counting the returned page is what
+  // made prod show "Exceptions 0" on a queue holding thousands of them.
+  counts?: Record<string, number>;
 };
 
 // Unified triage inbox (v0.5.211) — Problems + Exception groups +
@@ -36,6 +40,9 @@ export function useInbox(filter: {
   limit?: number;
   sort?: string; dir?: 'asc' | 'desc'; // v0.9.319 — server-side ranking
   minOcc?: number; // v0.9.320 — occurrence floor (0 = show all)
+  // v0.9.330 — kind/priority are SERVER filters now: they decide which rows
+  // come back, so they must bite before the cap.
+  kind?: string; prio?: string;
 }) {
   return useQuery<InboxPage>({
     queryKey: ['inbox', 'list', filter],

@@ -167,12 +167,25 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// Negative/absent → the default floor; an explicit 0 means "show all"
 	// and is honoured, which is why this can't use parseInt's default alone.
 	minOcc := normalizeInboxMinOcc(q.Get("minOcc"))
+	// v0.9.330 (operator-reported, prod) — kind/priority moved SERVER-side.
+	//
+	// They were client-side facets over a server-CAPPED page: the handler
+	// ranked the whole queue by priority, returned the top 300, and the page
+	// then kept only the matching kinds out of THOSE. On prod the top 300 were
+	// all Incidents, so the v0.9.328 exception-first default rendered "Queue
+	// clear" over 2,144 real items — an empty landing page on a queue that was
+	// anything but empty. The chips lied too ("Exceptions 0").
+	//
+	// This is the same lie the search filter told before v0.9.318, in the one
+	// place that hurts most: the default view.
+	kinds := normalizeInboxSet(q.Get("kind"), inboxKindsAll)
+	prios := normalizeInboxSet(q.Get("prio"), inboxPriosAll)
 
 	// v0.9.221 — :v2: marks the response-shape change (bare array → object
 	// with the total). Without the bump a pre-upgrade array could still be
 	// sitting under this key and would deserialize into the new shape as an
 	// empty page.
-	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc)
+	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc, kinds, prios)
 	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
 	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
 	// at 30s too, so each poll arrived at age = 30s + previous latency —
@@ -191,7 +204,8 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// by a key the truncation did not use returns the top of the SLICE, not
 	// the top of the queue.
 	narrowed := service != "" || search != "" || env != "" || ownerTeam != "" || sreTeam != "" ||
-		sortID != inboxSortDefault || sortDir != "desc"
+		sortID != inboxSortDefault || sortDir != "desc" ||
+		len(kinds) < len(inboxKindsAll) || len(prios) < len(inboxPriosAll)
 	srcLimit := inboxSourceLimit(limit, narrowed)
 
 	s.serveCached(w, r, cacheKey, 15*time.Second, func(ctx context.Context) (any, error) {
@@ -403,9 +417,18 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			items = filtered
 		}
 
-		// Occurrence floor — last narrow, so `hidden` is honest (see
-		// applyInboxMinOcc).
+		// Occurrence floor — last of the row-level narrows, so `hidden` is
+		// honest (see applyInboxMinOcc).
 		items, hiddenByMinOcc := applyInboxMinOcc(items, minOcc)
+
+		// v0.9.330 — facet counts are computed HERE, over everything that
+		// survived the row-level narrows and BEFORE the kind/priority facets
+		// and the cap. That ordering is the whole point: a chip has to report
+		// what exists, not what happens to be on the returned page. The old
+		// client-side counts were derived from the capped page, so on prod
+		// "Exceptions 0" meant "no exceptions in the top 300 incidents".
+		counts := inboxFacetCounts(items)
+		items = applyInboxFacets(items, kinds, prios)
 
 		// Rank the WHOLE candidate set before the cap (v0.9.318 scan fix +
 		// v0.9.319 server sort). Sorting after the cap would rank a page,
@@ -437,6 +460,9 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			// still be the important one.
 			"minOcc":         minOcc,
 			"hiddenByMinOcc": hiddenByMinOcc,
+			// Facet totals over the pre-facet, pre-cap set. The chips render
+			// from these, so they stay truthful about what is being excluded.
+			"counts": counts,
 		}, nil
 	})
 }
@@ -545,9 +571,23 @@ func inboxSourceLimit(limit int, narrowed bool) int {
 // request — the v0.5.187 cross-poisoning shape, with a search box as
 // the vector. The `:v2:` prefix marks the v0.9.221 response-shape
 // change (bare array → object with the total).
-func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit int, sortID, sortDir string, minOcc uint64) string {
-	return fmt.Sprintf("inbox:v3:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d",
-		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc)
+func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit int, sortID, sortDir string, minOcc uint64, kinds, prios []string) string {
+	// v0.9.330 — the facets join the key. They now decide WHICH rows come
+	// back, not just which of the returned ones render, so two operators on
+	// different facets sharing one cached page would be the v0.5.187
+	// cross-poisoning shape. Sorted+joined rather than length-only: a
+	// length-based digest is the exact bug that release fixed.
+	return fmt.Sprintf("inbox:v4:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s",
+		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc,
+		strings.Join(sortedCopyOf(kinds), "+"), strings.Join(sortedCopyOf(prios), "+"))
+}
+
+// sortedCopyOf returns a sorted copy so the key is order-independent:
+// ?kind=a,b and ?kind=b,a are the same view and must share one entry.
+func sortedCopyOf(in []string) []string {
+	out := append([]string(nil), in...)
+	sort.Strings(out)
+	return out
 }
 
 // inboxListCachePrefix is what a mutation drops to make the list re-read.
@@ -573,6 +613,83 @@ const inboxListCachePrefix = "inbox:"
 // staleness that makes an operator stop trusting the queue.
 func (s *Server) invalidateInboxCaches(r *http.Request) {
 	s.cacheInvalidatePrefix(r.Context(), inboxListCachePrefix)
+}
+
+// v0.9.330 — kind/priority vocabularies, server-side.
+//
+// These used to exist only in the frontend (KIND_ALL / PRIO_ALL). Keeping the
+// filter there meant it ran AFTER the server's cap, which is why prod showed
+// "Queue clear" over 2,144 items: the top 300 by priority were all Incidents,
+// and the page then kept only exceptions out of those 300.
+var inboxKindsAll = []string{"problem", "exception", "anomaly", "incident"}
+var inboxPriosAll = []string{"P1", "P2", "P3"}
+
+// normalizeInboxSet parses a comma-separated facet param against its
+// vocabulary. Absent, empty, or entirely-unknown → the full set, never an
+// empty one: a stale or hand-edited link must open the whole queue rather
+// than an empty page that looks like "nothing is wrong".
+func normalizeInboxSet(raw string, vocab []string) []string {
+	allow := make(map[string]bool, len(vocab))
+	for _, v := range vocab {
+		allow[v] = true
+	}
+	seen := map[string]bool{}
+	out := make([]string, 0, len(vocab))
+	for _, tok := range strings.Split(raw, ",") {
+		t := strings.TrimSpace(tok)
+		if t != "" && allow[t] && !seen[t] {
+			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	if len(out) == 0 {
+		return append([]string(nil), vocab...)
+	}
+	return out
+}
+
+// inboxFacetCounts totals each kind and priority over the set it is given.
+//
+// Called BEFORE the facet narrow and BEFORE the cap, so the chips report what
+// EXISTS rather than what survived. The client used to count the returned
+// page, which is how "Exceptions 0" appeared on a prod queue that held
+// thousands of them.
+func inboxFacetCounts(items []InboxItem) map[string]int {
+	out := make(map[string]int, len(inboxKindsAll)+len(inboxPriosAll))
+	for _, k := range inboxKindsAll {
+		out[k] = 0
+	}
+	for _, p := range inboxPriosAll {
+		out[p] = 0
+	}
+	for _, it := range items {
+		out[it.Kind]++
+		out[it.Priority]++
+	}
+	return out
+}
+
+// applyInboxFacets keeps rows matching BOTH selected sets. A full selection is
+// a no-op fast path so the default view pays nothing.
+func applyInboxFacets(items []InboxItem, kinds, prios []string) []InboxItem {
+	if len(kinds) >= len(inboxKindsAll) && len(prios) >= len(inboxPriosAll) {
+		return items
+	}
+	keepKind := make(map[string]bool, len(kinds))
+	for _, k := range kinds {
+		keepKind[k] = true
+	}
+	keepPrio := make(map[string]bool, len(prios))
+	for _, p := range prios {
+		keepPrio[p] = true
+	}
+	kept := items[:0]
+	for _, it := range items {
+		if keepKind[it.Kind] && keepPrio[it.Priority] {
+			kept = append(kept, it)
+		}
+	}
+	return kept
 }
 
 // inboxDefaultMinOcc — a group has to have fired this many times before it

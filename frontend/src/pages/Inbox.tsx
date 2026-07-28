@@ -189,6 +189,12 @@ export default function InboxPage() {
     sort: srvSort.id ?? 'priority',
     dir: srvSort.dir,
     minOcc,
+    // v0.9.330 — facets go to the SERVER now. As client-side filters they ran
+    // over a page the server had already capped at 300 by priority; on prod
+    // those 300 were all Incidents, so the exception-first default rendered
+    // "Queue clear" over 2,144 real items.
+    kind: [...kindSet].join(','),
+    prio: [...prioSet].join(','),
   });
   const data: InboxItem[] | null | undefined =
     inboxQ.isPending ? undefined : inboxQ.isError ? null : inboxQ.data?.items ?? [];
@@ -212,15 +218,29 @@ export default function InboxPage() {
   // operator isn't looking at is carrying a P1, say so on the page instead of
   // trusting them to notice a chip count. A triage surface may narrow by
   // default; it may not hide an emergency by default.
+  // v0.9.330 — derived from the SERVER counts. The page no longer carries the
+  // deselected kinds at all (the server filters before the cap), so scanning
+  // `data` for them would always find zero and the guard would go quiet
+  // exactly when it is needed. The server reports per-kind totals but not
+  // per-kind-per-priority, so this reads "kinds you are not looking at that
+  // have rows at all" — deliberately conservative: over-warning is survivable,
+  // staying silent about an unattended kind is not.
   const hiddenP1 = useMemo(() => {
+    const c = inboxQ.data?.counts;
+    if (!c) return {} as Record<string, number>;
     const out: Record<string, number> = {};
-    for (const it of data ?? []) {
-      if (it.priority !== 'P1' || kindSet.has(it.kind)) continue;
-      out[it.kind] = (out[it.kind] ?? 0) + 1;
+    for (const k of KIND_ALL) {
+      if (kindSet.has(k)) continue;
+      const n = c[k] ?? 0;
+      if (n > 0) out[k] = n;
     }
     return out;
-  }, [data, kindSet]);
+  }, [inboxQ.data, kindSet]);
   const hiddenP1Total = Object.values(hiddenP1).reduce((a, b) => a + b, 0);
+  // Naming note (v0.9.330): this counts ROWS in unselected kinds, not P1s
+  // specifically — the server reports per-kind totals, not a kind×priority
+  // matrix. The label says "kalem" for that reason; claiming "P1" would be a
+  // number that means something other than what it says.
 
   // The drawer's selected row, resolved from ?item= against the loaded list.
   // Uses the full (pre-facet) list so a deep-link to a row hidden by the
@@ -228,6 +248,10 @@ export default function InboxPage() {
   // the drawer shows a soft fallback, never a blank panel.
   const selected = useMemo(() => resolveSelectedItem(data, selectedId), [data, selectedId]);
 
+  // v0.9.330 — the server already applied these (before the cap, which is the
+  // whole point). Kept as a belt-and-braces pass so a stale cached page from a
+  // pre-upgrade pod can't render rows the operator deselected — it must never
+  // be the ONLY place the facet is applied again.
   const filtered = useMemo(() => {
     if (!data) return data;
     return data.filter(it =>
@@ -346,7 +370,14 @@ export default function InboxPage() {
     setBulkBusy(false);
   };
 
+  // v0.9.330 — chips render SERVER counts, computed over the pre-facet,
+  // pre-cap set. Counting the returned page is exactly how prod displayed
+  // "Exceptions 0" on a queue that held thousands: the page was 300 incidents,
+  // so every other chip read zero and the numbers argued the queue was empty.
+  // Falls back to page-derived counts only while no server payload exists yet.
   const counts = useMemo(() => {
+    const fromServer = inboxQ.data?.counts;
+    if (fromServer) return fromServer;
     const out: Record<string, number> = { P1: 0, P2: 0, P3: 0,
       problem: 0, exception: 0, anomaly: 0, incident: 0 };
     for (const it of data ?? []) {
@@ -354,7 +385,7 @@ export default function InboxPage() {
       out[it.kind] = (out[it.kind] ?? 0) + 1;
     }
     return out;
-  }, [data]);
+  }, [data, inboxQ.data]);
 
   // Distinct team values from the current result set drive the
   // dropdown options. Server-side filter narrows the list, so
@@ -530,8 +561,8 @@ export default function InboxPage() {
         {hiddenP1Total > 0 && (
           <div style={{ marginBottom: 8 }}>
             <span className="badge b-err"
-              title="Bakmadığın bir türde P1 var. Varsayılan görünüm daraltabilir, ama acil bir şeyi saklayamaz.">
-              ⚠ Gizli türlerde <b>{hiddenP1Total}</b> P1
+              title="Bakmadığın türlerde satır var. Varsayılan görünüm daraltabilir, ama bir şeyi sessizce saklayamaz.">
+              ⚠ Bakmadığın türlerde <b>{hiddenP1Total}</b> kalem
               {' — '}
               {Object.entries(hiddenP1)
                 .map(([k, n]) => `${KIND_LABEL[k as InboxKind] ?? k}: ${n}`)

@@ -297,7 +297,7 @@ func TestIncidentToInbox(t *testing.T) {
 // full TTL and nothing failed loudly. The prefix must match both the list key
 // and the count key.
 func TestInboxListCachePrefixMatchesKeys(t *testing.T) {
-	listKey := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5)
+	listKey := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5, nil, nil)
 	if !strings.HasPrefix(listKey, inboxListCachePrefix) {
 		t.Errorf("list key %q is not dropped by prefix %q", listKey, inboxListCachePrefix)
 	}
@@ -409,5 +409,132 @@ func TestInboxEffectiveLimit(t *testing.T) {
 					got, storeMax)
 			}
 		}
+	}
+}
+
+// ── v0.9.330 — facets are server-side ────────────────────────────────────
+//
+// Operator-reported, prod: the Problems page rendered "Queue clear" while the
+// same screen said "2144 kalemden ilk 300'i gösteriliyor". Kind and priority
+// were CLIENT-side facets over a page the server had already capped at 300 by
+// priority. On prod those 300 were all Incidents, so the v0.9.328
+// exception-first default filtered them to nothing. The chips agreed with the
+// emptiness — "Exceptions 0" — because they counted the returned page too.
+//
+// Both halves are fixed here: the facet runs before the cap, and the counts
+// are taken before the facet.
+
+func TestNormalizeInboxSet(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want []string
+	}{
+		// Absent / empty / all-unknown → the FULL set. Never empty: a stale
+		// or hand-edited link must open the whole queue, not a blank page
+		// that reads as "nothing is wrong".
+		{"", inboxKindsAll},
+		{"   ", inboxKindsAll},
+		{"nonsense,garbage", inboxKindsAll},
+		{"exception", []string{"exception"}},
+		{"exception,incident", []string{"exception", "incident"}},
+		{" exception , incident ", []string{"exception", "incident"}},
+		// Unknown tokens are dropped, known ones survive — a partially stale
+		// link still narrows to what it can.
+		{"exception,bogus", []string{"exception"}},
+		// Duplicates collapse.
+		{"exception,exception", []string{"exception"}},
+	}
+	for _, tc := range cases {
+		got := normalizeInboxSet(tc.raw, inboxKindsAll)
+		if len(got) != len(tc.want) {
+			t.Errorf("normalizeInboxSet(%q) = %v, want %v", tc.raw, got, tc.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("normalizeInboxSet(%q) = %v, want %v", tc.raw, got, tc.want)
+				break
+			}
+		}
+	}
+}
+
+func inboxFacetFixture() []InboxItem {
+	return []InboxItem{
+		{ID: "e1", Kind: "exception", Priority: "P2"},
+		{ID: "i1", Kind: "incident", Priority: "P1"},
+		{ID: "i2", Kind: "incident", Priority: "P1"},
+		{ID: "a1", Kind: "anomaly", Priority: "P3"},
+		{ID: "p1", Kind: "problem", Priority: "P1"},
+	}
+}
+
+// The counts must describe the whole set, not the filtered one — that is the
+// difference between a chip that says "there are 3 incidents you're not
+// looking at" and one that says "0" while hiding them.
+func TestInboxFacetCountsArePreFacet(t *testing.T) {
+	c := inboxFacetCounts(inboxFacetFixture())
+	for kind, want := range map[string]int{
+		"exception": 1, "incident": 2, "anomaly": 1, "problem": 1,
+	} {
+		if c[kind] != want {
+			t.Errorf("counts[%s] = %d, want %d", kind, c[kind], want)
+		}
+	}
+	for prio, want := range map[string]int{"P1": 3, "P2": 1, "P3": 1} {
+		if c[prio] != want {
+			t.Errorf("counts[%s] = %d, want %d", prio, c[prio], want)
+		}
+	}
+	// Every vocabulary entry is present even at zero, so a chip renders "0"
+	// rather than disappearing when its kind is empty.
+	empty := inboxFacetCounts(nil)
+	for _, k := range append(append([]string{}, inboxKindsAll...), inboxPriosAll...) {
+		if _, ok := empty[k]; !ok {
+			t.Errorf("counts is missing %q on an empty set", k)
+		}
+	}
+}
+
+func TestApplyInboxFacets(t *testing.T) {
+	all := inboxFacetFixture()
+
+	// The prod case: exception-only must return the exception, not nothing.
+	got := applyInboxFacets(append([]InboxItem(nil), all...),
+		[]string{"exception"}, inboxPriosAll)
+	if len(got) != 1 || got[0].ID != "e1" {
+		t.Errorf("kind=exception returned %d rows (%v), want just e1", len(got), got)
+	}
+
+	// Both facets AND together.
+	got = applyInboxFacets(append([]InboxItem(nil), all...),
+		[]string{"incident", "problem"}, []string{"P1"})
+	if len(got) != 3 {
+		t.Errorf("incident+problem × P1 returned %d rows, want 3", len(got))
+	}
+
+	// A full selection is a pass-through: the default view must pay nothing.
+	got = applyInboxFacets(append([]InboxItem(nil), all...), inboxKindsAll, inboxPriosAll)
+	if len(got) != len(all) {
+		t.Errorf("full selection filtered %d → %d", len(all), len(got))
+	}
+}
+
+// The facets change WHICH rows come back, so two operators on different
+// facets must not share one cached page — the v0.5.187 shape.
+func TestInboxFacetsInCacheKey(t *testing.T) {
+	base := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5, inboxKindsAll, inboxPriosAll)
+	exc := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5, []string{"exception"}, inboxPriosAll)
+	p1 := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5, inboxKindsAll, []string{"P1"})
+	if base == exc || base == p1 || exc == p1 {
+		t.Errorf("facet variants collide:\n base=%s\n exc=%s\n p1=%s", base, exc, p1)
+	}
+	// Order must NOT matter: ?kind=a,b and ?kind=b,a are one view.
+	ab := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5,
+		[]string{"exception", "incident"}, inboxPriosAll)
+	ba := inboxListKey("open", "", "", "", "", "", 200, "priority", "desc", 5,
+		[]string{"incident", "exception"}, inboxPriosAll)
+	if ab != ba {
+		t.Errorf("facet order changed the key:\n %s\n %s", ab, ba)
 	}
 }

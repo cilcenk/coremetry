@@ -160,6 +160,17 @@ type ListAnomalyEventsFilter struct {
 	SinceNs   int64   // unix ns; 0 = last 24h default
 	ActiveAge time.Duration // last_seen freshness for "active" status; 0 = 10m default
 	Limit     int
+	// ActiveOnly (v0.9.335) narrows to firing events IN SQL, so the LIMIT
+	// lands on rows the caller will actually keep.
+	//
+	// The inbox's "open" pivot keeps only active events and dropped the rest
+	// in Go — AFTER the limit. That is the same silent-scope shape already
+	// fixed for problems and incidents (v0.9.322): a caller asking for 2000
+	// rows to find 20 active ones spends its whole budget on cleared history.
+	// "Active" is exactly the freshness predicate the status column is
+	// derived from, so this adds no new notion — it moves an existing one to
+	// where the LIMIT can respect it.
+	ActiveOnly bool
 }
 
 // CountActiveAnomalyEvents returns the number of anomaly events currently
@@ -204,6 +215,15 @@ func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter
 		since = time.Now().Add(-24 * time.Hour).UnixNano()
 	}
 
+	activeSQL := ""
+	if f.ActiveOnly {
+		activeSQL = " AND last_seen >= now64() - INTERVAL ? SECOND"
+	}
+	args := []any{int64(f.ActiveAge.Seconds()), since}
+	if f.ActiveOnly {
+		args = append(args, int64(f.ActiveAge.Seconds()))
+	}
+	args = append(args, f.Limit)
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, kind, pattern, service,
 		       toUnixTimestamp64Nano(started_at),
@@ -211,7 +231,7 @@ func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter
 		       peak_ratio, current_ratio, current_count, sample,
 		       if(last_seen >= now64() - INTERVAL ? SECOND, 'active', 'cleared') AS status
 		FROM anomaly_events FINAL
-		WHERE toUnixTimestamp64Nano(last_seen) >= ?
+		WHERE toUnixTimestamp64Nano(last_seen) >= ?`+activeSQL+`
 		-- v0.9.326 — this used to order by the status STRING descending,
 		-- which puts CLEARED FIRST.
 		-- ClickHouse compares these lexically and 'active' < 'cleared', so
@@ -225,11 +245,7 @@ func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter
 		-- One more day of history and the active rows vanish silently.
 		-- Written as a boolean so the lexical trap can't come back.
 		ORDER BY status = 'active' DESC, last_seen DESC
-		LIMIT ?`,
-		int64(f.ActiveAge.Seconds()),
-		since,
-		f.Limit,
-	)
+		LIMIT ?`, args...)
 	if err != nil {
 		return nil, err
 	}

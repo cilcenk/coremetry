@@ -283,7 +283,13 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		var evs []chstore.AnomalyEvent
 		if statusFilter != "ignored" {
 			var err error
-			evs, err = s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{Limit: srcLimit})
+			// v0.9.335 — the "open" pivot keeps only ACTIVE events, so say so
+			// in SQL. Dropping cleared ones in Go after the LIMIT spent the
+			// whole scan budget on history: the fourth and last source still
+			// narrowing post-cap (problems + incidents got this in v0.9.322).
+			evs, err = s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
+				Limit: srcLimit, ActiveOnly: statusFilter == "open",
+			})
 			if err != nil {
 				return nil, err
 			}

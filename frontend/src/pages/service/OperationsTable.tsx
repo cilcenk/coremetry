@@ -5,7 +5,6 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Sparkline } from '@/components/Sparkline';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { EventMarkers } from '@/components/EventMarkers';
-import { Modal } from '@/components/ui';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -37,9 +36,28 @@ function impactOf(r: OperationSummary): number {
 // table answers "what should I optimise first" without the
 // operator combining columns by eye.
 
+// v0.9.347 — hangi metriğin sparkline'ına basıldığı; detay onunla açılır.
+export type OpMetricKey = 'calls' | 'errors' | 'p99';
+
+// Üç mini sparkline tek hücrede; her biri kendi tıklama hedefi.
+const miniSparkBtn: React.CSSProperties = {
+  background: 'transparent', border: '1px solid transparent', borderRadius: 4,
+  padding: '1px 2px', cursor: 'pointer', display: 'inline-block', marginRight: 2,
+};
+
 const OP_COLS: DataTableColumn<OperationSummary>[] = [
   { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc',  width: 320 },
-  { id: 'trend',     label: 'Trend',     width: 92 },
+  // v0.9.347 — Trend hücresi ÜÇE bölündü (calls · errors · p99).
+  //
+  // Operatör: "doğrudan sparkline olarak göstersek ve üzerine tıklayınca
+  // direkt o metriğe baksak". Eskiden tek bir calls sparkline'ı vardı ve
+  // üç metriği görmenin tek yolu modalı açmaktı — yani hangi satırda errors
+  // tümseği olduğunu görmek için satırları TEK TEK açman gerekiyordu.
+  //
+  // Diğer kolonların hiçbiri değişmedi: v0.9.61'de operations tablosunda bir
+  // düzen değişikliği canlıda reddedildi (v0.9.67 revert), o yüzden bu sürüm
+  // yalnız mevcut Trend hücresini genişletiyor.
+  { id: 'trend',     label: 'Trend',     width: 190 },
   { id: 'impact',    label: 'Impact',    sortValue: r => impactOf(r),       numeric: true,      width: 130 },
   { id: 'spanCount', label: 'Calls',     sortValue: r => r.spanCount,       numeric: true,      width: 96 },
   { id: 'errorRate', label: 'Err %',     sortValue: r => r.errorRate,       numeric: true,      width: 84 },
@@ -85,12 +103,15 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   // app-wide "/" shortcut focuses it (UX#4 keyboard nav).
   const searchRef = useRef<HTMLInputElement>(null);
   // v0.5.392 — per-row metric drill-in. Clicking the sparkline
-  // opens a Modal with three synced uPlot charts (calls, errors,
+  // v0.9.347 — artık satır ALTINDA açılıyor (eskiden Modal). Üç senkron
+  // uPlot grafiği aynı (calls, errors,
   // p99) for the same (service, op) tuple. Same pattern the
   // endpoints page uses; here it pulls from the row's stored
   // sparkline + companion errors/p99 sparklines added in the
   // same release.
   const [opDetail, setOpDetail] = useState<OperationSummary | null>(null);
+  // v0.9.347 — tıklanan sparkline hangi metrikse detay onunla açılıyor.
+  const [opFocus, setOpFocus] = useState<OpMetricKey>('calls');
 
   // v0.9.206 review-fix — modal satırının MEVCUT range'e ait taze
   // kopyası. Modal içinden zoom sayfa range'ini yeniden yazınca op
@@ -402,16 +423,30 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                   <td>
                     <button
                       type="button"
-                      onClick={() => setOpDetail(op)}
-                      title={`${fmtNum(op.spanCount)} calls — click for calls / errors / p99 detail`}
-                      style={{
-                        background: 'transparent', border: 0, padding: 0,
-                        cursor: 'pointer', display: 'inline-block',
-                      }}
+                      onClick={() => { setOpFocus('calls'); setOpDetail(op); }}
+                      title={`Calls — ${fmtNum(op.spanCount)} · tıkla: bu metriğin grafiği`}
+                      style={miniSparkBtn}
                     >
-                      <Sparkline values={op.sparkline ?? []}
-                        color={sparkColor}
-                        title="" />
+                      <Sparkline values={op.sparkline ?? []} color={sparkColor} title="" />
+                    </button>
+                    {/* v0.9.347 — errors ve p99 sparkline'ları. İkisi de ZATEN
+                        aynı yanıtta geliyordu (errorsSparkline / p99Sparkline,
+                        v0.5.392'den beri); modal açılmadığı için çizilmiyorlardı
+                        sadece. Yeni sorgu yok. */}
+                    <button type="button"
+                      onClick={() => { setOpFocus('errors'); setOpDetail(op); }}
+                      title={`Errors — %${op.errorRate.toFixed(2)} · tıkla: bu metriğin grafiği`}
+                      style={miniSparkBtn}
+                    >
+                      <Sparkline values={op.errorsSparkline ?? []}
+                        color={op.errorRate > 0 ? 'var(--err)' : undefined} title="" />
+                    </button>
+                    <button type="button"
+                      onClick={() => { setOpFocus('p99'); setOpDetail(op); }}
+                      title={`P99 — ${op.p99DurationMs.toFixed(0)}ms · tıkla: bu metriğin grafiği`}
+                      style={miniSparkBtn}
+                    >
+                      <Sparkline values={op.p99Sparkline ?? []} color="var(--warn)" title="" />
                     </button>
                   </td>
                   <td className="mono" style={{ textAlign: 'right' }}>
@@ -430,6 +465,33 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                   <td className="mono" style={{ textAlign: 'right' }}>{op.p99DurationMs.toFixed(1)}ms</td>
                 </tr>
               );
+            }).flatMap((rowEl, i) => {
+              // v0.9.347 — detay artık MODAL değil, satırın ALTINDA.
+              //
+              // Modal tabloyu kapatıyordu: "errors neden yükseldi" sorusunu
+              // sorarken diğer operasyonların aynı andaki hâlini göremiyordun,
+              // ve kapatınca sıralama/kaydırma bağlamı gidiyordu. Genişleme
+              // tabloyu yerinde bırakıyor.
+              const op = dt.sortedRows[i];
+              if (!opDetail || op.name !== opDetail.name) return [rowEl];
+              return [rowEl, (
+                <tr key={`${op.name}::detail`}>
+                  <td colSpan={OP_COLS.length} style={{
+                    background: 'var(--bg2)', borderLeft: '2px solid var(--accent)', padding: 0,
+                  }}>
+                    <OperationMetricPanel
+                      service={service}
+                      op={freshOpRow ?? opDetail}
+                      opIsStale={!freshOpRow}
+                      focus={opFocus}
+                      onClose={() => setOpDetail(null)}
+                      range={range}
+                      onZoom={onZoom}
+                      onZoomReset={onZoomReset}
+                    />
+                  </td>
+                </tr>
+              )];
             })}
           </tbody>
         </table>
@@ -439,29 +501,30 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
           (Endpoints modal deseni).
           v0.9.206 review-fix — taze kopya YOKSA grafikler bayat satırdan
           üretilmez (opIsStale); modal açık kalır, kimlik/başlık durur. */}
-      <OperationMetricModal
-        service={service}
-        op={opDetail ? freshOpRow ?? opDetail : null}
-        opIsStale={!!opDetail && !freshOpRow}
-        onClose={() => setOpDetail(null)}
-        range={range}
-        onZoom={onZoom}
-        onZoomReset={onZoomReset}
-      />
+      {/* v0.9.347 — modal kaldırıldı; detay yukarıda satır altında
+          render ediliyor. Bileşenin gövdesi (üç RED grafiği + Explore
+          bağlantıları) aynen korundu, yalnız kabı değişti. */}
     </div>
   );
 }
 
-// OperationMetricModal — opens on per-op sparkline click. Same
+// OperationMetricPanel — v0.9.347'de OperationMetricModal'dan dönüştü.
+// Aynı gövde (üç RED grafiği + Explore bağlantıları), farklı kap: Modal
+// yerine tıklanan satırın ALTINDA render ediliyor, ve `focus` tıklanan
+// sparkline'ın metriğini öne alıyor.
+//
+// Eski adıyla: opens on per-op sparkline click. Same
 // three-RED-dimensions pattern as the Endpoints modal: calls,
 // errors, p99 latency, drawn as full uPlot charts with a synced
 // crosshair so the operator correlates spikes across all three
 // at one instant. v0.5.392 — applies the metric drill-in pattern
 // to /service per-operation rows so the operator gets the same
 // reading affordance everywhere they see a sparkline.
-function OperationMetricModal({
+function OperationMetricPanel({
+  focus,
   service, op, opIsStale, onClose, range, onZoom, onZoomReset,
 }: {
+  focus: OpMetricKey;
   service: string;
   op: OperationSummary | null;
   // v0.9.206 review-fix — true = op, MEVCUT range'in sonuçlarında
@@ -501,7 +564,7 @@ function OperationMetricModal({
     };
   }, [op, opIsStale, range]);
 
-  if (!op) return <Modal open={false} onClose={onClose} />;
+  if (!op) return null;
   // v0.9.206 review-fix — bayat satırda boş hâl mesajı sebebi söyler.
   const emptyLabel = opIsStale
     ? 'no data for this operation in the zoomed window' : undefined;
@@ -543,38 +606,51 @@ function OperationMetricModal({
       ['result', 'metric'],
     ])}`;
   };
+  // v0.9.347 — tıklanan metrik ÖNCE geliyor. Diğer ikisi yanında duruyor:
+  // "errors neden yükseldi"nin cevabı çoğu zaman calls ya da p99'da, o yüzden
+  // odak sıralamayı değiştiriyor ama diğerlerini gizlemiyor.
+  const tiles = {
+    calls: (
+      <OpMetricTile key="calls" label="Calls" big={fmtNum(op.spanCount)}
+        sub={`peak ${fmtNum(peakCalls)} / bucket`}
+        series={series.calls} emptyLabel={emptyLabel}
+        service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
+    ),
+    errors: (
+      <OpMetricTile key="errors" label="Errors" big={fmtNum(op.errorCount)}
+        sub={`${op.errorRate.toFixed(2)}% rate`}
+        subCls={errCls}
+        series={series.errors} emptyLabel={emptyLabel}
+        service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
+    ),
+    p99: (
+      <OpMetricTile key="p99" label="P99 latency"
+        big={`${op.p99DurationMs.toFixed(0)} ms`}
+        sub={`peak ${maxP99.toFixed(0)} ms · avg ${op.avgDurationMs.toFixed(0)} ms`}
+        series={series.p99} unit="ms" emptyLabel={emptyLabel}
+        service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
+    ),
+  };
+  const order: OpMetricKey[] = [focus, ...(['calls', 'errors', 'p99'] as OpMetricKey[]).filter(k => k !== focus)];
+
   return (
-    <Modal
-      open
-      onClose={onClose}
-      size="lg"
-      title={
-        <span className="mono" style={{ fontSize: 13 }}>
+    <div style={{ padding: '12px 14px 14px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, marginBottom: 10 }}>
+        <span className="mono" style={{ fontSize: 12.5 }}>
           {op.name}
-          <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
-            ({service})
-          </span>
+          <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>({service})</span>
         </span>
-      }
-    >
+        <button type="button" onClick={onClose}
+          style={{
+            marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)',
+            borderRadius: 5, color: 'var(--text2)', fontSize: 11, padding: '2px 9px', cursor: 'pointer',
+          }}>kapat</button>
+      </div>
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
         gap: 12, marginBottom: 14,
       }}>
-        <OpMetricTile label="Calls" big={fmtNum(op.spanCount)}
-          sub={`peak ${fmtNum(peakCalls)} / bucket`}
-          series={series.calls} emptyLabel={emptyLabel}
-          service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
-        <OpMetricTile label="Errors" big={fmtNum(op.errorCount)}
-          sub={`${op.errorRate.toFixed(2)}% rate`}
-          subCls={errCls}
-          series={series.errors} emptyLabel={emptyLabel}
-          service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
-        <OpMetricTile label="P99 latency"
-          big={`${op.p99DurationMs.toFixed(0)} ms`}
-          sub={`peak ${maxP99.toFixed(0)} ms · avg ${op.avgDurationMs.toFixed(0)} ms`}
-          series={series.p99} unit="ms" emptyLabel={emptyLabel}
-          service={service} bounds={bounds} onZoom={onZoom} onZoomReset={onZoomReset} />
+        {order.map(k => tiles[k])}
       </div>
       <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
         Hover any chart to read the bucket value; crosshair syncs
@@ -605,7 +681,7 @@ function OperationMetricModal({
           P99 →
         </Link>
       </div>
-    </Modal>
+    </div>
   );
 }
 

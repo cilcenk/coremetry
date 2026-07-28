@@ -181,12 +181,27 @@ func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window ti
 	curWindow := time.Duration(curBuckets) * traceOpBucketLen
 	curStart := alignedNow.Add(-curWindow)
 
-	baseLookback := time.Hour
+	// v0.9.334 — taban penceresi 1 saat → 24 saat.
+	//
+	// Operatör (prod, v0.9.327'den SONRA): "Prodta hâlâ çok anomali var."
+	//
+	// Sertleştirilen eşikler `base_errs > 0` dalını kısıyordu ama "new_error"
+	// dalını değil: taban penceresinde hiç hata yoksa oran şartı HİÇ
+	// uygulanmıyor. 1 saatlik pencereyle, iki saatte bir tekrarlayan bir hata
+	// HER SEFERİNDE "yeni" sayılıyor — kalıcı bir olay üreteci. 24 saatte
+	// "yeni", gerçekten "bir gündür görülmedi" demek.
+	//
+	// Normalizasyon bunu ücretsiz kılıyor: base 24 saatlik toplam olduğu için
+	// windowRatio da 24× küçülüyor, yani basePerWindow (dolayısıyla spike
+	// eşiği) değişmiyor. Değişen tek şey "taban sıfır" iddiasının ne kadar
+	// zor olduğu.
+	//
+	// Maliyet ölçüldü (yerel, operation_summary_5m): 1h 0.050s / 24h 0.058s.
+	// MV önceden toplandığı için genişleme çıktı kardinalitesini değil yalnız
+	// birleştirilen bucket sayısını artırıyor.
+	baseLookback := 24 * time.Hour
 	if 12*curWindow > baseLookback {
 		baseLookback = 12 * curWindow
-	}
-	if baseLookback > 24*time.Hour {
-		baseLookback = 24 * time.Hour
 	}
 	baseStart := curStart.Add(-baseLookback)
 	windowRatio := float64(curWindow) / float64(baseLookback)

@@ -31,7 +31,12 @@ func TestQualifyLogPattern(t *testing.T) {
 		// 3 is exactly what prod was firing on; it must now be silent.
 		{"ölçülen gürültü: yeni desen, 3 satır", 3, 0, "", 0},
 		{"tabanın hemen altı: 9 satır", 9, 0, "", 0},
-		{"yeni desen, tam eşikte", 10, 0, "new", 10},
+		// v0.9.334 — "yeni" dalının kendi tabanı var (30) ve daha yüksek:
+		// oran kanıtı yokken yalnız sayı, "bilinen bir tabanı 3× aşmak"tan
+		// daha zayıf bir iddia.
+		{"yeni desen, ortak tabanda ama yeni-tabanının altında", 10, 0, "", 0},
+		{"yeni desen, yeni-tabanının hemen altında", 29, 0, "", 0},
+		{"yeni desen, tam yeni-tabanında", 30, 0, "new", 30},
 		{"yeni desen, bol hacim", 250, 0, "new", 250},
 
 		// The count floor binds on the spike branch too — that symmetry is

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"os"
 	"strings"
 	"testing"
 
@@ -563,5 +564,60 @@ func TestInboxFacetsInCacheKey(t *testing.T) {
 		[]string{"incident", "exception"}, inboxPriosAll)
 	if ab != ba {
 		t.Errorf("facet order changed the key:\n %s\n %s", ab, ba)
+	}
+}
+
+// ── v0.9.336 — the occurrence floor narrows in SQL ───────────────────────
+//
+// The floor was a Go filter over rows the store had already capped at 500 by
+// last_seen. On an install whose recent exception groups are mostly one-offs
+// — which is exactly what the operator complained about — that window filled
+// with rows the floor was about to drop, so the queue showed a handful of
+// real exceptions or none at all. Same lesson as the status narrow
+// (v0.9.322): the LIMIT has to bite on rows that survive.
+//
+// The floor is now two fetches: above-floor rows to show, below-floor rows to
+// COUNT. Both ride through the service / search / env / team narrows before
+// applyInboxMinOcc splits them, so `hiddenByMinOcc` keeps meaning "rows that
+// passed everything else and failed only the floor". A single SQL count would
+// ignore those narrows and overstate it.
+// readSrc reads a file from this package for shape assertions. The chstore
+// package has its own mustReadSource; this is the api-side equivalent rather
+// than an import cycle.
+func readSrc(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return string(b)
+}
+
+func TestInboxFloorFetchesBothSides(t *testing.T) {
+	src := readSrc(t, "inbox.go")
+
+	if !strings.Contains(src, "MinOccurrences: minOcc") {
+		t.Error("the floor must reach the exception query — otherwise the LIMIT is spent on rows it will drop")
+	}
+	if !strings.Contains(src, "MaxOccurrences: minOcc") {
+		t.Error("the below-floor rows must be fetched too, or hiddenByMinOcc stops being countable after the Go narrows")
+	}
+	// The split must still happen at the END, after every narrow.
+	iFetch := strings.Index(src, "MaxOccurrences: minOcc")
+	iSplit := strings.Index(src, "applyInboxMinOcc(items, minOcc)")
+	if iFetch < 0 || iSplit < 0 || iSplit < iFetch {
+		t.Error("applyInboxMinOcc must run after both fetches and after the narrows")
+	}
+}
+
+// The two fetches must be complements: nothing counted twice, nothing lost at
+// the boundary. `>= n` and `< n` partition the set exactly.
+func TestOccurrenceFloorBoundsArePartition(t *testing.T) {
+	src := readSrc(t, "../chstore/exception_inbox.go")
+	if !strings.Contains(src, `wc.add("occurrences >= ?", f.MinOccurrences)`) {
+		t.Error("MinOccurrences must be inclusive (>=)")
+	}
+	if !strings.Contains(src, `wc.add("occurrences < ?", f.MaxOccurrences)`) {
+		t.Error("MaxOccurrences must be EXCLUSIVE (<) — with >= on the other side, a row at exactly the floor would otherwise appear in both fetches and be counted as both shown and hidden")
 	}
 }

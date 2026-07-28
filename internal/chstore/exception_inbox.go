@@ -328,6 +328,13 @@ type ExceptionGroupFilter struct {
 	// without saying so is the failure mode this codebase keeps paying
 	// for.
 	MinOccurrences uint64
+	// MaxOccurrences (v0.9.336, EXCLUSIVE) selects the rows BELOW a floor —
+	// the complement of MinOccurrences. It exists so the inbox can push its
+	// occurrence floor into SQL without losing the honest "N hidden" count:
+	// one fetch for the rows to show, one bounded fetch for the rows the
+	// floor hides, both run through the same downstream narrows. Zero = no
+	// upper bound.
+	MaxOccurrences uint64
 	State    string // empty = all (except ignored)
 	Service  string
 	Assignee string
@@ -374,6 +381,9 @@ func buildExceptionGroupWhere(f ExceptionGroupFilter) whereClause {
 	}
 	if f.MinOccurrences > 0 {
 		wc.add("occurrences >= ?", f.MinOccurrences)
+	}
+	if f.MaxOccurrences > 0 {
+		wc.add("occurrences < ?", f.MaxOccurrences)
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)

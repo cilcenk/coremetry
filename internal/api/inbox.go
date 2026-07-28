@@ -262,9 +262,26 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// ── Exception groups ─────────────────────────────────────
+		// v0.9.336 — the occurrence floor moved INTO the SQL, in two fetches.
+		//
+		// It used to be a Go filter over rows the store had already capped at
+		// 500 by last_seen. On an install whose recent exceptions are mostly
+		// one-offs — which is the operator's whole complaint about them — the
+		// window filled with rows the floor was about to drop, so the queue
+		// showed a handful of real exceptions or none. The same lesson as the
+		// status narrow (v0.9.322): the LIMIT must bite on rows that survive.
+		//
+		// Two fetches rather than one because `hiddenByMinOcc` has to stay
+		// honest: it is counted AFTER the service / search / env / team
+		// narrows, none of which SQL can express here. So the below-floor
+		// rows are fetched too and ride through the exact same narrows; only
+		// then are they split off and counted (applyInboxMinOcc). A single
+		// SQL count would ignore those narrows and report an inflated number,
+		// which is its own kind of lie.
 		excLimit := inboxEffectiveLimit(srcLimit, inboxExcStoreMax)
 		exFilter := chstore.ExceptionGroupFilter{
 			State: pickExceptionState(statusFilter), Limit: excLimit,
+			MinOccurrences: minOcc,
 		}
 		exGroups, err := s.store.ListExceptionGroups(ctx, exFilter)
 		if err != nil {
@@ -275,6 +292,18 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, g := range exGroups {
 			items = append(items, exceptionToInbox(g))
+		}
+		if minOcc > 0 {
+			belowFloor, err := s.store.ListExceptionGroups(ctx, chstore.ExceptionGroupFilter{
+				State: pickExceptionState(statusFilter), Limit: excLimit,
+				MaxOccurrences: minOcc,
+			})
+			if err != nil {
+				return nil, err
+			}
+			for _, g := range belowFloor {
+				items = append(items, exceptionToInbox(g))
+			}
 		}
 
 		// ── Anomaly events ───────────────────────────────────────

@@ -913,6 +913,12 @@ type ProblemFilter struct {
 	// the narrow genuinely cannot move into SQL, the caller widens the
 	// candidate scan instead (see problemScanLimit).
 	Priority []string
+	// IDs constrains the result to these problem ids (id IN (…)), applied in
+	// SQL. v0.9.343 — the incident explain path resolved attached problems by
+	// paging the newest 2000 and keeping the subset it wanted, so an older
+	// attached problem silently dropped out of the prompt. Nil = no
+	// constraint; empty behaves like Services (constrain to nothing).
+	IDs []string
 	// Services constrains the result to this set (service IN (…)), applied in
 	// SQL so it bites BEFORE the LIMIT. v0.9.342 — the owner/SRE team and
 	// cluster filters used to run in Go on the already-capped page; both
@@ -1028,6 +1034,13 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)
+	}
+	if f.IDs != nil {
+		if len(f.IDs) == 0 {
+			wc.add("1 = 0")
+		} else {
+			wc.add("id IN ("+chPlaceholders(len(f.IDs))+")", toAnySlice(f.IDs)...)
+		}
 	}
 	if f.Services != nil {
 		if len(f.Services) == 0 {

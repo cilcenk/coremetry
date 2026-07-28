@@ -8,7 +8,7 @@ import (
 
 // v0.8.388 — D1-audit finding: the TDigest boot probe appended _local
 // to EVERY MV in cluster mode, but the unpromoted MVs (spanmetrics_*,
-// operation_group_summary_5m — outside highVolumeTables) exist under
+// (v0.9.350 öncesinde operation_group_summary_5m buranın dışındaydı) exist under
 // their bare names; probing <mv>_local found no column → a false
 // "upgrading …reservoir→TDigest" log + no-op drop/recreate every boot.
 func TestMVStorageName(t *testing.T) {
@@ -27,7 +27,7 @@ func TestMVStorageName(t *testing.T) {
 		{"spanmetrics_1m", "spanmetrics_1m_local"},   // promoted v0.8.408
 		{"spanmetrics_10s", "spanmetrics_10s_local"}, // promoted v0.8.408
 		{"spanmetrics_1s", "spanmetrics_1s_local"},   // promoted v0.8.408
-		{"operation_group_summary_5m", "operation_group_summary_5m"}, // unpromoted
+		{"operation_group_summary_5m", "operation_group_summary_5m_local"}, // promoted v0.9.350
 	}
 	for _, c := range cases {
 		if got := clustered.mvStorageName(c.mv); got != c.clustered {

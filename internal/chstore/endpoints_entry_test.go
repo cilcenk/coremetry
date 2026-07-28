@@ -81,3 +81,32 @@ func TestRPCEntryRefusesTheRawPath(t *testing.T) {
 		t.Fatal("the RPC refusal must be checked before falling through to the HTTP raw query")
 	}
 }
+
+// v0.9.324 — the search box on the RPC tab could not return a row.
+//
+// EntryRPC pins `http_route = ''` — that IS its definition of "non-HTTP
+// inbound" — while the search conjunct was hardcoded to filter
+// positionCaseInsensitive(http_route, ?) > 0. False for every row the tab can
+// produce. The operator sees their gRPC and Kafka entry points, types a term
+// to narrow, gets an empty table, and reads it as "there are none": the
+// silent-empty class the N1 slice was written to remove, re-introduced by the
+// slice itself.
+//
+// The invariant is simple enough to pin on the source: the column searched
+// must be the column displayed, whichever surface is active.
+func TestSearchFiltersTheDisplayedDimension(t *testing.T) {
+	src := mustReadSource(t, "endpoints.go")
+
+	if strings.Contains(src, `where += " AND positionCaseInsensitive(http_route, ?) > 0"`) {
+		t.Error("the MV search conjunct is hardcoded to http_route — on the RPC tab that column is pinned to '', so search can never match")
+	}
+	if !strings.Contains(src, `where += " AND positionCaseInsensitive(" + dimCol + ", ?) > 0"`) {
+		t.Error("the MV search conjunct must filter dimCol — the same column the tab projects and displays")
+	}
+
+	// dimCol has to actually differ per surface, or the assertion above is
+	// vacuous.
+	if !strings.Contains(src, `dimCol := "http_route"`) || !strings.Contains(src, `dimCol = "name"`) {
+		t.Error("dimCol must be http_route on the HTTP surface and name on the RPC surface")
+	}
+}

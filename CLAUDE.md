@@ -35,7 +35,11 @@ Datadog / Dynatrace / Honeycomb engineer this?"**
 React Query, react-router v6. No state library — URL is source of
 truth for shareable views.
 **Versioning:** git tags `v0.9.X` (v0.8 zinciri v0.8.588'de kapandı, operatör kararı 2026-07-17). Runtime resolution:
-`COREMETRY_VERSION` env > ldflag > `/app/VERSION` > `"dev"`.
+ldflag > `/app/VERSION` > `"dev"` = **build** kimliği; `COREMETRY_VERSION`
+env yalnız GÖSTERİLENİ değiştirir (v0.9.339). `/api/version` ikisini de
+döndürür + `overridden` bayrağı — bayat bir env artık imajmış gibi
+davranamaz (v0.5.394 olayı). Bu satır v0.5.394→v0.9.339 arasında YANLIŞTI:
+env override kaldırılmıştı ama doküman onu zincirin başında gösteriyordu.
 
 ## Architectural invariants
 

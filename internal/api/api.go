@@ -205,6 +205,10 @@ type Server struct {
 	// Surfaced unauthenticated on /api/version so the login page
 	// can show it before the operator has a session.
 	version string
+	// buildVersion (v0.9.339) is the tag baked into the binary, kept apart
+	// from `version` so a COREMETRY_VERSION override can be reported AS an
+	// override instead of quietly replacing the build identity.
+	buildVersion string
 
 	// background carries the cadence + timeout knobs (status
 	// probe ceiling, SMTP cache TTL, anomaly intervals) lifted
@@ -255,6 +259,14 @@ func (s *Server) SetBackgroundConfig(b config.BackgroundConfig) {
 // by SPA after the server is listening.
 func (s *Server) SetVersion(v string) {
 	s.version = v
+}
+
+// SetBuildVersion records what the IMAGE actually is, independent of any
+// display override. v0.5.394 removed the env override precisely because a
+// stale value masked this; keeping both is what lets the override come back
+// safely (v0.9.339).
+func (s *Server) SetBuildVersion(v string) {
+	s.buildVersion = v
 }
 
 // SetTempo wires the external Tempo client. Always called from
@@ -10111,7 +10123,24 @@ func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
 	if v == "" {
 		v = "dev"
 	}
-	writeJSON(w, map[string]string{"version": v})
+	b := s.buildVersion
+	if b == "" {
+		b = v
+	}
+	// v0.9.339 — build identity travels with the display version, and the
+	// response says outright when they disagree.
+	//
+	// The env override was removed in v0.5.394 because a stale value silently
+	// became "the version" and nothing anywhere could contradict it. Shipping
+	// the pair means a wrong override is visible instead of authoritative:
+	// whoever is debugging "why does this say 0.9.100" can see what the image
+	// really is in the same payload. `version` keeps its meaning for every
+	// existing caller (the login page reads exactly that field).
+	writeJSON(w, map[string]any{
+		"version":      v,
+		"buildVersion": b,
+		"overridden":   v != b,
+	})
 }
 
 // getTraceOpAnomalies pinpoints per-(service, operation) error

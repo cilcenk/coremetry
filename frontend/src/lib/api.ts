@@ -135,6 +135,15 @@ export const api = {
     // v0.7.44 — opt-in distinct-service total for the First/Last pager.
     // Default off keeps the hot path count-free.
     withTotal?: '1';
+    // v0.9.345 — display filters, now SERVER-side (HAVING on the grouped
+    // aggregates). They used to run in the browser over the 50 rows of the
+    // current page, so "Errors only" could empty page 1 while erroring
+    // services sat on page 7. Both the MV and raw paths apply them, from one
+    // shared predicate builder, so switching paths (by picking a cluster or
+    // env) cannot change what they mean.
+    errorsOnly?: '1';
+    minSpans?: number;
+    minP99?: number;
   } = {}) =>
     get<{
       services: Service[];

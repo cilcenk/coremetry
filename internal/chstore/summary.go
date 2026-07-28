@@ -413,6 +413,18 @@ func (s *Store) CountServicesAgg(ctx context.Context, from, to time.Time, nameMa
 const mvQuantileMemSettings = `distributed_aggregation_memory_efficient = 1`
 
 func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int) ([]ServiceSummary, error) {
+	return s.GetServicesAggFiltered2(ctx, from, to, nameMatch, serviceIn, sort, dir, limit, offset, ServiceDisplayFilters{})
+}
+
+// GetServicesAggFiltered2 is the MV fast path with the v0.9.345 display
+// filters. Kept as a second entry point so the eight-argument original stays
+// valid for its existing callers.
+//
+// The HAVING is built by the SAME method the raw path uses, with this query's
+// aliases passed in — the two paths cannot drift into disagreeing about what
+// "Errors only" means, which matters because the operator flips between them
+// just by picking a cluster or an env.
+func (s *Store) GetServicesAggFiltered2(ctx context.Context, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int, display ServiceDisplayFilters) ([]ServiceSummary, error) {
 	if from.IsZero() {
 		from = time.Now().Add(-24 * time.Hour)
 	}
@@ -444,6 +456,12 @@ func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time
 		}
 		nameClause += " AND service_name IN (" + strings.Join(holders, ",") + ")"
 	}
+	// Display filters, rendered against THIS query's aliases (the MV names them
+	// spans/errs, the raw path span_count/error_count). Args append last so
+	// they follow the WHERE binds in placeholder order.
+	aggHaving, havingArgs := display.having("spans", "errs", "p99_ms")
+	args = append(args, havingArgs...)
+
 	rows, err := s.conn.Query(ctx, `
 		SELECT service_name,
 		       countMerge(span_count_state)                                            AS spans,
@@ -454,7 +472,7 @@ func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time
 		         / nullIf(spans, 0)                                                     AS apdex
 		FROM service_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?`+nameClause+`
-		GROUP BY service_name
+		GROUP BY service_name`+aggHaving+`
 		ORDER BY `+servicesAggSortExpr(sort, dir)+limitClause+`
 		SETTINGS max_execution_time = 25, `+mvQuantileMemSettings,
 		args...)

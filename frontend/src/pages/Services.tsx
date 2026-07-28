@@ -143,11 +143,12 @@ export default function ServicesPage() {
   // service-name spelling.
   const sorted = useMemo(() => {
     if (!data) return data;
-    // Client-side REFINEMENTS only (errors-only / min-spans / min-p99). Name +
-    // team filtering is server-side — the typed draft auto-commits (debounced)
-    // to committedFilter → ?name across ALL services, and team dropdowns
-    // resolve server-side. v0.7.29: the old local name-substring filter is gone
-    // (it emptied the loaded page to "no services" until Search committed).
+    // v0.9.345 — these three moved SERVER-side (HAVING). The local pass stays
+    // as a second guard for the window between a filter change and the
+    // refetch landing: without it the stale page would flash rows the
+    // operator just excluded. It is no longer the only place they apply,
+    // which is what made "Errors only" lie across pages.
+    // Name + team filtering has been server-side since v0.7.29.
     const f = { errorsOnly, minSpans: parseFloat(minSpans), minP99: parseFloat(minP99) };
     const filtered = data.filter(s => passesLocalDisplayFilters(s, f));
     // v0.5.276 — pinned float to top. Server already sorted the
@@ -195,7 +196,12 @@ export default function ServicesPage() {
   // pagination handles the long tail without scaling cost.
 
   useEffect(() => {
-    const sig = JSON.stringify([committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace]);
+    // v0.9.345 — errorsOnly/minSpans/minP99 joined the signature. They are
+    // server filters now, so changing one has to refetch AND reset to page 0;
+    // leaving them out would mean flipping "Errors only" changed nothing but
+    // the local second pass, i.e. exactly the page-scoped behaviour this
+    // release removes.
+    const sig = JSON.stringify([committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99]);
     if (page !== 0 && fetchSigRef.current !== null && fetchSigRef.current !== sig) {
       // Sayfa-dışı bir girdi değişti ama page hâlâ eski: reset effect'i
       // birazdan page=0 yapacak; bu turdaki fetch boşa gider — atla.
@@ -242,6 +248,14 @@ export default function ServicesPage() {
       // that only narrowed the loaded page).
       ownerTeam: ownerTeam || undefined,
       sreTeam: sreTeam || undefined,
+      // v0.9.345 — errors-only / min-spans / min-p99 are SERVER filters now
+      // (HAVING on the grouped aggregates). They ran in the browser over the
+      // 50 rows of this page, so "Errors only" could empty page 1 while
+      // erroring services sat on page 7. Paging now walks the MATCHING
+      // services.
+      errorsOnly: errorsOnly ? '1' : undefined,
+      minSpans: minSpans ? Number(minSpans) : undefined,
+      minP99: minP99 ? Number(minP99) : undefined,
       cluster: cluster || undefined,
       // Global Topbar env filter (v0.8.385) — server-side deploy_env
       // conjunct on the raw path, so the page is correct across
@@ -270,12 +284,12 @@ export default function ServicesPage() {
       }
     }).catch(() => { if (!cancelled) { setData(null); setRefreshing(false); setHasMore(false); } });
     return () => { cancelled = true; };
-  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace]);
+  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99]);
 
   // Reset to page 0 whenever the search filter, time range,
   // sort, or team / cluster / env filter changes — staying on page 5
   // of an old result set when the operator re-orders is jarring.
-  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace]);
+  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99]);
 
   // Pre-fetch the cluster options on first mount and whenever
   // the time range changes. The /api/clusters response is
@@ -497,21 +511,10 @@ export default function ServicesPage() {
               Errors only
             </label>
             <button className="sec" onClick={reset}>Reset</button>
-            {/* v0.9.344 — say which page these three actually narrow.
-                errorsOnly / minSpans / minP99 run in the BROWSER, over the 50
-                rows the server sent for the current page. At 1000s of
-                services "Errors only" can empty page 1 while erroring
-                services sit on page 7, and nothing on screen said so — the
-                same misreading the triage queue kept producing before its
-                filters moved into SQL (v0.9.322/330/335/336/342).
-                Pushing these into the query is the real fix and is queued;
-                until then the affordance must not imply a global answer. */}
-            {(errorsOnly || minSpans || minP99) && (hasMore || page > 0) && (
-              <span className="badge b-warn"
-                title="Bu üç süzgeç tarayıcıda, yalnız GÖRÜNEN sayfanın satırlarına uygulanıyor. Diğer sayfalarda eşleşen servisler olabilir. Servis adı ve takım süzgeçleri sunucuda çalışır, tüm kataloğu kapsar.">
-                ⚠ bu sayfada süzülüyor
-              </span>
-            )}
+            {/* v0.9.344 warned that these three only narrowed the visible
+                page. v0.9.345 made that untrue — they are HAVING predicates
+                now, so paging walks the matching services and the warning
+                would itself be the lie. Removed rather than reworded. */}
             {/* v0.9.281 (operatör: "sayfa sayısı ve NEXT/Last butonları daha
                 belirgin olabilir") — şerit var(--text3)/12px idi ve 23 sayfalık
                 bir listede gezinmenin tek yolu olmasına rağmen gözden kaçıyordu.

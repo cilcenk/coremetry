@@ -79,6 +79,24 @@ type logPattern struct {
 const (
 	logPatternMinCount = 10
 	logPatternMinRatio = 3.0
+
+	// logPatternMinNewCount — v0.9.334. "Yeni" dalı için AYRI, daha yüksek
+	// taban.
+	//
+	// Operatör (prod, v0.9.327'den sonra): "Prodta hâlâ çok anomali var."
+	// Sertleştirme `base > 0` dalını kısıyordu ama "new" dalında oran şartı
+	// HİÇ yok: taban penceresi boşsa yalnız sayı yetiyor. Ve taban penceresi
+	// 1 saat, yani iki saatte bir görünen bir desen her seferinde "yeni".
+	//
+	// Trace tarafında bunu taban penceresini 24 saate genişleterek çözdüm
+	// (ClickHouse MV — ölçülen maliyet 0.050s → 0.058s). BURADA AYNISINI
+	// YAPMIYORUM: log sayımları harici Elasticsearch'e gidiyor ve pencereyi
+	// 24× açmak taranan doküman sayısını 24× artırırdı — operatörün duran
+	// kısıtı "elastice çok sorgu yükü oluşturma sakın". Aynı hedefe sıfır ek
+	// ES maliyetiyle giden kaldıraç: kanıtsız bir iddiadan daha fazlasını
+	// istemek. Bilinen bir tabanı 3× aşmak ile hiç taban olmadan ortaya
+	// çıkmak aynı kanıt değildir.
+	logPatternMinNewCount = 30
 )
 
 // qualifyLogPattern decides whether one pattern's current-window count is an
@@ -96,8 +114,13 @@ func qualifyLogPattern(cur uint64, basePerWindow float64) (kind string, ratio fl
 		return "", 0
 	}
 	if basePerWindow == 0 {
-		// Brand-new pattern this window: nothing to divide by, the count
-		// itself is the magnitude.
+		// Brand-new pattern this window: nothing to divide by, so there is no
+		// ratio evidence at all — only the raw count. That is weaker evidence
+		// than "3× a known baseline", so it has to clear a higher bar
+		// (v0.9.334).
+		if cur < logPatternMinNewCount {
+			return "", 0
+		}
 		return "new", float64(cur)
 	}
 	if r := float64(cur) / basePerWindow; r >= logPatternMinRatio {

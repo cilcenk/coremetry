@@ -304,6 +304,23 @@ var tablesWithoutTraceID = map[string]bool{
 	// trace_service_index_5m is the only newly-sharded MV that
 	// DOES project trace_id, so it's intentionally absent here.
 	"operation_summary_5m":         true,
+	// v0.9.350 — op_group rollup PROMOTED. Its sibling above has been in
+	// this map since v0.5.435; this one never joined, so in cluster mode it
+	// stayed a bare per-shard table while queryOperationsFromMV swaps
+	// between the two on ONE `normalized` boolean — the same function
+	// fanning out across shards in one branch and reading a single shard's
+	// slice in the other. That is the v0.8.356/358 undercount class.
+	//
+	// Dormant until now only because cluster_name is typically unset on the
+	// live install: op_group can't be added to spans_local, so the MV is
+	// dropped at boot (store.go). It arms the moment cluster_name is set
+	// CORRECTLY — which is the documented fix path. Fixing one thing was
+	// going to silently arm another.
+	//
+	// No trace_id in its SELECT (service_name, op_group, time_bucket +
+	// states), so it belongs with the rand()-fallback group, exactly like
+	// operation_summary_5m.
+	"operation_group_summary_5m":   true,
 	"spanmetrics_calls_5m":         true,
 	"spanmetrics_hist_5m":          true,
 	"spanmetrics_duration_5m":      true,
@@ -410,6 +427,9 @@ var defaultShardPolicy = map[string]string{
 	// cityHash64(service_name)).
 	"trace_service_index_5m":        "cityHash64(service_name)",
 	"operation_summary_5m":          "cityHash64(service_name)",
+	// v0.9.350 — same key as its sibling: ORDER BY leads with service_name
+	// and every read is service-scoped, so a service's rows stay together.
+	"operation_group_summary_5m":    "cityHash64(service_name)",
 	"spanmetrics_calls_5m":          "cityHash64(service_name)",
 	"spanmetrics_hist_5m":           "cityHash64(service_name)",
 	"spanmetrics_duration_5m":       "cityHash64(service_name)",
@@ -962,6 +982,17 @@ var highVolumeTables = map[string]bool{
 	// both matter.
 	"trace_service_index_5m":        true,
 	"operation_summary_5m":          true,
+	// v0.9.350 — op_group rollup, kardeşiyle aynı kayıt. Bu satır olmadan
+	// cluster modunda bare per-shard tablo olarak kalıyordu ve
+	// queryOperationsFromMV ikisi arasında TEK bir `normalized` boolean'ıyla
+	// geçiş yapıyor: aynı fonksiyon bir dalda shard'lara yayılıyor, diğerinde
+	// tek shard'ın dilimini okuyor (v0.8.356/358 eksik-sayım sınıfı).
+	//
+	// Uykudaydı, zararsız değildi: canlı kurulumda cluster_name genelde boş,
+	// o yüzden op_group spans_local'e eklenemiyor ve MV boot'ta düşürülüyor.
+	// cluster_name DOĞRU ayarlandığı an silahlanıyor — ki o, dokümante
+	// edilmiş düzeltme yolunun kendisi.
+	"operation_group_summary_5m":    true,
 	"spanmetrics_calls_5m":          true,
 	"spanmetrics_hist_5m":           true,
 	"spanmetrics_duration_5m":       true,

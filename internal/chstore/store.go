@@ -3001,6 +3001,13 @@ func (s *Store) migrate(ctx context.Context) error {
 	// bare MV would double-aggregate every spans insert.
 	if err := s.promoteCombinedMVs(ctx, []string{
 		"spanmetrics_1m", "spanmetrics_10s", "spanmetrics_1s",
+		// v0.9.350 — joins the promotion list with its highVolumeTables
+		// registration. An install that already created it bare-name (any
+		// cluster-mode boot with op_group present) gets the data-preserving
+		// RENAME → _local + Distributed wrapper. Installs where it was never
+		// created — the common case, op_group absent → MV dropped at boot —
+		// hit promoteCombinedMVs' missing-table branch and no-op.
+		"operation_group_summary_5m",
 	}); err != nil {
 		return fmt.Errorf("promote doorway MVs: %w", err)
 	}

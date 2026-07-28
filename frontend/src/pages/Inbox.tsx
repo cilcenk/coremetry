@@ -24,6 +24,19 @@ import type { InboxItem, InboxKind } from '@/lib/types';
 const PRIO_ALL = ['P1', 'P2', 'P3'] as const;
 const PRIO_DEFAULT = ['P1', 'P2'] as const;
 const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'anomaly', 'incident'];
+// v0.9.328 — operator: "Problems ilk açtığında exception görsün, kullanıcılar
+// ona göre tasarlar." Exceptions are the signal operators trust: a thrown
+// exception is a fact from the code, not an inference from a threshold.
+//
+// This is a DEFAULT, not a restriction. All four chips stay on screen with
+// their full counts, so what's excluded is visible and one click away, and
+// ?kind= carries the choice into every shared link. The P1 guard below makes
+// sure a landing default can never hide something urgent.
+const KIND_DEFAULT: readonly InboxKind[] = ['exception'];
+const KIND_LABEL: Record<InboxKind, string> = {
+  problem: 'Problems', exception: 'Exceptions',
+  anomaly: 'Anomalies', incident: 'Incidents',
+};
 // v0.9.254 — 'ignored' yalnızca exception gruplarını gösterir (problem'ler
 // MUTE'lanır, anomaliler SILENCE'lanır — farklı fiiller, farklı state).
 // Ayrı bir pivot olması bilinçli: susturmak kasıtlı bir eylem, o satırları
@@ -80,7 +93,7 @@ export default function InboxPage() {
   const rawKind = searchParams.get('kind');
   const prioSet = useMemo(() => new Set(decodeCsvSet(rawPrio, PRIO_ALL, PRIO_DEFAULT)), [rawPrio]);
   const kindSet = useMemo(
-    () => new Set(decodeCsvSet(rawKind, KIND_ALL, KIND_ALL) as InboxKind[]),
+    () => new Set(decodeCsvSet(rawKind, KIND_ALL, KIND_DEFAULT) as InboxKind[]),
     [rawKind]);
   const serviceFilter = searchParams.get('service') ?? '';
   // v0.9.251 — the search box drives `q` (service + title + source),
@@ -142,7 +155,7 @@ export default function InboxPage() {
   const toggleKind = (k: InboxKind) => {
     const next = new Set(kindSet);
     if (next.has(k)) { if (next.size === 1) return; next.delete(k); } else next.add(k);
-    setParam('kind', encodeCsvSet(next, KIND_ALL, KIND_ALL));
+    setParam('kind', encodeCsvSet(next, KIND_ALL, KIND_DEFAULT));
   };
   const setServiceFilter = (v: string) => setParam('service', v || null);
   const setSearchFilter = (v: string) => setParam('q', v || null);
@@ -194,6 +207,20 @@ export default function InboxPage() {
   const scanCapped = !inboxQ.isPending && !inboxQ.isError
     && !!inboxQ.data?.scanCapped && anyFilter;
   const hiddenByMinOcc = inboxQ.data?.hiddenByMinOcc ?? 0;
+  // v0.9.328 — the landing default shows Exceptions only, so this is the
+  // guard that keeps a DEFAULT from becoming a blindfold: if a kind the
+  // operator isn't looking at is carrying a P1, say so on the page instead of
+  // trusting them to notice a chip count. A triage surface may narrow by
+  // default; it may not hide an emergency by default.
+  const hiddenP1 = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const it of data ?? []) {
+      if (it.priority !== 'P1' || kindSet.has(it.kind)) continue;
+      out[it.kind] = (out[it.kind] ?? 0) + 1;
+    }
+    return out;
+  }, [data, kindSet]);
+  const hiddenP1Total = Object.values(hiddenP1).reduce((a, b) => a + b, 0);
 
   // The drawer's selected row, resolved from ?item= against the loaded list.
   // Uses the full (pre-facet) list so a deep-link to a row hidden by the
@@ -387,11 +414,8 @@ export default function InboxPage() {
           })}
 
           {/* Kind chips — multi-select */}
-          {(['problem', 'exception', 'anomaly', 'incident'] as const).map(k => {
-            const label = k === 'problem' ? 'Problems'
-                       : k === 'exception' ? 'Exceptions'
-                       : k === 'anomaly' ? 'Anomalies'
-                       : 'Incidents';
+          {KIND_ALL.map(k => {
+            const label = KIND_LABEL[k];
             return (
               <span key={k} onClick={() => toggleKind(k)}
                 className={`facet${kindSet.has(k) ? ' on' : ''}`}>
@@ -502,6 +526,22 @@ export default function InboxPage() {
               ? 'Widen the priority / kind filter to see more.'
               : 'Nothing needs your attention right now.'}
           </Empty>
+        )}
+        {hiddenP1Total > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <span className="badge b-err"
+              title="Bakmadığın bir türde P1 var. Varsayılan görünüm daraltabilir, ama acil bir şeyi saklayamaz.">
+              ⚠ Gizli türlerde <b>{hiddenP1Total}</b> P1
+              {' — '}
+              {Object.entries(hiddenP1)
+                .map(([k, n]) => `${KIND_LABEL[k as InboxKind] ?? k}: ${n}`)
+                .join(' · ')}
+            </span>{' '}
+            <Button variant="ghost" size="sm"
+              onClick={() => setParam('kind', encodeCsvSet([...KIND_ALL], KIND_ALL, KIND_DEFAULT))}>
+              hepsini göster
+            </Button>
+          </div>
         )}
         {!inboxQ.isPending && !inboxQ.isError && (
           <div style={{

@@ -902,12 +902,25 @@ type ProblemFilter struct {
 	// imported watcher rule). Exact match, unlike RuleIDPrefix.
 	RuleID string
 	// Priority — P1/P2/P3 subset to keep. Empty = no filter.
-	// Applied post-EnrichProblemsWithPriority because priority is
-	// computed at read time (v0.5.210), not a CH column. ListProblems
-	// applies Limit after this filter so an operator who picks P1
-	// gets the most recent P1 rows up to Limit, not the most recent
-	// rows that happen to be P1.
+	//
+	// Applied post-EnrichProblemsWithPriority because priority is computed at
+	// read time (v0.5.210), not a CH column, so it CANNOT be pushed into SQL.
+	//
+	// v0.9.342 — the old comment here claimed "ListProblems applies Limit
+	// after this filter". It never did: the body binds a plain LIMIT and has
+	// never mentioned Priority. The caller narrows in Go afterwards, so the
+	// page was "the P1s among the newest N", not "the newest N P1s". Since
+	// the narrow genuinely cannot move into SQL, the caller widens the
+	// candidate scan instead (see problemScanLimit).
 	Priority []string
+	// Services constrains the result to this set (service IN (…)), applied in
+	// SQL so it bites BEFORE the LIMIT. v0.9.342 — the owner/SRE team and
+	// cluster filters used to run in Go on the already-capped page; both
+	// resolve to a service set up front, so they belong here. Same shape as
+	// ExceptionGroupFilter.Services. Nil = no constraint; EMPTY = constrain to
+	// nothing (a team with no members must return an empty page, never an
+	// unfiltered one).
+	Services []string
 	// Env (v0.8.387 — env-separation Phase 3) narrows to problems
 	// whose SERVICE ran in the given deployment environment within
 	// the last hour, per the 60s-cached service→env map. Problems
@@ -1015,6 +1028,15 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)
+	}
+	if f.Services != nil {
+		if len(f.Services) == 0 {
+			// Resolved to nothing — say so in SQL rather than returning an
+			// unfiltered page.
+			wc.add("1 = 0")
+		} else {
+			wc.add("service IN ("+chPlaceholders(len(f.Services))+")", toAnySlice(f.Services)...)
+		}
 	}
 	if f.Severity != "" {
 		wc.add("severity = ?", f.Severity)

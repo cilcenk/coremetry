@@ -82,3 +82,67 @@ func servicesForTeam(mds map[string]chstore.ServiceMetadata, wantOwner, wantSRE 
 	sort.Strings(out)
 	return out
 }
+
+// problemScanLimit decides how many problem rows to pull from ClickHouse
+// before the read-time narrows run.
+//
+// v0.9.342 — priority is the one /api/problems filter that genuinely cannot
+// move into SQL: Problem.Priority is computed by EnrichProblemsWithPriority
+// from the enriched value/threshold/deploy/status, not stored on the row. So
+// the narrow has to run in Go, and the only honest way to keep the LIMIT
+// meaningful is to give it more candidates than the page needs.
+//
+// Without this, picking P1 returned "the P1s among the newest 100 problems"
+// rather than "the newest 100 P1s". On an install with ~800 open problems the
+// two are very different answers, and nothing on the page distinguished them.
+//
+// The multiple is deliberately modest: problems is a small ReplacingMergeTree
+// state table read with FINAL, but the enrichment chain that follows
+// (runbooks, teams, clusters, deploys, root-cause) runs over whatever comes
+// back, so an unbounded widening would move the cost into those batch reads.
+// 5× covers a page whose selected priorities are a fifth of the population —
+// well past the observed skew, where P1+P2 dominate.
+func problemScanLimit(pageLimit int, narrowed bool) int {
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+	if !narrowed {
+		return pageLimit
+	}
+	n := pageLimit * 5
+	if n > problemScanCeiling {
+		n = problemScanCeiling
+	}
+	return n
+}
+
+// problemScanCeiling bounds the widened scan so a large page size cannot turn
+// into an unbounded read of the problems table.
+const problemScanCeiling = 2000
+
+// intersectServices ANDs two service-set constraints.
+//
+// nil means "no constraint from this axis", which is why it cannot be treated
+// as an empty set: intersecting with nil must leave the other side untouched.
+// An EMPTY (non-nil) result is meaningful and preserved — it means the axes
+// have no service in common, and the page must then be empty rather than
+// unfiltered.
+func intersectServices(a, b []string) []string {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	inB := make(map[string]bool, len(b))
+	for _, s := range b {
+		inB[s] = true
+	}
+	out := make([]string, 0, len(a))
+	for _, s := range a {
+		if inB[s] {
+			out = append(out, s)
+		}
+	}
+	return out
+}

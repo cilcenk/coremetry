@@ -177,18 +177,42 @@ export function fmtXTicks(splits: number[]): string[] {
   const sameDay = splits.length > 1
     ? new Date(first * 1000).toDateString() === new Date(last * 1000).toDateString()
     : true;
+  // v0.9.329 — resolution follows the TICK SPACING, not the total span.
+  //
+  // This formatter only ever emitted HH:MM, so any axis whose ticks sit less
+  // than a minute apart rendered every label identically. Operator screenshot
+  // from prod: an exception group living 05:30:18 → 05:30:49 — 31 seconds —
+  // drew SIX ticks all reading "05:30". The chart was not wrong, it was
+  // unreadable, and it looked like a rendering bug.
+  //
+  // Keyed on spacing rather than span because that is exactly the condition
+  // under which HH:MM stops being able to distinguish two ticks: a 10-minute
+  // window with 2-minute ticks is still perfectly legible as HH:MM and must
+  // not grow a noisier ":SS" suffix.
+  const stepSec = splits.length > 1
+    ? Math.min(...splits.slice(1).map((v, i) => Math.abs(v - splits[i])))
+    : Infinity;
+  const withSec = stepSec < 60;
+  const withMs = stepSec < 1;
   return splits.map((s, i) => {
     const d = new Date(s * 1000);
     const hh = String(d.getHours()).padStart(2, '0');
     const mi = String(d.getMinutes()).padStart(2, '0');
-    const hm = `${hh}:${mi}`;
+    let hm = `${hh}:${mi}`;
+    if (withSec) {
+      hm += `:${String(d.getSeconds()).padStart(2, '0')}`;
+      if (withMs) hm += `.${String(d.getMilliseconds()).padStart(3, '0')}`;
+    }
     if (sameDay) return hm;
     const prev = i > 0 ? new Date(splits[i - 1] * 1000) : null;
     const dayChanged = !prev || prev.toDateString() !== d.toDateString();
     if (!dayChanged) return hm;
     const mm = String(d.getMonth() + 1).padStart(2, '0');
     const dd = String(d.getDate()).padStart(2, '0');
-    return `${mm}-${dd} ${hh}:${mi}`;
+    // v0.9.329 — reuse `hm` rather than re-deriving HH:MM here: the
+    // day-prefixed branch used to rebuild the time from scratch, so it
+    // silently dropped the seconds the branch above had just added.
+    return `${mm}-${dd} ${hm}`;
   });
 }
 

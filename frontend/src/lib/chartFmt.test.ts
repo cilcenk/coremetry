@@ -141,3 +141,63 @@ describe('niceTickValues — snap-to-decade gridlines', () => {
     expect(niceTickValues(0, Infinity)).toEqual([]);
   });
 });
+
+// v0.9.329 — operator screenshot from prod: an exception group that lived
+// 05:30:18 → 05:30:49 (31 seconds) drew SIX x-axis ticks, all reading
+// "05:30". The formatter only ever emitted HH:MM, so any axis whose ticks sit
+// under a minute apart was unreadable — and read as a rendering bug rather
+// than as a very short-lived problem.
+describe('fmtXTicks — sub-minute resolution', () => {
+  const at = (h: number, m: number, s: number, ms = 0) =>
+    new Date(2026, 6, 28, h, m, s, ms).getTime() / 1000;
+
+  it('adds seconds when ticks are less than a minute apart', () => {
+    // The screenshot's case: 31 seconds, ~6 ticks.
+    const splits = [
+      at(5, 30, 18), at(5, 30, 24), at(5, 30, 30),
+      at(5, 30, 36), at(5, 30, 42), at(5, 30, 48),
+    ];
+    const out = fmtXTicks(splits);
+    expect(out).toEqual([
+      '05:30:18', '05:30:24', '05:30:30', '05:30:36', '05:30:42', '05:30:48',
+    ]);
+    // The actual defect, stated directly: every label was the same string.
+    expect(new Set(out).size).toBe(splits.length);
+  });
+
+  it('leaves minute-and-coarser axes alone', () => {
+    // A 10-minute window at 2-minute ticks is perfectly legible as HH:MM and
+    // must NOT grow a noisier ":SS" suffix — this is why the branch keys on
+    // tick SPACING and not on the total span.
+    const splits = [at(5, 30, 0), at(5, 32, 0), at(5, 34, 0), at(5, 36, 0)];
+    expect(fmtXTicks(splits)).toEqual(['05:30', '05:32', '05:34', '05:36']);
+  });
+
+  it('exactly one minute apart stays HH:MM', () => {
+    const splits = [at(5, 30, 0), at(5, 31, 0), at(5, 32, 0)];
+    expect(fmtXTicks(splits)).toEqual(['05:30', '05:31', '05:32']);
+  });
+
+  it('goes to milliseconds when even seconds would collide', () => {
+    const splits = [at(5, 30, 18, 0), at(5, 30, 18, 250), at(5, 30, 18, 500)];
+    expect(fmtXTicks(splits)).toEqual(['05:30:18.000', '05:30:18.250', '05:30:18.500']);
+  });
+
+  it('keeps the day prefix across midnight at second resolution', () => {
+    const a = new Date(2026, 6, 28, 23, 59, 50).getTime() / 1000;
+    const b = new Date(2026, 6, 29, 0, 0, 2).getTime() / 1000;
+    // The first tick always carries its day when the axis spans one
+    // (existing behaviour) — the point here is that seconds survive BOTH
+    // branches; the day-prefixed one used to rebuild HH:MM from scratch.
+    const out = fmtXTicks([a, b]);
+    expect(out[0]).toBe('07-28 23:59:50');
+    expect(out[1]).toBe('07-29 00:00:02');
+  });
+
+  it('uses the SMALLEST gap, so one wide tick cannot mask a tight axis', () => {
+    // uPlot splits are not always evenly spaced; judging from splits[1]-[0]
+    // alone would miss a pair that collides later in the array.
+    const splits = [at(5, 30, 0), at(5, 32, 0), at(5, 32, 10)];
+    expect(fmtXTicks(splits)).toEqual(['05:30:00', '05:32:00', '05:32:10']);
+  });
+});

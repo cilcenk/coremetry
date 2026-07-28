@@ -86,3 +86,16 @@ skills-lock.json
 design_handoff_*/
 deployment-coremetry.yaml
 deployment-coremetry-prod.yaml
+
+# v1.0 hazırlığı — MÜŞTERİ ADI TAŞIYAN yerel manifestler.
+#
+# Bunlar takip edilmiyordu ama KORUNMUYORDU da: depo kökünde tek bir
+# `git add -A` onları kalıcı olarak commit ederdi. Duran kural "müşteri adı
+# asla depoya girmez" ve bir sürüm hazırlığı, tam da birinin geniş bir add
+# yapacağı andır. Dosyalar yerelde duruyor; yalnız kazara commit'lenmeleri
+# engelleniyor.
+/deployment-coremetry-distributed.yaml
+/deployment-coremetry-prod-distributed.yaml
+/services-coremetry-distributed.yaml
+/services-coremetry-prod-distributed.yaml
+/route-coremetry-otlp-http-prod.yaml

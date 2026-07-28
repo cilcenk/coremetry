@@ -76,9 +76,32 @@ export default function LoginPage() {
   // Build version is unauthenticated so we can show it before the
   // operator has a session — useful for support / matching a
   // running instance to a release tag.
-  const [version, setVersion] = useState<string>('');
+  //
+  // v0.9.339 — TWO independent sources, because one of them is failing in
+  // prod. Operator: "Localda login'de altta versiyon yazıyor ama prodta
+  // yazmıyor."
+  //
+  // /api/version is authoritative at runtime (it honours COREMETRY_VERSION),
+  // but the call was wrapped in `.catch(() => {})`, so when it fails the line
+  // simply vanishes — indistinguishable from "no version configured", and
+  // impossible to diagnose from the screen. The bundle constant is baked at
+  // build time (the same VITE_APP_VERSION browserOtel.ts already reports), so
+  // it is available even when the API is unreachable.
+  //
+  // The seed means the line renders immediately and never blanks; the fetch
+  // overwrites it when it succeeds. A failure now costs freshness, not the
+  // whole affordance.
+  const buildVersion = (import.meta.env.VITE_APP_VERSION as string | undefined) ?? '';
+  const [version, setVersion] = useState<string>(buildVersion);
   useEffect(() => {
-    api.version().then(v => setVersion(v?.version ?? '')).catch(() => {});
+    api.version()
+      .then(v => { if (v?.version) setVersion(v.version); })
+      .catch(err => {
+        // Not silent any more. The screen keeps the build version; whoever is
+        // asking "why does prod show nothing" gets the actual reason here
+        // instead of an empty element.
+        console.warn('[login] /api/version unreachable — showing the build-time version instead:', err);
+      });
   }, []);
 
   return (

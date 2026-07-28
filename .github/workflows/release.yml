@@ -56,12 +56,31 @@ jobs:
       # clusters are overwhelmingly x86, so this covers ~95% of users.
       # If you need arm64 (Apple Silicon dev, AWS Graviton), set
       # vars.BUILD_PLATFORMS=linux/amd64,linux/arm64 in repo settings.
+      # v0.9.340 — stamp the release tag INTO the image.
+      #
+      # This step passed no build-args at all, so every published image took
+      # the Dockerfile defaults: ARG VERSION=dev and ARG VITE_APP_VERSION=dev.
+      # That means the Go binary's ldflag, the /app/VERSION file the Dockerfile
+      # writes from the same ARG, and the frontend bundle constant were ALL
+      # "dev" on every official release. The chart got the real number (the
+      # sed step below rewrites appVersion), so the mismatch was invisible from
+      # the outside — Helm said 0.9.x while the running binary said dev.
+      #
+      # Operator-reported symptom: the login screen shows a version locally
+      # (local builds pass --build-arg) but not in prod.
+      #
+      # GITHUB_REF_NAME is the tag, e.g. v0.9.340. Passed with the leading "v"
+      # so the displayed string matches the git tag exactly, which is what an
+      # operator compares against.
       - name: Build + push
         uses: docker/build-push-action@v7
         with:
           context: .
           platforms: ${{ vars.BUILD_PLATFORMS || 'linux/amd64' }}
           push: true
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            VITE_APP_VERSION=${{ github.ref_name }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

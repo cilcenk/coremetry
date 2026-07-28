@@ -255,9 +255,18 @@ clickhouse:
   # for a "redeploy from scratch" against a long-lived external
   # CH that you don't want to manually wipe with clickhouse-client.
   #
-  # Idempotent (DROP DATABASE IF EXISTS), but every helm upgrade
-  # while this stays true will re-wipe the database. Flip back to
-  # false after the first install or you will keep losing data.
+  # Idempotent (DROP DATABASE IF EXISTS).
+  #
+  # v0.9.346 — the hook is PRE-INSTALL ONLY. It used to run on
+  # pre-upgrade as well, which meant leaving this true after the
+  # first install wiped the database on every routine `helm
+  # upgrade` — silently, as part of a normal deploy. Values files
+  # are sticky and "flip it back to false" was a comment, not a
+  # guarantee.
+  #
+  # Leaving it true is now harmless on upgrades. To deliberately
+  # reset an EXISTING install: `helm uninstall` + install, or run
+  # the Job by hand — both things you have to mean.
   resetSchema: false
 
   external:

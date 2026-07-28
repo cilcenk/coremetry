@@ -1,10 +1,25 @@
 {{- if .Values.clickhouse.resetSchema }}
-# DESTRUCTIVE: Helm pre-install + pre-upgrade hook. Drops the
-# configured CH database so the main coremetry pod boots into
-# an empty schema and rebuilds it via the migration sequence.
-# Triggered only when `clickhouse.resetSchema: true` is set —
-# default is false. Hook-delete-policy removes the Job after
-# success so it doesn't pile up across upgrades.
+# DESTRUCTIVE: Helm PRE-INSTALL hook. Drops the configured CH
+# database so the main coremetry pod boots into an empty schema
+# and rebuilds it via the migration sequence. Triggered only when
+# `clickhouse.resetSchema: true` is set — default is false.
+#
+# v0.9.346 — `pre-upgrade` REMOVED from the hook list.
+#
+# The chart's own guardrail (skills/helm-chart-coremetry §6) has
+# always said "pre-install only", and the docs call resetSchema a
+# one-shot first-install convenience. The template did not agree:
+# it also ran on pre-upgrade. resetSchema is a VALUE, and values
+# files are sticky — an operator who set it true for the first
+# install and left it there wiped the entire database on every
+# subsequent `helm upgrade`. All telemetry, all settings, all
+# saved views, silently, as part of a routine deploy.
+#
+# Documentation cannot fix that. "MUST stay false except first
+# install" is a comment; a hook that cannot fire on upgrade is a
+# guarantee. Deliberately re-resetting an existing install is now
+# `helm uninstall` + install, or running the Job by hand — both
+# of which are things you have to mean.
 #
 # The Job uses the same coremetry image + same ConfigMap +
 # Secret as the main Deployment, just with `--reset-schema`
@@ -18,7 +33,7 @@ metadata:
     {{- include "coremetry.labels" . | nindent 4 }}
     app.kubernetes.io/component: reset-schema
   annotations:
-    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook": pre-install
     "helm.sh/hook-weight": "-5"
     "helm.sh/hook-delete-policy": hook-succeeded,before-hook-creation
 spec:

@@ -60,4 +60,4 @@ All knobs and their defaults are documented inline in
 | Exposure | `route.enabled` (OpenShift) or `ingress.enabled` (vanilla k8s) |
 | MCP / SSE stickiness | `service.sessionAffinity`, `service.sessionAffinityTimeoutSeconds` |
 | Autoscaling | `autoscaling.*` (targets the api role in distributed mode) |
-| Destructive reset | `clickhouse.resetSchema` (keep `false` except first install) |
+| Destructive reset | `clickhouse.resetSchema` — **pre-install only** since chart 0.9.346; harmless if left `true` on upgrades |

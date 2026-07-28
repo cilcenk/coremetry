@@ -34,9 +34,27 @@ import type { Problem, SpanMetricSeries, TimeRange } from '@/lib/types';
 // crosshair on the other two — Datadog dashboard convention,
 // turns the three panels into one synchronised view.
 
-export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '', onOpScopeChange, windowNs, problems }: {
+export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '', onOpScopeChange, windowNs, problems, rootOnly = false }: {
   service: string;
   range: TimeRange;
+  // rootOnly (v0.9.348) — narrow the per-operation series to the service's
+  // OWN entry points (span kind server/consumer) instead of every span it
+  // emits.
+  //
+  // Unfiltered, an api-gateway's chart draws its OUTBOUND calls
+  // (account-service/ListAccounts, forex-service/GetRates) as if they were
+  // its own load — measured on the demo: 22 series, of which only 14 are
+  // this service's endpoints. Operator: "sadece root operationlar olsun."
+  // Same standing entry-span principle the service metrics already follow.
+  //
+  // OPT-IN on purpose. ServiceCharts has four consumers (Service Details,
+  // Service Overview, clusters/TrendPanel, RuntimeCharts) and Overview owns
+  // its own "Throughput · giriş / tüm span'ler" distinction. Burying the
+  // filter inside the component would silently change all four.
+  //
+  // Costs nothing: it is one more conjunct on a DSL the batch endpoint
+  // already parses (`kind` is a mapped field — chstore/filterexpr.go).
+  rootOnly?: boolean;
   // onZoom — drag-to-select range on any of the three RED
   // panels propagates up; parent (Service.tsx) replaces the
   // page TimeRange so every chart + the operations table
@@ -178,6 +196,10 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
         // never blank.
         let dsl = `service.name = "${service.replace(/"/g, '\\"')}"`;
         if (opScope) dsl += ` AND name = "${opScope.replace(/"/g, '\\"')}"`;
+        // v0.9.348 — root/entry narrow. Verified live: 22 series → 14, which
+        // matches ClickHouse's own 14 server + 8 client split for the same
+        // service and window.
+        if (rootOnly) dsl += ` AND kind in [server, consumer]`;
         // Batch — one CH pass for rate + error_rate + p99 over the same
         // WHERE. Cold-cache time drops to ~1/3 of a three-call fan-out
         // because the spans scan happens once.
@@ -194,7 +216,21 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
           p99: [...tagAvg(res.avg ?? []), ...(res.p99 ?? [])],
         }));
       };
-      const eligible = isResolverEligible(rpsMq) && isResolverEligible(errMq) && isResolverEligible(p99Mq)
+      // v0.9.348 — rootOnly forces the DSL path, and this is load-bearing.
+      //
+      // The resolver builds its WHERE from MetricQuery.Filters, which is
+      // Record<string,string> and renders `col = ?` with ONE value
+      // (chstore/metricresolve.go). "server OR consumer" cannot be expressed
+      // there. If the resolver stayed eligible, the root narrow would apply on
+      // the DSL path and SILENTLY VANISH on the resolver path — the same
+      // two-paths-one-predicate trap v0.9.345 fixed on /services, where the
+      // operator switches paths just by changing an unrelated input.
+      //
+      // Falling back costs one bounded spanMetricBatch call (a single CH pass
+      // for all three aggs), which is the path this component used before the
+      // resolver existed.
+      const eligible = !rootOnly
+        && isResolverEligible(rpsMq) && isResolverEligible(errMq) && isResolverEligible(p99Mq)
         && (!avgMq || isResolverEligible(avgMq));
       if (!eligible) return viaLegacy();
       const r = { from: fromNs, to: toNs };
@@ -211,7 +247,9 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
         p99: [...tagAvg(avg?.series ?? []), ...(p99?.series ?? [])],
       })).catch(() => viaLegacy());
     },
-    [service, opScope, rpsMq, errMq, p99Mq, avgMq, effStep],
+    // v0.9.348 — rootOnly joins the deps: it changes both the DSL and which
+    // path runs, so a stale closure would keep serving the unfiltered series.
+    [service, opScope, rpsMq, errMq, p99Mq, avgMq, effStep, rootOnly],
   );
 
   useEffect(() => {

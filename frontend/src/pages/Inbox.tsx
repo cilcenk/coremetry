@@ -75,6 +75,12 @@ const INBOX_COLS: DataTableColumn<InboxItem>[] = [
   { id: 'occurrences', label: 'Occurrences',
     sortValue: it => it.exception?.occurrences ?? 0,
     naturalDir: 'desc', numeric: true, width: 110 },
+  // v0.9.333 — First seen is its own column again (operator: "First seen ayrı
+  // kolon olabilir, öyleydi"). It was folded into the Last seen cell as a
+  // conditional "· ilk …" suffix, which meant it vanished whenever the two
+  // timestamps matched and could never be sorted on. "What started first" is
+  // the question that orders a cascade; "what fired last" is a different one.
+  { id: 'firstSeen', label: 'First seen', sortValue: it => it.startedAt, naturalDir: 'desc', width: 150 },
   { id: 'lastSeen', label: 'Last seen', sortValue: it => it.lastSeen,        naturalDir: 'desc', width: 170 },
   { id: 'assignee', label: 'Assignee', sortValue: it => it.assignee ?? '',   naturalDir: 'asc', width: 150 },
 ];
@@ -749,20 +755,25 @@ export default function InboxPage() {
                         : <span style={{ color: 'var(--text3)' }}>—</span>}
                     </td>
                     <td className="mono" style={{ fontSize: 11 }}>
+                      {it.startedAt
+                        ? <>
+                            {tsLong(it.startedAt)}
+                            {/* Age belongs to first-seen: "how long has this
+                                been going on" is read off the start, not the
+                                last hit. */}
+                            <div style={{ color: 'var(--text3)', marginTop: 2 }}>
+                              {fmtAgoNs(it.startedAt)}
+                            </div>
+                          </>
+                        : <span style={{ color: 'var(--text3)' }}>—</span>}
+                    </td>
+                    <td className="mono" style={{ fontSize: 11 }}>
+                      {/* v0.9.333 — yaş ve ilk-görülme artık kendi kolonunda.
+                          v0.9.255'te ikisi bu hücreye sıkıştırılmıştı ve ilk
+                          görülme yalnız iki damga FARKLIYSA çiziliyordu: yani
+                          exception satırlarında çoğu zaman hiç görünmüyordu ve
+                          hiçbir zaman sıralanamıyordu. */}
                       {tsLong(it.lastSeen)}
-                      {/* v0.9.255 — YAŞ. `startedAt` telde vardı, hiç çizilmiyordu:
-                          bir satırın 3 dakikadır mı yoksa 3 gündür mi açık olduğu
-                          triage sırasının en güçlü sinyallerinden biri ve operatör
-                          onu göremiyordu.
-
-                          Problem kind'ında backend LastSeen = StartedAt yazıyor
-                          (inbox.go), yani ikisi eşitse "ilk görülme" satırı bir
-                          şey söylemez — o yüzden yalnız GERÇEKTEN farklıysa
-                          gösteriliyor. Yaş her kaynakta anlamlı, o hep var. */}
-                      <div style={{ color: 'var(--text3)', marginTop: 2 }}>
-                        {fmtAgoNs(it.startedAt)}
-                        {it.startedAt !== it.lastSeen && ` · ilk ${tsLong(it.startedAt)}`}
-                      </div>
                     </td>
                     <td>
                       {it.assignee

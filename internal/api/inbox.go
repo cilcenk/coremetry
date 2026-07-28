@@ -753,6 +753,11 @@ const inboxSortDefault = "priority"
 func normalizeInboxSort(id, dir string) (string, string) {
 	switch id {
 	case "priority", "source", "service", "detail", "lastSeen", "assignee",
+		// v0.9.333 — firstSeen is its own column again (operator: "First seen
+		// ayrı kolon olabilir, öyleydi"). Sorting by it answers "what started
+		// first", which is a different question from "what fired last" and the
+		// one that orders a cascade.
+		"firstSeen",
 		// v0.9.331 — occurrences. The column the operator insisted on keeping
 		// (v0.9.315) came back on the merged queue, and a column that can't be
 		// sorted on a triage list is half a column: "which of these is
@@ -801,6 +806,10 @@ func sortInboxItems(items []InboxItem, id, dir string) {
 		case "occurrences":
 			if inboxOccurrences(a) != inboxOccurrences(b) {
 				return inboxOccurrences(a) < inboxOccurrences(b)
+			}
+		case "firstSeen":
+			if a.StartedAt != b.StartedAt {
+				return a.StartedAt < b.StartedAt
 			}
 		default: // priority
 			ra, rb := priorityRank(a.Priority), priorityRank(b.Priority)
@@ -860,6 +869,8 @@ func inboxPrimaryEqual(a, b InboxItem, id string) bool {
 		return a.Assignee == b.Assignee
 	case "occurrences":
 		return inboxOccurrences(a) == inboxOccurrences(b)
+	case "firstSeen":
+		return a.StartedAt == b.StartedAt
 	default:
 		return priorityRank(a.Priority) == priorityRank(b.Priority)
 	}

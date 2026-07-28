@@ -83,10 +83,17 @@ func TestNormalizeInboxSort(t *testing.T) {
 		{"service", "desc", "service", "desc"},
 		// A stale link from an older build must open a usable queue, not a
 		// 400 — unknown falls back rather than erroring.
-		{"occurrences", "asc", "priority", "asc"},
+		// (v0.9.319 used "occurrences" as the unknown-id example; v0.9.331 made
+		// it a real column, so the example moved to something still unknown.)
+		{"runbook", "asc", "priority", "asc"},
 		{"'; DROP", "asc", "priority", "asc"},
 		// Anything that isn't exactly "asc" is descending.
 		{"lastSeen", "sideways", "lastSeen", "desc"},
+		// v0.9.331 — the Occurrences column is sortable, so the server has to
+		// accept its id. Without this the header would silently fall back to
+		// priority and the arrow would point at a sort that never happened.
+		{"occurrences", "desc", "occurrences", "desc"},
+		{"occurrences", "asc", "occurrences", "asc"},
 	}
 	for _, tc := range cases {
 		gotID, gotDir := normalizeInboxSort(tc.inID, tc.inDir)
@@ -112,6 +119,26 @@ func inboxIDs(items []InboxItem) string {
 		out += it.ID
 	}
 	return out
+}
+
+// Occurrences sorts on the exception count, and the kinds that don't have one
+// sort as 0 rather than being dropped or floated to the top — a triage list
+// that hides incidents because they lack a count is worse than one that
+// ranks them last.
+func TestSortInboxItemsByOccurrences(t *testing.T) {
+	items := []InboxItem{
+		{ID: "low", Kind: "exception", Priority: "P2", Exception: &InboxExceptionRef{Occurrences: 3}},
+		{ID: "high", Kind: "exception", Priority: "P2", Exception: &InboxExceptionRef{Occurrences: 900}},
+		{ID: "none", Kind: "incident", Priority: "P2"},
+	}
+	sortInboxItems(items, "occurrences", "desc")
+	if got := inboxIDs(items); got != "highlownone" {
+		t.Errorf("occurrences desc = %q, want highlownone", got)
+	}
+	sortInboxItems(items, "occurrences", "asc")
+	if got := inboxIDs(items); got != "nonelowhigh" {
+		t.Errorf("occurrences asc = %q, want nonelowhigh", got)
+	}
 }
 
 func TestSortInboxItems(t *testing.T) {

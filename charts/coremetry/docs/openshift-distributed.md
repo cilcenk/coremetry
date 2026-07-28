@@ -444,6 +444,10 @@ every span, log, metric, dashboard, and audit event.
 - The Job uses the same image, ConfigMap, and Secret as the main
   Deployment, so credentials/addr/database match exactly.
 
+The hook is PRE-INSTALL ONLY as of chart 0.9.346 — it used to run on
+pre-upgrade too, so leaving this true after the first install wiped the
+database on every routine `helm upgrade`. It is now inert on upgrades.
+
 Treat `resetSchema: true` as a one-shot first-install convenience (or a
 deliberate "redeploy from scratch") only.
 

@@ -1564,6 +1564,22 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// via the catalog into the serviceIn allowlist like ownerTeam/sreTeam
 	// — so, UNLIKE cluster/env, it does NOT disqualify the MV fast path.
 	namespace := strings.TrimSpace(q.Get("namespace"))
+	// v0.9.345 — the three display filters, now server-side.
+	//
+	// They ran in the BROWSER over the 50 rows of the current page, so at
+	// 1000s of services "Errors only" could empty page 1 while erroring
+	// services sat on page 7. They are aggregate predicates (HAVING), which
+	// means paging now walks the MATCHING services instead of paging
+	// everything and hiding rows after the fact.
+	//
+	// Parsed leniently: a blank or unparseable box is "no constraint", the
+	// same thing the old client-side code did with an empty input.
+	display := chstore.ServiceDisplayFilters{
+		ErrorsOnly: q.Get("errorsOnly") == "1" || q.Get("errorsOnly") == "true",
+		MinSpans:   uint64(maxInt(parseInt(q.Get("minSpans"), 0), 0)),
+		// parseFloat returns 0 on garbage, which is exactly "no constraint".
+		MinP99Ms: parseFloat(strings.TrimSpace(q.Get("minP99"))),
+	}
 	if from.IsZero() {
 		from = time.Now().Add(-since)
 	}
@@ -1590,7 +1606,11 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// is the slowest part — see the limit+1 hasMore trick below).
 	withTotal := q.Get("withTotal") == "1"
 	bucket := cacheBucket(from, to)
-	key := servicesListKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal)
+	// Display filters join the key: they change WHICH services come back, so
+	// two operators on different filters must not share one cached page —
+	// the v0.5.187 cross-poisoning shape.
+	key := servicesListKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal) +
+		fmt.Sprintf(":err=%v:minSpans=%d:minP99=%g", display.ErrorsOnly, display.MinSpans, display.MinP99Ms)
 	// 30s cache. The 5m-MV-backed query is already sub-second on
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
@@ -1646,9 +1666,13 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		var rows []chstore.ServiceSummary
 		var err error
 		if useMV {
-			rows, err = s.store.GetServicesAggFilteredIn(ctx, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset)
+			rows, err = s.store.GetServicesAggFiltered2(ctx, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, display)
 		} else {
-			rows, err = s.store.GetServicesFilteredIn(ctx, since, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, cluster, env)
+			rows, err = s.store.GetServicesQuery(ctx, chstore.ServicesQuery{
+				Since: since, From: from, To: to, NameMatch: nameMatch, ServiceIn: serviceIn,
+				Sort: sort, Dir: dir, Limit: probeLimit, Offset: offset,
+				Cluster: cluster, Env: env, Display: display,
+			})
 		}
 		if err != nil {
 			return nil, err

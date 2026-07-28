@@ -823,7 +823,87 @@ func (s *Store) servicesListWhere(ctx context.Context, since time.Duration, from
 // Topbar env picker (v0.8.385, env-separation Phase 2). Same
 // raw-fallback semantics as cluster, but CHEAPER: deploy_env is a
 // typed LowCardinality column, no indexOf derive needed.
+// ServicesQuery is the /services read, as a struct.
+//
+// v0.9.345 — GetServicesFilteredIn had grown to twelve positional arguments
+// and the three filters this release pushes into SQL would have made fifteen.
+// The struct exists so the next filter is a named field rather than another
+// unlabelled bool three commas deep. GetServicesFilteredIn stays as a thin
+// wrapper: its six callers are unchanged.
+type ServicesQuery struct {
+	Since         time.Duration
+	From, To      time.Time
+	NameMatch     string
+	ServiceIn     []string
+	Sort, Dir     string
+	Limit, Offset int
+	Cluster, Env  string
+
+	Display ServiceDisplayFilters
+}
+
+// ServiceDisplayFilters are the three /services controls that ran in the
+// BROWSER until v0.9.345, over the 50 rows of the current page. At 1000s of
+// services "Errors only" could empty page 1 while erroring services sat on
+// page 7, and nothing on screen said so.
+//
+// They are plain aggregate predicates, so they belong in the HAVING where the
+// LIMIT/OFFSET can respect them — the same correction the triage queue's
+// filters got in v0.9.322/330/335/336 and /api/problems in v0.9.342.
+type ServiceDisplayFilters struct {
+	ErrorsOnly bool
+	MinSpans   uint64
+	MinP99Ms   float64
+}
+
+// Active reports whether any constraint is set — the caller uses it to decide
+// whether the page's own "filtered on this page only" warning still applies.
+func (f ServiceDisplayFilters) Active() bool {
+	return f.ErrorsOnly || f.MinSpans > 0 || f.MinP99Ms > 0
+}
+
+// having renders the predicates against the column ALIASES of the calling
+// query. The raw-spans path and the MV path name the same quantities
+// differently (span_count/error_count vs spans/errs), so the aliases are
+// parameters rather than literals: one predicate builder, two callers, no way
+// for the two paths to drift into disagreeing about what "Errors only" means.
+//
+// Zero means "no constraint" — that is what an empty input box sends, and a
+// service with genuinely zero spans is not something the operator asked to
+// exclude by leaving the field blank.
+func (f ServiceDisplayFilters) having(spansCol, errsCol, p99Col string) (string, []any) {
+	var parts []string
+	var args []any
+	if f.ErrorsOnly {
+		parts = append(parts, errsCol+" > 0")
+	}
+	if f.MinSpans > 0 {
+		parts = append(parts, spansCol+" >= ?")
+		args = append(args, f.MinSpans)
+	}
+	if f.MinP99Ms > 0 {
+		parts = append(parts, p99Col+" >= ?")
+		args = append(args, f.MinP99Ms)
+	}
+	if len(parts) == 0 {
+		return "", nil
+	}
+	return " HAVING " + strings.Join(parts, " AND "), args
+}
+
 func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int, cluster, env string) ([]ServiceSummary, error) {
+	return s.GetServicesQuery(ctx, ServicesQuery{
+		Since: since, From: from, To: to, NameMatch: nameMatch, ServiceIn: serviceIn,
+		Sort: sort, Dir: dir, Limit: limit, Offset: offset, Cluster: cluster, Env: env,
+	})
+}
+
+func (s *Store) GetServicesQuery(ctx context.Context, q ServicesQuery) ([]ServiceSummary, error) {
+	since, from, to := q.Since, q.From, q.To
+	nameMatch, serviceIn := q.NameMatch, q.ServiceIn
+	sort, dir := q.Sort, q.Dir
+	limit, offset := q.Limit, q.Offset
+	cluster, env := q.Cluster, q.Env
 	wc := s.servicesListWhere(ctx, since, from, to, nameMatch, serviceIn, cluster, env)
 	// scale-audit v0.8.201 — defensive cap on the limit<=0 wrapper path
 	// (GetServices passes limit=0) so this raw-spans GROUP BY can't return an
@@ -835,6 +915,9 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 	// Apdex threshold (T) — 200 ms is a common default. Frustrated boundary
 	// is 4T. Computed per-service in the same pass to avoid an extra query.
 	const apdexT = 200.0
+
+	havingSQL, havingArgs := q.Display.having("span_count", "error_count", "p99_ms")
+
 	rows, err := s.conn.Query(ctx, `
 		SELECT service_name,
 		       count()                                  AS span_count,
@@ -844,10 +927,10 @@ func (s *Store) GetServicesFilteredIn(ctx context.Context, since time.Duration, 
 		       (countIf(duration <= ?* 1e6) + countIf(duration > ? * 1e6 AND duration <= ? * 1e6) / 2)
 		         / nullIf(count(), 0)                   AS apdex
 		FROM spans `+wc.sql()+`
-		GROUP BY service_name
+		GROUP BY service_name`+havingSQL+`
 		ORDER BY `+servicesSortExpr(sort, dir)+limitClause+`
 		SETTINGS max_execution_time = 20`+heavyScanSpill,
-		append([]any{apdexT, apdexT, apdexT * 4}, wc.args...)...)
+		append(append([]any{apdexT, apdexT, apdexT * 4}, wc.args...), havingArgs...)...)
 	if err != nil {
 		return nil, err
 	}

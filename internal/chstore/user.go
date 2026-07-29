@@ -306,3 +306,24 @@ func (s *Store) DisableUser(ctx context.Context, userID string) error {
 	u.Disabled = true
 	return s.UpsertUser(ctx, *u)
 }
+
+// LiveAuthz resolves a user's CURRENT authorization state for the request
+// path (v0.9.352). It backs auth.AuthzLookup.
+//
+// ok=false covers both "deleted" and "disabled" on purpose: GetUserByID
+// already filters `disabled = 0` and returns nil when absent, and the caller
+// must not be able to tell the two apart — both are a 401, and distinguishing
+// them would leak whether an account exists.
+//
+// Called at most once per user per 10s (the auth package caches), so this
+// stays off the hot path even though it is a FINAL read.
+func (s *Store) LiveAuthz(ctx context.Context, userID string) (string, bool, error) {
+	u, err := s.GetUserByID(ctx, userID)
+	if err != nil {
+		return "", false, err
+	}
+	if u == nil {
+		return "", false, nil
+	}
+	return u.Role, true, nil
+}

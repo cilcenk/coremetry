@@ -686,6 +686,12 @@ func main() {
 
 	// ── Auth (JWT issuer + initial admin seed) ────────────────────────────────
 	authSvc := auth.NewService(cfg.Auth.JWTSecret, cfg.Auth.TokenTTL)
+	// v0.9.352 — authorization is resolved from the store on every request
+	// instead of being read out of the (up to 24h old) token. Without this,
+	// deleting or demoting a user took effect only when their session
+	// expired. See internal/auth/live_authz.go for the cache + fail-open
+	// reasoning.
+	authSvc.SetAuthzLookup(store)
 	if err := seedInitialAdmin(ctx, store, cfg.Auth); err != nil {
 		log.Printf("[auth] seed initial admin: %v", err)
 	}

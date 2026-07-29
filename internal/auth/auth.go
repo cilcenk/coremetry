@@ -70,6 +70,10 @@ type Service struct {
 	trustedHeader  *TrustedHeaderOptions
 	trustedCIDRs   []*net.IPNet
 	userStore      UserLookup
+	// liveAuthz (v0.9.352) resolves role/existence from the store instead of
+	// trusting the token's `role` claim. nil = not wired (tests/dev) → the
+	// middleware keeps the old behaviour. See live_authz.go.
+	liveAuthz *liveAuthzCache
 	// customRoles — operator-defined subsets of viewer's page
 	// access, loaded from system_settings at boot. Mutations go
 	// through Upsert/Delete which re-persist atomically. Empty
@@ -319,6 +323,17 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 					return
 				}
 			} else if claims, err := s.Parse(token); err == nil {
+				// v0.9.352 — the token proves WHO; the store decides WHAT
+				// they may do. Without this a deleted or demoted user kept
+				// their access until the 24h token expired.
+				role, ok := s.liveAuthz.resolve(r.Context(), claims.UserID, claims.Role)
+				if !ok {
+					// Deleted or disabled. Same 401 as a bad token — the
+					// difference must not be observable.
+					writeUnauth(w, "session no longer valid")
+					return
+				}
+				claims.Role = role
 				ctx := context.WithValue(r.Context(), userCtxKey, claims)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

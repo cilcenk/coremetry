@@ -6925,6 +6925,10 @@ func (s *Server) setUserRole(w http.ResponseWriter, r *http.Request) {
 	s.meUsers.clear() // v0.8.519 — /api/auth/me cache'i
 	details, _ := json.Marshal(map[string]any{"email": target.Email, "from": prevRole, "to": role})
 	s.audit(r, "user.set_role", "user", target.ID, string(details))
+	// v0.9.352 — bu pod yeni rolü BİR SONRAKİ istekte uygular; diğer
+	// podlar liveAuthzTTL içinde (10s). Öncesinde demote, kullanıcının
+	// token'ı dolana kadar (24 saate kadar) hiç etkili olmuyordu.
+	s.auth.InvalidateAuthz(target.ID)
 	writeJSON(w, map[string]any{"id": target.ID, "email": target.Email, "role": target.Role})
 }
 
@@ -6962,6 +6966,7 @@ func (s *Server) deleteUser(w http.ResponseWriter, r *http.Request) {
 	}
 	details, _ := json.Marshal(map[string]any{"email": target.Email, "role": target.Role})
 	s.audit(r, "user.delete", "user", id, string(details))
+	s.auth.InvalidateAuthz(id)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 
@@ -6992,6 +6997,10 @@ func (s *Server) resetUserPassword(w http.ResponseWriter, r *http.Request) {
 	// Audit row carries no password material — just that someone
 	// admin-reset this user's credential.
 	s.audit(r, "user.reset_password", "user", id, "")
+	// Parola sıfırlama oturumu düşürmüyor (rol değişmedi), ama önbelleği
+	// tazelemek zararsız ve hesap aynı turda devre dışı bırakıldıysa
+	// doğru olanı yapıyor.
+	s.auth.InvalidateAuthz(id)
 	writeJSON(w, map[string]string{"status": "ok"})
 }
 

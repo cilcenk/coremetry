@@ -68,6 +68,11 @@ type Evaluator struct {
 	// early re-run (accepted trade-off; the monitor runner's
 	// interval_sec pacing has the same shape). Guarded by watcherMu.
 	watcherLastRun map[string]time.Time
+	// watcherFails — ardışık ölçüm hatası sayacı (v0.9.447): bozuk
+	// kaynaklı (silinmiş index, ES yetkisi) watch'ların açık problemi
+	// keep-alive'la ölümsüzleşiyordu. Guarded by watcherMu; girdiler
+	// watcherLastRun ile aynı ömür sözleşmesini paylaşır.
+	watcherFails   map[string]int
 	watcherMu      sync.Mutex
 }
 
@@ -92,6 +97,7 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 		breachSince:    make(map[breachKey]time.Time),
 		lastResolved:   make(map[breachKey]time.Time),
 		watcherLastRun: make(map[string]time.Time),
+		watcherFails:   make(map[string]int),
 	}
 }
 

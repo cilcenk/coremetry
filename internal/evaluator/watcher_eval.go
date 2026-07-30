@@ -249,13 +249,16 @@ func (e *Evaluator) evaluateWatcher(ctx context.Context, r chstore.AlertRule) {
 		payload, _, err := e.logs.RawSearchPayload(ctx, indices, body, watcherTotalCap(r.Threshold))
 		if err != nil {
 			log.Printf("[evaluator] watcher measure %s: %v", r.ID, err)
+			e.watcherMeasureFailed(ctx, r, err)
 			return
 		}
 		value, err := extractPayloadValue(payload, spec.Path)
 		if err != nil {
 			log.Printf("[evaluator] watcher %s: %v — check the watch's aggs match the condition path", r.ID, err)
+			e.watcherMeasureFailed(ctx, r, err)
 			return
 		}
+		e.watcherMeasureOK(r.ID)
 		desc := fmt.Sprintf("watcher: %s — %s = %g (threshold %s %g, evaluated %s)",
 			r.Name, spec.Path, value, r.Comparator, r.Threshold, cadence)
 		// Agg-type watches embed no hit samples (nil enricher): the
@@ -267,13 +270,16 @@ func (e *Evaluator) evaluateWatcher(ctx context.Context, r chstore.AlertRule) {
 		payload, _, err := e.logs.RawSearchPayload(ctx, indices, body, watcherTotalCap(r.Threshold))
 		if err != nil {
 			log.Printf("[evaluator] watcher measure %s: %v", r.ID, err)
+			e.watcherMeasureFailed(ctx, r, err)
 			return
 		}
 		res, err := extractArrayCompareMax(payload, spec.ArrayPath, spec.ItemPath, r.Comparator, r.Threshold)
 		if err != nil {
 			log.Printf("[evaluator] watcher %s: %v — check the watch's aggs match the array_compare path", r.ID, err)
+			e.watcherMeasureFailed(ctx, r, err)
 			return
 		}
+		e.watcherMeasureOK(r.ID)
 		value := arrayCompareSettleValue(res, r.Comparator, r.Threshold)
 		item := spec.ItemPath
 		if item == "" {
@@ -287,8 +293,10 @@ func (e *Evaluator) evaluateWatcher(ctx context.Context, r chstore.AlertRule) {
 		total, err := e.logs.RawSearch(ctx, indices, body, watcherTotalCap(r.Threshold))
 		if err != nil {
 			log.Printf("[evaluator] watcher measure %s: %v", r.ID, err)
+			e.watcherMeasureFailed(ctx, r, err)
 			return
 		}
+		e.watcherMeasureOK(r.ID)
 		desc := fmt.Sprintf("watcher: %s — search matched %d (threshold %s %.0f, evaluated %s)",
 			r.Name, total, r.Comparator, r.Threshold, cadence)
 		e.settleCountAlert(ctx, r, now, float64(total), "watcher", desc,
@@ -329,6 +337,56 @@ func watcherSampleBlock(lines []string) string {
 		b.WriteString(l)
 	}
 	return b.String()
+}
+
+// ── Bozuk kaynak kapanışı (v0.9.447, hacim denetimi #4) ─────────────
+//
+// Ölçüm hatası ile "eşik sağlandı, sakin" AYNI şey değil: silinmiş
+// index / ES yetki hatası / bozuk agg yolu her cadence'ta error-return
+// üretir, resolve dalı hiç koşmaz, not-due keep-alive'ı da satırı
+// stale sweep'ten korur — problem ölümsüzleşir. N ardışık hatadan
+// sonra açık problem "watch source broken" gerekçesiyle kapanır;
+// kaynak düzelirse sayaç sıfırlanır ve bir sonraki gerçek ihlal
+// satırı yeniden açar (bildirimiyle).
+
+// watcherFailThreshold — kapanış eşiği. 3 ardışık cadence hatası
+// (5dk'lık tipik watch'ta ~15dk) geçici ES hıçkırığını bozuk
+// kaynaktan ayırmaya yeter; tek hata ASLA kapatmaz.
+const watcherFailThreshold = 3
+
+// watcherSourceBroken — saf karar çekirdeği (tablo-testli).
+func watcherSourceBroken(consecFails int) bool {
+	return consecFails >= watcherFailThreshold
+}
+
+func (e *Evaluator) watcherMeasureFailed(ctx context.Context, r chstore.AlertRule, cause error) {
+	e.watcherMu.Lock()
+	e.watcherFails[r.ID]++
+	fails := e.watcherFails[r.ID]
+	e.watcherMu.Unlock()
+	if !watcherSourceBroken(fails) {
+		return
+	}
+	open, err := e.store.FindOpenProblem(ctx, r.ID, "")
+	if err != nil || open == nil || open.ID == "" {
+		return
+	}
+	resolvedAt := time.Now().UnixNano()
+	open.Status = "resolved"
+	open.ResolvedAt = &resolvedAt
+	open.Description = appendResolveSuffix(open.Description, "watch source broken")
+	if err := e.store.UpsertProblem(ctx, *open); err != nil {
+		log.Printf("[evaluator] watcher %s broken-source resolve: %v", r.ID, err)
+		return
+	}
+	log.Printf("[evaluator] PROBLEM AUTO-RESOLVED (watch source broken, %d consecutive failures): %s · %v",
+		fails, r.Name, cause)
+}
+
+func (e *Evaluator) watcherMeasureOK(ruleID string) {
+	e.watcherMu.Lock()
+	delete(e.watcherFails, ruleID)
+	e.watcherMu.Unlock()
 }
 
 // ── Agg payload access (Faz-2) ──────────────────────────────────────

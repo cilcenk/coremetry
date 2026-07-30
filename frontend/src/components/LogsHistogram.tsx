@@ -131,7 +131,7 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
       <TimeChart
         times={times}
         series={series}
-        height={92}
+        height={140}
         rightUnit="%"
         fmtRight={fmtPct}
         onBrush={onRangeSelect
@@ -188,15 +188,23 @@ export function collapse(input: Series[], severityFiltered = false) {
 
   const all = new Array(tsNs.length).fill(0);
   const err = new Array(tsNs.length).fill(0);
+  // v0.9.382 (redesign D6) — WARN kendi bandını kazandı: "by level"
+  // alt yazısı v0.9.218'den beri yalnız total+error çiziyordu; olay
+  // ÖNCESİ yükselen WARN dalgası gri gövdede görünmezdi. Sıfır ek ES
+  // sorgusu: seviye serileri zaten geliyor (çip sayaçları v0.9.358).
+  const warnErr = new Array(tsNs.length).fill(0);
   const idx = new Map(tsNs.map((t, i) => [t, i]));
 
   for (const s of input) {
-    const isError = severityBandOf(s.name) === 'ERROR';
+    const band = severityBandOf(s.name);
+    const isError = band === 'ERROR';
+    const isWarn = band === 'WARN';
     for (const p of s.points) {
       const i = idx.get(p.t);
       if (i === undefined) continue;
       all[i] += p.v;
       if (isError) err[i] += p.v;
+      if (isError || isWarn) warnErr[i] += p.v;
     }
   }
 
@@ -219,8 +227,10 @@ export function collapse(input: Series[], severityFiltered = false) {
   const sumAll = all.reduce((a, b) => a + b, 0);
   const sumErr = err.reduce((a, b) => a + b, 0);
 
-  // Draw order = overlay order: the full bar first, the error share on top
-  // of it (reads from the baseline), the rate line last.
+  // Draw order = overlay order (baseline'dan): tam çubuk, üstüne
+  // warn+err (amber), en üste err (kırmızı) — yığılmış OKUNUR, overlay
+  // ÇİZİLİR (öndeki daha kısa çubuk arkadakini kısmen örter). Oran
+  // çizgisi ayrışsın diye amber'den turuncuya kaydı.
   const series: TimeChartSeries[] = [
     {
       key: 'total', label: 'logs', data: all, type: 'bar', axis: 'left',
@@ -228,10 +238,11 @@ export function collapse(input: Series[], severityFiltered = false) {
       // rarest, most actionable data, not the background traffic.
       color: 'color-mix(in srgb, var(--text3) 45%, transparent)',
     },
+    { key: 'warn', label: 'warn+', data: warnErr, type: 'bar', axis: 'left', color: 'var(--warn)' },
     { key: 'error', label: 'errors', data: err, type: 'bar', axis: 'left', color: 'var(--err)' },
     {
       key: 'rate', label: 'error rate', data: rate, type: 'line', axis: 'right',
-      color: 'var(--warn)', width: 1.8, pointsShow: true,
+      color: 'var(--orange)', width: 1.8, pointsShow: true,
     },
   ];
 

@@ -1489,9 +1489,14 @@ func (s *Store) UpsertProblemAISummary(ctx context.Context, problemID, summary s
 	row.AISummary = summary
 	row.AISummaryAt = time.Now().UnixNano()
 
+	// v0.9.445 — pod kolonu listeye dahil: eksikken bu yazma DEFAULT ''
+	// ile yeni sürüm üretiyor, ReplacingMergeTree bütün-satır replace'te
+	// problemin pod bağlamını siliyordu (runtime problemlerinde P1
+	// satırının hangi pod'a ait olduğu kayboluyor). GetProblem zaten tam
+	// satırı okuyor; taşımamak için hiçbir neden yoktu.
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO problems
 		(id, rule_id, rule_name, severity, service, metric, value,
-		 threshold, status, description, assignee, started_at,
+		 threshold, status, description, assignee, pod, started_at,
 		 resolved_at, updated_at, version, ai_summary, ai_summary_at)`)
 	if err != nil {
 		return err
@@ -1505,7 +1510,7 @@ func (s *Store) UpsertProblemAISummary(ctx context.Context, problemID, summary s
 	summaryAt := time.Unix(0, row.AISummaryAt).UTC()
 	if err := batch.Append(row.ID, row.RuleID, row.RuleName, row.Severity, row.Service,
 		row.Metric, row.Value, row.Threshold, row.Status, row.Description, row.Assignee,
-		startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano()),
+		row.Pod, startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano()),
 		row.AISummary, summaryAt); err != nil {
 		return fmt.Errorf("append problem ai-summary: %w", err)
 	}

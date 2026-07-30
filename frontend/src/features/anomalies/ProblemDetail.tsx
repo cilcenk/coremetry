@@ -131,6 +131,10 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
   const navigate = useNavigate();
   const [state, setState] = useState<ExceptionGroupState>(group.state);
   const [copied, setCopied] = useState(false);
+  // v0.9.414 — Explain'in deterministik kanıt trace'leri: örnek-trace
+  // satırları kutulanır (Explain trace'in waterfall kutulaması gibi).
+  const [evTraces, setEvTraces] = useState<string[]>([]);
+  useEffect(() => { setEvTraces([]); }, [group.fingerprint]);
   useEscBack(onBack);
 
   const samplesQ = useQuery({
@@ -259,6 +263,22 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         <span className="chip"><span className="k">last seen</span><b className="mono">{tsLong(group.lastSeen)}</b></span>
       </div>
 
+      {/* v0.9.414 (operatör istegi) — exception kök-sebep: backend örnek
+          trace + trace loglarını + deploy penceresini otomatik toplar;
+          kanıt trace'leri sağdaki örnek satırlarını kutular. */}
+      <div style={{ marginBottom: 16 }}>
+        <CopilotExplain kind="exception" id={group.fingerprint}
+          label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain root cause</span></>}
+          onEvidenceTraces={(ids) => {
+            setEvTraces(ids);
+            // Sıcak grupta backend en YENİ örneği kanıt seçer; mount'taki
+            // liste bayatsa kutulanacak satır listede olmayabilir —
+            // kanıt listede yoksa örnekleri tazele (verify bulgusu).
+            const have = new Set((samplesQ.data ?? []).map(sm => sm.traceId));
+            if (ids.some(tid => !have.has(tid))) void samplesQ.refetch();
+          }} />
+      </div>
+
       {/* AI Analizi — auto-sends this group's service context (v0.8.89). */}
       <AIAnalysisPanel service={group.service} />
 
@@ -322,18 +342,23 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
                 {!samplesQ.isLoading && samples.length === 0 && (
                   <tr><td style={{ padding: 12, color: 'var(--text3)', fontSize: 12 }}>No sample traces.</td></tr>
                 )}
-                {samples.slice(0, 14).map((s, i) => (
-                  <tr key={i} style={{ cursor: s.traceId ? 'pointer' : 'default' }}
+                {samples.slice(0, 14).map((s, i) => {
+                  const isEv = !!s.traceId && evTraces.includes(s.traceId);
+                  return (
+                  <tr key={i} className={isEv ? 'wf-evidence' : undefined}
+                    title={isEv ? 'Explain kanıtı — kök neden bu trace üzerinden soruşturuldu' : undefined}
+                    style={{ cursor: s.traceId ? 'pointer' : 'default' }}
                     onClick={() => s.traceId && navigate(`/trace?id=${encodeURIComponent(s.traceId)}`)}>
                     <td className="mono" style={{ paddingLeft: 14 }}>
                       <span style={{ color: 'var(--accent)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'inline-block', maxWidth: 150 }}>
                         {s.traceId ? s.traceId.slice(0, 16) + '…' : '—'}
                       </span>
                     </td>
-                    <td><span className="badge b-err">ERROR</span></td>
+                    <td><span className="badge b-err">ERROR</span>{isEv && <span className="badge b-warn" style={{ marginLeft: 6 }}>kanıt</span>}</td>
                     <td className="mono" style={{ textAlign: 'right', paddingRight: 14, fontSize: 11, color: 'var(--text3)' }}>{tsLong(s.time)}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

@@ -1280,6 +1280,12 @@ export const api = {
       { method: 'POST' }),
   copilotExplainProblem: (id: string) =>
     request<{ explanation: string }>(`/api/copilot/explain-problem/${id}`, { method: 'POST' }),
+  // v0.9.414 — exception grubu kök-sebep: backend örnek trace + trace
+  // loglarını + deploy penceresini otomatik toplar; kanıt trace/span
+  // id'leri deterministik döner (UI örnek satırlarını kutular).
+  copilotExplainException: (fingerprint: string) =>
+    request<{ explanation: string; evidenceTraceIds?: string[]; evidenceSpanIds?: string[] }>(
+      `/api/copilot/explain-exception/${encodeURIComponent(fingerprint)}`, { method: 'POST' }),
   copilotExplainIncident: (id: string) =>
     request<{ explanation: string }>(`/api/copilot/explain-incident/${id}`, { method: 'POST' }),
   copilotExplainAnomaly: (id: string) =>

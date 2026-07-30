@@ -1178,6 +1178,14 @@ canvas { max-width: 100%; }
    kullanıma kadar yumuşak bir halo yayar — ilk tıklamada durur.
    reduced-motion'da animasyon yerine sabit halka. */
 .ai-attn { animation: ai-attn-pulse 2s ease-out infinite; }
+
+/* v0.9.414 — kanıt SATIRI (exception örnek-trace tablosu): .wf-evidence
+   outline'ı WebKit'te tr üzerinde çizilmez → td-tabanlı arka plan + sol
+   aksan; hover'da kimlik kaybolmaz (tbody tr:hover tr arka planını ezer,
+   td arka planı üstte kalır). */
+tr.wf-evidence > td { background: color-mix(in srgb, var(--warn) 9%, transparent); }
+tr.wf-evidence > td:first-child { border-left: 3px solid var(--warn); }
+tbody tr.wf-evidence:hover > td { background: color-mix(in srgb, var(--warn) 14%, transparent); }
 @keyframes ai-attn-pulse {
   0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent2) 50%, transparent); }
   70%  { box-shadow: 0 0 0 8px transparent; }

@@ -953,6 +953,15 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
 		return out, f.StepSeconds, nil
 	}
+	// ── Dar rollup fast-path (v0.9.412, Rollup Aşama-3 dilim 1) ─────────────
+	// Overview/Service entry-RED batch'i (service + kind IN) op-MV'ye
+	// giremez ve ham spans tarardı; dar rollup (service/kind/status)
+	// bu şekli 10s granülaritede cevaplar. Tablolar yoksa / pencere
+	// rollup'ın en eski verisinden önceyse SESSİZCE ham yola düşer —
+	// migrations-öncesi prod davranışı bayt-bayt aynı.
+	if out, ok := s.tryNarrowRollupFastPathMulti(ctx, f); ok {
+		return out, f.StepSeconds, nil
+	}
 
 	// ── Build WHERE ───────────────────────────────────────────────────────────
 	var wc whereClause

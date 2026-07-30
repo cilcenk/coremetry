@@ -1,9 +1,10 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { healthToken } from '@/lib/health';
+import { encodeRange } from '@/lib/urlState';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap } from '@/lib/types';
@@ -131,6 +132,15 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
     staleTime: 30_000,
   });
 
+  // v0.9.381 (redesign D5, mockup af7419e5) — pin'li inspector: düğüm
+  // TIK = kart sabitlenir (📌/✕), hover-only davranış tamamlanır. Recenter
+  // artık karttaki buton; tık-recenter kalktı. +K more pili tıklanabilir:
+  // taraf bütçesi bir kademe artar (yalnız istemci yeniden-kesimi — kenar
+  // kümesi zaten odak-kapsamlı fetch'te, yeni istek YOK).
+  const [pinned, setPinned] = useState<string | null>(null);
+  const [capBoost, setCapBoost] = useState(0);
+  useEffect(() => { setPinned(null); setCapBoost(0); }, [focus]);
+
   // ── signed columns + nearest-first cap over the server-walked subgraph ──
   const nb = useMemo(() => {
     const allNodes = new Map<string, GraphNode>();
@@ -146,7 +156,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
     // TAMAMINI düşüremez; eskiden eşit mesafede ekleme sırası kazandığı ve
     // yürüyüş bağımlılıkları önce ürettiği için 45 bağımlılıklı bir gateway
     // sıfır çağıranla çizilebiliyordu.
-    const capped = capPerSide([...col.keys()], id => col.get(id) ?? 0, CAP, focus);
+    const capped = capPerSide([...col.keys()], id => col.get(id) ?? 0, CAP + capBoost * 40, focus);
     const ids = capped.keep;
     const collapsed = capped.collapsed;
     const keep = new Set(ids);
@@ -213,7 +223,8 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
 
   if (graph.isLoading) return <div style={{ padding: 60, display: 'grid', placeItems: 'center' }}><Spinner /></div>;
 
-  const hoverNode = hover ? nb.nodes.find(n => n.id === hover) : null;
+  const pinnedNode = pinned ? nb.nodes.find(n => n.id === pinned) : null;
+  const hoverNode = pinnedNode ?? (hover ? nb.nodes.find(n => n.id === hover) : null);
   const height = Math.round(window.innerHeight * 0.74);
 
   // v0.9.363 — 500, CH max_execution_time timeout'u ve gerçekten komşusuz
@@ -255,7 +266,13 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
             </label>
             <span style={{ fontSize: 11, color: 'var(--text3)' }}>
               {nb.nodes.length} of {graph.data?.nodes.length ?? 0} nodes · {nb.edges.length} edges
-              {nb.collapsed > 0 && <strong style={{ color: 'var(--warn)' }}> · +{nb.collapsed} more collapsed</strong>}
+              {nb.collapsed > 0 && (
+                <strong onClick={() => setCapBoost(b => b + 1)}
+                  title="Taraf bütçesini 40 düğüm artır — kenarlar zaten yüklü, yeni istek yok"
+                  style={{ color: 'var(--warn)', cursor: 'pointer', textDecoration: 'underline dotted' }}>
+                  {' '}· +{nb.collapsed} more — genişlet
+                </strong>
+              )}
             </span>
         </>
       </div>
@@ -268,8 +285,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
         onHoverNode={setHover}
         onSelectNode={id => {
           if (id === focus) return;
-          const n = nb.nodes.find(x => x.id === id);
-          onRecenter(n?.name ?? id);
+          setPinned(p => (p === id ? null : id));
         }}
         height={height}
         dropMessaging={false}
@@ -281,7 +297,11 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           <div style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 6 }}>
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: healthToken(hoverNode.errorRate) }} />
             <span style={{ fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hoverNode.name}</span>
+            {pinnedNode && <span title="Sabitlendi — ✕ ile bırak">📌</span>}
             <Button variant="secondary" size="sm" onClick={() => onRecenter(hoverNode.name)} style={{ marginLeft: 'auto' }}>Recenter</Button>
+            {pinnedNode && (
+              <Button variant="ghost" size="sm" onClick={() => setPinned(null)}>✕</Button>
+            )}
           </div>
           <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', marginBottom: 6 }}>
             {kindLabel(hoverNode)} · {hoverNode.kind === 'service' ? 'service.name' : hoverNode.system ? (hoverNode.kind === 'database' ? 'db.system' : 'messaging.system') : hoverNode.kind}
@@ -302,7 +322,21 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
             </div>
           )}
           {hoverNode.kind === 'service' && (
-            <Link to={`/service?name=${encodeURIComponent(hoverNode.name)}`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>Open service →</Link>
+            <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <Link to={`/service?name=${encodeURIComponent(hoverNode.name)}`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>Open service →</Link>
+              {/* v0.9.381 (D5) — kenar pivotunun düğüm hali: odak VE bu
+                  komşuyu birlikte İÇEREN trace'ler (Traces'ın mevcut
+                  ?services= requireServices filtresi). Etiket bilerek
+                  "içeren" der — doğrudan kenar garantisi yok. */}
+              {hoverNode.name !== focus && (
+                <Link
+                  to={`/traces?services=${encodeURIComponent(focus)},${encodeURIComponent(hoverNode.name)}&range=${encodeRange(range)}&view=list&rootOnly=false`}
+                  title="İki servisi birlikte içeren trace'ler — doğrudan kenar garantisi değil"
+                  style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+                  Traces ({focus} ∧ {hoverNode.name}) →
+                </Link>
+              )}
+            </span>
           )}
         </div>
       )}

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
 import { timeRangeToNs, fmtNum, isMessagingDep } from '@/lib/utils';
@@ -231,8 +231,22 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
   // v0.8.93 — render the SAME focused topology as the /topology page
   // (FocusedNeighborhood) so the service tab and the full page show one
   // identical graph (was a different ServiceGraph neighborhood view).
-  const [hops, setHops] = useState(1);
-  const [errorsOnly, setErrorsOnly] = useState(false);
+  // v0.9.381 (redesign D5) — hops + errorsOnly URL'e taşındı (?hops=2&
+  // eonly=1): sekme değişiminde/paylaşımda kaybolmuyordu iddiası artık
+  // doğru. replace:true; yabancı paramlar korunur (prev kopyalanır).
+  const [tparams, setTparams] = useSearchParams();
+  const hops = Math.min(3, Math.max(1, parseInt(tparams.get('hops') ?? '1', 10) || 1));
+  const errorsOnly = tparams.get('eonly') === '1';
+  const setHops = (h: number) => setTparams(prev => {
+    const next = new URLSearchParams(prev);
+    if (h > 1) next.set('hops', String(h)); else next.delete('hops');
+    return next;
+  }, { replace: true });
+  const setErrorsOnly = (v: boolean) => setTparams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('eonly', '1'); else next.delete('eonly');
+    return next;
+  }, { replace: true });
   return (
     <div className="card" style={{ marginTop: 4 }}>
       <div className="ov-card-h">

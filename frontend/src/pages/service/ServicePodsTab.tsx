@@ -41,8 +41,7 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
   const {
     metaQ, ns, deploy, matched, rows, clustersWithPods,
     effNs, effDeploy, from, to, cFrom, cTo, clamped,
-    sourcesPending, noClusters, podsPending,
-  } = useServicePods(service, range);
+    sourcesPending, noClusters, podsPending, sourcesError, podErrors } = useServicePods(service, range);
 
   // Accordion tek dt üstünde (sıralama/resize global; cluster'a göre gruplanır).
   const dt = useDataTable<ClusterPodRow>({
@@ -64,12 +63,23 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
     <>
       {(metaQ.isPending || sourcesPending) ? (
         <Spinner />
+      ) : sourcesError ? (
+        /* v0.9.363 — başarısızlık, boşlukmuş gibi çizilmez. */
+        <Empty icon="⚠" title="Thanos kaynaklarına erişilemedi">
+          Pod keşfi başarısız — yapılandırma değil, erişim sorunu olabilir:{' '}
+          <span className="mono">{sourcesError}</span>
+        </Empty>
       ) : noClusters ? (
         <Empty icon="▦" title="No Thanos clusters configured">
           Add a remote cluster under Settings → Remote clusters to see pod-level metrics here.
         </Empty>
       ) : rows.length === 0 ? (
-        podsPending ? <Spinner /> : (
+        podsPending ? <Spinner /> : podErrors.length > 0 ? (
+          <Empty icon="⚠" title="Pod metrikleri okunamadı">
+            {podErrors.join(', ')} cluster{podErrors.length > 1 ? "'ları" : "'ı"} sorguya
+            yanıt vermedi — liste bu yüzden boş olabilir, workload yok demek değil.
+          </Empty>
+        ) : (
           <Empty icon="▦" title="No pods matched">
             Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
             {' '}and pod-name matching (<span className="mono">{service}-*</span>) across{' '}

@@ -70,9 +70,19 @@ export function ServiceClusterBreakdown({ service, range }: {
     initialSort: { id: 'calls', dir: 'desc' },
   });
 
+  // v0.9.363 — hata artık sessizce "panel yok"a katlanmıyor: çok-cluster'lı
+  // bir serviste sorgu 500'lediğinde panelin YOK OLMASI operatöre "tek
+  // cluster'a düştü" diyordu. Tek satırlık dürüst bir çizgi çiziyoruz.
+  if (q.isError) {
+    return (
+      <div style={{ marginBottom: 14, fontSize: 12, color: 'var(--muted)' }}>
+        ⚠ Cluster kırılımı yüklenemedi — panel gizlenmedi, sorgu başarısız.
+      </div>
+    );
+  }
   // Silent when fewer than 2 clusters — single-cluster (or zero-cluster,
   // e.g. SDK without resource attrs) deployments don't need the panel.
-  // Loading / error states stay quiet for the same reason.
+  // Loading state stays quiet for the same reason.
   if (clusters.length < 2) return null;
 
   return (

@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { healthToken } from '@/lib/health';
-import { Spinner } from '@/components/Spinner';
+import { Spinner, Empty } from '@/components/Spinner';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
@@ -215,6 +215,25 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
 
   const hoverNode = hover ? nb.nodes.find(n => n.id === hover) : null;
   const height = Math.round(window.innerHeight * 0.74);
+
+  // v0.9.363 — 500, CH max_execution_time timeout'u ve gerçekten komşusuz
+  // servis AYNI boş tuvali üretiyordu; operatör hangisine baktığını
+  // bilemiyordu. Başarısızlık ve boşluk artık kendini söylüyor.
+  if (graph.isError) {
+    return (
+      <Empty icon="⚠" title="Topoloji yüklenemedi">
+        <span className="mono">{String(graph.error)}</span>
+      </Empty>
+    );
+  }
+  if (!graph.isPending && nb.nodes.length === 0) {
+    return (
+      <Empty icon="◇" title={`${focus} için topoloji verisi yok`}>
+        Yalnız trace'i Coremetry'ye ULAŞAN çağıran ve bağımlılıklar burada
+        görünebilir — enstrümante edilmemiş bir istemci buradan görünmezdir.
+      </Empty>
+    );
+  }
 
   return (
     <div style={{ position: 'relative' }}>

@@ -43,6 +43,14 @@ const (
 	jvmGCWarnMs       = 500.0
 	jvmGCCritMs       = 1000.0
 	jvmGCHystMs       = 50.0
+	// v0.9.440 (operatör istegi: "çok uzun GC + GC sayısı yüksek podlar")
+	// — GC ZAMAN PAYI: pencerede GC'de geçen sürenin yüzdesi. Tek ölçüde
+	// iki şikâyet: uzun pause'lar da sık kısa pause'lar da payı şişirir.
+	// >%10 = throughput acısı (soruşturulmalı), >%25 = ciddi; 2pp
+	// histerezis (jvm-heap ile aynı sınıf).
+	jvmGCShareWarnPct = 10.0
+	jvmGCShareCritPct = 25.0
+	jvmGCShareHystPct = 2.0
 )
 
 // jvmHeapDecision — saf eşik çekirdeği (tablo testli). capacityDecision'la
@@ -79,6 +87,21 @@ func jvmGCPauseDecision(avgMs float64, wasOpen bool) (open bool, severity string
 	case avgMs >= jvmGCWarnMs:
 		return true, "warning"
 	case wasOpen && avgMs >= jvmGCWarnMs-jvmGCHystMs:
+		return true, "warning"
+	default:
+		return false, ""
+	}
+}
+
+// jvmGCShareDecision — saf eşik çekirdeği (tablo testli): GC zaman
+// payı yüzdesi üzerinden warn/crit + histerezis.
+func jvmGCShareDecision(sharePct float64, wasOpen bool) (open bool, severity string) {
+	switch {
+	case sharePct >= jvmGCShareCritPct:
+		return true, "critical"
+	case sharePct >= jvmGCShareWarnPct:
+		return true, "warning"
+	case wasOpen && sharePct >= jvmGCShareWarnPct-jvmGCShareHystPct:
 		return true, "warning"
 	default:
 		return false, ""
@@ -122,6 +145,14 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 		} else {
 			for _, s := range samples {
 				e.reconcileRuntimeGC(ctx, s)
+			}
+		}
+		// v0.9.440 — GC zaman payı (uzun + sık GC'yi tek ölçüde yakalar).
+		if acts, err := e.store.JVMGCActivity(ctx); err != nil {
+			log.Printf("[evaluator] runtime jvm-gc-share read: %v", err)
+		} else {
+			for _, a := range acts {
+				e.reconcileRuntimeGCShare(ctx, a)
 			}
 		}
 	}
@@ -194,6 +225,30 @@ type runtimeReconcile struct {
 	severity                                     string
 	value, threshold                             float64
 	reason                                       string
+}
+
+
+// reconcileRuntimeGCShare (v0.9.440) — GC zaman payı kontrolü.
+// reconcileRuntimeGC'nin ikizi; reason koleksiyon hızını da söyler ki
+// "sayısı yüksek" şikâyeti alarm metninde görünür olsun.
+func (e *Evaluator) reconcileRuntimeGCShare(ctx context.Context, a chstore.GCActivitySample) {
+	const ruleID = "runtime:jvm-gc-share"
+	service := runtimeService(a.Service, a.Pod)
+	existing, err := e.store.FindOpenProblemByID(ctx, runtimeProblemID("jvm-gc-share", a.Service, a.Pod))
+	hasOpen := err == nil && existing != nil && existing.ID != ""
+	open, sev := jvmGCShareDecision(a.SharePct, hasOpen)
+	reason := fmt.Sprintf("JVM zamanının %%%.1f'i GC'de (≈%.0f koleksiyon/dk, 10dk penceresi) on %s · pod %s",
+		a.SharePct, a.RatePerMin, service, a.Pod)
+	thr := jvmGCShareWarnPct
+	if sev == "critical" {
+		thr = jvmGCShareCritPct
+	}
+	e.reconcileRuntime(ctx, runtimeReconcile{
+		ruleID: ruleID, ruleName: "Runtime · JVM GC zaman payı", metric: "runtime.jvm_gc_share",
+		service: service, pod: a.Pod, problemID: runtimeProblemID("jvm-gc-share", a.Service, a.Pod),
+		open: open, hasOpen: hasOpen, existing: existing,
+		severity: sev, value: a.SharePct, threshold: thr, reason: reason,
+	})
 }
 
 func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {

@@ -455,6 +455,10 @@ var editorRoles = []string{auth.RoleAdmin, auth.RoleEditor}
 func (s *Server) Start() error {
 	mux := http.NewServeMux()
 
+	// Rollup okuma uçları (Aşama 2) — api.go büyütülmez kısıtı gereği
+	// tüm route'lar internal/api/rollup_routes.go'da yaşar.
+	registerRollupRoutes(mux, s)
+
 	// OTLP HTTP
 	otlpHandler := otlpRouteGuard(s.roleIngestOff, otlp.HTTPHandler(s.ing))
 	mux.Handle("POST /v1/traces", otlpHandler)

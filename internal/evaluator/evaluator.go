@@ -343,6 +343,17 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 		log.Printf("[evaluator] services: %v", err)
 		return
 	}
+	// v0.9.449 — request_rate< kuralları için taze hedef kümesi (L4).
+	// Hata = nil = kapı devre dışı (fail-open).
+	var freshSet map[string]bool
+	if freshNames, ferr := e.store.ListActiveServiceNames(ctx, evalFreshWindow); ferr == nil {
+		freshSet = make(map[string]bool, len(freshNames))
+		for _, n := range freshNames {
+			freshSet[n] = true
+		}
+	} else {
+		log.Printf("[evaluator] fresh services (gate disabled this tick): %v", ferr)
+	}
 
 	// v0.8.352 (perf P2-A) — batched prefetch: ONE GROUP BY query per
 	// DISTINCT (metric, window) pair (+ one per MinSamples count window)
@@ -382,7 +393,11 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 			e.evaluateWatcher(ctx, r)
 			continue
 		}
-		for _, svc := range ruleEvalTargets(r, serviceNames) {
+		targets := ruleEvalTargets(r, serviceNames)
+		if ruleNeedsFreshTargets(r) {
+			targets = filterFreshTargets(targets, freshSet)
+		}
+		for _, svc := range targets {
 			e.evaluateOne(ctx, r, svc, pre, openSnap)
 		}
 	}
@@ -563,6 +578,39 @@ func ruleEvalTargets(r chstore.AlertRule, serviceNames []string) []string {
 		return []string{r.Service}
 	}
 	return serviceNames
+}
+
+// evalFreshWindow (v0.9.449, hacim denetimi L4) — request_rate DÜŞÜŞ
+// kuralları için hedef tazeliği: 24 saatlik wildcard listesi, 20 saat
+// önce susmuş (emekliye ayrılmış) servisi hâlâ değerlendiriyor ve
+// absentMeasure'ın 0'ı `request_rate <` eşiğini gün boyu ihlal
+// ediyordu. 2 saatlik tazelik: susma alarmı ilk 2 saat NORMAL çalışır
+// (asıl amaç), sonra değerlendirme durur → satır ~3×interval içinde
+// stale sweep'le "source silent" gerekçesiyle kapanır.
+const evalFreshWindow = 2 * time.Hour
+
+// ruleNeedsFreshTargets — saf kapı: yalnız susmayla ihlale DÖNEN şekil
+// (request_rate + küçüktür karşılaştırması). Diğer metrikler susan
+// serviste ya değerlendirilmez (error_rate/avg_ms evaluate=false) ya
+// da NaN ile resolve dalına düşer — onlara kapı gerekmez.
+func ruleNeedsFreshTargets(r chstore.AlertRule) bool {
+	return r.Metric == "request_rate" && (r.Comparator == "<" || r.Comparator == "<=")
+}
+
+// filterFreshTargets — hedef listesini taze kümeye indirger. fresh nil
+// ise (okuma hatası) kapı DEVRE DIŞI: eski davranışa düş (fail-open,
+// kör susturma olmasın).
+func filterFreshTargets(targets []string, fresh map[string]bool) []string {
+	if fresh == nil {
+		return targets
+	}
+	kept := make([]string, 0, len(targets))
+	for _, t := range targets {
+		if fresh[t] {
+			kept = append(kept, t)
+		}
+	}
+	return kept
 }
 
 func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string, pre *tickMeasures, openSnap map[string]*chstore.Problem) {

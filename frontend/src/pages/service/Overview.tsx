@@ -342,6 +342,17 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
 
   return (
     <div style={{ marginTop: 4 }}>
+      {/* v0.9.378 (redesign D2, mockup af7419e5) — Overview'a Details'ın
+          dtl-sech bölüm dili geldi: Altın sinyaller / Giriş noktaları /
+          Bağlam. Kapsam tanımı tooltip folklorundan çıkıp TEK görünür
+          rozete indi — beş karo ve üç grafik aynı rozete bakar; fallback
+          amber'e döner. */}
+      <div className="dtl-sech">Altın sinyaller
+        <span className={`badge ${usingAllSpans ? 'b-warn' : 'b-gray'}`}
+          style={{ textTransform: 'none', letterSpacing: 0 }} title={latScopeNote}>
+          {usingAllSpans ? 'kapsam: tüm span\u2019ler' : 'kapsam: giriş span\u2019leri'}
+        </span>
+      </div>
       {/* KPI row — golden signals + full-bleed trend sparklines. Each tile is
           wrapped in the reusable MetricPanel doorway (compact: a hover-revealed
           ⋮ + body-click → Explore); the tile body renders verbatim. */}
@@ -362,7 +373,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             spanmetrics pipeline (it's a composite of latency thresholds), so it
             stays a plain tile — no doorway. '—' when the summary bundle is
             absent (no spanmetrics apdex source). */}
-        <KpiTile lab="Apdex" val={apdexVal != null ? apdexVal.toFixed(2) : '—'} accent="var(--ok)" />
+        <KpiTile lab="Apdex" val={apdexVal != null ? apdexVal.toFixed(2) : '—'} accent="var(--ok)"
+          note="Apdex — eşik tabanlı bileşik skor (service_summary_5m). Sparkline/doorway yok: spanmetrics hattında apdex serisi üretilmiyor; D2 bilinçli kısmi bıraktı." />
       </div>
 
       {/* RED charts row — response time / throughput / failure rate, each
@@ -405,15 +417,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           sekmesine taşındı (ServicePodsTab, v0.9.158'de yeniden adlandırıldı).
           Operatör talebi. */}
 
-      {/* Upstream / downstream neighbours — the richer panel that used
-          to open the Details tab, moved here v0.8.366 (operator: the
-          Details version "daha güzel gösteriyor"); the flat two-column
-          Neighbors block it replaces is gone. Full graph on /topology. */}
-      <ServiceNeighbors service={service} since={nb.since} capped={nb.capped} defaultOpen />
-
-      {/* AI Analizi — auto-sends this service + selected window (v0.8.89). */}
-      <AIAnalysisPanel service={service} rangeS={Math.round((to - from) / 1e9)} />
-
+      {/* v0.9.378 (D2) — tablolar Bağlam'ın ÜSTÜNE taşındı (mockup düzeni):
+          AI/Neighbors açılınca altındaki tabloların zıplaması sorunu,
+          rezerv yükseklik yerine SIRAYLA çözülür — genişleyen paneller
+          artık sayfanın sonunda, altlarında itilecek içerik yok. */}
+      <div className="dtl-sech">Giriş noktaları</div>
       {/* Top endpoints (giriş span'leri, v0.9.377 D1) + Top DB statements.
           endpoints boşsa (giriş span'i olmayan servis / eski backend) eski
           Operations kartına düş — görünmez-düşme yerine zarif fallback;
@@ -424,6 +432,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           : <OpsCard service={service} range={range} operations={operations} />}
         <DbCard service={service} range={range} from={from} to={to} />
       </div>
+
+      <div className="dtl-sech">Bağlam</div>
+      {/* Upstream / downstream neighbours — the richer panel that used
+          to open the Details tab, moved here v0.8.366 (operator: the
+          Details version "daha güzel gösteriyor"); the flat two-column
+          Neighbors block it replaces is gone. Full graph on /topology. */}
+      <ServiceNeighbors service={service} since={nb.since} capped={nb.capped} defaultOpen />
+
+      {/* AI Analizi — auto-sends this service + selected window (v0.8.89). */}
+      <AIAnalysisPanel service={service} rangeS={Math.round((to - from) / 1e9)} />
 
     </div>
   );

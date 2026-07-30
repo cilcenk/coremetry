@@ -84,6 +84,11 @@ func TestRouteGuidedIntent(t *testing.T) {
 		{"gece + slow-trace slow kazanır", "dün gece en yavaş trace'ler", guidedSlowTraces, "", ""},
 		{"gece + deploy deploy kazanır", "dün gece deploy oldu mu", guidedDeployImpact, "", ""},
 
+		// (k) v0.9.422 — çoklu tam-ad kıyası → familyHealth (yan yana RED).
+		{"iki servis kıyas", "checkout-service ile payment-service p99 kıyasla", guidedFamilyHealth, "", ""},
+		{"iki servis vs", "checkout-service vs mobile-bff yavaş mı", guidedFamilyHealth, "", ""},
+		{"tek tam ad kıyas DEĞİL", "checkout-service sağlığı nasıl", guidedServiceHealth, "checkout-service", ""},
+
 		// (j) v0.9.420 — bağımlılık sağlığı.
 		{"db yavaş", "hangi db yavaş", guidedDBHealth, "", ""},
 		{"veritabanı", "veritabanı hataları arttı mı", guidedDBHealth, "", ""},

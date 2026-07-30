@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { pushZoom, popZoom } from './zoomHistory';
 import type { TimeRange } from '@/lib/types';
@@ -32,6 +32,10 @@ import type { TimeRange } from '@/lib/types';
 export function usePageZoomRange(defaultPreset: string, onChange?: () => void) {
   const [range, setRange] = useUrlRange(defaultPreset);
   const zoomStackRef = useRef<TimeRange[]>([]);
+  // zoomDepth (v0.9.430) — görünür "geri" affordance'ları için yığın
+  // derinliği (Traces'in Zoom back butonu). Ref render tetiklemez;
+  // bu state yalnız derinlik değişiminde tetikler.
+  const [zoomDepth, setZoomDepth] = useState(0);
   const rangeRef = useRef(range); rangeRef.current = range;
   const zoomWroteRef = useRef(false);
   const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
@@ -39,10 +43,12 @@ export function usePageZoomRange(defaultPreset: string, onChange?: () => void) {
   useEffect(() => {
     if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
     zoomStackRef.current = [];
+    setZoomDepth(0);
   }, [range.preset, range.fromMs, range.toMs]);
 
   const handleZoom = useCallback((fromUnixSec: number, toUnixSec: number) => {
     zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
+    setZoomDepth(zoomStackRef.current.length);
     zoomWroteRef.current = true;
     setRange({
       preset: 'custom',
@@ -55,6 +61,7 @@ export function usePageZoomRange(defaultPreset: string, onChange?: () => void) {
   const handleZoomReset = useCallback(() => {
     const { stack, view } = popZoom(zoomStackRef.current);
     zoomStackRef.current = stack;
+    setZoomDepth(stack.length);
     if (view) {
       zoomWroteRef.current = true;
       setRange(view);
@@ -68,5 +75,5 @@ export function usePageZoomRange(defaultPreset: string, onChange?: () => void) {
     }
   }, [setRange, defaultPreset]);
 
-  return { range, setRange, handleZoom, handleZoomReset };
+  return { range, setRange, handleZoom, handleZoomReset, zoomDepth };
 }

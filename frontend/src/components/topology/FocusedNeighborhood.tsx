@@ -50,6 +50,31 @@ function fmtMs(ms: number): string {
 //
 // Since v0.8.108 the columns aren't used for x-placement (TopologyFlowGraph
 // lays out with its own BFS) — they still drive the nearest-first node CAP.
+// capPerSide — v0.9.359. The old cap sorted every node by |col| and cut at
+// CAP; ties at the same distance kept insertion order, and the column walk
+// emits dependencies first — so a gateway with 45 deps and 20 callers
+// rendered 39 deps and ZERO callers. "Nothing calls this service" is the
+// single most load-bearing fact on this tab, and the cap could fabricate it.
+//
+// Each side now gets its own budget (half of CAP-1, focus always kept); an
+// under-full side donates its remainder to the other. Within a side the cut
+// stays nearest-first. Pure + unit-tested.
+export function capPerSide(
+  ids: string[], colOf: (id: string) => number, cap: number, focus: string,
+): { keep: string[]; collapsed: number } {
+  if (ids.length <= cap) return { keep: ids, collapsed: 0 };
+  const byDist = (a: string, b: string) => Math.abs(colOf(a)) - Math.abs(colOf(b));
+  const callers = ids.filter(id => id !== focus && colOf(id) < 0).sort(byDist);
+  const deps    = ids.filter(id => id !== focus && colOf(id) > 0).sort(byDist);
+  const others  = ids.filter(id => id !== focus && colOf(id) === 0); // savunma; normalde yalnız focus 0
+  const budget = cap - 1 - others.length;
+  const half = Math.floor(budget / 2);
+  const nCallers = Math.min(callers.length, half + Math.max(0, half - deps.length));
+  const nDeps    = Math.min(deps.length,    budget - nCallers);
+  const keep = [focus, ...others, ...callers.slice(0, nCallers), ...deps.slice(0, nDeps)];
+  return { keep, collapsed: ids.length - keep.length };
+}
+
 export function assignFocusColumns(edges: GraphEdge[], focus: string, hops: number): Map<string, number> {
   const out = new Map<string, GraphEdge[]>(); // source → edges (downstream)
   const inc = new Map<string, GraphEdge[]>(); // target → edges (upstream)
@@ -117,13 +142,13 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
     // the focus column (the pre-v0.8.39 "won't branch at 2 hops" bug).
     const col = assignFocusColumns(edges, focus, hops);
     // cap: keep the nearest CAP nodes (lowest |col|, focus always kept).
-    let ids = [...col.keys()];
-    let collapsed = 0;
-    if (ids.length > CAP) {
-      ids.sort((a, b) => Math.abs(col.get(a)!) - Math.abs(col.get(b)!));
-      collapsed = ids.length - CAP;
-      ids = ids.slice(0, CAP);
-    }
+    // v0.9.359 — taraf-başına bütçe (capPerSide): tavan artık çağıranların
+    // TAMAMINI düşüremez; eskiden eşit mesafede ekleme sırası kazandığı ve
+    // yürüyüş bağımlılıkları önce ürettiği için 45 bağımlılıklı bir gateway
+    // sıfır çağıranla çizilebiliyordu.
+    const capped = capPerSide([...col.keys()], id => col.get(id) ?? 0, CAP, focus);
+    const ids = capped.keep;
+    const collapsed = capped.collapsed;
     const keep = new Set(ids);
     const nodes = ids.map(id => allNodes.get(id)).filter((n): n is GraphNode => !!n);
     const shown = edges.filter(e => keep.has(e.source) && keep.has(e.target));

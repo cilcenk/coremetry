@@ -64,3 +64,59 @@ describe('assignFocusColumns', () => {
     expect(col.get('a')).not.toBe(0);
   });
 });
+
+// v0.9.359 — capPerSide. The flat nearest-first cap could drop EVERY caller:
+// ties at |col|=1 kept insertion order, and the walk emits dependencies
+// first, so a gateway with 45 deps + 20 callers rendered 39 deps and zero
+// callers — fabricating "nothing calls this service".
+import { capPerSide } from './FocusedNeighborhood';
+
+describe('capPerSide', () => {
+  const mk = (callers: number, deps: number) => {
+    const col = new Map<string, number>([['focus', 0]]);
+    for (let i = 0; i < callers; i++) col.set(`c${i}`, -1 - (i % 2)); // -1/-2 karışık
+    for (let i = 0; i < deps; i++) col.set(`d${i}`, 1 + (i % 2));
+    return { ids: [...col.keys()], colOf: (id: string) => col.get(id) ?? 0 };
+  };
+
+  it('under the cap: untouched', () => {
+    const { ids, colOf } = mk(5, 5);
+    const r = capPerSide(ids, colOf, 40, 'focus');
+    expect(r.keep.length).toBe(11);
+    expect(r.collapsed).toBe(0);
+  });
+
+  it('the review scenario: 45 deps + 20 callers keeps BOTH sides', () => {
+    const { ids, colOf } = mk(20, 45);
+    const r = capPerSide(ids, colOf, 40, 'focus');
+    expect(r.keep.length).toBe(40);
+    const callers = r.keep.filter(id => colOf(id) < 0).length;
+    const deps = r.keep.filter(id => colOf(id) > 0).length;
+    // budget=39, half=19: çağıran 19 (1'i düşer), bağımlılık 20 — ama SIFIR
+    // çağıran asla; eski davranış 0/39'du.
+    expect(callers).toBe(19);
+    expect(deps).toBe(20);
+    expect(r.collapsed).toBe(26); // 66 düğümden 40 kaldı
+  });
+
+  it('an under-full side donates its remainder', () => {
+    const { ids, colOf } = mk(3, 60);
+    const r = capPerSide(ids, colOf, 40, 'focus');
+    expect(r.keep.filter(id => colOf(id) < 0).length).toBe(3);   // hepsi
+    expect(r.keep.filter(id => colOf(id) > 0).length).toBe(36);  // 39-3
+  });
+
+  it('focus is always kept', () => {
+    const { ids, colOf } = mk(50, 50);
+    const r = capPerSide(ids, colOf, 10, 'focus');
+    expect(r.keep).toContain('focus');
+    expect(r.keep.length).toBe(10);
+  });
+
+  it('within a side the cut is nearest-first', () => {
+    const col = new Map<string, number>([['focus', 0], ['near', 1], ['far', 2], ['x', -1]]);
+    const r = capPerSide([...col.keys()], id => col.get(id) ?? 0, 3, 'focus');
+    expect(r.keep).toContain('near');
+    expect(r.keep).not.toContain('far');
+  });
+});

@@ -168,6 +168,18 @@ Not: bu sözleşme, grafik-deneyimi auditinin (docs/audit/chart-experience-audit
 
 `spanmetrics_1s/10s/1m` bugün /endpoints ve resolver hızlı-yollarını besliyor; DOKUNULMADI. Orta vadede DAR aile spanmetrics_10s/1s'in "overview" yükünü devralabilir (daha az boyut + kaskad + 13 aya kadar tarih); `name` boyutlu sorgular spanmetrics_1m'de veya GENİŞ ailenin `endpoint` kolonunda yaşar. Emeklilik kararı Aşama 2+ konusu — bu aşamada iki aile YAN YANA yaşar (ingest maliyeti §4'te bu varsayımla hesaplandı).
 
+**KARAR (v0.9.428, Aşama-3 kapanışı): konsolidasyon ERTELENDİ — iki
+aile yan yana yaşamaya devam eder.** Gerekçe: (1) spanmetrics_* hâlâ
+resolver + /endpoints hızlı-yollarının tek kaynağı ve `name` boyutunu
+yalnız o taşıyor (dar ailede yok, geniş ailede endpoint katlanmış);
+(2) rollup aileleri prod'da henüz uygulanmadı — kanıtlanmamış tabloya
+geçip kanıtlı MV'leri emekli etmek yanlış sıra; (3) ingest maliyeti
+§4'te yan-yana varsayımıyla ölçüldü ve kabul edildi. Yeniden açma
+ölçütleri (hepsi birden): rollup'lar prod'da ≥30 gün sorunsuz +
+resolver okumaları rollup'a taşınıp query_log medyanıyla eşit-veya-hızlı
+ölçülmüş + 0004 backfill geçmişi kapatmış. O gün ilk emekli adayı
+spanmetrics_1s'tir (en pahalı, en az okunan).
+
 ---
 
 ## 8. Aşama 2'ye bırakılanlar (onay bekler)

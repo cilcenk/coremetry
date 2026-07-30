@@ -397,7 +397,12 @@ func firstN(s string, n int) string {
 // working-set memory, cpu/mem limits) and merges them by
 // (namespace, pod). Exactly four queries per cluster regardless
 // of pod count — never a query per pod (audit §4).
-func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, error) {
+// PodMetrics'in ikinci dönüşü truncated: cpu/mem serilerinden biri
+// podListLimit tavanına DAYANDIYSA liste cluster'ın tamamı değildir —
+// düşük trafikli pod'lar topk dışında kalmıştır. v0.9.369: bu bayrak
+// olmadan 3000-pod'luk cluster'da sakin bir servisin sekmesi kendinden
+// emin "Pods (0)" diyordu; süzme istemcide, kesme sunucuda ve İFŞASIZDI.
+func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, bool, error) {
 	type acc struct{ cpu, mem, cpuLim, memLim, cpuReq, memReq, netIn, netOut float64 }
 	byKey := map[string]*acc{}
 	get := func(m map[string]string) *acc {
@@ -416,13 +421,14 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query",
 		url.Values{"query": {podCPUQuery(c.NamespaceFilter)}})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	memSeries, err := s.doQuery(ctx, c, "/api/v1/query",
 		url.Values{"query": {podMemQuery(c.NamespaceFilter)}})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
+	truncated := len(cpuSeries) >= podListLimit || len(memSeries) >= podListLimit
 	for _, ser := range cpuSeries {
 		if v, ok := sampleValue(ser.Value); ok {
 			get(ser.Metric).cpu = v
@@ -514,7 +520,7 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 	// diyordu. KSM faz/restart haritaları o pod'ları zaten biliyor —
 	// applyDeployKSM'in aynası: sıfır-kaynaklı hayalet satır ekle.
 	out = appendGhostPods(out, c.Name, emitted, phaseBy, restartBy)
-	return out, nil
+	return out, truncated, nil
 }
 
 // appendGhostPods appends a zero-resource PodRow for every pod the KSM

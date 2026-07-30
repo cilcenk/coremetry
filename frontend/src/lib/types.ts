@@ -1008,6 +1008,9 @@ export interface ClusterPodsResponse {
   cluster: string;
   pods: ClusterPodRow[] | null;
   count: number;
+  // v0.9.369 — sunucu topk(500) tavanına dayandı: liste cluster'ın tamamı
+  // değil, istemci süzmesi "yok" sonucunu kanıtlamaz.
+  truncated?: boolean;
 }
 // v0.8.583 — node CPU/memory (dar kapsam). node = kube_node_info
 // eşleşirse gerçek ad, yoksa instance (ip:port). Pct'ler kendi

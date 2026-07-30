@@ -95,10 +95,17 @@ export function useServicePods(service: string, range: TimeRange) {
   const podErrors = podQs
     .map((q, i) => (q.isError ? (matched[i] ?? `cluster ${i + 1}`) : null))
     .filter((x): x is string => !!x);
+  // v0.9.369 — sunucu topk(500) tavanına dayanan cluster'lar: istemci
+  // süzmesi o cluster'da "yok" sonucunu KANITLAYAMAZ (sakin pod'lar
+  // topk dışında). Boş durum ve başlık bunu söylemek zorunda.
+  const truncatedClusters = podQs
+    .map((q, i) => (q.data?.truncated ? (matched[i] ?? `cluster ${i + 1}`) : null))
+    .filter((x): x is string => !!x);
 
   return {
     metaQ, ns, deploy, matched, rows, clustersWithPods,
     effNs, effDeploy, from, to, cFrom, cTo, clamped,
     sourcesPending, noClusters, podsPending, sourcesError, podErrors,
+    truncatedClusters,
   };
 }

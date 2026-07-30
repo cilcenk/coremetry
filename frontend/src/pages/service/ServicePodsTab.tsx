@@ -41,7 +41,7 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
   const {
     metaQ, ns, deploy, matched, rows, clustersWithPods,
     effNs, effDeploy, from, to, cFrom, cTo, clamped,
-    sourcesPending, noClusters, podsPending, sourcesError, podErrors } = useServicePods(service, range);
+    sourcesPending, noClusters, podsPending, sourcesError, podErrors, truncatedClusters } = useServicePods(service, range);
 
   // Accordion tek dt üstünde (sıralama/resize global; cluster'a göre gruplanır).
   const dt = useDataTable<ClusterPodRow>({
@@ -84,6 +84,13 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
             Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
             {' '}and pod-name matching (<span className="mono">{service}-*</span>) across{' '}
             {matched.length} Thanos cluster{matched.length > 1 ? 's' : ''} — nothing matched.
+            {truncatedClusters.length > 0 && (
+              <div style={{ marginTop: 6 }}>
+                ⚠ {truncatedClusters.join(', ')}: sunucu en işlek 500 pod'u döndürdü
+                (topk tavanı) — sakin bir servisin pod'ları bu listenin DIŞINDA
+                kalmış olabilir; "yok" kesin değil.
+              </div>
+            )}
           </Empty>
         )
       ) : (
@@ -91,6 +98,12 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
           {/* 1) Cluster'a göre açılır pod grupları — pod tıkla → yerinde JMX. */}
           <h3 style={{ fontSize: 13, margin: '4px 0 8px' }}>
             Pods ({rows.length}) · {clustersWithPods.length} cluster{clustersWithPods.length > 1 ? 's' : ''}
+            {truncatedClusters.length > 0 && (
+              <span className="badge b-warn" style={{ marginLeft: 8 }}
+                title={`${truncatedClusters.join(', ')}: sunucu cluster genelinde en işlek 500 pod'u döndürdü (topk tavanı). Bu servisin sakin pod'ları listede eksik olabilir.`}>
+                kısmi liste — topk(500)
+              </span>
+            )}
           </h3>
           <ServiceClusterPods dt={dt} effNs={effNs} effDeploy={effDeploy}
             cFrom={cFrom} cTo={cTo} colCount={POD_COLS.length} onOpenPod={openPod} />

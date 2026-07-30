@@ -484,9 +484,13 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                   ayrı dilim. Link Pods sekmesine jpod daraltmasıyla gider —
                   o podun JMX/runtime grafikleri. */}
               {(() => {
-                if (!problem.id?.startsWith('runtime:')) return null;
-                const segs = problem.id.split(':');
-                const pod = segs.length >= 4 ? segs[segs.length - 1] : '';
+                // v0.9.403 — yapısal alan öncelikli; ID-parse yalnız 401
+                // öncesi ESKİ satırlar için köprü (pod kolonu boş gelir).
+                let pod = problem.pod ?? '';
+                if (!pod && problem.id?.startsWith('runtime:')) {
+                  const segs = problem.id.split(':');
+                  pod = segs.length >= 4 ? segs[segs.length - 1] : '';
+                }
                 if (!pod || pod === problem.service) return null;
                 return (
                   <Link to={`/service?name=${encodeURIComponent(problem.service)}&tab=pods&jpod=${encodeURIComponent(pod)}`}

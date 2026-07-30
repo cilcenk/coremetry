@@ -935,6 +935,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			status       LowCardinality(String),       -- open | resolved
 			description  String,
 			assignee     String        DEFAULT '',     -- owner_team OR email after manual claim
+			pod          String        DEFAULT '',     -- v0.9.403: runtime pod denetimlerinin pod kimliği; service artık birleşik ad taşımaz
 			started_at   DateTime64(9),
 			resolved_at  Nullable(DateTime64(9)),
 			updated_at   DateTime64(9) DEFAULT now64(9),
@@ -1573,6 +1574,10 @@ func (s *Store) migrate(ctx context.Context) error {
 		// summary as an "AI insight" chip. Empty = no explanation
 		// yet (or AI Copilot disabled).
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS ai_summary String DEFAULT ''`,
+		// v0.9.403 — runtime pod problemlerinin pod kimliği yapısal alana
+		// indi (401'in ID-parse köprüsünün emekliliği). Idempotent;
+		// Coremetry-yönetimli cluster'da adaptDDL ON CLUSTER uygular.
+		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS pod String DEFAULT ''`,
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS ai_summary_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
 		// v0.8.283 — synthetic monitor types beyond http+heartbeat: tcp,
 		// ssl-cert, keyword. Additive columns on the existing monitors

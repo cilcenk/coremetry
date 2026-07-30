@@ -8357,7 +8357,7 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 	// that block rather than failing the explain. Only meaningful
 	// when the problem is scoped to a concrete service.
 	if p.Service != "" {
-		user += s.problemCorrelationContext(r.Context(), p)
+		user += s.serviceCorrelationContext(r.Context(), p.Service, time.Unix(0, p.StartedAt))
 	}
 	out, err := s.copilotExplain(r, copilot.SystemPromptProblem(), user)
 	if err != nil {
@@ -8367,23 +8367,22 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"explanation": out})
 }
 
-// problemCorrelationContext gathers the multi-signal evidence the
-// root-cause prompt reasons over (v0.6.54): 1-hop topology
-// neighbours, error-trace exemplars, and significant log patterns
-// around the problem's open time. All bounded (top-5, windowed) and
-// best-effort — any signal that errors or comes up empty is simply
-// omitted so a flaky lookup never blocks the explain. Window is
-// [open-30m, open+5m]; the leading 30m captures the run-up, the
-// trailing 5m the immediate aftermath.
-func (s *Server) problemCorrelationContext(ctx context.Context, p *chstore.Problem) string {
+// serviceCorrelationContext gathers the multi-signal evidence the
+// root-cause prompt reasons over (v0.6.54; v0.9.418'de problem'dan
+// servis-genel hale getirildi — anomaly explain de kullanır): 1-hop
+// topology neighbours + error-trace exemplars around the anchor time.
+// All bounded (top-5, windowed) and best-effort — any signal that
+// errors or comes up empty is simply omitted so a flaky lookup never
+// blocks the explain. Window is [anchor-30m, anchor+5m]; the leading
+// 30m captures the run-up, the trailing 5m the immediate aftermath.
+func (s *Server) serviceCorrelationContext(ctx context.Context, service string, anchor time.Time) string {
 	var b strings.Builder
-	open := time.Unix(0, p.StartedAt)
-	from, to := open.Add(-30*time.Minute), open.Add(5*time.Minute)
+	from, to := anchor.Add(-30*time.Minute), anchor.Add(5*time.Minute)
 
 	// 1) Topology neighbours — who calls / is called by this service.
 	// Direction is the key root-cause hint: a callee erroring points
 	// downstream, a caller spike points upstream.
-	if up, down, _, _, err := s.store.ServiceNeighbors(ctx, p.Service, 35*time.Minute, 50); err == nil && (len(up) > 0 || len(down) > 0) {
+	if up, down, _, _, err := s.store.ServiceNeighbors(ctx, service, 35*time.Minute, 50); err == nil && (len(up) > 0 || len(down) > 0) {
 		b.WriteString("\n\nTopology neighbours (from trace structure):")
 		if len(up) > 0 {
 			b.WriteString("\n  callers: " + topNeighborNames(up, 5))
@@ -8395,7 +8394,7 @@ func (s *Server) problemCorrelationContext(ctx context.Context, p *chstore.Probl
 
 	// 2) Error-trace exemplars for this service in the window.
 	if traces, _, _, terr := s.store.GetTraces(ctx, chstore.TraceFilter{
-		Service: p.Service, HasError: true, From: from, To: to,
+		Service: service, HasError: true, From: from, To: to,
 		Limit: 5, Sort: "time", Order: "desc", CountMode: "skip",
 	}); terr == nil && len(traces) > 0 {
 		b.WriteString("\n\nError-trace exemplars (this service, in window):")
@@ -8517,6 +8516,26 @@ func (s *Server) copilotExplainAnomaly(w http.ResponseWriter, r *http.Request) {
 		ev.PeakRatio, ev.CurrentRatio, ev.CurrentCount,
 		truncate(ev.Sample, 600),
 	)
+	// v0.9.418 (CoSRE fikir #3 — korelasyon zinciri): explain-problem'ın
+	// üçlüsü artık anomaly'de de. Sıra bilinçli: deterministik hipotez
+	// ÖNCE (model onu birincil kanıt sayar), sonra deploy penceresi,
+	// sonra topology komşuları + hata-trace örnekleri. Hepsi best-effort.
+	if hyp, herr := s.store.GetHypothesis(r.Context(), "anomaly", ev.ID); herr == nil {
+		if block := anomaly.HypothesisPromptBlockTR(hyp); block != "" {
+			user += "\n" + block
+		}
+	}
+	if ev.Service != "" {
+		started := time.Unix(0, ev.StartedAt)
+		if deps, derr := s.store.GetServiceDeploys(r.Context(), ev.Service,
+			started.Add(-6*time.Hour), time.Unix(0, ev.LastSeen)); derr == nil && len(deps) > 0 {
+			if parts := anomaly.PickDeploysAroundStart(deps, ev.StartedAt); len(parts) > 0 {
+				user += "\n\nAynı servisin yakın DEPLOY'ları: " + fmt.Sprintf("%v", parts)
+			}
+		}
+		user += s.serviceCorrelationContext(r.Context(), ev.Service, started)
+		user += "\n\nZİNCİRİ anlat: anomali → (varsa) tetikleyen deploy → komşu servislere etkisi. Yönü belirt (upstream'den mi geldi, downstream'e mi yayılıyor); kanıt yoksa 'bilinmiyor' de."
+	}
 	out, err := s.copilotExplain(r, copilot.SystemPromptAnomaly(), user)
 	if err != nil {
 		writeErr(w, err)

@@ -8,8 +8,11 @@ import type { ClusterNamedSeries } from '@/lib/types';
 // CPU/Mem kartlarından çıkarıldı (v0.9.35 ResToggleHeader'ın genel
 // hali): Servis → Infrastructure sekmesi aynı kartı "By pod"
 // etiketiyle kullanır. Seri yoksa null döner — görünmez-düşer.
-export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle, series, seriesName, unit, height = 180, maxSeries, totalSeries, onZoom, onZoomReset, syncKey }: {
+export function MetricArea({ title, subtitle, byLabel, totalLabel = 'Total', by, onToggle, series, seriesName, unit, height = 180, maxSeries, totalSeries, onZoom, onZoomReset, syncKey }: {
   title: string;
+  // v0.9.383 (redesign D7) — insanileştirilmiş başlığın altında ham
+  // metrik adı (monospace, soluk) — bilgi kaybı yasak.
+  subtitle?: string;
   byLabel: string; // "By node" | "By pod" — toggle'ın sağ şıkkı
   // v0.9.146 — sol şık etiketi (varsayılan "Total"); jboss datasource
   // panelleri "By datasource" (off=data_source, on=pod+data_source) yapar.
@@ -45,6 +48,9 @@ export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle,
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
         <span>
           {title}
+          {subtitle && (
+            <span className="mono" style={{ display: 'block', fontSize: 9.5, fontWeight: 400, color: 'var(--text3)' }}>{subtitle}</span>
+          )}
           {totalSeries != null && series.length < totalSeries && (
             <span className="badge b-warn" style={{ marginLeft: 8 }}
               title={`Sunucu ortalaması en yüksek ${series.length} pod'u döndürdü (${totalSeries} pod'dan). Pencere sonunda sıçrayan ama ortalaması düşük bir pod bu kesimin dışında kalabilir — tek pod'a bakmak için satırdan pod seçin.`}>

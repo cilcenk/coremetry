@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { LazyMount } from '@/components/LazyMount';
 import { MetricArea } from '@/pages/clusters/MetricArea';
 import { dsToken, reconcile, applyDsIsolate } from '@/pages/service/jmxSelectors';
+import { jmxHumanize } from '@/pages/service/jmxHumanize';
 import type { ClusterPodRow } from '@/lib/types';
 
 // ServiceJmxPanels (v0.9.158) — servisin Thanos JVM/JBoss JMX panelleri
@@ -34,7 +35,15 @@ export function ServiceJmxPanels({ service, clusters, effNs, effDeploy, cFrom, c
   // Çok-cluster serviste JMX cluster'ı seçilebilir (Pods sekmesinde çip yok,
   // review v0.9.159: eskiden clustersWithPods[0]'a sabitti → diğer cluster'lar
   // erişilemezdi). Seçili cluster listede yoksa ilkine düşer.
-  const [pickCluster, setPickCluster] = useState('');
+  // v0.9.383 (redesign D7) — cluster seçimi ?jcluster ile URL'de
+  // (jpod/jds disipliniyle aynı): paylaşılan görünüm reload'da ilk
+  // cluster'a dönmüyor. Listede olmayan bayat değer ilkine düşer.
+  const pickCluster = params.get('jcluster') ?? '';
+  const setPickCluster = (v: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('jcluster', v); else next.delete('jcluster');
+    return next;
+  }, { replace: true });
   const cluster = (pickCluster && clusters.includes(pickCluster)) ? pickCluster : (clusters[0] ?? '');
   const enabled = !!cluster && !!effNs && !!effDeploy;
   const jpod = params.get('jpod') ?? '';
@@ -85,6 +94,10 @@ export function ServiceJmxPanels({ service, clusters, effNs, effDeploy, cFrom, c
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, margin: '18px 0 8px', flexWrap: 'wrap' }}>
         <h3 style={{ fontSize: 13, margin: 0 }}>
           JVM / JBoss (JMX) · <span className="mono">{cluster}</span>
+          <span className="badge b-gray" style={{ marginLeft: 8 }}
+            title="Bu bölümün kaynağı: Thanos üzerinden jmx_exporter serileri. Thanos erişilemezse bu bölüm düşer; Runtime bölümü OTel'den bağımsız çalışır.">
+            Thanos · JMX
+          </span>
           <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {jmxMetrics.length} metrics</span>
         </h3>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11, color: 'var(--text3)', flexWrap: 'wrap' }}>
@@ -169,9 +182,11 @@ function JmxPanelCell({ cluster, effNs, effDeploy, metric, by, onToggle, effJpod
   const unit = metric.includes('bytes') ? 'bytes' : metric.includes('seconds') ? 's' : undefined;
   const shown = isJboss ? applyDsIsolate(series, effJds) : series;
   if (shown.length === 0) return null;
+  const human = jmxHumanize(metric);
   return (
     <MetricArea
-      title={`${metric}${clamped ? ' (last 6h)' : ''}`}
+      title={`${human.title}${clamped ? ' (last 6h)' : ''}`}
+      subtitle={human.raw}
       byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
       by={by} onToggle={onToggle}
       series={shown} seriesName={metric} unit={unit}

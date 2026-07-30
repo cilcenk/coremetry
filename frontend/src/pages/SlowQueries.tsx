@@ -54,8 +54,19 @@ type ExplainState = 'idle' | 'busy' | { text: string } | { error: string };
 // times beats a 5s query running once.
 export default function SlowQueriesPage() {
   const [range, setRange] = useUrlRange('1h');
-  const [dbSystem, setDbSystem] = useState('');
-  const [dbName, setDbName] = useState('');
+  // v0.9.399 (desen paritesi) — aynı filtre çifti /databases'te URL'de
+  // (dbsys/dbname), kardeş sayfada oturum state'indeydi. Aynı adlarla
+  // URL'e alındı; copy-link filtreleri taşır.
+  const [sqParams, setSqParams] = useSearchParams();
+  const dbSystem = sqParams.get('dbsys') ?? '';
+  const dbName = sqParams.get('dbname') ?? '';
+  const setUrlParam = (k: string, v: string) => setSqParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set(k, v); else next.delete(k);
+    return next;
+  }, { replace: true });
+  const setDbSystem = (v: string) => setUrlParam('dbsys', v);
+  const setDbName = (v: string) => setUrlParam('dbname', v);
   // Bounds memoized on [range] so the query key stays stable across
   // renders (the v0.5.184 incident shape).
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);

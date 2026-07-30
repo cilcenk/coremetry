@@ -36,6 +36,20 @@ export default function DatabasesPage() {
   // korunur); seçenekler zaten çekilmiş satırlardan türetilir — ekstra
   // sorgu/katalog fetch'i YOK (satır sayısı sınırlı, client-side yeterli).
   const [sp, setSp] = useSearchParams();
+  // v0.9.399 (desen paritesi) — satır drawer'ı URL-first (?row=,
+  // controlled mod DependenciesTable'da zaten hazırdı): kopyalanan
+  // link artık drawer'ı da açıyor. İki tablo aynı param'ı paylaşır
+  // (anahtar system|cluster|name — çakışma yok).
+  const [dbRowParams, setDbRowParams] = useSearchParams();
+  const openRow = dbRowParams.get('row');
+  const setOpenRow = (row: { system: string; cluster?: string; name?: string; dbName?: string } | null) => setDbRowParams(prev => {
+    const next = new URLSearchParams(prev);
+    // DependenciesTable'ın iç anahtar şekli: system|cluster|name
+    const k = row ? `${row.system}|${row.cluster ?? ''}|${row.name ?? row.dbName ?? ''}` : null;
+    if (k) next.set('row', k); else next.delete('row');
+    return next;
+  }, { replace: true });
+
   const dbsys = sp.get('dbsys') ?? '';
   const dbname = sp.get('dbname') ?? '';
   const setFilter = (key: 'dbsys' | 'dbname', value: string) => {
@@ -159,7 +173,7 @@ export default function DatabasesPage() {
                   : 'No service-emitted database spans in this window. Wire an OTel SDK into one of the application services to see this section populate.'}
               </EmptyHint>
             ) : (
-              <DependenciesTable rows={spanRows.map(toRow)} kind="db" range={range} />
+              <DependenciesTable rows={spanRows.map(toRow)} kind="db" range={range} openRowKey={openRow} onOpenRowChange={setOpenRow} />
             )}
 
             <div style={{ height: 24 }} />
@@ -176,7 +190,7 @@ export default function DatabasesPage() {
                   : 'No receiver-detected instances in this window. Point an OpenTelemetry database receiver (oracledb / postgresql / mysql / redis) at one of your databases and the discovered instance will appear here.'}
               </EmptyHint>
             ) : (
-              <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} />
+              <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} openRowKey={openRow} onOpenRowChange={setOpenRow} />
             )}
           </>
         )}

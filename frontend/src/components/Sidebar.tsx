@@ -10,7 +10,7 @@ import {
   Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Search, Hash, Eye,
-  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, type LucideIcon,
+  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -70,9 +70,16 @@ const NAV_GROUPS: NavGroup[] = [
   // Incidents STAYS. It is not a drill-down: declaring an incident and writing
   // a postmortem are jobs the queue does not offer, so hiding it would remove
   // the only way to reach them.
+  //
+  // v0.9.425 (operatör istegi, v0.9.323 kararının kısmi geri alımı):
+  // Exceptions sidebar'a DÖNDÜ — "ben tüm exception'ları görmek
+  // istiyorum; inbox yine kalsın". /problems tam listedir (v417:
+  // tek-tük gruplar dahil, öncelik filtresi yok); inbox P1+P2 triage
+  // görünümü olarak kalır, ikisi yarışan kuyruk değil.
   {
     titleKey: 'navGroup.triage',
     items: [
+      { href: '/problems',  label: 'nav.problems',  icon: Bug },
       { href: '/incidents', label: 'nav.incidents', icon: TriangleAlert },
     ],
   },

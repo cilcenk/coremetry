@@ -41,18 +41,27 @@ const runtimeWindow = 10 * time.Minute
 func (s *Store) JVMHeapPodUsage(ctx context.Context) ([]CapacitySample, error) {
 	now := time.Now()
 	from := now.Add(-runtimeWindow)
+	// v0.9.426 (operator-reported, prod: "JVM hatası olmayan podlara
+	// alert") — GC-SONRASI doluluk da okunur: testere-dişi heap'te
+	// used/max ortalaması sağlıklı pod'da bile %85+'a çıkar; gerçek
+	// baskı sinyali jvm.memory.used_after_last_gc'dir. avgIf: after-GC
+	// datapoint'i taşımayan timestamp'ler ortalamayı SEYRELTMESİN
+	// (sumIf'in 0'ı ölçüm değil yokluk); hiç yoksa ifNotFinite → 0 =
+	// metrik akmıyor, karar katmanı anlık sinyale düşer.
 	q := `
-		SELECT svc, pod, avg(used_ts) AS usage, avg(lim_ts) AS lim
+		SELECT svc, pod, avg(used_ts) AS usage, avg(lim_ts) AS lim,
+		       ifNotFinite(avgIf(postgc_ts, postgc_ts > 0), 0) AS postgc
 		FROM (
 			SELECT
 				service_name AS svc,
 				` + runtimePodExpr + ` AS pod,
 				time,
 				sumIf(value, metric = 'jvm.memory.used')  AS used_ts,
-				sumIf(value, metric = 'jvm.memory.limit') AS lim_ts
+				sumIf(value, metric = 'jvm.memory.limit') AS lim_ts,
+				sumIf(value, metric = 'jvm.memory.used_after_last_gc') AS postgc_ts
 			FROM metric_points
 			WHERE time >= ? AND time <= ?
-			  AND metric IN ('jvm.memory.used', 'jvm.memory.limit')
+			  AND metric IN ('jvm.memory.used', 'jvm.memory.limit', 'jvm.memory.used_after_last_gc')
 			  AND attr_values[indexOf(attr_keys, 'jvm.memory.type')] = 'heap'
 			GROUP BY svc, pod, time
 		)
@@ -68,7 +77,7 @@ func (s *Store) JVMHeapPodUsage(ctx context.Context) ([]CapacitySample, error) {
 	out := []CapacitySample{}
 	for rows.Next() {
 		var c CapacitySample
-		if err := rows.Scan(&c.Instance, &c.Subkey, &c.Usage, &c.Limit); err != nil {
+		if err := rows.Scan(&c.Instance, &c.Subkey, &c.Usage, &c.Limit, &c.PostGC); err != nil {
 			continue
 		}
 		if c.Instance == "" || c.Limit <= 0 {

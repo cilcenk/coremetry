@@ -5,34 +5,48 @@ import "testing"
 // v0.9.90 — JVM pod runtime detector'ının saf eşik çekirdekleri. Bozuk
 // evaluator herkesi page'ler; eşik mantığı EXACT kalmalı (CLAUDE.md #11).
 
+// v0.9.426 (operator-reported, prod: "JVM hatası olmayan podlara alert")
+// — iki sinyalli eşikler: GC-sonrası doluluk varsa 85/90 (gerçek baskı),
+// yoksa anlık used/max 92/97 (testere-dişi payı). Gürültü düzeltmesinin
+// asıl pini: eski warn bölgesi (85-92, anlık sinyal) artık KAPALI.
 func TestJVMHeapDecision(t *testing.T) {
 	const eps = 1e-9
 	tests := []struct {
 		name     string
 		usage    float64
+		postGC   float64
 		limit    float64
 		wasOpen  bool
 		wantOpen bool
 		wantSev  string
 		wantPct  float64
+		wantPost bool
 	}{
-		{"boş limit → asla", 100, 0, false, false, "", 0},
-		{"düşük kullanım → kapalı", 40, 100, false, false, "", 40},
-		{"warn eşiği tam 85 → warning", 85, 100, false, true, "warning", 85},
-		{"warn altı 84.9 → kapalı", 84.9, 100, false, false, "", 84.9},
-		{"crit eşiği tam 90 → critical", 90, 100, false, true, "critical", 90},
-		{"crit üstü → critical", 96, 100, false, true, "critical", 96},
-		{"histerezis: açık + 83.5 → hâlâ warning", 83.5, 100, true, true, "warning", 83.5},
-		{"histerezis: açık + 82.9 (band altı) → kapan", 82.9, 100, true, false, "", 82.9},
-		{"histerezis: KAPALI + 83.5 → açma (band yalnız açığa)", 83.5, 100, false, false, "", 83.5},
-		{"gerçekçi: 3.7/4.0 GB → critical", 3.7e9, 4.0e9, false, true, "critical", 92.5},
+		{"boş limit → asla", 100, 0, 0, false, false, "", 0, false},
+		{"düşük kullanım → kapalı", 40, 0, 100, false, false, "", 40, false},
+
+		// GC-SONRASI sinyal varken: 85/90 eşikleri, pct post-GC'den.
+		{"postGC warn eşiği tam 85", 95, 85, 100, false, true, "warning", 85, true},
+		{"postGC crit eşiği tam 90", 99, 90, 100, false, true, "critical", 90, true},
+		{"postGC düşükse anlık YÜKSEK bile olsa kapalı (sağlıklı testere-dişi)", 95, 60, 100, false, false, "", 60, true},
+		{"postGC histerezis: açık + 83.5 → hâlâ warning", 99, 83.5, 100, true, true, "warning", 83.5, true},
+
+		// ANLIK sinyal (postGC=0): eşikler 92/97 — eski 85-92 bölgesi kapalı.
+		{"GÜRÜLTÜ PİNİ: anlık 85 artık kapalı", 85, 0, 100, false, false, "", 85, false},
+		{"GÜRÜLTÜ PİNİ: anlık 90 artık kapalı", 90, 0, 100, false, false, "", 90, false},
+		{"anlık warn eşiği tam 92", 92, 0, 100, false, true, "warning", 92, false},
+		{"anlık crit eşiği tam 97", 97, 0, 100, false, true, "critical", 97, false},
+		{"anlık histerezis: açık + 90.5 → hâlâ warning", 90.5, 0, 100, true, true, "warning", 90.5, false},
+		{"anlık histerezis: açık + 89.9 (band altı) → kapan", 89.9, 0, 100, true, false, "", 89.9, false},
+		{"anlık histerezis: KAPALI + 90.5 → açma", 90.5, 0, 100, false, false, "", 90.5, false},
+		{"gerçekçi: 3.7/4.0 GB anlık 92.5 → warning (eskiden critical'dı)", 3.7e9, 0, 4.0e9, false, true, "warning", 92.5, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			open, sev, pct := jvmHeapDecision(tt.usage, tt.limit, tt.wasOpen)
-			if open != tt.wantOpen || sev != tt.wantSev {
-				t.Errorf("jvmHeapDecision(%v,%v,%v) = (%v,%q); want (%v,%q)",
-					tt.usage, tt.limit, tt.wasOpen, open, sev, tt.wantOpen, tt.wantSev)
+			open, sev, pct, post := jvmHeapDecision(tt.usage, tt.postGC, tt.limit, tt.wasOpen)
+			if open != tt.wantOpen || sev != tt.wantSev || post != tt.wantPost {
+				t.Errorf("jvmHeapDecision(%v,%v,%v,%v) = (%v,%q,post=%v); want (%v,%q,post=%v)",
+					tt.usage, tt.postGC, tt.limit, tt.wasOpen, open, sev, post, tt.wantOpen, tt.wantSev, tt.wantPost)
 			}
 			if diff := pct - tt.wantPct; diff > eps || diff < -eps {
 				t.Errorf("pct = %v; want %v", pct, tt.wantPct)

@@ -31,27 +31,42 @@ const (
 	jvmHeapWarnPct = 85.0
 	jvmHeapCritPct = 90.0
 	jvmHeapHystPct = 2.0
-	jvmGCWarnMs    = 500.0
-	jvmGCCritMs    = 1000.0
-	jvmGCHystMs    = 50.0
+	// v0.9.426 (operator-reported, prod: "JVM hatası olmayan podlara
+	// alert") — anlık used/max testere-dişlidir: sağlıklı JVM, GC
+	// tetiklenmeden önce %85-95'e dokunur ve 10dk ortalaması bile
+	// yüksek kalabilir. GC-SONRASI sinyal (used_after_last_gc) varsa
+	// 85/90 eşikleri anlamlıdır ve o kullanılır; yoksa anlık sinyalin
+	// eşiği 92/97'ye çıkar — gerçek doluluk baskısı ancak o bölgede
+	// GC'ye rağmen inmeyen heap demektir.
+	jvmHeapRawWarnPct = 92.0
+	jvmHeapRawCritPct = 97.0
+	jvmGCWarnMs       = 500.0
+	jvmGCCritMs       = 1000.0
+	jvmGCHystMs       = 50.0
 )
 
 // jvmHeapDecision — saf eşik çekirdeği (tablo testli). capacityDecision'la
 // aynı şekil ama runtime eşikleri bağımsız evrilebilsin diye ayrı.
-func jvmHeapDecision(usage, limit float64, wasOpen bool) (open bool, severity string, pct float64) {
+// postGC > 0 → GC-sonrası sinyal + 85/90; postGC yok → anlık used + 92/97.
+// postBased dönüşü reason/threshold metnini dürüst kılar.
+func jvmHeapDecision(usage, postGC, limit float64, wasOpen bool) (open bool, severity string, pct float64, postBased bool) {
 	if limit <= 0 {
-		return false, "", 0
+		return false, "", 0, false
 	}
-	pct = usage / limit * 100
+	val, warn, crit := usage, jvmHeapRawWarnPct, jvmHeapRawCritPct
+	if postGC > 0 {
+		val, warn, crit, postBased = postGC, jvmHeapWarnPct, jvmHeapCritPct, true
+	}
+	pct = val / limit * 100
 	switch {
-	case pct >= jvmHeapCritPct:
-		return true, "critical", pct
-	case pct >= jvmHeapWarnPct:
-		return true, "warning", pct
-	case wasOpen && pct >= jvmHeapWarnPct-jvmHeapHystPct:
-		return true, "warning", pct
+	case pct >= crit:
+		return true, "critical", pct, postBased
+	case pct >= warn:
+		return true, "warning", pct, postBased
+	case wasOpen && pct >= warn-jvmHeapHystPct:
+		return true, "warning", pct, postBased
 	default:
-		return false, "", pct
+		return false, "", pct, postBased
 	}
 }
 
@@ -122,13 +137,25 @@ func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.Capacity
 	// yolunda service alanı kendini onarır.
 	existing, err := e.store.FindOpenProblemByID(ctx, runtimeProblemID("jvm-heap", s.Instance, s.Subkey))
 	hasOpen := err == nil && existing != nil && existing.ID != ""
-	open, sev, pct := jvmHeapDecision(s.Usage, s.Limit, hasOpen)
+	open, sev, pct, postBased := jvmHeapDecision(s.Usage, s.PostGC, s.Limit, hasOpen)
 	gb := func(b float64) float64 { return b / (1024 * 1024 * 1024) }
-	reason := fmt.Sprintf("JVM heap %.0f%% (%.1f/%.1f GB) on %s · pod %s",
-		pct, gb(s.Usage), gb(s.Limit), service, s.Subkey)
-	thr := jvmHeapWarnPct
-	if sev == "critical" {
-		thr = jvmHeapCritPct
+	// v0.9.426 — reason sinyali söyler: GC-sonrası mı, anlık mı.
+	var reason string
+	if postBased {
+		reason = fmt.Sprintf("JVM heap (GC sonrası) %.0f%% (%.1f/%.1f GB) on %s · pod %s",
+			pct, gb(s.PostGC), gb(s.Limit), service, s.Subkey)
+	} else {
+		reason = fmt.Sprintf("JVM heap %.0f%% (%.1f/%.1f GB, anlık — GC-sonrası metrik yok) on %s · pod %s",
+			pct, gb(s.Usage), gb(s.Limit), service, s.Subkey)
+	}
+	thr := jvmHeapRawWarnPct
+	if postBased {
+		thr = jvmHeapWarnPct
+		if sev == "critical" {
+			thr = jvmHeapCritPct
+		}
+	} else if sev == "critical" {
+		thr = jvmHeapRawCritPct
 	}
 	e.reconcileRuntime(ctx, runtimeReconcile{
 		ruleID: ruleID, ruleName: "Runtime · JVM heap", metric: "runtime.jvm_heap",

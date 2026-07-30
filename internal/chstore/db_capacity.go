@@ -38,6 +38,10 @@ type CapacitySample struct {
 	Subkey   string  // e.g. Oracle tablespace name; empty for undimensioned checks
 	Usage    float64 // current gauge value
 	Limit    float64 // cap gauge value (0 when the check is a raw rate, e.g. evictions)
+	// PostGC (v0.9.426, yalnız JVM heap yolu) — jvm.memory.used_after_last_gc
+	// penceresi ortalaması; 0 = metrik akmıyor (fallback anlık used).
+	// Testere-dişi heap'te GERÇEK baskı sinyali budur.
+	PostGC float64
 }
 
 // instanceExpr is the canonical "which DB instance produced this point"

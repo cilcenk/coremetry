@@ -77,10 +77,32 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
   // search scales). Level facet filters the fetched page client-side
   // (instant, mirrors the design); the histogram always shows full
   // volume-by-level for the service so the facet doesn't hide the shape.
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [lvl, setLvl] = useState<'all' | Lvl>('all');
-  useEffect(() => { const t = setTimeout(() => setSearch(searchInput), 300); return () => clearTimeout(t); }, [searchInput]);
+  // v0.9.382 (redesign D6) — arama + seviye facet'i URL'de (?lq/?llvl,
+  // replace:true): sekme değişince kaybolmuyor, paylaşılabiliyor.
+  // Yalnız SAHİP OLDUĞUMUZ paramlar yazılır (prev kopyalanır); debounce
+  // input state'te yaşar, URL'e ödemeli (settled) değer düşer.
+  const [lparams, setLparams] = useSearchParams();
+  const urlLq = lparams.get('lq') ?? '';
+  const urlLvl = (lparams.get('llvl') as 'all' | Lvl | null) ?? 'all';
+  const [searchInput, setSearchInput] = useState(urlLq);
+  const [search, setSearch] = useState(urlLq);
+  const lvl: 'all' | Lvl = urlLvl;
+  const setLvl = (v: 'all' | Lvl) => setLparams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v !== 'all') next.set('llvl', v); else next.delete('llvl');
+    return next;
+  }, { replace: true });
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setSearch(searchInput);
+      setLparams(prev => {
+        const next = new URLSearchParams(prev);
+        if (searchInput) next.set('lq', searchInput); else next.delete('lq');
+        return next;
+      }, { replace: true });
+    }, 300);
+    return () => clearTimeout(t);
+  }, [searchInput, setLparams]);
 
   const filter = useMemo(
     () => ({ service, search, severity: 0, traceId: '', spanId: '' }),

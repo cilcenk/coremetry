@@ -83,10 +83,24 @@ describe('collapse', () => {
     expect(collapse([]).totals).toEqual({ all: 0, error: 0, ratePct: null });
   });
 
-  it('draws total under error under rate — overlay order is load-bearing', () => {
+  it('draws total under warn under error under rate — overlay order is load-bearing', () => {
+    // v0.9.382 (D6) — WARN kendi bandını kazandı; sıra baseline-overlay
+    // yanılsamasını kurar: geniş gri arkada, amber ortada, kırmızı önde.
     const r = collapse([S('INFO', [[T0, 10]]), S('ERROR', [[T0, 1]])]);
-    expect(r.series.map(s => s.key)).toEqual(['total', 'error', 'rate']);
-    expect(r.series[2].axis).toBe('right');
+    expect(r.series.map(s => s.key)).toEqual(['total', 'warn', 'error', 'rate']);
+    expect(r.series[3].axis).toBe('right');
+  });
+
+  it('warn band = WARN + ERROR (overlay okuma: amber görünen kısım = warn)', () => {
+    // v0.9.382 (D6) — warnErr birikimli: öndeki kırmızı err bandı amber'in
+    // üstünü örter, amber'in GÖRÜNEN kısmı saf WARN kalır. Band değerleri
+    // birikimli olmak ZORUNDA — saf warn çizilirse err>warn bucket'ta
+    // amber kırmızının altında kaybolur.
+    const r = collapse([S('INFO', [[T0, 10]]), S('WARN', [[T0, 4]]), S('ERROR', [[T0, 1]])]);
+    const warn = r.series.find(s => s.key === 'warn')!;
+    const err = r.series.find(s => s.key === 'error')!;
+    expect(warn.data).toEqual([5]); // 4 warn + 1 err
+    expect(err.data).toEqual([1]);
   });
 });
 

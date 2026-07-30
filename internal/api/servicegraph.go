@@ -33,6 +33,13 @@ type GraphNode struct {
 	Errors    uint64  `json:"errors"`
 	ErrorRate float64 `json:"errorRate"` // (errors/calls)*100 — drives health color
 	Rate      float64 `json:"rate"`      // calls per minute over the window — node-size encoding (v0.8.x)
+	// v0.9.367 — which population Calls/Errors/ErrorRate came from:
+	// "inbound" (calls INTO the node — the normal basis) or "outbound"
+	// (the entry-service fallback: no instrumented caller, so the totals
+	// are what the node's DEPENDENCIES returned). The UI labels the two
+	// differently; without this the fallback was silent and a gateway's
+	// health dot read as its own error rate.
+	CallsBasis string `json:"callsBasis,omitempty"`
 }
 
 // GraphEdge is one directed caller→callee edge carrying RED metrics + protocol.
@@ -400,8 +407,10 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 		// node); a root with no inbound falls back to its outbound totals.
 		if c := inCalls[n.ID]; c > 0 {
 			n.Calls, n.Errors = c, inErrs[n.ID]
+			n.CallsBasis = "inbound"
 		} else {
 			n.Calls, n.Errors = outCalls[n.ID], outErrs[n.ID]
+			n.CallsBasis = "outbound"
 		}
 		if n.Calls > 0 {
 			n.ErrorRate = float64(n.Errors) / float64(n.Calls) * 100

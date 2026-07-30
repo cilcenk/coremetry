@@ -288,10 +288,19 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
             {hoverNode.kind === 'database' && hoverNode.dbName ? ` · db.name=${hoverNode.dbName}` : ''}
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginBottom: 8 }}>
-            <Stat l="CALLS" v={fmtNum(hoverNode.calls)} />
+            {/* v0.9.367 — sayının HANGİ popülasyondan geldiği görünür:
+                ↓ inbound (normal), ↑ outbound = giriş-servis fallback'i;
+                gateway'in ERR'i bağımlılıklarının hatası olabilir. */}
+            <Stat l={hoverNode.callsBasis === 'outbound' ? 'CALLS ↑' : 'CALLS ↓'} v={fmtNum(hoverNode.calls)} />
             <Stat l="P99" v={fmtMs(nb.p99Of(hoverNode.id))} />
-            <Stat l="ERR" v={`${hoverNode.errorRate.toFixed(1)}%`} tone={healthToken(hoverNode.errorRate)} />
+            <Stat l={hoverNode.callsBasis === 'outbound' ? 'ERR ↑' : 'ERR'} v={`${hoverNode.errorRate.toFixed(1)}%`} tone={healthToken(hoverNode.errorRate)} />
           </div>
+          {hoverNode.callsBasis === 'outbound' && (
+            <div style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 8 }}>
+              ↑ enstrümante çağıranı yok — sayılar bu servisin YAPTIĞI
+              çağrılardan (bağımlılıklarının döndürdükleri).
+            </div>
+          )}
           {hoverNode.kind === 'service' && (
             <Link to={`/service?name=${encodeURIComponent(hoverNode.name)}`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>Open service →</Link>
           )}

@@ -75,7 +75,11 @@ export function DetailsPropsStrip({ service, range }: { service: string; range: 
   const version = last?.versionAfter || null;
   const clusters = (clustersQ.data?.clusters ?? []).map(c => c.cluster).filter(c => c && c !== '(default)');
   const envs = envsQ.data?.environments ?? [];
-  const pods = instancesQ.data?.length ?? 0;
+  // v0.9.374 — "Pods" ŞU AN yaşayanlar: strip'te 28 okuyan operatör güncel
+  // replika sayısı anlar; 7g penceresinde bu "hafta boyunca var olmuş her
+  // pod"du (günlük deploy'lu 4-replika servis 28+ gösteriyordu). `up`
+  // (2dk tazelik) zaten wire'da — sıfır yeni sorgu.
+  const pods = instancesQ.data?.filter(i => i.up).length ?? 0;
 
   if (!tech && !version && clusters.length === 0 && envs.length === 0 && pods === 0) return null;
 

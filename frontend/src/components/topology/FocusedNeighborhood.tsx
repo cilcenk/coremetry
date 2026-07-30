@@ -315,6 +315,10 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
       {/* ── footer caption ──────────────────────────────────────────────── */}
       <div style={{ position: 'absolute', right: 10, bottom: 10, zIndex: 3, maxWidth: '62%', fontSize: 9.5, color: 'var(--text3)', textAlign: 'right', lineHeight: 1.4 }}>
         Built from OTel span semantics — nodes by service.name, type from db.system/messaging.system, edges from CLIENT→SERVER spans.
+        {/* v0.9.374 — grafiğin NEGATİF uzayı da beyan: "payments'ı kimse
+            çağırmıyor" ile "çağıranı enstrümante değil" aynı görüntüydü ve
+            operatörün ilk şüphesi kapsama değil servis oluyordu. */}
+        Only callers/dependencies whose traces reach Coremetry appear — an uninstrumented client is invisible here; operator-hidden patterns (Settings → Topology) are excluded.
         Click a node to recenter · hover for direct edges · dashed pill = external dependency.
       </div>
     </div>

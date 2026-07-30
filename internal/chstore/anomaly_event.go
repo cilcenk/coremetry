@@ -170,6 +170,11 @@ type ListAnomalyEventsFilter struct {
 	// (a team with no member services must yield an empty page, never an
 	// unfiltered one).
 	Services []string
+	// FromNs/ToNs (v0.9.394, annotation şeridi Ş1) — started_at pencere
+	// sorgusu: "bu pencerede BAŞLAYAN anomaliler". 0 = sınırsız (eski
+	// davranış SinceNs üzerinden aynen sürer).
+	FromNs int64
+	ToNs   int64
 	// ActiveOnly (v0.9.335) narrows to firing events IN SQL, so the LIMIT
 	// lands on rows the caller will actually keep.
 	//
@@ -237,11 +242,27 @@ func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter
 			svcSQL = " AND service IN (" + chPlaceholders(len(f.Services)) + ")"
 		}
 	}
+	// v0.9.394 (annotation şeridi Ş1) — started_at pencere sorgusu:
+	// şerit "bu pencerede BAŞLAYAN anomaliler"i ister; SinceNs (last_seen
+	// tabanlı) bunu ifade edemiyordu.
+	winSQL := ""
+	if f.FromNs > 0 {
+		winSQL += " AND toUnixTimestamp64Nano(started_at) >= ?"
+	}
+	if f.ToNs > 0 {
+		winSQL += " AND toUnixTimestamp64Nano(started_at) < ?"
+	}
 	args := []any{int64(f.ActiveAge.Seconds()), since}
 	if f.ActiveOnly {
 		args = append(args, int64(f.ActiveAge.Seconds()))
 	}
 	args = append(args, toAnySlice(f.Services)...)
+	if f.FromNs > 0 {
+		args = append(args, f.FromNs)
+	}
+	if f.ToNs > 0 {
+		args = append(args, f.ToNs)
+	}
 	args = append(args, f.Limit)
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, kind, pattern, service,
@@ -250,7 +271,7 @@ func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter
 		       peak_ratio, current_ratio, current_count, sample,
 		       if(last_seen >= now64() - INTERVAL ? SECOND, 'active', 'cleared') AS status
 		FROM anomaly_events FINAL
-		WHERE toUnixTimestamp64Nano(last_seen) >= ?`+activeSQL+svcSQL+`
+		WHERE toUnixTimestamp64Nano(last_seen) >= ?`+activeSQL+svcSQL+winSQL+`
 		-- v0.9.326 — this used to order by the status STRING descending,
 		-- which puts CLEARED FIRST.
 		-- ClickHouse compares these lexically and 'active' < 'cleared', so

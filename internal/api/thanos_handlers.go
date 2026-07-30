@@ -60,7 +60,7 @@ func (s *Server) getClusterPods(w http.ResponseWriter, r *http.Request) {
 		// a wedged Querier must not pin the singleflight slot.
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		rows, err := s.thanos.PodMetrics(qctx, cfg)
+		rows, truncated, err := s.thanos.PodMetrics(qctx, cfg)
 		if err != nil {
 			return nil, err
 		}
@@ -90,7 +90,8 @@ func (s *Server) getClusterPods(w http.ResponseWriter, r *http.Request) {
 				rows[i].Service = pickPodService(psm[rows[i].Pod], rows[i].Namespace, svcNS)
 			}
 		}
-		return map[string]any{"cluster": name, "pods": rows, "count": len(rows)}, nil
+		return map[string]any{"cluster": name, "pods": rows, "count": len(rows),
+			"truncated": truncated}, nil
 	})
 }
 

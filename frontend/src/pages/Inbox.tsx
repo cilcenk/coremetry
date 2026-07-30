@@ -7,7 +7,7 @@ import { Users, Shield } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
-import { useInbox } from '@/lib/queries';
+import { useInbox, useServicesMetadata } from '@/lib/queries';
 import { tsLong, fmtFixed, fmtAgoNs } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
@@ -433,17 +433,31 @@ export default function InboxPage() {
     return out;
   }, [data, inboxQ.data]);
 
-  // Distinct team values from the current result set drive the
-  // dropdown options. Server-side filter narrows the list, so
-  // selecting a team and then opening the dropdown again still
-  // shows the remaining teams — the operator can stack
-  // (owner=X then sre=Y) without losing visibility.
-  const { ownerOptions, sreOptions } = useMemo(() => ({
-    // v0.8.330 — case-insensitive dedup, same rule as the catalog-fed
-    // dropdowns (mixed-casing team attrs read as one team).
-    ownerOptions: teamOptionsCI((data ?? []).map(it => it.ownerTeam)),
-    sreOptions:   teamOptionsCI((data ?? []).map(it => it.sreTeam)),
-  }), [data]);
+  // v0.9.355 (operator-reported) — dropdown options come from the CATALOG,
+  // not from the filtered rows.
+  //
+  // They used to be derived from `data` — the response of a request that
+  // already carried the team filter. Pick Looki and the response holds only
+  // Looki's rows, so the dropdown collapsed to "all + Looki": switching to
+  // another team meant going back to "all" first, waiting for the (big)
+  // unfiltered list, then picking again. The old comment here claimed the
+  // opposite ("opening the dropdown again still shows the remaining teams"),
+  // which stopped being true the moment the filter moved server-side — and
+  // v0.9.353's SQL narrow made the collapse total.
+  //
+  // useServicesMetadata is the same catalog read the /services and
+  // exceptions pages feed their team dropdowns from (React Query dedups it,
+  // 60s staleTime) — no new endpoint, and all three surfaces now agree on
+  // what teams exist.
+  const catalogQ = useServicesMetadata();
+  const { ownerOptions, sreOptions } = useMemo(() => {
+    const mds = Object.values(catalogQ.data ?? {}) as import('@/lib/types').ServiceMetadata[];
+    return {
+      // v0.8.330 — case-insensitive dedup, same rule everywhere.
+      ownerOptions: teamOptionsCI(mds.map(md => md.ownerTeam)),
+      sreOptions:   teamOptionsCI(mds.map(md => md.sreTeam)),
+    };
+  }, [catalogQ.data]);
 
   return (
     <>

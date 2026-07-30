@@ -20,7 +20,7 @@ import (
 // Sözleşme (v0.9.414'ten aynen): tüm zenginleştirmeler best-effort;
 // kanıt trace/span'leri LLM'den bağımsız, girdiye giren veriden
 // deterministik. Saf montaj (assembleExceptionPrompt) ve deploy seçimi
-// (pickDeploysAroundStart) tablo-testli — exception_context_test.go.
+// (PickDeploysAroundStart) tablo-testli — exception_context_test.go.
 
 // ExceptionExplainInput — kurulan girdi + deterministik kanıt.
 type ExceptionExplainInput struct {
@@ -175,7 +175,7 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		dFrom := time.Unix(0, g.FirstSeen).Add(-6 * time.Hour)
 		dTo := time.Unix(0, g.LastSeen)
 		if deps, derr := store.GetServiceDeploys(ctx, g.Service, dFrom, dTo); derr == nil && len(deps) > 0 {
-			if parts := pickDeploysAroundStart(deps, g.FirstSeen); len(parts) > 0 {
+			if parts := PickDeploysAroundStart(deps, g.FirstSeen); len(parts) > 0 {
 				deployBlock = "\n\nAynı servisin yakın DEPLOY'ları: " + fmt.Sprintf("%v", parts) +
 					"\nGrubun başlangıcı bir deploy'un hemen SONRASINA denk geliyorsa o deploy'u kök neden adayı olarak öne al."
 			}
@@ -197,12 +197,12 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 	}
 }
 
-// pickDeploysAroundStart — GetServiceDeploys ASC döner; FirstSeen
+// PickDeploysAroundStart — GetServiceDeploys ASC döner; FirstSeen
 // ÖNCESİNDEN son 3 + SONRASINDAN ilk 2 seçilir ve yön açıkça yazılır.
 // Saf — exception_context_test.go: düz "son 5" kesimi uzun ömürlü
 // gruplarda asıl adayı (başlangıçtan hemen önceki deploy) düşürüyordu,
 // negatif "önce" ise LLM'e yanlış kanıt oluyordu (v0.9.414 bulguları).
-func pickDeploysAroundStart(deps []chstore.Deploy, firstSeen int64) []string {
+func PickDeploysAroundStart(deps []chstore.Deploy, firstSeen int64) []string {
 	split := len(deps)
 	for i, d := range deps {
 		if d.TimeUnixNs > firstSeen {

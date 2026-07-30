@@ -8,7 +8,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
-// exception_context_test.go — v0.9.415 pinleri. pickDeploysAroundStart
+// exception_context_test.go — v0.9.415 pinleri. PickDeploysAroundStart
 // v0.9.414 verify bulgularını kalıcı kilitler: (1) düz "son 5" kesimi
 // uzun ömürlü gruplarda başlangıçtan hemen önceki asıl adayı düşürüyordu,
 // (2) FirstSeen SONRASI deploy'lar "-N dk önce" diye yazılıp LLM'e yanlış
@@ -26,7 +26,7 @@ func TestPickDeploysAroundStart(t *testing.T) {
 		dep("v1", -300), dep("v2", -200), dep("v3", -90), dep("v4", -30), dep("v5", -5),
 		dep("v6", 60), dep("v7", 120), dep("v8", 600), dep("v9", 1200),
 	}
-	parts := pickDeploysAroundStart(deps, first)
+	parts := PickDeploysAroundStart(deps, first)
 	if len(parts) != 5 {
 		t.Fatalf("5 parça beklenirdi (önce 3 + sonra 2), %d geldi: %v", len(parts), parts)
 	}
@@ -51,7 +51,7 @@ func TestPickDeploysAroundStart(t *testing.T) {
 
 	// Hepsi başlangıçtan önce → yalnız son 3, SONRA yok.
 	pre := deps[:5]
-	parts2 := pickDeploysAroundStart(pre, first)
+	parts2 := PickDeploysAroundStart(pre, first)
 	if len(parts2) != 3 || strings.Contains(strings.Join(parts2, " "), "SONRA") {
 		t.Errorf("yalnız-önce durumunda son 3 beklenirdi: %v", parts2)
 	}

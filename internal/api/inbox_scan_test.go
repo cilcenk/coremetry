@@ -639,9 +639,27 @@ func TestOccurrenceFloorBoundsArePartition(t *testing.T) {
 //     aramayla da bulunamıyordu.
 func TestInboxSoloExceptionBudget(t *testing.T) {
 	src := readSrc(t, "inbox.go")
-	if !strings.Contains(src, `if len(kinds) == 1 && kinds[0] == "exception" {`) ||
+	if !strings.Contains(src, `if inboxKindsAllExcFamily(kinds) {`) ||
 		!strings.Contains(src, `excLimit = inboxExcSoloMax`) {
 		t.Error("solo-exception kind narrow must lift the candidate budget to inboxExcSoloMax — the shared 500 ceiling structurally hides fresh groups on large fleets")
+	}
+	// v0.9.443 — the solo budget generalizes to the exception FAMILY: both
+	// classes come from the same store, so a facet of exception+httperror is
+	// still a single-source view and gets the full budget.
+	for _, tc := range []struct {
+		kinds []string
+		want  bool
+	}{
+		{[]string{"exception"}, true},
+		{[]string{"httperror"}, true},
+		{[]string{"exception", "httperror"}, true},
+		{[]string{"exception", "problem"}, false},
+		{[]string{"problem"}, false},
+		{nil, false},
+	} {
+		if got := inboxKindsAllExcFamily(tc.kinds); got != tc.want {
+			t.Errorf("inboxKindsAllExcFamily(%v) = %v, want %v", tc.kinds, got, tc.want)
+		}
 	}
 	if n := strings.Count(src, "Search: search,") + strings.Count(src, "Search:         search,"); n < 2 {
 		t.Errorf("both ListExceptionGroups calls (main + below-floor) must push Search down to the store (found %d) — Go-side search over a capped candidate set cannot find what the cap excluded", n)
@@ -653,5 +671,34 @@ func TestInboxSoloExceptionBudget(t *testing.T) {
 	}
 	if inboxExcSoloMax != 3000 {
 		t.Errorf("inboxExcSoloMax = %d; the store clamp above is pinned to 3000 — change both together", inboxExcSoloMax)
+	}
+}
+
+// v0.9.443 — HTTP-hata sınıflandırıcısı: error.type fallback'inin ürettiği
+// çıplak 3-haneli tipler ("404") exception değil. Desen chstore.
+// HTTPErrorTypeRe'den gelir (CH WHERE match ile TEK kaynak) — burada satır
+// sınıflandırmasının o desenle aynı davrandığı sabitlenir.
+func TestIsHTTPErrorType(t *testing.T) {
+	cases := []struct {
+		exType string
+		want   bool
+	}{
+		{"404", true},
+		{"401", true},
+		{"500", true},
+		{"java.util.concurrent.TimeoutException", false},
+		{"io.grpc.StatusRuntimeException", false},
+		{"<unknown>", false},
+		{"", false},
+		{"40", false},     // 3 haneden az
+		{"4040", false},   // 3 haneden çok
+		{"404 ", false},   // anchor: boşluklu varyant sızmasın
+		{"E404", false},   // koda gömülü sayı ≠ çıplak durum kodu
+		{"HTTP 500", false},
+	}
+	for _, tc := range cases {
+		if got := isHTTPErrorType(tc.exType); got != tc.want {
+			t.Errorf("isHTTPErrorType(%q) = %v, want %v", tc.exType, got, tc.want)
+		}
 	}
 }

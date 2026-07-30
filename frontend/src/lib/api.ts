@@ -1355,7 +1355,7 @@ export const api = {
   // v0.9.219 — env-scoped like every other triage read; without it the badge
   // counted all environments while the page it links to showed one.
   inboxCount: (env?: string) =>
-    get<{ count: number; problems: number; exceptions: number; anomalies: number; incidents: number }>(
+    get<{ count: number; problems: number; exceptions: number; httpErrors: number; anomalies: number; incidents: number }>(
       `/api/inbox/count${env ? `?env=${encodeURIComponent(env)}` : ''}`),
   setProblemAssignee: (id: string, assignee: string) =>
     request<{ id: string; assignee: string }>(`/api/problems/${encodeURIComponent(id)}/assignee`, {

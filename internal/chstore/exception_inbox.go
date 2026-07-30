@@ -383,7 +383,20 @@ type ExceptionGroupFilter struct {
 	Dir    string
 	Limit  int
 	Offset int
+	// HTTPErrors (v0.9.443) — sözde-exception ayrımı: error.type
+	// fallback'i (v0.8.494) HTTP durum kodunu ex_type'a yazar; "404" gibi
+	// çıplak 3-haneli tipler gerçek exception değil beklenen istemci
+	// hatalarıdır. "" = ikisi de; "exclude" = yalnız gerçek exception;
+	// "only" = yalnız HTTP-hata grupları. Deseni HTTPErrorTypeRe taşır —
+	// Go tarafı sınıflandırmayla (api.isHTTPErrorType) AYNI kaynak.
+	HTTPErrors string
 }
+
+// HTTPErrorTypeRe — "HTTP-hata grubu" tanımının TEK kaynağı: çıplak
+// 3-haneli ex_type (gerçek bir Java/Go exception tipi asla çıplak sayı
+// olmaz). Hem CH match() hem Go regexp bu deseni kullanır (RE2 ikisinde
+// de aynı anlama gelir); ayrışırlarsa facet sayıları liste ile çelişir.
+const HTTPErrorTypeRe = `^[0-9]{3}$`
 
 // buildExceptionGroupWhere builds the WHERE clause shared by the
 // list + count queries. Pulled out so the count never drifts from
@@ -423,6 +436,12 @@ func buildExceptionGroupWhere(f ExceptionGroupFilter) whereClause {
 	if f.Search != "" {
 		p := "%" + f.Search + "%"
 		wc.add("(ex_type ILIKE ? OR ex_message ILIKE ? OR service ILIKE ?)", p, p, p)
+	}
+	switch f.HTTPErrors {
+	case "exclude":
+		wc.add("NOT match(ex_type, ?)", HTTPErrorTypeRe)
+	case "only":
+		wc.add("match(ex_type, ?)", HTTPErrorTypeRe)
 	}
 	return wc
 }

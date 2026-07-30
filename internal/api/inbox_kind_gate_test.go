@@ -24,13 +24,17 @@ func TestKindFacetGatesExpensiveSources(t *testing.T) {
 	if !strings.Contains(src, `if statusFilter != "ignored" && kindOn["problem"] {`) {
 		t.Error("problems fetch is not gated on the kind facet — a kind-narrowed request still pays fetch + four enrichers for rows it will discard")
 	}
-	if !strings.Contains(src, `if !teamIsEmpty && kindOn["exception"] {`) {
-		t.Error("exception fetches are not gated on the kind facet")
+	// v0.9.443 — the exception store serves TWO kinds (exception +
+	// httperror); the fetch gate is their union, the class split rides
+	// ExceptionGroupFilter.HTTPErrors.
+	if !strings.Contains(src, `if !teamIsEmpty && (excOn || httpOn) {`) {
+		t.Error("exception-family fetch is not gated on the kind facet")
 	}
 	// Deselected kinds keep an EXACT chip via COUNT queries — the v0.9.330
 	// contract ("chips report what exists") without the fetch.
 	if !strings.Contains(src, `skippedCounts["problem"] = int(n)`) ||
-		!strings.Contains(src, `skippedCounts["exception"] = int(n)`) {
+		!strings.Contains(src, `skippedCounts["exception"] = int(n)`) ||
+		!strings.Contains(src, `skippedCounts["httperror"] = int(n)`) {
 		t.Error("skipped kinds must still get chip counts from the cheap COUNT path — a zero chip would reintroduce the v0.9.330 'Exceptions 0' lie")
 	}
 	for _, frag := range []string{

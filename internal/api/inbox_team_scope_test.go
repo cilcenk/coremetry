@@ -47,8 +47,9 @@ func TestInboxTeamFilterReachesEverySource(t *testing.T) {
 	// the empty slice through would return an UNFILTERED page under a filter
 	// that should match nothing.
 	// v0.9.354 added the kind gate on the same line — the invariant is the
-	// teamIsEmpty guard, whatever else joins the condition.
-	if !strings.Contains(src, `if !teamIsEmpty && kindOn["exception"] {`) {
+	// teamIsEmpty guard, whatever else joins the condition. (v0.9.443: the
+	// kind gate became the exception-family pair excOn/httpOn.)
+	if !strings.Contains(src, `if !teamIsEmpty && (excOn || httpOn) {`) {
 		t.Error("empty-team short-circuit missing — an empty team allowlist passed to ExceptionGroupFilter.Services means NO constraint, not 'match nothing'")
 	}
 

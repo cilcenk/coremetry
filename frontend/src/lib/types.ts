@@ -1194,7 +1194,7 @@ export interface KibanaSettings {
 // triage object a HUMAN created on purpose, and it was the only source the
 // merged queue never showed: an operator working from /inbox could miss an
 // open incident entirely while the sidebar's own /incidents badge counted it.
-export type InboxKind = 'problem' | 'exception' | 'anomaly' | 'incident';
+export type InboxKind = 'problem' | 'exception' | 'httperror' | 'anomaly' | 'incident';
 export interface InboxItem {
   id: string;             // composite "<kind>:<nativeId>"
   kind: InboxKind;

@@ -33,7 +33,7 @@ export function inboxActionsForKind(kind: InboxKind): InboxActionMatrix {
     mute: kind === 'anomaly',
     rootCause: kind === 'problem' || kind === 'anomaly',
     openSource: true,
-    setState: kind === 'exception',
+    setState: kind === 'exception' || kind === 'httperror',
   };
 }
 

@@ -82,16 +82,19 @@ export function useInbox(filter: {
 // `count` alanı bilerek OKUNMUYOR (dört türün toplamı, eski semantik).
 export function useInboxCount(env?: string) {
   return useQuery<
-    { count: number; problems: number; exceptions: number; anomalies: number; incidents: number },
+    { count: number; problems: number; exceptions: number; httpErrors: number; anomalies: number; incidents: number },
     Error,
     { triage: number; exceptions: number }
   >({
     queryKey: keys.inbox.count(env),
     queryFn: async () =>
-      (await api.inboxCount(env)) ?? { count: 0, problems: 0, exceptions: 0, anomalies: 0, incidents: 0 },
+      (await api.inboxCount(env)) ?? { count: 0, problems: 0, exceptions: 0, httpErrors: 0, anomalies: 0, incidents: 0 },
     select: (r) => ({
       triage: (r.problems ?? 0) + (r.anomalies ?? 0) + (r.incidents ?? 0),
-      exceptions: r.exceptions ?? 0,
+      // Sönük rozet /problems girişini süsler; o sayfa HER grubu listeler
+      // (http-errors dahil) — rozet de aile toplamı olmalı ki rozet ile
+      // arkasındaki sayfa asla ayrışmasın (v0.9.219 drift sınıfı).
+      exceptions: (r.exceptions ?? 0) + (r.httpErrors ?? 0),
     }),
     refetchInterval: 30_000,
     staleTime: 25_000,

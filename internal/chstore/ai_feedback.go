@@ -111,3 +111,45 @@ func (s *Store) aiFeedbackBySurface(ctx context.Context, from, to time.Time) (ma
 	}
 	return out, rows.Err()
 }
+
+// NegativeFeedbackCall — 👎 alan bir cevabın madencilik satırı (v0.9.423).
+type NegativeFeedbackCall struct {
+	Surface   string `json:"surface"`
+	CreatedAt int64  `json:"createdAt"` // unix ns
+	UserEmail string `json:"userEmail,omitempty"`
+	Prompt    string `json:"prompt"`
+	Response  string `json:"response,omitempty"`
+}
+
+// ListNegativeFeedbackCalls (v0.9.423, CoSRE fikir #6) — pencere içindeki
+// verdict=-1 feedback'leri ai_calls örnekleriyle birleştirir: hangi soru
+// şekilleri kötü cevap alıyor → yeni guided-intent adayları VERİDEN çıkar.
+// İki tablo da küçük state tablosu (ai_feedback ReplacingMergeTree 90g TTL,
+// ai_calls örnekleri 4KB cap'li) — JOIN hot-path değil, admin paneli okuması.
+func (s *Store) ListNegativeFeedbackCalls(ctx context.Context, from, to time.Time, limit int) ([]NegativeFeedbackCall, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT f.surface, toUnixTimestamp64Nano(f.created_at), f.user_email,
+		       c.prompt_sample, c.response_sample
+		FROM ai_feedback FINAL AS f
+		LEFT JOIN ai_calls AS c ON c.exchange_id = f.exchange_id
+		WHERE f.verdict = -1 AND f.created_at >= ? AND f.created_at <= ?
+		ORDER BY f.created_at DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10`, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []NegativeFeedbackCall
+	for rows.Next() {
+		var r NegativeFeedbackCall
+		if err := rows.Scan(&r.Surface, &r.CreatedAt, &r.UserEmail, &r.Prompt, &r.Response); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

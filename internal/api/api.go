@@ -918,6 +918,9 @@ func (s *Server) Start() error {
 	// (NOT admin-gated like the reads above): whoever can chat can
 	// rate the answer they got — mirrors POST /api/copilot/chat.
 	mux.HandleFunc("POST /api/ai/feedback", s.postAIFeedback)
+	// v0.9.423 (CoSRE fikir #6) — 👎 madenciliği: düşük puanlı cevaplar
+	// prompt örnekleriyle; yeni guided-intent adayları veriden çıkar.
+	mux.HandleFunc("GET /api/ai/feedback/negative", auth.RequireRole(auth.RoleAdmin, s.listNegativeAIFeedback))
 	mux.HandleFunc("GET /api/status", s.getStatus)
 
 	// ── Public status page ────────────────────────────────────────

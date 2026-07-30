@@ -1397,6 +1397,16 @@ export interface AIStats {
 // Bundled defaults live frontend-side (see lib/ai-rates.ts);
 // admins can override via /api/ai/rates which the UI merges
 // over the bundle. Local-model endpoints stay at 0/0 = free.
+// NegativeFeedbackCall (v0.9.423) — 👎 madenciliği satırı: düşük
+// puanlı cevabın yüzeyi + soru/cevap örnekleri.
+export interface NegativeFeedbackCall {
+  surface: string;
+  createdAt: number; // unix ns
+  userEmail?: string;
+  prompt: string;
+  response?: string;
+}
+
 export interface AIRate {
   inputPer1M: number;
   outputPer1M: number;

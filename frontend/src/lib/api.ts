@@ -738,6 +738,10 @@ export const api = {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+  // v0.9.423 — 👎 madenciliği: düşük puanlı cevaplar prompt örnekleriyle.
+  aiNegativeFeedback: (rangeS?: number) =>
+    get<{ rows: import('./types').NegativeFeedbackCall[]; rangeS: number }>(
+      `/api/ai/feedback/negative${rangeS ? `?rangeS=${rangeS}` : ''}`),
   aiRates: () =>
     get<Record<string, import('./types').AIRate>>(`/api/ai/rates`),
   putAIRates: (rates: Record<string, import('./types').AIRate>) =>

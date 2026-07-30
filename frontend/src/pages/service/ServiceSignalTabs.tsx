@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Button } from '@/components/ui/Button';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
@@ -124,7 +125,39 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
     // re-open one. The filter/range/search change still refetches via the key.
     refetchOnWindowFocus: false,
   });
-  const logs = useMemo(() => q.data?.logs ?? [], [q.data]);
+  // v0.9.406 (redesign açık-dilimi "200 satır daha") — kullanıcı-tetiklemeli
+  // keyset sayfalama. İlk sayfa CURSOR'SUZ kalır (PIT açılmaz — v0.9.361
+  // maliyet kapısı aynen); butona ilk basışta bir kez wantCursor'lu sayfa-1
+  // ile cursor alınır (tek ek ES sorgusu, kullanıcı tetikli), sonrası
+  // after-zinciri. Filtre/pencere değişince birikim sıfırlanır.
+  const [extraRows, setExtraRows] = useState<import('@/lib/types').LogRow[]>([]);
+  const [pagingBusy, setPagingBusy] = useState(false);
+  const [pagingDone, setPagingDone] = useState(false);
+  const cursorRef = useRef<string>('');
+  useEffect(() => {
+    setExtraRows([]); setPagingDone(false); cursorRef.current = '';
+  }, [service, from, to, search, minSev]);
+  const loadMore = async () => {
+    if (pagingBusy || pagingDone) return;
+    setPagingBusy(true);
+    try {
+      const base = { limit: 200, from, to, service, search: search || undefined, severity: minSev } as const;
+      if (!cursorRef.current) {
+        const first = await api.logs({ ...base, paging: true });
+        cursorRef.current = first?.nextCursor ?? '';
+        if (!cursorRef.current) { setPagingDone(true); return; }
+      }
+      const next = await api.logs({ ...base, after: cursorRef.current, paging: true });
+      setExtraRows(r => [...r, ...(next?.logs ?? [])]);
+      cursorRef.current = next?.nextCursor ?? '';
+      if (!cursorRef.current || (next?.logs ?? []).length === 0) setPagingDone(true);
+    } catch {
+      setPagingDone(true); // hata = sessiz sonsuz-retry yok; sayaç zaten dürüst
+    } finally {
+      setPagingBusy(false);
+    }
+  };
+  const logs = useMemo(() => [...(q.data?.logs ?? []), ...extraRows], [q.data, extraRows]);
 
   // v0.9.358 — çip sayıları histogramın ZATEN çektiği severity serisinden
   // (pencerenin tamamı), sayfadan değil. Aynı ekrandaki iki sayı aynı
@@ -199,7 +232,23 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
         ) : rows.length === 0 ? (
           <div className="ov-card-b"><Empty icon="≡" title={`No logs for ${service} in this window`} /></div>
         ) : (
+          <>
           <LogTable logs={rows} />
+          {/* v0.9.406 — "200 satır daha": kullanıcı-tetiklemeli keyset
+              sayfa (otomatik prefetch YOK — ES disiplini). Sayaç üstteki
+              başlıkta; burada yalnız eylem + dürüst son. */}
+          <div style={{ textAlign: 'center', margin: '8px 0 2px' }}>
+            {pagingDone ? (
+              <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                penceredeki tüm eşleşmeler yüklendi ({logs.length} satır)
+              </span>
+            ) : (
+              <Button variant="secondary" size="sm" onClick={loadMore} loading={pagingBusy}>
+                200 satır daha
+              </Button>
+            )}
+          </div>
+          </>
         )}
       </div>
     </div>

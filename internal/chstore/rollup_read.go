@@ -147,7 +147,7 @@ func rollupREDSQL(plan RollupPlan, f RollupSeriesFilter, from, to time.Time) (st
 
 	inner := fmt.Sprintf(`
 		SELECT
-			toUnixTimestamp(toStartOfInterval(ts, INTERVAL %d SECOND)) AS tb,
+			toInt64(toUnixTimestamp(toStartOfInterval(ts, INTERVAL %d SECOND))) AS tb,
 			%s,
 			sum(span_count)   AS calls,
 			sum(error_count)  AS errs,

@@ -15,14 +15,13 @@ import { LogTable, DEFAULT_LOG_COLUMNS } from '@/components/LogTable';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
-import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
 import { ShareButton } from '@/components/ShareButton';
 import { buildKibanaURL } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
-import { useUrlRange } from '@/lib/useUrlRange';
+import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getRaw, setRaw } from '@/lib/storage';
 import { useTableNav } from '@/lib/useTableNav';
@@ -139,13 +138,14 @@ function buildKQLFromFilter(f: {
 function LogsInner() {
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const [range, setRange] = useUrlRange('30m');
-
-  // v0.9.390 (Faz A-3) — histogram brush geri-yığını: çift-tık önceki
-
-  // pencereye döner (M1 paritesi; ipucu metni artık doğruyu söylüyor).
-
-  const [zoomStack, setZoomStack] = useState<import('@/lib/types').TimeRange[]>([]);
+  // v0.9.431 — v0.9.390'ın sayfa-yerel yığını paylaşılan
+  // usePageZoomRange hook'una taşındı. İki boşluk da kapandı:
+  // (1) out-of-band Topbar seçimi artık yığını geçersizleştiriyor
+  // (bayat pre-zoom girdisi geri yazılamaz), (2) boş yığın + custom
+  // pencerede çift-tık default preset'e dönüyor (diğer sayfalarla
+  // aynı sözleşme). resetPaging her iki yönde (v0.7.81 kuralı) —
+  // closure çağrı anında değerlendirilir, TDZ yok.
+  const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('30m', () => resetPaging());
   // v0.9.291 — the window handed to the KQL autocomplete. Memoised on
   // the range, never computed bare in JSX (v0.5.184: a bare
   // range→duration call in the tree is a new object each render and
@@ -944,26 +944,11 @@ function LogsInner() {
             reading the count column. Hidden when neither a time
             range nor a trace pin is set; renders nothing on
             empty data. */}
+        {/* v0.9.431 — brush/çift-tık hook üzerinden; ns→sn çeviri burada
+            (LogsHistogram sınır sözleşmesi ns, hook saniye alır). */}
         <LogsHistogram range={{ from, to }} filter={{ ...filter, env, search: compiledSearch }}
-          onRangeSelect={(fromNs, toNs) => {
-            // Brush → narrow the window to the selection. Custom
-            // ranges ride ?range= (useUrlRange) so the zoom is
-            // shareable; paging resets per the v0.7.81 cursor rule.
-            // v0.9.390 — brush ÖNCESİ pencere yığına iter; çift-tık popZoom.
-            setZoomStack(st => pushZoom(st, range));
-            setRange({ preset: 'custom', fromMs: Math.round(fromNs / 1e6), toMs: Math.round(toNs / 1e6) });
-            resetPaging();
-          }}
-          onZoomReset={() => {
-            // v0.9.390 (Faz A-3) — ipucu metni ("çift tık = geri") v0.9.373'ten
-            // beri bu sekmede yalandı: LogsHistogram destekliyordu, sayfa
-            // geçirmiyordu. Yığın boşsa no-op (davranış sürprizsiz).
-            setZoomStack(st => {
-              const { stack, view } = popZoom(st);
-              if (view) { setRange(view); resetPaging(); }
-              return stack;
-            });
-          }} />
+          onRangeSelect={(fromNs, toNs) => handleZoom(fromNs / 1e9, toNs / 1e9)}
+          onZoomReset={handleZoomReset} />
 
         {data === undefined && <TableSkeleton rows={12} cols={5} />}
         {/* v0.9.215 — the error leg of the tri-state used to render NOTHING:

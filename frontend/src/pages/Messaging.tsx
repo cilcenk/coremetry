@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { SavedViewsBar } from '@/components/SavedViewsBar';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
-import { Spinner, Empty } from '@/components/Spinner';
+import { Empty } from '@/components/Spinner';
+import { TableSkeleton } from '@/components/Skeleton';
 import { DependenciesTable, type DepRow } from '@/components/DependenciesTable';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
@@ -150,8 +152,15 @@ export default function MessagingPage() {
           erişemiyorum" şikayetinin bir parçasıydı. */}
           Satıra tıkla → yayıncılar, tüketiciler ve uçtan uca gecikme;
           trace'ler için satırdaki destination bağlantısını kullan.
+          {/* v0.9.405 — çakışan yüzey artık birbirine bağlı: consumer
+              span'leri endpoint (giriş) perspektifiyle de listelenir. */}
+          {' '}Consumer'ları giriş-noktası görünümünde incelemek için{' '}
+          <Link to="/endpoints?entry=rpc" style={{ color: 'var(--accent)' }}>Endpoints · RPC →</Link>
         </div>
-        {q.isPending && <Spinner />}
+        {/* v0.9.405 — URL-state taşıyan sayfa görünüm kaydedebilmeli
+            (saved_views şeması hazır; Endpoints emsali). */}
+        <SavedViewsBar page="messaging" />
+        {q.isPending && <TableSkeleton rows={8} cols={9} wideFirst />}
         {q.isError && (
           <Empty icon="⚠" title="Couldn't load messaging overview">
             The messaging query failed. Check ClickHouse connectivity and retry —

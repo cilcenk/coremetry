@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -166,6 +167,9 @@ export default function SlowQueriesPage() {
           what's actually worth optimising. Click a row to expand a real
           sample with literals.
         </div>
+        {/* v0.9.405 — URL-state (dbsys/dbname, v0.9.399) taşıyan sayfa
+            görünüm kaydedebilmeli (Endpoints emsali). */}
+        <SavedViewsBar page="slowqueries" />
 
         <div className="controls" style={{ marginBottom: 12 }}>
           <select value={dbSystem} onChange={e => setDbSystem(e.target.value)}

@@ -56,8 +56,17 @@ function bandOfName(name: string): Lvl {
 // gelir, istemci bant kesimi görünümü tamamlar.
 const LVL_MIN_SEV: Record<Lvl, number> = { error: 17, warn: 13, info: 9, debug: 0 };
 
-export function ServiceLogsTab({ service, range }: { service: string; range: TimeRange }) {
-  const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+export function ServiceLogsTab({ service, range, windowNs }: {
+  service: string; range: TimeRange;
+  // v0.9.361 — sayfanın ZATEN memo'lu penceresi. Sekme kendi
+  // timeRangeToNs'ini üretiyordu; {tab==='logs' && …} her sekme dönüşünde
+  // unmount/remount ettiği için her dönüş taze bir nanosaniye basıyor,
+  // React Query anahtarı VE sunucu cache anahtarları (list + histogram)
+  // ıskalıyordu — her Overview↔Logs gidiş-gelişi iki gerçek ES sorgusuydu.
+  windowNs?: { from: number; to: number };
+}) {
+  const local = useMemo(() => timeRangeToNs(range), [range]);
+  const { from, to } = windowNs ?? local;
   const rangeParam = encodeRange(range);
 
   // Search box → debounced into the query key (server-side substring

@@ -50,6 +50,8 @@ function TraceDetailInner() {
   // tab" comes back identical when pasted in another browser.
   const [selectedId, setSelectedId] = useState<string | null>(
     () => searchParams.get('span'));
+  // v0.9.408 — explain'in deterministik kanıt span'leri; waterfall kutular.
+  const [evidenceIds, setEvidenceIds] = useState<Set<string>>(new Set());
   // Side-tab state — Trace (waterfall + detail) vs Logs (entries
   // matching this trace_id, Uptrace-style). Logs are fetched lazily
   // on first tab click so the trace page stays fast for users who
@@ -450,7 +452,9 @@ function TraceDetailInner() {
                 no links; see LinkedTracesSection. */}
             <LinkedTracesSection id={id} />
             <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <CopilotExplain kind="trace" id={id} label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this trace</span></>} />
+              <CopilotExplain kind="trace" id={id}
+                onEvidence={(ids) => setEvidenceIds(new Set(ids))}
+                label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this trace</span></>} />
               <CompareTracesButton aId={id} />
             </div>
 
@@ -487,6 +491,7 @@ function TraceDetailInner() {
                       critCount={criticalPath?.ids.size ?? 0}
                       critFocus={critFocus} onCritFocus={setCritFocus} />
                     <TraceWaterfall spans={spans} selectedId={selectedId} onSelect={setSelectedId}
+                      evidenceIds={evidenceIds}
                       criticalPathIds={criticalPathIds} matchIds={spanMatchIds}
                       focusIds={critFocus && criticalPath ? criticalPath.ids : undefined}
                       logSignals={logSignals} onLogsClick={() => setTab('logs')} />

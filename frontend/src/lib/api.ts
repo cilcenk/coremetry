@@ -1271,7 +1271,7 @@ export const api = {
     ),
 
   copilotExplainTrace:   (id: string) =>
-    request<{ explanation: string }>(`/api/copilot/explain-trace/${id}`, { method: 'POST' }),
+    request<{ explanation: string; evidenceSpanIds?: string[] }>(`/api/copilot/explain-trace/${id}`, { method: 'POST' }),
   // Per-span explain (v0.5.144). Backend pulls target span +
   // parent + children + error siblings for a focused prompt.
   copilotExplainSpan:    (traceId: string, spanId: string) =>

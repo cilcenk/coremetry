@@ -154,7 +154,7 @@ export function TraceServiceBreakdown({ spans }: { spans: SpanRow[] }) {
 
 export function TraceWaterfall({
   spans, selectedId, onSelect, defaultCollapsed, groupSimilar = false,
-  criticalPathIds, matchIds, focusIds, logSignals, onLogsClick,
+  criticalPathIds, matchIds, focusIds, evidenceIds, logSignals, onLogsClick,
 }: {
   spans: SpanRow[];
   selectedId: string | null;
@@ -177,6 +177,10 @@ export function TraceWaterfall({
   // spans actually drive the wall-clock latency. Computed once
   // per trace via lib/criticalPath.ts; we just take the result.
   criticalPathIds?: Set<string>;
+  // v0.9.408 — Explain'in kanıt span'leri (hata + en yavaş; backend
+  // deterministik döner): satır .wf-evidence kutusu alır — "kök neden
+  // soruşturulacak kısım" waterfall'da GÖRÜNÜR.
+  evidenceIds?: Set<string>;
   // v0.5.383 — in-trace span filter. Matching span IDs get the
   // .wf-match class (highlight); non-matches get .wf-dim (low
   // opacity). Undefined = no filter active, every row renders
@@ -565,6 +569,7 @@ export function TraceWaterfall({
           s.statusCode === 'error' ? 'wf-err' : '',
           sel ? 'wf-sel' : '',
           onCritical ? 'wf-critical' : '',
+          evidenceIds?.has(s.spanId) ? 'wf-evidence' : '',
           filterActive && onMatch ? 'wf-match' : '',
           dimmed ? 'wf-dim' : '',
         ].filter(Boolean).join(' ');

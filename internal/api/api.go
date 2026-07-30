@@ -8149,13 +8149,41 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 		cancel()
 	}
 
+	// v0.9.408 (operatör: "kök neden kısımları kutulanmıyor") — kanıt
+	// span'leri DETERMİNİSTİK: LLM çıktısını parse etmek yerine modele
+	// beslediğimiz aynı veriden hesaplanır (gemma4 güvenilirliğinden
+	// bağımsız). Hata span'leri (≤5) + en yavaş span; UI bunları
+	// waterfall'da kutular.
+	evidence := make([]string, 0, 6)
+	slowestID, slowestDur := "", float64(-1)
+	for _, c := range compact {
+		if c.Status == "error" && len(evidence) < 5 {
+			evidence = append(evidence, c.SpanID)
+		}
+		if c.DurationMs > slowestDur {
+			slowestDur, slowestID = c.DurationMs, c.SpanID
+		}
+	}
+	if slowestID != "" {
+		dup := false
+		for _, e := range evidence {
+			if e == slowestID {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			evidence = append(evidence, slowestID)
+		}
+	}
+
 	user := fmt.Sprintf("Trace %s with %d spans:\n```json\n%s\n```%s", id, len(compact), string(payload), logsBlock)
 	out, err := s.copilotExplain(r, copilot.SystemPromptTrace(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]string{"explanation": out})
+	writeJSON(w, map[string]any{"explanation": out, "evidenceSpanIds": evidence})
 }
 
 // copilotExplainSpan focuses the LLM on ONE span instead of the

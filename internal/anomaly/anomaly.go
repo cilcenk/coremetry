@@ -503,6 +503,31 @@ func accumulateSeries(byService map[string][]float64, service string, v float64)
 	byService[service] = append(byService[service], v)
 }
 
+// padTrailingSilence (v0.9.449, hacim denetimi L3 "donmuş kuyruk") —
+// susan servisin serisini pencere sonuna kadar SIFIRLA doldurur.
+// GROUP BY yalnız veri OLAN bucket'ları döndürür; seri sıkışınca son
+// dolu bucket "şimdi" muamelesi görüyordu: saatler önceki spike güncel
+// sanılıp anomali last_seen'i 24 saate dek taze tutuyor, (terfi
+// zinciriyle) problemi canlı tutuyordu. Kuyruk sıfırları gerçek
+// sessizliğin dürüst temsilidir: current=0 → z sönümlenir → event
+// 10dk'da clear → v0.9.444 resolve pass'i problemi kapatır.
+//
+// YALNIZ kuyruk doldurulur — iç boşluklara dokunulmaz (baseline
+// öğreniminin mevcut davranışını değiştirmemek için asgari cerrahi).
+// Saf — tablo-testli.
+func padTrailingSilence(series []float64, lastBucketUnix int64, upperUnix int64) []float64 {
+	if len(series) == 0 || lastBucketUnix <= 0 {
+		return series
+	}
+	const step = int64(300) // 5-dk MV grid'i
+	// Var olması gereken bucket'lar: last+step, last+2·step, … < upper
+	// (upper = ilk TAMAMLANMAMIŞ bucket'ın başı, exclusive).
+	for t := lastBucketUnix + step; t < upperUnix; t += step {
+		series = append(series, 0)
+	}
+	return series
+}
+
 // buildAllBucketsQuery is the batched twin of the old per-service fetchBuckets
 // read: ONE `GROUP BY service_name, t` pass over service_summary_5m for a
 // metric, instead of one `WHERE service_name = ?` query PER service. The metric
@@ -546,12 +571,14 @@ func (d *Detector) fetchAllBuckets(ctx context.Context, metric string, now time.
 		return nil, err
 	}
 	cutoff := now.Add(-time.Duration(historyHours) * time.Hour)
-	rows, err := d.store.Conn().Query(ctx, buildAllBucketsQuery(vexpr), cutoff, lastCompleteBucketStart(now))
+	upper := lastCompleteBucketStart(now)
+	rows, err := d.store.Conn().Query(ctx, buildAllBucketsQuery(vexpr), cutoff, upper)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := make(map[string][]float64)
+	lastT := make(map[string]int64)
 	for rows.Next() {
 		var svc string
 		var t uint32
@@ -560,8 +587,17 @@ func (d *Detector) fetchAllBuckets(ctx context.Context, metric string, now time.
 			return nil, err
 		}
 		accumulateSeries(out, svc, v)
+		lastT[svc] = int64(t) // ORDER BY service, t — son görülen kazanır
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// v0.9.449 — donmuş kuyruk: susan servis pencere sonuna dek sıfırla
+	// doldurulur ki son dolu bucket "şimdi" sanılmasın (padTrailingSilence).
+	for svc, series := range out {
+		out[svc] = padTrailingSilence(series, lastT[svc], upper.Unix())
+	}
+	return out, nil
 }
 
 // lastCompleteBucketStart is the exclusive upper bound for MV series reads

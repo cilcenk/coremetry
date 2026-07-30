@@ -56,8 +56,12 @@ function bandOfName(name: string): Lvl {
 // gelir, istemci bant kesimi görünümü tamamlar.
 const LVL_MIN_SEV: Record<Lvl, number> = { error: 17, warn: 13, info: 9, debug: 0 };
 
-export function ServiceLogsTab({ service, range, windowNs }: {
+export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }: {
   service: string; range: TimeRange;
+  // v0.9.373 — histogram brush'ı sayfanın zoom yoluna bağlar (Service.tsx
+  // handleZoom: unix-SANİYE alır, geri-yığını korur; diğer grafiklerle aynı).
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
   // v0.9.361 — sayfanın ZATEN memo'lu penceresi. Sekme kendi
   // timeRangeToNs'ini üretiyordu; {tab==='logs' && …} her sekme dönüşünde
   // unmount/remount ettiği için her dönüş taze bir nanosaniye basıyor,
@@ -142,7 +146,9 @@ export function ServiceLogsTab({ service, range, windowNs }: {
       <div className="card ov-mb">
         <div className="ov-card-h"><h3>Log volume</h3><span className="ov-sub">by level</span></div>
         <div className="ov-card-b" style={{ paddingTop: 8 }}>
-          <LogsHistogram range={{ from, to }} filter={filter} onSeries={onHistSeries} />
+          <LogsHistogram range={{ from, to }} filter={filter} onSeries={onHistSeries}
+            onRangeSelect={onZoom ? (fromNs, toNs) => onZoom(fromNs / 1e9, toNs / 1e9) : undefined}
+            onZoomReset={onZoomReset} />
         </div>
       </div>
 

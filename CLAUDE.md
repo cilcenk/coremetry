@@ -34,7 +34,7 @@ Datadog / Dynatrace / Honeycomb engineer this?"**
 **Frontend:** React + Vite, no Tailwind (CSS vars in `globals.css`),
 React Query, react-router v6. No state library — URL is source of
 truth for shareable views.
-**Versioning:** git tags `v0.9.X` (v0.8 zinciri v0.8.588'de kapandı, operatör kararı 2026-07-17). Runtime resolution:
+**Versioning:** git tags `v0.9.X` (v0.8 zinciri v0.8.588'de kapandı, operatör kararı 2026-07-17). 1.0 kesim prosedürü + smoke checklist: [docs/RELEASE-1.0.md](docs/RELEASE-1.0.md) (hazır, 2026-07-30). Runtime resolution:
 ldflag > `/app/VERSION` > `"dev"` = **build** kimliği; `COREMETRY_VERSION`
 env yalnız GÖSTERİLENİ değiştirir (v0.9.339). `/api/version` ikisini de
 döndürür + `overridden` bayrağı — bayat bir env artık imajmış gibi

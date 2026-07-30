@@ -510,15 +510,25 @@ func relabelBandSeries(in []SpanMetricSeries, label string) []SpanMetricSeries {
 func (s *Store) resolveBand(ctx context.Context, q MetricResolveQuery, step int) (MetricResolveResult, error) {
 	tier, useFine := selectMetricTier(q.From, q.To, step, s.spanmetricsCoverageStart(ctx), time.Now(), q.Filters, q.GroupBy)
 	if !useFine {
+		// v0.9.392 (grafik-audit Faz B-2) — üç ayrı QuerySpanMetric üç CH
+		// round-trip'ti; tek Multi aynı WHERE'i bir kez tarar. Hata
+		// sözleşmesi aynı (ilk hata döner); relabel aynı.
+		base := q.toSpanMetricFilter(step)
+		m, _, err := s.QuerySpanMetricMulti(ctx, SpanMetricBatchFilter{
+			Filters: base.Filters, GroupBy: base.GroupBy,
+			From: base.From, To: base.To, StepSeconds: base.StepSeconds,
+			Aggs: []SpanMetricAggSpec{
+				{Name: "p50", Aggregation: "p50", Field: base.Field},
+				{Name: "p95", Aggregation: "p95", Field: base.Field},
+				{Name: "p99", Aggregation: "p99", Field: base.Field},
+			},
+		})
+		if err != nil {
+			return MetricResolveResult{}, err
+		}
 		out := []SpanMetricSeries{}
 		for _, agg := range []string{"p50", "p95", "p99"} {
-			fq := q
-			fq.Agg = agg
-			series, err := s.QuerySpanMetric(ctx, fq.toSpanMetricFilter(step))
-			if err != nil {
-				return MetricResolveResult{}, err
-			}
-			out = append(out, relabelBandSeries(series, agg)...)
+			out = append(out, relabelBandSeries(m[agg], agg)...)
 		}
 		return MetricResolveResult{Series: out, Tier: "spans", StepSeconds: step}, nil
 	}

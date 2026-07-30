@@ -23,24 +23,30 @@ import (
 // self-describing without a side channel.
 func (s *Store) ServiceREDSeries(ctx context.Context, service string, from, to time.Time) []SpanMetricSeries {
 	svcFilter := []FilterExpr{{Key: "service.name", Op: "=", Values: []string{service}}}
+	// v0.9.392 (grafik-audit Faz B-2) — üç ayrı QuerySpanMetric üç CH
+	// round-trip'ti; QuerySpanMetricMulti dururken (aynı WHERE, tek
+	// tarama) sebepsizdi. Soft-fail sözleşmesi aynı: hata → boş bundle,
+	// eksik seri sessizce düşer. GroupKey relabel'ı korunur.
+	m, _, err := s.QuerySpanMetricMulti(ctx, SpanMetricBatchFilter{
+		Filters: svcFilter, From: from, To: to, GroupBy: []string{"service.name"},
+		Aggs: []SpanMetricAggSpec{
+			{Name: "rate", Aggregation: "rate"},
+			{Name: "error_rate", Aggregation: "error_rate"},
+			{Name: "p99", Aggregation: "p99", Field: "duration_ms"},
+		},
+	})
+	if err != nil {
+		return []SpanMetricSeries{}
+	}
 	out := make([]SpanMetricSeries, 0, 3)
-	add := func(label, agg, field string) {
-		f := SpanMetricFilter{
-			Aggregation: agg, Field: field, Filters: svcFilter, From: from, To: to,
-			GroupBy: []string{"service.name"},
+	for _, label := range []string{"rate", "error_rate", "p99"} {
+		rows := m[label]
+		if len(rows) == 0 {
+			continue
 		}
-		rows, err := s.QuerySpanMetric(ctx, f)
-		if err != nil || len(rows) == 0 {
-			return
-		}
-		// One series per metric; relabel GroupKey so the legend reads
-		// rate / error_rate / p99 instead of the service name three times.
 		ser := rows[0]
 		ser.GroupKey = []string{label}
 		out = append(out, ser)
 	}
-	add("rate", "rate", "")
-	add("error_rate", "error_rate", "")
-	add("p99", "p99", "duration_ms")
 	return out
 }

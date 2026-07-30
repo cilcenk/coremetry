@@ -8520,18 +8520,17 @@ func (s *Server) copilotExplainServiceHealth(w http.ResponseWriter, r *http.Requ
 	// SpanMetricFilter API takes []FilterExpr, not a DSL
 	// string. One filter chip is all we need here.
 	svcFilter := []chstore.FilterExpr{{Key: "service.name", Op: "=", Values: []string{service}}}
-	// Three parallel queries, same shape the SPA fires for
-	// the live chart. Bounded by the chosen window; the MV
-	// fast path covers any range ≥ 5min.
-	rps, _ := s.store.QuerySpanMetric(r.Context(), chstore.SpanMetricFilter{
-		Aggregation: "rate", Filters: svcFilter, From: from, To: to, GroupBy: []string{"name"},
+	// v0.9.392 (Faz B-2) — üç ayrı sorgu tek Multi'ye indi: aynı WHERE,
+	// tek CH taraması (SPA'nın batch yolu ile aynı şekil). Soft-fail aynı.
+	redM, _, _ := s.store.QuerySpanMetricMulti(r.Context(), chstore.SpanMetricBatchFilter{
+		Filters: svcFilter, From: from, To: to, GroupBy: []string{"name"},
+		Aggs: []chstore.SpanMetricAggSpec{
+			{Name: "rate", Aggregation: "rate"},
+			{Name: "error_rate", Aggregation: "error_rate"},
+			{Name: "p99", Aggregation: "p99", Field: "duration_ms"},
+		},
 	})
-	errs, _ := s.store.QuerySpanMetric(r.Context(), chstore.SpanMetricFilter{
-		Aggregation: "error_rate", Filters: svcFilter, From: from, To: to, GroupBy: []string{"name"},
-	})
-	p99, _ := s.store.QuerySpanMetric(r.Context(), chstore.SpanMetricFilter{
-		Aggregation: "p99", Field: "duration_ms", Filters: svcFilter, From: from, To: to, GroupBy: []string{"name"},
-	})
+	rps, errs, p99 := redM["rate"], redM["error_rate"], redM["p99"]
 
 	// Compact the series into a small JSON blob the LLM can
 	// reason about — full point lists are token-heavy and

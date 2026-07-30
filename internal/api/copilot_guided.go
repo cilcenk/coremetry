@@ -492,7 +492,17 @@ var guidedRangeRe = regexp.MustCompile(`(\d+)\s*(gün|gun|days|day|saat|hours|ho
 // words ("son bir saat", "today") map to 1h/1d. Clamped to
 // [300, 86400] so a typo can't trigger a week-wide scan.
 func guidedRangeS(raw string) int64 {
-	msg := normalizeGuidedMsg(raw)
+	v, _ := guidedRangeSExplicit(normalizeGuidedMsg(raw))
+	return v
+}
+
+// guidedRangeSExplicit (v0.9.410) — guidedRangeS'in çekirdeği; ikinci
+// dönüş, mesajın AÇIK bir pencere içerip içermediğini söyler (takip
+// devralması "peki payments?" için önceki sorunun penceresini ancak
+// mevcut soru açık pencere TAŞIMIYORSA korumalı). msg normalize
+// edilmiş olmalı.
+func guidedRangeSExplicit(msg string) (int64, bool) {
+	explicit := true
 	rangeS := int64(1800)
 	if m := guidedRangeRe.FindStringSubmatch(msg); m != nil {
 		n := int64(0)
@@ -513,6 +523,8 @@ func guidedRangeS(raw string) int64 {
 	} else if strings.Contains(msg, "gün") || strings.Contains(msg, "day") ||
 		strings.Contains(msg, "bugün") || strings.Contains(msg, "today") {
 		rangeS = 86400
+	} else {
+		explicit = false
 	}
 	if rangeS < 300 {
 		rangeS = 300
@@ -520,7 +532,7 @@ func guidedRangeS(raw string) int64 {
 	if rangeS > 86400 {
 		rangeS = 86400
 	}
-	return rangeS
+	return rangeS, explicit
 }
 
 // fmtAgoTR renders "how long ago" in compact Turkish units. EVERY
@@ -579,14 +591,31 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		return false, false
 	}
 	norm := normalizeGuidedMsg(question)
-	if !hasGuidedSignal(norm) {
+	// v0.9.410 — takip soruları ("peki payments?", "son 24 saatte?")
+	// guided sinyal taşımasa da katalog okumasını hak eder; devralma
+	// applyFollowUpContext'te (copilot_followup.go).
+	prior := priorUserTexts(msgs)
+	followCue := len(prior) > 0 && isFollowUpCue(norm)
+	if !hasGuidedSignal(norm) && !followCue {
 		return false, false // zero-cost fast path: no catalogue read
 	}
-	route := routeGuidedIntent(question, s.guidedServiceNames(ctx), s.guidedEnvNames(ctx), ctxService)
+	svcNames, envNames := s.guidedServiceNames(ctx), s.guidedEnvNames(ctx)
+	route := routeGuidedIntent(question, svcNames, envNames, ctxService)
+	rangeS := guidedRangeS(question)
+	followBase := "" // devralınan temel mesaj (operasyon çözümü için)
+	if followCue {
+		if nr, nrange, base, changed := applyFollowUpContext(route, question, prior, svcNames, envNames); changed {
+			route, rangeS, followBase = nr, nrange, base
+			scope := string(route.Intent)
+			if route.Service != "" {
+				scope = route.Service
+			}
+			emit("step", map[string]string{"tool": "bağlam: " + scope + " (önceki sorudan)"})
+		}
+	}
 	if route.Intent == guidedNone {
 		return false, false
 	}
-	rangeS := guidedRangeS(question)
 	to := time.Now()
 	from := to.Add(-time.Duration(rangeS) * time.Second)
 
@@ -600,7 +629,13 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		// operasyonu adlandırıyorsa (ya da operatör bir operasyon
 		// sayfasındaysa) RED'i o span-name'e daraltıp operasyon
 		// bundle'ına yönlendir; aksi halde servis-geneli kalır.
-		if op := s.resolveGuidedOperation(ctx, route.Service, question, ctxOperation); op != "" {
+		// v0.9.410 — takip sorusu operasyonu adlandırmaz ("peki p99?");
+		// mevcut soru çözmezse devralınan temel mesajdan dene.
+		op := s.resolveGuidedOperation(ctx, route.Service, question, ctxOperation)
+		if op == "" && followBase != "" {
+			op = s.resolveGuidedOperation(ctx, route.Service, followBase, "")
+		}
+		if op != "" {
 			evidence, sources, err = s.guidedOperationHealthBundle(ctx, emit, route.Service, op, route.Env, from, to, rangeS)
 		} else {
 			evidence, sources, err = s.guidedServiceHealthBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)

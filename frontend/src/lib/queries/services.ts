@@ -105,6 +105,33 @@ export function useServiceRollouts(svc: string, from: number, to: number) {
   });
 }
 
+// useServiceRollouts7d — v0.9.360. The Details tab used to fetch the SAME
+// rollouts endpoint three times per open: ServiceCharts (page window, deploy
+// markers — stays as-is), DetailsPropsStrip (page window, private key) and
+// DeployHistoryPanel (raw effect, 7-day window minted from Date.now() on
+// every mount, so its ns-exact key never repeated). The strip and the panel
+// now share THIS one 7-day read: one request, one React Query entry.
+//
+// The window is computed inside queryFn and SNAPPED to the 5-minute rollout
+// grid, so the key needs no timestamps at all — staleTime is the freshness
+// contract, and the server key (cacheBucket) collapses across viewers too.
+// Side effect the low-severity finding asked for: the strip's Version chip
+// now looks at 7 days, so it no longer vanishes at the default 30m range.
+export function useServiceRollouts7d(svc: string) {
+  return useQuery({
+    queryKey: ['service-rollouts-7d', svc],
+    queryFn: () => {
+      const grid = 5 * 60_000;
+      const toMs = Math.floor(Date.now() / grid) * grid;
+      const to = toMs * 1e6;
+      const from = to - 7 * 24 * 3600 * 1e9;
+      return api.serviceRollouts(svc, { from, to });
+    },
+    enabled: !!svc,
+    staleTime: 60_000,
+  });
+}
+
 // Service-catalog metadata — operator-curated owner / SRE team /
 // runbook links, joined locally by the consumers. The endpoint is
 // server-cached 60s; the matching client stale-time keeps repeat

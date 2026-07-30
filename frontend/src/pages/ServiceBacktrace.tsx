@@ -1,10 +1,11 @@
 import { Suspense, useMemo, useState } from 'react';
+import { seriesColor } from '@/lib/chartFmt';
 import { Link } from 'react-router-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useServiceBacktrace } from '@/lib/queries';
-import { fmtNum, hashColor, tsLong, rangeToSince } from '@/lib/utils';
+import { fmtNum, tsLong, rangeToSince } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { CallerRow, TimeRange } from '@/lib/types';
@@ -136,7 +137,7 @@ function BacktraceInner() {
               <DataTableHead dt={dt} />
               <tbody>
                 {dt.sortedRows.map((r, i) => {
-                  const color = hashColor(r.callerService);
+                  const color = seriesColor(r.callerService);
                   const errBad = r.errorRate >= 5;
                   const errWarn = !errBad && r.errorRate > 0;
                   return (

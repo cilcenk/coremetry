@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { hashColor, fmtNum } from '@/lib/utils';
+import { seriesColor } from '@/lib/chartFmt';
+import { fmtNum } from '@/lib/utils';
 import type { AggSpanNode } from '@/lib/types';
 
 // Grafana-Drilldown-style multi-trace path-aggregated tree. Each
@@ -86,7 +87,7 @@ function AggRow({ node, depth, ancestorContinues, isLastSibling, refMs, colWidth
   const hasChildren = !!node.children && node.children.length > 0;
   const isErr = node.errorCount > 0;
   // v0.8.302 — theme token instead of dark-palette literal.
-  const color = isErr ? 'var(--err)' : hashColor(node.service);
+  const color = isErr ? 'var(--err)' : seriesColor(node.service);
 
   const startPct = Math.max(0, Math.min(100, (node.avgStartMs / refMs) * 100));
   const widthPct = Math.max(0.5, Math.min(100 - startPct, (node.avgMs / refMs) * 100));

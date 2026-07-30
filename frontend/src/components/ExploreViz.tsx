@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { hashColor } from '@/lib/utils';
+import { seriesColor } from '@/lib/chartFmt';
 import { MultiLineChart } from './MultiLineChart';
 import type { ExploreSeries, SpanMetricSeries } from '@/lib/types';
 
@@ -110,7 +110,7 @@ function LineViz({ series, unit, mode }: {
 
         {/* Series */}
         {series.map((s, i) => {
-          const color = hashColor(s.name || `s${i}`);
+          const color = seriesColor(s.name || `s${i}`);
           if (mode === 'line') {
             const d = s.points
               .sort((a, b) => a.t - b.t)
@@ -144,7 +144,7 @@ function LineViz({ series, unit, mode }: {
         }}>
           {series.map((s, i) => (
             <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-              <span style={{ width: 10, height: 10, background: hashColor(s.name || `s${i}`), display: 'inline-block', borderRadius: 2 }} />
+              <span style={{ width: 10, height: 10, background: seriesColor(s.name || `s${i}`), display: 'inline-block', borderRadius: 2 }} />
               {s.name}
             </span>
           ))}
@@ -184,7 +184,7 @@ function TopNViz({ series, unit }: { series: ExploreSeries[]; unit?: string }) {
             <tr key={r.name}>
               <td>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 8, height: 8, background: hashColor(r.name),
+                  <span style={{ width: 8, height: 8, background: seriesColor(r.name),
                                   borderRadius: '50%', display: 'inline-block' }} />
                   {r.name}
                 </span>
@@ -195,7 +195,7 @@ function TopNViz({ series, unit }: { series: ExploreSeries[]; unit?: string }) {
                 <div style={{ height: 10, background: 'var(--bg3)', borderRadius: 3 }}>
                   <div style={{
                     width: `${(r.latest / max) * 100}%`,
-                    height: '100%', background: hashColor(r.name), borderRadius: 3,
+                    height: '100%', background: seriesColor(r.name), borderRadius: 3,
                   }} />
                 </div>
               </td>

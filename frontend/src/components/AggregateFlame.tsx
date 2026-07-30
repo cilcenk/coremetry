@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
-import { hashColor, fmtNum } from '@/lib/utils';
+import { seriesColor } from '@/lib/chartFmt';
+import { fmtNum } from '@/lib/utils';
 import type { AggSpanNode } from '@/lib/types';
 
 // Aggregate flamegraph for a service across many traces. Same
@@ -131,7 +132,7 @@ export function AggregateFlame({ roots, totalWidth = 1100 }: {
             const isErr = b.node.errorCount > 0;
             // v0.8.302 — error bars use the theme token (SVG resolves var()),
             // so they match the app-wide error red on every palette.
-            const baseColor = isErr ? 'var(--err)' : hashColor(b.node.service || b.node.operation);
+            const baseColor = isErr ? 'var(--err)' : seriesColor(b.node.service || b.node.operation);
             const w = Math.max(0.5, b.width);
             const x = b.x;
             const y = PAD_TOP + b.depth * ROW_H;

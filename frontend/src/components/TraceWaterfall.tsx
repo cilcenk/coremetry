@@ -91,12 +91,12 @@ function categoryOf(s: SpanRow): SpanCategory | null {
 // from the same service shares a colour — the scan-handoffs convention. Five
 // well-separated hues (blue/purple/teal/orange/green); collisions across a
 // large service set are acceptable (the design's SVC_COLOR reuses hues too).
-const SVC_TOKENS = ['var(--accent)', 'var(--purple)', 'var(--teal)', 'var(--orange)', 'var(--ok)'];
-export function svcColorToken(name: string): string {
-  let h = 5381;
-  for (let i = 0; i < name.length; i++) h = ((h << 5) + h) ^ name.charCodeAt(i);
-  return SVC_TOKENS[Math.abs(h) % SVC_TOKENS.length];
-}
+// v0.9.398 (grafik-audit Faz D, renk tekleştirme) — 5-token'lık ayrı
+// hash SÖKÜLDÜ: aynı trace sayfasında MiniWaterfall (seriesColor 10'lu
+// palet) ile tam waterfall AYNI servise iki farklı renk veriyordu.
+// Ad korunur (çağıranlar dokunulmadı), gövde kanonik svcColor'a delege.
+import { svcColor } from './traces/shared';
+export const svcColorToken = svcColor;
 
 // TraceServiceBreakdown — per-service SELF-time share of the trace
 // (span duration minus the sum of its direct children, clamped to 0),

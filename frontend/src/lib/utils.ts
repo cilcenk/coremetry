@@ -220,54 +220,10 @@ export function tsRel(ns: number): string {
   return past ? body + ' ago' : 'in ' + body;
 }
 
-// Hand-picked palette tuned for modern APM dashboards. Replaces the
-// previous Tailwind-default rainbow (indigo/violet/pink/orange/yellow/
-// emerald/cyan…) which read as "candy crayons" on a dark UI. Every
-// entry sits roughly in the same low-to-mid saturation band (35-50%)
-// and similar perceptual lightness, so a trace with 6 services
-// looks like a designer's palette rather than a child's crayon box.
-//
-// Order is hue-stepped so consecutive services in a hash collision
-// chain don't end up neighbouring on the colour wheel — you still
-// get visually distinct services even on small traces.
-// Tempo-inspired hand-tuned palette. Slightly desaturated relative
-// to the raw Grafana-classic set so the dark UI feels refined
-// rather than vibrant — same hue coverage (cool / green / warm /
-// purple) Tempo uses, just polished. Red and pink stay out (red is
-// the error overlay; pink is a standing user no-go).
-// v0.5.249 — modernised palette aligned to the Tailwind v3
-// -500 shade family (the de-facto "Datadog 2023+ / Grafana 11
-// / Honeycomb" hue stack). Higher saturation than the prior
-// Tempo-classic muted set; calibrated lightness so each colour
-// reads cleanly on dark UI backgrounds without WCAG contrast
-// failures. Red (#EF4444) is reserved for the error overlay;
-// pink is operator-no-go.
-const COLORS = [
-  // Cool — indigo / blue / sky / cyan / teal
-  '#6366F1',  // indigo-500
-  '#3B82F6',  // blue-500
-  '#0EA5E9',  // sky-500
-  '#06B6D4',  // cyan-500
-  '#14B8A6',  // teal-500
-
-  // Greens — emerald / green / lime
-  '#10B981',  // emerald-500
-  '#22C55E',  // green-500
-  '#84CC16',  // lime-500
-
-  // Warm — amber / orange
-  '#F59E0B',  // amber-500
-  '#F97316',  // orange-500
-
-  // Purple — violet / purple
-  '#8B5CF6',  // violet-500
-  '#A855F7',  // purple-500
-];
-export function hashColor(s: string): string {
-  let h = 5381;
-  for (let i = 0; i < s.length; i++) h = ((h << 5) + h) ^ s.charCodeAt(i);
-  return COLORS[Math.abs(h) % COLORS.length];
-}
+// hashColor (v0.9.398'de SÖKÜLDÜ) — üç bağımsız renk sistemi tekleşti:
+// kanonik kaynak lib/chartFmt.ts seriesColor (FNV + 10'luk palet).
+// Aynı servis artık topoloji/flame/neighbors/Explore/waterfall dahil
+// her yüzeyde AYNI renk.
 
 // Known messaging brokers. A topology node is "messaging" when the
 // backend classified it as a messaging.system (kind:"queue") OR it

@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
+import { EndpointPeekDrawer } from './EndpointPeekDrawer';
 import { encodeRange } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -39,18 +40,29 @@ export function TopEndpointsCard({ service, range, endpoints }: {
   service: string; range: TimeRange; endpoints: EndpointRow[];
 }) {
   const rangeParam = encodeRange(range);
-  const navigate = useNavigate();
-  // Aynı drill hedefi OpsCard'la: /traces, service + ad araması. HTTP
-  // satırında path http_route'tur ve span adları rotayı içerir; RPC
-  // satırında path zaten span adıdır.
-  const epHref = (path: string) =>
-    `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(path)}&range=${rangeParam}&view=list&rootOnly=false`;
+  // v0.9.379 (D3) — satır tıkı artık peek drawer açar (?ep= URL'de,
+  // replace:true; kopyalanan link aynı drawer'ı açar). Eski doğrudan
+  // /traces davranışı drawer içindeki "Traces →" linki olarak yaşar —
+  // additive, kapatınca hiçbir şey değişmemiş olur.
+  const [params, setParams] = useSearchParams();
+  const openEp = (path: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.set('ep', path);
+    return next;
+  }, { replace: true });
+  const closeEp = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('ep');
+    return next;
+  }, { replace: true });
+  const epParam = params.get('ep');
+  const peeked = epParam ? endpoints.find(r => r.path === epParam) : undefined;
   const dt = useDataTable<EndpointRow>({
     storageKey: 'svc-ov-endpoints',
     columns: EP_COLS,
     rows: endpoints,
     initialSort: { id: 'share', dir: 'desc' },
-    onOpen: (r) => navigate(epHref(r.path)),
+    onOpen: (r) => openEp(r.path),
   });
   // Bar ölçeği görünen kümenin maksimumuna göre — pay göreli okunur.
   const maxTime = useMemo(
@@ -79,7 +91,7 @@ export function TopEndpointsCard({ service, range, endpoints }: {
               const share = maxTime > 0 ? totalTimeOf(r) / maxTime : 0;
               return (
                 <tr key={r.path} {...dt.rowProps(i)} style={{ cursor: 'pointer' }}
-                    onClick={() => navigate(epHref(r.path))}>
+                    onClick={() => openEp(r.path)}>
                   <td><span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={r.path}>{r.path}</span></td>
                   <td className="num">{fmtCount(r.calls)}</td>
                   <td className="num"><span className={errBadge(r.errorRate)}>{r.errorRate.toFixed(1)}%</span></td>
@@ -101,6 +113,9 @@ export function TopEndpointsCard({ service, range, endpoints }: {
           </tbody>
         </table>
       </div>
+      {peeked && (
+        <EndpointPeekDrawer service={service} range={range} row={peeked} onClose={closeEp} />
+      )}
     </div>
   );
 }

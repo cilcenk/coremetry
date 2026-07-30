@@ -121,15 +121,18 @@ export default function ProblemsPage() {
   // "show all" tek tık. Bir kez düşen nadir bir exception gerçekten
   // önemli olan olabilir; onu söylemeden saklamak bu deponun tekrar
   // eden hata sınıfı.
+  // v0.9.417 (operatör kararı 2026-07-30, eski "1-2-3'lük grupları
+  // gösterme" direktifini geri alır): varsayılan taban 0 — az sayıda
+  // occurrence'lı gruplar da görünür (P3 olarak dibe sıralanır).
   const minOcc = (() => {
     const raw = searchParams.get('minOcc');
-    if (raw === null) return 5;
+    if (raw === null) return 0;
     const n = Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : 5;
+    return Number.isFinite(n) && n >= 0 ? n : 0;
   })();
   const setMinOcc = (v: number) => setSearchParams(prev => {
     const next = new URLSearchParams(prev);
-    if (v === 5) next.delete('minOcc'); else next.set('minOcc', String(v));
+    if (v === 0) next.delete('minOcc'); else next.set('minOcc', String(v));
     next.delete('page');
     return next;
   }, { replace: true });

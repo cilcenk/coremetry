@@ -136,15 +136,20 @@ export default function InboxPage() {
   // (the server counts them AFTER every other narrow, so the number is the
   // honest one), and "show all" is a single click. A rare exception that
   // fired once can still be the important one.
+  // v0.9.417 (operatör kararı 2026-07-30, eski "1-2-3'lük grupları
+  // gösterme" direktifini geri alır): varsayılan taban 0 — az sayıda
+  // occurrence'lı gruplar da GÖRÜNÜR; öncelik formülü onları zaten
+  // P3'e koyar ve priority-sıralı liste dibe iter. ?minOcc= isteyen
+  // için aynen duruyor.
   const minOcc = (() => {
     const raw = searchParams.get('minOcc');
-    if (raw === null) return 5;
+    if (raw === null) return 0;
     const n = Number(raw);
-    return Number.isFinite(n) && n >= 0 ? n : 5;
+    return Number.isFinite(n) && n >= 0 ? n : 0;
   })();
   const setMinOcc = (v: number) => setSearchParams(prev => {
     const next = new URLSearchParams(prev);
-    if (v === 5) next.delete('minOcc'); else next.set('minOcc', String(v));
+    if (v === 0) next.delete('minOcc'); else next.set('minOcc', String(v));
     return next;
   }, { replace: true });
   // Drawer selection is one more URL-backed facet (v0.8.292): ?item=<inboxId>.

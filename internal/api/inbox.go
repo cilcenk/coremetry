@@ -816,11 +816,13 @@ func applyInboxFacets(items []InboxItem, kinds, prios []string) []InboxItem {
 	return kept
 }
 
-// inboxDefaultMinOcc — a group has to have fired this many times before it
-// counts as something to triage. A one-shot failure is a fact about the
-// window, not a problem. Matches the /problems floor so the two surfaces
-// can't disagree about what "noise" means.
-const inboxDefaultMinOcc = 5
+// inboxDefaultMinOcc — v0.9.417 (operatör kararı 2026-07-30, eski
+// "1-2-3'lük grupları gösterme" direktifini GERİ ALIR): varsayılan 0 —
+// az-occurrence'lı gruplar da görünür; öncelik formülü (exceptionPriority)
+// onları zaten P3'e koyar ve priority-sıralı liste dibe iter. "Bazen az
+// sayıda hata olsa da gözükmesi iş görür." ?minOcc= eşiği aynen duruyor
+// ve /problems ile aynı varsayılanı paylaşır.
+const inboxDefaultMinOcc = 0
 
 // normalizeInboxMinOcc parses ?minOcc=. Absent → the default floor; an
 // explicit "0" → no floor ("show all"), which is the affordance that keeps

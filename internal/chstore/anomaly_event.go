@@ -160,6 +160,16 @@ type ListAnomalyEventsFilter struct {
 	SinceNs   int64   // unix ns; 0 = last 24h default
 	ActiveAge time.Duration // last_seen freshness for "active" status; 0 = 10m default
 	Limit     int
+	// Services (v0.9.353) constrains rows to this service set IN SQL, so the
+	// LIMIT lands on rows the team filter would keep. The inbox used to fetch
+	// up to srcLimit rows and drop other teams' rows in Go — the
+	// filter-after-LIMIT class, and the reason an owner pick was slow: the
+	// scan pulled the whole estate to find one team's rows. STRICT IN — a
+	// service-less anomaly row does not match a team filter (same semantics
+	// as the Go pass it backs). nil = no constraint; EMPTY = match nothing
+	// (a team with no member services must yield an empty page, never an
+	// unfiltered one).
+	Services []string
 	// ActiveOnly (v0.9.335) narrows to firing events IN SQL, so the LIMIT
 	// lands on rows the caller will actually keep.
 	//
@@ -219,10 +229,19 @@ func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter
 	if f.ActiveOnly {
 		activeSQL = " AND last_seen >= now64() - INTERVAL ? SECOND"
 	}
+	svcSQL := ""
+	if f.Services != nil {
+		if len(f.Services) == 0 {
+			svcSQL = " AND 1 = 0"
+		} else {
+			svcSQL = " AND service IN (" + chPlaceholders(len(f.Services)) + ")"
+		}
+	}
 	args := []any{int64(f.ActiveAge.Seconds()), since}
 	if f.ActiveOnly {
 		args = append(args, int64(f.ActiveAge.Seconds()))
 	}
+	args = append(args, toAnySlice(f.Services)...)
 	args = append(args, f.Limit)
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, kind, pattern, service,
@@ -231,7 +250,7 @@ func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter
 		       peak_ratio, current_ratio, current_count, sample,
 		       if(last_seen >= now64() - INTERVAL ? SECOND, 'active', 'cleared') AS status
 		FROM anomaly_events FINAL
-		WHERE toUnixTimestamp64Nano(last_seen) >= ?`+activeSQL+`
+		WHERE toUnixTimestamp64Nano(last_seen) >= ?`+activeSQL+svcSQL+`
 		-- v0.9.326 — this used to order by the status STRING descending,
 		-- which puts CLEARED FIRST.
 		-- ClickHouse compares these lexically and 'active' < 'cleared', so

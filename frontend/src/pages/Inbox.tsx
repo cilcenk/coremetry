@@ -251,6 +251,14 @@ export default function InboxPage() {
   const scanCapped = !inboxQ.isPending && !inboxQ.isError
     && !!inboxQ.data?.scanCapped && anyFilter;
   const hiddenByMinOcc = inboxQ.data?.hiddenByMinOcc ?? 0;
+  // v0.9.353 (operator-reported) — the rows on screen belong to the PREVIOUS
+  // filter while the new one fetches. useInbox keeps previous data
+  // (placeholderData: keepPreviousData) so a filter change doesn't blank the
+  // page — but nothing SAID so. On prod the owner-filtered request was slow
+  // enough that the old, unfiltered rows just sat there and the operator
+  // reasonably concluded "the owner filter does not work". Stale data may be
+  // shown; it may not masquerade as the answer.
+  const showingStale = inboxQ.isPlaceholderData && inboxQ.isFetching;
   // v0.9.328 — the landing default shows Exceptions only, so this is the
   // guard that keeps a DEFAULT from becoming a blindfold: if a kind the
   // operator isn't looking at is carrying a P1, say so on the page instead of
@@ -596,6 +604,13 @@ export default function InboxPage() {
               : 'Nothing needs your attention right now.'}
           </Empty>
         )}
+        {showingStale && (
+          <div style={{ marginBottom: 8 }}>
+            <span className="badge b-warn">
+              ⏳ Filtre uygulanıyor — aşağıdaki satırlar ÖNCEKİ filtrenin sonucu
+            </span>
+          </div>
+        )}
         {hiddenP1Total > 0 && (
           <div style={{ marginBottom: 8 }}>
             <span className="badge b-err"
@@ -659,7 +674,9 @@ export default function InboxPage() {
           // multi-line exception message + team chips), which breaks the
           // VirtualTable uniform-row assumption. content-visibility keeps the
           // >100-row paint cheap while letting each row size to its content.
-          <div className="table-wrap">
+          <div className="table-wrap"
+            style={{ opacity: showingStale ? 0.45 : 1, transition: 'opacity 120ms' }}
+            aria-busy={showingStale}>
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               {/* leading={[34]} — the primitive owns the <colgroup>; a
                   second one alongside it is invalid markup and the

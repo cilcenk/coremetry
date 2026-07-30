@@ -50,6 +50,13 @@ type IncidentFilter struct {
 	// N and scanning in Go — see the comment there.
 	ID       string
 	Status   string
+	// Services (v0.9.353) — strict service allowlist, in SQL. Same contract
+	// as the anomaly filter: nil = no constraint, EMPTY = match nothing.
+	// STRICT IN: under a team filter a service-less (global) incident does
+	// not belong to any team — matching the Go pass it backs. (The env
+	// narrow's `service='' OR …` escape is a DIFFERENT contract: env keeps
+	// global rows, team does not.)
+	Services []string
 	// NotStatuses — statuses to EXCLUDE, applied in SQL so the LIMIT bites on
 	// the rows that will be shown. See ProblemFilter.NotStatuses: on an
 	// install whose incident history is 99% resolved (local: 994 of the
@@ -75,6 +82,13 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 	}
 	if len(f.NotStatuses) > 0 {
 		wc.add("status NOT IN ("+chPlaceholders(len(f.NotStatuses))+")", toAnySlice(f.NotStatuses)...)
+	}
+	if f.Services != nil {
+		if len(f.Services) == 0 {
+			wc.add("1 = 0")
+		} else {
+			wc.add("service IN ("+chPlaceholders(len(f.Services))+")", toAnySlice(f.Services)...)
+		}
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)

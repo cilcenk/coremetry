@@ -343,10 +343,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
           wrapped in the reusable MetricPanel doorway (compact: a hover-revealed
           ⋮ + body-click → Explore); the tile body renders verbatim. */}
       <div className="ov-grid ov-kpis ov-mb">
-        <MetricPanel compact title="Throughput" metricQuery={mkThroughput('stat')}>
+        <MetricPanel compact menuOnly title="Throughput" metricQuery={mkThroughput('stat')}>
           <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(lat?.rate)} delta={computeDelta(vals(lat?.rate))} goodWhenUp note={latScopeNote} />
         </MetricPanel>
-        <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('stat')}>
+        <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('stat')}>
           <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(lat?.error_rate)} delta={computeDelta(vals(lat?.error_rate))} goodWhenUp={false} note={latScopeNote} />
         </MetricPanel>
         <MetricPanel compact title="Response time · P99" metricQuery={mkLatency('p99', 'stat')}>
@@ -364,9 +364,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
 
       {/* RED charts row — response time / throughput / failure rate, each
           with the deploy markers from the service bundle. Each chart carries
-          its viz:'line' descriptor through the compact MetricPanel doorway. */}
+          its viz:'line' descriptor through the compact MetricPanel doorway.
+          v0.9.362 — menuOnly: bu grafikler drag-zoom + tooltip-pin + lejant
+          isolate sahibi; gövde-tıklaması /explore'a giderse drag'ın kuyruk
+          tıklaması sayfayı savurur ve pin/isolate hiç ulaşılamaz olurdu.
+          ServiceCharts üç panelinde bu prop'u zaten geçiyor (oradaki yorum
+          sebebi yazar); Overview'da unutulmuştu — operatör bunu "grafikler
+          bozuk/zıplıyor" diye yaşıyordu. Doorway hover ⋮ ve `e` kısayoluyla
+          erişilebilir kalıyor; KPI karoları gövde-tıklamasını koruyor. */}
       <div className="ov-grid ov-charts-3 ov-mb">
-        <MetricPanel compact title="Response time" metricQuery={mkLatency('p99', 'line')}>
+        <MetricPanel compact menuOnly title="Response time" metricQuery={mkLatency('p99', 'line')}>
           <ChartCard title={usingAllSpans ? 'Response time · tüm span\u2019ler' : 'Response time · giriş'} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
             legendStorageKey="ov-response-time"
             defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}

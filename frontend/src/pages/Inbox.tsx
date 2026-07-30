@@ -172,6 +172,13 @@ export default function InboxPage() {
     if (next.has(k)) { if (next.size === 1) return; next.delete(k); } else next.add(k);
     setParam('kind', encodeCsvSet(next, KIND_ALL, KIND_DEFAULT));
   };
+  // v0.9.356 — "sadece" (1 tıkla izole; lejantların isolate jestiyle aynı)
+  // ve grup başına "tümü". Solo, toggle'ın aksine tek değere İNER; tümü,
+  // grubun tamamını seçer. İkisi de URL'e aynı codec'le yazar.
+  const soloPrio = (p: string) => setParam('prio', encodeCsvSet(new Set([p]), PRIO_ALL, PRIO_DEFAULT));
+  const allPrio = () => setParam('prio', encodeCsvSet(new Set(PRIO_ALL), PRIO_ALL, PRIO_DEFAULT));
+  const soloKind = (k: InboxKind) => setParam('kind', encodeCsvSet(new Set([k]), KIND_ALL, KIND_DEFAULT));
+  const allKind = () => setParam('kind', encodeCsvSet(new Set(KIND_ALL), KIND_ALL, KIND_DEFAULT));
   const setServiceFilter = (v: string) => setParam('service', v || null);
   const setSearchFilter = (v: string) => setParam('q', v || null);
   const setOwnerFilter = (v: string) => setParam('owner', v || null);
@@ -485,35 +492,66 @@ export default function InboxPage() {
             select via togglePrio/toggleKind. Team selects + service filter
             stay pushed right with margin-left:auto. */}
         <div className="facetbar">
-          {/* Status pivot — single-select */}
-          {STATUS_PIVOTS.map(s => (
-            <span key={s} onClick={() => setStatusFilter(s)}
-              className={`facet${statusFilter === s ? ' on' : ''}`}>
-              {s === 'open' ? 'Open / Active' : 'All'}
-            </span>
-          ))}
-
-          {/* Priority chips — multi-select */}
-          {(['P1', 'P2', 'P3'] as const).map(pp => {
-            const tint = pp === 'P1' ? ' f-err' : pp === 'P2' ? ' f-warn' : '';
-            return (
-              <span key={pp} onClick={() => togglePrio(pp)}
-                className={`facet${tint}${prioSet.has(pp) ? ' on' : ''}`}>
-                {pp} <span className="n">{counts[pp] ?? 0}</span>
+          {/* Status pivot — single-select. v0.9.356: 'ignored' "All" diye
+              etiketleniyordu (ternary yalnız 'open'ı ayırıyordu), yani
+              çubukta İKİ "All" vardı ve biri susturulmuş exception'ları
+              açıyordu. Operatörün "iki anlamı belirsiz All" gözlemi düpedüz
+              etiket hatasıydı. */}
+          <span className="facet-grp">
+            <span className="gl">Durum</span>
+            {STATUS_PIVOTS.map(s => (
+              <span key={s} onClick={() => setStatusFilter(s)}
+                className={`facet${statusFilter === s ? ' on' : ''}`}>
+                {s === 'open' ? 'Open / Active' : s === 'all' ? 'All' : 'Ignored'}
               </span>
-            );
-          })}
+            ))}
+          </span>
 
-          {/* Kind chips — multi-select */}
-          {KIND_ALL.map(k => {
-            const label = KIND_LABEL[k];
-            return (
-              <span key={k} onClick={() => toggleKind(k)}
-                className={`facet${kindSet.has(k) ? ' on' : ''}`}>
-                {label} <span className="n">{counts[k] ?? 0}</span>
-              </span>
-            );
-          })}
+          {/* Priority chips — multi-select + hover'da "sadece" */}
+          <span className="facet-grp">
+            <span className="gl">Öncelik</span>
+            {(['P1', 'P2', 'P3'] as const).map(pp => {
+              const tint = pp === 'P1' ? ' f-err' : pp === 'P2' ? ' f-warn' : '';
+              return (
+                <span key={pp} onClick={() => togglePrio(pp)}
+                  className={`facet${tint}${prioSet.has(pp) ? ' on' : ''}`}>
+                  {pp} <span className="n">{counts[pp] ?? 0}</span>
+                  {!(prioSet.size === 1 && prioSet.has(pp)) && (
+                    <button type="button" className="solo" title={`Yalnız ${pp}`}
+                      onClick={e => { e.stopPropagation(); soloPrio(pp); }}>
+                      sadece
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+            {prioSet.size < PRIO_ALL.length && (
+              <button type="button" className="all-link" onClick={allPrio}>tümü</button>
+            )}
+          </span>
+
+          {/* Kind chips — multi-select + hover'da "sadece" */}
+          <span className="facet-grp">
+            <span className="gl">Tür</span>
+            {KIND_ALL.map(k => {
+              const label = KIND_LABEL[k];
+              return (
+                <span key={k} onClick={() => toggleKind(k)}
+                  className={`facet${kindSet.has(k) ? ' on' : ''}`}>
+                  {label} <span className="n">{counts[k] ?? 0}</span>
+                  {!(kindSet.size === 1 && kindSet.has(k)) && (
+                    <button type="button" className="solo" title={`Yalnız ${label}`}
+                      onClick={e => { e.stopPropagation(); soloKind(k); }}>
+                      sadece
+                    </button>
+                  )}
+                </span>
+              );
+            })}
+            {kindSet.size < KIND_ALL.length && (
+              <button type="button" className="all-link" onClick={allKind}>tümü</button>
+            )}
+          </span>
 
           {/* Env hint chip (v0.8.387) — non-interactive; the pick lives
               in the Topbar EnvPicker. Surfaces the service-scoped

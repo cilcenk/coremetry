@@ -210,6 +210,33 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 
 	s.serveCached(w, r, cacheKey, 15*time.Second, func(ctx context.Context) (any, error) {
 		items := make([]InboxItem, 0, 256)
+
+		// v0.9.353 (operator-reported) — the team filter moves INTO the
+		// per-source SQL.
+		//
+		// It used to run in Go over the merged, already-capped scan: an
+		// owner pick pulled up to 2000 problems + 1000 incidents + 1000
+		// exception rows for the WHOLE estate, enriched all of them (four
+		// CH round-trips over 2000 problems), and only then dropped the
+		// other teams' rows. On prod that request was so slow the page
+		// kept showing the previous, unfiltered response — the operator
+		// read it as "the owner filter does not work".
+		//
+		// The catalog is read ONCE here and reused for the chip enrichment
+		// below (it used to be a second identical read). Soft-fail keeps
+		// v0.9.342's posture: if the catalog is unreachable the SQL narrow
+		// is skipped and the Go pass below still applies — a catalog blip
+		// must not blank the page.
+		mdMap, mdErr := s.store.ListServiceMetadata(ctx)
+		var teamServices []string // nil = no team constraint
+		if (ownerTeam != "" || sreTeam != "") && mdErr == nil {
+			teamServices = servicesForTeam(mdMap, ownerTeam, sreTeam)
+		}
+		// A team that resolves to no services means an EMPTY page, and the
+		// sources must not even be asked: the exception filter's Services
+		// field treats an empty slice as "no constraint" (v0.8.310), so
+		// passing it through would return an UNFILTERED page.
+		teamIsEmpty := teamServices != nil && len(teamServices) == 0
 		// scanCapped: a source came back exactly full, so there were more
 		// candidates than we looked at and the narrow below is answering over
 		// a slice. Travels with the response — the "no silent caps" rule
@@ -236,7 +263,11 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			probs, err = s.store.ListProblems(ctx, chstore.ProblemFilter{
 				Status:      pickStatus(statusFilter),
 				NotStatuses: pickExcludedStatuses(statusFilter),
-				Limit:       srcLimit,
+				// v0.9.353 — nil = no constraint; empty = "1=0" (ProblemFilter
+				// contract, v0.9.342). The enrichers below now run over ONE
+				// team's rows instead of the newest 2000 of the estate.
+				Services: teamServices,
+				Limit:    srcLimit,
 			})
 			if err != nil {
 				return nil, err
@@ -279,30 +310,38 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// SQL count would ignore those narrows and report an inflated number,
 		// which is its own kind of lie.
 		excLimit := inboxEffectiveLimit(srcLimit, inboxExcStoreMax)
-		exFilter := chstore.ExceptionGroupFilter{
-			State: pickExceptionState(statusFilter), Limit: excLimit,
-			MinOccurrences: minOcc,
-		}
-		exGroups, err := s.store.ListExceptionGroups(ctx, exFilter)
-		if err != nil {
-			return nil, err
-		}
-		if len(exGroups) >= excLimit {
-			scanCapped = true
-		}
-		for _, g := range exGroups {
-			items = append(items, exceptionToInbox(g))
-		}
-		if minOcc > 0 {
-			belowFloor, err := s.store.ListExceptionGroups(ctx, chstore.ExceptionGroupFilter{
+		// v0.9.353 — teamIsEmpty short-circuits BOTH exception fetches: the
+		// exception filter's Services field treats an empty slice as "no
+		// constraint" (v0.8.310 contract, opposite of ProblemFilter's), so
+		// passing it through would silently return an unfiltered page.
+		if !teamIsEmpty {
+			exFilter := chstore.ExceptionGroupFilter{
 				State: pickExceptionState(statusFilter), Limit: excLimit,
-				MaxOccurrences: minOcc,
-			})
+				MinOccurrences: minOcc,
+				Services:       teamServices,
+			}
+			exGroups, err := s.store.ListExceptionGroups(ctx, exFilter)
 			if err != nil {
 				return nil, err
 			}
-			for _, g := range belowFloor {
+			if len(exGroups) >= excLimit {
+				scanCapped = true
+			}
+			for _, g := range exGroups {
 				items = append(items, exceptionToInbox(g))
+			}
+			if minOcc > 0 {
+				belowFloor, err := s.store.ListExceptionGroups(ctx, chstore.ExceptionGroupFilter{
+					State: pickExceptionState(statusFilter), Limit: excLimit,
+					MaxOccurrences: minOcc,
+					Services:       teamServices,
+				})
+				if err != nil {
+					return nil, err
+				}
+				for _, g := range belowFloor {
+					items = append(items, exceptionToInbox(g))
+				}
 			}
 		}
 
@@ -318,6 +357,8 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			// narrowing post-cap (problems + incidents got this in v0.9.322).
 			evs, err = s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
 				Limit: srcLimit, ActiveOnly: statusFilter == "open",
+				// v0.9.353 — nil = no constraint; empty = match nothing.
+				Services: teamServices,
 			})
 			if err != nil {
 				return nil, err
@@ -341,6 +382,8 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			incLimit := inboxEffectiveLimit(srcLimit, inboxIncStoreMax)
 			incs, err := s.store.ListIncidents(ctx, chstore.IncidentFilter{
 				NotStatuses: pickExcludedStatuses(statusFilter), Limit: incLimit,
+				// v0.9.353 — nil = no constraint; empty = match nothing.
+				Services: teamServices,
 			})
 			if err != nil {
 				return nil, err
@@ -412,12 +455,8 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Team enrichment — one batch lookup over the service
-		// catalog covers every row. Cheap (catalog is small,
-		// cached upstream), and means we don't fire a per-row
-		// GetServiceMetadata call. Empty values leave the chip
-		// off in the UI.
-		mdMap, _ := s.store.ListServiceMetadata(ctx)
+		// Team enrichment — reuses the catalog read hoisted to the top of
+		// the closure (v0.9.353); this used to be a second identical query.
 		if len(mdMap) > 0 {
 			for i := range items {
 				if items[i].Service == "" {

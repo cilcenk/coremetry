@@ -136,6 +136,9 @@ export interface GraphNode {
   errors: number;
   errorRate: number;   // (errors/calls)*100 — health color
   rate: number;        // calls per minute over the window — node-size encoding
+  // v0.9.367 — 'outbound' = giriş-servis fallback'i: enstrümante çağıranı
+  // yok, sayılar bağımlılıklarının döndürdükleri. UI etiketi ayırır.
+  callsBasis?: 'inbound' | 'outbound';
 }
 export interface GraphEdge {
   source: string;

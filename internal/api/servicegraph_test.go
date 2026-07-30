@@ -237,3 +237,29 @@ func TestBuildServiceGraph_DeterministicNodeOrder(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.367 regression — the inbound→outbound fallback was silent: an entry
+// service (no instrumented caller) surfaced its DEPENDENCIES' totals as its
+// own Calls/ERR%, and the health dot followed. callsBasis names the
+// population so the UI can label ↓ vs ↑ (and the fallback stays auditable).
+func TestBuildServiceGraph_CallsBasis(t *testing.T) {
+	g := buildServiceGraph(sampleEdges(), "", "global", 0, nil, 60)
+	byID := map[string]GraphNode{}
+	for _, n := range g.Nodes {
+		byID[n.ID] = n
+	}
+	// orders has NO inbound edge → outbound fallback, dependencies' totals.
+	if got := byID["orders"].CallsBasis; got != "outbound" {
+		t.Errorf("orders callsBasis = %q, want outbound", got)
+	}
+	// payments is called by gateway → inbound basis.
+	if got := byID["payments"].CallsBasis; got != "inbound" {
+		t.Errorf("payments callsBasis = %q, want inbound", got)
+	}
+	// gateway sits in a cycle (ledger→gateway) so even the estate's entry
+	// point has inbound here — the fixture pins that inbound WINS whenever
+	// any caller exists, however small (50 calls in vs 1000 out).
+	if got := byID["gateway"]; got.CallsBasis != "inbound" || got.Calls != 50 {
+		t.Errorf("gateway = basis %q calls %d, want inbound/50", got.CallsBasis, got.Calls)
+	}
+}

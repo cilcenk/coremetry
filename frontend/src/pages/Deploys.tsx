@@ -35,7 +35,17 @@ const COLS: DataTableColumn<TimelineRow>[] = [
   // sıralıyordu (verify bulgusu); deploy-satırı churn'süz → -1 dibe.
   { id: 'pods',    label: 'Pod değişimi', sortValue: r => r.podsChurn ?? -1, numeric: true, naturalDir: 'desc', width: 160 },
   { id: 'volume',  label: 'Hacim',        sortValue: r => r.spanCount ?? 0, naturalDir: 'desc', numeric: true, width: 110 },
+  // v0.9.436 — etki: hata-oranı deltası (yüzde puanı) sıralama anahtarı;
+  // hesaplanmamış satırlar (-999) dibe.
+  { id: 'impact',  label: 'Etki (±10dk)', sortValue: r => r.errDeltaPp ?? -999, numeric: true, naturalDir: 'desc', width: 170 },
 ];
+
+// İşaretli delta rozeti: pozitif = kötüleşme (kırmızı), negatif = iyileşme
+// (yeşil), |δ| küçükse nötr.
+function DeltaBadge({ v, unit, threshold }: { v: number; unit: string; threshold: number }) {
+  const cls = v > threshold ? 'b-err' : v < -threshold ? 'b-ok' : 'b-gray';
+  return <span className={`badge ${cls}`} style={{ fontSize: 10 }}>{v > 0 ? '+' : ''}{v.toFixed(1)}{unit}</span>;
+}
 
 export default function DeploysPage() {
   const [range, setRange] = useUrlRange('24h');
@@ -130,6 +140,14 @@ export default function DeploysPage() {
                     <td className="mono" style={{ fontSize: 11.5 }} title={r.podsTitle}>{r.podsDelta}</td>
                     <td className="num mono" style={{ fontSize: 11.5, color: 'var(--text3)' }}>
                       {r.spanCount !== undefined ? r.spanCount.toLocaleString() : '—'}
+                    </td>
+                    <td title={r.impactTitle} style={{ fontSize: 11 }}>
+                      {r.errDeltaPp !== undefined ? (
+                        <span style={{ display: 'inline-flex', gap: 4 }}>
+                          <DeltaBadge v={r.errDeltaPp} unit="pp hata" threshold={0.5} />
+                          {r.p99DeltaPct !== undefined && <DeltaBadge v={r.p99DeltaPct} unit="% p99" threshold={10} />}
+                        </span>
+                      ) : <span style={{ color: 'var(--text3)' }}>—</span>}
                     </td>
                   </tr>
                 ))}

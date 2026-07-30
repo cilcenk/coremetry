@@ -3646,6 +3646,8 @@ export interface RecentDeployEntry {
   version: string;
   firstSeenNs: number;
   spanCount: number;
+  // v0.9.436 — en yeni N deploy için önce/sonra RED deltası (opsiyonel).
+  impact?: DeployImpact;
 }
 export interface FleetRollout extends Rollout { service: string }
 export interface DeploysHistoryResponse {
@@ -3656,6 +3658,7 @@ export interface DeploysHistoryResponse {
   deploysTruncated?: boolean;
   rolloutWindowClamped?: boolean;
   rolloutScanErrors?: number;
+  impactComputed?: number;
 }
 
 export interface RolloutsResult {

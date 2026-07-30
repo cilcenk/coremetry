@@ -1174,6 +1174,22 @@ canvas { max-width: 100%; }
 .pulse-dot { border-radius: 50%; animation: dot-pulse 1.6s ease-in-out infinite; }
 @keyframes dot-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 
+/* AI explain dikkat nabzı (v0.9.409, operatör isteği): buton ilk
+   kullanıma kadar yumuşak bir halo yayar — ilk tıklamada durur.
+   reduced-motion'da animasyon yerine sabit halka. */
+.ai-attn { animation: ai-attn-pulse 2s ease-out infinite; }
+@keyframes ai-attn-pulse {
+  0%   { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent2) 50%, transparent); }
+  70%  { box-shadow: 0 0 0 8px transparent; }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ai-attn {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent2) 30%, transparent);
+  }
+}
+
 /* Skeleton placeholder — content-shaped loading state. The
    shimmer is a single CSS animation so multiple placeholders
    on the page share GPU work. */

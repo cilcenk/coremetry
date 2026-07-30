@@ -181,10 +181,12 @@ func capacityProblemID(checkID, instance, subkey string) string {
 // per-tablespace Problem shows "corebank-scan.prod·SYSAUX" in the inbox and
 // FindOpenProblem(rule, service) dedups to exactly one open row per
 // (instance, check, subkey).
-func capacityService(instance, subkey string) string {
-	if subkey != "" {
-		return instance + "·" + subkey
-	}
+// v0.9.402 (v0.9.401'in kardeşi) — service alanı artık YALNIZ instance:
+// "corebank.prod·SYSAUX" birleşimi UI'nin service sözleşmesini runtime
+// problemleriyle AYNI şekilde kırıyordu (listede kırık ad + sahte
+// servise tıklama). Tablespace/keyspace alt-anahtarı problemID'de
+// (per-subkey dedup oradan) ve reason'da yaşar.
+func capacityService(instance, _ string) string {
 	return instance
 }
 
@@ -226,7 +228,10 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 
 	// Look up the open problem FIRST — the decision is hysteresis-aware
 	// (v0.8.320): an open problem holds until pct clears the band.
-	existing, err := e.store.FindOpenProblem(ctx, ruleID, service)
+	// v0.9.402 — dedup deterministik ID'den (per-subkey granülerlik
+	// service alanından taşınamaz artık); ID formatı değişmedi → prod'un
+	// açık eski satırları bulunur, refresh'te service kendini onarır.
+	existing, err := e.store.FindOpenProblemByID(ctx, capacityProblemID(c.id, s.Instance, s.Subkey))
 	hasOpen := err == nil && existing != nil && existing.ID != ""
 	open, sev, pct := capacityDecision(s.Usage, s.Limit, c.rate, hasOpen)
 
@@ -266,6 +271,9 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 		// gauge-derived warning every tick, and the sweep re-escalated +
 		// re-paged 60s later — the storm (87% tablespace = a critical
 		// page per minute, for hours).
+		// v0.9.402 — service self-heal (401 emsali): eski birleşik satır
+		// gerçek instance adıyla yeniden yazılır.
+		existing.Service = service
 		existing.Value = pct
 		existing.Severity = effectiveSeverity(sev, time.Since(time.Unix(0, existing.StartedAt)), e.escalationCfg(ctx))
 		existing.Threshold = capacityThreshold(c, sev)

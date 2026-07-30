@@ -106,7 +106,10 @@ func TestCapacityDedupKeys(t *testing.T) {
 	if got := capacityProblemID("oracle-tablespace", "corebank.prod", "SYSAUX"); got != "db-capacity:oracle-tablespace:corebank.prod:SYSAUX" {
 		t.Errorf("capacityProblemID(dimensioned) = %q", got)
 	}
-	if got := capacityService("corebank.prod", "SYSAUX"); got != "corebank.prod·SYSAUX" {
+	// v0.9.402 — service alanı artık YALNIZ instance (401 runtime
+	// emsali): birleşik ad UI'nin service sözleşmesini kırıyordu.
+	// Per-subkey granülerlik problemID'de (üstteki pin) yaşamaya devam.
+	if got := capacityService("corebank.prod", "SYSAUX"); got != "corebank.prod" {
 		t.Errorf("capacityService(dimensioned) = %q", got)
 	}
 	// Undimensioned: no trailing separators.

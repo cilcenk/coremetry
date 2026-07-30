@@ -204,7 +204,7 @@ function PodDetail() {
           {row?.phase && <span className={`badge ${podPhaseBadge(row.phase)}`}>{row.phase}</span>}
           {row && <Stat label="CPU" value={fmtCores(row.cpuCores)} />}
           {row && <Stat label="Mem" value={fmtBytes(row.memBytes)} />}
-          {row && <Stat label="Restarts" value={String(row.restarts ?? 0)} />}
+          {row && <Stat label="Restarts" value={row.restartsUnknown ? '—' : String(row.restarts ?? 0)} />}
           {clamped && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Infra/JVM: son 6h</span>}
         </div>
 

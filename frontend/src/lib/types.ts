@@ -985,6 +985,9 @@ export interface ClusterPodRow {
   // v0.9.37 (B4) — faz + restart (best-effort; absent = kube-state yok).
   phase?: string;
   restarts?: number;
+  // v0.9.371 — restart SERİSİ yok (KSM yok / 1000-seri parse tavanı):
+  // 0 değil BİLİNMİYOR; UI '—' çizer. restarts artık gerçek 0'da da gelir.
+  restartsUnknown?: boolean;
 }
 // v0.9.3 — multi-pod trend serisi (top-10, sunucu keser).
 export interface ClusterPodSeriesTrend {

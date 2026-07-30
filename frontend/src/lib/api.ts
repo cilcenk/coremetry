@@ -1702,6 +1702,10 @@ export const api = {
       problems:   import('./types').Problem[] | null;
       operations: OperationSummary[] | null;
       deploys:    import('./types').Deploy[] | null;
+      // v0.9.377 (redesign D1) — Overview Top endpoints kartı: giriş
+      // span'leri (HTTP + RPC birleşik), calls×avg sıralı top-12.
+      // Eski backend'de alan yoktur → UI OpsCard'a düşer.
+      endpoints?: import('./types').EndpointRow[] | null;
     }>(`/api/services/${encodeURIComponent(svc)}/bundle?${qs(params)}`);
   },
   // Errors Inbox (state-tracked exception groups). v0.5.95 switched

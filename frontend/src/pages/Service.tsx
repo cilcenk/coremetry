@@ -106,6 +106,7 @@ function ServiceDetailInner() {
   const [info, setInfo] = useState<Service | null>(null);
   const [problems, setProblems] = useState<Problem[]>([]);
   const [operations, setOperations] = useState<OperationSummary[]>([]);
+  const [endpoints, setEndpoints] = useState<import('@/lib/types').EndpointRow[]>([]);
   // group_id rel C — Raw ⇄ Normalized toggle for the Operations table.
   // Default RAW (forward-only: old windows have no op_group yet). When
   // ON, operations are grouped by their normalized shape (GET /users/:id)
@@ -253,6 +254,7 @@ function ServiceDetailInner() {
       setInfo(b?.service ?? null);
       setProblems(b?.problems ?? []);
       setOperations(b?.operations ?? []);
+      setEndpoints(b?.endpoints ?? []);
       if (b?.deploys) {
         queryClient.setQueryData(
           keys.deploys.forService(svc, r.from ?? 0, r.to ?? 0),
@@ -284,7 +286,7 @@ function ServiceDetailInner() {
       })
       .catch(() => {
         if (cancelled) return;
-        setInfo(null); setProblems([]); setOperations([]);
+        setInfo(null); setProblems([]); setOperations([]); setEndpoints([]);
       })
       .finally(() => {
         if (!cancelled) {
@@ -494,7 +496,7 @@ function ServiceDetailInner() {
 
             {tab === 'overview' && (
               <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations}
-                onZoom={handleZoom} onZoomReset={handleZoomReset} />
+                endpoints={endpoints} onZoom={handleZoom} onZoomReset={handleZoomReset} />
             )}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} windowNs={rangeNs}
               onZoom={handleZoom} onZoomReset={handleZoomReset} />}

@@ -53,6 +53,15 @@ export default function DatabasesPage() {
 
   const dbsys = sp.get('dbsys') ?? '';
   const dbname = sp.get('dbname') ?? '';
+  // v0.9.433 (desen paritesi, kuyruk #3a) — compare URL'de
+  // (?compare=prior, Messaging v0.9.399 birebiri): copy-link ve saved
+  // view compare durumunu da taşır. Opt-in — backend maliyeti ikiye katlar.
+  const compare = sp.get('compare') === 'prior';
+  const setCompare = (v: boolean) => setSp(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('compare', 'prior'); else next.delete('compare');
+    return next;
+  }, { replace: true });
   const setFilter = (key: 'dbsys' | 'dbname', value: string) => {
     setSp(prev => {
       const next = new URLSearchParams(prev);
@@ -67,8 +76,8 @@ export default function DatabasesPage() {
   // and the table refetches on every paint.
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const q = useQuery({
-    queryKey: ['databases', from, to],
-    queryFn: () => api.databases(from, to).then(r => r ?? []),
+    queryKey: ['databases', from, to, compare],
+    queryFn: () => api.databases(from, to, compare ? 'prior' : undefined).then(r => r ?? []),
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   });
@@ -114,6 +123,14 @@ export default function DatabasesPage() {
     p50DurationMs: d.p50DurationMs,
     p95DurationMs: d.p95DurationMs,
     p99DurationMs: d.p99DurationMs,
+    // v0.9.433 — prior ikizi eşleşen satırların delta rozetleri
+    // (DepRow bunları zaten biliyor; Messaging sözleşmesinin aynısı:
+    // prior yoksa alanlar undefined kalır, rozet gizli).
+    priorSpanCount: d.priorSpanCount,
+    priorErrorCount: d.priorSpanCount !== undefined ? (d.priorErrorCount ?? 0) : undefined,
+    priorAvgMs: d.priorAvgMs,
+    priorP50Ms: d.priorP50Ms,
+    priorP99Ms: d.priorP99Ms,
     callers: d.callers ?? [],
     source: d.source,
   });
@@ -143,6 +160,13 @@ export default function DatabasesPage() {
                 return next;
               }, { replace: true })}>Clear</Button>
           )}
+          {/* v0.9.433 — Messaging'in compare toggle'ının birebiri. */}
+          <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}
+            title="Compare current window against the immediately-preceding equal-length window. Adds a second backend scan; off by default.">
+            <input type="checkbox" checked={compare}
+              onChange={e => setCompare(e.target.checked)} />
+            Compare vs prior
+          </label>
           <Link to="/databases/slow-queries" className="sec"
             style={{
               fontSize: 12, padding: '5px 12px', borderRadius: 6,

@@ -17,10 +17,54 @@ import (
 
 func (s *Server) getDatabases(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
+	// v0.9.433 (desen paritesi, kuyruk #3a) — ?compare=prior: messaging
+	// v0.8.364 sözleşmesinin birebiri. Opt-in (CH maliyeti ikiye katlar);
+	// varsayılan anahtar bayt-bayt eski — warm loop aynı slotu ısıtmaya
+	// devam eder, compare kendi slotunda yaşar. Prior hatası ölümcül
+	// değil: sayfa delta'sız gelir, 500 olmaz.
+	compare := r.URL.Query().Get("compare") == "prior"
 	key := "databases:" + cacheBucket(from, to)
+	if compare {
+		key = "databases:cmp:" + cacheBucket(from, to)
+	}
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetDatabases(ctx, from, to)
+		rows, err := s.store.GetDatabases(ctx, from, to)
+		if err != nil {
+			return nil, err
+		}
+		if !compare || len(rows) == 0 {
+			return rows, nil
+		}
+		dur := to.Sub(from)
+		priorRows, err := s.store.GetDatabases(ctx, from.Add(-dur), from)
+		if err != nil {
+			return rows, nil
+		}
+		mergeDBPrior(rows, priorRows)
+		return rows, nil
 	})
+}
+
+// mergeDBPrior — prior pencere sayaçlarını (system, instance, dbName)
+// kimliğiyle mevcut satırlara kopyalar; mergeMessagingPrior'un ikizi.
+// Prior'da olmayan satır alanları boş bırakır (omitempty → rozet gizli).
+func mergeDBPrior(cur, prior []chstore.DBInstance) {
+	type key struct{ system, instance, dbName string }
+	idx := make(map[key]*chstore.DBInstance, len(prior))
+	for i := range prior {
+		idx[key{prior[i].System, prior[i].Instance, prior[i].DBName}] = &prior[i]
+	}
+	for i := range cur {
+		p, ok := idx[key{cur[i].System, cur[i].Instance, cur[i].DBName}]
+		if !ok {
+			continue
+		}
+		cur[i].PriorSpanCount = p.SpanCount
+		cur[i].PriorErrorCount = p.ErrorCount
+		cur[i].PriorAvgMs = p.AvgMs
+		cur[i].PriorP50Ms = p.P50Ms
+		cur[i].PriorP99Ms = p.P99Ms
+	}
 }
 
 // getDBTrends serves the per-row RED sparklines (#1) + latest-bucket

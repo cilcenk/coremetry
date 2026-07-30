@@ -41,6 +41,15 @@ type DBInstance struct {
 	P50Ms      float64  `json:"p50DurationMs"`
 	P95Ms      float64  `json:"p95DurationMs"`
 	P99Ms      float64  `json:"p99DurationMs"`
+	// Prior* (v0.9.433) — ?compare=prior: bir-önceki eş-pencere
+	// sayaçları (mergeDBPrior, api_databases.go). omitempty: yalnız
+	// prior ikizi eşleşen satırlarda taşınır — sıfırlanmış prior sahte
+	// NEW rozeti çizdirirdi (messaging v0.8.364 sözleşmesinin aynısı).
+	PriorSpanCount  uint64  `json:"priorSpanCount,omitempty"`
+	PriorErrorCount uint64  `json:"priorErrorCount,omitempty"`
+	PriorAvgMs      float64 `json:"priorAvgMs,omitempty"`
+	PriorP50Ms      float64 `json:"priorP50Ms,omitempty"`
+	PriorP99Ms      float64 `json:"priorP99Ms,omitempty"`
 	Callers    []string `json:"callers"` // top-5 calling services
 	// Source telegraphs the data origin. Empty / "spans" =
 	// span-derived (the historical default). "receiver" = the

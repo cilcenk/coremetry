@@ -806,9 +806,9 @@ export const api = {
   // grouped by span category (db / queue / http / kind).
   // /databases overview — one row per (db_system, instance) over
   // the window. Drives the Dynatrace-style Databases page.
-  databases: (fromNs: number, toNs: number) =>
+  databases: (fromNs: number, toNs: number, compare?: 'prior') =>
     get<import('./types').DBInstance[] | null>(
-      `/api/databases?from=${fromNs}&to=${toNs}`),
+      `/api/databases?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`),
   // Per-row RED sparklines + latest-bucket health snapshot for the
   // /databases + /messaging overview grid. One DBTrend per
   // (dbSystem, instance, dbName) — join to the overview rows by

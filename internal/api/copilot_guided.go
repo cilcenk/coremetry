@@ -65,6 +65,11 @@ const (
 	// 2+ live services as bounded name segments → one MV read compares
 	// the family's RED side by side.
 	guidedFamilyHealth guidedIntent = "family_health"
+	// v0.9.375 (operatör istegi) — "takımımın servisleri/problemleri":
+	// login kullanıcının User.Team'i servis metadata'sının ownerTeam/
+	// sreTeam'iyle eşlenir; kimlik CallMeta'dan (ctx) okunur.
+	guidedMyServices guidedIntent = "my_services"
+	guidedMyProblems guidedIntent = "my_problems"
 )
 
 type guidedRoute struct {
@@ -172,7 +177,27 @@ func hasGuidedSignal(msg string) bool {
 	toks := guidedTokens(msg)
 	return hasSlowTraceSignal(msg) || hasDeploySignal(toks) ||
 		hasLogSignal(toks) || hasErrorSignal(toks) ||
-		hasProblemSignal(toks) || hasHealthSignal(toks)
+		hasProblemSignal(toks) || hasHealthSignal(toks) ||
+		hasTeamSelfSignal(toks)
+}
+
+// hasTeamSelfSignal (v0.9.375) — "kendi takımım" şekilli sorular.
+// Türkçe iyelik ekleri prefix'le emilir ("takımımın", "servislerimin");
+// İngilizce "my" TEK BAŞINA yeterli değildir (my + team/services/
+// problems ister) — "mysql" gibi adlar prefix tuzağına düşmesin diye
+// "my" tam-token eşlenir.
+func hasTeamSelfSignal(tokens []string) bool {
+	if tokenHasPrefix(tokens, "takımım", "ekibim", "servislerim", "problemlerim") {
+		return true
+	}
+	my := false
+	for _, t := range tokens {
+		if t == "my" {
+			my = true
+			break
+		}
+	}
+	return my && tokenHasPrefix(tokens, "team", "service", "problem")
 }
 
 // guidedStopwords are message tokens that must never be treated as a
@@ -341,6 +366,14 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 		}
 	}
 	switch {
+	// v0.9.375 — iyelik takım sinyali HER ŞEYDEN önce: "takımımın açık
+	// problemleri" generic problem yolundan önce yakalanmalı, yoksa tüm
+	// filonun problemleri döner ve "takımımın" kelimesi sessizce düşer.
+	case hasTeamSelfSignal(toks):
+		if hasProblemSignal(toks) || hasErrorSignal(toks) {
+			return guidedRoute{Intent: guidedMyProblems, Env: env}
+		}
+		return guidedRoute{Intent: guidedMyServices, Env: env}
 	case hasSlowTraceSignal(msg):
 		return guidedRoute{Intent: guidedSlowTraces, Service: svc, Env: env}
 	case hasDeploySignal(toks):
@@ -557,6 +590,10 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedDeployBundle(ctx, emit, route.Service, route.Env, rangeS)
 	case guidedLogErrors:
 		evidence, sources, err = s.guidedLogErrorsBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
+	case guidedMyServices:
+		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, false, route.Env, from, to, rangeS)
+	case guidedMyProblems:
+		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, true, route.Env, from, to, rangeS)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may
@@ -807,6 +844,94 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 		src += fmt.Sprintf("; problemler ortam: %s", env)
 	}
 	return b.String(), src, nil
+}
+
+
+// servicesForUserTeam (v0.9.375) — kullanıcının takımına ait servisler:
+// ownerTeam VEYA sreTeam eşleşmesi (case-insensitive). Inbox'ın
+// servicesForTeam'inden farkı: orada owner ve SRE ayrı süzgeçler (AND),
+// burada "benim servisim" iki rolün BİRLEŞİMİ. Saf; table-testli.
+func servicesForUserTeam(mds map[string]chstore.ServiceMetadata, team string) []string {
+	if team == "" {
+		return nil
+	}
+	out := make([]string, 0, 16)
+	for svc, md := range mds {
+		if strings.EqualFold(md.OwnerTeam, team) || strings.EqualFold(md.SRETeam, team) {
+			out = append(out, svc)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// guidedMyTeamBundle (v0.9.375, operatör istegi) — "takımımın
+// servisleri / problemleri". Kimlik CallMeta'dan; takım users
+// tablosundan (tek satır FINAL okuma); servis eşlemesi metadata
+// katalogundan. Takımsız kullanıcı ve servissiz takım DÜRÜST cevap
+// alır (boş liste sessizce "her şey" olmaz — inbox'ın v0.9.353
+// dersinin tersi yönü). wantProblems=false → aile-sağlık bundle'ı
+// (tek MV okuması), true → o servislerin açık problemleri.
+func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any), wantProblems bool, env string, from, to time.Time, rangeS int64) (string, string, error) {
+	meta := copilot.MetaFromContext(ctx)
+	if meta.UserID == "" {
+		return "Oturum kimliği yok (auth kapalı olabilir) — takım-kapsamlı soru yanıtlanamıyor. Kullanıcıya söyle: belirli bir servis adıyla sorabilir.\n",
+			"kullanıcı kimliği", nil
+	}
+	emitGuidedStep(emit, "resolve_user_team", "")
+	u, uerr := s.store.GetUserByID(ctx, meta.UserID)
+	if uerr != nil || u == nil {
+		return "", "", fmt.Errorf("user lookup: %w", uerr)
+	}
+	if u.Team == "" {
+		return fmt.Sprintf("Kullanıcının (%s) hesabına takım atanmamış. Kullanıcıya söyle: admin Settings → Users'tan Team alanını doldurursa \"takımımın servisleri\" çalışır.\n", u.Email),
+			"users tablosu (takım atanmamış)", nil
+	}
+	mds, merr := s.store.ListServiceMetadata(ctx)
+	if merr != nil {
+		return "", "", merr
+	}
+	svcs := servicesForUserTeam(mds, u.Team)
+	if len(svcs) == 0 {
+		return fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). Kullanıcıya söyle: katalogda takım ataması yapılmalı.\n", u.Team),
+			fmt.Sprintf("servis kataloğu (takım: %s)", u.Team), nil
+	}
+	// Sınır: aile MV okuması IN listesiyle çalışır; 100 servis üstü
+	// takımda en fazla 100'ü okunur ve kanıt bunu SÖYLER.
+	const maxTeamServices = 100
+	trimmed := 0
+	if len(svcs) > maxTeamServices {
+		trimmed = len(svcs) - maxTeamServices
+		svcs = svcs[:maxTeamServices]
+	}
+	header := fmt.Sprintf("Kullanıcının takımı: %s — %d servis (owner/SRE eşleşmesi).\n", u.Team, len(svcs)+trimmed)
+	if trimmed > 0 {
+		header += fmt.Sprintf("Not: ilk %d servis okundu, %d servis dışarıda kaldı.\n", maxTeamServices, trimmed)
+	}
+	if wantProblems {
+		emitGuidedStep(emit, "list_problems", fmt.Sprintf(`{"status":"open","teamServices":%d}`, len(svcs)))
+		probs, perr := s.store.ListProblems(ctx, chstore.ProblemFilter{Status: "open", Services: svcs, Env: env, Limit: 50})
+		if perr != nil {
+			return "", "", perr
+		}
+		probs = chstore.EnrichProblemsWithPriority(probs)
+		emitGuidedStep(emit, "root_cause_hypotheses", "")
+		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
+		var b strings.Builder
+		b.WriteString(header)
+		if len(probs) == 0 {
+			fmt.Fprintf(&b, "Takımın servislerinde açık problem yok.\n")
+		} else {
+			b.WriteString(renderProblemsEvidenceTR(probs, "", env, time.Now()))
+		}
+		src := fmt.Sprintf("takım: %s (%d servis) — açık problemler + triage önceliği + kök-neden hipotezleri", u.Team, len(svcs)+trimmed)
+		return b.String(), src, nil
+	}
+	evidence, src, err := s.guidedFamilyHealthBundle(ctx, emit, svcs, env, from, to, rangeS)
+	if err != nil {
+		return "", "", err
+	}
+	return header + evidence, fmt.Sprintf("takım: %s — %s", u.Team, src), nil
 }
 
 // guidedFamilyHealthBundle (v0.9.192) — compares a service FAMILY's RED

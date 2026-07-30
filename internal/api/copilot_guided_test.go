@@ -49,6 +49,18 @@ func TestRouteGuidedIntent(t *testing.T) {
 		{"problems scoped to service", "payment-service için açık problem var mı", guidedProblems, "payment-service", ""},
 		{"incident english", "is there an incident going on", guidedProblems, "", ""},
 
+		// (g) v0.9.375 — takım-farkındalıklı iyelik yolları. İyelik sinyali
+		// generic problem/health stemlerinden ÖNCE kazanır; "mysql" gibi
+		// adlar "my" prefix tuzağına düşmez (tam-token eşleme).
+		{"my services turkish", "takımımın servisleri nasıl", guidedMyServices, "", ""},
+		{"my services benim", "benim servislerim sağlıklı mı", guidedMyServices, "", ""},
+		{"my services english", "how are my team services", guidedMyServices, "", ""},
+		{"my problems turkish", "takımımın açık problemleri neler", guidedMyProblems, "", ""},
+		{"my problems ekip", "ekibimin problemleri var mı", guidedMyProblems, "", ""},
+		{"my problems hatalar", "servislerimde hata var mı", guidedMyProblems, "", ""},
+		{"mysql is not my", "mysql yavaş mı", guidedNone, "", ""},
+		{"generic problems stays global", "şu an açık problemler neler", guidedProblems, "", ""},
+
 		// (b) service health — needs a live-list entity.
 		{"health turkish smoke", "checkout servisi yavaş mı", guidedServiceHealth, "checkout-service", ""},
 		{"health turkish sağlık", "payment-service sağlığı nasıl", guidedServiceHealth, "payment-service", ""},
@@ -595,5 +607,46 @@ func TestRouteGuidedIntentFamily(t *testing.T) {
 	got = routeGuidedIntent("mobile bff'lerde hangisinde hata var", services, nil, "checkout-service")
 	if got.Intent != guidedFamilyHealth {
 		t.Fatalf("ctx must not override family ask: got intent=%q service=%q", got.Intent, got.Service)
+	}
+}
+
+// v0.9.375 — servicesForUserTeam: owner VEYA sre eşleşmesi (birleşim),
+// case-insensitive; inbox'ın AND-semantikli servicesForTeam'inden farkı
+// pinli. Boş takım nil döner (bundle zaten dürüst erken-çıkar).
+func TestServicesForUserTeam(t *testing.T) {
+	mds := map[string]chstore.ServiceMetadata{
+		"checkout": {OwnerTeam: "Payments", SRETeam: "platform-sre"},
+		"billing":  {OwnerTeam: "payments", SRETeam: ""},
+		"search":   {OwnerTeam: "discovery", SRETeam: "Platform-SRE"},
+		"legacy":   {OwnerTeam: "", SRETeam: ""},
+	}
+	cases := []struct {
+		team string
+		want []string
+	}{
+		{"payments", []string{"billing", "checkout"}},     // owner eşleşmesi, case-insensitive
+		{"platform-sre", []string{"checkout", "search"}},  // sre eşleşmesi — owner farklı olsa da girer
+		{"discovery", []string{"search"}},
+		{"nonexistent", []string{}},
+		{"", nil},
+	}
+	for _, c := range cases {
+		got := servicesForUserTeam(mds, c.team)
+		if c.want == nil {
+			if got != nil {
+				t.Errorf("team %q: got %v, want nil", c.team, got)
+			}
+			continue
+		}
+		if len(got) != len(c.want) {
+			t.Errorf("team %q: got %v, want %v", c.team, got, c.want)
+			continue
+		}
+		for i := range got {
+			if got[i] != c.want[i] {
+				t.Errorf("team %q: got %v, want %v", c.team, got, c.want)
+				break
+			}
+		}
 	}
 }

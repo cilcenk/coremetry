@@ -22,16 +22,24 @@ type Turn = ChatMessage & {
   sources?: import('@/lib/types').RagSource[];
 };
 
-// Türkçe quick-start (v0.9.163 — eskiden İngilizce'ydi, cevaplar Türkçe geliyor).
+// Türkçe quick-start (v0.9.163 — eskiden İngilizce'ydi, cevaplar Türkçe
+// geliyor). v0.9.375 (operatör): SRE perspektifli katalog — her çip guided
+// router'daki BİR intent'e eşlenir (problems / my_services / my_problems /
+// slow_traces / log_errors / deploy_impact / service_health). Backend'in
+// yanıtlayamadığı şekle çip koymuyoruz; pod/JVM intent'i gelince çipi de
+// gelir (v0.9.376 adayı).
 const SAMPLE_QUESTIONS = [
-  'Şu an hangi servisler sağlıksız?',
-  'Açık problemler ve kök neden neler?',
-  'En yavaş endpoint neden yavaş?',
-  'Son 1 saatteki hatalar?',
+  'Takımımın servisleri nasıl?',        // my_services — User.Team → owner/SRE eşleşmesi
+  'Takımımın açık problemleri neler?',  // my_problems
+  'Şu an açık problemler ve kök neden?',// problems + root-cause hipotezleri
+  'En yavaş trace\'ler hangileri?',     // slow_traces
+  'Son 1 saatteki log hataları?',       // log_errors
+  'Son deploy\'un etkisi ne oldu?',     // deploy_impact
 ];
 // Follow-up önerileri — cevaptan sonra sıradaki faydalı drill-down'lar.
 const FOLLOWUPS = [
   'Açık problemlerin kök nedeni?',
+  'Takımımın servisleri nasıl?',
   'En yavaş servisler?',
   'Son deploy\'un etkisi?',
 ];

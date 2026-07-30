@@ -13,6 +13,7 @@ import { teamOptionsCI } from '@/lib/teamOptions';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup, resolveInitialSort } from '@/components/DataTable';
+import { FacetMultiSelect } from '@/components/ui/FacetMultiSelect';
 import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { resolveSelectedItem } from '@/lib/inboxDrawer';
@@ -507,51 +508,23 @@ export default function InboxPage() {
             ))}
           </span>
 
-          {/* Priority chips — multi-select + hover'da "sadece" */}
-          <span className="facet-grp">
-            <span className="gl">Öncelik</span>
-            {(['P1', 'P2', 'P3'] as const).map(pp => {
-              const tint = pp === 'P1' ? ' f-err' : pp === 'P2' ? ' f-warn' : '';
-              return (
-                <span key={pp} onClick={() => togglePrio(pp)}
-                  className={`facet${tint}${prioSet.has(pp) ? ' on' : ''}`}>
-                  {pp} <span className="n">{counts[pp] ?? 0}</span>
-                  {!(prioSet.size === 1 && prioSet.has(pp)) && (
-                    <button type="button" className="solo" title={`Yalnız ${pp}`}
-                      onClick={e => { e.stopPropagation(); soloPrio(pp); }}>
-                      sadece
-                    </button>
-                  )}
-                </span>
-              );
-            })}
-            {prioSet.size < PRIO_ALL.length && (
-              <button type="button" className="all-link" onClick={allPrio}>tümü</button>
-            )}
-          </span>
+          {/* v0.9.357 (mockup C, operatör: "C daha uygun bizim kuruma") —
+              çip grupları sayılı multi-select dropdown'lara döndü; Owner/SRE
+              select'leriyle tek dil. v0.9.356'nın "sadece"/"tümü" jestleri
+              panelin içinde yaşıyor; sayılar da orada — yoğunluk bir tık
+              arkaya taşındı, kaybolmadı. */}
+          <FacetMultiSelect label="Öncelik"
+            options={(['P1', 'P2', 'P3'] as const).map(pp => ({
+              value: pp, label: pp, count: counts[pp] ?? 0 }))}
+            selected={prioSet}
+            onToggle={togglePrio} onSolo={soloPrio} onAll={allPrio} />
 
-          {/* Kind chips — multi-select + hover'da "sadece" */}
-          <span className="facet-grp">
-            <span className="gl">Tür</span>
-            {KIND_ALL.map(k => {
-              const label = KIND_LABEL[k];
-              return (
-                <span key={k} onClick={() => toggleKind(k)}
-                  className={`facet${kindSet.has(k) ? ' on' : ''}`}>
-                  {label} <span className="n">{counts[k] ?? 0}</span>
-                  {!(kindSet.size === 1 && kindSet.has(k)) && (
-                    <button type="button" className="solo" title={`Yalnız ${label}`}
-                      onClick={e => { e.stopPropagation(); soloKind(k); }}>
-                      sadece
-                    </button>
-                  )}
-                </span>
-              );
-            })}
-            {kindSet.size < KIND_ALL.length && (
-              <button type="button" className="all-link" onClick={allKind}>tümü</button>
-            )}
-          </span>
+          <FacetMultiSelect label="Tür"
+            options={KIND_ALL.map(k => ({
+              value: k, label: KIND_LABEL[k], count: counts[k] ?? 0 }))}
+            selected={kindSet as Set<string>}
+            onToggle={k => toggleKind(k as InboxKind)}
+            onSolo={k => soloKind(k as InboxKind)} onAll={allKind} />
 
           {/* Env hint chip (v0.8.387) — non-interactive; the pick lives
               in the Topbar EnvPicker. Surfaces the service-scoped

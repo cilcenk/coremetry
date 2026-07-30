@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -347,29 +348,53 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// aday setine hiç giremiyordu; scanCapped şeridi durumu söylüyordu
 		// ama kayıt "yok" gibi görünüyordu. Cache anahtarı kind setini
 		// zaten taşıyor — bütçe farkı slot karıştırmaz.
-		if len(kinds) == 1 && kinds[0] == "exception" {
+		if inboxKindsAllExcFamily(kinds) {
 			excLimit = inboxExcSoloMax
 		}
 		// v0.9.353 — teamIsEmpty short-circuits BOTH exception fetches: the
 		// exception filter's Services field treats an empty slice as "no
 		// constraint" (v0.8.310 contract, opposite of ProblemFilter's), so
 		// passing it through would silently return an unfiltered page.
-		if !teamIsEmpty && !kindOn["exception"] {
-			// Deselected → exact COUNT (same state + floor + allowlist the
-			// fetch would have used; ExceptionGroupFilter.Services is a
-			// strict IN, so no service-less edge here).
+		// v0.9.443 — "httperror" türü: error.type fallback'inin (v0.8.494)
+		// ürettiği çıplak 3-haneli tipler ("404") beklenen istemci hatasıdır,
+		// exception değil. İki tür AYNI store'dan gelir; HTTPErrors süzgeci
+		// hangi sınıfın çekileceğini söyler. Seçilmeyen sınıf kesin COUNT
+		// chip'i alır (v0.9.330 sözleşmesi).
+		excOn, httpOn := kindOn["exception"], kindOn["httperror"]
+		if !teamIsEmpty && !excOn {
+			// Deselected → COUNT (state + floor + allowlist + Search, fetch'le
+			// aynı). Kalan sapma payı problem-chip'iyle AYNI belgeli kenar:
+			// Go-tarafı service-substring/env daraltmaları COUNT'a inemez —
+			// chip bu daraltmalar altında hafif ŞİŞKİN sayabilir, asla eksik
+			// değil (v0.9.330 "chip 0 yalanı"nın tersi, zararsız yön).
 			if n, err := s.store.CountExceptionGroups(ctx, chstore.ExceptionGroupFilter{
 				State: pickExceptionState(statusFilter), MinOccurrences: minOcc,
-				Services: teamServices,
+				Services: teamServices, HTTPErrors: "exclude", Search: search,
 			}); err == nil {
 				skippedCounts["exception"] = int(n)
 			}
 		}
-		if !teamIsEmpty && kindOn["exception"] {
+		if !teamIsEmpty && !httpOn {
+			if n, err := s.store.CountExceptionGroups(ctx, chstore.ExceptionGroupFilter{
+				State: pickExceptionState(statusFilter), MinOccurrences: minOcc,
+				Services: teamServices, HTTPErrors: "only", Search: search,
+			}); err == nil {
+				skippedCounts["httperror"] = int(n)
+			}
+		}
+		if !teamIsEmpty && (excOn || httpOn) {
+			httpFilter := ""
+			switch {
+			case excOn && !httpOn:
+				httpFilter = "exclude"
+			case httpOn && !excOn:
+				httpFilter = "only"
+			}
 			exFilter := chstore.ExceptionGroupFilter{
 				State: pickExceptionState(statusFilter), Limit: excLimit,
 				MinOccurrences: minOcc,
 				Services:       teamServices,
+				HTTPErrors:     httpFilter,
 				// v0.9.441 — arama STORE'a iner (ex_type/message/service
 				// ILIKE): eskiden Go'da yalnız ≤500 aday içinde aranıyordu,
 				// aday setine girmemiş kayıt aramayla da bulunamıyordu.
@@ -392,6 +417,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 					State: pickExceptionState(statusFilter), Limit: excLimit,
 					MaxOccurrences: minOcc,
 					Services:       teamServices,
+					HTTPErrors:     httpFilter,
 					Search:         search,
 				})
 				if err != nil {
@@ -728,7 +754,7 @@ func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit
 	// different facets sharing one cached page would be the v0.5.187
 	// cross-poisoning shape. Sorted+joined rather than length-only: a
 	// length-based digest is the exact bug that release fixed.
-	return fmt.Sprintf("inbox:v4:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s",
+	return fmt.Sprintf("inbox:v5:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s",
 		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc,
 		strings.Join(sortedCopyOf(kinds), "+"), strings.Join(sortedCopyOf(prios), "+"))
 }
@@ -772,7 +798,7 @@ func (s *Server) invalidateInboxCaches(r *http.Request) {
 // filter there meant it ran AFTER the server's cap, which is why prod showed
 // "Queue clear" over 2,144 items: the top 300 by priority were all Incidents,
 // and the page then kept only exceptions out of those 300.
-var inboxKindsAll = []string{"problem", "exception", "anomaly", "incident"}
+var inboxKindsAll = []string{"problem", "exception", "httperror", "anomaly", "incident"}
 var inboxPriosAll = []string{"P1", "P2", "P3"}
 
 // normalizeInboxSet parses a comma-separated facet param against its
@@ -885,7 +911,7 @@ func applyInboxMinOcc(items []InboxItem, minOcc uint64) ([]InboxItem, int) {
 	kept := items[:0]
 	hidden := 0
 	for _, it := range items {
-		if it.Kind == "exception" && it.Exception != nil && it.Exception.Occurrences < minOcc {
+		if (it.Kind == "exception" || it.Kind == "httperror") && it.Exception != nil && it.Exception.Occurrences < minOcc {
 			hidden++
 			continue
 		}
@@ -1056,7 +1082,7 @@ func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, err
 	}
 	var (
 		probN, anN, incN uint64
-		exN              int64
+		exN, httpN       int64
 	)
 	g, gctx := errgroup.WithContext(ctx)
 	g.Go(func() error {
@@ -1085,10 +1111,27 @@ func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, err
 		// default means "show all" makes the page show MORE than the badge,
 		// never fewer — the harmless direction. A badge larger than the page
 		// it links to is the one that reads as a broken count.
+		// v0.9.443 — rozet terimi yalnız GERÇEK exception'lar; HTTP-hata
+		// grupları ayrı sayıdır (varsayılan facet'te de kapalılar).
 		exN, err = s.store.CountExceptionGroups(gctx, chstore.ExceptionGroupFilter{
 			State:          pickExceptionState("open"),
 			Services:       envServices,
 			MinOccurrences: inboxDefaultMinOcc,
+			HTTPErrors:     "exclude",
+		})
+		return err
+	})
+	g.Go(func() error {
+		if envServices != nil && len(envServices) == 0 {
+			httpN = 0
+			return nil
+		}
+		var err error
+		httpN, err = s.store.CountExceptionGroups(gctx, chstore.ExceptionGroupFilter{
+			State:          pickExceptionState("open"),
+			Services:       envServices,
+			MinOccurrences: inboxDefaultMinOcc,
+			HTTPErrors:     "only",
 		})
 		return err
 	})
@@ -1115,6 +1158,7 @@ func (s *Server) computeInboxCountFor(ctx context.Context, env string) (any, err
 		"count":      problems + exceptions + anN + incN,
 		"problems":   problems,
 		"exceptions": exceptions,
+		"httpErrors": uint64(httpN),
 		"anomalies":  anN,
 		"incidents":  incN,
 	}, nil
@@ -1306,10 +1350,17 @@ func exceptionToInbox(g chstore.ExceptionGroup) InboxItem {
 	// We don't currently carry severity on the exception_groups
 	// row; surface "—" so the column doesn't lie. Downstream UI
 	// renders this as text not a badge.
+	// v0.9.443 — sınıf ayrımı: çıplak 3-haneli tip = HTTP-hata grubu.
+	// ID öneki her iki sınıfta "exception:" kalır — drawer deep-link'leri
+	// (?exc=) ve toplu-ack parmak izi yolu tür değil payload okur.
+	kind, source := "exception", "Exception"
+	if isHTTPErrorType(g.Type) {
+		kind, source = "httperror", "HTTP error"
+	}
 	return InboxItem{
 		ID:             "exception:" + g.Fingerprint,
-		Kind:           "exception",
-		Source:         "Exception",
+		Kind:           kind,
+		Source:         source,
 		Priority:       prio,
 		PriorityReason: reason,
 		Severity:       "warning", // best fit until exception rows carry one
@@ -1325,6 +1376,30 @@ func exceptionToInbox(g chstore.ExceptionGroup) InboxItem {
 			Occurrences: g.Occurrences,
 		},
 	}
+}
+
+// isHTTPErrorType — chstore.HTTPErrorTypeRe'nin Go tarafı; desen tek
+// kaynaktan gelir ki CH süzgeci (WHERE match) ile satır sınıflandırması
+// asla ayrışmasın.
+var httpErrorTypeGo = regexp.MustCompile(chstore.HTTPErrorTypeRe)
+
+func isHTTPErrorType(exType string) bool {
+	return httpErrorTypeGo.MatchString(exType)
+}
+
+// inboxKindsAllExcFamily — v0.9.441 solo bütçesinin v0.9.443 genellemesi:
+// seçili TÜR seti yalnız exception ailesinden (exception/httperror)
+// oluşuyorsa tek kaynak tüm aday bütçesini alır.
+func inboxKindsAllExcFamily(kinds []string) bool {
+	if len(kinds) == 0 {
+		return false
+	}
+	for _, k := range kinds {
+		if k != "exception" && k != "httperror" {
+			return false
+		}
+	}
+	return true
 }
 
 func exceptionPriority(g chstore.ExceptionGroup) (string, string) {

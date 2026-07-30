@@ -109,7 +109,7 @@ function DrawerBody({ item, onClose, onOpenSource }: {
           <RootCauseRibbon anchor={rc.anchor} id={rc.id} summary={undefined} defaultOpen />
         </div>
       )}
-      {item.kind === 'exception' && item.exception && (
+      {(item.kind === 'exception' || item.kind === 'httperror') && item.exception && (
         <div style={{
           marginBottom: 14, padding: '10px 12px', borderRadius: 6,
           background: 'var(--bg1)', border: '1px solid var(--border)',

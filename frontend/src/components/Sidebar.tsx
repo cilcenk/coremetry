@@ -165,9 +165,9 @@ export function Sidebar() {
   const t = useT();
   // Both queries auto-poll on their own intervals (5s / 30s) and
   // share their cache with anywhere else that consumes them.
-  // The /exceptions page consumes the same cache for its inline
-  // Problems section, so the sidebar badge and the page row
-  // count never drift.
+  // Sönük Exceptions rozeti aile TOPLAMIDIR (exceptions + httpErrors,
+  // v0.9.443) — /problems sayfası her grubu listeler; rozet ile sayfa
+  // toplamı birebir aynı kalır (v0.9.219 drift sınıfına karşı).
   const healthQ = useHealth();
   const [env] = useUrlEnv();
   // v0.9.323 — the separate open-problems poll is GONE with the /problems nav

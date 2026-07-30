@@ -24,7 +24,7 @@ import type { InboxItem, InboxKind } from '@/lib/types';
 // kinds; both are the "default" the URL codec omits so a fresh link stays clean.
 const PRIO_ALL = ['P1', 'P2', 'P3'] as const;
 const PRIO_DEFAULT = ['P1', 'P2'] as const;
-const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'anomaly', 'incident'];
+const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'httperror', 'anomaly', 'incident'];
 // v0.9.328 — operator: "Problems ilk açtığında exception görsün, kullanıcılar
 // ona göre tasarlar." Exceptions are the signal operators trust: a thrown
 // exception is a fact from the code, not an inference from a threshold.
@@ -34,10 +34,19 @@ const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'anomaly', 'inci
 // ?kind= carries the choice into every shared link. The P1 guard below makes
 // sure a landing default can never hide something urgent.
 const KIND_DEFAULT: readonly InboxKind[] = ['exception'];
+// v0.9.443 — 'httperror': error.type fallback'inin ürettiği çıplak
+// durum-kodu grupları ("404"). Varsayılan facet'te KAPALI (KIND_DEFAULT
+// değişmedi) — bankada beklenen istemci hataları triage'ı boğmasın;
+// chip sayısı yine görünür, tek tıkla açılır (v0.9.417 görünürlük ruhu).
 const KIND_LABEL: Record<InboxKind, string> = {
-  problem: 'Problems', exception: 'Exceptions',
+  problem: 'Problems', exception: 'Exceptions', httperror: 'HTTP errors',
   anomaly: 'Anomalies', incident: 'Incidents',
 };
+
+// exception ailesi — httperror satırları da exception payload'u taşır
+// (aynı store, aynı fingerprint yolu); drawer/drill-in/toplu-ack ortak.
+const isExcFamily = (it: InboxItem): boolean =>
+  (it.kind === 'exception' || it.kind === 'httperror') && !!it.exception;
 // v0.9.254 — 'ignored' yalnızca exception gruplarını gösterir (problem'ler
 // MUTE'lanır, anomaliler SILENCE'lanır — farklı fiiller, farklı state).
 // Ayrı bir pivot olması bilinçli: susturmak kasıtlı bir eylem, o satırları
@@ -207,8 +216,8 @@ export default function InboxPage() {
   // acked without leaving the queue (v0.8.292), and neither has a richer
   // destination that the drawer is hiding.
   const openDrawer = (it: InboxItem) => {
-    if (it.kind === 'exception' && it.exception) {
-      navigate(`/problems?exc=${encodeURIComponent(it.exception.fingerprint)}`);
+    if (isExcFamily(it)) {
+      navigate(`/problems?exc=${encodeURIComponent(it.exception!.fingerprint)}`);
       return;
     }
     setParam('item', it.id);
@@ -343,8 +352,8 @@ export default function InboxPage() {
   const goToSource = (it: InboxItem) => {
     if (it.kind === 'problem' && it.problem) {
       navigate(`/problems?problem=${encodeURIComponent(it.problem.id)}`);
-    } else if (it.kind === 'exception' && it.exception) {
-      navigate(`/problems?tab=open&exception=${encodeURIComponent(it.exception.fingerprint)}`);
+    } else if (isExcFamily(it)) {
+      navigate(`/problems?tab=open&exception=${encodeURIComponent(it.exception!.fingerprint)}`);
     } else if (it.kind === 'anomaly' && it.anomaly) {
       navigate(`/anomalies?event=${encodeURIComponent(it.anomaly.id)}`);
     } else if (it.kind === 'incident' && it.incident) {
@@ -390,7 +399,7 @@ export default function InboxPage() {
     .filter((r: InboxItem) => r.kind === 'problem' && r.problem)
     .map((r: InboxItem) => r.problem!.id);
   const ackExceptionFps = pickedRows
-    .filter((r: InboxItem) => r.kind === 'exception' && r.exception)
+    .filter((r: InboxItem) => isExcFamily(r))
     .map((r: InboxItem) => r.exception!.fingerprint);
   // v0.9.323 — incidents joined the queue in v0.9.321 but not the bulk
   // action: their rows got a checkbox, select-all included them, and then
@@ -456,7 +465,7 @@ export default function InboxPage() {
     const fromServer = inboxQ.data?.counts;
     if (fromServer) return fromServer;
     const out: Record<string, number> = { P1: 0, P2: 0, P3: 0,
-      problem: 0, exception: 0, anomaly: 0, incident: 0 };
+      problem: 0, exception: 0, httperror: 0, anomaly: 0, incident: 0 };
     for (const it of data ?? []) {
       out[it.priority] = (out[it.priority] ?? 0) + 1;
       out[it.kind] = (out[it.kind] ?? 0) + 1;
@@ -958,17 +967,17 @@ function DetailLine({ it }: { it: InboxItem }) {
       </div>
     );
   }
-  if (it.kind === 'exception' && it.exception) {
+  if (isExcFamily(it)) {
     return (
       <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-        <span className="mono">{it.exception.occurrences.toLocaleString()}</span>
+        <span className="mono">{it.exception!.occurrences.toLocaleString()}</span>
         {' occurrences'}
         {it.priorityReason && <span> · {it.priorityReason}</span>}
-        {it.exception.message && (
+        {it.exception!.message && (
           <div style={{ marginTop: 2, color: 'var(--text2)' }}>
-            {it.exception.message.length > 160
-              ? `${it.exception.message.slice(0, 160)}…`
-              : it.exception.message}
+            {it.exception!.message.length > 160
+              ? `${it.exception!.message.slice(0, 160)}…`
+              : it.exception!.message}
           </div>
         )}
       </div>

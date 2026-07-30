@@ -80,6 +80,10 @@ const (
 	// deploy'lar + yeni P1 exception grupları tek cevapta. Varsayılan
 	// pencere 12h (vardiya), açık range her zaman kazanır.
 	guidedShiftSummary guidedIntent = "shift_summary"
+	// v0.9.420 (CoSRE fikir #5) — bağımlılık sağlığı: "hangi db yavaş?",
+	// "kafka lag nasıl?". db_summary_5m / msg MV'lerinden top-N kırılım.
+	guidedDBHealth        guidedIntent = "db_health"
+	guidedMessagingHealth guidedIntent = "messaging_health"
 )
 
 type guidedRoute struct {
@@ -193,6 +197,32 @@ func hasShiftSignal(msg string, toks []string) bool {
 		strings.Contains(msg, "what happened")
 }
 
+// hasDBSignal (v0.9.420) — veritabanı-şekilli sorular. "db"/"sql"
+// tam-token ("dbConnection"/"sqlite" gibi ad parçaları tetiklemesin);
+// sistem adları prefix ("postgresql", "postgres'te").
+func hasDBSignal(toks []string) bool {
+	for _, t := range toks {
+		if t == "db" || t == "sql" {
+			return true
+		}
+	}
+	return tokenHasPrefix(toks, "database", "veritaban", "postgres", "mysql",
+		"oracle", "mongo", "redis", "cassandra", "mssql")
+}
+
+// hasMessagingSignal (v0.9.420) — mesajlaşma-şekilli sorular. "mq"
+// tam-token; "kuyruk"/"queue" BİLEREK YOK — operatör dilinde "kuyruk"
+// iş listesi demek (CLAUDE.md), messaging'e devretmek yanlış yönlendirir.
+func hasMessagingSignal(toks []string) bool {
+	for _, t := range toks {
+		if t == "mq" {
+			return true
+		}
+	}
+	return tokenHasPrefix(toks, "kafka", "rabbit", "topic", "artemis",
+		"activemq", "ibmmq", "nats", "messaging", "jms", "mesajla")
+}
+
 // hasGuidedSignal is the cheap precheck the handler runs BEFORE
 // fetching the live service list — a message with no guided keyword
 // at all skips the catalogue read and goes straight to the tool loop.
@@ -202,7 +232,7 @@ func hasGuidedSignal(msg string) bool {
 		hasLogSignal(toks) || hasErrorSignal(toks) ||
 		hasProblemSignal(toks) || hasHealthSignal(toks) ||
 		hasTeamSelfSignal(toks) || hasPodSignal(toks) ||
-		hasShiftSignal(msg, toks)
+		hasShiftSignal(msg, toks) || hasDBSignal(toks) || hasMessagingSignal(toks)
 }
 
 // hasPodSignal (v0.9.376) — pod/JVM şekilli sorular. "gc" tam-token
@@ -422,6 +452,14 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 		// v0.9.376 — servisli soru o servisin pod'ları, servissiz soru
 		// filo-geneli JVM heap sıralaması (ikisi de bundle'da).
 		return guidedRoute{Intent: guidedPodHealth, Service: svc, Env: env}
+	// v0.9.420 — bağımlılık sağlığı. Messaging DB'den önce ("kafka db'ye
+	// yazamıyor" → messaging tarafı daha spesifik ipucu). Servis çözülse
+	// bile bağımlılık sinyali kazanır ("payments db hataları" → DB
+	// kırılımı; bundle servis notunu düşer).
+	case hasMessagingSignal(toks):
+		return guidedRoute{Intent: guidedMessagingHealth, Service: svc, Env: env}
+	case hasDBSignal(toks):
+		return guidedRoute{Intent: guidedDBHealth, Service: svc, Env: env}
 	// v0.9.416 — vardiya özeti: spesifik sinyallerden (slow/deploy/log/
 	// pod) SONRA, problems'tan ÖNCE — "dün gece problem var mıydı" özet
 	// cevabı hak eder (problemler zaten bundle'ın ilk bloğu).
@@ -687,6 +725,10 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedPodHealthBundle(ctx, emit, route.Service, from, to)
 	case guidedShiftSummary:
 		evidence, sources, err = s.guidedShiftSummaryBundle(ctx, emit, route.Service, from, to, rangeS)
+	case guidedDBHealth:
+		evidence, sources, err = s.guidedDBHealthBundle(ctx, emit, route.Service, from, to, rangeS)
+	case guidedMessagingHealth:
+		evidence, sources, err = s.guidedMessagingBundle(ctx, emit, route.Service, from, to, rangeS)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may

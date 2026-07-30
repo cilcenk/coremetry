@@ -256,7 +256,18 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:top=%d:hops=%d:hid=%s",
 		focus, scope, from.Unix()/60, to.Unix()/60, topN, hops, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		edges, err := s.store.ReadServiceTopologyAgg(ctx, from, to, 20000)
+		// v0.9.366 — neighborhood scope'ta okuma odak-kapsamlı: eski yol
+		// tüm filonun calls-DESC ilk 20k kenarını çekip Go'da hop-yürüyordu;
+		// 20k'yı aşan filoda odağın SESSİZ bağımlılıkları LIMIT penceresinden
+		// düşüp sekmeden kayboluyordu. IN-filtreli hop yürüyüşü kesmeyi
+		// komşuluğun İÇİNE taşır. Global scope aynı kaldı.
+		var edges []chstore.ServiceTopologyEdge
+		var err error
+		if scope == "neighborhood" && focus != "" {
+			edges, err = s.store.ReadServiceTopologyAggForFocus(ctx, from, to, focus, hops, 20000)
+		} else {
+			edges, err = s.store.ReadServiceTopologyAgg(ctx, from, to, 20000)
+		}
 		if err != nil {
 			return nil, err
 		}

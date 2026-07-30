@@ -1091,9 +1091,27 @@ func (s *Store) ListOpsForService(ctx context.Context, service string, from, to 
 // Window is rounded out to the surrounding 5-min boundaries so a
 // partially-covered bucket isn't dropped silently.
 func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, limit int) ([]ServiceTopologyEdge, error) {
+	return s.readServiceTopologyAggFiltered(ctx, from, to, limit, nil)
+}
+
+// readServiceTopologyAggFiltered is ReadServiceTopologyAgg with an optional
+// node-touch filter: when `touching` is non-empty only edges with at least
+// one endpoint in the set are read. v0.9.366 — the neighborhood scope's
+// building block; the focus walk (ReadServiceTopologyAggForFocus) feeds
+// frontiers here instead of pulling the whole estate's top-20k edge set.
+func (s *Store) readServiceTopologyAggFiltered(ctx context.Context, from, to time.Time, limit int, touching []string) ([]ServiceTopologyEdge, error) {
 	if limit <= 0 || limit > 100000 {
 		limit = 20000
 	}
+	touchWhere := ""
+	args := []any{from.Unix(), to.Unix()}
+	if len(touching) > 0 {
+		ph := chPlaceholders(len(touching))
+		touchWhere = "\n\t\t\t  AND (parent_service IN (" + ph + ") OR child_node IN (" + ph + "))"
+		args = append(args, toAnySlice(touching)...)
+		args = append(args, toAnySlice(touching)...)
+	}
+	args = append(args, limit)
 	// Subquery: aggregate within groups first, then post-process
 	// the merged label array. Inlining the merged array twice in
 	// the outer SELECT (once for arraySlice, once for length)
@@ -1140,13 +1158,13 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 				any(child_env)  AS child_env
 			FROM topology_edges_5m FINAL
 			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
-			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE
+			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE`+touchWhere+`
 			GROUP BY parent_service, child_node, protocol
 		)
 		ORDER BY total_calls DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 10`,
-		from.Unix(), to.Unix(), limit,
+		args...,
 	)
 	if err != nil {
 		return nil, err
@@ -1180,6 +1198,85 @@ func (s *Store) ReadServiceTopologyAgg(ctx context.Context, from, to time.Time, 
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// topologyNextFrontier is the pure hop step of the focus walk: collects the
+// not-yet-seen endpoints of `edges` (busiest first — edges arrive ORDER BY
+// total_calls DESC), marks them seen, and caps the result. ext:<name>
+// endpoints contribute BOTH spellings so the api layer's ext-merge keeps
+// finding the real service's own edges on the next hop. Table-tested
+// (topology_focus_test.go, v0.9.366).
+func topologyNextFrontier(edges []ServiceTopologyEdge, seen map[string]bool, cap int) []string {
+	var next []string
+	add := func(n string) {
+		cands := []string{n}
+		if stripped := strings.TrimPrefix(n, "ext:"); stripped != n {
+			cands = append(cands, stripped)
+		}
+		for _, c := range cands {
+			if c == "" || seen[c] {
+				continue
+			}
+			seen[c] = true
+			next = append(next, c)
+		}
+	}
+	for _, e := range edges {
+		add(e.ParentService)
+		add(e.ChildNode)
+	}
+	if len(next) > cap {
+		next = next[:cap]
+	}
+	return next
+}
+
+// ReadServiceTopologyAggForFocus returns the aggregated edges within `hops`
+// of `focus` by walking hop-by-hop with IN-filtered MV reads. v0.9.366 —
+// the neighborhood scope previously read the whole estate's top-20000
+// edges by calls and hop-walked in Go: past 20k estate edges the focused
+// service's own QUIET dependencies fell out of the LIMIT window and
+// silently vanished from its Topology tab. Truncation now happens inside
+// the neighborhood (which is what the render budget means). ≤3 bounded MV
+// queries (hops clamps at 3 in the api layer).
+func (s *Store) ReadServiceTopologyAggForFocus(ctx context.Context, from, to time.Time, focus string, hops, limit int) ([]ServiceTopologyEdge, error) {
+	if hops < 1 {
+		hops = 1
+	}
+	if hops > 3 {
+		hops = 3
+	}
+	if limit <= 0 || limit > 100000 {
+		limit = 20000
+	}
+	// Frontier cap: 300 busiest per hop — far above the UI's 40-node render
+	// budget, low enough to keep the IN list sane on mega-fanout hubs.
+	const frontierCap = 300
+	seen := map[string]bool{focus: true}
+	frontier := []string{focus}
+	have := map[string]bool{}
+	var out []ServiceTopologyEdge
+	for h := 0; h < hops && len(frontier) > 0 && len(out) < limit; h++ {
+		edges, err := s.readServiceTopologyAggFiltered(ctx, from, to, limit, frontier)
+		if err != nil {
+			return nil, err
+		}
+		fresh := edges[:0]
+		for _, e := range edges {
+			k := e.ParentService + "\x00" + e.ChildNode + "\x00" + e.Protocol
+			if have[k] {
+				continue
+			}
+			have[k] = true
+			out = append(out, e)
+			fresh = append(fresh, e)
+			if len(out) >= limit {
+				break
+			}
+		}
+		frontier = topologyNextFrontier(fresh, seen, frontierCap)
+	}
+	return out, nil
 }
 
 // GetServiceTopologyEdges returns service-pair interactions with

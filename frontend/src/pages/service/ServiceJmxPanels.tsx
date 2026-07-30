@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { useQuery, useQueries } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { LazyMount } from '@/components/LazyMount';
 import { MetricArea } from '@/pages/clusters/MetricArea';
 import { dsToken, reconcile, applyDsIsolate } from '@/pages/service/jmxSelectors';
 import type { ClusterPodRow } from '@/lib/types';
@@ -57,21 +58,26 @@ export function ServiceJmxPanels({ service, clusters, effNs, effDeploy, cFrom, c
     rows.filter(r => r.cluster === cluster && r.namespace === effNs).map(r => r.pod),
   )].sort();
   const effJpod = reconcile(jpod, podOptions);
-  const jmxPanelQs = useQueries({
-    queries: jmxMetrics.map(m => {
-      const byPod = jmxBy[m] ?? !m.startsWith('jboss_');
-      return {
-        queryKey: ['jmx-trend', cluster, effNs, effDeploy, m, byPod, effJpod, cFrom, cTo],
-        queryFn: () => api.clusterJmxTrend(cluster, effNs, effDeploy, m, byPod, cFrom, cTo, effJpod),
-        staleTime: 60_000, retry: 1,
-      };
-    }),
-  });
-  const dsOptions = [...new Set(
-    jmxMetrics.flatMap((m, i) =>
-      m.startsWith('jboss_') ? (jmxPanelQs[i]?.data?.series ?? []).map(s => dsToken(s.name)) : []),
-  )].filter(Boolean).sort();
+  // v0.9.372 — N+1 sökümü: 40-80 keşfedilen metrik sekme açılışında 40-80
+  // /api/clusters/jmx-trend isteği demekti (useQueries hepsini hemen
+  // ateşliyordu). Sorgu artık panel HÜCRESİNDE yaşıyor ve hücre LazyMount
+  // ile görünür-alana yaklaşınca mount oluyor — ES-maliyet disiplininin
+  // (v0.8.270 "fetch on expand/open only") Thanos karşılığı. Datasource
+  // seçici opsiyonları yüklenen jboss panellerinden birikir (aşağıda);
+  // URL'deki ?jds= henüz yüklenmemiş bir ds'yi gösteriyorsa reconcile ''
+  // döner ve izole o panel yüklenince kendiliğinden devreye girer.
+  const [dsNamesByMetric, setDsNamesByMetric] = useState<Record<string, string[]>>({});
+  const dsOptions = useMemo(() => [...new Set(
+    Object.values(dsNamesByMetric).flat().map(n => dsToken(n)),
+  )].filter(Boolean).sort(), [dsNamesByMetric]);
   const effJds = reconcile(jds, dsOptions);
+  // Stabil callback: hücre effect'i dep olarak alıyor; her render yeni
+  // kimlik üretirse effect döngüye girer. Aynı ad listesi tekrar gelirse
+  // state'e dokunmaz (sig karşılaştırması).
+  const reportDsNames = useMemo(() => (metric: string, names: string[]) => {
+    setDsNamesByMetric(prev =>
+      prev[metric]?.join('\u0000') === names.join('\u0000') ? prev : { ...prev, [metric]: names });
+  }, []);
 
   if (jmxMetrics.length === 0) return null;
   return (
@@ -117,25 +123,60 @@ export function ServiceJmxPanels({ service, clusters, effNs, effDeploy, cFrom, c
           sıkıştırabilsin — aksi halde geniş panel sayfayı yana taşırıyordu
           (operatör "expand'da paneller yana kayıyor", v0.9.159). */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 14 }}>
-        {jmxMetrics.map((m, i) => {
-          const data = jmxPanelQs[i]?.data?.series;
-          if (!data || data.length === 0) return null;
-          const unit = m.includes('bytes') ? 'bytes' : m.includes('seconds') ? 's' : undefined;
-          const isJboss = m.startsWith('jboss_');
-          const shown = isJboss ? applyDsIsolate(data, effJds) : data;
-          if (shown.length === 0) return null;
-          return (
-            <MetricArea key={m}
-              title={`${m}${clamped ? ' (last 6h)' : ''}`}
-              byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
-              by={jmxBy[m] ?? !isJboss} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
-              series={shown} seriesName={m} unit={unit}
-              maxSeries={isJboss ? 40 : undefined}
-              totalSeries={jmxPanelQs[i]?.data?.seriesTotal} onZoom={onZoom} onZoomReset={onZoomReset}
-              syncKey={`runtime:${service}`} />
-          );
-        })}
+        {jmxMetrics.map(m => (
+          <LazyMount key={m} minHeight={220}>
+            <JmxPanelCell
+              cluster={cluster} effNs={effNs} effDeploy={effDeploy} metric={m}
+              by={jmxBy[m] ?? !m.startsWith('jboss_')}
+              onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
+              effJpod={effJpod} effJds={effJds} cFrom={cFrom} cTo={cTo}
+              clamped={clamped} service={service}
+              onDsNames={reportDsNames} onZoom={onZoom} onZoomReset={onZoomReset} />
+          </LazyMount>
+        ))}
       </div>
     </>
+  );
+}
+
+// JmxPanelCell — tek metriğin sorgusu + kartı. Sorgunun BURADA yaşaması
+// v0.9.372'nin özü: LazyMount hücreyi görünür-alana yaklaşınca mount eder,
+// istek ancak o zaman çıkar. Görünmez-düşer sözleşmesi aynı (veri yoksa
+// null; LazyMount mount sonrası fragment olduğu için grid'de delik kalmaz).
+function JmxPanelCell({ cluster, effNs, effDeploy, metric, by, onToggle, effJpod, effJds, cFrom, cTo, clamped, service, onDsNames, onZoom, onZoomReset }: {
+  cluster: string; effNs: string; effDeploy: string; metric: string;
+  by: boolean; onToggle: (v: boolean) => void;
+  effJpod: string; effJds: string; cFrom: number; cTo: number;
+  clamped: boolean; service: string;
+  onDsNames: (metric: string, names: string[]) => void;
+  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
+  onZoomReset?: () => void;
+}) {
+  const isJboss = metric.startsWith('jboss_');
+  const q = useQuery({
+    queryKey: ['jmx-trend', cluster, effNs, effDeploy, metric, by, effJpod, cFrom, cTo],
+    queryFn: () => api.clusterJmxTrend(cluster, effNs, effDeploy, metric, by, cFrom, cTo, effJpod),
+    staleTime: 60_000, retry: 1,
+  });
+  const series = q.data?.series;
+  // Datasource seçici opsiyonları yüklenen panellerden birikir.
+  useEffect(() => {
+    if (isJboss && series && series.length > 0) {
+      onDsNames(metric, series.map(s => s.name));
+    }
+  }, [isJboss, metric, series, onDsNames]);
+  if (!series || series.length === 0) return null;
+  const unit = metric.includes('bytes') ? 'bytes' : metric.includes('seconds') ? 's' : undefined;
+  const shown = isJboss ? applyDsIsolate(series, effJds) : series;
+  if (shown.length === 0) return null;
+  return (
+    <MetricArea
+      title={`${metric}${clamped ? ' (last 6h)' : ''}`}
+      byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
+      by={by} onToggle={onToggle}
+      series={shown} seriesName={metric} unit={unit}
+      maxSeries={isJboss ? 40 : undefined}
+      totalSeries={q.data?.seriesTotal} onZoom={onZoom} onZoomReset={onZoomReset}
+      syncKey={`runtime:${service}`} />
   );
 }

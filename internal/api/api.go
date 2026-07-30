@@ -2414,8 +2414,12 @@ func (s *Server) getServiceRollouts(w http.ResponseWriter, r *http.Request) {
 		to = time.Now()
 		from = to.Add(-1 * time.Hour)
 	}
-	key := fmt.Sprintf("service-rollouts:svc=%s:from=%d:to=%d",
-		name, from.UnixNano(), to.UnixNano())
+	// v0.9.360 — anahtar 30s grid'e oturur (cacheBucket, kardeş handler'lar
+	// gibi). Eski anahtar nanosaniye-hassastı ve HİÇ tutmuyordu: her Details
+	// açılışı 5-dk bucket'lı groupUniqArray taramasını + 8 rollout için
+	// ComputeDeployImpact'i sıfırdan ödüyordu — üstelik sekme aynı ucu üç
+	// ayrı pencereden üç kez çağırıyordu.
+	key := fmt.Sprintf("service-rollouts:svc=%s:w=%s", name, cacheBucket(from, to))
 	s.serveCached(w, r, key, time.Minute, func(ctx context.Context) (any, error) {
 		res, err := s.store.GetServiceRollouts(ctx, name, from, to)
 		if err != nil {

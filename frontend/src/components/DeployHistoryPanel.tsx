@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
+import { useServiceRollouts7d } from '@/lib/queries/services';
 import { fmtNum, fmtAgoNs } from '@/lib/utils';
 import type { Rollout, DeployImpact } from '@/lib/types';
 
@@ -30,15 +31,17 @@ export function DeployHistoryPanel({ service }: { service: string }) {
   const [explains, setExplains] = useState<Record<string, ExplainState>>({});
   const [copilotEnabled, setCopilotEnabled] = useState<boolean | null>(null);
 
+  // v0.9.360 — strip'le paylaşılan 7g hook (tek istek). Eski hâli her
+  // mount'ta Date.now()'dan taze bir ns penceresi basıyordu, yani sunucu
+  // cache anahtarı da hiç tekrarlamıyordu.
+  const rolloutsQ = useServiceRollouts7d(service);
   useEffect(() => {
-    // Compute the window INSIDE the effect (not in render) so Date.now()
-    // doesn't churn the dep set every render (v0.5.184). 7-day lookback
-    // matches the 2000-bucket cap at 5-min granularity.
-    const to = Date.now() * 1e6;
-    const from = to - 7 * 24 * 3600 * 1e9;
-    api.serviceRollouts(service, { from, to })
-      .then(r => { setRows(r?.rollouts ?? []); setTracked(r?.instancesTracked ?? false); })
-      .catch(() => setRows(null));
+    if (rolloutsQ.isError) { setRows(null); return; }
+    if (!rolloutsQ.data) return;
+    setRows(rolloutsQ.data.rollouts ?? []);
+    setTracked(rolloutsQ.data.instancesTracked ?? false);
+  }, [rolloutsQ.data, rolloutsQ.isError]);
+  useEffect(() => {
     // Probe the copilot once — if it's not configured, hide the
     // Explain button rather than show one that always 503's.
     api.copilotConfig().then(c => setCopilotEnabled(c.enabled)).catch(() => setCopilotEnabled(false));

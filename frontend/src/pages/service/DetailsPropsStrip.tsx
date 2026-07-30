@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useServiceRollouts7d } from '@/lib/queries/services';
 import { api } from '@/lib/api';
 import { timeRangeToNs, tsRel, rangeToSince } from '@/lib/utils';
 import type { TimeRange } from '@/lib/types';
@@ -32,11 +33,10 @@ export function DetailsPropsStrip({ service, range }: { service: string; range: 
     queryFn: () => api.serviceRuntime(service),
     enabled: !!service, staleTime: 5 * 60_000, retry: false,
   });
-  const rolloutsQ = useQuery({
-    queryKey: ['svc-rollouts-strip', service, from, to],
-    queryFn: () => api.serviceRollouts(service, { from, to }),
-    enabled: !!service, staleTime: STALE, retry: false,
-  });
+  // v0.9.360 — panelle AYNI 7g okuma (tek istek, tek cache girdisi).
+  // Bonus: Version çipi artık 7 güne bakıyor — varsayılan 30dk pencerede
+  // sürüm-değiştiren rollout neredeyse hiç olmadığı için çip hiç çıkmıyordu.
+  const rolloutsQ = useServiceRollouts7d(service);
   const clustersQ = useQuery({
     queryKey: ['svc-clusters', service, from, to],
     queryFn: () => api.serviceClusters(service, from, to),

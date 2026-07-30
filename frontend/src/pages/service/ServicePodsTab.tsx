@@ -95,28 +95,58 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
         )
       ) : (
         <>
-          {/* 1) Cluster'a göre açılır pod grupları — pod tıkla → yerinde JMX. */}
-          <h3 style={{ fontSize: 13, margin: '4px 0 8px' }}>
-            Pods ({rows.length}) · {clustersWithPods.length} cluster{clustersWithPods.length > 1 ? 's' : ''}
+          {/* v0.9.383 (redesign D7, mockup af7419e5) — yapışkan bölüm
+              şeridi + kaynak rozetleri: üç bölümün ÜÇ AYRI veri kaynağı
+              var (Thanos envanteri / Thanos JMX / OTel runtime) ve
+              "neden bir kısmı çalışıyor?" sorusu ilk kez ekranda
+              cevaplanıyor. Şerit anchor'ları uzun tek-akış sayfada GC
+              grafiğine tek tık verir. */}
+          <div style={{
+            position: 'sticky', top: 0, zIndex: 5, display: 'flex', gap: 14,
+            alignItems: 'center', fontSize: 12, padding: '6px 0',
+            background: 'var(--bg)', borderBottom: '1px solid var(--border)',
+            marginBottom: 8,
+          }}>
+            {([['pods-sec', `Pods (${rows.length})`], ['jmx-sec', 'JMX panelleri'], ['runtime-sec', 'Runtime']] as const).map(([id, label]) => (
+              <span key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
+                style={{ cursor: 'pointer', color: 'var(--accent)' }}>{label}</span>
+            ))}
+            <span style={{ marginLeft: 'auto' }} />
             {truncatedClusters.length > 0 && (
-              <span className="badge b-warn" style={{ marginLeft: 8 }}
-                title={`${truncatedClusters.join(', ')}: sunucu cluster genelinde en işlek 500 pod'u döndürdü (topk tavanı). Bu servisin sakin pod'ları listede eksik olabilir.`}>
+              <span className="badge b-warn"
+                title={`${truncatedClusters.join(', ')}: sunucu en işlek 500 pod'u döndürdü (topk tavanı).`}>
                 kısmi liste — topk(500)
               </span>
             )}
+          </div>
+          {/* 1) Cluster'a göre açılır pod grupları — pod tıkla → yerinde JMX. */}
+          <h3 id="pods-sec" style={{ fontSize: 13, margin: '4px 0 8px', scrollMarginTop: 40 }}>
+            Pods ({rows.length}) · {clustersWithPods.length} cluster{clustersWithPods.length > 1 ? 's' : ''}
+            <span className="badge b-gray" style={{ marginLeft: 8 }}
+              title="Bu bölümün kaynağı: Thanos kube-state-metrics/cAdvisor envanteri. Thanos erişilemezse bu bölüm düşer; alttaki Runtime bölümü OTel'den bağımsız çalışmaya devam eder.">
+              Thanos · envanter
+            </span>
           </h3>
           <ServiceClusterPods dt={dt} effNs={effNs} effDeploy={effDeploy}
             cFrom={cFrom} cTo={cTo} colCount={POD_COLS.length} onOpenPod={openPod} />
 
           {/* 2) JVM / JBoss JMX panelleri (servis-seviyesi; çok-cluster'da
               iç cluster seçici, review v0.9.159 #4). */}
-          <ServiceJmxPanels service={service} clusters={clustersWithPods} effNs={effNs} effDeploy={effDeploy}
-            cFrom={cFrom} cTo={cTo} clamped={clamped} rows={rows} onZoom={onZoom} onZoomReset={onZoomReset} />
+          <div id="jmx-sec" style={{ scrollMarginTop: 40 }}>
+            <ServiceJmxPanels service={service} clusters={clustersWithPods} effNs={effNs} effDeploy={effDeploy}
+              cFrom={cFrom} cTo={cTo} clamped={clamped} rows={rows} onZoom={onZoom} onZoomReset={onZoomReset} />
+          </div>
         </>
       )}
 
       {/* 3) OTel dil-runtime (heap/GC/threads by pod) — servis-scoped, her zaman. */}
-      <div style={{ marginTop: 20 }}>
+      <div id="runtime-sec" style={{ marginTop: 20, scrollMarginTop: 40 }}>
+        <div style={{ fontSize: 11, marginBottom: 4 }}>
+          <span className="badge b-ok"
+            title="Bu bölümün kaynağı: OTel runtime metrikleri (ClickHouse) — Thanos'tan tamamen bağımsız; Thanos düşse de burası çalışır.">
+            OTel — Thanos'tan bağımsız
+          </span>
+        </div>
         <RuntimeCharts service={service} from={from} to={to} onZoom={onZoom} onZoomReset={onZoomReset} />
       </div>
     </>

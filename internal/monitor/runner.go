@@ -337,9 +337,43 @@ func (r *Runner) record(ctx context.Context, m chstore.Monitor, status string,
 	}
 	r.lastStatus[m.ID] = status
 	if status == prevStatus {
+		// v0.9.446 (hacim denetimi yan bulgusu — kaçırılan-alarm sınıfı):
+		// DOWN problemi yalnız GEÇİŞTE açılıyordu ve bir daha hiç
+		// tazelenmiyordu; evaluator'ın stale sweep'i (updated_at >
+		// 3×interval) hâlâ DOWN olan monitörün problemini ~3 dk'da
+		// "source silent" diye kapatıyordu. Monitör up→down döngüsü
+		// yapmadan satır geri açılamıyordu — sayfa gitmiş, sorun
+		// sürüyor. Down kaldığı her probe'da satır tazelenir; sweep'e
+		// yem olmuşsa yeniden açılır (bildirimiyle — satır yokken
+		// operatörün haberi de yoktu).
+		if status == "down" {
+			r.keepDownProblemAlive(ctx, m, msg)
+		}
 		return
 	}
 	r.handleStateChange(ctx, m, status, msg)
+}
+
+// keepDownProblemAlive — down kalan monitörün problemini canlı tutar:
+// updated_at her probe'da ilerler (stale sweep bağışıklığı); satır
+// yoksa (yanlış süpürülmüş/silinmiş) state-change yolundan yeniden
+// açılır. FindOpenProblem tam satırı okur; Upsert bütün alanları
+// aynen ileri taşır (ack/assignee dahil).
+func (r *Runner) keepDownProblemAlive(ctx context.Context, m chstore.Monitor, msg string) {
+	ruleID := "monitor:" + m.ID
+	open, err := r.store.FindOpenProblem(ctx, ruleID, m.Name)
+	if err == nil && open != nil {
+		if err := r.store.UpsertProblem(ctx, *open); err != nil {
+			log.Printf("[monitor] keep-alive %s: %v", m.Name, err)
+		}
+		return
+	}
+	if err != nil {
+		// Okuma hatasında yeniden AÇMA: satır büyük ihtimalle duruyor,
+		// çift satır + çift bildirim üretmeyelim; sonraki probe dener.
+		return
+	}
+	r.handleStateChange(ctx, m, "down", msg)
 }
 
 func (r *Runner) handleStateChange(ctx context.Context, m chstore.Monitor, status, msg string) {

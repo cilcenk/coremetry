@@ -1343,6 +1343,14 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 			// v0.8.237 — PIT reads 403'd on this cluster earlier; stay
 			// on plain paging rather than re-attempting a doomed PIT.
 			pitID = ""
+		} else if !f.WantCursor {
+			// v0.9.361 — a PIT exists ONLY to hand a stable cursor back to a
+			// pager. The retain path already gates on WantCursor (v0.9.286);
+			// the OPEN did not, so every cursorless read — the service Logs
+			// tab, trace drawers, span detail, the Drain puller — opened a
+			// point-in-time on ES and immediately closed it. Two round-trips
+			// per read, purchased for nothing, at 10B docs/day.
+			pitID = ""
 		} else if pid, err := s.openPIT(ctx, esPITKeepAlive, queryIdx); err == nil {
 			pitID = pid
 		} else {

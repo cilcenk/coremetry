@@ -473,12 +473,13 @@ func (s *Server) getClusterJMXTrend(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		series, err := s.thanos.JMXTrend(qctx, cfg, ns, deploy, metric, byPod, pod, from, to)
+		series, total, err := s.thanos.JMXTrend(qctx, cfg, ns, deploy, metric, byPod, pod, from, to)
 		if err != nil {
 			return nil, err
 		}
 		return map[string]any{"cluster": name, "namespace": ns, "deployment": deploy,
-			"metric": metric, "byPod": byPod, "pod": pod, "series": series}, nil
+			"metric": metric, "byPod": byPod, "pod": pod, "series": series,
+			"seriesTotal": total}, nil
 	})
 }
 

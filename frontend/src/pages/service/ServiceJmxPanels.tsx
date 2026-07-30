@@ -130,7 +130,8 @@ export function ServiceJmxPanels({ service, clusters, effNs, effDeploy, cFrom, c
               byLabel="By pod" totalLabel={isJboss ? 'By datasource' : 'Total'}
               by={jmxBy[m] ?? !isJboss} onToggle={v => setJmxBy(s => ({ ...s, [m]: v }))}
               series={shown} seriesName={m} unit={unit}
-              maxSeries={isJboss ? 40 : undefined} onZoom={onZoom} onZoomReset={onZoomReset}
+              maxSeries={isJboss ? 40 : undefined}
+              totalSeries={jmxPanelQs[i]?.data?.seriesTotal} onZoom={onZoom} onZoomReset={onZoomReset}
               syncKey={`runtime:${service}`} />
           );
         })}

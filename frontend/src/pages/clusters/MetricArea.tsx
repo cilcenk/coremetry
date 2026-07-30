@@ -8,7 +8,7 @@ import type { ClusterNamedSeries } from '@/lib/types';
 // CPU/Mem kartlarından çıkarıldı (v0.9.35 ResToggleHeader'ın genel
 // hali): Servis → Infrastructure sekmesi aynı kartı "By pod"
 // etiketiyle kullanır. Seri yoksa null döner — görünmez-düşer.
-export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle, series, seriesName, unit, height = 180, maxSeries, onZoom, onZoomReset, syncKey }: {
+export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle, series, seriesName, unit, height = 180, maxSeries, totalSeries, onZoom, onZoomReset, syncKey }: {
   title: string;
   byLabel: string; // "By node" | "By pod" — toggle'ın sağ şıkkı
   // v0.9.146 — sol şık etiketi (varsayılan "Total"); jboss datasource
@@ -23,6 +23,10 @@ export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle,
   // v0.9.148 — MultiLineChart fold eşiği; jboss datasource panelleri
   // tüm datasource'ları göstersin diye yüksek verilir (others kesme yok).
   maxSeries?: number;
+  // v0.9.370 — sunucu kesmesi ifşası: kesme öncesi toplam seri sayısı.
+  // series.length'ten büyükse başlıkta "N / M pod" rozeti çizilir; sekme
+  // "hangi pod'un heap'i dolu" sorusuna bakarken 8-pod top-cut sessizdi.
+  totalSeries?: number;
   // v0.9.58 — drag-seçim global time picker'a yazılsın (operatör
   // isteği): MultiLineChart'ın onZoom'u aynen iletilir; çağıran
   // setRange({preset:'custom', fromMs, toMs}) yapar (Service.tsx emsali).
@@ -39,7 +43,15 @@ export function MetricArea({ title, byLabel, totalLabel = 'Total', by, onToggle,
   return (
     <Card header={
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-        <span>{title}</span>
+        <span>
+          {title}
+          {totalSeries != null && series.length < totalSeries && (
+            <span className="badge b-warn" style={{ marginLeft: 8 }}
+              title={`Sunucu ortalaması en yüksek ${series.length} pod'u döndürdü (${totalSeries} pod'dan). Pencere sonunda sıçrayan ama ortalaması düşük bir pod bu kesimin dışında kalabilir — tek pod'a bakmak için satırdan pod seçin.`}>
+              {series.length} / {totalSeries} pod
+            </span>
+          )}
+        </span>
         <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
           {([[totalLabel, false], [byLabel, true]] as const).map(([label, v]) => (
             <button key={label} type="button"

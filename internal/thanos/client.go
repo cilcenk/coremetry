@@ -1335,7 +1335,12 @@ func (s *Service) JMXMetricNames(ctx context.Context, c ClusterConfig, namespace
 // + Go-tarafı top-8 seçimi (topk'siz), tek fark seri adının `pod` label'ından
 // okunması ve JMX-özel selector (jmxTrendQuery). Metrik ailesi yoksa boş
 // döner; UI grafiği gizler (görünmez-düşer).
-func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, podFilter string, from, to time.Time) ([]NamedSeries, error) {
+// İkinci dönüş (v0.9.370): kesme ÖNCESİ toplam seri sayısı. Saf pod
+// grouping'te top-8 kesilir (aşağıda) ve UI "8 / N pod" diyebilsin diye
+// N burada döner — sekmenin var olma sebebi "hangi pod'un heap'i dolu"
+// sorusuyken en DÜŞÜK ortalamalı pod'ların sessizce düşmesi, pencere
+// sonunda OOM'a tırmanan pod'u da düşürebiliyordu (ortalaması düşük).
+func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, podFilter string, from, to time.Time) ([]NamedSeries, int, error) {
 	step := stepForWindow(from, to)
 	params := url.Values{
 		"query": {jmxTrendQuery(namespace, deploy, metric, byPod, podFilter)},
@@ -1345,7 +1350,7 @@ func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, depl
 	}
 	series, err := s.doQuery(ctx, c, "/api/v1/query_range", params)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	byClause, nameLabels := jmxGrouping(metric, byPod)
 	type acc struct {
@@ -1378,6 +1383,7 @@ func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, depl
 	}
 	// top-N YALNIZ saf pod grouping'te (jvm by pod, çok pod olabilir);
 	// datasource serilerini KESME (operatör: 5-10+ datasource hepsi görünsün).
+	total := len(all)
 	if byClause == "pod" && len(all) > maxTrendSeries {
 		sort.Slice(all, func(i, j int) bool {
 			if all[i].sum != all[j].sum {
@@ -1391,7 +1397,7 @@ func (s *Service) JMXTrend(ctx context.Context, c ClusterConfig, namespace, depl
 	for _, a := range all {
 		out = append(out, NamedSeries{Name: a.name, Points: a.pts})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // NetworkTrend — cluster toplam ağ hızının dakika-bucket trendi

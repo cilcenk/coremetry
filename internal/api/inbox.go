@@ -237,6 +237,19 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// field treats an empty slice as "no constraint" (v0.8.310), so
 		// passing it through would return an UNFILTERED page.
 		teamIsEmpty := teamServices != nil && len(teamServices) == 0
+		// v0.9.354 — the kind facet gates WHICH sources are fetched at all.
+		// Selecting just "Exceptions" used to fetch + enrich up to 2000
+		// problems (four CH round-trips) and then throw every one of them
+		// away in applyInboxFacets — the second half of the operator's
+		// "çok yavaş geliyor ya da gelmiyor". Only problems and exceptions
+		// are gated: they are the expensive sources (enrichment / double
+		// fetch). Anomalies and incidents stay always-fetched — small FINAL
+		// state tables, no enrichment — so their chip counts remain exact
+		// from rows.
+		kindOn := make(map[string]bool, len(kinds))
+		for _, k := range kinds {
+			kindOn[k] = true
+		}
 		// scanCapped: a source came back exactly full, so there were more
 		// candidates than we looked at and the narrow below is answering over
 		// a slice. Travels with the response — the "no silent caps" rule
@@ -257,8 +270,11 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// different verbs backed by different state, so folding them in
 		// would make one view mean three things. Skipping also keeps four
 		// CH round-trips (list + three enrichers) off a rarely-opened view.
+		// skippedCounts carries exact chip totals for sources we did not
+		// fetch, merged into `counts` after inboxFacetCounts.
+		skippedCounts := map[string]int{}
 		var probs []chstore.Problem
-		if statusFilter != "ignored" {
+		if statusFilter != "ignored" && kindOn["problem"] {
 			var err error
 			probs, err = s.store.ListProblems(ctx, chstore.ProblemFilter{
 				Status:      pickStatus(statusFilter),
@@ -279,6 +295,20 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// Same enrichment chain Problems UI runs through, so the
 		// derived priority lines up exactly. No-ops on the empty slice
 		// the `ignored` pivot leaves behind.
+		if statusFilter != "ignored" && !kindOn["problem"] {
+			// Deselected → one cheap COUNT instead of fetch + four enrichers.
+			// EDGE, stated honestly: the count's allowlist keeps service-less
+			// (global) rows via its `service='' OR …` escape, while the row
+			// path's strict team matching drops them — so under an ACTIVE
+			// team filter this chip can overcount by the number of
+			// service-less problems. Without a team filter it is exact.
+			if teamIsEmpty {
+				skippedCounts["problem"] = 0
+			} else if n, err := s.store.CountProblemsNotInStatuses(ctx,
+				pickExcludedStatuses(statusFilter), teamServices); err == nil {
+				skippedCounts["problem"] = int(n)
+			}
+		}
 		probs = s.store.EnrichProblemsWithRunbooks(ctx, probs)
 		probs = s.store.EnrichProblemsWithClusters(ctx, probs, time.Hour)
 		probs = s.store.EnrichProblemsWithDeploys(ctx, probs, 30*time.Minute)
@@ -314,7 +344,18 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// exception filter's Services field treats an empty slice as "no
 		// constraint" (v0.8.310 contract, opposite of ProblemFilter's), so
 		// passing it through would silently return an unfiltered page.
-		if !teamIsEmpty {
+		if !teamIsEmpty && !kindOn["exception"] {
+			// Deselected → exact COUNT (same state + floor + allowlist the
+			// fetch would have used; ExceptionGroupFilter.Services is a
+			// strict IN, so no service-less edge here).
+			if n, err := s.store.CountExceptionGroups(ctx, chstore.ExceptionGroupFilter{
+				State: pickExceptionState(statusFilter), MinOccurrences: minOcc,
+				Services: teamServices,
+			}); err == nil {
+				skippedCounts["exception"] = int(n)
+			}
+		}
+		if !teamIsEmpty && kindOn["exception"] {
 			exFilter := chstore.ExceptionGroupFilter{
 				State: pickExceptionState(statusFilter), Limit: excLimit,
 				MinOccurrences: minOcc,
@@ -502,6 +543,15 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// client-side counts were derived from the capped page, so on prod
 		// "Exceptions 0" meant "no exceptions in the top 300 incidents".
 		counts := inboxFacetCounts(items)
+		// v0.9.354 — chips for kinds we did not fetch still show what EXISTS
+		// (the v0.9.330 contract); the numbers come from the COUNT queries
+		// above. Priority chips now cover the FETCHED kinds only — the
+		// honest cost of not fetching 2000 rows to discard them; the
+		// hidden-kind guard on the page reads these per-kind totals and
+		// stays intact.
+		for k, n := range skippedCounts {
+			counts[k] = n
+		}
 		items = applyInboxFacets(items, kinds, prios)
 
 		// Rank the WHOLE candidate set before the cap (v0.9.318 scan fix +

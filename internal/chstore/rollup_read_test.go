@@ -34,6 +34,10 @@ func TestRollupREDSQL(t *testing.T) {
 			"quantilesTDigestMerge(0.5, 0.95, 0.99)(q_state)",
 			"LIMIT 250000", "max_execution_time = 15",
 			"INTERVAL 60 SECOND",
+			// v0.9.386 — CH sürücüsü Scan'de katı: toUnixTimestamp UInt32
+			// döner, hedef int64 → "converting UInt32 to *int64 is
+			// unsupported". toInt64 sarmalayıcısı sözleşmenin parçası.
+			"toInt64(toUnixTimestamp(",
 		} {
 			if !strings.Contains(sql, want) {
 				t.Errorf("SQL %q içermeli:\n%s", want, sql)

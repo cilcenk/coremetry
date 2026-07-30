@@ -599,6 +599,9 @@ func (s *Server) Start() error {
 	// Pod-churn rollouts — instance-set turnover events (replaces
 	// version-bump markers when service.version is constant). v0.8.x.
 	mux.HandleFunc("GET /api/services/{name}/rollouts", s.getServiceRollouts)
+	// v0.9.435 (operatör istegi) — filo Deploys/Rollouts geçmişi
+	// (deploys_page.go): imaj değişimleri + pod-churn tek çizelgede.
+	mux.HandleFunc("GET /api/deploys/history", s.getDeploysHistory)
 	mux.HandleFunc("GET /api/services/{name}/metadata", s.getServiceMetadata)
 	mux.HandleFunc("PUT /api/services/{name}/metadata", auth.RequireAnyRole(editorRoles, s.putServiceMetadata))
 	mux.HandleFunc("GET /api/services-metadata", s.listServiceMetadata)

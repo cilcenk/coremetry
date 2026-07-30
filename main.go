@@ -977,6 +977,11 @@ func main() {
 	// v0.5.488 — worker-only.
 	if mode.worker {
 		go anomaly.NewProblemExplainer(store, copilotSvc, lockImpl).Start(ctx)
+		// v0.9.415 (operatör istegi) — P1 exception gruplarına proaktif
+		// kök-sebep özeti: inbox'a "anonslanan" grup, operatör tıklamadan
+		// trace+log soruşturmalı CoSRE özetiyle gelir. Aynı leader-lock /
+		// Active() / kota-devre-kesici disiplinleri.
+		go anomaly.NewExceptionExplainer(store, logsStore, copilotSvc, lockImpl).Start(ctx)
 	}
 
 	// ── Root-cause synthesizer (rc #2, v0.8.x) ───────────────────────────────

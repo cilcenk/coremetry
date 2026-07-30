@@ -2202,6 +2202,9 @@ export interface ExceptionGroup {
   resolvedAt?: number;    // unix ns, present only when state was/is resolved
   occurrences: number;
   notes: string;
+  // v0.9.415 — ExceptionExplainer'ın proaktif kök-sebep özeti (P1
+  // gruplara arka planda dolar); boş/yok = henüz üretilmedi.
+  aiSummary?: string;
 }
 
 export interface ExceptionSample {

@@ -42,6 +42,20 @@ function levelOf(r: LogRow): Lvl {
 
 const LVL_BADGE: Record<Lvl, string> = { error: 'b-err', warn: 'b-warn', info: 'b-ok', debug: 'b-mut' };
 
+// v0.9.358 — histogram serisi adını levelOf ile AYNI kurallarla banda indirger;
+// iki ayrı sınıflandırıcı sürüklenirse çip ile çubuk yine ayrışırdı.
+function bandOfName(name: string): Lvl {
+  const t = name.toUpperCase();
+  if (t.startsWith('ERR') || t.startsWith('FATAL') || t.startsWith('CRIT')) return 'error';
+  if (t.startsWith('WARN')) return 'warn';
+  if (t.startsWith('INFO')) return 'info';
+  return 'debug';
+}
+// Sunucu severity paramı MINIMUM'dur (OTel numarası). error bandı için kesin
+// (>=17 zaten bandın kendisi); warn/info için taban — sayfa o taban ÜSTÜNDEN
+// gelir, istemci bant kesimi görünümü tamamlar.
+const LVL_MIN_SEV: Record<Lvl, number> = { error: 17, warn: 13, info: 9, debug: 0 };
+
 export function ServiceLogsTab({ service, range }: { service: string; range: TimeRange }) {
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const rangeParam = encodeRange(range);
@@ -60,9 +74,14 @@ export function ServiceLogsTab({ service, range }: { service: string; range: Tim
     [service, search],
   );
 
+  // v0.9.358 — seçili bant SUNUCUYA gider: eskiden 200 satır her zaman
+  // "her seviyeden en yeni 200"dü ve ERROR çipi o sayfada sıfır sayarken
+  // histogram kıpkırmızı olabiliyordu (dakikada 10k satır basan bir servis
+  // 30 dakikalık pencerenin ilk ~1.2 saniyesiyle 200'ü dolduruyor).
+  const minSev = lvl === 'all' ? undefined : (LVL_MIN_SEV[lvl] || undefined);
   const q = useQuery({
-    queryKey: ['service-tab-logs', service, from, to, search],
-    queryFn: () => api.logs({ limit: 200, from, to, service, search: search || undefined }),
+    queryKey: ['service-tab-logs', service, from, to, search, minSev ?? 0],
+    queryFn: () => api.logs({ limit: 200, from, to, service, search: search || undefined, severity: minSev }),
     enabled: !!service,
     staleTime: 15_000,
     // v0.8.3 (operator-reported ES incident) — /api/logs is uncached and
@@ -72,11 +91,23 @@ export function ServiceLogsTab({ service, range }: { service: string; range: Tim
   });
   const logs = useMemo(() => q.data?.logs ?? [], [q.data]);
 
+  // v0.9.358 — çip sayıları histogramın ZATEN çektiği severity serisinden
+  // (pencerenin tamamı), sayfadan değil. Aynı ekrandaki iki sayı aynı
+  // popülasyonu saymalı; eskiden çip en yeni 200 satırı sayıyordu.
+  // Histogram verisi gelmeden sayfa-türevi sayılara düşer (yüklenme anı).
+  const [bandTotals, setBandTotals] = useState<Record<string, number> | null>(null);
+  const onHistSeries = useMemo(() => (series: { name: string; total: number }[]) => {
+    const c: Record<string, number> = { all: 0, error: 0, warn: 0, info: 0, debug: 0 };
+    for (const sr of series) { c[bandOfName(sr.name)] += sr.total; c.all += sr.total; }
+    setBandTotals(c);
+  }, []);
+
   const counts = useMemo(() => {
+    if (bandTotals) return bandTotals;
     const c: Record<string, number> = { all: logs.length, error: 0, warn: 0, info: 0, debug: 0 };
     for (const r of logs) c[levelOf(r)]++;
     return c;
-  }, [logs]);
+  }, [bandTotals, logs]);
   const rows = useMemo(() => (lvl === 'all' ? logs : logs.filter(r => levelOf(r) === lvl)), [logs, lvl]);
 
   return (
@@ -102,7 +133,7 @@ export function ServiceLogsTab({ service, range }: { service: string; range: Tim
       <div className="card ov-mb">
         <div className="ov-card-h"><h3>Log volume</h3><span className="ov-sub">by level</span></div>
         <div className="ov-card-b" style={{ paddingTop: 8 }}>
-          <LogsHistogram range={{ from, to }} filter={filter} />
+          <LogsHistogram range={{ from, to }} filter={filter} onSeries={onHistSeries} />
         </div>
       </div>
 
@@ -110,7 +141,13 @@ export function ServiceLogsTab({ service, range }: { service: string; range: Tim
       <div className="card">
         <div className="ov-card-h">
           <h3>Logs</h3>
-          <span className="ov-sub">{rows.length} lines{lvl !== 'all' ? ` · ${lvl}` : ''}</span>
+          <span className="ov-sub">
+            {rows.length} lines{lvl !== 'all' ? ` · ${lvl}` : ''}
+            {/* v0.9.358 — sınır varsa görünür olur: 200'lük sayfa penceredeki
+                her şey değilse gerçek toplamı söyle (total zaten telde). */}
+            {(q.data?.total ?? 0) > logs.length &&
+              ` · pencerede ${q.data!.total}${q.data?.totalIsLowerBound ? '+' : ''} satır, en yeni ${logs.length} gösteriliyor`}
+          </span>
         </div>
         {q.isLoading ? (
           <TableSkeleton rows={10} cols={4} />

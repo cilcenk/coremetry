@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useRef } from 'react';
 import { api } from '@/lib/api';
 import { severityBandOf } from '@/lib/severityBand';
 import { TimeChart, type TimeChartSeries } from '@/components/charts/TimeChart';
@@ -45,14 +45,21 @@ type Filter = {
 
 type Series = { name: string; points: { t: number; v: number }[] };
 
-export function LogsHistogram({ range, filter, onRangeSelect }: {
+export function LogsHistogram({ range, filter, onRangeSelect , onSeries }: {
   range: { from?: number; to?: number };
   filter: Filter;
   // Drag-select a horizontal span → called with the selection as unix-ns
   // bounds; the parent narrows its time range. Omitted → hover-only.
   onRangeSelect?: (fromNs: number, toNs: number) => void;
+  // v0.9.358 — opsiyonel; verilirse fetch edilen serilerin bant toplamları iletilir.
+  onSeries?: (s: { name: string; total: number }[]) => void;
 }) {
   const [data, setData] = useState<Series[] | null | undefined>(undefined);
+  // v0.9.358 — the per-band series this chart ALREADY fetches, exposed to the
+  // parent so chip counts can be honest without a second request. Ref'd (the
+  // onZoomRef pattern) so a per-render callback identity doesn't re-run the
+  // fetch effect.
+  const onSeriesRef = useRef(onSeries); onSeriesRef.current = onSeries;
 
   useEffect(() => {
     setData(undefined);
@@ -74,7 +81,13 @@ export function LogsHistogram({ range, filter, onRangeSelect }: {
       groupBy: 'severity',
       bucketSec: pickBucket(range),
     })
-      .then(d => setData(d ?? []))
+      .then(d => {
+        setData(d ?? []);
+        onSeriesRef.current?.((d ?? []).map(sr => ({
+          name: sr.name,
+          total: sr.points.reduce((a, p) => a + p.v, 0),
+        })));
+      })
       .catch(() => setData(null));
   }, [range.from, range.to, filter.service, filter.cluster, filter.env, filter.search, filter.severity, filter.traceId, filter.hasTrace]);
 

@@ -172,7 +172,25 @@ Not: bu sözleşme, grafik-deneyimi auditinin (docs/audit/chart-experience-audit
 
 ## 8. Aşama 2'ye bırakılanlar (onay bekler)
 
-- `RollupSelector` + `registerRollupRoutes()` implementasyonu ve mevcut okuma yollarının kademeli geçişi
-- Attr promotion migration'ı (`attr_channel_code`/`attr_function_code`) — wide MV maliyetini düşürür; distributed-column-safety disipliniyle (hasXCol probe)
-- spanmetrics ailesiyle konsolidasyon kararı
-- Grafik-audit Faz B ile ortak `{series, stepSeconds}` yanıt zarfı
+- `RollupSelector` + `registerRollupRoutes()` implementasyonu ve mevcut okuma yollarının kademeli geçişi — **Aşama 2'de gemide** (v0.9.385-387; entry-RED batch fast-path v0.9.412)
+- Attr promotion migration'ı — **`migrations/0005_attr_promotion.sql` olarak hazır** (aşağıda §9)
+- spanmetrics ailesiyle konsolidasyon kararı (açık)
+- Grafik-audit Faz B ile ortak `{series, stepSeconds}` yanıt zarfı — **gemide** (v0.9.391)
+
+## 9. Attr promotion (`0005_attr_promotion.sql`, Aşama-3)
+
+Amaç: wide 1m MV'nin span başına 2× `indexOf` dizi taramasını
+`spans_local` üzerinde MATERIALIZED kolonlara taşımak — §4'teki ingest
+kestirimi +%4-8 → **+%2-4**. Tanımlar uygulamanın kendi boot
+ALTER'larıyla (store.go:2231 `attrColAlters`) birebir; dış Distributed
+prod'da uygulama bu ALTER'ları bilinçli atladığı için sahiplik bu
+migration'da.
+
+Sıra KRİTİK (kırık MV trigger'ı tüm ingest'i keser — db_stmt_hash
+dersi): önce spans_local + spans kolonları (ON CLUSTER), her shard'da
+çözünürlük doğrulaması, ANCAK SONRA `ALTER TABLE mv_rollup_spans_wide_1m
+MODIFY QUERY`. Rollup tablolarının şeması/verisi değişmez; geri dönüş =
+MODIFY QUERY'yi 0002'deki orijinal SELECT ile tekrar koşmak. Yan etki:
+bir sonraki uygulama boot'unda probe başarılı olur ve /traces extras
+CHANNEL_CODE/FUNCTION_CODE'u promoted koldan okur (kod değişikliği
+gerekmez).

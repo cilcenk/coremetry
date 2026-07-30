@@ -138,6 +138,8 @@ func guidedSuggestions(route guidedRoute) []string {
 			return []string{svc + " sağlığı nasıl?", svc + " hata logları?", svc + " son deploy etkisi?"}
 		}
 		return []string{"Açık problemler?", "Takımımın servisleri nasıl?"}
+	case guidedShiftSummary:
+		return []string{"Açık problemler?", "En yavaş trace'ler?", "Takımımın servisleri nasıl?"}
 	}
 	return nil
 }

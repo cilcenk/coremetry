@@ -147,6 +147,7 @@ func TestGuidedSuggestionsRoute(t *testing.T) {
 		{Intent: guidedMyProblems},
 		{Intent: guidedPodHealth, Service: "payments"},
 		{Intent: guidedPodHealth},
+		{Intent: guidedShiftSummary},
 	}
 	for _, r := range routes {
 		sugg := guidedSuggestions(r)

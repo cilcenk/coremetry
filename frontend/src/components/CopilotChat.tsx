@@ -32,6 +32,7 @@ type Turn = ChatMessage & {
 // yanıtlayamadığı şekle çip koymuyoruz; pod/JVM intent'i gelince çipi de
 // gelir (v0.9.376 adayı).
 const SAMPLE_QUESTIONS = [
+  'Dün gece neler oldu?',               // shift_summary (v0.9.416) — vardiya özeti
   'Takımımın servisleri nasıl?',        // my_services — User.Team → owner/SRE eşleşmesi
   'Takımımın açık problemleri neler?',  // my_problems
   'Şu an açık problemler ve kök neden?',// problems + root-cause hipotezleri

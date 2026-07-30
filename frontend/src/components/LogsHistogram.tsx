@@ -45,12 +45,15 @@ type Filter = {
 
 type Series = { name: string; points: { t: number; v: number }[] };
 
-export function LogsHistogram({ range, filter, onRangeSelect , onSeries }: {
+export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSeries }: {
   range: { from?: number; to?: number };
   filter: Filter;
   // Drag-select a horizontal span → called with the selection as unix-ns
   // bounds; the parent narrows its time range. Omitted → hover-only.
   onRangeSelect?: (fromNs: number, toNs: number) => void;
+  // v0.9.373 — çift-tık geri: TimeChart'ın zoom-yığını pop'una aynen
+  // iletilir; verilmezse eski davranış (yalnız brush).
+  onZoomReset?: () => void;
   // v0.9.358 — opsiyonel; verilirse fetch edilen serilerin bant toplamları iletilir.
   onSeries?: (s: { name: string; total: number }[]) => void;
 }) {
@@ -119,7 +122,10 @@ export function LogsHistogram({ range, filter, onRangeSelect , onSeries }: {
               seviye süzgeci açık — oran yok ·{' '}
             </span>
           )}
-          sürükle = zaman seç · çift tık = geri
+          {/* v0.9.373 — ipucu dürüst: kablosuz grafikte "sürükle" yazıp
+              hiçbir şey yapmamak, tam hata sivrisini daraltmak isteyen
+              operatörü sessizce yarı yolda bırakıyordu. */}
+          {onRangeSelect ? 'sürükle = zaman seç · çift tık = geri' : 'hover = detay'}
         </span>
       </div>
       <TimeChart
@@ -131,6 +137,7 @@ export function LogsHistogram({ range, filter, onRangeSelect , onSeries }: {
         onBrush={onRangeSelect
           ? (fromMs, toMs) => onRangeSelect(fromMs * 1e6, toMs * 1e6)
           : undefined}
+        onZoomReset={onZoomReset}
       />
     </div>
   );

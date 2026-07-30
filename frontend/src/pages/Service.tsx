@@ -496,7 +496,8 @@ function ServiceDetailInner() {
               <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations}
                 onZoom={handleZoom} onZoomReset={handleZoomReset} />
             )}
-            {tab === 'logs' && <ServiceLogsTab service={svc} range={range} windowNs={rangeNs} />}
+            {tab === 'logs' && <ServiceLogsTab service={svc} range={range} windowNs={rangeNs}
+              onZoom={handleZoom} onZoomReset={handleZoomReset} />}
             {tab === 'topology' && <ServiceTopologyTab service={svc} range={range} />}
             {tab === 'infra' && <ServiceInfraTab service={svc} range={range}
               onZoom={handleZoom} onZoomReset={handleZoomReset} />}

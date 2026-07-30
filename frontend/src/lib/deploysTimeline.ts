@@ -21,6 +21,11 @@ export type TimelineRow = {
   podsChurn?: number; // sayısal sıralama anahtarı (added+removed)
   podsTitle?: string;
   spanCount?: number;
+  // v0.9.436 — etki deltaları (yalnız deploy satırlarında, en yeni N):
+  // errDeltaPp = hata oranı değişimi (yüzde puanı), p99DeltaPct = %.
+  errDeltaPp?: number;
+  p99DeltaPct?: number;
+  impactTitle?: string;
 };
 
 function churnBits(ro: FleetRollout): Pick<TimelineRow, 'podsDelta' | 'podsChurn' | 'podsTitle'> {
@@ -47,6 +52,13 @@ export function buildDeployTimeline(
       timeNs: dep.firstSeenNs, kind: 'deploy', service: dep.service,
       version: dep.version, podsDelta: '—', spanCount: dep.spanCount,
     };
+    if (dep.impact) {
+      row.errDeltaPp = dep.impact.errorRateDeltaPct;
+      row.p99DeltaPct = dep.impact.p99DeltaPct;
+      row.impactTitle =
+        `Önce: ${dep.impact.before.rps.toFixed(1)} rps · hata %${(dep.impact.before.errorRate * 100).toFixed(2)} · p99 ${dep.impact.before.p99Ms.toFixed(0)}ms\n` +
+        `Sonra: ${dep.impact.after.rps.toFixed(1)} rps · hata %${(dep.impact.after.errorRate * 100).toFixed(2)} · p99 ${dep.impact.after.p99Ms.toFixed(0)}ms (±${Math.round(dep.impact.windowSec / 60)}dk)`;
+    }
     // Aynı olayın churn ikizini ara ve deploy satırına kat.
     for (let i = 0; i < rollouts.length; i++) {
       if (usedRollout.has(i)) continue;

@@ -36,6 +36,11 @@ import (
 const deploysPageRolloutCap = 20
 const deploysPageRolloutConcurrency = 8
 
+// deploysPageImpactCap (v0.9.436) — etki hesabı EN YENİ N deploy için:
+// satır başına bir bounded önce/sonra taraması (ComputeDeployImpact,
+// ±10dk, service+time PK budamalı). Kısıt yanıtta ifşa edilir.
+const deploysPageImpactCap = 25
+
 // deploysPageRolloutMaxWindow — GetServiceRollouts LIMIT 2000 bucket
 // (≈6.94g); marjlı kırpma.
 const deploysPageRolloutMaxWindow = 156 * time.Hour // 6.5 gün
@@ -44,6 +49,12 @@ const deploysPageRolloutMaxWindow = 156 * time.Hour // 6.5 gün
 type FleetRollout struct {
 	Service string `json:"service"`
 	chstore.Rollout
+}
+
+// DeployRow (v0.9.436) — deploy girdisi + opsiyonel etki deltası.
+type DeployRow struct {
+	chstore.RecentDeployEntry
+	Impact *chstore.DeployImpact `json:"impact,omitempty"`
 }
 
 func (s *Server) getDeploysHistory(w http.ResponseWriter, r *http.Request) {
@@ -126,8 +137,33 @@ func (s *Server) getDeploysHistory(w http.ResponseWriter, r *http.Request) {
 			return rollouts[i].TimeUnixNs > rollouts[j].TimeUnixNs
 		})
 
+		// v0.9.436 — etki deltası (önce/sonra RED): en yeni N deploy için,
+		// soft-fail (etkisiz satır ≠ hata). inWin first_seen DESC sıralı
+		// geldiğinden ilk N = en yeniler.
+		rows := make([]DeployRow, len(inWin))
+		for i, d := range inWin {
+			rows[i] = DeployRow{RecentDeployEntry: d}
+		}
+		ig, igctx := errgroup.WithContext(ctx)
+		ig.SetLimit(deploysPageRolloutConcurrency)
+		for i := range rows {
+			if i >= deploysPageImpactCap {
+				break
+			}
+			i := i
+			ig.Go(func() error {
+				imp, ierr := s.store.ComputeDeployImpact(igctx,
+					rows[i].Service, rows[i].Version, rows[i].FirstSeenNs, 600)
+				if ierr == nil && imp != nil && imp.Before.Count > 0 && imp.After.Count > 0 {
+					rows[i].Impact = imp
+				}
+				return nil
+			})
+		}
+		_ = ig.Wait()
+
 		return map[string]any{
-			"deploys":  inWin,
+			"deploys":  rows,
 			"rollouts": rollouts,
 			// Dürüstlük bayrakları — UI şeridi bunlardan konuşur.
 			"deploysTruncated":     len(deps) == deployLimit,
@@ -135,6 +171,7 @@ func (s *Server) getDeploysHistory(w http.ResponseWriter, r *http.Request) {
 			"candidateCapped":      capped,
 			"rolloutWindowClamped": rolloutClamped,
 			"rolloutScanErrors":    scanErrs.Load(),
+			"impactComputed":       min(len(rows), deploysPageImpactCap),
 		}, nil
 	})
 }

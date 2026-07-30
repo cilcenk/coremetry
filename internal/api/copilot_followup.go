@@ -91,6 +91,57 @@ var followUpFillable = map[guidedIntent]bool{
 	guidedPodHealth:    true,
 }
 
+// guidedSuggestions (v0.9.411) — cevap sonrası konuya-duyarlı takip
+// önerileri. Frontend'in statik FOLLOWUPS çipleri her cevapta aynıydı;
+// bunlar rotadan türetilir ("payments nasıl?" → "payments hata
+// logları?"). HER öneri guided router'da kendi başına yönlenen bir
+// şekildedir (testte pinli) — çipe tıklamak asla serbest döngüye
+// düşürmez. Deterministik; LLM'e sorulmaz.
+func guidedSuggestions(route guidedRoute) []string {
+	svc := route.Service
+	switch route.Intent {
+	case guidedServiceHealth:
+		return []string{
+			svc + " en yavaş trace'ler?",
+			svc + " hata logları?",
+			svc + " son deploy etkisi?",
+			svc + " pod'ları nasıl?",
+		}
+	case guidedProblems:
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " hata logları?", svc + " en yavaş trace'ler?"}
+		}
+		return []string{"Takımımın açık problemleri?", "En yavaş trace'ler?", "Son 1 saatteki log hataları?"}
+	case guidedSlowTraces:
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " hata logları?", svc + " son deploy etkisi?"}
+		}
+		return []string{"Açık problemler?", "Takımımın servisleri nasıl?"}
+	case guidedDeployImpact:
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?", svc + " hata logları?"}
+		}
+		return []string{"Açık problemler?", "En yavaş trace'ler?"}
+	case guidedLogErrors:
+		if svc != "" {
+			return []string{svc + " problemleri?", svc + " sağlığı nasıl?", svc + " en yavaş trace'ler?"}
+		}
+		return []string{"Açık problemler?", "En yavaş trace'ler?"}
+	case guidedFamilyHealth:
+		return []string{"Açık problemler?", "En yavaş trace'ler?", "Son 1 saatteki log hataları?"}
+	case guidedMyServices:
+		return []string{"Takımımın açık problemleri?", "En yavaş trace'ler?"}
+	case guidedMyProblems:
+		return []string{"Takımımın servisleri nasıl?", "En yavaş trace'ler?"}
+	case guidedPodHealth:
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " hata logları?", svc + " son deploy etkisi?"}
+		}
+		return []string{"Açık problemler?", "Takımımın servisleri nasıl?"}
+	}
+	return nil
+}
+
 // applyFollowUpContext — devralma çekirdeği. route = mevcut sorunun
 // kendi rotası (guidedNone olabilir). Dönenler: yeni rota, rangeS,
 // devralınan temel mesaj (operasyon çözümü için) ve değişiklik bayrağı.

@@ -127,6 +127,40 @@ func TestPriorUserTexts(t *testing.T) {
 	}
 }
 
+// v0.9.411 pini: HER takip önerisi guided router'da kendi başına
+// yönlenmeli — çipe tıklamak asla serbest tool döngüsüne düşürmez.
+// Router kelime kökleri değişirse bu test öneri metnini de değişmeye
+// zorlar.
+func TestGuidedSuggestionsRoute(t *testing.T) {
+	routes := []guidedRoute{
+		{Intent: guidedServiceHealth, Service: "payments"},
+		{Intent: guidedProblems, Service: "payments"},
+		{Intent: guidedProblems},
+		{Intent: guidedSlowTraces, Service: "payments"},
+		{Intent: guidedSlowTraces},
+		{Intent: guidedDeployImpact, Service: "payments"},
+		{Intent: guidedDeployImpact},
+		{Intent: guidedLogErrors, Service: "payments"},
+		{Intent: guidedLogErrors},
+		{Intent: guidedFamilyHealth},
+		{Intent: guidedMyServices},
+		{Intent: guidedMyProblems},
+		{Intent: guidedPodHealth, Service: "payments"},
+		{Intent: guidedPodHealth},
+	}
+	for _, r := range routes {
+		sugg := guidedSuggestions(r)
+		if len(sugg) == 0 {
+			t.Errorf("rota %s/%s: öneri boş", r.Intent, r.Service)
+		}
+		for _, q := range sugg {
+			if got := routeGuidedIntent(q, fuServices, fuEnvs, ""); got.Intent == guidedNone {
+				t.Errorf("öneri %q yönlenemiyor (rota %s) — serbest döngüye düşer", q, r.Intent)
+			}
+		}
+	}
+}
+
 // guidedRangeSExplicit — refactor pini: açık pencere bayrağı doğru,
 // guidedRangeS davranışı birebir korunmuş (varsayılan 1800).
 func TestGuidedRangeSExplicit(t *testing.T) {

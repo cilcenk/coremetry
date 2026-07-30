@@ -1114,6 +1114,7 @@ export default function ClustersPage() {
                     <MultiLineChart
                       series={netTrendToSeries(netTrendQ.data!.trend!)}
                       unit="bytes" onZoom={chartZoom} onZoomReset={chartZoomReset}
+                      syncKey="clusters"
                       height={200} />
                   </Card>
                 )}

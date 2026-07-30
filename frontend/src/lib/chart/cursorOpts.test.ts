@@ -52,7 +52,9 @@ describe('buildCursorOpts', () => {
   });
 
   it('syncKey → cursor.sync.key (kardeş grafik imleç senkronu)', () => {
-    expect(buildCursorOpts({ syncKey: 'service:api' }).cursor.sync).toEqual({ key: 'service:api' });
+    // v0.9.388 — scales: ['x', null] sözleşmenin parçası: Y senkronu
+    // kapalı (ms panelinden req/s paneline değer taşımaz), X senkron.
+    expect(buildCursorOpts({ syncKey: 'service:api' }).cursor.sync).toEqual({ key: 'service:api', scales: ['x', null] });
   });
 
   it('TC şekli: dragX/setScale bayrakları aynen geçer', () => {

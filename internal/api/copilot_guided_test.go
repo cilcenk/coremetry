@@ -669,7 +669,7 @@ func TestServicesForUserTeam(t *testing.T) {
 		{"", nil},
 	}
 	for _, c := range cases {
-		got := servicesForUserTeam(mds, c.team)
+		got := servicesForUserTeam(chstore.TeamAliases{}, mds, c.team)
 		if c.want == nil {
 			if got != nil {
 				t.Errorf("team %q: got %v, want nil", c.team, got)

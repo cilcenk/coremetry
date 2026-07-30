@@ -95,6 +95,7 @@ export function TeamRoutingTab() {
   const missing = rows.filter(t => contactFor(t).trim() === '').length;
 
   return (
+    <>
     <form onSubmit={save} style={{ maxWidth: 720 }}>
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Yeni bir problem <b>ilk kez</b> açıldığında, servisin katalogdaki owner
@@ -184,5 +185,94 @@ export function TeamRoutingTab() {
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
       <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
     </form>
+    {/* v0.9.427 — takım alias tablosu, routing'in doğal komşusu. */}
+    <TeamAliasesCard />
+    </>
+  );
+}
+
+// ── Takım eşleştirme (v0.9.427, operatör istegi) ────────────────────────────
+// LDAP takım adı ("SY-Dijital Bankacılık") ile telemetri metadata'sındaki
+// ad ("dijitalsy", "avengersy") aynı takımın farklı yazımları olabiliyor —
+// eşleme operatör tablosudur; my_services/my_problems soruları, inbox ve
+// /problems owner/SRE filtreleri bu tablo üzerinden eşleşir. Karşılaştırma
+// büyük/küçük harf + Türkçe İ/ı duyarsızdır; buradaki yazım yalnız gösterim.
+export function TeamAliasesCard() {
+  const [ta, setTa] = useState<import('@/lib/types').TeamAliases | null | undefined>(undefined);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+  const [newAlias, setNewAlias] = useState('');
+  const [newCanon, setNewCanon] = useState('');
+
+  useEffect(() => {
+    api.getTeamAliases().then(setTa).catch(() => setTa(null));
+  }, []);
+
+  const save = async (next: Record<string, string>) => {
+    setBusy(true); setMsg(null);
+    try {
+      const saved = await api.putTeamAliases({ aliases: next });
+      setTa(saved);
+      setMsg({ kind: 'ok', text: 'Kaydedildi.' });
+    } catch (e) {
+      setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = (e: FormEvent) => {
+    e.preventDefault();
+    const a = newAlias.trim(), c = newCanon.trim();
+    if (!a || !c || !ta) return;
+    void save({ ...ta.aliases, [a]: c });
+    setNewAlias(''); setNewCanon('');
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="ov-card-h">
+        <h3>Takım eşleştirme (alias)</h3>
+        <span className="ov-sub">LDAP adı ↔ telemetri adı — "dijitalsy" → "SY-Dijital Bankacılık"</span>
+      </div>
+      <div className="ov-card-b">
+        {ta === undefined && <Spinner />}
+        {ta === null && <Empty icon="✗" title="Alias tablosu okunamadı" />}
+        {ta && (
+          <>
+            {Object.keys(ta.aliases).length === 0 && (
+              <div style={{ color: 'var(--text3)', fontSize: 12, marginBottom: 10 }}>
+                Henüz eşleme yok. Telemetrideki takım adını kanonik (LDAP) ada bağla.
+              </div>
+            )}
+            {Object.entries(ta.aliases).map(([alias, canon]) => (
+              <div key={alias} style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 6 }}>
+                <span className="mono" style={{ fontSize: 12, minWidth: 180 }}>{alias}</span>
+                <span style={{ color: 'var(--text3)' }}>→</span>
+                <span className="mono" style={{ fontSize: 12, flex: 1 }}>{canon}</span>
+                <Button variant="ghost" size="sm" disabled={busy}
+                  onClick={() => {
+                    const next = { ...ta.aliases };
+                    delete next[alias];
+                    void save(next);
+                  }}>Sil</Button>
+              </div>
+            ))}
+            <form onSubmit={add} style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+              <input value={newAlias} onChange={e => setNewAlias(e.target.value)}
+                placeholder="telemetri adı (örn. avengersy)" disabled={busy}
+                style={{ flex: 1, padding: '6px 9px', fontSize: 12, background: 'var(--bg)',
+                  color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6 }} />
+              <input value={newCanon} onChange={e => setNewCanon(e.target.value)}
+                placeholder="kanonik ad (örn. SY-Krediler ve Sigorta)" disabled={busy}
+                style={{ flex: 1, padding: '6px 9px', fontSize: 12, background: 'var(--bg)',
+                  color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6 }} />
+              <Button type="submit" disabled={busy || !newAlias.trim() || !newCanon.trim()}>Ekle</Button>
+            </form>
+            {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
+          </>
+        )}
+      </div>
+    </div>
   );
 }

@@ -2237,6 +2237,10 @@ export interface OccurrencePoint {
 
 // ── Settings + notifications ─────────────────────────────────────────────────
 
+// TeamAliases (v0.9.427) — LDAP↔telemetri takım adı eşleme tablosu:
+// alias → kanonik ad ("dijitalsy" → "SY-Dijital Bankacılık").
+export interface TeamAliases { aliases: Record<string, string> }
+
 // TeamContacts (v0.8.429) — problem-open → team e-mail routing config.
 // Contacts maps a catalog team name (owner/SRE) to address(es);
 // comma-separated values fan out to multiple recipients.

@@ -469,3 +469,72 @@ func (s *Store) PutTeamContacts(ctx context.Context, tc TeamContacts) error {
 	}
 	return s.PutSetting(ctx, TeamContactsKey, raw)
 }
+
+// ── Team aliases (v0.9.427, operatör istegi) ────────────────────────────────
+// LDAP takım adı ("SY-Dijital Bankacılık") ile telemetri metadata'sındaki
+// takım adları ("dijitalsy", "avengersy"…) aynı takımın farklı yazımları
+// olabiliyor; hiçbir algoritma "avengersy → SY-Krediler ve Sigorta"yı
+// bilemez — eşleme OPERATÖR tablosudur. Tek settings anahtarı,
+// invariant #6.
+
+const TeamAliasesKey = "team_aliases"
+
+// TeamAliases — alias → kanonik ad. Anahtarlar da değerler de serbest
+// yazımdır; TÜM karşılaştırmalar CanonTeam üzerinden normalize edilir
+// (küçük harf + trim + Türkçe İ'nin combining-dot artığı temizliği).
+type TeamAliases struct {
+	Aliases map[string]string `json:"aliases"`
+}
+
+// normTeamName — takım adı karşılaştırma anahtarı. İki Türkçe I tuzağı
+// birden: (1) Go'nun ToLower'ı 'İ'yi "i"+U+0307 yapar → combining dot
+// atılır; (2) ASCII 'I', Türkçede 'ı'ya inmeliyken Go 'i' verir
+// ("BANKACILIK"→"bankacilik" ama "Bankacılık"→"bankacılık") → noktalı/
+// noktasız i TEK forma katlanır. Yalnız eşleşme anahtarıdır; gösterim
+// orijinal yazımı korur.
+func normTeamName(s string) string {
+	n := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "̇", "")
+	return strings.ReplaceAll(n, "ı", "i")
+}
+
+// CanonTeam — adı kanonik forma indirir: alias tablosunda varsa hedefin
+// normali, yoksa kendi normali. Tek seviyedir (alias'ın alias'ı yok —
+// tablo zaten kanonik hedefe yazılır).
+func (ta TeamAliases) CanonTeam(name string) string {
+	n := normTeamName(name)
+	if n == "" {
+		return ""
+	}
+	for k, v := range ta.Aliases {
+		if normTeamName(k) == n {
+			return normTeamName(v)
+		}
+	}
+	return n
+}
+
+// TeamEqual — iki takım adı aynı takım mı (alias + normalizasyon).
+func (ta TeamAliases) TeamEqual(a, b string) bool {
+	ca, cb := ta.CanonTeam(a), ta.CanonTeam(b)
+	return ca != "" && ca == cb
+}
+
+func (s *Store) GetTeamAliases(ctx context.Context) (TeamAliases, error) {
+	var ta TeamAliases
+	raw, err := s.GetSetting(ctx, TeamAliasesKey)
+	if err != nil || len(raw) == 0 {
+		return ta, err
+	}
+	if err := json.Unmarshal(raw, &ta); err != nil {
+		return TeamAliases{}, err
+	}
+	return ta, nil
+}
+
+func (s *Store) PutTeamAliases(ctx context.Context, ta TeamAliases) error {
+	raw, err := json.Marshal(ta)
+	if err != nil {
+		return err
+	}
+	return s.PutSetting(ctx, TeamAliasesKey, raw)
+}

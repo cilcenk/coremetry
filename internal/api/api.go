@@ -1055,6 +1055,9 @@ func (s *Server) Start() error {
 	// Settings + notification channels (admin only)
 	mux.HandleFunc("GET    /api/settings/team-contacts", auth.RequireRole(auth.RoleAdmin, s.getTeamContacts))
 	mux.HandleFunc("PUT    /api/settings/team-contacts", auth.RequireRole(auth.RoleAdmin, s.putTeamContacts))
+	// v0.9.427 — LDAP↔telemetri takım adı eşleme tablosu (team_aliases.go).
+	mux.HandleFunc("GET    /api/settings/team-aliases", auth.RequireRole(auth.RoleAdmin, s.getTeamAliases))
+	mux.HandleFunc("PUT    /api/settings/team-aliases", auth.RequireRole(auth.RoleAdmin, s.putTeamAliases))
 	mux.HandleFunc("GET    /api/settings/smtp", auth.RequireRole(auth.RoleAdmin, s.getSMTPSettings))
 	mux.HandleFunc("PUT    /api/settings/smtp", auth.RequireRole(auth.RoleAdmin, s.putSMTPSettings))
 	mux.HandleFunc("POST   /api/settings/smtp/test", auth.RequireRole(auth.RoleAdmin, s.testSMTPSettings))
@@ -7146,7 +7149,7 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				return nil, err
 			}
-			svcs := servicesForTeam(mds, ownerTeam, sreTeam)
+			svcs := servicesForTeam(s.teamAliasesCtx(ctx), mds, ownerTeam, sreTeam)
 			if len(svcs) == 0 {
 				return map[string]any{
 					"items": []chstore.ExceptionGroup{}, "total": 0,
@@ -9607,7 +9610,7 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		scan.Limit = sqlLimit
 		if ownerTeam != "" || sreTeam != "" {
 			if mds, err := s.store.ListServiceMetadata(ctx); err == nil {
-				scan.Services = servicesForTeam(mds, ownerTeam, sreTeam)
+				scan.Services = servicesForTeam(s.teamAliasesCtx(ctx), mds, ownerTeam, sreTeam)
 			}
 		}
 		if clusterFilter != "" {
@@ -9690,9 +9693,10 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// longer the ONLY place the filter applies, which is what made the
 		// page lie.
 		if ownerTeam != "" || sreTeam != "" {
+			ta := s.teamAliasesCtx(r.Context())
 			keep := probs[:0]
 			for _, p := range probs {
-				if matchesTeamFilter(p.OwnerTeam, p.SRETeam, ownerTeam, sreTeam) {
+				if matchesTeamFilter(ta, p.OwnerTeam, p.SRETeam, ownerTeam, sreTeam) {
 					keep = append(keep, p)
 				}
 			}

@@ -230,7 +230,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		mdMap, mdErr := s.store.ListServiceMetadata(ctx)
 		var teamServices []string // nil = no team constraint
 		if (ownerTeam != "" || sreTeam != "") && mdErr == nil {
-			teamServices = servicesForTeam(mdMap, ownerTeam, sreTeam)
+			teamServices = servicesForTeam(s.teamAliasesCtx(ctx), mdMap, ownerTeam, sreTeam)
 		}
 		// A team that resolves to no services means an EMPTY page, and the
 		// sources must not even be asked: the exception filter's Services
@@ -519,12 +519,13 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// pastes between dashboards / chat don't surface a
 		// false-negative on a mismatched capitalisation.
 		if ownerTeam != "" || sreTeam != "" {
+			ta := s.teamAliasesCtx(ctx)
 			filtered := items[:0]
 			for _, it := range items {
-				if ownerTeam != "" && !strings.EqualFold(it.OwnerTeam, ownerTeam) {
+				if ownerTeam != "" && !ta.TeamEqual(it.OwnerTeam, ownerTeam) {
 					continue
 				}
-				if sreTeam != "" && !strings.EqualFold(it.SRETeam, sreTeam) {
+				if sreTeam != "" && !ta.TeamEqual(it.SRETeam, sreTeam) {
 					continue
 				}
 				filtered = append(filtered, it)

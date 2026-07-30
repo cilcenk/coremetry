@@ -80,6 +80,11 @@ func TestRollupREDSQL(t *testing.T) {
 		if !strings.Contains(sql, "ORDER BY sum(span_count) DESC LIMIT 6") {
 			t.Errorf("top-N alt sorgusu maxGroups+1=6 LIMIT'li olmalı:\n%s", sql)
 		}
+		// v0.9.387 — dağıtık tabloda düz IN, CH 288 fırlatır (canlı vuruş);
+		// GLOBAL IN sözleşmenin parçası.
+		if !strings.Contains(sql, "GLOBAL IN (") {
+			t.Errorf("top-N alt sorgusu GLOBAL IN olmalı:\n%s", sql)
+		}
 	})
 
 	t.Run("whitelist dışı groupBy reddedilir", func(t *testing.T) {

@@ -4,7 +4,6 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowDownToLine } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtFixed, tsLong } from '@/lib/utils';
-import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
 import { Spinner } from '@/components/Spinner';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { RootCausePanel } from '@/components/RootCausePanel';
@@ -294,8 +293,11 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
           }} />
       </div>
 
-      {/* AI Analizi — auto-sends this group's service context (v0.8.89). */}
-      <AIAnalysisPanel service={group.service} />
+      {/* v0.9.432 (operatör kararı) — AIAnalysisPanel bu sayfadan
+          KALDIRILDI: "Explain root cause" (v0.9.414, exception'a özgü
+          trace+log soruşturmalı) ile yan yana iki AI affordance'ı kafa
+          karıştırıyordu; servis-bağlamlı genel analiz Service
+          sayfasında yaşamaya devam ediyor. */}
 
       {/* Occurrences over time — real server-side, gap-filled COUNT over the
           group's whole window (v0.8.309). */}

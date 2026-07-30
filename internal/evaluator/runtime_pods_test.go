@@ -83,6 +83,37 @@ func TestJVMGCPauseDecision(t *testing.T) {
 	}
 }
 
+// v0.9.440 — GC zaman payı (operatör istegi: "çok uzun GC + GC sayısı
+// yüksek"): uzun pause'lar da sık kısa pause'lar da payı şişirir; tek
+// eşik iki şikâyeti kapsar.
+func TestJVMGCShareDecision(t *testing.T) {
+	tests := []struct {
+		name     string
+		sharePct float64
+		wasOpen  bool
+		wantOpen bool
+		wantSev  string
+	}{
+		{"düşük pay → kapalı", 3, false, false, ""},
+		{"warn eşiği tam 10 → warning", 10, false, true, "warning"},
+		{"warn altı 9.9 → kapalı", 9.9, false, false, ""},
+		{"crit eşiği tam 25 → critical", 25, false, true, "critical"},
+		{"sık-kısa GC senaryosu: %14 → warning", 14, false, true, "warning"},
+		{"histerezis: açık + 8.5 → hâlâ warning", 8.5, true, true, "warning"},
+		{"histerezis: açık + 7.9 (band altı) → kapan", 7.9, true, false, ""},
+		{"histerezis: KAPALI + 8.5 → açma", 8.5, false, false, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			open, sev := jvmGCShareDecision(tt.sharePct, tt.wasOpen)
+			if open != tt.wantOpen || sev != tt.wantSev {
+				t.Errorf("jvmGCShareDecision(%v,%v) = (%v,%q); want (%v,%q)",
+					tt.sharePct, tt.wasOpen, open, sev, tt.wantOpen, tt.wantSev)
+			}
+		})
+	}
+}
+
 func TestRuntimeServiceAndID(t *testing.T) {
 	// v0.9.401 (operator-reported): service alanı artık YALNIZ gerçek
 	// servis — "servis·pod" birleşimi P1 listesinde servis adını yutuyor

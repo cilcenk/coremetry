@@ -126,3 +126,72 @@ func (s *Store) JVMGCPodPause(ctx context.Context) ([]CapacitySample, error) {
 	}
 	return out, rows.Err()
 }
+
+// GCActivitySample — bir pod'un pencere içi GC etkinliği (v0.9.440).
+type GCActivitySample struct {
+	Service    string
+	Pod        string
+	SharePct   float64 // GC'de geçen zaman / pencere (%)
+	RatePerMin float64 // koleksiyon/dk
+}
+
+// JVMGCActivity (v0.9.440, operatör istegi: "çok uzun GC + GC sayısı
+// yüksek podlar") — jvm.gc.duration histogramından pencere içi GC
+// ZAMAN PAYI ve koleksiyon hızı. Tek ölçüde iki şikâyet: uzun
+// pause'lar da sık kısa pause'lar da zaman payını şişirir.
+//
+// Delta hesabı SERİ-başına (svc, pod, attr seti — G1 Young/Old ayrı
+// seriler): cumulative temporality'de max-min per seri, delta'da düz
+// toplam; karışık min/max havuzlar-arası YANLIŞ olurdu. Restart
+// sıfırlaması greatest(0,·) ile yutulur (pencere payı eksik sayılır —
+// alarm tarafında güvenli yön). max_value BİLEREK kullanılmıyor:
+// cumulative'de ömür-boyu max'tır, tek kötü pause sonsuza dek alarm
+// çaldırırdı.
+func (s *Store) JVMGCActivity(ctx context.Context) ([]GCActivitySample, error) {
+	now := time.Now()
+	from := now.Add(-runtimeWindow)
+	windowSec := runtimeWindow.Seconds()
+	q := `
+		SELECT svc, pod, sum(gc_sec) AS gc_sec, sum(gc_cnt) AS gc_cnt
+		FROM (
+			SELECT
+				service_name AS svc,
+				` + runtimePodExpr + ` AS pod,
+				attr_values AS series_key,
+				if(anyLast(temporality) = 'delta',
+					sum(sum_value),
+					greatest(0., max(sum_value) - min(sum_value)))   AS gc_sec,
+				if(anyLast(temporality) = 'delta',
+					toFloat64(sum(count)),
+					greatest(0., toFloat64(max(count) - least(max(count), min(count))))) AS gc_cnt,
+				count() AS n
+			FROM metric_points
+			WHERE time >= ? AND time <= ?
+			  AND metric = 'jvm.gc.duration'
+			GROUP BY svc, pod, series_key
+			HAVING n >= 3
+		)
+		GROUP BY svc, pod
+		LIMIT 2000
+		SETTINGS max_execution_time = 10`
+	rows, err := s.conn.Query(ctx, q, from, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []GCActivitySample{}
+	for rows.Next() {
+		var g GCActivitySample
+		var gcSec, gcCnt float64
+		if err := rows.Scan(&g.Service, &g.Pod, &gcSec, &gcCnt); err != nil {
+			continue
+		}
+		if g.Service == "" {
+			continue
+		}
+		g.SharePct = gcSec / windowSec * 100
+		g.RatePerMin = gcCnt / (windowSec / 60)
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}

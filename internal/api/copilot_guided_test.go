@@ -58,7 +58,9 @@ func TestRouteGuidedIntent(t *testing.T) {
 		{"my problems turkish", "takımımın açık problemleri neler", guidedMyProblems, "", ""},
 		{"my problems ekip", "ekibimin problemleri var mı", guidedMyProblems, "", ""},
 		{"my problems hatalar", "servislerimde hata var mı", guidedMyProblems, "", ""},
-		{"mysql is not my", "mysql yavaş mı", guidedNone, "", ""},
+		// v0.9.420 — "mysql" artık DB sinyali: eskiden guidedNone'du
+		// ("my" prefix tuzağı pini); şimdi DB kırılımına gider.
+		{"mysql is db now", "mysql yavaş mı", guidedDBHealth, "", ""},
 
 		// (h) v0.9.376 — pod/JVM sağlığı. Servisli → o servisin pod'ları;
 		// servissiz → filo-geneli heap sıralaması. "gc" tam-token ("gcp"
@@ -81,6 +83,14 @@ func TestRouteGuidedIntent(t *testing.T) {
 		{"shift problem sorusu özete", "dün gece problem var mıydı", guidedShiftSummary, "", ""},
 		{"gece + slow-trace slow kazanır", "dün gece en yavaş trace'ler", guidedSlowTraces, "", ""},
 		{"gece + deploy deploy kazanır", "dün gece deploy oldu mu", guidedDeployImpact, "", ""},
+
+		// (j) v0.9.420 — bağımlılık sağlığı.
+		{"db yavaş", "hangi db yavaş", guidedDBHealth, "", ""},
+		{"veritabanı", "veritabanı hataları arttı mı", guidedDBHealth, "", ""},
+		{"kafka", "kafka lag nasıl", guidedMessagingHealth, "", ""},
+		{"topic hataları", "topic hataları var mı", guidedMessagingHealth, "", ""},
+		{"servisli db sorusu", "payment-service db hataları", guidedDBHealth, "payment-service", ""},
+		{"kuyruk messaging DEĞİL", "kuyrukta ne var", guidedNone, "", ""},
 
 		// (b) service health — needs a live-list entity.
 		{"health turkish smoke", "checkout servisi yavaş mı", guidedServiceHealth, "checkout-service", ""},
@@ -131,7 +141,9 @@ func TestRouteGuidedIntent(t *testing.T) {
 		// No match → fall through to the free tool loop.
 		{"greeting", "merhaba", guidedNone, "", ""},
 		{"smalltalk with health word but no entity", "bugün hava nasıl", guidedNone, "", ""},
-		{"unrelated question", "kafka consumer lag neden artar", guidedNone, "", ""},
+		// v0.9.420 — eskiden "yönlenemez" pinlenmişti; kafka artık
+		// messaging intent'i (soru gerçekten telemetri sorusu).
+		{"kafka lag artik messaging", "kafka consumer lag neden artar", guidedMessagingHealth, "", ""},
 		{"dashboard request", "bana bir dashboard oluştur", guidedNone, "", ""},
 		{"empty", "", guidedNone, "", ""},
 	}

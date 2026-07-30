@@ -141,6 +141,10 @@ func guidedSuggestions(route guidedRoute) []string {
 		return []string{"Açık problemler?", "Takımımın servisleri nasıl?"}
 	case guidedShiftSummary:
 		return []string{"Açık problemler?", "En yavaş trace'ler?", "Takımımın servisleri nasıl?"}
+	case guidedDBHealth:
+		return []string{"En yavaş trace'ler?", "Açık problemler?", "Son 1 saatteki log hataları?"}
+	case guidedMessagingHealth:
+		return []string{"En yavaş trace'ler?", "Açık problemler?"}
 	}
 	return nil
 }
@@ -204,6 +208,10 @@ func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
 			links = append(links, guidedAnswerLink{Label: svc + " · Overview", Href: "/service?name=" + svcQ})
 		}
 		return links
+	case guidedDBHealth:
+		return []guidedAnswerLink{{Label: "Databases", Href: "/databases"}}
+	case guidedMessagingHealth:
+		return []guidedAnswerLink{{Label: "Messaging", Href: "/messaging"}}
 	}
 	return nil
 }

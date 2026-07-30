@@ -149,6 +149,8 @@ func TestGuidedSuggestionsRoute(t *testing.T) {
 		{Intent: guidedPodHealth, Service: "payments"},
 		{Intent: guidedPodHealth},
 		{Intent: guidedShiftSummary},
+		{Intent: guidedDBHealth},
+		{Intent: guidedMessagingHealth},
 	}
 	for _, r := range routes {
 		sugg := guidedSuggestions(r)
@@ -177,6 +179,8 @@ func TestGuidedAnswerLinks(t *testing.T) {
 		{Intent: guidedPodHealth, Service: "payments"},
 		{Intent: guidedShiftSummary, Service: "payments"},
 		{Intent: guidedFamilyHealth},
+		{Intent: guidedDBHealth},
+		{Intent: guidedMessagingHealth},
 	}
 	for _, r := range routes {
 		links := guidedAnswerLinks(r)

@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
 import { MetricPanel } from './MetricPanel';
 import { OperationPicker } from './OperationPicker';
-import { EventMarkers } from './EventMarkers';
 import { Spinner } from './Spinner';
 import { CopilotExplain } from './CopilotExplain';
 import { TracePeekDrawer } from './TracePeekDrawer';
@@ -538,14 +537,14 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
         </div>
       ) : (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-        {/* v0.5.480 — Each RED panel gets an EventMarkers
-            overlay scoped to (service, [from, to]). The wrapper
-            is position:relative so EventMarkers' inset:0 spans
-            exactly the chart card; the markers sit above
-            uPlot's canvas without disturbing tooltip / zoom
-            interactions (pointerEvents:none on the container,
-            auto on the marker line so the title-tooltip still
-            works on hover). */}
+        {/* v0.9.396 (Ş3-a) — v0.5.480'in panel-başına EventMarkers
+            overlay'i SÖKÜLDÜ: annotation şeridi (v0.9.395, yığının
+            altında) aynı olayları daha zengin gösteriyor (popover +
+            hedef link + tık-zoom) ve overlay'in 3 AYRI
+            /api/operator-events fetch'i çift işti; olaylar hem çizgi
+            hem şeritte iki kez görünüyordu. Bileşen dosyası ve
+            Endpoints/OperationsTable kullanımları DURUYOR (oralarda
+            şerit yok henüz) — kolay revert. */}
         <ChartCard title={rpsTitle}>
           <MetricPanel compact menuOnly title={rpsTitle} metricQuery={rpsMq}>
             <div style={{ position: 'relative' }}>
@@ -559,7 +558,6 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               compareLabel={compareLabel}
                               onZoom={onZoom}
                               onZoomReset={onZoomReset} />
-              <EventMarkers fromNs={from} toNs={to} service={service} />
             </div>
           </MetricPanel>
         </ChartCard>
@@ -578,7 +576,6 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               onZoom={onZoom}
                               onZoomReset={onZoomReset}
                               onBucketClick={onErrorBucketClick} />
-              <EventMarkers fromNs={from} toNs={to} service={service} />
             </div>
           </MetricPanel>
         </ChartCard>
@@ -607,7 +604,6 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               onZoom={onZoom}
                               onZoomReset={onZoomReset}
                               onBucketClick={onLatencyBucketClick} />
-              <EventMarkers fromNs={from} toNs={to} service={service} />
             </div>
           </MetricPanel>
         </ChartCard>

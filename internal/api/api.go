@@ -4762,6 +4762,9 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 		GroupBy []string        `json:"groupBy"`
 		Filters json.RawMessage `json:"filters"`
 		DSL     string          `json:"dsl"`
+		// v0.9.391 (grafik-audit Faz B) — panel nokta bütçesi; 0 = eski
+		// davranış + 2000 emniyet tavanı. queryMetric ile aynı clamp.
+		MaxDataPoints int `json:"maxDataPoints"`
 		Aggs    []struct {
 			Name  string `json:"name"`
 			Agg   string `json:"agg"`
@@ -4789,13 +4792,20 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 			Field:       a.Field,
 		}
 	}
+	if body.MaxDataPoints < 0 {
+		body.MaxDataPoints = 0
+	}
+	if body.MaxDataPoints > 4000 {
+		body.MaxDataPoints = 4000
+	}
 	f := chstore.SpanMetricBatchFilter{
-		Filters:     filters,
-		GroupBy:     body.GroupBy,
-		From:        time.Unix(0, body.From),
-		To:          time.Unix(0, body.To),
-		StepSeconds: body.Step,
-		Aggs:        specs,
+		Filters:       filters,
+		GroupBy:       body.GroupBy,
+		From:          time.Unix(0, body.From),
+		To:            time.Unix(0, body.To),
+		StepSeconds:   body.Step,
+		MaxDataPoints: body.MaxDataPoints,
+		Aggs:          specs,
 	}
 	// v0.9.229 — this endpoint had NO cache at all. It is the Service
 	// Overview's main payload (the page fires TWO of these: the RED bundle
@@ -4811,10 +4821,17 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 	// inside the window is free; serveCached's SWR keeps it usable to 90s
 	// with a background refresh, and there is no poll on this query so the
 	// TTL×staleFactor ≤ interval trap (v0.9.228) can't apply here.
-	s.serveCached(w, r, spanMetricBatchKey(body.From, body.To, body.Step, body.GroupBy,
-		string(body.Filters), body.DSL, specs), 30*time.Second,
+	// v0.9.391 — yanıt zarfı {series, stepSeconds}: frontend bucket
+	// genişliğini artık TAHMİN etmiyor (bar genişliği/gap eşiği için
+	// sözleşme; rollup /api/rollup/red planıyla AYNI kontrat).
+	s.serveCached(w, r, spanMetricBatchKey(body.From, body.To, body.Step, body.MaxDataPoints,
+		body.GroupBy, string(body.Filters), body.DSL, specs), 30*time.Second,
 		func(ctx context.Context) (any, error) {
-			return s.store.QuerySpanMetricMulti(ctx, f)
+			series, stepSec, err := s.store.QuerySpanMetricMulti(ctx, f)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"series": series, "stepSeconds": stepSec}, nil
 		})
 }
 
@@ -4829,7 +4846,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 // would collide, the v0.5.187 rule applied to strings. Fields are hashed
 // individually rather than summarised by count, which is the same rule
 // applied to the set.
-func spanMetricBatchKey(fromNs, toNs int64, step int, groupBy []string,
+func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints int, groupBy []string,
 	filters, dsl string, aggs []chstore.SpanMetricAggSpec) string {
 	h := fnv.New64a()
 	write := func(parts ...string) {
@@ -4844,6 +4861,9 @@ func spanMetricBatchKey(fromNs, toNs int64, step int, groupBy []string,
 		write("gb", g)
 	}
 	write("f", filters, "dsl", dsl)
+	// v0.9.391 — mdp key'de: farklı genişlikteki paneller farklı çözünürlük
+	// ister; key'e girmezse birbirinin çözünürlüğünü zehirler (v0.5.187).
+	write("mdp", strconv.Itoa(maxDataPoints))
 	specs := append([]chstore.SpanMetricAggSpec(nil), aggs...)
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 	for _, a := range specs {

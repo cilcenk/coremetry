@@ -52,9 +52,12 @@ export function CosreChart({ spec }: { spec: CosreChartSpec }) {
       }
       return api.spanMetricBatch({
         from, to, dsl,
+        // v0.9.391 — sohbet içi ~560px kart; sabit küçük bütçe yeterli.
+        maxDataPoints: 300,
         aggs: [{ name: 'v', agg: spec.agg, field: meta.field }],
       });
     },
+    select: d => d.series,
     enabled: !!spec.service,
     staleTime: 30_000,
   });

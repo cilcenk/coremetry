@@ -863,7 +863,11 @@ type SpanMetricBatchFilter struct {
 	GroupBy     []string
 	From, To    time.Time
 	StepSeconds int
-	Aggs        []SpanMetricAggSpec
+	// MaxDataPoints (v0.9.391, grafik-audit Faz B) — panel nokta bütçesi.
+	// 0 = eski sabit ladder + 2000'lik emniyet tavanı; >0 = px-adaptif
+	// step (metricAutoStepPx) + bütçe tavanı. Cache key'e GİRER.
+	MaxDataPoints int
+	Aggs          []SpanMetricAggSpec
 }
 
 type SpanMetricAggSpec struct {
@@ -872,15 +876,73 @@ type SpanMetricAggSpec struct {
 	Field       string // attribute / column when aggregation needs one (default duration_ms)
 }
 
+// clampSpanMetricStep — batch/tekil span-metric okumalarının TEK step
+// kapısı (v0.9.391, grafik-audit Faz B): step<=0'da mdp verilmişse
+// px-adaptif (metricAutoStepPx), verilmemişse eski sabit ladder; her
+// İKİ yolda da nokta bütçesi tavanı uygulanır — eskiden explicit
+// step=1 + 7g pencere 604.800 bucket hedefleyip LIMIT 50000'in keyfî
+// satır kesmesine düşüyordu (groupBy'da seriler arası yanlış grafik).
+// Bütçe: mdp>0 ise mdp, değilse 2000 (≈"chart'a giden nokta ~2k'yı
+// aşmasın" ilkesi). Saf — spanmetric_step_test.go ile pinli.
+func clampSpanMetricStep(stepSec int, from, to time.Time, mdp int) int {
+	span := to.Sub(from).Seconds()
+	if span <= 0 {
+		if stepSec > 0 {
+			return stepSec
+		}
+		return 60
+	}
+	step := stepSec
+	if step <= 0 {
+		if mdp > 0 {
+			step = metricAutoStepPx(from, to, mdp)
+		} else {
+			switch {
+			case span <= 600:
+				step = 10
+			case span <= 3600:
+				step = 30
+			case span <= 6*3600:
+				step = 60
+			case span <= 24*3600:
+				step = 300
+			case span <= 7*24*3600:
+				step = 1800
+			default:
+				step = 3600
+			}
+		}
+	}
+	budget := mdp
+	if budget <= 0 {
+		budget = 2000
+	}
+	if int(span)/step > budget {
+		raw := int(math.Ceil(span / float64(budget)))
+		step = raw
+		for _, l := range metricStepLadder {
+			if l >= raw {
+				step = l
+				break
+			}
+		}
+	}
+	return step
+}
+
 // QuerySpanMetricMulti runs every aggregation in `f.Aggs`
 // against the same WHERE + GROUP BY in ONE round trip. Returns
 // a map keyed by spec.Name → series list. Empty result map on
 // success is allowed (no spans matched the filter); per-spec
 // failures (e.g. unknown aggregation) fail the whole call.
-func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilter) (map[string][]SpanMetricSeries, error) {
+func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilter) (map[string][]SpanMetricSeries, int, error) {
 	if len(f.Aggs) == 0 {
-		return map[string][]SpanMetricSeries{}, nil
+		return map[string][]SpanMetricSeries{}, 0, nil
 	}
+	// v0.9.391 — efektif step TEK yerde, fast-path denemesinden ÖNCE
+	// hesaplanır: MV uygunluğu (step >= 300) artık px-adaptif değeri
+	// görür; eşik DEĞİŞMEDİ, yalnız girdisi netleşti.
+	f.StepSeconds = clampSpanMetricStep(f.StepSeconds, f.From, f.To, f.MaxDataPoints)
 	// ── MV fast-path (v0.5.273) ───────────────────────────────────────────────
 	// ServiceCharts on /service?name=X fires this batch every
 	// time the operator changes range. At month-scale the raw-
@@ -889,7 +951,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// is the missing peer for the batched ("rate + error_rate
 	// + p99 in one CH pass") variant.
 	if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
-		return out, nil
+		return out, f.StepSeconds, nil
 	}
 
 	// ── Build WHERE ───────────────────────────────────────────────────────────
@@ -902,19 +964,8 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	}
 	ApplyFilters(&wc, f.Filters)
 
-	// ── Bucket size (same auto-pick as QuerySpanMetric) ───────────────────────
+	// ── Bucket size — clampSpanMetricStep yukarıda uyguladı ──────────────────
 	step := f.StepSeconds
-	if step <= 0 {
-		span := f.To.Sub(f.From).Seconds()
-		switch {
-		case span <= 600:        step = 10
-		case span <= 3600:       step = 30
-		case span <= 6*3600:     step = 60
-		case span <= 24*3600:    step = 300
-		case span <= 7*24*3600:  step = 1800
-		default:                 step = 3600
-		}
-	}
 
 	// Build one SELECT expression per aggregation, aliased
 	// with `v0` / `v1` / `v2`. Position-aliasing avoids a
@@ -932,7 +983,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		}
 		expr, err := aggToSQL(a.Aggregation, fieldToSQL(field), step)
 		if err != nil {
-			return nil, fmt.Errorf("agg %q: %w", a.Name, err)
+			return nil, 0, fmt.Errorf("agg %q: %w", a.Name, err)
 		}
 		selectParts = append(selectParts, fmt.Sprintf("%s AS v%d", expr, i))
 	}
@@ -966,7 +1017,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {
-		return nil, fmt.Errorf("query span metric multi: %w", err)
+		return nil, 0, fmt.Errorf("query span metric multi: %w", err)
 	}
 	defer rows.Close()
 
@@ -992,7 +1043,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		var gk []string
 		dest = append(dest, &gk)
 		if err := rows.Scan(dest...); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		key := strings.Join(gk, "|")
 		for i, v := range vals {
@@ -1010,7 +1061,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	out := make(map[string][]SpanMetricSeries, len(f.Aggs))
@@ -1021,7 +1072,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		}
 		out[a.Name] = list
 	}
-	return out, nil
+	return out, step, nil
 }
 
 // fieldToSQL maps a friendly field name to the underlying ClickHouse expression.

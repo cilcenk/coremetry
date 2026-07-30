@@ -2,6 +2,7 @@ import { Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { panelMaxDataPoints } from '@/lib/chartStep';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
@@ -126,24 +127,28 @@ function PodDetail() {
   // Per-pod RED — Overview.tsx'in iki batch'ini birebir aynala + host.name.
   const podScope = `service.name = "${service.replace(/"/g, '\\"')}" AND host.name = "${pod.replace(/"/g, '\\"')}"`;
   const redEnabled = !!service && !!pod;
+  // v0.9.391 (Faz B) — mdp + zarf select'i (Overview deseniyle aynı).
+  const podMdp = panelMaxDataPoints(3);
   const redQ = useQuery({
-    queryKey: ['pod-red', service, pod, from, to],
-    queryFn: () => api.spanMetricBatch({ from, to, dsl: podScope, aggs: [
+    queryKey: ['pod-red', service, pod, from, to, podMdp],
+    queryFn: () => api.spanMetricBatch({ from, to, maxDataPoints: podMdp, dsl: podScope, aggs: [
       { name: 'rate', agg: 'rate' },
       { name: 'error_rate', agg: 'error_rate' },
     ] }),
+    select: d => d.series,
     enabled: redEnabled, staleTime: 30_000,
   });
   // Latency kafka messaging span'lerini HARİÇ tutar (Overview v0.9.129 emsali).
   const latQ = useQuery({
-    queryKey: ['pod-latency-nokafka', service, pod, from, to],
-    queryFn: () => api.spanMetricBatch({ from, to, dsl: `${podScope} AND messaging.system != "kafka"`, aggs: [
+    queryKey: ['pod-latency-nokafka', service, pod, from, to, podMdp],
+    queryFn: () => api.spanMetricBatch({ from, to, maxDataPoints: podMdp, dsl: `${podScope} AND messaging.system != "kafka"`, aggs: [
       { name: 'p99', agg: 'p99', field: 'duration_ms' },
       { name: 'p95', agg: 'p95', field: 'duration_ms' },
       { name: 'p50', agg: 'p50', field: 'duration_ms' },
       // Madde 4 sweep — avg serisi (Overview latency batch'iyle ayna kalır).
       { name: 'avg', agg: 'avg', field: 'duration_ms' },
     ] }),
+    select: d => d.series,
     enabled: redEnabled, staleTime: 30_000,
   });
   const s = redQ.data;

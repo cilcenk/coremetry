@@ -125,7 +125,11 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
           {/* v0.9.373 — ipucu dürüst: kablosuz grafikte "sürükle" yazıp
               hiçbir şey yapmamak, tam hata sivrisini daraltmak isteyen
               operatörü sessizce yarı yolda bırakıyordu. */}
-          {onRangeSelect ? 'sürükle = zaman seç · çift tık = geri' : 'hover = detay'}
+          {/* v0.9.431 — "çift tık = geri" YALNIZ reset bağlıyken vaat
+              edilir (dürüst ipucu sınıfı, v0.9.373 devamı). */}
+          {onRangeSelect
+            ? (onZoomReset ? 'sürükle = zaman seç · çift tık = geri' : 'sürükle = zaman seç')
+            : 'hover = detay'}
         </span>
       </div>
       <TimeChart

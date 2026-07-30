@@ -233,6 +233,13 @@ export function DependenciesTable({
     columns: depCols,
     rows: filtered,
     initialSort: { id: 'spanCount', dir: 'desc' },
+    // v0.9.404 (desen paritesi) — j/k/Enter klavye gezinmesi: Enter satır
+    // drawer'ını Endpoints'teki gibi açar/kapar. /databases + /messaging
+    // bu tablo üzerinden aynı anda kazandı.
+    onOpen: (row) => {
+      const rowKey = `${row.system}|${row.cluster ?? ''}|${nameOf(row)}`;
+      setOpen(openKey === rowKey ? null : row, openKey === rowKey ? null : rowKey);
+    },
   });
 
   // Click-through DSL — pre-filters /explore by the chosen

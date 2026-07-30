@@ -150,6 +150,11 @@ export default function SlowQueriesPage() {
     columns: SLOW_COLS,
     rows: rows ?? [],
     initialSort: { id: 'totalMs', dir: 'desc' },
+    // v0.9.404 (desen paritesi) — j/k/Enter: Enter satırı genişletir.
+    onOpen: (r) => {
+      const key = `${r.service}::${r.statement}`;
+      setExpanded(cur => (cur === key ? null : key));
+    },
   });
 
   return (
@@ -225,7 +230,7 @@ export default function SlowQueriesPage() {
                         onClick={() => r.stmtHash
                           ? openStmt(r)
                           : setExpanded(isExpanded ? null : key)}
-                        style={{ cursor: 'pointer' }}>
+                        style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 40px' } as React.CSSProperties}>
                         <td onClick={e => {
                           e.stopPropagation();
                           setExpanded(isExpanded ? null : key);

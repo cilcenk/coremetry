@@ -295,17 +295,27 @@ export function DependenciesTable({
     if (!trendsEnabled(kind)) { setTrends(null); return; }
     setTrends(undefined);
     const { from, to } = timeRangeToNs(range);
-    api.dbTrends(from, to)
+    // v0.9.434 — endpoint kind'a göre: db → databases/trends (davranış
+    // bayt-bayt eski), queue → messaging/trends (yeni ikiz). Join
+    // anahtarları da kind'a göre: messaging kimliği (system, cluster,
+    // destination) — cluster'sız loose anahtar farklı cluster'daki aynı
+    // destination'ı ezerdi.
+    const fetchTrends = kind === 'db' ? api.dbTrends : api.msgTrends;
+    fetchTrends(from, to)
       .then(list => {
         if (!live) return;
         if (!list) { setTrends(null); return; }
         const m = new Map<string, DBTrend>();
         for (const t of list) {
-          m.set(`${t.dbSystem}|${t.instance}|${t.dbName}`, t);
-          // Looser fallback key — first writer wins so a real
-          // db.name'd trend isn't clobbered by a 'default' sibling.
-          const loose = `${t.dbSystem}|${t.instance}`;
-          if (!m.has(loose)) m.set(loose, t);
+          if (kind === 'db') {
+            m.set(`${t.dbSystem}|${t.instance}|${t.dbName}`, t);
+            // Looser fallback key — first writer wins so a real
+            // db.name'd trend isn't clobbered by a 'default' sibling.
+            const loose = `${t.dbSystem}|${t.instance}`;
+            if (!m.has(loose)) m.set(loose, t);
+          } else {
+            m.set(`${t.dbSystem}|${t.cluster}|${t.instance}`, t);
+          }
         }
         setTrends(m);
       })
@@ -320,6 +330,10 @@ export function DependenciesTable({
   // one, or vice-versa). nameOf(r) is the instance/destination.
   const trendFor = (r: DepRow): DBTrend | undefined => {
     if (!trends) return undefined;
+    if (kind === 'queue') {
+      // v0.9.434 — messaging kimliği (system, cluster, destination).
+      return trends.get(`${r.system}|${r.cluster ?? ''}|${r.destination ?? ''}`);
+    }
     const inst = nameOf(r);
     const db = r.dbName ?? '';
     return trends.get(`${r.system}|${inst}|${db}`)

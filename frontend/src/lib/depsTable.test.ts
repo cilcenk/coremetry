@@ -14,17 +14,20 @@ import { trendsEnabled, latencyPresent, type DepKind } from './depsTable';
 describe('trendsEnabled', () => {
   const cases: Array<[DepKind, boolean]> = [
     ['db', true],
-    ['queue', false],
+    // v0.9.434 — bilinçli pin değişimi: queue artık KENDİ endpoint'inden
+    // (messaging/trends, messaging_summary_5m) beslenir; v0.9.258'in
+    // kapattığı "yanlış MV + boşa tarama" kusuru yok.
+    ['queue', true],
   ];
   it.each(cases)('%s → %s', (kind, want) => {
     expect(trendsEnabled(kind)).toBe(want);
   });
 
-  it('queue is excluded — db_summary_5m cannot contain messaging rows', () => {
-    // Pinned as its own case because this is the actual defect, not a
-    // style preference: re-enabling it would restore both the dead
-    // column and the wasted scan.
-    expect(trendsEnabled('queue')).toBe(false);
+  it('queue is included — served by its own messaging/trends endpoint (v0.9.434)', () => {
+    // v0.9.258 bu satırı 'db_summary_5m messaging satırı içeremez'
+    // gerekçesiyle kapatmıştı; kusur endpoint'in yanlışlığıydı, kolonun
+    // kendisi değil. Fetch effect'i kind'a göre endpoint seçer.
+    expect(trendsEnabled('queue')).toBe(true);
   });
 });
 

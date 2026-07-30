@@ -83,6 +83,18 @@ func (s *Server) getDBTrends(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getMessagingTrends (v0.9.434) — getDBTrends'in messaging ikizi:
+// /messaging grid'inin satır-içi sparkline + sağlık chip kaynağı.
+// Aynı 30s TTL — sayfa yüklemesiyle sparkline fetch'i sıcak pencereyi
+// paylaşır; anahtar tüm girdileri (pencere) hashler.
+func (s *Server) getMessagingTrends(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, time.Hour)
+	key := "msg-trends:" + cacheBucket(from, to)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetMessagingTrends(ctx, from, to)
+	})
+}
+
 // getDatabaseDetail returns the drawer payload for one
 // (db_system, instance) pair — per-(service, pod) caller
 // breakdown plus the top db_statement prefixes. Cached 30s.

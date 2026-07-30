@@ -16,7 +16,13 @@
 export type DepKind = 'db' | 'queue';
 
 export function trendsEnabled(kind: DepKind): boolean {
-  return kind === 'db';
+  // v0.9.434 — queue yeniden AÇIK: v0.9.258'in kapattığı kusur "yanlış
+  // MV (db_summary_5m) + boşa LIMIT 200000 taraması"ydı; artık kind
+  // başına doğru endpoint var (/api/messaging/trends,
+  // messaging_summary_5m). Fetch effect'i endpoint'i BU kind'a göre
+  // seçer — tek taraflı yeniden-etkinleştirme sınıfı yine bu
+  // fonksiyondan geçer.
+  return kind === 'db' || kind === 'queue';
 }
 
 // latencyMissing — is there genuinely no latency measurement for this cell?

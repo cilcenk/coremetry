@@ -202,3 +202,85 @@ func (s *Store) DbNamesBySystem(ctx context.Context, from, to time.Time) (map[st
 	}
 	return out, rows.Err()
 }
+
+// GetMessagingTrends (v0.9.434, kuyruk #3b — desen paritesi) —
+// GetDBTrends'in messaging ikizi: messaging_summary_5m'i
+// (msg_system, cluster, destination, time_bucket) kırılımında okur,
+// satır başına sparkline + son-bucket sağlık anlık görüntüsü döner.
+// DBTrend şekli yeniden kullanılır (başlık yorumu bunu zaten
+// vadediyordu): DbSystem=msg_system, Instance=destination,
+// Cluster=cluster, DbName boş — frontend join anahtarı messaging'de
+// (system|cluster|destination). MV-only; üç sınır (time-bounded WHERE
+// + LIMIT + max_execution_time). error_count_state bu MV'de countState
+// — countMerge (db_summary_5m'in countIfMerge'ünden farklı, getMessaging
+// ile birebir aynı okuma).
+func (s *Store) GetMessagingTrends(ctx context.Context, from, to time.Time) ([]DBTrend, error) {
+	if from.IsZero() {
+		from = time.Now().Add(-1 * time.Hour)
+	}
+	if to.IsZero() {
+		to = time.Now()
+	}
+	bucketStart := from.Truncate(5 * time.Minute)
+	rows, err := s.conn.Query(ctx, `
+		SELECT msg_system,
+		       cluster,
+		       destination,
+		       toUnixTimestamp64Nano(toDateTime64(time_bucket, 9))                     AS bucket_ns,
+		       countMerge(span_count_state)                                            AS span_count,
+		       countMerge(error_count_state)                                           AS error_count,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
+		FROM messaging_summary_5m
+		WHERE time_bucket >= ? AND time_bucket <= ?
+		GROUP BY msg_system, cluster, destination, time_bucket
+		ORDER BY msg_system, cluster, destination, time_bucket
+		LIMIT 200000
+		SETTINGS max_execution_time = 15`, bucketStart, to)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []DBTrend{}
+	type key struct{ system, cluster, dest string }
+	idxByKey := map[key]int{}
+	for rows.Next() {
+		var (
+			system, cluster, dest string
+			bucketNs              int64
+			spanCount, errorCount uint64
+			p99Ms                 *float64
+		)
+		if err := rows.Scan(&system, &cluster, &dest, &bucketNs, &spanCount, &errorCount, &p99Ms); err != nil {
+			return nil, err
+		}
+		k := key{system, cluster, dest}
+		i, ok := idxByKey[k]
+		if !ok {
+			out = append(out, DBTrend{
+				DbSystem: system,
+				Instance: dest,
+				Cluster:  cluster,
+				Points:   []DBTrendPoint{},
+			})
+			i = len(out) - 1
+			idxByKey[k] = i
+		}
+		pt := DBTrendPoint{
+			T:     bucketNs,
+			Rps:   float64(spanCount) / dbTrendBucketSeconds,
+			P99Ms: safeF(p99Ms),
+		}
+		if spanCount > 0 {
+			pt.ErrorRate = float64(errorCount) / float64(spanCount) * 100
+		}
+		out[i].Points = append(out[i].Points, pt)
+		out[i].CurRps = pt.Rps
+		out[i].CurErrorRate = pt.ErrorRate
+		out[i].CurP99Ms = pt.P99Ms
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}

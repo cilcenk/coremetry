@@ -741,7 +741,7 @@ function TracesPageInner() {
             // slimmer + recedes — it's the brush/overview "tool", not the
             // headline chart; the RED strip below carries the filtered numbers.
             <VolumeChart count={volSeries?.count ?? null} errors={volSeries?.errors ?? null} p50={volSeries?.p50 ?? null}
-              height={chartTall ? 140 : 100} onBrush={applyBrush}
+              height={chartTall ? 140 : 100} onBrush={applyBrush} onZoomReset={clearBrush}
               xRange={{ from: listRangeNs.from / 1e9, to: listRangeNs.to / 1e9 }}
               header={vizToggle}
               headerRight={<>{vizStats}
@@ -772,7 +772,7 @@ function TracesPageInner() {
                   {vizStats}
                 </span>
               </div>
-              <LatencyScatter rows={displayRows} onOpen={openTrace} onBrush={applyBrush} />
+              <LatencyScatter rows={displayRows} onOpen={openTrace} onBrush={applyBrush} onZoomReset={clearBrush} />
             </div>
           );
         })()}

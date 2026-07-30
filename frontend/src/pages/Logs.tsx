@@ -15,6 +15,7 @@ import { LogTable, DEFAULT_LOG_COLUMNS } from '@/components/LogTable';
 import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer';
 import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
+import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
 import { ShareButton } from '@/components/ShareButton';
@@ -139,6 +140,12 @@ function LogsInner() {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const [range, setRange] = useUrlRange('30m');
+
+  // v0.9.390 (Faz A-3) — histogram brush geri-yığını: çift-tık önceki
+
+  // pencereye döner (M1 paritesi; ipucu metni artık doğruyu söylüyor).
+
+  const [zoomStack, setZoomStack] = useState<import('@/lib/types').TimeRange[]>([]);
   // v0.9.291 — the window handed to the KQL autocomplete. Memoised on
   // the range, never computed bare in JSX (v0.5.184: a bare
   // range→duration call in the tree is a new object each render and
@@ -942,8 +949,20 @@ function LogsInner() {
             // Brush → narrow the window to the selection. Custom
             // ranges ride ?range= (useUrlRange) so the zoom is
             // shareable; paging resets per the v0.7.81 cursor rule.
+            // v0.9.390 — brush ÖNCESİ pencere yığına iter; çift-tık popZoom.
+            setZoomStack(st => pushZoom(st, range));
             setRange({ preset: 'custom', fromMs: Math.round(fromNs / 1e6), toMs: Math.round(toNs / 1e6) });
             resetPaging();
+          }}
+          onZoomReset={() => {
+            // v0.9.390 (Faz A-3) — ipucu metni ("çift tık = geri") v0.9.373'ten
+            // beri bu sekmede yalandı: LogsHistogram destekliyordu, sayfa
+            // geçirmiyordu. Yığın boşsa no-op (davranış sürprizsiz).
+            setZoomStack(st => {
+              const { stack, view } = popZoom(st);
+              if (view) { setRange(view); resetPaging(); }
+              return stack;
+            });
           }} />
 
         {data === undefined && <TableSkeleton rows={12} cols={5} />}

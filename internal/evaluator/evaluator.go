@@ -1163,9 +1163,11 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 }
 
 // carryProblemOperatorState — terfi refresh'inin saf çekirdeği: mevcut
-// açık satırdan OPERATÖR alanlarını yeni gövdeye taşır. Status (ack
-// hayatta kalır), Assignee ve Pod taşınır; Severity/Value/Description
-// BİLEREK taşınmaz — onlar her tick'in taze ölçümüdür.
+// açık satırdan OPERATÖR + EXPLAINER alanlarını yeni gövdeye taşır.
+// Status (ack hayatta kalır), Assignee, Pod ve AI özeti (v0.9.448:
+// UpsertProblem artık ai kolonlarını yazıyor — taşımayan taze gövde
+// özeti silerdi) taşınır; Severity/Value/Description BİLEREK taşınmaz
+// — onlar her tick'in taze ölçümüdür.
 func carryProblemOperatorState(p *chstore.Problem, open *chstore.Problem) {
 	if open == nil {
 		return
@@ -1173,6 +1175,8 @@ func carryProblemOperatorState(p *chstore.Problem, open *chstore.Problem) {
 	p.Status = open.Status
 	p.Assignee = open.Assignee
 	p.Pod = open.Pod
+	p.AISummary = open.AISummary
+	p.AISummaryAt = open.AISummaryAt
 }
 
 // resolveClearedAnomalyPromotions (v0.9.444, hacim denetimi #3) —

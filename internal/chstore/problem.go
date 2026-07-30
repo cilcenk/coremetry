@@ -1451,16 +1451,19 @@ func (s *Store) SetProblemAssignee(ctx context.Context, id, assignee string) err
 
 func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 	// Explicit column list (v0.5.254 — was: column-order INSERT).
-	// The ai_summary / ai_summary_at columns are populated
-	// asynchronously by the problemExplainer goroutine, so the
-	// evaluator's upsert must NOT clobber them on every poll. The
-	// explicit list excludes them — CH falls back to the existing
-	// stored value via ReplacingMergeTree's version-merge once the
-	// explainer writes a row with the summary set.
+	//
+	// v0.9.448 — ai_summary/ai_summary_at LİSTEDE. v0.5.254'ün "explicit
+	// liste dışlar, ReplacingMergeTree eski değere düşer" varsayımı
+	// YANLIŞTI: replace bütün-satırdır, dışlanan kolon yeni sürümde
+	// DEFAULT ''e iner — her refresh (kural tick'i, anomali tazelemesi,
+	// monitor keep-alive) explainer'ın özetini siliyor, explainer boş
+	// görüp yeniden üretiyordu (AI maliyet döngüsü + sönüp yanan özet).
+	// Her taşıyıcı okuma (FindOpenProblem/Get/List/Snapshot/Stale) iki
+	// alanı zaten Scan ediyor; taze-satır açan siteler için boş = doğru.
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO problems
 		(id, rule_id, rule_name, severity, service, metric, value,
 		 threshold, status, description, assignee, pod, started_at,
-		 resolved_at, updated_at, version)`)
+		 resolved_at, updated_at, version, ai_summary, ai_summary_at)`)
 	if err != nil {
 		return err
 	}
@@ -1472,7 +1475,8 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 	}
 	if err := batch.Append(p.ID, p.RuleID, p.RuleName, p.Severity, p.Service,
 		p.Metric, p.Value, p.Threshold, p.Status, p.Description, p.Assignee,
-		p.Pod, startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
+		p.Pod, startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano()),
+		p.AISummary, time.Unix(0, p.AISummaryAt).UTC()); err != nil {
 		return fmt.Errorf("append problem: %w", err)
 	}
 	return batch.Send()

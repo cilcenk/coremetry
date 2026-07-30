@@ -20,10 +20,16 @@ func TestCarryProblemOperatorState(t *testing.T) {
 
 	t.Run("ack hayatta kalır", func(t *testing.T) {
 		p := base()
-		open := &chstore.Problem{Status: "acknowledged", Assignee: "cenk", Pod: "pod-a"}
+		open := &chstore.Problem{Status: "acknowledged", Assignee: "cenk", Pod: "pod-a",
+			AISummary: "kök sebep: X", AISummaryAt: 42}
 		carryProblemOperatorState(&p, open)
 		if p.Status != "acknowledged" || p.Assignee != "cenk" || p.Pod != "pod-a" {
 			t.Errorf("operator alanları taşınmadı: %+v", p)
+		}
+		// v0.9.448 — AI özeti de taşınır; taşımayan taze gövde whole-row
+		// replace'te özeti silerdi.
+		if p.AISummary != "kök sebep: X" || p.AISummaryAt != 42 {
+			t.Errorf("AI özeti taşınmadı: %+v", p)
 		}
 		// Taze ölçüm alanları open'dan GELMEZ.
 		if p.Severity != "critical" || p.Value != 7.5 {

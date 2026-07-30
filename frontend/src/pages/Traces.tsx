@@ -34,7 +34,7 @@ import { VirtualTable } from '@/components/ui/VirtualTable';
 import { useDataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
-import { useUrlRange } from '@/lib/useUrlRange';
+import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
@@ -157,7 +157,10 @@ function TracesPageInner() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
-  const [range, setRange] = useUrlRange('30m');
+  // v0.9.430 — zoom-yığını hook'u; sayfalama her zoom/geri adımında
+  // sıfırlanır (onChange; setPage sonradan tanımlı — closure çağrı
+  // anında değerlendirilir, TDZ yok).
+  const { range, setRange, handleZoom, handleZoomReset, zoomDepth } = usePageZoomRange('30m', () => setPage(0));
   // Global env filter (v0.8.383) — written by the Topbar EnvPicker,
   // consumed here as a first-class server param on the list/aggregate
   // fetches (+ volume strip + CSV). /traces is the Phase-1 consumer;
@@ -261,8 +264,7 @@ function TracesPageInner() {
   const [viz, setViz] = useState<'volume' | 'latency'>(() => searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
   const [expanded, setExpanded] = useState<string | null>(null);
   const filterInputRef = useRef<HTMLInputElement>(null);
-  // Scatter brush narrows the page range; stash the pre-brush range for restore.
-  const [brushPrev, setBrushPrev] = useState<TimeRange | null>(null);
+
 
   const [data, setData] = useState<TracesResponse | null | undefined>(undefined);
   // v0.8.478 (perf dalga-3) — refetch'te ekran boşalmaz: önceki sonuç
@@ -559,18 +561,15 @@ function TracesPageInner() {
 
   const openTrace = (t: TraceRow) => navigate(`/trace?id=${t.traceId}`);
 
-  // Scatter drag-brush → narrow the page range; remember prior range for restore.
+  // v0.9.430 — TAM geri-yığını (audit kriteri 1): eski tek-slot
+  // brushPrev yalnız İLK brush öncesini tutuyordu, ardışık zoom
+  // adımları kayboluyordu. Artık N brush → N çift-tık LIFO geri sarar;
+  // sayfalama her iki yönde sıfırlanır (hook onChange, v0.7.81 kuralı).
   const applyBrush = (fromMs: number, toMs: number) => {
     if (toMs - fromMs < 1) return;
-    setBrushPrev(prev => prev ?? range);
-    setRange({ preset: 'custom', fromMs, toMs });
-    setPage(0);
+    handleZoom(fromMs / 1000, toMs / 1000);
   };
-  const clearBrush = () => {
-    if (brushPrev) setRange(brushPrev);
-    setBrushPrev(null);
-    setPage(0);
-  };
+  const clearBrush = handleZoomReset;
 
   // Hover-prefetch the trace spans (server-cached 5m) so the row click is a HIT.
   const prefetched = useRef<Set<string>>(new Set());
@@ -630,8 +629,9 @@ function TracesPageInner() {
 
   return (
     <>
-      <Topbar title="Traces" range={range}
-        onRangeChange={(r) => { setBrushPrev(null); setRange(r); }} />
+      {/* v0.9.430 — Topbar seçimi out-of-band: hook yığını kendisi
+          geçersizleştirir, elle temizlik gerekmez. */}
+      <Topbar title="Traces" range={range} onRangeChange={setRange} />
       <div id="content">
         {/* v0.9.304 (operatör) — Trace ID araması sayfanın SAĞ ÜSTÜNE,
             zaman aralığı seçicisinin hemen altına taşındı. Filtre satırının
@@ -706,9 +706,10 @@ function TracesPageInner() {
                 <button className={viz === 'volume' ? 'active' : ''} onClick={() => setViz('volume')}>Volume</button>
                 <button className={viz === 'latency' ? 'active' : ''} onClick={() => setViz('latency')}>Latency</button>
               </div>
-              {brushPrev && (
-                <Button variant="secondary" size="sm" onClick={clearBrush} title="Restore the previous time range">
-                  Clear selection ✕
+              {zoomDepth > 0 && (
+                <Button variant="secondary" size="sm" onClick={clearBrush}
+                  title="Zoom back one step (double-click on the chart does the same)">
+                  ⤺ Zoom back{zoomDepth > 1 ? ` (${zoomDepth})` : ''}
                 </Button>
               )}
             </>

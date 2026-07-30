@@ -23,8 +23,7 @@ import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { DetailsPropsStrip } from './service/DetailsPropsStrip';
 import { DetailsToc } from './service/DetailsToc';
 import { panelMaxDataPoints } from '@/lib/chartStep';
-import { AnnotationLane } from '@/components/charts/AnnotationLane';
-import { useQuery as useAnnQuery } from '@tanstack/react-query';
+import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -569,7 +568,7 @@ function ServiceDetailInner() {
                     için yığının altında TEK şerit hepsine hizmet eder.
                     Sayfa başına tek fetch; tık = ±15dk zoom (yığın+çift-tık
                     geri aynı yol). Problem x-bölgeleri chart İÇİNDE kalır. */}
-                <DetailsAnnotationLane service={svc} fromNs={rangeNs.from} toNs={rangeNs.to}
+                <ServiceAnnotationLane service={svc} fromNs={rangeNs.from} toNs={rangeNs.to}
                   onZoomTo={handleZoom} />
                 <div className="dtl-sech" id="dtl-latency">Latency
                   {opScope && <span className="badge b-info" style={{ textTransform: 'none', letterSpacing: 0 }}>op kapsamı</span>}
@@ -764,30 +763,3 @@ export default function ServiceDetailPage() {
   );
 }
 
-// DetailsAnnotationLane — şeridin veri sarmalayıcısı (v0.9.395): tek
-// birleşik /api/annotations çağrısı, 30s stale (sunucu TTL ile aynı),
-// boş/hata durumunda görünmez-düşer (şerit süsleme değil sinyal —
-// olay yoksa yer kaplamaz; hata şeridi triage'ı BLOKE ETMEZ, RED
-// panelleri zaten kendi hatalarını söylüyor).
-function DetailsAnnotationLane({ service, fromNs, toNs, onZoomTo }: {
-  service: string; fromNs: number; toNs: number;
-  onZoomTo: (fromSec: number, toSec: number) => void;
-}) {
-  const q = useAnnQuery({
-    queryKey: ['annotations', service, fromNs, toNs],
-    queryFn: () => api.annotations(service, fromNs, toNs),
-    enabled: !!service, staleTime: 30_000,
-  });
-  const items = q.data?.items ?? [];
-  if (items.length === 0) return null;
-  return (
-    <div style={{ margin: '0 0 10px' }}>
-      <AnnotationLane items={items} fromNs={fromNs} toNs={toNs} onZoomTo={onZoomTo} />
-      {q.data?.truncated && (
-        <div style={{ fontSize: 10, color: 'var(--text3)' }}>
-          ⚠ 500 olay tavanı — pencereyi daralt (kesme ifşası)
-        </div>
-      )}
-    </div>
-  );
-}

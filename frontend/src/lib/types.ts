@@ -266,6 +266,13 @@ export interface DBInstance {
   p50DurationMs?: number;
   p95DurationMs?: number;
   p99DurationMs: number;
+  // v0.9.433 — ?compare=prior ikiz-pencere sayaçları; yalnız prior
+  // ikizi eşleşen satırlarda gelir (omitempty sözleşmesi).
+  priorSpanCount?: number;
+  priorErrorCount?: number;
+  priorAvgMs?: number;
+  priorP50Ms?: number;
+  priorP99Ms?: number;
   callers: string[];
   // Source: empty / 'spans' = derived from application traffic
   // (the default). 'receiver' = discovered via an OpenTelemetry

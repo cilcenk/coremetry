@@ -1747,6 +1747,11 @@ button.accent.copied {
   font-size: 10.5px; font-weight: 700; letter-spacing: 1.1px;
   text-transform: uppercase; color: var(--text3); }
 .dtl-sech::after { content: ""; flex: 1; border-top: 1px solid var(--border); }
+/* v0.9.408 — Explain kanıt kutusu: kök-neden soruşturulacak span'ler
+   waterfall'da amber çerçeveyle kutulanır (kritik-yol şeridinin ÜSTÜNE
+   binebilir; ikisi farklı soruya cevap verir). */
+.wf-evidence { outline: 1.5px solid var(--warn); outline-offset: -1.5px; background: color-mix(in srgb, var(--warn) 7%, transparent); }
+
 /* v0.9.380 (redesign D4) — Details ToC rayı yalnız geniş ekranda;
    dar ekranda içerik tam genişlik kalır, ray sessizce düşer. */
 .dtl-toc { display: none; }

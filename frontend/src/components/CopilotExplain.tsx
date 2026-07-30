@@ -23,10 +23,14 @@ import { IconSparkles } from './icons';
 //                               in past resolved instances of the same rule.
 // Each endpoint uses a kind-specific system prompt so the model's
 // answers match the operator's question.
-export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
+export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvidence }: {
   kind: 'trace' | 'span' | 'problem' | 'incident' | 'anomaly' | 'service-health' | 'runbook';
   id: string;
   label?: React.ReactNode;
+  // v0.9.408 — kind="trace" yanıtındaki deterministik kanıt span'leri
+  // (backend hesaplar; LLM'e bağımlı değil). Üst bileşen waterfall'ı
+  // kutulamak için kullanır.
+  onEvidence?: (spanIds: string[]) => void;
   // Only used when kind === 'service-health'. Ignored otherwise.
   fromNs?: number;
   toNs?: number;
@@ -59,7 +63,10 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId }: {
           ? `Based on ${r.similarCount} past resolved instance${r.similarCount === 1 ? '' : 's'} of this rule on this service.`
           : `No past resolutions found — first-principles only.`);
       } else {
-        const r = kind === 'trace'          ? await api.copilotExplainTrace(id)
+        const r = kind === 'trace'          ? await api.copilotExplainTrace(id).then(rr => {
+                                                  if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
+                                                  return rr;
+                                                })
                 : kind === 'span'           ? await api.copilotExplainSpan(id, spanId ?? '')
                 : kind === 'problem'        ? await api.copilotExplainProblem(id)
                 : kind === 'incident'       ? await api.copilotExplainIncident(id)

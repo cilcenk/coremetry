@@ -74,11 +74,25 @@ export function useInbox(filter: {
 // v0.9.219 — env joins the key AND the request. useInbox() already took env;
 // this one didn't, so with an env picked the sidebar badge counted every
 // environment while the page behind it showed one.
+// v0.9.442 — rozet Dynatrace şekline döner: manşet sayı yalnız
+// problems+anomalies+incidents; exception grupları AYRI sayıdır ve
+// Exceptions menü girişinde sönük rozet olarak görünür. Prod'da 3.1K
+// canlı exception grubu manşeti 3607'ye şişiriyordu — sayı triage
+// sinyali olmaktan çıkmıştı. Sunucu kırılımı zaten döndürüyor; toplam
+// `count` alanı bilerek OKUNMUYOR (dört türün toplamı, eski semantik).
 export function useInboxCount(env?: string) {
-  return useQuery<{ count: number; problems: number; exceptions: number; anomalies: number }, Error, number>({
+  return useQuery<
+    { count: number; problems: number; exceptions: number; anomalies: number; incidents: number },
+    Error,
+    { triage: number; exceptions: number }
+  >({
     queryKey: keys.inbox.count(env),
-    queryFn: async () => (await api.inboxCount(env)) ?? { count: 0, problems: 0, exceptions: 0, anomalies: 0 },
-    select: (r) => r.count,
+    queryFn: async () =>
+      (await api.inboxCount(env)) ?? { count: 0, problems: 0, exceptions: 0, anomalies: 0, incidents: 0 },
+    select: (r) => ({
+      triage: (r.problems ?? 0) + (r.anomalies ?? 0) + (r.incidents ?? 0),
+      exceptions: r.exceptions ?? 0,
+    }),
     refetchInterval: 30_000,
     staleTime: 25_000,
   });

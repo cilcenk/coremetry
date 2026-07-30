@@ -43,6 +43,9 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
   const [text, setText] = useState<string | null>(null);
   const [meta, setMeta] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // v0.9.409 (operatör isteği): buton ilk kullanıma kadar nabız atar —
+  // gözden kaçıyordu. İlk tıklama kalıcı susturur (bu mount için).
+  const [used, setUsed] = useState(false);
 
   useEffect(() => {
     api.copilotConfig().then(c => setEnabled(c.enabled)).catch(() => setEnabled(false));
@@ -51,6 +54,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
   if (enabled !== true) return null;
 
   const run = async () => {
+    setUsed(true);
     setBusy(true); setError(null); setText(null); setMeta(null);
     try {
       if (kind === 'runbook') {
@@ -100,8 +104,8 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
 
   return (
     <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
-      <Button variant="secondary" size="sm" onClick={run} disabled={busy}
-        style={{ color: 'var(--accent2)' }}>
+      <Button variant="accent" size="sm" onClick={run} disabled={busy}
+        className={used ? undefined : 'ai-attn'}>
         {busy
           ? <><IconSparkles /> <span>Thinking…</span></>
           : (label ?? <><IconSparkles /> <span>AI explain</span></>)}

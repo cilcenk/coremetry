@@ -18,10 +18,11 @@ import { heatmapFilters } from './heatmapFilters';
 // ?op= selection): the distribution narrows to that one operation,
 // completing the Grafana/Tempo triple of RED band + latency histogram
 // over the same (service, operation) pair.
-export function ServiceLatencyHeatmap({ service, range, operation = '' }: {
+export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly = false }: {
   service: string;
   range: import('@/lib/types').TimeRange;
   operation?: string;
+  rootOnly?: boolean;
 }) {
   const [data, setData] = useState<import('@/lib/types').LatencyHeatmap | null | undefined>(undefined);
   const [picked, setPicked] = useState<string>(''); // '' = all
@@ -62,11 +63,11 @@ export function ServiceLatencyHeatmap({ service, range, operation = '' }: {
     setData(undefined);
     api.spanHeatmap({
       from, to, buckets: 60,
-      filters: JSON.stringify(heatmapFilters(service, picked, operation)),
+      filters: JSON.stringify(heatmapFilters(service, picked, operation, rootOnly)),
     })
       .then(r => setData(r ?? null))
       .catch(() => setData(null));
-  }, [service, from, to, collapsed, picked, operation]);
+  }, [service, from, to, collapsed, picked, operation, rootOnly]);
 
   const toggle = () => {
     const next = !collapsed;

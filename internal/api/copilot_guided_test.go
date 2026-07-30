@@ -59,6 +59,16 @@ func TestRouteGuidedIntent(t *testing.T) {
 		{"my problems ekip", "ekibimin problemleri var mı", guidedMyProblems, "", ""},
 		{"my problems hatalar", "servislerimde hata var mı", guidedMyProblems, "", ""},
 		{"mysql is not my", "mysql yavaş mı", guidedNone, "", ""},
+
+		// (h) v0.9.376 — pod/JVM sağlığı. Servisli → o servisin pod'ları;
+		// servissiz → filo-geneli heap sıralaması. "gc" tam-token ("gcp"
+		// prefix tuzağına düşmez).
+		{"pods of service", "checkout servisinin podları nasıl", guidedPodHealth, "checkout-service", ""},
+		{"pods with errors still pod intent", "checkout podlarında sorun var mı", guidedPodHealth, "checkout-service", ""},
+		{"fleet heap", "hangi podun heap kullanımı yüksek", guidedPodHealth, "", ""},
+		{"jvm fleet", "jvm heap durumu nasıl", guidedPodHealth, "", ""},
+		{"gc exact token", "gc süreleri arttı mı", guidedPodHealth, "", ""},
+		{"gcp is not gc", "gcp servisi sağlıklı mı", guidedNone, "", ""},
 		{"generic problems stays global", "şu an açık problemler neler", guidedProblems, "", ""},
 
 		// (b) service health — needs a live-list entity.

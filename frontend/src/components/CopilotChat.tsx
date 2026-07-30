@@ -33,6 +33,7 @@ const SAMPLE_QUESTIONS = [
   'Takımımın açık problemleri neler?',  // my_problems
   'Şu an açık problemler ve kök neden?',// problems + root-cause hipotezleri
   'En yavaş trace\'ler hangileri?',     // slow_traces
+  'Hangi pod\'un JVM heap\'i dolu?',    // pod_health (v0.9.376) — servissiz = filo-geneli
   'Son 1 saatteki log hataları?',       // log_errors
   'Son deploy\'un etkisi ne oldu?',     // deploy_impact
 ];

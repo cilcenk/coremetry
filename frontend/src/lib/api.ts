@@ -1714,6 +1714,13 @@ export const api = {
       endpoints?: import('./types').EndpointRow[] | null;
     }>(`/api/services/${encodeURIComponent(svc)}/bundle?${qs(params)}`);
   },
+  // Annotation şeridi — sayfa başına TEK birleşik olay çağrısı
+  // (v0.9.394 Ş1; deploy+rollout+alarm tetik/çözülme+anomali+operatör
+  // olayları, ts-sıralı, 500 tavan + truncated).
+  annotations: (service: string, fromNs: number, toNs: number) =>
+    get<import('./types').AnnotationsResponse>(
+      `/api/annotations?service=${encodeURIComponent(service)}&from=${fromNs}&to=${toNs}`),
+
   // Errors Inbox (state-tracked exception groups). v0.5.95 switched
   // the response shape from a bare array to { items, total, limit,
   // offset } so the UI can paginate without losing the global count.

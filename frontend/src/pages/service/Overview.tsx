@@ -5,6 +5,7 @@ import { timeRangeToNs, rangeToSince } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { entryLatencyDSL } from '@/lib/entrySpans';
 import { panelMaxDataPoints } from '@/lib/chartStep';
+import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
 import type { ChartThreshold } from '@/lib/chart/overlays';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
@@ -421,6 +422,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           ]} />
         </MetricPanel>
       </div>
+
+      {/* v0.9.397 (Ş3 yayılım, "sırayla devam") — annotation şeridi
+          Overview'da da: üç RED grafiği aynı x-ekseni paylaşıyor, grid'in
+          altında TEK şerit. Details ile AYNI bileşen + queryKey (sekmeler
+          arası cache paylaşımı). Chart-içi deploy ▼ çizgileri ŞİMDİLİK
+          duruyor — emeklilikleri operatör pilotu canlıda görünce. */}
+      {onZoom && (
+        <ServiceAnnotationLane service={service} fromNs={from} toNs={to}
+          onZoomTo={onZoom} />
+      )}
 
       {/* v0.9.139 — dil-runtime grafikleri (JVM/.NET/Go) Overview'dan "Pods"
           sekmesine taşındı (ServicePodsTab, v0.9.158'de yeniden adlandırıldı).

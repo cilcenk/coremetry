@@ -62,3 +62,11 @@ func TestClampSpanMetricStep(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.407 notu — tek-tuple tdigest: ölçüm kanıtı commit gövdesinde
+// (AYRI 175ms/8MB → TEK-alias 84ms/4MB; inline-özdeş 190ms — CH
+// farklı-paramlı state'leri CSE'lemez). SQL üretimi bu dosyada pinli
+// DEĞİL: Multi'nin SELECT montajı dışa açık değil ve sırf pin için
+// kancalamak montajı karmaşıklaştırır; doğrulama gemiye alım sırasında
+// canlı e2e ile yapıldı (batch p50/p95/p99 ↔ CH tuple sorgusu birebir).
+// Montaj ileride dışa açılırsa rollupREDSQL deseninde pinlenecek.

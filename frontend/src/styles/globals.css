@@ -514,6 +514,25 @@ button.lg { padding: 8px 18px; font-size: 14px; }
 /* Severity-tinted inactive priority chips — keep the P1=err / P2=warn cue
    even when the chip is off, so the operator's eye reads urgency at rest. */
 .facet.f-err:not(.on) { color: var(--err); }
+
+/* v0.9.356 — labeled facet groups + per-chip "sadece" (operator-approved
+   mockup A). The group is a dashed hull with a tiny uppercase label so the
+   bar reads as "Durum | Öncelik | Tür" instead of seven loose toggles; the
+   solo button turns "only Exceptions" from three clicks into one — the same
+   isolate gesture the chart legends already taught. Density unchanged: every
+   chip and count stays exactly where it was. */
+.facet-grp { display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border: 1px dashed var(--border); border-radius: 10px; }
+.facet-grp .gl { font-size: 9.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--text3); font-weight: 700; }
+.facet-grp .all-link { font-size: 10.5px; color: var(--accent2); cursor: pointer;
+  background: none; border: none; padding: 0 2px; font-weight: 600; }
+.facet { position: relative; }
+.facet .solo { position: absolute; top: -9px; right: -4px; font-size: 9px;
+  line-height: 14px; padding: 0 5px; border-radius: 4px; border: none;
+  background: var(--accent); color: #fff; cursor: pointer; display: none;
+  box-shadow: var(--shadow-sm); }
+.facet:hover .solo { display: inline-block; }
 .facet.f-warn:not(.on) { color: var(--warn); }
 
 /* Cards */

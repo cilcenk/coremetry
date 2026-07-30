@@ -1240,7 +1240,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		fmt.Sprintf(`CREATE TABLE IF NOT EXISTS metric_points (
 			metric        LowCardinality(String),
 			instrument    LowCardinality(String),
-			description   String       DEFAULT '',
+			description   String       DEFAULT '' CODEC(ZSTD(1)),
 			unit          LowCardinality(String) DEFAULT '',
 			service_name  LowCardinality(String),
 			host_name     LowCardinality(String) DEFAULT '',
@@ -1252,9 +1252,9 @@ func (s *Store) migrate(ctx context.Context) error {
 			min_value     Float64      DEFAULT 0,
 			max_value     Float64      DEFAULT 0,
 			attr_keys     Array(LowCardinality(String)),
-			attr_values   Array(String),
+			attr_values   Array(String) CODEC(ZSTD(1)),
 			res_keys      Array(LowCardinality(String)),
-			res_values    Array(String),
+			res_values    Array(String) CODEC(ZSTD(1)),
 			-- v0.5.358 — explicit histogram bucket bounds + per-bucket
 			-- counts. Required for read-time quantile estimation; the
 			-- OTLP ingest path fills these for Histogram data points
@@ -2244,6 +2244,31 @@ func (s *Store) migrate(ctx context.Context) error {
 			}
 		}
 	}
+	// v0.9.439 (Uptrace uyarlamaları — LC/kodek denetimi) — metric_points
+	// serbest kolonlarına ZSTD(1) (metadata-only MODIFY; v0.8.214 spans
+	// emsali). Taban ölçümü (lokal, 2026-07-30): res_values 34.5MiB
+	// sıkıştırılmış / 568MiB ham, oran 16.5 — kodeksiz LZ4'ün en kötüsü.
+	// TİP-PROBE'lu: operatör 0006 ile LC mutasyonunu uyguladıysa (tip
+	// LowCardinality içerir) bu MODIFY'lar KOŞULMAZ — aksi halde tipi
+	// String'e GERİ mutasyonlarlardı (migrations sahiplik sözleşmesi).
+	// Soft-fail: kodek saf optimizasyon, boot'u asla düşürmez.
+	var mpAttrType string
+	if mrow := s.conn.QueryRow(ctx,
+		`SELECT type FROM system.columns WHERE database = currentDatabase() AND table = 'metric_points' AND name = 'attr_values'`); mrow != nil {
+		_ = mrow.Scan(&mpAttrType)
+	}
+	if !strings.Contains(mpAttrType, "LowCardinality") {
+		for _, a := range []string{
+			`ALTER TABLE metric_points MODIFY COLUMN description String DEFAULT '' CODEC(ZSTD(1))`,
+			`ALTER TABLE metric_points MODIFY COLUMN attr_values Array(String) CODEC(ZSTD(1))`,
+			`ALTER TABLE metric_points MODIFY COLUMN res_values Array(String) CODEC(ZSTD(1))`,
+		} {
+			if err := s.execDDL(ctx, a); err != nil {
+				log.Printf("[chstore] metric_points codec ALTER (soft-fail): %v", err)
+			}
+		}
+	}
+
 	acRows, acErr := s.conn.Query(ctx,
 		`SELECT attr_channel_code, attr_function_code FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
 	maybeCloseRows(acRows, acErr)

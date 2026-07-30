@@ -1133,6 +1133,9 @@ export interface ClusterJMXTrendResponse {
   metric: string;
   byPod: boolean;
   series: ClusterNamedSeries[] | null;
+  // v0.9.370 — kesme ÖNCESİ toplam seri; series.length'ten büyükse
+  // "By pod" top-8'e kesilmiştir ve UI bunu söyler.
+  seriesTotal?: number;
 }
 // v0.9.35 — cluster/per-node kaynak trendi (Overview CPU/Mem area).
 export interface ClusterNamedSeries {

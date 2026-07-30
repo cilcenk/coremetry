@@ -9,6 +9,7 @@ import type { ChartThreshold } from '@/lib/chart/overlays';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { OpsCard, DbCard } from './OverviewTables';
+import { TopEndpointsCard } from './TopEndpointsCard';
 import { MetricPanel } from '@/components/MetricPanel';
 import { AIAnalysisPanel } from '@/components/AIAnalysisPanel';
 import { ServiceNeighbors } from '@/components/ServiceNeighbors';
@@ -48,6 +49,8 @@ interface Props {
   range: TimeRange;
   info: Service | null;
   operations: OperationSummary[];
+  // v0.9.377 (redesign D1) — bundle'ın giriş-span endpoint slotu.
+  endpoints?: import('@/lib/types').EndpointRow[];
   // v0.8.534 — drag-zoom on any Overview chart → parent maps to the global
   // ?range=. Passed down to every ChartCard/OverviewChart (mirrors the
   // sibling Performance/ServiceCharts wiring in Service.tsx).
@@ -136,7 +139,7 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp, note }: {
 
 // ChartCard v0.9.87'de charts/ChartCard.tsx'e taşındı (Runtime paneli de kullanır).
 
-export function ServiceOverview({ service, range, windowNs, info, operations, onZoom, onZoomReset }: Props) {
+export function ServiceOverview({ service, range, windowNs, info, operations, endpoints = [], onZoom, onZoomReset }: Props) {
   // v0.8.480 — üst sayfa pencereyi çözdüyse AYNISI kullanılır: RED
   // prefetch'in RQ anahtarı ancak böyle tutar (timeRangeToNs göreli
   // aralıkta Date.now()'a bağlı, iki ayrı hesap anahtar kaçırır).
@@ -411,10 +414,15 @@ export function ServiceOverview({ service, range, windowNs, info, operations, on
       {/* AI Analizi — auto-sends this service + selected window (v0.8.89). */}
       <AIAnalysisPanel service={service} rangeS={Math.round((to - from) / 1e9)} />
 
-      {/* Operations (compact) + Top DB statements */}
+      {/* Top endpoints (giriş span'leri, v0.9.377 D1) + Top DB statements.
+          endpoints boşsa (giriş span'i olmayan servis / eski backend) eski
+          Operations kartına düş — görünmez-düşme yerine zarif fallback;
+          OpsCard dosyasıyla birlikte yaşamaya devam eder (kolay revert). */}
       <div className="ov-grid ov-cols-2 ov-mb">
-        <OpsCard service={service} range={range} operations={operations} />
-        <DbCard service={service} from={from} to={to} />
+        {endpoints.length > 0
+          ? <TopEndpointsCard service={service} range={range} endpoints={endpoints} />
+          : <OpsCard service={service} range={range} operations={operations} />}
+        <DbCard service={service} range={range} from={from} to={to} />
       </div>
 
     </div>

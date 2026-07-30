@@ -44,6 +44,11 @@ func TestEndpointsOrderBy(t *testing.T) {
 		// Composite impact matches the frontend impactOf() formula.
 		{"impact desc", "impact", "desc",
 			"ORDER BY calls * p99_ms * (1 + error_rate / 100.0) DESC" + tiebreak},
+		// v0.9.377 (redesign D1) — Overview Top endpoints kartının toplam
+		// wall-clock sıralaması; iki yol da (MV + raw) calls/avg_ms
+		// alias'larını taşır.
+		{"totalTime desc", "totalTime", "desc",
+			"ORDER BY calls * avg_ms DESC" + tiebreak},
 		{"service asc", "service", "asc", "ORDER BY service_name ASC" + tiebreak},
 		{"path asc", "path", "asc", "ORDER BY path ASC" + tiebreak},
 		// Injection probes — hostile input must fall back, never

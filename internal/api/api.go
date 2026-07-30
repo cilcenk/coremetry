@@ -1945,6 +1945,14 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 			Problems   []chstore.Problem          `json:"problems"`
 			Operations []chstore.OperationSummary `json:"operations"`
 			Deploys    []chstore.Deploy           `json:"deploys"`
+			// v0.9.377 (redesign D1) — Overview'un Top endpoints kartı:
+			// GİRİŞ span'leri (server+consumer; operation_summary_5m'in
+			// kind boyutu yok, o yüzden operations listesi client
+			// span'lerini de içerir ve "endpoint" diye etiketlenemez).
+			// HTTP + RPC/messaging girişleri birleşik, toplam wall-clock
+			// (calls×avg) sıralı. Boş kalırsa UI eski Operations
+			// kartına düşer — görünmez-düşme yok.
+			Endpoints []chstore.EndpointRow `json:"endpoints"`
 		}
 		out := &result{}
 
@@ -1955,7 +1963,7 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 		// blank the whole panel. WaitGroup keeps the
 		// goroutines bounded to this request's lifetime.
 		var wg sync.WaitGroup
-		wg.Add(4)
+		wg.Add(5)
 
 		go func() {
 			defer wg.Done()
@@ -2001,9 +2009,46 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 			out.Deploys = s.serviceDeploysNonBlocking(ctx, svc, from, to)
 		}()
 
+		go func() {
+			defer wg.Done()
+			out.Endpoints = s.bundleTopEndpoints(ctx, svc, from, to)
+		}()
+
 		wg.Wait()
 		return out, nil
 	})
+}
+
+// bundleTopEndpoints — Overview kartının giriş-span endpoint listesi
+// (v0.9.377, redesign D1). İki bounded MV okuması (EntryHTTP + EntryRPC,
+// SkipStatus: raw sidecar'sız), Go'da calls×avg DESC birleşik top-12.
+// Best-effort: hata boş liste bırakır, bundle düşmez (diğer slotlarla
+// aynı sözleşme).
+func (s *Server) bundleTopEndpoints(ctx context.Context, svc string, from, to time.Time) []chstore.EndpointRow {
+	var rows []chstore.EndpointRow
+	for _, entry := range []chstore.EntryKind{chstore.EntryHTTP, chstore.EntryRPC} {
+		part, err := s.store.GetEndpoints(ctx, chstore.EndpointsQuery{
+			From: from, To: to, Service: svc, Limit: 12,
+			Sort: "totalTime", Dir: "desc", Entry: entry, SkipStatus: true,
+		})
+		if err != nil {
+			log.Printf("[svc-bundle] endpoints(%s) %s: %v", entry, svc, err)
+			continue
+		}
+		rows = append(rows, part...)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		ti := float64(rows[i].Calls) * rows[i].AvgMs
+		tj := float64(rows[j].Calls) * rows[j].AvgMs
+		if ti != tj {
+			return ti > tj
+		}
+		return rows[i].Path < rows[j].Path
+	})
+	if len(rows) > 12 {
+		rows = rows[:12]
+	}
+	return rows
 }
 
 // deployCacheTTL — deploy markers move on a ROLLOUT cadence (hours),

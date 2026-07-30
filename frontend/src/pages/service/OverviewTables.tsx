@@ -88,7 +88,7 @@ const DB_COLS: DataTableColumn<DBQueryStat>[] = [
   { id: 'time', label: 'Time/req', sortValue: r => r.avgMs, numeric: true, width: 120 },
 ];
 
-export function DbCard({ service, from, to }: { service: string; from: number; to: number }) {
+export function DbCard({ service, range, from, to }: { service: string; range: TimeRange; from: number; to: number }) {
   const dbQ = useQuery({
     queryKey: ['service-overview-db', service, from, to],
     queryFn: () => api.serviceDBQueries(service, { from, to, limit: 50 }),

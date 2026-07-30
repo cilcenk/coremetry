@@ -285,6 +285,10 @@ func endpointsOrderBy(sort, dir string) string {
 		// Composite "fix me first" score — matches the frontend's
 		// impactOf(): calls × p99 × (1 + errorRate).
 		"impact": "calls * p99_ms * (1 + error_rate / 100.0)",
+		// v0.9.377 (redesign D1) — toplam wall-clock payı: Overview'un
+		// Top endpoints kartı "en pahalı giriş noktası üstte" sıralar,
+		// DB panelinin toplam-süre zihinsel modeliyle aynı.
+		"totalTime": "calls * avg_ms",
 	}[sort]
 	if !ok {
 		return "ORDER BY calls DESC, service_name ASC, path ASC"

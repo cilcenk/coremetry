@@ -231,6 +231,9 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
   font-size: 10px; font-weight: 700; padding: 1px 6px;
   border-radius: 10px; min-width: 18px; text-align: center;
 }
+/* v0.9.442 — bilgi rozeti (Exceptions sayacı): alarm kırmızısı değil,
+   sönük zemin. Manşet triage rozeti kırmızı kalır. */
+.nav-badge.nb-dim { background: var(--bg3); color: var(--text2); font-weight: 600; }
 .nav-dot {
   position: absolute; top: 4px; right: 4px;
   width: 8px; height: 8px; background: var(--err); border-radius: 50%;

@@ -173,11 +173,13 @@ export function Sidebar() {
   // v0.9.323 — the separate open-problems poll is GONE with the /problems nav
   // entry. Keeping the hook would have left a 30s query running forever for a
   // badge that no longer renders anywhere.
-  // v0.8.288 (Option B) — the triage badge sums all four sources
-  // (not-resolved problems + open exception groups + active anomalies +
-  // open incidents, v0.9.321), with the same occurrence floor the list
-  // applies by default (v0.9.322).
-  const inboxCount = useInboxCount(env).data ?? 0;
+  // v0.8.288 (Option B) — the triage badge summed all four sources.
+  // v0.9.442 — Dynatrace şekli: manşet rozet yalnız problems+anomalies+
+  // incidents; exception grupları Exceptions girişinde AYRI, sönük
+  // rozettir. Prod'da 3.1K canlı exception grubu manşeti 3607'ye
+  // şişiriyor, sayı triage sinyali olmaktan çıkıyordu. Occurrence
+  // tabanı sunucuda aynı (v0.9.322).
+  const inboxCounts = useInboxCount(env).data ?? { triage: 0, exceptions: 0 };
   // Footer only shows when the backend is unreachable — pre-v0.5.0
   // it always rendered the queue depths, which on a quiet
   // deployment read as a permanent "spans: 0 · logs: 0" line
@@ -368,7 +370,7 @@ export function Sidebar() {
                 onToggle={() => toggleGroup(group.titleKey)}
                 showLabels={showLabels}
                 pathname={pathname}
-                inboxCount={inboxCount}
+                counts={inboxCounts}
                 t={t} />
             );
           })}
@@ -477,7 +479,7 @@ export function Sidebar() {
 // children stacked since the chevron interaction makes no
 // sense at 56px wide.
 function NavGroupBlock({
-  titleKey, items, isOpen, onToggle, showLabels, pathname, inboxCount, t,
+  titleKey, items, isOpen, onToggle, showLabels, pathname, counts, t,
 }: {
   titleKey: string;
   items: NavItem[];
@@ -485,12 +487,16 @@ function NavGroupBlock({
   onToggle: () => void;
   showLabels: boolean;
   pathname: string;
-  inboxCount: number;
+  counts: { triage: number; exceptions: number };
   t: (key: string) => string;
 }) {
-  // navBadge — the count rendered on a nav entry. Only the merged triage
-  // queue carries one now (v0.9.323); 0 renders nothing.
-  const navBadge = (href: string): number => (href === '/inbox' ? inboxCount : 0);
+  // navBadge — the count rendered on a nav entry. v0.9.442: manşet
+  // (/inbox) yalnız triage toplamı; Exceptions girişi (/problems) kendi
+  // sayısını SÖNÜK rozetle taşır — bilgi, alarm değil. 0 renders nothing.
+  const navBadge = (href: string): number =>
+    href === '/inbox' ? counts.triage : href === '/problems' ? counts.exceptions : 0;
+  const navBadgeClass = (href: string): string =>
+    href === '/problems' ? 'nav-badge nb-dim' : 'nav-badge';
   // Icon-only sidebar: skip the group header (no place for it),
   // render every link inline. Operator still navigates by icon
   // memory in this mode.
@@ -503,7 +509,7 @@ function NavGroupBlock({
             title={t(n.label)}
             style={{ justifyContent: 'center', padding: '10px 0' }}>
             <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
-            {navBadge(n.href) > 0 && (
+            {n.href === '/inbox' && navBadge(n.href) > 0 && (
               <span className="nav-dot" title={`${navBadge(n.href)} triage items`} />
             )}
           </Link>
@@ -522,7 +528,7 @@ function NavGroupBlock({
             <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
             <span className="nav-label">{t(n.label)}</span>
             {navBadge(n.href) > 0 && (
-              <span className="nav-badge">{navBadge(n.href)}</span>
+              <span className={navBadgeClass(n.href)}>{navBadge(n.href)}</span>
             )}
           </Link>
         ))}
@@ -565,7 +571,7 @@ function NavGroupBlock({
           <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
           <span className="nav-label">{t(n.label)}</span>
           {navBadge(n.href) > 0 && (
-            <span className="nav-badge">{navBadge(n.href)}</span>
+            <span className={navBadgeClass(n.href)}>{navBadge(n.href)}</span>
           )}
         </Link>
       ))}

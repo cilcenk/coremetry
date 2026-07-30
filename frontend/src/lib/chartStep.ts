@@ -45,3 +45,16 @@ export function quantizeWidth(px: number): number {
   if (!Number.isFinite(px)) return 1200; // same fallback as useContentWidth
   return Math.min(2400, Math.max(400, Math.round(px / 200) * 200));
 }
+
+// panelMaxDataPoints — v0.9.391 (grafik-audit Faz B): batch RED
+// sorgularının nokta bütçesi. ÖLÇÜLMÜŞ ref genişliği DEĞİL, viewport
+// türevi kullanır — bilinçli: Service.tsx bundle-öncesi PREFETCH ile
+// Overview'un useQuery'si AYNI queryKey'i üretmek zorunda; ref ancak
+// mount'ta ölçülür, prefetch anında yoktur. Formül iki tarafta da
+// deterministik: (viewport - sidebar) / kolon → quantizeWidth (200px
+// bucket — resize tick'i başına refetch yok) → px/2 nokta.
+export function panelMaxDataPoints(cols: number): number {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+  const content = Math.max(400, vw - 260); // sidebar payı
+  return Math.max(120, Math.min(2000, Math.round(quantizeWidth(content / Math.max(1, cols)) / 2)));
+}

@@ -4,6 +4,7 @@ import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/l
 import { timeRangeToNs, rangeToSince } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { entryLatencyDSL } from '@/lib/entrySpans';
+import { panelMaxDataPoints } from '@/lib/chartStep';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
 import type { ChartThreshold } from '@/lib/chart/overlays';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
@@ -158,10 +159,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
 
   // One batched span-metric call: rate + error_rate + p99 + p50 over the
   // same WHERE (service.name = svc). Feeds the KPI sparklines + RED charts.
+  // v0.9.391 (Faz B) — mdp: 3 kolonlu panel bütçesi; Service.tsx prefetch
+  // AYNI formül + AYNI key'i üretir (parite şart — ölçülmüş ref değil,
+  // viewport türevi; gerekçe panelMaxDataPoints yorumunda). select: zarfın
+  // series'ini soyar — tüketici gövdeleri değişmeden kalır, stepSeconds
+  // gerektiğinde d'den okunur.
+  const redMdp = panelMaxDataPoints(3);
   const seriesQ = useQuery({
-    queryKey: ['service-overview-red', service, from, to],
+    queryKey: ['service-overview-red', service, from, to, redMdp],
     queryFn: () => api.spanMetricBatch({
-      from, to,
+      from, to, maxDataPoints: redMdp,
       dsl: `service.name = "${service.replace(/"/g, '\\"')}"`,
       aggs: [
         { name: 'rate', agg: 'rate' },
@@ -171,6 +178,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         { name: 'p50', agg: 'p50', field: 'duration_ms' },
       ],
     }),
+    select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
     enabled: !!service,
     staleTime: 30_000,
   });
@@ -209,9 +217,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // (service_summary_5m'de kind boyutu yok), yani bu sorgu hâlihazırda ham
   // span okuyordu. Aynı sorguya iki agg eklemek ek round-trip getirmiyor.
   const latencyQ = useQuery({
-    queryKey: ['service-overview-entry-red', service, from, to],
+    queryKey: ['service-overview-entry-red', service, from, to, redMdp],
     queryFn: () => api.spanMetricBatch({
-      from, to,
+      from, to, maxDataPoints: redMdp,
       dsl: entryLatencyDSL(service),
       aggs: [
         { name: 'rate', agg: 'rate' },
@@ -225,6 +233,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         { name: 'avg', agg: 'avg', field: 'duration_ms' },
       ],
     }),
+    select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
     enabled: !!service,
     staleTime: 30_000,
   });

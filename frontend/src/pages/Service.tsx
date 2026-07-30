@@ -22,6 +22,7 @@ import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { DetailsPropsStrip } from './service/DetailsPropsStrip';
 import { DetailsToc } from './service/DetailsToc';
+import { panelMaxDataPoints } from '@/lib/chartStep';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -235,10 +236,14 @@ function ServiceDetailInner() {
     // bundle+batch TOPLAMI oluyordu. Aynı RQ anahtarıyla önden ısıt —
     // Overview mount olduğunda useQuery cache'ten anında dolar; iki
     // istek artık paralel, chart paint max()'ı öder.
+    // v0.9.391 — mdp Overview'un useQuery'siyle AYNI formülden (parite
+    // şart: farklı key = prefetch boşa gider). select yok — cache HAM
+    // zarfı taşır, Overview'un select'i okurken soyar.
+    const redMdp = panelMaxDataPoints(3);
     queryClient.prefetchQuery({
-      queryKey: ['service-overview-red', svc, r.from, r.to],
+      queryKey: ['service-overview-red', svc, r.from, r.to, redMdp],
       queryFn: () => api.spanMetricBatch({
-        from: r.from, to: r.to,
+        from: r.from, to: r.to, maxDataPoints: redMdp,
         dsl: `service.name = "${svc.replace(/"/g, '\\"')}"`,
         aggs: [
           { name: 'rate', agg: 'rate' },

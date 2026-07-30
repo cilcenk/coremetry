@@ -1508,20 +1508,26 @@ export const api = {
   // time from 3× to 1× a single-agg query. Returns a map
   // keyed by spec.name so callers address each series
   // without inspecting types.
+  // v0.9.391 (grafik-audit Faz B) — yanıt zarfı {series, stepSeconds}:
+  // bucket genişliği artık sözleşmede (bar genişliği/gap eşiği tahmin
+  // değil); maxDataPoints panel nokta bütçesi (0/yok = sunucu 2000
+  // emniyet tavanı). Rollup /api/rollup/red planıyla AYNI kontrat.
   spanMetricBatch: (body: {
     from?: number; to?: number; step?: number;
+    maxDataPoints?: number;
     groupBy?: string[];
     filters?: string;
     dsl?: string;
     aggs: { name: string; agg: string; field?: string }[];
   }) =>
-    request<Record<string, SpanMetricSeries[] | null>>('/api/spans/metric-batch', {
+    request<{ stepSeconds: number; series: Record<string, SpanMetricSeries[] | null> }>('/api/spans/metric-batch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         from:    body.from,
         to:      body.to,
         step:    body.step,
+        maxDataPoints: body.maxDataPoints,
         groupBy: body.groupBy,
         // server expects filters as raw JSON; we pass through
         // the same shape the GET endpoint does.

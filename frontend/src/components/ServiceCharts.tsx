@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
 import { useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
-import { stepForWidth } from '@/lib/chartStep';
+import { quantizeWidth, stepForWidth } from '@/lib/chartStep';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { isResolverEligible, serviceRedDescriptors } from '@/lib/resolverEligibility';
 import { metricQuery } from '@/lib/metricQuery';
@@ -205,13 +205,18 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
         // because the spans scan happens once.
         return api.spanMetricBatch({
           from: fromNs, to: toNs, groupBy: opScope ? [] : ['name'], dsl,
+          // v0.9.391 — effStep zaten px-adaptif (stepForWidth); mdp ek
+          // emniyet: explicit step sunucu bütçesinden de geçer. quantizeWidth
+          // ŞART: ham piksel sunucu cache anahtarını piksel başına bölerdi
+          // (v0.8.270 sınırlı-kardinalite kuralı).
+          maxDataPoints: contentW > 0 ? Math.round(quantizeWidth(contentW) / 2) : undefined,
           aggs: [
             { name: 'rate',       agg: 'rate' },
             { name: 'error_rate', agg: 'error_rate' },
             { name: 'p99',        agg: 'p99', field: 'duration_ms' },
             ...(opScope ? [{ name: 'avg', agg: 'avg', field: 'duration_ms' }] : []),
           ],
-        }).then(res => ({
+        }).then(({ series: res }) => ({
           rate: res.rate ?? [], error_rate: res.error_rate ?? [],
           p99: [...tagAvg(res.avg ?? []), ...(res.p99 ?? [])],
         }));

@@ -477,6 +477,7 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 	}
 
 	out := make([]PodRow, 0, len(byKey))
+	emitted := map[string]bool{}
 	for k, a := range byKey {
 		ns, pod, _ := strings.Cut(k, "\x00")
 		// Limit-only keys (limit configured, pod idle enough that
@@ -484,6 +485,7 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 		if a.cpu == 0 && a.mem == 0 {
 			continue
 		}
+		emitted[k] = true
 		row := PodRow{Cluster: c.Name, Namespace: ns, Pod: pod,
 			CPUCores: a.cpu, MemBytes: a.mem,
 			Phase: phaseBy[k], Restarts: restartBy[k]}
@@ -506,7 +508,46 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, er
 		row.NetInBps, row.NetOutBps = a.netIn, a.netOut
 		out = append(out, row)
 	}
+	// v0.9.368 — çöken pod'lar geri geliyor: container'ı koşmayan bir pod'un
+	// cAdvisor cpu/mem serisi YOKTUR, yani byKey'e hiç girmez (ya da noise
+	// kuralına takılır) ve sekme tam servis yattığı anda "No pods matched"
+	// diyordu. KSM faz/restart haritaları o pod'ları zaten biliyor —
+	// applyDeployKSM'in aynası: sıfır-kaynaklı hayalet satır ekle.
+	out = appendGhostPods(out, c.Name, emitted, phaseBy, restartBy)
 	return out, nil
+}
+
+// appendGhostPods appends a zero-resource PodRow for every pod the KSM
+// phase/restart maps know but the cAdvisor-based loop didn't emit — gated
+// to pods that are actually interesting: a non-Running/non-Succeeded phase
+// (Pending, Failed, Unknown) or a nonzero restart count. Healthy idle pods
+// with a scrape gap stay excluded (the "limit-only keys are noise" rule).
+// Pure; table-tested (ghost_pods_test.go, v0.9.368).
+func appendGhostPods(out []PodRow, cluster string, emitted map[string]bool, phaseBy map[string]string, restartBy map[string]int) []PodRow {
+	keys := map[string]bool{}
+	for k := range phaseBy {
+		keys[k] = true
+	}
+	for k := range restartBy {
+		keys[k] = true
+	}
+	for k := range keys {
+		if emitted[k] {
+			continue
+		}
+		phase := phaseBy[k]
+		badPhase := phase != "" && phase != "Running" && phase != "Succeeded"
+		if !badPhase && restartBy[k] == 0 {
+			continue
+		}
+		ns, pod, _ := strings.Cut(k, "\x00")
+		if pod == "" {
+			continue
+		}
+		out = append(out, PodRow{Cluster: cluster, Namespace: ns, Pod: pod,
+			Phase: phase, Restarts: restartBy[k]})
+	}
+	return out
 }
 
 // ClusterSummary — genel görünüm kartının verisi (v0.8.586,

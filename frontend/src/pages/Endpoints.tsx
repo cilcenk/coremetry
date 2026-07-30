@@ -14,9 +14,8 @@ import { useEndpoints, useClusters } from '@/lib/queries';
 import { timeRangeToNs, rangeToSince, fmtNum } from '@/lib/utils';
 import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
-import { useUrlRange } from '@/lib/useUrlRange';
+import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
-import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { TrendDelta } from '@/components/TrendDelta';
 import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
@@ -136,32 +135,10 @@ export default function EndpointsPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   // Global time window (UX#2) — URL-persisted + carried across pages.
-  const [range, setRange] = useUrlRange('30m');
-  // Madde 4 sweep — modal RED grafiklerinin drag-zoom'u global range'e
-  // yazar; çift-tık GERİ-YIĞINI Service.tsx v0.9.199 deseninin birebiri
-  // (out-of-band range değişimi yığını geçersizleştirir).
-  const zoomStackRef = useRef<TimeRange[]>([]);
-  const rangeRef = useRef(range); rangeRef.current = range;
-  const zoomWroteRef = useRef(false);
-  useEffect(() => {
-    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
-    zoomStackRef.current = [];
-  }, [range.preset, range.fromMs, range.toMs]);
-  const handleZoom = (fromUnixSec: number, toUnixSec: number) => {
-    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
-    zoomWroteRef.current = true;
-    setRange({
-      preset: 'custom',
-      fromMs: Math.round(fromUnixSec * 1000),
-      toMs: Math.round(toUnixSec * 1000),
-    });
-  };
-  const handleZoomReset = () => {
-    const { stack, view } = popZoom(zoomStackRef.current);
-    zoomStackRef.current = stack;
-    if (view) { zoomWroteRef.current = true; setRange(view); return; }
-    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '30m' }); }
-  };
+  // v0.9.429 — zoom-yığını paylaşılan usePageZoomRange hook'unda
+  // (üstelik handler'lar artık useCallback-stabil — buradaki inline
+  // kopya panel alt-ağacını her render'da yeniden çiziyordu).
+  const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('30m');
   // Global env filter (v0.8.385, env-separation Phase 2) — written by
   // the Topbar EnvPicker. Forwarded to /api/endpoints, where it forces
   // the bounded raw-spans path with a deploy_env conjunct (the

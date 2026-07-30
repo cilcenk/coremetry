@@ -1302,6 +1302,14 @@ func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*P
 			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
 	if err != nil {
+		// v0.9.446 — "satır yok" hata DEĞİL (nil/nil, user.go emsali):
+		// monitor keep-alive'ı gerçek okuma hatası ile süpürülmüş-satırı
+		// ayırt etmek zorunda — hata varken yeniden açmak çift bildirim,
+		// yok saymak kaçırılmış alarm üretir. Tüm mevcut çağıranlar
+		// `err == nil && open != nil` kalıbında; davranışları değişmez.
+		if isNoRows(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if resolvedAt != nil {

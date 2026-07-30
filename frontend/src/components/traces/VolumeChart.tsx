@@ -19,13 +19,16 @@ function fmtDurRight(v: number): string {
 }
 
 export function VolumeChart({
-  count, errors, p50, height = 140, onBrush, xRange, header, headerRight,
+  count, errors, p50, height = 140, onBrush, onZoomReset, xRange, header, headerRight,
 }: {
   count: SpanMetricSeries[] | null;
   errors: SpanMetricSeries[] | null;
   p50: SpanMetricSeries[] | null;
   height?: number;
   onBrush?: (fromMs: number, toMs: number) => void;
+  // v0.9.390 (Faz A-3) — çift-tık = brush'ı geri al; TimeChart'ın mevcut
+  // dblclick altyapısına aynen iletilir. Verilmezse eski davranış.
+  onZoomReset?: () => void;
   // v0.9.83 — sorgu penceresi (unix sec); histogram x-ekseni buna sabitlenir.
   xRange?: { from: number; to: number } | null;
   // v0.9.246 — kartın başlık şeridine gömülen içerik (Volume/Latency anahtarı
@@ -97,6 +100,7 @@ export function VolumeChart({
           leftUnit=""
           rightUnit=""
           onBrush={onBrush}
+      onZoomReset={onZoomReset}
           fmtRight={fmtDurRight}
           xRange={xRange}
           // v0.9.245 — istatistik tablosu kapalı başlar. Bu sayfada asıl iş

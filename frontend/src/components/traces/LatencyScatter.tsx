@@ -27,12 +27,15 @@ interface PlotPoint {
 }
 
 export function LatencyScatter({
-  rows, height = 168, onOpen, onBrush,
+  rows, height = 168, onOpen, onBrush, onZoomReset,
 }: {
   rows: TraceRow[];
   height?: number;
   onOpen: (t: TraceRow) => void;
   onBrush: (fromMs: number, toMs: number) => void;
+  // v0.9.390 (Faz A-3) — çift-tık = brush'ı geri al (M1 paritesi; scatter
+  // kendi tuvalinde çizdiği için TimeChart'ın dblclick altyapısı yok).
+  onZoomReset?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -236,6 +239,7 @@ export function LatencyScatter({
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerLeave={() => { setHover(null); if (dragStart.current != null) { dragStart.current = null; setBrush(null); } }}
+        onDoubleClick={() => onZoomReset?.()}
       />
       {/* Brush rectangle overlay */}
       {brush && Math.abs(brush.b - brush.a) > 1 && (

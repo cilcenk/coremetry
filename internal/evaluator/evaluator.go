@@ -1135,6 +1135,11 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 			Description: desc,
 			StartedAt:   startedAt,
 		}
+		// v0.9.444 (hacim denetimi bulgusu) — tam-satır replace operatör
+		// alanlarını İLERİ taşımalı: refresh dalı her tick Status:"open"
+		// yazıp ack'i geri açıyor, boş Assignee/Pod alanları da mevcut
+		// değerleri siliyordu (ReplacingMergeTree bütün-satır sözleşmesi).
+		carryProblemOperatorState(&p, open)
 		if err := e.store.UpsertProblem(ctx, p); err != nil {
 			log.Printf("[evaluator] anomaly promote %s/%s: %v",
 				ev.Service, ev.ID, err)
@@ -1148,6 +1153,92 @@ func (e *Evaluator) promoteStrongAnomalies(ctx context.Context) {
 			}
 		}
 	}
+	e.resolveClearedAnomalyPromotions(ctx, muted)
+}
+
+// carryProblemOperatorState — terfi refresh'inin saf çekirdeği: mevcut
+// açık satırdan OPERATÖR alanlarını yeni gövdeye taşır. Status (ack
+// hayatta kalır), Assignee ve Pod taşınır; Severity/Value/Description
+// BİLEREK taşınmaz — onlar her tick'in taze ölçümüdür.
+func carryProblemOperatorState(p *chstore.Problem, open *chstore.Problem) {
+	if open == nil {
+		return
+	}
+	p.Status = open.Status
+	p.Assignee = open.Assignee
+	p.Pod = open.Pod
+}
+
+// resolveClearedAnomalyPromotions (v0.9.444, hacim denetimi #3) —
+// anomali TEMİZLENİNCE terfi problemi hemen ve dürüst gerekçeyle
+// kapanır. Eskiden kapanış dolaylıydı: promotion satıra dokunmayı
+// bırakır, ~10dk aktif penceresi + 3×interval sonra stale sweep
+// "source silent" damgasıyla kapatırdı — Dynatrace davranışı
+// "koşul geçti → problem kapandı"dır ve gerekçe yalan söylememeli.
+// Susturulmuş (mute) parmak izlerinin problemleri de kapanır:
+// v0.9.337 mute'u en gürültülü yoldan düşürmüştü; açık satırı
+// sonsuza dek taşımak aynı şikâyetin kuyruğuydu.
+//
+// Soft-fail her iki okumada: aktif seti alınamazsa HİÇBİR ŞEY
+// kapatılmaz (kör resolve, kaçırılmış alarmdan beterdir).
+func (e *Evaluator) resolveClearedAnomalyPromotions(ctx context.Context, muted map[string]bool) {
+	events, err := e.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
+		ActiveOnly: true,
+		SinceNs:    time.Now().Add(-1 * time.Hour).UnixNano(),
+		Limit:      5000,
+	})
+	if err != nil {
+		log.Printf("[evaluator] anomaly resolve pass: list active: %v", err)
+		return
+	}
+	active := make(map[string]bool, len(events))
+	for _, ev := range events {
+		active[ev.ID] = true
+	}
+	snap, err := e.store.OpenProblemsSnapshot(ctx)
+	if err != nil {
+		log.Printf("[evaluator] anomaly resolve pass: snapshot: %v", err)
+		return
+	}
+	resolved := 0
+	for _, p := range snap {
+		if !strings.HasPrefix(p.RuleID, promoteAnomalyRuleID) {
+			continue
+		}
+		fp := strings.TrimPrefix(p.RuleID, promoteAnomalyRuleID)
+		isMuted := muted[fp]
+		if active[fp] && !isMuted {
+			continue
+		}
+		reason := "anomaly cleared"
+		if isMuted {
+			reason = "anomaly muted"
+		}
+		resolvedAt := time.Now().UnixNano()
+		q := *p
+		q.Status = "resolved"
+		q.ResolvedAt = &resolvedAt
+		q.Description = appendResolveSuffix(q.Description, reason)
+		if err := e.store.UpsertProblem(ctx, q); err != nil {
+			log.Printf("[evaluator] anomaly resolve pass: %s: %v", q.ID, err)
+			continue
+		}
+		resolved++
+		log.Printf("[evaluator] PROBLEM AUTO-RESOLVED (%s): %s · %s", reason, q.Service, q.RuleName)
+	}
+	if resolved > 0 {
+		log.Printf("[evaluator] anomaly resolve pass: closed %d promoted problem(s)", resolved)
+	}
+}
+
+// appendResolveSuffix — appendStaleSuffix'in gerekçeli genellemesi.
+// İdempotent: aynı gerekçe zaten damgalıysa yeniden eklenmez
+// (resolved→reopened→re-resolved döngüsü çift damga üretmesin).
+func appendResolveSuffix(desc, reason string) string {
+	if strings.Contains(desc, reason) {
+		return desc
+	}
+	return desc + " · auto-resolved: " + reason
 }
 
 // formatFloat / formatUint — tiny helpers used by promotion

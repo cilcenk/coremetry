@@ -30,6 +30,7 @@ const Runbooks          = lazy(() => import('./pages/Runbooks'));
 const Runbook           = lazy(() => import('./pages/Runbook'));
 const RunbookExecution  = lazy(() => import('./pages/RunbookExecution'));
 const Databases         = lazy(() => import('./pages/Databases'));
+const Deploys           = lazy(() => import('./pages/Deploys')); // v0.9.435
 const External          = lazy(() => import('./pages/External'));
 const Hosts             = lazy(() => import('./pages/Hosts'));
 const Clusters          = lazy(() => import('./pages/Clusters'));
@@ -127,6 +128,7 @@ export default function App() {
             <Route path="/runbook"       element={<Runbook />} />
             <Route path="/runbook-exec"  element={<RunbookExecution />} />
             <Route path="/databases"      element={<Databases />} />
+            <Route path="/deploys"        element={<Deploys />} />
             <Route path="/databases/slow-queries" element={<SlowQueries />} />
             <Route path="/external"       element={<External />} />
             <Route path="/hosts"          element={<Hosts />} />

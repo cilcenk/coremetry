@@ -742,3 +742,59 @@ func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 		deployLookback, earliest.UTC().Format(time.RFC3339))
 	return true
 }
+
+// GetDeploysInWindow (v0.9.435) — GetRecentDeploys'un PENCERE-sınırlı
+// ikizi (/deploys sayfası için). GetRecentDeploys [since, ŞİMDİ] tarar
+// ve en yeni N'i tutar — geçmiş bir custom pencerede (to << now) o N
+// satırın tamamı to'dan sonra kalıp kırpmada elenebiliyordu (sayfa
+// dolu pencerede boş görünürdü — verify bulgusu). Burada hem taramanın
+// hem HAVING'in sağ ucu to'ya bağlı; LIMIT pencere İÇİNDE uygulanır.
+// Placeholder filtresi + effectiveVersion zinciri birebir aynı.
+func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limit int) ([]RecentDeployEntry, error) {
+	if limit <= 0 || limit > 2000 {
+		limit = 200
+	}
+	window := to.Sub(from)
+	maxExecSec := 5
+	switch {
+	case window > 25*time.Hour: // tolerans: 24h preset'i ε yüzünden 60s kovasına düşmesin
+		maxExecSec = 60
+	case window > time.Hour:
+		maxExecSec = 30
+	}
+	sql := fmt.Sprintf(`
+		SELECT
+		  service_name,
+		  `+effectiveVersionExpr+` AS version,
+		  toUnixTimestamp64Nano(min(time)) AS first_seen,
+		  count() AS span_count
+		FROM spans
+		WHERE time >= ? AND time <= ?
+		  AND (has(res_keys, 'service.version')
+		    OR has(res_keys, 'container.image.tag')
+		    OR has(res_keys, 'k8s.container.image.tag')
+		    OR has(res_keys, 'k8s.deployment.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.pod.labels.app_kubernetes_io_version')
+		    OR has(res_keys, 'k8s.deployment.labels.version')
+		    OR has(res_keys, 'helm.chart.version'))
+		GROUP BY service_name, version
+		HAVING version != ''
+		   AND first_seen >= ?
+		ORDER BY first_seen DESC
+		LIMIT ?
+		SETTINGS max_execution_time = %d`, maxExecSec)
+	rows, err := s.conn.Query(ctx, sql, from, to, from.UnixNano(), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []RecentDeployEntry{}
+	for rows.Next() {
+		var e RecentDeployEntry
+		if err := rows.Scan(&e.Service, &e.Version, &e.FirstSeenNs, &e.SpanCount); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}

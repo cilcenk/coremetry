@@ -1588,6 +1588,10 @@ export const api = {
   // events (instance-set turnover) + per-rollout RED impact, plus
   // versionConstant/instancesTracked flags. Replaces the version-
   // based deploy markers when service.version is constant.
+  // v0.9.435 — filo Deploys/Rollouts geçmişi.
+  deploysHistory: (fromNs: number, toNs: number, service?: string) =>
+    get<import('./types').DeploysHistoryResponse>(
+      `/api/deploys/history?from=${fromNs}&to=${toNs}${service ? `&service=${encodeURIComponent(service)}` : ''}`),
   serviceRollouts: (svc: string, params: { from?: number; to?: number }) =>
     get<import('./types').RolloutsResult>(
       `/api/services/${encodeURIComponent(svc)}/rollouts?${qs(params)}`),

@@ -10,7 +10,7 @@ import {
   Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Search, Hash, Eye,
-  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, type LucideIcon,
+  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, Rocket, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -92,6 +92,8 @@ const NAV_GROUPS: NavGroup[] = [
       // değiştirdi (Clusters öne, Topology gruba sona).
       { href: '/clusters',    label: 'nav.clusters',   icon: Server }, // v0.8.578 — Thanos pod metrikleri
       { href: '/databases',   label: 'nav.databases',  icon: Database },
+      // v0.9.435 (operatör istegi) — filo Deploys/Rollouts geçmişi.
+      { href: '/deploys',     label: 'nav.deploys',    icon: Rocket },
       { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
       { href: '/service-map', label: 'nav.topology',   icon: Workflow }, // v0.8.219 — /topology retired → /service-map
       // v0.8.490 — External + Hosts sidebar'dan gizlendi (operatör:

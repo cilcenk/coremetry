@@ -3640,6 +3640,24 @@ export interface Rollout {
   versionAfter?: string;
   impact?: DeployImpact | null;
 }
+// v0.9.435 — filo Deploys/Rollouts geçmişi (/deploys sayfası).
+export interface RecentDeployEntry {
+  service: string;
+  version: string;
+  firstSeenNs: number;
+  spanCount: number;
+}
+export interface FleetRollout extends Rollout { service: string }
+export interface DeploysHistoryResponse {
+  deploys: RecentDeployEntry[];
+  rollouts: FleetRollout[];
+  scannedServices: number;
+  candidateCapped: boolean;
+  deploysTruncated?: boolean;
+  rolloutWindowClamped?: boolean;
+  rolloutScanErrors?: number;
+}
+
 export interface RolloutsResult {
   service: string;
   rollouts: Rollout[];

@@ -202,6 +202,25 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		}
 	}
 
+	// ── Dar rollup fast-path (v0.9.428, Rollup Aşama-3 dilim 3) ──────────────
+	// Batch yolunun (v0.9.412) TEKİL ikizi: uygunluk (dar boyutlar +
+	// eşlenebilir agg), kademe seçimi, tablo varlığı ve KAPSAMA
+	// dürüstlüğü aynı çekirdekten (tryNarrowRollupFastPathMulti) —
+	// iki kopya sürüklenmez. Kısa pencerelerin alt-10s step'leri (1s/5s
+	// ladder basamakları) kademe bölünebilirliğinden doğal olarak ham
+	// yolda kalır; Search/OR-grubu MV fast-path'leriyle aynı kapıdan
+	// diskalifiye olur. Tablolar yokken davranış bayt-bayt eski.
+	if f.Search == "" && f.FilterRoot.IsFlatAnd() {
+		bf := SpanMetricBatchFilter{
+			Filters: f.effectiveFastPathFilters(), GroupBy: f.GroupBy,
+			From: f.From, To: f.To, StepSeconds: step,
+			Aggs: []SpanMetricAggSpec{{Name: "v", Aggregation: f.Aggregation, Field: f.Field}},
+		}
+		if out, ok := s.tryNarrowRollupFastPathMulti(ctx, bf); ok {
+			return out["v"], nil
+		}
+	}
+
 	// ── Aggregation expression ────────────────────────────────────────────────
 	field := f.Field
 	if field == "" {

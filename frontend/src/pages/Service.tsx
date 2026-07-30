@@ -544,7 +544,7 @@ function ServiceDetailInner() {
                 <div className="ov-grid dtl-cols ov-mb">
                   <LazyMount minHeight={360}>
                     <ServiceLatencyHeatmap service={svc} range={range}
-                                           operation={opScope} />
+                                           operation={opScope} rootOnly />
                   </LazyMount>
                   {/* v0.9.348 — "RPS by operation" çubuk listesi kaldırıldı.
                       Hemen ÜSTÜNDEKİ grafik zaten operasyon başına RPS

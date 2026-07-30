@@ -13,9 +13,17 @@
 import type { FilterExpr } from '@/lib/types';
 
 export function heatmapFilters(
-  service: string, cluster?: string, operation?: string,
+  service: string, cluster?: string, operation?: string, rootOnly?: boolean,
 ): FilterExpr[] {
   const f: FilterExpr[] = [{ k: 'service.name', op: '=', v: [service] }];
+  // v0.9.364 — Details sekmesindeki panel v0.9.348'den beri rootOnly RED
+  // grafiklerinin ALTINDA duruyor ama dağılımı TÜM span türlerinden
+  // çiziyordu: üstteki grafikler giriş noktalarını (server+consumer)
+  // gösterirken heatmap client/internal span'leri de karıştırıyordu —
+  // api-gateway'de giden çağrıların gecikmesi servisin kendi dağılımıymış
+  // gibi okunuyordu. `kind` filterexpr.go wellKnown kolonu, değerler
+  // CH'deki küçük-harf literal'ler (endpoints.go/slo.go ile aynı).
+  if (rootOnly) f.push({ k: 'kind', op: 'IN', v: ['server', 'consumer'] });
   // Hit the resource-attr key directly. The OTLP ingest path materialises
   // k8s.cluster.name as a span attr, so a single predicate is enough (no
   // coalesce across resource + span attrs needed at query time).

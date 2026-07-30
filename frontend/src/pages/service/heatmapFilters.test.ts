@@ -30,6 +30,33 @@ describe('heatmapFilters wire shape (v0.8.421)', () => {
     ]],
   ];
 
+  // v0.9.364 — rootOnly konjonktu: Details'taki panel üstündeki rootOnly
+  // grafiklerle aynı giriş-span popülasyonunu çizer. Değerler CH'deki
+  // küçük-harf literal'lerdir ('server','consumer') — endpoints.go/slo.go
+  // ile aynı; büyük harfe drift ederse sessizce boş heatmap olur.
+  const rootCases: Array<[
+    name: string,
+    args: [string, string?, string?, boolean?],
+    want: { k: string; op: string; v: string[] }[],
+  ]> = [
+    ['rootOnly adds entry-span kind conjunct', ['checkout', undefined, undefined, true], [
+      { k: 'service.name', op: '=', v: ['checkout'] },
+      { k: 'kind', op: 'IN', v: ['server', 'consumer'] },
+    ]],
+    ['rootOnly composes with cluster + operation', ['checkout', 'eu-1', 'GET /cart', true], [
+      { k: 'service.name', op: '=', v: ['checkout'] },
+      { k: 'kind', op: 'IN', v: ['server', 'consumer'] },
+      { k: 'k8s.cluster.name', op: '=', v: ['eu-1'] },
+      { k: 'name', op: '=', v: ['GET /cart'] },
+    ]],
+    ['rootOnly=false stays kind-free (Overview contract)', ['checkout', undefined, undefined, false], [
+      { k: 'service.name', op: '=', v: ['checkout'] },
+    ]],
+  ];
+  it.each(rootCases)('%s', (_name, args, want) => {
+    expect(heatmapFilters(...args)).toEqual(want);
+  });
+
   it.each(cases)('%s', (_name, args, want) => {
     expect(heatmapFilters(...args)).toEqual(want);
   });

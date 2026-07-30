@@ -25,6 +25,8 @@ export interface HeatmapCellRef {
   lowDurMs:  number;  // duration band lower bound (exclusive)
   highDurMs: number;  // duration band upper bound (inclusive)
   count:     number;  // for the modal header
+  // v0.9.393 — hücrenin sunucu-tarafı temsilci trace'i (opsiyonel).
+  exemplarTraceId?: string;
 }
 
 interface Props {
@@ -43,7 +45,12 @@ interface Props {
   onClose: () => void;
 }
 
-export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, onClose }: Props) {
+export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exemplarTraceId, onClose }: Props & {
+  // v0.9.393 — hücrenin SUNUCU-tarafı temsilci trace'i (heatmap yanıtındaki
+  // exemplars ızgarasından). Arama sampled pencerede "No traces matched"
+  // ölü ucuna düşse bile bu link her zaman GERÇEK bir trace'e gider.
+  exemplarTraceId?: string;
+}) {
   const [traces, setTraces] = useState<TraceRow[] | null | undefined>(undefined);
 
   useEffect(() => {
@@ -115,9 +122,29 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, onClos
             joins by trace id. If the heatmap is sampled, exemplars may be missing
             (the cell still represents real spans, just not all reachable as
             trace rows here).
+            {exemplarTraceId && (
+              <div style={{ marginTop: 8 }}>
+                {/* v0.9.393 — ölü uç kapandı: hücrenin sunucu-tarafı temsilci
+                    trace'i aramadan bağımsız her zaman elimizde. */}
+                Yine de hücrenin temsilci trace&#39;i elimizde:{' '}
+                <a className="mono" href={`/trace?id=${exemplarTraceId}`}
+                  style={{ color: 'var(--accent)' }}>
+                  ◆ {exemplarTraceId.slice(0, 16)}… (hücredeki en yavaş)
+                </a>
+              </div>
+            )}
           </div>
         )}
         {traces && traces.length > 0 && (
+          <>
+          {exemplarTraceId && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
+              ◆ temsilci (en yavaş):{' '}
+              <a className="mono" href={`/trace?id=${exemplarTraceId}`} style={{ color: 'var(--accent)' }}>
+                {exemplarTraceId.slice(0, 16)}…
+              </a>
+            </div>
+          )}
           <table style={{ width: '100%', fontSize: 12 }}>
             <thead>
               <tr>
@@ -167,6 +194,7 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, onClos
               ))}
             </tbody>
           </table>
+          </>
         )}
       </div>
     </div>

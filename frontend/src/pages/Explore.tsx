@@ -841,6 +841,7 @@ name ~ checkout`}
                     lowDurMs: cell.lowDurMs,
                     highDurMs: cell.highDurMs,
                     count: cell.count,
+                    exemplarTraceId: cell.exemplarTraceId,
                   })}
                   onBoxSelect={setBoxSel} />
                 <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
@@ -927,6 +928,7 @@ name ~ checkout`}
           return (
             <HeatmapCellExemplars
               cell={cellExemplar}
+              exemplarTraceId={cellExemplar.exemplarTraceId}
               bucketWidthNs={bucketWidthNs}
               filters={a ? effectiveFilters(a) : []}
               dsl={a && a.dsl.trim() ? a.dsl : undefined}

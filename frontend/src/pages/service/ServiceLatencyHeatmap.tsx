@@ -34,6 +34,7 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
   // Explore ile aynı), sürükleme = "N span · Traces →" eylem çubuğu.
   const [cellExemplar, setCellExemplar] = useState<{
     timeNs: number; lowDurMs: number; highDurMs: number; count: number;
+    exemplarTraceId?: string;
   } | null>(null);
   const [boxSel, setBoxSel] = useState<{
     timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number;
@@ -187,6 +188,7 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
       {cellExemplar && data && (
         <HeatmapCellExemplars
           cell={cellExemplar}
+          exemplarTraceId={cellExemplar.exemplarTraceId}
           bucketWidthNs={data.times.length >= 2 ? data.times[1] - data.times[0] : 60 * 1e9}
           filters={heatmapFilters(service, picked, operation, rootOnly)}
           onClose={() => setCellExemplar(null)} />

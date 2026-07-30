@@ -296,6 +296,24 @@ export default function InboxPage() {
     return out;
   }, [inboxQ.data, kindSet]);
   const hiddenP1Total = Object.values(hiddenP1).reduce((a, b) => a + b, 0);
+  // v0.9.424 (operator-reported, prod) — öncelik gizlemesi de tür
+  // gizlemesi kadar dürüst olmalı: varsayılan P1+P2 görünümü P3'leri
+  // (v417 ile görünür olan tek-tük exception'lar P3'te yaşar) SESSİZCE
+  // saklıyordu — /problems'ta duran gruplar inbox'ta "kayıp" sanıldı.
+  // Sunucu öncelik sayaçlarını zaten gönderiyor (inboxFacetCounts,
+  // fetch edilen türler üzerinde); tek eksik görünür şerit + tek tıktı.
+  const hiddenPrio = useMemo(() => {
+    const c = inboxQ.data?.counts;
+    if (!c) return {} as Record<string, number>;
+    const out: Record<string, number> = {};
+    for (const p of PRIO_ALL) {
+      if (prioSet.has(p)) continue;
+      const n = c[p] ?? 0;
+      if (n > 0) out[p] = n;
+    }
+    return out;
+  }, [inboxQ.data, prioSet]);
+  const hiddenPrioTotal = Object.values(hiddenPrio).reduce((a, b) => a + b, 0);
   // Naming note (v0.9.330): this counts ROWS in unselected kinds, not P1s
   // specifically — the server reports per-kind totals, not a kind×priority
   // matrix. The label says "kalem" for that reason; claiming "P1" would be a
@@ -654,6 +672,23 @@ export default function InboxPage() {
             <Button variant="ghost" size="sm"
               onClick={() => setParam('kind', encodeCsvSet([...KIND_ALL], KIND_ALL, KIND_DEFAULT))}>
               hepsini göster
+            </Button>
+          </div>
+        )}
+        {/* v0.9.424 — öncelik gizlemesinin dürüst şeridi (tür banner'ının
+            kardeşi): P3'te satır varken varsayılan P1+P2 görünümü sessiz
+            kalamaz. Tek tık tüm öncelikleri açar (?prio= URL'de yaşar). */}
+        {hiddenPrioTotal > 0 && (
+          <div style={{ marginBottom: 8 }}>
+            <span className="badge b-warn"
+              title="Öncelik filtresi dışında satır var — tek-tük exception'lar P3 olarak burada yaşar. Varsayılan görünüm daraltabilir, ama bir şeyi sessizce saklayamaz.">
+              ⚠ Öncelik filtresi dışında <b>{hiddenPrioTotal}</b> kalem
+              {' — '}
+              {Object.entries(hiddenPrio).map(([p, n]) => `${p}: ${n}`).join(' · ')}
+            </span>{' '}
+            <Button variant="ghost" size="sm"
+              onClick={() => setParam('prio', encodeCsvSet(new Set(PRIO_ALL), PRIO_ALL, PRIO_DEFAULT))}>
+              onları da göster
             </Button>
           </div>
         )}

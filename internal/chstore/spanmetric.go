@@ -976,7 +976,53 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 			"toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket",
 			step),
 	}
+	// v0.9.407 (grafik-audit Faz B'nin ertelenen 4. kalemi — ÖLÇÜMLE):
+	// aynı alan üzerinde ≥2 percentile istendiğinde üç ayrı
+	// quantileTDigest state'i yerine TEK quantilesTDigest tuple'ı.
+	// query_log medyanı (yerel, 526k span/6h, 7'şer koşu): AYRI 175ms /
+	// 8MB → TEK 84ms / 4MB — CH üç state'i CSE ile İNDİRGEMİYOR.
+	// Tuple alias'ı aynı SELECT'te yeniden kullanılır (CH alias kuralı);
+	// sütun başına vN çıkışı DEĞİŞMEDİ, Scan tarafı aynen.
+	pctQ := map[string]string{"p50": "0.50", "p90": "0.90", "p95": "0.95", "p99": "0.99", "p999": "0.999"}
+	type pctGroup struct {
+		qs   []string
+		idxs []int
+	}
+	pctByField := map[string]*pctGroup{}
 	for i, a := range f.Aggs {
+		if q, ok := pctQ[strings.ToLower(a.Aggregation)]; ok {
+			field := a.Field
+			if field == "" {
+				field = "duration_ms"
+			}
+			g := pctByField[field]
+			if g == nil {
+				g = &pctGroup{}
+				pctByField[field] = g
+			}
+			g.qs = append(g.qs, q)
+			g.idxs = append(g.idxs, i)
+		}
+	}
+	tupleFor := map[int]string{} // agg index → hazır ifade
+	tn := 0
+	for field, g := range pctByField {
+		if len(g.qs) < 2 {
+			continue // tek percentile: eski yol daha okunur
+		}
+		alias := fmt.Sprintf("_qt%d", tn)
+		tn++
+		selectParts = append(selectParts, fmt.Sprintf(
+			"quantilesTDigest(%s)(%s) AS %s", strings.Join(g.qs, ", "), fieldToSQL(field), alias))
+		for j, idx := range g.idxs {
+			tupleFor[idx] = fmt.Sprintf("toNullable(toFloat64(%s[%d]))", alias, j+1)
+		}
+	}
+	for i, a := range f.Aggs {
+		if expr, ok := tupleFor[i]; ok {
+			selectParts = append(selectParts, fmt.Sprintf("%s AS v%d", expr, i))
+			continue
+		}
 		field := a.Field
 		if field == "" {
 			field = "duration_ms"
@@ -1004,16 +1050,36 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	}
 	selectParts = append(selectParts, groupSelect+" AS gk")
 
-	sql := fmt.Sprintf(`
+	// v0.9.407 — tuple alias'ı (_qtN) kullanıldıysa dış projeksiyon:
+	// Scan sözleşmesi (bucket, v0..vN, gk) SABİT; _qtN iç katmanda
+	// hesaplanır, dışarı yalnız beklenen kolonlar çıkar. Tuple yoksa
+	// düz form bugünküyle bayt-bayt aynı.
+	inner := fmt.Sprintf(`
 		SELECT %s
 		FROM spans
 		%s
-		GROUP BY bucket, gk
-		ORDER BY gk, bucket
-		LIMIT 50000
-		SETTINGS max_execution_time = 25`,
+		GROUP BY bucket, gk`,
 		strings.Join(selectParts, ", "),
 		wc.sql())
+	var sql string
+	if tn > 0 {
+		proj := make([]string, 0, 2+len(f.Aggs))
+		proj = append(proj, "bucket")
+		for i := range f.Aggs {
+			proj = append(proj, fmt.Sprintf("v%d", i))
+		}
+		proj = append(proj, "gk")
+		sql = fmt.Sprintf(`
+		SELECT %s FROM (%s)
+		ORDER BY gk, bucket
+		LIMIT 50000
+		SETTINGS max_execution_time = 25`, strings.Join(proj, ", "), inner)
+	} else {
+		sql = inner + `
+		ORDER BY gk, bucket
+		LIMIT 50000
+		SETTINGS max_execution_time = 25`
+	}
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {

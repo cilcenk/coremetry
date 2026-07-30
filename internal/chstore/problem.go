@@ -1254,6 +1254,35 @@ func (s *Store) OpenProblemsSnapshot(ctx context.Context) (map[string]*Problem, 
 	return out, rows.Err()
 }
 
+// FindOpenProblemByID — deterministik ID'li üreticiler (runtime pod
+// denetimleri, v0.9.401) için açık/ack problem araması. FindOpenProblem
+// (ruleID, service) anahtarı per-pod granülerliği taşıyamaz — pod artık
+// service alanında DEĞİL.
+func (s *Store) FindOpenProblemByID(ctx context.Context, id string) (*Problem, error) {
+	var p Problem
+	var resolvedAt *time.Time
+	err := s.conn.QueryRow(ctx, `
+		SELECT id, rule_id, rule_name, severity, service, metric,
+		       value, threshold, status, description, assignee,
+		       toUnixTimestamp64Nano(started_at),
+		       resolved_at,
+		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+		FROM problems FINAL
+		WHERE id = ? AND status IN ('open', 'acknowledged')
+		ORDER BY started_at DESC LIMIT 1`, id).
+		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description,
+			&p.Assignee, &p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
+	if err != nil {
+		return nil, err
+	}
+	if resolvedAt != nil && !resolvedAt.IsZero() {
+		ns := resolvedAt.UnixNano()
+		p.ResolvedAt = &ns
+	}
+	return &p, nil
+}
+
 func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*Problem, error) {
 	var p Problem
 	var resolvedAt *time.Time

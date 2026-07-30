@@ -688,8 +688,11 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// "chat-guided" ai_calls row, so the UI's thumbs up/down joins
 	// back to it exactly like the free tool loop's answers.
 	answer := strings.TrimSpace(raw) + "\n\nKaynak: " + sources
-	emit("answer", map[string]string{
+	// v0.9.411 — konuya-duyarlı takip önerileri (guidedSuggestions,
+	// copilot_followup.go). Eski frontend'ler alanı yok sayar.
+	emit("answer", map[string]any{
 		"text": answer, "exchangeId": copilot.MetaFromContext(ctx).ExchangeID,
+		"suggestions": guidedSuggestions(route),
 	})
 	return true, true
 }

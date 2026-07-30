@@ -20,6 +20,9 @@ type Turn = ChatMessage & {
   steps?: string[]; pending?: boolean; error?: string;
   exchangeId?: string; verdict?: 1 | -1;
   sources?: import('@/lib/types').RagSource[];
+  // v0.9.411 — backend'in rotadan türettiği konuya-duyarlı takip
+  // önerileri; varsa statik FOLLOWUPS yerine bunlar çizilir.
+  suggestions?: string[];
 };
 
 // Türkçe quick-start (v0.9.163 — eskiden İngilizce'ydi, cevaplar Türkçe
@@ -203,7 +206,7 @@ export function CopilotChat() {
         } else if (e.kind === 'delta') {
           patchLast(t => ({ ...t, text: (t.text ?? '') + e.text }));
         } else if (e.kind === 'answer') {
-          patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, sources: e.sources, pending: false }));
+          patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, sources: e.sources, suggestions: e.suggestions, pending: false }));
         } else if (e.kind === 'error') {
           patchLast(t => ({ ...t, error: e.error, pending: false }));
         } else if (e.kind === 'done') {
@@ -317,10 +320,12 @@ export function CopilotChat() {
             ))}
           </div>
 
-          {/* Follow-up çipleri (v0.9.163) — sıradaki drill-down'lar. */}
+          {/* Follow-up çipleri (v0.9.163; v0.9.411 konuya-duyarlı) —
+              guided cevap kendi rotasından öneri getirirse onlar,
+              yoksa statik drill-down listesi. */}
           {showFollowups && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '0 12px 8px' }}>
-              {FOLLOWUPS.map(q => (
+              {(last.suggestions?.length ? last.suggestions : FOLLOWUPS).map(q => (
                 <button key={q} type="button" onClick={() => send(q)}
                   style={{
                     all: 'unset', cursor: 'pointer', fontSize: 12, color: 'var(--text)',

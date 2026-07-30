@@ -3516,7 +3516,9 @@ export interface RagSource {
 export type ChatStreamEvent =
   | { kind: 'step'; tool: string; args: string }
   | { kind: 'delta'; text: string }
-  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[] }
+  // suggestions (v0.9.411) — guided cevabın rotasından türetilen
+  // konuya-duyarlı takip önerileri; yoksa frontend statik listesine düşer.
+  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[]; suggestions?: string[] }
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };
 

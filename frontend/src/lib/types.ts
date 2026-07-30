@@ -3922,3 +3922,19 @@ export interface HostDetail {
   services: HostServiceRow[];
   trend: HostTrendPoint[];
 }
+
+// AnnotationItem — v0.9.394/395 annotation şeridi olay modeli
+// (backend api/annotation_routes.go ile birebir).
+export interface AnnotationItem {
+  ts: number; // unix ns
+  kind: 'deploy' | 'rollout' | 'alert_fired' | 'alert_resolved' | 'anomaly' | 'event';
+  title: string;
+  service?: string;
+  targetType?: 'problem' | 'anomaly' | 'event' | 'rollout';
+  targetId?: string;
+  link?: string;
+}
+export interface AnnotationsResponse {
+  items: AnnotationItem[] | null;
+  truncated: boolean;
+}

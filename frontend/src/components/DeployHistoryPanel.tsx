@@ -38,7 +38,10 @@ export function DeployHistoryPanel({ service }: { service: string }) {
   useEffect(() => {
     if (rolloutsQ.isError) { setRows(null); return; }
     if (!rolloutsQ.data) return;
-    setRows(rolloutsQ.data.rollouts ?? []);
+    // v0.9.365 — "Recent rollouts" en-yeni-üstte: API ASC döner (strip'in
+    // deploys[len-1] sözleşmesi), panel triage için ters çevirir; fmtAgoNs
+    // "2h ago"nun "3d ago"nun ALTINDA durması okuma yönünü bozuyordu.
+    setRows((rolloutsQ.data.rollouts ?? []).slice().reverse());
     setTracked(rolloutsQ.data.instancesTracked ?? false);
   }, [rolloutsQ.data, rolloutsQ.isError]);
   useEffect(() => {

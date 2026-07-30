@@ -2401,6 +2401,16 @@ func (s *Server) getDeployHistory(w http.ResponseWriter, r *http.Request) {
 // impact. Replaces version-bump deploy markers when service.version
 // is constant; the response's versionConstant flag lets the UI hide
 // the version chip everywhere it would otherwise render "1.0.0".
+// impactStart returns the first index of the newest-`cap` window over an
+// ASC (oldest-first) slice of length n — the rollouts whose RED impact is
+// worth paying ComputeDeployImpact for. Pure; pinned by impact_window_test.
+func impactStart(n, cap int) int {
+	if n <= cap {
+		return 0
+	}
+	return n - cap
+}
+
 func (s *Server) getServiceRollouts(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if name == "" {
@@ -2428,11 +2438,13 @@ func (s *Server) getServiceRollouts(w http.ResponseWriter, r *http.Request) {
 		// Fill before/after RED impact per rollout (cap to bound cost,
 		// like deploy-history). Best-effort — a failed compute leaves
 		// impact nil and the UI shows "—" deltas.
+		// v0.9.365 — pencere EN YENİ 8: GetServiceRollouts ASC döner ve
+		// eski döngü ilk 8'i (en eski) hesaplıyordu; 7g penceresinde çok
+		// rollout'lu bir serviste operatörün baktığı GÜNCEL satırlar hep
+		// "—" kalıyordu. Sıra sözleşmesi (ASC) değişmedi — strip
+		// deploys[len-1] ile en yeniyi seçmeye devam eder.
 		const maxImpact = 8
-		for i := range res.Rollouts {
-			if i >= maxImpact {
-				break
-			}
+		for i := impactStart(len(res.Rollouts), maxImpact); i < len(res.Rollouts); i++ {
 			imp, err := s.store.ComputeDeployImpact(
 				ctx, name, res.Rollouts[i].VersionAfter,
 				res.Rollouts[i].TimeUnixNs, 600)

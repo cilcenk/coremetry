@@ -3,8 +3,7 @@ import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { panelMaxDataPoints } from '@/lib/chartStep';
-import { useUrlRange } from '@/lib/useUrlRange';
-import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
+import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { timeRangeToNs, fmtBytes } from '@/lib/utils';
 import { Topbar } from '@/components/Topbar';
@@ -59,35 +58,10 @@ function PodDetail() {
   const toPods = drillFrom === 'pods' || drillFrom === 'metrics';
   const backTab = toPods ? 'pods' : 'infra';
   const backLabel = toPods ? 'Pods' : 'Infrastructure';
-  const [range, setRange] = useUrlRange('1h');
+  // v0.9.429 — zoom-yığını paylaşılan usePageZoomRange hook'unda.
+  const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('1h');
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const xRange = useMemo(() => ({ from: from / 1e9, to: to / 1e9 }), [from, to]);
-
-  // Madde 4 sweep — drag-zoom GERİ-YIĞINI (Service.tsx v0.9.199 deseninin
-  // birebiri): zoom öncesi görünüm yığına iter, çift-tık bir adım geri;
-  // out-of-band range değişimi (Topbar preset) yığını geçersizleştirir.
-  const zoomStackRef = useRef<import('@/lib/types').TimeRange[]>([]);
-  const rangeRef = useRef(range); rangeRef.current = range;
-  const zoomWroteRef = useRef(false);
-  useEffect(() => {
-    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
-    zoomStackRef.current = [];
-  }, [range.preset, range.fromMs, range.toMs]);
-  const handleZoom = useCallback((fromUnixSec: number, toUnixSec: number) => {
-    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
-    zoomWroteRef.current = true;
-    setRange({
-      preset: 'custom',
-      fromMs: Math.round(fromUnixSec * 1000),
-      toMs: Math.round(toUnixSec * 1000),
-    });
-  }, [setRange]);
-  const handleZoomReset = useCallback(() => {
-    const { stack, view } = popZoom(zoomStackRef.current);
-    zoomStackRef.current = stack;
-    if (view) { zoomWroteRef.current = true; setRange(view); return; }
-    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '1h' }); }
-  }, [setRange]);
 
   // Sunucu 6h clamp — Infra/JMX Thanos sorgularıyla aynı dürüstlük (Clusters/
   // ServiceInfraTab emsali). RED spans tarafında clamp YOK (raw-spans zaten

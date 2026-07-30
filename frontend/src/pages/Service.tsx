@@ -5,7 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { DrillButton } from '@/components/DrillButton';
 import { Button } from '@/components/ui/Button';
 import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/recentServices';
-import { useUrlRange } from '@/lib/useUrlRange';
+import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { ServiceOverview } from './service/Overview';
 import { ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
@@ -30,7 +30,6 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { keys } from '@/lib/queries/keys';
 import type { Service, Problem, OperationSummary, SLORow, TimeRange } from '@/lib/types';
-import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 
 // v0.9.257 — SINCE_MAP deleted: it had no remaining reader here, and the
 // dormant copy is how the divergence spread (pages/service/Overview.tsx
@@ -56,47 +55,15 @@ function ServiceDetailInner() {
 
   const queryClient = useQueryClient();
   // Global time window (UX#2) — URL-persisted + carried across pages.
-  const [range, setRange] = useUrlRange('30m');
+  // v0.9.429 — zoom-yığını deseni (bu dosyanın v0.9.199 referans
+  // implementasyonu) paylaşılan usePageZoomRange hook'una taşındı;
+  // davranış sözleşmesi hook başlığında, birebir aynı.
+  const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('30m');
   // v0.9.309 — read-only here, for the Endpoints drill below. A pivot
   // that drops the global env scope asks a wider question than the
   // screen it left (the v0.9.306/307 lesson); DrillButton builds a
   // fresh URL, so anything not passed is lost on navigation.
   const [env] = useUrlEnv();
-  // Grafana-parite M1 — drag-zoom GERİ-YIĞINI (çift-tık = bir adım geri).
-  // EFEMER ref state, URL'e yazılmaz: range yazımları replace:true olduğundan
-  // browser history zoom adımlarını zaten biriktirmiyor; yığını URL'e koymak
-  // copy-link / SavedViews sözleşmesini zoom-geçmişiyle kirletirdi.
-  // rangeRef: handler'lar useCallback-stabil kalsın diye canlı range okunur
-  // (v0.8.520 — fresh-arrow onZoom tüm panel alt-ağacını yeniden çiziyordu).
-  const zoomStackRef = useRef<TimeRange[]>([]);
-  const rangeRef = useRef(range); rangeRef.current = range;
-  // v0.9.199 review-fix — out-of-band range değişimi (Topbar preset seçimi,
-  // mutlak aralık) yığını GEÇERSİZLEŞTİRİR: bayat pre-zoom girdisi, operatörün
-  // yeni seçiminin üstüne çift-tıkla geri yazılamaz. zoomWroteRef yalnız
-  // zoom-sistemi yazımlarını işaretler; onların dışındaki her range değişimi
-  // yığını sıfırlar.
-  const zoomWroteRef = useRef(false);
-  useEffect(() => {
-    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
-    zoomStackRef.current = [];
-  }, [range.preset, range.fromMs, range.toMs]);
-  const handleZoom = useCallback((fromUnixSec: number, toUnixSec: number) => {
-    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
-    zoomWroteRef.current = true;
-    setRange({
-      preset: 'custom',
-      fromMs: Math.round(fromUnixSec * 1000),
-      toMs: Math.round(toUnixSec * 1000),
-    });
-  }, [setRange]);
-  const handleZoomReset = useCallback(() => {
-    const { stack, view } = popZoom(zoomStackRef.current);
-    zoomStackRef.current = stack;
-    if (view) { zoomWroteRef.current = true; setRange(view); return; }
-    // Yığın boş: zoom'lu (custom) penceredeysek preset default'a dön (derin
-    // linkle gelen custom dahil); zoom yokken çift-tık HİÇBİR ŞEY yapmaz.
-    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '30m' }); }
-  }, [setRange]);
   const [pinned, setPinned] = useState(false);
   // v0.7.89 — record this service in the recently-viewed MRU (powers
   // the Cmd-K pivot rotation) and reflect its pinned state for the

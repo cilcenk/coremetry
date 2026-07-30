@@ -9,7 +9,7 @@ import { PanelEditor, defaultConfig } from '@/components/dashboard/PanelEditor';
 import { VariablesBar } from '@/components/dashboard/VariablesBar';
 import type { DashboardVariable } from '@/lib/types';
 import { api } from '@/lib/api';
-import { useUrlRange } from '@/lib/useUrlRange';
+import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { quantizeWidth } from '@/lib/chartStep';
 import { effectivePanelStep, estimatePanelPx } from '@/components/dashboard/panelStep';
@@ -19,7 +19,6 @@ import type {
 } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
 import { serializeDashboard, suggestedFilename } from '@/lib/dashboardIO';
-import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 
 // Wrapper handles the Suspense requirement of useSearchParams() in App
 // Router with static export.
@@ -34,46 +33,10 @@ function Inner() {
   const id = sp.get('id') ?? '';
   const startInEdit = sp.get('edit') === '1';
 
-  const [range, setRange] = useUrlRange('30m');
-  // Stable drag-to-zoom handler (v0.8.520). Passing a fresh arrow here rode
-  // down through every panel to MultiLineChart; the primitive now tracks onZoom
-  // by presence, but keeping this referentially stable also spares the panel
-  // subtree a needless re-render. setRange is itself stable (useUrlRange) and
-  // the closure captures no `range`, so there's no stale-window risk.
-  // Grafana-parite M1 — drag-zoom GERİ-YIĞINI (çift-tık = bir adım geri).
-  // EFEMER ref state, URL'e yazılmaz: range yazımları replace:true olduğundan
-  // browser history zoom adımlarını zaten biriktirmiyor; yığını URL'e koymak
-  // copy-link / SavedViews sözleşmesini zoom-geçmişiyle kirletirdi.
-  const zoomStackRef = useRef<TimeRange[]>([]);
-  const rangeRef = useRef(range); rangeRef.current = range;
-  // v0.9.199 review-fix — out-of-band range değişimi (Topbar seçimi) yığını
-  // geçersizleştirir (Service.tsx'teki desenin aynısı).
-  const zoomWroteRef = useRef(false);
-  useEffect(() => {
-    if (zoomWroteRef.current) { zoomWroteRef.current = false; return; }
-    zoomStackRef.current = [];
-  }, [range.preset, range.fromMs, range.toMs]);
-  const handleZoom = useCallback((fromUnixSec: number, toUnixSec: number) => {
-    // Dynatrace-style click-drag-to-zoom: dragging a horizontal range on any
-    // panel updates the dashboard's time range so every panel re-fetches for
-    // the new window. Without this the chart visually zoomed but the metric
-    // queries still covered the full original window — confusing.
-    zoomStackRef.current = pushZoom(zoomStackRef.current, rangeRef.current);
-    zoomWroteRef.current = true;
-    setRange({
-      preset: 'custom',
-      fromMs: Math.round(fromUnixSec * 1000),
-      toMs: Math.round(toUnixSec * 1000),
-    });
-  }, [setRange]);
-  const handleZoomReset = useCallback(() => {
-    const { stack, view } = popZoom(zoomStackRef.current);
-    zoomStackRef.current = stack;
-    if (view) { zoomWroteRef.current = true; setRange(view); return; }
-    // Yığın boş: zoom'lu (custom) penceredeysek preset default'a dön; zoom
-    // yokken çift-tık HİÇBİR ŞEY yapmaz (mevcut davranış).
-    if (rangeRef.current.preset === 'custom') { zoomWroteRef.current = true; setRange({ preset: '30m' }); }
-  }, [setRange]);
+  // v0.9.429 — zoom-yığını deseni paylaşılan usePageZoomRange hook'unda
+  // (Dynatrace-style drag-to-zoom: her panel global range'i yazar, tüm
+  // paneller yeni pencereyle refetch; çift-tık bir adım geri).
+  const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('30m');
   const [doc, setDoc] = useState<Dashboard | null | undefined>(undefined);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Dashboard | null>(null);

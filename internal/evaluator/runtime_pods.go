@@ -132,7 +132,7 @@ func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.Capacity
 	}
 	e.reconcileRuntime(ctx, runtimeReconcile{
 		ruleID: ruleID, ruleName: "Runtime · JVM heap", metric: "runtime.jvm_heap",
-		service: service, problemID: runtimeProblemID("jvm-heap", s.Instance, s.Subkey),
+		service: service, pod: s.Subkey, problemID: runtimeProblemID("jvm-heap", s.Instance, s.Subkey),
 		open: open, hasOpen: hasOpen, existing: existing,
 		severity: sev, value: pct, threshold: thr, reason: reason,
 	})
@@ -152,7 +152,7 @@ func (e *Evaluator) reconcileRuntimeGC(ctx context.Context, s chstore.CapacitySa
 	}
 	e.reconcileRuntime(ctx, runtimeReconcile{
 		ruleID: ruleID, ruleName: "Runtime · JVM GC pause", metric: "runtime.jvm_gc",
-		service: service, problemID: runtimeProblemID("jvm-gc", s.Instance, s.Subkey),
+		service: service, pod: s.Subkey, problemID: runtimeProblemID("jvm-gc", s.Instance, s.Subkey),
 		open: open, hasOpen: hasOpen, existing: existing,
 		severity: sev, value: s.Usage, threshold: thr, reason: reason,
 	})
@@ -161,7 +161,7 @@ func (e *Evaluator) reconcileRuntimeGC(ctx context.Context, s chstore.CapacitySa
 // runtimeReconcile — reconcileCapacity'nin open/refresh/resolve üçlüsünün
 // parametreli hâli (iki denetim paylaşır).
 type runtimeReconcile struct {
-	ruleID, ruleName, metric, service, problemID string
+	ruleID, ruleName, metric, service, problemID, pod string
 	open, hasOpen                                bool
 	existing                                     *chstore.Problem
 	severity                                     string
@@ -179,6 +179,7 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 			RuleName:    r.ruleName,
 			Severity:    r.severity,
 			Service:     r.service,
+			Pod:         r.pod,
 			Metric:      r.metric,
 			Value:       r.value,
 			Threshold:   r.threshold,
@@ -205,6 +206,7 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 		// birleşik satırlar aynı ID'den bulunup gerçek servis adıyla
 		// yeniden yazılır (ReplacingMergeTree tam-satır upsert zaten).
 		r.existing.Service = r.service
+		r.existing.Pod = r.pod
 		r.existing.Value = r.value
 		r.existing.Severity = effectiveSeverity(r.severity, time.Since(time.Unix(0, r.existing.StartedAt)), e.escalationCfg(ctx))
 		r.existing.Threshold = r.threshold

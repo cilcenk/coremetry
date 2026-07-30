@@ -80,6 +80,9 @@ type Problem struct {
 	Value       float64 `json:"value"`
 	Threshold   float64 `json:"threshold"`
 	Status      string  `json:"status"` // open | resolved
+	// Pod (v0.9.403) — runtime pod denetimlerinde alarmın pod kimliği;
+	// diğer üreticilerde boş. Service GERÇEK servis kalır (v0.9.401).
+	Pod         string  `json:"pod,omitempty"`
 	Description string  `json:"description"`
 	// Assignee (v0.5.209) — free-form string, two flavours:
 	//   • team name auto-set from service_metadata.owner_team
@@ -1077,7 +1080,7 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	// instead of stacking up doomed requests.
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee,
+		       value, threshold, status, description, assignee, pod,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at,
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
@@ -1095,7 +1098,7 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 		var p Problem
 		var resolvedAt *time.Time
 		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
 			return nil, err
 		}
@@ -1121,7 +1124,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 	}
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee,
+		       value, threshold, status, description, assignee, pod,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at,
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
@@ -1138,7 +1141,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 		var p Problem
 		var resolvedAt *time.Time
 		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
 			return nil, err
 		}
@@ -1163,7 +1166,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time) ([]Problem, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee,
+		       value, threshold, status, description, assignee, pod,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at,
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
@@ -1182,7 +1185,7 @@ func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time
 		var p Problem
 		var resolvedAt *time.Time
 		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
 			return nil, err
 		}
@@ -1224,7 +1227,7 @@ func reduceLatestProblem(m map[string]*Problem, p *Problem) {
 func (s *Store) OpenProblemsSnapshot(ctx context.Context) (map[string]*Problem, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee,
+		       value, threshold, status, description, assignee, pod,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at,
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
@@ -1241,7 +1244,7 @@ func (s *Store) OpenProblemsSnapshot(ctx context.Context) (map[string]*Problem, 
 		var p Problem
 		var resolvedAt *time.Time
 		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
 			return nil, err
 		}
@@ -1263,7 +1266,7 @@ func (s *Store) FindOpenProblemByID(ctx context.Context, id string) (*Problem, e
 	var resolvedAt *time.Time
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee,
+		       value, threshold, status, description, assignee, pod,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at,
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
@@ -1272,7 +1275,7 @@ func (s *Store) FindOpenProblemByID(ctx context.Context, id string) (*Problem, e
 		ORDER BY started_at DESC LIMIT 1`, id).
 		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
 			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description,
-			&p.Assignee, &p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
+			&p.Assignee, &p.Pod, &p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1288,7 +1291,7 @@ func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*P
 	var resolvedAt *time.Time
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee,
+		       value, threshold, status, description, assignee, pod,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at,
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
@@ -1296,7 +1299,7 @@ func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*P
 		WHERE rule_id = ? AND service = ? AND status IN ('open', 'acknowledged')
 		ORDER BY started_at DESC LIMIT 1`, ruleID, service).
 		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
 	if err != nil {
 		return nil, err
@@ -1402,7 +1405,7 @@ func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {
 	var resolvedAt *time.Time
 	err := s.conn.QueryRow(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee,
+		       value, threshold, status, description, assignee, pod,
 		       toUnixTimestamp64Nano(started_at),
 		       resolved_at,
 		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
@@ -1410,7 +1413,7 @@ func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {
 		WHERE id = ?
 		LIMIT 1`, id).
 		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee,
+			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
 	if err != nil {
 		return nil, err
@@ -1448,7 +1451,7 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 	// explainer writes a row with the summary set.
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO problems
 		(id, rule_id, rule_name, severity, service, metric, value,
-		 threshold, status, description, assignee, started_at,
+		 threshold, status, description, assignee, pod, started_at,
 		 resolved_at, updated_at, version)`)
 	if err != nil {
 		return err
@@ -1461,7 +1464,7 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 	}
 	if err := batch.Append(p.ID, p.RuleID, p.RuleName, p.Severity, p.Service,
 		p.Metric, p.Value, p.Threshold, p.Status, p.Description, p.Assignee,
-		startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
+		p.Pod, startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano())); err != nil {
 		return fmt.Errorf("append problem: %w", err)
 	}
 	return batch.Send()

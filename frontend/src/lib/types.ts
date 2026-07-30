@@ -2117,6 +2117,9 @@ export interface Problem {
   metric: string;
   value: number;
   threshold: number;
+  // v0.9.403 — runtime pod alarmının pod kimliği (401: service artık
+  // birleşik ad taşımaz); diğer üreticilerde boş.
+  pod?: string;
   status: string;       // open | resolved
   description: string;
   // Triage assignee (v0.5.209). Two shapes:

@@ -33,7 +33,16 @@ export default function MessagingPage() {
   const [params, setParams] = useSearchParams();
   // Prior-window comparison — off by default (second CH scan);
   // session-local like the endpoints toggle.
-  const [compare, setCompare] = useState<boolean>(false);
+  // v0.9.399 (desen paritesi) — compare oturum state'inden URL'e
+  // (?compare=prior, Endpoints deseniyle birebir): copy-link ve saved
+  // view artık compare durumunu da taşıyor.
+  const [mparams, setMparams] = useSearchParams();
+  const compare = mparams.get('compare') === 'prior';
+  const setCompare = (v: boolean) => setMparams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('compare', 'prior'); else next.delete('compare');
+    return next;
+  }, { replace: true });
   // Memoize on range identity — without this, a relative range
   // resolved fresh every render reshuffles the useQuery key
   // and the table refetches on every paint.

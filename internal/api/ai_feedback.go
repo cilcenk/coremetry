@@ -1,10 +1,13 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -85,4 +88,30 @@ func (s *Server) postAIFeedback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]bool{"ok": true})
+}
+
+// listNegativeAIFeedback (v0.9.423, CoSRE fikir #6) — 👎 madenciliği:
+// pencere içindeki düşük puanlı cevaplar prompt örnekleriyle. Hangi
+// soru şekilleri kötü cevap alıyor → yeni guided-intent adayları
+// VERİDEN çıkar. Admin-gated (rota), 60s cache — panel okuması.
+func (s *Server) listNegativeAIFeedback(w http.ResponseWriter, r *http.Request) {
+	rangeS := int64(7 * 86400)
+	if v := r.URL.Query().Get("rangeS"); v != "" {
+		if n := parseInt(v, 0); n > 0 && n <= 90*86400 {
+			rangeS = int64(n)
+		}
+	}
+	key := fmt.Sprintf("ai:negfb:v1:range=%d", rangeS)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		to := time.Now()
+		from := to.Add(-time.Duration(rangeS) * time.Second)
+		rows, err := s.store.ListNegativeFeedbackCalls(ctx, from, to, 100)
+		if err != nil {
+			return nil, err
+		}
+		if rows == nil {
+			rows = []chstore.NegativeFeedbackCall{}
+		}
+		return map[string]any{"rows": rows, "rangeS": rangeS}, nil
+	})
 }

@@ -258,9 +258,57 @@ export default function AIObservabilityPage() {
           </div>
         )}
 
+        {/* v0.9.423 (CoSRE fikir #6) — 👎 madenciliği: hangi soru
+            şekilleri kötü cevap alıyor? Yeni guided-intent adayları
+            buradan çıkar. Sunucu 60s cache'li; mount'ta bir kez. */}
+        <NegativeFeedbackPanel />
+
         {open && <CallDrawer call={open} rates={rates} onClose={() => setOpen(null)} />}
       </div>
     </>
+  );
+}
+
+function NegativeFeedbackPanel() {
+  const [rows, setRows] = useState<import('@/lib/types').NegativeFeedbackCall[] | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    api.aiNegativeFeedback()
+      .then(r => { if (!cancelled) setRows(r.rows); })
+      .catch(() => { if (!cancelled) setRows(null); });
+    return () => { cancelled = true; };
+  }, []);
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="ov-card-h">
+        <h3>👎 alan cevaplar</h3>
+        <span className="ov-sub">son 7 gün — yeni guided-intent adayları buradan çıkar</span>
+      </div>
+      <div className="ov-card-b">
+        {rows === undefined && <Spinner />}
+        {rows === null && <Empty icon="✗" title="Feedback okunamadı" />}
+        {rows && rows.length === 0 && (
+          <div style={{ color: 'var(--text3)', fontSize: 12 }}>Son 7 günde 👎 yok. 🎉</div>
+        )}
+        {rows && rows.length > 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>Yüzey</th><th>Soru</th><th>Ne zaman</th><th>Kim</th></tr></thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} title={r.response ? `Cevap: ${r.response.slice(0, 400)}` : undefined}>
+                    <td><span className="badge b-gray">{r.surface || '—'}</span></td>
+                    <td className="mono" style={{ fontSize: 11.5, maxWidth: 480, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.prompt || '—'}</td>
+                    <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(r.createdAt)}</td>
+                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{r.userEmail || '—'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

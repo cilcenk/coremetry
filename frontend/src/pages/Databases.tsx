@@ -1,9 +1,10 @@
 import { useMemo } from 'react';
+import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Turtle } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
-import { Spinner } from '@/components/Spinner';
+import { TableSkeleton } from '@/components/Skeleton';
 import { Button } from '@/components/ui/Button';
 import { DependenciesTable } from '@/components/DependenciesTable';
 import { api } from '@/lib/api';
@@ -153,7 +154,13 @@ export default function DatabasesPage() {
             <Turtle size={14} strokeWidth={1.75} /> Slow queries →
           </Link>
         </div>
-        {q.isPending && <Spinner />}
+        {/* v0.9.405 (desen paritesi) — Spinner yerine tablo iskeleti:
+            gerçek tablo ~11 kolon; iskelet aynı kalıpta gelince veri
+            indiğinde düzen zıplamıyor (Endpoints deseni). */}
+        {/* v0.9.405 — URL-state taşıyan sayfa görünüm kaydedebilmeli
+            (saved_views şeması hazır; Endpoints emsali). */}
+        <SavedViewsBar page="databases" />
+        {q.isPending && <TableSkeleton rows={8} cols={11} wideFirst />}
         {q.isError && (
           <div style={{ color: 'var(--err)', fontSize: 12 }}>
             Failed to load databases overview.

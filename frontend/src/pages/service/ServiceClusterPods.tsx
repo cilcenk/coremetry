@@ -76,12 +76,18 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
         const hcolor = health === 'ok' ? 'var(--ok)' : health === 'warn' ? 'var(--warn)' : 'var(--err)';
         const isCol = !!collapsed[cluster];
         return (
-          <div key={cluster} style={{ border: '1px solid var(--border)', borderRadius: 9, overflow: 'hidden' }}>
+          // v0.9.400 (operatör, prod ekran görüntüsü): kartın kendi zemini
+          // yoktu — redhat/light temada sayfanın gri kanvası (--bg0)
+          // tablonun içinden görünüyordu. .card konvansiyonu: --bg1
+          // (açık temalarda BEYAZ, koyu temada yükseltilmiş yüzey).
+          <div key={cluster} style={{ border: '1px solid var(--border)', borderRadius: 9, overflow: 'hidden', background: 'var(--bg1)' }}>
             {/* cluster başlığı — tıkla-kapat */}
             <div onClick={() => setCollapsed(s => ({ ...s, [cluster]: !s[cluster] }))}
               style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '10px 13px',
-                cursor: 'pointer', background: 'var(--panel2, var(--bg))',
+                // --panel2 hiç tanımlı değildi (sessiz fallback) — başlık
+                // thead konvansiyonuyla --bg2 (hafif ton farkı).
+                cursor: 'pointer', background: 'var(--bg2)',
               }}>
               <span style={{ color: 'var(--text3)', display: 'inline-block', width: 12,
                 transform: isCol ? 'rotate(-90deg)' : 'none', transition: 'transform .15s' }}>▾</span>

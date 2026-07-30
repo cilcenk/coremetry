@@ -21,6 +21,7 @@ import { ServiceCatalogPill } from '@/components/ServiceCatalogPill';
 import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { DetailsPropsStrip } from './service/DetailsPropsStrip';
+import { DetailsToc } from './service/DetailsToc';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -521,18 +522,30 @@ function ServiceDetailInner() {
                 loading={opsLoading} />
             )}
             {tab === 'details' && (
-              <>
-                {/* v0.8.370 — Dynatrace-style reorganization (operator-
-                    approved mockup): a properties strip on top, then three
-                    question-grouped sections in a 2-col grid instead of the
-                    old single-column stack. LazyMount discipline unchanged
-                    (v0.5.302): eager = strip + RED charts; every grid cell
-                    below mounts ~200px from the viewport. Profiling tile
-                    dropped (operator: not in use); RPS-by-operation card
-                    added — zero new fetches, it reuses the page's
-                    operations summary. */}
-                <DetailsPropsStrip service={svc} range={range} />
-                <div className="dtl-sech">Performance</div>
+              <div style={{ display: 'flex', gap: 18, alignItems: 'flex-start' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                {/* v0.9.380 (redesign D4, mockup af7419e5) — dtl-cols (1fr 1fr)
+                    grid'i ÖLDÜ: v0.9.141/348 kaldırmalarından beri üç bölümde
+                    de sağ sütun boştu (sayfanın yarısı ölü piksel). Heatmap/
+                    DB/Runtime tam genişlikte; sağda scroll-spy ToC rayı
+                    (DetailsToc, ≥1100px). LazyMount disiplini değişmedi.
+                    ?op= kapsam şeridi hangi bölümün daraldığını İŞARETLER —
+                    v0.9.358-374 dürüstlük çizgisinin düzen hali. */}
+                <div id="dtl-props"><DetailsPropsStrip service={svc} range={range} /></div>
+                {opScope && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, margin: '4px 0 8px', fontSize: 12 }}>
+                    <span className="badge b-info mono" style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                      op: {opScope}
+                      <span onClick={() => setOpScope('')} style={{ cursor: 'pointer' }} title="Operasyon kapsamını kaldır">✕</span>
+                    </span>
+                    <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                      kapsam: Performance ✓ · Latency ✓ · <span style={{ opacity: .65 }}>Database ✗ · Runtime ✗</span>
+                    </span>
+                  </div>
+                )}
+                <div className="dtl-sech" id="dtl-perf">Performance
+                  {opScope && <span className="badge b-info" style={{ textTransform: 'none', letterSpacing: 0 }}>op kapsamı</span>}
+                </div>
                 {/* v0.9.348 — rootOnly: bu paneller servisin KENDİ giriş
                     noktalarını çiziyor artık, dışarı yaptığı çağrıları değil.
                     Filtresiz hâlde api-gateway'in grafiği
@@ -544,25 +557,21 @@ function ServiceDetailInner() {
                   opScope={opScope} onOpScopeChange={setOpScope}
                   problems={problems} rootOnly
                   onZoom={handleZoom} onZoomReset={handleZoomReset} />
-                <div className="ov-grid dtl-cols ov-mb">
+                <div className="dtl-sech" id="dtl-latency">Latency
+                  {opScope && <span className="badge b-info" style={{ textTransform: 'none', letterSpacing: 0 }}>op kapsamı</span>}
+                </div>
+                <div className="ov-mb">
                   <LazyMount minHeight={360}>
                     <ServiceLatencyHeatmap service={svc} range={range}
                                            operation={opScope} rootOnly />
                   </LazyMount>
-                  {/* v0.9.348 — "RPS by operation" çubuk listesi kaldırıldı.
-                      Hemen ÜSTÜNDEKİ grafik zaten operasyon başına RPS
-                      çiziyor; liste aynı veriyi ZAMAN EKSENİ OLMADAN tekrar
-                      gösteriyordu (ne zaman yükseldi, deploy'la çakıştı mı,
-                      bozulan hata oranı mı gecikme mi — hiçbirini
-                      söyleyemiyordu) ve root filtresi olmadığı için client
-                      çağrılarını servisin kendi yükü gibi karıştırıyordu.
-                      Kaldırılması bir sorgu eklemiyor: listenin hiç kendi
-                      sorgusu yoktu (v0.8.370 "ZERO new fetches"). */}
                 </div>
                 {/* v0.9.141 (operatör) — Structure paneli kaldırıldı; bölüm
                     yalnız DB sorgularına indi, başlık "Database" oldu. */}
-                <div className="dtl-sech">Database</div>
-                <div className="ov-grid dtl-cols ov-mb">
+                <div className="dtl-sech" id="dtl-db">Database
+                  {opScope && <span className="badge b-gray" style={{ textTransform: 'none', letterSpacing: 0 }}>tüm servis</span>}
+                </div>
+                <div className="ov-mb">
                   <LazyMount minHeight={300}>
                     <DBQueriesPanel service={svc}
                                     from={rangeNs.from}
@@ -570,9 +579,11 @@ function ServiceDetailInner() {
                                     defaultOpen />
                   </LazyMount>
                 </div>
-                <div className="dtl-sech">Runtime &amp; rollouts</div>
+                <div className="dtl-sech" id="dtl-runtime">Runtime &amp; rollouts
+                  {opScope && <span className="badge b-gray" style={{ textTransform: 'none', letterSpacing: 0 }}>tüm servis</span>}
+                </div>
                 {/* v0.9.141 (operatör) — Attributes-emitted paneli kaldırıldı. */}
-                <div className="ov-grid dtl-cols ov-mb">
+                <div className="ov-mb">
                   <LazyMount minHeight={140}>
                     <ServiceClusterBreakdown service={svc} range={range} />
                   </LazyMount>
@@ -581,10 +592,13 @@ function ServiceDetailInner() {
                     /deploys "history →" link still scrolls here. */}
                 <div id="deploys">
                   <LazyMount minHeight={160}>
-                    <DeployHistoryPanel service={svc} />
+                    <DeployHistoryPanel service={svc}
+                      onZoomWindow={(tNs) => handleZoom(tNs / 1e9 - 1800, tNs / 1e9 + 1800)} />
                   </LazyMount>
                 </div>
-              </>
+              </div>
+              <DetailsToc />
+              </div>
             )}
 
             {/* v0.6.51 — SLO health strip. Unifies SLO status into the

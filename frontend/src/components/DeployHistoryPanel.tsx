@@ -22,7 +22,14 @@ type ExplainState =
 // rollout: pods replaced + age + the before/after RED diff so the
 // operator reads "the rollout regressed p99 by 12%" at a glance. A
 // version is shown ONLY when it actually changed across the rollout.
-export function DeployHistoryPanel({ service }: { service: string }) {
+export function DeployHistoryPanel({ service, onZoomWindow }: {
+  service: string;
+  // v0.9.380 (redesign D4) — ⏱ pencere kapısı: rollout satırı, anın
+  // ±30dk'sını sayfanın zoom yığınına push'lar (Service.tsx handleZoom
+  // — grafiklerdeki ↻ marker'la liste iki yönlü bağlanır, çift-tık geri
+  // çalışır). Verilmezse buton hiç çizilmez (panel başka yerde de yaşar).
+  onZoomWindow?: (timeUnixNs: number) => void;
+}) {
   const [rows, setRows] = useState<Rollout[] | null | undefined>(undefined);
   const [tracked, setTracked] = useState(true);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -141,6 +148,16 @@ export function DeployHistoryPanel({ service }: { service: string }) {
                   {fmtAgoNs(r.timeUnixNs)}
                 </span>
                 <span style={{ flex: 1 }} />
+                {onZoomWindow && (
+                  <button type="button"
+                    onClick={(e) => { e.stopPropagation(); onZoomWindow(r.timeUnixNs); }}
+                    title="Grafikleri bu rollout'un ±30 dakikasına daralt (çift-tık = geri)"
+                    style={{
+                      all: 'unset', cursor: 'pointer', fontSize: 11,
+                      border: '1px solid var(--border)', borderRadius: 4,
+                      padding: '1px 7px', color: 'var(--text2)',
+                    }}>⏱ pencereye git</button>
+                )}
                 {r.impact ? <DeltaChips imp={r.impact} /> : (
                   <span style={{ fontSize: 11, color: 'var(--text3)' }}>
                     impact pending

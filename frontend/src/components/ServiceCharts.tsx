@@ -444,9 +444,14 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
           uniformly. Dynatrace-style "previous 24h" overlay is
           off by default (no second fetch); flipping it on
           paints a dashed ghost line per chart. */}
+      {/* v0.9.380 (redesign D4) — toolbar ikiye ayrıldı: SOL küme scope
+          (Compare + Operation), SAĞ küme eylemler (AI triage + Explain
+          deploy). Dört kontrol ailesi tek düz flex satırında okunmuyordu;
+          iki küme arasına esnek boşluk girdi, dar ekranda kümeler bütün
+          hâlde alt satıra sarar (flexWrap). */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6,
-        fontSize: 11, color: 'var(--text2)',
+        fontSize: 11, color: 'var(--text2)', flexWrap: 'wrap', rowGap: 6,
       }}>
         <span style={{
           textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700,
@@ -510,14 +515,13 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
           glance instead of traversing horizontally. Each chart
           gets the full row width, more y-axis room, and the
           synced cursor (syncKey) reads top-to-bottom naturally. */}
-      {/* v0.5.364 — legend-click affordance hint. The MultiLineChart
-          legend already isolates a series on plain click and restores
-          on second click; the Ctrl/Cmd modifier additively toggles
-          for subset selection. Surface that as a small caption so
-          the behaviour is discoverable instead of operator-folklore. */}
-      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
-        Lejantta operasyon tıkla → sadece o seri · tekrar tıkla → tümü ·
-        Ctrl/⌘+tıkla → çoklu seç
+      {/* v0.9.380 (D4) — v0.5.364'ün kalıcı lejant-ipucu satırı ⓘ'ye
+          taşındı: bir kez öğrenilen davranış için sürekli dikey alan
+          harcanıyordu; kazanılan alan grafiklere döndü. */}
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span title="Lejantta operasyon tıkla → sadece o seri · tekrar tıkla → tümü · Ctrl/⌘+tıkla → çoklu seç"
+          style={{ cursor: 'help', border: '1px solid var(--border)', borderRadius: '50%', width: 15, height: 15, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontSize: 10 }}>ⓘ</span>
+        <span>lejant etkileşimleri</span>
       </div>
       {loading ? (
         <div style={{

@@ -300,7 +300,12 @@ export function TimeChart({
           }
           const base: uPlot.Series = {
             label: s.label, scale, stroke: colors[i], width: s.width ?? 1.8,
-            points: s.pointsShow ? { show: true, size: 4 } : { show: false },
+            // v0.9.389 (grafik-audit Faz A) — pointsShow yoğunluk tavanlı:
+            // sparse-seri varsayımıyla eklenmişti; 2k-nokta seride caller
+            // pointsShow geçerse 2k işaret çiziliyordu. TSP'nin ≤300 tier
+            // eşiğinin (TimeSeriesPanel.tsx:364) TimeChart karşılığı.
+            points: s.pointsShow && (s.data?.length ?? 0) <= 300
+              ? { show: true, size: 4 } : { show: false },
             // null = gap; v0.9.84 (madde 3) — tek kaçmış scrape köprülenir
             // (< 1.5×step), gerçek kesinti kırık kalır (stepGapsRefiner).
             gaps: stepGapsRefiner,

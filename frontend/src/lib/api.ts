@@ -817,6 +817,11 @@ export const api = {
   dbTrends: (fromNs: number, toNs: number) =>
     get<import('./types').DBTrend[] | null>(
       `/api/databases/trends?from=${fromNs}&to=${toNs}`),
+  // v0.9.434 — /messaging satır-içi trend (dbTrends'in ikizi; DBTrend
+  // şekli paylaşılır: dbSystem=msg_system, instance=destination, cluster).
+  msgTrends: (fromNs: number, toNs: number) =>
+    get<import('./types').DBTrend[] | null>(
+      `/api/messaging/trends?from=${fromNs}&to=${toNs}`),
   // /messaging overview — parallel shape for queues / topics
   // (Kafka / RabbitMQ / IBM MQ / NATS / etc.). compare='prior'
   // (v0.8.364) merges the immediately-preceding equal-length

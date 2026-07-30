@@ -1526,3 +1526,50 @@ func (s *Store) CalleesOf(ctx context.Context, service string, since time.Durati
 	}
 	return out, rows.Err()
 }
+
+// ListProblemWindowEvents — annotation şeridinin alarm olayları (v0.9.394,
+// Ş1): pencere içinde TETİKLENEN (started_at ∈ [from,to)) ya da ÇÖZÜLEN
+// (resolved_at ∈ [from,to)) problemler, ÇÖZÜLMÜŞLER DAHİL. Hot triage
+// yolundaki ProblemFilter'a dokunmamak için ayrı odaklı okuma —
+// ReplacingMergeTree FINAL + bounded LIMIT. service "" = tüm servisler
+// (global kurallar dahil).
+func (s *Store) ListProblemWindowEvents(ctx context.Context, service string, from, to time.Time) ([]Problem, error) {
+	conds := []string{
+		"(toUnixTimestamp64Nano(started_at) >= ? AND toUnixTimestamp64Nano(started_at) < ?)" +
+			" OR (resolved_at IS NOT NULL AND toUnixTimestamp64Nano(resolved_at) >= ? AND toUnixTimestamp64Nano(resolved_at) < ?)",
+	}
+	args := []any{from.UnixNano(), to.UnixNano(), from.UnixNano(), to.UnixNano()}
+	svcSQL := ""
+	if service != "" {
+		svcSQL = " AND service = ?"
+		args = append(args, service)
+	}
+	args = append(args, 500)
+	rows, err := s.conn.Query(ctx, `
+		SELECT id, rule_id, rule_name, service, severity, status,
+		       toUnixTimestamp64Nano(started_at),
+		       toUnixTimestamp64Nano(coalesce(resolved_at, toDateTime64(0, 9)))
+		FROM problems FINAL
+		WHERE (`+conds[0]+`)`+svcSQL+`
+		ORDER BY started_at DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 10`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Problem{}
+	for rows.Next() {
+		var p Problem
+		var resolved int64
+		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Service, &p.Severity,
+			&p.Status, &p.StartedAt, &resolved); err != nil {
+			return nil, err
+		}
+		if resolved > 0 {
+			p.ResolvedAt = &resolved
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}

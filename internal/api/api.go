@@ -458,6 +458,8 @@ func (s *Server) Start() error {
 	// Rollup okuma uçları (Aşama 2) — api.go büyütülmez kısıtı gereği
 	// tüm route'lar internal/api/rollup_routes.go'da yaşar.
 	registerRollupRoutes(mux, s)
+	// Annotation şeridi (Faz C-2 Ş1) — aynı desen.
+	registerAnnotationRoutes(mux, s)
 
 	// OTLP HTTP
 	otlpHandler := otlpRouteGuard(s.roleIngestOff, otlp.HTTPHandler(s.ing))

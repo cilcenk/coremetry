@@ -44,14 +44,19 @@ export interface CursorZoomSpec {
 // hooks.setSelect dizisi (onZoom yoksa undefined; engine undefined-değerli
 // hook key'lerini zaten ayıklıyor, uPlot fire() patlamaz).
 export function buildCursorOpts(spec: CursorZoomSpec): {
-  cursor: { drag: { x: boolean; y: false; setScale: boolean }; sync?: { key: string } };
+  cursor: { drag: { x: boolean; y: false; setScale: boolean }; sync?: { key: string; scales: [string, null] } };
   setSelect: ((u: uPlot) => void)[] | undefined;
 } {
   const { syncKey, onZoom, dragX = true, setScale = true, minWidthPx = 4 } = spec;
   return {
     cursor: {
       drag: { x: dragX, y: false, setScale },
-      ...(syncKey ? { sync: { key: syncKey } } : {}),
+      // v0.9.388 (grafik-audit Faz A) — yalnız X senkronlanır: scales
+      // verilmeyince uPlot default'u Y'yi de DEĞER bazlı eşler ve tüm
+      // preset'ler 'y' scale anahtarını kullandığı için ms panelinden
+      // req/s paneline sayısal y taşınıyordu (follower tooltip'te
+      // yanıltıcı okuma). [null] ikinci eksen = senkron yok.
+      ...(syncKey ? { sync: { key: syncKey, scales: ['x', null] as [string, null] } } : {}),
     },
     setSelect: onZoom
       ? [

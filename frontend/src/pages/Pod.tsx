@@ -216,7 +216,11 @@ function PodDetail() {
               <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {service}</span>
             </h3>
             <div className="ov-grid ov-charts-3 ov-mb">
+              {/* v0.9.388 (grafik-audit Faz A) — RED üçlüsü sayfanın
+                  podjmx grubuna katıldı: JMX kartlarında hover'ken RED'de
+                  aynı an vurgulanıyor (aynı olayı iki panelde okuma). */}
               <ChartCard title="Response time" unit=" ms" mode="line" status={latStatus} onZoom={undefined} xRange={xRange}
+                syncKey={`podjmx:${pod}`}
                 legendStorageKey="pod-response-time"
                 defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
                 lines={[
@@ -225,8 +229,8 @@ function PodDetail() {
                 { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
                 { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
               ]} />
-              <ChartCard title="Throughput" unit=" req/s" mode="stacked" status={redStatus} xRange={xRange} lines={throughputBands} />
-              <ChartCard title="Failure rate" unit="%" mode="area" status={redStatus} xRange={xRange} lines={[
+              <ChartCard title="Throughput" unit=" req/s" mode="stacked" status={redStatus} xRange={xRange} syncKey={`podjmx:${pod}`} lines={throughputBands} />
+              <ChartCard title="Failure rate" unit="%" mode="area" status={redStatus} xRange={xRange} syncKey={`podjmx:${pod}`} lines={[
                 { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
               ]} />
             </div>

@@ -202,11 +202,13 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
           <div ref={cpuChartRef} style={flashStyle('cpu')}>
             <MetricArea title={`CPU (cores) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
               by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom} onZoomReset={onZoomReset}
+              syncKey={`infra:${service}`}
               series={cpuTrendQ.data?.series} seriesName="CPU" />
           </div>
           <div ref={memChartRef} style={flashStyle('mem')}>
             <MetricArea title={`Memory · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
               by={memByPod} onToggle={setMemByPod} onZoom={onZoom} onZoomReset={onZoomReset}
+              syncKey={`infra:${service}`}
               series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
           </div>
         </div>

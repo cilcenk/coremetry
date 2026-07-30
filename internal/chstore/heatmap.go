@@ -32,6 +32,11 @@ type LatencyHeatmap struct {
 	DurationBins []float64 `json:"durationBins"`
 	// Counts[time_idx][dur_idx] = span count in that cell.
 	Counts [][]uint32 `json:"counts"`
+	// Exemplars[time_idx][dur_idx] — hücrenin temsilci trace_id'si
+	// (v0.9.393: hücredeki EN YAVAŞ span'in trace'i; "" = hücre boş).
+	// Tık→trace garantisi bunun üstünden: eski hücre-tık modalının trace
+	// ARAMASI sampled pencerede "No traces matched" ölü ucuna düşebiliyordu.
+	Exemplars [][]string `json:"exemplars,omitempty"`
 	// MaxCount = peak cell value, useful for the frontend to
 	// pick a colour scale without a full re-scan.
 	MaxCount uint32 `json:"maxCount"`
@@ -143,11 +148,17 @@ func (s *Store) latencyHeatmapWhere(
 		stepSec = 1
 	}
 
+	// v0.9.393 (grafik-audit Faz C) — hücre başına temsilci trace:
+	// aynı GROUP BY'a argMax(trace_id, duration) eklemek near-zero
+	// maliyet (endpoints.go v0.9.310 exemplar-state emsalinin ham-yol
+	// hali; yeni kolon YOK — distributed-safe). Örnekleme açıkken
+	// exemplar örneklenen alt-kümeden gelir — yine GERÇEK bir trace.
 	sql := fmt.Sprintf(`
 		SELECT
 		  toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) AS t_bucket,
 		  toUInt8(greatest(0, least(%d, toInt32(floor((log10(duration / 1e6 + 0.0001) - %d) * %d))))) AS d_bin,
-		  count() AS cnt
+		  count() AS cnt,
+		  argMax(trace_id, duration) AS ex_trace
 		FROM spans
 		%s
 		GROUP BY t_bucket, d_bin
@@ -179,8 +190,10 @@ func (s *Store) latencyHeatmapWhere(
 	}
 
 	counts := make([][]uint32, timeBuckets)
+	exemplars := make([][]string, timeBuckets)
 	for i := range counts {
 		counts[i] = make([]uint32, totalBins)
+		exemplars[i] = make([]string, totalBins)
 	}
 
 	var maxCnt uint32 = 0
@@ -188,7 +201,8 @@ func (s *Store) latencyHeatmapWhere(
 		var tBucket uint32
 		var dBin uint8
 		var cnt uint64
-		if err := rows.Scan(&tBucket, &dBin, &cnt); err != nil {
+		var exTrace string
+		if err := rows.Scan(&tBucket, &dBin, &cnt, &exTrace); err != nil {
 			return nil, err
 		}
 		// Map t_bucket (unix-seconds aligned to stepSec) back
@@ -208,6 +222,7 @@ func (s *Store) latencyHeatmapWhere(
 		// per-cell count by N to estimate the full distribution.
 		scaled := uint32(cnt) * uint32(sampleN)
 		counts[col][row] = scaled
+		exemplars[col][row] = exTrace
 		if scaled > maxCnt {
 			maxCnt = scaled
 		}
@@ -217,6 +232,7 @@ func (s *Store) latencyHeatmapWhere(
 		Times:        times,
 		DurationBins: durBins,
 		Counts:       counts,
+		Exemplars:    exemplars,
 		MaxCount:     maxCnt,
 		SamplingRate: 1.0 / float64(sampleN),
 	}, rows.Err()

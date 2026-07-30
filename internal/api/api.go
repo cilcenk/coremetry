@@ -5034,7 +5034,9 @@ func (s *Server) spanHeatmap(w http.ResponseWriter, r *http.Request) {
 	// dashboard or the same operator scrolling between viz
 	// modes hit the cached payload instead of re-firing the
 	// CH GROUP BY at billion-span scale.
-	key := fmt.Sprintf("span-heatmap:window=%s:buckets=%d:filters=%s:dsl=%s",
+	// v0.9.393 — v2: yanıt exemplar ızgarası kazandı; eski cache girdileri
+	// alansız kalmasın diye anahtar sürümlendi (şekil değişiminde kural).
+	key := fmt.Sprintf("span-heatmap:v2:window=%s:buckets=%d:filters=%s:dsl=%s",
 		cacheBucket(from, to), timeBuckets,
 		q.Get("filters"), q.Get("dsl"))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {

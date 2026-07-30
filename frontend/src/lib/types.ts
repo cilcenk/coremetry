@@ -3399,6 +3399,9 @@ export interface LatencyHeatmap {
   times: number[];          // unix nanoseconds, len = N time buckets
   durationBins: number[];   // upper bound in ms per bin, len = M
   counts: number[][];       // [N][M] grid
+  // v0.9.393 — hücrenin temsilci trace_id'si (en yavaş span'in trace'i;
+  // '' = boş). Tık→trace garantisi + ◆ overlay bunun üstünden.
+  exemplars?: string[][];
   maxCount: number;
   // v0.9.110 (C2 review fix) — when the TOP bin is a +Inf overflow (a
   // histogram's ">highest explicit bound" bucket), its durationBins entry is

@@ -98,7 +98,9 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
   // Caller receives the cell's (timeNs, lowDurMs, highDurMs)
   // and can fetch matching traces. Honeycomb's classic
   // "click the slow band, see what trace ran there" workflow.
-  onCellClick?: (cell: { timeNs: number; lowDurMs: number; highDurMs: number; count: number }) => void;
+  // v0.9.393 — exemplarTraceId: hücrenin sunucu-tarafı temsilci trace'i
+  // (data.exemplars'tan; '' olabilir). Modal'ın tık→trace garantisi.
+  onCellClick?: (cell: { timeNs: number; lowDurMs: number; highDurMs: number; count: number; exemplarTraceId?: string }) => void;
   // explore-v2 Phase 4.2 — drag a rectangle across cells to select a
   // (time × latency) region for BubbleUp. timeFromNs/timeToNs bound the
   // dragged columns (± half a bucket); lowDurMs/highDurMs bound the dragged
@@ -179,6 +181,27 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
           const x = padL + i * cellW;
           const y = padT + (rows - 1 - j) * cellH;
           ctx.fillRect(x, y, Math.ceil(cellW) + 0.5, Math.ceil(cellH) + 0.5);
+        }
+      }
+      // v0.9.393 (grafik-audit Faz C) — ◆ exemplar işaretleri: kolon
+      // başına EN YÜKSEK dolu bin'e (o zaman diliminin en yavaş hücresi —
+      // SRE'nin taradığı yer) küçük elmas. HER hücreye çizmek gürültü
+      // olurdu; hücrenin temsilci trace'i zaten tıkla açılan modalda.
+      if (data.exemplars) {
+        ctx.fillStyle = 'rgba(18,184,255,0.95)';
+        for (let i = 0; i < cols; i++) {
+          for (let j = rows - 1; j >= 0; j--) {
+            if ((data.counts[i]?.[j] ?? 0) === 0) continue;
+            if (!data.exemplars[i]?.[j]) break;
+            const cx = padL + i * cellW + cellW / 2;
+            const cy = padT + (rows - 1 - j) * cellH + cellH / 2;
+            const r = Math.max(2, Math.min(4, cellW / 4));
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - r); ctx.lineTo(cx + r, cy);
+            ctx.lineTo(cx, cy + r); ctx.lineTo(cx - r, cy);
+            ctx.closePath(); ctx.fill();
+            break; // yalnız en üst dolu bin
+          }
         }
       }
       // Outlier highlight pass (v0.5.256). Painted AFTER the
@@ -389,6 +412,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
       lowDurMs,
       highDurMs,
       count: c,
+      exemplarTraceId: data.exemplars?.[col]?.[row] || undefined,
     });
   };
 

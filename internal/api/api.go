@@ -990,6 +990,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("POST   /api/copilot/deploy-impact", s.copilotDeployImpact)
 	mux.HandleFunc("POST   /api/copilot/explain-slo/{id}", s.copilotExplainSLO)
 	mux.HandleFunc("POST   /api/copilot/explain-slow-query", s.copilotExplainSlowQuery)
+	// v0.9.414 (operatör istegi) — exception grubu kök-sebep: örnek
+	// trace + trace logları + deploy penceresi otomatik prefetch'lenir,
+	// kanıt trace/span'leri deterministik döner (copilot_exception.go).
+	mux.HandleFunc("POST   /api/copilot/explain-exception/{fp}", s.copilotExplainException)
 	mux.HandleFunc("POST   /api/copilot/suggest-service-tags", auth.RequireAnyRole(editorRoles, s.copilotSuggestServiceTags))
 
 	// ── Incident management ───────────────────────────────────────

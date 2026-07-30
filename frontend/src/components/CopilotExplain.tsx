@@ -23,14 +23,17 @@ import { IconSparkles } from './icons';
 //                               in past resolved instances of the same rule.
 // Each endpoint uses a kind-specific system prompt so the model's
 // answers match the operator's question.
-export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvidence }: {
-  kind: 'trace' | 'span' | 'problem' | 'incident' | 'anomaly' | 'service-health' | 'runbook';
+export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvidence, onEvidenceTraces }: {
+  kind: 'trace' | 'span' | 'problem' | 'incident' | 'anomaly' | 'service-health' | 'runbook' | 'exception';
   id: string;
   label?: React.ReactNode;
   // v0.9.408 — kind="trace" yanıtındaki deterministik kanıt span'leri
   // (backend hesaplar; LLM'e bağımlı değil). Üst bileşen waterfall'ı
   // kutulamak için kullanır.
   onEvidence?: (spanIds: string[]) => void;
+  // v0.9.414 — kind="exception" kanıt TRACE'leri; exception detayı
+  // örnek-trace satırlarını kutular.
+  onEvidenceTraces?: (traceIds: string[]) => void;
   // Only used when kind === 'service-health'. Ignored otherwise.
   fromNs?: number;
   toNs?: number;
@@ -71,6 +74,11 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
                                                   return rr;
                                                 })
+                : kind === 'exception'      ? await api.copilotExplainException(id).then(rr => {
+                                                  if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
+                                                  if (rr.evidenceTraceIds?.length) onEvidenceTraces?.(rr.evidenceTraceIds);
+                                                  return rr;
+                                                })
                 : kind === 'span'           ? await api.copilotExplainSpan(id, spanId ?? '')
                 : kind === 'problem'        ? await api.copilotExplainProblem(id)
                 : kind === 'incident'       ? await api.copilotExplainIncident(id)
@@ -95,6 +103,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
       case 'runbook':        return `${id} runbook'unun adımlarını özetle`;
       case 'anomaly':        return `Bu anomaliyi açıkla (${id})`;
       case 'incident':       return `Bu incident'i açıkla (${id})`;
+      case 'exception':      return `Bu exception grubunun kök nedeni ne? (${id})`;
       case 'span':           return `Bu span'i açıkla (${id})`;
       default:               return `Bu trace'i açıkla (${id})`;
     }

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
+import { seriesColor } from '@/lib/chartFmt';
 import type { FlameNode } from '@/lib/types';
-import { hashColor } from '@/lib/utils';
 
 interface Box {
   node: FlameNode;
@@ -51,7 +51,7 @@ export function FlameGraph({ root, totalWidth = 1100 }: { root: FlameNode; total
            onMouseLeave={() => setHover(null)}>
         <svg width={totalWidth} height={height} style={{ display: 'block', fontFamily: 'monospace' }}>
           {boxes.map((b, i) => {
-            const color = b.node === focus ? '#E30613' : hashColor(b.node.name);
+            const color = b.node === focus ? '#E30613' : seriesColor(b.node.name);
             const w = Math.max(0.5, b.width);
             const x = b.x;
             const y = PAD_TOP + b.depth * ROW_H;

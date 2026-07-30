@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { seriesColor } from '@/lib/chartFmt';
 import type { ServiceMap, ServiceMapNode } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
-import { hashColor, isMessagingDep } from '@/lib/utils';
+import { isMessagingDep } from '@/lib/utils';
 
 // ServiceMapGraph renders {nodes, edges} as an SVG graph. Two
 // layout modes:
@@ -396,7 +397,7 @@ function NodeMark({
       {!n.kind && n.cluster && n.cluster !== 'multi' && (
         <circle cx={x} cy={y} r={r + 3}
                 fill="none"
-                stroke={hashColor(n.cluster)}
+                stroke={seriesColor(n.cluster)}
                 strokeWidth={1.5}
                 strokeOpacity={0.85} />
       )}

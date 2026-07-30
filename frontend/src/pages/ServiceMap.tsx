@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { seriesColor } from '@/lib/chartFmt';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -9,7 +10,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { useServiceMap } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { serviceGraphToMap } from '@/lib/serviceGraphAdapter';
-import { fmtNum, hashColor, timeRangeToNs } from '@/lib/utils';
+import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
 import type { TimeRange, ServiceMap, ServiceMapNode } from '@/lib/types';
@@ -376,7 +377,7 @@ export default function ServiceMapPage() {
               <span key={c} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
                 <span style={{
                   display: 'inline-block', width: 12, height: 12,
-                  borderRadius: '50%', border: `1.5px solid ${hashColor(c)}`,
+                  borderRadius: '50%', border: `1.5px solid ${seriesColor(c)}`,
                   background: 'transparent',
                 }} />
                 {c}

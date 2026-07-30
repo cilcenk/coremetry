@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
+import { seriesColor } from '@/lib/chartFmt';
 import { Link } from 'react-router-dom';
 import { Spinner } from './Spinner';
 import { api } from '@/lib/api';
-import { hashColor, fmtNum, type GoDuration } from '@/lib/utils';
+import { fmtNum, type GoDuration } from '@/lib/utils';
 import type { NeighborStat } from '@/lib/types';
 
 // Service-level upstream / downstream summary derived from sampled
@@ -175,7 +176,7 @@ function Column({ label, items, emptyText, align }: {
 }
 
 function Chip({ stat }: { stat: NeighborStat }) {
-  const color = hashColor(stat.service);
+  const color = seriesColor(stat.service);
   return (
     <Link to={`/service?name=${encodeURIComponent(stat.service)}`}
           style={{
@@ -199,7 +200,7 @@ function Chip({ stat }: { stat: NeighborStat }) {
 }
 
 function SelfChip({ name }: { name: string }) {
-  const color = hashColor(name);
+  const color = seriesColor(name);
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 8,

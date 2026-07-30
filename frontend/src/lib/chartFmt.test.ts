@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtSmart, niceTickValues, fmtXTicks, fmtAxisTick } from './chartFmt';
+import { fmtSmart, niceTickValues, fmtXTicks, fmtAxisTick , seriesColor } from './chartFmt';
 
 // v0.8.58 — fmtXTicks regression (operator-reported: multi-day metric x-axis
 // labels overlapped). Same-day ranges stay HH:MM; multi-day ranges keep HH:MM
@@ -199,5 +199,23 @@ describe('fmtXTicks — sub-minute resolution', () => {
     // alone would miss a pair that collides later in the array.
     const splits = [at(5, 30, 0), at(5, 32, 0), at(5, 32, 10)];
     expect(fmtXTicks(splits)).toEqual(['05:30:00', '05:32:00', '05:32:10']);
+  });
+});
+
+// v0.9.398 — renk tekleştirme pinleri: kanonik kaynak seriesColor;
+// waterfall/mini-waterfall delegasyonları aynı servise aynı rengi verir.
+import { svcColor } from '@/components/traces/shared';
+import { svcColorToken } from '@/components/TraceWaterfall';
+
+describe('renk tekleştirme (v0.9.398)', () => {
+  it('aynı servis her yüzeyde aynı renk', () => {
+    for (const name of ['payment-service', 'api-gateway', 'ledger']) {
+      const c = seriesColor(name);
+      expect(svcColor(name)).toBe(c);
+      expect(svcColorToken(name)).toBe(c);
+    }
+  });
+  it('deterministik — çağrılar arası sabit', () => {
+    expect(seriesColor('checkout')).toBe(seriesColor('checkout'));
   });
 });

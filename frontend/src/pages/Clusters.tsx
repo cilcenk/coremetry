@@ -97,7 +97,7 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   // v0.9.10 — network (best-effort).
   { id: 'netIn',     label: 'Net in',    sortValue: r => r.netInBps ?? 0, numeric: true, width: 90 },
   { id: 'netOut',    label: 'Net out',   sortValue: r => r.netOutBps ?? 0, numeric: true, width: 90 },
-  { id: 'restarts',  label: 'Restarts',  sortValue: r => r.restarts ?? 0, numeric: true, width: 84 },
+  { id: 'restarts',  label: 'Restarts',  sortValue: r => (r.restartsUnknown ? -1 : r.restarts ?? 0), numeric: true, width: 84 },
 ];
 
 // fmtCores v0.9.51'de thresholds.ts'e taşındı (PodDrawer + §8 ortak).
@@ -949,8 +949,10 @@ export default function ClustersPage() {
                                 {r.memPct ? r.memPct.toFixed(0) : '—'}</td>
                               <td className="num mono">{r.netInBps ? fmtBps(r.netInBps) : '—'}</td>
                               <td className="num mono">{r.netOutBps ? fmtBps(r.netOutBps) : '—'}</td>
-                              <td className="num mono" style={{ color: restartColor(r.restarts ?? 0) }}>
-                                {r.restarts != null ? fmtNum(r.restarts) : '—'}</td>
+                              <td className="num mono"
+                                title={r.restartsUnknown ? 'Restart serisi yok (KSM eksik ya da seri tavanı) — 0 değil, bilinmiyor.' : undefined}
+                                style={{ color: r.restartsUnknown ? 'var(--text3)' : restartColor(r.restarts ?? 0) }}>
+                                {r.restartsUnknown ? '—' : fmtNum(r.restarts ?? 0)}</td>
                             </tr>
                           ))}
                         </tbody>

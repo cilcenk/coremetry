@@ -119,8 +119,15 @@ type PodRow struct {
 	Service string `json:"service,omitempty"`
 	// v0.9.37 (B4) — faz + restart (Pods tab Status/Restarts).
 	// Best-effort: kube-state-metrics yoksa Phase="" / Restarts=0.
+	// v0.9.371 — Restarts'ta omitempty YOK artık: gerçek 0 wire'da
+	// görünür (Clusters sayfası 0'ı '—' çiziyordu). Bilinmezlik ayrı
+	// bayrak: restart SERİSİ hiç gelmediyse (KSM yok ya da 1000-seri
+	// parse tavanı) RestartsUnknown=true — 0 sağlıklıymış gibi değil,
+	// '—' bilinmiyor gibi çizilir. Üyelik = bilgi: KSM 0 restart'lı
+	// pod için de seri döndürür.
 	Phase    string `json:"phase,omitempty"`
-	Restarts int    `json:"restarts,omitempty"`
+	Restarts        int  `json:"restarts"`
+	RestartsUnknown bool `json:"restartsUnknown,omitempty"`
 }
 
 // PodSeriesTrend — multi-pod görünümün seri birimi (v0.9.3): bir
@@ -492,9 +499,10 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, bo
 			continue
 		}
 		emitted[k] = true
+		rst, rstKnown := restartBy[k]
 		row := PodRow{Cluster: c.Name, Namespace: ns, Pod: pod,
 			CPUCores: a.cpu, MemBytes: a.mem,
-			Phase: phaseBy[k], Restarts: restartBy[k]}
+			Phase: phaseBy[k], Restarts: rst, RestartsUnknown: !rstKnown}
 		if a.cpuLim > 0 {
 			row.CPUPct = clampPct(a.cpu / a.cpuLim * 100)
 		}
@@ -550,8 +558,9 @@ func appendGhostPods(out []PodRow, cluster string, emitted map[string]bool, phas
 		if pod == "" {
 			continue
 		}
+		rst, rstKnown := restartBy[k]
 		out = append(out, PodRow{Cluster: cluster, Namespace: ns, Pod: pod,
-			Phase: phase, Restarts: restartBy[k]})
+			Phase: phase, Restarts: rst, RestartsUnknown: !rstKnown})
 	}
 	return out
 }

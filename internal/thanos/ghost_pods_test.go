@@ -52,6 +52,14 @@ func TestAppendGhostPods(t *testing.T) {
 			t.Errorf("%s: got %+v, want phase=%q restarts=%d zero-resource", g.pod, r, g.phase, g.restarts)
 		}
 	}
+	// v0.9.371 — bilinmezlik ÜYELİKTEN: restart serisi olmayan hayaletler
+	// unknown (UI '—'), seri getiren api-4 known (14 gerçek sayıdır).
+	if !got["api-2"].RestartsUnknown || !got["api-3"].RestartsUnknown {
+		t.Errorf("ghosts without a restart series must be RestartsUnknown")
+	}
+	if got["api-4"].RestartsUnknown {
+		t.Errorf("api-4 has a restart series (14) — must not be RestartsUnknown")
+	}
 	for _, absent := range []string{"idle-1", "job-done", "quiet-1"} {
 		if _, ok := got[absent]; ok {
 			t.Errorf("%s should stay excluded (healthy/completed/no-signal)", absent)

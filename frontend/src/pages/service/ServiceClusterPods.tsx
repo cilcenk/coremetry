@@ -41,7 +41,8 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
       {groups.map(([cluster, pods]) => {
         const cpuSum = pods.reduce((a, r) => a + r.cpuCores, 0);
         const memSum = pods.reduce((a, r) => a + r.memBytes, 0);
-        const restarts = pods.reduce((a, r) => a + (r.restarts ?? 0), 0);
+        const restarts = pods.reduce((a, r) => a + (r.restartsUnknown ? 0 : r.restarts ?? 0), 0);
+        const restartsPartial = pods.some(r => r.restartsUnknown);
         const notRunning = pods.filter(p => p.phase && p.phase !== 'Running').length;
         const health = notRunning > 0 ? 'err' : restarts > 5 ? 'warn' : 'ok';
         const hcolor = health === 'ok' ? 'var(--ok)' : health === 'warn' ? 'var(--warn)' : 'var(--err)';
@@ -61,7 +62,9 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
               <div style={{ marginLeft: 'auto', display: 'flex', gap: 16, alignItems: 'center', fontSize: 12, color: 'var(--text3)' }}>
                 <span>CPU <b className="mono" style={{ color: 'var(--text)' }}>{fmtCores(cpuSum)}</b></span>
                 <span>Mem <b className="mono" style={{ color: 'var(--text)' }}>{fmtBytes(memSum)}</b></span>
-                <span style={{ color: restartColor(restarts) }}>↻ {restarts}</span>
+                <span style={{ color: restartColor(restarts) }}
+                  title={restartsPartial ? 'Bazı pod\'ların restart serisi yok — toplam alt sınırdır.' : undefined}>
+                  ↻ {restarts}{restartsPartial ? '+' : ''}</span>
                 <span style={{ width: 8, height: 8, borderRadius: '50%', background: hcolor }} title={`cluster sağlığı: ${health}`} />
               </div>
             </div>
@@ -90,7 +93,10 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
                             <td className="num mono">{fmtBytes(r.memBytes)}</td>
                             <td className="num mono">{(r.netInBps ?? 0) > 0 ? fmtBps(r.netInBps!) : '—'}</td>
                             <td className="num mono">{(r.netOutBps ?? 0) > 0 ? fmtBps(r.netOutBps!) : '—'}</td>
-                            <td className="num mono" style={{ color: restartColor(r.restarts ?? 0) }}>{r.restarts ?? 0}</td>
+                            <td className="num mono"
+                              title={r.restartsUnknown ? 'Restart serisi yok (KSM eksik ya da seri tavanı) — 0 değil, bilinmiyor.' : undefined}
+                              style={{ color: r.restartsUnknown ? 'var(--text3)' : restartColor(r.restarts ?? 0) }}>
+                              {r.restartsUnknown ? '—' : r.restarts ?? 0}</td>
                           </tr>
                           {open && (
                             <tr>

@@ -26,7 +26,7 @@ const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'memBytes', label: 'Memory',   sortValue: r => r.memBytes, numeric: true, width: 100 },
   { id: 'netIn',    label: 'Net in',   sortValue: r => r.netInBps ?? 0, numeric: true, width: 90 },
   { id: 'netOut',   label: 'Net out',  sortValue: r => r.netOutBps ?? 0, numeric: true, width: 90 },
-  { id: 'restarts', label: 'Restarts', sortValue: r => r.restarts ?? 0, numeric: true, width: 84 },
+  { id: 'restarts', label: 'Restarts', sortValue: r => (r.restartsUnknown ? -1 : r.restarts ?? 0), numeric: true, width: 84 },
 ];
 
 export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {

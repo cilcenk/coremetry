@@ -457,8 +457,13 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 	if f.Limit == 0 {
 		f.Limit = 50
 	}
-	if f.Limit > 500 {
-		f.Limit = 500
+	// v0.9.441 — tavan 500→3000: inbox'ın solo-exception bütçesi
+	// (inboxExcSoloMax) buradan geçer; eski 500 kırpması 3.1K gruplu
+	// prod'da bugün doğan grupları aday penceresinden düşürüyordu.
+	// exception_groups küçük bir ReplacingMergeTree state tablosu —
+	// 3000 satırlık FINAL okuma ucuz; sayfalama (Limit≈50) etkilenmez.
+	if f.Limit > 3000 {
+		f.Limit = 3000
 	}
 	if f.Offset < 0 {
 		f.Offset = 0

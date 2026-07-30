@@ -340,6 +340,16 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// SQL count would ignore those narrows and report an inflated number,
 		// which is its own kind of lie.
 		excLimit := inboxEffectiveLimit(srcLimit, inboxExcStoreMax)
+		// v0.9.441 (operator-reported: "Exception'da gördüğüm kaydı
+		// Problems'te P3 seçsem de göremiyorum") — TÜR yalnız exception'a
+		// daraltılmışsa paylaşılan 500 tavanı anlamsız: tek kaynak tüm
+		// bütçeyi alır. 3.1K gruplu prod'da 2.6K grup yapısal olarak
+		// aday setine hiç giremiyordu; scanCapped şeridi durumu söylüyordu
+		// ama kayıt "yok" gibi görünüyordu. Cache anahtarı kind setini
+		// zaten taşıyor — bütçe farkı slot karıştırmaz.
+		if len(kinds) == 1 && kinds[0] == "exception" {
+			excLimit = inboxExcSoloMax
+		}
 		// v0.9.353 — teamIsEmpty short-circuits BOTH exception fetches: the
 		// exception filter's Services field treats an empty slice as "no
 		// constraint" (v0.8.310 contract, opposite of ProblemFilter's), so
@@ -360,6 +370,12 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				State: pickExceptionState(statusFilter), Limit: excLimit,
 				MinOccurrences: minOcc,
 				Services:       teamServices,
+				// v0.9.441 — arama STORE'a iner (ex_type/message/service
+				// ILIKE): eskiden Go'da yalnız ≤500 aday içinde aranıyordu,
+				// aday setine girmemiş kayıt aramayla da bulunamıyordu.
+				// Go tarafındaki genel arama süzgeci yine uygulanır
+				// (service+title+source semantiği değişmez).
+				Search: search,
 			}
 			exGroups, err := s.store.ListExceptionGroups(ctx, exFilter)
 			if err != nil {
@@ -376,6 +392,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 					State: pickExceptionState(statusFilter), Limit: excLimit,
 					MaxOccurrences: minOcc,
 					Services:       teamServices,
+					Search:         search,
 				})
 				if err != nil {
 					return nil, err
@@ -642,6 +659,15 @@ const inboxBaseScan = 200
 // raise the flag. The probe now compares against what the store will actually
 // return.
 const inboxExcStoreMax = 500
+
+// inboxExcSoloMax (v0.9.441) — TÜR filtresi yalnız exception'ken aday
+// tavanı: tek kaynak, paylaşılan bütçeye sıkışmaz. Prod vakası: 3.1K
+// gruplu filoda son dakikalarda ateşleyen grup sayısı 500'ü aşınca
+// bugün doğan gruplar last_seen-sıralı aday penceresinden düşüyordu —
+// sayfada görünen kayıt inbox'ta P3 açıkken bile yoktu. exception_groups
+// küçük bir ReplacingMergeTree state tablosu — 3000 satırlık FINAL
+// okuma inbox'ın 15s cache'i arkasında ucuz.
+const inboxExcSoloMax = 3000
 const inboxIncStoreMax = 1000
 const inboxNoStoreMax = 0 // sources that honour the requested limit
 

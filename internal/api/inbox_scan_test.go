@@ -621,3 +621,37 @@ func TestOccurrenceFloorBoundsArePartition(t *testing.T) {
 		t.Error("MaxOccurrences must be EXCLUSIVE (<) — with >= on the other side, a row at exactly the floor would otherwise appear in both fetches and be counted as both shown and hidden")
 	}
 }
+
+// ── v0.9.441 — solo-exception bütçesi + arama pushdown ───────────────────
+//
+// Operator-reported, prod: "Exception'da gördüğüm kaydı Problems'te P3
+// seçsem de göremiyorum." 3.1K gruplu filoda son dakikalarda ateşleyen grup
+// sayısı 500'ü aşınca BUGÜN doğan gruplar last_seen-sıralı 500'lük aday
+// penceresinden düşüyordu — sayfada görünen kayıt inbox'ta hiçbir öncelik/
+// durum kombinasyonunda yoktu. İki pin:
+//
+//  1. TÜR yalnız exception'a daraltılmışsa aday bütçesi inboxExcSoloMax
+//     olur (tek kaynak, paylaşılan tavana sıkışmaz) ve store bu bütçeyi
+//     KIRPMADAN onurlandırır — eski 500 clamp'ı bütçeyi sessizce geri
+//     alırdı, dürüstlük probu (len >= excLimit) da asla ateşleyemezdi.
+//  2. Arama STORE'a iner (ExceptionGroupFilter.Search) — eskiden Go'da
+//     yalnız ≤500 aday içinde aranıyordu; aday setine girmemiş kayıt
+//     aramayla da bulunamıyordu.
+func TestInboxSoloExceptionBudget(t *testing.T) {
+	src := readSrc(t, "inbox.go")
+	if !strings.Contains(src, `if len(kinds) == 1 && kinds[0] == "exception" {`) ||
+		!strings.Contains(src, `excLimit = inboxExcSoloMax`) {
+		t.Error("solo-exception kind narrow must lift the candidate budget to inboxExcSoloMax — the shared 500 ceiling structurally hides fresh groups on large fleets")
+	}
+	if n := strings.Count(src, "Search: search,") + strings.Count(src, "Search:         search,"); n < 2 {
+		t.Errorf("both ListExceptionGroups calls (main + below-floor) must push Search down to the store (found %d) — Go-side search over a capped candidate set cannot find what the cap excluded", n)
+	}
+
+	store := readSrc(t, "../chstore/exception_inbox.go")
+	if !strings.Contains(store, "if f.Limit > 3000 {") {
+		t.Error("ListExceptionGroups must honour the solo budget: a store-side clamp below inboxExcSoloMax silently re-caps the fetch AND makes the honesty probe (len >= excLimit) unreachable")
+	}
+	if inboxExcSoloMax != 3000 {
+		t.Errorf("inboxExcSoloMax = %d; the store clamp above is pinned to 3000 — change both together", inboxExcSoloMax)
+	}
+}

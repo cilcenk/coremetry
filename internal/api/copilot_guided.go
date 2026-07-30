@@ -70,6 +70,11 @@ const (
 	// sreTeam'iyle eşlenir; kimlik CallMeta'dan (ctx) okunur.
 	guidedMyServices guidedIntent = "my_services"
 	guidedMyProblems guidedIntent = "my_problems"
+	// v0.9.376 (operatör istegi, SRE perspektifi) — pod/JVM sağlığı:
+	// servisliyse instance listesi + JVM heap; servissizse filo-geneli
+	// heap doluluk sıralaması. Veri CH'den (OTel runtime metrikleri) —
+	// Thanos şartı yok; restart sayıları KSM gerektirir ve kanıt bunu söyler.
+	guidedPodHealth guidedIntent = "pod_health"
 )
 
 type guidedRoute struct {
@@ -178,7 +183,21 @@ func hasGuidedSignal(msg string) bool {
 	return hasSlowTraceSignal(msg) || hasDeploySignal(toks) ||
 		hasLogSignal(toks) || hasErrorSignal(toks) ||
 		hasProblemSignal(toks) || hasHealthSignal(toks) ||
-		hasTeamSelfSignal(toks)
+		hasTeamSelfSignal(toks) || hasPodSignal(toks)
+}
+
+// hasPodSignal (v0.9.376) — pod/JVM şekilli sorular. "gc" tam-token
+// ("gcp" prefix tuzağı); diğerleri prefix (podlar, jvm'de, heap'i).
+func hasPodSignal(tokens []string) bool {
+	if tokenHasPrefix(tokens, "pod", "jvm", "heap") {
+		return true
+	}
+	for _, t := range tokens {
+		if t == "gc" {
+			return true
+		}
+	}
+	return false
 }
 
 // hasTeamSelfSignal (v0.9.375) — "kendi takımım" şekilli sorular.
@@ -380,6 +399,10 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 		return guidedRoute{Intent: guidedDeployImpact, Service: svc, Env: env}
 	case hasLogSignal(toks) && hasErrorSignal(toks):
 		return guidedRoute{Intent: guidedLogErrors, Service: svc, Env: env}
+	case hasPodSignal(toks):
+		// v0.9.376 — servisli soru o servisin pod'ları, servissiz soru
+		// filo-geneli JVM heap sıralaması (ikisi de bundle'da).
+		return guidedRoute{Intent: guidedPodHealth, Service: svc, Env: env}
 	case len(family) >= 2:
 		return guidedRoute{Intent: guidedFamilyHealth, Env: env, Family: family}
 	case hasProblemSignal(toks):
@@ -594,6 +617,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, false, route.Env, from, to, rangeS)
 	case guidedMyProblems:
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, true, route.Env, from, to, rangeS)
+	case guidedPodHealth:
+		evidence, sources, err = s.guidedPodHealthBundle(ctx, emit, route.Service, from, to)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may
@@ -932,6 +957,104 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		return "", "", err
 	}
 	return header + evidence, fmt.Sprintf("takım: %s — %s", u.Team, src), nil
+}
+
+
+// guidedPodHealthBundle (v0.9.376, operatör istegi — SRE perspektifi):
+// pod/JVM sorusu. Servisliyse ServiceInstances (OTel host_name kimliği:
+// up/CPU/bellek/son görülme) + o servisin JVM heap doluluğu; servissizse
+// filo-geneli heap doluluk sıralaması (JVMHeapPodUsage zaten filo-geneli
+// tek bounded okuma). Restart/faz KSM ister — kanıt bunu açıkça söyler,
+// Pods sekmesine yönlendirir. Veri tamamen CH'den; Thanos şartı yok.
+func (s *Server) guidedPodHealthBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time) (string, string, error) {
+	var b strings.Builder
+	emitGuidedStep(emit, "jvm_heap_usage", "")
+	heap, herr := s.store.JVMHeapPodUsage(ctx)
+	if service == "" {
+		if herr != nil {
+			return "", "", herr
+		}
+		type hp struct {
+			svc, pod string
+			pct      float64
+		}
+		ranked := make([]hp, 0, len(heap))
+		for _, h := range heap {
+			if h.Limit > 0 {
+				ranked = append(ranked, hp{h.Instance, h.Subkey, h.Usage / h.Limit * 100})
+			}
+		}
+		sort.Slice(ranked, func(i, j int) bool { return ranked[i].pct > ranked[j].pct })
+		if len(ranked) == 0 {
+			b.WriteString("Filoda JVM heap metriği (jvm.memory.used/limit, OTel runtime) yayınlayan pod yok — JVM olmayan servislerde bu normaldir.\n")
+		} else {
+			fmt.Fprintf(&b, "Filo-geneli JVM heap doluluğu (son 10 dk ortalaması, %d pod), en dolu önce:\n", len(ranked))
+			for i, r := range ranked {
+				if i >= 10 {
+					fmt.Fprintf(&b, "… ve %d pod daha (hepsi daha az dolu).\n", len(ranked)-10)
+					break
+				}
+				fmt.Fprintf(&b, "- %s / %s: heap %%%.0f\n", r.svc, r.pod, r.pct)
+			}
+		}
+		b.WriteString("Not: restart sayıları ve pod fazı kube-state-metrics/Thanos ister — servis sayfasının Pods sekmesinde.\n")
+		return b.String(), "filo JVM heap doluluğu (OTel runtime, canlı)", nil
+	}
+
+	emitGuidedStep(emit, "service_instances", `{"service":"`+service+`"}`)
+	inst, ierr := s.store.ServiceInstances(ctx, service, from, to)
+	if ierr != nil {
+		return "", "", ierr
+	}
+	up := 0
+	for _, i := range inst {
+		if i.Up {
+			up++
+		}
+	}
+	fmt.Fprintf(&b, "%s pod/instance envanteri (pencere içinde metrik yayınlayanlar): %d pod, %d canlı (2dk tazelik).\n", service, len(inst), up)
+	// Sıralama: önce düşenler (SRE ilk onlara bakar), sonra CPU desc.
+	sort.Slice(inst, func(i, j int) bool {
+		if inst[i].Up != inst[j].Up {
+			return !inst[i].Up
+		}
+		return inst[i].CPUPct > inst[j].CPUPct
+	})
+	for i, r := range inst {
+		if i >= 12 {
+			fmt.Fprintf(&b, "… ve %d pod daha.\n", len(inst)-12)
+			break
+		}
+		state := "CANLI"
+		if !r.Up {
+			state = "SESSİZ (örnek yok — düşmüş ya da drene olmuş olabilir)"
+		}
+		fmt.Fprintf(&b, "- %s: %s, cpu %%%.0f, bellek %.0fMB\n", r.ID, state, r.CPUPct, r.MemBytes/1e6)
+	}
+	if len(inst) == 0 {
+		b.WriteString("Bu pencerede metrik yayınlayan pod yok.\n")
+	}
+	if herr == nil {
+		lines := 0
+		for _, h := range heap {
+			if h.Instance != service || h.Limit <= 0 {
+				continue
+			}
+			if lines == 0 {
+				b.WriteString("JVM heap doluluğu (son 10 dk ortalaması):\n")
+			}
+			lines++
+			if lines > 12 {
+				break
+			}
+			fmt.Fprintf(&b, "- %s: heap %%%.0f (%.0fMB / %.0fMB -Xmx)\n", h.Subkey, h.Usage/h.Limit*100, h.Usage/1e6, h.Limit/1e6)
+		}
+		if lines == 0 {
+			b.WriteString("Bu servis JVM heap metriği yayınlamıyor (JVM değilse normal).\n")
+		}
+	}
+	b.WriteString("Not: restart sayıları ve pod fazı kube-state-metrics/Thanos ister — servis sayfasının Pods sekmesinde.\n")
+	return b.String(), fmt.Sprintf("%s pod envanteri + JVM heap (OTel runtime, canlı)", service), nil
 }
 
 // guidedFamilyHealthBundle (v0.9.192) — compares a service FAMILY's RED

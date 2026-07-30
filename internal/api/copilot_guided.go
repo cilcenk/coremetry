@@ -400,6 +400,35 @@ func extractEnvEntity(msg string, envs []string) string {
 	return best
 }
 
+// extractServiceEntities (v0.9.422, CoSRE fikir #7) — mesajda sınırlı
+// (bounded) tam-ad olarak geçen TÜM canlı servisler. extractServiceEntity
+// en uzun TEK eşleşmeyi döner; kıyas soruları ("checkout-service ile
+// payment-service p99 kıyasla") iki adı da ister. Ad-içi gölgeleme yok:
+// "mobile-bff", "mobile-bff-uat" içinde boundary'ye takılır.
+func extractServiceEntities(msg string, services []string) []string {
+	var out []string
+	for _, svc := range services {
+		ls := strings.ToLower(svc)
+		if len(ls) < 3 {
+			continue
+		}
+		if indexBounded(msg, ls) >= 0 {
+			out = append(out, svc)
+		}
+	}
+	return out
+}
+
+// hasCompareSignal (v0.9.422) — açık karşılaştırma kalıpları.
+func hasCompareSignal(toks []string) bool {
+	for _, t := range toks {
+		if t == "vs" || t == "versus" {
+			return true
+		}
+	}
+	return tokenHasPrefix(toks, "kıyas", "kiyas", "karşılaştır", "karsilastir", "compare", "fark")
+}
+
 // routeGuidedIntent is THE router: normalized keyword matching over
 // the five shapes, most-specific first. Pure — table-tested in
 // copilot_guided_test.go with Turkish + English variants.
@@ -408,6 +437,14 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 	toks := guidedTokens(msg)
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
+	// v0.9.422 (CoSRE fikir #7) — çoklu tam-ad kıyası: soru 2+ canlı
+	// servisi ADIYLA anıyor ve sağlık/hata/kıyas şekliyse familyHealth
+	// yan-yana RED karşılaştırması zaten işi yapar. Tek-ad çözümü
+	// (en uzun) bu durumda yanlış daraltmaydı.
+	if multi := extractServiceEntities(msg, services); len(multi) >= 2 &&
+		(hasHealthSignal(toks) || hasErrorSignal(toks) || hasCompareSignal(toks)) {
+		return guidedRoute{Intent: guidedFamilyHealth, Env: env, Family: multi}
+	}
 	// Family resolution (v0.9.192 — operator-reported: "mobile
 	// bff'lerde hangisinde hata var" servis bulamıyordu): tek servis
 	// çözülmediyse ve soru sağlık/hata/problem şekilliyse, mesajın

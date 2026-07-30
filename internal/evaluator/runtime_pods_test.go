@@ -70,7 +70,10 @@ func TestJVMGCPauseDecision(t *testing.T) {
 }
 
 func TestRuntimeServiceAndID(t *testing.T) {
-	if got := runtimeService("auth-service", "pod-x2v"); got != "auth-service·pod-x2v" {
+	// v0.9.401 (operator-reported): service alanı artık YALNIZ gerçek
+	// servis — "servis·pod" birleşimi P1 listesinde servis adını yutuyor
+	// ve tıklamayı sahte servise götürüyordu. Pod, problemID + reason'da.
+	if got := runtimeService("auth-service", "pod-x2v"); got != "auth-service" {
 		t.Errorf("runtimeService with pod = %q", got)
 	}
 	if got := runtimeService("auth-service", ""); got != "auth-service" {

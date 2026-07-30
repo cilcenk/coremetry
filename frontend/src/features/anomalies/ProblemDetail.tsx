@@ -477,6 +477,26 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 style={{ textDecoration: 'none', color: 'var(--accent2)' }}>
                 <span className="dot" /> <span className="mono">{problem.service}</span>
               </Link>
+              {/* v0.9.401 (operator-reported) — runtime pod problemleri artık
+                  gerçek servis adı taşıyor; pod kimliği deterministik ID'nin
+                  son segmentinde (runtime:<check>:<svc>:<pod> — evaluator
+                  runtimeProblemID). Tek yerde çözülür, yapısal `pod` kolonu
+                  ayrı dilim. Link Pods sekmesine jpod daraltmasıyla gider —
+                  o podun JMX/runtime grafikleri. */}
+              {(() => {
+                if (!problem.id?.startsWith('runtime:')) return null;
+                const segs = problem.id.split(':');
+                const pod = segs.length >= 4 ? segs[segs.length - 1] : '';
+                if (!pod || pod === problem.service) return null;
+                return (
+                  <Link to={`/service?name=${encodeURIComponent(problem.service)}&tab=pods&jpod=${encodeURIComponent(pod)}`}
+                    className="pb-pill"
+                    style={{ textDecoration: 'none', color: 'var(--accent2)' }}
+                    title="Bu podun JMX/runtime grafikleri (Pods sekmesi, pod daraltmalı)">
+                    <span className="dot" /> pod <span className="mono">{pod}</span> →
+                  </Link>
+                );
+              })()}
               {(problem.clusters ?? []).map(c => (
                 <span key={c} className="pb-pill"><span className="dot" /> <span className="mono">{c}</span></span>
               ))}

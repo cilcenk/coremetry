@@ -70,13 +70,14 @@ func jvmGCPauseDecision(avgMs float64, wasOpen bool) (open bool, severity string
 	}
 }
 
-// runtimeService — Problem.service kolonu: servis·pod (capacityService
-// emsali). Pod anahtarı boşsa (attr'sız kurulum) servis düzeyinde tek
-// Problem.
-func runtimeService(service, pod string) string {
-	if pod != "" {
-		return service + "·" + pod
-	}
+// runtimeService — Problem.service kolonu: YALNIZ gerçek servis adı.
+// v0.9.401 (operator-reported, prod): eski "servis·pod" birleşimi
+// (capacityService emsalinden kopya) UI'nin service sözleşmesini
+// kırıyordu — P1 listesinde servis adı görünmüyor, tıklama
+// /service?name=<servis·pod> diye SAHTE servise gidiyordu (0 req/s
+// boş overview). Pod kimliği problemID'de yaşamaya devam eder
+// (per-pod dedup oradan) ve reason'da görünür.
+func runtimeService(service, _ string) string {
 	return service
 }
 
@@ -114,12 +115,17 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.CapacitySample) {
 	const ruleID = "runtime:jvm-heap"
 	service := runtimeService(s.Instance, s.Subkey)
-	existing, err := e.store.FindOpenProblem(ctx, ruleID, service)
+	// v0.9.401 — dedup (ruleID, service) yerine deterministik problemID:
+	// service artık pod taşımadığı için eski anahtar per-pod granülerliği
+	// kaybederdi (iki pod tek probleme çökerdi). ID formatı DEĞİŞMEDİ —
+	// prod'daki açık eski satırlar aynı ID'den bulunur ve refresh
+	// yolunda service alanı kendini onarır.
+	existing, err := e.store.FindOpenProblemByID(ctx, runtimeProblemID("jvm-heap", s.Instance, s.Subkey))
 	hasOpen := err == nil && existing != nil && existing.ID != ""
 	open, sev, pct := jvmHeapDecision(s.Usage, s.Limit, hasOpen)
 	gb := func(b float64) float64 { return b / (1024 * 1024 * 1024) }
-	reason := fmt.Sprintf("JVM heap %.0f%% (%.1f/%.1f GB) on %s",
-		pct, gb(s.Usage), gb(s.Limit), service)
+	reason := fmt.Sprintf("JVM heap %.0f%% (%.1f/%.1f GB) on %s · pod %s",
+		pct, gb(s.Usage), gb(s.Limit), service, s.Subkey)
 	thr := jvmHeapWarnPct
 	if sev == "critical" {
 		thr = jvmHeapCritPct
@@ -135,10 +141,11 @@ func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.Capacity
 func (e *Evaluator) reconcileRuntimeGC(ctx context.Context, s chstore.CapacitySample) {
 	const ruleID = "runtime:jvm-gc"
 	service := runtimeService(s.Instance, s.Subkey)
-	existing, err := e.store.FindOpenProblem(ctx, ruleID, service)
+	// v0.9.401 — heap yoluyla aynı: dedup deterministik problemID'den.
+	existing, err := e.store.FindOpenProblemByID(ctx, runtimeProblemID("jvm-gc", s.Instance, s.Subkey))
 	hasOpen := err == nil && existing != nil && existing.ID != ""
 	open, sev := jvmGCPauseDecision(s.Usage, hasOpen)
-	reason := fmt.Sprintf("JVM GC pause avg %.0fms on %s", s.Usage, service)
+	reason := fmt.Sprintf("JVM GC pause avg %.0fms on %s · pod %s", s.Usage, service, s.Subkey)
 	thr := jvmGCWarnMs
 	if sev == "critical" {
 		thr = jvmGCCritMs
@@ -194,6 +201,10 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 	case r.open && r.hasOpen:
 		// Canlı değer + severity tazele (warning critical'e kötüleşebilir);
 		// StartedAt korunur; yaş-bazlı eskalasyon tabanına clamp (v0.8.309).
+		// v0.9.401 — service self-heal: prod'daki eski "servis·pod"
+		// birleşik satırlar aynı ID'den bulunup gerçek servis adıyla
+		// yeniden yazılır (ReplacingMergeTree tam-satır upsert zaten).
+		r.existing.Service = r.service
 		r.existing.Value = r.value
 		r.existing.Severity = effectiveSeverity(r.severity, time.Since(time.Unix(0, r.existing.StartedAt)), e.escalationCfg(ctx))
 		r.existing.Threshold = r.threshold

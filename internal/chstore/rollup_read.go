@@ -138,7 +138,10 @@ func rollupREDSQL(plan RollupPlan, f RollupSeriesFilter, from, to time.Time) (st
 	topFilter := ""
 	if f.GroupBy != "" {
 		col := rollupCols[f.GroupBy]
-		topFilter = fmt.Sprintf(` AND %s IN (
+		// GLOBAL IN — dağıtık tabloda düz IN alt sorgusu her shard'da
+		// yeniden dağıtılır ve CH 288 (double-distributed denied) fırlatır;
+		// proje kuralı (make audit CHECK 5 sınıfı, v0.9.387 canlı vuruşu).
+		topFilter = fmt.Sprintf(` AND %s GLOBAL IN (
 			SELECT %s FROM %s WHERE %s
 			GROUP BY %s ORDER BY sum(span_count) DESC LIMIT %d)`,
 			col, col, plan.Table, whereSQL, col, maxGroups+1)

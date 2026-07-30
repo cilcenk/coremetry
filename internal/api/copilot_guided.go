@@ -726,6 +726,9 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	emit("answer", map[string]any{
 		"text": answer, "exchangeId": copilot.MetaFromContext(ctx).ExchangeID,
 		"suggestions": guidedSuggestions(route),
+		// v0.9.419 — rotadan türetilen deterministik derin linkler;
+		// frontend çip olarak çizer (eski frontend'ler yok sayar).
+		"links": guidedAnswerLinks(route),
 	})
 	return true, true
 }

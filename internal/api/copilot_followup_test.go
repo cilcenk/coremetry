@@ -1,6 +1,7 @@
 package api
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cilcenk/coremetry/internal/copilot"
@@ -159,6 +160,42 @@ func TestGuidedSuggestionsRoute(t *testing.T) {
 				t.Errorf("öneri %q yönlenemiyor (rota %s) — serbest döngüye düşer", q, r.Intent)
 			}
 		}
+	}
+}
+
+// v0.9.419 pini: derin linkler daima uygulama-köklü (/ ile başlar) ve
+// servisli rotalarda servis query-escape'li taşınır.
+func TestGuidedAnswerLinks(t *testing.T) {
+	routes := []guidedRoute{
+		{Intent: guidedServiceHealth, Service: "päy ments"},
+		{Intent: guidedProblems, Service: "payments"},
+		{Intent: guidedProblems},
+		{Intent: guidedSlowTraces},
+		{Intent: guidedLogErrors, Service: "payments"},
+		{Intent: guidedMyServices},
+		{Intent: guidedMyProblems},
+		{Intent: guidedPodHealth, Service: "payments"},
+		{Intent: guidedShiftSummary, Service: "payments"},
+		{Intent: guidedFamilyHealth},
+	}
+	for _, r := range routes {
+		links := guidedAnswerLinks(r)
+		if len(links) == 0 {
+			t.Errorf("rota %s/%s: link boş", r.Intent, r.Service)
+		}
+		for _, l := range links {
+			if !strings.HasPrefix(l.Href, "/") {
+				t.Errorf("%s: href uygulama-köklü değil: %s", r.Intent, l.Href)
+			}
+			if l.Label == "" {
+				t.Errorf("%s: boş label", r.Intent)
+			}
+		}
+	}
+	// Escape pini: boşluklu/aksanlı servis adı href'te ham geçmez.
+	sl := guidedAnswerLinks(guidedRoute{Intent: guidedServiceHealth, Service: "päy ments"})
+	if !strings.Contains(sl[0].Href, "p%C3%A4y+ments") {
+		t.Errorf("servis adı escape edilmeli: %s", sl[0].Href)
 	}
 }
 

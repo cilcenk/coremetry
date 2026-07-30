@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
-import { useLocation, useSearchParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
@@ -23,6 +23,8 @@ type Turn = ChatMessage & {
   // v0.9.411 — backend'in rotadan türettiği konuya-duyarlı takip
   // önerileri; varsa statik FOLLOWUPS yerine bunlar çizilir.
   suggestions?: string[];
+  // v0.9.419 — rotadan türetilen derin-link çipleri (cevabın konusuna git).
+  links?: import('@/lib/types').ChatAnswerLink[];
 };
 
 // Türkçe quick-start (v0.9.163 — eskiden İngilizce'ydi, cevaplar Türkçe
@@ -68,10 +70,14 @@ function AiMark({ size = 26 }: { size?: number }) {
   );
 }
 
-// mdLite — güvenli hafif markdown: ÖNCE escapeHTML (XSS), sonra `kod` + **kalın**.
-// Satır sonları/madde tireleri container'ın white-space:pre-wrap'ıyla korunur.
-function mdLite(raw: string): string {
+// mdLite — güvenli hafif markdown: ÖNCE escapeHTML (XSS), sonra 32-hex
+// trace id'leri tıklanabilir link (v0.9.419 — href salt hex'ten kurulur,
+// injection yüzeyi yok; data-nav ile SPA navigate, sayfa yenilenmez ve
+// chat state'i yaşar), sonra `kod` + **kalın**. Satır sonları/madde
+// tireleri container'ın white-space:pre-wrap'ıyla korunur.
+export function mdLite(raw: string): string {
   return escapeHTML(raw)
+    .replace(/\b[0-9a-f]{32}\b/g, '<a href="/trace?id=$&" data-nav="1">$&</a>')
     .replace(/`([^`\n]+)`/g, '<code>$1</code>')
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
 }
@@ -207,7 +213,7 @@ export function CopilotChat() {
         } else if (e.kind === 'delta') {
           patchLast(t => ({ ...t, text: (t.text ?? '') + e.text }));
         } else if (e.kind === 'answer') {
-          patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, sources: e.sources, suggestions: e.suggestions, pending: false }));
+          patchLast(t => ({ ...t, text: e.text, exchangeId: e.exchangeId, sources: e.sources, suggestions: e.suggestions, links: e.links, pending: false }));
         } else if (e.kind === 'error') {
           patchLast(t => ({ ...t, error: e.error, pending: false }));
         } else if (e.kind === 'done') {
@@ -363,7 +369,17 @@ export function CopilotChat() {
 
 function ChatBubble({ turn, onRate }: { turn: Turn; onRate?: (v: 1 | -1) => void }) {
   const isUser = turn.role === 'user';
+  const navigate = useNavigate();
   const [copied, setCopied] = useState(false);
+  // v0.9.419 — mdLite'ın enjekte ettiği data-nav linkleri (trace id'ler)
+  // SPA içi gider: tam sayfa yenilenmesi efemer chat'i sıfırlardı.
+  const onBodyClick = (e: React.MouseEvent) => {
+    const a = (e.target as HTMLElement).closest?.('a[data-nav]');
+    if (a) {
+      e.preventDefault();
+      navigate(a.getAttribute('href') ?? '/');
+    }
+  };
   const copy = () => {
     navigator.clipboard?.writeText(turn.text ?? '').then(() => {
       setCopied(true);
@@ -373,7 +389,7 @@ function ChatBubble({ turn, onRate }: { turn: Turn; onRate?: (v: 1 | -1) => void
   const done = !isUser && !turn.pending && !turn.error && !!turn.text;
   return (
     <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
-      <div style={{
+      <div onClick={onBodyClick} style={{
         padding: '8px 11px', borderRadius: 10, fontSize: 13, lineHeight: 1.5,
         whiteSpace: 'pre-wrap', wordBreak: 'break-word',
         background: isUser ? 'var(--accent2)' : 'var(--bg2)',
@@ -422,6 +438,19 @@ function ChatBubble({ turn, onRate }: { turn: Turn; onRate?: (v: 1 | -1) => void
               title={`benzerlik ${(src.score * 100).toFixed(0)}%`}>
               📄 {src.doc} §{src.chunk}
             </span>
+          ))}
+        </div>
+      )}
+
+      {/* Derin-link çipleri (v0.9.419) — cevabın konusuna tek tık.
+          Sunucu rotadan deterministik üretir; SPA Link, chat yaşar. */}
+      {!isUser && !!turn.links?.length && !turn.pending && !turn.error && (
+        <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
+          {turn.links.map((l, i) => (
+            <Link key={i} to={l.href} className="badge b-info"
+              style={{ textDecoration: 'none', fontSize: 10 }}>
+              🔗 {l.label}
+            </Link>
           ))}
         </div>
       )}

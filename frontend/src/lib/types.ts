@@ -3516,12 +3516,17 @@ export interface RagSource {
   score: number;
 }
 
+// ChatAnswerLink (v0.9.419) — guided cevabın altındaki derin-link çipi;
+// sunucu rotadan deterministik üretir (LLM biçimlemesine güvenilmez).
+export interface ChatAnswerLink { label: string; href: string }
+
 export type ChatStreamEvent =
   | { kind: 'step'; tool: string; args: string }
   | { kind: 'delta'; text: string }
   // suggestions (v0.9.411) — guided cevabın rotasından türetilen
   // konuya-duyarlı takip önerileri; yoksa frontend statik listesine düşer.
-  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[]; suggestions?: string[] }
+  // links (v0.9.419) — rotadan türetilen deterministik derin linkler.
+  | { kind: 'answer'; text: string; exchangeId?: string; sources?: RagSource[]; suggestions?: string[]; links?: ChatAnswerLink[] }
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };
 

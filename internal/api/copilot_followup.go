@@ -1,6 +1,7 @@
 package api
 
 import (
+	"net/url"
 	"strings"
 	"unicode/utf8"
 
@@ -140,6 +141,69 @@ func guidedSuggestions(route guidedRoute) []string {
 		return []string{"Açık problemler?", "Takımımın servisleri nasıl?"}
 	case guidedShiftSummary:
 		return []string{"Açık problemler?", "En yavaş trace'ler?", "Takımımın servisleri nasıl?"}
+	}
+	return nil
+}
+
+// guidedAnswerLink — cevap altındaki derin-link çipi (v0.9.419).
+type guidedAnswerLink struct {
+	Label string `json:"label"`
+	Href  string `json:"href"`
+}
+
+// guidedAnswerLinks (v0.9.419, CoSRE fikir #4) — cevabın konusuna giden
+// deterministik uygulama-içi linkler. LLM çıktısından DEĞİL rotadan
+// üretilir (gemma4'e link biçimletmeyiz); frontend çip olarak çizer ve
+// SPA navigate eder. Saf — copilot_followup_test.go.
+func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
+	svc := route.Service
+	svcQ := url.QueryEscape(svc)
+	switch route.Intent {
+	case guidedServiceHealth:
+		return []guidedAnswerLink{
+			{Label: svc + " · Overview", Href: "/service?name=" + svcQ},
+			{Label: "Trace'ler", Href: "/traces?service=" + svcQ},
+		}
+	case guidedProblems:
+		if svc != "" {
+			return []guidedAnswerLink{
+				{Label: "Problemler", Href: "/problems?service=" + svcQ},
+				{Label: svc + " · Overview", Href: "/service?name=" + svcQ},
+			}
+		}
+		return []guidedAnswerLink{{Label: "Problemler", Href: "/problems"}}
+	case guidedSlowTraces:
+		if svc != "" {
+			return []guidedAnswerLink{{Label: "Trace'ler (en yavaş)", Href: "/traces?service=" + svcQ + "&sort=duration"}}
+		}
+		return []guidedAnswerLink{{Label: "Trace'ler (en yavaş)", Href: "/traces?sort=duration"}}
+	case guidedDeployImpact:
+		if svc != "" {
+			return []guidedAnswerLink{{Label: svc + " · Overview", Href: "/service?name=" + svcQ}}
+		}
+		return nil
+	case guidedLogErrors:
+		if svc != "" {
+			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&minSev=17"}}
+		}
+		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?minSev=17"}}
+	case guidedFamilyHealth:
+		return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
+	case guidedMyServices:
+		return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
+	case guidedMyProblems:
+		return []guidedAnswerLink{{Label: "Problemler", Href: "/problems"}}
+	case guidedPodHealth:
+		if svc != "" {
+			return []guidedAnswerLink{{Label: svc + " · Pods", Href: "/service?name=" + svcQ + "&tab=pods"}}
+		}
+		return nil
+	case guidedShiftSummary:
+		links := []guidedAnswerLink{{Label: "Inbox", Href: "/inbox"}, {Label: "Problemler", Href: "/problems"}}
+		if svc != "" {
+			links = append(links, guidedAnswerLink{Label: svc + " · Overview", Href: "/service?name=" + svcQ})
+		}
+		return links
 	}
 	return nil
 }

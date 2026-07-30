@@ -6,6 +6,8 @@ import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { Spinner } from '@/components/Spinner';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { heatmapFilters } from './heatmapFilters';
+import { HeatmapCellExemplars } from '@/components/HeatmapCellExemplars';
+import { Link } from 'react-router-dom';
 
 // ServiceLatencyHeatmap fetches the heatmap for the current
 // service + window and renders it under a collapsible
@@ -26,6 +28,16 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
 }) {
   const [data, setData] = useState<import('@/lib/types').LatencyHeatmap | null | undefined>(undefined);
   const [picked, setPicked] = useState<string>(''); // '' = all
+  // v0.9.379 (redesign D3, mockup af7419e5) — LatencyHeatmap primitifi
+  // onCellClick/onBoxSelect'i Explore BubbleUp'tan beri taşıyor; bu sekme
+  // kablolamamıştı. Tek hücre = exemplar modalı (HeatmapCellExemplars,
+  // Explore ile aynı), sürükleme = "N span · Traces →" eylem çubuğu.
+  const [cellExemplar, setCellExemplar] = useState<{
+    timeNs: number; lowDurMs: number; highDurMs: number; count: number;
+  } | null>(null);
+  const [boxSel, setBoxSel] = useState<{
+    timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number;
+  } | null>(null);
   // Collapse state — defaults open. Persisted to localStorage so an operator
   // who'd rather hide the panel doesn't fight it on every reload. Keyed
   // globally (not per-service) so the preference is a one-time setting.
@@ -135,9 +147,49 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
               No spans in this window.
             </div>
           ) : (
-            <LatencyHeatmap data={data} height={240} />
+            <>
+              <LatencyHeatmap data={data} height={240}
+                onCellClick={(cell) => setCellExemplar(cell)}
+                onBoxSelect={setBoxSel} />
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
+                tek hücre = örnek trace · sürükle = zaman × gecikme bandı seç
+              </div>
+              {boxSel && (() => {
+                const tFmt = (ns: number) => new Date(ns / 1e6).toLocaleTimeString();
+                const lo = Math.max(0, Math.floor(boxSel.lowDurMs));
+                const hi = Math.ceil(boxSel.highDurMs);
+                const tracesHref = `/traces?service=${encodeURIComponent(service)}`
+                  + (operation ? `&search=${encodeURIComponent(operation)}` : '')
+                  + `&minMs=${lo}&maxMs=${hi}`
+                  + `&range=custom:${Math.floor(boxSel.timeFromNs / 1e6)}-${Math.ceil(boxSel.timeToNs / 1e6)}`
+                  + `&view=list&rootOnly=false`;
+                return (
+                  <div style={{
+                    display: 'flex', gap: 10, alignItems: 'center', marginTop: 8,
+                    border: '1px solid var(--accent)', borderRadius: 6,
+                    padding: '4px 10px', fontSize: 12, width: 'fit-content',
+                    background: 'var(--bg1)',
+                  }}>
+                    <b>{boxSel.count.toLocaleString()} span</b>
+                    <span style={{ color: 'var(--text3)' }}>
+                      {tFmt(boxSel.timeFromNs)}–{tFmt(boxSel.timeToNs)} · {lo}–{hi} ms
+                    </span>
+                    <Link to={tracesHref} style={{ color: 'var(--accent)', textDecoration: 'none' }}>Traces →</Link>
+                    <span onClick={() => setBoxSel(null)}
+                      style={{ cursor: 'pointer', color: 'var(--text3)' }}>✕</span>
+                  </div>
+                );
+              })()}
+            </>
           ))}
         </div>
+      )}
+      {cellExemplar && data && (
+        <HeatmapCellExemplars
+          cell={cellExemplar}
+          bucketWidthNs={data.times.length >= 2 ? data.times[1] - data.times[0] : 60 * 1e9}
+          filters={heatmapFilters(service, picked, operation, rootOnly)}
+          onClose={() => setCellExemplar(null)} />
       )}
     </div>
   );

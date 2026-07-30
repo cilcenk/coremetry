@@ -982,6 +982,11 @@ func main() {
 		// trace+log soruşturmalı CoSRE özetiyle gelir. Aynı leader-lock /
 		// Active() / kota-devre-kesici disiplinleri.
 		go anomaly.NewExceptionExplainer(store, logsStore, copilotSvc, lockImpl).Start(ctx)
+		// v0.9.437 (öneri #2) — P1 exception ANONSU: inbox'ın P1 formülünü
+		// geçen grup, team-routing mail zincirinin ikiziyle owner+SRE
+		// takımlarına maillenir (tc.Enabled tek kapı; notification_log
+		// dedup — grup ömrü başına tek anons).
+		go notify.NewExceptionNotifier(store, notifier, lockImpl).Start(ctx)
 	}
 
 	// ── Root-cause synthesizer (rc #2, v0.8.x) ───────────────────────────────

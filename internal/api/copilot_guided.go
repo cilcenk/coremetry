@@ -75,6 +75,11 @@ const (
 	// heap doluluk sıralaması. Veri CH'den (OTel runtime metrikleri) —
 	// Thanos şartı yok; restart sayıları KSM gerektirir ve kanıt bunu söyler.
 	guidedPodHealth guidedIntent = "pod_health"
+	// v0.9.416 (CoSRE fikir #2) — vardiya özeti: "dün gece neler oldu?"
+	// Pencere içinde açılan/çözülen problemler + anomali olayları +
+	// deploy'lar + yeni P1 exception grupları tek cevapta. Varsayılan
+	// pencere 12h (vardiya), açık range her zaman kazanır.
+	guidedShiftSummary guidedIntent = "shift_summary"
 )
 
 type guidedRoute struct {
@@ -175,6 +180,19 @@ func hasHealthSignal(tokens []string) bool {
 		"gecikme", "latency", "performan", "p99", "p95", "iyi")
 }
 
+// hasShiftSignal (v0.9.416) — vardiya-özeti şekilleri: "vardiya",
+// "overnight"/"shift", "neler oldu / ne oldu" kalıpları ve "gece".
+// "gece" tek başına yeter çünkü switch'te shift, daha SPESİFİK
+// sinyallerden (slow-trace/deploy/log/pod) SONRA gelir — "dün gece
+// en yavaş trace'ler" slowTraces'ta kalır.
+func hasShiftSignal(msg string, toks []string) bool {
+	if tokenHasPrefix(toks, "vardiya", "overnight", "shift", "gece") {
+		return true
+	}
+	return strings.Contains(msg, "neler oldu") || strings.Contains(msg, "ne oldu") ||
+		strings.Contains(msg, "what happened")
+}
+
 // hasGuidedSignal is the cheap precheck the handler runs BEFORE
 // fetching the live service list — a message with no guided keyword
 // at all skips the catalogue read and goes straight to the tool loop.
@@ -183,7 +201,8 @@ func hasGuidedSignal(msg string) bool {
 	return hasSlowTraceSignal(msg) || hasDeploySignal(toks) ||
 		hasLogSignal(toks) || hasErrorSignal(toks) ||
 		hasProblemSignal(toks) || hasHealthSignal(toks) ||
-		hasTeamSelfSignal(toks) || hasPodSignal(toks)
+		hasTeamSelfSignal(toks) || hasPodSignal(toks) ||
+		hasShiftSignal(msg, toks)
 }
 
 // hasPodSignal (v0.9.376) — pod/JVM şekilli sorular. "gc" tam-token
@@ -403,6 +422,11 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 		// v0.9.376 — servisli soru o servisin pod'ları, servissiz soru
 		// filo-geneli JVM heap sıralaması (ikisi de bundle'da).
 		return guidedRoute{Intent: guidedPodHealth, Service: svc, Env: env}
+	// v0.9.416 — vardiya özeti: spesifik sinyallerden (slow/deploy/log/
+	// pod) SONRA, problems'tan ÖNCE — "dün gece problem var mıydı" özet
+	// cevabı hak eder (problemler zaten bundle'ın ilk bloğu).
+	case hasShiftSignal(msg, toks):
+		return guidedRoute{Intent: guidedShiftSummary, Service: svc, Env: env}
 	case len(family) >= 2:
 		return guidedRoute{Intent: guidedFamilyHealth, Env: env, Family: family}
 	case hasProblemSignal(toks):
@@ -616,6 +640,13 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	if route.Intent == guidedNone {
 		return false, false
 	}
+	// v0.9.416 — vardiya özeti varsayılanı 12h (guidedRangeS'in 30dk'sı
+	// bir vardiyayı anlatamaz); soru açık pencere taşıyorsa o kazanır.
+	if route.Intent == guidedShiftSummary {
+		if _, explicit := guidedRangeSExplicit(norm); !explicit {
+			rangeS = 12 * 3600
+		}
+	}
 	to := time.Now()
 	from := to.Add(-time.Duration(rangeS) * time.Second)
 
@@ -654,6 +685,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, true, route.Env, from, to, rangeS)
 	case guidedPodHealth:
 		evidence, sources, err = s.guidedPodHealthBundle(ctx, emit, route.Service, from, to)
+	case guidedShiftSummary:
+		evidence, sources, err = s.guidedShiftSummaryBundle(ctx, emit, route.Service, from, to, rangeS)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may

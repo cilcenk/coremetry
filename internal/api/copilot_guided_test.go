@@ -71,6 +71,17 @@ func TestRouteGuidedIntent(t *testing.T) {
 		{"gcp is not gc", "gcp servisi sağlıklı mı", guidedNone, "", ""},
 		{"generic problems stays global", "şu an açık problemler neler", guidedProblems, "", ""},
 
+		// (i) v0.9.416 — vardiya özeti. Spesifik sinyaller (slow-trace/
+		// deploy/log/pod) shift'ten ÖNCE kazanır; "problem var mıydı"
+		// gibi genel sorular gece bağlamında özete gider.
+		{"shift dün gece", "dün gece neler oldu", guidedShiftSummary, "", ""},
+		{"shift vardiya", "vardiya özeti", guidedShiftSummary, "", ""},
+		{"shift english", "what happened overnight", guidedShiftSummary, "", ""},
+		{"shift servisli", "checkout servisinde dün gece ne oldu", guidedShiftSummary, "checkout-service", ""},
+		{"shift problem sorusu özete", "dün gece problem var mıydı", guidedShiftSummary, "", ""},
+		{"gece + slow-trace slow kazanır", "dün gece en yavaş trace'ler", guidedSlowTraces, "", ""},
+		{"gece + deploy deploy kazanır", "dün gece deploy oldu mu", guidedDeployImpact, "", ""},
+
 		// (b) service health — needs a live-list entity.
 		{"health turkish smoke", "checkout servisi yavaş mı", guidedServiceHealth, "checkout-service", ""},
 		{"health turkish sağlık", "payment-service sağlığı nasıl", guidedServiceHealth, "payment-service", ""},

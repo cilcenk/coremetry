@@ -1029,13 +1029,13 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 // ownerTeam VEYA sreTeam eşleşmesi (case-insensitive). Inbox'ın
 // servicesForTeam'inden farkı: orada owner ve SRE ayrı süzgeçler (AND),
 // burada "benim servisim" iki rolün BİRLEŞİMİ. Saf; table-testli.
-func servicesForUserTeam(mds map[string]chstore.ServiceMetadata, team string) []string {
+func servicesForUserTeam(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetadata, team string) []string {
 	if team == "" {
 		return nil
 	}
 	out := make([]string, 0, 16)
 	for svc, md := range mds {
-		if strings.EqualFold(md.OwnerTeam, team) || strings.EqualFold(md.SRETeam, team) {
+		if ta.TeamEqual(md.OwnerTeam, team) || ta.TeamEqual(md.SRETeam, team) {
 			out = append(out, svc)
 		}
 	}
@@ -1069,7 +1069,7 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 	if merr != nil {
 		return "", "", merr
 	}
-	svcs := servicesForUserTeam(mds, u.Team)
+	svcs := servicesForUserTeam(s.teamAliasesCtx(ctx), mds, u.Team)
 	if len(svcs) == 0 {
 		return fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). Kullanıcıya söyle: katalogda takım ataması yapılmalı.\n", u.Team),
 			fmt.Sprintf("servis kataloğu (takım: %s)", u.Team), nil

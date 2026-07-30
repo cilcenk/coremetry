@@ -2,7 +2,6 @@ package api
 
 import (
 	"sort"
-	"strings"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -15,7 +14,7 @@ import (
 // Semantics are copied verbatim from the inbox filter
 // (internal/api/inbox.go): an empty filter value means "all" (that
 // axis does not narrow); a set value keeps only rows whose
-// corresponding team matches case-insensitively (strings.EqualFold),
+// corresponding team matches alias-farkındalıklı (TeamAliases.TeamEqual),
 // so a URL / link paste between dashboards or chat doesn't
 // false-negative on a capitalisation mismatch. The two axes AND
 // together — "owned by X AND on-call'd by Y".
@@ -25,11 +24,15 @@ import (
 // operator-reported "filter problems by owner/SRE team like the
 // Services page" request; MUST behave identically to the inbox
 // filter it mirrors.
-func matchesTeamFilter(rowOwner, rowSRE, wantOwner, wantSRE string) bool {
-	if wantOwner != "" && !strings.EqualFold(rowOwner, wantOwner) {
+// v0.9.427 — alias-farkındalıklı: LDAP adı ("SY-Dijital Bankacılık") ile
+// telemetri adı ("dijitalsy") operatörün team_aliases tablosu üzerinden
+// aynı takıma iner. Boş tablo = eski EqualFold davranışı (TeamEqual'ın
+// normalizasyonu case-fold'u kapsar).
+func matchesTeamFilter(ta chstore.TeamAliases, rowOwner, rowSRE, wantOwner, wantSRE string) bool {
+	if wantOwner != "" && !ta.TeamEqual(rowOwner, wantOwner) {
 		return false
 	}
-	if wantSRE != "" && !strings.EqualFold(rowSRE, wantSRE) {
+	if wantSRE != "" && !ta.TeamEqual(rowSRE, wantSRE) {
 		return false
 	}
 	return true
@@ -69,13 +72,13 @@ func envKeepsRow(service string, members map[string]bool) bool {
 // (service IN (…)); resolving team→services here keeps that query a
 // simple set membership instead of a catalog JOIN with its own FINAL /
 // distributed concerns.
-func servicesForTeam(mds map[string]chstore.ServiceMetadata, wantOwner, wantSRE string) []string {
+func servicesForTeam(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetadata, wantOwner, wantSRE string) []string {
 	if wantOwner == "" && wantSRE == "" {
 		return nil
 	}
 	out := make([]string, 0, len(mds))
 	for svc, md := range mds {
-		if matchesTeamFilter(md.OwnerTeam, md.SRETeam, wantOwner, wantSRE) {
+		if matchesTeamFilter(ta, md.OwnerTeam, md.SRETeam, wantOwner, wantSRE) {
 			out = append(out, svc)
 		}
 	}

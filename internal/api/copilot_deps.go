@@ -44,7 +44,7 @@ func (s *Server) guidedDBHealthBundle(ctx context.Context, emit func(string, any
 		fmt.Fprintf(&b, "- %s · %d çağrı · hata %%%.2f · avg %.1fms · p95 %.1fms\n",
 			name, d.SpanCount, d.ErrorRate, d.AvgMs, d.P95Ms)
 	}
-	slow := append([]int(nil))
+	slow := make([]int, 0, len(top))
 	for i := range top {
 		slow = append(slow, i)
 	}

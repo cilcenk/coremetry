@@ -1981,6 +1981,13 @@ export const api = {
     }>(
       `/api/settings/ldap/inspect?username=${encodeURIComponent(username)}`),
   getTeamContacts: () => get<import('./types').TeamContacts>('/api/settings/team-contacts'),
+  // v0.9.427 — LDAP↔telemetri takım alias tablosu.
+  getTeamAliases: () => get<import('./types').TeamAliases>('/api/settings/team-aliases'),
+  putTeamAliases: (ta: import('./types').TeamAliases) =>
+    request<import('./types').TeamAliases>('/api/settings/team-aliases', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(ta),
+    }),
   putTeamContacts: (tc: import('./types').TeamContacts) =>
     request<import('./types').TeamContacts>('/api/settings/team-contacts', {
       method: 'PUT',

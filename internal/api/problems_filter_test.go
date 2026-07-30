@@ -46,7 +46,7 @@ func TestMatchesTeamFilter(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchesTeamFilter(tt.rowOwner, tt.rowSRE, tt.wantOwner, tt.wantSRE)
+			got := matchesTeamFilter(chstore.TeamAliases{}, tt.rowOwner, tt.rowSRE, tt.wantOwner, tt.wantSRE)
 			if got != tt.keep {
 				t.Errorf("matchesTeamFilter(owner=%q sre=%q want-owner=%q want-sre=%q) = %v, want %v",
 					tt.rowOwner, tt.rowSRE, tt.wantOwner, tt.wantSRE, got, tt.keep)
@@ -86,7 +86,7 @@ func TestServicesForTeam(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := servicesForTeam(catalog, tt.wantOwner, tt.wantSRE)
+			got := servicesForTeam(chstore.TeamAliases{}, catalog, tt.wantOwner, tt.wantSRE)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("servicesForTeam(owner=%q sre=%q) = %#v, want %#v",
 					tt.wantOwner, tt.wantSRE, got, tt.want)

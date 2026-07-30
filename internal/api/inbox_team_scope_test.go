@@ -28,7 +28,7 @@ func TestInboxTeamFilterReachesEverySource(t *testing.T) {
 
 	for _, want := range []struct{ name, frag string }{
 		// One catalog read, hoisted — it used to be fetched twice.
-		{"allowlist resolution", "teamServices = servicesForTeam(mdMap, ownerTeam, sreTeam)"},
+		{"allowlist resolution", "teamServices = servicesForTeam(s.teamAliasesCtx(ctx), mdMap, ownerTeam, sreTeam)"},
 		{"problems", "Services: teamServices,\n\t\t\t\tLimit:    srcLimit,"},
 		{"exceptions (above floor)", "MinOccurrences: minOcc,\n\t\t\t\tServices:       teamServices,"},
 		{"exceptions (below floor)", "MaxOccurrences: minOcc,\n\t\t\t\t\tServices:       teamServices,"},

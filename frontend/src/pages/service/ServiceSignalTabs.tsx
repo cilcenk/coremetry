@@ -160,6 +160,14 @@ export function ServiceLogsTab({ service, range, windowNs }: {
         </div>
         {q.isLoading ? (
           <TableSkeleton rows={10} cols={4} />
+        ) : q.data?.degraded ? (
+          /* v0.9.363 — ES brownout "log yok" DEĞİLDİR. Backend v0.8.350'den
+             beri 200 + degraded/reason gönderiyor; bu sekme onu atıyordu. */
+          <div className="ov-card-b">
+            <Empty icon="⚠" title="Log backend'i yanıt veremedi">
+              {q.data.reason || 'Elasticsearch yavaş ya da erişilemez — pencerede log olmadığı anlamına gelmez.'}
+            </Empty>
+          </div>
         ) : rows.length === 0 ? (
           <div className="ov-card-b"><Empty icon="≡" title={`No logs for ${service} in this window`} /></div>
         ) : (

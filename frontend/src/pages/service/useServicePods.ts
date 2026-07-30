@@ -87,10 +87,18 @@ export function useServicePods(service: string, range: TimeRange) {
   const sourcesPending = sourcesQ.isPending;
   const noClusters = (sourcesQ.data?.clusters ?? []).length === 0;
   const podsPending = podQs.some(q => q.isPending);
+  // v0.9.363 — hatalar dışarı çıkıyor. Eskiden Thanos 502'si, 10s handler
+  // deadline'ı ya da süresi dolmuş token, "No pods matched … nothing
+  // matched" ile AYNI ekranı üretiyordu: operatöre ürün yanlış yapılandırılmış
+  // ya da workload yok deniyordu — tam da bakması gereken anda.
+  const sourcesError = sourcesQ.isError ? String(sourcesQ.error) : null;
+  const podErrors = podQs
+    .map((q, i) => (q.isError ? (matched[i] ?? `cluster ${i + 1}`) : null))
+    .filter((x): x is string => !!x);
 
   return {
     metaQ, ns, deploy, matched, rows, clustersWithPods,
     effNs, effDeploy, from, to, cFrom, cTo, clamped,
-    sourcesPending, noClusters, podsPending,
+    sourcesPending, noClusters, podsPending, sourcesError, podErrors,
   };
 }

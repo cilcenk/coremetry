@@ -45,6 +45,11 @@ type ExceptionGroup struct {
 	ResolvedAt  *int64 `json:"resolvedAt,omitempty"`
 	Occurrences uint64 `json:"occurrences"`
 	Notes       string `json:"notes"`
+	// AISummary (v0.9.415) — ExceptionExplainer'ın proaktif kök-sebep
+	// özeti (problems.ai_summary'nin ikizi). Boş = henüz üretilmedi.
+	// ReplacingMergeTree tam-satır replace: HER yazma yolu bu alanı
+	// taşımak ZORUNDA (Scan'e dahil → stale-sweep/state-flip korur).
+	AISummary string `json:"aiSummary,omitempty"`
 }
 
 // FingerprintException computes a stable identifier for "the same
@@ -233,6 +238,7 @@ func (s *Store) UpsertExceptionGroup(ctx context.Context, g ExceptionGroup) erro
 		g.State = existing.State
 		g.Assignee = existing.Assignee
 		g.Notes = existing.Notes
+		g.AISummary = existing.AISummary // v0.9.415 — refresher özeti silmesin
 		g.FirstSeen = existing.FirstSeen
 		// Regression detection — a resolved group reopens only if it KEEPS firing
 		// past a grace window after the resolve. v0.8.99 (operator-reported:
@@ -243,6 +249,10 @@ func (s *Store) UpsertExceptionGroup(ctx context.Context, g ExceptionGroup) erro
 		// regressed.
 		if shouldRegress(existing.State, existing.ResolvedAt, g.LastSeen, exResolveGrace) {
 			g.State = ExStateRegressed
+			// v0.9.415 — regresyonda bayat kök-sebep özeti yanıltır
+			// (çözüldü sanılan neden geri geldi): sıfırla ki
+			// ExceptionExplainer taze bağlamla yeniden doldursun.
+			g.AISummary = ""
 		} else if existing.State == ExStateIgnored {
 			// Stay ignored — silence is the whole point.
 			g.State = ExStateIgnored
@@ -264,7 +274,7 @@ func (s *Store) UpsertExceptionGroup(ctx context.Context, g ExceptionGroup) erro
 func (s *Store) writeExceptionGroup(ctx context.Context, g ExceptionGroup) error {
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO exception_groups
 		(fingerprint, ex_type, ex_message, service, state, assignee,
-		 first_seen, last_seen, resolved_at, occurrences, notes)`)
+		 first_seen, last_seen, resolved_at, occurrences, notes, ai_summary)`)
 	if err != nil {
 		return fmt.Errorf("prepare exception_groups: %w", err)
 	}
@@ -280,10 +290,24 @@ func (s *Store) writeExceptionGroup(ctx context.Context, g ExceptionGroup) error
 		resolved,
 		g.Occurrences,
 		g.Notes,
+		g.AISummary,
 	); err != nil {
 		return fmt.Errorf("append exception_group: %w", err)
 	}
 	return batch.Send()
+}
+
+// UpsertExceptionGroupAISummary (v0.9.415) — ExceptionExplainer'ın
+// proaktif kök-sebep özetini yazar. UpsertProblemAISummary'nin ikizi:
+// FINAL okuma + tam-satır yeniden yazım (writeExceptionGroup zaten
+// tüm alanları taşır). Grup kaybolduysa sessizce düşer.
+func (s *Store) UpsertExceptionGroupAISummary(ctx context.Context, fingerprint, summary string) error {
+	g, err := s.GetExceptionGroup(ctx, fingerprint)
+	if err != nil || g == nil {
+		return err
+	}
+	g.AISummary = summary
+	return s.writeExceptionGroup(ctx, *g)
 }
 
 func (s *Store) GetExceptionGroup(ctx context.Context, fingerprint string) (*ExceptionGroup, error) {
@@ -292,13 +316,13 @@ func (s *Store) GetExceptionGroup(ctx context.Context, fingerprint string) (*Exc
 		       toUnixTimestamp64Nano(first_seen),
 		       toUnixTimestamp64Nano(last_seen),
 		       resolved_at,
-		       occurrences, notes
+		       occurrences, notes, ai_summary
 		FROM exception_groups FINAL
 		WHERE fingerprint = ? LIMIT 1`, fingerprint)
 	var g ExceptionGroup
 	var resolvedAt *time.Time
 	if err := row.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service, &g.State, &g.Assignee,
-		&g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences, &g.Notes); err != nil {
+		&g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences, &g.Notes, &g.AISummary); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
@@ -445,7 +469,7 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 		SELECT fingerprint, ex_type, ex_message, service, state, assignee,
 		       toUnixTimestamp64Nano(first_seen),
 		       toUnixTimestamp64Nano(last_seen),
-		       resolved_at, occurrences, notes
+		       resolved_at, occurrences, notes, ai_summary
 		FROM exception_groups FINAL `+wc.sql()+`
 		`+exceptionGroupsOrderBy(f.Sort, f.Dir)+`
 		LIMIT ? OFFSET ?`, args...)
@@ -458,7 +482,7 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 		var g ExceptionGroup
 		var resolvedAt *time.Time
 		if err := rows.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service, &g.State, &g.Assignee,
-			&g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences, &g.Notes); err != nil {
+			&g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences, &g.Notes, &g.AISummary); err != nil {
 			return nil, err
 		}
 		if resolvedAt != nil {
@@ -598,7 +622,7 @@ func (s *Store) AutoResolveStaleExceptionGroups(ctx context.Context, staleAfter 
 		SELECT fingerprint, ex_type, ex_message, service, state, assignee,
 		       toUnixTimestamp64Nano(first_seen),
 		       toUnixTimestamp64Nano(last_seen),
-		       resolved_at, occurrences, notes
+		       resolved_at, occurrences, notes, ai_summary
 		FROM exception_groups FINAL
 		WHERE state IN ('new','acknowledged','regressed')
 		  AND last_seen < ?
@@ -613,7 +637,7 @@ func (s *Store) AutoResolveStaleExceptionGroups(ctx context.Context, staleAfter 
 		var resolvedAt *time.Time
 		if err := rows.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service,
 			&g.State, &g.Assignee, &g.FirstSeen, &g.LastSeen, &resolvedAt,
-			&g.Occurrences, &g.Notes); err != nil {
+			&g.Occurrences, &g.Notes, &g.AISummary); err != nil {
 			rows.Close()
 			return 0, err
 		}

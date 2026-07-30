@@ -263,6 +263,21 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         <span className="chip"><span className="k">last seen</span><b className="mono">{tsLong(group.lastSeen)}</b></span>
       </div>
 
+      {/* v0.9.415 — arka plan ExceptionExplainer'ın proaktif kök-sebep
+          özeti (P1 gruplara otomatik dolar; problems'taki ai_summary
+          bloğunun ikizi). Explain butonu yine durur — taze soruşturma. */}
+      {group.aiSummary && (
+        <div style={{
+          fontSize: 12, color: 'var(--text2)', marginBottom: 12,
+          padding: '8px 10px', borderRadius: 'var(--radius-sm)',
+          background: 'var(--accent-soft)',
+          borderLeft: '2px solid var(--accent)',
+          whiteSpace: 'pre-wrap',
+        }}>
+          <IconSparkles size={11} /> {group.aiSummary}
+        </div>
+      )}
+
       {/* v0.9.414 (operatör istegi) — exception kök-sebep: backend örnek
           trace + trace loglarını + deploy penceresini otomatik toplar;
           kanıt trace'leri sağdaki örnek satırlarını kutular. */}

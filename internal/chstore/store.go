@@ -733,6 +733,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			resolved_at    Nullable(DateTime64(9)),
 			occurrences    UInt64       DEFAULT 0,
 			notes          String       DEFAULT '',
+			ai_summary     String       DEFAULT '',              -- v0.9.415 proaktif kök-sebep özeti
 			version        UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		ORDER BY fingerprint`,
@@ -1579,6 +1580,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		// Coremetry-yönetimli cluster'da adaptDDL ON CLUSTER uygular.
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS pod String DEFAULT ''`,
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS ai_summary_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
+		// v0.9.415 — P1 exception gruplarına proaktif kök-sebep özeti
+		// (ExceptionExplainer, problems ai_summary'nin exception ikizi).
+		`ALTER TABLE exception_groups ADD COLUMN IF NOT EXISTS ai_summary String DEFAULT ''`,
 		// v0.8.283 — synthetic monitor types beyond http+heartbeat: tcp,
 		// ssl-cert, keyword. Additive columns on the existing monitors
 		// state table (no new schema). `monitors` isn't a high-volume

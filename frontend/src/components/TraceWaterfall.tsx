@@ -616,8 +616,10 @@ export function TraceWaterfall({
           && spaceRightPx < OUTSIDE_LABEL_MIN_PX
           && spaceLeftPx > spaceRightPx + OUTSIDE_LABEL_MIN_PX;
 
+        // data-span-id (v0.9.477): AI çekmecesindeki kanıt satırı tıklanınca
+        // sayfa bu satırı bulup görünüme kaydırır.
         return (
-          <div key={s.spanId} className={cls} onClick={() => onSelect(s.spanId)}
+          <div key={s.spanId} data-span-id={s.spanId} className={cls} onClick={() => onSelect(s.spanId)}
             style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
             {/* Left stripe — solid 3px service-color marker so the eye
                 can scan service handoffs down the trace. Selected row

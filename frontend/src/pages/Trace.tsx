@@ -8,7 +8,8 @@ import { perSpanLogSignals, spanEventLogRows, traceServicesWithoutTraceField } f
 import { computeCriticalPath } from '@/lib/criticalPath';
 import { CopyButton } from '@/components/CopyButton';
 import { LogTable } from '@/components/LogTable';
-import { CopilotExplain } from '@/components/CopilotExplain';
+import { AIExplainButton } from '@/components/ai/AIExplainButton';
+import { useAiEvidence, useAiFocus } from '@/components/ai/aiEvents';
 import { IconLink, IconCheck, IconDownload, IconSparkles } from '@/components/icons';
 import { Button } from '@/components/ui/Button';
 import { useAuth } from '@/components/AuthProvider';
@@ -53,6 +54,12 @@ function TraceDetailInner() {
     () => searchParams.get('span'));
   // v0.9.408 — explain'in deterministik kanıt span'leri; waterfall kutular.
   const [evidenceIds, setEvidenceIds] = useState<Set<string>>(new Set());
+  // v0.9.477 — kanıt artık AppShell'deki AI çekmecesinden window köprüsüyle
+  // geliyor (eski onEvidence prop'unun yerine); kutulama sözleşmesi aynı.
+  useAiEvidence(d => { if (d.spanIds?.length) setEvidenceIds(new Set(d.spanIds)); });
+  // Çekmecedeki kanıt satırına tıklama: span'i seç + waterfall'da ona kaydır
+  // (çekmece kapandığı için kutulanan satır görünür olur).
+  useAiFocus(d => { if (d.spanId) setSelectedId(d.spanId); });
   // Side-tab state — Trace (waterfall + detail) vs Logs (entries
   // matching this trace_id, Uptrace-style). Logs are fetched lazily
   // on first tab click so the trace page stays fast for users who
@@ -454,8 +461,10 @@ function TraceDetailInner() {
                 no links; see LinkedTracesSection. */}
             <LinkedTracesSection id={id} />
             <div style={{ marginBottom: 10, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              <CopilotExplain kind="trace" id={id}
-                onEvidence={(ids) => setEvidenceIds(new Set(ids))}
+              {/* v0.9.477 — satır-içi panel yerine tek sağ-kenar AI
+                  çekmecesi (?ai=trace:<id>); kanıt span'leri window
+                  köprüsüyle gelip waterfall'ı kutulamaya devam ediyor. */}
+              <AIExplainButton subject={{ kind: 'trace', id }}
                 label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this trace</span></>} />
               <CompareTracesButton aId={id} />
             </div>

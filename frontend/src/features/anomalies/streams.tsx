@@ -15,7 +15,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
 import { Card, Badge, Row, Button } from '@/components/ui';
 import { ClusterChips } from '@/components/ClusterChips';
-import { CopilotExplain } from '@/components/CopilotExplain';
+import { AIExplainButton } from '@/components/ai/AIExplainButton';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
@@ -500,7 +500,9 @@ function AnomalyTable({ rows, rowRefs, highlight, onOpen, title }: {
                 <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(e.startedAt)}</td>
                 <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(e.lastSeen)}</td>
                 <td>
-                  <CopilotExplain kind="anomaly" id={e.id} label="AI" />
+                  {/* v0.9.477 — satır-içi panel bir tablo hücresinde
+                      satırı şişiriyordu; cevap artık sağ AI çekmecesinde. */}
+                  <AIExplainButton subject={{ kind: 'anomaly', id: e.id }} label="AI" />
                 </td>
               </tr>
             ))}

@@ -5,6 +5,7 @@ import { AnnouncementBanner } from './AnnouncementBanner';
 import { ShortcutsHelp } from './ShortcutsHelp';
 import { CommandPalette } from './CommandPalette';
 import { CopilotChat } from './CopilotChat';
+import { AIDrawer } from './ai/AIDrawer';
 import { GlobalShortcuts } from './GlobalShortcuts';
 import { Toaster } from './Toaster';
 import { useAuth } from './AuthProvider';
@@ -153,6 +154,12 @@ export function AppShell() {
           is configured. Mounted here so it's reachable on every
           authenticated page, like CommandPalette. */}
       <CopilotChat />
+      {/* AIDrawer (v0.9.477, onaylı mockup) — "✨ Explain" affordance'ının
+          TEK evi. Yüzeydeki buton yalnız `?ai=<kind>:<id>` yazar, içeriği
+          burada mount edilen çekmece render eder; sayfa-içi sekme değişimi
+          cevabı söküp atmaz ve paylaşılan link aynı açıklamayı açar.
+          Kapalıyken (adreste ?ai= yokken) hiçbir istek atmaz. */}
+      <AIDrawer />
       {/* Toaster (v0.5.455) — singleton notification surface.
           toast.success/error/info from anywhere in the app lands
           here. Renders null when empty so no overhead. */}

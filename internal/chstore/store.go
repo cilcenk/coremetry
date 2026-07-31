@@ -361,7 +361,19 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	log.Printf("[chstore] per-query memory limits: max_memory_usage=%d, external_group_by=%d, external_sort=%d bytes",
 		maxMem, extGroupBy, extSort)
 	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr:        hosts,
+		Addr: hosts,
+		// v0.9.481 (operator-reported, prod: "CH tek node'a mı bağlanıyor?")
+		// — EVET, bağlanıyordu: strateji set edilmeyince clickhouse-go
+		// varsayılanı ConnOpenInOrder'dır; havuzdaki HER bağlantı listedeki
+		// ilk sağlıklı host'a gider, kalan 3 host yalnız failover'dı. Tüm
+		// koordinasyon (async insert birleştirme, GROUP BY merge, FINAL)
+		// tek node'da birikiyordu — part hotspot + replikasyon gecikmesinin
+		// tek yerde toplanmasıyla tutarlı. RoundRobin bağlantıları 4 node'a
+		// dağıtır; Coremetry oturum durumu/temp tablo kullanmaz (düz sorgu +
+		// çağrı başına PrepareBatch), sorgu koordinatörünün dönmesi güvenli.
+		// SQL console (runquery.go) B İLEREK in-order kaldı: admin belirli
+		// node'da system.* okurken bağlantının node değiştirmesi yanıltır.
+		ConnOpenStrategy: clickhouse.ConnOpenRoundRobin,
 		Auth:        clickhouse.Auth{Database: cfg.Database, Username: cfg.Username, Password: cfg.Password},
 		TLS:         tlsCfg,
 		Compression: &clickhouse.Compression{Method: clickhouse.CompressionLZ4},

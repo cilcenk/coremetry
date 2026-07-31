@@ -643,6 +643,9 @@ function LinkedTracesSection({ id }: { id: string }) {
     }
     return out;
   }, [q.data, id]);
+  // v0.9.470 (dürüstlük A18) — yön başına 100 tavanı: len==cap tavan
+  // işaretidir; batch fan-in'de gerçek producer listede olmayabilir.
+  const linksCapped = (q.data?.outgoing?.length ?? 0) >= 100 || (q.data?.incoming?.length ?? 0) >= 100;
   if (rows.length === 0) return null;
   return (
     <div style={{
@@ -659,6 +662,12 @@ function LinkedTracesSection({ id }: { id: string }) {
       }} title="OTel span links — causal pointers this trace declares (→) or receives (←), e.g. producer→consumer or batch fan-in">
         ⛓ Linked traces
       </span>
+      {linksCapped && (
+        <span style={{ fontSize: 11, color: 'var(--warn)' }}
+          title="Yön başına ilk 100 bağlantı yüklendi — geniş fan-in/fan-out'ta (ör. batch consumer) aradığın producer/consumer bu listede olmayabilir.">
+          ⚠ ilk 100
+        </span>
+      )}
       {rows.map(r => (
         <span key={`${r.dir}:${r.other}`}
           style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>

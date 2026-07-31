@@ -8136,10 +8136,14 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 			maxT = sp.EndTime
 		}
 	}
-	cap := 100
-	if len(spans) > cap {
-		spans = spans[:cap] // bound the prompt; large traces still get a useful summary from the head
-	}
+	// v0.9.462 (dürüstlük A6) — prompt tavanı 100 span'de kalır ama seçim
+	// artık HEAD dilimi değil: kronolojik ilk-100, hatalı ve en yavaş
+	// span'lar 100'ün dışındaysa modele HİÇ ulaşmıyordu — "en yavaş span"
+	// kanıtı waterfall'da yanlış span'ı kutulayabiliyordu. pickExplainSpans
+	// hataları + en yavaşları garantiler, kalanı kronolojik doldurur ve
+	// seçimi zaman sırasına geri koyar (model akışı sırayla okur).
+	totalSpans := len(spans)
+	spans = pickExplainSpans(spans, 100)
 	compact := make([]lite, 0, len(spans))
 	for _, sp := range spans {
 		dur := float64(sp.EndTime-sp.StartTime) / 1e6
@@ -8222,7 +8226,13 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	user := fmt.Sprintf("Trace %s with %d spans:\n```json\n%s\n```%s", id, len(compact), string(payload), logsBlock)
+	analyzedNote := ""
+	if totalSpans > len(compact) {
+		// Hem modele hem operatöre aynı gerçek: analiz kısmi ama seçim
+		// hata+yavaşlık öncelikli — "head" değil.
+		analyzedNote = fmt.Sprintf(" (trace'in tamamı %d span; hatalar + en yavaşlar öncelikli %d span analiz edildi)", totalSpans, len(compact))
+	}
+	user := fmt.Sprintf("Trace %s with %d spans%s:\n```json\n%s\n```%s", id, len(compact), analyzedNote, string(payload), logsBlock)
 	out, err := s.copilotExplain(r, copilot.SystemPromptTrace(), user)
 	if err != nil {
 		writeErr(w, err)

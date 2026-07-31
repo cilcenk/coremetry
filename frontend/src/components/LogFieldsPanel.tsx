@@ -104,6 +104,22 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
   );
 }
 
+// v0.9.452 — backend'in conventionalLogFields listesiyle AYNI adlar
+// (internal/logstore/elasticsearch.go): backend cap'ten korur, burada
+// öne çıkar. Sıra operatörün Kibana "Popular fields" ekranını izler.
+const POPULAR_FIELDS: readonly string[] = [
+  'kubernetes.container_name',
+  'openshift.labels.cluster',
+  'message',
+  'kubernetes.namespace_name',
+  'kubernetes.pod_name',
+  'backendUrl',
+  'service_name',
+  'lastError.message',
+  'responseCode',
+  'throwable',
+];
+
 export function LogFieldsPanel({
   fields, fieldsTotal, columns, scope, onToggleColumn, onPillAdd, onPillExclude,
 }: {
@@ -130,12 +146,25 @@ export function LogFieldsPanel({
   };
 
   const selectedSet = useMemo(() => new Set(columns), [columns]);
-  const available = useMemo(() => {
+  // v0.9.452 (operatör isteği, Kibana emsali) — popüler alanlar:
+  // OpenShift cluster-logging + yaygın uygulama şeması adayları,
+  // YALNIZ mapping'de gerçekten varsa (fields listede-varlık = gerçek;
+  // backend cap'e kurban gidenleri geri ekliyor). CH backend'de fields
+  // boş → grup hiç görünmez.
+  const popular = useMemo(() => {
     const n = needle.trim().toLowerCase();
-    return fields
-      .filter(f => !selectedSet.has(f))
+    const set = new Set(fields);
+    return POPULAR_FIELDS
+      .filter(f => set.has(f) && !selectedSet.has(f))
       .filter(f => !n || f.toLowerCase().includes(n));
   }, [fields, selectedSet, needle]);
+  const available = useMemo(() => {
+    const n = needle.trim().toLowerCase();
+    const pop = new Set(popular);
+    return fields
+      .filter(f => !selectedSet.has(f) && !pop.has(f))
+      .filter(f => !n || f.toLowerCase().includes(n));
+  }, [fields, selectedSet, needle, popular]);
   const selected = useMemo(() => {
     const n = needle.trim().toLowerCase();
     return columns.filter(f => !n || f.toLowerCase().includes(n));
@@ -225,6 +254,12 @@ export function LogFieldsPanel({
       )}
       {selected.map(f => fieldRow(f, true))}
 
+      {popular.length > 0 && (
+        <>
+          <div style={groupTitle}>Popular fields</div>
+          {popular.map(f => fieldRow(f, false))}
+        </>
+      )}
       <div style={groupTitle}>Available fields</div>
       {fields.length === 0 && (
         <div style={{ fontSize: 11, color: 'var(--text3)', padding: '0 4px' }}>

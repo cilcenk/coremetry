@@ -573,6 +573,11 @@ func (s *ESStore) ListFieldsBounded(ctx context.Context) (ListFieldsResult, erro
 	total := len(out)
 	if len(out) > listFieldsMax {
 		out = out[:listFieldsMax]
+		// v0.9.452 — alfabetik kırpma konvansiyonel alanları (openshift.*,
+		// kubernetes.* geç harfler) listeden düşürmesin: frontend'in
+		// "Popular fields" grubu listede-varlık = gerçek sözleşmesiyle
+		// çalışır; cap'e kurban giden konvansiyonel yol geri eklenir.
+		out = ensureConventionalFields(out, seen)
 	}
 	return ListFieldsResult{Fields: out, Total: total}, nil
 }
@@ -2516,10 +2521,18 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// mappings where the path is typed keyword directly (same class
 		// as the service filter fix above).
 		clShould := []any{}
+		// v0.9.452 (operatör isteği) — OpenShift cluster-logging şekli:
+		// ClusterLogForwarder cluster adını ÜST-DÜZEY
+		// `openshift.labels.cluster` alanına yazar (OTel resource_attributes
+		// öneki YOK). Prod ES'te seçilen cluster (ocp5, ocpa…) yalnız bu
+		// alanla eşleşiyor; üç OTel yolu bu indekste hiç yok — filtre o
+		// yüzden hiçbir kaydı bulamıyordu. exists-guard'lı should zinciri
+		// eksik alanlı indekslerde zararsız (mevcut sözleşme).
 		for _, fld := range []string{
 			"resource_attributes.k8s.cluster.name",
 			"resource_attributes.openshift.cluster.name",
 			"resource_attributes.cluster",
+			"openshift.labels.cluster",
 		} {
 			clShould = append(clShould, exactTermsBothShapes(fld, f.Cluster)...)
 		}
@@ -3050,4 +3063,43 @@ func stringToInt64ID(s string) int64 {
 		h *= prime64
 	}
 	return int64(h >> 1)
+}
+
+
+// conventionalLogFields — OpenShift cluster-logging / yaygın uygulama
+// şeması alan adayları. ensureConventionalFields yalnız MAPPING'DE
+// GERÇEKTEN VAR OLANLARI (seen) geri ekler — burada listelenmek alanı
+// icat etmez, cap'ten korur. Frontend'in "Popular fields" grubu aynı
+// adlarla listede-varlık üzerinden çalışır (v0.9.452).
+var conventionalLogFields = []string{
+	"openshift.labels.cluster",
+	"kubernetes.container_name",
+	"kubernetes.namespace_name",
+	"kubernetes.pod_name",
+	"service_name",
+	"message",
+	"level",
+	"backendUrl",
+	"lastError.message",
+	"responseCode",
+	"throwable",
+}
+
+// ensureConventionalFields — kırpılmış listeye, mapping'de var olup
+// cap'e kurban giden konvansiyonel yolları geri ekler. Saf — tablo-testli.
+func ensureConventionalFields(out []string, seen map[string]struct{}) []string {
+	have := make(map[string]struct{}, len(out))
+	for _, f := range out {
+		have[f] = struct{}{}
+	}
+	for _, f := range conventionalLogFields {
+		if _, in := seen[f]; !in {
+			continue
+		}
+		if _, dup := have[f]; dup {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }

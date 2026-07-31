@@ -3791,14 +3791,26 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 	// "not found" entries within a short window — hence the
 	// short TTL. `source` distinguishes CH-resident vs Tempo-
 	// fallback so the frontend can banner-tag the result.
-	key := "trace:" + id
+	key := "trace:v2:" + id
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		spans, err := s.store.GetTrace(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		if len(spans) > 0 {
-			return map[string]any{"traceId": id, "spans": spans, "source": "clickhouse"}, nil
+			out := map[string]any{"traceId": id, "spans": spans, "source": "clickhouse"}
+			// v0.9.457 (dürüstlük A2) — 50k tavanına çarpan trace "tam"
+			// diye render ediliyordu: kesilen çocuklar orphan olup
+			// TraceHonesty şeridi operatörün SDK'sını ("parent yok —
+			// context propagation bozuk") suçluyordu. Tavan dolunca
+			// söyle; gerçek span sayısı MV stub'ından (best-effort).
+			if len(spans) >= 50000 {
+				out["spanCapped"] = true
+				if stub, ok := s.store.GetTraceAggregateStub(ctx, id); ok {
+					out["spanTotal"] = stub.SpanCount
+				}
+			}
+			return out, nil
 		}
 		// CH miss → Tempo fallback. Skip cleanly when Tempo isn't
 		// configured. Errors from Tempo don't fail the whole

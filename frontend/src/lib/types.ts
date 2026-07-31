@@ -1655,6 +1655,10 @@ export interface SpanRow {
 export interface TraceDetailResponse {
   traceId: string;
   spans: SpanRow[];
+  // v0.9.457 (dürüstlük A2) — 50k span tavanı doldu; spanTotal MV
+  // stub'ından gerçek sayı (best-effort, yoksa yalnız capped bilinir).
+  spanCapped?: boolean;
+  spanTotal?: number;
   // v0.5.208 — "clickhouse" when the trace was resolved from
   // Coremetry's own store, "tempo" when it came from the
   // external Tempo backend fallback (Coremetry sampled it out).

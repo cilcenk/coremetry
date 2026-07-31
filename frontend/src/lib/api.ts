@@ -1239,13 +1239,20 @@ export const api = {
     // (internal/api/copilot_drawer.go). Operatör raporu: çekmeceden
     // açılan sohbet ekrandaki exception'ı bilmiyordu.
     contextExplain?: string,
+    // v0.9.482 — çekmecenin ÖZNESİ (`?ai=` kodeği: "trace:<id>",
+    // "span:<trace>:<span>", "exception:<fp>"). Sunucu bundan ilgili
+    // explain'in HAM KANITINI yeniden kurar (trace span'leri + ilişkili
+    // loglar) ve anlatıma katar. Operatör raporu: açıklamanın metni
+    // takiplere yetmiyordu — "logda ne yazıyor" kör cevaplanıyordu.
+    contextSubject?: string,
   ): Promise<void> => {
     const context =
-      contextService || contextOperation || contextExplain
+      contextService || contextOperation || contextExplain || contextSubject
         ? {
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
             ...(contextExplain ? { explain: contextExplain } : {}),
+            ...(contextSubject ? { subject: contextSubject } : {}),
           }
         : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {

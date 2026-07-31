@@ -27,6 +27,12 @@ type ExceptionExplainInput struct {
 	User     string   // narration user prompt'u
 	EvTraces []string // kanıt trace id'leri (örnek tablosu kutulaması)
 	EvSpans  []string // kanıt span id'leri
+	// LogsBlock — User'ın İÇİNDEKİ log bölümü, ayrıca taşınır (v0.9.482).
+	// AI çekmecesi sohbeti bu paketi narration bütçesine sığdırırken önce
+	// span/trace listesini budar, LOGLARI KORUR — operatörün takip
+	// soruları ("logda ne yazıyor") log içeriğine dairdir. Explain
+	// yolunda kullanılmaz; User bayt-bayt eskisidir.
+	LogsBlock string
 }
 
 // BuildExceptionExplainInput — grup meta + occurrence trendi + temsilî
@@ -191,9 +197,10 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 	}
 
 	return ExceptionExplainInput{
-		User:     assembleExceptionPrompt(g, trend, stack, traceBlock, logsBlock, deployBlock),
-		EvTraces: evTraces,
-		EvSpans:  evSpans,
+		User:      assembleExceptionPrompt(g, trend, stack, traceBlock, logsBlock, deployBlock),
+		EvTraces:  evTraces,
+		EvSpans:   evSpans,
+		LogsBlock: logsBlock,
 	}
 }
 

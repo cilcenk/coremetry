@@ -1786,8 +1786,10 @@ export const api = {
   // env (v0.8.387) — the global Topbar picker, service-scoped on
   // problems: the server keeps rows whose service ran in the env in
   // the last hour (plus service-less global alerts).
+  // v0.9.455 — dürüstlük zarfı: {items,total,truncated}. total=-1 =
+  // bilinmiyor (takım/cluster daraltması SQL COUNT'a inemiyor).
   problems: (params: { status?: string; service?: string; severity?: string; priority?: string[]; ownerTeam?: string; sreTeam?: string; env?: string; cluster?: string; limit?: number }) =>
-    get<Problem[] | null>(`/api/problems?${qs({ ...params, priority: params.priority?.join(',') })}`),
+    get<{ items: Problem[]; total: number; truncated: boolean } | null>(`/api/problems?${qs({ ...params, priority: params.priority?.join(',') })}`),
   // v0.5.398 — sidebar-badge count endpoint. Returns just the
   // matching row count, no rows. Replaces the prior approach
   // of fetching limit=200 and counting the array — the badge

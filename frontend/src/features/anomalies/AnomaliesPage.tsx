@@ -781,7 +781,12 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
     ? undefined
     : problemsQ.isError
       ? null
-      : (problemsQ.data ?? []);
+      : (problemsQ.data?.items ?? []);
+  // v0.9.455 (dürüstlük A3) — 200'lük aday tavanı dolduğunda sayfa artık
+  // söylüyor; total=-1 = bilinmiyor (takım/cluster daraltması COUNT'a
+  // inemiyor), o durumda şerit sayısız konuşur.
+  const probTruncated = problemsQ.data?.truncated ?? false;
+  const probTotal = problemsQ.data?.total ?? -1;
   // v0.9.344 — chip counts come from the UNFILTERED set, server-side.
   //
   // They used to be `data.filter(...)`, and `data` is the response to a
@@ -964,8 +969,9 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
             env: {env} — service-scoped
           </span>
         )}
-        <span style={{ marginLeft: 'auto', color: 'var(--text3)', fontSize: 12 }}>
-          {open} open · {resolved} resolved
+        <span style={{ marginLeft: 'auto', color: 'var(--text3)', fontSize: 12 }}
+          title={probTruncated ? 'Sayımlar görünen sayfa üzerinden — liste kırpıldı, tam envanter için aşağıdaki şeride bak' : undefined}>
+          {open} open · {resolved} resolved{probTruncated ? ' (sayfada)' : ''}
         </span>
         <Link to="/alerts" className="sec" style={{
           textDecoration: 'none', padding: '5px 12px',
@@ -974,6 +980,21 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
         }}><IconBell /> <span>Manage alert rules</span></Link>
       </div>
 
+      {/* v0.9.455 (dürüstlük A3) — aday tavanı dolduysa söyle: eskiden
+          footer "200 open" derken sidebar rozeti gerçek COUNT'la
+          çelişiyor ve hiçbir şey kırpmayı söylemiyordu. total=-1 =
+          bilinmiyor (takım/cluster daraltması COUNT'a inemiyor). */}
+      {probTruncated && (
+        <div style={{
+          margin: '8px 0', padding: '6px 10px', borderRadius: 6, fontSize: 12,
+          background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--text2)',
+        }}>
+          ⚠ Aday tavanı doldu — {probTotal >= 0
+            ? `ilk ${data?.length ?? 0} satır gösteriliyor, bu daraltmada toplam ${probTotal.toLocaleString()} problem var`
+            : `ilk ${data?.length ?? 0} satır gösteriliyor; takım/cluster süzgeci altında toplam sayı hesaplanamıyor`}.
+          Daraltmayı sıkılaştır (servis, durum, öncelik) ya da sayıları /inbox rozetinden izle.
+        </div>
+      )}
       {data === undefined && <Spinner />}
       {data && sorted && sorted.length === 0 && (
         <Empty icon="✓" title={`No problems in "${statusFilter}"`}>
@@ -1220,7 +1241,7 @@ function AlertProblemHost({ id, isAdmin, onBack }: {
     return undefined;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qc, id, q.dataUpdatedAt]);
-  const p = cached ?? (q.data ?? []).find(x => x.id === id);
+  const p = cached ?? (q.data?.items ?? []).find(x => x.id === id);
   return (
     <>
       {/* Singular: this is ONE problem, reached from a notification deep

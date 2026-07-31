@@ -29,15 +29,13 @@ export function useProblems(filter: {
   cluster?: string;
   limit?: number;
 }) {
-  return useQuery<Problem[]>({
+  // v0.9.455 — zarf: {items,total,truncated}; null gövde boş-dürüst
+  // zarfa normalize edilir (truncated:false, total:-1 = bilinmiyor).
+  return useQuery<{ items: Problem[]; total: number; truncated: boolean }>({
     queryKey: keys.problems.list(filter),
-    // queryFn returns Problem[] always — api.problems can
-    // return null on error but we map to [] in the component
-    // layer. Here we let the error bubble to React Query so the
-    // hook can surface isError / error to the caller.
     queryFn: async () => {
       const res = await api.problems(filter);
-      return res ?? [];
+      return res ?? { items: [], total: -1, truncated: false };
     },
     refetchInterval: 30_000,
     staleTime: 25_000,

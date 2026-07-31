@@ -55,9 +55,10 @@ export function useMetricAnomalies() {
 }
 
 export function useAnomalyEvents() {
-  return useQuery<AnomalyEvent[]>({
+  // v0.9.465 — zarf; null gövde boş-dürüst zarfa normalize edilir.
+  return useQuery<{ items: AnomalyEvent[]; activeTotal: number; clearedTotal: number; truncated: boolean }>({
     queryKey: keys.anomalies.events,
-    queryFn: async () => (await api.anomalyEvents()) ?? [],
+    queryFn: async () => (await api.anomalyEvents()) ?? { items: [], activeTotal: 0, clearedTotal: 0, truncated: false },
     refetchInterval: 60_000,
     // staleTime matches refetchInterval so a re-mount inside the
     // poll window doesn't fire a duplicate refetch on top of the

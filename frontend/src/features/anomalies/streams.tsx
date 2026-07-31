@@ -10,6 +10,7 @@
 // them. For triage, see the assignable exception inbox on /problems.
 
 import { useEffect, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
 import { Card, Badge, Row, Button } from '@/components/ui';
@@ -17,6 +18,7 @@ import { ClusterChips } from '@/components/ClusterChips';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { useAuth } from '@/components/AuthProvider';
+import { api } from '@/lib/api';
 import {
   useLogPatternAnomalies, useTraceOpAnomalies, useMetricAnomalies,
   useAnomalyEvents, useAnomalySilences,
@@ -45,7 +47,9 @@ export function AnomalyStreams() {
   const logPatterns = useLogPatternAnomalies().data;
   const traceOps    = useTraceOpAnomalies().data;
   const metrics     = useMetricAnomalies().data;
-  const history     = useAnomalyEvents().data;
+  const historyQ    = useAnomalyEvents();
+  const history     = historyQ.data?.items;
+  const historyMeta = historyQ.data;
   const silences    = useAnomalySilences().data;
   const createSilence = useCreateAnomalySilence();
   const deleteSilence = useDeleteAnomalySilence();
@@ -70,7 +74,7 @@ export function AnomalyStreams() {
       <LogPatternsSection items={logPatterns} onMute={onMute} canEdit={canEdit} />
       <TraceOpsSection    items={traceOps}    onMute={onMute} canEdit={canEdit} />
       <MetricSection      items={metrics} />
-      <HistorySection items={history} />
+      <HistorySection items={history} meta={historyMeta} />
     </>
   );
 }
@@ -272,7 +276,12 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
   );
 }
 
-function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
+function HistorySection({ items, meta }: {
+  items: AnomalyEvent[] | undefined;
+  // v0.9.465 (dürüstlük A9) — SQL sayımları + kırpma bayrağı; yoksa
+  // sayfa-türevi sayımlara düşülür.
+  meta?: { activeTotal: number; clearedTotal: number; truncated: boolean };
+}) {
   const [searchParams, setSearchParams] = useSearchParams();
   // ?event=<id> deep-link target. We scroll + flash the matching
   // row when it appears so inbox navigation lands the operator
@@ -298,9 +307,17 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
       return p;
     }, { replace: true });
   };
-  const detailEvent = highlight
-    ? (items ?? []).find(e => e.id === highlight) ?? null
-    : null;
+  const inList = highlight ? (items ?? []).find(e => e.id === highlight) ?? null : null;
+  // v0.9.465 (dürüstlük A9) — deep-link kurtarma: ?event= hedefi 200'lük
+  // pencerenin dışına düştüyse tek-event ucundan çek; drawer yine açılır
+  // (satıra scroll edilemez — satır listede yok, drawer bunu söyler).
+  const rescueQ = useQuery({
+    queryKey: ['anomaly-event-rescue', highlight],
+    queryFn: () => api.anomalyEvent(highlight),
+    enabled: !!highlight && items !== undefined && !inList,
+    staleTime: 60_000,
+  });
+  const detailEvent = inList ?? (rescueQ.data ?? null);
 
   // v0.5.279 — split active vs cleared. Operator-reported:
   // "çok fazla anomali gözüküyor aktif/cleared birlikte" —
@@ -320,7 +337,7 @@ function HistorySection({ items }: { items: AnomalyEvent[] | undefined }) {
   return (
     <AnomalyShell
       title="Anomaly history (last 24h)"
-      hint={`${active.length} active · ${cleared.length} cleared`}
+      hint={`${meta?.activeTotal ?? active.length} active · ${meta?.clearedTotal ?? cleared.length} cleared${meta?.truncated ? ` · ilk ${(items ?? []).length} satır yüklendi` : ''}`}
       count={items.length}>
       {detailEvent && (
         <AnomalyDetailDrawer event={detailEvent} onClose={() => openDetail(null)} />

@@ -218,6 +218,28 @@ func (s *Store) CountActiveAnomalyEvents(ctx context.Context, activeAge time.Dur
 	return n, err
 }
 
+// CountAnomalyEventsByStatus (v0.9.465, dürüstlük A9) — pencere içi
+// GERÇEK aktif/cleared toplamları: /anomalies sayfası sayıları yüklü
+// 200'lük sayfadan türetiyordu; gürültülü günde ikisi de yalan
+// söylüyordu. Status hesabı ListAnomalyEvents ile AYNI ifade
+// (last_seen tazeliği, 10dk varsayılan).
+func (s *Store) CountAnomalyEventsByStatus(ctx context.Context, sinceNs int64, activeAge time.Duration) (active, cleared uint64, err error) {
+	if activeAge == 0 {
+		activeAge = 10 * time.Minute
+	}
+	row := s.conn.QueryRow(ctx, `
+		SELECT countIf(last_seen >= now64() - INTERVAL ? SECOND),
+		       countIf(last_seen <  now64() - INTERVAL ? SECOND)
+		FROM anomaly_events FINAL
+		WHERE toUnixTimestamp64Nano(last_seen) >= ?
+		SETTINGS max_execution_time = 5`,
+		int64(activeAge.Seconds()), int64(activeAge.Seconds()), sinceNs)
+	if err := row.Scan(&active, &cleared); err != nil {
+		return 0, 0, err
+	}
+	return active, cleared, nil
+}
+
 func (s *Store) ListAnomalyEvents(ctx context.Context, f ListAnomalyEventsFilter) ([]AnomalyEvent, error) {
 	if f.Limit == 0 {
 		f.Limit = 200

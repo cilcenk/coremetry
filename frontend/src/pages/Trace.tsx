@@ -41,6 +41,7 @@ function TraceDetailInner() {
   // above the waterfall so the operator doesn't mistake "trace
   // resolved" for "Coremetry has full retention".
   const [source, setSource] = useState<'clickhouse' | 'tempo' | 'mv_only' | undefined>(undefined);
+  const [spanCap, setSpanCap] = useState<{ capped: boolean; total?: number }>({ capped: false });
   // v0.6.34 — aged-out stub: present only when source === 'mv_only'.
   // Carries the aggregate stats trace_summary_5m still holds for
   // traces whose raw spans have aged past the 30-day TTL.
@@ -111,6 +112,7 @@ function TraceDetailInner() {
         setSpans(d.spans ?? []);
         setSource(d.source);
         setStub(d.stub);
+        setSpanCap({ capped: d.spanCapped ?? false, total: d.spanTotal });
       })
       .catch(() => setSpans(null));
   }, [id]);
@@ -483,7 +485,7 @@ function TraceDetailInner() {
                 {/* Honest OTel provenance: W3C tracecontext linkage + sampling +
                     dropped-span counts so the operator never mistakes a partial
                     trace for a complete one. */}
-                <TraceHonesty spans={spans} source={source} />
+                <TraceHonesty spans={spans} source={source} capped={spanCap.capped} totalSpans={spanCap.total} />
                 <div ref={spanAreaRef} style={{ display: 'flex', alignItems: 'stretch', gap: 10, minHeight: 240 }}>
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <TraceServiceBreakdown spans={spans} />

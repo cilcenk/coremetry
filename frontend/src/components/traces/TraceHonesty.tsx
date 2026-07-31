@@ -18,10 +18,15 @@ import { useMemo } from 'react';
 import type { SpanRow } from '@/lib/types';
 
 export function TraceHonesty({
-  spans, source,
+  spans, source, capped, totalSpans,
 }: {
   spans: SpanRow[];
   source?: 'clickhouse' | 'tempo' | 'mv_only';
+  // v0.9.457 (dürüstlük A2) — 50k yükleme tavanı doldu: orphan/parent
+  // istatistikleri KISMİ listeden türetilir; kesikte şerit önce bunu
+  // söyler ki eksik parent'lar instrumentation suçlaması gibi okunmasın.
+  capped?: boolean;
+  totalSpans?: number;
 }) {
   const facts = useMemo(() => {
     const ids = new Set(spans.map(s => s.spanId));
@@ -56,6 +61,19 @@ export function TraceHonesty({
   if (spans.length === 0) return null;
 
   const chips: Array<{ label: string; tone: 'ok' | 'warn' | 'err' | 'info'; title: string }> = [];
+
+  // v0.9.457 — kesik trace ÖNCE söylenir: aşağıdaki orphan/root
+  // istatistikleri kısmi listeden türetilir; kesikte instrumentation
+  // suçlaması gibi okunmasınlar.
+  if (capped) {
+    chips.push({
+      label: totalSpans && totalSpans > spans.length
+        ? `Kesik: ilk ${spans.length.toLocaleString()} / ${totalSpans.toLocaleString()} span`
+        : `Kesik: ilk ${spans.length.toLocaleString()} span`,
+      tone: 'err',
+      title: 'Yükleme tavanı doldu — bu trace daha büyük. Orphan/root ve dropped sayıları yüklenen kısımdan türetilmiştir; eksik parent\'lar kesikten kaynaklanabilir, instrumentation hatası kanıtı değildir. Export da yalnız yüklenen span\'ları içerir.',
+    });
+  }
 
   // tracecontext integrity
   if (facts.roots === 1) {

@@ -811,6 +811,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/anomalies/trace-ops", s.getTraceOpAnomalies)
 	mux.HandleFunc("GET /api/anomalies/metric", s.getMetricAnomalies)
 	mux.HandleFunc("GET /api/anomalies/events", s.getAnomalyEvents)
+	mux.HandleFunc("GET /api/anomalies/events/{id}", s.getAnomalyEvent)
 	// Anomaly-anchored root cause (v0.8.x, release #1) — same parallel
 	// soft-fail fan-out as /api/problems/{id}/rootcause but anchored on an
 	// AnomalyEvent window. Read-only, open (writes no state; same posture
@@ -10467,14 +10468,23 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	since := parseDuration(q.Get("since"), 24*time.Hour)
 	limit := parseInt(q.Get("limit"), 200)
-	key := fmt.Sprintf("anomaly:events:since=%s:limit=%d", since, limit)
+	// v0.9.465 (dürüstlük A9) — zarf {items, activeTotal, clearedTotal,
+	// truncated}: sayılar SQL'den, kırpma söylenir (anahtar v2).
+	key := fmt.Sprintf("anomaly:events:v2:since=%s:limit=%d", since, limit)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		sinceNs := time.Now().Add(-since).UnixNano()
 		rows, err := s.store.ListAnomalyEvents(ctx, chstore.ListAnomalyEventsFilter{
-			SinceNs: time.Now().Add(-since).UnixNano(),
+			SinceNs: sinceNs,
 			Limit:   limit,
 		})
 		if err != nil {
 			return nil, err
+		}
+		activeN, clearedN, cErr := s.store.CountAnomalyEventsByStatus(ctx, sinceNs, 0)
+		if cErr != nil {
+			// Soft-fail: sayım yoksa frontend sayfa-türevine düşer;
+			// dürüstlük şeridi sayfayı asla boşaltmaz.
+			activeN, clearedN = 0, 0
 		}
 		rows = s.store.EnrichAnomaliesWithClusters(ctx, rows, time.Hour)
 		// v0.5.286 — attach the most recent deploy per service
@@ -10492,8 +10502,29 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 		// the existing key already hashes since+limit; this join is
 		// read-only, no new audit.
 		rows = s.store.EnrichAnomaliesWithRootCause(ctx, rows)
-		return rows, nil
+		return map[string]any{
+			"items":        rows,
+			"activeTotal":  activeN,
+			"clearedTotal": clearedN,
+			"truncated":    len(rows) >= limit,
+		}, nil
 	})
+}
+
+// getAnomalyEvent (v0.9.465, dürüstlük A9) — tek event, id ile.
+// ?event= deep-link'i 200'lük liste penceresinin dışına düşünce sayfa
+// sessiz hiçlik gösteriyordu; frontend bu uçtan kurtarır.
+func (s *Server) getAnomalyEvent(w http.ResponseWriter, r *http.Request) {
+	ev, err := s.store.GetAnomalyEvent(r.Context(), r.PathValue("id"), 0)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if ev == nil {
+		http.Error(w, "anomaly not found", http.StatusNotFound)
+		return
+	}
+	writeJSON(w, ev)
 }
 
 // getMetricAnomalies returns the open Problems whose rule_id

@@ -528,8 +528,12 @@ export const api = {
   // status, so the operator can tell at a glance whether an
   // event is ongoing or has subsided. Backed by the
   // anomaly_events ReplacingMergeTree.
+  // v0.9.465 (dürüstlük A9) — zarf: sayımlar SQL'den, truncated = 200
+  // penceresi doldu. anomalyEvent(id): deep-link kurtarma ucu.
   anomalyEvents:       (since: GoDuration = '24h', limit = 200) =>
-    get<import('./types').AnomalyEvent[]>(`/api/anomalies/events?since=${since}&limit=${limit}`),
+    get<{ items: import('./types').AnomalyEvent[]; activeTotal: number; clearedTotal: number; truncated: boolean }>(`/api/anomalies/events?since=${since}&limit=${limit}`),
+  anomalyEvent:        (id: string) =>
+    get<import('./types').AnomalyEvent | null>(`/api/anomalies/events/${encodeURIComponent(id)}`),
 
   // Active anomalies autocomplete — backs the Cmd-K silence
   // action's first param. Returns slim shape: id (fingerprint),

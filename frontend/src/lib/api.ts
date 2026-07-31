@@ -1634,8 +1634,14 @@ export const api = {
 
   // v0.9.105 (F1) — default maxDataPoints=1500 (geniş panel px'i yaklaşık;
   // tek sabit → cache-key parçalanmaz). Çağıran açıkça geçerse o kazanır.
+  // v0.9.458 — endpoint artık {series, rowsCapped} zarfı döner; bu metot
+  // .series'i açar ki 6 eski tüketici SpanMetricSeries[] üzerinde kalsın.
+  // Dürüstlük şeridi gerekenler metricQueryFull kullanır.
   metricQuery: (params: MetricQueryParams) =>
-    get<SpanMetricSeries[] | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`),
+    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`)
+      .then(r => (r ? r.series : null)),
+  metricQueryFull: (params: MetricQueryParams) =>
+    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`),
   // v0.6.56 — explicit-histogram heatmap + percentile bands. Reuses
   // MetricQueryParams (agg/groupBy ignored server-side for histograms).
   metricHistogram: (params: MetricQueryParams) =>

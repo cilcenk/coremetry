@@ -55,6 +55,12 @@ export const QueryPanel = memo(function QueryPanel({
         {!panel.loading && (
           <span style={{ color: 'var(--text3)' }}>
             {panel.series.length} seri{panel.more > 0 ? ` · +${panel.more} daha (alan bazlı kırpıldı)` : ''}
+            {panel.rowsCapped && (
+              <span style={{ color: 'var(--warn)' }}
+                title="Sorgu 50k satır tavanına çarptı — seriler grup anahtarına göre ALFABETİK kesildi; geç harfli seriler eksik olabilir ve 'daha' sayısı gerçek evreni bilemez. Pencereyi daralt, adımı büyüt ya da filtre ekle.">
+                {' '}· ⚠ satır tavanı doldu — liste eksik olabilir
+              </span>
+            )}
             {panel.unit ? ` · ${panel.unit}` : ''}
           </span>
         )}

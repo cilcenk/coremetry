@@ -25,6 +25,9 @@ export interface PanelData {
   loading: boolean;
   series: TSSeries[];      // capped, labeled, coloured
   more: number;            // series dropped by the cap
+  // v0.9.458 (dürüstlük A1) — 50k satır tavanı doldu: seriler ALFABETİK
+  // kesildi; more'un anlattığı alan-bazlı top-N kırpmasından ayrı yalan.
+  rowsCapped?: boolean;
   deploys?: number[];      // ▼ deploy markers (Phase 3.3 — pinned-service queries)
   events?: ChartAnnotation[]; // operator-event annotation lines (A7 — v0.8.284)
   thresholds?: TSThreshold[]; // SLO latency threshold lines (Phase 3.3)
@@ -91,6 +94,7 @@ export function buildPanels(
   // metric queries (useExploreQueries gates the fetch to single-service,
   // no-splitBy queries; [] everywhere else).
   otlpExemplarsByLetter: Record<string, OtlpExemplar[]> = {},
+  cappedByLetter: Record<string, boolean> = {},
 ): PanelData[] {
   const out: PanelData[] = [];
   for (const q of state.queries) {
@@ -165,6 +169,7 @@ export function buildPanels(
       key: q.letter, letter: q.letter, desc, unit, isFormula: false, loading: false,
       series: ranked.slice(0, cap).map(x => x.s),
       more: Math.max(0, total - shown),
+      rowsCapped: cappedByLetter[q.letter] || undefined,
       deploys: ov?.deploys?.length ? ov.deploys : undefined,
       events: ov?.events?.length ? ov.events : undefined,
       thresholds: ov?.thresholds?.length ? ov.thresholds : undefined,

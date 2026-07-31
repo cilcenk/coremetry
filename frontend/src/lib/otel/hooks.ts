@@ -64,6 +64,9 @@ export function traceLogWindow(
 // renders a warning chip, never a blocked/failed tab.
 export interface CorrelatedLogsResult {
   logs: LogRow[];
+  // v0.9.461 (dürüstlük A5) — sunucunun gerçek toplamı: limit'e çarpan
+  // sayfa "N satır"ı tam envanter gibi göstermesin.
+  total?: number;
   degraded?: boolean;
   reason?: string;
 }
@@ -89,7 +92,7 @@ export function useCorrelatedLogs(
     queryKey: ['otel', 'correlated-logs', traceId ?? '', spanId ?? '', limit, from ?? 0, to ?? 0],
     queryFn: async () => {
       const res = await api.logs({ traceId: traceId!, spanId, limit, from, to });
-      return { logs: res?.logs ?? [], degraded: res?.degraded, reason: res?.reason };
+      return { logs: res?.logs ?? [], total: res?.total, degraded: res?.degraded, reason: res?.reason };
     },
     enabled: !!traceId,
     staleTime: 30_000,

@@ -506,6 +506,7 @@ function TraceDetailInner() {
 
             {tab === 'logs' && (
               <TraceLogsPanel logs={logs} degraded={logsDegraded}
+                logsTotal={logsQuery.data?.total}
                 eventRows={eventRows}
                 traceServices={[...new Set((spans ?? []).map(sp => sp.serviceName).filter(Boolean))]} />
             )}
@@ -691,9 +692,11 @@ function LinkedTracesSection({ id }: { id: string }) {
 // result contract: warn chip instead of the "no logs" empty state (which
 // would misread as an instrumentation gap), table still renders, tab never
 // blocks.
-function TraceLogsPanel({ logs, degraded, eventRows, traceServices }: {
+function TraceLogsPanel({ logs, degraded, logsTotal, eventRows, traceServices }: {
   logs: LogRow[] | null | undefined;
   degraded?: string | null;
+  // v0.9.461 (dürüstlük A5) — sunucunun gerçek toplamı ("ilk N / M").
+  logsTotal?: number;
   // v0.8.407 — pseudo rows from the trace's own span events (zero-ES
   // leg): merged into the list, shown alone when the backend has
   // nothing / fails, so the tab is useful even without shipped logs.
@@ -738,7 +741,11 @@ function TraceLogsPanel({ logs, degraded, eventRows, traceServices }: {
         fontSize: 11, color: 'var(--text3)',
       }}>
         <span>
-          {logs.length} log line{logs.length === 1 ? '' : 's'}
+          {/* v0.9.461 (dürüstlük A5) — sunucu toplamı sayfadan büyükse
+              "ilk N / M": limit'e çarpan sayfa tam envanter değil. */}
+          {logsTotal && logsTotal > logs.length
+            ? `ilk ${logs.length} / ${logsTotal.toLocaleString()} log satırı`
+            : `${logs.length} log line${logs.length === 1 ? '' : 's'}`}
           {eventRows.length > 0 && ` + ${eventRows.length} span event${eventRows.length === 1 ? '' : 's'}`}
         </span>
       </div>

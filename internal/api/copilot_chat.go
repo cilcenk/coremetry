@@ -60,6 +60,12 @@ type chatRequest struct {
 		// service page; lets a bare "bu operasyonun durumu" scope RED to
 		// that span name (guided router's operation fallback).
 		Operation string `json:"operation,omitempty"`
+		// Explain (v0.9.479) — AI çekmecesindeki sohbetin bağlam devri:
+		// operatörün AZ ÖNCE OKUDUĞU açıklamanın metni (+ kanıt id'leri).
+		// Boşken bu dosyadaki her yol bayt-bayt eski davranıştadır; dolu
+		// olduğunda guided/explain-grounded ayrımını copilot_drawer.go
+		// yönetir (kök neden + tasarım orada yazılı).
+		Explain string `json:"explain,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -131,8 +137,21 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// frontier models; the 2B-class primary target (qwen3.5-2b) can't
 	// drive the 5-round × 11-schema loop reliably at all. No match →
 	// the free tool loop below runs UNCHANGED.
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation); handled {
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain); handled {
 		emit("done", map[string]bool{"ok": gok})
+		return
+	}
+
+	// v0.9.479 — AI çekmecesi sohbeti: ekrandaki açıklama bağlam olarak
+	// geldiyse (context.explain) ve guided somut bir özneye oturmadıysa,
+	// cevabı tek narration çağrısıyla O AÇIKLAMAYA dayandır. Sıra
+	// bilinçli: guided (canlı telemetri, somut özne) > çekmece bağlamı >
+	// dokümanlar > serbest döngü. Çekmece sohbeti özne-kapsamlıdır;
+	// filo/doküman soruları global CoSRE penceresinde kalır.
+	// (ai_calls satırını guided'da olduğu gibi tek narration çağrısı
+	// KENDİSİ yazar — burada ikinci bir RecordUsage yok.)
+	if handled, dok := s.copilotChatDrawer(ctx, emit, req.Messages, req.Context.Explain); handled {
+		emit("done", map[string]bool{"ok": dok})
 		return
 	}
 

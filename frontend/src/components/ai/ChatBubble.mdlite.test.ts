@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { mdLite } from './CopilotChat';
+import { mdLite } from './ChatBubble';
 
-// v0.9.419 pinleri — mdLite: 32-hex trace id'ler data-nav linkine döner
+// v0.9.419 pinleri — mdLite (v0.9.479'da CopilotChat.tsx'ten ai/ChatBubble.tsx'e
+// taşındı; davranış aynı): 32-hex trace id'ler data-nav linkine döner
 // (href SALT hex'ten kurulur — injection yüzeyi yok), escape HER ZAMAN
 // linkify'dan önce (XSS), kod/kalın davranışı değişmedi.
 describe('mdLite', () => {

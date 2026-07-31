@@ -684,7 +684,9 @@ KURALLAR:
 // prefetch fails — the caller then runs the free tool loop unchanged.
 // handled=true means the exchange is complete (answer or error
 // emitted); ok mirrors the `done` event's success flag.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation string) (handled, ok bool) {
+// explain (v0.9.479) — AI çekmecesinden gelen "ekrandaki açıklama"
+// bağlamı; boşken bu fonksiyonun davranışı bayt-bayt eskisidir.
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -713,6 +715,14 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		}
 	}
 	if route.Intent == guidedNone {
+		return false, false
+	}
+	// v0.9.479 — çekmece bağlamı varken SOMUT ÖZNEYE oturmayan rota
+	// guided'a bırakılmaz: filo geneli prefetch ekrandaki konuyu
+	// ıskalıyordu (operatör raporu — ekranda exception dururken filo
+	// JVM GC anlatıldı). Explain-grounded yol devralır
+	// (copilot_drawer.go). explain boşken bu daima false.
+	if drawerSuppressesGuided(explain, route, question) {
 		return false, false
 	}
 	// v0.9.416 — vardiya özeti varsayılanı 12h (guidedRangeS'in 30dk'sı
@@ -785,7 +795,10 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// render exactly as before, and when the endpoint can't stream
 	// (vLLM builds that 400 on stream:true) StreamText falls back to
 	// the buffered call transparently: zero deltas, same answer.
-	user := "SORU: " + question + "\n\nVERİ:\n" + evidence
+	// v0.9.479 — çekmece bağlamı (varsa) narration bloğuna ek bölüm
+	// olarak girer; explain boşken üretilen metin bayt-bayt eskisidir
+	// (guidedNarrationUser, copilot_drawer.go — testte pinli).
+	user := guidedNarrationUser(question, evidence, explain)
 	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", guidedChatPrompt, user, func(delta string) {
 		emit("delta", map[string]string{"text": delta})
 	})

@@ -801,12 +801,17 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // priority param by design and is server-cached 5s on a shared key. It
   // mirrors every OTHER filter, so the counts describe the same population
   // the rows are drawn from.
+  // v0.9.474 (dürüstlük A16) — team/cluster chip'lere de iner: yorumun
+  // "mirrors every OTHER filter" iddiası bu ikisi için yanlıştı.
   const bucketsQ = useQuery({
-    queryKey: ['problem-buckets', statusFilter, serviceFilter, env],
+    queryKey: ['problem-buckets', statusFilter, serviceFilter, env, ownerTeam, sreTeam, cluster],
     queryFn: () => api.problemBuckets({
       status: statusFilter === 'all' ? undefined : statusFilter,
       service: serviceFilter || undefined,
       env: env || undefined,
+      ownerTeam: ownerTeam || undefined,
+      sreTeam: sreTeam || undefined,
+      cluster: cluster || undefined,
     }),
     staleTime: 5_000,
     refetchInterval: 30_000,

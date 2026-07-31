@@ -453,7 +453,35 @@ func otlpRouteGuard(disabled bool, next http.Handler) http.Handler {
 var editorRoles = []string{auth.RoleAdmin, auth.RoleEditor}
 
 func (s *Server) Start() error {
+	mux := s.buildMux()
+	log.Printf("[api] HTTP listening on %s", s.addr)
+	// v0.6.42 — self-observability. otelhttp wraps the outer-most
+	// handler so every inbound request gets a server span tagged
+	// with route + status + duration. Frontend's `traceparent`
+	// header (lib/otel.ts) is extracted by otelhttp's
+	// W3C propagator, so a UI click → server-span chain joins on
+	// /trace/{id}. Goes OUTSIDE cors + auth middleware so the span
+	// captures the entire request lifecycle (including 401s).
+	// presence.middleware sits INSIDE auth.Middleware so claims are
+	// already resolved (JWT + trusted-header paths both covered) —
+	// v0.8.403, online indicator on the admin Users page. Throttled +
+	// fire-and-forget: zero added latency, no Redis dependency on the
+	// auth path (see presence.go).
+	return s.listen(mux)
+}
+
+// buildMux registers every route. Ayrı fonksiyon (v0.9.471): Go 1.22
+// ServeMux kalıp çakışmaları KAYIT anında panic'ler — kayıt Start()
+// içinde gömülüyken hiçbir test bunu göremiyordu ve v0.9.465-470
+// tag'leri boot'ta patladı. TestMuxRoutePatterns artık bu fonksiyonu
+// kurarak sınıfı derleme-sonrası ilk test koşusunda yakalar.
+func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
+	s.registerRoutes(mux)
+	return mux
+}
+
+func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 	// Rollup okuma uçları (Aşama 2) — api.go büyütülmez kısıtı gereği
 	// tüm route'lar internal/api/rollup_routes.go'da yaşar.
@@ -811,7 +839,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("GET /api/anomalies/trace-ops", s.getTraceOpAnomalies)
 	mux.HandleFunc("GET /api/anomalies/metric", s.getMetricAnomalies)
 	mux.HandleFunc("GET /api/anomalies/events", s.getAnomalyEvents)
-	mux.HandleFunc("GET /api/anomalies/events/{id}", s.getAnomalyEvent)
+	// v0.9.471 — ?id= sorgu paramı, path segmenti DEĞİL: Go 1.22 ServeMux
+	// "GET /api/anomalies/events/{id}" ile "GET /api/anomalies/{id}/rootcause"
+	// kalıplarını çakıştırıp BOOT'ta panic'liyor (ikisi de
+	// /api/anomalies/events/rootcause'u eşler, hiçbiri daha spesifik
+	// değil). v0.9.465-470 tag'leri bu yüzden açılamadı — testler mux'u
+	// hiç kurmadığından sınıf yakalanmıyordu; TestMuxRoutePatterns artık
+	// kuruyor.
+	mux.HandleFunc("GET /api/anomalies/event", s.getAnomalyEvent)
 	// Anomaly-anchored root cause (v0.8.x, release #1) — same parallel
 	// soft-fail fan-out as /api/problems/{id}/rootcause but anchored on an
 	// AnomalyEvent window. Read-only, open (writes no state; same posture
@@ -1157,19 +1192,10 @@ func (s *Server) Start() error {
 		go s.warmDependenciesCache()
 	}
 
-	log.Printf("[api] HTTP listening on %s", s.addr)
-	// v0.6.42 — self-observability. otelhttp wraps the outer-most
-	// handler so every inbound request gets a server span tagged
-	// with route + status + duration. Frontend's `traceparent`
-	// header (lib/otel.ts) is extracted by otelhttp's
-	// W3C propagator, so a UI click → server-span chain joins on
-	// /trace/{id}. Goes OUTSIDE cors + auth middleware so the span
-	// captures the entire request lifecycle (including 401s).
-	// presence.middleware sits INSIDE auth.Middleware so claims are
-	// already resolved (JWT + trusted-header paths both covered) —
-	// v0.8.403, online indicator on the admin Users page. Throttled +
-	// fire-and-forget: zero added latency, no Redis dependency on the
-	// auth path (see presence.go).
+}
+
+
+func (s *Server) listen(mux *http.ServeMux) error {
 	handler := otelhttp.NewHandler(cors(s.auth.Middleware(s.presence.middleware(mux))),
 		"coremetry-api",
 		otelhttp.WithSpanNameFormatter(func(_ string, r *http.Request) string {
@@ -10515,7 +10541,7 @@ func (s *Server) getAnomalyEvents(w http.ResponseWriter, r *http.Request) {
 // ?event= deep-link'i 200'lük liste penceresinin dışına düşünce sayfa
 // sessiz hiçlik gösteriyordu; frontend bu uçtan kurtarır.
 func (s *Server) getAnomalyEvent(w http.ResponseWriter, r *http.Request) {
-	ev, err := s.store.GetAnomalyEvent(r.Context(), r.PathValue("id"), 0)
+	ev, err := s.store.GetAnomalyEvent(r.Context(), r.URL.Query().Get("id"), 0)
 	if err != nil {
 		writeErr(w, err)
 		return

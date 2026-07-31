@@ -532,8 +532,10 @@ export const api = {
   // penceresi doldu. anomalyEvent(id): deep-link kurtarma ucu.
   anomalyEvents:       (since: GoDuration = '24h', limit = 200) =>
     get<{ items: import('./types').AnomalyEvent[]; activeTotal: number; clearedTotal: number; truncated: boolean }>(`/api/anomalies/events?since=${since}&limit=${limit}`),
+  // v0.9.471 — ?id= sorgu paramı: path-segment hali Go 1.22 ServeMux'ta
+  // {id}/rootcause kalıbıyla çakışıp boot'u panic'letiyordu (v465-470).
   anomalyEvent:        (id: string) =>
-    get<import('./types').AnomalyEvent | null>(`/api/anomalies/events/${encodeURIComponent(id)}`),
+    get<import('./types').AnomalyEvent | null>(`/api/anomalies/event?id=${encodeURIComponent(id)}`),
 
   // Active anomalies autocomplete — backs the Cmd-K silence
   // action's first param. Returns slim shape: id (fingerprint),

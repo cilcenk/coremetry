@@ -663,7 +663,7 @@ func (s *ESStore) EQLSearch(ctx context.Context, q EQLQuery) ([]EQLSequence, err
 			evs = append(evs, EQLEvent{
 				Timestamp: timestampNs(e.Source),
 				Body:      pickString(e.Source, "message", "body", "log.message"),
-				Service:   pickString(e.Source, "service.name", "service", "kubernetes.labels.app"),
+				Service:   pickString(e.Source, "service.name", "kubernetes.container_name", "kubernetes.container.name", "service", "kubernetes.labels.app"),
 				Severity:  pickString(e.Source, "level", "log.level", "severity_text", "severity"),
 			})
 		}
@@ -2722,10 +2722,23 @@ func (s *ESStore) mapHit(id string, src map[string]any, dv map[string]any, expec
 	// Service column on the Logs page kept coming up blank for
 	// operators whose pipelines ship a flat `service_name`
 	// instead of the OTel ECS `service.name`. Read the
-	// configured path first; if empty, walk the four common
-	// shapes any shipper might emit.
+	// configured path first; if empty, walk the common shapes.
+	//
+	// v0.9.480 (operator-reported, prod OpenShift ES): k8s işyükü
+	// kimliği uygulama-yayımlı düz alanlardan ÖNCE gelir. Cluster-logging
+	// kayıtlarında düz `service_name` çoğu zaman uygulamanın kendi
+	// OPERASYON adıdır (DIGITAL_TRANSFER_EFT,
+	// ADKSERVICES_APPROVEBOX_..._REST_SERVICE) — servis değil; asıl
+	// servis kimliği kubernetes.container_name'dedir. Trace'in Logs
+	// sekmesinde bu kayıtların SERVICE kolonu boş kalıyordu (alan gövde
+	// JSON'undaydı, indekste yoktu) ya da yanlış dolacaktı. Yalnız
+	// container_name/container.name eklendi — ikisi de servis
+	// FİLTRESİNİN eşlediği alanlar (svcFields, v0.8.284): gösterilen ada
+	// tıklayıp filtreleyince sonuç boş dönmez (v0.8.265 sınıfı).
 	r.ServiceName = readPathAny(src, s.fields.Service,
-		"service.name", "service_name", "serviceName", "ServiceName")
+		"service.name",
+		"kubernetes.container_name", "kubernetes.container.name",
+		"service_name", "serviceName", "ServiceName")
 	r.Body = readPathAny(src, s.fields.Body,
 		"message", "Body", "body", "log.message", "log")
 	r.SeverityText = readPathAny(src, s.fields.SeverityTx,

@@ -3927,7 +3927,7 @@ func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 	}); lerr != nil {
 		log.Printf("[share] log snapshot capture failed for trace %s: %v", id, lerr)
 	} else {
-		snap.LogsJSON = snapshotLogsJSON(logsPage.Logs, snapshotLogsMax)
+		snap.LogsJSON = snapshotLogsJSON(logsPage.Logs, snapshotLogsMax, int64(logsPage.Total))
 	}
 	if err := s.store.CreateTraceSnapshot(r.Context(), snap); err != nil {
 		writeErr(w, err)
@@ -4042,14 +4042,26 @@ const snapshotLogsMax = 500
 // snapshotLogsJSON marshals up to max log records into the frozen
 // share payload. Pure (v0.8.252) — tested in snapshot_logs_test.go.
 // nil/empty → "" so the column stays empty (the reader serves []).
-func snapshotLogsJSON(logs []*logstore.LogRecord, max int) string {
+//
+// v0.9.475 (dürüstlük A10) — gövde artık zarf: {"logs":[...],"total":N,
+// "truncated":bool}. Dış alıcının (retention sonrası, drill-out yok)
+// 500'de kesilmiş listeyi tam sanmasının HİÇBİR düzeltme yolu yoktu —
+// kesiklik mint anında donmuş gövdenin içinde taşınmak zorunda. total
+// = logstore'un mint anındaki gerçek toplamı. Eski (çıplak dizi)
+// snapshot'lar viewer'da aynen çalışır (Array.isArray dalı) — şema
+// değişikliği yok.
+func snapshotLogsJSON(logs []*logstore.LogRecord, max int, total int64) string {
 	if len(logs) == 0 {
 		return ""
 	}
 	if max > 0 && len(logs) > max {
 		logs = logs[:max]
 	}
-	b, err := json.Marshal(logs)
+	b, err := json.Marshal(map[string]any{
+		"logs":      logs,
+		"total":     total,
+		"truncated": total > int64(len(logs)),
+	})
 	if err != nil {
 		return ""
 	}

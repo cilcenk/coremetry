@@ -29,7 +29,9 @@ import type { SpanRow, LogRow } from '@/lib/types';
 interface PublicTraceResponse {
   traceId: string;
   spans: SpanRow[];
-  logs?: LogRow[];
+  // v0.9.475 — yeni snapshot'lar zarf ({logs,total,truncated}), eskiler
+  // çıplak dizi; viewer ikisini de okur.
+  logs?: LogRow[] | { logs: LogRow[]; total: number; truncated: boolean };
   expiresAt: number;
   createdBy?: string;
 }
@@ -92,7 +94,12 @@ function PublicTraceInner() {
   const maxT = Math.max(...data.spans.map(s => s.endTime));
   const totalNs = maxT - minT;
   const hasErr = data.spans.some(s => s.statusCode === 'error');
-  const logs = data.logs ?? [];
+  const logsRaw = data.logs ?? [];
+  const logs = Array.isArray(logsRaw) ? logsRaw : (logsRaw.logs ?? []);
+  // v0.9.475 (dürüstlük A10) — kesiklik mint anında gövdeye donduruldu:
+  // dış alıcı (retention sonrası, drill-out yok) 500'lük listeyi tam
+  // sanmasın. Eski snapshot'larda bilgi yok → hiçbir şey iddia edilmez.
+  const logsTrunc = !Array.isArray(logsRaw) && logsRaw.truncated ? logsRaw.total : 0;
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '20px 24px' }}>
@@ -167,7 +174,11 @@ function PublicTraceInner() {
               display: 'flex', gap: 10, padding: '6px 10px',
               fontSize: 11, color: 'var(--text3)',
             }}>
-              <span>{logs.length} log line{logs.length === 1 ? '' : 's'} · captured at share time</span>
+              <span>
+                {logsTrunc > 0
+                  ? `ilk ${logs.length} log satırı — paylaşım anında toplam ${logsTrunc.toLocaleString()} vardı`
+                  : `${logs.length} log line${logs.length === 1 ? '' : 's'} · captured at share time`}
+              </span>
             </div>
             <LogTable logs={[...logs].sort((a, b) => a.timestamp - b.timestamp)} hideTraceColumn />
           </>

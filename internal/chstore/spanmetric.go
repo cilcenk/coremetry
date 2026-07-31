@@ -204,6 +204,16 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		case span <= 7*24*3600:  step = 1800
 		default:                 step = 3600
 		}
+	} else {
+		// v0.9.460 (dürüstlük A8) — EXPLICIT step de nokta bütçesine
+		// kelepçelenir (batch yolunun v0.9.391 clamp'i, tekil ikizi):
+		// step=1s + 7g pencere ≈ 600k bucket satır tavanını aşar ve
+		// chart pencerenin yalnız BAŞINI "tam aralıkmış gibi" çizerdi.
+		// Grafana davranışı: bütçeyi aşan explicit step kabalaştırılır —
+		// pencere TAMAMI görünür, çözünürlük düşer (dürüst yön). Auto
+		// rampa (yukarısı) bilerek değişmedi. mdp=0 → clamp'in 2000
+		// nokta varsayılan bütçesi (SpanMetricFilter mdp taşımıyor).
+		step = clampSpanMetricStep(step, f.From, f.To, 0)
 	}
 
 	// ── Dar rollup fast-path (v0.9.428, Rollup Aşama-3 dilim 3) ──────────────

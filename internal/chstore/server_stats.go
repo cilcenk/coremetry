@@ -46,14 +46,16 @@ var serverMemoryLimits = []string{"max_server_memory_usage"}
 // the storage and disk blocks).
 func (s *Store) collectServerStats(ctx context.Context) []ServerStat {
 	// system.* are LOCAL tables. On an external Distributed cluster a
-	// plain read describes only the node we happen to be connected to,
-	// so with cluster_name set we fan out one replica per shard and
-	// label each row with its host.
+	// plain read describes only the node we happen to be connected to.
+	// v0.9.454 — clusterAllReplicas, cluster() DEĞİL: utilizasyon
+	// (bellek/CPU sayaçları) node-düzeyi metadata'dır; cluster() her
+	// shard'dan tek replika okuyup 4 node'lu (2×2) kümede 2 node
+	// gösteriyordu — disks paneliyle aynı operatör bulgusu.
 	host := "''"
 	wrap := func(tbl string) string { return tbl }
 	if cn := strings.TrimSpace(s.cfg.ClusterName); cn != "" {
 		host = "hostName()"
-		wrap = func(tbl string) string { return "cluster('" + cn + "', " + tbl + ")" }
+		wrap = func(tbl string) string { return "clusterAllReplicas('" + cn + "', " + tbl + ")" }
 	}
 
 	quote := func(names []string) string {

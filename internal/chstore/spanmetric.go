@@ -119,13 +119,17 @@ type SpanMetricPoint struct {
 // Only the primary /api/spans/metric handler uses this. The resolver, DQL, RED
 // and batch paths keep calling QuerySpanMetric directly (they either already
 // bound cardinality or need every series), so their behaviour is unchanged.
-func (s *Store) QuerySpanMetricTopN(ctx context.Context, f SpanMetricFilter) (series []SpanMetricSeries, total int, err error) {
+func (s *Store) QuerySpanMetricTopN(ctx context.Context, f SpanMetricFilter) (series []SpanMetricSeries, total int, capped bool, err error) {
 	all, err := s.QuerySpanMetric(ctx, f)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, false, err
 	}
+	// v0.9.458 (dürüstlük A1) — satır tavanı TRIM'den ÖNCE ölçülür:
+	// totalSeries top-N kırpmasını anlatır, capped ise LIMIT'in alfabetik
+	// kestiğini — ikisi ayrı yalanlardır.
+	capped = SeriesRowsCapped(all)
 	kept, total := trimTopNByArea(all, spanMetricTopN)
-	return kept, total, nil
+	return kept, total, capped, nil
 }
 
 // QuerySpanMetric computes the requested aggregation over the matching spans,
@@ -259,8 +263,8 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		%s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
-		LIMIT 50000
-		SETTINGS max_execution_time = 25`, step, groupSelect, aggExpr, wc.sql())
+		LIMIT %d
+		SETTINGS max_execution_time = 25`, step, groupSelect, aggExpr, wc.sql(), SpanMetricRowCap)
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {
@@ -1299,4 +1303,24 @@ func escapeStr(s string) string {
 		}
 	}
 	return b.String()
+}
+
+// SpanMetricRowCap — spans/metric_points GROUP BY sorgularının satır
+// (bucket×seri) tavanı. v0.9.458'e dek çıplak 50000 literaliydi ve
+// dolduğunda KİMSE söylemiyordu: ORDER BY gk alfabetik olduğundan
+// geç-harfli seriler komple düşer, panel kalan ~ilk serileri "evren"
+// gibi çizerdi.
+const SpanMetricRowCap = 50000
+
+// SeriesRowsCapped — sonuç kümesi satır tavanına çarptı mı? Toplam
+// nokta sayısı == tavan, LIMIT'in ısırdığının işaretidir (tam-50000'lik
+// meşru sonuç da işaretlenir — zararsız yön: "eksik olabilir" der,
+// asla eksiği tam gibi göstermez; inbox len==cap sözleşmesinin aynısı).
+// Saf — tablo-testli.
+func SeriesRowsCapped(series []SpanMetricSeries) bool {
+	total := 0
+	for _, sr := range series {
+		total += len(sr.Points)
+	}
+	return total >= SpanMetricRowCap
 }

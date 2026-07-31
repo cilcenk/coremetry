@@ -4119,10 +4119,12 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	engine := strings.TrimSpace(q.Get("engine"))
 	from := parseTime(q.Get("from"))
 	to := parseTime(q.Get("to"))
-	key := fmt.Sprintf("metric-query:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d",
+	// v0.9.458 (dürüstlük A1) — zarf {series, rowsCapped}: anahtar v2
+	// (gövde şekli değişti, v0.9.443 dersi).
+	key := fmt.Sprintf("metric-query:v2:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d",
 		name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.QueryMetric(ctx, chstore.MetricQueryFilter{
+		series, qerr := s.store.QueryMetric(ctx, chstore.MetricQueryFilter{
 			Name:          name,
 			Service:       svc,
 			Instance:      inst,
@@ -4135,6 +4137,13 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 			StepSeconds:   step,
 			MaxDataPoints: maxDP,
 		})
+		if qerr != nil {
+			return nil, qerr
+		}
+		return map[string]any{
+			"series":     series,
+			"rowsCapped": chstore.SeriesRowsCapped(series),
+		}, nil
 	})
 }
 
@@ -4732,11 +4741,11 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 		// keeps the top-50 by the SAME area metric and reports the pre-trim
 		// total so the "+N more" stays accurate. totalSeries omitted (== len)
 		// when no trim happened, keeping the response compact.
-		series, total, err := s.store.QuerySpanMetricTopN(ctx, f)
+		series, total, capped, err := s.store.QuerySpanMetricTopN(ctx, f)
 		if err != nil {
 			return nil, err
 		}
-		resp := spanMetricResponse{Series: series}
+		resp := spanMetricResponse{Series: series, RowsCapped: capped}
 		if total > len(series) {
 			resp.TotalSeries = total
 		}
@@ -4752,6 +4761,10 @@ func (s *Server) spanMetric(w http.ResponseWriter, r *http.Request) {
 type spanMetricResponse struct {
 	Series      []chstore.SpanMetricSeries `json:"series"`
 	TotalSeries int                        `json:"totalSeries,omitempty"`
+	// RowsCapped (v0.9.458, dürüstlük A1) — 50k satır tavanı doldu:
+	// ORDER BY gk alfabetik olduğundan geç-harfli seriler eksik
+	// olabilir; totalSeries'in anlattığı top-N kırpmasından AYRI yalan.
+	RowsCapped bool `json:"rowsCapped,omitempty"`
 }
 
 // spanMetricBatch runs N aggregations over the same span

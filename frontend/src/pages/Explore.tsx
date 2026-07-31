@@ -307,7 +307,7 @@ function ExploreInner() {
   // single-service catalogue-metric queries; clicks ride the same
   // onExemplarClick → CorrelationContextDrawer path as the span-derived ones.
   const {
-    byLetter, totalByLetter, exemplarsByLetter, otlpExemplarsByLetter,
+    byLetter, totalByLetter, cappedByLetter, exemplarsByLetter, otlpExemplarsByLetter,
     anyLoading, error: builderError,
   } = useExploreQueries(
     debounced,
@@ -317,8 +317,8 @@ function ExploreInner() {
   // Phase 3.3 — deploy markers + SLO thresholds for pinned-service queries.
   const overlaysByLetter = useExploreOverlays(debounced, builderFrom, exploreRange.to);
   const panels = useMemo(
-    () => buildPanels(debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter, otlpExemplarsByLetter),
-    [debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter, otlpExemplarsByLetter],
+    () => buildPanels(debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter),
+    [debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter],
   );
   const anyProduces = debounced.queries.some(produces);
 

@@ -1858,6 +1858,9 @@ export interface SpanMetricSeries {
 export interface SpanMetricResult {
   series: SpanMetricSeries[];
   totalSeries?: number;
+  // v0.9.458 (dürüstlük A1) — 50k satır tavanı doldu: alfabetik-son
+  // seriler eksik olabilir (top-N kırpmasından AYRI sinyal).
+  rowsCapped?: boolean;
 }
 
 // v0.8.53 ("every metric is a doorway" D4) — result of server-side descriptor

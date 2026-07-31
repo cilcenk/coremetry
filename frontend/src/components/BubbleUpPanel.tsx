@@ -96,9 +96,18 @@ export function BubbleUpPanel({
         Score = selection % − baseline %; values over-represented in the selection
         sort to the top.
       </div>
+      {/* v0.9.472 (dürüstlük A7) — örneklemeli okuma bunu SÖYLER: anahtar
+          seti occurrence'a göre ilk 30, anahtar başına 6 değer, toplamı
+          <5 olan değerler elenir, panel ilk 10 anahtarı çizer. Nadir ama
+          açıklayıcı bir anahtar bu kapılardan geçmemiş olabilir — boş
+          sonuç "hiçbir şey ayırt etmiyor" kanıtı DEĞİLDİR. */}
+      <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 8 }}
+        title="Sınırlar sorguyu milyar-span ölçeğinde sınırlı tutmak için: en sık görülen 30 anahtar × anahtar başına en güçlü 6 değer; toplam sayısı 5'in altındaki değerler gürültü diye elenir; panel ilk 10 anahtarı gösterir. Nadir-ama-açıklayıcı bir attribute bu kapılara takılmış olabilir — kesin dışlama için Explore'da elle filtrele.">
+        Örneklemeli okuma: ilk 30 anahtar · 6 değer/anahtar · toplam ≥5 · ilk 10 gösterilir
+      </div>
       {data.attributes.length === 0 ? (
         <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic' }}>
-          No attribute key clearly distinguishes the selection from the baseline.
+          Bu örneklem kapılarında hiçbir anahtar seçimi baseline'dan ayırt etmedi — nadir bir anahtar kapılara takılmış olabilir; kesin dışlama değildir.
         </div>
       ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -106,6 +115,11 @@ export function BubbleUpPanel({
             <AttributeBlock key={attr.key} attr={attr}
               onApply={onApplyFilter} />
           ))}
+          {data.attributes.length > 10 && (
+            <div style={{ fontSize: 11, color: 'var(--text3)' }}>
+              +{data.attributes.length - 10} anahtar daha skorlandı ama gösterilmiyor (ilk 10)
+            </div>
+          )}
         </div>
       )}
     </div>

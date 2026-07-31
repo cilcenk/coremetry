@@ -27,9 +27,26 @@ const LAST_RUNG = STEP_RUNGS[STEP_RUNGS.length - 1]; // 86400 (1d)
 // first rung that covers it (rung >= raw — a smaller rung would overshoot the
 // point budget); beyond the 1d rung it rounds up to a whole multiple of 1d.
 export function stepForWidth(rangeSec: number, widthPx: number): number {
+  return stepForPoints(rangeSec, Math.min(720, Math.max(120, Math.floor(widthPx / 2))));
+}
+
+// stepForPoints — v0.9.484 (operatör onayı: Response time "root spanler için
+// multichart"). stepForWidth'in nokta→rung yarısı, AYRI export.
+//
+// Neden: /api/spans/metric `step` (saniye) alır, /api/spans/metric-batch
+// `maxDataPoints` alır. Overview'un toplam görünümü batch'i redMdp ile
+// çağırıyor; operasyon kırılımı AYNI pencereyi aynı çözünürlükte görmeli,
+// yoksa iki görünüm arasında geçiş yapan operatör bucket boyu değiştiği
+// için zıplayan bir grafik görür. Nokta bütçesini rung'a çevirmenin tek
+// yeri burası olsun diye stepForWidth de buradan geçiyor — davranışı
+// birebir aynı (clamp'ı çağıran tarafta kaldı).
+//
+// Rung'a snap ETMEK aynı zamanda cache-key disiplini (v0.8.270): step
+// sunucu cache anahtarına biniyor, sınırlı kardinalite şart.
+export function stepForPoints(rangeSec: number, targetPoints: number): number {
   if (!Number.isFinite(rangeSec) || rangeSec <= 0) return STEP_RUNGS[0];
-  const targetPoints = Math.min(720, Math.max(120, Math.floor(widthPx / 2)));
-  const raw = rangeSec / targetPoints;
+  const pts = Number.isFinite(targetPoints) ? Math.max(1, Math.floor(targetPoints)) : 1;
+  const raw = rangeSec / pts;
   for (const rung of STEP_RUNGS) {
     if (rung >= raw) return rung;
   }

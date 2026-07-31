@@ -1,10 +1,12 @@
 import { useId, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
 import { timeRangeToNs, rangeToSince } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { entryLatencyDSL } from '@/lib/entrySpans';
-import { panelMaxDataPoints } from '@/lib/chartStep';
+import { panelMaxDataPoints, stepForPoints } from '@/lib/chartStep';
+import { Tabs } from '@/components/ui';
 import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
 import type { ChartThreshold } from '@/lib/chart/overlays';
@@ -12,6 +14,8 @@ import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
 import { sumNullableSeries } from './charts/throughputTotal';
+import { buildRootOpLines } from './charts/rootOpSeries';
+import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
 import { TopEndpointsCard } from './TopEndpointsCard';
 import { MetricPanel } from '@/components/MetricPanel';
@@ -265,6 +269,53 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // güncellenip diğeri bayatlıyordu).
   const latScopeNote = scopeTitleTip(usingAllSpans);
 
+  // ── Response time · operasyon kırılımı (v0.9.484, operatör onayı: "root
+  // spanler için multichart") ────────────────────────────────────────────
+  //
+  // Seçim URL'de (?rtops=1): ev kuralı — ekranda ne görüldüğünü değiştiren
+  // her operatör seçimi kopyalanabilir linke biner. Yabancı parametreler
+  // korunur (prev kopyası), replace:true (geri tuşu görünüm değiştirmekle
+  // dolmaz). Service.tsx zaten kendi parametrelerini setSearchParams(prev)
+  // ile yazıyor — bu sayfada `prev` bayat bir alt küme DEĞİL, o yüzden düz
+  // prev formu yeterli (ham replaceState yazan sayfalarda olmaz).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const splitByOp = searchParams.get('rtops') === '1';
+  const setSplitByOp = (next: boolean) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (next) p.set('rtops', '1'); else p.delete('rtops');
+    return p;
+  }, { replace: true });
+
+  // Toplam görünüm batch'i maxDataPoints ile, /api/spans/metric ise step
+  // (saniye) ile konuşuyor. Aynı pencereyi aynı çözünürlükte görmek için
+  // nokta bütçesi rung'a çevrilir — görünüm değiştirince bucket boyu
+  // değişip grafik zıplamaz.
+  const opsStep = useMemo(
+    () => stepForPoints(Math.max(1, (to - from) / 1e9), redMdp),
+    [from, to, redMdp]);
+  // İstek YALNIZ kırılım açıkken (ES/CH maliyet disiplini — varsayılan bedava).
+  const opsQ = useRootOpLatency(service, from, to, opsStep, splitByOp);
+  // Saf projeksiyon: alan bazlı ilk 5, union zaman ekseni, "+N daha" notu.
+  const opsView = useMemo(() => buildRootOpLines(opsQ.data), [opsQ.data]);
+  const opsStatus: 'loading' | 'error' | 'ready' =
+    opsQ.isLoading ? 'loading' : opsQ.isError ? 'error' : 'ready';
+  // Fallback (usingAllSpans) durumunda kırılım YAPISAL olarak boş: kırılım
+  // giriş span'lerinden okur, o servisin hiç giriş span'i yok. ChartCard'ın
+  // jenerik "No data in this window"u burada yalan söylerdi ("pencere boş"
+  // değil, "bu servis bu kırılımı üretemez"), o yüzden sebebi SÖYLENİR.
+  const opsNote = usingAllSpans
+    ? 'Bu serviste giriş span’i (server/consumer) yok — operasyon kırılımı boş.'
+    : opsView.note;
+  const rtSegment = (
+    <Tabs variant="segmented" ariaLabel="Response time görünümü"
+      value={splitByOp ? 'ops' : 'agg'}
+      onChange={k => setSplitByOp(k === 'ops')}
+      items={[
+        { key: 'agg', label: 'Toplam', hint: 'Servisin giriş span’leri — avg / P50 / P95 / P99' },
+        { key: 'ops', label: 'Operasyonlar', hint: 'En yüksek P95 alanına sahip 5 giriş operasyonu, her biri kendi P95 çizgisi' },
+      ]} />
+  );
+
   // Grafana-parite M3 — failure-rate paneline SLO hata-bütçesi eşiği.
   // ServiceCharts'ın error-rate threshold KAYNAĞININ aynısı (useSLOs →
   // availability SLO → (1-target)·100), OverviewChart'ın yeni thresholds
@@ -435,15 +486,33 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           erişilebilir kalıyor; KPI karoları gövde-tıklamasını koruyor. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact menuOnly title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-            legendStorageKey="ov-response-time" statsDefaultCollapsed
-            defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
-            lines={[
-            { series: lat?.avg ?? [], color: 'var(--teal)', label: 'avg' },
-            { series: lat?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
-            { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
-            { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
-          ]} />
+          {/* v0.9.484 — TEK kart, iki görünüm. Başlık/kapsam tooltip'i
+              (v0.9.483) ve deploy ▼ / eşik / zoom / sync kablolaması ikisinde
+              de AYNI; değişen yalnız çizgiler, durum ve lejant anahtarı.
+              legendStorageKey AYRI olmak ZORUNDA: "P95" etiketi iki görünümde
+              de var, ortak anahtarla toplam görünümde gizlenen bir çizgi
+              kırılımda da gizli gelirdi (lejant seçimi çapraz zehirlenmesi).
+              key= de şart: aynı konumda aynı bileşen tipi olduğu için React
+              örneği YENİDEN KULLANIRDI ve uPlot örneği bir görünümün seri
+              kümesiyle kurulmuşken diğerinin verisini alırdı (lejant
+              görünürlüğü afterBuild'de okunuyor). Ayrı key = temiz kurulum. */}
+          {splitByOp ? (
+            <ChartCard key="rt-ops" title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={opsStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+              headerAside={rtSegment} note={opsNote}
+              legendStorageKey="ov-response-time-ops" statsDefaultCollapsed
+              lines={opsView.lines} />
+          ) : (
+            <ChartCard key="rt-agg" title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+              headerAside={rtSegment}
+              legendStorageKey="ov-response-time" statsDefaultCollapsed
+              defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
+              lines={[
+              { series: lat?.avg ?? [], color: 'var(--teal)', label: 'avg' },
+              { series: lat?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
+              { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
+              { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
+            ]} />
+          )}
         </MetricPanel>
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>
           {/* v0.9.253 — status ve seri artık ENTRY sorgusundan. Kart üstündeki

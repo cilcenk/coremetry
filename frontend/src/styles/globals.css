@@ -1805,10 +1805,20 @@ button.accent.copied {
 .ov-kpi .ov-spark { position: absolute; right: 0; bottom: 0; left: 0; height: 34px; opacity: .9; z-index: 0; pointer-events: none; }
 
 /* Overview card header/body (lighter than the generic .card-title) */
-.ov-card-h { display: flex; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--border); }
+/* flex-wrap (v0.9.484): başlığın yanına kontrol gelebiliyor (Response time
+   görünüm segmenti) ve fallback başlığı uzun ("· tüm span'ler"). Dar bir 3
+   kolonlu grid'de ikisi birden sığmazsa SARSIN — nowrap + sabit genişlik
+   metni sessizce kırpıyor (docs/INCIDENTS.md, table-layout sınıfı). Tek
+   çocuklu kartlarda hiçbir etkisi yok. */
+.ov-card-h { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--border); }
 .ov-card-h h3 { margin: 0; font-size: 13.5px; font-weight: 700; letter-spacing: -.1px; }
 .ov-card-h .ov-sub { color: var(--text3); font-size: 11.5px; font-weight: 500; }
 .ov-card-h .ov-right { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+/* v0.9.484 — kart başlığındaki görünüm segmenti (Response time:
+   Toplam / Operasyonlar). Paylaşılan .segmented anatomisi aynen kalır,
+   yalnız ölçek küçülür: 13px/6px-14px bir RED kartının 13.5px başlığının
+   yanında düğme gibi duruyordu. Renk/kenarlık token'ları .segmented'ten. */
+.ov-card-h .segmented > button { font-size: 11px; padding: 3px 9px; }
 .ov-card-b { padding: 16px; }
 
 /* Charts (uPlot host + legend + hover tooltip + deploy flag) */

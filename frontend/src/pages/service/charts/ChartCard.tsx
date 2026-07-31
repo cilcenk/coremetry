@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import type { ReactNode } from 'react';
 import { Spinner } from '@/components/Spinner';
 import type { SpanMetricSeries } from '@/lib/types';
 import type { ChartThreshold, ChartTimeRegion } from '@/lib/chart/overlays';
@@ -33,8 +34,18 @@ function toOvSeries(ls: ChartLine[]): OvChartSeries[] {
     .filter(s => s.data.length);
 }
 
-export function ChartCard({ title, titleTip, lines, statsLines, unit, mode = 'line', deploy, status = 'ready', onZoom, onZoomReset, syncKey, xRange, thresholds, regions, legendStorageKey, defaultHidden, statsDefaultCollapsed }: {
+export function ChartCard({ title, titleTip, headerAside, note, lines, statsLines, unit, mode = 'line', deploy, status = 'ready', onZoom, onZoomReset, syncKey, xRange, thresholds, regions, legendStorageKey, defaultHidden, statsDefaultCollapsed }: {
   title: string; lines: ChartLine[]; unit: string;
+  // v0.9.484 — başlığın YANINA küçük bir kontrol (Response time kartının
+  // "Toplam / Operasyonlar" segmenti). Sağa DEĞİL başlığın hemen sağına
+  // konur: MetricPanel compact modda ⋮ düğmesini sağ-üste mutlak
+  // konumlandırıyor (top:6 right:6), sağ uçtaki bir kontrol onun altında
+  // kalırdı.
+  headerAside?: ReactNode;
+  // v0.9.484 — grafiğin ÜSTÜNDE tek satırlık dürüstlük notu ("+N operasyon
+  // daha", satır tavanı uyarısı). Başlık satırına sığmaz: 3 kolonlu grid'de
+  // kart dar, başlık + segment zaten dolduruyor.
+  note?: ReactNode;
   // v0.9.483 — başlığın hover açıklaması (kapsam tanımı). Overview RED
   // kartlarında "· giriş" eki başlıktan kalktı, tanım buraya taşındı.
   titleTip?: string;
@@ -76,11 +87,15 @@ export function ChartCard({ title, titleTip, lines, statsLines, unit, mode = 'li
     <div className="card">
       <div className="ov-card-h">
         <h3 title={titleTip}>{title}</h3>
+        {headerAside}
         {/* v0.9.103 (Grafana-parity #1) — header swatch lejantı kaldırıldı;
             OverviewChart artık altında StatsLegend (swatch+label+istatistik)
             gösteriyor, çift lejant olmasın. */}
       </div>
       <div className="ov-card-b" style={{ paddingTop: 10, paddingBottom: 10 }}>
+        {note && (
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>{note}</div>
+        )}
         {times.length < 2 ? (
           <div style={{ height: 150, display: 'grid', placeItems: 'center',
             color: status === 'error' ? 'var(--err)' : 'var(--text3)', fontSize: 12 }}>

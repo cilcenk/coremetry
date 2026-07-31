@@ -445,7 +445,9 @@ export const api = {
   logs:      (params: LogsParams)    => get<LogsResponse>(`/api/logs?${qs(params)}`),
 
   metricNames: (service: string)     => get<MetricInfo[] | null>(`/api/metrics/names${service ? '?service=' + encodeURIComponent(service) : ''}`),
-  metrics:     (params: MetricsParams) => get<MetricPoint[] | null>(`/api/metrics?${qs(params)}`),
+  // v0.9.464 (dürüstlük A12) — zarf {points, truncated}: nokta tavanı
+  // dolduğunda pencerenin SON kısmı döner ve UI bunu söyler.
+  metrics:     (params: MetricsParams) => get<{ points: MetricPoint[]; truncated: boolean } | null>(`/api/metrics?${qs(params)}`),
 
   // Logs timeseries — Histogram aggregation routed through
   // whichever backend is configured (CH or external ES). Powers

@@ -32,6 +32,7 @@ export function MetricsExplorer({ range, viz, compare, initialService = '', init
   // metrics scale.
   const [currentMeta, setCurrentMeta] = useState<MetricInfo | null>(null);
   const [series, setSeries]           = useState<ExploreSeries[] | null | undefined>(undefined);
+  const [truncated, setTruncated] = useState(false);
 
   // Track first mount so the "clear metric on service swap"
   // effect doesn't wipe the deep-linked initialMetric the moment
@@ -69,8 +70,14 @@ export function MetricsExplorer({ range, viz, compare, initialService = '', init
 
     Promise.all([
       fetchOne(from, to),
-      compare ? fetchOne(from - (to - from), from) : Promise.resolve([]),
-    ]).then(([cur, prev]) => {
+      compare ? fetchOne(from - (to - from), from) : Promise.resolve(null),
+    ]).then(([curR, prevR]) => {
+      const cur = curR?.points ?? [];
+      const prev = prevR?.points ?? [];
+      // v0.9.464 (dürüstlük A12) — tavan dolduysa söyle: eski ASC+LIMIT
+      // pencerenin yalnız BAŞINI çiziyordu; artık SON kısmı gelir ve
+      // şerit kısmiliği söyler.
+      setTruncated((curR?.truncated ?? false) || (prevR?.truncated ?? false));
       const out: ExploreSeries[] = [];
       // Group raw points by their attrs string so each unique
       // label tuple becomes one series.
@@ -84,7 +91,7 @@ export function MetricsExplorer({ range, viz, compare, initialService = '', init
       byAttrs.forEach((pts, name) => {
         out.push({ name, points: pts.sort((a, b) => a.t - b.t) });
       });
-      if (compare && prev) {
+      if (compare && prev.length > 0) {
         const shift = to - from;
         const prevByAttrs = new Map<string, { t: number; v: number }[]>();
         prev.forEach(p => {
@@ -118,6 +125,17 @@ export function MetricsExplorer({ range, viz, compare, initialService = '', init
         {unit && <span style={{ color: 'var(--text3)', fontSize: 11 }}>unit: {unit}</span>}
       </div>
 
+      {/* v0.9.464 (dürüstlük A12) — nokta tavanı dolduysa pencere kısmi:
+          en YENİ noktalar gösteriliyor (eski davranış sessizce baş kısmı
+          çizip serinin erken bittiği yanılsamasını veriyordu). */}
+      {truncated && (
+        <div style={{
+          margin: '4px 0 8px', padding: '5px 10px', borderRadius: 6, fontSize: 12,
+          background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--text2)',
+        }}>
+          ⚠ Nokta tavanı doldu — pencerenin SON kısmı gösteriliyor. Pencereyi daralt ya da Explore'un bucket'lı görünümünü kullan.
+        </div>
+      )}
       {series === undefined && <Spinner />}
       {series === null && (
         <div style={{ color: 'var(--err)', fontSize: 12, padding: '12px 4px' }}>

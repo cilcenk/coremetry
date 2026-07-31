@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { fmtSmart, niceTickValues, fmtXTicks, fmtAxisTick , seriesColor } from './chartFmt';
+import { fmtSmart, niceTickValues, fmtXTicks, fmtAxisTick , seriesColor, fmtTooltipTime } from './chartFmt';
 
 // v0.8.58 — fmtXTicks regression (operator-reported: multi-day metric x-axis
 // labels overlapped). Same-day ranges stay HH:MM; multi-day ranges keep HH:MM
@@ -199,6 +199,45 @@ describe('fmtXTicks — sub-minute resolution', () => {
     // alone would miss a pair that collides later in the array.
     const splits = [at(5, 30, 0), at(5, 32, 0), at(5, 32, 10)];
     expect(fmtXTicks(splits)).toEqual(['05:30:00', '05:32:00', '05:32:10']);
+  });
+});
+
+// v0.9.483 (operatör: "çıkan hover'da ay gün saat yok") — tooltip zaman
+// satırı artık tarihi de taşır. Testler YEREL saatle Date kurar (formatter
+// yerel getter'lar kullanır), böylece CI'ın TZ'inden bağımsız.
+describe('fmtTooltipTime — hover zaman satırı (v0.9.483)', () => {
+  const at = (y: number, mo: number, d: number, h: number, mi: number, s = 0) =>
+    new Date(y, mo - 1, d, h, mi, s).getTime() / 1000;
+
+  it('gün.ay + HH:MM (adım ≥ 60sn → saniye yok)', () => {
+    expect(fmtTooltipTime(at(2026, 7, 31, 23, 12, 5), 60)).toBe('31.07 23:12');
+    expect(fmtTooltipTime(at(2026, 7, 31, 23, 12, 5), 300)).toBe('31.07 23:12');
+  });
+
+  it('adım < 60sn → saniye eklenir', () => {
+    expect(fmtTooltipTime(at(2026, 7, 31, 23, 12, 5), 30)).toBe('31.07 23:12:05');
+    expect(fmtTooltipTime(at(2026, 7, 31, 23, 12, 5), 1)).toBe('31.07 23:12:05');
+  });
+
+  it('adım verilmezse (tek nokta) saniye yok', () => {
+    expect(fmtTooltipTime(at(2026, 7, 31, 23, 12, 5))).toBe('31.07 23:12');
+    expect(fmtTooltipTime(at(2026, 7, 31, 23, 12, 5), null)).toBe('31.07 23:12');
+    expect(fmtTooltipTime(at(2026, 7, 31, 23, 12, 5), Infinity)).toBe('31.07 23:12');
+  });
+
+  it('gün / ay / saat / dakika iki hane sıfır-dolgulu', () => {
+    expect(fmtTooltipTime(at(2026, 1, 5, 9, 7, 3), 300)).toBe('05.01 09:07');
+    expect(fmtTooltipTime(at(2026, 1, 5, 9, 7, 3), 10)).toBe('05.01 09:07:03');
+  });
+
+  it('gece yarısı ve yıl sonu doğru gün/ay', () => {
+    expect(fmtTooltipTime(at(2026, 12, 31, 0, 0, 0), 300)).toBe('31.12 00:00');
+    expect(fmtTooltipTime(at(2027, 1, 1, 0, 0, 0), 300)).toBe('01.01 00:00');
+  });
+
+  it('saat-yalnız biçim geri gelmez (regresyon pini)', () => {
+    // Eski davranış toLocaleTimeString([], {hour, minute}) → "23:12".
+    expect(fmtTooltipTime(at(2026, 7, 31, 23, 12), 300)).not.toMatch(/^\d{2}:\d{2}$/);
   });
 });
 

@@ -53,6 +53,12 @@ export const STORAGE_KEYS = {
 export const dtSortKey = (storageKey: string) => `dt.${storageKey}.sort`;
 export const dtWidthKey = (storageKey: string) => `dt.${storageKey}.widths`;
 
+/** Chart-legend family (v0.9.483): "▶/▼ Series (N)" istatistik tablosunun
+ *  açık/kapalı durumu, grafik başına. Görünürlük seçimi ayrı bir ailede
+ *  (`cm.legendVis:` — lib/chart/legendVisibility.ts) yaşar; iki kayıt
+ *  bilinçli AYRI: seri gizleme ile paneli kapatma farklı niyetler. */
+export const legendCollapseKey = (storageKey: string) => `cm.legendCollapsed.${storageKey}`;
+
 export function getRaw(key: string): string | null {
   try {
     return localStorage.getItem(key);

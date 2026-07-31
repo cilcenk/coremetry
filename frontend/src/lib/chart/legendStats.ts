@@ -31,6 +31,24 @@ export function seriesStats(values: ReadonlyArray<number | null | undefined>): S
   return { last, min, max, mean: sum / count, sum, count };
 }
 
+// resolveLegendCollapsed (v0.9.483) — "▶/▼ Series (N)" tablosunun AÇILIŞ
+// durumu. Öncelik legendVisibility'nin persist kuralının aynısı:
+//   kullanıcının kalıcı seçimi > çağıranın default'u > seri-sayısı eşiği
+// Kullanıcı bir kez açtıysa (stored=false) o grafikte açık kalır; hiç
+// dokunmadıysa panel kendi default'unu söyler (Overview RED kartları:
+// kapalı — operatör "dikey alanı yiyor" dedi). Bozuk/eksik kayıt null →
+// default kazanır (getItem<T> zaten fallback'e düşer).
+export function resolveLegendCollapsed(
+  stored: boolean | null | undefined,
+  defaultCollapsed: boolean | undefined,
+  seriesCount: number,
+  threshold: number,
+): boolean {
+  if (typeof stored === 'boolean') return stored;
+  if (typeof defaultCollapsed === 'boolean') return defaultCollapsed;
+  return seriesCount > threshold;
+}
+
 // isAdditiveUnit — Sum/Σ (ve "Toplam" satırı) bu birimde ANLAMLI mı?
 // Toplanabilir: boş (sayaç/adet), oran/hız (rps, req/s, /s, ops), bytes
 // (B/KB/MB/GB). Toplanamaz: yüzde (%), gecikme/süre (ms/s/µs/ns/min/h) —

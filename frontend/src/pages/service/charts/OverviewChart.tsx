@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
-import { fmtXTicks, fmtAxisTick } from '@/lib/chartFmt';
+import { fmtXTicks, fmtAxisTick, fmtTooltipTime } from '@/lib/chartFmt';
 import { overviewChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
@@ -74,10 +74,21 @@ interface Props {
   legendStorageKey?: string;
   // Kayıtlı seçim yokken gizli başlayacak etiketler (latency default'u p99).
   defaultHidden?: readonly string[];
+  // v0.9.483 — alttaki "Series (N)" istatistik tablosu kapalı başlasın mı
+  // (kullanıcının kalıcı seçimi yoksa). Overview RED kartları true geçer.
+  statsDefaultCollapsed?: boolean;
+  // v0.9.483 — istatistik tablosunun ÇİZİLEN seriden farklı bir küme
+  // göstermesi gerektiğinde. Throughput kartı çizgiye döndü (Toplam +
+  // Errors) ama tablo eskisi gibi OK / Errors satırları + "Toplam"
+  // toplamını göstermeli; Toplam'ı hem satır hem toplam olarak saymak
+  // trafiği iki katı gösterirdi. Verildiğinde satır↔seri index eşlemesi
+  // artık geçerli olmadığından gizle/izole tıklaması KAPANIR (yanlış
+  // seriyi gizlemektense tıklamamak).
+  statsSeries?: OvChartSeries[];
 }
 
 export function OverviewChart({
-  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', thresholds, regions, onZoom, onZoomReset, syncKey, xRange, legendStorageKey, defaultHidden,
+  times, series, height = 150, mode = 'line', unit = '', deployAtSec = null, deployLabel = 'deploy', thresholds, regions, onZoom, onZoomReset, syncKey, xRange, legendStorageKey, defaultHidden, statsDefaultCollapsed, statsSeries,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   // onZoom in a ref (v0.8.520 pattern) so the once-per-build setSelect hook
@@ -322,7 +333,13 @@ export function OverviewChart({
               })),
             );
             if (rows.length === 0) { tt.style.display = 'none'; return; }
-            const ts = new Date(tSec * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            // v0.9.483 (operatör: "çıkan hover'da ay gün saat yok") — tarih
+            // artık tooltip'te: paylaşımlı fmtTooltipTime (lib/chartFmt).
+            // Saniye çözünürlüğü TICK ARALIĞINDAN gelir (fmtXTicks'in
+            // v0.9.329 kuralıyla aynı); adım ilk iki bucket'ın farkı —
+            // seriler tek batch'ten geldiği için eşit aralıklı.
+            const stepSec = xs.length > 1 ? Math.abs(xs[1] - xs[0]) : undefined;
+            const ts = fmtTooltipTime(tSec, stepSec);
             tt.innerHTML = `<div class="ov-tt-t">${ts}</div>` + rows.map(r =>
               `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,
             ).join('');
@@ -427,11 +444,16 @@ export function OverviewChart({
         )}
       </div>
       {/* v0.9.103 (Grafana-parity #1) — grafik altında seri istatistikleri;
-          Grafana-parite #2 — interaktif: tık gizle/göster, Ctrl/Cmd izole. */}
+          Grafana-parite #2 — interaktif: tık gizle/göster, Ctrl/Cmd izole.
+          v0.9.483 — açık/kapalı durumu grafik başına kalıcı (legendStorageKey
+          ile aynı anahtar, ayrı depolama ailesi); statsSeries verildiyse
+          tablo ayrı bir küme gösterir ve etkileşim kapanır (bkz. Props). */}
       <StatsLegend
-        series={series.map(s => ({ label: s.label, color: s.color, values: s.data, unit }))}
-        isVisible={i => legendVis?.[i] ?? true}
-        onToggle={handleLegendToggle}
+        series={(statsSeries ?? series).map(s => ({ label: s.label, color: s.color, values: s.data, unit }))}
+        storageKey={legendStorageKey}
+        defaultCollapsed={statsDefaultCollapsed}
+        isVisible={statsSeries ? undefined : i => legendVis?.[i] ?? true}
+        onToggle={statsSeries ? undefined : handleLegendToggle}
       />
     </>
   );

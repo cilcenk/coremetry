@@ -155,10 +155,17 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
     () => [{ role: 'user' as const, text: aiSubjectQuestion(subject.kind, subject.id) }],
     [subject],
   );
+  // v0.9.482 — öznenin KENDİSİ de tele gider: sunucu bundan ilgili
+  // explain'in HAM KANITINI (trace span'leri + ilişkili loglar, exception
+  // paketi) yeniden kurup anlatıma katar. Operatör raporu: "logda ne
+  // yazıyor" gibi takipler açıklamanın metninde geçmediği için kör
+  // cevaplanıyordu. `?ai=` kodeğinin AYNI biçimi — ikinci bir sözleşme yok.
+  const subjectParam = useMemo(() => formatAiParam(subject), [subject]);
   // service-health öznesinde sayfa bağlamı da geçer: guided router
   // servisi mesajda bulamazsa bunu varsayılan alır (v0.9.164 sözleşmesi).
   const { turns, busy, send, last, showFollowups } = useChatThread({
-    explain, seed, service: subject.kind === 'service-health' ? subject.id : undefined,
+    explain, seed, subject: subjectParam,
+    service: subject.kind === 'service-health' ? subject.id : undefined,
   });
 
   useEffect(() => {

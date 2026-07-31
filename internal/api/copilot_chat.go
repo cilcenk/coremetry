@@ -66,6 +66,13 @@ type chatRequest struct {
 		// olduğunda guided/explain-grounded ayrımını copilot_drawer.go
 		// yönetir (kök neden + tasarım orada yazılı).
 		Explain string `json:"explain,omitempty"`
+		// Subject (v0.9.482) — çekmecenin öznesi, frontend'in `?ai=` kodeği
+		// biçiminde ("trace:<id>", "span:<trace>:<span>", "exception:<fp>").
+		// Sunucu bundan İLGİLİ EXPLAIN'İN KANIT PAKETİNİ yeniden kurar
+		// (copilot_drawer.go): açıklamanın metni takip sorularına yetmiyordu
+		// — "logda ne yazıyor" kör cevaplanıyordu (operatör raporu).
+		// Boşken v0.9.479 davranışı bayt-bayt korunur.
+		Subject string `json:"subject,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -150,7 +157,10 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// filo/doküman soruları global CoSRE penceresinde kalır.
 	// (ai_calls satırını guided'da olduğu gibi tek narration çağrısı
 	// KENDİSİ yazar — burada ikinci bir RecordUsage yok.)
-	if handled, dok := s.copilotChatDrawer(ctx, emit, req.Messages, req.Context.Explain); handled {
+	// v0.9.482 — özne (context.subject) doluysa aynı yol ilgili explain'in
+	// HAM KANITINI da yeniden kurup anlatıma katar; kanıt çekilemezse
+	// v0.9.479'un metin-tabanlı anlatımı aynen sürer (soft-fail).
+	if handled, dok := s.copilotChatDrawer(ctx, emit, req.Messages, req.Context.Explain, req.Context.Subject); handled {
 		emit("done", map[string]bool{"ok": dok})
 		return
 	}

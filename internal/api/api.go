@@ -8147,146 +8147,32 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 // Heavy lifting (gathering context) happens server-side so the
 // browser doesn't ship trace data back to the API just to ship it on
 // to Anthropic.
+//
+// v0.9.482 — kanıt montajı (span seçimi + ilişkili loglar + dürüstlük
+// notu) buildTraceExplainInput'a taşındı: AI çekmecesindeki sohbet AYNI
+// paketi kurabilsin (operatör raporu: "logda ne yazıyor" takipleri kör
+// cevaplanıyordu). Prompt bayt-bayt aynıdır — explain_trace_input_test.go
+// pinler. Emsal: anomaly.BuildExceptionExplainInput (v0.9.415).
 func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 	if !s.copilot.Active() {
 		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
 		return
 	}
-	id := r.PathValue("id")
-	spans, err := s.store.GetTrace(r.Context(), id)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	if len(spans) == 0 {
+	in, err := s.buildTraceExplainInput(r.Context(), r.PathValue("id"))
+	if errors.Is(err, errExplainTraceNotFound) {
 		http.Error(w, "trace not found", http.StatusNotFound)
 		return
 	}
-	// Compact each span — full attribute maps blow the prompt for big
-	// traces. Keep just the fields a senior engineer would want.
-	type lite struct {
-		Name       string  `json:"name"`
-		Service    string  `json:"service"`
-		Kind       string  `json:"kind"`
-		ParentSpan string  `json:"parent,omitempty"`
-		SpanID     string  `json:"id"`
-		DurationMs float64 `json:"durMs"`
-		Status     string  `json:"status,omitempty"`
-		StatusMsg  string  `json:"statusMsg,omitempty"`
-	}
-	// Trace penceresi (log sorgusu için) — cap'ten ÖNCE, tüm span'lar üstünden.
-	minT, maxT := spans[0].StartTime, spans[0].EndTime
-	for _, sp := range spans {
-		if sp.StartTime < minT {
-			minT = sp.StartTime
-		}
-		if sp.EndTime > maxT {
-			maxT = sp.EndTime
-		}
-	}
-	// v0.9.462 (dürüstlük A6) — prompt tavanı 100 span'de kalır ama seçim
-	// artık HEAD dilimi değil: kronolojik ilk-100, hatalı ve en yavaş
-	// span'lar 100'ün dışındaysa modele HİÇ ulaşmıyordu — "en yavaş span"
-	// kanıtı waterfall'da yanlış span'ı kutulayabiliyordu. pickExplainSpans
-	// hataları + en yavaşları garantiler, kalanı kronolojik doldurur ve
-	// seçimi zaman sırasına geri koyar (model akışı sırayla okur).
-	totalSpans := len(spans)
-	spans = pickExplainSpans(spans, 100)
-	compact := make([]lite, 0, len(spans))
-	for _, sp := range spans {
-		dur := float64(sp.EndTime-sp.StartTime) / 1e6
-		l := lite{Name: sp.Name, Service: sp.ServiceName, Kind: sp.Kind,
-			ParentSpan: sp.ParentSpanID, SpanID: sp.SpanID, DurationMs: dur}
-		if sp.StatusCode == "error" {
-			l.Status = "error"
-			l.StatusMsg = sp.StatusMessage
-		}
-		compact = append(compact, l)
-	}
-	payload, _ := json.Marshal(compact)
-
-	// Trace'in LOGLARI — SADECE kullanıcı bu explain'i tetiklediğinde, log
-	// store'a TEK sorgu (poll/proaktif YOK; operatör isteği v0.9.166).
-	// Elastic loglarında stacktrace'ler span event'lerinden zengin
-	// olabildiğinden trace + logları BİRLİKTE yorumlatırız. Pencere trace
-	// span'larından ±1dk, bounded limit 30, hata-öncelikli, gövde/stack
-	// truncate'li (2B prompt bütçesi). Log store yok/yavaş/boşsa sessizce
-	// trace-only'e düşer — explain'i asla düşürmez.
-	var logsBlock string
-	if s.logs != nil {
-		from := time.Unix(0, minT).Add(-time.Minute)
-		to := time.Unix(0, maxT).Add(time.Minute)
-		lctx, cancel := context.WithTimeout(r.Context(), 6*time.Second)
-		if page, lerr := logstore.LogsForTrace(lctx, s.logs, id, from, to, 30); lerr == nil && page != nil && len(page.Logs) > 0 {
-			type liteLog struct {
-				Sev    string `json:"sev,omitempty"`
-				Svc    string `json:"svc,omitempty"`
-				ExType string `json:"exType,omitempty"`
-				Stack  string `json:"stack,omitempty"`
-				Body   string `json:"body,omitempty"`
-			}
-			logs := page.Logs
-			sort.SliceStable(logs, func(i, j int) bool { return logs[i].Severity > logs[j].Severity })
-			ll := make([]liteLog, 0, 15)
-			for _, lg := range logs {
-				if len(ll) >= 15 {
-					break
-				}
-				e := liteLog{Sev: lg.SeverityText, Svc: lg.ServiceName, Body: truncate(lg.Body, 600)}
-				if lg.Attributes != nil {
-					e.ExType = lg.Attributes["exception.type"]
-					e.Stack = truncate(lg.Attributes["exception.stacktrace"], 900)
-				}
-				ll = append(ll, e)
-			}
-			if lp, e := json.Marshal(ll); e == nil {
-				logsBlock = fmt.Sprintf("\n\nBu trace'in ilişkili LOGLARI (log store; stacktrace burada span event'lerinden zengin olabilir), yüksek severity önce:\n```json\n%s\n```\n\nTrace waterfall'ı VE logları BİRLİKTE yorumla — hata/stacktrace varsa kök nedeni logdaki stacktrace + exception.type'a dayandır ve ilgili span'ın StatusMsg'ıyla eşleştir.", string(lp))
-			}
-		}
-		cancel()
-	}
-
-	// v0.9.408 (operatör: "kök neden kısımları kutulanmıyor") — kanıt
-	// span'leri DETERMİNİSTİK: LLM çıktısını parse etmek yerine modele
-	// beslediğimiz aynı veriden hesaplanır (gemma4 güvenilirliğinden
-	// bağımsız). Hata span'leri (≤5) + en yavaş span; UI bunları
-	// waterfall'da kutular.
-	evidence := make([]string, 0, 6)
-	slowestID, slowestDur := "", float64(-1)
-	for _, c := range compact {
-		if c.Status == "error" && len(evidence) < 5 {
-			evidence = append(evidence, c.SpanID)
-		}
-		if c.DurationMs > slowestDur {
-			slowestDur, slowestID = c.DurationMs, c.SpanID
-		}
-	}
-	if slowestID != "" {
-		dup := false
-		for _, e := range evidence {
-			if e == slowestID {
-				dup = true
-				break
-			}
-		}
-		if !dup {
-			evidence = append(evidence, slowestID)
-		}
-	}
-
-	analyzedNote := ""
-	if totalSpans > len(compact) {
-		// Hem modele hem operatöre aynı gerçek: analiz kısmi ama seçim
-		// hata+yavaşlık öncelikli — "head" değil.
-		analyzedNote = fmt.Sprintf(" (trace'in tamamı %d span; hatalar + en yavaşlar öncelikli %d span analiz edildi)", totalSpans, len(compact))
-	}
-	user := fmt.Sprintf("Trace %s with %d spans%s:\n```json\n%s\n```%s", id, len(compact), analyzedNote, string(payload), logsBlock)
-	out, err := s.copilotExplain(r, copilot.SystemPromptTrace(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"explanation": out, "evidenceSpanIds": evidence})
+	out, err := s.copilotExplain(r, copilot.SystemPromptTrace(), in.User)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"explanation": out, "evidenceSpanIds": in.Evidence})
 }
 
 // copilotExplainSpan focuses the LLM on ONE span instead of the

@@ -202,7 +202,7 @@ func TestDrawerNarrationUser(t *testing.T) {
 		{Role: "assistant", Text: "NPE, checkout'ta"},
 		{Role: "user", Text: "peki nasıl düzeltirim?"},
 	}
-	got := drawerNarrationUser("peki nasıl düzeltirim?", "NPE checkout'ta, 34 kez", msgs)
+	got := drawerNarrationUser("peki nasıl düzeltirim?", "NPE checkout'ta, 34 kez", msgs, "")
 	for _, want := range []string{
 		"EKRANDAKİ AÇIKLAMA", "NPE checkout'ta, 34 kez",
 		"KONUŞMA (K: operatör, C: sen):", "K: Bu exception grubunun kök nedeni ne? (fp1)",
@@ -217,7 +217,7 @@ func TestDrawerNarrationUser(t *testing.T) {
 		t.Fatalf("soru sonda değil:\n%s", got)
 	}
 	// Geçmişsiz çağrıda KONUŞMA bölümü hiç yazılmaz.
-	solo := drawerNarrationUser("bu neden oluyor?", "NPE", []copilot.ChatMessage{{Role: "user", Text: "bu neden oluyor?"}})
+	solo := drawerNarrationUser("bu neden oluyor?", "NPE", []copilot.ChatMessage{{Role: "user", Text: "bu neden oluyor?"}}, "")
 	if strings.Contains(solo, "KONUŞMA") {
 		t.Fatalf("boş geçmişte KONUŞMA bölümü yazıldı:\n%s", solo)
 	}

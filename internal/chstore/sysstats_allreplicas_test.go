@@ -32,3 +32,18 @@ func TestNodeMetadataUsesAllReplicas(t *testing.T) {
 		t.Error("server utilisation must fan out to EVERY node (clusterAllReplicas)")
 	}
 }
+
+// v0.9.481 (operator-reported, prod: "CH tek node'a mı bağlanıyor?") —
+// strateji yokken clickhouse-go varsayılanı ConnOpenInOrder: 4 host'luk
+// listede her bağlantı İLK sağlıklı host'a gider, tüm koordinasyon tek
+// node'da birikir. Pin: ana bağlantı RoundRobin (SQL console bilinçli
+// in-order — admin node-özel system.* okur).
+func TestMainConnRoundRobin(t *testing.T) {
+	b, err := os.ReadFile("store.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "ConnOpenStrategy: clickhouse.ConnOpenRoundRobin") {
+		t.Error("ana CH bağlantısı RoundRobin değil — 4 node'luk kümede her şey ilk host'ta koordine olur")
+	}
+}

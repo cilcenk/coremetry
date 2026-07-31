@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { fmtSmart } from '@/lib/chartFmt';
-import { seriesStats, isAdditiveUnit } from '@/lib/chart/legendStats';
+import { seriesStats, isAdditiveUnit, resolveLegendCollapsed } from '@/lib/chart/legendStats';
+import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
 
 // StatsLegend (v0.9.103, Grafana-parity #1) — kompakt OVC/TC grafiklerinin
 // ALTINA seri-başı istatistik tablosu (Seçenek A, operatör onaylı). MLC/TSP'de
@@ -10,6 +11,10 @@ import { seriesStats, isAdditiveUnit } from '@/lib/chart/legendStats';
 //
 // COLLAPSE (zorunlu): "Series (N)" ▶/▼ toggle HER ZAMAN var; >8 seride
 // VARSAYILAN kapalı (TSP LEGEND_COLLAPSE_THRESHOLD deseni) — sayfa uzamasın.
+// v0.9.483 — çağıran defaultCollapsed ile eşikten bağımsız kapalı başlatabilir
+// (Overview RED kartları: 4 seri, eşiğe hiç değmiyordu ama tablo ~150px dikey
+// alanı kalıcı yiyordu — operatör raporu) ve storageKey ile kullanıcının
+// tercihi grafik başına kalıcılaşır.
 //
 // Sum/Σ + "Toplam" satırı yalnız TOPLANABİLİR birimde (rps/sayaç/bytes);
 // ms/s/% gizlenir. Her seri kendi birimine göre (TC dual-axis: left/right).
@@ -29,8 +34,13 @@ export interface StatsLegendSeries {
   unit?: string;
 }
 
-export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed }: {
+export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed, storageKey }: {
   series: StatsLegendSeries[];
+  // v0.9.483 — açık/kapalı seçimi grafik başına KALICI (legendStorageKey ile
+  // aynı anahtar, ayrı aile: lib/storage.ts legendCollapseKey). Bir kez açan
+  // kullanıcı her ziyarette açık bulur; hiç dokunmayan default'u görür.
+  // Anahtar verilmezse davranış eskisi gibi (oturumluk state).
+  storageKey?: string;
   // v0.9.245 — eşikten BAĞIMSIZ olarak kapalı başlat. Traces histogramında
   // tam 3 seri var, yani LEGEND_COLLAPSE_THRESHOLD hiç devreye girmiyor ve
   // istatistik tablosu ~150px'i kalıcı olarak yiyor; asıl iş olan trace
@@ -43,7 +53,20 @@ export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed }: {
   onToggle?: (i: number, additive: boolean) => void;
   isVisible?: (i: number) => boolean;
 }) {
-  const [collapsed, setCollapsed] = useState(defaultCollapsed ?? series.length > LEGEND_COLLAPSE_THRESHOLD);
+  // v0.9.483 — açılış durumu: kalıcı kullanıcı seçimi > defaultCollapsed >
+  // seri-sayısı eşiği (çözüm saf: legendStats.resolveLegendCollapsed).
+  // Lazy initializer: localStorage bir kez, mount'ta okunur.
+  const [collapsed, setCollapsed] = useState(() => resolveLegendCollapsed(
+    storageKey ? getItem<boolean | null>(legendCollapseKey(storageKey), null) : null,
+    defaultCollapsed, series.length, LEGEND_COLLAPSE_THRESHOLD,
+  ));
+  const toggleCollapsed = () => {
+    // Yan etki updater'ın DIŞINDA — StrictMode updater'ı iki kez çağırır,
+    // içeride yazmak çift kayıt demek olurdu.
+    const next = !collapsed;
+    setCollapsed(next);
+    if (storageKey) setItem(legendCollapseKey(storageKey), next);
+  };
   if (series.length === 0) return null;
 
   const stats = series.map(s => seriesStats(s.values));
@@ -63,7 +86,7 @@ export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed }: {
 
   return (
     <div style={{ marginTop: 8 }}>
-      <button type="button" onClick={() => setCollapsed(c => !c)}
+      <button type="button" onClick={toggleCollapsed}
         style={{
           background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px',
           fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 4,

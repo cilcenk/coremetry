@@ -10,6 +10,8 @@ import { useServiceDeploys, useSLOs } from '@/lib/queries';
 import type { ChartThreshold } from '@/lib/chart/overlays';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
+import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
+import { sumNullableSeries } from './charts/throughputTotal';
 import { OpsCard, DbCard } from './OverviewTables';
 import { TopEndpointsCard } from './TopEndpointsCard';
 import { MetricPanel } from '@/components/MetricPanel';
@@ -255,12 +257,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const lat = usingAllSpans ? seriesQ.data : latencyQ.data;
   const latStatus: 'loading' | 'error' | 'ready' =
     latencyQ.isLoading ? 'loading' : latencyQ.isError ? 'error' : 'ready';
-  // What the RED panel is actually measuring — rendered next to each title so
-  // the definition is never implicit. v0.9.253: this now describes throughput
-  // and failure rate too, not just latency; all three read the same series.
-  const latScopeNote = usingAllSpans
-    ? 'tüm span’ler — bu serviste giriş span’i (server/consumer) yok'
-    : 'giriş span’leri (server + consumer) — servisin kendi işi';
+  // What the RED panel is actually measuring — the KPI tiles, the scope badge
+  // and (v0.9.483) the chart titles all read this ONE string. v0.9.253: it
+  // describes throughput and failure rate too, not just latency; all three
+  // read the same series. v0.9.483 — metin charts/scopeTitle.ts'e taşındı:
+  // başlık eki ve açıklama tek yerden gelsin (ikisi ayrı yazılınca biri
+  // güncellenip diğeri bayatlıyordu).
+  const latScopeNote = scopeTitleTip(usingAllSpans);
 
   // Grafana-parite M3 — failure-rate paneline SLO hata-bütçesi eşiği.
   // ServiceCharts'ın error-rate threshold KAYNAĞININ aynısı (useSLOs →
@@ -294,11 +297,20 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     return { sec: latest.timeUnixNs / 1e9, label: latest.version };
   }, [deploysQ.data, from, to]);
 
-  // Throughput stacked-area bands (OK vs Errors) derived from the MV-backed
-  // rate + error_rate series — no extra query, no raw-spans scan (invariant
-  // #3). Error band = rate × err%, OK band = the remainder; they stack to the
-  // total rate. (A 4xx-vs-5xx split would need an HTTP-status MV dimension.)
-  const throughputBands = useMemo<ChartLine[]>(() => {
+  // Throughput series (OK vs Errors) derived from the MV-backed rate +
+  // error_rate series — no extra query, no raw-spans scan (invariant #3).
+  // Errors = rate × err%, OK = the remainder; the two add up to the total rate.
+  // (A 4xx-vs-5xx split would need an HTTP-status MV dimension.)
+  //
+  // v0.9.483 (operatör: yığılmış alan sorgulandı) — kart artık ÇİZGİ modunda
+  // ve iki çizgi taşıyor: "Toplam" (var(--accent)) + "Errors" (var(--err)).
+  // Yığın kalkınca toplam görsel olarak okunamaz oldu, bu yüzden VERİ olarak
+  // çiziliyor (sumNullableSeries — boşluk semantiği testli).
+  //   chart → çizilen çizgiler   (Toplam, Errors)
+  //   stats → alttaki tablo      (OK, Errors + tfoot "Toplam") — v0.9.103'ten
+  //           beri ne gösteriyorsa aynısı; Toplam'ı satır olarak da koysaydık
+  //           tfoot toplamı trafiği iki katı gösterirdi.
+  const throughput = useMemo<{ chart: ChartLine[]; stats: ChartLine[] }>(() => {
     // v0.9.253 — `lat` is the entry-scoped series when the service has entry
     // spans, and the all-span series when it doesn't (usingAllSpans). Reading
     // through it keeps throughput, error rate and latency on ONE population:
@@ -306,13 +318,23 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     // two different services stacked on one card.
     const ratePts = lat?.rate?.[0]?.points ?? [];
     const erPts = lat?.error_rate?.[0]?.points ?? [];
-    if (ratePts.length < 2) return [{ series: lat?.rate ?? [], color: 'var(--accent)', label: 'req/s' }];
+    if (ratePts.length < 2) {
+      // Tek nokta / veri yok — ayrıştıracak bir şey yok, ham hız çizilir.
+      const only: ChartLine[] = [{ series: lat?.rate ?? [], color: 'var(--accent)', label: 'Toplam' }];
+      return { chart: only, stats: only };
+    }
     const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
     const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
-    return [
-      { series: [{ groupKey: [], points: okPts }], color: 'var(--ok)', label: 'OK' },
-      { series: [{ groupKey: [], points: errPts }], color: 'var(--err)', label: 'Errors' },
-    ];
+    const okLine: ChartLine = { series: [{ groupKey: [], points: okPts }], color: 'var(--ok)', label: 'OK' };
+    const errLine: ChartLine = { series: [{ groupKey: [], points: errPts }], color: 'var(--err)', label: 'Errors' };
+    // Toplam = OK + Errors, eleman-eleman (boşluklar korunur). series boş:
+    // x ekseni Errors çizgisinden gelir — ikisi de ratePts'ten türediği için
+    // aynı bucket kümesi, index kayması yok (ChartCard hizalama sözleşmesi).
+    const totalLine: ChartLine = {
+      series: [], color: 'var(--accent)', label: 'Toplam',
+      values: sumNullableSeries(okPts.map(p => p.value), errPts.map(p => p.value)),
+    };
+    return { chart: [totalLine, errLine], stats: [okLine, errLine] };
   }, [lat]);
 
   // v0.9.170 (operatör-bildirimi: cluster çözülemeyen / metrik-yoğun
@@ -325,7 +347,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const rateNow = vals(lat?.rate).slice(-1)[0];
   const errNow = vals(lat?.error_rate).slice(-1)[0];
   const p99Now = vals(lat?.p99).slice(-1)[0];
-  const p50Now = vals(lat?.p50).slice(-1)[0];
+  // v0.9.483 — p50Now / p50Ms kaldırıldı: tek tüketicileri "Response time ·
+  // median" karosuydu (operatör: "bence response time mediana da gerek yok").
+  // lat.p50 SERİSİ duruyor — Response time grafiğinin lejant-kontrollü çizgisi.
   // v0.9.253 — ENTRY series first, `info` only as the fallback. `info` comes
   // from service_summary_5m, which has no `kind` dimension, so it can only
   // ever report the all-span number. Preferring it would have left the tiles
@@ -338,7 +362,6 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const rps = firstNum(rateNow, info ? info.spanCount / windowSec : undefined);
   const errorRatePct = firstNum(errNow, info ? info.errorRate : undefined);
   const p99Ms = firstNum(p99Now, info?.p99DurationMs);
-  const p50Ms = firstNum(p50Now, info?.avgDurationMs);
   const apdexVal = info?.apdex ?? null;
 
   // "Every metric is a doorway" (Phase C) — canonical descriptors for each KPI
@@ -388,9 +411,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         <MetricPanel compact title="Response time · P99" metricQuery={mkLatency('p99', 'stat')}>
           <KpiTile lab="Response time · P99" val={p99Ms.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} note={latScopeNote} />
         </MetricPanel>
-        <MetricPanel compact title="Response time · median" metricQuery={mkLatency('p50', 'stat')}>
-          <KpiTile lab="Response time · median" val={p50Ms.toFixed(0)} unit=" ms" accent="var(--purple)" spark={vals(lat?.p50)} delta={computeDelta(vals(lat?.p50))} goodWhenUp={false} note={latScopeNote} />
-        </MetricPanel>
+        {/* v0.9.483 (operatör: "bence response time mediana da gerek yok") —
+            "Response time · median" karosu kaldırıldı; P99 karo olarak kalıyor.
+            P50 SERİSİ duruyor: Response time grafiğinde lejant-kontrollü bir
+            çizgi (varsayılan açık) — kaldırılan yalnız KPI şeridindeki karo. */}
         {/* Apdex has no calls_total/duration descriptor analogue in the
             spanmetrics pipeline (it's a composite of latency thresholds), so it
             stays a plain tile — no doorway. '—' when the summary bundle is
@@ -411,8 +435,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           erişilebilir kalıyor; KPI karoları gövde-tıklamasını koruyor. */}
       <div className="ov-grid ov-charts-3 ov-mb">
         <MetricPanel compact menuOnly title="Response time" metricQuery={mkLatency('p99', 'line')}>
-          <ChartCard title={usingAllSpans ? 'Response time · tüm span\u2019ler' : 'Response time · giriş'} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-            legendStorageKey="ov-response-time"
+          <ChartCard title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+            legendStorageKey="ov-response-time" statsDefaultCollapsed
             defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
             lines={[
             { series: lat?.avg ?? [], color: 'var(--teal)', label: 'avg' },
@@ -425,10 +449,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           {/* v0.9.253 — status ve seri artık ENTRY sorgusundan. Kart üstündeki
               KPI giriş span'lerini sayarken altındaki grafiğin tüm span'leri
               çizmesi, aynı kartta iki farklı servisi üst üste koymak olurdu. */}
-          <ChartCard title={usingAllSpans ? 'Throughput · tüm span’ler' : 'Throughput · giriş'} unit=" req/s" mode="stacked" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange} lines={throughputBands} />
+          <ChartCard title={scopedChartTitle('Throughput', usingAllSpans)} titleTip={latScopeNote} unit=" req/s" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+            legendStorageKey="ov-throughput" statsDefaultCollapsed
+            lines={throughput.chart} statsLines={throughput.stats} />
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
-          <ChartCard title={usingAllSpans ? 'Failure rate · tüm span’ler' : 'Failure rate · giriş'} unit="%" mode="area" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+          <ChartCard title={scopedChartTitle('Failure rate', usingAllSpans)} titleTip={latScopeNote} unit="%" mode="area" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+            legendStorageKey="ov-failure-rate" statsDefaultCollapsed
             thresholds={failureThresholds} lines={[
             { series: lat?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
           ]} />
@@ -438,7 +465,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             seri hiç yüzeye çıkmamıştı. Giriş span'leri üzerinden (RED
             kartlarıyla aynı popülasyon), 0..1. Tek-commit revert kolay. */}
         <MetricPanel compact title="Apdex" metricQuery={mkApdex('line')}>
-          <ChartCard title={usingAllSpans ? 'Apdex · tüm span\u2019ler' : 'Apdex · giriş'} unit="" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+          <ChartCard title={scopedChartTitle('Apdex', usingAllSpans)} titleTip={latScopeNote} unit="" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+            legendStorageKey="ov-apdex" statsDefaultCollapsed
             thresholds={apdexThresholds} lines={[
             { series: lat?.apdex ?? [], color: 'var(--ok)', label: 'apdex' },
           ]} />

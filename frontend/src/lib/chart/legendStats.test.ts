@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { seriesStats, isAdditiveUnit } from './legendStats';
+import { seriesStats, isAdditiveUnit, resolveLegendCollapsed } from './legendStats';
 
 // v0.9.103 (Grafana-parity #1) — lejant istatistik çekirdeği.
 
@@ -44,5 +44,23 @@ describe('isAdditiveUnit', () => {
   });
   it('bilinmeyen birim → kapalı (conservative)', () => {
     expect(isAdditiveUnit('widgets')).toBe(false);
+  });
+});
+
+// v0.9.483 (operatör: "Series tablosu varsayılan kapalı olsun") — açılış
+// durumu çözümü: kullanıcı seçimi > panel default'u > seri-sayısı eşiği.
+describe('resolveLegendCollapsed', () => {
+  it('kalıcı kullanıcı seçimi her şeyi ezer', () => {
+    expect(resolveLegendCollapsed(false, true, 20, 8)).toBe(false);  // kullanıcı AÇTI
+    expect(resolveLegendCollapsed(true, false, 2, 8)).toBe(true);    // kullanıcı KAPATTI
+  });
+  it('kayıt yokken panel default\'u kazanır', () => {
+    expect(resolveLegendCollapsed(null, true, 4, 8)).toBe(true);
+    expect(resolveLegendCollapsed(undefined, false, 20, 8)).toBe(false);
+  });
+  it('kayıt ve default yokken eski eşik davranışı korunur', () => {
+    expect(resolveLegendCollapsed(null, undefined, 9, 8)).toBe(true);
+    expect(resolveLegendCollapsed(null, undefined, 8, 8)).toBe(false);
+    expect(resolveLegendCollapsed(undefined, undefined, 4, 8)).toBe(false);
   });
 });

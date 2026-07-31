@@ -1764,7 +1764,9 @@ button.accent.copied {
    ════════════════════════════════════════════════════════════════════════ */
 .ov-grid { display: grid; gap: 16px; }
 .ov-grid.ov-mb { margin-bottom: 16px; }
-.ov-kpis { grid-template-columns: repeat(5, 1fr); }
+/* v0.9.483 — "Response time · median" karosu kaldı, şerit 5 → 4 karo
+   (operatör). 5'te bırakılsaydı sağda boş bir hücre kalırdı. */
+.ov-kpis { grid-template-columns: repeat(4, 1fr); }
 .ov-charts-3 { grid-template-columns: repeat(3, 1fr); }
 .ov-cols-2 { grid-template-columns: 1.35fr 1fr; }
 /* Service Details tab (v0.8.370) — question-grouped sections in an

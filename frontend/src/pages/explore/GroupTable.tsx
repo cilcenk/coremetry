@@ -100,7 +100,9 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onFocus }: {
       onMouseLeave={() => onFocus(null)}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 8px 0' }}>
         <Button variant="secondary" size="sm" onClick={exportCSV}
-          title="Download every series point (long format: query, series, unit, time, value)">
+          title={panels.some(p => p.more > 0 || p.rowsCapped)
+            ? 'Görünen serileri indirir (top-N kırpılmış küme) — kırpma CSV içinde # yorum satırıyla işaretlidir'
+            : 'Download every series point (long format: query, series, unit, time, value)'}>
           ⤓ CSV
         </Button>
       </div>

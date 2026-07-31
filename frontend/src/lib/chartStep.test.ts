@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STEP_RUNGS, stepForWidth, quantizeWidth } from './chartStep';
+import { STEP_RUNGS, stepForWidth, stepForPoints, quantizeWidth } from './chartStep';
 
 // GRAN-A (v0.8.245) — Grafana-style width-aware step. stepForWidth picks the
 // step a chart should REQUEST for its pixel budget (~2px/point, 120–720
@@ -62,6 +62,44 @@ describe('stepForWidth — window × width table', () => {
     expect(stepForWidth(0, 1200)).toBe(1);
     expect(stepForWidth(-60, 1200)).toBe(1);
     expect(stepForWidth(NaN, 1200)).toBe(1);
+  });
+});
+
+// v0.9.484 — stepForPoints, stepForWidth'in nokta→rung yarısı. Overview'un
+// operasyon kırılımı bunu kullanıyor: batch (maxDataPoints) ile
+// /api/spans/metric (step saniye) aynı çözünürlüğü konuşsun diye.
+describe('stepForPoints — nokta bütçesi → rung', () => {
+  const cases: Array<[desc: string, rangeSec: number, points: number, want: number]> = [
+    ['1h / 700 nokta → raw ≈5.14s, 5s rung yetmez → 10s', HOUR, 700, 10],
+    ['1h / 720 nokta → raw tam 5s → 5s rung (>= sözleşmesi)', HOUR, 720, 5],
+    ['24h / 300 nokta → raw 288s → 300s', DAY, 300, 300],
+    ['5m / 700 nokta → raw ≈0.43s → 1s taban rung', 300, 700, 1],
+    ['7d / 120 nokta → raw 5040s → 7200s', 7 * DAY, 120, 7200],
+    ['ondalık nokta sayısı aşağı yuvarlanır (600.9 → 600)', HOUR, 600.9, 10],
+  ];
+  it.each(cases)('%s', (_d, rangeSec, points, want) => {
+    expect(stepForPoints(rangeSec, points)).toBe(want);
+  });
+
+  it('stepForWidth ile aynı sonuç (clamp çağıranda kaldı — davranış korundu)', () => {
+    for (const rangeSec of [300, HOUR, 6 * HOUR, DAY, 7 * DAY, 30 * DAY]) {
+      for (const widthPx of [100, 400, 600, 1200, 1600, 2400]) {
+        const points = Math.min(720, Math.max(120, Math.floor(widthPx / 2)));
+        expect(stepForPoints(rangeSec, points)).toBe(stepForWidth(rangeSec, widthPx));
+      }
+    }
+  });
+
+  it('ladder ötesi → tam gün katları', () => {
+    expect(stepForPoints(2 * 365 * DAY, 720)).toBe(2 * DAY);
+  });
+
+  it('bozuk girdi patlamaz: pencere <=0 / non-finite → taban rung, nokta <1 → 1 nokta', () => {
+    expect(stepForPoints(0, 500)).toBe(1);
+    expect(stepForPoints(NaN, 500)).toBe(1);
+    expect(stepForPoints(HOUR, 0)).toBe(HOUR);       // tek bucket = tüm pencere
+    expect(stepForPoints(HOUR, -5)).toBe(HOUR);
+    expect(stepForPoints(HOUR, NaN)).toBe(HOUR);
   });
 });
 

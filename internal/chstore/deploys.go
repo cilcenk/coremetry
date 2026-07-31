@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -580,6 +581,23 @@ func analyzeRollouts(service string, buckets []rolloutBucket) *RolloutsResult {
 			r.VersionAfter = buckets[i].version
 			r.Kind = "deploy"
 		}
+		// v0.9.451 (operator-reported: /deploys'ta olmamış restart —
+		// web-fund-bff-pilot 08:30 "+1/-1", OpenShift'te 4 pod da 21
+		// Mayıs'tan beri 0 restart'la Running) — bucket varlığı canlılık
+		// değil "o 5 dakikada span üretti"dir; ~0.002 core'luk pilot
+		// pod 10+ dk susunca tek-bucket yumuşatma (v0.8.405) yetmiyor:
+		// susan pod "gitti", yeniden konuşan pod "geldi" okunuyordu.
+		// Ayırt edici sinyal pod adındaki ReplicaSet template-hash'i:
+		// GERÇEK rollout yeni RS hash'i üretir (k8s pod adı
+		// <deploy>-<rs-hash>-<rand5>); eklenen ve giden pod'lar AYNI
+		// hash'teyse şablon değişmemiştir → rollout/restart yok,
+		// telemetri flıker'ı. Sürüm DEĞİŞTİYSE guard atlanır (deploy
+		// kanıtı hash'ten güçlü); hash çıkarılamayan adlarda (host adı,
+		// UUID) guard devre dışı — eski davranış.
+		if r.Kind == "restart" && sameTemplateHash(added, removed) {
+			lastRolloutIdx = i // aynı flıker kuyruğu yeni satır üretmesin
+			continue
+		}
 		res.Rollouts = append(res.Rollouts, r)
 		lastRolloutIdx = i
 	}
@@ -597,6 +615,74 @@ func podSetSmoothed(buckets []rolloutBucket, i int) map[string]struct{} {
 		}
 	}
 	return cur
+}
+
+// podTemplateHash extracts the ReplicaSet pod-template-hash segment
+// from a k8s pod name (<deploy>-<rs-hash>-<rand5>): son segment 5
+// karakterlik random sonekse sondan ikinci segment hash'tir.
+// DeploymentConfig adlarında (<name>-<deployNo>-<rand>) aynı kural
+// deploy numarasını yakalar — o da rollout'ta değişir. Uymayan adlar
+// (host.name, service.instance.id ilk-8) "" döner → guard devre dışı.
+// Saf — tablo-testli.
+func podTemplateHash(pod string) string {
+	parts := strings.Split(pod, "-")
+	if len(parts) < 3 {
+		return ""
+	}
+	last := parts[len(parts)-1]
+	if len(last) != 5 || !isLowerAlnum(last) {
+		return ""
+	}
+	hash := parts[len(parts)-2]
+	if hash == "" || !isLowerAlnum(hash) {
+		return ""
+	}
+	return hash
+}
+
+func isLowerAlnum(s string) bool {
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+	return len(s) > 0
+}
+
+// sameTemplateHash — eklenen ve giden pod kümeleri AYNI template-hash
+// kümesini paylaşıyor mu? Guard yalnız İKİ taraf da tamamen
+// çıkarılabilir olduğunda uygulanır (kısmi bilgiyle bastırma =
+// kaçırılmış gerçek rollout riski).
+func sameTemplateHash(added, removed []string) bool {
+	ah, ok := hashSet(added)
+	if !ok {
+		return false
+	}
+	rh, ok := hashSet(removed)
+	if !ok {
+		return false
+	}
+	if len(ah) != len(rh) {
+		return false
+	}
+	for h := range ah {
+		if _, in := rh[h]; !in {
+			return false
+		}
+	}
+	return true
+}
+
+func hashSet(pods []string) (map[string]struct{}, bool) {
+	out := make(map[string]struct{}, len(pods))
+	for _, p := range pods {
+		h := podTemplateHash(p)
+		if h == "" {
+			return nil, false
+		}
+		out[h] = struct{}{}
+	}
+	return out, len(out) > 0
 }
 
 func podSet(xs []string) map[string]struct{} {

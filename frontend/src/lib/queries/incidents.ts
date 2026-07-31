@@ -11,9 +11,11 @@ import type { Incident, IncidentEvent } from '@/lib/types';
 export function useIncidents(filter: {
   status?: string; service?: string; severity?: string; limit?: number;
 } = {}) {
-  return useQuery<Incident[]>({
+  // v0.9.456 — zarf: {items, counts, truncated}; null gövde boş-dürüst
+  // zarfa normalize edilir.
+  return useQuery<{ items: Incident[]; counts: Record<string, number> | null; truncated: boolean }>({
     queryKey: keys.incidents.list(filter),
-    queryFn: async () => (await api.listIncidents(filter)) ?? [],
+    queryFn: async () => (await api.listIncidents(filter)) ?? { items: [], counts: null, truncated: false },
     refetchInterval: 30_000,
     staleTime: 25_000,
   });

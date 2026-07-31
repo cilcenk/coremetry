@@ -44,7 +44,8 @@ export default function IncidentsPage() {
     ? undefined
     : incidentsQ.isError
       ? null
-      : incidentsQ.data ?? [];
+      : incidentsQ.data?.items ?? [];
+  const incTruncated = incidentsQ.data?.truncated ?? false;
 
   // Shared sortable + resizable table (unconditional hook).
   // onOpen wires the app-wide keyboard nav: j/k select a row,
@@ -55,8 +56,19 @@ export default function IncidentsPage() {
     onOpen: i => navigate(`/incident?id=${i.id}`),
   });
 
+  // v0.9.456 (dürüstlük A4) — sayılar SQL'den: en-yeni-200 penceresinin
+  // dışındaki eski açık incident eskiden hem listeden hem sayımdan
+  // kayboluyordu (inbox'ın v0.9.321 "2 vs 29" sınıfı). SQL sayımı
+  // gelmezse sayfa-türevine düş (soft-fail).
+  const sqlCounts = incidentsQ.data?.counts;
   const counts = { open: 0, acknowledged: 0, resolved: 0 };
-  for (const i of items ?? []) counts[i.status]++;
+  if (sqlCounts) {
+    counts.open = sqlCounts.open ?? 0;
+    counts.acknowledged = sqlCounts.acknowledged ?? 0;
+    counts.resolved = sqlCounts.resolved ?? 0;
+  } else {
+    for (const i of items ?? []) counts[i.status]++;
+  }
 
   return (
     <>
@@ -80,6 +92,19 @@ export default function IncidentsPage() {
             {' '}<b style={{ color: 'var(--ok)' }}>{counts.resolved}</b> resolved
           </span>
         </div>
+        {/* v0.9.456 (dürüstlük A4) — en-yeni-200 penceresi dolduysa
+            söyle: pencere dışındaki eski incident'lar listede YOK ama
+            yukarıdaki sayılar (SQL) onları sayıyor. */}
+        {incTruncated && (
+          <div style={{
+            margin: '0 0 10px', padding: '6px 10px', borderRadius: 6, fontSize: 12,
+            background: 'var(--bg2)', border: '1px solid var(--border)', color: 'var(--text2)',
+          }}>
+            ⚠ En yeni {items?.length ?? 0} incident gösteriliyor — pencere doldu;
+            daha eskiler listede değil (sayılar tam envanteri sayar).
+            Durum/servis süzgeciyle daralt.
+          </div>
+        )}
         {items === undefined && <Spinner />}
         {items !== undefined && (!items || items.length === 0) && (
           <Empty icon="⚠" title="No incidents">

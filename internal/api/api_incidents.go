@@ -15,18 +15,31 @@ import (
 
 func (s *Server) listIncidents(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	limit := parseInt(q.Get("limit"), 200)
 	rows, err := s.store.ListIncidents(r.Context(), chstore.IncidentFilter{
 		Status:   q.Get("status"),
 		Service:  q.Get("service"),
 		Severity: q.Get("severity"),
-		Limit:    parseInt(q.Get("limit"), 200),
+		Limit:    limit,
 	})
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	rows = s.store.EnrichIncidentsWithClusters(r.Context(), rows, time.Hour)
-	writeJSON(w, rows)
+	// v0.9.456 (dürüstlük A4) — zarf: en-yeni-200 penceresi dolunca
+	// sayfa söylesin; durum sayıları kesik sayfadan değil SQL'den.
+	// Sayım hatası soft-fail (nil map = frontend sayfa-türevine düşer)
+	// — dürüstlük şeridi asla sayfayı boşaltmaz.
+	counts, cerr := s.store.CountIncidentsByStatus(r.Context(), q.Get("service"))
+	if cerr != nil {
+		counts = nil
+	}
+	writeJSON(w, map[string]any{
+		"items":     rows,
+		"counts":    counts,
+		"truncated": len(rows) >= limit,
+	})
 }
 
 func (s *Server) getIncident(w http.ResponseWriter, r *http.Request) {

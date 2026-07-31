@@ -1415,8 +1415,10 @@ export const api = {
     request<void>(`/api/status-page/subscribers?email=${encodeURIComponent(email)}`, { method: 'DELETE' }),
 
   // Incident management
+  // v0.9.456 — dürüstlük zarfı: counts SQL'den (null = sayım
+  // alınamadı, sayfa-türevine düş), truncated = 200-pencere doldu.
   listIncidents:    (params?: { status?: string; service?: string; severity?: string; limit?: number }) =>
-    get<Incident[] | null>(`/api/incidents?${qs(params ?? {})}`),
+    get<{ items: Incident[]; counts: Record<string, number> | null; truncated: boolean } | null>(`/api/incidents?${qs(params ?? {})}`),
   getIncident:      (id: string) => get<Incident>(`/api/incidents/${id}`),
   createIncident:   (i: Partial<Incident>) =>
     request<Incident>(`/api/incidents`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(i) }),

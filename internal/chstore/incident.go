@@ -129,6 +129,39 @@ func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident
 	return out, rows.Err()
 }
 
+// CountIncidentsByStatus (v0.9.456, dürüstlük A4) — /incidents sayfa
+// başlığındaki open/ack/resolved sayıları SQL'den: eskiden en-yeni-200
+// penceresinden sayılıyordu; 200'ün dışında kalan eski açık incident
+// hem listeden hem sayımdan kayboluyor, /inbox rozetiyle çelişiyordu
+// (inbox'ın v0.9.321'de kapattığı "2 vs 29" sınıfının sayfa kalıntısı).
+// Service daraltması listeyle aynı conjunct; status daraltması BİLEREK
+// yok — sayılar sekme chip'leridir, tüm durumları kapsar.
+func (s *Store) CountIncidentsByStatus(ctx context.Context, service string) (map[string]uint64, error) {
+	var wc whereClause
+	if service != "" {
+		wc.add("service = ?", service)
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT status, count()
+		FROM incidents FINAL `+wc.sql()+`
+		GROUP BY status
+		SETTINGS max_execution_time = 5`, wc.args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]uint64{}
+	for rows.Next() {
+		var st string
+		var n uint64
+		if err := rows.Scan(&st, &n); err != nil {
+			return nil, err
+		}
+		out[st] = n
+	}
+	return out, rows.Err()
+}
+
 // CountIncidentsNotInStatuses returns how many incidents are NOT in the given
 // statuses — the /inbox badge's fourth term (v0.9.321).
 //

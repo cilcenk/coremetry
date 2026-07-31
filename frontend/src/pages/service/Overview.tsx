@@ -177,6 +177,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         { name: 'p99', agg: 'p99', field: 'duration_ms' },
         { name: 'p95', agg: 'p95', field: 'duration_ms' },
         { name: 'p50', agg: 'p50', field: 'duration_ms' },
+        { name: 'apdex', agg: 'apdex' },
       ],
     }),
     select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
@@ -232,6 +233,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         // default görünürlük avg+P50+P95 açık / P99 gizli (aşağıda
         // defaultLatencyHidden), kullanıcı lejant seçimi kalıcı ve ezer.
         { name: 'avg', agg: 'avg', field: 'duration_ms' },
+        // v0.9.476 (redesign açık dilimi "Apdex serisi") — giriş
+        // span'leri üzerinden apdex zaman serisi (T=200ms/4T=800ms,
+        // backend agg zaten vardı). Aynı batch = ek round-trip yok.
+        { name: 'apdex', agg: 'apdex' },
       ],
     }),
     select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
@@ -349,6 +354,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     metricQuery({ metric: 'calls_total', agg: 'error_rate', unit: '%', filters: svcFilter, viz, range });
   const mkLatency = (agg: 'p50' | 'p95' | 'p99', viz: MetricQuery['viz']) =>
     metricQuery({ metric: 'duration_milliseconds_bucket', agg, unit: 'ms', filters: svcFilter, viz, range });
+  const mkApdex = (viz: MetricQuery['viz']) =>
+    metricQuery({ metric: 'calls_total', agg: 'apdex', unit: 'ratio', filters: svcFilter, viz, range });
+  // Apdex bantları (endüstri standardı): ≥0.94 mükemmel, ≥0.85 iyi,
+  // <0.7 zayıf — grafikte 0.85 rehber çizgisi yeter (kalabalık yapmadan).
+  const apdexThresholds: ChartThreshold[] = [
+    { value: 0.85, label: 'iyi ≥ 0.85', color: 'var(--warn)' },
+  ];
 
   return (
     <div style={{ marginTop: 4 }}>
@@ -419,6 +431,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           <ChartCard title={usingAllSpans ? 'Failure rate · tüm span’ler' : 'Failure rate · giriş'} unit="%" mode="area" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
             thresholds={failureThresholds} lines={[
             { series: lat?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
+          ]} />
+        </MetricPanel>
+        {/* v0.9.476 (redesign açık dilimi) — Apdex zaman serisi:
+            service_summary_5m'in apdex state'leri v0.8.x'ten beri vardı,
+            seri hiç yüzeye çıkmamıştı. Giriş span'leri üzerinden (RED
+            kartlarıyla aynı popülasyon), 0..1. Tek-commit revert kolay. */}
+        <MetricPanel compact title="Apdex" metricQuery={mkApdex('line')}>
+          <ChartCard title={usingAllSpans ? 'Apdex · tüm span\u2019ler' : 'Apdex · giriş'} unit="" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+            thresholds={apdexThresholds} lines={[
+            { series: lat?.apdex ?? [], color: 'var(--ok)', label: 'apdex' },
           ]} />
         </MetricPanel>
       </div>

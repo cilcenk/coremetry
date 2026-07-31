@@ -13,8 +13,9 @@ export type MetricAgg =
   | 'rate' | 'count' | 'sum' | 'avg'
   | 'p50' | 'p90' | 'p95' | 'p99'
   | 'band' // v0.8.411 — full percentile band, one resolver call
+  | 'apdex' // v0.9.476 — Apdex serisi (0..1); backend agg + resolver zaten destekliyordu
   | 'error_rate' | 'errors';
-export type MetricUnit = 'rps' | 'ms' | '%' | 'count';
+export type MetricUnit = 'rps' | 'ms' | '%' | 'count' | 'ratio';
 export type MetricViz = 'line' | 'area' | 'bar' | 'stat' | 'heatmap' | 'topN';
 
 // MetricQuery is the descriptor. Kept self-contained in this contract module
@@ -40,6 +41,8 @@ export function defaultUnit(agg: MetricAgg): MetricUnit {
       return 'rps';
     case 'error_rate':
       return '%';
+    case 'apdex':
+      return 'ratio'; // 0..1 skoru — ms/%/count hiçbiri doğru okutmaz
     case 'avg':
     case 'p50':
     case 'p90':

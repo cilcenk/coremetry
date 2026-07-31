@@ -507,7 +507,7 @@ export const api = {
   //
   // It deliberately takes no priority param — that is the whole point — and
   // is server-cached 5s on a key shared across viewers.
-  problemBuckets: (params: { status?: string; service?: string; env?: string } = {}) =>
+  problemBuckets: (params: { status?: string; service?: string; env?: string; ownerTeam?: string; sreTeam?: string; cluster?: string } = {}) =>
     get<{ severity: Record<string, number>; priority: Record<string, number>; total: number } | null>(
       `/api/problems/buckets?${qs(params)}`),
   version: ()                        => get<{ version: string }>(`/api/version`),

@@ -9592,8 +9592,37 @@ func (s *Server) listProblemBuckets(w http.ResponseWriter, r *http.Request) {
 		Env:   strings.TrimSpace(q.Get("env")),
 		Limit: 2000,
 	}
-	key := fmt.Sprintf("problems-buckets:status=%s:svc=%s:env=%s", f.Status, f.Service, f.Env)
+	// v0.9.474 (dürüstlük A16) — team/cluster da chip'lere iner: liste bu
+	// daraltmaları SQL servis setine çeviriyordu, chip'ler görmüyordu —
+	// "mirrors every OTHER filter" iddiası team/cluster altında yanlıştı
+	// (takım seçili operatörde P1 chip'i tüm filoyu sayıyordu). Aynı
+	// çözümleme listeyle bire bir; çözümleme hatası daraltmayı KAPALI
+	// bırakır (liste ile aynı fail-open duruşu).
+	ownerTeam := strings.TrimSpace(q.Get("ownerTeam"))
+	sreTeam := strings.TrimSpace(q.Get("sreTeam"))
+	clusterFilter := strings.TrimSpace(q.Get("cluster"))
+	key := fmt.Sprintf("problems-buckets:v2:status=%s:svc=%s:env=%s:owner=%s:sre=%s:cluster=%s",
+		f.Status, f.Service, f.Env, ownerTeam, sreTeam, clusterFilter)
 	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+		if ownerTeam != "" || sreTeam != "" {
+			if mds, err := s.store.ListServiceMetadata(ctx); err == nil {
+				f.Services = servicesForTeam(s.teamAliasesCtx(ctx), mds, ownerTeam, sreTeam)
+			}
+		}
+		if clusterFilter != "" {
+			if cm, err := s.store.GetServiceClusterMap(ctx, time.Hour); err == nil {
+				inCluster := make([]string, 0, 32)
+				for svc, cs := range cm {
+					for _, c := range cs {
+						if c == clusterFilter {
+							inCluster = append(inCluster, svc)
+							break
+						}
+					}
+				}
+				f.Services = intersectServices(f.Services, inCluster)
+			}
+		}
 		probs, err := s.store.ListProblems(ctx, f)
 		if err != nil {
 			return nil, err

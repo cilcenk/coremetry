@@ -19,6 +19,10 @@ type HistogramSeries struct {
 	P95     []float64  `json:"p95"`
 	P99     []float64  `json:"p99"`
 	Skipped int        `json:"skipped"` // series dropped for mismatched bounds
+	// RowCapped (v0.9.473, dürüstlük A13) — 200k satır tavanı doldu:
+	// ORDER BY t ASC + LIMIT pencerenin SAĞ kenarını keser; heatmap
+	// "trafik düştü" gibi okunmasın diye UI bunu söyler.
+	RowCapped bool `json:"rowCapped,omitempty"`
 }
 
 // maxHistogramBuckets bounds the Go-side time-bucket allocation in the
@@ -108,7 +112,9 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 	}
 	seriesMap := make(map[string]*ser)
 	var order []string
+	rowsScanned := 0
 	for rows.Next() {
+		rowsScanned++
 		var t int64
 		var attrK, attrV []string
 		var bounds []float64
@@ -203,7 +209,8 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 		P50:     make([]float64, nTime),
 		P95:     make([]float64, nTime),
 		P99:     make([]float64, nTime),
-		Skipped: skipped,
+		Skipped:   skipped,
+		RowCapped: rowsScanned >= 200000,
 	}
 	for i := 0; i < nTime; i++ {
 		out.Times[i] = fromNs + int64(i)*stepNs

@@ -3,6 +3,8 @@ import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Spinner } from '@/components/Spinner';
 import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
+import { aiSubjectQuestion } from '@/components/ai/drawerChat';
+import type { AIKind } from '@/lib/aiSubject';
 import { IconSparkles } from './icons';
 
 // CopilotExplain — drop-in Explain button that calls the
@@ -31,8 +33,8 @@ import { IconSparkles } from './icons';
 //                               in past resolved instances of the same rule.
 // Each endpoint uses a kind-specific system prompt so the model's
 // answers match the operator's question.
-export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, onEvidence, onEvidenceTraces }: {
-  kind: 'trace' | 'span' | 'problem' | 'incident' | 'anomaly' | 'service-health' | 'runbook' | 'exception';
+export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, onEvidence, onEvidenceTraces, onAnswer }: {
+  kind: AIKind;
   id: string;
   label?: React.ReactNode;
   // v0.9.477 — AIDrawer içinde mount edildiğinde: açıklamayı mount'ta bir
@@ -47,6 +49,10 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // v0.9.414 — kind="exception" kanıt TRACE'leri; exception detayı
   // örnek-trace satırlarını kutular.
   onEvidenceTraces?: (traceIds: string[]) => void;
+  // v0.9.479 — açıklama metnini yukarı ver. AI çekmecesi bunu sohbetin
+  // BAĞLAMI yapar (`context.explain`): operatör raporunda chat ekrandaki
+  // exception'ı bilmiyordu. onEvidence/onEvidenceTraces ile aynı sözleşme.
+  onAnswer?: (text: string) => void;
   // Only used when kind === 'service-health'. Ignored otherwise.
   fromNs?: number;
   toNs?: number;
@@ -65,13 +71,23 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // gözden kaçıyordu. İlk tıklama kalıcı susturur (bu mount için).
   const [used, setUsed] = useState(false);
 
+  // applyText — cevabı hem panele yaz hem üst bileşene duyur (v0.9.479).
+  // BOŞ model cevabı bağlam olamaz: onAnswer'a boş string gider, çekmece
+  // sohbeti açılmaz (bağlamsız sohbet operatör raporundaki hatanın ta
+  // kendisiydi).
+  const applyText = (raw: string) => {
+    setText(raw || '⚠ Model boş yanıt döndürdü (reasoning modu + düşük max_tokens olabilir).');
+    onAnswer?.(raw);
+  };
+
   const run = async () => {
     setUsed(true);
     setBusy(true); setError(null); setText(null); setMeta(null);
+    onAnswer?.(''); // "Yeniden sor" bayat bağlamı taşımasın
     try {
       if (kind === 'runbook') {
         const r = await api.copilotRunbook(id);
-        setText(r.explanation || '⚠ Model boş yanıt döndürdü (reasoning modu + düşük max_tokens olabilir).');
+        applyText(r.explanation);
         // Surface the "based on N past resolutions" hint so the
         // operator knows whether the steps are grounded in
         // real history or first-principles.
@@ -93,7 +109,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
                 : kind === 'incident'       ? await api.copilotExplainIncident(id)
                 : kind === 'anomaly'        ? await api.copilotExplainAnomaly(id)
                 :                             await api.copilotExplainServiceHealth(id, fromNs ?? 0, toNs ?? 0);
-        setText(r.explanation || '⚠ Model boş yanıt döndürdü (reasoning modu + düşük max_tokens olabilir).');
+        applyText(r.explanation);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Explain failed');
@@ -103,22 +119,15 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   };
 
   // Explain→chat köprüsü (v0.9.165): açıklamayı okuduktan sonra tek tıkla
-  // Copilot chat'te devam et — konuya uygun bir soruyla açılır (guided router
-  // service-health'i doğrudan yakalar; diğerleri tool/RAG yoluyla best-effort).
-  const chatSeed = () => {
-    switch (kind) {
-      case 'service-health': return `${id} servisinin sağlığı nasıl?`;
-      case 'problem':        return `Bu problemin kök nedeni ne? (problem ${id})`;
-      case 'runbook':        return `${id} runbook'unun adımlarını özetle`;
-      case 'anomaly':        return `Bu anomaliyi açıkla (${id})`;
-      case 'incident':       return `Bu incident'i açıkla (${id})`;
-      case 'exception':      return `Bu exception grubunun kök nedeni ne? (${id})`;
-      case 'span':           return `Bu span'i açıkla (${id})`;
-      default:               return `Bu trace'i açıkla (${id})`;
-    }
-  };
+  // global CoSRE penceresinde devam et — konuya uygun bir soruyla açılır.
+  // v0.9.479: bu köprü artık YALNIZ satır-içi kullanımda (auto'suz, örn.
+  // AnomalyDetailDrawer). AI çekmecesinde global pencereyi çekmecenin
+  // üstüne açıyordu ve sohbet ekrandaki açıklamayı bilmiyordu (operatör
+  // raporu) — orada devam düğmesini çekmece kendi içinde çiziyor.
   const askInChat = () =>
-    window.dispatchEvent(new CustomEvent('coremetry:ai-ask', { detail: { question: chatSeed() } }));
+    window.dispatchEvent(new CustomEvent('coremetry:ai-ask', {
+      detail: { question: aiSubjectQuestion(kind, id) },
+    }));
 
   // auto: çekmece bu özneyle açıldı → tek sefer çalıştır. Ref muhafızı
   // StrictMode'un çift-mount'unu (dev) ikinci bir LLM çağrısına çevirmesin;
@@ -178,16 +187,21 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
             </div>
           )}
           {text}
-          <div style={{ marginTop: 8 }}>
-            <button type="button" onClick={askInChat}
-              title="CoSRE chat'te bu konuda devam et"
-              style={{
-                all: 'unset', cursor: 'pointer', fontSize: 11, color: 'var(--accent2)',
-                display: 'inline-flex', alignItems: 'center', gap: 4,
-              }}>
-              💬 Chat'te devam et →
-            </button>
-          </div>
+          {/* v0.9.479 — çekmecede (auto) bu link ÇİZİLMEZ: sohbet aynı
+              çekmecenin içinde, ekrandaki açıklamayı bağlam alarak açılır
+              (AIDrawer). Satır-içi yüzeylerde köprü aynen duruyor. */}
+          {!auto && (
+            <div style={{ marginTop: 8 }}>
+              <button type="button" onClick={askInChat}
+                title="CoSRE chat'te bu konuda devam et"
+                style={{
+                  all: 'unset', cursor: 'pointer', fontSize: 11, color: 'var(--accent2)',
+                  display: 'inline-flex', alignItems: 'center', gap: 4,
+                }}>
+                💬 Chat'te devam et →
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

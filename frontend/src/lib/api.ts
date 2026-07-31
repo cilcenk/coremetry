@@ -1233,12 +1233,19 @@ export const api = {
     // v0.9.184 — seçili operasyon (?op=); "bu operasyonun durumu" RED'i o
     // span-name'e daraltır (guided operation fallback).
     contextOperation?: string,
+    // v0.9.479 — AI çekmecesindeki açıklamanın metni (+ kanıt id'leri).
+    // Sunucu bunu narration bloğuna katar ve özneye oturmayan guided
+    // rotayı bastırır; ALAN YOKKEN her yol bayt-bayt eski davranışta
+    // (internal/api/copilot_drawer.go). Operatör raporu: çekmeceden
+    // açılan sohbet ekrandaki exception'ı bilmiyordu.
+    contextExplain?: string,
   ): Promise<void> => {
     const context =
-      contextService || contextOperation
+      contextService || contextOperation || contextExplain
         ? {
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
+            ...(contextExplain ? { explain: contextExplain } : {}),
           }
         : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {

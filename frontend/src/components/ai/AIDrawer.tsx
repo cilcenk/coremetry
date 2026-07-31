@@ -1,10 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Drawer, DrawerSection } from '@/components/ui/Drawer';
 import { CopilotExplain } from '@/components/CopilotExplain';
+import { Button } from '@/components/ui/Button';
 import { IconSparkles } from '@/components/icons';
 import { aiSubjectSubtitle, aiSubjectTitle, formatAiParam, type AISubject } from '@/lib/aiSubject';
 import { emitAiEvidence, emitAiFocus, scrollToAttr } from './aiEvents';
+import { ChatBubble } from './ChatBubble';
+import { aiSubjectQuestion, buildExplainContext, drawerFollowups } from './drawerChat';
 import { useAiSubject } from './useAiSubject';
+import { useChatThread } from './useChatThread';
 import { useCopilotEnabled } from './useCopilotEnabled';
 
 // AIDrawer — uygulamadaki TEK AI açıklama yüzeyi (v0.9.477, onaylı
@@ -53,6 +57,8 @@ export function AIDrawer() {
 function AIDrawerBody({ subject, onClose }: { subject: AISubject; onClose: () => void }) {
   const [spanIds, setSpanIds] = useState<string[]>([]);
   const [traceIds, setTraceIds] = useState<string[]>([]);
+  // v0.9.479 — açıklamanın metni: çekmece-içi sohbetin BAĞLAMI.
+  const [explainText, setExplainText] = useState('');
 
   return (
     <div style={{ paddingTop: 8 }}>
@@ -69,6 +75,7 @@ function AIDrawerBody({ subject, onClose }: { subject: AISubject; onClose: () =>
         // devam eder (çekmece kapansa da kutular kalır).
         onEvidence={ids => { setSpanIds(ids); emitAiEvidence({ spanIds: ids }); }}
         onEvidenceTraces={ids => { setTraceIds(ids); emitAiEvidence({ traceIds: ids }); }}
+        onAnswer={setExplainText}
       />
 
       {/* Kanıt span'leri yalnız trace yüzeylerinde tıklanabilir bir hedefe
@@ -105,6 +112,126 @@ function AIDrawerBody({ subject, onClose }: { subject: AISubject; onClose: () =>
           </DrawerSection>
         </div>
       )}
+
+      {/* Sohbet devamı (v0.9.479) — açıklama geldiyse. Global CoSRE
+          penceresi AÇILMAZ: cevap burada, aynı çekmecede sürer. */}
+      {explainText && (
+        <AIDrawerChat subject={subject} explainText={explainText}
+          spanIds={spanIds} traceIds={traceIds} />
+      )}
+    </div>
+  );
+}
+
+// AIDrawerChat — çekmece içindeki sohbet bölümü (v0.9.479, operatör
+// raporu: "Chat'te devam et" global pencereyi çekmecenin ÜSTÜNE açıyordu
+// ve sohbet ekrandaki açıklamayı bilmiyordu).
+//
+// İkinci bir chat implementasyonu YOK: tur state'i + gönderme döngüsü
+// useChatThread, balon çizimi ChatBubble (adım çipleri, RAG kaynakları,
+// derin linkler, kopyala, 👍/👎 hepsi bedelsiz gelir). Bu bileşen yalnız
+// KABUK: aç/kapa, çipler, composer.
+//
+// Bağlam devri iki parça (drawerChat.ts):
+//   seed  → öznenin doğal sorusu, konuşmanın ilk (çizilmeyen) turu;
+//           sunucudaki takip-devralma bunu "önceki soru" sayar.
+//   explain → `context.explain`; sunucu narration bloğuna katar ve
+//           özneye oturmayan guided rotayı bastırır.
+function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
+  subject: AISubject;
+  explainText: string;
+  spanIds: string[];
+  traceIds: string[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState('');
+  const endRef = useRef<HTMLDivElement>(null);
+
+  const explain = useMemo(
+    () => buildExplainContext({ subject, text: explainText, spanIds, traceIds }),
+    [subject, explainText, spanIds, traceIds],
+  );
+  const seed = useMemo(
+    () => [{ role: 'user' as const, text: aiSubjectQuestion(subject.kind, subject.id) }],
+    [subject],
+  );
+  // service-health öznesinde sayfa bağlamı da geçer: guided router
+  // servisi mesajda bulamazsa bunu varsayılan alır (v0.9.164 sözleşmesi).
+  const { turns, busy, send, last, showFollowups } = useChatThread({
+    explain, seed, service: subject.kind === 'service-health' ? subject.id : undefined,
+  });
+
+  useEffect(() => {
+    if (turns.length) endRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  }, [turns]);
+
+  const submit = (text: string) => { setInput(''); void send(text); };
+
+  // Bağlam kurulamadıysa (yalnız-boşluk cevap) sohbeti hiç açma —
+  // bağlamsız sohbet operatör raporundaki hatanın ta kendisiydi.
+  if (!explain) return null;
+
+  if (!open) {
+    return (
+      <div style={{ marginTop: 16 }}>
+        <Button variant="accent" size="sm" onClick={() => setOpen(true)}
+          title="Bu açıklama üzerinden CoSRE ile devam et">
+          💬 Chat'te devam et →
+        </Button>
+      </div>
+    );
+  }
+
+  // Çipler: sunucu rotadan öneri gönderdiyse onlar (v0.9.411), yoksa
+  // özneye göre üretilen liste — global chat'in filo çipleri burada
+  // konu dışı kalırdı.
+  const chips = last?.suggestions?.length ? last.suggestions : drawerFollowups(subject);
+  const showChips = turns.length === 0 || showFollowups;
+
+  return (
+    <div style={{ marginTop: 16 }}>
+      <DrawerSection title="Sohbet">
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+          Bu sohbet yukarıdaki açıklamayı bilir — takip sorusu sorabilirsin.
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {turns.map((t, i) => <ChatBubble key={i} turn={t} />)}
+          <div ref={endRef} />
+        </div>
+
+        {showChips && (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: turns.length ? 8 : 0 }}>
+            {chips.map(q => (
+              <button key={q} type="button" onClick={() => submit(q)} disabled={busy}
+                style={{
+                  all: 'unset', cursor: busy ? 'default' : 'pointer', fontSize: 12,
+                  color: 'var(--text)', opacity: busy ? 0.5 : 1,
+                  border: '1px solid var(--border)', borderRadius: 999, padding: '4px 11px',
+                }}>↳ {q}</button>
+            ))}
+          </div>
+        )}
+
+        <form
+          onSubmit={e => { e.preventDefault(); submit(input); }}
+          style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <input
+            value={input}
+            onChange={e => setInput(e.target.value)}
+            placeholder="Bu konuda sor…"
+            disabled={busy}
+            autoFocus
+            style={{
+              flex: 1, minWidth: 0, padding: '7px 10px', fontSize: 13,
+              background: 'var(--bg)', color: 'var(--text)',
+              border: '1px solid var(--border)', borderRadius: 6,
+            }} />
+          <Button type="submit" disabled={busy || !input.trim()}>
+            {busy ? '…' : 'Gönder'}
+          </Button>
+        </form>
+      </DrawerSection>
     </div>
   );
 }

@@ -3551,6 +3551,24 @@ export interface RagSource {
 // sunucu rotadan deterministik üretir (LLM biçimlemesine güvenilmez).
 export interface ChatAnswerLink { label: string; href: string }
 
+// ChatTurn (v0.9.479) — ekranda çizilen bir sohbet turu: wire shape'i
+// (ChatMessage) + yalnız UI'ın bildiği alanlar. İKİ yüzey paylaşır —
+// global CoSRE penceresi (CopilotChat) ve AI çekmecesi içindeki sohbet
+// (AIDrawer) — bu yüzden bileşen dosyasında değil burada yaşar.
+export interface ChatTurn extends ChatMessage {
+  steps?: string[];
+  pending?: boolean;
+  error?: string;
+  exchangeId?: string;
+  verdict?: 1 | -1;
+  sources?: RagSource[];
+  // v0.9.411 — sunucunun rotadan türettiği konuya-duyarlı takip
+  // önerileri; varsa statik liste yerine bunlar çizilir.
+  suggestions?: string[];
+  // v0.9.419 — rotadan türetilen derin-link çipleri.
+  links?: ChatAnswerLink[];
+}
+
 export type ChatStreamEvent =
   | { kind: 'step'; tool: string; args: string }
   | { kind: 'delta'; text: string }

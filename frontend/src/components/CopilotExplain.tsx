@@ -1,12 +1,20 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { Spinner } from '@/components/Spinner';
+import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
 import { IconSparkles } from './icons';
 
 // CopilotExplain — drop-in Explain button that calls the
 // CoSRE (copilot) endpoint for the given subject and renders the
 // reply inline beneath the button. Self-hides when the copilot is
 // not configured (no API key on the server).
+//
+// v0.9.477 (onaylı AI-drawer mockup'ı): bu bileşen artık esas olarak
+// AIDrawer'ın İÇİNDE, `auto` ile yaşıyor — yüzeylerdeki tetik
+// AIExplainButton, cevabın evi tek sağ-kenar çekmece. Satır-içi kullanım
+// (auto'suz) yalnızca zaten çekmece olan yüzeylerde kaldı
+// (AnomalyDetailDrawer). Fetch/render mantığı DEĞİŞMEDİ.
 //
 // Six subject types share this component to avoid a button per call site:
 //   - kind="trace"          → POST /api/copilot/explain-trace/{id}
@@ -23,10 +31,15 @@ import { IconSparkles } from './icons';
 //                               in past resolved instances of the same rule.
 // Each endpoint uses a kind-specific system prompt so the model's
 // answers match the operator's question.
-export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvidence, onEvidenceTraces }: {
+export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, onEvidence, onEvidenceTraces }: {
   kind: 'trace' | 'span' | 'problem' | 'incident' | 'anomaly' | 'service-health' | 'runbook' | 'exception';
   id: string;
   label?: React.ReactNode;
+  // v0.9.477 — AIDrawer içinde mount edildiğinde: açıklamayı mount'ta bir
+  // kez çalıştır ve KENDİ tetik butonunu gizle. Tetik zaten yüzeydeki
+  // "✨ Explain" butonuydu; çekmecede ikinci bir tık istemek olurdu.
+  // Satır-içi (auto'suz) kullanım birebir eski davranışta.
+  auto?: boolean;
   // v0.9.408 — kind="trace" yanıtındaki deterministik kanıt span'leri
   // (backend hesaplar; LLM'e bağımlı değil). Üst bileşen waterfall'ı
   // kutulamak için kullanır.
@@ -41,7 +54,9 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
   // trace identified by `id`. v0.5.144 per-span explain.
   spanId?: string;
 }) {
-  const [enabled, setEnabled] = useState<boolean | null>(null);
+  // v0.9.477 — config artık paylaşılan, modül düzeyinde cache'lenen hook'tan
+  // geliyor (satır başına bir istek atan eski mount-içi fetch yerine).
+  const enabled = useCopilotEnabled();
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState<string | null>(null);
   const [meta, setMeta] = useState<string | null>(null);
@@ -49,12 +64,6 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
   // v0.9.409 (operatör isteği): buton ilk kullanıma kadar nabız atar —
   // gözden kaçıyordu. İlk tıklama kalıcı susturur (bu mount için).
   const [used, setUsed] = useState(false);
-
-  useEffect(() => {
-    api.copilotConfig().then(c => setEnabled(c.enabled)).catch(() => setEnabled(false));
-  }, []);
-
-  if (enabled !== true) return null;
 
   const run = async () => {
     setUsed(true);
@@ -111,19 +120,45 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
   const askInChat = () =>
     window.dispatchEvent(new CustomEvent('coremetry:ai-ask', { detail: { question: chatSeed() } }));
 
+  // auto: çekmece bu özneyle açıldı → tek sefer çalıştır. Ref muhafızı
+  // StrictMode'un çift-mount'unu (dev) ikinci bir LLM çağrısına çevirmesin;
+  // özne değişimi AIDrawer'da `key` ile yeni bir mount olduğundan burada
+  // bağımlılık takibine gerek yok.
+  const autoRan = useRef(false);
+  useEffect(() => {
+    if (!auto || enabled !== true || autoRan.current) return;
+    autoRan.current = true;
+    void run();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auto, enabled]);
+
+  if (enabled !== true) return null;
+
+  // Çekmecede tetik buton yok: sonuç gelene kadar Spinner, sonrasında
+  // "Yeniden sor" (hata hâlinde tekrar deneme yolu da bu).
+  const showButton = !auto || (!busy && (text !== null || error !== null));
+
   return (
-    <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
-      <Button variant="accent" size="sm" onClick={run} disabled={busy}
-        className={used ? undefined : 'ai-attn'}>
-        {busy
-          ? <><IconSparkles /> <span>Thinking…</span></>
-          : (label ?? <><IconSparkles /> <span>AI explain</span></>)}
-      </Button>
+    <div style={{
+      display: 'inline-flex', flexDirection: 'column', gap: 8,
+      alignItems: 'flex-start', maxWidth: '100%',
+    }}>
+      {auto && busy && <Spinner label="CoSRE düşünüyor…" />}
+      {showButton && (
+        <Button variant="accent" size="sm" onClick={run} disabled={busy}
+          className={used || auto ? undefined : 'ai-attn'}>
+          {busy
+            ? <><IconSparkles /> <span>Thinking…</span></>
+            : auto
+              ? <><IconSparkles /> <span>Yeniden sor</span></>
+              : (label ?? <><IconSparkles /> <span>AI explain</span></>)}
+        </Button>
+      )}
       {error && (
         <div style={{
           padding: 10, borderRadius: 6, fontSize: 12,
           background: 'rgba(255,82,82,.10)', color: 'var(--err)',
-          border: '1px solid rgba(255,82,82,.25)', maxWidth: 720,
+          border: '1px solid rgba(255,82,82,.25)', maxWidth: 'min(720px, 100%)',
         }}>{error}</div>
       )}
       {text && (
@@ -131,7 +166,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId , onEvide
           padding: 12, borderRadius: 6, fontSize: 13, lineHeight: 1.5,
           background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
           border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
-          color: 'var(--text)', whiteSpace: 'pre-wrap', maxWidth: 720,
+          color: 'var(--text)', whiteSpace: 'pre-wrap', maxWidth: 'min(720px, 100%)',
         }}>
           <div style={{ fontSize: 10, color: 'var(--accent2)', marginBottom: 6, fontWeight: 700, letterSpacing: '.5px',
                         display: 'inline-flex', alignItems: 'center', gap: 4 }}>

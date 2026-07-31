@@ -5,7 +5,8 @@ import { ArrowLeft, ArrowDownToLine } from 'lucide-react';
 import { api } from '@/lib/api';
 import { fmtFixed, tsLong } from '@/lib/utils';
 import { Spinner } from '@/components/Spinner';
-import { CopilotExplain } from '@/components/CopilotExplain';
+import { AIExplainButton } from '@/components/ai/AIExplainButton';
+import { useAiEvidence } from '@/components/ai/aiEvents';
 import { RootCausePanel } from '@/components/RootCausePanel';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
 import { IconSparkles } from '@/components/icons';
@@ -141,6 +142,22 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     queryFn: () => api.exceptionGroupSamples(group.fingerprint, 100),
     staleTime: 30_000,
   });
+  // v0.9.477 — kanıt trace'leri artık AI çekmecesinden window köprüsüyle
+  // geliyor (eski onEvidenceTraces prop'unun yerine); v0.9.414 kutulama
+  // sözleşmesi + bayat-liste tazeleme aynen korundu.
+  useAiEvidence(d => {
+    const ids = d.traceIds;
+    if (!ids?.length) return;
+    setEvTraces(ids);
+    // Sıcak grupta backend en YENİ örneği kanıt seçer; mount'taki liste
+    // bayatsa kutulanacak satır listede olmayabilir — kanıt listede yoksa
+    // örnekleri tazele (v0.9.414 verify bulgusu).
+    const have = new Set((samplesQ.data?.samples ?? []).map(sm => sm.traceId));
+    if (ids.some(tid => !have.has(tid))) void samplesQ.refetch();
+  });
+  // (Kanıt satırına tıklanınca kaydırma tarafı DOM üzerinden çalışıyor —
+  // aşağıdaki satırların `data-trace-id`'si + aiEvents.scrollToAttr; bu
+  // bileşenin ek bir dinleyiciye ihtiyacı yok.)
   const samples = samplesQ.data?.samples ?? [];
   // v0.9.463 (dürüstlük A11) — sahte-boş ayrımı: sıcak serviste kardeş
   // fingerprint 500 adayı doldurunca liste boş kalır ama bu "örnek yok"
@@ -284,17 +301,12 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
       {/* v0.9.414 (operatör istegi) — exception kök-sebep: backend örnek
           trace + trace loglarını + deploy penceresini otomatik toplar;
           kanıt trace'leri sağdaki örnek satırlarını kutular. */}
+      {/* v0.9.477 — cevap tek sağ AI çekmecesinde (?ai=exception:<fp>);
+          kanıt trace'leri window köprüsüyle gelip örnek satırlarını
+          kutulamaya devam ediyor. */}
       <div style={{ marginBottom: 16 }}>
-        <CopilotExplain kind="exception" id={group.fingerprint}
-          label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain root cause</span></>}
-          onEvidenceTraces={(ids) => {
-            setEvTraces(ids);
-            // Sıcak grupta backend en YENİ örneği kanıt seçer; mount'taki
-            // liste bayatsa kutulanacak satır listede olmayabilir —
-            // kanıt listede yoksa örnekleri tazele (verify bulgusu).
-            const have = new Set((samplesQ.data?.samples ?? []).map(sm => sm.traceId));
-            if (ids.some(tid => !have.has(tid))) void samplesQ.refetch();
-          }} />
+        <AIExplainButton subject={{ kind: 'exception', id: group.fingerprint }}
+          label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain root cause</span></>} />
       </div>
 
       {/* v0.9.432 (operatör kararı) — AIAnalysisPanel bu sayfadan
@@ -370,7 +382,10 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
                 {samples.slice(0, 14).map((s, i) => {
                   const isEv = !!s.traceId && evTraces.includes(s.traceId);
                   return (
-                  <tr key={i} className={isEv ? 'wf-evidence' : undefined}
+                  // data-trace-id (v0.9.477): AI çekmecesindeki kanıt satırı
+                  // tıklanınca buraya kaydırılır.
+                  <tr key={i} data-trace-id={s.traceId || undefined}
+                    className={isEv ? 'wf-evidence' : undefined}
                     title={isEv ? 'Explain kanıtı — kök neden bu trace üzerinden soruşturuldu' : undefined}
                     style={{ cursor: s.traceId ? 'pointer' : 'default' }}
                     onClick={() => s.traceId && navigate(`/trace?id=${encodeURIComponent(s.traceId)}`)}>
@@ -475,9 +490,12 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
               <DeployBox version={problem.recentDeploy.version} ageSeconds={problem.recentDeploy.ageSeconds} />
             )}
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-              <CopilotExplain kind="problem" id={problem.id}
+              {/* v0.9.477 — iki AI affordance'ı da tek sağ çekmeceye açılır;
+                  ikisi aynı anda satır-içi açıldığında kart iki uzun metin
+                  bloğuyla şişiyordu. */}
+              <AIExplainButton subject={{ kind: 'problem', id: problem.id }}
                 label={<><IconSparkles /> <span>Explain</span></>} />
-              <CopilotExplain kind="runbook" id={problem.id}
+              <AIExplainButton subject={{ kind: 'runbook', id: problem.id }}
                 label={<><IconSparkles /> <span>Runbook AI</span></>} />
             </div>
           </Sect>

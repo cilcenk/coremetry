@@ -185,6 +185,11 @@ export function AnomalyDetailDrawer({ event, onClose }: {
             <RootCauseRibbon anchor="anomaly" id={event.id} summary={event.rootCause} />
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* v0.9.477 — BİLEREK satır-içi kaldı (tek istisna). Bu yüzey
+                zaten bir ui/Drawer; AI çekmecesi üstüne ikinci bir çekmece
+                açardı ve iki kabuk da window'da Escape dinlediğinden tek
+                ESC ikisini birden kapatırdı. Detay çekmecesinde açıklamanın
+                yeri zaten burası. */}
             <CopilotExplain kind="anomaly" id={event.id} label="✨ Explain this anomaly" />
             {isLogKind && event.service && (
               <Link to={logsHref} className="sec"

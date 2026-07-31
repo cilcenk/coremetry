@@ -3,7 +3,7 @@ import { MultiLineChart, type DeployMarker } from './MultiLineChart';
 import { MetricPanel } from './MetricPanel';
 import { OperationPicker } from './OperationPicker';
 import { Spinner } from './Spinner';
-import { CopilotExplain } from './CopilotExplain';
+import { AIExplainButton } from './ai/AIExplainButton';
 import { TracePeekDrawer } from './TracePeekDrawer';
 import { IconSparkles } from './icons';
 import { Button } from '@/components/ui/Button';
@@ -498,11 +498,12 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
             healthy". Distinct from per-problem explain because
             the chart may look fine and the answer should say
             so plainly. Self-hides when copilot isn't configured. */}
-        <CopilotExplain
-          kind="service-health"
-          id={service}
-          fromNs={from}
-          toNs={to}
+        {/* v0.9.477 — cevap sağ AI çekmecesinde. service-health prompt'u
+            CANLI pencereye bağlı olduğundan from/to da linke yazılır:
+            paylaşılan `?ai=service-health:<svc>:<from>:<to>` aynı pencereyi
+            açıklar, "başka bir saati anlatan link" olmaz. */}
+        <AIExplainButton
+          subject={{ kind: 'service-health', id: service, fromNs: from, toNs: to }}
           label={<><IconSparkles /> <span>AI triage</span></>} />
         {/* Deploy impact AI — only renders when at least one
             deploy marker landed in the visible window; the

@@ -6,7 +6,7 @@ import { ArrowLeft, AlertTriangle, Bell, Check, MessageSquare, Zap, Paperclip, P
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
-import { CopilotExplain } from '@/components/CopilotExplain';
+import { AIExplainButton } from '@/components/ai/AIExplainButton';
 import { OverviewChart } from '@/pages/service/charts/OverviewChart';
 import {
   useIncident, useIncidentEvents, useIncidentProblems, useServiceDeploys, keys,
@@ -125,7 +125,9 @@ function Inner() {
           <StatusPill s={inc.status} />
           <SeverityPill s={inc.severity} />
           <span className="spacer" />
-          <CopilotExplain kind="incident" id={inc.id} />
+          {/* v0.9.477 — aksiyon çubuğunda buton, cevap sağ AI çekmecesinde
+              (eskiden çubuğun altına satır-içi panel açıyordu). */}
+          <AIExplainButton subject={{ kind: 'incident', id: inc.id }} />
           {isAdmin && inc.status === 'open' && <button className="sec" onClick={ack}>Acknowledge</button>}
           {isAdmin && inc.status !== 'resolved' && <button onClick={resolve}>Resolve</button>}
         </div>

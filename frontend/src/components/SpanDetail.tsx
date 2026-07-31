@@ -6,7 +6,7 @@ import { api } from '@/lib/api';
 import { getRaw, setRaw } from '@/lib/storage';
 import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
-import { CopilotExplain } from './CopilotExplain';
+import { AIExplainButton } from './ai/AIExplainButton';
 import { BreakdownBar, KindBadge } from './KindBadge';
 
 const PANEL_MIN = 300;
@@ -212,7 +212,10 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
             base_url. Auto-hides when copilot isn't configured. */}
         {span.traceId && span.spanId && (
           <div style={{ marginBottom: 12 }}>
-            <CopilotExplain kind="span" id={span.traceId} spanId={span.spanId}
+            {/* v0.9.477 — cevap artık tek sağ-kenar AI çekmecesinde
+                (?ai=span:<traceId>:<spanId>); panel içinde satır-içi bir
+                metin bloğu daha açıp paneli uzatmıyoruz. */}
+            <AIExplainButton subject={{ kind: 'span', id: span.traceId, spanId: span.spanId }}
               label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this span</span></>} />
           </div>
         )}

@@ -354,18 +354,22 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 
 	// ── Disk capacity (v0.9.289, operator ask) ──────────────────
 	// system.disks is metadata — no scan, instant at any volume. Same
-	// LOCAL-table caveat as system.parts above: on an external
-	// Distributed cluster a plain read sees only the connected shard's
-	// node, so with cluster_name set we fan out one replica per shard
-	// and label each row with its host. Without it we report the node
-	// we happen to be connected to, which is honest as far as it goes.
+	// LOCAL-table caveat as system.parts above; without cluster_name we
+	// report the node we happen to be connected to, which is honest as
+	// far as it goes.
+	//
+	// v0.9.454 (operator-reported: "4 node'lu cluster'da yalnız 2
+	// node'un diskini görüyorum") — cluster() her shard'dan TEK replika
+	// okur; 2 shard × 2 replika = 4 node'da panel hep 2 node gösterir.
+	// Disk kapasitesi NODE-düzeyi metadata'dır (parts'ın aksine veri
+	// çift sayımı yoktur) → clusterAllReplicas her node'a gider.
 	//
 	// Failure is NOT fatal: a credential without access to system.disks
 	// just leaves the section empty, exactly like the storage query
 	// above. /admin/stats must never go blank over an optional panel.
 	disksSource, diskHost := "system.disks", "''"
 	if cn := strings.TrimSpace(s.cfg.ClusterName); cn != "" {
-		disksSource, diskHost = "cluster('"+cn+"', system.disks)", "hostName()"
+		disksSource, diskHost = "clusterAllReplicas('"+cn+"', system.disks)", "hostName()"
 	}
 	if drows, derr := s.conn.Query(ctx, fmt.Sprintf(`
 		SELECT %s AS host, name, path,

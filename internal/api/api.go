@@ -9598,7 +9598,7 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	// P1s": on prod, with ~800 open problems, a P1 selection could show a
 	// fraction of what exists and nothing said so.
 	sqlLimit := problemScanLimit(f.Limit, len(prios) > 0 && len(prios) < 3)
-	key := fmt.Sprintf("problems:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:cluster=%s:limit=%d:scan=%d",
+	key := fmt.Sprintf("problems:v2:status=%s:svc=%s:sev=%s:prio=%s:owner=%s:sre=%s:env=%s:cluster=%s:limit=%d:scan=%d",
 		f.Status, f.Service, f.Severity, excludeKeyDigest(prioMap), ownerTeam, sreTeam, f.Env, clusterFilter, f.Limit, sqlLimit)
 	// v0.8.471 — count ile aynı gerekçe (liste p95 903ms/max 3s → STALE ~10ms).
 	s.serveCached(w, r, key, 15*time.Second, func(ctx context.Context) (any, error) {
@@ -9633,6 +9633,7 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		probs, err := s.store.ListProblems(ctx, scan)
+		scanTruncated := err == nil && len(probs) >= sqlLimit
 		if err != nil {
 			return nil, err
 		}
@@ -9730,7 +9731,27 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// fails to the unenriched slice; rows with no hypothesis keep
 		// RootCause=nil (honest "no clear cause yet"). Read-only — no audit.
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
-		return probs, nil
+		// v0.9.455 (dürüstlük taraması A3) — çıplak dizi yerine zarf:
+		// sayfa 200-cap'li diziden "N open" sayarken sidebar rozeti
+		// gerçek COUNT'la çelişiyordu ve hiçbir şey kırpmayı
+		// söylemiyordu. truncated aday taramasının tavanına çarptı
+		// demektir; total yalnız SQL'e inen daraltmalarla (status/
+		// service/severity/env) hesaplanır — takım/cluster daraltması
+		// aktifken sayı yanıltır, o durumda -1 (bilinmiyor) döner ve
+		// şerit sayısız konuşur (inbox chip'lerinin belgeli duruşu).
+		total := int64(-1)
+		if ownerTeam == "" && sreTeam == "" && clusterFilter == "" {
+			if n, cerr := s.store.CountProblems(ctx, chstore.ProblemFilter{
+				Status: f.Status, Service: f.Service, Severity: f.Severity, Env: f.Env,
+			}); cerr == nil {
+				total = int64(n)
+			}
+		}
+		return map[string]any{
+			"items":     probs,
+			"total":     total,
+			"truncated": scanTruncated,
+		}, nil
 	})
 }
 

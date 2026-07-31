@@ -4076,10 +4076,15 @@ func (s *Server) getMetrics(w http.ResponseWriter, r *http.Request) {
 	name, svc := q.Get("name"), q.Get("service")
 	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
 	limit := parseInt(q.Get("limit"), 500)
-	key := fmt.Sprintf("metric-points:name=%s:svc=%s:limit=%d:from=%d:to=%d",
+	// v0.9.464 (dürüstlük A12) — zarf {points, truncated}: anahtar v2.
+	key := fmt.Sprintf("metric-points:v2:name=%s:svc=%s:limit=%d:from=%d:to=%d",
 		name, svc, limit, from.Unix()/60, to.Unix()/60)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetMetricPoints(ctx, name, svc, from, to, limit)
+		points, truncated, err := s.store.GetMetricPoints(ctx, name, svc, from, to, limit)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"points": points, "truncated": truncated}, nil
 	})
 }
 

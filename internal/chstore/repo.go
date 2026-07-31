@@ -4347,7 +4347,7 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 	return out, int(total), rows.Err()
 }
 
-func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, from, to time.Time, limit int) ([]MetricPointRow, error) {
+func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, from, to time.Time, limit int) ([]MetricPointRow, bool, error) {
 	// v0.8.454 — pencere artık opsiyonel değil: sıfır from/to varsayılan
 	// 1 saate bağlanır + max_execution_time. Önceden penceresiz çağrı tüm
 	// metric_points tarihçesini tarıyordu (hard-constraint ihlali).
@@ -4362,15 +4362,21 @@ func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, fro
 	if limit == 0 {
 		limit = 500
 	}
+	// v0.9.464 (dürüstlük A12) — ORDER BY time DESC: eski ASC + LIMIT,
+	// yüksek frekanslı metrikte pencerenin yalnız BAŞINI alıyordu — her
+	// seri x-ekseninin ilk üçte birinde bitiyor, compare iki yarım-doğruyu
+	// üst üste koyuyordu. Grafiğin asıl önemli kenarı "şimdi"dir: en yeni
+	// noktalar alınır, Go'da zaman sırasına çevrilir; tavan dolduysa
+	// truncated=true (UI şeridi "pencerenin son N noktası").
 	rows, err := s.conn.Query(ctx,
 		`SELECT time, value, count, sum_value,
 		        arrayStringConcat(arrayMap((k, v) -> concat(k, '=', v), attr_keys, attr_values), ',')
 		 FROM metric_points `+wc.sql()+
-			` ORDER BY time ASC LIMIT ?
+			` ORDER BY time DESC LIMIT ?
 		 SETTINGS max_execution_time = 10`,
 		append(wc.args, limit)...)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	var out []MetricPointRow
@@ -4382,12 +4388,16 @@ func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, fro
 		// call still reported success (rows.Err() doesn't cover Scan),
 		// silently corrupting chart data instead of failing loudly.
 		if err := rows.Scan(&t, &p.Value, &p.Count, &p.Sum, &p.Attrs); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		p.Time = t.UnixNano()
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	// DESC geldi — grafiğe zaman sırasıyla ver.
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, len(out) >= limit, rows.Err()
 }
 
 // boundWindow — v0.8.454: sıfır bırakılmış from/to'yu güvenli varsayılana

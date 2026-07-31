@@ -27,8 +27,23 @@ import { usePanelWidth } from './usePanelWidth';
 // blank out the entire grid.
 export type PanelDataOverride = {
   series?: SpanMetricSeries[] | null;
+  // v0.9.459 (dürüstlük A1b) — 50k satır tavanı: alfabetik-son seriler
+  // eksik olabilir; panel köşesinde ⚠ ipucu.
+  rowsCapped?: boolean;
   error?: string;
 } | undefined;
+
+// CapHint — v0.9.459: 50k satır tavanı dolduğunda panel köşesi ⚠.
+// Şerit değil ipucu: dashboard panelleri yoğun, tooltip nedeni anlatır.
+function CapHint() {
+  return (
+    <span title="Sorgu 50k satır tavanına çarptı — seriler grup anahtarına göre ALFABETİK kesildi; geç harfli seriler eksik olabilir. Pencereyi daralt, adımı büyüt ya da filtre ekle."
+      style={{
+        position: 'absolute', top: 6, right: 8, zIndex: 2, cursor: 'help',
+        fontSize: 11, color: 'var(--warn)',
+      }}>⚠ kesik</span>
+  );
+}
 
 export function PanelRenderer({ panel, range, vars, syncKey, onZoom, onZoomReset, dataOverride }: {
   panel: Panel;
@@ -196,6 +211,7 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }:
   dataOverride?: PanelDataOverride;
 }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
+  const [capped, setCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // GRAN-C (v0.8.248) — width-aware auto step. widthPx is the panel's OWN
   // container bucket (panels share a 4-col grid, so #content is the wrong
@@ -231,6 +247,7 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }:
         setError(dataOverride!.error);
       } else {
         setSeries(dataOverride!.series ?? []);
+        setCapped(dataOverride!.rowsCapped ?? false);
         setError(null);
       }
       return;
@@ -245,15 +262,17 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }:
     const step = effectivePanelStep(cfg.step, (to - from) / 1e9, widthPx);
     if (step === null) return;
     setSeries(undefined); setError(null);
-    api.metricQuery({
+    api.metricQueryFull({
       name: cfg.metricName, service: cfg.service, agg: cfg.agg,
       groupBy: cfg.groupBy, from, to, step,
-    }).then(s => setSeries(s ?? [])).catch(e => setError(e.message));
+    }).then(r => { setSeries(r?.series ?? []); setCapped(r?.rowsCapped ?? false); })
+      .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride), widthPx]);
 
   if (error) return <PanelError msg={error} />;
   return (
-    <div ref={ref}>
+    <div ref={ref} style={{ position: 'relative' }}>
+      {capped && <CapHint />}
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
         // Madde 4 sweep — cfg.unit eksene/tooltip'e iner (promql paneli
@@ -360,6 +379,7 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
   dataOverride?: PanelDataOverride;
 }) {
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
+  const [capped, setCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // GRAN-C (v0.8.248) — same width-aware auto step as MetricPanel above.
   const { ref, widthPx } = usePanelWidth();
@@ -372,6 +392,7 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
         setError(dataOverride!.error);
       } else {
         setSeries(dataOverride!.series ?? []);
+        setCapped(dataOverride!.rowsCapped ?? false);
         setError(null);
       }
       return;
@@ -381,11 +402,12 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
     const step = effectivePanelStep(cfg.step, (to - from) / 1e9, widthPx);
     if (step === null) return; // panel width not measured yet — defer
     setSeries(undefined); setError(null);
-    api.spanMetric({
+    api.spanMetricTopN({
       agg: cfg.agg, field: cfg.field, groupBy: cfg.groupBy,
       filters: cfg.filters, dsl: cfg.dsl,
       from, to, step,
-    }).then(s => setSeries(s ?? [])).catch(e => setError(e.message));
+    }).then(r => { setSeries(r?.series ?? []); setCapped(r?.rowsCapped ?? false); })
+      .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride), widthPx]);
 
   if (error) return <PanelError msg={error} />;
@@ -394,7 +416,8 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
   // through the small SVG-based DashboardViz component.
   const viz = cfg.viz ?? 'line';
   return (
-    <div ref={ref}>
+    <div ref={ref} style={{ position: 'relative' }}>
+      {capped && <CapHint />}
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
         : viz === 'line'

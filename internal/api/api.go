@@ -4993,7 +4993,11 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 
 	type slot struct {
 		Series []chstore.SpanMetricSeries `json:"series,omitempty"`
-		Error  string                     `json:"error,omitempty"`
+		// RowsCapped (v0.9.459, dürüstlük A1b) — 50k satır tavanı doldu:
+		// alfabetik-son seriler eksik olabilir. Bundle yolu tekil
+		// endpoint'lerin v0.9.458 zarfını atlıyordu.
+		RowsCapped bool   `json:"rowsCapped,omitempty"`
+		Error      string `json:"error,omitempty"`
 	}
 	out := make(map[string]*slot, len(body.Requests))
 	var mu sync.Mutex
@@ -5042,6 +5046,7 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				out[req.ID].Error = err.Error()
 			} else {
+				out[req.ID].RowsCapped = chstore.SeriesRowsCapped(series)
 				out[req.ID].Series = series
 			}
 			mu.Unlock()

@@ -23,6 +23,14 @@ function LetterBadge({ letter, isFormula }: { letter: string; isFormula: boolean
 
 export function SummaryViz({ panels, mode }: { panels: PanelData[]; mode: 'stat' | 'toplist' | 'pie' }) {
   const rows = useMemo(() => buildGroupRows(panels), [panels]);
+  // v0.9.468 (dürüstlük A15) — harf → kırpılan seri sayısı: pasta payı
+  // GÖRÜNEN (top-N) kümenin payıdır; kırpma varken "bütünün payı" gibi
+  // okunmasın.
+  const moreByLetter = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const p of panels) m.set(p.letter, p.more ?? 0);
+    return m;
+  }, [panels]);
 
   if (rows.length === 0) return null;
 
@@ -80,7 +88,15 @@ export function SummaryViz({ panels, mode }: { panels: PanelData[]; mode: 'stat'
               <div style={{ minWidth: 0, flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                   <LetterBadge letter={letter} isFormula={list[0]?.isFormula ?? false} />
-                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>güncel değerin payı</span>
+                  <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    güncel değerin payı
+                    {(moreByLetter.get(letter) ?? 0) > 0 && (
+                      <span style={{ color: 'var(--warn)' }}
+                        title={`Pay yalnız gösterilen ilk ${list.length} serinin toplamına göredir — ${moreByLetter.get(letter)} seri kırpıldı, gerçek bütünün payı bilinmiyor.`}>
+                        {' '}(ilk {list.length} seri; +{moreByLetter.get(letter)} dışarıda)
+                      </span>
+                    )}
+                  </span>
                 </div>
                 {slices.slice(0, 8).map(r => (
                   <div key={r.rowKey} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, marginBottom: 2, minWidth: 0 }}>

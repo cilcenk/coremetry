@@ -210,6 +210,22 @@ var (
 	// Çıplak uzun hex (trace/span/request kimlikleri): 16+ hane.
 	// (path_template.go'daki longHexRe path-segment'e çapalı; bu genel.)
 	bareHexRe = regexp.MustCompile(`\b[0-9a-fA-F]{16,}\b`)
+	// v0.9.466 (hacim denetimi #8) — üç yeni maske, stack'siz parmak izi
+	// parçalanmasına karşı. SIRA ÖNEMLİ: e-posta tırnaklıdan önce (tırnak
+	// içindeki e-posta da tek sınıfa insin diye değil — tırnak maskesi
+	// içeriği zaten yutar; e-posta TIRNAKSIZ geçen SDK'lar için), karışık
+	// alfasayısal token rakam maskesinden önce (yoksa rakamları # olur,
+	// harf artıkları parmak izinde kalırdı). YALNIZ parmak izi normalize
+	// olur — gösterim ham mesajı korur (redaksiyon değildir).
+	emailRe = regexp.MustCompile(`[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}`)
+	// Tek/çift tırnaklı içerik: 'order X' / "user Y" — dinamik değer
+	// taşıyan en yaygın kalıp. Tırnak İÇİ maskelenir, tırnaklar kalır
+	// (mesaj şekli parmak izinde ayırt edici kalsın).
+	quotedRe = regexp.MustCompile(`"[^"]{1,200}"|'[^']{1,200}'`)
+	// Karışık harf+rakam token (session/correlation kimlikleri:
+	// abc123def456): ≥8 hane, en az bir harf VE bir rakam şartı
+	// lookahead'siz iki alternatifle (RE2 lookahead desteklemez).
+	mixedTokRe = regexp.MustCompile(`\b(?:[A-Za-z]+\d|\d+[A-Za-z])[A-Za-z0-9]{6,}\b`)
 	intRe     = regexp.MustCompile(`\d+`)
 )
 
@@ -218,6 +234,9 @@ func normalizeMessage(s string) string {
 	s = isoTsRe.ReplaceAllString(s, "#ts")
 	s = hexRe.ReplaceAllString(s, "#hex")
 	s = bareHexRe.ReplaceAllString(s, "#hex")
+	s = emailRe.ReplaceAllString(s, "#email")
+	s = quotedRe.ReplaceAllString(s, "#q")
+	s = mixedTokRe.ReplaceAllString(s, "#tok")
 	s = intRe.ReplaceAllString(s, "#")
 	return s
 }

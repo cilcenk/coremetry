@@ -706,17 +706,22 @@ type ExceptionSample struct {
 // candidate set by exact message — instead we scan recent spans matching
 // (service, type), recompute the fingerprint per row in Go, and return
 // the first `limit` that match.
-func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string, limit int) ([]ExceptionSample, error) {
+// v0.9.463 (dürüstlük A11) — dönüş zarfı scanned/scanCapped taşır:
+// aday taraması (service, type) üzerinden en-yeni-500'dür; sıcak
+// serviste kardeş fingerprint 500'ü doldurunca 10K occurrence'lı grup
+// "No samples" okuyordu — yanlış-boş. Şerit artık "en yeni 500 aday
+// tarandı, bu grubun örneği pencerede yok" diyebiliyor.
+func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string, limit int) ([]ExceptionSample, int, bool, error) {
 	f := exFragments(s.hasExCols)
 	if limit <= 0 || limit > 100 {
 		limit = 10
 	}
 	g, err := s.GetExceptionGroup(ctx, fingerprint)
 	if err != nil {
-		return nil, err
+		return nil, 0, false, err
 	}
 	if g == nil {
-		return nil, nil
+		return nil, 0, false, nil
 	}
 	// Pull a wide candidate window so even rare messages within the group
 	// have a chance to surface, capped to bound memory.
@@ -744,15 +749,17 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 		LIMIT ?
 		SETTINGS max_execution_time = 10`, g.Service, winFrom, winTo, g.Type, maxCandidates)
 	if err != nil {
-		return nil, err
+		return nil, 0, false, err
 	}
 	defer rows.Close()
 	out := make([]ExceptionSample, 0, limit)
+	scanned := 0
 	for rows.Next() {
 		var sm ExceptionSample
 		if err := rows.Scan(&sm.TraceID, &sm.SpanID, &sm.Time, &sm.Message, &sm.Stacktrace, &sm.SpanName, &sm.StatusMsg); err != nil {
-			return nil, err
+			return nil, 0, false, err
 		}
+		scanned++
 		// Filter to samples that belong to this group — keeps message
 		// variants together while excluding spans whose stacktrace puts
 		// them in a different inbox row.
@@ -764,7 +771,7 @@ func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string
 			break
 		}
 	}
-	return out, rows.Err()
+	return out, scanned, scanned >= maxCandidates, rows.Err()
 }
 
 // OccurrencePoint is one time-bucket of the "occurrences over time"

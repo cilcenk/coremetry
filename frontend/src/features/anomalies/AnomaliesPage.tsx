@@ -1316,6 +1316,7 @@ function PriorityBadge({ p, reason }: { p?: 'P1' | 'P2' | 'P3'; reason?: string 
 // link out to the waterfall.
 function SamplesPanel({ fingerprint, occurrences }: { fingerprint: string; occurrences?: number }) {
   const [samples, setSamples] = useState<ExceptionSample[] | null | undefined>(undefined);
+  const [samplesCapped, setSamplesCapped] = useState(false);
   const [limit, setLimit] = useState(10);
   // v0.9.314 — the total the table no longer shows. Kept here rather
   // than dropped: how often a group fires is real context ONCE you are
@@ -1324,12 +1325,19 @@ function SamplesPanel({ fingerprint, occurrences }: { fingerprint: string; occur
   useEffect(() => {
     setSamples(undefined);
     api.exceptionGroupSamples(fingerprint, limit)
-      .then(s => setSamples(s ?? [])).catch(() => setSamples(null));
+      .then(r => { setSamples(r?.samples ?? []); setSamplesCapped(r?.scanCapped ?? false); })
+      .catch(() => setSamples(null));
   }, [fingerprint, limit]);
 
   if (samples === undefined) return <Spinner />;
   if (!samples || samples.length === 0) {
-    return <div style={{ color: 'var(--text3)', fontSize: 12 }}>No sample occurrences found.</div>;
+    return (
+      <div style={{ color: samplesCapped ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
+        {samplesCapped
+          ? '⚠ En yeni 500 aday tarandı, bu grubun örneği pencerede yok (sıcak serviste kardeş gruplar adayları doldurabilir).'
+          : 'No sample occurrences found.'}
+      </div>
+    );
   }
 
   const distinct = new Set(samples.map(s => s.message)).size;

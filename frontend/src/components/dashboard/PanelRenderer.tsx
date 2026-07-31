@@ -291,6 +291,7 @@ function HeatmapPanel({ cfg, range }: {
   cfg: HeatmapPanelConfig; range: TimeRange;
 }) {
   const [data, setData] = useState<HeatmapData | null | undefined>(undefined);
+  const [honesty, setHonesty] = useState<{ skipped: number; rowCapped: boolean }>({ skipped: 0, rowCapped: false });
   const [error, setError] = useState<string | null>(null);
   const { ref, widthPx } = usePanelWidth();
 
@@ -304,13 +305,28 @@ function HeatmapPanel({ cfg, range }: {
       name: cfg.metricName, service: cfg.service,
       filters: cfg.filters, from, to, step,
     })
-      .then(r => setData(r ? histogramResultToHeatmap(r, cfg.unit) : null))
+      .then(r => {
+        setData(r ? histogramResultToHeatmap(r, cfg.unit) : null);
+        // v0.9.473 (dürüstlük A13) — backend'in dürüst alanları yere
+        // düşmesin: skipped (uyumsuz bucket düzenli seriler hariç) +
+        // rowCapped (sağ kenar kesik olabilir).
+        setHonesty({ skipped: r?.skipped ?? 0, rowCapped: r?.rowCapped ?? false });
+      })
       .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range, widthPx]);
 
   if (error) return <PanelError msg={error} />;
   return (
-    <div ref={ref}>
+    <div ref={ref} style={{ position: 'relative' }}>
+      {(honesty.skipped > 0 || honesty.rowCapped) && (
+        <span style={{ position: 'absolute', top: 6, right: 8, zIndex: 2, cursor: 'help', fontSize: 11, color: 'var(--warn)' }}
+          title={[
+            honesty.rowCapped ? 'Satır tavanı (200k) doldu — pencerenin SAĞ kenarı kesik olabilir; "trafik düştü" gibi okuma.' : '',
+            honesty.skipped > 0 ? `${honesty.skipped} seri uyumsuz bucket düzeni nedeniyle hariç tutuldu (yanlış kovaya toplamak yerine).` : '',
+          ].filter(Boolean).join(' ')}>
+          ⚠ {honesty.rowCapped ? 'kesik' : ''}{honesty.rowCapped && honesty.skipped > 0 ? ' · ' : ''}{honesty.skipped > 0 ? `${honesty.skipped} seri hariç` : ''}
+        </span>
+      )}
       {data === undefined ? <PanelLoading />
         : !data || data.maxCount === 0 ? <PanelEmpty />
         : <LatencyHeatmap data={data} height={280} />}

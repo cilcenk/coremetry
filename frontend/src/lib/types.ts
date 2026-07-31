@@ -1929,6 +1929,9 @@ export interface HistogramResult {
   p95: number[];
   p99: number[];
   skipped: number;      // series dropped for a mismatched bucket layout
+  // v0.9.473 (dürüstlük A13) — 200k satır tavanı doldu: pencerenin SAĞ
+  // kenarı kesik olabilir ("trafik düştü" yanılsaması).
+  rowCapped?: boolean;
 }
 
 // ── Alerts & Problems ───────────────────────────────────────────────────────

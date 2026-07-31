@@ -20,6 +20,16 @@ export function panelsToCSV(panels: PanelData[]): string {
   const lines: string[] = ['query,series,unit,time,value'];
   for (const p of panels) {
     if (p.loading) continue;
+    // v0.9.467 (dürüstlük A14) — export GÖRÜNEN serilerdir (top-N
+    // kırpılmış küme); 3K serilik splitBy'da Excel pivot toplamları
+    // gerçeğin kesri olur. Kırpma varsa CSV kendisi söyler (# yorum
+    // satırı — tablolamada veri satırı gibi parse edilmez).
+    if (p.more > 0) {
+      lines.push(`# query ${p.letter}: capped — ${p.series.length} of ${p.series.length + p.more} series exported`);
+    }
+    if (p.rowsCapped) {
+      lines.push(`# query ${p.letter}: row cap hit — series list may be missing late-alphabet groups`);
+    }
     for (const s of p.series) {
       for (const pt of s.points) {
         const iso = new Date(pt.time / 1e6).toISOString();

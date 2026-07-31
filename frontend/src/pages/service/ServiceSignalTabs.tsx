@@ -9,6 +9,7 @@ import type { TimeRange, LogRow, ServiceMap } from '@/lib/types';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { LogsHistogram } from '@/components/LogsHistogram';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { LogTable } from '@/components/LogTable';
 import { TopologyPillGraph, type PillNode, type PillEdge, type PillLevel } from '@/components/TopologyPillGraph';
 import { FocusedNeighborhood } from '@/components/topology/FocusedNeighborhood';
@@ -82,6 +83,13 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
   // replace:true): sekme değişince kaybolmuyor, paylaşılabiliyor.
   // Yalnız SAHİP OLDUĞUMUZ paramlar yazılır (prev kopyalanır); debounce
   // input state'te yaşar, URL'e ödemeli (settled) değer düşer.
+  // v0.9.453 (operatör onayı: "sekme ile /logs farklı") — global ortam
+  // filtresi bu sekmede de uygulanır: /logs env geçiriyordu, sekme
+  // geçirmiyordu; env seçiliyken iki yüzey farklı kayıt kümesi
+  // gösteriyordu (v0.9.219 drift sınıfı). Liste + sayfalama + histogram
+  // aynı env'i taşır; env yokken davranış değişmez.
+  const [env] = useUrlEnv();
+  const envParam = env || undefined;
   const [lparams, setLparams] = useSearchParams();
   const urlLq = lparams.get('lq') ?? '';
   const urlLvl = (lparams.get('llvl') as 'all' | Lvl | null) ?? 'all';
@@ -106,8 +114,8 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
   }, [searchInput, setLparams]);
 
   const filter = useMemo(
-    () => ({ service, search, severity: 0, traceId: '', spanId: '' }),
-    [service, search],
+    () => ({ service, search, severity: 0, traceId: '', spanId: '', env: envParam }),
+    [service, search, envParam],
   );
 
   // v0.9.358 — seçili bant SUNUCUYA gider: eskiden 200 satır her zaman
@@ -116,8 +124,8 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
   // 30 dakikalık pencerenin ilk ~1.2 saniyesiyle 200'ü dolduruyor).
   const minSev = lvl === 'all' ? undefined : (LVL_MIN_SEV[lvl] || undefined);
   const q = useQuery({
-    queryKey: ['service-tab-logs', service, from, to, search, minSev ?? 0],
-    queryFn: () => api.logs({ limit: 200, from, to, service, search: search || undefined, severity: minSev }),
+    queryKey: ['service-tab-logs', service, from, to, search, minSev ?? 0, envParam ?? ''],
+    queryFn: () => api.logs({ limit: 200, from, to, service, search: search || undefined, severity: minSev, env: envParam }),
     enabled: !!service,
     staleTime: 15_000,
     // v0.8.3 (operator-reported ES incident) — /api/logs is uncached and
@@ -136,12 +144,12 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
   const cursorRef = useRef<string>('');
   useEffect(() => {
     setExtraRows([]); setPagingDone(false); cursorRef.current = '';
-  }, [service, from, to, search, minSev]);
+  }, [service, from, to, search, minSev, envParam]);
   const loadMore = async () => {
     if (pagingBusy || pagingDone) return;
     setPagingBusy(true);
     try {
-      const base = { limit: 200, from, to, service, search: search || undefined, severity: minSev } as const;
+      const base = { limit: 200, from, to, service, search: search || undefined, severity: minSev, env: envParam } as const;
       if (!cursorRef.current) {
         const first = await api.logs({ ...base, paging: true });
         cursorRef.current = first?.nextCursor ?? '';

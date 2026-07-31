@@ -36,6 +36,7 @@ export function TracePeekDrawer({
 }: { traceId: string | null; onClose: () => void }) {
   const [trace, setTrace] = useState<TraceDetailResponse | null | undefined>(undefined);
   const [logs, setLogs] = useState<LogRow[] | null | undefined>(undefined);
+  const [logsDegraded, setLogsDegraded] = useState<string | null>(null);
 
   useEffect(() => {
     if (!traceId) {
@@ -51,7 +52,13 @@ export function TracePeekDrawer({
       .then(r => { if (!cancelled) setTrace(r ?? null); })
       .catch(() => { if (!cancelled) setTrace(null); });
     api.logs({ traceId, limit: 500 })
-      .then(r => { if (!cancelled) setLogs(r?.logs ?? []); })
+      .then(r => {
+        if (cancelled) return;
+        setLogs(r?.logs ?? []);
+        // v0.9.461 (dürüstlük A5) — degraded düşürülmesin: boş liste
+        // "bu pencerede log yok" değil "backend kısmi" olabilir.
+        setLogsDegraded(r?.degraded ? (r?.reason || 'log backend slow/unreachable') : null);
+      })
       .catch(() => { if (!cancelled) setLogs(null); });
     return () => { cancelled = true; };
   }, [traceId]);
@@ -171,8 +178,10 @@ export function TracePeekDrawer({
               <div style={{ padding: 12 }}><Spinner /></div>
             )}
             {logs && logs.length === 0 && (
-              <div style={{ padding: 12, fontSize: 11, color: 'var(--text3)' }}>
-                No logs emitted during this trace's window.
+              <div style={{ padding: 12, fontSize: 11, color: logsDegraded ? 'var(--warn)' : 'var(--text3)' }}>
+                {logsDegraded
+                  ? `⚠ Kısmi sonuç (${logsDegraded}) — log olup olmadığı bilinmiyor.`
+                  : "No logs emitted during this trace's window."}
               </div>
             )}
             {logs && logs.length > 0 && (

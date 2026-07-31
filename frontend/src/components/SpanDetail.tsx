@@ -88,11 +88,18 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   const logsFromBound = logsFrom ?? (span.startTime ? span.startTime - SPAN_LOG_WINDOW_BUFFER_NS : undefined);
   const logsToBound   = logsTo   ?? (span.endTime   ? span.endTime   + SPAN_LOG_WINDOW_BUFFER_NS : undefined);
   const [spanLogs, setSpanLogs] = useState<LogRow[]>([]);
+  // v0.9.461 (dürüstlük A5) — zarf düşürülmesin: degraded/hata "log yok"
+  // gibi OKUNMASIN (ES brownout'ta emin bir "No logs attached" basılıyordu);
+  // total > 50 ise sayfa kısmidir.
+  const [spanLogsMeta, setSpanLogsMeta] = useState<{ degraded?: string; failed?: boolean; total?: number }>({});
   useEffect(() => {
-    if (!span.traceId) { setSpanLogs([]); return; }
+    if (!span.traceId) { setSpanLogs([]); setSpanLogsMeta({}); return; }
     api.logs({ traceId: span.traceId, from: logsFromBound, to: logsToBound, limit: 50 })
-      .then(r => setSpanLogs(r.logs ?? []))
-      .catch(() => setSpanLogs([]));
+      .then(r => {
+        setSpanLogs(r.logs ?? []);
+        setSpanLogsMeta({ degraded: r.degraded ? (r.reason || 'log backend slow/unreachable') : undefined, total: r.total });
+      })
+      .catch(() => { setSpanLogs([]); setSpanLogsMeta({ failed: true }); });
   }, [span.traceId, logsFromBound, logsToBound]);
 
   // Baseline p50 — the 24h leading up to this span, for the same
@@ -318,8 +325,12 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
           </>
         }>
           {spanLogs.length === 0 ? (
-            <div style={{ fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
-              No logs attached to this span
+            <div style={{ fontSize: 11, color: spanLogsMeta.failed || spanLogsMeta.degraded ? 'var(--warn)' : 'var(--text3)', fontStyle: 'italic' }}>
+              {spanLogsMeta.failed
+                ? '⚠ Log backend\'e ulaşılamadı — log olup olmadığı bilinmiyor'
+                : spanLogsMeta.degraded
+                  ? `⚠ Kısmi sonuç (${spanLogsMeta.degraded}) — log olup olmadığı bilinmiyor`
+                  : 'No logs attached to this span'}
             </div>
           ) : (
             spanLogs.map(l => (

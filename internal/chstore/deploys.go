@@ -836,16 +836,29 @@ func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 // dolu pencerede boş görünürdü — verify bulgusu). Burada hem taramanın
 // hem HAVING'in sağ ucu to'ya bağlı; LIMIT pencere İÇİNDE uygulanır.
 // Placeholder filtresi + effectiveVersion zinciri birebir aynı.
+// deployJudgmentLookback (v0.9.478) — "bu pencerede DOĞDU" hükmü için
+// geriye bakış ufku. Operator-reported: 15 dakikalık pencerede tüm filo
+// "deploy" görünüyordu — tarama penceresi hüküm penceresiyle AYNI
+// olunca min(time) her aktif sürüm için kaçınılmaz pencere içindeydi ve
+// HAVING first_seen >= from TOTOLOJİYDİ: sayfa "pencerede yaşayan her
+// sürümü" listeliyordu, "pencerede doğan"ı değil. Tarama artık 24 saat
+// geriden başlar; ufuktan önce de koşan sürümün first_seen'i from'un
+// altına düşer ve elenir. Bilinen kenar: 24+ saat susup aynı sürümle
+// geri gelen servis "deploy" sayılır — operasyonel olarak da öyledir
+// (bir gün sonra aynı imajı geri açmak bir yayındır).
+const deployJudgmentLookback = 24 * time.Hour
+
 func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limit int) ([]RecentDeployEntry, error) {
 	if limit <= 0 || limit > 2000 {
 		limit = 200
 	}
-	window := to.Sub(from)
+	scanFrom := from.Add(-deployJudgmentLookback)
+	horizon := to.Sub(scanFrom)
 	maxExecSec := 5
 	switch {
-	case window > 25*time.Hour: // tolerans: 24h preset'i ε yüzünden 60s kovasına düşmesin
+	case horizon > 25*time.Hour: // tolerans: 24h preset'i ε yüzünden 60s kovasına düşmesin
 		maxExecSec = 60
-	case window > time.Hour:
+	case horizon > time.Hour:
 		maxExecSec = 30
 	}
 	sql := fmt.Sprintf(`
@@ -853,7 +866,7 @@ func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limi
 		  service_name,
 		  `+effectiveVersionExpr+` AS version,
 		  toUnixTimestamp64Nano(min(time)) AS first_seen,
-		  count() AS span_count
+		  countIf(time >= ?) AS span_count
 		FROM spans
 		WHERE time >= ? AND time <= ?
 		  AND (has(res_keys, 'service.version')
@@ -869,7 +882,7 @@ func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limi
 		ORDER BY first_seen DESC
 		LIMIT ?
 		SETTINGS max_execution_time = %d`, maxExecSec)
-	rows, err := s.conn.Query(ctx, sql, from, to, from.UnixNano(), limit)
+	rows, err := s.conn.Query(ctx, sql, from, scanFrom, to, from.UnixNano(), limit)
 	if err != nil {
 		return nil, err
 	}

@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"os"
 )
 
 // v0.9.205 — Operator-reported: image-tag'siz bir serviste (zincir
@@ -122,4 +123,34 @@ func TestAnalyzeRolloutsFlickerSuppressed(t *testing.T) {
 			t.Fatalf("hash'siz adlarda tespit kaybolmamalı: %+v", res.Rollouts)
 		}
 	})
+}
+
+// v0.9.478 (operator-reported, prod: "15 dakikalık pencerede tüm filo
+// deploy görünüyor — mevcut sürümleri deploy sanıyor") — tarama penceresi
+// hüküm penceresiyle AYNI olunca min(time) her aktif sürüm için pencere
+// içindeydi ve HAVING first_seen >= from TOTOLOJİYDİ. Pinler: tarama
+// 24h geriden başlar (scanFrom), hüküm sınırı from'da kalır ve span_count
+// yalnız pencere içini sayar (countIf) — lookback hacmi şişirmesin.
+func TestDeployWindowJudgmentLookback(t *testing.T) {
+	b, err := os.ReadFile("deploys.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := string(b)
+	if !strings.Contains(src, "const deployJudgmentLookback = 24 * time.Hour") {
+		t.Error("deployJudgmentLookback yok — hüküm ufku olmadan HAVING first_seen >= from totolojidir (her aktif sürüm 'deploy' görünür)")
+	}
+	if !strings.Contains(src, "scanFrom := from.Add(-deployJudgmentLookback)") {
+		t.Error("tarama penceresi geriye açılmıyor — pencere-içi min(time) her zaman >= from")
+	}
+	if !strings.Contains(src, "countIf(time >= ?) AS span_count") {
+		t.Error("span_count lookback'i sayıyor — hacim kolonu yalnız sayfa penceresini saymalı")
+	}
+	i := strings.Index(src, "func (s *Store) GetDeploysInWindow")
+	if i < 0 {
+		t.Fatal("GetDeploysInWindow yok")
+	}
+	if !strings.Contains(src[i:], "rows, err := s.conn.Query(ctx, sql, from, scanFrom, to, from.UnixNano(), limit)") {
+		t.Error("bind sırası bozuk — countIf(from), WHERE(scanFrom,to), HAVING(from) sırası şart")
+	}
 }

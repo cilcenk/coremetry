@@ -55,7 +55,11 @@ export function RepeatsResult({
       {repeats && repeats.length > 0 && (
         <>
           <div style={{ marginBottom: 6, fontSize: 12, color: 'var(--text2)' }}>
-            {repeats.length} trace{repeats.length === 1 ? '' : 's'} with ≥ {repeatMin} repeats of the same span shape — heaviest at the top.
+            {/* v0.9.469 (dürüstlük A17) — len==limit tavan işaretidir:
+                "200 trace" tam sayım gibi okunmasın. */}
+            {repeats.length >= 200
+              ? `ilk ${repeats.length} trace (tavan doldu — daha fazlası olabilir), ≥ ${repeatMin} tekrar, en ağır üstte.`
+              : `${repeats.length} trace${repeats.length === 1 ? '' : 's'} with ≥ ${repeatMin} repeats of the same span shape — heaviest at the top.`}
           </div>
           <div className="table-wrap">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>

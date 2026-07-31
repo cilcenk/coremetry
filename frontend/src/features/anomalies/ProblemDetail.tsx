@@ -141,7 +141,11 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     queryFn: () => api.exceptionGroupSamples(group.fingerprint, 100),
     staleTime: 30_000,
   });
-  const samples = samplesQ.data ?? [];
+  const samples = samplesQ.data?.samples ?? [];
+  // v0.9.463 (dürüstlük A11) — sahte-boş ayrımı: sıcak serviste kardeş
+  // fingerprint 500 adayı doldurunca liste boş kalır ama bu "örnek yok"
+  // demek değildir.
+  const samplesCapped = samplesQ.data?.scanCapped ?? false;
 
   // Occurrences-over-time is a real server-side, gap-filled COUNT over the
   // group's whole window (v0.8.309) — NOT bucketed from the sampled
@@ -288,7 +292,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
             // Sıcak grupta backend en YENİ örneği kanıt seçer; mount'taki
             // liste bayatsa kutulanacak satır listede olmayabilir —
             // kanıt listede yoksa örnekleri tazele (verify bulgusu).
-            const have = new Set((samplesQ.data ?? []).map(sm => sm.traceId));
+            const have = new Set((samplesQ.data?.samples ?? []).map(sm => sm.traceId));
             if (ids.some(tid => !have.has(tid))) void samplesQ.refetch();
           }} />
       </div>
@@ -351,13 +355,17 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
 
         {/* Sample traces */}
         <div className="card" style={{ minWidth: 0 }}>
-          <div className="ov-card-h"><h3>Sample traces</h3>{samples.length > 0 && <span className="ov-sub">{samples.length}</span>}</div>
+          <div className="ov-card-h"><h3>Sample traces</h3>{samples.length > 0 && <span className="ov-sub">{Math.min(samples.length, 14)}{samples.length > 14 ? ` / ${samples.length}` : ''}</span>}</div>
           <div className="table-wrap">
             <table>
               <tbody>
                 {samplesQ.isLoading && <tr><td style={{ padding: 12 }}><Spinner /></td></tr>}
                 {!samplesQ.isLoading && samples.length === 0 && (
-                  <tr><td style={{ padding: 12, color: 'var(--text3)', fontSize: 12 }}>No sample traces.</td></tr>
+                  <tr><td style={{ padding: 12, color: samplesCapped ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
+                    {samplesCapped
+                      ? '⚠ En yeni 500 aday tarandı, bu grubun örneği pencerede yok — grup daha eski/seyrek ateşliyor olabilir; occurrences grafiği gerçek dağılımı gösterir.'
+                      : 'No sample traces.'}
+                  </td></tr>
                 )}
                 {samples.slice(0, 14).map((s, i) => {
                   const isEv = !!s.traceId && evTraces.includes(s.traceId);

@@ -1765,8 +1765,10 @@ export const api = {
   // request()); callers treat any rejection as "not found".
   getExceptionGroup: (fingerprint: string) =>
     get<ExceptionGroup>(`/api/exception-groups/${encodeURIComponent(fingerprint)}`),
+  // v0.9.463 (dürüstlük A11) — zarf: scanned/scanCapped ile boş liste
+  // "örnek yok" mu "500 aday penceresi yetmedi" mi ayırt edilir.
   exceptionGroupSamples: (fingerprint: string, limit = 10) =>
-    get<ExceptionSample[] | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
+    get<{ samples: ExceptionSample[]; scanned: number; scanCapped: boolean } | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
   exceptionGroupOccurrences: (fingerprint: string) =>
     get<OccurrencePoint[] | null>(`/api/exception-groups/${fingerprint}/occurrences`),
   // v0.9.252 — bulk sibling. One request, one audit row, one set of

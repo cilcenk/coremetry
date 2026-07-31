@@ -7235,12 +7235,16 @@ func (s *Server) getExceptionGroup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getExceptionGroupSamples(w http.ResponseWriter, r *http.Request) {
 	limit := parseInt(r.URL.Query().Get("limit"), 10)
-	out, err := s.store.GetExceptionGroupSamples(r.Context(), r.PathValue("fp"), limit)
+	out, scanned, capped, err := s.store.GetExceptionGroupSamples(r.Context(), r.PathValue("fp"), limit)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, out)
+	// v0.9.463 (dürüstlük A11) — zarf: sıcak serviste kardeş fingerprint
+	// 500 adayı doldurunca boş liste "örnek yok" DEĞİL "aday penceresi
+	// yetmedi"dir; frontend farkı söyler. Eski çıplak dizi tüketicisi
+	// kalmadı (tek çağıran ProblemDetail, aynı sürümde zarfa geçti).
+	writeJSON(w, map[string]any{"samples": out, "scanned": scanned, "scanCapped": capped})
 }
 
 // getExceptionGroupOccurrences serves the "occurrences over time"

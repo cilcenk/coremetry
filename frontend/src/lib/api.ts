@@ -1502,7 +1502,7 @@ export const api = {
       filters?: string; dsl?: string;
     }>;
   }) =>
-    request<Record<string, { series?: SpanMetricSeries[] | null; error?: string }>>(
+    request<Record<string, { series?: SpanMetricSeries[] | null; rowsCapped?: boolean; error?: string }>>(
       `/api/dashboards/data`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

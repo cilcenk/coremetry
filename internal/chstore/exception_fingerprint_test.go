@@ -33,6 +33,46 @@ func TestFingerprintMergesDynamicIDVariants(t *testing.T) {
 			azureAuthMsg("ab12cd34-e567-89f0-1234-567890abcdef", "2026-07-11T15:03:07.1234567Z", "Sat, 11 Jul 2026 15:03:07 GMT"),
 			true,
 		},
+		// v0.9.466 (hacim denetimi #8) — üç yeni maske sınıfı: tırnaklı
+		// dinamik değer, e-posta, karışık harf+rakam token. Her sınıf
+		// İKİ yönde test edilir (birleşmeli / ayrık kalmalı) —
+		// unit-mixing disiplini.
+		{
+			"tırnaklı dinamik değer birleşir",
+			`user 'ali.veli' not found in cache`,
+			`user 'ayse.k' not found in cache`,
+			true,
+		},
+		{
+			"çift tırnak da birleşir",
+			`config key "payment.retry.limit" missing`,
+			`config key "fraud.check.timeout" missing`,
+			true,
+		},
+		{
+			"e-posta farkı birleşir",
+			`notification failed for cil.cenk@example.com: bounce`,
+			`notification failed for x.y@bank.com.tr: bounce`,
+			true,
+		},
+		{
+			"karışık token (session id) birleşir",
+			`session abc123def456gh expired`,
+			`session zz99xx88yy77ww expired`,
+			true,
+		},
+		{
+			"farklı mesaj ŞEKLİ ayrık kalır (tırnak maskesi her şeyi yutmaz)",
+			`connection refused to 'db-primary'`,
+			`timeout waiting for 'db-primary'`,
+			false,
+		},
+		{
+			"düz kelimeler maskelenmez — ayrık kalır",
+			`invalid password for account`,
+			`invalid username for account`,
+			false,
+		},
 		{
 			"çıplak ISO damga farkı birleşir",
 			"deadline exceeded at 2026-07-11T12:42:32Z",

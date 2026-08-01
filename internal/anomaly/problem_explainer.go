@@ -164,7 +164,21 @@ func (e *ProblemExplainer) run(ctx context.Context) {
 			hh := h
 			hyp = &hh
 		}
-		summary, err := e.explain(ctx, p, buildEvidenceBundle(p, inputs), hyp)
+		bundle := buildEvidenceBundle(p, inputs)
+		// v0.9.510 — P1 KAPISI. Derin soruşturma pahalı (aile başına bir
+		// sınırlı okuma), o yüzden yalnız P1'de koşar. P2/P3 bugünkü sığ
+		// paketiyle kalır — operatör kararı: "yeni açılan P2 ve P3 ise
+		// dikkate almayabiliriz bu yapıda".
+		//
+		// Öncelik okuma zamanında hesaplanıyor (computePriority chstore'da
+		// unexported); EnrichProblemsWithPriority ile alıyoruz.
+		if prio := chstore.EnrichProblemsWithPriority([]chstore.Problem{p}); len(prio) > 0 && prio[0].Priority == "P1" {
+			if plan := investigationPlan(p); len(plan) > 0 {
+				to := time.Now()
+				bundle.Deep = gatherDeepEvidence(ctx, e.store, p, plan, to.Add(-evidenceWindow), to)
+			}
+		}
+		summary, err := e.explain(ctx, p, bundle, hyp)
 		if err != nil {
 			log.Printf("[problem-explainer] %s: %v", p.ID, err)
 			continue
@@ -225,5 +239,19 @@ func buildProblemPrompt(p chstore.Problem, bundle EvidenceBundle, hyp *chstore.R
 	// evidence so the summary reads as one incident with a likely root cause,
 	// not an isolated metric blip. Empty bundle → nothing added (unchanged).
 	renderEvidence(&sb, bundle)
+	// v0.9.510 — P1 soruşturmasının derin kanıtı + "neye bakıldı" izi.
+	// SADECE P1'de dolu; boşsa hiçbir şey basılmaz ve prompt bugünküyle
+	// birebir aynı kalır (rootcause_prompt_test.go bunu pinliyor).
+	//
+	// Uydurma yasağı burada, kanıtın hemen ardında duruyor — 2B model
+	// talimatı bağlamın başında değil, yanında olunca tutuyor. Derin kanıt
+	// vermek modeli daha İDDİALI yapar; bu satır onu dengeliyor.
+	if len(bundle.Deep.Checked) > 0 {
+		renderDeepEvidence(&sb, bundle.Deep)
+		sb.WriteString("\nKURAL: Yukarıdaki SORUŞTURMA listesi neye BAKILDIĞINI söyler. " +
+			"Bir sinyalde 'yok' yazıyorsa o sinyali sebep olarak GÖSTERME. " +
+			"Hiçbir sinyalde kanıt yoksa sebep uydurma — 'kanıt yetersiz' de ve " +
+			"hangi sinyallere bakıldığını yaz.\n")
+	}
 	return sb.String()
 }

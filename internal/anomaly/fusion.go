@@ -49,7 +49,7 @@ type EvidenceBundle struct {
 	// + "neye bakıldı" denetim izi. YALNIZ P1 anchor'larında dolu
 	// (investigation.go, maliyet kapısı). Boş = derin soruşturma koşmadı;
 	// prompt o zaman bugünküyle birebir aynı kalır.
-	Deep DeepEvidence
+	Deep chstore.DeepEvidence
 }
 
 // NeighborProblem is an open problem on a service adjacent to the trigger,

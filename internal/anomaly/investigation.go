@@ -98,37 +98,9 @@ func investigationPlan(p chstore.Problem) []signalFamily {
 	return nil
 }
 
-// CheckedSignal — denetim izinin bir satırı: NEYE bakıldı, bulundu mu, ne
-// bulundu. v0.9.510'da yalnız kanıt metnine basılıyor; kalıcı kolon ayrı
-// dilimde gelecek (şema değişikliği tek başına izlenebilsin diye).
-//
-// Bu iz opsiyonel bir süs DEĞİL: 2B modelin ürettiği anlatıma güvenmenin
-// tek yolu hangi sinyallerin GERÇEKTEN okunduğunun görünür olması. İz
-// "pod'lara bakıldı, anormallik yok" derken anlatım "pod restart'ları
-// yüzünden" diyorsa çelişki operatöre görünür olur. Derin kanıtı denetim
-// izi olmadan vermek modeli daha İDDİALI yapar, daha doğru değil.
-type CheckedSignal struct {
-	Family  signalFamily
-	Found   bool
-	Detail  string // tek satır insan-okur özet
-	Records int    // okunan kayıt sayısı (0 = yok)
-}
-
-// DeepEvidence — playbook'un topladığı ek kanıt.
-type DeepEvidence struct {
-	Checked    []CheckedSignal
-	Exceptions []chstore.ExceptionGroup
-	Templates  []chstore.LogTemplate
-	Heap       []chstore.CapacitySample
-	GCPause    []chstore.CapacitySample
-	Runtime    *chstore.ServiceRuntime
-	SlowOps    []chstore.OperationSummary
-	// Business — anahtar → hata-ağırlıklı kırılım (v0.9.511).
-	Business map[string][]chstore.BusinessSlice
-	// CodeMeaning — iş kodu → RAG'dan çözülmüş insan anlamı (v0.9.512).
-	// Boş = doküman yüklü değil ya da kod eşleşmedi; o zaman ham kod basılır.
-	CodeMeaning map[string]string
-}
+// CheckedSignal / DeepEvidence artık chstore'da (v0.9.516): hipotezle
+// birlikte KALICI olarak saklanıyorlar, dolayısıyla en alt katmana
+// taşındılar. Tüm üyeleri zaten chstore tipleriydi.
 
 // deepEvidenceLimit — aile başına taşınan kayıt tavanı. Kanıt bloğu 2B'nin
 // bağlamına sığmalı; ilk N zaten en ağırları (okumalar sıralı geliyor).
@@ -137,15 +109,15 @@ const deepEvidenceLimit = 5
 // gatherDeepEvidence — plandaki her aile için BİR sınırlı okuma. Best-effort:
 // bir okuma patlarsa o aile "bakılamadı" olarak ize girer ve soruşturma
 // devam eder; kısmi kanıt hiç kanıttan iyidir ve iz dürüst kalır.
-func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Problem, plan []signalFamily, from, to time.Time) DeepEvidence {
-	var d DeepEvidence
+func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Problem, plan []signalFamily, from, to time.Time) chstore.DeepEvidence {
+	var d chstore.DeepEvidence
 	for _, f := range plan {
 		switch f {
 		case familyExceptions:
 			gs, err := store.ListExceptionGroups(ctx, chstore.ExceptionGroupFilter{
 				Service: p.Service, Limit: deepEvidenceLimit,
 			})
-			d.note(f, err, len(gs), func() string {
+			noteChecked(&d, f, err, len(gs), func() string {
 				return fmt.Sprintf("%d exception grubu, en sık: %s", len(gs), firstExcTitle(gs))
 			})
 			d.Exceptions = gs
@@ -159,7 +131,7 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 				SinceNs: from.UnixNano(), SortBy: "count", Limit: 100,
 			})
 			ts := templatesForService(all, p.Service)
-			d.note(f, err, len(ts), func() string {
+			noteChecked(&d, f, err, len(ts), func() string {
 				return fmt.Sprintf("%d baskın log şablonu", len(ts))
 			})
 			d.Templates = ts
@@ -173,7 +145,7 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 			if err == nil {
 				err = gerr
 			}
-			d.note(f, err, len(heap)+len(gc), func() string {
+			noteChecked(&d, f, err, len(heap)+len(gc), func() string {
 				return fmt.Sprintf("%d pod heap örneği, %d GC örneği", len(heap), len(gc))
 			})
 			d.Heap, d.GCPause = heap, gc
@@ -184,7 +156,7 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 			if rt != nil {
 				n = 1
 			}
-			d.note(f, err, n, func() string {
+			noteChecked(&d, f, err, n, func() string {
 				if rt == nil {
 					return "çalışma zamanı kaydı yok"
 				}
@@ -195,7 +167,7 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 		case familyOperations:
 			ops, err := store.GetOperationSummary(ctx, p.Service, to.Sub(from), from, to, false)
 			ops = topSlowOps(ops)
-			d.note(f, err, len(ops), func() string {
+			noteChecked(&d, f, err, len(ops), func() string {
 				return fmt.Sprintf("%d operasyon, en ağırı: %s", len(ops), firstOpName(ops))
 			})
 			d.SlowOps = ops
@@ -218,7 +190,7 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 				}
 			}
 			d.CodeMeaning = resolveBusinessCodes(ctx, store, d.Business)
-			d.note(f, firstErr, total, func() string {
+			noteChecked(&d, f, firstErr, total, func() string {
 				return fmt.Sprintf("%d iş boyutu değeri (%s), %d kodun anlamı çözüldü",
 					total, strings.Join(businessDimKeys, ", "), len(d.CodeMeaning))
 			})
@@ -294,21 +266,21 @@ func codeLineFrom(content, code string) string {
 
 // note — denetim izine bir satır ekler. Hata varsa "bakılamadı" olarak
 // kaydeder: sessizce atlamak izi yalancı yapardı.
-func (d *DeepEvidence) note(f signalFamily, err error, n int, detail func() string) {
+func noteChecked(d *chstore.DeepEvidence, f signalFamily, err error, n int, detail func() string) {
 	if err != nil {
-		d.Checked = append(d.Checked, CheckedSignal{
-			Family: f, Found: false, Detail: "okunamadı: " + err.Error(),
+		d.Checked = append(d.Checked, chstore.CheckedSignal{
+			Family: string(f), Found: false, Detail: "okunamadı: " + err.Error(),
 		})
 		return
 	}
 	if n == 0 {
-		d.Checked = append(d.Checked, CheckedSignal{
-			Family: f, Found: false, Detail: "bakıldı, kayıt yok",
+		d.Checked = append(d.Checked, chstore.CheckedSignal{
+			Family: string(f), Found: false, Detail: "bakıldı, kayıt yok",
 		})
 		return
 	}
-	d.Checked = append(d.Checked, CheckedSignal{
-		Family: f, Found: true, Detail: detail(), Records: n,
+	d.Checked = append(d.Checked, chstore.CheckedSignal{
+		Family: string(f), Found: true, Detail: detail(), Records: n,
 	})
 }
 
@@ -369,7 +341,7 @@ func firstOpName(ops []chstore.OperationSummary) string {
 
 // renderDeepEvidence — kanıt bloğuna "neye bakıldı, ne bulundu" bölümünü
 // basar. Model bu metni okuyup anlatır; operatör de aynı metni görebilir.
-func renderDeepEvidence(sb *strings.Builder, d DeepEvidence) {
+func renderDeepEvidence(sb *strings.Builder, d chstore.DeepEvidence) {
 	if len(d.Checked) == 0 {
 		return
 	}

@@ -26,17 +26,51 @@ import (
 // shape is small, read whole, and never queried by sub-field, so a JSON blob
 // keeps the schema flat and the ScoredCause shape (owned by the correlator)
 // from leaking into a CH column layout that would have to track it.
+// CheckedSignal — P1 soruşturmasının denetim izi satırı: NEYE bakıldı,
+// bulundu mu, ne bulundu (v0.9.516'da kalıcı hale geldi).
+//
+// İz süs değil: 2B modelin ürettiği anlatıma güvenmenin tek yolu hangi
+// sinyallerin GERÇEKTEN okunduğunun görünür olması. Kalıcı olunca
+// sonradan da sorulabiliyor — "kaç P1'de gerçekten pod/log okundu".
+type CheckedSignal struct {
+	Family  string `json:"family"`
+	Found   bool   `json:"found"`
+	Detail  string `json:"detail"`
+	Records int    `json:"records"`
+}
+
+// DeepEvidence — P1 soruşturmasının topladığı ek kanıt + denetim izi.
+// chstore'da yaşıyor çünkü TÜM üyeleri chstore tipleri ve hipotezle
+// birlikte saklanıyor; anomaly paketi burayı kullanır (tersi import
+// döngüsü olurdu).
+type DeepEvidence struct {
+	Checked     []CheckedSignal            `json:"checked,omitempty"`
+	Exceptions  []ExceptionGroup           `json:"exceptions,omitempty"`
+	Templates   []LogTemplate              `json:"templates,omitempty"`
+	Heap        []CapacitySample           `json:"heap,omitempty"`
+	GCPause     []CapacitySample           `json:"gcPause,omitempty"`
+	Runtime     *ServiceRuntime            `json:"runtime,omitempty"`
+	SlowOps     []OperationSummary         `json:"slowOps,omitempty"`
+	Business    map[string][]BusinessSlice `json:"business,omitempty"`
+	CodeMeaning map[string]string          `json:"codeMeaning,omitempty"`
+}
+
 type RootCauseHypothesis struct {
-	AnchorKind   string        `json:"anchorKind"`   // "anomaly" | "problem"
-	AnchorID     string        `json:"anchorId"`     // AnomalyEvent.ID or Problem.ID
-	Service      string        `json:"service"`      // the anchor's service
-	ComputedAt   int64         `json:"computedAt"`   // unix ns — when the worker synthesized this
-	TopSuspect   string        `json:"topSuspect"`   // the #1 candidate's Service (empty = no clear cause)
-	TopScore     float64       `json:"topScore"`     // the #1 candidate's blended score
-	Confidence   float64       `json:"confidence"`   // 0..1 — honest low/zero when evidence is thin
-	Candidates   []ScoredCause `json:"candidates"`   // full ranked list, best first (reused correlator shape)
+	AnchorKind   string        `json:"anchorKind"`             // "anomaly" | "problem"
+	AnchorID     string        `json:"anchorId"`               // AnomalyEvent.ID or Problem.ID
+	Service      string        `json:"service"`                // the anchor's service
+	ComputedAt   int64         `json:"computedAt"`             // unix ns — when the worker synthesized this
+	TopSuspect   string        `json:"topSuspect"`             // the #1 candidate's Service (empty = no clear cause)
+	TopScore     float64       `json:"topScore"`               // the #1 candidate's blended score
+	Confidence   float64       `json:"confidence"`             // 0..1 — honest low/zero when evidence is thin
+	Candidates   []ScoredCause `json:"candidates"`             // full ranked list, best first (reused correlator shape)
 	RecentDeploy *RecentDeploy `json:"recentDeploy,omitempty"` // the deploy that the fuser weighted, if any
-	Version      uint64        `json:"version"`      // set by the table DEFAULT on insert; read back on FINAL
+	Version      uint64        `json:"version"`                // set by the table DEFAULT on insert; read back on FINAL
+	// Deep (v0.9.516) — P1 soruşturmasının kanıtı + denetim izi. nil =
+	// derin soruşturma koşmadı (P2/P3 ya da plan boş). candidates ile
+	// AYNI teknik: JSON String kolonu — şekil küçük, bütün okunuyor,
+	// alt-alanla sorgulanmıyor.
+	Deep *DeepEvidence `json:"deep,omitempty"`
 }
 
 // ScoredCause mirrors correlator.ScoredCause so chstore (the lowest layer) does
@@ -77,9 +111,20 @@ func (s *Store) UpsertHypothesis(ctx context.Context, h RootCauseHypothesis) err
 	if computedAt == 0 {
 		computedAt = time.Now().UnixNano()
 	}
+	// v0.9.516 — deep_evidence. ReplacingMergeTree TAM SATIR replace:
+	// bu alanı yazmayan bir yol diğer alanları silmez ama KENDİ alanını
+	// sıfırlar. Tek yazma yolu var (bu fonksiyon) ve hepsini taşıyor.
+	deep := ""
+	if h.Deep != nil {
+		b, err := json.Marshal(h.Deep)
+		if err != nil {
+			return err
+		}
+		deep = string(b)
+	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO root_cause_hypotheses
 		(anchor_kind, anchor_id, service, computed_at,
-		 top_suspect, top_score, confidence, candidates, recent_deploy)`)
+		 top_suspect, top_score, confidence, candidates, recent_deploy, deep_evidence)`)
 	if err != nil {
 		return err
 	}
@@ -87,7 +132,7 @@ func (s *Store) UpsertHypothesis(ctx context.Context, h RootCauseHypothesis) err
 		h.AnchorKind, h.AnchorID, h.Service,
 		time.Unix(0, computedAt),
 		h.TopSuspect, h.TopScore, h.Confidence,
-		string(cands), deploy,
+		string(cands), deploy, deep,
 	); err != nil {
 		return err
 	}
@@ -107,12 +152,13 @@ func (s *Store) GetHypothesis(ctx context.Context, anchorKind, anchorID string) 
 		computedAt time.Time
 		candsJSON  string
 		deployJSON string
+		deepJSON   string
 	)
 	row := s.conn.QueryRow(ctx, `
 		SELECT anchor_kind, anchor_id, service,
 		       computed_at,
 		       top_suspect, top_score, confidence,
-		       candidates, recent_deploy, version
+		       candidates, recent_deploy, deep_evidence, version
 		FROM root_cause_hypotheses FINAL
 		WHERE anchor_kind = ? AND anchor_id = ?
 		LIMIT 1`,
@@ -122,7 +168,7 @@ func (s *Store) GetHypothesis(ctx context.Context, anchorKind, anchorID string) 
 		&h.AnchorKind, &h.AnchorID, &h.Service,
 		&computedAt,
 		&h.TopSuspect, &h.TopScore, &h.Confidence,
-		&candsJSON, &deployJSON, &h.Version,
+		&candsJSON, &deployJSON, &deepJSON, &h.Version,
 	); err != nil {
 		// clickhouse-go surfaces an empty result as this exact string (no
 		// typed sentinel) — the same soft no-rows idiom GetAnomalyEvent uses.
@@ -143,6 +189,14 @@ func (s *Store) GetHypothesis(ctx context.Context, anchorKind, anchorID string) 
 			return nil, err
 		}
 		h.RecentDeploy = &d
+	}
+	// Bozuk JSON hipotezin TAMAMINI düşürmemeli — derin kanıt yardımcı
+	// bir alan, çekirdek sıralama değil. Sessizce atlanır.
+	if deepJSON != "" && deepJSON != "{}" {
+		var d DeepEvidence
+		if err := json.Unmarshal([]byte(deepJSON), &d); err == nil {
+			h.Deep = &d
+		}
 	}
 	return &h, nil
 }
@@ -234,7 +288,7 @@ func (s *Store) GetHypotheses(ctx context.Context, anchorKind string, ids []stri
 		SELECT anchor_kind, anchor_id, service,
 		       computed_at,
 		       top_suspect, top_score, confidence,
-		       candidates, recent_deploy, version
+		       candidates, recent_deploy, deep_evidence, version
 		FROM root_cause_hypotheses FINAL
 		WHERE anchor_kind = ? AND anchor_id IN (`+strings.Join(holders, ",")+`)`,
 		args...,
@@ -250,12 +304,13 @@ func (s *Store) GetHypotheses(ctx context.Context, anchorKind string, ids []stri
 			computedAt time.Time
 			candsJSON  string
 			deployJSON string
+			deepJSON   string
 		)
 		if err := rows.Scan(
 			&h.AnchorKind, &h.AnchorID, &h.Service,
 			&computedAt,
 			&h.TopSuspect, &h.TopScore, &h.Confidence,
-			&candsJSON, &deployJSON, &h.Version,
+			&candsJSON, &deployJSON, &deepJSON, &h.Version,
 		); err != nil {
 			return nil, err
 		}
@@ -271,6 +326,12 @@ func (s *Store) GetHypotheses(ctx context.Context, anchorKind string, ids []stri
 				return nil, err
 			}
 			h.RecentDeploy = &d
+		}
+		if deepJSON != "" && deepJSON != "{}" {
+			var dv DeepEvidence
+			if err := json.Unmarshal([]byte(deepJSON), &dv); err == nil {
+				h.Deep = &dv
+			}
 		}
 		out[h.AnchorID] = h
 	}

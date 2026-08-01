@@ -165,18 +165,17 @@ func (e *ProblemExplainer) run(ctx context.Context) {
 			hyp = &hh
 		}
 		bundle := buildEvidenceBundle(p, inputs)
-		// v0.9.510 — P1 KAPISI. Derin soruşturma pahalı (aile başına bir
-		// sınırlı okuma), o yüzden yalnız P1'de koşar. P2/P3 bugünkü sığ
-		// paketiyle kalır — operatör kararı: "yeni açılan P2 ve P3 ise
-		// dikkate almayabiliriz bu yapıda".
+		// v0.9.516 — derin kanıt ARTIK TOPLANMIYOR burada; synthesizer
+		// topluyor ve hipotezle birlikte KALICI yazıyor. Explainer onu
+		// okuyor. Böylece tek toplama / tek yazma / iki okuyucu olur ve
+		// iki işçinin aynı ReplacingMergeTree satırına yazma yarışı
+		// ortadan kalkar.
 		//
-		// Öncelik okuma zamanında hesaplanıyor (computePriority chstore'da
-		// unexported); EnrichProblemsWithPriority ile alıyoruz.
-		if prio := chstore.EnrichProblemsWithPriority([]chstore.Problem{p}); len(prio) > 0 && prio[0].Priority == "P1" {
-			if plan := investigationPlan(p); len(plan) > 0 {
-				to := time.Now()
-				bundle.Deep = gatherDeepEvidence(ctx, e.store, p, plan, to.Add(-evidenceWindow), to)
-			}
+		// Hipotez henüz sentezlenmediyse Deep de yoktur — prompt o zaman
+		// bugünkü sığ haliyle gider (hipotez-yok yolunun aynısı, dürüst
+		// bir düşüş).
+		if hyp != nil && hyp.Deep != nil {
+			bundle.Deep = *hyp.Deep
 		}
 		summary, err := e.explain(ctx, p, bundle, hyp)
 		if err != nil {

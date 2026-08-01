@@ -81,6 +81,7 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"dbstmt_detail.go":    true, // db_statement_summary_5m / spans
 		"db_capacity.go":      true, // metric_points
 		"endpoints_detail.go": true, // spans
+		"business_dims.go":    true, // spans — kanal/fonksiyon kodu kırılımı (v0.9.511)
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order
@@ -170,7 +171,7 @@ func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
 	for _, f := range []string{
 		"summary.go", "repo.go", "topology.go", "dependencies.go", "problem_telemetry.go",
 		"deploys.go", "oracle.go", "profile.go", "spanmetric.go", "dbstmt_detail.go",
-		"db_capacity.go", "endpoints_detail.go",
+		"db_capacity.go", "endpoints_detail.go", "business_dims.go",
 	} {
 		b, err := os.ReadFile(f)
 		if err != nil {

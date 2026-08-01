@@ -42,7 +42,16 @@ const (
 	familySaturation signalFamily = "saturation" // heap / GC / pod doygunluğu
 	familyRuntime    signalFamily = "runtime"    // servis çalışma zamanı durumu
 	familyOperations signalFamily = "operations" // yavaşlayan operasyonlar
+	// familyBusiness (v0.9.511) — İŞ boyutu: hangi kanal / hangi fonksiyon
+	// kodu etkileniyor. Teknik cevabı ("hata oranı %4") işin duyduğu
+	// cevaba ("mobil kanaldan gelen işlemler patlıyor") çeviren boyut.
+	familyBusiness signalFamily = "business"
 )
+
+// businessDimKeys — kırılımı alınan attribute anahtarları. Sabit liste:
+// yüksek kardinaliteli rastgele bir attribute buraya girerse hem sorgu
+// pahalılaşır hem kanıt bloğu gürültüye boğulur.
+var businessDimKeys = []string{"CHANNEL_CODE", "FUNCTION_CODE"}
 
 // investigationPlan — SAF dallanma: bu problem şekli için hangi ek kanıt
 // aileleri okunmalı. Tablo-testli (investigation_test.go).
@@ -60,14 +69,14 @@ func investigationPlan(p chstore.Problem) []signalFamily {
 	switch {
 	// Hata oranı / exception — "ne patlıyor" sorusu.
 	case strings.Contains(metric, "error"), strings.Contains(rule, "exception"):
-		return []signalFamily{familyExceptions, familyLogs}
+		return []signalFamily{familyExceptions, familyLogs, familyBusiness}
 
 	// Gecikme — "neden yavaşladı" sorusu. Doygunluk önce (heap/GC bir
 	// servisi sessizce yavaşlatan en sık sebep), sonra hangi operasyon.
 	case strings.Contains(metric, "p99"), strings.Contains(metric, "p95"),
 		strings.Contains(metric, "p50"), strings.Contains(metric, "avg"),
 		strings.Contains(metric, "duration"), strings.Contains(metric, "latency"):
-		return []signalFamily{familySaturation, familyOperations}
+		return []signalFamily{familySaturation, familyOperations, familyBusiness}
 
 	// Ayakta mı — pod durumu, sonra loglar (crash sebebi logda olur).
 	case strings.Contains(metric, "down"), strings.Contains(metric, "availab"),
@@ -114,6 +123,8 @@ type DeepEvidence struct {
 	GCPause    []chstore.CapacitySample
 	Runtime    *chstore.ServiceRuntime
 	SlowOps    []chstore.OperationSummary
+	// Business — anahtar → hata-ağırlıklı kırılım (v0.9.511).
+	Business map[string][]chstore.BusinessSlice
 }
 
 // deepEvidenceLimit — aile başına taşınan kayıt tavanı. Kanıt bloğu 2B'nin
@@ -185,6 +196,27 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 				return fmt.Sprintf("%d operasyon, en ağırı: %s", len(ops), firstOpName(ops))
 			})
 			d.SlowOps = ops
+
+		case familyBusiness:
+			// Anahtar başına BİR sınırlı okuma. Kırılım boşsa (kurulum bu
+			// attribute'ları yaymıyor) iz "kayıt yok" der ve anlatım o
+			// boyuttan bahsetmez — sessizce atlamak yerine dürüst kalır.
+			d.Business = map[string][]chstore.BusinessSlice{}
+			var firstErr error
+			total := 0
+			for _, key := range businessDimKeys {
+				sl, err := store.BusinessBreakdown(ctx, p.Service, key, from, to)
+				if err != nil && firstErr == nil {
+					firstErr = err
+				}
+				if len(sl) > 0 {
+					d.Business[key] = sl
+					total += len(sl)
+				}
+			}
+			d.note(f, firstErr, total, func() string {
+				return fmt.Sprintf("%d iş boyutu değeri (%s)", total, strings.Join(businessDimKeys, ", "))
+			})
 		}
 	}
 	return d
@@ -302,6 +334,16 @@ func renderDeepEvidence(sb *strings.Builder, d DeepEvidence) {
 			sb.WriteString("GC duraklamaları:\n")
 		}
 		fmt.Fprintf(sb, "  - %s: GC duraklama %.0f\n", s.Subkey, s.Usage)
+	}
+	for _, key := range businessDimKeys {
+		sl := d.Business[key]
+		if len(sl) == 0 {
+			continue
+		}
+		fmt.Fprintf(sb, "%s kırılımı (en çok hata üreten önce):\n", key)
+		for _, b := range sl {
+			fmt.Fprintf(sb, "  - %s: %d çağrı, %d hata (%%%.1f)\n", b.Value, b.Calls, b.Errors, b.ErrPct)
+		}
 	}
 	for i, o := range d.SlowOps {
 		if i == 0 {

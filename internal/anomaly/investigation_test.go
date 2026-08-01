@@ -23,15 +23,15 @@ func TestInvestigationPlan(t *testing.T) {
 		want   []signalFamily
 	}{
 		// Hata ailesi
-		{"error_rate", "error_rate", "Checkout hata oranı", []signalFamily{familyExceptions, familyLogs}},
-		{"errors mutlak", "errors", "", []signalFamily{familyExceptions, familyLogs}},
-		{"kural adı exception der", "custom_metric", "Exception spike", []signalFamily{familyExceptions, familyLogs}},
+		{"error_rate", "error_rate", "Checkout hata oranı", []signalFamily{familyExceptions, familyLogs, familyBusiness}},
+		{"errors mutlak", "errors", "", []signalFamily{familyExceptions, familyLogs, familyBusiness}},
+		{"kural adı exception der", "custom_metric", "Exception spike", []signalFamily{familyExceptions, familyLogs, familyBusiness}},
 
 		// Gecikme ailesi — doygunluk ÖNCE (heap/GC sessiz yavaşlatıcıdır)
-		{"p99", "p99_ms", "", []signalFamily{familySaturation, familyOperations}},
-		{"p95", "p95_ms", "", []signalFamily{familySaturation, familyOperations}},
-		{"avg", "avg_ms", "", []signalFamily{familySaturation, familyOperations}},
-		{"latency", "latency_ms", "", []signalFamily{familySaturation, familyOperations}},
+		{"p99", "p99_ms", "", []signalFamily{familySaturation, familyOperations, familyBusiness}},
+		{"p95", "p95_ms", "", []signalFamily{familySaturation, familyOperations, familyBusiness}},
+		{"avg", "avg_ms", "", []signalFamily{familySaturation, familyOperations, familyBusiness}},
+		{"latency", "latency_ms", "", []signalFamily{familySaturation, familyOperations, familyBusiness}},
 
 		// Ayakta mı
 		{"down", "down", "", []signalFamily{familyRuntime, familyLogs}},
@@ -72,7 +72,7 @@ func TestInvestigationPlan(t *testing.T) {
 func TestInvestigationPlanNormalizes(t *testing.T) {
 	for _, m := range []string{"ERROR_RATE", "  error_rate  ", "Error_Rate"} {
 		got := investigationPlan(chstore.Problem{Metric: m})
-		if len(got) != 2 || got[0] != familyExceptions {
+		if len(got) == 0 || got[0] != familyExceptions {
 			t.Errorf("plan(%q) = %v — normalize edilmeli", m, got)
 		}
 	}
@@ -133,3 +133,28 @@ func TestRenderDeepEvidenceListsWhatWasChecked(t *testing.T) {
 type errFake struct{}
 
 func (errFake) Error() string { return "ch down" }
+
+// v0.9.511 — iş boyutu (kanal/fonksiyon kodu) YALNIZ operatöre görünen
+// etkiyi anlatan dallarda okunur: hata ve gecikme. DOWN dalında servis
+// zaten ayakta değil, kırılım gürültü; doygunluk dalı pod-içi bir sorun.
+// Gereksiz dala eklemek P1 başına iki fazla spans okuması demek.
+func TestBusinessDimOnlyOnUserFacingBranches(t *testing.T) {
+	has := func(fs []signalFamily) bool {
+		for _, f := range fs {
+			if f == familyBusiness {
+				return true
+			}
+		}
+		return false
+	}
+	for _, m := range []string{"error_rate", "p99_ms"} {
+		if !has(investigationPlan(chstore.Problem{Metric: m})) {
+			t.Errorf("%s dalında iş boyutu olmalı", m)
+		}
+	}
+	for _, m := range []string{"down", "jvm_heap_pct", "request_rate"} {
+		if has(investigationPlan(chstore.Problem{Metric: m})) {
+			t.Errorf("%s dalında iş boyutu OLMAMALI — gereksiz spans okuması", m)
+		}
+	}
+}

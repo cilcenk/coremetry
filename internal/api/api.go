@@ -545,6 +545,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// catalogue + the hard-constraint checklist. Returns
 	// {optimized, explanation}.
 	mux.HandleFunc("POST /api/admin/clickhouse/optimize-query", auth.RequireRole(auth.RoleAdmin, s.copilotOptimizeCHQuery))
+	// v0.9.494 — koordinatör dağılımı: hangi CH node'u kaç sorgunun
+	// giriş noktası oldu (is_initial_query üzerinden, clusterAllReplicas
+	// fan-out'uyla). Okuma havuzu dilimlerinin öncesi/sonrası kabul
+	// ölçüsü; ayrı uç + 60s TTL çünkü gövde okumasından çok daha geniş
+	// bir satır kümesini grupluyor.
+	mux.HandleFunc("GET /api/admin/clickhouse/coordinators", auth.RequireRole(auth.RoleAdmin, s.getCHCoordinatorSpread))
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
 	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
 	// only AdminStats reads it, handler had no role check.

@@ -125,14 +125,30 @@ func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit
 	if limit > 2000 {
 		limit = 2000
 	}
-	maxExecSec := 5
-	switch {
-	case since > 24*time.Hour:
-		maxExecSec = 60
-	case since > 1*time.Hour:
-		maxExecSec = 30
-	}
 	cutoff := time.Now().Add(-since)
+	// v0.9.493 — MV hızlı yol: filo-geneli ham taramanın (aşağıda) iki
+	// derdi birden burada kapanır. (1) Perf: banner her sayfanın 30s
+	// poll'ünden ateşlenir; ham yol prod'da sürücünün 30s ReadTimeout'una
+	// çarpıyordu. (2) Doğruluk: ham sorgunun HAVING first_seen >= cutoff
+	// hükmü tarama penceresi == hüküm penceresi olduğu için TOTOLOJİYDİ
+	// (v0.9.478'in /deploys'ta düzelttiği sınıf — banner/marker/problem
+	// korelasyonu "pencerede yaşayan her sürümü" deploy sanıyordu). MV
+	// yolu 24h lookback'le tarar, yalnız pencerede DOĞAN sürümler döner.
+	// Ham fallback (48h MV ısınması) eski totolojik davranışıyla kalır —
+	// yanlış-pozitif eski durumun aynısı, regresyon değil.
+	if s.deployMVCovers(ctx, cutoff.Add(-deployJudgmentLookback)) {
+		out, err := s.deploysInWindowFromMV(ctx, cutoff, time.Now(), limit)
+		if err == nil {
+			return out, nil
+		}
+		log.Printf("[deploys] recent MV path: %v — falling back to raw spans", err)
+	}
+	maxExecSec := 5
+	if since > time.Hour {
+		// v0.9.493 — 30/60s kademeleri sürücü ReadTimeout'unun (30s,
+		// v0.8.340) üstündeydi; tavan 25s (GetDeploysInWindow ile aynı).
+		maxExecSec = 25
+	}
 	// v0.5.278 — placeholder filter + image-tag fallback (see
 	// effectiveVersionExpr / placeholderVersionList). Operator-
 	// reported: Java apps emitting Maven's default
@@ -777,24 +793,45 @@ func (s *Store) serviceDeploysFromMV(
 // young service to the slow path forever. What we actually want to
 // know is how long the MV itself has been running.
 //
-// Latches once satisfied — the MV only accumulates, so the answer can
-// never go back to false while the process lives, and the probe stops
-// running after the first success.
+// v0.9.493 — LATCH KALDIRILDI (verify bulgusu). Eski hâli ilk başarılı
+// probe'dan sonra `need`'i HİÇ karşılaştırmadan true dönüyordu; tek
+// kapı hem 48h'lik (GetServiceDeploys) hem 24h'lik (pencere/banner)
+// ihtiyaçlara hizmet etmeye başlayınca bu iki gerçek hataya dönüştü:
+// (1) 24h'lik bir probe MV 24.5 saatlikken kilidi kapatıp 48h'lik yolu
+// da erken açıyordu (24-48h sessiz servislerde v0.9.205 hayalet-marker
+// sınıfı geri gelirdi), (2) kilitli kapı MV'nin DOĞUMUNDAN eski
+// tarihsel pencereleri MV'ye yolluyordu — tamamen-eski pencere boş
+// "deploy yok" dönerdi (raw fallback hiç devreye girmeden). Şimdi:
+// probe'un EN ESKİ değeri önbelleklenir, her çağrı kendi need'ini onunla
+// karşılaştırır. 10 dakikalık tazeleme TTL trim'ini de izler (45 gün
+// sonra earliest İLERLER); başarısız probe 1 dakikalık geri çekilmeyle
+// tekrar denenir.
 // deployMVCoverageProbeSQL — hoisted as a const so deploys_mv_test.go can
 // pin WHICH column the gate trusts (v0.9.250).
 const deployMVCoverageProbeSQL = `
 	SELECT minMerge(first_seen_state) FROM service_version_5m
 	SETTINGS max_execution_time = 5, `
 
+// deployMVProbeRefresh — earliest önbelleğinin tazelik penceresi.
+const deployMVProbeRefresh = 10 * time.Minute
+
+// deployMVCoverageAnswers — saf karşılaştırma: earliest bilinmiyorsa
+// (zero) kapı kapalı; biliniyorsa yalnız need'i kapsıyorsa açık.
+func deployMVCoverageAnswers(earliest, need time.Time) bool {
+	return !earliest.IsZero() && !earliest.After(need)
+}
+
 func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 	s.deployMVMu.Lock()
 	defer s.deployMVMu.Unlock()
-	if s.deployMVReady {
-		return true
+	fresh := !s.deployMVProbedAt.IsZero() && time.Since(s.deployMVProbedAt) < deployMVProbeRefresh
+	// Başarılı probe taze ise sorgusuz cevapla; başarısız (zero) probe
+	// 1 dakika geri çekilir ki her deploys okuması warm-up sırasında
+	// fazladan sorgu ödemesin.
+	if fresh && !s.deployMVEarliest.IsZero() {
+		return deployMVCoverageAnswers(s.deployMVEarliest, need)
 	}
-	// Re-probing on every miss would add a query to each deploys read
-	// during the 48h warm-up; once a minute is plenty.
-	if !s.deployMVProbedAt.IsZero() && time.Since(s.deployMVProbedAt) < time.Minute {
+	if s.deployMVEarliest.IsZero() && !s.deployMVProbedAt.IsZero() && time.Since(s.deployMVProbedAt) < time.Minute {
 		return false
 	}
 	s.deployMVProbedAt = time.Now()
@@ -803,13 +840,7 @@ func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 	// The bucket LABEL overstates coverage by up to one bucket width: a
 	// span ingested at 14:58 lands in the bucket named 14:55, so a
 	// freshly-created MV reports coverage from 14:55 while its earliest
-	// real datum is 14:58. Verified on a live cluster right after
-	// creating the view: min(time_bucket) said 14:55:00, the actual
-	// first_seen was 14:58:37. Five minutes is nothing against a 48h
-	// lookback, but it is a hole of exactly the kind this gate exists
-	// to close — a version whose only pre-window activity fell in that
-	// gap would read as a fresh deploy. The state's own min is exact,
-	// and the probe latches, so the extra read happens once.
+	// real datum is 14:58. The state's own min is exact.
 	var earliest time.Time
 	err := s.conn.QueryRow(ctx,
 		deployMVCoverageProbeSQL+s.shardSkipSetting()).Scan(&earliest)
@@ -819,14 +850,16 @@ func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 		// correct.
 		return false
 	}
-	// A zero/absent min means the MV exists but has no rows yet.
-	if earliest.IsZero() || earliest.After(need) {
+	if earliest.IsZero() {
+		// MV exists but has no rows yet.
 		return false
 	}
-	s.deployMVReady = true
-	log.Printf("[deploys] service_version_5m covers the %s lookback (earliest bucket %s) — using the MV path",
-		deployLookback, earliest.UTC().Format(time.RFC3339))
-	return true
+	if s.deployMVEarliest.IsZero() {
+		log.Printf("[deploys] service_version_5m earliest datum %s — MV path serves windows starting after it",
+			earliest.UTC().Format(time.RFC3339))
+	}
+	s.deployMVEarliest = earliest
+	return deployMVCoverageAnswers(earliest, need)
 }
 
 // GetDeploysInWindow (v0.9.435) — GetRecentDeploys'un PENCERE-sınırlı
@@ -848,18 +881,76 @@ func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 // (bir gün sonra aynı imajı geri açmak bir yayındır).
 const deployJudgmentLookback = 24 * time.Hour
 
+// deploysWindowMVSQL (v0.9.493) — GetDeploysInWindow'un MV hızlı yolu:
+// serviceVersionMVSQL'in (v0.9.249) FİLO-geneli ikizi. Operator-reported:
+// prod'da /deploys 30 saniyede timeout — v0.9.478 lookback'i tarama
+// penceresini +24h yapınca filo-geneli HAM spans taraması (satır başına
+// 14 indexOf'lu effectiveVersionExpr) sürücünün 30s ReadTimeout'unu
+// aşıyordu. MV okuma (service, version, bucket) satırlarına iner.
+// Kenar notları (hepsi ≤5dk, 5 dakikalık bucket granülaritesi): span_count
+// from'u İÇEREN bucket'ın tamamını sayar (fazla sayım); tarama sınırları
+// bucket etiketiyle kesildiğinden to'yu içeren bucket'ta doğan bir sürüm
+// first_seen > to ile dönebilir, 24h ufku da ≤5dk kayar. first_seen
+// DEĞERİ minMerge ile kesindir (v0.9.250); bulanık olan zaten keyfi 24h
+// hüküm ufkudur — kabul edilen yaklaşıklıklar (v0.9.493 verify).
+const deploysWindowMVSQL = `
+	SELECT
+	  service_name,
+	  version,
+	  toUnixTimestamp64Nano(minMerge(first_seen_state)) AS first_seen,
+	  toUInt64(sumIf(finalizeAggregation(span_count_state),
+	                 time_bucket >= toStartOfInterval(?, INTERVAL 5 MINUTE))) AS span_count
+	FROM service_version_5m
+	WHERE time_bucket >= ? AND time_bucket <= ?
+	GROUP BY service_name, version
+	HAVING version != ''
+	   AND first_seen >= ?
+	ORDER BY first_seen DESC
+	LIMIT ?
+	SETTINGS max_execution_time = 15, `
+
+func (s *Store) deploysInWindowFromMV(ctx context.Context, from, to time.Time, limit int) ([]RecentDeployEntry, error) {
+	rows, err := s.conn.Query(ctx, deploysWindowMVSQL+s.shardSkipSetting(),
+		from, from.Add(-deployJudgmentLookback), to, from.UnixNano(), limit)
+	if err != nil {
+		return nil, fmt.Errorf("query service_version_5m window: %w", err)
+	}
+	defer rows.Close()
+	out := []RecentDeployEntry{}
+	for rows.Next() {
+		var e RecentDeployEntry
+		if err := rows.Scan(&e.Service, &e.Version, &e.FirstSeenNs, &e.SpanCount); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limit int) ([]RecentDeployEntry, error) {
 	if limit <= 0 || limit > 2000 {
 		limit = 200
 	}
 	scanFrom := from.Add(-deployJudgmentLookback)
+	// v0.9.493 — MV hızlı yol; kapı + soft-fail v0.9.249 deseniyle aynı
+	// (kapsama yetmiyorsa ya da MV bozuksa ham yol her zaman doğru).
+	if s.deployMVCovers(ctx, scanFrom) {
+		out, err := s.deploysInWindowFromMV(ctx, from, to, limit)
+		if err == nil {
+			return out, nil
+		}
+		log.Printf("[deploys] window MV path: %v — falling back to raw spans", err)
+	}
 	horizon := to.Sub(scanFrom)
 	maxExecSec := 5
-	switch {
-	case horizon > 25*time.Hour: // tolerans: 24h preset'i ε yüzünden 60s kovasına düşmesin
-		maxExecSec = 60
-	case horizon > time.Hour:
-		maxExecSec = 30
+	if horizon > time.Hour {
+		// v0.9.493 — tavan 25s: eski 30/60s kademeleri sürücünün 30s
+		// ReadTimeout'unun (v0.8.340) ÜSTÜNDEYDİ — sunucu sorguya devam
+		// ederken istemci 30. saniyede bağlantıyı kesiyordu (operatörün
+		// gördüğü "30 saniye sonra timeout" tam buydu). Taşımanın
+		// veremeyeceği süreyi vaat etme; ham yol artık yalnız MV
+		// ısınma penceresinin (48h) yedeği.
+		maxExecSec = 25
 	}
 	sql := fmt.Sprintf(`
 		SELECT

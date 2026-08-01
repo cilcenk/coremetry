@@ -40,6 +40,23 @@ func TestConnStrategySplit(t *testing.T) {
 	if strings.Count(src, "ConnOpenStrategy") != 2 {
 		t.Error("store.go'da tam 2 ConnOpenStrategy ataması beklenir (ingest + read havuzları); ana bağlantı stratejisiz kalmalı")
 	}
+
+	// v0.9.505 — RoundRobin TEK BAŞINA yükü dağıtmaz: bağlantı açılışını
+	// dağıtır, sorguyu değil. Bağlantı ömrü kısaltılmazsa açılışta düştüğü
+	// host'u sürücü varsayılanı olan 1 SAAT boyunca taşır ve Go havuzunun
+	// LIFO yeniden kullanımı trafiği birkaç sıcak bağlantıya yığar.
+	// Ölçüldü: v0.9.504 sonrası lokalde giriş sorgularının %83'ü hâlâ tek
+	// node'daydı. İki havuzun da kısa ömrü bu yüzden sözleşmenin parçası.
+	for _, pool := range []string{"ingestOpts", "readOpts"} {
+		if !strings.Contains(src, pool+".ConnMaxLifetime = roundRobinConnLifetime") {
+			t.Errorf("%s.ConnMaxLifetime kısaltılmamış — bağlantılar açıldıkları host'ta 1 saat çakılı kalır, RoundRobin kağıt üzerinde kalır (v0.9.505)", pool)
+		}
+	}
+	// Ana bağlantı bilinçli olarak uzun ömürlü: zaten in-order, hep ilk
+	// host'a gidiyor, çevrimden kazanacağı bir şey yok.
+	if !strings.Contains(src, "ConnMaxLifetime: time.Hour") {
+		t.Error("ana bağlantının 1 saatlik ömrü kaldırılmış — in-order havuzda çevrim gereksiz bağlantı çöpü üretir")
+	}
 }
 
 // telemetryReadConn'un çağrı yüzeyi: yalnız Distributed sarmalayıcı /

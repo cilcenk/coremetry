@@ -5,17 +5,17 @@
 // Three providers supported:
 //   - "anthropic": Anthropic Messages API (api.anthropic.com).
 //   - "github":    GitHub Copilot Chat (api.githubcopilot.com). The
-//                  caller's API key is a GitHub OAuth token (`ghu_…`)
-//                  which we exchange for a short-lived Copilot session
-//                  token (cached + auto-refreshed).
+//     caller's API key is a GitHub OAuth token (`ghu_…`)
+//     which we exchange for a short-lived Copilot session
+//     token (cached + auto-refreshed).
 //   - "openai":    Any OpenAI-compatible /v1/chat/completions endpoint.
-//                  Drives self-hosted local LLMs (Ollama, LM Studio,
-//                  vLLM, llama.cpp server, LocalAI, OpenWebUI) AND
-//                  the real OpenAI API. Banks running Coremetry
-//                  air-gapped want this so traces / problems never
-//                  leave the perimeter for explanation. APIKey is
-//                  optional for local endpoints that don't gate on
-//                  it (Ollama default).
+//     Drives self-hosted local LLMs (Ollama, LM Studio,
+//     vLLM, llama.cpp server, LocalAI, OpenWebUI) AND
+//     the real OpenAI API. Banks running Coremetry
+//     air-gapped want this so traces / problems never
+//     leave the perimeter for explanation. APIKey is
+//     optional for local endpoints that don't gate on
+//     it (Ollama default).
 //
 // The Service is configurable at runtime — admins can flip provider
 // or rotate keys via the Settings UI without restarting Coremetry.
@@ -55,7 +55,7 @@ type Service struct {
 	// endpoints. Empty → default https://api.openai.com/v1 (real
 	// OpenAI). Examples for self-hosted: http://ollama:11434/v1,
 	// http://lmstudio:1234/v1, http://vllm:8000/v1.
-	baseURL  string
+	baseURL string
 	// skipTLS — when true the embedded http.Client uses an
 	// InsecureSkipVerify TLS config. v0.5.360: operator-requested
 	// for the same self-hosted enterprise-CA case the Tempo +
@@ -97,6 +97,14 @@ type Service struct {
 	// Configure — a provider/model/URL change invalidates the verdict.
 	streamUnsupported map[string]bool
 
+	// jsonModeUnsupported (v0.9.517) — streamUnsupported'un JSON-mod
+	// ikizi. Katı JSON isteyen yüzeyler response_format ile çağırır;
+	// bazı sunucular (eski OpenAI-uyumlu proxy'ler, kimi Ollama sürümleri)
+	// bu alanı 400'ler. İlk ret kaydedilir ve o uç için bir daha
+	// denenmez — her çağrıda yeniden yoklamak boşuna gecikme ve
+	// çift faturalandırma olurdu. Configure'da sıfırlanır.
+	jsonModeUnsupported map[string]bool
+
 	cli *http.Client
 
 	// recorder is the AI-observability sink (v0.5.162). Set once at
@@ -122,8 +130,8 @@ type Recorder interface {
 // (OpenAI + Anthropic both ship usage data; some Ollama versions
 // don't — those stay 0).
 type CallRecord struct {
-	CreatedAt      time.Time
-	Surface        string
+	CreatedAt time.Time
+	Surface   string
 	// ExchangeID (v0.8.399) — correlation key for operator feedback:
 	// the chat handler mints one id per exchange, emits it to the UI
 	// in the SSE answer event, and threads it here via CallMeta so a
@@ -242,6 +250,7 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS, en
 	// v0.8.404 — the streaming-support verdicts were probed against
 	// the OLD endpoint config; a swap must re-probe.
 	s.streamUnsupported = nil
+	s.jsonModeUnsupported = nil
 }
 
 // buildCopilotHTTPClient — mirrors the Tempo / LDAP pattern. When
@@ -480,6 +489,42 @@ func truncErr(s string) string {
 // (finish_reason "length", empty content), so we give them room.
 const openAICompletionTokens = 4096
 
+// jsonModeKey — bağlamda "bu çağrı katı JSON istiyor" bayrağı. Bağlam
+// üzerinden taşınıyor (CallMeta deseninin aynısı) ki dört yüzeyin ve
+// aradaki sarmalayıcıların imzaları değişmesin.
+type jsonModeKey struct{}
+
+// WithJSONMode — modelden KATI JSON isteyen çağrılar için.
+//
+// response_format sunucu tarafında çözümlemeyi kısıtlar: model JSON
+// DIŞINA çıkamaz. İyi bir modelde bile değerli — JSON kaçakları nadir
+// ama sessiz, ve bu dört yüzey post-check ile temizlemeye çalışıyordu.
+// Kısıt o sınıfı tamamen kapatıyor. Desteklemeyen uçta sessizce eski
+// davranışa düşer (bir kez yoklanır, karar önbelleklenir).
+func WithJSONMode(ctx context.Context) context.Context {
+	return context.WithValue(ctx, jsonModeKey{}, true)
+}
+
+func jsonModeRequested(ctx context.Context) bool {
+	v, _ := ctx.Value(jsonModeKey{}).(bool)
+	return v
+}
+
+func (s *Service) jsonModeBlocked(provider, baseURL, model string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.jsonModeUnsupported[streamVerdictKey(provider, baseURL, model)]
+}
+
+func (s *Service) markJSONModeUnsupported(provider, baseURL, model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jsonModeUnsupported == nil {
+		s.jsonModeUnsupported = map[string]bool{}
+	}
+	s.jsonModeUnsupported[streamVerdictKey(provider, baseURL, model)] = true
+}
+
 func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
 	s.mu.RLock()
 	apiKey, model, base := s.apiKey, s.model, s.baseURL
@@ -501,6 +546,15 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
+	}
+	// v0.9.517 — katı JSON isteyen yüzeylerde çözümlemeyi sunucuda
+	// kısıtla. `json_object` bilinçli tercih: `json_schema` daha güçlü
+	// ama çok daha az sunucu destekliyor ve reddedilmesi daha olası.
+	// Amaç şemayı dayatmak değil, modelin JSON DIŞINA çıkmasını
+	// engellemek.
+	jsonMode := jsonModeRequested(ctx) && !s.jsonModeBlocked(s.provider, base, model)
+	if jsonMode {
+		body["response_format"] = map[string]any{"type": "json_object"}
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
@@ -524,6 +578,15 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
+		// JSON modu denenmişken reddedildiyse: uç bunu desteklemiyor
+		// olabilir. Verdiği kararı önbelleğe al ve BİR KEZ kısıtsız
+		// yeniden dene — yoksa özellik, desteklemeyen her kurulumda
+		// Explain'i tamamen kırardı (sessiz regresyon).
+		if jsonMode {
+			s.markJSONModeUnsupported(s.provider, base, model)
+			log.Printf("[copilot] response_format reddedildi (%d) — bu uç için JSON modu kapatıldı, kısıtsız yeniden deneniyor", resp.StatusCode)
+			return s.explainOpenAIWithUsage(context.WithValue(ctx, jsonModeKey{}, false), systemPrompt, userPrompt)
+		}
 		return "", 0, 0, fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	return parseOpenAIChatResponse(respBody)
@@ -829,13 +892,13 @@ type persisted struct {
 	BaseURL  string `json:"baseUrl,omitempty"`
 	// v0.5.360 — omitempty so legacy blobs decode without the
 	// field, leaving skipTLS=false (current default).
-	SkipTLS  bool   `json:"skipTls,omitempty"`
+	SkipTLS bool `json:"skipTls,omitempty"`
 	// wf — Enabled is a POINTER so a legacy blob saved BEFORE this
 	// field existed decodes as nil, which LoadPersisted treats as
 	// "enabled" (nil⇒true). A non-pointer bool would decode as
 	// false and silently disable AI for every existing install on
 	// upgrade. omitempty keeps the JSON clean when nil.
-	Enabled  *bool  `json:"enabled,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
 }
 
 // SettingsStore is the small slice of *chstore.Store we need —
@@ -1300,7 +1363,7 @@ the suggestion before saving.
 
 NO preamble, NO trailing prose. Just the JSON object.`
 
-func SystemPromptServiceTags() string   { return systemServiceTags }
+func SystemPromptServiceTags() string { return systemServiceTags }
 
 // systemSlowQuery — operator hit "Explain" on a row in the
 // slow-query catalog. The prompt receives the normalised
@@ -1357,32 +1420,32 @@ func SystemPromptSlowQuery() string { return systemSlowQuery }
 //
 // Schema embedded in the prompt:
 //
-//   filters: [{ k: <attribute key>, op: <FilterOp>, v: [<string>] }]
-//   range: { preset: <preset id> }
+//	filters: [{ k: <attribute key>, op: <FilterOp>, v: [<string>] }]
+//	range: { preset: <preset id> }
 //
-//   Allowed attribute keys (lowercase, dot-separated):
-//     service.name, http.status_code, http.method, http.route,
-//     http.url, http.user_agent, db.system, db.statement,
-//     rpc.system, rpc.service, rpc.method, messaging.system,
-//     messaging.destination, exception.type, exception.message,
-//     status_code, kind, duration_ms, span.name, peer.service,
-//     resource.deployment.environment, resource.k8s.namespace,
-//     resource.k8s.pod.name, resource.k8s.cluster.name,
-//     resource.host.name, resource.service.version,
-//     resource.service.instance.id, resource.process.runtime.name
-//   …plus any custom resource.* / span attribute the operator's
-//   instrumentation emits — pass it through verbatim if the
-//   user names it.
+//	Allowed attribute keys (lowercase, dot-separated):
+//	  service.name, http.status_code, http.method, http.route,
+//	  http.url, http.user_agent, db.system, db.statement,
+//	  rpc.system, rpc.service, rpc.method, messaging.system,
+//	  messaging.destination, exception.type, exception.message,
+//	  status_code, kind, duration_ms, span.name, peer.service,
+//	  resource.deployment.environment, resource.k8s.namespace,
+//	  resource.k8s.pod.name, resource.k8s.cluster.name,
+//	  resource.host.name, resource.service.version,
+//	  resource.service.instance.id, resource.process.runtime.name
+//	…plus any custom resource.* / span attribute the operator's
+//	instrumentation emits — pass it through verbatim if the
+//	user names it.
 //
-//   Allowed ops: =, !=, LIKE, NOT LIKE, IN, NOT IN, >, >=, <, <=,
-//   EXISTS, NOT EXISTS.
-//   LIKE uses SQL-style % wildcards; quote literal % / _.
+//	Allowed ops: =, !=, LIKE, NOT LIKE, IN, NOT IN, >, >=, <, <=,
+//	EXISTS, NOT EXISTS.
+//	LIKE uses SQL-style % wildcards; quote literal % / _.
 //
-//   Allowed range presets:
-//     1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 24h, 2d, 3d, 7d, 14d, 30d
-//   Default to 1h when the user doesn't name a time window.
-//   "yesterday" → 24h, "last week" → 7d, "today" → 24h,
-//   "right now / last few minutes" → 15m.
+//	Allowed range presets:
+//	  1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 24h, 2d, 3d, 7d, 14d, 30d
+//	Default to 1h when the user doesn't name a time window.
+//	"yesterday" → 24h, "last week" → 7d, "today" → 24h,
+//	"right now / last few minutes" → 15m.
 const systemNLToQuery = `You convert plain-English trace-search descriptions
 into a Coremetry filter JSON payload.
 

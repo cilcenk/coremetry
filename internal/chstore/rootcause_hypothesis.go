@@ -29,7 +29,7 @@ import (
 // CheckedSignal — P1 soruşturmasının denetim izi satırı: NEYE bakıldı,
 // bulundu mu, ne bulundu (v0.9.516'da kalıcı hale geldi).
 //
-// İz süs değil: 2B modelin ürettiği anlatıma güvenmenin tek yolu hangi
+// İz süs değil: modelin ürettiği anlatıma güvenmenin tek yolu hangi
 // sinyallerin GERÇEKTEN okunduğunun görünür olması. Kalıcı olunca
 // sonradan da sorulabiliyor — "kaç P1'de gerçekten pod/log okundu".
 type CheckedSignal struct {

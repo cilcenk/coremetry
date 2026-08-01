@@ -1,6 +1,6 @@
 # CoSRE — P1 soruşturması (tasarım)
 
-**Tarih:** 2026-08-01 · **Durum:** onay bekliyor · **Kod değişikliği yok**
+**Tarih:** 2026-08-01 · **Durum:** uygulandı (v0.9.510-516) · model gerekçesi v0.9.517'de düzeltildi
 
 Operatör: *"CoSRE akıllı olsun; bir hata olduğunda gerekirse pod'larına,
 metriklerine, loglarına baksın, ona göre sonuç çıkarsın, kaydetsin.
@@ -28,18 +28,33 @@ Eksik olan **neye baktığı**. Kanıt paketi (`fusion.go:40`) sabit:
 Yani bugünkü muhakeme "komşuma ve deploy'a bakan" bir muhakeme.
 Operatörün istediği "pod'una, metriğine, loguna bakan" muhakeme.
 
-## 2. Mimari ilke — 2B modelde "gerçek SRE" nasıl kurulur
+## 2. Mimari ilke — "gerçek SRE" nasıl kurulur
 
-Gemma4-2B'de serbest ajan döngüsü kurulamaz: Gemma ailesi native
-function-calling ile eğitilmiyor ve 2B'de araç seçimi zaten güvenilmez.
-Çözüm modeli zorlamak değil, SRE davranışını **doğru katmana** koymak:
+**Düzeltme (2026-08-01, v0.9.517):** bu bölüm önce "model Gemma4-2B"
+varsayımıyla yazılmıştı. Operatör ekranından doğrulanan gerçek model
+**gemma4-26b-a4b-it** (26B toplam / 4B aktif MoE, instruction-tuned) —
+çok daha yetenekli bir sınıf. Tasarım DEĞİŞMEDİ ama gerekçesi değişti:
+artık "model yapamaz" değil, üç somut sebep:
+
+1. **Maliyet** — her P1'de serbest ajan döngüsü N tur LLM çağrısı;
+   deterministik playbook tek anlatım çağrısıyla bitiyor.
+2. **Denetlenebilirlik** — hangi sinyale bakıldığı KOD, dolayısıyla
+   tablo-testli ve tekrarlanabilir. Model seçseydi her koşuda farklı
+   bakabilirdi; denetim izi de anlamını yitirirdi.
+3. **Sınırlılık** — okumalar sınırlı kalmalı (LIMIT / timeout / pencere).
+   Modele araç verirsek bu sınırları o seçer.
+
+Serbest tool-loop bu modelde yeniden değerlendirilebilir — ama önce
+ölçüm aleti (altın-küme) gerekir, yoksa "daha iyi mi" sorusu cevapsız.
+
+SRE davranışını **doğru katmana** koymak:
 
 | SRE'nin yaptığı | Nerede olur | Neden |
 |---|---|---|
 | Nereye bakacağına karar vermek | **Kod** — sinyal şekline göre playbook | Deterministik, test edilebilir, ucuz |
 | Sinyalleri okumak | Mevcut sınırlı store okumaları | Yeni sorgu yazmıyoruz, mevcutları besliyoruz |
 | Sebepleri sıralamak | `correlator.Synthesize` (LLM'siz) | Zaten en güçlü parça |
-| Sonucu insan diliyle yazmak | Model, tek atış, kanıt önünde | 2B'nin gerçekten yapabildiği tek iş |
+| Sonucu insan diliyle yazmak | Model, tek atış, kanıt önünde | Modelin katma değeri burada; kanıt zaten hazır |
 | Kaydetmek | `RootCauseHypothesis` + `AISummary` | Zaten var |
 
 Modelin işi **araştırmak değil, bulguyu anlatmak**.
@@ -62,7 +77,7 @@ tablo-testli — hangi problem şeklinin neyi tetiklediği pinlenir.
 
 ## 4. Denetlenebilirlik — "neye baktım, ne buldum"
 
-2B modelin ürettiği metne güvenmenin tek yolu, hangi sinyallerin
+Modelin ürettiği metne güvenmenin tek yolu, hangi sinyallerin
 GERÇEKTEN okunduğunun görünür olması. Hipotez bir denetim izi taşır:
 
 ```

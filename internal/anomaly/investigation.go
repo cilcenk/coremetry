@@ -15,18 +15,25 @@ import (
 // Operatör: "bir hata olduğunda gerekirse pod'larına, metriklerine,
 // loglarına baksın, ona göre sonuç çıkarsın, kaydetsin. Gerçek bir SRE gibi."
 //
-// MİMARİ İLKE: birincil model Gemma4-2B. Gemma ailesi native
-// function-calling ile eğitilmiyor ve 2B'de araç seçimi zaten güvenilmez —
-// serbest ajan döngüsü kurulamaz. SRE davranışını modele YAPTIRMAK yerine
-// doğru katmana koyuyoruz:
+// MİMARİ İLKE — birincil model gemma4-26b-a4b-it (26B toplam / 4B aktif
+// MoE, instruction-tuned; v0.9.517'de operatör ekranından DOĞRULANDI).
+//
+// Gerekçe model kapasitesi DEĞİL, üç somut sebep:
+//  1. MALİYET — her P1'de serbest ajan döngüsü N tur LLM çağrısı demek;
+//     deterministik playbook tek anlatım çağrısıyla bitiyor.
+//  2. DENETLENEBİLİRLİK — hangi sinyale bakıldığı KOD, dolayısıyla
+//     tablo-testli ve tekrarlanabilir. Model seçseydi her koşuda
+//     farklı bakabilirdi.
+//  3. SINIRLILIK — okumalar sınırlı kalmalı (LIMIT/timeout/pencere);
+//     modele araç verirsek bu sınırları o seçer.
+// SRE davranışını doğru katmana koyuyoruz:
 //
 //	nereye bakacağına karar vermek → KOD (buradaki saf playbook)
 //	sinyalleri okumak              → mevcut sınırlı store okumaları
 //	sebepleri sıralamak            → correlator.Synthesize (LLM'siz)
 //	bulguyu anlatmak               → model, tek atış, kanıt önünde
 //
-// Modelin işi araştırmak değil, bulguyu anlatmak. 2B'nin gerçekten
-// yapabildiği tek iş bu.
+// Modelin işi araştırmak değil, bulguyu anlatmak.
 //
 // MALİYET: bugünkü kanıt toplama tick başına BEŞ okuma yapıp tüm batch'te
 // paylaşıyor (fusion.go gatherEvidenceInputs). Koşullu derinleşme bunu
@@ -102,8 +109,9 @@ func investigationPlan(p chstore.Problem) []signalFamily {
 // birlikte KALICI olarak saklanıyorlar, dolayısıyla en alt katmana
 // taşındılar. Tüm üyeleri zaten chstore tipleriydi.
 
-// deepEvidenceLimit — aile başına taşınan kayıt tavanı. Kanıt bloğu 2B'nin
-// bağlamına sığmalı; ilk N zaten en ağırları (okumalar sıralı geliyor).
+// deepEvidenceLimit — aile başına taşınan kayıt tavanı. Kanıt bloğu
+// odaklı kalmalı: uzun blok asıl sinyali (sıralı adaylar, hata sayıları)
+// gürültüye boğar. İlk N zaten en ağırları (okumalar sıralı geliyor).
 const deepEvidenceLimit = 5
 
 // gatherDeepEvidence — plandaki her aile için BİR sınırlı okuma. Best-effort:
@@ -208,9 +216,8 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 // olurdu, üstelik gömme yolu bge-m3'e bağlı — sözcüksel yol o blokörden
 // bağımsız çalışır.
 //
-// Chunk'ın TAMAMI değil, kodu içeren SATIR alınır: 2B'nin bağlamına
-// koca bir doküman parçası koymak sinyali gürültüye boğar ve asıl
-// kanıtı (kırılım sayıları) bastırır.
+// Chunk'ın TAMAMI değil, kodu içeren SATIR alınır: koca bir doküman
+// parçası asıl kanıtı (kırılım sayıları) bastırır.
 func resolveBusinessCodes(ctx context.Context, store *chstore.Store, business map[string][]chstore.BusinessSlice) map[string]string {
 	if len(business) == 0 {
 		return nil
@@ -400,8 +407,8 @@ func renderDeepEvidence(sb *strings.Builder, d chstore.DeepEvidence) {
 	}
 }
 
-// truncate — kanıt bloğu 2B'nin bağlamına sığmalı; uzun mesaj/şablon
-// kırpılır ama kırpıldığı belli olur.
+// truncate — kanıt bloğu odaklı kalmalı; uzun mesaj/şablon kırpılır
+// ama kırpıldığı belli olur.
 func truncate(s string, n int) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= n {

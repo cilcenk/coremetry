@@ -242,9 +242,10 @@ func buildProblemPrompt(p chstore.Problem, bundle EvidenceBundle, hyp *chstore.R
 	// SADECE P1'de dolu; boşsa hiçbir şey basılmaz ve prompt bugünküyle
 	// birebir aynı kalır (rootcause_prompt_test.go bunu pinliyor).
 	//
-	// Uydurma yasağı burada, kanıtın hemen ardında duruyor — 2B model
-	// talimatı bağlamın başında değil, yanında olunca tutuyor. Derin kanıt
-	// vermek modeli daha İDDİALI yapar; bu satır onu dengeliyor.
+	// Uydurma yasağı burada, kanıtın hemen ardında duruyor: talimat
+	// bağlamın başında değil, kanıtın YANINDA olunca daha iyi tutuyor.
+	// Derin kanıt vermek modeli daha İDDİALI yapar; bu satır onu
+	// dengeliyor — model ne kadar iyi olursa olsun geçerli.
 	if len(bundle.Deep.Checked) > 0 {
 		renderDeepEvidence(&sb, bundle.Deep)
 		sb.WriteString("\nKURAL: Yukarıdaki SORUŞTURMA listesi neye BAKILDIĞINI söyler. " +

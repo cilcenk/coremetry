@@ -5,7 +5,27 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Coremetry</title>
     <meta name="description" content="Enterprise OpenTelemetry APM" />
-    <link rel="icon" href="/favicon.ico" />
+    <!--
+      Favicon (v0.9.495) — bu satır ÖNCE /favicon.ico'yu gösteriyordu
+      ama o dosya public/ içinde HİÇ var olmamıştı. Go spaHandler
+      uzantılı her yolu gerçek 404 sayar (SPA fallback yok,
+      api.go:10923) → her sekme tarayıcının boş varsayılan ikonunu
+      çiziyordu.
+
+      Varlıklar operatör talimatıyla opentelemetry.io'nun kendi
+      favicon'undan alındı; SVG, CNCF artwork deposundaki resmî
+      OpenTelemetry renkli ikonunun aynısı (dosyanın içindeki
+      provenance yorumuna bak). public/opentelemetry.{svg,png}
+      DOKUNULMADI — onları TelescopeIcon sidebar/login/public
+      sayfalarında çiziyor ve elle sadeleştirilmiş ayrı bir kopya.
+
+      SVG önce (her boyutta net), .ico bunu yok sayan motorlar için
+      (16x16 + 32x32 taşıyor), apple-touch-icon iOS ana-ekran pin'i
+      için 512x512 PNG.
+    -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" sizes="16x16 32x32" />
+    <link rel="apple-touch-icon" href="/opentelemetry.png" />
     <!--
       Inline theme boot — applies the saved theme BEFORE first
       paint so the operator never sees a flash of the wrong

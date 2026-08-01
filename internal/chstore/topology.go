@@ -27,7 +27,7 @@ func (s *Store) GetTopologyEdges(ctx context.Context, from, to time.Time, limit 
 	if limit <= 0 || limit > 100000 {
 		limit = 50000
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
 			p.service_name AS parent_service,
 			p.name         AS parent_op,
@@ -151,7 +151,7 @@ func (s *Store) GetRootFlows(ctx context.Context, from, to time.Time, limit int)
 	if limit <= 0 || limit > 200 {
 		limit = 20
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		WITH root_traces AS (
 			SELECT trace_id, service_name AS root_service, name AS root_op
 			FROM spans
@@ -199,7 +199,7 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 	// to the trace-id set whose root matches the flow signature.
 	// The CTE-style filter is materialised once per query so each
 	// pass benefits from CH's GLOBAL IN dedup.
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		WITH root_traces AS (
 			SELECT trace_id FROM spans
 			WHERE parent_id = ''
@@ -274,7 +274,7 @@ func (s *Store) GetFlowTopology(ctx context.Context, from, to time.Time, rootSer
 		return nil, err
 	}
 	// Infra pass — same filter, db/msg/peer destinations.
-	infra, err := s.conn.Query(ctx, `
+	infra, err := s.telemetryReadConn().Query(ctx, `
 		WITH root_traces AS (
 			SELECT trace_id FROM spans
 			WHERE parent_id = ''
@@ -373,7 +373,7 @@ func (s *Store) GetEdgeInstances(ctx context.Context, parentService, system, kin
 	default:
 		return []EdgeInstance{}, nil
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
 			coalesce(nullIf(peer_service, ''), 'unknown') AS instance,
 			toUInt64(count())                              AS calls,
@@ -852,7 +852,7 @@ func (s *Store) ReadTopologyOpEdgesAgg(ctx context.Context, from, to time.Time, 
 	if limit <= 0 || limit > 200000 {
 		limit = 50000
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
 			parent_service, parent_op, child_service, child_op,
 			sum(calls) AS total_calls
@@ -935,7 +935,7 @@ func (s *Store) ReadRootFlowsAgg(ctx context.Context, from, to time.Time, limit 
 	if limit <= 0 || limit > 200 {
 		limit = 20
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
 			root_service,
 			root_op,
@@ -972,7 +972,7 @@ func (s *Store) ReadRootFlowsAgg(ctx context.Context, from, to time.Time, limit 
 // uniqExact over the small pre-aggregated MV.
 func (s *Store) CountRootFlows(ctx context.Context, from, to time.Time) (int, error) {
 	var n uint64
-	err := s.conn.QueryRow(ctx, `
+	err := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT toUInt64(uniqExact((root_service, root_op)))
 		FROM topology_root_flows_5m FINAL
 		WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
@@ -1030,7 +1030,7 @@ func (s *Store) ComputeFlowsLatencyP99(ctx context.Context, from, to time.Time, 
 		  AND (service_name, name) IN (` + string(placeholders) + `)
 		GROUP BY service_name, name
 		SETTINGS max_execution_time = 15`
-	rows, err := s.conn.Query(ctx, q, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1052,7 +1052,7 @@ func (s *Store) ComputeFlowsLatencyP99(ctx context.Context, from, to time.Time, 
 // op-picker dropdown on the operation deep-dive view. Reads
 // directly from the agg table so the response is fast.
 func (s *Store) ListOpsForService(ctx context.Context, service string, from, to time.Time) ([]string, error) {
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT DISTINCT parent_op
 		FROM topology_op_edges_5m FINAL
 		WHERE parent_service = ?
@@ -1123,7 +1123,7 @@ func (s *Store) readServiceTopologyAggFiltered(ctx context.Context, from, to tim
 	// is strict on Scan type matching — a UInt32 column won't bind
 	// to *uint64 even though the value fits. Struct fields stay
 	// uint64 so JSON encoding keeps the same shape across drivers.
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
 			parent_service,
 			child_node,
@@ -1300,7 +1300,7 @@ func (s *Store) GetServiceTopologyEdges(ctx context.Context, from, to time.Time,
 	if limit <= 0 || limit > 100000 {
 		limit = 20000
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		WITH
 			multiIf(
 				c.db_system  != '', 'db',
@@ -1357,7 +1357,7 @@ func (s *Store) GetServiceTopologyEdges(ctx context.Context, from, to time.Time,
 		return nil, err
 	}
 
-	infraRows, err := s.conn.Query(ctx, `
+	infraRows, err := s.telemetryReadConn().Query(ctx, `
 		WITH
 			multiIf(
 				db_system  != '', concat('db:',    db_system),

@@ -51,6 +51,15 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 	allowed := map[string]bool{
 		"store.go":   true, // tanım + fallback
 		"summary.go": true, // service_summary_5m / operation_summary_5m / spans (v0.9.496 dilim 1)
+		// v0.9.497 dilim 2 — üçü de SAF telemetri (aşağıdaki testle pinli):
+		"repo.go":         true, // spans / logs / metric_points / trace_*_5m / topology_edges_5m
+		"topology.go":     true, // topology_*_5m / service_summary_5m / spans / root_traces
+		"dependencies.go": true, // db_*_summary_5m / messaging_*_summary_5m / metric_points / spans
+		// BİLİNÇLİ DIŞARIDA: problem.go (alert_rules + problems) ve
+		// incident.go (incidents/incident_events/incident_problems) STATE
+		// tablosu okuyor — ReplacingMergeTree + FINAL, her kurulumda
+		// replicate DEĞİL. Bu dosyalar dosya bazında taşınamaz; taşınacaksa
+		// fonksiyon fonksiyon ayrıştırılmalı.
 	}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -78,8 +87,10 @@ func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
 	stateTables := []string{
 		"FROM users", "FROM teams", "FROM system_settings", "FROM alert_rules",
 		"FROM saved_views", "FROM dashboards", "FROM problems", "FROM audit_events",
+		"FROM incidents", "FROM incident_events", "FROM incident_problems",
+		"FROM anomaly_events", "FROM service_metadata", "FROM ai_calls",
 	}
-	for _, f := range []string{"summary.go"} {
+	for _, f := range []string{"summary.go", "repo.go", "topology.go", "dependencies.go"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

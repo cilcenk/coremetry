@@ -88,7 +88,7 @@ func (s *Store) UsageLimit(
 		GROUP BY inst
 		LIMIT 1000
 		SETTINGS max_execution_time = 10`
-	rows, err := s.conn.Query(ctx, q, usageMetric, limitMetric, from, now, usageMetric, limitMetric)
+	rows, err := s.telemetryReadConn().Query(ctx, q, usageMetric, limitMetric, from, now, usageMetric, limitMetric)
 	if err != nil {
 		return nil, err
 	}
@@ -129,7 +129,7 @@ func (s *Store) DimensionedUsageLimit(
 		GROUP BY inst, subkey
 		LIMIT 5000
 		SETTINGS max_execution_time = 10`
-	rows, err := s.conn.Query(ctx, q,
+	rows, err := s.telemetryReadConn().Query(ctx, q,
 		attrKey, usageMetric, limitMetric, from, now, usageMetric, limitMetric, attrKey)
 	if err != nil {
 		return nil, err
@@ -172,7 +172,7 @@ func (s *Store) RateGauge(
 		GROUP BY inst
 		LIMIT 1000
 		SETTINGS max_execution_time = 10`
-	rows, err := s.conn.Query(ctx, q, windowSec, from, now, metric)
+	rows, err := s.telemetryReadConn().Query(ctx, q, windowSec, from, now, metric)
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +204,7 @@ func (s *Store) MetricExists(ctx context.Context, metric string) (bool, error) {
 	now := time.Now()
 	from := now.Add(-capacityWindow)
 	var n uint64
-	err := s.conn.QueryRow(ctx, `
+	err := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT count() FROM metric_points
 		WHERE time >= ? AND time <= ? AND metric = ?
 		LIMIT 1

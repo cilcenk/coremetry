@@ -276,7 +276,7 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		LIMIT %d
 		SETTINGS max_execution_time = 25`, step, groupSelect, aggExpr, wc.sql(), SpanMetricRowCap)
 
-	rows, err := s.conn.Query(ctx, sql, wc.args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, wc.args...)
 	if err != nil {
 		return nil, fmt.Errorf("query span metric: %w", err)
 	}
@@ -446,7 +446,7 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 		SETTINGS max_execution_time = 25`,
 		step, groupSelect, aggExpr, strings.Join(whereClauses, " AND "))
 
-	rows, err := s.conn.Query(ctx, sql, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return nil, false
 	}
@@ -671,7 +671,7 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 		SETTINGS max_execution_time = 25`,
 		step, groupSelect, aggExpr, strings.Join(whereClauses, " AND "))
 
-	rows, err := s.conn.Query(ctx, sql, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return nil, false
 	}
@@ -818,7 +818,7 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 		strings.Join(selectParts, ",\n        "),
 		strings.Join(whereClauses, " AND "))
 
-	rows, err := s.conn.Query(ctx, sql, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return nil, false
 	}
@@ -1123,7 +1123,7 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		SETTINGS max_execution_time = 25`
 	}
 
-	rows, err := s.conn.Query(ctx, sql, wc.args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, wc.args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query span metric multi: %w", err)
 	}

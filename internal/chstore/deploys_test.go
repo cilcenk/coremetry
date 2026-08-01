@@ -150,7 +150,11 @@ func TestDeployWindowJudgmentLookback(t *testing.T) {
 	if i < 0 {
 		t.Fatal("GetDeploysInWindow yok")
 	}
-	if !strings.Contains(src[i:], "rows, err := s.conn.Query(ctx, sql, from, scanFrom, to, from.UnixNano(), limit)") {
+	// v0.9.508 — erişimci s.conn → s.telemetryReadConn() oldu (deploys.go
+	// RoundRobin okuma havuzuna taşındı). Bu testin pinlediği şey BAĞLANTI
+	// değil BIND SIRASI; sıra birebir aynı kaldı, yalnız beklenen metin
+	// yeni erişimciye güncellendi.
+	if !strings.Contains(src[i:], "Query(ctx, sql, from, scanFrom, to, from.UnixNano(), limit)") {
 		t.Error("bind sırası bozuk — countIf(from), WHERE(scanFrom,to), HAVING(from) sırası şart")
 	}
 }

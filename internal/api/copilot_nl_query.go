@@ -81,7 +81,7 @@ func (s *Server) copilotNLToQuery(w http.ResponseWriter, r *http.Request) {
 		body.Prompt = body.Prompt[:1024]
 	}
 
-	out, err := s.copilotExplain(r, copilot.SystemPromptNLToQuery(), body.Prompt)
+	out, err := s.copilotExplainJSON(r, copilot.SystemPromptNLToQuery(), body.Prompt)
 	if err != nil {
 		writeErr(w, err)
 		return

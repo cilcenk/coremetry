@@ -107,6 +107,29 @@ func (s *Server) copilotExplain(r *http.Request, system, user string) (string, e
 	return s.copilot.Explain(ctx, system, user)
 }
 
+// copilotExplainJSON (v0.9.517) — modelden KATI JSON bekleyen yüzeyler
+// için. copilotExplain ile aynı /ai atıf yolu, tek farkı sunucu tarafında
+// çözümlemenin JSON'a kısıtlanması.
+//
+// Neden: birincil model Gemma4-2B ve Gemma serbest formda JSON üretmekte
+// zayıf. Bu yüzeyler bugüne kadar "umut + post-check" ile çalışıyordu;
+// kısıt modelin JSON DIŞINA çıkmasını engelliyor. Desteklemeyen uçta
+// sessizce eski davranışa düşer (bir kez yoklanır, karar önbelleklenir).
+func (s *Server) copilotExplainJSON(r *http.Request, system, user string) (string, error) {
+	surface := aiSurfaceFromPath(r.URL.Path)
+	c := auth.FromContext(r.Context())
+	uid, email := "", ""
+	if c != nil {
+		uid, email = c.UserID, c.Email
+	}
+	ctx := copilot.WithMeta(copilot.WithJSONMode(r.Context()), copilot.CallMeta{
+		Surface:   surface,
+		UserID:    uid,
+		UserEmail: email,
+	})
+	return s.copilot.Explain(ctx, system, user)
+}
+
 // copilotExplainSurface (v0.8.397) — sibling wrapper for handlers
 // whose surface label is NOT derivable from the URL path: the guided
 // chat mode answers on POST /api/copilot/chat but must land in

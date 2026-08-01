@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyThreshold, barGeometry, barIndexAt,
-  downsampleBuckets, maxBarsForWidth, type BucketReducer,
+  downsampleBuckets, maxBarsForWidth, sparkRenderMode, type BucketReducer,
 } from './sparkline';
 
 // Granular-sparklines sweep (M4, 2026-07-24) — the Sparkline component
@@ -179,5 +179,38 @@ describe('barIndexAt', () => {
     expect(barIndexAt(-1, 100, 4)).toBe(null);
     expect(barIndexAt(101, 100, 4)).toBe(null);
     expect(barIndexAt(50, 100, 0)).toBe(null);
+  });
+});
+
+// v0.9.498 — "ölçüm yok" ile "ölçüm var, hepsi sıfır" ayrımı. Önceden
+// ikisi de "—" basıyordu, yani 0.00% hata oranlı bir operasyonun errors
+// sparkline'ı ölçüm hiç gelmemiş gibi görünüyordu (operatör bunu
+// Operations tablosunda gördü). v0.9.371'in pod Restarts'ta çözdüğü
+// ayrımın aynısı: 0 bir DEĞERDİR, bilinmezlik değil.
+describe('sparkRenderMode', () => {
+  it('ölçüm yoksa nodata', () => {
+    expect(sparkRenderMode([])).toBe('nodata');
+  });
+
+  it('ölçüm var ama hepsi sıfırsa zero — "—" DEĞİL', () => {
+    expect(sparkRenderMode([0])).toBe('zero');
+    expect(sparkRenderMode([0, 0, 0, 0, 0])).toBe('zero');
+  });
+
+  it('tek bir pozitif değer bile seriyi series yapar', () => {
+    expect(sparkRenderMode([0, 0, 0, 0.0001])).toBe('series');
+    expect(sparkRenderMode([3, 1, 4])).toBe('series');
+  });
+
+  it('NaN/Infinity ölçüm sayılmaz — hepsi bozuksa nodata', () => {
+    expect(sparkRenderMode([NaN, NaN])).toBe('nodata');
+    expect(sparkRenderMode([Infinity, -Infinity])).toBe('nodata');
+    // Bozuk değerler elenir, kalan gerçek ölçüm kararı verir.
+    expect(sparkRenderMode([NaN, 0, 0])).toBe('zero');
+    expect(sparkRenderMode([NaN, 5])).toBe('series');
+  });
+
+  it('negatif değerler sıfır sayılır (sayım/oran serileri negatif olamaz)', () => {
+    expect(sparkRenderMode([-1, -2])).toBe('zero');
   });
 });

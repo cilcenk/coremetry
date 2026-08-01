@@ -169,7 +169,7 @@ const traceOpBucketLen = 5 * time.Minute
 // have the spike fall into baseline within minutes, flickering the
 // anomaly section as windows slide.
 func DetectTraceOpAnomalies(ctx context.Context, store *chstore.Store, window time.Duration) ([]TraceOpAnomaly, error) {
-	conn := store.Conn()
+	conn := store.TelemetryReadConn()
 	now := time.Now()
 
 	// Tam-bucket hizası: MV bucket'ı kapanmadan sayımı eksiktir.

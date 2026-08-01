@@ -572,7 +572,7 @@ func (d *Detector) fetchAllBuckets(ctx context.Context, metric string, now time.
 	}
 	cutoff := now.Add(-time.Duration(historyHours) * time.Hour)
 	upper := lastCompleteBucketStart(now)
-	rows, err := d.store.Conn().Query(ctx, buildAllBucketsQuery(vexpr), cutoff, upper)
+	rows, err := d.store.TelemetryReadConn().Query(ctx, buildAllBucketsQuery(vexpr), cutoff, upper)
 	if err != nil {
 		return nil, err
 	}
@@ -724,7 +724,7 @@ func (d *Detector) fetchAllSeasonal(ctx context.Context, metric string, at time.
 	radius := neighborBuckets * bucketSeconds // ±window half-width in seconds
 	class := dayClass(at)
 
-	rows, err := d.store.Conn().Query(ctx, buildAllSeasonalQuery(vexpr), cutoff, class, targetSod, targetSod, radius)
+	rows, err := d.store.TelemetryReadConn().Query(ctx, buildAllSeasonalQuery(vexpr), cutoff, class, targetSod, targetSod, radius)
 	if err != nil {
 		return nil, err
 	}

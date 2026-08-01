@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -217,7 +217,70 @@ function CoordinatorPanel() {
   // giren parametrenin kardinalitesi sınırlı olmalı (v0.8.270).
   const [windowS, setWindowS] = useState(COORD_WINDOWS[0].s);
   const q = useCHCoordinators(windowS);
-  const data = q.isPending ? undefined : q.isError ? null : q.data ?? null;
+  const raw = q.isPending ? undefined : q.isError ? null : q.data ?? null;
+
+  // v0.9.506 — FARK MODU. events yolunda sayaçlar sunucu açılışından
+  // beri kümülatif: prod'da ilk node'da birikmiş milyonlarca giriş
+  // sorgusu var ve bir düzeltme mükemmel çalışsa bile o yığın günlerce
+  // toplamı domine eder — panel eski dengesizliği göstermeye devam eder.
+  // Yani "az önceki değişiklik yükü dengeledi mi?" sorusunu kümülatif
+  // sayı CEVAPLAYAMAZ.
+  //
+  // Çözüm sunucuda durum tutmak değil: ilk gelen örnek tarayıcıda taban
+  // olarak saklanıyor, sonraki her yenilemede FARK gösteriliyor. Panel
+  // açık kaldıkça pencere büyür ve okuma keskinleşir. query_log yolunda
+  // gerek yok — orası zaten pencereli.
+  const baselineRef = useRef<{ at: number; by: Record<string, Coord> } | null>(null);
+  const [baselineAt, setBaselineAt] = useState<number | null>(null);
+  const deltaMode = raw?.source === 'events';
+
+  if (deltaMode && raw && raw.nodes.length > 0 && !baselineRef.current) {
+    baselineRef.current = {
+      at: Date.now(),
+      by: Object.fromEntries(raw.nodes.map(n => [n.host, n])),
+    };
+  }
+
+  const resetBaseline = () => {
+    if (!raw) return;
+    baselineRef.current = { at: Date.now(), by: Object.fromEntries(raw.nodes.map(n => [n.host, n])) };
+    setBaselineAt(Date.now());
+  };
+  void baselineAt; // yalnız yeniden render tetiklemek için
+
+  // Fark satırları. Bir node yeniden başladıysa sayacı sıfırlanır ve
+  // fark NEGATİF çıkar — o durumda 0'a kelepçeleyip tabanı o node için
+  // tazeliyoruz, yoksa panel eksi sayı gösterir.
+  const baseline = baselineRef.current;
+  const elapsedMs = baseline ? Date.now() - baseline.at : 0;
+  const data = (() => {
+    if (!raw || !deltaMode || !baseline) return raw;
+    const nodes = raw.nodes.map(n => {
+      const b = baseline.by[n.host];
+      if (!b) return { ...n, initial: 0, selects: 0, inserts: 0, other: 0 };
+      const d = (cur: number, prev: number) => Math.max(0, cur - prev);
+      return {
+        ...n,
+        initial: d(n.initial, b.initial),
+        selects: d(n.selects, b.selects),
+        inserts: d(n.inserts, b.inserts),
+        other: d(n.other, b.other),
+      };
+    });
+    const imb = (vals: number[]) => {
+      if (vals.length < 2) return 1;
+      const sum = vals.reduce((a, v) => a + v, 0);
+      if (sum === 0) return 1;
+      const mean = sum / vals.length;
+      return Math.round((Math.max(...vals) / mean) * 100) / 100;
+    };
+    return {
+      ...raw, nodes,
+      initialImbalance: imb(nodes.map(n => n.initial)),
+      selectImbalance:  imb(nodes.map(n => n.selects)),
+      insertImbalance:  imb(nodes.map(n => n.inserts)),
+    };
+  })();
 
   const dt = useDataTable<Coord>({
     storageKey: 'ch-coordinators', columns: COORD_COLS,
@@ -238,8 +301,21 @@ function CoordinatorPanel() {
         >
           {COORD_WINDOWS.map(w => <option key={w.s} value={w.s}>{w.label}</option>)}
         </select>
-        {data && data.source === 'events' && (
-          <span style={{ fontSize: 11, color: 'var(--text3)' }}>pencere yok — açılıştan beri</span>
+        {deltaMode && (
+          <>
+            <span className="badge b-info" title={
+              'query_log bu kümede kapalı, sayaçlar açılıştan beri kümülatif. ' +
+              'Panel ilk okumayı taban alıp FARKI gösteriyor — açık kaldıkça pencere büyür.'
+            }>
+              delta · {elapsedMs < 60_000
+                ? `${Math.max(1, Math.round(elapsedMs / 1000))}sn`
+                : `${Math.round(elapsedMs / 60_000)}dk`}
+            </span>
+            <button type="button" onClick={resetBaseline} style={{
+              background: 'transparent', color: 'var(--accent2)', border: '1px solid var(--border)',
+              borderRadius: 6, fontSize: 11, padding: '3px 8px', cursor: 'pointer',
+            }}>tabanı sıfırla</button>
+          </>
         )}
         {data && (
           <>
@@ -257,9 +333,9 @@ function CoordinatorPanel() {
               data.source === 'query_log'
                 ? 'system.query_log — seçilen pencere'
                 : data.source === 'events'
-                ? 'system.events — sunucu açılışından beri kümülatif (query_log bu kümede kapalı)'
+                ? 'system.events — taban alındıktan sonraki FARK (ham sayaçlar açılıştan beri kümülatif)'
                 : 'ölçüm okunamadı'
-            }>{data.source === 'query_log' ? 'windowed' : data.source === 'events' ? 'since boot' : 'no source'}</span>
+            }>{data.source === 'query_log' ? 'windowed' : data.source === 'events' ? 'events' : 'no source'}</span>
           </>
         )}
         <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>
@@ -271,8 +347,17 @@ function CoordinatorPanel() {
         fan-out, partial-state merge and final aggregation land. Sub-queries a node runs
         as a shard are excluded, so this measures coordination load, not scan work.
         INSERT coordination is spread by the round-robin ingest pool; SELECT coordination
-        currently rides the in-order main connection.
+        rides the round-robin read pool from v0.9.496 onward.
       </p>
+      {deltaMode && (
+        <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px' }}>
+          Bu kümede <code>system.query_log</code> kapalı, sayaçlar sunucu açılışından beri
+          kümülatif — birikmiş eski dengesizlik yeni davranışı gizler. Panel bu yüzden ilk
+          okumayı <strong>taban</strong> alıp farkı gösteriyor: açık bıraktıkça pencere büyür
+          ve okuma keskinleşir. Bir değişikliğin etkisini ölçmek için deploy sonrası tabanı
+          sıfırla ve 15–20 dk bekle.
+        </p>
+      )}
       {data === undefined && <Spinner />}
       {data === null && <EmptyNote text="Failed to load coordination spread" />}
       {data && data.note && <EmptyNote text={data.note} />}

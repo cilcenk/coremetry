@@ -79,6 +79,53 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 	}
 }
 
+// v0.9.504 — TelemetryReadConn() paket DIŞI erişimci. Aynı sözleşme
+// chstore dışında da geçerli olmalı, ama dosya-yüzeyi testi yalnız bu
+// dizini tarıyordu. Bu test internal/ altındaki TÜM paketleri tarar:
+// havuzu kullanan her paket bilinçli beyaz listede olmalı VE hiçbir state
+// tablosu okumamalı.
+func TestTelemetryReadConnPackageSurface(t *testing.T) {
+	allowedPkgs := map[string]bool{
+		"anomaly":   true, // spans + service_summary_5m — saf telemetri (v0.9.504)
+		"evaluator": true, // spans + service_summary_5m + operation_summary_5m
+	}
+	stateTables := []string{
+		"FROM users", "FROM teams", "FROM system_settings", "FROM alert_rules",
+		"FROM saved_views", "FROM dashboards", "FROM problems", "FROM audit_events",
+		"FROM incidents", "FROM incident_events", "FROM incident_problems",
+	}
+	files, err := filepath.Glob("../*/*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		pkg := filepath.Base(filepath.Dir(f))
+		if pkg == "chstore" {
+			continue // kendi dizini; dosya-yüzeyi testi onu ayrıca kapsıyor
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		if !strings.Contains(src, "TelemetryReadConn") {
+			continue
+		}
+		if !allowedPkgs[pkg] {
+			t.Errorf("%s: paket %q RoundRobin okuma havuzunu kullanıyor ama beyaz listede değil — o paketin HİÇBİR state tablosu okumadığı doğrulanmadan eklenmemeli (v0.9.486)", f, pkg)
+			continue
+		}
+		for _, tbl := range stateTables {
+			if strings.Contains(src, tbl) {
+				t.Errorf("%s: %q — bu paket RoundRobin okuma havuzunu kullanıyor, state tablosu okuyamaz (v0.9.486 /users tutarsızlığı)", f, tbl)
+			}
+		}
+	}
+}
+
 // Beyaz listedeki dosyalar GERÇEKTEN state tablosu okumamalı. Yukarıdaki
 // test yeni dosyaların havuza sızmasını engelliyor; bu test ise izin
 // verilmiş dosyaya sonradan bir state okuması EKLENMESİNİ yakalıyor —

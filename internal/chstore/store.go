@@ -549,6 +549,16 @@ func (s *Store) Close() error {
 }
 func (s *Store) Conn() driver.Conn { return s.conn }
 
+// TelemetryReadConn — telemetryReadConn'un paket DIŞI hali (v0.9.504).
+// anomaly/evaluator gibi arka plan işçileri chstore paketinde değil ama
+// okudukları şey tamamen telemetri; RoundRobin havuzunu kullanmaları
+// gerekiyor. AYNI KURAL geçerli: yalnız Distributed sarmalayıcı / MV
+// okumaları. Bir state tablosu (users, teams, system_settings,
+// alert_rules, problems, incidents…) bu bağlantıdan okunursa v0.9.486'nın
+// operatör bug'ı geri gelir. Yeni bir paket bunu kullanacaksa
+// conn_strategy_test.go'daki paket beyaz listesine BİLİNÇLİ eklenir.
+func (s *Store) TelemetryReadConn() driver.Conn { return s.telemetryReadConn() }
+
 // ingestWriteConn returns the RoundRobin pool for high-volume telemetry
 // INSERTs, falling back to the main conn when the second pool was never
 // opened (zero-value Store in tests). State tables must NEVER write

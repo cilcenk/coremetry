@@ -1455,7 +1455,7 @@ func (e *Evaluator) measureCount(ctx context.Context, service string, window tim
 	if useSummaryMV(window) {
 		// v0.8.315 — bucket-aligned cutoff + normalize back to the
 		// nominal window (see mvWindowStart).
-		err := e.store.Conn().QueryRow(ctx, `
+		err := e.store.TelemetryReadConn().QueryRow(ctx, `
 			SELECT countMerge(span_count_state) FROM service_summary_5m
 			WHERE service_name = ? AND time_bucket >= ?
 			SETTINGS max_execution_time = 10`,
@@ -1465,7 +1465,7 @@ func (e *Evaluator) measureCount(ctx context.Context, service string, window tim
 		}
 		return uint64(scaleToWindow(float64(n), window.Seconds(), mvCoveredSeconds(now, window))), nil
 	}
-	err := e.store.Conn().QueryRow(ctx, `
+	err := e.store.TelemetryReadConn().QueryRow(ctx, `
 		SELECT count() FROM spans WHERE service_name = ? AND time >= ?
 		SETTINGS max_execution_time = 10`,
 		service, now.Add(-window)).Scan(&n)
@@ -1475,7 +1475,7 @@ func (e *Evaluator) measureCount(ctx context.Context, service string, window tim
 func (e *Evaluator) measure(ctx context.Context, service, metric string, window time.Duration) (float64, error) {
 	now := time.Now()
 	cutoff := now.Add(-window)
-	conn := e.store.Conn()
+	conn := e.store.TelemetryReadConn()
 	mv := useSummaryMV(window)
 	if mv {
 		// v0.8.315 — the MV filter is on the bucket START; align down so

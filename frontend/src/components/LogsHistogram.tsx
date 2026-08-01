@@ -142,6 +142,10 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
           ? (fromMs, toMs) => onRangeSelect(fromMs * 1e6, toMs * 1e6)
           : undefined}
         onZoomReset={onZoomReset}
+        // v0.9.489 (operatör: "Series gözükmesine ihtiyacım yok") — seviye
+        // kimliği zaten yüzeydeki level chip'lerinde/renklerde; alttaki
+        // istatistik lejantı log yüzeylerinde tamamen kapalı.
+        hideLegend
       />
     </div>
   );

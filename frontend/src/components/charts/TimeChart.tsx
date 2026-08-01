@@ -80,6 +80,10 @@ interface Props {
   // atlar). Trace listesi gibi ASIL içeriğin ekranın üstünde kalması
   // gereken sayfalar için.
   legendCollapsed?: boolean;
+  // v0.9.489 (operatör: "Series gözükmesine ihtiyacım yok") — lejantı
+  // tamamen kaldırır (kapalı tek satır bile yok). Log histogramları gibi
+  // seri kimliğinin zaten yüzeydeki chip'lerden okunduğu yerler için.
+  hideLegend?: boolean;
 }
 
 // v0.9.75 (chart-consolidation Adım 0) — cssVar/yRange lib/chart/'a çıkarıldı
@@ -92,7 +96,7 @@ const MAX_BAR_PX = 18;
 export function TimeChart({
   times, series, height = 150, leftUnit = '', rightUnit = '',
   deployMarkers, thresholds, regions, onBrush, onZoomReset, syncKey, fmtLeft, fmtRight, fmtX, xRange,
-  legendCollapsed,
+  legendCollapsed, hideLegend,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const ttRef = useRef<HTMLDivElement>(null);
@@ -435,8 +439,9 @@ export function TimeChart({
       </div>
       {/* v0.9.103 (Grafana-parity #1) — grafik altında seri istatistikleri;
           birim seri-başı (dual eksende left/right). Grafana-parite #2 —
-          interaktif: tık gizle/göster, Ctrl/Cmd izole. */}
-      <StatsLegend
+          interaktif: tık gizle/göster, Ctrl/Cmd izole. v0.9.489 —
+          hideLegend ile tamamen kapatılabilir (log histogramları). */}
+      {!hideLegend && <StatsLegend
         series={series.map(s => ({
           label: s.label, color: s.color, values: s.data,
           unit: s.axis === 'right' ? rightUnit : leftUnit,
@@ -444,7 +449,7 @@ export function TimeChart({
         isVisible={i => legendVis?.[i] ?? true}
         onToggle={handleLegendToggle}
         defaultCollapsed={legendCollapsed}
-      />
+      />}
     </>
   );
 }

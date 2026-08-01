@@ -1,6 +1,10 @@
 package evaluator
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
+)
 
 // v0.9.90 — JVM pod runtime detector'ının saf eşik çekirdekleri. Bozuk
 // evaluator herkesi page'ler; eşik mantığı EXACT kalmalı (CLAUDE.md #11).
@@ -43,7 +47,7 @@ func TestJVMHeapDecision(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			open, sev, pct, post := jvmHeapDecision(tt.usage, tt.postGC, tt.limit, tt.wasOpen)
+			open, sev, pct, post := jvmHeapDecision(tt.usage, tt.postGC, tt.limit, tt.wasOpen, chstore.DefaultRuntimeAlerts())
 			if open != tt.wantOpen || sev != tt.wantSev || post != tt.wantPost {
 				t.Errorf("jvmHeapDecision(%v,%v,%v,%v) = (%v,%q,post=%v); want (%v,%q,post=%v)",
 					tt.usage, tt.postGC, tt.limit, tt.wasOpen, open, sev, post, tt.wantOpen, tt.wantSev, tt.wantPost)
@@ -55,6 +59,11 @@ func TestJVMHeapDecision(t *testing.T) {
 	}
 }
 
+// v0.9.485 (operator-reported, prod: "false pozitif çok — 2-3 saniye
+// pause olursa sorun GERÇEKTEN vardır") — eşikler 500/1000ms →
+// 2000/3000ms ve RuntimeAlertConfig'ten gelir. GÜRÜLTÜ PİNLERİ: eski
+// warn bölgesi (500-2000ms) artık KAPALI — prod selinin (510-1361ms
+// bandı, onlarca servis) tamamı bu bölgedeydi. Histerezis warn'ın %10'u.
 func TestJVMGCPauseDecision(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -64,17 +73,19 @@ func TestJVMGCPauseDecision(t *testing.T) {
 		wantSev  string
 	}{
 		{"düşük pause → kapalı", 120, false, false, ""},
-		{"warn eşiği tam 500 → warning", 500, false, true, "warning"},
-		{"warn altı 499 → kapalı", 499, false, false, ""},
-		{"crit eşiği tam 1000 → critical", 1000, false, true, "critical"},
-		{"crit üstü → critical", 2400, false, true, "critical"},
-		{"histerezis: açık + 460 → hâlâ warning", 460, true, true, "warning"},
-		{"histerezis: açık + 449 (band altı) → kapan", 449, true, false, ""},
-		{"histerezis: KAPALI + 460 → açma", 460, false, false, ""},
+		{"GÜRÜLTÜ PİNİ: 510ms (eski warn bölgesi, prod seli) → kapalı", 510, false, false, ""},
+		{"GÜRÜLTÜ PİNİ: 1361ms (prod selinin tepesi) → kapalı", 1361, false, false, ""},
+		{"warn eşiği tam 2000 → warning", 2000, false, true, "warning"},
+		{"warn altı 1999 → kapalı", 1999, false, false, ""},
+		{"crit eşiği tam 3000 → critical", 3000, false, true, "critical"},
+		{"crit üstü → critical", 4500, false, true, "critical"},
+		{"histerezis: açık + 1850 (band içi, warn-%10) → hâlâ warning", 1850, true, true, "warning"},
+		{"histerezis: açık + 1799 (band altı) → kapan", 1799, true, false, ""},
+		{"histerezis: KAPALI + 1850 → açma", 1850, false, false, ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			open, sev := jvmGCPauseDecision(tt.avgMs, tt.wasOpen)
+			open, sev := jvmGCPauseDecision(tt.avgMs, tt.wasOpen, chstore.DefaultRuntimeAlerts())
 			if open != tt.wantOpen || sev != tt.wantSev {
 				t.Errorf("jvmGCPauseDecision(%v,%v) = (%v,%q); want (%v,%q)",
 					tt.avgMs, tt.wasOpen, open, sev, tt.wantOpen, tt.wantSev)
@@ -105,7 +116,7 @@ func TestJVMGCShareDecision(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			open, sev := jvmGCShareDecision(tt.sharePct, tt.wasOpen)
+			open, sev := jvmGCShareDecision(tt.sharePct, tt.wasOpen, chstore.DefaultRuntimeAlerts())
 			if open != tt.wantOpen || sev != tt.wantSev {
 				t.Errorf("jvmGCShareDecision(%v,%v) = (%v,%q); want (%v,%q)",
 					tt.sharePct, tt.wasOpen, open, sev, tt.wantOpen, tt.wantSev)

@@ -987,6 +987,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/settings/retention", auth.RequireRole(auth.RoleAdmin, s.putRetention))
 	mux.HandleFunc("GET /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.getAnomalyPromotion))
 	mux.HandleFunc("PUT /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.putAnomalyPromotion))
+	mux.HandleFunc("GET /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.getRuntimeAlerts))
+	mux.HandleFunc("PUT /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.putRuntimeAlerts))
 	mux.HandleFunc("GET /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.getProblemEscalation))
 	mux.HandleFunc("PUT /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.putProblemEscalation))
 	mux.HandleFunc("GET /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.getAISettings))
@@ -7958,6 +7960,48 @@ func retentionDetails(sp chstore.RetentionSpec) string {
 		parts = append(parts, "profiles="+sp.Profiles)
 	}
 	return strings.Join(parts, " ")
+}
+
+// getRuntimeAlerts / putRuntimeAlerts (v0.9.485, operator-reported:
+// "JVM alertleri daha sıkı olmalı, false pozitif çok") — runtime pod
+// detektörünün eşikleri. Varsayılanlar chstore.DefaultRuntimeAlerts
+// (GC pause 2000/3000ms — operatör ölçütü "2-3 saniye"); evaluator her
+// tick taze okur, PUT bir sonraki tick'te devrede.
+func (s *Server) getRuntimeAlerts(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, s.store.GetRuntimeAlerts(r.Context()))
+}
+
+func (s *Server) putRuntimeAlerts(w http.ResponseWriter, r *http.Request) {
+	var c chstore.RuntimeAlertConfig
+	if err := json.NewDecoder(r.Body).Decode(&c); err != nil {
+		http.Error(w, "invalid JSON: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	// Sınır kontrolü: ters/absürt eşik sessizce her şeyi critical ya da
+	// hiç-alarm yapmasın (v0.9.247 dersi). Ayrıntılı zero-patch okuma
+	// tarafında (GetRuntimeAlerts) zaten var; burada yalnız kaba sınırlar.
+	if c.GCPauseWarnMs < 100 || c.GCPauseWarnMs > 60000 || c.GCPauseCritMs <= c.GCPauseWarnMs {
+		http.Error(w, "gcPauseWarnMs 100-60000 aralığında ve gcPauseCritMs > gcPauseWarnMs olmalı", http.StatusBadRequest)
+		return
+	}
+	if c.GCShareWarnPct <= 0 || c.GCShareWarnPct >= 100 || c.GCShareCritPct <= c.GCShareWarnPct {
+		http.Error(w, "gcShareWarnPct 0-100 aralığında ve gcShareCritPct > gcShareWarnPct olmalı", http.StatusBadRequest)
+		return
+	}
+	if c.HeapPostGCWarnPct <= 0 || c.HeapPostGCCritPct <= c.HeapPostGCWarnPct ||
+		c.HeapRawWarnPct <= 0 || c.HeapRawCritPct <= c.HeapRawWarnPct ||
+		c.HeapPostGCCritPct > 100 || c.HeapRawCritPct > 100 {
+		http.Error(w, "heap eşikleri 0-100 aralığında ve crit > warn olmalı", http.StatusBadRequest)
+		return
+	}
+	if err := s.store.SaveRuntimeAlerts(r.Context(), c); err != nil {
+		writeErr(w, err)
+		return
+	}
+	s.audit(r, "settings.runtime_alerts.update", "settings", "runtime_alerts",
+		fmt.Sprintf(`{"gcPauseWarnMs":%v,"gcPauseCritMs":%v,"gcShareWarnPct":%v,"gcShareCritPct":%v}`,
+			c.GCPauseWarnMs, c.GCPauseCritMs, c.GCShareWarnPct, c.GCShareCritPct))
+	writeJSON(w, c)
 }
 
 // getAnomalyPromotion returns the live anomaly auto-promotion

@@ -158,7 +158,7 @@ func (s *Store) EndpointStatusBreakdown(ctx context.Context, q EndpointDetailQue
 	wc.add("http_status > 0")
 	args := append([]any{}, wc.args...)
 	args = append(args, 50)
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT http_status, count() AS cnt
 		FROM spans
 		`+wc.sql()+`
@@ -240,7 +240,7 @@ func (s *Store) EndpointTopExceptions(ctx context.Context, q EndpointDetailQuery
 	// max(time) keeps the column's DateTime64 type so
 	// toUnixTimestamp64Nano is safe on the external Distributed schema
 	// (the v0.8.312 trap only bites toStartOfInterval's DateTime).
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
 		  `+f.Type+` AS ex_type,
 		  argMax(`+f.Msg+`, time) AS ex_msg,
@@ -299,7 +299,7 @@ func (s *Store) EndpointFailingTraces(ctx context.Context, q EndpointDetailQuery
 	wc.add("status_code = 'error'")
 	args := append([]any{}, wc.args...)
 	args = append(args, limit)
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT trace_id,
 		       max(duration) / 1e6                  AS dur_ms,
 		       argMax(name, duration)               AS span_name,
@@ -376,7 +376,7 @@ func endpointExemplarArgs(q EndpointDetailQuery) (pathProj string, args []any) {
 // the caller renders the section without links.
 func (s *Store) EndpointExemplars(ctx context.Context, q EndpointDetailQuery) (slowTraceID, errorTraceID string, err error) {
 	pathProj, args := endpointExemplarArgs(q)
-	row := s.conn.QueryRow(ctx, `
+	row := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT argMaxMerge(slow_exemplar_state)    AS slow_tid,
 		       argMaxIfMerge(error_exemplar_state) AS err_tid
 		FROM `+s.spanmetricsSourceFor("spanmetrics_1m")+`
@@ -471,7 +471,7 @@ func (s *Store) EndpointSplit(ctx context.Context, q EndpointDetailQuery, by str
 	}
 	args := append([]any{}, wc.args...)
 	args = append(args, limit)
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT `+expr+`                                   AS v,
 		       count()                                    AS calls,
 		       countIf(status_code = 'error')             AS errors,

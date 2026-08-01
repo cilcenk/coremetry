@@ -175,7 +175,7 @@ func (s *Store) GetRecentDeploys(ctx context.Context, since time.Duration, limit
 		ORDER BY first_seen DESC
 		LIMIT ?
 		SETTINGS max_execution_time = %d`, maxExecSec)
-	rows, err := s.conn.Query(ctx, sql, cutoff, cutoff.UnixNano(), limit)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, cutoff, cutoff.UnixNano(), limit)
 	if err != nil {
 		return nil, err
 	}
@@ -259,7 +259,7 @@ func (s *Store) ComputeDeployImpact(
 	deployT := time.Unix(0, deployTimeNs)
 	beforeStart := deployT.Add(-time.Duration(windowSec) * time.Second)
 	afterEnd := deployT.Add(time.Duration(windowSec) * time.Second)
-	row := s.conn.QueryRow(ctx, `
+	row := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT
 		  countIf(time < ?)                                        AS bef_count,
 		  countIf(time >= ?)                                       AS aft_count,
@@ -377,7 +377,7 @@ func (s *Store) GetServiceDeploys(
 	}
 
 	sql := serviceDeploysSQL + s.shardSkipSetting()
-	rows, err := s.conn.Query(ctx, sql, service, from.Add(-deployLookback), to, from.UnixNano())
+	rows, err := s.telemetryReadConn().Query(ctx, sql, service, from.Add(-deployLookback), to, from.UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("query deploys: %w", err)
 	}
@@ -486,7 +486,7 @@ func (s *Store) GetServiceRollouts(
 		LIMIT 2000
 		SETTINGS max_execution_time = 15,
 		         ` + s.shardSkipSetting()
-	rows, err := s.conn.Query(ctx, sql, service, from, to)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, service, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("query rollouts: %w", err)
 	}
@@ -752,7 +752,7 @@ const serviceVersionMVSQL = `
 func (s *Store) serviceDeploysFromMV(
 	ctx context.Context, service string, from, to time.Time,
 ) ([]Deploy, error) {
-	rows, err := s.conn.Query(ctx, serviceVersionMVSQL+s.shardSkipSetting(),
+	rows, err := s.telemetryReadConn().Query(ctx, serviceVersionMVSQL+s.shardSkipSetting(),
 		service, from.Add(-deployLookback), to, from.UnixNano())
 	if err != nil {
 		return nil, fmt.Errorf("query service_version_5m: %w", err)
@@ -842,7 +842,7 @@ func (s *Store) deployMVCovers(ctx context.Context, need time.Time) bool {
 	// freshly-created MV reports coverage from 14:55 while its earliest
 	// real datum is 14:58. The state's own min is exact.
 	var earliest time.Time
-	err := s.conn.QueryRow(ctx,
+	err := s.telemetryReadConn().QueryRow(ctx,
 		deployMVCoverageProbeSQL+s.shardSkipSetting()).Scan(&earliest)
 	if err != nil {
 		// Table missing (pre-migration binary, or an operator dropped
@@ -910,7 +910,7 @@ const deploysWindowMVSQL = `
 	SETTINGS max_execution_time = 15, `
 
 func (s *Store) deploysInWindowFromMV(ctx context.Context, from, to time.Time, limit int) ([]RecentDeployEntry, error) {
-	rows, err := s.conn.Query(ctx, deploysWindowMVSQL+s.shardSkipSetting(),
+	rows, err := s.telemetryReadConn().Query(ctx, deploysWindowMVSQL+s.shardSkipSetting(),
 		from, from.Add(-deployJudgmentLookback), to, from.UnixNano(), limit)
 	if err != nil {
 		return nil, fmt.Errorf("query service_version_5m window: %w", err)
@@ -973,7 +973,7 @@ func (s *Store) GetDeploysInWindow(ctx context.Context, from, to time.Time, limi
 		ORDER BY first_seen DESC
 		LIMIT ?
 		SETTINGS max_execution_time = %d`, maxExecSec)
-	rows, err := s.conn.Query(ctx, sql, from, scanFrom, to, from.UnixNano(), limit)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, from, scanFrom, to, from.UnixNano(), limit)
 	if err != nil {
 		return nil, err
 	}

@@ -47,7 +47,7 @@ func (s *Store) ListProfiles(ctx context.Context, f ProfileFilter) ([]ProfileRow
 	if f.Limit == 0 {
 		f.Limit = 100
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT profile_id, service_name, host_name, profile_type,
 		       start_time, duration_ns, sample_count
 		FROM profiles `+wc.sql()+`
@@ -80,7 +80,7 @@ func (s *Store) GetProfileBytes(ctx context.Context, id string) ([]byte, *Profil
 	var t time.Time
 	var meta ProfileRow
 	var durNs int64
-	err := s.conn.QueryRow(ctx, `
+	err := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT profile_id, service_name, host_name, profile_type,
 		       start_time, duration_ns, sample_count, pprof_data
 		FROM profiles WHERE profile_id = ? LIMIT 1`, id).
@@ -131,7 +131,7 @@ func (s *Store) IterateProfilePayloads(ctx context.Context, f ProfileFilter, fn 
 	if f.Limit == 0 {
 		f.Limit = 100
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT profile_id, profile_type, start_time, duration_ns,
 		       host_name, pprof_data
 		FROM profiles `+wc.sql()+`
@@ -191,7 +191,7 @@ func (s *Store) ListProfilePayloads(ctx context.Context, f ProfileFilter) ([]Pro
 	if f.Limit == 0 {
 		f.Limit = 100
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT profile_id, profile_type, start_time, duration_ns,
 		       host_name, pprof_data
 		FROM profiles `+wc.sql()+`
@@ -226,7 +226,7 @@ func (s *Store) IterateProfilesForSpan(ctx context.Context, service string, span
 	tolStart := spanStart.Add(-profileSnapshotTolerance)
 	tolEnd := spanEnd.Add(profileSnapshotTolerance)
 
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT profile_id, profile_type, start_time, duration_ns,
 		       host_name, pprof_data
 		FROM profiles
@@ -274,7 +274,7 @@ func (s *Store) FindProfilesForSpan(ctx context.Context, service string, spanSta
 	tolStart := spanStart.Add(-profileSnapshotTolerance)
 	tolEnd := spanEnd.Add(profileSnapshotTolerance)
 
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT profile_id, service_name, host_name, profile_type,
 		       start_time, duration_ns, sample_count
 		FROM profiles

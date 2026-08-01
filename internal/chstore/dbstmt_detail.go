@@ -117,7 +117,7 @@ func dbStmtSummarySQL(where string) string {
 // and encoding/json rejects NaN (the v0.5.301 500-class).
 func (s *Store) GetDBStmtSummary(ctx context.Context, q DBStmtDetailQuery) (*DBStmtSummary, error) {
 	wc := dbStmtDetailWhere(q)
-	row := s.conn.QueryRow(ctx, dbStmtSummarySQL(wc.sql()), wc.args...)
+	row := s.telemetryReadConn().QueryRow(ctx, dbStmtSummarySQL(wc.sql()), wc.args...)
 	var out DBStmtSummary
 	var totalMs, p95, p99, maxMs float64
 	if err := row.Scan(&out.SampleStatement, &out.DBSystem, &out.DBName,
@@ -194,7 +194,7 @@ func (s *Store) GetDBStmtTrend(ctx context.Context, q DBStmtDetailQuery) (points
 	bucketSec = dbStmtTrendBucketSec(q.From, q.To)
 	wc := dbStmtDetailWhere(q)
 	args := append([]any{bucketStart.Unix(), bucketSec}, wc.args...)
-	rows, err := s.conn.Query(ctx, dbStmtTrendSQL(wc.sql()), args...)
+	rows, err := s.telemetryReadConn().Query(ctx, dbStmtTrendSQL(wc.sql()), args...)
 	if err != nil {
 		return nil, bucketSec, err
 	}
@@ -258,7 +258,7 @@ func (s *Store) GetDBStmtCallers(ctx context.Context, q DBStmtDetailQuery, limit
 	}
 	wc := dbStmtDetailWhere(q)
 	args := append(append([]any{}, wc.args...), limit)
-	rows, err := s.conn.Query(ctx, dbStmtCallersSQL(wc.sql()), args...)
+	rows, err := s.telemetryReadConn().Query(ctx, dbStmtCallersSQL(wc.sql()), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +336,7 @@ func (s *Store) DBStmtExemplars(ctx context.Context, q DBStmtDetailQuery) (slowT
 			return slowTraceID, errorTraceID, ctx.Err()
 		}
 		wc := dbStmtExemplarWhere(q, target.errorOnly)
-		row := s.conn.QueryRow(ctx, dbStmtExemplarSQL(wc.sql(), s.shardSkipSetting()), wc.args...)
+		row := s.telemetryReadConn().QueryRow(ctx, dbStmtExemplarSQL(wc.sql(), s.shardSkipSetting()), wc.args...)
 		// v0.8.564 — no-rows is the legitimate "no exemplar in window"
 		// and stays silent; every OTHER scan error used to be swallowed
 		// by a bare `_ =`, which at prod scale meant a 10s

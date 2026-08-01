@@ -73,6 +73,18 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"topology.go":     true, // topology_*_5m / service_summary_5m / spans / root_traces
 		"dependencies.go": true, // db_*_summary_5m / messaging_*_summary_5m / metric_points / spans
 		"problem_telemetry.go": true, // spans — problem.go'dan ayrılan telemetri yarısı (v0.9.507)
+		// v0.9.508 dilim 5 — yedisi de saf telemetri, FROM listeleri tek tek doğrulandı:
+		"deploys.go":          true, // service_version_5m / spans
+		"oracle.go":           true, // metric_points
+		"profile.go":          true, // profiles (yazma yarısı ingest havuzunda)
+		"spanmetric.go":       true, // service_summary_5m / operation_summary_5m / spans
+		"dbstmt_detail.go":    true, // db_statement_summary_5m / spans
+		"db_capacity.go":      true, // metric_points
+		"endpoints_detail.go": true, // spans
+		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
+		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
+		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order
+		// tutulma gerekçesiyle aynı).
 		// BİLİNÇLİ DIŞARIDA: problem.go (alert_rules + problems) ve
 		// incident.go (incidents/incident_events/incident_problems) STATE
 		// tablosu okuyor — ReplacingMergeTree + FINAL, her kurulumda
@@ -155,7 +167,11 @@ func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
 		"FROM incidents", "FROM incident_events", "FROM incident_problems",
 		"FROM anomaly_events", "FROM service_metadata", "FROM ai_calls",
 	}
-	for _, f := range []string{"summary.go", "repo.go", "topology.go", "dependencies.go", "problem_telemetry.go"} {
+	for _, f := range []string{
+		"summary.go", "repo.go", "topology.go", "dependencies.go", "problem_telemetry.go",
+		"deploys.go", "oracle.go", "profile.go", "spanmetric.go", "dbstmt_detail.go",
+		"db_capacity.go", "endpoints_detail.go",
+	} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

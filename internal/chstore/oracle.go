@@ -318,7 +318,7 @@ func (s *Store) queryOracleGauges(
 	if withInstance {
 		args = append(args, instance, instance)
 	}
-	rows, err := s.conn.Query(ctx, q, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -352,7 +352,7 @@ func (s *Store) queryOracleRates(
 	if withInstance {
 		args = append(args, instance, instance)
 	}
-	rows, err := s.conn.Query(ctx, q, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -395,7 +395,7 @@ func (s *Store) queryOracleTablespaces(
 	if withInstance {
 		args = append(args, instance, instance)
 	}
-	rows, err := s.conn.Query(ctx, q, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -482,7 +482,7 @@ func (s *Store) queryOracleSessionsByStatus(
 	if withInstance {
 		args = append(args, instance, instance)
 	}
-	rows, err := s.conn.Query(ctx, q, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -525,7 +525,7 @@ func (s *Store) queryOracleWaitClasses(
 	if withInstance {
 		args = append(args, instance, instance)
 	}
-	rows, err := s.conn.Query(ctx, q, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -569,7 +569,7 @@ func (s *Store) queryOracleRowLockWaits(
 	if withInstance {
 		args = append(args, instance, instance)
 	}
-	row := s.conn.QueryRow(ctx, q, args...)
+	row := s.telemetryReadConn().QueryRow(ctx, q, args...)
 	var rate float64
 	if err := row.Scan(&rate); err != nil || rate <= 0 {
 		return 0, false
@@ -599,7 +599,7 @@ func (s *Store) queryOracleTopSQL(
 	if withInstance {
 		args = append(args, instance, instance)
 	}
-	rows, err := s.conn.Query(ctx, q, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

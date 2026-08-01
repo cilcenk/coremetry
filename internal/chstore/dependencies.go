@@ -298,7 +298,7 @@ func (s *Store) GetDatabaseDetail(
 	}
 	// Scan is POSITIONAL — pointer order must mirror the SELECT exactly.
 	var avgMs, p50Ms, p95Ms, p99Ms *float64
-	row := s.conn.QueryRow(ctx, `
+	row := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT countMerge(span_count_state),
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
@@ -324,7 +324,7 @@ func (s *Store) GetDatabaseDetail(
 	}
 
 	// Per-(service, pod) breakdown — read from db_caller_summary_5m.
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT service_name,
 		       host_name AS pod,
 		       countMerge(span_count_state),
@@ -402,7 +402,7 @@ func (s *Store) GetDatabaseDetail(
 		ORDER BY count() DESC
 		LIMIT 20
 		SETTINGS max_execution_time = 15`
-	opRows, err := s.conn.Query(ctx, stmtSQL, stmtArgs...)
+	opRows, err := s.telemetryReadConn().Query(ctx, stmtSQL, stmtArgs...)
 	if err != nil {
 		return out, nil
 	}
@@ -496,7 +496,7 @@ func (s *Store) GetMessagingDetail(
 	// "(default)" matches the implicit-cluster bucket.
 	// Scan is POSITIONAL — pointer order must mirror the SELECT exactly.
 	var avgMs, p50Ms, p95Ms, p99Ms *float64
-	row := s.conn.QueryRow(ctx, `
+	row := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT countMerge(span_count_state),
 		       countMerge(error_count_state),
 		       sumMerge(duration_sum_state) / 1e6
@@ -524,7 +524,7 @@ func (s *Store) GetMessagingDetail(
 	// Per-(service, pod, role) breakdown from the MV. kind
 	// rides the dimension so a service that both publishes and
 	// consumes lands on two rows.
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT service_name,
 		       host_name AS pod,
 		       coalesce(nullIf(kind, ''), 'client') AS role,
@@ -577,7 +577,7 @@ func (s *Store) GetMessagingDetail(
 	// × ≤2 kinds; LIMIT 5000 covers >17 days). ORDER BY t lets the
 	// fold below build the ascending series in one pass. Failure is
 	// non-fatal — the drawer renders without sparklines.
-	sRows, err := s.conn.Query(ctx, `
+	sRows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT toUnixTimestamp(time_bucket) AS t,
 		       kind,
 		       countMerge(span_count_state) AS c
@@ -624,7 +624,7 @@ func (s *Store) GetMessagingDetail(
 	// useful pivot (e.g. "publish kafka.orders" / "consume
 	// kafka.orders"). No truncation needed; OTel span names
 	// are short by spec.
-	opRows, err := s.conn.Query(ctx, `
+	opRows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT name AS stmt, count(), avg(duration) / 1e6
 		FROM spans
 		WHERE time >= ? AND time <= ? AND msg_system = ?
@@ -698,7 +698,7 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	// merged state — typically sub-100ms vs the prior 1-5s on
 	// wider windows.
 	bucketStart := from.Truncate(5 * time.Minute)
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT db_system,
 		       instance,
 		       db_name,
@@ -761,7 +761,7 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	// approximation. db_caller_summary_5m's GROUP BY produces
 	// distinct rollups keyed on the same triple plus the calling
 	// service / host.
-	cRows, err := s.conn.Query(ctx, `
+	cRows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT db_system,
 		       instance,
 		       db_name,
@@ -878,7 +878,7 @@ func (s *Store) discoverReceiverInstances(
 		ORDER BY inst
 		LIMIT 2000
 		SETTINGS max_execution_time = 8`
-	rows, err := s.conn.Query(ctx, q, specificAttr, from, to, metricPrefix)
+	rows, err := s.telemetryReadConn().Query(ctx, q, specificAttr, from, to, metricPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -951,7 +951,7 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 	// string equality. v0.8.364 — p50/p95 projected out of the
 	// same TDigest state that already served p99 (elements 1/2 of
 	// the 0.5/0.95/0.99 grid); zero extra scan cost.
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT msg_system,
 		       cluster,
 		       destination,
@@ -1008,7 +1008,7 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 	// it onto the overview rows. Rows outside the top-200 overview
 	// simply don't match the index and are dropped. Failure is
 	// non-fatal — the split columns render as zero.
-	kRows, err := s.conn.Query(ctx, `
+	kRows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT msg_system,
 		       cluster,
 		       destination,
@@ -1042,7 +1042,7 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 
 	// MV-backed callers read from messaging_caller_summary_5m.
 	// LIMIT 1000 mirrors the DB path's wire-byte cap.
-	cRows, err := s.conn.Query(ctx, `
+	cRows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT msg_system,
 		       cluster,
 		       destination,

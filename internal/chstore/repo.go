@@ -375,7 +375,7 @@ func (s *Store) GetServiceClusterMap(ctx context.Context, since time.Duration) (
 	}
 	s.clusterMapMu.RUnlock()
 	from := time.Now().Add(-since)
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT service_name, `+s.clusterExpr()+` AS cluster
 		FROM spans
 		WHERE time >= ? AND service_name != ''
@@ -560,7 +560,7 @@ func (s *Store) ListEnvironments(ctx context.Context, from, to time.Time, q stri
 	// Same-scan-shape total (LC dict pass) so the picker can label
 	// truncation honestly. Soft-fails to len(names).
 	total = uint64(len(names))
-	row := s.conn.QueryRow(ctx, `
+	row := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT uniqExact(deploy_env)
 		FROM spans
 		WHERE `+where+`
@@ -600,7 +600,7 @@ func (s *Store) GetServiceEnvironments(ctx context.Context, service string, from
 // scanClusters runs a single-string-column cluster query and collects the
 // distinct names. Shared by the fast column path and the derive fallback.
 func (s *Store) scanClusters(ctx context.Context, sql string, args ...any) ([]string, error) {
-	rows, err := s.conn.Query(ctx, sql, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -651,7 +651,7 @@ func (s *Store) GetServiceClusterBreakdown(
 	if to.IsZero() {
 		to = time.Now()
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT `+s.clusterExpr()+` AS cluster,
 		       count()                          AS span_count,
 		       countIf(status_code = 'error')   AS error_count,
@@ -918,7 +918,7 @@ func (s *Store) GetServicesQuery(ctx context.Context, q ServicesQuery) ([]Servic
 
 	havingSQL, havingArgs := q.Display.having("span_count", "error_count", "p99_ms")
 
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT service_name,
 		       count()                                  AS span_count,
 		       countIf(status_code = 'error')           AS error_count,
@@ -1062,7 +1062,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 	// input) so the interpolation is injection-safe; the window bounds
 	// stay parameterised.
 	const apdexT = 200.0
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT `+nameCol+` AS name,
 		       countMerge(span_count_state)                            AS span_count,
 		       countMerge(error_count_state)                           AS error_count,
@@ -1131,7 +1131,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 	// v0.9.60 — quantile merge 0.99'dan (0.5,0.95,0.99)'a genişledi +
 	// slot başına süre toplamı (avg serisi için): Elastic-parity latency
 	// hücresinin percentile-seçicili sparkline'ı. Aynı tek scan.
-	bucketRows, err := s.conn.Query(ctx, `
+	bucketRows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT `+nameCol+` AS name,
 		       intDiv(toUInt32(time_bucket) - toUInt32(?), ?) AS bidx,
 		       countMerge(span_count_state)                   AS c,
@@ -1378,7 +1378,7 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		wc.add("op_group != ''") // no placeholder — adds zero args
 	}
 	const apdexT = 200.0
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT `+rawNameCol+` AS name,
 		       count()                                       AS span_count,
 		       countIf(status_code = 'error')                AS error_count,
@@ -1473,7 +1473,7 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	// (raw yol) en görünür hücre '—' basıyordu. MV yolundaki genişletmenin
 	// aynısı; quantileTDigest raw'da da ~%2 hata ile yeter (pitfall
 	// kuralı: 1M+ satırda quantile() değil).
-	sparkRows, err := s.conn.Query(ctx, `
+	sparkRows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT `+rawNameCol+` AS name,
 		       intDiv(toUInt32(time) - toUInt32(?), ?) AS bidx,
 		       count()                                 AS c,
@@ -1567,7 +1567,7 @@ func (s *Store) GetOperations(ctx context.Context, service string, since time.Du
 	if service != "" {
 		wc.add("service_name = ?", service)
 	}
-	rows, err := s.conn.Query(ctx,
+	rows, err := s.telemetryReadConn().Query(ctx,
 		`SELECT name, count() AS c
 		 FROM spans `+wc.sql()+`
 		 GROUP BY name
@@ -1684,7 +1684,7 @@ func (s *Store) GetServiceGraphTopN(ctx context.Context, service string, since t
 		sql += fmt.Sprintf("\n\t\tLIMIT %d", topN)
 	}
 
-	rows, err := s.conn.Query(ctx, sql, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -2208,7 +2208,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		)
 		countArgs := append([]any{}, wc.args...)
 		countArgs = append(countArgs, havingArgs...)
-		if err := s.conn.QueryRow(ctx, approxSQL, countArgs...).Scan(&total); err != nil {
+		if err := s.telemetryReadConn().QueryRow(ctx, approxSQL, countArgs...).Scan(&total); err != nil {
 			return nil, 0, false, err
 		}
 	default: // "exact" (and "" for back-compat)
@@ -2239,7 +2239,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 				" " + settings
 			countArgs = wc.args
 		}
-		if err := s.conn.QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
+		if err := s.telemetryReadConn().QueryRow(ctx, countSQL, countArgs...).Scan(&total); err != nil {
 			return nil, 0, false, err
 		}
 	}
@@ -2283,7 +2283,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	args := append([]any{}, wc.args...)
 	args = append(args, havingArgs...)
 	args = append(args, pageLimit, f.Offset)
-	rows, err := s.conn.Query(ctx, querySQL, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, querySQL, args...)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -2540,7 +2540,7 @@ func (s *Store) traceExtrasChunk(ctx context.Context, ids, attrs []string, from,
 	for _, id := range ids {
 		args = append(args, id)
 	}
-	qrows, err := s.conn.Query(ctx, sql, args...)
+	qrows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return err
 	}
@@ -2748,7 +2748,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		// below is unchanged.
 		serviceSubquery = true
 	} else if f.Service != "" {
-		rows1, err := s.conn.Query(ctx, `
+		rows1, err := s.telemetryReadConn().Query(ctx, `
 			SELECT trace_id
 			FROM trace_service_index_5m
 			WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
@@ -2859,7 +2859,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 				}
 			}
 		} else if s1, ok := traceStage1LightSQL(s1f, having); ok && budgetOK {
-			rows1, err := s.conn.Query(ctx, s1, f.From, f.To, budget)
+			rows1, err := s.telemetryReadConn().Query(ctx, s1, f.From, f.To, budget)
 			if err != nil {
 				return nil, 0, false, fmt.Errorf("stage1-light: %w", err)
 			}
@@ -3362,7 +3362,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 		SETTINGS max_execution_time = 25, max_threads = 8`
 	args = append(args, f.Limit)
 
-	rows, err := s.conn.Query(ctx, sql, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3565,7 +3565,7 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 	args = append(args, postArgs...)
 	args = append(args, f.Limit)
 
-	rows, err := s.conn.Query(ctx, sql, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -3622,7 +3622,7 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 	args := []any{traceID}
 	var winStart time.Time
 	var winEndNanos int64
-	if err := s.conn.QueryRow(ctx, `
+	if err := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT minMerge(trace_start_state), toInt64(maxMerge(trace_end_state))
 		FROM trace_summary_5m
 		WHERE trace_id = ?
@@ -3633,7 +3633,7 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 		args = append(args, lo, hi)
 	}
 
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT trace_id, span_id, parent_id, name, kind, service_name, host_name,
 		       time, duration, status_code, status_msg,
 		       attr_keys, attr_values, res_keys, res_values,
@@ -3941,7 +3941,7 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	// ns by LogRow.ID.
 	if f.SinceNs > 0 {
 		wc.add("time >= ?", time.Unix(0, f.SinceNs))
-		rows, err := s.conn.Query(ctx, `
+		rows, err := s.telemetryReadConn().Query(ctx, `
 			SELECT time, severity_num, severity_text, body,
 			       service_name, trace_id, span_id,
 			       attr_keys, attr_values, res_keys, res_values,
@@ -3983,7 +3983,7 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	// so the UI's "N matches" stays stable while paging. Bounded by
 	// max_execution_time so a heavy window can't stall the request.
 	var total uint64
-	if err := s.conn.QueryRow(ctx,
+	if err := s.telemetryReadConn().QueryRow(ctx,
 		"SELECT count() FROM logs "+wc.sql()+" SETTINGS max_execution_time = 25",
 		wc.args...).Scan(&total); err != nil {
 		return nil, 0, "", err
@@ -4034,7 +4034,7 @@ func (s *Store) GetLogs(ctx context.Context, f LogFilter) ([]LogRow, uint64, str
 	}
 
 	args := append(wc.args, f.Limit, offset)
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT time, severity_num, severity_text, body,
 		       service_name, trace_id, span_id,
 		       attr_keys, attr_values, res_keys, res_values,
@@ -4167,7 +4167,7 @@ func (s *Store) listMetricNamesFromCatalog(ctx context.Context, service, pattern
 
 	var total uint64
 	if !defaultUnlimited {
-		if err := s.conn.QueryRow(ctx,
+		if err := s.telemetryReadConn().QueryRow(ctx,
 			`SELECT count() FROM (
 				SELECT metric FROM metric_catalog `+wc.sql()+`
 				GROUP BY metric
@@ -4189,7 +4189,7 @@ func (s *Store) listMetricNamesFromCatalog(ctx context.Context, service, pattern
 		args = append(args, limit, offset)
 	}
 	query += " SETTINGS max_execution_time = 10"
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -4234,7 +4234,7 @@ func (s *Store) listMetricNamesFromCatalog(ctx context.Context, service, pattern
 // install stops answering.
 func (s *Store) metricCatalogHasRows(ctx context.Context) bool {
 	var any uint8
-	if err := s.conn.QueryRow(ctx,
+	if err := s.telemetryReadConn().QueryRow(ctx,
 		`SELECT count() > 0 FROM metric_catalog LIMIT 1 SETTINGS max_execution_time = 5`,
 	).Scan(&any); err != nil {
 		return false
@@ -4311,7 +4311,7 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 
 	var total uint64
 	if !defaultUnlimited {
-		if err := s.conn.QueryRow(ctx,
+		if err := s.telemetryReadConn().QueryRow(ctx,
 			"SELECT count(DISTINCT metric) FROM metric_points "+wc.sql()+
 				" SETTINGS max_execution_time = 25",
 			wc.args...).Scan(&total); err != nil {
@@ -4328,7 +4328,7 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 		args = append(args, limit, offset)
 	}
 	query += " SETTINGS max_execution_time = 25"
-	rows, err := s.conn.Query(ctx, query, args...)
+	rows, err := s.telemetryReadConn().Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -4368,7 +4368,7 @@ func (s *Store) GetMetricPoints(ctx context.Context, metric, service string, fro
 	// üst üste koyuyordu. Grafiğin asıl önemli kenarı "şimdi"dir: en yeni
 	// noktalar alınır, Go'da zaman sırasına çevrilir; tavan dolduysa
 	// truncated=true (UI şeridi "pencerenin son N noktası").
-	rows, err := s.conn.Query(ctx,
+	rows, err := s.telemetryReadConn().Query(ctx,
 		`SELECT time, value, count, sum_value,
 		        arrayStringConcat(arrayMap((k, v) -> concat(k, '=', v), attr_keys, attr_values), ',')
 		 FROM metric_points `+wc.sql()+

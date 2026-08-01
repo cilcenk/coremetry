@@ -45,6 +45,21 @@ export function useClickhouseHealth() {
   });
 }
 
+// Koordinatör dağılımı (v0.9.494). Sunucu 60s cache'liyor →
+// staleTime da 60s (staleTime < sunucu TTL'i olursa istemci boşuna
+// istek atar, cevap zaten aynı gövde olur). Poll de 60s: bu okuma
+// gövde okumasından çok daha geniş bir query_log kümesini grupluyor,
+// 10s'te bir koşturmanın teşhis değeri yok. Gizli sekmede React
+// Query interval'i zaten durdurur.
+export function useCHCoordinators(windowS: number) {
+  return useQuery({
+    queryKey: ['admin', 'ch-coordinators', windowS],
+    queryFn: () => api.chCoordinators(windowS),
+    refetchInterval: 60_000,
+    staleTime: 60_000,
+  });
+}
+
 // Multi-pod HA roster for /admin/cluster. 10s poll matches the
 // heartbeat interval so a freshly-rolled pod appears within one
 // tick; hidden tabs pause automatically.

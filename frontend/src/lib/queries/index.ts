@@ -21,7 +21,7 @@ export {
 export {
   useSystemStats, useCardinality,
   useAuditLog,
-  useClickhouseHealth, useClusterMembers,
+  useClickhouseHealth, useCHCoordinators, useClusterMembers,
   useElasticIndices, useElasticErrors, useTraceContext, useSqlSchema,
   useStatusPageConfig, useUpdateStatusPageConfig,
   useStatusPageComponents, useCreateStatusComponent,

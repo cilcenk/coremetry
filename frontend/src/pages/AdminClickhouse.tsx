@@ -5,7 +5,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum, fmtBytes } from '@/lib/utils';
-import { useClickhouseHealth } from '@/lib/queries';
+import { useClickhouseHealth, useCHCoordinators } from '@/lib/queries';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
 // slow queries, in-flight merges, part hotspots, replication lag.
@@ -160,6 +160,122 @@ const SHARD_POLICY_COLS: DataTableColumn<ShardPolicyRow>[] = [
   { id: 'expr',  label: 'Shard expression', sortValue: r => r.expr,  naturalDir: 'asc', width: 400 },
 ];
 
+// v0.9.494 — koordinatör dağılımı. Satır = bir CH node'u, sayılar o
+// node'un GİRİŞ NOKTASI olduğu sorgular (is_initial_query=1). Shard
+// olarak yaptığı alt-sorgular buraya girmez — panel taramanın değil,
+// koordinasyon yükünün dağılımını ölçer.
+type Coord = {
+  host: string; selects: number; inserts: number; other: number;
+  readRows: number; memoryMB: number; p50Ms: number; p95Ms: number;
+};
+
+const COORD_COLS: DataTableColumn<Coord>[] = [
+  { id: 'host',    label: 'Host',      sortValue: c => c.host,     naturalDir: 'asc',  width: 240 },
+  { id: 'selects', label: 'SELECT',    sortValue: c => c.selects,  numeric: true, naturalDir: 'desc', width: 110 },
+  { id: 'inserts', label: 'INSERT',    sortValue: c => c.inserts,  numeric: true, naturalDir: 'desc', width: 110 },
+  { id: 'other',   label: 'Other',     sortValue: c => c.other,    numeric: true, naturalDir: 'desc', width: 90 },
+  { id: 'rows',    label: 'Read rows', sortValue: c => c.readRows, numeric: true, naturalDir: 'desc', width: 130 },
+  { id: 'mem',     label: 'Memory',    sortValue: c => c.memoryMB, numeric: true, naturalDir: 'desc', width: 110 },
+  { id: 'p50',     label: 'SELECT p50', sortValue: c => c.p50Ms,   numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'p95',     label: 'SELECT p95', sortValue: c => c.p95Ms,   numeric: true, naturalDir: 'desc', width: 120 },
+];
+
+// Dengesizlik = maxNode / ortalamaNode. 1.00 kusursuz; N node'da tek
+// node her şeyi alıyorsa N'e yaklaşır. Eşikler kaba ama operatörün
+// "bakmam lazım mı?" sorusunu tek renkte cevaplıyor.
+function imbalanceTone(v: number): string {
+  if (v <= 1.25) return 'b-ok';
+  if (v <= 2) return 'b-warn';
+  return 'b-err';
+}
+
+const COORD_WINDOWS: Array<{ s: number; label: string }> = [
+  { s: 3600,  label: 'Last 1h' },
+  { s: 21600, label: 'Last 6h' },
+  { s: 86400, label: 'Last 24h' },
+];
+
+// Koordinatör dağılımı paneli. Kendi ucu + kendi 60s poll'u var
+// (gövde okuması 10s'te dönüyor; bu okuma pencerede TÜM sorguları
+// grupluyor, çok daha geniş bir satır kümesi — 10s'te koşturmanın
+// teşhis değeri yok, maliyeti var).
+function CoordinatorPanel() {
+  // Pencere sabit basamaklardan seçilir — sunucu cache anahtarına
+  // giren parametrenin kardinalitesi sınırlı olmalı (v0.8.270).
+  const [windowS, setWindowS] = useState(COORD_WINDOWS[0].s);
+  const q = useCHCoordinators(windowS);
+  const data = q.isPending ? undefined : q.isError ? null : q.data ?? null;
+
+  const dt = useDataTable<Coord>({
+    storageKey: 'ch-coordinators', columns: COORD_COLS,
+    rows: data?.nodes ?? [], initialSort: { id: 'selects', dir: 'desc' },
+  });
+
+  return (
+    <Section title="Query coordination spread">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <select
+          value={windowS}
+          onChange={e => setWindowS(Number(e.target.value))}
+          style={{
+            background: 'var(--bg)', color: 'var(--text)',
+            border: '1px solid var(--border)', borderRadius: 6,
+            fontSize: 12, padding: '4px 8px',
+          }}
+        >
+          {COORD_WINDOWS.map(w => <option key={w.s} value={w.s}>{w.label}</option>)}
+        </select>
+        {data && (
+          <>
+            <span className={`badge ${imbalanceTone(data.selectImbalance)}`}>
+              SELECT spread ×{data.selectImbalance.toFixed(2)}
+            </span>
+            <span className={`badge ${imbalanceTone(data.insertImbalance)}`}>
+              INSERT spread ×{data.insertImbalance.toFixed(2)}
+            </span>
+            <span className="badge b-gray">{data.mode}</span>
+          </>
+        )}
+        <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>
+          entry-point queries only (is_initial_query) · ×1.00 = even
+        </span>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px' }}>
+        Which node was the <strong>entry point</strong> for each query — where parse,
+        fan-out, partial-state merge and final aggregation land. Sub-queries a node runs
+        as a shard are excluded, so this measures coordination load, not scan work.
+        INSERT coordination is spread by the round-robin ingest pool; SELECT coordination
+        currently rides the in-order main connection.
+      </p>
+      {data === undefined && <Spinner />}
+      {data === null && <EmptyNote text="Failed to load coordination spread" />}
+      {data && data.note && <EmptyNote text={data.note} />}
+      {data && !data.note && data.nodes.length > 0 && (
+        <div className="table-wrap">
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} />
+            <DataTableHead dt={dt} />
+            <tbody>
+              {dt.sortedRows.map(c => (
+                <tr key={c.host}>
+                  <td className="mono" style={{ fontSize: 11 }} title={c.host}>{c.host || '—'}</td>
+                  <td className="num mono">{fmtNum(c.selects)}</td>
+                  <td className="num mono">{fmtNum(c.inserts)}</td>
+                  <td className="num mono">{fmtNum(c.other)}</td>
+                  <td className="num mono">{fmtNum(c.readRows)}</td>
+                  <td className="num mono">{c.memoryMB.toFixed(0)} MB</td>
+                  <td className="num mono">{c.p50Ms.toFixed(0)} ms</td>
+                  <td className="num mono">{c.p95Ms.toFixed(0)} ms</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Section>
+  );
+}
+
 export default function AdminClickhousePage() {
   // 10s poll via the hook's refetchInterval; hidden tabs pause
   // automatically (refetchIntervalInBackground defaults false).
@@ -230,6 +346,11 @@ export default function AdminClickhousePage() {
         {data && (
           <>
             <TopologyPanel topology={data.topology} />
+
+            {/* v0.9.494 — topolojinin hemen altında: operatör kaç
+                node'u olduğunu okuduktan hemen sonra o node'ların
+                gerçekte eşit yüklenip yüklenmediğini görsün. */}
+            <CoordinatorPanel />
 
             <Section title="Slow queries (>500ms, last 1h)">
               {(!data.slowQueries || data.slowQueries.length === 0)

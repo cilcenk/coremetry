@@ -2169,6 +2169,25 @@ export const api = {
       replicationLag?: Array<{ database: string; table: string; queueSize: number; absoluteDelaySec: number }> | null;
       generatedAt: number;
     }>(`/api/admin/clickhouse`),
+  // v0.9.494 — koordinatör dağılımı. Hangi CH node'u kaç sorgunun
+  // GİRİŞ NOKTASI oldu (system.query_log is_initial_query=1).
+  // Taramanın nerede yapıldığını değil, fan-out + merge + final
+  // aggregation yükünün nerede biriktiğini ölçer. windowS yalnız
+  // sabit basamaklardan gelir (1h/6h/24h) — sunucu cache anahtarına
+  // giren her parametrenin kardinalitesi sınırlı olmalı (v0.8.270).
+  chCoordinators: (windowS: number) =>
+    get<{
+      nodes: Array<{
+        host: string; selects: number; inserts: number; other: number;
+        readRows: number; memoryMB: number; p50Ms: number; p95Ms: number;
+      }>;
+      mode: 'cluster' | 'standalone';
+      windowS: number;
+      selectImbalance: number;
+      insertImbalance: number;
+      note?: string;
+      generatedAt: number;
+    }>(`/api/admin/clickhouse/coordinators?windowS=${windowS}`),
   // Cluster membership — v0.5.253. Lists every replica that
   // wrote a heartbeat in the last 30s. Single-instance mode
   // returns one member; HA returns N. Cheap (single SCAN +

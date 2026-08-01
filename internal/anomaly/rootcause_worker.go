@@ -146,6 +146,25 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 				"problem", p.ID, p.Service, now.UnixNano(),
 				synthInputForProblem(p, bundle),
 			)
+			// v0.9.516 — P1 SORUŞTURMASI ARTIK BURADA. v0.9.510'da
+			// explainer'daydı ama denetim izini KALICI kılmak için
+			// hipotezle aynı satıra yazılması gerekiyordu ve bu satırı
+			// synthesizer yazıyor. ReplacingMergeTree tam-satır replace
+			// olduğu için explainer'dan "sadece izi güncelle" demek diğer
+			// alanları riske atardı (iki işçi aynı satıra yazar, kaybeden
+			// diğerinin alanlarını siler).
+			//
+			// Tek toplama, tek yazma, iki okuyucu: explainer prompt için,
+			// ribbon/denetim sorguları için.
+			//
+			// Maliyet kapısı DEĞİŞMEDİ: yalnız P1 (operatör kararı),
+			// aile başına bir sınırlı okuma.
+			if prio := chstore.EnrichProblemsWithPriority([]chstore.Problem{p}); len(prio) > 0 && prio[0].Priority == "P1" {
+				if plan := investigationPlan(p); len(plan) > 0 {
+					d := gatherDeepEvidence(ctx, s.store, p, plan, now.Add(-evidenceWindow), now)
+					h.Deep = &d
+				}
+			}
 			if err := s.store.UpsertHypothesis(ctx, h); err != nil {
 				log.Printf("[rootcause-synth] upsert problem %s: %v", p.ID, err)
 				continue

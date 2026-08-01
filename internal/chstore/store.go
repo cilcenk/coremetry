@@ -1056,11 +1056,17 @@ func (s *Store) migrate(ctx context.Context) error {
 			confidence    Float64       DEFAULT 0,
 			candidates    String        DEFAULT '[]',  -- JSON-encoded []ScoredCause, best first
 			recent_deploy String        DEFAULT '',    -- JSON-encoded *RecentDeploy or ''
+			deep_evidence String        DEFAULT '' CODEC(ZSTD(3)), -- v0.9.516: JSON DeepEvidence (P1 soruşturma kanıtı + denetim izi)
 			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		PARTITION BY toYYYYMM(computed_at)
 		ORDER BY (anchor_kind, anchor_id)
 		TTL toDate(computed_at) + INTERVAL 30 DAY`,
+		// v0.9.516 — mevcut kurulumlar için in-place kolon ekleme. Taze
+		// kurulumda CREATE zaten taşıyor, bu no-op. ZSTD: kanıt bloğu
+		// tekrarlı metin, sıkışması yüksek. Düşük hacimli state tablosu
+		// (anchor başına bir satır, 30 gün TTL) — spans sınıfı değil.
+		`ALTER TABLE root_cause_hypotheses ADD COLUMN IF NOT EXISTS deep_evidence String DEFAULT '' CODEC(ZSTD(3))`,
 
 		`CREATE TABLE IF NOT EXISTS alert_rules (
 			id           String,

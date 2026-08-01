@@ -82,9 +82,9 @@ func TestInvestigationPlanNormalizes(t *testing.T) {
 // "bakıldı, kayıt yok". Sessizce atlamak izi yalancı yapar ve izin tek
 // işi modelin anlatımını denetlenebilir kılmak.
 func TestDeepEvidenceNoteHonesty(t *testing.T) {
-	var d DeepEvidence
+	var d chstore.DeepEvidence
 
-	d.note(familyExceptions, errFake{}, 0, func() string { return "olmamalı" })
+	noteChecked(&d, familyExceptions, errFake{}, 0, func() string { return "olmamalı" })
 	if len(d.Checked) != 1 || d.Checked[0].Found {
 		t.Fatal("hata durumu Found=false olmalı")
 	}
@@ -92,12 +92,12 @@ func TestDeepEvidenceNoteHonesty(t *testing.T) {
 		t.Errorf("hata detayı okunamadığını söylemeli, got %q", d.Checked[0].Detail)
 	}
 
-	d.note(familyLogs, nil, 0, func() string { return "olmamalı" })
+	noteChecked(&d, familyLogs, nil, 0, func() string { return "olmamalı" })
 	if d.Checked[1].Found || !strings.Contains(d.Checked[1].Detail, "kayıt yok") {
 		t.Errorf("boş sonuç 'bakıldı, kayıt yok' demeli, got %+v", d.Checked[1])
 	}
 
-	d.note(familyRuntime, nil, 3, func() string { return "üç kayıt" })
+	noteChecked(&d, familyRuntime, nil, 3, func() string { return "üç kayıt" })
 	if !d.Checked[2].Found || d.Checked[2].Records != 3 {
 		t.Errorf("dolu sonuç Found=true + Records taşımalı, got %+v", d.Checked[2])
 	}
@@ -108,7 +108,7 @@ func TestDeepEvidenceNoteHonesty(t *testing.T) {
 // modele "bakıldı ama bulunamadı" izlenimi verir. Yanlış izlenim.
 func TestRenderDeepEvidenceEmpty(t *testing.T) {
 	var sb strings.Builder
-	renderDeepEvidence(&sb, DeepEvidence{})
+	renderDeepEvidence(&sb, chstore.DeepEvidence{})
 	if sb.Len() != 0 {
 		t.Errorf("boş kanıtta çıktı olmamalı, got %q", sb.String())
 	}
@@ -116,10 +116,10 @@ func TestRenderDeepEvidenceEmpty(t *testing.T) {
 
 func TestRenderDeepEvidenceListsWhatWasChecked(t *testing.T) {
 	var sb strings.Builder
-	renderDeepEvidence(&sb, DeepEvidence{
-		Checked: []CheckedSignal{
-			{Family: familySaturation, Found: true, Detail: "2 pod heap örneği", Records: 2},
-			{Family: familyOperations, Found: false, Detail: "bakıldı, kayıt yok"},
+	renderDeepEvidence(&sb, chstore.DeepEvidence{
+		Checked: []chstore.CheckedSignal{
+			{Family: string(familySaturation), Found: true, Detail: "2 pod heap örneği", Records: 2},
+			{Family: string(familyOperations), Found: false, Detail: "bakıldı, kayıt yok"},
 		},
 	})
 	out := sb.String()

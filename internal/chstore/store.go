@@ -15,6 +15,27 @@ import (
 	"github.com/cilcenk/coremetry/internal/config"
 )
 
+// roundRobinConnLifetime — RoundRobin havuzlarındaki (ingest + read)
+// bağlantıların azami ömrü. v0.9.505.
+//
+// NEDEN sürücü varsayılanı (1 saat) yetmiyor: ConnOpenRoundRobin
+// BAĞLANTI AÇILIŞINI dağıtır, sorguyu değil. Bir bağlantı açıldığı
+// host'a ömrü boyunca bağlı kalır ve Go havuzu boştaki en son
+// kullanılan bağlantıyı geri verir — yani trafik birkaç sıcak
+// bağlantıya yığılır ve onların düştüğü host bir saat boyunca yükü
+// taşır. Ölçüm (lokal 2 node, v0.9.504 sonrası 180sn'lik fark):
+// giriş sorgularının %83'ü tek node'da, oysa okuma havuzu aktifti.
+// Aynı mekanizma prod'daki INSERT eğriliğini de açıklıyor (2.31×,
+// ingest havuzu v0.9.481'den beri RoundRobin olmasına rağmen).
+//
+// 5 dk: bağlantılar periyodik olarak kapanıp yeniden açılır, her
+// açılış round-robin'in bir sonraki host'una düşer, yük zamanla
+// düzleşir. Maliyet ihmal edilebilir — CH native protokol el sıkışması
+// ucuz ve tavan 60 bağlantıda dakikada ≤12 yeniden bağlanma demek.
+// ANA bağlantı bilinçli olarak 1 saatte kalır: o zaten in-order,
+// hep ilk host'a gidiyor, çevrimden kazanacağı bir şey yok.
+const roundRobinConnLifetime = 5 * time.Minute
+
 type Store struct {
 	conn driver.Conn
 	// ingest is the RoundRobin pool used ONLY for high-volume telemetry
@@ -430,6 +451,7 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	// (runquery.go) remains deliberately in-order on its own conn.
 	ingestOpts := chOpts()
 	ingestOpts.ConnOpenStrategy = clickhouse.ConnOpenRoundRobin
+	ingestOpts.ConnMaxLifetime = roundRobinConnLifetime
 	ingest, err := clickhouse.Open(ingestOpts)
 	if err != nil {
 		conn.Close()
@@ -464,6 +486,7 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	// aç bırakırdı).
 	readOpts := chOpts()
 	readOpts.ConnOpenStrategy = clickhouse.ConnOpenRoundRobin
+	readOpts.ConnMaxLifetime = roundRobinConnLifetime
 	readConn, err := clickhouse.Open(readOpts)
 	if err != nil {
 		conn.Close()

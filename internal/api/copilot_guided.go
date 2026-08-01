@@ -82,6 +82,13 @@ const (
 	guidedShiftSummary guidedIntent = "shift_summary"
 	// v0.9.420 (CoSRE fikir #5) — bağımlılık sağlığı: "hangi db yavaş?",
 	// "kafka lag nasıl?". db_summary_5m / msg MV'lerinden top-N kırılım.
+	// guidedRootCause (v0.9.514) — "neden X patladı / sebebi ne".
+	// Bir SRE'nin sorduğu EN değerli soru bugüne kadar kendi intent'i
+	// olmadan yaşıyordu: ikincil sinyaline savruluyordu ("neden yavaşladı"
+	// → slow_traces, yani "yavaş mı" sorusuna çöküyordu) ya da kırılgan
+	// serbest tool-loop'a düşüyordu. Kayıtlı kök-neden hipotezi (v0.8.394
+	// worker + v0.9.510-512 derin soruşturma) zaten hazır bekliyordu.
+	guidedRootCause       guidedIntent = "root_cause"
 	guidedDBHealth        guidedIntent = "db_health"
 	guidedMessagingHealth guidedIntent = "messaging_health"
 )
@@ -232,7 +239,29 @@ func hasGuidedSignal(msg string) bool {
 		hasLogSignal(toks) || hasErrorSignal(toks) ||
 		hasProblemSignal(toks) || hasHealthSignal(toks) ||
 		hasTeamSelfSignal(toks) || hasPodSignal(toks) ||
-		hasShiftSignal(msg, toks) || hasDBSignal(toks) || hasMessagingSignal(toks)
+		hasShiftSignal(msg, toks) || hasDBSignal(toks) || hasMessagingSignal(toks) ||
+		hasWhySignal(toks)
+}
+
+// hasWhySignal (v0.9.514) — NEDENSELLİK soran şekiller. Türkçe ekler
+// için prefix ("neden", "nedeni", "nedenini", "sebep", "sebebi"),
+// İngilizce için tam token.
+//
+// "kaynak" BİLEREK dışarıda: Türkçede "kaynak kullanımı" (resource
+// usage) çok daha sık ve o soru doygunluk yolu, nedensellik değil.
+func hasWhySignal(tokens []string) bool {
+	// "sebeb" AYRI stem: Türkçe ünsüz yumuşaması sebep→sebebi, yani
+	// "sebep" prefix'i çekimli hali yakalamaz.
+	if tokenHasPrefix(tokens, "neden", "niye", "niçin", "sebep", "sebeb") {
+		return true
+	}
+	for _, t := range tokens {
+		switch t {
+		case "why", "cause", "reason", "rootcause":
+			return true
+		}
+	}
+	return false
 }
 
 // hasPodSignal (v0.9.376) — pod/JVM şekilli sorular. "gc" tam-token
@@ -479,6 +508,13 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 			return guidedRoute{Intent: guidedMyProblems, Env: env}
 		}
 		return guidedRoute{Intent: guidedMyServices, Env: env}
+	// v0.9.514 — kök-neden, spesifik sinyallerden ÖNCE. "neden checkout
+	// yavaşladı" hem why hem slow sinyali taşır; slow yolu kazanırsa soru
+	// "yavaş mı"ya çöker ve NEDENSELLİK sessizce düşer. Servis şart:
+	// hipotez bir anchor'a bağlıdır, servissiz "neden hata alıyoruz"
+	// aşağıdaki problems yoluna düşsün (filo geneli zaten o).
+	case svc != "" && hasWhySignal(toks):
+		return guidedRoute{Intent: guidedRootCause, Service: svc, Env: env}
 	case hasSlowTraceSignal(msg):
 		return guidedRoute{Intent: guidedSlowTraces, Service: svc, Env: env}
 	case hasDeploySignal(toks):
@@ -738,6 +774,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	var evidence, sources string
 	var err error
 	switch route.Intent {
+	case guidedRootCause:
+		evidence, sources, err = s.guidedRootCauseBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedProblems:
 		evidence, sources, err = s.guidedProblemsBundle(ctx, emit, route.Service, route.Env)
 	case guidedServiceHealth:
@@ -929,6 +967,60 @@ func guidedTraceFilter(service, env string, from, to time.Time) chstore.TraceFil
 // env (v0.8.398) rides ProblemFilter.Env — the service-scoped
 // semantics from env_members.go; the evidence spells that out so the
 // narration never oversells the filter.
+// guidedRootCauseBundle (v0.9.514) — "neden X patladı" sorusunun kanıtı.
+//
+// Hipotez ZATEN kayıtlı: RootCauseSynthesizer her anchor için
+// deterministik sıralı adayları üretip saklıyor, v0.9.510-512 derin
+// soruşturması onu pod/metrik/log/iş-boyutu kanıtıyla besliyor. Bu
+// bundle o birikimi okuyup önüne koyuyor — model nedenselliği kendi
+// UYDURMUYOR, hesaplanmış hipotezi anlatıyor.
+//
+// Sıra kasıtlı: önce hipotez (asıl cevap), sonra RED (ne değişti), sonra
+// deploy (en sık sebep). Açık problem yoksa hipotez de yoktur — o durum
+// SESSİZCE geçilmez, açıkça söylenir ve model değişim verisiyle cevap
+// verir.
+func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, any), service, env string, from, to time.Time, rangeS int64) (string, string, error) {
+	var b strings.Builder
+	fmt.Fprintf(&b, "SORU ŞEKLİ: nedensellik — %q servisinde NE OLDU değil NEDEN OLDU sorusu.\n\n", service)
+
+	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`","status":"open"}`, env))
+	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
+	if perr == nil && len(probs) > 0 {
+		probs = chstore.EnrichProblemsWithPriority(probs)
+		emitGuidedStep(emit, "root_cause_hypotheses", "")
+		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
+		b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
+	} else {
+		b.WriteString("Bu serviste AÇIK PROBLEM YOK — dolayısıyla kayıtlı bir kök-neden hipotezi de yok. " +
+			"Aşağıdaki değişim verisiyle cevap ver ve hipotez olmadığını AÇIKÇA söyle; sebep uydurma.\n\n")
+	}
+
+	emitGuidedStep(emit, "service_context", `{"service":"`+service+`"}`)
+	cx := s.buildServiceContext(ctx, service, from, to)
+	b.WriteString(renderServiceSnapshot(cx))
+	if cx.Current.Spans == 0 {
+		b.WriteString("Bu pencerede span verisi yok — değişim de okunamıyor.\n")
+	}
+
+	// Deploy: "neden bozuldu" sorusunun en sık cevabı. Ayrı bir adım
+	// olarak emit ediliyor ki operatör hangi kanıtın çekildiğini görsün.
+	emitGuidedStep(emit, "recent_deploys", `{"service":"`+service+`"}`)
+	if dep, _, derr := s.guidedDeployBundle(ctx, func(string, any) {}, service, env, rangeS); derr == nil && strings.TrimSpace(dep) != "" {
+		b.WriteString("\n")
+		b.WriteString(dep)
+	}
+
+	b.WriteString("\nKURAL: Yukarıdaki kök-neden hipotezi HESAPLANMIŞ bir sıralamadır, tahmin değil. " +
+		"Onu anlat ve güven skorunu birlikte ver. Hipotez yoksa ya da güveni düşükse sebep UYDURMA — " +
+		"hangi kanıta baktığını yaz ve 'kesin sebep için yeterli kanıt yok' de.\n")
+
+	src := fmt.Sprintf("kök-neden hipotezi + açık problemler + servis RED değişimi + deploy geçmişi (son %s)", fmtAgoTR(rangeS))
+	if env != "" {
+		src += fmt.Sprintf("; problemler ortam: %s", env)
+	}
+	return b.String(), src, nil
+}
+
 func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any), service, env string) (string, string, error) {
 	emitGuidedStep(emit, "list_problems", withEnvArg(`{"status":"open"}`, env))
 	probs, err := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 50))
@@ -1037,7 +1129,6 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 	return b.String(), src, nil
 }
 
-
 // servicesForUserTeam (v0.9.375) — kullanıcının takımına ait servisler:
 // ownerTeam VEYA sreTeam eşleşmesi (case-insensitive). Inbox'ın
 // servicesForTeam'inden farkı: orada owner ve SRE ayrı süzgeçler (AND),
@@ -1124,7 +1215,6 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 	}
 	return header + evidence, fmt.Sprintf("takım: %s — %s", u.Team, src), nil
 }
-
 
 // guidedPodHealthBundle (v0.9.376, operatör istegi — SRE perspektifi):
 // pod/JVM sorusu. Servisliyse ServiceInstances (OTel host_name kimliği:

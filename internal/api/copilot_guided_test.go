@@ -105,7 +105,11 @@ func TestRouteGuidedIntent(t *testing.T) {
 		{"health base name not shadowed", "mobile-bff yavaş mı", guidedServiceHealth, "mobile-bff", ""},
 		{"health apostrophe suffix", "checkout-service'in durumu ne", guidedServiceHealth, "checkout-service", ""},
 		{"errors on a service routes to health", "checkout servisinde hata var mı", guidedServiceHealth, "checkout-service", ""},
-		{"why slow english", "why is ledger-service slow", guidedServiceHealth, "ledger-service", ""},
+		// v0.9.514 — SÖZLEŞME DEĞİŞİKLİĞİ (bilinçli): "why is X slow"
+		// nedensellik sorusudur ve artık kök-neden yoluna gider. Eskiden
+		// service_health'e düşüyordu, yani "yavaş mı" sorusuna çöküyordu
+		// ve NEDEN sessizce kayboluyordu — bu özelliğin var olma sebebi.
+		{"why slow english", "why is ledger-service slow", guidedRootCause, "ledger-service", ""},
 
 		// (c) slowest traces.
 		{"slowest turkish", "en yavaş traceler hangileri", guidedSlowTraces, "", ""},
@@ -540,10 +544,13 @@ func TestRouteGuidedIntentContext(t *testing.T) {
 		intent         guidedIntent
 		service        string
 	}{
-		{"slow no-entity → ctx svc", "neden yavaş", "checkout-service", guidedSlowTraces, "checkout-service"},
+		// v0.9.514 — SÖZLEŞME DEĞİŞİKLİĞİ (bilinçli): "neden yavaş" sayfa
+		// bağlamıyla artık kök-nedene gider. Sayfa bağlamının servisi
+		// çözme davranışı DEĞİŞMEDİ — test onu pinlemeye devam ediyor.
+		{"slow no-entity → ctx svc", "neden yavaş", "checkout-service", guidedRootCause, "checkout-service"},
 		{"error no-entity + ctx → health", "hataları var mı", "checkout-service", guidedServiceHealth, "checkout-service"},
 		{"explicit svc wins over ctx", "payment-service hataları", "checkout-service", guidedServiceHealth, "payment-service"},
-		{"invalid ctx ignored", "neden yavaş", "nonexistent-service", guidedSlowTraces, ""},
+		{"invalid ctx ignored", "neden yavaş", "nonexistent-service", guidedSlowTraces, ""}, // servis çözülmezse kök-nedene GİRMEZ
 		{"no ctx unchanged", "neden yavaş", "", guidedSlowTraces, ""},
 	}
 	for _, tc := range cases {
@@ -686,5 +693,70 @@ func TestServicesForUserTeam(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// v0.9.514 — kök-neden intent'i. İki sözleşme birden pinli:
+// (a) nedensellik soran şekil rootcause'a gider,
+// (b) nedensellik SORMAYAN komşu şekiller ESKİSİ GİBİ kalır.
+//
+// (b) daha kritik: yeni intent slow/deploy/log'dan ÖNCE duruyor, yani
+// sinyali fazla geniş tutarsam 13 mevcut intent'i sessizce yutar.
+func TestRouteGuidedIntentRootCause(t *testing.T) {
+	services := []string{"checkout", "payments"}
+	cases := []struct {
+		msg  string
+		want guidedIntent
+	}{
+		// Nedensellik — TR
+		{"neden checkout yavaşladı", guidedRootCause},
+		{"checkout neden hata veriyor", guidedRootCause},
+		{"checkout hatalarının sebebi ne", guidedRootCause},
+		{"payments niye patladı", guidedRootCause},
+		{"checkout yavaşlamasının nedeni nedir", guidedRootCause},
+		// Nedensellik — EN
+		{"why is checkout slow", guidedRootCause},
+		{"what is the cause of checkout errors", guidedRootCause},
+
+		// KOMŞULAR — nedensellik yok, eski yollar korunmalı
+		// "yavaş mı" slow-trace sinyali DEĞİL (o "en yavaş"/"slowest"
+		// arıyor); sağlık yoluna gider — nedensellik eklenmeden davranış
+		// aynen korunmalı.
+		{"checkout yavaş mı", guidedServiceHealth},
+		{"checkout en yavaş traceler", guidedSlowTraces},
+		{"checkout sağlığı nasıl", guidedServiceHealth},
+		{"checkout hata alıyor mu", guidedServiceHealth},
+		{"checkout deploy edildi mi", guidedDeployImpact},
+		{"checkout podları nasıl", guidedPodHealth},
+		{"açık problemler neler", guidedProblems},
+
+		// "kaynak" nedensellik DEĞİL — Türkçede kaynak kullanımı çok daha
+		// sık ve o soru doygunluk yolu.
+		{"checkout kaynak kullanımı nasıl", guidedServiceHealth},
+	}
+	for _, c := range cases {
+		got := routeGuidedIntent(c.msg, services, nil, "")
+		if got.Intent != c.want {
+			t.Errorf("route(%q) = %q, beklenen %q", c.msg, got.Intent, c.want)
+		}
+	}
+}
+
+// Servis çözülmezse kök-neden yoluna GİRMEZ — hipotez bir anchor'a
+// bağlıdır, servissiz soru filo-geneli problems yoluna düşmeli.
+func TestRootCauseNeedsService(t *testing.T) {
+	got := routeGuidedIntent("neden bu kadar çok hata alıyoruz", []string{"checkout"}, nil, "")
+	if got.Intent == guidedRootCause {
+		t.Errorf("servissiz soru rootcause'a gitmemeli, got %q", got.Intent)
+	}
+}
+
+// Sayfa bağlamı servis veriyorsa çıplak "neden yavaş?" o servise
+// bağlanmalı — CoSRE'nin sayfa-farkındalığı (v0.9.164) kök-nedende de
+// çalışmalı.
+func TestRootCauseUsesPageContext(t *testing.T) {
+	got := routeGuidedIntent("neden yavaş?", []string{"checkout"}, nil, "checkout")
+	if got.Intent != guidedRootCause || got.Service != "checkout" {
+		t.Errorf("sayfa bağlamı kullanılmalı, got intent=%q service=%q", got.Intent, got.Service)
 	}
 }

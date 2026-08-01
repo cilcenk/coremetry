@@ -72,6 +72,7 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"repo.go":         true, // spans / logs / metric_points / trace_*_5m / topology_edges_5m
 		"topology.go":     true, // topology_*_5m / service_summary_5m / spans / root_traces
 		"dependencies.go": true, // db_*_summary_5m / messaging_*_summary_5m / metric_points / spans
+		"problem_telemetry.go": true, // spans — problem.go'dan ayrılan telemetri yarısı (v0.9.507)
 		// BİLİNÇLİ DIŞARIDA: problem.go (alert_rules + problems) ve
 		// incident.go (incidents/incident_events/incident_problems) STATE
 		// tablosu okuyor — ReplacingMergeTree + FINAL, her kurulumda
@@ -154,7 +155,7 @@ func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
 		"FROM incidents", "FROM incident_events", "FROM incident_problems",
 		"FROM anomaly_events", "FROM service_metadata", "FROM ai_calls",
 	}
-	for _, f := range []string{"summary.go", "repo.go", "topology.go", "dependencies.go"} {
+	for _, f := range []string{"summary.go", "repo.go", "topology.go", "dependencies.go", "problem_telemetry.go"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatal(err)

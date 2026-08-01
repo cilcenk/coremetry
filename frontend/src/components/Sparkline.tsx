@@ -1,5 +1,5 @@
 import { useId, useRef, useState } from 'react';
-import { barGeometry, barIndexAt, classifyThreshold, downsampleBuckets, maxBarsForWidth } from '@/lib/sparkline';
+import { barGeometry, barIndexAt, classifyThreshold, downsampleBuckets, maxBarsForWidth, sparkRenderMode } from '@/lib/sparkline';
 
 // Tiny inline SVG sparkline — no chart library. Auto-scales to its own
 // y-range so a service with 5 spans/min looks just as readable as one
@@ -89,8 +89,11 @@ export function Sparkline({
 
   const baseStroke = color || 'var(--accent2)';
   const barMode = mode === 'bars' || mode === 'count';
-  const nonZero = values.filter(v => v > 0);
-  if (values.length === 0 || nonZero.length === 0) {
+  // v0.9.498 — "veri yok" ile "veri var, hepsi sıfır" AYRI şeyler.
+  // Karar saf tarafta (lib/sparkline.ts sparkRenderMode), tablo-güdümlü
+  // testi orada; burada yalnız o kararın çizimi var.
+  const renderMode = sparkRenderMode(values);
+  if (renderMode === 'nodata') {
     return (
       <span
         title={title || 'no data'}
@@ -99,6 +102,19 @@ export function Sparkline({
                  color: 'var(--text3)', fontSize: 11 }}
         className={className}
       >—</span>
+    );
+  }
+  if (renderMode === 'zero') {
+    // Gerçek ölçüm, tamamen sıfır → tabanda düz çizgi. Sağlıklı bir
+    // "hiç hata yok" penceresi böyle okunur; "—" ise ölçüm yokluğudur.
+    const y = height - 1.5;
+    return (
+      <svg width={width} height={height} className={className}
+           role="img" aria-label={title || 'all zero'} style={{ display: 'inline-block' }}>
+        <title>{title || 'sıfır — ölçüm var, değer yok'}</title>
+        <line x1={1} y1={y} x2={width - 1} y2={y}
+              stroke={baseStroke} strokeWidth={1.5} strokeLinecap="round" opacity={0.55} />
+      </svg>
     );
   }
   // v0.9.207 review-fix — bar modes cap the rendered bar count at a

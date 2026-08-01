@@ -40,6 +40,17 @@ function impactOf(r: OperationSummary): number {
 export type OpMetricKey = 'calls' | 'errors' | 'p99';
 
 // Üç mini sparkline tek hücrede; her biri kendi tıklama hedefi.
+// v0.9.498 — Trend hücresindeki üç serinin KİMLİK renkleri. Renk metriği
+// gösterir, şiddeti değil: aynı seri tablonun her satırında aynı renktir,
+// yoksa göz "turuncu = calls" eşlemesini kuramaz. Şiddet sinyali zaten iki
+// yerde var — Err% rozeti ve errors serisinin kendisi.
+// Uygulamanın chart-serisi token'ları (globals.css), üç temada da tanımlı.
+const TREND_C = {
+  calls:  'var(--orange)',
+  errors: 'var(--err)',
+  p99:    'var(--teal)',
+} as const;
+
 const miniSparkBtn: React.CSSProperties = {
   background: 'transparent', border: '1px solid transparent', borderRadius: 4,
   padding: '1px 2px', cursor: 'pointer', display: 'inline-block', marginRight: 2,
@@ -57,7 +68,10 @@ const OP_COLS: DataTableColumn<OperationSummary>[] = [
   // Diğer kolonların hiçbiri değişmedi: v0.9.61'de operations tablosunda bir
   // düzen değişikliği canlıda reddedildi (v0.9.67 revert), o yüzden bu sürüm
   // yalnız mevcut Trend hücresini genişletiyor.
-  { id: 'trend',     label: 'Trend',     width: 190 },
+  // v0.9.498 — 190px üç sparkline'a yetmiyordu (3×80 + boşluk ≈ 250) ve
+  // hangisinin hangi metrik olduğunu söyleyen hiçbir şey yoktu. Genişlik
+  // gerçek içeriğe çekildi, her mini grafiğe renk lekesi + etiket eklendi.
+  { id: 'trend',     label: 'Trend',     width: 330 },
   { id: 'impact',    label: 'Impact',    sortValue: r => impactOf(r),       numeric: true,      width: 130 },
   { id: 'spanCount', label: 'Calls',     sortValue: r => r.spanCount,       numeric: true,      width: 96 },
   { id: 'errorRate', label: 'Err %',     sortValue: r => r.errorRate,       numeric: true,      width: 84 },
@@ -338,7 +352,26 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
       <div className="table-wrap">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} />
-          <DataTableHead dt={dt} />
+          {/* v0.9.498 — Trend başlığı üç serinin lejantını taşıyor. Lejant
+              satırlara değil BAŞLIĞA konuyor: 79 satırda her satıra
+              "CALLS ERRORS P99" yazmak kolonu gürültüye boğardı, oysa
+              eşleme tablo boyunca sabit. Renk lekeleri satırdaki
+              sparkline renkleriyle birebir. */}
+          <DataTableHead dt={dt} renderLabel={c => c.id === 'trend' ? (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}>
+              <span>Trend</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontWeight: 400 }}>
+                {([['Calls', TREND_C.calls], ['Errors', TREND_C.errors], ['P99', TREND_C.p99]] as const).map(([lbl, col]) => (
+                  <span key={lbl} style={{ display: 'inline-flex', alignItems: 'center', gap: 3, color: 'var(--text3)' }}>
+                    <span aria-hidden="true" style={{
+                      width: 7, height: 7, borderRadius: 1, background: col, flex: 'none',
+                    }} />
+                    {lbl}
+                  </span>
+                ))}
+              </span>
+            </span>
+          ) : c.label} />
           <tbody>
             {agg && (
               <tr className="agg-row">
@@ -376,13 +409,12 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
             )}
             {dt.sortedRows.map((op, i) => {
               const errCls = op.errorRate > 5 ? 'err' : op.errorRate > 0 ? 'warn' : 'ok';
-              // Tone the per-row sparkline with the same severity
-              // colour as the err-rate badge so the eye reads "this
-              // op is hot" from one glance at the trend column,
-              // before reading the numbers.
-              const sparkColor = errCls === 'err' ? 'var(--err)'
-                              : errCls === 'warn' ? 'var(--warn)'
-                              : undefined;
+              // v0.9.498 — calls sparkline'ı ARTIK şiddet rengiyle
+              // boyanmıyor (eski sparkColor kaldırıldı). Üç seri yan yana
+              // duruyorsa renk METRİĞİ göstermeli: aynı seri her satırda
+              // aynı renkte olmazsa "turuncu = calls" eşlemesi kurulamaz
+              // ve lejant yalan söyler. Şiddet iki yerde zaten okunuyor:
+              // Err% rozeti ve errors serisinin kendisi.
               // dt.rowProps(i) → data-row-idx (auto-scroll target) +
               // .row-selected accent when j/k lands here. Index tracks
               // dt.sortedRows (the agg "All" row above is NOT counted).
@@ -427,7 +459,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       title={`Calls — ${fmtNum(op.spanCount)} · tıkla: bu metriğin grafiği`}
                       style={miniSparkBtn}
                     >
-                      <Sparkline values={op.sparkline ?? []} color={sparkColor} title="" />
+                      <Sparkline values={op.sparkline ?? []} color={TREND_C.calls} title="" />
                     </button>
                     {/* v0.9.347 — errors ve p99 sparkline'ları. İkisi de ZATEN
                         aynı yanıtta geliyordu (errorsSparkline / p99Sparkline,
@@ -439,14 +471,14 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       style={miniSparkBtn}
                     >
                       <Sparkline values={op.errorsSparkline ?? []}
-                        color={op.errorRate > 0 ? 'var(--err)' : undefined} title="" />
+                        color={TREND_C.errors} title="" />
                     </button>
                     <button type="button"
                       onClick={() => { setOpFocus('p99'); setOpDetail(op); }}
                       title={`P99 — ${op.p99DurationMs.toFixed(0)}ms · tıkla: bu metriğin grafiği`}
                       style={miniSparkBtn}
                     >
-                      <Sparkline values={op.p99Sparkline ?? []} color="var(--warn)" title="" />
+                      <Sparkline values={op.p99Sparkline ?? []} color={TREND_C.p99} title="" />
                     </button>
                   </td>
                   <td className="mono" style={{ textAlign: 'right' }}>

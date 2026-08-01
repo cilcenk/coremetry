@@ -6,6 +6,24 @@
 
 export type SparkThresholdClass = 'ok' | 'warn' | 'err';
 
+// v0.9.498 — bir sparkline'ın ÜÇ hali vardır ve ikisi uzun süre tek
+// hale çökmüştü:
+//   'nodata' — hiç ölçüm yok        → "—"
+//   'zero'   — ölçüm VAR, hepsi 0   → tabanda düz çizgi
+//   'series' — normal seri          → çizgi/bar
+// Önceden 'zero' de "—" basıyordu; 0.00% hata oranlı bir operasyonun
+// errors sparkline'ı ölçüm hiç gelmemiş gibi görünüyordu. Operatör bunu
+// Operations tablosunda gördü ("üç sparkline'ın biri yok sanki").
+// v0.9.371'in pod Restarts'ta çözdüğü ayrımın aynısı: 0 bir DEĞERDİR,
+// bilinmezlik değil. NaN/Infinity ölçüm sayılmaz — onlar 'nodata'.
+export type SparkRenderMode = 'nodata' | 'zero' | 'series';
+
+export function sparkRenderMode(values: readonly number[]): SparkRenderMode {
+  const finite = values.filter(v => Number.isFinite(v));
+  if (finite.length === 0) return 'nodata';
+  return finite.some(v => v > 0) ? 'series' : 'zero';
+}
+
 // classifyThreshold — two-level classification for bar-mode sparklines:
 //   v ≥ threshold             → 'err'  (breach bucket, var(--err))
 //   v ≥ warnRatio · threshold → 'warn' (approaching, var(--warn))

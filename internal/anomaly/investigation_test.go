@@ -158,3 +158,42 @@ func TestBusinessDimOnlyOnUserFacingBranches(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.512 — kanal kodu sözlüğü RAG dokümanı olarak yükleniyor; kodun
+// anlamı chunk'ın TAMAMI değil kodu İÇEREN SATIR olarak alınır. 2B'nin
+// bağlamına koca bir doküman parçası koymak asıl kanıtı (kırılım
+// sayılarını) bastırır.
+func TestCodeLineFrom(t *testing.T) {
+	doc := `Kanal kodları
+0001 - Internet Şube (Bireysel)
+0012 - Mobil Kanal (Bireysel)
+0044 - Çağrı Merkezi
+`
+	cases := []struct{ code, want string }{
+		{"0012", "0012 - Mobil Kanal (Bireysel)"},
+		{"0044", "0044 - Çağrı Merkezi"},
+		{"0001", "0001 - Internet Şube (Bireysel)"},
+	}
+	for _, c := range cases {
+		if got := codeLineFrom(doc, c.code); got != c.want {
+			t.Errorf("codeLineFrom(%q) = %q, beklenen %q", c.code, got, c.want)
+		}
+	}
+
+	// Kod hiçbir satırda yoksa BOŞ döner. Chunk sözcüksel skorla gelmiş
+	// olabilir ama eşleşme başka bir jetondan gelmiş olabilir; yanlış
+	// satır göstermektense hiç göstermemek doğru.
+	if got := codeLineFrom(doc, "9999"); got != "" {
+		t.Errorf("eşleşmeyen kod boş dönmeli, got %q", got)
+	}
+	if got := codeLineFrom(doc, ""); got != "" {
+		t.Errorf("boş kod boş dönmeli, got %q", got)
+	}
+
+	// Uzun satır kırpılır ama kırpıldığı belli olur.
+	long := strings.Repeat("x", 300) + " 0012"
+	got := codeLineFrom(long, "0012")
+	if len(got) > 130 || !strings.HasSuffix(got, "…") {
+		t.Errorf("uzun satır kırpılmalı ve kırpıldığı belli olmalı, got len=%d", len(got))
+	}
+}

@@ -125,6 +125,9 @@ type DeepEvidence struct {
 	SlowOps    []chstore.OperationSummary
 	// Business — anahtar → hata-ağırlıklı kırılım (v0.9.511).
 	Business map[string][]chstore.BusinessSlice
+	// CodeMeaning — iş kodu → RAG'dan çözülmüş insan anlamı (v0.9.512).
+	// Boş = doküman yüklü değil ya da kod eşleşmedi; o zaman ham kod basılır.
+	CodeMeaning map[string]string
 }
 
 // deepEvidenceLimit — aile başına taşınan kayıt tavanı. Kanıt bloğu 2B'nin
@@ -214,12 +217,79 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 					total += len(sl)
 				}
 			}
+			d.CodeMeaning = resolveBusinessCodes(ctx, store, d.Business)
 			d.note(f, firstErr, total, func() string {
-				return fmt.Sprintf("%d iş boyutu değeri (%s)", total, strings.Join(businessDimKeys, ", "))
+				return fmt.Sprintf("%d iş boyutu değeri (%s), %d kodun anlamı çözüldü",
+					total, strings.Join(businessDimKeys, ", "), len(d.CodeMeaning))
 			})
 		}
 	}
 	return d
+}
+
+// resolveBusinessCodes — iş kodlarının İNSAN anlamını RAG'dan çözer
+// (v0.9.512). Operatör kanal kodu sözlüğünü RAG dokümanı olarak
+// yüklüyor; burada her kod için BİR sözcüksel arama yapılır.
+//
+// Neden sözcüksel (TopKRagChunksByContent), semantik değil: kanal kodu
+// TAM EŞLEŞME aranan bir jeton. Semantik benzerlik burada yanlış araç
+// olurdu, üstelik gömme yolu bge-m3'e bağlı — sözcüksel yol o blokörden
+// bağımsız çalışır.
+//
+// Chunk'ın TAMAMI değil, kodu içeren SATIR alınır: 2B'nin bağlamına
+// koca bir doküman parçası koymak sinyali gürültüye boğar ve asıl
+// kanıtı (kırılım sayıları) bastırır.
+func resolveBusinessCodes(ctx context.Context, store *chstore.Store, business map[string][]chstore.BusinessSlice) map[string]string {
+	if len(business) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	lookups := 0
+	for _, slices := range business {
+		for _, b := range slices {
+			if b.Value == "" || out[b.Value] != "" {
+				continue
+			}
+			// Maliyet tavanı: P1 başına en fazla bu kadar arama. Kodlar
+			// az sayıda olmalı; yanlış yapılandırılmış yüksek kardinaliteli
+			// bir attribute soruşturmayı arama fırtınasına çevirmemeli.
+			if lookups >= businessCodeLookupMax {
+				return out
+			}
+			lookups++
+			hits, err := store.TopKRagChunksByContent(ctx, b.Value, 1)
+			if err != nil || len(hits) == 0 {
+				continue
+			}
+			if line := codeLineFrom(hits[0].Content, b.Value); line != "" {
+				out[b.Value] = line
+			}
+		}
+	}
+	return out
+}
+
+// businessCodeLookupMax — P1 başına RAG arama tavanı.
+const businessCodeLookupMax = 8
+
+// codeLineFrom — chunk içinden kodu İÇEREN ilk satırı döndürür. Saf —
+// tablo-testli. Kod hiçbir satırda geçmiyorsa boş döner (chunk sözcüksel
+// skorla gelmiş olabilir ama kod başka bir jetondan eşleşmiş olabilir;
+// o durumda yanlış satır göstermektense hiç göstermemek doğru).
+func codeLineFrom(content, code string) string {
+	if code == "" {
+		return ""
+	}
+	for _, ln := range strings.Split(content, "\n") {
+		if strings.Contains(ln, code) {
+			ln = strings.TrimSpace(ln)
+			if ln == "" {
+				continue
+			}
+			return truncate(ln, 120)
+		}
+	}
+	return ""
 }
 
 // note — denetim izine bir satır ekler. Hata varsa "bakılamadı" olarak
@@ -342,6 +412,11 @@ func renderDeepEvidence(sb *strings.Builder, d DeepEvidence) {
 		}
 		fmt.Fprintf(sb, "%s kırılımı (en çok hata üreten önce):\n", key)
 		for _, b := range sl {
+			if m := d.CodeMeaning[b.Value]; m != "" {
+				fmt.Fprintf(sb, "  - %s [%s]: %d çağrı, %d hata (%%%.1f)\n",
+					b.Value, m, b.Calls, b.Errors, b.ErrPct)
+				continue
+			}
 			fmt.Fprintf(sb, "  - %s: %d çağrı, %d hata (%%%.1f)\n", b.Value, b.Calls, b.Errors, b.ErrPct)
 		}
 	}

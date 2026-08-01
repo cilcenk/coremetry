@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { AnnotationLane } from './AnnotationLane';
+import { AnnotationLane, KIND_GLYPH, KIND_COLOR, KIND_LABEL_TR } from './AnnotationLane';
 
 // ServiceAnnotationLane — v0.9.397: v0.9.395'te Service.tsx içinde doğan
 // veri sarmalayıcısı ortak dosyaya çıktı; Details VE Overview aynı
@@ -19,14 +19,30 @@ export function ServiceAnnotationLane({ service, fromNs, toNs, onZoomTo }: {
   });
   const items = q.data?.items ?? [];
   if (items.length === 0) return null;
+  // v0.9.492 (operatör: "alev ve tick işaretleri anlaşılmıyor") — şeridin
+  // altında yalnız GÖRÜNEN türlerin mini lejantı: 🔥 alarm · ✓ çözüldü …
+  // Simge sözlüğü artık kendini açıklıyor; tür yoksa lejantta da yok.
+  const presentKinds = [...new Set(items.map(it => it.kind))]
+    .filter(k => KIND_GLYPH[k]);
   return (
     <div style={{ margin: '0 0 10px' }}>
       <AnnotationLane items={items} fromNs={fromNs} toNs={toNs} onZoomTo={onZoomTo} />
-      {q.data?.truncated && (
-        <div style={{ fontSize: 10, color: 'var(--text3)' }}>
-          ⚠ 500 olay tavanı — pencereyi daralt (kesme ifşası)
-        </div>
-      )}
+      <div style={{
+        display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap',
+        fontSize: 10, color: 'var(--text3)', marginTop: 2,
+      }}>
+        {presentKinds.map(k => (
+          <span key={k}>
+            <span style={{ color: KIND_COLOR[k] }}>{KIND_GLYPH[k]}</span>
+            {' '}{KIND_LABEL_TR[k] ?? k}
+          </span>
+        ))}
+        {q.data?.truncated && (
+          <span style={{ marginLeft: 'auto' }}>
+            ⚠ 500 olay tavanı — pencereyi daralt (kesme ifşası)
+          </span>
+        )}
+      </div>
     </div>
   );
 }

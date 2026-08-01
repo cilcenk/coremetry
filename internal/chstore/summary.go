@@ -7,6 +7,20 @@ import (
 	"time"
 )
 
+// v0.9.496 — bu dosyadaki HER okuma telemetryReadConn() üzerinden
+// gider (RoundRobin havuzu), s.conn üzerinden değil. Dosya baştan sona
+// telemetri okur: service_summary_5m, operation_summary_5m ve bir tane
+// spans fallback'i — hepsi Distributed sarmalayıcı / MV, yani hangi
+// node koordine ederse etsin cevap aynıdır. /api/services'i besleyen
+// en sıcak yol burası (<50ms warm bütçesi), okuma havuzunun ilk dilimi
+// olarak seçilme sebebi de bu.
+//
+// Buraya bir STATE tablosu okuması eklenirse (users, teams,
+// system_settings…) havuzu DEĞİŞTİR: o tablolar her kurulumda
+// replicate değil, RoundRobin her çağrıda başka node'un kopyasına
+// düşer → v0.9.486'nın /users tutarsızlığı. conn_strategy_test.go
+// dosya yüzeyini pinliyor.
+
 // ServiceSummaryRow is one 5-minute bucket of pre-aggregated stats for a
 // single service, sourced from the service_summary_5m materialized view.
 // Use for time-bucketed reads that span hours/days — the MV merges
@@ -67,7 +81,7 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 	}
 
 	var total uint64
-	if err := s.conn.QueryRow(ctx,
+	if err := s.telemetryReadConn().QueryRow(ctx,
 		"SELECT count(DISTINCT name) FROM operation_summary_5m "+wc.sql()+
 			" SETTINGS max_execution_time = 25",
 		wc.args...).Scan(&total); err != nil {
@@ -81,7 +95,7 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 	}
 
 	args := append(append([]any{}, wc.args...), limit, offset)
-	rows, err := s.conn.Query(ctx,
+	rows, err := s.telemetryReadConn().Query(ctx,
 		"SELECT DISTINCT name FROM operation_summary_5m "+wc.sql()+
 			" ORDER BY name LIMIT ? OFFSET ?"+
 			" SETTINGS max_execution_time = 25",
@@ -109,7 +123,7 @@ func (s *Store) ListOperationNames(ctx context.Context, service, pattern string,
 // DISTINCT, ORDER BY (service_name, ...) sayesinde read_in_order ile
 // neredeyse bedava.
 func (s *Store) ListActiveServiceNames(ctx context.Context, window time.Duration) ([]string, error) {
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT DISTINCT service_name
 		FROM service_summary_5m
 		WHERE time_bucket >= now() - INTERVAL ? SECOND
@@ -155,7 +169,7 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 	}
 
 	var total uint64
-	if err := s.conn.QueryRow(ctx,
+	if err := s.telemetryReadConn().QueryRow(ctx,
 		"SELECT count(DISTINCT service_name) FROM service_summary_5m"+where+
 			" SETTINGS max_execution_time = 25",
 		args...).Scan(&total); err != nil {
@@ -174,7 +188,7 @@ func (s *Store) ListServiceNames(ctx context.Context, pattern string, limit, off
 	}
 
 	args = append(args, limit, offset)
-	rows, err := s.conn.Query(ctx,
+	rows, err := s.telemetryReadConn().Query(ctx,
 		"SELECT DISTINCT service_name FROM service_summary_5m"+where+
 			" ORDER BY service_name LIMIT ? OFFSET ?"+
 			" SETTINGS max_execution_time = 25",
@@ -234,11 +248,11 @@ func (s *Store) serviceNamesFromSpans(ctx context.Context, like string, limit, o
 	}
 	countQ, pageQ := rawPickerSQL("service_name", extra)
 	var total uint64
-	if err := s.conn.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+	if err := s.telemetryReadConn().QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	pargs := append(append([]any{}, args...), limit, offset)
-	rows, err := s.conn.Query(ctx, pageQ, pargs...)
+	rows, err := s.telemetryReadConn().Query(ctx, pageQ, pargs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -271,11 +285,11 @@ func (s *Store) operationNamesFromSpans(ctx context.Context, service, like strin
 	}
 	countQ, pageQ := rawPickerSQL("name", extra)
 	var total uint64
-	if err := s.conn.QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
+	if err := s.telemetryReadConn().QueryRow(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	pargs := append(append([]any{}, args...), limit, offset)
-	rows, err := s.conn.Query(ctx, pageQ, pargs...)
+	rows, err := s.telemetryReadConn().Query(ctx, pageQ, pargs...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -380,7 +394,7 @@ func (s *Store) CountServicesAgg(ctx context.Context, from, to time.Time, nameMa
 		nameClause += " AND service_name IN (" + strings.Join(holders, ",") + ")"
 	}
 	var n uint64
-	err := s.conn.QueryRow(ctx, `
+	err := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT toUInt64(uniqExact(service_name))
 		FROM service_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?`+nameClause+`
@@ -462,7 +476,7 @@ func (s *Store) GetServicesAggFiltered2(ctx context.Context, from, to time.Time,
 	aggHaving, havingArgs := display.having("spans", "errs", "p99_ms")
 	args = append(args, havingArgs...)
 
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT service_name,
 		       countMerge(span_count_state)                                            AS spans,
 		       countIfMerge(error_count_state)                                         AS errs,
@@ -524,7 +538,7 @@ func (s *Store) GetServiceSummary5mFor(ctx context.Context, services []string, f
 		svcFilter = " AND service_name IN ?"
 		args = append(args, services)
 	}
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
 		  service_name,
 		  toUnixTimestamp64Nano(toDateTime64(time_bucket, 9)) AS bucket_ns,
@@ -571,7 +585,7 @@ func (s *Store) GetServiceSummary5m(ctx context.Context, service string, from, t
 	// strips sub-second precision regardless of input type), so explicitly
 	// widen to DateTime64(9) before extracting nanoseconds. Otherwise CH
 	// errors with "illegal type ... Expected: DateTime64, got: DateTime".
-	rows, err := s.conn.Query(ctx, `
+	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT
 		  service_name,
 		  toUnixTimestamp64Nano(toDateTime64(time_bucket, 9)) AS bucket_ns,

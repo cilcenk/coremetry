@@ -30,8 +30,66 @@ func TestConnStrategySplit(t *testing.T) {
 	if strings.Contains(src, "ConnOpenStrategy: clickhouse.ConnOpenRoundRobin") {
 		t.Error("ana bağlantı options literal'inde RoundRobin var — state tabloları node-lokal olabilir; /users tutarsızlığı (v0.9.486) geri gelir")
 	}
-	if strings.Count(src, "ConnOpenStrategy") != 1 {
-		t.Error("store.go'da tam 1 ConnOpenStrategy ataması beklenir (yalnız ingest havuzu)")
+	// v0.9.496 — okuma havuzu eklendi, sayı 1'den 2'ye BİLİNÇLİ olarak
+	// çıktı (ingest + read). 3'e çıkarsa yeni bir havuz gelmiş demektir
+	// ve o havuzun hangi trafiği taşıdığı bu testte gerekçelendirilmeli;
+	// 1'e düşerse dilimlerden biri geri alınmış demektir.
+	if !strings.Contains(src, "readOpts.ConnOpenStrategy = clickhouse.ConnOpenRoundRobin") {
+		t.Error("okuma havuzu RoundRobin değil — analitik SELECT koordinasyonu yine tek node'da birikir (v0.9.496 gerilemesi)")
+	}
+	if strings.Count(src, "ConnOpenStrategy") != 2 {
+		t.Error("store.go'da tam 2 ConnOpenStrategy ataması beklenir (ingest + read havuzları); ana bağlantı stratejisiz kalmalı")
+	}
+}
+
+// telemetryReadConn'un çağrı yüzeyi: yalnız Distributed sarmalayıcı /
+// MV okuyan dosyalar. Dilim dilim büyüyecek liste — yeni bir dosya
+// eklenirken o dosyanın HİÇBİR state tablosu okumadığı doğrulanmalı,
+// yoksa RoundRobin her çağrıda başka node'un kopyasına düşer ve
+// v0.9.486'nın /users tutarsızlığı geri gelir.
+func TestTelemetryReadConnCallSurface(t *testing.T) {
+	allowed := map[string]bool{
+		"store.go":   true, // tanım + fallback
+		"summary.go": true, // service_summary_5m / operation_summary_5m / spans (v0.9.496 dilim 1)
+	}
+	files, err := filepath.Glob("*.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") || allowed[f] {
+			continue
+		}
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(b), "telemetryReadConn") {
+			t.Errorf("%s: telemetryReadConn çağrısı — RoundRobin okuma havuzu yalnız telemetri SELECT'leri için; state tabloları in-order ana bağlantıda kalmalı (v0.9.486)", f)
+		}
+	}
+}
+
+// Beyaz listedeki dosyalar GERÇEKTEN state tablosu okumamalı. Yukarıdaki
+// test yeni dosyaların havuza sızmasını engelliyor; bu test ise izin
+// verilmiş dosyaya sonradan bir state okuması EKLENMESİNİ yakalıyor —
+// asıl sinsi olan bu.
+func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
+	stateTables := []string{
+		"FROM users", "FROM teams", "FROM system_settings", "FROM alert_rules",
+		"FROM saved_views", "FROM dashboards", "FROM problems", "FROM audit_events",
+	}
+	for _, f := range []string{"summary.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		src := string(b)
+		for _, tbl := range stateTables {
+			if strings.Contains(src, tbl) {
+				t.Errorf("%s: %q — bu dosya RoundRobin okuma havuzunu kullanıyor, state tablosu okuyamaz (v0.9.486 /users tutarsızlığı)", f, tbl)
+			}
+		}
 	}
 }
 

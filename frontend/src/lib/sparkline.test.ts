@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   classifyThreshold, barGeometry, barIndexAt,
-  downsampleBuckets, maxBarsForWidth, sparkRenderMode, type BucketReducer,
+  downsampleBuckets, maxBarsForWidth, maxLinePointsForWidth, sparkRenderMode, type BucketReducer,
 } from './sparkline';
 
 // Granular-sparklines sweep (M4, 2026-07-24) — the Sparkline component
@@ -212,5 +212,30 @@ describe('sparkRenderMode', () => {
 
   it('negatif değerler sıfır sayılır (sayım/oran serileri negatif olamaz)', () => {
     expect(sparkRenderMode([-1, -2])).toBe('zero');
+  });
+});
+
+// v0.9.500 — çizgi/alan modunun nokta bütçesi. Bar modunun bütçesi
+// v0.9.207'den beri vardı, çizgi modunda hiç yoktu: Services tablosu 7g
+// penceresinde 2016 ham bucket'ı 80px kutuya çiziyordu (~25 nokta/px).
+describe('maxLinePointsForWidth', () => {
+  it('tablo: genişlik → bütçe', () => {
+    const cases: Array<[width: number, perPx: number | undefined, want: number]> = [
+      [80, undefined, 160],  // bileşen varsayılanı — 2 nokta/px
+      [80, 1, 80],
+      [150, undefined, 300], // Operations trend sparkline'ı
+      [1, undefined, 2],     // taban: iki nokta olmadan çizgi olmaz
+      [0, undefined, 0],     // dejenere genişlik hiç çizmez
+      [-5, undefined, 0],
+      [NaN, undefined, 0],
+    ];
+    for (const [width, perPx, want] of cases) {
+      expect(maxLinePointsForWidth(width, perPx), `width=${width} perPx=${perPx}`).toBe(want);
+    }
+  });
+
+  it('7g ham besleme 80px kutuda ~12× seyreltilir', () => {
+    // 2016 = 7 gün × 288 adet 5-dakikalık bucket.
+    expect(2016 / maxLinePointsForWidth(80)).toBeGreaterThan(12);
   });
 });

@@ -16,6 +16,21 @@ export type SparkThresholdClass = 'ok' | 'warn' | 'err';
 // Operations tablosunda gördü ("üç sparkline'ın biri yok sanki").
 // v0.9.371'in pod Restarts'ta çözdüğü ayrımın aynısı: 0 bir DEĞERDİR,
 // bilinmezlik değil. NaN/Infinity ölçüm sayılmaz — onlar 'nodata'.
+// v0.9.500 — ÇİZGİ/ALAN modu için nokta bütçesi. Bar modunun bütçesi
+// v0.9.207'den beri vardı (maxBarsForWidth), çizgi modunda hiç yoktu:
+// Services tablosu 7g penceresinde ham 5dk bucket besliyor (2016 nokta)
+// ve 80px'lik bir kutuya ~25 nokta/piksel çiziliyordu — satır başına 5
+// kolon × 50 satır path string'i. Görsel kazanç sıfır, maliyet gerçek.
+//
+// perPx=2: piksel başına iki nokta alt-piksel doğruluğu için fazlasıyla
+// yeter (80px → 160 nokta, 2016'dan ~12× azalma). Seyreltme LTTB ile
+// yapılır (downsampleXY) — bar modundaki 'max' reducer'ı DEĞİL: max bir
+// oran serisinin tepelerini yukarı abartır, LTTB şeklin kendisini korur.
+export function maxLinePointsForWidth(width: number, perPx = 2): number {
+  if (!Number.isFinite(width) || width <= 0) return 0;
+  return Math.max(2, Math.floor(width * perPx));
+}
+
 export type SparkRenderMode = 'nodata' | 'zero' | 'series';
 
 export function sparkRenderMode(values: readonly number[]): SparkRenderMode {

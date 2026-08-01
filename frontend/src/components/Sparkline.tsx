@@ -1,5 +1,6 @@
 import { useId, useRef, useState } from 'react';
-import { barGeometry, barIndexAt, classifyThreshold, downsampleBuckets, maxBarsForWidth, sparkRenderMode } from '@/lib/sparkline';
+import { barGeometry, barIndexAt, classifyThreshold, downsampleBuckets, maxBarsForWidth, maxLinePointsForWidth, sparkRenderMode } from '@/lib/sparkline';
+import { downsampleXY } from '@/lib/perf/lttb';
 
 // Tiny inline SVG sparkline — no chart library. Auto-scales to its own
 // y-range so a service with 5 spans/min looks just as readable as one
@@ -160,8 +161,23 @@ export function Sparkline({
   });
   const stroke = crossed ? 'var(--err)' : baseStroke;
 
+  // v0.9.500 — çizgi/alan modunda nokta bütçesi. `step` ve y-ölçeği HAM
+  // seri üzerinden hesaplanır (yukarıda), seyreltme yalnız ÇİZİLEN nokta
+  // kümesini küçültür — LTTB seçtiği noktaların ORİJİNAL indeksini
+  // döndürdüğü için x ekseni (zaman) birebir yerinde kalır. Eşik-geçme
+  // tespiti de (crossed) ham seride: seyreltme bir spike'ı elerse
+  // renk sinyali kaybolmamalı.
+  const lineBudget = maxLinePointsForWidth(width);
+  let px: number[] = values.map((_, i) => i);
+  let py: number[] = values;
+  if (!barMode && lineBudget > 0 && values.length > lineBudget) {
+    const ds = downsampleXY(px, values, lineBudget);
+    px = ds.xs;
+    py = ds.ys as number[];
+  }
+
   // SVG path — line then close back along the baseline for the area fill.
-  const linePoints = values.map((v, i) => `${i * step},${yOf(v)}`).join(' L ');
+  const linePoints = py.map((v, i) => `${px[i] * step},${yOf(v)}`).join(' L ');
   const linePath = `M ${linePoints}`;
   const areaPath = `${linePath} L ${(values.length - 1) * step},${height} L 0,${height} Z`;
 

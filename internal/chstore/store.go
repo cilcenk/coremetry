@@ -25,17 +25,19 @@ type Store struct {
 	cfg    config.CHConfig
 	ret    config.RetentionConfig
 
-	// service_version_5m readiness latch (v0.9.249). A materialized
-	// view only populates from inserts made after it exists, so for
-	// the first deployLookback after an upgrade the rollup can't
-	// answer "was this version already running before the window?" —
-	// see deployMVCovers in deploys.go for why reading it early would
-	// re-open the v0.9.205 phantom-marker bug. Latches true once the
-	// MV's history spans the lookback; deployMVProbedAt throttles the
-	// probe during the warm-up so each deploys read doesn't add a
-	// query.
+	// service_version_5m coverage cache (v0.9.249, reshaped v0.9.493).
+	// A materialized view only populates from inserts made after it
+	// exists, so for the first lookback after an upgrade the rollup
+	// can't answer "was this version already running before the
+	// window?" — see deployMVCovers in deploys.go for why reading it
+	// early would re-open the v0.9.205 phantom-marker bug. v0.9.493:
+	// the old boolean latch ignored each call's `need` once ANY probe
+	// succeeded (a 24h-need caller unlocked the 48h-need path early,
+	// and historical windows older than the MV slipped through) — now
+	// the probed EARLIEST datum is cached and every call compares its
+	// own need against it; deployMVProbedAt throttles re-probes.
 	deployMVMu       sync.Mutex
-	deployMVReady    bool
+	deployMVEarliest time.Time
 	deployMVProbedAt time.Time
 
 	// hasClusterCol records whether the spans table the read path

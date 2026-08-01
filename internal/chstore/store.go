@@ -22,6 +22,12 @@ type Store struct {
 	// (v0.9.486). nil in tests that build Store{} directly; use
 	// ingestWriteConn(), never the field.
 	ingest driver.Conn
+	// read is the RoundRobin pool for high-volume telemetry SELECTs
+	// (v0.9.496). Same safety argument as ingest: these queries hit
+	// Distributed wrappers / MV'ler, so any node can coordinate and the
+	// answer is identical. State tables must NEVER read through this —
+	// use telemetryReadConn(), never the field.
+	read driver.Conn
 	cfg    config.CHConfig
 	ret    config.RetentionConfig
 
@@ -433,12 +439,53 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		conn.Close()
 		return nil, fmt.Errorf("ping (ingest pool): %w", err)
 	}
+	// Read conn: RoundRobin — v0.9.496, operatör direktifi ("4 node var,
+	// yük eşit dağılmalı"). v0.9.481 INSERT koordinasyonunu dağıttı,
+	// v0.9.486 state doğruluğunu kurtardı; ARADA kalan analitik
+	// SELECT'lerdi. Onlar da ana bağlantıda kaldığı için parse +
+	// fan-out + partial-state merge + final aggregation/sort/limit hep
+	// ilk node'da birikiyordu (tarama Distributed sayesinde zaten
+	// yayılıyor — biriken koordinatör yükü).
+	//
+	// Güvenlik argümanı ingest havuzuyla BİREBİR aynı: bu havuzdan yalnız
+	// Distributed sarmalayıcılara / MV'lere giden telemetri okumaları
+	// geçer, dolayısıyla hangi node koordine ederse etsin cevap aynıdır.
+	// State tabloları (users/teams/system_settings/alert_rules) her
+	// kurulumda replicate DEĞİL — onlar in-order ana bağlantıda kalır,
+	// yoksa v0.9.486'nın /users tutarsızlığı geri gelir. Sözleşme
+	// conn_strategy_test.go'da dosya-yüzeyi testiyle pinli.
+	//
+	// Havuz boyutu: üçü de maxConns tavanına sahip, yani tavan 3×.
+	// Sürücü bağlantıları TEMBEL açar ve bu dilimle trafik ana
+	// bağlantıdan buraya TAŞINIR — gerçek açık soket sayısı yaklaşık
+	// sabit kalır, yalnız tavan büyür. Ana bağlantının payı, son
+	// okuma dilimi de taşındığında küçültülecek (o güne kadar ana
+	// bağlantı hâlâ taşınmamış okumaları taşıyor; şimdi kısmak onları
+	// aç bırakırdı).
+	readOpts := chOpts()
+	readOpts.ConnOpenStrategy = clickhouse.ConnOpenRoundRobin
+	readConn, err := clickhouse.Open(readOpts)
+	if err != nil {
+		conn.Close()
+		ingest.Close()
+		return nil, fmt.Errorf("connect (read pool): %w", err)
+	}
+	if err := readConn.Ping(ctx); err != nil {
+		conn.Close()
+		ingest.Close()
+		return nil, fmt.Errorf("ping (read pool): %w", err)
+	}
 
 	// v0.6.42 — wrap conn so every Query/Exec/QueryRow/PrepareBatch
 	// becomes a child span under the inbound request span (when
 	// selfobs is enabled). Noop tracer when disabled — essentially
 	// zero overhead. See internal/chstore/traced_conn.go.
-	s := &Store{conn: newTracedConn(conn), ingest: newTracedConn(ingest), cfg: cfg, ret: ret}
+	s := &Store{
+		conn:   newTracedConn(conn),
+		ingest: newTracedConn(ingest),
+		read:   newTracedConn(readConn),
+		cfg:    cfg, ret: ret,
+	}
 	// v0.5.437 — self-heal pass. Detects HighVolumeTables `_local`
 	// MVs/aggregates that exist in system.tables (engine
 	// Replicated*) but are missing from system.replicas — a state
@@ -495,6 +542,9 @@ func (s *Store) Close() error {
 	if s.ingest != nil {
 		s.ingest.Close()
 	}
+	if s.read != nil {
+		s.read.Close()
+	}
 	return s.conn.Close()
 }
 func (s *Store) Conn() driver.Conn { return s.conn }
@@ -506,6 +556,25 @@ func (s *Store) Conn() driver.Conn { return s.conn }
 func (s *Store) ingestWriteConn() driver.Conn {
 	if s.ingest != nil {
 		return s.ingest
+	}
+	return s.conn
+}
+
+// telemetryReadConn returns the RoundRobin pool for high-volume
+// telemetry SELECTs, falling back to the main conn when the pool was
+// never opened (zero-value Store in tests).
+//
+// KULLANIM KURALI: yalnız Distributed sarmalayıcılara / MV'lere giden
+// telemetri okumaları. Bir state tablosu okuması (users, teams,
+// system_settings, alert_rules, saved_views, problems…) buradan
+// geçerse v0.9.486'nın operatör bug'ı geri gelir: o tablolar her
+// kurulumda replicate değildir, RoundRobin her çağrıda başka node'un
+// kopyasına düşer ve liste refresh'ten refresh'e değişir. Yeni bir
+// dosya bu havuzu kullanacaksa conn_strategy_test.go'daki beyaz
+// listeye BİLİNÇLİ olarak eklenir.
+func (s *Store) telemetryReadConn() driver.Conn {
+	if s.read != nil {
+		return s.read
 	}
 	return s.conn
 }

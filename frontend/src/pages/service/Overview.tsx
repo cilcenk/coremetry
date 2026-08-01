@@ -183,7 +183,6 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         { name: 'p99', agg: 'p99', field: 'duration_ms' },
         { name: 'p95', agg: 'p95', field: 'duration_ms' },
         { name: 'p50', agg: 'p50', field: 'duration_ms' },
-        { name: 'apdex', agg: 'apdex' },
       ],
     }),
     select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
@@ -239,10 +238,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         // default görünürlük avg+P50+P95 açık / P99 gizli (aşağıda
         // defaultLatencyHidden), kullanıcı lejant seçimi kalıcı ve ezer.
         { name: 'avg', agg: 'avg', field: 'duration_ms' },
-        // v0.9.476 (redesign açık dilimi "Apdex serisi") — giriş
-        // span'leri üzerinden apdex zaman serisi (T=200ms/4T=800ms,
-        // backend agg zaten vardı). Aynı batch = ek round-trip yok.
-        { name: 'apdex', agg: 'apdex' },
+        // v0.9.491 — v0.9.476'nın apdex agg'ı kaldırıldı (operatör:
+        // "Service overview'de apdex'e gerek yok"); backend agg yaşıyor,
+        // Explore'dan hâlâ sorgulanabilir.
       ],
     }),
     select: (d: { stepSeconds: number; series: Record<string, import('@/lib/types').SpanMetricSeries[] | null> }) => d.series,
@@ -413,7 +411,6 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const rps = firstNum(rateNow, info ? info.spanCount / windowSec : undefined);
   const errorRatePct = firstNum(errNow, info ? info.errorRate : undefined);
   const p99Ms = firstNum(p99Now, info?.p99DurationMs);
-  const apdexVal = info?.apdex ?? null;
 
   // "Every metric is a doorway" (Phase C) — canonical descriptors for each KPI
   // + RED chart. The SAME object that the panel carries is what the Explorer
@@ -428,13 +425,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     metricQuery({ metric: 'calls_total', agg: 'error_rate', unit: '%', filters: svcFilter, viz, range });
   const mkLatency = (agg: 'p50' | 'p95' | 'p99', viz: MetricQuery['viz']) =>
     metricQuery({ metric: 'duration_milliseconds_bucket', agg, unit: 'ms', filters: svcFilter, viz, range });
-  const mkApdex = (viz: MetricQuery['viz']) =>
-    metricQuery({ metric: 'calls_total', agg: 'apdex', unit: 'ratio', filters: svcFilter, viz, range });
-  // Apdex bantları (endüstri standardı): ≥0.94 mükemmel, ≥0.85 iyi,
-  // <0.7 zayıf — grafikte 0.85 rehber çizgisi yeter (kalabalık yapmadan).
-  const apdexThresholds: ChartThreshold[] = [
-    { value: 0.85, label: 'iyi ≥ 0.85', color: 'var(--warn)' },
-  ];
+  // v0.9.491 (operatör: "Service overview'de apdex'e gerek yok") — v0.9.476
+  // Apdex karosu + grafiği kaldırıldı. Backend apdex agg'ı ve MV state'leri
+  // yaşıyor; Explore'dan calls_total/apdex hâlâ sorgulanabilir.
 
   return (
     <div style={{ marginTop: 4 }}>
@@ -466,12 +459,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             "Response time · median" karosu kaldırıldı; P99 karo olarak kalıyor.
             P50 SERİSİ duruyor: Response time grafiğinde lejant-kontrollü bir
             çizgi (varsayılan açık) — kaldırılan yalnız KPI şeridindeki karo. */}
-        {/* Apdex has no calls_total/duration descriptor analogue in the
-            spanmetrics pipeline (it's a composite of latency thresholds), so it
-            stays a plain tile — no doorway. '—' when the summary bundle is
-            absent (no spanmetrics apdex source). */}
-        <KpiTile lab="Apdex" val={apdexVal != null ? apdexVal.toFixed(2) : '—'} accent="var(--ok)"
-          note="Apdex — eşik tabanlı bileşik skor (service_summary_5m). Sparkline/doorway yok: spanmetrics hattında apdex serisi üretilmiyor; D2 bilinçli kısmi bıraktı." />
+        {/* v0.9.491 — Apdex karosu kaldırıldı (operatör: "Service overview'de
+            apdex'e gerek yok"); .ov-kpis 3 kolona indi. */}
       </div>
 
       {/* RED charts row — response time / throughput / failure rate, each
@@ -529,17 +518,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             { series: lat?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
           ]} />
         </MetricPanel>
-        {/* v0.9.476 (redesign açık dilimi) — Apdex zaman serisi:
-            service_summary_5m'in apdex state'leri v0.8.x'ten beri vardı,
-            seri hiç yüzeye çıkmamıştı. Giriş span'leri üzerinden (RED
-            kartlarıyla aynı popülasyon), 0..1. Tek-commit revert kolay. */}
-        <MetricPanel compact title="Apdex" metricQuery={mkApdex('line')}>
-          <ChartCard title={scopedChartTitle('Apdex', usingAllSpans)} titleTip={latScopeNote} unit="" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-            legendStorageKey="ov-apdex" statsDefaultCollapsed
-            thresholds={apdexThresholds} lines={[
-            { series: lat?.apdex ?? [], color: 'var(--ok)', label: 'apdex' },
-          ]} />
-        </MetricPanel>
+        {/* v0.9.491 — v0.9.476 Apdex grafiği kaldırıldı (operatör kararı);
+            RED üçlüsü ov-charts-3'ü tam dolduruyor. */}
       </div>
 
       {/* v0.9.397 (Ş3 yayılım, "sırayla devam") — annotation şeridi

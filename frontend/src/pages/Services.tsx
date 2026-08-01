@@ -619,10 +619,11 @@ export default function ServicesPage() {
                         spark={aggBuckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
                         color="var(--err)"
                         title="Aggregate error rate (weighted by spans)"
-                        // M4 — eşikli mini-bar: %1 üstü bucket kırmızı,
-                        // %0.7-1 arası amber, normaller soluk gri.
-                        mode="bars"
-                        threshold={1}
+                        // v0.9.499 — çizgi moduna geri (operatör: "eskiden
+                        // spans ile aynı şekilde chart'tı, bar görünümüne
+                        // ihtiyaç yok"). M4'ün eşikli mini-bar'ı satırdaki
+                        // diğer dört hücreyle farklı bir dil konuşuyordu;
+                        // eşik sinyali zaten Err% rozetinde okunuyor.
                         onClick={() => goToExplore('', 'error_rate')} />
                       </td>
                       <td className="mono" style={{ textAlign: 'right' }}>
@@ -724,9 +725,7 @@ export default function ServicesPage() {
                           spark={buckets.map(b => b.spans > 0 ? (b.errs / b.spans) * 100 : 0)}
                           color="var(--err)"
                           title={`Error rate (%) for ${s.name}`}
-                          // M4 — eşikli mini-bar (bkz. agg satırı).
-                          mode="bars"
-                          threshold={1}
+                          // v0.9.499 — çizgi moduna geri (bkz. agg satırı).
                           onClick={() => goToExplore(s.name, 'error_rate')} />
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>

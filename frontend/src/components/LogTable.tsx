@@ -22,9 +22,27 @@ import type { LogRow } from '@/lib/types';
 // non-clickable label that still carries the resize grip, and makes
 // dt.sortedRows === the input rows in server order.
 const TRACE_COL: DataTableColumn<LogRow> = { id: 'trace', label: 'Trace', width: 120 };
-export const DEFAULT_LOG_COLUMNS = ['level', 'service', 'cluster', 'pod'];
+// v0.9.489 (operatör: "level kalkabilir; TIME cluster Message service ve
+// pod şeklinde olabilir, trace de sonda") — 'message' artık SIRALANABİLİR
+// bir işaretçi: columns listesinde nereye konursa Message oraya gelir.
+// Level varsayılandan çıktı (renderer yaşıyor — fields panelinden geri
+// eklenebilir). Listede 'message' yoksa eski anatomi korunur (dinamiklerin
+// arkasına eklenir) — kayıtlı kullanıcı tercihleri / eski ?cols= linkleri
+// aynen çalışır.
+export const DEFAULT_LOG_COLUMNS = ['cluster', 'message', 'service', 'pod'];
 // Ids reserved by the fixed frame — a dynamic column may not shadow them.
-const FRAME_COL_IDS = new Set(['time', 'message', 'trace']);
+const FRAME_COL_IDS = new Set(['time', 'trace']);
+// Message konumlanabilir ama KALDIRILAMAZ (header ×'i almaz).
+const NON_REMOVABLE_COL_IDS = new Set(['time', 'message', 'trace']);
+
+// normalizeLogColumns — sıralı orta-kolon listesi (v0.9.489). Frame id'leri
+// (time/trace) düşer; 'message' listede yoksa SONA eklenir — eski kayıtlı
+// tercihler / eski ?cols= linkleri eski anatomiyle (dinamikler + Message)
+// çalışmaya devam eder. Pure — vitest pini logTableColumns.test.ts.
+export function normalizeLogColumns(columns?: string[]): string[] {
+  const ids = (columns ?? DEFAULT_LOG_COLUMNS).filter(id => !FRAME_COL_IDS.has(id));
+  return ids.includes('message') ? ids : [...ids, 'message'];
+}
 const COL_LABELS: Record<string, string> = {
   level: 'Level', service: 'Service', cluster: 'Cluster', pod: 'Pod',
 };
@@ -235,11 +253,10 @@ export function LogTable({
     });
   };
   // Dynamic middle columns: prop wins, defaults preserve the classic
-  // anatomy. Frame ids (time/message/trace) can't be shadowed.
-  const colIds = useMemo(
-    () => (columns ?? DEFAULT_LOG_COLUMNS).filter(id => !FRAME_COL_IDS.has(id)),
-    [columns],
-  );
+  // anatomy. Frame ids (time/trace) can't be shadowed; 'message' bir
+  // KONUM işaretçisidir (v0.9.489) — listede yoksa sona eklenir, yani
+  // eski kullanıcı tercihleri / ?cols= linkleri eski anatomiyle çalışır.
+  const colIds = useMemo(() => normalizeLogColumns(columns), [columns]);
   // Stable string key so the memo below doesn't rebuild on every
   // render from a fresh array identity.
   const colKey = colIds.join('');
@@ -251,20 +268,21 @@ export function LogTable({
   // only when its deep-link column is shown.
   const dtColumns = useMemo<DataTableColumn<LogRow>[]>(() => [
     { id: 'time', label: 'Time', width: 150 },
-    ...colIds.map(id => ({ id, label: COL_LABELS[id] ?? id, width: COL_WIDTHS[id] ?? 140 })),
-    { id: 'message', label: 'Message', width: 480 },
+    ...colIds.map(id => id === 'message'
+      ? { id: 'message', label: 'Message', width: 480 }
+      : { id, label: COL_LABELS[id] ?? id, width: COL_WIDTHS[id] ?? 140 }),
     ...(hideTraceColumn ? [] : [TRACE_COL]),
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [colKey, hideTraceColumn]);
   const dt = useDataTable<LogRow>({ storageKey: 'logs', columns: dtColumns, rows: logs });
-  // colSpan for the expanded row: Time + dynamic + Message (+ Trace).
-  const cols = 2 + colIds.length + (hideTraceColumn ? 0 : 1);
+  // colSpan for the expanded row: Time + (dynamics incl. Message) (+ Trace).
+  const cols = 1 + colIds.length + (hideTraceColumn ? 0 : 1);
   return (
     <div className="table-wrap">
       <table className="logtbl-dense" style={{ tableLayout: 'fixed', width: '100%' }}>
         <DataTableColgroup dt={dt} />
         <DataTableHead dt={dt} renderLabel={onRemoveColumn ? (c) => (
-          FRAME_COL_IDS.has(c.id)
+          NON_REMOVABLE_COL_IDS.has(c.id)
             ? c.label
             : <>
                 {c.label}
@@ -363,6 +381,25 @@ function LogRow({
           style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 28px' }}>
         <td className="mono">{tsLong(l.timestamp)}</td>
         {colIds.map(id => {
+          if (id === 'message') {
+            return (
+              <td key={id} style={{ maxWidth: 480 }} title={l.body}>
+                {/* v0.8.407 — span-event pseudo rows (exceptions / log-bridge
+                    records riding the trace's spans) are visibly distinct from
+                    backend log rows so the merged trace Logs tab stays honest. */}
+                {l.origin === 'span-event' && (
+                  <span className="badge b-gray" style={{ marginRight: 6, fontSize: 9 }}
+                        title="Synthesized from an OTel span event on this trace — not a shipped log line">
+                    event
+                  </span>
+                )}
+                {highlightTerms && highlightTerms.length > 0
+                  ? highlightSegments(l.body, highlightTerms).map((s, i) =>
+                      s.hl ? <mark key={i} className="log-mark">{s.text}</mark> : <span key={i}>{s.text}</span>)
+                  : l.body}
+              </td>
+            );
+          }
           if (id === 'level') {
             return (
               <td key={id}>
@@ -412,21 +449,6 @@ function LogRow({
             </td>
           );
         })}
-        <td style={{ maxWidth: 480 }} title={l.body}>
-          {/* v0.8.407 — span-event pseudo rows (exceptions / log-bridge
-              records riding the trace's spans) are visibly distinct from
-              backend log rows so the merged trace Logs tab stays honest. */}
-          {l.origin === 'span-event' && (
-            <span className="badge b-gray" style={{ marginRight: 6, fontSize: 9 }}
-                  title="Synthesized from an OTel span event on this trace — not a shipped log line">
-              event
-            </span>
-          )}
-          {highlightTerms && highlightTerms.length > 0
-            ? highlightSegments(l.body, highlightTerms).map((s, i) =>
-                s.hl ? <mark key={i} className="log-mark">{s.text}</mark> : <span key={i}>{s.text}</span>)
-            : l.body}
-        </td>
         {!hideTraceColumn && (
           <td className="mono">
             {l.traceId ? (

@@ -132,7 +132,7 @@ func (s *Store) InsertSpans(ctx context.Context, spans []*Span) error {
 	// and ingest survives. The monolithic / cluster-name-set path keeps
 	// hasOpGroupCol=true → byte-identical column+value layout to pre-v0.8.186.
 	withOpGroup := s.hasOpGroupCol
-	batch, err := s.conn.PrepareBatch(ctx, spansInsertSQL(withOpGroup))
+	batch, err := s.ingestWriteConn().PrepareBatch(ctx, spansInsertSQL(withOpGroup))
 	if err != nil {
 		return fmt.Errorf("prepare spans: %w", err)
 	}
@@ -146,7 +146,7 @@ func (s *Store) InsertSpans(ctx context.Context, spans []*Span) error {
 
 func (s *Store) InsertLogs(ctx context.Context, logs []*Log) error {
 	ctx = asyncInsertCtx(ctx)
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO logs")
+	batch, err := s.ingestWriteConn().PrepareBatch(ctx, "INSERT INTO logs")
 	if err != nil {
 		return fmt.Errorf("prepare logs: %w", err)
 	}
@@ -229,7 +229,7 @@ func (s *Store) InsertMetrics(ctx context.Context, pts []*MetricPoint) error {
 	// — see metricsInsertSQL for the failure mode this prevents.
 	withSeriesFp := s.hasSeriesFpCol
 	withIsMonotonic := s.hasIsMonotonicCol
-	batch, err := s.conn.PrepareBatch(ctx, metricsInsertSQL(withSeriesFp, withIsMonotonic))
+	batch, err := s.ingestWriteConn().PrepareBatch(ctx, metricsInsertSQL(withSeriesFp, withIsMonotonic))
 	if err != nil {
 		return fmt.Errorf("prepare metrics: %w", err)
 	}

@@ -92,7 +92,7 @@ func (s *Store) InsertSpanLinks(ctx context.Context, rows []*SpanLinkRow) error 
 		return nil
 	}
 	ctx = asyncInsertCtx(ctx)
-	batch, err := s.conn.PrepareBatch(ctx, spanLinksInsertSQL)
+	batch, err := s.ingestWriteConn().PrepareBatch(ctx, spanLinksInsertSQL)
 	if err != nil {
 		return fmt.Errorf("prepare span_links: %w", err)
 	}

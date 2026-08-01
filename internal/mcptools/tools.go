@@ -10,23 +10,23 @@
 //
 // Design choices:
 //
-//   • Args are decoded into a typed struct per tool. JSON Schema
+//   - Args are decoded into a typed struct per tool. JSON Schema
 //     in the registration matches that struct field-for-field so
 //     a Claude Desktop-style inspector renders the right form.
 //
-//   • Time windows are expressed as `range_s` (seconds back from
+//   - Time windows are expressed as `range_s` (seconds back from
 //     now) instead of from/to nanoseconds. LLMs are notoriously
 //     bad at constructing big nanosecond integers; "give me the
 //     last 30 minutes" → range_s=1800 is a much more reliable
 //     prompt for them than two unix-nano timestamps.
 //
-//   • Every tool caps Limit at a tool-specific sane default. The
+//   - Every tool caps Limit at a tool-specific sane default. The
 //     LLM can ask for 10 or 100 but not 10000 — context windows
 //     are precious and an oversized list_problems response
 //     trashes downstream reasoning. Server-side cap is the
 //     backstop.
 //
-//   • Errors are returned as Go errors; the mcp package wraps
+//   - Errors are returned as Go errors; the mcp package wraps
 //     them into MCP isError=true content. No need to format
 //     them here.
 //
@@ -356,7 +356,7 @@ type getProblemRootCauseArgs struct {
 func getProblemRootCauseTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_problem_root_cause",
-		Description: "Return Coremetry's synthesized root-cause hypothesis for a Problem: the #1 suspect service, a confidence score (0-1, honestly low when evidence is thin), the full ranked list of candidate causes (each with a blended score and the topology hop-path from the anchor), and the recent deploy the correlator weighted (if any). This is the SAME correlation intelligence the UI shows on the problem row — call it after list_problems to answer 'what caused problem X?' without manually cross-referencing deploys, error spikes, and downstream timeouts. Read-only and cheap (one pre-computed lookup). Returns computed=false when the worker has not synthesized a hypothesis for this problem yet.",
+		Description: "Return Coremetry's synthesized root-cause hypothesis for a Problem: the #1 suspect service, a confidence score (0-1, honestly low when evidence is thin), the full ranked list of candidate causes (each with a blended score and the topology hop-path from the anchor), and the recent deploy the correlator weighted (if any). This is the SAME correlation intelligence the UI shows on the problem row — call it after list_problems to answer 'what caused problem X?' without manually cross-referencing deploys, error spikes, and downstream timeouts. Read-only and cheap (one pre-computed lookup). Returns computed=false when the worker has not synthesized a hypothesis for this problem yet.\n\nWhen the anchor was a P1, the result also carries the INVESTIGATION: `checked` lists every signal family the worker actually inspected (pods/saturation, logs, exceptions, business dimensions) with found=true/false, and `business` breaks the failure down by channel/function code. CRITICAL: never cite a signal whose checked entry says found=false as a cause — it was looked at and nothing was there. If every entry is found=false, say the evidence is insufficient instead of naming a cause.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -388,7 +388,7 @@ func getProblemRootCauseTool(d Deps) mcp.Tool {
 					"note":      "No root-cause hypothesis synthesized yet — the correlator worker computes these shortly after a problem opens. Retry later, or investigate manually with list_problems / get_service_health.",
 				}, nil
 			}
-			return map[string]any{
+			out := map[string]any{
 				"problemId":    a.ProblemID,
 				"computed":     true,
 				"service":      h.Service,
@@ -398,7 +398,36 @@ func getProblemRootCauseTool(d Deps) mcp.Tool {
 				"candidates":   h.Candidates,
 				"recentDeploy": h.RecentDeploy,
 				"computedAt":   h.ComputedAt,
-			}, nil
+			}
+			// v0.9.520 — P1 soruşturmasının (v0.9.510-516) sonucu serbest
+			// tool döngüsüne de açılıyor. Bunsuz tanınmayan sorular
+			// guided'ın gördüğü kanıtı GÖREMİYORDU: aynı problem, chat
+			// yoluna göre farklı derinlikte cevap — operatörün fark
+			// edeceği bir tutarsızlık.
+			//
+			// KOMPAKT izdüşüm, hipotezin tamamı DEĞİL: denetim izi + iş
+			// kırılımı + tek smoking-gun exception. Heap örnek dizileri ve
+			// log şablonları BİLEREK dışarıda — tool sonucu döngüye geri
+			// besleniyor, hacimli diziler bağlamı şişirip asıl sinyali
+			// bastırır.
+			if h.Deep != nil {
+				if len(h.Deep.Checked) > 0 {
+					out["checked"] = h.Deep.Checked
+				}
+				if len(h.Deep.Business) > 0 {
+					out["business"] = h.Deep.Business
+					if len(h.Deep.CodeMeaning) > 0 {
+						out["businessCodeMeaning"] = h.Deep.CodeMeaning
+					}
+				}
+				if len(h.Deep.Exceptions) > 0 {
+					e := h.Deep.Exceptions[0]
+					out["topException"] = map[string]any{
+						"type": e.Type, "message": e.Message, "occurrences": e.Occurrences,
+					}
+				}
+			}
+			return out, nil
 		},
 	}
 }

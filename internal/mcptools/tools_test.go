@@ -240,3 +240,25 @@ func TestNormalizeRenderChart(t *testing.T) {
 		})
 	}
 }
+
+// v0.9.520 — P1 soruşturması serbest tool döngüsüne de açık olmalı.
+// Bunsuz aynı problem, chat yoluna göre farklı derinlikte cevap alır:
+// guided kanıtı görür, tanınmayan soru görmez. Operatörün fark edeceği
+// bir tutarsızlık.
+func TestRootCauseToolDescribesAuditTrail(t *testing.T) {
+	tool := getProblemRootCauseTool(Deps{})
+	d := tool.Description
+
+	for _, want := range []string{"checked", "business", "found=false"} {
+		if !strings.Contains(d, want) {
+			t.Errorf("tool açıklaması %q anlatmıyor — model alanı görse de ne anlama geldiğini bilmez", want)
+		}
+	}
+	// Denetim izinin ANLAMI açıklamada olmalı: model found=false olan bir
+	// sinyali sebep diye göstermemeli. İz sadece veri olarak yollanırsa
+	// modeli daha İDDİALI yapar, daha doğru değil — açıklama o dengeyi
+	// kuran yer (tool sonucuna talimat konulamaz).
+	if !strings.Contains(d, "never cite") && !strings.Contains(d, "insufficient") {
+		t.Error("açıklama uydurma yasağını taşımıyor — izi veri olarak vermek tek başına yetmez")
+	}
+}

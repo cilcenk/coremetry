@@ -580,6 +580,14 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// honest (see applyInboxMinOcc).
 		items, hiddenByMinOcc := applyInboxMinOcc(items, minOcc)
 
+		// v0.9.487 (operatör kararı, prod) — exception türü dışındaki
+		// türler inbox'ta HEP P3: "bakmadığın türde yazmasına gerek yok,
+		// onlar hep P3 olsun, defaultta sadece P1'ler gözüksün". Facet
+		// sayaçlarından ÖNCE uygulanır ki öncelik chip'leri de zorlanmış
+		// değerleri saysın. Yalnız inbox GÖRÜNÜM önceliği — evaluator'ın
+		// Problem.Priority'si (bildirim yönlendirme, drawer) değişmez.
+		forceNonExceptionP3(items)
+
 		// v0.9.330 — facet counts are computed HERE, over everything that
 		// survived the row-level narrows and BEFORE the kind/priority facets
 		// and the cap. That ordering is the whole point: a chip has to report
@@ -633,6 +641,27 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 			"counts": counts,
 		}, nil
 	})
+}
+
+// forceNonExceptionP3 pins every non-exception kind to P3 for the inbox
+// view. v0.9.487 (operatör kararı, prod): operatörün triage sinyali
+// exception grupları; problem/httperror/anomaly/incident satırları kendi
+// önceliğiyle P1 görünümüne karışmasın — hepsi P3 kovasında, tür + öncelik
+// chip'leri üzerinden tek tıkla ulaşılır. Yalnız GÖRÜNÜM: kaynağın kendi
+// Priority'si (Problem drawer'ı, bildirim yönlendirme, /problems eski
+// yüzeyi) değişmez; PriorityReason zorlamayı açıkça söyler.
+func forceNonExceptionP3(items []InboxItem) {
+	for i := range items {
+		if items[i].Kind == "exception" {
+			continue
+		}
+		if items[i].Priority == "P3" {
+			continue
+		}
+		orig := items[i].Priority
+		items[i].Priority = "P3"
+		items[i].PriorityReason = "tür kuralı: exception dışı kalemler inbox'ta P3 (kaynak önceliği " + orig + ")"
+	}
 }
 
 // pickStatus translates the inbox filter into a Problem status.
@@ -754,7 +783,9 @@ func inboxListKey(status, service, search, ownerTeam, sreTeam, env string, limit
 	// different facets sharing one cached page would be the v0.5.187
 	// cross-poisoning shape. Sorted+joined rather than length-only: a
 	// length-based digest is the exact bug that release fixed.
-	return fmt.Sprintf("inbox:v5:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s",
+	// :v6: — v0.9.487 forceNonExceptionP3 satır önceliklerini değiştirdi;
+	// eski cache'lenmiş sayfa yeni sözleşmeymiş gibi servis edilemez.
+	return fmt.Sprintf("inbox:v6:status=%s:svc=%s:q=%s:owner=%s:sre=%s:env=%s:limit=%d:sort=%s:dir=%s:minOcc=%d:kind=%s:prio=%s",
 		status, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc,
 		strings.Join(sortedCopyOf(kinds), "+"), strings.Join(sortedCopyOf(prios), "+"))
 }

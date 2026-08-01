@@ -165,12 +165,16 @@ const SHARD_POLICY_COLS: DataTableColumn<ShardPolicyRow>[] = [
 // olarak yaptığı alt-sorgular buraya girmez — panel taramanın değil,
 // koordinasyon yükünün dağılımını ölçer.
 type Coord = {
-  host: string; selects: number; inserts: number; other: number;
+  host: string; initial: number; selects: number; inserts: number; other: number;
   readRows: number; memoryMB: number; p50Ms: number; p95Ms: number;
+  uptimeS?: number;
 };
 
 const COORD_COLS: DataTableColumn<Coord>[] = [
-  { id: 'host',    label: 'Host',      sortValue: c => c.host,     naturalDir: 'asc',  width: 240 },
+  { id: 'host',    label: 'Host',      sortValue: c => c.host,     naturalDir: 'asc',  width: 220 },
+  // Entry = bu node'un GİRİŞ NOKTASI olduğu sorgu sayısı. Panelin asıl
+  // rakamı: shard alt-sorguları buna girmez, yani saf koordinatör yükü.
+  { id: 'initial', label: 'Entry',     sortValue: c => c.initial,  numeric: true, naturalDir: 'desc', width: 110 },
   { id: 'selects', label: 'SELECT',    sortValue: c => c.selects,  numeric: true, naturalDir: 'desc', width: 110 },
   { id: 'inserts', label: 'INSERT',    sortValue: c => c.inserts,  numeric: true, naturalDir: 'desc', width: 110 },
   { id: 'other',   label: 'Other',     sortValue: c => c.other,    numeric: true, naturalDir: 'desc', width: 90 },
@@ -178,7 +182,16 @@ const COORD_COLS: DataTableColumn<Coord>[] = [
   { id: 'mem',     label: 'Memory',    sortValue: c => c.memoryMB, numeric: true, naturalDir: 'desc', width: 110 },
   { id: 'p50',     label: 'SELECT p50', sortValue: c => c.p50Ms,   numeric: true, naturalDir: 'desc', width: 120 },
   { id: 'p95',     label: 'SELECT p95', sortValue: c => c.p95Ms,   numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'uptime',  label: 'Uptime',     sortValue: c => c.uptimeS ?? 0, numeric: true, naturalDir: 'desc', width: 100 },
 ];
+
+// Kümülatif sayaç yolunda uptime OKUNMAK ZORUNDA: yeni restart etmiş bir
+// node düşük sayı gösterir ve dengesizlik olduğundan büyük görünür.
+function fmtUptime(s?: number): string {
+  if (!s) return '—';
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600);
+  return d > 0 ? `${d}g ${h}s` : `${h}s`;
+}
 
 // Dengesizlik = maxNode / ortalamaNode. 1.00 kusursuz; N node'da tek
 // node her şeyi alıyorsa N'e yaklaşır. Eşikler kaba ama operatörün
@@ -225,8 +238,14 @@ function CoordinatorPanel() {
         >
           {COORD_WINDOWS.map(w => <option key={w.s} value={w.s}>{w.label}</option>)}
         </select>
+        {data && data.source === 'events' && (
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>pencere yok — açılıştan beri</span>
+        )}
         {data && (
           <>
+            <span className={`badge ${imbalanceTone(data.initialImbalance)}`}>
+              Entry spread ×{data.initialImbalance.toFixed(2)}
+            </span>
             <span className={`badge ${imbalanceTone(data.selectImbalance)}`}>
               SELECT spread ×{data.selectImbalance.toFixed(2)}
             </span>
@@ -234,6 +253,13 @@ function CoordinatorPanel() {
               INSERT spread ×{data.insertImbalance.toFixed(2)}
             </span>
             <span className="badge b-gray">{data.mode}</span>
+            <span className="badge b-gray" title={
+              data.source === 'query_log'
+                ? 'system.query_log — seçilen pencere'
+                : data.source === 'events'
+                ? 'system.events — sunucu açılışından beri kümülatif (query_log bu kümede kapalı)'
+                : 'ölçüm okunamadı'
+            }>{data.source === 'query_log' ? 'windowed' : data.source === 'events' ? 'since boot' : 'no source'}</span>
           </>
         )}
         <span style={{ fontSize: 11, color: 'var(--text3)', marginLeft: 'auto' }}>
@@ -259,6 +285,7 @@ function CoordinatorPanel() {
               {dt.sortedRows.map(c => (
                 <tr key={c.host}>
                   <td className="mono" style={{ fontSize: 11 }} title={c.host}>{c.host || '—'}</td>
+                  <td className="num mono"><strong>{fmtNum(c.initial)}</strong></td>
                   <td className="num mono">{fmtNum(c.selects)}</td>
                   <td className="num mono">{fmtNum(c.inserts)}</td>
                   <td className="num mono">{fmtNum(c.other)}</td>
@@ -266,6 +293,7 @@ function CoordinatorPanel() {
                   <td className="num mono">{c.memoryMB.toFixed(0)} MB</td>
                   <td className="num mono">{c.p50Ms.toFixed(0)} ms</td>
                   <td className="num mono">{c.p95Ms.toFixed(0)} ms</td>
+                  <td className="num mono">{fmtUptime(c.uptimeS)}</td>
                 </tr>
               ))}
             </tbody>

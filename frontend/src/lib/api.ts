@@ -2178,13 +2178,20 @@ export const api = {
   chCoordinators: (windowS: number) =>
     get<{
       nodes: Array<{
-        host: string; selects: number; inserts: number; other: number;
+        host: string; initial: number; selects: number; inserts: number; other: number;
         readRows: number; memoryMB: number; p50Ms: number; p95Ms: number;
+        uptimeS?: number;
       }>;
       mode: 'cluster' | 'standalone';
       windowS: number;
       selectImbalance: number;
       insertImbalance: number;
+      initialImbalance: number;
+      // v0.9.502 — "query_log" (pencereli) | "events" (açılıştan beri
+      // kümülatif) | "none" (ikisi de okunamadı). Prod'da query_log
+      // çoğu kurulumda kapalı; UI hangi kaynağı okuduğunu söylemeli
+      // yoksa kümülatif sayıyı pencereli sanır.
+      source: 'query_log' | 'events' | 'none';
       note?: string;
       generatedAt: number;
     }>(`/api/admin/clickhouse/coordinators?windowS=${windowS}`),

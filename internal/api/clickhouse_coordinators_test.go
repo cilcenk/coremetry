@@ -52,6 +52,33 @@ func TestCoordinatorQueryBounds(t *testing.T) {
 	}
 }
 
+// v0.9.502 — prod'da query_log YOK (log_queries=0 → tablo hiç yaratılmaz,
+// okuma UNKNOWN_TABLE verir). Panel o kurulumda boş kalmak yerine
+// system.events'e düşer; `InitialQuery` ProfileEvent'i query_log'daki
+// is_initial_query=1'in birebir karşılığıdır, yani asıl sinyal korunur.
+func TestCoordinatorEventsQuery(t *testing.T) {
+	cl := coordinatorEventsQuery("uptrace")
+	for _, want := range []string{
+		"clusterAllReplicas('uptrace', system.events)", // cluster() DEĞİL
+		"InitialQuery",   // koordinatör sinyali — panelin asıl rakamı
+		"any(uptime())",  // sayaçlar açılıştan beri; restart etmiş node düşük okunur
+		"SETTINGS max_execution_time",
+		"LIMIT 64",
+	} {
+		if !strings.Contains(cl, want) {
+			t.Errorf("events sorgusunda %q yok", want)
+		}
+	}
+	if strings.Contains(cl, "cluster('uptrace'") {
+		t.Error("cluster() kullanılmış — shard başına TEK replika okur, 4 node'un ikisi görünmez olur")
+	}
+
+	solo := coordinatorEventsQuery("")
+	if !strings.Contains(solo, "FROM system.events") || strings.Contains(solo, "clusterAllReplicas") {
+		t.Error("standalone modda düz system.events okunmalı")
+	}
+}
+
 func TestImbalance(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -69,6 +96,12 @@ func TestImbalance(t *testing.T) {
 		{"hafif egim", []uint64{120, 100, 90, 90}, 1.2},
 		// Sıfır trafik dengesizlik DEĞİLDİR — 1.0 dönmeli, NaN değil.
 		{"hic sorgu yok", []uint64{0, 0, 0}, 1},
+		// Prod ölçümü 2026-08-01 (4 node, ~4.2 gün uptime, system.events
+		// InitialQuery). İlk node giriş sorgularının %85.6'sını koordine
+		// ediyordu — okuma havuzu dilimlerinin (v0.9.496/497) düzeltmeye
+		// çalıştığı durumun sayısal fotoğrafı. Dilimler prod'a çıkınca bu
+		// oranın düşmesi beklenir; test rakamı ÖLÇÜT olarak duruyor.
+		{"prod 2026-08-01 giris", []uint64{22071239, 1565701, 1071510, 1079233}, 3.42},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -222,19 +222,21 @@ export function fmtXTicks(splits: number[]): string[] {
 // bakıldığı tooltip'ten okunamıyordu (x ekseninde gün ancak gün DEĞİŞTİĞİ
 // tick'te görünüyor — fmtXTicks). Tarih artık her zaman orada:
 //
-//   "31.07 23:12"      → gün.ay + HH:MM
-//   "31.07 23:12:05"   → tick aralığı < 60sn ise saniye de eklenir
+//   "31.07.2026 23:12"    → gün.ay.yıl + HH:MM
+//   "31.07.2026 23:12:05"  → tick aralığı < 60sn ise saniye de eklenir
 //
 // Saniye kuralı fmtXTicks'in v0.9.329'daki kuralının AYNISI (adım < 60sn):
 // eksen ile tooltip aynı çözünürlükte konuşsun; dakikalık bir grafiğe
 // gürültülü ":00" eki gelmesin. stepSec verilmezse saniye yok.
 //
-// Biçim gün.ay (31.07) — TR okuma sırası; ISO değil çünkü bu bir ETİKET,
-// makine değeri değil (tam damga zaten trace/log yüzeylerinde).
+// Biçim gün.ay.yıl (31.07.2026) — TR okuma sırası; log TIME kolonuyla aynı
+// düzen. v0.9.488 (operatör: "burada ay gün yıl yazmıyor") yıl da eklendi —
+// tooltip bir ETİKET, ama yıl olmadan geçen yılın penceresi bugünmüş gibi
+// okunabiliyordu.
 export function fmtTooltipTime(tSec: number, stepSec?: number | null): string {
   const d = new Date(tSec * 1000);
   const p2 = (n: number) => String(n).padStart(2, '0');
-  const head = `${p2(d.getDate())}.${p2(d.getMonth() + 1)} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  const head = `${p2(d.getDate())}.${p2(d.getMonth() + 1)}.${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
   return stepSec != null && isFinite(stepSec) && stepSec < 60
     ? `${head}:${p2(d.getSeconds())}`
     : head;

@@ -10,7 +10,7 @@ import {
   Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Search, Hash, Eye,
-  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, Rocket, type LucideIcon,
+  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, type LucideIcon,
 } from 'lucide-react';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
@@ -92,8 +92,14 @@ const NAV_GROUPS: NavGroup[] = [
       // değiştirdi (Clusters öne, Topology gruba sona).
       { href: '/clusters',    label: 'nav.clusters',   icon: Server }, // v0.8.578 — Thanos pod metrikleri
       { href: '/databases',   label: 'nav.databases',  icon: Database },
-      // v0.9.435 (operatör istegi) — filo Deploys/Rollouts geçmişi.
-      { href: '/deploys',     label: 'nav.deploys',    icon: Rocket },
+      // v0.9.509 — /deploys sidebar'dan GİZLENDİ (operatör: "deploy kısmı
+      // sağlıklı çalışmıyor, önümüzden gizleyelim şimdilik; daha sonra
+      // belki Thanos ya da Argo'dan alırız"). v0.9.435'te eklenmişti.
+      // Rota + sayfa + ⌘K girişi + deploy MARKER'ları (grafiklerdeki
+      // dikey çizgiler, Problems/Anomalies deploy zenginleştirmesi)
+      // YAŞIYOR — gizlenen yalnız gezinim girişi. Geri gelirse tek satır.
+      // Kaynak değişikliği (Thanos/Argo) gelirse burası aynen açılır,
+      // besleyen sorgu değişir.
       { href: '/messaging',   label: 'nav.messaging',  icon: MessageSquare },
       { href: '/service-map', label: 'nav.topology',   icon: Workflow }, // v0.8.219 — /topology retired → /service-map
       // v0.8.490 — External + Hosts sidebar'dan gizlendi (operatör:

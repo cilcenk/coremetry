@@ -78,6 +78,47 @@ GROUP BY trace_id ORDER BY span_count DESC LIMIT 20` },
 FROM system.query_log WHERE event_time >= now() - INTERVAL 30 MINUTE
   AND type = 'QueryFinish'
 ORDER BY query_duration_ms DESC LIMIT 30` },
+  // v0.9.506 — küme sağlığı / yük dağılımı üçlüsü. Operatör bunları
+  // elle yazıyordu; /admin/clickhouse paneli aynı veriyi gösteriyor ama
+  // konsolda ham okuma da lazım oluyor.
+  { label: 'Cluster nodes — küme adı + kayıtlı node listesi', sql:
+    `-- Küme adını buradan öğren; aşağıdaki iki örnek onu istiyor.
+-- is_local = 1 olan satır, bu sorguyu koşturan node.
+SELECT cluster, shard_num, replica_num, host_name, port, is_local
+FROM system.clusters
+ORDER BY cluster, shard_num, replica_num` },
+  { label: 'Koordinatör dağılımı — yük node\'lara eşit mi (query_log GEREKMEZ)', sql:
+    `-- <CLUSTER> yerine system.clusters'tan aldığın küme adını yaz.
+--
+-- InitialQuery = o node'un GİRİŞ NOKTASI olduğu sorgu sayısı; Distributed
+-- bir sorguda yalnız koordinatör böyle sayar, shard'ların alt-sorguları
+-- saymaz. Yani taramanın nerede yapıldığını değil, parse + fan-out +
+-- merge + final aggregation yükünün nerede biriktiğini ölçer.
+--
+-- DİKKAT: sayaçlar SUNUCU AÇILIŞINDAN BERİ kümülatif. Tek okuma birikmiş
+-- eski dengesizliği gösterir; bir değişikliğin etkisini ölçmek için iki
+-- kez çalıştırıp FARKA bak (up_s kolonu node'ların yaşını verir — yeni
+-- restart etmiş node düşük okunur).
+--
+-- clusterAllReplicas kullanılıyor, cluster() DEĞİL: cluster() shard başına
+-- TEK replika okur, 2 shard x 2 replika bir kümede iki node görünmez olur.
+SELECT hostName()                           AS node,
+       any(uptime())                        AS up_s,
+       sumIf(value, event = 'InitialQuery') AS initial,
+       sumIf(value, event = 'SelectQuery')  AS selects,
+       sumIf(value, event = 'InsertQuery')  AS inserts
+FROM clusterAllReplicas('<CLUSTER>', system.events)
+WHERE event IN ('InitialQuery', 'SelectQuery', 'InsertQuery')
+GROUP BY node
+ORDER BY initial DESC` },
+  { label: 'Anlık bağlantı dağılımı — hangi node kaç sorgu çalıştırıyor', sql:
+    `-- <CLUSTER> yerine küme adını yaz. Kümülatif değil ANLIK görüntü:
+-- şu an her node'da çalışan sorgu sayısı.
+SELECT hostName() AS node, count() AS running
+FROM clusterAllReplicas('<CLUSTER>', system.processes)
+WHERE query NOT LIKE '%system.processes%'
+GROUP BY node
+ORDER BY node` },
 ];
 
 const HISTORY_KEY = 'coremetry-sql-history';

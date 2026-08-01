@@ -130,19 +130,23 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
         ) : ''}
       </div>
 
-      {/* Kaynak chip'leri (RAG dayanağı) */}
+      {/* Kaynak chip'leri (RAG dayanağı). v0.9.515 (operatör): doküman
+          ADI çipte GÖSTERİLMİYOR — dosya adı iç artefakt, cevabın parçası
+          değil. Çip yine de duruyor ki cevabın bir dokümana dayandığı
+          görünsün; ad ipucuna (hover) taşındı, yani denetlenebilirlik
+          kaybolmadan gürültü kalktı. */}
       {!isUser && !!turn.sources?.length && !turn.pending && !turn.error && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
           {turn.sources.map((src, i) => src.ref ? (
             <a key={i} href={src.ref} target="_blank" rel="noopener"
               className="badge b-info" style={{ textDecoration: 'none', fontSize: 10 }}
-              title={`benzerlik ${(src.score * 100).toFixed(0)}%`}>
-              📄 {src.doc} §{src.chunk}
+              title={`${src.doc} §${src.chunk} · benzerlik ${(src.score * 100).toFixed(0)}%`}>
+              📄 Kaynak §{src.chunk}
             </a>
           ) : (
             <span key={i} className="badge b-info" style={{ fontSize: 10 }}
-              title={`benzerlik ${(src.score * 100).toFixed(0)}%`}>
-              📄 {src.doc} §{src.chunk}
+              title={`${src.doc} §${src.chunk} · benzerlik ${(src.score * 100).toFixed(0)}%`}>
+              📄 Kaynak §{src.chunk}
             </span>
           ))}
         </div>

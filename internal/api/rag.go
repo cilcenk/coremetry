@@ -301,7 +301,9 @@ func ragDocID(name string) string {
 
 // ragSystemPrompt — 2B hedefe uygun kısa, katı talimat: yalnız verilen
 // bağlamdan cevapla; bağlamda yoksa uydurma.
-const ragSystemPrompt = `Sen Coremetry'nin doküman asistanısın. SADECE sana verilen BAĞLAM parçalarındaki bilgiyle, Türkçe ve öz cevap ver. Cevap bağlamda yoksa "Yüklü dokümanlarda bu bilgi yok." de — asla tahmin etme, asla bağlam dışı bilgi ekleme.`
+const ragSystemPrompt = `Sen Coremetry'nin doküman asistanısın. SADECE sana verilen BAĞLAM parçalarındaki bilgiyle, Türkçe ve öz cevap ver. Cevap bağlamda yoksa "Yüklü dokümanlarda bu bilgi yok." de — asla tahmin etme, asla bağlam dışı bilgi ekleme.
+
+DOSYA ADI ANMA. Bağlam parçaları numaralıdır ama dosya/doküman ADI sana verilmez ve cevapta da geçmemeli — "X dokümanına göre", "şu dosyada yazıyor" gibi ifadeler KULLANMA. Bilgiyi doğrudan söyle; kaynağın nereden geldiğini arayüz zaten gösteriyor.`
 
 // ragChatAnswer — guided telemetri router'ı eşleşmediğinde, serbest
 // tool döngüsünden önce denenen doküman yolu. handled=false → RAG
@@ -355,7 +357,13 @@ func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs
 	}
 	sources := make([]src, 0, len(hits))
 	for i, h := range hits {
-		fmt.Fprintf(&b, "[%d] (%s §%d)\n%s\n\n", i+1, h.DocName, h.ChunkIdx+1, h.Content)
+		// v0.9.515 (operatör): doküman ADI modele VERİLMİYOR. Verildiğinde
+		// model "kanal_kodlari dosyasına göre…" diye anlatıyordu — dosya adı
+		// bir bilgi değil, iç artefakt. Parça numarası kalıyor ki model
+		// gerekirse "kaynak 2" diye atıf yapabilsin. Provenance kaybolmuyor:
+		// sources dizisi doküman adını taşımaya devam ediyor, arayüz onu
+		// ipucu (title) olarak gösteriyor.
+		fmt.Fprintf(&b, "[%d] §%d\n%s\n\n", i+1, h.ChunkIdx+1, h.Content)
 		sources = append(sources, src{Doc: h.DocName, Ref: h.SourceRef, Chunk: h.ChunkIdx + 1, Score: h.Score})
 	}
 

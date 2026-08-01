@@ -40,14 +40,20 @@ export function clusterAnnotations(
     }));
 }
 
-const KIND_GLYPH: Record<string, string> = {
+export const KIND_GLYPH: Record<string, string> = {
   deploy: '▲', rollout: '↻', alert_fired: '🔥', alert_resolved: '✓',
   anomaly: '◈', event: '◇',
 };
-const KIND_COLOR: Record<string, string> = {
+export const KIND_COLOR: Record<string, string> = {
   deploy: 'var(--text2)', rollout: 'var(--text2)',
   alert_fired: 'var(--err)', alert_resolved: 'var(--ok)',
   anomaly: 'var(--warn)', event: 'var(--text3)',
+};
+// v0.9.492 — lejant etiketleri (yalnız şeritte GERÇEKTEN görünen türler
+// çizilir; ServiceAnnotationLane şeridin altına basar).
+export const KIND_LABEL_TR: Record<string, string> = {
+  deploy: 'deploy', rollout: 'rollout', alert_fired: 'alarm',
+  alert_resolved: 'çözüldü', anomaly: 'anomali', event: 'olay',
 };
 
 function targetHref(it: AnnotationItem): string | null {
@@ -69,13 +75,49 @@ export function AnnotationLane({ items, fromNs, toNs, onZoomTo }: {
   const clusters = useMemo(
     () => clusterAnnotations(items, fromNs, toNs), [items, fromNs, toNs]);
   const [open, setOpen] = useState<number | null>(null);
+  // v0.9.492 (operatör: "alev ve tick işaretleri anlaşılmıyor, timeline
+  // gibi olsa daha iyi") — şerit gerçek bir zaman çizgisine dönüştü:
+  // kesikli süs çizgisi yerine SOLID baseline, her işaretin baseline'a
+  // inen renkli bir sapı, ve şeridin KENDİ saat etiketleri (üç kartın
+  // içindeki eksenlerle hizalanamıyordu; kendi ekseni konumu okunur
+  // kılar). Kümeleme/hover/tık-zoom aynen.
+  const axis = useMemo(() => {
+    const fracs = [0, 0.25, 0.5, 0.75, 1];
+    const secs = fracs.map(f => (fromNs + f * (toNs - fromNs)) / 1e9);
+    const sameDay = new Date(secs[0] * 1000).toDateString() ===
+      new Date(secs[secs.length - 1] * 1000).toDateString();
+    const fmt = (s: number) => {
+      const d = new Date(s * 1000);
+      const p2 = (n: number) => String(n).padStart(2, '0');
+      const hm = `${p2(d.getHours())}:${p2(d.getMinutes())}`;
+      return sameDay ? hm : `${p2(d.getDate())}.${p2(d.getMonth() + 1)} ${hm}`;
+    };
+    return fracs.map((f, i) => ({ frac: f, label: fmt(secs[i]) }));
+  }, [fromNs, toNs]);
   if (clusters.length === 0) return null;
+  const BASE = 17; // baseline'ın üstten piksel konumu
   return (
-    <div style={{
-      position: 'relative', height: 22, marginTop: 2,
-      borderTop: '1px dashed var(--border)',
-    }}
+    <div style={{ position: 'relative', height: 34, marginTop: 2 }}
       onMouseLeave={() => setOpen(null)}>
+      {/* baseline */}
+      <div style={{
+        position: 'absolute', top: BASE, left: 0, right: 0,
+        borderTop: '1px solid var(--border)',
+      }} />
+      {/* saat etiketleri + eksen çentikleri (uçlar taşmasın diye clamp) */}
+      {axis.map((t, i) => (
+        <span key={`ax${i}`}>
+          <span style={{
+            position: 'absolute', top: BASE - 3, left: `${t.frac * 100}%`,
+            width: 1, height: 7, background: 'var(--border)',
+          }} />
+          <span style={{
+            position: 'absolute', top: BASE + 5, left: `${t.frac * 100}%`,
+            transform: i === 0 ? 'none' : i === axis.length - 1 ? 'translateX(-100%)' : 'translateX(-50%)',
+            fontSize: 9, color: 'var(--text3)', lineHeight: 1,
+          }}>{t.label}</span>
+        </span>
+      ))}
       {clusters.map((c, i) => {
         const glyphs = [...new Set(c.items.map(x => KIND_GLYPH[x.kind] ?? '•'))];
         const label = c.items.length > 1
@@ -91,20 +133,26 @@ export function AnnotationLane({ items, fromNs, toNs, onZoomTo }: {
             title={c.items.length === 1 ? c.items[0].title : undefined}
             style={{
               position: 'absolute', left: `${c.frac * 100}%`,
-              transform: 'translateX(-50%)', top: 3, cursor: 'pointer',
-              fontSize: 11, lineHeight: 1, color,
+              transform: 'translateX(-50%)', top: 1, cursor: 'pointer',
+              fontSize: 11, lineHeight: 1, color, zIndex: 2,
+              display: 'inline-flex', flexDirection: 'column', alignItems: 'center',
               ...(c.items.length > 1 ? {
                 background: 'var(--bg2)', border: '1px solid var(--border)',
                 borderRadius: 999, padding: '1px 7px', fontSize: 9.5,
               } : {}),
             }}>
             {label}
+            {/* işaretin baseline'a inen sapı — konum bir ZAMAN noktası
+                olarak okunur (timeline dili), simge havada yüzmez */}
+            {c.items.length === 1 && (
+              <span style={{ width: 1.5, height: 5, marginTop: 1, background: color }} />
+            )}
           </span>
         );
       })}
       {open != null && clusters[open] && (
         <div style={{
-          position: 'absolute', bottom: 24, zIndex: 6,
+          position: 'absolute', bottom: 36, zIndex: 6,
           left: `min(max(${clusters[open].frac * 100}%, 130px), calc(100% - 130px))`,
           transform: 'translateX(-50%)', width: 260,
           background: 'var(--bg1)', border: '1px solid var(--accent)',

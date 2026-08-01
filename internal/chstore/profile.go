@@ -8,7 +8,7 @@ import (
 
 // InsertProfile stores a single pprof profile.
 func (s *Store) InsertProfile(ctx context.Context, p *Profile) error {
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO profiles")
+	batch, err := s.ingestWriteConn().PrepareBatch(ctx, "INSERT INTO profiles")
 	if err != nil {
 		return fmt.Errorf("prepare profiles: %w", err)
 	}

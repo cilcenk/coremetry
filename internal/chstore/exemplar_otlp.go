@@ -68,7 +68,7 @@ func (s *Store) InsertExemplars(ctx context.Context, rows []*ExemplarRow) error 
 	ctx = asyncInsertCtx(ctx)
 	// Named column list (v0.8.186 discipline): fails loudly on a stale
 	// schema instead of writing into the wrong column.
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO exemplars
+	batch, err := s.ingestWriteConn().PrepareBatch(ctx, `INSERT INTO exemplars
 		(series_fingerprint, metric_name, service_name, timestamp,
 		 value, trace_id, span_id, filtered_attributes)`)
 	if err != nil {

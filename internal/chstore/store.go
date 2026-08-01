@@ -17,8 +17,13 @@ import (
 
 type Store struct {
 	conn driver.Conn
-	cfg  config.CHConfig
-	ret  config.RetentionConfig
+	// ingest is the RoundRobin pool used ONLY for high-volume telemetry
+	// INSERTs — see the two-pool rationale at the clickhouse.Open calls
+	// (v0.9.486). nil in tests that build Store{} directly; use
+	// ingestWriteConn(), never the field.
+	ingest driver.Conn
+	cfg    config.CHConfig
+	ret    config.RetentionConfig
 
 	// service_version_5m readiness latch (v0.9.249). A materialized
 	// view only populates from inserts made after it exists, so for
@@ -360,55 +365,78 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	// override unmistakable).
 	log.Printf("[chstore] per-query memory limits: max_memory_usage=%d, external_group_by=%d, external_sort=%d bytes",
 		maxMem, extGroupBy, extSort)
-	conn, err := clickhouse.Open(&clickhouse.Options{
-		Addr: hosts,
-		// v0.9.481 (operator-reported, prod: "CH tek node'a mı bağlanıyor?")
-		// — EVET, bağlanıyordu: strateji set edilmeyince clickhouse-go
-		// varsayılanı ConnOpenInOrder'dır; havuzdaki HER bağlantı listedeki
-		// ilk sağlıklı host'a gider, kalan 3 host yalnız failover'dı. Tüm
-		// koordinasyon (async insert birleştirme, GROUP BY merge, FINAL)
-		// tek node'da birikiyordu — part hotspot + replikasyon gecikmesinin
-		// tek yerde toplanmasıyla tutarlı. RoundRobin bağlantıları 4 node'a
-		// dağıtır; Coremetry oturum durumu/temp tablo kullanmaz (düz sorgu +
-		// çağrı başına PrepareBatch), sorgu koordinatörünün dönmesi güvenli.
-		// SQL console (runquery.go) B İLEREK in-order kaldı: admin belirli
-		// node'da system.* okurken bağlantının node değiştirmesi yanıltır.
-		ConnOpenStrategy: clickhouse.ConnOpenRoundRobin,
-		Auth:        clickhouse.Auth{Database: cfg.Database, Username: cfg.Username, Password: cfg.Password},
-		TLS:         tlsCfg,
-		Compression: &clickhouse.Compression{Method: clickhouse.CompressionLZ4},
-		DialTimeout: dialTimeout,
-		// v0.8.340 (HA audit H2) — the driver's default ReadTimeout is
-		// 300s: a CH that ACCEPTS the TCP connection and never answers
-		// (keeper pause, asymmetric partition) held every query — and
-		// every ingest flusher — for five minutes. Server-side
-		// max_execution_time never fires when the query never executes.
-		// 30s covers the slowest legitimate reads (heatmap budget is 3s,
-		// bulk inserts single-digit seconds) with generous margin.
-		ReadTimeout:     30 * time.Second,
-		MaxOpenConns:    maxConns,
-		MaxIdleConns:    maxConns / 2,
-		ConnMaxLifetime: time.Hour,
-		Settings: clickhouse.Settings{
-			"max_execution_time":                       60,
-			"max_memory_usage":                         maxMem,
-			"max_bytes_before_external_group_by":       extGroupBy,
-			"max_bytes_before_external_sort":           extSort,
-			"distributed_aggregation_memory_efficient": 1,
-		},
-	})
+	// chOpts builds a FRESH options struct per call — two pools must not
+	// share the Settings map (the driver retains it).
+	chOpts := func() *clickhouse.Options {
+		return &clickhouse.Options{
+			Addr:        hosts,
+			Auth:        clickhouse.Auth{Database: cfg.Database, Username: cfg.Username, Password: cfg.Password},
+			TLS:         tlsCfg,
+			Compression: &clickhouse.Compression{Method: clickhouse.CompressionLZ4},
+			DialTimeout: dialTimeout,
+			// v0.8.340 (HA audit H2) — the driver's default ReadTimeout is
+			// 300s: a CH that ACCEPTS the TCP connection and never answers
+			// (keeper pause, asymmetric partition) held every query — and
+			// every ingest flusher — for five minutes. Server-side
+			// max_execution_time never fires when the query never executes.
+			// 30s covers the slowest legitimate reads (heatmap budget is 3s,
+			// bulk inserts single-digit seconds) with generous margin.
+			ReadTimeout:     30 * time.Second,
+			MaxOpenConns:    maxConns,
+			MaxIdleConns:    maxConns / 2,
+			ConnMaxLifetime: time.Hour,
+			Settings: clickhouse.Settings{
+				"max_execution_time":                       60,
+				"max_memory_usage":                         maxMem,
+				"max_bytes_before_external_group_by":       extGroupBy,
+				"max_bytes_before_external_sort":           extSort,
+				"distributed_aggregation_memory_efficient": 1,
+			},
+		}
+	}
+	// Main conn: strategy DELIBERATELY left at the driver default
+	// (ConnOpenInOrder — every connection goes to the first healthy host).
+	// v0.9.486 (operator-reported, prod: "/users her refresh'te farklı
+	// sayıda kullanıcı — 2, sonra 205"): admin/state tabloları (users,
+	// teams, system_settings, alert_rules…) her kurulumda tek tutarlı
+	// tablo DEĞİL — cluster_name'siz kurulumlarda ve cluster moduna
+	// GEÇİŞTEN ÖNCE yaratılmış tablolarda node-lokaldirler (ON CLUSTER
+	// IF NOT EXISTS mevcut lokal tabloyu Replicated'a çevirmez). v0.9.481
+	// RoundRobin'i ANA bağlantıya koyunca her state okuması farklı node'un
+	// kopyasına düştü. State doğruluğu > okuma dağıtımı: ana bağlantı
+	// in-order kalır, RoundRobin aşağıdaki ingest havuzuna taşındı.
+	conn, err := clickhouse.Open(chOpts())
 	if err != nil {
 		return nil, fmt.Errorf("connect: %w", err)
 	}
 	if err := conn.Ping(ctx); err != nil {
 		return nil, fmt.Errorf("ping: %w", err)
 	}
+	// Ingest conn: RoundRobin — the actual v0.9.481 fix, now scoped to
+	// where it is SAFE. High-volume telemetry INSERTs (spans / logs /
+	// metric_points / profiles / exemplars / span_links) target Distributed
+	// wrappers (or a single node in monolithic mode), so any coordinator
+	// works and spreading them fixes the first-node saturation the
+	// operator reported (CPU climb + ingest "buffer full" drops). Reads
+	// and state writes stay on the in-order main conn. SQL console
+	// (runquery.go) remains deliberately in-order on its own conn.
+	ingestOpts := chOpts()
+	ingestOpts.ConnOpenStrategy = clickhouse.ConnOpenRoundRobin
+	ingest, err := clickhouse.Open(ingestOpts)
+	if err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("connect (ingest pool): %w", err)
+	}
+	if err := ingest.Ping(ctx); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("ping (ingest pool): %w", err)
+	}
 
 	// v0.6.42 — wrap conn so every Query/Exec/QueryRow/PrepareBatch
 	// becomes a child span under the inbound request span (when
 	// selfobs is enabled). Noop tracer when disabled — essentially
 	// zero overhead. See internal/chstore/traced_conn.go.
-	s := &Store{conn: newTracedConn(conn), cfg: cfg, ret: ret}
+	s := &Store{conn: newTracedConn(conn), ingest: newTracedConn(ingest), cfg: cfg, ret: ret}
 	// v0.5.437 — self-heal pass. Detects HighVolumeTables `_local`
 	// MVs/aggregates that exist in system.tables (engine
 	// Replicated*) but are missing from system.replicas — a state
@@ -461,8 +489,24 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	return s, nil
 }
 
-func (s *Store) Close() error      { return s.conn.Close() }
+func (s *Store) Close() error {
+	if s.ingest != nil {
+		s.ingest.Close()
+	}
+	return s.conn.Close()
+}
 func (s *Store) Conn() driver.Conn { return s.conn }
+
+// ingestWriteConn returns the RoundRobin pool for high-volume telemetry
+// INSERTs, falling back to the main conn when the second pool was never
+// opened (zero-value Store in tests). State tables must NEVER write
+// through this — see the v0.9.486 two-pool rationale in New.
+func (s *Store) ingestWriteConn() driver.Conn {
+	if s.ingest != nil {
+		return s.ingest
+	}
+	return s.conn
+}
 
 // ClusterName returns the configured CH cluster identifier (e.g.
 // the value that lands inside `ON CLUSTER`) when the operator set

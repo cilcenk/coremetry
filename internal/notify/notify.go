@@ -34,8 +34,8 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"text/template"
 	"sync"
+	"text/template"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -104,11 +104,11 @@ type TeamsChannelConfig struct {
 //   - AccountID:    the Zoom account UUID (Zoom calls it Account ID)
 //   - ClientID:     OAuth client_id from the Server-to-Server app
 //   - ClientSecret: OAuth client_secret (write-only after save —
-//                   the UI never echoes it back)
+//     the UI never echoes it back)
 //   - ChannelID:    the channel JID for the target chat channel
-//                   (Zoom's "to_channel" field on the messages API)
+//     (Zoom's "to_channel" field on the messages API)
 //   - ToContact:    optional fallback — email of a single contact
-//                   to DM when ChannelID is empty
+//     to DM when ChannelID is empty
 //
 // On send the notifier exchanges credentials for an access
 // token via /oauth/token and POSTs the chat message to
@@ -187,6 +187,15 @@ type Notifier struct {
 	mu       sync.RWMutex
 	smtp     SMTPSettings
 	smtpRead time.Time // last refresh — short TTL avoids hammering CH on every alert
+
+	// awaiting (v0.9.513) — P1 e-postası AI özetini beklerken aynı
+	// problem için ikinci bir bekleyici doğmasın. sendTeamMail'in dedup'ı
+	// notification_log'a YAZILDIKTAN sonra çalışır; bekleme penceresinde
+	// (≤45sn) eşzamanlı bir SendProblemAlert dedup'ı ikinci kez geçip
+	// ÇİFT mail attırabilirdi. Süreç-içi koruma o pencereyi kapatır;
+	// pod'lar arası garanti zaten notification_log'da.
+	awaitMu  sync.Mutex
+	awaiting map[string]bool
 
 	// bus is the optional SSE broker. When set, every problem-
 	// open / problem-resolve / anomaly fire publishes a typed
@@ -537,6 +546,62 @@ func resolveTeamRecipients(md *chstore.ServiceMetadata, tc chstore.TeamContacts)
 // notification_log record are byte-identical to a hand-configured
 // e-mail channel. Soft-fail throughout — routing must never block or
 // crash the evaluator's notify path.
+// v0.9.513 — P1 e-postası AI kök-sebep özetini bekler.
+//
+// Operatör: "P1 açık problemleri notification olarak ekibe gönderirken
+// mail içinde AI yorumunu da ekleyebilir miyiz."
+//
+// Zamanlama sorunu: SendProblemAlert problem açılır açılmaz ANINDA
+// tetikleniyor (dokuz ayrı yerden, `go` ile), ProblemExplainer ise 30
+// saniyelik tikte çalışıyor ve üstüne bir LLM turu var. "Varsa ekle"
+// deseydik ilk mailde özet neredeyse HER ZAMAN boş olurdu — yani
+// özellik çoğu zaman çalışmazdı.
+//
+// Operatör kararı (seçenek A): YALNIZ e-posta bekler. SSE / webhook /
+// uygulama-içi bildirim anında gider — gerçek zamanlı sinyal kaybolmaz.
+// E-posta zaten dakikalar mertebesinde bir kanal; oraya ≤45 saniye
+// eklemek sinyal kaybı değil.
+const (
+	aiSummaryWaitMax = 45 * time.Second
+	aiSummaryPoll    = 5 * time.Second
+)
+
+// shouldAwaitAISummary — beklemenin ANLAMLI olduğu tek hal. Explainer
+// yalnız kritik + açık + özeti boş problemleri dolduruyor; başka bir
+// durumda beklemek e-postayı boşuna geciktirir.
+func shouldAwaitAISummary(p chstore.Problem) bool {
+	return p.Status == "open" &&
+		strings.EqualFold(p.Severity, "critical") &&
+		strings.TrimSpace(p.AISummary) == ""
+}
+
+// awaitAISummary — özet dolana ya da süre dolana kadar problemi yeniden
+// okur. Süre dolarsa problemi OLDUĞU GİBİ döndürür ve mail özetsiz gider;
+// bekleme bir garanti değil, bir fırsat penceresi.
+func (n *Notifier) awaitAISummary(ctx context.Context, p chstore.Problem) chstore.Problem {
+	deadline := time.Now().Add(aiSummaryWaitMax)
+	for time.Now().Before(deadline) {
+		select {
+		case <-ctx.Done():
+			return p
+		case <-time.After(aiSummaryPoll):
+		}
+		fresh, err := n.store.GetProblem(ctx, p.ID)
+		if err != nil || fresh == nil {
+			continue
+		}
+		if strings.TrimSpace(fresh.AISummary) != "" {
+			return *fresh
+		}
+		// Problem bekleme sırasında kapandıysa beklemeye devam etmenin
+		// anlamı yok — açık olmayan bir probleme explainer bakmaz.
+		if fresh.Status != "open" {
+			return *fresh
+		}
+	}
+	return p
+}
+
 func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chstore.ServiceMetadata) {
 	tc, err := n.store.GetTeamContacts(ctx)
 	if err != nil {
@@ -577,9 +642,42 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 		Type:   "email",
 		Config: cfg,
 	}
-	if err := n.sendOne(ctx, ch, p, problemRelatedKind(p), p.ID); err != nil {
-		log.Printf("[notify] team-routing (%s → %d rcpt): %v", p.Service, len(to), err)
+	send := func(ctx context.Context, p chstore.Problem) {
+		if err := n.sendOne(ctx, ch, p, problemRelatedKind(p), p.ID); err != nil {
+			log.Printf("[notify] team-routing (%s → %d rcpt): %v", p.Service, len(to), err)
+		}
 	}
+	if !shouldAwaitAISummary(p) {
+		send(ctx, p)
+		return
+	}
+	// Bekleme ASENKRON: sendTeamMail SendProblemAlert içinde kanal
+	// fan-out'undan ÖNCE çağrılıyor, burada senkron beklemek Slack/webhook
+	// bildirimlerini de geciktirirdi. Operatörün onayladığı şey yalnız
+	// e-postanın beklemesiydi.
+	n.awaitMu.Lock()
+	if n.awaiting == nil {
+		n.awaiting = map[string]bool{}
+	}
+	if n.awaiting[p.ID] {
+		n.awaitMu.Unlock()
+		return // bu problem için zaten bir bekleyici var
+	}
+	n.awaiting[p.ID] = true
+	n.awaitMu.Unlock()
+
+	go func() {
+		defer func() {
+			n.awaitMu.Lock()
+			delete(n.awaiting, p.ID)
+			n.awaitMu.Unlock()
+		}()
+		// Çağıranın ctx'i iptal olursa bekleme ölmesin — SendProblemAlert
+		// zaten `go` ile çağrılıyor ve çoğu çağıran Background veriyor.
+		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), aiSummaryWaitMax+aiSummaryPoll)
+		defer cancel()
+		send(bg, n.awaitAISummary(bg, p))
+	}()
 }
 
 // SendRunbookComplete fans a finished runbook execution out to the configured
@@ -814,6 +912,13 @@ func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 	if u := n.problemURL(p.ID); u != "" {
 		fmt.Fprintf(&b, "Open:       %s\n", u)
 	}
+	// v0.9.513 — AI kök-sebep özeti. Boşsa hiçbir şey basılmaz (mevcut
+	// mail biçimi birebir korunur). "AI" etiketi BİLEREK duruyor: özet
+	// bir modelin yorumu, ölçülmüş bir gerçek değil — okuyan ekip farkı
+	// bilmeli.
+	if sum := strings.TrimSpace(p.AISummary); sum != "" {
+		fmt.Fprintf(&b, "\nAI kök-sebep yorumu:\n%s\n", sum)
+	}
 	return b.String()
 }
 
@@ -833,6 +938,7 @@ func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 //     structure Word actually honours.
 //   - <p>/<div> margins get Word's own paragraph spacing stacked on
 //     top — spacing must come from <td> padding, never margins.
+//
 // No JS (mail clients never execute it), no external assets. Every
 // dynamic field is HTML-escaped — service/rule/description are
 // operator-shaped free text and must never inject markup.
@@ -881,6 +987,17 @@ func (n *Notifier) buildEmailHTML(p chstore.Problem) string {
 		b.WriteString(row("Runbook", `<a href="`+esc(p.RunbookURL)+`" style="color:#2563eb">`+esc(p.RunbookURL)+`</a>`))
 	}
 	b.WriteString(`</table>`)
+	// v0.9.513 — AI kök-sebep özeti. Word-güvenli: kart içinde bir tablo
+	// satırı, kenarlık <td> üzerinde (div + border-left Word'de düşer).
+	// Etiket "AI yorumu" — modelin yorumu olduğu gizlenmiyor.
+	if sum := strings.TrimSpace(p.AISummary); sum != "" {
+		b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:16px 0 0"><tr>` +
+			`<td bgcolor="#f9fafb" style="` + font + `;padding:12px 14px;border-left:3px solid #6b7280">` +
+			`<div style="` + font + `;font-size:11px;font-weight:700;color:#6b7280;letter-spacing:.5px;padding-bottom:6px">AI KÖK-SEBEP YORUMU</div>` +
+			`<div style="` + font + `;font-size:13px;color:#374151;line-height:1.5">` +
+			strings.ReplaceAll(esc(sum), "\n", "<br>") + `</div>` +
+			`</td></tr></table>`)
+	}
 	if u := n.problemURL(p.ID); u != "" {
 		// Bulletproof button: padding + bgcolor on the td (Word honours
 		// both), the anchor only colours its text.
@@ -1006,11 +1123,11 @@ func (n *Notifier) sendSlack(ctx context.Context, c chstore.NotificationChannel,
 	color := severityColor(p.Severity)
 	t := time.Unix(0, p.StartedAt).UTC().Format(time.RFC3339)
 	fields := []map[string]any{
-		{"title": "Service",   "value": p.Service,                                       "short": true},
-		{"title": "Severity",  "value": strings.ToUpper(p.Severity),                    "short": true},
-		{"title": "Metric",    "value": p.Metric,                                        "short": true},
-		{"title": "Value",     "value": fmt.Sprintf("%.2f (threshold %.2f)", p.Value, p.Threshold), "short": true},
-		{"title": "Started",   "value": t,                                               "short": false},
+		{"title": "Service", "value": p.Service, "short": true},
+		{"title": "Severity", "value": strings.ToUpper(p.Severity), "short": true},
+		{"title": "Metric", "value": p.Metric, "short": true},
+		{"title": "Value", "value": fmt.Sprintf("%.2f (threshold %.2f)", p.Value, p.Threshold), "short": true},
+		{"title": "Started", "value": t, "short": false},
 	}
 	// Runbook link as a clickable Slack mrkdwn field — the
 	// oncall on mobile lands on the playbook in one tap.
@@ -1057,11 +1174,11 @@ func (n *Notifier) sendTeams(ctx context.Context, c chstore.NotificationChannel,
 	colour := strings.TrimPrefix(severityColor(p.Severity), "#")
 	t := time.Unix(0, p.StartedAt).UTC().Format(time.RFC3339)
 	facts := []map[string]string{
-		{"name": "Service",  "value": p.Service},
+		{"name": "Service", "value": p.Service},
 		{"name": "Severity", "value": strings.ToUpper(p.Severity)},
-		{"name": "Metric",   "value": p.Metric},
-		{"name": "Value",    "value": fmt.Sprintf("%.2f (threshold %.2f)", p.Value, p.Threshold)},
-		{"name": "Started",  "value": t},
+		{"name": "Metric", "value": p.Metric},
+		{"name": "Value", "value": fmt.Sprintf("%.2f (threshold %.2f)", p.Value, p.Threshold)},
+		{"name": "Started", "value": t},
 	}
 	body := map[string]any{
 		"@type":      "MessageCard",

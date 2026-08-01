@@ -107,9 +107,10 @@ const NAV_GROUPS: NavGroup[] = [
       // v0.8.489 — Profiling + Monitors sidebar'dan gizlendi (operatör:
       // "hiç kullanmıyorum"). Rotalar + Komut Paleti girişleri YAŞIYOR —
       // profiling rakip-farkı bir yetenek, silinmedi; gezinim sadeleşti.
+      // v0.9.490 (operatör) — sıra: Traces · Logs · Metrics.
       { href: '/traces',     label: 'nav.traces',    icon: ListTree },
-      { href: '/metrics',    label: 'nav.metrics',   icon: ChartSpline },
       { href: '/logs',       label: 'nav.logs',      icon: ScrollText },
+      { href: '/metrics',    label: 'nav.metrics',   icon: ChartSpline },
     ],
   },
   {

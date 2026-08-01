@@ -44,6 +44,12 @@ type EvidenceBundle struct {
 	Deploy     *chstore.RecentDeployEntry // a deploy of the service just before onset
 	Neighbors  []NeighborProblem          // open problems on direct topology neighbours
 	Confidence int                        // distinct corroborating evidence types present (incl. the trigger)
+	// Deep (v0.9.510) — P1 soruşturmasının topladığı ek kanıt: pod
+	// doygunluğu, exception grupları, log şablonları, yavaş operasyonlar
+	// + "neye bakıldı" denetim izi. YALNIZ P1 anchor'larında dolu
+	// (investigation.go, maliyet kapısı). Boş = derin soruşturma koşmadı;
+	// prompt o zaman bugünküyle birebir aynı kalır.
+	Deep DeepEvidence
 }
 
 // NeighborProblem is an open problem on a service adjacent to the trigger,

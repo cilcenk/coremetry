@@ -22,33 +22,56 @@ import (
 //
 // Design choices:
 //
-//   • Embeds driver.Conn so methods we don't override (Stats,
+//   - Embeds driver.Conn so methods we don't override (Stats,
 //     ServerVersion, etc.) are promoted unchanged — keeps the
 //     surface forwards-compatible with future driver versions.
 //
-//   • Span name is the SQL operation verb only ("clickhouse.query",
+//   - Span name is the SQL operation verb only ("clickhouse.query",
 //     "clickhouse.exec", "clickhouse.batch", "clickhouse.queryrow")
 //     so trace aggregation groups them sensibly. The `db.statement`
 //     attribute carries the SQL (truncated to 1KB to stay under
 //     the OTel attribute-size limit and avoid blowing trace payload
 //     sizes on bulk INSERTs).
 //
-//   • Errors are recorded on the span AND wrapped through; the
+//   - Errors are recorded on the span AND wrapped through; the
 //     handler still gets the same error it would have without
 //     tracing — instrumentation is purely additive.
 //
-//   • When selfobs is disabled (noop tracer), each Start call
+//   - When selfobs is disabled (noop tracer), each Start call
 //     allocates a noop span which is essentially free; we don't
 //     branch on selfobs.Enabled() at the per-call level. The hot
 //     path overhead is one map-free no-op span allocation +
 //     attribute slice — well under 1µs at the rates we run.
-type tracedConn struct{ driver.Conn }
+//
+// pool — hangi bağlantı havuzundan geçtiği ("main" | "ingest" | "read").
+// v0.9.521: span'e etiket olarak basılıyor.
+//
+// NEDEN: v0.9.496-508 okumaları RoundRobin bir havuza taşıdı ama "ne kadarı
+// gerçekten oraya gitti" sorusu ölçülemiyordu. 2026-08-01 akşamı prod'da
+// CPU dengesizliğinin sebebi üç ayrı hipotezle dolaylı olarak arandı
+// (gecikmiş replika, dengesiz veri, dış istemci — üçü de veriyle öldü) ve
+// asıl soru cevapsız kaldı: okumalar hangi havuzda? Bu etiket o soruyu
+// tek sorguyla cevaplıyor ve bundan sonra da cevaplayacak.
+type tracedConn struct {
+	driver.Conn
+	pool string
+}
 
 // dbSystem is the OTel semconv 'db.system' value for ClickHouse.
 // Hard-coded since chstore is single-backend.
 const dbSystem = "clickhouse"
 
-func newTracedConn(c driver.Conn) driver.Conn { return &tracedConn{Conn: c} }
+func newTracedConn(c driver.Conn, pool string) driver.Conn {
+	return &tracedConn{Conn: c, pool: pool}
+}
+
+// Havuz adları — span etiketi olarak sabit kalmalı; değişirse geçmiş
+// sorgular kırılır.
+const (
+	poolMain   = "main"   // ConnOpenInOrder — state okuma/yazma + DDL
+	poolIngest = "ingest" // ConnOpenRoundRobin — yüksek hacimli telemetri INSERT
+	poolRead   = "read"   // ConnOpenRoundRobin — telemetri SELECT
+)
 
 // truncStmt caps db.statement to keep span payload bounded. The
 // alternative — recording the full SQL for a 10K-batch INSERT —
@@ -101,6 +124,7 @@ func (t *tracedConn) Query(ctx context.Context, q string, args ...any) (driver.R
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),
 		attribute.String("db.statement", truncStmt(q)),
+		attribute.String("coremetry.ch_pool", t.pool),
 	)
 	defer span.End()
 	rows, err := t.Conn.Query(ctx, q, args...)
@@ -113,6 +137,7 @@ func (t *tracedConn) QueryRow(ctx context.Context, q string, args ...any) driver
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),
 		attribute.String("db.statement", truncStmt(q)),
+		attribute.String("coremetry.ch_pool", t.pool),
 	)
 	// QueryRow returns a Row; the Scan() happens later. We end the
 	// span immediately because the Row's lazy Scan can be invoked
@@ -128,6 +153,7 @@ func (t *tracedConn) Exec(ctx context.Context, q string, args ...any) error {
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),
 		attribute.String("db.statement", truncStmt(q)),
+		attribute.String("coremetry.ch_pool", t.pool),
 	)
 	defer span.End()
 	err := t.Conn.Exec(ctx, q, args...)
@@ -140,6 +166,7 @@ func (t *tracedConn) PrepareBatch(ctx context.Context, q string, opts ...driver.
 	span.SetAttributes(
 		attribute.String("db.system", dbSystem),
 		attribute.String("db.statement", truncStmt(q)),
+		attribute.String("coremetry.ch_pool", t.pool),
 	)
 	defer span.End()
 	b, err := t.Conn.PrepareBatch(ctx, q, opts...)
@@ -153,6 +180,7 @@ func (t *tracedConn) AsyncInsert(ctx context.Context, q string, wait bool, args 
 		attribute.String("db.system", dbSystem),
 		attribute.String("db.statement", truncStmt(q)),
 		attribute.Bool("clickhouse.async_wait", wait),
+		attribute.String("coremetry.ch_pool", t.pool),
 	)
 	defer span.End()
 	err := t.Conn.AsyncInsert(ctx, q, wait, args...)

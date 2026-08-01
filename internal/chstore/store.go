@@ -49,8 +49,8 @@ type Store struct {
 	// answer is identical. State tables must NEVER read through this —
 	// use telemetryReadConn(), never the field.
 	read driver.Conn
-	cfg    config.CHConfig
-	ret    config.RetentionConfig
+	cfg  config.CHConfig
+	ret  config.RetentionConfig
 
 	// service_version_5m coverage cache (v0.9.249, reshaped v0.9.493).
 	// A materialized view only populates from inserts made after it
@@ -504,9 +504,9 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	// selfobs is enabled). Noop tracer when disabled — essentially
 	// zero overhead. See internal/chstore/traced_conn.go.
 	s := &Store{
-		conn:   newTracedConn(conn),
-		ingest: newTracedConn(ingest),
-		read:   newTracedConn(readConn),
+		conn:   newTracedConn(conn, poolMain),
+		ingest: newTracedConn(ingest, poolIngest),
+		read:   newTracedConn(readConn, poolRead),
 		cfg:    cfg, ret: ret,
 	}
 	// v0.5.437 — self-heal pass. Detects HighVolumeTables `_local`

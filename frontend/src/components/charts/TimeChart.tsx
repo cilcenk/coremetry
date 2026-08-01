@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
-import { fmtXTicks, fmtAxisTick } from '@/lib/chartFmt';
+import { fmtXTicks, fmtAxisTick, fmtTooltipTime } from '@/lib/chartFmt';
 import { timeChartBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import { yRangeHeadroom } from '@/lib/chart/yRange';
@@ -330,13 +330,11 @@ export function TimeChart({
           const xs = u.data[0] as number[];
           const tSec = xs[idx] as number;
           if (tSec == null) { tt.style.display = 'none'; return; }
-          // v0.8.402 — include the DAY when the chart spans more than one.
-          const dd = new Date(tSec * 1000);
-          const sameDay = xs.length > 1 &&
-            new Date((xs[0] as number) * 1000).toDateString() === new Date((xs[xs.length - 1] as number) * 1000).toDateString();
-          const hm = dd.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-          const ts = sameDay ? hm
-            : `${String(dd.getMonth() + 1).padStart(2, '0')}-${String(dd.getDate()).padStart(2, '0')} ${hm}`;
+          // v0.8.402 gün ekleme kuralının yerini v0.9.488 aldı (operatör:
+          // "burada ay gün yıl yazmıyor"): tarih artık KOŞULSUZ — OVC ile
+          // aynı fmtTooltipTime, saniye çözünürlüğü adımdan türer.
+          const stepSec = xs.length > 1 ? Math.abs((xs[1] as number) - (xs[0] as number)) : null;
+          const ts = fmtTooltipTime(tSec, stepSec);
           // v0.9.101 (Grafana-parity Adım 1) — sorted "all series" tooltip via
           // the shared model: value desc + fmtSmart units (per-axis left/right
           // unit); was naive in-order kfmt with 0-for-gap. Per-series snapped

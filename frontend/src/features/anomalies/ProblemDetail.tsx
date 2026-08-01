@@ -173,7 +173,28 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     queryFn: () => api.exceptionGroupOccurrences(group.fingerprint),
     staleTime: 30_000,
   });
-  const occAll = occQ.data ?? [];
+  const occRaw = occQ.data ?? [];
+  // v0.9.488 (operatör: "occurrences sağında solunda zaman boşluğu olursa ne
+  // zaman başladı bitti ya da devam ediyor mu daha net anlaşılır") — sunucu
+  // serisi first→last occurrence aralığını doldurur; grafik veri aralığına
+  // kırpılınca "burada BAŞLADI mı yoksa pencere mi burada başlıyor" ve
+  // "bitti mi / hâlâ akıyor mu" okunamıyordu. İki taraf sıfırla dolar:
+  //   • sol: 3 sessiz bucket — ilk bar'ın öncesi görünür ("burada başladı").
+  //   • sağ: ŞİMDİye kadar sıfır dolgu (300 bucket tavanı — çok eski bir grup
+  //     yine uzun boş kuyrukla "bitti" okunur, uPlot'a 40k nokta basılmaz).
+  //     Bar'lar sağ kenara dayanıyorsa grup hâlâ ateşliyor demektir.
+  const occAll = useMemo(() => {
+    if (occRaw.length === 0) return occRaw;
+    const step = occRaw.length >= 2
+      ? Math.max(1, occRaw[1].time - occRaw[0].time)
+      : 60e9;
+    const out = [...occRaw];
+    for (let i = 1; i <= 3; i++) out.unshift({ time: occRaw[0].time - i * step, count: 0 });
+    const nowNs = Date.now() * 1e6;
+    let t = occRaw[occRaw.length - 1].time + step;
+    for (let n = 0; t <= nowNs && n < 300; t += step, n++) out.push({ time: t, count: 0 });
+    return out;
+  }, [occRaw]);
   // Madde 4 sweep — histogram üstünde drag-brush = YEREL zoom penceresi
   // (M3 regions'ın devamı). Occurrences ucu range parametresi almaz (grubun
   // tüm penceresi tek fetch'te gelir) → sayfa range'i yok; zoom, gelen

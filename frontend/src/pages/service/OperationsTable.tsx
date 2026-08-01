@@ -45,6 +45,13 @@ export type OpMetricKey = 'calls' | 'errors' | 'p99';
 // yoksa göz "turuncu = calls" eşlemesini kuramaz. Şiddet sinyali zaten iki
 // yerde var — Err% rozeti ve errors serisinin kendisi.
 // Uygulamanın chart-serisi token'ları (globals.css), üç temada da tanımlı.
+// v0.9.501 — mini grafik genişliği. Varsayılan 80 üçlü hücrede dardı
+// (3×80 = 240px, kolon ekranda ~435px'e geriliyor) ve aradaki fark tek
+// bir boşluk olarak görünüyordu. 110 + space-between: içerik kolonun
+// çoğunu doldurur, kalan pay üç grafiğin ARASINA eşit dağılır —
+// metrikler ayrışır, boşluk kasıtlı durur.
+const SPARK_W = 110;
+
 const TREND_C = {
   calls:  'var(--orange)',
   errors: 'var(--err)',
@@ -57,7 +64,7 @@ const miniSparkBtn: React.CSSProperties = {
 };
 
 const OP_COLS: DataTableColumn<OperationSummary>[] = [
-  { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc',  width: 320 },
+  { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc',  width: 440 },
   // v0.9.347 — Trend hücresi ÜÇE bölündü (calls · errors · p99).
   //
   // Operatör: "doğrudan sparkline olarak göstersek ve üzerine tıklayınca
@@ -71,7 +78,7 @@ const OP_COLS: DataTableColumn<OperationSummary>[] = [
   // v0.9.498 — 190px üç sparkline'a yetmiyordu (3×80 + boşluk ≈ 250) ve
   // hangisinin hangi metrik olduğunu söyleyen hiçbir şey yoktu. Genişlik
   // gerçek içeriğe çekildi, her mini grafiğe renk lekesi + etiket eklendi.
-  { id: 'trend',     label: 'Trend',     width: 330 },
+  { id: 'trend',     label: 'Trend',     width: 350 },
   { id: 'impact',    label: 'Impact',    sortValue: r => impactOf(r),       numeric: true,      width: 130 },
   { id: 'spanCount', label: 'Calls',     sortValue: r => r.spanCount,       numeric: true,      width: 96 },
   { id: 'errorRate', label: 'Err %',     sortValue: r => r.errorRate,       numeric: true,      width: 84 },
@@ -452,14 +459,27 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       </Link>
                     )}
                   </td>
+                  {/* v0.9.501 — üç mini grafik FLEX kutuda ve eşit paylı.
+                      Operatör-bildirimli: "trend ile diğer kolonlar arasında
+                      çok ciddi boşluk var". Sebep table-layout:fixed'in artan
+                      genişliği kolonlara ORANSAL dağıtması — kolon 330px
+                      tanımlıyken ekranda ~435px'e geriliyordu, içerik 246px
+                      sola yaslı kalınca kalan ~190px tek bir boşluk olarak
+                      görünüyordu. Sabit içerik genişliği bunu çözmez: kolon
+                      genişliği hem ekran boyuna hem operatörün elle
+                      boyutlandırmasına (colWidths localStorage'da) göre
+                      değişir. flex:1 ile üç grafik kolon NE GENİŞLİKTE OLURSA
+                      OLSUN yayılır. */}
                   <td>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 6, width: '100%' }}>
                     <button
                       type="button"
                       onClick={() => { setOpFocus('calls'); setOpDetail(op); }}
                       title={`Calls — ${fmtNum(op.spanCount)} · tıkla: bu metriğin grafiği`}
                       style={miniSparkBtn}
                     >
-                      <Sparkline values={op.sparkline ?? []} color={TREND_C.calls} title="" />
+                      <Sparkline values={op.sparkline ?? []} color={TREND_C.calls}
+                        width={SPARK_W} title="" />
                     </button>
                     {/* v0.9.347 — errors ve p99 sparkline'ları. İkisi de ZATEN
                         aynı yanıtta geliyordu (errorsSparkline / p99Sparkline,
@@ -471,15 +491,17 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       style={miniSparkBtn}
                     >
                       <Sparkline values={op.errorsSparkline ?? []}
-                        color={TREND_C.errors} title="" />
+                        color={TREND_C.errors} width={SPARK_W} title="" />
                     </button>
                     <button type="button"
                       onClick={() => { setOpFocus('p99'); setOpDetail(op); }}
                       title={`P99 — ${op.p99DurationMs.toFixed(0)}ms · tıkla: bu metriğin grafiği`}
                       style={miniSparkBtn}
                     >
-                      <Sparkline values={op.p99Sparkline ?? []} color={TREND_C.p99} title="" />
+                      <Sparkline values={op.p99Sparkline ?? []} color={TREND_C.p99}
+                        width={SPARK_W} title="" />
                     </button>
+                    </div>
                   </td>
                   <td className="mono" style={{ textAlign: 'right' }}>
                     <ImpactBar value={impactOf(op)}

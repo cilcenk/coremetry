@@ -20,10 +20,12 @@ import { resolveSelectedItem } from '@/lib/inboxDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
 
-// Facet vocab + defaults (v0.8.291) — the inbox lands on P1+P2 across all
-// kinds; both are the "default" the URL codec omits so a fresh link stays clean.
+// Facet vocab + defaults (v0.8.291) — both defaults are what the URL codec
+// omits so a fresh link stays clean.
 const PRIO_ALL = ['P1', 'P2', 'P3'] as const;
-const PRIO_DEFAULT = ['P1', 'P2'] as const;
+// v0.9.487 (operatör kararı, prod) — varsayılan yalnız P1: "defaultta sadece
+// P1'ler gözüksün". P2/P3 chip sayılarıyla görünür, tek tık uzakta.
+const PRIO_DEFAULT = ['P1'] as const;
 const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'httperror', 'anomaly', 'incident'];
 // v0.9.328 — operator: "Problems ilk açtığında exception görsün, kullanıcılar
 // ona göre tasarlar." Exceptions are the signal operators trust: a thrown
@@ -281,52 +283,12 @@ export default function InboxPage() {
   // reasonably concluded "the owner filter does not work". Stale data may be
   // shown; it may not masquerade as the answer.
   const showingStale = inboxQ.isPlaceholderData && inboxQ.isFetching;
-  // v0.9.328 — the landing default shows Exceptions only, so this is the
-  // guard that keeps a DEFAULT from becoming a blindfold: if a kind the
-  // operator isn't looking at is carrying a P1, say so on the page instead of
-  // trusting them to notice a chip count. A triage surface may narrow by
-  // default; it may not hide an emergency by default.
-  // v0.9.330 — derived from the SERVER counts. The page no longer carries the
-  // deselected kinds at all (the server filters before the cap), so scanning
-  // `data` for them would always find zero and the guard would go quiet
-  // exactly when it is needed. The server reports per-kind totals but not
-  // per-kind-per-priority, so this reads "kinds you are not looking at that
-  // have rows at all" — deliberately conservative: over-warning is survivable,
-  // staying silent about an unattended kind is not.
-  const hiddenP1 = useMemo(() => {
-    const c = inboxQ.data?.counts;
-    if (!c) return {} as Record<string, number>;
-    const out: Record<string, number> = {};
-    for (const k of KIND_ALL) {
-      if (kindSet.has(k)) continue;
-      const n = c[k] ?? 0;
-      if (n > 0) out[k] = n;
-    }
-    return out;
-  }, [inboxQ.data, kindSet]);
-  const hiddenP1Total = Object.values(hiddenP1).reduce((a, b) => a + b, 0);
-  // v0.9.424 (operator-reported, prod) — öncelik gizlemesi de tür
-  // gizlemesi kadar dürüst olmalı: varsayılan P1+P2 görünümü P3'leri
-  // (v417 ile görünür olan tek-tük exception'lar P3'te yaşar) SESSİZCE
-  // saklıyordu — /problems'ta duran gruplar inbox'ta "kayıp" sanıldı.
-  // Sunucu öncelik sayaçlarını zaten gönderiyor (inboxFacetCounts,
-  // fetch edilen türler üzerinde); tek eksik görünür şerit + tek tıktı.
-  const hiddenPrio = useMemo(() => {
-    const c = inboxQ.data?.counts;
-    if (!c) return {} as Record<string, number>;
-    const out: Record<string, number> = {};
-    for (const p of PRIO_ALL) {
-      if (prioSet.has(p)) continue;
-      const n = c[p] ?? 0;
-      if (n > 0) out[p] = n;
-    }
-    return out;
-  }, [inboxQ.data, prioSet]);
-  const hiddenPrioTotal = Object.values(hiddenPrio).reduce((a, b) => a + b, 0);
-  // Naming note (v0.9.330): this counts ROWS in unselected kinds, not P1s
-  // specifically — the server reports per-kind totals, not a kind×priority
-  // matrix. The label says "kalem" for that reason; claiming "P1" would be a
-  // number that means something other than what it says.
+  // v0.9.487 (operatör kararı) — v0.9.328/330 "bakmadığın türler" ve v0.9.424
+  // "öncelik filtresi dışında" şeritleri KALDIRILDI: "kafa karıştırıyor".
+  // Görünürlük sözleşmesi chip sayılarına devrolur (facet chip'leri seçili
+  // OLMAYAN tür/önceliklerin sayısını her zaman gösterir); exception-dışı
+  // türler sunucuda artık HEP P3 (inbox.go forceNonExceptionP3), yani
+  // varsayılan P1 görünümüne hiçbir zaman karışmazlar.
 
   // The drawer's selected row, resolved from ?item= against the loaded list.
   // Uses the full (pre-facet) list so a deep-link to a row hidden by the
@@ -514,8 +476,8 @@ export default function InboxPage() {
         <SavedViewsBar page="inbox" />
         <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 14 }}>
           Everything needing a human — Problems (alert rules), open Exception
-          groups, and active Anomaly detections. Default view: <b>P1 + P2</b>
-          across all kinds. Click any row to triage it in place.
+          groups, and active Anomaly detections. Default view: <b>P1</b>{' '}
+          Exceptions. Click any row to triage it in place.
         </p>
 
         {/* One grouped facet bar (v0.8.38) — status pivot + priority + kind
@@ -668,39 +630,9 @@ export default function InboxPage() {
             </span>
           </div>
         )}
-        {hiddenP1Total > 0 && (
-          <div style={{ marginBottom: 8 }}>
-            <span className="badge b-err"
-              title="Bakmadığın türlerde satır var. Varsayılan görünüm daraltabilir, ama bir şeyi sessizce saklayamaz.">
-              ⚠ Bakmadığın türlerde <b>{hiddenP1Total}</b> kalem
-              {' — '}
-              {Object.entries(hiddenP1)
-                .map(([k, n]) => `${KIND_LABEL[k as InboxKind] ?? k}: ${n}`)
-                .join(' · ')}
-            </span>{' '}
-            <Button variant="ghost" size="sm"
-              onClick={() => setParam('kind', encodeCsvSet([...KIND_ALL], KIND_ALL, KIND_DEFAULT))}>
-              hepsini göster
-            </Button>
-          </div>
-        )}
-        {/* v0.9.424 — öncelik gizlemesinin dürüst şeridi (tür banner'ının
-            kardeşi): P3'te satır varken varsayılan P1+P2 görünümü sessiz
-            kalamaz. Tek tık tüm öncelikleri açar (?prio= URL'de yaşar). */}
-        {hiddenPrioTotal > 0 && (
-          <div style={{ marginBottom: 8 }}>
-            <span className="badge b-warn"
-              title="Öncelik filtresi dışında satır var — tek-tük exception'lar P3 olarak burada yaşar. Varsayılan görünüm daraltabilir, ama bir şeyi sessizce saklayamaz.">
-              ⚠ Öncelik filtresi dışında <b>{hiddenPrioTotal}</b> kalem
-              {' — '}
-              {Object.entries(hiddenPrio).map(([p, n]) => `${p}: ${n}`).join(' · ')}
-            </span>{' '}
-            <Button variant="ghost" size="sm"
-              onClick={() => setParam('prio', encodeCsvSet(new Set(PRIO_ALL), PRIO_ALL, PRIO_DEFAULT))}>
-              onları da göster
-            </Button>
-          </div>
-        )}
+        {/* v0.9.487 — "bakmadığın türlerde" + "öncelik filtresi dışında"
+            şeritleri operatör kararıyla kaldırıldı; sayılar facet
+            chip'lerinde yaşıyor. */}
         {!inboxQ.isPending && !inboxQ.isError && (
           <div style={{
             display: 'flex', alignItems: 'center', gap: 8,

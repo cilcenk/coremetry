@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { DataTableHead, DataTableColgroup, type DataTable } from '@/components/DataTable';
 import { PodJmxInline } from './PodJmxInline';
@@ -53,6 +53,34 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
   const cmpRows = useMemo(
     () => cmpPods.map(name => ({ name, row: dt.sortedRows.find(r => r.pod === name) })),
     [cmpPods, dt.sortedRows]);
+
+  // v0.9.533 — ?jpod= derin linki (Problems → "pod'a bak"). Eskiden
+  // kaldırılan bağımsız JMX bölümünün pod daraltmasıydı; yeniden
+  // amaçlandı: ilgili pod satırını otomatik aç + görünüme kaydır.
+  // TEK SEFERLİK ve TÜKETİLİR (ref bekçisi + replace:true, yabancı
+  // paramlar korunur — ev kuralı): pod envanterde yoksa (rollout'ta
+  // öldü) param yine temizlenir, sonsuz bekleyen daraltma kalmaz.
+  const jpodConsumed = useRef(false);
+  useEffect(() => {
+    if (jpodConsumed.current) return;
+    const jpod = (params.get('jpod') ?? '').trim();
+    if (!jpod) { jpodConsumed.current = true; return; }
+    if (dt.sortedRows.length === 0) return; // envanter henüz yüklenmedi
+    jpodConsumed.current = true;
+    const r = dt.sortedRows.find(x => x.pod === jpod);
+    if (r) {
+      setOpenKey(`${r.cluster}|${r.namespace}|${r.pod}`);
+      setCollapsed(s => ({ ...s, [r.cluster]: false }));
+      setTimeout(() => {
+        document.getElementById(`pod-row-${jpod}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 80);
+    }
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.delete('jpod');
+      return next;
+    }, { replace: true });
+  }, [params, dt.sortedRows, setParams]);
 
   // sortedRows'u cluster'a göre grupla (grup içi sıra sortu izler).
   const groups = useMemo(() => {
@@ -115,6 +143,7 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
                       return (
                         <Fragment key={key}>
                           <tr onClick={() => setOpenKey(open ? null : key)}
+                            id={`pod-row-${r.pod}`}
                             title="Metrikleri göster · JVM · GC · datasource"
                             style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                             <td className="mono" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.pod}>

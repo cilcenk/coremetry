@@ -153,6 +153,12 @@ function ServiceDetailInner() {
   const setTab = (next: ServiceTab) => setSearchParams(prev => {
     const p = new URLSearchParams(prev);
     if (next === 'overview') p.delete('tab'); else p.set('tab', next);
+    // v0.9.533 — kaldırılan bağımsız JMX bölümünün paramları (?jcluster
+    // /?jds) sekme değişiminde temizlenir: kimse okumuyor, eski
+    // paylaşılan linklerden URL'de atıl kalıyorlardı. jpod KALIR —
+    // yeniden amaçlandı (pod satırını otomatik açan derin link).
+    p.delete('jcluster');
+    p.delete('jds');
     return p;
   }, { replace: true });
 

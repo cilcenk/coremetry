@@ -1,7 +1,10 @@
 import { useSearchParams, useNavigate } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import { useDataTable } from '@/components/DataTable';
 import { Spinner, Empty } from '@/components/Spinner';
-import { RuntimeCharts } from './RuntimeCharts';
+import { RuntimeCharts, familyOf } from './RuntimeCharts';
+import { PodResourceCharts } from './PodResourceCharts';
 import { ServiceClusterPods } from './ServiceClusterPods';
 import { useServicePods } from './useServicePods';
 import { podDetailPath } from './podDetailPath';
@@ -45,6 +48,16 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
     effNs, effDeploy, from, to, cFrom, cTo, clamped,
     sourcesPending, noClusters, podsPending, podsBlocking, podsSettled, podsTotal,
     sourcesError, podErrors, truncatedClusters } = useServicePods(service, range);
+
+  // v0.9.546 — dil-runtime ailesi var mı? RuntimeCharts ile AYNI RQ
+  // anahtarı, yani ek istek yok (cache'ten dolar). Aile yoksa aşağıda
+  // Thanos kaynak grafikleri devreye giriyor.
+  const runtimeQ = useQuery({
+    queryKey: ['svc-runtime', service],
+    queryFn: () => api.serviceRuntime(service),
+    enabled: !!service, staleTime: 300_000,
+  });
+  const runtimeFamily = familyOf(runtimeQ.data?.language);
 
   // Accordion tek dt üstünde (sıralama/resize global; cluster'a göre gruplanır).
   const dt = useDataTable<ClusterPodRow>({
@@ -166,6 +179,20 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
         </div>
         <RuntimeCharts service={service} from={from} to={to} onZoom={onZoom} onZoomReset={onZoomReset} />
       </div>
+
+      {/* v0.9.546 (operatör: "jvm metrikleri yoksa cpu memory NETWORK
+          grafikleri gözükebilir") — dil-runtime ailesi TANINMIYORSA
+          (Node.js, Python, ya da dili hiç raporlanmayan servis) Runtime
+          bölümü hiç çizilmiyordu ve sayfa boşlukla bitiyordu. O servisin
+          CPU/bellek/ağ verisi Thanos'ta zaten var; pod tablosunda ANLIK
+          kolon olarak görünüyordu, eksik olan yalnız zaman serisiydi.
+          Aile VARSA bu bölüm çizilmez — iki kaynak yan yana aynı şeyi
+          göstermesin. */}
+      {!runtimeFamily && (
+        <PodResourceCharts service={service} cluster={clustersWithPods[0] ?? ''}
+          ns={effNs} deploy={effDeploy} cFrom={cFrom} cTo={cTo} clamped={clamped}
+          onZoom={onZoom} onZoomReset={onZoomReset} />
+      )}
     </>
   );
 }

@@ -312,3 +312,38 @@ func TestPodQueriesCarryPodRe(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.546 — ağ trendi (operatör: "jvm metrikleri yoksa cpu memory
+// NETWORK grafikleri gözükebilir"). Ağ, pod envanterinde anlık kolon
+// olarak zaten vardı; trend hâli eksikti.
+//
+// KRİTİK fark: cAdvisor ağ sayaçlarını pod'un ALTYAPI (pause)
+// container'ına yazar, yani container adı BOŞTUR. CPU/Mem'in
+// container!="" seçicisi kullanılsaydı ağ serisi HİÇ dönmezdi —
+// sessizce boş grafik.
+func TestDeployTrendQueryNetwork(t *testing.T) {
+	in := deployTrendQuery("mobile-bff-prod", "mobile-overview-bff", "netin", true)
+	if !strings.Contains(in, "container_network_receive_bytes_total") {
+		t.Errorf("netin receive sayacını kullanmalı:\n%s", in)
+	}
+	if strings.Contains(in, `container!=""`) {
+		t.Errorf("ağ seçicisinde container!=\"\" OLMAMALI — pause container'ın adı boş, seri hiç dönmez:\n%s", in)
+	}
+	out := deployTrendQuery("ns", "dep", "netout", false)
+	if !strings.Contains(out, "container_network_transmit_bytes_total") {
+		t.Errorf("netout transmit sayacını kullanmalı:\n%s", out)
+	}
+	// Pod seçicisi ve namespace yine kapsamda.
+	if !strings.Contains(in, `namespace="mobile-bff-prod"`) || !strings.Contains(in, `pod=~"mobile-overview-bff-.*"`) {
+		t.Errorf("kapsam kaybolmuş:\n%s", in)
+	}
+	// byPod=true → pod başına grup.
+	if !strings.Contains(in, "sum by (pod)") {
+		t.Errorf("byPod pod başına gruplamalı:\n%s", in)
+	}
+	// CPU/Mem dalları BOZULMAMALI (container!="" onlarda kalmalı).
+	cpu := deployTrendQuery("ns", "dep", "cpu", false)
+	if !strings.Contains(cpu, `container!=""`) {
+		t.Errorf("CPU dalı container filtresini kaybetmiş:\n%s", cpu)
+	}
+}

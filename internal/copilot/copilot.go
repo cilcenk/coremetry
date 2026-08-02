@@ -1188,9 +1188,9 @@ No preamble, no headers — just the bullets.` + AnswerInTurkish
 // kanıtı toplanmışsa ekleniyordu. Oysa bu sistem prompt'unun ÜÇ
 // tüketicisi var:
 //
-//	1. arka plan ProblemExplainer                    — kural VARDI (kanıt varsa)
-//	2. operatör tıklaması /api/copilot/explain-problem — kural YOKTU
-//	3. MCP explain_problem prompt'u (DIŞ istemciler)   — kural YOKTU
+//  1. arka plan ProblemExplainer                    — kural VARDI (kanıt varsa)
+//  2. operatör tıklaması /api/copilot/explain-problem — kural YOKTU
+//  3. MCP explain_problem prompt'u (DIŞ istemciler)   — kural YOKTU
 //
 // Yani korumasız olan iki yol, tam da bir insanın cevabı okuyup aksiyon
 // aldığı yollardı.
@@ -1807,3 +1807,71 @@ Rules:
     paragraph. Terse: this is triage context next to a chart.` + AnswerInTurkish
 
 func SystemPromptRootCauseNarration() string { return systemRootCauseNarration }
+
+// systemRCAVerdict — RCA verdict'i (v0.9.559).
+//
+// Tasarım: docs/cosre-verdict-design.md §6.
+//
+// systemRootCauseNarration'ın YERİNE değil YANINA gelir: narration
+// prompt'u düşüş yolunda dönülecek düzyazı sözleşmesi olarak duruyor.
+//
+// Prompt 1'in (agentic INVESTIGATE) tool döngüsü AÇILMADI — bu
+// runtime'da deterministik prefetch'in döngüyü yendiği ölçülmüştü.
+// Ondan alınan tek şey ELEMECİLİK: modelin doğal eğilimi ilk hipotezi
+// DOĞRULAMAKTIR ve Davis'in yanılmama sebebi elemeci olmasıdır.
+//
+// Ama elemecilik serbest bırakılamaz: rakip hipotezleri model YAZARSA,
+// hiç değerlendirmediği bir rakibi sahte bir gerekçeyle "elenmiş"
+// gösterip en yüksek verdict'i alır. Bu yüzden rakipler SUNUCUDAN
+// verilir ve model yalnız SEÇER (şema enum'u).
+//
+// Anti-uydurma kuralları v0.9.556'daki systemProblem ile aynı ruhta,
+// ama burada bir tane FAZLASI var ve o kritik: kanıt kataloğu iki
+// uzaylı (E/N) ve negatif uzayın ne için kullanılabileceği açıkça
+// yazılı. Küçük modelde kuralı uzakta bir kez söylemek yetmiyor —
+// katalog metni de aynı kısıtı taşıyor (rca_evidence.go).
+const systemRCAVerdict = `Sen Coremetry APM'in kök-neden hakem motorusun. Deterministik tespit
+ve korelasyon ZATEN koştu; sen anomali ARAMAZSIN. Sana bir kanıt
+kataloğu ve bir deterministik hipotez verilir; işin bunları hakemlemek.
+
+YÖNTEM:
+- Önce rakip hipotezleri düşün. Sana verilen RAKİP listesinden seç —
+  kendi rakibini UYDURMA.
+- Her rakip için, onu ÇÜRÜTEN kanıtı göster. Doğrulamayı değil
+  çürütmeyi tercih et: bir hipotezi destekleyen kanıt bulmak kolaydır,
+  onu yıkacak kanıtı aramak zordur ve doğruyu bulduran odur.
+- Bir rakibi çürütecek kanıtın yoksa onu ELEME. Sahte eleme, elemesiz
+  kalmaktan kötüdür.
+
+KANIT KURALLARI:
+- Her iddian bir kanıt kimliğine dayanmalı (E1, E3 gibi).
+- E kimlikleri BULUNMUŞ sinyallerdir; kök nedene dayanak olabilir.
+- N kimlikleri BULUNAMAYAN sinyallerdir. Bir N kaydı ASLA kök nedenin
+  kanıtı DEĞİLDİR — aranmış ve bulunamamış olmak, olduğunun kanıtı
+  değildir. N yalnız bir hipotezi ÇÜRÜTMEK için kullanılabilir.
+- Katalogda olmayan bir kimlik yazma.
+- Aynı kanıtı hem destek hem çürütme olarak kullanma.
+- Sayı UYDURMA. Etki rakamlarını sen hesaplamazsın; onlar ölçülür.
+
+KARAR:
+- root_cause_identified: doğrudan nedensel kanıt VAR ve en az bir
+  rakip gerçekten çürütüldü.
+- probable_cause: güçlü dolaylı kanıt, rakipler zayıfladı ama
+  çürütülmedi.
+- insufficient_evidence: kanıt yetmiyor. Bunu demek AYIP DEĞİL, doğru
+  cevaptır. Yanlış ve kendinden emin bir karar, tüm platforma olan
+  güveni yıkar; "kanıt yetersiz" yalnız o soruyu cevapsız bırakır.
+
+Kök nedeni SEMPTOMDAN ayır: en gürültülü varlık değil, gerekçesini
+gösterebildiğin en DERİN varlık. Tetikleyici ile yapısal zayıflık
+farklıdır; kanıt destekliyorsa ikisini de yaz.
+
+Öneriler en fazla 3 tane, etki/risk sırasına göre. "Yeniden başlat"
+bir ÇÖZÜM değildir (mitigate olabilir). Topolojide olmayan bir varlığı
+hedef gösterme.
+
+Çıktı YALNIZ JSON olsun. title, summary, remediation.action alanlarını
+TÜRKÇE yaz; kimlikleri (E1, N2) ve enum değerlerini İNGİLİZCE bırak.` + AnswerInTurkish
+
+// SystemPromptRCAVerdict — hakem prompt'u (v0.9.559).
+func SystemPromptRCAVerdict() string { return systemRCAVerdict }

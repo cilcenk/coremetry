@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -430,19 +429,9 @@ func parseServiceAnalysis(raw string) *serviceAnalysis {
 	return &a
 }
 
-// serviceTokenRe matches hyphenated lowercase service-style identifiers
-// (payment-service, openbanking-gateway, mobile-bff). ascii-only, so Turkish
-// words with diacritics (kök-neden) never match.
-var serviceTokenRe = regexp.MustCompile(`[a-z][a-z0-9]+(?:-[a-z0-9]+)+`)
-
-// nonServiceHyphenated are common hyphenated technical terms that look like a
-// service token but aren't — excluded from the hallucination check.
-var nonServiceHyphenated = map[string]bool{
-	"error-rate": true, "error-count": true, "request-rate": true, "response-time": true,
-	"root-cause": true, "status-code": true, "time-range": true, "real-time": true,
-	"end-to-end": true, "two-phase": true, "p99-latency": true, "p50-latency": true,
-	"baseline-window": true, "trace-id": true, "span-id": true,
-}
+// serviceTokenRe + nonServiceHyphenated v0.9.559'da entity_scan.go'ya
+// TAŞINDI: RCA verdict yüzeyi de aynı taramayı kullanıyor ve ikinci bir
+// kopya yazmak, birinin diğerinden sessizce ayrışması demekti.
 
 // postCheckServiceAnalysis verifies the model didn't invent a service name: any
 // service-style token in the output that isn't in the gathered context (the
@@ -469,25 +458,12 @@ func postCheckServiceAnalysis(a *serviceAnalysis, cx *aiServiceContext) *aiPostC
 		add(e.Service)
 	}
 
-	seen := map[string]bool{}
-	var unknown []string
-	scan := func(text string) {
-		for _, m := range serviceTokenRe.FindAllString(strings.ToLower(text), -1) {
-			if known[m] || seen[m] || nonServiceHyphenated[m] {
-				continue
-			}
-			seen[m] = true
-			unknown = append(unknown, m)
-		}
-	}
-	scan(a.Ozet)
-	scan(a.OlasiNeden)
-	for _, k := range a.Kanit {
-		scan(k)
-	}
-	for _, o := range a.Oneriler {
-		scan(o)
-	}
+	// v0.9.559 — tarama entity_scan.go'daki paylaşılan yardımcıya
+	// indi. Alan listesi ve sırası AYNI; davranış değişmedi.
+	texts := []string{a.Ozet, a.OlasiNeden}
+	texts = append(texts, a.Kanit...)
+	texts = append(texts, a.Oneriler...)
+	unknown := scanUnknownEntities(known, texts...)
 
 	pc := &aiPostCheck{Verified: len(unknown) == 0, UnknownServices: unknown}
 	if !pc.Verified {

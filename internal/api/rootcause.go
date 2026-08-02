@@ -237,12 +237,12 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		out := AnomalyRootCause{
 			RootCause: RootCause{
-				ProblemID: "", // anomaly-anchored — no parent Problem
-				Service:   ev.Service,
-				Metric:    ev.Kind, // shared-render label: the anomaly kind
-				StartedAt: ev.StartedAt,
-				FromNs:    started.UnixNano(),
-				ToNs:      end.UnixNano(),
+				ProblemID:    "", // anomaly-anchored — no parent Problem
+				Service:      ev.Service,
+				Metric:       ev.Kind, // shared-render label: the anomaly kind
+				StartedAt:    ev.StartedAt,
+				FromNs:       started.UnixNano(),
+				ToNs:         end.UnixNano(),
 				Correlations: []chstore.ChangedService{},
 			},
 			AnomalyID:   ev.ID,
@@ -448,18 +448,21 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 		uid, email = claims.UserID, claims.Email
 	}
 	s.serveCached(w, r, key, 10*time.Minute, func(ctx context.Context) (any, error) {
-		// Surface AÇIKÇA verilir: aiSurfaceFromPath bu yolu "other"
-		// kovasına atıyordu (parts[1] == "problems"/"anomalies", yani
-		// "copilot" değil — ai_observability.go:177-186). Kök-neden
-		// anlatımının /ai'da kendi adıyla görünmesi, kalitesini
-		// ölçebilmenin ön şartı.
 		ctx = copilot.WithMeta(ctx, copilot.CallMeta{UserID: uid, UserEmail: email})
-		prose, err := s.copilotExplainSurface(ctx, "rootcause-explain",
-			copilot.SystemPromptRootCauseNarration(), buildRootCausePrompt(h))
-		if err != nil {
-			return nil, err
-		}
-		return map[string]string{"prose": prose}, nil
+		// v0.9.559 — düzyazı anlatım yerine KALKANLI VERDICT.
+		//
+		// Tek LLM çağrısı: verdict hem yapılandırılmış kararı hem
+		// operatörün okuduğu özeti taşıyor. İki ayrı çağrı yapmak
+		// (anlatım + verdict) maliyeti ikiye katlar ve ikisinin
+		// birbiriyle çelişme ihtimalini açardı.
+		//
+		// `prose` alanı KORUNUYOR ve nil OLABİLİYOR: frontend'in
+		// "anlatım yok" dalı ulaşılabilir kalmalı. Model çözümlenemezse
+		// deterministik cümle verdict.summary'ye yazılır, prose'a
+		// DEĞİL — aksi hâlde yedek cümle gerçek LLM anlatımıyla aynı
+		// kutuda çizilir ve operatör ayırt edemez.
+		verdict, prose := s.buildRCAVerdict(ctx, h)
+		return rcaExplainResponse{Prose: prose, Verdict: verdict}, nil
 	})
 }
 
@@ -477,4 +480,15 @@ func (s *Server) getAnomalyRootCauseExplain(w http.ResponseWriter, r *http.Reque
 // prompt + prose path are identical. GET /api/problems/{id}/rootcause/explain.
 func (s *Server) getProblemRootCauseExplain(w http.ResponseWriter, r *http.Request) {
 	s.rootCauseExplainProse(w, r, "problem")
+}
+
+// rcaExplainResponse — /rootcause/explain gövdesi (v0.9.559).
+//
+// `prose` sözleşmesi KORUNDU (frontend ham cast ediyor, fazladan alan
+// yok sayılır) ama artık POINTER: nil ⇒ JSON'da null ⇒ frontend'in
+// dürüst "anlatım yok" dalı çalışır. Eskiden düz string'di ve hep
+// doluydu; verdict düşüşünde doldurmaya devam etseydik o dal ölürdü.
+type rcaExplainResponse struct {
+	Prose   *string     `json:"prose"`
+	Verdict *RCAVerdict `json:"verdict,omitempty"`
 }

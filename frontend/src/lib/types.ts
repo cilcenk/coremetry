@@ -1127,6 +1127,10 @@ export interface ClusterDeployTrendResponse {
   metric: 'cpu' | 'mem';
   byPod: boolean;
   series: ClusterNamedSeries[] | null;
+  // v0.9.539 — kesme ÖNCESİ pod sayısı; yalnız kesme olduğunda gelir.
+  // MetricArea "N / M pod" rozetini bununla çizer (operator-reported:
+  // "17 pod var ama 7 tane gösteriyor" — kesme sessizdi).
+  totalSeries?: number;
 }
 // v0.9.534 — Service→Infrastructure "Router / HAProxy" (OpenShift router
 // backend metrikleri; seri adı = route). kind cache anahtarına girdiği

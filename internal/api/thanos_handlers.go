@@ -404,12 +404,19 @@ func (s *Server) getClusterDeployTrend(w http.ResponseWriter, r *http.Request) {
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		series, err := s.thanos.DeployTrend(qctx, cfg, ns, deploy, metric, byPod, from, to)
+		series, total, err := s.thanos.DeployTrend(qctx, cfg, ns, deploy, metric, byPod, from, to)
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"cluster": name, "namespace": ns, "deployment": deploy,
-			"metric": metric, "byPod": byPod, "series": series}, nil
+		// totalSeries (v0.9.539) — kesme öncesi pod sayısı; UI "N / M pod"
+		// rozetini bununla çizer. Kesme yoksa gönderilmez (omitempty
+		// sözleşmesi: rozet yalnız gerçekten kesildiğinde çıksın).
+		out := map[string]any{"cluster": name, "namespace": ns, "deployment": deploy,
+			"metric": metric, "byPod": byPod, "series": series}
+		if total > len(series) {
+			out["totalSeries"] = total
+		}
+		return out, nil
 	})
 }
 

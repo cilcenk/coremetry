@@ -97,7 +97,25 @@ export function useServicePods(service: string, range: TimeRange) {
   // Gate bit'leri (her iki sekme aynı boş/yükleniyor durumlarını gösterir).
   const sourcesPending = sourcesQ.isPending;
   const noClusters = (sourcesQ.data?.clusters ?? []).length === 0;
-  const podsPending = podQs.some(q => q.isPending);
+  // v0.9.538 (operatör: "infra sayfası tüm cluster'ları döndüğü için
+  // yavaş yükleniyor") — KADEMELİ render. Eskiden podsPending =
+  // some(isPending) idi: TEK bir yavaş cluster tüm sayfayı spinner'da
+  // tutuyordu. 14 cluster'ın 13'ü 200ms'de dönse de 14.'sü handler'ın
+  // 10s deadline'ına dayanırsa operatör 10 saniye boş ekran görüyordu.
+  //
+  // Cluster listesi DARALTILAMAZ: servis, Coremetry'ye trace
+  // göndermediği (yalnız Thanos'ta metrik/JMX olan) cluster'larda da
+  // koşabilir — spans'tan türetmek v0.9.138'in düzelttiği "bazı
+  // cluster'lar görünmüyor" bug'ını geri getirirdi (v0.9.142 notu).
+  // O yüzden hepsini sormaya devam ediyoruz, ama GELENİ hemen çiziyoruz.
+  const podsSettled = podQs.filter(q => !q.isPending).length;
+  const podsTotal = podQs.length;
+  const podsPending = podsSettled < podsTotal;
+  // podsBlocking — spinner SADECE hiçbir eşleşme yokken ve hâlâ
+  // beklenen cluster varken. Erken "No pods matched" YASAK: ilk dönen
+  // cluster'lar boş çıkıp pod'lar 12. cluster'da olabilir; o hâlde
+  // "yok" demek yalan olurdu.
+  const podsBlocking = rows.length === 0 && podsPending;
   // v0.9.363 — hatalar dışarı çıkıyor. Eskiden Thanos 502'si, 10s handler
   // deadline'ı ya da süresi dolmuş token, "No pods matched … nothing
   // matched" ile AYNI ekranı üretiyordu: operatöre ürün yanlış yapılandırılmış
@@ -116,7 +134,8 @@ export function useServicePods(service: string, range: TimeRange) {
   return {
     metaQ, ns, deploy, matched, rows, clustersWithPods,
     effNs, effDeploy, from, to, cFrom, cTo, clamped,
-    sourcesPending, noClusters, podsPending, sourcesError, podErrors,
+    sourcesPending, noClusters, podsPending, podsBlocking, podsSettled, podsTotal,
+    sourcesError, podErrors,
     truncatedClusters,
   };
 }

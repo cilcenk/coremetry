@@ -32,7 +32,7 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
   const {
     metaQ, ns, deploy, matched, rows, clustersWithPods,
     effNs, effDeploy, cFrom, cTo, clamped,
-    sourcesPending, noClusters, podsPending,
+    sourcesPending, noClusters, podsBlocking,
   } = useServicePods(service, range);
 
   // ?icluster= — çip filtresi (URL kaynak-of-truth, replace:true).
@@ -135,7 +135,9 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
     </Empty>;
   }
   if (rows.length === 0) {
-    if (podsPending) return <Spinner />;
+    // v0.9.538 — spinner YALNIZ hiç eşleşme yokken; gelen cluster'lar
+    // hemen çizilir (tek yavaş cluster tüm sayfayı bekletmesin).
+    if (podsBlocking) return <Spinner />;
     return <Empty icon="▦" title="No pods matched">
       {/* v0.9.536 — gerçek aday kalıbı (ServicePodsTab ile aynı düzeltme). */}
       Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
@@ -232,13 +234,15 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
           <div ref={cpuChartRef} style={flashStyle('cpu')}>
             <MetricArea title={`CPU (cores) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
               by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom} onZoomReset={onZoomReset}
-              syncKey={`infra:${service}`}
+              syncKey={`infra:${service}`} totalSeries={cpuTrendQ.data?.totalSeries}
+              labelTrimPrefix={effDeploy}
               series={cpuTrendQ.data?.series} seriesName="CPU" />
           </div>
           <div ref={memChartRef} style={flashStyle('mem')}>
             <MetricArea title={`Memory · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
               by={memByPod} onToggle={setMemByPod} onZoom={onZoom} onZoomReset={onZoomReset}
-              syncKey={`infra:${service}`}
+              syncKey={`infra:${service}`} totalSeries={memTrendQ.data?.totalSeries}
+              labelTrimPrefix={effDeploy}
               series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
           </div>
         </div>

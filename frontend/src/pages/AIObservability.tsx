@@ -261,11 +261,105 @@ export default function AIObservabilityPage() {
         {/* v0.9.423 (CoSRE fikir #6) — 👎 madenciliği: hangi soru
             şekilleri kötü cevap alıyor? Yeni guided-intent adayları
             buradan çıkar. Sunucu 60s cache'li; mount'ta bir kez. */}
+        {/* v0.9.549 — 👎 paneli "cevap kötüydü"yü, bu panel
+            "soru hiç tanınmadı"yı gösteriyor. İkisi farklı
+            kalite sinyali: biri anlatımın, diğeri yönlendirmenin. */}
+        <RouterGapsPanel />
         <NegativeFeedbackPanel />
 
         {open && <CallDrawer call={open} rates={rates} onClose={() => setOpen(null)} />}
       </div>
     </>
+  );
+}
+
+// RouterGapsPanel — v0.9.549. Guided router'ın YAKALAYAMADIĞI sorular.
+//
+// CoSRE 16 intent tanıyor; tanımayan soru serbest tool döngüsüne
+// düşüyor. O döngü çalışır ama pahalıdır (N tur LLM çağrısı) ve küçük
+// modelde kalitesi düşüktür. Asıl mesele: hangi soruların düştüğünü
+// kimse GÖRMÜYORDU, dolayısıyla "sıradaki intent ne olmalı" sorusu
+// sezgiyle cevaplanıyordu.
+//
+// Yeni kayıt gerekmedi: serbest döngü zaten ai_calls'a surface='chat'
+// yazıyor ve prompt_sample kullanıcının sorusunun ta kendisi. Guided
+// yol 'chat-guided' yazıyor — ayrım hazır duruyordu.
+//
+// "Kullanıcı" kolonu bilinçli: tek kişinin ısrarla denediği bir soru
+// ile ekibin tamamının sorduğu soru aynı öncelikte değil, ve sayı tek
+// başına bunu ayırt edemiyor.
+function RouterGapsPanel() {
+  const [days, setDays] = useState<1 | 7 | 30>(7);
+  const [data, setData] = useState<Awaited<ReturnType<typeof api.aiRouterGaps>> | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setData(undefined);
+    api.aiRouterGaps(days)
+      .then(r => { if (!cancelled) setData(r); })
+      .catch(() => { if (!cancelled) setData(null); });
+    return () => { cancelled = true; };
+  }, [days]);
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="ov-card-h">
+        <h3>Router boşlukları</h3>
+        <span className="ov-sub">
+          guided intent'e OTURMAYAN sorular — serbest tool döngüsüne düştüler
+        </span>
+        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
+          {([1, 7, 30] as const).map(d => (
+            <button key={d} type="button" onClick={() => setDays(d)}
+              style={{
+                all: 'unset', cursor: 'pointer', padding: '2px 8px', fontSize: 11,
+                borderRadius: 4, border: '1px solid var(--border)',
+                background: days === d ? 'var(--accent-soft)' : 'transparent',
+                color: days === d ? 'var(--accent2)' : 'var(--text3)',
+              }}>{d}g</button>
+          ))}
+        </span>
+      </div>
+      <div className="ov-card-b">
+        {data === undefined && <Spinner />}
+        {data === null && <Empty icon="✗" title="Okunamadı" />}
+        {data && data.gaps.length === 0 && (
+          <div style={{ color: 'var(--text3)', fontSize: 12 }}>
+            Bu pencerede serbest döngüye düşen soru yok — router her soruyu yakalamış.
+          </div>
+        )}
+        {data && data.gaps.length > 0 && (
+          <>
+            <div style={{ fontSize: 11.5, color: 'var(--text2)', marginBottom: 8 }}>
+              Toplam <b>{data.totalFallbacks.toLocaleString()}</b> soru serbest döngüye
+              düştü. Sık tekrarlayanlar yeni bir guided intent adayıdır: deterministik
+              prefetch + tek anlatım çağrısı, N turluk tool döngüsünden hem ucuz hem
+              tutarlı olur.
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead><tr>
+                  <th>Soru</th>
+                  <th style={{ textAlign: 'right' }}>Kez</th>
+                  <th style={{ textAlign: 'right' }}>Kullanıcı</th>
+                  <th>Son</th>
+                </tr></thead>
+                <tbody>
+                  {data.gaps.map((g, i) => (
+                    <tr key={i} title={g.question}>
+                      <td className="mono" style={{ fontSize: 11.5, maxWidth: 560, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {g.question}
+                      </td>
+                      <td className="num mono">{g.count.toLocaleString()}</td>
+                      <td className="num mono" style={{ color: 'var(--text3)' }}>{g.users}</td>
+                      <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{tsLong(g.lastAt)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 

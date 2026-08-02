@@ -262,3 +262,39 @@ func (s *Server) aiSeries(w http.ResponseWriter, r *http.Request) {
 		return s.store.AICallsTimeseries(ctx, from, to, bucketSec)
 	})
 }
+
+// GET /api/ai/router-gaps?days=7 — v0.9.549.
+//
+// CoSRE'nin guided router'ının YAKALAYAMADIĞI sorular. Serbest tool
+// döngüsüne düşen her soru ai_calls'a surface='chat' ile yazılıyor ve
+// prompt_sample kullanıcının sorusunun kendisi — yani rapor saf bir
+// okuma, yeni kayıt gerekmiyor.
+//
+// Değeri: "sıradaki intent ne olmalı" sorusu bugüne kadar sezgiyle
+// cevaplanıyordu. Bu liste onu ölçüye bağlıyor.
+func (s *Server) aiRouterGaps(w http.ResponseWriter, r *http.Request) {
+	// Gün sayısı SABİT basamaklardan — cache anahtarına giriyor,
+	// serbest değer kardinaliteyi patlatır (v0.8.270).
+	days := 7
+	switch r.URL.Query().Get("days") {
+	case "1":
+		days = 1
+	case "30":
+		days = 30
+	}
+	key := fmt.Sprintf("ai:router-gaps:v1:d=%d", days)
+	s.serveCached(w, r, key, 5*time.Minute, func(ctx context.Context) (any, error) {
+		gaps, err := s.store.RouterGaps(ctx, time.Duration(days)*24*time.Hour, 50)
+		if err != nil {
+			return nil, err
+		}
+		var total uint64
+		for _, g := range gaps {
+			total += g.Count
+		}
+		return map[string]any{
+			"gaps": gaps, "days": days, "totalFallbacks": total,
+			"generatedAt": time.Now().UnixNano(),
+		}, nil
+	})
+}

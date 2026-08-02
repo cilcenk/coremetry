@@ -747,6 +747,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
   // v0.9.423 — 👎 madenciliği: düşük puanlı cevaplar prompt örnekleriyle.
+  // v0.9.549 — guided router'ın yakalayamadığı sorular (serbest tool
+  // döngüsüne düşenler). days sabit basamak: cache anahtarına giriyor.
+  aiRouterGaps: (days: 1 | 7 | 30 = 7) =>
+    get<{
+      gaps: Array<{ question: string; count: number; lastAt: number; users: number }>;
+      days: number; totalFallbacks: number; generatedAt: number;
+    }>(`/api/ai/router-gaps?days=${days}`),
   aiNegativeFeedback: (rangeS?: number) =>
     get<{ rows: import('./types').NegativeFeedbackCall[]; rangeS: number }>(
       `/api/ai/feedback/negative${rangeS ? `?rangeS=${rangeS}` : ''}`),

@@ -63,6 +63,22 @@ type InboxItem struct {
 	// deploy correlation paths and are not enriched on this route.
 	RunbookURL   string                `json:"runbookUrl,omitempty"`
 	RecentDeploy *chstore.RecentDeploy `json:"recentDeploy,omitempty"`
+	// AISummary (v0.9.530) — AYNI hata sınıfının ikinci nüshası. Hem
+	// Problem.AISummary (problem.go:789 SELECT'inde) hem
+	// ExceptionGroup.AISummary (exception_inbox.go SELECT'inde) bu
+	// handler'ın belleğine ZATEN geliyordu; mapper ikisini de atıyordu.
+	// Faturası ödenmiş, cevabı çöpe atılmış — yukarıdaki v0.9.255
+	// yorumunun tarif ettiği durumun aynısı, 1300 satır aşağıda.
+	//
+	// Sunucuda kırpılır: özet tek cümle değil, çok bölümlü bir blok
+	// ("Olası neden: / Kanıt: / İlk kontroller:"), ~700 karakter. Tam
+	// metnin yeri detay yüzeyi; satırın işi TARAMA.
+	//
+	// AISummaryAt olmadan gönderilmez: özet tek yazımlıktır ama satırın
+	// gövdesi (occurrences, mesaj) altından değişmeye devam eder, ve
+	// yaşsız bir çıkarım canlı sayının altında taze görünür.
+	AISummary   string `json:"aiSummary,omitempty"`
+	AISummaryAt int64  `json:"aiSummaryAt,omitempty"`
 	// Kind-specific drill-down hints. Only one is populated per
 	// row. Keeps the JSON shape skinny — frontend reads exactly
 	// the one matching `kind`.
@@ -1380,6 +1396,9 @@ func problemToInbox(p chstore.Problem) InboxItem {
 		// enrichment chain in listInbox and then discarded here.
 		RunbookURL:   p.RunbookURL,
 		RecentDeploy: p.RecentDeploy,
+		// v0.9.530 — aynı sınıf: ListProblems bunu zaten SELECT ediyordu.
+		AISummary:   inboxTruncate(p.AISummary, inboxAISummaryMax),
+		AISummaryAt: p.AISummaryAt,
 		Problem: &InboxProblemRef{
 			ID: p.ID, RuleID: p.RuleID, Metric: p.Metric,
 			Value: p.Value, Threshold: p.Threshold,
@@ -1427,6 +1446,11 @@ func exceptionToInbox(g chstore.ExceptionGroup) InboxItem {
 		LastSeen:       g.LastSeen,
 		Assignee:       g.Assignee,
 		Status:         g.State,
+		// v0.9.530 — ExceptionExplainer'ın özeti. Varsayılan Inbox
+		// görünümünde (P1 + kind=exception) operatörün gördüğü TEK
+		// AI cümlesi bu; problem satırları P3 kovasında kalıyor.
+		AISummary:   inboxTruncate(g.AISummary, inboxAISummaryMax),
+		AISummaryAt: g.AISummaryAt,
 		Exception: &InboxExceptionRef{
 			Fingerprint: g.Fingerprint, Type: g.Type, Message: g.Message,
 			Occurrences: g.Occurrences,
@@ -1585,9 +1609,34 @@ func anomalyPriority(e chstore.AnomalyEvent) (string, string) {
 
 // inboxTruncate caps a string at n characters; the package's
 // generic truncate() lives in api.go and has a different signature.
+// inboxAISummaryMax — satırdaki AI özetinin bayt bütçesi (v0.9.530).
+//
+// Özet çok bölümlü bir blok ("Olası neden: / Kanıt: … / İlk kontroller:
+// …"), ~700 karakter. Tamamını satıra basmak hem tabloyu şişirir hem
+// Redis'e ve L1'e taşınır; satırın işi TARAMA, tam metnin yeri detay
+// yüzeyi. 240, mevcut g.Message kırpmasıyla aynı bütçe — aynı satırda
+// iki farklı kırpma eşiği tutarsız görünürdü.
+const inboxAISummaryMax = 240
+
+// v0.9.530 — kırpma RUNE sınırında yapılır, bayt sınırında değil.
+//
+// Eski hâli `s[:n]` idi ve çok baytlı bir karakteri ORTADAN bölebiliyordu:
+// Türkçe metinde ç/ğ/ı/ö/ş/ü hepsi 2 bayt, yani 240. baytın bir runenin
+// ortasına düşme olasılığı yüksek. Bozuk bayt JSON'a girince Go onu
+// U+FFFD'ye çevirir ve operatör triage satırında "�" görür. Exception
+// mesajları çoğunlukla ASCII olduğu için bu bugüne dek görünmedi; AI
+// özeti Türkçe düzyazı olduğu için artık görünürdü.
 func inboxTruncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "…"
+	// n bayta kadar TAM runeleri al.
+	cut := 0
+	for i := range s {
+		if i > n {
+			break
+		}
+		cut = i
+	}
+	return strings.TrimRight(s[:cut], " \n\t") + "…"
 }

@@ -9,6 +9,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { useInbox, useServicesMetadata } from '@/lib/queries';
 import { tsLong, fmtFixed, fmtAgoNs } from '@/lib/utils';
+import { IconSparkles } from '@/components/icons';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
@@ -826,6 +827,7 @@ export default function InboxPage() {
                         )}
                       </div>
                       <DetailLine it={it} />
+                      <AISummaryLine it={it} />
                     </td>
                     <td className="mono"
                       style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -920,6 +922,53 @@ function AssigneePill({ v }: { v: string }) {
 // DetailLine — kind-specific subtitle. Surfaces the single most
 // useful number per source: the breach ratio for Problems, the
 // occurrence count for Exceptions, the peak ratio for Anomalies.
+// AISummaryLine — v0.9.530. Arka plan işçilerinin (ProblemExplainer /
+// ExceptionExplainer) yazdığı proaktif kök-sebep cümlesi. Operatör
+// hiçbir şey tıklamaz; satır zaten telde gelen veriyle çizilir.
+//
+// KÖKEN İŞARETİ ŞART. Bu bir LLM ÇIKARIMI ve satırın geri kalanı olgu.
+// Projedeki diğer tüm AI render'ları kökeni işaretliyor (ProblemDetail
+// :501-508 ve :307-319: IconSparkles + accent-soft zemin + sol accent
+// kenar); en çok taranan yüzeyde tahmini olguyla aynı tipografide
+// basmak, operatörün ikisini ayırmasını imkânsız kılardı.
+//
+// YAŞ DAMGASI ŞART. Özet TEK YAZIMLIK ama satırın gövdesi (occurrences,
+// mesaj) altından değişmeye devam eder. Damgasız bir çıkarım canlı
+// sayının hemen altında taze görünür — bu yüzden exception tarafına
+// ai_summary_at kolonu v0.9.530'da eklendi (problems'ta zaten vardı).
+//
+// YOKLUĞUNDA HİÇBİR ŞEY ÇİZİLMEZ, ve bunun gerekçesi RootCauseRibbon
+// DEĞİL (o görünür bir "henüz yok" dalı çiziyor — farklı bağlam, tek
+// bir özneye adanmış panel). Burada bağlam bir TARAMA tablosu: yüzlerce
+// satırın her birine "henüz özet yok" basmak gürültüdür ve rozetin
+// yokluğu bir tablo satırında zaten iddia taşımaz. Buna karşılık
+// yokluğun olayın önemiyle değil işçinin debisiyle korele olduğunu
+// bilmek gerekir (ExceptionExplainer tik başına 4 grup / 60s), yani
+// "özeti yok" bir hüküm değil, sadece sıranın gelmemiş olması.
+function AISummaryLine({ it }: { it: InboxItem }) {
+  if (!it.aiSummary) return null;
+  const age = it.aiSummaryAt ? fmtAgoNs(it.aiSummaryAt) : '';
+  return (
+    <div
+      title={age ? `${it.aiSummary}\n\nAI çıkarımı · ${age}` : it.aiSummary}
+      style={{
+        fontSize: 11, color: 'var(--text2)', marginTop: 4,
+        padding: '3px 7px', borderRadius: 'var(--radius-sm)',
+        background: 'var(--accent-soft)',
+        borderLeft: '2px solid var(--accent)',
+        // Tek satıra çivili: satır yüksekliği sınırlı kalsın, yoksa
+        // containIntrinsicSize yer-tutucu tahmini (auto 44px) daha da
+        // yanlışlaşır ve kaydırma çubuğu zıplar.
+        display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical',
+        overflow: 'hidden',
+      }}
+    >
+      <IconSparkles size={10} /> {it.aiSummary}
+      {age && <span style={{ color: 'var(--text3)' }}> · {age}</span>}
+    </div>
+  );
+}
+
 function DetailLine({ it }: { it: InboxItem }) {
   if (it.kind === 'problem' && it.problem) {
     return (

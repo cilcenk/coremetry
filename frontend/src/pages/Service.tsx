@@ -25,7 +25,8 @@ import { DetailsToc } from './service/DetailsToc';
 import { panelMaxDataPoints } from '@/lib/chartStep';
 import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { api } from '@/lib/api';
-import { timeRangeToNs } from '@/lib/utils';
+import { timeRangeToNs, fmtAgoNs } from '@/lib/utils';
+import { IconSparkles } from '@/components/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { keys } from '@/lib/queries/keys';
@@ -438,6 +439,35 @@ function ServiceDetailInner() {
                     {p.description && (
                       <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
                         {p.description}
+                      </div>
+                    )}
+                    {/* v0.9.530 — ProblemExplainer'ın proaktif kök-sebep
+                        cümlesi. Alan bundle'da ZATEN geliyordu (Problem[]),
+                        yalnız çizilmiyordu; ek istek yok.
+                        description ile AYNI tonda basılamaz: bu bir LLM
+                        çıkarımı, o bir kural metni. Köken işareti + yaş,
+                        Inbox satırıyla aynı muamele. İki satıra çivili —
+                        özet çok bölümlü bir blok ve kart 50 probleme kadar
+                        çizilebiliyor (bundle Limit=50), sınırsız bırakmak
+                        sekmeleri sayfanın çok altına iterdi. */}
+                    {p.aiSummary && (
+                      <div
+                        title={p.aiSummaryAt
+                          ? `${p.aiSummary}\n\nAI çıkarımı · ${fmtAgoNs(p.aiSummaryAt)}`
+                          : p.aiSummary}
+                        style={{
+                          fontSize: 11, color: 'var(--text2)', marginTop: 4,
+                          padding: '4px 8px', borderRadius: 'var(--radius-sm)',
+                          background: 'var(--accent-soft)',
+                          borderLeft: '2px solid var(--accent)',
+                          display: '-webkit-box', WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical', overflow: 'hidden',
+                        }}
+                      >
+                        <IconSparkles size={10} /> {p.aiSummary}
+                        {p.aiSummaryAt && (
+                          <span style={{ color: 'var(--text3)' }}> · {fmtAgoNs(p.aiSummaryAt)}</span>
+                        )}
                       </div>
                     )}
                     <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4, fontFamily: 'monospace' }}>

@@ -1029,7 +1029,9 @@ export const api = {
     get<ClusterResourceTrendResponse>(`/api/clusters/resource-trend?cluster=${encodeURIComponent(cluster)}` +
       `&metric=${metric}&byNode=${byNode ? 1 : 0}&from=${fromNs}&to=${toNs}`),
   // v0.9.50 (handoff §8) — Service→Infra sekmesinin CPU/Mem grafiği.
-  clusterDeployTrend: (cluster: string, ns: string, deploy: string, metric: 'cpu' | 'mem', byPod: boolean, fromNs: number, toNs: number) =>
+  // v0.9.546 — netin/netout eklendi (operatör: JVM yokken CPU/Mem/Network
+  // grafikleri). Sunucuda beyaz listeli: değer cache anahtarına giriyor.
+  clusterDeployTrend: (cluster: string, ns: string, deploy: string, metric: 'cpu' | 'mem' | 'netin' | 'netout', byPod: boolean, fromNs: number, toNs: number) =>
     get<ClusterDeployTrendResponse>(`/api/clusters/deploy-trend?cluster=${encodeURIComponent(cluster)}` +
       `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
       `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),

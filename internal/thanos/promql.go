@@ -410,6 +410,22 @@ func deployTrendQuery(namespace, deploy, metric string, byPod bool) string {
 	switch metric {
 	case "mem":
 		expr = fmt.Sprintf(`container_memory_working_set_bytes{%s}`, sel)
+	// v0.9.546 (operatör: "jvm metrikleri yoksa cpu memory NETWORK
+	// grafikleri gözükebilir") — ağ, pod envanterinde zaten anlık
+	// kolon olarak vardı (podNetQuery); trend hâli eksikti.
+	//
+	// container!="" seçicisi ağda KULLANILMAZ: cAdvisor ağ sayaçlarını
+	// pod'un altyapı (pause) container'ına yazar, yani container adı
+	// boştur — CPU/Mem seçicisiyle aynı kalıbı kullansaydık ağ serisi
+	// HİÇ dönmezdi. Bu yüzden seçici burada yeniden kuruluyor.
+	case "netin", "netout":
+		dir := "receive"
+		if metric == "netout" {
+			dir = "transmit"
+		}
+		netSel := fmt.Sprintf(`namespace="%s",pod=~"%s-.*"`,
+			escapeLabelValue(namespace), escapeLabelValue(regexp.QuoteMeta(deploy)))
+		expr = fmt.Sprintf(`rate(container_network_%s_bytes_total{%s}[5m])`, dir, netSel)
 	default: // cpu
 		expr = fmt.Sprintf(`rate(container_cpu_usage_seconds_total{%s}[5m])`, sel)
 	}

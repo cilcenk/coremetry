@@ -127,7 +127,12 @@ const FAMILY_CARDS: Record<string, CardSpec[]> = {
   ],
 };
 
-function familyOf(language: string | undefined): string | null {
+// v0.9.546 — dışa açıldı: Pods sekmesi "bu serviste dil-runtime ailesi
+// VAR MI" sorusunu sorup yoksa Thanos kaynak grafiklerine düşüyor
+// (PodResourceCharts). Tek kaynak, iki tüketici — aile listesi
+// ayrışırsa bir servis hem runtime hem kaynak grafiği görür ya da
+// hiçbirini görmez.
+export function familyOf(language: string | undefined): string | null {
   const l = (language || '').toLowerCase();
   if (l === 'java' || l === 'kotlin') return 'jvm';
   if (l === 'dotnet' || l === 'csharp') return 'dotnet';

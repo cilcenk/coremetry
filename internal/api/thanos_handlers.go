@@ -390,9 +390,13 @@ func (s *Server) getClusterDeployTrend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "cluster, ns and deploy query params required", http.StatusBadRequest)
 		return
 	}
+	// v0.9.546 — netin/netout eklendi. Beyaz liste ŞART: değer cache
+	// anahtarına giriyor, serbest bırakmak kardinaliteyi patlatır
+	// (v0.8.270 sınıfı) ve PromQL'e bilinmeyen dal sokar.
 	metric := "cpu"
-	if q.Get("metric") == "mem" {
-		metric = "mem"
+	switch q.Get("metric") {
+	case "mem", "netin", "netout":
+		metric = q.Get("metric")
 	}
 	byPod := q.Get("byPod") == "1"
 	cfg, ok := s.thanos.ClusterByName(name)

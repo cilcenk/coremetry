@@ -950,6 +950,44 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .mlc-chart .u-legend tr.u-series.u-off td.u-value { color: var(--text3); }
 
+/* ── Lejant LİSTE modu (v0.9.541) ────────────────────────────────────────
+   Operatör (mockup C + otomatik seçim): pod grafiklerinde lejant tam pod
+   adlarıyla dikey tabloydu — 40 pod = 40 satır, grafik sayfanın çok altına
+   iniyordu. Grafana yoğunluğunu veren şey dolgu DEĞİL yatay lejant;
+   40-serilik mockup kıyası dolgunun kalabalıkta alttaki serileri gizlediğini
+   gösterdi, o yüzden dolgu bilinçli kapalı kalıyor.
+
+   Yaklaşım: uPlot'un KENDİ <table> lejantını yerinde tutup display ile
+   yeniden akıtıyoruz. <tr>'ler DOM'da kalıyor, dolayısıyla tıkla-izole
+   işleyicisi, .u-off opaklığı ve legendVisibility persist katmanı hiç
+   değişmeden çalışıyor — JS'e dokunmadan yalnız düzen değişiyor.
+
+   Sayı sütunları (Last/Min/Max/Avg) burada gizlenir: kalabalıkta zaten
+   okunmuyorlardı ve satır başına ~200px yiyorlardı. Değerler tooltip'te
+   ve ≤6 serili grafiklerin tablo modunda duruyor. Mod seçimi
+   lib/chart/legendMode (tek eşik, iki bileşen). */
+.mlc-legend-list .u-legend,
+.mlc-legend-list .u-legend tbody {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+  width: 100%;
+}
+.mlc-legend-list .u-legend tr.u-series {
+  display: inline-flex;
+  align-items: center;
+  max-width: 240px;
+}
+.mlc-legend-list .u-legend th {
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* Sayı sütunları liste modunda yok. */
+.mlc-legend-list .u-legend td.u-value { display: none !important; }
+
 /* ── Dashboard row header (Grafana-style collapsible groups) ──────────── */
 .dash-row-header {
   display: flex; align-items: center; gap: 8px;

@@ -8,6 +8,7 @@ import { placeTooltip } from '@/lib/chartTooltip';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { timeSeriesPanelBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar as resolveColor } from '@/lib/chart/resolveVar';
+import { legendMode } from '@/lib/chart/legendMode';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { useChartEngine } from '@/lib/chart/engine';
@@ -984,7 +985,39 @@ function TimeSeriesLegend({ rows, isVisible, onToggle }: {
         <span style={{ fontSize: 9 }}>{collapsed ? '▶' : '▼'}</span>
         Series ({rows.length})
       </button>
-      {!collapsed && (
+      {/* v0.9.541 (operatör, mockup C + otomatik seçim) — kalabalık
+          lejant YATAY akar: 40 seri 40 satır yerine birkaç satırda
+          sığar. Last/Min/Max/Avg burada gösterilmez (okunmuyordu ve
+          yer yiyordu); değerler tooltip'te ve az-serili grafiklerin
+          tablo modunda duruyor. Karar seri sayısının fonksiyonu —
+          lib/chart/legendMode, iki lejant bileşeni de aynı eşiği okur. */}
+      {!collapsed && legendMode(rows.length) === 'list' && (
+        <div style={{
+          display: 'flex', flexWrap: 'wrap', gap: '3px 14px',
+          marginTop: 6, fontSize: 11, lineHeight: 1.5,
+        }}>
+          {rows.map((r, i) => {
+            const on = isVisible(i);
+            return (
+              <span key={r.label + i}
+                onClick={e => onToggle(i, e.ctrlKey || e.metaKey)}
+                title={`${r.label} · son ${fmtSmart(r.last, r.unit)} · tıkla=izole, Ctrl/Cmd-tıkla=aç/kapa`}
+                style={{
+                  cursor: 'pointer', opacity: on ? 1 : 0.4, userSelect: 'none',
+                  whiteSpace: 'nowrap', maxWidth: 240, overflow: 'hidden',
+                  textOverflow: 'ellipsis', color: 'var(--text2)',
+                }}>
+                <span style={{
+                  display: 'inline-block', width: 8, height: 8, borderRadius: 2,
+                  background: r.color, marginRight: 5, verticalAlign: 'middle',
+                }} />
+                <span style={{ verticalAlign: 'middle' }}>{r.label}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
+      {!collapsed && legendMode(rows.length) === 'table' && (
       <div style={{ overflowX: 'auto', marginTop: 4 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
         <thead>

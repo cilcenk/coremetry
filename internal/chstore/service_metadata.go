@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"encoding/json"
+	"log"
 	"strings"
 	"time"
 )
@@ -518,7 +519,143 @@ ORDER BY service_name
 LIMIT 10000
 SETTINGS max_execution_time = 25`
 
+// derivePodIdentitySQL — v0.9.531 pod-adı yedeği için ham malzeme:
+// servis başına gözlemlenen pod kimlikleri + satır sayıları. Kimlik
+// zinciri deploys.go'daki instanceIdExpr ile aynı (k8s.pod.name →
+// service.instance.id → host_name kolonu). Pencere + LIMIT +
+// max_execution_time deriveDeploymentSQL ile aynı bütçe.
+const derivePodIdentitySQL = `
+SELECT service_name, pod, count() AS c
+FROM (
+  SELECT service_name,
+    multiIf(
+      res_values[indexOf(res_keys, 'k8s.pod.name')] != '',        res_values[indexOf(res_keys, 'k8s.pod.name')],
+      res_values[indexOf(res_keys, 'service.instance.id')] != '', res_values[indexOf(res_keys, 'service.instance.id')],
+      host_name != '',                                            host_name,
+      '') AS pod
+  FROM spans
+  WHERE time >= ? AND time <= ?
+  LIMIT 2000000
+)
+WHERE pod != ''
+GROUP BY service_name, pod
+LIMIT 100000
+SETTINGS max_execution_time = 25`
+
+// deploymentFromPodName — v0.9.531. Pod adından deployment adı, YALNIZ
+// emin olunan şekillerde; emin değilse "".
+//
+// Operatör-bildirimli (prod): BFF servislerinde k8s deployment adı
+// servis adındaki env ekini TAŞIMIYOR — servis mobile-loans-bff-prod,
+// pod mobile-loans-bff-6b8f49b9d5-8hrtj. Katalog deriver'ı yalnız
+// deployment.name attr'larını okuyordu; BFF o attr'ı basmadığı için
+// deployment_auto boş kalıyor, istemcinin son çaresi (soyulmuş pod adı
+// == servis adı TAM eşitliği) env eki yüzünden asla tutmuyor ve Pods /
+// Infrastructure sekmeleri "No pods matched" gösteriyordu — CPU/Memory
+// grafikleri dahil, çünkü PromQL seçicisi de servis adına düşüyordu.
+//
+// thanos/promql.go'daki stripPodSuffixes'ten BİLİNÇLİ olarak daha
+// muhafazakâr: o bir görüntüleme sezgiseli, bu bir KATALOG ALANI yazar.
+//
+//	<ad>-<rs-hash 8-10 hex>-<rand5>  → ad   (Deployment — asıl hedef)
+//	<ad>-<N, ≤3 hane>                → ad   (StatefulSet ordinali)
+//	<ad>-<rand5> (rs-hash'siz)       → ""   (DaemonSet şekli hostname'le
+//	                                         ayırt edilemez: vm-app01)
+//	UUID service.instance.id         → ""   (son parça 12 hane → ordinal
+//	                                         sınırına takılır)
+func deploymentFromPodName(pod string) string {
+	segs := strings.Split(pod, "-")
+	if len(segs) < 2 {
+		return ""
+	}
+	last := segs[len(segs)-1]
+	// StatefulSet: kısa sayısal ordinal. 12 haneli UUID kuyruğu ya da
+	// tarih damgası gibi uzun sayılar deployment kanıtı DEĞİL.
+	if isOrdinalSuffix(last) {
+		return strings.Join(segs[:len(segs)-1], "-")
+	}
+	// Deployment: rand5 + hemen önünde rs-hash. İkisi birden şart —
+	// tek başına rand5, "vm-app01" gibi hostname'lerle çakışır.
+	if len(segs) >= 3 && isPodRandom5(last) && isRSHash(segs[len(segs)-2]) {
+		return strings.Join(segs[:len(segs)-2], "-")
+	}
+	return ""
+}
+
+func isOrdinalSuffix(s string) bool {
+	if len(s) == 0 || len(s) > 3 {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// isPodRandom5 — k8s'in 5'lik rand alfabesi (rakam + sessiz harfler),
+// thanos/promql.go isPodRandomSuffix ile aynı küme.
+func isPodRandom5(s string) bool {
+	if len(s) != 5 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789bcdfghjklmnpqrstvwxz", c) {
+			return false
+		}
+	}
+	return true
+}
+
+// isRSHash — thanos/promql.go isReplicaSetHash ile aynı küme.
+func isRSHash(s string) bool {
+	if len(s) < 8 || len(s) > 10 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+
+// deploymentsFromPodCounts — (servis → pod → satır sayısı) yığınından
+// servis başına baskın deployment adayı. Saf — tablo-testli.
+func deploymentsFromPodCounts(pods map[string]map[string]uint64) map[string]string {
+	out := make(map[string]string, len(pods))
+	for svc, byPod := range pods {
+		counts := map[string]uint64{}
+		for pod, c := range byPod {
+			if dep := deploymentFromPodName(pod); dep != "" {
+				counts[dep] += c
+			}
+		}
+		var best string
+		var bestC uint64
+		for dep, c := range counts {
+			// Eşitlikte deterministik seçim (map sırası rastgele).
+			if c > bestC || (c == bestC && (best == "" || dep < best)) {
+				best, bestC = dep, c
+			}
+		}
+		if best != "" {
+			out[svc] = best
+		}
+	}
+	return out
+}
+
 // DeriveServiceDeployments — servis → baskın deployment adı.
+//
+// İki kaynak, öncelik sırasıyla:
+//  1. deployment.name attr'ları (yetkili kaynak — v0.9.25/53/54)
+//  2. v0.9.531 — gözlemlenen pod adlarından türetim, YALNIZ 1'in boş
+//     bıraktığı servisler için. Çapraz-env güvenli: aday servisin
+//     KENDİ telemetrisindeki pod'lardan gelir; mobile-loans-bff-prod
+//     kendi pod'undan "mobile-loans-bff" türetir, -int servisi kendi
+//     pod'undan kendininkini.
 func (s *Store) DeriveServiceDeployments(ctx context.Context, since time.Duration) (map[string]string, error) {
 	to := time.Now()
 	from := to.Add(-since)
@@ -537,7 +674,45 @@ func (s *Store) DeriveServiceDeployments(ctx context.Context, since time.Duratio
 			out[svc] = dep
 		}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Yedek kaynak: pod adları. Attr'ı olan servislerde koşmaz demek
+	// DEĞİL — sorgu filo-geneli tek tarama; yalnız SONUÇLARI attr'ın
+	// doldurmadığı servislere uygulanır.
+	prows, err := s.conn.Query(ctx, derivePodIdentitySQL, from, to)
+	if err != nil {
+		// Yedek kaynağın hatası birincil sonucu düşürmesin: attr'dan
+		// gelenler yine yazılır, pod yedeği bir sonraki tik'te denenir.
+		log.Printf("[metadata] pod-adı deployment yedeği okunamadı: %v", err)
+		return out, nil
+	}
+	defer prows.Close()
+	pods := map[string]map[string]uint64{}
+	for prows.Next() {
+		var svc, pod string
+		var c uint64
+		if err := prows.Scan(&svc, &pod, &c); err != nil {
+			return nil, err
+		}
+		if _, have := out[svc]; have {
+			continue // attr kaynağı yetkili
+		}
+		m := pods[svc]
+		if m == nil {
+			m = map[string]uint64{}
+			pods[svc] = m
+		}
+		m[pod] = c
+	}
+	if err := prows.Err(); err != nil {
+		return nil, err
+	}
+	for svc, dep := range deploymentsFromPodCounts(pods) {
+		out[svc] = dep
+	}
+	return out, nil
 }
 
 // mergeDeployment — mergeNamespace'in birebir sahiplik sözleşmesi.

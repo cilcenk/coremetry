@@ -126,3 +126,78 @@ func TestNamespaceAutoSurvivesUnrelatedEdit(t *testing.T) {
 		t.Fatal("zeroed auto reads as a human pin — the handler MUST carry NamespaceAuto forward")
 	}
 }
+
+// v0.9.531 — operatör-bildirimli (prod): BFF servislerinde k8s
+// deployment adı servis adındaki env ekini taşımıyor (servis
+// mobile-loans-bff-prod, pod mobile-loans-bff-6b8f49b9d5-8hrtj).
+// Katalog deriver'ı yalnız deployment.name attr'larını okuyordu; BFF o
+// attr'ı basmadığı için deployment_auto boş kalıyor ve Pods /
+// Infrastructure sekmeleri "No pods matched" gösteriyordu — CPU/Memory
+// grafikleri dahil (PromQL seçicisi de servis adına düşüyordu).
+//
+// Çözüm: gözlemlenen pod adlarından türetim. Bu test türetimin
+// MUHAFAZAKÂRLIK sınırlarını pinler — katalog alanı yazan bir sezgisel,
+// görüntüleme sezgiselinden (thanos stripPodSuffixes) daha sıkı olmak
+// ZORUNDA: yanlış deployment adı, yanlış pod'ları servise bağlar.
+func TestDeploymentFromPodName(t *testing.T) {
+	cases := []struct{ name, pod, want string }{
+		// Asıl hedef: Deployment şekli (rand5 + rs-hash birlikte).
+		{"BFF prod pod'u", "mobile-loans-bff-6b8f49b9d5-8hrtj", "mobile-loans-bff"},
+		{"BSA pod'u (env ekli deployment)", "bsa-digital-limitcore-prod-864cd95d87-q9dt9", "bsa-digital-limitcore-prod"},
+		{"oneagent yan pod'u ayrı aday üretir", "bsa-digital-limitcore-prod-oneagent-7d98d8b99d-m6r8f", "bsa-digital-limitcore-prod-oneagent"},
+
+		// StatefulSet: kısa sayısal ordinal.
+		{"statefulset-0", "chc-0", "chc"},
+		{"statefulset çok haneli", "kafka-broker-12", "kafka-broker"},
+
+		// Emin olunamayanlar → "". Her biri gerçek bir yanlış-pozitif
+		// sınıfı: katalog alanına girseydi yanlış pod eşleşmesi doğardı.
+		{"DaemonSet şekli hostname'le ayırt edilemez", "node-exporter-x8k2p", ""},
+		{"hostname rand5'e benzeyen kuyrukla", "vm-app01", ""},
+		{"rs-hash'siz rand5", "mobile-loans-bff-8hrtj", ""},
+		{"rand5 sesli harf içeriyor (k8s alfabesi dışı)", "svc-6b8f49b9d5-abcde", ""},
+		{"UUID instance id", "550e8400-e29b-41d4-a716-446655440000", ""},
+		{"uzun sayısal kuyruk ordinal değil", "batch-20260802", ""},
+		{"tek segment", "localhost", ""},
+		{"boş", "", ""},
+		// rs-hash sınırları: 8-10 hex.
+		{"rs-hash 7 karakter (kısa)", "svc-abc1234-8hrtj", ""},
+		{"rs-hash 11 karakter (uzun)", "svc-abc1234def5-8hrtj", ""},
+		{"rs-hash hex dışı", "svc-abcdefgh-8hrtj", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := deploymentFromPodName(c.pod); got != c.want {
+				t.Errorf("deploymentFromPodName(%q) = %q, beklenen %q", c.pod, got, c.want)
+			}
+		})
+	}
+}
+
+// Baskın aday seçimi: yan pod'lar (oneagent) ana deployment'ı ezmemeli,
+// eşitlikte seçim deterministik olmalı (map sırası rastgele).
+func TestDeploymentsFromPodCounts(t *testing.T) {
+	got := deploymentsFromPodCounts(map[string]map[string]uint64{
+		"mobile-loans-bff-prod": {
+			"mobile-loans-bff-6b8f49b9d5-8hrtj": 900,
+			"mobile-loans-bff-6b8f49b9d5-vdp54": 850,
+			"mobile-loans-bff-oneagent-7d98d8b99d-m6r8f": 40,
+		},
+		"uuid-only-svc": {
+			"550e8400-e29b-41d4-a716-446655440000": 1000,
+		},
+		"tie-svc": {
+			"aaa-6b8f49b9d5-8hrtj": 10,
+			"bbb-6b8f49b9d5-8hrtj": 10,
+		},
+	})
+	if got["mobile-loans-bff-prod"] != "mobile-loans-bff" {
+		t.Errorf("baskın aday mobile-loans-bff olmalı, got %q", got["mobile-loans-bff-prod"])
+	}
+	if _, ok := got["uuid-only-svc"]; ok {
+		t.Error("hiç güvenli aday yoksa servis haritada OLMAMALI")
+	}
+	if got["tie-svc"] != "aaa" {
+		t.Errorf("eşitlikte alfabetik ilk seçilmeli (deterministik), got %q", got["tie-svc"])
+	}
+}

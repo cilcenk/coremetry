@@ -79,7 +79,22 @@ func TestServiceDisplayPrefersK8sWorkload(t *testing.T) {
 	if iflat >= 0 && iflat < ik8s {
 		t.Error("düz service_name k8s işyükünden önce — uygulama-yayımlı operasyon adı servis kolonunu ele geçirir")
 	}
-	if !strings.Contains(src, `svcFields := []string{s.fields.Service, "kubernetes.container.name", "kubernetes.container_name"}`) {
-		t.Error("servis filtresi container alanlarını eşlemiyor — gösterilen ada tıklayınca filtre boş döner")
+	// v0.9.545 — iddia TEK SATIRLIK LİTERALDEN alan-varlığına çevrildi.
+	// Sözleşme aynı: gösterim zincirindeki k8s alanları servis
+	// FİLTRESİNİN de eşlediği alanlar olmalı, yoksa operatör gösterilen
+	// ada tıklayınca boş liste alır (v0.8.265 sınıfı). Değişen tek şey
+	// svcFields'ın çok satırlı hale gelmesi (labels.app + env-eki-soyulmuş
+	// değer eklendi); literali pinlemek biçimi pinliyordu, davranışı değil.
+	svcIdx := strings.Index(src, "svcFields := []string{")
+	if svcIdx < 0 {
+		t.Fatal("svcFields bulunamadı")
+	}
+	svcBlock := src[svcIdx : svcIdx+400]
+	for _, fld := range []string{
+		"s.fields.Service", `"kubernetes.container.name"`, `"kubernetes.container_name"`,
+	} {
+		if !strings.Contains(svcBlock, fld) {
+			t.Errorf("servis filtresi %s alanını eşlemiyor — gösterilen ada tıklayınca filtre boş döner", fld)
+		}
 	}
 }

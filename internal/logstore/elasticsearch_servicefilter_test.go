@@ -114,3 +114,56 @@ func TestQueryIndicesTemplateFallsBackWhenResolvedUnknown(t *testing.T) {
 		t.Fatalf("empty inventory must skip the existence check, got %v", got)
 	}
 }
+
+// v0.9.545 — operator-reported (prod): BFF servislerinin Logs sekmesi
+// TAMAMEN boştu. Kök sebep aranan ALAN değil aranan DEĞER: servis adı
+// env ekli (mobile-overview-bff-prod) ama log dokümanı eksiz taşıyor
+// (kubernetes.container_name = mobile-overview-bff). Ortam bilgisi
+// NAMESPACE'e yazılmış (mobile-bff-prod), iş yükü adına değil.
+//
+// Aynı adlandırma boşluğunun pod tarafındaki ikizi v0.9.535'te
+// kapandı; ek listesi BİLEREK ortak — iki yüzey aynı servisi farklı
+// adlarla aramamalı.
+func TestStripLogEnvSuffix(t *testing.T) {
+	cases := []struct{ in, want string }{
+		// Operatörün gerçek vakası.
+		{"mobile-overview-bff-prod", "mobile-overview-bff"},
+		{"mobile-loans-bff-prod", "mobile-loans-bff"},
+		{"bsa-login-int", "bsa-login"},
+		{"svc-uat", "svc"},
+		{"svc-prep", "svc"},
+
+		// Ad ORTASINDAKİ ek dokunulmaz — soyma ne kadar gevşek olursa
+		// yanlış servisin logunu getirme riski o kadar büyür.
+		{"bsa-digital-limitcore-prod-oneagent", "bsa-digital-limitcore-prod-oneagent"},
+		{"prod-gateway", "prod-gateway"},
+
+		// Bilinmeyen varyant ve eksiz ad aynen kalır.
+		{"svc-production", "svc-production"},
+		{"mobile-overview-bff", "mobile-overview-bff"},
+
+		// Yalnız ekten ibaret ad soyulmaz: boş arama terimi üretmek
+		// filtreyi SESSİZCE kaldırmak demek olurdu.
+		{"-prod", "-prod"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := stripLogEnvSuffix(c.in); got != c.want {
+			t.Errorf("stripLogEnvSuffix(%q) = %q, beklenen %q", c.in, got, c.want)
+		}
+	}
+}
+
+// Ek listesi frontend'deki ENV_SUFFIXES ile AYNI olmalı — ayrışırlarsa
+// aynı servis pod yüzeyinde bulunup log yüzeyinde bulunamaz.
+func TestLogEnvSuffixesMatchFrontend(t *testing.T) {
+	want := map[string]bool{"-prod": true, "-int": true, "-uat": true, "-prep": true}
+	if len(logEnvSuffixes) != len(want) {
+		t.Fatalf("ek sayısı ayrışmış: %v", logEnvSuffixes)
+	}
+	for _, s := range logEnvSuffixes {
+		if !want[s] {
+			t.Errorf("%q frontend ENV_SUFFIXES'te yok — iki yüzey ayrışır", s)
+		}
+	}
+}

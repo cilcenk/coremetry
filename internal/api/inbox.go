@@ -181,12 +181,24 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 	// place that hurts most: the default view.
 	kinds := normalizeInboxSet(q.Get("kind"), inboxKindsAll)
 	prios := normalizeInboxSet(q.Get("prio"), inboxPriosAll)
+	// v0.9.525 (operatör isteği: "son 1 gün veya 2 saat seçebilmek
+	// isterim") — İLK GÖRÜLME penceresi. StartedAt dört türde de "ilk
+	// görülme" taşır (problem started_at, exception first_seen, incident/
+	// anomaly started_at), yani filtre "bu pencerede ORTAYA ÇIKANLAR"
+	// demek — kuyruğun "şu an ne yanıyor" semantiği bozulmaz, "bugün ne
+	// çıktı" sorusu tek tıkla cevaplanır. SON GÖRÜLME bilerek değil:
+	// 35 gündür yanan bir P1 "son 2 saat"te de görünürdü ve filtre
+	// hiçbir şeyi elememiş olurdu.
+	//
+	// Sabit basamaklar (2h/24h/7d/boş) — cache anahtarına giren her
+	// parametrenin kardinalitesi sınırlı olmalı (v0.8.270).
+	since := normalizeInboxSince(q.Get("since"))
 
 	// v0.9.221 — :v2: marks the response-shape change (bare array → object
 	// with the total). Without the bump a pre-upgrade array could still be
 	// sitting under this key and would deserialize into the new shape as an
 	// empty page.
-	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc, kinds, prios)
+	cacheKey := inboxListKey(statusFilter, service, search, ownerTeam, sreTeam, env, limit, sortID, sortDir, minOcc, kinds, prios) + ":since=" + since
 	// v0.9.228 — 10s → 15s. v0.9.220 gave the inbox list a 30s poll; at a 10s
 	// TTL the SWR window is ttl×staleFactor = 30s and the Redis entry expires
 	// at 30s too, so each poll arrived at age = 30s + previous latency —
@@ -574,6 +586,19 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 				filtered = append(filtered, it)
 			}
 			items = filtered
+		}
+
+		// v0.9.525 — first-seen penceresi, diğer satır daraltmalarıyla
+		// birlikte ve minOcc'tan ÖNCE (hidden sayacı dürüst kalsın).
+		if d := inboxSinceDuration(since); d > 0 {
+			cutoff := time.Now().Add(-d).UnixNano()
+			kept := items[:0]
+			for _, it := range items {
+				if it.StartedAt >= cutoff {
+					kept = append(kept, it)
+				}
+			}
+			items = kept
 		}
 
 		// Occurrence floor — last of the row-level narrows, so `hidden` is
@@ -1447,6 +1472,28 @@ func fmtThousands(n uint64) string {
 		b.WriteRune(c)
 	}
 	return b.String()
+}
+
+// normalizeInboxSince — yalnız sabit basamaklar; bilinmeyen değer "".
+// Saf + tablo-testli.
+func normalizeInboxSince(v string) string {
+	switch v {
+	case "2h", "24h", "7d":
+		return v
+	}
+	return ""
+}
+
+func inboxSinceDuration(v string) time.Duration {
+	switch v {
+	case "2h":
+		return 2 * time.Hour
+	case "24h":
+		return 24 * time.Hour
+	case "7d":
+		return 7 * 24 * time.Hour
+	}
+	return 0
 }
 
 func exceptionPriority(g chstore.ExceptionGroup) (string, string) {

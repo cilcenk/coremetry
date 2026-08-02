@@ -163,6 +163,23 @@ export default function InboxPage() {
     if (v === 0) next.delete('minOcc'); else next.set('minOcc', String(v));
     return next;
   }, { replace: true });
+  // v0.9.525 (operatör: "son 1 gün veya 2 saat seçebilmek isterim") —
+  // İLK GÖRÜLME penceresi, URL'de ?since=. Sabit basamaklar (2h/24h/7d/
+  // boş=hepsi): sunucu cache anahtarına girdiği için kardinalite sınırlı
+  // olmalı (v0.8.270). SON görülme bilerek değil — 35 gündür yanan bir P1
+  // "son 2 saat"te de görünürdü ve filtre hiçbir şeyi elemezdi; bu filtre
+  // "bu pencerede ORTAYA ÇIKANLAR" sorusunu cevaplıyor.
+  const SINCE_OPTS = [
+    { v: '',    label: 'First seen: any' },
+    { v: '2h',  label: 'Last 2h' },
+    { v: '24h', label: 'Last 24h' },
+    { v: '7d',  label: 'Last 7d' },
+  ] as const;
+  const sinceFilter = (() => {
+    const raw = searchParams.get('since') ?? '';
+    return SINCE_OPTS.some(o => o.v === raw) ? raw : '';
+  })();
+
   // Drawer selection is one more URL-backed facet (v0.8.292): ?item=<inboxId>.
   // Deep-linking /inbox?item=<id> opens the drawer; closing deletes the key.
   const selectedId = searchParams.get('item');
@@ -251,6 +268,7 @@ export default function InboxPage() {
     sort: srvSort.id ?? 'priority',
     dir: srvSort.dir,
     minOcc,
+    since: sinceFilter || undefined,
     // v0.9.330 — facets go to the SERVER now. As client-side filters they ran
     // over a page the server had already capped at 300 by priority; on prod
     // those 300 were all Incidents, so the exception-first default rendered
@@ -519,6 +537,21 @@ export default function InboxPage() {
             selected={kindSet as Set<string>}
             onToggle={k => toggleKind(k as InboxKind)}
             onSolo={k => soloKind(k as InboxKind)} onAll={allKind} />
+
+          {/* v0.9.525 — first-seen penceresi. Küçük sabit küme → düz
+              <select> (frontend-conventions: ≤10 değer picker istemez). */}
+          <select
+            value={sinceFilter}
+            onChange={e => setParam('since', e.target.value || null)}
+            title="İlk görülme penceresi: yalnız bu pencerede ORTAYA ÇIKAN kayıtlar. Eski ama hâlâ açık kayıtlar 'any' seçiliyken görünür."
+            style={{
+              background: 'var(--bg)', color: 'var(--text)',
+              border: '1px solid var(--border)', borderRadius: 6,
+              fontSize: 12, padding: '4px 8px',
+            }}
+          >
+            {SINCE_OPTS.map(o => <option key={o.v} value={o.v}>{o.label}</option>)}
+          </select>
 
           {/* Env hint chip (v0.8.387) — non-interactive; the pick lives
               in the Topbar EnvPicker. Surfaces the service-scoped

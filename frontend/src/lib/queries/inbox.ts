@@ -43,6 +43,8 @@ export function useInbox(filter: {
   // v0.9.330 — kind/priority are SERVER filters now: they decide which rows
   // come back, so they must bite before the cap.
   kind?: string; prio?: string;
+  // v0.9.525 — first-seen penceresi ('2h' | '24h' | '7d'); boş = hepsi.
+  since?: string;
 }) {
   return useQuery<InboxPage>({
     queryKey: ['inbox', 'list', filter],

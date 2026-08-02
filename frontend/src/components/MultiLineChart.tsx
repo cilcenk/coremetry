@@ -19,6 +19,7 @@ import {
   toggleSeriesVisibility, isolateSeriesVisibility,
   visibilityFor, loadLegendVisibility, saveLegendVisibility,
 } from '@/lib/chart/legendVisibility';
+import { legendMode } from '@/lib/chart/legendMode';
 import { drawThresholds, drawTimeRegions, type ChartTimeRegion } from '@/lib/chart/overlays';
 
 // v0.9.131 (chart-consolidation Adım 3) — TimeSeriesPanel artık placeTooltip'i
@@ -1041,7 +1042,14 @@ export function MultiLineChart({
   // default; the hook flips it on when the cursor enters the
   // chart and updates content + position on every move.
   return (
-    <div ref={hostRef} className="mlc-chart" style={{
+    <div ref={hostRef}
+      // v0.9.541 — lejant modu seri sayısının fonksiyonu (mockup C +
+      // otomatik seçim, operatör onayı). Liste modu uPlot'un KENDİ
+      // tablosunu CSS ile yatay akıtır: satırlar yerinde kalır, yani
+      // tıkla-izole işleyicisi ve u-off durumu aynen çalışır — DOM'a
+      // dokunmuyoruz, yalnız düzeni değiştiriyoruz.
+      className={'mlc-chart' + (legendMode(bundle.eff.length) === 'list' ? ' mlc-legend-list' : '')}
+      style={{
       position: 'relative', width: '100%',
       // Subtle "this chart is clickable" affordance — only when
       // the spike→exemplar hook is wired (opt-in). Absent the

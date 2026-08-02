@@ -13,6 +13,7 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 import { LogTable } from '@/components/LogTable';
 import { TopologyPillGraph, type PillNode, type PillEdge, type PillLevel } from '@/components/TopologyPillGraph';
 import { FocusedNeighborhood } from '@/components/topology/FocusedNeighborhood';
+import { parseTopologyHops, topologyHopsUrlValue } from './topologyHops';
 
 // Service-scoped Logs / Topology tabs — the design's tab strip beyond
 // Overview/Operations/Details. All read-only, all reuse the app-wide
@@ -303,6 +304,15 @@ function buildPillTiers(map: ServiceMap, focus: string): {
   return { nodes, edges: pillEdges, columns };
 }
 
+// DEFAULT_TOPOLOGY_HOPS — servis Topology sekmesinin varsayılan komşuluk
+// derinliği (v0.9.558, operatör talebi).
+//
+// Tek yerde durur çünkü İKİ yerde kullanılıyor: URL'den okurken
+// geri-düşüş değeri ve URL'e yazarken "varsayılansa yazma" kararı.
+// İkisi ayrışırsa kullanıcının seçimi sessizce yutulur — sabiti
+// bölmek, tam da o hatanın davetiyesidir.
+const DEFAULT_TOPOLOGY_HOPS = 2;
+
 // ── Topology: tiered pill-card neighbourhood (shared TopologyPillGraph) ──
 export function ServiceTopologyTab({ service, range }: { service: string; range: TimeRange }) {
   const navigate = useNavigate();
@@ -313,12 +323,29 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
   // v0.9.381 (redesign D5) — hops + errorsOnly URL'e taşındı (?hops=2&
   // eonly=1): sekme değişiminde/paylaşımda kaybolmuyordu iddiası artık
   // doğru. replace:true; yabancı paramlar korunur (prev kopyalanır).
+  // v0.9.558 — varsayılan 2 hop (operatör: "topology sekmesinde
+  // servicelerin direkt 2 hop gelsin").
+  //
+  // Gerekçe: 1 hop yalnız doğrudan komşuları gösterir ve bir servisin
+  // sorunu çoğu zaman komşusunun komşusundan gelir — operatörün her
+  // seferinde elle 2'ye çıkarması gerekiyordu.
+  //
+  // Maliyet sınırlı: ReadServiceTopologyAggForFocus hop-farkında ve
+  // hop başına BİR sınırlı MV sorgusu yapıyor (api katmanında 3'e
+  // kırpılı), yani 2 hop = 2 sorgu. Kullanıcı kontrolden 1'e
+  // düşürebilir.
   const [tparams, setTparams] = useSearchParams();
-  const hops = Math.min(3, Math.max(1, parseInt(tparams.get('hops') ?? '1', 10) || 1));
+  const hops = Math.min(3, Math.max(1,
+    parseInt(tparams.get('hops') ?? String(DEFAULT_TOPOLOGY_HOPS), 10) || DEFAULT_TOPOLOGY_HOPS));
   const errorsOnly = tparams.get('eonly') === '1';
   const setHops = (h: number) => setTparams(prev => {
     const next = new URLSearchParams(prev);
-    if (h > 1) next.set('hops', String(h)); else next.delete('hops');
+    // Karşılaştırma VARSAYILANLA yapılır, sabit 1'le değil. Eskiden
+    // `h > 1` yazıyordu; varsayılan 2 olunca bu, kullanıcının 1 hop
+    // seçimini URL'den siler ve okuma yine 2 döndürürdü — seçim
+    // sessizce yutulurdu. Bu repoda üç kez tekrarlamış tek-yön-okuma
+    // hata sınıfı (v0.8.256/265/267).
+    if (h !== DEFAULT_TOPOLOGY_HOPS) next.set('hops', String(h)); else next.delete('hops');
     return next;
   }, { replace: true });
   const setErrorsOnly = (v: boolean) => setTparams(prev => {

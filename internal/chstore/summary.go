@@ -27,7 +27,7 @@ import (
 // AggregateFunction states cheaply at query time, no raw spans scan.
 type ServiceSummaryRow struct {
 	Service     string  `json:"service"`
-	BucketStart int64   `json:"bucketStart"`  // unix ns
+	BucketStart int64   `json:"bucketStart"` // unix ns
 	SpanCount   uint64  `json:"spanCount"`
 	ErrorCount  uint64  `json:"errorCount"`
 	AvgMs       float64 `json:"avgMs"`
@@ -49,6 +49,7 @@ type ServiceSummaryRow struct {
 //   - bare text  → case-insensitive substring (LIKE '%text%')
 //   - "*"        → multi-char wildcard
 //   - "?"        → single-char wildcard
+//
 // SQL LIKE special chars in user input ('%', '_') are escaped first so
 // they're matched literally rather than acting as inadvertent wildcards.
 // ListOperationNames — operations-picker counterpart to
@@ -373,6 +374,10 @@ func servicesAggSortExpr(sort, dir string) string {
 // default hot path stays count-free per the /api/services p99<50ms budget
 // (v0.7.44).
 func (s *Store) CountServicesAgg(ctx context.Context, from, to time.Time, nameMatch string, serviceIn []string) (int, error) {
+	// v0.9.555 — MV kovaları başlangıçlarıyla etiketli; [from,to]
+	// aralığını kapsamak için from kova başına inmeli, yoksa
+	// baştaki kısmi kova tamamen elenir (bkz. alignBucketStart).
+	from = alignBucketStart(from)
 	if from.IsZero() {
 		from = time.Now().Add(-24 * time.Hour)
 	}
@@ -439,6 +444,10 @@ func (s *Store) GetServicesAggFilteredIn(ctx context.Context, from, to time.Time
 // "Errors only" means, which matters because the operator flips between them
 // just by picking a cluster or an env.
 func (s *Store) GetServicesAggFiltered2(ctx context.Context, from, to time.Time, nameMatch string, serviceIn []string, sort, dir string, limit, offset int, display ServiceDisplayFilters) ([]ServiceSummary, error) {
+	// v0.9.555 — MV kovaları başlangıçlarıyla etiketli; [from,to]
+	// aralığını kapsamak için from kova başına inmeli, yoksa
+	// baştaki kısmi kova tamamen elenir (bkz. alignBucketStart).
+	from = alignBucketStart(from)
 	if from.IsZero() {
 		from = time.Now().Add(-24 * time.Hour)
 	}
@@ -497,10 +506,10 @@ func (s *Store) GetServicesAggFiltered2(ctx context.Context, from, to time.Time,
 	out := []ServiceSummary{}
 	for rows.Next() {
 		var (
-			sv     ServiceSummary
-			avg    *float64
-			p99    *float64
-			apdex  *float64
+			sv    ServiceSummary
+			avg   *float64
+			p99   *float64
+			apdex *float64
 		)
 		if err := rows.Scan(&sv.Name, &sv.SpanCount, &sv.ErrorCount, &avg, &p99, &apdex); err != nil {
 			return nil, err
@@ -529,6 +538,10 @@ func (s *Store) GetServicesAggFiltered2(ctx context.Context, from, to time.Time,
 // Empty list returns ALL services (so an internal caller that genuinely
 // wants the full set still has a path).
 func (s *Store) GetServiceSummary5mFor(ctx context.Context, services []string, from, to time.Time) ([]ServiceSummaryRow, error) {
+	// v0.9.555 — MV kovaları başlangıçlarıyla etiketli; [from,to]
+	// aralığını kapsamak için from kova başına inmeli, yoksa
+	// baştaki kısmi kova tamamen elenir (bkz. alignBucketStart).
+	from = alignBucketStart(from)
 	args := []any{from, to}
 	svcFilter := ""
 	if len(services) > 0 {
@@ -575,6 +588,10 @@ func (s *Store) GetServiceSummary5mFor(ctx context.Context, services []string, f
 // (under 5 minutes old) will be missing — callers should overlay raw
 // spans for the most recent window if they need second-fresh numbers.
 func (s *Store) GetServiceSummary5m(ctx context.Context, service string, from, to time.Time) ([]ServiceSummaryRow, error) {
+	// v0.9.555 — MV kovaları başlangıçlarıyla etiketli; [from,to]
+	// aralığını kapsamak için from kova başına inmeli, yoksa
+	// baştaki kısmi kova tamamen elenir (bkz. alignBucketStart).
+	from = alignBucketStart(from)
 	args := []any{from, to}
 	svcFilter := ""
 	if service != "" {
@@ -613,4 +630,36 @@ func (s *Store) GetServiceSummary5m(ctx context.Context, service string, from, t
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+// mvBucketWidth — service_summary_5m ve kardeş MV'lerin kova genişliği.
+// Sabit, MV tanımından geliyor (store.go CREATE MATERIALIZED VIEW).
+const mvBucketWidth = 5 * time.Minute
+
+// alignBucketStart — bir zamanı ait olduğu MV kovasının başına indirir
+// (v0.9.555).
+//
+// Neden gerekli: MV kovaları BAŞLANGIÇLARIYLA etiketlidir. time_bucket
+// = 10:00 olan satır 10:00–10:05 arasındaki veriyi taşır. Dolayısıyla
+// [from, to] aralığını KAPSAMAK için sorgunun `time_bucket >=
+// truncate(from)` demesi gerekir.
+//
+// Öncesi `time_bucket >= from` diyordu; bu "from'dan sonra BAŞLAYAN
+// kovalar" demek ve baştaki kısmi kovayı tamamen eler. from=10:03 ise
+// 10:00 kovası (yani 10:00–10:05 arası tüm veri) düşer.
+//
+// Zararı en çok olay incelemesinde: operatör pencereyi olayın başına
+// ayarlar, olayın İLK DAKİKALARI görünmez olur ve yüzey "anomali yok"
+// der — tam patlama anında. Kısa pencerelerde oran daha da kötü:
+// 15 dakikalık pencerede bir kova kaybı verinin üçte biri demek.
+//
+// Repo'nun kendi doğru deseni zaten vardı (blast_radius.go:79,
+// backtrace.go:133) ama summary.go'ya hiç uygulanmamıştı.
+//
+// Takas: hizalama, from'dan ÖNCEKİ birkaç dakikayı da dahil eder.
+// Bu bilinçli — MV'nin greninden ince bir soruya dürüst cevap yok ve
+// eksik göstermek fazla göstermekten kötü: biri olayı gizler, diğeri
+// biraz komşu veri katar.
+func alignBucketStart(t time.Time) time.Time {
+	return t.Truncate(mvBucketWidth)
 }

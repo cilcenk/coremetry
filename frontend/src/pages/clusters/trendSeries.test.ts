@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { limitThresholds, netTrendToSeries, thanosPodSeriesToSeries, thanosTrendToSeries } from './trendSeries';
+import { limitThresholds, netTrendToSeries, thanosPodSeriesToSeries, thanosTrendToSeries, shortSeriesLabel } from './trendSeries';
 
 // v0.9.4 — Thanos→MultiLineChart dönüşüm sözleşmeleri: saniye→ns,
 // boş trend → boş seri, pod sırası korunur, 0-limit çizgi üretmez.
@@ -61,5 +61,45 @@ describe('netTrendToSeries', () => {
   });
   it('empty trend → empty', () => {
     expect(netTrendToSeries([])).toEqual([]);
+  });
+});
+
+// v0.9.539 — operatör: "lejantta isim gösterimleri Grafana gibi
+// olabilir mi?" Grafana'da seri adları kısa ("lckhsdbp04"); bizde tam
+// pod adı geliyordu (41 karakter) ve lejant üç sütuna taşıp grafiği
+// aşağı itiyordu. Ortak önek (deployment adı) HER seride aynı olduğu
+// için ayırt edici değil.
+describe('shortSeriesLabel (v0.9.539)', () => {
+  const dep = 'mobile-crm-dashboard-bff';
+
+  it('ortak deployment öneki atılır — geriye ayırt edici kısım kalır', () => {
+    expect(shortSeriesLabel('mobile-crm-dashboard-bff-57bdc7975b-59c8q', 'CPU', dep))
+      .toBe('57bdc7975b-59c8q');
+  });
+
+  it('önek verilmezse tam ad (eski davranış bayt-bayt)', () => {
+    expect(shortSeriesLabel('mobile-crm-dashboard-bff-57bdc7975b-59c8q', 'CPU'))
+      .toBe('mobile-crm-dashboard-bff-57bdc7975b-59c8q');
+  });
+
+  it('önek YALNIZ tam segment sınırında atılır — kısmi ad çakışması kırpmaz', () => {
+    // "mobile-crm" öneki "mobile-crmx-..." pod'unu kırparsa etiket yalan olur.
+    expect(shortSeriesLabel('mobile-crmx-abc-123', 'CPU', 'mobile-crm'))
+      .toBe('mobile-crmx-abc-123');
+  });
+
+  it('oneagent varyantı kendi kimliğini korur', () => {
+    expect(shortSeriesLabel('mobile-crm-dashboard-bff-oneagent-d4487ff99-rkr9s', 'CPU', dep))
+      .toBe('oneagent-d4487ff99-rkr9s');
+  });
+
+  it('ad boşsa fallback (Total modunda tek seri)', () => {
+    expect(shortSeriesLabel('', 'CPU', dep)).toBe('CPU');
+    expect(shortSeriesLabel('   ', 'Memory')).toBe('Memory');
+  });
+
+  it('kırpma sonrası boş kalırsa ham ad korunur — etiketsiz seri ayırt edilemez', () => {
+    expect(shortSeriesLabel('svc-', 'CPU', 'svc')).toBe('svc-');
+    expect(shortSeriesLabel('svc', 'CPU', 'svc')).toBe('svc');
   });
 });

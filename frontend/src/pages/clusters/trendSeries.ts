@@ -62,11 +62,38 @@ export function netTrendToSeries(trend: ClusterNetTrendPoint[]): SpanMetricSerie
 // namedSeriesToSeries — ResourceTrend NamedSeries[] → MultiLineChart
 // (v0.9.35). Boş ad → verilen fallback etiketi (total modda "CPU"
 // gibi). Aynı saniye→ns sözleşmesi.
-export function namedSeriesToSeries(series: ClusterNamedSeries[], fallbackLabel: string): SpanMetricSeries[] {
+export function namedSeriesToSeries(
+  series: ClusterNamedSeries[],
+  fallbackLabel: string,
+  // v0.9.539 — lejant kısaltma öneki (operatör: "lejantta isim
+  // gösterimleri Grafana gibi olabilir mi?"). Grafana'da seri adları
+  // kısa ("lckhsdbp04"); bizde tam pod adı geliyordu
+  // ("mobile-crm-dashboard-bff-57bdc7975b-59c8q", 41 karakter) ve
+  // lejant üç sütuna taşıp grafiği aşağı itiyordu. Ortak önek
+  // (deployment adı) HER seride aynı olduğu için ayırt edici DEĞİL —
+  // atılınca "57bdc7975b-59c8q" kalır, okunur ve Grafana yoğunluğuna
+  // yaklaşır. Verilmezse davranış bayt-bayt eskisi.
+  trimPrefix?: string,
+): SpanMetricSeries[] {
   return series
     .filter(s => s.points.length > 0)
     .map(s => ({
-      groupKey: [s.name || fallbackLabel],
+      groupKey: [shortSeriesLabel(s.name, fallbackLabel, trimPrefix)],
       points: s.points.map(p => ({ time: p.bucket * 1e9, value: p.value })),
     }));
+}
+
+// shortSeriesLabel — saf, tablo-testli. Önek YALNIZ tam segment
+// sınırında atılır ("<önek>-" ile başlıyorsa); kısmi ad çakışması
+// ("mobile-crm" öneki "mobile-crmx-..." pod'unu kırpmaz) yanlış etiket
+// üretirdi. Kırpma sonrası boş kalırsa ham ad korunur — etiketsiz seri
+// lejantta ayırt edilemez.
+export function shortSeriesLabel(name: string, fallback: string, trimPrefix?: string): string {
+  const n = (name || '').trim();
+  if (!n) return fallback;
+  if (trimPrefix) {
+    const p = trimPrefix + '-';
+    if (n.startsWith(p) && n.length > p.length) return n.slice(p.length);
+  }
+  return n;
 }

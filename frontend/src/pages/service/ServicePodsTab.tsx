@@ -43,7 +43,8 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
   const {
     metaQ, ns, deploy, matched, rows, clustersWithPods,
     effNs, effDeploy, from, to, cFrom, cTo, clamped,
-    sourcesPending, noClusters, podsPending, sourcesError, podErrors, truncatedClusters } = useServicePods(service, range);
+    sourcesPending, noClusters, podsPending, podsBlocking, podsSettled, podsTotal,
+    sourcesError, podErrors, truncatedClusters } = useServicePods(service, range);
 
   // Accordion tek dt üstünde (sıralama/resize global; cluster'a göre gruplanır).
   const dt = useDataTable<ClusterPodRow>({
@@ -76,7 +77,7 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
           Add a remote cluster under Settings → Remote clusters to see pod-level metrics here.
         </Empty>
       ) : rows.length === 0 ? (
-        podsPending ? <Spinner /> : podErrors.length > 0 ? (
+        podsBlocking ? <Spinner /> : podErrors.length > 0 && rows.length === 0 ? (
           <Empty icon="⚠" title="Pod metrikleri okunamadı">
             {podErrors.join(', ')} cluster{podErrors.length > 1 ? "'ları" : "'ı"} sorguya
             yanıt vermedi — liste bu yüzden boş olabilir, workload yok demek değil.

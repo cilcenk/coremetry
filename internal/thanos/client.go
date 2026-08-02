@@ -1271,7 +1271,9 @@ func (s *Service) ResourceTrend(ctx context.Context, c ClusterConfig, metric str
 // modunda sum by (pod) ham çekilir ve top-8 seçimi ortalamaya göre
 // Go'da yapılır (topk'siz — v0.9.3 adım-kayması notu). Metrik ailesi
 // yoksa boş döner; UI grafiği gizler (görünmez-düşer).
-func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, from, to time.Time) ([]NamedSeries, error) {
+// İkinci dönüş (v0.9.539): kesme ÖNCESİ seri sayısı — UI "N / M pod"
+// rozetini bununla çizer (NamespacePodsTrend'in aynı sözleşmesi).
+func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, deploy, metric string, byPod bool, from, to time.Time) ([]NamedSeries, int, error) {
 	step := stepForWindow(from, to)
 	params := url.Values{
 		"query": {deployTrendQuery(namespace, deploy, metric, byPod)},
@@ -1281,7 +1283,7 @@ func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, d
 	}
 	series, err := s.doQuery(ctx, c, "/api/v1/query_range", params)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	type acc struct {
 		pts  []ValuePoint
@@ -1306,20 +1308,26 @@ func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, d
 			all = append(all, acc{pts: pts, sum: sum / float64(len(pts)), name: name})
 		}
 	}
-	if byPod && len(all) > maxTrendSeries {
+	// v0.9.539 — kesme ÖNCESİ seri sayısı çağırana döner: 17 pod'un
+	// 8'i çizilirken operatörün bunu bilmesi gerekiyor (operator-
+	// reported: "17 pod var ama series kısmında 7 tane gösteriyor").
+	// İfşa mekanizması (MetricArea totalSeries rozeti) v0.9.370'ten
+	// beri vardı ama bu yol onu BESLEMİYORDU — sessiz kesme.
+	total := len(all)
+	if byPod && len(all) > maxPodTrendSeries {
 		sort.Slice(all, func(i, j int) bool {
 			if all[i].sum != all[j].sum {
 				return all[i].sum > all[j].sum
 			}
 			return all[i].name < all[j].name
 		})
-		all = all[:maxTrendSeries]
+		all = all[:maxPodTrendSeries]
 	}
 	out := make([]NamedSeries, 0, len(all))
 	for _, a := range all {
 		out = append(out, NamedSeries{Name: a.name, Points: a.pts})
 	}
-	return out, nil
+	return out, total, nil
 }
 
 // HaproxyTrend — v0.9.534. Namespace'in route'larına router (HAProxy)
@@ -1528,6 +1536,16 @@ func (s *Service) NetworkTrend(ctx context.Context, c ClusterConfig, from, to ti
 // "Top 10 of N" başlığı grafikle çelişiyordu (self-review); tavan
 // grafiğin gerçekte gösterdiği sayıya sabitlendi.
 const maxTrendSeries = 8
+
+// maxPodTrendSeries — v0.9.539. POD bazlı grafiklerde ayrı, YÜKSEK
+// tavan (operator-reported: "17 pod var ama 7 tane gösteriyor").
+// OTel tarafı aynı şikâyetle v0.9.95'te 8→40 çıkmıştı (RuntimeCharts
+// FANOUT_MAX); Thanos tarafı geride kalmıştı — iki yüzey aynı soruyu
+// ("hangi pod sıcak") cevaplıyor, tavanları ayrışmamalı.
+//
+// maxTrendSeries=8 node/route grafikleri için AYNEN kalır: oralarda
+// seri sayısı doğal olarak düşük ve foldTopN(8) sözleşmesi geçerli.
+const maxPodTrendSeries = 40
 
 // NamespacePodsTrend — namespace'in pod başına dakika-bucket
 // trendleri (v0.9.3). Sorgu topk'siz (adım-başına set kayması

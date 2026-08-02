@@ -5724,6 +5724,14 @@ func (s *Server) userPayload(u *chstore.User) map[string]any {
 	if u.Org != "" {
 		out["org"] = u.Org
 	}
+	// v0.9.528 — hitap adı. Ayrıştırma SUNUCUDA yapılır çünkü iki
+	// tüketici var: sohbetin karşılaması (SPA) ve sistem prompt'u
+	// (backend). Aynı ayrıştırıcıyı iki dilde tutmak sessiz ayrışma
+	// demekti. Boş = güvenle ad çıkarılamadı; çağıran isimsiz
+	// karşılamaya düşer (bkz. greeting.go).
+	if fn := firstNameFrom(u.FullName, u.Email); fn != "" {
+		out["firstName"] = fn
+	}
 	// Only viewers get a custom-role restriction. Defensive guard
 	// mirrors UpsertUser — a stale pointer on an admin/editor row
 	// should be ignored, never enforced.

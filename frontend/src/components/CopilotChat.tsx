@@ -2,9 +2,11 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
-import { useOpenCriticalCount } from '@/lib/queries';
+import { useOpenCriticalCount, useProblems } from '@/lib/queries';
+import { useAuth } from '@/components/AuthProvider';
 import { ChatBubble } from './ai/ChatBubble';
 import { useChatThread } from './ai/useChatThread';
+import { greetHello, greetStatus, greetChips } from './ai/greeting';
 
 // CopilotChat (v0.6.53, v0.9.163 interaktif) — global in-app AI assistant.
 // Sağ-alt animasyonlu sparkline logo (operatör seçimi B) bir drawer açar;
@@ -68,6 +70,12 @@ export function CopilotChat() {
   // v0.9.169 — proaktif rozet: açık KRİTİK problem sayısı (chat kapalıyken
   // FAB'da kırmızı rozet). Yalnız copilot açıkken pollar; RQ tab gizliyken durur.
   const criticalOpen = useOpenCriticalCount({ enabled: enabled === true }).data ?? 0;
+  // v0.9.528 — karşılama operatörü ADIYLA selamlar ve o anki durumu
+  // söyler. İki kaynak da UCUZ: ad zaten AuthProvider'da (login'de
+  // gelen /api/auth/me), P1 listesi YALNIZ pencere açıkken ve henüz
+  // soru sorulmamışken çekilir — ev kuralı: aç-üzerine-getir, liste
+  // prefetch'i yok, poll yok.
+  const { user } = useAuth();
   // v0.9.182 — Alternatif A: sayfa-içi tam-boy expand (operatör seçimi).
   const [expanded, setExpanded] = useState(false);
   const [input, setInput] = useState('');
@@ -101,6 +109,14 @@ export function CopilotChat() {
   const { turns, busy, send, rate, clear, last, showFollowups } = useChatThread({
     service: currentService, operation: currentOp,
   });
+
+  // Karşılamanın canlı yarısı (v0.9.528). `enabled` ÜÇ koşulu birden
+  // taşır: copilot açık, pencere açık, ve henüz konuşma başlamamış —
+  // yani sorgu SADECE karşılama gerçekten ekrandayken koşar. Kapalı
+  // pencerede ya da sohbet ortasında tek istek bile gitmez.
+  const p1q = useProblems({ status: 'open', priority: ['P1'], limit: 50 },
+    { enabled: enabled === true && open && turns.length === 0 });
+  const p1s = p1q.data?.items;
 
   useEffect(() => {
     api.copilotConfig().then(c => setEnabled(c.enabled)).catch(() => setEnabled(false));
@@ -211,9 +227,21 @@ export function CopilotChat() {
           <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
             {turns.length === 0 && (
               <div style={{ color: 'var(--text3)', fontSize: 12 }}>
-                <div style={{ marginBottom: 10 }}>Merhaba 👋 Telemetrini sor — canlı veriye grounded cevap veririm.</div>
+                {/* Karşılama (v0.9.528) — LLM çağrısı YOK; ad
+                    /api/auth/me'den, durum açık P1'lerden. Durum satırı
+                    yüklenirken BOŞ döner: "P1 yok" yanlış iddiası
+                    operatörü yanıltırdı (greeting.ts). */}
+                <div style={{ marginBottom: 4, color: 'var(--text1)', fontSize: 13, fontWeight: 600 }}>
+                  {greetHello(user?.firstName)}
+                </div>
+                {greetStatus(p1s) && (
+                  <div style={{ marginBottom: 6, color: p1s && p1s.length > 0 ? 'var(--err)' : 'var(--text2)' }}>
+                    {greetStatus(p1s)}
+                  </div>
+                )}
+                <div style={{ marginBottom: 10 }}>Sana nasıl yardımcı olabilirim?</div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {SAMPLE_QUESTIONS.map(q => (
+                  {greetChips(p1s, SAMPLE_QUESTIONS).map(q => (
                     <Button key={q} variant="secondary" size="sm" onClick={() => submit(q)}
                       style={{ textAlign: 'left' }}>{q}</Button>
                   ))}

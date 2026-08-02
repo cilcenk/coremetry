@@ -28,7 +28,12 @@ export function useProblems(filter: {
   // via the filter object.
   cluster?: string;
   limit?: number;
-}) {
+  // v0.9.528 — `enabled`, useOpenCriticalCount'un deseninin aynısı.
+  // Varsayılan açık, yani mevcut çağıranların hiçbiri değişmez. CoSRE
+  // karşılaması bunu KAPALI tutar: sorgu yalnız sohbet penceresi
+  // açıkken ve henüz soru sorulmamışken koşsun — aksi hâlde her
+  // sayfada arka planda 30s'lik bir poll daha açılırdı.
+}, opts?: { enabled?: boolean }) {
   // v0.9.455 — zarf: {items,total,truncated}; null gövde boş-dürüst
   // zarfa normalize edilir (truncated:false, total:-1 = bilinmiyor).
   return useQuery<{ items: Problem[]; total: number; truncated: boolean }>({
@@ -39,6 +44,7 @@ export function useProblems(filter: {
     },
     refetchInterval: 30_000,
     staleTime: 25_000,
+    enabled: opts?.enabled ?? true,
   });
 }
 

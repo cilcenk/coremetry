@@ -2311,6 +2311,11 @@ export interface AuthUser {
   // the team field on UserRow). Empty for local/OIDC accounts.
   fullName?: string;
   org?: string;
+  // v0.9.528 — hitap adı, SUNUCUDA türetilir (internal/api/greeting.go).
+  // fullName bileşik olabilir ("Ad Soyad (Bölüm) * ÜNVAN-Ekip") ve
+  // ham hâli karşılamada kullanılamaz. Absent = güvenle ad
+  // çıkarılamadı; isimsiz karşılamaya düşülür.
+  firstName?: string;
 }
 export interface UserRow extends AuthUser {
   disabled: boolean;

@@ -1181,6 +1181,28 @@ No preamble, no headers — just the bullets.` + AnswerInTurkish
 // extend it, never re-guess; when the block is absent it ranks causes
 // from the correlated signals as before. The trailing AnswerInTurkish is
 // the ONE language directive (pinned single by TestSystemProblemPrompt).
+//
+// v0.9.556 — anti-uydurma kuralları BURAYA taşındı. Öncesinde bu iki
+// kural yalnız arka plan işçisinin KULLANICI prompt'unda vardı
+// (anomaly.buildProblemPrompt) ve orada da yalnız derin soruşturma
+// kanıtı toplanmışsa ekleniyordu. Oysa bu sistem prompt'unun ÜÇ
+// tüketicisi var:
+//
+//	1. arka plan ProblemExplainer                    — kural VARDI (kanıt varsa)
+//	2. operatör tıklaması /api/copilot/explain-problem — kural YOKTU
+//	3. MCP explain_problem prompt'u (DIŞ istemciler)   — kural YOKTU
+//
+// Yani korumasız olan iki yol, tam da bir insanın cevabı okuyup aksiyon
+// aldığı yollardı.
+//
+// Mevcut "veride olmayan … UYDURMA" kuralı bunu KAPSAMIYORDU: bir
+// sinyalin "bulunamadı" kaydı VERİLEN veridir, uydurma değildir. Onu
+// sebep diye göstermek kuralın harfine uyup ruhunu çiğner — ve tam
+// olarak gözlenen hata sınıfı budur.
+//
+// Kullanıcı prompt'undaki SORUŞTURMA'ya özgü cümle yerinde kalır (orada
+// bir liste var ve kural o listeye atıf yapıyor). Tekrar zararsız:
+// bir güvenlik kuralının iki kez söylenmesi, hiç söylenmemesine yeğdir.
 const systemProblem = `Sen Coremetry APM içinde kıdemli bir SRE asistanısın. Operatör az önce
 açılmış bir Problem'e (tetiklenen alarma) bakıyor. Sana kural + servis +
 metrik değeri ve problemin açılış anı etrafında toplanmış korelasyon
@@ -1198,6 +1220,11 @@ KURALLAR:
 - latency, span, deploy, timeout, p99 gibi teknik terimleri ÇEVİRME.
 - Kanıt maddeleri verideki somut sinyale/sayıya atıfta bulunsun.
 - Sinyaller çelişiyor veya zayıfsa bunu açıkça söyle; neden ZORLAMA.
+- Bir sinyal için "yok" / "bulunamadı" yazıyorsa o sinyali SEBEP olarak
+  gösterme. Aranmış ve bulunamamış olmak, olduğunun kanıtı değildir.
+- Hiçbir sinyalde kanıt yoksa sebep UYDURMA: "Olası neden: kanıt yetersiz"
+  de ve hangi sinyallere bakıldığını yaz. Kanıtsız bir sebep, sebepsiz
+  kalmaktan kötüdür — operatör onu kovalar.
 - Kısa yaz — bu metin pager'da okunur. Selamlama ve giriş cümlesi yok.
 - Çıktı DÜZ METİN olsun (JSON değil) ve TAM olarak şu üç bölümü içersin:
   "Olası neden:", "Kanıt:", "İlk kontroller:".

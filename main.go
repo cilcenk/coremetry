@@ -731,10 +731,23 @@ func main() {
 		}
 	}
 
-	// ── Seed SRE preset dashboards (only on a fresh install) ────────────────
-	// Idempotent + non-destructive — checks for any existing dashboard
-	// and skips if the table isn't empty. Operator can delete or modify
-	// presets freely; we never re-seed on subsequent boots.
+	// ── Seed preset dashboards ──────────────────────────────────────────────
+	// v0.9.564 — bu yorum ÜÇ iddiayı da yanlış anlatıyordu ve
+	// düzeltildi. Eskiden "idempotent + non-destructive … skips if the
+	// table isn't empty … we never re-seed on subsequent boots" diyordu.
+	//
+	// Gerçek: tohumlama SÜRÜM DAMGALI. Tablo boş değilse bile,
+	// system_settings'teki "preset_dashboards_version" mevcut
+	// presetVersion'dan farklıysa TÜM `preset-` satırları SİLİNİP
+	// yeniden tohumlanır. Yani hem yıkıcı olabilir hem sonraki
+	// boot'larda yeniden tohumlayabilir.
+	//
+	// Operatörün preset dashboard'lara yaptığı düzenlemeler o silmede
+	// kaybolur (düzenleme aynı `preset-` ID'sinin üstünde yaşıyor).
+	// Bir sonraki paket yükseltmesinde bu bilinçli ele alınmalı.
+	//
+	// Hata artık ölümcül değil ama SESSİZ de değil: SeedPresetDashboards
+	// sürümü okuyamazsa yıkıcı yola girmeden hata döner (v0.9.564).
 	if err := store.SeedPresetDashboards(ctx); err != nil {
 		log.Printf("[chstore] seed preset dashboards: %v", err)
 	}

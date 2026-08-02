@@ -56,6 +56,9 @@ func (s *Server) enrichProblemsForRead(ctx context.Context, probs []chstore.Prob
 	if len(probs) == 0 {
 		return probs
 	}
-	probs = s.store.EnrichProblemsWithDeploys(ctx, probs, problemDeployLookback)
-	return chstore.EnrichProblemsWithPriority(probs)
+	// Zincirin kendisi chstore'da (v0.9.554): ikinci tüketici MCP
+	// list_problems aracı ve o api.Server'a erişemiyor. İki paketin
+	// ayrı ayrı "deploy sonra öncelik" yazması, düzeltilen ayrışmanın
+	// yeni bir kopyası olurdu.
+	return s.store.EnrichProblemsForRead(ctx, probs, problemDeployLookback)
 }

@@ -164,6 +164,14 @@ func registerResources(srv *mcp.Server, d Deps) {
 			if err != nil {
 				return "", err
 			}
+			// v0.9.554 — bu kaynağın açıklaması "Sorted by priority then
+			// recency" diyor ama öncelik HİÇ HESAPLANMIYORDU: Priority
+			// boş kalıyor, omitempty ile JSON'dan düşüyor ve liste
+			// yalnız started_at DESC geliyordu. Yani açıklama yanlıştı
+			// ve modeli yanlış bilgilendiriyordu. Artık zincir koşuyor
+			// ve sıralama gerçekten önceliğe göre.
+			rows = d.Store.EnrichProblemsForRead(ctx, rows, 30*time.Minute)
+			rows = chstore.SortProblemsByPriority(rows)
 			// v0.8.394 — attach the persisted root-cause hypothesis summary
 			// (one batched read, soft-fails to unenriched rows).
 			rows = d.Store.EnrichProblemsWithRootCause(ctx, rows)
@@ -556,6 +564,20 @@ func listProblemsTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
+			// v0.9.554 — ÖNCELİK ZENGİNLEŞTİRMESİ. Öncesi: bu yol yalnız
+			// EnrichProblemsWithRootCause çağırıyordu, yani dönen
+			// satırlarda Priority BOŞ kalıyor ve omitempty ile JSON'dan
+			// düşüyordu. Araç açıklaması ise modele P1/P2/P3
+			// tier'larından bahsediyor — model de tier'ı UYDURUYORDU.
+			// Operatörün "P1 alertleri karıştırıyor" şikâyetinin en
+			// doğrudan kolu buydu: uydurulan tier hiçbir yüzeyle
+			// eşleşmiyor, çünkü hiçbir yerden gelmiyor.
+			rows = d.Store.EnrichProblemsForRead(ctx, rows, 30*time.Minute)
+			// priority argümanı SQL'de UYGULANMAZ (öncelik okuma anı
+			// hesabı, CH satırında yok — problem.go:594-605). Daraltma
+			// Go'da yapılmazsa argüman sessizce yok sayılır.
+			rows = chstore.FilterProblemsByPriority(rows, f.Priority)
+			rows = chstore.SortProblemsByPriority(rows)
 			// v0.8.394 (AI audit A1) — attach the persisted deterministic
 			// root-cause hypothesis summary (rootCause {topSuspect, topScore,
 			// confidence}) so the chat/MCP caller sees the same verdict the

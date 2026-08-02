@@ -68,31 +68,23 @@ func TestNoBarePriorityEnrich(t *testing.T) {
 	}
 }
 
-// TestEnrichHelperDoesBothSteps — yardımcının İKİ adımı da yaptığını
-// sabitler. Birinin deploy adımını "pahalı" diye çıkarması, hatayı
-// tek satırda geri getirirdi ve yukarıdaki tarama bunu göremezdi
-// (çağrı noktaları hâlâ doğru fonksiyonu çağırıyor olurdu).
-func TestEnrichHelperDoesBothSteps(t *testing.T) {
+// TestEnrichHelperDelegatesToCanonicalChain — api yardımcısının
+// zinciri KENDİ yazmadığını, kanonik chstore çağrısına delege
+// ettiğini sabitler.
+//
+// Bu test v0.9.553'te "yardımcı iki adımı da içeriyor mu" diye
+// yazılmıştı; v0.9.554'te zincir chstore'a taşınınca düştü. Düşmesi
+// DOĞRUYDU: test sözleşmeyi değil uygulamanın YERİNİ sabitlemişti.
+// Sözleşmenin kendisi (iki adım, doğru sırada) artık kaynağında
+// test ediliyor — chstore/enrich_chain_test.go.
+func TestEnrichHelperDelegatesToCanonicalChain(t *testing.T) {
 	b, err := os.ReadFile("problem_enrich.go")
 	if err != nil {
 		t.Fatalf("problem_enrich.go okunamadı: %v", err)
 	}
-	src := string(b)
-	for _, must := range []string{
-		"EnrichProblemsWithDeploys(",
-		"EnrichProblemsWithPriority(",
-	} {
-		if !strings.Contains(src, must) {
-			t.Errorf("%s kaybolmuş — öncelik hesabı RecentDeploy'a bağlı, "+
-				"deploy adımı olmadan P1'ler P2 görünür", must)
-		}
-	}
-	// Sıra da önemli: deploy ÖNCE gelmeli.
-	iDeploy := strings.Index(src, "EnrichProblemsWithDeploys(")
-	iPrio := strings.Index(src, "EnrichProblemsWithPriority(")
-	if iDeploy > iPrio {
-		t.Error("sıra ters: öncelik hesabı deploy zenginleştirmesinden ÖNCE " +
-			"koşuyor — RecentDeploy henüz nil olduğu için postDeploy dalı " +
-			"hiç ateşlemez")
+	if !strings.Contains(string(b), "EnrichProblemsForRead(") {
+		t.Error("kanonik zincire delege edilmiyor — yardımcı zinciri " +
+			"kendi kurarsa MCP tarafıyla ayrışabilir, ki v0.9.554'te " +
+			"düzeltilen hata tam olarak buydu")
 	}
 }

@@ -315,7 +315,7 @@ function NodeWorkPanel() {
               <tr key={r.host} style={{ opacity: r.restarted ? 0.55 : 1 }}>
                 <td className="mono">{r.host}</td>
                 <td className="mono" style={{ color: 'var(--text3)' }}>
-                  {r.shard ? `${r.shard}/${r.replica}` : '—'}
+                  {r.shard ? `${r.shard}${r.replica ? ' / ' + r.replica : ''}` : '—'}
                 </td>
                 <td className="num mono">{fmt(r.cpuCores, 3)}</td>
                 <td className="num mono" title="CPU DEĞİL — merge thread'inin meşgul geçirdiği süre (I/O beklemesi dahil). CPU'yu aşabilir.">

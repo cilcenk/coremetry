@@ -10,7 +10,7 @@ import { nodeWorkView, makeBaseline, imbalanceOf, worstShardImbalance, type Node
 
 const NS = 1e6; // ms → ns
 const node = (o: Partial<NodeWorkRaw> & { host: string }): NodeWorkRaw => ({
-  shard: 1, replica: 1, uptimeS: 1000,
+  shard: 1, replica: 'r1', uptimeS: 1000,
   cpuMicros: 0, mergeMillis: 0, insertedRows: 0, partFetches: 0,
   selectedBytes: 0, mergesLaunched: 0, ...o,
 });
@@ -99,7 +99,7 @@ describe('imbalanceOf', () => {
 // TUZAK 3 — shard'lar arası kıyas.
 describe('worstShardImbalance', () => {
   const row = (host: string, shard: number, cpu: number | null) =>
-    ({ host, shard, replica: 1, restarted: false,
+    ({ host, shard, replica: 'r1', restarted: false,
        cpuCores: cpu, mergeThreads: null, insertedRows: null, partFetches: null });
 
   it('kıyas SHARD İÇİNDE yapılır — shard çarpıklığı node suçu gibi okunmaz', () => {

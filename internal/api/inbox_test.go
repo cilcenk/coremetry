@@ -58,3 +58,27 @@ func TestFmtThousands(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.525 — ?since= yalnız sabit basamak kabul eder: cache anahtarına
+// giriyor, serbest değer anahtar kardinalitesini patlatır (v0.8.270).
+func TestNormalizeInboxSince(t *testing.T) {
+	for in, want := range map[string]string{
+		"2h": "2h", "24h": "24h", "7d": "7d",
+		"": "", "1h": "", "30d": "", "abc": "", "2H": "",
+	} {
+		if got := normalizeInboxSince(in); got != want {
+			t.Errorf("normalizeInboxSince(%q) = %q, beklenen %q", in, got, want)
+		}
+	}
+	// Süre eşlemesi normalizasyonla birebir: normalize edilen her basamak
+	// pozitif süre vermeli, boş sıfır vermeli — ayrışırlarsa filtre
+	// sessizce no-op olur.
+	for _, v := range []string{"2h", "24h", "7d"} {
+		if inboxSinceDuration(v) <= 0 {
+			t.Errorf("inboxSinceDuration(%q) pozitif olmalı", v)
+		}
+	}
+	if inboxSinceDuration("") != 0 {
+		t.Error("boş since süre üretmemeli")
+	}
+}

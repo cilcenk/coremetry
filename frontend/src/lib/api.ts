@@ -1363,6 +1363,8 @@ export const api = {
     minOcc?: number;
     // v0.9.330 — server-side facets (csv). Applied before the cap.
     kind?: string; prio?: string;
+    // v0.9.525 — first-seen penceresi (2h/24h/7d); boş = hepsi.
+    since?: string;
   } = {}) =>
     // v0.9.221 — was a bare array; the page had no way to tell a full queue
     // from the top slice of a truncated one.

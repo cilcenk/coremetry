@@ -30,7 +30,13 @@ export function podWorkloadName(pod: string): string {
 // (Dynatrace OneAgent enjeksiyonu ayrı deployment üretir). Varyant eki
 // soyulup servise eşlenir; "-batch"/"-uat" gibi kardeş İŞ YÜKLERİ
 // listede DEĞİL — onlar ayrı servistir, prefix eşleşmesi bilinçli yok.
-const WORKLOAD_VARIANT_SUFFIXES = ['-oneagent'];
+//
+// "-bff" — v0.9.535, operatör örneği: servis mobile-overview-prod,
+// deployment mobile-overview-bff. Pod adında servis adında OLMAYAN bir
+// -bff kuyruğu var; env eki soyulunca (mobile-overview) varyant
+// eşitliği onu yakalar. Kardeş disiplini korunur: mobile-overview-web
+// gibi başka bir kuyruk eşleşmez.
+const WORKLOAD_VARIANT_SUFFIXES = ['-oneagent', '-bff'];
 
 // workloadMatchesService — soyulmuş iş-yükü adının servise eşitliği,
 // bilinen enstrümantasyon varyantları dahil.
@@ -40,6 +46,49 @@ export function workloadMatchesService(workload: string, service: string): boole
     if (workload === service + suf) return true;
   }
   return false;
+}
+
+// stripEnvSuffix — v0.9.535 (operatör direktifi: "mobile*bff-prod
+// sonunda prod olmadan bul"). Servis adının SONUNDAKİ bilinen env eki
+// soyulur: filoda k8s deployment adı env ekini taşımayabiliyor (servis
+// mobile-loans-bff-prod, deployment mobile-loans-bff). Yalnız BİLİNEN
+// ekler (whitelist) ve yalnız kuyrukta — "-production" gibi serbest
+// varyantlar ya da ad ortasındaki "prod" DOKUNULMAZ.
+//
+// Çapraz-env notu (operatörle konuşuldu, kabul edilen risk):
+// mobile-loans-bff-prod ve mobile-loans-bff-int soyulunca aynı ada
+// iner; iki env'in pod'ları aynı Thanos setinde ve katalog ns boşsa
+// karışabilir. Çare katalogda namespace girmek (ns süzgeci kesin
+// ayırır). Prod tek-env olduğu için beklenen durumda sorun yok.
+const ENV_SUFFIXES = ['-prod', '-int', '-uat', '-prep'];
+
+export function stripEnvSuffix(service: string): string {
+  for (const suf of ENV_SUFFIXES) {
+    if (service.length > suf.length && service.endsWith(suf)) {
+      return service.slice(0, -suf.length);
+    }
+  }
+  return service;
+}
+
+// dominantWorkload — v0.9.535. Eşleşen pod adlarından EN SIK iş-yükü
+// adı; PromQL pod=~"<deploy>-.*" seçicisinin yedeği buradan beslenir.
+// Neden servis adı değil: BFF'te servis adı env ekli, pod'lar eksiz —
+// gözlemlenen pod'un kendi iş-yükü adı her zaman DOĞRU önektir ve
+// kardeş-önek tuzağı taşımaz (bsa-login-prep pod'unun iş yükü
+// bsa-login-prep'tir, bsa-login değil). Eşitlikte alfabetik ilk
+// (deterministik — map sırasına bırakılmaz).
+export function dominantWorkload(pods: string[]): string {
+  const counts = new Map<string, number>();
+  for (const p of pods) {
+    const w = podWorkloadName(p);
+    if (w && w !== p) counts.set(w, (counts.get(w) ?? 0) + 1); // soyulmamış ad (hostname vb.) önek kanıtı değil
+  }
+  let best = '', n = 0;
+  for (const [w, c] of counts) {
+    if (c > n || (c === n && (best === '' || w < best))) { best = w; n = c; }
+  }
+  return best;
 }
 
 // PodMatchInput — podMatchesService'in ihtiyaç duyduğu ClusterPodRow
@@ -80,5 +129,14 @@ export function podMatchesService(
   }
   // deploy yoksa: enrichment servis alanı YA DA soyulmuş iş-yükü adı ==
   // servis (prefix DEĞİL eşitlik — kardeş-öneki tuzağı yok).
-  return p.service === service || workloadMatchesService(podWorkloadName(p.pod), service);
+  if (p.service === service || workloadMatchesService(podWorkloadName(p.pod), service)) {
+    return true;
+  }
+  // v0.9.535 — env eki soyulmuş İKİNCİ aday (operatör direktifi):
+  // servis mobile-loans-bff-prod, iş yükü mobile-loans-bff. Yine
+  // EŞİTLİK — kardeş disiplini korunur: bsa-login-prod soyulunca
+  // bsa-login olur ama bsa-login-prep pod'unun iş yükü bsa-login-prep
+  // olduğu için eşleşmez.
+  const stripped = stripEnvSuffix(service);
+  return stripped !== service && workloadMatchesService(podWorkloadName(p.pod), stripped);
 }

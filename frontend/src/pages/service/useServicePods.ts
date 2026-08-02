@@ -3,7 +3,7 @@ import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useServicesMetadata } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
-import { podMatchesService } from '@/pages/clusters/podWorkload';
+import { podMatchesService, dominantWorkload } from '@/pages/clusters/podWorkload';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
 // dominantNamespace — eşleşen pod'ların en sık namespace'i (v0.9.56):
@@ -73,7 +73,12 @@ export function useServicePods(service: string, range: TimeRange) {
     }
   });
   const clustersWithPods = [...new Set(rows.map(r => r.cluster))];
-  const effDeploy = deploy || service;
+  // v0.9.535 — deploy yedeği artık EŞLEŞEN pod'ların iş-yükü adı,
+  // servis adı son çare. BFF'te servis adı env ekli (mobile-loans-
+  // bff-prod), pod'lar eksiz — PromQL pod=~"<servis>-.*" hiç tutmuyordu
+  // ve CPU/Mem boş kalıyordu. Gözlemlenen pod'un iş-yükü adı her zaman
+  // doğru önektir; satır yoksa eski davranış (servis adı) aynen kalır.
+  const effDeploy = deploy || dominantWorkload(rows.map(r => r.pod)) || service;
   const effNs = ns || dominantNamespace(rows);
 
   // Sunucu 6h clamp'i — Clusters Overview'la aynı dürüstlük (v0.9.21).

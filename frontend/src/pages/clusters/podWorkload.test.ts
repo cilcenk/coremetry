@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { podWorkloadName, workloadMatchesService, podMatchesService } from './podWorkload';
+import { podWorkloadName, workloadMatchesService, podMatchesService, stripEnvSuffix, dominantWorkload } from './podWorkload';
 
 // v0.9.56 — servis-adı↔pod-adı yedek eşleşmesinin çekirdeği; backend
 // stripPodSuffixes ile aynı davranış (operatör vakası:
@@ -106,5 +106,87 @@ describe('podMatchesService', () => {
   it('yedek mod: enrichment service alanı eşleşir', () => {
     const pod = P('renamed-pod-abc', 'callcenter', 'bsa-core-prep');
     expect(podMatchesService(pod, opts({ service: 'bsa-core-prep' }))).toBe(true);
+  });
+});
+
+// v0.9.535 — operatör direktifi: "mobile*bff-prod sonunda prod olmadan
+// bul" + somut örnek: servis mobile-overview-prod, pod
+// mobile-overview-bff-<hash>-<rand>. İki adlandırma boşluğu birden:
+// (a) k8s deployment adı servis adındaki env ekini taşımıyor,
+// (b) pod'da servis adında olmayan bir -bff kuyruğu olabiliyor.
+describe('stripEnvSuffix', () => {
+  it('bilinen env ekleri kuyruktayken soyulur', () => {
+    expect(stripEnvSuffix('mobile-loans-bff-prod')).toBe('mobile-loans-bff');
+    expect(stripEnvSuffix('mobile-overview-prod')).toBe('mobile-overview');
+    expect(stripEnvSuffix('bsa-login-int')).toBe('bsa-login');
+    expect(stripEnvSuffix('svc-uat')).toBe('svc');
+    expect(stripEnvSuffix('svc-prep')).toBe('svc');
+  });
+  it('ad ortasındaki env sözcüğü DOKUNULMAZ', () => {
+    expect(stripEnvSuffix('bsa-digital-limitcore-prod-oneagent')).toBe('bsa-digital-limitcore-prod-oneagent');
+    expect(stripEnvSuffix('prod-gateway')).toBe('prod-gateway');
+  });
+  it('bilinmeyen ek / eksiz ad aynen kalır', () => {
+    expect(stripEnvSuffix('mobile-loans-bff')).toBe('mobile-loans-bff');
+    expect(stripEnvSuffix('svc-production')).toBe('svc-production');
+  });
+  it('yalnız ekten ibaret ad soyulmaz (boş ad üretme)', () => {
+    expect(stripEnvSuffix('-prod')).toBe('-prod');
+  });
+});
+
+describe('podMatchesService — env eki soyulmuş aday (v0.9.535)', () => {
+  const noOpts = { deploy: '', ns: '', podNames: null };
+  it('BFF şekli 1: servis env ekli, pod eksiz', () => {
+    expect(podMatchesService(
+      { pod: 'mobile-loans-bff-6b8f49b9d5-8hrtj', namespace: 'mobile-bff-prod' },
+      { service: 'mobile-loans-bff-prod', ...noOpts },
+    )).toBe(true);
+  });
+  it('BFF şekli 2 (operatör örneği): servis mobile-overview-prod, pod mobile-overview-bff-*', () => {
+    expect(podMatchesService(
+      { pod: 'mobile-overview-bff-c747d59bc-s66gr', namespace: 'mobile-bff-prod' },
+      { service: 'mobile-overview-prod', ...noOpts },
+    )).toBe(true);
+  });
+  it('kardeş disiplini: bsa-login-prod, bsa-login-prep podunu ALMAZ', () => {
+    expect(podMatchesService(
+      { pod: 'bsa-login-prep-6bd9df6c4d-x2b1z', namespace: 'x' },
+      { service: 'bsa-login-prod', ...noOpts },
+    )).toBe(false);
+  });
+  it('bilinmeyen kuyruk eşleşmez: mobile-overview-web pod, overview-prod servis', () => {
+    expect(podMatchesService(
+      { pod: 'mobile-overview-web-c747d59bc-s66gr', namespace: 'x' },
+      { service: 'mobile-overview-prod', ...noOpts },
+    )).toBe(false);
+  });
+  it('eski davranış bozulmadı: BSA tam eşitlik hâlâ tutar', () => {
+    expect(podMatchesService(
+      { pod: 'bsa-digital-limitcore-prod-864cd95d87-q9dt9', namespace: 'x' },
+      { service: 'bsa-digital-limitcore-prod', ...noOpts },
+    )).toBe(true);
+  });
+});
+
+describe('dominantWorkload (v0.9.535 — effDeploy yedeği)', () => {
+  it('en sık iş yükü kazanır; oneagent azınlığı ezemez', () => {
+    expect(dominantWorkload([
+      'mobile-loans-bff-6b8f49b9d5-8hrtj',
+      'mobile-loans-bff-6b8f49b9d5-vdp54',
+      'mobile-loans-bff-oneagent-7d98d8b99d-m6r8f',
+    ])).toBe('mobile-loans-bff');
+  });
+  it('soyulamayan adlar (hostname vb.) önek kanıtı sayılmaz', () => {
+    expect(dominantWorkload(['gateway', 'my-app-canary'])).toBe('');
+  });
+  it('boş liste boş döner (çağıran servis adına düşer)', () => {
+    expect(dominantWorkload([])).toBe('');
+  });
+  it('eşitlikte deterministik (alfabetik ilk)', () => {
+    expect(dominantWorkload([
+      'bbb-6b8f49b9d5-8hrtj',
+      'aaa-6b8f49b9d5-8hrtj',
+    ])).toBe('aaa');
   });
 });

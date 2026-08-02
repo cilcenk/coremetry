@@ -24,6 +24,16 @@ import (
 	"time"
 )
 
+// deployWindowFloor — deploy arama penceresinin en eski açılabileceği
+// nokta (v0.9.552 ikinci kalkanı).
+//
+// Retention 30 gün, yani 32 günden eskisini sormanın hiçbir karşılığı
+// yok: veri zaten yok, tarama bedavaya yanıyor. Bu taban bir ayar
+// değil, `FROM spans` sorgusunun zaman sınırlı kalmasını garanti eden
+// son savunma — pencereyi hesaplayan kod bir gün yine hata yaparsa
+// sorgu tam tablo taramasına DÖNÜŞMESİN.
+const deployWindowFloor = 32 * 24 * time.Hour
+
 // spanDeploy is one observed (version, first_seen) pair for a service.
 type spanDeploy struct {
 	version string
@@ -166,25 +176,10 @@ func (s *Store) EnrichProblemsWithDeploys(ctx context.Context, problems []Proble
 		return problems
 	}
 	// Distinct services + global time window across the page.
-	services := map[string]struct{}{}
-	var minStarted, maxStarted int64
-	for i, p := range problems {
-		if p.Service == "" {
-			continue
-		}
-		services[p.Service] = struct{}{}
-		if i == 0 || p.StartedAt < minStarted {
-			minStarted = p.StartedAt
-		}
-		if p.StartedAt > maxStarted {
-			maxStarted = p.StartedAt
-		}
-	}
-	if len(services) == 0 {
+	services, from, to, ok := deployEnrichWindow(problems, lookback, time.Now())
+	if !ok {
 		return problems
 	}
-	from := time.Unix(0, minStarted).Add(-lookback)
-	to := time.Unix(0, maxStarted)
 
 	byService, err := s.fetchDeploysByService(ctx, services, from, to)
 	if err != nil {
@@ -235,29 +230,20 @@ func (s *Store) EnrichAnomaliesWithDeploys(ctx context.Context, events []Anomaly
 	if len(events) == 0 {
 		return events
 	}
-	services := map[string]struct{}{}
-	var minStarted, maxStarted int64
-	for i, e := range events {
-		if e.Service == "" {
-			continue
-		}
-		services[e.Service] = struct{}{}
-		if i == 0 || e.StartedAt < minStarted {
-			minStarted = e.StartedAt
-		}
-		if e.StartedAt > maxStarted {
-			maxStarted = e.StartedAt
-		}
-	}
-	if len(services) == 0 {
+	// v0.9.552 — İKİZDE DE AYNI BUG VARDI. Problem tarafındaki hatayı
+	// düzeltirken bu fonksiyon "AnomalyEvent twin" olarak anılıyordu;
+	// açıp bakınca pencere hesabı satır satır aynıydı — aynı `i == 0`
+	// tuzağı, aynı sonuç (from = 1970 ⇒ spans tam tablo taraması).
+	// Tek kaynağa indirildi: deployEnrichWindow artık ikisini de
+	// besliyor, böylece bir daha ayrı ayrı bozulamazlar.
+	services, from, to, ok := deployEnrichWindow(anomalyDeployRows(events), lookback, time.Now())
+	if !ok {
 		return events
 	}
 	svcList := make([]any, 0, len(services))
 	for s := range services {
 		svcList = append(svcList, s)
 	}
-	from := time.Unix(0, minStarted).Add(-lookback)
-	to := time.Unix(0, maxStarted)
 
 	holders := ""
 	for i := range svcList {
@@ -374,4 +360,77 @@ func (s *Store) CalleesOf(ctx context.Context, service string, since time.Durati
 		out = append(out, e)
 	}
 	return out, rows.Err()
+}
+
+// deployEnrichWindow — deploy zenginleştirmesinin servis kümesini ve
+// zaman penceresini hesaplar. SAF: test edilebilmesi için Store'dan
+// ayrı duruyor (v0.9.552 — buradaki hata sessizce tam tablo taraması
+// üretmişti, bir daha testsiz kalmasın).
+//
+// ok=false ⇒ servisli problem yok, zenginleştirme atlanır.
+func deployEnrichWindow(problems []Problem, lookback time.Duration, now time.Time) (services map[string]struct{}, from, to time.Time, ok bool) {
+	services = map[string]struct{}{}
+	// Pencere SAYAÇLA kurulur, indeksle DEĞİL.
+	//
+	// Öncesi: `if i == 0 || p.StartedAt < minStarted`. i==0 dalı, ilk
+	// problemin Service'i boşsa yukarıdaki `continue` yüzünden HİÇ
+	// çalışmıyordu; sonraki turlarda i!=0 olduğu için karşılaştırma
+	// minStarted=0 ile yapılıyor ve pozitif bir unix-ns hiçbir zaman
+	// 0'dan küçük olmadığı için minStarted 0'da KALIYORDU. Sonuç:
+	// from = 1970 ⇒ `FROM spans` sorgusunun tek zaman sınırı yok olur
+	// ve TÜM tablo taranır.
+	//
+	// Tetikleyici kenar durum değil: ES watcher kuralları servissiz
+	// problem üretir (evaluator/watcher_eval.go) ve ListProblems
+	// started_at DESC sıralar — en yeni açık problem bir watcher
+	// alarmıysa problems[0].Service boştur.
+	//
+	// Belirti sessizdi ve YANLIŞ yöne bakıyordu: sorgu 10sn timeout'una
+	// takılıyor, çağıran zenginleştirmeyi atlıyor, RecentDeploy nil
+	// kalıyor ve computePriority'nin postDeploy dalı hiç ateşlemiyor —
+	// taze deploy sonrası kritik problemler P1 yerine P2 etiketleniyordu.
+	var minStarted, maxStarted int64
+	seen := 0
+	for _, p := range problems {
+		if p.Service == "" {
+			continue
+		}
+		services[p.Service] = struct{}{}
+		if seen == 0 || p.StartedAt < minStarted {
+			minStarted = p.StartedAt
+		}
+		if seen == 0 || p.StartedAt > maxStarted {
+			maxStarted = p.StartedAt
+		}
+		seen++
+	}
+	if len(services) == 0 {
+		return nil, time.Time{}, time.Time{}, false
+	}
+	from = time.Unix(0, minStarted).Add(-lookback)
+	to = time.Unix(0, maxStarted)
+	// İkinci kalkan: StartedAt bozuk/sıfır gelirse pencere yine
+	// sınırsız açılmasın. `FROM spans` sorgularının zaman sınırlı
+	// olması CLAUDE.md'de sert kısıt; tek bir hesap hatasının onu
+	// delebilmesi kabul edilemez.
+	if floor := now.Add(-deployWindowFloor); from.Before(floor) {
+		from = floor
+	}
+	return services, from, to, true
+}
+
+// anomalyDeployRows — AnomalyEvent'leri deployEnrichWindow'un anladığı
+// asgari şekle indirir (v0.9.552).
+//
+// Neden dönüştürme: pencere hesabı yalnız iki alana bakıyor (Service,
+// StartedAt) ve iki çağıranın tipleri farklı. Alternatif bir arayüz
+// tanımlamaktı; bu, iki alan için fazla tören. Asıl kazanç pencere
+// mantığının TEK yerde kalması — ikisi ayrı ayrı yazıldığı için aynı
+// hata iki yere birden kopyalanmıştı.
+func anomalyDeployRows(events []AnomalyEvent) []Problem {
+	out := make([]Problem, len(events))
+	for i, e := range events {
+		out[i] = Problem{Service: e.Service, StartedAt: e.StartedAt}
+	}
+	return out
 }

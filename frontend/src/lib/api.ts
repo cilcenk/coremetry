@@ -1260,15 +1260,20 @@ export const api = {
     // baktığı pencereye ait olur. Açık pencere taşıyan soru ("son 24
     // saatte…") bunu EZER — soru her zaman ekrandan güçlüdür.
     contextRangeS?: number,
+    // v0.9.537 — EKRANDAKİ trace ID'si (/trace?id=). Mesajda açık
+    // 32-hex varsa sunucu onu tercih eder; bu yalnız ID'siz "bu trace
+    // neden yavaş" şekilleri için.
+    contextTrace?: string,
   ): Promise<void> => {
     const context =
-      contextService || contextOperation || contextExplain || contextSubject || contextRangeS
+      contextService || contextOperation || contextExplain || contextSubject || contextRangeS || contextTrace
         ? {
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
             ...(contextExplain ? { explain: contextExplain } : {}),
             ...(contextSubject ? { subject: contextSubject } : {}),
             ...(contextRangeS && contextRangeS > 0 ? { rangeS: contextRangeS } : {}),
+            ...(contextTrace ? { trace: contextTrace } : {}),
           }
         : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {

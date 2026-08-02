@@ -36,6 +36,9 @@ export interface ChatThreadOpts {
   // pencere taşımıyorsa sunucu sabit 30dk yerine bunu kullanır; soru
   // pencere taşıyorsa ("son 24 saatte…") soru kazanır.
   rangeS?: number;
+  // trace (v0.9.537) — EKRANDAKİ trace ID'si (/trace?id=). "bu trace
+  // neden yavaş" gibi ID'siz sorular sunucuda buna oturur.
+  trace?: string;
 }
 
 export function useChatThread(opts: ChatThreadOpts = {}) {
@@ -89,7 +92,7 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
           patchLast(t => ({ ...t, pending: false }));
         }
       }, ac.signal, o.service || undefined, o.operation || undefined, o.explain || undefined,
-        o.subject || undefined, o.rangeS || undefined);
+        o.subject || undefined, o.rangeS || undefined, o.trace || undefined);
     } catch (err) {
       patchLast(t => ({ ...t, error: err instanceof Error ? err.message : String(err), pending: false }));
     } finally {

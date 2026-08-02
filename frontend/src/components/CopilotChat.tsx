@@ -95,6 +95,13 @@ export function CopilotChat() {
     if (loc.pathname === '/pod') return sp.get('service') || '';
     return '';
   }, [loc.pathname, sp]);
+  // v0.9.537 (operatör raporu: "ekrandaki trace'i anlamıyor") — trace
+  // sayfasındayken adresteki ID bağlam olarak gider; "bu trace neden
+  // yavaş" sunucuda guidedTraceByID'ye oturur. Mesaja yapıştırılan
+  // açık 32-hex her zaman bundan güçlüdür.
+  const currentTrace = useMemo(
+    () => (loc.pathname === '/trace' ? (sp.get('id') || '') : ''),
+    [loc.pathname, sp]);
   // Operation-awareness (v0.9.184) — servis sayfasında seçili ?op=. "bu
   // operasyonun durumu" gibi bir soru guided router'da RED'i o span-name'e
   // daraltır (resolveGuidedOperation'ın context fallback'i).
@@ -119,7 +126,7 @@ export function CopilotChat() {
   }, [range]);
 
   const { turns, busy, send, rate, clear, last, showFollowups } = useChatThread({
-    service: currentService, operation: currentOp, rangeS,
+    service: currentService, operation: currentOp, rangeS, trace: currentTrace,
   });
 
   // Karşılamanın canlı yarısı (v0.9.528). `enabled` ÜÇ koşulu birden

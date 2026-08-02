@@ -60,6 +60,34 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
     staleTime: 60_000, retry: 1, enabled: trendOK,
   });
 
+  // v0.9.534 — Router / HAProxy (operatör isteği + Grafana probe'u):
+  // namespace'in route'larına OpenShift router'ı gözünden bakış. Servisin
+  // ROUTE'unu bilmiyoruz, NAMESPACE'ini biliyoruz — bölüm namespace
+  // kapsamlı (operatörün kendi panosu da öyle). deployment GEREKMEZ:
+  // yalnız cluster + ns ister; üç sorgu da 60s sunucu cache'li, staleTime
+  // TTL ile hizalı (ES-maliyet disiplini). Cluster'da haproxy_* ailesi
+  // yoksa seriler boş döner ve bölüm görünmez-düşer (CPU/Mem emsali).
+  const haproxyOK = chartCluster !== '' && effNs !== '';
+  const hap2xxQ = useQuery({
+    queryKey: ['haproxy-trend', chartCluster, effNs, '2xx', cFrom, cTo],
+    queryFn: () => api.clusterHaproxyTrend(chartCluster, effNs, '2xx', cFrom, cTo),
+    staleTime: 60_000, retry: 1, enabled: haproxyOK,
+  });
+  const hap5xxQ = useQuery({
+    queryKey: ['haproxy-trend', chartCluster, effNs, '5xx', cFrom, cTo],
+    queryFn: () => api.clusterHaproxyTrend(chartCluster, effNs, '5xx', cFrom, cTo),
+    staleTime: 60_000, retry: 1, enabled: haproxyOK,
+  });
+  const hapLatQ = useQuery({
+    queryKey: ['haproxy-trend', chartCluster, effNs, 'latency', cFrom, cTo],
+    queryFn: () => api.clusterHaproxyTrend(chartCluster, effNs, 'latency', cFrom, cTo),
+    staleTime: 60_000, retry: 1, enabled: haproxyOK,
+  });
+  const haproxyAny =
+    (hap2xxQ.data?.series?.length ?? 0) > 0 ||
+    (hap5xxQ.data?.series?.length ?? 0) > 0 ||
+    (hapLatQ.data?.series?.length ?? 0) > 0;
+
   // KPI kartları (OpenShift konsol deseni): CPU/Mem → kendi grafiğine kaydırır;
   // Pods/Restarts → pod listesi artık Pods sekmesinde olduğundan oraya götürür.
   const cpuChartRef = useRef<HTMLDivElement>(null);
@@ -210,6 +238,35 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
               by={memByPod} onToggle={setMemByPod} onZoom={onZoom} onZoomReset={onZoomReset}
               syncKey={`infra:${service}`}
               series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
+          </div>
+        </div>
+      )}
+
+      {/* v0.9.534 — Router / HAProxy: namespace'in route'ları, router
+          gözünden. Seri adı = route; 2xx trafiğin kendisi, yokluğu da
+          sinyal (operatör onaylı üçlü: 2xx + 5xx + gecikme). */}
+      {haproxyAny && (
+        <div style={{ marginTop: 14 }}>
+          <h3 style={{ fontSize: 13, margin: '4px 0 8px' }}>
+            Router / HAProxy · {effNs}
+            <span className="badge b-gray" style={{ marginLeft: 8 }}
+              title="Kaynak: OpenShift router'ının (HAProxy) backend metrikleri, Thanos üzerinden. Namespace kapsamlı — servisin route'u değil, namespace'in tüm route'ları.">
+              Thanos · router
+            </span>
+          </h3>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <MetricArea title={`HTTP 2xx (req/s) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`}
+              subtitle="haproxy_backend_http_responses_total{code=2xx} · by route"
+              series={hap2xxQ.data?.series} seriesName="2xx"
+              onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
+            <MetricArea title={`HTTP 5xx (req/s) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`}
+              subtitle="haproxy_backend_http_responses_total{code=5xx} · by route"
+              series={hap5xxQ.data?.series} seriesName="5xx"
+              onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
+            <MetricArea title={`Backend gecikme (ms) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`}
+              subtitle="haproxy_backend_http_average_response_latency_milliseconds · by route"
+              series={hapLatQ.data?.series} seriesName="latency" unit="ms"
+              onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`infra:${service}`} />
           </div>
         </div>
       )}

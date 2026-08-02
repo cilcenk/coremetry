@@ -1033,6 +1033,11 @@ export const api = {
     get<ClusterDeployTrendResponse>(`/api/clusters/deploy-trend?cluster=${encodeURIComponent(cluster)}` +
       `&ns=${encodeURIComponent(ns)}&deploy=${encodeURIComponent(deploy)}` +
       `&metric=${metric}&byPod=${byPod ? 1 : 0}&from=${fromNs}&to=${toNs}`),
+  // v0.9.534 — Service→Infra "Router / HAProxy": namespace'in route'larına
+  // router gözünden trend (2xx/5xx oranı, backend gecikmesi).
+  clusterHaproxyTrend: (cluster: string, ns: string, kind: '2xx' | '5xx' | 'latency', fromNs: number, toNs: number) =>
+    get<import('./types').ClusterHaproxyTrendResponse>(`/api/clusters/haproxy-trend?cluster=${encodeURIComponent(cluster)}` +
+      `&ns=${encodeURIComponent(ns)}&kind=${kind}&from=${fromNs}&to=${toNs}`),
   // v0.9.144 — Service→Infra JBoss/JVM JMX auto-discovery: servisin bir
   // cluster'da taşıdığı jvm_/jboss_ metrik adları.
   clusterJmxMetrics: (cluster: string, ns: string, deploy: string) =>

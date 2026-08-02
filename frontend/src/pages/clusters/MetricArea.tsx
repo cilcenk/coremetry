@@ -13,12 +13,14 @@ export function MetricArea({ title, subtitle, byLabel, totalLabel = 'Total', by,
   // v0.9.383 (redesign D7) — insanileştirilmiş başlığın altında ham
   // metrik adı (monospace, soluk) — bilgi kaybı yasak.
   subtitle?: string;
-  byLabel: string; // "By node" | "By pod" — toggle'ın sağ şıkkı
+  // v0.9.534 — byLabel/onToggle opsiyonel: HAProxy route panelleri hep
+  // route-bazlı, toggle anlamsız; onToggle verilmezse toggle hiç çizilmez.
+  byLabel?: string; // "By node" | "By pod" — toggle'ın sağ şıkkı
   // v0.9.146 — sol şık etiketi (varsayılan "Total"); jboss datasource
   // panelleri "By datasource" (off=data_source, on=pod+data_source) yapar.
   totalLabel?: string;
-  by: boolean;
-  onToggle: (v: boolean) => void;
+  by?: boolean;
+  onToggle?: (v: boolean) => void;
   series: ClusterNamedSeries[] | null | undefined;
   seriesName: string; // Total modunda tek serinin legend adı
   unit?: string;
@@ -58,17 +60,19 @@ export function MetricArea({ title, subtitle, byLabel, totalLabel = 'Total', by,
             </span>
           )}
         </span>
-        <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
-          {([[totalLabel, false], [byLabel, true]] as const).map(([label, v]) => (
-            <button key={label} type="button"
-              onClick={e => { e.stopPropagation(); onToggle(v); }}
-              style={{
-                all: 'unset', cursor: 'pointer', padding: '2px 8px', fontSize: 11,
-                background: by === v ? 'var(--accent-soft)' : 'transparent',
-                color: by === v ? 'var(--accent2)' : 'var(--text3)',
-              }}>{label}</button>
-          ))}
-        </span>
+        {onToggle && byLabel && (
+          <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+            {([[totalLabel, false], [byLabel, true]] as const).map(([label, v]) => (
+              <button key={label} type="button"
+                onClick={e => { e.stopPropagation(); onToggle(v); }}
+                style={{
+                  all: 'unset', cursor: 'pointer', padding: '2px 8px', fontSize: 11,
+                  background: by === v ? 'var(--accent-soft)' : 'transparent',
+                  color: by === v ? 'var(--accent2)' : 'var(--text3)',
+                }}>{label}</button>
+            ))}
+          </span>
+        )}
       </div>
     }>
       <MultiLineChart series={namedSeriesToSeries(series, seriesName)} height={height} unit={unit} maxSeries={maxSeries} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={syncKey} />

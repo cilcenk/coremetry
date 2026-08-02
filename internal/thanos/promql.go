@@ -401,6 +401,33 @@ func deployTrendQuery(namespace, deploy, metric string, byPod bool) string {
 	return "sum(" + expr + ")"
 }
 
+// ── HAProxy router trend (v0.9.534, operatör Grafana probe'u) ───────
+// OpenShift router'ı HAProxy'dir ve backend metriklerini route +
+// exported_namespace etiketleriyle basar (operatörün OCP HAProxy
+// Grafana panosundan birebir doğrulandı, 2026-08-02). Servis sayfası
+// namespace-kapsamlı sorar: Coremetry servisin ROUTE'unu bilmez,
+// namespace'ini bilir (katalog); pano da aynı kapsamda çalışıyor.
+//
+// `code` etiketi SINIF-şekillidir ("2xx"/"5xx") — sayısal kod regex'i
+// gerekmez. Gecikmede `> 0` operatörün panosundaki hile: trafiksiz
+// backend 0 basar, ortalamayı sahte aşağı çeker. Yanıt oranında >0
+// YOK — sıfır oran dürüst veridir, seriyi pencere ortasında düşürmek
+// grafikte sahte boşluk yaratır. topk bilinçli yok (v0.9.3 adım-kayması
+// notu) — top-N seçimi Go'da.
+func haproxyTrendQuery(namespace, kind string) string {
+	ns := escapeLabelValue(namespace)
+	switch kind {
+	case "2xx", "5xx":
+		return fmt.Sprintf(
+			`sum by (route) (rate(haproxy_backend_http_responses_total{code="%s",exported_namespace="%s",route!=""}[5m]))`,
+			kind, ns)
+	default: // latency
+		return fmt.Sprintf(
+			`avg by (route) (haproxy_backend_http_average_response_latency_milliseconds{exported_namespace="%s",route!=""} > 0)`,
+			ns)
+	}
+}
+
 // ── JMX/JVM discovery + trend (v0.9.140, auto-discovery v0.9.144) ───────
 // Operatör: Thanos'ta servisin jvm_/jboss_ metriklerini AUTO-DISCOVER edip
 // Infrastructure sekmesi altında göster. SABİT metrik-adı listesi YOK —

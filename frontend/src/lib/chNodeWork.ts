@@ -23,7 +23,8 @@
 export interface NodeWorkRaw {
   host: string;
   shard: number;
-  replica: number;
+  // v0.9.547 — makro bir AD döndürür ("chc-0"), sayı değil.
+  replica: string;
   uptimeS: number;
   cpuMicros: number;
   mergeMillis: number;
@@ -36,7 +37,7 @@ export interface NodeWorkRaw {
 export interface NodeWorkRow {
   host: string;
   shard: number;
-  replica: number;
+  replica: string;
   /** Sayaç sıfırlandı → bu turda ölçüm yok, hesaptan çıkarıldı. */
   restarted: boolean;
   /** Ortalama çekirdek (Δ mikrosaniye / geçen süre). null = ölçülemedi. */

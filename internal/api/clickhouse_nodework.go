@@ -43,8 +43,10 @@ type CHNodeWork struct {
 	// replikaları AYNI veriyi tutar, farklı shard'lar tanım gereği
 	// farklı. Shard etiketi olmadan shard çarpıklığı "merge suçu" gibi
 	// okunur. 0 = küme tanımlı değil ya da eşleşme bulunamadı.
-	Shard   uint32 `json:"shard"`
-	Replica uint32 `json:"replica"`
+	Shard uint32 `json:"shard"`
+	// Replica — makro bir AD döndürür ("chc-0"), sayı değil. Gösterim
+	// için string; gruplama zaten SHARD üzerinden yapılıyor.
+	Replica string `json:"replica"`
 	// UptimeS — sayaçların kapsadığı süre. İstemci farkı bununla
 	// doğrular: uptime GERİYE giderse node yeniden başlamıştır ve
 	// taban geçersizdir (fark 0'a kelepçelenirse node "iş yapmıyor"
@@ -105,25 +107,39 @@ func nodeWorkQuery(clusterName string) string {
 		SETTINGS max_execution_time = 5`
 }
 
-// nodeShardQuery — her node KENDİ shard/replika kaydını bildirir.
+// nodeShardQuery — her node KENDİ shard/replika kimliğini bildirir.
 //
-// v0.9.544 — `is_local` TEK BAŞINA yetmiyor. Lokal kümede her iki node
-// da kendi system.clusters'ında is_local=0 bildiriyor (küme tanımı
-// hostName() ile eşleşmeyen bir adla yazılmışsa CH satırı "yerel"
-// saymıyor). O hâlde shard etiketleri hiç çözülemiyordu. host_name
-// eşleşmesi ikinci kapı: ikisinden biri tutarsa etiket geliyor,
-// tutmazsa panel çalışmaya devam ediyor ve shard'ı bilmediğini
-// SÖYLÜYOR (rozet) — sessizce yanlış gruplama yapmıyor.
+// v0.9.547 — kaynak system.clusters'tan system.macros'a TAŞINDI.
+//
+// Ad eşleştirmesi bir çıkmaz sokaktı ve iki kez patladı:
+//   is_local        → lokal kümede HER İKİ node da 0 bildiriyor
+//   host_name=hostName() → host_name FQDN (chc-0.chc-headless) ya da
+//                          IP (172.31.240.15), hostName() kısa ad
+//                          (chc-0 / lckhsdbp01) — hiçbir kurulumda
+//                          güvenilir eşleşmiyor
+//
+// system.macros bu sorunun tamamını atlıyor: her node'un KENDİ
+// yapılandırmasında yazılı, eşleştirme gerektirmiyor. Ve pratikte her
+// zaman var — ReplicatedMergeTree'nin ZooKeeper yolu makrolarla
+// kurulur, yani Replicated tablosu olan bir kümede shard/replica
+// makroları TANIMLI olmak zorunda.
+//
+// shard tipik olarak sıfır dolgulu string ("01"); toUInt32OrZero
+// parse eder, parse edilemezse 0 döner ve panel "shard bilinmiyor"
+// der — sessizce yanlış gruplamaz. replica bir AD ("chc-0"), sayı
+// değil; gösterim için string taşınıyor.
 func nodeShardQuery(clusterName string) string {
 	cn := strings.TrimSpace(clusterName)
 	if cn == "" {
 		return ""
 	}
 	return `
-		SELECT hostName() AS host, shard_num, replica_num
-		FROM clusterAllReplicas('` + cn + `', system.clusters)
-		WHERE cluster = '` + cn + `'
-		  AND (is_local OR host_name = hostName())
+		SELECT hostName()                                          AS host,
+		       toUInt32OrZero(anyIf(substitution, macro = 'shard')) AS shard,
+		       anyIf(substitution, macro = 'replica')               AS replica
+		FROM clusterAllReplicas('` + cn + `', system.macros)
+		WHERE macro IN ('shard', 'replica')
+		GROUP BY host
 		ORDER BY host
 		LIMIT 64
 		SETTINGS max_execution_time = 5`
@@ -187,19 +203,27 @@ func (s *Server) getCHNodeWork(w http.ResponseWriter, r *http.Request) {
 		// dengesizliği shard-içi hesaplayamaz ve UI bunu söyler.
 		if q := nodeShardQuery(cn); q != "" {
 			if srows, serr := s.store.Conn().Query(ctx, q); serr == nil {
-				byHost := map[string][2]uint32{}
+				type shardID struct {
+					shard   uint32
+					replica string
+				}
+				byHost := map[string]shardID{}
 				for srows.Next() {
-					var h string
-					var sh, rp uint32
+					var h, rp string
+					var sh uint32
 					if err := srows.Scan(&h, &sh, &rp); err == nil {
-						byHost[h] = [2]uint32{sh, rp}
+						byHost[h] = shardID{sh, rp}
 					}
 				}
 				srows.Close()
 				for i := range out.Nodes {
 					if v, ok := byHost[out.Nodes[i].Host]; ok {
-						out.Nodes[i].Shard, out.Nodes[i].Replica = v[0], v[1]
-						out.ShardsKnown = true
+						out.Nodes[i].Shard, out.Nodes[i].Replica = v.shard, v.replica
+						// Shard 0 = makro parse edilemedi → gruplama
+						// güvenilir değil, "biliniyor" sayma.
+						if v.shard > 0 {
+							out.ShardsKnown = true
+						}
 					}
 				}
 				out.ExpectedNodes = len(byHost)

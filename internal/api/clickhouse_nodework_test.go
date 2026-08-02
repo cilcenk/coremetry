@@ -90,8 +90,8 @@ func TestNodeWorkQueryAvoidsUnion(t *testing.T) {
 // replikaları aynı veriyi tutar, farklı shard'lar tanım gereği farklı.
 func TestNodeShardQuery(t *testing.T) {
 	q := nodeShardQuery("uptrace_all")
-	for _, want := range []string{"is_local", "shard_num", "replica_num", "hostName()",
-		"clusterAllReplicas('uptrace_all', system.clusters)"} {
+	for _, want := range []string{"macro = 'shard'", "macro = 'replica'", "hostName()",
+		"clusterAllReplicas('uptrace_all', system.macros)"} {
 		if !strings.Contains(q, want) {
 			t.Errorf("%q eksik:\n%s", want, q)
 		}
@@ -130,12 +130,25 @@ func TestNodeWorkQueryCastsUptime(t *testing.T) {
 	}
 }
 
-// Shard etiketi yalnız is_local'e bağlı KALMAMALI: lokal kümede her iki
-// node da is_local=0 bildiriyor (küme tanımı hostName() ile eşleşmeyen
-// bir adla yazılmışsa). host_name eşleşmesi ikinci kapı.
-func TestNodeShardQueryHasHostNameFallback(t *testing.T) {
+// v0.9.547 — AD EŞLEŞTİRMESİ terk edildi. İki kez patladı:
+//   is_local             → lokal kümede her iki node da 0 bildiriyor
+//   host_name=hostName() → host_name FQDN (chc-0.chc-headless) ya da IP
+//                          (172.31.240.15); hostName() kısa ad
+//
+// system.macros eşleştirme GEREKTİRMİYOR: her node kendi kimliğini
+// kendi yapılandırmasından okuyor. Replicated tablosu olan her kümede
+// tanımlıdır (ZooKeeper yolu makrolarla kurulur).
+func TestNodeShardQueryUsesMacrosNotNameMatching(t *testing.T) {
 	q := nodeShardQuery("uptrace_all")
-	if !strings.Contains(q, "is_local OR host_name = hostName()") {
-		t.Errorf("is_local tek başına yetmiyor — host_name yedeği şart:\n%s", q)
+	if strings.Contains(q, "is_local") || strings.Contains(q, "host_name") {
+		t.Errorf("ad eşleştirmesine geri dönülmüş — hiçbir kurulumda güvenilir değil:\n%s", q)
+	}
+	if !strings.Contains(q, "system.macros") {
+		t.Errorf("kaynak system.macros olmalı:\n%s", q)
+	}
+	// shard sıfır dolgulu string gelir ("01"); parse edilemezse 0 →
+	// panel "shard bilinmiyor" der, sessizce yanlış gruplamaz.
+	if !strings.Contains(q, "toUInt32OrZero") {
+		t.Errorf("shard parse'ı hataya dayanıklı olmalı:\n%s", q)
 	}
 }

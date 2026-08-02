@@ -110,3 +110,93 @@ func serviceAnalysisSchema() map[string]any {
 		"guven":       map[string]any{"type": "string", "enum": serviceAnalysisGuven},
 	})
 }
+
+// numProp — sayısal alan (v0.9.559). Şemalarda ilk kez RCA verdict'inin
+// `model_confidence` alanıyla gerekti.
+//
+// Aralık ŞEMADA kısıtlanmıyor (minimum/maximum), bilerek: json_schema
+// desteği uçtan uca garanti değil (merdiven düşebilir) ve aralık
+// kontrolü zaten sunucuda var — capRCAConfidence NaN/Inf ve aralık
+// dışını kıstırıyor. Şemaya güvenip sunucu kontrolünü kaldırmak, bu
+// dosyanın başındaki 2. kuralın ihlali olurdu.
+func numProp() map[string]any { return map[string]any{"type": "number"} }
+
+// enumProp — verilen kümeden seçim. Boş küme geçersizdir (strict şema
+// boş enum kabul etmez), o yüzden çağıran boşluğu kendi ele alır.
+func enumProp(vals []string) map[string]any {
+	return map[string]any{"type": "string", "enum": vals}
+}
+
+// rcaVerdictSchema — RCA verdict'i (v0.9.559).
+//
+// Tasarım: docs/cosre-verdict-design.md §3.
+//
+// İki enum SUNUCUDAN gelir ve asıl kazanç orada:
+//
+//   - entities: root_cause.entity yalnız GERÇEK bir varlık olabilir.
+//   - rivals:   rakip hipotezi model YAZMAZ, listeden SEÇER. Serbest
+//     bırakmak, hiç değerlendirilmemiş bir rakibi sahte bir gerekçeyle
+//     "elenmiş" göstermeye izin veriyordu ve elemecilik tavanı böylece
+//     tek satırla atlanıyordu.
+//
+// `deciding_rules` alanı KASITLI olarak YOK: R1-R7 kodda kural olarak
+// yaşamıyor, modele sordurmak sıfır kalkanı olan bir DENETİM İZİ
+// TAKLİDİ üretirdi. Taklit, yokluktan kötüdür.
+//
+// `impact` da YOK: sayılar ClickHouse'tan gelir (rca_impact.go), modele
+// hesaplatılmaz — yalnız yorumlatılır.
+func rcaVerdictSchema(entities, rivals []string) map[string]any {
+	// Strict şema boş enum kabul etmez. Varlık listesi boşsa (hipotez
+	// çok zayıf) alan serbest string kalır ve K3 taraması yakalar —
+	// kalkan zinciri tek bir halkaya bağlı değil.
+	entityProp := strProp()
+	if len(entities) > 0 {
+		entityProp = enumProp(entities)
+	}
+	rivalProp := strProp()
+	if len(rivals) > 0 {
+		rivalProp = enumProp(rivals)
+	}
+
+	return objSchema(map[string]any{
+		"verdict": enumProp([]string{
+			"root_cause_identified", "probable_cause", "insufficient_evidence",
+		}),
+		"title":   strProp(),
+		"summary": strProp(),
+		"root_cause": objSchema(map[string]any{
+			"entity":          entityProp,
+			"failure_mode":    strProp(),
+			"trigger":         strProp(),
+			"latent_weakness": strProp(),
+			"evidence":        strArrayProp(),
+		}),
+		"causal_chain": map[string]any{
+			"type": "array",
+			"items": objSchema(map[string]any{
+				"entity":   strProp(),
+				"effect":   strProp(),
+				"evidence": strArrayProp(),
+			}),
+		},
+		"rejected_hypotheses": map[string]any{
+			"type": "array",
+			"items": objSchema(map[string]any{
+				"hypothesis": rivalProp,
+				"refuted_by": strArrayProp(),
+				"reason":     strProp(),
+			}),
+		},
+		"model_confidence": numProp(),
+		"missing_evidence": strArrayProp(),
+		"remediation": map[string]any{
+			"type": "array",
+			"items": objSchema(map[string]any{
+				"kind":   enumProp([]string{"mitigate", "fix"}),
+				"action": strProp(),
+				"target": strProp(),
+				"risk":   enumProp([]string{"low", "medium", "high"}),
+			}),
+		},
+	})
+}

@@ -766,7 +766,63 @@ export interface RootCauseSummary {
 // s.copilotExplain. 404 when no hypothesis is synthesized yet (honest "no
 // narration available" state — never fabricated).
 export interface RootCauseExplain {
-  prose: string;
+  /** v0.9.559 — null OLABİLİR: model hakemi yanıt üretemediyse sunucu
+   *  prose'u DOLDURMAZ, deterministik cümleyi verdict.summary'ye yazar.
+   *  Böylece "anlatım yok" dalı ulaşılabilir kalır; yedek cümleyi
+   *  gerçek anlatımla aynı kutuda çizmek operatörü yanıltırdı. */
+  prose: string | null;
+  /** Kalkanlardan geçmiş yapılandırılmış karar (v0.9.559).
+   *  Yoksa eski davranış: yalnız prose. */
+  verdict?: RCAVerdict;
+}
+
+/** RCA verdict — deterministik kalkanlardan geçmiş kök-neden kararı.
+ *  Tasarım: docs/cosre-verdict-design.md */
+export interface RCAVerdict {
+  verdict: 'root_cause_identified' | 'probable_cause' | 'insufficient_evidence';
+  title: string;
+  summary: string;
+  rootCause: {
+    entity: string;
+    failure_mode: string;
+    trigger: string;
+    latent_weakness: string;
+    evidence: string[];
+  };
+  causalChain?: { entity: string; effect: string; evidence: string[] }[];
+  rejectedHypotheses?: { hypothesis: string; refuted_by: string[]; reason: string }[];
+  missingEvidence?: string[];
+  remediation?: { kind: 'mitigate' | 'fix'; action: string; target: string; risk: 'low' | 'medium' | 'high' }[];
+  /** Tavanlanmış nihai güven. */
+  confidence: number;
+  /** Modelin kendi beyanı — tavanın ne kadar indirdiği görünsün diye ayrı. */
+  modelConfidence: number;
+  /** Deterministik korelasyon motorunun güveni. Üçü FARKLI şeyler. */
+  hypothesisConfidence: number;
+  /** Atıf yapılan kanıtların SUNUCU metni (model metni değil). */
+  evidence?: { id: string; kind: 'E' | 'N'; entity?: string; text: string }[];
+  impact?: {
+    entity: string;
+    anchorService?: string;
+    /** null = ÖLÇEMEDİK (sıfır DEĞİL). */
+    errorCount: number | null;
+    requestCount: number | null;
+    errorShare: number | null;
+    windowFromNs: number;
+    windowToNs: number;
+    note?: string;
+  };
+  shields: {
+    /** false ⇒ deterministik düşüş. UI'DA GÖSTERİLMELİ, yoksa sahte bir
+     *  "kanıt yetersiz" gerçeğinden ayırt edilemez. */
+    parsed: boolean;
+    repaired?: boolean;
+    rejectedEvidence?: string[];
+    unknownEntities?: string[];
+    refutationInvalid?: boolean;
+    confidenceCapped?: boolean;
+    notes?: string[];
+  };
 }
 
 // ── Correlated Signals (task #6) ────────────────────────────────────────────

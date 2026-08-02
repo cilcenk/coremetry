@@ -84,6 +84,11 @@ func TestSchemasAreStrictValid(t *testing.T) {
 		"nlToQuery":       nlToQuerySchema(),
 		"chOptimize":      chOptimizeSchema(),
 		"serviceAnalysis": serviceAnalysisSchema(),
+		// v0.9.559 — RCA verdict. İki varyant: enum DOLU hâli
+		// (normal yol) ve enum BOŞ hâli (zayıf hipotez → serbest
+		// string'e düşer). Strict kuralı ikisinde de geçerli.
+		"rcaVerdict":      rcaVerdictSchema([]string{"a-svc", "b-svc"}, []string{"r1", "r2"}),
+		"rcaVerdictEmpty": rcaVerdictSchema(nil, nil),
 	} {
 		t.Run(name, func(t *testing.T) { assertStrict(t, sc, name) })
 	}
@@ -120,6 +125,11 @@ func TestSchemasMarshal(t *testing.T) {
 		"nlToQuery":       nlToQuerySchema(),
 		"chOptimize":      chOptimizeSchema(),
 		"serviceAnalysis": serviceAnalysisSchema(),
+		// v0.9.559 — RCA verdict. İki varyant: enum DOLU hâli
+		// (normal yol) ve enum BOŞ hâli (zayıf hipotez → serbest
+		// string'e düşer). Strict kuralı ikisinde de geçerli.
+		"rcaVerdict":      rcaVerdictSchema([]string{"a-svc", "b-svc"}, []string{"r1", "r2"}),
+		"rcaVerdictEmpty": rcaVerdictSchema(nil, nil),
 	} {
 		b, err := json.Marshal(sc)
 		if err != nil {

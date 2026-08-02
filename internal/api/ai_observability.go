@@ -298,3 +298,24 @@ func (s *Server) aiRouterGaps(w http.ResponseWriter, r *http.Request) {
 		}, nil
 	})
 }
+
+// copilotExplainJSONSurface (v0.9.559) — copilotExplainJSON'un ctx
+// taşıyan ikizi.
+//
+// Neden gerekli: serveCached'in fn'i İKİ yolda koşar ve SWR arka plan
+// tazelemesinde istek çoktan bitmiştir (cache.go refreshKey taze bir
+// context.Background() verir). `r` alan bir sarmalayıcı o yolda ölü
+// bir context kullanır ve her tazeleme context.Canceled ile düşer —
+// v0.9.557'de tam bu hata düzeltildi, aynısını JSON yolunda
+// tekrarlamamak için bu varyant var.
+//
+// Meta ctx'ten gelir; yalnız surface ve JSON kipi burada set edilir.
+func (s *Server) copilotExplainJSONSurface(ctx context.Context, surface, system, user string, schema map[string]any) (string, error) {
+	jctx := copilot.WithJSONMode(ctx)
+	if len(schema) > 0 {
+		jctx = copilot.WithJSONSchema(ctx, surface, schema)
+	}
+	meta := copilot.MetaFromContext(ctx)
+	meta.Surface = surface
+	return s.copilot.Explain(copilot.WithMeta(jctx, meta), system, user)
+}

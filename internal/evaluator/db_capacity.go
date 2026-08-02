@@ -195,6 +195,16 @@ func capacityService(instance, _ string) string {
 // open/refresh/resolve each sample exactly like evaluateOne. Runs on the
 // leader tick — no new goroutine, no new route.
 func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
+	// v0.9.522 — açık problemler tik başına BİR kez (runtime_pods ile aynı
+	// gerekçe: instance × subkey başına ayrı FindOpenProblemByID, `problems`
+	// state tablosu olduğu için hepsi in-order ana bağlantıdan ilk CH
+	// node'una gidiyordu). Hata halinde tik ATLANIR — boş kabul etmek açık
+	// problemleri yeniden açtırırdı.
+	snap, err := e.store.OpenProblemsSnapshot(ctx)
+	if err != nil {
+		log.Printf("[evaluator] db-capacity: açık problem anlık görüntüsü alınamadı, tik atlanıyor: %v", err)
+		return
+	}
 	for _, c := range capacityChecks {
 		// Defensive checks: skip cleanly unless the receiver is
 		// actually publishing. Oracle checks have no probe → always run.
@@ -214,7 +224,7 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 			continue
 		}
 		for _, s := range samples {
-			e.reconcileCapacity(ctx, c, s)
+			e.reconcileCapacity(ctx, c, s, snap)
 		}
 	}
 }
@@ -222,7 +232,7 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 // reconcileCapacity opens / refreshes / resolves the Problem for one
 // sample, mirroring evaluateOne's open/refresh/resolve switch. Dedup is by
 // (rule_id, service) via FindOpenProblem + a stable Problem id.
-func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s chstore.CapacitySample) {
+func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s chstore.CapacitySample, snap map[string]*chstore.Problem) {
 	ruleID := capacityRuleID(c.id)
 	service := capacityService(s.Instance, s.Subkey)
 
@@ -231,8 +241,8 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 	// v0.9.402 — dedup deterministik ID'den (per-subkey granülerlik
 	// service alanından taşınamaz artık); ID formatı değişmedi → prod'un
 	// açık eski satırları bulunur, refresh'te service kendini onarır.
-	existing, err := e.store.FindOpenProblemByID(ctx, capacityProblemID(c.id, s.Instance, s.Subkey))
-	hasOpen := err == nil && existing != nil && existing.ID != ""
+	existing := snap[capacityProblemID(c.id, s.Instance, s.Subkey)]
+	hasOpen := existing != nil && existing.ID != ""
 	open, sev, pct := capacityDecision(s.Usage, s.Limit, c.rate, hasOpen)
 
 	switch {

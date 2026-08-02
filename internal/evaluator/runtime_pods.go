@@ -129,12 +129,33 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 	// v0.9.485 — eşikler tick başında BİR kez okunur (soft-fail →
 	// varsayılanlar); operatör PUT'u bir sonraki tick'te devrede.
 	cfg := e.store.GetRuntimeAlerts(ctx)
+	// v0.9.522 — açık problemler tik başına BİR kez okunur.
+	//
+	// Öncesi: her pod × her metrik için ayrı FindOpenProblemByID. Prod
+	// ölçümü (2026-08-02, self-telemetri havuz etiketiyle): bu tek sorgu
+	// ŞEKLİ saatte ~10.000 çağrı, Coremetry'nin TÜM queryrow trafiğinin
+	// ~%77'si. `problems` bir STATE tablosu, yani in-order ana bağlantıda
+	// kalmak ZORUNDA (v0.9.486 /users tutarsızlığı) — dolayısıyla hepsi
+	// ilk CH node'una gidiyor ve o node'un CPU'sunu şişiriyordu.
+	//
+	// Okuma havuzu bunu ASLA düzeltemezdi: sorgu doğru havuzda. Düzeltme
+	// taşımak değil, çağrı sayısını düşürmek. v0.8.352'de evaluator'ın
+	// measure() çağrılarında uygulanan desenin aynısı (105k→600).
+	//
+	// Hata halinde tik ATLANIR, boş kabul EDİLMEZ: boş kabul etmek "açık
+	// problem yok" demek olurdu ve evaluator zaten açık olan problemleri
+	// yeniden açardı (kopya + flapping).
+	snap, err := e.store.OpenProblemsSnapshot(ctx)
+	if err != nil {
+		log.Printf("[evaluator] runtime pods: açık problem anlık görüntüsü alınamadı, tik atlanıyor: %v", err)
+		return
+	}
 	if present, err := e.store.MetricExists(ctx, "jvm.memory.limit"); err == nil && present {
 		if samples, err := e.store.JVMHeapPodUsage(ctx); err != nil {
 			log.Printf("[evaluator] runtime jvm-heap read: %v", err)
 		} else {
 			for _, s := range samples {
-				e.reconcileRuntimeHeap(ctx, s, cfg)
+				e.reconcileRuntimeHeap(ctx, s, cfg, snap)
 			}
 		}
 	}
@@ -143,7 +164,7 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 			log.Printf("[evaluator] runtime jvm-gc read: %v", err)
 		} else {
 			for _, s := range samples {
-				e.reconcileRuntimeGC(ctx, s, cfg)
+				e.reconcileRuntimeGC(ctx, s, cfg, snap)
 			}
 		}
 		// v0.9.440 — GC zaman payı (uzun + sık GC'yi tek ölçüde yakalar).
@@ -151,13 +172,13 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 			log.Printf("[evaluator] runtime jvm-gc-share read: %v", err)
 		} else {
 			for _, a := range acts {
-				e.reconcileRuntimeGCShare(ctx, a, cfg)
+				e.reconcileRuntimeGCShare(ctx, a, cfg, snap)
 			}
 		}
 	}
 }
 
-func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.CapacitySample, cfg chstore.RuntimeAlertConfig) {
+func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.CapacitySample, cfg chstore.RuntimeAlertConfig, snap map[string]*chstore.Problem) {
 	const ruleID = "runtime:jvm-heap"
 	service := runtimeService(s.Instance, s.Subkey)
 	// v0.9.401 — dedup (ruleID, service) yerine deterministik problemID:
@@ -165,8 +186,8 @@ func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.Capacity
 	// kaybederdi (iki pod tek probleme çökerdi). ID formatı DEĞİŞMEDİ —
 	// prod'daki açık eski satırlar aynı ID'den bulunur ve refresh
 	// yolunda service alanı kendini onarır.
-	existing, err := e.store.FindOpenProblemByID(ctx, runtimeProblemID("jvm-heap", s.Instance, s.Subkey))
-	hasOpen := err == nil && existing != nil && existing.ID != ""
+	existing := snap[runtimeProblemID("jvm-heap", s.Instance, s.Subkey)]
+	hasOpen := existing != nil && existing.ID != ""
 	open, sev, pct, postBased := jvmHeapDecision(s.Usage, s.PostGC, s.Limit, hasOpen, cfg)
 	gb := func(b float64) float64 { return b / (1024 * 1024 * 1024) }
 	// v0.9.426 — reason sinyali söyler: GC-sonrası mı, anlık mı.
@@ -195,12 +216,12 @@ func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.Capacity
 	})
 }
 
-func (e *Evaluator) reconcileRuntimeGC(ctx context.Context, s chstore.CapacitySample, cfg chstore.RuntimeAlertConfig) {
+func (e *Evaluator) reconcileRuntimeGC(ctx context.Context, s chstore.CapacitySample, cfg chstore.RuntimeAlertConfig, snap map[string]*chstore.Problem) {
 	const ruleID = "runtime:jvm-gc"
 	service := runtimeService(s.Instance, s.Subkey)
 	// v0.9.401 — heap yoluyla aynı: dedup deterministik problemID'den.
-	existing, err := e.store.FindOpenProblemByID(ctx, runtimeProblemID("jvm-gc", s.Instance, s.Subkey))
-	hasOpen := err == nil && existing != nil && existing.ID != ""
+	existing := snap[runtimeProblemID("jvm-gc", s.Instance, s.Subkey)]
+	hasOpen := existing != nil && existing.ID != ""
 	open, sev := jvmGCPauseDecision(s.Usage, hasOpen, cfg)
 	reason := fmt.Sprintf("JVM GC pause avg %.0fms on %s · pod %s", s.Usage, service, s.Subkey)
 	thr := cfg.GCPauseWarnMs
@@ -230,11 +251,11 @@ type runtimeReconcile struct {
 // reconcileRuntimeGCShare (v0.9.440) — GC zaman payı kontrolü.
 // reconcileRuntimeGC'nin ikizi; reason koleksiyon hızını da söyler ki
 // "sayısı yüksek" şikâyeti alarm metninde görünür olsun.
-func (e *Evaluator) reconcileRuntimeGCShare(ctx context.Context, a chstore.GCActivitySample, cfg chstore.RuntimeAlertConfig) {
+func (e *Evaluator) reconcileRuntimeGCShare(ctx context.Context, a chstore.GCActivitySample, cfg chstore.RuntimeAlertConfig, snap map[string]*chstore.Problem) {
 	const ruleID = "runtime:jvm-gc-share"
 	service := runtimeService(a.Service, a.Pod)
-	existing, err := e.store.FindOpenProblemByID(ctx, runtimeProblemID("jvm-gc-share", a.Service, a.Pod))
-	hasOpen := err == nil && existing != nil && existing.ID != ""
+	existing := snap[runtimeProblemID("jvm-gc-share", a.Service, a.Pod)]
+	hasOpen := existing != nil && existing.ID != ""
 	open, sev := jvmGCShareDecision(a.SharePct, hasOpen, cfg)
 	reason := fmt.Sprintf("JVM zamanının %%%.1f'i GC'de (≈%.0f koleksiyon/dk, 10dk penceresi) on %s · pod %s",
 		a.SharePct, a.RatePerMin, service, a.Pod)

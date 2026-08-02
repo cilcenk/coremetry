@@ -3605,6 +3605,45 @@ func traceTimeBound(start time.Time, endNanos int64) (lo, hi time.Time, ok bool)
 	return start.Add(-margin), end.Add(margin), true
 }
 
+// FindTraceIDBySpan — v0.9.548. Çıplak bir SPAN id'sinin ait olduğu
+// trace'i bulur. "" = bulunamadı (hata değil).
+//
+// Operatör CoSRE'ye 16-hex yapıştırdığında gereken tek şey bu: trace
+// bulununca mevcut kanıt paketi (buildTraceExplainInput, v0.9.537)
+// olduğu gibi devreye giriyor.
+//
+// MALİYET UYARISI — spans ORDER BY (service_name, time) ve span_id'de
+// İNDEKS YOK (trace_id'de bloom var, span_id'de yok). Yani bu arama
+// pencere içinde bir kolon taraması. Kabul edilebilir çünkü:
+//   - açık bir operatör eylemi (ID yapıştırdı), arka plan yoklaması değil
+//   - LIMIT 1 → eşleşme bulununca CH erken çıkar
+//   - pencere ÇAĞIRAN tarafından sınırlanır + max_execution_time tavanı,
+//     yani eşleşme YOKKEN bile maliyet üstten kapalı
+// Bunu bir hot path'e ya da bir poll'a bağlamak YANLIŞ olur.
+func (s *Store) FindTraceIDBySpan(ctx context.Context, spanID string, from, to time.Time) (string, error) {
+	spanID = strings.TrimSpace(spanID)
+	if spanID == "" {
+		return "", nil
+	}
+	var traceID string
+	err := s.telemetryReadConn().QueryRow(ctx, `
+		SELECT trace_id
+		FROM spans
+		WHERE span_id = ? AND time >= ? AND time <= ?
+		LIMIT 1
+		SETTINGS max_execution_time = 8`,
+		spanID, chDateTime64Arg(from), chDateTime64Arg(to)).Scan(&traceID)
+	if err != nil {
+		// Satır yok = bulunamadı; çağıran bunu dürüst kanıt olarak
+		// anlatır, hata olarak değil.
+		if strings.Contains(err.Error(), "no rows") {
+			return "", nil
+		}
+		return "", err
+	}
+	return traceID, nil
+}
+
 func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error) {
 	// v0.8.210 — derive the trace's time window from trace_summary_5m (the
 	// aggregate, far smaller than raw spans) so the spans scan is time-bounded

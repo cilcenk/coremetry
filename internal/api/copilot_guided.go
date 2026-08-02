@@ -97,6 +97,10 @@ const (
 	// trace ID'si "yüklü dokümanlarda bu bilgi yok" cevabına düşüyordu —
 	// hiçbir intent 32-hex'i tanımıyor, soru RAG doküman yoluna gidiyordu).
 	guidedTraceByID guidedIntent = "trace_by_id"
+
+	// guidedSpanByID — v0.9.548. Çıplak 16-hex SPAN id'si. Trace'i
+	// aranır, bulununca aynı trace kanıt paketi kullanılır.
+	guidedSpanByID guidedIntent = "span_by_id"
 )
 
 type guidedRoute struct {
@@ -116,6 +120,8 @@ type guidedRoute struct {
 	Family []string
 	// TraceID (v0.9.537) — guidedTraceByID rotasının öznesi (32-hex).
 	TraceID string
+	// SpanID (v0.9.548) — guidedSpanByID rotasının öznesi (16-hex).
+	SpanID string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -251,6 +257,15 @@ func extractTraceID(msg string) string {
 	return guidedTraceIDRe.FindString(msg)
 }
 
+// guidedSpanIDRe — v0.9.548. 16-hex = W3C span ID. \b sınırları
+// sayesinde 32-hex trace ID'nin İÇİNDEKİ 16'lık dizileri YAKALAMAZ;
+// yine de çağrı sırası önemli — trace ID her zaman önce denenir.
+var guidedSpanIDRe = regexp.MustCompile(`\b[0-9a-f]{16}\b`)
+
+func extractSpanID(msg string) string {
+	return guidedSpanIDRe.FindString(msg)
+}
+
 func hasGuidedSignal(msg string) bool {
 	toks := guidedTokens(msg)
 	return hasSlowTraceSignal(msg) || hasDeploySignal(toks) ||
@@ -263,7 +278,8 @@ func hasGuidedSignal(msg string) bool {
 		// Türkçe ekli hâlleri de yakalar — "tracei", "trace'in";
 		// ekrandaki trace'e bağlamdan gitmek için, ctxTrace çözümü
 		// dispatch'te).
-		extractTraceID(msg) != "" || tokenHasPrefix(toks, "trace")
+		extractTraceID(msg) != "" || extractSpanID(msg) != "" ||
+		tokenHasPrefix(toks, "trace") || tokenHasPrefix(toks, "span")
 }
 
 // hasWhySignal (v0.9.514) — NEDENSELLİK soran şekiller. Türkçe ekler
@@ -493,6 +509,11 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 	// dokümanlarda bu bilgi yok" cevabı alıyordu (operator-reported).
 	if id := extractTraceID(msg); id != "" {
 		return guidedRoute{Intent: guidedTraceByID, TraceID: id}
+	}
+	// v0.9.548 — 16-hex SPAN id'si. SIRA önemli: 32-hex önce denendi,
+	// yani bir trace ID'nin içindeki 16'lık dizi buraya düşemez.
+	if id := extractSpanID(msg); id != "" {
+		return guidedRoute{Intent: guidedSpanByID, SpanID: id}
 	}
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
@@ -898,6 +919,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedMessagingBundle(ctx, emit, route.Service, from, to, rangeS)
 	case guidedTraceByID:
 		evidence, sources, err = s.guidedTraceBundle(ctx, emit, route.TraceID)
+	case guidedSpanByID:
+		evidence, sources, err = s.guidedSpanBundle(ctx, emit, route.SpanID, from, to)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may
@@ -1620,6 +1643,48 @@ func (s *Server) guidedTraceBundle(ctx context.Context, emit func(string, any), 
 		return "", "", err
 	}
 	return in.User, fmt.Sprintf("trace %s — span kanıtı + ilişkili loglar", traceID), nil
+}
+
+// guidedSpanBundle — v0.9.548. Çıplak SPAN id'sinin kanıt paketi.
+//
+// Span tek başına anlamsızdır: neyin parçası olduğu bilinmeden "bu span
+// neden yavaş" cevaplanamaz. O yüzden önce trace'i bulunur, sonra
+// v0.9.537'nin trace paketi AYNEN kullanılır — ikinci bir montaj yok.
+// Anlatıma hangi span'in sorulduğu ayrıca söylenir ki model waterfall
+// içinde onu işaret edebilsin.
+//
+// Pencere çağırandan gelir (sohbetin aralığı, v0.9.529): span_id'de
+// indeks yok, arama zaman-sınırlı bir tarama. Sınırsız pencere
+// prod'da pahalıya kaçardı.
+func (s *Server) guidedSpanBundle(ctx context.Context, emit func(string, any), spanID string, from, to time.Time) (string, string, error) {
+	emitGuidedStep(emit, "span", `{"id":"`+spanID+`"}`)
+	traceID, err := s.store.FindTraceIDBySpan(ctx, spanID, from, to)
+	if err != nil {
+		return "", "", err
+	}
+	if traceID == "" {
+		// Bulunamamak HATA DEĞİL dürüst kanıt. Hata döndürsek soru
+		// serbest döngüye düşer ve operatör yine cevapsız kalır.
+		ev := fmt.Sprintf("Span %s bu zaman penceresinde BULUNAMADI.\n"+
+			"Olası nedenler: ID eksik/yanlış kopyalandı, span sohbetin zaman "+
+			"aralığının dışında (aralığı genişletmeyi öner), ya da retention "+
+			"penceresinin dışına düştü. Kullanıcıya bunu söyle; span/istatistik "+
+			"UYDURMA.", spanID)
+		return ev, "span araması (bulunamadı)", nil
+	}
+	in, terr := s.buildTraceExplainInput(ctx, traceID)
+	if errors.Is(terr, errExplainTraceNotFound) {
+		ev := fmt.Sprintf("Span %s trace %s'e ait ama trace'in span'leri okunamadı "+
+			"(retention ya da kısmi yazım). Kullanıcıya bunu söyle; UYDURMA.", spanID, traceID)
+		return ev, "span → trace (span'ler okunamadı)", nil
+	}
+	if terr != nil {
+		return "", "", terr
+	}
+	// Hangi span'in sorulduğu anlatımın ÖNÜNE yazılıyor: model
+	// waterfall içinde onu işaret edebilsin.
+	ev := fmt.Sprintf("SORULAN SPAN: %s (trace %s içinde)\n\n%s", spanID, traceID, in.User)
+	return ev, fmt.Sprintf("span %s → trace %s kanıtı", spanID, traceID), nil
 }
 
 // guidedDeployRef unifies the two deploy reads (global

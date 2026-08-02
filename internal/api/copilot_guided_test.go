@@ -833,3 +833,76 @@ func TestHasGuidedSignalAcceptsTraceShapes(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.548 — çıplak SPAN id'si (16-hex). v0.9.537 trace ID'yi tanıttı
+// ama span ID'yi bilinçli dışarıda bırakmıştı ("trace'ini bulmak ayrı
+// bir spans taraması"); bu o dilim.
+//
+// SIRA sözleşmesi kritik: 32-hex trace ID'nin İÇİNDE 16'lık diziler
+// var. Regex \b sınırlarıyla korunuyor ama router'da trace her zaman
+// ÖNCE deneniyor — ikisi birden değişirse trace ID'si span sanılabilir.
+func TestExtractSpanID(t *testing.T) {
+	const span = "8a61070780e6f7ab"
+	const trace = "07544915dcf643aead8a61070780e6f7"
+	cases := []struct{ name, in, want string }{
+		{"çıplak", span, span},
+		{"cümle içinde", "bu span " + span + " neden yavaş", span},
+		{"noktalama bitişik", "span(" + span + ")", span},
+
+		// 32-hex İÇİNDEN 16'lık dizi ÇIKARMAMALI — \b sınırı.
+		{"trace id'nin içi yakalanmaz", trace, ""},
+
+		{"15 hane kısa", span[:15], ""},
+		{"büyük harf (W3C küçük hex)", strings.ToUpper(span), ""},
+		{"hex olmayan", "zzzz070780e6f7ab", ""},
+		{"boş", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := extractSpanID(c.in); got != c.want {
+				t.Errorf("extractSpanID(%q) = %q, beklenen %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// Trace ID her zaman span'den ÖNCE gelir. Aksi halde 32-hex bir trace
+// ID'si span rotasına düşer, span araması boş döner ve operatör
+// "bulunamadı" cevabı alır — elindeki ID doğruyken.
+func TestRouteGuidedIntentTraceBeatsSpan(t *testing.T) {
+	const trace = "07544915dcf643aead8a61070780e6f7"
+	const span = "8a61070780e6f7ab"
+	if r := routeGuidedIntent(trace, nil, nil, ""); r.Intent != guidedTraceByID {
+		t.Errorf("32-hex trace rotasına gitmeli, got %q", r.Intent)
+	}
+	// İkisi birden geçiyorsa TRACE kazanır (daha spesifik özne).
+	both := "trace " + trace + " span " + span
+	r := routeGuidedIntent(both, nil, nil, "")
+	if r.Intent != guidedTraceByID || r.TraceID != trace {
+		t.Errorf("ikisi varken trace kazanmalı, got %q/%q", r.Intent, r.TraceID)
+	}
+}
+
+func TestRouteGuidedIntentSpanID(t *testing.T) {
+	const span = "8a61070780e6f7ab"
+	for _, q := range []string{span, "bu span " + span, span + " neden hata verdi"} {
+		r := routeGuidedIntent(q, []string{"checkout"}, nil, "")
+		if r.Intent != guidedSpanByID {
+			t.Errorf("%q → intent %q, beklenen span_by_id", q, r.Intent)
+		}
+		if r.SpanID != span {
+			t.Errorf("%q → SpanID %q, beklenen %q", q, r.SpanID, span)
+		}
+	}
+}
+
+// "span" sözcüğü tek başına mevcut rotaları ÇALMAMALI.
+func TestSpanWordDoesNotHijack(t *testing.T) {
+	svcs := []string{"checkout"}
+	if r := routeGuidedIntent("en yavaş trace'ler hangileri?", svcs, nil, ""); r.Intent != guidedSlowTraces {
+		t.Errorf("slow-trace rotası bozuldu: %q", r.Intent)
+	}
+	if r := routeGuidedIntent("checkout nasıl?", svcs, nil, ""); r.Intent != guidedServiceHealth {
+		t.Errorf("servis sağlığı rotası bozuldu: %q", r.Intent)
+	}
+}

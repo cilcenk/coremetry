@@ -10221,8 +10221,13 @@ func (s *Server) updateDashboard(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	// v0.9.563 — gövdede GELMEYEN alanlar mevcut satırdan taşınır.
+	// Öncesinde yalnız CreatedAt taşınıyordu; frontend `variables`
+	// göndermediği için dashboard'un $service değişkeni İLK KAYITTA
+	// kalıcı siliniyordu ve ${service} referanslı paneller sessizce
+	// filo geneline geçiyordu (bkz. dashboard_merge.go).
 	d.ID = id
-	d.CreatedAt = existing.CreatedAt
+	d = mergeDashboardUpdate(d, *existing)
 	if err := s.store.UpsertDashboard(r.Context(), d); err != nil {
 		writeErr(w, err)
 		return

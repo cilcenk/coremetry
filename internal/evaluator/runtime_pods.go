@@ -293,6 +293,7 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 			log.Printf("[evaluator] runtime open %s/%s: %v", r.ruleID, r.service, err)
 			return
 		}
+		e.countOpened() // v0.9.550 — kalp atışı sayacı
 		log.Printf("[evaluator] PROBLEM OPENED (%s): %s", r.metric, p.Description)
 		if _, err := e.store.AttachProblemToIncident(ctx, p); err != nil {
 			log.Printf("[evaluator] runtime incident attach: %v", err)
@@ -325,6 +326,7 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 		if err := e.store.UpsertProblem(ctx, *r.existing); err != nil {
 			log.Printf("[evaluator] runtime resolve %s/%s: %v", r.ruleID, r.service, err)
 		} else {
+			e.countResolved() // v0.9.550 — kalp atışı sayacı
 			log.Printf("[evaluator] PROBLEM RESOLVED (%s): %s", r.metric, r.reason)
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/cache"
@@ -74,6 +75,21 @@ type Evaluator struct {
 	// watcherLastRun ile aynı ömür sözleşmesini paylaşır.
 	watcherFails   map[string]int
 	watcherMu      sync.Mutex
+
+	// v0.9.550 — kalp atışı alanları (heartbeat.go).
+	//
+	// opened/resolved tik başına sıfırlanan sayaçlardır. Atomik
+	// olmalarının sebebi eşzamanlılık değil (tik tek liderde
+	// seridir), reconcile yollarının derinden çağırıyor olması ve
+	// testlerin eşzamanlı dokunabilmesi — mutex'siz doğruluk
+	// burada daha ucuz.
+	opened   atomic.Int64
+	resolved atomic.Int64
+	// version — kalp atışını yazan binary'nin kimliği. main'den
+	// SetVersion ile geçer (evaluator main'i import edemez).
+	// Bir dağıtım sonrası eski pod'un bayat kalp atışını taze
+	// sanmamak için gerekli.
+	version string
 }
 
 type breachKey struct {
@@ -135,11 +151,46 @@ func (e *Evaluator) Start(ctx context.Context) {
 // runIfLeader skips the tick when another replica holds leadership.
 // v0.5.429 — long-lived LeaderHolder; one pod owns the worker for
 // its lifetime + refreshes the lease in the background.
+// v0.9.550 — lider olmayan pod kalp atışı YAZMAZ. Yazsaydı iki pod
+// aynı anahtarı çiğneyip birbirinin kaydını silerdi ve operatör
+// "tik atıldı" görürken aslında hiçbir değerlendirme yapılmamış
+// olabilirdi. Kalp atışı yalnız gerçekten değerlendirme yapanın
+// kaydıdır — anahtarın bayatlaması "lider yok" halini de doğru
+// şekilde gösterir.
 func (e *Evaluator) runIfLeader(ctx context.Context) {
 	if !e.leader.IsLeader() {
 		return
 	}
-	e.evaluateAll(ctx)
+
+	// Tik başına deadline: asılı bir bağımlılık alarm üretimini
+	// süresiz durduramasın (bkz. tickDeadline).
+	tickCtx, cancel := context.WithTimeout(ctx, tickDeadline(e.interval))
+	defer cancel()
+
+	started := time.Now()
+	e.opened.Store(0)
+	e.resolved.Store(0)
+
+	rules := e.evaluateAll(tickCtx)
+
+	hb := Heartbeat{
+		StartedAt:  started.UnixNano(),
+		FinishedAt: time.Now().UnixNano(),
+		DurationMS: time.Since(started).Milliseconds(),
+		Rules:      rules,
+		Opened:     int(e.opened.Load()),
+		Resolved:   int(e.resolved.Load()),
+		Leader:     true,
+	}
+	// Deadline'a takılan tik BAŞARISIZDIR ve öyle kaydedilir.
+	// Sessizce "bitti" yazmak, düzeltmeye çalıştığımız yanılgının
+	// ta kendisi olurdu: operatör taze bir kalp atışı görüp
+	// evaluator'ı sağlıklı sanardı.
+	if err := tickCtx.Err(); err != nil {
+		hb.Err = "tik süre sınırını aştı (" + tickDeadline(e.interval).String() + "): " + err.Error()
+		log.Printf("[evaluator] %s", hb.Err)
+	}
+	e.writeHeartbeat(hb)
 }
 
 // ── Built-in rules ───────────────────────────────────────────────────────────
@@ -327,11 +378,14 @@ func (e *Evaluator) seedBuiltinRules(ctx context.Context) error {
 
 // ── Evaluation loop ──────────────────────────────────────────────────────────
 
-func (e *Evaluator) evaluateAll(ctx context.Context) {
+// evaluateAll bir turu koşar ve DEĞERLENDİRİLEN kural sayısını döner
+// (v0.9.550 — kalp atışı için; devre dışı kurallar sayılmaz). Dönüş
+// değeri yalnız gözlemlenebilirlik içindir, akış kararı vermez.
+func (e *Evaluator) evaluateAll(ctx context.Context) int {
 	rules, err := e.store.ListAlertRules(ctx)
 	if err != nil {
 		log.Printf("[evaluator] list rules: %v", err)
-		return
+		return 0
 	}
 
 	// Cache the recent service set so wildcard rules know what to
@@ -341,7 +395,7 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	serviceNames, err := e.store.ListActiveServiceNames(ctx, 24*time.Hour)
 	if err != nil {
 		log.Printf("[evaluator] services: %v", err)
-		return
+		return 0
 	}
 	// v0.9.449 — request_rate< kuralları için taze hedef kümesi (L4).
 	// Hata = nil = kapı devre dışı (fail-open).
@@ -371,10 +425,12 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 		openSnap = nil
 	}
 
+	evaluated := 0
 	for _, r := range rules {
 		if !r.Enabled {
 			continue
 		}
+		evaluated++
 		// v0.8.342 (HA audit H9) — log-query rules evaluate ONCE per rule:
 		// the KQL carries its own filters and evaluateLogQuery ignores the
 		// service param, yet the wildcard expansion below used to fan the
@@ -465,6 +521,8 @@ func (e *Evaluator) evaluateAll(ctx context.Context) {
 	// detector keeps re-firing with a real ratio become
 	// pageable.
 	e.promoteStrongAnomalies(ctx)
+
+	return evaluated
 }
 
 // incidentCascadeDecision decides whether an OPEN incident should auto-resolve
@@ -785,6 +843,7 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 		if err := e.store.UpsertProblem(ctx, p); err != nil {
 			log.Printf("[evaluator] open problem: %v", err)
 		} else {
+			e.countOpened() // v0.9.550 — kalp atışı sayacı
 			log.Printf("[evaluator] PROBLEM OPENED: %s · %s = %.2f (threshold %.2f)",
 				service, r.Metric, value, r.Threshold)
 			// Auto-group into an Incident — same-service same-severity
@@ -832,6 +891,7 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 			// gate can suppress immediate re-opens — Redis-
 			// mirrored so the gate survives failover (v0.8.354).
 			e.stampResolved(ctx, key, time.Now(), r.CooldownSec)
+			e.countResolved() // v0.9.550 — kalp atışı sayacı
 			log.Printf("[evaluator] PROBLEM RESOLVED: %s · %s", service, r.Metric)
 		}
 	}

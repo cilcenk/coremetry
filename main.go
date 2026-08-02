@@ -620,6 +620,9 @@ func main() {
 	// clocks / punches CooldownSec holes. cacheImpl is the Switchable, so
 	// the v0.8.344 Noop→Redis hot-swap applies transparently.
 	evalr.SetStampCache(cacheImpl)
+	// v0.9.550 — kalp atışına binary kimliği gömülür; bir dağıtım
+	// sonrası eski pod'un bıraktığı bayat kaydı taze sanmamak için.
+	evalr.SetVersion(BuildVersion)
 	if mode.worker {
 		// ── Alert evaluator (background — opens & resolves problems) ─────
 		go evalr.Start(ctx)

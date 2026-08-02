@@ -627,6 +627,7 @@ func (e *Evaluator) settleCountAlert(ctx context.Context, r chstore.AlertRule, n
 			log.Printf("[evaluator] open %s problem: %v", metric, err)
 			return
 		}
+		e.countOpened() // v0.9.550 — kalp atışı sayacı
 		log.Printf("[evaluator] PROBLEM OPENED (%s): %s = %.0f (threshold %s %.0f)",
 			metric, r.Name, value, r.Comparator, r.Threshold)
 		if _, err := e.store.AttachProblemToIncident(ctx, p); err != nil {
@@ -649,6 +650,7 @@ func (e *Evaluator) settleCountAlert(ctx context.Context, r chstore.AlertRule, n
 			log.Printf("[evaluator] resolve %s problem: %v", metric, err)
 		} else {
 			e.stampResolved(ctx, key, now, r.CooldownSec)
+			e.countResolved() // v0.9.550 — kalp atışı sayacı
 			log.Printf("[evaluator] PROBLEM RESOLVED (%s): %s", metric, r.Name)
 		}
 	}

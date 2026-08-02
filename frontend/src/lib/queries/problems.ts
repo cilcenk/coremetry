@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { keys } from './keys';
-import type { Problem } from '@/lib/types';
+import type { Problem, EvaluatorHealth } from '@/lib/types';
 
 // /api/problems — the open-incident inbox feeding /problems,
 // /anomalies, the sidebar badge, and several deep-link
@@ -84,5 +84,29 @@ export function useOpenCriticalCount(opts?: { env?: string; enabled?: boolean })
     refetchInterval: 30_000,
     staleTime: 25_000,
     enabled: opts?.enabled ?? true,
+  });
+}
+
+// v0.9.550 — evaluator kalp atışı.
+//
+// Operatör: "bazen sanki takıldığını hissediyorum." Bu hook o hissi
+// ölçüye çevirir: boş bir Problems sayfasının "sorun yok" mu yoksa
+// "evaluator ölü" mü olduğunu ayırt eder — öncesinde ikisi ekranda
+// birebir aynı görünüyordu.
+//
+// 30s poll: evaluator dakikada bir tik atar, daha sık sormak yeni bir
+// şey öğretmez. Redis'ten tek GET, sunucuda ek maliyeti yok.
+export function useEvaluatorHealth() {
+  return useQuery<EvaluatorHealth>({
+    queryKey: ['problems', 'evaluator-health'],
+    queryFn: async () =>
+      (await api.evaluatorHealth()) ?? {
+        // Ağ hatası = ÖLÇEMEDİK. 'ok' varsaymak, bu sürümün
+        // düzelttiği hatayı istemci tarafında yeniden kurardı.
+        status: 'unknown', reason: 'Sağlık okunamadı (ağ hatası).',
+        ageSec: -1, durationMs: 0, rules: 0, opened: 0, resolved: 0,
+      },
+    refetchInterval: 30_000,
+    staleTime: 25_000,
   });
 }

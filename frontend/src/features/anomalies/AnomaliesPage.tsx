@@ -4,6 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { TriageCrumb } from '@/components/TriageCrumb';
 import { Spinner, Empty } from '@/components/Spinner';
+import EvaluatorStatus from './EvaluatorStatus';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { ClusterChips } from '@/components/ClusterChips';
@@ -864,7 +865,13 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
       <div style={{ marginTop: 22, marginBottom: 12 }}>
         <SectionHeader title="Alert rules" subtitle="Threshold + SLO burn detectors" />
         <Empty icon="✓" title="No open alerts — all clear!">
-          The evaluator runs once per minute. Built-in rules cover error rate and P99 latency.
+          {/* v0.9.550 — buradaki eski metin "The evaluator runs once per
+              minute" diyordu ve bu ÖLÇÜLMEMİŞ bir iddiaydı: evaluator ölü
+              olsa da sayfa aynı cümleyi ✓ ikonuyla kurardı. Artık iddia
+              yerine ölçüm var; "all clear" ancak evaluator gerçekten
+              koşuyorsa güvenilir bir cümle. */}
+          Built-in rules cover error rate and P99 latency.
+          <EvaluatorStatus compact />
         </Empty>
       </div>
     );
@@ -873,6 +880,10 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   return (
     <div style={{ marginTop: 22, marginBottom: 12 }}>
       <SectionHeader title="Alert rules" subtitle="Threshold + SLO burn detectors" />
+      {/* v0.9.550 — dolu listede de görünür. Bayat bir evaluator'ın
+          ESKİ problemleri göstermesi, boş sayfa kadar yanıltıcı:
+          operatör ekranda gördüğünü "şu anki durum" sanar. */}
+      <EvaluatorStatus />
       {/* One grouped facet bar (v0.8.39) — status pivot + severity +
           priority chips share the shared .facet primitive (the repo
           equivalent of the design's filter bar), replacing the old

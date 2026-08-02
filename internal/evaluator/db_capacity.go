@@ -265,6 +265,7 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 			log.Printf("[evaluator] db-capacity open %s/%s: %v", ruleID, service, err)
 			return
 		}
+		e.countOpened() // v0.9.550 — kalp atışı sayacı
 		log.Printf("[evaluator] PROBLEM OPENED (db.capacity): %s", p.Description)
 		if _, err := e.store.AttachProblemToIncident(ctx, p); err != nil {
 			log.Printf("[evaluator] db-capacity incident attach: %v", err)
@@ -300,6 +301,7 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 		if err := e.store.UpsertProblem(ctx, *existing); err != nil {
 			log.Printf("[evaluator] db-capacity resolve %s/%s: %v", ruleID, service, err)
 		} else {
+			e.countResolved() // v0.9.550 — kalp atışı sayacı
 			log.Printf("[evaluator] PROBLEM RESOLVED (db.capacity): %s %s on %s",
 				c.dbsys, c.label, s.Instance)
 		}

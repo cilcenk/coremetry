@@ -73,6 +73,13 @@ type chatRequest struct {
 		// — "logda ne yazıyor" kör cevaplanıyordu (operatör raporu).
 		// Boşken v0.9.479 davranışı bayt-bayt korunur.
 		Subject string `json:"subject,omitempty"`
+		// RangeS (v0.9.529) — operatörün EKRANDAKİ zaman aralığı,
+		// saniye. Soru AÇIK bir pencere taşımıyorsa guided router sabit
+		// 30dk yerine bunu kullanır: 6 saatlik pencereye bakarken "hata
+		// oranı ne" diye soran operatör, baktığından BAŞKA bir pencerenin
+		// cevabını alıyordu ve fark görünmüyordu. Açık pencere taşıyan
+		// soru bunu EZER. 0/absent = eski istemci, davranış değişmez.
+		RangeS int64 `json:"rangeS,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -135,6 +142,13 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	ctx := copilot.WithMeta(r.Context(), copilot.CallMeta{
 		Surface: "chat", UserID: uid, UserEmail: email, ExchangeID: exchangeID,
 	})
+	// v0.9.528 Faz 2 — model kiminle konuştuğunu bilsin: ad (hitap için)
+	// ve rol (viewer'a yapamayacağı eylemi ÖNERMEMESİ için). Ad çözümü
+	// /api/auth/me'nin 30s cache'ini kullanır, yani sohbet başına yeni
+	// bir FINAL satır okuması EKLEMEZ. Çözülemezse ön-söz boş kalır ve
+	// iki prompt da bayt-bayt eskisi olur.
+	addressee := s.chatAddressee(r.Context(), c)
+	ctx = ctxWithAddressee(ctx, addressee)
 
 	// v0.8.397 (AI audit A3) — guided mode first, for EVERY provider:
 	// a deterministic intent router recognises the highest-value
@@ -144,7 +158,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// frontier models; the 2B-class primary target (qwen3.5-2b) can't
 	// drive the 5-round × 11-schema loop reliably at all. No match →
 	// the free tool loop below runs UNCHANGED.
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain); handled {
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS); handled {
 		emit("done", map[string]bool{"ok": gok})
 		return
 	}
@@ -207,9 +221,12 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	var totalIn, totalOut uint32
 	var lastErr error
 	var finalText string
+	// v0.9.528 Faz 2 — serbest döngünün sistem prompt'u da kiminle
+	// konuşulduğunu taşır. Ön-söz boşsa sabitin aynısı.
+	loopPrompt := withAddressee(addressee, chatSystemPrompt)
 
 	for round := 0; round < chatMaxToolRounds; round++ {
-		turn, err := s.copilot.ChatWithTools(ctx, chatSystemPrompt, conv, specs)
+		turn, err := s.copilot.ChatWithTools(ctx, loopPrompt, conv, specs)
 		totalIn += turn.InputTokens
 		totalOut += turn.OutputTokens
 		if err != nil {
@@ -265,7 +282,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		// model for a best-effort answer with what it has, no more
 		// tools, so the operator isn't left hanging.
 		if round == chatMaxToolRounds-1 {
-			turn2, err2 := s.copilot.ChatWithTools(ctx, chatSystemPrompt+
+			turn2, err2 := s.copilot.ChatWithTools(ctx, loopPrompt+
 				"\n\nYou have reached the tool-call limit. Answer now with what you have.", conv, nil)
 			totalIn += turn2.InputTokens
 			totalOut += turn2.OutputTokens

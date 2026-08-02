@@ -4,6 +4,8 @@ import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { useOpenCriticalCount, useProblems } from '@/lib/queries';
 import { useAuth } from '@/components/AuthProvider';
+import { useUrlRange } from '@/lib/useUrlRange';
+import { timeRangeToNs } from '@/lib/utils';
 import { ChatBubble } from './ai/ChatBubble';
 import { useChatThread } from './ai/useChatThread';
 import { greetHello, greetStatus, greetChips } from './ai/greeting';
@@ -106,8 +108,18 @@ export function CopilotChat() {
   // Tur state'i + gönderme döngüsü paylaşılan çekirdekte (v0.9.479).
   // Global pencere explain bağlamı GÖNDERMEZ — filo geneli sorular
   // sunucuda aynen guided/RAG/serbest döngü yollarına gider.
+  // v0.9.529 — ekrandaki zaman aralığı. Ev kuralı: timeRangeToNs bare
+  // JSX'te ASLA (v0.5.184 sonsuz refetch); burada useMemo içinde ve
+  // yalnız pencere kimliğinden türüyor, `now()` okunmuyor.
+  const [range] = useUrlRange();
+  const rangeS = useMemo(() => {
+    const { from, to } = timeRangeToNs(range);
+    const s = Math.round((to - from) / 1e9);
+    return s > 0 ? s : undefined;
+  }, [range]);
+
   const { turns, busy, send, rate, clear, last, showFollowups } = useChatThread({
-    service: currentService, operation: currentOp,
+    service: currentService, operation: currentOp, rangeS,
   });
 
   // Karşılamanın canlı yarısı (v0.9.528). `enabled` ÜÇ koşulu birden

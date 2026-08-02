@@ -626,6 +626,36 @@ var guidedRangeRe = regexp.MustCompile(`(\d+)\s*(gün|gun|days|day|saat|hours|ho
 // question. Default 1800 (30m, the chat tools' default); bare unit
 // words ("son bir saat", "today") map to 1h/1d. Clamped to
 // [300, 86400] so a typo can't trigger a week-wide scan.
+// guidedRangeRungs — ekrandan gelen aralığın oturtulacağı basamaklar.
+// frontend'in PRESET_SECONDS kümesiyle aynı (1m … 30d).
+var guidedRangeRungs = []int64{
+	60, 300, 900, 1800, 3600, 10800, 21600, 43200,
+	86400, 172800, 259200, 604800, 1209600, 2592000,
+}
+
+// snapRangeS — EKRANDAN gelen aralığı sabit basamaklara oturtur.
+//
+// Neden gerekli (v0.9.529): ekrandaki aralık MUTLAK (custom from/to)
+// olabilir ve o hâlde keyfi bir saniye sayısı üretir — "6 saat 3 dakika
+// 17 saniye". Bu değer guided prefetch'lerin sunucu cache anahtarlarına
+// giriyor; sınırsız kardinalite, her sorunun kendi cache satırını
+// yazması demek. Aynı sınıf v0.8.270'te ES tarafında yakalanmıştı.
+//
+// YUKARI oturtulur: pencere operatörün gördüğünü KAPSAMALI. Aşağı
+// oturtmak "6 saate bakıyorum ama cevap 3 saatlik" demek olurdu ve
+// eksik rapor, biraz fazla okumadan kötüdür.
+func snapRangeS(v int64) int64 {
+	if v <= 0 {
+		return 0
+	}
+	for _, r := range guidedRangeRungs {
+		if v <= r {
+			return r
+		}
+	}
+	return guidedRangeRungs[len(guidedRangeRungs)-1] // 30 günde tavan
+}
+
 func guidedRangeS(raw string) int64 {
 	v, _ := guidedRangeSExplicit(normalizeGuidedMsg(raw))
 	return v
@@ -722,7 +752,9 @@ KURALLAR:
 // emitted); ok mirrors the `done` event's success flag.
 // explain (v0.9.479) — AI çekmecesinden gelen "ekrandaki açıklama"
 // bağlamı; boşken bu fonksiyonun davranışı bayt-bayt eskisidir.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string) (handled, ok bool) {
+// ctxRangeS (v0.9.529) — operatörün EKRANDAKİ zaman aralığı, saniye.
+// 0 = bilgi yok (eski istemci); o hâlde davranış bayt-bayt eskisidir.
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -738,7 +770,17 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	}
 	svcNames, envNames := s.guidedServiceNames(ctx), s.guidedEnvNames(ctx)
 	route := routeGuidedIntent(question, svcNames, envNames, ctxService)
-	rangeS := guidedRangeS(question)
+	// v0.9.529 — soru AÇIK bir pencere taşımıyorsa ekrandaki aralığı
+	// kullan. Sabit 30dk, operatör 6 saatlik pencereye bakarken "hata
+	// oranı ne" diye sorduğunda BAŞKA bir pencerenin cevabını veriyordu
+	// ve fark görünmüyordu. Öncelik sırası bilinçli: sorunun açık
+	// penceresi > ekran > 30dk varsayılanı. Soru her zaman ekrandan
+	// güçlü — "son 24 saatte" yazan operatör ekranını değiştirmek
+	// zorunda kalmamalı.
+	rangeS, explicitRange := guidedRangeSExplicit(norm)
+	if !explicitRange && ctxRangeS > 0 {
+		rangeS = snapRangeS(ctxRangeS)
+	}
 	followBase := "" // devralınan temel mesaj (operasyon çözümü için)
 	if followCue {
 		if nr, nrange, base, changed := applyFollowUpContext(route, question, prior, svcNames, envNames); changed {
@@ -837,7 +879,9 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// olarak girer; explain boşken üretilen metin bayt-bayt eskisidir
 	// (guidedNarrationUser, copilot_drawer.go — testte pinli).
 	user := guidedNarrationUser(question, evidence, explain)
-	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", guidedChatPrompt, user, func(delta string) {
+	// v0.9.528 Faz 2 — kiminle konuşulduğu prompt'un başına girer
+	// (ctx'ten; ön-söz boşsa metin bayt-bayt eskisi).
+	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", withAddressee(addresseeFromCtx(ctx), guidedChatPrompt), user, func(delta string) {
 		emit("delta", map[string]string{"text": delta})
 	})
 	if exErr != nil {

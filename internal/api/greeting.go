@@ -1,8 +1,12 @@
 package api
 
 import (
+	"context"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/cilcenk/coremetry/internal/auth"
 )
 
 // greeting.go — v0.9.528. CoSRE sohbetinin kullanıcıya adıyla hitap
@@ -16,6 +20,106 @@ import (
 // yazılıyor (v0.8.266). Operatörün AD'sinde bu alan BİLEŞİK —
 // "Ad Soyad (Bölüm) * ÜNVAN-Ekip" — ve ham basılırsa karşılama
 // "Merhaba Fatih Yılmaz (Bilgi Teknolojileri) * UZMAN-APM" olurdu.
+
+// addresseeLine — sohbet sistem prompt'unun başına eklenen "kiminle
+// konuşuyorsun" bölümü (v0.9.528, Faz 2). İkisi de boşsa "" döner ve
+// prompt bayt-bayt eskisi kalır.
+//
+// İki somut kazanç, ikisi de operatöre görünür:
+//
+//  1. Model konuşma ORTASINDA adıyla hitap edebilir. Karşılama (Faz 1)
+//     deterministik ve tek satırlıktı; buradan sonrası modelin.
+//  2. Model ROLÜ bilir. Bugün bilmiyor ve viewer'a "şu ayarı değiştir",
+//     "bu kuralı sustur" diyebiliyor — kullanıcının yapamayacağı bir
+//     eylem. Yanlış tavsiye, yardımın olmamasından kötüdür: operatör
+//     denemek için zaman harcar ve asistana güveni azalır.
+//
+// Rol adları auth paketinin sabitleriyle aynı: admin | editor | viewer.
+func addresseeLine(firstName, role string) string {
+	name := strings.TrimSpace(firstName)
+	role = strings.ToLower(strings.TrimSpace(role))
+	if name == "" && role == "" {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("KONUŞTUĞUN KİŞİ: ")
+	if name != "" {
+		b.WriteString(name)
+	} else {
+		b.WriteString("(adı bilinmiyor)")
+	}
+	if role != "" {
+		b.WriteString(" · rol: ")
+		b.WriteString(role)
+	}
+	b.WriteString("\n")
+
+	if name != "" {
+		b.WriteString("- Uygun düştüğünde adıyla hitap et; her cümlede TEKRARLAMA.\n")
+	}
+	// Yetki uyarısı YALNIZ viewer için. admin/editor'e kısıt cümlesi
+	// eklemek prompt'u boşuna şişirir ve modeli gereksiz temkinli yapar.
+	if role == "viewer" {
+		b.WriteString("- Bu kullanıcının YALNIZ OKUMA yetkisi var: ayar değiştiremez, " +
+			"kural/alarm oluşturamaz, problem susturamaz. Ona bu eylemleri ÖNERME; " +
+			"bunun yerine ne bulduğunu söyle ve kime iletmesi gerektiğini belirt.\n")
+	}
+	return b.String()
+}
+
+// withAddressee — sistem prompt'una eklenecek ön-sözü metnin BAŞINA
+// koyar. Ön-söz boşsa metin hiç değişmez.
+func withAddressee(prefix, systemPrompt string) string {
+	if prefix == "" {
+		return systemPrompt
+	}
+	return prefix + "\n" + systemPrompt
+}
+
+// Hitap ön-sözü ctx ile taşınır (WithMeta / WithJSONMode deseninin
+// aynısı): guided yolu, çekmece sohbeti ve serbest döngü aynı isteğin
+// ctx'ini paylaşıyor, yani üç yol da tek yerden beslenir ve hiçbirinin
+// imzası değişmez.
+type addresseeKey struct{}
+
+func ctxWithAddressee(ctx context.Context, prefix string) context.Context {
+	if prefix == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, addresseeKey{}, prefix)
+}
+
+func addresseeFromCtx(ctx context.Context) string {
+	v, _ := ctx.Value(addresseeKey{}).(string)
+	return v
+}
+
+// chatAddressee — oturumdaki kullanıcının hitap ön-sözünü üretir.
+//
+// Ad için kullanıcı satırı gerekir (full_name JWT'de YOK, yalnız
+// users tablosunda). Okuma /api/auth/me'nin 30s cache'inden geçer:
+// sohbet başına yeni bir FINAL satır okuması eklemek, bir prompt
+// cümlesi için ödenecek yanlış bir bedel olurdu.
+//
+// Cache ıskalar ve satır okunamazsa ROL yine de claim'den gelir —
+// yetki uyarısı adın varlığına bağlı değil, ve asıl koruyucu o.
+func (s *Server) chatAddressee(ctx context.Context, c *auth.Claims) string {
+	if c == nil {
+		return ""
+	}
+	first := ""
+	if u, ok := s.meUsers.get(c.UserID, time.Now()); ok && u != nil {
+		first = firstNameFrom(u.FullName, u.Email)
+	} else if u, err := s.store.GetUserByID(ctx, c.UserID); err == nil && u != nil {
+		s.meUsers.put(c.UserID, u, time.Now())
+		first = firstNameFrom(u.FullName, u.Email)
+	} else {
+		// Satır okunamadı: e-postadan türetmeyi dene, claim'de o var.
+		first = firstNameFromEmail(c.Email)
+	}
+	return addresseeLine(first, c.Role)
+}
 
 // firstNameFrom — hitap için kullanılacak ilk ad, yoksa "".
 //

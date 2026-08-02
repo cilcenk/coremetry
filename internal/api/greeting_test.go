@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // v0.9.528 — CoSRE karşılaması operatörün adını kullanıyor. Adın kaynağı
 // LDAP `displayName` ve operatörün AD'sinde bu alan BİLEŞİK:
@@ -93,6 +96,95 @@ func TestFirstNameFromPrefersDirectory(t *testing.T) {
 	}
 }
 
+// v0.9.528 Faz 2 — sohbet prompt'una eklenen "kiminle konuşuyorsun"
+// ön-sözü. İki sözleşme pinleniyor:
+//
+//  1. Kaynak yoksa ön-söz BOŞ, dolayısıyla prompt bayt-bayt eskisi.
+//     Boş bir başlık eklemek modele "bir kullanıcı var ama bilmiyorum"
+//     der ve gereksiz temkin üretir.
+//  2. Yetki uyarısı YALNIZ viewer'a çıkar. Bugün model rolü bilmiyor ve
+//     viewer'a "bu ayarı değiştir" diyebiliyor — yapamayacağı bir
+//     eylem. Yanlış tavsiye, yardımın olmamasından kötü.
+func TestAddresseeLine(t *testing.T) {
+	t.Run("kaynak yoksa boş", func(t *testing.T) {
+		if got := addresseeLine("", ""); got != "" {
+			t.Errorf("boş beklenirdi, got %q", got)
+		}
+		if got := addresseeLine("  ", "  "); got != "" {
+			t.Errorf("yalnız boşluk da boş sayılmalı, got %q", got)
+		}
+	})
+
+	t.Run("ad varsa hitap talimatı gelir", func(t *testing.T) {
+		got := addresseeLine("Fatih", "admin")
+		if !strings.Contains(got, "Fatih") {
+			t.Errorf("ad geçmeli: %q", got)
+		}
+		if !strings.Contains(got, "adıyla hitap et") {
+			t.Errorf("hitap talimatı olmalı: %q", got)
+		}
+		if !strings.Contains(got, "TEKRARLAMA") {
+			t.Errorf("her cümlede tekrar etmeme uyarısı olmalı: %q", got)
+		}
+	})
+
+	t.Run("viewer yetki uyarısı alır", func(t *testing.T) {
+		got := addresseeLine("Fatih", "viewer")
+		for _, want := range []string{"YALNIZ OKUMA", "ÖNERME", "kime iletmesi"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("viewer uyarısında %q yok: %q", want, got)
+			}
+		}
+	})
+
+	t.Run("admin ve editor uyarı ALMAZ", func(t *testing.T) {
+		// Kısıt cümlesini herkese eklemek prompt'u şişirir ve modeli
+		// yetkisi olan kullanıcıya karşı da temkinli yapar.
+		for _, role := range []string{"admin", "editor"} {
+			got := addresseeLine("Fatih", role)
+			if strings.Contains(got, "YALNIZ OKUMA") {
+				t.Errorf("%s rolü yetki uyarısı almamalı: %q", role, got)
+			}
+			if !strings.Contains(got, role) {
+				t.Errorf("%s rolü prompt'ta geçmeli: %q", role, got)
+			}
+		}
+	})
+
+	t.Run("rol büyük harfle gelse de tanınır", func(t *testing.T) {
+		if !strings.Contains(addresseeLine("Fatih", "VIEWER"), "YALNIZ OKUMA") {
+			t.Error("rol karşılaştırması büyük/küçük harfe duyarlı olmamalı")
+		}
+	})
+
+	t.Run("ad yok rol var — uyarı yine çıkar", func(t *testing.T) {
+		// Asıl koruyucu yetki uyarısı; adın çözülememesi onu
+		// düşürmemeli.
+		got := addresseeLine("", "viewer")
+		if !strings.Contains(got, "YALNIZ OKUMA") {
+			t.Errorf("ad olmasa da yetki uyarısı olmalı: %q", got)
+		}
+		if strings.Contains(got, "adıyla hitap et") {
+			t.Errorf("ad yokken hitap talimatı olmamalı: %q", got)
+		}
+	})
+}
+
+// withAddressee ön-sözü BAŞA koyar ve boş ön-sözde metne DOKUNMAZ.
+func TestWithAddressee(t *testing.T) {
+	const prompt = "Sen Coremetry'nin asistanısın."
+	if got := withAddressee("", prompt); got != prompt {
+		t.Errorf("boş ön-sözde prompt değişmemeli, got %q", got)
+	}
+	got := withAddressee("KONUŞTUĞUN KİŞİ: Fatih\n", prompt)
+	if !strings.HasPrefix(got, "KONUŞTUĞUN KİŞİ: Fatih") {
+		t.Errorf("ön-söz BAŞTA olmalı: %q", got)
+	}
+	if !strings.HasSuffix(got, prompt) {
+		t.Errorf("özgün prompt korunmalı: %q", got)
+	}
+}
+
 // Türkçe küçültme doğrudan: Go'nun unicode.ToLower'ı burada YANLIŞ
 // sonuç verir, o yüzden ayrı pinleniyor.
 func TestLowerTR(t *testing.T) {
@@ -135,5 +227,45 @@ func TestTitleCaseIAmbiguity(t *testing.T) {
 				t.Errorf("titleCaseTR(%q) = %q, beklenen %q", c.in, got, c.want)
 			}
 		})
+	}
+}
+
+// v0.9.529 — ekrandan gelen aralık sabit basamaklara oturur.
+//
+// Neden: mutlak (custom from/to) aralık keyfi bir saniye sayısı üretir
+// ve o değer guided prefetch'lerin sunucu cache anahtarlarına giriyor.
+// Sınırsız kardinalite = her sorunun kendi cache satırı. Aynı sınıf
+// v0.8.270'te ES tarafında bir kez yakalandı.
+func TestSnapRangeS(t *testing.T) {
+	for in, want := range map[int64]int64{
+		0: 0, -5: 0, // bilgi yok
+
+		// Tam basamaklar DEĞİŞMEZ — preset kullanan operatör (çoğunluk)
+		// hiçbir kayma görmemeli.
+		60: 60, 1800: 1800, 3600: 3600, 21600: 21600, 86400: 86400, 2592000: 2592000,
+
+		// Aradaki değerler YUKARI oturur: pencere görüleni KAPSAMALI.
+		1:      60,
+		61:     300,
+		1801:   3600,
+		21917:  43200, // "6 saat 5 dakika 17 saniye" — gerçek custom aralık
+		100000: 172800,
+
+		// 30 günün üstü tavanlanır — sınırsız pencere CH'a gitmez.
+		5000000: 2592000,
+	} {
+		if got := snapRangeS(in); got != want {
+			t.Errorf("snapRangeS(%d) = %d, beklenen %d", in, got, want)
+		}
+	}
+}
+
+// Oturtma ASLA aşağı inmemeli: "6 saate bakıyorum ama cevap 3 saatlik"
+// eksik rapordur ve biraz fazla okumadan kötüdür.
+func TestSnapRangeSNeverShrinks(t *testing.T) {
+	for _, v := range []int64{1, 59, 61, 301, 1799, 1801, 3599, 21917, 86401, 999999} {
+		if got := snapRangeS(v); got < v {
+			t.Errorf("snapRangeS(%d) = %d — pencere küçültülemez", v, got)
+		}
 	}
 }

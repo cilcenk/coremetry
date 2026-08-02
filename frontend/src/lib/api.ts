@@ -1245,14 +1245,21 @@ export const api = {
     // loglar) ve anlatıma katar. Operatör raporu: açıklamanın metni
     // takiplere yetmiyordu — "logda ne yazıyor" kör cevaplanıyordu.
     contextSubject?: string,
+    // v0.9.529 — EKRANDAKİ zaman aralığı (saniye). Soru açık bir pencere
+    // TAŞIMIYORSA sunucu sabit 30dk yerine bunu kullanır: operatör 6
+    // saatlik pencereye bakarken "hata oranı ne" diye sorunca cevap
+    // baktığı pencereye ait olur. Açık pencere taşıyan soru ("son 24
+    // saatte…") bunu EZER — soru her zaman ekrandan güçlüdür.
+    contextRangeS?: number,
   ): Promise<void> => {
     const context =
-      contextService || contextOperation || contextExplain || contextSubject
+      contextService || contextOperation || contextExplain || contextSubject || contextRangeS
         ? {
             ...(contextService ? { service: contextService } : {}),
             ...(contextOperation ? { operation: contextOperation } : {}),
             ...(contextExplain ? { explain: contextExplain } : {}),
             ...(contextSubject ? { subject: contextSubject } : {}),
+            ...(contextRangeS && contextRangeS > 0 ? { rangeS: contextRangeS } : {}),
           }
         : undefined;
     const r = await fetch(API_BASE + '/api/copilot/chat', {

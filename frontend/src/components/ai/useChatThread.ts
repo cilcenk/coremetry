@@ -32,6 +32,10 @@ export interface ChatThreadOpts {
   // takip-devralma (v0.9.410) onu "önceki soru" olarak görür, böylece
   // "peki hata logları?" gibi takipler guided router'da servise oturur.
   seed?: ChatMessage[];
+  // rangeS (v0.9.529) — EKRANDAKİ zaman aralığı, saniye. Soru açık bir
+  // pencere taşımıyorsa sunucu sabit 30dk yerine bunu kullanır; soru
+  // pencere taşıyorsa ("son 24 saatte…") soru kazanır.
+  rangeS?: number;
 }
 
 export function useChatThread(opts: ChatThreadOpts = {}) {
@@ -85,7 +89,7 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
           patchLast(t => ({ ...t, pending: false }));
         }
       }, ac.signal, o.service || undefined, o.operation || undefined, o.explain || undefined,
-        o.subject || undefined);
+        o.subject || undefined, o.rangeS || undefined);
     } catch (err) {
       patchLast(t => ({ ...t, error: err instanceof Error ? err.message : String(err), pending: false }));
     } finally {

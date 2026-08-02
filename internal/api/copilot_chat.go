@@ -80,6 +80,10 @@ type chatRequest struct {
 		// cevabını alıyordu ve fark görünmüyordu. Açık pencere taşıyan
 		// soru bunu EZER. 0/absent = eski istemci, davranış değişmez.
 		RangeS int64 `json:"rangeS,omitempty"`
+		// Trace (v0.9.537) — operatörün EKRANDA baktığı trace'in ID'si
+		// (/trace?id=). "bu trace neden yavaş" gibi ID'siz sorular
+		// bununla çözülür; mesajda açık 32-hex varsa o kazanır.
+		Trace string `json:"trace,omitempty"`
 	} `json:"context,omitempty"`
 }
 
@@ -158,7 +162,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// frontier models; the 2B-class primary target (qwen3.5-2b) can't
 	// drive the 5-round × 11-schema loop reliably at all. No match →
 	// the free tool loop below runs UNCHANGED.
-	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS); handled {
+	if handled, gok := s.copilotChatGuided(ctx, emit, req.Messages, req.Context.Service, req.Context.Operation, req.Context.Explain, req.Context.RangeS, req.Context.Trace); handled {
 		emit("done", map[string]bool{"ok": gok})
 		return
 	}

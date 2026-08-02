@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"sort"
@@ -91,6 +92,11 @@ const (
 	guidedRootCause       guidedIntent = "root_cause"
 	guidedDBHealth        guidedIntent = "db_health"
 	guidedMessagingHealth guidedIntent = "messaging_health"
+
+	// guidedTraceByID — v0.9.537 (operator-reported: sohbete yapıştırılan
+	// trace ID'si "yüklü dokümanlarda bu bilgi yok" cevabına düşüyordu —
+	// hiçbir intent 32-hex'i tanımıyor, soru RAG doküman yoluna gidiyordu).
+	guidedTraceByID guidedIntent = "trace_by_id"
 )
 
 type guidedRoute struct {
@@ -108,6 +114,8 @@ type guidedRoute struct {
 	// Family (v0.9.192) — the resolved service list for a
 	// guidedFamilyHealth route ("mobile bff'ler"); nil otherwise.
 	Family []string
+	// TraceID (v0.9.537) — guidedTraceByID rotasının öznesi (32-hex).
+	TraceID string
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -233,6 +241,16 @@ func hasMessagingSignal(toks []string) bool {
 // hasGuidedSignal is the cheap precheck the handler runs BEFORE
 // fetching the live service list — a message with no guided keyword
 // at all skips the catalogue read and goes straight to the tool loop.
+// guidedTraceIDRe — v0.9.537. 32-hex = W3C trace ID; operatörün en
+// doğal hamlesi ID'yi sohbete yapıştırmak. 16-hex BİLİNÇLİ dışarıda:
+// o span ID'sidir ve tek başına yapıştırıldığında hangi trace'e ait
+// olduğu ancak spans taramasıyla bulunur — ayrı iş.
+var guidedTraceIDRe = regexp.MustCompile(`\b[0-9a-f]{32}\b`)
+
+func extractTraceID(msg string) string {
+	return guidedTraceIDRe.FindString(msg)
+}
+
 func hasGuidedSignal(msg string) bool {
 	toks := guidedTokens(msg)
 	return hasSlowTraceSignal(msg) || hasDeploySignal(toks) ||
@@ -240,7 +258,12 @@ func hasGuidedSignal(msg string) bool {
 		hasProblemSignal(toks) || hasHealthSignal(toks) ||
 		hasTeamSelfSignal(toks) || hasPodSignal(toks) ||
 		hasShiftSignal(msg, toks) || hasDBSignal(toks) || hasMessagingSignal(toks) ||
-		hasWhySignal(toks)
+		hasWhySignal(toks) ||
+		// v0.9.537 — açık trace ID'si ya da "trace" kökü (prefix:
+		// Türkçe ekli hâlleri de yakalar — "tracei", "trace'in";
+		// ekrandaki trace'e bağlamdan gitmek için, ctxTrace çözümü
+		// dispatch'te).
+		extractTraceID(msg) != "" || tokenHasPrefix(toks, "trace")
 }
 
 // hasWhySignal (v0.9.514) — NEDENSELLİK soran şekiller. Türkçe ekler
@@ -464,6 +487,13 @@ func hasCompareSignal(toks []string) bool {
 func routeGuidedIntent(raw string, services, envs []string, ctxService string) guidedRoute {
 	msg := normalizeGuidedMsg(raw)
 	toks := guidedTokens(msg)
+	// v0.9.537 — açık 32-hex trace ID'si EN GÜÇLÜ sinyaldir ve her şeyi
+	// ezer: operatör somut bir öznenin adresini vermiş. Eskiden hiçbir
+	// intent tanımıyordu, soru RAG doküman yoluna düşüp "yüklü
+	// dokümanlarda bu bilgi yok" cevabı alıyordu (operator-reported).
+	if id := extractTraceID(msg); id != "" {
+		return guidedRoute{Intent: guidedTraceByID, TraceID: id}
+	}
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
 	// v0.9.422 (CoSRE fikir #7) — çoklu tam-ad kıyası: soru 2+ canlı
@@ -754,7 +784,8 @@ KURALLAR:
 // bağlamı; boşken bu fonksiyonun davranışı bayt-bayt eskisidir.
 // ctxRangeS (v0.9.529) — operatörün EKRANDAKİ zaman aralığı, saniye.
 // 0 = bilgi yok (eski istemci); o hâlde davranış bayt-bayt eskisidir.
-func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64) (handled, ok bool) {
+// ctxTrace (v0.9.537) — ekrandaki trace ID'si (/trace?id=), "" = yok.
+func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService, ctxOperation, explain string, ctxRangeS int64, ctxTrace string) (handled, ok bool) {
 	question := strings.TrimSpace(lastUserText(msgs))
 	if question == "" {
 		return false, false
@@ -770,6 +801,15 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	}
 	svcNames, envNames := s.guidedServiceNames(ctx), s.guidedEnvNames(ctx)
 	route := routeGuidedIntent(question, svcNames, envNames, ctxService)
+	// v0.9.537 — "bu trace" / "ekrandaki trace" İD'siz sorulduğunda
+	// ekrandaki trace'e otur: operatör /trace sayfasında, adres zaten
+	// özneyi taşıyor. Mesajdaki AÇIK 32-hex her zaman kazanır
+	// (routeGuidedIntent onu en üstte yakalar); burası yalnız hiçbir
+	// rota çıkmadığında ve mesaj "trace" kökü taşıdığında devreye girer.
+	if route.Intent == guidedNone && ctxTrace != "" && tokenHasPrefix(guidedTokens(norm), "trace") {
+		route = guidedRoute{Intent: guidedTraceByID, TraceID: ctxTrace}
+		emit("step", map[string]string{"tool": "bağlam: ekrandaki trace (" + ctxTrace + ")"})
+	}
 	// v0.9.529 — soru AÇIK bir pencere taşımıyorsa ekrandaki aralığı
 	// kullan. Sabit 30dk, operatör 6 saatlik pencereye bakarken "hata
 	// oranı ne" diye sorduğunda BAŞKA bir pencerenin cevabını veriyordu
@@ -856,6 +896,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedDBHealthBundle(ctx, emit, route.Service, from, to, rangeS)
 	case guidedMessagingHealth:
 		evidence, sources, err = s.guidedMessagingBundle(ctx, emit, route.Service, from, to, rangeS)
+	case guidedTraceByID:
+		evidence, sources, err = s.guidedTraceBundle(ctx, emit, route.TraceID)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may
@@ -1554,6 +1596,30 @@ func (s *Server) guidedSlowTracesBundle(ctx context.Context, emit func(string, a
 		src += fmt.Sprintf(", ortam: %s", env)
 	}
 	return renderSlowTracesEvidenceTR(rows, service, env, rangeS), src, nil
+}
+
+// guidedTraceBundle — v0.9.537. Yapıştırılan/bağlamdan gelen trace
+// ID'sinin kanıt paketi. Montaj buildTraceExplainInput'un AYNISI
+// (explain butonu, çekmece sohbeti ve guided yol tek paketi paylaşır —
+// v0.9.482 deseni): span seçimi + ilişkili loglar + dürüstlük notu.
+//
+// Bulunamayan trace HATA DEĞİL dürüst kanıttır: yol serbest döngüye
+// düşerse operatör yine cevapsız kalırdı; model "bulunamadı + olası
+// nedenler" kanıtını anlatır (guidedChatPrompt uydurmayı yasaklar).
+func (s *Server) guidedTraceBundle(ctx context.Context, emit func(string, any), traceID string) (string, string, error) {
+	emitGuidedStep(emit, "trace", `{"id":"`+traceID+`"}`)
+	in, err := s.buildTraceExplainInput(ctx, traceID)
+	if errors.Is(err, errExplainTraceNotFound) {
+		ev := fmt.Sprintf("Trace %s Coremetry deposunda BULUNAMADI.\n"+
+			"Olası nedenler: ID eksik/yanlış kopyalandı, trace retention "+
+			"penceresinin dışında kaldı, ya da bu ortam yerine başka bir "+
+			"ortamda üretildi. Kullanıcıya bunu söyle; span/istatistik UYDURMA.", traceID)
+		return ev, "trace araması (bulunamadı)", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return in.User, fmt.Sprintf("trace %s — span kanıtı + ilişkili loglar", traceID), nil
 }
 
 // guidedDeployRef unifies the two deploy reads (global

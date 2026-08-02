@@ -760,3 +760,76 @@ func TestRootCauseUsesPageContext(t *testing.T) {
 		t.Errorf("sayfa bağlamı kullanılmalı, got intent=%q service=%q", got.Intent, got.Service)
 	}
 }
+
+// v0.9.537 — operatör raporu: sohbete yapıştırılan trace ID'si üç kez
+// üst üste "Yüklü dokümanlarda bu bilgi yok." cevabı aldı. Kök sebep:
+// hiçbir intent 32-hex'i tanımıyordu, hasGuidedSignal false dönüyordu
+// ve soru RAG doküman yoluna düşüyordu — yani sistem elindeki trace'i
+// hiç aramıyordu bile.
+func TestExtractTraceID(t *testing.T) {
+	const id = "07544915dcf643aead8a61070780e6f7" // operatörün ekranındaki
+	cases := []struct{ name, in, want string }{
+		{"çıplak id", id, id},
+		{"cümle içinde", "bu trace " + id + " neden yavaş", id},
+		{"noktalama bitişik", "trace(" + id + ")", id},
+		{"büyük harf eşleşmez (W3C küçük hex)", strings.ToUpper(id), ""},
+		{"16-hex span id BİLİNÇLİ dışarıda", "8a61070780e6f7ab", ""},
+		{"31 hane kısa", id[:31], ""},
+		{"33 hane uzun — sınır içinde 32'lik yok", id + "f", ""},
+		{"hex olmayan", "zzzz4915dcf643aead8a61070780e6f7", ""},
+		{"boş", "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := extractTraceID(c.in); got != c.want {
+				t.Errorf("extractTraceID(%q) = %q, beklenen %q", c.in, got, c.want)
+			}
+		})
+	}
+}
+
+// Trace ID'si EN GÜÇLÜ sinyal: somut öznenin adresi verilmişken başka
+// bir rotaya (yavaş trace listesi, servis sağlığı…) sapmak yanlış
+// cevap üretir.
+func TestRouteGuidedIntentTraceIDWins(t *testing.T) {
+	const id = "07544915dcf643aead8a61070780e6f7"
+	svcs := []string{"checkout", "payment-api"}
+	for _, q := range []string{
+		id,
+		"bu trace " + id,
+		"neden yavaş " + id,                        // why sinyali + id
+		"checkout " + id + " problemleri",          // servis adı + problem sinyali + id
+		"en yavaş trace'ler " + id,                 // slow-trace sinyali + id
+	} {
+		r := routeGuidedIntent(q, svcs, nil, "")
+		if r.Intent != guidedTraceByID {
+			t.Errorf("%q → intent %q, beklenen trace_by_id", q, r.Intent)
+		}
+		if r.TraceID != id {
+			t.Errorf("%q → TraceID %q, beklenen %q", q, r.TraceID, id)
+		}
+	}
+}
+
+// ID yokken eski rotalar BOZULMAMALI — "trace" sözcüğü tek başına
+// slow-trace/servis rotalarını çalmamalı.
+func TestRouteGuidedIntentTraceWordDoesNotHijack(t *testing.T) {
+	svcs := []string{"checkout"}
+	if r := routeGuidedIntent("en yavaş trace'ler hangileri?", svcs, nil, ""); r.Intent != guidedSlowTraces {
+		t.Errorf("slow-trace rotası bozuldu: %q", r.Intent)
+	}
+	if r := routeGuidedIntent("checkout nasıl?", svcs, nil, ""); r.Intent != guidedServiceHealth {
+		t.Errorf("servis sağlığı rotası bozuldu: %q", r.Intent)
+	}
+}
+
+// hasGuidedSignal artık trace şekillerini geçirmeli — eskiden false
+// dönüp soruyu RAG yoluna bırakıyordu (asıl bug).
+func TestHasGuidedSignalAcceptsTraceShapes(t *testing.T) {
+	const id = "07544915dcf643aead8a61070780e6f7"
+	for _, q := range []string{id, "bu trace neden yavaş", "tracei açıklar mısın"} {
+		if !hasGuidedSignal(normalizeGuidedMsg(q)) {
+			t.Errorf("%q guided sinyali taşımalı (yoksa RAG yoluna düşer)", q)
+		}
+	}
+}

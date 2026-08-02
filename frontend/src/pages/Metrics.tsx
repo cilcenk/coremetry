@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
+import { metricsViewFromParam, metricsViewUrlValue, shouldRedirectLegacyMetric } from './metricsView';
 import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -54,7 +55,11 @@ export default function MetricsPage() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-  const editor = searchParams.get('editor') === '1';
+  // v0.9.561 — varsayılan görünüm EDİTÖR (operatör talebi). Okuma ve
+  // yazma tek kodekten geçiyor (metricsView.ts): varsayılan iki yerde
+  // ayrı yazılırsa kullanıcının seçimi sessizce yutulur.
+  const editorParam = searchParams.get('editor');
+  const editor = metricsViewFromParam(editorParam) === 'editor';
   const legacyMetric = searchParams.get('metric') ?? '';
 
   const [range, setRange] = useState<TimeRange>(() =>
@@ -64,7 +69,11 @@ export default function MetricsPage() {
 
   // Legacy deep-link → canonical Explore seed. Computed pre-render; the
   // Navigate return sits AFTER every hook so rules-of-hooks holds.
-  const redirectTo = !editor && legacyMetric
+  // Yönlendirme kararı VARSAYILANA DEĞİL, kullanıcının açıkça editör
+  // isteyip istemediğine bakar. Eskiden `!editor` yazıyordu; varsayılan
+  // editöre çevrilince o koşul hep false olur ve eski `?metric=`
+  // linkleri sessizce boş bir sorgu editörüne düşerdi.
+  const redirectTo = shouldRedirectLegacyMetric(legacyMetric, editorParam)
     ? metricCatalogueHref(legacyMetric, {
         service: searchParams.get('service') || undefined,
         agg: searchParams.get('agg') || undefined,
@@ -115,7 +124,15 @@ export default function MetricsPage() {
           </div>
           <div style={{ flex: 1 }} />
           <Button variant={editor ? 'primary' : 'secondary'} size="sm"
-            onClick={() => navigate(editor ? '/metrics' : '/metrics?editor=1')}>
+            onClick={() => {
+              // Yabancı paramlar KORUNUR (range!). Eskiden tam URL
+              // yazılıyordu ve görünüm değiştiren operatörün zaman
+              // aralığı sıfırlanıyordu.
+              const next = new URLSearchParams(searchParams);
+              const v = metricsViewUrlValue(editor ? 'catalogue' : 'editor');
+              if (v !== null) next.set('editor', v); else next.delete('editor');
+              navigate({ pathname: '/metrics', search: next.toString() }, { replace: true });
+            }}>
             {editor ? '← Catalogue' : 'Advanced query editor →'}
           </Button>
         </div>

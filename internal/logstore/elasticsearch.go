@@ -2488,15 +2488,43 @@ func (s *ESStore) buildQuery(f Filter) map[string]any {
 		// nothing; term on an analyzed text field can't match a
 		// hyphenated value), so this stays an exact-value filter — no
 		// free-text looseness.
-		svcFields := []string{s.fields.Service, "kubernetes.container.name", "kubernetes.container_name"}
+		//
+		// v0.9.545 — operator-reported (prod, ES zemin gerçeğiyle):
+		// BFF servislerinin Logs sekmesi TAMAMEN boştu. Sebep alan değil
+		// DEĞER: servis adı env ekli (`mobile-overview-bff-prod`) ama
+		// log dokümanı eksiz taşıyor —
+		//   kubernetes.container_name : mobile-overview-bff
+		//   kubernetes.labels.app     : mobile-overview-bff
+		//   kubernetes.namespace_name : mobile-bff-prod   (ek BURADA)
+		// Yani env eki namespace'e yazılmış, iş yükü adına değil. Aynı
+		// adlandırma boşluğunun pod tarafındaki ikizi v0.9.535'te
+		// kapatılmıştı; bu log tarafı.
+		//
+		// İki genişletme: (a) labels.app aday alan listesine giriyor,
+		// (b) her alan hem TAM hem env-eki-SOYULMUŞ değerle deneniyor.
+		// Hepsi should altında ve exact-term, yani serbest metin
+		// gevşekliği yok: yanlış dal eşleşmez, sessizce boş döner.
+		svcFields := []string{
+			s.fields.Service,
+			"kubernetes.container.name", "kubernetes.container_name",
+			"kubernetes.labels.app", "kubernetes.labels_app",
+		}
+		// Aday DEĞERLER: tam ad her zaman; eksiz ad yalnız gerçekten
+		// bir ek soyulduysa (aksi halde aynı değeri iki kez sorardık).
+		svcValues := []string{f.Service}
+		if stripped := stripLogEnvSuffix(f.Service); stripped != f.Service {
+			svcValues = append(svcValues, stripped)
+		}
 		seen := map[string]bool{}
-		svcShould := make([]any, 0, len(svcFields)*2)
+		svcShould := make([]any, 0, len(svcFields)*len(svcValues)*2)
 		for _, fld := range svcFields {
 			if fld == "" || seen[fld] {
 				continue
 			}
 			seen[fld] = true
-			svcShould = append(svcShould, exactTermsBothShapes(fld, f.Service)...)
+			for _, val := range svcValues {
+				svcShould = append(svcShould, exactTermsBothShapes(fld, val)...)
+			}
 		}
 		must = append(must, map[string]any{
 			"bool": map[string]any{

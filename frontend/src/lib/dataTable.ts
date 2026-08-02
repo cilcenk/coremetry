@@ -45,6 +45,22 @@ export interface DataTableColumn<T> {
   // column: multiple pinned columns would need per-column right
   // offsets, which nothing needs yet.
   stickyRight?: boolean;
+  // flex — v0.9.542. Bu kolon ARTAN genişliği emer; diğerleri kendi
+  // genişliğinde kalır.
+  //
+  // Neden gerekti (operatör: "boşluklar güzel durmuyor, fit olsun"):
+  // table-layout:fixed, kolon genişlikleri toplamı tablodan darsa
+  // artanı TÜM kolonlara orantılı dağıtır. Geniş ekranda bu, her
+  // kolonun arasına birkaç on piksel boşluk serpiyor ve tablo
+  // "dağılmış" görünüyor — v0.9.501'de Trend kolonunda yaşanan sınıfın
+  // aynısı. Tek bir kolon esner ve artan oraya giderse düzen kasıtlı
+  // görünür.
+  //
+  // Emici kolon içerik olarak EN ÇOK yer isteyen olmalı (Traces'te
+  // Operation). Operatör o kolonu elle sürüklerse kalıcı genişlik
+  // kazanır ve esneklik biter — beklenen davranış, sürüklenen genişlik
+  // her zaman kazanır.
+  flex?: boolean;
 }
 
 export interface SortState {

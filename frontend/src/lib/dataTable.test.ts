@@ -130,3 +130,29 @@ describe('computeSortedRows — sortedRows pipeline (v0.8.251)', () => {
     expect(computeSortedRows(rows, Object.values(COLS), { id: null, dir: 'desc' }, false)).toBe(rows);
   });
 });
+
+// v0.9.542 — operatör: "boşluklar güzel durmuyor, gerekiyorsa daraltsın
+// fit olsun sayfaya". table-layout:fixed, kolon genişlikleri toplamı
+// tablodan darsa artanı TÜM kolonlara orantılı dağıtır — geniş ekranda
+// her kolonun arasına boşluk serpiliyor ve tablo dağılmış görünüyor
+// (v0.9.501'de Trend kolonunda yaşanan sınıfın aynısı).
+//
+// flex bunu tek kolona yönlendirir. Sözleşme: SÜRÜKLENMEMİŞ flex kolon
+// 'auto', sürüklenmiş olan sabit genişlik — operatörün eli kazanır.
+describe('flex kolon genişliği (v0.9.542)', () => {
+  const colW = (colWidths: Record<string, number>, c: { id: string; width?: number; flex?: boolean }) =>
+    colWidths[c.id] ?? (c.flex ? 'auto' : c.width ?? 120);
+
+  it('sürüklenmemiş flex kolon auto — artanı emer', () => {
+    expect(colW({}, { id: 'operation', width: 260, flex: true })).toBe('auto');
+  });
+  it('flex olmayan kolon kendi genişliğinde kalır', () => {
+    expect(colW({}, { id: 'time', width: 168 })).toBe(168);
+  });
+  it('SÜRÜKLENEN flex kolon sabitlenir — el kazanır', () => {
+    expect(colW({ operation: 400 }, { id: 'operation', width: 260, flex: true })).toBe(400);
+  });
+  it('genişliksiz flex olmayan kolon varsayılana düşer', () => {
+    expect(colW({}, { id: 'x' })).toBe(120);
+  });
+});

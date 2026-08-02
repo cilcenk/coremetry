@@ -91,6 +91,22 @@ export function dominantWorkload(pods: string[]): string {
   return best;
 }
 
+// servicePodRegex — v0.9.536. Servis sekmelerinin HEDEFLİ envanter
+// seçicisi: sunucu bu regex'i pod=~ olarak PromQL'e gömer, topk(500)
+// servisin kendi pod'ları içinde işler (cluster-geneli kesim kalkar —
+// operator-reported: 0.001 core'luk BFF pod'ları top-500'e giremiyordu).
+//
+// Adaylar: katalog deployment'ı (varsa) + servis adı + env eki soyulmuş
+// hâli. Önek kalıbı BİLİNÇLİ gevşek — "(mobile-overview)-.*" hem
+// mobile-overview-bff'i hem olası kardeşleri getirir; kesin ayrımı
+// istemcideki podMatchesService eşitlik disiplini yapar (sunucu
+// DARALTIR, istemci AYIKLAR).
+export function servicePodRegex(service: string, deploy: string): string {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const cands = [...new Set([deploy, service, stripEnvSuffix(service)].filter(Boolean))];
+  return `(${cands.map(esc).join('|')})-.*`;
+}
+
 // PodMatchInput — podMatchesService'in ihtiyaç duyduğu ClusterPodRow
 // alt kümesi (test edilebilirlik için dar tip; ClusterPodRow bunu karşılar).
 export interface PodMatchInput {

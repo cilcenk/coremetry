@@ -6,6 +6,7 @@ import { Card } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MetricArea } from '@/pages/clusters/MetricArea';
 import { PromQLList } from '@/pages/clusters/PromQLList';
+import { servicePodRegex } from '@/pages/clusters/podWorkload';
 import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, restartColor } from '@/pages/clusters/thresholds';
 import { fmtBytes, fmtNum } from '@/lib/utils';
@@ -136,8 +137,9 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
   if (rows.length === 0) {
     if (podsPending) return <Spinner />;
     return <Empty icon="▦" title="No pods matched">
+      {/* v0.9.536 — gerçek aday kalıbı (ServicePodsTab ile aynı düzeltme). */}
       Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
-      {' '}and pod-name matching (<span className="mono">{service}-*</span>) across{' '}
+      {' '}and pod-name matching (<span className="mono">{servicePodRegex(service, deploy)}</span>) across{' '}
       {matched.length} Thanos cluster{matched.length > 1 ? 's' : ''} — nothing matched.
       Check that the pods follow the <span className="mono">&lt;service&gt;-&lt;hash&gt;-&lt;rand&gt;</span> naming
       or curate namespace/deployment in the service catalog.

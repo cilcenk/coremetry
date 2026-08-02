@@ -60,7 +60,7 @@ func TestPodMetricsMergesFourQueries(t *testing.T) {
 
 	s := New()
 	c := ClusterConfig{Name: "prod-ist", URL: srv.URL, AuthType: "bearer", Token: "tok-1", Enabled: true}
-	rows, trunc, err := s.PodMetrics(context.Background(), c)
+	rows, trunc, err := s.PodMetrics(context.Background(), c, "")
 	if err != nil {
 		t.Fatalf("PodMetrics: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestPodMetricsRequestAxisUnclamped(t *testing.T) {
 	defer srv.Close()
 
 	s := New()
-	rows, _, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	rows, _, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true}, "")
 	if err != nil {
 		t.Fatalf("PodMetrics: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestPodMetricsLimitsAreBestEffort(t *testing.T) {
 	defer srv.Close()
 
 	s := New()
-	rows, _, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	rows, _, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true}, "")
 	if err != nil {
 		t.Fatalf("limits failure must not fail the read: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestPodMetricsSurfacesAuthError(t *testing.T) {
 
 	s := New()
 	_, _, err := s.PodMetrics(context.Background(),
-		ClusterConfig{Name: "c", URL: srv.URL, AuthType: "bearer", Token: "wrong", Enabled: true})
+		ClusterConfig{Name: "c", URL: srv.URL, AuthType: "bearer", Token: "wrong", Enabled: true}, "")
 	if err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("want HTTP 401 error, got %v", err)
 	}
@@ -474,7 +474,7 @@ func TestPodMetricsExposesRawLimitAndRequest(t *testing.T) {
 	})
 	defer srv.Close()
 	s := New()
-	rows, _, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	rows, _, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true}, "")
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("PodMetrics: %v %+v", err, rows)
 	}
@@ -495,7 +495,7 @@ func TestPodAndNodeNetworkBestEffort(t *testing.T) {
 	})
 	defer srv.Close()
 	s := New()
-	rows, _, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true})
+	rows, _, err := s.PodMetrics(context.Background(), ClusterConfig{Name: "c", URL: srv.URL, Enabled: true}, "")
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("PodMetrics: %v %+v", err, rows)
 	}

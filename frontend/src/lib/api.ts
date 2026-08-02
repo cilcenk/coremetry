@@ -1056,8 +1056,12 @@ export const api = {
   clusterNamespacePodsTrend: (cluster: string, namespace: string, fromNs: number, toNs: number) =>
     get<ClusterPodsTrendResponse>(`/api/clusters/namespaces/pods-trend?cluster=${encodeURIComponent(cluster)}` +
       `&namespace=${encodeURIComponent(namespace)}&from=${fromNs}&to=${toNs}`),
-  clusterPods: (cluster: string) =>
-    get<ClusterPodsResponse>(`/api/clusters/pods?cluster=${encodeURIComponent(cluster)}`),
+  // podRe (v0.9.536, opsiyonel) — hedefli envanter: sunucu pod=~ ile
+  // daraltır, topk(500) servisin kendi pod'ları içinde işler. Boş =
+  // tüm cluster (/clusters sayfası, eski davranış).
+  clusterPods: (cluster: string, podRe?: string) =>
+    get<ClusterPodsResponse>(`/api/clusters/pods?cluster=${encodeURIComponent(cluster)}` +
+      (podRe ? `&podRe=${encodeURIComponent(podRe)}` : '')),
   clusterPodDetail: (cluster: string, namespace: string, pod: string, fromNs: number, toNs: number) =>
     get<ClusterPodDetail>(`/api/clusters/pods/detail?cluster=${encodeURIComponent(cluster)}` +
       `&namespace=${encodeURIComponent(namespace)}&pod=${encodeURIComponent(pod)}&from=${fromNs}&to=${toNs}`),

@@ -510,6 +510,32 @@ func jsonModeRequested(ctx context.Context) bool {
 	return v
 }
 
+// jsonModeVerdictStatus — bu HTTP statüsü "response_format'ı anlamadım"
+// demek için kullanılabilir mi?
+//
+// v0.9.526 — operatör-bildirimli değil, kod okurken bulundu: v0.9.517
+// HERHANGİ bir ≥300 yanıtı yetenek kararı sayıyordu. Geçici bir 500,
+// bir 429 rate-limit ya da rolling-restart penceresindeki 503, o uç
+// için JSON modunu süreç ömrü boyunca kapatıyordu. Sessiz yetenek
+// kaybı: kimse hata görmez, sadece JSON kaçakları geri gelir.
+//
+// Sadece "isteği anlamadım/işleyemedim" ailesi karar verebilir:
+//
+//	400 — bilinmeyen parametrede en yaygın yanıt
+//	422 — FastAPI/vLLM gövde doğrulama hatası (tam bu sınıf)
+//	501 — açıkça "uygulanmadı"
+//
+// 404 KASITLI olarak dışarıda: rota/model bulunamadı demek, JSON
+// moduyla ilgisi yok — yapılandırma hatasını yetenek kararına
+// çevirmek teşhisi saklardı. 5xx ve 429 zaten geçici.
+func jsonModeVerdictStatus(code int) bool {
+	switch code {
+	case http.StatusBadRequest, http.StatusUnprocessableEntity, http.StatusNotImplemented:
+		return true
+	}
+	return false
+}
+
 func (s *Service) jsonModeBlocked(provider, baseURL, model string) bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -578,16 +604,31 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode >= 300 {
+		err := fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 		// JSON modu denenmişken reddedildiyse: uç bunu desteklemiyor
-		// olabilir. Verdiği kararı önbelleğe al ve BİR KEZ kısıtsız
-		// yeniden dene — yoksa özellik, desteklemeyen her kurulumda
-		// Explain'i tamamen kırardı (sessiz regresyon).
-		if jsonMode {
+		// OLABİLİR. Kısıtsız BİR KEZ yeniden dene — yoksa özellik,
+		// desteklemeyen her kurulumda Explain'i tamamen kırardı.
+		//
+		// v0.9.526 — kararı yalnız "bu parametreyi anlamadım" ailesinde
+		// ver, HERHANGİ bir ≥300'de değil (aşağıya bak), ve yalnız
+		// kısıtsız deneme GERÇEKTEN başarırsa kaydet. Kanıta dayalı:
+		// bağlamı taşan bir 400 iki yolda da patlar, o yüzden karar
+		// yazılmaz; response_format'ı reddeden bir 400 kısıtsız geçer,
+		// karar yazılır.
+		if jsonMode && jsonModeVerdictStatus(resp.StatusCode) {
+			out, pt, ct, rerr := s.explainOpenAIWithUsage(context.WithValue(ctx, jsonModeKey{}, false), systemPrompt, userPrompt)
+			if rerr != nil {
+				// İkisi de patladı → 400 JSON moduyla ilgili değildi.
+				// Yeteneği kapatma; çağıranın gerçekten yaptığı isteğin
+				// hatasını döndür.
+				log.Printf("[copilot] %d hatası JSON modundan bağımsız (kısıtsız deneme de başarısız) — JSON modu açık bırakıldı", resp.StatusCode)
+				return "", 0, 0, err
+			}
 			s.markJSONModeUnsupported(s.provider, base, model)
-			log.Printf("[copilot] response_format reddedildi (%d) — bu uç için JSON modu kapatıldı, kısıtsız yeniden deneniyor", resp.StatusCode)
-			return s.explainOpenAIWithUsage(context.WithValue(ctx, jsonModeKey{}, false), systemPrompt, userPrompt)
+			log.Printf("[copilot] response_format reddedildi (%d) — bu uç için JSON modu kapatıldı, kısıtsız yanıt kullanıldı", resp.StatusCode)
+			return out, pt, ct, nil
 		}
-		return "", 0, 0, fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return "", 0, 0, err
 	}
 	return parseOpenAIChatResponse(respBody)
 }

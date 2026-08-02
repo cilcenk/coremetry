@@ -18,6 +18,9 @@ type Slow = {
   readRows: number; resultRows: number; eventTimeNs: number; user: string;
 };
 type Merge = {
+  // host (v0.9.540) — merge'i koşturan node. 4 node'lu kümede "hangi
+  // node merge'e boğulmuş" sorusunun cevabı; küme yoksa bağlı node.
+  host: string;
   database: string; table: string;
   elapsedSec: number; progressPct: number;
   rowsRead: number; mergedSizeBytes: number;
@@ -107,6 +110,7 @@ const SLOW_COLS: DataTableColumn<Slow>[] = [
 ];
 
 const MERGE_COLS: DataTableColumn<Merge>[] = [
+  { id: 'host',     label: 'Node',        sortValue: m => m.host,     naturalDir: 'asc',  width: 150 },
   { id: 'database', label: 'Database',    sortValue: m => m.database, naturalDir: 'asc',  width: 160 },
   { id: 'table',    label: 'Table',       sortValue: m => m.table,    naturalDir: 'asc',  width: 200 },
   { id: 'elapsed',  label: 'Elapsed',     sortValue: m => m.elapsedSec,      numeric: true, naturalDir: 'desc', width: 110 },
@@ -505,6 +509,7 @@ export default function AdminClickhousePage() {
                       <tbody>
                         {mergeDt.sortedRows.map((m, i) => (
                           <tr key={i}>
+                            <td className="mono">{m.host}</td>
                             <td className="mono">{m.database}</td>
                             <td className="mono">{m.table}</td>
                             <td className="num mono">{m.elapsedSec.toFixed(1)}s</td>

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -128,7 +129,36 @@ type CHSlowQuery struct {
 	User         string  `json:"user"`
 }
 
+// inFlightMergesQuery — saf SQL üreteci (koordinatör panelindeki
+// coordinatorQuery deseninin aynısı: canlı CH olmadan test edilebilsin).
+//
+// clusterName boşsa yalnız bağlı olunan node okunur; doluysa
+// clusterAllReplicas ile HER node'a gidilir — cluster() DEĞİL, çünkü o
+// shard başına TEK replika okur ve 2 shard × 2 replika kurulumda panel
+// 4 yerine 2 node gösterir (v0.9.454 operatör bug'ı). system.merges
+// node-düzeyi anlık bir görünümdür; çift sayım riski yoktur.
+func inFlightMergesQuery(clusterName string) string {
+	source := "system.merges"
+	if cn := strings.TrimSpace(clusterName); cn != "" {
+		source = "clusterAllReplicas('" + cn + "', system.merges)"
+	}
+	return `
+		SELECT hostName() AS host, database, table,
+		       elapsed,
+		       progress * 100 AS progress_pct,
+		       rows_read,
+		       bytes_written_uncompressed
+		FROM ` + source + `
+		ORDER BY elapsed DESC
+		LIMIT 20
+		SETTINGS max_execution_time = 3`
+}
+
 type CHMerge struct {
+	// Host (v0.9.540) — merge'i KOŞTURAN node. Küme yapılandırılmamışsa
+	// bağlı olunan node'un adı. 4 node'lu kümede "hangi node merge'e
+	// boğulmuş" sorusunun cevabı bu kolonda.
+	Host        string  `json:"host"`
 	Database    string  `json:"database"`
 	Table       string  `json:"table"`
 	ElapsedSec  float64 `json:"elapsedSec"`
@@ -378,25 +408,41 @@ func (s *Server) getClickHouseHealth(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// ── In-flight merges ───────────────────────────────────
-		if rows, err := s.store.Conn().Query(ctx, `
-			SELECT database, table,
-			       elapsed,
-			       progress * 100   AS progress_pct,
-			       rows_read,
-			       merged_rows_bytes
-			FROM system.merges
-			ORDER BY elapsed DESC
-			LIMIT 20
-			SETTINGS max_execution_time = 3`); err == nil {
+		//
+		// v0.9.540 — İKİ BUG birden. Bu blok bugüne kadar HİÇ satır
+		// döndürmedi ve kimse fark etmedi:
+		//
+		//  1. `merged_rows_bytes` diye bir kolon system.merges'te YOK
+		//     (CH zemin gerçeğiyle doğrulandı: bytes_read_uncompressed,
+		//     bytes_written_uncompressed, rows_read, rows_written…).
+		//     Sorgu her çağrıda UNKNOWN_IDENTIFIER veriyor, `err == nil`
+		//     guard'ı onu yutuyor, panel sessizce boş kalıyordu. Sessiz
+		//     çünkü boş liste "merge yok" gibi okunuyor — oysa ölçüm
+		//     hiç yapılmamış. Doğrusu bytes_written_uncompressed:
+		//     MergedSize'ın kastettiği şey merge'in ÜRETTİĞİ hacim.
+		//
+		//  2. Okuma tek node'dan geliyordu: s.store.Conn() ana bağlantı
+		//     ve ConnOpenInOrder (store.go) — yani pratikte hep ilk
+		//     host. 4 node'lu bir kümede "hangi node merge'e boğulmuş"
+		//     sorusu tam da bu panelde cevaplanmalıyken panel yalnız
+		//     dbp01'i gösteriyordu. clusterAllReplicas + host kolonu
+		//     (koordinatör panelinin v0.9.494 gerekçesi birebir aynı:
+		//     cluster() shard başına TEK replika okur, 2x2 kurulumda
+		//     4 yerine 2 node gösterir).
+		if rows, err := s.store.Conn().Query(ctx, inFlightMergesQuery(s.store.ClusterName())); err == nil {
 			defer rows.Close()
 			for rows.Next() {
 				var m CHMerge
-				if err := rows.Scan(&m.Database, &m.Table, &m.ElapsedSec,
+				if err := rows.Scan(&m.Host, &m.Database, &m.Table, &m.ElapsedSec,
 					&m.ProgressPct, &m.RowsRead, &m.MergedSize); err != nil {
 					continue
 				}
 				out.Merges = append(out.Merges, m)
 			}
+		} else {
+			// Sessiz yutma ARTIK YOK: ölçüm yapılamadıysa operatör
+			// bunu bilsin, boş listeyi "merge yok" sanmasın.
+			log.Printf("[admin/clickhouse] in-flight merges okunamadı: %v", err)
 		}
 
 		// ── Part hotspots ──────────────────────────────────────

@@ -118,6 +118,16 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
                 style={{ cursor: 'pointer', color: 'var(--accent)' }}>{label}</span>
             ))}
             <span style={{ marginLeft: 'auto' }} />
+            {/* v0.9.539 — kademeli tarama GÖRÜNÜR olsun (operatör: 20+
+                cluster'da uzun bekleme). Liste zaten çizilmiş durumda;
+                bu rozet "eksik olabilir, hâlâ taranıyor" der. Bitince
+                kaybolur — tamamlanmış taramada rozet gürültüdür. */}
+            {podsPending && (
+              <span className="badge b-info"
+                title="Cluster'lar paralel taranıyor; yanıt verenler hemen listeleniyor. Sayı tamamlanana kadar liste büyüyebilir.">
+                {podsSettled} / {podsTotal} cluster tarandı
+              </span>
+            )}
             {truncatedClusters.length > 0 && (
               <span className="badge b-warn"
                 title={`${truncatedClusters.join(', ')}: sunucu en işlek 500 pod'u döndürdü (topk tavanı).`}>

@@ -111,18 +111,26 @@ func (s *Server) copilotExplain(r *http.Request, system, user string) (string, e
 // için. copilotExplain ile aynı /ai atıf yolu, tek farkı sunucu tarafında
 // çözümlemenin JSON'a kısıtlanması.
 //
-// Neden: birincil model Gemma4-2B ve Gemma serbest formda JSON üretmekte
-// zayıf. Bu yüzeyler bugüne kadar "umut + post-check" ile çalışıyordu;
-// kısıt modelin JSON DIŞINA çıkmasını engelliyor. Desteklemeyen uçta
+// Neden: JSON kaçakları (fence, önsöz cümlesi, kesik gövde) nadir ama
+// SESSİZ — yüzey "model geçerli JSON üretmedi" der ve operatör sebebini
+// göremez. Kısıt o sınıfı sunucu tarafında kapatıyor. Desteklemeyen uçta
 // sessizce eski davranışa düşer (bir kez yoklanır, karar önbelleklenir).
-func (s *Server) copilotExplainJSON(r *http.Request, system, user string) (string, error) {
+//
+// v0.9.527 — `schema` verilirse çözümleme yalnız JSON'a değil o ŞEKLE
+// kilitlenir (bkz. copilot_schemas.go). nil geçmek eski davranıştır;
+// şema desteklemeyen uç zaten kendiliğinden json_object'e düşer.
+func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema map[string]any) (string, error) {
 	surface := aiSurfaceFromPath(r.URL.Path)
 	c := auth.FromContext(r.Context())
 	uid, email := "", ""
 	if c != nil {
 		uid, email = c.UserID, c.Email
 	}
-	ctx := copilot.WithMeta(copilot.WithJSONMode(r.Context()), copilot.CallMeta{
+	jctx := copilot.WithJSONMode(r.Context())
+	if len(schema) > 0 {
+		jctx = copilot.WithJSONSchema(r.Context(), surface, schema)
+	}
+	ctx := copilot.WithMeta(jctx, copilot.CallMeta{
 		Surface:   surface,
 		UserID:    uid,
 		UserEmail: email,

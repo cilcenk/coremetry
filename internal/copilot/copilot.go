@@ -105,6 +105,13 @@ type Service struct {
 	// çift faturalandırma olurdu. Configure'da sıfırlanır.
 	jsonModeUnsupported map[string]bool
 
+	// jsonSchemaUnsupported (v0.9.527) — merdivenin üst basamağı.
+	// `json_schema` `json_object`'ten kesinlikle daha az yaygın: şemayı
+	// destekleyemeyen bir uç genellikle object'i destekler. Bu yüzden iki
+	// ayrı karar tutulur — şemayı reddeden uçta object'e düşeriz,
+	// ikisini birden kaybetmeyiz. Configure'da sıfırlanır.
+	jsonSchemaUnsupported map[string]bool
+
 	cli *http.Client
 
 	// recorder is the AI-observability sink (v0.5.162). Set once at
@@ -251,6 +258,7 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS, en
 	// the OLD endpoint config; a swap must re-probe.
 	s.streamUnsupported = nil
 	s.jsonModeUnsupported = nil
+	s.jsonSchemaUnsupported = nil
 }
 
 // buildCopilotHTTPClient — mirrors the Tempo / LDAP pattern. When
@@ -493,21 +501,74 @@ const openAICompletionTokens = 4096
 // üzerinden taşınıyor (CallMeta deseninin aynısı) ki dört yüzeyin ve
 // aradaki sarmalayıcıların imzaları değişmesin.
 type jsonModeKey struct{}
+type jsonSchemaKey struct{}
+
+// jsonLevel — response_format merdiveninin basamağı. Yüksek basamak
+// daha çok garanti, daha az sunucu desteği. Reddedilen basamak bir alta
+// düşer; en alt basamak kısıtsız çağrıdır ve her zaman çalışır.
+type jsonLevel int
+
+const (
+	jsonNone   jsonLevel = iota // response_format yok
+	jsonObject                  // {"type":"json_object"} — "geçerli JSON üret"
+	jsonSchema                  // {"type":"json_schema", …} — "BU şekli üret"
+)
+
+func (l jsonLevel) String() string {
+	switch l {
+	case jsonSchema:
+		return "json_schema"
+	case jsonObject:
+		return "json_object"
+	}
+	return "kısıtsız"
+}
+
+// jsonSchemaSpec — bir yüzeyin beklediği çıktı şekli.
+type jsonSchemaSpec struct {
+	Name   string
+	Schema map[string]any
+}
 
 // WithJSONMode — modelden KATI JSON isteyen çağrılar için.
 //
 // response_format sunucu tarafında çözümlemeyi kısıtlar: model JSON
 // DIŞINA çıkamaz. İyi bir modelde bile değerli — JSON kaçakları nadir
-// ama sessiz, ve bu dört yüzey post-check ile temizlemeye çalışıyordu.
+// ama sessiz, ve bu yüzeyler post-check ile temizlemeye çalışıyordu.
 // Kısıt o sınıfı tamamen kapatıyor. Desteklemeyen uçta sessizce eski
 // davranışa düşer (bir kez yoklanır, karar önbelleklenir).
 func WithJSONMode(ctx context.Context) context.Context {
-	return context.WithValue(ctx, jsonModeKey{}, true)
+	return context.WithValue(ctx, jsonModeKey{}, jsonObject)
 }
 
-func jsonModeRequested(ctx context.Context) bool {
-	v, _ := ctx.Value(jsonModeKey{}).(bool)
+// WithJSONSchema — çıktının ŞEKLİNİ de dayatan üst basamak (v0.9.527).
+//
+// `json_object` yalnız "geçerli JSON" der; alan eksik olabilir, tip
+// kayabilir, enum dışı değer gelebilir. `json_schema` çözümlemeyi
+// şemaya kilitler — asıl kazanç ENUM: bugün sunucu tarafında elle
+// temizlenen alanlar (filtre operatörü, aralık ön-ayarı, güven
+// seviyesi) modelin üretebileceği küme dışına çıkar.
+//
+// ÖNEMLİ: sunucu-tarafı doğrulama bunun yerine GEÇMEZ. Şema desteği
+// yoklamayla kapanmış olabilir, basamak düşmüş olabilir, uç eski
+// olabilir — üç durumda da yanıt şemasız gelir. Şema kaliteyi
+// yükseltir, doğrulamanın yerini almaz.
+//
+// Şema OpenAI `strict` kurallarına uygun olmalı: her object'te
+// `additionalProperties: false` ve tüm anahtarlar `required`.
+func WithJSONSchema(ctx context.Context, name string, schema map[string]any) context.Context {
+	ctx = context.WithValue(ctx, jsonSchemaKey{}, jsonSchemaSpec{Name: name, Schema: schema})
+	return context.WithValue(ctx, jsonModeKey{}, jsonSchema)
+}
+
+func jsonLevelRequested(ctx context.Context) jsonLevel {
+	v, _ := ctx.Value(jsonModeKey{}).(jsonLevel)
 	return v
+}
+
+func jsonSchemaFrom(ctx context.Context) (jsonSchemaSpec, bool) {
+	v, ok := ctx.Value(jsonSchemaKey{}).(jsonSchemaSpec)
+	return v, ok && v.Name != "" && len(v.Schema) > 0
 }
 
 // jsonModeVerdictStatus — bu HTTP statüsü "response_format'ı anlamadım"
@@ -551,6 +612,32 @@ func (s *Service) markJSONModeUnsupported(provider, baseURL, model string) {
 	s.jsonModeUnsupported[streamVerdictKey(provider, baseURL, model)] = true
 }
 
+func (s *Service) jsonSchemaBlocked(provider, baseURL, model string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.jsonSchemaUnsupported[streamVerdictKey(provider, baseURL, model)]
+}
+
+func (s *Service) markJSONSchemaUnsupported(provider, baseURL, model string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.jsonSchemaUnsupported == nil {
+		s.jsonSchemaUnsupported = map[string]bool{}
+	}
+	s.jsonSchemaUnsupported[streamVerdictKey(provider, baseURL, model)] = true
+}
+
+// markLevelUnsupported — reddedilen basamağı kaydeder. Yalnız KANIT
+// varken çağrılır (bir alt basamak gerçekten başardığında).
+func (s *Service) markLevelUnsupported(lvl jsonLevel, provider, baseURL, model string) {
+	switch lvl {
+	case jsonSchema:
+		s.markJSONSchemaUnsupported(provider, baseURL, model)
+	case jsonObject:
+		s.markJSONModeUnsupported(provider, baseURL, model)
+	}
+}
+
 func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
 	s.mu.RLock()
 	apiKey, model, base := s.apiKey, s.model, s.baseURL
@@ -573,13 +660,29 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 			{"role": "user", "content": userPrompt},
 		},
 	}
-	// v0.9.517 — katı JSON isteyen yüzeylerde çözümlemeyi sunucuda
-	// kısıtla. `json_object` bilinçli tercih: `json_schema` daha güçlü
-	// ama çok daha az sunucu destekliyor ve reddedilmesi daha olası.
-	// Amaç şemayı dayatmak değil, modelin JSON DIŞINA çıkmasını
-	// engellemek.
-	jsonMode := jsonModeRequested(ctx) && !s.jsonModeBlocked(s.provider, base, model)
-	if jsonMode {
+	// v0.9.517/527 — katı JSON isteyen yüzeylerde çözümlemeyi sunucuda
+	// kısıtla. İstenen basamak, o uç için ÖNCEDEN reddedilmiş
+	// basamaklara göre aşağı çekilir; hiç yoklanmamışsa istenen
+	// basamakla denenir ve sonuç aşağıda öğrenilir.
+	lvl := jsonLevelRequested(ctx)
+	spec, hasSpec := jsonSchemaFrom(ctx)
+	if lvl >= jsonSchema && (!hasSpec || s.jsonSchemaBlocked(s.provider, base, model)) {
+		lvl = jsonObject
+	}
+	if lvl >= jsonObject && s.jsonModeBlocked(s.provider, base, model) {
+		lvl = jsonNone
+	}
+	switch lvl {
+	case jsonSchema:
+		body["response_format"] = map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   spec.Name,
+				"schema": spec.Schema,
+				"strict": true,
+			},
+		}
+	case jsonObject:
 		body["response_format"] = map[string]any{"type": "json_object"}
 	}
 	raw, _ := json.Marshal(body)
@@ -615,17 +718,22 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 		// bağlamı taşan bir 400 iki yolda da patlar, o yüzden karar
 		// yazılmaz; response_format'ı reddeden bir 400 kısıtsız geçer,
 		// karar yazılır.
-		if jsonMode && jsonModeVerdictStatus(resp.StatusCode) {
-			out, pt, ct, rerr := s.explainOpenAIWithUsage(context.WithValue(ctx, jsonModeKey{}, false), systemPrompt, userPrompt)
+		if lvl > jsonNone && jsonModeVerdictStatus(resp.StatusCode) {
+			// Bir ALT basamakla yeniden dene. Basamak basamak iner:
+			// json_schema → json_object → kısıtsız. Her çerçeve kendi
+			// basamağının kararını yalnız alttaki gerçekten başarırsa
+			// yazar, o yüzden iki basamak birden reddeden bir uçta iki
+			// karar da doğru şekilde kaydedilir.
+			out, pt, ct, rerr := s.explainOpenAIWithUsage(context.WithValue(ctx, jsonModeKey{}, lvl-1), systemPrompt, userPrompt)
 			if rerr != nil {
-				// İkisi de patladı → 400 JSON moduyla ilgili değildi.
-				// Yeteneği kapatma; çağıranın gerçekten yaptığı isteğin
-				// hatasını döndür.
-				log.Printf("[copilot] %d hatası JSON modundan bağımsız (kısıtsız deneme de başarısız) — JSON modu açık bırakıldı", resp.StatusCode)
+				// Alt basamak da patladı → hata bu basamakla ilgili
+				// değildi. Yeteneği kapatma; çağıranın gerçekten yaptığı
+				// isteğin hatasını döndür.
+				log.Printf("[copilot] %d hatası %s basamağından bağımsız (alt basamak da başarısız) — yetenek açık bırakıldı", resp.StatusCode, lvl)
 				return "", 0, 0, err
 			}
-			s.markJSONModeUnsupported(s.provider, base, model)
-			log.Printf("[copilot] response_format reddedildi (%d) — bu uç için JSON modu kapatıldı, kısıtsız yanıt kullanıldı", resp.StatusCode)
+			s.markLevelUnsupported(lvl, s.provider, base, model)
+			log.Printf("[copilot] response_format %s reddedildi (%d) — bu uç için kapatıldı, %s ile yanıt alındı", lvl, resp.StatusCode, lvl-1)
 			return out, pt, ct, nil
 		}
 		return "", 0, 0, err

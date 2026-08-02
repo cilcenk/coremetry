@@ -57,7 +57,7 @@ func (s *Server) copilotOptimizeCHQuery(w http.ResponseWriter, r *http.Request) 
 		body.Query = body.Query[:8192]
 	}
 
-	out, err := s.copilotExplainJSON(r, copilot.SystemPromptCHQueryOptimize(), body.Query)
+	out, err := s.copilotExplainJSON(r, copilot.SystemPromptCHQueryOptimize(), body.Query, chOptimizeSchema())
 	if err != nil {
 		writeErr(w, err)
 		return

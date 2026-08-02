@@ -171,6 +171,177 @@ func TestJSONModeKeepsCapabilityWhenPlainRetryAlsoFails(t *testing.T) {
 	}
 }
 
+// ─── v0.9.527 — merdiven: json_schema → json_object → kısıtsız ────────
+
+var testSchema = map[string]any{
+	"type":                 "object",
+	"properties":           map[string]any{"ozet": map[string]any{"type": "string"}},
+	"required":             []string{"ozet"},
+	"additionalProperties": false,
+}
+
+// ladderServer — hangi basamakların reddedileceğini alır, her isteğin
+// hangi basamakta geldiğini kaydeder.
+func ladderServer(t *testing.T, reject map[jsonLevel]bool) (*Service, *[]jsonLevel, func()) {
+	t.Helper()
+	var seen []jsonLevel
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+
+		lvl := jsonNone
+		if rf, ok := body["response_format"].(map[string]any); ok {
+			if rf["type"] == "json_schema" {
+				lvl = jsonSchema
+			} else {
+				lvl = jsonObject
+			}
+		}
+		seen = append(seen, lvl)
+
+		if reject[lvl] {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":"unsupported"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(okChatBody))
+	}))
+	s := New("openai", "", "test-model")
+	s.Configure("openai", "", "test-model", srv.URL, false, true)
+	return s, &seen, srv.Close
+}
+
+// Şemayı reddeden ama json_object'i kabul eden uç: BİR basamak inilir.
+// json_object kaybedilmemeli — merdivenin iki ayrı karar tutmasının
+// bütün sebebi bu.
+func TestJSONSchemaDemotesOneRungOnly(t *testing.T) {
+	s, seen, done := ladderServer(t, map[jsonLevel]bool{jsonSchema: true})
+	defer done()
+
+	ctx := WithJSONSchema(context.Background(), "test", testSchema)
+	out, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user")
+	if err != nil {
+		t.Fatalf("json_object çalışırken hata dönmemeli: %v", err)
+	}
+	if out != "cevap" {
+		t.Errorf("alt basamağın cevabı kullanılmalı, got %q", out)
+	}
+	if want := []jsonLevel{jsonSchema, jsonObject}; !sameLevels(*seen, want) {
+		t.Errorf("iniş sırası %v, beklenen %v", *seen, want)
+	}
+	if !s.jsonSchemaBlocked("openai", s.baseURL, "test-model") {
+		t.Error("şema basamağı kapatılmalıydı")
+	}
+	if s.jsonModeBlocked("openai", s.baseURL, "test-model") {
+		t.Error("json_object KAPATILMAMALIYDI — yalnız bir basamak inildi")
+	}
+
+	// Sonraki çağrı doğrudan json_object ile gitmeli.
+	*seen = nil
+	if _, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user"); err != nil {
+		t.Fatalf("beklenmeyen hata: %v", err)
+	}
+	if want := []jsonLevel{jsonObject}; !sameLevels(*seen, want) {
+		t.Errorf("karar önbelleklenmeli — %v, beklenen %v", *seen, want)
+	}
+}
+
+// İki basamağı da reddeden uç: kısıtsıza kadar iner ve İKİ karar da
+// yazılır (her çerçeve kendi basamağını, alttaki başardığı için).
+func TestJSONLadderFallsAllTheWayDown(t *testing.T) {
+	s, seen, done := ladderServer(t, map[jsonLevel]bool{jsonSchema: true, jsonObject: true})
+	defer done()
+
+	ctx := WithJSONSchema(context.Background(), "test", testSchema)
+	if _, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user"); err != nil {
+		t.Fatalf("kısıtsız çalışırken hata dönmemeli: %v", err)
+	}
+	if want := []jsonLevel{jsonSchema, jsonObject, jsonNone}; !sameLevels(*seen, want) {
+		t.Errorf("iniş sırası %v, beklenen %v", *seen, want)
+	}
+	if !s.jsonSchemaBlocked("openai", s.baseURL, "test-model") {
+		t.Error("şema basamağı kapatılmalıydı")
+	}
+	if !s.jsonModeBlocked("openai", s.baseURL, "test-model") {
+		t.Error("json_object basamağı da kapatılmalıydı")
+	}
+
+	// Artık tek istek, kısıtsız.
+	*seen = nil
+	_, _, _, _ = s.explainOpenAIWithUsage(ctx, "sys", "user")
+	if want := []jsonLevel{jsonNone}; !sameLevels(*seen, want) {
+		t.Errorf("iki karar da önbellekli olmalı — %v, beklenen %v", *seen, want)
+	}
+}
+
+// Şema istendi ama bağlamda şema yok (çağıran nil geçti) → sessizce
+// json_object'e düş. Boş bir `json_schema` gövdesi göndermek 400 alır
+// ve GEREKSİZ yere yetenek kararı yazdırırdı.
+func TestJSONSchemaWithoutSpecFallsBackToObject(t *testing.T) {
+	s, seen, done := ladderServer(t, nil)
+	defer done()
+
+	ctx := context.WithValue(context.Background(), jsonModeKey{}, jsonSchema)
+	if _, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user"); err != nil {
+		t.Fatalf("beklenmeyen hata: %v", err)
+	}
+	if want := []jsonLevel{jsonObject}; !sameLevels(*seen, want) {
+		t.Errorf("şemasız istek json_object olmalı — %v, beklenen %v", *seen, want)
+	}
+}
+
+// Gönderilen gövde gerçekten OpenAI json_schema şeklinde olmalı:
+// {"type":"json_schema","json_schema":{"name","schema","strict"}}.
+func TestJSONSchemaBodyShape(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		got, _ = body["response_format"].(map[string]any)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(okChatBody))
+	}))
+	defer srv.Close()
+	s := New("openai", "", "test-model")
+	s.Configure("openai", "", "test-model", srv.URL, false, true)
+
+	ctx := WithJSONSchema(context.Background(), "nl-to-query", testSchema)
+	if _, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user"); err != nil {
+		t.Fatalf("beklenmeyen hata: %v", err)
+	}
+	if got["type"] != "json_schema" {
+		t.Fatalf("type json_schema olmalı, got %v", got["type"])
+	}
+	js, ok := got["json_schema"].(map[string]any)
+	if !ok {
+		t.Fatal("json_schema gövdesi yok")
+	}
+	if js["name"] != "nl-to-query" {
+		t.Errorf("name yüzey adını taşımalı, got %v", js["name"])
+	}
+	if js["strict"] != true {
+		t.Errorf("strict:true gönderilmeli, got %v", js["strict"])
+	}
+	if _, ok := js["schema"].(map[string]any); !ok {
+		t.Error("schema gövdesi taşınmamış")
+	}
+}
+
+func sameLevels(a, b []jsonLevel) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // JSON modu istenmediğinde gövdeye response_format GİRMEMELİ — kısıt
 // istemeyen yüzeyler (serbest anlatım) modeli JSON'a hapsetmemeli.
 func TestNoJSONModeSendsNoResponseFormat(t *testing.T) {

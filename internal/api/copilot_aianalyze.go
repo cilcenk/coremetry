@@ -171,7 +171,7 @@ func (s *Server) copilotAnalyzeService(w http.ResponseWriter, r *http.Request) {
 
 	// Single-shot through the /ai-attributed wrapper (CLAUDE.md: never call
 	// s.copilot.Explain direct). Provider-neutral — uses the configured model.
-	raw, err := s.copilotExplainJSON(r, serviceAnalysisPrompt, snapshot)
+	raw, err := s.copilotExplainJSON(r, serviceAnalysisPrompt, snapshot, serviceAnalysisSchema())
 	if err != nil {
 		writeErr(w, err)
 		return

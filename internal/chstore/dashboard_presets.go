@@ -25,15 +25,45 @@ import (
 // presetVersion forces a re-seed.
 //
 // User-created dashboards (any ID without the preset- prefix)
-// are never touched — even an admin who renamed a preset
-// retains their rename because the old preset row gets deleted
-// on bundle upgrade while their renamed copy lives under its
-// new ID.
+// are never touched.
+//
+// v0.9.564 — bu yorumun ikinci yarısı YANLIŞTI ve düzeltildi.
+// Eskiden şöyle diyordu: "admin bir preseti yeniden adlandırdıysa
+// yeniden adlandırması korunur çünkü kopyası yeni ID altında yaşar."
+// Öyle bir kopya YOK: frontend kaydederken aynı `preset-` ID'sine
+// yazıyor (Dashboard.tsx → api.updateDashboard(id, …)), dolayısıyla
+// düzenleme preset satırının ÜSTÜNDE yaşıyor ve paket yükseltmesinde
+// DELETE ile birlikte gidiyor.
+//
+// Yani bugünkü gerçek davranış: presetVersion bumplanırsa operatörün
+// preset dashboard'lara yaptığı düzenlemeler KAYBOLUR. Yeni bir paket
+// göndermeden önce bunun bilinçli olarak ele alınması gerekir —
+// yanlış bir yorumun arkasına saklanmamalı.
 
 const presetVersion = "apm-v1"
 
 func (s *Store) SeedPresetDashboards(ctx context.Context) error {
-	storedVersion, _ := s.GetSetting(ctx, "preset_dashboards_version")
+	// v0.9.564 — HATA YUTULMUYOR.
+	//
+	// Öncesi `storedVersion, _ := s.GetSetting(...)` idi ve bu, boot
+	// anında canlı bir VERİ KAYBI yoluydu. GetSetting'in sözleşmesi
+	// (settings.go:19-30) kayıt-yok için (nil,nil), GERÇEK hata için
+	// (nil,err) döner — ama `_` ikisini de aynı yere indiriyordu:
+	// current = "".
+	//
+	// Sonuç: presetVersion hiç değişmemiş olsa bile, boot sırasında
+	// geçici bir ClickHouse arızası current="" üretiyor, o da
+	// presetVersion'a eşit olmadığı için aşağıdaki DELETE dalına
+	// giriliyor ve TÜM preset- satırları siliniyordu. Operatörün o
+	// dashboard'lara yaptığı düzenlemeler, kimse bir şey bumplamadan,
+	// bir CH hıçkırığında yok oluyordu.
+	//
+	// Kural: sürümü OKUYAMIYORSAK yıkıcı yola GİRME. Bilmemek,
+	// "eşleşmiyor" demek değildir.
+	storedVersion, err := s.GetSetting(ctx, "preset_dashboards_version")
+	if err != nil {
+		return fmt.Errorf("read preset dashboards version: %w", err)
+	}
 	current := string(storedVersion)
 
 	row := s.conn.QueryRow(ctx, `SELECT count() FROM dashboards FINAL`)

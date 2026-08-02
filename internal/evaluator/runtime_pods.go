@@ -48,6 +48,14 @@ const (
 	jvmGCShareHystPct = 2.0
 )
 
+// jvmHeapDecision — ŞU AN ÇAĞRILMIYOR (v0.9.551: heap alarmı false
+// pozitif oranı yüzünden kaldırıldı; çağıran reconcileRuntimeHeap
+// silindi). Fonksiyon ve tablo testi bilerek KALDI: operatör
+// "daha sonra spesifik kurallarla geliriz" dedi ve buradaki
+// iki-sinyalli eşik semantiği (post-GC varsa 85/90, yoksa 92/97)
+// o dönüşte yeniden türetilmesi gereken en pahalı bilgi. Testler
+// onu canlı tutar; ölü kod değil, korunmuş sözleşme.
+//
 // jvmHeapDecision — saf eşik çekirdeği (tablo testli). capacityDecision'la
 // aynı şekil ama runtime eşikleri bağımsız evrilebilsin diye ayrı.
 // postGC > 0 → GC-sonrası sinyal + 85/90; postGC yok → anlık used + 92/97.
@@ -150,15 +158,23 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 		log.Printf("[evaluator] runtime pods: açık problem anlık görüntüsü alınamadı, tik atlanıyor: %v", err)
 		return
 	}
-	if present, err := e.store.MetricExists(ctx, "jvm.memory.limit"); err == nil && present {
-		if samples, err := e.store.JVMHeapPodUsage(ctx); err != nil {
-			log.Printf("[evaluator] runtime jvm-heap read: %v", err)
-		} else {
-			for _, s := range samples {
-				e.reconcileRuntimeHeap(ctx, s, cfg, snap)
-			}
-		}
-	}
+	// v0.9.551 — JVM heap alarmı KALDIRILDI (operatör: "çok fazla false
+	// pozitif üretiyor, daha sonra spesifik kurallarla geliriz").
+	//
+	// Eşik ayarı yerine kaldırma seçildi çünkü sorun eşikte değil
+	// sinyalde: heap doluluğu JVM'de tek başına bir arıza göstergesi
+	// değildir — sağlıklı bir uygulama da GC'den hemen önce %95'e
+	// çıkar. v0.9.426'nın iki-sinyalli (post-GC + ham) yaklaşımı bunu
+	// azalttı ama bitirmedi. Gerçek sinyal GC BASKISI, o da zaten
+	// ayrı iki kuralda ölçülüyor (jvm-gc duraklaması + jvm-gc-share);
+	// ikisi de yerinde duruyor.
+	//
+	// Açık heap problemleri TAHLİYE EDİLİR (aşağıda). Sadece
+	// değerlendirmeyi silmek, açık satırların kapatıcısını da
+	// sildiği için onları sonsuza dek Problems'ta bırakırdı —
+	// false pozitiflerden kurtulmak için onları KALICI hâle
+	// getirmek, çözmeye çalıştığımız şikâyetin daha kötüsü olurdu.
+	e.drainRetiredHeapProblems(ctx, snap)
 	if present, err := e.store.MetricExists(ctx, "jvm.gc.duration"); err == nil && present {
 		if samples, err := e.store.JVMGCPodPause(ctx); err != nil {
 			log.Printf("[evaluator] runtime jvm-gc read: %v", err)
@@ -176,44 +192,6 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 			}
 		}
 	}
-}
-
-func (e *Evaluator) reconcileRuntimeHeap(ctx context.Context, s chstore.CapacitySample, cfg chstore.RuntimeAlertConfig, snap map[string]*chstore.Problem) {
-	const ruleID = "runtime:jvm-heap"
-	service := runtimeService(s.Instance, s.Subkey)
-	// v0.9.401 — dedup (ruleID, service) yerine deterministik problemID:
-	// service artık pod taşımadığı için eski anahtar per-pod granülerliği
-	// kaybederdi (iki pod tek probleme çökerdi). ID formatı DEĞİŞMEDİ —
-	// prod'daki açık eski satırlar aynı ID'den bulunur ve refresh
-	// yolunda service alanı kendini onarır.
-	existing := snap[runtimeProblemID("jvm-heap", s.Instance, s.Subkey)]
-	hasOpen := existing != nil && existing.ID != ""
-	open, sev, pct, postBased := jvmHeapDecision(s.Usage, s.PostGC, s.Limit, hasOpen, cfg)
-	gb := func(b float64) float64 { return b / (1024 * 1024 * 1024) }
-	// v0.9.426 — reason sinyali söyler: GC-sonrası mı, anlık mı.
-	var reason string
-	if postBased {
-		reason = fmt.Sprintf("JVM heap (GC sonrası) %.0f%% (%.1f/%.1f GB) on %s · pod %s",
-			pct, gb(s.PostGC), gb(s.Limit), service, s.Subkey)
-	} else {
-		reason = fmt.Sprintf("JVM heap %.0f%% (%.1f/%.1f GB, anlık — GC-sonrası metrik yok) on %s · pod %s",
-			pct, gb(s.Usage), gb(s.Limit), service, s.Subkey)
-	}
-	thr := cfg.HeapRawWarnPct
-	if postBased {
-		thr = cfg.HeapPostGCWarnPct
-		if sev == "critical" {
-			thr = cfg.HeapPostGCCritPct
-		}
-	} else if sev == "critical" {
-		thr = cfg.HeapRawCritPct
-	}
-	e.reconcileRuntime(ctx, runtimeReconcile{
-		ruleID: ruleID, ruleName: "Runtime · JVM heap", metric: "runtime.jvm_heap",
-		service: service, pod: s.Subkey, problemID: runtimeProblemID("jvm-heap", s.Instance, s.Subkey),
-		open: open, hasOpen: hasOpen, existing: existing,
-		severity: sev, value: pct, threshold: thr, reason: reason,
-	})
 }
 
 func (e *Evaluator) reconcileRuntimeGC(ctx context.Context, s chstore.CapacitySample, cfg chstore.RuntimeAlertConfig, snap map[string]*chstore.Problem) {
@@ -330,4 +308,62 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 			log.Printf("[evaluator] PROBLEM RESOLVED (%s): %s", r.metric, r.reason)
 		}
 	}
+}
+
+// drainRetiredHeapProblems — v0.9.551. Emekliye ayrılan
+// runtime:jvm-heap kuralının açık bıraktığı problemleri kapatır.
+//
+// Neden gerekli: bir kuralın değerlendirmesini silmek, o kuralın
+// KAPATICI kolunu da siler. Açık satırlar Problems'ta sonsuza dek
+// kalır ve hiçbir şey onları temizlemez — false pozitiflerden
+// kurtulmak için onları kalıcılaştırmak, şikâyetin daha kötü hâli
+// olurdu.
+//
+// Maliyet sıfır: tik başında zaten okunan snapshot üzerinden döner,
+// yeni CH sorgusu yok. Açık heap problemi kalmayınca hiçbir iş
+// yapmaz, yani kendini tüketen bir geçiş adımıdır. İleride "spesifik
+// kurallarla" dönüldüğünde bu fonksiyon silinebilir.
+func (e *Evaluator) drainRetiredHeapProblems(ctx context.Context, snap map[string]*chstore.Problem) {
+	now := time.Now().UnixNano()
+	for _, p := range snap {
+		if !shouldDrainHeapProblem(p) {
+			continue
+		}
+		resolved := *p
+		resolved.Status = "resolved"
+		resolved.ResolvedAt = &now
+		// Açıklamaya SEBEBİ yazılır. Aksi hâlde operatör problemin
+		// kendiliğinden düzeldiğini sanardı — oysa kural kaldırıldı,
+		// heap iyileşmedi. İkisi farklı şeyler ve karıştırılmaları
+		// gelecekteki bir incelemeyi yanlış yola sokar.
+		resolved.Description = p.Description + " · (kural v0.9.551'de kaldırıldı — false pozitif oranı; GC baskısı kuralları yerinde)"
+		if err := e.store.UpsertProblem(ctx, resolved); err != nil {
+			log.Printf("[evaluator] emekli jvm-heap problemi kapatılamadı %s: %v", p.ID, err)
+			continue
+		}
+		e.countResolved()
+		log.Printf("[evaluator] PROBLEM RESOLVED (runtime.jvm_heap, kural kaldırıldı): %s", p.ID)
+	}
+}
+
+// retiredHeapRuleID — v0.9.551'de emekliye ayrılan kuralın kimliği.
+// runtimeProblemID("jvm-heap", ...) bu önekle ID üretiyordu.
+const retiredHeapRuleID = "runtime:jvm-heap"
+
+// shouldDrainHeapProblem — saf karar: bu satır, kaldırılan heap
+// kuralının açık bıraktığı bir problem mi?
+//
+// Ayrı ve saf olmasının sebebi test edilebilirlik: evaluator'ın store
+// alanı somut *chstore.Store, yani sahte store ile tahliye döngüsü
+// uçtan uca koşturulamıyor. Karar burada izole edilince tablo testi
+// gerçek davranışı sabitler.
+//
+// Üç eleme de gerekli ve üçü de farklı bir hatayı engelliyor:
+//   - nil: snapshot map'i nil değer taşıyabilir (savunmacı).
+//   - RuleID: BAŞKA kuralların problemlerini kapatmak sessiz veri
+//     kaybı olurdu — tahliye yalnız kendi kuralını temizler.
+//   - Status: zaten kapalı bir satırı yeniden kapatmak her tikte
+//     ResolvedAt'i ileri iter ve problemin gerçek süresini bozar.
+func shouldDrainHeapProblem(p *chstore.Problem) bool {
+	return p != nil && p.RuleID == retiredHeapRuleID && p.Status == "open"
 }

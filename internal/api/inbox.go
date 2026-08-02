@@ -1433,6 +1433,22 @@ func inboxKindsAllExcFamily(kinds []string) bool {
 	return true
 }
 
+// fmtThousands — binlik ayraçlı sayı; "18217 total" yerine "18,217 total".
+func fmtThousands(n uint64) string {
+	s := fmt.Sprintf("%d", n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteByte(',')
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}
+
 func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 	age := time.Now().UnixNano() - g.LastSeen
 	freshMin := time.Duration(age) <= 5*time.Minute
@@ -1441,11 +1457,22 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 	if g.State == "regressed" {
 		return "P2", "regressed"
 	}
+	// v0.9.524 — operatör-bildirimli: "28 Haziran'daki problemde bile
+	// aynı sayı yazıyor". Cümle YANLIŞTI: freshMin grubun SON GÖRÜLME
+	// zamanının 5 dk içinde olduğunu söyler, g.Occurrences ise ÖMÜR BOYU
+	// toplamdır. İkisini "N in last 5min" diye birleştirmek, 35 gündür
+	// biriken 18.217 occurrence'ı son 5 dakikada olmuş gibi gösteriyordu.
+	//
+	// Gerçek pencereli sayı elimizde YOK (ExceptionGroup yalnız
+	// first_seen/last_seen/toplam taşır) ve onu üretmek grup başına yeni
+	// bir sorgu demek — v0.9.522/523'te tam o sınıfı azalttık. Doğru
+	// çözüm sayıyı uydurmak değil, elimizdeki iki gerçeği DOĞRU cümleyle
+	// söylemek: tazelik ayrı, toplam ayrı.
 	if freshMin && g.Occurrences >= 500 {
-		return "P1", fmt.Sprintf("%d in last 5min", g.Occurrences)
+		return "P1", fmt.Sprintf("active in last 5min · %s total", fmtThousands(g.Occurrences))
 	}
 	if freshHour && g.Occurrences >= 100 {
-		return "P2", fmt.Sprintf("%d in last hour", g.Occurrences)
+		return "P2", fmt.Sprintf("seen in last hour · %s total", fmtThousands(g.Occurrences))
 	}
 	return "P3", "steady"
 }

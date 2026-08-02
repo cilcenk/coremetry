@@ -61,7 +61,16 @@ export function useServicePods(service: string, range: TimeRange) {
     queries: matched.map(c => ({
       queryKey: ['cluster-pods', c, podRe],
       queryFn: () => api.clusterPods(c, podRe),
-      staleTime: 60_000, retry: 1,
+      staleTime: 60_000,
+      // v0.9.539 (operatör: "20+ cluster, kullanıcılar 20-30 sn
+      // bekliyor") — RETRY YOK. Aritmetik: handler'ın cluster başına
+      // 10s deadline'ı × retry:1 = tek yanıt vermeyen cluster 20
+      // saniye. Yeniden deneme burada BEDAVA DEĞİL ve işe de yaramaz:
+      // 10 saniyede yanıt vermemiş bir Thanos'un hemen ardından
+      // yanıt verme olasılığı düşük, ve 60s'lik poll zaten doğal
+      // yeniden denemedir. Hata o cluster için görünür kalır
+      // (podErrors → "X cluster'ı yanıt vermedi"), sessizce yutulmaz.
+      retry: false,
     })),
   });
 

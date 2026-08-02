@@ -111,3 +111,20 @@ func TestImbalance(t *testing.T) {
 		})
 	}
 }
+
+// v0.9.544 — KOORDİNATÖR panelinin events yolu da aynı tip hatasını
+// taşıyordu ve bu daha ciddi: prod'da query_log KAPALI, yani prod tam
+// bu yolu kullanıyor. `any(uptime())` UInt32 döner, CHCoordinator.UptimeS
+// uint64; sürücü her satırda ColumnConverterError verir ve sessiz
+// `continue` onu yutar → panel prod'da sessizce boş kalıyordu.
+func TestCoordinatorEventsQueryCastsUptime(t *testing.T) {
+	for _, cn := range []string{"", "uptrace_all"} {
+		q := coordinatorEventsQuery(cn)
+		if !strings.Contains(q, "toUInt64(any(uptime()))") {
+			t.Errorf("uptime UInt64'e cast edilmeli — prod bu yolu kullanıyor:\n%s", q)
+		}
+		if strings.Contains(q, "       any(uptime())") {
+			t.Errorf("cast'siz any(uptime()) kalmış:\n%s", q)
+		}
+	}
+}

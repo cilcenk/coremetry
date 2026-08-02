@@ -163,7 +163,7 @@ func coordinatorEventsQuery(clusterName string) string {
 	}
 	return fmt.Sprintf(`
 		SELECT hostName()                                AS host,
-		       any(uptime())                             AS uptime_s,
+		       toUInt64(any(uptime()))                   AS uptime_s,
 		       sumIf(value, event = 'InitialQuery')      AS initial,
 		       sumIf(value, event = 'SelectQuery')       AS selects,
 		       sumIf(value, event = 'InsertQuery')       AS inserts

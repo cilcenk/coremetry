@@ -91,7 +91,7 @@ func nodeWorkQuery(clusterName string) string {
 	}
 	return `
 		SELECT hostName()                                            AS host,
-		       any(uptime())                                         AS uptime_s,
+		       toUInt64(any(uptime()))                               AS uptime_s,
 		       sumIf(value, event = 'OSCPUVirtualTimeMicroseconds')   AS cpu_micros,
 		       sumIf(value, event = 'MergeExecuteMilliseconds')       AS merge_millis,
 		       sumIf(value, event = 'InsertedRows')                   AS inserted_rows,
@@ -105,9 +105,15 @@ func nodeWorkQuery(clusterName string) string {
 		SETTINGS max_execution_time = 5`
 }
 
-// nodeShardQuery — her node KENDİ shard/replika kaydını bildirir
-// (is_local). clusterAllReplicas + is_local, IP↔hostname eşlemesi
-// gerektirmeden hostName() ile doğrudan eşleşme verir.
+// nodeShardQuery — her node KENDİ shard/replika kaydını bildirir.
+//
+// v0.9.544 — `is_local` TEK BAŞINA yetmiyor. Lokal kümede her iki node
+// da kendi system.clusters'ında is_local=0 bildiriyor (küme tanımı
+// hostName() ile eşleşmeyen bir adla yazılmışsa CH satırı "yerel"
+// saymıyor). O hâlde shard etiketleri hiç çözülemiyordu. host_name
+// eşleşmesi ikinci kapı: ikisinden biri tutarsa etiket geliyor,
+// tutmazsa panel çalışmaya devam ediyor ve shard'ı bilmediğini
+// SÖYLÜYOR (rozet) — sessizce yanlış gruplama yapmıyor.
 func nodeShardQuery(clusterName string) string {
 	cn := strings.TrimSpace(clusterName)
 	if cn == "" {
@@ -116,7 +122,8 @@ func nodeShardQuery(clusterName string) string {
 	return `
 		SELECT hostName() AS host, shard_num, replica_num
 		FROM clusterAllReplicas('` + cn + `', system.clusters)
-		WHERE cluster = '` + cn + `' AND is_local
+		WHERE cluster = '` + cn + `'
+		  AND (is_local OR host_name = hostName())
 		ORDER BY host
 		LIMIT 64
 		SETTINGS max_execution_time = 5`
@@ -145,10 +152,20 @@ func (s *Server) getCHNodeWork(w http.ResponseWriter, r *http.Request) {
 			out.Note = "Ölçüm okunamadı — system.events: " + err.Error()
 			return out, nil
 		}
+		// v0.9.544 — tarama hatası ARTIK YUTULMUYOR. v0.9.543'te sessiz
+		// `continue` vardı ve tam da bu yüzden panel hiçbir kümede veri
+		// döndüremedi: uptime_s UInt32 dönüyordu, struct uint64 bekliyordu,
+		// sürücü her satırda ColumnConverterError veriyordu ve hata
+		// yutulduğu için sonuç "satır dönmedi" notu oluyordu — yani panel
+		// ölçemediğini değil, YANLIŞ ŞEYİ söylüyordu.
+		var scanErr error
 		for rows.Next() {
 			var n CHNodeWork
 			if err := rows.Scan(&n.Host, &n.UptimeS, &n.CPUMicros, &n.MergeMillis,
 				&n.InsertedRows, &n.PartFetches, &n.SelectedBytes, &n.MergesLaunched); err != nil {
+				if scanErr == nil {
+					scanErr = err
+				}
 				continue
 			}
 			out.Nodes = append(out.Nodes, n)
@@ -156,6 +173,11 @@ func (s *Server) getCHNodeWork(w http.ResponseWriter, r *http.Request) {
 		rows.Close()
 
 		if len(out.Nodes) == 0 {
+			if scanErr != nil {
+				out.Source = "none"
+				out.Note = "Satırlar çözümlenemedi (sürücü tip uyuşmazlığı): " + scanErr.Error()
+				return out, nil
+			}
 			out.Note = "system.events okundu ama satır dönmedi — ölçüm YAPILAMADI, " +
 				"bunu 'yük dengeli' diye okuma."
 			return out, nil

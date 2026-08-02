@@ -105,3 +105,37 @@ func TestNodeShardQuery(t *testing.T) {
 		t.Error("yalnız boşluk da boş sayılmalı")
 	}
 }
+
+// v0.9.544 — v0.9.543 HİÇBİR kümede veri döndüremiyordu ve bunu kimse
+// göremiyordu.
+//
+// Kök sebep: `any(uptime())` UInt32 döner (CH zemin gerçeği:
+// TSVWithNamesAndTypes → String/UInt32/UInt64/...), struct alanı ise
+// uint64. clickhouse-go'nun UInt32 kolonu *uint64 kabul etmez ve HER
+// satırda ColumnConverterError verir. Tarama hatası sessiz `continue`
+// ile yutulduğu için sonuç boş liste oluyor ve panel "satır dönmedi"
+// diyordu — yani ölçemediğini değil, YANLIŞ ŞEYİ söylüyordu.
+//
+// İki kapı birden kapatıldı: SQL'de cast + hatanın yüzeye çıkması.
+func TestNodeWorkQueryCastsUptime(t *testing.T) {
+	for _, cn := range []string{"", "uptrace_all"} {
+		q := nodeWorkQuery(cn)
+		if !strings.Contains(q, "toUInt64(any(uptime()))") {
+			t.Errorf("uptime UInt64'e cast edilmeli — sürücü UInt32'yi uint64'e taramaz:\n%s", q)
+		}
+		// Çıplak any(uptime()) geri gelmesin.
+		if strings.Contains(q, "       any(uptime())") {
+			t.Errorf("cast'siz any(uptime()) kalmış (v0.9.543 gerilemesi):\n%s", q)
+		}
+	}
+}
+
+// Shard etiketi yalnız is_local'e bağlı KALMAMALI: lokal kümede her iki
+// node da is_local=0 bildiriyor (küme tanımı hostName() ile eşleşmeyen
+// bir adla yazılmışsa). host_name eşleşmesi ikinci kapı.
+func TestNodeShardQueryHasHostNameFallback(t *testing.T) {
+	q := nodeShardQuery("uptrace_all")
+	if !strings.Contains(q, "is_local OR host_name = hostName()") {
+		t.Errorf("is_local tek başına yetmiyor — host_name yedeği şart:\n%s", q)
+	}
+}

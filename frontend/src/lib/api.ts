@@ -2198,6 +2198,19 @@ export const api = {
   // aggregation yükünün nerede biriktiğini ölçer. windowS yalnız
   // sabit basamaklardan gelir (1h/6h/24h) — sunucu cache anahtarına
   // giren her parametrenin kardinalitesi sınırlı olmalı (v0.8.270).
+  // v0.9.543 — node iş dağılımı: CPU · merge · insert · fetch host
+  // başına, HAM kümülatif. Pencereyi istemci açar (lib/chNodeWork):
+  // 5 günlük ortalama son saatlerdeki rejim değişimini seyreltiyor.
+  chNodeWork: () =>
+    get<{
+      nodes: import('./chNodeWork').NodeWorkRaw[];
+      mode: 'cluster' | 'standalone';
+      source: 'events' | 'none';
+      shardsKnown: boolean;
+      expectedNodes: number;
+      note?: string;
+      generatedAt: number;
+    }>('/api/admin/clickhouse/nodework'),
   chCoordinators: (windowS: number) =>
     get<{
       nodes: Array<{

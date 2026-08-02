@@ -281,10 +281,30 @@ var metricPointsWellKnown = map[string]string{
 	"host.name": "host_name", "host_name": "host_name",
 	"deployment.environment":      metricEnvExpr,
 	"deployment.environment.name": metricEnvExpr,
+	// v0.9.532 — operatör raporu: Runtime—JVM pod grafiklerinde hangi
+	// pod'un hangi cluster'da olduğu belli değildi. "cluster" anahtarı
+	// spans tarafındaki clusterDeriveExpr'in (repo.go) metric_points
+	// ikizine çözümlenir. TEK anahtar (k8s.cluster.name) YETMEZ —
+	// v0.9.52 dersi: yalnız openshift.cluster.name basan cluster var;
+	// coalesce atlanırsa o cluster'ın pod'ları sessizce öneksiz kalır.
+	"cluster": metricClusterExpr,
 }
 
 const metricEnvExpr = "coalesce(nullIf(res_values[indexOf(res_keys, 'deployment.environment.name')], ''), " +
 	"res_values[indexOf(res_keys, 'deployment.environment')])"
+
+// metricClusterExpr — clusterDeriveExpr'in (repo.go) metric_points
+// kopyası: aynı 6 permütasyon, aynı sıra (resource önce). Anahtar seti
+// filterexpr_test'te clusterDeriveExpr'e pinli — ayrışırlarsa spans ve
+// metrics yüzeyleri aynı pod'u farklı cluster'da gösterir.
+const metricClusterExpr = `coalesce(
+	nullIf(res_values[indexOf(res_keys, 'k8s.cluster.name')], ''),
+	nullIf(res_values[indexOf(res_keys, 'openshift.cluster.name')], ''),
+	nullIf(res_values[indexOf(res_keys, 'cluster')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'k8s.cluster.name')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'openshift.cluster.name')], ''),
+	nullIf(attr_values[indexOf(attr_keys, 'cluster')], ''),
+	'')`
 
 // groupKeyExprMetric is groupKeyExpr for a metric_points GROUP BY (v0.9.126,
 // review fix). The generic groupKeyExpr resolves against the SPANS wellKnown

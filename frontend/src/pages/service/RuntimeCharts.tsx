@@ -5,7 +5,7 @@ import { useServiceDeploys } from '@/lib/queries';
 import { Spinner } from '@/components/Spinner';
 import { TimeSeriesPanel, type TSSeries } from '@/components/viz/TimeSeriesPanel';
 import type { FilterExpr, SpanMetricSeries } from '@/lib/types';
-import { podLineLabel } from './runtimePodLabel';
+import { podLineLabel, podClusterOf, withClusterPrefix } from './runtimePodLabel';
 import { smoothPoints } from './runtimeSmooth';
 
 // RuntimeCharts (v0.9.87, operatör talebi) — Service Overview'da dil
@@ -62,7 +62,12 @@ interface LineSpec {
 // ortamda yok) + host.name (container hostname = k8s pod adı, javaagent
 // default) + service.instance.id (UUID son çare). Etiket önceliği
 // podLineLabel'da okunabilir pod adına yeğler.
-const POD_GROUP = 'resource.k8s.pod.name,resource.host.name,resource.service.instance.id';
+// v0.9.532 — 4. anahtar "cluster" (operatör: "jvm var ama hangi cluster
+// belli değil"). Sunucuda metricClusterExpr'e çözümlenir (6-permütasyon
+// coalesce, spans clusterDeriveExpr'in ikizi). groupKey[0..2] indeksleri
+// DEĞİŞMEZ — podLineLabel sözleşmesi bozulmaz; [3] cluster önekidir ve
+// yalnız seri kümesi birden çok cluster'a yayılıyorsa basılır.
+const POD_GROUP = 'resource.k8s.pod.name,resource.host.name,resource.service.instance.id,cluster';
 // mode (v0.9.128, operatör talebi) — memory kartları (heap/committed, MB) =
 // area (dolu kapasite okunur); GC pause / thread / object COUNT kartları =
 // line (dolgu yanıltıcı, "biriken alan" anlamı yok). Verilmezse 'area'.
@@ -197,6 +202,9 @@ export function RuntimeCharts({ service, from, to, onZoom, onZoomReset }: {
       const tsSeries: TSSeries[] = [];
       let podTotal = 0;
       let capped = false;
+      // v0.9.532 — karttaki serilerin dokunduğu cluster'lar ("40 / 52
+      // pod · 3 cluster" notu için).
+      const cardClusters = new Set<string>();
       specs.forEach(({ card: c, line }, qi) => {
         if (c.key !== card.key) return;
         const data = (queries[qi]?.data ?? []) as SpanMetricSeries[];
@@ -208,12 +216,18 @@ export function RuntimeCharts({ service, from, to, onZoom, onZoomReset }: {
         if (line.fanout) {
           podTotal += data.length;
           if (data.length > FANOUT_MAX) capped = true;
+          // v0.9.532 — cluster öneki: kesilmemiş TAM kümeden hesaplanır
+          // (ilk 40'ı tek cluster'a düşen çok-cluster'lı bir servis
+          // yanlışlıkla "tek cluster" sayılmasın).
+          const clusterSet = new Set(data.map(s => podClusterOf(s.groupKey)).filter(Boolean));
+          clusterSet.forEach(c => cardClusters.add(c));
+          const multi = clusterSet.size > 1;
           data.slice(0, FANOUT_MAX).forEach(s => {
-            const label = line.labelOf
+            const base = line.labelOf
               ? line.labelOf(s.groupKey, service, line.label)
               : (s.groupKey.filter(Boolean).join('/') || line.label);
             tsSeries.push({
-              label,
+              label: withClusterPrefix(base, podClusterOf(s.groupKey), multi),
               points: smoothPoints(s.points.map(p => ({ time: p.time, value: p.value == null ? null : p.value * scale }))),
             });
           });
@@ -235,7 +249,7 @@ export function RuntimeCharts({ service, from, to, onZoom, onZoomReset }: {
         cardQs.some(x => x.q.isError) ? 'error'
         : cardQs.some(x => x.q.isPending) ? 'loading'
         : 'ready';
-      return { card, series: tsSeries, status, podTotal, capped };
+      return { card, series: tsSeries, status, podTotal, capped, clusterCount: cardClusters.size };
     });
     return { byCard, anyData };
   }, [family, cards, specs, queries, service]);
@@ -263,13 +277,17 @@ export function RuntimeCharts({ service, from, to, onZoom, onZoomReset }: {
           3-across dar kalıyordu (operatör raporu). Ortak syncKey: bir karta
           hover TÜM kartlarda crosshair çizer (heap spike ↔ GC pause korele). */}
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-        {built.byCard.map(({ card, series, status, podTotal, capped }) => (
+        {built.byCard.map(({ card, series, status, podTotal, capped, clusterCount }) => (
           <div key={card.key} className="card">
             <div className="ov-card-h">
               <h3>{card.title}{card.unit ? ` (${card.unit.trim()})` : ''}</h3>
-              {capped && (
+              {/* v0.9.532 — cluster sayısı: çok-cluster'lı serviste not,
+                  kesme olmasa da görünür (operatör "hangi cluster belli
+                  değil" — cevabın yarısı bu sayı, yarısı seri önekleri). */}
+              {(capped || clusterCount > 1) && (
                 <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                  {FANOUT_MAX} / {podTotal} pod gösteriliyor
+                  {capped ? `${FANOUT_MAX} / ${podTotal} pod gösteriliyor` : `${podTotal} pod`}
+                  {clusterCount > 1 ? ` · ${clusterCount} cluster` : ''}
                 </span>
               )}
             </div>

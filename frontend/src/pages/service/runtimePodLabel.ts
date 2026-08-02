@@ -22,3 +22,19 @@ export function podLineLabel(groupKey: string[], service: string, fallback: stri
   if (inst) return inst.slice(0, 8);
   return fallback;
 }
+
+// podClusterOf — v0.9.532. groupKey[3] = sunucunun çözdüğü cluster adı
+// (POD_GROUP'un 4. anahtarı); yoksa ''.
+export function podClusterOf(groupKey: string[]): string {
+  return (groupKey[3] ?? '').trim();
+}
+
+// withClusterPrefix — cluster önekini YALNIZ ayırt ediciyken basar.
+//
+// Tek cluster'lı serviste her etikete "ocpma · " eklemek gürültü —
+// operatörün sorusu "hangisi hangi cluster'da", cevabı ancak birden çok
+// cluster varken anlamlı. Cluster'ı boş olan seri (attr basmayan ~%1-2)
+// önek almaz; etiketi değişmediği için rengi de stabil kalır.
+export function withClusterPrefix(label: string, cluster: string, multiCluster: boolean): string {
+  return multiCluster && cluster ? `${cluster} · ${label}` : label;
+}

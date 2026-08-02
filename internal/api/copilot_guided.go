@@ -1095,7 +1095,7 @@ func (s *Server) guidedRootCauseBundle(ctx context.Context, emit func(string, an
 	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`","status":"open"}`, env))
 	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil && len(probs) > 0 {
-		probs = chstore.EnrichProblemsWithPriority(probs)
+		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		emitGuidedStep(emit, "root_cause_hypotheses", "")
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		b.WriteString(renderProblemsEvidenceTR(probs, service, env, time.Now()))
@@ -1136,7 +1136,7 @@ func (s *Server) guidedProblemsBundle(ctx context.Context, emit func(string, any
 	if err != nil {
 		return "", "", err
 	}
-	probs = chstore.EnrichProblemsWithPriority(probs)
+	probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 	emitGuidedStep(emit, "root_cause_hypotheses", "")
 	probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 	evidence := renderProblemsEvidenceTR(probs, service, env, time.Now())
@@ -1169,7 +1169,7 @@ func (s *Server) guidedServiceHealthBundle(ctx context.Context, emit func(string
 	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
 	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil {
-		probs = chstore.EnrichProblemsWithPriority(probs)
+		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		if len(probs) == 0 {
 			b.WriteString("Açık problem yok.\n")
@@ -1217,7 +1217,7 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 	emitGuidedStep(emit, "list_problems", withEnvArg(`{"service":"`+service+`"}`, env))
 	probs, perr := s.store.ListProblems(ctx, guidedProblemFilter(service, env, 10))
 	if perr == nil {
-		probs = chstore.EnrichProblemsWithPriority(probs)
+		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		if len(probs) == 0 {
 			b.WriteString("Servis düzeyinde açık problem yok.\n")
@@ -1305,7 +1305,7 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		if perr != nil {
 			return "", "", perr
 		}
-		probs = chstore.EnrichProblemsWithPriority(probs)
+		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		emitGuidedStep(emit, "root_cause_hypotheses", "")
 		probs = s.store.EnrichProblemsWithRootCause(ctx, probs)
 		var b strings.Builder

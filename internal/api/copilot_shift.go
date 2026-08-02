@@ -44,7 +44,7 @@ func (s *Server) guidedShiftSummaryBundle(ctx context.Context, emit func(string,
 	}
 	fmt.Fprintf(&b, "\nPROBLEMLER: %d açıldı, %d çözüldü, %d hâlâ açık.\n", opened, resolved, stillOpen)
 	if len(probs) > 0 {
-		probs = chstore.EnrichProblemsWithPriority(probs)
+		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		sort.SliceStable(probs, func(i, j int) bool { return probs[i].StartedAt > probs[j].StartedAt })
 		if len(probs) > 12 {
 			fmt.Fprintf(&b, "(en yeni 12 satır gösteriliyor, toplam %d)\n", len(probs))

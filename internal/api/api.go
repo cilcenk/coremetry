@@ -9599,8 +9599,7 @@ func (s *Server) listProblemBuckets(w http.ResponseWriter, r *http.Request) {
 		// the deploys enrich must run before the priority enrich.
 		// Runbooks/clusters enrichment skipped — buckets don't need
 		// either, and skipping the CH round-trips keeps this cheap.
-		probs = s.store.EnrichProblemsWithDeploys(ctx, probs, 30*time.Minute)
-		probs = chstore.EnrichProblemsWithPriority(probs)
+		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		sev := map[string]int{"critical": 0, "warning": 0, "info": 0}
 		prio := map[string]int{"P1": 0, "P2": 0, "P3": 0}
 		for _, p := range probs {
@@ -9739,14 +9738,15 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 		// receiving traffic, broke things" windows; longer
 		// causal chains stay invisible to keep the signal
 		// strong.
-		probs = s.store.EnrichProblemsWithDeploys(ctx, probs, 30*time.Minute)
 		// Priority bucket (v0.5.210) — pure function over the
 		// already-enriched values, no CH round-trip. Runs last
 		// so it can read RecentDeploy + value/threshold +
 		// status in their final form. Recomputed on every read
 		// so a worsening metric or fresh deploy reranks
 		// instantly without rewriting the problems row.
-		probs = chstore.EnrichProblemsWithPriority(probs)
+		// v0.9.553 — deploy+öncelik ikilisi tek çağrıda; sıra
+		// artık yorumla değil kodla garanti (problem_enrich.go).
+		probs = s.enrichProblemsForRead(ctx, probs)
 		// Priority chip filter — applied AFTER enrich because
 		// Problem.Priority is populated by EnrichProblemsWithPriority,
 		// not stored on the CH row. Default "P3" matches the

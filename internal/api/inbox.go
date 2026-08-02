@@ -340,8 +340,7 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		}
 		probs = s.store.EnrichProblemsWithRunbooks(ctx, probs)
 		probs = s.store.EnrichProblemsWithClusters(ctx, probs, time.Hour)
-		probs = s.store.EnrichProblemsWithDeploys(ctx, probs, 30*time.Minute)
-		probs = chstore.EnrichProblemsWithPriority(probs)
+		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
 		for _, p := range probs {
 			// v0.8.287 — drop resolved Problems from the open inbox. pickStatus
 			// fetched every status (see its comment), so the narrow happens here.

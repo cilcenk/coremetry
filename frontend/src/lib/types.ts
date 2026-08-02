@@ -1128,6 +1128,15 @@ export interface ClusterDeployTrendResponse {
   byPod: boolean;
   series: ClusterNamedSeries[] | null;
 }
+// v0.9.534 — Service→Infrastructure "Router / HAProxy" (OpenShift router
+// backend metrikleri; seri adı = route). kind cache anahtarına girdiği
+// için sunucuda üç değere sabitli.
+export interface ClusterHaproxyTrendResponse {
+  cluster: string;
+  namespace: string;
+  kind: '2xx' | '5xx' | 'latency';
+  series: ClusterNamedSeries[] | null;
+}
 // v0.9.140/144 — Service→Infrastructure JBoss/JVM JMX (Thanos auto-discovery).
 // metric = ham keşfedilmiş ad (jvm_*/jboss_*).
 export interface ClusterJMXMetricsResponse {

@@ -1317,6 +1317,60 @@ func (s *Service) DeployTrend(ctx context.Context, c ClusterConfig, namespace, d
 	return out, nil
 }
 
+// HaproxyTrend — v0.9.534. Namespace'in route'larına router (HAProxy)
+// gözünden trend: kind = "2xx" | "5xx" (yanıt oranı, req/s) | "latency"
+// (backend ortalama, ms). DeployTrend'in aynası: query_range, seri adı
+// route etiketi, top-N seçimi ortalamaya göre Go'da (topk'siz —
+// v0.9.3 adım-kayması notu). Metrik ailesi cluster'da yoksa boş döner;
+// UI bölümü gizler (görünmez-düşer).
+func (s *Service) HaproxyTrend(ctx context.Context, c ClusterConfig, namespace, kind string, from, to time.Time) ([]NamedSeries, error) {
+	step := stepForWindow(from, to)
+	params := url.Values{
+		"query": {haproxyTrendQuery(namespace, kind)},
+		"start": {fmt.Sprintf("%d", from.Unix())},
+		"end":   {fmt.Sprintf("%d", to.Unix())},
+		"step":  {fmt.Sprintf("%d", step)},
+	}
+	series, err := s.doQuery(ctx, c, "/api/v1/query_range", params)
+	if err != nil {
+		return nil, err
+	}
+	type acc struct {
+		pts  []ValuePoint
+		sum  float64
+		name string
+	}
+	all := make([]acc, 0, len(series))
+	for _, ser := range series {
+		name := ser.Metric["route"]
+		pts := make([]ValuePoint, 0, len(ser.Values))
+		sum := 0.0
+		for _, pair := range ser.Values {
+			if v, ts, ok := samplePair(pair); ok {
+				pts = append(pts, ValuePoint{Bucket: ts - ts%int64(step), Value: v})
+				sum += v
+			}
+		}
+		if len(pts) > 0 {
+			all = append(all, acc{pts: pts, sum: sum / float64(len(pts)), name: name})
+		}
+	}
+	if len(all) > maxTrendSeries {
+		sort.Slice(all, func(i, j int) bool {
+			if all[i].sum != all[j].sum {
+				return all[i].sum > all[j].sum
+			}
+			return all[i].name < all[j].name
+		})
+		all = all[:maxTrendSeries]
+	}
+	out := make([]NamedSeries, 0, len(all))
+	for _, a := range all {
+		out = append(out, NamedSeries{Name: a.name, Points: a.pts})
+	}
+	return out, nil
+}
+
 // JMXMetricNames — bir deployment'ın Thanos'ta taşıdığı jvm_/jboss_ metrik
 // ADLARINI keşfeder (v0.9.144 auto-discovery). count by (__name__) instant
 // sorgusu; her serinin __name__ label'ını toplar, sıralı+tekilleştirir.

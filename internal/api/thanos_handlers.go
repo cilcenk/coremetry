@@ -399,6 +399,55 @@ func (s *Server) getClusterDeployTrend(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getClusterHaproxyTrend — GET /api/clusters/haproxy-trend?cluster=X&
+// ns=Y&kind=2xx|5xx|latency (v0.9.534). Servis→Infrastructure "Router /
+// HAProxy" bölümü: namespace'in route'larına router gözünden trend.
+// deploy-trend'in aynası — deployment GEREKMEZ (namespace-kapsamlı),
+// bu yüzden deployment'ı türetilemeyen serviste de çalışır (ns yeter).
+func (s *Server) getClusterHaproxyTrend(w http.ResponseWriter, r *http.Request) {
+	if s.thanos == nil || !s.thanos.HasEnabledClusters() {
+		http.Error(w, "no thanos clusters configured", http.StatusNotFound)
+		return
+	}
+	q := r.URL.Query()
+	name := strings.TrimSpace(q.Get("cluster"))
+	ns := strings.TrimSpace(q.Get("ns"))
+	if name == "" || ns == "" {
+		http.Error(w, "cluster and ns query params required", http.StatusBadRequest)
+		return
+	}
+	kind := q.Get("kind")
+	switch kind {
+	case "2xx", "5xx", "latency":
+	default:
+		// Serbest değer cache anahtarına girer — kardinalite sınırlı
+		// kalsın (v0.8.270 sınıfı): bilinmeyen tür reddedilir.
+		http.Error(w, "kind must be 2xx, 5xx or latency", http.StatusBadRequest)
+		return
+	}
+	cfg, ok := s.thanos.ClusterByName(name)
+	if !ok {
+		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
+		return
+	}
+	from, to := parseFromTo(r, time.Hour)
+	if to.Sub(from) > 6*time.Hour {
+		from = to.Add(-6 * time.Hour)
+	}
+	key := fmt.Sprintf("cluster-haproxy-trend:%s:%s:%s:%s:%s",
+		name, ns, kind, clusterCfgDigest(cfg), cacheBucket(from, to))
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		defer cancel()
+		series, err := s.thanos.HaproxyTrend(qctx, cfg, ns, kind, from, to)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"cluster": name, "namespace": ns, "kind": kind,
+			"series": series}, nil
+	})
+}
+
 // getClusterJMXMetrics — GET /api/clusters/jmx-metrics?cluster=X&ns=Y&
 // deploy=Z (v0.9.144, auto-discovery). Servisin o cluster'da taşıdığı
 // jvm_/jboss_ metrik ADLARINI döner (boş = JMX yok). Service→Infrastructure

@@ -233,3 +233,33 @@ func TestJMXTrendQuery(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.534 — HAProxy router trend sorguları. Şekil operatörün prod
+// Grafana panosundan birebir doğrulandı (2026-08-02): code etiketi
+// SINIF-şekilli ("2xx"), kapsam exported_namespace + route!="".
+// Gecikmede >0 süzgeci pano hilesi (trafiksiz backend 0 basar);
+// yanıt oranında >0 BİLİNÇLİ yok — sıfır oran dürüst veridir, seriyi
+// pencere ortasında düşürmek sahte boşluk yaratır.
+func TestHaproxyTrendQuery(t *testing.T) {
+	cases := []struct{ name, ns, kind, want string }{
+		{"2xx", "mobile-bff-prod", "2xx",
+			`sum by (route) (rate(haproxy_backend_http_responses_total{code="2xx",exported_namespace="mobile-bff-prod",route!=""}[5m]))`},
+		{"5xx", "mobile-bff-prod", "5xx",
+			`sum by (route) (rate(haproxy_backend_http_responses_total{code="5xx",exported_namespace="mobile-bff-prod",route!=""}[5m]))`},
+		{"latency", "callcenter", "latency",
+			`avg by (route) (haproxy_backend_http_average_response_latency_milliseconds{exported_namespace="callcenter",route!=""} > 0)`},
+		{"bilinmeyen tür gecikmeye düşer", "ns", "garip",
+			`avg by (route) (haproxy_backend_http_average_response_latency_milliseconds{exported_namespace="ns",route!=""} > 0)`},
+		// Etiket kaçışı: namespace operatör girdisi değil (katalogdan)
+		// ama yine de kaçışlı gitmeli — tırnak içeren ad PromQL kırar.
+		{"kaçış", `a"b`, "2xx",
+			`sum by (route) (rate(haproxy_backend_http_responses_total{code="2xx",exported_namespace="a\"b",route!=""}[5m]))`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := haproxyTrendQuery(c.ns, c.kind); got != c.want {
+				t.Errorf("haproxyTrendQuery(%q,%q) =\n  %s\nbeklenen\n  %s", c.ns, c.kind, got, c.want)
+			}
+		})
+	}
+}

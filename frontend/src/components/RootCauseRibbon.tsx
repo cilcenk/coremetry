@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from './Spinner';
 import { IconFlame } from './icons';
 import { api } from '@/lib/api';
-import type { RootCauseSummary, RootCause, AnomalyRootCause, ScoredCause } from '@/lib/types';
+import type { RootCauseSummary, RootCause, AnomalyRootCause, ScoredCause, RCAVerdict } from '@/lib/types';
+import { RCAVerdictPanel } from './RCAVerdictPanel';
 import { fmtDurShort } from '@/lib/utils';
 
 // RootCauseRibbon (rc #3) — the in-page "Root cause: <suspect> (NN%) ▸" chip on
@@ -248,6 +249,11 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
   const [loading, setLoading] = useState(false);
   // undefined = not asked yet, null = failed/empty (honest degraded), string = prose.
   const [prose, setProse] = useState<string | null | undefined>(undefined);
+  // v0.9.560 — yapılandırılmış karar (v0.9.559 backend'i döndürüyor).
+  // prose'dan AYRI tutuluyor: model yanıt üretemediğinde prose null
+  // kalır ama verdict yine gelir (deterministik düşüş) ve o hâlde
+  // ekranda "anlatım yok" DEĞİL, kalkan uyarılı verdict görünmeli.
+  const [verdict, setVerdict] = useState<RCAVerdict | null | undefined>(undefined);
 
   const onExplain = () => {
     if (loading) return;
@@ -256,7 +262,9 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
     p.then(r => {
       const text = r?.prose?.trim();
       setProse(text ? text : null);
-    }).catch(() => setProse(null)).finally(() => setLoading(false));
+      setVerdict(r?.verdict ?? null);
+    }).catch(() => { setProse(null); setVerdict(null); })
+      .finally(() => setLoading(false));
   };
 
   return (
@@ -267,7 +275,11 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
         </Button>
       )}
       {loading && <Spinner label="Narrating the ranked evidence…" />}
-      {prose === null && (
+      {/* Dürüst-boş dalı KORUNDU ama daraltıldı: yalnız NE prose NE de
+          verdict geldiğinde basılır. Verdict varken bu mesajı basmak,
+          asıl kararı gizlerdi — verdict'in kendi kalkan şeridi zaten
+          modelin yanıt verip vermediğini söylüyor. */}
+      {prose === null && verdict === null && (
         <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic' }}>
           No narration available — the hypothesis isn't synthesized yet, or the
           AI copilot isn't configured.
@@ -285,6 +297,7 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
           {prose}
         </div>
       )}
+      {verdict && <RCAVerdictPanel v={verdict} />}
     </div>
   );
 }

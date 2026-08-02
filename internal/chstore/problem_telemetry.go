@@ -434,3 +434,91 @@ func anomalyDeployRows(events []AnomalyEvent) []Problem {
 	}
 	return out
 }
+
+// EnrichProblemsForRead — bir problem listesini OKUMA için hazırlar:
+// önce deploy, sonra öncelik (v0.9.554).
+//
+// Sıra ZORUNLU. computePriority'nin kritik kolu RecentDeploy'a bakar:
+//
+//	postDeploy := p.RecentDeploy != nil && AgeSeconds <= 5*60
+//	case postDeploy: return "P1", "critical + deploy Ns before"
+//	default:         return "P2", "critical"
+//
+// Deploy adımı koşmazsa RecentDeploy nil kalır ve AYNI SATIR P2 olur.
+// v0.9.553'te sohbet yüzeyleri tam bu yüzden Problems sayfasıyla
+// çelişiyordu.
+//
+// Zincir chstore'a TAŞINDI çünkü ikinci bir tüketici çıktı: MCP
+// list_problems aracı (internal/mcptools) — o da api.Server'a
+// erişemiyor. İki paketin ayrı ayrı "deploy sonra öncelik" yazması,
+// düzeltilen ayrışmanın yeni bir kopyası olurdu.
+func (s *Store) EnrichProblemsForRead(ctx context.Context, probs []Problem, lookback time.Duration) []Problem {
+	if len(probs) == 0 {
+		return probs
+	}
+	probs = s.EnrichProblemsWithDeploys(ctx, probs, lookback)
+	return EnrichProblemsWithPriority(probs)
+}
+
+// FilterProblemsByPriority — P1/P2/P3 daraltması (v0.9.554).
+//
+// ProblemFilter.Priority SQL'de UYGULANMAZ: öncelik okuma anında
+// hesaplanır, CH satırında yoktur (problem.go:594-605). Filtre alanını
+// set edip bu daraltmayı ÇAĞIRMAMAK, argümanın sessizce yok sayılması
+// demek — MCP list_problems aracının v0.9.554 öncesi hatası buydu.
+//
+// Boş bucket "P3" sayılır: frontend'in bucket'sız satırlar için
+// kullandığı geri düşüş değeriyle aynı, böylece chip davranışı okuma
+// ile render arasında tutarlı kalır.
+func FilterProblemsByPriority(probs []Problem, want []string) []Problem {
+	if len(want) == 0 {
+		return probs
+	}
+	m := make(map[string]bool, len(want))
+	for _, w := range want {
+		m[w] = true
+	}
+	keep := make([]Problem, 0, len(probs))
+	for _, p := range probs {
+		bucket := p.Priority
+		if bucket == "" {
+			bucket = "P3"
+		}
+		if m[bucket] {
+			keep = append(keep, p)
+		}
+	}
+	return keep
+}
+
+// SortProblemsByPriority — P1 → P2 → P3, eşitlikte en yeni önce
+// (v0.9.554). Yerinde sıralar ve aynı dilimi döner.
+//
+// MCP "Open problems" kaynağının açıklaması "Sorted by priority then
+// recency" DİYORDU ama öncelik hiç hesaplanmadığı için ona göre
+// sıralanması imkânsızdı — liste yalnız started_at DESC geliyordu.
+// Açıklamanın doğru olabilmesi için hem zenginleştirme hem bu sıralama
+// gerekiyor.
+//
+// Bilinmeyen/boş bucket P3 sayılır: FilterProblemsByPriority ile aynı
+// geri düşüş, iki yerin ayrışmaması için.
+func SortProblemsByPriority(probs []Problem) []Problem {
+	rank := func(p Problem) int {
+		switch p.Priority {
+		case "P1":
+			return 1
+		case "P2":
+			return 2
+		default:
+			return 3
+		}
+	}
+	sort.SliceStable(probs, func(i, j int) bool {
+		ri, rj := rank(probs[i]), rank(probs[j])
+		if ri != rj {
+			return ri < rj
+		}
+		return probs[i].StartedAt > probs[j].StartedAt
+	})
+	return probs
+}

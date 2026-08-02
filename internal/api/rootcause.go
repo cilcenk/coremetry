@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
@@ -420,8 +421,41 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 	// expensive — a 10m TTL lets concurrent triage clicks share one trip while
 	// the version guarantees freshness on re-rank.
 	key := fmt.Sprintf("rootcause-explain:%s:%s:%d", anchorKind, id, h.Version)
+	// v0.9.557 — kimlik closure DIŞINDA yakalanır.
+	//
+	// Öncesi: closure `s.copilotExplain(r, ...)` çağırıyordu, yani
+	// serveCached'in VERDİĞİ ctx'i yok sayıp isteğin context'ini
+	// kullanıyordu. Miss yolunda bu zararsız; SWR ARKA PLAN TAZELEME
+	// yolunda değil: refreshKey taze bir context.Background() verir
+	// (cache.go:349) çünkü istek çoktan bitmiştir — closure hâlâ ölü
+	// r.Context()'i kullanınca her tazeleme context.Canceled ile
+	// düşüyordu.
+	//
+	// Bu hata bu kod tabanında BİR KEZ düzeltilmişti: cache.go:351-354
+	// yorumu v0.8.319'da aynı sınıfı anlatıyor ("fn() used to close
+	// over the (already cancelled) request context"). Düzeltme
+	// serveCached'in kendisine yapılmıştı; bu çağrı noktası ctx'i
+	// kullanmadığı için düzeltmenin dışında kalmıştı.
+	//
+	// Görünen belirti sinsiydi: 10dk TTL + staleFactor 3 ⇒ 10-30dk
+	// arası her istek bir tazeleme tetikler, hepsi başarısız olur,
+	// bayat metin sunulmaya devam eder ve 30dk dolunca operatör tam
+	// bir LLM beklemesi öder. Yani "hızlı ama bayat" ile "yavaş"
+	// arasında salınıyordu, hiç düzgün tazelenmiyordu.
+	claims := auth.FromContext(r.Context())
+	uid, email := "", ""
+	if claims != nil {
+		uid, email = claims.UserID, claims.Email
+	}
 	s.serveCached(w, r, key, 10*time.Minute, func(ctx context.Context) (any, error) {
-		prose, err := s.copilotExplain(r, copilot.SystemPromptRootCauseNarration(), buildRootCausePrompt(h))
+		// Surface AÇIKÇA verilir: aiSurfaceFromPath bu yolu "other"
+		// kovasına atıyordu (parts[1] == "problems"/"anomalies", yani
+		// "copilot" değil — ai_observability.go:177-186). Kök-neden
+		// anlatımının /ai'da kendi adıyla görünmesi, kalitesini
+		// ölçebilmenin ön şartı.
+		ctx = copilot.WithMeta(ctx, copilot.CallMeta{UserID: uid, UserEmail: email})
+		prose, err := s.copilotExplainSurface(ctx, "rootcause-explain",
+			copilot.SystemPromptRootCauseNarration(), buildRootCausePrompt(h))
 		if err != nil {
 			return nil, err
 		}

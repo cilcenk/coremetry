@@ -3,7 +3,6 @@ import { useDataTable } from '@/components/DataTable';
 import { Spinner, Empty } from '@/components/Spinner';
 import { RuntimeCharts } from './RuntimeCharts';
 import { ServiceClusterPods } from './ServiceClusterPods';
-import { ServiceJmxPanels } from './ServiceJmxPanels';
 import { useServicePods } from './useServicePods';
 import { podDetailPath } from './podDetailPath';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -13,9 +12,11 @@ import type { ClusterPodRow, TimeRange } from '@/lib/types';
 // adlandırıldı ve operatör isteğiyle pod-merkezli her şey buraya toplandı:
 //   1. Cluster'a göre açılır pod grupları (ServiceClusterPods, Infra'dan
 //      taşındı) — pod tıkla → yerinde JMX (PodJmxInline).
-//   2. JVM / JBoss JMX panelleri (ServiceJmxPanels, Infra'dan taşındı) —
-//      "Pods tabında JVM metrikleri de panellerde olsun".
-//   3. RuntimeCharts — OTel dil-runtime (heap/GC/threads by pod).
+//   2. RuntimeCharts — OTel dil-runtime (heap/GC/threads by pod).
+// (Aradaki bağımsız "JVM / JBoss (JMX)" bölümü — ServiceJmxPanels,
+// ?jcluster/?jds — v0.9.533'te operatör isteğiyle kaldırıldı: pod
+// genişletmesi zaten pod-başına JMX veriyor, ikinci cluster seçtirmek
+// gereksizdi. ?jpod= artık satırı otomatik açan derin link.)
 // Infrastructure sekmesi artık cluster-seviyesi (çipler/KPI/CPU-Mem/PromQL).
 // Pod-envanteri paylaşılan useServicePods hook'undan (Infra ile aynı veri).
 
@@ -107,7 +108,7 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
             background: 'var(--bg)', borderBottom: '1px solid var(--border)',
             marginBottom: 8,
           }}>
-            {([['pods-sec', `Pods (${rows.length})`], ['jmx-sec', 'JMX panelleri'], ['runtime-sec', 'Runtime']] as const).map(([id, label]) => (
+            {([['pods-sec', `Pods (${rows.length})`], ['runtime-sec', 'Runtime']] as const).map(([id, label]) => (
               <span key={id} onClick={() => document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
                 style={{ cursor: 'pointer', color: 'var(--accent)' }}>{label}</span>
             ))}
@@ -129,13 +130,14 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
           </h3>
           <ServiceClusterPods dt={dt} effNs={effNs} effDeploy={effDeploy}
             cFrom={cFrom} cTo={cTo} colCount={POD_COLS.length} onOpenPod={openPod} />
-
-          {/* 2) JVM / JBoss JMX panelleri (servis-seviyesi; çok-cluster'da
-              iç cluster seçici, review v0.9.159 #4). */}
-          <div id="jmx-sec" style={{ scrollMarginTop: 40 }}>
-            <ServiceJmxPanels service={service} clusters={clustersWithPods} effNs={effNs} effDeploy={effDeploy}
-              cFrom={cFrom} cTo={cTo} clamped={clamped} rows={rows} onZoom={onZoom} onZoomReset={onZoomReset} />
-          </div>
+          {/* v0.9.533 (operatör) — buradaki bağımsız "JVM / JBoss (JMX)"
+              bölümü (kendi cluster/pod/datasource seçicileriyle,
+              ?jcluster/?jds) KALDIRILDI: pod satırı genişletmesi zaten
+              pod-başına JMX veriyor, ikinci bir cluster seçtirmek
+              gereksizdi. Deployment-geneli by-pod/by-datasource
+              toplulaştırma bu bölümle gitti — geri istenirse tek-commit
+              revert. ?jpod= derin linki (Problems→pod) yeniden amaçlandı:
+              ServiceClusterPods ilgili satırı otomatik açıp kaydırıyor. */}
         </>
       )}
 

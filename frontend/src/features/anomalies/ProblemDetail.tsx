@@ -570,8 +570,10 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                   gerçek servis adı taşıyor; pod kimliği deterministik ID'nin
                   son segmentinde (runtime:<check>:<svc>:<pod> — evaluator
                   runtimeProblemID). Tek yerde çözülür, yapısal `pod` kolonu
-                  ayrı dilim. Link Pods sekmesine jpod daraltmasıyla gider —
-                  o podun JMX/runtime grafikleri. */}
+                  ayrı dilim. Link Pods sekmesine ?jpod= ile gider —
+                  v0.9.533'ten beri ilgili pod SATIRI otomatik açılıp
+                  görünüme kaydırılır (eski JMX-bölümü daraltması
+                  kaldırıldı; satır genişletmesi aynı JMX'i veriyor). */}
               {(() => {
                 // v0.9.403 — yapısal alan öncelikli; ID-parse yalnız 401
                 // öncesi ESKİ satırlar için köprü (pod kolonu boş gelir).

@@ -1220,6 +1220,12 @@ export interface InboxItem {
   // satıra kopyalamıyordu: sorgu faturalanıp cevap çöpe gidiyordu.
   runbookUrl?: string;
   recentDeploy?: { service: string; version: string; timeUnixNs: number };
+  // v0.9.530 — arka plan işçilerinin proaktif kök-sebep cümlesi.
+  // Sunucuda 240 bayta kırpılır (satırın işi tarama; tam metin detay
+  // yüzeyinde). aiSummaryAt olmadan çizilmez — özet tek yazımlık ama
+  // satırın gövdesi değişmeye devam eder, yaşsız çıkarım taze görünür.
+  aiSummary?: string;
+  aiSummaryAt?: number; // unix ns, 0/absent = özet yok
   problem?: {
     id: string; ruleId: string; metric: string;
     value: number; threshold: number;

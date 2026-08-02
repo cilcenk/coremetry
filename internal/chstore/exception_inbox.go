@@ -50,6 +50,12 @@ type ExceptionGroup struct {
 	// ReplacingMergeTree tam-satır replace: HER yazma yolu bu alanı
 	// taşımak ZORUNDA (Scan'e dahil → stale-sweep/state-flip korur).
 	AISummary string `json:"aiSummary,omitempty"`
+	// AISummaryAt (v0.9.530) — özetin ÜRETİLDİĞİ an, unix-ns.
+	// problems.AISummaryAt'in ikizi. Özet tek yazımlıktır ama grubun
+	// gövdesi (mesaj, occurrences) altından değişmeye devam eder; yaş
+	// damgası olmadan operatör 6 saatlik bir çıkarımı canlı sayının
+	// altında taze sanar. 0 = özet yok.
+	AISummaryAt int64 `json:"aiSummaryAt,omitempty"`
 }
 
 // FingerprintException computes a stable identifier for "the same
@@ -262,6 +268,10 @@ func mergeExceptionGroup(g ExceptionGroup, existing *ExceptionGroup) ExceptionGr
 		g.Assignee = existing.Assignee
 		g.Notes = existing.Notes
 		g.AISummary = existing.AISummary // v0.9.415 — refresher özeti silmesin
+		// v0.9.530 — damga özetle BİRLİKTE taşınır. ReplacingMergeTree
+		// tüm satırı değiştirir: taşımazsak yenileme özeti korur ama
+		// yaşını sıfırlar ve UI 6 saatlik bir çıkarımı "az önce" gösterir.
+		g.AISummaryAt = existing.AISummaryAt
 		g.FirstSeen = existing.FirstSeen
 		// Regression detection — a resolved group reopens only if it KEEPS firing
 		// past a grace window after the resolve. v0.8.99 (operator-reported:
@@ -276,6 +286,7 @@ func mergeExceptionGroup(g ExceptionGroup, existing *ExceptionGroup) ExceptionGr
 			// (çözüldü sanılan neden geri geldi): sıfırla ki
 			// ExceptionExplainer taze bağlamla yeniden doldursun.
 			g.AISummary = ""
+			g.AISummaryAt = 0 // v0.9.530 — özetle birlikte damga da gider
 		} else if existing.State == ExStateIgnored {
 			// Stay ignored — silence is the whole point.
 			g.State = ExStateIgnored
@@ -324,7 +335,8 @@ func (s *Store) GetExceptionGroupsByFingerprints(ctx context.Context, fps []stri
 	}
 	rows, err := s.conn.Query(ctx, `SELECT fingerprint, ex_type, ex_message, service, state,
 		       assignee, toUnixTimestamp64Nano(first_seen), toUnixTimestamp64Nano(last_seen),
-		       resolved_at, occurrences, notes, ai_summary
+		       resolved_at, occurrences, notes, ai_summary,
+		       toUnixTimestamp64Nano(ai_summary_at)
 		FROM exception_groups FINAL
 		WHERE fingerprint IN (`+strings.Join(holders, ",")+`)
 		SETTINGS max_execution_time = 20`, args...)
@@ -337,7 +349,7 @@ func (s *Store) GetExceptionGroupsByFingerprints(ctx context.Context, fps []stri
 		var resolvedAt *time.Time
 		if err := rows.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service, &g.State,
 			&g.Assignee, &g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences,
-			&g.Notes, &g.AISummary); err != nil {
+			&g.Notes, &g.AISummary, &g.AISummaryAt); err != nil {
 			return nil, err
 		}
 		if resolvedAt != nil {
@@ -385,7 +397,8 @@ func (s *Store) UpsertExceptionGroups(ctx context.Context, gs []ExceptionGroup) 
 func (s *Store) writeExceptionGroup(ctx context.Context, g ExceptionGroup) error {
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO exception_groups
 		(fingerprint, ex_type, ex_message, service, state, assignee,
-		 first_seen, last_seen, resolved_at, occurrences, notes, ai_summary)`)
+		 first_seen, last_seen, resolved_at, occurrences, notes, ai_summary,
+		 ai_summary_at)`)
 	if err != nil {
 		return fmt.Errorf("prepare exception_groups: %w", err)
 	}
@@ -402,6 +415,7 @@ func (s *Store) writeExceptionGroup(ctx context.Context, g ExceptionGroup) error
 		g.Occurrences,
 		g.Notes,
 		g.AISummary,
+		time.Unix(0, g.AISummaryAt).UTC(),
 	); err != nil {
 		return fmt.Errorf("append exception_group: %w", err)
 	}
@@ -418,6 +432,14 @@ func (s *Store) UpsertExceptionGroupAISummary(ctx context.Context, fingerprint, 
 		return err
 	}
 	g.AISummary = summary
+	// v0.9.530 — damgayı özetin YAZILDIĞI anda koy. Tek yazım noktası
+	// burası olduğu için damga özetsiz kalamaz; boş özet damgayı da
+	// sıfırlar (yaş yokken "0 dk önce" göstermek yalan olurdu).
+	if strings.TrimSpace(summary) == "" {
+		g.AISummaryAt = 0
+	} else {
+		g.AISummaryAt = time.Now().UnixNano()
+	}
 	return s.writeExceptionGroup(ctx, *g)
 }
 
@@ -427,13 +449,14 @@ func (s *Store) GetExceptionGroup(ctx context.Context, fingerprint string) (*Exc
 		       toUnixTimestamp64Nano(first_seen),
 		       toUnixTimestamp64Nano(last_seen),
 		       resolved_at,
-		       occurrences, notes, ai_summary
+		       occurrences, notes, ai_summary,
+		       toUnixTimestamp64Nano(ai_summary_at)
 		FROM exception_groups FINAL
 		WHERE fingerprint = ? LIMIT 1`, fingerprint)
 	var g ExceptionGroup
 	var resolvedAt *time.Time
 	if err := row.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service, &g.State, &g.Assignee,
-		&g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences, &g.Notes, &g.AISummary); err != nil {
+		&g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences, &g.Notes, &g.AISummary, &g.AISummaryAt); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
@@ -604,7 +627,8 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 		SELECT fingerprint, ex_type, ex_message, service, state, assignee,
 		       toUnixTimestamp64Nano(first_seen),
 		       toUnixTimestamp64Nano(last_seen),
-		       resolved_at, occurrences, notes, ai_summary
+		       resolved_at, occurrences, notes, ai_summary,
+		       toUnixTimestamp64Nano(ai_summary_at)
 		FROM exception_groups FINAL `+wc.sql()+`
 		`+exceptionGroupsOrderBy(f.Sort, f.Dir)+`
 		LIMIT ? OFFSET ?`, args...)
@@ -617,7 +641,7 @@ func (s *Store) ListExceptionGroups(ctx context.Context, f ExceptionGroupFilter)
 		var g ExceptionGroup
 		var resolvedAt *time.Time
 		if err := rows.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service, &g.State, &g.Assignee,
-			&g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences, &g.Notes, &g.AISummary); err != nil {
+			&g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences, &g.Notes, &g.AISummary, &g.AISummaryAt); err != nil {
 			return nil, err
 		}
 		if resolvedAt != nil {
@@ -757,7 +781,8 @@ func (s *Store) AutoResolveStaleExceptionGroups(ctx context.Context, staleAfter 
 		SELECT fingerprint, ex_type, ex_message, service, state, assignee,
 		       toUnixTimestamp64Nano(first_seen),
 		       toUnixTimestamp64Nano(last_seen),
-		       resolved_at, occurrences, notes, ai_summary
+		       resolved_at, occurrences, notes, ai_summary,
+		       toUnixTimestamp64Nano(ai_summary_at)
 		FROM exception_groups FINAL
 		WHERE state IN ('new','acknowledged','regressed')
 		  AND last_seen < ?
@@ -772,7 +797,7 @@ func (s *Store) AutoResolveStaleExceptionGroups(ctx context.Context, staleAfter 
 		var resolvedAt *time.Time
 		if err := rows.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service,
 			&g.State, &g.Assignee, &g.FirstSeen, &g.LastSeen, &resolvedAt,
-			&g.Occurrences, &g.Notes, &g.AISummary); err != nil {
+			&g.Occurrences, &g.Notes, &g.AISummary, &g.AISummaryAt); err != nil {
 			rows.Close()
 			return 0, err
 		}

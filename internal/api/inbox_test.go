@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -80,5 +81,91 @@ func TestNormalizeInboxSince(t *testing.T) {
 	}
 	if inboxSinceDuration("") != 0 {
 		t.Error("boş since süre üretmemeli")
+	}
+}
+
+// v0.9.530 — "hesaplandı, çöpe atıldı" sınıfının İKİNCİ nüshası.
+//
+// v0.9.255 aynısını runbookUrl/recentDeploy için kapatmıştı: listInbox
+// zenginleştirme turlarını ödüyor, mapper sonucu atıyordu. AISummary'de
+// aynı şey oluyordu — ListProblems (problem.go:789) ve
+// ListExceptionGroups (exception_inbox.go) ai_summary'yi ZATEN
+// SELECT'liyor, iki mapper da kopyalamıyordu.
+//
+// Bu sınıfın sessiz olması tehlikeli: hata yok, sorgu yavaşlamıyor,
+// yalnız operatör hiç göremiyor. Test kopyalamayı pinler.
+func TestInboxMappersCarryAISummary(t *testing.T) {
+	const at = int64(1_700_000_000_000_000_000)
+
+	t.Run("problem", func(t *testing.T) {
+		it := problemToInbox(chstore.Problem{
+			ID: "p1", AISummary: "Olası neden: deploy v42", AISummaryAt: at,
+		})
+		if it.AISummary != "Olası neden: deploy v42" {
+			t.Errorf("özet taşınmadı: %q", it.AISummary)
+		}
+		if it.AISummaryAt != at {
+			t.Errorf("damga taşınmadı: %d", it.AISummaryAt)
+		}
+	})
+
+	t.Run("exception", func(t *testing.T) {
+		it := exceptionToInbox(chstore.ExceptionGroup{
+			Fingerprint: "fp", Type: "NullPointerException",
+			AISummary: "Olası neden: null config", AISummaryAt: at,
+		})
+		if it.AISummary != "Olası neden: null config" {
+			t.Errorf("özet taşınmadı: %q", it.AISummary)
+		}
+		if it.AISummaryAt != at {
+			t.Errorf("damga taşınmadı: %d", it.AISummaryAt)
+		}
+	})
+
+	// Özet YOKSA damga da gitmemeli — "0 dk önce" gösterimi yalan olurdu.
+	t.Run("özetsiz satır damga taşımaz", func(t *testing.T) {
+		it := exceptionToInbox(chstore.ExceptionGroup{Fingerprint: "fp"})
+		if it.AISummary != "" || it.AISummaryAt != 0 {
+			t.Errorf("boş özet + sıfır damga beklenirdi: %q / %d", it.AISummary, it.AISummaryAt)
+		}
+	})
+}
+
+// Kırpma RUNE sınırında olmalı. Eski `s[:n]` çok baytlı bir karakteri
+// ortadan böler; Türkçe'de ç/ğ/ı/ö/ş/ü hepsi 2 bayt, yani AI özetinde
+// bölünme olasılığı yüksek. Bozuk bayt JSON'a girince U+FFFD'ye döner
+// ve operatör triage satırında "�" görür.
+func TestInboxTruncateIsRuneSafe(t *testing.T) {
+	// 240 baytlık bütçenin tam sınırına Türkçe karakter denk getir.
+	long := strings.Repeat("ş", 400) // her biri 2 bayt
+	got := inboxTruncate(long, inboxAISummaryMax)
+	if !utf8.ValidString(got) {
+		t.Fatalf("kırpma geçersiz UTF-8 üretti: %q", got)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Errorf("kırpıldığı belli olmalı: %q", got)
+	}
+	if len(got) > inboxAISummaryMax+len("…") {
+		t.Errorf("bütçe aşıldı: %d bayt", len(got))
+	}
+
+	// Her uzunlukta geçerli UTF-8 — sınırın hangi bayta düştüğü fark
+	// etmemeli.
+	for n := 1; n <= 60; n++ {
+		s := strings.Repeat("ğüşiöç", 20)
+		if out := inboxTruncate(s, n); !utf8.ValidString(out) {
+			t.Errorf("n=%d geçersiz UTF-8: %q", n, out)
+		}
+	}
+
+	// Bütçenin altındaki metin DEĞİŞMEZ — gereksiz "…" eklenmemeli.
+	short := "kısa özet"
+	if got := inboxTruncate(short, inboxAISummaryMax); got != short {
+		t.Errorf("kısa metin değişmemeli: %q", got)
+	}
+
+	// ASCII davranışı korunmalı (mevcut g.Message kullanımı).
+	if got := inboxTruncate(strings.Repeat("a", 300), 10); got != "aaaaaaaaaa…" {
+		t.Errorf("ASCII kırpma bozuldu: %q", got)
 	}
 }

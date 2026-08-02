@@ -5,7 +5,7 @@ import type {
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, EndpointDetail, EndpointSplitResponse, EndpointDownstream, ServiceAttrsResponse,
-  AlertRule, Problem, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
+  AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
   SMTPSettings, NotificationChannel,
@@ -1860,6 +1860,10 @@ export const api = {
   // capped at 200 silently on installs with >200 open problems.
   problemsCount: (params: { status?: string; service?: string; severity?: string; env?: string } = {}) =>
     get<{ count: number }>(`/api/problems/count?${qs(params)}`),
+  // v0.9.550 — evaluator kalp atışı (worker pod'u Redis'e yazar,
+  // API okur). Filtre YOK: sağlık her filtreden bağımsızdır ve
+  // parametre eklemek gereksiz cache parçalanması olurdu.
+  evaluatorHealth: () => get<EvaluatorHealth>('/api/problems/evaluator'),
 
   // ── SLOs ─────────────────────────────────────────────────────────────────
   listSLOs: () => get<SLORow[] | null>('/api/slos'),

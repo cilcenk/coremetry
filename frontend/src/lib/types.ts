@@ -2150,6 +2150,24 @@ export interface NoisyRule {
   currentCooldownSec: number;
 }
 
+// v0.9.550 — evaluator kalp atışı. Boş bir Problems sayfasının
+// "sorun yok" mu yoksa "evaluator ölü" mü olduğunu ayırt eder.
+// status='unknown' ÖLÇEMEDİK demektir; asla iyi haber olarak
+// gösterilmemeli (backend: internal/api/evaluator_health.go).
+export interface EvaluatorHealth {
+  status: 'ok' | 'stale' | 'failing' | 'unknown';
+  reason: string;
+  /** Son tikten bu yana geçen saniye; unknown iken -1. Sunucu hesaplar
+   *  (tarayıcı saati kaymış olabilir). */
+  ageSec: number;
+  durationMs: number;
+  rules: number;
+  opened: number;
+  resolved: number;
+  err?: string;
+  version?: string;
+}
+
 export interface Problem {
   id: string;
   // Runbook URL — composed at read time on the backend from

@@ -112,6 +112,7 @@ func (e *Evaluator) evaluateSLOBurn(ctx context.Context, slo chstore.SLO, pol bu
 			log.Printf("[evaluator/slo] open: %v", err)
 			return
 		}
+		e.countOpened() // v0.9.550 — kalp atışı sayacı
 		log.Printf("[evaluator/slo] PROBLEM OPENED: %s %s burn=%.1fx/%.1fx",
 			slo.Service, pol.severity, fastRate, slowRate)
 		if _, err := e.store.AttachProblemToIncident(ctx, p); err != nil {
@@ -136,6 +137,7 @@ func (e *Evaluator) evaluateSLOBurn(ctx context.Context, slo chstore.SLO, pol bu
 		open.ResolvedAt = &now
 		open.Value = fastRate
 		_ = e.store.UpsertProblem(ctx, *open)
+		e.countResolved() // v0.9.550 — kalp atışı sayacı
 		log.Printf("[evaluator/slo] PROBLEM RESOLVED: %s %s burn=%.1fx/%.1fx",
 			slo.Service, pol.severity, fastRate, slowRate)
 	}

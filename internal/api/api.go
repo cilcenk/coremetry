@@ -771,6 +771,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET    /api/services/{name}/span-breakdown", s.svcSpanBreakdown)
 	mux.HandleFunc("GET    /api/problems", s.listProblems)
 	mux.HandleFunc("GET    /api/problems/count", s.countProblems)
+	// v0.9.550 — evaluator kalp atışı. /api/problems ile AYNI yetki
+	// duruşu (rol kapısı yok): boş bir Problems sayfasının "sorun yok"
+	// mu yoksa "evaluator ölü" mü olduğunu görmek her rolün hakkı.
+	// Admin'e kilitlemek, viewer'ı tam da bu ayrımdan mahrum bırakırdı.
+	mux.HandleFunc("GET    /api/problems/evaluator", s.getEvaluatorHealth)
 	mux.HandleFunc("GET    /api/problems/buckets", s.listProblemBuckets)
 	mux.HandleFunc("GET    /api/problems/{id}/rootcause", s.getProblemRootCause)
 	// Copilot prose narration of the persisted problem hypothesis (rc #4) —

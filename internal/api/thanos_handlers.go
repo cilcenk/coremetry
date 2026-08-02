@@ -54,13 +54,27 @@ func (s *Server) getClusterPods(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown or disabled cluster", http.StatusNotFound)
 		return
 	}
-	key := fmt.Sprintf("cluster-pods:%s:%s", name, clusterCfgDigest(cfg))
+	// podRe — v0.9.536: servis sekmelerinin hedefli seçicisi. Boş = tüm
+	// cluster (eski davranış, /clusters). Uzunluk tavanı: değer PromQL'e
+	// gömülür ve cache anahtarına girer; serbest uzunluk ikisini de
+	// kötüye açar. Regex geçerliliğini Thanos denetler (bozuk regex o
+	// cluster için sorgu hatası olarak döner — sessiz yutulmaz).
+	podRe := strings.TrimSpace(r.URL.Query().Get("podRe"))
+	if len(podRe) > 512 {
+		http.Error(w, "podRe too long (max 512)", http.StatusBadRequest)
+		return
+	}
+	// Cache anahtarı TÜM girdileri taşır (ev kuralı) — podRe dahil.
+	// fnv digest'i: regex ham hâliyle Redis anahtarına girmesin.
+	ph := fnv.New64a()
+	ph.Write([]byte(podRe))
+	key := fmt.Sprintf("cluster-pods:%s:%s:%x", name, clusterCfgDigest(cfg), ph.Sum64())
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		// 10s deadline per cluster call (client hard cap 15s):
 		// a wedged Querier must not pin the singleflight slot.
 		qctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
-		rows, truncated, err := s.thanos.PodMetrics(qctx, cfg)
+		rows, truncated, err := s.thanos.PodMetrics(qctx, cfg, podRe)
 		if err != nil {
 			return nil, err
 		}

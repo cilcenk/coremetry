@@ -5,6 +5,7 @@ import { RuntimeCharts } from './RuntimeCharts';
 import { ServiceClusterPods } from './ServiceClusterPods';
 import { useServicePods } from './useServicePods';
 import { podDetailPath } from './podDetailPath';
+import { servicePodRegex } from '@/pages/clusters/podWorkload';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
@@ -82,8 +83,11 @@ export function ServicePodsTab({ service, range, onZoom, onZoomReset }: {
           </Empty>
         ) : (
           <Empty icon="▦" title="No pods matched">
+            {/* v0.9.536 — metin GERÇEK aday kalıbını gösterir (eskiden
+                yalnız servis adını yazıyor ve operatörü yanıltıyordu:
+                "aslında araması gereken mobile-overview-bff"). */}
             Tried {ns && deploy ? `k8s.namespace=${ns} · ${deploy}` : 'the k8s metadata mapping'}
-            {' '}and pod-name matching (<span className="mono">{service}-*</span>) across{' '}
+            {' '}and pod-name matching (<span className="mono">{servicePodRegex(service, deploy)}</span>) across{' '}
             {matched.length} Thanos cluster{matched.length > 1 ? 's' : ''} — nothing matched.
             {truncatedClusters.length > 0 && (
               <div style={{ marginTop: 6 }}>

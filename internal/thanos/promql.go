@@ -49,27 +49,45 @@ func nsMatcher(nsFilter string) string {
 // podCPUQuery — per-pod CPU in cores: 5m rate over the cAdvisor
 // counter, container!="" drops the pause/aggregate rows,
 // pod!="" drops node-level series.
-func podCPUQuery(nsFilter string) string {
+// podMatcher — v0.9.536. Envanter sorgularının pod seçicisi. podRe
+// boşken eski davranış (pod!=""); doluyken pod=~"<re>" — PromQL =~
+// TAM eşleşir (kısmi değil), regex istemcinin "(aday1|aday2)-.*"
+// önek kalıbıdır.
+//
+// Neden var (operator-reported, prod): envanter topk(500) cluster
+// GENELİNDE en işlekleri döndürür; 0.001 core'luk BFF pod'ları büyük
+// prod cluster'ında ilk 500'e hiç giremiyordu → istemci eşleştirmesi
+// ne kadar doğru olursa olsun hiç gelmeyen pod'u eşleştiremez ve
+// Pods/Infrastructure "No pods matched" gösteriyordu. Hedefli seçici
+// topk'u servisin KENDİ pod'ları içinde işletir — kesme fiilen kalkar.
+func podMatcher(podRe string) string {
+	if podRe == "" {
+		return `pod!=""`
+	}
+	return fmt.Sprintf(`pod=~"%s"`, escapeLabelValue(podRe))
+}
+
+func podCPUQuery(nsFilter, podRe string) string {
 	return fmt.Sprintf(
-		`topk(%d, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",pod!=""%s}[5m])))`,
-		podListLimit, nsMatcher(nsFilter))
+		`topk(%d, sum by (namespace, pod) (rate(container_cpu_usage_seconds_total{container!="",%s%s}[5m])))`,
+		podListLimit, podMatcher(podRe), nsMatcher(nsFilter))
 }
 
 // podMemQuery — per-pod working-set bytes (the OOM-relevant
 // number, matching `kubectl top pod`).
-func podMemQuery(nsFilter string) string {
+func podMemQuery(nsFilter, podRe string) string {
 	return fmt.Sprintf(
-		`topk(%d, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",pod!=""%s}))`,
-		podListLimit, nsMatcher(nsFilter))
+		`topk(%d, sum by (namespace, pod) (container_memory_working_set_bytes{container!="",%s%s}))`,
+		podListLimit, podMatcher(podRe), nsMatcher(nsFilter))
 }
 
 // podLimitQuery — per-pod resource limits from kube-state-metrics.
 // resource is "cpu" (cores) or "memory" (bytes). Best-effort: the
 // caller tolerates this series being entirely absent.
-func podLimitQuery(resource, nsFilter string) string {
+func podLimitQuery(resource, nsFilter, podRe string) string {
 	return fmt.Sprintf(
-		`sum by (namespace, pod) (kube_pod_container_resource_limits{resource="%s",pod!=""%s})`,
-		escapeLabelValue(resource), nsMatcher(nsFilter))
+		`sum by (namespace, pod) (kube_pod_container_resource_limits{resource="%s",%s%s})`,
+		escapeLabelValue(resource), podMatcher(podRe), nsMatcher(nsFilter))
 }
 
 // podRequestQuery — podLimitQuery's sibling for resource REQUESTS
@@ -77,10 +95,10 @@ func podLimitQuery(resource, nsFilter string) string {
 // best-effort contract; the two percentages answer different
 // questions — limit = throttle/OOM proximity, request =
 // provisioning accuracy — so both ride the row.
-func podRequestQuery(resource, nsFilter string) string {
+func podRequestQuery(resource, nsFilter, podRe string) string {
 	return fmt.Sprintf(
-		`sum by (namespace, pod) (kube_pod_container_resource_requests{resource="%s",pod!=""%s})`,
-		escapeLabelValue(resource), nsMatcher(nsFilter))
+		`sum by (namespace, pod) (kube_pod_container_resource_requests{resource="%s",%s%s})`,
+		escapeLabelValue(resource), podMatcher(podRe), nsMatcher(nsFilter))
 }
 
 // singlePodCPUQuery / singlePodMemQuery — the drawer's range-query
@@ -310,10 +328,10 @@ func nsPodsMemTrendQuery(namespace string) string {
 //   node/cluster: node_network_*_bytes_total{device!="lo"}
 //             (node-exporter; loopback dışlanır)
 
-func podNetQuery(direction, nsFilter string) string {
+func podNetQuery(direction, nsFilter, podRe string) string {
 	return fmt.Sprintf(
-		`topk(%d, sum by (namespace, pod) (rate(container_network_%s_bytes_total{pod!=""%s}[5m])))`,
-		podListLimit, escapeLabelValue(direction), nsMatcher(nsFilter))
+		`topk(%d, sum by (namespace, pod) (rate(container_network_%s_bytes_total{%s%s}[5m])))`,
+		podListLimit, escapeLabelValue(direction), podMatcher(podRe), nsMatcher(nsFilter))
 }
 
 func nodeNetQuery(direction string) string {

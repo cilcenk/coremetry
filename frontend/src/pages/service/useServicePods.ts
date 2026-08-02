@@ -3,7 +3,7 @@ import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { useServicesMetadata } from '@/lib/queries';
 import { timeRangeToNs } from '@/lib/utils';
-import { podMatchesService, dominantWorkload } from '@/pages/clusters/podWorkload';
+import { podMatchesService, dominantWorkload, servicePodRegex } from '@/pages/clusters/podWorkload';
 import type { ClusterPodRow, TimeRange } from '@/lib/types';
 
 // dominantNamespace — eşleşen pod'ların en sık namespace'i (v0.9.56):
@@ -51,10 +51,16 @@ export function useServicePods(service: string, range: TimeRange) {
       staleTime: 60_000, retry: 1, enabled: ns !== '',
     })),
   });
+  // v0.9.536 — HEDEFLİ envanter (operator-reported: BFF pod'ları
+  // cluster-geneli topk(500)'e giremiyordu → istemci eşleştirmesi hiç
+  // gelmeyen pod'u eşleştiremez, "No pods matched"). Sunucu regex'le
+  // daraltır; anahtar podRe'yi taşır — /clusters sayfasının düz
+  // envanter cache'iyle ÇAKIŞMAZ (farklı anahtar, farklı sonuç).
+  const podRe = servicePodRegex(service, deploy);
   const podQs = useQueries({
     queries: matched.map(c => ({
-      queryKey: ['cluster-pods', c],
-      queryFn: () => api.clusterPods(c),
+      queryKey: ['cluster-pods', c, podRe],
+      queryFn: () => api.clusterPods(c, podRe),
       staleTime: 60_000, retry: 1,
     })),
   });

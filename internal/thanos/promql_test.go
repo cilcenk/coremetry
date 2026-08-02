@@ -15,20 +15,20 @@ func TestPodQueriesCarryCardinalityShields(t *testing.T) {
 		query    string
 		wantSubs []string
 	}{
-		{"cpu with ns filter", podCPUQuery("^app-"), []string{
+		{"cpu with ns filter", podCPUQuery("^app-", ""), []string{
 			`topk(500,`, `sum by (namespace, pod)`,
 			`rate(container_cpu_usage_seconds_total{container!="",pod!="",namespace=~"^app-"}[5m])`,
 		}},
-		{"cpu without ns filter", podCPUQuery(""), []string{
+		{"cpu without ns filter", podCPUQuery("", ""), []string{
 			`topk(500,`, `container_cpu_usage_seconds_total{container!="",pod!=""}`,
 		}},
-		{"mem with ns filter", podMemQuery("payments"), []string{
+		{"mem with ns filter", podMemQuery("payments", ""), []string{
 			`topk(500,`, `container_memory_working_set_bytes{container!="",pod!="",namespace=~"payments"}`,
 		}},
-		{"cpu limits", podLimitQuery("cpu", ""), []string{
+		{"cpu limits", podLimitQuery("cpu", "", ""), []string{
 			`kube_pod_container_resource_limits{resource="cpu",pod!=""}`,
 		}},
-		{"memory limits with ns", podLimitQuery("memory", "^x$"), []string{
+		{"memory limits with ns", podLimitQuery("memory", "^x$", ""), []string{
 			`resource="memory"`, `namespace=~"^x$"`,
 		}},
 	}
@@ -47,7 +47,7 @@ func TestPodQueriesCarryCardinalityShields(t *testing.T) {
 // birebir kardeşi kalmalı (aynı gruplandırma + kalkanlar), yalnız
 // metrik adı değişir.
 func TestPodRequestQuery(t *testing.T) {
-	q := podRequestQuery("cpu", "^app-")
+	q := podRequestQuery("cpu", "^app-", "")
 	for _, sub := range []string{
 		`kube_pod_container_resource_requests{resource="cpu",pod!="",namespace=~"^app-"}`,
 		`sum by (namespace, pod)`,
@@ -261,5 +261,54 @@ func TestHaproxyTrendQuery(t *testing.T) {
 				t.Errorf("haproxyTrendQuery(%q,%q) =\n  %s\nbeklenen\n  %s", c.ns, c.kind, got, c.want)
 			}
 		})
+	}
+}
+
+// v0.9.536 — hedefli pod seçicisi. Operator-reported: envanter topk(500)
+// cluster GENELİNDE işliyordu; 0.001 core'luk BFF pod'ları büyük prod
+// cluster'ında ilk 500'e giremiyor, istemci eşleştirmesi hiç gelmeyen
+// pod'u eşleştiremiyordu ("No pods matched … across 14 Thanos clusters").
+// podRe doluyken topk servisin KENDİ pod'ları içinde işler.
+func TestPodMatcher(t *testing.T) {
+	// Boş = eski davranış BAYT-BAYT: /clusters sayfası değişmemeli.
+	if got := podMatcher(""); got != `pod!=""` {
+		t.Errorf("boş podRe eski seçiciyi vermeli, got %s", got)
+	}
+	// Dolu = tam-eşleşen regex (PromQL =~ zaten tam eşler).
+	want := `pod=~"(mobile-overview-bff-prod|mobile-overview-bff)-.*"`
+	if got := podMatcher(`(mobile-overview-bff-prod|mobile-overview-bff)-.*`); got != want {
+		t.Errorf("podMatcher = %s, beklenen %s", got, want)
+	}
+	// Tırnak kaçışı — değer PromQL string'ine gömülür.
+	if got := podMatcher(`a"b`); got != `pod=~"a\"b"` {
+		t.Errorf("tırnak kaçışı bozuk: %s", got)
+	}
+}
+
+func TestPodQueriesCarryPodRe(t *testing.T) {
+	const re = `(svc)-.*`
+	for name, q := range map[string]string{
+		"cpu":  podCPUQuery("", re),
+		"mem":  podMemQuery("", re),
+		"lim":  podLimitQuery("cpu", "", re),
+		"req":  podRequestQuery("memory", "", re),
+		"net":  podNetQuery("receive", "", re),
+	} {
+		if !strings.Contains(q, `pod=~"(svc)-.*"`) {
+			t.Errorf("%s sorgusu podRe taşımıyor: %s", name, q)
+		}
+		if strings.Contains(q, `pod!=""`) {
+			t.Errorf("%s sorgusunda eski seçici kalmış: %s", name, q)
+		}
+	}
+	// podRe boşken beş sorgu da eski seçiciyle.
+	for name, q := range map[string]string{
+		"cpu": podCPUQuery("", ""), "mem": podMemQuery("", ""),
+		"lim": podLimitQuery("cpu", "", ""), "req": podRequestQuery("memory", "", ""),
+		"net": podNetQuery("receive", "", ""),
+	} {
+		if !strings.Contains(q, `pod!=""`) {
+			t.Errorf("%s boş podRe'de eski seçiciyi kaybetmiş: %s", name, q)
+		}
 	}
 }

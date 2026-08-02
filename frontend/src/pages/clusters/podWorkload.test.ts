@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { podWorkloadName, workloadMatchesService, podMatchesService, stripEnvSuffix, dominantWorkload } from './podWorkload';
+import { podWorkloadName, workloadMatchesService, podMatchesService, stripEnvSuffix, dominantWorkload, servicePodRegex } from './podWorkload';
 
 // v0.9.56 — servis-adı↔pod-adı yedek eşleşmesinin çekirdeği; backend
 // stripPodSuffixes ile aynı davranış (operatör vakası:
@@ -188,5 +188,27 @@ describe('dominantWorkload (v0.9.535 — effDeploy yedeği)', () => {
       'bbb-6b8f49b9d5-8hrtj',
       'aaa-6b8f49b9d5-8hrtj',
     ])).toBe('aaa');
+  });
+});
+
+// v0.9.536 — hedefli envanter seçicisi: sunucu bu regex'i pod=~ olarak
+// PromQL'e gömer. Operator-reported kök sebep: cluster-geneli topk(500)
+// düşük trafikli BFF pod'larını hiç döndürmüyordu — istemci gelmeyen
+// pod'u eşleştiremez.
+describe('servicePodRegex', () => {
+  it('katalog deploy + servis + soyulmuş ad, sıralı ve tekilleşmiş', () => {
+    expect(servicePodRegex('mobile-overview-bff-prod', ''))
+      .toBe('(mobile-overview-bff-prod|mobile-overview-bff)-.*');
+  });
+  it('deploy doluysa başa girer', () => {
+    expect(servicePodRegex('mobile-overview-prod', 'mobile-overview-bff'))
+      .toBe('(mobile-overview-bff|mobile-overview-prod|mobile-overview)-.*');
+  });
+  it('eksiz ad tek aday üretir (çift üretme)', () => {
+    expect(servicePodRegex('coremetry-monolithic', ''))
+      .toBe('(coremetry-monolithic)-.*');
+  });
+  it('regex metaları kaçışlanır — servis adı PromQL regex bozamaz', () => {
+    expect(servicePodRegex('svc.v2', '')).toBe('(svc\\.v2)-.*');
   });
 });

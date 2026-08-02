@@ -409,7 +409,12 @@ func firstN(s string, n int) string {
 // düşük trafikli pod'lar topk dışında kalmıştır. v0.9.369: bu bayrak
 // olmadan 3000-pod'luk cluster'da sakin bir servisin sekmesi kendinden
 // emin "Pods (0)" diyordu; süzme istemcide, kesme sunucuda ve İFŞASIZDI.
-func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, bool, error) {
+// podRe — v0.9.536: boş = tüm cluster (eski davranış, /clusters sayfası);
+// dolu = hedefli seçici pod=~"<re>" (servis sekmeleri). Hedefli modda
+// topk(500) servisin KENDİ pod'ları içinde işler — düşük trafikli pod
+// cluster-geneli kesime takılmaz (operator-reported: BFF pod'ları
+// 0.001 core'da top-500'e giremiyordu, "No pods matched").
+func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig, podRe string) ([]PodRow, bool, error) {
 	type acc struct{ cpu, mem, cpuLim, memLim, cpuReq, memReq, netIn, netOut float64 }
 	byKey := map[string]*acc{}
 	get := func(m map[string]string) *acc {
@@ -426,12 +431,12 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, bo
 	// without kube-state-metrics simply leave Pct at 0 — the
 	// HostRow.MemPct contract).
 	cpuSeries, err := s.doQuery(ctx, c, "/api/v1/query",
-		url.Values{"query": {podCPUQuery(c.NamespaceFilter)}})
+		url.Values{"query": {podCPUQuery(c.NamespaceFilter, podRe)}})
 	if err != nil {
 		return nil, false, err
 	}
 	memSeries, err := s.doQuery(ctx, c, "/api/v1/query",
-		url.Values{"query": {podMemQuery(c.NamespaceFilter)}})
+		url.Values{"query": {podMemQuery(c.NamespaceFilter, podRe)}})
 	if err != nil {
 		return nil, false, err
 	}
@@ -450,15 +455,15 @@ func (s *Service) PodMetrics(ctx context.Context, c ClusterConfig) ([]PodRow, bo
 		query string
 		set   func(*acc, float64)
 	}{
-		{podLimitQuery("cpu", c.NamespaceFilter), func(a *acc, v float64) { a.cpuLim = v }},
-		{podLimitQuery("memory", c.NamespaceFilter), func(a *acc, v float64) { a.memLim = v }},
+		{podLimitQuery("cpu", c.NamespaceFilter, podRe), func(a *acc, v float64) { a.cpuLim = v }},
+		{podLimitQuery("memory", c.NamespaceFilter, podRe), func(a *acc, v float64) { a.memLim = v }},
 		// v0.8.580 — request axis, same best-effort contract:
 		// cluster başına sabit 6 sorgu, hâlâ pod sayısından bağımsız.
-		{podRequestQuery("cpu", c.NamespaceFilter), func(a *acc, v float64) { a.cpuReq = v }},
-		{podRequestQuery("memory", c.NamespaceFilter), func(a *acc, v float64) { a.memReq = v }},
+		{podRequestQuery("cpu", c.NamespaceFilter, podRe), func(a *acc, v float64) { a.cpuReq = v }},
+		{podRequestQuery("memory", c.NamespaceFilter, podRe), func(a *acc, v float64) { a.memReq = v }},
 		// v0.9.9 — network (best-effort; cluster başına sabit 8 sorgu oldu).
-		{podNetQuery("receive", c.NamespaceFilter), func(a *acc, v float64) { a.netIn = v }},
-		{podNetQuery("transmit", c.NamespaceFilter), func(a *acc, v float64) { a.netOut = v }},
+		{podNetQuery("receive", c.NamespaceFilter, podRe), func(a *acc, v float64) { a.netIn = v }},
+		{podNetQuery("transmit", c.NamespaceFilter, podRe), func(a *acc, v float64) { a.netOut = v }},
 	} {
 		series, err := s.doQuery(ctx, c, "/api/v1/query", url.Values{"query": {lim.query}})
 		if err != nil {

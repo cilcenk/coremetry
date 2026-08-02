@@ -962,6 +962,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/ai/calls", auth.RequireRole(auth.RoleAdmin, s.listAICalls))
 	mux.HandleFunc("GET /api/ai/calls/{id}", auth.RequireRole(auth.RoleAdmin, s.getAICall))
 	mux.HandleFunc("GET /api/ai/stats", auth.RequireRole(auth.RoleAdmin, s.aiStats))
+	// v0.9.549 — guided router'ın yakalayamadığı sorular (serbest tool
+	// döngüsüne düşenler). "Sıradaki intent ne olmalı" ölçüye bağlanıyor.
+	mux.HandleFunc("GET /api/ai/router-gaps", auth.RequireRole(auth.RoleAdmin, s.aiRouterGaps))
 	mux.HandleFunc("GET /api/ai/series", auth.RequireRole(auth.RoleAdmin, s.aiSeries))
 	mux.HandleFunc("GET /api/ai/rates", auth.RequireRole(auth.RoleAdmin, s.getAIRates))
 	mux.HandleFunc("PUT /api/ai/rates", auth.RequireRole(auth.RoleAdmin, s.putAIRates))

@@ -6,6 +6,8 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum, fmtBytes } from '@/lib/utils';
 import { useClickhouseHealth, useCHCoordinators } from '@/lib/queries';
+import { useQuery } from '@tanstack/react-query';
+import { makeBaseline, nodeWorkView, type Baseline, type NodeWorkRow } from '@/lib/chNodeWork';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
 // slow queries, in-flight merges, part hotspots, replication lag.
@@ -211,6 +213,130 @@ const COORD_WINDOWS: Array<{ s: number; label: string }> = [
   { s: 21600, label: 'Last 6h' },
   { s: 86400, label: 'Last 24h' },
 ];
+
+// NodeWorkPanel — v0.9.543. "Hangi node ne yapıyor, ve CPU'su neden
+// diğerlerinden yüksek?"
+//
+// Operatör soruşturması (prod, 2026-08-02): dbp01'in CPU'su 6 saattir
+// 2-3x. Elle koşulan sorgularla dört hipotez öldü ve merge ORANSIZ
+// çıktı (merge 1.9x iken CPU 2.76x); eşleşen tek sinyal insert oldu
+// (2.93x). Bu panel o ölçümü kalıcı hale getiriyor.
+//
+// Dürüstlük sözleşmesi (lib/chNodeWork'te pinli): restart eden node
+// "0 iş" göstermez, ölçülemeyen "dengeli" sayılmaz, ve dengesizlik
+// SHARD İÇİNDE hesaplanır — aynı shard'ın replikaları aynı veriyi
+// tutar, farklı shard'lar tanım gereği farklı.
+function NodeWorkPanel() {
+  const q = useQuery({
+    queryKey: ['ch-nodework'],
+    queryFn: () => api.chNodeWork(),
+    refetchInterval: 30_000, staleTime: 25_000,
+  });
+  const raw = q.isPending ? undefined : q.isError ? null : q.data ?? null;
+
+  const baseRef = useRef<Baseline | null>(null);
+  const [, bump] = useState(0);
+  if (raw && raw.nodes.length > 0 && !baseRef.current) {
+    baseRef.current = makeBaseline(raw.nodes, raw.generatedAt);
+  }
+  const view = raw ? nodeWorkView(raw.nodes, baseRef.current, raw.generatedAt) : null;
+
+  if (raw === undefined) return <Section title="Node work spread"><Spinner /></Section>;
+  if (raw === null) {
+    return <Section title="Node work spread">
+      <Empty icon="⚠" title="Ölçüm okunamadı">system.events sorgusu başarısız.</Empty>
+    </Section>;
+  }
+
+  const fmt = (v: number | null, d = 2) => v == null ? '—' : v.toFixed(d);
+  const fmtInt = (v: number | null) => v == null ? '—' : v.toLocaleString();
+
+  return (
+    <Section title="Node work spread">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+        <span className="badge b-info" title={
+          'Sayaçlar sunucu açılışından beri kümülatif; panel ilk okumayı taban alıp FARKI ' +
+          'gösteriyor. Açık kaldıkça pencere büyür ve okuma keskinleşir.'}>
+          delta · {view && view.elapsedMs >= 1000
+            ? (view.elapsedMs < 60_000
+              ? `${Math.round(view.elapsedMs / 1000)}sn`
+              : `${Math.round(view.elapsedMs / 60_000)}dk`)
+            : 'taban alındı'}
+        </span>
+        <button type="button" onClick={() => {
+          if (raw) { baseRef.current = makeBaseline(raw.nodes, raw.generatedAt); bump(n => n + 1); }
+        }} style={{
+          background: 'transparent', color: 'var(--accent2)', border: '1px solid var(--border)',
+          borderRadius: 6, fontSize: 11, padding: '3px 8px', cursor: 'pointer',
+        }}>tabanı sıfırla</button>
+        {/* Dengesizlik rozetleri YALNIZ ölçüm varken. null → '—' + gri:
+            "ölçülemedi" ile "dengeli" aynı şey değil. */}
+        {view?.cpuImbalance != null && (
+          <span className={`badge ${imbalanceTone(view.cpuImbalance)}`}
+            title="Shard İÇİ en yüksek CPU dengesizliği (max/ortalama).">
+            CPU spread ×{view.cpuImbalance.toFixed(2)}
+          </span>
+        )}
+        {view?.insertImbalance != null && (
+          <span className={`badge ${imbalanceTone(view.insertImbalance)}`}
+            title="Shard İÇİ en yüksek insert dengesizliği. CPU ile AYNI yönde ise sebep yazma dağılımıdır.">
+            Insert spread ×{view.insertImbalance.toFixed(2)}
+          </span>
+        )}
+        {view && !view.measurable && (
+          <span className="badge b-gray">henüz ölçüm yok — taban alındı, birkaç saniye bekle</span>
+        )}
+        {!raw.shardsKnown && raw.mode === 'cluster' && (
+          <span className="badge b-warn" title="system.clusters okunamadı; dengesizlik shard İÇİ değil TÜM node'lar üzerinden hesaplandı.">
+            shard bilinmiyor
+          </span>
+        )}
+        {raw.expectedNodes > raw.nodes.length && (
+          <span className="badge b-err">
+            {raw.nodes.length}/{raw.expectedNodes} node — EKSİK, oranlar güvenilmez
+          </span>
+        )}
+      </div>
+      {raw.note && (
+        <div style={{ fontSize: 11.5, color: 'var(--text2)', marginBottom: 8 }}>{raw.note}</div>
+      )}
+      <div className="table-wrap">
+        <table style={{ width: '100%' }}>
+          <thead><tr>
+            <th style={{ textAlign: 'left' }}>Node</th>
+            <th style={{ textAlign: 'left' }}>Shard/Rep</th>
+            <th className="num">CPU (cores)</th>
+            <th className="num">Merge (threads)</th>
+            <th className="num">Inserted rows</th>
+            <th className="num">Part fetches</th>
+          </tr></thead>
+          <tbody>
+            {view?.rows.map((r: NodeWorkRow) => (
+              <tr key={r.host} style={{ opacity: r.restarted ? 0.55 : 1 }}>
+                <td className="mono">{r.host}</td>
+                <td className="mono" style={{ color: 'var(--text3)' }}>
+                  {r.shard ? `${r.shard}/${r.replica}` : '—'}
+                </td>
+                <td className="num mono">{fmt(r.cpuCores, 3)}</td>
+                <td className="num mono" title="CPU DEĞİL — merge thread'inin meşgul geçirdiği süre (I/O beklemesi dahil). CPU'yu aşabilir.">
+                  {fmt(r.mergeThreads, 3)}
+                </td>
+                <td className="num mono">{fmtInt(r.insertedRows)}</td>
+                <td className="num mono">{fmtInt(r.partFetches)}</td>
+              </tr>
+            ))}
+            {view?.rows.some((r: NodeWorkRow) => r.restarted) && (
+              <tr><td colSpan={6} style={{ fontSize: 11, color: 'var(--text3)', paddingTop: 6 }}>
+                Soluk satır = sayaç sıfırlanmış (node yeniden başladı). O tur ölçüm yok ve
+                dengesizlik hesabına GİRMİYOR — 0 saymak "iş yapmıyor" demek olurdu.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </Section>
+  );
+}
 
 // Koordinatör dağılımı paneli. Kendi ucu + kendi 60s poll'u var
 // (gövde okuması 10s'te dönüyor; bu okuma pencerede TÜM sorguları
@@ -468,6 +594,11 @@ export default function AdminClickhousePage() {
                 node'u olduğunu okuduktan hemen sonra o node'ların
                 gerçekte eşit yüklenip yüklenmediğini görsün. */}
             <CoordinatorPanel />
+            {/* v0.9.543 — koordinatör paneli "sorgular nereye giriyor"u
+                ölçüyor; bu panel "o node ne İŞ yapıyor"u. Yan yana
+                okunuyorlar: giriş dengeliyken CPU dengesizse cevap
+                sorgu yolunda değil, yazma/merge tarafındadır. */}
+            <NodeWorkPanel />
 
             <Section title="Slow queries (>500ms, last 1h)">
               {(!data.slowQueries || data.slowQueries.length === 0)

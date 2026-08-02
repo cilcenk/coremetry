@@ -552,6 +552,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// ölçüsü; ayrı uç + 60s TTL çünkü gövde okumasından çok daha geniş
 	// bir satır kümesini grupluyor.
 	mux.HandleFunc("GET /api/admin/clickhouse/coordinators", auth.RequireRole(auth.RoleAdmin, s.getCHCoordinatorSpread))
+	// v0.9.543 — node iş dağılımı: CPU · merge · insert · fetch host
+	// başına, HAM kümülatif (pencereyi istemci delta ile açar).
+	mux.HandleFunc("GET /api/admin/clickhouse/nodework", auth.RequireRole(auth.RoleAdmin, s.getCHNodeWork))
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
 	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
 	// only AdminStats reads it, handler had no role check.

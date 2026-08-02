@@ -234,9 +234,14 @@ export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<
   return (
     <colgroup>
       {(leading ?? []).map((w, i) => <col key={`lead-${i}`} style={{ width: w }} />)}
-      {dt.columns.filter(c => !c.headerHidden).map(c => (
-        <col key={c.id} style={{ width: dt.colWidths[c.id] ?? c.width ?? DEFAULT_W }} />
-      ))}
+      {dt.columns.filter(c => !c.headerHidden).map(c => {
+        // v0.9.542 — flex kolon SÜRÜKLENMEDİYSE 'auto': table-layout:fixed
+        // artan genişliği ona verir, diğerleri kendi genişliğinde kalır.
+        // Sürüklendiği an colWidths dolar ve sabit genişliğe döner —
+        // operatörün eli her zaman kazanır.
+        const w = dt.colWidths[c.id] ?? (c.flex ? 'auto' : c.width ?? DEFAULT_W);
+        return <col key={c.id} style={{ width: w }} />;
+      })}
       {(trailing ?? []).map((w, i) => <col key={`trail-${i}`} style={{ width: w }} />)}
     </colgroup>
   );

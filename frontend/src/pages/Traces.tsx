@@ -588,7 +588,21 @@ function TracesPageInner() {
   // sorted rows, so the table never disagrees with the server order. Only the
   // server-sortable fixed columns get a sortValue; attribute columns resize but
   // don't sort (the backend doesn't sort by a projected attr). ──
-  const colIds = useMemo(() => [...FIXED_COLS, ...extraCols], [extraCols]);
+  // v0.9.542 (operatör) — özel attribute kolonları TIME ile SERVICE
+  // ARASINA giriyor, en sağa değil. Gerekçe: channel_code /
+  // function_code operatörün satırı TANIMLAMAK için okuduğu alanlar
+  // (hangi kanal, hangi işlem) — servis/operasyondan ÖNCE gelmeleri
+  // okuma sırasına uyuyor. En sağda kaldıklarında yatay kaydırmanın
+  // ardında kalıyorlardı.
+  //
+  // Sıra tek yerden değişiyor: hem başlık (DataTableHead) hem hücreler
+  // (renderTraceCell) colIds üzerinden çiziliyor, yani ikisi ayrışamaz.
+  // Genişlik/sıralama durumu id'ye bağlı olduğu için kalıcı ayarlar
+  // (localStorage) bu değişiklikten etkilenmiyor.
+  const colIds = useMemo(
+    () => ['time', ...extraCols, ...FIXED_COLS.filter(c => c !== 'time')],
+    [extraCols],
+  );
   const columns: DataTableColumn<TraceRow>[] = useMemo(() =>
     colIds.map(id => {
       const server = SERVER_SORTABLE[id];
@@ -596,6 +610,13 @@ function TracesPageInner() {
         id,
         label: COL_LABEL[id] ?? id,
         width: COL_W[id] ?? ATTR_W,
+        // v0.9.542 (operatör: "boşluklar güzel durmuyor, fit olsun") —
+        // artan genişliği Operation emsin. table-layout:fixed artanı
+        // aksi hâlde TÜM kolonlara serpiyor ve tablo dağılmış görünüyor
+        // (v0.9.501 Trend kolonu sınıfı). Emici olarak Operation seçildi:
+        // içerik olarak en uzun alan o ("INSERT db0p.TUK_TURUN_SEPET_
+        // HEADER" gibi), yani fazladan piksel en çok orada işe yarıyor.
+        flex: id === 'operation',
         numeric: id === 'spans',
         naturalDir: (id === 'service' || id === 'operation' ? 'asc' : 'desc') as SortOrder,
         sortValue: server ? sortAccessor(server) : undefined,

@@ -52,7 +52,7 @@ func trimTopNByArea(series []SpanMetricSeries, n int) (kept []SpanMetricSeries, 
 // metric (Tempo's span-metrics generator pattern). Optional groupBy keys
 // produce one series per unique combination — Dynatrace-style MDA.
 type SpanMetricFilter struct {
-	Filters     []FilterExpr // span filter chips
+	Filters []FilterExpr // span filter chips
 	// FilterRoot is the optional grouped AND/OR builder (v0.8.x gap-2,
 	// extended into Explore). When non-nil, QuerySpanMetric routes the
 	// predicate through ApplyFilterGroup INSTEAD of ApplyFilters(f.Filters),
@@ -64,11 +64,11 @@ type SpanMetricFilter struct {
 	// service_summary_5m / operation_summary_5m rollups, same cost class as a
 	// free-text Search), so it falls to the bounded raw-spans GROUP BY.
 	FilterRoot  *FilterGroup
-	Aggregation string       // count | error_rate | rate | avg | sum | p50 | p95 | p99 | max | min
-	Field       string       // attribute / column to aggregate (default: duration_ms)
-	GroupBy     []string     // 0..N attribute names; same syntax as FilterExpr.Key
+	Aggregation string   // count | error_rate | rate | avg | sum | p50 | p95 | p99 | max | min
+	Field       string   // attribute / column to aggregate (default: duration_ms)
+	GroupBy     []string // 0..N attribute names; same syntax as FilterExpr.Key
 	From, To    time.Time
-	StepSeconds int          // bucket size; if 0, auto-pick from time range
+	StepSeconds int // bucket size; if 0, auto-pick from time range
 	// v0.6.32 — free-text search predicate. Same shape as
 	// GetTraces' search HAVING (positionCaseInsensitive across
 	// name / http_route / http_method+route concat / attr
@@ -90,6 +90,7 @@ type SpanMetricFilter struct {
 //     which is exactly what ApplyFilters would emit), so a flat-AND group with
 //     a `service.name = X` leaf stays MV-eligible — byte-identical to passing
 //     that leaf via f.Filters.
+//
 // A non-flat root never reaches here (the gate disables the fast-paths first),
 // but for safety we return f.Filters unchanged in that case.
 func (f SpanMetricFilter) effectiveFastPathFilters() []FilterExpr {
@@ -106,7 +107,7 @@ type SpanMetricSeries struct {
 }
 
 type SpanMetricPoint struct {
-	Time  int64   `json:"time"`  // unix nanos (bucket start)
+	Time  int64   `json:"time"` // unix nanos (bucket start)
 	Value float64 `json:"value"`
 }
 
@@ -195,14 +196,22 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 		// v0.5.259 — same sub-10s ramp as metricquery.go.
 		span := f.To.Sub(f.From).Seconds()
 		switch {
-		case span <= 120:        step = 1   // ≤2m   → 1s
-		case span <= 600:        step = 5   // ≤10m  → 5s
-		case span <= 1800:       step = 10  // ≤30m  → 10s
-		case span <= 3600:       step = 30  // ≤1h   → 30s
-		case span <= 6*3600:     step = 60  // ≤6h   → 1m
-		case span <= 24*3600:    step = 300 // ≤1d   → 5m
-		case span <= 7*24*3600:  step = 1800
-		default:                 step = 3600
+		case span <= 120:
+			step = 1 // ≤2m   → 1s
+		case span <= 600:
+			step = 5 // ≤10m  → 5s
+		case span <= 1800:
+			step = 10 // ≤30m  → 10s
+		case span <= 3600:
+			step = 30 // ≤1h   → 30s
+		case span <= 6*3600:
+			step = 60 // ≤6h   → 1m
+		case span <= 24*3600:
+			step = 300 // ≤1d   → 5m
+		case span <= 7*24*3600:
+			step = 1800
+		default:
+			step = 3600
 		}
 	} else {
 		// v0.9.460 (dürüstlük A8) — EXPLICIT step de nokta bütçesine
@@ -317,13 +326,13 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 // QuerySpanMetric queries to service_summary_5m. Eligibility
 // gate:
 //
-//   • step ≥ 300s (the MV's bucket granularity; we re-bucket
+//   - step ≥ 300s (the MV's bucket granularity; we re-bucket
 //     bigger windows via toStartOfInterval on time_bucket)
-//   • GroupBy is empty OR exactly ["service.name"]
-//   • Filters all key on service.name with op = (the MV only
+//   - GroupBy is empty OR exactly ["service.name"]
+//   - Filters all key on service.name with op = (the MV only
 //     has service_name as a dimension; any other predicate
 //     would need raw spans)
-//   • Aggregation is one the MV's states can serve:
+//   - Aggregation is one the MV's states can serve:
 //     count, rate, error_rate, errors, avg, p50, p95, p99
 //
 // Returns (series, true) on a successful MV read; (nil, false)
@@ -386,34 +395,10 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 		// MV only has duration; non-duration aggs can't use it.
 		return nil, false
 	}
-	var aggExpr string
-	switch f.Aggregation {
-	case "", "count":
-		aggExpr = "toNullable(toFloat64(countMerge(span_count_state)))"
-	case "rate":
-		aggExpr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
-	case "error_rate":
-		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
-	case "errors":
-		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)))"
-	case "per_min":
-		// Per-minute throughput (Uptrace perMin). count over the step / step
-		// seconds × 60. v0.8.x forced add alongside the legacy `rate`.
-		aggExpr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
-	case "apdex":
-		// Apdex score from the MV's satisfied/tolerating states (Uptrace
-		// apdex()). T is fixed at MV build time (apdex_satisfied = dur ≤ T,
-		// tolerating = T < dur ≤ 4T). v0.8.x.
-		aggExpr = "toNullable((toFloat64(countMerge(apdex_satisfied_state)) + toFloat64(countMerge(apdex_tolerating_state)) / 2) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
-	case "avg":
-		aggExpr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
-	case "p50":
-		aggExpr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6))"
-	case "p95":
-		aggExpr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6))"
-	case "p99":
-		aggExpr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6))"
-	default:
+	// v0.9.565 — ifade tek kanonik yerden gelir (mvAggExpr). Bu switch
+	// ÜÇ yerde kopyalanmıştı ve kopyalar ham yoldan sessizce ayrışmıştı.
+	aggExpr, ok := mvAggExpr(f.Aggregation, step)
+	if !ok {
 		return nil, false
 	}
 
@@ -497,16 +482,16 @@ type operationMVPlan struct {
 // tryOperationMVFastPath and its batched peer, so it can be
 // table-tested without a CH connection. Semantics:
 //
-//   • GroupBy keys limited to name/operation + service.name.
-//   • Filters limited to `service.name = X` and — new in v0.8.425 —
+//   - GroupBy keys limited to name/operation + service.name.
+//   - Filters limited to `service.name = X` and — new in v0.8.425 —
 //     `name = Y` single-value equality. The name filter is what the
 //     operation-scoped RED view (v0.8.414, filters {service.name,
 //     name} groupBy []) emits; before this gate change those queries
 //     fell through to raw-spans scans on every ≥5m fallback window
 //     while their unscoped siblings rode the MV.
-//   • The operation axis must be present SOMEWHERE: either as a
+//   - The operation axis must be present SOMEWHERE: either as a
 //     groupBy split (hasName) or pinned by a name filter.
-//   • Service scope stays mandatory (groupBy service.name or a
+//   - Service scope stays mandatory (groupBy service.name or a
 //     service filter) — a cross-service single-operation scan is
 //     probably not what the operator meant (v0.5.269 refusal kept).
 func operationMVGate(groupBy []string, filters []FilterExpr) (operationMVPlan, bool) {
@@ -569,13 +554,13 @@ func operationMVGate(groupBy []string, filters []FilterExpr) (operationMVPlan, b
 // name, bin(time, 5m)`) without ever touching raw spans.
 //
 // Eligibility:
-//   • step ≥ 300s
-//   • GroupBy contains "name" (operation), optionally
+//   - step ≥ 300s
+//   - GroupBy contains "name" (operation), optionally
 //     "service.name". The two-key set ["service.name","name"]
 //     splits per (service, operation); ["name"] alone is
 //     valid when a service filter pins the scope.
-//   • Filters are all service.name = X with op =.
-//   • Agg in the MV's state set (same as the service fast-path).
+//   - Filters are all service.name = X with op =.
+//   - Agg in the MV's state set (same as the service fast-path).
 //
 // When GroupBy is just ["name"] without a service filter we
 // reject — the MV would return cross-service operation rows
@@ -614,34 +599,10 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 	if field != "duration_ms" {
 		return nil, false
 	}
-	var aggExpr string
-	switch f.Aggregation {
-	case "", "count":
-		aggExpr = "toNullable(toFloat64(countMerge(span_count_state)))"
-	case "rate":
-		aggExpr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
-	case "error_rate":
-		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
-	case "errors":
-		aggExpr = "toNullable(toFloat64(countMerge(error_count_state)))"
-	case "per_min":
-		// Per-minute throughput (Uptrace perMin). count over the step / step
-		// seconds × 60. v0.8.x forced add alongside the legacy `rate`.
-		aggExpr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
-	case "apdex":
-		// Apdex score from the MV's satisfied/tolerating states (Uptrace
-		// apdex()). T is fixed at MV build time (apdex_satisfied = dur ≤ T,
-		// tolerating = T < dur ≤ 4T). v0.8.x.
-		aggExpr = "toNullable((toFloat64(countMerge(apdex_satisfied_state)) + toFloat64(countMerge(apdex_tolerating_state)) / 2) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
-	case "avg":
-		aggExpr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
-	case "p50":
-		aggExpr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6))"
-	case "p95":
-		aggExpr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6))"
-	case "p99":
-		aggExpr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6))"
-	default:
+	// v0.9.565 — ifade tek kanonik yerden gelir (mvAggExpr). Bu switch
+	// ÜÇ yerde kopyalanmıştı ve kopyalar ham yoldan sessizce ayrışmıştı.
+	aggExpr, ok := mvAggExpr(f.Aggregation, step)
+	if !ok {
 		return nil, false
 	}
 
@@ -758,31 +719,17 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 		if field != "duration_ms" {
 			return nil, false
 		}
-		var expr string
-		switch a.Aggregation {
-		case "", "count":
-			expr = "toNullable(toFloat64(countMerge(span_count_state)))"
-		case "rate":
-			expr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
-		case "error_rate":
-			expr = "toNullable(toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
-		case "errors":
-			expr = "toNullable(toFloat64(countMerge(error_count_state)))"
-		case "per_min":
-			expr = fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step)
-		case "apdex":
-			expr = "toNullable((toFloat64(countMerge(apdex_satisfied_state)) + toFloat64(countMerge(apdex_tolerating_state)) / 2) / nullIf(toFloat64(countMerge(span_count_state)), 0))"
-		case "avg":
-			expr = "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)"
-		case "p50":
-			expr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6))"
-		case "p95":
-			expr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6))"
-		case "p99":
-			expr = "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6))"
-		default:
+		// v0.9.565 — kanonik ifade (mvAggExpr). Üçüncü kopya buydu.
+		// return (continue DEĞİL): aggExprs, f.Aggs ile 1:1 POZİSYONEL
+		// olmak zorunda — SQL bunları v0/v1/v2 takma adlarıyla yayıyor ve
+		// tarama pozisyonu agg sırasına göre eşleşiyor (yukarıdaki nota
+		// bkz.). Desteklenmeyen bir agg'i atlamak pozisyonları kaydırır
+		// ve yanlış seriye yanlış değer yazar. Tüm batch ham yola düşer.
+		expr, ok := mvAggExpr(a.Aggregation, step)
+		if !ok {
 			return nil, false
 		}
+
 		aggExprs = append(aggExprs, expr)
 	}
 
@@ -1333,4 +1280,56 @@ func SeriesRowsCapped(series []SpanMetricSeries) bool {
 		total += len(sr.Points)
 	}
 	return total >= SpanMetricRowCap
+}
+
+// mvAggExpr — MV (service/operation özet) yolunun agg ifadesi.
+//
+// v0.9.565 — bu switch ÜÇ yerde birebir kopyalanmıştı (service MV,
+// operation MV, batched peer) ve kopyalar SESSİZCE ham yoldan
+// ayrışmıştı. Tek fonksiyona indirildi; kopyalamak, sapmanın kendisiydi.
+//
+// BİRİM SÖZLEŞMESİ — ham yolla (aggToSQL) AYNI olmak ZORUNDA:
+//
+//	rate       → saniye başına   (count/step)          — çarpan YOK
+//	per_min    → dakika başına   (count/step*60)       — çarpan VAR
+//	error_rate → YÜZDE           (100 * err/count)
+//
+// Öncesinde MV yolu rate'i DAKİKA başına, error_rate'i 0-1 ORANI
+// döndürüyordu; ham yol saniye ve yüzde. Yani aynı panel, MV'nin
+// devreye girip girmemesine göre 60× ve 100× sapıyordu.
+//
+// Daha kötüsü sapma ARALIĞA BAĞLIYDI: MV kapısı ≤24 saatlik aralıkları
+// reddediyor, yani operatör aralığı 24 saatin üstüne çekince aynı karo
+// 60× sıçrıyor, "%2.5 hata" birden "%0.025" oluyordu. Hiçbir hata
+// görünmeden.
+//
+// ok=false ⇒ bu agg MV'den karşılanamaz, çağıran ham yola düşer.
+func mvAggExpr(agg string, step int) (string, bool) {
+	switch agg {
+	case "", "count":
+		return "toNullable(toFloat64(countMerge(span_count_state)))", true
+	case "rate":
+		// Saniye başına — ham yolun count()/step sözleşmesi.
+		return fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0)", step), true
+	case "error_rate":
+		// YÜZDE — ham yolun 100.0 * ... sözleşmesi.
+		return "toNullable(100.0 * toFloat64(countMerge(error_count_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0))", true
+	case "errors":
+		return "toNullable(toFloat64(countMerge(error_count_state)))", true
+	case "per_min":
+		// Dakika başına — burada çarpan DOĞRU, ham yolda da var.
+		return fmt.Sprintf("toNullable(toFloat64(countMerge(span_count_state)) / %d.0 * 60.0)", step), true
+	case "apdex":
+		return "toNullable((toFloat64(countMerge(apdex_satisfied_state)) + toFloat64(countMerge(apdex_tolerating_state)) / 2) / nullIf(toFloat64(countMerge(span_count_state)), 0))", true
+	case "avg":
+		return "toNullable(toFloat64(sumMerge(duration_sum_state)) / nullIf(toFloat64(countMerge(span_count_state)), 0) / 1e6)", true
+	case "p50":
+		return "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 1) / 1e6))", true
+	case "p95":
+		return "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6))", true
+	case "p99":
+		return "toNullable(toFloat64(arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6))", true
+	default:
+		return "", false
+	}
 }

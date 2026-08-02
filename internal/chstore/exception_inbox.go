@@ -226,7 +226,7 @@ var (
 	// abc123def456): ≥8 hane, en az bir harf VE bir rakam şartı
 	// lookahead'siz iki alternatifle (RE2 lookahead desteklemez).
 	mixedTokRe = regexp.MustCompile(`\b(?:[A-Za-z]+\d|\d+[A-Za-z])[A-Za-z0-9]{6,}\b`)
-	intRe     = regexp.MustCompile(`\d+`)
+	intRe      = regexp.MustCompile(`\d+`)
 )
 
 func normalizeMessage(s string) string {
@@ -247,11 +247,15 @@ func normalizeMessage(s string) string {
 //   - missing row             → state=new
 //   - state=resolved + new occurrence later than resolved_at → state=regressed
 //   - everything else         → state preserved, only counters updated
-func (s *Store) UpsertExceptionGroup(ctx context.Context, g ExceptionGroup) error {
-	existing, err := s.GetExceptionGroup(ctx, g.Fingerprint)
-	if err != nil {
-		return err
-	}
+//
+// mergeExceptionGroup — taze tarama sonucunu KAYITLI satırla birleştirir.
+// SAF (store'suz, ctx'siz) — v0.9.523'te ayrıştırıldı, artık tablo-testli.
+//
+// Neden ayrı: ReplacingMergeTree TAM SATIR replace, yani upsert kendi
+// üretmediği alanları (state/assignee/notes/AISummary/first_seen) ileri
+// taşımak ZORUNDA. Bu mantık bugüne kadar okuma çağrısıyla iç içeydi ve
+// test edilemiyordu; toplu okumaya geçerken ayrıldı.
+func mergeExceptionGroup(g ExceptionGroup, existing *ExceptionGroup) ExceptionGroup {
 	if existing != nil {
 		// Preserve state/assignee/notes/first_seen; bump last_seen + count.
 		g.State = existing.State
@@ -287,7 +291,95 @@ func (s *Store) UpsertExceptionGroup(ctx context.Context, g ExceptionGroup) erro
 			g.FirstSeen = g.LastSeen
 		}
 	}
-	return s.writeExceptionGroup(ctx, g)
+	return g
+}
+
+// UpsertExceptionGroup — tekil yol (API çağrıları, tekil düzeltmeler).
+// Sıcak yenileme döngüsü UpsertExceptionGroups kullanır.
+func (s *Store) UpsertExceptionGroup(ctx context.Context, g ExceptionGroup) error {
+	existing, err := s.GetExceptionGroup(ctx, g.Fingerprint)
+	if err != nil {
+		return err
+	}
+	return s.writeExceptionGroup(ctx, mergeExceptionGroup(g, existing))
+}
+
+// exGroupBatchCap — tek IN-listesinin taşıyacağı fingerprint tavanı.
+const exGroupBatchCap = 5000
+
+// GetExceptionGroupsByFingerprints — TOPLU okuma (GetHypotheses emsali).
+func (s *Store) GetExceptionGroupsByFingerprints(ctx context.Context, fps []string) (map[string]ExceptionGroup, error) {
+	out := map[string]ExceptionGroup{}
+	if len(fps) == 0 {
+		return out, nil
+	}
+	if len(fps) > exGroupBatchCap {
+		fps = fps[:exGroupBatchCap]
+	}
+	holders := make([]string, len(fps))
+	args := make([]any, len(fps))
+	for i, fp := range fps {
+		holders[i] = "?"
+		args[i] = fp
+	}
+	rows, err := s.conn.Query(ctx, `SELECT fingerprint, ex_type, ex_message, service, state,
+		       assignee, toUnixTimestamp64Nano(first_seen), toUnixTimestamp64Nano(last_seen),
+		       resolved_at, occurrences, notes, ai_summary
+		FROM exception_groups FINAL
+		WHERE fingerprint IN (`+strings.Join(holders, ",")+`)
+		SETTINGS max_execution_time = 20`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var g ExceptionGroup
+		var resolvedAt *time.Time
+		if err := rows.Scan(&g.Fingerprint, &g.Type, &g.Message, &g.Service, &g.State,
+			&g.Assignee, &g.FirstSeen, &g.LastSeen, &resolvedAt, &g.Occurrences,
+			&g.Notes, &g.AISummary); err != nil {
+			return nil, err
+		}
+		if resolvedAt != nil {
+			ns := resolvedAt.UnixNano()
+			g.ResolvedAt = &ns
+		}
+		out[g.Fingerprint] = g
+	}
+	return out, rows.Err()
+}
+
+// UpsertExceptionGroups — sıcak yenileme yolu: N tekil okuma yerine BİR
+// toplu okuma (v0.9.523).
+//
+// Prod ölçümü (2026-08-02): tekil GetExceptionGroup şekli saatte ~1.3k
+// çağrı — queryrow trafiğinin ikinci en büyük kalemi. exception_groups
+// bir STATE tablosu, in-order ana bağlantıda kalmak zorunda; yani bu yük
+// okuma havuzuna dağıtılamaz, yalnız AZALTILABİLİR. problems tarafındaki
+// v0.9.522 düzeltmesinin ikizi.
+func (s *Store) UpsertExceptionGroups(ctx context.Context, gs []ExceptionGroup) error {
+	if len(gs) == 0 {
+		return nil
+	}
+	fps := make([]string, 0, len(gs))
+	for _, g := range gs {
+		fps = append(fps, g.Fingerprint)
+	}
+	existing, err := s.GetExceptionGroupsByFingerprints(ctx, fps)
+	if err != nil {
+		return err
+	}
+	for _, g := range gs {
+		var prev *ExceptionGroup
+		if e, ok := existing[g.Fingerprint]; ok {
+			ee := e
+			prev = &ee
+		}
+		if err := s.writeExceptionGroup(ctx, mergeExceptionGroup(g, prev)); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) writeExceptionGroup(ctx context.Context, g ExceptionGroup) error {
@@ -378,9 +470,9 @@ type ExceptionGroupFilter struct {
 	// floor hides, both run through the same downstream narrows. Zero = no
 	// upper bound.
 	MaxOccurrences uint64
-	State    string // empty = all (except ignored)
-	Service  string
-	Assignee string
+	State          string // empty = all (except ignored)
+	Service        string
+	Assignee       string
 	// Services constrains the result to this set (service IN (…)). Used
 	// by the owner/SRE team filter on the Problems inbox (v0.8.310): the
 	// API resolves a team pick to its member services from the catalog
@@ -1018,10 +1110,12 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 		return 0, err
 	}
 
+	batch := make([]ExceptionGroup, 0, len(merged))
 	for _, g := range merged {
-		if err := s.UpsertExceptionGroup(ctx, *g); err != nil {
-			return 0, err
-		}
+		batch = append(batch, *g)
+	}
+	if err := s.UpsertExceptionGroups(ctx, batch); err != nil {
+		return 0, err
 	}
 	return len(merged), nil
 }

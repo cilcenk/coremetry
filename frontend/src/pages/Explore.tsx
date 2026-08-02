@@ -29,7 +29,6 @@ import {
 import { NLQueryBox } from './explore/NLQueryBox';
 import { TracesResult } from './explore/TracesResult';
 import { RepeatsResult } from './explore/RepeatsResult';
-import { QuestionCards } from './explore/QuestionCards';
 import { useQueryHistory } from './explore/useQueryHistory';
 import {
   type BuilderState, defaultBuilderState, blankQuery, nextLetter,
@@ -459,20 +458,21 @@ function ExploreInner() {
     width: 1, alignSelf: 'stretch', background: 'var(--border)', margin: '0 2px',
   };
 
-  // ── Entry screen — paramless /explore (Phase-1) ───────────────────────────
-  if (!hasParams) {
-    return (
-      <>
-        <Topbar title="Explore" range={range} onRangeChange={setRange} />
-        <div id="content">
-          <QuestionCards history={history} />
-          <div style={{ marginTop: 20, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-            <SavedViewsBar page="explore" />
-          </div>
-        </div>
-      </>
-    );
-  }
+  // v0.9.562 — GİRİŞ EKRANI KALDIRILDI (operatör: "Explore'da 'hangi
+  // neden yavaş' gibi şeyler kullanışsız… ben Dynatrace data explorer
+  // gibi düşünmüştüm", ardından "soru kartlarına gerek yok").
+  //
+  // Paramsız /explore artık doğrudan sorgu builder'ına iniyor. Kartlar
+  // bir soru listesiydi; Data Explorer bir ARAÇTIR — operatör metriği
+  // seçer, böler, toplar, çizer.
+  //
+  // Boş durumda HİÇBİR SORGU ATILMIYOR ve bu tesadüf değil: hasParams
+  // false iken builderFrom 0 kalıyor (yukarıda), react-query devre dışı.
+  // Yani builder görünür ama sessiz — Dynatrace'in boş metrik
+  // seçicisiyle aynı davranış. Operatör builder'a dokununca param
+  // yazılıyor (setHasParams) ve sorgu o zaman açılıyor. Kartları
+  // kaldırmanın bedava olmasının sebebi bu kapının ZATEN doğru yerde
+  // durması.
 
   return (
     <>

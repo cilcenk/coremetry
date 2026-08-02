@@ -141,7 +141,6 @@ export function fmtBytes(n: number): string {
 // üç FARKLI giriş birimiyle (sec/unixNs/ms) kendi kopyasını taşıyordu;
 // CLAUDE.md'nin unit-mixing pitfall sınıfı). Giriş birimi fonksiyon
 // adında AÇIK: fmtDurShort saniye alır, fmtAgoNs unix-nanosaniye.
-// QuestionCards'ın Türkçe lehçesi bilinçli olarak yerelde kalır.
 export function fmtDurShort(seconds: number): string {
   const s = Math.max(0, Math.round(seconds));
   if (s < 60) return `${s}s`;

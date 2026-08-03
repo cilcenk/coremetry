@@ -270,3 +270,41 @@ func TestVerdictPromptCarriesConstraints(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.577 — "çözümlendi" ŞEMAYA UYMAYA bağlı, yalnız geçerli JSON'a değil.
+//
+// Model `{}` döndürürse json.Unmarshal BAŞARILI olur ve eski kod
+// sh.Parsed=true yazıyordu; mv.Verdict boş kalıyor, panel boş rozetle
+// çiziliyor ve shields.parsed=true "model cevap verdi" diye iddia
+// ediyordu. Tam da bu tasarımın engellemek için kurulduğu şey: cevap
+// VERİLMEMESİNİ cevap gibi göstermek.
+func TestRCAVerdictEnumOK(t *testing.T) {
+	for _, ok := range []string{"root_cause_identified", "probable_cause", "insufficient_evidence"} {
+		if !rcaVerdictEnumOK(ok) {
+			t.Errorf("%q geçerli sayılmadı", ok)
+		}
+	}
+	for _, bad := range []string{"", "{}", "kok_neden", "ROOT_CAUSE_IDENTIFIED", "probable"} {
+		if rcaVerdictEnumOK(bad) {
+			t.Errorf("%q geçerli sayıldı — boş/geçersiz verdict panelde BOŞ rozet "+
+				"çizer ve parsed=true 'model cevap verdi' diye yalan söyler", bad)
+		}
+	}
+}
+
+// Düşüş yolunda kanıt listesi BOŞ kalmalı: alanın sözleşmesi "modelin
+// ATIF YAPTIĞI kanıtlar" ve model hiçbir şeye atıf yapmamıştır.
+func TestFallbackVerdictCitesNoEvidence(t *testing.T) {
+	h, cat := verdictFixture()
+	if len(cat.Refs) == 0 {
+		t.Fatal("test kataloğu boş — vaka anlamsız")
+	}
+	sh := rcaShieldReport{}
+	out := fallbackRCAVerdict(h, cat, &sh)
+
+	if len(out.Evidence) != 0 {
+		t.Errorf("düşüşte %d kanıt basılmış — panel \"Model şu kanıtları gösterdi\" "+
+			"başlığıyla çizer ve modelin SÖYLEMEDİĞİ bir şeyi ona söyletir",
+			len(out.Evidence))
+	}
+}

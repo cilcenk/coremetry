@@ -151,7 +151,7 @@ func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypoth
 	var sh rcaShieldReport
 	var mv rcaModelVerdict
 	if err == nil {
-		if perr := json.Unmarshal([]byte(strings.TrimSpace(raw)), &mv); perr == nil {
+		if perr := json.Unmarshal([]byte(strings.TrimSpace(raw)), &mv); perr == nil && rcaVerdictEnumOK(mv.Verdict) {
 			sh.Parsed = true
 		}
 	}
@@ -159,7 +159,7 @@ func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypoth
 		// Tek onarım turu: JSON dışı gürültü (```json çitleri, önsöz)
 		// en sık hata ve ucuz düzeliyor.
 		if fixed, ok := salvageJSONObject(raw); ok {
-			if perr := json.Unmarshal([]byte(fixed), &mv); perr == nil {
+			if perr := json.Unmarshal([]byte(fixed), &mv); perr == nil && rcaVerdictEnumOK(mv.Verdict) {
 				sh.Parsed = true
 				sh.Repaired = true
 			}
@@ -320,7 +320,33 @@ func fallbackRCAVerdict(h *chstore.RootCauseHypothesis, cat rcaEvidenceCatalog, 
 		Summary:              sum,
 		Confidence:           0,
 		HypothesisConfidence: h.Confidence,
-		Evidence:             cat.Refs,
-		Shields:              *sh,
+		// v0.9.577 — Evidence BOŞ bırakılır. Alanın sözleşmesi
+		// "modelin ATIF YAPTIĞI kanıtlar" ve düşüş yolunda model
+		// hiçbir şeye atıf yapmamıştır (yanıt bile üretmedi). Tüm
+		// kataloğu basmak, paneli "Model şu kanıtları gösterdi"
+		// başlığıyla çizdiriyordu — söylemediği bir şeyi ona
+		// söyletmek.
+		Shields: *sh,
 	}
+}
+
+// rcaVerdictEnumOK — model çıktısı ŞEMAYA uydu mu?
+//
+// v0.9.577 — "çözümlendi" artık yalnız JSON'un geçerli olmasına DEĞİL,
+// verdict alanının şemadaki üç değerden biri olmasına bağlı.
+//
+// Öncesi: model `{}` döndürürse json.Unmarshal BAŞARILI oluyor,
+// sh.Parsed=true yazılıyor ve mv.Verdict boş kalıyordu. Panel o boş
+// değerle çiziliyor (rozet etiketi undefined → boş rozet) ve
+// shields.parsed=true "model cevap verdi" diye iddia ediyordu.
+//
+// Tam da bu tasarımın engellemek için kurulduğu şey: cevap
+// VERİLMEMESİNİ cevap gibi göstermek. Geçersiz enum artık düşüş
+// yoluna gider ve operatör dürüst degrade şeridini görür.
+func rcaVerdictEnumOK(v string) bool {
+	switch v {
+	case "root_cause_identified", "probable_cause", "insufficient_evidence":
+		return true
+	}
+	return false
 }

@@ -1996,6 +1996,25 @@ export interface ServiceAnalysisResponse {
   exchangeId?: string;
 }
 
+/** v0.9.594 — RCA hakem motorunun kalite özeti (GET /api/ai/rca-quality).
+ *  Kardeş /ai uçları TRANSPORT sağlığını ölçüyor (kaç çağrı, kaç hata,
+ *  kaç token); bu, cevabın KENDİSİNE bakan tek ölçüm. */
+export interface RCAVerdictQuality {
+  total: number;
+  rootCauseIdentified: number;
+  probableCause: number;
+  insufficientEvidence: number;
+  /** Model şemaya uymadı → deterministik düşüş. Bu karar MODELİN değil bizim. */
+  unparsed: number;
+  /** Bir onarım turu gerekti (```json çitleri, önsöz). Kalite sinyali. */
+  repaired: number;
+  /** En az bir kalkan devreye girdi — model uydurulmuş kanıt/varlık kullandı. */
+  shielded: number;
+  avgConfidence: number;
+  thumbsUp: number;
+  thumbsDown: number;
+}
+
 export interface MetricResolveResult {
   series: SpanMetricSeries[];
   tier: string;

@@ -971,6 +971,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// döngüsüne düşenler). "Sıradaki intent ne olmalı" ölçüye bağlanıyor.
 	mux.HandleFunc("GET /api/ai/router-gaps", auth.RequireRole(auth.RoleAdmin, s.aiRouterGaps))
 	mux.HandleFunc("GET /api/ai/series", auth.RequireRole(auth.RoleAdmin, s.aiSeries))
+	// v0.9.594 — RCA hakem motorunun KALİTESİ. Kardeşleri transport
+	// sağlığını ölçüyor (kaç çağrı, kaç hata, kaç token); bu, cevabın
+	// kendisine bakan tek uç.
+	mux.HandleFunc("GET /api/ai/rca-quality", auth.RequireRole(auth.RoleAdmin, s.aiRCAQuality))
 	mux.HandleFunc("GET /api/ai/rates", auth.RequireRole(auth.RoleAdmin, s.getAIRates))
 	mux.HandleFunc("PUT /api/ai/rates", auth.RequireRole(auth.RoleAdmin, s.putAIRates))
 	// v0.8.399 — thumbs up/down on AI answers. Any authenticated user

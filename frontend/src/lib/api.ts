@@ -754,6 +754,13 @@ export const api = {
       gaps: Array<{ question: string; count: number; lastAt: number; users: number }>;
       days: number; totalFallbacks: number; generatedAt: number;
     }>(`/api/ai/router-gaps?days=${days}`),
+  // v0.9.594 — RCA hakem motorunun kalitesi. Kardeşleri transport
+  // sağlığını ölçüyor; bu, cevabın kendisine bakan tek uç.
+  // Pencere from/to ile geçer — kardeş aiStats/aiSeries ile AYNI
+  // sözleşme. rangeS kullansaydım aynı sayfada iki ayrı pencere
+  // kavramı olurdu ve karolar grafikle uyuşmazdı.
+  aiRCAQuality: (params: { from?: number; to?: number }) =>
+    get<import('./types').RCAVerdictQuality>(`/api/ai/rca-quality?${qs(params)}`),
   aiNegativeFeedback: (rangeS?: number) =>
     get<{ rows: import('./types').NegativeFeedbackCall[]; rangeS: number }>(
       `/api/ai/feedback/negative${rangeS ? `?rangeS=${rangeS}` : ''}`),

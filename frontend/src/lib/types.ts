@@ -774,6 +774,14 @@ export interface RootCauseExplain {
   /** Kalkanlardan geçmiş yapılandırılmış karar (v0.9.559).
    *  Yoksa eski davranış: yalnız prose. */
   verdict?: RCAVerdict;
+  /** v0.9.592 — bu CEVABIN kimliği; 👍/👎 bununla
+   *  POST /api/ai/feedback'e gider (v0.8.399'dan beri çalışan ray).
+   *
+   *  Yoksa derecelendirme affordance'ı HİÇ ÇİZİLMEZ: 30dk'lık önbellek
+   *  penceresi yüzünden eski bir gövde kimliksiz gelebilir ve tıklanınca
+   *  hiçbir yere yazmayan bir düğme göstermek, bu dilimin düzeltmek için
+   *  var olduğu hatanın ta kendisi olurdu. */
+  exchangeId?: string;
 }
 
 /** RCA verdict — deterministik kalkanlardan geçmiş kök-neden kararı.

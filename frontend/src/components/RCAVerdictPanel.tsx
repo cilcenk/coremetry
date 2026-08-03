@@ -22,8 +22,11 @@
 //  4. Üç güven AYRI etiketlerle gösterilir. Aynı ekranda üç farklı
 //     "confidence" var ve hepsini "güven" diye çizmek, hangisinin neyi
 //     ölçtüğünü kaybettirirdi.
+import { useState } from 'react';
 import { Badge } from '@/components/ui/Badge';
-import { verdictTone, verdictIsDegraded, verdictHasShieldWarning, measuredText } from './rcaVerdictView';
+import { Button } from '@/components/ui/Button';
+import { api } from '@/lib/api';
+import { verdictTone, verdictIsDegraded, verdictHasShieldWarning, measuredText, canRateVerdict } from './rcaVerdictView';
 import type { RCAVerdict } from '@/lib/types';
 
 const VERDICT_LABEL: Record<RCAVerdict['verdict'], string> = {
@@ -62,9 +65,11 @@ function measured(n: number | null | undefined, fmt: (v: number) => string): Rea
   return t;
 }
 
-export function RCAVerdictPanel({ v }: { v: RCAVerdict }) {
+export function RCAVerdictPanel({ v, exchangeId }: { v: RCAVerdict; exchangeId?: string }) {
   const sh = v.shields;
   const degraded = verdictIsDegraded(v);
+  // v0.9.592 — operatör oyu. undefined = henüz oy yok.
+  const [rated, setRated] = useState<1 | -1 | undefined>(undefined);
 
   return (
     <div style={{
@@ -256,6 +261,49 @@ export function RCAVerdictPanel({ v }: { v: RCAVerdict }) {
           {sh.refutationInvalid && <>En az bir eleme geçersiz sayıldı.</>}
         </div>
       )}
+
+      {/* ── 5. Operatör oyu (v0.9.592) ────────────────────────────────
+          Kimlik yoksa HİÇ ÇİZİLMEZ. Bu dilim, depoda tıklanınca
+          "Teşekkürler." yazıp hiçbir yere yazmayan ÖLÜ bir
+          derecelendirme affordance'ı bulunduğu için var; aynı hatayı
+          burada tekrarlamak tasarımın kendisini çürütürdü.
+
+          İyimser güncelleme + hata hâlinde geri alma — sohbetteki
+          rateTurn (ChatBubble.tsx) ile aynı davranış. Ray da aynı:
+          POST /api/ai/feedback, surface SUNUCUDA çözülür. */}
+      {canRateVerdict(exchangeId) && (
+        <div style={{
+          marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', gap: 8, fontSize: 11.5,
+          color: 'var(--text3)',
+        }}>
+          <span>Bu değerlendirme doğru mu?</span>
+          <Button
+            variant="ghost" size="sm" aria-label="doğru"
+            aria-pressed={rated === 1}
+            style={rated === 1 ? { color: 'var(--ok)' } : undefined}
+            onClick={() => rateVerdict(exchangeId!, 1, rated, setRated)}>👍</Button>
+          <Button
+            variant="ghost" size="sm" aria-label="yanlış"
+            aria-pressed={rated === -1}
+            style={rated === -1 ? { color: 'var(--err)' } : undefined}
+            onClick={() => rateVerdict(exchangeId!, -1, rated, setRated)}>👎</Button>
+          {rated !== undefined && <span>Kaydedildi.</span>}
+        </div>
+      )}
     </div>
   );
+}
+
+// rateVerdict — oyu gönderir. İyimser güncelleme, hata hâlinde GERİ
+// ALMA: başarısız bir POST'tan sonra "Kaydedildi." yazmak, düzeltmeye
+// çalıştığımız ölü affordance'ın daha sinsi bir biçimi olurdu.
+function rateVerdict(
+  exchangeId: string, verdict: 1 | -1,
+  prior: 1 | -1 | undefined,
+  setRated: (v: 1 | -1 | undefined) => void,
+) {
+  if (prior === verdict) return;
+  setRated(verdict);
+  api.postAIFeedback({ exchangeId, verdict }).catch(() => setRated(prior));
 }

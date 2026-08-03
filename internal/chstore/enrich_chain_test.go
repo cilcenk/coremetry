@@ -38,8 +38,10 @@ func TestEnrichForReadOrder(t *testing.T) {
 	iDeploy := strings.Index(body, "EnrichProblemsWithDeploys(")
 	iPrio := strings.Index(body, "EnrichProblemsWithPriority(")
 	if iDeploy < 0 {
-		t.Error("deploy adımı kaybolmuş — RecentDeploy nil kalır, " +
-			"postDeploy dalı hiç ateşlemez, P1'ler P2 görünür")
+		t.Error("deploy adımı kaybolmuş — RecentDeploy nil kalır ve " +
+			"ProblemDetail'deki DeployBox hiç çizilmez. (v0.9.612'den beri " +
+			"ÖNCELİĞİ etkilemiyor; etkilediği şey operatörün problemi " +
+			"deploy'la ilişkilendirebilmesi.)")
 	}
 	if iPrio < 0 {
 		t.Error("öncelik adımı kaybolmuş — Priority boş kalır ve omitempty " +

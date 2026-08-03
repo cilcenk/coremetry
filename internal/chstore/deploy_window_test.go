@@ -16,10 +16,15 @@
 // servissizdir.
 //
 // Belirti sessizdi ve YANLIŞ yöne bakıyordu: sorgu timeout'a takılıyor,
-// çağıran zenginleştirmeyi atlıyor, RecentDeploy nil kalıyor,
-// computePriority'nin postDeploy dalı hiç ateşlemiyor — taze deploy
-// sonrası kritik problemler P1 yerine P2 etiketleniyordu. Operatörün
-// "bazen P1 alertleri karıştırıyor" şikâyetinin bir kolu buydu.
+// çağıran zenginleştirmeyi atlıyor, RecentDeploy nil kalıyor.
+//
+// ⚠ v0.9.612 — bu testin ÖNEMİ DEĞİŞTİ, kendisi değil. O tarihte
+// postDeploy dalı computePriority'den KALDIRILDI (operatör kararı:
+// prod'da deploy sıklığı yüksek, tetikleyici P1'i sulandırıyordu).
+// Yani pencere hatasının ETKİSİ artık "P1'ler P2 görünüyor" değil:
+// RecentDeploy nil kalırsa ProblemDetail'deki DeployBox hiç çizilmez
+// ve operatör problemi deploy'la ilişkilendirecek bilgiyi kaybeder.
+// Karar operatörün, ama karar verebilmesi için bilgiyi GÖRMESİ şart.
 package chstore
 
 import (

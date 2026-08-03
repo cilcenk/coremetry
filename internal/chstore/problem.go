@@ -73,19 +73,19 @@ type AlertRule struct {
 }
 
 type Problem struct {
-	ID          string  `json:"id"`
-	RuleID      string  `json:"ruleId"`
-	RuleName    string  `json:"ruleName"`
-	Severity    string  `json:"severity"`
-	Service     string  `json:"service"`
-	Metric      string  `json:"metric"`
-	Value       float64 `json:"value"`
-	Threshold   float64 `json:"threshold"`
-	Status      string  `json:"status"` // open | resolved
+	ID        string  `json:"id"`
+	RuleID    string  `json:"ruleId"`
+	RuleName  string  `json:"ruleName"`
+	Severity  string  `json:"severity"`
+	Service   string  `json:"service"`
+	Metric    string  `json:"metric"`
+	Value     float64 `json:"value"`
+	Threshold float64 `json:"threshold"`
+	Status    string  `json:"status"` // open | resolved
 	// Pod (v0.9.403) — runtime pod denetimlerinde alarmın pod kimliği;
 	// diğer üreticilerde boş. Service GERÇEK servis kalır (v0.9.401).
-	Pod         string  `json:"pod,omitempty"`
-	Description string  `json:"description"`
+	Pod         string `json:"pod,omitempty"`
+	Description string `json:"description"`
 	// Assignee (v0.5.209) — free-form string, two flavours:
 	//   • team name auto-set from service_metadata.owner_team
 	//     when the problem opens (so "payments" surfaces without
@@ -245,7 +245,22 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 		}
 	}
 
-	postDeploy := p.RecentDeploy != nil && p.RecentDeploy.AgeSeconds > 0 && p.RecentDeploy.AgeSeconds <= 5*60
+	// v0.9.612 (operatör kararı): TAZE DEPLOY artık öncelik BELİRLEMİYOR.
+	//
+	// Önceki kural "critical + son 5 dk içinde deploy → P1" idi. Prod'da
+	// deploy sıklığı yüksek olduğu için bu tetikleyici sürekli ateşliyor
+	// ve P1 kavramını sulandırıyordu: her dağıtım penceresinde açılan
+	// kritik problemler otomatik P1 oluyordu.
+	//
+	// DEPLOY BİLGİSİ KAYBOLMUYOR — yalnız ÖNCELİĞE karışmıyor.
+	// RecentDeploy zenginleştirmesi (v0.9.552-554) duruyor ve
+	// ProblemDetail'de DeployBox olarak GÖRÜNÜYOR. Ayrım bilinçli:
+	// bilgi vermek ile sıraya sokmak farklı işler. Operatör deploy'u
+	// görüp kendi bağlantısını kurar; sistem onun yerine karar vermez.
+	//
+	// Geriye kalan P1 kapıları: 2× eşik ihlali, ve 4+ saat açık kalmış
+	// kritik. İkisi de problemin KENDİ şiddetinden türüyor, yakınındaki
+	// bir olaydan değil.
 
 	// Stale-critical: still open after 4h of operator inactivity.
 	openHours := float64(nowNs-p.StartedAt) / float64(time.Hour)
@@ -253,8 +268,6 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 
 	if sev == "critical" {
 		switch {
-		case postDeploy:
-			return "P1", fmt.Sprintf("critical + deploy %ds before", p.RecentDeploy.AgeSeconds)
 		case bigBreach:
 			return "P1", fmt.Sprintf("critical + %.1fx threshold", ratio)
 		case staleCritical:
@@ -266,8 +279,6 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 
 	// severity = warning
 	switch {
-	case postDeploy:
-		return "P2", fmt.Sprintf("warning + deploy %ds before", p.RecentDeploy.AgeSeconds)
 	case bigBreach:
 		return "P2", fmt.Sprintf("warning + %.1fx threshold", ratio)
 	default:
@@ -340,7 +351,6 @@ type deploysCacheEntry struct {
 	at        time.Time
 	byService map[string][]spanDeploy
 }
-
 
 // EnrichProblemsWithRunbooks resolves each problem's
 // RunbookURL from (a) the alert rule that fired or (b) the
@@ -568,7 +578,7 @@ func (s *Store) GetAlertRule(ctx context.Context, id string) (*AlertRule, error)
 // ── Problems ─────────────────────────────────────────────────────────────────
 
 type ProblemFilter struct {
-	Status   string // "open" | "resolved" | ""
+	Status string // "open" | "resolved" | ""
 	// NotStatuses — statuses to EXCLUDE, applied in SQL so the narrow bites
 	// BEFORE the LIMIT. Status (singular) stays for callers that want exactly
 	// one bucket; the two AND together if both are set.
@@ -580,8 +590,8 @@ type ProblemFilter struct {
 	// exactly those rows — and, worse, drop them from the LIST while the
 	// badge still counted them.
 	NotStatuses []string
-	Service  string
-	Severity string
+	Service     string
+	Severity    string
 	// RuleIDPrefix narrows to rules whose id starts with the given
 	// string — used by the Anomalies page to surface only the
 	// anomaly-detector entries (rule_id = "anomaly:…") and skip
@@ -1311,7 +1321,6 @@ type ServiceEdgeStats struct {
 	AvgMs     float64 `json:"avgMs"`
 	P99Ms     float64 `json:"p99Ms"`
 }
-
 
 // ListProblemWindowEvents — annotation şeridinin alarm olayları (v0.9.394,
 // Ş1): pencere içinde TETİKLENEN (started_at ∈ [from,to)) ya da ÇÖZÜLEN

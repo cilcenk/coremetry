@@ -106,22 +106,15 @@ func servicesForTeam(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetad
 // 5× covers a page whose selected priorities are a fifth of the population —
 // well past the observed skew, where P1+P2 dominate.
 func problemScanLimit(pageLimit int, narrowed bool) int {
-	if pageLimit <= 0 {
-		pageLimit = 100
-	}
-	if !narrowed {
-		return pageLimit
-	}
-	n := pageLimit * 5
-	if n > problemScanCeiling {
-		n = problemScanCeiling
-	}
-	return n
+	// v0.9.576 — kural chstore'a taşındı: MCP list_problems aracı da
+	// aynı daraltmayı yapıyor ve mcptools internal/api'yi import
+	// edemez (döngü). İki kopya yazmak, ayrışmanın davetiyesi.
+	return chstore.ProblemScanLimit(pageLimit, narrowed)
 }
 
 // problemScanCeiling bounds the widened scan so a large page size cannot turn
 // into an unbounded read of the problems table.
-const problemScanCeiling = 2000
+const problemScanCeiling = chstore.ProblemScanCeiling
 
 // intersectServices ANDs two service-set constraints.
 //

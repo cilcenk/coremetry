@@ -133,7 +133,7 @@ const rcaVerdictSurface = "rootcause-verdict"
 // "anlatım yok" dalı ULAŞILABİLİR kalır. Deterministik yedek cümle
 // verdict.summary'ye yazılır, prose'a DEĞİL — aksi hâlde yedek cümle
 // gerçek LLM anlatımıyla aynı kutuda çizilir ve operatör ayırt edemez.
-func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypothesis) (*RCAVerdict, *string) {
+func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypothesis, anchorStartNs int64) (*RCAVerdict, *string) {
 	cat := buildRCAEvidenceCatalog(h)
 
 	candidates := make([]string, 0, len(h.Candidates))
@@ -169,7 +169,7 @@ func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypoth
 		return fallbackRCAVerdict(h, cat, &sh), nil
 	}
 
-	return s.applyRCAShields(ctx, h, cat, mv, &sh), proseFrom(mv.Summary)
+	return s.applyRCAShields(ctx, h, cat, mv, &sh, anchorStartNs), proseFrom(mv.Summary)
 }
 
 // proseFrom — özet metnini prose'a çevirir; boşsa nil (dürüst boş).
@@ -197,7 +197,7 @@ func salvageJSONObject(s string) (string, bool) {
 // bağlı olduğu için kalkan mantığı SAF ikizde duruyor (aşağıda);
 // bu sarmalayıcı yalnız ölçümü ekliyor.
 func (s *Server) applyRCAShields(ctx context.Context, h *chstore.RootCauseHypothesis,
-	cat rcaEvidenceCatalog, mv rcaModelVerdict, sh *rcaShieldReport) *RCAVerdict {
+	cat rcaEvidenceCatalog, mv rcaModelVerdict, sh *rcaShieldReport, anchorStartNs int64) *RCAVerdict {
 	out := applyRCAShieldsPure(h, cat, mv, sh)
 	// K5 — etki, kök neden VARLIĞI için ölçülür (ankorun servisi için
 	// değil): tipik bir P1'de ikisi farklıdır.
@@ -205,7 +205,15 @@ func (s *Server) applyRCAShields(ctx context.Context, h *chstore.RootCauseHypoth
 	if entity == "" {
 		entity = h.Service
 	}
-	out.Impact = s.computeRCAImpact(ctx, entity, h.Service, h.ComputedAt)
+	// v0.9.576 — ankorun GERÇEK başlangıcı. h.ComputedAt hipotezin
+	// SENTEZLENDİĞİ andı, olayın başladığı an değil: pencere olayın
+	// ilk dakikalarını kaçırıyordu. 0 = çözülemedi → rcaImpactWindow
+	// tutarsız pencereyi reddeder ve ölçüm "yapılamadı" der.
+	startNs := anchorStartNs
+	if startNs == 0 {
+		startNs = h.ComputedAt
+	}
+	out.Impact = s.computeRCAImpact(ctx, entity, h.Service, startNs)
 	return out
 }
 

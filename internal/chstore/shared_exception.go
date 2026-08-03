@@ -87,7 +87,22 @@ func (s *Store) FindSharedExceptionBursts(ctx context.Context, since time.Durati
 		    SELECT ex_type, ex_message, service, first_seen, last_seen, occurrences,
 		           toStartOfInterval(first_seen, INTERVAL %d SECOND) AS bucket
 		    FROM exception_groups FINAL
-		    WHERE first_seen >= ?
+		    -- v0.9.576 — tazelik kapısı LAST_SEEN'de, first_seen'de DEĞİL.
+		    --
+		    -- first_seen ile iki şey birden bozuluyordu:
+		    --  (a) 24 saatten uzun süren bir bağımlılık arızası HİÇ
+		    --      tespit edilmiyordu — patlama hâlâ sürerken pencereden
+		    --      düşüyordu.
+		    --  (b) Daha sinsisi: KAPANIŞ görünürlüğe bağlı. Dedektör
+		    --      "artık aktif değil" kararını ancak patlamayı GÖREREK
+		    --      verebiliyor; satır pencereden düştüğü an problem
+		    --      kapatılamaz hale geliyor ve stale-sweep'e kalıyordu
+		    --      (yanlış etiketle: "source silent").
+		    --
+		    -- last_seen ile: son 24 saatte AKTİF olan her grup değerlendirmeye
+		    -- girer, ne zaman başladığından bağımsız. Kova hâlâ first_seen'den
+		    -- türüyor, yani patlamanın KİMLİĞİ değişmiyor.
+		    WHERE last_seen >= ?
 		      AND state != 'ignored'
 		      AND ex_type != ''
 		)

@@ -197,6 +197,14 @@ type Notifier struct {
 	awaitMu  sync.Mutex
 	awaiting map[string]bool
 
+	// dedupSeen (v0.9.587) — problem yayılımında tekrar tabanı.
+	// Anahtar → son gönderim damgası; sözleşme ve gerekçe
+	// problem_dedup.go'da. Süreç-içi: her pod kendi tabanını tutar,
+	// çünkü korunan şey TEK bir dedektörün takılıp aynı problemi her
+	// tikte yeniden açması — ve o dedektör tek bir worker'da koşar.
+	dedupMu   sync.Mutex
+	dedupSeen map[string]dedupStamp
+
 	// bus is the optional SSE broker. When set, every problem-
 	// open / problem-resolve / anomaly fire publishes a typed
 	// event so connected browser tabs update in <1s instead of
@@ -485,9 +493,35 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 		Clusters: p.Clusters,
 	}
 	relKind := problemRelatedKind(p)
+	// v0.9.587 — çözülme, o problem hakkındaki bastırma durumunu
+	// geçersiz kılar: aynı kimlikle yeniden açılırsa (flap) o meşru bir
+	// haberdir ve ilk açılışın damgası onu yutmamalı.
+	if p.Status == "resolved" {
+		n.forgetProblem(p.ID)
+	}
 	for _, c := range channels {
 		if !c.MatchRules.MatchesProblem(in) {
 			continue
+		}
+		// Tekrar tabanı: birebir aynı (problem, kanal, durum,
+		// ciddiyet) 15 dk içinde ikinci kez gitmez. Gerekçe ve
+		// bastıramadıkları problem_dedup.go'da.
+		//
+		// Log YALNIZ iki uçta: bastırma başlarken bir kez, pencere
+		// kapanıp geçen gönderim önceki turda yutulmuş tekrarları
+		// taşıyorsa bir kez. Her bastırmayı loglamak, tam da
+		// söndürdüğümüz seli log tarafında yeniden kurardı.
+		ok, n2 := n.allowChannelSend(p.ID, c.ID, p.Status, p.Severity)
+		if !ok {
+			if n2 == 1 {
+				log.Printf("[notify] tekrar bastırılıyor — %s · %s (%s): aynısı 15 dk içinde gitmişti. Bir dedektör aynı problemi her tikte yeniden açıyor olabilir.",
+					p.ID, c.Name, c.Type)
+			}
+			continue
+		}
+		if n2 > 0 {
+			log.Printf("[notify] %s · %s (%s): önceki pencerede %d tekrar bastırılmıştı",
+				p.ID, c.Name, c.Type, n2)
 		}
 		if err := n.sendOne(ctx, c, p, relKind, p.ID); err != nil {
 			log.Printf("[notify] %s (%s): %v", c.Name, c.Type, err)

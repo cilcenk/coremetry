@@ -5,7 +5,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum, fmtBytes } from '@/lib/utils';
-import { useClickhouseHealth, useCHCoordinators } from '@/lib/queries';
+import { useClickhouseHealth, useCHCoordinators, useDDLQueueHealth } from '@/lib/queries';
 import { useQuery } from '@tanstack/react-query';
 import { makeBaseline, nodeWorkView, type Baseline, type NodeWorkRow } from '@/lib/chNodeWork';
 
@@ -341,6 +341,119 @@ function NodeWorkPanel() {
 // Koordinatör dağılımı paneli. Kendi ucu + kendi 60s poll'u var
 // (gövde okuması 10s'te dönüyor; bu okuma pencerede TÜM sorguları
 // grupluyor, çok daha geniş bir satır kümesi — 10s'te koşturmanın
+
+// DDLQueuePanel — v0.9.613. Dağıtık DDL kuyruğu sağlığı.
+//
+// Üç gecelik prod vakasının ürünleşmiş teşhisi: verdict SUNUCUDA
+// davranıştan türer (host geride mi / atlıyor mu / ulaşılamıyor mu —
+// kalibrasyon chstore/ddl_queue_health.go), panel yalnız çizer ve
+// eylem cümlesini olduğu gibi gösterir. Tek-node kurulumda kart
+// kendini "tek düğüm" notuna indirger — boş panel yok.
+// fmtDurTR — 'ago'suz süre: fmtAge "5m ago" basar, Türkçe panelde yaş
+// kolonu süre ister (verify bulgusu).
+function fmtDurTR(sec: number): string {
+  if (sec < 90) return `${Math.max(0, Math.round(sec))}sn`;
+  if (sec < 5400) return `${Math.round(sec / 60)}dk`;
+  return `${(sec / 3600).toFixed(1)}sa`;
+}
+
+function DDLQueuePanel() {
+  const q = useDDLQueueHealth();
+  const d = q.isPending ? undefined : q.isError ? null : q.data ?? null;
+
+  const tone: Record<string, string> = {
+    healthy: 'b-ok', single_node: 'b-gray',
+    worker_stuck: 'b-err', worker_skipping: 'b-err',
+    unreachable: 'b-err', probe_failed: 'b-warn',
+  };
+  const label: Record<string, string> = {
+    healthy: 'SAĞLIKLI', single_node: 'TEK DÜĞÜM',
+    worker_stuck: 'WORKER TAKILI', worker_skipping: 'WORKER ATLIYOR',
+    unreachable: 'HOST ULAŞILAMAZ', probe_failed: 'PROBE DÜŞTÜ',
+  };
+
+  return (
+    <Section title="Dağıtık DDL kuyruğu">
+      {d === undefined && <Spinner />}
+      {d === null && <Empty icon="✗" title="Okunamadı" />}
+      {d && (
+        <div style={{ display: 'grid', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <span className={`badge ${tone[d.verdict] ?? 'b-gray'}`}>{label[d.verdict] ?? d.verdict}</span>
+            {d.stuckCount > 0 && (
+              <span style={{ fontSize: 12, color: 'var(--text2)' }}>
+                {d.stuckCountApprox ? 'en az ' : ''}{d.stuckCount.toLocaleString()} bekleyen girdi
+                {d.oldestAgeSeconds ? ` · en eskisi ${fmtDurTR(d.oldestAgeSeconds)}` : ''}
+              </span>
+            )}
+          </div>
+          {/* Eylem cümlesi sunucudan — rozet tek başına gece 3'te ne
+              yapılacağını söylemez. */}
+          <div style={{ fontSize: 12.5, lineHeight: 1.55, color: 'var(--text2)' }}>{d.detail}</div>
+
+          {d.hosts && d.hosts.length > 0 && d.stuckCount > 0 && (
+            <div className="table-wrap">
+            <table style={{ width: "100%" }}>
+              <thead><tr><th>Host</th><th>İşlenen</th><th>Geride</th></tr></thead>
+              <tbody>
+                {d.hosts.map(h => (
+                  <tr key={h.host}>
+                    <td className="mono">{h.host}</td>
+                    <td style={{ textAlign: 'right' }}>{h.processed.toLocaleString()}</td>
+                    <td style={{ textAlign: 'right', color: h.behind > 0 ? 'var(--err)' : 'var(--text3)' }}>
+                      {h.behind > 0 ? h.behind.toLocaleString() : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            </div>
+          )}
+
+          {d.verdict === 'worker_skipping' && (
+            <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>
+              Kuyruk girdilerinin beklediği adlar:{' '}
+              <span className="mono">{(d.queueHosts ?? []).join(', ') || '—'}</span>
+              {' '}· cluster tanımı:{' '}
+              <span className="mono">{(d.clusterHosts ?? []).join(', ') || '—'}</span>
+            </div>
+          )}
+
+          {d.entries && d.entries.length > 0 && (
+            <details>
+              <summary style={{ fontSize: 12, cursor: 'pointer', color: 'var(--text3)' }}>
+                Kuyruğun başı ({d.entries.length} girdi{d.stuckCount > d.entries.length ? `, toplam ${d.stuckCount}` : ''})
+              </summary>
+              <div className="table-wrap" style={{ marginTop: 6 }}>
+              <table style={{ width: "100%" }}>
+                <thead><tr><th>Girdi</th><th>Host</th><th>Durum</th><th>Yaş</th><th>Sorgu</th></tr></thead>
+                <tbody>
+                  {d.entries.map((e, i) => (
+                    <tr key={`${e.entry}-${e.host}-${i}`}>
+                      <td className="mono">{e.entry}</td>
+                      <td className="mono">{e.host}</td>
+                      <td>{e.status}</td>
+                      <td>{fmtDurTR(e.ageSeconds)}</td>
+                      <td className="mono" style={{ maxWidth: 380, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.query}>{e.query}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              </div>
+            </details>
+          )}
+
+          {d.probeErrors && d.probeErrors.length > 0 && (
+            <div style={{ fontSize: 11.5, color: 'var(--warn)' }}>
+              Probe hataları: {d.probeErrors.join(' · ')}
+            </div>
+          )}
+        </div>
+      )}
+    </Section>
+  );
+}
+
 // teşhis değeri yok, maliyeti var).
 function CoordinatorPanel() {
   // Pencere sabit basamaklardan seçilir — sunucu cache anahtarına
@@ -593,6 +706,7 @@ export default function AdminClickhousePage() {
             {/* v0.9.494 — topolojinin hemen altında: operatör kaç
                 node'u olduğunu okuduktan hemen sonra o node'ların
                 gerçekte eşit yüklenip yüklenmediğini görsün. */}
+            <DDLQueuePanel />
             <CoordinatorPanel />
             {/* v0.9.543 — koordinatör paneli "sorgular nereye giriyor"u
                 ölçüyor; bu panel "o node ne İŞ yapıyor"u. Yan yana

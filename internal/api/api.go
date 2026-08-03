@@ -555,6 +555,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// v0.9.543 — node iş dağılımı: CPU · merge · insert · fetch host
 	// başına, HAM kümülatif (pencereyi istemci delta ile açar).
 	mux.HandleFunc("GET /api/admin/clickhouse/nodework", auth.RequireRole(auth.RoleAdmin, s.getCHNodeWork))
+	// v0.9.613 — dağıtık DDL kuyruğu teşhisi (üç gecelik prod vakası,
+	// ch_ddl_queue.go). registerXxxRoutes deseni.
+	s.registerCHDDLQueueRoutes(mux)
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
 	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
 	// only AdminStats reads it, handler had no role check.

@@ -2274,6 +2274,8 @@ export const api = {
       note?: string;
       generatedAt: number;
     }>('/api/admin/clickhouse/nodework'),
+  /** v0.9.613 — DDL kuyruğu teşhisi. Verdict + eylem cümlesi sunucudan. */
+  chDDLQueue: () => get<import('./types').DDLQueueHealth>('/api/admin/clickhouse/ddl-queue'),
   chCoordinators: (windowS: number) =>
     get<{
       nodes: Array<{

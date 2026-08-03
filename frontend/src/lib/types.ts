@@ -2015,6 +2015,29 @@ export interface RCAVerdictQuality {
   thumbsDown: number;
 }
 
+/** v0.9.613 — dağıtık DDL kuyruğu teşhisi (GET /api/admin/clickhouse/ddl-queue).
+ *  Verdict DAVRANIŞTAN türer (chstore/ddl_queue_health.go başlığı):
+ *  kuyruk dolu + host geride = worker takılı (restart çözer);
+ *  kuyruk dolu + kimse geride değil = worker'lar girdileri ATLIYOR
+ *  (hostname/IP uyuşmazlığı). */
+export interface DDLQueueHealth {
+  clusterMode: boolean;
+  verdict: 'healthy' | 'worker_stuck' | 'worker_skipping' | 'unreachable' | 'probe_failed' | 'single_node';
+  detail: string;
+  stuckCount: number;
+  /** Sayım probe'u düştü — stuckCount alt sınır ("en az N"). */
+  stuckCountApprox?: boolean;
+  oldestAgeSeconds?: number;
+  queueHead?: number;
+  hosts?: { host: string; processed: number; behind: number }[];
+  unreachableHosts?: string[];
+  entries?: { entry: string; host: string; status: string; ageSeconds: number; query: string }[];
+  queueHosts?: string[];
+  clusterHosts?: string[];
+  probeErrors?: string[];
+  generated: number;
+}
+
 export interface MetricResolveResult {
   series: SpanMetricSeries[];
   tier: string;

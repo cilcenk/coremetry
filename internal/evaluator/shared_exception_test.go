@@ -9,6 +9,7 @@ package evaluator
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -102,5 +103,58 @@ func TestSharedBurstDescriptionWithoutMessage(t *testing.T) {
 	got := sharedBurstDescription(b)
 	if strings.Contains(got, "Örnek:") {
 		t.Errorf("boş mesaj için 'Örnek:' başlığı basılmış: %q", got)
+	}
+}
+
+// v0.9.585 — AÇMA dalı yalnız YENİ patlamalar için.
+//
+// Operator-reported, prod: log ESCALATED seliyle doldu —
+//
+//	ESCALATED · Paylaşılan bağımlılık · open 862h35m0s · warning → critical
+//
+// 862 saat = 36 gün. v0.9.576 tazelik kapısını last_seen'e almıştı (uzun
+// süren arıza görünür kalsın diye, doğru bir düzeltme) ama yan etkisi
+// ağırdı: aylardır var olan bir exception tipi de pencereye giriyor ve
+// StartedAt: b.FirstSeen onu HAFTALAR ÖNCE başlamış bir problem olarak
+// açıyordu. Problem doğar doğmaz yaş-bazlı eskalasyona takılıp anında
+// critical oluyordu.
+//
+// Üstelik yanlıştı: 36 gündür var olan bir tip "aynı anda başladı"
+// premisini karşılamıyor — o bir patlama değil, kronik bir durum.
+func TestSharedBurstOnlyOpensRecentBursts(t *testing.T) {
+	now := time.Now()
+
+	cases := []struct {
+		name      string
+		firstSeen time.Time
+		wantOpen  bool
+	}{
+		{"az önce başladı → aç", now.Add(-2 * time.Minute), true},
+		{"6 saat önce başladı → aç", now.Add(-6 * time.Hour), true},
+		{"tam sınırda (24sa) → aç", now.Add(-sharedBurstLookback + time.Minute), true},
+		{"3 gün önce başladı → AÇMA", now.Add(-72 * time.Hour), false},
+		{"36 gün önce başladı → AÇMA (prod vakası)", now.Add(-862 * time.Hour), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			isNew := now.Sub(c.firstSeen) <= sharedBurstLookback
+			if isNew != c.wantOpen {
+				t.Errorf("firstSeen=%s → burstIsNew=%v, beklenen %v. "+
+					"Eski bir tipi açmak, doğar doğmaz 'saatlerdir açık' olan ve "+
+					"anında critical'a eskale olan bir problem üretir.",
+					now.Sub(c.firstSeen).Round(time.Hour), isNew, c.wantOpen)
+			}
+		})
+	}
+}
+
+// Görünürlük kapısı ile tespit kapısı AYRI eşikler olmalı — aynı eşiğe
+// bağlamak v0.9.576/585 hatasının kendisiydi.
+func TestSharedBurstGatesAreDistinct(t *testing.T) {
+	// Aktiflik (kapatma kararı) kısa, tespit (açma kararı) uzun.
+	if sharedBurstActiveFor >= sharedBurstLookback {
+		t.Errorf("aktiflik eşiği (%s) tespit penceresinden (%s) kısa OLMALI — "+
+			"aksi halde bir patlama görünür kalmadan kapatılamaz",
+			sharedBurstActiveFor, sharedBurstLookback)
 	}
 }

@@ -119,7 +119,32 @@ func (e *Evaluator) reconcileSharedBurst(ctx context.Context, b chstore.SharedEx
 	hasOpen := existing != nil && existing.ID != ""
 	active := now.Sub(time.Unix(0, b.LastSeen)) <= sharedBurstActiveFor
 
+	// v0.9.585 (operator-reported, prod) — AÇMA dalı patlamanın gerçekten
+	// YENİ olmasını şart koşar.
+	//
+	// v0.9.576 tazelik kapısını last_seen'e aldı ki uzun süren bir arıza
+	// görünür kalsın ve kapatılabilsin. Doğru bir düzeltmeydi ama YAN
+	// ETKİSİ ağırdı: aylardır var olan bir exception tipi de artık
+	// pencereye giriyor ve `StartedAt: b.FirstSeen` onu HAFTALAR ÖNCE
+	// başlamış bir problem olarak açıyordu.
+	//
+	// Prod sonucu: problem doğar doğmaz "862 saattir açık" oluyor,
+	// yaş-bazlı eskalasyon anında warning→critical yapıyor ve log
+	// ESCALATED seliyle doluyor. Üstelik yanlış: 36 gündür var olan bir
+	// tip "aynı anda başladı" premisini KARŞILAMIYOR — o bir patlama
+	// değil, kronik bir durum.
+	//
+	// Ayrım: SQL kapısı GÖRÜNÜRLÜK içindir (açık problemi kapatabilmek),
+	// bu kapı ise TESPİT içindir (yeni bir olay mı?). İkisi farklı
+	// sorular ve aynı eşiğe bağlanmaları hatanın kendisiydi.
+	burstIsNew := now.Sub(time.Unix(0, b.FirstSeen)) <= sharedBurstLookback
+
 	switch {
+	case active && !hasOpen && !burstIsNew:
+		// Eski ve açık kaydı da yok: bu kronik bir tip, patlama değil.
+		// Sessizce geç — açmak, doğar doğmaz kritik olan bir problem
+		// üretirdi.
+
 	case active && !hasOpen:
 		p := chstore.Problem{
 			ID:       id,

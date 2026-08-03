@@ -14,7 +14,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -96,8 +98,50 @@ type RCAVerdict struct {
 
 // ── Prompt ───────────────────────────────────────────────────────────
 
+// renderRCASignatures — geçmişte DOĞRULANMIŞ kök nedenler bloğu
+// (v0.9.596, [6] LEARN). SAF.
+//
+// Blok, dilin her cümlesinde ÖN BİLGİ ile KANIT arasındaki farkı
+// çiziyor ve bu tek mesele değil, TASARIMIN KENDİSİ: motorun tüm
+// mimarisi "LLM dedektör değil, hakemdir" üzerine kurulu. Geçmişi
+// kanıt gibi sunmak, modeli bugünkü veriye bakmadan karar vermeye
+// davet etmek olurdu — yani kalkanların engellemek için var olduğu
+// şeyi prompt'un kendisiyle yapmak.
+//
+// Kalkanlar bu bloğa rağmen AYNEN geçerli ve bu bir tesadüf değil,
+// güvenliğin kaynağı: izinli varlık listesi (K3) GÜNCEL katalogdan
+// üretiliyor, geçmiş imzalar onu GENİŞLETMİYOR. Yani model buradaki
+// bir varlığı bugünkü topolojide yoksa gösteremez — aynı ilke
+// rca_evidence.go'da N-kayıtları için de geçerli ("aranmış ve
+// bulunamamış olmak, olduğunun kanıtı değildir").
+func renderRCASignatures(sigs []chstore.RCASignature, now time.Time) string {
+	if len(sigs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\nGEÇMİŞTE DOĞRULANMIŞ KÖK NEDENLER (bu servis)\n")
+	b.WriteString("Bunlar operatörün ONAYLADIĞI geçmiş vakalar. ÖN BİLGİDİR, KANIT DEĞİLDİR:\n")
+	b.WriteString("  - Bir iddiayı yalnız bunlara dayandırma; kanıt kimliği (E1, E3) ŞART.\n")
+	b.WriteString("  - Güncel kanıt kataloğu desteklemiyorsa YOK SAY.\n")
+	b.WriteString("  - Geçmişte doğrulanmış olması bugün de doğru olduğu anlamına GELMEZ.\n")
+	for _, sig := range sigs {
+		age := ""
+		if sig.LastSeen > 0 {
+			d := now.Sub(time.Unix(0, sig.LastSeen))
+			age = fmt.Sprintf(", son %d gün önce", int(d.Hours()/24))
+		}
+		mode := sig.FailureMode
+		if mode == "" {
+			mode = "(arıza kipi kaydedilmemiş)"
+		}
+		fmt.Fprintf(&b, "  - %s — %s (%d ayrı vakada onaylandı%s)\n",
+			sig.Entity, mode, sig.Confirmations, age)
+	}
+	return b.String()
+}
+
 // buildRCAVerdictPrompt — kullanıcı prompt'u. SAF (test edilebilir).
-func buildRCAVerdictPrompt(h *chstore.RootCauseHypothesis, cat rcaEvidenceCatalog, rivals []string) string {
+func buildRCAVerdictPrompt(h *chstore.RootCauseHypothesis, cat rcaEvidenceCatalog, rivals []string, sigs []chstore.RCASignature, now time.Time) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "ANKOR: %s / %s\n", h.AnchorKind, h.AnchorID)
 	if h.Service != "" {
@@ -115,6 +159,10 @@ func buildRCAVerdictPrompt(h *chstore.RootCauseHypothesis, cat rcaEvidenceCatalo
 			fmt.Fprintf(&b, "  - %s\n", r)
 		}
 	}
+	// Ön bilgi EN SONDA: kanıt kataloğundan ve rakiplerden sonra.
+	// Küçük modelde sıra ağırlıktır — geçmişi başa koymak, modeli
+	// bugünkü kanıta bakmadan çapa atmaya iter.
+	b.WriteString(renderRCASignatures(sigs, now))
 	return b.String()
 }
 
@@ -141,11 +189,27 @@ func (s *Server) buildRCAVerdict(ctx context.Context, h *chstore.RootCauseHypoth
 		candidates = append(candidates, c.Service)
 	}
 	rivals := buildRCARivalOptions(cat, h.TopSuspect, candidates)
+	// İzinli varlık listesi GÜNCEL katalogdan; geçmiş imzalar onu
+	// GENİŞLETMEZ. Bu satırın sırası önemli: imzalar aşağıda okunuyor
+	// ve buraya hiç dokunmuyor — geçmişin bugünkü topolojiyi
+	// genişletememesi kalkan zincirinin dayanağı.
 	entities := rcaAllowedEntities(cat)
+
+	// v0.9.596 — [6] LEARN. Yalnız operatörün 👍'ladığı geçmiş kök
+	// nedenler. En iyi çaba: okuma hatası verdict'i düşürmez, ön bilgi
+	// olmadan devam eder (dünkü bilgi, bugünkü tanıdan önemsizdir).
+	var sigs []chstore.RCASignature
+	if h.Service != "" {
+		if got, err := s.store.ConfirmedRCASignatures(ctx, h.Service, time.Now()); err == nil {
+			sigs = got
+		} else {
+			log.Printf("[rca] imza okunamadı (%s): %v", h.Service, err)
+		}
+	}
 
 	raw, err := s.copilotExplainJSONSurface(ctx, rcaVerdictSurface,
 		copilot.SystemPromptRCAVerdict(),
-		buildRCAVerdictPrompt(h, cat, rivals),
+		buildRCAVerdictPrompt(h, cat, rivals, sigs, time.Now()),
 		rcaVerdictSchema(entities, rivals))
 
 	var sh rcaShieldReport

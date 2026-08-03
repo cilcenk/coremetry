@@ -33,7 +33,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 )
 
@@ -253,5 +255,107 @@ func TestSalvageHandlesFencedJSON(t *testing.T) {
 					"model doğru cevap vermiş olsa bile düşüş yoluna giderdi", mv.Verdict)
 			}
 		})
+	}
+}
+
+// ── [6] LEARN: geçmiş vakalar (v0.9.596) ─────────────────────────────
+
+func learnSigs() []chstore.RCASignature {
+	return []chstore.RCASignature{
+		{Service: "checkout-service", Entity: "oracle-prod",
+			FailureMode: "bağlantı havuzu tükenmesi", Confirmations: 3,
+			LastSeen: time.Unix(1_759_000_000, 0).UnixNano()},
+	}
+}
+
+// TestSignaturesAreFramedAsPriorNotEvidence — bloğun TEK kritik özelliği.
+//
+// Motorun tüm mimarisi "LLM dedektör değil, hakemdir" üzerine kurulu ve
+// kalkanlar uydurulmuş kanıtı engellemek için var. Geçmişi KANIT gibi
+// sunmak, tam da kalkanların engellediği şeyi prompt'un kendisiyle
+// yapmak olurdu: modeli bugünkü veriye bakmadan karar vermeye davet
+// etmek.
+func TestSignaturesAreFramedAsPriorNotEvidence(t *testing.T) {
+	out := renderRCASignatures(learnSigs(), time.Unix(1_760_000_000, 0))
+	if out == "" {
+		t.Fatal("imza bloğu hiç üretilmedi")
+	}
+	for _, want := range []string{
+		"KANIT DEĞİLDİR",
+		"kanıt kimliği",
+		"YOK SAY",
+		"doğru olduğu anlamına",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("ön bilgi/kanıt ayrımını kuran ifade eksik: %q\n\nBu blok "+
+				"KANIT gibi okunursa model bugünkü veriye bakmadan geçmişe "+
+				"çapa atar — kalkanların engellemek için var olduğu şeyi "+
+				"prompt'un kendisiyle yapmış oluruz.", want)
+		}
+	}
+	// İçerik gerçekten taşınıyor mu (blok boş bir uyarı listesi değil).
+	for _, want := range []string{"oracle-prod", "bağlantı havuzu tükenmesi", "3 ayrı vaka"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("imza içeriği taşınmadı: %q", want)
+		}
+	}
+}
+
+// TestNoSignaturesNoBlock — veri yoksa prompt DEĞİŞMEZ.
+//
+// LEARN, operatör oy verene kadar etkisizdir ve bu tasarımın kendisi:
+// veri olmadan öğrenmek, tahmin etmenin süslü adıdır. Boş bir başlık
+// bile basmamak önemli — küçük modelde her satır dikkat harcar.
+func TestNoSignaturesNoBlock(t *testing.T) {
+	if got := renderRCASignatures(nil, time.Unix(1_760_000_000, 0)); got != "" {
+		t.Errorf("imza yokken blok basıldı: %q", got)
+	}
+	h, cat := verdictFixture()
+	withNil := buildRCAVerdictPrompt(h, cat, nil, nil, time.Unix(1_760_000_000, 0))
+	if strings.Contains(withNil, "GEÇMİŞTE DOĞRULANMIŞ") {
+		t.Error("imza yokken prompt'a geçmiş başlığı sızdı")
+	}
+}
+
+// TestSignaturesComeLastInThePrompt — SIRA sözleşmesi.
+//
+// Küçük modelde sıra ağırlıktır. Geçmişi kanıt kataloğundan ÖNCE
+// koymak, modeli bugünkü kanıta bakmadan çapa atmaya iter — blok
+// doğru kelimelerle yazılmış olsa bile.
+func TestSignaturesComeLastInThePrompt(t *testing.T) {
+	h, cat := verdictFixture()
+	p := buildRCAVerdictPrompt(h, cat, []string{"kimlik-api"}, learnSigs(),
+		time.Unix(1_760_000_000, 0))
+
+	past := strings.Index(p, "GEÇMİŞTE DOĞRULANMIŞ")
+	if past < 0 {
+		t.Fatal("imza bloğu prompt'a girmedi")
+	}
+	for _, earlier := range []string{"KANIT KATALOĞU", "RAKİP HİPOTEZLER"} {
+		i := strings.Index(p, earlier)
+		if i < 0 {
+			continue // o blok bu vakada yoksa sıra kıyası anlamsız
+		}
+		if i > past {
+			t.Errorf("%q geçmiş bloğundan SONRA geliyor — geçmişi öne almak "+
+				"modeli bugünkü kanıta bakmadan çapa atmaya iter", earlier)
+		}
+	}
+}
+
+// TestSystemPromptTeachesThePriorRule — blok ile sistem prompt'u
+// AYNI kuralı söylemeli.
+//
+// Kullanıcı prompt'undaki uyarı tek başına zayıf: sistem prompt'u
+// kanıt kurallarını sayıyor ve geçmiş orada geçmezse model iki
+// kaynağı çelişkili okur.
+func TestSystemPromptTeachesThePriorRule(t *testing.T) {
+	sp := copilot.SystemPromptRCAVerdict()
+	for _, want := range []string{"ÖN BİLGİDİR", "güvenini ARTIRMAZ"} {
+		if !strings.Contains(sp, want) {
+			t.Errorf("sistem prompt'u geçmiş-vaka kuralını öğretmiyor: %q — "+
+				"kullanıcı prompt'u uyarıyor ama sistem prompt'u susuyorsa "+
+				"model iki kaynağı çelişkili okur", want)
+		}
 	}
 }

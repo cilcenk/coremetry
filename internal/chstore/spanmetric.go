@@ -1178,6 +1178,43 @@ func groupKeyExpr(key string, hasOpGroup bool) (string, []any) {
 			return "toString(name)", nil
 		}
 		return "toString(op_group)", nil
+	// v0.9.567 — BİRLEŞİK anahtarlar.
+	//
+	// Bazı kavramların TEK bir attribute'u yok; kod bunları zaten
+	// coalesce ediyor ama group-by tek anahtar aldığı için Explore ve
+	// preset dashboard'lar o birleşimi ifade EDEMİYORDU. Sonuç: doğru
+	// görünen ama boş dönen paneller.
+	//
+	// Kanıtlı olay (pivotHref.ts:80-86, canlı ClickHouse ile
+	// doğrulanmış): `messaging.destination.name` tek başına SIFIR satır
+	// döndürürken eski `messaging.destination` aynı saatte 1280 satır
+	// taşıyordu — 17 topic'in hepsinde has_name_attr = 0. O yazımla
+	// kurulmuş her panel ölü doğuyordu.
+	//
+	// Zincirler, koddaki mevcut birleştirmelerin BİREBİR aynısı:
+	// topology.go (infra_host / msg_dest), messaging_e2e.go,
+	// dependencies.go. Ayrı yazmak, ayrışmanın kendisi olurdu.
+	case key == "peer":
+		// Dış bağımlılık kimliği. peer.service ingest'te TÜRETİLMİYOR,
+		// verbatim okunuyor — OTel javaagent onu varsayılan basmaz,
+		// peer-service-mapping konfigürasyonu ister. Alt kademeler
+		// (server.address / net.peer.name) çoğu kurulumda tek gerçek
+		// kaynak.
+		return `toString(coalesce(
+			nullIf(peer_service, ''),
+			nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
+			nullIf(attr_values[indexOf(attr_keys, 'net.peer.name')], ''),
+			''
+		))`, nil
+	case key == "messaging.destination":
+		// OTel semconv'de ad DEĞİŞTİ (.name eklendi) ve iki yazım da
+		// sahada yaşıyor. Tek yazıma bağlanmak, filonun yarısını
+		// görünmez yapar.
+		return `toString(coalesce(
+			nullIf(attr_values[indexOf(attr_keys, 'messaging.destination.name')], ''),
+			nullIf(attr_values[indexOf(attr_keys, 'messaging.destination')], ''),
+			''
+		))`, nil
 	case strings.HasPrefix(key, "span."):
 		name := strings.TrimPrefix(key, "span.")
 		if col, ok := wellKnown[name]; ok {

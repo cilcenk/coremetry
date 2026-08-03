@@ -46,10 +46,24 @@ export const AGG_OPTIONS: { v: SpanAgg; label: string; unit?: string }[] = [
   { v: 'sum',        label: 'Sum',             unit: 'ms' },
 ];
 
+// v0.9.567 — `peer` ve `messaging.destination` BİRLEŞİK anahtarlar:
+// backend bunları coalesce ediyor (spanmetric.go groupKeyExpr), yani
+// tek bir attribute'a bağlı kalmıyorlar.
+//
+// `peer.service` listede KALDI ama artık ikinci sırada: tek başına
+// çoğu kurulumda boş, çünkü ingest'te türetilmiyor — OTel javaagent
+// onu varsayılan basmaz. `peer` onun yerine server.address ve
+// net.peer.name'e de düşer.
+//
+// `messaging.destination` semconv'de ad değiştirdi (.name eklendi) ve
+// iki yazım da sahada yaşıyor; birleşik anahtar ikisini birden görür.
+// Tek yazıma bağlanmak filonun yarısını görünmez yapıyordu (canlı
+// ClickHouse'ta doğrulanmış: .name sıfır satır, eski ad 1280).
 export const SUGGESTED_GROUPBY = [
   'service.name', 'name', 'op_group', 'kind', 'status_code',
   'http.method', 'http.route', 'http.status_code',
-  'db.system', 'rpc.method', 'peer.service',
+  'db.system', 'rpc.method',
+  'peer', 'peer.service', 'messaging.destination',
   'resource.host.name', 'resource.deployment.environment',
 ];
 

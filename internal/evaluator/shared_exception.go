@@ -89,24 +89,31 @@ func sharedBurstDescription(b chstore.SharedExceptionBurst) string {
 
 // sharedBurstCriticalServices — kaç servisten sonra P1.
 //
-// v0.9.610 (operatör kararı): eşik 8'den 4'e indi.
+// v0.9.611 (operatör kararı): eşik 10.
 //
-// 8 fazla yüksekti ve sebebi bir muhakeme hatasıydı: eşiği "kaç servis
-// çok fazla" diye düşünmüştüm. Doğru soru o değil — doğru soru
-// "MÜNFERİT mi, PAYLAŞILAN mı".
+// Tarihçe kısa ve iki kez ben yanıldım: 8 (ilk tahmin) → 4 (v0.9.610,
+// "münferit mi paylaşılan mı" muhakemesi) → 10 (operatör, prod
+// deneyimi). Karar operatörün: 10'dan azı P2, 10'dan fazlası P1.
 //
 // ConnectException, SocketTimeoutException, SQLRecoverableException:
-// üçü de TEK serviste gürültüdür (geçici, yeniden deneme düzeltir, pod
-// yeniden başlarken normaldir) — bu yüzden IsFatalExceptionType'a
-// GİRMİYORLAR ve tek oluşumda P1 üretmiyorlar.
+// üçü de TEK serviste gürültüdür — bu yüzden IsFatalExceptionType'a
+// GİRMİYORLAR ve tek oluşumda P1 üretmiyorlar. Paylaşıldıklarında
+// anlamları değişiyor ama prod'da 4-9 servis hâlâ "bugün bak"
+// seviyesi; gece 3'te uyandıracak olan 10+.
 //
-// Ama aynı tip AYNI ANDA dört ayrı serviste görünüyorsa artık o
-// servislerin hiçbiriyle ilgili değildir: paylaşılan bir bağımlılık
-// düşmüştür. Tip aynı kalıyor, ANLAMI değişiyor.
+// SAYILARIN NASIL P1/P2'YE DÖNDÜĞÜ (chstore.computePriority):
+// P1 = critical VE (2× eşik | taze deploy | 4+ saat açık).
+// Problem.Threshold burada 3 (açma eşiği), Value = servis sayısı:
 //
-// Üç ve altı "münferit" sayılabilir (aynı deploy dalgası, aynı node,
-// tesadüf). Dörtten itibaren tesadüf açıklaması tükeniyor.
-const sharedBurstCriticalServices = 4
+//	3-5   servis → warning, oran <2  → P3
+//	6-9   servis → warning, oran ≥2  → P2
+//	10+   servis → critical, oran ≥3 → P1   ← operatörün sınırı
+//
+// Yani 10'da P1 iki koşulun BİRLİKTE sağlanmasıyla çıkıyor: ciddiyet
+// critical'a geçiyor VE 10/3 oranı büyük-ihlal eşiğini aşıyor. Bu iki
+// sayı (10 ve 3) birbirine bağlı — açma eşiği değişirse P1 sınırı da
+// kayar ve testte bu ilişki pinli.
+const sharedBurstCriticalServices = 10
 
 // sharedBurstSeverity — patlamanın ciddiyeti.
 //

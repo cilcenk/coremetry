@@ -1646,6 +1646,10 @@ Allowed attribute keys (lowercase, dot-separated):
 
 Allowed ops: =, !=, LIKE, NOT LIKE, IN, NOT IN, >, >=, <, <=,
 EXISTS, NOT EXISTS. LIKE uses SQL-style % wildcards.
+EXISTS and NOT EXISTS take NO value — emit "v": [] for them. They ask
+whether the attribute is PRESENT at all ("spans that carry an
+exception", "requests with no http.route"), so a value would be
+meaningless.
 
 Allowed range presets:
   1m, 5m, 15m, 30m, 1h, 3h, 6h, 12h, 24h, 2d, 3d, 7d, 14d, 30d.

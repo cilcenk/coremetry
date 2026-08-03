@@ -109,6 +109,13 @@ type aiServiceContext struct {
 	Deploys    []aiDeploy   `json:"deploys"`
 	Upstream   []string     `json:"upstream"`
 	Downstream []string     `json:"downstream"`
+	// v0.9.580 (operatör: "örnek request_id, CHANNEL_CODE değerlerini
+	// de söylesin") — cevabı EYLEME dönüştüren somut kimlikler.
+	// "Hata oranı %14" bir gözlem; "örnek request_id: 8f3c…, en çok
+	// hata üreten CHANNEL_CODE: 0012" bir başlangıç noktası: operatör
+	// onu alıp kendi log'una, kaydına, çağrı merkezine gider.
+	Business    map[string][]chstore.BusinessSlice `json:"business,omitempty"`
+	Correlation []chstore.CorrelationSample        `json:"correlation,omitempty"`
 }
 
 // aiAnalyzeResponse is the endpoint payload.
@@ -206,6 +213,21 @@ func (s *Server) buildServiceContext(ctx context.Context, service string, from, 
 		cx.Baseline = aggRED(rows, span.Seconds())
 	}
 
+	// v0.9.580 — iş boyutu kırılımı + örnek istek kimlikleri. İkisi de
+	// soft-fail: eksik olmaları cevabı engellemez, yalnız somutluğunu
+	// azaltır (aynı desen: RED, deploys, topology).
+	for _, key := range []string{"CHANNEL_CODE", "FUNCTION_CODE"} {
+		if sl, err := s.store.BusinessBreakdown(ctx, service, key, from, to); err == nil && len(sl) > 0 {
+			if cx.Business == nil {
+				cx.Business = map[string][]chstore.BusinessSlice{}
+			}
+			cx.Business[key] = sl
+		}
+	}
+	if cs, err := s.store.SampleCorrelationIDs(ctx, service, from, to); err == nil {
+		cx.Correlation = cs
+	}
+
 	// Top error messages (most-frequent first, top 5).
 	if errs, err := s.store.GetExceptions(ctx, chstore.ExceptionFilter{
 		Service: service, GroupBy: "full", From: from, To: to, Limit: 50,
@@ -296,6 +318,27 @@ func renderServiceSnapshot(cx *aiServiceContext) string {
 		}
 		b.WriteString(strings.Join(parts, ", "))
 		b.WriteString("\n")
+	}
+	// v0.9.580 — somut kimlikler. Model bunları YORUMLAR, üretmez:
+	// değerler doğrudan ClickHouse'tan geliyor ve prompt'a olduğu gibi
+	// basılıyor, yani uydurulamaz.
+	for _, key := range []string{"CHANNEL_CODE", "FUNCTION_CODE"} {
+		sl := cx.Business[key]
+		if len(sl) == 0 {
+			continue
+		}
+		var parts []string
+		for i, v := range sl {
+			if i >= 5 {
+				break
+			}
+			parts = append(parts, fmt.Sprintf("%s (%d çağrı, %d hata, %%%.1f)",
+				v.Value, v.Calls, v.Errors, v.ErrPct))
+		}
+		fmt.Fprintf(&b, "%s kırılımı (en çok hata üreten önce): %s\n", key, strings.Join(parts, ", "))
+	}
+	for _, c := range cx.Correlation {
+		fmt.Fprintf(&b, "Örnek %s: %s\n", c.Key, strings.Join(c.Values, ", "))
 	}
 	if len(cx.Deploys) > 0 {
 		var parts []string

@@ -73,6 +73,9 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"topology.go":     true, // topology_*_5m / service_summary_5m / spans / root_traces
 		"dependencies.go": true, // db_*_summary_5m / messaging_*_summary_5m / metric_points / spans
 		"problem_telemetry.go": true, // spans — problem.go'dan ayrılan telemetri yarısı (v0.9.507)
+		// v0.9.580 — SAF telemetri: tek FROM'u spans. State tablosu
+		// okumuyor (aşağıdaki FROM testi de pinliyor).
+		"correlation_ids.go": true, // spans'ten örnek request_id/correlation_id'ler
 		// v0.9.508 dilim 5 — yedisi de saf telemetri, FROM listeleri tek tek doğrulandı:
 		"deploys.go":          true, // service_version_5m / spans
 		"oracle.go":           true, // metric_points

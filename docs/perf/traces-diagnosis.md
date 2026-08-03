@@ -75,14 +75,26 @@ Yani CHANNEL_CODE için 4.3× ceza **yalnızca ALTER her shard'a inmediyse**
 ödeniyor. Diğer tüm özel anahtarlar (kurumsal alanlar) için her zaman
 ödeniyor.
 
-**Prod'da doğrulanacak:**
-```sql
-SELECT attr_channel_code FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1
+**PROD'DA DOĞRULANDI (2026-08-03, operatör ekran görüntüsü):**
 ```
-ve boot log'unda `promoted attribute columns not resolvable` aranmalı.
+select attr_channel_code FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1
+→ 1 rows · 13 ms · 1 columns   (HATA YOK)
+```
+ALTER her shard'a inmiş, probe geçiyor, harita dolu. Prod'da
+CHANNEL_CODE ve FUNCTION_CODE extras'ı **zaten en ucuz katmanda**
+(1. katman, native kolon) koşuyor.
 
-**Kazanç:** 4.3× bayt — ama yalnız promoted olmayan anahtarlarda.
-**Efor:** 2/5 (mekanizma hazır, yeni anahtar eklemek ALTER + probe)
+**Sonuç: operatörün "attribute kolonu ekleyince yavaşlıyor"
+semptomunun sebebi dizi yolu DEĞİL.** Geriye teşhiste sıralanan diğer
+üç şüpheli kalıyor: (a) extras'ın ek bir gidiş-dönüş olması, (b) her
+kolon kombinasyonunun ayrı bir önbellek anahtarı üretip SOĞUK
+başlaması, (c) attr dizilerinin dekompresyon maliyeti — ki (c) de
+promoted anahtarlarda ödenmiyor.
+
+4.3× ceza yalnız **promoted OLMAYAN** özel anahtarlar için geçerli.
+
+**Kazanç:** yalnız yeni promote edilecek anahtarlarda.
+**Efor:** 2/5 · **Öncelik: DÜŞÜK** — bugün ödenen bir maliyet değil.
 
 ---
 
@@ -248,7 +260,7 @@ Kural: şema değişikliği gerektirmeyen ve geri alınabilir olanlar önce.
 | **D3** | "Toplamı göster" için MV tabanlı tavanlı sayım (`approx` YETMEZ — o da MV'yi kapatıyor) | MV'de kalır | 3 | hayır |
 | **D4** | `/api/attribute-keys` debounce | istek sayısı | 1 | hayır |
 | **D5** | **Ham yolu iki fazlı + dar pencereye çevir** | 3.5× satır, 9.7× bayt | 3 | hayır |
-| **D7** | Sıcak kurumsal attribute'ları promote et (ALTER + probe) | 4.3× bayt | 2 | **evet** |
+| ~~D7~~ | ~~Sıcak attribute promote~~ — **prod'da doğrulandı: CHANNEL_CODE/FUNCTION_CODE ZATEN promoted.** Yalnız yeni anahtarlar için reçete | — | 2 | evet |
 | **D8** | Trace başına tek satırlık özet tablo (kova değil) | sınıf değişimi | 4 | **evet** |
 
 **D1-D6 şema değişikliği gerektirmiyor ve her biri tek başına geri

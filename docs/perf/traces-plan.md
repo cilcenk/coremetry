@@ -54,13 +54,37 @@ GROUP BY trace_id LIMIT 10000)`. Tavana değerse UI "10.000+" gösterir.
 `countModeAllowsMV`), `frontend/src/pages/Traces.tsx` (kip seçimi),
 `Pager` etiketi.
 
+**UYGULAMAYA BAŞLARKEN ÇIKAN AYRINTI (2026-08-03) — planda yoktu:**
+
+MV yolunun (`getTracesFromMV`, `repo.go:2704`) **ÜÇ ayrı aşama-1
+varyantı** var ve tavanlı sayım üçünü de aynalamak zorunda:
+
+| Varyant | Ne zaman | Kaynak | Koşul |
+|---|---|---|---|
+| recency slice | servis yok, HAVING yok | `trace_summary_5m` | `time_bucket` aralığı, `GROUP BY` yok |
+| servis indeksi | `service=` var, post-agg filtre yok | `trace_service_index_5m` | `service_name` + aralık |
+| light stage-1 | HAVING var (rootOnly/minMs/maxMs) | `trace_summary_5m` | aralık + `HAVING` |
+
+Kestirme yol ("aşama-1'in döndürdüğü kimlik sayısını say") ÇALIŞMAZ:
+recency slice `(trace_id, time_bucket)` döndürüyor, yani kovalar
+arasına yayılan bir trace BİRDEN ÇOK kez geliyor. `len()` tekil sayı
+değil.
+
+Yani sayım kendi sorgusunu ister ve o sorgu aktif varyanta göre
+şekillenmeli. Aksi hâlde "toplamı göster" bazı filtrelerde YANLIŞ sayı
+verir — ve yanlış sayı, sayı yokluğundan kötüdür çünkü operatör ona
+güvenir.
+
+**Bu yüzden dilim `/spec` ile başlamalı**: üç varyantın hangisinin
+hangi sayım sorgusunu aldığı önce yazılmalı, sonra kod.
+
 **Kabul kriteri:** "toplamı göster" açıkken liste sorgusunun
 `read_rows`'u kapalıyken ile AYNI kalmalı (yani MV'de kalmalı).
 Sayım sorgusu ayrıca `read_rows < 200.000`.
 
 **Geri alma:** tek commit; `countModeAllowsMV` eski hâline döner.
 
-**Efor:** 3 · **Şema:** hayır
+**Efor:** 3 (üç varyant yüzünden; ilk tahmin tek sorguydu) · **Şema:** hayır
 
 ---
 

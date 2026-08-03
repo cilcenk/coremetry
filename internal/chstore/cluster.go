@@ -1160,6 +1160,14 @@ func (s *Store) adaptDDL(sql string) []string {
 // until ZK converges (typically <30s). Without retry, boot
 // crashes. With retry, the migration self-heals.
 func (s *Store) execDDL(ctx context.Context, sql string) error {
+	// v0.9.614 — erteleme kipi (ddl_defer.go): şema yerindeyken boot
+	// DDL'i ÇALIŞTIRMAZ, biriktirir. HAM sql saklanır — adaptDDL
+	// yürütme anında uygulanır, böylece ertelenen ifade de normal
+	// yoldan geçer.
+	if s.deferDDL {
+		s.deferredDDL = append(s.deferredDDL, sql)
+		return nil
+	}
 	for _, frag := range s.adaptDDL(sql) {
 		if err := s.execWithReadonlyRetry(ctx, frag); err != nil {
 			return fmt.Errorf("ddl exec: %w\nSQL: %.200s", err, frag)

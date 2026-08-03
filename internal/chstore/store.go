@@ -37,6 +37,12 @@ import (
 const roundRobinConnLifetime = 5 * time.Minute
 
 type Store struct {
+	// v0.9.614 — DDL erteleme durumu (ddl_defer.go). YALNIZ boot
+	// sırasında, tek goroutine'den dokunulur; New dönmeden
+	// finishDeferredDDL ile temizlenir.
+	deferDDL    bool
+	deferredDDL []string
+
 	conn driver.Conn
 	// ingest is the RoundRobin pool used ONLY for high-volume telemetry
 	// INSERTs — see the two-pool rationale at the clickhouse.Open calls
@@ -640,6 +646,13 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		// at all, which is worse than a missing wrapper that an
 		// operator can fix manually.
 		log.Printf("[chstore] reconcile distributed wrappers: %v", err)
+	}
+	// v0.9.614 — ertelenenler arka plana. finishDeferredDDL bayrağı
+	// listeden ÖNCE temizler: yürütücü aynı execDDL'den geçiyor,
+	// bayrak açık kalsaydı her ifade yeniden birikir ve hiçbir şey
+	// uygulanmazdı.
+	if deferred := s.finishDeferredDDL(); len(deferred) > 0 {
+		go s.runDeferredDDL(deferred)
 	}
 	return s, nil
 }
@@ -1807,7 +1820,15 @@ func (s *Store) migrate(ctx context.Context) error {
 	// hazır olmuyor (operator-reported, prod).
 	//
 	// Taze kurulumda hiçbir şey elenmez; davranış birebir aynı kalır.
-	plan, skipped := planDeclarativeDDL(tables, s.existingObjects(ctx))
+	existing := s.existingObjects(ctx)
+	// v0.9.614 — şema yerindeyse (küme modu + spans mevcut) kalan TÜM
+	// DDL arka plana ertelenir; boot hiçbir kuyruk turunu beklemez.
+	// Taze kurulumda ve tek düğümde davranış birebir eski (senkron).
+	if deferMigrationDDL(s.clusterMode(), existing["spans"]) {
+		s.deferDDL = true
+		log.Printf("[chstore] şema yerinde — kalan DDL arka plana ertelenecek, boot beklemeyecek")
+	}
+	plan, skipped := planDeclarativeDDL(tables, existing)
 	if skipped > 0 {
 		log.Printf("[chstore] %d/%d nesne zaten var — o CREATE'ler gönderilmiyor (dağıtık DDL kuyruğu turu başına ~%d sn)",
 			skipped, len(tables), ddlTaskTimeoutSeconds)

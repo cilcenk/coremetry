@@ -1,0 +1,91 @@
+// v0.9.614 — şema yerindeyken DDL boot'u BEKLETMEZ: arka plana ertelenir.
+//
+// Operatör (prod, dördüncü gece): "Yeni image çıksan ve direkt deploy
+// etsem DDL sorunu kalmasa. Şu an hâlâ prod podları ready olmuyor."
+//
+// v0.9.607/608 zaten var olan nesne/kolon için DDL'i ELEDİ (prod'da
+// 44/49 + 58/76). Ama elenemeyenler — gerçekten yeni tablolar, MODIFY
+// COLUMN'lar, probe'ların tetiklediği onarımlar — tıkalı kuyrukta her
+// biri bütçesini (20 sn) doldurup boot'u DAKİKALARCA bekletiyordu.
+// Pod ölmüyordu ama ready de olmuyordu.
+//
+// ASIL SORU: schema aylardır yerindeyken boot neden HERHANGİ bir DDL'i
+// bekliyor? API'nin servise başlamak için ihtiyacı olan her şey zaten
+// duruyor. Bekletilen ifadeler ya no-op ya da "kuyruk düzelince
+// uygulanacak iyileştirme" — ikisi de boot'u rehin tutmayı hak etmiyor.
+//
+// MEKANİZMA: migrate başında şemanın yerinde olduğu tespit edilirse
+// (küme modu + spans tablosu mevcut) execDDL ifadeleri ÇALIŞTIRMAK
+// yerine biriktirir; New() dönmeden önce birikenler TEK arka plan
+// goroutine'ine devredilir. Boot saniyeler içinde biter; ClickHouse
+// kuyruğu düzelince ertelenenler sırayla uygulanır.
+//
+// NE ZAMAN ERTELENMEZ:
+//   - TAZE KURULUM (spans yok): API tablosuz servise başlayamaz —
+//     tamamen senkron, davranış birebir eski.
+//   - TEK DÜĞÜM: kuyruk hastalığı yok, DDL zaten milisaniyelik;
+//     ertelemek yalnız chsmoke'u yarıştırırdı.
+//
+// BİLİNÇLİ SONUÇLAR (gizlenmiyor):
+//   - Probe'a bağlı özellikler (hasXCol kapıları) ertelenen kolon
+//     uygulanana kadar KAPALI kalır — bu, bugünkü prod gerçeğinin
+//     aynısı: kolon kuyrukta beklerken de kapalılar. Kuyruk düzelince
+//     bir SONRAKİ boot'ta açılırlar.
+//   - registerTraceAttrMaterialized SENKRON kalır (SELECT probe, DDL
+//     değil): boot-sonrası-yazım-yok sözleşmesi korunur.
+package chstore
+
+import (
+	"context"
+	"log"
+	"time"
+)
+
+// deferMigrationDDL — SAF kapı: bu boot DDL'i ertelesin mi?
+func deferMigrationDDL(clusterMode, spansExists bool) bool {
+	return clusterMode && spansExists
+}
+
+// finishDeferredDDL — birikenleri devralır ve durumu TEMİZLER.
+//
+// Bayrağın listeden ÖNCE temizlenmesi kritik ve testli: arka plan
+// yürütücüsü aynı execDDL'den geçer; bayrak açık kalsaydı yürütücünün
+// her ifadesi yeniden birikir ve hiçbir şey uygulanmazdı — sessiz bir
+// sonsuz erteleme.
+func (s *Store) finishDeferredDDL() []string {
+	s.deferDDL = false
+	list := s.deferredDDL
+	s.deferredDDL = nil
+	return list
+}
+
+// runDeferredDDL — ertelenen ifadeleri sırayla uygular.
+//
+// Sıra korunur: DROP+CREATE çiftleri (MV onarımları) sıraya bağımlı.
+// Hata di̇ğerleri̇ni̇ durdurmaz — her ifade bağımsız, hepsi idempotent;
+// başarısız olan bir SONRAKİ boot'ta yeniden denenir (aynı eleme/
+// erteleme döngüsünden geçerek).
+func (s *Store) runDeferredDDL(list []string) {
+	if len(list) == 0 {
+		return
+	}
+	log.Printf("[chstore] %d ertelenmiş DDL arka planda uygulanıyor (boot bunları BEKLEMEDİ)", len(list))
+	okN, failN := 0, 0
+	start := time.Now()
+	for _, sql := range list {
+		// İfade başına bağımsız bütçe: tıkalı kuyrukta her biri
+		// sunucu bütçesini (ddlTaskTimeoutSeconds) doldurabilir;
+		// üstüne istemci payı.
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		err := s.execDDL(ctx, sql)
+		cancel()
+		if err != nil {
+			failN++
+			log.Printf("[chstore] ertelenmiş DDL uygulanamadı (sonraki boot'ta yeniden denenecek): %v", err)
+			continue
+		}
+		okN++
+	}
+	log.Printf("[chstore] arka plan DDL bitti: %d uygulandı, %d başarısız, süre %s",
+		okN, failN, time.Since(start).Round(time.Second))
+}

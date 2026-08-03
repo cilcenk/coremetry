@@ -35,24 +35,11 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [params, setParams] = useSearchParams();
-  const cmpPods = useMemo(
-    () => (params.get('pods') ?? '').split(',').map(x => x.trim()).filter(Boolean).slice(0, 2),
-    [params]);
-  const setCmp = (list: string[]) => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    if (list.length > 0) next.set('pods', list.join(',')); else next.delete('pods');
-    return next;
-  }, { replace: true });
-  const toggleCmp = (pod: string) => {
-    if (cmpPods.includes(pod)) setCmp(cmpPods.filter(x => x !== pod));
-    else if (cmpPods.length < 2) setCmp([...cmpPods, pod]);
-    else setCmp([cmpPods[0], pod]); // üçüncü seçim ikincinin yerine geçer
-  };
-  // URL'deki adları görünen satırlara çöz — pod ölmüş/pencereden düşmüşse
-  // panel yerine dürüst not (sessiz yok-sayma değil).
-  const cmpRows = useMemo(
-    () => cmpPods.map(name => ({ name, row: dt.sortedRows.find(r => r.pod === name) })),
-    [cmpPods, dt.sortedRows]);
+  // v0.9.574 — pod KIYASI kaldırıldı (operatör: "kıyasla kısmını da
+  // kaldır gereksiz"). Satır başına bir düğme, iki-pod state'i, ?pods=
+  // URL param'ı ve yan yana panel bölümü gitti. Aynı pencerede iki
+  // pod'u ayrı ayrı açmak zaten mümkün; ayrı bir mod bunun için fazla
+  // makine.
 
   // v0.9.533 — ?jpod= derin linki (Problems → "pod'a bak"). Eskiden
   // kaldırılan bağımsız JMX bölümünün pod daraltmasıydı; yeniden
@@ -148,19 +135,6 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
                             style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                             <td className="mono" style={{ fontSize: 12, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.pod}>
                               <span style={{ color: 'var(--text3)', marginRight: 5 }}>{open ? '▾' : '▸'}</span>{r.pod}
-                              <button type="button"
-                                onClick={(e) => { e.stopPropagation(); toggleCmp(r.pod); }}
-                                title={cmpPods.includes(r.pod)
-                                  ? 'Kıyastan çıkar'
-                                  : 'Yan yana kıyasa ekle (en fazla 2 pod; ?pods= URL\'de)'}
-                                style={{
-                                  all: 'unset', cursor: 'pointer', marginLeft: 8, fontSize: 10.5,
-                                  padding: '0 6px', borderRadius: 4,
-                                  border: `1px solid ${cmpPods.includes(r.pod) ? 'var(--accent)' : 'var(--border)'}`,
-                                  color: cmpPods.includes(r.pod) ? 'var(--accent)' : 'var(--text3)',
-                                }}>
-                                {cmpPods.includes(r.pod) ? '✓ kıyasta' : '+ kıyas'}
-                              </button>
                             </td>
                             <td>{r.phase
                               ? <span className={`badge ${podPhaseBadge(r.phase)}`}>{r.phase}</span>
@@ -196,44 +170,6 @@ export function ServiceClusterPods({ dt, effNs, effDeploy, cFrom, cTo, colCount,
         );
       })}
 
-      {/* v0.9.384 — yan yana kıyas: iki seçili pod'un JMX panelleri split.
-          Tek pod seçiliyken ipucu satırı; çözülemeyen ad dürüst not. */}
-      {cmpPods.length === 1 && (
-        <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-          <span className="mono">{cmpPods[0]}</span> kıyasta — ikinci pod'u seç, paneller yan yana açılsın.
-        </div>
-      )}
-      {cmpPods.length === 2 && (
-        <div style={{ border: '1px solid var(--accent)', borderRadius: 9, padding: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, fontSize: 12.5, fontWeight: 600 }}>
-            Pod kıyası
-            <span style={{ fontWeight: 400, color: 'var(--text3)' }}>aynı pencere · aynı metrikler</span>
-            <span onClick={() => setCmp([])}
-              style={{ marginLeft: 'auto', cursor: 'pointer', color: 'var(--text3)' }}>✕ kapat</span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
-            {cmpRows.map(({ name, row }) => (
-              <div key={name} style={{ border: '1px solid var(--border)', borderRadius: 7, overflow: 'hidden' }}>
-                <div className="mono" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 10px', fontSize: 11.5, fontWeight: 600, borderBottom: '1px solid var(--border)' }}>
-                  {name}
-                  {row?.phase && <span className={`badge ${podPhaseBadge(row.phase)}`}>{row.phase}</span>}
-                  <span onClick={() => toggleCmp(name)}
-                    style={{ marginLeft: 'auto', cursor: 'pointer', color: 'var(--text3)', fontWeight: 400 }}>✕</span>
-                </div>
-                {row ? (
-                  <PodJmxInline cluster={row.cluster} ns={row.namespace || effNs} deploy={effDeploy}
-                    pod={row.pod} cFrom={cFrom} cTo={cTo} onFull={() => onOpenPod(row)} />
-                ) : (
-                  <div style={{ padding: 12, fontSize: 12, color: 'var(--text3)' }}>
-                    Bu pod şu anki listede yok — ölmüş ya da pencereden düşmüş olabilir
-                    (?pods= linki bayat). Kıyastan çıkarabilirsin.
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
     </div>
   );
 }

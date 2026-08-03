@@ -5,7 +5,6 @@ import { api } from '@/lib/api';
 import { Card } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MetricArea } from '@/pages/clusters/MetricArea';
-import { PromQLList } from '@/pages/clusters/PromQLList';
 import { servicePodRegex } from '@/pages/clusters/podWorkload';
 import { promQuote } from '@/pages/clusters/promQuote';
 import { fmtCores, restartColor } from '@/pages/clusters/thresholds';
@@ -277,17 +276,10 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
         </div>
       )}
 
-      {/* Servis-kapsamlı PromQL (§8) — display-only, promQuote'lu. */}
-      <div style={{ marginTop: 14, maxWidth: 720 }}>
-        <Card header="Prometheus queries (service scope)">
-          <PromQLList queries={[
-            ['CPU (cores)', `sum(rate(container_cpu_usage_seconds_total{namespace="${promQuote(ns)}",pod=~"${promQuote(deploy)}-.*"}[5m]))`],
-            ['Working-set memory', `sum(container_memory_working_set_bytes{namespace="${promQuote(ns)}",pod=~"${promQuote(deploy)}-.*"})`],
-            ['Restarts (1h)', `sum(increase(kube_pod_container_status_restarts_total{namespace="${promQuote(ns)}"}[1h]))`],
-            ['Ready replicas', `kube_deployment_status_replicas_ready{namespace="${promQuote(ns)}",deployment="${promQuote(deploy)}"}`],
-          ]} />
-        </Card>
-      </div>
+      {/* v0.9.574 — servis-kapsamlı PromQL kartı KALDIRILDI (operatör:
+          "services infrada benzerini kaldıralım"). Clusters sayfasındaki
+          ikiziyle aynı gerekçe: kopyala-yapıştır sorgu örnekleri bir
+          referanstı, bir gözlem değil. */}
     </>
   );
 }

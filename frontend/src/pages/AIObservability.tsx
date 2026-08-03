@@ -4,6 +4,8 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Button, Drawer, DrawerSection } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { rcaPctText, rcaEngineTone, rcaSatisfactionText } from './ai/rcaQualityView';
+import type { RCAVerdictQuality } from '@/lib/types';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
 import {
   type AIRateTable, mergeRates, costForCall, fmtCost,
@@ -264,12 +266,88 @@ export default function AIObservabilityPage() {
         {/* v0.9.549 — 👎 paneli "cevap kötüydü"yü, bu panel
             "soru hiç tanınmadı"yı gösteriyor. İkisi farklı
             kalite sinyali: biri anlatımın, diğeri yönlendirmenin. */}
+        {/* v0.9.594 — kalite ölçümü. Yukarıdaki her şey TRANSPORT
+            sağlığı: kaç çağrı, kaç hata, kaç token, ne kadar gecikme.
+            Bir model sürekli 200 dönüp sürekli saçmalayabilir ve o
+            karolarda mükemmel görünür. Bu panel cevabın KENDİSİNE
+            bakan tek yer. */}
+        <RCAQualityPanel range={range} />
         <RouterGapsPanel />
         <NegativeFeedbackPanel />
 
         {open && <CallDrawer call={open} rates={rates} onClose={() => setOpen(null)} />}
       </div>
     </>
+  );
+}
+
+// RCAQualityPanel — v0.9.594. Kök-neden hakem motorunun kalitesi.
+//
+// Üç ayrı soru, üçü FARKLI şey ve birine tek başına bakmak yanıltır:
+//
+//   kararın DAĞILIMI   kaçı kök neden gösterdi, kaçı "kanıt yetersiz"
+//   MOTORUN sağlığı    model kaç kez çözümlenemedi, kalkan kaç kez girdi
+//   OPERATÖRÜN yargısı 👍/👎
+//
+// Yüksek "kanıt yetersiz" oranı modelin zayıflığı DEĞİL, kanıtın
+// yetersizliği olabilir. Yüksek kalkan oranı ise modelin UYDURDUĞUNU
+// söyler ve bu bambaşka bir arıza — biri veri sorunu, öteki model
+// sorunu ve çareleri de farklı.
+function RCAQualityPanel({ range }: { range: TimeRange }) {
+  const [q, setQ] = useState<RCAVerdictQuality | null | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    setQ(undefined);
+    const { from, to } = timeRangeToNs(range);
+    api.aiRCAQuality({ from, to })
+      .then(r => { if (!cancelled) setQ(r); })
+      .catch(() => { if (!cancelled) setQ(null); });
+    return () => { cancelled = true; };
+  }, [range]);
+
+  return (
+    <div className="card" style={{ marginTop: 16 }}>
+      <div className="ov-card-h">
+        <h3>Kök-neden hakem kalitesi</h3>
+        <span className="ov-sub">
+          transport değil, CEVABIN kendisi — karar dağılımı, motor sağlığı, operatör yargısı
+        </span>
+      </div>
+      <div className="ov-card-b">
+        {q === undefined && <Spinner />}
+        {q === null && <Empty icon="✗" title="Okunamadı" />}
+        {q && q.total === 0 && (
+          <Empty icon="○" title="Bu pencerede hiç verdict üretilmemiş">
+            Bir problem/anomali kartında ✨ Explain'e basıldığında burada görünür.
+          </Empty>
+        )}
+        {q && q.total > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+            <KPI label="Verdict" value={fmtNum(q.total)} />
+            <KPI label="Kök neden belirlendi"
+              value={`${fmtNum(q.rootCauseIdentified)} · ${rcaPctText(q.rootCauseIdentified, q.total)}`} />
+            <KPI label="Olası neden"
+              value={`${fmtNum(q.probableCause)} · ${rcaPctText(q.probableCause, q.total)}`} />
+            {/* Kanıt yetersiz NÖTR çizilir: bir arıza değil, geçerli
+                bir cevap. Kırmızı yapmak modeli tam da kaçınmasını
+                istemediğimiz yöne — kendinden emin ve yanlış cevaba —
+                iter (prompt ona açıkça "bunu demek ayıp değil" diyor). */}
+            <KPI label="Kanıt yetersiz"
+              value={`${fmtNum(q.insufficientEvidence)} · ${rcaPctText(q.insufficientEvidence, q.total)}`} />
+            <KPI label="Model çözümlenemedi"
+              value={`${fmtNum(q.unparsed)} · ${rcaPctText(q.unparsed, q.total)}`}
+              cls={rcaEngineTone(q)} />
+            <KPI label="Kalkan devrede"
+              value={`${fmtNum(q.shielded)} · ${rcaPctText(q.shielded, q.total)}`}
+              cls={rcaEngineTone(q)} />
+            <KPI label="Onarım gerekti"
+              value={`${fmtNum(q.repaired)} · ${rcaPctText(q.repaired, q.total)}`} />
+            <KPI label="Ortalama güven" value={q.avgConfidence.toFixed(2)} />
+            <KPI label="Operatör memnuniyeti" value={rcaSatisfactionText(q)} />
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

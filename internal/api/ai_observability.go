@@ -255,6 +255,34 @@ func (s *Server) aiStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// aiRCAQuality — kök-neden hakem motorunun kalitesi (v0.9.594).
+//
+// /ai sayfası bugün TRANSPORT sağlığını ölçüyor: kaç çağrı, kaç hata,
+// kaç token, ne kadar gecikme. Hiçbiri "cevap DOĞRU MUYDU" sorusuna
+// dokunmuyor — bir model sürekli 200 dönüp sürekli saçmalayabilir ve
+// o panelde mükemmel görünür.
+//
+// Bu uç o boşluğun RCA yüzeyindeki karşılığı. Üç ayrı soruyu birden
+// cevaplıyor ve üçü FARKLI şeyler:
+//
+//	kararın DAĞILIMI  — kaçı kök neden gösterdi, kaçı "kanıt yetersiz"
+//	MOTORUN sağlığı   — model kaç kez çözümlenemedi, kalkanlar kaç kez girdi
+//	OPERATÖRÜN yargısı — 👍/👎
+//
+// Bir tanesine bakmak yanıltır: yüksek insufficient_evidence oranı
+// modelin zayıflığı DEĞİL, kanıtın yetersizliği olabilir; yüksek
+// kalkan oranı modelin uydurduğunu söyler ve bu bambaşka bir arıza.
+//
+// Aynı 30sn önbellek + admin kapısı: kardeş uçlarla tek davranış.
+func (s *Server) aiRCAQuality(w http.ResponseWriter, r *http.Request) {
+	from, to := parseFromTo(r, 24*time.Hour)
+	key := fmt.Sprintf("ai-rca-quality:from=%d:to=%d",
+		from.UnixNano()/int64(time.Minute), to.UnixNano()/int64(time.Minute))
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.RCAVerdictQualityStats(ctx, from, to)
+	})
+}
+
 // aiSeries — volume / errors / latency / token timeseries for the
 // /ai page line chart. Bucket size is derived from the window
 // length so a 24h window has 5-min buckets, a 7d window has 1h

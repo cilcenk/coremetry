@@ -669,8 +669,8 @@ func TestServicesForUserTeam(t *testing.T) {
 		team string
 		want []string
 	}{
-		{"payments", []string{"billing", "checkout"}},     // owner eşleşmesi, case-insensitive
-		{"platform-sre", []string{"checkout", "search"}},  // sre eşleşmesi — owner farklı olsa da girer
+		{"payments", []string{"billing", "checkout"}},    // owner eşleşmesi, case-insensitive
+		{"platform-sre", []string{"checkout", "search"}}, // sre eşleşmesi — owner farklı olsa da girer
 		{"discovery", []string{"search"}},
 		{"nonexistent", []string{}},
 		{"", nil},
@@ -797,9 +797,9 @@ func TestRouteGuidedIntentTraceIDWins(t *testing.T) {
 	for _, q := range []string{
 		id,
 		"bu trace " + id,
-		"neden yavaş " + id,                        // why sinyali + id
-		"checkout " + id + " problemleri",          // servis adı + problem sinyali + id
-		"en yavaş trace'ler " + id,                 // slow-trace sinyali + id
+		"neden yavaş " + id,               // why sinyali + id
+		"checkout " + id + " problemleri", // servis adı + problem sinyali + id
+		"en yavaş trace'ler " + id,        // slow-trace sinyali + id
 	} {
 		r := routeGuidedIntent(q, svcs, nil, "")
 		if r.Intent != guidedTraceByID {
@@ -904,5 +904,39 @@ func TestSpanWordDoesNotHijack(t *testing.T) {
 	}
 	if r := routeGuidedIntent("checkout nasıl?", svcs, nil, ""); r.Intent != guidedServiceHealth {
 		t.Errorf("servis sağlığı rotası bozuldu: %q", r.Intent)
+	}
+}
+
+// v0.9.590 — "kuyruk" belirsizliğinin BİRLEŞİM kapısı.
+//
+// Bu, #6'yı ("üç intent erişilemez") doğrularken çıktı: üç intent de
+// ERİŞİLEBİLİRDİ (kuyruk kaydı yanlıştı), ama sonda gerçek bir boşluk
+// vardı — "kuyrukta birikme var mı" HİÇBİR intent'e düşmüyor, serbest/
+// RAG yoluna savruluyor ve "yüklü dokümanlarda bu bilgi yok" cevabını
+// alıyordu; elimizde tam o soruyu cevaplayan MV varken.
+//
+// Kapının BİRLEŞİM olması şart: "kuyruk" operatörün kendi iş-listesi
+// sözcüğü (CLAUDE.md `kuyruk` komutu) ve tek başına messaging'e
+// devredilemez. Bu test iki yönü birden pinliyor.
+func TestQueueWordNeedsBacklogWord(t *testing.T) {
+	messaging := []string{
+		"kuyrukta birikme var mı",
+		"kuyruklarda lag nasıl",
+		"queue gecikmesi var mı",
+		"kuyrukta bekleyen mesaj sayısı",
+	}
+	for _, q := range messaging {
+		if got := routeGuidedIntent(q, guidedTestServices, guidedTestEnvs, ""); got.Intent != guidedMessagingHealth {
+			t.Errorf("%q → %q, messaging_health bekleniyordu — birikme sözcüğü "+
+				"belirsizliği kaldırıyor", q, got.Intent)
+		}
+	}
+	// Çıplak "kuyruk" messaging'e GİTMEMELİ: operatörün iş listesi.
+	notMessaging := []string{"kuyruk", "kuyrukta ne var", "kuyruğu göster"}
+	for _, q := range notMessaging {
+		if got := routeGuidedIntent(q, guidedTestServices, guidedTestEnvs, ""); got.Intent == guidedMessagingHealth {
+			t.Errorf("%q messaging_health'e gitti — 'kuyruk' operatörün iş "+
+				"listesi sözcüğü, tek başına Kafka'ya devredilemez", q)
+		}
 	}
 }

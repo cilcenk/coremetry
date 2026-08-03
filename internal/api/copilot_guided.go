@@ -253,8 +253,21 @@ func hasMessagingSignal(toks []string) bool {
 			return true
 		}
 	}
-	return tokenHasPrefix(toks, "kafka", "rabbit", "topic", "artemis",
-		"activemq", "ibmmq", "nats", "messaging", "jms", "mesajla")
+	if tokenHasPrefix(toks, "kafka", "rabbit", "topic", "artemis",
+		"activemq", "ibmmq", "nats", "messaging", "jms", "mesajla") {
+		return true
+	}
+	// v0.9.590 — "kuyruk" TEK BAŞINA hâlâ yok (yukarıdaki gerekçe
+	// geçerli), ama BİRİKME sözcüğüyle birlikte belirsizlik kalmıyor:
+	// operatörün iş listesinde "birikme/lag/gecikme" olmaz, Kafka'da
+	// olur. Bu yüzden kapı bir BİRLEŞİM — iki taraf da gerekli.
+	//
+	// Boşluk gerçekti: "kuyrukta birikme var mı" HİÇBİR intent'e
+	// düşmüyordu, yani serbest/RAG yoluna savruluyor ve orada
+	// "yüklü dokümanlarda bu bilgi yok" cevabını alıyordu — elimizde
+	// tam da o soruyu cevaplayan MV varken.
+	return tokenHasPrefix(toks, "kuyru", "queue") &&
+		tokenHasPrefix(toks, "birik", "lag", "gecik", "bekleyen", "tüket", "tuket")
 }
 
 // hasGuidedSignal is the cheap precheck the handler runs BEFORE

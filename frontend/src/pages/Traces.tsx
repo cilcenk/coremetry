@@ -33,7 +33,7 @@ import { ColumnManager } from '@/components/ColumnManager';
 import { VirtualTable } from '@/components/ui/VirtualTable';
 import { useDataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import { api } from '@/lib/api';
+import { api, isCanceled } from '@/lib/api';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
@@ -342,7 +342,15 @@ function TracesPageInner() {
     setListErr(null);
     // v0.8.300 (quality bar S3) — stale-overwrite guard, same pattern as the
     // volume-strip effect below.
+    //
+    // v0.9.603 (traces D2) — bayrağın YANINDA gerçek iptal.
+    //
+    // Bayrak tek başına YANITI atıyordu, İSTEĞİ değil: aralığı hızlı
+    // değiştiren operatör ClickHouse'ta üst üste binen sorgular
+    // bırakıyordu ve her biri max_execution_time'a kadar koşuyordu.
+    // Bayrak yine gerekli (iptal yarışı kazanmayabilir); ikisi birlikte.
     let cancelled = false;
+    const ctl = new AbortController();
     // Only a FULL 32-hex trace id is honoured server-side (prefix search
     // removed v0.9.82 — startsWith defeats the trace_id bloom index and runs
     // unbounded). A partial id is ignored here so the normal time-bounded
@@ -373,13 +381,15 @@ function TracesPageInner() {
       // toggle never re-runs this (window-wide) query. extraCols is
       // deliberately NOT a dep here for the same reason.
       count: showTotal && !traceIdExact ? 'exact' : 'skip',
-    }).then(d => { if (!cancelled) { setData(d); setRefreshing(false); } }).catch((e: unknown) => {
-      if (cancelled) return;
+    }, ctl.signal).then(d => { if (!cancelled) { setData(d); setRefreshing(false); } }).catch((e: unknown) => {
+      // İptal HATA DEĞİL — operatörün kendi eylemi. Yutulmazsa aralık
+      // her değiştiğinde ekrana kırmızı bir kutu düşerdi.
+      if (cancelled || isCanceled(e)) return;
       setListErr(e instanceof Error ? e.message : 'Request failed');
       setData(null);
       setRefreshing(false);
     });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; ctl.abort(); };
   }, [view, listRangeNs, sort, order, page, filter, env, advFilters, advGroupParam, showTotal, retryNonce]);
 
   // ── Extras enrichment (FAZ 2 — docs/audit/traces-attribute-columns.md
@@ -463,6 +473,7 @@ function TracesPageInner() {
       dsl: filter.service ? `service.name = "${filter.service.replace(/"/g, '\\"')}"` : undefined,
     };
     let cancelled = false;
+    const ctl = new AbortController();
     // v0.9.601 — üç ayrı /api/spans/metric yerine TEK metric-batch.
     //
     // Endpoint tam bu iş için vardı (api.go:735, yorumu: "dropping
@@ -481,7 +492,7 @@ function TracesPageInner() {
         { name: 'errors', agg: 'errors' },
         { name: 'p50', agg: 'p50', field: 'duration_ms' },
       ],
-    })
+    }, ctl.signal)
       .then(r => {
         if (cancelled) return;
         setVolSeries({
@@ -490,8 +501,8 @@ function TracesPageInner() {
           p50: r.series.p50 ?? [],
         });
       })
-      .catch(() => { if (!cancelled) setVolSeries(null); });
-    return () => { cancelled = true; };
+      .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setVolSeries(null); });
+    return () => { cancelled = true; ctl.abort(); };
   }, [view, listRangeNs, filter.service, filter.search, env, advFilters, grouped]);
 
   // ── Aggregate fetch ──────────────────────────────────────────────────────

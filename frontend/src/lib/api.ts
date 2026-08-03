@@ -63,13 +63,26 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 // keep the connection open while the server works.
 async function request<T>(path: string, init?: RequestInit & { timeoutMs?: number }): Promise<T> {
   const timeoutMs = init?.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
-  let signal = init?.signal;
-  let abortTimer: ReturnType<typeof setTimeout> | undefined;
-  if (!signal) {
-    const ctl = new AbortController();
-    signal = ctl.signal;
-    abortTimer = setTimeout(() => ctl.abort(), timeoutMs);
+  // v0.9.603 (traces D2) — çağıranın signal'i ile timeout BİRLİKTE çalışır.
+  //
+  // Öncesi: `if (!signal)` — çağıran bir signal verdiği anda 60s timeout
+  // KAYBOLUYORDU, yani iptal edilebilirlik kazanmanın bedeli asılı kalma
+  // riskiydi. İkisi birbirinin alternatifi değil; biri kullanıcı niyeti,
+  // öteki emniyet tavanı.
+  //
+  // AbortSignal.any() kullanılmadı: tarayıcı desteği yeni (Safari 17.4+)
+  // ve bu depo eski istemcileri de destekliyor. Dinleyici deseni her
+  // yerde çalışır.
+  const ctl = new AbortController();
+  let timedOut = false;
+  const abortTimer = setTimeout(() => { timedOut = true; ctl.abort(); }, timeoutMs);
+  const caller = init?.signal;
+  const onCallerAbort = () => ctl.abort();
+  if (caller) {
+    if (caller.aborted) ctl.abort();
+    else caller.addEventListener('abort', onCallerAbort, { once: true });
   }
+  const signal = ctl.signal;
   try {
     const r = await fetch(API_BASE + path, { credentials: 'include', ...init, signal });
     if (r.status === 401) {
@@ -83,15 +96,36 @@ async function request<T>(path: string, init?: RequestInit & { timeoutMs?: numbe
     return await (r.json() as Promise<T>);
   } catch (err) {
     if ((err as Error)?.name === 'AbortError') {
+      // İPTAL ile ZAMAN AŞIMI ayrı şeyler ve ayrı davranmalı.
+      //
+      // Öncesi ikisi de "Request timed out" oluyordu: operatör aralığı
+      // değiştirdiğinde eski istek iptal edilse bile ekrana zaman aşımı
+      // hatası düşerdi. Kullanıcının kendi eylemi hata gibi görünmemeli.
+      if (!timedOut) throw new CanceledError();
       throw new Error(`Request timed out after ${timeoutMs / 1000}s — try a narrower time range or fewer filters`);
     }
     throw err;
   } finally {
-    if (abortTimer) clearTimeout(abortTimer);
+    clearTimeout(abortTimer);
+    caller?.removeEventListener('abort', onCallerAbort);
   }
 }
 
-async function get<T>(path: string): Promise<T> { return request<T>(path); }
+/** v0.9.603 — çağıran isteği bilerek iptal etti. Hata DEĞİL: çağıranlar
+ *  bunu sessizce yutmalı, yoksa operatörün kendi eylemi ekranda hata
+ *  olarak görünür. `isCanceled` ile ayırt edilir. */
+export class CanceledError extends Error {
+  constructor() { super('request canceled'); this.name = 'CanceledError'; }
+}
+
+/** Bir hatanın "çağıran iptal etti" olup olmadığını söyler. */
+export function isCanceled(e: unknown): boolean {
+  return e instanceof CanceledError || (e as Error)?.name === 'CanceledError';
+}
+
+async function get<T>(path: string, signal?: AbortSignal): Promise<T> {
+  return request<T>(path, signal ? { signal } : undefined);
+}
 
 export interface RangeParams { from: number; to: number }
 
@@ -399,7 +433,11 @@ export const api = {
   operations: (service: string, r: RangeParams) =>
     get<string[] | null>(`/api/operations?${qs({ ...r, service })}`),
 
-  traces:    (params: TracesParams)  => get<TracesResponse>(`/api/traces?${qs(params)}`),
+  // v0.9.603 (traces D2) — signal ile İPTAL EDİLEBİLİR. Sayfanın en pahalı
+  // isteği bu; operatör aralığı/filtreyi hızlı değiştirdiğinde eski sorgu
+  // ClickHouse'ta koşmaya devam etmemeli.
+  traces:    (params: TracesParams, signal?: AbortSignal) =>
+    get<TracesResponse>(`/api/traces?${qs(params)}`, signal),
   // FAZ 2 (traces attribute columns) — phase-2-only enrichment: fetch the
   // selected attribute columns for an EXPLICIT page of trace ids, bounded
   // by the visible rows' real min/max timestamps (ns). Same GET /api/traces
@@ -1601,8 +1639,9 @@ export const api = {
      *  geçmesini engelliyordu (arama sessizce düşerdi). */
     search?: string;
     aggs: { name: string; agg: string; field?: string }[];
-  }) =>
+  }, signal?: AbortSignal) =>
     request<{ stepSeconds: number; series: Record<string, SpanMetricSeries[] | null> }>('/api/spans/metric-batch', {
+      signal,
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({

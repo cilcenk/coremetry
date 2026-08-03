@@ -8,6 +8,7 @@ package api
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
@@ -258,7 +259,7 @@ func TestSalvageJSONObject(t *testing.T) {
 func TestVerdictPromptCarriesConstraints(t *testing.T) {
 	h, cat := verdictFixture()
 	rivals := buildRCARivalOptions(cat, h.TopSuspect, []string{"kimlik-api"})
-	p := buildRCAVerdictPrompt(h, cat, rivals)
+	p := buildRCAVerdictPrompt(h, cat, rivals, nil, time.Unix(1_760_000_000, 0))
 
 	for _, want := range []string{
 		"RAKİP HİPOTEZLER",

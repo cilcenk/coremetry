@@ -1853,6 +1853,16 @@ KANIT KURALLARI:
 - Aynı kanıtı hem destek hem çürütme olarak kullanma.
 - Sayı UYDURMA. Etki rakamlarını sen hesaplamazsın; onlar ölçülür.
 
+GEÇMİŞ VAKALAR (verilirse):
+- "GEÇMİŞTE DOĞRULANMIŞ KÖK NEDENLER" bloğu ÖN BİLGİDİR, KANIT DEĞİL.
+  Nereye BAKACAĞINI söyler, ne BULACAĞINI değil.
+- Geçmişte doğrulanmış olması bugün de doğru olduğu anlamına gelmez.
+  Aynı servis farklı sebeplerle iki kez bozulabilir ve ikincisinde
+  geçmişe yaslanmak, yeni sebebi görmemek demektir.
+- Bir iddiayı yalnız geçmişe dayandırma: kanıt kimliği (E1, E3) ŞART.
+  Güncel katalog desteklemiyorsa geçmiş kaydı YOK SAY.
+- Geçmiş bir kayıt güvenini ARTIRMAZ. Güven bugünkü kanıttan gelir.
+
 KARAR:
 - root_cause_identified: doğrudan nedensel kanıt VAR ve en az bir
   rakip gerçekten çürütüldü.

@@ -128,3 +128,88 @@ func TestAddShownTokensIsTokenLevel(t *testing.T) {
 		t.Fatal("hiçbir şey eklenmedi")
 	}
 }
+
+// ── Few-shot ↔ snapshot hizası (v0.9.599) ────────────────────────────
+
+// TestFewShotMatchesTheRealSnapshotShape — örnek GİRDİ, gerçek
+// snapshot'ın ürettiği satır türlerini içermeli.
+//
+// v0.9.580 snapshot'a iki yeni satır türü ekledi (kırılım + örnek
+// kimlik) ama few-shot örneği güncellenmedi. Küçük lokal model
+// gösterilen örneği taklit eder: örnekte o satırlar yoksa cevapta da
+// olmaz. Veri prompt'a gidiyor, cevaba gelmiyordu — operatörün açıkça
+// istediği özellik sessizce yarım çalışıyordu.
+//
+// Ne derleme, ne şema, ne mevcut testler bunu yakalayabilirdi: içerik
+// serbest metin alanlarının İÇİNDE yaşıyor.
+func TestFewShotMatchesTheRealSnapshotShape(t *testing.T) {
+	// Beklenen biçimler ELLE YAZILMIYOR: gerçek renderer'dan
+	// türetiliyor. Elle yazsaydık aynı cümle iki yerde yaşardı ve
+	// renderer değiştiğinde test yeşil kalıp few-shot bayatlardı —
+	// bu oturumun tekrar eden hata sınıfı ("iki yer, iki kural").
+	rendered := renderServiceSnapshot(shownCtx())
+
+	var shapes []string
+	for _, line := range strings.Split(rendered, "\n") {
+		// Yalnız v0.9.580'in eklediği iki satır türü ilgilendiriyor.
+		if i := strings.Index(line, "kırılımı"); i >= 0 {
+			if j := strings.Index(line, ":"); j > i {
+				shapes = append(shapes, line[i:j+1]) // "kırılımı (…):"
+			}
+		}
+		if strings.HasPrefix(line, "Örnek ") {
+			if j := strings.Index(line, ":"); j > 0 {
+				shapes = append(shapes, line[:j+1]) // "Örnek request_id:"
+			}
+		}
+	}
+	if len(shapes) != 2 {
+		t.Fatalf("renderer'dan 2 satır türü bekleniyordu, %d bulundu:\n%s\n\n"+
+			"Snapshot biçimi değişmiş olabilir — o hâlde few-shot da gözden "+
+			"geçirilmeli (testin bayatlaması bunu haber vermek için).",
+			len(shapes), rendered)
+	}
+	for _, shape := range shapes {
+		if !strings.Contains(serviceAnalysisPrompt, shape) {
+			t.Errorf("few-shot ÖRNEK GİRDİ'si %q satır türünü içermiyor.\n\n"+
+				"Küçük model gösterilen örneği taklit eder; örnekte olmayan "+
+				"satır türü cevaba da yansımaz. Veri prompt'a gider, cevaba "+
+				"gelmez — özellik sessizce yarım çalışır.", shape)
+		}
+	}
+}
+
+// TestFewShotOutputCarriesConcreteIdentifiers — örnek ÇIKTI da
+// göstermeli. Girdide olup çıktıda olmayan bir sinyal, modele
+// "bunu kullanma" demenin örtük yoludur.
+func TestFewShotOutputCarriesConcreteIdentifiers(t *testing.T) {
+	i := strings.Index(serviceAnalysisPrompt, "ÖRNEK ÇIKTI:")
+	if i < 0 {
+		t.Fatal("ÖRNEK ÇIKTI bölümü bulunamadı — test bayatladı")
+	}
+	out := serviceAnalysisPrompt[i:]
+	for _, want := range []string{"mobile-app", "request_id"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("örnek ÇIKTI %q taşımıyor — girdide gösterilip çıktıda "+
+				"kullanılmayan sinyal, modele örtük olarak 'bunu kullanma' der",
+				want)
+		}
+	}
+}
+
+// TestPromptAsksForConcreteIdentifiers — kural da yazılı olmalı.
+// Yalnız örnekle öğretmek zayıf: örnek tek bir vakayı gösterir,
+// KURALLAR bloğu her vakayı bağlar.
+func TestPromptAsksForConcreteIdentifiers(t *testing.T) {
+	i := strings.Index(serviceAnalysisPrompt, "ÖRNEK GİRDİ:")
+	if i < 0 {
+		t.Fatal("ÖRNEK GİRDİ bulunamadı — test bayatladı")
+	}
+	rules := serviceAnalysisPrompt[:i]
+	for _, want := range []string{"KIRILIM", "AYNEN geçir", "UYDURMA"} {
+		if !strings.Contains(rules, want) {
+			t.Errorf("KURALLAR bloğunda %q yok — yalnız örnekle öğretmek zayıf, "+
+				"örnek tek vakayı gösterir, kural her vakayı bağlar", want)
+		}
+	}
+}

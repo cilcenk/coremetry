@@ -36,6 +36,12 @@ KURALLAR:
 - latency, span, deadlock, timeout, p99 gibi teknik terimleri ÇEVİRME.
 - "kanit" maddeleri verideki somut metrik/sayıya atıfta bulunsun.
 - Veri yetersizse "guven" değerini "dusuk" yap ve bunu özet'te belirt.
+- Girdide KIRILIM (CHANNEL_CODE/FUNCTION_CODE) ya da "Örnek <alan>: <değer>"
+  satırı varsa, en az bir kanıt maddesinde ve mümkünse bir öneride bunları
+  AYNEN geçir. Sebebi: "hata oranı %14" bir gözlemdir, "hata mobile-app
+  kanalında %74 ve örnek request_id 8f3c-…" bir BAŞLANGIÇ NOKTASIDIR —
+  operatör onu alıp kendi log'una, kaydına, çağrı merkezine gider.
+  Bu değerler sana verildi; UYDURMA, yalnız verilenleri kullan.
 - Çıktıyı SADECE aşağıdaki JSON formatında ver, başka hiçbir şey yazma.
 
 ÇIKTI FORMATI:
@@ -54,13 +60,15 @@ Baseline (önceki 30 dk): error=0.40%, p99=210ms
 En sık hatalar: SQLTimeoutException ×980, HttpServerErrorException ×210
 Deploy: v1.4.0 (12 dk önce)
 Bağımlılıklar: downstream → ledger-service, auth-service
+CHANNEL_CODE kırılımı (en çok hata üreten önce): mobile-app (820 çağrı, 610 hata, %74.4), internet-banking (410 çağrı, 21 hata, %5.1)
+Örnek request_id: 8f3c-4a2b-91de, c7b1-05fa-3e22
 
 ÖRNEK ÇIKTI:
 {
   "ozet": "payment-service son 30 dakikada ciddi bozulma yaşıyor. error %0.40'tan %8.30'a, p99 210ms'den 1850ms'ye çıktı. Artış v1.4.0 deploy'u ile başladı.",
   "olasi_neden": "v1.4.0 deploy'u sonrası ledger-service çağrılarında SQLTimeoutException; downstream DB lock contention p99'u ~9x artırdı.",
-  "kanit": ["error_rate %0.40 → %8.30", "p99 210ms → 1850ms", "SQLTimeoutException ×980 baskın hata", "v1.4.0 deploy 12 dk önce"],
-  "oneriler": ["v1.4.0'ı geri al veya ledger-service DB bağlantı havuzunu incele", "SQLTimeoutException örnek trace'ini aç ve yavaş sorguyu bul"],
+  "kanit": ["error_rate %0.40 → %8.30", "p99 210ms → 1850ms", "SQLTimeoutException ×980 baskın hata", "v1.4.0 deploy 12 dk önce", "hata mobile-app kanalında yoğun: %74.4 (610/820), internet-banking %5.1", "örnek request_id: 8f3c-4a2b-91de"],
+  "oneriler": ["v1.4.0'ı geri al veya ledger-service DB bağlantı havuzunu incele", "8f3c-4a2b-91de request_id'siyle mobile-app kanalının log'una bak"],
   "guven": "yuksek"
 }`
 

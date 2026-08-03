@@ -21,6 +21,7 @@ package chstore
 import (
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -65,5 +66,49 @@ func TestDDLOutputModeIsNotNeverThrow(t *testing.T) {
 				"boot bozuk şemayla sessizce devam eder. Yalnız zamanaşımı "+
 				"gevşetilmeli (null_status_on_timeout).", bad)
 		}
+	}
+}
+
+// TestDDLTaskTimeoutIsUnderClientReadTimeout — v0.9.606'nın ASIL kuralı.
+//
+// Operator-reported: v0.9.605'ten sonra CREATE DATABASE geçti ama ilk
+// CREATE TABLE istemci tarafında "i/o timeout" ile öldü. Sebep iki
+// sayının çelişmesiydi:
+//
+//	sunucu:  distributed_ddl_task_timeout = 180 sn (CH varsayılanı)
+//	istemci: ReadTimeout                  =  30 sn (sürücü ayarı)
+//
+// Sunucu kendi bütçesi içindeyken istemci bağlantıyı koparıyordu ve
+// hata "i/o timeout" diye görünüyordu — gerçek sebebi (DDL kuyruğu)
+// hiç söylemeden. En kötü hata türü budur: doğru yere bakmanı
+// engelleyen hata.
+//
+// İki sayı iki ayrı yerde yaşıyor; bu test aralarındaki ilişkiyi
+// kuruyor. Biri değişirse öteki de değişmeli.
+func TestDDLTaskTimeoutIsUnderClientReadTimeout(t *testing.T) {
+	src := storeSourceNoComments(t)
+
+	// İstemci ReadTimeout'unu KAYNAKTAN oku — elle yazmak, iki sayının
+	// yeniden ayrışmasına kapı açardı.
+	m := regexp.MustCompile(`ReadTimeout:\s*(\d+)\s*\*\s*time\.Second`).FindStringSubmatch(src)
+	if m == nil {
+		t.Fatal("ReadTimeout kaynakta bulunamadı — test bayatladı")
+	}
+	readTimeout, err := strconv.Atoi(m[1])
+	if err != nil {
+		t.Fatalf("ReadTimeout ayrıştırılamadı: %v", err)
+	}
+
+	if ddlTaskTimeoutSeconds >= readTimeout {
+		t.Errorf("DDL bütçesi (%d sn) istemci ReadTimeout'undan (%d sn) KISA DEĞİL.\n\n"+
+			"Sunucu kendi süresi içindeyken istemci bağlantıyı koparır ve hata "+
+			"'i/o timeout' diye görünür — gerçek sebebi (DDL kuyruğu) hiç "+
+			"söylemeden. Prod'da tam olarak bu oldu.",
+			ddlTaskTimeoutSeconds, readTimeout)
+	}
+	// Anlamlı bir alt sınır: 0/negatif ayar CH tarafında "sonsuz bekle"
+	// ya da tanımsız davranışa açılır.
+	if ddlTaskTimeoutSeconds <= 0 {
+		t.Errorf("DDL bütçesi %d — pozitif olmalı", ddlTaskTimeoutSeconds)
 	}
 }

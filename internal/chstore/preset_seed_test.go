@@ -79,3 +79,65 @@ func stripGoLineComments(src string) string {
 	}
 	return strings.Join(out, "\n")
 }
+
+// v0.9.568 — paket yükseltmesinde operatörün düzenlemeleri korunmalı.
+//
+// Öncesinde `DELETE WHERE id LIKE 'preset-%'` doğrudan çalışıyordu ve
+// bir preset üzerinde yapılan her düzenleme paket yükseltmesinde yok
+// oluyordu. Düzenleme AYNI `preset-` ID'sinin ÜSTÜNDE yaşıyor (frontend
+// updateDashboard(id, …) ile aynı ID'ye yazıyor), yani dosyanın eski
+// yorumundaki "kopyası yeni ID altında yaşar" varsayımı yanlıştı.
+
+func TestPresetWasCustomised(t *testing.T) {
+	// Tohumlama anında UpsertDashboard hem CreatedAt hem UpdatedAt'i
+	// AYNI `now` değerine set eder — eşitlik "dokunulmadı" demektir.
+	if presetWasCustomised(Dashboard{CreatedAt: 100, UpdatedAt: 100}) {
+		t.Error("taze tohumlanmış satır 'dokunulmuş' sayıldı — her bumpta " +
+			"gereksiz kopya birikir")
+	}
+	// Operatör kaydettiğinde CreatedAt korunur, UpdatedAt yenilenir.
+	if !presetWasCustomised(Dashboard{CreatedAt: 100, UpdatedAt: 500}) {
+		t.Error("düzenlenmiş satır 'dokunulmamış' sayıldı — operatörün emeği " +
+			"paket yükseltmesinde SİLİNİR")
+	}
+}
+
+func TestCustomisedPresetIDDropsPresetPrefix(t *testing.T) {
+	got := customisedPresetID("preset-apm-overview")
+	if got != "custom-apm-overview" {
+		t.Errorf("customisedPresetID = %q, beklenen custom-apm-overview", got)
+	}
+	// ASIL İDDİA: yeni kimlik `preset-` ÖNEKİ TAŞIMAMALI. Taşısaydı bir
+	// sonraki paket yükseltmesinde o da silinirdi — kurtardığımızı
+	// bir sonraki bumpta kaybederdik.
+	if strings.HasPrefix(got, "preset-") {
+		t.Errorf("korunan kimlik hâlâ preset- önekli (%q) — bir sonraki "+
+			"yükseltmede yine silinir", got)
+	}
+}
+
+func TestSeedPreservesBeforeDeleting(t *testing.T) {
+	b, err := os.ReadFile("dashboard_presets.go")
+	if err != nil {
+		t.Fatalf("kaynak okunamadı: %v", err)
+	}
+	src := stripGoLineComments(string(b))
+
+	iPreserve := strings.Index(src, "preserveCustomisedPresets(ctx)")
+	iDelete := strings.Index(src, "DELETE WHERE id LIKE 'preset-%'")
+	if iPreserve < 0 {
+		t.Fatal("koruma adımı yok — düzenlemeler silinir")
+	}
+	if iDelete < 0 {
+		t.Fatal("silme adımı bulunamadı")
+	}
+	if iPreserve > iDelete {
+		t.Error("koruma SİLMEDEN SONRA çalışıyor — kurtaracak bir şey kalmaz")
+	}
+	// Koruma başarısızsa silme YAPILMAMALI.
+	between := src[iPreserve:iDelete]
+	if !strings.Contains(between, "return fmt.Errorf(\"preserve customised presets") {
+		t.Error("koruma hatası silmeyi durdurmuyor — kurtarma başarısızken " +
+			"yine de siliyoruz")
+	}
+}

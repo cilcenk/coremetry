@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 )
 
 // Preset dashboards seeded into a fresh install — practical
@@ -77,8 +78,23 @@ func (s *Store) SeedPresetDashboards(ctx context.Context) error {
 	if current == presetVersion {
 		return nil
 	}
-	// Bundle change → drop old preset-* rows so the new bundle
-	// takes their tiles cleanly.
+	// v0.9.568 — paket değişimi: ÖNCE operatörün düzenlediklerini kurtar,
+	// SONRA eskiyi sil.
+	//
+	// Öncesinde doğrudan `DELETE WHERE id LIKE 'preset-%'` çalışıyordu ve
+	// operatörün bir preset üzerinde yaptığı her düzenleme paket
+	// yükseltmesinde yok oluyordu. Düzenleme AYNI `preset-` ID'sinin
+	// üstünde yaşıyor (frontend updateDashboard(id, …) ile aynı ID'ye
+	// yazıyor), yani "kopyası yeni ID altında yaşar" varsayımı yanlıştı.
+	//
+	// Yeni davranış: dokunulmuş presetler `preset-` ÖNEKİNDEN ÇIKARILIP
+	// kalıcı bir kimliğe taşınır. Böylece hem operatörün emeği kalır hem
+	// yeni paket temiz kurulur — ikisinden birini seçmek zorunda değiliz.
+	if err := s.preserveCustomisedPresets(ctx); err != nil {
+		// Kurtarma başarısızsa SİLME. Yeni paketi bir sürüm geç almak,
+		// operatörün dashboard'ını kaybetmekten iyidir.
+		return fmt.Errorf("preserve customised presets: %w", err)
+	}
 	if err := s.conn.Exec(ctx, `ALTER TABLE dashboards DELETE WHERE id LIKE 'preset-%'`); err != nil {
 		return fmt.Errorf("delete old preset dashboards: %w", err)
 	}
@@ -121,7 +137,7 @@ func presetDashboards() []Dashboard {
 
 type panel struct {
 	ID     string `json:"id"`
-	Type   string `json:"type"`   // metric | spanmetric | stat | markdown | row
+	Type   string `json:"type"` // metric | spanmetric | stat | markdown | row
 	Title  string `json:"title"`
 	Width  int    `json:"width"`
 	Config any    `json:"config"`
@@ -206,12 +222,12 @@ func stat(id, title, agg string, opts ...statOpt) panel {
 
 type statOpt func(*statCfg)
 
-func unit(u string) statOpt           { return func(c *statCfg) { c.Unit = u } }
-func decimals(n int) statOpt          { return func(c *statCfg) { c.Decimals = n } }
-func dsl(s string) statOpt            { return func(c *statCfg) { c.Span.DSL = s } }
-func field(f string) statOpt          { return func(c *statCfg) { c.Span.Field = f } }
-func groupByOpt(gb string) statOpt    { return func(c *statCfg) { c.Span.GroupBy = gb } } //nolint:unused // reserved
-func filtersOpt(f string) statOpt     { return func(c *statCfg) { c.Span.Filters = f } } //nolint:unused // reserved
+func unit(u string) statOpt        { return func(c *statCfg) { c.Unit = u } }
+func decimals(n int) statOpt       { return func(c *statCfg) { c.Decimals = n } }
+func dsl(s string) statOpt         { return func(c *statCfg) { c.Span.DSL = s } }
+func field(f string) statOpt       { return func(c *statCfg) { c.Span.Field = f } }
+func groupByOpt(gb string) statOpt { return func(c *statCfg) { c.Span.GroupBy = gb } } //nolint:unused // reserved
+func filtersOpt(f string) statOpt  { return func(c *statCfg) { c.Span.Filters = f } }  //nolint:unused // reserved
 
 // line is the time-series spanmetric panel.
 func line(id, title string, w int, cfg spanCfg) panel {
@@ -280,7 +296,6 @@ func presetAPMOverview() Dashboard {
 		},
 	)
 }
-
 
 // ── 2. Service Performance ──────────────────────────────────────────────────
 //
@@ -685,4 +700,61 @@ func presetErrorsExceptions() Dashboard {
 				spanCfg{Agg: "errors", DSL: errOnly, GroupBy: "kind"}),
 		},
 	)
+}
+
+// customisedPresetID — dokunulmuş bir presetin taşınacağı kimlik.
+//
+// `preset-` öneki DÜŞER: o önek "paket yükseltmesinde silinebilir"
+// anlamına geliyor ve operatörün kendi sürümü artık pakete ait değil.
+// Saf — tablo testli.
+func customisedPresetID(presetID string) string {
+	return "custom-" + strings.TrimPrefix(presetID, "preset-")
+}
+
+// presetWasCustomised — bu satıra operatör dokundu mu?
+//
+// Tohumlama anında UpsertDashboard hem CreatedAt hem UpdatedAt'i AYNI
+// `now` değerine set eder (dashboard.go). Operatör kaydettiğinde
+// CreatedAt korunur, UpdatedAt yenilenir — yani eşitsizlik "dokunuldu"
+// demektir. Saf — tablo testli.
+func presetWasCustomised(d Dashboard) bool {
+	return d.UpdatedAt != d.CreatedAt
+}
+
+// preserveCustomisedPresets — dokunulmuş preset satırlarını `custom-`
+// kimliğine kopyalar. Dokunulmamışlar olduğu gibi bırakılır (birazdan
+// silinip yeniden tohumlanacaklar).
+//
+// Ad da işaretlenir ki operatör dashboard listesinde hangisinin kendi
+// sürümü olduğunu görsün — aynı adla iki satır, çözülmesi gereken bir
+// bilmece olurdu.
+func (s *Store) preserveCustomisedPresets(ctx context.Context) error {
+	all, err := s.ListDashboards(ctx)
+	if err != nil {
+		return err
+	}
+	for _, d := range all {
+		if !strings.HasPrefix(d.ID, "preset-") || !presetWasCustomised(d) {
+			continue
+		}
+		// ListDashboards panelleri taşımıyor (hafif liste) — tam satırı al.
+		full, err := s.GetDashboard(ctx, d.ID)
+		if err != nil {
+			return fmt.Errorf("read customised preset %s: %w", d.ID, err)
+		}
+		if full == nil {
+			continue
+		}
+		full.ID = customisedPresetID(d.ID)
+		full.Name = d.Name + " (özelleştirilmiş)"
+		// CreatedAt sıfırlanır ki yeni satır kendi zamanını alsın; aksi
+		// halde kopya da "dokunulmuş" görünür ve bir sonraki bumpta
+		// yeniden kopyalanırdı.
+		full.CreatedAt = 0
+		if err := s.UpsertDashboard(ctx, *full); err != nil {
+			return fmt.Errorf("preserve customised preset %s: %w", d.ID, err)
+		}
+		log.Printf("[chstore] özelleştirilmiş preset korundu: %s → %s", d.ID, full.ID)
+	}
+	return nil
 }

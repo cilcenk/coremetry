@@ -1596,6 +1596,10 @@ export const api = {
     groupBy?: string[];
     filters?: string;
     dsl?: string;
+    /** v0.9.601 — serbest metin yüklemi. spanMetric'in ?search='iyle AYNI
+     *  alana gider; eksikliği /traces hacim şeridinin bu yüzeye
+     *  geçmesini engelliyordu (arama sessizce düşerdi). */
+    search?: string;
     aggs: { name: string; agg: string; field?: string }[];
   }) =>
     request<{ stepSeconds: number; series: Record<string, SpanMetricSeries[] | null> }>('/api/spans/metric-batch', {

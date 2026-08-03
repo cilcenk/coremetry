@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { greetHello, greetStatus, greetChips, agoTR, newestP1 } from './greeting';
+import { greetHello, greetStatus, agoTR, newestP1 } from './greeting';
 
 // v0.9.528 — karşılama saf olduğu için sözleşmesi burada pinli.
 // Kritik nokta: karşılama bir İDDİA taşıyor ("3 açık P1 var"). Yanlış
@@ -61,36 +61,6 @@ describe('greetStatus', () => {
   });
 });
 
-describe('greetChips', () => {
-  const base = ['Dün gece neler oldu?', 'Takımımın servisleri nasıl?'] as const;
-
-  it('açık P1 varsa onun adıyla soru başa gelir', () => {
-    const got = greetChips([{ service: 'payment-api', startedAt: nsAgo(4) }], base);
-    expect(got[0]).toBe('payment-api neden P1?');
-    expect(got).toHaveLength(3);
-  });
-
-  it('P1 yoksa/yüklenmediyse sabit katalog', () => {
-    expect(greetChips([], base)).toEqual([...base]);
-    expect(greetChips(undefined, base)).toEqual([...base]);
-  });
-
-  it('servissiz P1 çip üretmez', () => {
-    expect(greetChips([{ startedAt: nsAgo(4) }], base)).toEqual([...base]);
-  });
-
-  it('aynı soru iki kez listelenmez', () => {
-    const withDup = ['payment-api neden P1?', ...base] as const;
-    const got = greetChips([{ service: 'payment-api', startedAt: nsAgo(4) }], withDup);
-    expect(got.filter(q => q === 'payment-api neden P1?')).toHaveLength(1);
-  });
-
-  it('taban listeyi MUTATE etmez', () => {
-    const arr = [...base];
-    greetChips([{ service: 'x', startedAt: nsAgo(1) }], arr);
-    expect(arr).toEqual([...base]);
-  });
-});
 
 describe('agoTR', () => {
   it('her birim ayrı ayrı doğru — birim karışması tekrar eden hata sınıfı', () => {

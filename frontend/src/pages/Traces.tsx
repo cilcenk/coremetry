@@ -463,12 +463,33 @@ function TracesPageInner() {
       dsl: filter.service ? `service.name = "${filter.service.replace(/"/g, '\\"')}"` : undefined,
     };
     let cancelled = false;
-    Promise.all([
-      api.spanMetric({ ...common, agg: 'count' }),
-      api.spanMetric({ ...common, agg: 'errors' }),
-      api.spanMetric({ ...common, agg: 'p50', field: 'duration_ms' }),
-    ])
-      .then(([count, errors, p50]) => { if (!cancelled) setVolSeries({ count, errors, p50 }); })
+    // v0.9.601 — üç ayrı /api/spans/metric yerine TEK metric-batch.
+    //
+    // Endpoint tam bu iş için vardı (api.go:735, yorumu: "dropping
+    // cold-cache time from ~3× to ~1×") ve servis detay sayfası
+    // kullanıyordu; /traces kullanmıyordu. Üç sorgu AYNI WHERE'i
+    // paylaşıyor, yani ClickHouse aynı span kümesini üç kez tarıyordu.
+    //
+    // search bu turda batch yüzeyine eklendi: olmadan geçseydik arama
+    // sessizce düşer, grafik filtrelenmemiş hacmi gösterirken tablo
+    // filtreli sonucu gösterirdi.
+    api.spanMetricBatch({
+      from: common.from, to: common.to, step: common.step,
+      search: common.search, filters: common.filters, dsl: common.dsl,
+      aggs: [
+        { name: 'count', agg: 'count' },
+        { name: 'errors', agg: 'errors' },
+        { name: 'p50', agg: 'p50', field: 'duration_ms' },
+      ],
+    })
+      .then(r => {
+        if (cancelled) return;
+        setVolSeries({
+          count: r.series.count ?? [],
+          errors: r.series.errors ?? [],
+          p50: r.series.p50 ?? [],
+        });
+      })
       .catch(() => { if (!cancelled) setVolSeries(null); });
     return () => { cancelled = true; };
   }, [view, listRangeNs, filter.service, filter.search, env, advFilters, grouped]);

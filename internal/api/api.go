@@ -1218,7 +1218,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 
 }
 
-
 func (s *Server) listen(mux *http.ServeMux) error {
 	handler := otelhttp.NewHandler(cors(s.auth.Middleware(s.presence.middleware(mux))),
 		"coremetry-api",
@@ -4872,10 +4871,21 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 		GroupBy []string        `json:"groupBy"`
 		Filters json.RawMessage `json:"filters"`
 		DSL     string          `json:"dsl"`
+		// Search (v0.9.601) — serbest metin yüklemi. spanMetric'in
+		// ?search= parametresiyle AYNI alana gidiyor; eksikliği bu
+		// yüzeyi /traces için kullanılamaz kılıyordu: hacim şeridi
+		// aramayı yok sayıp filtrelenmemiş seriyi çizerdi, tablo ise
+		// filtreli sonucu gösterirdi — sessiz ve yanıltıcı bir ayrışma.
+		//
+		// Semantik değişmiyor: chstore tarafında Search != "" zaten MV
+		// hızlı yolunu kapatıyor (spanmetric.go:157), yani bu alan
+		// yalnız üç gidiş-dönüşü bire indiriyor, maliyet sınıfını
+		// değiştirmiyor.
+		Search string `json:"search"`
 		// v0.9.391 (grafik-audit Faz B) — panel nokta bütçesi; 0 = eski
 		// davranış + 2000 emniyet tavanı. queryMetric ile aynı clamp.
 		MaxDataPoints int `json:"maxDataPoints"`
-		Aggs    []struct {
+		Aggs          []struct {
 			Name  string `json:"name"`
 			Agg   string `json:"agg"`
 			Field string `json:"field"`
@@ -4910,6 +4920,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 	}
 	f := chstore.SpanMetricBatchFilter{
 		Filters:       filters,
+		Search:        body.Search,
 		GroupBy:       body.GroupBy,
 		From:          time.Unix(0, body.From),
 		To:            time.Unix(0, body.To),
@@ -4935,7 +4946,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 	// genişliğini artık TAHMİN etmiyor (bar genişliği/gap eşiği için
 	// sözleşme; rollup /api/rollup/red planıyla AYNI kontrat).
 	s.serveCached(w, r, spanMetricBatchKey(body.From, body.To, body.Step, body.MaxDataPoints,
-		body.GroupBy, string(body.Filters), body.DSL, specs), 30*time.Second,
+		body.GroupBy, string(body.Filters), body.DSL, body.Search, specs), 30*time.Second,
 		func(ctx context.Context) (any, error) {
 			series, stepSec, err := s.store.QuerySpanMetricMulti(ctx, f)
 			if err != nil {
@@ -4957,7 +4968,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 // individually rather than summarised by count, which is the same rule
 // applied to the set.
 func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints int, groupBy []string,
-	filters, dsl string, aggs []chstore.SpanMetricAggSpec) string {
+	filters, dsl, search string, aggs []chstore.SpanMetricAggSpec) string {
 	h := fnv.New64a()
 	write := func(parts ...string) {
 		for _, p := range parts {
@@ -4970,7 +4981,11 @@ func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints int, groupBy []s
 	for _, g := range gb {
 		write("gb", g)
 	}
-	write("f", filters, "dsl", dsl)
+	// v0.9.601 — search ANAHTARA GİRER. Girmeseydi iki farklı arama aynı
+	// önbellek girdisini paylaşırdı: operatör "timeout" arar, sonraki
+	// "refused" arar ve ilkinin serisini görür. CLAUDE.md sert kısıtı
+	// (v0.5.187 çapraz-zehirlenme) — anahtar TÜM girdileri hash'ler.
+	write("f", filters, "dsl", dsl, "q", search)
 	// v0.9.391 — mdp key'de: farklı genişlikteki paneller farklı çözünürlük
 	// ister; key'e girmezse birbirinin çözünürlüğünü zehirler (v0.5.187).
 	write("mdp", strconv.Itoa(maxDataPoints))
@@ -9893,8 +9908,8 @@ func (s *Server) setProblemAssignee(w http.ResponseWriter, r *http.Request) {
 	// v0.8.350 (HA 🟡9) — same cross-pod eviction as acknowledgeProblems:
 	// the assignee chip must show on every replica's next /problems read.
 	s.cacheInvalidatePrefix(r.Context(), "problems")
-	s.cacheInvalidatePrefix(r.Context(), "inbox:count") // v0.8.472 — rozet anında güncellensin
-	s.cacheInvalidatePrefix(r.Context(), inboxListCachePrefix)    // v0.9.234 — liste de
+	s.cacheInvalidatePrefix(r.Context(), "inbox:count")        // v0.8.472 — rozet anında güncellensin
+	s.cacheInvalidatePrefix(r.Context(), inboxListCachePrefix) // v0.9.234 — liste de
 	// v0.8.289 (operator request) — when a Problem is assigned to a PERSON
 	// (email assignee) and it actually changed, email them the assignment.
 	if prev != nil {
@@ -9960,8 +9975,8 @@ func (s *Server) acknowledgeProblems(w http.ResponseWriter, r *http.Request) {
 	// pod A is visible through pod B's next read instead of after the
 	// 5s TTL × SWR stale window (~15s of a "still open" ghost).
 	s.cacheInvalidatePrefix(r.Context(), "problems")
-	s.cacheInvalidatePrefix(r.Context(), "inbox:count") // v0.8.472 — rozet anında güncellensin
-	s.cacheInvalidatePrefix(r.Context(), inboxListCachePrefix)    // v0.9.234 — liste de
+	s.cacheInvalidatePrefix(r.Context(), "inbox:count")        // v0.8.472 — rozet anında güncellensin
+	s.cacheInvalidatePrefix(r.Context(), inboxListCachePrefix) // v0.9.234 — liste de
 	writeJSON(w, map[string]any{"acknowledged": n})
 }
 

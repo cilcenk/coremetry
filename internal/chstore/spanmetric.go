@@ -847,7 +847,17 @@ type SpanMetricBatchFilter struct {
 	// 0 = eski sabit ladder + 2000'lik emniyet tavanı; >0 = px-adaptif
 	// step (metricAutoStepPx) + bütçe tavanı. Cache key'e GİRER.
 	MaxDataPoints int
-	Aggs          []SpanMetricAggSpec
+	// Search (v0.9.601) — serbest metin yüklemi. Tek-agg
+	// SpanMetricFilter'da baştan beri vardı; batch şeklinde YOKTU ve
+	// bu, /traces hacim şeridinin bu yüzeye geçmesini engelliyordu:
+	// geçseydi arama sessizce düşer, grafik filtrelenmemiş seriyi
+	// çizerken tablo filtreli sonucu gösterirdi.
+	//
+	// Aynı searchPredicate paylaşılıyor (GetTraces ile de) — iki yüzey
+	// AYNI şekilde daraltmak zorunda, yoksa histogram toplamı tablonun
+	// gösterdiği kümeyle uyuşmaz.
+	Search string
+	Aggs   []SpanMetricAggSpec
 }
 
 type SpanMetricAggSpec struct {
@@ -952,6 +962,13 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		wc.add("time <= ?", f.To)
 	}
 	ApplyFilters(&wc, f.Filters)
+	// v0.9.601 — tek-agg yolundaki (yukarıda, ~satır 189) searchPredicate
+	// ile BİREBİR aynı. İki yolun aynı yüklemi kurması şart: /traces
+	// hacim şeridi bu yüzeye geçtiğinde grafik ile tablo aynı kümeyi
+	// daraltmalı.
+	if pred, pargs := searchPredicate(f.Search); pred != "" {
+		wc.add(pred, pargs...)
+	}
 
 	// ── Bucket size — clampSpanMetricStep yukarıda uyguladı ──────────────────
 	step := f.StepSeconds

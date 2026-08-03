@@ -241,6 +241,32 @@ const (
 	deploysCacheMax    = 64 // distinct (service-set, window) keys kept
 )
 
+// ddlTaskTimeoutSeconds — sunucunun bir ON CLUSTER DDL için TÜM
+// host'ları bekleme bütçesi (v0.9.606).
+//
+// Operator-reported (prod, v0.9.605 sonrası): CREATE DATABASE geçti ama
+// ilk CREATE TABLE istemci tarafında öldü:
+//
+//	migrate: create table: ddl exec: … read tcp …: i/o timeout
+//	SQL: CREATE TABLE IF NOT EXISTS spans_local ON CLUSTER `…`
+//
+// Bu bir ClickHouse hata KODU değil — sürücünün ReadTimeout'u.
+// ClickHouse varsayılanı distributed_ddl_task_timeout = 180 sn;
+// sürücününki ReadTimeout = 30 sn. v0.9.605 sunucunun İSTİSNA atmasını
+// engelledi ama BEKLEMESİNİ engellemedi, dolayısıyla istemci hep önce
+// ölüyordu ve hata "i/o timeout" diye görünüyordu — gerçek sebebi (DDL
+// kuyruğu) hiç söylemeden.
+//
+// İki sayı iki ayrı yerde yaşıyordu ve aralarındaki ilişkiyi kimse
+// kurmuyordu. Kural artık testle sabit: SUNUCUNUN BÜTÇESİ
+// İSTEMCİNİNKİNDEN KISA OLMALI.
+//
+// 20 sn: 30 sn'lik ReadTimeout'un rahatça altında, ve sağlıklı bir
+// kümede ON CLUSTER DDL saniyeler sürer. Kuyruk tıkalıysa zaten hiçbir
+// bekleme yetmez — o hâlde HIZLI ve AÇIK başarısız olmak, 30 saniye
+// bekleyip anlamsız bir soket hatası vermekten iyidir.
+const ddlTaskTimeoutSeconds = 20
+
 func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	dialTimeout, _ := time.ParseDuration(cfg.DialTimeout)
 	if dialTimeout == 0 {
@@ -298,6 +324,9 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 			// ŞART — asıl arıza ana bağlantıya sıra gelmeden oluyordu.
 			Settings: clickhouse.Settings{
 				"distributed_ddl_output_mode": "null_status_on_timeout",
+				// v0.9.606 — sunucunun bekleme bütçesi İSTEMCİNİNKİNDEN
+				// kısa olmalı; gerekçe ddlTaskTimeoutSeconds'ta.
+				"distributed_ddl_task_timeout": ddlTaskTimeoutSeconds,
 			},
 		})
 		if err != nil {
@@ -471,6 +500,9 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 				// Doğruluk kaybı yok: DDL'in hepsi IF NOT EXISTS ve
 				// ClickHouse kuyruğa alınanı arka planda uyguluyor.
 				"distributed_ddl_output_mode": "null_status_on_timeout",
+				// v0.9.606 — sunucunun bekleme bütçesi İSTEMCİNİNKİNDEN
+				// kısa olmalı; gerekçe ddlTaskTimeoutSeconds'ta.
+				"distributed_ddl_task_timeout": ddlTaskTimeoutSeconds,
 			},
 		}
 	}

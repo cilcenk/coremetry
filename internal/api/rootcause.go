@@ -415,6 +415,27 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 
+	// v0.9.576 — ankorun GERÇEK başlangıcı.
+	//
+	// Etki penceresi h.ComputedAt'ten kuruluyordu ve o, hipotezin
+	// SENTEZLENDİĞİ an — olayın başladığı an DEĞİL. İşçi tik başına
+	// koşuyor, yani pencere olayın ilk dakikalarını (en yoğun,
+	// tanıya en yakın kısmını) kaçırıyordu; sentez geç kaldıysa
+	// pencere tamamen kayıyordu.
+	//
+	// Ek maliyet küçük: ID'ye anahtarlı tek FINAL state okuması,
+	// hipotez okumasıyla aynı sınıf. Çözülemezse 0 geçilir ve
+	// rcaImpactWindow zaten tutarsız pencereyi reddeder (ölçüm
+	// yapılmaz, uydurulmaz).
+	var anchorStartNs int64
+	if anchorKind == "problem" {
+		if p, err := s.store.GetProblem(r.Context(), id); err == nil && p != nil {
+			anchorStartNs = p.StartedAt
+		}
+	} else if ev, err := s.store.GetAnomalyEvent(r.Context(), id, time.Hour); err == nil && ev != nil {
+		anchorStartNs = ev.StartedAt
+	}
+
 	// Cache keyed on anchor id + hypothesis VERSION: a re-synthesis bumps the
 	// version (ReplacingMergeTree DEFAULT stamps a monotonic ns), so the key
 	// changes and we never serve prose for a stale ranking. Copilot calls are
@@ -461,7 +482,7 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 		// deterministik cümle verdict.summary'ye yazılır, prose'a
 		// DEĞİL — aksi hâlde yedek cümle gerçek LLM anlatımıyla aynı
 		// kutuda çizilir ve operatör ayırt edemez.
-		verdict, prose := s.buildRCAVerdict(ctx, h)
+		verdict, prose := s.buildRCAVerdict(ctx, h, anchorStartNs)
 		return rcaExplainResponse{Prose: prose, Verdict: verdict}, nil
 	})
 }

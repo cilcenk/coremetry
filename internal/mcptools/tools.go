@@ -550,15 +550,28 @@ func listProblemsTool(d Deps) mcp.Tool {
 			if status == "" {
 				status = "open"
 			}
+			// v0.9.576 — SAYFA BOYUTU ile CH TARAMASI ayrı.
+			//
+			// Öncesi: f.Limit = sayfa boyutu ve öncelik daraltması Go'da
+			// SONRA yapılıyordu. Yani priority=P1 + limit=25 istemek "en
+			// yeni 25 problemi tara, içinden P1'leri tut" demekti —
+			// filoda yüzlerce P1 varken SIFIR sonuç dönebiliyordu.
+			// make audit CHECK 8'in kovaladığı "LIMIT'ten sonra
+			// filtrele" sınıfı; sayfa yolu bunu zaten doğru yapıyordu,
+			// bu araç v0.9.554'te tuzağa düştü.
+			page := clampLimit(a.Limit, 25, 200)
 			f := chstore.ProblemFilter{
 				Status:   status,
 				Service:  a.Service,
 				Env:      a.Env, // v0.8.398 — service-scoped env semantics (env_members.go)
 				Severity: a.Severity,
-				Limit:    clampLimit(a.Limit, 25, 200),
+				Limit:    page,
 			}
 			if a.Priority != "" {
 				f.Priority = []string{a.Priority}
+				// Daraltma varsa tarama genişler (kanonik kural,
+				// sayfa yoluyla AYNI fonksiyondan).
+				f.Limit = chstore.ProblemScanLimit(page, true)
 			}
 			rows, err := d.Store.ListProblems(ctx, f)
 			if err != nil {
@@ -578,6 +591,11 @@ func listProblemsTool(d Deps) mcp.Tool {
 			// Go'da yapılmazsa argüman sessizce yok sayılır.
 			rows = chstore.FilterProblemsByPriority(rows, f.Priority)
 			rows = chstore.SortProblemsByPriority(rows)
+			// Genişletilmiş tarama SAYFAYA kırpılır — model 25 satır
+			// istediyse 125 satır almasın.
+			if len(rows) > page {
+				rows = rows[:page]
+			}
 			// v0.8.394 (AI audit A1) — attach the persisted deterministic
 			// root-cause hypothesis summary (rootCause {topSuspect, topScore,
 			// confidence}) so the chat/MCP caller sees the same verdict the

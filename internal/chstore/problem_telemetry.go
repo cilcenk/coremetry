@@ -522,3 +522,36 @@ func SortProblemsByPriority(probs []Problem) []Problem {
 	})
 	return probs
 }
+
+// ProblemScanCeiling / ProblemScanLimit — öncelik daraltmasında CH
+// taramasının genişletilmesi (v0.9.576).
+//
+// ProblemFilter.Priority SQL'de UYGULANMAZ: öncelik okuma anında
+// hesaplanır, CH satırında yoktur. Daraltma Go'da, LIMIT'ten SONRA
+// olur — yani sayfa boyutu kadar satır taranıp içinden P1'ler
+// süzülürse, filoda yüzlerce P1 varken SIFIR sonuç dönebilir.
+//
+// Bu, make audit CHECK 8'in kovaladığı "LIMIT'ten sonra filtrele"
+// sınıfı. Sayfa yolu (internal/api) bunu zaten doğru yapıyordu; MCP
+// list_problems aracı v0.9.554'te aynı tuzağa düştü.
+//
+// Kural chstore'a TAŞINDI çünkü iki tüketici var ve mcptools
+// internal/api'yi import edemez (döngü). İkinci bir kopya yazmak,
+// bu oturumda altı kez çıkan ayrışma sınıfının yenisi olurdu.
+const ProblemScanCeiling = 2000
+
+// ProblemScanLimit — daraltma varsa taramayı 5× açar, tavanla kırpar.
+// Saf, tablo-testli.
+func ProblemScanLimit(pageLimit int, narrowed bool) int {
+	if pageLimit <= 0 {
+		pageLimit = 100
+	}
+	if !narrowed {
+		return pageLimit
+	}
+	n := pageLimit * 5
+	if n > ProblemScanCeiling {
+		n = ProblemScanCeiling
+	}
+	return n
+}

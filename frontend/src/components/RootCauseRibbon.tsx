@@ -254,6 +254,9 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
   // kalır ama verdict yine gelir (deterministik düşüş) ve o hâlde
   // ekranda "anlatım yok" DEĞİL, kalkan uyarılı verdict görünmeli.
   const [verdict, setVerdict] = useState<RCAVerdict | null | undefined>(undefined);
+  // v0.9.592 — cevabın kimliği; 👍/👎 bununla gider. Yoksa panel
+  // derecelendirme affordance'ını HİÇ çizmez (ölü düğme üretmemek).
+  const [exchangeId, setExchangeId] = useState<string | undefined>(undefined);
 
   const onExplain = () => {
     if (loading) return;
@@ -263,7 +266,8 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
       const text = r?.prose?.trim();
       setProse(text ? text : null);
       setVerdict(r?.verdict ?? null);
-    }).catch(() => { setProse(null); setVerdict(null); })
+      setExchangeId(r?.exchangeId || undefined);
+    }).catch(() => { setProse(null); setVerdict(null); setExchangeId(undefined); })
       .finally(() => setLoading(false));
   };
 
@@ -297,7 +301,7 @@ function ExplainBlock({ anchor, id }: { anchor: 'problem' | 'anomaly'; id: strin
           {prose}
         </div>
       )}
-      {verdict && <RCAVerdictPanel v={verdict} />}
+      {verdict && <RCAVerdictPanel v={verdict} exchangeId={exchangeId} />}
     </div>
   );
 }

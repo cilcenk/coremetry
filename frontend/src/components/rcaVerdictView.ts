@@ -67,3 +67,21 @@ export function measuredText(
   if (n === null || n === undefined) return null;
   return fmt(n);
 }
+
+/**
+ * v0.9.592 — derecelendirme affordance'ı ÇİZİLMELİ Mİ?
+ *
+ * Tek kural ve sert: kimlik yoksa düğme yok.
+ *
+ * Neden saf bir fonksiyon: bu dilimin çıkış noktası, depoda ÖLÜ bir
+ * derecelendirme affordance'ı bulmuş olmam (AIAnalysisPanel operatöre
+ * "Bu analiz yararlı mıydı?" diye soruyor, tıklayınca "Teşekkürler."
+ * yazıyor ve hiçbir yere yazmıyor). Aynı hatayı burada tekrarlamamak
+ * bir yerleşim tercihi değil, test edilmesi gereken bir sözleşme.
+ *
+ * Kimliksiz gövde gerçek bir hâl: verdict 30dk'ya kadar önbellekten
+ * sunuluyor, yani sürüm geçişinde eski bir gövde exchangeId'siz gelir.
+ */
+export function canRateVerdict(exchangeId: string | undefined | null): boolean {
+  return typeof exchangeId === 'string' && exchangeId.trim() !== '';
+}

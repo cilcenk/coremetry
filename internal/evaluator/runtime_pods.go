@@ -194,11 +194,11 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 	}
 }
 
-func (e *Evaluator) reconcileRuntimeGC(ctx context.Context, s chstore.CapacitySample, cfg chstore.RuntimeAlertConfig, snap map[string]*chstore.Problem) {
+func (e *Evaluator) reconcileRuntimeGC(ctx context.Context, s chstore.CapacitySample, cfg chstore.RuntimeAlertConfig, snap *chstore.OpenProblems) {
 	const ruleID = "runtime:jvm-gc"
 	service := runtimeService(s.Instance, s.Subkey)
 	// v0.9.401 — heap yoluyla aynı: dedup deterministik problemID'den.
-	existing := snap[runtimeProblemID("jvm-gc", s.Instance, s.Subkey)]
+	existing := snap.ByID(runtimeProblemID("jvm-gc", s.Instance, s.Subkey))
 	hasOpen := existing != nil && existing.ID != ""
 	open, sev := jvmGCPauseDecision(s.Usage, hasOpen, cfg)
 	reason := fmt.Sprintf("JVM GC pause avg %.0fms on %s · pod %s", s.Usage, service, s.Subkey)
@@ -229,10 +229,10 @@ type runtimeReconcile struct {
 // reconcileRuntimeGCShare (v0.9.440) — GC zaman payı kontrolü.
 // reconcileRuntimeGC'nin ikizi; reason koleksiyon hızını da söyler ki
 // "sayısı yüksek" şikâyeti alarm metninde görünür olsun.
-func (e *Evaluator) reconcileRuntimeGCShare(ctx context.Context, a chstore.GCActivitySample, cfg chstore.RuntimeAlertConfig, snap map[string]*chstore.Problem) {
+func (e *Evaluator) reconcileRuntimeGCShare(ctx context.Context, a chstore.GCActivitySample, cfg chstore.RuntimeAlertConfig, snap *chstore.OpenProblems) {
 	const ruleID = "runtime:jvm-gc-share"
 	service := runtimeService(a.Service, a.Pod)
-	existing := snap[runtimeProblemID("jvm-gc-share", a.Service, a.Pod)]
+	existing := snap.ByID(runtimeProblemID("jvm-gc-share", a.Service, a.Pod))
 	hasOpen := existing != nil && existing.ID != ""
 	open, sev := jvmGCShareDecision(a.SharePct, hasOpen, cfg)
 	reason := fmt.Sprintf("JVM zamanının %%%.1f'i GC'de (≈%.0f koleksiyon/dk, 10dk penceresi) on %s · pod %s",
@@ -323,9 +323,9 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 // yeni CH sorgusu yok. Açık heap problemi kalmayınca hiçbir iş
 // yapmaz, yani kendini tüketen bir geçiş adımıdır. İleride "spesifik
 // kurallarla" dönüldüğünde bu fonksiyon silinebilir.
-func (e *Evaluator) drainRetiredHeapProblems(ctx context.Context, snap map[string]*chstore.Problem) {
+func (e *Evaluator) drainRetiredHeapProblems(ctx context.Context, snap *chstore.OpenProblems) {
 	now := time.Now().UnixNano()
-	for _, p := range snap {
+	for _, p := range snap.All() {
 		if !shouldDrainHeapProblem(p) {
 			continue
 		}

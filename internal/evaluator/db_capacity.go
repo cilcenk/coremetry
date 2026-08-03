@@ -232,7 +232,7 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 // reconcileCapacity opens / refreshes / resolves the Problem for one
 // sample, mirroring evaluateOne's open/refresh/resolve switch. Dedup is by
 // (rule_id, service) via FindOpenProblem + a stable Problem id.
-func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s chstore.CapacitySample, snap map[string]*chstore.Problem) {
+func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s chstore.CapacitySample, snap *chstore.OpenProblems) {
 	ruleID := capacityRuleID(c.id)
 	service := capacityService(s.Instance, s.Subkey)
 
@@ -241,7 +241,7 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 	// v0.9.402 — dedup deterministik ID'den (per-subkey granülerlik
 	// service alanından taşınamaz artık); ID formatı değişmedi → prod'un
 	// açık eski satırları bulunur, refresh'te service kendini onarır.
-	existing := snap[capacityProblemID(c.id, s.Instance, s.Subkey)]
+	existing := snap.ByID(capacityProblemID(c.id, s.Instance, s.Subkey))
 	hasOpen := existing != nil && existing.ID != ""
 	open, sev, pct := capacityDecision(s.Usage, s.Limit, c.rate, hasOpen)
 

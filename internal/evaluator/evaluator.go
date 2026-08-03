@@ -679,7 +679,7 @@ func filterFreshTargets(targets []string, fresh map[string]bool) []string {
 	return kept
 }
 
-func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string, pre *tickMeasures, openSnap map[string]*chstore.Problem) {
+func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, service string, pre *tickMeasures, openSnap *chstore.OpenProblems) {
 	// Saved-search log alerts (v0.5.242) bypass the per-service
 	// span-metric path entirely. The KQL itself carries any
 	// service / pod / level filter the operator wants; the
@@ -814,7 +814,7 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 	var open *chstore.Problem
 	var err error
 	if openSnap != nil {
-		open = openSnap[chstore.OpenProblemKey(r.ID, service)]
+		open = openSnap.ByKey(r.ID, service)
 	} else {
 		open, err = e.store.FindOpenProblem(ctx, r.ID, service)
 	}
@@ -1327,7 +1327,7 @@ func (e *Evaluator) resolveClearedAnomalyPromotions(ctx context.Context, muted m
 		return
 	}
 	resolved := 0
-	for _, p := range snap {
+	for _, p := range snap.All() {
 		if !strings.HasPrefix(p.RuleID, promoteAnomalyRuleID) {
 			continue
 		}

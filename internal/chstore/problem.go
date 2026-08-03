@@ -906,12 +906,86 @@ func reduceLatestProblem(m map[string]*Problem, p *Problem) {
 	m[k] = p
 }
 
-// OpenProblemsSnapshot returns every open/acknowledged problem keyed by
-// (rule_id|service) in ONE FINAL scan. v0.8.520 (perf raporu #9): the
-// evaluator called FindOpenProblem once per (rule, service) pair —
-// ~657 nokta FINAL sorgusu/tick prod'da — hepsi aynı küçük state
-// tablosunu okuyor. Tick başında tek snapshot + map lookup.
-func (s *Store) OpenProblemsSnapshot(ctx context.Context) (map[string]*Problem, error) {
+// OpenProblems — tek FINAL taramanın İKİ indeksi.
+//
+// v0.9.575 — bu tip, düz map'in ürettiği SESSİZ bir hatayı kapatıyor.
+//
+// Snapshot her zaman (rule_id|service) ile anahtarlanıyordu, ama
+// deterministik-ID üreten dedektörler (runtime pod denetimleri, DB
+// kapasitesi, paylaşılan exception patlaması) problem ID'siyle arıyordu:
+//
+//	snap["runtime:jvm-gc:odeme-api:pod-abc"]   ← ID, "|" YOK
+//	harita anahtarı: "runtime:jvm-gc|odeme-api" ← rule|service
+//
+// İki uzay kesişmiyor, dolayısıyla hasOpen DAİMA false kalıyordu.
+// Sonuçları ağır ve hepsi sessiz:
+//   - "aç" dalı HER TİK yeniden koşuyor → dakikada bir PROBLEM OPENED,
+//     incident-attach ve BİLDİRİM (sendOne'da dedup yok)
+//   - StartedAt her tik sıfırlanıyor → yaş-bazlı eskalasyon ve
+//     "4 saattir açık → P1" triyajı hiç ateşlemiyor
+//   - histerezis kolu (wasOpen) ölü kod
+//   - "kapat" dalı hiç çalışmıyor; satır ancak stale-sweep ile ve
+//     YANLIŞ etiketle ("source silent") kapanıyor
+//   - acknowledged her tik open'a geri yazılıyor
+//
+// Kök sebep v0.9.522: FindOpenProblemByID(ctx, xProblemID(...)) çağrıları
+// snap[xProblemID(...)] yapıldı ama ANAHTAR ÇEVRİLMEDİ.
+//
+// Neden iki AYRI map, tek map'e iki anahtar değil: snapshot'ı DOLAŞAN
+// kod var (anomali resolve geçişi, emekli heap tahliyesi) ve tek map'e
+// çift anahtar koymak her problemi iki kez gösterirdi — bir hatayı
+// düzeltirken başka bir hata.
+//
+// Neden ID indeksi ByKey'in yerine geçmiyor: reduceLatestProblem bir
+// servisin TÜM pod'larını tek girdiye çöktürüyor (en yeni kazanır),
+// yani per-pod granülerlik orada yok. İki indeks farklı sorulara cevap
+// veriyor ve ikisi de gerekli.
+type OpenProblems struct {
+	byKey map[string]*Problem // rule_id|service — kural-bazlı denetimler
+	byID  map[string]*Problem // problem ID     — deterministik-ID üreticiler
+	all   []*Problem          // dolaşım için, TEKRARSIZ
+}
+
+// ByKey — (kural, servis) araması. nil alıcı güvenli: snapshot hatasında
+// çağıranlar nil geçiyor ve "açık problem yok" davranışı korunuyor.
+func (o *OpenProblems) ByKey(ruleID, service string) *Problem {
+	if o == nil {
+		return nil
+	}
+	return o.byKey[OpenProblemKey(ruleID, service)]
+}
+
+// ByID — deterministik problem ID araması (per-pod granülerlik).
+func (o *OpenProblems) ByID(id string) *Problem {
+	if o == nil {
+		return nil
+	}
+	return o.byID[id]
+}
+
+// All — her açık problem TAM BİR KEZ. Dolaşan kod bunu kullanmalı;
+// indeks map'lerini dolaşmak çift sayım üretir.
+func (o *OpenProblems) All() []*Problem {
+	if o == nil {
+		return nil
+	}
+	return o.all
+}
+
+// Len — açık problem sayısı (tekrarsız).
+func (o *OpenProblems) Len() int {
+	if o == nil {
+		return 0
+	}
+	return len(o.all)
+}
+
+// OpenProblemsSnapshot returns every open/acknowledged problem in ONE
+// FINAL scan, indexed BOTH ways (bkz. OpenProblems). v0.8.520 (perf
+// raporu #9): the evaluator called FindOpenProblem once per (rule,
+// service) pair — ~657 nokta FINAL sorgusu/tick prod'da — hepsi aynı
+// küçük state tablosunu okuyor. Tick başında tek snapshot + map lookup.
+func (s *Store) OpenProblemsSnapshot(ctx context.Context) (*OpenProblems, error) {
 	rows, err := s.conn.Query(ctx, `
 		SELECT id, rule_id, rule_name, severity, service, metric,
 		       value, threshold, status, description, assignee, pod,
@@ -926,7 +1000,7 @@ func (s *Store) OpenProblemsSnapshot(ctx context.Context) (map[string]*Problem, 
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]*Problem{}
+	out := &OpenProblems{byKey: map[string]*Problem{}, byID: map[string]*Problem{}}
 	for rows.Next() {
 		var p Problem
 		var resolvedAt *time.Time
@@ -939,7 +1013,12 @@ func (s *Store) OpenProblemsSnapshot(ctx context.Context) (map[string]*Problem, 
 			ns := resolvedAt.UnixNano()
 			p.ResolvedAt = &ns
 		}
-		reduceLatestProblem(out, &p)
+		// `var p Problem` döngü İÇİNDE tanımlı — her iterasyon ayrı
+		// değişken, &p almak güvenli (dışarıda tanımlı olsaydı tüm
+		// işaretçiler son satıra aliaslanırdı).
+		reduceLatestProblem(out.byKey, &p)
+		out.byID[p.ID] = &p
+		out.all = append(out.all, &p)
 	}
 	return out, rows.Err()
 }

@@ -5,6 +5,7 @@ import { Card } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { namedSeriesToSeries } from '@/pages/clusters/trendSeries';
+import { PodInlineResourceCharts } from './PodInlineResourceCharts';
 
 // PodJmxInline (v0.9.155) — Infrastructure açılır-grup tasarımında (operatör
 // onaylı mock A) bir pod satırı açılınca YERİNDE gösterilen JVM/JBoss JMX
@@ -57,7 +58,18 @@ export function PodJmxInline({ cluster, ns, deploy, pod, cFrom, cTo, onFull }: {
         </button>
       </div>
       {metricsQ.isSuccess && metrics.length === 0 ? (
-        <div style={{ fontSize: 12, color: 'var(--text3)' }}>Bu servis için Thanos'ta JMX metriği keşfedilmedi.</div>
+        // v0.9.574 (operatör: "podlara tıklayınca cpu memory
+        // utilizasyon gelsin demiştik") — JMX yoksa panel eskiden TEK
+        // CÜMLEYLE bitiyordu: bir açıklama, ama bir veri değil.
+        // Servisin dilini bilmek, kaynak kullanımını göstermemek için
+        // sebep değil.
+        <>
+          <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 10 }}>
+            Bu servis için Thanos'ta JMX metriği keşfedilmedi — pod'un kaynak kullanımı aşağıda.
+          </div>
+          <PodInlineResourceCharts cluster={cluster} ns={ns} deploy={deploy}
+            pod={pod} cFrom={cFrom} cTo={cTo} />
+        </>
       ) : loading ? (
         <Spinner />
       ) : !anyData ? (

@@ -10,7 +10,6 @@ import { safePct, restartColor, fmtCores, fmtBps, podPhaseBadge } from '@/pages/
 import { TREND_WINDOWS } from '@/pages/clusters/TrendPanel';
 import { podWorkloadName } from '@/pages/clusters/podWorkload';
 import { podDetailPath } from '@/pages/service/podDetailPath';
-import { PromQLList } from '@/pages/clusters/PromQLList';
 import { NodeHeatmap } from '@/pages/clusters/NodeHeatmap';
 import { MiniBar } from '@/pages/clusters/MiniBar';
 import { NamespaceCombobox } from '@/pages/clusters/NamespaceCombobox';
@@ -1125,14 +1124,15 @@ export default function ClustersPage() {
                     <NodeHeatmap nodes={nodeRows} />
                   </Card>
                 )}
-                {/* v0.9.36 (B3/F4) — firing alerts (1/2) + PromQL (1/2). */}
-                {section === 'overview' && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
-                    {(alertsQ.data?.alerts?.length ?? 0) > 0 && (
-                      <AlertsPanel alerts={alertsQ.data!.alerts!}
-                        criticalOnly={alertsCriticalOnly} onToggle={setAlertsCriticalOnly} />
-                    )}
-                    <ClusterPromQLCard cluster={clusterParam} />
+                {/* v0.9.574 — "Prometheus / Thanos queries" kartı KALDIRILDI
+                    (operatör: "gerek yok"). Kopyala-yapıştır PromQL örnekleri
+                    bir referanstı, bir gözlem değil: sayfanın yarısını
+                    kaplarken hiçbir soruyu cevaplamıyordu. Firing alerts artık
+                    tam genişlik. */}
+                {section === 'overview' && (alertsQ.data?.alerts?.length ?? 0) > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <AlertsPanel alerts={alertsQ.data!.alerts!}
+                      criticalOnly={alertsCriticalOnly} onToggle={setAlertsCriticalOnly} />
                   </div>
                 )}
               </>
@@ -1316,23 +1316,6 @@ function AlertsPanel({ alerts, criticalOnly, onToggle }: {
   );
 }
 
-// ClusterPromQLCard — README §Overview PromQL bloğu (display-only,
-// $c yerine cluster adı). Operatörün canlıda çalıştırabileceği
-// referans sorgular.
-function ClusterPromQLCard({ cluster }: { cluster: string }) {
-  const c = promQuote(cluster); // v0.9.44 — operatör serbest metni, kaçışla
-  const queries: [string, string][] = [
-    ['CPU by namespace', `sum by (namespace) (rate(container_cpu_usage_seconds_total{cluster="${c}"}[5m]))`],
-    ['Working-set memory', `sum by (namespace) (container_memory_working_set_bytes{cluster="${c}"})`],
-    ['Pod phase count', `count by (phase) (kube_pod_status_phase{cluster="${c}"} == 1)`],
-    ['Restarts (1h)', `sum by (pod) (increase(kube_pod_container_status_restarts_total{cluster="${c}"}[1h]))`],
-  ];
-  return (
-    <Card header="Prometheus / Thanos queries">
-      <PromQLList queries={queries} />
-    </Card>
-  );
-}
 
 // PromQLList v0.9.51'de pages/clusters/PromQLList.tsx'e taşındı.
 

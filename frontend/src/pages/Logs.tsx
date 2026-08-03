@@ -633,7 +633,40 @@ function LogsInner() {
           the apply/reset/search/URL-sync handlers. (v0.7.81 fix) */}
       <Topbar title="Logs" range={range} onRangeChange={(r) => { setRange(r); resetPaging(); }} />
       <div id="content">
-        <SavedViewsBar page="logs" />
+        {/* v0.9.574 (operatör: "Discover'ı TR yazısının altında sağ üstte
+            olması gerekiyor") — Kibana derin linki Live-tail satırından
+            İÇERİK ALANININ SAĞ ÜSTÜNE taşındı. Orada bir eylem
+            düğmesiydi ve arama kontrollerinin arasında kayboluyordu;
+            asıl işi "buradan Kibana'ya geç" demek, yani sayfa
+            kimliğinin yanında duruyor.
+            Bağlamı aynen taşır: servis / trace-id / arama → KQL,
+            pencere → zaman aralığı. Settings → Kibana link boşsa
+            hiç çizilmez. */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <SavedViewsBar page="logs" />
+          </div>
+          {(() => {
+            const kql = buildKQLFromFilter({ ...filter, search: compiledSearch });
+            const href = buildKibanaURL(kibana, {
+              fromNs: from ?? undefined,
+              toNs: to ?? undefined,
+              kql,
+            });
+            if (!href) return null;
+            return (
+              <a href={href} target="_blank" rel="noopener"
+                className="sec"
+                title="Open the current filter slice in Kibana Discover"
+                style={{
+                  flexShrink: 0, fontSize: 12, padding: '5px 12px',
+                  textDecoration: 'none', color: 'var(--accent2)',
+                }}>
+                ↗ Discover in Kibana
+              </a>
+            );
+          })()}
+        </div>
         {filter.traceId && (
           <div className="trace-lock">
             <span>Filtered to trace</span>
@@ -721,32 +754,6 @@ function LogsInner() {
               ⚠ high volume — some lines skipped
             </span>
           )}
-          {/* External Kibana deep-link (v0.5.236). Hidden unless
-              the admin has filled in Settings → Kibana link.
-              Carries the current filter context — service /
-              trace-id / search clauses become KQL; window
-              becomes the time range — so the operator lands on
-              the same slice they're looking at here. */}
-          {(() => {
-            const kql = buildKQLFromFilter({ ...filter, search: compiledSearch });
-            const href = buildKibanaURL(kibana, {
-              fromNs: from ?? undefined,
-              toNs: to ?? undefined,
-              kql,
-            });
-            if (!href) return null;
-            return (
-              <a href={href} target="_blank" rel="noopener"
-                className="sec"
-                title="Open the current filter slice in Kibana Discover"
-                style={{
-                  fontSize: 12, padding: '5px 12px',
-                  textDecoration: 'none', color: 'var(--accent2)',
-                }}>
-                ↗ Discover in Kibana
-              </a>
-            );
-          })()}
         </div>
 
         {/* v0.8.400 — HONEST env-filter chip (the v0.8.398 pattern:

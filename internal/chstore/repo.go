@@ -45,24 +45,24 @@ func safeF(p *float64) float64 {
 // for durability), so we still detect insert errors properly.
 //
 // v0.5.346 — tuned for high-TPS ingestion:
-//   • async_insert_max_data_size = 10MB  (up from 1MB default)
+//   - async_insert_max_data_size = 10MB  (up from 1MB default)
 //     — bigger coalescence per server-side flush, fewer disk
 //     writes per row at burst peaks.
-//   • async_insert_busy_timeout_ms = 1000  (up from 200ms)
+//   - async_insert_busy_timeout_ms = 1000  (up from 200ms)
 //     — wait up to 1s collecting concurrent inserts before
 //     flushing. Trade a tiny visibility lag for far fewer
 //     write operations at sustained load.
-//   • async_insert_stale_timeout_ms = 1000
+//   - async_insert_stale_timeout_ms = 1000
 //     — flush a partial buffer 1s after the last insert so
 //     low-traffic services (test envs, off-hours) don't sit
 //     on rows indefinitely.
 func asyncInsertCtx(ctx context.Context) context.Context {
 	return clickhouse.Context(ctx, clickhouse.WithSettings(clickhouse.Settings{
-		"async_insert":                      1,
-		"wait_for_async_insert":             1,
-		"async_insert_max_data_size":        10_485_760,
-		"async_insert_busy_timeout_ms":      1000,
-		"async_insert_stale_timeout_ms":     1000,
+		"async_insert":                  1,
+		"wait_for_async_insert":         1,
+		"async_insert_max_data_size":    10_485_760,
+		"async_insert_busy_timeout_ms":  1000,
+		"async_insert_stale_timeout_ms": 1000,
 	}))
 }
 
@@ -299,7 +299,7 @@ func servicesSortExpr(sort, dir string) string {
 // attr (per-operation overrides). We coalesce across all six
 // permutations, resource-first since that's the stable case.
 //
-// Returns '' when no signal is present — callers comparing
+// Returns ” when no signal is present — callers comparing
 // against an empty string skip the row, which is the right
 // behaviour (no-cluster rows belong only in the "All
 // clusters" view).
@@ -316,7 +316,7 @@ const clusterDeriveExpr = `coalesce(
 // clusterColExpr reads the promoted `cluster` MATERIALIZED column
 // (v0.8.x) when present — new parts compute+store it at insert — and
 // falls back to the live clusterDeriveExpr array scan for old parts
-// that predate the column add (those read '' for the materialized
+// that predate the column add (those read ” for the materialized
 // col). CH short-circuits coalesce, so new parts never pay the
 // indexOf() scan over res_values/attr_values; old parts pay it once,
 // until they TTL out of the retention window, after which every part
@@ -1027,7 +1027,7 @@ const latSparkCap = 150
 // normalized op_group shape (group_id rel B) instead of
 // operation_summary_5m keyed by the raw operation name; op_group is
 // aliased back to the OperationSummary.Name field so the read path,
-// scanner, and frontend render identically. The ungrouped '' bucket
+// scanner, and frontend render identically. The ungrouped ” bucket
 // (old/pre-Release-A spans) is excluded so the normalized list stays
 // clean. When normalized is false the behaviour is byte-for-byte the
 // pre-rel-B path.
@@ -1296,7 +1296,7 @@ func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string,
 // normalized=true groups the operations by op_group (the normalized
 // operation-shape column; group_id rel B) instead of the raw operation
 // name — both the MV path (operation_group_summary_5m) and the raw-spans
-// fallback group by op_group and exclude the ungrouped '' bucket. The
+// fallback group by op_group and exclude the ungrouped ” bucket. The
 // OperationSummary.Name field carries the op_group value in that mode, so
 // the scanner, sparkline, and frontend are unchanged. normalized=false is
 // byte-for-byte the pre-rel-B behaviour.
@@ -1550,7 +1550,6 @@ func round2(v float64) float64 {
 	return math.Round(v*100) / 100
 }
 
-
 // GetOperations returns the distinct span names ("operations") seen in the
 // given window, optionally filtered by service. Ordered by call count desc,
 // so the most common operations appear first in the autocomplete list.
@@ -1602,13 +1601,13 @@ func (s *Store) GetOperations(ctx context.Context, service string, since time.Du
 //
 //  2. Outbound (client / producer) spans where the downstream identity
 //     is inferred from the first non-empty among:
-//       a. peer.service                (OTel SDK hint)
-//       b. rpc.service                 (gRPC contract — the same string
-//                                       Grafana Tempo's traces-drilldown
-//                                       uses to bucket child gRPC calls)
-//       c. server.address / http.host  (HTTP downstream)
-//       d. db.system                   (DB engine)
-//       e. messaging.system            (queue / topic broker)
+//     a. peer.service                (OTel SDK hint)
+//     b. rpc.service                 (gRPC contract — the same string
+//     Grafana Tempo's traces-drilldown
+//     uses to bucket child gRPC calls)
+//     c. server.address / http.host  (HTTP downstream)
+//     d. db.system                   (DB engine)
+//     e. messaging.system            (queue / topic broker)
 //     This catches edges to non-instrumented downstreams (managed DBs,
 //     third-party APIs, brokers) AND covers environments where the
 //     OTel SDK isn't populating peer.service — common in older Java
@@ -1711,21 +1710,21 @@ func (s *Store) GetServiceGraphTopN(ctx context.Context, service string, since t
 // LowCardinality column instead of scanning the attr_keys/attr_values
 // arrays — same value, much cheaper plan.
 var WellKnownTraceCol = map[string]string{
-	"http.method":      "http_method",
-	"http.route":       "http_route",
-	"http.status_code": "toString(http_status)",
-	"db.system":        "db_system",
-	"db.statement":     "db_statement",
-	"rpc.system":       "rpc_system",
-	"rpc.method":       "rpc_method",
-	"peer.service":     "peer_service",
-	"messaging.system": "msg_system",
-	"service.name":     "service_name",
+	"http.method":            "http_method",
+	"http.route":             "http_route",
+	"http.status_code":       "toString(http_status)",
+	"db.system":              "db_system",
+	"db.statement":           "db_statement",
+	"rpc.system":             "rpc_system",
+	"rpc.method":             "rpc_method",
+	"peer.service":           "peer_service",
+	"messaging.system":       "msg_system",
+	"service.name":           "service_name",
 	"deployment.environment": "deploy_env",
 	// Current semconv spelling (≥1.27) — same typed column (v0.8.379).
 	"deployment.environment.name": "deploy_env",
-	"host.name":        "host_name",
-	"kind":             "kind",
+	"host.name":                   "host_name",
+	"kind":                        "kind",
 }
 
 type TraceFilter struct {
@@ -1780,8 +1779,8 @@ type TraceFilter struct {
 	// every filter mode. Non-empty Env disqualifies the trace_summary
 	// MV fast-path (the MV has no env dimension — cluster-style
 	// raw-fallback, operator-approved, NO MV changes).
-	Env        string
-	Filters    []FilterExpr // advanced filter chips (AND-joined)
+	Env     string
+	Filters []FilterExpr // advanced filter chips (AND-joined)
 	// FilterRoot is the optional grouped AND/OR builder (v0.8.x trace-query
 	// gap-2). When non-nil it SUPERSEDES Filters: buildGetTracesWhere calls
 	// ApplyFilterGroup instead of ApplyFilters. A flat-AND FilterRoot emits
@@ -1790,10 +1789,10 @@ type TraceFilter struct {
 	// unaffected. An OR / nested group disqualifies the trace_summary MV
 	// fast-path exactly like Search / custom-attr does (see GetTraces gate).
 	FilterRoot *FilterGroup
-	Sort     string       // "time" | "duration"
-	Order    string       // "asc" | "desc"
-	Limit    int
-	Offset   int
+	Sort       string // "time" | "duration"
+	Order      string // "asc" | "desc"
+	Limit      int
+	Offset     int
 	// RankedWithin, when non-nil, is an OUT param: the MV fast-path
 	// writes traceRecencySliceN into it when a non-time sort was
 	// ranked within the newest-N recency slice (v0.8.369,
@@ -2017,7 +2016,7 @@ func traceCountSettings(useHLL bool) string {
 // searchHaystack is the per-span text the free-text trace search scans:
 // operation name + HTTP method + route + every span-attr value, space-joined
 // into one string so the operator's words match whichever field carries them.
-// arrayStringConcat on an empty attr_values returns '' (concat is NULL-safe).
+// arrayStringConcat on an empty attr_values returns ” (concat is NULL-safe).
 const searchHaystack = `concat(name, ' ', http_method, ' ', http_route, ' ', arrayStringConcat(attr_values, ' '))`
 
 // searchPredicate builds the per-span free-text match for a query string plus
@@ -2329,7 +2328,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 // v0.5.351 — root_name/root_svc fallback. When the WHERE
 // filter (service / name search) excludes the real root
 // span (because it lives in a different service or has a
-// different name), anyIf(parent_id='') returns empty and
+// different name), anyIf(parent_id=”) returns empty and
 // the trace row renders blank. Fall back to ANY span's
 // name/service so the operator at least sees a label — the
 // trace detail view still shows the full trace on click.
@@ -2363,17 +2362,17 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 
 // getTracesFromMV implements the two-stage fast path:
 //
-//  Stage 1: scan trace_service_index_5m, find the top
-//  (Limit+1) trace_ids that match the service in the
-//  window, ordered by last activity. Uses the
-//  (service_name, time_bucket) primary key prefix so the
-//  scan is partition-pruned + sorted-access.
+//	Stage 1: scan trace_service_index_5m, find the top
+//	(Limit+1) trace_ids that match the service in the
+//	window, ordered by last activity. Uses the
+//	(service_name, time_bucket) primary key prefix so the
+//	scan is partition-pruned + sorted-access.
 //
-//  Stage 2: pull those trace_ids' full summaries from
-//  trace_summary_5m (state merge). Apply RootOnly /
-//  HasError / MinMs / MaxMs as HAVING filters here so the
-//  page sort sees only matching traces. Final ORDER BY +
-//  LIMIT runs on the page-bounded result.
+//	Stage 2: pull those trace_ids' full summaries from
+//	trace_summary_5m (state merge). Apply RootOnly /
+//	HasError / MinMs / MaxMs as HAVING filters here so the
+//	page sort sees only matching traces. Final ORDER BY +
+//	LIMIT runs on the page-bounded result.
 //
 // Sort: index supports time-desc; for duration / span_count
 // / has_error we still produce the right page because stage
@@ -2505,7 +2504,7 @@ const traceExtrasChunkIDs = 5000
 
 // TraceExtras fetches the requested attribute keys for an EXPLICIT trace-id
 // set within [from, to] (+slack) and returns them keyed by trace id. Every
-// requested key is present in each returned trace's map ('' when absent) so
+// requested key is present in each returned trace's map (” when absent) so
 // callers can distinguish "fetched, empty" from "not fetched". Id sets past
 // traceExtrasChunkIDs run as sequential chunked queries (export path).
 //
@@ -3051,15 +3050,15 @@ type AggregateFilter struct {
 	// for the same reason as TraceFilter.Env: it must survive the
 	// FilterRoot-supersedes-Filters rule and the FilterGroup depth cap.
 	// Non-empty disqualifies the trace_summary MV fast-path below.
-	Env       string
-	Filters   []FilterExpr
+	Env     string
+	Filters []FilterExpr
 	// FilterRoot — grouped AND/OR builder (v0.8.x gap-2). Supersedes Filters
 	// when non-nil; flat-AND is byte-identical to the legacy path, OR /
 	// nested disqualifies the trace_summary MV fast-path.
 	FilterRoot *FilterGroup
-	Sort      string // "count"|"perMin"|"errorRate"|"avg"|"p50"|"p95"|"p99"|"max"|"name"
-	Order     string // "asc"|"desc"
-	Limit     int
+	Sort       string // "count"|"perMin"|"errorRate"|"avg"|"p50"|"p95"|"p99"|"max"|"name"
+	Order      string // "asc"|"desc"
+	Limit      int
 	// Having — v0.8.453 (B2-c): genel post-aggregate koşullar
 	// ("errorRate > 1 AND p95 > 500"). Yalnız compileHaving'in
 	// whitelist'inden geçer; MV fast-path'i diskalifiye ETMEZ (dış
@@ -3392,11 +3391,11 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 // carries no per-span filters / custom attributes. The MV
 // already stores everything we need:
 //
-//   • argMaxIfState(root_service / root_name) → group key
-//   • countState                              → trace_count
-//   • quantilesState                          → p50 / p95 / p99
-//   • minMerge(trace_start_state)             → trace_start
-//   • countIfState(error_count_state)         → error_count
+//   - argMaxIfState(root_service / root_name) → group key
+//   - countState                              → trace_count
+//   - quantilesState                          → p50 / p95 / p99
+//   - minMerge(trace_start_state)             → trace_start
+//   - countIfState(error_count_state)         → error_count
 //
 // One pass over the MV's bucket range; no inner GROUP BY
 // trace_id over the spans table. On 7d windows the wall-time
@@ -3593,6 +3592,23 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 // caller then falls back to an unbounded scan so a trace is never un-fetchable.
 // The 5-min margin absorbs clock skew / state approximation while still binding
 // the scan to ~1-2 daily partitions instead of all of them. (v0.8.210)
+// traceWindowSteps — pencere aramasının kademeleri (v0.9.578).
+//
+// Dar başlar çünkü trace_summary_5m partisyonu toDate(time_bucket):
+// 24 saatlik bir sınır ~1 partisyona iner, 90 günlük sınırsız arama
+// ise 90 partisyonu tarar. Operatörlerin açtığı trace'lerin ezici
+// çoğunluğu tazedir.
+var traceWindowSteps = []time.Duration{
+	24 * time.Hour,
+	7 * 24 * time.Hour,
+	90 * 24 * time.Hour, // MV'nin TTL'i
+}
+
+// traceScanFloor — pencere hiç çözülemediğinde spans taramasının
+// tavanı. spans TTL'i 30 gün; bundan eskisini sormanın karşılığı yok
+// ve sınırsız bırakmak sert kısıt ihlali.
+const traceScanFloor = 31 * 24 * time.Hour
+
 func traceTimeBound(start time.Time, endNanos int64) (lo, hi time.Time, ok bool) {
 	if endNanos <= 0 {
 		return time.Time{}, time.Time{}, false
@@ -3619,6 +3635,7 @@ func traceTimeBound(start time.Time, endNanos int64) (lo, hi time.Time, ok bool)
 //   - LIMIT 1 → eşleşme bulununca CH erken çıkar
 //   - pencere ÇAĞIRAN tarafından sınırlanır + max_execution_time tavanı,
 //     yani eşleşme YOKKEN bile maliyet üstten kapalı
+//
 // Bunu bir hot path'e ya da bir poll'a bağlamak YANLIŞ olur.
 func (s *Store) FindTraceIDBySpan(ctx context.Context, spanID string, from, to time.Time) (string, error) {
 	spanID = strings.TrimSpace(spanID)
@@ -3659,17 +3676,60 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 	// bloom-pruned spans path (spans.idx_trace), instead of up to +10s.
 	where := "trace_id = ?"
 	args := []any{traceID}
+	// v0.9.578 (operator-reported, prod): pencere araması KADEMELİ ve
+	// ZAMAN SINIRLI.
+	//
+	// Öncesi tek sorguydu: `WHERE trace_id = ?`, zaman sınırı YOK.
+	// trace_summary_5m'in sıralaması (time_bucket, trace_id) ve
+	// partisyonu toDate(time_bucket) — yani trace_id ile arama ÖNCÜ
+	// kolonu kullanamıyor ve 90 GÜNLÜK TÜM partisyonları tarıyordu.
+	// Prod log'u: her trace açılışında "Timeout exceeded: elapsed
+	// 3019ms, maximum: 3000ms".
+	//
+	// Sonuç iki kat kötüydü: (a) her açılışta 3 saniye boşa yanıyor,
+	// (b) ön-sorgu başarısız olunca spans taraması ZAMAN SINIRSIZ
+	// kalıyordu — CLAUDE.md'nin sert kısıtının ihlali, ve zaten bu
+	// optimizasyonun ÖNLEMEK için var olduğu şey.
+	//
+	// Kademeli pencere bunu tersine çeviriyor: dar pencere partisyon
+	// budar ve ORDER BY önekini kullanır. Operatörlerin açtığı
+	// trace'lerin ezici çoğunluğu tazedir, yani ilk adım pratikte
+	// hemen isabet eder; eski bir trace için ikinci/üçüncü adımın
+	// bedeli yalnız o istekte ödenir.
 	var winStart time.Time
 	var winEndNanos int64
-	if err := s.telemetryReadConn().QueryRow(ctx, `
-		SELECT minMerge(trace_start_state), toInt64(maxMerge(trace_end_state))
-		FROM trace_summary_5m
-		WHERE trace_id = ?
-		SETTINGS max_execution_time = 3`, traceID).Scan(&winStart, &winEndNanos); err != nil {
-		log.Printf("[trace] %s window lookup failed (%v) — unbounded spans scan", traceID, err)
-	} else if lo, hi, ok := traceTimeBound(winStart, winEndNanos); ok {
-		where += " AND time >= ? AND time <= ?"
-		args = append(args, lo, hi)
+	bounded := false
+	for _, step := range traceWindowSteps {
+		since := time.Now().Add(-step)
+		err := s.telemetryReadConn().QueryRow(ctx, `
+			SELECT minMerge(trace_start_state), toInt64(maxMerge(trace_end_state))
+			FROM trace_summary_5m
+			WHERE trace_id = ? AND time_bucket >= ?
+			SETTINGS max_execution_time = 3`,
+			traceID, chDateTime64Arg(since)).Scan(&winStart, &winEndNanos)
+		if err != nil {
+			// Zaman aşımı/hata: daha GENİŞ pencere daha da yavaş olur,
+			// denemeye devam etmek anlamsız. Sınırsız taramaya düşme —
+			// aşağıdaki son çare TTL sınırını uyguluyor.
+			log.Printf("[trace] %s pencere araması başarısız (%s içinde): %v", traceID, step, err)
+			break
+		}
+		if lo, hi, ok := traceTimeBound(winStart, winEndNanos); ok {
+			where += " AND time >= ? AND time <= ?"
+			args = append(args, lo, hi)
+			bounded = true
+			break
+		}
+		// Satır yok: trace bu pencerede değil, bir sonrakini dene.
+	}
+	if !bounded {
+		// SON ÇARE — yine de SINIRLI. Pencereyi çözemedik ama spans
+		// taramasının sınırsız kalması kabul edilemez: retention
+		// tavanı en azından niyeti koda yazıyor ve TTL uzarsa sorgu
+		// sessizce büyümez.
+		where += " AND time >= ?"
+		args = append(args, chDateTime64Arg(time.Now().Add(-traceScanFloor)))
+		log.Printf("[trace] %s penceresi çözülemedi — tarama %s ile sınırlandı", traceID, traceScanFloor)
 	}
 
 	rows, err := s.telemetryReadConn().Query(ctx, `
@@ -3718,7 +3778,7 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 // ── Log queries ───────────────────────────────────────────────────────────────
 
 type LogFilter struct {
-	Service     string
+	Service string
 	// Env (v0.8.400 — env-separation Phase 4) — deployment-environment
 	// filter, applied as the bounded res-array conjunct
 	// logsEnvChainSQL. Empty = all environments.
@@ -3731,9 +3791,9 @@ type LogFilter struct {
 	// HasTrace (v0.8.406) — only rows with a trace correlation
 	// (trace_id != ''). Applied before the SinceNs branch so the
 	// count(), page read AND forward-tail all carry it.
-	HasTrace    bool
-	Limit       int
-	Offset      int
+	HasTrace bool
+	Limit    int
+	Offset   int
 	// Cursor (v0.7.22, SAFE-CORE) — opaque CH keyset token from a
 	// prior GetLogs NextCursor. When set, GetLogs pages AFTER the
 	// encoded (time, rowKey) position with a STRICT keyset predicate
@@ -3768,7 +3828,7 @@ const logsMaxLimit = 1000
 // Dilim-5-class migration this raw-fallback slice deliberately avoids)
 // and WITHOUT the namespace fallbacks (a logs row with neither key is
 // honestly env-less, not namespace-approximated). indexOf() returns 0
-// for a missing key and arr[0] is '' in CH, so absent keys coalesce
+// for a missing key and arr[0] is ” in CH, so absent keys coalesce
 // cleanly. Pinned by TestLogsEnvChainSQL (repo_logs_env_test.go).
 const logsEnvChainSQL = `coalesce(
 			nullIf(res_values[indexOf(res_keys, 'deployment.environment.name')], ''),
@@ -3782,11 +3842,11 @@ const logsEnvChainSQL = `coalesce(
 // stable keyset tiebreak with no stored column / migration.
 //
 // v0.7.23 (SAFE-CORE) — the prior tiebreak was `span_id` (String
-// DEFAULT ''). But (time, span_id) is NOT a total order on the logs
-// table: most log lines are emitted OUTSIDE a span (span_id='') and
+// DEFAULT ”). But (time, span_id) is NOT a total order on the logs
+// table: most log lines are emitted OUTSIDE a span (span_id=”) and
 // DateTime64(9) timestamps collide at billions/day. A page boundary
-// landing inside a run of (t0,'') rows dropped every remaining
-// (t0,'') row on the next page, because `time = t0 AND span_id < ''`
+// landing inside a run of (t0,”) rows dropped every remaining
+// (t0,”) row on the next page, because `time = t0 AND span_id < ”`
 // matches nothing. cityHash64 over the line's identifying columns is
 // effectively unique among same-time rows (64-bit collision ≈ 2^-64),
 // restoring a provable total order on (time, rowKey).
@@ -3882,7 +3942,7 @@ func DecodeLogsCursor(tok string) (LogsCursor, bool) {
 // unique among same-time rows) means the boundary row itself is
 // neither re-returned (dup) nor skipped (drop), and a run of same-time
 // rows can no longer collapse to a single comparable value the way
-// `span_id < ''` did before v0.7.23. Returns ("", nil) when the cursor
+// `span_id < ”` did before v0.7.23. Returns ("", nil) when the cursor
 // is empty so the first page applies no keyset. Pure function for
 // table-driven testing (CLAUDE.md #11).
 func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
@@ -3921,10 +3981,10 @@ func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
 //   - STABLE sort: ORDER BY time DESC, <rowKey> DESC, where rowKey is
 //     a deterministic cityHash64 over the line's identifying columns
 //     (logsRowKeyExpr). v0.7.23 (SAFE-CORE) replaced the span_id
-//     tiebreak: span_id is String DEFAULT '' and most log lines are
+//     tiebreak: span_id is String DEFAULT ” and most log lines are
 //     emitted outside a span, so (time, span_id) was not a total
-//     order — a page boundary inside a run of (t0,'') rows dropped
-//     every remaining (t0,'') row on the next page. The hash makes
+//     order — a page boundary inside a run of (t0,”) rows dropped
+//     every remaining (t0,”) row on the next page. The hash makes
 //     (time, rowKey) a provable total order, so no boundary
 //     drop/dup.
 //   - Keyset cursor paging: when f.Cursor decodes, page strictly

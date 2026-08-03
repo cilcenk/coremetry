@@ -281,10 +281,10 @@ func (s *Store) shardKey() string {
 // Every other high-volume / sharded MV omits it.
 var tablesWithoutTraceID = map[string]bool{
 	// Raw tables.
-	"metric_points":        true,
-	"profiles":             true,
+	"metric_points": true,
+	"profiles":      true,
 	// MVs — none of these project trace_id in their SELECT.
-	"trace_summary_1d":     true,  // only (day, trace_count_state)
+	"trace_summary_1d":     true, // only (day, trace_count_state)
 	"service_summary_5m":   true,
 	"db_summary_5m":        true,
 	"db_caller_summary_5m": true,
@@ -294,7 +294,7 @@ var tablesWithoutTraceID = map[string]bool{
 	"metric_catalog": true,
 	// v0.9.249 — service/version rollup: (service_name, version,
 	// time_bucket) + min/count states. No trace_id projected.
-	"service_version_5m": true,
+	"service_version_5m":   true,
 	"topology_edges_5m":    true,
 	"topology_op_edges_5m": true,
 	// v0.5.435 — MVs/aggregates that join highVolumeTables in
@@ -303,7 +303,7 @@ var tablesWithoutTraceID = map[string]bool{
 	// shard-key path must fall back to rand() for these.
 	// trace_service_index_5m is the only newly-sharded MV that
 	// DOES project trace_id, so it's intentionally absent here.
-	"operation_summary_5m":         true,
+	"operation_summary_5m": true,
 	// v0.9.350 — op_group rollup PROMOTED. Its sibling above has been in
 	// this map since v0.5.435; this one never joined, so in cluster mode it
 	// stayed a bare per-shard table while queryOperationsFromMV swaps
@@ -320,21 +320,21 @@ var tablesWithoutTraceID = map[string]bool{
 	// No trace_id in its SELECT (service_name, op_group, time_bucket +
 	// states), so it belongs with the rand()-fallback group, exactly like
 	// operation_summary_5m.
-	"operation_group_summary_5m":   true,
-	"spanmetrics_calls_5m":         true,
-	"spanmetrics_hist_5m":          true,
-	"spanmetrics_duration_5m":      true,
+	"operation_group_summary_5m": true,
+	"spanmetrics_calls_5m":       true,
+	"spanmetrics_hist_5m":        true,
+	"spanmetrics_duration_5m":    true,
 	// v0.8.408 — doorway tiers promoted (the v0.8.356 TODO). trace_id
 	// appears only INSIDE argMax/argMaxIf AggregateFunction states,
 	// never as a plain column, so the env-override shard-key path
 	// must fall back to rand() here too.
-	"spanmetrics_1m":  true,
-	"spanmetrics_10s": true,
-	"spanmetrics_1s":  true,
-	"messaging_summary_5m":         true,
-	"messaging_caller_summary_5m":  true,
-	"service_callers_5m":           true,
-	"topology_root_flows_5m":       true,
+	"spanmetrics_1m":              true,
+	"spanmetrics_10s":             true,
+	"spanmetrics_1s":              true,
+	"messaging_summary_5m":        true,
+	"messaging_caller_summary_5m": true,
+	"service_callers_5m":          true,
+	"topology_root_flows_5m":      true,
 }
 
 // defaultShardPolicy — v0.5.419. Per-table shard expressions matching
@@ -366,19 +366,19 @@ var tablesWithoutTraceID = map[string]bool{
 // every trace-id lookup saves N-1 shard hits. Network + CPU +
 // coordinator-memory all drop proportionally.
 var defaultShardPolicy = map[string]string{
-	"spans":                "cityHash64(service_name)",
-	"logs":                 "cityHash64(service_name)",
-	"metric_points":        "cityHash64(service_name)",
+	"spans":         "cityHash64(service_name)",
+	"logs":          "cityHash64(service_name)",
+	"metric_points": "cityHash64(service_name)",
 	// v0.8.396 — co-locate catalog rows with their metric_points shard.
-	"metric_catalog":       "cityHash64(service_name)",
-	"profiles":             "cityHash64(service_name)",
+	"metric_catalog": "cityHash64(service_name)",
+	"profiles":       "cityHash64(service_name)",
 	// v0.8.328 — exemplars shard by series fingerprint so the canonical
 	// `series_fingerprint IN (…)` pivot read is shard-local per series
 	// (all rows of one series co-locate; the fingerprint set of one chart
 	// touches few shards). toString because the fingerprint is UInt64 and
 	// cityHash64 wants a hashable arg shape consistent with the other
 	// policies.
-	"exemplars":            "cityHash64(toString(series_fingerprint))",
+	"exemplars": "cityHash64(toString(series_fingerprint))",
 	// v0.8.329 — span links: each pivot direction shards by ITS OWN lookup
 	// key so both reads are single-shard PK scans. The forward table takes
 	// ingest INSERTs through the wrapper (routes by owning trace_id); the
@@ -387,7 +387,7 @@ var defaultShardPolicy = map[string]string{
 	// linked_trace_id.
 	"span_links":         "cityHash64(trace_id)",
 	"span_links_reverse": "cityHash64(linked_trace_id)",
-	"trace_summary_5m":     "cityHash64(trace_id)",
+	"trace_summary_5m":   "cityHash64(trace_id)",
 	// v0.5.422 — trace_summary_1d MV columns are only `day` +
 	// `trace_count_state` (HLL state); trace_id isn't projected.
 	// Shard by day so read patterns (per-day uniqMerge) land
@@ -425,14 +425,14 @@ var defaultShardPolicy = map[string]string{
 	// topology aggregator) the shard key DOES matter — chosen for
 	// locality with the upstream sharded source (spans on
 	// cityHash64(service_name)).
-	"trace_service_index_5m":        "cityHash64(service_name)",
-	"operation_summary_5m":          "cityHash64(service_name)",
+	"trace_service_index_5m": "cityHash64(service_name)",
+	"operation_summary_5m":   "cityHash64(service_name)",
 	// v0.9.350 — same key as its sibling: ORDER BY leads with service_name
 	// and every read is service-scoped, so a service's rows stay together.
-	"operation_group_summary_5m":    "cityHash64(service_name)",
-	"spanmetrics_calls_5m":          "cityHash64(service_name)",
-	"spanmetrics_hist_5m":           "cityHash64(service_name)",
-	"spanmetrics_duration_5m":       "cityHash64(service_name)",
+	"operation_group_summary_5m": "cityHash64(service_name)",
+	"spanmetrics_calls_5m":       "cityHash64(service_name)",
+	"spanmetrics_hist_5m":        "cityHash64(service_name)",
+	"spanmetrics_duration_5m":    "cityHash64(service_name)",
 	// v0.8.408 — doorway tiers (decorative for MVs, honest about the
 	// dominant read filter — every doorway query leads service_name).
 	"spanmetrics_1m":  "cityHash64(service_name)",
@@ -442,10 +442,10 @@ var defaultShardPolicy = map[string]string{
 	// (msg_system is ~5 values, cluster is ~10). Reads from
 	// /messaging filter by (msg_system, destination) — both
 	// land cleanly under destination-locality.
-	"messaging_summary_5m":          "cityHash64(destination)",
-	"messaging_caller_summary_5m":   "cityHash64(service_name)",
-	"service_callers_5m":            "cityHash64(service)",
-	"topology_root_flows_5m":        "cityHash64(root_service)",
+	"messaging_summary_5m":        "cityHash64(destination)",
+	"messaging_caller_summary_5m": "cityHash64(service_name)",
+	"service_callers_5m":          "cityHash64(service)",
+	"topology_root_flows_5m":      "cityHash64(root_service)",
 }
 
 // shardKeyFor returns the shard expression for a specific table.
@@ -980,8 +980,8 @@ var highVolumeTables = map[string]bool{
 	// and topology_root_flows_5m are aggregator-INSERTed tables
 	// where the INSERT-via-wrapper distribution + read fan-out
 	// both matter.
-	"trace_service_index_5m":        true,
-	"operation_summary_5m":          true,
+	"trace_service_index_5m": true,
+	"operation_summary_5m":   true,
 	// v0.9.350 — op_group rollup, kardeşiyle aynı kayıt. Bu satır olmadan
 	// cluster modunda bare per-shard tablo olarak kalıyordu ve
 	// queryOperationsFromMV ikisi arasında TEK bir `normalized` boolean'ıyla
@@ -992,10 +992,10 @@ var highVolumeTables = map[string]bool{
 	// o yüzden op_group spans_local'e eklenemiyor ve MV boot'ta düşürülüyor.
 	// cluster_name DOĞRU ayarlandığı an silahlanıyor — ki o, dokümante
 	// edilmiş düzeltme yolunun kendisi.
-	"operation_group_summary_5m":    true,
-	"spanmetrics_calls_5m":          true,
-	"spanmetrics_hist_5m":           true,
-	"spanmetrics_duration_5m":       true,
+	"operation_group_summary_5m": true,
+	"spanmetrics_calls_5m":       true,
+	"spanmetrics_hist_5m":        true,
+	"spanmetrics_duration_5m":    true,
 	// v0.8.408 — the spanmetrics_{1m,10s,1s} DOORWAY tiers join the
 	// _local family (closes the v0.8.356 TODO). Existing cluster
 	// installs are promoted at boot by promoteCombinedMVs (RENAME
@@ -1005,13 +1005,13 @@ var highVolumeTables = map[string]bool{
 	// insert. spanmetricsSourceFor collapsed to the bare name in the
 	// SAME release: cluster() over the new Distributed wrapper would
 	// count every shard N times.
-	"spanmetrics_1m":  true,
-	"spanmetrics_10s": true,
-	"spanmetrics_1s":  true,
-	"messaging_summary_5m":          true,
-	"messaging_caller_summary_5m":   true,
-	"service_callers_5m":            true,
-	"topology_root_flows_5m":        true,
+	"spanmetrics_1m":              true,
+	"spanmetrics_10s":             true,
+	"spanmetrics_1s":              true,
+	"messaging_summary_5m":        true,
+	"messaging_caller_summary_5m": true,
+	"service_callers_5m":          true,
+	"topology_root_flows_5m":      true,
 }
 
 // adaptDDL rewrites a DDL statement for the current mode.
@@ -1183,6 +1183,15 @@ func (s *Store) execWithReadonlyRetry(ctx context.Context, frag string) error {
 			return nil
 		}
 		lastErr = err
+		// v0.9.604 — dağıtık DDL kuyruğa alındıysa BAŞARI say.
+		//
+		// Yeniden denemek YANLIŞ olurdu: DDL zaten kuyrukta, ikinci
+		// bir kopya göndermek tıkalı kuyruğu daha da uzatır. Doğru
+		// davranış devam etmek — ifadelerin hepsi IF NOT EXISTS.
+		if isDistributedDDLQueued(err) {
+			log.Printf("[chstore] dağıtık DDL kuyruğa alındı (arka planda uygulanacak), devam ediliyor: %.160s", frag)
+			return nil
+		}
 		if !isReadonlyTransient(err) {
 			return err
 		}
@@ -1208,6 +1217,42 @@ func isReadonlyTransient(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "Table is in read only mode") ||
 		strings.Contains(msg, "code: 242")
+}
+
+// isDistributedDDLQueued — dağıtık DDL "zamanaşımı" imzası (v0.9.604).
+//
+// Operator-reported (prod, 2026-08-03, v0.9.603 rollout'u): api rolündeki
+// bir pod boot'ta ölüp crashloop'a girdi:
+//
+//	create database: code: 159, message: Distributed DDL task
+//	/clickhouse/task_queue/ddl/query-… is not finished on 2 of 4 hosts
+//	(0 of them are currently executing the task, 0 are inactive).
+//	They are going to execute the query in background. Was waiting for
+//	180.93 seconds, which is longer than distributed_ddl_task_timeout
+//
+// Bu bir BAŞARISIZLIK DEĞİL ve mesajın kendisi bunu söylüyor: "arka
+// planda çalıştıracaklar". Kod 159 yalnızca "senin beklediğin süre
+// içinde HEPSİ bitirmedi" demek. DDL kuyruğa ALINDI ve uygulanacak;
+// üstelik hepsi IF NOT EXISTS, yani tekrar uygulanması da zararsız.
+//
+// Ölümcül saymanın bedeli ağır ve KENDİNİ BESLİYOR: pod ölür, yeniden
+// başlar, TÜM DDL kümesini zaten tıkalı kuyruğa yeniden gönderir,
+// kuyruk daha da tıkanır. Rollout sırasında birden çok pod aynı anda
+// boot ettiği için tam da o an en kötü hâline geliyor.
+//
+// "0 are inactive" ayrıntısı belirleyici: hiçbir host DÜŞMÜŞ değil,
+// yalnız kuyruk yavaş. Gerçek bir host arızası farklı imza verir.
+func isDistributedDDLQueued(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	// İki koşul BİRLİKTE aranıyor: yalın "code: 159" başka bir
+	// zamanaşımı da olabilir (sorgu zamanaşımı), ama dağıtık DDL
+	// kuyruğu mesajı bu cümleyi taşır. Dar tutmak, alakasız bir
+	// hatayı sessizce yutmamak için.
+	return strings.Contains(msg, "code: 159") &&
+		strings.Contains(msg, "going to execute the query in background")
 }
 
 // isClusterUnsupportedAlter recognises the ClickHouse error
@@ -1267,3 +1312,27 @@ var (
 	// out of scope and stay scoped to the _local table.
 	reAlterColList = regexp.MustCompile(`(?i)\b(?:ADD|DROP|MODIFY|RENAME)\s+COLUMN\b`)
 )
+
+// databaseExists — CREATE DATABASE'in KOŞULUNU doğrular (v0.9.604).
+//
+// Dağıtık DDL zamanaşımını (kod 159) yumuşatırken hatayı körlemesine
+// yutmamak için gerekli: "hata yoktu" ile "sonuç oluştu" farklı şeyler
+// ve boot'un dayandığı ikincisi.
+//
+// Bu sorgu KOORDİNATÖRE bakar. Yeterli, çünkü boot'un bir sonraki
+// adımı zaten o bağlantı üzerinden tablo DDL'i çalıştırıyor; diğer
+// host'lara DDL kuyruğu üzerinden ulaşıyor ve oradaki ifadeler de
+// IF NOT EXISTS.
+//
+// Probe hatası "yok" sayılır — emin olamadığımızda boot'u SÜRDÜRMEK
+// değil DURDURMAK doğru taraf: yanlış bir "var" kararı, sonraki
+// adımların anlaşılmaz UNKNOWN_DATABASE hatalarıyla ölmesine yol açar.
+func databaseExists(ctx context.Context, conn driver.Conn, name string) bool {
+	var n uint64
+	if err := conn.QueryRow(ctx,
+		`SELECT count() FROM system.databases WHERE name = ?`, name).Scan(&n); err != nil {
+		log.Printf("[chstore] veritabanı varlık probe'u başarısız (%v) — güvenli tarafta kalınıyor", err)
+		return false
+	}
+	return n > 0
+}

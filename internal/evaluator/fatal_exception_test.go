@@ -29,12 +29,20 @@ func TestFatalExceptionTypeMatching(t *testing.T) {
 	}
 }
 
-// TestNonFatalTypesAreNotP1 — P1 SEYREK kalmalı.
+// TestNonFatalTypesAreNotP1 — TEK OLUŞUMDA P1 seyrek kalmalı.
 //
 // ConnectException hedefin VAR olduğunu ama cevap vermediğini söyler:
 // çoğu zaman geçici, yeniden deneme düzeltir, pod yeniden başlarken
-// normaldir. Onu da P1 yapmak, operatörün P1'e verdiği tepkiyi
+// normaldir. Tek oluşumda P1 yapmak, operatörün P1'e verdiği tepkiyi
 // değersizleştirir — ve o tepki dedektörün tek çıktısı.
+//
+// ⚠ BU "ASLA P1 OLMAZ" DEMEK DEĞİL (v0.9.610, operatör düzeltmesi).
+// Aynı tip AYNI ANDA dört ayrı serviste görünüyorsa paylaşılan bir
+// bağımlılık düşmüştür ve paylaşılan-patlama dedektörü onu critical
+// açar. İki dedektör bir sözleşme paylaşıyor: bu test TEKİL yolu
+// kapatıyor, TestRetryableTypesBecomeP1WhenShared PAYLAŞILAN yolun
+// açık kaldığını doğruluyor. İkisi birden kapanırsa vaka hiç
+// görünmez.
 func TestNonFatalTypesAreNotP1(t *testing.T) {
 	no := []string{
 		"java.net.ConnectException",

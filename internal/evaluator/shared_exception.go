@@ -87,14 +87,35 @@ func sharedBurstDescription(b chstore.SharedExceptionBurst) string {
 	return out
 }
 
+// sharedBurstCriticalServices — kaç servisten sonra P1.
+//
+// v0.9.610 (operatör kararı): eşik 8'den 4'e indi.
+//
+// 8 fazla yüksekti ve sebebi bir muhakeme hatasıydı: eşiği "kaç servis
+// çok fazla" diye düşünmüştüm. Doğru soru o değil — doğru soru
+// "MÜNFERİT mi, PAYLAŞILAN mı".
+//
+// ConnectException, SocketTimeoutException, SQLRecoverableException:
+// üçü de TEK serviste gürültüdür (geçici, yeniden deneme düzeltir, pod
+// yeniden başlarken normaldir) — bu yüzden IsFatalExceptionType'a
+// GİRMİYORLAR ve tek oluşumda P1 üretmiyorlar.
+//
+// Ama aynı tip AYNI ANDA dört ayrı serviste görünüyorsa artık o
+// servislerin hiçbiriyle ilgili değildir: paylaşılan bir bağımlılık
+// düşmüştür. Tip aynı kalıyor, ANLAMI değişiyor.
+//
+// Üç ve altı "münferit" sayılabilir (aynı deploy dalgası, aynı node,
+// tesadüf). Dörtten itibaren tesadüf açıklaması tükeniyor.
+const sharedBurstCriticalServices = 4
+
 // sharedBurstSeverity — patlamanın ciddiyeti.
 //
 // Servis sayısına bağlı, oluşum sayısına DEĞİL: paylaşılan bir
 // bağımlılık arızasının ağırlığı KAÇ SERVİSİ vurduğudur. Tek serviste
-// 10.000 oluşum o servisin sorunu; on serviste 10'ar oluşum altyapı
+// 10.000 oluşum o servisin sorunu; dört serviste 10'ar oluşum altyapı
 // sorunu. SAF (tablo testli).
 func sharedBurstSeverity(serviceCount int) string {
-	if serviceCount >= 8 {
+	if serviceCount >= sharedBurstCriticalServices {
 		return "critical"
 	}
 	return "warning"

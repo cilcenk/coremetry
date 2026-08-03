@@ -2271,7 +2271,21 @@ func (s *Store) migrate(ctx context.Context) error {
 		// semantics as the topology.exclude cleanup above.
 		`ALTER TABLE system_settings DELETE WHERE key = 'sampling'`,
 	}
-	for _, q := range alters {
+	// v0.9.608 — kolonu ZATEN VAR olan `ADD COLUMN IF NOT EXISTS`
+	// gönderilmez. v0.9.607'nin CREATE'ler için kurduğu kanıtın aynısı:
+	// kolon varsa ifadenin etkisi tanım gereği yok, ödenen tek şey
+	// tıkalı kuyrukta bir bütçe turu (~20 sn × 69 ALTER ≈ 23 dakika,
+	// operator-reported: pod hiç ready olmuyordu).
+	//
+	// MODIFY COLUMN / MODIFY TTL / DELETE ELENMEZ — no-op oldukları
+	// kanıtlanamaz ve yanlış eleme sessizce uygulanmamış bir tip
+	// değişikliği bırakır.
+	alterPlan, alterSkipped := planAlterDDL(alters, s.existingColumns(ctx))
+	if alterSkipped > 0 {
+		log.Printf("[chstore] %d/%d kolon zaten var — o ADD COLUMN'lar gönderilmiyor",
+			alterSkipped, len(alters))
+	}
+	for _, q := range alterPlan {
 		if err := s.execDDL(ctx, q); err != nil {
 			// Skip-index ALTERs against a Distributed engine return
 			// CH error 48 ("Alter of type 'ADD_INDEX' is not

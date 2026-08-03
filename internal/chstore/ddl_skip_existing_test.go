@@ -113,3 +113,56 @@ func TestProbeFailureSendsEverything(t *testing.T) {
 			"davranış bugünküyle aynı kalmalı")
 	}
 }
+
+// ── v0.9.608: ADD COLUMN elemesi ─────────────────────────────────────
+
+func TestDDLAddsColumn(t *testing.T) {
+	tbl, col, ok := ddlAddsColumn("ALTER TABLE spans ADD COLUMN IF NOT EXISTS cluster String")
+	if !ok || tbl != "spans" || col != "cluster" {
+		t.Errorf("ayrıştırma yanlış: %q/%q ok=%v", tbl, col, ok)
+	}
+}
+
+// TestAlterNotSkippable — ELENMEMESİ gerekenler.
+//
+// Bu testin kırılması sessiz ve kalıcı hasar demek: uygulanmamış bir
+// tip/codec değişikliği hiçbir yerde hata vermez, sadece yanlış
+// davranır.
+func TestAlterNotSkippable(t *testing.T) {
+	for name, sql := range map[string]string{
+		"MODIFY COLUMN":     "ALTER TABLE spans MODIFY COLUMN attr_values Array(String) CODEC(ZSTD(3))",
+		"MODIFY TTL":        "ALTER TABLE trace_snapshots MODIFY TTL toDate(created_at) + INTERVAL 7 DAY",
+		"DELETE":            "ALTER TABLE system_settings DELETE WHERE key = 'sampling'",
+		"ADD INDEX":         "ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_x x TYPE set(0) GRANULARITY 4",
+		"IF NOT EXISTS'siz": "ALTER TABLE spans ADD COLUMN cluster String",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, _, ok := ddlAddsColumn(sql); ok {
+				t.Errorf("elenebilir sayıldı: %q\n\nBu ifadenin etkisi VAR — "+
+					"atlanması sessizce uygulanmamış bir şema değişikliği bırakır.", sql)
+			}
+		})
+	}
+}
+
+func TestPlanAlterDDL(t *testing.T) {
+	stmts := []string{
+		"ALTER TABLE spans ADD COLUMN IF NOT EXISTS cluster String",    // var → elenir
+		"ALTER TABLE spans ADD COLUMN IF NOT EXISTS yeni_kolon String", // yok → gider
+		"ALTER TABLE spans MODIFY COLUMN attr_values Array(String)",    // hep gider
+	}
+	send, skipped := planAlterDDL(stmts, map[string]bool{"spans.cluster": true})
+	if skipped != 1 || len(send) != 2 {
+		t.Errorf("elenen %d (1 bekleniyordu), gönderilen %d (2)", skipped, len(send))
+	}
+}
+
+// TestAlterProbeFailureSendsEverything — kolon listesi okunamazsa TÜM
+// ALTER gönderilir; davranış bugünküyle aynı kalır.
+func TestAlterProbeFailureSendsEverything(t *testing.T) {
+	send, skipped := planAlterDDL(
+		[]string{"ALTER TABLE spans ADD COLUMN IF NOT EXISTS x String"}, nil)
+	if skipped != 0 || len(send) != 1 {
+		t.Error("boş kolon kümesinde eleme yapıldı — probe hatasında davranış değişmemeli")
+	}
+}

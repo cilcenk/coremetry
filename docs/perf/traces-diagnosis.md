@@ -259,7 +259,8 @@ Kural: şema değişikliği gerektirmeyen ve geri alınabilir olanlar önce.
 | **D2** | İstek iptali (`AbortController` → `get<T>`) | yığılan CH yükü kalkar | 2 | hayır |
 | **D3** | "Toplamı göster" için MV tabanlı tavanlı sayım (`approx` YETMEZ — o da MV'yi kapatıyor) | MV'de kalır | 3 | hayır |
 | **D4** | `/api/attribute-keys` debounce | istek sayısı | 1 | hayır |
-| **D5** | **Ham yolu iki fazlı + dar pencereye çevir** | 3.5× satır, 9.7× bayt | 3 | hayır |
+| ~~D5~~ | ~~Ham yolu iki fazlıya çevir~~ — **ÖLÇÜMLE ÇÜRÜTÜLDÜ**, aşağıya bak | — | — | hayır |
+| **D5b** | Promoted attribute kolonlarına skip index (filtreyi granül-seçici yap) | ölçülmedi | 2 | **evet** |
 | ~~D7~~ | ~~Sıcak attribute promote~~ — **prod'da doğrulandı: CHANNEL_CODE/FUNCTION_CODE ZATEN promoted.** Yalnız yeni anahtarlar için reçete | — | 2 | evet |
 | **D8** | Trace başına tek satırlık özet tablo (kova değil) | sınıf değişimi | 4 | **evet** |
 
@@ -287,3 +288,48 @@ Aynı pencerede, aynı sorguyla, `system.query_log` **medyanı** üzerinden:
 Tek ad-hoc zamanlama kabul edilmiyor; `ms` önbellek sıcaklığıyla 2-3×
 oynuyor (bu turda bir vakada dizi yolu materialized yoldan *hızlı*
 göründü). Karar `read_rows`/`read_bytes` üzerinden verilir.
+
+
+---
+
+## EK: D5 ölçümle çürütüldü (2026-08-03)
+
+Planın en yüksek etkili kalemi olarak yazdığım D5 — "ham yolu iki
+fazlıya çevir" — uygulamaya başlarken ölçüldü ve **yapılamaz** çıktı.
+Sebebi tek: `spans` ORDER BY `(service_name, time)`.
+
+Senaryo: attribute filtresi (MV'yi kapatan hâl), 6h pencere, 50 satır.
+
+| Şekil | `read_rows` | `read_bytes` | ms |
+|---|---|---|---|
+| (a) bugünkü tek faz | 1.487.763 | 117.34 MiB | 336 |
+| (b) iki faz, aşama-1 **SIRASIZ** | **302.760** | **51.03 MiB** | 118 |
+| (c) iki faz, aşama-1 **SIRALI** | **1.645.390** | 105.64 MiB | 137 |
+
+(b) cazip görünüyor — 4.9× satır — ama **yanlış**: `SELECT DISTINCT
+trace_id … LIMIT 5000` sıralamasız olduğu için dönen 5000 aday KEYFİ.
+Eşleşen trace sayısı 5000'i aştığı anda "en yeni 50" o kümede
+olmayabilir ve operatör sessizce YANLIŞ bir liste görür. Hızlı ve
+sessizce yanlış, yavaş ve doğrudan kötüdür.
+
+(c) doğruluğu düzeltiyor ve maliyeti **bugünkünden yükseğe** çıkarıyor:
+`time`'a göre sıralamak birincil anahtarın öneki OLMADIĞI için tüm
+pencere okunup sıralanıyor, erken sonlanma yok. H6'nın bu tasarım için
+nicelleştirilmiş hâli.
+
+**Sonuç:** ham yolun maliyeti YAPISAL. İki faz bir sorgu-yazım hilesiyle
+kazanılamaz; kazanç ancak filtrenin kendisi granül-seçici olursa ya da
+sıralama anahtarı erişim desenine uyarsa gelir. İki aday kalıyor:
+
+- **D5b (yeni, ucuz):** promoted attribute kolonlarına (`attr_channel_code`,
+  `attr_function_code`) skip index. Filtre granül düzeyinde budarsa tek
+  fazlı sorgu da ucuzlar. Prod'da CHANNEL_CODE gerçek değer taşıdığı için
+  ölçüm ORADA yapılmalı — lokalde kolon boş, ölçüm anlamsız.
+- **D8 (pahalı, kesin):** trace başına tek satırlık, ZAMANA göre sıralı
+  özet tablo — sıcak attribute'ları taşırsa filtre+sıralama+LIMIT üçü de
+  birincil anahtara biner.
+
+**Ders:** teşhis kod okumaya dayanıyordu, ölçüm gerçeğe. Bu turda
+önerdiğim üç dilimden üçü de uygulanırken değişti (D1'in eforu, D3'ün
+tamamı, D5'in yapılabilirliği). Plan, ölçülmeden dilim gönderilmemesi
+gerektiğini yeniden kanıtladı.

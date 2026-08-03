@@ -264,6 +264,13 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }:
     setSeries(undefined); setError(null);
     api.metricQueryFull({
       name: cfg.metricName, service: cfg.service, agg: cfg.agg,
+      // v0.9.566 — FİLTRELER. Bu çağrı cfg.filters'ı geçirmiyordu:
+      // panel config'inde duruyor, toplu (bundle) yol da geçirmiyordu
+      // (api.go metric dalı), yani filtre HİÇBİR yoldan SQL'e inmiyordu.
+      // Sonuç boş panel değil, sessizce YANLIŞ SAYI — bir
+      // jvm.memory.type="heap" filtresi uygulanmayınca panel heap +
+      // non-heap toplamını "heap" diye çiziyordu.
+      filters: cfg.filters,
       groupBy: cfg.groupBy, from, to, step,
     }).then(r => { setSeries(r?.series ?? []); setCapped(r?.rowsCapped ?? false); })
       .catch(e => setError(e.message));

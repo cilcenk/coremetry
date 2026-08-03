@@ -1991,6 +1991,9 @@ export interface ServiceAnalysisResponse {
   parsed: boolean;
   postCheck: AiPostCheck | null;
   cached: boolean;
+  /** v0.9.593 — bu CEVABIN kimliği; 👍/👎 bununla
+   *  POST /api/ai/feedback'e gider. Yoksa affordance ÇİZİLMEZ. */
+  exchangeId?: string;
 }
 
 export interface MetricResolveResult {

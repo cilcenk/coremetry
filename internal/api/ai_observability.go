@@ -134,6 +134,17 @@ func (s *Server) copilotExplainJSON(r *http.Request, system, user string, schema
 		Surface:   surface,
 		UserID:    uid,
 		UserEmail: email,
+		// v0.9.593 — çağıran ctx'e bir exchange kimliği koyduysa TAŞI.
+		//
+		// Bu sarmalayıcı CallMeta'yı sıfırdan kuruyordu, yani ctx'teki
+		// kimlik sessizce düşüyordu. Sonucu: tek-atış ✨ Explain
+		// yüzeylerinin hiçbiri geri bildirim rayına (v0.8.399
+		// ai_calls.exchange_id ↔ ai_feedback) binemiyordu.
+		//
+		// Tek satır ama kapıyı TÜM tek-atış yüzeylere açıyor: bundan
+		// sonra bir handler kimliği ctx'e koyup yanıtında döndürdüğü
+		// anda o cevap oylanabilir hale geliyor.
+		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
 	})
 	return s.copilot.Explain(ctx, system, user)
 }

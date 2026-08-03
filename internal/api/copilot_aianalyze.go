@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/copilot"
 )
 
 // Per-entity AI analysis (v0.8.85). SINGLE-SHOT, provider-neutral — the model
@@ -126,6 +127,19 @@ type aiAnalyzeResponse struct {
 	Parsed    bool              `json:"parsed"`
 	PostCheck *aiPostCheck      `json:"postCheck"`
 	Cached    bool              `json:"cached"`
+
+	// ExchangeID (v0.9.593) — bu CEVABIN kimliği; 👍/👎 bununla
+	// POST /api/ai/feedback'e gider.
+	//
+	// Panel operatöre "Bu analiz yararlı mıydı?" diye soruyor ve
+	// tıklayınca "Teşekkürler." yazıyordu — ama hiçbir yere
+	// yazmıyordu. Kimlik o ölü affordance'ı gerçek yapan parça.
+	//
+	// Önbelleğe ALINAN gövdenin parçası ve bu doğru: kimlik cevabı
+	// tanımlar, isteği değil. Aynı cevabı iki operatör oylarsa
+	// ai_feedback dedup'ı gereği son yazan kazanır (RCA yolundaki
+	// kabulün aynısı).
+	ExchangeID string `json:"exchangeId,omitempty"`
 }
 
 type aiPostCheck struct {
@@ -175,6 +189,13 @@ func (s *Server) copilotAnalyzeService(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot := renderServiceSnapshot(cx)
 
+	// v0.9.593 — cevaba kimlik. copilotExplainJSON ctx'teki kimliği
+	// taşır (ai_observability.go), böylece ai_calls satırı ve
+	// operatörün oyu AYNI anahtarda buluşur.
+	exchangeID := newRandID(16)
+	r = r.WithContext(copilot.WithMeta(r.Context(),
+		copilot.CallMeta{ExchangeID: exchangeID}))
+
 	// Single-shot through the /ai-attributed wrapper (CLAUDE.md: never call
 	// s.copilot.Explain direct). Provider-neutral — uses the configured model.
 	raw, err := s.copilotExplainJSON(r, serviceAnalysisPrompt, snapshot, serviceAnalysisSchema())
@@ -184,10 +205,11 @@ func (s *Server) copilotAnalyzeService(w http.ResponseWriter, r *http.Request) {
 	}
 	parsed := parseServiceAnalysis(raw)
 	resp := aiAnalyzeResponse{
-		Analysis: parsed,
-		Context:  cx,
-		Raw:      raw,
-		Parsed:   parsed != nil,
+		Analysis:   parsed,
+		Context:    cx,
+		Raw:        raw,
+		Parsed:     parsed != nil,
+		ExchangeID: exchangeID,
 	}
 	if parsed != nil {
 		resp.PostCheck = postCheckServiceAnalysis(parsed, cx)

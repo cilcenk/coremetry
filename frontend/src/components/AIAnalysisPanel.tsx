@@ -6,6 +6,10 @@ import { aiErrorHint } from '@/lib/aiErrors';
 import { IconSparkles } from './icons';
 import type { ServiceAnalysisResponse } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
+// canRateVerdict — kimlik yoksa soru sorulmaz. Kapı tek yerde
+// (rcaVerdictView.ts) ve vitest ile pinli; ikinci bir kopya yazmak
+// aynı sözleşmenin iki yerde ayrışması demekti.
+import { canRateVerdict } from './rcaVerdictView';
 
 // AIAnalysisPanel — embedded "AI ile analiz et" affordance for a service /
 // incident / error-group (NOT logs). The operator clicks; the screen context
@@ -15,6 +19,19 @@ import { Button } from '@/components/ui/Button';
 // analysis content. Colour is used ONLY for the güven (confidence) badge.
 
 const GUVEN_BADGE: Record<string, string> = { yuksek: 'b-ok', orta: 'b-warn', dusuk: 'b-err' };
+// rateAnalysis — oyu gönderir. İyimser güncelleme, hata hâlinde GERİ
+// ALMA: başarısız bir POST'tan sonra "Kaydedildi." yazmak, düzelttiğimiz
+// ölü affordance'ın daha sinsi bir biçimi olurdu.
+function rateAnalysis(
+  exchangeId: string, verdict: 1 | -1,
+  prior: 1 | -1 | null,
+  setFb: (v: 1 | -1 | null) => void,
+) {
+  if (prior === verdict) return;
+  setFb(verdict);
+  api.postAIFeedback({ exchangeId, verdict }).catch(() => setFb(prior));
+}
+
 const GUVEN_LABEL: Record<string, string> = { yuksek: 'YÜKSEK GÜVEN', orta: 'ORTA GÜVEN', dusuk: 'DÜŞÜK GÜVEN' };
 
 export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; rangeS?: number }) {
@@ -22,7 +39,14 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
   const [res, setRes] = useState<ServiceAnalysisResponse | null>(null);
   const [errMsg, setErrMsg] = useState('');
   const [showCtx, setShowCtx] = useState(false);
-  const [fb, setFb] = useState<'up' | 'down' | null>(null);
+  // v0.9.593 — oy artık GERÇEKTEN kaydediliyor.
+  //
+  // Öncesi: bu state yalnız local'di. Panel operatöre "Bu analiz
+  // yararlı mıydı?" diye soruyor, tıklayınca "Teşekkürler." yazıyor ve
+  // HİÇBİR YERE yazmıyordu. Sistem topladığını iddia ettiği şeyi
+  // toplamıyordu — dürüstlük hatası, üstelik ölçmek istediğimiz tam
+  // olarak buydu.
+  const [fb, setFb] = useState<1 | -1 | null>(null);
 
   const run = async (refresh = false) => {
     setState('loading'); setErrMsg(''); setFb(null);
@@ -100,8 +124,8 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
 
 function Result({ res, fb, setFb, showCtx, setShowCtx }: {
   res: ServiceAnalysisResponse;
-  fb: 'up' | 'down' | null;
-  setFb: (v: 'up' | 'down' | null) => void;
+  fb: 1 | -1 | null;
+  setFb: (v: 1 | -1 | null) => void;
   showCtx: boolean;
   setShowCtx: (v: boolean) => void;
 }) {
@@ -155,12 +179,19 @@ function Result({ res, fb, setFb, showCtx, setShowCtx }: {
         </Block>
       )}
 
-      {/* Footer: feedback + "Bağlamı gör" */}
+      {/* Footer: feedback + "Bağlamı gör"
+          Kimlik yoksa soru HİÇ SORULMAZ (canRateVerdict). Cevabı
+          kaydedemeyeceğimiz bir soruyu sormak, bu düzeltmenin ortadan
+          kaldırdığı hatanın ta kendisiydi. */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-        <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>Bu analiz yararlı mıydı?</span>
-        <button className="sec" style={fbBtn(fb === 'up')} onClick={() => setFb('up')} aria-label="faydalı">👍</button>
-        <button className="sec" style={fbBtn(fb === 'down')} onClick={() => setFb('down')} aria-label="faydasız">👎</button>
-        {fb && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Teşekkürler.</span>}
+        {canRateVerdict(res.exchangeId) && (<>
+          <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>Bu analiz yararlı mıydı?</span>
+          <button className="sec" style={fbBtn(fb === 1)} aria-pressed={fb === 1}
+            onClick={() => rateAnalysis(res.exchangeId!, 1, fb, setFb)} aria-label="faydalı">👍</button>
+          <button className="sec" style={fbBtn(fb === -1)} aria-pressed={fb === -1}
+            onClick={() => rateAnalysis(res.exchangeId!, -1, fb, setFb)} aria-label="faydasız">👎</button>
+          {fb && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kaydedildi.</span>}
+        </>)}
         <span style={{ flex: 1 }} />
         <Button variant="secondary" size="sm" onClick={() => setShowCtx(!showCtx)}>
           {showCtx ? 'Bağlamı gizle' : 'Bağlamı gör'}

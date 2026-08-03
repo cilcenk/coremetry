@@ -47,9 +47,9 @@ func TestSharedBurstSeverityTracksServiceCount(t *testing.T) {
 		why      string
 	}{
 		{1, "warning", "tek servis — münferit"},
-		{3, "warning", "üç servis — hâlâ tesadüf olabilir"},
-		{4, "critical", "operatörün sınırı: 3'ten FAZLA"},
-		{8, "critical", "eski eşik, hâlâ critical"},
+		{4, "warning", "prod'da 4-9 hâlâ 'bugün bak' seviyesi"},
+		{9, "warning", "sınırın hemen altı"},
+		{10, "critical", "operatörün sınırı: 10 ve üstü P1"},
 		{15, "critical", "operatörün ilk vakası"},
 	} {
 		if got := sharedBurstSeverity(c.services); got != c.want {
@@ -84,13 +84,45 @@ func TestRetryableTypesBecomeP1WhenShared(t *testing.T) {
 				"pod yeniden başlarken normaldir", ty)
 		}
 	}
-	// Paylaşılan yol: 4+ serviste P1.
-	if got := sharedBurstSeverity(4); got != "critical" {
-		t.Errorf("dört serviste paylaşılan patlama → %q, beklenen critical.\n\n"+
-			"Bu tipler tek başına gürültü ama aynı anda dört serviste "+
+	// Paylaşılan yol: 10+ serviste P1.
+	if got := sharedBurstSeverity(10); got != "critical" {
+		t.Errorf("on serviste paylaşılan patlama → %q, beklenen critical.\n\n"+
+			"Bu tipler tek başına gürültü ama aynı anda on serviste "+
 			"görünüyorsa paylaşılan bir bağımlılık düşmüştür. İki dedektörden "+
 			"biri tekil yolu kapatıyor; öteki paylaşılan yolu AÇIK bırakmak "+
 			"zorunda, yoksa vaka hiç görünmez.", got)
+	}
+}
+
+// TestSharedBurstReachesP1AtOperatorThreshold — İKİ SAYININ İLİŞKİSİ.
+//
+// Operatörün kuralı "10'dan azı P2, fazlası P1". Bu, tek bir sabitle
+// sağlanmıyor: ciddiyet eşiği (10) VE açma eşiği (3) BİRLİKTE
+// çalışıyor, çünkü computePriority P1 için critical'ın YANINDA
+// "2× eşik" de arıyor ve oran = servis sayısı / Problem.Threshold.
+//
+// Biri değişirse öteki de gözden geçirilmeli. Bu test o bağı kuruyor;
+// yoksa açma eşiğini 3'ten 6'ya çeken biri, P1 sınırının sessizce
+// 12'ye kaydığını fark etmez.
+func TestSharedBurstReachesP1AtOperatorThreshold(t *testing.T) {
+	thr := float64(sharedBurstMinServicesEffective())
+	at := float64(sharedBurstCriticalServices)
+
+	if sharedBurstSeverity(sharedBurstCriticalServices) != "critical" {
+		t.Fatalf("%d serviste ciddiyet critical değil", sharedBurstCriticalServices)
+	}
+	// computePriority'nin büyük-ihlal kapısı: oran ≥ 2.
+	if at/thr < 2 {
+		t.Errorf("ciddiyet eşiğinde (%v servis) oran %.2f — P1 için 2 gerekiyor.\n\n"+
+			"critical TEK BAŞINA P2 demek (chstore.computePriority). Operatörün "+
+			"kuralı '10'dan fazlası P1' ancak oran da 2'yi aşarsa gerçekleşir; "+
+			"açma eşiği (%v) ile ciddiyet eşiği (%v) birbirine bağlı.",
+			at, at/thr, thr, at)
+	}
+	// Sınırın ALTI P1 olmamalı: ciddiyet warning kalıyor.
+	if sharedBurstSeverity(sharedBurstCriticalServices-1) == "critical" {
+		t.Errorf("%d serviste (sınırın altı) critical — operatörün kuralı "+
+			"10'dan AZI P2", sharedBurstCriticalServices-1)
 	}
 }
 

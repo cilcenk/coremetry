@@ -49,6 +49,75 @@ var allowedOps = map[string]bool{
 	"EXISTS": true, "NOT EXISTS": true,
 }
 
+// valuelessOps — DEĞER ALMAYAN operatörler (v0.9.600).
+//
+// frontend/src/components/FilterBuilder.tsx'teki NEEDS_VALUE
+// haritasının aynadaki yüzü ve chstore/filterexpr.go'nun davranışıyla
+// birebir: orada EXISTS/NOT EXISTS SQL'i Values'a HİÇ bakmadan
+// kuruluyor (`case "EXISTS", "NOT EXISTS":`).
+//
+// Yığındaki üç yer bunu biliyordu, NL yolu bilmiyordu — ve o
+// bilgisizlik sessizce filtre düşürüyordu.
+var valuelessOps = map[string]bool{
+	"EXISTS": true, "NOT EXISTS": true,
+}
+
+// opNeedsValue — SAF. Bu operatör için `v` dolu olmak ZORUNDA mı?
+func opNeedsValue(op string) bool { return !valuelessOps[op] }
+
+// cleanNLFilters — modelin ürettiği filtreleri doğrular ve normalize
+// eder. SAF (tablo testli).
+//
+// Handler gövdesinden v0.9.600'de ÇIKARILDI: kural orada gömülüyken
+// hiçbir test ona doğrudan dokunamıyordu ve tam da bu yüzden değer
+// almayan operatörleri öldüren satır uzun süre fark edilmedi. Bu
+// oturumun tekrar eden dersi — karar HTTP'nin ya da SQL'in içinde
+// saklıysa, test edilmiyor demektir.
+func cleanNLFilters(in []nlToQueryFilter) []nlToQueryFilter {
+	var out []nlToQueryFilter
+	for _, f := range in {
+		f.Op = strings.TrimSpace(strings.ToUpper(f.Op))
+		if !allowedOps[f.Op] {
+			continue
+		}
+		f.K = strings.TrimSpace(f.K)
+		if f.K == "" {
+			continue
+		}
+		// v0.9.600 — DEĞER ŞARTI operatöre bağlı.
+		//
+		// Önceki kural koşulsuzdu (`len(f.V) == 0` → düş) ve tam da
+		// değer ALMAYAN iki operatörü öldürüyordu. Şema ve prompt
+		// EXISTS/NOT EXISTS'i modele sunuyor, model doğru ayrıştırıyor,
+		// sonra bu satır cevabı çöpe atıyordu.
+		//
+		// Belirti yanıltıcıydı: tek filtre EXISTS ise liste boş kalıyor
+		// ve UI "Model produced no filters — try rephrasing." diyordu;
+		// oysa model DOĞRU ayrıştırmıştı.
+		if opNeedsValue(f.Op) {
+			if len(f.V) == 0 {
+				continue
+			}
+			// Patolojik v[] kırpması: model 100 değer dökerse kuyruğu
+			// at, URL state şişmesin.
+			if len(f.V) > 20 {
+				f.V = f.V[:20]
+			}
+		} else {
+			// Değersiz operatörde `v` NORMALİZE edilir.
+			//
+			// Şema `v`yi required kılıyor, yani model bir şey üretmek
+			// ZORUNDA: kimi zaman [], kimi zaman [""]. İkisi de aynı
+			// anlama gelmeli. Normalize etmezsek aynı cümle iki farklı
+			// URL state'i üretir ve davranış modelin o günkü keyfine
+			// kalır.
+			f.V = nil
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
 // allowed range presets mirror PRESET_SECONDS in frontend/src/lib/utils.ts.
 var allowedPresets = map[string]bool{
 	"1m": true, "5m": true, "15m": true, "30m": true,
@@ -119,30 +188,7 @@ func (s *Server) copilotNLToQuery(w http.ResponseWriter, r *http.Request) {
 	if !allowedPresets[clean.Range.Preset] {
 		clean.Range.Preset = "1h"
 	}
-	for _, f := range parsed.Filters {
-		f.Op = strings.TrimSpace(strings.ToUpper(f.Op))
-		// Restore mixed-case for the comparators (the upper-case
-		// fold above turned LIKE → LIKE which is fine, but `=`
-		// stays `=` — no harm done; the map is upper-keyed for
-		// the textual ops only).
-		if f.Op == "=" || f.Op == "!=" || f.Op == ">" || f.Op == ">=" ||
-			f.Op == "<" || f.Op == "<=" {
-			// canonical already
-		}
-		if !allowedOps[f.Op] {
-			continue
-		}
-		f.K = strings.TrimSpace(f.K)
-		if f.K == "" || len(f.V) == 0 {
-			continue
-		}
-		// Cap pathological v[]: if the model dumps 100 values
-		// drop the tail, keeps the URL state from blowing up.
-		if len(f.V) > 20 {
-			f.V = f.V[:20]
-		}
-		clean.Filters = append(clean.Filters, f)
-	}
+	clean.Filters = cleanNLFilters(parsed.Filters)
 
 	writeJSON(w, clean)
 }

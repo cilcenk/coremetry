@@ -101,7 +101,7 @@ func sharedBurstSeverity(serviceCount int) string {
 }
 
 // evaluateSharedExceptionBursts — tik geçişi.
-func (e *Evaluator) evaluateSharedExceptionBursts(ctx context.Context, snap map[string]*chstore.Problem) {
+func (e *Evaluator) evaluateSharedExceptionBursts(ctx context.Context, snap *chstore.OpenProblems) {
 	bursts, err := e.store.FindSharedExceptionBursts(ctx, sharedBurstLookback, 0)
 	if err != nil {
 		log.Printf("[evaluator] paylaşılan exception patlaması okunamadı: %v", err)
@@ -113,9 +113,9 @@ func (e *Evaluator) evaluateSharedExceptionBursts(ctx context.Context, snap map[
 	}
 }
 
-func (e *Evaluator) reconcileSharedBurst(ctx context.Context, b chstore.SharedExceptionBurst, now time.Time, snap map[string]*chstore.Problem) {
+func (e *Evaluator) reconcileSharedBurst(ctx context.Context, b chstore.SharedExceptionBurst, now time.Time, snap *chstore.OpenProblems) {
 	id := sharedBurstProblemID(b.Type, b.BucketStart)
-	existing := snap[id]
+	existing := snap.ByID(id)
 	hasOpen := existing != nil && existing.ID != ""
 	active := now.Sub(time.Unix(0, b.LastSeen)) <= sharedBurstActiveFor
 

@@ -1798,7 +1798,21 @@ func (s *Store) migrate(ctx context.Context) error {
 		`DROP TABLE IF EXISTS feedbacks`,
 	}
 
-	for _, q := range tables {
+	// v0.9.607 — ZATEN VAR OLAN nesne için DDL GÖNDERİLMEZ.
+	//
+	// Hepsi `IF NOT EXISTS`, yani nesne varsa ifadenin etkisi ZATEN
+	// yok. Ödenen tek şey, sonucu baştan belli olan bir dağıtık DDL
+	// kuyruğu turu — ve tıkalı bir kuyrukta o tur bütçesini (20 sn)
+	// doluyor. 158 ifade × 20 sn ≈ 53 dakika: pod ölmüyor ama hiç
+	// hazır olmuyor (operator-reported, prod).
+	//
+	// Taze kurulumda hiçbir şey elenmez; davranış birebir aynı kalır.
+	plan, skipped := planDeclarativeDDL(tables, s.existingObjects(ctx))
+	if skipped > 0 {
+		log.Printf("[chstore] %d/%d nesne zaten var — o CREATE'ler gönderilmiyor (dağıtık DDL kuyruğu turu başına ~%d sn)",
+			skipped, len(tables), ddlTaskTimeoutSeconds)
+	}
+	for _, q := range plan {
 		if err := s.execDDL(ctx, q); err != nil {
 			return fmt.Errorf("create table: %w", err)
 		}

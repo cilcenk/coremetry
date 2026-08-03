@@ -60,6 +60,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
@@ -268,4 +269,32 @@ func shutdownAll(ctx context.Context) error {
 		return nil
 	}
 	return fmt.Errorf("selfobs shutdown: %s", strings.Join(errs, "; "))
+}
+
+// SafeAttr — bir string'i span attribute'una / durum mesajına
+// koymadan ÖNCE geçerli UTF-8'e indirger (v0.9.586).
+//
+// Operator-reported, prod:
+//
+//	traces export: rpc error: code = Internal desc = grpc: error while
+//	marshaling: string field contains invalid UTF-8
+//
+// protobuf'un string alanı geçerli UTF-8 ŞART koşar ve marshaling
+// hatası TÜM BATCH'i düşürür — yani tek bir bozuk bayt yüzünden o
+// tur hiçbir self-telemetri span'i gitmiyor. Sessiz ve toplu bir
+// kayıp: gözlemlenebilirlik katmanının kendisi kör kalıyor.
+//
+// Bozuk baytın kaynağı bizim ürettiğimiz metin DEĞİL: ClickHouse hata
+// mesajları kusurlu veriyi AYNEN ALINTILAR ("Cannot convert string
+// '<bayt>' …"), ve o veri filodan gelir. Yani filodaki tek bir bozuk
+// span attribute'u, bizim kendi izlerimizi düşürebiliyor.
+//
+// Maliyet: geçerli string'de yalnız bir tarama (utf8.ValidString) ve
+// SIFIR ayırma. Yalnız bozuk olan yeniden kurulur — sıcak yolda
+// pratikte bedelsiz.
+func SafeAttr(s string) string {
+	if utf8.ValidString(s) {
+		return s
+	}
+	return strings.ToValidUTF8(s, "�")
 }

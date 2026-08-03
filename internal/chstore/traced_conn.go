@@ -115,8 +115,25 @@ func recordCHError(span trace.Span, err error) {
 		span.SetAttributes(attribute.Bool("clickhouse.canceled", true))
 		return
 	}
-	span.RecordError(err)
-	span.SetStatus(codes.Error, err.Error())
+	// v0.9.586 (operator-reported, prod) — hata mesajı UTF-8 GEÇERLİ
+	// hale getirilir.
+	//
+	// ClickHouse hata mesajları kusurlu veriyi AYNEN ALINTILAR
+	// ("Cannot convert string '<bayt>' …") ve o veri filodan gelir.
+	// Tek bir bozuk bayt span durumuna girince protobuf marshaling
+	// patlıyor ve TÜM BATCH düşüyordu:
+	//
+	//   traces export: rpc error: code = Internal desc = grpc: error
+	//   while marshaling: string field contains invalid UTF-8
+	//
+	// Sonuç sessiz ve toplu: o tur hiçbir self-telemetri span'i
+	// gitmiyor. Yani filodaki tek bir bozuk attribute, bizim kendi
+	// gözlemlenebilirliğimizi köreltiyordu.
+	//
+	// RecordError da sarmalanır: o da mesajı bir olay attribute'una
+	// yazıyor ve aynı yoldan patlar.
+	span.RecordError(errors.New(selfobs.SafeAttr(err.Error())))
+	span.SetStatus(codes.Error, selfobs.SafeAttr(err.Error()))
 }
 
 func (t *tracedConn) Query(ctx context.Context, q string, args ...any) (driver.Rows, error) {

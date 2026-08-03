@@ -85,6 +85,38 @@ jobs:
       # forgotten local run could ship a regression undetected. This is the gate.
       - name: go test
         run: go test ./...
+
+      # v0.9.584 — GERÇEK ClickHouse'a karşı tip duman testi.
+      #
+      # Bu sınıf (derlenen ama CH'de patlayan sorgu) üç kez prod'a
+      # çıktı: v0.9.543 (struct↔kolon tipi), v0.9.572 (toStartOfInterval
+      # dönüş tipi), v0.9.578 (time_bucket bağlama tipi). Üçünü de saf
+      # fonksiyon testleri kaçırdı çünkü SQL'e hiç dokunmuyorlardı.
+      #
+      # Boş bir CH yeter: satır dönmesi beklenmiyor, aranan tek şey
+      # sorgunun hatasız çalışması. Tip/sözdizimi hataları boş tabloda
+      # da patlar.
+      - name: ClickHouse başlat (tip duman testi)
+        run: |
+          docker run -d --name ch-smoke -p 19000:9000 \
+            -e CLICKHOUSE_SKIP_USER_SETUP=1 \
+            clickhouse/clickhouse-server:24.8
+          for i in $(seq 1 60); do
+            if docker exec ch-smoke clickhouse-client --query "SELECT 1" >/dev/null 2>&1; then
+              echo "ClickHouse hazır ($i sn)"; exit 0
+            fi
+            sleep 1
+          done
+          echo "ClickHouse 60 sn içinde hazır olmadı"; docker logs ch-smoke | tail -30; exit 1
+
+      - name: CH tip duman testi
+        env:
+          CH_SMOKE_ADDR: localhost:19000
+        run: go test -tags=chsmoke ./internal/chstore/ -run TestCHSmokeReads -v
+
+      - name: ClickHouse durdur
+        if: always()
+        run: docker rm -f ch-smoke || true
       # Race detector on the concurrency-heavy packages (background agent runner,
       # notifier fan-out, SSE broker, Redis cache/locks) where a data race would
       # otherwise hide until a production heisenbug.

@@ -3706,7 +3706,10 @@ func (s *Store) GetTrace(ctx context.Context, traceID string) ([]SpanRow, error)
 			FROM trace_summary_5m
 			WHERE trace_id = ? AND time_bucket >= ?
 			SETTINGS max_execution_time = 3`,
-			traceID, chDateTime64Arg(since)).Scan(&winStart, &winEndNanos)
+			// time_bucket DateTime (DateTime64 DEĞİL): toStartOfInterval
+			// saniye grenli INTERVAL ile düz DateTime üretiyor. Nanosaniyeli
+			// bir argüman code 53 ile reddedilir — v0.9.578'de tam bu oldu.
+			traceID, chDateTimeArg(since)).Scan(&winStart, &winEndNanos)
 		if err != nil {
 			// Zaman aşımı/hata: daha GENİŞ pencere daha da yavaş olur,
 			// denemeye devam etmek anlamsız. Sınırsız taramaya düşme —

@@ -82,7 +82,7 @@ func (s *Store) FindSharedExceptionBursts(ctx context.Context, since time.Durati
 		       toUnixTimestamp64Nano(min(first_seen))            AS first_ns,
 		       toUnixTimestamp64Nano(max(last_seen))             AS last_ns,
 		       sum(occurrences)                                  AS occ,
-		       toUnixTimestamp64Nano(toStartOfInterval(min(first_seen), INTERVAL %d SECOND)) AS bucket_ns
+		       toStartOfInterval(min(first_seen), INTERVAL %d SECOND)  AS bucket_start
 		FROM (
 		    SELECT ex_type, ex_message, service, first_seen, last_seen, occurrences,
 		           toStartOfInterval(first_seen, INTERVAL %d SECOND) AS bucket
@@ -105,10 +105,23 @@ func (s *Store) FindSharedExceptionBursts(ctx context.Context, since time.Durati
 	out := make([]SharedExceptionBurst, 0, 16)
 	for rows.Next() {
 		var b SharedExceptionBurst
+		// v0.9.573 — bucket CH'nin DOĞAL zaman tipinde taranır ve
+		// unix-ns'e GO'DA çevrilir. İlk sürüm onu SQL'de
+		// toUnixTimestamp64Nano ile sarmalıyordu ve her tikte code 43
+		// veriyordu: toStartOfInterval, saniye grenli bir INTERVAL ile
+		// DateTime64 girdiden düz DateTime üretiyor,
+		// toUnixTimestamp64Nano ise yalnız DateTime64 kabul ediyor.
+		//
+		// Bu, kod tabanının v0.8.312'de (operatör raporu) öğrendiği ve
+		// exception_inbox.go'da İKİ yerde yazılı olan dersin ta
+		// kendisiydi; uymamışım. time.Time olarak taramak iki şemada da
+		// (lokal monolitik + harici Distributed) tip-bağımsız çalışır.
+		var bucket time.Time
 		if err := rows.Scan(&b.Type, &b.Message, &b.Services,
-			&b.FirstSeen, &b.LastSeen, &b.Occurrences, &b.BucketStart); err != nil {
+			&b.FirstSeen, &b.LastSeen, &b.Occurrences, &bucket); err != nil {
 			return nil, err
 		}
+		b.BucketStart = bucket.UnixNano()
 		// groupArray tekrar içerebilir (aynı servis, farklı fingerprint —
 		// mesajı değişen aynı tip). Kimlik ve sayım için tekilleştir.
 		b.Services = uniqueSorted(b.Services)

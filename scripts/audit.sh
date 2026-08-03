@@ -299,6 +299,33 @@ else
     printf "${GRN}✓ clean${NC}\n"
 fi
 
+# ─── CHECK 9: toUnixTimestamp64Nano over toStartOfInterval ───
+# İKİ KEZ prod'a çıktı, ikisi de operatör raporuyla döndü.
+#
+# toStartOfInterval, saniye grenli bir INTERVAL ile DateTime64
+# girdiden düz DateTime üretir; toUnixTimestamp64Nano yalnız
+# DateTime64 kabul eder → code 43, sorgu HİÇ çalışmaz.
+#
+# v0.8.312 (exception occurrences grafiği) ve v0.9.572
+# (paylaşılan bağımlılık dedektörü). İkincisi boş tabloda bile
+# patlıyordu, yani özellik hiç çalışmadı — ve saf-fonksiyon
+# testleri bunu göremedi çünkü SQL'e dokunmuyorlardı.
+#
+# Doğru desen: bucket'ı CH'nin doğal zaman tipinde döndür,
+# unix-ns'e Go'da çevir (bucket.UnixNano()). İki şemada da
+# (lokal monolitik + harici Distributed) tip-bağımsız.
+hr
+echo "CHECK 9 — toUnixTimestamp64Nano(toStartOfInterval(...))"
+hits=$(grep -rn 'toUnixTimestamp64Nano(toStartOfInterval' \
+    internal/ 2>/dev/null | filter_ignored || true)
+if [ -n "$hits" ]; then
+    while IFS= read -r line; do
+        crit "$line — toStartOfInterval DateTime döndürür, toUnixTimestamp64Nano DateTime64 ister (code 43). Bucket'ı time.Time olarak tara, UnixNano()'yu Go'da çağır."
+    done <<< "$hits"
+else
+    printf "${GRN}✓ clean${NC}\n"
+fi
+
 # ─── Summary ────────────────────────────────────────────────
 hr
 SUPPRESSED=$(awk '{ s += $1 } END { print s+0 }' "$SUPPRESS_LOG")

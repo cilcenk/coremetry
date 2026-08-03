@@ -41,7 +41,10 @@ import (
 // göndermeden önce bunun bilinçli olarak ele alınması gerekir —
 // yanlış bir yorumun arkasına saklanmamalı.
 
-const presetVersion = "apm-v1"
+// v0.9.569 — paket yenilendi. Bump ETKİSİ: preset- satırları silinip
+// yeniden tohumlanır; operatörün DÜZENLEDİĞİ presetler önce `custom-`
+// kimliğine taşınır (v0.9.568), yani emek kaybolmaz.
+const presetVersion = "apm-v2"
 
 func (s *Store) SeedPresetDashboards(ctx context.Context) error {
 	// v0.9.564 — HATA YUTULMUYOR.
@@ -127,6 +130,7 @@ func presetDashboards() []Dashboard {
 		presetGoRuntime(),
 		presetKafkaMessaging(),
 		presetErrorsExceptions(),
+		presetDependencies(),
 	}
 }
 
@@ -291,8 +295,14 @@ func presetAPMOverview() Dashboard {
 				spanCfg{Agg: "p99", Field: "duration_ms", GroupBy: "service.name"}),
 
 			row("row-slow-ops", "Slowest operations across the app"),
-			line("p99-op", "P99 by operation", 4,
-				spanCfg{Agg: "p99", Field: "duration_ms", GroupBy: "name"}),
+			// v0.9.569 — op_group: ham `name` filo genelinde yüksek
+			// kardinaliteli (GET /orders/8421, GET /orders/8422 …) ve
+			// grafik okunamaz hale geliyordu. op_group aynı şekli tek
+			// satıra katlar (GET /orders/:id). Servis-içi panellerde ham
+			// `name` KALDI: orada kardinalite zaten dar ve tam operasyon
+			// adı bilgi taşıyor.
+			line("p99-op", "P99 by operation shape", 4,
+				spanCfg{Agg: "p99", Field: "duration_ms", GroupBy: "op_group"}),
 		},
 	)
 }
@@ -614,7 +624,9 @@ func presetKafkaMessaging() Dashboard {
 			md("intro",
 				"**Messaging tier.** Spans where `messaging.system` is set. "+
 					"Producer and consumer kinds split via `kind`. The "+
-					"`messaging.destination.name` group-by surfaces hot topics. "+
+					"`messaging.destination` group-by surfaces hot topics (v0.9.567: bu "+
+					"anahtar iki semconv yazımını da birleştirir; tek yazıma bağlanmak "+
+					"filonun yarısını görünmez yapıyordu). "+
 					"Lag-by-consumer is best read from the broker's own metrics "+
 					"(kafka_consumergroup_lag) — wire those into the metric "+
 					"panels by name; they show up automatically when present."),
@@ -639,9 +651,9 @@ func presetKafkaMessaging() Dashboard {
 
 			row("row-kafka-topic", "Kafka topics (filtered to messaging.system=kafka)"),
 			line("rps-topic", "Messages/sec by topic", 2,
-				spanCfg{Agg: "rate", DSL: kafka, GroupBy: "messaging.destination.name"}),
+				spanCfg{Agg: "rate", DSL: kafka, GroupBy: "messaging.destination"}),
 			line("p99-topic", "P99 by topic", 2,
-				spanCfg{Agg: "p99", Field: "duration_ms", DSL: kafka, GroupBy: "messaging.destination.name"}),
+				spanCfg{Agg: "p99", Field: "duration_ms", DSL: kafka, GroupBy: "messaging.destination"}),
 
 			row("row-broker", "Broker metrics (auto-populated when emitted)"),
 			metric("kafka-lag", "kafka_consumergroup_lag by group", 2,
@@ -757,4 +769,77 @@ func (s *Store) preserveCustomisedPresets(ctx context.Context) error {
 		log.Printf("[chstore] özelleştirilmiş preset korundu: %s → %s", d.ID, full.ID)
 	}
 	return nil
+}
+
+// ── 10. Dependencies & Outbound ─────────────────────────────────────────────
+//
+// v0.9.569 — YENİ. Mevcut paket "bize ne geliyor"u dokuz açıdan
+// anlatıyordu ama "biz kime gidiyoruz"u hiç anlatmıyordu. Bir olayın
+// yarısı dışarıdadır: yavaşlayan bir servisin sebebi çoğu zaman
+// çağırdığı şeydir.
+//
+// Bu dashboard v0.9.567'nin `peer` BİRLEŞİK anahtarıyla mümkün oldu.
+// Öncesinde ifade edilemezdi: dış bağımlılık kimliğinin tek bir
+// attribute'u yok — peer.service ingest'te türetilmiyor (javaagent onu
+// varsayılan basmaz) ve kod dört yerde server.address / net.peer.name
+// ile coalesce ediyor. `peer.service` ile kurulmuş bir panel çoğu
+// kurulumda boş dönerdi.
+func presetDependencies() Dashboard {
+	// Giden çağrılar: client + producer. Bu DSL bilinçli DAR — burada
+	// amaç "istek sayımı" değil, "dışarı ne gidiyor".
+	const outbound = `kind in ["client", "producer"]`
+
+	return dash(
+		"preset-dependencies",
+		"Dependencies & Outbound",
+		"Bu servisler DIŞARIYA ne çağırıyor: bağımlılık başına hız, hata ve gecikme. Bir servis yavaşladığında sebebi çoğu zaman burada görünür.",
+		[]panel{
+			md("intro",
+				"**Giden bağımlılıklar.** Client ve producer span'leri, hedefe "+
+					"göre kırılmış. `peer` anahtarı üç kaynağı birleştirir "+
+					"(peer.service → server.address → net.peer.name), çünkü "+
+					"OTel javaagent `peer.service`'i varsayılan basmaz ve tek "+
+					"yazıma bağlanan paneller boş döner.\n\n"+
+					"**Bu bölüm boşsa** span'lerinizde üç kaynaktan hiçbiri yok "+
+					"demektir; aşağıdaki motor/RPC kırılımları yine çalışır "+
+					"(tipli kolonlardan gelirler). Kontrol: client span'lerde "+
+					"`peer.service`, `server.address`, `net.peer.name` "+
+					"attribute'larından hangisinin dolu olduğuna bakın.\n\n"+
+					"Bir bağımlılığın P99'u sıçradığında, onu ÇAĞIRAN servisi "+
+					"[Services](/services) üzerinden bul; tam çağrı zincirini "+
+					"[Traces](/traces) gösterir. Veritabanı özelinde "+
+					"[Database Performance](/dashboards) daha derin."),
+
+			row("row-kpi", "Giden trafik"),
+			stat("k-rate", "Çağrı/sn", "rate", unit("rps"), decimals(1), dsl(outbound)),
+			stat("k-err", "Hata oranı", "error_rate", unit("%"), decimals(2), dsl(outbound)),
+			stat("k-p95", "P95", "p95", field("duration_ms"), unit("ms"), decimals(0), dsl(outbound)),
+			stat("k-p99", "P99", "p99", field("duration_ms"), unit("ms"), decimals(0), dsl(outbound)),
+
+			row("row-peer", "Bağımlılık başına"),
+			line("rate-peer", "Çağrı hızı — bağımlılığa göre", 2,
+				spanCfg{Agg: "rate", DSL: outbound, GroupBy: "peer"}),
+			line("err-peer", "Hata oranı (%) — bağımlılığa göre", 2,
+				spanCfg{Agg: "error_rate", DSL: outbound, GroupBy: "peer"}),
+			line("p99-peer", "P99 — bağımlılığa göre", 2,
+				spanCfg{Agg: "p99", Field: "duration_ms", DSL: outbound, GroupBy: "peer"}),
+			line("errcnt-peer", "Hata/sn — bağımlılığa göre", 2,
+				spanCfg{Agg: "errors", DSL: outbound, GroupBy: "peer"}),
+
+			row("row-caller", "Kim çağırıyor"),
+			line("rate-caller", "Giden çağrı hızı — çağıran servise göre", 2,
+				spanCfg{Agg: "rate", DSL: outbound, GroupBy: "service.name"}),
+			line("p99-caller", "Giden P99 — çağıran servise göre", 2,
+				spanCfg{Agg: "p99", Field: "duration_ms", DSL: outbound, GroupBy: "service.name"}),
+
+			row("row-kind", "Bağımlılık türü"),
+			// db.system dolu olan client span'ler veritabanı; kalanı
+			// HTTP/gRPC/kuyruk. Tür kırılımı, sorunun hangi katmanda
+			// olduğunu tek bakışta söyler.
+			line("p99-dbsys", "P99 — veritabanı motoruna göre", 2,
+				spanCfg{Agg: "p99", Field: "duration_ms", DSL: outbound, GroupBy: "db.system"}),
+			line("p99-rpc", "P99 — RPC metoduna göre", 2,
+				spanCfg{Agg: "p99", Field: "duration_ms", DSL: outbound, GroupBy: "rpc.method"}),
+		},
+	)
 }

@@ -12,10 +12,18 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
+
+// sloStatusConcurrency — /api/slos fan-out'unun eşzamanlılığı.
+//
+// 6: sıralıya göre belirgin kazanç, ama ClickHouse'a aynı anda
+// düzinelerce ağır sorgu göndermeyecek kadar dar. Fan-out zaten 30s
+// cache arkasında (pencere başına tek çalışma).
+const sloStatusConcurrency = 6
 
 func (s *Server) listSLOs(w http.ResponseWriter, r *http.Request) {
 	// v0.8.200 (scale-audit) — cache the list: each SLO's status is its own CH
@@ -33,14 +41,52 @@ func (s *Server) listSLOs(w http.ResponseWriter, r *http.Request) {
 			chstore.SLO
 			Status *chstore.SLOStatus `json:"status,omitempty"`
 		}
-		rows := make([]row, 0, len(out))
-		for _, o := range out {
-			st, err := s.store.ComputeSLOStatus(ctx, o)
-			if err != nil {
-				log.Printf("[slo] status %s: %v", o.ID, err)
+		// v0.9.578 (operator-reported, prod) — SINIRLI PARALEL + TEK LOG.
+		//
+		// Öncesi SIRALIYDI: SLO başına bir CH sorgusu, arka arkaya. Filo
+		// büyüdükçe toplam süre istek deadline'ını aşıyordu ve o an
+		// KALAN HER yineleme aynı "context deadline exceeded" hatasını
+		// logluyordu — prod log'unda tek kök sebep için onlarca satır,
+		// ardından "[cache] set slos:status: context deadline exceeded".
+		//
+		// İki ayrı kusur, iki ayrı düzeltme:
+		//
+		//  (a) Sel: ctx ölünce döngü DURUYOR ve TEK satır yazılıyor.
+		//      N satır, N sorun olduğunu düşündürüyordu; oysa tek
+		//      sorun vardı ve N kez tekrarlanıyordu.
+		//  (b) Sebep: fan-out sınırlı paralel. Sorgular birbirini
+		//      beklemiyor; eşzamanlılık ClickHouse'u boğmayacak kadar
+		//      dar tutuldu (rootcause.go'nun alt-okuma deseni).
+		rows := make([]row, len(out))
+		var wg sync.WaitGroup
+		sem := make(chan struct{}, sloStatusConcurrency)
+		var errOnce sync.Once
+		for i, o := range out {
+			rows[i] = row{SLO: o}
+			if ctx.Err() != nil {
+				break
 			}
-			rows = append(rows, row{SLO: o, Status: st})
+			wg.Add(1)
+			go func(i int, o chstore.SLO) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				if ctx.Err() != nil {
+					return
+				}
+				st, err := s.store.ComputeSLOStatus(ctx, o)
+				if err != nil {
+					// TEK satır: aynı kök sebep N kez yazılmaz.
+					errOnce.Do(func() {
+						log.Printf("[slo] durum hesabı başarısız (ilk hata, %d SLO'luk fan-out): %s: %v",
+							len(out), o.ID, err)
+					})
+					return
+				}
+				rows[i].Status = st
+			}(i, o)
 		}
+		wg.Wait()
 		return rows, nil
 	})
 }

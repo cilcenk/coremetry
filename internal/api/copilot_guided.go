@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -166,8 +168,19 @@ func tokenHasPrefix(tokens []string, stems ...string) bool {
 }
 
 func hasSlowTraceSignal(msg string) bool {
-	for _, p := range []string{"en yavaş", "slowest", "slow trace", "yavaş trace", "en uzun"} {
-		if strings.Contains(msg, p) {
+	// v0.9.570 — KELİME SINIRINDA eşleşme. Sınırsız Contains,
+	// "bu trace neden yavaş?" sorusunu "en yavaş" kalıbına
+	// çarptırıp (ned|EN YAVAŞ) filo geneli liste döndürüyordu.
+	// "neden/niye yavaş" AÇIK kalıp olarak listede: bağlamsız sorulduğunda
+	// "en yavaş trace'ler" makul bir cevaptır ve bu sözleşme testlerle
+	// pinli. Sınırlı eşleşme sayesinde artık kazayla değil BİLEREK
+	// eşleşiyor — ve ekranda bir trace varsa aşağıdaki işaret-zamiri
+	// kapısı onu geçersiz kılıyor.
+	for _, p := range []string{
+		"en yavaş", "slowest", "slow trace", "yavaş trace", "en uzun",
+		"neden yavaş", "niye yavaş",
+	} {
+		if containsPhrase(msg, p) {
 			return true
 		}
 	}
@@ -827,7 +840,23 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// özneyi taşıyor. Mesajdaki AÇIK 32-hex her zaman kazanır
 	// (routeGuidedIntent onu en üstte yakalar); burası yalnız hiçbir
 	// rota çıkmadığında ve mesaj "trace" kökü taşıdığında devreye girer.
-	if route.Intent == guidedNone && ctxTrace != "" && tokenHasPrefix(guidedTokens(norm), "trace") {
+	// v0.9.570 — İŞARET ZAMİRİ KAPISI: operatör "BU trace" derken
+	// ekrandaki şeyi soruyor ve bu, başka her niyeti geçersiz kılar.
+	//
+	// Öncesinde "bu trace neden yavaş?" filo geneli en yavaş 10 trace
+	// listesi döndürüyordu: hasSlowTraceSignal sınırsız Contains ile
+	// "ned|EN YAVAŞ" yakalıyor, slow_traces dalı ctxTrace
+	// devralmasından ÖNCE geliyordu. Sınır eşleşmesi (v0.9.570) o
+	// kazayı bitirdi ama "neden yavaş" artık AÇIK kalıp — yani bu kapı
+	// olmadan aynı soru yine listeye giderdi.
+	//
+	// Ayrım şu: "en yavaş trace'ler" bir LİSTE sorusu, "bu trace neden
+	// yavaş?" EKRANDAKİ şeyi soruyor. İşaret zamiri o ayrımı taşıyan
+	// tek sinyal.
+	if ctxTrace != "" && hasDemonstrativeTrace(norm) {
+		route = guidedRoute{Intent: guidedTraceByID, TraceID: ctxTrace}
+		emit("step", map[string]string{"tool": "bağlam: ekrandaki trace (" + ctxTrace + ")"})
+	} else if route.Intent == guidedNone && ctxTrace != "" && tokenHasPrefix(guidedTokens(norm), "trace") {
 		route = guidedRoute{Intent: guidedTraceByID, TraceID: ctxTrace}
 		emit("step", map[string]string{"tool": "bağlam: ekrandaki trace (" + ctxTrace + ")"})
 	}
@@ -1965,4 +1994,74 @@ func renderLogErrorsEvidenceTR(series []logstore.LogSeries, pats []anomaly.LogPa
 		b.WriteString("Bilinen hata pattern'lerinde eşleşme yok.\n")
 	}
 	return b.String()
+}
+
+// containsPhrase — çok kelimeli bir kalıbı KELİME SINIRINDA arar
+// (v0.9.570).
+//
+// Sınırsız strings.Contains, Türkçede sessiz bir yanlış-yönlendirme
+// üretiyordu ve çarpışma tam da en doğal SRE sorusundaydı:
+//
+//	"bu trace neden yavaş?" ⊃ "en yavaş"   →  ned|EN YAVAŞ
+//	"neden uzun sürdü"      ⊃ "en uzun"    →  ned|EN UZUN sürdü
+//
+// Yani operatör /trace sayfasında ekrandaki trace'i sorarken router
+// onu "en yavaş trace'leri listele" niyetine yönlendiriyor ve FİLO
+// GENELİ bir liste dönüyordu. Hata görünmez: cevap makul bir cevap,
+// yalnız SORULAN soruya ait değil.
+//
+// Sınır tanımı: kalıbın YALNIZ BAŞINDA harf/rakam olmamalı. Son ek
+// serbest — ve bu bilinçli bir asimetri:
+//
+//   - Bug BAŞTAYDI: "ned|en yavaş" kalıbı bir kelimenin ortasında
+//     yakalıyordu.
+//   - SONDA ek dayatmak yanlış olurdu: "slow trace" → "slow traceS"
+//     (İngilizce çoğul) ve "en yavaş" → "en yavaşI", "yavaşLAR"
+//     (Türkçe eklemeli yapı). İki uçta da sınır isteyen ilk taslağım
+//     mevcut testleri düşürdü ve haklı olarak düşürdü.
+//
+// Türkçe harfler unicode.IsLetter ile doğru ele alınır — ASCII testi
+// ş/ğ/ı'yı sınır sanardı ve kalıbın kendisini bölerdi.
+func containsPhrase(msg, phrase string) bool {
+	if phrase == "" {
+		return false
+	}
+	for i := 0; ; {
+		j := strings.Index(msg[i:], phrase)
+		if j < 0 {
+			return false
+		}
+		start := i + j
+		if !alnumBefore(msg, start) {
+			return true
+		}
+		// Kayarak devam et: aynı kalıp ilerde SINIRDA geçebilir.
+		i = start + 1
+		if i >= len(msg) {
+			return false
+		}
+	}
+}
+
+func alnumBefore(s string, idx int) bool {
+	if idx <= 0 {
+		return false
+	}
+	r, _ := utf8.DecodeLastRuneInString(s[:idx])
+	return unicode.IsLetter(r) || unicode.IsDigit(r)
+}
+
+// hasDemonstrativeTrace — mesaj EKRANDAKİ trace'i mi işaret ediyor?
+//
+// "bu trace", "şu trace", "this trace" gibi işaret zamirli kullanımlar
+// bir LİSTE değil, TEK bir şey sorar. Bu ayrım olmadan "bu trace neden
+// yavaş?" sorusu "en yavaş trace'leri listele" niyetiyle çarpışıyor ve
+// operatör ekranındaki trace yerine filo geneli bir liste görüyordu.
+func hasDemonstrativeTrace(msg string) bool {
+	for _, p := range []string{"bu trace", "şu trace", "this trace", "bu iz"} {
+		if containsPhrase(msg, p) {
+			return true
+		}
+	}
+	return false
 }

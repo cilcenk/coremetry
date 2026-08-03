@@ -89,6 +89,19 @@ type Heartbeat struct {
 	// "çalışıyor" sanmak mümkün.
 	Version string `json:"version,omitempty"`
 
+	// ContinuousSince (v0.9.588) — KESİNTİSİZ değerlendirmenin
+	// başladığı an, unix ns.
+	//
+	// Kalp atışında taşınmasının tek sebebi POD SINIRINI geçmek: bir
+	// rollout'ta yeni pod'un belleği boştur ama fleet'in gerçek
+	// kesintisi yalnız birkaç saniye olabilir. Bu alan olmasa yeni
+	// lider her seferinde sıfırdan sayardı ve sessiz-kaynak süpürmesi
+	// her dağıtımdan sonra gereksizce üç tik beklerdi.
+	//
+	// Ayrıca operatör için doğrudan okunabilir bir cevap: "bu evaluator
+	// ne zamandır kesintisiz koşuyor?"
+	ContinuousSince int64 `json:"continuousSince,omitempty"`
+
 	// IntervalMS — YAZANIN tik aralığı. Okuyan taraf "bu kalp atışı
 	// bayat mı" sorusunu buna göre cevaplar; aralığı okuyan tarafta
 	// sabit yazmak, evaluator'ın aralığı değiştiğinde sessizce yanlış

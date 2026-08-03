@@ -85,6 +85,15 @@ type Evaluator struct {
 	// burada daha ucuz.
 	opened   atomic.Int64
 	resolved atomic.Int64
+	// v0.9.588 — süreklilik izleri (tick_continuity.go). Yalnız lider
+	// tikinden (seri, tek goroutine) yazılır ve okunur; kilit yok.
+	//
+	// lastTickAt — bu süreçteki bir önceki tikin başlangıcı.
+	// contSince  — KESİNTİSİZ değerlendirmenin başladığı an. Sessiz-
+	//              kaynak süpürmesi, bayatlığın kaynağının problem mi
+	//              yoksa kendi kesintimiz mi olduğunu buradan ayırır.
+	lastTickAt time.Time
+	contSince  time.Time
 	// version — kalp atışını yazan binary'nin kimliği. main'den
 	// SetVersion ile geçer (evaluator main'i import edemez).
 	// Bir dağıtım sonrası eski pod'un bayat kalp atışını taze
@@ -171,16 +180,22 @@ func (e *Evaluator) runIfLeader(ctx context.Context) {
 	e.opened.Store(0)
 	e.resolved.Store(0)
 
+	// v0.9.588 — süreklilik ÖNCE işlenir: sessiz-kaynak süpürmesi bu
+	// tikin içinde koşuyor ve "bayatlığı ben mi ürettim" sorusunun
+	// cevabına ihtiyacı var.
+	e.noteTickContinuity(started)
+
 	rules := e.evaluateAll(tickCtx)
 
 	hb := Heartbeat{
-		StartedAt:  started.UnixNano(),
-		FinishedAt: time.Now().UnixNano(),
-		DurationMS: time.Since(started).Milliseconds(),
-		Rules:      rules,
-		Opened:     int(e.opened.Load()),
-		Resolved:   int(e.resolved.Load()),
-		Leader:     true,
+		StartedAt:       started.UnixNano(),
+		FinishedAt:      time.Now().UnixNano(),
+		DurationMS:      time.Since(started).Milliseconds(),
+		Rules:           rules,
+		Opened:          int(e.opened.Load()),
+		Resolved:        int(e.resolved.Load()),
+		Leader:          true,
+		ContinuousSince: e.contSince.UnixNano(),
 	}
 	// Deadline'a takılan tik BAŞARISIZDIR ve öyle kaydedilir.
 	// Sessizce "bitti" yazmak, düzeltmeye çalıştığımız yanılgının
@@ -999,6 +1014,15 @@ const (
 // returned no data, so neither the breached nor the
 // !breached branch ran, and the problem was orphaned.
 func (e *Evaluator) sweepStaleProblems(ctx context.Context) {
+	// v0.9.588 (operator-reported) — sessizliği GERÇEKTEN biz mi
+	// gözledik? Rollout'ta worker inip kalkarken hiçbir dedektör tik
+	// atamaz; yeni pod'un ilk tikinde her problem bayat görünür ve
+	// süpürme bunu "kaynak sustu" diye okurdu. Kesintisiz koşma süresi
+	// süpürme eşiğini doldurmadan karar vermek, kendi kör noktamızı
+	// veri sanmaktır. Bkz. tick_continuity.go.
+	if !e.sweepIsTrustworthy(time.Now()) {
+		return
+	}
 	cutoff := time.Now().Add(-3 * e.interval)
 	stale, err := e.store.ListStaleOpenProblems(ctx, cutoff)
 	if err != nil {

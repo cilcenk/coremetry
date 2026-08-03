@@ -62,16 +62,35 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
   // slice they're already looking at. Re-fetches when the filter
   // chip set changes.
   const [observedKeys, setObservedKeys] = useState<{ key: string; count: number }[]>([]);
+  // v0.9.602 (traces D4) — debounce + yarış koruması.
+  //
+  // Önceki hâl her chip değişiminde ANINDA ateşliyordu: operatör bir
+  // filtre kurarken (anahtar seç → operatör seç → değer yaz) her adım
+  // ayrı bir /api/attribute-keys çağrısı doğuruyordu. Kardeş etki
+  // (değer önerileri, aşağıda) zaten 200ms debounce'lu — bu yol
+  // atlanmıştı.
+  //
+  // İkinci ve daha sinsi kusur: `cancelled` muhafızı YOKTU. İki istek
+  // uçuştayken GEÇ dönen ESKİ yanıt yeni state'i ezebiliyordu, yani
+  // operatör filtresini daralttıkça daha ESKİ bir anahtar listesi
+  // görebiliyordu. Sıralı gelme garantisi yok.
   useEffect(() => {
-    const filterCtx = value.length > 0 ? JSON.stringify(value) : undefined;
-    api.attributeKeys('1h', 500, filterCtx)
-      .then(rows => setObservedKeys(
-        (rows ?? []).map(r => ({
-          key: r.scope === 'resource' ? `resource.${r.key}` : r.key,
-          count: r.count,
-        }))
-      ))
-      .catch(() => setObservedKeys([]));
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      const filterCtx = value.length > 0 ? JSON.stringify(value) : undefined;
+      api.attributeKeys('1h', 500, filterCtx)
+        .then(rows => {
+          if (cancelled) return;
+          setObservedKeys(
+            (rows ?? []).map(r => ({
+              key: r.scope === 'resource' ? `resource.${r.key}` : r.key,
+              count: r.count,
+            }))
+          );
+        })
+        .catch(() => { if (!cancelled) setObservedKeys([]); });
+    }, 200);
+    return () => { cancelled = true; window.clearTimeout(t); };
   }, [JSON.stringify(value)]);
   const allKeys = useMemo(() => {
     // v0.5.261 — observed-by-count first (real data leads), then

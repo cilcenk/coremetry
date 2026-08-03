@@ -34,19 +34,63 @@ func TestSharedBurstProblemIDStableAsServicesJoin(t *testing.T) {
 
 func TestSharedBurstSeverityTracksServiceCount(t *testing.T) {
 	// Ciddiyet SERVİS SAYISINA bağlı, oluşum sayısına değil: tek
-	// serviste 10.000 oluşum o servisin sorunu; on serviste 10'ar
+	// serviste 10.000 oluşum o servisin sorunu; dört serviste 10'ar
 	// oluşum altyapı sorunu.
-	if got := sharedBurstSeverity(3); got != "warning" {
-		t.Errorf("3 servis → %q, beklenen warning", got)
+	//
+	// v0.9.610 (operatör kararı) — eşik 8'den 4'e indi. Doğru soru
+	// "kaç servis çok fazla" değil, "MÜNFERİT mi PAYLAŞILAN mı".
+	// Üç ve altı tesadüf olabilir (aynı deploy dalgası, aynı node);
+	// dörtten itibaren tesadüf açıklaması tükeniyor.
+	for _, c := range []struct {
+		services int
+		want     string
+		why      string
+	}{
+		{1, "warning", "tek servis — münferit"},
+		{3, "warning", "üç servis — hâlâ tesadüf olabilir"},
+		{4, "critical", "operatörün sınırı: 3'ten FAZLA"},
+		{8, "critical", "eski eşik, hâlâ critical"},
+		{15, "critical", "operatörün ilk vakası"},
+	} {
+		if got := sharedBurstSeverity(c.services); got != c.want {
+			t.Errorf("%d servis → %q, beklenen %q (%s)", c.services, got, c.want, c.why)
+		}
 	}
-	if got := sharedBurstSeverity(7); got != "warning" {
-		t.Errorf("7 servis → %q, beklenen warning", got)
+}
+
+// TestRetryableTypesBecomeP1WhenShared — operatörün düzeltmesi.
+//
+// ConnectException / SocketTimeoutException / SQLRecoverableException
+// TEK oluşumda P1 DEĞİL (IsFatalExceptionType false) — geçicidirler,
+// yeniden deneme düzeltir, pod yeniden başlarken normaldirler.
+//
+// AMA aynı tip aynı anda dört ayrı serviste görünüyorsa artık o
+// servislerin hiçbiriyle ilgili değildir: paylaşılan bir bağımlılık
+// düşmüştür. Tip aynı kalıyor, ANLAMI değişiyor.
+//
+// Bu test iki dedektörün ARASINDAKİ sözleşmeyi tutuyor: biri tekil
+// yolu kapatırken öteki paylaşılan yolu açık bırakmalı. İkisi birden
+// kapanırsa bu vaka hiç görünmez.
+func TestRetryableTypesBecomeP1WhenShared(t *testing.T) {
+	retryable := []string{
+		"java.net.ConnectException",
+		"java.net.SocketTimeoutException",
+		"java.sql.SQLRecoverableException",
 	}
-	if got := sharedBurstSeverity(8); got != "critical" {
-		t.Errorf("8 servis → %q, beklenen critical", got)
+	for _, ty := range retryable {
+		// Tekil yol: P1 DEĞİL.
+		if chstore.IsFatalExceptionType(ty) {
+			t.Errorf("%q tek oluşumda P1 sayıldı — geçici bir hata, "+
+				"pod yeniden başlarken normaldir", ty)
+		}
 	}
-	if got := sharedBurstSeverity(15); got != "critical" {
-		t.Errorf("15 servis (operatörün vakası) → %q, beklenen critical", got)
+	// Paylaşılan yol: 4+ serviste P1.
+	if got := sharedBurstSeverity(4); got != "critical" {
+		t.Errorf("dört serviste paylaşılan patlama → %q, beklenen critical.\n\n"+
+			"Bu tipler tek başına gürültü ama aynı anda dört serviste "+
+			"görünüyorsa paylaşılan bir bağımlılık düşmüştür. İki dedektörden "+
+			"biri tekil yolu kapatıyor; öteki paylaşılan yolu AÇIK bırakmak "+
+			"zorunda, yoksa vaka hiç görünmez.", got)
 	}
 }
 

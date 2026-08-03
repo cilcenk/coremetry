@@ -5084,6 +5084,21 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 					Service:     req.Service,
 					Aggregation: req.Agg,
 					GroupBy:     req.GroupBy,
+					// v0.9.566 — FİLTRELER. Bu dal Filters'ı hiç
+					// geçirmiyordu: istemci gönderiyor (Dashboard.tsx
+					// filters: cfg.filters), gövdede duruyor
+					// (req.Filters), ama SQL'e HİÇ inmiyordu.
+					//
+					// Sonuç boş panel DEĞİL — sessizce YANLIŞ SAYI. Bir
+					// jvm.memory.type="heap" filtresi uygulanmayınca
+					// panel heap + non-heap (Metaspace, CodeCache,
+					// Compressed Class Space) toplamını "heap" diye
+					// çiziyordu. Yanlış ama makul görünen bir sayı,
+					// boş panelden tehlikelidir: kimse sorgulamaz.
+					//
+					// Kardeş handler (/api/metrics/query) filtreyi
+					//ZATEN geçiriyordu — bu dal ondan ayrışmıştı.
+					Filters:     parseFilters(string(req.Filters)),
 					From:        from,
 					To:          to,
 					StepSeconds: req.Step,

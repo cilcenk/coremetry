@@ -94,7 +94,13 @@ export function RCAVerdictPanel({ v }: { v: RCAVerdict }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-        <Badge tone={verdictTone(v.verdict)}>{VERDICT_LABEL[v.verdict]}</Badge>
+        {/* v0.9.577 — bilinmeyen verdict BOŞ rozet çizmesin. Backend
+            artık geçersiz enum'u düşüş yoluna gönderiyor, ama ileride
+            yeni bir değer eklenirse panel sessizce boş bir rozetle
+            değil, gelen değerin kendisiyle çizsin. */}
+        <Badge tone={verdictTone(v.verdict)}>
+          {VERDICT_LABEL[v.verdict] ?? (v.verdict || 'bilinmeyen')}
+        </Badge>
         {v.title && (
           <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{v.title}</span>
         )}

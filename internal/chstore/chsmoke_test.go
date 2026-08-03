@@ -16,10 +16,26 @@
 // Bu testin fikri basit ve sınıfın tamamını kapatıyor: her okuma
 // yolunu BOŞ bir ClickHouse'a karşı BİR KEZ çalıştır.
 //
-// SATIR DÖNMESİ GEREKMİYOR — beklenen zaten sıfır satır. Aranan tek
-// şey "sorgu hatasız çalıştı mı". Tip uyuşmazlıkları, eksik kolonlar,
-// yanlış bind sayısı, geçersiz fonksiyon çağrıları hepsi BURADA
-// patlar; boş tablo bunların hiçbirini gizlemez.
+// Aranan şey "sorgu hatasız çalıştı mı": eksik kolonlar, yanlış bind
+// sayısı, geçersiz fonksiyon çağrıları, agregat dönüş tipleri hepsi
+// BURADA patlar.
+//
+// v0.9.595 — İLK YAZIMDAKİ VARSAYIM YANLIŞTI ve düzeltildi. Başlık
+// "satır dönmesi gerekmiyor, beklenen zaten sıfır satır" diyordu. Bu,
+// iki okuma şeklini aynı sanıyordu:
+//
+//	QueryRow + agregat  → boş tabloda bile BİR satır döner, Scan koşar
+//	rows.Next() döngüsü → boş tabloda hiç dönmez, Scan HİÇ KOŞMAZ
+//
+// Yani TARAMA yollarında struct-alanı ↔ kolon-tipi uyuşmazlığı — yani
+// v0.9.543, bu testin var olma sebeplerinden biri — sessizce
+// kaçıyordu. Bizzat kanıtlandı: bir sayaç alanı int'e (kolon UInt64)
+// çevrildiğinde tarama yolundaki vaka YEŞİL kaldı, QueryRow yolundaki
+// kardeşi anında kırmızı verdi.
+//
+// Çare seedSmokeRows: tarama yollarının Scan'i gerçekten çalıştırması
+// için bir tohum satır. Vaka ayrıca DÖNEN SATIR SAYISINI da kontrol
+// eder — "hata vermedi" ile "gerçekten tarandı" farklı şeyler.
 //
 // Lokal minikube bunu sağlayamıyor: şema orada da doğru ama sorgular
 // elle çalıştırılmıyor. Bu yüzden CI'da.
@@ -33,6 +49,7 @@ package chstore
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"os"
 	"regexp"
@@ -64,6 +81,44 @@ func smokeStore(t *testing.T) *Store {
 	return st
 }
 
+// seedSmokeRows — TARAMA yollarını gerçekten çalıştırmak için tohum.
+//
+// v0.9.595'te bulunan KÖR NOKTA. Boş tabloya karşı koşan bu test iki
+// okuma şeklini AYNI sanıyordu, oysa değiller:
+//
+//	QueryRow + agregat  → boş tabloda bile BİR satır döner, Scan koşar
+//	rows.Next() döngüsü → boş tabloda hiç dönmez, Scan HİÇ KOŞMAZ
+//
+// Yani tarama-tabanlı okumalarda tip uyuşmazlığı — bu testin var olma
+// sebebi olan hata sınıfı — sessizce kaçıyordu. Bizzat kanıtlandı:
+// ConfirmedRCASignatures'ın sayaç alanı int'e (kolon UInt64)
+// çevrildiğinde test YEŞİL kaldı; aynı bozma QueryRow yolundaki
+// kardeşinde anında kırmızı verdi.
+//
+// Bir satır yeter: Scan'in koşması için gereken tek şey o.
+func seedSmokeRows(t *testing.T, st *Store, now time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	if err := st.UpsertRCAVerdict(ctx, RCAVerdictRecord{
+		ExchangeID: "smoke-ex-1", AnchorKind: "problem", AnchorID: "smoke-p-1",
+		Service: "smoke-service", Verdict: "root_cause_identified",
+		RCEntity: "smoke-db", RCFailMode: "bağlantı havuzu tükenmesi",
+		Confidence: 0.5, ModelConf: 0.8, HypoConf: 0.4, HypoVersion: 1,
+		Parsed: true, ShieldNotes: []string{"güven tavanlandı"},
+		CreatedAt: now.UnixNano(),
+	}); err != nil {
+		t.Fatalf("tohum verdict yazılamadı: %v", err)
+	}
+	// 👍 — ConfirmedRCASignatures'ın INNER JOIN'i buna bağlı; onsuz
+	// sorgu koşar ama sıfır satır döner ve Scan yine çalışmazdı.
+	if err := st.UpsertAIFeedback(ctx, AIFeedback{
+		ExchangeID: "smoke-ex-1", Surface: "rootcause-verdict", Verdict: 1,
+		CreatedAt: now.UnixNano(),
+	}); err != nil {
+		t.Fatalf("tohum geri bildirim yazılamadı: %v", err)
+	}
+}
+
 // TestCHSmokeReads — her okuma yolunu bir kez çalıştırır.
 //
 // Her vaka AYRI t.Run: biri patlarsa hangisi olduğu adıyla belli olur
@@ -76,6 +131,7 @@ func TestCHSmokeReads(t *testing.T) {
 
 	now := time.Now()
 	from := now.Add(-time.Hour)
+	seedSmokeRows(t, st, now)
 
 	cases := []struct {
 		name string
@@ -130,6 +186,26 @@ func TestCHSmokeReads(t *testing.T) {
 		{"RouterGaps", func() error {
 			_, err := st.RouterGaps(ctx, 7*24*time.Hour, 10)
 			return err
+		}},
+		// v0.9.595 — iki yeni okuma da AYNI sınıftan risk taşıyor:
+		// count()/countIf()/uniqExact() UInt64 döner ve struct alanı
+		// int olsaydı DERLENİR, tüm testlerden GEÇER, yalnız burada
+		// patlardı (v0.9.543'ün birebir tekrarı). Ayrıca ikisi de
+		// JOIN'li — join tarafındaki tip/kolon hatası da burada çıkar.
+		{"RCAVerdictQualityStats", func() error {
+			_, err := st.RCAVerdictQualityStats(ctx, from, now)
+			return err
+		}},
+		{"ConfirmedRCASignatures", func() error {
+			sigs, err := st.ConfirmedRCASignatures(ctx, "smoke-service", now)
+			if err != nil {
+				return err
+			}
+			if len(sigs) == 0 {
+				return errors.New("tohum satır tarandı sayılmadı — Scan hiç " +
+					"koşmadı, yani tip uyuşmazlığı bu testten SESSİZCE geçerdi")
+			}
+			return nil
 		}},
 	}
 

@@ -44,6 +44,12 @@ type RCAVerdictRecord struct {
 	// probable_cause | insufficient_evidence). Kalkanlar sonrası.
 	Verdict string `json:"verdict"`
 
+	// RCEntity / RCFailMode (v0.9.595) — İMZA. Bir vakayı "kök neden
+	// şu varlıkta, şu arıza kipiyle" diye özetleyen ikili; LEARN
+	// katmanı geçmiş vakaları bununla eşleştiriyor.
+	RCEntity   string `json:"rootCauseEntity,omitempty"`
+	RCFailMode string `json:"rootCauseFailureMode,omitempty"`
+
 	// Üç ayrı güven, üçü FARKLI şey ve aynı ekranda buluşuyorlar:
 	// Confidence nihai (tavanlanmış), ModelConf modelin beyanı,
 	// HypoConf deterministik korelasyon motorunun güveni. Tavanın ne
@@ -94,6 +100,7 @@ func (s *Store) UpsertRCAVerdict(ctx context.Context, v RCAVerdictRecord) error 
 	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO rca_verdicts
 		(exchange_id, anchor_kind, anchor_id, service, verdict,
+		 rc_entity, rc_fail_mode,
 		 confidence, model_conf, hypo_conf, hypo_version,
 		 parsed, repaired, shield_notes, created_at)`)
 	if err != nil {
@@ -101,6 +108,7 @@ func (s *Store) UpsertRCAVerdict(ctx context.Context, v RCAVerdictRecord) error 
 	}
 	if err := batch.Append(
 		v.ExchangeID, v.AnchorKind, v.AnchorID, v.Service, v.Verdict,
+		v.RCEntity, v.RCFailMode,
 		v.Confidence, v.ModelConf, v.HypoConf, v.HypoVersion,
 		boolToUInt8(v.Parsed), boolToUInt8(v.Repaired), notes, created,
 	); err != nil {
@@ -123,18 +131,22 @@ func boolToUInt8(b bool) uint8 {
 // sorusundan türedi: kaç karar verildi, kaçı gerçekten kök neden
 // gösterdi, model ne sıklıkla çözümlenemedi, kalkanlar ne sıklıkla
 // devreye girdi, ve operatör ne dedi.
+// Sayaç alanları uint64 ve bu ZORUNLU: count()/countIf() ClickHouse'ta
+// UInt64 döner. int'e taramak DERLENİR, tüm testlerden GEÇER ve yalnız
+// gerçek CH'de patlar — bu oturumun baskın hata sınıfı (v0.9.543 struct
+// alanı ↔ kolon tipi). ComputeAIStats emsali toUInt64() + uint64 ile
+// açıkça eşliyor; aynısı burada.
 type RCAVerdictQuality struct {
-	Total          int     `json:"total"`
-	RootCause      int     `json:"rootCauseIdentified"`
-	Probable       int     `json:"probableCause"`
-	Insufficient   int     `json:"insufficientEvidence"`
-	Unparsed       int     `json:"unparsed"`
-	Repaired       int     `json:"repaired"`
-	Shielded       int     `json:"shielded"`
-	AvgConfidence  float64 `json:"avgConfidence"`
-	ThumbsUp       int     `json:"thumbsUp"`
-	ThumbsDown     int     `json:"thumbsDown"`
-	AvgHypoVersion uint64  `json:"-"`
+	Total         uint64  `json:"total"`
+	RootCause     uint64  `json:"rootCauseIdentified"`
+	Probable      uint64  `json:"probableCause"`
+	Insufficient  uint64  `json:"insufficientEvidence"`
+	Unparsed      uint64  `json:"unparsed"`
+	Repaired      uint64  `json:"repaired"`
+	Shielded      uint64  `json:"shielded"`
+	AvgConfidence float64 `json:"avgConfidence"`
+	ThumbsUp      uint64  `json:"thumbsUp"`
+	ThumbsDown    uint64  `json:"thumbsDown"`
 }
 
 // RCAVerdictQualityStats — pencere içindeki verdict kalitesi.
@@ -150,19 +162,22 @@ func (s *Store) RCAVerdictQualityStats(ctx context.Context, from, to time.Time) 
 	var q RCAVerdictQuality
 	row := s.conn.QueryRow(ctx, `
 		SELECT
-			count()                                                   AS total,
-			countIf(v.verdict = 'root_cause_identified')              AS rc,
-			countIf(v.verdict = 'probable_cause')                     AS pc,
-			countIf(v.verdict = 'insufficient_evidence')              AS ie,
-			countIf(v.parsed = 0)                                     AS unparsed,
-			countIf(v.repaired = 1)                                   AS repaired,
-			countIf(length(v.shield_notes) > 0)                       AS shielded,
+			-- toUInt64 AÇIK: count()/countIf() zaten UInt64 döner ama
+			-- niyeti kaynakta yazmak, struct alanını değiştiren birinin
+			-- eşleşmeyi görmesini sağlıyor (ComputeAIStats emsali).
+			toUInt64(count())                                          AS total,
+			toUInt64(countIf(v.verdict = 'root_cause_identified'))     AS rc,
+			toUInt64(countIf(v.verdict = 'probable_cause'))            AS pc,
+			toUInt64(countIf(v.verdict = 'insufficient_evidence'))     AS ie,
+			toUInt64(countIf(v.parsed = 0))                            AS unparsed,
+			toUInt64(countIf(v.repaired = 1))                          AS repaired,
+			toUInt64(countIf(length(v.shield_notes) > 0))              AS shielded,
 			-- ifNotFinite: boş pencerede avg() NaN döner ve NaN JSON'a
 			-- serileştirilemez (sanitizeFloats'a güvenmek yerine
 			-- kaynağında kes — bu okuma başka çağıranlara da açık).
-			ifNotFinite(avg(v.confidence), 0)                         AS avg_conf,
-			countIf(f.verdict = 1)                                    AS up,
-			countIf(f.verdict = -1)                                   AS down
+			ifNotFinite(toFloat64(avg(v.confidence)), 0)               AS avg_conf,
+			toUInt64(countIf(f.verdict = 1))                           AS up,
+			toUInt64(countIf(f.verdict = -1))                          AS down
 		FROM rca_verdicts AS v FINAL
 		LEFT JOIN (
 			SELECT exchange_id, verdict FROM ai_feedback FINAL
@@ -178,4 +193,97 @@ func (s *Store) RCAVerdictQualityStats(ctx context.Context, from, to time.Time) 
 	}
 	q.AvgConfidence = avg
 	return q, nil
+}
+
+// ── LEARN: bilinen imzalar (v0.9.595) ────────────────────────────────
+//
+// Tasarım dokümanının [6] LEARN katmanı (docs/cosre-verdict-design.md
+// §11). Fikir: geçmişte DOĞRULANMIŞ bir kök neden, benzer bir vakada
+// modele ÖN BİLGİ olarak verilsin.
+//
+// TEK NİTELİK ÖLÇÜTÜ: operatörün 👍'sı.
+//
+// Neden bu kadar dar — ve neden "aynı imza N kez tekrarlandı" ölçütü
+// KASTEN reddedildi: o ölçüt kendi kendini besler. Model servis S için
+// X önerir, kayda geçer; bir dahaki sefere ön bilgi "X daha önce
+// önerilmişti" der; model X'i daha emin önerir; tekrar sayısı büyür.
+// Sonunda motor kendi geçmiş tahminlerini kanıt sanar. Modelin
+// kendisiyle hemfikir olması hiçbir şeyin kanıtı değildir.
+//
+// 👍 bu döngüyü kırar çünkü sisteme DIŞARIDAN girer.
+//
+// Sonucu dürüstçe söylemek gerekir: hiç oy yokken bu okuma BOŞ döner
+// ve prompt hiç değişmez. Yani LEARN, operatör oy vermeye başlayana
+// kadar ETKİSİZDİR. Bu bir eksiklik değil, tasarımın kendisi — veri
+// olmadan öğrenmek, tahmin etmenin süslü adıdır.
+
+// RCASignature — geçmişte DOĞRULANMIŞ bir kök neden.
+type RCASignature struct {
+	Service     string `json:"service"`
+	Entity      string `json:"entity"`
+	FailureMode string `json:"failureMode"`
+	// Confirmations — kaç AYRI vakada 👍 aldı. Ayrı vaka şartı
+	// önemli: aynı vakanın tekrar tekrar oylanması bir örüntü değil.
+	// uint64 — uniqExact() UInt64 döner (yukarıdaki tip notunun aynısı).
+	Confirmations uint64 `json:"confirmations"`
+	// LastSeen — unix ns. Bayat bir imza, taze olandan az şey söyler.
+	LastSeen int64 `json:"lastSeen"`
+}
+
+const (
+	// rcaSignatureLookback — imzalar ne kadar geriye bakar.
+	// rca_verdicts TTL'i 90 gün; ondan uzun bir pencere anlamsız.
+	rcaSignatureLookback = 90 * 24 * time.Hour
+	// rcaSignatureLimit — prompt'a en fazla kaç imza taşınır.
+	// 5: küçük modelde uzun ön bilgi listesi asıl kanıtı bastırır ve
+	// model geçmişi bugüne tercih etmeye başlar.
+	rcaSignatureLimit = 5
+)
+
+// ConfirmedRCASignatures — bir servis için DOĞRULANMIŞ kök nedenler.
+//
+// Yalnız 👍 almış verdict'ler; 👎 almış ya da hiç oylanmamışlar
+// dışarıda. INNER JOIN bilinçli (kalite okumasındaki LEFT JOIN'in
+// tersi): orada amaç her verdict'i saymaktı, burada amaç yalnız
+// onaylananları almak.
+//
+// Bounded: küçük TTL'li state tablosu, servis + zaman WHERE, LIMIT,
+// max_execution_time. FINAL şart — hem rca_verdicts hem ai_feedback
+// ReplacingMergeTree ve operatör oyunu değiştirebilir.
+func (s *Store) ConfirmedRCASignatures(ctx context.Context, service string, now time.Time) ([]RCASignature, error) {
+	if service == "" {
+		return nil, nil
+	}
+	rows, err := s.conn.Query(ctx, `
+		SELECT v.service, v.rc_entity, v.rc_fail_mode,
+		       -- AYRI vaka sayısı: aynı ankorun tekrar tekrar
+		       -- oylanması bir örüntü değil, tek bir gözlemdir.
+		       toUInt64(uniqExact(v.anchor_id)) AS confirmations,
+		       toUnixTimestamp64Nano(max(v.created_at)) AS last_seen
+		FROM rca_verdicts AS v FINAL
+		INNER JOIN (
+			SELECT exchange_id FROM ai_feedback FINAL WHERE verdict = 1
+		) AS f ON f.exchange_id = v.exchange_id
+		WHERE v.service = ? AND v.created_at >= ?
+		  AND v.rc_entity != '' AND v.verdict != 'insufficient_evidence'
+		GROUP BY v.service, v.rc_entity, v.rc_fail_mode
+		ORDER BY confirmations DESC, last_seen DESC
+		LIMIT ?
+		SETTINGS max_execution_time = 5`,
+		service, chDateTime64Arg(now.Add(-rcaSignatureLookback)), rcaSignatureLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []RCASignature
+	for rows.Next() {
+		var sig RCASignature
+		if err := rows.Scan(&sig.Service, &sig.Entity, &sig.FailureMode,
+			&sig.Confirmations, &sig.LastSeen); err != nil {
+			return nil, err
+		}
+		out = append(out, sig)
+	}
+	return out, rows.Err()
 }

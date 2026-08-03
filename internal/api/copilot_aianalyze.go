@@ -225,7 +225,27 @@ func (s *Server) copilotAnalyzeService(w http.ResponseWriter, r *http.Request) {
 // are aggregates; no raw spans/logs leave the server.
 func (s *Server) buildServiceContext(ctx context.Context, service string, from, to time.Time) *aiServiceContext {
 	span := to.Sub(from)
-	cx := &aiServiceContext{Service: service, RangeS: int64(span.Seconds())}
+	// v0.9.597 — dizi alanları BOŞ DİLİM olarak ilklenir, nil olarak DEĞİL.
+	//
+	// Go'da nil dilim JSON'a `null` serileşir. TS tipi ise
+	// `deploys: AiDeploy[]` diyor — yani NULLABLE DEĞİL. Sözleşme
+	// yalandı ve yalan sessiz değildi: ContextView `ctx.deploys.length`
+	// okuyor, null'da TypeError atıyor ve route ErrorBoundary'si TÜM
+	// Servis Overview sayfasını hata ekranıyla değiştiriyordu — yalnız
+	// AI kartını değil.
+	//
+	// Tetikleyici NADİR DEĞİL, NORMAL: penceresinde deploy olmayan bir
+	// servis. 30 dakikalık varsayılan pencerede servislerin çoğu böyle.
+	// Aynı hat hatasız serviste topErrors, izole serviste upstream/
+	// downstream için de geçerliydi.
+	//
+	// omitempty ÇÖZÜM DEĞİL: alanı tamamen düşürür, TS'te `undefined`
+	// olur ve `.length` yine patlar — daha sinsi bir biçimde.
+	cx := &aiServiceContext{
+		Service: service, RangeS: int64(span.Seconds()),
+		TopErrors: []aiErrCount{}, Deploys: []aiDeploy{},
+		Upstream: []string{}, Downstream: []string{},
+	}
 
 	// RED — current window + the immediately-preceding baseline window.
 	if rows, err := s.store.GetServiceSummary5m(ctx, service, from, to); err == nil {
@@ -490,6 +510,22 @@ func parseServiceAnalysis(raw string) *serviceAnalysis {
 	var a serviceAnalysis
 	if err := json.Unmarshal([]byte(t[i:j+1]), &a); err != nil {
 		return nil
+	}
+	// v0.9.597 — MODELİN atladığı diziler de boş dilime normalize
+	// edilir. Yukarıdaki bağlam alanları sunucu kaynaklıydı; bunlar
+	// model kaynaklı ama sonuç AYNI: nil → `null` → frontend'de
+	// `a.kanit.length` TypeError → sayfa ErrorBoundary'ye düşer.
+	//
+	// Şema bu alanları required kılıyor ama şema YALNIZ OpenAI-uyumlu
+	// yolda gönderiliyor; anthropic sağlayıcıda ya da json_schema
+	// reddedilip merdiven json_object'e düştüğünde tek güvence
+	// prompt'un ricası kalıyor. Bir modelin ricayı tutacağına
+	// güvenmek, çökmeyi modele emanet etmektir.
+	if a.Kanit == nil {
+		a.Kanit = []string{}
+	}
+	if a.Oneriler == nil {
+		a.Oneriler = []string{}
 	}
 	return &a
 }

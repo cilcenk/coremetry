@@ -482,6 +482,14 @@ func (e *Evaluator) evaluateAll(ctx context.Context) int {
 	// never sees spurious Problems; same leader-lock / notify / dedup path.
 	e.evaluateRuntimePods(ctx)
 
+	// v0.9.572 — paylaşılan bağımlılık patlaması. Operatör raporu:
+	// on beşten fazla servis aynı saniyede aynı ORA-18730 hatasını aldı
+	// ve Coremetry on beş AYRI exception grubu gösterdi. Bu dedektör
+	// ortak paydayı kuruyor: aynı tip + dar pencere + çok servis =
+	// TEK bir problem. openSnap zaten elimizde (yukarıda tik başına bir
+	// kez okundu), ek sorgu yok.
+	e.evaluateSharedExceptionBursts(ctx, openSnap)
+
 	// Escalation sweep — bump severity on problems that have
 	// been open past the configured threshold without
 	// acknowledgement. Refires SendProblemAlert with the new

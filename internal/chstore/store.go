@@ -1345,6 +1345,13 @@ func (s *Store) migrate(ctx context.Context) error {
 			anchor_id     String,
 			service       LowCardinality(String) DEFAULT '',
 			verdict       LowCardinality(String),
+			-- v0.9.595 — İMZA alanları. Bir verdict'i "kök neden şu
+			-- varlıkta, şu arıza kipiyle" diye özetleyen ikili; LEARN
+			-- katmanı geçmiş vakaları bununla eşleştiriyor.
+			-- LowCardinality(entity): servis/host adı, binlerce mertebe.
+			-- failure_mode serbest metin — modelin cümlesi, sınırlı değil.
+			rc_entity     LowCardinality(String) DEFAULT '',
+			rc_fail_mode  String DEFAULT '',
 			confidence    Float64 DEFAULT 0,
 			model_conf    Float64 DEFAULT 0,
 			hypo_conf     Float64 DEFAULT 0,
@@ -2138,6 +2145,16 @@ func (s *Store) migrate(ctx context.Context) error {
 		// wrapper/_local hazard. Insert failures on ai_calls are
 		// log-and-drop observability rows, never span ingest.
 		`ALTER TABLE ai_calls ADD COLUMN IF NOT EXISTS exchange_id String DEFAULT ''`,
+		// v0.9.595 — rca_verdicts'e İMZA alanları. v0.9.591-594
+		// çalıştırmış bir kurulumda tablo bu kolonlar OLMADAN yaratıldı;
+		// CREATE'e eklemek yeni kurulumları kapsar, bu ALTER eskileri.
+		// IF NOT EXISTS ikisini de idempotent yapıyor.
+		//
+		// rca_verdicts highVolumeTables'ta DEĞİL (ai_calls emsali):
+		// chstore onu dış Distributed kümelerde bile tek-node şeklinde
+		// yaratıyor, yani spans-tarzı wrapper/_local tuzağı yok.
+		`ALTER TABLE rca_verdicts ADD COLUMN IF NOT EXISTS rc_entity LowCardinality(String) DEFAULT ''`,
+		`ALTER TABLE rca_verdicts ADD COLUMN IF NOT EXISTS rc_fail_mode String DEFAULT ''`,
 		// v0.8.20 — drop the dead topology-mute setting. The
 		// "Mute on topology" chip was removed from the service detail
 		// page in v0.8.19; this migration removes the now-orphaned

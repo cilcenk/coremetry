@@ -1000,10 +1000,17 @@ function DetailLine({ it }: { it: InboxItem }) {
   if (it.kind === 'incident' && it.incident) {
     return (
       <div style={{ fontSize: 11, color: 'var(--text3)' }}>
-        <span className={`badge ${it.incident.status === 'acknowledged' ? 'b-warn' : 'b-err'}`}>
-          {it.incident.status}
-        </span>
-        {it.priorityReason && <span> · {it.priorityReason}</span>}
+        {/* v0.9.571 (operator-reported: "open open iki defa yazan kayıtlar
+            var") — buradaki duruma özel rozet KALDIRILDI. Başlık satırı
+            v0.9.255'ten beri paylaşılan <StatusBadge s={it.status}/>
+            basıyor ve incidentToInbox `Status: inc.Status` set ediyor,
+            yani AYNI durum iki kez çiziliyordu — üstelik iki FARKLI
+            tonda (başlıkta amber b-warn, burada kırmızı b-err), sanki
+            iki ayrı şey söylüyorlarmış gibi.
+            Genel rozet korundu çünkü ton eşlemesi tüm türlerde ortak;
+            burada bırakmak, incident satırlarını diğerlerinden farklı
+            renklendiren tek istisna olurdu. */}
+        {it.priorityReason && <span>{it.priorityReason}</span>}
         {it.description && <div style={{ marginTop: 2, color: 'var(--text2)' }}>{it.description}</div>}
       </div>
     );

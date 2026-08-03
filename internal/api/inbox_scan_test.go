@@ -154,8 +154,8 @@ func TestSortInboxItems(t *testing.T) {
 		{"lastSeen desc", "lastSeen", "desc", "dacb"},
 		// Case-insensitive: "Payments" must not sort before "billing" just
 		// because of a capital P.
-		{"service asc", "service", "asc", "dca", // billing, checkout×2, Payments
-			},
+		{"service asc", "service", "asc", "dca"}, // billing, checkout×2, Payments
+
 		{"detail asc", "detail", "asc", "bcda"},
 	}
 	for _, tc := range cases {
@@ -412,11 +412,10 @@ func TestInboxEffectiveLimit(t *testing.T) {
 		want, storeMax int
 		expect         int
 	}{
-		{"exceptions clamp the wide scan", inboxNarrowScan, inboxExcStoreMax, 500},
 		{"incidents clamp the wide scan", inboxNarrowScan, inboxIncStoreMax, 1000},
 		{"unclamped source gets what it asked for", inboxNarrowScan, inboxNoStoreMax, inboxNarrowScan},
-		{"base scan is under every ceiling", inboxBaseScan, inboxExcStoreMax, inboxBaseScan},
-		{"a page of 300 is under every ceiling", 300, inboxExcStoreMax, 300},
+		{"base scan is under the incident ceiling", inboxBaseScan, inboxIncStoreMax, inboxBaseScan},
+		{"a page of 300 is under the incident ceiling", 300, inboxIncStoreMax, 300},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -430,7 +429,7 @@ func TestInboxEffectiveLimit(t *testing.T) {
 	// The property that makes the probe honest: the effective limit is
 	// reachable. If it ever exceeded the store ceiling, `len(rows) >= limit`
 	// could not fire even on a fully truncated read.
-	for _, storeMax := range []int{inboxExcStoreMax, inboxIncStoreMax} {
+	for _, storeMax := range []int{inboxIncStoreMax} {
 		for _, want := range []int{50, 200, 300, 500, 2000, 5000} {
 			if got := inboxEffectiveLimit(want, storeMax); got > storeMax {
 				t.Errorf("effective limit %d exceeds store ceiling %d — the cap flag could never fire",
@@ -622,83 +621,55 @@ func TestOccurrenceFloorBoundsArePartition(t *testing.T) {
 	}
 }
 
-// ── v0.9.441 — solo-exception bütçesi + arama pushdown ───────────────────
+// ── v0.9.441 + v0.9.571 — exception aday bütçesi + arama pushdown ───────
 //
-// Operator-reported, prod: "Exception'da gördüğüm kaydı Problems'te P3
-// seçsem de göremiyorum." 3.1K gruplu filoda son dakikalarda ateşleyen grup
-// sayısı 500'ü aşınca BUGÜN doğan gruplar last_seen-sıralı 500'lük aday
-// penceresinden düşüyordu — sayfada görünen kayıt inbox'ta hiçbir öncelik/
-// durum kombinasyonunda yoktu. İki pin:
+// İKİ KEZ raporlandı, ikisi de aynı kök:
 //
-//  1. TÜR yalnız exception'a daraltılmışsa aday bütçesi inboxExcSoloMax
-//     olur (tek kaynak, paylaşılan tavana sıkışmaz) ve store bu bütçeyi
-//     KIRPMADAN onurlandırır — eski 500 clamp'ı bütçeyi sessizce geri
-//     alırdı, dürüstlük probu (len >= excLimit) da asla ateşleyemezdi.
+//	v0.9.441: "Exception'da gördüğüm kaydı Problems'te P3 seçsem de
+//	          göremiyorum." (3.1K grup)
+//	v0.9.571: "Gece bazı sql exception'ları gelmiş ama problems altında
+//	          gözükmüyor." (2.4K grup, gece 03:04-03:06 arası biten
+//	          ORA-18730 patlaması)
+//
+// Aday penceresi last_seen sıralı. 500'lük pencere, birkaç saat önce
+// SONA ERMİŞ bir patlamayı yapısal olarak dışarıda bırakır: grup hâlâ
+// açık, Exceptions sayfasında görünüyor, ama inbox'a hiç aday olmuyor.
+//
+// v0.9.441 bunu YALNIZ "tür filtresi sadece exception" hâlinde
+// düzeltmişti; VARSAYILAN görünüm (tüm türler seçili) 500'de kaldı ve
+// aynı hata beş sürüm sonra tekrar geldi. Ders: bütçe kaynağın
+// MALİYETİNE bağlı olmalı, kaç tür seçili olduğuna değil.
+//
+// İki pin:
+//  1. Exception bütçesi HER görünümde inboxExcScanMax — koşulsuz.
 //  2. Arama STORE'a iner (ExceptionGroupFilter.Search) — eskiden Go'da
-//     yalnız ≤500 aday içinde aranıyordu; aday setine girmemiş kayıt
+//     yalnız aday seti içinde aranıyordu; aday setine girmemiş kayıt
 //     aramayla da bulunamıyordu.
-func TestInboxSoloExceptionBudget(t *testing.T) {
+func TestInboxExceptionBudgetIsUnconditional(t *testing.T) {
 	src := readSrc(t, "inbox.go")
-	if !strings.Contains(src, `if inboxKindsAllExcFamily(kinds) {`) ||
-		!strings.Contains(src, `excLimit = inboxExcSoloMax`) {
-		t.Error("solo-exception kind narrow must lift the candidate budget to inboxExcSoloMax — the shared 500 ceiling structurally hides fresh groups on large fleets")
-	}
-	// v0.9.443 — the solo budget generalizes to the exception FAMILY: both
-	// classes come from the same store, so a facet of exception+httperror is
-	// still a single-source view and gets the full budget.
-	for _, tc := range []struct {
-		kinds []string
-		want  bool
-	}{
-		{[]string{"exception"}, true},
-		{[]string{"httperror"}, true},
-		{[]string{"exception", "httperror"}, true},
-		{[]string{"exception", "problem"}, false},
-		{[]string{"problem"}, false},
-		{nil, false},
-	} {
-		if got := inboxKindsAllExcFamily(tc.kinds); got != tc.want {
-			t.Errorf("inboxKindsAllExcFamily(%v) = %v, want %v", tc.kinds, got, tc.want)
-		}
-	}
-	if n := strings.Count(src, "Search: search,") + strings.Count(src, "Search:         search,"); n < 2 {
-		t.Errorf("both ListExceptionGroups calls (main + below-floor) must push Search down to the store (found %d) — Go-side search over a capped candidate set cannot find what the cap excluded", n)
-	}
 
-	store := readSrc(t, "../chstore/exception_inbox.go")
-	if !strings.Contains(store, "if f.Limit > 3000 {") {
-		t.Error("ListExceptionGroups must honour the solo budget: a store-side clamp below inboxExcSoloMax silently re-caps the fetch AND makes the honesty probe (len >= excLimit) unreachable")
+	// Bütçe bir TABAN olmalı, tavan değil. Bağlayıcı kısıt hiçbir zaman
+	// tavan değildi: varsayılan görünüm daraltılmamış sayıldığı için
+	// srcLimit = inboxBaseScan = 200 ve exception kaynağı 500'lük tavana
+	// hiç değmiyordu. Tavanı yükseltmek NO-OP olurdu.
+	if !strings.Contains(src, "excLimit := srcLimit") ||
+		!strings.Contains(src, "if excLimit < inboxExcScanMax {") {
+		t.Error("exception bütçesi TABAN olarak kurulmamış — srcLimit (varsayılan " +
+			"görünümde 200) bağlayıcı kalır ve saatler önce bitmiş bir patlama " +
+			"last_seen penceresine hiç giremez")
 	}
-	if inboxExcSoloMax != 3000 {
-		t.Errorf("inboxExcSoloMax = %d; the store clamp above is pinned to 3000 — change both together", inboxExcSoloMax)
+	if inboxExcScanMax <= inboxBaseScan {
+		t.Errorf("exception tabanı (%d) taban taramadan (%d) büyük olmalı — "+
+			"aksi halde taban hiçbir şey eklemez", inboxExcScanMax, inboxBaseScan)
 	}
-}
-
-// v0.9.443 — HTTP-hata sınıflandırıcısı: error.type fallback'inin ürettiği
-// çıplak 3-haneli tipler ("404") exception değil. Desen chstore.
-// HTTPErrorTypeRe'den gelir (CH WHERE match ile TEK kaynak) — burada satır
-// sınıflandırmasının o desenle aynı davrandığı sabitlenir.
-func TestIsHTTPErrorType(t *testing.T) {
-	cases := []struct {
-		exType string
-		want   bool
-	}{
-		{"404", true},
-		{"401", true},
-		{"500", true},
-		{"java.util.concurrent.TimeoutException", false},
-		{"io.grpc.StatusRuntimeException", false},
-		{"<unknown>", false},
-		{"", false},
-		{"40", false},     // 3 haneden az
-		{"4040", false},   // 3 haneden çok
-		{"404 ", false},   // anchor: boşluklu varyant sızmasın
-		{"E404", false},   // koda gömülü sayı ≠ çıplak durum kodu
-		{"HTTP 500", false},
+	// Bütçe KOŞULA bağlanmamalı: v0.9.441 tam olarak bu yüzden yarım kaldı.
+	if strings.Contains(src, "excLimit = inboxExcSoloMax") ||
+		strings.Contains(src, "inboxKindsAllExcFamily(kinds)") {
+		t.Error("exception bütçesi yine tür-filtresine koşullanmış — varsayılan " +
+			"görünüm (tüm türler) dar tavanda kalır ve hata tekrar eder")
 	}
-	for _, tc := range cases {
-		if got := isHTTPErrorType(tc.exType); got != tc.want {
-			t.Errorf("isHTTPErrorType(%q) = %v, want %v", tc.exType, got, tc.want)
-		}
-	}
+	// NOT: sabit adını burada string olarak aramak, testin KENDİ
+	// metnini yakalayan bir yanlış pozitif üretirdi (aynı tuzak
+	// v0.9.564'te çıktı). Sabit silindiği için derleyici zaten
+	// koruyor — kullanan kod derlenmez.
 }

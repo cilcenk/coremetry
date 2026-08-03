@@ -469,7 +469,29 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 		uid, email = claims.UserID, claims.Email
 	}
 	s.serveCached(w, r, key, 10*time.Minute, func(ctx context.Context) (any, error) {
-		ctx = copilot.WithMeta(ctx, copilot.CallMeta{UserID: uid, UserEmail: email})
+		// v0.9.591 — verdict'e KARARLI BİR KİMLİK.
+		//
+		// Öncesinde verdict'in hiçbir kimliği yoktu: istek başına
+		// üretiliyor, hiçbir yere yazılmıyor, ai_calls.id istemciye
+		// dönmüyordu. Dolayısıyla operatör "bu değerlendirme yanlış"
+		// diyemiyordu — diyecek yer yoktu.
+		//
+		// exchangeID depoda ZATEN ÇALIŞAN geri bildirim rayının
+		// anahtarı (v0.8.399: ai_calls.exchange_id ↔ ai_feedback,
+		// POST /api/ai/feedback, /ai memnuniyet paneli). CallMeta'da
+		// alan hep vardı; yalnız chat handler'ı dolduruyordu, bu yol
+		// rayın dışında kalmıştı. Yeni ray kurmuyoruz, var olana
+		// biniyoruz.
+		//
+		// Kimlik ÖNBELLEĞİN İÇİNDE basılıyor ve bu şart: serveCached
+		// gövdeyi olduğu gibi saklar, yani kimlik gövdeyle birlikte
+		// yaşamalı. Dışarıda bassaydık her istek yeni bir kimlik
+		// üretir, oysa önbellekten sunulan cevap AYNI cevaptır —
+		// kimlik cevabı tanımlar, isteği değil.
+		exchangeID := newRandID(16)
+		ctx = copilot.WithMeta(ctx, copilot.CallMeta{
+			UserID: uid, UserEmail: email, ExchangeID: exchangeID,
+		})
 		// v0.9.559 — düzyazı anlatım yerine KALKANLI VERDICT.
 		//
 		// Tek LLM çağrısı: verdict hem yapılandırılmış kararı hem
@@ -483,7 +505,17 @@ func (s *Server) rootCauseExplainProse(w http.ResponseWriter, r *http.Request, a
 		// DEĞİL — aksi hâlde yedek cümle gerçek LLM anlatımıyla aynı
 		// kutuda çizilir ve operatör ayırt edemez.
 		verdict, prose := s.buildRCAVerdict(ctx, h, anchorStartNs)
-		return rcaExplainResponse{Prose: prose, Verdict: verdict}, nil
+		// Kalıcılaştır: operatöre GÖSTERİLEN karar (kalkanlar
+		// sonrası). ai_calls.response_sample modelin HAM çıktısını
+		// taşıyor — aradaki farkı kalkanlar üretiyor ve o fark
+		// hiçbir yerde kalmıyordu.
+		//
+		// En iyi çaba: yazım hatası cevabı DÜŞÜREMEZ. Operatörün
+		// beklediği tanı, bizim muhasebemiz yüzünden kaybolmaz.
+		s.recordRCAVerdict(ctx, exchangeID, anchorKind, id, h, verdict)
+		return rcaExplainResponse{
+			Prose: prose, Verdict: verdict, ExchangeID: exchangeID,
+		}, nil
 	})
 }
 
@@ -512,4 +544,14 @@ func (s *Server) getProblemRootCauseExplain(w http.ResponseWriter, r *http.Reque
 type rcaExplainResponse struct {
 	Prose   *string     `json:"prose"`
 	Verdict *RCAVerdict `json:"verdict,omitempty"`
+
+	// ExchangeID (v0.9.591) — bu CEVABIN kimliği; 👍/👎 bununla
+	// POST /api/ai/feedback'e gider.
+	//
+	// Cevabı tanımlar, isteği değil: önbellekten sunulan aynı cevap
+	// aynı kimliği taşır. Sonucu, aynı verdict'i iki operatör oylarsa
+	// ai_feedback'in ORDER BY exchange_id dedup'ı gereği SON yazan
+	// kazanır. Bilinçli kabul: aynı cevaba tek oy. Düzeltmek ORDER BY
+	// değişikliği isterdi, o da yeni tablo + backfill demek.
+	ExchangeID string `json:"exchangeId,omitempty"`
 }

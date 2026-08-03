@@ -1316,6 +1316,48 @@ func (s *Store) migrate(ctx context.Context) error {
 		ORDER BY exchange_id
 		TTL toDate(created_at) + INTERVAL 90 DAY`,
 
+		// rca_verdicts — kök-neden hakem kararının KALICI kaydı
+		// (v0.9.591). Öncesinde verdict istek başına üretilip
+		// yalnızca HTTP yanıtında yaşıyordu: ne kararın kendisi ne de
+		// kalkanların ne yaptığı hiçbir yere düşüyordu. Tek kalıcı iz
+		// ai_calls.response_sample'daki modelin HAM çıktısıydı — yani
+		// kalkanlardan ÖNCEKİ hâli, ki operatörün gördüğü o değil.
+		//
+		// İki şeyi birden mümkün kılıyor:
+		//   1. ölçüm — kalkanlar ne sıklıkla devreye giriyor, model
+		//      ne sıklıkla çözümlenemiyor, kaç karar insufficient
+		//   2. geri bildirim — exchange_id ai_feedback'e join olur ve
+		//      "hangi verdict'e 👎 verildi" cevaplanabilir hale gelir
+		//
+		// ORDER BY exchange_id: ai_feedback ile AYNI anahtar, join
+		// bedavaya gelsin diye. Dedup anahtarı MÜNHASIRAN bu (ev
+		// kuralı — ek kolon dedup'ı sessizce bozar).
+		//
+		// PARTITION BY yok ve bu bilinçli: ai_feedback emsali. Bir
+		// yeniden-yazım partition sınırını aşarsa FINAL onu kopya
+		// olarak sağ bırakırdı.
+		//
+		// TTL 90g — ai_calls ve ai_feedback ile hizalı; öksüz kalan
+		// verdict, derecelendirdiği çağrıyla birlikte yaşlanıp düşsün.
+		`CREATE TABLE IF NOT EXISTS rca_verdicts (
+			exchange_id   String,
+			anchor_kind   LowCardinality(String),
+			anchor_id     String,
+			service       LowCardinality(String) DEFAULT '',
+			verdict       LowCardinality(String),
+			confidence    Float64 DEFAULT 0,
+			model_conf    Float64 DEFAULT 0,
+			hypo_conf     Float64 DEFAULT 0,
+			hypo_version  UInt64  DEFAULT 0,
+			parsed        UInt8   DEFAULT 0,
+			repaired      UInt8   DEFAULT 0,
+			shield_notes  Array(String),
+			created_at    DateTime64(9) DEFAULT now64(9),
+			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
+		) ENGINE = ReplacingMergeTree(version)
+		ORDER BY exchange_id
+		TTL toDate(created_at) + INTERVAL 90 DAY`,
+
 		// Email subscribers — get notified when a public-visible
 		// incident opens or resolves on the configured components.
 		// Double opt-in: public submissions land with verified=0

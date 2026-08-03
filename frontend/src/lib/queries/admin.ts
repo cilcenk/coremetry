@@ -60,6 +60,23 @@ export function useCHCoordinators(windowS: number) {
   });
 }
 
+/** v0.9.613 — DDL kuyruğu teşhisi. 20s stale: sunucu 15s cache'li,
+ *  staleTime ≥ sunucu TTL kuralı (frontend-conventions §6). */
+export function useDDLQueueHealth() {
+  return useQuery({
+    // 'admin' öneki: kardeş hook'ların ad alanı — öneksiz anahtar,
+    // önek-bazlı invalidation'ı ıskalar (verify bulgusu).
+    queryKey: ['admin', 'ch-ddl-queue'],
+    queryFn: () => api.chDDLQueue(),
+    staleTime: 20_000,
+    // Canlı vaka sırasında panel açık kalır; 30s poll (≥10s kuralı,
+    // RQ arka plan sekmesinde durdurur) restart sonrası verdict'in
+    // kendiliğinden yeşile dönmesini sağlar.
+    refetchInterval: 30_000,
+    retry: false,
+  });
+}
+
 // Multi-pod HA roster for /admin/cluster. 10s poll matches the
 // heartbeat interval so a freshly-rolled pod appears within one
 // tick; hidden tabs pause automatically.

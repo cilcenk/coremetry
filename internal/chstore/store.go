@@ -289,6 +289,16 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 			Auth:        clickhouse.Auth{Database: "default", Username: cfg.Username, Password: cfg.Password},
 			TLS:         tlsCfg,
 			DialTimeout: dialTimeout,
+			// v0.9.605 — PROD'DA PATLAYAN BAĞLANTI TAM BURASI.
+			//
+			// `CREATE DATABASE … ON CLUSTER` bu setup bağlantısından
+			// çalışıyor ve varsayılan output_mode 'throw' olduğu için
+			// istemci dört host'un da bitirmesini 180 sn bekleyip
+			// istisna atıyordu. Ana bağlantıdaki ayarı buraya da koymak
+			// ŞART — asıl arıza ana bağlantıya sıra gelmeden oluyordu.
+			Settings: clickhouse.Settings{
+				"distributed_ddl_output_mode": "null_status_on_timeout",
+			},
 		})
 		if err != nil {
 			return err
@@ -437,6 +447,30 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 				"max_bytes_before_external_group_by":       extGroupBy,
 				"max_bytes_before_external_sort":           extSort,
 				"distributed_aggregation_memory_efficient": 1,
+				// v0.9.605 (operator-reported, prod v0.9.603 rollout'u) —
+				// dağıtık DDL zamanaşımı ARTIK İSTİSNA DEĞİL.
+				//
+				// Varsayılan `distributed_ddl_output_mode='throw'`:
+				// istemci TÜM host'ların DDL'i bitirmesini
+				// distributed_ddl_task_timeout (180 sn) kadar bekler ve
+				// bitmezse İSTİSNA atar. Boot 158 bildirimsel DDL
+				// çalıştırıyor ve rollout'ta birkaç pod aynı anda boot
+				// ediyor; kuyruk tıkandığında bu bekleme pod'u
+				// öldürüyordu (v0.9.604 semptomu yumuşattı, bu ayar
+				// SEBEBİ kaldırıyor).
+				//
+				// `null_status_on_timeout` DAR bir gevşetme ve doğru
+				// olanı: YALNIZ zamanaşımı hâli istisna yerine NULL
+				// durum döner. Sözdizimi hatası, izin reddi, tip
+				// uyuşmazlığı gibi GERÇEK DDL hataları AYNEN fırlar.
+				//
+				// `never_throw` KASTEN seçilmedi: o, gerçek hataları da
+				// yutardı ve boot bozuk bir şemayla sessizce devam
+				// ederdi — crashloop'tan kötüsü.
+				//
+				// Doğruluk kaybı yok: DDL'in hepsi IF NOT EXISTS ve
+				// ClickHouse kuyruğa alınanı arka planda uyguluyor.
+				"distributed_ddl_output_mode": "null_status_on_timeout",
 			},
 		}
 	}

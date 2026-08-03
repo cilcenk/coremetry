@@ -196,6 +196,10 @@ func TestCHSmokeReads(t *testing.T) {
 			_, err := st.RCAVerdictQualityStats(ctx, from, now)
 			return err
 		}},
+		{"FindFatalExceptions", func() error {
+			_, err := st.FindFatalExceptions(ctx, 24*time.Hour)
+			return err
+		}},
 		{"ConfirmedRCASignatures", func() error {
 			sigs, err := st.ConfirmedRCASignatures(ctx, "smoke-service", now)
 			if err != nil {

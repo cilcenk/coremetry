@@ -73,8 +73,8 @@ type Evaluator struct {
 	// kaynaklı (silinmiş index, ES yetkisi) watch'ların açık problemi
 	// keep-alive'la ölümsüzleşiyordu. Guarded by watcherMu; girdiler
 	// watcherLastRun ile aynı ömür sözleşmesini paylaşır.
-	watcherFails   map[string]int
-	watcherMu      sync.Mutex
+	watcherFails map[string]int
+	watcherMu    sync.Mutex
 
 	// v0.9.550 — kalp atışı alanları (heartbeat.go).
 	//
@@ -221,11 +221,11 @@ func (e *Evaluator) runIfLeader(ctx context.Context) {
 // rule'larında hardening yap, gerçek alertler oluşsun, default
 // gelsin"):
 //
-//   CRITICAL floor (5-min windows) — "really wrong", pages someone:
-//     error rate >15% · HTTP P99 >5s · DB P99 >5s · MQ consume P99 >2m
-//   WARNING tier (10-min sustained) — real degradation forming, catch
-//     it before the floor trips:
-//     error rate >5% · HTTP P99 >3s · DB P99 >2.5s · MQ consume P99 >30s
+//	CRITICAL floor (5-min windows) — "really wrong", pages someone:
+//	  error rate >15% · HTTP P99 >5s · DB P99 >5s · MQ consume P99 >2m
+//	WARNING tier (10-min sustained) — real degradation forming, catch
+//	  it before the floor trips:
+//	  error rate >5% · HTTP P99 >3s · DB P99 >2.5s · MQ consume P99 >30s
 //
 // Every rule now carries the full anti-noise kit the engine already
 // had but the defaults never used: MinSamples (v0.5.128 — no verdicts
@@ -316,8 +316,8 @@ var builtins = []chstore.AlertRule{
 // nothing is deleted (preserves any custom edits like
 // runbookURL on the rule itself).
 var deprecatedBuiltinIDs = []string{
-	"builtin-http-5xx-5pct",  // subsumed by error_rate
-	"builtin-db-error-5pct",  // subsumed by error_rate
+	"builtin-http-5xx-5pct",   // subsumed by error_rate
+	"builtin-db-error-5pct",   // subsumed by error_rate
 	"builtin-rpc-error-10pct", // subsumed by error_rate
 }
 
@@ -504,6 +504,12 @@ func (e *Evaluator) evaluateAll(ctx context.Context) int {
 	// TEK bir problem. openSnap zaten elimizde (yukarıda tik başına bir
 	// kez okundu), ek sorgu yok.
 	e.evaluateSharedExceptionBursts(ctx, openSnap)
+
+	// v0.9.609 (operatör isteği) — altyapı-ölümcül exception'lar.
+	// UnknownHostException gibi "yeniden deneme düzeltmez, kendiliğinden
+	// geçmez" sınıfı: tek oluşum bile anında P1. Aynı openSnap, ek okuma
+	// yok.
+	e.evaluateFatalExceptions(ctx, openSnap)
 
 	// Escalation sweep — bump severity on problems that have
 	// been open past the configured threshold without
@@ -968,11 +974,11 @@ func (e *Evaluator) evaluateLogQuery(ctx context.Context, r chstore.AlertRule) {
 // each severity before the sweep bumps it up a tier. Chosen
 // for the bank-oncall flow:
 //
-//   • info → warning after 15 min — gives a heads-up that
+//   - info → warning after 15 min — gives a heads-up that
 //     should have been triaged but wasn't.
-//   • warning → critical after 30 min — paging-grade signal
+//   - warning → critical after 30 min — paging-grade signal
 //     that no human has acknowledged in half an hour.
-//   • critical stays critical (no further tier).
+//   - critical stays critical (no further tier).
 //
 // Measured from started_at, so a freshly-opened critical
 // stays at critical naturally (it has nowhere higher to go),
@@ -1150,8 +1156,8 @@ const promoteAnomalyRuleID = "anomaly-auto:"
 // and just bumps its last-seen via UpsertProblem.
 //
 // Severity ladder:
-//   • peakRatio ≥ MinPeakRatio      → warning  (the auto-promote tier)
-//   • peakRatio ≥ CriticalPeakRatio → critical (genuine "wake someone")
+//   - peakRatio ≥ MinPeakRatio      → warning  (the auto-promote tier)
+//   - peakRatio ≥ CriticalPeakRatio → critical (genuine "wake someone")
 //
 // Both come from the operator's anomaly-promotion settings
 // (v0.9.247); the critical cut-off used to be a hard-coded 20.
@@ -1752,10 +1758,14 @@ func transportOp(metric string) string {
 
 func compare(value float64, op string, threshold float64) bool {
 	switch op {
-	case ">":  return value >  threshold
-	case ">=": return value >= threshold
-	case "<":  return value <  threshold
-	case "<=": return value <= threshold
+	case ">":
+		return value > threshold
+	case ">=":
+		return value >= threshold
+	case "<":
+		return value < threshold
+	case "<=":
+		return value <= threshold
 	}
 	return false
 }

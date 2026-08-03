@@ -591,18 +591,25 @@ type ProblemFilter struct {
 	// the /watchers history drawer: fire/resolve timeline of a single
 	// imported watcher rule). Exact match, unlike RuleIDPrefix.
 	RuleID string
-	// Priority — P1/P2/P3 subset to keep. Empty = no filter.
+	// Priority alanı v0.9.583'te KALDIRILDI.
 	//
-	// Applied post-EnrichProblemsWithPriority because priority is computed at
-	// read time (v0.5.210), not a CH column, so it CANNOT be pushed into SQL.
+	// Öncelik okuma anında hesaplanır (v0.5.210), CH kolonu değildir —
+	// yani SQL'e İNEMEZ. Alan yıllarca burada durdu ama ListProblems
+	// gövdesi ona HİÇ bakmadı: sadece "Go'da daraltmayı unutma" notuydu.
 	//
-	// v0.9.342 — the old comment here claimed "ListProblems applies Limit
-	// after this filter". It never did: the body binds a plain LIMIT and has
-	// never mentioned Priority. The caller narrows in Go afterwards, so the
-	// page was "the P1s among the newest N", not "the newest N P1s". Since
-	// the narrow genuinely cannot move into SQL, the caller widens the
-	// candidate scan instead (see problemScanLimit).
-	Priority []string
+	// Bir filtre struct'ında uygulanmayan bir alan tutmak, bir tuzaktır.
+	// İki kez ısırdı:
+	//   v0.9.342 — buradaki yorum "ListProblems Limit'i bu filtreden
+	//              SONRA uygular" diyordu; hiç uygulamadı.
+	//   v0.9.576 — MCP list_problems alanı doldurdu, daraltmayı unuttu;
+	//              priority=P1 istemek filoda yüzlerce P1 varken SIFIR
+	//              sonuç döndürebiliyordu.
+	//
+	// Artık çağıran AÇIKÇA iki adımı yazıyor ve ikisi de görünür:
+	//   f.Limit = chstore.ProblemScanLimit(page, true)   // taramayı aç
+	//   rows = chstore.FilterProblemsByPriority(rows, prios)  // daralt
+	//
+	// Alan olmayınca yanlışlıkla güvenilemez.
 	// IDs constrains the result to these problem ids (id IN (…)), applied in
 	// SQL. v0.9.343 — the incident explain path resolved attached problems by
 	// paging the newest 2000 and keeping the subset it wanted, so an older

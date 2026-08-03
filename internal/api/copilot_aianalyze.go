@@ -557,6 +557,27 @@ func postCheckServiceAnalysis(a *serviceAnalysis, cx *aiServiceContext) *aiPostC
 	}
 	for _, e := range cx.TopErrors {
 		add(e.Service)
+		// v0.9.598 — hata METNİ de gösterildi. Type boşsa etikete
+		// mesaj basılıyor (renderServiceSnapshot), yani içindeki bir
+		// servis adı modele gösterilmiş demektir.
+		addShownTokens(known, e.Type, e.Message)
+	}
+	// v0.9.598 — v0.9.580'in prompt'a bastığı SOMUT KİMLİKLER.
+	//
+	// Snapshot bunları basıyordu ama bilinen küme bilmiyordu, yani
+	// model kendisine verdiğimiz bir CHANNEL_CODE'u alıntıladığında
+	// kalkan "uydurma" diyordu. v0.9.580'in kendi yorumu bunun neden
+	// imkânsız olduğunu zaten yazıyor ("değerler doğrudan
+	// ClickHouse'tan geliyor, uydurulamaz") — eksik olan, o bilgiyi
+	// kalkana da söylemekti.
+	for _, sl := range cx.Business {
+		for _, v := range sl {
+			addShownTokens(known, v.Value)
+		}
+	}
+	for _, c := range cx.Correlation {
+		addShownTokens(known, c.Key)
+		addShownTokens(known, c.Values...)
 	}
 
 	// v0.9.559 — tarama entity_scan.go'daki paylaşılan yardımcıya

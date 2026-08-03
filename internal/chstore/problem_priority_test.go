@@ -43,3 +43,53 @@ func TestComputePriorityReasonUsesFlippedRatio(t *testing.T) {
 		}
 	})
 }
+
+// TestFreshDeployDoesNotDrivePriority — v0.9.612, operatör kararı.
+//
+// Önceki kural "critical + son 5 dk içinde deploy → P1" idi. Prod'da
+// deploy sıklığı yüksek olduğu için tetikleyici sürekli ateşliyor ve
+// P1 kavramını sulandırıyordu.
+//
+// Bu test iki yönü birden tutuyor:
+//  1. taze deploy artık ÖNCELİĞE karışmıyor
+//  2. ama problemin KENDİ şiddetinden gelen kapılar (2× eşik,
+//     4+ saat açık) hâlâ P1 üretiyor — tetikleyiciyi kaldırmak
+//     P1'i büsbütün kapatmak DEĞİL
+func TestFreshDeployDoesNotDrivePriority(t *testing.T) {
+	now := time.Now().UnixNano()
+	fresh := &RecentDeploy{Version: "v1.2.3", AgeSeconds: 30}
+
+	// critical + taze deploy, başka tetikleyici YOK → P2 (P1 değil).
+	p := Problem{
+		Severity: "critical", Status: "open",
+		Value: 1, Threshold: 1, // oran 1 → büyük ihlal değil
+		StartedAt:    now - int64(time.Minute),
+		RecentDeploy: fresh,
+	}
+	if pri, reason := computePriority(p, now); pri != "P2" {
+		t.Errorf("taze deploy + critical → %s (%s); P2 bekleniyordu.\n\n"+
+			"Deploy sıklığı yüksek bir prod'da bu tetikleyici sürekli ateşler "+
+			"ve P1 kavramını sulandırır. Deploy bilgisi kaybolmuyor — "+
+			"ProblemDetail'de görünüyor — yalnız SIRAYA sokmuyor.", pri, reason)
+	}
+
+	// warning + taze deploy → P3 (P2 değil): aynı kural.
+	w := p
+	w.Severity = "warning"
+	if pri, _ := computePriority(w, now); pri != "P3" {
+		t.Errorf("taze deploy + warning → %s; P3 bekleniyordu", pri)
+	}
+
+	// AMA: problemin kendi şiddeti hâlâ P1 üretmeli.
+	big := p
+	big.Value, big.Threshold = 10, 3 // oran 3.33 → büyük ihlal
+	if pri, _ := computePriority(big, now); pri != "P1" {
+		t.Errorf("2× eşik ihlali → %s; P1 bekleniyordu — deploy tetikleyicisini "+
+			"kaldırmak P1'i büsbütün kapatmak DEĞİL", pri)
+	}
+	stale := p
+	stale.StartedAt = now - int64(5*time.Hour)
+	if pri, _ := computePriority(stale, now); pri != "P1" {
+		t.Errorf("5 saattir açık kritik → %s; P1 bekleniyordu", pri)
+	}
+}

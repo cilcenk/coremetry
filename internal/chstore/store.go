@@ -343,8 +343,25 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		onCluster = " ON CLUSTER `" + name + "`"
 	}
 	if err := setup.Exec(ctx, fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`%s", cfg.Database, onCluster)); err != nil {
-		setup.Close()
-		return nil, fmt.Errorf("create database: %w", err)
+		// v0.9.604 (operator-reported, prod v0.9.603 rollout'u) — dağıtık
+		// DDL "zamanaşımı" boot'u öldürüyordu.
+		//
+		// Kod 159 bir başarısızlık DEĞİL; mesajın kendisi "arka planda
+		// çalıştıracaklar" diyor. Ama biz ölümcül sayıp pod'u
+		// düşürüyorduk ve bu KENDİNİ BESLİYORDU: pod ölür, yeniden
+		// başlar, tüm DDL kümesini zaten tıkalı kuyruğa yeniden
+		// gönderir. Rollout sırasında birden çok pod aynı anda boot
+		// ettiği için tam o an en kötü hâline geliyordu.
+		//
+		// Körlemesine YUTMUYORUZ: KOŞULU DOĞRULUYORUZ. Veritabanı
+		// gerçekten oradaysa devam etmek doğru; değilse hata aynen
+		// yükselir. "Hata yoktu" demekle "sonuç oluştu" demek farklı
+		// şeyler ve burada ikincisini kontrol ediyoruz.
+		if !isDistributedDDLQueued(err) || !databaseExists(ctx, setup, cfg.Database) {
+			setup.Close()
+			return nil, fmt.Errorf("create database: %w", err)
+		}
+		log.Printf("[chstore] dağıtık CREATE DATABASE kuyruğa alındı ama veritabanı %q ZATEN VAR — boot sürüyor (kod 159 arka plan uygulamasını anlatır, arıza değil)", cfg.Database)
 	}
 	setup.Close()
 

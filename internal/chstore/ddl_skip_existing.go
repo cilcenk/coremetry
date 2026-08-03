@@ -104,3 +104,79 @@ func planDeclarativeDDL(stmts []string, existing map[string]bool) (send []string
 	}
 	return send, skipped
 }
+
+// ── ADD COLUMN elemesi (v0.9.608) ────────────────────────────────────
+//
+// v0.9.607 CREATE'leri eledi ve prod'da 44/49'u kaldırdı — ama boot
+// yine bitmedi. Kalan sebep ikinci liste: 69 ALTER, tıkalı kuyrukta
+// her biri bütçesini doluyor → ~23 dakika.
+//
+// Bunların ~50'si `ADD COLUMN IF NOT EXISTS`. Kolon zaten varsa bu
+// ifadenin etkisi — CREATE'lerde olduğu gibi — TANIM GEREĞİ yok.
+// Aynı kanıt, aynı eleme.
+//
+// MODIFY COLUMN / MODIFY TTL / ALTER DELETE ELENMİYOR: onların no-op
+// olduğunu kanıtlamak tipi ve codec'i CH'nin normalize ettiği biçimle
+// karşılaştırmayı gerektirir ve o karşılaştırma kırılgandır. Yanlış
+// bir eleme, uygulanmamış bir tip değişikliği demektir — sessiz ve
+// kalıcı. Kanıtlayamadığımızı elemiyoruz.
+
+// addColumnRe — `ALTER TABLE <tablo> ADD COLUMN IF NOT EXISTS <kolon>`.
+// YALNIZ `IF NOT EXISTS` taşıyanlar; onsuzu var olan kolonda HATA verir.
+var addColumnRe = regexp.MustCompile(
+	`(?is)^\s*ALTER\s+TABLE\s+` + "`?" + `([a-zA-Z0-9_]+)` + "`?" +
+		`\s+ADD\s+COLUMN\s+IF\s+NOT\s+EXISTS\s+` + "`?" + `([a-zA-Z0-9_]+)` + "`?")
+
+// ddlAddsColumn — bu ifade hangi (tablo, kolon) çiftini ekliyor?
+// ok=false ise eleme adayı DEĞİL. SAF.
+func ddlAddsColumn(sql string) (table, column string, ok bool) {
+	m := addColumnRe.FindStringSubmatch(sql)
+	if m == nil {
+		return "", "", false
+	}
+	return m[1], m[2], true
+}
+
+// existingColumns — mevcut (tablo, kolon) çiftleri.
+//
+// Küme modunda `x` ve `x_local` ayrı satırlar; ikisini de koyuyoruz
+// çünkü eleme kararı BİLDİRİMSEL ad üzerinden veriliyor.
+//
+// Hata hâlinde BOŞ küme → hiçbir şey elenmez → davranış bugünküyle
+// aynı. Emin olamadığımızda ALTER'ı GÖNDERMEK doğru taraf.
+func (s *Store) existingColumns(ctx context.Context) map[string]bool {
+	out := map[string]bool{}
+	rows, err := s.conn.Query(ctx,
+		`SELECT table, name FROM system.columns WHERE database = currentDatabase()`)
+	if err != nil {
+		log.Printf("[chstore] kolon listesi okunamadı (%v) — tüm ALTER gönderilecek", err)
+		return out
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var tbl, col string
+		if err := rows.Scan(&tbl, &col); err != nil {
+			log.Printf("[chstore] kolon taranamadı (%v) — tüm ALTER gönderilecek", err)
+			return map[string]bool{}
+		}
+		out[tbl+"."+col] = true
+		out[strings.TrimSuffix(tbl, "_local")+"."+col] = true
+	}
+	if err := rows.Err(); err != nil {
+		log.Printf("[chstore] kolon listesi hatası (%v) — tüm ALTER gönderilecek", err)
+		return map[string]bool{}
+	}
+	return out
+}
+
+// planAlterDDL — var olan kolonu ekleyen ALTER'ları eler. SAF.
+func planAlterDDL(stmts []string, cols map[string]bool) (send []string, skipped int) {
+	for _, q := range stmts {
+		if tbl, col, ok := ddlAddsColumn(q); ok && cols[tbl+"."+col] {
+			skipped++
+			continue
+		}
+		send = append(send, q)
+	}
+	return send, skipped
+}

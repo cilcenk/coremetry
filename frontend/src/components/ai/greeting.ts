@@ -51,18 +51,6 @@ export function newestP1(p1s: GreetingP1[]): GreetingP1 {
   return p1s.reduce((a, b) => (b.startedAt > a.startedAt ? b : a));
 }
 
-/**
- * Açılış çipleri. Açık bir P1 varsa ONUN adıyla bir soru başa gelir —
- * sabit katalog her zaman jenerik, oysa operatörün o an merak ettiği
- * şey ekranındaki yangın.
- */
-export function greetChips(p1s: GreetingP1[] | undefined, base: readonly string[]): string[] {
-  if (!p1s || p1s.length === 0) return [...base];
-  const svc = (newestP1(p1s).service || '').trim();
-  if (!svc) return [...base];
-  const live = `${svc} neden P1?`;
-  return [live, ...base.filter(q => q !== live)];
-}
 
 /**
  * Türkçe göreli zaman. lib/utils'teki fmtAgoNs "12m ago" üretir —

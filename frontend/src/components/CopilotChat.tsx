@@ -8,7 +8,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs } from '@/lib/utils';
 import { ChatBubble } from './ai/ChatBubble';
 import { useChatThread } from './ai/useChatThread';
-import { greetHello, greetStatus, greetChips } from './ai/greeting';
+import { greetHello, greetStatus } from './ai/greeting';
 
 // CopilotChat (v0.6.53, v0.9.163 interaktif) — global in-app AI assistant.
 // Sağ-alt animasyonlu sparkline logo (operatör seçimi B) bir drawer açar;
@@ -29,16 +29,6 @@ import { greetHello, greetStatus, greetChips } from './ai/greeting';
 // slow_traces / log_errors / deploy_impact / service_health). Backend'in
 // yanıtlayamadığı şekle çip koymuyoruz; pod/JVM intent'i gelince çipi de
 // gelir (v0.9.376 adayı).
-const SAMPLE_QUESTIONS = [
-  'Dün gece neler oldu?',               // shift_summary (v0.9.416) — vardiya özeti
-  'Takımımın servisleri nasıl?',        // my_services — User.Team → owner/SRE eşleşmesi
-  'Takımımın açık problemleri neler?',  // my_problems
-  'Şu an açık problemler ve kök neden?',// problems + root-cause hipotezleri
-  'En yavaş trace\'ler hangileri?',     // slow_traces
-  'Hangi pod\'un JVM heap\'i dolu?',    // pod_health (v0.9.376) — servissiz = filo-geneli
-  'Son 1 saatteki log hataları?',       // log_errors
-  'Son deploy\'un etkisi ne oldu?',     // deploy_impact
-];
 // Follow-up önerileri — cevaptan sonra sıradaki faydalı drill-down'lar.
 const FOLLOWUPS = [
   'Açık problemlerin kök nedeni?',
@@ -258,13 +248,16 @@ export function CopilotChat() {
                     {greetStatus(p1s)}
                   </div>
                 )}
+                {/* v0.9.579 (operatör: "çıkar") — HAZIR SORU ÇİPLERİ
+                    KALDIRILDI. Sekiz sabit soru bir MENÜYDÜ, bir araç
+                    değil: operatörün kendi sorusu neredeyse hiçbir zaman
+                    listedekilerden biri olmuyor ve liste, asistanın
+                    yalnız onları anlayabildiği izlenimini veriyordu.
+                    Aynı gerekçeyle /explore'un soru kartları da
+                    kaldırılmıştı (v0.9.562).
+                    Cevap SONRASI follow-up çipleri KALDI: onlar bir menü
+                    değil, o cevaba bağlı sıradaki adım. */}
                 <div style={{ marginBottom: 10 }}>Sana nasıl yardımcı olabilirim?</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {greetChips(p1s, SAMPLE_QUESTIONS).map(q => (
-                    <Button key={q} variant="secondary" size="sm" onClick={() => submit(q)}
-                      style={{ textAlign: 'left' }}>{q}</Button>
-                  ))}
-                </div>
               </div>
             )}
             {turns.map((t, i) => (

@@ -367,16 +367,44 @@ func (s *Server) inbox(w http.ResponseWriter, r *http.Request) {
 		// then are they split off and counted (applyInboxMinOcc). A single
 		// SQL count would ignore those narrows and report an inflated number,
 		// which is its own kind of lie.
-		excLimit := inboxEffectiveLimit(srcLimit, inboxExcStoreMax)
 		// v0.9.441 (operator-reported: "Exception'da gördüğüm kaydı
-		// Problems'te P3 seçsem de göremiyorum") — TÜR yalnız exception'a
-		// daraltılmışsa paylaşılan 500 tavanı anlamsız: tek kaynak tüm
-		// bütçeyi alır. 3.1K gruplu prod'da 2.6K grup yapısal olarak
-		// aday setine hiç giremiyordu; scanCapped şeridi durumu söylüyordu
-		// ama kayıt "yok" gibi görünüyordu. Cache anahtarı kind setini
-		// zaten taşıyor — bütçe farkı slot karıştırmaz.
-		if inboxKindsAllExcFamily(kinds) {
-			excLimit = inboxExcSoloMax
+		// Problems'te P3 seçsem de göremiyorum") — paylaşılan 500 tavanı
+		// exception ailesi için ANLAMSIZ dar. 3.1K gruplu prod'da 2.6K
+		// grup yapısal olarak aday setine hiç giremiyordu; scanCapped
+		// şeridi durumu söylüyordu ama kayıt "yok" gibi görünüyordu.
+		//
+		// v0.9.571 (operator-reported: "Gece bazı sql exception'ları
+		// gelmiş ama problems altında gözükmüyor") — o düzeltme YALNIZ
+		// tür filtresi sadece exception'ken uygulanıyordu; VARSAYILAN
+		// görünüm (tüm türler seçili) hâlâ 500'e sıkışıyordu.
+		//
+		// Somut vaka: 2.4K gruplu filoda gece 03:04-03:06 arasında biten
+		// bir ORA-18730 patlaması. Aday penceresi last_seen sıralı
+		// olduğu için, sabah 08:20'de ilk 500 satır çoktan daha taze
+		// gruplarla dolmuştu ve patlama pencereye HİÇ giremedi. Operatör
+		// Exceptions sayfasında 2441 kaydı görürken Problems'ta yoktu.
+		//
+		// Bütçe artık KAYNAĞIN MALİYETİNE bağlı, kaç tür seçili
+		// olduğuna değil: exception_groups küçük bir ReplacingMergeTree
+		// state tablosu ve 3000 satırlık FINAL okuma inbox'ın 15s
+		// cache'i arkasında ucuz — bu gerekçe diğer kaynakların seçili
+		// olmasından etkilenmiyor. Cache anahtarı kind setini zaten
+		// taşıyor, bütçe farkı slot karıştırmaz.
+		//
+		// DİKKAT — bağlayıcı kısıt TAVAN DEĞİL TABANDI. İlk düzeltme
+		// denemem tavanı 500'den 3000'e çıkardı ve HİÇBİR ŞEY
+		// değiştirmezdi: varsayılan görünüm daraltılmamış sayıldığı
+		// için srcLimit = inboxBaseScan = 200. Yani exception kaynağı
+		// zaten 200 aday görüyordu; 500'lük tavana hiç değmiyordu.
+		// 2.4K gruplu bir filoda 200 satırlık last_seen penceresi,
+		// birkaç saat önce bitmiş bir patlamayı kesinlikle dışarıda
+		// bırakır.
+		//
+		// Bu yüzden exception bütçesi bir TABAN: kaynak ucuz olduğu
+		// için diğer kaynakların dar taramasına ORTAK OLMAZ.
+		excLimit := srcLimit
+		if excLimit < inboxExcScanMax {
+			excLimit = inboxExcScanMax
 		}
 		// v0.9.353 — teamIsEmpty short-circuits BOTH exception fetches: the
 		// exception filter's Services field treats an empty slice as "no
@@ -753,16 +781,22 @@ const inboxBaseScan = 200
 // the one source most likely to be truncated was also the one that could never
 // raise the flag. The probe now compares against what the store will actually
 // return.
-const inboxExcStoreMax = 500
 
-// inboxExcSoloMax (v0.9.441) — TÜR filtresi yalnız exception'ken aday
-// tavanı: tek kaynak, paylaşılan bütçeye sıkışmaz. Prod vakası: 3.1K
-// gruplu filoda son dakikalarda ateşleyen grup sayısı 500'ü aşınca
-// bugün doğan gruplar last_seen-sıralı aday penceresinden düşüyordu —
-// sayfada görünen kayıt inbox'ta P3 açıkken bile yoktu. exception_groups
-// küçük bir ReplacingMergeTree state tablosu — 3000 satırlık FINAL
-// okuma inbox'ın 15s cache'i arkasında ucuz.
-const inboxExcSoloMax = 3000
+// inboxExcScanMax (v0.9.441, v0.9.571'de HER duruma genişletildi) —
+// exception ailesinin aday tavanı.
+//
+// Neden paylaşılan 500'den ayrı: aday penceresi last_seen sıralı ve
+// exception grup sayısı binlerle ölçülüyor. 500'lük pencere, birkaç
+// saat önce SONA ERMİŞ bir patlamayı yapısal olarak dışarıda bırakır —
+// grup hâlâ açık, sayfada görünüyor, ama inbox'a hiç aday olmuyor.
+//
+// v0.9.441 bunu yalnız "tür filtresi sadece exception" hâlinde
+// düzeltmişti; varsayılan görünüm (tüm türler) 500'de kalmıştı ve aynı
+// hata v0.9.571'de tekrar raporlandı. Bütçe kaynağın MALİYETİNE bağlı
+// olmalı, kaç tür seçili olduğuna değil: exception_groups küçük bir
+// ReplacingMergeTree state tablosu ve 3000 satırlık FINAL okuma
+// inbox'ın 15s cache'i arkasında ucuz.
+const inboxExcScanMax = 3000
 const inboxIncStoreMax = 1000
 const inboxNoStoreMax = 0 // sources that honour the requested limit
 
@@ -1464,21 +1498,6 @@ var httpErrorTypeGo = regexp.MustCompile(chstore.HTTPErrorTypeRe)
 
 func isHTTPErrorType(exType string) bool {
 	return httpErrorTypeGo.MatchString(exType)
-}
-
-// inboxKindsAllExcFamily — v0.9.441 solo bütçesinin v0.9.443 genellemesi:
-// seçili TÜR seti yalnız exception ailesinden (exception/httperror)
-// oluşuyorsa tek kaynak tüm aday bütçesini alır.
-func inboxKindsAllExcFamily(kinds []string) bool {
-	if len(kinds) == 0 {
-		return false
-	}
-	for _, k := range kinds {
-		if k != "exception" && k != "httperror" {
-			return false
-		}
-	}
-	return true
 }
 
 // fmtThousands — binlik ayraçlı sayı; "18217 total" yerine "18,217 total".

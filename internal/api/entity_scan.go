@@ -70,3 +70,35 @@ func lowerKnownSet(names ...string) map[string]bool {
 	}
 	return known
 }
+
+// addShownTokens — modele GÖSTERİLEN bir metindeki servis-biçimli
+// jetonları bilinen kümeye ekler (v0.9.598).
+//
+// İlke basit ve kalkanın kendi tanımından çıkıyor: kalkan "çıktıda
+// olup GİRDİDE olmayan" adı yakalar. Öyleyse girdide GEÇEN her jeton,
+// tanımı gereği bilinendir — nerede geçtiği (servis adı mı, bir
+// CHANNEL_CODE değeri mi, bir hata mesajının içi mi) fark etmez.
+//
+// Neden gerekliydi: v0.9.580 snapshot'a iş-boyutu kırılımı
+// (CHANNEL_CODE/FUNCTION_CODE) ve örnek korelasyon kimlikleri basmaya
+// başladı ama bilinen küme güncellenmedi. Model kendisine VERDİĞİMİZ
+// bir değeri alıntıladığında ("internet-banking" gibi tireli-küçük
+// harfe inen her değer) kalkan onu uydurma sanıyordu: halüsinasyon
+// koruması yanlış alarm üretip DOĞRU cevabı şüpheli gösteriyordu.
+//
+// Bu, kalkanı zayıflatmaz. Aynı tarayıcıyla aynı metinden çıkarılan
+// jetonlar ekleniyor, yani "gösterildi mi" sorusuna tam olarak
+// tarayıcının sorduğu biçimde cevap veriliyor. Ham metni tek anahtar
+// olarak eklemek YETMEZDİ: tarayıcı jeton düzeyinde eşleşiyor ve bir
+// request_id'nin ("8f3c-4a2b") içinden ayrı bir jeton çıkarabiliyor.
+func addShownTokens(known map[string]bool, texts ...string) {
+	for _, text := range texts {
+		low := strings.ToLower(text)
+		if low != "" {
+			known[low] = true
+		}
+		for _, m := range serviceTokenRe.FindAllString(low, -1) {
+			known[m] = true
+		}
+	}
+}

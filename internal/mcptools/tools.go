@@ -567,10 +567,14 @@ func listProblemsTool(d Deps) mcp.Tool {
 				Severity: a.Severity,
 				Limit:    page,
 			}
+			// v0.9.583 — öncelik daraltması AÇIKÇA iki adım. Eskiden
+			// ProblemFilter.Priority alanına yazılıyordu ama mağaza o
+			// alana HİÇ bakmıyordu; alan silindi (bkz. problem.go).
+			var prios []string
 			if a.Priority != "" {
-				f.Priority = []string{a.Priority}
-				// Daraltma varsa tarama genişler (kanonik kural,
-				// sayfa yoluyla AYNI fonksiyondan).
+				prios = []string{a.Priority}
+				// Daraltma Go'da olduğu için tarama genişler (kanonik
+				// kural, sayfa yoluyla AYNI fonksiyondan).
 				f.Limit = chstore.ProblemScanLimit(page, true)
 			}
 			rows, err := d.Store.ListProblems(ctx, f)
@@ -589,7 +593,7 @@ func listProblemsTool(d Deps) mcp.Tool {
 			// priority argümanı SQL'de UYGULANMAZ (öncelik okuma anı
 			// hesabı, CH satırında yok — problem.go:594-605). Daraltma
 			// Go'da yapılmazsa argüman sessizce yok sayılır.
-			rows = chstore.FilterProblemsByPriority(rows, f.Priority)
+			rows = chstore.FilterProblemsByPriority(rows, prios)
 			rows = chstore.SortProblemsByPriority(rows)
 			// Genişletilmiş tarama SAYFAYA kırpılır — model 25 satır
 			// istediyse 125 satır almasın.

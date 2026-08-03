@@ -9662,7 +9662,11 @@ func (s *Server) listProblems(w http.ResponseWriter, r *http.Request) {
 	clusterFilter := strings.TrimSpace(q.Get("cluster"))
 	f := chstore.ProblemFilter{
 		Status: q.Get("status"), Service: q.Get("service"),
-		Severity: q.Get("severity"), Priority: prios,
+		Severity: q.Get("severity"),
+		// v0.9.583 — Priority alanı ProblemFilter'dan KALDIRILDI: mağaza
+		// ona hiç bakmıyordu (öncelik okuma anı hesabı, CH kolonu değil).
+		// Daraltma aşağıda AÇIKÇA yapılıyor; tarama da problemScanLimit
+		// ile ona göre genişletiliyor (birkaç satır aşağıda).
 		// v0.8.387 — env-separation Phase 3: the global ?env= picker.
 		// Service-scoped semantics (problems carry no env dimension;
 		// ProblemFilter.Env narrows to services seen in the env in the

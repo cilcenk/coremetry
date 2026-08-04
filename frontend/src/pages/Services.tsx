@@ -24,6 +24,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getItem, setItem } from '@/lib/storage';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // v0.8.251 — the page's hand-rolled SortKey/NATURAL_DIR/SortTh server-sort
 // system moved into the shared DataTable primitive's serverSort mode. The
@@ -445,7 +446,7 @@ export default function ServicesPage() {
       <Topbar title="Services" range={range} onRangeChange={setRange} />
       <div id="content">
         {data != null && (
-          <div className="controls">
+          <PageControls sticky>
             <ServicePicker value={serviceFilter} onChange={setServiceFilter}
               onEnter={apply}
               placeholder="Filter services…" width={220} />
@@ -559,7 +560,7 @@ export default function ServicesPage() {
                 Last ⏭
               </Button>
             </span>
-          </div>
+          </PageControls>
         )}
 
         {data === undefined && <TableSkeleton rows={10} cols={7} />}

@@ -113,20 +113,43 @@ func promotedAttrNeedsRepair(have string, keys []string) bool {
 // no-op olur ve eski (bozuk ama var olan) kolon yerinde kalır. Probe
 // onu zaten kaydetmez → dizi yolu → doğru-ama-yavaş. Kolonsuz kalmaktan
 // iyidir.
-func promotedAttrDDL(a promotedAttr, have string, exists bool) []string {
-	add := fmt.Sprintf(
-		"ALTER TABLE spans ADD COLUMN IF NOT EXISTS %s LowCardinality(String) MATERIALIZED %s",
-		a.col, promotedAttrExpr(a.keys))
-	if !exists {
-		return []string{add}
+// v0.9.623 — skip index de bu listeye girdi ve SIRA ZORUNLU.
+//
+// ÖLÇÜLDÜ (CH 24.8): indeksi duran bir kolonu düşürmek
+//
+//	Code: 47 … Cannot apply mutation because it breaks skip index
+//	           idx_attr_channel_code. (UNKNOWN_IDENTIFIER)
+//
+// ile REDDEDİLİYOR. Yani onarım önce indeksi düşürmek zorunda. İki
+// ayrı yerde iki yarım sıra tutmak yerine tek sıralı liste — bu
+// oturumun tekrar eden dersi: bir kural iki yere bölününce ayrışıyor.
+//
+// idxExists ayrı bir parametre çünkü `ADD INDEX IF NOT EXISTS`'i her
+// boot göndermek tıkalı bir dağıtık DDL kuyruğunda bedava değil
+// (v0.9.607/608'in tüm konusu buydu): sonucu belli bir tur.
+func promotedAttrDDL(a promotedAttr, have string, colExists, idxExists bool) []string {
+	idx := "idx_" + a.col
+	needsRepair := colExists && promotedAttrNeedsRepair(have, a.keys)
+
+	var out []string
+	if needsRepair && idxExists {
+		out = append(out, fmt.Sprintf("ALTER TABLE spans DROP INDEX IF EXISTS %s", idx))
 	}
-	if !promotedAttrNeedsRepair(have, a.keys) {
-		return nil
+	if needsRepair {
+		out = append(out, fmt.Sprintf("ALTER TABLE spans DROP COLUMN IF EXISTS %s", a.col))
 	}
-	return []string{
-		fmt.Sprintf("ALTER TABLE spans DROP COLUMN IF EXISTS %s", a.col),
-		add,
+	if !colExists || needsRepair {
+		out = append(out, fmt.Sprintf(
+			"ALTER TABLE spans ADD COLUMN IF NOT EXISTS %s LowCardinality(String) MATERIALIZED %s",
+			a.col, promotedAttrExpr(a.keys)))
 	}
+	// Onarım indeksi düşürdüyse idxExists'e bakmadan geri konur.
+	if !idxExists || needsRepair {
+		out = append(out, fmt.Sprintf(
+			"ALTER TABLE spans ADD INDEX IF NOT EXISTS %s %s TYPE set(0) GRANULARITY 4",
+			idx, a.col))
+	}
+	return out
 }
 
 // spansColumnExpr — spans üzerindeki bir kolonun MATERIALIZED ifadesi.
@@ -150,6 +173,23 @@ func (s *Store) spansColumnExpr(ctx context.Context, col string) (string, bool) 
 	return expr, true
 }
 
+// spansIndexExists — spans üzerinde bu adda bir skip index var mı?
+//
+// Hata hâlinde false döner: emin olamadığımızda `ADD INDEX IF NOT
+// EXISTS` göndermek doğru taraf — fazladan bir no-op zararsız, eksik
+// bir indeks yavaş.
+func (s *Store) spansIndexExists(ctx context.Context, name string) bool {
+	var n uint64 // count() UInt64 döner (v0.9.595 dersi)
+	if err := s.conn.QueryRow(ctx,
+		`SELECT count() FROM system.data_skipping_indices
+		 WHERE database = currentDatabase()
+		   AND table IN ('spans', 'spans_local')
+		   AND name = ?`, name).Scan(&n); err != nil {
+		return false
+	}
+	return n > 0
+}
+
 // repairPromotedAttrCols — terfi kolonlarını istenen ifadeye getirir.
 //
 // Dış Distributed + cluster_name boşken ATLANIR (v0.8.185/186 emsali,
@@ -161,22 +201,55 @@ func (s *Store) repairPromotedAttrCols(ctx context.Context) {
 		return
 	}
 	for _, a := range promotedAttrs {
-		have, exists := s.spansColumnExpr(ctx, a.col)
-		stmts := promotedAttrDDL(a, have, exists)
+		have, colExists := s.spansColumnExpr(ctx, a.col)
+		idxExists := s.spansIndexExists(ctx, "idx_"+a.col)
+		stmts := promotedAttrDDL(a, have, colExists, idxExists)
 		if len(stmts) == 0 {
 			continue
 		}
-		if exists {
+		if colExists && promotedAttrNeedsRepair(have, a.keys) {
 			log.Printf("[chstore] %s ifadesi eksik yazım taşıyor — DROP+ADD ile onarılıyor (eski part'lar okuma anında hesaplanır)", a.col)
 		}
 		for _, q := range stmts {
 			if err := s.execDDL(ctx, q); err != nil {
-				// Soft-fail: terfi kolonu saf bir hız optimizasyonu.
-				// Probe zaten dolmamış kolonu kaydetmiyor, yani
-				// başarısızlık "yavaş" demek, "yanlış" değil.
+				// Soft-fail: terfi kolonu + indeksi saf birer hız
+				// optimizasyonu. Probe zaten dolmamış kolonu
+				// kaydetmiyor, yani başarısızlık "yavaş" demek,
+				// "yanlış" değil.
+				//
+				// Distributed engine'de ADD_INDEX kod 48 döner
+				// (cluster_name boşsa adaptDDL _local'e çeviremiyor) —
+				// store.go'daki skip-index döngüsüyle aynı gerekçe.
 				log.Printf("[chstore] terfi kolonu DDL'i başarısız (yumuşak): %v", err)
 				break
 			}
+		}
+		// v0.9.623 — asıl kazanç burada. Kolon tek başına yalnız 2×
+		// çünkü YENİ eklenen bir MATERIALIZED kolon eski part'larda
+		// SAKLANMAZ, okuma anında diziden hesaplanır. Skip index ise
+		// granülü tamamen eliyor:
+		//
+		//	dizi açma            10.000.000 satır   3.90 GiB   362 ms
+		//	kolon                10.000.000 satır   1.98 GiB   204 ms
+		//	kolon + set(0)        1.310.720 satır    261 MiB    81 ms
+		//
+		// idx_kind / idx_db_system / idx_status ile aynı biçim
+		// (store.go ~2192): düşük kardinaliteli LowCardinality kolonda
+		// `set(0)` TAM eleme yapar, bloom_filter'ın yanlış-pozitifi yok.
+		//
+		// İndeks YALNIZ YENİ PART'LARA uygulanır. `MATERIALIZE INDEX`
+		// BİLİNÇLİ OLARAK ÇALIŞTIRILMIYOR: 30 günlük spans üzerinde
+		// milyarlarca satırlık bir mutasyon olurdu. Gerek de yok —
+		// tipik pencere 6 saat, yani indeks eklendikten 6 saat sonra
+		// o pencere tamamen indeksli. Eski veri doğal olarak dolar.
+		if err := s.execDDL(ctx, fmt.Sprintf(
+			"ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_%s %s TYPE set(0) GRANULARITY 4",
+			a.col, a.col)); err != nil {
+			// Distributed engine'de ADD_INDEX kod 48 döner (cluster_name
+			// boşsa adaptDDL _local'e çeviremiyor) — store.go'daki
+			// skip-index döngüsüyle aynı gerekçe: saf sorgu-zamanı
+			// optimizasyonu, eksikliği yavaşlatır ama bozmaz.
+			log.Printf("[chstore] %s skip index'i eklenemedi (yumuşak): %v", a.col, err)
 		}
 	}
 }

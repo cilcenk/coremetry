@@ -28,7 +28,7 @@ const SLOW_COLS: DataTableColumn<SlowQueryRow>[] = [
   // which database it actually was. 'Engine' above keeps the old value under
   // an honest label rather than being repurposed.
   { id: 'dbName',     label: 'Database',               sortValue: r => r.dbName ?? '', naturalDir: 'asc', width: 130 },
-  { id: 'statement',  label: 'Statement (normalised)', sortValue: r => r.statement,  naturalDir: 'asc', width: 380 },
+  { id: 'statement',  label: 'Statement (normalised)', sortValue: r => r.statement,  naturalDir: 'asc', flex: true },
   { id: 'count',      label: 'Calls',      sortValue: r => r.count,      numeric: true, width: 90 },
   { id: 'avgMs',      label: 'Avg ms',     sortValue: r => r.avgMs,      numeric: true, width: 90 },
   // v0.9.265 — P50 next to Avg so a row reads "typical" then "tail".
@@ -208,7 +208,7 @@ export default function SlowQueriesPage() {
           </Empty>
         )}
         {rows && rows.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} leading={[36]} />
               <DataTableHead dt={dt} leading={<th style={{ width: 36 }}></th>} />

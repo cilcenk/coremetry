@@ -14,10 +14,10 @@ import { PageControls } from '@/components/ui/PageControls';
 
 // Columns for the shared sortable + resizable DataTable.
 const USER_COLS: DataTableColumn<UserRow>[] = [
-  { id: 'email',      label: 'Email',       sortValue: u => u.email,             naturalDir: 'asc',  width: 240 },
+  { id: 'email',      label: 'Email',       sortValue: u => u.email,             naturalDir: 'asc', flex: true },
   { id: 'role',       label: 'Role',        sortValue: u => u.role,              naturalDir: 'asc',  width: 120 },
   { id: 'customRole', label: 'Custom role', width: 150 },
-  { id: 'team',       label: 'Team',        sortValue: u => u.team ?? '',        naturalDir: 'asc',  width: 140 },
+  { id: 'team',       label: 'Team',        sortValue: u => u.team ?? '',        naturalDir: 'asc', flex: true },
   { id: 'provider',   label: 'Provider',    sortValue: u => u.authProvider ?? '', naturalDir: 'asc', width: 110 },
   // v0.8.403 — presence. Sort key puts online users first, then most
   // recently seen; never-seen (no stamp) sinks to the bottom.
@@ -165,7 +165,7 @@ export default function UsersPage() {
           </Empty>
         )}
         {users && users.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />

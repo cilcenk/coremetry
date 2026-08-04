@@ -64,7 +64,7 @@ const miniSparkBtn: React.CSSProperties = {
 };
 
 const OP_COLS: DataTableColumn<OperationSummary>[] = [
-  { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc',  width: 440 },
+  { id: 'name',      label: 'Operation', sortValue: r => r.name,            naturalDir: 'asc', flex: true },
   // v0.9.347 — Trend hücresi ÜÇE bölündü (calls · errors · p99).
   //
   // Operatör: "doğrudan sparkline olarak göstersek ve üzerine tıklayınca
@@ -356,7 +356,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
           tableLayout:fixed. Body cell order tracks OP_COLS:
           Operation · Trend · Impact · Calls · Err% · Avg · P50 · P95 ·
           P99 · Apdex. */}
-      <div className="table-wrap">
+      <div className="table-wrap is-fit">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} />
           {/* v0.9.498 — Trend başlığı üç serinin lejantını taşıyor. Lejant

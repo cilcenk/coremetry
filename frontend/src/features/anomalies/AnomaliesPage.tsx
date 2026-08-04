@@ -56,7 +56,7 @@ const DEFAULT_EXC_SORT = { id: 'lastSeen' as SortKey, dir: 'desc' as const };
 // exceptionGroupsOrderBy's multiIf.
 const EXC_COLS: DataTableColumn<ExceptionGroup>[] = [
   { id: 'state',       label: 'State',       sortValue: g => g.state,       naturalDir: 'desc', width: 100 },
-  { id: 'type',        label: 'Exception',   sortValue: g => g.type,        naturalDir: 'asc',  width: 400 },
+  { id: 'type',        label: 'Exception',   sortValue: g => g.type,        naturalDir: 'asc', flex: true },
   { id: 'service',     label: 'Service',     sortValue: g => g.service,     naturalDir: 'asc',  width: 150 },
   { id: 'occurrences', label: 'Occurrences', sortValue: g => g.occurrences, numeric: true,      width: 100 },
   { id: 'firstSeen',   label: 'First seen',  sortValue: g => g.firstSeen,   width: 150 },
@@ -91,7 +91,7 @@ const PROBLEM_COLS: DataTableColumn<Problem>[] = [
   { id: 'service',  label: 'Service',  sortValue: p => p.service,   naturalDir: 'asc', width: 170 },
   { id: 'metric',   label: 'Metric',   sortValue: p => p.metric,    naturalDir: 'asc', width: 150 },
   { id: 'value',    label: 'Value',    sortValue: p => p.value,     numeric: true,     width: 110 },
-  { id: 'rule',     label: 'Rule',     sortValue: p => p.ruleName,  naturalDir: 'asc', width: 420 },
+  { id: 'rule',     label: 'Rule',     sortValue: p => p.ruleName,  naturalDir: 'asc', flex: true },
   { id: 'started',  label: 'Started',  sortValue: p => p.startedAt, width: 150 },
   { id: 'status',   label: 'Status',   sortValue: p => p.status,    naturalDir: 'asc', width: 100 },
 ];

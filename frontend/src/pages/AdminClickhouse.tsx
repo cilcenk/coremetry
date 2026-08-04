@@ -177,7 +177,8 @@ type Coord = {
 };
 
 const COORD_COLS: DataTableColumn<Coord>[] = [
-  { id: 'host',    label: 'Host',      sortValue: c => c.host,     naturalDir: 'asc',  width: 220 },
+  // v0.9.649 — ESNEK: host adı değişken uzunlukta, artanı emer.
+  { id: 'host',    label: 'Host',      sortValue: c => c.host,     naturalDir: 'asc', flex: true },
   // Entry = bu node'un GİRİŞ NOKTASI olduğu sorgu sayısı. Panelin asıl
   // rakamı: shard alt-sorguları buna girmez, yani saf koordinatör yükü.
   { id: 'initial', label: 'Entry',     sortValue: c => c.initial,  numeric: true, naturalDir: 'desc', width: 110 },

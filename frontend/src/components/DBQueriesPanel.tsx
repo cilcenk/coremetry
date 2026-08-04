@@ -27,7 +27,7 @@ import type { DBQueryStat, FilterExpr } from '@/lib/types';
 // sorting for free. The trailing Traces-drill column is layout-only
 // (no sortValue → not clickable, still resizable).
 const DBQ_COLS: DataTableColumn<DBQueryStat>[] = [
-  { id: 'statement',  label: 'Statement', sortValue: r => r.statement,      naturalDir: 'asc', width: 380, minWidth: 160 },
+  { id: 'statement',  label: 'Statement', sortValue: r => r.statement,      naturalDir: 'asc', flex: true, minWidth: 160 },
   { id: 'dbSystem',   label: 'DB',        sortValue: r => r.dbSystem || '', naturalDir: 'asc', width: 90 },
   { id: 'count',      label: '×N',     sortValue: r => r.count,      numeric: true, width: 80 },
   { id: 'totalMs',    label: 'Total',  sortValue: r => r.totalMs,    numeric: true, width: 90 },

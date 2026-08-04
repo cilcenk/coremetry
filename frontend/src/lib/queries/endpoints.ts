@@ -13,7 +13,7 @@ import { api } from '@/lib/api';
 export function useEndpoints(params: Parameters<typeof api.endpoints>[0]) {
   return useQuery({
     queryKey: ['endpoints', 'list', params],
-    queryFn: async () => (await api.endpoints(params)) ?? [],
+    queryFn: async ({ signal }) => (await api.endpoints(params, signal)) ?? [],
     refetchInterval: 30_000,
     // v0.8.462 — staleTime = refetchInterval: poll penceresi içindeki
     // re-mount, zaten planlı arka plan poll'unun üstüne ikinci fetch
@@ -38,7 +38,7 @@ export function useEndpointDetail(
 ) {
   return useQuery({
     queryKey: ['endpoints', 'detail', params],
-    queryFn: async () => api.endpointDetail(params!),
+    queryFn: async ({ signal }) => api.endpointDetail(params!, signal),
     enabled: params !== null,
     staleTime: 30_000,
   });
@@ -51,7 +51,7 @@ export function useEndpointSplit(
 ) {
   return useQuery({
     queryKey: ['endpoints', 'split', params],
-    queryFn: async () => api.endpointSplit(params!),
+    queryFn: async ({ signal }) => api.endpointSplit(params!, signal),
     enabled: params !== null && params.by !== '',
     staleTime: 30_000,
   });
@@ -70,7 +70,7 @@ export function useEndpointDownstream(
 ) {
   return useQuery({
     queryKey: ['endpoints', 'downstream', params],
-    queryFn: async () => api.endpointDownstream(params!),
+    queryFn: async ({ signal }) => api.endpointDownstream(params!, signal),
     enabled: params !== null,
     staleTime: 60_000,
   });

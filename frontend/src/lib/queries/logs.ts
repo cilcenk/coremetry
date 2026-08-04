@@ -26,7 +26,7 @@ export function useLogs(params: LogsParams) {
   const pagingParams: LogsParams = { ...params, paging: true };
   return useQuery<LogsResponse>({
     queryKey: ['logs', 'list', pagingParams],
-    queryFn: () => api.logs(pagingParams),
+    queryFn: ({ signal }) => api.logs(pagingParams, signal),
     staleTime: 15_000,
     refetchOnWindowFocus: false,
     // v0.8.260 — "Load more" accumulation on /logs: a cursor change

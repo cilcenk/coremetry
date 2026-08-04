@@ -137,9 +137,9 @@ export const api = {
   // response shape introduced for /services. Existing callers
   // (autocomplete pickers, slos, alerts, …) keep their array
   // contract.
-  services: async (r: RangeParams, limit?: number, name?: string): Promise<Service[] | null> => {
+  services: async (r: RangeParams, limit?: number, name?: string, signal?: AbortSignal): Promise<Service[] | null> => {
     const resp = await get<{ services: Service[]; hasMore: boolean } | null>(
-      `/api/services?${qs({ ...r, limit, name })}`);
+      `/api/services?${qs({ ...r, limit, name })}`, signal);
     return resp ? resp.services : null;
   },
   // Page-aware variant — returns the full {services, hasMore,
@@ -295,7 +295,7 @@ export const api = {
   // Global service-level topology graph — nodes + directed edges
   // derived from sampled recent traces. Powers the /service-map
   // page; 30s server-side cache.
-  serviceMap: (since: GoDuration = '15m', samples = 200, diff?: string, topN = 0) => {
+  serviceMap: (since: GoDuration = '15m', samples = 200, diff?: string, topN = 0, signal?: AbortSignal) => {
     // diff is an optional "compare-to" duration (e.g. "24h"). When
     // set, the backend returns the current topology with new /
     // removed nodes/edges flagged against that baseline window.
@@ -304,7 +304,7 @@ export const api = {
     const qs = `since=${since}&samples=${samples}`
       + (diff ? `&diff=${diff}` : '')
       + (topN > 0 ? `&topN=${topN}` : '');
-    return get<import('./types').ServiceMap>(`/api/service-map?${qs}`);
+    return get<import('./types').ServiceMap>(`/api/service-map?${qs}`, signal);
   },
 
   // Topology — operation-level BFS rooted at one service, depth-
@@ -480,7 +480,7 @@ export const api = {
   traceLinks: (id: string) =>
     get<TraceLinks>(`/api/traces/${encodeURIComponent(id)}/links`),
 
-  logs:      (params: LogsParams)    => get<LogsResponse>(`/api/logs?${qs(params)}`),
+  logs:      (params: LogsParams, signal?: AbortSignal) => get<LogsResponse>(`/api/logs?${qs(params)}`, signal),
 
   metricNames: (service: string)     => get<MetricInfo[] | null>(`/api/metrics/names${service ? '?service=' + encodeURIComponent(service) : ''}`),
   // v0.9.464 (dürüstlük A12) — zarf {points, truncated}: nokta tavanı
@@ -1763,26 +1763,26 @@ export const api = {
   endpoints: (params: { from: number; to: number; service?: string; search?: string; cluster?: string; env?: string; limit?: number; compare?: 'prior'; groupBy?: 'signature'; sort?: string; dir?: 'asc' | 'desc';
     // v0.9.313 (brief N1) — which inbound surface. Omitted = http, the
     // pre-v0.9.313 table.
-    entry?: 'rpc' }) =>
-    get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`),
+    entry?: 'rpc' }, signal?: AbortSignal) =>
+    get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`, signal),
   // v0.8.360 — endpoint detail drill-down (Stage-2 slice E2). One
   // payload with per-section null tolerance; sig=1 marks path as an
   // ID-collapsed signature (the table's "group by shape" mode).
   // v0.9.306 — env/cluster carry the SAME scope the table row was
   // computed under. Without them the drawer aggregated every env for
   // the route while the table showed one: two truths, one screen.
-  endpointDetail: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }) =>
-    get<EndpointDetail>(`/api/endpoints/detail?${qs(params)}`),
+  endpointDetail: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }, signal?: AbortSignal) =>
+    get<EndpointDetail>(`/api/endpoints/detail?${qs(params)}`, signal),
   // v0.9.311 (brief N4) — "Where the time goes". SAMPLED over the
   // route's slowest traces; two raw-spans passes behind a 60s server
   // cache, so this is fetch-on-open and never polled.
-  endpointDownstream: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }) =>
-    get<EndpointDownstream>(`/api/endpoints/downstream?${qs(params)}`),
+  endpointDownstream: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }, signal?: AbortSignal) =>
+    get<EndpointDownstream>(`/api/endpoints/downstream?${qs(params)}`, signal),
   // v0.8.360 — split-by: top-10 values of one whitelisted attribute
   // with RED each. `by` must match the backend whitelist
   // (chstore.EndpointSplitDims — mirrored in ENDPOINT_SPLIT_DIMS).
-  endpointSplit: (params: { service: string; path: string; by: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }) =>
-    get<EndpointSplitResponse>(`/api/endpoints/split?${qs(params)}`),
+  endpointSplit: (params: { service: string; path: string; by: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }, signal?: AbortSignal) =>
+    get<EndpointSplitResponse>(`/api/endpoints/split?${qs(params)}`, signal),
   serviceAttrs: (service: string, from: number, to: number, opts?: { top?: number; samples?: number }) =>
     get<ServiceAttrsResponse>(
       `/api/services/${encodeURIComponent(service)}/attrs?from=${from}&to=${to}` +

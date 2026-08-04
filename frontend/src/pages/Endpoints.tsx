@@ -132,6 +132,24 @@ const DEFAULT_ENDPOINTS_SORT = { id: 'calls', dir: 'desc' as const };
 // hidden (it has no header to hide).
 const ALL_COL_IDS = ENDPOINT_COLS.filter(c => !c.headerHidden).map(c => c.id);
 
+// v0.9.642 — VARSAYILAN kolon kümesi (operatör-bildirimli: "Endpoints
+// tablosunda çok kolon olduğu için içerik sızıyor").
+//
+// 16 kolon ~1664px sürüyor; tipik dizüstünde içerik alanı ~1180px, yani
+// tablo yatay kayıyordu. Daraltma HİÇBİR ŞEY SİLMİYOR — gizlenenler
+// ColumnManager'da bir tık ötede ve ?cols= ile hâlâ adreslenebilir,
+// sıralama da çalışmaya devam ediyor (serverSort görünürlükten bağımsız).
+//
+// Varsayılan dışı bırakılanlar ve gerekçeleri:
+//   avgMs      P50/P95/P99 varken en az bilgilendirici olan; ortalama
+//              uç değerlerden sapıyor
+//   p90Ms      dört persentil bir fazla — P50 ortayı, P95/P99 kuyruğu
+//   spread     türetilmiş (p99/p50); değerli ama varsayılan olmak zorunda değil
+//   errors     mutlak sayı artık Error rate hücresinde ("%0,4 · 12")
+//   reqPerMin  Calls hücresinde ("1,2M · 340/dk")
+const DEFAULT_COL_IDS = ALL_COL_IDS.filter(
+  id => !['avgMs', 'p90Ms', 'spread', 'errors', 'reqPerMin'].includes(id));
+
 export default function EndpointsPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
@@ -307,11 +325,11 @@ export default function EndpointsPage() {
   // Widths/sort persistence (localStorage, keyed by column id) is
   // untouched: a re-shown column comes back at its remembered width.
   const visibleCols = useMemo(
-    () => parseColsParam(params.get('cols'), ALL_COL_IDS),
+    () => parseColsParam(params.get('cols'), ALL_COL_IDS, DEFAULT_COL_IDS),
     [params]);
   const setVisibleCols = (s: Set<string>) => setParams(prev => {
     const next = new URLSearchParams(prev);
-    const v = formatColsParam(s, ALL_COL_IDS);
+    const v = formatColsParam(s, ALL_COL_IDS, DEFAULT_COL_IDS);
     if (v) next.set('cols', v); else next.delete('cols');
     return next;
   }, { replace: true });
@@ -323,11 +341,15 @@ export default function EndpointsPage() {
   const visibleColumns = useMemo(
     () => ENDPOINT_COLS
       .filter(c => c.headerHidden || visibleCols.has(c.id))
+      // v0.9.642 — tek servise filtreliyken Service kolonu her satırda
+      // AYNI değeri taşıyor; bilgi zaten filtrenin kendisinde duruyor.
+      // 150px, tablonun en geniş ikinci kolonu.
+      .filter(c => !(c.id === 'service' && service !== ''))
       // v0.9.313 — "Path" is http.route; on the RPC surface the same
       // column carries the span NAME, and calling a gRPC method a path
       // would be a small lie repeated on every row.
       .map(c => (c.id === 'path' && entry === 'rpc' ? { ...c, label: 'Operation' } : c)),
-    [visibleCols, entry]);
+    [visibleCols, entry, service]);
   // onOpen + searchRef wire the app-wide keyboard nav: j/k select a
   // row, Enter/o open its service detail, "/" focuses the path filter.
   const dt = useDataTable<EndpointRow>({
@@ -614,6 +636,15 @@ export default function EndpointsPage() {
                         </td>}
                         {visibleCols.has('calls') && <td className="num mono">
                           {fmtNum(r.calls)}
+                          {/* v0.9.642 — Req/min varsayılandan çıktı; hızı
+                              BURADA taşıyoruz ki bilgi kaybolmasın. Ayrı
+                              kolon hâlâ ColumnManager'da (o zaman burada
+                              tekrar etmiyor). */}
+                          {!visibleCols.has('reqPerMin') && r.reqPerMin != null && (
+                            <span style={{ color: 'var(--text3)', marginLeft: 6 }}>
+                              · {fmtRate(r.reqPerMin)}
+                            </span>
+                          )}
                           {compare && <TrendDelta cur={r.calls} prior={r.priorCalls} kind="neutral" />}
                         </td>}
                         {visibleCols.has('errors') && <td className="num mono">
@@ -622,6 +653,15 @@ export default function EndpointsPage() {
                         </td>}
                         {visibleCols.has('errorRate') && <td className="num mono">
                           <span className={`badge ${errCls}`}>{r.errorRate.toFixed(2)}%</span>
+                          {/* v0.9.642 — Errors varsayılandan çıktı; mutlak
+                              sayı BURADA. Oran tek başına ölçek saklıyor:
+                              %50 iki çağrının biri de olabilir, 2M'nin
+                              1M'i de. */}
+                          {!visibleCols.has('errors') && r.errors > 0 && (
+                            <span style={{ color: 'var(--text3)', marginLeft: 6 }}>
+                              · {fmtNum(r.errors)}
+                            </span>
+                          )}
                         </td>}
                         {visibleCols.has('status') && <td><StatusBreakdown r={r} /></td>}
                         {visibleCols.has('reqPerMin') && <td className="num mono">{fmtRate(r.reqPerMin)}</td>}

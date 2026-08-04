@@ -44,3 +44,43 @@ describe('formatColsParam', () => {
     expect(formatColsParam(new Set(['service', 'ghost']), ALL)).toBe('service');
   });
 });
+
+// v0.9.642 — operatör-bildirimli: "Endpoints tablosunda çok kolon olduğu
+// için içerik sızıyor". Varsayılan kolon kümesi daraldı.
+//
+// Daraltma HİÇBİR ŞEY SİLMİYOR: gizlenenler ColumnManager'da bir tık
+// ötede, ?cols= ile hâlâ adreslenebilir. Bu testler o sözleşmeyi
+// çiviliyor.
+describe('defaultIds — varsayılan alt küme olabilir', () => {
+  const ALL2 = ['a', 'b', 'c', 'd'];
+  const DEF = ['a', 'b'];
+
+  it('param yoksa VARSAYILAN döner, hepsi değil', () => {
+    expect(parseColsParam(null, ALL2, DEF)).toEqual(new Set(DEF));
+    expect(parseColsParam('', ALL2, DEF)).toEqual(new Set(DEF));
+  });
+
+  it('varsayılan dışı kolon ?cols= ile GERİ GELEBİLİR', () => {
+    expect(parseColsParam('a,c', ALL2, DEF)).toEqual(new Set(['a', 'c']));
+    expect(parseColsParam('a,b,c,d', ALL2, DEF)).toEqual(new Set(ALL2));
+  });
+
+  it('varsayılan görünümde URL TEMİZ kalıyor', () => {
+    expect(formatColsParam(new Set(DEF), ALL2, DEF)).toBe('');
+  });
+
+  it('hepsi görünürken artık param YAZILIYOR (varsayılan değil çünkü)', () => {
+    expect(formatColsParam(new Set(ALL2), ALL2, DEF)).toBe('a,b,c,d');
+  });
+
+  it('defaultIds atlanırsa eski davranış birebir korunuyor', () => {
+    expect(parseColsParam(null, ALL2)).toEqual(new Set(ALL2));
+    expect(formatColsParam(new Set(ALL2), ALL2)).toBe('');
+  });
+
+  // Boş bir varsayılan kolonsuz tablo demek — paylaşılan link asla
+  // kolonsuz bir tablo üretmemeli (kodeğin özgün sözleşmesi).
+  it('geçersiz ?cols= varsayılana düşüyor', () => {
+    expect(parseColsParam('zzz,yyy', ALL2, DEF)).toEqual(new Set(DEF));
+  });
+});

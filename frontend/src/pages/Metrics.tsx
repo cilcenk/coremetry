@@ -162,7 +162,7 @@ export default function MetricsPage() {
                 </Empty>
               ) : (
                 <>
-                  <div className="table-wrap">
+                  <div className="table-wrap is-fit">
                     <table style={{ tableLayout: 'fixed', width: '100%' }}>
                       <DataTableColgroup dt={dt} />
                       <DataTableHead dt={dt} />

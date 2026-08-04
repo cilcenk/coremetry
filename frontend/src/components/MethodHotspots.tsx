@@ -90,7 +90,7 @@ export function MethodHotspots({ root }: { root: FlameNode }) {
           }}
         />
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap is-fit">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} />
           <DataTableHead dt={dt} />

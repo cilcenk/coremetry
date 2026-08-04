@@ -115,7 +115,7 @@ export default function ExternalPage() {
           </Empty>
         )}
         {rows && rows.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />

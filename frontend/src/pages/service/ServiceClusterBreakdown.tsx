@@ -103,7 +103,7 @@ export function ServiceClusterBreakdown({ service, range }: {
           fontWeight: 400, color: 'var(--text3)', textTransform: 'none',
         }}>· {clusters.length} cluster{clusters.length === 1 ? '' : 's'} with traces</span>
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap is-fit">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} />
           <DataTableHead dt={dt} />

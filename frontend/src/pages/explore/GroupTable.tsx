@@ -96,7 +96,7 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onFocus }: {
   };
 
   return (
-    <div className="table-wrap" style={{ marginTop: 12 }}
+    <div className="table-wrap is-fit" style={{ marginTop: 12 }}
       onMouseLeave={() => onFocus(null)}>
       <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '6px 8px 0' }}>
         <Button variant="secondary" size="sm" onClick={exportCSV}

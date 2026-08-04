@@ -11,8 +11,7 @@ import (
 // milyarlarca satırda terfi etmiş kolondan kat kat pahalı).
 func TestBusinessDimExpr(t *testing.T) {
 	// Terfi etmiş kolon kaydı boot'ta doluyor; testte elle kuruyoruz.
-	traceAttrMaterialized["CHANNEL_CODE"] = "attr_channel_code"
-	defer delete(traceAttrMaterialized, "CHANNEL_CODE")
+	withPromoted(t, "CHANNEL_CODE", "attr_channel_code")
 
 	t.Run("terfi etmis kolon dogrudan kullanilir", func(t *testing.T) {
 		expr, args := businessDimExpr("CHANNEL_CODE")

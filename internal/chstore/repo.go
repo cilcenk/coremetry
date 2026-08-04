@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -2397,16 +2398,43 @@ func buildGetTracesListSQL(whereSQL, havingSQL, sortCol, order string) string {
 // unapplied migration silently poison the other class; the projection
 // generator consults this map first, then delegates to WellKnown, then
 // falls back to the array lookup — one code path, three cost tiers.
-var traceAttrMaterialized = map[string]string{}
+// v0.9.625 — harita artık BOOT-SONRASI da güncellenebiliyor, bu yüzden
+// çıplak map değil atomic pointer.
+//
+// Sebep: küme kipinde boot DDL'i ERTELİYOR (ddl_defer.go, v0.9.614).
+// Terfi kolonu onarımı (v0.9.621) o kuyruğa giriyor, probe ise boot
+// sırasında SENKRON koşuyor — yani probe henüz onarılmamış kolonu
+// görüyor, kaydetmiyor ve düzeltme İKİNCİ BİR RESTART'a kadar devreye
+// girmiyor. Ertelenen DDL bitince yeniden probe edebilmek için haritanın
+// güvenle değiştirilebilir olması gerekiyor.
+//
+// Çıplak map'e boot sonrası yazmak Go'da "concurrent map read and map
+// write" fatal'i demekti — süreç çöker. Kopyala-ve-değiştir + atomic
+// pointer: okuyucular kilitsiz kalıyor, yazar yeni bir map yayınlıyor.
+var promotedColsPtr atomic.Pointer[map[string]string]
 
-// registerTraceAttrMaterialized populates the promoted-column map at BOOT
-// (migrate, after the probe confirms the columns resolve — v0.9.198). Boot-
-// only by contract: it runs before the API serves, so the lock-free reads in
-// traceExtrasProjection stay safe (the hasExCols/hasClusterCol precedent).
-func registerTraceAttrMaterialized(cols map[string]string) {
-	for k, col := range cols {
-		traceAttrMaterialized[k] = col
+// promotedCols — terfi kolonu haritasının o anki hâli. Dönen map SALT
+// OKUNUR: çağıran ASLA yazmamalı, yayınlanmış bir kopyadır.
+func promotedCols() map[string]string {
+	if m := promotedColsPtr.Load(); m != nil {
+		return *m
 	}
+	return nil
+}
+
+// registerTraceAttrMaterialized publishes the promoted-column map. Boot
+// (migrate, after the probe confirms the columns actually CARRY the data —
+// v0.9.621) and, in cluster mode, again once the deferred DDL lands
+// (v0.9.625). Copy-on-write: readers never see a partially built map.
+func registerTraceAttrMaterialized(cols map[string]string) {
+	next := map[string]string{}
+	for k, v := range promotedCols() {
+		next[k] = v
+	}
+	for k, col := range cols {
+		next[k] = col
+	}
+	promotedColsPtr.Store(&next)
 }
 
 // traceExtrasProjection builds the extras SELECT fragment for the requested
@@ -2424,7 +2452,7 @@ func traceExtrasProjection(attrs []string) (string, []any) {
 	sel := ""
 	args := []any{}
 	for i, key := range attrs {
-		if col, ok := traceAttrMaterialized[key]; ok {
+		if col, ok := promotedCols()[key]; ok {
 			sel += fmt.Sprintf(", anyIf(%s, %s != '') AS extra_%d", col, col, i)
 			continue
 		}

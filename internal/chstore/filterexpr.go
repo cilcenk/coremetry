@@ -88,7 +88,7 @@ var wellKnown = map[string]string{
 // pushes the key as a parameter. For numeric ops we cast to Float64 so that
 // even string-stored attributes compare correctly when they parse.
 func (f FilterExpr) SQL() (string, []any, error) {
-	return f.sql("", wellKnown, wellKnownResource, traceAttrMaterialized)
+	return f.sql("", wellKnown, wellKnownResource, promotedCols())
 }
 
 // SQLForMetricPoints resolves against metric_points' column set
@@ -111,7 +111,7 @@ func (f FilterExpr) SQLForMetricPoints() (string, []any, error) {
 // caller (relations.go uses the fixed literals "c" / "p"), never threaded
 // from user input. Keys and values still flow exclusively as `?` params.
 func (f FilterExpr) SQLAliased(alias string) (string, []any, error) {
-	return f.sql(alias, wellKnown, wellKnownResource, traceAttrMaterialized)
+	return f.sql(alias, wellKnown, wellKnownResource, promotedCols())
 }
 
 // qualCol prefixes a well-known column expression (which may itself be a

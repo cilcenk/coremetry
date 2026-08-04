@@ -185,7 +185,7 @@ func promotedAttrResolve(key string) (string, []any, bool) {
 		// Probe hangi yazımı doğruladıysa kolon o yazımla kayıtlı;
 		// hepsi aynı kolona işaret ediyor.
 		for _, k := range a.keys {
-			if col, ok := traceAttrMaterialized[k]; ok {
+			if col, ok := promotedCols()[k]; ok {
 				return col, nil, true
 			}
 		}

@@ -19,7 +19,7 @@ import (
 // uygulanmadı) ifade HER İKİ yazımı da denemeli — aksi halde kırılım
 // yine boş döner.
 func TestBusinessDimTriesBothSpellingsWithoutColumn(t *testing.T) {
-	if _, ok := traceAttrMaterialized["channel_code"]; ok {
+	if _, ok := promotedCols()["channel_code"]; ok {
 		t.Fatal("ön koşul: bu testte harita boş olmalı")
 	}
 	expr, args := businessDimExpr("CHANNEL_CODE")
@@ -40,8 +40,7 @@ func TestBusinessDimTriesBothSpellingsWithoutColumn(t *testing.T) {
 // Prod'un GERÇEK hâli: veri küçük harf, probe küçük harfli yazımı
 // doğruladı. Kod içi BÜYÜK harfli sabit yine de kolona ulaşmalı.
 func TestBusinessDimUppercaseConstantReachesLowercaseColumn(t *testing.T) {
-	traceAttrMaterialized["channel_code"] = "attr_channel_code"
-	t.Cleanup(func() { delete(traceAttrMaterialized, "channel_code") })
+	withPromoted(t, "channel_code", "attr_channel_code")
 
 	expr, args := businessDimExpr("CHANNEL_CODE")
 	if expr != "attr_channel_code" {
@@ -70,8 +69,7 @@ func TestBusinessDimUnknownKeyUnchanged(t *testing.T) {
 // sessizce başkasına eşlenmesi sürpriz olur. Kod içi sabit listeler bir
 // KAVRAMI ifade eder, kullanıcı girdisi bir ANAHTARI.
 func TestUserFilterStaysCaseSensitive(t *testing.T) {
-	traceAttrMaterialized["channel_code"] = "attr_channel_code"
-	t.Cleanup(func() { delete(traceAttrMaterialized, "channel_code") })
+	withPromoted(t, "channel_code", "attr_channel_code")
 
 	sql, _, err := FilterExpr{Key: "CHANNEL_CODE", Op: "=", Values: []string{"030101"}}.SQL()
 	if err != nil {

@@ -88,4 +88,43 @@ func (s *Store) runDeferredDDL(list []string) {
 	}
 	log.Printf("[chstore] arka plan DDL bitti: %d uygulandı, %d başarısız, süre %s",
 		okN, failN, time.Since(start).Round(time.Second))
+	s.reprobePromotedAttrs()
+}
+
+// reprobePromotedAttrs — ertelenen DDL indikten sonra terfi kolonlarını
+// YENİDEN dener.
+//
+// v0.9.625 — bu olmadan v0.9.621/623 küme kipinde İKİ RESTART istiyordu:
+//
+//	boot: repairPromotedAttrCols → execDDL → ERTELENDİ (koşmadı)
+//	boot: probePromotedAttrs     → kolon hâlâ bozuk → KAYDEDİLMEDİ
+//	arka plan: onarım uygulandı  → ama haritayı kimse güncellemiyor
+//	→ hızlanma bir sonraki restart'a kadar KAPALI
+//
+// Operatör deploy'u çeker, hiçbir şey değişmemiş görür. Kabul edilemez.
+//
+// Neden bir kez değil de geri çekilmeli birkaç deneme: dağıtık DDL
+// "kuyruğa alındı" (kod 159) BAŞARI sayılıyor (v0.9.604) — yani execDDL
+// döndüğünde ifade henüz UYGULANMAMIŞ olabilir. Denemeler bunu kapatıyor;
+// hiçbiri tutmazsa davranış bugünküyle aynı kalır (dizi yolu, doğru ama
+// yavaş) ve bir sonraki boot yeniden dener.
+//
+// Kayıt kopyala-ve-değiştir + atomic pointer üzerinden (repo.go), yani
+// bu goroutine okuyucularla yarışmıyor.
+func (s *Store) reprobePromotedAttrs() {
+	for _, wait := range []time.Duration{0, time.Minute, 5 * time.Minute, 15 * time.Minute} {
+		if wait > 0 {
+			time.Sleep(wait)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		found := s.probePromotedAttrs(ctx)
+		cancel()
+		if len(found) == 0 {
+			continue
+		}
+		registerTraceAttrMaterialized(found)
+		log.Printf("[chstore] terfi kolonları ertelenen DDL sonrası devreye girdi (%d yazım) — restart gerekmedi", len(found))
+		return
+	}
+	log.Printf("[chstore] terfi kolonları hâlâ doğrulanamadı — dizi yolunda kalınıyor, sonraki boot yeniden deneyecek")
 }

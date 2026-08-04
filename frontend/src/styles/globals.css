@@ -2112,11 +2112,27 @@ button.accent.copied {
 
 /* Overview chart hover tooltip (uPlot setCursor popover) — ported from the
    design .tt/.tt-r/.lbl with globals.css tokens. Referenced by OverviewChart. */
+/* v0.9.631 — operatör-bildirimli: "neden imlecin sol üstünde çıkıyor,
+   sağ altta çıksa daha iyi, Grafana gibi".
+
+   `transform: translate(-50%, -110%)` KALDIRILDI. İki yerleşim sistemi
+   birbiriyle kavga ediyordu: placeTooltip (chartTooltip.ts) sağ-altı
+   TERCİH EDEN bir sol-üst köşe hesaplıyor ve panel içine clamp'liyor;
+   sonra bu transform kutuyu yarım genişlik SOLA + %110 yükseklik YUKARI
+   çekiyordu. Hesap ne verirse versin sonuç sol-üsttü — ve dönüşüm
+   clamp'ten SONRA uygulandığı için clamp hiçbir şey garanti etmiyordu,
+   kutu panelden de taşıyordu.
+
+   Transform, placeTooltip'ten ÖNCEki dönemin kalıntısı (o zaman konum
+   ham imleç koordinatıydı ve kutuyu imlecin üstüne kaldırmak gerekiyordu).
+   placeTooltip eklenince gereksizleşti ama silinmedi.
+
+   Her iki tüketici de (TimeChart, OverviewChart) placeTooltip
+   kullanıyor, yani ikisi de bu düzeltmeden yararlanıyor. */
 .ov-tt {
   position: absolute; pointer-events: none; background: var(--bg1);
   border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: var(--shadow-pop);
   padding: 8px 10px; font-size: 11.5px; z-index: 30; min-width: 130px;
-  transform: translate(-50%, -110%);
 }
 .ov-tt .ov-tt-t { color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; margin-bottom: 5px; }
 .ov-tt .ov-tt-r { display: flex; align-items: center; gap: 7px; justify-content: space-between; }

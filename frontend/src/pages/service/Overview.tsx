@@ -449,11 +449,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         <MetricPanel compact menuOnly title="Throughput" metricQuery={mkThroughput('stat')}>
           <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(lat?.rate)} delta={computeDelta(vals(lat?.rate))} goodWhenUp note={latScopeNote} />
         </MetricPanel>
-        <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('stat')}>
-          <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(lat?.error_rate)} delta={computeDelta(vals(lat?.error_rate))} goodWhenUp={false} note={latScopeNote} />
-        </MetricPanel>
+        {/* v0.9.631 (operatör: "failure rate yüzdesi grafiğin üzerinde olsun,
+            p99 ile yer değişsin") — Failure rate karosu SON sıraya alındı,
+            böylece altındaki RED grafik şeridinin ÜÇÜNCÜ grafiği (Failure
+            rate) ile aynı kolona düşüyor: yüzde, ait olduğu eğrinin tam
+            üstünde okunuyor. */}
         <MetricPanel compact title="Response time · P99" metricQuery={mkLatency('p99', 'stat')}>
           <KpiTile lab="Response time · P99" val={p99Ms.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} note={latScopeNote} />
+        </MetricPanel>
+        <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('stat')}>
+          <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(lat?.error_rate)} delta={computeDelta(vals(lat?.error_rate))} goodWhenUp={false} note={latScopeNote} />
         </MetricPanel>
         {/* v0.9.483 (operatör: "bence response time mediana da gerek yok") —
             "Response time · median" karosu kaldırıldı; P99 karo olarak kalıyor.

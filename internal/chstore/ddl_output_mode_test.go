@@ -30,9 +30,17 @@ var goComment = regexp.MustCompile(`(?m)^\s*//.*$`)
 
 func storeSourceNoComments(t *testing.T) string {
 	t.Helper()
-	b, err := os.ReadFile("store.go")
+	return storeSourceNoCommentsFile(t, "store.go")
+}
+
+// storeSourceNoCommentsFile — herhangi bir chstore kaynağını YORUMSUZ
+// okur. Yorumları atmak şart: bu oturumda kaynak taramaları üç kez
+// kendi açıklama metinlerine takılıp yanlış sonuç verdi.
+func storeSourceNoCommentsFile(t *testing.T, name string) string {
+	t.Helper()
+	b, err := os.ReadFile(name)
 	if err != nil {
-		t.Fatalf("store.go okunamadı: %v", err)
+		t.Fatalf("%s okunamadı: %v", name, err)
 	}
 	return goComment.ReplaceAllString(string(b), "")
 }

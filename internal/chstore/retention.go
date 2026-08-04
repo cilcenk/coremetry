@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,7 @@ import (
 // RetentionSpec is the on-the-wire shape sent by /api/settings/retention.
 // Empty / zero fields preserve the existing value for that signal.
 type RetentionSpec struct {
-	Spans    string `json:"spans,omitempty"`    // e.g. "48h", "30d"
+	Spans    string `json:"spans,omitempty"` // e.g. "48h", "30d"
 	Logs     string `json:"logs,omitempty"`
 	Metrics  string `json:"metrics,omitempty"`
 	Profiles string `json:"profiles,omitempty"`
@@ -52,10 +53,14 @@ func (s *Store) GetRetention(ctx context.Context) (RetentionSpec, error) {
 			return RetentionSpec{}, err
 		}
 		switch k {
-		case "retention.spans":    sp.Spans = v
-		case "retention.logs":     sp.Logs = v
-		case "retention.metrics":  sp.Metrics = v
-		case "retention.profiles": sp.Profiles = v
+		case "retention.spans":
+			sp.Spans = v
+		case "retention.logs":
+			sp.Logs = v
+		case "retention.metrics":
+			sp.Metrics = v
+		case "retention.profiles":
+			sp.Profiles = v
 		}
 	}
 	return sp, rows.Err()
@@ -170,7 +175,7 @@ func (s *Store) SetRetention(ctx context.Context, sp RetentionSpec, actor string
 // So the exemplar COLUMNS get a column-level TTL riding retention.spans
 // while the row TTL keeps the aggregate history. Verified on CH 24.8: a row
 // past the column TTL but inside the row TTL keeps countMerge/quantiles and
-// returns '' for the exemplar.
+// returns ” for the exemplar.
 //
 // The shorter tiers (10s → 2d, 1s → 6h) can't produce a dead link today —
 // they expire before spans — but they're listed anyway: the column TTL is a
@@ -218,19 +223,50 @@ func (s *Store) applyExemplarColTTL(ctx context.Context, spansVal string) {
 		if s.clusterMode() && highVolumeTables[mv] {
 			name = mv + "_local"
 		}
-		inner, ok := s.mvInnerTable(ctx, name)
-		if !ok {
+		// v0.9.620 — inner tablo KÜME GENELİNDE çözülür.
+		//
+		// Operator-reported (prod): her boot'ta altı satır code 60
+		// (UNKNOWN_TABLE), hep aynı host için:
+		//   Could not find table: .inner_id.<uuid>
+		//
+		// Sebep bu fonksiyonun eski varsayımıydı — yorumu hâlâ yukarıda:
+		// ".inner_id.<uuid> ADI SHARD'LAR ARASINDA SABİT (Atomic DB, ON
+		// CLUSTER create tek uuid yayar)". Sağlıklı kümede doğru (lokal
+		// 2 düğümde uuid'ler birebir aynı ölçüldü) ama GARANTİ DEĞİL:
+		// bir host sonradan eklenmiş, yeniden kurulmuş ya da MV'yi
+		// yerel olarak yeniden yaratmışsa kendi uuid'sini taşır.
+		// O hâlde koordinatörün uuid'sini ON CLUSTER'a gömmek, diğer
+		// host'larda "tablo yok" demektir — ve TTL oralarda HİÇ
+		// uygulanmaz: exemplar kolonları süresiz büyür.
+		inners := s.mvInnerTablesCluster(ctx, name)
+		if len(inners) == 0 {
 			log.Printf("[chstore] exemplar column TTL skipped for %s: inner table unresolved (TO-table MV or absent) — exemplars there may outlive their traces", name)
 			continue
 		}
-		for _, col := range exemplarStateCols {
-			typ, ok := s.columnType(ctx, inner, col)
-			if !ok {
-				continue // column absent — nothing to expire
+		if len(inners) > 1 {
+			// AYRIŞMA: her uuid için ayrı ALTER gerekiyor. Her ALTER
+			// sahibi olmayan host'larda code 60 verecek ve bu BEKLENEN —
+			// o yüzden tek tek loglanmıyor, tek bir açıklayıcı satır
+			// yazılıyor. Altı kafa karıştırıcı hata satırı yerine bir
+			// teşhis.
+			log.Printf("[chstore] %s'in inner tablosu host'lar arasında AYRIŞMIŞ (%d farklı uuid) — "+
+				"TTL her biri için ayrı uygulanıyor. Bu, o MV'nin bir host'ta sonradan "+
+				"yeniden yaratıldığını gösterir; şema o host'ta küme geneliyle aynı değil.",
+				name, len(inners))
+		}
+		for _, inner := range inners {
+			typ, ok := s.columnTypeCluster(ctx, inner, exemplarStateCols)
+			if len(typ) == 0 || !ok {
+				continue // kolonlar yok — süresi dolacak bir şey yok
 			}
-			if err := s.execWithReadonlyRetry(ctx,
-				exemplarColTTLStmt(inner, s.onCluster(), col, typ, ttl)); err != nil {
-				log.Printf("[chstore] exemplar column TTL on %s.%s not applied: %v — exemplars there may outlive their traces", name, col, err)
+			for col, ctyp := range typ {
+				err := s.execWithReadonlyRetry(ctx,
+					exemplarColTTLStmt(inner, s.onCluster(), col, ctyp, ttl))
+				// Ayrışma varken sahibi olmayan host'un code 60'ı
+				// beklenen; tek uuid varsa gerçek arızadır.
+				if err != nil && len(inners) == 1 {
+					log.Printf("[chstore] exemplar column TTL on %s.%s not applied: %v — exemplars there may outlive their traces", name, col, err)
+				}
 			}
 		}
 	}
@@ -313,9 +349,9 @@ func (s *Store) ApplyPersistedRetention(ctx context.Context) error {
 //
 // The fix splits the expression by unit:
 //   - "Nd"  → `toDate(<col>) + INTERVAL N DAY`        (partition-aligned;
-//             lets CH DROP whole day partitions cheaply)
+//     lets CH DROP whole day partitions cheaply)
 //   - "Nh"  → `toDateTime(<col>) + INTERVAL N HOUR`   (row-level TTL,
-//             DateTime-typed result; correct rolling window)
+//     DateTime-typed result; correct rolling window)
 //
 // Hour-granularity TTLs can't ride the partition-drop fast path
 // because spans are PARTITION BY toDate(time) — a 1-hour TTL crosses
@@ -335,4 +371,95 @@ func buildRetentionTTL(s, col string) (string, error) {
 		return fmt.Sprintf("toDateTime(%s) + INTERVAL %d HOUR", col, n), nil
 	}
 	return fmt.Sprintf("toDate(%s) + INTERVAL %d DAY", col, n), nil
+}
+
+// mvInnerTablesCluster — bir MV'nin inner tablo adlarını KÜME GENELİNDE
+// toplar (v0.9.620).
+//
+// Tek düğümde davranış eskisiyle birebir: yerel uuid, tek ad.
+//
+// Küme modunda clusterAllReplicas ile her host'un kendi uuid'si okunur
+// ve TEKİLLEŞTİRİLİR. Sağlıklı bir kümede sonuç tek elemanlıdır (ON
+// CLUSTER create uuid'yi yayar); birden çok eleman AYRIŞMA demektir ve
+// çağıran onu operatöre bildirir.
+//
+// Probe hatası boş liste döndürür → çağıran "çözülemedi" der ve
+// atlar; bugünkü davranışın aynısı.
+func (s *Store) mvInnerTablesCluster(ctx context.Context, mv string) []string {
+	if !s.clusterMode() {
+		if inner, ok := s.mvInnerTable(ctx, mv); ok {
+			return []string{inner}
+		}
+		return nil
+	}
+	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
+		SELECT DISTINCT toString(uuid)
+		FROM clusterAllReplicas(%s, system.tables)
+		WHERE database = currentDatabase() AND name = ? AND engine = 'MaterializedView'
+		SETTINGS skip_unavailable_shards = 1, max_execution_time = 5`,
+		"`"+strings.ReplaceAll(s.cfg.ClusterName, "`", "")+"`"), mv)
+	if err != nil {
+		// Küme sorgusu düşerse yerel yola geri dön — teşhis aracının
+		// arızası, TTL'in hiç uygulanmamasına yol açmamalı.
+		if inner, ok := s.mvInnerTable(ctx, mv); ok {
+			return []string{inner}
+		}
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var uuid string
+		if rows.Scan(&uuid) != nil {
+			continue
+		}
+		if uuid == "" || uuid == "00000000-0000-0000-0000-000000000000" {
+			continue
+		}
+		out = append(out, ".inner_id."+uuid)
+	}
+	sort.Strings(out) // deterministik sıra: log ve ALTER sırası kararlı olsun
+	return out
+}
+
+// columnTypeCluster — istenen kolonların GERÇEK tiplerini küme
+// genelinde çözer (v0.9.620).
+//
+// Neden küme geneli: ayrışma hâlinde koordinatör, bir başka host'un
+// inner tablosunu system.columns'ta GÖRMEZ — tip çözülemez ve TTL o
+// uuid için hiç denenmezdi. Yani ayrışmanın kendisi, düzeltmeyi de
+// engelliyordu.
+func (s *Store) columnTypeCluster(ctx context.Context, table string, cols []string) (map[string]string, bool) {
+	out := map[string]string{}
+	if !s.clusterMode() {
+		for _, c := range cols {
+			if t, ok := s.columnType(ctx, table, c); ok {
+				out[c] = t
+			}
+		}
+		return out, true
+	}
+	rows, err := s.conn.Query(ctx, fmt.Sprintf(`
+		SELECT DISTINCT name, type
+		FROM clusterAllReplicas(%s, system.columns)
+		WHERE database = currentDatabase() AND table = ? AND name IN (?)
+		SETTINGS skip_unavailable_shards = 1, max_execution_time = 5`,
+		"`"+strings.ReplaceAll(s.cfg.ClusterName, "`", "")+"`"), table, cols)
+	if err != nil {
+		return out, false
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var n, t string
+		if rows.Scan(&n, &t) != nil {
+			continue
+		}
+		// İlk gören kazanır: aynı kolonun tipi host'lar arasında
+		// farklıysa bu ayrı ve daha ciddi bir sorundur; TTL ALTER'ı
+		// onu çözemez, bu yüzden burada sessizce ilkini alıyoruz.
+		if _, seen := out[n]; !seen {
+			out[n] = t
+		}
+	}
+	return out, true
 }

@@ -1543,6 +1543,33 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 	freshMin := time.Duration(age) <= 5*time.Minute
 	freshHour := time.Duration(age) <= time.Hour
 
+	// v0.9.627 — operatör-bildirimli: tek servisten 12 dakikada 11.260
+	// olay P2 göründü.
+	//
+	// Sebep iki katmanlıydı. (a) P1'in TEK kapısı "son 5 dakika içinde
+	// görülmüş" idi; patlama 13:01'de bitmişti, operatör 13:22'de baktı,
+	// 21 dakikalık yaş kapıyı kapattı. (b) HIZ diye bir kavram yoktu —
+	// 11.260 ile 110 arasındaki fark yalnız eşik karşılaştırmasına
+	// giriyordu, birim zamana değil.
+	//
+	// Yirmi dakika önce biten 11 binlik bir patlama hâlâ P1: olay
+	// bitti diye etkisi bitmiyor, ve oncall'ın onu bir sonraki nöbet
+	// devrinde değil ŞİMDİ görmesi gerekiyor.
+	//
+	// Hız grubun KENDİ ömründen türüyor (last_seen − first_seen) —
+	// v0.9.524'ün dersi gereği elimizde OLMAYAN pencereli bir sayı
+	// uydurmuyoruz. "12 dakikada 11.260" birebir doğru bir cümle.
+	//
+	// Bu kontrol `regressed` erken-dönüşünden ÖNCE: regressed bir grup
+	// dakikada 938 olay üretiyorsa "regressed" etiketi onu P2'de
+	// tutmamalı; etiket problemin GEÇMİŞİNİ anlatır, ŞİDDETİNİ değil.
+	if freshHour && exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen) {
+		rate := exceptionBurstRate(g.Occurrences, g.FirstSeen, g.LastSeen)
+		return "P1", fmt.Sprintf("%s olay / %s (~%.0f/dk)",
+			fmtThousands(g.Occurrences),
+			shortDur(time.Duration(g.LastSeen-g.FirstSeen)), rate)
+	}
+
 	if g.State == "regressed" {
 		return "P2", "regressed"
 	}

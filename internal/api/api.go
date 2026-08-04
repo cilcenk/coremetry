@@ -3846,37 +3846,35 @@ func (s *Server) getTrace(w http.ResponseWriter, r *http.Request) {
 	// fallback so the frontend can banner-tag the result.
 	key := "trace:v2:" + id
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		spans, err := s.store.GetTrace(ctx, id)
+		// v0.9.632 — çözümleme TEK yerde (trace_resolve.go) ve sırası
+		// operatör kararıyla ÖNCE TEMPO: elinde bir trace_id varken TAM
+		// trace istenir, Coremetry'nin örneklemesinden sağ kalan
+		// parçası değil. Tempo yapılandırılmamışsa / bütçeyi aşarsa /
+		// bulamazsa ClickHouse'a düşülür.
+		//
+		// Buradaki eski kopya (CH önce, ıskalarsa Tempo) explain'in
+		// Tempo-only bir trace'te 404 vermesinin sebebiydi.
+		spans, src, err := s.resolveTraceSpans(ctx, id)
 		if err != nil {
 			return nil, err
 		}
 		if len(spans) > 0 {
-			out := map[string]any{"traceId": id, "spans": spans, "source": "clickhouse"}
+			out := map[string]any{"traceId": id, "spans": spans, "source": src}
 			// v0.9.457 (dürüstlük A2) — 50k tavanına çarpan trace "tam"
 			// diye render ediliyordu: kesilen çocuklar orphan olup
 			// TraceHonesty şeridi operatörün SDK'sını ("parent yok —
 			// context propagation bozuk") suçluyordu. Tavan dolunca
 			// söyle; gerçek span sayısı MV stub'ından (best-effort).
-			if len(spans) >= 50000 {
+			//
+			// Tavan yalnız ClickHouse yolunda anlamlı: 50k limiti
+			// GetTrace'in LIMIT'i, Tempo yanıtının değil.
+			if src == traceSourceCH && len(spans) >= 50000 {
 				out["spanCapped"] = true
 				if stub, ok := s.store.GetTraceAggregateStub(ctx, id); ok {
 					out["spanTotal"] = stub.SpanCount
 				}
 			}
 			return out, nil
-		}
-		// CH miss → Tempo fallback. Skip cleanly when Tempo isn't
-		// configured. Errors from Tempo don't fail the whole
-		// request — the operator gets the same empty result they
-		// would have without the fallback, and a [tempo] log line
-		// fingers the misconfig.
-		if s.tempo != nil && s.tempo.Configured() {
-			tspans, terr := s.tempo.LookupTrace(ctx, id)
-			if terr != nil {
-				log.Printf("[tempo] lookup %q: %v", id, terr)
-			} else if len(tspans) > 0 {
-				return map[string]any{"traceId": id, "spans": tspans, "source": "tempo"}, nil
-			}
 		}
 		// v0.6.34 — operator-reported: /traces aggregate view
 		// showed traces, clicking them opened an empty detail.
@@ -3915,7 +3913,9 @@ func (s *Server) createTraceSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	// Validate the trace actually exists before issuing a token —
 	// stops users from minting share links for typos.
-	spans, err := s.store.GetTrace(r.Context(), id)
+	// v0.9.632 — Tempo fallback dahil: örneklemeyle CH dışında kalmış
+	// bir trace'in paylaşım linki de üretilebilmeli.
+	spans, _, err := s.resolveTraceSpans(r.Context(), id)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -4039,7 +4039,9 @@ func (s *Server) getPublicTrace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "snapshot not found or expired", http.StatusNotFound)
 		return
 	}
-	spans, err := s.store.GetTrace(r.Context(), snap.TraceID)
+	// v0.9.632 — Tempo fallback dahil; aksi halde paylaşılan bir
+	// Tempo-only trace boş açılıyordu.
+	spans, _, err := s.resolveTraceSpans(r.Context(), snap.TraceID)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -8305,7 +8307,7 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "span query param required", http.StatusBadRequest)
 		return
 	}
-	spans, err := s.store.GetTrace(r.Context(), traceID)
+	spans, _, err := s.resolveTraceSpans(r.Context(), traceID) // v0.9.632 — Tempo fallback dahil
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -8909,12 +8911,12 @@ func (s *Server) copilotCompareTraces(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	aSpans, err := s.store.GetTrace(r.Context(), aID)
+	aSpans, _, err := s.resolveTraceSpans(r.Context(), aID) // v0.9.632 — Tempo fallback dahil
 	if err != nil || len(aSpans) == 0 {
 		http.Error(w, "trace A not found: "+aID, http.StatusNotFound)
 		return
 	}
-	bSpans, err := s.store.GetTrace(r.Context(), bID)
+	bSpans, _, err := s.resolveTraceSpans(r.Context(), bID) // v0.9.632 — Tempo fallback dahil
 	if err != nil || len(bSpans) == 0 {
 		http.Error(w, "trace B not found: "+bID, http.StatusNotFound)
 		return

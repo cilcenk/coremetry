@@ -94,15 +94,15 @@ type CorrelationAnchor struct {
 // mini-waterfall + a header, without re-loading the full /trace page. Derived
 // from the same GetTrace spans the /api/traces/{id} endpoint returns.
 type CorrelationTrace struct {
-	TraceID     string              `json:"traceId"`
-	RootName    string              `json:"rootName"`
-	Service     string              `json:"service"`
-	DurationMs  float64             `json:"durationMs"`
-	SpanCount   int                 `json:"spanCount"`
-	Services    []string            `json:"services"`
-	ErrSpans    int                 `json:"errSpans"`
-	StartTimeNs int64               `json:"startTimeNs"`
-	EndTimeNs   int64               `json:"endTimeNs"`
+	TraceID     string   `json:"traceId"`
+	RootName    string   `json:"rootName"`
+	Service     string   `json:"service"`
+	DurationMs  float64  `json:"durationMs"`
+	SpanCount   int      `json:"spanCount"`
+	Services    []string `json:"services"`
+	ErrSpans    int      `json:"errSpans"`
+	StartTimeNs int64    `json:"startTimeNs"`
+	EndTimeNs   int64    `json:"endTimeNs"`
 	// Spans is the raw span list (capped) so the drawer's extracted
 	// ServiceTimeline sub-component renders the SAME per-service density bars
 	// TracePeekDrawer does — no second derivation. Capped to keep the bundle
@@ -114,11 +114,11 @@ type CorrelationTrace struct {
 // a lens with no data soft-fails to nil/empty, exactly like rootcause.go — a
 // partial bundle still helps the operator.
 type CorrelationContext struct {
-	Anchor   CorrelationAnchor           `json:"anchor"`
-	Trace    *CorrelationTrace           `json:"trace,omitempty"`
-	Logs     []*logstore.LogRecord       `json:"logs"`              // always present (possibly empty)
-	Metrics  []chstore.SpanMetricSeries  `json:"metrics"`           // anchor service RED series (possibly empty)
-	Exemplar *chstore.Exemplar           `json:"exemplar,omitempty"` // metric anchor: a REAL representative trace to pivot INTO (slow/error rollup exemplar, raw-span fallback)
+	Anchor   CorrelationAnchor          `json:"anchor"`
+	Trace    *CorrelationTrace          `json:"trace,omitempty"`
+	Logs     []*logstore.LogRecord      `json:"logs"`               // always present (possibly empty)
+	Metrics  []chstore.SpanMetricSeries `json:"metrics"`            // anchor service RED series (possibly empty)
+	Exemplar *chstore.Exemplar          `json:"exemplar,omitempty"` // metric anchor: a REAL representative trace to pivot INTO (slow/error rollup exemplar, raw-span fallback)
 }
 
 // correlateSpanCap bounds the trace lens span list so a pathological 10k-span
@@ -164,12 +164,13 @@ func correlateKeyDigest(parts ...string) string {
 // time-bucketed to the minute).
 //
 // Query:
-//   ?kind=trace|log|metric
-//   &traceId=<hex>          (kind=trace required; kind=log optional)
-//   &service=<name>         (kind=metric required; kind=log/trace derived)
-//   &tsNs=<unix-ns>         (kind=log|metric — the pivot instant)
-//   &from=<ns>&to=<ns>      (or range — derives [from,to])
-//   &metricKind=error|latency|throughput  (kind=metric — picks exemplar kind)
+//
+//	?kind=trace|log|metric
+//	&traceId=<hex>          (kind=trace required; kind=log optional)
+//	&service=<name>         (kind=metric required; kind=log/trace derived)
+//	&tsNs=<unix-ns>         (kind=log|metric — the pivot instant)
+//	&from=<ns>&to=<ns>      (or range — derives [from,to])
+//	&metricKind=error|latency|throughput  (kind=metric — picks exemplar kind)
 func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	kind := CorrelationKind(strings.TrimSpace(q.Get("kind")))
@@ -274,7 +275,9 @@ func (s *Server) getCorrelationContext(w http.ResponseWriter, r *http.Request) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				spans, err := s.store.GetTrace(ctx, traceID)
+				// v0.9.632 — Tempo fallback dahil: örneklemeyle CH dışında
+				// kalmış bir trace için korelasyon merceği de boş kalıyordu.
+				spans, _, err := s.resolveTraceSpans(ctx, traceID)
 				if err != nil || len(spans) == 0 {
 					return
 				}
@@ -418,6 +421,7 @@ func joinKeyFor(traceID string, kind CorrelationKind, metricKind string) string 
 //   - error    → error (the loudest erroring representative trace)
 //   - throughput / anything else → any (no single representative span; the
 //     "loudest in the window" stand-in, labelled service+window by joinKeyFor)
+//
 // Distinct from rootcause.go's exemplarKindForMetric, which classifies a
 // problem's free-form metric NAME; here metricKind is already the clean enum.
 func correlateExemplarKind(metricKind string) chstore.ExemplarKind {

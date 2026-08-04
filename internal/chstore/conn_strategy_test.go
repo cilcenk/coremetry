@@ -12,12 +12,12 @@ import (
 // admin/state tabloları her kurulumda replicate olmadığından her refresh
 // farklı node'un kopyasını okudu. Sözleşme bu testle pinli:
 //
-//   1. Ana bağlantı stratejisiz açılır (driver varsayılanı ConnOpenInOrder)
-//      → state okuma/yazmaları hep aynı node'da, v481 öncesi tutarlılık.
-//   2. RoundRobin YALNIZ ingest havuzundadır → v481'in gerçek amacı
-//      (insert koordinasyonunun 4 node'a dağılması) korunur.
-//   3. ingestWriteConn() yalnız yüksek hacimli telemetri INSERT dosyalarında
-//      çağrılır — bir state tablosu yazımı bu havuza kayarsa test patlar.
+//  1. Ana bağlantı stratejisiz açılır (driver varsayılanı ConnOpenInOrder)
+//     → state okuma/yazmaları hep aynı node'da, v481 öncesi tutarlılık.
+//  2. RoundRobin YALNIZ ingest havuzundadır → v481'in gerçek amacı
+//     (insert koordinasyonunun 4 node'a dağılması) korunur.
+//  3. ingestWriteConn() yalnız yüksek hacimli telemetri INSERT dosyalarında
+//     çağrılır — bir state tablosu yazımı bu havuza kayarsa test patlar.
 func TestConnStrategySplit(t *testing.T) {
 	b, err := os.ReadFile("store.go")
 	if err != nil {
@@ -69,9 +69,9 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"store.go":   true, // tanım + fallback
 		"summary.go": true, // service_summary_5m / operation_summary_5m / spans (v0.9.496 dilim 1)
 		// v0.9.497 dilim 2 — üçü de SAF telemetri (aşağıdaki testle pinli):
-		"repo.go":         true, // spans / logs / metric_points / trace_*_5m / topology_edges_5m
-		"topology.go":     true, // topology_*_5m / service_summary_5m / spans / root_traces
-		"dependencies.go": true, // db_*_summary_5m / messaging_*_summary_5m / metric_points / spans
+		"repo.go":              true, // spans / logs / metric_points / trace_*_5m / topology_edges_5m
+		"topology.go":          true, // topology_*_5m / service_summary_5m / spans / root_traces
+		"dependencies.go":      true, // db_*_summary_5m / messaging_*_summary_5m / metric_points / spans
 		"problem_telemetry.go": true, // spans — problem.go'dan ayrılan telemetri yarısı (v0.9.507)
 		// v0.9.580 — SAF telemetri: tek FROM'u spans. State tablosu
 		// okumuyor (aşağıdaki FROM testi de pinliyor).
@@ -85,6 +85,7 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"db_capacity.go":      true, // metric_points
 		"endpoints_detail.go": true, // spans
 		"business_dims.go":    true, // spans — kanal/fonksiyon kodu kırılımı (v0.9.511)
+		"trace_count.go":      true, // trace_summary_5m / trace_service_index_5m — tavanlı sayım (v0.9.638)
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

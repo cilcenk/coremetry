@@ -4167,3 +4167,17 @@ export interface AnnotationsResponse {
   items: AnnotationItem[] | null;
   truncated: boolean;
 }
+
+// v0.9.638 — /traces "Toplamı göster" sayısı.
+//
+// reason DOLU ise sayı YOK ve sebebi var: bazı şekiller (süre filtresi,
+// servis+post-agg, MV'yi kapatan filtreler) trace_summary_5m'de ucuza
+// sayılamıyor. "Yanlış sayı, sayı yokluğundan kötüdür" ilkesinin
+// devamı — pahalı bir sayı da dürüst bir retten kötüdür.
+//
+// atLeast: tavana değildi, gerçek sayı DAHA BÜYÜK ("10.000+").
+export interface TraceCountResponse {
+  value: number;
+  atLeast: boolean;
+  reason?: 'raw-path-filter' | 'duration-filter' | 'service+filter';
+}

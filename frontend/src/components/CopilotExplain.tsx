@@ -6,6 +6,7 @@ import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
 import { aiSubjectQuestion } from '@/components/ai/drawerChat';
 import type { AIKind } from '@/lib/aiSubject';
 import { IconSparkles } from './icons';
+import { RenderedMarkdown } from '@/components/Markdown';
 
 // CopilotExplain — drop-in Explain button that calls the
 // CoSRE (copilot) endpoint for the given subject and renders the
@@ -175,7 +176,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           padding: 12, borderRadius: 6, fontSize: 13, lineHeight: 1.5,
           background: 'color-mix(in srgb, var(--accent) 8%, transparent)',
           border: '1px solid color-mix(in srgb, var(--accent) 25%, transparent)',
-          color: 'var(--text)', whiteSpace: 'pre-wrap', maxWidth: 'min(720px, 100%)',
+          color: 'var(--text)', maxWidth: 'min(720px, 100%)',
         }}>
           <div style={{ fontSize: 10, color: 'var(--accent2)', marginBottom: 6, fontWeight: 700, letterSpacing: '.5px',
                         display: 'inline-flex', alignItems: 'center', gap: 4 }}>
@@ -186,7 +187,19 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               {meta}
             </div>
           )}
-          {text}
+          {/* v0.9.641 — operatör-bildirimli: "neden kök neden ipucu veya
+              öncelikli inceleme başlıkları bold yazmıyor". Model markdown
+              üretiyor (**Kök Neden İpucu:**) ama burası {text}'i HAM
+              basıyordu, yıldızlar ekranda görünüyordu.
+
+              RenderedMarkdown ZATEN vardı (v0.7.0, Notebook'tan çıkarıldı)
+              ve **bold** / başlık / madde / `kod` / link destekliyor —
+              yalnız Runbook sayfaları kullanıyordu. Bileşen var, AI
+              yüzeyi ondan habersizdi.
+
+              whiteSpace:'pre-wrap' KALKTI: Markdown kendi blok düzenini
+              kuruyor, ikisi birlikte satır aralarını ikiye katlıyordu. */}
+          <RenderedMarkdown text={text} />
           {/* v0.9.479 — çekmecede (auto) bu link ÇİZİLMEZ: sohbet aynı
               çekmecenin içinde, ekrandaki açıklamayı bağlam alarak açılır
               (AIDrawer). Satır-içi yüzeylerde köprü aynen duruyor. */}

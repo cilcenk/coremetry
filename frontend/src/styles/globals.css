@@ -630,13 +630,18 @@ button.lg { padding: 8px 18px; font-size: 14px; }
    `.is-fit` konteyneri KALDIRIYOR: başlık `#content`'e, yani sayfanın
    TEK dikey eksenine yapışıyor. İç çerçeve yok.
 
-   NEDEN OPT-IN VE NEDEN BU YÖNDE: ölçüldü — tablo taşıyan 51 dosyanın
-   23'ü 1150px'i aşıyor, yani geniş tablo istisna değil kural. Geniş bir
-   tabloyu yanlışlıkla `is-fit` yaparsak yatay kaydırma `#content`'e
-   çıkar ve YAPIŞKAN FİLTRE BARI içerikle yana kayar — v0.9.640'ta
-   düzeltilen sızıntının aynısı geri gelir. Yanlış sınıflandırmanın
-   bedeli asimetrik, bu yüzden varsayılan BUGÜNKÜ davranış: yalnız
-   sığdığı KANITLANMIŞ tablolar opt-in.
+   NEDEN OPT-IN: geniş bir tabloyu yanlışlıkla `is-fit` yaparsak yatay
+   kaydırma `#content`'e çıkar ve YAPIŞKAN FİLTRE BARI içerikle yana
+   kayar — v0.9.640'ta düzeltilen sızıntının aynısı geri gelir. Yanlış
+   sınıflandırmanın bedeli asimetrik, bu yüzden varsayılan BUGÜNKÜ
+   davranış: yalnız sığdığı ÖLÇÜLMÜŞ tablolar opt-in.
+
+   ⚠ v0.9.647 — v0.9.646'da güvenlik gerekçesi olarak "tableLayout:
+   'fixed' tabloyu sığmaya ZORLAR" yazmıştım; YANLIŞ. DataTableColgroup
+   `<col style={{width: N}}>` ile PİKSEL genişlik yayıyor ve sabit düzen
+   onları aynen uyguluyor — toplam konteyneri aşarsa tablo TAŞAR. Sabit
+   düzen bir garanti değil; tek geçerli ölçüt beyan edilen genişliklerin
+   TOPLAMI. isFitTables.test.ts bunu ölçüyor.
 
    Başlık, yapışkan filtre barının ALTINA yapışıyor (--controls-h,
    PageControls yayınlıyor). Bar yoksa değişken tanımsız ve fallback 0. */

@@ -283,6 +283,11 @@ type Trace struct {
 	// ledger-service, …) derive client.address from the parent pod's IP.
 	browserIP string
 	userAgent string
+	// v0.9.629 — iş boyutları (kanal / fonksiyon kodu), trace başına
+	// SABİT: kanal işlemin tamamına ait bir özellik, tek bir span'in
+	// değil. Seçim yük modelinden besleniyor — business_dims.go.
+	channelCode  string
+	functionCode string
 }
 
 func NewTrace() *Trace {
@@ -292,6 +297,10 @@ func NewTrace() *Trace {
 		podOf:     map[string]string{},
 		browserIP: browserIPs[mrand.IntN(len(browserIPs))],
 		userAgent: userAgents[mrand.IntN(len(userAgents))],
+		// v0.9.629 — iş boyutları trace başına bir kez seçilir; gerekçe
+		// ve yük-modeli bağlantısı business_dims.go'da.
+		channelCode:  pickChannelCode(),
+		functionCode: pickFunctionCode(),
 	}
 }
 
@@ -351,6 +360,23 @@ func (t *Trace) Add(service, name string, kind tracepb.Span_SpanKind,
 		EndTimeUnixNano:   uint64(start.Add(duration).UnixNano()),
 		Attributes:        mapToKVs(attrs),
 	}
+	// v0.9.629 — iş boyutları HER span'e, trace başına sabit değerle.
+	//
+	// Trace başına sabit: kanal işlemin tamamına ait bir özellik, tek bir
+	// span'in değil. Her span'e yazılması da prod'un gerçeği (operatör
+	// ölçümünde eşleşen span'lerin HEPSİ bu anahtarları taşıyordu).
+	//
+	// Çağıranın map'i MUTASYONA UĞRAMIYOR — KV listesine ekleniyor;
+	// kv(...) haritaları çağrı yerlerinde paylaşılabiliyor.
+	sp.Attributes = append(sp.Attributes,
+		kvStr("channel_code", t.channelCode),
+		kvStr("function_code", t.functionCode))
+	// v0.9.629 — filonun ~üçte biri MODERN semconv konuşuyor
+	// (semconv_mix.go). v0.9.628'in düzelttiği "yeni adı da oku" kuralı
+	// aksi hâlde lokalde hiç sınanmazdı: tüm demo üreteçleri eski adları
+	// basıyordu, yani modern bir SDK'nın kolonları boş bırakması yerel
+	// hiçbir testte ortaya çıkmıyordu.
+	sp.Attributes = applySemconvDialect(service, sp.Attributes)
 	if parent != nil {
 		sp.ParentSpanId = parent
 	}

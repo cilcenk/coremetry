@@ -109,7 +109,7 @@ export function ApiTokensTab() {
         </Empty>
       )}
       {tokens && tokens.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap is-fit">
           <table>
             <thead><tr><th>Ad</th><th>Token</th><th>Rol</th><th>Üreten</th><th>Tarih</th><th>Durum</th><th></th></tr></thead>
             <tbody>

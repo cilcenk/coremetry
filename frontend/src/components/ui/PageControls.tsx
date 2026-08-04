@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 
 // v0.9.639 — liste sayfalarının filtre barı için tek primitif.
@@ -35,8 +36,37 @@ export interface PageControlsProps {
 }
 
 export function PageControls({ children, sticky = false, className, style }: PageControlsProps) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  // v0.9.644 — barın YÜKSEKLİĞİNİ `--controls-h` olarak yayınla.
+  //
+  // Yapışkan tablo BAŞLIĞI da `#content`'e yapışıyor; ikisi de top:0
+  // olsaydı üst üste binerlerdi. Başlık `top: var(--controls-h)` ile
+  // barın ALTINA yapışıyor.
+  //
+  // Sabit bir sayı yazmak kırılgan olurdu: bar sarınca (dar pencere,
+  // çok filtre) yüksekliği değişiyor. ResizeObserver bunu izliyor.
+  //
+  // Değişken `#content`'e yazılıyor — sayfa başına tek scrollport o, ve
+  // aynı ağaçtaki tablolar oradan miras alıyor. Bar yoksa değişken hiç
+  // tanımlanmıyor ve başlık `top: 0` fallback'ine düşüyor.
+  useEffect(() => {
+    const el = ref.current;
+    if (!el || !sticky) return;
+    const host = el.closest('#content') as HTMLElement | null;
+    if (!host) return;
+    const apply = () => host.style.setProperty('--controls-h', `${el.offsetHeight}px`);
+    apply();
+    const ro = new ResizeObserver(apply);
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      host.style.removeProperty('--controls-h');
+    };
+  }, [sticky]);
+
   return (
-    <div className={[
+    <div ref={ref} className={[
       'controls',
       sticky ? 'is-sticky' : '',
       className ?? '',

@@ -807,7 +807,20 @@ func main() {
 		// loop below (plus any UI settings save) restore ES when it
 		// answers again.
 		if cfg.Logs.Backend == "elasticsearch" {
-			log.Printf("[logs] ELASTICSEARCH UNREACHABLE AT BOOT (%v) — starting DEGRADED on the ClickHouse logstore; will retry ES every 30s", err)
+			// v0.9.630 — mesaj artık GERÇEK sebebi söylüyor.
+			//
+			// Operatör-bildirimli: "UNREACHABLE" satırı çıkıyor ama ES
+			// kendiliğinden düzeliyor. Sebep ağ değil SIRALAMA — API key
+			// env'de değil system_settings'te duruyor ve buildLogStore
+			// LoadPersisted'dan ÖNCE koşuyor, yani ping auth=none ile
+			// gidip 401 yiyor. Küme ayakta, adresler doğru, yalnız kimlik
+			// henüz yüklenmemiş. Eski satır operatörü ağa ve adreslere
+			// bakmaya yolluyordu.
+			//
+			// expectPersisted: kaydedilmiş bir ES yapılandırması var mı?
+			// Varsa kimliksiz 401 gürültü değil, sıradan bir boot adımı.
+			headline, hint := logstore.ESBootDiagnosis(err, logstore.HasPersistedESSettings(ctx, store))
+			log.Printf("[logs] %s — %s (ayrıntı: %v)", headline, hint, err)
 			logsInner = logstore.NewCH(store)
 			esBootDegraded = true
 		} else {

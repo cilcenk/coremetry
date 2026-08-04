@@ -38,6 +38,7 @@ import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { alignTraceWindow } from '@/lib/traceWindow';
+import { suggestAttrKey, type AttrKeySuggestion } from '@/lib/attrKeySuggest';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
@@ -511,6 +512,25 @@ function TracesPageInner() {
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setVolSeries(null); });
     return () => { cancelled = true; ctl.abort(); };
   }, [view, listRangeNs, filter.service, filter.search, env, advFilters, grouped]);
+
+  // v0.9.637 — anahtar önerisi YALNIZ boş sonuçta çekilir. CLAUDE.md
+  // ES/CH maliyet disiplini: liste boyunca prefetch yok, poll yok —
+  // boş kırılım nadir bir durum, o an bir kez sormak makul.
+  const [attrSuggestion, setAttrSuggestion] = useState<AttrKeySuggestion | null>(null);
+  useEffect(() => {
+    setAttrSuggestion(null);
+    if (view !== 'aggregate' || groupBy !== 'attr') return;
+    const key = groupAttr.trim();
+    if (!key || !agg || agg.length > 0) return;
+    let cancelled = false;
+    api.attributeKeys('1h', 500)
+      .then(res => {
+        if (cancelled) return;
+        setAttrSuggestion(suggestAttrKey(key, (res ?? []).map(r => r.key)));
+      })
+      .catch(() => { /* öneri saf ek fayda — sessizce vazgeç */ });
+    return () => { cancelled = true; };
+  }, [view, groupBy, groupAttr, agg]);
 
   // ── Aggregate fetch ──────────────────────────────────────────────────────
   const aggRangeNs = useMemo(() => timeRangeToNs(range), [range]);
@@ -1090,7 +1110,26 @@ function TracesPageInner() {
         {view === 'aggregate' && agg && agg.length === 0 && (
           <Empty icon="∑" title="No groups in this window">
             <div style={{ marginTop: 6, color: 'var(--text2)' }}>
-              The aggregate view needs at least one trace to group. Switch to the Traces tab to confirm there are matching rows, or widen the time range.
+              {/* v0.9.637 — yanlış yazılmış anahtar SESSİZCE boş tablo
+                  veriyordu: "bu attribute yok" ile "yazımı yanlış" ayırt
+                  edilemiyordu. Sorgu harf DUYARLI kalıyor (bilinçli, bkz.
+                  lib/attrKeySuggest.ts); açıklanan yalnız boşluk. */}
+              {attrSuggestion ? (
+                <>
+                  <b>{groupAttr}</b> bu pencerede hiçbir span'de yok.{' '}
+                  {attrSuggestion.reason === 'case'
+                    ? 'Yalnız harf düzeni farklı olan bir anahtar var:'
+                    : 'Şuna benzer bir anahtar var:'}{' '}
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setGroupAttr(attrSuggestion.key)}
+                  >{attrSuggestion.key}</Button>
+                  {' '}— attribute anahtarları harf duyarlıdır.
+                </>
+              ) : (
+                'The aggregate view needs at least one trace to group. Switch to the Traces tab to confirm there are matching rows, or widen the time range.'
+              )}
             </div>
           </Empty>
         )}

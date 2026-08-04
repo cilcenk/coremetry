@@ -81,7 +81,7 @@ export default function RunbooksPage() {
         )}
 
         {runbooks && runbooks.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table>
               <thead>
                 <tr>

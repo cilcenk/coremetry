@@ -71,3 +71,55 @@ describe('opt-in olma sözleşmesi', () => {
     expect(src).toContain("sticky ? 'is-sticky' : ''");
   });
 });
+
+// v0.9.644 — yapışkan tablo BAŞLIĞI (denetim bulgusu #10, etki 5/5).
+//
+// Engel: `.table-wrap`'ın overflow-x:auto'su onu kaydırma konteyneri
+// yapıyor, thead'in sticky'si o konteynere yapışıyor ama konteyner
+// dikey kaydırmadığı için etkisiz. `.is-fit` konteyneri kaldırıyor.
+describe('yapışkan tablo başlığı', () => {
+  it('is-fit kaydırma konteynerini kaldırıyor', () => {
+    expect(block('.table-wrap.is-fit')).toMatch(/overflow:\s*visible/);
+  });
+
+  it('başlık yapışkan ve opak', () => {
+    const b = block('.table-wrap.is-fit thead th');
+    expect(b).toMatch(/position:\s*sticky/);
+    expect(b).toMatch(/background:/);
+  });
+
+  // İKİ ÖZELLİK BİRLİKTE ÇALIŞMALI: ikisi de top:0 olsaydı üst üste
+  // binerlerdi. Başlık barın ALTINA yapışıyor.
+  it('başlık, yapışkan filtre barının ALTINA yapışıyor', () => {
+    expect(block('.table-wrap.is-fit thead th')).toContain('top: var(--controls-h, 0px)');
+  });
+
+  // Varsayılan DEĞİŞMEMELİ: geniş tabloda is-fit, yatay kaydırmayı
+  // #content'e taşır ve v0.9.640'ta düzeltilen bar sızıntısını geri
+  // getirir. Yanlış sınıflandırmanın bedeli asimetrik.
+  it('varsayılan .table-wrap hâlâ kendi kaydırma konteyneri', () => {
+    const b = block('.table-wrap');
+    expect(b).toMatch(/overflow-x:\s*auto/);
+  });
+});
+
+describe('PageControls yüksekliği yayınlıyor', () => {
+  const src = readFileSync(resolve(__dirname, './PageControls.tsx'), 'utf8');
+
+  it('--controls-h yazılıyor', () => {
+    expect(src).toContain("setProperty('--controls-h'");
+  });
+
+  // Sabit sayı kırılgan olurdu: bar sarınca yüksekliği değişiyor.
+  it('yükseklik ÖLÇÜLÜYOR, sabit değil', () => {
+    expect(src).toContain('ResizeObserver');
+    expect(src).toContain('offsetHeight');
+  });
+
+  // Bar sticky değilse değişken yazılmamalı — yoksa başlık olmayan bir
+  // barın altına yapışmaya çalışır.
+  it('yalnız sticky iken yayınlıyor ve sökülürken temizliyor', () => {
+    expect(src).toContain('if (!el || !sticky) return;');
+    expect(src).toContain("removeProperty('--controls-h')");
+  });
+});

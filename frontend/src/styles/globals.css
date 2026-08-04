@@ -616,6 +616,41 @@ button.lg { padding: 8px 18px; font-size: 14px; }
 
 /* Table */
 .table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; overflow-y: hidden; }
+
+/* v0.9.644 — YAPIŞKAN TABLO BAŞLIĞI, tablo başına OPT-IN.
+   (denetim bulgusu #10: "sticky tablo başlığı yok VE .table-wrap
+   yüzünden yapısal olarak mümkün değil", etki 5/5)
+
+   Engel şuydu: `.table-wrap`'ın `overflow-x:auto`'su onu bir kaydırma
+   konteyneri yapıyor, içindeki `thead`in sticky'si o konteynere
+   yapışıyor — ama konteyner DİKEY kaydırmadığı için hiçbir etkisi
+   olmuyor. CSS'te `overflow-x:auto` + `overflow-y:visible` de mümkün
+   değil (tarayıcı ikincisini auto'ya çeviriyor).
+
+   `.is-fit` konteyneri KALDIRIYOR: başlık `#content`'e, yani sayfanın
+   TEK dikey eksenine yapışıyor. İç çerçeve yok.
+
+   NEDEN OPT-IN VE NEDEN BU YÖNDE: ölçüldü — tablo taşıyan 51 dosyanın
+   23'ü 1150px'i aşıyor, yani geniş tablo istisna değil kural. Geniş bir
+   tabloyu yanlışlıkla `is-fit` yaparsak yatay kaydırma `#content`'e
+   çıkar ve YAPIŞKAN FİLTRE BARI içerikle yana kayar — v0.9.640'ta
+   düzeltilen sızıntının aynısı geri gelir. Yanlış sınıflandırmanın
+   bedeli asimetrik, bu yüzden varsayılan BUGÜNKÜ davranış: yalnız
+   sığdığı KANITLANMIŞ tablolar opt-in.
+
+   Başlık, yapışkan filtre barının ALTINA yapışıyor (--controls-h,
+   PageControls yayınlıyor). Bar yoksa değişken tanımsız ve fallback 0. */
+.table-wrap.is-fit { overflow: visible; }
+.table-wrap.is-fit thead th {
+  position: sticky;
+  top: var(--controls-h, 0px);
+  z-index: 3;
+  /* Opak zemin şart: satırlar altından geçiyor. thead'in kendi
+     border-bottom'ı sticky'de kaybolabildiği için box-shadow ile
+     çiziliyor (yaygın tarayıcı davranışı). */
+  background: var(--bg1);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 thead th {
   padding: 9px 12px; text-align: left;

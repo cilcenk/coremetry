@@ -99,7 +99,7 @@ export function TracesResult({
                 </a></>
             )}
           </div>
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} trailing={[120]} />
               {/* Same column-manager UX as /traces — attribute columns

@@ -118,7 +118,7 @@ export default function IncidentsPage() {
           // ClusterChips can wrap, so rows are variable-height — incompatible
           // with VirtualTable's uniform-row assumption. content-visibility
           // keeps the paint cheap on the (limit 200) list.
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />

@@ -449,16 +449,26 @@ func NewES(cfg ESConfig) (*ESStore, error) {
 	defer cancel()
 	infoRes, err := cli.Info(cli.Info.WithContext(ctx))
 	if err != nil {
-		return nil, fmt.Errorf("ES ping (addresses=%v): %w", cfg.Addresses, err)
+		// v0.9.630 — tipli hata: çağıran "ulaşılamıyor" ile "kimlik
+		// reddedildi"yi ayırt edebilmeli. Status 0 = ağdan hiç yanıt yok.
+		return nil, &ESPingError{
+			Status: 0, AuthMode: esAuthMode(apiKey, cfg.Username),
+			Addresses: cfg.Addresses, Err: err,
+		}
 	}
 	defer infoRes.Body.Close()
 	// cli.Info() returns a nil error on an HTTP 401/403 — a BAD API KEY would
 	// otherwise pass this ping and then 401 every user query. Check the status
 	// so a bad key fails boot LOUDLY with an actionable message. (v0.8.226)
 	if infoRes.IsError() {
-		return nil, fmt.Errorf("ES ping rejected (auth=%s addresses=%v): %s — "+
-			"verify COREMETRY_ES_API_KEY (or username/password) + the addresses",
-			esAuthMode(apiKey, cfg.Username), cfg.Addresses, infoRes.String())
+		// v0.9.630 — durum kodu KORUNUYOR. Öncesi düz bir error'dı ve
+		// main.go 401'i de ağ hatasını da "ELASTICSEARCH UNREACHABLE AT
+		// BOOT" diye raporluyordu; operatör ağa bakmaya yollanıyordu
+		// halbuki küme cevap vermişti.
+		return nil, &ESPingError{
+			Status: infoRes.StatusCode, AuthMode: esAuthMode(apiKey, cfg.Username),
+			Addresses: cfg.Addresses, Body: infoRes.String(),
+		}
 	}
 	var info struct {
 		ClusterName string `json:"cluster_name"`

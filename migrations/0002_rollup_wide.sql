@@ -60,10 +60,21 @@ AS SELECT
     kind                                                           AS span_kind,
     status_code,
     if(http_route != '', http_route, name)                         AS endpoint,
+    -- v0.9.626 — İKİ YAZIM da okunuyor. Öncesi yalnız 'CHANNEL_CODE'
+    -- idi ve prod KÜÇÜK harf yazıyor ('channel_code' — operatör
+    -- ölçümü, 10 dakikada 2.67M span), yani bu MV uygulanmış olsaydı
+    -- channel_code/function_code boyutları BOŞ DOĞARDI. Tablonun
+    -- ORDER BY öneki ve bloom index'i de o kolonlara kurulu olduğu
+    -- için sabit-boş bir birincil anahtar bileşeni demekti.
+    -- Aynı ifade internal/chstore/promoted_attr.go'da (promotedAttrExpr).
     -- Promotion uygulanmışsa: attr_channel_code AS channel_code
-    toLowCardinality(attr_values[indexOf(attr_keys, 'CHANNEL_CODE')])  AS channel_code,
+    toLowCardinality(coalesce(
+        nullIf(attr_values[indexOf(attr_keys, 'CHANNEL_CODE')], ''),
+        nullIf(attr_values[indexOf(attr_keys, 'channel_code')], ''), ''))  AS channel_code,
     -- Promotion uygulanmışsa: attr_function_code AS function_code
-    attr_values[indexOf(attr_keys, 'FUNCTION_CODE')]               AS function_code,
+    coalesce(
+        nullIf(attr_values[indexOf(attr_keys, 'FUNCTION_CODE')], ''),
+        nullIf(attr_values[indexOf(attr_keys, 'function_code')], ''), '')  AS function_code,
     toUInt64(count())                                              AS span_count,
     toUInt64(countIf(status_code = 'error'))                       AS error_count,
     toUInt64(sum(duration))                                        AS duration_sum,

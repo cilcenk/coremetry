@@ -15,12 +15,24 @@ import { useEffect, useState, FormEvent } from 'react';
 //     style metadata in the middle of the strip without losing the
 //     centred Page-input layout.
 export function Pager({
-  page, pageSize, total, hasMore, onPage, extras,
+  page, pageSize, total, hasMore, onPage, extras, stickyBottom, lastReachablePage,
 }: {
   page: number;
   pageSize: number;
   total?: number;
   hasMore?: boolean;
+  // v0.9.645 — sayfanın dibine yapış. Uzun listede "Next" ekranın
+  // dışında kalıyordu (operatör-bildirimli: "next butonu çok
+  // gözükmüyor, daha iyi bir yerde olabilir mi").
+  stickyBottom?: boolean;
+  // v0.9.645 — SON sayfaya atlama, YALNIZ ulaşılabilirse.
+  //
+  // `total`'dan türetilmiyor ve bu bilinçli: v0.9.638'de total'ı
+  // Pager'dan kestik çünkü MV yolunun aşama-1 kimlik bütçesi sınırlı
+  // ve ötesindeki sayfalar SUNULAMIYOR. Çağıran, sayının hem KESİN
+  // hem ulaşılabilir olduğunu doğruladığında bu değeri veriyor;
+  // vermezse Last butonu hiç çizilmiyor.
+  lastReachablePage?: number;
   onPage: (next: number) => void;
   extras?: React.ReactNode;
 }) {
@@ -47,7 +59,7 @@ export function Pager({
   };
 
   return (
-    <div className="pager">
+    <div className={`pager${stickyBottom ? ' is-sticky-bottom' : ''}`}>
       <button className="sec" onClick={() => onPage(Math.max(0, page - 1))} disabled={page === 0}>
         ← Prev
       </button>
@@ -71,9 +83,17 @@ export function Pager({
         {extras && <span style={{ color: 'var(--text2)' }}>· {extras}</span>}
       </span>
 
-      <button className="sec" onClick={() => onPage(page + 1)} disabled={atEnd}>
+      {/* v0.9.645 — Next artık BİRİNCİL vurgulu: `sec` ile diğer
+          kontrollerden ayrışmıyordu ve uzun listede gözden kaçıyordu. */}
+      <button onClick={() => onPage(page + 1)} disabled={atEnd}>
         Next →
       </button>
+      {lastReachablePage !== undefined && lastReachablePage > page && (
+        <button className="sec" onClick={() => onPage(lastReachablePage)}
+          title={`Son sayfaya git (${lastReachablePage + 1})`}>
+          Last ⇥
+        </button>
+      )}
     </div>
   );
 }

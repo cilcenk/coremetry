@@ -40,6 +40,7 @@ import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { alignTraceWindow } from '@/lib/traceWindow';
 import { suggestAttrKey, type AttrKeySuggestion } from '@/lib/attrKeySuggest';
 import { traceCountReasonHint } from '@/lib/traceCountReason';
+import { lastReachablePage } from '@/lib/traceReach';
 import type { TraceCountResponse } from '@/lib/types';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
@@ -1063,9 +1064,28 @@ function TracesPageInner() {
                 </span>
               ))}
             </div>
+              {/* v0.9.645 — operatör-bildirimli: "traceleri iframe içinde gibi
+                aşağıya çekmek yerine farklı bir çözüm olabilir mi?"
+
+                560px'lik tavan, SUNUCU TARAFINDA 50 satıra sayfalanmış bir
+                listeyi ~15 satırlık bir kutuya sıkıştırıyordu: 35 satır iç
+                kaydırma çubuğunun ardında kalıyor ve sayfa iki ayrı dikey
+                eksen taşıyordu. Operatörün kendi kuralı bunu yasaklıyor
+                ("iç çerçeve yok"), ve uygulamadaki tek ihlal burasıydı —
+                diğer 20+ tablo 10.000 satıra kadar content-visibility ile
+                iç çerçevesiz idare ediyor.
+
+                Tavan kalktı, yükseklik İÇERİĞE eşit: dikey kaydırma
+                çubuğu kaybolur (kaydıracak bir şey yok), sayfa tek eksene
+                döner. Sanallaştırma makinesi yerinde kalıyor — 50 satırda
+                hiçbir şeyi pencerelemiyor ama diğer çağıranlar (Inbox,
+                Incidents) onu kullanmaya devam ediyor.
+
+                YATAY kaydırma tabloda KALIYOR: sayfaya taşımak, geniş
+                tabloda #content'i yana kaydırır. */}
             <VirtualTable<TraceRow>
               dt={dt}
-              height={Math.min(560, 44 + displayRows.length * 36)}
+              height={44 + displayRows.length * 36}
               rowHeight={36}
               leading={[30]}
               getRowKey={(t) => t.traceId}
@@ -1105,7 +1125,13 @@ function TracesPageInner() {
                 listenin ULAŞAMAYACAĞI sayfalara yollar (aşama-1 kimlik
                 bütçesi 5.000-6.000). Gezinme hasMore üzerinde kalıyor;
                 sayı yalnız bir etiket. */}
+            {/* v0.9.645 — Pager sayfanın dibine yapışıyor (uzun listede
+                "Next" ekran dışında kalıyordu) ve sayı hem KESİN hem
+                sunulabilir tavanın içindeyse "Last" çiziliyor.
+                Gerekçe + sınır: lib/traceReach.ts */}
             <Pager page={page} pageSize={50} hasMore={hasMore} onPage={setPage}
+              stickyBottom
+              lastReachablePage={lastReachablePage(countRes?.value, countRes?.atLeast ?? false, 50)}
               extras={
                 <>
                   {countRes?.reason ? (

@@ -721,6 +721,23 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Pagination */
 .pager { display: flex; gap: 8px; margin-top: 10px; align-items: center; color: var(--text2); font-size: 12px; }
+
+/* v0.9.645 — Pager sayfanın DİBİNE yapışabiliyor (opt-in).
+   Operatör-bildirimli: "next butonu çok gözükmüyor, daha iyi bir yerde
+   olabilir mi". /traces'te iç kaydırma kutusu kalkınca (aynı sürüm)
+   tablo ~1800px'e uzadı ve Pager ekranın dışında kaldı.
+
+   Yapışkan filtre barıyla çakışmıyor: o top:0, bu bottom:0.
+   Opak zemin + üst çizgi şart — satırlar altından geçiyor. */
+.pager.is-sticky-bottom {
+  position: sticky;
+  bottom: 0;
+  z-index: 4;
+  background: var(--bg0);
+  border-top: 1px solid var(--border);
+  padding: 10px 0;
+  margin-bottom: 0;
+}
 .pager button { padding: 3px 8px; font-size: 12px; }
 
 /* Waterfall */

@@ -152,6 +152,55 @@ func promotedAttrDDL(a promotedAttr, have string, colExists, idxExists bool) []s
 	return out
 }
 
+// promotedAttrResolve — KANONİK bir iş-boyutu anahtarını okunabilir bir
+// SQL ifadesine çevirir. ok=false ise anahtar terfi listesinde yok.
+//
+// v0.9.624 — bu, KOD İÇİ sabit anahtar listeleri içindir, kullanıcı
+// filtresi için DEĞİL. Ayrım bilinçli:
+//
+//   - Kullanıcı filtresi (filterexpr.go) HARF DUYARLI kalır: OTel'de
+//     attribute anahtarları harf duyarlıdır, 'CHANNEL_CODE' yazan
+//     operatör gerçekten o anahtarı sormuştur ve olmayan bir anahtarın
+//     sessizce başkasına eşlenmesi sürpriz olur.
+//   - Kod içi liste (businessDimKeys, copilot kırılım listeleri) bir
+//     KAVRAMI ifade eder — "kanal boyutu" — yazımı değil. Prod verisi
+//     küçük harf yazdığı için o listelerin BÜYÜK harfli girdileri
+//     hiçbir şeye eşleşmiyordu ve iş-boyutu kırılımı SIFIR satır
+//     dönüyordu (v0.9.511/580 ile gelen kanıt bloğu prod'da ölüydü).
+//
+// Kolon kayıtlıysa onu, değilse TÜM yazımları deneyen dizi ifadesini
+// döndürür — yani kolon henüz onarılmamış kurulumlarda da doğru çalışır.
+func promotedAttrResolve(key string) (string, []any, bool) {
+	for _, a := range promotedAttrs {
+		match := false
+		for _, k := range a.keys {
+			if strings.EqualFold(k, key) {
+				match = true
+				break
+			}
+		}
+		if !match {
+			continue
+		}
+		// Probe hangi yazımı doğruladıysa kolon o yazımla kayıtlı;
+		// hepsi aynı kolona işaret ediyor.
+		for _, k := range a.keys {
+			if col, ok := traceAttrMaterialized[k]; ok {
+				return col, nil, true
+			}
+		}
+		parts := make([]string, 0, len(a.keys)+1)
+		args := make([]any, 0, len(a.keys))
+		for _, k := range a.keys {
+			parts = append(parts, "nullIf(attr_values[indexOf(attr_keys, ?)], '')")
+			args = append(args, k)
+		}
+		parts = append(parts, "''")
+		return "coalesce(" + strings.Join(parts, ", ") + ")", args, true
+	}
+	return "", nil, false
+}
+
 // spansColumnExpr — spans üzerindeki bir kolonun MATERIALIZED ifadesi.
 // exists=false ise kolon yok (ya da okunamadı — aynı tarafa düşüyoruz:
 // ADD gönderilir, IF NOT EXISTS onu zararsız kılar).

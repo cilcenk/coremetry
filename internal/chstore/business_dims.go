@@ -48,6 +48,23 @@ func businessDimExpr(key string) (string, []any) {
 	if col, ok := traceAttrMaterialized[key]; ok {
 		return col, nil
 	}
+	// v0.9.624 — anahtar bir terfi attribute'unun BAŞKA YAZIMI olabilir.
+	//
+	// Operator-reported zincirinin devamı: businessDimKeys
+	// (anomaly/investigation.go:61) ve copilot kırılım listeleri
+	// (api/copilot_aianalyze.go:269, :375) "CHANNEL_CODE" / "FUNCTION_CODE"
+	// sabitlerini taşıyor, prod verisi ise küçük harf yazıyor. Sonuç:
+	// `WHERE <ifade> != ''` hiçbir satır tutmuyordu ve "hangi kanal
+	// patlıyor" kanıt bloğu (v0.9.511, v0.9.580 — operatörün açıkça
+	// istediği bölüm) prod'da SESSİZCE BOŞ dönüyordu.
+	//
+	// Çağrı noktalarına dokunmak yerine çözümleme burada yapılıyor:
+	// üç yerde üç liste düzeltmek, dördüncüsü eklendiğinde yine
+	// ayrışırdı. promotedAttrResolve neden yalnız kod içi listeler
+	// için harf duyarsız olduğunu anlatıyor.
+	if expr, args, ok := promotedAttrResolve(key); ok {
+		return expr, args
+	}
 	if col, ok := WellKnownTraceCol[key]; ok {
 		return col, nil
 	}

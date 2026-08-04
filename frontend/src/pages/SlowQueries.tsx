@@ -16,6 +16,7 @@ import { encodeStmtParam, decodeStmtParam } from '@/pages/slowqueries/stmtParam'
 import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // Columns for the shared sortable + resizable DataTable primitive.
 // Default order matches the backend's total-wall-clock sort so the
@@ -171,7 +172,7 @@ export default function SlowQueriesPage() {
             görünüm kaydedebilmeli (Endpoints emsali). */}
         <SavedViewsBar page="slowqueries" />
 
-        <div className="controls" style={{ marginBottom: 12 }}>
+        <PageControls sticky style={{ marginBottom: 12 }}>
           <select value={dbSystem} onChange={e => setDbSystem(e.target.value)}
             style={{ fontSize: 12, padding: '3px 8px' }}>
             <option value="">All databases</option>
@@ -196,7 +197,7 @@ export default function SlowQueriesPage() {
             style={{ marginLeft: 'auto', fontSize: 11, padding: '4px 10px', textDecoration: 'none' }}>
             ← Database overview
           </Link>
-        </div>
+        </PageControls>
 
         {rows === undefined && <TableSkeleton cols={8} wideFirst />}
         {rows === null && <Empty icon="✗" title="Failed to load slow queries" />}

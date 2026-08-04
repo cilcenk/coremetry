@@ -26,6 +26,7 @@ import type {
 } from '@/lib/types';
 import { AlertProblemDetail, ProblemDetail } from './ProblemDetail';
 import { withProblemParam, withExcParam } from './problemLink';
+import { PageControls } from '@/components/ui/PageControls';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -424,7 +425,7 @@ export default function ProblemsPage() {
           ))}
         </div>
 
-        <div className="controls">
+        <PageControls sticky>
           <ServicePicker value={service} onChange={setService}
             placeholder="Service…" width={170} />
           <input value={search} onChange={e => setSearch(e.target.value)}
@@ -451,7 +452,7 @@ export default function ProblemsPage() {
               </>
             )}
           </span>
-        </div>
+        </PageControls>
 
         {data === undefined && <Spinner />}
         {data && filtered.length === 0 && (

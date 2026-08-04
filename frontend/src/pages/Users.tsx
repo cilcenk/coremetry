@@ -10,6 +10,7 @@ import type { Role } from '@/lib/types';
 import { tsLong, tsRel } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { PageControls } from '@/components/ui/PageControls';
 
 // Columns for the shared sortable + resizable DataTable.
 const USER_COLS: DataTableColumn<UserRow>[] = [
@@ -117,7 +118,7 @@ export default function UsersPage() {
     <>
       <Topbar title="Users" />
       <div id="content">
-        <div className="controls">
+        <PageControls sticky>
           <button onClick={() => setShowNew(true)}>+ New user</button>
           {teamOptions.length > 0 && (
             <select value={teamFilter}
@@ -145,7 +146,7 @@ export default function UsersPage() {
                 ? ` of ${users.length}` : ''} users
             </span>
           </span>
-        </div>
+        </PageControls>
 
         {actionError && (
           <div style={{

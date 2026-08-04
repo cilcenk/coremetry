@@ -12,6 +12,7 @@ import type { AlertRule, WatcherSummaryEntry } from '@/lib/types';
 import { fmtAgoNs, fmtDurShort, tsLong } from '@/lib/utils';
 import { buildWatcherTimeline, summarizeWatcherHistory, type WatcherTimelineEntry } from '@/lib/watcherTimeline';
 import { WatcherImportModal } from './alerts/WatcherImportModal';
+import { PageControls } from '@/components/ui/PageControls';
 
 // /watchers (v0.9.196) — dedicated surface for the imported ES
 // Watcher fleet (~300 rules in prod; operator decision 2026-07-23).
@@ -115,7 +116,7 @@ export default function WatchersPage() {
     <>
       <Topbar title="Watchers" />
       <div id="content">
-        <div className="controls" style={{ marginBottom: 14 }}>
+        <PageControls sticky style={{ marginBottom: 14 }}>
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>
             Imported ES Watcher definitions, evaluated on their own schedule against the
             log backend. Click a row for its fire / notification / resolve history.
@@ -127,7 +128,7 @@ export default function WatchersPage() {
               ⤓ Import ES watcher
             </Button>
           )}
-        </div>
+        </PageControls>
 
         {showImport && (
           <WatcherImportModal

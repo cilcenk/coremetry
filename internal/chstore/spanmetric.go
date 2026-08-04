@@ -940,8 +940,28 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// The single-agg paths got MV-routing in v0.5.268/269; this
 	// is the missing peer for the batched ("rate + error_rate
 	// + p99 in one CH pass") variant.
-	if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
-		return out, f.StepSeconds, nil
+	//
+	// v0.9.618 — Search/OR-grubu VARSA fast-path'ler ATLANIR.
+	//
+	// v0.9.601 batch yüzeyine Search ekledi ve yüklemi WHERE'e koydu —
+	// ama WHERE yalnız fast-path'ler REDDEDERSE kuruluyor. Kabul
+	// ederlerse arama hiç uygulanmıyordu: /traces hacim şeridi
+	// filtrelenmemiş hacmi çizerken tablo filtreli sonucu gösterirdi —
+	// v0.9.601'in önlemek İÇİN yazıldığı yalanın ta kendisi.
+	//
+	// Kapı tek-agg yolundakiyle (yukarıda, ~157) AYNI gerekçede:
+	// rollup'lar attr_values/http_route taşımaz, bir arama yüklemi
+	// onlara karşı onurlandırılamaz.
+	//
+	// Tek-agg yolundaki FilterRoot koşulu BURADA YOK ve olmamalı:
+	// SpanMetricBatchFilter'da FilterRoot alanı yok — batch yüzeyi
+	// OR/iç içe grubu hiç kabul etmiyor, yalnız düz ApplyFilters
+	// koşuyor. Yani o sınıf bu yolda doğuştan imkânsız.
+	fastPathOK := f.Search == ""
+	if fastPathOK {
+		if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
+			return out, f.StepSeconds, nil
+		}
 	}
 	// ── Dar rollup fast-path (v0.9.412, Rollup Aşama-3 dilim 1) ─────────────
 	// Overview/Service entry-RED batch'i (service + kind IN) op-MV'ye
@@ -949,8 +969,10 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// bu şekli 10s granülaritede cevaplar. Tablolar yoksa / pencere
 	// rollup'ın en eski verisinden önceyse SESSİZCE ham yola düşer —
 	// migrations-öncesi prod davranışı bayt-bayt aynı.
-	if out, ok := s.tryNarrowRollupFastPathMulti(ctx, f); ok {
-		return out, f.StepSeconds, nil
+	if fastPathOK {
+		if out, ok := s.tryNarrowRollupFastPathMulti(ctx, f); ok {
+			return out, f.StepSeconds, nil
+		}
 	}
 
 	// ── Build WHERE ───────────────────────────────────────────────────────────

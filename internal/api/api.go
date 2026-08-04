@@ -4880,10 +4880,16 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 		// aramayı yok sayıp filtrelenmemiş seriyi çizerdi, tablo ise
 		// filtreli sonucu gösterirdi — sessiz ve yanıltıcı bir ayrışma.
 		//
-		// Semantik değişmiyor: chstore tarafında Search != "" zaten MV
-		// hızlı yolunu kapatıyor (spanmetric.go:157), yani bu alan
-		// yalnız üç gidiş-dönüşü bire indiriyor, maliyet sınıfını
-		// değiştirmiyor.
+		// Maliyet sınıfı: Search != "" iken batch yolu da MV/rollup
+		// fast-path'lerini ATLAR (QuerySpanMetricMulti'deki fastPathOK
+		// kapısı) — tek-agg yoluyla aynı davranış.
+		//
+		// ⚠ v0.9.601'de bu yorum spanmetric.go:157'yi gerekçe
+		// gösteriyordu; o satır TEK-AGG yolunu yönetiyor, bu çağrı
+		// yolunu DEĞİL. Batch tarafında kapı YOKTU ve arama sessizce
+		// düşebiliyordu (v0.9.618 ekledi). Yanlış gerekçe, eksik
+		// kapıdan tehlikeliydi: okuyan "korunuyor" sanıp bir daha
+		// bakmaz.
 		Search string `json:"search"`
 		// v0.9.391 (grafik-audit Faz B) — panel nokta bütçesi; 0 = eski
 		// davranış + 2000 emniyet tavanı. queryMetric ile aynı clamp.

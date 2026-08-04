@@ -57,3 +57,49 @@ func TestBatchAppliesSearchPredicate(t *testing.T) {
 			"aramayı yok sayar ve grafik ile tablo AYRI kümeleri gösterir")
 	}
 }
+
+// TestBatchSearchSkipsFastPaths — v0.9.618, v0.9.601'in AÇIĞI.
+//
+// v0.9.601 batch yüzeyine Search ekledi ve yüklemi WHERE'e koydu. Ama
+// WHERE yalnız fast-path'ler REDDEDERSE kuruluyor: QuerySpanMetricMulti
+// önce tryOperationMVFastPathMulti, sonra tryNarrowRollupFastPathMulti
+// çağırıyor ve İKİSİ DE Search'e bakmıyordu. Kabul ettiklerinde arama
+// hiç uygulanmıyordu — /traces hacim şeridi filtrelenmemiş hacmi
+// çizerken tablo filtreli sonucu gösterirdi. v0.9.601'in ÖNLEMEK İÇİN
+// yazıldığı yalanın ta kendisi.
+//
+// Kaynak taraması, çünkü kapı bir sıralama sözleşmesi: fast-path
+// çağrıları WHERE'den ÖNCE koşuyor ve gate onlardan da önce olmalı.
+func TestBatchSearchSkipsFastPaths(t *testing.T) {
+	src := readAPISourceNoComments(t, "../chstore/spanmetric.go")
+	i := strings.Index(src, "func (s *Store) QuerySpanMetricMulti(")
+	if i < 0 {
+		t.Fatal("QuerySpanMetricMulti bulunamadı — test bayatladı")
+	}
+	body := src[i:]
+	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+		body = body[:j+1]
+	}
+
+	gate := strings.Index(body, `fastPathOK := f.Search == ""`)
+	if gate < 0 {
+		t.Fatal("batch yolunda Search kapısı YOK — arama, MV/rollup fast-path'i " +
+			"kabul ettiğinde sessizce düşer ve grafik ile tablo AYRI kümeleri gösterir")
+	}
+	// Kapı HER İKİ fast-path'ten de ÖNCE gelmeli.
+	for _, fp := range []string{"tryOperationMVFastPathMulti(", "tryNarrowRollupFastPathMulti("} {
+		at := strings.Index(body, fp)
+		if at < 0 {
+			continue // fast-path kaldırıldıysa sorun yok
+		}
+		if at < gate {
+			t.Errorf("%s kapıdan ÖNCE çağrılıyor — o yol Search'ü yok sayar", fp)
+		}
+		// Çağrı fastPathOK bloğunun içinde mi: kapı ile çağrı arasında
+		// bir `if fastPathOK {` bulunmalı.
+		between := body[gate:at]
+		if !strings.Contains(between, "if fastPathOK {") {
+			t.Errorf("%s fastPathOK kapısının İÇİNDE değil", fp)
+		}
+	}
+}

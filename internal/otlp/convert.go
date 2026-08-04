@@ -101,10 +101,14 @@ func convertSpan(sp *tracepb.Span, svcName, hostName, deployEnv, scopeName strin
 
 	attrK, attrV := attrsToArrays(sp.Attributes)
 
-	// Extract well-known attributes into dedicated columns
-	dbSystem := attrStr(sp.Attributes, "db.system", "")
-	dbStmt := attrStr(sp.Attributes, "db.statement", "")
-	httpMethod := attrStr(sp.Attributes, "http.method", "")
+	// Extract well-known attributes into dedicated columns.
+	//
+	// v0.9.628 — çok-adlı: OTel bu dördünü ≥1.23'te yeniden adlandırdı
+	// ve modern SDK'lar YALNIZ yeni adı basıyor. Adlar ve gerekçe
+	// semconv.go'da (spanAttrAliases).
+	dbSystem := attrFirst(sp.Attributes, spanAttrAliases["db_system"]...)
+	dbStmt := attrFirst(sp.Attributes, spanAttrAliases["db_statement"]...)
+	httpMethod := attrFirst(sp.Attributes, spanAttrAliases["http_method"]...)
 	httpRoute := attrStr(sp.Attributes, "http.route", attrStr(sp.Attributes, "http.target", ""))
 	// v0.9.71 (operatör: "url.path'ler /endpoints'te görünmüyor") —
 	// yeni semconv http.target'ı url.path/url.query'ye böldü; route
@@ -119,7 +123,7 @@ func convertSpan(sp *tracepb.Span, svcName, hostName, deployEnv, scopeName strin
 			httpRoute = templater.NormalizePathTemplate(p)
 		}
 	}
-	httpStatus := uint16(attrInt(sp.Attributes, "http.status_code", 0))
+	httpStatus := uint16(attrIntFirst(sp.Attributes, spanAttrAliases["http_status"]...))
 	rpcSystem := attrStr(sp.Attributes, "rpc.system", "")
 	rpcMethod := attrStr(sp.Attributes, "rpc.method", "")
 	peerService := attrStr(sp.Attributes, "peer.service", "")

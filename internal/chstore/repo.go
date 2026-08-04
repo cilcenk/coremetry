@@ -2008,6 +2008,33 @@ func stage2IsBounded(serviceSubquery bool, holders string) bool {
 // The same unfiltered query /traces answered from the MV, /explore
 // answered from raw spans. Named + tested so the gate cannot close
 // again as a side effect of a UI label.
+// tracesMVEligible — bu filtre MV hızlı yolunda karşılanabilir mi?
+//
+// v0.9.638'de GetTraces'in gövdesinden ÇIKARILDI, davranış değişmeden.
+// Sebep: tavanlı sayım (trace_count.go) listenin SAYDIĞI kümeyle AYNI
+// evreni saymak zorunda. Koşulu aynalayan ikinci bir kopya, bu oturumun
+// on yedi sürümünü doğuran hata sınıfının ta kendisi olurdu — sayım
+// planlayıcısı bu fonksiyonu AYNALAMAZ, ÇAĞIRIR.
+//
+// countModeAllowsMV BİLİNÇLİ olarak DIŞARIDA: o, filtrenin MV'de
+// karşılanabilirliğiyle değil, çağıranın istediği sayım kipiyle ilgili.
+// İçeri alsaydık sayım planlayıcısı kendi kipini kendine sorardı.
+//
+// SAF — tablo testli.
+func tracesMVEligible(f TraceFilter) bool {
+	return !f.From.IsZero() && !f.To.IsZero() &&
+		f.To.Sub(f.From) >= 5*time.Minute &&
+		f.Search == "" && f.TraceID == "" &&
+		// v0.8.383 — an env filter disqualifies the MV fast-path:
+		// trace_summary_5m has no env dimension (cluster precedent —
+		// bounded raw fallback, NO MV changes).
+		f.Env == "" &&
+		len(f.Filters) == 0 &&
+		!f.FilterRoot.hasPredicate() &&
+		len(f.RequireServices) == 0 &&
+		len(f.TraceIDs) == 0
+}
+
 func countModeAllowsMV(mode string) bool {
 	return mode == "skip" || mode == ""
 }
@@ -2089,18 +2116,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 	// now the COMMON phase-2 of BOTH paths (raw list no longer inlines the
 	// projection) and is time-bounded by the page rows' real min/max
 	// timestamps, so partition pruning + the trace_id bloom compose.
-	if !f.From.IsZero() && !f.To.IsZero() &&
-		f.To.Sub(f.From) >= 5*time.Minute &&
-		f.Search == "" && f.TraceID == "" &&
-		// v0.8.383 — an env filter disqualifies the MV fast-path:
-		// trace_summary_5m has no env dimension (cluster precedent —
-		// bounded raw fallback, NO MV changes).
-		f.Env == "" &&
-		len(f.Filters) == 0 &&
-		!f.FilterRoot.hasPredicate() &&
-		len(f.RequireServices) == 0 &&
-		len(f.TraceIDs) == 0 &&
-		countModeAllowsMV(f.CountMode) {
+	if tracesMVEligible(f) && countModeAllowsMV(f.CountMode) {
 		out, total, hasMore, err := s.getTracesFromMV(ctx, f)
 		if err == nil {
 			if len(f.ExtraAttrs) > 0 {

@@ -23,10 +23,9 @@ import type {
   ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse, ClusterDeployTrendResponse, ClusterJMXTrendResponse, ClusterJMXMetricsResponse,
   KibanaSettings,
   Role, LDAPConfig, LDAPDirectoryUser,
- FilterExpr,
+  FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
-  OtlpExemplar, TraceLinks,
-} from './types';
+  OtlpExemplar, TraceLinks, TraceCountResponse } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
@@ -404,6 +403,16 @@ export const api = {
   // Distinct attribute keys observed on recent spans — drives the
   // FilterBuilder autocomplete so custom attrs (function_code etc.)
   // surface as suggestions in addition to the hardcoded list.
+  // v0.9.638 — /traces "Toplamı göster" sayısı. AYRI endpoint, çünkü
+  // ?count=exact liste isteğine binince countModeAllowsMV'yi kapatıp
+  // listeyi ham spans yoluna düşürüyordu (çift ceza). Ayrı istek =
+  // liste SQL'i bayt bayt aynı = liste MV'de kalıyor.
+  //
+  // reason dolu ise SAYI YOK: bazı şekiller MV'de ucuza sayılamıyor ve
+  // pahalı bir sayı dürüst bir retten kötüdür.
+  tracesCount: (params: TracesParams, signal?: AbortSignal) =>
+    get<TraceCountResponse>(`/api/traces/count?${qs(params)}`, signal),
+
   attributeKeys: (since: GoDuration = '1h', limit = 500, filters?: string, filterGroup?: string) => {
     // v0.5.261 — optional filter context. When the operator has
     // active filters in /explore, pass them through so the

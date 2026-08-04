@@ -39,6 +39,8 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { alignTraceWindow } from '@/lib/traceWindow';
 import { suggestAttrKey, type AttrKeySuggestion } from '@/lib/attrKeySuggest';
+import { traceCountReasonHint } from '@/lib/traceCountReason';
+import type { TraceCountResponse } from '@/lib/types';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
@@ -388,7 +390,11 @@ function TracesPageInner() {
       // columns arrive via the phase-2 enrichment effect below, so a column
       // toggle never re-runs this (window-wide) query. extraCols is
       // deliberately NOT a dep here for the same reason.
-      count: showTotal && !traceIdExact ? 'exact' : 'skip',
+      // v0.9.638 — liste ARTIK sayım istemiyor. ?count=exact tek başına
+      // countModeAllowsMV'yi kapatıp listeyi ham spans yoluna düşürüyordu
+      // (çift ceza). Sayı ayrı endpoint'ten geliyor; liste SQL'i bayt bayt
+      // aynı kaldığı için "toplamı göster" listeyi MV'de BIRAKIYOR.
+      count: 'skip',
     }, ctl.signal).then(d => { if (!cancelled) { setData(d); setRefreshing(false); } }).catch((e: unknown) => {
       // İptal HATA DEĞİL — operatörün kendi eylemi. Yutulmazsa aralık
       // her değiştiğinde ekrana kırmızı bir kutu düşerdi.
@@ -591,7 +597,31 @@ function TracesPageInner() {
   };
 
   const traces = data?.traces ?? [];
-  const total = data?.total;
+  // v0.9.638 — tavanlı sayım, AYRI istek. Yalnız operatör "toplamı göster"
+  // dediğinde koşuyor; sayfa değiştikçe DEĞİŞMEDİĞİ için sayfalama turları
+  // 20sn önbelleğe biniyor (eski davranış her offset'te yeniden ödüyordu).
+  const [countRes, setCountRes] = useState<TraceCountResponse | null>(null);
+  useEffect(() => {
+    if (!showTotal || view !== 'list') { setCountRes(null); return; }
+    const ctl = new AbortController();
+    let cancelled = false;
+    const { from, to } = listRangeNs;
+    api.tracesCount({
+      limit: 50, offset: 0, from, to,
+      service: filter.service || undefined,
+      minMs: filter.minMs || undefined,
+      maxMs: filter.maxMs || undefined,
+      hasError: filter.hasError || undefined,
+      rootOnly: filter.rootOnly || undefined,
+      env: env || undefined,
+      filterGroup: advGroupParam || undefined,
+      filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
+    }, ctl.signal)
+      .then(r => { if (!cancelled) setCountRes(r); })
+      .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setCountRes(null); });
+    return () => { cancelled = true; ctl.abort(); };
+  }, [showTotal, view, listRangeNs, filter.service, filter.minMs, filter.maxMs,
+      filter.hasError, filter.rootOnly, env, advFilters, advGroupParam]);
   const hasMore = data?.hasMore ?? false;
 
   // Quick-filter chips narrow the CURRENT page client-side (instant).
@@ -1070,13 +1100,28 @@ function TracesPageInner() {
                   onOpen={() => { const t = displayRows.find(x => x.traceId === expanded); if (t) openTrace(t); }} />
               </div>
             )}
-            <Pager page={page} pageSize={50} total={total} hasMore={hasMore} onPage={setPage}
+            {/* v0.9.638 — total Pager'a GEÇMİYOR. Pager lastPage/atEnd'i
+                total'dan türetiyor; tavanlı bir sayı verirsek operatörü
+                listenin ULAŞAMAYACAĞI sayfalara yollar (aşama-1 kimlik
+                bütçesi 5.000-6.000). Gezinme hasMore üzerinde kalıyor;
+                sayı yalnız bir etiket. */}
+            <Pager page={page} pageSize={50} hasMore={hasMore} onPage={setPage}
               extras={
                 <>
-                  {total !== undefined ? (<>{total.toLocaleString()} total</>) : (
+                  {countRes?.reason ? (
+                    <span title={traceCountReasonHint(countRes.reason)}>
+                      showing {traces.length}{hasMore ? '+' : ''} · toplam sayılamıyor
+                    </span>
+                  ) : countRes ? (
+                    <span title={countRes.atLeast
+                      ? `Sayım ${countRes.value.toLocaleString()} trace'te durduruldu — gerçek sayı daha büyük.`
+                      : 'Bu pencerede eşleşen trace sayısı.'}>
+                      {countRes.value.toLocaleString()}{countRes.atLeast ? '+' : ''} total
+                    </span>
+                  ) : (
                     <>showing {traces.length}{hasMore ? '+' : ''}{' · '}
                       <a href="#" onClick={e => { e.preventDefault(); setShowTotal(true); }}
-                        title="Run an exact count(DISTINCT trace_id) — can be slow at scale">Show total</a>
+                        title="Tavanlı sayım — MV'den okur, listeyi yavaşlatmaz">Show total</a>
                     </>
                   )}
                   {' · '}sorted by <b>{sort}</b> {order}

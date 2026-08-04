@@ -665,6 +665,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// so the browser triggers a download rather than rendering.
 	mux.HandleFunc("GET /api/traces/export.csv", s.exportTracesCSV)
 	mux.HandleFunc("GET /api/traces/aggregate", s.getTraceAggregate)
+	mux.HandleFunc("GET /api/traces/count", s.getTracesCount)
 	// v0.8.x (Gap 3) — span-relationship / structural trace operators.
 	// Two predicate sets (parent / child) + a kind (child-of /
 	// descendant-of / sequence) + direct-only flag → a BOUNDED self-join
@@ -3547,12 +3548,14 @@ func (s *Server) getOperations(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
-	// FAZ 2 — ?traceIds= skips phase-1 and serves bounded extras only (traces_extras.go).
-	if s.serveTracesExtras(w, r) {
-		return
-	}
-	q := r.URL.Query()
+// parseTraceFilter — ?query -> chstore.TraceFilter.
+//
+// v0.9.638'de getTraces'in gövdesinden ÇIKARILDI, davranış değişmeden.
+// Sebep: /api/traces/count listenin SAYDIĞI kümeyle aynı evreni saymak
+// zorunda ve bu ancak AYNI ayrıştırmadan geçerse garanti. İkinci bir
+// ayrıştırıcı, bu oturumun on yedi sürümünü doğuran hata sınıfının ta
+// kendisi olurdu: bir kural iki yerde, zamanla ayrışıyor.
+func parseTraceFilter(q url.Values) (chstore.TraceFilter, error) {
 	f := chstore.TraceFilter{
 		Service:  q.Get("service"),
 		Search:   q.Get("search"),
@@ -3598,8 +3601,7 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 	}
 	filters, ferr := parseFiltersAndDSL(q.Get("filters"), q.Get("dsl"))
 	if ferr != nil {
-		http.Error(w, "invalid query DSL: "+ferr.Error(), http.StatusBadRequest)
-		return
+		return chstore.TraceFilter{}, fmt.Errorf("invalid query DSL: %w", ferr)
 	}
 	f.Filters = filters
 	// v0.8.x gap-2 — grouped AND/OR builder. When the FE sends a filterGroup
@@ -3616,6 +3618,20 @@ func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
 	f.CountMode = q.Get("count")
 	if f.CountMode == "" {
 		f.CountMode = "skip"
+	}
+	return f, nil
+}
+
+func (s *Server) getTraces(w http.ResponseWriter, r *http.Request) {
+	// FAZ 2 — ?traceIds= skips phase-1 and serves bounded extras only (traces_extras.go).
+	if s.serveTracesExtras(w, r) {
+		return
+	}
+	q := r.URL.Query()
+	f, ferr := parseTraceFilter(q)
+	if ferr != nil {
+		http.Error(w, ferr.Error(), http.StatusBadRequest)
+		return
 	}
 	// 20s cache. /api/traces is the heaviest uncached read: a filtered
 	// query disqualifies the trace_summary MV fast-path and falls back to
@@ -3765,6 +3781,32 @@ func (s *Server) exportTracesCSV(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	cw.Flush()
+}
+
+// getTracesCount — /traces "Toplamı göster" rozetinin tavanlı sayısı.
+//
+// v0.9.638 — sayım liste isteğinden AYRILDI. Öncesi ?count=exact tek
+// başına countModeAllowsMV'yi kapatıp listeyi ham spans yoluna
+// düşürüyordu: çift ceza. Ayrı endpoint sayesinde liste SQL'i bayt bayt
+// aynı kalıyor, yani "toplamı göster" listeyi MV'de BIRAKIYOR.
+//
+// Filtre AYNI parseTraceFilter'dan geçiyor — ikinci bir ayrıştırıcı
+// sayımı listeden ayrıştırırdı.
+//
+// Rol: /api/traces ile aynı (viewer okur). Önbellek 20s: sayı sayfa
+// değiştikçe DEĞİŞMEDİĞİ için sayfalama turları tek sorguya biner —
+// eski davranışta her offset yeniden ödüyordu.
+func (s *Server) getTracesCount(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	f, ferr := parseTraceFilter(q)
+	if ferr != nil {
+		http.Error(w, ferr.Error(), http.StatusBadRequest)
+		return
+	}
+	s.serveCached(w, r, "traces-count:"+r.URL.RawQuery, 20*time.Second,
+		func(ctx context.Context) (any, error) {
+			return s.store.CountTracesCapped(ctx, f)
+		})
 }
 
 func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {

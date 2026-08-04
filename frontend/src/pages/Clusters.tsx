@@ -84,8 +84,10 @@ const DEP_COLS: DataTableColumn<ClusterDeploymentRow>[] = [
 
 const POD_COLS: DataTableColumn<ClusterPodRow>[] = [
   { id: 'cluster',   label: 'Cluster',   sortValue: r => r.cluster,   naturalDir: 'asc', width: 130 },
-  { id: 'namespace', label: 'Namespace', sortValue: r => r.namespace, naturalDir: 'asc', width: 160 },
-  { id: 'pod',       label: 'Pod',       sortValue: r => r.pod,       naturalDir: 'asc', width: 260 },
+  // v0.9.649 — ikinci ESNEK kolon: pod tek başına 1154px bırakıyordu
+  // (eşik 1150). Namespace de değişken uzunlukta, artanı paylaşıyorlar.
+  { id: 'namespace', label: 'Namespace', sortValue: r => r.namespace, naturalDir: 'asc', flex: true },
+  { id: 'pod',       label: 'Pod',       sortValue: r => r.pod,       naturalDir: 'asc', flex: true },
   // v0.9.12 — Coremetry servis eşleşmesi (korelasyon audit'i).
   { id: 'service',   label: 'Service',   sortValue: r => r.service ?? '', naturalDir: 'asc', width: 150 },
   { id: 'phase',     label: 'Status',    sortValue: r => r.phase ?? '', naturalDir: 'asc', width: 100 },

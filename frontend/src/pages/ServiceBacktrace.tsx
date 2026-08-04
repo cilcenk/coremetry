@@ -26,7 +26,7 @@ import { tracesPivotHref } from '@/lib/pivotHref';
 const BACKTRACE_COLS: DataTableColumn<CallerRow>[] = [
   { id: 'callerService', label: 'Caller service', sortValue: r => r.callerService, naturalDir: 'asc', width: 200 },
   { id: 'hostInstance',  label: 'Host / Instance', width: 180 },
-  { id: 'clientUa',      label: 'Client IP / User-Agent', width: 210 },
+  { id: 'clientUa',      label: 'Client IP / User-Agent', flex: true },
   { id: 'calls',      label: 'Calls', sortValue: r => r.calls,      numeric: true, naturalDir: 'desc', width: 90 },
   { id: 'errorRate',  label: 'Err %', sortValue: r => r.errorRate,  numeric: true, naturalDir: 'desc', width: 90 },
   { id: 'p50Ms',      label: 'p50',   sortValue: r => r.p50Ms,      numeric: true, naturalDir: 'desc', width: 80 },
@@ -131,7 +131,7 @@ function BacktraceInner() {
           } />
         )}
         {data && filtered.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />

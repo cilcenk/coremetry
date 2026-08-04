@@ -22,7 +22,11 @@ const AUDIT_COLS: DataTableColumn<AuditEntry>[] = [
   { id: 'actor',   label: 'Actor',   sortValue: e => e.actorEmail, naturalDir: 'asc', width: 220 },
   { id: 'action',  label: 'Action',  sortValue: e => e.action,     naturalDir: 'asc', width: 200 },
   { id: 'target',  label: 'Target',  sortValue: e => e.targetKind, naturalDir: 'asc', width: 200 },
-  { id: 'details', label: 'Details', width: 360 },
+  // v0.9.648 — ESNEK kolon: serbest metin, artan genişliği emsin.
+  // Sabit genişlik toplamı 1280px'di ve tablo taşıyordu; details flex
+  // olunca sabit toplam 920px'e düşüyor ve tablo her genişlikte sığıyor.
+  // Kolon SİLİNMEDİ, genişliği daraltılmadı — yalnız artanı emiyor.
+  { id: 'details', label: 'Details', flex: true },
   { id: 'ip',      label: 'IP',      sortValue: e => e.ip,         naturalDir: 'asc', width: 130 },
 ];
 
@@ -213,7 +217,7 @@ export default function AuditPage() {
           </Empty>
         )}
         {data && visible.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />

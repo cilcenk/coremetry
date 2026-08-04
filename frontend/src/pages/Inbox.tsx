@@ -78,7 +78,9 @@ const INBOX_COLS: DataTableColumn<InboxItem>[] = [
   { id: 'priority', label: 'Priority', sortValue: it => PRIO_RANK[it.priority] ?? 0, naturalDir: 'desc', width: 80 },
   { id: 'source',   label: 'Source',   sortValue: it => it.source,           naturalDir: 'asc', width: 100 },
   { id: 'service',  label: 'Service',  sortValue: it => it.service,          naturalDir: 'asc', width: 190 },
-  { id: 'detail',   label: 'Detail',   sortValue: it => it.title,            naturalDir: 'asc', width: 380 },
+  // v0.9.648 — ESNEK kolon: başlık serbest metin ve en geniş olan.
+  // Sabit toplam 1330 → 950px, tablo sığıyor.
+  { id: 'detail',   label: 'Detail',   sortValue: it => it.title,            naturalDir: 'asc', flex: true },
   // v0.9.331 — Occurrences is back. The operator insisted on keeping this
   // column on /problems (v0.9.315: "ben occurences kolonu kalkmasını
   // istemedim"); when the merged queue took over the Problems name in
@@ -714,7 +716,7 @@ export default function InboxPage() {
           // multi-line exception message + team chips), which breaks the
           // VirtualTable uniform-row assumption. content-visibility keeps the
           // >100-row paint cheap while letting each row size to its content.
-          <div className="table-wrap"
+          <div className="table-wrap is-fit"
             style={{ opacity: showingStale ? 0.45 : 1, transition: 'opacity 120ms' }}
             aria-busy={showingStale}>
             <table style={{ tableLayout: 'fixed', width: '100%' }}>

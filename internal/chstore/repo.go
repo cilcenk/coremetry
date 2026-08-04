@@ -2675,6 +2675,33 @@ func traceStage1LightSQL(f TraceFilter, having []string) (string, bool) {
 		         optimize_aggregation_in_order = 1`, true
 }
 
+// v0.9.633 — in-order ayarlarının ÖLÇÜLMÜŞ etkisi (denetim bulgusu:
+// "ölü ayar"). Kaldırılmadılar — bir no-op'u silmenin operatöre faydası
+// YOK, riski sıfır değil (aşağıdaki 1. satır bunun kanıtı: az kalsın
+// ÇALIŞAN bir ayar silinecekti). Bilgi burada dursun ki bir dahaki
+// okuyan sorgunun sıraya göre optimize edildiğini sanmasın.
+//
+// Yöntem: EXPLAIN PIPELINE'daki AggregatingInOrderTransform sayısı.
+// ⚠ DÜZ `EXPLAIN` AYIRT ETMİYOR — ilk denememde açık/kapalı aynı planı
+// verdi ve "hepsi ölü" diye yanlış sonuca varıyordum. Kontrol vakası
+// (gerçek önek) olmadan bu ölçüm yapılmamalı.
+//
+//	SORGU ŞEKLİ                                      AÇIK  KAPALI
+//	operation_summary_5m (service_name, name, tb)
+//	  WHERE service_name=? GROUP BY name                 1       0  ← ETKİLİ
+//	trace_summary_5m (time_bucket, trace_id)
+//	  GROUP BY trace_id                                  0       0  ← ölü
+//	trace_service_index_5m (service_name, tb, trace_id)
+//	  WHERE service_name=? GROUP BY trace_id             0       0  ← ölü
+//
+// Ölü olanların sebebi aynı: GROUP BY anahtarı sıralama anahtarının
+// ÖNEKİ değil (trace_id ikinci/üçüncü bileşen, aradaki time_bucket ise
+// ARALIK filtresi), ve ORDER BY agregat ifade üstünde.
+//
+// ÖLÇÜLMEYEN iki nokta var — `spans` üzerinde GROUP BY trace_id ve
+// alt-sorgu üstünde GROUP BY group_key: ikisi de yapısal olarak ölü
+// GÖRÜNÜYOR ama ölçülmedi, dolayısıyla iddia edilmiyor.
+
 // traceRecencySliceN is the Dynatrace-style ranking slice (v0.8.369,
 // operator decision): on the no-service path, non-time sorts rank
 // within the NEWEST N traces instead of aggregating every trace in

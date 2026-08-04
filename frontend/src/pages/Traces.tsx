@@ -37,6 +37,7 @@ import { api, isCanceled } from '@/lib/api';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
+import { alignTraceWindow } from '@/lib/traceWindow';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
@@ -329,7 +330,13 @@ function TracesPageInner() {
   }, [range, env, view, viz, sort, order, page, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, advFilters, advGroupParam, extraCols, navigate]);
 
   // ── List fetch ───────────────────────────────────────────────────────────
-  const listRangeNs = useMemo(() => timeRangeToNs(range), [range]);
+  // v0.9.636 — pencere TEK yerde hizalanıyor: liste, hacim şeridi ve
+  // x ekseni üçü de buradan besleniyor, dolayısıyla üçü de AYNI
+  // pencereyi görüyor. Gerekçe + bedel: lib/traceWindow.ts.
+  const listRangeNs = useMemo(() => {
+    const r = timeRangeToNs(range);
+    return alignTraceWindow(r.from, r.to);
+  }, [range]);
   useEffect(() => {
     if (view !== 'list') return;
     // Önceki sayfa/sıralama/filtre sonucu ekranda kalır; yalnız ilk

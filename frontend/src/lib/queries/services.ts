@@ -16,7 +16,7 @@ export function useServices(
 ) {
   return useQuery<Service[]>({
     queryKey: keys.services.list(range, opts),
-    queryFn: async () => (await api.services(range, opts?.limit, opts?.name)) ?? [],
+    queryFn: async ({ signal }) => (await api.services(range, opts?.limit, opts?.name, signal)) ?? [],
     staleTime: 60_000,
   });
 }
@@ -40,7 +40,7 @@ export function useServiceMap(since: GoDuration, samples: number, diff?: string,
   // React Query cache.
   return useQuery<ServiceMap>({
     queryKey: keys.services.map(since, samples, diff, topN),
-    queryFn: () => api.serviceMap(since, samples, diff, topN),
+    queryFn: ({ signal }) => api.serviceMap(since, samples, diff, topN, signal),
     refetchInterval: 30_000,
     // v0.8.462 — 25s < 30s poll penceresi tab dönüşlerinde double-fetch
     // üretiyordu (anomalies.ts v0.4.79 deseni); eşitlendi.

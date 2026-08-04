@@ -96,3 +96,38 @@ describe('is-fit güvenlik kuralı — GENİŞLİK', () => {
     expect(ep).not.toContain('table-wrap is-fit');
   });
 });
+
+// v0.9.648 — ESNEK kolon, daraltmanın alternatifi.
+//
+// /admin/audit, /deploys ve /inbox eşiği aşıyordu. Kolon SİLMEK ya da
+// genişlik KIRPMAK yerine, her birinin en geniş SERBEST METİN kolonu
+// `flex: true` yapıldı: artan genişliği emiyor, sabit toplamdan
+// düşüyor. Bilgi kaybı sıfır.
+//
+// `flex` v0.9.542'de eklenmişti ama HİÇBİR sayfa kullanmıyordu —
+// bugünün tekrar eden deseni: yetenek var, kullanan yok.
+describe('flex kolonu', () => {
+  const FLEX_USERS = [
+    'pages/AdminAudit.tsx', 'pages/Deploys.tsx', 'pages/Inbox.tsx',
+  ];
+
+  it('esnek kolon kullanan sayfalar hâlâ kullanıyor', () => {
+    for (const rel of FLEX_USERS) {
+      const s = readFileSync(join(SRC, rel), 'utf8');
+      expect(s, `${rel} flex kolonunu kaybetmiş`).toContain('flex: true');
+    }
+  });
+
+  // Esnek kolonun genişliği sabit toplama GİRMEMELİ — girerse daraltma
+  // etkisi kaybolur ve tablo yine taşar.
+  it('esnek kolon width BEYAN ETMİYOR', () => {
+    for (const rel of FLEX_USERS) {
+      const s = readFileSync(join(SRC, rel), 'utf8');
+      const lines = s.split('\n').filter(l => l.includes('flex: true'));
+      expect(lines.length).toBeGreaterThan(0);
+      for (const l of lines) {
+        expect(l, `${rel}: flex kolonu ayrıca width taşıyor`).not.toMatch(/\bwidth:\s*\d/);
+      }
+    }
+  });
+});

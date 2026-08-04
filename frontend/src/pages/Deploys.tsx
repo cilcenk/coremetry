@@ -29,7 +29,10 @@ const KIND_BADGE: Record<TimelineRow['kind'], { label: string; cls: string }> = 
 const COLS: DataTableColumn<TimelineRow>[] = [
   { id: 'time',    label: 'Zaman',        sortValue: r => r.timeNs, naturalDir: 'desc', numeric: true, width: 170 },
   { id: 'kind',    label: 'Tür',          sortValue: r => r.kind, width: 110 },
-  { id: 'service', label: 'Servis',       sortValue: r => r.service, width: 240 },
+  // v0.9.648 — ESNEK kolon (gerekçe AdminAudit'te). Servis adları
+  // değişken uzunlukta (bsa-cashmanagement-cashflow-prod gibi), artan
+  // genişliği emmeye en uygun kolon bu. Sabit toplam 1220 → 980px.
+  { id: 'service', label: 'Servis',       sortValue: r => r.service, flex: true },
   { id: 'version', label: 'Sürüm',        sortValue: r => r.version, width: 260 },
   // podsChurn sayısal anahtar — biçimli string leksikografik yanlış
   // sıralıyordu (verify bulgusu); deploy-satırı churn'süz → -1 dibe.
@@ -119,7 +122,7 @@ export default function DeploysPage() {
           </Empty>
         )}
         {q.data && rows.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />

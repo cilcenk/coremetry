@@ -2,15 +2,29 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
-// v0.9.646 — `.table-wrap.is-fit` yapışkan tablo başlığını açıyor ama
-// bunu KAYDIRMA KONTEYNERİNİ KALDIRARAK yapıyor (v0.9.644). Geniş bir
-// tabloya yanlışlıkla eklenirse yatay kaydırma #content'e çıkar ve
-// yapışkan filtre barı içerikle yana kayar — v0.9.640'ta operatörün
-// bildirdiği sızıntının aynısı.
+// v0.9.647 — v0.9.646'nın GEREKÇESİ YANLIŞTI, düzeltiliyor.
 //
-// Güvenliğin YAPISAL kanıtı `tableLayout: 'fixed'` + width:100%: sabit
-// düzende tablo sığmaya ZORLANIYOR, yani yatay taşma olamaz. Bu test o
-// koşulu her is-fit kullanımı için zorunlu kılıyor.
+// Orada `.table-wrap.is-fit`'in güvenliğini "tableLayout: 'fixed' +
+// width:100% yapısal bir garanti, tablo sığmaya ZORLANIYOR" diye
+// gerekçelendirmiştim. DEĞİL: DataTableColgroup `<col style={{width: N}}>`
+// ile PİKSEL genişlik yayıyor (DataTable.tsx:242-243) ve sabit düzen o
+// değerleri aynen uyguluyor — toplamları konteyneri aşarsa tablo TAŞAR.
+//
+// Seçim yine de doğruydu (opt-in edilen on tablonun hepsi ölçülmüş
+// ≤1150px'di), ama TEST yanlış kuralı çiviliyordu: 1634px'lik sabit
+// düzenli bir tabloyu memnuniyetle geçirirdi. Yanlış gerekçe, eksik
+// korumadan tehlikelidir — okuyan kişi aramayı bırakır.
+//
+// Gerçek kural GENİŞLİK. Bu test onu ölçüyor.
+
+// Sığma eşiği. 1440px'lik dizüstü − ~220px sidebar − 40px #content
+// padding ≈ 1180px. 1150 biraz pay bırakıyor.
+//
+// Bu bir VARSAYIM, garanti değil: daha dar bir pencerede sığan bir tablo
+// da taşabilir. O durumda yatay kaydırma sayfaya çıkıyor ve yapışkan
+// filtre barı içerikle yana kayıyor (v0.9.640'ta operatörün bildirdiği
+// sızıntı). Eşiği düşürmek her zaman güvenli taraf.
+const FIT_PX = 1150;
 
 const SRC = resolve(__dirname, '../..');
 
@@ -23,34 +37,62 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-describe('is-fit güvenlik kuralı', () => {
-  const users = walk(SRC).filter(p => {
-    const s = readFileSync(p, 'utf8');
-    return s.includes('table-wrap is-fit');
-  });
+/** Dosyadaki her DataTableColumn dizisinin beyan edilen genişlik toplamı. */
+function tableWidths(src: string): number[] {
+  const out: number[] = [];
+  const re = /DataTableColumn<[^>]*>\[\]\s*=\s*\[/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(src))) {
+    let d = 1, j = m.index + m[0].length;
+    while (j < src.length && d > 0) {
+      if (src[j] === '[') d++;
+      else if (src[j] === ']') d--;
+      j++;
+    }
+    const arr = src.slice(m.index + m[0].length, j);
+    const w = [...arr.matchAll(/\bwidth:\s*(\d{2,4})\b/g)].map(x => Number(x[1]));
+    if (w.length) out.push(w.reduce((a, b) => a + b, 0));
+  }
+  return out;
+}
 
-  it('en az bir kullanım var (regex/yol bozulmadıysa)', () => {
+describe('is-fit güvenlik kuralı — GENİŞLİK', () => {
+  const users = walk(SRC).filter(p => readFileSync(p, 'utf8').includes('table-wrap is-fit'));
+
+  it('kullanımlar bulunabiliyor', () => {
     expect(users.length).toBeGreaterThan(0);
   });
 
-  // Elle yazılmış <thead>'li iki tablo (v0.9.644 pilotları) fixed layout
-  // TAŞIMIYOR: kolon sayıları tek haneli ve içerik kısa olduğu için GÖZLE
-  // seçildiler, yapısal kanıtları yok. İstisna olduklarını AÇIKÇA
-  // yazıyoruz ki sessizce çoğalmasınlar — yeni kullanımlar için kural
-  // fixed layout.
-  const HAND_PICKED = ['/pages/Runbooks.tsx', '/pages/settings/ApiTokensTab.tsx'];
+  // Elle yazılmış <thead>'li iki tablo (v0.9.644 pilotları) kolon
+  // genişliği BEYAN ETMİYOR — ölçülemiyorlar, gözle seçildiler. Açıkça
+  // adlandırılıyorlar ki sessizce çoğalmasınlar.
+  const UNMEASURED = ['/pages/Runbooks.tsx', '/pages/settings/ApiTokensTab.tsx'];
 
-  it('her is-fit tablosu tableLayout:fixed taşıyor (istisnalar hariç)', () => {
-    const bad = users
-      .filter(p => !HAND_PICKED.some(h => p.endsWith(h)))
-      .filter(p => !readFileSync(p, 'utf8').includes("tableLayout: 'fixed'"));
-    expect(bad.map(p => p.replace(SRC, ''))).toEqual([]);
+  it('ölçülebilir her is-fit tablosu eşiğin ALTINDA', () => {
+    const over: string[] = [];
+    for (const p of users) {
+      if (UNMEASURED.some(u => p.endsWith(u))) continue;
+      for (const w of tableWidths(readFileSync(p, 'utf8'))) {
+        if (w > FIT_PX) over.push(`${p.replace(SRC, '')} (${w}px)`);
+      }
+    }
+    expect(over).toEqual([]);
   });
 
-  it('istisna listesi bayatlamamış', () => {
-    for (const rel of HAND_PICKED) {
-      const p = users.find(u => u.endsWith(rel));
-      expect(p, `${rel} artık is-fit kullanmıyor — istisnadan çıkarılmalı`).toBeTruthy();
+  it('ölçülemeyen istisna listesi bayatlamamış', () => {
+    for (const rel of UNMEASURED) {
+      expect(users.find(u => u.endsWith(rel)), `${rel} artık is-fit değil`).toBeTruthy();
     }
+  });
+
+  // Testin GERÇEKTEN ayırt ettiğini kanıtla: ölçüm fonksiyonu geniş bir
+  // tabloyu geniş görmeli. Aksi halde yukarıdaki iddia boş geçerdi.
+  it('ölçüm geniş tabloyu yakalıyor (ayırt edicilik)', () => {
+    const ep = readFileSync(join(SRC, 'pages/Endpoints.tsx'), 'utf8');
+    const w = tableWidths(ep);
+    expect(w.length).toBeGreaterThan(0);
+    expect(Math.max(...w)).toBeGreaterThan(FIT_PX);
+    // Ve Endpoints is-fit DEĞİL — olsaydı taşardı.
+    expect(ep).not.toContain('table-wrap is-fit');
   });
 });

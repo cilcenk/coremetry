@@ -1711,17 +1711,23 @@ func (s *Store) GetServiceGraphTopN(ctx context.Context, service string, since t
 // LowCardinality column instead of scanning the attr_keys/attr_values
 // arrays — same value, much cheaper plan.
 var WellKnownTraceCol = map[string]string{
-	"http.method":            "http_method",
-	"http.route":             "http_route",
-	"http.status_code":       "toString(http_status)",
-	"db.system":              "db_system",
-	"db.statement":           "db_statement",
-	"rpc.system":             "rpc_system",
-	"rpc.method":             "rpc_method",
-	"peer.service":           "peer_service",
-	"messaging.system":       "msg_system",
-	"service.name":           "service_name",
-	"deployment.environment": "deploy_env",
+	"http.method": "http_method",
+	// v0.9.628 — GÜNCEL semconv yazımları; ingest ikisini de aynı kolona
+	// yazıyor (otlp/semconv.go). Gösterim yolu da ikisini tanımalı.
+	"http.request.method":       "http_method",
+	"http.response.status_code": "toString(http_status)",
+	"db.system.name":            "db_system",
+	"db.query.text":             "db_statement",
+	"http.route":                "http_route",
+	"http.status_code":          "toString(http_status)",
+	"db.system":                 "db_system",
+	"db.statement":              "db_statement",
+	"rpc.system":                "rpc_system",
+	"rpc.method":                "rpc_method",
+	"peer.service":              "peer_service",
+	"messaging.system":          "msg_system",
+	"service.name":              "service_name",
+	"deployment.environment":    "deploy_env",
 	// Current semconv spelling (≥1.27) — same typed column (v0.8.379).
 	"deployment.environment.name": "deploy_env",
 	"host.name":                   "host_name",

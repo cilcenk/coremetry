@@ -75,26 +75,52 @@ Yani CHANNEL_CODE için 4.3× ceza **yalnızca ALTER her shard'a inmediyse**
 ödeniyor. Diğer tüm özel anahtarlar (kurumsal alanlar) için her zaman
 ödeniyor.
 
-**PROD'DA DOĞRULANDI (2026-08-03, operatör ekran görüntüsü):**
+> ## ⚠ AŞAĞIDAKİ SONUÇ YANLIŞTI — düzeltildi 2026-08-04 (v0.9.621-625)
+>
+> **Hata:** İstediğim probe kolonun **VAR olduğunu** kanıtlıyordu,
+> **DOLU olduğunu** değil. İkisini aynı şey sandım ve ekran
+> görüntüsünde değerin boş göründüğünü fark edip üstünde durmadım.
+>
+> **Gerçek:** `attr_channel_code` prod'da v0.9.198'den beri **HEP
+> BOŞTU**. Kolonun ifadesi `indexOf(attr_keys, 'CHANNEL_CODE')` —
+> BÜYÜK harf; prod ise KÜÇÜK harf yazıyor. Operatör ölçümü
+> (2026-08-04): 10 dakikalık pencerede `channel_code` taşıyan
+> **2.67M span**, `CHANNEL_CODE` taşıyan **sıfır**.
+>
+> Yani "prod zaten en ucuz katmanda" cümlesinin tam tersi doğruydu:
+> prod **hiçbir zaman** o katmanda olmadı ve her `channel_code`
+> sorgusu dört değil **iki** şişman `Array(String)` kolonunu açıyordu.
+>
+> **Ders:** doğrulanan postkoşul, ihtiyaç duyulan postkoşul olmalı.
+> "Sorgu hata vermedi" ile "kolon veriyi taşıyor" farklı iddialar.
+>
+> Kapatan sürümler: v0.9.621 (kolon onarımı + DOLULUK probe'u),
+> v0.9.622 (filtre yönlendirmesi), v0.9.623 (skip index),
+> v0.9.624 (iş-boyutu kırılımı), v0.9.625 (ertelenen DDL sonrası
+> yeniden probe), v0.9.626 (rollup migration'ları).
+
+**PROD PROBE'U (2026-08-03, operatör ekran görüntüsü) — yanlış okundu:**
 ```
 select attr_channel_code FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1
-→ 1 rows · 13 ms · 1 columns   (HATA YOK)
+→ 1 rows · 13 ms · 1 columns   (HATA YOK — ama DEĞER BOŞ)
 ```
-ALTER her shard'a inmiş, probe geçiyor, harita dolu. Prod'da
-CHANNEL_CODE ve FUNCTION_CODE extras'ı **zaten en ucuz katmanda**
-(1. katman, native kolon) koşuyor.
 
-**Sonuç: operatörün "attribute kolonu ekleyince yavaşlıyor"
-semptomunun sebebi dizi yolu DEĞİL.** Geriye teşhiste sıralanan diğer
-üç şüpheli kalıyor: (a) extras'ın ek bir gidiş-dönüş olması, (b) her
-kolon kombinasyonunun ayrı bir önbellek anahtarı üretip SOĞUK
-başlaması, (c) attr dizilerinin dekompresyon maliyeti — ki (c) de
-promoted anahtarlarda ödenmiyor.
+**Doğru sonuç:** dizi yolu cezası prod'da CHANNEL_CODE ve
+FUNCTION_CODE için de ödeniyordu. Ölçülen fark (CH 24.8, 10M satır
+prod şeklinde tablo, 3 koşu medyanı):
 
-4.3× ceza yalnız **promoted OLMAYAN** özel anahtarlar için geçerli.
+| yol | read_rows | read_bytes | ms |
+|---|---|---|---|
+| dizi açma | 10.000.000 | 3.90 GiB | 362 |
+| terfi kolonu | 10.000.000 | 1.98 GiB | 204 |
+| kolon + `set(0)` indeks | 1.310.720 | 261 MiB | 81 |
 
-**Kazanç:** yalnız yeni promote edilecek anahtarlarda.
-**Efor:** 2/5 · **Öncelik: DÜŞÜK** — bugün ödenen bir maliyet değil.
+Kolonun tek başına yalnız 2× olmasının sebebi ölçümle bulundu: YENİ
+eklenen bir MATERIALIZED kolon eski part'larda **saklanmaz**, okuma
+anında diziden hesaplanır. Asıl kazanç skip index'te.
+
+**Öncelik: YÜKSEK** (öncesinde "DÜŞÜK — bugün ödenen bir maliyet
+değil" yazıyordu; ödenen bir maliyetti).
 
 ---
 

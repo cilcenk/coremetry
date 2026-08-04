@@ -3263,42 +3263,7 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	// group_extra surfaces the service alongside the bucket name so
 	// the UI can render '<svc> · <op>' rows for non-service groupings;
 	// when grouping by service it stays empty.
-	groupBuiltin := map[string]string{
-		"operation":   "name",
-		"service":     "service_name",
-		"kind":        "kind",
-		"status":      "status_code",
-		"http_method": "http_method",
-		"http_route":  "http_route",
-		"http_status": "toString(http_status)",
-		"host":        "host_name",
-		"deploy_env":  "deploy_env",
-		"scope":       "scope_name",
-	}
-	var groupExpr, extraExpr string
-	groupArgs := []any{}
-	switch {
-	case f.GroupAttr != "":
-		// Sanitisation happened on the HTTP layer — the key is
-		// safe to flow through as a `?` parameter. We try span
-		// attrs first then resource attrs.
-		groupExpr = "anyIf(coalesce(" +
-			"nullIf(attr_values[indexOf(attr_keys, ?)], ''), " +
-			"nullIf(res_values[indexOf(res_keys, ?)], '')" +
-			"), (parent_id = '' OR parent_id = '0000000000000000'))"
-		extraExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
-		groupArgs = append(groupArgs, f.GroupAttr, f.GroupAttr)
-	case f.GroupBy == "service":
-		groupExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
-		extraExpr = "''"
-	default:
-		col, ok := groupBuiltin[f.GroupBy]
-		if !ok {
-			col = "name" // default = operation
-		}
-		groupExpr = "anyIf(" + col + ", (parent_id = '' OR parent_id = '0000000000000000'))"
-		extraExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
-	}
+	groupExpr, extraExpr, groupArgs := aggregateGroupExpr(f)
 
 	// Whitelist sort key.
 	sortMap := map[string]string{
@@ -4626,4 +4591,74 @@ func BuildFilterGroupWhere(g FilterGroup) (string, []any) {
 		return "", nil
 	}
 	return wc.sql(), wc.args
+}
+
+// aggregateGroupExpr — /traces "Aggregated" sekmesinin gruplama ifadesi,
+// ek sütunu ve bind argümanları. SAF (tablo testli).
+//
+// v0.9.634'te handler'dan çıkarıldı: terfi kolonu çözümlemesi eklenince
+// dal karmaşıklaştı ve saf olmayan bir switch'i test etmenin tek yolu
+// tüm sorguyu kurmaktı. Emsal: traceExtrasProjection / businessDimExpr —
+// aynı "çözümleme saf, sorgu ayrı" ayrımı.
+//
+// KÖK-SPAN semantiği HER dalda korunur (anyIf … parent_id kökü). Bu
+// BİLİNÇLİ bir tasarım — "Uptrace-style: group traces by root
+// attributes" — hata değil; kovalamanın orta span'lerdeki değeri
+// görmemesi ayrı bir karar konusu ve operatör onayı ister.
+func aggregateGroupExpr(f AggregateFilter) (groupExpr, extraExpr string, groupArgs []any) {
+	groupBuiltin := map[string]string{
+		"operation":   "name",
+		"service":     "service_name",
+		"kind":        "kind",
+		"status":      "status_code",
+		"http_method": "http_method",
+		"http_route":  "http_route",
+		"http_status": "toString(http_status)",
+		"host":        "host_name",
+		"deploy_env":  "deploy_env",
+		"scope":       "scope_name",
+	}
+	groupArgs = []any{}
+	switch {
+	case f.GroupAttr != "":
+		// Sanitisation happened on the HTTP layer — the key is
+		// safe to flow through as a `?` parameter. We try span
+		// attrs first then resource attrs.
+		//
+		// v0.9.634 — TERFİ ETMİŞ KOLON önce. Bu dal, haritayı danışan
+		// üç kardeşin (traceExtrasProjection, businessDimExpr,
+		// FilterExpr.sql) yanında TEK istisnaydı: /traces Aggregated
+		// sekmesi koşulsuz dizi araması yapıyordu. Aynı sayfada aynı
+		// anahtar, filtrede indeksli kolondan, kırılımda dört şişman
+		// diziden okunuyordu.
+		//
+		// promotedCols() KULLANILIYOR, promotedAttrResolve DEĞİL:
+		// GroupAttr KULLANICI girdisi ve OTel'de attribute anahtarları
+		// harf duyarlı (v0.9.624'ün ayrımı — kod içi sabit liste bir
+		// KAVRAMI, kullanıcı girdisi bir ANAHTARI ifade eder).
+		//
+		// Kolon yalnız SPAN attribute'unu taşıyor; harita ıskalarsa
+		// resource fallback'li coalesce olduğu gibi kalıyor.
+		if col, ok := promotedCols()[f.GroupAttr]; ok {
+			groupExpr = "anyIf(" + col + ", (parent_id = '' OR parent_id = '0000000000000000'))"
+		} else {
+			groupExpr = "anyIf(coalesce(" +
+				"nullIf(attr_values[indexOf(attr_keys, ?)], ''), " +
+				"nullIf(res_values[indexOf(res_keys, ?)], '')" +
+				"), (parent_id = '' OR parent_id = '0000000000000000'))"
+			groupArgs = append(groupArgs, f.GroupAttr, f.GroupAttr)
+		}
+		extraExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
+	case f.GroupBy == "service":
+		groupExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
+		extraExpr = "''"
+	default:
+		col, ok := groupBuiltin[f.GroupBy]
+		if !ok {
+			col = "name" // default = operation
+		}
+		groupExpr = "anyIf(" + col + ", (parent_id = '' OR parent_id = '0000000000000000'))"
+		extraExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
+	}
+	return groupExpr, extraExpr, groupArgs
 }

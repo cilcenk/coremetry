@@ -2450,7 +2450,10 @@ func (s *Store) migrate(ctx context.Context) error {
 			// no-op via IF EXISTS).
 			log.Printf("[chstore] could not drop stale operation_group_summary_5m MV (op_group absent): %v", err)
 		} else {
-			log.Printf("[chstore] dropped operation_group_summary_5m MV (op_group absent — its insert trigger would block ingest)")
+			// v0.9.633 — erteleme kipinde DROP KOŞMADI, kuyruğa alındı.
+			// "dropped" demek operatöre "ingest'i tıkayan MV düştü"
+			// dedirtiyordu; halbuki MV hâlâ orada.
+			log.Printf("[chstore] operation_group_summary_5m MV DROP %s (op_group absent — its insert trigger would block ingest)", ddlAppliedOrQueued(s.ddlDeferred()))
 		}
 	}
 
@@ -2655,7 +2658,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		if err := s.execDDL(ctx, `DROP VIEW IF EXISTS db_statement_summary_5m`); err != nil {
 			log.Printf("[chstore] could not drop stale db_statement_summary_5m MV (db_stmt_hash absent): %v", err)
 		} else {
-			log.Printf("[chstore] dropped db_statement_summary_5m MV (db_stmt_hash absent — its insert trigger would block ingest)")
+			log.Printf("[chstore] db_statement_summary_5m MV DROP %s (db_stmt_hash absent — its insert trigger would block ingest)", ddlAppliedOrQueued(s.ddlDeferred()))
 		}
 	}
 

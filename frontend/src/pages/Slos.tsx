@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { SLIType, SLORow } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // v0.6.44 — sortable columns on /slos. Forecast + 7d trend stay
 // non-sortable because their values are loaded asynchronously per
@@ -63,7 +64,7 @@ export default function SLOsPage() {
     <>
       <Topbar title="SLOs" />
       <div id="content">
-        <div className="controls">
+        <PageControls sticky>
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>
             Service Level Objectives — track availability and latency targets with error-budget burn down.
           </span>
@@ -77,7 +78,7 @@ export default function SLOsPage() {
               <Button variant="primary" size="sm" onClick={() => setShowNew(true)}>+ New SLO</Button>
             </>
           )}
-        </div>
+        </PageControls>
 
         {items === undefined && <Spinner />}
         {items !== undefined && (!items || items.length === 0) && (

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 
 // v0.9.639 — liste sayfalarının filtre barı için tek primitif.
 //
@@ -28,15 +28,19 @@ export interface PageControlsProps {
   /** Kaydırırken üstte kalsın mı. Liste sayfalarında true. */
   sticky?: boolean;
   className?: string;
+  /** Sayfa-özel ince ayar (tipik: marginBottom). Dönüştürülen
+      sayfaların taşıdığı mevcut değerleri kaybetmemek için var —
+      yeni kullanımda gerekmiyor. */
+  style?: CSSProperties;
 }
 
-export function PageControls({ children, sticky = false, className }: PageControlsProps) {
+export function PageControls({ children, sticky = false, className, style }: PageControlsProps) {
   return (
     <div className={[
       'controls',
       sticky ? 'is-sticky' : '',
       className ?? '',
-    ].filter(Boolean).join(' ')}>
+    ].filter(Boolean).join(' ')} style={style}>
       {children}
     </div>
   );

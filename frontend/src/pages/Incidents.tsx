@@ -11,6 +11,7 @@ import { tsLong, fmtNum } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Incident, IncidentStatus } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // Columns for the shared sortable + resizable DataTable. Ongoing
 // incidents (no resolvedAt) sort as longest-duration.
@@ -74,7 +75,7 @@ export default function IncidentsPage() {
     <>
       <Topbar title="Incidents" />
       <div id="content">
-        <div className="controls" style={{ marginBottom: 12 }}>
+        <PageControls sticky style={{ marginBottom: 12 }}>
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as 'all' | IncidentStatus)}>
             <option value="all">All statuses</option>
             <option value="open">Open</option>
@@ -91,7 +92,7 @@ export default function IncidentsPage() {
             {' '}<b style={{ color: 'var(--warn)' }}>{counts.acknowledged}</b> ack ·
             {' '}<b style={{ color: 'var(--ok)' }}>{counts.resolved}</b> resolved
           </span>
-        </div>
+        </PageControls>
         {/* v0.9.456 (dürüstlük A4) — en-yeni-200 penceresi dolduysa
             söyle: pencere dışındaki eski incident'lar listede YOK ama
             yukarıdaki sayılar (SQL) onları sayıyor. */}

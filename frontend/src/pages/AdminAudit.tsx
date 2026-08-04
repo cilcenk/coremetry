@@ -8,6 +8,7 @@ import { tsLong, type GoDuration } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { AuditEntry } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // Columns for the shared sortable + resizable DataTable (v0.7.53
 // primitive). Default sort is Time desc — newest first, the
@@ -161,7 +162,7 @@ export default function AuditPage() {
     <>
       <Topbar title="Audit log" />
       <div id="content">
-        <div className="controls" style={{ marginBottom: 8 }}>
+        <PageControls sticky style={{ marginBottom: 8 }}>
           <select value={since} onChange={e => setSince(e.target.value as GoDuration)} aria-label="Time range">
             <option value="1h">Last 1h</option>
             <option value="24h">Last 24h</option>
@@ -197,7 +198,7 @@ export default function AuditPage() {
             title="Download current view as CSV">
             ↓ Export CSV
           </a>
-        </div>
+        </PageControls>
 
         {data === undefined && <Spinner />}
         {data !== undefined && data?.length === 0 && (

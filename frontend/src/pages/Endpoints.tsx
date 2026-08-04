@@ -24,6 +24,7 @@ import { parseColsParam, formatColsParam } from '@/pages/endpoints/endpointCols'
 import { ColumnToggle } from '@/pages/endpoints/ColumnToggle';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // /endpoints — operator-asked v0.5.365. Cross-service inbound
 // RED rollup keyed on http.route (templated) with url.path /
@@ -415,7 +416,7 @@ export default function EndpointsPage() {
             RPC &amp; Messaging
           </button>
         </div>
-        <div className="controls" style={{ flexWrap: 'wrap', marginBottom: 12 }}>
+        <PageControls sticky>
           <ServicePicker value={service} onChange={setService}
             placeholder="All services…" width={200} />
           <input ref={searchRef} value={search}
@@ -503,7 +504,7 @@ export default function EndpointsPage() {
             columns={ENDPOINT_COLS.filter(c => !c.headerHidden).map(c => ({ id: c.id, label: c.label }))}
             visible={visibleCols}
             onChange={setVisibleCols} />
-        </div>
+        </PageControls>
 
         {rows === undefined && <TableSkeleton cols={8} wideFirst />}
         {rows === null && (

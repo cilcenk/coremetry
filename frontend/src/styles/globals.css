@@ -261,6 +261,35 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 
 /* Controls */
 .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
+
+/* v0.9.639 — YAPIŞKAN filtre barı, OPT-IN.
+   (denetim bulgusu #5: "hiçbir liste sayfasında sticky filtre barı yok —
+   filtreler kaydırınca ekrandan çıkıyor", etki 5/5)
+
+   Neden `.controls`'a doğrudan eklenmedi: 30 dosya onu kullanıyor ve
+   hepsi liste sayfası değil (kimi kart ızgarası, kimi detay paneli).
+   Global bir davranış değişikliği görsel olarak doğrulanmadan 30 sayfaya
+   yayılmaz — artımsal rollout (feedback-ui-consistency-principles).
+
+   Kaydırma portu `#content` (flex:1 + overflow:auto). `#content`'in 20px
+   padding'i olduğu için bar, kenarlara TAŞIRILIYOR (negatif margin +
+   eşit padding); aksi halde altından kayan içerik barın sağ/sol
+   boşluğundan görünürdü.
+
+   İÇ ÇERÇEVE YOK: bar `#content`'in kendi eksenine yapışıyor, yeni bir
+   kaydırma konteyneri KURMUYOR — operatörün "sayfa başına tek scroll
+   ekseni" kuralı korunuyor. */
+.controls.is-sticky {
+  position: sticky;
+  top: -20px;                 /* #content padding-top kadar */
+  z-index: 5;
+  background: var(--bg0);
+  margin: -20px -20px 14px;
+  padding: 20px 20px 12px;
+  /* Altından geçen içerikle arasına ince bir ayrım — gölge değil çizgi,
+     çünkü gölge tema geçişlerinde iki paletle de uyumlu değil. */
+  border-bottom: 1px solid var(--border);
+}
 input, select {
   background: var(--bg2); border: 1px solid var(--border); color: var(--text);
   border-radius: 6px; padding: 5px 10px; font-size: 13px; outline: none;

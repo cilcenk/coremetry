@@ -10,18 +10,10 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { useServiceMap } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { serviceGraphToMap } from '@/lib/serviceGraphAdapter';
-import { fmtNum, timeRangeToNs } from '@/lib/utils';
+import { fmtNum, rangeToSince, timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
-import type { TimeRange, ServiceMap, ServiceMapNode } from '@/lib/types';
-
-const PRESETS: { key: TimeRange['preset']; secs: number; label: string }[] = [
-  { key: '5m',  secs: 300,    label: '5m'  },
-  { key: '15m', secs: 900,    label: '15m' },
-  { key: '1h',  secs: 3600,   label: '1h'  },
-  { key: '6h',  secs: 21600,  label: '6h'  },
-  { key: '24h', secs: 86400,  label: '24h' },
-];
+import type { ServiceMap, ServiceMapNode } from '@/lib/types';
 
 // Service map: global topology view + a focus mode that
 // narrows to a single service's 1-hop neighbourhood. The
@@ -73,7 +65,22 @@ export default function ServiceMapPage() {
   // so the whole-production map isn't an unreadable hairball. 0 = no cap (full
   // sampled graph). Server-side prune — the browser never receives the long tail.
   const [topN, setTopN] = useState(0);
-  const since = `${PRESETS.find(p => p.key === range.preset)?.secs ?? 900}s` as const;
+  // v0.9.616 — pencere PAYLAŞILAN rangeToSince'dan.
+  //
+  // Öncesi 5 girdilik YEREL bir tablodan çözülüyordu ve tabloda
+  // olmayan her preset sessizce 900s'e (15 dk) düşüyordu. Sayfanın
+  // KENDİ varsayılanı '30m' de tabloda YOKTU: hiç dokunulmamış
+  // /service-map, picker "Son 30 dakika" derken 15 DAKİKALIK veri
+  // gösteriyordu. 3h/12h/2d/7d/30d ve her custom aralık da aynı
+  // şekilde 15 dakikaya düşüyordu.
+  //
+  // Üstelik aynı sayfada ikinci bir pencere hesabı (aşağıda,
+  // timeRangeToNs ile focus sorgusu) DOĞRU aralığı kullanıyordu —
+  // yani tek ekranda iki farklı zaman penceresi vardı.
+  //
+  // ServiceBacktrace bu göçü v0.9.257'de yaptı (yorumu orada duruyor);
+  // ServiceMap atlanmış.
+  const since = rangeToSince(range).since;
 
   const mapQ = useServiceMap(since, samples, diff || undefined, topN);
   // Single focus-commit path (v0.8.265, operator-reported "Focus

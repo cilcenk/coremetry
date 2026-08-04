@@ -46,8 +46,14 @@ SELECT
     kind                                                           AS span_kind,
     status_code,
     if(http_route != '', http_route, name)                         AS endpoint,
-    toLowCardinality(attr_values[indexOf(attr_keys, 'CHANNEL_CODE')])  AS channel_code,
-    attr_values[indexOf(attr_keys, 'FUNCTION_CODE')]               AS function_code,
+    -- v0.9.626 — iki yazım da (gerekçe 0002'de; prod küçük harf yazıyor
+    -- ve yalnız BÜYÜK harf okuyan bir backfill boyutu boş doldururdu).
+    toLowCardinality(coalesce(
+        nullIf(attr_values[indexOf(attr_keys, 'CHANNEL_CODE')], ''),
+        nullIf(attr_values[indexOf(attr_keys, 'channel_code')], ''), ''))  AS channel_code,
+    coalesce(
+        nullIf(attr_values[indexOf(attr_keys, 'FUNCTION_CODE')], ''),
+        nullIf(attr_values[indexOf(attr_keys, 'function_code')], ''), '')  AS function_code,
     toUInt64(count())                                              AS span_count,
     toUInt64(countIf(status_code = 'error'))                       AS error_count,
     toUInt64(sum(duration))                                        AS duration_sum,

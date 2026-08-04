@@ -40,20 +40,28 @@
 -- (ya da merge'te) hesaplar — backfill GEREKMEZ.
 ALTER TABLE spans_local ON CLUSTER uptrace_all
     ADD COLUMN IF NOT EXISTS attr_channel_code LowCardinality(String)
-    MATERIALIZED attr_values[indexOf(attr_keys, 'CHANNEL_CODE')];
+    MATERIALIZED coalesce(
+        nullIf(attr_values[indexOf(attr_keys, 'CHANNEL_CODE')], ''),
+        nullIf(attr_values[indexOf(attr_keys, 'channel_code')], ''), '');
 
 ALTER TABLE spans_local ON CLUSTER uptrace_all
     ADD COLUMN IF NOT EXISTS attr_function_code LowCardinality(String)
-    MATERIALIZED attr_values[indexOf(attr_keys, 'FUNCTION_CODE')];
+    MATERIALIZED coalesce(
+        nullIf(attr_values[indexOf(attr_keys, 'FUNCTION_CODE')], ''),
+        nullIf(attr_values[indexOf(attr_keys, 'function_code')], ''), '');
 
 -- ── ADIM 2: Distributed sarmalayıcı (SELECT forwarding çözümlemesi) ──────
 ALTER TABLE spans ON CLUSTER uptrace_all
     ADD COLUMN IF NOT EXISTS attr_channel_code LowCardinality(String)
-    MATERIALIZED attr_values[indexOf(attr_keys, 'CHANNEL_CODE')];
+    MATERIALIZED coalesce(
+        nullIf(attr_values[indexOf(attr_keys, 'CHANNEL_CODE')], ''),
+        nullIf(attr_values[indexOf(attr_keys, 'channel_code')], ''), '');
 
 ALTER TABLE spans ON CLUSTER uptrace_all
     ADD COLUMN IF NOT EXISTS attr_function_code LowCardinality(String)
-    MATERIALIZED attr_values[indexOf(attr_keys, 'FUNCTION_CODE')];
+    MATERIALIZED coalesce(
+        nullIf(attr_values[indexOf(attr_keys, 'FUNCTION_CODE')], ''),
+        nullIf(attr_values[indexOf(attr_keys, 'function_code')], ''), '');
 
 -- ── ADIM 3 (ELLE DOĞRULAMA — MODIFY QUERY'den önce ŞART) ─────────────────
 -- ŞEMA sorgusu (veri sorgusu DEĞİL — analyzer kullanılmayan kolon

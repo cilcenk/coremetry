@@ -88,7 +88,7 @@ var wellKnown = map[string]string{
 // pushes the key as a parameter. For numeric ops we cast to Float64 so that
 // even string-stored attributes compare correctly when they parse.
 func (f FilterExpr) SQL() (string, []any, error) {
-	return f.sql("", wellKnown, wellKnownResource)
+	return f.sql("", wellKnown, wellKnownResource, traceAttrMaterialized)
 }
 
 // SQLForMetricPoints resolves against metric_points' column set
@@ -96,7 +96,10 @@ func (f FilterExpr) SQL() (string, []any, error) {
 // other wellKnown key falls to the attr/res array lookups instead of
 // referencing a spans-only column ClickHouse would reject.
 func (f FilterExpr) SQLForMetricPoints() (string, []any, error) {
-	return f.sql("", metricPointsWellKnown, nil)
+	// promoted=nil: terfi kolonları SPANS'a özgü. v0.9.619'un dersi —
+	// paylaşılan üretecin içine harita GÖMÜLMEZ, parametre olarak gelir;
+	// aksi halde metric_points'te var olmayan bir kolona referans üretir.
+	return f.sql("", metricPointsWellKnown, nil, nil)
 }
 
 // SQLAliased is the alias-qualified twin of SQL: every column reference is
@@ -108,7 +111,7 @@ func (f FilterExpr) SQLForMetricPoints() (string, []any, error) {
 // caller (relations.go uses the fixed literals "c" / "p"), never threaded
 // from user input. Keys and values still flow exclusively as `?` params.
 func (f FilterExpr) SQLAliased(alias string) (string, []any, error) {
-	return f.sql(alias, wellKnown, wellKnownResource)
+	return f.sql(alias, wellKnown, wellKnownResource, traceAttrMaterialized)
 }
 
 // qualCol prefixes a well-known column expression (which may itself be a
@@ -146,7 +149,25 @@ func qualArr(alias, expr string) string {
 // Tabloya ÖZEL ve wellKnown'dan ayrı olması şart — gerekçe
 // wellKnownResource tanımında. nil geçmek "bu tabloda resource→kolon
 // eşlemesi yok" demek ve davranışı dizi aramasında bırakır.
-func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown map[string]string) (string, []any, error) {
+// promoted: operatör tarafından terfi ettirilmiş ÖZEL attribute anahtarları
+// (traceAttrMaterialized). nil geçmek "bu tabloda terfi kolonu yok" demek —
+// metric_points yolu böyle geçiyor.
+//
+// v0.9.622 — filtre yolu bu haritaya BAKMIYORDU ve bu, terfi kolonlarının
+// tüm noktasını kaçırıyordu: /traces gösterim kolonları (traceExtrasProjection)
+// ve kırılımlar (businessDimExpr) haritayı kullanıyordu ama FİLTRE — yani
+// pahalı olan taraf — koşulsuz dizi aramasına düşüyordu.
+//
+// Operator-reported sonuç: channel_code filtresi 6 saatlik pencerede iki
+// büyük Array(String) kolonunu her span için açıyor, granül eleme yok,
+// 26 sn'de max_execution_time'a takılıyor.
+//
+// Ölçüldü (CH 24.8, 10M satır, 3 koşu medyanı):
+//
+//	dizi açma            3.90 GiB   362 ms
+//	terfi kolonu         1.98 GiB   204 ms
+//	kolon + skip index    261 MiB    81 ms
+func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown, promoted map[string]string) (string, []any, error) {
 	op := strings.ToUpper(strings.TrimSpace(f.Op))
 	if op == "" {
 		op = "="
@@ -187,15 +208,23 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown map[string]st
 		}
 	case strings.HasPrefix(f.Key, "span."):
 		name := strings.TrimPrefix(f.Key, "span.")
-		// Allow span.<known> to fall back to the dedicated column for indexing
-		if col, ok := wellKnown[name]; ok {
+		// v0.9.622 — çözümleme sırası traceExtrasProjection /
+		// businessDimExpr ile AYNI: terfi kolonu → well-known → dizi.
+		// Üç yerde üç farklı sıra olsaydı aynı anahtar aynı sayfada
+		// farklı kolonlardan okunurdu.
+		if col, ok := promoted[name]; ok {
+			lhs = qualCol(alias, col)
+		} else if col, ok := wellKnown[name]; ok {
+			// Allow span.<known> to fall back to the dedicated column for indexing
 			lhs = qualCol(alias, col)
 		} else {
 			lhs = qualArr(alias, "attr_values[indexOf(attr_keys, ?)]")
 			args = append(args, name)
 		}
 	default:
-		if col, ok := wellKnown[f.Key]; ok {
+		if col, ok := promoted[f.Key]; ok {
+			lhs = qualCol(alias, col)
+		} else if col, ok := wellKnown[f.Key]; ok {
 			lhs = qualCol(alias, col)
 		} else {
 			lhs = qualArr(alias, "attr_values[indexOf(attr_keys, ?)]")
@@ -210,6 +239,12 @@ func (f FilterExpr) sql(alias string, wellKnown, resourceWellKnown map[string]st
 	switch op {
 	case "EXISTS", "NOT EXISTS":
 		neg := op == "NOT EXISTS"
+		// v0.9.622 — EXISTS terfi kolonuna BİLİNÇLİ olarak yönlenmiyor.
+		// `has(attr_keys,'k')` ile `col != ''` eşdeğer DEĞİL: anahtar
+		// BOŞ DEĞERLE varsa ilki true, ikincisi false döner. Kazanç da
+		// küçük — EXISTS zaten yalnız attr_keys'i okuyor, değer
+		// karşılaştırmaları gibi iki diziyi birden açmıyor.
+		//
 		// Pick the right array (or use the dedicated column if well-known).
 		var hasExpr string
 		var hArgs []any

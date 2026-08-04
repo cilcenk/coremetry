@@ -65,7 +65,12 @@ type traceExplainInput struct {
 // hata/boşluk durumunda sessizce trace-only'e düşer (v0.9.166 maliyet
 // disiplini: proaktif/poll YOK).
 func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceExplainInput, error) {
-	spans, err := s.store.GetTrace(ctx, id)
+	// v0.9.632 — operator-reported: Tempo fallback trace'i bulup
+	// waterfall'ı çizerken explain "trace not found" diyordu. Burası
+	// doğrudan s.store.GetTrace çağırıyordu; /api/traces/{id} ise CH
+	// ıskalayınca Tempo'ya düşüyordu. Tek kural, tek yer:
+	// resolveTraceSpans (trace_resolve.go).
+	spans, _, err := s.resolveTraceSpans(ctx, id)
 	if err != nil {
 		return traceExplainInput{}, err
 	}

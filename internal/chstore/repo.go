@@ -4639,15 +4639,45 @@ func aggregateGroupExpr(f AggregateFilter) (groupExpr, extraExpr string, groupAr
 		//
 		// Kolon yalnız SPAN attribute'unu taşıyor; harita ıskalarsa
 		// resource fallback'li coalesce olduğu gibi kalıyor.
+		// v0.9.635 — KÖK-ÖNCELİKLİ, kök taşımıyorsa DÜŞÜŞ YOLU.
+		//
+		// Öncesi yalnız kök span'e bakıyordu ve bu SESSİZ VERİ KAYBI
+		// üretiyordu: kök anahtarı taşımıyorsa group_key='' oluyor ve
+		// trace `HAVING group_key != ''` ile TAMAMEN ELENİYORDU —
+		// yanlış kovaya düşmüyor, yok oluyordu. Hiçbir trace'in kökünde
+		// yoksa tablo komple boş dönüyor ve operatör "bu attribute yok"
+		// diye okuyor.
+		//
+		// Tipik şekil tam bunu tetikliyor: kök span gateway'in generic
+		// HTTP span'i, iş kodu bir alt serviste set ediliyor.
+		//
+		// Dahası AYNI SAYFA iki cevap veriyordu: trace listesinin ekstra
+		// kolonu kök-bağımsız (repo.go traceExtrasProjection), yani
+		// listede `channel_code = MOBILE` görünen bir trace'i Aggregated
+		// sekmesi hiç saymıyordu. İki yüzeyin çelişmesi tasarım değil.
+		//
+		// "Uptrace-style: group traces by root attributes" yorumu niyeti
+		// anlatıyordu ama blok terfi-kolonu katmanlarından aylar önce
+		// yazılmış ve hiç revize edilmemiş.
+		//
+		// argMinIf (anyIf DEĞİL): düşüş yolu DETERMİNİSTİK olmalı —
+		// değeri taşıyan EN ERKEN span kazanır. anyIf ile aynı trace
+		// iki koşuda farklı kovaya düşebilirdi.
+		val := "coalesce(" +
+			"nullIf(attr_values[indexOf(attr_keys, ?)], ''), " +
+			"nullIf(res_values[indexOf(res_keys, ?)], ''))"
+		valArgs := []any{f.GroupAttr, f.GroupAttr}
 		if col, ok := promotedCols()[f.GroupAttr]; ok {
-			groupExpr = "anyIf(" + col + ", (parent_id = '' OR parent_id = '0000000000000000'))"
-		} else {
-			groupExpr = "anyIf(coalesce(" +
-				"nullIf(attr_values[indexOf(attr_keys, ?)], ''), " +
-				"nullIf(res_values[indexOf(res_keys, ?)], '')" +
-				"), (parent_id = '' OR parent_id = '0000000000000000'))"
-			groupArgs = append(groupArgs, f.GroupAttr, f.GroupAttr)
+			val, valArgs = col, nil
 		}
+		groupExpr = "coalesce(" +
+			"nullIf(anyIf(" + val + ", (parent_id = '' OR parent_id = '0000000000000000')), ''), " +
+			"argMinIf(" + val + ", time, " + val + " != ''), '')"
+		// Bind sırası SQL'deki görünme sırasıyla BİREBİR: val üç kez
+		// geçiyor (kök anyIf, argMin değeri, argMin koşulu).
+		groupArgs = append(groupArgs, valArgs...)
+		groupArgs = append(groupArgs, valArgs...)
+		groupArgs = append(groupArgs, valArgs...)
 		extraExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"
 	case f.GroupBy == "service":
 		groupExpr = "anyIf(service_name, (parent_id = '' OR parent_id = '0000000000000000'))"

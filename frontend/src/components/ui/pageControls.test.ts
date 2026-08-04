@@ -28,13 +28,19 @@ describe('sticky filtre barının dayandığı kabuk', () => {
     expect(b).toMatch(/flex:\s*1/);
   });
 
-  // Taşırma (negatif margin) #content'in padding'ine göre hesaplandı.
-  // Padding değişirse bar kenarlardan sızar.
-  it('#content padding’i 20px — taşırma buna göre', () => {
-    expect(block('#content')).toMatch(/padding:\s*20px/);
+  // v0.9.640 — operatör-bildirimli regresyon: YATAY negatif margin blok
+  // elemanın genişliğini 40px artırıyor, kolon sayısı fazla bir tabloda
+  // #content'te yatay kaydırma doğuruyor ve içerik barın yanından
+  // sızıyordu. Yatay taşırma zaten gereksizdi: alttan kayan içerik de
+  // barla aynı content-box genişliğinde.
+  it('YATAY taşırma YOK — genişliği artıran negatif margin yasak', () => {
     const s = block('.controls.is-sticky');
-    expect(s).toContain('margin: -20px -20px 14px');
-    expect(s).toContain('top: -20px');
+    expect(s).not.toMatch(/margin(-left|-right)?:\s*-/);
+    expect(s).not.toMatch(/width:/);
+  });
+
+  it('scrollport üst kenarına yapışıyor', () => {
+    expect(block('.controls.is-sticky')).toMatch(/top:\s*0/);
   });
 
   it('sticky sınıfı gerçekten sticky ve opak', () => {

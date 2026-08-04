@@ -281,11 +281,25 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
    ekseni" kuralı korunuyor. */
 .controls.is-sticky {
   position: sticky;
-  top: -20px;                 /* #content padding-top kadar */
+  top: 0;
   z-index: 5;
   background: var(--bg0);
-  margin: -20px -20px 14px;
-  padding: 20px 20px 12px;
+  /* v0.9.640 — operatör-bildirimli: "Endpoints tablosunda çok kolon
+     olduğu için içerik sızıyor".
+
+     v0.9.639'da `margin: -20px -20px 14px` vardı. Blok elemanda YATAY
+     negatif margin genişliği 40px ARTIRIYOR; kolon sayısı fazla bir
+     tabloda #content'te yatay kaydırma doğuyor ve içerik barın yanından
+     sızıyor. Regresyonu ben soktum.
+
+     Yatay taşırma zaten GEREKSİZDİ: alttan kayan içerik de barla aynı
+     content-box genişliğinde, yani bar onu tam kapatıyor. Padding
+     bölgesinde içerik yok — kapatılacak bir şey de yok.
+
+     Dikey taşırma da kalktı: top:0 ile bar #content'in üst kenarına
+     yapışıyor, negatif margin'e gerek yok. */
+  margin-bottom: 14px;
+  padding: 10px 0;
   /* Altından geçen içerikle arasına ince bir ayrım — gölge değil çizgi,
      çünkü gölge tema geçişlerinde iki paletle de uyumlu değil. */
   border-bottom: 1px solid var(--border);

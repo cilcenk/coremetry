@@ -2598,19 +2598,17 @@ func (s *Store) migrate(ctx context.Context) error {
 	// probe below gates the read side (distributed-column-safety — the map
 	// stays EMPTY and the projection falls back to the array path when the
 	// columns aren't resolvable).
-	attrColAlters := []string{
-		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS attr_channel_code LowCardinality(String) MATERIALIZED attr_values[indexOf(attr_keys, 'CHANNEL_CODE')]`,
-		`ALTER TABLE spans ADD COLUMN IF NOT EXISTS attr_function_code LowCardinality(String) MATERIALIZED attr_values[indexOf(attr_keys, 'FUNCTION_CODE')]`,
-	}
-	if s.spansIsExternalDistributed(ctx) {
-		log.Printf("[chstore] external Distributed `spans` with cluster_name unset — SKIPPING promoted attribute column ALTERs; /traces extras stay on the array path")
-	} else {
-		for _, a := range attrColAlters {
-			if err := s.execDDL(ctx, a); err != nil {
-				return fmt.Errorf("alter table (promoted attr cols): %w", err)
-			}
-		}
-	}
+	// v0.9.621 — ifade artık İKİ yazımı da okuyor ve gerekiyorsa var olan
+	// kolon DROP+ADD ile onarılıyor (promoted_attr.go: neden MODIFY değil,
+	// neden `alters` listesine konulamaz).
+	//
+	// Ayrıca artık boot'u DÜŞÜRMÜYOR: eskiden ALTER hatası
+	// `return fmt.Errorf(...)` ile migrate'i kesiyordu. Terfi kolonu saf
+	// bir hız optimizasyonu ve okuma tarafı probe ile kapalı — başarısızlık
+	// "yavaş" demek, "yanlış" değil. v0.9.604-615 boot krizinden sonra
+	// isteğe bağlı bir optimizasyonun pod'u ready olmaktan alıkoyması
+	// kabul edilemez.
+	s.repairPromotedAttrCols(ctx)
 	// v0.9.439 (Uptrace uyarlamaları — LC/kodek denetimi) — metric_points
 	// serbest kolonlarına ZSTD(1) (metadata-only MODIFY; v0.8.214 spans
 	// emsali). Taban ölçümü (lokal, 2026-07-30): res_values 34.5MiB
@@ -2636,17 +2634,14 @@ func (s *Store) migrate(ctx context.Context) error {
 		}
 	}
 
-	acRows, acErr := s.conn.Query(ctx,
-		`SELECT attr_channel_code, attr_function_code FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
-	maybeCloseRows(acRows, acErr)
-	if acErr == nil {
-		registerTraceAttrMaterialized(map[string]string{
-			"CHANNEL_CODE":  "attr_channel_code",
-			"FUNCTION_CODE": "attr_function_code",
-		})
-	} else {
-		log.Printf("[chstore] promoted attribute columns not resolvable on spans (%v) — /traces extras use the array path (expected until the ALTER lands on every shard)", acErr)
-	}
+	// v0.9.621 — kayıt artık VERİYLE kanıtlanıyor, varlıkla değil.
+	//
+	// Eski probe `SELECT attr_channel_code … LIMIT 1` idi: kolonun VAR
+	// olduğunu kanıtlıyordu, DOLU olduğunu değil. Kolon v0.9.198'den beri
+	// boştu ve probe her boot'ta geçti. probePromotedAttrs her yazım için
+	// ayrı ayrı "kolon, dizi aramasının verdiği değerin aynısını mı
+	// veriyor?" sorusunu veriyle cevaplıyor.
+	registerTraceAttrMaterialized(s.probePromotedAttrs(ctx))
 
 	// Defensive recovery (mirrors the op_group guard, v0.8.186): when
 	// db_stmt_hash is genuinely absent, DROP db_statement_summary_5m if it

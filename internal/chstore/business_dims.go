@@ -45,7 +45,7 @@ type BusinessSlice struct {
 // gider; çağıran zaten sabit anahtar veriyor ama dizi yolunda parametre
 // kullanmak enjeksiyon yüzeyini tamamen kapatıyor.
 func businessDimExpr(key string) (string, []any) {
-	if col, ok := traceAttrMaterialized[key]; ok {
+	if col, ok := promotedCols()[key]; ok {
 		return col, nil
 	}
 	// v0.9.624 — anahtar bir terfi attribute'unun BAŞKA YAZIMI olabilir.

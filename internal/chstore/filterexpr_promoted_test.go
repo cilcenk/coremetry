@@ -15,8 +15,9 @@ import (
 
 func withPromoted(t *testing.T, key, col string) {
 	t.Helper()
-	traceAttrMaterialized[key] = col
-	t.Cleanup(func() { delete(traceAttrMaterialized, key) })
+	prev := promotedColsPtr.Load()
+	registerTraceAttrMaterialized(map[string]string{key: col})
+	t.Cleanup(func() { promotedColsPtr.Store(prev) })
 }
 
 func TestFilterRoutesPromotedAttrToColumn(t *testing.T) {
@@ -58,7 +59,7 @@ func TestFilterRoutesPromotedAttrUnderSpanPrefix(t *testing.T) {
 // boş bir kolona yönlenip BOŞ sonuç dönerdi — yani "hiç trace yok".
 // Yanlış sonuç, yavaş sonuçtan kötüdür.
 func TestFilterStaysOnArrayPathWhenNotProbed(t *testing.T) {
-	if _, registered := traceAttrMaterialized["channel_code"]; registered {
+	if _, registered := promotedCols()["channel_code"]; registered {
 		t.Fatal("ön koşul: bu testte harita boş olmalı")
 	}
 	sql, args, err := FilterExpr{Key: "channel_code", Op: "=", Values: []string{"030101"}}.SQL()

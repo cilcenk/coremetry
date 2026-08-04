@@ -86,8 +86,7 @@ func TestTraceExtrasProjection_MaterializedVsArray(t *testing.T) {
 
 	// Materialized map populated (FAZ 2C applied) → native column wins,
 	// no array access, no binds. Restore the package map afterwards.
-	traceAttrMaterialized["CHANNEL_CODE"] = "attr_channel_code"
-	defer delete(traceAttrMaterialized, "CHANNEL_CODE")
+	withPromoted(t, "CHANNEL_CODE", "attr_channel_code")
 	sel, args = traceExtrasProjection([]string{"CHANNEL_CODE", "FUNCTION_CODE"})
 	if !strings.Contains(sel, "anyIf(attr_channel_code, attr_channel_code != '') AS extra_0") {
 		t.Fatalf("materialized key should read its native column; got:\n%s", sel)

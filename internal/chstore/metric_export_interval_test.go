@@ -14,12 +14,12 @@ import (
 // estimator's branches, the raise-only clamp, and the probe SQL's
 // CH-bounds contract.
 
-// v0.9.672 — TABAN ARTIK P90 (operatör-bildirimi: "kesikli çıkıyor").
+// v0.9.688 — TABAN = YAYIM TİKİ (düşük kantil).
 //
-// Eski hâli en YOĞUN seriyi alıyordu. Ölçüm (127 seri, üretim
-// sorgusuyla aynı granülerlik): iv_min 27.3s · p50 45.2s · p90 76.1s ·
-// max 113.9s. Eski tabanla 1/127 seri (%0.8) kapsanıyordu, yenisiyle
-// 115/127 (%90.6).
+// v0.9.672 yüksek kantile çekmişti; o, seri SEYREKLİĞİNİ ölçüyor.
+// Ölçüm: seri başına p90 137.5s, gerçek tik (farklı damga sayısı)
+// 4.24s — 32× fark. Operatörün "client 1 sn ama metrics dakikalık"
+// gözlemi tam bu.
 func TestExportIntervalQuantile(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -27,7 +27,7 @@ func TestExportIntervalQuantile(t *testing.T) {
 		series uint64
 		want   int
 	}{
-		{"tipik p90 (ölçülen)", 76.1, 127, 76},
+		{"ölçülen yayım tiki", 4.24, 127, 4},
 		{"tek seri — dejenerasyon doğru yönde", 8, 1, 8},
 		{"yuvarlama", 7.6, 10, 8},
 		{"seri yok → clamp yok", 30, 0, 0},
@@ -54,10 +54,13 @@ func TestMetricExportIntervalQuantileSQLBounds(t *testing.T) {
 			"LIMIT 20000",
 			"max_execution_time",
 			"GROUP BY service_name, host_name, attr_values",
-			// P90 ÖZELLİKLE: p50'ye (45.2s) düşürmek kapsamı yarıya indirir,
-			// max'a (113.9s) çıkarmak tek seyrek seriyle tüm grafiği
-			// kabalaştırır.
-			"quantileExact(0.9)",
+			// v0.9.688 — DÜŞÜK kantil ÖZELLİKLE. Yüksek kantil seri
+			// SEYREKLİĞİNİ ölçüyordu, yayım tikini değil: ölçümde seri
+			// başına p90 137.5s iken gerçek tik 4.24s (32× fark). Delta
+			// temporality'de nadir bir route yalnız trafik aldığında
+			// nokta üretir; o seyrekliği taban yapmak herkesin
+			// çözünürlüğünü yok ediyordu.
+			"quantileExact(0.1)",
 		} {
 			if !strings.Contains(q, want) {
 				t.Errorf("service=%q: missing %q in %s", svc, want, q)

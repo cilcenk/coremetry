@@ -203,6 +203,13 @@ export function tsLong(ns: number): string {
 // absolute date is less load-bearing than "how much longer". For
 // past timestamps the suffix flips to " ago". Rounds to the
 // largest unit that fits to keep the label tight.
+// tsMinute — dd.mm.yyyy HH:mm (saniyesiz). tsLong'un dar kolonlar için
+// olan kardeşi: tam damga title'a, okunabilir kısmı hücreye (v0.9.660).
+export function tsMinute(ns: number): string {
+  if (!ns) return '—';
+  return tsLong(ns).slice(0, -3);
+}
+
 export function tsRel(ns: number): string {
   if (!ns) return '—';
   const diffMs = ns / 1e6 - Date.now();

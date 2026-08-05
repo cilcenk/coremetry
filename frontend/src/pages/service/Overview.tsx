@@ -421,6 +421,20 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     };
   }, [metricTputQ.data]);
 
+  // v0.9.676 (operatör: "response time için de bir panel yapabilir
+  // misin") — metrik türevli gecikme. Aynı uçtan, THROUGHPUT'UN BULDUĞU
+  // seriden geliyor: iki panelin farklı serilere bakması kıyaslamayı
+  // sessizce anlamsız kılardı.
+  const metricLatLines = useMemo<ChartLine[]>(() => {
+    const l = metricTputQ.data?.latency;
+    if (!l) return [];
+    const out: ChartLine[] = [];
+    if (l.p50) out.push({ series: l.p50, color: 'var(--purple)', label: 'P50' });
+    if (l.p95) out.push({ series: l.p95, color: 'var(--orange)', label: 'P95' });
+    if (l.p99) out.push({ series: l.p99, color: 'var(--err)', label: 'P99' });
+    return out;
+  }, [metricTputQ.data]);
+
   // v0.9.170 (operatör-bildirimi: cluster çözülemeyen / metrik-yoğun
   // servislerde "bütün Service Overview boş"). Service-summary bundle (info)
   // null olsa da Overview BLANK dönmez — headline sayılar RED/latency
@@ -541,6 +555,32 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
               { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
             ]} />
+          )}
+          {/* v0.9.676 — metrik türevli gecikme KENDİ kartında, span
+              türevlinin ALTINDA (throughput'takiyle aynı düzen).
+              Yüzdelikler histogram KOVA SINIRLARINDAN; bir sayaçta
+              gecikme diye bir şey olmadığı için yalnız histogramda
+              çiziliyor. */}
+          {metricLatLines.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <ChartCard
+                title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
+                titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}${metricTputQ.data?.latencyUnitKnown === false ? ' · BİRİM TANINMADI, ölçeklenmedi' : ''}`}
+                unit={metricTputQ.data?.latencyUnitKnown === false
+                  ? ` ${metricTputQ.data?.latencyUnit || '?'}` : ' ms'}
+                mode="line"
+                deploy={deploy} onZoom={onZoom} onZoomReset={onZoomReset}
+                syncKey={chartSync} xRange={xRange}
+                legendStorageKey="ov-response-time-metric" statsDefaultCollapsed
+                lines={metricLatLines} />
+              {metricTputQ.data?.latencyUnitKnown === false && (
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                  Metriğin birimi tanınmadı (<code>{metricTputQ.data?.latencyUnit || 'boş'}</code>)
+                  — değerler ms'ye ÇEVRİLMEDİ, üstteki panelle doğrudan
+                  kıyaslanamaz.
+                </div>
+              )}
+            </div>
           )}
         </MetricPanel>
         <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>

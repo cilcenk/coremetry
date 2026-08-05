@@ -153,6 +153,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// aday yanlış eşleşme üretmiyor.
 		labels := identityLabelCandidates(jobLabel)
 		triedLabels := make([]string, 0, len(labels)+1)
+		var matched *chstore.MetricQueryFilter
 		for _, lb := range labels {
 			triedLabels = append(triedLabels, lb)
 			_, f := metricThroughputPlan(name, resolved, lb, from, to)
@@ -164,8 +165,9 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 				out["series"] = ser
 				out["matched"] = len(ser)
 				out["matchedBy"] = lb
-				out["triedLabels"] = triedLabels
-				return out, nil
+				mf := f
+				matched = &mf
+				break
 			}
 		}
 
@@ -173,16 +175,36 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		//
 		// Prometheus dünyasında kimlik bir etikette; OTLP dünyasında
 		// kaynak özniteliğinden gelen service_name kolonunda.
-		triedLabels = append(triedLabels, "service_name (kolon)")
+		if matched == nil {
+			triedLabels = append(triedLabels, "service_name (kolon)")
+			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to)
+			svcFilter := base
+			svcFilter.Filters = nil
+			svcFilter.Service = name
+			if svcSeries, err2 := rate(ctx, svcFilter, "rate"); err2 == nil && len(svcSeries) > 0 {
+				out["series"] = svcSeries
+				out["matched"] = len(svcSeries)
+				out["matchedBy"] = "service_name"
+				matched = &svcFilter
+			}
+		}
 		out["triedLabels"] = triedLabels
-		_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to)
-		svcFilter := base
-		svcFilter.Filters = nil
-		svcFilter.Service = name
-		if svcSeries, err2 := rate(ctx, svcFilter, "rate"); err2 == nil && len(svcSeries) > 0 {
-			out["series"] = svcSeries
-			out["matched"] = len(svcSeries)
-			out["matchedBy"] = "service_name"
+
+		// 5) GECİKME — aynı eşleşen filtreden (operatör: "response time
+		// için de bir panel yapabilir misin").
+		//
+		// Çözümlemeyi (ad → instrument → kimlik etiketi) TEKRARLAMIYOR:
+		// throughput hangi seriyi bulduysa gecikme de onu okuyor. İki
+		// panelin farklı serilere bakması, kıyaslamayı sessizce anlamsız
+		// kılardı.
+		//
+		// Yalnız HISTOGRAM: yüzdelikler kova sınırlarından geliyor. Bir
+		// sayaçta gecikme diye bir şey yok.
+		if matched != nil && instrument == "histogram" {
+			s.attachMetricLatency(ctx, out, *matched, resolved, name)
+		}
+
+		if matched != nil {
 			return out, nil
 		}
 		out["matched"] = 0
@@ -287,4 +309,46 @@ func identityLabelCandidates(explicit string) []string {
 		return []string{explicit}
 	}
 	return chstore.ServiceIdentityLabels
+}
+
+// attachMetricLatency — histogram yüzdeliklerini (P50/P95/P99) cevaba
+// ekler, MİLİSANİYEYE çevirerek.
+//
+// v0.9.676. Birim çevirisi şart: span türevli Response time paneli ms
+// çiziyor, OTel semconv duration metriği ise SANİYE. Çevirmezsek iki
+// panel 1000× farklı görünür — operatör ya hata sanar ya da daha
+// kötüsü, sanmaz ve yanlış sayıya güvenir.
+//
+// BİRİM BİLİNMİYORSA ÖLÇEKLENMİYOR ve bu cevapta SÖYLENİYOR
+// (latencyUnitKnown=false). Tahmin etmek yazı-tura; yanlış ölçekli bir
+// grafik, ölçeksiz olandan kötüdür.
+//
+// Hata YUTULUYOR: gecikme bir ek: throughput cevabı onsuz da geçerli.
+func (s *Server) attachMetricLatency(ctx context.Context, out map[string]any, f chstore.MetricQueryFilter, metric, service string) {
+	unit := s.store.MetricUnit(ctx, metric, service)
+	if unit == "" {
+		unit = s.store.MetricUnit(ctx, metric, "")
+	}
+	scale, known := chstore.LatencyScaleToMs(unit)
+	out["latencyUnit"] = unit
+	out["latencyUnitKnown"] = known
+
+	lat := map[string][]chstore.SpanMetricSeries{}
+	for _, agg := range []string{"p50", "p95", "p99"} {
+		ser, err := s.store.QueryMetricHistogramPercentile(ctx, f, agg)
+		if err != nil || len(ser) == 0 {
+			continue
+		}
+		if scale != 1 {
+			for i := range ser {
+				for j := range ser[i].Points {
+					ser[i].Points[j].Value *= scale
+				}
+			}
+		}
+		lat[agg] = ser
+	}
+	if len(lat) > 0 {
+		out["latency"] = lat
+	}
 }

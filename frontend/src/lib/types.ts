@@ -1954,6 +1954,8 @@ export interface ServiceMetricThroughput {
   tried?: string[];
   instrument?: string;
   matchedBy?: string;
+  // v0.9.671 — hangi kimlik etiketleri denendi (job/service/name/kolon).
+  triedLabels?: string[];
   unsupportedInstrument?: boolean;
 }
 

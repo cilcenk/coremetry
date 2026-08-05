@@ -63,9 +63,13 @@ func (s *Server) throughputMetricName(ctx context.Context) string {
 //     sınıfı.
 //   - Filtre operatörü `=~` olmalı. `=` olsaydı desen düz metin olarak
 //     aranır ve HİÇBİR job eşleşmezdi; grafik sessizce boş kalırdı.
+func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time) string {
+	return fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s", service, metric, jobLabel, cacheBucket(from, to))
+}
+
 func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time) (string, chstore.MetricQueryFilter) {
 	pattern := chstore.JobServiceRegex(service)
-	key := fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s", service, metric, jobLabel, cacheBucket(from, to))
+	key := metricThroughputCacheKey(service, metric, jobLabel, from, to)
 	return key, chstore.MetricQueryFilter{
 		Name:        metric,
 		Filters:     []chstore.FilterExpr{{Key: jobLabel, Op: "=~", Values: []string{pattern}}},
@@ -83,16 +87,20 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 	name := r.PathValue("name")
 	from, to := parseFromTo(r, time.Hour)
 
+	// v0.9.671 — BOŞ BIRAK. v0.9.668'de burada varsayılana çevriliyordu
+	// ve resolveThroughputMetric'e hep "açıkça istendi" gibi giriyordu:
+	// aday listesi HİÇ denenmedi. Operatörün ekran görüntüsü bunu
+	// kanıtladı — tanılama "Denenen adlar: <tek ad>" yazıyordu, oysa
+	// aradığı http.server.request.duration önerilerin İÇİNDEYDİ.
 	metric := strings.TrimSpace(r.URL.Query().Get("metric"))
-	if metric == "" {
-		metric = s.throughputMetricName(r.Context())
-	}
+	// jobLabel de BOŞ KALIYOR (aynı sebep): doldurulursa aşağıdaki
+	// etiket-adayı döngüsü tek elemana iner ve `name` hiç denenmez.
+	// Bu, v0.9.668'de metrik adında yaptığım hatanın etiket ikizi —
+	// aynı gün, aynı biçimde iki kez.
 	jobLabel := strings.TrimSpace(r.URL.Query().Get("jobLabel"))
-	if jobLabel == "" {
-		jobLabel = chstore.JobLabelDefault
-	}
-	key, filter := metricThroughputPlan(name, metric, jobLabel, from, to)
-	pattern := filter.Filters[0].Values[0]
+
+	key := metricThroughputCacheKey(name, metric, jobLabel, from, to)
+	pattern := chstore.JobServiceRegex(name)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		out := map[string]any{
 			"metric":   metric,
@@ -121,40 +129,54 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// Sayaçta ölçüm `value`da, histogramda `count` kolonunda (gözlem
 		// sayısı). OTel'in HTTP server metriği çoğu kurulumda HİSTOGRAM;
 		// v0.9.665 sabit 'sum' okuduğu için tam da en yaygın durumda
-		// sessizce boş dönüyordu ve tanılama kutusu operatörü yanlış
-		// yöne — deseni düzeltmeye — gönderiyordu.
-		instrument := s.store.MetricInstrument(ctx, resolved, "")
+		// sessizce boş dönüyordu.
+		instrument := s.store.MetricInstrument(ctx, resolved, name)
+		if instrument == "" {
+			// Servis kapsamında satır yok (kimlik başka etikette
+			// olabilir) — kapsamsız prob'a düş.
+			instrument = s.store.MetricInstrument(ctx, resolved, "")
+		}
 		out["instrument"] = instrument
 		rate := s.store.QueryMetricRate
 		if instrument == "histogram" {
 			rate = s.store.QueryMetricCountRate
 		} else if instrument != "sum" {
-			// gauge / bilinmeyen: rate anlamsız. Sessizce boş seri
-			// döndürmek yerine sebebi söyle.
 			out["unsupportedInstrument"] = true
 			return out, nil
 		}
 
-		_, filter := metricThroughputPlan(name, resolved, jobLabel, from, to)
-		series, err := rate(ctx, filter, "rate")
-		if err != nil {
-			return nil, err
-		}
-		if len(series) > 0 {
-			out["series"] = series
-			out["matched"] = len(series)
-			out["matchedBy"] = jobLabel
-			return out, nil
+		// 3) KİMLİK ETİKETİNİ ARA.
+		//
+		// v0.9.671 (operatör-bildirimi): kimlik her kurulumda `job`da
+		// değil — o kurulumda `name` etiketinde. Etiket adayları sırayla
+		// deneniyor; eşleşme TAM DEĞER üzerinden olduğu için fazladan
+		// aday yanlış eşleşme üretmiyor.
+		labels := identityLabelCandidates(jobLabel)
+		triedLabels := make([]string, 0, len(labels)+1)
+		for _, lb := range labels {
+			triedLabels = append(triedLabels, lb)
+			_, f := metricThroughputPlan(name, resolved, lb, from, to)
+			ser, err := rate(ctx, f, "rate")
+			if err != nil {
+				return nil, err
+			}
+			if len(ser) > 0 {
+				out["series"] = ser
+				out["matched"] = len(ser)
+				out["matchedBy"] = lb
+				out["triedLabels"] = triedLabels
+				return out, nil
+			}
 		}
 
-		// 3) `job` TUTMADI → service_name'e düş.
+		// 4) Etiketlerin hiçbiri tutmadı → service_name KOLONUNA düş.
 		//
-		// Prometheus dünyasında kimlik `job` etiketinde; OTLP dünyasında
-		// kaynak özniteliğinden gelen service_name'de. Operatörün
-		// ekranındaki metrik Prometheus'tan geliyordu ama Coremetry'ye
-		// giren OTel adlı metrik büyük olasılıkla job TAŞIMIYOR — o
-		// durumda job desenini kovalamak sonsuza kadar boş döner.
-		svcFilter := filter
+		// Prometheus dünyasında kimlik bir etikette; OTLP dünyasında
+		// kaynak özniteliğinden gelen service_name kolonunda.
+		triedLabels = append(triedLabels, "service_name (kolon)")
+		out["triedLabels"] = triedLabels
+		_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to)
+		svcFilter := base
 		svcFilter.Filters = nil
 		svcFilter.Service = name
 		if svcSeries, err2 := rate(ctx, svcFilter, "rate"); err2 == nil && len(svcSeries) > 0 {
@@ -165,10 +187,14 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		}
 		out["matched"] = 0
 
-		// 4) İkisi de tutmadı — gerçek `job` değerlerini göster. Desen mi
-		// yanlış, etiket adı mı başka, yoksa metrik job taşımıyor mu:
-		// üçü ayırt edilebilsin.
-		vals, err := s.store.MetricLabelValues(ctx, resolved, jobLabel, to.Sub(from))
+		// 5) Hiçbiri tutmadı — gerçek etiket değerlerini göster.
+		// Operatör Coremetry'nin servis adıyla metriğin taşıdığı değeri
+		// yan yana görsün.
+		probeLabel := jobLabel
+		if probeLabel == "" {
+			probeLabel = chstore.JobLabelDefault
+		}
+		vals, err := s.store.MetricLabelValues(ctx, resolved, probeLabel, to.Sub(from))
 		if err == nil {
 			if len(vals) > metricThroughputSampleJobs {
 				vals = vals[:metricThroughputSampleJobs]
@@ -222,21 +248,43 @@ func (s *Server) suggestMetricNames(ctx context.Context, want string) []string {
 // OLAN. Denenen adlar da dönüyor: hiçbiri yoksa operatör neyin
 // arandığını görsün, "yok" cevabı sağır kalmasın.
 func (s *Server) resolveThroughputMetric(ctx context.Context, explicit string) (string, []string) {
-	var cands []string
-	if explicit != "" {
-		cands = []string{explicit}
-	} else {
-		cands = append(cands, s.throughputMetricName(ctx))
-		for _, c := range chstore.ThroughputMetricCandidates {
-			if c != cands[0] {
-				cands = append(cands, c)
-			}
-		}
-	}
+	cands := throughputMetricCandidates(explicit, s.throughputMetricName(ctx))
 	for _, c := range cands {
 		if ok, err := s.store.MetricExists(ctx, c); err == nil && ok {
 			return c, cands
 		}
 	}
 	return "", cands
+}
+
+// throughputMetricCandidates / identityLabelCandidates — aday listesi
+// kurulumu. SAF, ve ayrı durmalarının tek sebebi bu:
+//
+// AYNI HATAYI BİR GÜNDE İKİ KEZ YAPTIM. Boş bir girdiyi aday
+// döngüsünden ÖNCE varsayılana çevirince döngü tek elemana iniyor ve
+// liste hiç denenmiyor:
+//   - v0.9.668, metrik adı — operatörün ekran görüntüsü kanıtladı:
+//     "Denenen adlar: <tek ad>", oysa aradığı ad önerilerin içindeydi.
+//   - v0.9.671'i yazarken aynısını jobLabel'da tekrarladım.
+//
+// İkisi de sessiz: özellik çalışıyor görünür, yalnız hiçbir şey bulmaz.
+// Kapı burada.
+func throughputMetricCandidates(explicit, configured string) []string {
+	if explicit != "" {
+		return []string{explicit} // operatör açıkça istedi — başkasını deneme
+	}
+	out := []string{configured}
+	for _, c := range chstore.ThroughputMetricCandidates {
+		if c != configured {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func identityLabelCandidates(explicit string) []string {
+	if explicit != "" {
+		return []string{explicit}
+	}
+	return chstore.ServiceIdentityLabels
 }

@@ -26,6 +26,28 @@ import (
 // JobLabelDefault — Prometheus'un servis kimliğini taşıdığı etiket.
 const JobLabelDefault = "job"
 
+// ServiceIdentityLabels — servis kimliğini taşıyabilecek etiketler,
+// DENEME SIRASIYLA.
+//
+// v0.9.671 (operatör-bildirimi, ekran görüntüsüyle): "Coremetry acaba
+// name bakmıyor mu? Metric explorer'da aynı metriği name'e göre
+// filtreleyince görüyorum."
+//
+// Doğru: o kurulumda kimlik `name` etiketinde
+// (name=bsa-chatbot-ai-integration). v0.9.665-670 yalnız `job`
+// deniyordu — Prometheus kanonik adı, ama tek doğru değil. Aynı ölçüm
+// kuruluma göre farklı etikette taşınıyor.
+//
+// ÇOK ETİKET DENEMEK GÜVENLİ, çünkü eşleşme TAM DEĞER üzerinden:
+// etiketin değeri servis adına (ya da ortam-eki soyulmuş hâline)
+// birebir eşit olmalı. Yanlış bir etiket rastgele eşleşme üretemez.
+// Gevşek/alt-dize eşleşme olsaydı bu liste tehlikeli olurdu.
+var ServiceIdentityLabels = []string{
+	"job",     // Prometheus kanonik
+	"service", // açık adlandırma
+	"name",    // operatörün kurulumu (v0.9.671)
+}
+
 // ThroughputMetricDefault — operatörün ekranındaki metrik. Ayarla
 // değiştirilebilir; kuruluma göre adı farklı olabilir.
 const ThroughputMetricDefault = "http_server_request_duration_seconds_count"

@@ -214,6 +214,25 @@ func (s *Store) QueryMetricCountRate(ctx context.Context, f MetricQueryFilter, m
 	return s.queryRateFrom(ctx, f, mode, rateSourceHistogramCount)
 }
 
+// MetricUnit — bir metriğin OTLP birimi ("s", "ms", "By", …).
+// MetricInstrument ile aynı kalıp: kısa, sınırlı prob.
+func (s *Store) MetricUnit(ctx context.Context, name, service string) string {
+	to := time.Now()
+	from := to.Add(-metricIvProbeWindow)
+	q := `SELECT any(unit) FROM metric_points WHERE metric = ? AND time >= ? AND time <= ?`
+	args := []any{name, from, to}
+	if service != "" {
+		q += ` AND service_name = ?`
+		args = append(args, service)
+	}
+	q += ` SETTINGS max_execution_time = 3`
+	var u string
+	if err := s.conn.QueryRow(ctx, q, args...).Scan(&u); err != nil {
+		return ""
+	}
+	return u
+}
+
 // MetricInstrument — bir metriğin instrument türü ("sum"/"histogram"/
 // "gauge"/""). metricTemporality ile aynı kalıp: kısa, sınırlı prob.
 func (s *Store) MetricInstrument(ctx context.Context, name, service string) string {

@@ -73,6 +73,12 @@ const (
 	// sreTeam'iyle eşlenir; kimlik CallMeta'dan (ctx) okunur.
 	guidedMyServices guidedIntent = "my_services"
 	guidedMyProblems guidedIntent = "my_problems"
+	// v0.9.650 (operatör: "Takımıma ait servislerin hataları
+	// (Exceptions) neler?") — Problem ve Exception AYRI yüzeyler:
+	// Problem bir alarm kuralının açtığı kayıt, Exception ise
+	// span'lerden gruplanan ham hata. my_problems ikincisini
+	// kapsamıyordu.
+	guidedMyExceptions guidedIntent = "my_exceptions"
 	// v0.9.376 (operatör istegi, SRE perspektifi) — pod/JVM sağlığı:
 	// servisliyse instance listesi + JVM heap; servissizse filo-geneli
 	// heap doluluk sıralaması. Veri CH'den (OTel runtime metrikleri) —
@@ -207,6 +213,17 @@ func hasLogSignal(tokens []string) bool {
 
 func hasErrorSignal(tokens []string) bool {
 	return tokenHasPrefix(tokens, "hata", "error", "exception", "fail", "başarısız", "5xx", "500")
+}
+
+// hasExceptionWord — YALNIZ "exception/istisna" kelimesi.
+//
+// hasErrorSignal "exception"ı da kapsıyor ama çok geniş: "hata" da ona
+// giriyor. Takım sorusunu Problem'lerden Exception'lara çevirmek için
+// operatörün AÇIKÇA exception demesi gerekiyor — "takımımın hataları"
+// bugünkü davranışta (açık problemler) kalsın, "takımımın
+// exception'ları" ham hata gruplarına gitsin.
+func hasExceptionWord(tokens []string) bool {
+	return tokenHasPrefix(tokens, "exception", "istisna")
 }
 
 func hasProblemSignal(tokens []string) bool {
@@ -353,13 +370,27 @@ func hasTeamSelfSignal(tokens []string) bool {
 		return true
 	}
 	my := false
+	benim := false
 	for _, t := range tokens {
-		if t == "my" {
+		switch t {
+		case "my":
 			my = true
-			break
+		case "benim", "bizim":
+			benim = true
 		}
 	}
-	return my && tokenHasPrefix(tokens, "team", "service", "problem")
+	if my && tokenHasPrefix(tokens, "team", "service", "problem") {
+		return true
+	}
+	// v0.9.650 — Türkçe iyelik SİMETRİSİ. Üstteki önek listesi yalnız
+	// "takımım" ekini tanıyordu; "benim takımın", "bizim takımda",
+	// "benim ekibin" gibi çok doğal kalıplar DÜŞÜYOR ve soru sessizce
+	// FİLO GENELİNE gidiyordu — operatör "takımımın" dediğini sanırken
+	// tüm kurumun problemlerini görüyordu.
+	//
+	// İngilizce dalı ("my" + team/service/problem) bu işi zaten yapıyor;
+	// Türkçesinde karşılığı yoktu. Regresyon testiyle bulundu.
+	return benim && tokenHasPrefix(tokens, "takım", "ekip", "servis", "problem", "exception")
 }
 
 // guidedStopwords are message tokens that must never be treated as a
@@ -581,6 +612,12 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 	// problemleri" generic problem yolundan önce yakalanmalı, yoksa tüm
 	// filonun problemleri döner ve "takımımın" kelimesi sessizce düşer.
 	case hasTeamSelfSignal(toks):
+		// v0.9.650 — exception kelimesi problem/hata sinyalinden ÖNCE:
+		// "takımımın exception'ları" ikisini birden taşıyor ve problems
+		// dalı kazanırsa soru sessizce "açık problemler"e çöker.
+		if hasExceptionWord(toks) {
+			return guidedRoute{Intent: guidedMyExceptions, Env: env}
+		}
 		if hasProblemSignal(toks) || hasErrorSignal(toks) {
 			return guidedRoute{Intent: guidedMyProblems, Env: env}
 		}
@@ -948,9 +985,11 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	case guidedLogErrors:
 		evidence, sources, err = s.guidedLogErrorsBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedMyServices:
-		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, false, route.Env, from, to, rangeS)
+		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "health", route.Env, from, to, rangeS)
 	case guidedMyProblems:
-		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, true, route.Env, from, to, rangeS)
+		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "problems", route.Env, from, to, rangeS)
+	case guidedMyExceptions:
+		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "exceptions", route.Env, from, to, rangeS)
 	case guidedPodHealth:
 		evidence, sources, err = s.guidedPodHealthBundle(ctx, emit, route.Service, from, to)
 	case guidedShiftSummary:
@@ -1305,7 +1344,18 @@ func servicesForUserTeam(ta chstore.TeamAliases, mds map[string]chstore.ServiceM
 // alır (boş liste sessizce "her şey" olmaz — inbox'ın v0.9.353
 // dersinin tersi yönü). wantProblems=false → aile-sağlık bundle'ı
 // (tek MV okuması), true → o servislerin açık problemleri.
-func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any), wantProblems bool, env string, from, to time.Time, rangeS int64) (string, string, error) {
+// guidedMyTeamBundle — takım-kapsamlı üç sorunun ORTAK gövdesi.
+//
+// v0.9.650 — `wantProblems bool` yerine KİP aldı. Üçüncü bir soru
+// (takımın exception'ları) gelince bool yetmiyordu ve alternatif,
+// kullanıcı→takım→servis çözümlemesini (25 satır: oturum kimliği,
+// takım ataması, katalog eşleşmesi, 100-servis tavanı, her birinin
+// kendi operatör mesajı) İKİNCİ bir yere kopyalamaktı. Bu kod
+// tabanında tekrar eden hata sınıfı tam olarak o: bir kural iki yere
+// bölünüp zamanla ayrışıyor.
+//
+// mode: "health" | "problems" | "exceptions"
+func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any), mode string, env string, from, to time.Time, rangeS int64) (string, string, error) {
 	meta := copilot.MetaFromContext(ctx)
 	if meta.UserID == "" {
 		return "Oturum kimliği yok (auth kapalı olabilir) — takım-kapsamlı soru yanıtlanamıyor. Kullanıcıya söyle: belirli bir servis adıyla sorabilir.\n",
@@ -1341,7 +1391,7 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 	if trimmed > 0 {
 		header += fmt.Sprintf("Not: ilk %d servis okundu, %d servis dışarıda kaldı.\n", maxTeamServices, trimmed)
 	}
-	if wantProblems {
+	if mode == "problems" {
 		emitGuidedStep(emit, "list_problems", fmt.Sprintf(`{"status":"open","teamServices":%d}`, len(svcs)))
 		probs, perr := s.store.ListProblems(ctx, chstore.ProblemFilter{Status: "open", Services: svcs, Env: env, Limit: 50})
 		if perr != nil {
@@ -1358,6 +1408,45 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 			b.WriteString(renderProblemsEvidenceTR(probs, "", env, time.Now()))
 		}
 		src := fmt.Sprintf("takım: %s (%d servis) — açık problemler + triage önceliği + kök-neden hipotezleri", u.Team, len(svcs)+trimmed)
+		return b.String(), src, nil
+	}
+	if mode == "exceptions" {
+		// v0.9.650 (operatör: "Takımıma ait servislerin hataları
+		// (Exceptions) neler?") — Problem'ler ile Exception'lar AYRI
+		// yüzeyler: Problem bir alarm kuralının açtığı kayıt,
+		// Exception ise span'lerden gruplanan ham hata. "Takımımın
+		// problemleri" ikincisini KAPSAMIYORDU.
+		//
+		// Tek sorgu: ExceptionFilter.Services (v0.9.650) takımın tüm
+		// servislerini IN ile tarıyor — servis başına ayrı çağrı,
+		// takım büyüdükçe doğrusal büyüyen bir JSON-kazıma yükü
+		// olurdu.
+		emitGuidedStep(emit, "list_exceptions", fmt.Sprintf(`{"teamServices":%d}`, len(svcs)))
+		exs, eerr := s.store.GetExceptions(ctx, chstore.ExceptionFilter{
+			Services: svcs, GroupBy: "type-service", From: from, To: to, Limit: 30,
+		})
+		if eerr != nil {
+			return "", "", eerr
+		}
+		var b strings.Builder
+		b.WriteString(header)
+		if len(exs) == 0 {
+			b.WriteString("Takımın servislerinde bu pencerede exception yok.\n")
+		} else {
+			fmt.Fprintf(&b, "Takımın servislerindeki exception'lar (en çok görülen önce, %d grup):\n", len(exs))
+			for i, e := range exs {
+				if i >= 20 {
+					fmt.Fprintf(&b, "… ve %d grup daha.\n", len(exs)-20)
+					break
+				}
+				fmt.Fprintf(&b, "- %s · %s · %d kez", e.Service, e.Type, e.Count)
+				if e.Message != "" {
+					fmt.Fprintf(&b, " · %s", truncate(e.Message, 140))
+				}
+				b.WriteString("\n")
+			}
+		}
+		src := fmt.Sprintf("takım: %s (%d servis) — exception grupları", u.Team, len(svcs)+trimmed)
 		return b.String(), src, nil
 	}
 	evidence, src, err := s.guidedFamilyHealthBundle(ctx, emit, svcs, env, from, to, rangeS)

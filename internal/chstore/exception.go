@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
@@ -94,6 +95,15 @@ func exFragments(hasCols bool) exFrag {
 
 type ExceptionFilter struct {
 	Service  string
+	// Services — ÇOKLU servis kapsamı (v0.9.650). Bir TAKIMIN tüm
+	// servislerini tek sorguda taramak için: takım başına N ayrı
+	// GetExceptions çağrısı, servis sayısıyla doğrusal büyüyen bir
+	// JSON-kazıma yükü demekti.
+	//
+	// Service ile birlikte verilirse ikisi de uygulanır (AND) — çağıran
+	// ikisini birden vermemeli; tek servis için Service, takım için
+	// Services.
+	Services []string
 	GroupBy  string // "type" | "type-service" | "full"  (default: "type-service")
 	From, To time.Time
 	Limit    int
@@ -114,6 +124,17 @@ func (s *Store) GetExceptions(ctx context.Context, f ExceptionFilter) ([]Excepti
 	wc.add("time <= ?", f.To)
 	if f.Service != "" {
 		wc.add("service_name = ?", f.Service)
+	}
+	if len(f.Services) > 0 {
+		// GLOBAL gerekmiyor: bu bir DEĞER listesi, alt sorgu değil.
+		// (Dağıtık kurulumda GLOBAL şartı yalnız alt-sorgu biçimi için;
+		// make audit CHECK 5 onu arıyor.)
+		ph := strings.TrimRight(strings.Repeat("?,", len(f.Services)), ",")
+		args := make([]any, 0, len(f.Services))
+		for _, sv := range f.Services {
+			args = append(args, sv)
+		}
+		wc.add("service_name IN ("+ph+")", args...)
 	}
 	wc.add(frag.Match)
 	if f.Limit == 0 {

@@ -181,3 +181,69 @@ export function computeSortedRows<T>(
   const col = sort.id ? columns.find(c => c.id === sort.id) : undefined;
   return sortRows(rows, col, sort.dir);
 }
+
+// columnLayoutSig — kalıcı kolon genişliklerinin HANGİ kolon tanımına
+// karşı yakalandığını damgalar (v0.9.695).
+//
+// Operatör-bildirimi: "Manage users sayfasında user tablosunun kolonları,
+// ilk header kullanıcının üzerinde çıkıyor."
+//
+// KÖK NEDEN — v0.9.660'ın kendi düzeltmesi operatöre HİÇ ULAŞMADI.
+// O sürümde Users kolonları yeniden tanımlandı (team: flex → sabit 145,
+// email tek emici). Ama DataTableColgroup şunu yapıyor:
+//
+//     const w = dt.colWidths[c.id] ?? (c.flex ? 'auto' : c.width ?? …)
+//
+// `colWidths` localStorage'dan (`dt.<key>.widths`) geliyor ve SÜRÜMSÜZDÜ.
+// Kolonları bir kez sürüklemiş bir tarayıcıda ESKİ harita yeni tanımı
+// tamamen eziyor: düzeltilmiş bütçe hiç uygulanmıyor, tablo eskisi gibi
+// bozuk kalıyor. Kod doğru, ekran yanlış — ve `git log` düzeltmenin
+// gemide olduğunu söylediği için bu tuzak sessiz.
+//
+// v0.9.660 bu katmanı BİLİYORDU ("Users tablosunun kaymasında bu ikinci
+// katmandı") ama yalnız elle basılan bir Reset butonu ekledi. Kaçış
+// kapısı, düzeltme değil: operatörün önce butonu keşfetmesi gerekiyor.
+//
+// İMZA NEYİ KAPSIYOR: id + beyan edilen genişlik niyeti (width/flex/
+// minWidth) + headerHidden. Kolon EKLENMESİ/ÇIKMASI kadar bir kolonun
+// genişlik niyetinin DEĞİŞMESİ de imzayı değiştiriyor — operatörün
+// vakasında değişen tam olarak buydu, id kümesi aynı kalmıştı.
+//
+// TAKAS, açıkça: beyan edilen bir genişliği değiştirdiğimde o tablonun
+// sürüklenmiş genişlikleri sıfırlanır. İSTENEN bu — bir genişliği
+// elle değiştirmemin nedeni neredeyse her zaman düzenin taşmasıdır ve
+// tam o durumda bayat sürükleme GİTMELİ. Kalıcı düzen yalnız yakalandığı
+// kolon kümesine göre anlamlıdır.
+export function columnLayoutSig<T>(columns: DataTableColumn<T>[]): string {
+  // FNV-1a — cache anahtarlarındaki ile aynı aile (uzunluk değil, içerik).
+  let h = 0x811c9dc5;
+  for (const c of columns) {
+    const part = `${c.id}:${c.width ?? ''}:${c.flex ? 'f' : ''}:${c.minWidth ?? ''}:${c.headerHidden ? 'h' : ''};`;
+    for (let i = 0; i < part.length; i++) {
+      h ^= part.charCodeAt(i);
+      h = Math.imul(h, 0x01000193);
+    }
+  }
+  return (h >>> 0).toString(36);
+}
+
+// PersistedLayout — diskteki şekil. `sig` uyuşmazsa genişlikler ATILIR.
+//
+// ESKİ ŞEKİL (çıplak Record<string, number>) bilinçli olarak atılıyor:
+// tam da onu geçersiz kılmak için bu imza yazıldı, taşımak amacı
+// bozardı (CLAUDE.md: kaldırırken geriye-uyum şimi ekleme).
+export interface PersistedLayout {
+  sig: string;
+  widths: Record<string, number>;
+}
+
+export function readPersistedWidths(
+  stored: unknown,
+  sig: string,
+): Record<string, number> {
+  if (!stored || typeof stored !== 'object') return {};
+  const p = stored as Partial<PersistedLayout>;
+  if (typeof p.sig !== 'string' || p.sig !== sig) return {};
+  if (!p.widths || typeof p.widths !== 'object') return {};
+  return p.widths as Record<string, number>;
+}

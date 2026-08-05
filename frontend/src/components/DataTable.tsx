@@ -6,7 +6,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useTableNav, type TableNav } from '@/lib/useTableNav';
 import { useShortcuts } from '@/lib/keyboard';
 import {
-  computeSortedRows, formatSortParam, parseSortParam, resolveToggle,
+  columnLayoutSig, computeSortedRows, formatSortParam, parseSortParam,
+  readPersistedWidths, resolveToggle,
   type DataTableColumn, type SortState,
 } from '@/lib/dataTable';
 import { getItem, setItem, dtSortKey, dtWidthKey } from '@/lib/storage';
@@ -97,15 +98,22 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
   const urlSort = searchParams.get(urlKey);
   const [sort, setSortState] = useState<SortState>(() =>
     resolveInitialSort(storageKey, urlSort, initialSort, urlSortFallback));
+  // v0.9.695 — kalıcı genişlikler KOLON TANIMINA MÜHÜRLÜ.
+  //
+  // İmza, yakalandığı kolon kümesiyle uyuşmuyorsa genişlikler atılıyor.
+  // Sürümsüz haldeyken bayat bir harita yeni kolon tanımını sessizce
+  // eziyordu — v0.9.660'ın Users düzeltmesi tam bu yüzden operatörün
+  // ekranına hiç ulaşmadı (gerekçe: lib/dataTable.ts columnLayoutSig).
+  const layoutSig = useMemo(() => columnLayoutSig(columns), [columns]);
   const [colWidths, setColWidths] = useState<Record<string, number>>(() =>
-    getItem(widthLSKey, {}));
+    readPersistedWidths(getItem<unknown>(widthLSKey, null), layoutSig));
 
   useEffect(() => {
     setItem(sortLSKey, sort);
   }, [sort, sortLSKey]);
   useEffect(() => {
-    setItem(widthLSKey, colWidths);
-  }, [colWidths, widthLSKey]);
+    setItem(widthLSKey, { sig: layoutSig, widths: colWidths });
+  }, [colWidths, widthLSKey, layoutSig]);
 
   // Apply a sort to state + URL, then notify the page (serverSort pages
   // re-fetch off this — or off the returned `sort`, same thing).

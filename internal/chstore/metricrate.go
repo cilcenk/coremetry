@@ -117,20 +117,56 @@ func metricSeriesKeyExpr(hasFp bool) string {
 }
 
 // metricTemporality — metriğin OTLP aggregation temporality'sini probe'lar
-// ('cumulative' | 'delta' | ''). Boş/bilinmeyen → çağıran cumulative sayar
+// ('cumulative' | 'delta' | ”). Boş/bilinmeyen → çağıran cumulative sayar
 // (OTLP default). Bounded (max_execution_time=3, time-pruned).
 func (s *Store) metricTemporality(ctx context.Context, name, service string) string {
+	return s.metricTemporalityFiltered(ctx, name, service, nil)
+}
+
+// temporalityProbeWhere — temporality probunun WHERE'i (saf, testli).
+//
+// v0.9.669 (v0.9.668'de AÇTIĞIM hata) — prob, ana sorgunun BAKTIĞI
+// satır kümesine bakmalı.
+//
+// Olay: metrik throughput'un `job` yolu MetricQueryFilter'ı Service'siz
+// kuruyor (kimlik job etiketinde, service_name'de değil). Prob da
+// Service'siz çalışınca `any(temporality)` TÜM servislere bakıyordu —
+// ve http.server.duration gerçekten KARIŞIK: yerel veride 6 servis
+// delta, 1 servis (coremetry-monolithic) cumulative.
+//
+// any() hangi tarafı seçerse diğeri yanlış hesaplanıyordu:
+//
+//	delta seçilirse      → cumulative seri per-bucket toplanır, ŞİŞER
+//	                       (mx 656 vs delta'da ≤7).
+//	cumulative seçilirse → delta seriye cross-bucket delta uygulanır,
+//	                       sıfıra yakın ÇÖP.
+//
+// Üstelik any() deterministik değil: part/thread sırasına bağlı, part
+// birleşmesiyle sessizce dönebilir. Grafik bir gün kendiliğinden
+// yanlışa geçerdi.
+//
+// Filtreler proba da inince prob, sorgunun eşlediği serilerle AYNI
+// kümeye bakıyor. Filtresiz çağıranlarda davranış DEĞİŞMİYOR.
+func temporalityProbeWhere(name, service string, from, to time.Time, filters []FilterExpr) whereClause {
+	var wc whereClause
+	wc.add("metric = ?", name)
+	wc.add("time >= ?", from)
+	wc.add("time <= ?", to)
+	if service != "" {
+		wc.add("service_name = ?", service)
+	}
+	ApplyMetricFilters(&wc, filters)
+	return wc
+}
+
+func (s *Store) metricTemporalityFiltered(ctx context.Context, name, service string, filters []FilterExpr) string {
 	to := time.Now()
 	from := to.Add(-metricIvProbeWindow)
-	q := `SELECT any(temporality) FROM metric_points WHERE metric = ? AND time >= ? AND time <= ?`
-	args := []any{name, from, to}
-	if service != "" {
-		q += ` AND service_name = ?`
-		args = append(args, service)
-	}
-	q += ` SETTINGS max_execution_time = 3`
+	wc := temporalityProbeWhere(name, service, from, to, filters)
+	q := `SELECT any(temporality) FROM metric_points ` + wc.sql() +
+		` SETTINGS max_execution_time = 3`
 	var temp string
-	if err := s.conn.QueryRow(ctx, q, args...).Scan(&temp); err != nil {
+	if err := s.conn.QueryRow(ctx, q, wc.args...).Scan(&temp); err != nil {
 		return ""
 	}
 	return temp
@@ -225,7 +261,7 @@ func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode str
 
 	// Delta temporality: değer zaten per-interval artışı → per-bucket sum;
 	// cumulative (OTLP default; probe boşsa varsay) → per-seri cross-bucket delta.
-	isDelta := s.metricTemporality(ctx, f.Name, f.Service) == "delta"
+	isDelta := s.metricTemporalityFiltered(ctx, f.Name, f.Service, f.Filters) == "delta"
 
 	// Cumulative: pencere-öncesi bir SEED bucket (From-step) çek ki pencere-içi
 	// İLK bucket gerçek delta alsın (sol-kenar sahte-sıfır kalkar, PromQL

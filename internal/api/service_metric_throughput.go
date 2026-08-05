@@ -176,16 +176,36 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// Prometheus dünyasında kimlik bir etikette; OTLP dünyasında
 		// kaynak özniteliğinden gelen service_name kolonunda.
 		if matched == nil {
-			triedLabels = append(triedLabels, "service_name (kolon)")
 			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to)
-			svcFilter := base
-			svcFilter.Filters = nil
-			svcFilter.Service = name
-			if svcSeries, err2 := rate(ctx, svcFilter, "rate"); err2 == nil && len(svcSeries) > 0 {
+			// v0.9.678 — KOLON DA İKİ BİÇİM DENİYOR.
+			//
+			// Operatörün sorusu ("Coremetry ingest ederken env kesiyor
+			// olabilir mi?") bu boşluğu açığa çıkardı. Cevap hayır —
+			// ingest birebir yazıyor (attrsToArrays) — ama tam bu yüzden
+			// metriğin service_name'i EKSİZ olabiliyor: OTel'in doğru
+			// yolu servis adını eksiz tutup ortamı ayrı bir kaynak
+			// özniteliğinde taşımak (res_keys'te deployment.environment
+			// GERÇEKTEN var). Coremetry'nin servis listesi ise trace'ten
+			// gelen EKLİ adı gösteriyor.
+			//
+			// Etiket tarafı bunu v0.9.673'te çözmüştü (regex iki biçimi
+			// de kabul ediyor); kolon tarafı TAM ADDA kalmıştı ve
+			// MetricQueryFilter.Service tam eşleşme yapıyor.
+			for _, cand := range serviceNameCandidates(name) {
+				triedLabels = append(triedLabels, "service_name="+cand)
+				svcFilter := base
+				svcFilter.Filters = nil
+				svcFilter.Service = cand
+				svcSeries, err2 := rate(ctx, svcFilter, "rate")
+				if err2 != nil || len(svcSeries) == 0 {
+					continue
+				}
 				out["series"] = svcSeries
 				out["matched"] = len(svcSeries)
-				out["matchedBy"] = "service_name"
-				matched = &svcFilter
+				out["matchedBy"] = "service_name=" + cand
+				mf := svcFilter
+				matched = &mf
+				break
 			}
 		}
 		out["triedLabels"] = triedLabels
@@ -351,4 +371,29 @@ func (s *Server) attachMetricLatency(ctx context.Context, out map[string]any, f 
 	if len(lat) > 0 {
 		out["latency"] = lat
 	}
+}
+
+// serviceNameCandidates — service_name KOLONU için aday değerler.
+//
+// v0.9.678. MetricQueryFilter.Service TAM eşleşme yapıyor, o yüzden
+// etiket tarafındaki regex hilesi burada işe yaramıyor: iki değeri de
+// ayrı ayrı denemek gerekiyor.
+//
+// Neden iki biçim: OTel'in doğru yolu servis adını EKSİZ tutup ortamı
+// ayrı bir kaynak özniteliğinde taşımak (deployment.environment).
+// Coremetry'nin servis listesi ise trace'ten gelen EKLİ adı gösteriyor.
+// Aynı servis iki yüzeyde iki adla görünebiliyor.
+//
+// SAF ve TEST EDİLDİ, çünkü "boş/aynı adayı ikinci kez deneme" mantığını
+// bugün İKİ KEZ elle yazıp ikisini de batırdım (v0.9.668 metrik adı,
+// v0.9.671 jobLabel).
+func serviceNameCandidates(service string) []string {
+	if service == "" {
+		return nil
+	}
+	out := []string{service}
+	if st := chstore.StripEnvSuffix(service); st != service && st != "" {
+		out = append(out, st)
+	}
+	return out
 }

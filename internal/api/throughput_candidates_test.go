@@ -63,3 +63,37 @@ func TestIdentityLabelCandidatesHonoursExplicit(t *testing.T) {
 		t.Errorf("açık etiket tek aday olmalı, alınan %v", got)
 	}
 }
+
+// v0.9.678 — service_name KOLONU adayları.
+//
+// Operatörün sorusu ("ingest env kesiyor olabilir mi?") bu boşluğu
+// açığa çıkardı. Cevap hayır (ingest birebir yazıyor), ama tam bu
+// yüzden metriğin service_name'i EKSİZ olabiliyor: OTel servis adını
+// eksiz tutup ortamı ayrı özniteliğe koyuyor. Kolon TAM eşleşme
+// yaptığı için etiket tarafındaki regex hilesi burada işlemiyor.
+func TestServiceNameCandidatesTriesBothForms(t *testing.T) {
+	got := serviceNameCandidates("bsa-chatbot-ai-integration-uat")
+	want := []string{"bsa-chatbot-ai-integration-uat", "bsa-chatbot-ai-integration"}
+	if len(got) != len(want) {
+		t.Fatalf("iki aday bekleniyordu: %v", got)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("aday %d: %q, beklenen %q", i, got[i], want[i])
+		}
+	}
+}
+
+// Ek YOKSA aynı değeri iki kez sorgulamamalı — boşuna CH turu.
+func TestServiceNameCandidatesNoDuplicateWhenNoSuffix(t *testing.T) {
+	got := serviceNameCandidates("checkout")
+	if len(got) != 1 || got[0] != "checkout" {
+		t.Errorf("tek aday olmalı, alınan %v", got)
+	}
+}
+
+func TestServiceNameCandidatesEmpty(t *testing.T) {
+	if got := serviceNameCandidates(""); len(got) != 0 {
+		t.Errorf("boş servis için aday olmamalı, alınan %v", got)
+	}
+}

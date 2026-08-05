@@ -314,17 +314,40 @@ const clusterDeriveExpr = `coalesce(
 	''
 )`
 
-// clusterColExpr reads the promoted `cluster` MATERIALIZED column
-// (v0.8.x) when present — new parts compute+store it at insert — and
-// falls back to the live clusterDeriveExpr array scan for old parts
-// that predate the column add (those read ” for the materialized
-// col). CH short-circuits coalesce, so new parts never pay the
-// indexOf() scan over res_values/attr_values; old parts pay it once,
-// until they TTL out of the retention window, after which every part
-// carries the column. The SAME clusterDeriveExpr const is embedded
-// here as the column's MATERIALIZED expression (store.go) so new and
-// old parts always derive identical cluster names — no drift.
-const clusterColExpr = `coalesce(nullIf(cluster, ''), ` + clusterDeriveExpr + `)`
+// clusterColExpr — promoted `cluster` MATERIALIZED kolonunu OKUR, başka
+// bir şey yapmaz.
+//
+// v0.9.692 (perf taraması #3) — ESKİ HÂLİ `coalesce(nullIf(cluster,”),
+// clusterDeriveExpr)` idi ve gerekçesi YANLIŞTI. Yorum şöyle diyordu:
+// "CH short-circuits coalesce, so new parts never pay the indexOf()
+// scan". Kısa devre SATIR YÜRÜTMESİNİ atlar, KOLON OKUMASINI değil:
+// ifadede geçen res_values/attr_values dizileri her satır için diskten
+// okunuyordu.
+//
+// ÖLÇÜLDÜ (chc-0, aynı 3 saatlik pencere, aynı çıktı):
+//
+//	coalesce fallback : 137.15 MiB / 247k satır = 566 B/satır · 81 ms
+//	düz kolon         :   8.71 MiB / 1.015M satır = 8.6 B/satır · 11 ms
+//	                                           → ~66× bayt, ~7× süre
+//
+// FALLBACK YAPISAL OLARAK GEREKSİZ, yalnız ampirik değil:
+//  1. `cluster` kolonu store.go:852'de `MATERIALIZED clusterDeriveExpr`
+//     — AYNI ifade. MATERIALIZED kolon, onu saklamayan eski parçalarda
+//     OKUMA ANINDA hesaplanır; yani kolon zaten türetilmiş değeri
+//     döndürüyor.
+//  2. Kolon hiç yoksa (harici Distributed, ALTER uygulanmamış)
+//     clusterExpr() zaten ham clusterDeriveExpr'e düşüyor — bu sabit
+//     yalnız kolon VARKEN kullanılıyor.
+//
+// Yani fallback ikinci, gereksiz bir değerlendirmeydi.
+//
+// Ölçüm de bunu doğruladı: 6 saatte 20.383 boş-cluster satırın
+// türetmeyle kurtarılanı SIFIR.
+//
+// hasClusterCol boot probu KALIYOR (clusterExpr'deki dal) — harici
+// Distributed yolu ona bağlı ve v0.8.162'de operatör-bildirimli bir
+// code 47 olayını o çözmüştü.
+const clusterColExpr = `cluster`
 
 // clusterExpr returns the SQL expression that yields a span's cluster name.
 // When the materialized `cluster` column is resolvable on the read path

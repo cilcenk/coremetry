@@ -26,10 +26,10 @@ import (
 	"math"
 	mrand "math/rand/v2"
 	"net/http"
-	"strings"
 	"os"
 	"os/signal"
 	"runtime/pprof"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -107,11 +107,11 @@ var services = map[string]Service{
 	// v0.8.383 — sms/email/audit grew a second pod so EVERY service's
 	// pod pool spans ≥2 of demoEnvs (envForPod is index-round-robin;
 	// a 1-pod service could only ever live in one env).
-	"sms-service":          {"sms-service", []string{"sms-prod-1", "sms-prod-2"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
-	"email-service":        {"email-service", []string{"mail-prod-1", "mail-prod-2"}, "nodejs", "node", "20.11.1", "Node.js v20.11.1"},
-	"aml-service":          {"aml-service", []string{"aml-prod-1", "aml-prod-2"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
-	"audit-service":        {"audit-service", []string{"audit-prod-1", "audit-prod-2"}, "java", "OpenJDK Runtime Environment", "17.0.10+7", "OpenJDK 64-Bit Server VM Temurin-17.0.10+7 (build 17.0.10+7-LTS)"},
-	"fraud-ml-service":     {"fraud-ml-service", []string{"fraudml-prod-1", "fraudml-prod-2"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
+	"sms-service":      {"sms-service", []string{"sms-prod-1", "sms-prod-2"}, "go", "go", "1.22.5", "go version go1.22.5 linux/amd64"},
+	"email-service":    {"email-service", []string{"mail-prod-1", "mail-prod-2"}, "nodejs", "node", "20.11.1", "Node.js v20.11.1"},
+	"aml-service":      {"aml-service", []string{"aml-prod-1", "aml-prod-2"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
+	"audit-service":    {"audit-service", []string{"audit-prod-1", "audit-prod-2"}, "java", "OpenJDK Runtime Environment", "17.0.10+7", "OpenJDK 64-Bit Server VM Temurin-17.0.10+7 (build 17.0.10+7-LTS)"},
+	"fraud-ml-service": {"fraud-ml-service", []string{"fraudml-prod-1", "fraudml-prod-2"}, "python", "CPython", "3.12.2", "CPython 3.12.2 (main, Feb  6 2024, 20:19:44) [GCC 12.2.0]"},
 }
 
 // User-agent pool — each trace picks one to put on the channel's
@@ -477,6 +477,26 @@ func (t *Trace) Send() error {
 			kvStr("k8s.pod.name", pod),
 			kvStr("k8s.pod.ip", podIP(pod)),
 			kvStr("k8s.namespace.name", "demo"),
+			// v0.9.684 — K8s İŞYÜKÜ KİMLİĞİ. Demo bugüne kadar yalnız pod
+			// adını yayıyordu; deployment/container adı YOKTU.
+			//
+			// Bedeli ölçüldü: metrik throughput zincirinin kimlik adaylarından
+			// BEŞİ yerelde tam sıfırdı (474 bin satırın hiçbirinde yok), yani
+			// v0.9.680'de aday listesinin BAŞINA koyduğum
+			// resource.k8s.deployment.name yerelde bir kez bile icra edilmedi.
+			// Bugünkü altı hatanın hepsi "yerelde hiç çalışmayan dal"
+			// sınıfındandı; bu, sınıfı kaynağında kapatıyor.
+			//
+			// DEĞER SERVİS ADI, pod adından TÜRETİLMİYOR. İlk yazımda pod
+			// adından çıkarmayı denedim; demo pod biçimi
+			// "billpay-prod-2-r7402" olduğu için "billpay-prod" üretiyordu
+			// ve servis adı "billpay-service" — yani HİÇBİR ZAMAN
+			// eşleşmeyecek bir değer. Üstelik "yol icra edildi" gibi
+			// görünürdü: kapatmaya çalıştığım sınıfın ta kendisi.
+			// Gerçek k8s'te de service.name genellikle deployment adıdır.
+			// Üç sinyalde de aynı (kaynak tutarlılığı, v0.8.383 ilkesi).
+			kvStr("k8s.deployment.name", s.Name),
+			kvStr("k8s.container.name", s.Name),
 			kvStr("k8s.cluster.name", clusterFor(s.Name)),
 			// v0.8.383 — per-INSTANCE environment, current semconv key
 			// only (see demoEnvs). Resource-level: every span this pod
@@ -1301,6 +1321,26 @@ func sendLog(service string, severity int32, sevText, body string, traceID, span
 			kvStr("host.name", pod),
 			kvStr("service.instance.id", pod),
 			kvStr("k8s.pod.name", pod),
+			// v0.9.684 — K8s İŞYÜKÜ KİMLİĞİ. Demo bugüne kadar yalnız pod
+			// adını yayıyordu; deployment/container adı YOKTU.
+			//
+			// Bedeli ölçüldü: metrik throughput zincirinin kimlik adaylarından
+			// BEŞİ yerelde tam sıfırdı (474 bin satırın hiçbirinde yok), yani
+			// v0.9.680'de aday listesinin BAŞINA koyduğum
+			// resource.k8s.deployment.name yerelde bir kez bile icra edilmedi.
+			// Bugünkü altı hatanın hepsi "yerelde hiç çalışmayan dal"
+			// sınıfındandı; bu, sınıfı kaynağında kapatıyor.
+			//
+			// DEĞER SERVİS ADI, pod adından TÜRETİLMİYOR. İlk yazımda pod
+			// adından çıkarmayı denedim; demo pod biçimi
+			// "billpay-prod-2-r7402" olduğu için "billpay-prod" üretiyordu
+			// ve servis adı "billpay-service" — yani HİÇBİR ZAMAN
+			// eşleşmeyecek bir değer. Üstelik "yol icra edildi" gibi
+			// görünürdü: kapatmaya çalıştığım sınıfın ta kendisi.
+			// Gerçek k8s'te de service.name genellikle deployment adıdır.
+			// Üç sinyalde de aynı (kaynak tutarlılığı, v0.8.383 ilkesi).
+			kvStr("k8s.deployment.name", s.Name),
+			kvStr("k8s.container.name", s.Name),
 			kvStr("k8s.cluster.name", clusterFor(s.Name)),
 			// v0.8.383 — logs carry the pod's env too (resource-level
 			// coherence across signals; readies the Phase-4 log-env
@@ -1775,6 +1815,22 @@ func (m *metricsState) flush(startNs, nowNs uint64) []*metricspb.ResourceMetrics
 				kvStr("host.name", pod),
 				kvStr("service.instance.id", pod),
 				kvStr("k8s.pod.name", pod),
+				// v0.9.684 — K8s İŞYÜKÜ KİMLİĞİ. Demo bugüne kadar yalnız pod
+				// adını yayıyordu; deployment/container adı YOKTU.
+				//
+				// Bedeli ölçüldü: metrik throughput zincirinin kimlik adaylarından
+				// BEŞİ yerelde tam sıfırdı (474 bin satırın hiçbirinde yok), yani
+				// v0.9.680'de aday listesinin BAŞINA koyduğum
+				// resource.k8s.deployment.name yerelde bir kez bile icra edilmedi.
+				// Bugünkü altı hatanın hepsi "yerelde hiç çalışmayan dal"
+				// sınıfındandı; bu, sınıfı kaynağında kapatıyor.
+				//
+				// DEĞER SERVİS ADI, pod adından TÜRETİLMİYOR — demo pod biçimi
+				// "billpay-prod-2-r7402", ondan çıkarılan ad servisle
+				// eşleşmiyordu (bkz. spans dalındaki uzun not).
+				// Üç sinyalde de aynı (kaynak tutarlılığı, v0.8.383 ilkesi).
+				kvStr("k8s.deployment.name", s.Name),
+				kvStr("k8s.container.name", s.Name),
 				kvStr("k8s.cluster.name", clusterFor(s.Name)),
 				// v0.8.383 — same per-instance env as the pod's spans.
 				kvStr("deployment.environment.name", envForPod(s, pod)),

@@ -48,8 +48,10 @@ func TestBuildRateCumulativeSQLPlaceholderOrder(t *testing.T) {
 		t.Errorf("gk grup ifadesini almalı, alınan %q", got)
 	}
 	// Değer, toplama fonksiyonunun İÇİNDE olmalı.
-	if got := colExpr(t, sql, "v"); got != "argMaxOrNull(VALUECOL, time)" {
-		t.Errorf("v değer kolonunu sarmalı, alınan %q", got)
+	// v0.9.686 — toFloat64 sarmalaması eklendi: `count` UInt64, `value`
+	// Float64, Go ikisini de *float64'e tarıyor.
+	if got := colExpr(t, sql, "v"); got != "argMaxOrNull(toFloat64(VALUECOL), time)" {
+		t.Errorf("v değer kolonunu toFloat64 ile sarmalı, alınan %q", got)
 	}
 	if !strings.Contains(sql, "WHERE x = 1") {
 		t.Error("WHERE cümlesi düştü")
@@ -65,8 +67,8 @@ func TestBuildRateDeltaSQLPlaceholderOrder(t *testing.T) {
 	if got := colExpr(t, sql, "gk"); got != "GROUPEXPR" {
 		t.Errorf("gk grup ifadesini almalı, alınan %q", got)
 	}
-	if got := colExpr(t, sql, "v"); got != "sumOrNull(VALUECOL)" {
-		t.Errorf("v değer kolonunu sarmalı, alınan %q", got)
+	if got := colExpr(t, sql, "v"); got != "sumOrNull(toFloat64(VALUECOL))" {
+		t.Errorf("v değer kolonunu toFloat64 ile sarmalı, alınan %q", got)
 	}
 	if !strings.Contains(sql, "WHERE y = 2") {
 		t.Error("WHERE cümlesi düştü")
@@ -151,5 +153,44 @@ func TestRateSQLCallSitesUseNamedFields(t *testing.T) {
 	if strings.Contains(body, "SeriesKey: src.valueExpr") ||
 		strings.Contains(body, "GroupExpr: src.valueExpr") {
 		t.Error("değer kolonu yanlış alana bağlanmış — v0.9.668 hatasının şekli")
+	}
+}
+
+// v0.9.686 — DEĞER HER ZAMAN Float64 OLMALI.
+//
+// Operatörün ekranındaki ikinci hata:
+//
+//	clickhouse [ScanRow]: (v) converting UInt64 to *float64
+//
+// `count` UInt64, `value` Float64; Go tarafı ikisini de *float64'e
+// tarıyor. v0.9.668'de histogram için kolonu count'a çevirdim ama tarama
+// tipini düşünmedim — sk hatasıyla AYNI commit'te, aynı sınıf.
+//
+// Not: bu tipi kanıt olarak elimde vardı — alt-ajanın SQL doğrulaması
+// `v=Nullable(UInt64)` yazıyordu ve bağlantıyı kurmadım. Veri
+// oradaydı, okumadım.
+func TestRateSQLValueIsAlwaysFloat(t *testing.T) {
+	for _, src := range []rateSource{rateSourceCounter, rateSourceHistogramCount} {
+		cum := buildRateCumulativeSQL(rateSQLParams{
+			Step: 60, SeriesKey: "SK", GroupExpr: "GK", ValueExpr: src.valueExpr, Where: "WHERE 1"})
+		if got := colExpr(t, cum, "v"); !strings.Contains(got, "toFloat64(") {
+			t.Errorf("cumulative/%s: değer toFloat64 ile sarılmalı, alınan %q", src.instrument, got)
+		}
+		del := buildRateDeltaSQL(rateSQLParams{
+			Step: 60, GroupExpr: "GK", ValueExpr: src.valueExpr, Where: "WHERE 1"})
+		if got := colExpr(t, del, "v"); !strings.Contains(got, "toFloat64(") {
+			t.Errorf("delta/%s: değer toFloat64 ile sarılmalı, alınan %q", src.instrument, got)
+		}
+	}
+}
+
+// Go tarafı gerçekten *float64 tarıyor — sözleşmenin diğer ucu.
+func TestRateScanTargetIsFloat(t *testing.T) {
+	src, err := os.ReadFile("metricrate.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stripGoLineComments(string(src)), "var v *float64") {
+		t.Error("tarama hedefi *float64 değil — SQL tarafındaki toFloat64 sarmalaması onunla eşleşmeli")
 	}
 }

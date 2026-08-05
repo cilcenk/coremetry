@@ -202,6 +202,13 @@ var rateSourceCounter = rateSource{instrument: "sum", valueExpr: "value"}
 
 // rateSourceHistogramCount — histogramın GÖZLEM SAYISI. Süre histogramı
 // için bu tam olarak istek sayısıdır, yani throughput.
+//
+// v0.9.686 — TİP TUZAĞI: `count` UInt64, `value` ise Float64. Go tarafı
+// ikisini de *float64'e tarıyor, yani histogram yolu ScanRow'da
+// patlıyordu: "(v) converting UInt64 to *float64". SQL kurucusu artık
+// değeri KOŞULSUZ toFloat64 ile sarıyor — kaynak hangi kolon olursa
+// olsun `v` Float64 döner. Sarmalama kurucuda, kaynak tanımında DEĞİL:
+// yeni bir rateSource eklendiğinde tipi düşünmek gerekmesin.
 var rateSourceHistogramCount = rateSource{instrument: "histogram", valueExpr: "count"}
 
 // QueryMetricRate — sayaç yolu (geriye dönük imza korunuyor).
@@ -588,7 +595,7 @@ func buildRateCumulativeSQL(p rateSQLParams) string {
 		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
 		    %s AS sk,
 		    %s AS gk,
-		    argMaxOrNull(%s, time) AS v
+		    argMaxOrNull(toFloat64(%s), time) AS v
 		FROM metric_points
 		%s
 		GROUP BY bucket, sk, gk
@@ -602,7 +609,7 @@ func buildRateDeltaSQL(p rateSQLParams) string {
 		SELECT
 		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
 		    %s AS gk,
-		    sumOrNull(%s) AS v
+		    sumOrNull(toFloat64(%s)) AS v
 		FROM metric_points
 		%s
 		GROUP BY bucket, gk

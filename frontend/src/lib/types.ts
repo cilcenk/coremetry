@@ -1963,6 +1963,11 @@ export interface ServiceMetricThroughput {
   latency?: { p50?: SpanMetricSeries[]; p95?: SpanMetricSeries[]; p99?: SpanMetricSeries[] };
   latencyUnit?: string;
   latencyUnitKnown?: boolean;
+  // v0.9.679 — eşleşme ORTAMLA ayrıştırılamadı. Metrik tarafında servis
+  // adı eksiz olduğu için `-uat`/`-prod` aynı ada iniyor; ortam kısıtı
+  // tutmazsa seri birden çok ortamın verisini taşıyor OLABİLİR.
+  // Sessiz kalmamalı: sayı makul göründüğü için kimse fark etmez.
+  envAmbiguous?: boolean;
   unsupportedInstrument?: boolean;
 }
 

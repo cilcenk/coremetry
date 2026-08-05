@@ -16,6 +16,7 @@ import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
 import { sumNullableSeries } from './charts/throughputTotal';
 import { MetricThroughputNote } from './MetricThroughputNote';
 import { metricLatencyComparable, metricLatencyUnitLabel } from './metricLatencyUnit';
+import { EnvAmbiguousNote } from './EnvAmbiguousNote';
 import { buildRootOpLines } from './charts/rootOpSeries';
 import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
@@ -573,6 +574,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 syncKey={chartSync} xRange={xRange}
                 legendStorageKey="ov-response-time-metric" statsDefaultCollapsed
                 lines={metricLatLines} />
+              {metricTputQ.data?.envAmbiguous && <EnvAmbiguousNote />}
               {!metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) && (
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
                   Metriğin birimi tanınmadı (<code>{metricTputQ.data?.latencyUnit || 'boş'}</code>)
@@ -610,6 +612,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 syncKey={chartSync} xRange={xRange}
                 legendStorageKey="ov-throughput-metric" statsDefaultCollapsed
                 lines={[metricTputLine]} />
+              {metricTputQ.data?.envAmbiguous && <EnvAmbiguousNote />}
             </div>
           )}
           {metricTputQ.data && !metricTputLine && (

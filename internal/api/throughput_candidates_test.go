@@ -64,36 +64,83 @@ func TestIdentityLabelCandidatesHonoursExplicit(t *testing.T) {
 	}
 }
 
-// v0.9.678 — service_name KOLONU adayları.
+// v0.9.679 — service_name KOLONU denemeleri.
 //
-// Operatörün sorusu ("ingest env kesiyor olabilir mi?") bu boşluğu
-// açığa çıkardı. Cevap hayır (ingest birebir yazıyor), ama tam bu
-// yüzden metriğin service_name'i EKSİZ olabiliyor: OTel servis adını
-// eksiz tutup ortamı ayrı özniteliğe koyuyor. Kolon TAM eşleşme
-// yaptığı için etiket tarafındaki regex hilesi burada işlemiyor.
-func TestServiceNameCandidatesTriesBothForms(t *testing.T) {
-	got := serviceNameCandidates("bsa-chatbot-ai-integration-uat")
-	want := []string{"bsa-chatbot-ai-integration-uat", "bsa-chatbot-ai-integration"}
-	if len(got) != len(want) {
-		t.Fatalf("iki aday bekleniyordu: %v", got)
+// Operatörün SQL çıktısı: metric_points'te 1494 servis, HEPSİ EKSİZ —
+// oysa servis listesi trace'ten gelen EKLİ adı gösteriyor. Eşleşme
+// ancak eksiz adla kurulabiliyor.
+//
+// Ama eksiz ad ORTAMLARI BİRLEŞTİRİR: bsa-deposit-uat ve
+// bsa-deposit-prod ikisi de bsa-deposit'e iner. Sayı makul göründüğü
+// için kimse fark etmez — bu yüzden önce ortamla kısıtlanıyor.
+func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
+	got := serviceNameAttempts("bsa-deposit-uat")
+	if len(got) != 4 {
+		t.Fatalf("4 deneme bekleniyordu (tam + 2 ortam yazımı + kısıtsız), alınan %d: %v", len(got), got)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Errorf("aday %d: %q, beklenen %q", i, got[i], want[i])
+
+	// 1) TAM ad, kısıtsız — en güvenli, hiç belirsizlik yok.
+	if got[0].Service != "bsa-deposit-uat" || len(got[0].Filters) != 0 || got[0].EnvAmbiguous {
+		t.Errorf("ilk deneme tam ad ve kısıtsız olmalı: %+v", got[0])
+	}
+
+	// 2-3) EKSİZ ad + ortam kısıtı. İki semconv yazımı da denenmeli:
+	// deployment.environment.name (≥1.27) ve deployment.environment.
+	wantKeys := []string{
+		"resource.deployment.environment.name",
+		"resource.deployment.environment",
+	}
+	for i, wk := range wantKeys {
+		a := got[i+1]
+		if a.Service != "bsa-deposit" {
+			t.Errorf("deneme %d eksiz ad olmalı: %q", i+1, a.Service)
+		}
+		if len(a.Filters) != 1 || a.Filters[0].Key != wk {
+			t.Errorf("deneme %d ortam anahtarı %q olmalı: %+v", i+1, wk, a.Filters)
+		}
+		if len(a.Filters[0].Values) != 1 || a.Filters[0].Values[0] != "uat" {
+			t.Errorf("deneme %d ortam değeri 'uat' olmalı: %v", i+1, a.Filters[0].Values)
+		}
+		if a.EnvAmbiguous {
+			t.Errorf("deneme %d ortamla KISITLI, belirsiz olmamalı", i+1)
 		}
 	}
-}
 
-// Ek YOKSA aynı değeri iki kez sorgulamamalı — boşuna CH turu.
-func TestServiceNameCandidatesNoDuplicateWhenNoSuffix(t *testing.T) {
-	got := serviceNameCandidates("checkout")
-	if len(got) != 1 || got[0] != "checkout" {
-		t.Errorf("tek aday olmalı, alınan %v", got)
+	// 4) Son çare: kısıtsız eksiz ad — ama BELİRSİZ İŞARETLİ.
+	last := got[3]
+	if last.Service != "bsa-deposit" || len(last.Filters) != 0 {
+		t.Errorf("son deneme kısıtsız eksiz ad olmalı: %+v", last)
+	}
+	if !last.EnvAmbiguous {
+		t.Error("son deneme EnvAmbiguous OLMALI — yoksa ortam karışması sessiz kalır")
 	}
 }
 
-func TestServiceNameCandidatesEmpty(t *testing.T) {
-	if got := serviceNameCandidates(""); len(got) != 0 {
-		t.Errorf("boş servis için aday olmamalı, alınan %v", got)
+// Ek yoksa tek deneme: eksiz ad = tam ad, ikinci CH turu boşuna.
+func TestServiceNameAttemptsNoSuffix(t *testing.T) {
+	got := serviceNameAttempts("checkout")
+	if len(got) != 1 || got[0].Service != "checkout" || got[0].EnvAmbiguous {
+		t.Errorf("tek, kısıtsız, belirsiz-olmayan deneme bekleniyordu: %+v", got)
+	}
+}
+
+func TestServiceNameAttemptsEmpty(t *testing.T) {
+	if got := serviceNameAttempts(""); len(got) != 0 {
+		t.Errorf("boş servis için deneme olmamalı: %v", got)
+	}
+}
+
+// Etiket operatöre HANGİ yolun tuttuğunu söylemeli — belirsiz eşleşme
+// özellikle görünür olmalı.
+func TestSvcAttemptLabel(t *testing.T) {
+	all := serviceNameAttempts("bsa-deposit-uat")
+	if l := all[0].Label(); l != "service_name=bsa-deposit-uat" {
+		t.Errorf("tam ad etiketi: %q", l)
+	}
+	if l := all[1].Label(); l != "service_name=bsa-deposit +resource.deployment.environment.name" {
+		t.Errorf("ortam kısıtlı etiket: %q", l)
+	}
+	if l := all[3].Label(); l != "service_name=bsa-deposit (ortam kısıtsız)" {
+		t.Errorf("belirsiz etiket ortam kısıtsızlığını SÖYLEMELİ: %q", l)
 	}
 }

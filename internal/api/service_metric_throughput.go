@@ -191,18 +191,19 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 			// Etiket tarafı bunu v0.9.673'te çözmüştü (regex iki biçimi
 			// de kabul ediyor); kolon tarafı TAM ADDA kalmıştı ve
 			// MetricQueryFilter.Service tam eşleşme yapıyor.
-			for _, cand := range serviceNameCandidates(name) {
-				triedLabels = append(triedLabels, "service_name="+cand)
+			for _, at := range serviceNameAttempts(name) {
+				triedLabels = append(triedLabels, at.Label())
 				svcFilter := base
-				svcFilter.Filters = nil
-				svcFilter.Service = cand
+				svcFilter.Filters = at.Filters
+				svcFilter.Service = at.Service
 				svcSeries, err2 := rate(ctx, svcFilter, "rate")
 				if err2 != nil || len(svcSeries) == 0 {
 					continue
 				}
 				out["series"] = svcSeries
 				out["matched"] = len(svcSeries)
-				out["matchedBy"] = "service_name=" + cand
+				out["matchedBy"] = at.Label()
+				out["envAmbiguous"] = at.EnvAmbiguous
 				mf := svcFilter
 				matched = &mf
 				break
@@ -373,27 +374,68 @@ func (s *Server) attachMetricLatency(ctx context.Context, out map[string]any, f 
 	}
 }
 
-// serviceNameCandidates — service_name KOLONU için aday değerler.
+// svcAttempt — service_name kolonu üzerinden TEK bir deneme.
+type svcAttempt struct {
+	Service string
+	Filters []chstore.FilterExpr // ortam kısıtı (olabilir)
+	// EnvAmbiguous: ortam AYRIŞTIRILAMADI. Eşleşen seri birden çok
+	// ortamın verisini taşıyor olabilir — çağıran bunu SÖYLEMEK zorunda.
+	EnvAmbiguous bool
+}
+
+func (a svcAttempt) Label() string {
+	l := "service_name=" + a.Service
+	switch {
+	case len(a.Filters) > 0:
+		l += " +" + a.Filters[0].Key
+	case a.EnvAmbiguous:
+		l += " (ortam kısıtsız)"
+	}
+	return l
+}
+
+// serviceNameAttempts — service_name kolonu denemeleri, GÜVEN SIRASIYLA.
 //
-// v0.9.678. MetricQueryFilter.Service TAM eşleşme yapıyor, o yüzden
-// etiket tarafındaki regex hilesi burada işe yaramıyor: iki değeri de
-// ayrı ayrı denemek gerekiyor.
+// v0.9.679. Operatörün SQL çıktısı belirleyiciydi: metric_points'te 1494
+// servis var ve HEPSİ EKSİZ (bsa-chequenotes-notespayment,
+// bsa-creditcard-ccfinancial…), oysa Coremetry'nin servis listesi
+// trace'ten gelen EKLİ adı gösteriyor (...-uat). Eşleşme ancak eksiz
+// adla kurulabiliyor.
 //
-// Neden iki biçim: OTel'in doğru yolu servis adını EKSİZ tutup ortamı
-// ayrı bir kaynak özniteliğinde taşımak (deployment.environment).
-// Coremetry'nin servis listesi ise trace'ten gelen EKLİ adı gösteriyor.
-// Aynı servis iki yüzeyde iki adla görünebiliyor.
+// SESSİZ TEHLİKE: "bsa-deposit-uat" ve "bsa-deposit-prod" ikisi de
+// "bsa-deposit"e iniyor. Aynı kurulum birden çok ortam taşıyorsa eksiz
+// eşleşme onları BİRLEŞTİRİR — uat sayfasında prod trafiği görünür ve
+// sayı makul olduğu için kimse fark etmez.
 //
-// SAF ve TEST EDİLDİ, çünkü "boş/aynı adayı ikinci kez deneme" mantığını
-// bugün İKİ KEZ elle yazıp ikisini de batırdım (v0.9.668 metrik adı,
-// v0.9.671 jobLabel).
-func serviceNameCandidates(service string) []string {
+// Bu yüzden eksiz ada düşerken ÖNCE ortamla kısıtlanıyor. İki semconv
+// yazımı da deneniyor: deployment.environment.name (≥1.27) ve
+// deployment.environment (eski) — ikisi de yerel res_keys'te GERÇEKTEN
+// var, yani hangisinin geleceği kuruluma bağlı.
+//
+// Hiçbiri tutmazsa kısıtsız deneme yapılıyor ama EnvAmbiguous ile
+// İŞARETLENİYOR. Veri göstermek sessizce yanlış ortamı göstermekten
+// iyi — yeter ki söylensin.
+//
+// SAF ve TEST EDİLDİ: bu "aday listesi" mantığını bugün üç kez elle
+// yazdım, ikisini batırdım (v0.9.668 metrik adı, v0.9.671 jobLabel).
+func serviceNameAttempts(service string) []svcAttempt {
 	if service == "" {
 		return nil
 	}
-	out := []string{service}
-	if st := chstore.StripEnvSuffix(service); st != service && st != "" {
-		out = append(out, st)
+	out := []svcAttempt{{Service: service}}
+	stripped := chstore.StripEnvSuffix(service)
+	if stripped == service || stripped == "" {
+		return out
 	}
-	return out
+	env := strings.TrimPrefix(service[len(stripped):], "-")
+	for _, key := range []string{
+		"resource.deployment.environment.name",
+		"resource.deployment.environment",
+	} {
+		out = append(out, svcAttempt{
+			Service: stripped,
+			Filters: []chstore.FilterExpr{{Key: key, Op: "=", Values: []string{env}}},
+		})
+	}
+	return append(out, svcAttempt{Service: stripped, EnvAmbiguous: true})
 }

@@ -124,7 +124,7 @@ func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter,
 	}
 	// v0.9.687 — filtreler proba da iniyor (bkz. metricrate.go'daki not).
 	// Gecikme paneli de aynı dar-pencere bozulmasını yaşıyordu.
-	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters); iv > 0 {
+	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters, len(f.GroupBy) > 0); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 	// v0.9.114 (review CRITICAL) — cap Go-side nTime alloc against a

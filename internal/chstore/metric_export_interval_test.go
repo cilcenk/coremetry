@@ -134,3 +134,96 @@ func TestExportIntervalUsesCacheKeyHelper(t *testing.T) {
 		t.Error("prob önbellek anahtarını yardımcıdan ALMIYOR — elle kurulan anahtar filtreleri düşürür")
 	}
 }
+
+// v0.9.689 — TABAN, GRAFİĞİN NE ÇİZDİĞİNE BAĞLI.
+//
+// Ölçüm iki büyüklüğü ayırdı (yerel, 20 dk):
+//
+//	havuzlanmış tempo (farklı damga) :  4.24 s
+//	seri başına aralık p10           : 41.18 s   → 9.7× fark
+//
+// Sebep: 282 farklı damgaya 301 seri düşüyor (damga başına ~5.7).
+// Seriler KAYMALI yayımlıyor, yani hiçbir serinin kendi temposu
+// havuzlanmış tempoya eşit değil — ve olmamalı.
+//
+// TOPLULAŞTIRILMIŞ çizgide (GroupBy yok) her kovaya birçok seri katkı
+// verir, ince adım delik ÜRETMEZ → havuzlanmış tempo doğru taban.
+// SERİ BAŞINA çizgide her çizgi kendi serisine bağlı → kantil.
+func TestPooledProbeMeasuresDistinctTimestamps(t *testing.T) {
+	to := time.Date(2026, 8, 5, 18, 0, 0, 0, time.UTC)
+	wc := exportIntervalProbeWhere("m", "", to.Add(-time.Hour), to, nil)
+
+	pooled := metricExportIntervalPooledSQL(wc)
+	perSeries := metricExportIntervalQuantileSQL(wc)
+
+	// Havuzlanmış: FARKLI DAMGA sayar, seri başına gruplamaz.
+	if !strings.Contains(pooled, "uniqExact(time)") {
+		t.Error("havuzlanmış prob farklı zaman damgalarını saymalı")
+	}
+	if strings.Contains(pooled, "GROUP BY service_name") {
+		t.Error("havuzlanmış prob seri başına GRUPLAMAMALI — o, seyrekliği ölçer")
+	}
+	// Seri başına: gruplar ve düşük kantil alır.
+	if !strings.Contains(perSeries, "GROUP BY service_name, host_name, attr_values") {
+		t.Error("seri başına prob gruplamalı")
+	}
+	if !strings.Contains(perSeries, "quantileExact(0.1)") {
+		t.Error("seri başına prob DÜŞÜK kantil almalı — yüksek kantil seyrekliği ölçer")
+	}
+	// İkisi de CH sınırlarını korumalı.
+	for _, q := range []string{pooled, perSeries} {
+		for _, want := range []string{"time >= ?", "time <= ?", "max_execution_time"} {
+			if !strings.Contains(q, want) {
+				t.Errorf("CH sınırı %q düşmüş:\n%s", want, q)
+			}
+		}
+	}
+}
+
+// Önbellek, iki ölçüyü AYIRMALI: aynı metrik+filtre için havuzlanmış ve
+// seri başına taban FARKLI (4.24 vs 41.18). Anahtar ayırmazsa biri
+// diğerinin değerini okur ve grafik 10× yanlış çözünürlükte çizilir.
+func TestExportIntervalCacheKeySeparatesGrouping(t *testing.T) {
+	base := exportIntervalCacheKey("m", "svc", nil)
+	if base+"\x00g" == base {
+		t.Fatal("grouped eki anahtarı değiştirmiyor")
+	}
+}
+
+// DAĞITIM KAPISI. Yukarıdaki testler iki SQL KURUCUSUNU doğruluyor ama
+// hangisinin ÇAĞRILDIĞINI değil — havuzlanmış yol devre dışı bırakılsa
+// hepsi geçerdi (mutasyonla kanıtlandı).
+//
+// Bugün bu ayrımı DÖRDÜNCÜ kez öğreniyorum: v0.9.685'te iki, v0.9.687'de
+// bir testim aynı şekilde mutasyonu geçmişti. Kurucuyu test etmek
+// çağrıyı test etmek değildir.
+func TestExportIntervalDispatchesOnGrouping(t *testing.T) {
+	src, err := os.ReadFile("metric_export_interval.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := stripGoLineComments(string(src))
+
+	// Havuzlanmış yol VARSAYILAN, seri başına yalnız grouped iken.
+	if !strings.Contains(body, "sql := metricExportIntervalPooledSQL(wc)") {
+		t.Error("havuzlanmış prob varsayılan olarak KULLANILMIYOR — GroupBy'sız paneller seyrekliğe göre kabalaşır")
+	}
+	if !strings.Contains(body, "sql = metricExportIntervalQuantileSQL(wc)") {
+		t.Error("seri başına prob grouped dalında KULLANILMIYOR")
+	}
+	i := strings.Index(body, "sql := metricExportIntervalPooledSQL(wc)")
+	if !strings.Contains(body[i:i+160], "if grouped {") {
+		t.Error("seçim `grouped` bayrağına bağlı DEĞİL")
+	}
+
+	// Çağıranlar bayrağı GroupBy'dan türetmeli, sabit geçmemeli.
+	for _, f := range []string{"metricrate.go", "metricquery.go", "metrichist_percentile.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(stripGoLineComments(string(b)), "f.Filters, len(f.GroupBy) > 0)") {
+			t.Errorf("%s: grouped bayrağı GroupBy'dan türetilmiyor", f)
+		}
+	}
+}

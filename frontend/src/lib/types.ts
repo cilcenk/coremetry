@@ -1960,6 +1960,10 @@ export interface ServiceMetricThroughput {
   // "anahtar yok" ile "anahtar var, değer tutmadı" bambaşka eylemler
   // gerektiriyor; boş bir grafik ikisini de aynı gösteriyordu.
   presentKeys?: string[];
+  // v0.9.683 — teknik olarak PATLAYAN adaylar. "Eşleşme yok" ile
+  // "sorgu hata verdi" bambaşka şeyler; ikincisi sessiz kalırsa
+  // operatör sonsuza kadar deseni kovalar.
+  candidateErrors?: string[];
   // v0.9.676 — histogram yüzdelikleri, MİLİSANİYEYE çevrilmiş.
   // latencyUnitKnown=false ise ölçekleme YAPILMADI (birim tanınmadı) —
   // panel bunu söylemek zorunda, yoksa yanlış ölçekli bir sayıya

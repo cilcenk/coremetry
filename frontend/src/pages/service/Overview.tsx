@@ -615,6 +615,24 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               {metricTputQ.data?.envAmbiguous && <EnvAmbiguousNote />}
             </div>
           )}
+          {/* v0.9.683 — HATA DURUMU. Burada yalnız `data` varsa çizim
+              vardı: uç 500 dönünce data undefined kalıyor ve HİÇBİR ŞEY
+              çizilmiyordu — operatörün gördüğü "panel gelmiyor" tam
+              buydu, üstelik sebepsiz. Sessiz başarısızlık, bugün altı
+              kez düzelttiğim sınıfın kendi hata yolumdaki hâli. */}
+          {metricTputQ.isError && (
+            <div style={{
+              marginTop: 8, padding: '8px 10px', borderRadius: 6,
+              background: 'var(--bg2)', border: '1px solid var(--border)',
+              fontSize: 11.5, lineHeight: 1.5, color: 'var(--text2)',
+            }}>
+              <b>Metrik throughput okunamadı.</b>
+              <div style={{ color: 'var(--text3)', marginTop: 4 }}>
+                {metricTputQ.error instanceof Error
+                  ? metricTputQ.error.message : 'Bilinmeyen hata'}
+              </div>
+            </div>
+          )}
           {metricTputQ.data && !metricTputLine && (
             <MetricThroughputNote d={metricTputQ.data} />
           )}

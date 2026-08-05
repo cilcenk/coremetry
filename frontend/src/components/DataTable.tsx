@@ -322,10 +322,33 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
                 onClick={sortable ? () => dt.toggleSort(c.id) : undefined}
                 aria-sort={active ? (dt.sort.dir === 'asc' ? 'ascending' : 'descending') : (sortable ? 'none' : undefined)}
                 style={{
-                  // sticky-right columns take their position from the class
-                  // (position:sticky + right:0); inline 'relative' would win
-                  // over it. Both variants anchor the absolute resize handle.
-                  textAlign: align, position: c.stickyRight ? undefined : 'relative',
+                  // v0.9.697 — `position` ARTIK INLINE DEĞİL (globals.css:
+                  // `thead th { position: relative }`).
+                  //
+                  // Operatör-bildirimi: "Kolonların ismi ilk satırın üzerine
+                  // denk geliyor." Ölçüm (prod, scrollTop=0): wrap.top=206,
+                  // th.top=294 — başlık 87px aşağıda ve 87px tam olarak
+                  // --controls-h.
+                  //
+                  // Buradaki inline 'relative', `.table-wrap.is-fit thead th`
+                  // kuralının `position: sticky`'sini eziyordu; ama aynı
+                  // kuralın `top: var(--controls-h)`'si SATIR İÇİ DEĞİL, yani
+                  // uygulanmaya devam ediyordu. relative + top:87px = başlığı
+                  // 87px aşağı KAYDIR ve yerini akışta BOŞ BIRAK → satırlar
+                  // yukarı çıkıyor, başlık üstlerine çiziliyor.
+                  //
+                  // Eski yorum mekanizmayı doğru anlatıp ("inline 'relative'
+                  // would win over it") yalnız sticky-right'ı istisna tutmuştu;
+                  // yapışkan BAŞLIĞI da ezdiği görülmemişti. Yapışkan bar
+                  // olmayan sayfalarda --controls-h tanımsız (top:0) olduğu
+                  // için kayma sıfırdı — kusur o yüzden seçici göründü.
+                  //
+                  // CSS'e taşımak üç varyantı da doğru çözüyor: taban
+                  // `thead th` relative (resize tutamağının çapası), `.is-fit`
+                  // ve `.sticky-right` daha yüksek özgüllükle sticky'ye
+                  // çeviriyor — sticky de konumlanmış bir değer, tutamak yine
+                  // çapalanıyor.
+                  textAlign: align,
                   overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   userSelect: 'none',
                 }}>

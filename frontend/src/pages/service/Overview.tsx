@@ -15,6 +15,7 @@ import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
 import { sumNullableSeries } from './charts/throughputTotal';
 import { MetricThroughputNote } from './MetricThroughputNote';
+import { metricLatencyComparable, metricLatencyUnitLabel } from './metricLatencyUnit';
 import { buildRootOpLines } from './charts/rootOpSeries';
 import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
@@ -566,14 +567,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               <ChartCard
                 title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
                 titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}${metricTputQ.data?.latencyUnitKnown === false ? ' · BİRİM TANINMADI, ölçeklenmedi' : ''}`}
-                unit={metricTputQ.data?.latencyUnitKnown === false
-                  ? ` ${metricTputQ.data?.latencyUnit || '?'}` : ' ms'}
+                unit={metricLatencyUnitLabel(metricTputQ.data?.latencyUnitKnown, metricTputQ.data?.latencyUnit)}
                 mode="line"
                 deploy={deploy} onZoom={onZoom} onZoomReset={onZoomReset}
                 syncKey={chartSync} xRange={xRange}
                 legendStorageKey="ov-response-time-metric" statsDefaultCollapsed
                 lines={metricLatLines} />
-              {metricTputQ.data?.latencyUnitKnown === false && (
+              {!metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) && (
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
                   Metriğin birimi tanınmadı (<code>{metricTputQ.data?.latencyUnit || 'boş'}</code>)
                   — değerler ms'ye ÇEVRİLMEDİ, üstteki panelle doğrudan

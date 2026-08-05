@@ -6,6 +6,7 @@ import { useOpenCriticalCount, useProblems } from '@/lib/queries';
 import { useAuth } from '@/components/AuthProvider';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs } from '@/lib/utils';
+import { contextStarter } from '@/lib/chatContext';
 import { ChatBubble } from './ai/ChatBubble';
 import { useChatThread } from './ai/useChatThread';
 import { greetHello, greetStatus } from './ai/greeting';
@@ -101,6 +102,11 @@ export function CopilotChat() {
   // servis sayfasında → o servis). Banner scope'u şeffaf gösterir.
   const loc = useLocation();
   const [sp] = useSearchParams();
+  // v0.9.653 — ekrandaki özneden türeyen başlangıç çipi. Saf çözümleyici
+  // (lib/chatContext.ts); rota değişince kendiliğinden güncelleniyor.
+  const ctxStarter = useMemo(
+    () => contextStarter(loc.pathname, loc.search),
+    [loc.pathname, loc.search]);
   const currentService = useMemo(() => {
     if (loc.pathname === '/service' || loc.pathname === '/service/backtrace') {
       return sp.get('name') || sp.get('service') || '';
@@ -284,6 +290,19 @@ export function CopilotChat() {
                 {/* v0.9.652 — başlangıç çipleri (operatör isteği). Gerekçe
                     ve v0.9.579 ile ilişkisi STARTERS tanımında. */}
                 <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {/* v0.9.653 — EKRANDAKİ özne, statik çiplerden ÖNCE.
+                      Operatör bir trace'e bakarken sohbeti açtığında
+                      elindeki bağlam kaybolup ona takımının servisleri
+                      soruluyordu. Vurgulu çizilir: tek anlamlı öneri o.
+                      Otomatik açıklama DEĞİL — sohbeti açmak bir LLM
+                      çağrısı tetiklememeli (gerekçe lib/chatContext.ts). */}
+                  {ctxStarter && (
+                    <button type="button" onClick={() => submit(ctxStarter.question)}
+                      style={{
+                        all: 'unset', cursor: 'pointer', fontSize: 12, color: 'var(--accent2)',
+                        border: '1px solid var(--accent)', borderRadius: 999, padding: '4px 11px',
+                      }}>✨ {ctxStarter.chip}</button>
+                  )}
                   {STARTERS.map(q => (
                     <button key={q} type="button" onClick={() => submit(q)}
                       style={{

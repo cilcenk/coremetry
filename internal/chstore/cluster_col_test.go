@@ -1,30 +1,83 @@
 package chstore
 
-import "testing"
+import (
+	"os"
+	"strings"
+	"testing"
+)
 
-// v0.8.x — cluster promoted from a read-time res_values/attr_values
-// indexOf() scan (clusterDeriveExpr) to a MATERIALIZED column on
-// spans. The read path uses clusterColExpr, which reads the column
-// for new parts and falls back to clusterDeriveExpr for pre-column
-// parts. The subtle correctness invariant: the column's MATERIALIZED
-// expression (store.go DDL + migration) and the read-time fallback
-// MUST embed the SAME clusterDeriveExpr, or new and old parts would
-// derive different cluster names for the same span. These asserts
-// fail loudly if a future edit decouples them.
-func TestClusterColExpr_FallsBackToDeriveNoDrift(t *testing.T) {
-	if !contains(clusterColExpr, clusterDeriveExpr) {
-		t.Fatal("clusterColExpr must embed clusterDeriveExpr verbatim as the " +
-			"old-part fallback — otherwise new/old parts drift")
+// v0.9.692 — SÜRÜKLENME İNVARİANTI ARTIK GERÇEK YERİNDE: DDL'de.
+//
+// Eski test okuma yolunun (clusterColExpr) clusterDeriveExpr'i GÖMMESİNİ
+// şart koşuyordu ve gerekçesi yanlıştı: "kolon okuması önce gelmeli ki
+// CH kısa devre yapıp indexOf taramasını atlasın". Kısa devre SATIR
+// YÜRÜTMESİNİ atlar, KOLON OKUMASINI değil — ölçüldü: 566 B/satır vs
+// 8.6 B/satır (~66×).
+//
+// Sürüklenme korkusu gerçekti ama yeri yanlıştı. Gerçek garanti şu:
+// kolon `MATERIALIZED clusterDeriveExpr` olarak tanımlı, ve MATERIALIZED
+// kolon onu saklamayan eski parçalarda OKUMA ANINDA hesaplanıyor. Yani
+// yeni ve eski parçalar aynı ifadeyi kullanıyor — okuma yolunun ikinci
+// bir kopyasını taşımasına gerek yok.
+//
+// Bu test o garantiyi DDL'de çiviliyor.
+func TestClusterMaterializedExprMatchesDerive(t *testing.T) {
+	src, err := os.ReadFile("store.go")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if !contains(clusterColExpr, "nullIf(cluster, '')") {
-		t.Fatal("clusterColExpr must read the promoted `cluster` column via " +
-			"nullIf(cluster, '') before falling back to the derive scan")
+	body := stripGoLineComments(string(src))
+
+	// CREATE: `cluster ... MATERIALIZED %s` + Sprintf argümanı derive olmalı.
+	if !strings.Contains(body, "cluster       LowCardinality(String) MATERIALIZED %s") {
+		t.Error("CREATE TABLE'da cluster kolonu MATERIALIZED yer-tutucu biçiminde değil")
 	}
-	// The column read must come FIRST so CH short-circuits the
-	// expensive indexOf() scan on new parts.
-	if indexOf(clusterColExpr, "cluster, ''") > indexOf(clusterColExpr, "res_values[indexOf") {
-		t.Fatal("the cheap column read must precede the derive scan so coalesce " +
-			"short-circuits on new parts")
+	if !strings.Contains(body, "`, clusterDeriveExpr,") {
+		t.Error("CREATE TABLE Sprintf'i clusterDeriveExpr geçmiyor — yeni/eski parçalar SÜRÜKLENİR")
+	}
+	// ALTER (sonradan eklenen kurulumlar) da aynı ifadeyi kullanmalı.
+	if !strings.Contains(body, "MATERIALIZED ` + clusterDeriveExpr") {
+		t.Error("ALTER ADD COLUMN clusterDeriveExpr kullanmıyor — sürüklenme")
+	}
+}
+
+// PERF İNVARİANTI: okuma yolu DÜZ KOLON okumalı, dizi taraması
+// TAŞIMAMALI.
+//
+// ÖLÇÜLDÜ (chc-0, aynı pencere, aynı çıktı): coalesce fallback
+// 137.15 MiB / 247k satır = 566 B/satır · 81 ms; düz kolon 8.71 MiB /
+// 1.015M satır = 8.6 B/satır · 11 ms → ~66× bayt. 6 saatte 20.383
+// boş-cluster satırın türetmeyle kurtarılanı SIFIR.
+func TestClusterColExprIsPlainColumnRead(t *testing.T) {
+	if clusterColExpr != "cluster" {
+		t.Errorf("okuma yolu düz kolon olmalı, alınan %q", clusterColExpr)
+	}
+	for _, scan := range []string{"res_values[indexOf", "attr_values[indexOf", "coalesce"} {
+		if contains(clusterColExpr, scan) {
+			t.Errorf("okuma yolunda %q var — her satırda dizi kolonları diskten okunur (~66× bayt)", scan)
+		}
+	}
+}
+
+// Kolon HİÇ YOKSA (harici Distributed, ALTER uygulanmamış) ham türetmeye
+// düşülmeli. v0.8.162'de operatör-bildirimli code 47 olayını bu dal
+// çözmüştü; perf düzeltmesi onu kaldırmamalı.
+func TestClusterExprFallsBackWhenColumnAbsent(t *testing.T) {
+	src, err := os.ReadFile("repo.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := stripGoLineComments(string(src))
+	i := strings.Index(body, "func (s *Store) clusterExpr()")
+	if i < 0 {
+		t.Fatal("clusterExpr bulunamadı")
+	}
+	fn := body[i : i+220]
+	if !strings.Contains(fn, "s.hasClusterCol") {
+		t.Error("hasClusterCol probu düşmüş — harici Distributed yolu kırılır")
+	}
+	if !strings.Contains(fn, "return clusterDeriveExpr") {
+		t.Error("kolon yokken ham türetmeye düşülmüyor")
 	}
 }
 

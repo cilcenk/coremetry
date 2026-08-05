@@ -13,6 +13,7 @@ import {
 import type {
   AICall, AIStats, AICallsTimePoint, TimeRange,
 } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // /ai — Coremetry-native AI observability dashboard. The
 // Langfuse-alike: every Copilot Explain call lands as one
@@ -166,7 +167,7 @@ export default function AIObservabilityPage() {
         })()}
 
         {/* Filter strip */}
-        <div className="controls" style={{ marginTop: 18, marginBottom: 8 }}>
+        <PageControls sticky style={{ marginTop: 18, marginBottom: 8 }}>
           <input type="search" placeholder="Filter by surface…" aria-label="Filter by surface"
             value={surface} onChange={e => setSurface(e.target.value)}
             style={{ fontSize: 12, padding: '3px 8px', width: 200 }} />
@@ -199,7 +200,7 @@ export default function AIObservabilityPage() {
               ↓ CSV
             </Button>
           )}
-        </div>
+        </PageControls>
 
         {/* Recent calls table */}
         {calls === undefined && <Spinner />}

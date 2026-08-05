@@ -53,6 +53,7 @@ import { LatencyScatter } from '@/components/traces/LatencyScatter';
 import { MiniWaterfall } from '@/components/traces/MiniWaterfall';
 import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
+import { PageControls } from '@/components/ui/PageControls';
 
 // v0.9.304 (operatör) — 'relations' kaldırıldı. Yapısal self-join
 // sorgusu ham spans üzerinde koşuyordu, yani sayfadaki en pahalı okuma
@@ -894,7 +895,7 @@ function TracesPageInner() {
             `.controls` sırasındaydı; ikisi de "hangi trace'ler" sorusunu
             yanıtladığı için tek şeritte topluluyor (~43px kazanç). `.controls`
             zaten flex-wrap, dar ekranda ikinci satıra kırılır. */}
-        <div className="controls" data-shortcut-search style={{ marginBottom: 8, alignItems: 'center' }}>
+        <PageControls sticky style={{ marginBottom: 8, alignItems: 'center' }}>
           <div className="segmented">
             <button onClick={() => setView('list')} className={view === 'list' ? 'active' : ''}>Traces</button>
             <button onClick={() => setView('aggregate')} className={view === 'aggregate' ? 'active' : ''}>Aggregated</button>
@@ -980,7 +981,7 @@ function TracesPageInner() {
                 <span style={{ color: draft.rootOnly ? 'var(--accent2)' : 'var(--text2)' }}>Root</span>
               </label>
               <Button variant="primary" size="sm" onClick={() => apply()}>Search</Button>
-        </div>
+        </PageControls>
 
 
 

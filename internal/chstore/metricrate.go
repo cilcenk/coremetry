@@ -330,7 +330,12 @@ func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode str
 	if f.StepSeconds <= 0 {
 		f.StepSeconds = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
 	}
-	if iv := s.metricExportInterval(ctx, f.Name, f.Service); iv > 0 {
+	// v0.9.687 — filtreler proba da iniyor. Kapsamsız prob, eşleşen
+	// servisin gerçek yayım aralığı yerine TÜM servislerin p90'ını
+	// veriyordu; dar pencerede clamp devreye girmeyince oran şişiyor ve
+	// grafik düz bir çizgiye iniyordu (operatör-bildirimi: 30 dk doğru,
+	// 5 dk bozuk).
+	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 	step := f.StepSeconds

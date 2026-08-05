@@ -10,14 +10,14 @@ import (
 // MetricQueryFilter is a Grafana-style query against metric_points.
 // Same shape as SpanMetricFilter but targets the metrics table.
 type MetricQueryFilter struct {
-	Name        string       // metric name (required)
-	Service     string       // shortcut filter on service_name
+	Name    string // metric name (required)
+	Service string // shortcut filter on service_name
 	// Instance + Engine — v0.9.279, DB receiver drill scoping. service_name
 	// cannot do this job: it names the RECEIVER, so every instance of an
 	// engine shares one value. See dbInstanceScopeClause for why it takes an
 	// engine and why the predicate is an OR.
-	Instance string
-	Engine   string
+	Instance    string
+	Engine      string
 	Filters     []FilterExpr // arbitrary attribute filters (resource.X / span.X also supported)
 	GroupBy     []string     // 0..N attribute keys → multi-line series
 	Aggregation string       // avg | sum | min | max | last | p50 | p95 | p99 (default: avg)
@@ -154,7 +154,8 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		// v0.9.105 (F1) — pixel-adaptif; MaxDataPoints=0 ise eski ladder.
 		f.StepSeconds = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
 	}
-	if iv := s.metricExportInterval(ctx, f.Name, f.Service); iv > 0 {
+	// v0.9.687 — filtreler proba da iniyor (bkz. metricrate.go'daki not).
+	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 

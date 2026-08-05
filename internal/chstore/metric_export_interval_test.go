@@ -12,52 +12,46 @@ import (
 // estimator's branches, the raise-only clamp, and the probe SQL's
 // CH-bounds contract.
 
-func TestExportIntervalFrom(t *testing.T) {
+// v0.9.672 — TABAN ARTIK P90 (operatör-bildirimi: "kesikli çıkıyor").
+//
+// Eski hâli en YOĞUN seriyi alıyordu. Yerel ölçüm: 28 seri, aralık
+// 4s→30s (7.5× yayılım), 7 seri 29-30s'de yayımlıyor, adımı ise TEK bir
+// 4s serisi belirliyor → 30s'lik seride kovaların ~%87'si boş.
+func TestExportIntervalQuantile(t *testing.T) {
 	cases := []struct {
-		name    string
-		cnt     uint64
-		spanSec int64
-		want    int
+		name   string
+		iv     float64
+		series uint64
+		want   int
 	}{
-		{"classic 10s exporter (60 pts / 590s)", 60, 590, 10},
-		{"1s exporter", 600, 599, 1},
-		{"15s exporter with jitter", 41, 610, 15},
-		{"60s exporter", 11, 600, 60},
-		{"young metric (4 pts) → no clamp", 4, 30, 0},
-		{"single point → no clamp", 1, 0, 0},
-		{"zero span → no clamp", 10, 0, 0},
-		{"sub-second flood → floor 1s", 1000, 10, 1},
-		{"implausibly sparse (>1h apart) → no clamp", 5, 20000, 0},
+		{"tipik p90", 29.4, 28, 29},
+		{"tek seri — dejenerasyon doğru yönde", 8, 1, 8},
+		{"yuvarlama", 7.6, 10, 8},
+		{"seri yok → clamp yok", 30, 0, 0},
+		{"sıfır aralık → clamp yok", 0, 5, 0},
+		{"negatif → clamp yok", -1, 5, 0},
+		{"1s altı tabana çekiliyor", 0.4, 5, 1},
+		{"tavan üstü → clamp yok (bayat/seyrek metrik)", float64(metricIvMaxSeconds + 1), 5, 0},
 	}
 	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := exportIntervalFrom(c.cnt, c.spanSec); got != c.want {
-				t.Fatalf("exportIntervalFrom(%d, %d) = %d, want %d", c.cnt, c.spanSec, got, c.want)
-			}
-		})
+		if got := exportIntervalQuantile(c.iv, c.series); got != c.want {
+			t.Errorf("%s: exportIntervalQuantile(%v, %d) = %d, beklenen %d", c.name, c.iv, c.series, got, c.want)
+		}
 	}
 }
 
-func TestClampStepToExportRaisesOnly(t *testing.T) {
-	if got := clampStepToExport(1, 10); got != 10 {
-		t.Fatalf("finer-than-export must clamp up: got %d", got)
-	}
-	if got := clampStepToExport(300, 10); got != 300 {
-		t.Fatalf("coarse request must stay coarse: got %d", got)
-	}
-	if got := clampStepToExport(30, 0); got != 30 {
-		t.Fatalf("unknown interval (0) must not clamp: got %d", got)
-	}
-}
-
-func TestMetricExportIntervalSQLBounds(t *testing.T) {
+func TestMetricExportIntervalQuantileSQLBounds(t *testing.T) {
 	for _, withSvc := range []bool{false, true} {
-		q := metricExportIntervalSQL(withSvc)
+		q := metricExportIntervalQuantileSQL(withSvc)
 		for _, want := range []string{
 			"time >= ?", "time <= ?", // partition-pruning window
-			"LIMIT 1",
+			"LIMIT 20000",
 			"max_execution_time",
 			"GROUP BY service_name, host_name, attr_values",
+			// P90 ÖZELLİKLE: p50'ye düşürmek delikleri geri getirir
+			// (ölçüm: 28 serinin 7'si p50'nin ~4× üstünde yayımlıyor),
+			// max'a çıkarmak tek bozuk seriyle tüm grafiği kabalaştırır.
+			"quantileExact(0.9)",
 		} {
 			if !strings.Contains(q, want) {
 				t.Errorf("withService=%v: missing %q in %s", withSvc, want, q)

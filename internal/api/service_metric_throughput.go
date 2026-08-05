@@ -101,53 +101,86 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 			"service":  name,
 		}
 
-		// 1) Metrik Coremetry'de var mı? Cevap "hayır" ise geri kalan her
-		// şey gürültü — collector onu iletmiyor demektir.
-		exists, err := s.store.MetricExists(ctx, metric)
-		if err != nil {
-			return nil, err
-		}
-		out["metricExists"] = exists
-		if !exists {
-			// Ad tutmadı — ama ölçüm başka bir adla İÇERİDE olabilir.
-			// Prometheus ve OTLP aynı şeyi farklı adlandırıyor
-			// (`http_server_request_duration_seconds_count` ↔
-			// `http.server.request.duration`). Operatöre "yok" deyip
-			// bırakmak, aramayı ona yıkmak olurdu.
+		// 1) ADI ÇÖZ. Tek bir varsayılan yetmiyor: aynı ölçüm kuruluma
+		// göre beş farklı adla geliyor (OTel semconv sürüm değiştirdi,
+		// Micrometer kendi adını koyuyor, Prometheus çevirisi sonek
+		// ekliyor). Operatöre "doğru adı bul ve yaz" demek yerine sunucu
+		// sırayla deniyor — operatör-bildirimi v0.9.668'in çözdüğü şey.
+		resolved, tried := s.resolveThroughputMetric(ctx, metric)
+		out["tried"] = tried
+		if resolved == "" {
+			out["metricExists"] = false
 			out["suggestions"] = s.suggestMetricNames(ctx, metric)
 			return out, nil
 		}
+		out["metric"] = resolved
+		out["metricExists"] = true
 
-		// 2) Seri: sayaç olduğu için RATE. QueryMetricRate cumulative/delta
-		// ayrımını ve sayaç sıfırlanmalarını zaten işliyor.
-		series, err := s.store.QueryMetricRate(ctx, filter, "rate")
+		// 2) INSTRUMENT belirle — hangi KOLON rate'lenecek.
+		//
+		// Sayaçta ölçüm `value`da, histogramda `count` kolonunda (gözlem
+		// sayısı). OTel'in HTTP server metriği çoğu kurulumda HİSTOGRAM;
+		// v0.9.665 sabit 'sum' okuduğu için tam da en yaygın durumda
+		// sessizce boş dönüyordu ve tanılama kutusu operatörü yanlış
+		// yöne — deseni düzeltmeye — gönderiyordu.
+		instrument := s.store.MetricInstrument(ctx, resolved, "")
+		out["instrument"] = instrument
+		rate := s.store.QueryMetricRate
+		if instrument == "histogram" {
+			rate = s.store.QueryMetricCountRate
+		} else if instrument != "sum" {
+			// gauge / bilinmeyen: rate anlamsız. Sessizce boş seri
+			// döndürmek yerine sebebi söyle.
+			out["unsupportedInstrument"] = true
+			return out, nil
+		}
+
+		_, filter := metricThroughputPlan(name, resolved, jobLabel, from, to)
+		series, err := rate(ctx, filter, "rate")
 		if err != nil {
 			return nil, err
 		}
-		out["series"] = series
-		out["matched"] = len(series)
+		if len(series) > 0 {
+			out["series"] = series
+			out["matched"] = len(series)
+			out["matchedBy"] = jobLabel
+			return out, nil
+		}
 
-		// 3) Eşleşme YOKSA gerçek `job` değerlerini göster. Bu, ucun en
-		// değerli çıktısı: desen mi tutmadı, etiket adı mı başka, yoksa
-		// metrik bu kurulumda job taşımıyor mu — üçü ayırt edilebilsin.
-		if len(series) == 0 {
-			vals, err := s.store.MetricLabelValues(ctx, metric, jobLabel, to.Sub(from))
-			if err == nil {
-				if len(vals) > metricThroughputSampleJobs {
-					vals = vals[:metricThroughputSampleJobs]
-				}
-				out["sampleJobs"] = vals
-				// Örnek değerlerden ÇÖZÜLEN servis adları: operatör
-				// Coremetry'nin servis adıyla job'ın son bölümünün
-				// gerçekten aynı olup olmadığını tek bakışta görsün.
-				svcs := make([]string, 0, len(vals))
-				for _, v := range vals {
-					if svc := chstore.ServiceFromJobLabel(v); svc != "" {
-						svcs = append(svcs, svc)
-					}
-				}
-				out["sampleServices"] = svcs
+		// 3) `job` TUTMADI → service_name'e düş.
+		//
+		// Prometheus dünyasında kimlik `job` etiketinde; OTLP dünyasında
+		// kaynak özniteliğinden gelen service_name'de. Operatörün
+		// ekranındaki metrik Prometheus'tan geliyordu ama Coremetry'ye
+		// giren OTel adlı metrik büyük olasılıkla job TAŞIMIYOR — o
+		// durumda job desenini kovalamak sonsuza kadar boş döner.
+		svcFilter := filter
+		svcFilter.Filters = nil
+		svcFilter.Service = name
+		if svcSeries, err2 := rate(ctx, svcFilter, "rate"); err2 == nil && len(svcSeries) > 0 {
+			out["series"] = svcSeries
+			out["matched"] = len(svcSeries)
+			out["matchedBy"] = "service_name"
+			return out, nil
+		}
+		out["matched"] = 0
+
+		// 4) İkisi de tutmadı — gerçek `job` değerlerini göster. Desen mi
+		// yanlış, etiket adı mı başka, yoksa metrik job taşımıyor mu:
+		// üçü ayırt edilebilsin.
+		vals, err := s.store.MetricLabelValues(ctx, resolved, jobLabel, to.Sub(from))
+		if err == nil {
+			if len(vals) > metricThroughputSampleJobs {
+				vals = vals[:metricThroughputSampleJobs]
 			}
+			out["sampleJobs"] = vals
+			svcs := make([]string, 0, len(vals))
+			for _, v := range vals {
+				if svc := chstore.ServiceFromJobLabel(v); svc != "" {
+					svcs = append(svcs, svc)
+				}
+			}
+			out["sampleServices"] = svcs
 		}
 		return out, nil
 	})
@@ -181,4 +214,29 @@ func (s *Server) suggestMetricNames(ctx context.Context, want string) []string {
 		}
 	}
 	return out
+}
+
+// resolveThroughputMetric — kullanılacak metrik adı + denenen adlar.
+//
+// Öncelik: açıkça istenen ad > ayardaki ad > aday listesinden İLK VAR
+// OLAN. Denenen adlar da dönüyor: hiçbiri yoksa operatör neyin
+// arandığını görsün, "yok" cevabı sağır kalmasın.
+func (s *Server) resolveThroughputMetric(ctx context.Context, explicit string) (string, []string) {
+	var cands []string
+	if explicit != "" {
+		cands = []string{explicit}
+	} else {
+		cands = append(cands, s.throughputMetricName(ctx))
+		for _, c := range chstore.ThroughputMetricCandidates {
+			if c != cands[0] {
+				cands = append(cands, c)
+			}
+		}
+	}
+	for _, c := range cands {
+		if ok, err := s.store.MetricExists(ctx, c); err == nil && ok {
+			return c, cands
+		}
+	}
+	return "", cands
 }

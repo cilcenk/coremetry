@@ -142,7 +142,62 @@ func (s *Store) metricTemporality(ctx context.Context, name, service string) str
 // temporality → per-seri reset-korumalı cross-bucket delta; delta temporality
 // → per-bucket sum (değer zaten interval-artışı). Aynı step disiplini
 // (metricAutoStepPx + clampStepToExport). Sonuç SpanMetricSeries — UI aynı.
+// rateSource — rate'in HANGİ instrument'ten ve HANGİ kolondan okunacağı.
+//
+// v0.9.668 (operatör-bildirimi): "Coremetry'de sanırım
+// http.server.request.duration şeklinde çıkıyor metric ismi. O yüzden
+// overview'de çıkmıyor."
+//
+// Teşhis daha derindi: ad yalnız ilk engeldi. QueryMetricRate
+// instrument='sum' sabitini taşıyordu, yani bir HISTOGRAM verildiğinde
+// sessizce BOŞ dönüyordu. Throughput'un histogramdaki karşılığı
+// `count` kolonu (gözlem sayısı); `value` orada anlamsız.
+//
+// OTel HTTP server metriği çoğu kurulumda histogram
+// (http.server.duration / http.server.request.duration), yani sabit
+// 'sum' bu yolun en yaygın durumu KAÇIRMASI demekti.
+type rateSource struct {
+	instrument string // metric_points.instrument
+	valueExpr  string // rate'lenecek kolon
+}
+
+// rateSourceCounter — klasik sayaç: ölçüm `value`da.
+var rateSourceCounter = rateSource{instrument: "sum", valueExpr: "value"}
+
+// rateSourceHistogramCount — histogramın GÖZLEM SAYISI. Süre histogramı
+// için bu tam olarak istek sayısıdır, yani throughput.
+var rateSourceHistogramCount = rateSource{instrument: "histogram", valueExpr: "count"}
+
+// QueryMetricRate — sayaç yolu (geriye dönük imza korunuyor).
 func (s *Store) QueryMetricRate(ctx context.Context, f MetricQueryFilter, mode string) ([]SpanMetricSeries, error) {
+	return s.queryRateFrom(ctx, f, mode, rateSourceCounter)
+}
+
+// QueryMetricCountRate — histogram gözlem sayısının rate'i.
+func (s *Store) QueryMetricCountRate(ctx context.Context, f MetricQueryFilter, mode string) ([]SpanMetricSeries, error) {
+	return s.queryRateFrom(ctx, f, mode, rateSourceHistogramCount)
+}
+
+// MetricInstrument — bir metriğin instrument türü ("sum"/"histogram"/
+// "gauge"/""). metricTemporality ile aynı kalıp: kısa, sınırlı prob.
+func (s *Store) MetricInstrument(ctx context.Context, name, service string) string {
+	to := time.Now()
+	from := to.Add(-metricIvProbeWindow)
+	q := `SELECT any(instrument) FROM metric_points WHERE metric = ? AND time >= ? AND time <= ?`
+	args := []any{name, from, to}
+	if service != "" {
+		q += ` AND service_name = ?`
+		args = append(args, service)
+	}
+	q += ` SETTINGS max_execution_time = 3`
+	var inst string
+	if err := s.conn.QueryRow(ctx, q, args...).Scan(&inst); err != nil {
+		return ""
+	}
+	return inst
+}
+
+func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode string, src rateSource) ([]SpanMetricSeries, error) {
 	if f.Name == "" {
 		return nil, fmt.Errorf("metric name required")
 	}
@@ -190,7 +245,12 @@ func (s *Store) QueryMetricRate(ctx context.Context, f MetricQueryFilter, mode s
 	}
 	wc.add("time >= ?", lowerBound)
 	wc.add("time <= ?", f.To)
-	wc.add("instrument = 'sum'")
+	// v0.9.668 — HANGİ instrument, HANGİ kolon.
+	//
+	// Sayaçta ölçüm `value`da; histogramda `count` kolonunda (gözlem
+	// SAYISI). Throughput bir histogramdan okunacaksa doğru kolon
+	// `count` — `value` histogramda anlamsız ve sessizce 0 döner.
+	wc.add("instrument = ?", src.instrument)
 	// v0.9.106 (F2 review-fix #3) — yalnız MONOTONIC counter; UpDownCounter
 	// (is_monotonic=0: active_requests/queue-depth) rate'te her düşüşü "reset"
 	// sanıp garbage üretiyordu → filtrele (boş döner, yanlış değil). Kolon
@@ -215,27 +275,27 @@ func (s *Store) QueryMetricRate(ctx context.Context, f MetricQueryFilter, mode s
 	}
 
 	if isDelta {
-		return s.queryRateDelta(ctx, wc, groupSelect, step, mode)
+		return s.queryRateDelta(ctx, wc, groupSelect, step, mode, src)
 	}
-	return s.queryRateCumulative(ctx, wc, groupSelect, step, mode, originalFromNs)
+	return s.queryRateCumulative(ctx, wc, groupSelect, step, mode, originalFromNs, src)
 }
 
 // queryRateCumulative — per-(seri, bucket) SON kümülatif değeri çeker; Go'da
 // per-seri reset-korumalı delta (scalarSeriesDelta) + kullanıcı-groupBy'a
 // yeniden-toplama. CH bounds korunur (LIMIT + max_execution_time + time WHERE).
-func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSelect string, step int, mode string, originalFromNs uint64) ([]SpanMetricSeries, error) {
+func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSelect string, step int, mode string, originalFromNs uint64, src rateSource) ([]SpanMetricSeries, error) {
 	sql := fmt.Sprintf(`
 		SELECT
 		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
 		    %s AS sk,
 		    %s AS gk,
-		    argMaxOrNull(value, time) AS v
+		    argMaxOrNull(%s, time) AS v
 		FROM metric_points
 		%s
 		GROUP BY bucket, sk, gk
 		ORDER BY sk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 25`, step, metricSeriesKeyExpr(s.hasSeriesFpCol), groupSelect, wc.sql())
+		SETTINGS max_execution_time = 25`, step, src.valueExpr, metricSeriesKeyExpr(s.hasSeriesFpCol), groupSelect, wc.sql())
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {
@@ -301,18 +361,18 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 
 // queryRateDelta — delta-temporality counter: değer zaten per-interval artışı,
 // per-(gk, bucket) sumOrNull yeter (cross-bucket delta YOK).
-func (s *Store) queryRateDelta(ctx context.Context, wc whereClause, groupSelect string, step int, mode string) ([]SpanMetricSeries, error) {
+func (s *Store) queryRateDelta(ctx context.Context, wc whereClause, groupSelect string, step int, mode string, src rateSource) ([]SpanMetricSeries, error) {
 	sql := fmt.Sprintf(`
 		SELECT
 		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
 		    %s AS gk,
-		    sumOrNull(value) AS v
+		    sumOrNull(%s) AS v
 		FROM metric_points
 		%s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 25`, step, groupSelect, wc.sql())
+		SETTINGS max_execution_time = 25`, step, src.valueExpr, groupSelect, wc.sql())
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {

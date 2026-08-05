@@ -65,8 +65,13 @@ func ServiceFromJobLabel(job string) string {
 // (`..._seconds_count`, `..._total`, `..._bucket`); "http"/"server" ise
 // yüzlerce metrikte geçiyor. Bunlarla arama yapmak katalogdaki her şeyi
 // döndürür ve öneri işe yaramaz.
+// v0.9.668 — "server"/"client" LİSTEDEN ÇIKTI. İlk hâlinde jenerik
+// sayılmışlardı; operatörün prod ekranında sonuç şu oldu: önerilerin
+// TAMAMI http.client.* geldi ve aradığı http.server.* hiç görünmedi.
+// Oysa server/client, bir HTTP metriğini ayırt eden EN belirleyici
+// parça — atılacak değil, öncelenecek şey.
 var metricNameGenericTokens = map[string]bool{
-	"http": true, "server": true, "client": true,
+	"http":    true,
 	"seconds": true, "count": true, "total": true, "bucket": true,
 	"sum": true, "ms": true, "milliseconds": true, "bytes": true,
 }
@@ -99,4 +104,23 @@ func MetricNameProbeTokens(name string) []string {
 		}
 	}
 	return out
+}
+
+// ThroughputMetricCandidates — throughput için bilinen metrik adları,
+// ÖNCELİK SIRASIYLA.
+//
+// v0.9.668 (operatör-bildirimi): tek bir varsayılan ad yetmiyor. Aynı
+// ölçüm kuruluma göre beş farklı adla geliyor — OTel semconv sürüm
+// değiştirdi (http.server.duration → http.server.request.duration),
+// Micrometer kendi adını koyuyor, Prometheus çevirisi sonek ekliyor.
+// Operatöre "doğru adı bul ve ayara yaz" demek yerine sunucu sırayla
+// deniyor.
+//
+// Sıra ÖNEMLİ: en yeni/en yaygın semconv başta. İlk VAR OLAN kazanıyor.
+var ThroughputMetricCandidates = []string{
+	"http.server.request.duration",               // OTel semconv ≥1.23 (histogram)
+	"http.server.duration",                       // OTel semconv <1.23 (histogram)
+	"http.server.requests",                       // Micrometer/Spring (counter)
+	"http_server_request_duration_seconds_count", // Prometheus çevirisi
+	"http_server_requests_seconds_count",         // Micrometer → Prometheus
 }

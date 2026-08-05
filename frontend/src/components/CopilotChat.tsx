@@ -34,7 +34,30 @@ const FOLLOWUPS = [
   'Açık problemlerin kök nedeni?',
   'Takımımın servisleri nasıl?',
   'En yavaş servisler?',
-  'Son deploy\'un etkisi?',
+  // v0.9.652 (operatör: "son deploy etkisine gerek yok") — deploy
+  // sorusu STATİK listeden çıktı. Rotaya bağlı follow-up'larda duruyor:
+  // orada bir CEVABIN devamı, burada ise bağlamsız bir menü maddesiydi.
+];
+
+// v0.9.652 — BOŞ sohbetteki başlangıç çipleri.
+//
+// v0.9.579'da operatör "çıkar" demişti ve gerekçe kayıtlıydı: SEKİZ
+// sabit soru bir MENÜYDÜ, araç değil — operatörün kendi sorusu
+// neredeyse hiç listedekilerden biri olmuyor ve liste, asistanın yalnız
+// onları anlayabildiği izlenimini veriyordu.
+//
+// Operatör kararı değiştirdi (2026-08-05) ama gerekçeyi ÖLDÜRMEDİK:
+// sekiz değil ÜÇ çip, ve üçü de operatörün ADIYLA istediği sorular.
+//
+// Servis ADI taşımıyorlar ve taşıyamazlar: boş sohbette takım henüz
+// çözülmemiş. İlkine tıklayınca zincir devralıyor — v0.9.651 takım
+// servisleri listelendikten sonra servis-adlı çipler üretiyor, oradan
+// da service_health'in dört drill-down'u açılıyor (loglar, en yavaş
+// trace'ler, deploy etkisi, pod'lar).
+const STARTERS = [
+  'Takımımın servisleri nasıl?',
+  "Takımımın exception'ları?",
+  "En yavaş trace'ler?",
 ];
 
 // CoSRE markası — çizilen gradient sparkline (APM göndermesi, varyant B).
@@ -258,6 +281,17 @@ export function CopilotChat() {
                     Cevap SONRASI follow-up çipleri KALDI: onlar bir menü
                     değil, o cevaba bağlı sıradaki adım. */}
                 <div style={{ marginBottom: 10 }}>Sana nasıl yardımcı olabilirim?</div>
+                {/* v0.9.652 — başlangıç çipleri (operatör isteği). Gerekçe
+                    ve v0.9.579 ile ilişkisi STARTERS tanımında. */}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  {STARTERS.map(q => (
+                    <button key={q} type="button" onClick={() => submit(q)}
+                      style={{
+                        all: 'unset', cursor: 'pointer', fontSize: 12, color: 'var(--text)',
+                        border: '1px solid var(--border)', borderRadius: 999, padding: '4px 11px',
+                      }}>{q}</button>
+                  ))}
+                </div>
               </div>
             )}
             {turns.map((t, i) => (

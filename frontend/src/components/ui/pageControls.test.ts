@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { resolve, join } from 'node:path';
 
 // v0.9.639 — yapışkan filtre barı (denetim bulgusu #5, etki 5/5:
 // "filtreler kaydırınca ekrandan çıkıyor").
@@ -121,5 +121,46 @@ describe('PageControls yüksekliği yayınlıyor', () => {
   it('yalnız sticky iken yayınlıyor ve sökülürken temizliyor', () => {
     expect(src).toContain('if (!el || !sticky) return;');
     expect(src).toContain("removeProperty('--controls-h')");
+  });
+});
+
+// v0.9.663 — yapışkan barın YAPISAL ön koşulu: #content ağacında olmak.
+//
+// Bar `#content`'in kaydırma eksenine yapışıyor ve yüksekliğini
+// `--controls-h` olarak ORAYA yayınlıyor. Kendi `#content`'i olmayan bir
+// yüzeyde — gömülü bileşenler (LogsExplorer, MetricsExplorer,
+// DependenciesTable) ve settings sekmeleri — bar sayfanın #content'ine
+// tutunup alakasız içeriğin üstünde uçar. Bu yayılımda o altı dosya tam
+// bu yüzden dışarıda bırakıldı; kural yorumda kalmasın diye kapı burada.
+//
+// KAPSAM SINIRI (dürüstlük): tarama "#content var mı ve bar ondan SONRA
+// mı" diye soruyor. Aradaki bir kaydırma konteynerini yakalayamaz — onu
+// ancak gözle görmek mümkün. Yakaladığı şey, gerçekten yapılabilecek
+// hata: barı hiç #content'i olmayan bir yüzeye koymak.
+describe('sticky bar #content ağacında', () => {
+  const SRCDIR = resolve(__dirname, '../..');
+  const walk = (d: string, out: string[] = []): string[] => {
+    for (const e of readdirSync(d)) {
+      const p = join(d, e);
+      if (statSync(p).isDirectory()) walk(p, out);
+      else if (p.endsWith('.tsx')) out.push(p);
+    }
+    return out;
+  };
+  const users = walk(SRCDIR)
+    .map(p => ({ p, src: readFileSync(p, 'utf8') }))
+    .filter(f => f.src.includes('<PageControls sticky'));
+
+  // Tarama boş dönerse aşağıdaki her şey hiçbir şey ölçmeden GEÇER.
+  it('kullanımlar bulunabiliyor', () => {
+    expect(users.length).toBeGreaterThan(5);
+  });
+
+  it('her sticky bar kendi #content\'inin İÇİNDE', () => {
+    const bad = users
+      .filter(f => !f.src.includes('id="content"')
+        || f.src.indexOf('id="content"') > f.src.indexOf('<PageControls sticky'))
+      .map(f => f.p.slice(SRCDIR.length + 1));
+    expect(bad).toEqual([]);
   });
 });

@@ -15,6 +15,7 @@ import { classifyMetric } from '@/lib/metricTemplates';
 import { metricCatalogueHref } from './explore/urlCodec';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { MetricInfo, TimeRange } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // Metrics — v0.8.x Phase-5 collapse. /metrics is now a CATALOGUE: a
 // server-side-searchable, sortable index of every metric name (name / type /
@@ -141,7 +142,7 @@ export default function MetricsPage() {
           <MetricQueryEditor range={range} />
         ) : (
           <>
-            <div className="controls" style={{ marginBottom: 10 }}>
+            <PageControls sticky style={{ marginBottom: 10 }}>
               <input className="field" placeholder="Search metrics…" value={search}
                 onChange={e => setSearch(e.target.value)} style={{ width: 280 }} autoFocus />
               <div className="ov-logbar" style={{ gap: 4, marginBottom: 0 }}>
@@ -153,7 +154,7 @@ export default function MetricsPage() {
                   </span>
                 ))}
               </div>
-            </div>
+            </PageControls>
 
             {catalogQ.isLoading ? <Spinner />
               : filtered.length === 0 ? (

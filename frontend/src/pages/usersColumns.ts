@@ -1,6 +1,5 @@
 import type { UserRow } from '@/lib/api';
 import type { DataTableColumn } from '@/lib/dataTable';
-import { FIT_CONTENT_BUDGET } from '@/lib/tableFit';
 
 // Users tablosunun kolon bütçesi (v0.9.660).
 //
@@ -31,10 +30,22 @@ import { FIT_CONTENT_BUDGET } from '@/lib/tableFit';
 // kenar çubuğu ve dolgu — operatörün ekran görüntüsünden ölçüldü).
 // Sabit kolonlar 1020px, email'e en az 220px kalıyor.
 
-// USERS_CONTENT_BUDGET — tasarım hedefi. Test bunun üzerinden ölçüyor.
-// v0.9.662'de paylaşılan sabite bağlandı: aynı sayının iki yerde durması
-// bu kod tabanının tekrar eden hata sınıfı.
-export const USERS_CONTENT_BUDGET = FIT_CONTENT_BUDGET;
+// USERS_CONTENT_BUDGET — operatörün ekranı (1920 @125% ≈ 1536 CSS px
+// eksi kenar çubuğu ve dolgu).
+//
+// EV KURALIYLA İLİŞKİSİ — karıştırılmasın, iki AYRI ölçü:
+//   • isFitTables.test.ts'teki FIT_PX = 1150, is-fit verilen her tablonun
+//     BİLDİRİLEN genişlik toplamına bakıyor (dar dizüstü varsayımı).
+//     Users'ın bildirilen toplamı 1020 — o kuralı geçiyor.
+//   • Buradaki 1240 farklı bir soru soruyor: sabit toplam + esneyen
+//     kolonun TABANI ekrana sığıyor mu.
+//
+// DÜRÜST SINIR: 1240 > 1150. Yani 1440px'lik dar bir dizüstünde Users
+// hâlâ ~60px taşar. Daha fazla kırpmak gerçek UX kaybı isterdi (9
+// kolonun ikisi düzenlenebilir select, biri iki-butonlu aksiyon
+// hücresi). Operatörün makinesinde sığıyor; daha dar ekran bildirilirse
+// aksiyon hücresi taşma menüsüne dönmeli.
+export const USERS_CONTENT_BUDGET = 1240;
 
 // USERS_EMAIL_MIN — email hücresinin gerçek asgarisi: 20px avatar +
 // 8px boşluk + "yusufcan.baspinar@akbank.com" uzunluğunda bir adres

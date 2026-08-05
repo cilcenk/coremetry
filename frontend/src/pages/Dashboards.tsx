@@ -13,6 +13,7 @@ import { parseDashboardImport } from '@/lib/dashboardIO';
 import { toast } from '@/lib/toast';
 import { tsLong, fmtNum } from '@/lib/utils';
 import type { DashboardSummary } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // Columns for the shared sortable + resizable DataTable primitive. The
 // list is a small fetched array (saved dashboards), so client-side sort
@@ -116,7 +117,7 @@ export default function DashboardsPage() {
     <>
       <Topbar title="Dashboards" />
       <div id="content">
-        <div className="controls">
+        <PageControls sticky>
           <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)}
             placeholder="Filter dashboards…" aria-label="Filter dashboards"
             style={{ width: 220 }} />
@@ -142,7 +143,7 @@ export default function DashboardsPage() {
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             {filtered?.length ?? 0} dashboard{(filtered?.length ?? 0) === 1 ? '' : 's'}
           </span>
-        </div>
+        </PageControls>
 
         {items === undefined && <Spinner />}
         {items === null && <Empty icon="⚠" title="Failed to load dashboards" />}

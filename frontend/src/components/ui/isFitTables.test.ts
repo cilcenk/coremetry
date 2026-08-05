@@ -131,3 +131,35 @@ describe('flex kolonu', () => {
     }
   });
 });
+
+// v0.9.662 — KURTULUŞ YOLU.
+//
+// is-fit iç kaydırma güvenlik ağını kaldırıyor: sürüklenmiş bir kolon
+// genişliği tabloyu taşırırsa yatay kaydırma sayfaya çıkar (v0.9.640'ta
+// operatörün bildirdiği sızıntı) ve genişlik localStorage'da KALICI —
+// v0.9.660'a kadar geri dönüş yolu yoktu.
+//
+// Çözüm hatanın yapıldığı yerde: tutamağın kendisi. Orada olmasının
+// sebebi kapsam — tutamak TEK paylaşılan bileşen, yani useDataTable
+// kullanan HER tablo kapsanıyor.
+describe('sürüklenmiş genişlikten çıkış', () => {
+  const dt = readFileSync(join(SRC, 'components/DataTable.tsx'), 'utf8');
+
+  it('resize tutamağı çift tıkla düzeni sıfırlıyor', () => {
+    const i = dt.indexOf('export function ColResizeHandle');
+    expect(i).toBeGreaterThan(-1);
+    const body = dt.slice(i, i + 800);
+    expect(body).toContain('onDoubleClick');
+    expect(body).toContain('resetLayout()');
+  });
+
+  // Keşfedilemeyen bir kurtuluş yolu yok sayılır.
+  it('tutamağın title\'ı bunu söylüyor', () => {
+    expect(dt).toContain('double-click to reset all column widths');
+  });
+
+  // resetLayout gerçekten TEMİZLEMELİ — kısmi sıfırlama taşmayı sürdürür.
+  it('resetLayout tüm genişlikleri siliyor', () => {
+    expect(dt).toContain('resetLayout = useCallback(() => setColWidths({})');
+  });
+});

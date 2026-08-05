@@ -92,3 +92,71 @@ func TestBenimAloneDoesNotClaimTeamScope(t *testing.T) {
 		t.Errorf("'benim' tek başına takım kapsamı açmamalı, alınan %q", got)
 	}
 }
+
+// v0.9.651 — operatör: "takımıma ait servisleri listeledikten sonra
+// SEÇECEĞİ servisle ilgili hatalar / logları / en yavaş trace'leri".
+//
+// Servis-kapsamlı çipler ZATEN vardı; eksik olan tek halka, takım
+// listelendikten sonraki çiplerin servis ADI taşımamasıydı — operatör
+// bir servis seçemiyordu.
+
+func TestTeamServiceChipsNameRealServices(t *testing.T) {
+	r := guidedRoute{Intent: guidedMyServices, TeamServices: []string{"checkout", "ledger", "auth", "search"}}
+	got := guidedSuggestions(r)
+
+	// İlk üç servis adlandırılmalı; dördüncü DEĞİL (menü hissi).
+	for _, want := range []string{"checkout sağlığı nasıl?", "ledger sağlığı nasıl?", "auth sağlığı nasıl?"} {
+		found := false
+		for _, g := range got {
+			if g == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q çipi yok, üretilen: %v", want, got)
+		}
+	}
+	for _, g := range got {
+		if g == "search sağlığı nasıl?" {
+			t.Errorf("dördüncü servis çipi çizilmemeli (menü hissi): %v", got)
+		}
+	}
+	if len(got) > 4 {
+		t.Errorf("çip sayısı dördü aşmamalı, alınan %d: %v", len(got), got)
+	}
+}
+
+// Takım çözülemediyse (kimlik yok, takım atanmamış, katalog boş) eski
+// jenerik çipler kalmalı — servis adı olmayan bir çip üretmektense.
+func TestTeamServiceChipsFallBackWhenUnresolved(t *testing.T) {
+	got := guidedSuggestions(guidedRoute{Intent: guidedMyServices})
+	if len(got) == 0 {
+		t.Fatal("çip listesi boş kalmamalı")
+	}
+	for _, g := range got {
+		if g == " sağlığı nasıl?" {
+			t.Fatalf("boş servis adıyla çip üretilmiş: %v", got)
+		}
+	}
+}
+
+// Servis seçildikten SONRAKİ adım zaten çalışıyor olmalı: operatörün
+// istediği iki drill-down (loglar, en yavaş trace'ler) service_health
+// çiplerinde duruyor. Bu test o halkanın kopmadığını çiviliyor.
+func TestServiceHealthChipsCarryOperatorDrilldowns(t *testing.T) {
+	got := guidedSuggestions(guidedRoute{Intent: guidedServiceHealth, Service: "checkout"})
+	want := map[string]bool{
+		"checkout hata logları?":     false,
+		"checkout en yavaş trace'ler?": false,
+	}
+	for _, g := range got {
+		if _, ok := want[g]; ok {
+			want[g] = true
+		}
+	}
+	for k, seen := range want {
+		if !seen {
+			t.Errorf("%q çipi kayıp, üretilen: %v", k, got)
+		}
+	}
+}

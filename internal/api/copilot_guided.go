@@ -126,6 +126,16 @@ type guidedRoute struct {
 	// Family (v0.9.192) — the resolved service list for a
 	// guidedFamilyHealth route ("mobile bff'ler"); nil otherwise.
 	Family []string
+	// TeamServices (v0.9.651) — takım-kapsamlı bir rotada ÇÖZÜLEN servis
+	// listesi; Family emsali. Rotanın GİRDİSİ değil, paketin ÇIKTISI:
+	// guidedMyTeamBundle dolduruyor, guidedSuggestions okuyor.
+	//
+	// Neden gerekli: takım servisleri listelendikten sonraki çipler
+	// jenerikti ("Açık problemler?"), yani operatör bir servis SEÇİP
+	// onun loglarına/trace'lerine inemiyordu. Servis-kapsamlı çipler
+	// (svc + " hata logları?" vb.) ZATEN vardı — eksik olan tek halka,
+	// çiplere hangi servislerin yazılacağıydı.
+	TeamServices []string
 	// TraceID (v0.9.537) — guidedTraceByID rotasının öznesi (32-hex).
 	TraceID string
 	// SpanID (v0.9.548) — guidedSpanByID rotasının öznesi (16-hex).
@@ -985,11 +995,11 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	case guidedLogErrors:
 		evidence, sources, err = s.guidedLogErrorsBundle(ctx, emit, route.Service, route.Env, from, to, rangeS)
 	case guidedMyServices:
-		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "health", route.Env, from, to, rangeS)
+		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "health", &route, from, to, rangeS)
 	case guidedMyProblems:
-		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "problems", route.Env, from, to, rangeS)
+		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "problems", &route, from, to, rangeS)
 	case guidedMyExceptions:
-		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "exceptions", route.Env, from, to, rangeS)
+		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "exceptions", &route, from, to, rangeS)
 	case guidedPodHealth:
 		evidence, sources, err = s.guidedPodHealthBundle(ctx, emit, route.Service, from, to)
 	case guidedShiftSummary:
@@ -1355,7 +1365,8 @@ func servicesForUserTeam(ta chstore.TeamAliases, mds map[string]chstore.ServiceM
 // bölünüp zamanla ayrışıyor.
 //
 // mode: "health" | "problems" | "exceptions"
-func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any), mode string, env string, from, to time.Time, rangeS int64) (string, string, error) {
+func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any), mode string, route *guidedRoute, from, to time.Time, rangeS int64) (string, string, error) {
+	env := route.Env
 	meta := copilot.MetaFromContext(ctx)
 	if meta.UserID == "" {
 		return "Oturum kimliği yok (auth kapalı olabilir) — takım-kapsamlı soru yanıtlanamıyor. Kullanıcıya söyle: belirli bir servis adıyla sorabilir.\n",
@@ -1387,6 +1398,9 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		trimmed = len(svcs) - maxTeamServices
 		svcs = svcs[:maxTeamServices]
 	}
+	// v0.9.651 — çözülen liste rotaya yazılıyor; guidedSuggestions
+	// buradan servis-adlı çipler üretiyor.
+	route.TeamServices = svcs
 	header := fmt.Sprintf("Kullanıcının takımı: %s — %d servis (owner/SRE eşleşmesi).\n", u.Team, len(svcs)+trimmed)
 	if trimmed > 0 {
 		header += fmt.Sprintf("Not: ilk %d servis okundu, %d servis dışarıda kaldı.\n", maxTeamServices, trimmed)

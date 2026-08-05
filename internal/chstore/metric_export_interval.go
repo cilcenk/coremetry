@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"math"
+	"strconv"
 	"time"
 )
 
@@ -34,14 +35,32 @@ const (
 	metricIvMaxSeconds = 3600
 )
 
-// exportIntervalFrom converts the densest series' (point count, first→
-// last span) into an export-interval estimate in seconds. Pure so the
-// young-metric / sparse / implausible branches are table-tested.
-func exportIntervalFrom(cnt uint64, spanSec int64) int {
-	if cnt < metricIvMinPoints || spanSec <= 0 {
+// exportIntervalQuantile — v0.9.672 (operatör-bildirimi: "kesikli
+// çıkıyor bu da kötü bir görünüm").
+//
+// clamp'in TABANI artık en yoğun seriden değil, serilerin P90'ından
+// geliyor. Ölçüm (yerel, http.server.duration, 1 saat):
+//
+//	28 seri · iv_min 4s · p50 8s · p90 29s · max 30s   → 7.5× yayılım
+//	28 serinin 7'si 29-30s'de yayımlıyor
+//	adımı belirleyen ise TEK bir 4s serisi
+//
+// 4s tabanla 30s'lik bir seri çizilince kovaların ~%87'si boş kalıyor —
+// operatörün gördüğü "kesikli" tam bu. Clamp zaten delik ÖNLEMEK için
+// yazılmıştı (v0.8.243, "$__rate_interval muadili"); niyet doğruydu,
+// kusur tabanı en yoğun seriden almasıydı — yani "clamp yanlış" değil,
+// "clamp yeterince yükseltmiyor".
+//
+// P90 SEÇİLDİ, max değil: tek bir bozuk/çok seyrek seri tüm grafiği
+// kabalaştırmasın. Bedeli açık — karışık hızlı bir kümede en yoğun seri
+// çözünürlük kaybediyor. TEK serili grafikte (Service Overview
+// throughput) p90 = o serinin kendisi, yani davranış DEĞİŞMİYOR;
+// dejenerasyon doğru yönde.
+func exportIntervalQuantile(ivSec float64, series uint64) int {
+	if series == 0 || ivSec <= 0 {
 		return 0
 	}
-	iv := int(math.Round(float64(spanSec) / float64(cnt-1)))
+	iv := int(math.Round(ivSec))
 	if iv < 1 {
 		iv = 1
 	}
@@ -61,16 +80,18 @@ func clampStepToExport(step, exportIv int) int {
 	return step
 }
 
-// metricExportIntervalSQL builds the bounded probe: the densest
-// series' point count + covered span within the recent window. Pure so
-// the CH-bounds contract (time-bounded WHERE, LIMIT, max_execution_
-// time) is unit-tested. Series identity = (service_name, host_name,
-// attr_values) — the same tuple the read path groups by.
-func metricExportIntervalSQL(withService bool) string {
+// metricExportIntervalQuantileSQL — v0.9.672. Seri BAŞINA aralığı
+// hesaplar ve P90'ını döndürür (+ seri sayısı).
+//
+// CH sınırları korunuyor (CLAUDE.md sert kısıtı): zaman-sınırlı WHERE,
+// iç sorguda LIMIT, max_execution_time. Alt sorgu seri sayısıyla
+// sınırlı — metric_points'in kendisi taranmıyor, GROUP BY sonucu.
+func metricExportIntervalQuantileSQL(withService bool) string {
 	q := `
-		SELECT cnt, spanSec FROM (
+		SELECT quantileExact(0.9)(iv) AS iv90, count() AS series FROM (
 			SELECT count() AS cnt,
-			       dateDiff('second', min(time), max(time)) AS spanSec
+			       dateDiff('second', min(time), max(time)) AS spanSec,
+			       spanSec / greatest(cnt - 1, 1) AS iv
 			FROM metric_points
 			WHERE metric = ? AND time >= ? AND time <= ?`
 	if withService {
@@ -79,8 +100,8 @@ func metricExportIntervalSQL(withService bool) string {
 	}
 	q += `
 			GROUP BY service_name, host_name, attr_values
-			ORDER BY cnt DESC
-			LIMIT 1
+			HAVING cnt >= ` + strconv.Itoa(metricIvMinPoints) + ` AND spanSec > 0
+			LIMIT 20000
 		)
 		SETTINGS max_execution_time = 5`
 	return q
@@ -106,10 +127,10 @@ func (s *Store) metricExportInterval(ctx context.Context, name, service string) 
 		args = append(args, service)
 	}
 	iv := 0
-	var cnt uint64
-	var spanSec int64
-	if err := s.conn.QueryRow(ctx, metricExportIntervalSQL(service != ""), args...).Scan(&cnt, &spanSec); err == nil {
-		iv = exportIntervalFrom(cnt, spanSec)
+	var iv90 float64
+	var series uint64
+	if err := s.conn.QueryRow(ctx, metricExportIntervalQuantileSQL(service != ""), args...).Scan(&iv90, &series); err == nil {
+		iv = exportIntervalQuantile(iv90, series)
 	}
 
 	s.metricIvMu.Lock()

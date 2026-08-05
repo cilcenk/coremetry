@@ -392,18 +392,13 @@ func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode str
 // per-seri reset-korumalı delta (scalarSeriesDelta) + kullanıcı-groupBy'a
 // yeniden-toplama. CH bounds korunur (LIMIT + max_execution_time + time WHERE).
 func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSelect string, step int, mode string, originalFromNs uint64, src rateSource) ([]SpanMetricSeries, error) {
-	sql := fmt.Sprintf(`
-		SELECT
-		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
-		    %s AS sk,
-		    %s AS gk,
-		    argMaxOrNull(%s, time) AS v
-		FROM metric_points
-		%s
-		GROUP BY bucket, sk, gk
-		ORDER BY sk, bucket
-		LIMIT 50000
-		SETTINGS max_execution_time = 25`, step, src.valueExpr, metricSeriesKeyExpr(s.hasSeriesFpCol), groupSelect, wc.sql())
+	sql := buildRateCumulativeSQL(rateSQLParams{
+		Step:      step,
+		SeriesKey: metricSeriesKeyExpr(s.hasSeriesFpCol),
+		GroupExpr: groupSelect,
+		ValueExpr: src.valueExpr,
+		Where:     wc.sql(),
+	})
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {
@@ -470,17 +465,12 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 // queryRateDelta — delta-temporality counter: değer zaten per-interval artışı,
 // per-(gk, bucket) sumOrNull yeter (cross-bucket delta YOK).
 func (s *Store) queryRateDelta(ctx context.Context, wc whereClause, groupSelect string, step int, mode string, src rateSource) ([]SpanMetricSeries, error) {
-	sql := fmt.Sprintf(`
-		SELECT
-		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
-		    %s AS gk,
-		    sumOrNull(%s) AS v
-		FROM metric_points
-		%s
-		GROUP BY bucket, gk
-		ORDER BY gk, bucket
-		LIMIT 50000
-		SETTINGS max_execution_time = 25`, step, src.valueExpr, groupSelect, wc.sql())
+	sql := buildRateDeltaSQL(rateSQLParams{
+		Step:      step,
+		GroupExpr: groupSelect,
+		ValueExpr: src.valueExpr,
+		Where:     wc.sql(),
+	})
 
 	rows, err := s.conn.Query(ctx, sql, wc.args...)
 	if err != nil {
@@ -546,4 +536,77 @@ func buildRateSeries(byGk map[string]map[uint64]float64, gkKeys map[string][]str
 		out = append(out, SpanMetricSeries{GroupKey: gkKeys[gkKey], Points: pts})
 	}
 	return out
+}
+
+// buildRateCumulativeSQL / buildRateDeltaSQL — rate sorgularının SQL'i.
+//
+// v0.9.685 — SAF FONKSİYONA ÇIKARILDI, ve sebebi bir hata:
+//
+// v0.9.668'de değer kolonunu parametrik yaptım (sayaçta `value`,
+// histogramda `count`) ve fmt.Sprintf argümanlarını YANLIŞ SIRAYA
+// koydum. Şablon sırası sk → gk → değer iken argümanlar
+// değer → sk → gk gidiyordu, yani sorgu şu hâle geliyordu:
+//
+//	count AS sk,                              ← UInt64
+//	toString(cityHash64(...)) AS gk,
+//	argMaxOrNull([]::Array(String), time) AS v
+//
+// Sonuç: `clickhouse [ScanRow]: (sk) converting UInt64 to *string`.
+// HER İKİ YOL da (cumulative ve delta) kırıktı ve ON ALTI SÜRÜM boyunca
+// fark edilmedi — çünkü ucu bir kez bile çalıştırmadım; yerelde auth,
+// prod'da erişim yok. Operatörün ekran görüntüsündeki tanılama kutusu
+// (v0.9.683) hatayı yüzeye çıkarana kadar sessizdi.
+//
+// Bu yüzden SQL artık ADLANDIRILMIŞ parametrelerle kuruluyor ve testi
+// her yer tutucunun DOĞRU ifadeyi aldığını çiviliyor. Konumsal
+// fmt.Sprintf, bu şablon gibi aynı tipte dört %s taşıyan yerlerde
+// derleyicinin yakalayamadığı bir hata sınıfı.
+// rateSQLParams — ADLANDIRILMIŞ alanlar, ve bu bir düzeltme değil bir
+// TASARIM kararı.
+//
+// İlk düzeltmemde konumsal argümanları doğru sıraya koyup kurucunun
+// yer tutucu sırasını test etmiştim. TEST HATAYI YAKALAMADI: kurucuyu
+// kendi argümanlarıyla çağırıyordu, oysa hata ÇAĞRI YERİNDEYDİ. Yani
+// kapı yanlış şeyi ölçüyordu — bugün altı kez düzelttiğim sınıfın
+// testime bulaşmış hâli.
+//
+// Struct ile hata TESPİT EDİLEBİLİR olmaktan çıkıp İMKÂNSIZ oluyor:
+// aynı tipte dört string'i yanlış sıraya koymak artık derleme hatası
+// değil ama alan adları sayesinde okurken görünür, ve sessizce
+// kaymaları mümkün değil.
+type rateSQLParams struct {
+	Step      int
+	SeriesKey string // yalnız cumulative
+	GroupExpr string
+	ValueExpr string
+	Where     string
+}
+
+func buildRateCumulativeSQL(p rateSQLParams) string {
+	return fmt.Sprintf(`
+		SELECT
+		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
+		    %s AS sk,
+		    %s AS gk,
+		    argMaxOrNull(%s, time) AS v
+		FROM metric_points
+		%s
+		GROUP BY bucket, sk, gk
+		ORDER BY sk, bucket
+		LIMIT 50000
+		SETTINGS max_execution_time = 25`, p.Step, p.SeriesKey, p.GroupExpr, p.ValueExpr, p.Where)
+}
+
+func buildRateDeltaSQL(p rateSQLParams) string {
+	return fmt.Sprintf(`
+		SELECT
+		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
+		    %s AS gk,
+		    sumOrNull(%s) AS v
+		FROM metric_points
+		%s
+		GROUP BY bucket, gk
+		ORDER BY gk, bucket
+		LIMIT 50000
+		SETTINGS max_execution_time = 25`, p.Step, p.GroupExpr, p.ValueExpr, p.Where)
 }

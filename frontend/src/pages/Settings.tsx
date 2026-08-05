@@ -25,6 +25,7 @@ import { TempoTab } from './settings/TempoTab';
 import { ClustersTab } from './settings/ClustersTab';
 import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
+import { LogBridgeTab } from './settings/LogBridgeTab';
 import { LDAPTab } from './settings/LdapTab';
 import { SSOPresetsTab } from './settings/SsoTab';
 import { RetentionTab } from './settings/RetentionTab';
@@ -57,6 +58,9 @@ const TABS: SettingsTab[] = [
   { slug: 'clusters',    label: 'Remote clusters',       Comp: ClustersTab },
   { slug: 'elastic',     label: 'Elasticsearch logs',    Comp: ElasticTab },
   { slug: 'kibana',      label: 'Kibana link',           Comp: KibanaTab },
+  // v0.9.657 — CoSRE cevaplarındaki request_id'den dış log sistemine
+  // köprü. Kibana sekmesinin yanına: aynı sınıf, dış derin-link.
+  { slug: 'log-bridge',  label: 'Log köprüsü',           Comp: LogBridgeTab },
   { slug: 'ldap',        label: 'LDAP / AD',             Comp: LDAPTab },
   { slug: 'sso',         label: 'SSO presets',           Comp: SSOPresetsTab },
   { slug: 'retention',   label: 'Data retention',        Comp: RetentionTab },

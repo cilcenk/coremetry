@@ -4181,3 +4181,14 @@ export interface TraceCountResponse {
   atLeast: boolean;
   reason?: 'raw-path-filter' | 'duration-filter' | 'service+filter';
 }
+
+// v0.9.657 — dış log sistemi köprü şablonları (v0.9.655 backend'i).
+//
+// Ortam → URL şablonu. "default" soneksiz (prod) servisler için; int/uat/
+// prep servis adının SONEKİNDEN çözülüyor. Şablon {value} yer tutucusunu
+// taşımak zorunda — backend doğruluyor.
+export interface CorrelationLinkSettings {
+  templates: Record<string, string>;
+  placeholder: string;
+  envs: string[];
+}

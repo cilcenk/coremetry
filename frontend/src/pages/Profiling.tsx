@@ -163,7 +163,7 @@ export default function ProfilingPage() {
               </Empty>
             )}
             {data && data.length > 0 && (
-              <div className="table-wrap">
+              <div className="table-wrap is-fit">
                 <table style={{ tableLayout: 'fixed', width: '100%' }}>
                   <DataTableColgroup dt={profileDt} />
                   <DataTableHead dt={profileDt} />
@@ -266,7 +266,7 @@ function HotspotsPanel({ service, hotspots }: {
           </span>
         )}
       </div>
-      <div className="table-wrap">
+      <div className="table-wrap is-fit">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={hsDt} />
           <DataTableHead dt={hsDt} />

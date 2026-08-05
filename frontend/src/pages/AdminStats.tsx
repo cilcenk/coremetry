@@ -503,7 +503,7 @@ export default function AdminStatsPage() {
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>
                 ClickHouse storage · {data.tables.length} table{data.tables.length === 1 ? '' : 's'}
               </div>
-              <div className="table-wrap">
+              <div className="table-wrap is-fit">
                 <table style={{ tableLayout: 'fixed', width: '100%' }}>
                   <DataTableColgroup dt={storageDt} />
                   <DataTableHead dt={storageDt} />

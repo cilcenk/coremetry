@@ -37,12 +37,26 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** Dosyadaki her DataTableColumn dizisinin beyan edilen genişlik toplamı. */
+// v0.9.664 — ÖLÇÜM İKİ KÖR NOKTAYLA YAŞIYORDU. İkisi de "test yanlış
+// sebeple geçiyor" sınıfı: kapı yeşildi ama tabloya hiç bakmıyordu.
+//
+//  1. Yalnız `const X: DataTableColumn<T>[] = [` biçimi eşleşiyordu.
+//     `useMemo<DataTableColumn<T>[]>(() => [` ile tanımlanan kolonlar
+//     ölçülmüyordu — TracesResult'ın ikinci tablosu böyle kaçmış.
+//  2. Tarama DOSYA-YEREL'di. v0.9.660'ta USER_COLS ayrı bir modüle
+//     (usersColumns.ts) taşındı ve Users.tsx o günden beri is-fit ama
+//     ÖLÇÜSÜZ kaldı. Kolonlarını ayıran her sayfa aynı boşluğa düşerdi.
+//
+// Artık iki biçim de eşleşiyor ve dosyanın içe aktardığı modüller de
+// taranıyor (bir seviye). Fazladan atıf yalnızca kuralı SIKILAŞTIRIR.
+const COLS_RE = /DataTableColumn<[^>]*>\[\]\s*(?:=\s*\[|>\(\(\)\s*=>\s*\[)/g;
+
+/** Kaynaktaki her DataTableColumn dizisinin beyan edilen genişlik toplamı. */
 function tableWidths(src: string): number[] {
   const out: number[] = [];
-  const re = /DataTableColumn<[^>]*>\[\]\s*=\s*\[/g;
+  COLS_RE.lastIndex = 0;
   let m: RegExpExecArray | null;
-  while ((m = re.exec(src))) {
+  while ((m = COLS_RE.exec(src))) {
     let d = 1, j = m.index + m[0].length;
     while (j < src.length && d > 0) {
       if (src[j] === '[') d++;
@@ -56,8 +70,34 @@ function tableWidths(src: string): number[] {
   return out;
 }
 
+/** Dosyanın kendi kolonları + BİR SEVİYE içe aktardığı modüllerinkiler. */
+function widthsWithImports(file: string): number[] {
+  const src = readFileSync(file, 'utf8');
+  const out = tableWidths(src);
+  for (const m of src.matchAll(/from\s+'([^']+)'/g)) {
+    const spec = m[1];
+    if (!spec.startsWith('.') && !spec.startsWith('@/')) continue;
+    const base = spec.startsWith('@/')
+      ? join(SRC, spec.slice(2))
+      : resolve(file, '..', spec);
+    for (const ext of ['.ts', '.tsx']) {
+      try {
+        const dep = readFileSync(base + ext, 'utf8');
+        if (dep.includes('DataTableColumn')) out.push(...tableWidths(dep));
+        break;
+      } catch { /* bu uzantı değil */ }
+    }
+  }
+  return out;
+}
+
 describe('is-fit güvenlik kuralı — GENİŞLİK', () => {
-  const users = walk(SRC).filter(p => readFileSync(p, 'utf8').includes('table-wrap is-fit'));
+  // Test dosyaları HARİÇ: bu dosyanın kendi açıklaması 'table-wrap is-fit'
+  // dizesini içeriyor ve tarama kendini yakalıyordu — bu kod tabanında
+  // dört kez ısıran "kendi yorumunu eşleyen test" tuzağı.
+  const users = walk(SRC)
+    .filter(p => !p.endsWith('.test.ts') && !p.endsWith('.test.tsx'))
+    .filter(p => readFileSync(p, 'utf8').includes('table-wrap is-fit'));
 
   it('kullanımlar bulunabiliyor', () => {
     expect(users.length).toBeGreaterThan(0);
@@ -72,7 +112,7 @@ describe('is-fit güvenlik kuralı — GENİŞLİK', () => {
     const over: string[] = [];
     for (const p of users) {
       if (UNMEASURED.some(u => p.endsWith(u))) continue;
-      for (const w of tableWidths(readFileSync(p, 'utf8'))) {
+      for (const w of widthsWithImports(p)) {
         if (w > FIT_PX) over.push(`${p.replace(SRC, '')} (${w}px)`);
       }
     }
@@ -83,6 +123,16 @@ describe('is-fit güvenlik kuralı — GENİŞLİK', () => {
     for (const rel of UNMEASURED) {
       expect(users.find(u => u.endsWith(rel)), `${rel} artık is-fit değil`).toBeTruthy();
     }
+  });
+
+  // v0.9.664 — kolonlarını ayrı modüle taşıyan sayfa ÖLÇÜLÜYOR mu?
+  // Users.tsx'in kolonları usersColumns.ts'te; dosya-yerel tarama onu
+  // sessizce atlıyordu ve kapı yeşil kalıyordu.
+  it('kolonları ayrı modülde olan sayfa da ölçülüyor', () => {
+    const users = join(SRC, 'pages/Users.tsx');
+    expect(readFileSync(users, 'utf8')).toContain('table-wrap is-fit');
+    expect(tableWidths(readFileSync(users, 'utf8'))).toEqual([]); // dosya-yerel: BOŞ
+    expect(widthsWithImports(users).length).toBeGreaterThan(0);   // import'la: ölçülüyor
   });
 
   // Testin GERÇEKTEN ayırt ettiğini kanıtla: ölçüm fonksiyonu geniş bir

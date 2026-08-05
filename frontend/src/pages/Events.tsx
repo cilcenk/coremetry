@@ -176,7 +176,7 @@ function NotificationsTab({ from, to }: { from: number; to: number }) {
         </Empty>
       )}
       {rows && rows.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap is-fit">
           <table style={{ tableLayout: 'fixed', width: '100%' }}>
             <DataTableColgroup dt={dt} />
             <DataTableHead dt={dt} />
@@ -311,7 +311,7 @@ function AnnotationsTab({ from, to }: { from: number; to: number }) {
           </Empty>
         )}
         {data && data.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />

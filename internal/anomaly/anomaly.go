@@ -44,7 +44,7 @@ const (
 	// artık YALNIZ critical verdict'te açıyor (warning-grade anomali hiç
 	// Problem olmaz). request_rate DÜŞÜŞÜ istisna: trafik kaybı z'den
 	// bağımsız critical'dır ve openZ'de açılmaya devam eder.
-	criticalZ = 6.0 // |z| above this escalates warning → critical
+	criticalZ    = 6.0    // |z| above this escalates warning → critical
 	dwellBuckets = 3      // consecutive buckets that must all fire to open (anti-flap)
 	minSamples   = 12     // need at least this many baseline buckets
 	madScale     = 0.6745 // scales MAD to a normal-dist stdev (modified z-score)
@@ -91,8 +91,8 @@ type metricPolicy struct {
 
 var metricPolicies = map[string]metricPolicy{
 	"error_rate":   {direction: "up", floorPct: 0.10, absFloor: 1.0}, // rising errors only; <%1 = birkaç-hata gürültüsü, açma
-	"p99_ms":       {direction: "up", floorPct: 0.10},   // only rising latency matters
-	"request_rate": {direction: "both", floorPct: 0.15}, // drop AND spike both matter
+	"p99_ms":       {direction: "up", floorPct: 0.10},                // only rising latency matters
+	"request_rate": {direction: "both", floorPct: 0.15},              // drop AND spike both matter
 }
 
 // policyFor returns a metric's policy, defaulting to a symmetric 10% floor.
@@ -106,13 +106,14 @@ func policyFor(metric string) metricPolicy {
 // flatMADFloor — düz (MAD≈0) baseline'da modified z-score'u tanımlı
 // kılan metrik-farkındalı taban (v0.9.48). Birimler farklı olduğundan
 // tek mutlak taban üçüne birden uymaz:
-//   error_rate  : 0.5 yüzde puanı — %0 tabanlı serviste sürekli %3
-//     hata ~4σ (warning), %30 hata ~40σ (critical); %1'lik kıpırtı
-//     ~1.3σ ile sessiz.
-//   p99_ms      : max(1ms, medyanın %5'i) — sabit-2ms cache'li op
-//     10ms'e çıkınca ~5σ; 500ms'lik sabit servis 600ms'de sessiz.
-//   request_rate: max(0.1 rps, medyanın %5'i) — sıfır-trafik servis
-//     aniden trafik alınca açılır (direction both).
+//
+//	error_rate  : 0.5 yüzde puanı — %0 tabanlı serviste sürekli %3
+//	  hata ~4σ (warning), %30 hata ~40σ (critical); %1'lik kıpırtı
+//	  ~1.3σ ile sessiz.
+//	p99_ms      : max(1ms, medyanın %5'i) — sabit-2ms cache'li op
+//	  10ms'e çıkınca ~5σ; 500ms'lik sabit servis 600ms'de sessiz.
+//	request_rate: max(0.1 rps, medyanın %5'i) — sıfır-trafik servis
+//	  aniden trafik alınca açılır (direction both).
 func flatMADFloor(metric string, median float64) float64 {
 	switch metric {
 	case "error_rate":
@@ -338,11 +339,34 @@ func (d *Detector) scan(ctx context.Context) {
 		}
 	}
 
+	// v0.9.691 (perf taraması #2) — AÇIK PROBLEMLER TEK SORGUDA.
+	//
+	// checkOne her (servis, metrik) çifti için `FindOpenProblem` çağırıyordu:
+	// `problems FINAL` üzerinde NOKTA SORGUSU, ve `problems` sıralama
+	// anahtarı `id` olduğu için rule_id/service ile budama YOK — her çağrı
+	// tam tarama.
+	//
+	// ÖLÇÜLDÜ (chc-0 query_log, 6 saat): 47.442 çağrı · 42 GiB · SELECT
+	// baytının %4.5. A/B: 297 nokta sorgusu 1.725 ms, tek snapshot 5.2 ms
+	// → 331×. `satır/çağrı` her iki tarafta 3.775 (EXPLAIN: Parts 9/9,
+	// Granules 9/9 — budama sıfır, teyitli).
+	//
+	// Toplu okuma ZATEN YAZILMIŞ (OpenProblemsSnapshot, dört çağıranı var);
+	// bu dedektör bağlanmamıştı.
+	//
+	// HATA DAVRANIŞI KORUNUYOR: eski kod `open, _ :=` ile hatayı yutup
+	// "açık problem yok" sayıyordu; ByKey nil-alıcı güvenli, yani snapshot
+	// hatasında aynı yola düşülüyor.
+	snap, err := d.store.OpenProblemsSnapshot(ctx)
+	if err != nil {
+		log.Printf("[anomaly] open-problems snapshot: %v — bu tik açık problem YOK sayılıyor", err)
+	}
+
 	for _, svc := range services {
 		for _, m := range trackedMetrics {
 			buckets := seriesFor(bucketsByMetric[m], svc)
 			seasonal := seriesFor(seasonalByMetric[m], svc)
-			d.checkOne(ctx, svc, m, buckets, seasonal, minSamples)
+			d.checkOne(ctx, svc, m, buckets, seasonal, minSamples, snap)
 		}
 	}
 }
@@ -353,7 +377,7 @@ func (d *Detector) scan(ctx context.Context) {
 // than fetched here per service. A nil/short `buckets` (service absent from the
 // batch, or the metric's batch read errored this tick) is skipped by the
 // enoughHistory guard — identical to the old per-service fetch returning empty.
-func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets, seasonal []float64, seasonalMinSamples int) {
+func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets, seasonal []float64, seasonalMinSamples int, openSnap *chstore.OpenProblems) {
 	if !enoughHistory(len(buckets)) {
 		return // not enough history + a full dwell window yet
 	}
@@ -394,7 +418,10 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 	z := madScale * (current - median) / mad
 
 	ruleID := "anomaly:" + service + ":" + metric
-	open, _ := d.store.FindOpenProblem(ctx, ruleID, service)
+	// v0.9.691 — tik başına TEK snapshot'tan arama (bkz. scan()).
+	// Yerel ad `open` KORUNUYOR: aşağıdaki tüm kullanımlar ona bağlı ve
+	// yeniden adlandırmak gereksiz fark üretirdi.
+	open := openSnap.ByKey(ruleID, service)
 	hasOpen := open != nil && open.ID != ""
 
 	// Open only when ALL dwell buckets fire (same direction); resolve as soon as

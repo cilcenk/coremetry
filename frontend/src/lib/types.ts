@@ -1949,6 +1949,12 @@ export interface ServiceMetricThroughput {
   // ve OTLP aynı ölçümü farklı adlandırıyor, doğru adı aramayı operatöre
   // yıkmamak için.
   suggestions?: string[];
+  // v0.9.668 — çözüm süreci görünür olsun: hangi adlar denendi, hangisi
+  // tuttu, instrument ne, eşleşme job'dan mı service_name'den mi geldi.
+  tried?: string[];
+  instrument?: string;
+  matchedBy?: string;
+  unsupportedInstrument?: boolean;
 }
 
 export interface SpanMetricSeries {

@@ -24,10 +24,33 @@ export function MetricThroughputNote({ d }: { d: ServiceMetricThroughput }) {
     fontSize: 11.5, lineHeight: 1.5, color: 'var(--text2)',
   };
 
+  if (d.unsupportedInstrument) {
+    return (
+      <div style={box}>
+        <b>Bu metrikten throughput türetilemiyor.</b>
+        <div style={{ marginTop: 4 }}>
+          <code>{d.metric}</code> · instrument <code>{d.instrument || '?'}</code>
+        </div>
+        <div style={{ color: 'var(--text3)', marginTop: 4 }}>
+          Rate yalnız sayaç (sum) ve histogram için anlamlı; gauge anlık
+          bir değer, oranı istek sayısı vermez.
+        </div>
+      </div>
+    );
+  }
+
   if (!d.metricExists) {
     return (
       <div style={box}>
-        <b>Metrik bu kurulumda yok:</b> <code>{d.metric}</code>
+        <b>Metrik bu kurulumda yok.</b>
+        {(d.tried?.length ?? 0) > 0 && (
+          <div style={{ marginTop: 4 }}>
+            Denenen adlar:{' '}
+            {d.tried!.map((t, i) => (
+              <span key={t}>{i > 0 && ', '}<code>{t}</code></span>
+            ))}
+          </div>
+        )}
         <div style={{ color: 'var(--text3)', marginTop: 4 }}>
           Grafana bunu Prometheus'tan okuyor; Coremetry'ye OTLP ile
           iletilmiyor ya da adı çeviride değişmiş olabilir. Farklı bir ad

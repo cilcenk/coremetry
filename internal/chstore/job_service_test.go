@@ -103,16 +103,20 @@ func TestJobRoundTrip(t *testing.T) {
 // Grafana'sındaki ad Coremetry'de birebir olmayabilir.
 func TestMetricNameProbeTokens(t *testing.T) {
 	cases := map[string][]string{
-		// Operatörün ekranındaki ad: birim/toplama ekleri ve http/server
-		// atılıyor, geriye ayırt edici olanlar kalıyor.
-		"http_server_request_duration_seconds_count": {"request", "duration"},
-		"http.server.request.duration":               {"request", "duration"},
-		// Tamamen jenerik ad → önerecek bir şey yok. Boş dönmek, katalogun
-		// tamamını döndürmekten iyidir.
-		"http_server_seconds_total": nil,
+		// v0.9.668 — "server" AYIRT EDİCİ ve ilk sırada olmalı.
+		//
+		// İlk sürümde jenerik sayılıp atılmıştı. Operatörün prod
+		// ekranındaki sonuç: önerilerin TAMAMI http.client.* geldi,
+		// aradığı http.server.* hiç görünmedi. Bir HTTP metriğinde
+		// server/client, adı ayıran en belirleyici parça.
+		"http_server_request_duration_seconds_count": {"server", "request"},
+		"http.server.request.duration":               {"server", "request"},
+		"http.client.request.duration":               {"client", "request"},
+		// Birim/toplama ekleri hâlâ atılıyor: "seconds"/"count"/"total"
+		// katalogda binlerce satır eşler.
+		"http_server_seconds_total": {"server"},
 		"":                          nil,
-		// Kısa parçalar (<3) atlanıyor: "db" gibi tokenlar katalogda
-		// binlerce satır eşler.
+		// Kısa parçalar (<3) atlanıyor.
 		"db_a_query_time": {"query", "time"},
 	}
 	for in, want := range cases {
@@ -127,6 +131,42 @@ func TestMetricNameProbeTokens(t *testing.T) {
 				break
 			}
 		}
+	}
+}
+
+// ASIL REGRESYON (operatör-bildirimi, prod): server metriği aranırken
+// öneriler client metrikleriyle dolmuştu. Ayırt edici parça korunmazsa
+// aynı şey tekrarlanır.
+func TestMetricNameProbeKeepsServerClientDiscriminator(t *testing.T) {
+	for name, side := range map[string]string{
+		"http.server.request.duration": "server",
+		"http.client.request.duration": "client",
+	} {
+		toks := MetricNameProbeTokens(name)
+		if len(toks) == 0 || toks[0] != side {
+			t.Errorf("%q → %v; %q İLK parça olmalı, yoksa öneriler karşı tarafla dolar", name, toks, side)
+		}
+	}
+}
+
+// Aday listesi throughput için gerçek adları taşımalı ve OTel semconv
+// önce gelmeli — ilk VAR OLAN kazanıyor.
+func TestThroughputMetricCandidateOrder(t *testing.T) {
+	if len(ThroughputMetricCandidates) < 3 {
+		t.Fatal("aday listesi fazla dar")
+	}
+	if ThroughputMetricCandidates[0] != "http.server.request.duration" {
+		t.Errorf("en yeni OTel semconv başta olmalı, alınan %q", ThroughputMetricCandidates[0])
+	}
+	// Varsayılan da listede olmalı, yoksa ayar bir adayı atlar.
+	var found bool
+	for _, c := range ThroughputMetricCandidates {
+		if c == ThroughputMetricDefault {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("varsayılan %q aday listesinde yok", ThroughputMetricDefault)
 	}
 }
 

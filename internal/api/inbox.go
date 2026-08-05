@@ -1563,11 +1563,43 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 	// Bu kontrol `regressed` erken-dönüşünden ÖNCE: regressed bir grup
 	// dakikada 938 olay üretiyorsa "regressed" etiketi onu P2'de
 	// tutmamalı; etiket problemin GEÇMİŞİNİ anlatır, ŞİDDETİNİ değil.
-	if freshHour && exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen) {
-		rate := exceptionBurstRate(g.Occurrences, g.FirstSeen, g.LastSeen)
-		return "P1", fmt.Sprintf("%s olay / %s (~%.0f/dk)",
+	// v0.9.699 — operatör-bildirimli: "cm-put-service problemi P1 ya da
+	// P2'ydi, sonra P3'e düştü neden?"
+	//
+	//	101.132 olay / 2dk58sn → ~34.000/dk (P1 hız eşiğinin 170 KATI)
+	//	22:12:07'de bitti · 23:18'de bakıldı → 66 dk
+	//
+	// AYNI SINIF, İKİNCİ KEZ. v0.9.627'de şikâyet "12 dakikada 11.260
+	// olay P2 göründü" idi; P1 kapısındaki tazelik penceresini 5 dk'dan
+	// 1 saate TAŞIDIM. Asıl kusur pencerenin dar olması değil, UÇURUMUN
+	// KENDİSİYDİ: eşiği öteleyince operatör bir çentik ötede aynı duvara
+	// çarpıyor. Bu sefer daha kötüsü oldu — P1'den P2'ye değil, doğrudan
+	// P3'e düştü, çünkü P2 kapıları da freshHour'a bağlıydı.
+	//
+	// CLAUDE.md'nin kendi tanımı zaten cevabı veriyor:
+	// P1 "şimdi", P2 "bugün", P3 "sırası gelince". Bir saat önce biten
+	// 101 binlik bir patlama tanımı gereği BUGÜN'dür — P3 olamaz.
+	//
+	// Yeni kural: patlama şiddeti bir OLGU, tazelik ise ONA ERİŞİM
+	// aciliyeti. Şiddet zamanla silinmiyor, yalnız aciliyeti düşüyor:
+	//   taze (≤1sa) → P1 · aynı gün (≤24sa) → P2 · sonrası → P3
+	// Uçurum yerine basamak. Gerekçe her basamakta patlamanın gerçek
+	// büyüklüğünü taşıyor, "steady" gibi yanlış bir cümle değil.
+	burst := exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen)
+	burstDesc := ""
+	if burst {
+		burstDesc = fmt.Sprintf("%s olay / %s (~%.0f/dk)",
 			fmtThousands(g.Occurrences),
-			shortDur(time.Duration(g.LastSeen-g.FirstSeen)), rate)
+			shortDur(time.Duration(g.LastSeen-g.FirstSeen)),
+			exceptionBurstRate(g.Occurrences, g.FirstSeen, g.LastSeen))
+		if freshHour {
+			return "P1", burstDesc
+		}
+		if time.Duration(age) <= 24*time.Hour {
+			// Bitiş yaşı gerekçeye giriyor: operatör satıra bakarken
+			// "neden P1 değil" sorusunun cevabını da görsün.
+			return "P2", burstDesc + " · " + shortDur(time.Duration(age)) + " önce bitti"
+		}
 	}
 
 	if g.State == "regressed" {
@@ -1589,6 +1621,14 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 	}
 	if freshHour && g.Occurrences >= 100 {
 		return "P2", fmt.Sprintf("seen in last hour · %s total", fmtThousands(g.Occurrences))
+	}
+	// v0.9.699 — "steady" YALNIZ gerçekten öyle olanlar için. 24 saati
+	// geçmiş bir patlama P3'e düşer (aciliyet gitti) ama gerekçesi hâlâ
+	// ne olduğunu söylemeli: 3 dakikada 101 bin olay için "steady"
+	// yazmak, verinin şekli hakkında YANLIŞ bir iddiadır. Öncelik
+	// düşebilir, cümle yalan olamaz.
+	if burst {
+		return "P3", burstDesc + " · " + shortDur(time.Duration(age)) + " önce"
 	}
 	return "P3", "steady"
 }

@@ -36,42 +36,37 @@ const (
 	metricIvMaxSeconds = 3600
 )
 
-// exportIntervalQuantile — v0.9.672 (operatör-bildirimi: "kesikli
-// çıkıyor bu da kötü bir görünüm").
+// exportIntervalQuantile — clamp tabanı = metriğin YAYIM TİKİ.
 //
-// clamp'in TABANI artık en yoğun seriden değil, serilerin P90'ından
-// geliyor.
+// v0.9.688 — v0.9.672'DE YANLIŞ BÜYÜKLÜĞÜ OPTİMİZE ETMİŞİM, geri
+// alınıyor. Operatör: "Client 1 sn, prometheus 60s tutuyormuş, ancak
+// metrics 1 sn" — yani veri saniyede bir geliyor ama grafik dakikalık
+// çözünürlükte çiziliyordu.
 //
-// ÖLÇÜM (yerel, http.server.duration, 1 saat; seri = service+host+attr,
-// yani üretim sorgusuyla AYNI granülerlik):
+// ÖLÇÜM (yerel, http.server.duration, 20 dk) iki büyüklüğü ayırdı:
 //
-//	127 seri · iv_min 27.3s · p50 45.2s · p90 76.1s · max 113.9s
+//	seri BAŞINA aralık p90        : 137.5 s   ← v0.9.672'nin ölçtüğü
+//	GERÇEK yayım tiki (farklı damga): 4.24 s   ← olması gereken
+//	                                  → 32× fark
 //
-//	ESKİ taban (en yoğun seri, 27.3s) →   1/127 seri kapsanıyor (%0.8)
-//	YENİ taban (p90, 76.1s)           → 115/127 seri kapsanıyor (%90.6)
+// FARKIN SEBEBİ: delta temporality'de bir seri YALNIZ o aralıkta gözlem
+// varsa nokta üretir. Nadir bir route (attr kombinasyonu) 137 saniyede
+// bir nokta verir — ama bu METRİĞİN YAYIM ARALIĞI DEĞİL, O ROUTE'UN
+// TRAFİK SEYREKLİĞİ. Seri başına aralığın yüksek kantili seyrekliği
+// ölçüyor, tiki değil.
 //
-// DÜZELTME: v0.9.672'de bu sayılar 4-6× KÜÇÜK bildirilmişti (4/8/29/30).
-// O ölçümün GROUP BY'ı host_name TAŞIMIYORDU; her serviste 4-6 host
-// olduğu için nokta sayısı şişip aralık küçük göründü. Bulgunun yönü ve
-// düzeltme doğruydu, büyüklükler yanlıştı.
+// v0.9.672 "delikleri kapatmak" için p90'a çekmişti. Delikler gerçekten
+// azaldı — ama seyrek serilerin deliği GERÇEK veri yokluğu; onu adımı
+// 32× kabalaştırarak "kapatmak", herkesin çözünürlüğünü yok etmek
+// demek. Yanlış takas.
 //
-// Eski tabanla serilerin %99'u delikli çiziliyordu — operatörün gördüğü
-// "kesikli" tam bu. Clamp zaten delik ÖNLEMEK için
-// yazılmıştı (v0.8.243, "$__rate_interval muadili"); niyet doğruydu,
-// kusur tabanı en yoğun seriden almasıydı — yani "clamp yanlış" değil,
-// "clamp yeterince yükseltmiyor".
+// P10 SEÇİLDİ, min değil: tik yoğun serilerden okunur, ama tek bir
+// anormal seri (örn. yeni doğmuş pod, iki noktalı seri) tabanı sıfıra
+// çekmesin. Düşük kantil, yoğun uçtan robust bir okuma.
 //
-// P90 SEÇİLDİ, max değil: tek bir bozuk/çok seyrek seri tüm grafiği
-// kabalaştırmasın.
-//
-// BEDELİ ve KALAN AÇIK, ikisi de ölçüldü:
-//   - En yoğun seri çözünürlük kaybediyor (27.3s → 76.1s bucket).
-//   - iv_max 113.9s > p90 olduğu için 12 seri (%9.4) HÂLÂ delikli. Tam
-//     kapatmak p99/max tabanı ister; o da yoğun serileri iyice
-//     kabalaştırır. %0.8 → %90.6 kazanç karşılığında kabul edildi. TEK serili grafikte (Service Overview
-//
-// throughput) p90 = o serinin kendisi, yani davranış DEĞİŞMİYOR;
-// dejenerasyon doğru yönde.
+// KABUL EDİLEN SONUÇ: seyrek seriler yine delikli çizilir. Bu DOĞRU —
+// o dilimlerde gerçekten veri yok, ve olmayan veriyi kalın kovalara
+// yayarak gizlemek bu kod tabanının reddettiği şey.
 func exportIntervalQuantile(ivSec float64, series uint64) int {
 	if series == 0 || ivSec <= 0 {
 		return 0
@@ -104,7 +99,7 @@ func clampStepToExport(step, exportIv int) int {
 // sınırlı — metric_points'in kendisi taranmıyor, GROUP BY sonucu.
 func metricExportIntervalQuantileSQL(inner whereClause) string {
 	return `
-		SELECT quantileExact(0.9)(iv) AS iv90, count() AS series FROM (
+		SELECT quantileExact(0.1)(iv) AS iv90, count() AS series FROM (
 			SELECT count() AS cnt,
 			       dateDiff('second', min(time), max(time)) AS spanSec,
 			       spanSec / greatest(cnt - 1, 1) AS iv

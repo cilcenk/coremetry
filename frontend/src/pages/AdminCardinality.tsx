@@ -201,7 +201,7 @@ function AttrKeyTable({ rows }: { rows: AttrKeyRow[] }) {
     return <div style={{ fontSize: 12, color: 'var(--text3)' }}>No attributes sampled.</div>;
   }
   return (
-    <div className="table-wrap">
+    <div className="table-wrap is-fit">
       <table style={{ tableLayout: 'fixed', width: '100%' }}>
         <DataTableColgroup dt={dt} />
         <DataTableHead dt={dt} />
@@ -382,7 +382,7 @@ function FinOpsContributorsTable({ top, bytesPerSpan, totalSpans24h, costPerTbMo
     initialSort: { id: 'spans', dir: 'desc' },
   });
   return (
-    <div className="table-wrap">
+    <div className="table-wrap is-fit">
       <table style={{ tableLayout: 'fixed', width: '100%' }}>
         <DataTableColgroup dt={dt} />
         <DataTableHead dt={dt} />
@@ -448,7 +448,7 @@ function ColumnTable({ rows }: { rows: ColumnRow[] }) {
     return <div style={{ fontSize: 12, color: 'var(--text3)' }}>system.columns empty.</div>;
   }
   return (
-    <div className="table-wrap">
+    <div className="table-wrap is-fit">
       <table style={{ tableLayout: 'fixed', width: '100%' }}>
         <DataTableColgroup dt={dt} />
         <DataTableHead dt={dt} />

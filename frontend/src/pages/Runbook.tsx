@@ -214,7 +214,7 @@ function ExecutionsTab({ runbookId }: { runbookId: string }) {
     return <Empty icon="▷" title="No runs yet">Click Run to execute this runbook. Every run is recorded here — who ran it, when, and which steps executed.</Empty>;
   }
   return (
-    <div className="table-wrap">
+    <div className="table-wrap is-fit">
       <table style={{ tableLayout: 'fixed', width: '100%' }}>
         <DataTableColgroup dt={dt} />
         <DataTableHead dt={dt} />

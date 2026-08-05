@@ -14,9 +14,10 @@ import (
 
 // v0.9.672 — TABAN ARTIK P90 (operatör-bildirimi: "kesikli çıkıyor").
 //
-// Eski hâli en YOĞUN seriyi alıyordu. Yerel ölçüm: 28 seri, aralık
-// 4s→30s (7.5× yayılım), 7 seri 29-30s'de yayımlıyor, adımı ise TEK bir
-// 4s serisi belirliyor → 30s'lik seride kovaların ~%87'si boş.
+// Eski hâli en YOĞUN seriyi alıyordu. Ölçüm (127 seri, üretim
+// sorgusuyla aynı granülerlik): iv_min 27.3s · p50 45.2s · p90 76.1s ·
+// max 113.9s. Eski tabanla 1/127 seri (%0.8) kapsanıyordu, yenisiyle
+// 115/127 (%90.6).
 func TestExportIntervalQuantile(t *testing.T) {
 	cases := []struct {
 		name   string
@@ -24,7 +25,7 @@ func TestExportIntervalQuantile(t *testing.T) {
 		series uint64
 		want   int
 	}{
-		{"tipik p90", 29.4, 28, 29},
+		{"tipik p90 (ölçülen)", 76.1, 127, 76},
 		{"tek seri — dejenerasyon doğru yönde", 8, 1, 8},
 		{"yuvarlama", 7.6, 10, 8},
 		{"seri yok → clamp yok", 30, 0, 0},
@@ -48,9 +49,9 @@ func TestMetricExportIntervalQuantileSQLBounds(t *testing.T) {
 			"LIMIT 20000",
 			"max_execution_time",
 			"GROUP BY service_name, host_name, attr_values",
-			// P90 ÖZELLİKLE: p50'ye düşürmek delikleri geri getirir
-			// (ölçüm: 28 serinin 7'si p50'nin ~4× üstünde yayımlıyor),
-			// max'a çıkarmak tek bozuk seriyle tüm grafiği kabalaştırır.
+			// P90 ÖZELLİKLE: p50'ye (45.2s) düşürmek kapsamı yarıya indirir,
+			// max'a (113.9s) çıkarmak tek seyrek seriyle tüm grafiği
+			// kabalaştırır.
 			"quantileExact(0.9)",
 		} {
 			if !strings.Contains(q, want) {

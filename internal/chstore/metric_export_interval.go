@@ -39,21 +39,36 @@ const (
 // çıkıyor bu da kötü bir görünüm").
 //
 // clamp'in TABANI artık en yoğun seriden değil, serilerin P90'ından
-// geliyor. Ölçüm (yerel, http.server.duration, 1 saat):
+// geliyor.
 //
-//	28 seri · iv_min 4s · p50 8s · p90 29s · max 30s   → 7.5× yayılım
-//	28 serinin 7'si 29-30s'de yayımlıyor
-//	adımı belirleyen ise TEK bir 4s serisi
+// ÖLÇÜM (yerel, http.server.duration, 1 saat; seri = service+host+attr,
+// yani üretim sorgusuyla AYNI granülerlik):
 //
-// 4s tabanla 30s'lik bir seri çizilince kovaların ~%87'si boş kalıyor —
-// operatörün gördüğü "kesikli" tam bu. Clamp zaten delik ÖNLEMEK için
+//	127 seri · iv_min 27.3s · p50 45.2s · p90 76.1s · max 113.9s
+//
+//	ESKİ taban (en yoğun seri, 27.3s) →   1/127 seri kapsanıyor (%0.8)
+//	YENİ taban (p90, 76.1s)           → 115/127 seri kapsanıyor (%90.6)
+//
+// DÜZELTME: v0.9.672'de bu sayılar 4-6× KÜÇÜK bildirilmişti (4/8/29/30).
+// O ölçümün GROUP BY'ı host_name TAŞIMIYORDU; her serviste 4-6 host
+// olduğu için nokta sayısı şişip aralık küçük göründü. Bulgunun yönü ve
+// düzeltme doğruydu, büyüklükler yanlıştı.
+//
+// Eski tabanla serilerin %99'u delikli çiziliyordu — operatörün gördüğü
+// "kesikli" tam bu. Clamp zaten delik ÖNLEMEK için
 // yazılmıştı (v0.8.243, "$__rate_interval muadili"); niyet doğruydu,
 // kusur tabanı en yoğun seriden almasıydı — yani "clamp yanlış" değil,
 // "clamp yeterince yükseltmiyor".
 //
 // P90 SEÇİLDİ, max değil: tek bir bozuk/çok seyrek seri tüm grafiği
-// kabalaştırmasın. Bedeli açık — karışık hızlı bir kümede en yoğun seri
-// çözünürlük kaybediyor. TEK serili grafikte (Service Overview
+// kabalaştırmasın.
+//
+// BEDELİ ve KALAN AÇIK, ikisi de ölçüldü:
+//   - En yoğun seri çözünürlük kaybediyor (27.3s → 76.1s bucket).
+//   - iv_max 113.9s > p90 olduğu için 12 seri (%9.4) HÂLÂ delikli. Tam
+//     kapatmak p99/max tabanı ister; o da yoğun serileri iyice
+//     kabalaştırır. %0.8 → %90.6 kazanç karşılığında kabul edildi. TEK serili grafikte (Service Overview
+//
 // throughput) p90 = o serinin kendisi, yani davranış DEĞİŞMİYOR;
 // dejenerasyon doğru yönde.
 func exportIntervalQuantile(ivSec float64, series uint64) int {

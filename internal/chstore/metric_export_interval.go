@@ -4,6 +4,7 @@ import (
 	"context"
 	"math"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -101,25 +102,72 @@ func clampStepToExport(step, exportIv int) int {
 // CH sınırları korunuyor (CLAUDE.md sert kısıtı): zaman-sınırlı WHERE,
 // iç sorguda LIMIT, max_execution_time. Alt sorgu seri sayısıyla
 // sınırlı — metric_points'in kendisi taranmıyor, GROUP BY sonucu.
-func metricExportIntervalQuantileSQL(withService bool) string {
-	q := `
+func metricExportIntervalQuantileSQL(inner whereClause) string {
+	return `
 		SELECT quantileExact(0.9)(iv) AS iv90, count() AS series FROM (
 			SELECT count() AS cnt,
 			       dateDiff('second', min(time), max(time)) AS spanSec,
 			       spanSec / greatest(cnt - 1, 1) AS iv
 			FROM metric_points
-			WHERE metric = ? AND time >= ? AND time <= ?`
-	if withService {
-		q += `
-			  AND service_name = ?`
-	}
-	q += `
+			` + inner.sql() + `
 			GROUP BY service_name, host_name, attr_values
 			HAVING cnt >= ` + strconv.Itoa(metricIvMinPoints) + ` AND spanSec > 0
 			LIMIT 20000
 		)
 		SETTINGS max_execution_time = 5`
-	return q
+}
+
+// exportIntervalProbeWhere — probun WHERE'i (saf, testli).
+//
+// v0.9.687 — FİLTRELER PROBA DA İNİYOR. Bu, v0.9.669'un temporality
+// düzeltmesiyle AYNI SINIF: orada düzelttim, burada unuttum.
+//
+// Operatör-bildirimi: metrik throughput paneli 30 dakikalık pencerede
+// DOĞRU, 5 dakikalıkta düz bir çizgi ve değerler ~20× yüksek.
+//
+// Mekanizma: adım metriğin dışa-aktarım aralığına yükseltiliyor
+// (clampStepToExport) ama aralık TÜM servislerin serilerinden
+// hesaplanıyordu. Eşleşen servis 60s'de bir yayarken tüm-metrik p90'ı
+// küçük çıkıyor → clamp devreye girmiyor → dar pencerede auto-step
+// 5s'e iniyor → 60s'de biriken delta 5s'e bölünüyor (oran ~12× şişer)
+// ve kovaların çoğu boş kaldığı için grafik tek düz parçaya iner.
+//
+// GENİŞ pencerede auto-step zaten büyük olduğu için clamp'in devreye
+// girmemesi FARK ETMİYORDU — hata yalnız dar pencerede görünür. 30
+// dakikada doğru, 5 dakikada bozuk olmasının sebebi tam olarak bu.
+func exportIntervalProbeWhere(name, service string, from, to time.Time, filters []FilterExpr) whereClause {
+	var wc whereClause
+	wc.add("metric = ?", name)
+	wc.add("time >= ?", from)
+	wc.add("time <= ?", to)
+	if service != "" {
+		wc.add("service_name = ?", service)
+	}
+	ApplyMetricFilters(&wc, filters)
+	return wc
+}
+
+// exportIntervalCacheKey — prob önbelleği anahtarı.
+//
+// FİLTRELERİ DE TAŞIMAK ZORUNDA (CLAUDE.md sert kısıtı): aynı metrik +
+// servis için farklı filtreler farklı aralık verir; anahtar onları
+// ayırmazsa biri diğerinin değerini okur. v0.5.187 çapraz-zehirlenme
+// sınıfı, ve buradaki bedeli YANLIŞ ÖLÇEKLİ bir grafik — yani sessiz.
+func exportIntervalCacheKey(name, service string, filters []FilterExpr) string {
+	var b strings.Builder
+	b.WriteString(name)
+	b.WriteString("\x00")
+	b.WriteString(service)
+	for _, f := range filters {
+		b.WriteString("\x00")
+		b.WriteString(f.Key)
+		b.WriteString(f.Op)
+		for _, v := range f.Values {
+			b.WriteString("\x1f")
+			b.WriteString(v)
+		}
+	}
+	return b.String()
 }
 
 // metricExportInterval returns the cached/probed export interval for a
@@ -127,7 +175,13 @@ func metricExportIntervalQuantileSQL(withService bool) string {
 // cadences per service). 0 = unknown → caller applies no clamp; a
 // probe failure must never break the chart read.
 func (s *Store) metricExportInterval(ctx context.Context, name, service string) int {
-	key := name + "\x00" + service
+	return s.metricExportIntervalFiltered(ctx, name, service, nil)
+}
+
+// metricExportIntervalFiltered — v0.9.687. Prob, ana sorgunun BAKTIĞI
+// satır kümesine bakar; filtresiz çağıranlarda davranış değişmez.
+func (s *Store) metricExportIntervalFiltered(ctx context.Context, name, service string, filters []FilterExpr) int {
+	key := exportIntervalCacheKey(name, service, filters)
 	s.metricIvMu.RLock()
 	if e, ok := s.metricIv[key]; ok && time.Since(e.at) < metricIvTTL {
 		s.metricIvMu.RUnlock()
@@ -137,14 +191,11 @@ func (s *Store) metricExportInterval(ctx context.Context, name, service string) 
 
 	to := time.Now()
 	from := to.Add(-metricIvProbeWindow)
-	args := []any{name, from, to}
-	if service != "" {
-		args = append(args, service)
-	}
+	wc := exportIntervalProbeWhere(name, service, from, to, filters)
 	iv := 0
 	var iv90 float64
 	var series uint64
-	if err := s.conn.QueryRow(ctx, metricExportIntervalQuantileSQL(service != ""), args...).Scan(&iv90, &series); err == nil {
+	if err := s.conn.QueryRow(ctx, metricExportIntervalQuantileSQL(wc), wc.args...).Scan(&iv90, &series); err == nil {
 		iv = exportIntervalQuantile(iv90, series)
 	}
 

@@ -22,7 +22,7 @@ import (
 //     PromQL `histogram_quantile(p, sum by (le, <labels>)(…))`.
 
 // metricInstrument — metriğin OTLP instrument tipini probe'lar
-// ('gauge'|'sum'|'histogram'|'exp_histogram'|''). histogram_quantile routing'i
+// ('gauge'|'sum'|'histogram'|'exp_histogram'|”). histogram_quantile routing'i
 // için. Pencere = sorgunun kendi [from,to]'su: 24s'lik bir histogram son 10dk'da
 // susmuş olsa bile doğru route'a düşer (sabit 10dk boş dönüp value-quantile'a
 // kaymaz). any() ilk satırda kısa devre + max_execution_time=3 = ucuz.
@@ -122,7 +122,9 @@ func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter,
 	if f.StepSeconds <= 0 {
 		f.StepSeconds = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
 	}
-	if iv := s.metricExportInterval(ctx, f.Name, f.Service); iv > 0 {
+	// v0.9.687 — filtreler proba da iniyor (bkz. metricrate.go'daki not).
+	// Gecikme paneli de aynı dar-pencere bozulmasını yaşıyordu.
+	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 	// v0.9.114 (review CRITICAL) — cap Go-side nTime alloc against a

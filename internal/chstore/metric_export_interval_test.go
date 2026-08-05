@@ -1,8 +1,10 @@
 package chstore
 
 import (
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // v0.8.243 — granularity slice B: the effective chart step never drops
@@ -42,8 +44,11 @@ func TestExportIntervalQuantile(t *testing.T) {
 }
 
 func TestMetricExportIntervalQuantileSQLBounds(t *testing.T) {
-	for _, withSvc := range []bool{false, true} {
-		q := metricExportIntervalQuantileSQL(withSvc)
+	to := time.Date(2026, 8, 5, 18, 0, 0, 0, time.UTC)
+	from := to.Add(-time.Hour)
+	for _, svc := range []string{"", "checkout"} {
+		wc := exportIntervalProbeWhere("m", svc, from, to, nil)
+		q := metricExportIntervalQuantileSQL(wc)
 		for _, want := range []string{
 			"time >= ?", "time <= ?", // partition-pruning window
 			"LIMIT 20000",
@@ -55,11 +60,74 @@ func TestMetricExportIntervalQuantileSQLBounds(t *testing.T) {
 			"quantileExact(0.9)",
 		} {
 			if !strings.Contains(q, want) {
-				t.Errorf("withService=%v: missing %q in %s", withSvc, want, q)
+				t.Errorf("service=%q: missing %q in %s", svc, want, q)
 			}
 		}
-		if withSvc != strings.Contains(q, "service_name = ?") {
-			t.Errorf("withService=%v: service filter presence wrong", withSvc)
+		if (svc != "") != strings.Contains(q, "service_name = ?") {
+			t.Errorf("service=%q: service filter presence wrong", svc)
 		}
+	}
+}
+
+// v0.9.687 — FİLTRELER PROBA İNİYOR.
+//
+// Operatör-bildirimi: metrik throughput paneli 30 dakikada DOĞRU, 5
+// dakikada düz çizgi ve ~20× yüksek. Adım metriğin yayım aralığına
+// yükseltiliyor ama aralık TÜM servislerin serilerinden hesaplanıyordu;
+// eşleşen servis 60s'de bir yayarken tüm-metrik p90'ı küçük çıkınca
+// clamp devreye girmiyor, dar pencerede auto-step 5s'e iniyor ve 60s'de
+// biriken delta 5s'e bölünüyor.
+//
+// GENİŞ pencerede auto-step zaten büyük olduğu için fark edilmiyordu —
+// hata yalnız dar pencerede görünür. v0.9.669'un temporality
+// düzeltmesiyle AYNI SINIF; orada düzelttim, burada unutmuşum.
+func TestExportIntervalProbeAppliesFilters(t *testing.T) {
+	to := time.Date(2026, 8, 5, 18, 0, 0, 0, time.UTC)
+	from := to.Add(-time.Hour)
+	f := []FilterExpr{{Key: "resource.k8s.deployment.name", Op: "=~", Values: []string{"^svc$"}}}
+
+	withF := exportIntervalProbeWhere("m", "", from, to, f)
+	without := exportIntervalProbeWhere("m", "", from, to, nil)
+
+	if withF.sql() == without.sql() {
+		t.Fatal("filtre proba inmiyor — prob tüm servislere bakar, dar pencerede clamp devreye girmez")
+	}
+	if len(withF.args) <= len(without.args) {
+		t.Error("filtre bind argümanı eklemedi")
+	}
+}
+
+// ÖNBELLEK ANAHTARI FİLTRELERİ AYIRMALI: aynı metrik+servis için farklı
+// filtreler farklı aralık verir. Anahtar ayırmazsa biri diğerinin
+// değerini okur — v0.5.187 çapraz-zehirlenme sınıfı, ve buradaki bedeli
+// YANLIŞ ÖLÇEKLİ bir grafik, yani sessiz.
+func TestExportIntervalCacheKeySeparatesFilters(t *testing.T) {
+	a := exportIntervalCacheKey("m", "svc", nil)
+	b := exportIntervalCacheKey("m", "svc", []FilterExpr{{Key: "job", Op: "=", Values: []string{"x"}}})
+	c := exportIntervalCacheKey("m", "svc", []FilterExpr{{Key: "job", Op: "=", Values: []string{"y"}}})
+
+	if a == b || b == c || a == c {
+		t.Errorf("farklı filtreler AYNI anahtara düşüyor: %q / %q / %q", a, b, c)
+	}
+	// Aynı girdi → aynı anahtar, yoksa önbellek hiç isabet etmez.
+	if b != exportIntervalCacheKey("m", "svc", []FilterExpr{{Key: "job", Op: "=", Values: []string{"x"}}}) {
+		t.Error("aynı girdi farklı anahtar üretti")
+	}
+}
+
+// ÇAĞRI YERİ. Yukarıdaki test FONKSİYONU doğruluyor; prob anahtarı elle
+// kurulursa (name+service) digest kaybolur ve fonksiyon doğru kalsa bile
+// çapraz zehirlenme geri gelir.
+//
+// Bu ayrımı bugün üç kez öğrendim: v0.9.685'te iki testim üst üste
+// mutasyonu geçti çünkü kurucuyu test edip çağrı yerini atlamışlardı.
+func TestExportIntervalUsesCacheKeyHelper(t *testing.T) {
+	src, err := os.ReadFile("metric_export_interval.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := stripGoLineComments(string(src))
+	if !strings.Contains(body, "key := exportIntervalCacheKey(name, service, filters)") {
+		t.Error("prob önbellek anahtarını yardımcıdan ALMIYOR — elle kurulan anahtar filtreleri düşürür")
 	}
 }

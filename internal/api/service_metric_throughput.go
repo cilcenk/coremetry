@@ -428,10 +428,7 @@ func serviceNameAttempts(service string) []svcAttempt {
 		return out
 	}
 	env := strings.TrimPrefix(service[len(stripped):], "-")
-	for _, key := range []string{
-		"resource.deployment.environment.name",
-		"resource.deployment.environment",
-	} {
+	for _, key := range chstore.EnvAttrKeys {
 		out = append(out, svcAttempt{
 			Service: stripped,
 			Filters: []chstore.FilterExpr{{Key: key, Op: "=", Values: []string{env}}},

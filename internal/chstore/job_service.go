@@ -42,10 +42,44 @@ const JobLabelDefault = "job"
 // etiketin değeri servis adına (ya da ortam-eki soyulmuş hâline)
 // birebir eşit olmalı. Yanlış bir etiket rastgele eşleşme üretemez.
 // Gevşek/alt-dize eşleşme olsaydı bu liste tehlikeli olurdu.
+// v0.9.680 — KAYNAK ÖZNİTELİKLERİ ÖNCE, ve sebebi güçlü.
+//
+// Operatörün res_keys dökümü (56 anahtar) `job`ın kaybolmadığını,
+// OTel'in doğru karşılıklarına AYRILDIĞINI gösterdi:
+//
+//	job="deposit/bsa-deposit-commondeposithesapsl-uat"
+//	  → k8s.namespace.name = "deposit"
+//	  → k8s.deployment.name = "bsa-deposit-commondeposithesapsl-uat"
+//
+// k8s.deployment.name ORTAM EKİNİ TAŞIYOR (meslektaşın Prometheus
+// çıktısı bunu doğruluyor), yani Coremetry'nin servis adıyla TAM
+// eşleşiyor. Bu, elimizdeki en yüksek güvenli kimlik:
+//   - ek soymaya gerek yok
+//   - ortam belirsizliği doğmuyor (v0.9.679'un uğraştığı sorun)
+//   - k8s işyükü kimliği zaten "servis"in tanımı
+//
+// Bu yüzden aday listesinin BAŞINDA. service_name kolonu (eksiz ad +
+// ortam kısıtı) artık son çare, ilk umut değil.
 var ServiceIdentityLabels = []string{
-	"job",     // Prometheus kanonik
-	"service", // açık adlandırma
-	"name",    // operatörün kurulumu (v0.9.671)
+	"resource.k8s.deployment.name", // k8s işyükü — ek taşır, TAM eşleşir
+	"resource.k8s.container.name",  // konteyner adı — genelde aynı
+	"job",                          // Prometheus kanonik (collector tüketmediyse)
+	"service",                      // açık adlandırma
+	"name",                         // veri noktası özniteliği (v0.9.671)
+}
+
+// EnvAttrKeys — ortam kısıtı için KAYNAK öznitelik adları, deneme
+// sırasıyla.
+//
+// v0.9.680: operatörün dökümünde ÜÇ yazım birden var —
+// deployment.environment.name (semconv ≥1.27), deploy.environment.name
+// (standart DIŞI ama gerçek) ve düz environment. Tek yazımı denemek,
+// ortam ayrıştırmasını o kurulumların çoğunda sessizce kapatırdı.
+var EnvAttrKeys = []string{
+	"resource.deployment.environment.name",
+	"resource.deployment.environment",
+	"resource.deploy.environment.name",
+	"resource.environment",
 }
 
 // ThroughputMetricDefault — operatörün ekranındaki metrik. Ayarla

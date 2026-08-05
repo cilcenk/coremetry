@@ -1,6 +1,10 @@
 package api
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
+)
 
 // v0.9.671 — AYNI HATA BİR GÜNDE İKİ KEZ.
 //
@@ -75,8 +79,13 @@ func TestIdentityLabelCandidatesHonoursExplicit(t *testing.T) {
 // için kimse fark etmez — bu yüzden önce ortamla kısıtlanıyor.
 func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
 	got := serviceNameAttempts("bsa-deposit-uat")
-	if len(got) != 4 {
-		t.Fatalf("4 deneme bekleniyordu (tam + 2 ortam yazımı + kısıtsız), alınan %d: %v", len(got), got)
+
+	// Beklenen sayı SABİTTEN türüyor: tam ad + her ortam yazımı +
+	// kısıtsız son çare. Elle sayı yazmak, EnvAttrKeys büyüdüğünde
+	// testi ayrıştırırdı (v0.9.680'de tam bu oldu — 2 yazım 4'e çıktı).
+	want := 1 + len(chstore.EnvAttrKeys) + 1
+	if len(got) != want {
+		t.Fatalf("%d deneme bekleniyordu, alınan %d: %+v", want, len(got), got)
 	}
 
 	// 1) TAM ad, kısıtsız — en güvenli, hiç belirsizlik yok.
@@ -84,13 +93,11 @@ func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
 		t.Errorf("ilk deneme tam ad ve kısıtsız olmalı: %+v", got[0])
 	}
 
-	// 2-3) EKSİZ ad + ortam kısıtı. İki semconv yazımı da denenmeli:
-	// deployment.environment.name (≥1.27) ve deployment.environment.
-	wantKeys := []string{
-		"resource.deployment.environment.name",
-		"resource.deployment.environment",
-	}
-	for i, wk := range wantKeys {
+	// 2..n) EKSİZ ad + ortam kısıtı, HER yazım için. Operatörün
+	// dökümünde üç yazım birden vardı (deployment.environment.name,
+	// deploy.environment.name, environment) — tek yazım denemek
+	// ayrıştırmayı sessizce kapatırdı.
+	for i, wk := range chstore.EnvAttrKeys {
 		a := got[i+1]
 		if a.Service != "bsa-deposit" {
 			t.Errorf("deneme %d eksiz ad olmalı: %q", i+1, a.Service)
@@ -106,13 +113,41 @@ func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
 		}
 	}
 
-	// 4) Son çare: kısıtsız eksiz ad — ama BELİRSİZ İŞARETLİ.
-	last := got[3]
+	// Son) kısıtsız eksiz ad — ama BELİRSİZ İŞARETLİ.
+	last := got[len(got)-1]
 	if last.Service != "bsa-deposit" || len(last.Filters) != 0 {
 		t.Errorf("son deneme kısıtsız eksiz ad olmalı: %+v", last)
 	}
 	if !last.EnvAmbiguous {
 		t.Error("son deneme EnvAmbiguous OLMALI — yoksa ortam karışması sessiz kalır")
+	}
+}
+
+// v0.9.680 — KİMLİK ADAYLARININ SIRASI.
+//
+// Operatörün res_keys dökümü k8s.deployment.name'in var olduğunu ve
+// ortam ekini TAŞIDIĞINI gösterdi: job="deposit/bsa-…-uat" →
+// k8s.namespace.name + k8s.deployment.name. Bu TAM eşleşme demek —
+// ek soymaya da ortam kısıtına da gerek yok. Bu yüzden listenin
+// BAŞINDA olmalı; sonra denenirse eksiz-ad yolu önce tutup gereksiz
+// belirsizlik üretir.
+func TestIdentityLabelsPreferK8sWorkloadFirst(t *testing.T) {
+	got := identityLabelCandidates("")
+	if len(got) == 0 || got[0] != "resource.k8s.deployment.name" {
+		t.Errorf("k8s işyükü kimliği İLK sırada olmalı, alınan %v", got)
+	}
+	// Veri noktası etiketleri hâlâ listede — collector job'ı tükettiyse
+	// bile başka kurulumlarda duruyor olabilir.
+	for _, want := range []string{"job", "name"} {
+		var found bool
+		for _, g := range got {
+			if g == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q aday listesinden düşmüş", want)
+		}
 	}
 }
 
@@ -140,7 +175,9 @@ func TestSvcAttemptLabel(t *testing.T) {
 	if l := all[1].Label(); l != "service_name=bsa-deposit +resource.deployment.environment.name" {
 		t.Errorf("ortam kısıtlı etiket: %q", l)
 	}
-	if l := all[3].Label(); l != "service_name=bsa-deposit (ortam kısıtsız)" {
+	// SON deneme belirsiz olan — indeksi EnvAttrKeys uzunluğuna bağlı,
+	// elle yazmak listeyi büyütünce yanlış denemeye bakardı.
+	if l := all[len(all)-1].Label(); l != "service_name=bsa-deposit (ortam kısıtsız)" {
 		t.Errorf("belirsiz etiket ortam kısıtsızlığını SÖYLEMELİ: %q", l)
 	}
 }

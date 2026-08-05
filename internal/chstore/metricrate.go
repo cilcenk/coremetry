@@ -335,7 +335,11 @@ func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode str
 	// veriyordu; dar pencerede clamp devreye girmeyince oran şişiyor ve
 	// grafik düz bir çizgiye iniyordu (operatör-bildirimi: 30 dk doğru,
 	// 5 dk bozuk).
-	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters); iv > 0 {
+	// v0.9.689 — taban, grafiğin ne çizdiğine bağlı: GroupBy YOKSA tüm
+	// seriler tek çizgide toplanıyor, ince adım delik üretmez →
+	// havuzlanmış tempo. GroupBy VARSA her çizgi kendi serisine bağlı →
+	// seri başına kantil.
+	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters, len(f.GroupBy) > 0); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 	step := f.StepSeconds

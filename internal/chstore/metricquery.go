@@ -155,7 +155,7 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		f.StepSeconds = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
 	}
 	// v0.9.687 — filtreler proba da iniyor (bkz. metricrate.go'daki not).
-	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters); iv > 0 {
+	if iv := s.metricExportIntervalFiltered(ctx, f.Name, f.Service, f.Filters, len(f.GroupBy) > 0); iv > 0 {
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 

@@ -112,6 +112,39 @@ func metricExportIntervalQuantileSQL(inner whereClause) string {
 		SETTINGS max_execution_time = 5`
 }
 
+// metricExportIntervalPooledSQL — HAVUZLANMIŞ varış temposu: metriğin
+// bir bütün olarak ne sıklıkta nokta ürettiği (farklı zaman damgaları).
+//
+// v0.9.689 — DOĞRU TABAN, GRAFİĞİN NE ÇİZDİĞİNE BAĞLI. Bu ayrım
+// ölçümle ortaya çıktı:
+//
+//	havuzlanmış tempo (farklı damga) :  4.24 s
+//	seri başına aralık p10           : 41.18 s   → 9.7× fark
+//
+// Sebep: 20 dk'lık pencerede 282 farklı damgaya 301 seri düşüyor
+// (damga başına ~5.7). Seriler KAYMALI yayımlıyor, yani hiçbir serinin
+// kendi temposu havuzlanmış tempoya eşit değil — ve olmamalı.
+//
+// HANGİSİ DOĞRU:
+//   - TOPLULAŞTIRILMIŞ çizgi (GroupBy YOK): her kovaya birçok seri
+//     katkı veriyor, ince adım delik ÜRETMEZ → havuzlanmış tempo.
+//     Service Overview'ın metrik panelleri bu şekilde (Aggregation:sum,
+//     GroupBy boş).
+//   - SERİ BAŞINA çizgi (GroupBy VAR): her çizgi kendi serisinin
+//     temposuna bağlı → seri başına düşük kantil.
+//
+// v0.9.688 ikisini ayırmadan tek bir ölçüye bağlıydı; operatörün
+// "client 1 sn ama metrics dakikalık" gözlemi bu ayrımın eksikliğiydi.
+func metricExportIntervalPooledSQL(inner whereClause) string {
+	return `
+		SELECT
+		    dateDiff('second', min(time), max(time)) / greatest(uniqExact(time) - 1, 1) AS iv90,
+		    count() AS series
+		FROM metric_points
+		` + inner.sql() + `
+		SETTINGS max_execution_time = 5`
+}
+
 // exportIntervalProbeWhere — probun WHERE'i (saf, testli).
 //
 // v0.9.687 — FİLTRELER PROBA DA İNİYOR. Bu, v0.9.669'un temporality
@@ -170,13 +203,22 @@ func exportIntervalCacheKey(name, service string, filters []FilterExpr) string {
 // cadences per service). 0 = unknown → caller applies no clamp; a
 // probe failure must never break the chart read.
 func (s *Store) metricExportInterval(ctx context.Context, name, service string) int {
-	return s.metricExportIntervalFiltered(ctx, name, service, nil)
+	return s.metricExportIntervalFiltered(ctx, name, service, nil, true)
 }
 
-// metricExportIntervalFiltered — v0.9.687. Prob, ana sorgunun BAKTIĞI
-// satır kümesine bakar; filtresiz çağıranlarda davranış değişmez.
-func (s *Store) metricExportIntervalFiltered(ctx context.Context, name, service string, filters []FilterExpr) int {
+// metricExportIntervalFiltered — v0.9.687 (filtre kapsamı) + v0.9.689
+// (grouped ayrımı).
+//
+// grouped=false → TOPLULAŞTIRILMIŞ çizgi: taban havuzlanmış tempo.
+// grouped=true  → SERİ BAŞINA çizgi: taban seri başına düşük kantil.
+//
+// Varsayılan (eski çağıranlar) grouped=true, yani davranış değişmiyor;
+// yalnız GroupBy'sız sorgular yeni, daha ince tabana geçiyor.
+func (s *Store) metricExportIntervalFiltered(ctx context.Context, name, service string, filters []FilterExpr, grouped bool) int {
 	key := exportIntervalCacheKey(name, service, filters)
+	if grouped {
+		key += "\x00g"
+	}
 	s.metricIvMu.RLock()
 	if e, ok := s.metricIv[key]; ok && time.Since(e.at) < metricIvTTL {
 		s.metricIvMu.RUnlock()
@@ -187,10 +229,14 @@ func (s *Store) metricExportIntervalFiltered(ctx context.Context, name, service 
 	to := time.Now()
 	from := to.Add(-metricIvProbeWindow)
 	wc := exportIntervalProbeWhere(name, service, from, to, filters)
+	sql := metricExportIntervalPooledSQL(wc)
+	if grouped {
+		sql = metricExportIntervalQuantileSQL(wc)
+	}
 	iv := 0
 	var iv90 float64
 	var series uint64
-	if err := s.conn.QueryRow(ctx, metricExportIntervalQuantileSQL(wc), wc.args...).Scan(&iv90, &series); err == nil {
+	if err := s.conn.QueryRow(ctx, sql, wc.args...).Scan(&iv90, &series); err == nil {
 		iv = exportIntervalQuantile(iv90, series)
 	}
 

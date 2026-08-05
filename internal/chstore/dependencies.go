@@ -24,11 +24,11 @@ type DBInstance struct {
 	// database name, Redis db index (when distinguishable). Falls
 	// back to 'default' when the OTel instrumentation didn't emit
 	// db.name. Row identity is now (System, Instance, DBName).
-	DBName     string   `json:"dbName,omitempty"`
-	SpanCount  uint64   `json:"spanCount"`
-	ErrorCount uint64   `json:"errorCount"`
-	ErrorRate  float64  `json:"errorRate"` // 0..100
-	AvgMs      float64  `json:"avgDurationMs"`
+	DBName     string  `json:"dbName,omitempty"`
+	SpanCount  uint64  `json:"spanCount"`
+	ErrorCount uint64  `json:"errorCount"`
+	ErrorRate  float64 `json:"errorRate"` // 0..100
+	AvgMs      float64 `json:"avgDurationMs"`
 	// v0.9.262 — P50/P95 read off the SAME db_summary_5m TDigest state that
 	// already produced P99 (indices 1 and 2 of the 3-wide (0.5, 0.95, 0.99)
 	// arg list). CH evaluates the identical quantilesTDigestMerge
@@ -38,19 +38,19 @@ type DBInstance struct {
 	// metric_points, which carry no quantiles at all — those rows leave all
 	// three at 0 and are tagged Source="receiver". The frontend badges them;
 	// do not read a 0 here as "this database is fast".
-	P50Ms      float64  `json:"p50DurationMs"`
-	P95Ms      float64  `json:"p95DurationMs"`
-	P99Ms      float64  `json:"p99DurationMs"`
+	P50Ms float64 `json:"p50DurationMs"`
+	P95Ms float64 `json:"p95DurationMs"`
+	P99Ms float64 `json:"p99DurationMs"`
 	// Prior* (v0.9.433) — ?compare=prior: bir-önceki eş-pencere
 	// sayaçları (mergeDBPrior, api_databases.go). omitempty: yalnız
 	// prior ikizi eşleşen satırlarda taşınır — sıfırlanmış prior sahte
 	// NEW rozeti çizdirirdi (messaging v0.8.364 sözleşmesinin aynısı).
-	PriorSpanCount  uint64  `json:"priorSpanCount,omitempty"`
-	PriorErrorCount uint64  `json:"priorErrorCount,omitempty"`
-	PriorAvgMs      float64 `json:"priorAvgMs,omitempty"`
-	PriorP50Ms      float64 `json:"priorP50Ms,omitempty"`
-	PriorP99Ms      float64 `json:"priorP99Ms,omitempty"`
-	Callers    []string `json:"callers"` // top-5 calling services
+	PriorSpanCount  uint64   `json:"priorSpanCount,omitempty"`
+	PriorErrorCount uint64   `json:"priorErrorCount,omitempty"`
+	PriorAvgMs      float64  `json:"priorAvgMs,omitempty"`
+	PriorP50Ms      float64  `json:"priorP50Ms,omitempty"`
+	PriorP99Ms      float64  `json:"priorP99Ms,omitempty"`
+	Callers         []string `json:"callers"` // top-5 calling services
 	// Source telegraphs the data origin. Empty / "spans" =
 	// span-derived (the historical default). "receiver" = the
 	// row was discovered via the OpenTelemetry oracledb (or
@@ -184,7 +184,7 @@ type DBCallerBreakdown struct {
 	// AGGREGATE above gained P50/P95 but this per-caller struct only gained
 	// P95, so the drawer showed three percentiles at the top and two per row.
 	// The data was free the whole time — same merge, index 1.
-	P50Ms      float64 `json:"p50DurationMs"`
+	P50Ms float64 `json:"p50DurationMs"`
 	// v0.9.263 — P95 off the same 3-wide TDigest state (index 2).
 	//
 	// ⚠️ This struct is filled by TWO queries — the /databases caller
@@ -192,8 +192,8 @@ type DBCallerBreakdown struct {
 	// a pointer. A path that fails to SELECT it marshals 0 and the drawer
 	// prints "0.0ms": a plausible wrong number, not a visible blank. Both
 	// queries must always project it; a third producer must too.
-	P95Ms      float64 `json:"p95DurationMs"`
-	P99Ms      float64 `json:"p99DurationMs"`
+	P95Ms float64 `json:"p95DurationMs"`
+	P99Ms float64 `json:"p99DurationMs"`
 }
 
 // DBOpStat is one row of the top-operations table in the DB
@@ -209,18 +209,18 @@ type DBOpStat struct {
 // frontend renders it as a three-section drawer: time-series
 // (call rate), per-(service, pod) breakdown, top operations.
 type DBDetail struct {
-	System     string              `json:"system"`
-	Instance   string              `json:"instance"`
-	SpanCount  uint64              `json:"spanCount"`
-	ErrorCount uint64              `json:"errorCount"`
-	ErrorRate  float64             `json:"errorRate"`
-	AvgMs      float64             `json:"avgDurationMs"`
+	System     string  `json:"system"`
+	Instance   string  `json:"instance"`
+	SpanCount  uint64  `json:"spanCount"`
+	ErrorCount uint64  `json:"errorCount"`
+	ErrorRate  float64 `json:"errorRate"`
+	AvgMs      float64 `json:"avgDurationMs"`
 	// v0.9.263 — same db_caller_summary_5m merge as P99, indices 1 and 2.
-	P50Ms      float64             `json:"p50DurationMs"`
-	P95Ms      float64             `json:"p95DurationMs"`
-	P99Ms      float64             `json:"p99DurationMs"`
-	Callers    []DBCallerBreakdown `json:"callers"`
-	TopOps     []DBOpStat          `json:"topOps"`
+	P50Ms   float64             `json:"p50DurationMs"`
+	P95Ms   float64             `json:"p95DurationMs"`
+	P99Ms   float64             `json:"p99DurationMs"`
+	Callers []DBCallerBreakdown `json:"callers"`
+	TopOps  []DBOpStat          `json:"topOps"`
 }
 
 // GetDatabaseDetail returns per-(service, pod) breakdown + top
@@ -423,19 +423,19 @@ func (s *Store) GetDatabaseDetail(
 // carry a SQL-equivalent; the operation (send / receive /
 // process) plus the destination already discriminates work.
 type MessagingDetail struct {
-	System      string              `json:"system"`
-	Cluster     string              `json:"cluster"`
-	Destination string              `json:"destination"`
-	SpanCount   uint64              `json:"spanCount"`
-	ErrorCount  uint64              `json:"errorCount"`
-	ErrorRate   float64             `json:"errorRate"`
-	AvgMs       float64             `json:"avgDurationMs"`
+	System      string  `json:"system"`
+	Cluster     string  `json:"cluster"`
+	Destination string  `json:"destination"`
+	SpanCount   uint64  `json:"spanCount"`
+	ErrorCount  uint64  `json:"errorCount"`
+	ErrorRate   float64 `json:"errorRate"`
+	AvgMs       float64 `json:"avgDurationMs"`
 	// v0.9.263 — same merge as P99, indices 1 and 2. No extra scan.
-	P50Ms       float64             `json:"p50DurationMs"`
-	P95Ms       float64             `json:"p95DurationMs"`
-	P99Ms       float64             `json:"p99DurationMs"`
-	Callers     []DBCallerBreakdown `json:"callers"` // same shape — service / pod / RED
-	TopOps      []DBOpStat          `json:"topOps"`  // statement = span name (send / receive / process)
+	P50Ms   float64             `json:"p50DurationMs"`
+	P95Ms   float64             `json:"p95DurationMs"`
+	P99Ms   float64             `json:"p99DurationMs"`
+	Callers []DBCallerBreakdown `json:"callers"` // same shape — service / pod / RED
+	TopOps  []DBOpStat          `json:"topOps"`  // statement = span name (send / receive / process)
 	// Series — v0.8.364 (Stage-2 M1). Per-5-minute produce/consume
 	// counts across the window, straight off
 	// messaging_caller_summary_5m (kind + time_bucket are both
@@ -814,12 +814,30 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	// rich engine-specific drill-down (sessions / wait classes
 	// / tablespaces / buffer pool / etc.) that the span data
 	// can't.
+	// v0.9.693 (perf taraması #4) — ÖNEK KAPISI. Dört receiver ailesi
+	// koşulsuz taranıyordu; kurulumların çoğunda üçü HİÇ veri
+	// üretmiyor ve her tik boş bir tam tarama ödeniyordu.
+	//
+	// ÖLÇÜLDÜ (chc-0, 2 saat): oracledb.* = 173.160 satır;
+	// postgresql./mysql./redis. = 0 / 0 / 0. Tarama raporu bu şekli
+	// SELECT baytının %9.5'i olarak ölçmüştü.
+	//
+	// Kapı metric_catalog'dan: MV insert anında dolar (v0.8.396), yani
+	// YANLIŞ NEGATİF üretmez — bir motor veri yaymaya başladığı anda
+	// katalogda görünür.
+	//
+	// TAZELİK ŞART: katalogda TTL YOK. `maxMerge(last_seen_state)`
+	// olmadan, bir kez bağlanıp sonra sökülen bir motor kapıyı sonsuza
+	// kadar açık tutardı — yani kapı zamanla kendiliğinden anlamsızlaşır.
 	for _, prefix := range []struct{ metric, system string }{
 		{"oracledb.", "oracle"},
 		{"postgresql.", "postgresql"},
 		{"mysql.", "mysql"},
 		{"redis.", "redis"},
 	} {
+		if !s.receiverPrefixActive(ctx, prefix.metric) {
+			continue
+		}
 		extra, err := s.discoverReceiverInstances(ctx, from, to, prefix.metric, prefix.system, nil)
 		if err != nil {
 			continue
@@ -1073,4 +1091,36 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 		}
 	}
 	return out, nil
+}
+
+// receiverPrefixActive — bu metrik önekinden SON DÖNEMDE veri geldi mi?
+//
+// v0.9.693. metric_catalog (AggregatingMergeTree, ORDER BY
+// (service_name, metric)) insert anında MV ile dolar; önek araması
+// sıralama anahtarının önekine düştüğü için ucuz.
+//
+// TAZELİK KAPISI (maxMerge(last_seen_state)) ŞART: katalogda TTL yok,
+// yani bir kez bağlanmış bir motor kaydı kalıcı. Tazelik olmadan kapı
+// ilk bağlantıdan sonra sonsuza kadar açık kalır ve hiçbir işe yaramaz.
+// Aynı kalıp ListMetricNames'te de kullanılıyor (repo.go).
+//
+// HATA → AÇIK KAPI: sorgu patlarsa `true` dönüyoruz. Keşfi sessizce
+// kapatmak, yavaş bir sorgudan kötüdür — eksik veri, yavaş veriden
+// beterdir.
+func (s *Store) receiverPrefixActive(ctx context.Context, prefix string) bool {
+	since := time.Now().Add(-metricNameLookback)
+	var n uint64
+	err := s.telemetryReadConn().QueryRow(ctx,
+		`SELECT count() FROM (
+			SELECT metric FROM metric_catalog
+			WHERE metric LIKE ?
+			GROUP BY metric
+			HAVING maxMerge(last_seen_state) >= ?
+			LIMIT 1
+		) SETTINGS max_execution_time = 5`,
+		prefix+"%", since).Scan(&n)
+	if err != nil {
+		return true // kapıyı kapatma
+	}
+	return n > 0
 }

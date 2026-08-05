@@ -28,9 +28,9 @@ func TestMetricThroughputCacheKeyCoversEveryInput(t *testing.T) {
 	base, _ := metricThroughputPlan(svc, "m1", "job", from, to)
 
 	cases := map[string]string{
-		"servis":      mustKey(metricThroughputPlan("other-service", "m1", "job", from, to)),
-		"metrik adı":  mustKey(metricThroughputPlan(svc, "m2", "job", from, to)),
-		"etiket adı":  mustKey(metricThroughputPlan(svc, "m1", "service_job", from, to)),
+		"servis":       mustKey(metricThroughputPlan("other-service", "m1", "job", from, to)),
+		"metrik adı":   mustKey(metricThroughputPlan(svc, "m2", "job", from, to)),
+		"etiket adı":   mustKey(metricThroughputPlan(svc, "m1", "service_job", from, to)),
 		"zaman kovası": mustKey(metricThroughputPlan(svc, "m1", "job", from.Add(-48*time.Hour), to)),
 	}
 	for name, k := range cases {

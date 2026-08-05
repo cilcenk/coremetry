@@ -588,6 +588,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/services/{name}/bundle", s.getServiceBundle)
 	mux.HandleFunc("GET /api/services/{name}/structure", s.getServiceStructure)
 	mux.HandleFunc("GET /api/services/{name}/clusters", s.getServiceClusterBreakdown)
+	mux.HandleFunc("GET /api/services/{name}/metric-throughput", s.getServiceMetricThroughput) // v0.9.665 — job etiketinden metrik türevli throughput
 	// v0.8.383 — per-service env chips (Service header Envs group).
 	mux.HandleFunc("GET /api/services/{name}/environments", s.getServiceEnvironments)
 	mux.HandleFunc("GET /api/services/{name}/neighbors", s.getServiceNeighbors)

@@ -14,6 +14,7 @@ import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
 import { sumNullableSeries } from './charts/throughputTotal';
+import { MetricThroughputNote } from './MetricThroughputNote';
 import { buildRootOpLines } from './charts/rootOpSeries';
 import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
@@ -223,6 +224,22 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // Ek istek YOK: `kind` filtresi MV fast-path'ini zaten devre dışı bırakıyor
   // (service_summary_5m'de kind boyutu yok), yani bu sorgu hâlihazırda ham
   // span okuyordu. Aynı sorguya iki agg eklemek ek round-trip getirmiyor.
+  // v0.9.665 (operatör isteği) — throughput'u METRİKTEN de oku.
+  //
+  // Overview'ın throughput'u SPAN türevli (giriş-span ilkesi). Bu sorgu
+  // ikinci bir kaynak getiriyor: Prometheus biçimli sayaç metriği, servis
+  // kimliği `job` etiketinin son bölümünde ("<namespace>/<servis>").
+  //
+  // Amaç KIYASLAMA: iki çizgi yan yana durunca span sayımı ile metrik
+  // sayımının aynı şeyi söyleyip söylemediği görülüyor. Ayrışıyorlarsa
+  // bu başlı başına bir bulgu (örnekleme, giriş-span kapsamı, ya da
+  // metriğin farklı bir yüzeyi ölçmesi).
+  const metricTputQ = useQuery({
+    queryKey: ['service-metric-throughput', service, from, to],
+    queryFn: () => api.serviceMetricThroughput(service, from, to),
+    staleTime: 30_000,
+  });
+
   const latencyQ = useQuery({
     queryKey: ['service-overview-entry-red', service, from, to, redMdp],
     queryFn: () => api.spanMetricBatch({
@@ -386,6 +403,15 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     return { chart: [totalLine, errLine], stats: [okLine, errLine] };
   }, [lat]);
 
+  // Metrik türevli çizgi, span türevli olanın YANINA. Yerine geçmiyor:
+  // hangisinin doğru olduğuna operatör bakarak karar versin — sessizce
+  // kaynak değiştirmek, grafiğin ne anlattığını belirsizleştirirdi.
+  const metricTputLine = useMemo<ChartLine | null>(() => {
+    const ser = metricTputQ.data?.series;
+    if (!ser || ser.length === 0) return null;
+    return { series: ser, color: 'var(--teal)', label: 'Metrik (job)' };
+  }, [metricTputQ.data]);
+
   // v0.9.170 (operatör-bildirimi: cluster çözülemeyen / metrik-yoğun
   // servislerde "bütün Service Overview boş"). Service-summary bundle (info)
   // null olsa da Overview BLANK dönmez — headline sayılar RED/latency
@@ -514,7 +540,15 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               çizmesi, aynı kartta iki farklı servisi üst üste koymak olurdu. */}
           <ChartCard title={scopedChartTitle('Throughput', usingAllSpans)} titleTip={latScopeNote} unit=" req/s" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
             legendStorageKey="ov-throughput" statsDefaultCollapsed
-            lines={throughput.chart} statsLines={throughput.stats} />
+            lines={metricTputLine ? [...throughput.chart, metricTputLine] : throughput.chart}
+            statsLines={throughput.stats} />
+          {/* v0.9.665 — TANILAMA. Boş bir grafik "metrik yok" ile "desen
+              tutmadı"yı aynı gösterir; ikisi bambaşka eylem gerektiriyor
+              (collector'ı düzelt / deseni düzelt). Bu yüzden neden
+              yazılıyor, gerçek `job` değerleriyle birlikte. */}
+          {metricTputQ.data && !metricTputLine && (
+            <MetricThroughputNote d={metricTputQ.data} />
+          )}
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
           <ChartCard title={scopedChartTitle('Failure rate', usingAllSpans)} titleTip={latScopeNote} unit="%" mode="area" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}

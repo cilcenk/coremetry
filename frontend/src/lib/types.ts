@@ -1926,6 +1926,31 @@ export type SpanAgg =
   // quantile label folded into groupKey's last element.
   | 'band';
 
+// ServiceMetricThroughput — servis throughput'unu METRİKTEN okuma
+// (v0.9.665, operatör isteği). Prometheus biçimli sayaç metriği; servis
+// kimliği `job` etiketinin son bölümünde (`<namespace>/<servis>`).
+//
+// Cevap boş bir seriyle YETİNMİYOR: metrik kurulumda var mı, hangi `job`
+// değerleri mevcut, hangi desen denendi — hepsi dönüyor. Boş bir grafik
+// "metrik yok" ile "desen tutmadı"yı aynı gösterirdi.
+export interface ServiceMetricThroughput {
+  service: string;
+  metric: string;
+  jobLabel: string;
+  pattern: string;
+  metricExists: boolean;
+  matched?: number;
+  series?: SpanMetricSeries[];
+  // Yalnız eşleşme YOKKEN dolu: kurulumda gerçekten bulunan job değerleri
+  // ve onlardan çözülen servis adları.
+  sampleJobs?: string[];
+  sampleServices?: string[];
+  // Yalnız metrik BULUNAMADIĞINDA dolu: katalogda yakın adlar. Prometheus
+  // ve OTLP aynı ölçümü farklı adlandırıyor, doğru adı aramayı operatöre
+  // yıkmamak için.
+  suggestions?: string[];
+}
+
 export interface SpanMetricSeries {
   groupKey: string[];                  // raw tuple, joined for label
   points: { time: number; value: number }[]; // time = unix nanoseconds

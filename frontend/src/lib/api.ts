@@ -217,6 +217,13 @@ export const api = {
   serviceClusters: (svc: string, fromNs: number, toNs: number) =>
     get<{ clusters: import('./types').ServiceClusterStat[] } | null>(
       `/api/services/${encodeURIComponent(svc)}/clusters?from=${fromNs}&to=${toNs}`),
+  // Servis throughput'u METRİKTEN (v0.9.665). `metric` boş bırakılırsa
+  // ayardaki ad kullanılıyor; operatör doğru adı ararken her denemede
+  // ayar kaydetmek zorunda kalmasın diye sorgudan da geçilebiliyor.
+  serviceMetricThroughput: (svc: string, fromNs: number, toNs: number, metric?: string) =>
+    get<import('./types').ServiceMetricThroughput>(
+      `/api/services/${encodeURIComponent(svc)}/metric-throughput?from=${fromNs}&to=${toNs}`
+      + (metric ? `&metric=${encodeURIComponent(metric)}` : '')),
   // Coremetry meta-observability snapshot — drives /admin/stats.
   systemStats: () =>
     get<import('./types').SystemStats>('/api/admin/system-stats'),

@@ -154,12 +154,25 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		labels := identityLabelCandidates(jobLabel)
 		triedLabels := make([]string, 0, len(labels)+1)
 		var matched *chstore.MetricQueryFilter
+		var candErrs []string
 		for _, lb := range labels {
 			triedLabels = append(triedLabels, lb)
 			_, f := metricThroughputPlan(name, resolved, lb, from, to)
 			ser, err := rate(ctx, f, "rate")
 			if err != nil {
-				return nil, err
+				// v0.9.683 — TEK ADAYIN HATASI TÜM CEVABI ÖLDÜRMESİN.
+				//
+				// Burada `return nil, err` vardı: 5 kimlik adayından
+				// herhangi biri patlayınca uç 500 dönüyordu, frontend de
+				// hata durumunda hiçbir şey çizmediği için operatör
+				// "panel gelmiyor" görüyordu — sebepsiz. Bugün altı kez
+				// düzelttiğim sessiz-başarısızlık sınıfının kendi
+				// hata yolumdaki hâli.
+				//
+				// Aday sırayla denenen bir LİSTE; birinin çalışmaması
+				// diğerlerini denememek için sebep değil.
+				candErrs = append(candErrs, lb+": "+err.Error())
+				continue
 			}
 			if len(ser) > 0 {
 				out["series"] = ser
@@ -197,7 +210,11 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 				svcFilter.Filters = at.Filters
 				svcFilter.Service = at.Service
 				svcSeries, err2 := rate(ctx, svcFilter, "rate")
-				if err2 != nil || len(svcSeries) == 0 {
+				if err2 != nil {
+					candErrs = append(candErrs, at.Label()+": "+err2.Error())
+					continue
+				}
+				if len(svcSeries) == 0 {
 					continue
 				}
 				out["series"] = svcSeries
@@ -210,6 +227,12 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 			}
 		}
 		out["triedLabels"] = triedLabels
+		if len(candErrs) > 0 {
+			// Hatalar SESSİZ KALMASIN: bir aday teknik bir sebeple
+			// çalışmıyorsa operatör bunu görmeli, "eşleşme yok" ile
+			// karıştırmamalı.
+			out["candidateErrors"] = candErrs
+		}
 
 		// 5) GECİKME — aynı eşleşen filtreden (operatör: "response time
 		// için de bir panel yapabilir misin").

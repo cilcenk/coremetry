@@ -92,6 +92,16 @@ export function MetricThroughputNote({ d }: { d: ServiceMetricThroughput }) {
       {/* v0.9.682 — VARLIK, denemeden ayrı. "Anahtar yok" ise
           collector'ı düzeltmek gerekiyor; "anahtar var ama değer
           tutmadı" ise deseni. Boş grafik ikisini de aynı gösterirdi. */}
+      {(d.candidateErrors?.length ?? 0) > 0 && (
+        <div style={{ marginTop: 6, color: 'var(--err)' }}>
+          <b>Bazı adaylar HATA verdi</b> (eşleşme yokluğu değil, teknik hata):
+          <ul style={{ margin: '2px 0 0 16px', padding: 0 }}>
+            {d.candidateErrors!.map(e => (
+              <li key={e} style={{ fontSize: 11 }}>{e}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div style={{ marginTop: 4 }}>
         {(d.presentKeys?.length ?? 0) > 0 ? (
           <>

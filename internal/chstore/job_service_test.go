@@ -300,3 +300,53 @@ func TestLatencyScaleToMs(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.681 — ORTAM DEĞERİ ORTAM+KÜME olabiliyor.
+//
+// Operatör: "Deploy env-cluster şeklinde sanki geliyor
+// deployment.environment.name" — yani `uat` değil `uat-ocpuat`
+// (ekran görüntüsünde openshift.cluster.name = ocpuat).
+//
+// v0.9.679/680 TAM eşleşme yapıyordu; böyle bir değerde hiç tutmaz ve
+// kısıt SESSİZCE hiçbir şeyi kısıtlamazdı — "çalışıyor görünür, hiçbir
+// şey yapmaz" sınıfı.
+func TestEnvValueRegexAcceptsEnvClusterForm(t *testing.T) {
+	re := regexp.MustCompile(EnvValueRegex("uat"))
+	for _, ok := range []string{
+		"uat",          // düz ortam
+		"uat-ocpuat",   // operatörün kurulumu: ortam+küme
+		"uat-ocp-eu-1", // çok parçalı sonek
+	} {
+		if !re.MatchString(ok) {
+			t.Errorf("%q eşleşmeliydi", ok)
+		}
+	}
+}
+
+// GEVŞEMEDİK: ayırıcı ŞART. "-" olmadan eşleştirseydik "uat" deseni
+// "uatest"i de alırdı ve YANLIŞ ortamın verisi doğru sanılırdı.
+func TestEnvValueRegexRejectsOtherEnvs(t *testing.T) {
+	re := regexp.MustCompile(EnvValueRegex("uat"))
+	for _, bad := range []string{
+		"prod", "prod-ocpuat", // başka ortam
+		"uatest", "uat2", // ad uzantısı, ayırıcı yok
+		"preuat", "x-uat", // önek
+	} {
+		if re.MatchString(bad) {
+			t.Errorf("%q eşleşmemeliydi — yanlış ortamın verisi doğru sanılır", bad)
+		}
+	}
+}
+
+// Metakarakter taşıyan ortam adı deseni bozmamalı.
+func TestEnvValueRegexEscapes(t *testing.T) {
+	for _, env := range []string{"uat", "a.b", "a+b", "a(b", ""} {
+		if _, err := regexp.Compile(EnvValueRegex(env)); err != nil {
+			t.Errorf("%q: desen derlenmedi: %v", env, err)
+		}
+	}
+	re := regexp.MustCompile(EnvValueRegex("a.b"))
+	if re.MatchString("aXb") {
+		t.Error("kaçışsız metakarakter yanlış eşleşme üretti")
+	}
+}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"regexp"
 	"testing"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -105,8 +106,27 @@ func TestServiceNameAttemptsOrderAndEnvConstraint(t *testing.T) {
 		if len(a.Filters) != 1 || a.Filters[0].Key != wk {
 			t.Errorf("deneme %d ortam anahtarı %q olmalı: %+v", i+1, wk, a.Filters)
 		}
-		if len(a.Filters[0].Values) != 1 || a.Filters[0].Values[0] != "uat" {
-			t.Errorf("deneme %d ortam değeri 'uat' olmalı: %v", i+1, a.Filters[0].Values)
+		// v0.9.681 — TAM eşleşme DEĞİL, desen. Operatörün kurulumunda
+		// değer `uat` değil `uat-ocpuat` (ortam+küme) olabiliyor; tam
+		// eşleşme orada hiç tutmaz ve kısıt sessizce hiçbir şeyi
+		// kısıtlamaz.
+		if a.Filters[0].Op != "=~" {
+			t.Errorf("deneme %d regex operatörü kullanmalı, alınan %q", i+1, a.Filters[0].Op)
+		}
+		if len(a.Filters[0].Values) != 1 {
+			t.Fatalf("deneme %d tek desen taşımalı: %v", i+1, a.Filters[0].Values)
+		}
+		re := regexp.MustCompile(a.Filters[0].Values[0])
+		for _, ok := range []string{"uat", "uat-ocpuat", "uat-anything"} {
+			if !re.MatchString(ok) {
+				t.Errorf("deneme %d: %q eşleşmeliydi (desen %q)", i+1, ok, a.Filters[0].Values[0])
+			}
+		}
+		// Gevşemedik: başka ortam ya da ad uzantısı GİRMEMELİ.
+		for _, bad := range []string{"prod", "prod-ocpuat", "uatest", "preuat"} {
+			if re.MatchString(bad) {
+				t.Errorf("deneme %d: %q eşleşmemeliydi — yanlış ortamın verisi doğru sanılır", i+1, bad)
+			}
 		}
 		if a.EnvAmbiguous {
 			t.Errorf("deneme %d ortamla KISITLI, belirsiz olmamalı", i+1)

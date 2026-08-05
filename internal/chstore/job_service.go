@@ -240,3 +240,29 @@ func LatencyScaleToMs(unit string) (float64, bool) {
 	}
 	return 1, false
 }
+
+// EnvValueRegex — ortam değeri deseni.
+//
+// v0.9.681 (operatör-bildirimi): "Deploy env-cluster şeklinde sanki
+// geliyor deployment.environment.name" — yani değer düz `uat` değil,
+// `uat-ocpuat` gibi ORTAM+KÜME birleşimi olabiliyor (ekran
+// görüntüsünde openshift.cluster.name = ocpuat).
+//
+// v0.9.679/680'in ortam kısıtı TAM EŞLEŞME yapıyordu (`= "uat"`), yani
+// böyle bir değerde HİÇ tutmazdı ve zincir sessizce "ortam
+// ayrıştırılamadı" dalına düşerdi. Kısıt çalışıyor görünür, aslında
+// hiçbir şey kısıtlamaz — v0.9.671'de aday listelerinde yaşadığım
+// sessiz-çalışmama sınıfının aynısı.
+//
+// Desen: ortamın kendisi VEYA ortam + "-" + herhangi bir sonek.
+//
+//	uat        ✓
+//	uat-ocpuat ✓
+//	uatX       ✗  (başka ortam olabilir, gevşetmiyoruz)
+//	prod-ocpuat ✗ (yanlış ortam)
+//
+// Ayırıcı ŞART: "-" olmadan eşleştirseydik "uat" deseni "uatest"i de
+// alırdı ve yanlış ortamın verisi doğru sanılırdı.
+func EnvValueRegex(env string) string {
+	return "^" + regexp.QuoteMeta(strings.TrimSpace(env)) + "(-.*)?$"
+}

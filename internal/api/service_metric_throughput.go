@@ -431,7 +431,11 @@ func serviceNameAttempts(service string) []svcAttempt {
 	for _, key := range chstore.EnvAttrKeys {
 		out = append(out, svcAttempt{
 			Service: stripped,
-			Filters: []chstore.FilterExpr{{Key: key, Op: "=", Values: []string{env}}},
+			// v0.9.681 — TAM eşleşme DEĞİL: operatörün kurulumunda değer
+			// `uat` değil `uat-ocpuat` (ortam+küme) olabiliyor. Tam
+			// eşleşme böyle bir değerde hiç tutmaz ve kısıt sessizce
+			// hiçbir şeyi kısıtlamaz.
+			Filters: []chstore.FilterExpr{{Key: key, Op: "=~", Values: []string{chstore.EnvValueRegex(env)}}},
 		})
 	}
 	return append(out, svcAttempt{Service: stripped, EnvAmbiguous: true})

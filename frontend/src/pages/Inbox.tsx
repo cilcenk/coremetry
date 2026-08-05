@@ -26,7 +26,19 @@ import type { InboxItem, InboxKind } from '@/lib/types';
 const PRIO_ALL = ['P1', 'P2', 'P3'] as const;
 // v0.9.487 (operatör kararı, prod) — varsayılan yalnız P1: "defaultta sadece
 // P1'ler gözüksün". P2/P3 chip sayılarıyla görünür, tek tık uzakta.
-const PRIO_DEFAULT = ['P1'] as const;
+//
+// v0.9.659 (operatör kararı, prod) — P2 GERİ EKLENDİ: "Problems sayfasında
+// P1 P2 exceptions default listelensin".
+//
+// Kararın arkasındaki olay kayıtlı: tek servisten 12 dakikada 11.260 olay
+// üreten bir exception P2 görünüyordu ve varsayılan görünümde HİÇ
+// çıkmıyordu (v0.9.627). O vaka artık P1'e terfi ediyor (patlama hızı),
+// ama terfi kurallarının yakalayamadığı ciddi P2'ler için varsayılanın
+// kendisi bir emniyet ağı.
+//
+// P3 hâlâ dışarıda: kronik/düşük-şiddet gürültüsü varsayılan görünümü
+// doldurur ve v0.9.487'nin çözdüğü sorun buydu.
+const PRIO_DEFAULT = ['P1', 'P2'] as const;
 const KIND_ALL: readonly InboxKind[] = ['problem', 'exception', 'httperror', 'anomaly', 'incident'];
 // v0.9.328 — operator: "Problems ilk açtığında exception görsün, kullanıcılar
 // ona göre tasarlar." Exceptions are the signal operators trust: a thrown
@@ -497,8 +509,9 @@ export default function InboxPage() {
         <SavedViewsBar page="inbox" />
         <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 14 }}>
           Everything needing a human — Problems (alert rules), open Exception
-          groups, and active Anomaly detections. Default view: <b>P1</b>{' '}
-          Exceptions. Click any row to triage it in place.
+          groups, and active Anomaly detections. Default view:{' '}
+          <b>{PRIO_DEFAULT.join(' + ')}</b> Exceptions. Click any row to
+          triage it in place.
         </p>
 
         {/* One grouped facet bar (v0.8.38) — status pivot + priority + kind

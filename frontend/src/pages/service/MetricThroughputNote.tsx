@@ -89,6 +89,27 @@ export function MetricThroughputNote({ d }: { d: ServiceMetricThroughput }) {
           ))}
         </div>
       )}
+      {/* v0.9.682 — VARLIK, denemeden ayrı. "Anahtar yok" ise
+          collector'ı düzeltmek gerekiyor; "anahtar var ama değer
+          tutmadı" ise deseni. Boş grafik ikisini de aynı gösterirdi. */}
+      <div style={{ marginTop: 4 }}>
+        {(d.presentKeys?.length ?? 0) > 0 ? (
+          <>
+            <span style={{ color: 'var(--text3)' }}>Bu metrikte VAR OLAN anahtarlar:</span>{' '}
+            {d.presentKeys!.map((k, i) => (
+              <span key={k}>{i > 0 && ', '}<code>{k}</code></span>
+            ))}
+            <div style={{ color: 'var(--text3)', marginTop: 2 }}>
+              Anahtar var ama eşleşme yok → değer beklenenden farklı.
+            </div>
+          </>
+        ) : (
+          <span style={{ color: 'var(--text3)' }}>
+            Denenen kimlik anahtarlarının <b>hiçbiri</b> bu metrikte yok —
+            collector servis kimliğini başka bir alanda gönderiyor.
+          </span>
+        )}
+      </div>
       {hasJobs ? (
         <div style={{ marginTop: 6 }}>
           <div style={{ color: 'var(--text3)' }}>

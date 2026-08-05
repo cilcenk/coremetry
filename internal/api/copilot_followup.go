@@ -133,7 +133,11 @@ func guidedSuggestions(route guidedRoute) []string {
 	case guidedMyServices:
 		return []string{"Takımımın açık problemleri?", "En yavaş trace'ler?"}
 	case guidedMyProblems:
-		return []string{"Takımımın servisleri nasıl?", "En yavaş trace'ler?"}
+		return []string{"Takımımın servisleri nasıl?", "Takımımın exception'ları?", "En yavaş trace'ler?"}
+	// v0.9.650 — exception cevabından sonraki doğal adımlar: aynı takımın
+	// açık PROBLEM'leri (farklı yüzey, aynı kapsam) ve servis sağlığı.
+	case guidedMyExceptions:
+		return []string{"Takımımın açık problemleri?", "Takımımın servisleri nasıl?"}
 	case guidedPodHealth:
 		if svc != "" {
 			return []string{svc + " sağlığı nasıl?", svc + " hata logları?", svc + " son deploy etkisi?"}
@@ -197,6 +201,9 @@ func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
 		return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
 	case guidedMyProblems:
 		return []guidedAnswerLink{{Label: "Problemler", Href: "/problems"}}
+	case guidedMyExceptions:
+		// Exceptions sekmesi Inbox'ta tür süzgeciyle açılıyor.
+		return []guidedAnswerLink{{Label: "Exceptions", Href: "/inbox?kind=exception"}}
 	case guidedPodHealth:
 		if svc != "" {
 			return []guidedAnswerLink{{Label: svc + " · Pods", Href: "/service?name=" + svcQ + "&tab=pods"}}

@@ -37,6 +37,7 @@ import {
 import type { LogFilter } from '@/lib/logFilters';
 import { logsUrlSig, writeLogsParams, readLogsParams } from '@/lib/logsUrl';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
+import { PageControls } from '@/components/ui/PageControls';
 
 // Share affordance — copies a link to the CURRENT filtered logs view.
 // Logs filters live entirely in the URL querystring (the same mechanism
@@ -658,7 +659,7 @@ function LogsInner() {
             <button className="sec" onClick={clearTraceLock}>✕ Clear</button>
           </div>
         )}
-        <div className="controls">
+        <PageControls sticky>
           <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
             placeholder="Service…" width={170} onEnter={apply} />
           {/* v0.5.471 — cluster selector. Populated from
@@ -734,7 +735,7 @@ function LogsInner() {
               ⚠ high volume — some lines skipped
             </span>
           )}
-        </div>
+        </PageControls>
 
         {/* v0.8.400 — HONEST env-filter chip (the v0.8.398 pattern:
             state that the filter could NOT apply instead of silently

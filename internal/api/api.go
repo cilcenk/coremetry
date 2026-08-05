@@ -1409,15 +1409,26 @@ func (s *Server) warmDependenciesCache() {
 		// (problems-count default = status=open, filtresiz).
 		// v0.8.475 (perf dalga-1 #4) — Wave-3 sayfaları warmer'dan sonra
 		// eklendiği için hiç ısıtılmıyordu; ilk navigasyondaki ölçülen
-		// 120-190ms soğuk-slot silinir. Pencereler sayfaların
-		// varsayılanlarıyla birebir (hosts 15m, external 1h) ki anahtar
-		// şekli handler'ınkiyle çakışsın.
-		hostsFrom := to.Add(-15 * time.Minute)
-		warm("hosts", "hosts:"+cacheBucket(hostsFrom, to), 60*time.Second,
-			func(ctx context.Context) (any, error) { return s.store.GetHosts(ctx, hostsFrom, to) })
-		extFrom := to.Add(-time.Hour)
-		warm("external", "external:"+cacheBucket(extFrom, to), 30*time.Second,
-			func(ctx context.Context) (any, error) { return s.store.GetExternalHosts(ctx, extFrom, to) })
+		// 120-190ms soğuk-slot silinir.
+		//
+		// v0.9.690 — `hosts` ve `external` GİRİŞLERİ KALDIRILDI.
+		//
+		// O sayfalar v0.9.489-499 sadeleştirmesinde nav'dan gizlendi
+		// (Sidebar.tsx: "hidden from nav, code alive") ama warm girişleri
+		// güncellenmedi: 30 saniyede bir, kimsenin açmadığı iki sayfa
+		// için tam tarama.
+		//
+		// ÖLÇÜLDÜ (chc-0 query_log, 6 saat):
+		//   hosts warmer   : 723 + 723 çağrı · 132 GiB · SELECT baytının %13.9
+		//   external warmer:       867 çağrı ·  24 GiB · %2.5
+		//   723 çağrı / 6 saat = tam 30 s ızgara → SIFIR kullanıcı isteği
+		//
+		// Handler'lar ve rotalar DURUYOR: URL'den erişilebilir ve
+		// `serveCached` ile talep üzerine servis ediliyor. Kaldırılan tek
+		// şey, kimsenin istemediği veriyi önden çekmek.
+		//
+		// Sayfalar nav'a geri gelirse warm girişleri de geri gelmeli —
+		// warm_hidden_pages_test.go bu çifti bir arada tutuyor.
 		warm("problems-count", "problems-count:status=open:svc=:sev=:env=", 15*time.Second,
 			func(ctx context.Context) (any, error) {
 				n, err := s.store.CountProblems(ctx, chstore.ProblemFilter{Status: "open"})

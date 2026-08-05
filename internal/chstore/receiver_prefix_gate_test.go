@@ -79,6 +79,66 @@ func TestReceiverGateFailsOpen(t *testing.T) {
 	}
 }
 
+// v0.9.698 — BOŞ KATALOG "MOTOR YOK" DEMEK DEĞİL.
+//
+// Yukarıdaki TestReceiverGateFailsOpen yalnız HATA yolunu çiviliyordu.
+// v0.9.693'te `n == 0` yolunu atlamışım: iki farklı soru aynı sonuca
+// düşüyordu.
+//
+//	n=0 + DOLU katalog → "bu motor gerçekten yok"     → kapat (doğru)
+//	n=0 + BOŞ katalog  → "katalog henüz cevap veremez" → kapat (YANLIŞ)
+//
+// Katalog taze kurulumda, şema resetinde ve MV drop+recreate
+// penceresinde boştur — kod tabanı MV tipi değişiminde bunu YAPIYOR
+// (dropCombinedMV). O aralıkta receiver ile keşfedilen TÜM DB
+// instance'ları /databases listesinden sessizce düşerdi: hata yok, log
+// yok, yalnız eksik veri.
+//
+// Kusuru ölçüm değil, kendi önerimi çürütmek için kurduğum düşmanca
+// inceleme buldu — asıl önerdiğim optimizasyon reddedildi, bu çıktı.
+func TestReceiverGateFailsOpenOnEmptyCatalog(t *testing.T) {
+	src := depsSrc(t)
+	i := strings.Index(src, "func (s *Store) receiverPrefixActive")
+	if i < 0 {
+		t.Fatal("receiverPrefixActive bulunamadı")
+	}
+	fn := win(src, i, 1200)
+
+	if !strings.Contains(fn, "metricCatalogHasRows") {
+		t.Error("kapı boş-katalog ayrımını YAPMIYOR: n=0 iken metricCatalogHasRows " +
+			"sorulmalı, yoksa taze kurulum / MV drop+recreate penceresinde " +
+			"receiver-keşifli DB instance'ları sessizce kaybolur")
+	}
+
+	// Düzeltme öncesi gövde `return n > 0` ile bitiyordu. O satırın tek
+	// başına dönmesi, "yok" ile "bilmiyorum"un yeniden aynı kefeye
+	// konduğu anlamına gelir.
+	if strings.Contains(fn, "return n > 0") {
+		t.Error("`return n > 0` geri gelmiş — 'motor yok' ile 'katalog boş' ayrımı kayboldu")
+	}
+}
+
+// HİZA KURALI. Bu kapının değeri tek fonksiyonu değil KURALI korumak:
+// kataloğa varlık sorusu soran her yol aynı boş-katalog ayrımını
+// yapmalı. v0.9.693'ün hatası tam olarak hizadan çıkmaktı — kardeşler
+// (MetricExists / ListMetricNames) ayrımı zaten yapıyordu.
+func TestCatalogExistenceCallersShareTheEmptyGuard(t *testing.T) {
+	for _, f := range []string{"db_capacity.go", "dependencies.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("%s okunamadı: %v", f, err)
+		}
+		src := stripGoLineComments(string(b))
+		if !strings.Contains(src, "metric_catalog") {
+			continue // kataloğa hiç sormuyorsa kural geçerli değil
+		}
+		if !strings.Contains(src, "metricCatalogHasRows") {
+			t.Errorf("%s metric_catalog'a varlık sorusu soruyor ama boş-katalog "+
+				"kapısı (metricCatalogHasRows) yok", f)
+		}
+	}
+}
+
 func max0(n int) int {
 	if n < 0 {
 		return 0

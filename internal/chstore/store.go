@@ -2361,7 +2361,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	//     safe.
 	//   • external Distributed spans, ClusterName unset → the ALTER would
 	//     land on the wrapper only, never on spans_local → SKIP + log
-	//     (v0.8.186 Akbank: this exact inconsistent state lost every span
+	//     (v0.8.186 prod: this exact inconsistent state lost every span
 	//     batch). The hasOpGroupCol probe below then reads false, the
 	//     INSERT drops op_group from its column list, and the read path
 	//     soft-degrades to raw-name grouping.
@@ -3662,7 +3662,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	// res/attr derive (see clusterExpr).
 	probeRows, probeErr := s.conn.Query(ctx,
 		`SELECT cluster FROM spans WHERE time >= now() - INTERVAL 1 SECOND LIMIT 1 SETTINGS max_execution_time = 3`)
-	// v0.8.185 — operator-reported PRODUCTION PANIC (Akbank distributed):
+	// v0.8.185 — operator-reported PRODUCTION PANIC (external distributed):
 	// on a Query ERROR clickhouse-go returns a NON-NIL but half-initialised
 	// *rows, so the old `if probeRows != nil { Close() }` nil-derefs inside
 	// Close() and crash-loops the pod at boot. NEVER touch the rows on error.
@@ -3719,7 +3719,7 @@ type rowsCloser interface{ Close() error }
 // maybeCloseRows closes a Query's rows ONLY when the query SUCCEEDED. On a
 // query error clickhouse-go (v2.46) returns a NON-NIL but partially-
 // initialised *rows whose Close() nil-dereferences — so guarding on `rows !=
-// nil` alone still panics (the production crash-loop on the Akbank distributed
+// nil` alone still panics (the production crash-loop on the external distributed
 // cluster, v0.8.185, where `SELECT cluster FROM spans` errors because the
 // materialized column never reached spans_local). Gate on the error: never
 // touch the rows when the query failed.

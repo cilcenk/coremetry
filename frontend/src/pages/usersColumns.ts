@@ -48,7 +48,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 export const USERS_CONTENT_BUDGET = 1240;
 
 // USERS_EMAIL_MIN — email hücresinin gerçek asgarisi: 20px avatar +
-// 8px boşluk + "yusufcan.baspinar@akbank.com" uzunluğunda bir adres
+// 8px boşluk + "firstname.lastname@example.com" uzunluğunda bir adres
 // (12px/600 ≈ 185px) + hücre dolgusu. Bunun altında adres kırpılır.
 export const USERS_EMAIL_MIN = 220;
 

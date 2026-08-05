@@ -140,7 +140,7 @@ func (s *Store) ShardSkipSetting() string { return s.shardSkipSetting() }
 // definition but never reaches the per-shard spans_local — and the
 // next INSERT, which fans out to the shards, fails with code 16
 // ("No such column op_group in table spans_local"), losing every span
-// batch (the v0.8.186 Akbank ingest outage).
+// batch (the v0.8.186 prod ingest outage).
 //
 // Detection: clusterMode() is the affirmative "chstore owns the local"
 // signal — when ClusterName is set, adaptDDL handles the rewrite, so

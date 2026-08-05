@@ -1107,6 +1107,23 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 // HATA → AÇIK KAPI: sorgu patlarsa `true` dönüyoruz. Keşfi sessizce
 // kapatmak, yavaş bir sorgudan kötüdür — eksik veri, yavaş veriden
 // beterdir.
+//
+// v0.9.698 — BOŞ KATALOG DA AÇIK KAPI. v0.9.693'te bu kapıyı yazarken
+// yalnız HATA yolunu fail-open yaptım; `n=0` yolunu atladım. İkisi
+// FARKLI sorular:
+//
+//	n=0  + dolu katalog  → "bu motor gerçekten yok"        → kapat, doğru
+//	n=0  + BOŞ katalog   → "katalog henüz cevap veremiyor"  → kapatmak YANLIŞ
+//
+// Katalog taze kurulumda, şema resetinde ve MV drop+recreate penceresinde
+// (kod tabanı MV tipi değişiminde bunu yapıyor) boştur. O aralıkta kapı
+// kapanınca receiver ile keşfedilen TÜM DB instance'ları listeden sessizce
+// düşer — hata yok, log yok, sadece eksik veri.
+//
+// Kardeş çağrı yerleri bu ayrımı zaten yapıyor (MetricExists /
+// db_capacity.go, ListMetricNames / repo.go): ikisi de aynı
+// metricCatalogHasRows kapısından geçiyor. v0.9.693 sırayı bozan tek
+// yerdi.
 func (s *Store) receiverPrefixActive(ctx context.Context, prefix string) bool {
 	since := time.Now().Add(-metricNameLookback)
 	var n uint64
@@ -1122,5 +1139,10 @@ func (s *Store) receiverPrefixActive(ctx context.Context, prefix string) bool {
 	if err != nil {
 		return true // kapıyı kapatma
 	}
-	return n > 0
+	if n > 0 {
+		return true
+	}
+	// n == 0 — "yok" mu, "henüz bilmiyorum" mu? Katalog tamamen boşsa
+	// ikincisi; kapıyı açık bırak ve ham yol çalışsın.
+	return !s.metricCatalogHasRows(ctx)
 }

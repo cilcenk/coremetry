@@ -20,7 +20,7 @@ func (f *fakeRows) Close() error {
 	return nil
 }
 
-// v0.8.185 — operator-reported PRODUCTION crash-loop on the Akbank distributed
+// v0.8.185 — operator-reported PRODUCTION crash-loop on the external distributed
 // cluster: the hasClusterCol boot probe `SELECT cluster FROM spans` errors
 // (the materialized column never reached spans_local), and clickhouse-go
 // returns a NON-NIL but half-initialised *rows whose Close() nil-derefs. The

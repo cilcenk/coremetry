@@ -1956,6 +1956,10 @@ export interface ServiceMetricThroughput {
   matchedBy?: string;
   // v0.9.671 — hangi kimlik etiketleri denendi (job/service/name/kolon).
   triedLabels?: string[];
+  // v0.9.682 — denenen adaylardan HANGİLERİ bu kurulumda gerçekten var.
+  // "anahtar yok" ile "anahtar var, değer tutmadı" bambaşka eylemler
+  // gerektiriyor; boş bir grafik ikisini de aynı gösteriyordu.
+  presentKeys?: string[];
   // v0.9.676 — histogram yüzdelikleri, MİLİSANİYEYE çevrilmiş.
   // latencyUnitKnown=false ise ölçekleme YAPILMADI (birim tanınmadı) —
   // panel bunu söylemek zorunda, yoksa yanlış ölçekli bir sayıya

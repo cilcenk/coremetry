@@ -233,6 +233,20 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// 5) Hiçbiri tutmadı — gerçek etiket değerlerini göster.
 		// Operatör Coremetry'nin servis adıyla metriğin taşıdığı değeri
 		// yan yana görsün.
+		// v0.9.682 — HANGİ ADAYLAR KURULUMDA VAR?
+		//
+		// "denenen adaylar" listesi hangi yolun DENENDİĞİNİ söylüyordu
+		// ama hangisinin var olduğunu söylemiyordu. Yerel ölçüm bunun
+		// neden şart olduğunu gösterdi: 7 kimlik adayından 5'i yerelde
+		// TAM SIFIR (474 bin satırın hiçbirinde yok). O dallar hiç icra
+		// edilmiyor ve "boş sonuç" bunu hiç belli etmiyordu.
+		//
+		// anahtar YOK  → collector o kimliği göndermiyor
+		// anahtar VAR  → değer beklediğimizden farklı
+		// İkisi bambaşka eylem; boş grafik ikisini de aynı gösterirdi.
+		out["presentKeys"] = s.store.MetricPresentKeys(ctx, resolved,
+			append(identityLabelCandidates(jobLabel), chstore.EnvAttrKeys...), to.Sub(from))
+
 		probeLabel := jobLabel
 		if probeLabel == "" {
 			probeLabel = chstore.JobLabelDefault

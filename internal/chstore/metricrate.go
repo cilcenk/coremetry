@@ -214,6 +214,59 @@ func (s *Store) QueryMetricCountRate(ctx context.Context, f MetricQueryFilter, m
 	return s.queryRateFrom(ctx, f, mode, rateSourceHistogramCount)
 }
 
+// MetricPresentKeys — verilen anahtarlardan HANGİLERİ bu metrikte
+// gerçekten var (attr_keys ya da res_keys içinde).
+//
+// v0.9.682. Tanılamanın eksik yarısı buydu: "denenen adaylar" listesi
+// hangi yolun DENENDİĞİNİ söylüyordu ama hangisinin kurulumda VAR
+// olduğunu söylemiyordu. İkisi bambaşka eylem gerektiriyor:
+//
+//	anahtar YOK      → collector o kimliği hiç göndermiyor
+//	anahtar VAR ama eşleşmedi → değer beklediğimizden farklı
+//
+// Boş bir grafik ikisini de aynı gösteriyordu.
+//
+// Tek sorgu, anahtar başına countIf — N ayrı tur değil. `resource.`
+// öneki soyulup res_keys'e, önek yoksa attr_keys'e bakılıyor (filtre
+// tarafındaki çözümlemenin aynısı).
+func (s *Store) MetricPresentKeys(ctx context.Context, metric string, keys []string, since time.Duration) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	to := time.Now()
+	from := to.Add(-since)
+	sel := make([]string, 0, len(keys))
+	args := []any{}
+	for i, k := range keys {
+		col, name := "attr_keys", k
+		if strings.HasPrefix(k, "resource.") {
+			col, name = "res_keys", strings.TrimPrefix(k, "resource.")
+		}
+		sel = append(sel, fmt.Sprintf("countIf(has(%s, ?)) AS k%d", col, i))
+		args = append(args, name)
+	}
+	args = append(args, metric, from, to)
+	q := "SELECT " + strings.Join(sel, ", ") +
+		" FROM metric_points WHERE metric = ? AND time >= ? AND time <= ?" +
+		" SETTINGS max_execution_time = 5"
+
+	counts := make([]uint64, len(keys))
+	dest := make([]any, len(keys))
+	for i := range counts {
+		dest[i] = &counts[i]
+	}
+	if err := s.conn.QueryRow(ctx, q, args...).Scan(dest...); err != nil {
+		return nil
+	}
+	var out []string
+	for i, k := range keys {
+		if counts[i] > 0 {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
 // MetricUnit — bir metriğin OTLP birimi ("s", "ms", "By", …).
 // MetricInstrument ile aynı kalıp: kısa, sınırlı prob.
 func (s *Store) MetricUnit(ctx context.Context, name, service string) string {

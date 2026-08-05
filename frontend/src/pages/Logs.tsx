@@ -18,7 +18,7 @@ import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
 import { ShareButton } from '@/components/ShareButton';
-import { buildKibanaURL } from '@/lib/kibanaLink';
+import { buildKibanaURL, buildKQLFromFilter } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
 import { useLogs } from '@/lib/queries';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
@@ -114,26 +114,6 @@ function pickVolumeBucket(from?: number, to?: number): number {
 // become per-field clauses; the free-text search string passes
 // through verbatim (it's already KQL on this page). Returned
 // string may be empty — Kibana handles "no query" cleanly.
-function buildKQLFromFilter(f: {
-  service: string; search: string; severity: number; traceId: string; spanId: string;
-  hasTrace?: boolean;
-}): string {
-  const parts: string[] = [];
-  if (f.service) parts.push(`service.name:"${f.service.replace(/"/g, '\\"')}"`);
-  if (f.traceId) parts.push(`trace.id:"${f.traceId}"`);
-  if (f.hasTrace && !f.traceId) parts.push('trace.id:*'); // v0.8.406 — trace-only filter
-  if (f.spanId)  parts.push(`span.id:"${f.spanId}"`);
-  if (f.severity > 0) {
-    // Map OTel severity number to a level name range; Kibana's
-    // log.level field typically holds the canonical text.
-    const min = f.severity;
-    if (min >= 21) parts.push('log.level:"FATAL"');
-    else if (min >= 17) parts.push('log.level:("FATAL" OR "ERROR")');
-    else if (min >= 13) parts.push('log.level:("FATAL" OR "ERROR" OR "WARN")');
-  }
-  if (f.search.trim()) parts.push(f.search.trim());
-  return parts.join(' AND ');
-}
 
 function LogsInner() {
   const [searchParams, setSearchParams] = useSearchParams();

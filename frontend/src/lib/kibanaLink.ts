@@ -86,3 +86,31 @@ function risonKey(k: string): string {
   // when they're alphanumeric, else quoted.
   return risonString(k);
 }
+
+// buildKQLFromFilter — Coremetry filtresi → Kibana KQL.
+//
+// v0.9.658'de Logs.tsx'ten BURAYA taşındı, davranış değişmeden. Sebep:
+// CoSRE analiz paneli de servis-kapsamlı bir Kibana linki veriyor ve
+// alternatif, alan adlarını (service.name, log.level, trace.id) İKİNCİ
+// bir yere kopyalamaktı. Bu kod tabanının tekrar eden hata sınıfı tam
+// olarak o — bir kural iki yere bölünüp zamanla ayrışıyor.
+export function buildKQLFromFilter(f: {
+  service: string; search: string; severity: number; traceId: string; spanId: string;
+  hasTrace?: boolean;
+}): string {
+  const parts: string[] = [];
+  if (f.service) parts.push(`service.name:"${f.service.replace(/"/g, '\\"')}"`);
+  if (f.traceId) parts.push(`trace.id:"${f.traceId}"`);
+  if (f.hasTrace && !f.traceId) parts.push('trace.id:*'); // v0.8.406 — trace-only filter
+  if (f.spanId)  parts.push(`span.id:"${f.spanId}"`);
+  if (f.severity > 0) {
+    // Map OTel severity number to a level name range; Kibana's
+    // log.level field typically holds the canonical text.
+    const min = f.severity;
+    if (min >= 21) parts.push('log.level:"FATAL"');
+    else if (min >= 17) parts.push('log.level:("FATAL" OR "ERROR")');
+    else if (min >= 13) parts.push('log.level:("FATAL" OR "ERROR" OR "WARN")');
+  }
+  if (f.search.trim()) parts.push(f.search.trim());
+  return parts.join(' AND ');
+}

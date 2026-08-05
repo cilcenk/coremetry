@@ -1,10 +1,11 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { tsShort } from '@/lib/utils';
 import { aiErrorHint } from '@/lib/aiErrors';
 import { IconSparkles } from './icons';
-import type { ServiceAnalysisResponse } from '@/lib/types';
+import type { ServiceAnalysisResponse, KibanaSettings } from '@/lib/types';
+import { buildKibanaURL, buildKQLFromFilter } from '@/lib/kibanaLink';
 import { Button } from '@/components/ui/Button';
 // canRateVerdict — kimlik yoksa soru sorulmaz. Kapı tek yerde
 // (rcaVerdictView.ts) ve vitest ile pinli; ikinci bir kopya yazmak
@@ -34,11 +35,41 @@ function rateAnalysis(
 
 const GUVEN_LABEL: Record<string, string> = { yuksek: 'YÜKSEK GÜVEN', orta: 'ORTA GÜVEN', dusuk: 'DÜŞÜK GÜVEN' };
 
+// extLinkStyle — dış sistem köprü çipi. .sec sınıfının üstüne yalnız
+// boyut/renk; hand-roll bir buton DEĞİL (frontend-conventions §1).
+const extLinkStyle: React.CSSProperties = {
+  fontSize: 11.5, padding: '4px 10px', textDecoration: 'none',
+  color: 'var(--accent2)', whiteSpace: 'nowrap',
+};
+
 export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; rangeS?: number }) {
   const [state, setState] = useState<'idle' | 'loading' | 'done' | 'error'>('idle');
   const [res, setRes] = useState<ServiceAnalysisResponse | null>(null);
   const [errMsg, setErrMsg] = useState('');
   const [showCtx, setShowCtx] = useState(false);
+  // v0.9.658 — Kibana ayarları YALNIZ analiz tamamlandığında çekiliyor:
+  // panel çoğu zaman hiç açılmıyor ve boşuna bir istek atmak ES-maliyet
+  // disiplinine aykırı olurdu (CLAUDE.md: fetch on expand/open only).
+  const [kibana, setKibana] = useState<KibanaSettings | null>(null);
+  useEffect(() => {
+    if (state !== 'done' || kibana) return;
+    api.getKibanaSettings().then(setKibana).catch(() => { /* link çizilmez */ });
+  }, [state, kibana]);
+
+  // Pencere ANALİZİN koştuğu ana sabitleniyor: her render'da now()
+  // hesaplamak hem v0.5.184 sınıfı bir tuzak hem de linki analizden
+  // KAYDIRIRDI — operatör başka bir aralığın loglarına giderdi.
+  const kibanaHref = useMemo(() => {
+    if (!kibana || state !== 'done') return null;
+    const toNs = Date.now() * 1e6;
+    return buildKibanaURL(kibana, {
+      fromNs: toNs - rangeS * 1e9,
+      toNs,
+      // severity 17 = FATAL|ERROR — analiz zaten hata odaklı.
+      kql: buildKQLFromFilter({ service, search: '', severity: 17, traceId: '', spanId: '' }),
+    });
+    // res kimliği: yeni analiz = yeni pencere.
+  }, [kibana, state, service, rangeS, res?.exchangeId]);
   // v0.9.593 — oy artık GERÇEKTEN kaydediliyor.
   //
   // Öncesi: bu state yalnız local'di. Panel operatöre "Bu analiz
@@ -115,19 +146,24 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
         )}
 
         {state === 'done' && res?.parsed && res.analysis && (
-          <Result res={res} fb={fb} setFb={setFb} showCtx={showCtx} setShowCtx={setShowCtx} />
+          <Result res={res} fb={fb} setFb={setFb} showCtx={showCtx} setShowCtx={setShowCtx}
+            kibanaHref={kibanaHref} service={service} />
         )}
       </div>
     </div>
   );
 }
 
-function Result({ res, fb, setFb, showCtx, setShowCtx }: {
+function Result({ res, fb, setFb, showCtx, setShowCtx, kibanaHref, service }: {
   res: ServiceAnalysisResponse;
   fb: 1 | -1 | null;
   setFb: (v: 1 | -1 | null) => void;
   showCtx: boolean;
   setShowCtx: (v: boolean) => void;
+  // v0.9.658 — dış sistem köprüleri üst bileşende hesaplanıyor
+  // (Kibana ayarı orada çekiliyor); Result yalnız ÇİZİYOR.
+  kibanaHref: string | null;
+  service: string;
 }) {
   const a = res.analysis!;
   const ctx = res.context;
@@ -177,6 +213,35 @@ function Result({ res, fb, setFb, showCtx, setShowCtx }: {
             {a.oneriler.map((o, i) => <li key={i} style={liStyle}>{o}</li>)}
           </ul>
         </Block>
+      )}
+
+      {/* v0.9.658 — DIŞ SİSTEM KÖPRÜLERİ: analizden çıkıp operatörün
+          kendi araçlarına gitmek.
+
+          İkisi de deterministik ve sunucu/istemci tarafında kuruluyor;
+          model bir URL üretmiyor (bozma riski).
+
+          · Log köprüsü (v0.9.655): örnek request_id'lerden kurumun log
+            arayüzüne. Ortam servis adının sonekinden çözülüyor.
+          · Kibana (operatör isteği): bu SERVİSİN hata logları, analizin
+            penceresiyle. buildKQLFromFilter Logs sayfasıyla PAYLAŞILAN
+            kurucu — alan adları (service.name/log.level) iki yere
+            kopyalanmıyor.
+
+          Hiçbiri yapılandırılmamışsa şerit HİÇ çizilmiyor. */}
+      {(kibanaHref || (res.correlationLinks?.length ?? 0) > 0) && (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 12 }}>
+          {kibanaHref && (
+            <a href={kibanaHref} target="_blank" rel="noopener" className="sec"
+              title={`${service} hata logları — analizin penceresiyle Kibana Discover'da`}
+              style={extLinkStyle}>↗ Kibana'da loglar</a>
+          )}
+          {res.correlationLinks?.map(l => (
+            <a key={l.href} href={l.href} target="_blank" rel="noopener" className="sec"
+              title="Örnek request_id ile dış log sisteminde aç"
+              style={extLinkStyle}>↗ {l.label}</a>
+          ))}
+        </div>
       )}
 
       {/* Footer: feedback + "Bağlamı gör"

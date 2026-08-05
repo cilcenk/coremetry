@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { CSSProperties, ReactNode } from 'react';
+import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 
 // v0.9.639 — liste sayfalarının filtre barı için tek primitif.
 //
@@ -35,7 +35,21 @@ export interface PageControlsProps {
   style?: CSSProperties;
 }
 
-export function PageControls({ children, sticky = false, className, style }: PageControlsProps) {
+// v0.9.669 — kalan div ÖZNİTELİKLERİ geçirgen.
+//
+// AIObservability'nin barı `data-shortcut-search` taşıyordu ve
+// GlobalShortcuts o özniteliği arama kısayolunun AÇIK işareti olarak
+// arıyor (querySelectorAll('[data-shortcut-search]')). PageControls'a
+// dönüştürürken öznitelik sessizce düşmüştü — sayfa çalışmaya devam
+// eder, yalnız kısayol ölür; fark edilmesi zor bir kayıp.
+//
+// Genel geçirgenlik tercih edildi çünkü sorun tek bir öznitelikte
+// değil: `.controls`u kullanan 20+ sayfanın taşıdığı her data-*/aria-*
+// aynı şekilde düşerdi.
+type PageControlsAllProps = PageControlsProps &
+  Omit<HTMLAttributes<HTMLDivElement>, 'style' | 'className' | 'children'>;
+
+export function PageControls({ children, sticky = false, className, style, ...rest }: PageControlsAllProps) {
   const ref = useRef<HTMLDivElement>(null);
 
   // v0.9.644 — barın YÜKSEKLİĞİNİ `--controls-h` olarak yayınla.
@@ -66,7 +80,9 @@ export function PageControls({ children, sticky = false, className, style }: Pag
   }, [sticky]);
 
   return (
-    <div ref={ref} className={[
+    // rest ÖNCE: className/style/ref açıkça sonra yazılıyor ki bir
+    // çağıran onları kazara ezemesin.
+    <div {...rest} ref={ref} className={[
       'controls',
       sticky ? 'is-sticky' : '',
       className ?? '',

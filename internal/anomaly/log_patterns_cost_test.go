@@ -71,7 +71,12 @@ func TestOperatorBoardShapesAreMatched(t *testing.T) {
 	cases := []struct{ sample, wantPattern string }{
 		{"ORA-03113: database connection closed by peer", "Oracle errors (ORA-)"},
 		{"java.lang.NullPointerException: Cannot invoke", "Null pointer"},
-		{"com.akbank.bsa.core.exception.ExternalSystemException: Request not allowed for URI :", "External system rejected"},
+		// v0.9.656 — kurum paket öneki JENERİKLEŞTİRİLDİ. Bu depo bir
+		// müşteri adı taşımaz ve fixture'lar da istisna değil.
+		// Test ZAYIFLAMIYOR: desen `ExternalSystemException|Request not
+		// allowed for URI|…` üzerinden eşleşiyor, paket öneki eşleşmeye
+		// HİÇ girmiyor — iki eşleşen jeton da olduğu gibi duruyor.
+		{"com.example.core.exception.ExternalSystemException: Request not allowed for URI :", "External system rejected"},
 		{"javax.naming.NameNotFoundException", "JNDI / lookup failure"},
 		{"Service endpoint not found", "JNDI / lookup failure"},
 		{"Queue connection definition not found with name", "JNDI / lookup failure"},

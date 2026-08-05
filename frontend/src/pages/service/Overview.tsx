@@ -407,9 +407,18 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // hangisinin doğru olduğuna operatör bakarak karar versin — sessizce
   // kaynak değiştirmek, grafiğin ne anlattığını belirsizleştirirdi.
   const metricTputLine = useMemo<ChartLine | null>(() => {
-    const ser = metricTputQ.data?.series;
-    if (!ser || ser.length === 0) return null;
-    return { series: ser, color: 'var(--teal)', label: 'Metrik (job)' };
+    const d = metricTputQ.data;
+    if (!d?.series || d.series.length === 0) return null;
+    // v0.9.675 — etiket KAYNAĞI söylüyor. Sabit "Metrik (job)" yazıyordu,
+    // oysa v0.9.671'den beri eşleşme job / service / name / service_name
+    // kolonundan gelebiliyor. `name`den eşleşen bir çizgiyi "(job)" diye
+    // etiketlemek lejantı yalancı yapardı — ve bu çizginin TEK işi span
+    // türevli sayımla kıyaslanmak, yani neyi ölçtüğü okunabilir olmalı.
+    return {
+      series: d.series,
+      color: 'var(--teal)',
+      label: `Metrik · ${d.matchedBy ?? '?'}`,
+    };
   }, [metricTputQ.data]);
 
   // v0.9.170 (operatör-bildirimi: cluster çözülemeyen / metrik-yoğun
@@ -540,12 +549,29 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               çizmesi, aynı kartta iki farklı servisi üst üste koymak olurdu. */}
           <ChartCard title={scopedChartTitle('Throughput', usingAllSpans)} titleTip={latScopeNote} unit=" req/s" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
             legendStorageKey="ov-throughput" statsDefaultCollapsed
-            lines={metricTputLine ? [...throughput.chart, metricTputLine] : throughput.chart}
-            statsLines={throughput.stats} />
+            lines={throughput.chart} statsLines={throughput.stats} />
           {/* v0.9.665 — TANILAMA. Boş bir grafik "metrik yok" ile "desen
               tutmadı"yı aynı gösterir; ikisi bambaşka eylem gerektiriyor
               (collector'ı düzelt / deseni düzelt). Bu yüzden neden
               yazılıyor, gerçek `job` değerleriyle birlikte. */}
+          {/* v0.9.675 (operatör: "Throughput'un altında ayrı bir panel
+              olsun") — metrik türevli seri KENDİ kartında.
+              Önce span türevli çizginin yanına konmuştu; aynı eksende iki
+              farklı ölçüm yöntemi üst üste binince hangisinin ne olduğu
+              okunmuyordu. Ayrı kart ikisini kıyaslanabilir tutuyor:
+              aynı pencere, aynı birim, ayrı eksen. */}
+          {metricTputLine && (
+            <div style={{ marginTop: 10 }}>
+              <ChartCard
+                title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
+                titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · instrument ${metricTputQ.data?.instrument ?? '?'} · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}. Span türevli throughput'tan BAĞIMSIZ bir ölçüm — ayrışıyorlarsa bu başlı başına bir bulgu.`}
+                unit=" req/s" mode="line"
+                deploy={deploy} onZoom={onZoom} onZoomReset={onZoomReset}
+                syncKey={chartSync} xRange={xRange}
+                legendStorageKey="ov-throughput-metric" statsDefaultCollapsed
+                lines={[metricTputLine]} />
+            </div>
+          )}
           {metricTputQ.data && !metricTputLine && (
             <MetricThroughputNote d={metricTputQ.data} />
           )}

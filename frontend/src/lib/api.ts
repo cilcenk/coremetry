@@ -25,7 +25,7 @@ import type {
   Role, LDAPConfig, LDAPDirectoryUser,
   FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
-  OtlpExemplar, TraceLinks, TraceCountResponse } from './types';
+  OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
@@ -410,6 +410,17 @@ export const api = {
   //
   // reason dolu ise SAYI YOK: bazı şekiller MV'de ucuza sayılamıyor ve
   // pahalı bir sayı dürüst bir retten kötüdür.
+  // v0.9.657 — dış log köprüsü şablonları (admin). Backend doğrulamayı
+  // yapıyor: http(s) + {value} şartı ve hangi ortamın hatalı olduğu 400
+  // gövdesinde döner.
+  getCorrelationLink: () =>
+    get<CorrelationLinkSettings>('/api/settings/correlation-link'),
+  putCorrelationLink: (templates: Record<string, string>) =>
+    request<{ templates: Record<string, string> }>('/api/settings/correlation-link', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ templates }),
+    }),
+
   tracesCount: (params: TracesParams, signal?: AbortSignal) =>
     get<TraceCountResponse>(`/api/traces/count?${qs(params)}`, signal),
 

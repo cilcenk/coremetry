@@ -13,6 +13,8 @@ import {
   type GoDuration,
   substituteVars,
   timeRangeToNs,
+  tsLong,
+  tsMinute,
 } from './utils';
 
 // First-ever frontend test file (v0.7.25). Targets the pure helpers in
@@ -324,5 +326,27 @@ describe('fmtDurShort / fmtAgoNs (v0.8.463)', () => {
     // Yanlış birim (ms) verilirse near-epoch okunur → devasa yaş;
     // bu satır birim sözleşmesini pinler.
     expect(fmtAgoNs(now - 51_000)).not.toBe('51s ago');
+  });
+});
+
+// v0.9.660 — tsMinute: tsLong'un dar kolonlar için saniyesiz kardeşi.
+// HER İKİ DAL: boş damga da biçimlenen damga da. Bir değer+birim
+// şablonunun tek dalını test etmek bu kod tabanında tekrar eden hata.
+describe('tsMinute', () => {
+  it('saniyeyi atıyor, dakikayı koruyor', () => {
+    const ns = new Date(2026, 7, 5, 10, 9, 45).getTime() * 1e6;
+    expect(tsLong(ns)).toBe('05.08.2026 10:09:45');
+    expect(tsMinute(ns)).toBe('05.08.2026 10:09');
+  });
+
+  it('gece yarısını kırpmıyor (00:00 geçerli bir saat)', () => {
+    const ns = new Date(2026, 0, 1, 0, 0, 7).getTime() * 1e6;
+    expect(tsMinute(ns)).toBe('01.01.2026 00:00');
+  });
+
+  // Damga yoksa tsLong '—' döndürüyor; kör bir slice(0,-3) onu ''
+  // yapardı ve hücre sessizce boşalırdı.
+  it('damga yoksa em-dash', () => {
+    expect(tsMinute(0)).toBe('—');
   });
 });

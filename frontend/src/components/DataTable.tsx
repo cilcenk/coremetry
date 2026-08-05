@@ -247,6 +247,27 @@ export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<
   );
 }
 
+// ResetLayoutButton — kalıcı kolon genişliklerini temizler (v0.9.660).
+//
+// `resetLayout` useDataTable'dan beri DÖNDÜRÜLÜYORDU ve HİÇBİR sayfa
+// bağlamamıştı. Operatör bir kolonu bir kez sürüklediğinde genişlik
+// localStorage'a yazılıyor ve kalıcı oluyor; o genişlik tabloyu ekrandan
+// taşırıyorsa geri dönüş yolu YOK — çıkmaz sokak. Users tablosunun
+// kaymasında (v0.9.660) bu ikinci katmandı.
+//
+// KENDİ KENDİNİ GİZLİYOR: kalıcı genişlik yoksa buton da yok. Hiçbir şey
+// yapmayan bir düğme araç çubuğunda gürültüdür ve operatör onu bir daha
+// okumaz.
+export function ResetLayoutButton<T>({ dt }: { dt: DataTable<T> }) {
+  if (Object.keys(dt.colWidths).length === 0) return null;
+  return (
+    <button className="sec" onClick={dt.resetLayout}
+      title="Restore default column widths — clears widths you dragged, so the table fits the window again">
+      Reset columns
+    </button>
+  );
+}
+
 // DataTableHead — the full <thead><tr> built from the column defs: each
 // sortable column is clickable (▲▼↕ glyph + aria-sort, matching the
 // house .sortable/.sorted CSS) and every column gets a right-edge resize

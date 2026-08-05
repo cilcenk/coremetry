@@ -7,28 +7,11 @@ import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
 import { keys, useUsers, useCustomRoles } from '@/lib/queries';
 import { api, type UserRow, type CustomRole } from '@/lib/api';
 import type { Role } from '@/lib/types';
-import { tsLong, tsRel } from '@/lib/utils';
-import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
-import type { DataTableColumn } from '@/lib/dataTable';
+import { tsLong, tsMinute, tsRel } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
+import { USER_COLS } from './usersColumns';
 import { PageControls } from '@/components/ui/PageControls';
 
-// Columns for the shared sortable + resizable DataTable.
-const USER_COLS: DataTableColumn<UserRow>[] = [
-  { id: 'email',      label: 'Email',       sortValue: u => u.email,             naturalDir: 'asc', flex: true },
-  { id: 'role',       label: 'Role',        sortValue: u => u.role,              naturalDir: 'asc',  width: 120 },
-  { id: 'customRole', label: 'Custom role', width: 150 },
-  { id: 'team',       label: 'Team',        sortValue: u => u.team ?? '',        naturalDir: 'asc', flex: true },
-  { id: 'provider',   label: 'Provider',    sortValue: u => u.authProvider ?? '', naturalDir: 'asc', width: 110 },
-  // v0.8.403 — presence. Sort key puts online users first, then most
-  // recently seen; never-seen (no stamp) sinks to the bottom.
-  { id: 'seen',       label: 'Last seen',   sortValue: u => u.lastSeenAt ?? 0,   naturalDir: 'desc', width: 120 },
-  // v0.8.450 — kalıcı son LOGIN anı (operatör isteği). "Last seen"
-  // Redis-TTL'li aktivite damgası; bu kolon users tablosundan gelir
-  // ve hiç sönmez.
-  { id: 'lastLogin',  label: 'Last login',  sortValue: u => u.lastLoginAt ?? 0,  naturalDir: 'desc', width: 130 },
-  { id: 'created',    label: 'Created',     sortValue: u => u.createdAt,         naturalDir: 'desc', width: 170 },
-  { id: 'actions',    label: 'Actions',     align: 'right', width: 230 },
-];
 
 export default function UsersPage() {
   const { user: me } = useAuth();
@@ -130,6 +113,7 @@ export default function UsersPage() {
               {teamOptions.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
           )}
+          <ResetLayoutButton dt={dt} />
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 10, marginLeft: 'auto' }}>
             {/* v0.8.403 — presence: count over ALL loaded users (not the
                 team-filtered slice) so the header reads as a page-level
@@ -258,8 +242,13 @@ export default function UsersPage() {
                             title="Bu sürümden beri hiç giriş yapmadı">—</span>
                         )}
                       </td>
-                      <td className="mono" style={{ color: 'var(--text3)' }}>
-                        {tsLong(u.createdAt)}
+                      <td className="mono" style={{ color: 'var(--text3)' }}
+                        title={tsLong(u.createdAt)}>
+                        {/* Saniyesiz — bir hesabın oluşturulma saniyesi
+                            25px kolon genişliğine değmiyor ve o 25px
+                            doğrudan taşmaya gidiyordu (v0.9.660). Tam
+                            damga title'da. */}
+                        {tsMinute(u.createdAt)}
                       </td>
                       <td style={{ textAlign: 'right' }}>
                         <button className="sec" onClick={() => setResetFor(u)}

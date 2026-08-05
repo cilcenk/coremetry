@@ -1994,6 +1994,10 @@ export interface ServiceAnalysisResponse {
   /** v0.9.593 — bu CEVABIN kimliği; 👍/👎 bununla
    *  POST /api/ai/feedback'e gider. Yoksa affordance ÇİZİLMEZ. */
   exchangeId?: string;
+  /** v0.9.655 — örnek request_id'lerden dış log sistemine köprüler.
+   *  Şablon yapılandırılmamışsa alan HİÇ gelmez (kırık link, link
+   *  yokluğundan kötüdür). Ortam servis adının sonekinden çözülür. */
+  correlationLinks?: { label: string; href: string }[];
 }
 
 /** v0.9.594 — RCA hakem motorunun kalite özeti (GET /api/ai/rca-quality).

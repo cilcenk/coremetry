@@ -11,6 +11,10 @@
 // the full library.
 
 import type { KibanaSettings } from './types';
+import {
+  LEVEL_FIELDS, SERVICE_FIELDS, SPAN_FIELDS, TRACE_FIELDS,
+  kqlAnyField, serviceValues,
+} from './logFieldAliases';
 
 export type KibanaQueryContext = {
   // ISO timestamps or "now-Xh" style relative; Kibana accepts
@@ -99,17 +103,29 @@ export function buildKQLFromFilter(f: {
   hasTrace?: boolean;
 }): string {
   const parts: string[] = [];
-  if (f.service) parts.push(`service.name:"${f.service.replace(/"/g, '\\"')}"`);
-  if (f.traceId) parts.push(`trace.id:"${f.traceId}"`);
-  if (f.hasTrace && !f.traceId) parts.push('trace.id:*'); // v0.8.406 — trace-only filter
-  if (f.spanId)  parts.push(`span.id:"${f.spanId}"`);
+  // v0.9.661 — TEK alan adı yerine ADAY GRUBU. Operatörün prod
+  // OpenShift indeksinde `service.name`/`trace.id` alanları yok; kimlik
+  // kubernetes.container_name ve düz trace_id'de. Coremetry'nin kendi ES
+  // filtresi bu adayları zaten deniyordu (svcFields / expandShorthand),
+  // yalnız bu link geride kalmıştı — Logs sayfası doluyken Kibana
+  // "No results" diyordu. Listeler logFieldAliases.ts'te, Go kaynağıyla
+  // test kapılı.
+  if (f.service) parts.push(kqlAnyField(SERVICE_FIELDS, serviceValues(f.service)));
+  if (f.traceId) parts.push(kqlAnyField(TRACE_FIELDS, [f.traceId]));
+  // trace-only filtresi (v0.8.406): "herhangi bir trace'e bağlı" —
+  // varlık sorgusu, değer sorgusu değil.
+  if (f.hasTrace && !f.traceId) parts.push(`(${TRACE_FIELDS.map(x => `${x}:*`).join(' or ')})`);
+  if (f.spanId)  parts.push(kqlAnyField(SPAN_FIELDS, [f.spanId]));
   if (f.severity > 0) {
-    // Map OTel severity number to a level name range; Kibana's
-    // log.level field typically holds the canonical text.
+    // OTel severity numarası → seviye ADI kümesi. Seviye alanının adı da
+    // pipeline'a göre değişiyor (log.level / level / severity / …), o
+    // yüzden alan × değer çapraz çarpımı.
     const min = f.severity;
-    if (min >= 21) parts.push('log.level:"FATAL"');
-    else if (min >= 17) parts.push('log.level:("FATAL" OR "ERROR")');
-    else if (min >= 13) parts.push('log.level:("FATAL" OR "ERROR" OR "WARN")');
+    const levels = min >= 21 ? ['FATAL']
+      : min >= 17 ? ['FATAL', 'ERROR']
+      : min >= 13 ? ['FATAL', 'ERROR', 'WARN']
+      : [];
+    if (levels.length > 0) parts.push(kqlAnyField(LEVEL_FIELDS, levels));
   }
   if (f.search.trim()) parts.push(f.search.trim());
   return parts.join(' AND ');

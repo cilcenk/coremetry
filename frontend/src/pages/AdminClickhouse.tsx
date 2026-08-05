@@ -606,7 +606,7 @@ function CoordinatorPanel() {
       {data === null && <EmptyNote text="Failed to load coordination spread" />}
       {data && data.note && <EmptyNote text={data.note} />}
       {data && !data.note && data.nodes.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap is-fit">
           <table style={{ tableLayout: 'fixed', width: '100%' }}>
             <DataTableColgroup dt={dt} />
             <DataTableHead dt={dt} />
@@ -719,7 +719,7 @@ export default function AdminClickhousePage() {
               {(!data.slowQueries || data.slowQueries.length === 0)
                 ? <EmptyNote text="No slow queries in the last hour" />
                 : (
-                  <div className="table-wrap">
+                  <div className="table-wrap is-fit">
                     <table style={{ tableLayout: 'fixed', width: '100%' }}>
                       <DataTableColgroup dt={slowDt} />
                       <DataTableHead dt={slowDt} />
@@ -748,7 +748,7 @@ export default function AdminClickhousePage() {
               {(!data.merges || data.merges.length === 0)
                 ? <EmptyNote text="No merges in flight — CH idle or up-to-date" />
                 : (
-                  <div className="table-wrap">
+                  <div className="table-wrap is-fit">
                     <table style={{ tableLayout: 'fixed', width: '100%' }}>
                       <DataTableColgroup dt={mergeDt} />
                       <DataTableHead dt={mergeDt} />
@@ -774,7 +774,7 @@ export default function AdminClickhousePage() {
               {(!data.partHotspots || data.partHotspots.length === 0)
                 ? <EmptyNote text="No part data available" />
                 : (
-                  <div className="table-wrap">
+                  <div className="table-wrap is-fit">
                     <table style={{ tableLayout: 'fixed', width: '100%' }}>
                       <DataTableColgroup dt={partDt} />
                       <DataTableHead dt={partDt} />
@@ -799,7 +799,7 @@ export default function AdminClickhousePage() {
 
             {data.asyncInserts && data.asyncInserts.length > 0 && (
               <Section title="Async insert buffer">
-                <div className="table-wrap">
+                <div className="table-wrap is-fit">
                   <table style={{ tableLayout: 'fixed', width: '100%' }}>
                     <DataTableColgroup dt={asyncDt} />
                     <DataTableHead dt={asyncDt} />
@@ -831,7 +831,7 @@ export default function AdminClickhousePage() {
                   a sustained non-zero row count usually means the table needs a tombstone or
                   ReplacingMergeTree pattern instead of in-place mutation.
                 </p>
-                <div className="table-wrap">
+                <div className="table-wrap is-fit">
                   <table style={{ tableLayout: 'fixed', width: '100%' }}>
                     <DataTableColgroup dt={mutationDt} />
                     <DataTableHead dt={mutationDt} />
@@ -855,7 +855,7 @@ export default function AdminClickhousePage() {
 
             {data.replicationLag && data.replicationLag.length > 0 && (
               <Section title="Replication lag (cluster only)">
-                <div className="table-wrap">
+                <div className="table-wrap is-fit">
                   <table style={{ tableLayout: 'fixed', width: '100%' }}>
                     <DataTableColgroup dt={repLagDt} />
                     <DataTableHead dt={repLagDt} />
@@ -1117,7 +1117,7 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
       </div>
 
       {t.nodes && t.nodes.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap is-fit">
           <table style={{ tableLayout: 'fixed', width: '100%' }}>
             <DataTableColgroup dt={nodesDt} />
             <DataTableHead dt={nodesDt} />
@@ -1155,7 +1155,7 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
           }}>
             Shard policy (resolved)
           </div>
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={shardDt} />
               <DataTableHead dt={shardDt} />

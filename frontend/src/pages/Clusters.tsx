@@ -735,7 +735,7 @@ export default function ClustersPage() {
                     </div>
                   )}
                   {nodeRows.length > 0 && (
-                    <div className="table-wrap">
+                    <div className="table-wrap is-fit">
                       <table style={{ tableLayout: 'fixed', width: '100%' }}>
                         <DataTableColgroup dt={ndt} />
                         <DataTableHead dt={ndt} />
@@ -789,7 +789,7 @@ export default function ClustersPage() {
                     </div>
                   )}
                   {depRows.length > 0 && (
-                    <div className="table-wrap">
+                    <div className="table-wrap is-fit">
                       <table style={{ tableLayout: 'fixed', width: '100%' }}>
                         <DataTableColgroup dt={depdt} />
                         <DataTableHead dt={depdt} />
@@ -831,7 +831,7 @@ export default function ClustersPage() {
                     </div>
                   )}
                   {nsRows.length > 0 && (
-                    <div className="table-wrap">
+                    <div className="table-wrap is-fit">
                       <table style={{ tableLayout: 'fixed', width: '100%' }}>
                         <DataTableColgroup dt={nsdt} />
                         <DataTableHead dt={nsdt} />
@@ -902,7 +902,7 @@ export default function ClustersPage() {
                     </div>
                   )}
                   {rows.length > 0 && (
-                    <div className="table-wrap">
+                    <div className="table-wrap is-fit">
                       <table style={{ tableLayout: 'fixed', width: '100%' }}>
                         <DataTableColgroup dt={dt} />
                         <DataTableHead dt={dt} />

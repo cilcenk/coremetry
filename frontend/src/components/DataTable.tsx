@@ -221,8 +221,22 @@ export function resolveInitialSort(
 // globals.css) anchors to its right edge. mousedown starts the drag;
 // click is stopped so the handle can live inside a sort-on-click <th>
 // without triggering a sort. (v0.7.54)
+// v0.9.662 — ÇİFT TIK düzeni sıfırlar.
+//
+// Sürüklenen genişlik localStorage'a yazılıyor ve kalıcı. O genişlik
+// tabloyu ekrandan taşırırsa operatörün geri dönüş yolu yoktu — v0.9.660'ta
+// Users tablosunda tam bu oldu (kolon 0'a çöktü, tablo taştı). Kurtuluş
+// yolu HATANIN YAPILDIĞI yerde duruyor: tutamağın kendisi.
+//
+// Burada olmasının sebebi kapsam: tutamak TEK paylaşılan bileşen, yani bu
+// tek satır useDataTable kullanan HER tabloyu kapsıyor. Sayfa başına buton
+// eklemek 40 dosyalık bir süpürme olurdu ve yarısı unutulurdu.
 export function ColResizeHandle<T>({ dt, colId }: { dt: DataTable<T>; colId: string }) {
-  return <span className="col-resize-handle" onMouseDown={e => dt.startResize(colId, e)} onClick={e => e.stopPropagation()} title="Drag to resize" />;
+  return <span className="col-resize-handle"
+    onMouseDown={e => dt.startResize(colId, e)}
+    onDoubleClick={e => { e.stopPropagation(); dt.resetLayout(); }}
+    onClick={e => e.stopPropagation()}
+    title="Drag to resize · double-click to reset all column widths" />;
 }
 
 // DataTableColgroup — emits the <colgroup> that makes table-layout:fixed

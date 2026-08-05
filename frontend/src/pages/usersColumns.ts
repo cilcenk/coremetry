@@ -1,5 +1,6 @@
 import type { UserRow } from '@/lib/api';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { FIT_CONTENT_BUDGET } from '@/lib/tableFit';
 
 // Users tablosunun kolon bütçesi (v0.9.660).
 //
@@ -31,7 +32,9 @@ import type { DataTableColumn } from '@/lib/dataTable';
 // Sabit kolonlar 1020px, email'e en az 220px kalıyor.
 
 // USERS_CONTENT_BUDGET — tasarım hedefi. Test bunun üzerinden ölçüyor.
-export const USERS_CONTENT_BUDGET = 1240;
+// v0.9.662'de paylaşılan sabite bağlandı: aynı sayının iki yerde durması
+// bu kod tabanının tekrar eden hata sınıfı.
+export const USERS_CONTENT_BUDGET = FIT_CONTENT_BUDGET;
 
 // USERS_EMAIL_MIN — email hücresinin gerçek asgarisi: 20px avatar +
 // 8px boşluk + "yusufcan.baspinar@akbank.com" uzunluğunda bir adres

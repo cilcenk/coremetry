@@ -66,6 +66,43 @@ export function RenderedMarkdown({ text }: { text: string }) {
   return <>{blocks}</>;
 }
 
+// stripMarkdown — işaretleri ATAR, düz metin döndürür (v0.9.696).
+//
+// Operatör-bildirimi: "Burada neden açıklama da hata tipi falan bold
+// yazmıyor" — exception detayında modelin `* **Hata Tipi:** …` çıktısı
+// yıldızlarıyla görünüyordu.
+//
+// v0.9.641 aynı sınıfı CopilotExplain için düzeltmişti ama AI metni BEŞ
+// yerde basılıyor ve o kapı yalnız BİRİNİ kapsıyordu.
+//
+// NEDEN İKİ ARAÇ GEREKİYOR: yüzeylerin yarısı KIRPILMIŞ tek satırlık
+// kart önizlemesi (WebkitLineClamp) ve `title=` ipucu. RenderedMarkdown
+// oralarda YANLIŞ: <p>/<ul> blokları üretiyor, satır kırpması bozuluyor;
+// `title` ise bir HTML özniteliği, içine React düğümü koyulamıyor —
+// oraya markdown'ı ancak DÜZLEŞTİREREK sokabilirsin. Yani "her yerde
+// RenderedMarkdown kullan" kuralı kartlarda düzeni bozardı.
+//
+// Bilinmeyen işaretler OLDUĞU GİBİ kalıyor — RenderedMarkdown'ın
+// "sessizce içerik yutma" ilkesiyle aynı.
+export function stripMarkdown(s: string): string {
+  return s
+    // ``` çitleri: yalnız çit satırı gider, kod durur.
+    .replace(/^```.*$/gm, '')
+    // Başlıklar ve madde imleri satır BAŞINDA.
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '')
+    .replace(/^\s{0,3}[-*]\s+/gm, '')
+    // [etiket](url) → etiket. URL düz metinde gürültü.
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1')
+    // **kalın** / *eğik* / `kod` → içerik. Kapanışsız işaret DURUR:
+    // eşleşme çifti şart, yoksa satırın kalanını yutardı.
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/\*([^*]+)\*/g, '$1')
+    .replace(/`([^`]+)`/g, '$1')
+    // Kırpılmış tek satırda satır sonu görsel boşluk demek.
+    .replace(/\s*\n+\s*/g, ' ')
+    .trim();
+}
+
 // Inline markdown — bold, italic, inline code, links. Walks the
 // string once, emitting React fragments. The regex is anchored to
 // each delimiter so unmatched ones (** without closing **) pass

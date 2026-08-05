@@ -20,6 +20,7 @@ import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { resolveSelectedItem } from '@/lib/inboxDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
+import { stripMarkdown } from '@/components/Markdown';
 
 // Facet vocab + defaults (v0.8.291) — both defaults are what the URL codec
 // omits so a fresh link stays clean.
@@ -963,9 +964,13 @@ function AssigneePill({ v }: { v: string }) {
 function AISummaryLine({ it }: { it: InboxItem }) {
   if (!it.aiSummary) return null;
   const age = it.aiSummaryAt ? fmtAgoNs(it.aiSummaryAt) : '';
+  // v0.9.696 — KIRPILMIŞ yüzey: markdown DÜZLEŞTİRİLİYOR, render EDİLMİYOR.
+  // RenderedMarkdown burada yanlış olurdu (<p>/<ul> tek-satır kırpmasını
+  // bozar) ve `title` bir HTML özniteliği — React düğümü alamaz.
+  const summary = stripMarkdown(it.aiSummary);
   return (
     <div
-      title={age ? `${it.aiSummary}\n\nAI çıkarımı · ${age}` : it.aiSummary}
+      title={age ? `${summary}\n\nAI çıkarımı · ${age}` : summary}
       style={{
         fontSize: 11, color: 'var(--text2)', marginTop: 4,
         padding: '3px 7px', borderRadius: 'var(--radius-sm)',
@@ -978,7 +983,7 @@ function AISummaryLine({ it }: { it: InboxItem }) {
         overflow: 'hidden',
       }}
     >
-      <IconSparkles size={10} /> {it.aiSummary}
+      <IconSparkles size={10} /> {summary}
       {age && <span style={{ color: 'var(--text3)' }}> · {age}</span>}
     </div>
   );

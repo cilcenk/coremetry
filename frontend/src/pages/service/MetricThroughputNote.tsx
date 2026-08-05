@@ -77,9 +77,18 @@ export function MetricThroughputNote({ d }: { d: ServiceMetricThroughput }) {
     <div style={box}>
       <b>Metrik var ama bu servise eşleşen seri yok.</b>
       <div style={{ marginTop: 4 }}>
-        <code>{d.metric}</code> · etiket <code>{d.jobLabel}</code> · desen{' '}
-        <code>{d.pattern}</code>
+        <code>{d.metric}</code>
+        {d.instrument && <> · instrument <code>{d.instrument}</code></>}
+        {' '}· desen <code>{d.pattern}</code>
       </div>
+      {(d.triedLabels?.length ?? 0) > 0 && (
+        <div style={{ marginTop: 4, color: 'var(--text3)' }}>
+          Denenen kimlik etiketleri:{' '}
+          {d.triedLabels!.map((l, i) => (
+            <span key={l}>{i > 0 && ', '}<code>{l}</code></span>
+          ))}
+        </div>
+      )}
       {hasJobs ? (
         <div style={{ marginTop: 6 }}>
           <div style={{ color: 'var(--text3)' }}>

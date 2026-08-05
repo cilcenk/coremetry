@@ -203,6 +203,49 @@ func (s *Store) RateGauge(
 func (s *Store) MetricExists(ctx context.Context, metric string) (bool, error) {
 	now := time.Now()
 	from := now.Add(-capacityWindow)
+
+	// v0.9.694 (perf taraması #13 + v0.9.693 sonrası ölçüm) — VARLIK
+	// SORUSU KATALOGDAN.
+	//
+	// Ham yol `metric_points`'i tarıyordu ve yorumu "indexed point-existence
+	// probe" diyordu. DEĞİL: metric_points sıralama anahtarı
+	// (service_name, metric, time) ve burada service_name filtresi YOK,
+	// yani `metric` ikinci kolon → budama yok. `LIMIT 1` de count()'u
+	// kesmiyor; count() eşleşen her satırı saymak zorunda.
+	//
+	// ÖLÇÜLDÜ (v0.9.693 deploy'undan sonra, 15 dk): db-önekli varlık
+	// probları 26 çağrı / 218 MiB + dağıtık alt-sorgu 45 çağrı / 82 MiB
+	// ≈ 300 MiB. Aynı soruyu metric_catalog'a sorunca 50 çağrı / 198 KiB.
+	//
+	// v0.9.693'te receiver ÖNEK kapısını kataloğa aldım ama bu TAM AD
+	// yolu gözümden kaçtı — ölçüm yakaladı. Üç çağıranı var ve biri
+	// bugün yazdığım metrik-adı çözümlemesi (5 aday/istek).
+	//
+	// TAZELİK ŞART: katalogda TTL yok, `maxMerge(last_seen_state)`
+	// olmadan bir kez görülen metrik sonsuza kadar "var" görünür.
+	//
+	// KATALOG BOŞSA ham yola düşülüyor (taze kurulum / MV henüz
+	// dolmamış) — metricCatalogHasRows aynı kararı ListMetricNames için
+	// de veriyor.
+	if s.metricCatalogHasRows(ctx) {
+		var n uint64
+		err := s.telemetryReadConn().QueryRow(ctx, `
+			SELECT count() FROM (
+				SELECT metric FROM metric_catalog
+				WHERE metric = ?
+				GROUP BY metric
+				HAVING maxMerge(last_seen_state) >= ?
+				LIMIT 1
+			) SETTINGS max_execution_time = 5`,
+			metric, from).Scan(&n)
+		if err == nil {
+			return n > 0, nil
+		}
+		// Katalog okunamadı — ham yola düş. Varlık sorusuna "hayır"
+		// demek özelliği sessizce kapatır; yavaş cevap, yanlış cevaptan
+		// iyidir.
+	}
+
 	var n uint64
 	err := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT count() FROM metric_points

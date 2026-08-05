@@ -48,6 +48,33 @@ func (s *Server) throughputMetricName(ctx context.Context) string {
 	return chstore.ThroughputMetricDefault
 }
 
+// metricThroughputPlan — istekten (önbellek anahtarı, CH filtresi).
+//
+// SAF, ve ayrı durmasının sebebi test edilebilirlik: Server.store somut
+// bir *chstore.Store, yani handler'a sahte store enjekte edilemiyor ve
+// uçtan uca test canlı ClickHouse ister. Karar mantığı burada durursa
+// CH olmadan çivilenebiliyor — trace_count.go'daki traceCountPlan ile
+// aynı kalıp.
+//
+// Çivilenen iki şey:
+//   - ÖNBELLEK ANAHTARI TÜM GİRDİLERİ taşımalı (CLAUDE.md sert kısıtı).
+//     metric ve jobLabel sorgudan geliyor; anahtardan düşerlerse farklı
+//     metrikler birbirinin sonucunu okur — v0.5.187 çapraz-zehirlenme
+//     sınıfı.
+//   - Filtre operatörü `=~` olmalı. `=` olsaydı desen düz metin olarak
+//     aranır ve HİÇBİR job eşleşmezdi; grafik sessizce boş kalırdı.
+func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time) (string, chstore.MetricQueryFilter) {
+	pattern := chstore.JobServiceRegex(service)
+	key := fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s", service, metric, jobLabel, cacheBucket(from, to))
+	return key, chstore.MetricQueryFilter{
+		Name:        metric,
+		Filters:     []chstore.FilterExpr{{Key: jobLabel, Op: "=~", Values: []string{pattern}}},
+		Aggregation: "sum",
+		From:        from,
+		To:          to,
+	}
+}
+
 // getServiceMetricThroughput — GET /api/services/{name}/metric-throughput
 //
 // `?metric=` ile ad geçici olarak ezilebiliyor: operatör doğru adı
@@ -64,12 +91,8 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 	if jobLabel == "" {
 		jobLabel = chstore.JobLabelDefault
 	}
-	pattern := chstore.JobServiceRegex(name)
-
-	// Önbellek anahtarı TÜM girdileri taşıyor (CLAUDE.md sert kısıtı):
-	// metrik adı ve etiket sorgudan gelebiliyor, dışarıda bırakılırsa
-	// farklı metrikler birbirinin sonucunu okur.
-	key := fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s", name, metric, jobLabel, cacheBucket(from, to))
+	key, filter := metricThroughputPlan(name, metric, jobLabel, from, to)
+	pattern := filter.Filters[0].Values[0]
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		out := map[string]any{
 			"metric":   metric,
@@ -97,13 +120,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 
 		// 2) Seri: sayaç olduğu için RATE. QueryMetricRate cumulative/delta
 		// ayrımını ve sayaç sıfırlanmalarını zaten işliyor.
-		series, err := s.store.QueryMetricRate(ctx, chstore.MetricQueryFilter{
-			Name:        metric,
-			Filters:     []chstore.FilterExpr{{Key: jobLabel, Op: "=~", Values: []string{pattern}}},
-			Aggregation: "sum",
-			From:        from,
-			To:          to,
-		}, "rate")
+		series, err := s.store.QueryMetricRate(ctx, filter, "rate")
 		if err != nil {
 			return nil, err
 		}

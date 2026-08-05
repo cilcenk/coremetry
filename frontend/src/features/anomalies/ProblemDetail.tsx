@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { fmtFixed, tsLong } from '@/lib/utils';
 import { Spinner } from '@/components/Spinner';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
+import { RenderedMarkdown } from '@/components/Markdown';
 import { useAiEvidence } from '@/components/ai/aiEvents';
 import { RootCausePanel } from '@/components/RootCausePanel';
 import { ProblemRunbookPanel } from '@/components/ProblemRunbookPanel';
@@ -313,9 +314,11 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
           padding: '8px 10px', borderRadius: 'var(--radius-sm)',
           background: 'var(--accent-soft)',
           borderLeft: '2px solid var(--accent)',
-          whiteSpace: 'pre-wrap',
         }}>
-          <IconSparkles size={11} /> {group.aiSummary}
+          {/* v0.9.696 — pre-wrap KALKTI: RenderedMarkdown zaten <p>/<ul>
+              üretiyor, ikisi birlikte satır aralarını ikiye katlıyor
+              (v0.9.641'de CopilotExplain'de öğrenildi). */}
+          <IconSparkles size={11} /> <RenderedMarkdown text={group.aiSummary} />
         </div>
       )}
 
@@ -502,9 +505,9 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 padding: '8px 10px', borderRadius: 'var(--radius-sm)',
                 background: 'var(--accent-soft)',
                 borderLeft: '2px solid var(--accent)',
-                whiteSpace: 'pre-wrap',
               }}>
-                <IconSparkles size={11} /> {problem.aiSummary}
+                {/* v0.9.696 — exception ikiziyle aynı: markdown basılıyor. */}
+                <IconSparkles size={11} /> <RenderedMarkdown text={problem.aiSummary} />
               </div>
             )}
             {problem.recentDeploy && (

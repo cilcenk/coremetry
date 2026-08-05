@@ -27,6 +27,7 @@ import type {
 import { AlertProblemDetail, ProblemDetail } from './ProblemDetail';
 import { withProblemParam, withExcParam } from './problemLink';
 import { PageControls } from '@/components/ui/PageControls';
+import { RenderedMarkdown, stripMarkdown } from '@/components/Markdown';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -1162,7 +1163,7 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                           // the existing operator-clicked Explain affordances.
                           <span className="badge b-info"
                             onClick={e => e.stopPropagation()}
-                            title={p.aiSummary}
+                            title={stripMarkdown(p.aiSummary)}
                             style={{ marginLeft: 8, cursor: 'help' }}>
                             <IconSparkles size={11} /> AI insight
                           </span>
@@ -1187,9 +1188,9 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             padding: 6, borderRadius: 4,
                             background: 'var(--accent-soft)',
                             borderLeft: '2px solid var(--accent)',
-                            whiteSpace: 'pre-wrap',
                           }}>
-                            {p.aiSummary}
+                            {/* v0.9.696 — kırpılmamış tam metin: markdown basılıyor. */}
+                            <RenderedMarkdown text={p.aiSummary} />
                           </div>
                         )}
                         {/* rc #3 — in-page root-cause ribbon. Collapsed chip

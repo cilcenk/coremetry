@@ -31,6 +31,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { keys } from '@/lib/queries/keys';
 import type { Service, Problem, OperationSummary, SLORow, TimeRange } from '@/lib/types';
+import { stripMarkdown } from '@/components/Markdown';
 
 // v0.9.257 — SINCE_MAP deleted: it had no remaining reader here, and the
 // dormant copy is how the divergence spread (pages/service/Overview.tsx
@@ -458,9 +459,12 @@ function ServiceDetailInner() {
                         sekmeleri sayfanın çok altına iterdi. */}
                     {p.aiSummary && (
                       <div
+                        // v0.9.696 — KIRPILMIŞ yüzey (2 satır) + title
+                        // özniteliği: markdown düzleştiriliyor, Inbox
+                        // kartıyla aynı gerekçe.
                         title={p.aiSummaryAt
-                          ? `${p.aiSummary}\n\nAI çıkarımı · ${fmtAgoNs(p.aiSummaryAt)}`
-                          : p.aiSummary}
+                          ? `${stripMarkdown(p.aiSummary)}\n\nAI çıkarımı · ${fmtAgoNs(p.aiSummaryAt)}`
+                          : stripMarkdown(p.aiSummary)}
                         style={{
                           fontSize: 11, color: 'var(--text2)', marginTop: 4,
                           padding: '4px 8px', borderRadius: 'var(--radius-sm)',
@@ -470,7 +474,7 @@ function ServiceDetailInner() {
                           WebkitBoxOrient: 'vertical', overflow: 'hidden',
                         }}
                       >
-                        <IconSparkles size={10} /> {p.aiSummary}
+                        <IconSparkles size={10} /> {stripMarkdown(p.aiSummary)}
                         {p.aiSummaryAt && (
                           <span style={{ color: 'var(--text3)' }}> · {fmtAgoNs(p.aiSummaryAt)}</span>
                         )}

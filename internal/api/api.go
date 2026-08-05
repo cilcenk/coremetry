@@ -1023,6 +1023,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// read access to every trace in the operator's Tempo cluster.
 	mux.HandleFunc("GET /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))
 	mux.HandleFunc("PUT /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.putTempoSettings))
+	// v0.9.655 — dış log sistemi köprü şablonu. Admin-only: bir URL
+	// şablonu, cevaplarda tıklanabilir link üretiyor.
+	mux.HandleFunc("GET /api/settings/correlation-link", auth.RequireRole(auth.RoleAdmin, s.getCorrelationLinkSetting))
+	mux.HandleFunc("PUT /api/settings/correlation-link", auth.RequireRole(auth.RoleAdmin, s.putCorrelationLinkSetting))
 	mux.HandleFunc("GET /api/settings/thanos", auth.RequireRole(auth.RoleAdmin, s.getThanosSettings))
 	mux.HandleFunc("PUT /api/settings/thanos", auth.RequireRole(auth.RoleAdmin, s.putThanosSettings))
 	mux.HandleFunc("GET  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.getLogstoreESSettings))

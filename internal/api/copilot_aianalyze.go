@@ -136,6 +136,19 @@ type aiAnalyzeResponse struct {
 	PostCheck *aiPostCheck      `json:"postCheck"`
 	Cached    bool              `json:"cached"`
 
+	// CorrelationLinks (v0.9.655, operatör: "Request Id bulduğunda
+	// prod'ta log izleme linkini de versin parametrik olarak") —
+	// örnek korelasyon kimliklerinden DIŞ log sistemine köprüler.
+	//
+	// Cevap METNİNE değil ayrı bir alana konuyor ve bu bilinçli: metin
+	// modelden geçiyor, bir URL'yi modele emanet etmek onu bozma riski.
+	// Burası sunucuda deterministik üretiliyor — "Kaynak:" alt
+	// bilgisiyle aynı ilke.
+	//
+	// Şablon yapılandırılmamışsa alan HİÇ gönderilmiyor: kırık bir
+	// link, link yokluğundan kötüdür.
+	CorrelationLinks []guidedAnswerLink `json:"correlationLinks,omitempty"`
+
 	// ExchangeID (v0.9.593) — bu CEVABIN kimliği; 👍/👎 bununla
 	// POST /api/ai/feedback'e gider.
 	//
@@ -221,6 +234,13 @@ func (s *Server) copilotAnalyzeService(w http.ResponseWriter, r *http.Request) {
 	}
 	if parsed != nil {
 		resp.PostCheck = postCheckServiceAnalysis(parsed, cx)
+	}
+	// v0.9.655 — korelasyon kimliklerinden dış log sistemine köprüler.
+	// Şablon system_settings'te; yoksa alan hiç gönderilmiyor.
+	if cx != nil && len(cx.Correlation) > 0 {
+		// Ortam servis adının SONEKİNDEN çözülüyor (-int/-uat/-prep);
+		// soneksiz ad prod demek ve "default" şablonunu alıyor.
+		resp.CorrelationLinks = correlationLinks(cx.Correlation, service, s.correlationLinkTemplates(r.Context()))
 	}
 
 	if b, err := json.Marshal(resp); err == nil {

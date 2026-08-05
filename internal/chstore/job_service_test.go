@@ -1,7 +1,9 @@
 package chstore
 
 import (
+	"os"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -175,5 +177,101 @@ func TestMetricNameProbeTokensCapped(t *testing.T) {
 	got := MetricNameProbeTokens("alpha_beta_gamma_delta_epsilon")
 	if len(got) > 2 {
 		t.Errorf("en çok 2 parça olmalı, alınan %v", got)
+	}
+}
+
+// v0.9.673 — OPERATÖRÜN GERÇEK DEĞERLERİ.
+//
+// Meslektaşının Prometheus çıktısı: job = "<namespace>/<deployment>" ve
+// deployment kısmı ortam ekini TAŞIYOR:
+//
+//	deposit/bsa-deposit-commondeposithesapsl-uat
+//
+// Ama Metric Explorer ekran görüntüsündeki `name` etiketi ekSİZ:
+//
+//	bsa-chatbot-ai-integration      (servis: ...-uat)
+//
+// Aynı kurulumda iki biçim birden. Tek biçimi aramak diğerini kaçırır.
+func TestJobServiceRegexMatchesBothEnvSuffixForms(t *testing.T) {
+	// (1) Ek TAŞIYAN job değeri — namespace önekli.
+	re := regexp.MustCompile(JobServiceRegex("bsa-deposit-commondeposithesapsl-uat"))
+	for _, v := range []string{
+		"deposit/bsa-deposit-commondeposithesapsl-uat", // operatörün gerçek job'ı
+		"bsa-deposit-commondeposithesapsl-uat",         // öneksiz
+		"bsa-deposit-commondeposithesapsl",             // ek soyulmuş (name etiketi biçimi)
+	} {
+		if !re.MatchString(v) {
+			t.Errorf("%q eşleşmeliydi", v)
+		}
+	}
+
+	// (2) Servis adı ekli, etiket eksiz — ekran görüntüsündeki durum.
+	re2 := regexp.MustCompile(JobServiceRegex("bsa-chatbot-ai-integration-uat"))
+	if !re2.MatchString("bsa-chatbot-ai-integration") {
+		t.Error("eksiz `name` değeri eşleşmeliydi — v0.9.672'ye kadar kaçıyordu")
+	}
+}
+
+// Gevşemedik: ek alternatifi eklemek KOMŞU servisleri içeri almamalı.
+func TestJobServiceRegexStillRejectsNeighbours(t *testing.T) {
+	re := regexp.MustCompile(JobServiceRegex("bsa-deposit-commondeposithesapsl-uat"))
+	for _, v := range []string{
+		"deposit/legacy-bsa-deposit-commondeposithesapsl-uat", // ad uzantısı
+		"deposit/bsa-deposit-commondeposithesapsl-uat-v2",     // sonek
+		"deposit/bsa-deposit-commondeposithesapsl-prod",       // BAŞKA ortam
+		"deposit/bsa-deposit",                                 // kısaltma
+	} {
+		if re.MatchString(v) {
+			t.Errorf("%q eşleşmemeliydi — yanlış servisin trafiği karışır", v)
+		}
+	}
+}
+
+func TestStripEnvSuffix(t *testing.T) {
+	cases := map[string]string{
+		"bsa-deposit-commondeposithesapsl-uat": "bsa-deposit-commondeposithesapsl",
+		"svc-prod":                             "svc",
+		"svc-int":                              "svc",
+		"svc-prep":                             "svc",
+		"checkout":                             "checkout", // ek yok
+		"-uat":                                 "-uat",     // adın tamamı ek → dokunma
+		"printer":                              "printer",  // alt dize, sonek değil
+	}
+	for in, want := range cases {
+		if got := StripEnvSuffix(in); got != want {
+			t.Errorf("StripEnvSuffix(%q) = %q, beklenen %q", in, got, want)
+		}
+	}
+}
+
+// DİLLER/PAKETLER ARASI AYNA. chstore, logstore'u import edemiyor; liste
+// ayrışırsa aynı servis bir yüzeyde bulunup diğerinde bulunamaz.
+func TestEnvSuffixesMirrorLogstore(t *testing.T) {
+	b, err := os.ReadFile("../logstore/env_suffix.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := stripGoLineComments(string(b))
+	i := strings.Index(src, "logEnvSuffixes = []string{")
+	if i < 0 {
+		t.Fatal("logEnvSuffixes bulunamadı — ayna kaynağı taşınmış olabilir")
+	}
+	block := src[i : strings.Index(src[i:], "}")+i]
+	for _, suf := range EnvSuffixes {
+		if !strings.Contains(block, `"`+suf+`"`) {
+			t.Errorf("%q logstore listesinde YOK — ayna ayrışmış", suf)
+		}
+	}
+	// Ters yön: logstore'da olup burada olmayan.
+	for _, m := range regexp.MustCompile(`"(-[a-z]+)"`).FindAllStringSubmatch(block, -1) {
+		var found bool
+		for _, suf := range EnvSuffixes {
+			if suf == m[1] {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%q logstore'da var, chstore'da YOK — ayna ayrışmış", m[1])
+		}
 	}
 }

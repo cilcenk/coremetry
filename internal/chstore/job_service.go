@@ -66,7 +66,41 @@ const ThroughputMetricDefault = "http_server_request_duration_seconds_count"
 // bir karaktere uyar, yani "cm-put-service" deseni "cmXput-service"i de
 // eşlerdi.
 func JobServiceRegex(service string) string {
-	return "^(.*/)?" + regexp.QuoteMeta(strings.TrimSpace(service)) + "$"
+	svc := strings.TrimSpace(service)
+	alts := []string{regexp.QuoteMeta(svc)}
+	// v0.9.673 (operatör + meslektaşının Prometheus çıktısı) — ORTAM EKİ
+	// İKİ YÖNE DE GİDİYOR. Aynı kurulumda her iki biçim birden var:
+	//
+	//   job  = "deposit/bsa-deposit-commondeposithesapsl-uat"  ← ek VAR
+	//   name = "bsa-chatbot-ai-integration"                    ← ek YOK
+	//                (servis adı ise bsa-chatbot-ai-integration-uat)
+	//
+	// Yalnız tam adı aramak ikincisini kaçırıyordu; yalnız eksiz adı
+	// aramak birincisini kaçırırdı. İkisi de aday.
+	if st := StripEnvSuffix(svc); st != svc && st != "" {
+		alts = append(alts, regexp.QuoteMeta(st))
+	}
+	return "^(.*/)?(" + strings.Join(alts, "|") + ")$"
+}
+
+// EnvSuffixes — servis adlarındaki ortam ekleri.
+//
+// AYNA: internal/logstore/env_suffix.go `logEnvSuffixes` ve frontend
+// podWorkload.ts / logFieldAliases.ts ile AYNI küme olmak zorunda.
+// Ayrışırlarsa aynı servis bir yüzeyde bulunup diğerinde bulunamaz —
+// sessiz ve teşhisi zor. job_service_test.go Go kaynağını okuyup
+// eşleşmeyi doğruluyor (chstore logstore'u import edemiyor).
+var EnvSuffixes = []string{"-prod", "-int", "-uat", "-prep"}
+
+// StripEnvSuffix — servis adından ortam ekini atar. Ek yoksa ad aynen
+// döner. Adın TAMAMI ekse soymaz (boş ad üretmez).
+func StripEnvSuffix(service string) string {
+	for _, suf := range EnvSuffixes {
+		if len(service) > len(suf) && strings.HasSuffix(service, suf) {
+			return service[:len(service)-len(suf)]
+		}
+	}
+	return service
 }
 
 // ServiceFromJobLabel — `job` değerinden servis adı: son "/" sonrası.

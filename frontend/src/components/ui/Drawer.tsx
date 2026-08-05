@@ -8,11 +8,26 @@ import { Sparkline } from '@/components/Sparkline';
 // olup Drawer'da eksik kalan ayağı. İçerik (bölümler, tablolar,
 // trendler) çağıranda kalır. İlk migrasyon External + Hosts (bayt-bayt
 // aynı kopyalar); kalan 5 çekmece yüzeyi kendi sürümlerinde taşınır.
-export function Drawer({ onClose, header, width = 560, children }: {
+export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyle, children }: {
   onClose: () => void;
   // Başlık satırının sol tarafı (ad + rozetler); ✕ butonunu kabuk koyar.
   header: React.ReactNode;
   width?: number;
+  // backdrop (v0.9.654) — arkadaki sayfayı KARARTIP tıklanamaz yapan
+  // katman. Varsayılan true: bir özneyi (host, endpoint, exception)
+  // İNCELEYEN çekmece modaldır, arkasıyla iş yapılmaz.
+  //
+  // false → CoSRE sohbeti. Operatör sohbet açıkken tabloyu kaydırıyor,
+  // başka bir trace açıyor, sonra sorusunu yazıyor; overlay bunu
+  // imkânsız kılardı. Sohbet bir özneyi incelemiyor, ona EŞLİK ediyor.
+  //
+  // Kapatma da buna bağlı: overlay yoksa "dışarı tıkla kapat" da yok —
+  // sayfayla çalışmak sohbeti kapatmamalı. Esc ve ✕ her iki kipte de
+  // çalışıyor.
+  backdrop?: boolean;
+  // bodyStyle — gövde düzenini çağıran devralabilir (sohbet kendi
+  // dikey flex'ini kuruyor: kaydıran tur listesi + sabit composer).
+  bodyStyle?: React.CSSProperties;
   children: React.ReactNode;
 }) {
   useEffect(() => {
@@ -23,17 +38,22 @@ export function Drawer({ onClose, header, width = 560, children }: {
 
   return (
     <>
-      <div onClick={onClose}
-        style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-          zIndex: 30, animation: 'fadeIn 120ms ease-out',
-        }} />
+      {backdrop && (
+        <div onClick={onClose}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
+            zIndex: 30, animation: 'fadeIn 120ms ease-out',
+          }} />
+      )}
       <div style={{
         position: 'fixed', right: 0, top: 0, bottom: 0,
         width: `min(${width}px, 100vw)`,
         background: 'var(--bg)', borderLeft: '1px solid var(--border)',
         boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-        zIndex: 31, overflowY: 'auto', padding: 16,
+        zIndex: 31, padding: 16,
+        // Overlay'siz kipte gövdeyi çağıran düzenliyor; modal kipte
+        // bugünkü davranış (tek dikey kaydırma) aynen sürüyor.
+        ...(bodyStyle ?? { overflowY: 'auto' }),
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           {header}

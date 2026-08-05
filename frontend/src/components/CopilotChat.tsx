@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { Drawer } from '@/components/ui/Drawer';
 import { useOpenCriticalCount, useProblems } from '@/lib/queries';
 import { useAuth } from '@/components/AuthProvider';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -217,38 +218,38 @@ export function CopilotChat() {
         </button>
       )}
 
-      {/* Drawer */}
+      {/* v0.9.654 (operatör: "CoSRE drawer gibi çıksa … Chat'ten devam et
+          özelliği drawerdı") — sohbet artık PAYLAŞILAN Drawer primitifini
+          kullanıyor: Explain çekmecesiyle (AIDrawer) aynı kenar, aynı
+          genişlik, aynı Esc/✕ davranışı. Öncesi kendi sağ-alt yüzen
+          paneliydi ve iki AI yüzeyi iki ayrı kabuk gibi duruyordu.
+
+          backdrop=false BİLİNÇLİ: operatör sohbet açıkken tabloyu
+          kaydırıyor, başka bir trace açıyor, sonra sorusunu yazıyor.
+          Overlay bunu imkânsız kılardı — sohbet bir özneyi İNCELEMİYOR,
+          ona EŞLİK ediyor. Explain'in modal davranışı DEĞİŞMEDİ.
+
+          Genişlet kipi korundu: geniş sohbet için 620 → içerik alanı. */}
       {open && (
-        <div style={{
-          position: 'fixed', zIndex: 60,
-          display: 'flex', flexDirection: 'column',
-          background: 'var(--bg1)', border: '1px solid var(--border)',
-          boxShadow: '0 8px 40px rgba(0,0,0,0.5)',
-          transition: 'width .16s, height .16s',
-          // Alternatif A (v0.9.182): genişken içerik alanını doldurur (sidebar
-          // ~208px + topbar ~56px görünür kalır); değilse sağ-alt drawer.
-          ...(expanded
-            ? { top: 56, left: 208, right: 12, bottom: 12, borderRadius: 12 }
-            : { right: 18, bottom: 18, width: 'min(420px, calc(100vw - 36px))', height: 'min(620px, calc(100vh - 100px))', borderRadius: 10 }),
-        }}>
-          {/* Header */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 8,
-            padding: '10px 14px', borderBottom: '1px solid var(--border)',
-          }}>
-            <AiMark size={18} />
-            <span style={{ fontWeight: 600, fontSize: 13 }}>CoSRE</span>
-            <span style={{ flex: 1 }} />
-            <Button variant="ghost" size="sm" onClick={() => setExpanded(e => !e)}
-              title={expanded ? "Drawer'a küçült" : 'Tam sayfa genişlet'}>
-              {expanded ? '⊟' : '⤢'}</Button>
-            {turns.length > 0 && (
-              <Button variant="secondary" size="sm" onClick={clear}
-                title="Konuşmayı temizle">Temizle</Button>
-            )}
-            <Button variant="ghost" size="sm" onClick={() => setOpen(false)}
-              title="Kapat">✕</Button>
-          </div>
+        <Drawer
+          onClose={() => setOpen(false)}
+          backdrop={false}
+          width={expanded ? 1100 : 480}
+          bodyStyle={{ display: 'flex', flexDirection: 'column', padding: 0 }}
+          header={
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, minWidth: 0 }}>
+              <AiMark size={18} />
+              <span style={{ fontWeight: 600, fontSize: 13 }}>CoSRE</span>
+              <span style={{ flex: 1 }} />
+              <Button variant="ghost" size="sm" onClick={() => setExpanded(e => !e)}
+                title={expanded ? 'Daralt' : 'Genişlet'}>
+                {expanded ? '⊟' : '⤢'}</Button>
+              {turns.length > 0 && (
+                <Button variant="secondary" size="sm" onClick={clear}
+                  title="Konuşmayı temizle">Temizle</Button>
+              )}
+            </div>
+          }>
 
           {/* Context banner (v0.9.164) — bulunulan servis, scope şeffaflığı. */}
           {currentService && (
@@ -352,7 +353,7 @@ export function CopilotChat() {
               {busy ? '…' : 'Gönder'}
             </Button>
           </form>
-        </div>
+        </Drawer>
       )}
     </>
   );

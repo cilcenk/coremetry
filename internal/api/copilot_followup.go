@@ -131,6 +131,34 @@ func guidedSuggestions(route guidedRoute) []string {
 	case guidedFamilyHealth:
 		return []string{"Açık problemler?", "En yavaş trace'ler?", "Son 1 saatteki log hataları?"}
 	case guidedMyServices:
+		// v0.9.651 (operatör: "takımıma ait servisleri listeledikten
+		// sonra SEÇECEĞİ servisle ilgili hatalar / logları / en yavaş
+		// trace'leri") — çipler artık takımın GERÇEK servislerini
+		// adlandırıyor.
+		//
+		// Öncesi jenerikti ("Açık problemler?") ve operatör bir servis
+		// seçemiyordu: cevap servisleri sayıyor, çipler onlara
+		// dokunmuyordu. Servis-kapsamlı çipler (svc + " hata logları?",
+		// " en yavaş trace'ler?") ZATEN vardı — eksik olan tek halka
+		// buydu.
+		//
+		// "sağlığı nasıl?" seçildi çünkü TEK tık ile service_health'e
+		// giriyor ve ORASI dört drill-down'un hepsini açıyor (yavaş
+		// trace, hata logları, deploy etkisi, pod'lar). Servis başına
+		// iki ayrı çip koymak listeyi altıya çıkarır ve v0.9.579'da
+		// kaldırılan "menü" hissini geri getirirdi.
+		//
+		// ÜÇ servisle sınırlı: takım 100 servis taşıyabiliyor.
+		if n := len(route.TeamServices); n > 0 {
+			out := make([]string, 0, 4)
+			for i, sv := range route.TeamServices {
+				if i >= 3 {
+					break
+				}
+				out = append(out, sv+" sağlığı nasıl?")
+			}
+			return append(out, "Takımımın açık problemleri?")
+		}
 		return []string{"Takımımın açık problemleri?", "En yavaş trace'ler?"}
 	case guidedMyProblems:
 		return []string{"Takımımın servisleri nasıl?", "Takımımın exception'ları?", "En yavaş trace'ler?"}

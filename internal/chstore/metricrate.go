@@ -57,7 +57,7 @@ type ratePoint struct {
 //     primer, böylece pencere-içi İLK bucket gerçek delta alır (sol-kenar
 //     sahte-sıfır kalkar, PromQL lookback semantiği). Seed yoksa (gerçekten
 //     yeni seri) ilk pencere-içi bucket baseline'dır — doğru.
-func seriesRatePoints(buckets []uint64, vals []*float64, mode string, dropBeforeNs uint64) []ratePoint {
+func seriesRatePoints(buckets []uint64, vals []*float64, mode string, dropBeforeNs uint64, monotonic bool) []ratePoint {
 	var out []ratePoint
 	havePrev := false
 	var prevV float64
@@ -72,7 +72,11 @@ func seriesRatePoints(buckets []uint64, vals []*float64, mode string, dropBefore
 			prevV, prevB, havePrev = cur, curB, true
 			continue // baseline: primer, emit yok
 		}
-		delta := resetSafeDelta(prevV, cur)
+		// v0.9.714 — telafi YALNIZ monotonikte (gerekçe: SQL kapısı yorumu).
+		delta := cur - prevV
+		if monotonic {
+			delta = resetSafeDelta(prevV, cur)
+		}
 		dtSec := float64(curB-prevB) / 1e9
 		prevV, prevB = cur, curB
 		if curB < dropBeforeNs {
@@ -375,13 +379,17 @@ func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode str
 	// SAYISI). Throughput bir histogramdan okunacaksa doğru kolon
 	// `count` — `value` histogramda anlamsız ve sessizce 0 döner.
 	wc.add("instrument = ?", src.instrument)
-	// v0.9.106 (F2 review-fix #3) — yalnız MONOTONIC counter; UpDownCounter
-	// (is_monotonic=0: active_requests/queue-depth) rate'te her düşüşü "reset"
-	// sanıp garbage üretiyordu → filtrele (boş döner, yanlış değil). Kolon
-	// yoksa (external-distributed cluster_name unset) guard'sız best-effort.
-	if s.hasIsMonotonicCol {
-		wc.add("is_monotonic = 1")
-	}
+	// v0.9.714 (parite koşumu bulgusu) — v0.9.106 kapısı is_monotonic=0'ı
+	// FİLTRELİYORDU ve UpDownCounter'a rate soran SESSİZCE BOŞ grafik
+	// alıyordu (cgo.calls vakası; Go SDK bazı runtime sayaçlarını açıkça
+	// non-monotonik bildirir). Prometheus aynı seriye cevap verir. Yeni
+	// davranış: 0'ları da OKU, ama delta'yı RESET-TELAFİSİZ hesapla (düz
+	// türev; negatif MEŞRU — up-down'ın anlamı bu). Reset telafisi yalnız
+	// monotonikte: telafi non-monotonikte her düşüşü zirveye çevirirdi —
+	// v0.9.106'nın korkusu YERİNDEYDİ, cevabı yanlıştı (boş yerine doğru
+	// tanım). Monotoniklik SELECT'e taşındı (seri-başı max: karışık
+	// damgalı seri pratikte tek damga; max=1 → telafili, temkinli taraf).
+	// Kolon yoksa (external-distributed) eski best-effort duruş.
 	ApplyMetricFilters(&wc, f.Filters)
 
 	// Kullanıcı groupBy ifadesi (yeniden-toplama anahtarı).
@@ -413,6 +421,7 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 		SeriesKey: metricSeriesKeyExpr(s.hasSeriesFpCol),
 		GroupExpr: groupSelect,
 		ValueExpr: src.valueExpr,
+		MonoExpr:  monoSelectExpr(s.hasIsMonotonicCol), // v0.9.714 (gerekçe: SQL kapı yorumu)
 		Where:     wc.sql(),
 	})
 
@@ -428,6 +437,7 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 		gk      []string
 		buckets []uint64
 		vals    []*float64
+		mono    bool
 	}
 	bySk := map[string]*skSeries{}
 	var skOrder []string
@@ -436,7 +446,8 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 		var sk string
 		var gk []string
 		var v *float64
-		if err := rows.Scan(&bucket, &sk, &gk, &v); err != nil {
+		var mono uint8
+		if err := rows.Scan(&bucket, &sk, &gk, &v, &mono); err != nil {
 			return nil, err
 		}
 		ss := bySk[sk]
@@ -444,6 +455,9 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 			ss = &skSeries{gk: gk}
 			bySk[sk] = ss
 			skOrder = append(skOrder, sk)
+		}
+		if mono == 1 {
+			ss.mono = true
 		}
 		ss.buckets = append(ss.buckets, bucket)
 		ss.vals = append(ss.vals, v)
@@ -461,7 +475,7 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 	var gkOrder []string
 	for _, sk := range skOrder {
 		ss := bySk[sk]
-		pts := seriesRatePoints(ss.buckets, ss.vals, mode, originalFromNs)
+		pts := seriesRatePoints(ss.buckets, ss.vals, mode, originalFromNs, ss.mono)
 		gkKey := strings.Join(ss.gk, "\x00")
 		acc := byGk[gkKey]
 		if acc == nil {
@@ -593,6 +607,9 @@ func buildRateSeries(byGk map[string]map[uint64]float64, gkKeys map[string][]str
 type rateSQLParams struct {
 	Step      int
 	SeriesKey string // yalnız cumulative
+	// v0.9.714 — seri monotonikliği SELECT'e taşındı (0'lar artık okunuyor;
+	// delta telafisi Go'da bu bayrağa göre). Kolon yoksa "toUInt8(1)".
+	MonoExpr string
 	GroupExpr string
 	ValueExpr string
 	Where     string
@@ -604,13 +621,14 @@ func buildRateCumulativeSQL(p rateSQLParams) string {
 		    toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket,
 		    %s AS sk,
 		    %s AS gk,
-		    argMaxOrNull(toFloat64(%s), time) AS v
+		    argMaxOrNull(toFloat64(%s), time) AS v,
+		    %s AS mono
 		FROM metric_points
 		%s
 		GROUP BY bucket, sk, gk
 		ORDER BY sk, bucket
 		LIMIT 50000
-		SETTINGS max_execution_time = 25`, p.Step, p.SeriesKey, p.GroupExpr, p.ValueExpr, p.Where)
+		SETTINGS max_execution_time = 25`, p.Step, p.SeriesKey, p.GroupExpr, p.ValueExpr, p.MonoExpr, p.Where)
 }
 
 func buildRateDeltaSQL(p rateSQLParams) string {
@@ -625,4 +643,12 @@ func buildRateDeltaSQL(p rateSQLParams) string {
 		ORDER BY gk, bucket
 		LIMIT 50000
 		SETTINGS max_execution_time = 25`, p.Step, p.GroupExpr, p.ValueExpr, p.Where)
+}
+
+// monoSelectExpr — cumulative SELECT'inin mono kolonu. SAF (testli).
+func monoSelectExpr(hasCol bool) string {
+	if hasCol {
+		return "toUInt8(max(is_monotonic))"
+	}
+	return "toUInt8(1)"
 }

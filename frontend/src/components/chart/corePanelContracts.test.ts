@@ -94,6 +94,21 @@ describe('CorePanel self-review düzeltmeleri', () => {
     expect(src).toMatch(/setItem\(legendCollapseKey/);
   });
 
+  // v0.9.711 — klavye erişimi (self-review WCAG bulgusu). Kapılar
+  // davranışın kaynağını çiviler: satırlar fokuslanabilir + Enter/Space
+  // yolları var + menü ESC/dış-tık kapanışı bağlı.
+  it('♿ legend satırları klavyeden erişilir', () => {
+    expect(src).toMatch(/tabIndex=\{0\}/);
+    expect(src).toMatch(/onKeyDown/);
+    expect(src).toMatch(/e\.key === 'Enter'/);
+    expect(src).toMatch(/e\.key === ' '/);
+  });
+
+  it('♿ menü ESC + dış-tık ile kapanır', () => {
+    expect(src).toMatch(/menuOpen\) return;/);
+    expect(src).toMatch(/mousedown/);
+  });
+
   it('doktrin: spanNulls connectNulls üzerinden, varsayılan sıkı', () => {
     expect(src).toMatch(/spanNulls: connectNulls \?\? false/);
   });

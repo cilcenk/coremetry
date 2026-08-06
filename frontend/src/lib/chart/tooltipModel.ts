@@ -20,6 +20,12 @@ export interface TooltipItem {
   // Per-series unit (dual-axis panels pass different units per series), fed to
   // fmtSmart: 'ms' → "234ms", 'B' → "1.2 MB", '%' → "3.4%", '' → "1.23k".
   unit?: string;
+  // v0.9.710 — HAZIR biçimli metin (CorePanel: DataFrame display
+  // processor üretir; birim çevirisi köprü sözleşmesi gereği elle
+  // yazılmaz). Verilirse fmtSmart ATLANIR. İlk bağlayışım bu alanı
+  // sözleşmeye eklemeden geçirmişti — TS excess-property boşluğu
+  // yüzünden sessiz no-op'tu; test şimdi çiviliyor.
+  fmt?: string;
 }
 
 export interface TooltipRow {
@@ -48,7 +54,7 @@ export function sortedTooltipRows(
       label: it.label,
       color: it.color,
       value: it.value,
-      text: fmtSmart(it.value, it.unit),
+      text: it.fmt ?? fmtSmart(it.value, it.unit),
     });
   }
   if (sort === 'desc') rows.sort((a, b) => b.value - a.value);

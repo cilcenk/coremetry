@@ -110,3 +110,31 @@ describe('sortedTooltipRows — legend-hidden series (value forced null) drop', 
     expect(rows.map(r => r.label)).toEqual(['hidden-big', 'hidden-mid', 'visible-small']); // DESC
   });
 });
+
+// v0.9.710 — fmt override (CorePanel display-processor yolu).
+//
+// İlk bağlayış fmt'i SÖZLEŞMEYE EKLEMEDEN geçirmişti: TS excess-property
+// denetimi map-callback çıkarımından geçmiyor, alan sessizce yutuluyordu
+// ve display-processor biçimi hiç basılmıyordu. Bugünün yedinci
+// "yazılmış-ama-bağlanmamış" vakası — bu test sınıfı çiviliyor.
+describe('fmt override', () => {
+  it('fmt verilirse fmtSmart atlanır', () => {
+    const rows = sortedTooltipRows([
+      { label: 'a', color: '#000', value: 1500, fmt: '1.50 s' },
+    ]);
+    expect(rows[0].text).toBe('1.50 s');
+  });
+  it('fmt yoksa fmtSmart yolu aynen', () => {
+    const rows = sortedTooltipRows([
+      { label: 'a', color: '#000', value: 1500, unit: 'ms' },
+    ]);
+    expect(rows[0].text).not.toBe('');
+    expect(rows[0].text).toMatch(/s|ms/);
+  });
+  it('fmt olsa bile null değer yine düşer — gap 0 okumaz', () => {
+    const rows = sortedTooltipRows([
+      { label: 'a', color: '#000', value: null, fmt: 'HAYALET' },
+    ]);
+    expect(rows).toEqual([]);
+  });
+});

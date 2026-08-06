@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@grafana/data": "^13.1.2",
+    "@grafana/ui": "^13.1.2",
     "@opentelemetry/api": "^1.9.1",
     "@opentelemetry/context-zone": "^2.7.1",
     "@opentelemetry/exporter-trace-otlp-http": "^0.218.0",

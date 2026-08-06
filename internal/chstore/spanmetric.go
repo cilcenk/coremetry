@@ -239,7 +239,8 @@ func (s *Store) QuerySpanMetric(ctx context.Context, f SpanMetricFilter) ([]Span
 			From: f.From, To: f.To, StepSeconds: step,
 			Aggs: []SpanMetricAggSpec{{Name: "v", Aggregation: f.Aggregation, Field: f.Field}},
 		}
-		if out, ok := s.tryNarrowRollupFastPathMulti(ctx, bf); ok {
+		// Tek-agg yüzeyi pencere taşımaz (RateWindowSec yalnız batch'te).
+		if out, ok := s.tryNarrowRollupFastPathMulti(ctx, bf, 0, 0); ok {
 			return out["v"], nil
 		}
 	}
@@ -1016,6 +1017,11 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// Pencere açıkken fast-path'ler atlanır: op-MV/rollup okuyucuları
 	// bucket-başına state döndürür, pencere birleşimini bilmezler.
 	effWin, winK := spanMetricWindow(f.RateWindowSec, f.StepSeconds)
+	// v0.9.727 — kapı ayrıştı: op-MV pencereyi BİLMEZ (5m state'ler,
+	// kaydırma yok) → yalnız winK==0'da; dar rollup pencereyi kendi
+	// arrayJoin'iyle taşır → Search yoksa her zaman denenir. Overview
+	// RED'i böylece pencereli modda da 10s rollup'tan okur (ham tarama
+	// yalnız rollup tabloları yokken/kapsamıyorken).
 	fastPathOK := f.Search == "" && winK == 0
 	if fastPathOK {
 		if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
@@ -1028,8 +1034,8 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// bu şekli 10s granülaritede cevaplar. Tablolar yoksa / pencere
 	// rollup'ın en eski verisinden önceyse SESSİZCE ham yola düşer —
 	// migrations-öncesi prod davranışı bayt-bayt aynı.
-	if fastPathOK {
-		if out, ok := s.tryNarrowRollupFastPathMulti(ctx, f); ok {
+	if f.Search == "" {
+		if out, ok := s.tryNarrowRollupFastPathMulti(ctx, f, effWin, winK); ok {
 			return out, f.StepSeconds, nil
 		}
 	}

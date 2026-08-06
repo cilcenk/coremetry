@@ -118,9 +118,30 @@ func pickNarrowRollupTier(stepSec int, from time.Time, now time.Time) (rollupTie
 // (bucket UInt64, gk Array(String), calls, errs, durNs UInt64,
 // qs Array(Float64) [ns]). Agg eşlemesi Go'da (rollupAggValue) —
 // SQL, agg listesinden bağımsız kalır.
-func narrowRollupSQL(table string, stepSec int, q narrowRollupQuery, needQuantiles bool, from, to time.Time) (string, []any) {
+func narrowRollupSQL(table string, stepSec int, q narrowRollupQuery, needQuantiles bool, from, to time.Time, winK int) (string, []any) {
+	// v0.9.727 — kayan pencere: ham yolun (QuerySpanMetricMulti) arrayJoin
+	// deseninin rollup karşılığı. Her rollup satırı k ardışık çıktı
+	// bucket'ına katkı verir; quantilesTDigestMerge pencerenin TÜM
+	// state'lerini birleştirir → gerçek pencereli percentile. Tarama
+	// pencere kadar geriye genişler, kenarlar bucket sınırlarıyla kırpılır.
+	scanFrom := from
+	bucketExpr := fmt.Sprintf("toUnixTimestamp(toStartOfInterval(ts, INTERVAL %d SECOND)) * 1000000000", stepSec)
+	arrayJoin := ""
+	if winK > 0 {
+		scanFrom = from.Add(-time.Duration(winK*stepSec) * time.Second)
+		bucketExpr += " + _shift"
+		arrayJoin = fmt.Sprintf(
+			"ARRAY JOIN arrayMap(x -> toUInt64(x * %d) * 1000000000, range(%d)) AS _shift",
+			stepSec, winK)
+	}
 	where := []string{"ts >= ?", "ts <= ?"}
-	args := []any{from, to}
+	args := []any{scanFrom, to}
+	if winK > 0 {
+		stepNs := int64(stepSec) * 1e9
+		where = append(where,
+			fmt.Sprintf("bucket >= %d", from.UnixNano()/stepNs*stepNs),
+			fmt.Sprintf("bucket <= %d", to.UnixNano()))
+	}
 	for _, c := range q.conjuncts {
 		if len(c.values) == 1 {
 			where = append(where, c.col+" = ?")
@@ -150,19 +171,20 @@ func narrowRollupSQL(table string, stepSec int, q narrowRollupQuery, needQuantil
 
 	sql := fmt.Sprintf(`
 		SELECT
-			toUnixTimestamp(toStartOfInterval(ts, INTERVAL %d SECOND)) * 1000000000 AS bucket,
+			%s AS bucket,
 			%s AS gk,
 			sum(span_count)   AS calls,
 			sum(error_count)  AS errs,
 			sum(duration_sum) AS dur_ns,
 			%s
 		FROM %s
+		%s
 		WHERE %s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT 50000
 		SETTINGS max_execution_time = 15`,
-		stepSec, gk, qs, table, strings.Join(where, " AND "))
+		bucketExpr, gk, qs, table, arrayJoin, strings.Join(where, " AND "))
 	return sql, args
 }
 
@@ -259,7 +281,7 @@ func (s *Store) rollupEarliestTS(ctx context.Context, table string) (time.Time, 
 // tryNarrowRollupFastPathMulti — QuerySpanMetricMulti'nin dar rollup
 // denemesi. ok=false → çağıran ham yola OLDUĞU GİBİ devam eder (MV
 // fast-path'lerle aynı sözleşme; hata sayfayı asla boşaltmaz).
-func (s *Store) tryNarrowRollupFastPathMulti(ctx context.Context, f SpanMetricBatchFilter) (map[string][]SpanMetricSeries, bool) {
+func (s *Store) tryNarrowRollupFastPathMulti(ctx context.Context, f SpanMetricBatchFilter, effWinSec, winK int) (map[string][]SpanMetricSeries, bool) {
 	q, ok := narrowRollupEligible(f)
 	if !ok {
 		return nil, false
@@ -272,11 +294,18 @@ func (s *Store) tryNarrowRollupFastPathMulti(ctx context.Context, f SpanMetricBa
 		return nil, false
 	}
 	earliest, has := s.rollupEarliestTS(ctx, tier.table)
-	if !has || earliest.After(f.From) {
+	// Pencere açıkken kapsama GENİŞLETİLMİŞ taramaya göre denetlenir:
+	// pencere from-W'ye geriye bakar; rollup orayı kapsamıyorsa ham yol
+	// (ilk W'nin rampalanması yerine dürüst tam-pencere).
+	coverFrom := f.From
+	if winK > 0 {
+		coverFrom = coverFrom.Add(-time.Duration(effWinSec) * time.Second)
+	}
+	if !has || earliest.After(coverFrom) {
 		return nil, false
 	}
 
-	sql, args := narrowRollupSQL(tier.table, f.StepSeconds, q, needsQuantiles(f.Aggs), f.From, f.To)
+	sql, args := narrowRollupSQL(tier.table, f.StepSeconds, q, needsQuantiles(f.Aggs), f.From, f.To, winK)
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
 		log.Printf("[rollup] narrow fast-path %s düştü, ham yol: %v", tier.table, err)
@@ -308,9 +337,13 @@ func (s *Store) tryNarrowRollupFastPathMulti(ctx context.Context, f SpanMetricBa
 				accs[i].seriesMap[key] = ser
 				accs[i].order = append(accs[i].order, key)
 			}
+			rateDiv := f.StepSeconds
+			if winK > 0 {
+				rateDiv = effWinSec
+			}
 			ser.Points = append(ser.Points, SpanMetricPoint{
 				Time:  int64(bucket),
-				Value: rollupAggValue(a.Aggregation, calls, errs, durNs, qsArr, f.StepSeconds),
+				Value: rollupAggValue(a.Aggregation, calls, errs, durNs, qsArr, rateDiv),
 			})
 		}
 	}
@@ -324,6 +357,11 @@ func (s *Store) tryNarrowRollupFastPathMulti(ctx context.Context, f SpanMetricBa
 		list := make([]SpanMetricSeries, 0, len(accs[i].order))
 		for _, k := range accs[i].order {
 			list = append(list, *accs[i].seriesMap[k])
+		}
+		// Ham yolla aynı doktrin (v0.9.723): pencere açıkken sayım-sınıfı
+		// seriler sıfır-doldurulur; oran/gecikme boşluk bırakır.
+		if winK > 0 && spanAggZeroFills(a.Aggregation) {
+			list = zeroFillSpanSeries(list, f.StepSeconds, f.From.UnixNano(), f.To.UnixNano())
 		}
 		out[a.Name] = list
 	}

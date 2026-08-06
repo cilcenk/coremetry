@@ -133,7 +133,9 @@ func TestRateSQLCallSitesUseNamedFields(t *testing.T) {
 			t.Fatalf("%s çağrısı bulunamadı", fn)
 		}
 		// Çağrıdan sonraki kısa pencerede struct literali olmalı.
-		win := body[i : i+220]
+		// v0.9.714 — 220→320: struct MonoExpr alanı kazandı, Where: pencere
+		// dışına taşmıştı (kapı doğru kızmıştı; sözleşme büyüdü).
+		win := body[i : i+320]
 		// `rateSQLParams{` aramak YETMEZ: konumsal literal de onu içerir
 		// (ilk denememde tam bu yüzden mutasyon testi geçti). ALAN ADI
 		// aranmalı — asıl koruma o.
@@ -141,7 +143,11 @@ func TestRateSQLCallSitesUseNamedFields(t *testing.T) {
 			t.Errorf("%s rateSQLParams kullanmıyor:\n%s", fn, win)
 			continue
 		}
-		for _, field := range []string{"Step:", "GroupExpr:", "ValueExpr:", "Where:"} {
+		fields := []string{"Step:", "GroupExpr:", "ValueExpr:", "Where:"}
+		if fn == "buildRateCumulativeSQL(" {
+			fields = append(fields, "MonoExpr:") // v0.9.714 — mono SELECT'e taşındı
+		}
+		for _, field := range fields {
 			if !strings.Contains(win, field) {
 				t.Errorf("%s konumsal kurulmuş — %q alan adı yok. Aynı tipte "+
 					"dört string sessizce kayar (v0.9.668):\n%s", fn, field, win)

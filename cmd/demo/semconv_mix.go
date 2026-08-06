@@ -57,9 +57,12 @@ func applySemconvDialect(service string, kvs []*commonpb.KeyValue) []*commonpb.K
 	out := make([]*commonpb.KeyValue, len(kvs))
 	for i, kv := range kvs {
 		if newKey, ok := modernSemconvKeys[kv.Key]; ok {
-			clone := *kv
-			clone.Key = newKey
-			out[i] = &clone
+			// Yeni struct kur, *kv'yi DEĞERLE KOPYALAMA: protobuf mesajı
+			// MessageState içinde mutex taşır, kopya copylocks (go vet)
+			// ihlali — CI'ın tam vet'i yakalar, go test'in vet alt kümesi
+			// yakalamaz (v0.9.726 dersi). Value pointer'ı paylaşmak eski
+			// shallow-clone'la aynı semantik: değer değişmiyor, yalnız ad.
+			out[i] = &commonpb.KeyValue{Key: newKey, Value: kv.Value}
 			continue
 		}
 		out[i] = kv

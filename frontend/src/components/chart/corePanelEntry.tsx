@@ -24,3 +24,33 @@ export function CorePanelWithFrames({ series, unit, seriesName, ...rest }: CoreP
     }} />
   );
 }
+
+// ── v0.9.717 (dalga-2) — ÇOK SERİLİ giriş ────────────────────────────────
+//
+// Overview RED kartları birden çok adlandırılmış seri + ROL taşır
+// (OK=success yeşil, Errors=error kırmızı — seriesRole vitrini). Tek-seri
+// giriş (üstte) pilot panel için aynen duruyor; bu ek, dalga-2
+// dönüşümlerinin ortak kapısı.
+export interface CorePanelMultiItem {
+  series: SpanMetricSeries[];
+  name: string;
+  role?: 'data' | 'error' | 'success' | 'muted';
+}
+
+export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'roles'> {
+  items: CorePanelMultiItem[];
+  unit?: string;
+}
+
+export function CorePanelMulti({ items, unit, ...rest }: CorePanelMultiProps) {
+  // TEK geçiş: frames + rol hizası birlikte (çifte dönüşüm = çifte
+  // display-processor kurulumu olurdu).
+  const frames: ReturnType<typeof spanSeriesToFrames> = [];
+  const roles: NonNullable<CorePanelProps['roles']> = [];
+  for (const it of items) {
+    const fs = spanSeriesToFrames(it.series, { unit, name: it.name });
+    frames.push(...fs);
+    for (let i = 0; i < fs.length; i++) roles.push(it.role ?? 'data');
+  }
+  return <CorePanel {...rest} roles={roles} data={{ state: 'ready', frames }} />;
+}

@@ -24,6 +24,8 @@ import { chartsV2 } from '@/lib/featureFlags';
 import { Spinner } from '@/components/Spinner';
 const CorePanelLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelWithFrames })));
+const CorePanelMultiLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 import { metricLatencyComparable, metricLatencyUnitLabel } from './metricLatencyUnit';
 import { EnvAmbiguousNote } from './EnvAmbiguousNote';
 import { buildRootOpLines } from './charts/rootOpSeries';
@@ -601,9 +603,27 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           {/* v0.9.253 — status ve seri artık ENTRY sorgusundan. Kart üstündeki
               KPI giriş span'lerini sayarken altındaki grafiğin tüm span'leri
               çizmesi, aynı kartta iki farklı servisi üst üste koymak olurdu. */}
-          <ChartCard title={scopedChartTitle('Throughput', usingAllSpans)} titleTip={latScopeNote} unit=" req/s" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-            legendStorageKey="ov-throughput" statsDefaultCollapsed
-            lines={throughput.chart} statsLines={throughput.stats} />
+          {/* v0.9.717 (dalga-2 dilim 1) — Throughput chartsV2 bayrağıyla
+              CorePanel'de: OK=success/Errors=error rolleri (deterministik
+              yeşil/kırmızı). Bilinen fark: ▼ deploy işareti v2'de henüz yok
+              (regions eşlemesi ayrı dilim); eski yol aynen duruyor. */}
+          {chartsV2() ? (
+            <Suspense fallback={<Spinner />}>
+              <CorePanelMultiLazy
+                title={scopedChartTitle('Throughput', usingAllSpans)}
+                storageKey="ov-throughput-v2" height={200} unit="reqps"
+                items={[
+                  { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
+                  { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },
+                ]}
+                onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
+              />
+            </Suspense>
+          ) : (
+            <ChartCard title={scopedChartTitle('Throughput', usingAllSpans)} titleTip={latScopeNote} unit=" req/s" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+              legendStorageKey="ov-throughput" statsDefaultCollapsed
+              lines={throughput.chart} statsLines={throughput.stats} />
+          )}
           {/* v0.9.665 — TANILAMA. Boş bir grafik "metrik yok" ile "desen
               tutmadı"yı aynı gösterir; ikisi bambaşka eylem gerektiriyor
               (collector'ı düzelt / deseni düzelt). Bu yüzden neden

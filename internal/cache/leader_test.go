@@ -188,3 +188,15 @@ func TestLeaderOnAcquireFiresOnAcquisition(t *testing.T) {
 	waitFor(t, 4*time.Second, func() bool { return h.IsLeader() }, "edinim")
 	waitFor(t, time.Second, func() bool { return fired.Load() == 1 }, "OnAcquire")
 }
+
+// v0.9.731 — edinim-deneme aralığı TTL'den bağımsız tavanlı: 10 dk
+// TTL'li kilit edinimi ~3dk20sn değil ≤10 sn içinde denenir (deploy
+// ajanı ölçümü: her worker tam ttl/3 tikinde edinmişti).
+func TestAcquireRetryInterval(t *testing.T) {
+	if got := acquireRetryInterval(200 * time.Second); got != 10*time.Second {
+		t.Fatalf("uzun refresh tavanlanmadı: %v", got)
+	}
+	if got := acquireRetryInterval(time.Second); got != time.Second {
+		t.Fatalf("kısa refresh değişmemeli: %v", got)
+	}
+}

@@ -19,15 +19,17 @@ import (
 //
 //  1. NewLeaderHolder(lock, key, ttl) returns a non-running
 //     holder. ttl is the lease TTL; refresh runs at ttl/3.
+//
 //  2. Start(ctx) launches the heartbeat goroutine. The
 //     goroutine immediately attempts TryAcquire, then enters
 //     the refresh loop. ctx.Done() cleanly releases the lock
 //     and exits.
+//
 //  3. IsLeader() reports the current state. Background workers
 //     check this at the top of each tick and skip when false:
 //
-//         if !leader.IsLeader() { return }
-//         // ... do work ...
+//     if !leader.IsLeader() { return }
+//     // ... do work ...
 //
 //  4. The held state flips back to false when Refresh reports
 //     the lease is definitively lost (ok=false) OR — v0.8.341 —
@@ -138,6 +140,20 @@ func refreshOutlivedLease(sinceLastOK, ttl time.Duration) bool {
 	return sinceLastOK >= ttl
 }
 
+// acquireRetryInterval — SAF: edinim-deneme aralığı. v0.9.731'e dek
+// refresh (TTL/3) kullanılıyordu; 10 dk TTL'li deriver kilidinde bu
+// ~3dk20sn demekti ve rolling restart'ta kilit ANINDA boşta olduğu
+// hâlde (eski pod deferred Release) edinim ilk tick'e kalıyordu —
+// deploy ajanının ölçümü: her worker tam kendi ttl/3 tikinde edindi.
+// TryAcquire ucuz bir SetNX; 10 sn tavan tüm kilitlerde edinimi
+// saniyeler sınıfına indirir, Redis yükü ihmal edilebilir.
+func acquireRetryInterval(refresh time.Duration) time.Duration {
+	if refresh > 10*time.Second {
+		return 10 * time.Second
+	}
+	return refresh
+}
+
 func (h *LeaderHolder) run(ctx context.Context) {
 	// On exit, release the lock so the next pod can become
 	// leader without waiting for TTL expiry.
@@ -177,7 +193,7 @@ func (h *LeaderHolder) run(ctx context.Context) {
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(h.refresh):
+			case <-time.After(acquireRetryInterval(h.refresh)):
 			}
 		}
 

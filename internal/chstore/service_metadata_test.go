@@ -90,21 +90,22 @@ func TestDeriveNamespaceSQLShape(t *testing.T) {
 		"FROM spans",
 		"time >= ? AND time <= ?",
 		"LIMIT 2000000",
-		"LIMIT 10000",
+		// v0.9.715 sonrası birleşik SQL: dış LIMIT kombo tablosuna (50000)
+		"LIMIT 50000",
 		"SETTINGS max_execution_time = 25",
 		"has(res_keys, 'service.namespace')",
 		"has(res_keys, 'k8s.namespace.name')",
 		"has(attr_keys, 'service.namespace')",
 		"has(attr_keys, 'k8s.namespace.name')",
 	} {
-		if !strings.Contains(deriveNamespaceSQL, frag) {
+		if !strings.Contains(deriveMetadataAllSQL, frag) {
 			t.Errorf("missing %q", frag)
 		}
 	}
 	// resource spelling must be checked BEFORE the span-scope fallback
 	// (multiIf order is the preference order).
-	if strings.Index(deriveNamespaceSQL, "has(res_keys, 'service.namespace')") >
-		strings.Index(deriveNamespaceSQL, "has(attr_keys, 'service.namespace')") {
+	if strings.Index(deriveMetadataAllSQL, "has(res_keys, 'service.namespace')") >
+		strings.Index(deriveMetadataAllSQL, "has(attr_keys, 'service.namespace')") {
 		t.Fatal("resource scope must precede span scope in the multiIf")
 	}
 }

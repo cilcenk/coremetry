@@ -138,6 +138,26 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		}
 	}
 
+	// v0.9.712 (parite dilim 4B) — aile-C rollup yönlendirmesi. Yalnız
+	// 0003 şemasının DOĞRU cevapladığı şekiller (metric_rollup_read.go
+	// başlığındaki tablo); cumulative + filtreli/gruplu HER ZAMAN ham.
+	// Her uygunsuzluk/hata FAIL-OPEN hama düşer.
+	if f.Service != "" {
+		instrument := s.metricInstrument(ctx, f.Name, f.Service, f.From, f.To)
+		temporality := ""
+		if instrument == "sum" {
+			temporality = s.metricTemporalityFiltered(ctx, f.Name, f.Service, f.Filters)
+		}
+		if tr, ok := metricRollupPlan(f, instrument, temporality, time.Now()); ok {
+			if floor, ok2 := s.rollupCoverageFloor(ctx, tr.table); ok2 && !f.From.Before(floor) {
+				if ser, err := s.queryMetricRollup(ctx, f, tr); err == nil {
+					return ser, nil
+				}
+				// hata → ham yola devam (fail-open)
+			}
+		}
+	}
+
 	// v0.8.243 — min-step clamp: never bucket finer than the metric's
 	// observed export cadence (Grafana's $__rate_interval equivalent —
 	// see metric_export_interval.go). Normalize the window + auto-step

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
-import 'uplot/dist/uPlot.min.css';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtXTicks, fmtAxisTick, fmtTooltipTime } from '@/lib/chartFmt';
 import { overviewChartBuildSignature } from '@/lib/chartBuildSig';

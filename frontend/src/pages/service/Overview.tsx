@@ -15,6 +15,15 @@ import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
 import { sumNullableSeries } from './charts/throughputTotal';
 import { MetricThroughputNote } from './MetricThroughputNote';
+// v0.9.708 — CorePanel LAZY: @grafana/* vendor ağırlığı (~126 KB gzip)
+// yalnız chartsV2 bayrağı açık ve panel gerçekten çizilirken iner.
+// Statik import her sayfanın vendor chunk'ını 35 KB→1 MB yapıyordu —
+// ölçüldü; bayrak kapalı kullanıcı bunu ödememeli.
+import { lazy, Suspense } from 'react';
+import { chartsV2 } from '@/lib/featureFlags';
+import { Spinner } from '@/components/Spinner';
+const CorePanelLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelWithFrames })));
 import { metricLatencyComparable, metricLatencyUnitLabel } from './metricLatencyUnit';
 import { EnvAmbiguousNote } from './EnvAmbiguousNote';
 import { buildRootOpLines } from './charts/rootOpSeries';
@@ -607,14 +616,37 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               aynı pencere, aynı birim, ayrı eksen. */}
           {metricTputLine && (
             <div style={{ marginTop: 10 }}>
-              <ChartCard
-                title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
-                titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · instrument ${metricTputQ.data?.instrument ?? '?'} · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}. Span türevli throughput'tan BAĞIMSIZ bir ölçüm — ayrışıyorlarsa bu başlı başına bir bulgu.`}
-                unit=" req/s" mode="line"
-                deploy={deploy} onZoom={onZoom} onZoomReset={onZoomReset}
-                syncKey={chartSync} xRange={xRange}
-                legendStorageKey="ov-throughput-metric" statsDefaultCollapsed
-                lines={[metricTputLine]} />
+              {/* v0.9.708 — FAZ 3 PİLOTU. chartsV2 bayrağıyla bu TEK panel
+                  CorePanel'e (@grafana/ui hattı) geçiyor; eski ChartCard
+                  yolu aynen duruyor — tek adımda geri dönüş. Veri +
+                  tanılama yolu ORTAK: yalnız çizim gövdesi değişiyor.
+                  Pilot bu panel çünkü zincirin en taze ucu: px bütçesi
+                  (v0.9.706) + DataFrame köprüsü aynı veriyle burada
+                  buluşuyor. */}
+              {chartsV2() ? (
+                <Suspense fallback={<Spinner />}>
+                  <CorePanelLazy
+                    title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
+                    storageKey="ov-throughput-metric-v2"
+                    height={200}
+                    series={metricTputQ.data?.series ?? []}
+                    unit="reqps"
+                    seriesName={`metrik (${metricTputQ.data?.matchedBy ?? 'job'})`}
+                    onZoom={onZoom} onZoomReset={onZoomReset}
+                    syncKey={chartSync}
+                    queryText={`metric=${metricTputQ.data?.metric ?? '?'} · instrument=${metricTputQ.data?.instrument ?? '?'} · eşleşme=${metricTputQ.data?.matchedBy ?? '?'} · mdp=${redMdp}`}
+                  />
+                </Suspense>
+              ) : (
+                <ChartCard
+                  title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
+                  titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · instrument ${metricTputQ.data?.instrument ?? '?'} · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}. Span türevli throughput'tan BAĞIMSIZ bir ölçüm — ayrışıyorlarsa bu başlı başına bir bulgu.`}
+                  unit=" req/s" mode="line"
+                  deploy={deploy} onZoom={onZoom} onZoomReset={onZoomReset}
+                  syncKey={chartSync} xRange={xRange}
+                  legendStorageKey="ov-throughput-metric" statsDefaultCollapsed
+                  lines={[metricTputLine]} />
+              )}
               {metricTputQ.data?.envAmbiguous && <EnvAmbiguousNote />}
             </div>
           )}

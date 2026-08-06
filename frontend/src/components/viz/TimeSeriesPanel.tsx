@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import uPlot from 'uplot';
-import 'uplot/dist/uPlot.min.css';
 import { downsampleXY } from '@/lib/perf/lttb';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { escapeHTML } from '@/lib/utils';

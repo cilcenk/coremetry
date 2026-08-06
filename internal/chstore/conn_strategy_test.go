@@ -73,6 +73,9 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"topology.go":          true, // topology_*_5m / service_summary_5m / spans / root_traces
 		"dependencies.go":      true, // db_*_summary_5m / messaging_*_summary_5m / metric_points / spans
 		"problem_telemetry.go": true, // spans — problem.go'dan ayrılan telemetri yarısı (v0.9.507)
+		// v0.9.712 — SAF telemetri: rollup_metrics_* (metric_points'in
+		// AggregatingMergeTree türevi) + coverage min(ts) probu. State yok.
+		"metric_rollup_read.go": true,
 		// v0.9.580 — SAF telemetri: tek FROM'u spans. State tablosu
 		// okumuyor (aşağıdaki FROM testi de pinliyor).
 		"correlation_ids.go": true, // spans'ten örnek request_id/correlation_id'ler

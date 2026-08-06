@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { STEP_RUNGS, stepForWidth, stepForPoints, quantizeWidth } from './chartStep';
+import { STEP_RUNGS, stepForWidth, stepForPoints, quantizeWidth, barPanelMaxDataPoints, logsBucketSec } from './chartStep';
 
 // GRAN-A (v0.8.245) — Grafana-style width-aware step. stepForWidth picks the
 // step a chart should REQUEST for its pixel budget (~2px/point, 120–720
@@ -128,5 +128,40 @@ describe('quantizeWidth — 200px buckets, [400, 2400] clamp', () => {
       expect(w).toBeGreaterThanOrEqual(400);
       expect(w).toBeLessThanOrEqual(2400);
     }
+  });
+});
+
+// v0.9.715 — bar bütçesi (operatör: "barlar çok küçülmüş").
+// v0.9.707 çizgi bütçesini bar'a uygulamıştı; bu testler bar sınıfının
+// kendi sözleşmesini çiviliyor.
+describe('barPanelMaxDataPoints', () => {
+  it('sınırlar: 30..240', () => {
+    const n = barPanelMaxDataPoints(1);
+    expect(n).toBeGreaterThanOrEqual(30);
+    expect(n).toBeLessThanOrEqual(240);
+  });
+  it('çizgi bütçesinden KÜÇÜK — bar geniş kalmalı', () => {
+    // px/12 < px/2 her genişlikte.
+    expect(barPanelMaxDataPoints(1)).toBeLessThan(600);
+  });
+});
+
+describe('logsBucketSec (bar sınıfı)', () => {
+  it('taban 5 sn (ES)', () => {
+    expect(logsBucketSec(10)).toBeGreaterThanOrEqual(5);
+  });
+  it('3 saatte kova sayısı ≤ bar bütçesi', () => {
+    const sec = logsBucketSec(3 * 3600);
+    expect((3 * 3600) / sec).toBeLessThanOrEqual(barPanelMaxDataPoints(1));
+    expect(STEP_RUNGS).toContain(sec); // rung-kuantalı (cache disiplini)
+  });
+});
+
+describe('stepForPoints bar entegrasyonu', () => {
+  it('3 saat + bar bütçesi → eski 4px-bar yoğunluğundan uzak', () => {
+    const step = stepForPoints(3 * 3600, barPanelMaxDataPoints(1));
+    const bars = (3 * 3600) / step;
+    expect(bars).toBeLessThanOrEqual(240);
+    expect(bars).toBeGreaterThanOrEqual(30);
   });
 });

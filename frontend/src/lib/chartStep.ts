@@ -75,3 +75,25 @@ export function panelMaxDataPoints(cols: number): number {
   const content = Math.max(400, vw - 260); // sidebar payı
   return Math.max(120, Math.min(2000, Math.round(quantizeWidth(content / Math.max(1, cols)) / 2)));
 }
+
+// ── Parite dilim 3 (v0.9.707): en kötü yüzeylerin bütçe yardımcıları ──
+
+// logsBucketSec — Logs hacim şeridi + LogsHistogram İKİSİ İÇİN TEK kaynak.
+// İkisi ayrı ama "aynı kalmalı" yorumlu iki kopya merdivendi (5s/30s/1m/
+// 5m/15m) — 1 saatte 120 kova ≈ 0.1 nokta/px. Şimdi piksel bütçesinden:
+// nokta ≤ min(240, panel bütçesi) — 240 tavanı ES maliyeti (date_histogram
+// kova sayısı; v0.8.270 disiplini: rung-kuantalı → sınırlı kardinalite),
+// 5 sn tabanı ES'in makul en ince kovası.
+export function logsBucketSec(spanSec: number): number {
+  return Math.max(5, stepForPoints(spanSec, Math.min(240, panelMaxDataPoints(1))));
+}
+
+// heatmapBucketCount — sabit 60/80 kova yerine genişlik-türevi sütun
+// sayısı. ~12px/sütun Grafana heatmap yoğunluğu; sunucu tavanı 240
+// (chstore/heatmap.go), tabanı 40 (daha azı lekeli görünüyor).
+export function heatmapBucketCount(cols = 1): number {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+  const content = Math.max(400, vw - 260);
+  const px = quantizeWidth(content / Math.max(1, cols));
+  return Math.max(40, Math.min(240, Math.round(px / 12)));
+}

@@ -26,6 +26,7 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getRaw, setRaw } from '@/lib/storage';
 import { useTableNav } from '@/lib/useTableNav';
 import { api } from '@/lib/api';
+import { logsBucketSec } from '@/lib/chartStep';
 import { tsShort, timeRangeToNs, sevName, sevClass, rangeToSince } from '@/lib/utils';
 import { severityBandOf } from '@/lib/severityBand';
 import { accumulatePage, narrowLoaded } from '@/lib/logAccumulate';
@@ -102,12 +103,9 @@ type SevSeries = { name: string; points: { t: number; v: number }[] };
 // histogram below it agree on resolution. Returns seconds.
 function pickVolumeBucket(from?: number, to?: number): number {
   if (!from || !to) return 30;
-  const spanSec = (to - from) / 1_000_000_000;
-  if (spanSec < 60 * 15)      return 5;      // <15min → 5s
-  if (spanSec < 60 * 60)      return 30;     // <1h    → 30s
-  if (spanSec < 60 * 60 * 6)  return 60;     // <6h    → 1m
-  if (spanSec < 60 * 60 * 24) return 5 * 60; // <24h   → 5m
-  return 15 * 60;                            // ≥24h   → 15m
+  // v0.9.707 — iki kopya merdiven (burada + LogsHistogram) tek kaynağa
+  // indi: logsBucketSec piksel bütçeli, ES-disiplinli (≤240 kova, ≥5 sn).
+  return logsBucketSec((to - from) / 1_000_000_000);
 }
 
 // Compose a KQL clause from the current filter state so the

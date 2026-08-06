@@ -78,6 +78,21 @@ export function panelMaxDataPoints(cols: number): number {
 
 // ── Parite dilim 3 (v0.9.707): en kötü yüzeylerin bütçe yardımcıları ──
 
+// barPanelMaxDataPoints — BAR yüzeylerinin bütçesi (v0.9.715,
+// operatör-bildirimi: "Barlar çok küçülmüş").
+//
+// v0.9.707 en kötü yüzeylere nokta bütçesi verirken ÇİZGİ bütçesini
+// (px/2) kullandı; 3 saatlik Traces şeridinde ~360 adet ~4px bar üretti.
+// Bar çizgi değildir: okunabilir bar ~12px ister (Grafana bar/histogram
+// yüzeyleri de kova sayısını böyle düşürür). px/12, taban 30 (eski sabit
+// davranışın alt sınırı — daha azı bilgi kaybı), tavan 240 (ES/heatmap
+// sunucu tavanıyla hizalı).
+export function barPanelMaxDataPoints(cols = 1): number {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1440;
+  const content = Math.max(400, vw - 260);
+  return Math.max(30, Math.min(240, Math.round(quantizeWidth(content / Math.max(1, cols)) / 12)));
+}
+
 // logsBucketSec — Logs hacim şeridi + LogsHistogram İKİSİ İÇİN TEK kaynak.
 // İkisi ayrı ama "aynı kalmalı" yorumlu iki kopya merdivendi (5s/30s/1m/
 // 5m/15m) — 1 saatte 120 kova ≈ 0.1 nokta/px. Şimdi piksel bütçesinden:
@@ -85,7 +100,9 @@ export function panelMaxDataPoints(cols: number): number {
 // kova sayısı; v0.8.270 disiplini: rung-kuantalı → sınırlı kardinalite),
 // 5 sn tabanı ES'in makul en ince kovası.
 export function logsBucketSec(spanSec: number): number {
-  return Math.max(5, stepForPoints(spanSec, Math.min(240, panelMaxDataPoints(1))));
+  // v0.9.715 — bar bütçesine geçti (bunlar da bar yüzeyi; Traces
+  // şeridiyle aynı "küçülmüş bar" sınıfı).
+  return Math.max(5, stepForPoints(spanSec, barPanelMaxDataPoints(1)));
 }
 
 // heatmapBucketCount — sabit 60/80 kova yerine genişlik-türevi sütun

@@ -30,7 +30,7 @@ import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
 import { Button } from '@/components/ui/Button';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
-import { stepForPoints, panelMaxDataPoints } from '@/lib/chartStep';
+import { stepForPoints, barPanelMaxDataPoints } from '@/lib/chartStep';
 import { VirtualTable } from '@/components/ui/VirtualTable';
 import { useDataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -471,7 +471,8 @@ function TracesPageInner() {
     // nokta/px demekti (taban çizgisinin en kötü ihlalcisi). Bütçe artık
     // piksel-türevi + rung-kuantalı; step sunucu cache anahtarına sınırlı
     // kardinaliteyle biner.
-    const step = stepForPoints(windowSec, panelMaxDataPoints(1));
+    // v0.9.715 (operatör: "barlar çok küçülmüş") — bar bütçesi: ~12px/bar.
+    const step = stepForPoints(windowSec, barPanelMaxDataPoints(1));
     // The header volume chart rides /api/spans/metric, which is a flat-filters
     // surface (filterGroup is a /traces + /aggregate + /facets capability in
     // v0.8.x gap-2 — spanMetric isn't wired for it). When a grouped OR/nested

@@ -1,6 +1,7 @@
 package chstore
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -90,10 +91,10 @@ func TestNarrowRollupEligible(t *testing.T) {
 func TestPickNarrowRollupTier(t *testing.T) {
 	now := time.Date(2026, 7, 30, 12, 0, 0, 0, time.UTC)
 	cases := []struct {
-		name  string
-		step  int
-		age   time.Duration
-		want  string // "" = ok=false beklenir
+		name string
+		step int
+		age  time.Duration
+		want string // "" = ok=false beklenir
 	}{
 		// En kaba bölen kademe kazanır (en az satır).
 		{"5m step 24h", 300, 24 * time.Hour, "rollup_spans_narrow_5m"},
@@ -127,7 +128,7 @@ func TestNarrowRollupSQL(t *testing.T) {
 			{col: "span_kind", values: []string{"server", "consumer"}},
 		},
 	}
-	sql, args := narrowRollupSQL("rollup_spans_narrow_1m", 60, q, true, from, to)
+	sql, args := narrowRollupSQL("rollup_spans_narrow_1m", 60, q, true, from, to, 0)
 
 	for _, want := range []string{
 		"INTERVAL 60 SECOND", "FROM rollup_spans_narrow_1m",
@@ -145,14 +146,14 @@ func TestNarrowRollupSQL(t *testing.T) {
 	}
 
 	// Quantile istenmeyince merge maliyeti YOK — sabit boş dizi.
-	sql2, _ := narrowRollupSQL("rollup_spans_narrow_1m", 60, q, false, from, to)
+	sql2, _ := narrowRollupSQL("rollup_spans_narrow_1m", 60, q, false, from, to, 0)
 	if strings.Contains(sql2, "quantilesTDigestMerge") || !strings.Contains(sql2, "CAST([], 'Array(Float64)')") {
 		t.Errorf("quantile'sız SQL merge içermemeli:\n%s", sql2)
 	}
 
 	// groupBy → gk dizisi.
 	q.groupCols = []string{"service_name"}
-	sql3, _ := narrowRollupSQL("rollup_spans_narrow_1m", 60, q, false, from, to)
+	sql3, _ := narrowRollupSQL("rollup_spans_narrow_1m", 60, q, false, from, to, 0)
 	if !strings.Contains(sql3, "[toString(service_name)] AS gk") {
 		t.Errorf("groupBy gk eksik:\n%s", sql3)
 	}
@@ -166,12 +167,12 @@ func TestRollupAggValue(t *testing.T) {
 		want float64
 	}{
 		{"count", 120},
-		{"rate", 2},        // 120 / 60s
-		{"per_min", 120},   // 2 * 60
+		{"rate", 2},      // 120 / 60s
+		{"per_min", 120}, // 2 * 60
 		{"errors", 6},
-		{"error_rate", 5},  // 100 * 6/120
-		{"avg", 2},         // 240e6 ns / 120 / 1e6 = 2ms
-		{"sum", 240},       // 240e6 ns → ms
+		{"error_rate", 5}, // 100 * 6/120
+		{"avg", 2},        // 240e6 ns / 120 / 1e6 = 2ms
+		{"sum", 240},      // 240e6 ns → ms
 		{"p50", 100},
 		{"p95", 400},
 		{"p99", 900},
@@ -184,5 +185,52 @@ func TestRollupAggValue(t *testing.T) {
 	// calls=0 koruması (bölme paniği yok).
 	if got := rollupAggValue("error_rate", 0, 0, 0, nil, 60); got != 0 {
 		t.Errorf("error_rate calls=0 → 0, got %v", got)
+	}
+}
+
+// v0.9.727 — dar rollup kayan penceresi: ham yolun (v0.9.723) arrayJoin
+// deseninin rollup karşılığı. Pencere yokken SQL şekli ESKİYLE aynı
+// kalmalı (bayt-parite sözleşmesi); pencere varken kaydırma + kırpma +
+// genişletilmiş tarama girer.
+func TestNarrowRollupSQLWindowed(t *testing.T) {
+	q := narrowRollupQuery{
+		conjuncts: []narrowConjunct{{col: "service", values: []string{"s"}}},
+	}
+	from := time.Unix(1000, 0)
+	to := time.Unix(1000+3*3600, 0)
+
+	sqlPlain, argsPlain := narrowRollupSQL("rollup_spans_narrow_10s", 20, q, true, from, to, 0)
+	if strings.Contains(sqlPlain, "ARRAY JOIN") || strings.Contains(sqlPlain, "_shift") {
+		t.Fatal("winK=0'da kaydırma SIZMAMALI — eski davranış bayt-bayt")
+	}
+	if !argsPlain[0].(time.Time).Equal(from) {
+		t.Fatal("winK=0'da tarama başlangıcı genişletilmemeli")
+	}
+
+	sqlWin, argsWin := narrowRollupSQL("rollup_spans_narrow_10s", 20, q, true, from, to, 9)
+	for _, want := range []string{
+		"ARRAY JOIN arrayMap(x -> toUInt64(x * 20) * 1000000000, range(9)) AS _shift",
+		"+ _shift AS bucket",
+		"bucket >= 1000000000000",
+		"bucket <= " + strconv.FormatInt(to.UnixNano(), 10),
+	} {
+		if !strings.Contains(sqlWin, want) {
+			t.Errorf("pencereli SQL'de %q yok", want)
+		}
+	}
+	// Tarama 9*20=180 sn geriye genişler (Prometheus kenar-geriye bakışı).
+	if got := argsWin[0].(time.Time); !got.Equal(from.Add(-180 * time.Second)) {
+		t.Errorf("tarama başlangıcı %v, from-180s bekleniyordu", got)
+	}
+}
+
+// Pencereli bölen: rate = calls/W (Grafana [3m] paritesi) — rollupAggValue
+// bölen parametresiyle ham yolun aggToSQL(180) davranışını aynalar.
+func TestRollupAggValueWindowDivisor(t *testing.T) {
+	if got := rollupAggValue("rate", 360, 0, 0, nil, 180); got != 2.0 {
+		t.Fatalf("rate(360 çağrı / 180s) = %v, 2.0 bekleniyordu", got)
+	}
+	if got := rollupAggValue("per_min", 360, 0, 0, nil, 180); got != 120.0 {
+		t.Fatalf("per_min = %v, 120 bekleniyordu", got)
 	}
 }

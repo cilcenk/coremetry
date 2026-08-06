@@ -94,6 +94,10 @@ export interface CorePanelProps {
   // uPlot serisi; 0 = x). Çizgi olarak zaten var olan iki serinin ARASI
   // doldurulur — p95 çizgisi ayrı bir seri olarak gelir.
   bands?: { above: number; below: number; fill?: string }[];
+  // Başlangıçta GİZLİ seriler (ada göre) — ChartCard defaultHidden
+  // paritesi (v0.9.720): Response time P99'u kapalı açar, lejant açar.
+  // Kullanıcı dokunuşu seri kümesi değişene dek kalıcıdır.
+  defaultHidden?: string[];
   // Kısa boşlukları köprüle (ms eşiği) — Grafana "Connect null values:
   // Threshold" birebiri. VARSAYILAN YOK = sıkı doktrin (null → boşluk).
   // Operatör kararı 2026-08-06: köprüleme panel-başına açık tercih.
@@ -109,6 +113,7 @@ export interface CorePanelProps {
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
+  defaultHidden,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -172,7 +177,15 @@ export function CorePanel({
   // Görünürlük: tıkla = izole, Ctrl/Cmd = çoklu seçim (spec). Sorgu
   // TETİKLEMEZ — yalnız çizim gizlenir.
   const [vis, setVis] = useState<boolean[]>([]);
-  useEffect(() => { setVis(resetSeriesVisibility(aligned.names.length)); }, [aligned.names.length]);
+  useEffect(() => {
+    const v = resetSeriesVisibility(aligned.names.length);
+    // v0.9.720 — defaultHidden tohumu (yalnız seri kümesi değişince).
+    if (defaultHidden?.length) {
+      aligned.names.forEach((n, i) => { if (defaultHidden.includes(n)) v[i] = false; });
+    }
+    setVis(v);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aligned.names.join('|')]);
 
   // Görünen aralık (uPlot x scale) — legend istatistikleri bundan.
   const [xWin, setXWin] = useState<[number, number] | null>(null);

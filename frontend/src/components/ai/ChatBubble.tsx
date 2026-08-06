@@ -157,10 +157,20 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
       {!isUser && !!turn.links?.length && !turn.pending && !turn.error && (
         <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', marginTop: 4 }}>
           {turn.links.map((l, i) => (
-            <Link key={i} to={l.href} className="badge b-info"
-              style={{ textDecoration: 'none', fontSize: 10 }}>
-              🔗 {l.label}
-            </Link>
+            // v0.9.709 — DIŞ URL çipi (log köprüsü, https://...) SPA
+            // <Link>'e verilemez: router onu path sanıp uygulama içinde
+            // gezinir ve link kırılır. Dış href <a target=_blank>.
+            /^https?:/i.test(l.href) ? (
+              <a key={i} href={l.href} target="_blank" rel="noopener noreferrer"
+                className="badge b-info" style={{ textDecoration: 'none', fontSize: 10 }}>
+                🔗 {l.label}
+              </a>
+            ) : (
+              <Link key={i} to={l.href} className="badge b-info"
+                style={{ textDecoration: 'none', fontSize: 10 }}>
+                🔗 {l.label}
+              </Link>
+            )
           ))}
         </div>
       )}

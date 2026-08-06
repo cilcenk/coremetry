@@ -22,16 +22,16 @@ import (
 // serisini görürdü — v0.5.187 çapraz-zehirlenmesinin birebir aynısı.
 func TestBatchKeySeparatesSearches(t *testing.T) {
 	aggs := []chstore.SpanMetricAggSpec{{Name: "count", Aggregation: "count"}}
-	k1 := spanMetricBatchKey(1, 2, 30, 0, nil, "", "", "timeout", aggs)
-	k2 := spanMetricBatchKey(1, 2, 30, 0, nil, "", "", "refused", aggs)
+	k1 := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "timeout", aggs)
+	k2 := spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "refused", aggs)
 	if k1 == k2 {
 		t.Error("iki farklı arama AYNI önbellek anahtarını üretti — operatör " +
 			"birinin sonucunu ötekinin sorusuna karşılık görür (v0.5.187)")
 	}
 	// Boş arama, aramasız çağrıyla aynı kalmalı: aksi halde mevcut
 	// çağıranların (servis detayı) önbelleği tek seferde soğurdu.
-	if spanMetricBatchKey(1, 2, 30, 0, nil, "", "", "", aggs) !=
-		spanMetricBatchKey(1, 2, 30, 0, nil, "", "", "", aggs) {
+	if spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "", aggs) !=
+		spanMetricBatchKey(1, 2, 30, 0, 0, nil, "", "", "", aggs) {
 		t.Error("aynı girdi iki farklı anahtar üretti — deterministik değil")
 	}
 }

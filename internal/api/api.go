@@ -4954,7 +4954,10 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 		// v0.9.391 (grafik-audit Faz B) — panel nokta bütçesi; 0 = eski
 		// davranış + 2000 emniyet tavanı. queryMetric ile aynı clamp.
 		MaxDataPoints int `json:"maxDataPoints"`
-		Aggs          []struct {
+		// v0.9.723 — Prometheus rate[W] kayan penceresi (saniye).
+		// 0 = kapalı. Clamp [0,600] chstore'da (spanMetricWindow).
+		RateWindow int `json:"rateWindow"`
+		Aggs       []struct {
 			Name  string `json:"name"`
 			Agg   string `json:"agg"`
 			Field string `json:"field"`
@@ -4995,6 +4998,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 		To:            time.Unix(0, body.To),
 		StepSeconds:   body.Step,
 		MaxDataPoints: body.MaxDataPoints,
+		RateWindowSec: body.RateWindow,
 		Aggs:          specs,
 	}
 	// v0.9.229 — this endpoint had NO cache at all. It is the Service
@@ -5015,7 +5019,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 	// genişliğini artık TAHMİN etmiyor (bar genişliği/gap eşiği için
 	// sözleşme; rollup /api/rollup/red planıyla AYNI kontrat).
 	s.serveCached(w, r, spanMetricBatchKey(body.From, body.To, body.Step, body.MaxDataPoints,
-		body.GroupBy, string(body.Filters), body.DSL, body.Search, specs), 30*time.Second,
+		body.RateWindow, body.GroupBy, string(body.Filters), body.DSL, body.Search, specs), 30*time.Second,
 		func(ctx context.Context) (any, error) {
 			series, stepSec, err := s.store.QuerySpanMetricMulti(ctx, f)
 			if err != nil {
@@ -5036,7 +5040,7 @@ func (s *Server) spanMetricBatch(w http.ResponseWriter, r *http.Request) {
 // would collide, the v0.5.187 rule applied to strings. Fields are hashed
 // individually rather than summarised by count, which is the same rule
 // applied to the set.
-func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints int, groupBy []string,
+func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints, rateWindow int, groupBy []string,
 	filters, dsl, search string, aggs []chstore.SpanMetricAggSpec) string {
 	h := fnv.New64a()
 	write := func(parts ...string) {
@@ -5058,6 +5062,10 @@ func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints int, groupBy []s
 	// v0.9.391 — mdp key'de: farklı genişlikteki paneller farklı çözünürlük
 	// ister; key'e girmezse birbirinin çözünürlüğünü zehirler (v0.5.187).
 	write("mdp", strconv.Itoa(maxDataPoints))
+	// v0.9.723 — rateWindow anahtara girer: pencereli/penceresiz seri
+	// kümeleri farklıdır; girmese v2 panel ile eski panel birbirini
+	// zehirlerdi (v0.5.187 kuralı).
+	write("rw", strconv.Itoa(rateWindow))
 	specs := append([]chstore.SpanMetricAggSpec(nil), aggs...)
 	sort.Slice(specs, func(i, j int) bool { return specs[i].Name < specs[j].Name })
 	for _, a := range specs {

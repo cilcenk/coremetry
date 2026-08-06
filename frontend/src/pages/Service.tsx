@@ -22,6 +22,7 @@ import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { DetailsPropsStrip } from './service/DetailsPropsStrip';
 import { DetailsToc } from './service/DetailsToc';
+import { chartsV2 } from '@/lib/featureFlags';
 import { panelMaxDataPoints } from '@/lib/chartStep';
 import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { api } from '@/lib/api';
@@ -216,10 +217,15 @@ function ServiceDetailInner() {
     // şart: farklı key = prefetch boşa gider). select yok — cache HAM
     // zarfı taşır, Overview'un select'i okurken soyar.
     const redMdp = panelMaxDataPoints(3);
+    // v0.9.723 — chartsV2 bayrağı + rateWindow Overview'un key/istek
+    // formülüne girdi; parite BURADA da şart, yoksa prefetch iki modda
+    // da ölü kalır (review bulgusu: 5-elemanlı key 6-elemanlıyla asla
+    // eşleşmez, istek boşa gider + soğuk yükleme eski yavaşlığına döner).
     queryClient.prefetchQuery({
-      queryKey: ['service-overview-red', svc, r.from, r.to, redMdp],
+      queryKey: ['service-overview-red', svc, r.from, r.to, redMdp, chartsV2()],
       queryFn: () => api.spanMetricBatch({
         from: r.from, to: r.to, maxDataPoints: redMdp,
+        rateWindow: chartsV2() ? 180 : undefined,
         dsl: `service.name = "${svc.replace(/"/g, '\\"')}"`,
         aggs: [
           { name: 'rate', agg: 'rate' },

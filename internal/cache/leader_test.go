@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -157,4 +158,33 @@ func TestLeaderReacquiresAfterDemote(t *testing.T) {
 	// Recovery: lock becomes acquirable again (lease freed / Redis back).
 	sl.set(func(s *scriptLock) { s.acquireOK = true })
 	waitFor(t, 2*time.Second, h.IsLeader, "re-acquire after demote")
+}
+
+// v0.9.730 — edinim tetiği: OnAcquire liderlik EDİNİLDİĞİNDE (false→true)
+// çağrılır; edinemeyen pod'da ASLA. Rolling restart'ın "ilk türetme bir
+// tam aralık gecikiyor" bulgusunun regresyon pini: eski desen boot-tick'ti
+// ve o anda lider olunmadığı için no-op kalıyordu.
+func TestLeaderOnAcquireFiresOnAcquisition(t *testing.T) {
+	lk := &scriptLock{acquireOK: false, refreshOK: true}
+	h := NewLeaderHolder(lk, "k", 3*time.Second) // refresh=1s → retry hızlı
+	var fired atomic.Int32
+	h.SetOnAcquire(func() { fired.Add(1) })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.Start(ctx)
+
+	// Kilit başkasında: edinim yok, callback yok.
+	waitFor(t, time.Second, func() bool {
+		lk.mu.Lock()
+		defer lk.mu.Unlock()
+		return lk.acquires >= 1
+	}, "ilk acquire denemesi")
+	if fired.Load() != 0 {
+		t.Fatal("edinim olmadan OnAcquire ateşlendi")
+	}
+
+	// Eski pod bıraktı: edinim → callback tam BİR kez.
+	lk.set(func(s *scriptLock) { s.acquireOK = true })
+	waitFor(t, 4*time.Second, func() bool { return h.IsLeader() }, "edinim")
+	waitFor(t, time.Second, func() bool { return fired.Load() == 1 }, "OnAcquire")
 }

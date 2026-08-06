@@ -1436,7 +1436,6 @@ func runServiceTeamDeriver(ctx context.Context, store *chstore.Store, lock cache
 	const interval = 10 * time.Minute
 	const window = 3 * time.Hour
 	leader := cache.NewLeaderHolder(lock, lockKey, cache.LeaderTTL(interval))
-	leader.Start(ctx)
 	tick := func() {
 		if !leader.IsLeader() {
 			return
@@ -1459,7 +1458,13 @@ func runServiceTeamDeriver(ctx context.Context, store *chstore.Store, lock cache
 			log.Printf("[ns-derive] filled namespace for %d service(s) from span attrs", nn)
 		}
 	}
-	tick() // immediate on boot (idempotent; non-leader skips)
+	// v0.9.730 — boot-tick yerine EDİNİM tetiği: rolling restart'ta eski
+	// pod kilidi bırakır, yeni pod saniyeler içinde edinir ve İLK türetme
+	// hemen koşar (eskiden bir sonraki 10 dk ticker'ını bekliyordu; boot
+	// tick'i o anda lider olunmadığı için no-op'tu). İlk-kurulum da aynı
+	// yoldan: edinim = tick.
+	leader.SetOnAcquire(tick)
+	leader.Start(ctx)
 	t := time.NewTicker(interval)
 	defer t.Stop()
 	for {

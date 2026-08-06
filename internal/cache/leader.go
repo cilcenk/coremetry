@@ -56,7 +56,21 @@ type LeaderHolder struct {
 
 	held atomic.Bool
 
+	// onAcquire (v0.9.730) — liderlik EDİNİM anında (false→true geçişi)
+	// bir kez çağrılır; kendi goroutine'inde (heartbeat'i bloklamaz).
+	// Kullanım: rolling restart'ta eski pod kilidi kapanırken bırakır,
+	// yeni pod saniyeler içinde edinir — ama tick'i bir sonraki ticker'a
+	// (10 dk) bırakmak ilk işi tam bir aralık geciktiriyordu (deploy
+	// ajanı bulgusu). Start'tan ÖNCE SetOnAcquire ile kurulur.
+	onAcquire func()
+
 	startOnce sync.Once
+}
+
+// SetOnAcquire — edinim callback'i. Start'tan ÖNCE çağrılmalı (yarı
+// yarışsız basitlik; Start sonrası çağrı desteklenmez).
+func (h *LeaderHolder) SetOnAcquire(fn func()) {
+	h.onAcquire = fn
 }
 
 // LeaderTTL picks a sensible lease TTL given a worker's tick
@@ -153,6 +167,9 @@ func (h *LeaderHolder) run(ctx context.Context) {
 			if err == nil && ok {
 				h.held.Store(true)
 				log.Printf("[leader] became leader for %s (ttl=%s)", h.key, h.ttl)
+				if h.onAcquire != nil {
+					go h.onAcquire()
+				}
 				break
 			}
 			// Either another pod holds it (ok=false) OR network

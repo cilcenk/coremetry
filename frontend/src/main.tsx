@@ -6,6 +6,12 @@ import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 import App from './App';
 import { getRaw, STORAGE_KEYS } from './lib/storage';
 import './styles/globals.css';
+// uPlot temel CSS'i TEK yerden (v0.9.708): dört preset ayrı ayrı import
+// edince rolldown css modülünün sahipliğini @grafana chunk'ına verdi ve
+// preset'ler 198 KB gzip'lik lazy chunk'a statik kenar açtı. Eager tek
+// sahip = index; grafana'nın aynı css importu eager modüle çözülür,
+// ters kenar doğmaz.
+import 'uplot/dist/uPlot.min.css';
 
 // Defer AND gate the OpenTelemetry browser SDK off the critical path
 // (v0.7.84 deferred; gating added to shrink the cold path further).

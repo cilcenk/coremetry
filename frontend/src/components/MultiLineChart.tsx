@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef } from 'react';
 import uPlot from 'uplot';
-import 'uplot/dist/uPlot.min.css';
 import { escapeHTML } from '@/lib/utils';
 import type { SpanMetricSeries } from '@/lib/types';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';

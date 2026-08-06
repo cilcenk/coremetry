@@ -47,42 +47,39 @@ export default defineConfig({
         // chunk hash bumped for an unrelated reason. Vite's
         // default already content-hashes, this just opts the
         // chunk strategy into "by-import" granularity.
-        manualChunks(id) {
-          if (id.includes('node_modules')) {
-            if (id.includes('react-router')) return 'router';
-            // v0.8.514 (perf raporu #17) — kural daraltıldı: react-virtual
-            // yalnız VirtualList/VirtualTable tüketiyor; geniş '@tanstack'
-            // eşleşmesi onu da eager 'tanstack' chunk'ına itiyordu. Artık
-            // yalnız query çekirdeği eager; virtual, kullanan route
-            // chunk'larına taşınır (Rollup default'u).
-            if (id.includes('@tanstack/query-core') || id.includes('@tanstack/react-query')) return 'tanstack';
-            if (id.includes('uplot')) return 'charts';
-            if (id.includes('@opentelemetry')) return 'otel';
-            // v0.8.477 (perf dalga-2) — zone.js yalnız browserOtel'in
-            // ZoneContextManager'ı için var (main.tsx'te idle dinamik
-            // import); catch-all onu HER soğuk açılışta inen vendor'a
-            // sabitliyordu (~37KB min / ~11KB gz — vendor'ın %17.5'i).
-            // otel chunk'ına taşınınca RUM ile birlikte tembel iner.
-            if (id.includes('zone.js')) return 'otel';
-            // dagre (+ its graphlib + lodash layout deps) is a heavy
-            // layered-DAG engine imported ONLY by ServiceGraph.tsx,
-            // which is reached solely through the route-lazy
-            // ServiceGraphPreview page. Without this rule the vendor
-            // catch-all below pins dagre into the ALWAYS-loaded vendor
-            // chunk, so every cold first paint ships ~40 kB gz of graph
-            // layout the operator may never open. Splitting it into its
-            // own 'graph' chunk lets it load only with the topology
-            // route. graphlib + lodash are dagre-exclusive transitive
-            // deps (no app source imports lodash), so co-locating them
-            // keeps the chunk self-contained AND strips the lodash shard
-            // out of vendor too.
-            if (
-              id.includes('/dagre/') ||
-              id.includes('/graphlib/') ||
-              id.includes('/lodash')
-            ) return 'graph';
-            return 'vendor';
-          }
+        // v0.9.708 — manualChunks(fn) → advancedChunks: Vite 8 rolldown,
+        // CJS facade modüllerinde (react'in require şimleri gibi) fonksiyon
+        // formunu UYGULAMIYOR: @grafana pilotu gelince rolldown react'in
+        // CJS instance'ını grafana chunk'ına taşıdı ve HER sayfa
+        // require_react/require_jsx_runtime'ı oradan statik import etti —
+        // 178 KB gzip'lik lazy chunk index.html modulepreload'ına bindi
+        // (unminified build + sourcemap ile teşhis). advancedChunks
+        // rolldown'ın birinci sınıf mekanizması; eski kurallar birebir
+        // çevrildi, react AÇIK yüksek öncelikle vendor'da.
+        // Kural gerekçeleri (router/tanstack/charts/otel/graph) için git
+        // geçmişindeki manualChunks yorumlarına bak — v0.8.477/514.
+        advancedChunks: {
+          groups: [
+            // Sanal modüller (\0-önekli): Vite preload yardımcısı + CJS
+            // interop. Grupsuz kalınca rolldown ilk dinamik-import edene
+            // (grafana) kümeliyor ve HER chunk oradan import ediyor —
+            // __vitePreload vakası, unminified build ile teşhis.
+            { name: 'vendor', test: /^\u0000|vite\/(preload-helper|modulepreload)|commonjsHelpers/, priority: 110 },
+            { name: 'vendor', test: /node_modules\/(react|react-dom|scheduler)[\/?]/, priority: 100 },
+            { name: 'grafana', test: /node_modules\/@grafana\//, priority: 90 },
+            { name: 'router', test: /node_modules\/react-router/, priority: 80 },
+            { name: 'tanstack', test: /node_modules\/@tanstack\/(query-core|react-query)/, priority: 80 },
+            // charts > grafana önceliği ŞART: rolldown yüksek öncelikli grup
+            // chunk'ı kurulurken henüz sahiplenilmemiş bağımlılıkları YUTUYOR
+            // (docs: "modules of that group will be removed from other
+            // groups"). 80'deyken uplot grafana'ya yutuldu ve dört eager
+            // preset lazy chunk'a statik kenar açtı. react'in 100 pini de
+            // aynı mekanizmanın çözümüydü.
+            { name: 'charts', test: /node_modules\/uplot/, priority: 95 },
+            { name: 'otel', test: /node_modules\/(@opentelemetry|zone\.js)/, priority: 80 },
+            { name: 'graph', test: /node_modules\/(dagre|graphlib|lodash)/, priority: 80 },
+            { name: 'vendor', test: /node_modules/, priority: 10 },
+          ],
         },
       },
     },

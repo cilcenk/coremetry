@@ -461,7 +461,7 @@ func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode str
 	}
 
 	if isDelta {
-		return s.queryRateDelta(ctx, wc, groupSelect, step, mode, src)
+		return s.queryRateDelta(ctx, wc, groupSelect, step, f.RateWindowSec, mode, uint64(f.From.UnixNano()), uint64(f.To.UnixNano()), src)
 	}
 	return s.queryRateCumulative(ctx, wc, groupSelect, step, f.RateWindowSec, mode, originalFromNs, src)
 }
@@ -549,7 +549,7 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 
 // queryRateDelta — delta-temporality counter: değer zaten per-interval artışı,
 // per-(gk, bucket) sumOrNull yeter (cross-bucket delta YOK).
-func (s *Store) queryRateDelta(ctx context.Context, wc whereClause, groupSelect string, step int, mode string, src rateSource) ([]SpanMetricSeries, error) {
+func (s *Store) queryRateDelta(ctx context.Context, wc whereClause, groupSelect string, step, rateWindowSec int, mode string, fromNs, toNs uint64, src rateSource) ([]SpanMetricSeries, error) {
 	sql := buildRateDeltaSQL(rateSQLParams{
 		Step:      step,
 		GroupExpr: groupSelect,
@@ -589,14 +589,62 @@ func (s *Store) queryRateDelta(ctx context.Context, wc whereClause, groupSelect 
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
-	// Delta counter: değer zaten bucket'ın per-interval artışı. rate → /step
-	// (delta bucket'ları düzenli, gap-over-division sorunu YOK — review notu);
-	// increase → ham. Cumulative yol /dt'yi seriesRatePoints'te zaten yaptı.
-	divBy := 1.0
-	if mode == "rate" {
-		divBy = float64(step)
+	// v0.9.722 (operatör Grafana kıyası, prod ekranları) — DELTA'DA İKİ
+	// EKSİK vardı ve "kesikli"nin gerçek kökü buydu:
+	//
+	// 1. SIFIR-DOLDURMA YOKTU: yalnız dolu bucket'lar basılıyordu. Delta
+	//    temporality'de boş bucket "veri eksik" DEĞİL "SIFIR OLAY"dır —
+	//    Prometheus increase() boş aralığa 0 der. Seyrek route serileri
+	//    bu yüzden sıfıra çakılan iğneler gibi görünüyordu; Grafana'da
+	//    aynı route sürekli çizgi. (Null-doktrini İHLAL DEĞİL: doktrin
+	//    bilinmeyen için; delta'da yokluk bilinen bir sıfırdır — parite
+	//    raporu §D ayrımı.)
+	// 2. KAYAN PENCERE YOKTU: v0.9.718 rollingRate'i yalnız cumulative
+	//    yola bağladım; operatörün servisi delta histogram — pencere hiç
+	//    değmiyordu.
+	//
+	// Sıra: grid'i [from,to] step kafesiyle 0-doldur → pencere toplamı →
+	// rate ise /W (W<=step → /step, eski davranış).
+	grid := deltaGridFill(byGk, gkOrder, step, fromNs, toNs)
+	win := rateWindowSec
+	if win < step {
+		win = step
 	}
-	return buildRateSeries(byGk, gkKeys, gkOrder, divBy), nil
+	out := make([]SpanMetricSeries, 0, len(gkOrder))
+	for _, gkKey := range gkOrder {
+		pts := rollingRate(grid[gkKey], step, win, "increase")
+		div := 1.0
+		if mode == "rate" {
+			div = float64(win)
+		}
+		sp := make([]SpanMetricPoint, len(pts))
+		for i, p := range pts {
+			sp[i] = SpanMetricPoint{Time: int64(p.bucket), Value: p.value / div}
+		}
+		out = append(out, SpanMetricSeries{GroupKey: gkKeys[gkKey], Points: sp})
+	}
+	return out, nil
+}
+
+// deltaGridFill — SAF: her seriyi [fromNs,toNs] step-kafesine oturtur,
+// boş bucket = 0 (delta semantiği). Kafes toStartOfInterval hizasıyla
+// aynı: bucket = floor(t/step)*step.
+func deltaGridFill(byGk map[string]map[uint64]float64, gkOrder []string, step int, fromNs, toNs uint64) map[string][]ratePoint {
+	stepNs := uint64(step) * 1e9
+	if stepNs == 0 {
+		stepNs = 1e9
+	}
+	start := fromNs / stepNs * stepNs
+	out := make(map[string][]ratePoint, len(gkOrder))
+	for _, gkKey := range gkOrder {
+		acc := byGk[gkKey]
+		var pts []ratePoint
+		for b := start; b <= toNs; b += stepNs {
+			pts = append(pts, ratePoint{bucket: b, value: acc[b]})
+		}
+		out[gkKey] = pts
+	}
+	return out
 }
 
 // buildRateSeries — bucket-bazlı (ZATEN nihai) değerleri SpanMetricSeries'e

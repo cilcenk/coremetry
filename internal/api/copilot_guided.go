@@ -1058,7 +1058,11 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		"suggestions": guidedSuggestions(route),
 		// v0.9.419 — rotadan türetilen deterministik derin linkler;
 		// frontend çip olarak çizer (eski frontend'ler yok sayar).
-		"links": guidedAnswerLinks(route),
+		// v0.9.709 — rota çiplerine cevap metnindeki request_id log
+		// köprüsü çipleri eklenir (operatör-bildirimi: CoSRE id'yi
+		// buluyor ama linklemiyordu).
+		"links": append(guidedAnswerLinks(route),
+			s.answerRequestIDLinks(ctx, answer, ctxService)...),
 	})
 	return true, true
 }

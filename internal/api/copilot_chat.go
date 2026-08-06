@@ -242,7 +242,11 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		// chart blocks accumulated from earlier render_chart rounds).
 		if len(turn.ToolCalls) == 0 {
 			finalText = appendCharts(turn.Text)
-			emit("answer", map[string]string{"text": finalText, "exchangeId": exchangeID})
+			// v0.9.709 (operatör-bildirimi) — cevaptaki request_id'ler log
+			// köprüsü çipi olur; altyapı (links + ChatBubble çipleri)
+			// v0.9.419'dan beri hazırdı, yalnız guided yayınlıyordu.
+			emit("answer", map[string]any{"text": finalText, "exchangeId": exchangeID,
+				"links": s.answerRequestIDLinks(ctx, finalText, req.Context.Service)})
 			break
 		}
 		// Record the assistant's tool-call turn, then execute each
@@ -295,7 +299,11 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 				emit("error", map[string]string{"error": err2.Error()})
 			} else {
 				finalText = appendCharts(turn2.Text)
-				emit("answer", map[string]string{"text": finalText, "exchangeId": exchangeID})
+				// v0.9.709 (operatör-bildirimi) — cevaptaki request_id'ler log
+			// köprüsü çipi olur; altyapı (links + ChatBubble çipleri)
+			// v0.9.419'dan beri hazırdı, yalnız guided yayınlıyordu.
+			emit("answer", map[string]any{"text": finalText, "exchangeId": exchangeID,
+				"links": s.answerRequestIDLinks(ctx, finalText, req.Context.Service)})
 			}
 		}
 	}

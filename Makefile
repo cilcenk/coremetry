@@ -246,3 +246,11 @@ minikube-down:
 
 clean:
 	rm -rf coremetry demo frontend/out frontend/.next frontend/node_modules
+
+# v0.9.713 — FAZ 4 parite koşumu (Mod A; auth çerezi ve CH erişimi lokal)
+parity:
+	go run ./cmd/paritycheck -base http://localhost:8090 \
+	  -cookie-file /tmp/cm-cookies.txt \
+	  -ch "kubectl exec -i -n coremetry chc-0 -- clickhouse-client --database coremetry" \
+	  -service coremetry-monolithic -metric process.runtime.go.mem.heap_alloc \
+	  -step 60 -window 30 -report docs/charts/parity-report-last.md

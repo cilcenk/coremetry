@@ -47,6 +47,9 @@ import {
   type ChartThreshold, type ChartTimeRegion,
 } from '@/lib/chart/overlays';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
+import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { placeTooltip } from '@/lib/chartTooltip';
+import { fmtTooltipTime } from '@/lib/chartFmt';
 import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtSmart } from '@/lib/chartFmt';
@@ -158,6 +161,14 @@ export function CorePanel({
 
   // Görünürlük uPlot'a setSeries ile uygulanır — config rebuild DEĞİL.
   const plotRef = useRef<uPlot | null>(null);
+  // v0.9.710 — tooltip. Kapanışlar config rebuild'ine bağlı kalmasın
+  // diye canlı durum ref'lerde (TimeChart deseni: veri u.data'dan LIVE
+  // okunur, yapısal olanlar rebuild'de tazelenir).
+  const ttRef = useRef<HTMLDivElement | null>(null);
+  const visRef = useRef<boolean[]>([]);
+  visRef.current = vis;
+  const framesRef = useRef(frames);
+  framesRef.current = frames;
   useEffect(() => {
     const u = plotRef.current;
     if (!u) return;
@@ -237,6 +248,58 @@ export function CorePanel({
       const toSec = u.posToVal(u.select.left + u.select.width, 'x') / 1000;
       u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
       onZoomRef.current(fromSec, toSec);
+    });
+    // v0.9.710 — tooltip: "tüm seriler, değere göre sıralı" (spec
+    // varsayılanı). Saf çekirdekler TimeChart'la ORTAK: sortedTooltipRows
+    // (gizli seri düşer, gap 0 okumaz) + placeTooltip (flip/clamp) +
+    // fmtTooltipTime (tarih koşulsuz, çözünürlük adımdan). Değer biçimi
+    // DataFrame display processor'dan — birim çevirisi köprü sözleşmesi
+    // gereği elle yazılmaz.
+    b.addHook('setCursor', (u) => {
+      const tt = ttRef.current;
+      if (!tt) return;
+      const idx = u.cursor.idx;
+      if (idx == null || u.cursor.left == null || u.cursor.left < 0) {
+        tt.style.display = 'none';
+        return;
+      }
+      const xs = u.data[0] as number[];
+      const tMs = xs[idx];
+      if (tMs == null) { tt.style.display = 'none'; return; }
+      const stepSec = xs.length > 1 ? Math.abs(xs[1] - xs[0]) / 1000 : null;
+      const rows = sortedTooltipRows(aligned.names.map((label, i) => {
+        const si = u.cursor.idxs?.[i + 1] ?? idx;
+        const v = visRef.current[i] === false ? null
+          : ((u.data[i + 1] as (number | null)[])?.[si] ?? null);
+        const disp = framesRef.current[i]?.fields[1].display;
+        return {
+          label,
+          color: resolveVar(seriesRoleColor(label, roles?.[i] ?? 'data')),
+          value: v,
+          // display processor varsa text'i o üretir; TooltipRow.text'i
+          // model kurar ama biz biçimli metni unit alanına gömmüyoruz —
+          // fmt override'ı aşağıda satır basarken uygulanıyor.
+          unit: undefined,
+          fmt: v != null && disp ? (() => { const d = disp(v); return `${d.text}${d.suffix ?? ''}`; })() : undefined,
+        };
+      }));
+      if (rows.length === 0) { tt.style.display = 'none'; return; }
+      tt.innerHTML = `<div class="ov-tt-t">${fmtTooltipTime(tMs / 1000, stepSec)}</div>` + rows.map(r =>
+        `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,
+      ).join('');
+      tt.style.display = 'block';
+      const host = wrapRef.current;
+      if (host) {
+        const pl = placeTooltip(
+          u.cursor.left ?? 0, u.cursor.top ?? 0,
+          tt.offsetWidth, tt.offsetHeight,
+          u.over.clientWidth, u.over.clientHeight,
+          u.over.offsetLeft, u.over.offsetTop,
+          host.clientWidth, host.clientHeight,
+        );
+        tt.style.left = `${pl.x}px`;
+        tt.style.top = `${pl.y}px`;
+      }
     });
     // Görünen pencereyi legend istatistiklerine bildir.
     b.addHook('setScale', (u, key) => {
@@ -356,8 +419,12 @@ export function CorePanel({
         }}>{queryText}</pre>
       )}
 
-      <div ref={wrapRef} style={{ minHeight: height }}
-        onDoubleClick={onZoomReset}>
+      <div ref={wrapRef} style={{ minHeight: height, position: 'relative' }}
+        onDoubleClick={onZoomReset}
+        onMouseLeave={() => { if (ttRef.current) ttRef.current.style.display = 'none'; }}>
+        {/* v0.9.710 — tooltip overlay; .ov-tt sınıfları evdeki tooltip
+            görseliyle birebir (OVC/TC/MLC aynı CSS'i kullanıyor). */}
+        <div ref={ttRef} className="ov-tt" style={{ display: 'none', position: 'absolute', zIndex: 10, pointerEvents: 'none' }} />
         {data.state === 'loading' && <Spinner />}
         {data.state === 'error' && (
           <Empty icon="⚠" title="Grafik yüklenemedi">{data.message}</Empty>

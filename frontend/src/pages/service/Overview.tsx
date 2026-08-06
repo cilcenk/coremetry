@@ -383,6 +383,18 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     return { sec: latest.timeUnixNs / 1e9, label: latest.version };
   }, [deploysQ.data, from, to]);
 
+  // v0.9.720 — v2 panellerinin deploy işareti: anlık olay → ince bant
+  // (pencerenin %0.4'ü; clampRegion sıfır-genişliği eler, o yüzden
+  // genişlik ŞART). drawTimeRegions zoom'la doğru konumlanır.
+  const deployRegions = useMemo(() => {
+    if (!deploy) return undefined;
+    const spanSec = Math.max(1, (to - from) / 1e9);
+    return [{
+      fromSec: deploy.sec, toSec: deploy.sec + spanSec * 0.004,
+      color: 'var(--purple)', label: `▼ ${deploy.label}`,
+    }];
+  }, [deploy, from, to]);
+
   // Throughput series (OK vs Errors) derived from the MV-backed rate +
   // error_rate series — no extra query, no raw-spans scan (invariant #3).
   // Errors = rate × err%, OK = the remainder; the two add up to the total rate.
@@ -565,6 +577,26 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               legendStorageKey="ov-response-time-ops" statsDefaultCollapsed
               lines={opsView.lines} />
           ) : (
+            chartsV2() ? (
+              <Suspense key="rt-agg-v2" fallback={<Spinner />}>
+                {/* v0.9.720 — dalga-2: agregat Response time. Ops kırılım
+                    görünümü (rt-ops) ESKİ yolda kaldı — ayrı dilim.
+                    defaultHidden paritesi: P99 kapalı açılır. */}
+                <CorePanelMultiLazy
+                  title={scopedChartTitle('Response time', usingAllSpans)}
+                  storageKey="ov-response-time-v2" height={200} unit="ms"
+                  items={[
+                    { name: 'avg', role: 'data' as const, series: lat?.avg ?? [] },
+                    { name: 'P50', role: 'data' as const, series: lat?.p50 ?? [] },
+                    { name: 'P95', role: 'data' as const, series: lat?.p95 ?? [] },
+                    { name: 'P99', role: 'data' as const, series: lat?.p99 ?? [] },
+                  ]}
+                  defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
+                  regions={deployRegions}
+                  onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
+                />
+              </Suspense>
+            ) : (
             <ChartCard key="rt-agg" title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
               headerAside={rtSegment}
               legendStorageKey="ov-response-time" statsDefaultCollapsed
@@ -575,6 +607,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
               { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
             ]} />
+            )
           )}
           {/* v0.9.676 — metrik türevli gecikme KENDİ kartında, span
               türevlinin ALTINDA (throughput'takiyle aynı düzen).
@@ -620,6 +653,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                   { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
                   { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },
                 ]}
+                regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>
@@ -704,11 +738,23 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           )}
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
-          <ChartCard title={scopedChartTitle('Failure rate', usingAllSpans)} titleTip={latScopeNote} unit="%" mode="area" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-            legendStorageKey="ov-failure-rate" statsDefaultCollapsed
-            thresholds={failureThresholds} lines={[
-            { series: lat?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
-          ]} />
+          {chartsV2() ? (
+            <Suspense fallback={<Spinner />}>
+              <CorePanelMultiLazy
+                title={scopedChartTitle('Failure rate', usingAllSpans)}
+                storageKey="ov-failure-rate-v2" height={200} unit="percent"
+                items={[{ name: 'errors', role: 'error', series: lat?.error_rate ?? [] }]}
+                thresholds={failureThresholds} regions={deployRegions}
+                onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
+              />
+            </Suspense>
+          ) : (
+            <ChartCard title={scopedChartTitle('Failure rate', usingAllSpans)} titleTip={latScopeNote} unit="%" mode="area" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
+              legendStorageKey="ov-failure-rate" statsDefaultCollapsed
+              thresholds={failureThresholds} lines={[
+              { series: lat?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
+            ]} />
+          )}
         </MetricPanel>
         {/* v0.9.491 — v0.9.476 Apdex grafiği kaldırıldı (operatör kararı);
             RED üçlüsü ov-charts-3'ü tam dolduruyor. */}

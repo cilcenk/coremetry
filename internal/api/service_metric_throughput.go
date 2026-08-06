@@ -64,16 +64,16 @@ func (s *Server) throughputMetricName(ctx context.Context) string {
 //     sınıfı.
 //   - Filtre operatörü `=~` olmalı. `=` olsaydı desen düz metin olarak
 //     aranır ve HİÇBİR job eşleşmezdi; grafik sessizce boş kalırdı.
-func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time, mdp int) string {
+func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int) string {
 	// mdp ANAHTARDA (hash-all-inputs, v0.5.187 sınıfı): farklı nokta
 	// bütçeleri farklı adım → farklı sonuç. panelMaxDataPoints kuantalı
 	// (200px kova) olduğu için kardinalite sınırlı (v0.8.270 disiplini).
-	return fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s:mdp%d", service, metric, jobLabel, cacheBucket(from, to), mdp)
+	return fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s:mdp%d:bd%s:rw%d", service, metric, jobLabel, cacheBucket(from, to), mdp, breakdown, rateWin)
 }
 
-func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, mdp int) (string, chstore.MetricQueryFilter) {
+func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int) (string, chstore.MetricQueryFilter) {
 	pattern := chstore.JobServiceRegex(service)
-	key := metricThroughputCacheKey(service, metric, jobLabel, from, to, mdp)
+	key := metricThroughputCacheKey(service, metric, jobLabel, from, to, mdp, breakdown, rateWin)
 	return key, chstore.MetricQueryFilter{
 		Name:        metric,
 		Filters:     []chstore.FilterExpr{{Key: jobLabel, Op: "=~", Values: []string{pattern}}},
@@ -85,7 +85,21 @@ func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, 
 		// clampStepToExport tabanı); bunu geçiren İLK yüzey bu. 0 = px
 		// bilinmiyor → eski sabit merdiven, davranış değişmez.
 		MaxDataPoints: mdp,
+		// v0.9.718 (operatör: Grafana by(http_route) referansı) —
+		// breakdown=route → seri başına http.route; rateWindow PromQL
+		// [W] eşdeğeri yumuşatma (kesikli şikâyeti).
+		GroupBy:       breakdownGroupBy(breakdown),
+		RateWindowSec: rateWin,
 	}
+}
+
+// breakdownGroupBy — panelin kırılım seçenekleri. Yalnız bilinen değerler:
+// keyfi attr'a açmak yüksek-kardinalite kapısı olurdu.
+func breakdownGroupBy(breakdown string) []string {
+	if breakdown == "route" {
+		return []string{"http.route"}
+	}
+	return nil
 }
 
 // getServiceMetricThroughput — GET /api/services/{name}/metric-throughput
@@ -116,8 +130,23 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 	if mdp > 4000 {
 		mdp = 4000
 	}
+	// v0.9.718 — kırılım + rate penceresi. Pencere verilmezse PromQL
+	// alışkanlığına yakın varsayılan: 3×step bandında ama en az 60 sn,
+	// en çok 600 sn (Grafana referansı [3m]@1s). step bilinmiyorsa
+	// (auto) 180 sn.
+	breakdown := strings.TrimSpace(r.URL.Query().Get("breakdown"))
+	if breakdown != "" && breakdown != "route" {
+		breakdown = "" // bilinmeyen kırılım sessizce kapalı — 400 değil
+	}
+	rateWin, _ := strconv.Atoi(r.URL.Query().Get("rateWindow"))
+	if rateWin <= 0 {
+		rateWin = 180
+	}
+	if rateWin > 600 {
+		rateWin = 600
+	}
 
-	key := metricThroughputCacheKey(name, metric, jobLabel, from, to, mdp)
+	key := metricThroughputCacheKey(name, metric, jobLabel, from, to, mdp, breakdown, rateWin)
 	pattern := chstore.JobServiceRegex(name)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		out := map[string]any{
@@ -175,7 +204,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		var candErrs []string
 		for _, lb := range labels {
 			triedLabels = append(triedLabels, lb)
-			_, f := metricThroughputPlan(name, resolved, lb, from, to, mdp)
+			_, f := metricThroughputPlan(name, resolved, lb, from, to, mdp, breakdown, rateWin)
 			ser, err := rate(ctx, f, "rate")
 			if err != nil {
 				// v0.9.683 — TEK ADAYIN HATASI TÜM CEVABI ÖLDÜRMESİN.
@@ -207,7 +236,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// Prometheus dünyasında kimlik bir etikette; OTLP dünyasında
 		// kaynak özniteliğinden gelen service_name kolonunda.
 		if matched == nil {
-			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to, mdp)
+			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to, mdp, breakdown, rateWin)
 			// v0.9.678 — KOLON DA İKİ BİÇİM DENİYOR.
 			//
 			// Operatörün sorusu ("Coremetry ingest ederken env kesiyor

@@ -220,13 +220,16 @@ export const api = {
   // Servis throughput'u METRİKTEN (v0.9.665). `metric` boş bırakılırsa
   // ayardaki ad kullanılıyor; operatör doğru adı ararken her denemede
   // ayar kaydetmek zorunda kalmasın diye sorgudan da geçilebiliyor.
-  serviceMetricThroughput: (svc: string, fromNs: number, toNs: number, metric?: string, mdp?: number) =>
+  serviceMetricThroughput: (svc: string, fromNs: number, toNs: number, metric?: string, mdp?: number, opts?: { breakdown?: 'route'; rateWindow?: number }) =>
     get<import('./types').ServiceMetricThroughput>(
       `/api/services/${encodeURIComponent(svc)}/metric-throughput?from=${fromNs}&to=${toNs}`
       + (metric ? `&metric=${encodeURIComponent(metric)}` : '')
       // v0.9.706 — nokta bütçesi (parite px pilotu). panelMaxDataPoints
       // kuantalı üretir → sunucu cache anahtarı sınırlı kardinalitede.
-      + (mdp ? `&maxDataPoints=${mdp}` : '')),
+      + (mdp ? `&maxDataPoints=${mdp}` : '')
+      // v0.9.718 — route kırılımı + PromQL-eşdeğeri rate penceresi.
+      + (opts?.breakdown ? `&breakdown=${opts.breakdown}` : '')
+      + (opts?.rateWindow ? `&rateWindow=${opts.rateWindow}` : '')),
   // Coremetry meta-observability snapshot — drives /admin/stats.
   systemStats: () =>
     get<import('./types').SystemStats>('/api/admin/system-stats'),

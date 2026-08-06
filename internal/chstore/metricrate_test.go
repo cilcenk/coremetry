@@ -172,3 +172,68 @@ func TestCumulativeRateDoesNotFilterMonotonic(t *testing.T) {
 		t.Error("MonoExpr bağlanmamış — mono bayrağı SELECT'e taşınmalı")
 	}
 }
+
+// v0.9.718 (parite: "kesikli" şikâyeti) — rollingRate = PromQL rate([W]).
+// Grafana referansı [3m] pencereyle pürüzsüz; penceresiz per-bucket delta
+// aynı veride testere üretiyordu.
+func TestRollingRate(t *testing.T) {
+	mk := func(vals ...float64) []ratePoint {
+		out := make([]ratePoint, len(vals))
+		for i, v := range vals {
+			out[i] = ratePoint{bucket: uint64(i) * ns(10), value: v}
+		}
+		return out
+	}
+
+	t.Run("pencere<=step: girdi aynen (eski davranış)", func(t *testing.T) {
+		in := mk(1, 2, 3)
+		out := rollingRate(in, 10, 10, "rate")
+		for i := range in {
+			if out[i] != in[i] {
+				t.Fatalf("nokta %d değişti", i)
+			}
+		}
+	})
+
+	t.Run("testere → düz: 0/6/0/6 rate'i 30s pencerede yumuşar", func(t *testing.T) {
+		// step=10s, artışlar (rate×dt): 0,60,0,60,0,60 → 30s pencerede
+		// toplam ~60-120/30 bandına oturur; uçlar arası fark testere
+		// halinden KÜÇÜK olmalı.
+		in := mk(0, 6, 0, 6, 0, 6)
+		out := rollingRate(in, 10, 30, "rate")
+		mx, mn := out[2].value, out[2].value
+		for _, p := range out[2:] { // pencere dolduktan sonra
+			if p.value > mx {
+				mx = p.value
+			}
+			if p.value < mn {
+				mn = p.value
+			}
+		}
+		if mx-mn >= 6 {
+			t.Fatalf("yumuşama yok: min=%v max=%v (testere aynen duruyor)", mn, mx)
+		}
+		if mn <= 0 {
+			t.Fatalf("pencereli rate 0'a düşmemeli (artış var): mn=%v", mn)
+		}
+	})
+
+	t.Run("increase modu: pencere TOPLAMI, W'ye bölünmez", func(t *testing.T) {
+		in := mk(10, 10, 10) // increase per bucket
+		out := rollingRate(in, 10, 30, "increase")
+		if out[2].value != 30 {
+			t.Fatalf("30s pencere artışı = %v, beklenen 30", out[2].value)
+		}
+	})
+
+	t.Run("boşluklu seride pencere kayar, patlamaz", func(t *testing.T) {
+		in := []ratePoint{
+			{bucket: 0, value: 6},
+			{bucket: ns(60), value: 6}, // 50s boşluk
+		}
+		out := rollingRate(in, 10, 30, "rate")
+		if len(out) != 2 || out[1].value <= 0 {
+			t.Fatalf("boşluk sonrası nokta: %+v", out)
+		}
+	})
+}

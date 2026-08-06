@@ -251,8 +251,12 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     // v0.9.706 — redMdp anahtarda VE istekte: metrik paneli artık kardeş
     // RED grafikleriyle aynı nokta bütçesini geçiyor (px pilotu). Sunucu
     // desteği v0.9.105'ten beri hazırdı; geçiren ilk yüzey bu.
-    queryKey: ['service-metric-throughput', service, from, to, redMdp],
-    queryFn: () => api.serviceMetricThroughput(service, from, to, undefined, redMdp),
+    // v0.9.718 — chartsV2'de route kırılımı + 180s rate penceresi
+    // (Grafana by(http_route) + [3m] referansı). Bayrak anahtarda:
+    // iki mod farklı seri kümesi döndürür.
+    queryKey: ['service-metric-throughput', service, from, to, redMdp, chartsV2()],
+    queryFn: () => api.serviceMetricThroughput(service, from, to, undefined, redMdp,
+      chartsV2() ? { breakdown: 'route', rateWindow: 180 } : { rateWindow: 180 }),
     staleTime: 30_000,
   });
 
@@ -645,13 +649,20 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                   buluşuyor. */}
               {chartsV2() ? (
                 <Suspense fallback={<Spinner />}>
-                  <CorePanelLazy
+                  {/* v0.9.718 — route kırılımı: her seri kendi groupKey'iyle
+                      (http.route) gelir; CorePanelMulti ad+rol hizalar.
+                      Rol 'data': route'lar veri serisi, semantik değil. */}
+                  <CorePanelMultiLazy
                     title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
                     storageKey="ov-throughput-metric-v2"
                     height={200}
-                    series={metricTputQ.data?.series ?? []}
                     unit="reqps"
-                    seriesName={`metrik (${metricTputQ.data?.matchedBy ?? 'job'})`}
+                    items={(metricTputQ.data?.series ?? []).map((s0, i) => ({
+                      series: [s0],
+                      name: s0.groupKey?.length ? s0.groupKey.join(' · ')
+                        : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
+                      role: 'data' as const,
+                    }))}
                     onZoom={onZoom} onZoomReset={onZoomReset}
                     syncKey={chartSync}
                     queryText={`metric=${metricTputQ.data?.metric ?? '?'} · instrument=${metricTputQ.data?.instrument ?? '?'} · eşleşme=${metricTputQ.data?.matchedBy ?? '?'} · mdp=${redMdp}`}

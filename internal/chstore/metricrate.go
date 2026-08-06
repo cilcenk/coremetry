@@ -91,6 +91,60 @@ func seriesRatePoints(buckets []uint64, vals []*float64, mode string, dropBefore
 	return out
 }
 
+// rollingRate (v0.9.718, parite: "kesikli" şikâyeti) — PromQL rate([W])
+// eşdeğeri: seriesRatePoints'in TEK-bucket artışları üzerinde kayan
+// pencere. Her noktada değer = (t-W, t] penceresindeki artışların
+// toplamı / W. Pencere ≤ step → girdi aynen döner (eski davranış).
+//
+// Grafana referansı sum(rate(...[3m])) by(...) pürüzsüz; aynı veri
+// penceresiz per-bucket delta'da testere dişi. Yumuşatma SUNUCUDA —
+// frontend türev almaz (FAZ 2 doktrini).
+//
+// SAF; increase modunda pencere toplamı W'ye bölünmeden verilir
+// (increase = penceredeki toplam artış — PromQL increase eşleniği).
+func rollingRate(pts []ratePoint, stepSec, windowSec int, mode string) []ratePoint {
+	if windowSec <= stepSec || len(pts) == 0 {
+		return pts
+	}
+	// pts değerleri mode'a göre: rate=delta/dt, increase=delta. Pencere
+	// toplamı için her noktayı ARTIŞA çevir (rate ise ×dt geri).
+	type incPt struct {
+		b   uint64
+		inc float64
+	}
+	incs := make([]incPt, len(pts))
+	for i, p := range pts {
+		inc := p.value
+		if mode == "rate" {
+			// dt'yi komşudan türet: seriesRatePoints değeri delta/dtSec
+			// olarak verdi; dt = bucket farkı (ilk nokta için step).
+			dt := float64(stepSec)
+			if i > 0 {
+				dt = float64(p.bucket-pts[i-1].bucket) / 1e9
+			}
+			inc = p.value * dt
+		}
+		incs[i] = incPt{p.bucket, inc}
+	}
+	winNs := uint64(windowSec) * 1e9
+	out := make([]ratePoint, len(pts))
+	j := 0
+	sum := 0.0
+	for i := range incs {
+		sum += incs[i].inc
+		for incs[j].b+winNs <= incs[i].b {
+			sum -= incs[j].inc
+			j++
+		}
+		v := sum
+		if mode == "rate" {
+			v = sum / float64(windowSec)
+		}
+		out[i] = ratePoint{bucket: incs[i].b, value: v}
+	}
+	return out
+}
+
 // isRateableInstrument — rate/increase yalnız MONOTONIC COUNTER'da (sum) anlamlı.
 // gauge (anlık) / histogram (dağılım) reddedilir.
 func isRateableInstrument(instrument string) bool {
@@ -409,13 +463,13 @@ func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode str
 	if isDelta {
 		return s.queryRateDelta(ctx, wc, groupSelect, step, mode, src)
 	}
-	return s.queryRateCumulative(ctx, wc, groupSelect, step, mode, originalFromNs, src)
+	return s.queryRateCumulative(ctx, wc, groupSelect, step, f.RateWindowSec, mode, originalFromNs, src)
 }
 
 // queryRateCumulative — per-(seri, bucket) SON kümülatif değeri çeker; Go'da
 // per-seri reset-korumalı delta (scalarSeriesDelta) + kullanıcı-groupBy'a
 // yeniden-toplama. CH bounds korunur (LIMIT + max_execution_time + time WHERE).
-func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSelect string, step int, mode string, originalFromNs uint64, src rateSource) ([]SpanMetricSeries, error) {
+func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSelect string, step, rateWindowSec int, mode string, originalFromNs uint64, src rateSource) ([]SpanMetricSeries, error) {
 	sql := buildRateCumulativeSQL(rateSQLParams{
 		Step:      step,
 		SeriesKey: metricSeriesKeyExpr(s.hasSeriesFpCol),
@@ -476,6 +530,7 @@ func (s *Store) queryRateCumulative(ctx context.Context, wc whereClause, groupSe
 	for _, sk := range skOrder {
 		ss := bySk[sk]
 		pts := seriesRatePoints(ss.buckets, ss.vals, mode, originalFromNs, ss.mono)
+		pts = rollingRate(pts, step, rateWindowSec, mode)
 		gkKey := strings.Join(ss.gk, "\x00")
 		acc := byGk[gkKey]
 		if acc == nil {

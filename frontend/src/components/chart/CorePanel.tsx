@@ -102,6 +102,11 @@ export interface CorePanelProps {
   // Threshold" birebiri. VARSAYILAN YOK = sıkı doktrin (null → boşluk).
   // Operatör kararı 2026-08-06: köprüleme panel-başına açık tercih.
   connectNulls?: number;
+  // v0.9.725 — x ekseni SORGU aralığına mıhlanır (saniye, epoch).
+  // Grafana her zaman seçili [from,to]'yu çizer: kenarlar = aralık
+  // kenarı; verilmezse uPlot veriden türetir (eski davranış) ve
+  // eksende sağlı-sollu ölü boşluk kalır (operatör bulgusu).
+  xRange?: { from: number; to: number } | null;
   // "Sorguyu göster" menü kalemi için: paneli besleyen sorgunun/isteğin
   // insan-okur özeti. Verilmezse kalem çizilmez.
   queryText?: string;
@@ -113,7 +118,7 @@ export interface CorePanelProps {
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
-  defaultHidden,
+  defaultHidden, xRange,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -216,6 +221,10 @@ export function CorePanel({
     b.addScale({
       scaleKey: 'x', isTime: true,
       orientation: ScaleOrientation.Horizontal, direction: ScaleDirection.Right,
+      // v0.9.725 — Grafana paritesi: x SORGU aralığına mıhlı (kenar =
+      // aralık kenarı). uPlot x ms cinsinden (onZoom /1000 gerekçesi),
+      // xRange sn gelir. Verilmezse eski davranış (veriden türet).
+      range: xRange ? () => [xRange.from * 1000, xRange.to * 1000] as uPlot.Range.MinMax : undefined,
     });
     b.addScale({
       scaleKey: 'y',
@@ -341,7 +350,7 @@ export function CorePanel({
     return b;
     // themeTick: tema değişince renkler yeniden çözülsün diye bağımlılıkta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig]);
+  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to]);
 
   // CSV: ekranda ne varsa o iner (görünen veri, ayrı export sorgusu yok).
   const downloadCsv = () => {

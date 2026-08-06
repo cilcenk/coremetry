@@ -28,6 +28,7 @@
 // durum NEDENİNİ ve sonraki adımı söyler; kısmi veri görsel işaretlenir.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type uPlot from 'uplot';
 import {
   UPlotChart, UPlotConfigBuilder,
   AxisPlacement, ScaleOrientation, ScaleDirection, ScaleDistribution,
@@ -46,6 +47,7 @@ import {
   type ChartThreshold, type ChartTimeRegion,
 } from '@/lib/chart/overlays';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
+import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtSmart } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -89,6 +91,10 @@ export interface CorePanelProps {
   // uPlot serisi; 0 = x). Çizgi olarak zaten var olan iki serinin ARASI
   // doldurulur — p95 çizgisi ayrı bir seri olarak gelir.
   bands?: { above: number; below: number; fill?: string }[];
+  // Kısa boşlukları köprüle (ms eşiği) — Grafana "Connect null values:
+  // Threshold" birebiri. VARSAYILAN YOK = sıkı doktrin (null → boşluk).
+  // Operatör kararı 2026-08-06: köprüleme panel-başına açık tercih.
+  connectNulls?: number;
   // "Sorguyu göster" menü kalemi için: paneli besleyen sorgunun/isteğin
   // insan-okur özeti. Verilmezse kalem çizilmez.
   queryText?: string;
@@ -99,13 +105,22 @@ export interface CorePanelProps {
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
-  thresholds, regions, bands, queryText, logScaleToggle,
+  thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   // Tema değişince config yeniden kurulmalı (renkler draw anında çözülür;
   // useThemeTick data-theme mutasyonunda sayaç artırır — mevcut desen).
   const themeTick = useThemeTick();
+  // v0.9.704 (self-review 🟠) — config'i KİMLİK değişimi yıkmasın.
+  // Grafana UPlotChart config'i === ile karşılaştırır; farklıysa uPlot
+  // DESTROY+RECREATE eder. Inline thresholds={[...]} her parent render'da
+  // yeni kimlik üretir → her poll tick'inde canvas yıkılırdı (flicker,
+  // sync kaybı, 16ms ihlali). Callback ref'e, overlay props içerik
+  // imzasına biner; yalnız İÇERİK değişince rebuild.
+  const onZoomRef = useRef(onZoom);
+  onZoomRef.current = onZoom;
+  const overlaySig = JSON.stringify([thresholds ?? null, regions ?? null, bands ?? null]);
   // FAZ 2D — panel menüsü durumları. Tam ekran CSS overlay: route/DOM
   // taşıma yok, ESC ile çıkılır. Log toggle logScale prop'unu TOHUM alır.
   const [menuOpen, setMenuOpen] = useState(false);
@@ -141,6 +156,18 @@ export function CorePanel({
   // Görünen aralık (uPlot x scale) — legend istatistikleri bundan.
   const [xWin, setXWin] = useState<[number, number] | null>(null);
 
+  // Görünürlük uPlot'a setSeries ile uygulanır — config rebuild DEĞİL.
+  const plotRef = useRef<uPlot | null>(null);
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    vis.forEach((show, i) => {
+      if (u.series[i + 1] && u.series[i + 1].show !== show) {
+        u.setSeries(i + 1, { show }, false);
+      }
+    });
+  }, [vis]);
+
   const config = useMemo(() => {
     const theme = chartTheme();
     const b = new UPlotConfigBuilder();
@@ -164,11 +191,15 @@ export function CorePanel({
         scaleKey: 'y', theme,
         lineColor: resolveVar(seriesRoleColor(name, roles?.[i] ?? 'data')),
         lineWidth: 1.5,
-        show: vis[i] ?? true,
-        // dataFrame köprüsü null taşır; spanNulls=false → boşluk boşluk
-        // olarak çizilir (spec: sahte süreklilik yok). Kısa boşluk
-        // köprüleme (gapPolicy) FAZ 2C'de bu bayrağın yerine bağlanacak.
-        spanNulls: false,
+        // show BURADA SABİT true: görünürlük setSeries ile uygulanıyor
+        // (aşağıdaki effect). Config'e gömmek her legend tıkını full
+        // rebuild yapardı — uPlot'un ucuz toggle'ı varken.
+        show: true,
+        // Doktrin (operatör onayı 2026-08-06): varsayılan SIKI — null
+        // boşluk çizilir, Grafana'nın "Connect null values: Never"
+        // karşılığı. connectNulls (ms eşiği) panel-başına AÇIK tercihtir:
+        // Grafana'daki "Threshold" modunun birebiri (spanNulls: number).
+        spanNulls: connectNulls ?? false,
       });
     });
     if (syncKey) b.setCursor({ sync: { key: syncKey } });
@@ -196,11 +227,16 @@ export function CorePanel({
     // Brush → zoom. uPlot select değeri px; setSelect hook'unda scale'e
     // çevrilir (posToVal) — cursorOpts.selectRangeSec ile aynı yaklaşım.
     b.addHook('setSelect', (u) => {
-      if (!onZoom || u.select.width < 5) return;
-      const from = u.posToVal(u.select.left, 'x');
-      const to = u.posToVal(u.select.left + u.select.width, 'x');
+      if (!onZoomRef.current || u.select.width < 5) return;
+      // v0.9.704 (self-review 🔴) — posToVal MİLİSANİYE döndürür: köprü
+      // x'i ms üretir ve @grafana/ui ms:1 kurar. Sözleşme SANİYE
+      // (usePageZoomRange.handleZoom ×1000 yapar); bölmeden geçirmek
+      // URL'i yıl ~58.000'e götürüyordu. /1000 BURADA — çağıranda değil,
+      // yoksa her çağıran ayrı hatırlamak zorunda kalır.
+      const fromSec = u.posToVal(u.select.left, 'x') / 1000;
+      const toSec = u.posToVal(u.select.left + u.select.width, 'x') / 1000;
       u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
-      onZoom(from, to);
+      onZoomRef.current(fromSec, toSec);
     });
     // Görünen pencereyi legend istatistiklerine bildir.
     b.addHook('setScale', (u, key) => {
@@ -211,8 +247,7 @@ export function CorePanel({
     return b;
     // themeTick: tema değişince renkler yeniden çözülsün diye bağımlılıkta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aligned.names.join(' '), roles?.join(), vis, syncKey, logScale, onZoom, themeTick,
-    thresholds, regions, bands, effLog]);
+  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig]);
 
   // CSV: ekranda ne varsa o iner (görünen veri, ayrı export sorgusu yok).
   const downloadCsv = () => {
@@ -237,8 +272,33 @@ export function CorePanel({
     }));
   }, [aligned, xWin]);
 
-  const [legendOpen, setLegendOpen] = useState(() =>
-    !resolveLegendCollapsed(null, undefined, aligned.names.length, 6));
+  // v0.9.704 (self-review 🟠) — İKİ kusur: (a) initializer yalnız
+  // mount'ta koşar ve panel loading (0 seri) ile mount olur → ">6 seri
+  // kapalı" kuralı HİÇ tetiklenmezdi; (b) storageKey belgeliydi ama
+  // hiç KULLANILMIYORDU — tercih kalıcılaşmıyordu. Şimdi: kayıt
+  // legendCollapseKey ailesinden okunur/yazılır (v0.9.483), seri sayısı
+  // İLK KEZ öğrenildiğinde (0→n) kural yeniden değerlendirilir; kullanıcı
+  // dokunduysa (touchedRef) otomatik karar bir daha ezmez.
+  const [legendOpen, setLegendOpen] = useState(true);
+  const legendTouchedRef = useRef(false);
+  const legendCountRef = useRef(0);
+  useEffect(() => {
+    const n = aligned.names.length;
+    if (n === 0 || legendCountRef.current === n) return;
+    legendCountRef.current = n;
+    if (legendTouchedRef.current) return;
+    const stored = getItem<boolean | null>(legendCollapseKey(storageKey), null);
+    setLegendOpen(!resolveLegendCollapsed(stored, undefined, n, 6));
+  }, [aligned.names.length, storageKey]);
+  const toggleLegend = () => {
+    legendTouchedRef.current = true;
+    setLegendOpen(o => {
+      // Kayıt COLLAPSED anlamında (resolveLegendCollapsed sözleşmesi):
+      // yeni durum açık(=!o true) ise collapsed=false yazılır.
+      setItem(legendCollapseKey(storageKey), o);
+      return !o;
+    });
+  };
 
   return (
     <div className="panel" style={{
@@ -306,7 +366,8 @@ export function CorePanel({
           <Empty icon="◫" title={data.reason}>{data.hint ?? ''}</Empty>
         )}
         {data.state === 'ready' && width > 0 && aligned.data[0].length >= 2 && (
-          <UPlotChart data={aligned.data} width={width} height={height} config={config} />
+          <UPlotChart data={aligned.data} width={width} height={height} config={config}
+            plotRef={(u) => { plotRef.current = u; }} />
         )}
         {data.state === 'ready' && aligned.data[0].length < 2 && (
           <Empty icon="◫" title="Bu aralıkta çizilecek nokta yok">
@@ -318,7 +379,7 @@ export function CorePanel({
       {data.state === 'ready' && aligned.names.length > 0 && (
         <div style={{ fontSize: 11 }}>
           <button className="sec" style={{ fontSize: 10, padding: '1px 6px' }}
-            onClick={() => setLegendOpen(o => !o)}>
+            onClick={toggleLegend}>
             {legendOpen ? '▼' : '▶'} Series ({aligned.names.length})
           </button>
           {legendOpen && (
@@ -331,7 +392,7 @@ export function CorePanel({
               </tr></thead>
               <tbody>
                 {stats.map((s, i) => (
-                  <tr key={s.name}
+                  <tr key={`${i}:${s.name}`}
                     style={{ opacity: vis[i] === false ? 0.35 : 1, cursor: 'pointer' }}
                     onClick={e => setVis(v =>
                       e.ctrlKey || e.metaKey

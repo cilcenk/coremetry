@@ -18,6 +18,7 @@
 package api
 
 import (
+	"strconv"
 	"context"
 	"fmt"
 	"net/http"
@@ -63,19 +64,27 @@ func (s *Server) throughputMetricName(ctx context.Context) string {
 //     sınıfı.
 //   - Filtre operatörü `=~` olmalı. `=` olsaydı desen düz metin olarak
 //     aranır ve HİÇBİR job eşleşmezdi; grafik sessizce boş kalırdı.
-func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time) string {
-	return fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s", service, metric, jobLabel, cacheBucket(from, to))
+func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time, mdp int) string {
+	// mdp ANAHTARDA (hash-all-inputs, v0.5.187 sınıfı): farklı nokta
+	// bütçeleri farklı adım → farklı sonuç. panelMaxDataPoints kuantalı
+	// (200px kova) olduğu için kardinalite sınırlı (v0.8.270 disiplini).
+	return fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s:mdp%d", service, metric, jobLabel, cacheBucket(from, to), mdp)
 }
 
-func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time) (string, chstore.MetricQueryFilter) {
+func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, mdp int) (string, chstore.MetricQueryFilter) {
 	pattern := chstore.JobServiceRegex(service)
-	key := metricThroughputCacheKey(service, metric, jobLabel, from, to)
+	key := metricThroughputCacheKey(service, metric, jobLabel, from, to, mdp)
 	return key, chstore.MetricQueryFilter{
 		Name:        metric,
 		Filters:     []chstore.FilterExpr{{Key: jobLabel, Op: "=~", Values: []string{pattern}}},
 		Aggregation: "sum",
 		From:        from,
 		To:          to,
+		// v0.9.706 (parite dilim 2, px pilotu) — nokta bütçesi. Sunucu
+		// desteği v0.9.105'ten beri vardı (piksel-uyarlamalı adım +
+		// clampStepToExport tabanı); bunu geçiren İLK yüzey bu. 0 = px
+		// bilinmiyor → eski sabit merdiven, davranış değişmez.
+		MaxDataPoints: mdp,
 	}
 }
 
@@ -98,8 +107,17 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 	// Bu, v0.9.668'de metrik adında yaptığım hatanın etiket ikizi —
 	// aynı gün, aynı biçimde iki kez.
 	jobLabel := strings.TrimSpace(r.URL.Query().Get("jobLabel"))
+	// px bütçesi — rollup_routes ile aynı sözleşme: 0 → sabit merdiven,
+	// clamp 4000 (üst sınır savunması; FE zaten ≤2000 üretir).
+	mdp, _ := strconv.Atoi(r.URL.Query().Get("maxDataPoints"))
+	if mdp < 0 {
+		mdp = 0
+	}
+	if mdp > 4000 {
+		mdp = 4000
+	}
 
-	key := metricThroughputCacheKey(name, metric, jobLabel, from, to)
+	key := metricThroughputCacheKey(name, metric, jobLabel, from, to, mdp)
 	pattern := chstore.JobServiceRegex(name)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		out := map[string]any{
@@ -157,7 +175,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		var candErrs []string
 		for _, lb := range labels {
 			triedLabels = append(triedLabels, lb)
-			_, f := metricThroughputPlan(name, resolved, lb, from, to)
+			_, f := metricThroughputPlan(name, resolved, lb, from, to, mdp)
 			ser, err := rate(ctx, f, "rate")
 			if err != nil {
 				// v0.9.683 — TEK ADAYIN HATASI TÜM CEVABI ÖLDÜRMESİN.
@@ -189,7 +207,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// Prometheus dünyasında kimlik bir etikette; OTLP dünyasında
 		// kaynak özniteliğinden gelen service_name kolonunda.
 		if matched == nil {
-			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to)
+			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to, mdp)
 			// v0.9.678 — KOLON DA İKİ BİÇİM DENİYOR.
 			//
 			// Operatörün sorusu ("Coremetry ingest ederken env kesiyor

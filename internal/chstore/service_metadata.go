@@ -3,7 +3,6 @@ package chstore
 import (
 	"context"
 	"encoding/json"
-	"log"
 	"strings"
 	"time"
 )
@@ -270,71 +269,7 @@ type ServiceTeams struct {
 	SRETeam   string
 }
 
-// deriveTeamsSQL extracts, per service, the dominant owner-team (ug-team /
-// ug_team) and sre-team (sy-team / sy_team) attribute value. Team ownership is a
-// stable signal, so the most-frequent value IS the team. Both the resource scope
-// (res_keys/res_values — preferred) AND the span scope (attr_keys/attr_values)
-// are checked, in that order, and both the hyphen + underscore key spellings.
-const deriveTeamsSQL = `
-SELECT service_name,
-       argMaxIf(ug_val, c, ug_val != '') AS owner,
-       argMaxIf(sy_val, c, sy_val != '') AS sre
-FROM (
-  SELECT service_name, ug_val, sy_val, count() AS c
-  FROM (
-    SELECT service_name,
-      multiIf(
-        has(res_keys, 'ug-team'),  res_values[indexOf(res_keys, 'ug-team')],
-        has(res_keys, 'ug_team'),  res_values[indexOf(res_keys, 'ug_team')],
-        has(attr_keys, 'ug-team'), attr_values[indexOf(attr_keys, 'ug-team')],
-        has(attr_keys, 'ug_team'), attr_values[indexOf(attr_keys, 'ug_team')],
-        '') AS ug_val,
-      multiIf(
-        has(res_keys, 'sy-team'),  res_values[indexOf(res_keys, 'sy-team')],
-        has(res_keys, 'sy_team'),  res_values[indexOf(res_keys, 'sy_team')],
-        has(attr_keys, 'sy-team'), attr_values[indexOf(attr_keys, 'sy-team')],
-        has(attr_keys, 'sy_team'), attr_values[indexOf(attr_keys, 'sy_team')],
-        '') AS sy_val
-    FROM spans
-    WHERE time >= ? AND time <= ?
-      AND ( has(res_keys, 'ug-team')  OR has(res_keys, 'ug_team')
-         OR has(res_keys, 'sy-team')  OR has(res_keys, 'sy_team')
-         OR has(attr_keys, 'ug-team') OR has(attr_keys, 'ug_team')
-         OR has(attr_keys, 'sy-team') OR has(attr_keys, 'sy_team') )
-    LIMIT 2000000
-  )
-  GROUP BY service_name, ug_val, sy_val
-)
-GROUP BY service_name
-ORDER BY service_name
-LIMIT 10000
-SETTINGS max_execution_time = 25`
 
-// DeriveServiceTeams returns service → dominant {owner, sre} team derived from
-// span/resource attributes over the window. Services emitting none of the four
-// keys are omitted.
-func (s *Store) DeriveServiceTeams(ctx context.Context, since time.Duration) (map[string]ServiceTeams, error) {
-	to := time.Now()
-	from := to.Add(-since)
-	rows, err := s.conn.Query(ctx, deriveTeamsSQL, from, to)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]ServiceTeams, 64)
-	for rows.Next() {
-		var svc, owner, sre string
-		if err := rows.Scan(&svc, &owner, &sre); err != nil {
-			return nil, err
-		}
-		owner, sre = strings.TrimSpace(owner), strings.TrimSpace(sre)
-		if owner == "" && sre == "" {
-			continue
-		}
-		out[svc] = ServiceTeams{OwnerTeam: owner, SRETeam: sre}
-	}
-	return out, rows.Err()
-}
 
 // mergeTeams applies derived teams. The deriver OWNS a field while it's empty
 // OR still equals the value it last auto-wrote (owner_team_auto / sre_team_auto);
@@ -365,11 +300,7 @@ func mergeTeams(md ServiceMetadata, t ServiceTeams) (ServiceMetadata, bool) {
 // as are all other metadata fields — UpsertServiceMetadata is a full-row
 // replace, so we read-merge-write). Best-effort: a single failed upsert doesn't
 // abort the rest. Returns the number of services updated.
-func (s *Store) PopulateServiceTeamsFromSpans(ctx context.Context, since time.Duration) (int, error) {
-	derived, err := s.DeriveServiceTeams(ctx, since)
-	if err != nil {
-		return 0, err
-	}
+func (s *Store) populateTeams(ctx context.Context, derived map[string]ServiceTeams) (int, error) {
 	if len(derived) == 0 {
 		return 0, nil
 	}
@@ -410,114 +341,8 @@ func (s *Store) PopulateServiceTeamsFromSpans(ctx context.Context, since time.Du
 	return updated, nil
 }
 
-// ── Auto-derive namespace from span resource attrs (v0.8.436) ────────────────
-//
-// The flow-graph namespace grouping's backend precondition: every
-// service's logical namespace, resolved from span resource attributes.
-// OTel offers two spellings — semconv `service.namespace` (preferred:
-// the SDK-declared logical namespace) and `k8s.namespace.name` (the
-// k8s detector's container namespace) — checked in that order, resource
-// scope before span scope, same multiIf idiom as deriveTeamsSQL.
-// v0.9.53 (openshift-attr audit B2, operatör onayı) — OpenShift/legacy
-// agent yedekleri: kubernetes.namespace.name / kubernetes.namespace_name
-// (ES log zincirinin span karşılığı — filo sözlüğü). Standart anahtarlar
-// önde: semconv basan kurulumlarda davranış birebir aynı kalır.
-const deriveNamespaceSQL = `
-SELECT service_name, argMax(ns_val, c) AS ns
-FROM (
-  SELECT service_name, ns_val, count() AS c
-  FROM (
-    SELECT service_name,
-      multiIf(
-        has(res_keys, 'service.namespace'),  res_values[indexOf(res_keys, 'service.namespace')],
-        has(res_keys, 'k8s.namespace.name'), res_values[indexOf(res_keys, 'k8s.namespace.name')],
-        has(res_keys, 'kubernetes.namespace.name'), res_values[indexOf(res_keys, 'kubernetes.namespace.name')],
-        has(res_keys, 'kubernetes.namespace_name'), res_values[indexOf(res_keys, 'kubernetes.namespace_name')],
-        has(attr_keys, 'service.namespace'),  attr_values[indexOf(attr_keys, 'service.namespace')],
-        has(attr_keys, 'k8s.namespace.name'), attr_values[indexOf(attr_keys, 'k8s.namespace.name')],
-        has(attr_keys, 'kubernetes.namespace.name'), attr_values[indexOf(attr_keys, 'kubernetes.namespace.name')],
-        has(attr_keys, 'kubernetes.namespace_name'), attr_values[indexOf(attr_keys, 'kubernetes.namespace_name')],
-        '') AS ns_val
-    FROM spans
-    WHERE time >= ? AND time <= ?
-      AND ( has(res_keys, 'service.namespace')  OR has(res_keys, 'k8s.namespace.name')
-         OR has(res_keys, 'kubernetes.namespace.name') OR has(res_keys, 'kubernetes.namespace_name')
-         OR has(attr_keys, 'service.namespace') OR has(attr_keys, 'k8s.namespace.name')
-         OR has(attr_keys, 'kubernetes.namespace.name') OR has(attr_keys, 'kubernetes.namespace_name') )
-    LIMIT 2000000
-  )
-  WHERE ns_val != ''
-  GROUP BY service_name, ns_val
-)
-GROUP BY service_name
-ORDER BY service_name
-LIMIT 10000
-SETTINGS max_execution_time = 25`
 
-// DeriveServiceNamespaces returns service → dominant namespace over the
-// window; services emitting neither attribute are omitted.
-func (s *Store) DeriveServiceNamespaces(ctx context.Context, since time.Duration) (map[string]string, error) {
-	to := time.Now()
-	from := to.Add(-since)
-	rows, err := s.conn.Query(ctx, deriveNamespaceSQL, from, to)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]string, 64)
-	for rows.Next() {
-		var svc, ns string
-		if err := rows.Scan(&svc, &ns); err != nil {
-			return nil, err
-		}
-		if ns = strings.TrimSpace(ns); ns != "" {
-			out[svc] = ns
-		}
-	}
-	return out, rows.Err()
-}
 
-// deriveDeploymentSQL — deriveNamespaceSQL'in tek-attribute eşleniği:
-// k8s.deployment.name (resource önce, sonra span attr). v0.9.25.
-// v0.9.53 (B2) — OpenShift/legacy yedekleri: kubernetes.deployment.name /
-// kubernetes.deployment_name + openshift.deployment.name (v0.9.54 —
-// operatör düzeltmesi: filo openshift.deployment.name basar,
-// deploymentconfig değil; openshift.cluster.name ile simetrik).
-// ES'in kubernetes.labels.app takma adı BİLİNÇLİ dışarıda: app label'ı
-// deployment adıyla aynı olmak zorunda değil, yanlış eşleşme infra pod
-// korelasyonunu bozar.
-const deriveDeploymentSQL = `
-SELECT service_name, argMax(dep_val, c) AS dep
-FROM (
-  SELECT service_name, dep_val, count() AS c
-  FROM (
-    SELECT service_name,
-      multiIf(
-        has(res_keys, 'k8s.deployment.name'),  res_values[indexOf(res_keys, 'k8s.deployment.name')],
-        has(res_keys, 'kubernetes.deployment.name'), res_values[indexOf(res_keys, 'kubernetes.deployment.name')],
-        has(res_keys, 'kubernetes.deployment_name'), res_values[indexOf(res_keys, 'kubernetes.deployment_name')],
-        has(res_keys, 'openshift.deployment.name'), res_values[indexOf(res_keys, 'openshift.deployment.name')],
-        has(attr_keys, 'k8s.deployment.name'), attr_values[indexOf(attr_keys, 'k8s.deployment.name')],
-        has(attr_keys, 'kubernetes.deployment.name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment.name')],
-        has(attr_keys, 'kubernetes.deployment_name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment_name')],
-        has(attr_keys, 'openshift.deployment.name'), attr_values[indexOf(attr_keys, 'openshift.deployment.name')],
-        '') AS dep_val
-    FROM spans
-    WHERE time >= ? AND time <= ?
-      AND ( has(res_keys, 'k8s.deployment.name') OR has(attr_keys, 'k8s.deployment.name')
-         OR has(res_keys, 'kubernetes.deployment.name') OR has(res_keys, 'kubernetes.deployment_name')
-         OR has(res_keys, 'openshift.deployment.name')
-         OR has(attr_keys, 'kubernetes.deployment.name') OR has(attr_keys, 'kubernetes.deployment_name')
-         OR has(attr_keys, 'openshift.deployment.name') )
-    LIMIT 2000000
-  )
-  WHERE dep_val != ''
-  GROUP BY service_name, dep_val
-)
-GROUP BY service_name
-ORDER BY service_name
-LIMIT 10000
-SETTINGS max_execution_time = 25`
 
 // derivePodIdentitySQL — v0.9.531 pod-adı yedeği için ham malzeme:
 // servis başına gözlemlenen pod kimlikleri + satır sayıları. Kimlik
@@ -647,73 +472,6 @@ func deploymentsFromPodCounts(pods map[string]map[string]uint64) map[string]stri
 	return out
 }
 
-// DeriveServiceDeployments — servis → baskın deployment adı.
-//
-// İki kaynak, öncelik sırasıyla:
-//  1. deployment.name attr'ları (yetkili kaynak — v0.9.25/53/54)
-//  2. v0.9.531 — gözlemlenen pod adlarından türetim, YALNIZ 1'in boş
-//     bıraktığı servisler için. Çapraz-env güvenli: aday servisin
-//     KENDİ telemetrisindeki pod'lardan gelir; mobile-loans-bff-prod
-//     kendi pod'undan "mobile-loans-bff" türetir, -int servisi kendi
-//     pod'undan kendininkini.
-func (s *Store) DeriveServiceDeployments(ctx context.Context, since time.Duration) (map[string]string, error) {
-	to := time.Now()
-	from := to.Add(-since)
-	rows, err := s.conn.Query(ctx, deriveDeploymentSQL, from, to)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make(map[string]string, 64)
-	for rows.Next() {
-		var svc, dep string
-		if err := rows.Scan(&svc, &dep); err != nil {
-			return nil, err
-		}
-		if dep = strings.TrimSpace(dep); dep != "" {
-			out[svc] = dep
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-
-	// Yedek kaynak: pod adları. Attr'ı olan servislerde koşmaz demek
-	// DEĞİL — sorgu filo-geneli tek tarama; yalnız SONUÇLARI attr'ın
-	// doldurmadığı servislere uygulanır.
-	prows, err := s.conn.Query(ctx, derivePodIdentitySQL, from, to)
-	if err != nil {
-		// Yedek kaynağın hatası birincil sonucu düşürmesin: attr'dan
-		// gelenler yine yazılır, pod yedeği bir sonraki tik'te denenir.
-		log.Printf("[metadata] pod-adı deployment yedeği okunamadı: %v", err)
-		return out, nil
-	}
-	defer prows.Close()
-	pods := map[string]map[string]uint64{}
-	for prows.Next() {
-		var svc, pod string
-		var c uint64
-		if err := prows.Scan(&svc, &pod, &c); err != nil {
-			return nil, err
-		}
-		if _, have := out[svc]; have {
-			continue // attr kaynağı yetkili
-		}
-		m := pods[svc]
-		if m == nil {
-			m = map[string]uint64{}
-			pods[svc] = m
-		}
-		m[pod] = c
-	}
-	if err := prows.Err(); err != nil {
-		return nil, err
-	}
-	for svc, dep := range deploymentsFromPodCounts(pods) {
-		out[svc] = dep
-	}
-	return out, nil
-}
 
 // mergeDeployment — mergeNamespace'in birebir sahiplik sözleşmesi.
 func mergeDeployment(md ServiceMetadata, dep string) (ServiceMetadata, bool) {
@@ -728,11 +486,7 @@ func mergeDeployment(md ServiceMetadata, dep string) (ServiceMetadata, bool) {
 }
 
 // PopulateServiceDeploymentsFromSpans — namespace populate'inin aynası.
-func (s *Store) PopulateServiceDeploymentsFromSpans(ctx context.Context, since time.Duration) (int, error) {
-	derived, err := s.DeriveServiceDeployments(ctx, since)
-	if err != nil {
-		return 0, err
-	}
+func (s *Store) populateDeployments(ctx context.Context, derived map[string]string) (int, error) {
 	if len(derived) == 0 {
 		return 0, nil
 	}
@@ -783,11 +537,7 @@ func mergeNamespace(md ServiceMetadata, ns string) (ServiceMetadata, bool) {
 
 // PopulateServiceNamespacesFromSpans mirrors PopulateServiceTeamsFromSpans
 // for the namespace field — read-merge-write per service, best-effort.
-func (s *Store) PopulateServiceNamespacesFromSpans(ctx context.Context, since time.Duration) (int, error) {
-	derived, err := s.DeriveServiceNamespaces(ctx, since)
-	if err != nil {
-		return 0, err
-	}
+func (s *Store) populateNamespaces(ctx context.Context, derived map[string]string) (int, error) {
 	if len(derived) == 0 {
 		return 0, nil
 	}
@@ -822,4 +572,173 @@ func (s *Store) PopulateServiceNamespacesFromSpans(ctx context.Context, since ti
 		updated++
 	}
 	return updated, nil
+}
+
+// ── v0.9.715 (perf taraması #5) — TEK taramalı birleşik türetme ──────────────
+//
+// Üç deriver (teams/namespaces/deployments) AYNI 3 saatlik spans
+// penceresini ÜÇ KEZ tarıyordu — tarama raporunda SELECT baytının %9.3'ü.
+// Şimdi tek tarama: iç SELECT dört değeri birden çıkarır (multiIf sırası
+// AYNEN korunur: resource önce, sonra span scope; anahtar sıraları eski
+// sorgularla birebir), orta katman (service, ug, sy, ns, dep) kombo
+// sayımı üretir. Kombo tablosu KÜÇÜKTÜR; dört marjinal mod Go'da EXACT
+// hesaplanır: c'ler (service, değer) başına TOPLANIR, argmax alınır —
+// kombo üzerinden argMax marjinali bozardı (testli), o yüzden mod
+// SQL'den Go'ya taşındı (topK'ya sessiz düşüş yok; rapor kısıtı).
+//
+// Eşitlik kırıcı DETERMİNİSTİK (eşit c → sözlükçe küçük): eski
+// argMax(val, c)'nin belirsiz tie-break'i tikler arasında değeri
+// sallandırabiliyordu — flapping kaynaklarından biri. Pencere
+// DARALTILMADI (rapor: seyrek servisler geç keşfedilir).
+const deriveMetadataAllSQL = `
+SELECT service_name, ug_val, sy_val, ns_val, dep_val, count() AS c
+FROM (
+  SELECT service_name,
+    multiIf(
+      has(res_keys, 'ug-team'),  res_values[indexOf(res_keys, 'ug-team')],
+      has(res_keys, 'ug_team'),  res_values[indexOf(res_keys, 'ug_team')],
+      has(attr_keys, 'ug-team'), attr_values[indexOf(attr_keys, 'ug-team')],
+      has(attr_keys, 'ug_team'), attr_values[indexOf(attr_keys, 'ug_team')],
+      '') AS ug_val,
+    multiIf(
+      has(res_keys, 'sy-team'),  res_values[indexOf(res_keys, 'sy-team')],
+      has(res_keys, 'sy_team'),  res_values[indexOf(res_keys, 'sy_team')],
+      has(attr_keys, 'sy-team'), attr_values[indexOf(attr_keys, 'sy-team')],
+      has(attr_keys, 'sy_team'), attr_values[indexOf(attr_keys, 'sy_team')],
+      '') AS sy_val,
+    multiIf(
+      has(res_keys, 'service.namespace'),  res_values[indexOf(res_keys, 'service.namespace')],
+      has(res_keys, 'k8s.namespace.name'), res_values[indexOf(res_keys, 'k8s.namespace.name')],
+      has(res_keys, 'kubernetes.namespace.name'), res_values[indexOf(res_keys, 'kubernetes.namespace.name')],
+      has(res_keys, 'kubernetes.namespace_name'), res_values[indexOf(res_keys, 'kubernetes.namespace_name')],
+      has(attr_keys, 'service.namespace'),  attr_values[indexOf(attr_keys, 'service.namespace')],
+      has(attr_keys, 'k8s.namespace.name'), attr_values[indexOf(attr_keys, 'k8s.namespace.name')],
+      has(attr_keys, 'kubernetes.namespace.name'), attr_values[indexOf(attr_keys, 'kubernetes.namespace.name')],
+      has(attr_keys, 'kubernetes.namespace_name'), attr_values[indexOf(attr_keys, 'kubernetes.namespace_name')],
+      '') AS ns_val,
+    multiIf(
+      has(res_keys, 'k8s.deployment.name'),  res_values[indexOf(res_keys, 'k8s.deployment.name')],
+      has(res_keys, 'kubernetes.deployment.name'), res_values[indexOf(res_keys, 'kubernetes.deployment.name')],
+      has(res_keys, 'kubernetes.deployment_name'), res_values[indexOf(res_keys, 'kubernetes.deployment_name')],
+      has(res_keys, 'openshift.deployment.name'), res_values[indexOf(res_keys, 'openshift.deployment.name')],
+      has(attr_keys, 'k8s.deployment.name'), attr_values[indexOf(attr_keys, 'k8s.deployment.name')],
+      has(attr_keys, 'kubernetes.deployment.name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment.name')],
+      has(attr_keys, 'kubernetes.deployment_name'), attr_values[indexOf(attr_keys, 'kubernetes.deployment_name')],
+      has(attr_keys, 'openshift.deployment.name'), attr_values[indexOf(attr_keys, 'openshift.deployment.name')],
+      '') AS dep_val
+  FROM spans
+  WHERE time >= ? AND time <= ?
+    AND ( has(res_keys, 'ug-team')  OR has(res_keys, 'ug_team')
+       OR has(res_keys, 'sy-team')  OR has(res_keys, 'sy_team')
+       OR has(attr_keys, 'ug-team') OR has(attr_keys, 'ug_team')
+       OR has(attr_keys, 'sy-team') OR has(attr_keys, 'sy_team')
+       OR has(res_keys, 'service.namespace')  OR has(res_keys, 'k8s.namespace.name')
+       OR has(res_keys, 'kubernetes.namespace.name') OR has(res_keys, 'kubernetes.namespace_name')
+       OR has(attr_keys, 'service.namespace') OR has(attr_keys, 'k8s.namespace.name')
+       OR has(attr_keys, 'kubernetes.namespace.name') OR has(attr_keys, 'kubernetes.namespace_name')
+       OR has(res_keys, 'k8s.deployment.name') OR has(attr_keys, 'k8s.deployment.name')
+       OR has(res_keys, 'kubernetes.deployment.name') OR has(res_keys, 'kubernetes.deployment_name')
+       OR has(res_keys, 'openshift.deployment.name')
+       OR has(attr_keys, 'kubernetes.deployment.name') OR has(attr_keys, 'kubernetes.deployment_name')
+       OR has(attr_keys, 'openshift.deployment.name') )
+  LIMIT 2000000
+)
+GROUP BY service_name, ug_val, sy_val, ns_val, dep_val
+LIMIT 50000
+SETTINGS max_execution_time = 25`
+
+// metaComboRow — birleşik taramanın bir kombosu (SAF marjinal girdisi).
+type metaComboRow struct {
+	Svc, UG, SY, NS, Dep string
+	C                    uint64
+}
+
+// marginalModes — SAF: kombo satırlarından dört EXACT marjinal mod.
+// Eşitlikte sözlükçe küçük değer kazanır — tikler arası KARARLI.
+func marginalModes(rows []metaComboRow) (teams map[string]ServiceTeams, ns, dep map[string]string) {
+	type acc map[string]map[string]uint64
+	sum := func(a acc, svc, val string, c uint64) {
+		if val == "" {
+			return
+		}
+		if a[svc] == nil {
+			a[svc] = map[string]uint64{}
+		}
+		a[svc][val] += c
+	}
+	ug, sy, nsA, depA := acc{}, acc{}, acc{}, acc{}
+	for _, r := range rows {
+		sum(ug, r.Svc, strings.TrimSpace(r.UG), r.C)
+		sum(sy, r.Svc, strings.TrimSpace(r.SY), r.C)
+		sum(nsA, r.Svc, strings.TrimSpace(r.NS), r.C)
+		sum(depA, r.Svc, strings.TrimSpace(r.Dep), r.C)
+	}
+	mode := func(m map[string]uint64) string {
+		best, bestC := "", uint64(0)
+		for v, c := range m {
+			if c > bestC || (c == bestC && (best == "" || v < best)) {
+				best, bestC = v, c
+			}
+		}
+		return best
+	}
+	ns, dep = map[string]string{}, map[string]string{}
+	teams = map[string]ServiceTeams{}
+	svcs := map[string]bool{}
+	for _, a := range []acc{ug, sy, nsA, depA} {
+		for svc := range a {
+			svcs[svc] = true
+		}
+	}
+	for svc := range svcs {
+		if o, sr := mode(ug[svc]), mode(sy[svc]); o != "" || sr != "" {
+			teams[svc] = ServiceTeams{OwnerTeam: o, SRETeam: sr}
+		}
+		if v := mode(nsA[svc]); v != "" {
+			ns[svc] = v
+		}
+		if v := mode(depA[svc]); v != "" {
+			dep[svc] = v
+		}
+	}
+	return teams, ns, dep
+}
+
+// DeriveServiceMetadataAll — TEK taramada üç türetmenin tamamı.
+func (s *Store) DeriveServiceMetadataAll(ctx context.Context, since time.Duration) (map[string]ServiceTeams, map[string]string, map[string]string, error) {
+	to := time.Now()
+	from := to.Add(-since)
+	rows, err := s.conn.Query(ctx, deriveMetadataAllSQL, from, to)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer rows.Close()
+	var combos []metaComboRow
+	for rows.Next() {
+		var r metaComboRow
+		if err := rows.Scan(&r.Svc, &r.UG, &r.SY, &r.NS, &r.Dep, &r.C); err != nil {
+			return nil, nil, nil, err
+		}
+		combos = append(combos, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, nil, err
+	}
+	teams, ns, dep := marginalModes(combos)
+	return teams, ns, dep, nil
+}
+
+// PopulateAllServiceMetadataFromSpans — tikin TEK giriş noktası
+// (v0.9.715): bir tarama, üç uygulama. Sıra eski tikle aynı
+// (teams → deployments → namespaces); merge/pin/TOCTOU yarıları
+// birebir korunmuş populate gövdeleri.
+func (s *Store) PopulateAllServiceMetadataFromSpans(ctx context.Context, since time.Duration) (teams, deps, ns int, err error) {
+	dt, dns, ddep, derr := s.DeriveServiceMetadataAll(ctx, since)
+	if derr != nil {
+		return 0, 0, 0, derr
+	}
+	teams, _ = s.populateTeams(ctx, dt)
+	deps, _ = s.populateDeployments(ctx, ddep)
+	ns, _ = s.populateNamespaces(ctx, dns)
+	return teams, deps, ns, nil
 }

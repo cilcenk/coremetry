@@ -1441,25 +1441,19 @@ func runServiceTeamDeriver(ctx context.Context, store *chstore.Store, lock cache
 		if !leader.IsLeader() {
 			return
 		}
-		n, err := store.PopulateServiceTeamsFromSpans(ctx, window)
+		// v0.9.715 (perf #5) — üç ayrı 3-saatlik tarama TEK taramaya indi
+		// (DeriveServiceMetadataAll; SELECT baytının %9.3'ü). Merge/pin/
+		// TOCTOU yarıları birebir; yalnız türetme birleşti.
+		n, nd, nn, err := store.PopulateAllServiceMetadataFromSpans(ctx, window)
 		if err != nil {
-			log.Printf("[team-derive] %v", err)
+			log.Printf("[metadata-derive] %v", err)
 			return
 		}
 		if n > 0 {
 			log.Printf("[team-derive] filled owner/sre team for %d service(s) from span attrs", n)
 		}
-		// v0.8.436 — namespace rides the same leader-gated tick (one
-		// bounded spans scan each; same ownership/pin semantics).
-		if nd, err := store.PopulateServiceDeploymentsFromSpans(ctx, window); err != nil {
-			log.Printf("[metadata] deployment derive: %v", err)
-		} else if nd > 0 {
+		if nd > 0 {
 			log.Printf("[metadata] deployment derive: %d service(s) updated", nd)
-		}
-		nn, err := store.PopulateServiceNamespacesFromSpans(ctx, window)
-		if err != nil {
-			log.Printf("[ns-derive] %v", err)
-			return
 		}
 		if nn > 0 {
 			log.Printf("[ns-derive] filled namespace for %d service(s) from span attrs", nn)

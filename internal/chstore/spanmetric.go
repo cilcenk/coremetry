@@ -358,7 +358,7 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 			step = 3600
 		}
 	}
-	if step < 300 {
+	if step < opMVMinStepSec {
 		return nil, false
 	}
 
@@ -578,7 +578,7 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 			step = 3600
 		}
 	}
-	if step < 300 {
+	if step < opMVMinStepSec {
 		return nil, false
 	}
 
@@ -693,7 +693,7 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 			step = 3600
 		}
 	}
-	if step < 300 {
+	if step < opMVMinStepSec {
 		return nil, false
 	}
 

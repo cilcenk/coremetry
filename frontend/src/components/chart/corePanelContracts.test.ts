@@ -79,10 +79,18 @@ describe('CorePanel self-review düzeltmeleri', () => {
   });
 
   it('🟠 config bağımlılığında vis/onZoom kimliği YOK — overlaySig var', () => {
-    const dep = src.match(/\}, \[aligned\.names\.join[^\]]*\]\);/)?.[0] ?? '';
-    expect(dep).not.toContain(' vis,');
-    expect(dep).not.toContain('onZoom,');
-    expect(dep).toContain('overlaySig');
+    // v0.9.721 — İLK eşleşme yeterli değildi: defaultHidden (v0.9.720)
+    // ikinci bir names.join bağımlılığı ekledi ve kapı ONU yakalayıp
+    // yanlış kızardı (v0.9.720 kırmızı testle push edildi — bu düzeltme
+    // o ihlalin kapanışı). Artık TÜM diziler taranır: config dizisi
+    // (overlaySig'li) VAR olmalı, HİÇBİRİ vis/onZoom kimliği taşımamalı.
+    const deps = src.match(/\}, \[[^\]]*\]\);/g) ?? [];
+    expect(deps.length).toBeGreaterThan(0);
+    expect(deps.some(d => d.includes('overlaySig'))).toBe(true);
+    for (const d of deps) {
+      expect(d).not.toContain(' vis,');
+      expect(d).not.toContain('onZoom,');
+    }
   });
 
   it('🟠 görünürlük setSeries ile — config rebuild değil', () => {

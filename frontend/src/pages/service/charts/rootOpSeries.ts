@@ -131,3 +131,38 @@ export function buildRootOpLines(
   const total = res?.totalSeries ?? all.length;
   return { lines, shown: top.length, note: rootOpMoreNote(total, top.length, res?.rowsCapped ?? false) };
 }
+
+// ── v0.9.728 — CorePanelMulti (v2) projeksiyonu ─────────────────────────
+//
+// ChartCard yolundan farkı: union hizalama YOK — CorePanel'in frame
+// birleşimi (framesToAligned) zaman eksenini kendisi kurar, eksik bucket
+// null olur (sıkı doktrin). Renk de verilmez: CorePanel 'data' rolünde
+// etikete deterministik palet uygular (seriesRole sözleşmesi — aynı
+// operasyon her yüzeyde aynı renk; eski index-palet yerine bilinçli).
+export interface RootOpItem {
+  name: string;
+  role: 'data';
+  series: SpanMetricSeries[];
+}
+
+export interface RootOpItems {
+  items: RootOpItem[];
+  note: string | null;
+}
+
+export function buildRootOpItems(
+  res: SpanMetricResult | null | undefined,
+  cap = ROOT_OP_TOP_N,
+): RootOpItems {
+  const all = res?.series ?? [];
+  const top = rankRootOps(all, cap);
+  const total = res?.totalSeries ?? all.length;
+  return {
+    items: top.map(s => ({
+      name: rootOpLineLabel(s.groupKey),
+      role: 'data' as const,
+      series: [s],
+    })),
+    note: rootOpMoreNote(total, top.length, res?.rowsCapped ?? false),
+  };
+}

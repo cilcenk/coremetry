@@ -1671,6 +1671,10 @@ export const api = {
      *  alana gider; eksikliği /traces hacim şeridinin bu yüzeye
      *  geçmesini engelliyordu (arama sessizce düşerdi). */
     search?: string;
+    /** v0.9.723 — Prometheus rate[W] kayan penceresi (sn); 0/yok = kapalı.
+     *  Sunucu step kafesine yuvarlar, [0,600] clamp. Sayım-sınıfı seriler
+     *  sıfır-doldurulur; oran/gecikme pencerede istek yoksa boşluk kalır. */
+    rateWindow?: number;
     aggs: { name: string; agg: string; field?: string }[];
   }, signal?: AbortSignal) =>
     request<{ stepSeconds: number; series: Record<string, SpanMetricSeries[] | null> }>('/api/spans/metric-batch', {
@@ -1687,6 +1691,7 @@ export const api = {
         // the same shape the GET endpoint does.
         filters: body.filters ? JSON.parse(body.filters) : undefined,
         dsl:     body.dsl,
+        rateWindow: body.rateWindow,
         aggs:    body.aggs,
       }),
     }),

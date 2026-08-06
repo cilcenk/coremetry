@@ -187,9 +187,12 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // gerektiğinde d'den okunur.
   const redMdp = panelMaxDataPoints(3);
   const seriesQ = useQuery({
-    queryKey: ['service-overview-red', service, from, to, redMdp],
+    // v0.9.723 — chartsV2'de 180s rate penceresi (Grafana [3m] paritesi);
+    // bayrak + pencere anahtarda: iki mod farklı seri kümesi döndürür.
+    queryKey: ['service-overview-red', service, from, to, redMdp, chartsV2()],
     queryFn: () => api.spanMetricBatch({
       from, to, maxDataPoints: redMdp,
+      rateWindow: chartsV2() ? 180 : undefined,
       dsl: `service.name = "${service.replace(/"/g, '\\"')}"`,
       aggs: [
         { name: 'rate', agg: 'rate' },
@@ -261,9 +264,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   });
 
   const latencyQ = useQuery({
-    queryKey: ['service-overview-entry-red', service, from, to, redMdp],
+    queryKey: ['service-overview-entry-red', service, from, to, redMdp, chartsV2()],
     queryFn: () => api.spanMetricBatch({
       from, to, maxDataPoints: redMdp,
+      rateWindow: chartsV2() ? 180 : undefined,
       dsl: entryLatencyDSL(service),
       aggs: [
         { name: 'rate', agg: 'rate' },

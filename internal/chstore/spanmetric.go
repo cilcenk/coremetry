@@ -858,6 +858,15 @@ type SpanMetricBatchFilter struct {
 	// gösterdiği kümeyle uyuşmaz.
 	Search string
 	Aggs   []SpanMetricAggSpec
+	// RateWindowSec (v0.9.723) — Prometheus rate[W] karşılığı kayan
+	// pencere. 0 = kapalı (bugünkü bucket-başına davranış, bayt-bayt).
+	// step'ten büyükse ham yol arrayJoin kaydırmasıyla her noktayı
+	// [t-W, t] penceresinden hesaplar (percentile dahil GERÇEK kayan
+	// pencere) ve sayım-sınıfı agg'ler sıfır-doldurulur. Fast-path'ler
+	// pencere açıkken atlanır (op-MV zaten step>=300'de devrede;
+	// W<=600 → büyük aralıklar pencereye girmez, MV yolu korunur).
+	// Rollup penceresi = takip dilimi. Cache key'e GİRER.
+	RateWindowSec int
 }
 
 type SpanMetricAggSpec struct {
@@ -874,6 +883,48 @@ type SpanMetricAggSpec struct {
 // satır kesmesine düşüyordu (groupBy'da seriler arası yanlış grafik).
 // Bütçe: mdp>0 ise mdp, değilse 2000 (≈"chart'a giden nokta ~2k'yı
 // aşmasın" ilkesi). Saf — spanmetric_step_test.go ile pinli.
+// raiseStepForWindow — SAF: pencere istendiğinde step'i, k<=30 tavanı
+// pencereyi DARALTMAYACAK tabana yükseltir (minStep = ceil(W/30); W=180
+// → 6s). Grafana'nın $__rate_interval min-interval kuralının karşılığı:
+// kısa aralıkta çözünürlükten feragat edilir, pencereden ASLA — yoksa
+// 5m görünümde [3m] sessizce [1m] olur ve aynı karttaki metrik-türevli
+// çizgiyle (rollingRate, k tavansız) yapısal olarak ayrışırdı (review
+// bulgusu, v0.9.723).
+func raiseStepForWindow(step, rateWindowSec int) int {
+	if rateWindowSec <= 0 || step <= 0 {
+		return step
+	}
+	if rateWindowSec > 600 {
+		rateWindowSec = 600
+	}
+	minStep := (rateWindowSec + 29) / 30
+	if step < minStep {
+		return minStep
+	}
+	return step
+}
+
+// spanMetricWindow — SAF: istenen rate penceresini step kafesine
+// oturtur. Etkin pencere k*step (k = ceil(W/step)); W<=step ya da
+// W<=0 → kapalı. Tavanlar: W<=600 (metric-throughput ile aynı clamp),
+// k<=30 (arrayJoin çoğaltma sınırı — maliyet çarpanı).
+func spanMetricWindow(rateWindowSec, step int) (effWinSec, k int) {
+	if rateWindowSec <= 0 || step <= 0 {
+		return 0, 0
+	}
+	if rateWindowSec > 600 {
+		rateWindowSec = 600
+	}
+	if rateWindowSec <= step {
+		return 0, 0
+	}
+	k = (rateWindowSec + step - 1) / step
+	if k > 30 {
+		k = 30
+	}
+	return k * step, k
+}
+
 func clampSpanMetricStep(stepSec int, from, to time.Time, mdp int) int {
 	span := to.Sub(from).Seconds()
 	if span <= 0 {
@@ -933,6 +984,10 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// hesaplanır: MV uygunluğu (step >= 300) artık px-adaptif değeri
 	// görür; eşik DEĞİŞMEDİ, yalnız girdisi netleşti.
 	f.StepSeconds = clampSpanMetricStep(f.StepSeconds, f.From, f.To, f.MaxDataPoints)
+	// v0.9.723 — pencere step'i tabana yükseltebilir (raiseStepForWindow);
+	// zarftaki stepSeconds da bu değeri döndürür, frontend bar/gap eşiği
+	// gerçek kafesi görür.
+	f.StepSeconds = raiseStepForWindow(f.StepSeconds, f.RateWindowSec)
 	// ── MV fast-path (v0.5.273) ───────────────────────────────────────────────
 	// ServiceCharts on /service?name=X fires this batch every
 	// time the operator changes range. At month-scale the raw-
@@ -957,7 +1012,11 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// SpanMetricBatchFilter'da FilterRoot alanı yok — batch yüzeyi
 	// OR/iç içe grubu hiç kabul etmiyor, yalnız düz ApplyFilters
 	// koşuyor. Yani o sınıf bu yolda doğuştan imkânsız.
-	fastPathOK := f.Search == ""
+	// v0.9.723 — kayan pencere (Grafana/Prometheus rate[W] paritesi).
+	// Pencere açıkken fast-path'ler atlanır: op-MV/rollup okuyucuları
+	// bucket-başına state döndürür, pencere birleşimini bilmezler.
+	effWin, winK := spanMetricWindow(f.RateWindowSec, f.StepSeconds)
+	fastPathOK := f.Search == "" && winK == 0
 	if fastPathOK {
 		if out, ok := s.tryOperationMVFastPathMulti(ctx, f); ok {
 			return out, f.StepSeconds, nil
@@ -978,7 +1037,15 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// ── Build WHERE ───────────────────────────────────────────────────────────
 	var wc whereClause
 	if !f.From.IsZero() {
-		wc.add("time >= ?", f.From)
+		scanFrom := f.From
+		if winK > 0 {
+			// Prometheus rate[W] grafik kenarının W sn gerisine bakar;
+			// taramayı genişletmezsek ilk W saniye eksik pencereyle
+			// rampalanır (Grafana'da olmayan bir artefakt). Kenarlar
+			// aşağıda bucket sınırlarıyla kırpılıyor.
+			scanFrom = scanFrom.Add(-time.Duration(effWin) * time.Second)
+		}
+		wc.add("time >= ?", scanFrom)
 	}
 	if !f.To.IsZero() {
 		wc.add("time <= ?", f.To)
@@ -999,11 +1066,26 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 	// with `v0` / `v1` / `v2`. Position-aliasing avoids a
 	// name-collision when the operator picks names that
 	// happen to match SQL keywords (`count`, `rate`).
-	selectParts := []string{
-		fmt.Sprintf(
-			"toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000 AS bucket",
-			step),
+	bucketExpr := fmt.Sprintf(
+		"toUnixTimestamp(toStartOfInterval(time, INTERVAL %d SECOND)) * 1000000000", step)
+	arrayJoinClause := ""
+	if winK > 0 {
+		// Her span, penceresi kendisini kapsayan k ardışık bucket'a
+		// katkı verir: bucket(t)+i*step, i∈[0,k). Böylece her nokta
+		// [t-W, t] penceresinin GERÇEK agregasyonu olur — percentile
+		// dahil (Prometheus'un range-vector bakışının SQL karşılığı).
+		// Maliyet çarpanı k (<=30, spanMetricWindow tavanı).
+		bucketExpr += " + _shift"
+		arrayJoinClause = fmt.Sprintf(
+			"ARRAY JOIN arrayMap(x -> toUInt64(x * %d) * 1000000000, range(%d)) AS _shift",
+			step, winK)
+		// Kaydırma bucket'ı [from,to] dışına taşabilir; kenarları kırp.
+		// (Alias WHERE'de kullanılabilir — CH alias genişletmesi.)
+		stepNs := int64(step) * 1e9
+		wc.add(fmt.Sprintf("bucket >= %d", f.From.UnixNano()/stepNs*stepNs))
+		wc.add(fmt.Sprintf("bucket <= %d", f.To.UnixNano()))
 	}
+	selectParts := []string{bucketExpr + " AS bucket"}
 	// v0.9.407 (grafik-audit Faz B'nin ertelenen 4. kalemi — ÖLÇÜMLE):
 	// aynı alan üzerinde ≥2 percentile istendiğinde üç ayrı
 	// quantileTDigest state'i yerine TEK quantilesTDigest tuple'ı.
@@ -1055,7 +1137,11 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		if field == "" {
 			field = "duration_ms"
 		}
-		expr, err := aggToSQL(a.Aggregation, fieldToSQL(field), step)
+		rateDiv := step
+		if winK > 0 {
+			rateDiv = effWin
+		}
+		expr, err := aggToSQL(a.Aggregation, fieldToSQL(field), rateDiv)
 		if err != nil {
 			return nil, 0, fmt.Errorf("agg %q: %w", a.Name, err)
 		}
@@ -1086,8 +1172,10 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		SELECT %s
 		FROM spans
 		%s
+		%s
 		GROUP BY bucket, gk`,
 		strings.Join(selectParts, ", "),
+		arrayJoinClause,
 		wc.sql())
 	var sql string
 	if tn > 0 {
@@ -1164,9 +1252,51 @@ func (s *Store) QuerySpanMetricMulti(ctx context.Context, f SpanMetricBatchFilte
 		for _, k := range accs[i].order {
 			list = append(list, *accs[i].seriesMap[k])
 		}
+		// v0.9.723 — pencere açıkken sayım-sınıfı agg'ler sıfır-doldurulur:
+		// span yokluğu bilinen sıfırdır (%100 saklıyoruz, örnekleme yok) —
+		// rate/count çizgisi Grafana'daki gibi sürekli olur. Oran/gecikme
+		// agg'leri DOLDURULMAZ: pencerede hiç istek yoksa error_rate ve
+		// pXX tanımsızdır, Prometheus'ta da boşluktur (0/0 → NaN → gap).
+		if winK > 0 && spanAggZeroFills(a.Aggregation) {
+			list = zeroFillSpanSeries(list, step, f.From.UnixNano(), f.To.UnixNano())
+		}
 		out[a.Name] = list
 	}
 	return out, step, nil
+}
+
+// spanAggZeroFills — SAF: pencereli okumada hangi agg'lerin boş
+// bucket'ı "bilinen sıfır" sayacağı. Yalnız sayım türevleri.
+func spanAggZeroFills(agg string) bool {
+	switch strings.ToLower(agg) {
+	case "count", "rate", "per_min", "errors":
+		return true
+	}
+	return false
+}
+
+// zeroFillSpanSeries — SAF: her seriyi [from,to] step-kafesine oturtur,
+// eksik bucket = 0. deltaGridFill'in (metricrate.go, v0.9.722) span
+// kardeşi; SpanMetricSeries şekli üzerinde çalışır.
+func zeroFillSpanSeries(list []SpanMetricSeries, step int, fromNs, toNs int64) []SpanMetricSeries {
+	stepNs := int64(step) * 1e9
+	if stepNs <= 0 {
+		return list
+	}
+	start := fromNs / stepNs * stepNs
+	out := make([]SpanMetricSeries, len(list))
+	for si, ser := range list {
+		have := make(map[int64]float64, len(ser.Points))
+		for _, p := range ser.Points {
+			have[p.Time] = p.Value
+		}
+		var pts []SpanMetricPoint
+		for b := start; b <= toNs; b += stepNs {
+			pts = append(pts, SpanMetricPoint{Time: b, Value: have[b]})
+		}
+		out[si] = SpanMetricSeries{GroupKey: ser.GroupKey, Points: pts}
+	}
+	return out
 }
 
 // fieldToSQL maps a friendly field name to the underlying ClickHouse expression.

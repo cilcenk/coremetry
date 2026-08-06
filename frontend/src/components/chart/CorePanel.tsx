@@ -45,6 +45,7 @@ import {
   drawThresholds, drawTimeRegions,
   type ChartThreshold, type ChartTimeRegion,
 } from '@/lib/chart/overlays';
+import { alignedToCsv } from '@/lib/chart/exportCsv';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtSmart } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -88,17 +89,37 @@ export interface CorePanelProps {
   // uPlot serisi; 0 = x). Çizgi olarak zaten var olan iki serinin ARASI
   // doldurulur — p95 çizgisi ayrı bir seri olarak gelir.
   bands?: { above: number; below: number; fill?: string }[];
+  // "Sorguyu göster" menü kalemi için: paneli besleyen sorgunun/isteğin
+  // insan-okur özeti. Verilmezse kalem çizilmez.
+  queryText?: string;
+  // Log ölçek kullanıcıya AÇILSIN mı (menüde toggle). logScale prop'u
+  // başlangıç değeri; toggle panel-yerel state'e biner.
+  logScaleToggle?: boolean;
 }
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
-  thresholds, regions, bands,
+  thresholds, regions, bands, queryText, logScaleToggle,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
   // Tema değişince config yeniden kurulmalı (renkler draw anında çözülür;
   // useThemeTick data-theme mutasyonunda sayaç artırır — mevcut desen).
   const themeTick = useThemeTick();
+  // FAZ 2D — panel menüsü durumları. Tam ekran CSS overlay: route/DOM
+  // taşıma yok, ESC ile çıkılır. Log toggle logScale prop'unu TOHUM alır.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [showQuery, setShowQuery] = useState(false);
+  const [logLocal, setLogLocal] = useState(!!logScale);
+  const effLog = logScaleToggle ? logLocal : !!logScale;
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFullscreen(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [fullscreen]);
 
   useEffect(() => {
     const el = wrapRef.current;
@@ -130,8 +151,8 @@ export function CorePanel({
     b.addScale({
       scaleKey: 'y',
       orientation: ScaleOrientation.Vertical, direction: ScaleDirection.Up,
-      distribution: logScale ? ScaleDistribution.Log : ScaleDistribution.Linear,
-      log: logScale ? 10 : undefined,
+      distribution: effLog ? ScaleDistribution.Log : ScaleDistribution.Linear,
+      log: effLog ? 10 : undefined,
     });
     b.addAxis({ scaleKey: 'x', isTime: true, placement: AxisPlacement.Bottom, theme });
     b.addAxis({
@@ -191,7 +212,19 @@ export function CorePanel({
     // themeTick: tema değişince renkler yeniden çözülsün diye bağımlılıkta.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aligned.names.join(' '), roles?.join(), vis, syncKey, logScale, onZoom, themeTick,
-    thresholds, regions, bands]);
+    thresholds, regions, bands, effLog]);
+
+  // CSV: ekranda ne varsa o iner (görünen veri, ayrı export sorgusu yok).
+  const downloadCsv = () => {
+    if (data.state !== 'ready') return;
+    const csv = alignedToCsv(aligned.names, aligned.data as (number | null)[][]);
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${title.replace(/[^\w-]+/g, '_')}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
 
   // Legend istatistikleri — GÖRÜNEN aralıktan (spec). Zoom bir sorgu
   // değil pencerelemedir; visibleRangeStats saf.
@@ -208,13 +241,60 @@ export function CorePanel({
     !resolveLegendCollapsed(null, undefined, aligned.names.length, 6));
 
   return (
-    <div className="panel" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+    <div className="panel" style={{
+      display: 'flex', flexDirection: 'column', gap: 6,
+      // Tam ekran: CSS overlay. Route/DOM taşınmaz — uPlot instance'ı
+      // yaşamaya devam eder, ResizeObserver genişliği kendisi yakalar.
+      ...(fullscreen ? {
+        position: 'fixed', inset: 12, zIndex: 100,
+        background: 'var(--bg0)', padding: 12, overflow: 'auto',
+      } : {}),
+    }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
         <h3 style={{ margin: 0, fontSize: 12 }}>{title}</h3>
         {data.state === 'ready' && data.partial && (
           <span className="badge b-warn" title={data.partial}>kısmi</span>
         )}
+        {/* FAZ 2D — panel menüsü: tam ekran / CSV / sorguyu göster / log. */}
+        <span style={{ marginLeft: 'auto', position: 'relative' }}>
+          <button className="sec" aria-label="Panel menüsü" aria-expanded={menuOpen}
+            style={{ fontSize: 11, padding: '0 6px' }}
+            onClick={() => setMenuOpen(o => !o)}>⋯</button>
+          {menuOpen && (
+            <div role="menu" style={{
+              position: 'absolute', right: 0, top: '100%', zIndex: 20,
+              background: 'var(--bg1)', border: '1px solid var(--border)',
+              borderRadius: 6, padding: 4, display: 'flex',
+              flexDirection: 'column', gap: 2, minWidth: 150,
+            }}>
+              <button className="sec" onClick={() => { setFullscreen(f => !f); setMenuOpen(false); }}>
+                {fullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
+              </button>
+              <button className="sec" disabled={data.state !== 'ready'}
+                onClick={() => { downloadCsv(); setMenuOpen(false); }}>
+                CSV indir
+              </button>
+              {queryText && (
+                <button className="sec" onClick={() => { setShowQuery(q => !q); setMenuOpen(false); }}>
+                  Sorguyu göster
+                </button>
+              )}
+              {logScaleToggle && (
+                <button className="sec" onClick={() => setLogLocal(l => !l)}>
+                  {effLog ? '✓ ' : ''}Log ölçek
+                </button>
+              )}
+            </div>
+          )}
+        </span>
       </div>
+      {showQuery && queryText && (
+        <pre style={{
+          margin: 0, padding: 8, fontSize: 11, background: 'var(--bg2)',
+          border: '1px solid var(--border)', borderRadius: 6,
+          overflowX: 'auto', whiteSpace: 'pre-wrap',
+        }}>{queryText}</pre>
+      )}
 
       <div ref={wrapRef} style={{ minHeight: height }}
         onDoubleClick={onZoomReset}>

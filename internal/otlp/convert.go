@@ -236,6 +236,20 @@ func ConvertMetrics(req *metricscollpb.ExportMetricsServiceRequest) ([]*chstore.
 			// be: it's baked into series_fingerprint.
 			svcInstance = attrStr(rm.Resource.Attributes, "service.instance.id", "")
 			hostName = attrStr(rm.Resource.Attributes, "host.name", "")
+			// v0.9.724 — YAZAR KİMLİĞİ ZİNCİRİ: instance.id yoksa
+			// k8s.pod.name, o da yoksa host.name. instance.id yaymayan
+			// çok-pod'lu servislerde (prod vakası) aynı attr-set'li
+			// kümülatif sayaçlar TEK fingerprint'e çöküyordu; okuma
+			// tarafı her pod-değişimini reset sanıp delta=cur (ham
+			// sayaç, binlik ölçek) basıyordu — operatör ekranındaki
+			// testere/-0.000. Okuma synthetic'i (metricSeriesKeyExpr)
+			// AYNI zinciri kurar — simetri şart.
+			if svcInstance == "" {
+				svcInstance = attrStr(rm.Resource.Attributes, "k8s.pod.name", "")
+			}
+			if svcInstance == "" {
+				svcInstance = hostName
+			}
 			resK, resV = attrsToArrays(rm.Resource.Attributes)
 		}
 		for _, sm := range rm.ScopeMetrics {

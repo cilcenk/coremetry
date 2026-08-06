@@ -200,3 +200,25 @@ func TestRateScanTargetIsFloat(t *testing.T) {
 		t.Error("tarama hedefi *float64 değil — SQL tarafındaki toFloat64 sarmalaması onunla eşleşmeli")
 	}
 }
+
+// v0.9.724 — okuma tarafı yazar kimliği zinciri ingest ile simetrik:
+// synthetic sk, instance.id → k8s.pod.name → host_name zincirini
+// kurmalı. Zincir düşerse instance.id yaymayan çok-pod'lu servislerin
+// sayaçları tek sk'ya çöker (prod testere vakası) — ve bu sessiz olur.
+func TestSeriesKeyWriterIdentityChain(t *testing.T) {
+	for _, hasFp := range []bool{true, false} {
+		key := metricSeriesKeyExpr(hasFp)
+		for _, want := range []string{"service.instance.id", "k8s.pod.name", "host_name"} {
+			if !strings.Contains(key, want) {
+				t.Errorf("hasFp=%v: sk ifadesinde %q yok — yazar zinciri eksik", hasFp, want)
+			}
+		}
+		// Zincir sırası: instance.id, pod, host_name (tercih sırası).
+		i1 := strings.Index(key, "service.instance.id")
+		i2 := strings.Index(key, "k8s.pod.name")
+		i3 := strings.Index(key, "host_name")
+		if !(i1 < i2 && i2 < i3) {
+			t.Errorf("hasFp=%v: zincir sırası bozuk (%d,%d,%d)", hasFp, i1, i2, i3)
+		}
+	}
+}

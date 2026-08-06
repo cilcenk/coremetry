@@ -116,3 +116,26 @@ func TestDeltaWindowFallbackOldRate(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.724 — kayan toplamın float artığı: matematiksel sıfıra dönen
+// pencere TAM 0 vermeli ("-0.000" görüntü hatası, prod ekranı).
+func TestRollingRateFloatResidualClamp(t *testing.T) {
+	const step = 20
+	stepNs := uint64(step) * 1e9
+	from := uint64(5000) * 1e9
+	// 0.1+0.2+0.7 katkıları pencereden çıkınca ikili tabanda artık kalır.
+	pts := []ratePoint{
+		{bucket: from, value: 0.1},
+		{bucket: from + stepNs, value: 0.2},
+		{bucket: from + 2*stepNs, value: 0.7},
+		{bucket: from + 3*stepNs, value: 0},
+		{bucket: from + 4*stepNs, value: 0},
+		{bucket: from + 5*stepNs, value: 0},
+		{bucket: from + 6*stepNs, value: 0},
+	}
+	out := rollingRate(pts, step, 60, "increase")
+	last := out[len(out)-1].value
+	if last != 0 {
+		t.Fatalf("pencere boşaldıktan sonra değer %v — tam 0 olmalı (float artığı kelepçesi)", last)
+	}
+}

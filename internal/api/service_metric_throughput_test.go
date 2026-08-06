@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"os"
 )
 
 // v0.9.665 — metrik türevli throughput planlayıcısı.
@@ -103,5 +104,28 @@ func TestMetricThroughputFilterCarriesWindowAndName(t *testing.T) {
 	// toplam trafiği olduğundan küçük gösterirdi.
 	if f.Aggregation != "sum" {
 		t.Errorf("toplama sum olmalı, alınan %q", f.Aggregation)
+	}
+}
+
+// v0.9.719 — kimlik BAĞI kaynak pinleri: hızlı yol + iki pozitif + iki
+// negatif yazım. Saf test Redis ister; pin, akışın kaynakta durduğunu
+// çiviler (bugünün sekiz kez işe yarayan deseni).
+func TestTputBindingWiring(t *testing.T) {
+	raw, err := os.ReadFile("service_metric_throughput.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := stripAPILineComments(string(raw))
+	for what, want := range map[string]int{
+		"s.loadTputBinding(":  1,
+		"s.storeTputBinding(": 4, // 2 pozitif eşleşme + 2 negatif çıkış
+	} {
+		if got := strings.Count(src, what); got != want {
+			t.Errorf("%s %d yerde, beklenen %d — bağ akışı eksik/fazla", what, got, want)
+		}
+	}
+	// Elle ?metric= ezmesi bağı NE OKUMALI NE YAZMALI.
+	if !strings.Contains(src, `if metric == "" && jobLabel == "" {`) {
+		t.Error("bağ hızlı yolu elle-ezme korumasız")
 	}
 }

@@ -18,6 +18,7 @@
 package api
 
 import (
+	"encoding/json"
 	"strconv"
 	"context"
 	"fmt"
@@ -154,6 +155,56 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 			"jobLabel": jobLabel,
 			"pattern":  pattern,
 			"service":  name,
+			// v0.9.719 — tanılanabilirlik (deploy doğrulamasının bulgusu:
+			// parametre yankılanmıyordu, etkisi doğrulanamıyordu).
+			"rateWindow": rateWin,
+			"breakdown":  breakdown,
+		}
+
+		// 0) BAĞ HIZLI YOLU (v0.9.719). Daha önce çözülmüş kimlik varsa
+		// keşfi tamamen atla: tek rate sorgusu. Boş dönerse bağ bayat —
+		// aşağıdaki tam keşfe düş (ve keşif sonunda yeniden yazılır).
+		// ?metric= ile elle ezme keşif ister — bağ atlanır.
+		if metric == "" && jobLabel == "" {
+			if b := s.loadTputBinding(ctx, name); b != nil {
+				if b.None {
+					// Negatif bağ: son tanılama zarfını aynen döndür —
+					// metriksiz servis her 30 sn'de keşif koşturmasın.
+					var cached map[string]any
+					if json.Unmarshal(b.Diag, &cached) == nil {
+						return cached, nil
+					}
+				} else {
+					f := chstore.MetricQueryFilter{
+						Name: b.Metric, From: from, To: to,
+						Aggregation: "sum", MaxDataPoints: mdp,
+						GroupBy:       breakdownGroupBy(breakdown),
+						RateWindowSec: rateWin,
+						Service:       b.Service,
+						Filters:       b.Filters,
+					}
+					rate := s.store.QueryMetricRate
+					if b.Instrument == "histogram" {
+						rate = s.store.QueryMetricCountRate
+					}
+					if ser, err := rate(ctx, f, "rate"); err == nil && len(ser) > 0 {
+						out["metric"] = b.Metric
+						out["metricExists"] = true
+						out["instrument"] = b.Instrument
+						out["series"] = ser
+						out["matched"] = len(ser)
+						out["matchedBy"] = b.MatchedBy
+						out["binding"] = "hit" // tanılama: hızlı yol
+						if b.EnvAmbiguous {
+							out["envAmbiguous"] = true
+						}
+						mf := f
+						s.attachMetricLatency(ctx, out, mf, b.Metric, name)
+						return out, nil
+					}
+					// bayat bağ → düş ve yeniden keşfet
+				}
+			}
 		}
 
 		// 1) ADI ÇÖZ. Tek bir varsayılan yetmiyor: aynı ölçüm kuruluma
@@ -166,6 +217,14 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		if resolved == "" {
 			out["metricExists"] = false
 			out["suggestions"] = s.suggestMetricNames(ctx, metric)
+			// v0.9.719 — negatif bağ: tanılama zarfı 10 dk saklanır,
+			// metriksiz servis her yüklemede keşif koşturmaz. Elle
+			// ?metric= ezmesi bağa YAZILMAZ (keşif zaten istenmişti).
+			if metric == "" && jobLabel == "" {
+				if diag, err := json.Marshal(out); err == nil {
+					s.storeTputBinding(ctx, name, tputBinding{None: true, Diag: diag})
+				}
+			}
 			return out, nil
 		}
 		out["metric"] = resolved
@@ -227,6 +286,12 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 				out["matchedBy"] = lb
 				mf := f
 				matched = &mf
+				// v0.9.719 — bağı kalıcıla: sonraki istekler keşifsiz.
+				s.storeTputBinding(ctx, name, tputBinding{
+					Metric: resolved, Instrument: instrument,
+					Kind: "label", Label: lb, Filters: f.Filters,
+					MatchedBy: lb,
+				})
 				break
 			}
 		}
@@ -270,10 +335,21 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 				out["envAmbiguous"] = at.EnvAmbiguous
 				mf := svcFilter
 				matched = &mf
+				s.storeTputBinding(ctx, name, tputBinding{
+					Metric: resolved, Instrument: instrument,
+					Kind: "svc", Service: at.Service, Filters: at.Filters,
+					EnvAmbiguous: at.EnvAmbiguous, MatchedBy: at.Label(),
+				})
 				break
 			}
 		}
 		out["triedLabels"] = triedLabels
+		if matched == nil && metric == "" && jobLabel == "" {
+			// v0.9.719 — kimlik bulunamadı: negatif bağ (10 dk).
+			if diag, err := json.Marshal(out); err == nil {
+				s.storeTputBinding(ctx, name, tputBinding{None: true, Diag: diag})
+			}
+		}
 		if len(candErrs) > 0 {
 			// Hatalar SESSİZ KALMASIN: bir aday teknik bir sebeple
 			// çalışmıyorsa operatör bunu görmeli, "eşleşme yok" ile
@@ -523,4 +599,65 @@ func serviceNameAttempts(service string) []svcAttempt {
 		})
 	}
 	return append(out, svcAttempt{Service: stripped, EnvAmbiguous: true})
+}
+
+
+// ── v0.9.719 (operatör önerisi: "bir defa keşfet, sonra hızlı gelsin") ──────
+//
+// Kimlik ÇÖZÜMÜ pahalı: 5 aday metrik + instrument/temporality probları +
+// 5 kimlik etiketi × rate denemesi + service_name biçim denemeleri — hepsi
+// SIRALI CH sorgusu ve chartsV2 ayrı cache anahtarı ürettiği için ilk v2
+// yüklemesi hep soğuktu. Çözülen bağ Redis'e yazılır (pod'lar arası
+// paylaşımlı, restart'a dayanıklı); sonraki istekler TEK rate sorgusuna
+// iner. Bağ bayatlarsa (boş dönerse) tam keşfe düşülür ve yeniden yazılır
+// — yanlışa kilitlenme yok, yalnız hızlanma.
+//
+// NEGATİF bağ da kısa TTL ile saklanır: metriği olmayan servis her 30
+// saniyede tam keşif koşturmasın; 10 dk'da bir tazelenen tanılama yeter.
+
+type tputBinding struct {
+	// None=true → son keşif eşleşme bulamadı; Diag son tanılama zarfı.
+	None bool            `json:"none,omitempty"`
+	Diag json.RawMessage `json:"diag,omitempty"`
+
+	Metric     string `json:"metric"`
+	Instrument string `json:"instrument"`
+	// Kind: "label" → Filters üzerinden kimlik etiketi; "svc" →
+	// serviceNameAttempts biçimi (Service + Filters).
+	Kind         string             `json:"kind"`
+	Label        string             `json:"label,omitempty"`
+	AttemptLabel string             `json:"attemptLabel,omitempty"`
+	Service      string             `json:"service,omitempty"`
+	Filters      []chstore.FilterExpr `json:"filters,omitempty"`
+	EnvAmbiguous bool               `json:"envAmbiguous,omitempty"`
+	MatchedBy    string             `json:"matchedBy"`
+}
+
+const (
+	tputBindTTL    = 12 * time.Hour
+	tputBindNegTTL = 10 * time.Minute
+)
+
+func tputBindKey(service string) string { return "cm:tputbind:v1:" + service }
+
+func (s *Server) loadTputBinding(ctx context.Context, service string) *tputBinding {
+	raw, ok, err := s.cache.Get(ctx, tputBindKey(service))
+	if err != nil || !ok {
+		return nil
+	}
+	var b tputBinding
+	if json.Unmarshal(raw, &b) != nil {
+		return nil
+	}
+	return &b
+}
+
+func (s *Server) storeTputBinding(ctx context.Context, service string, b tputBinding) {
+	ttl := tputBindTTL
+	if b.None {
+		ttl = tputBindNegTTL
+	}
+	if raw, err := json.Marshal(b); err == nil {
+		_ = s.cache.Set(ctx, tputBindKey(service), raw, ttl)
+	}
 }

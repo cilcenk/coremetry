@@ -139,6 +139,24 @@ export function CorePanel({
     return () => window.removeEventListener('keydown', onKey);
   }, [fullscreen]);
 
+  // v0.9.711 (self-review WCAG bulgusu, kendim doğruladım) — menü
+  // klavye sözleşmesi: role=menu vaat edip ESC/dış-tık vermemek ekran
+  // okuyucuya yalan söylemek. ESC kapatır, dışarı tık kapatır.
+  const menuRef = useRef<HTMLSpanElement | null>(null);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    const onDown = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [menuOpen]);
+
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -379,7 +397,7 @@ export function CorePanel({
           <span className="badge b-warn" title={data.partial}>kısmi</span>
         )}
         {/* FAZ 2D — panel menüsü: tam ekran / CSV / sorguyu göster / log. */}
-        <span style={{ marginLeft: 'auto', position: 'relative' }}>
+        <span ref={menuRef} style={{ marginLeft: 'auto', position: 'relative' }}>
           <button className="sec" aria-label="Panel menüsü" aria-expanded={menuOpen}
             style={{ fontSize: 11, padding: '0 6px' }}
             onClick={() => setMenuOpen(o => !o)}>⋯</button>
@@ -460,11 +478,21 @@ export function CorePanel({
               <tbody>
                 {stats.map((s, i) => (
                   <tr key={`${i}:${s.name}`}
+                    tabIndex={0}
+                    role="button"
+                    aria-pressed={vis[i] !== false}
+                    aria-label={`${s.name} — Enter: izole et, Boşluk: gizle/göster`}
                     style={{ opacity: vis[i] === false ? 0.35 : 1, cursor: 'pointer' }}
                     onClick={e => setVis(v =>
                       e.ctrlKey || e.metaKey
                         ? toggleSeriesVisibility(v, i)
-                        : isolateSeriesVisibility(v, i))}>
+                        : isolateSeriesVisibility(v, i))}
+                    onKeyDown={e => {
+                      // v0.9.711 — Ctrl+tık klavyeden ERİŞİLEMEZ (review
+                      // bulgusu): Enter=izole, Space=tekil gizle/göster.
+                      if (e.key === 'Enter') { e.preventDefault(); setVis(v => isolateSeriesVisibility(v, i)); }
+                      if (e.key === ' ') { e.preventDefault(); setVis(v => toggleSeriesVisibility(v, i)); }
+                    }}>
                     <td>
                       <span style={{
                         display: 'inline-block', width: 8, height: 8, borderRadius: 2,

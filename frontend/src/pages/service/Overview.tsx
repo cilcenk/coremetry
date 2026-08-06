@@ -28,7 +28,7 @@ const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 import { metricLatencyComparable, metricLatencyUnitLabel } from './metricLatencyUnit';
 import { EnvAmbiguousNote } from './EnvAmbiguousNote';
-import { buildRootOpLines } from './charts/rootOpSeries';
+import { buildRootOpLines, buildRootOpItems } from './charts/rootOpSeries';
 import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
 import { TopEndpointsCard } from './TopEndpointsCard';
@@ -336,6 +336,8 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const opsQ = useRootOpLatency(service, from, to, opsStep, splitByOp);
   // Saf projeksiyon: alan bazlı ilk 5, union zaman ekseni, "+N daha" notu.
   const opsView = useMemo(() => buildRootOpLines(opsQ.data), [opsQ.data]);
+  // v0.9.728 — v2 projeksiyonu (CorePanelMulti): hizalama/renk CorePanel'de.
+  const opsItems = useMemo(() => buildRootOpItems(opsQ.data), [opsQ.data]);
   const opsStatus: 'loading' | 'error' | 'ready' =
     opsQ.isLoading ? 'loading' : opsQ.isError ? 'error' : 'ready';
   // Fallback (usingAllSpans) durumunda kırılım YAPISAL olarak boş: kırılım
@@ -576,10 +578,29 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               kümesiyle kurulmuşken diğerinin verisini alırdı (lejant
               görünürlüğü afterBuild'de okunuyor). Ayrı key = temiz kurulum. */}
           {splitByOp ? (
+            chartsV2() ? (
+              <Suspense key="rt-ops-v2" fallback={<Spinner />}>
+                {/* v0.9.728 — dalga-2 son Overview dilimi: operasyon
+                    kırılımı. items tek-serili (op başına bir frame);
+                    renk CorePanel'in deterministik paletinden. */}
+                <CorePanelMultiLazy
+                  title={scopedChartTitle('Response time', usingAllSpans)}
+                  storageKey="ov-response-time-ops-v2" height={200} unit="ms" xRange={xRange}
+                  items={opsItems.items}
+                  note={usingAllSpans
+                    ? 'Bu serviste giriş span’i (server/consumer) yok — operasyon kırılımı boş.'
+                    : opsItems.note}
+                  headerExtra={rtSegment}
+                  regions={deployRegions}
+                  onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
+                />
+              </Suspense>
+            ) : (
             <ChartCard key="rt-ops" title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={opsStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
               headerAside={rtSegment} note={opsNote}
               legendStorageKey="ov-response-time-ops" statsDefaultCollapsed
               lines={opsView.lines} />
+            )
           ) : (
             chartsV2() ? (
               <Suspense key="rt-agg-v2" fallback={<Spinner />}>
@@ -589,6 +610,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 <CorePanelMultiLazy
                   title={scopedChartTitle('Response time', usingAllSpans)}
                   storageKey="ov-response-time-v2" height={200} unit="ms" xRange={xRange}
+                  headerExtra={rtSegment}
                   items={[
                     { name: 'avg', role: 'data' as const, series: lat?.avg ?? [] },
                     { name: 'P50', role: 'data' as const, series: lat?.p50 ?? [] },

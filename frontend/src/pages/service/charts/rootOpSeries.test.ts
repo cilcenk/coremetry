@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { SpanMetricSeries } from '@/lib/types';
 import {
   ROOT_OP_COLORS, ROOT_OP_TOP_N,
-  buildRootOpLines, rankRootOps, rootOpColorAt, rootOpLineLabel,
-  rootOpMoreNote, rootOpName,
+  buildRootOpItems, buildRootOpLines, rankRootOps, rootOpColorAt,
+  rootOpLineLabel, rootOpMoreNote, rootOpName,
 } from './rootOpSeries';
 
 // v0.9.484 — Response time kartının operasyon kırılımı. Testlenen saf
@@ -151,5 +151,41 @@ describe('buildRootOpLines', () => {
   it('totalSeries yoksa gelen seri sayısına düşer', () => {
     const res = { series: Array.from({ length: 8 }, (_, i) => s(`op${i}`, [[1, i + 1]])) };
     expect(buildRootOpLines(res).note).toBe('+3 operasyon daha (alan bazlı kırpıldı)');
+  });
+});
+
+// v0.9.728 — v2 projeksiyonu: CorePanelMulti item'ları. Hizalama BİLEREK
+// yok (CorePanel frame birleşimi yapar) — ham points korunmalı; sıralama
+// ve not, lines projeksiyonuyla aynı çekirdekten (rankRootOps/moreNote).
+describe('buildRootOpItems (v2)', () => {
+  it('alan sırasına göre ilk N, ham points korunur, not taşınır', () => {
+    const res = {
+      series: [
+        s('low', [[1, 1], [2, 1]]),
+        s('high', [[1, 100], [3, 100]]),
+        s('mid', [[2, 50]]),
+      ],
+      totalSeries: 9,
+      rowsCapped: false,
+    };
+    const { items, note } = buildRootOpItems(res as never, 2);
+    expect(items.map(i => i.name)).toEqual(['high · P95', 'mid · P95']);
+    // Ham points aynen: union hizalama v2'de CorePanel'in işi.
+    expect(items[0].series[0].points).toEqual([
+      { time: 1, value: 100 }, { time: 3, value: 100 },
+    ]);
+    expect(items.every(i => i.role === 'data')).toBe(true);
+    expect(note).toContain('+7 operasyon daha');
+  });
+
+  it('boş zarf: boş items + tavan notu yok', () => {
+    const { items, note } = buildRootOpItems(undefined);
+    expect(items).toEqual([]);
+    expect(note).toBeNull();
+  });
+
+  it('rowsCapped tavan uyarısı nota girer', () => {
+    const { note } = buildRootOpItems({ series: [s('a', [[1, 1]])], rowsCapped: true } as never);
+    expect(note).toContain('satır tavanı');
   });
 });

@@ -107,6 +107,12 @@ export interface CorePanelProps {
   // kenarı; verilmezse uPlot veriden türetir (eski davranış) ve
   // eksende sağlı-sollu ölü boşluk kalır (operatör bulgusu).
   xRange?: { from: number; to: number } | null;
+  // v0.9.728 (rt-ops v2) — başlık satırına ek kontrol yuvası (segment
+  // anahtarı gibi); menünün SOLUNA girer. ChartCard.headerAside paritesi.
+  headerExtra?: import('react').ReactNode;
+  // Dürüstlük notu ("+N operasyon daha…", satır tavanı) — grafiğin
+  // altında soluk tek satır. ChartCard.note paritesi.
+  note?: string | null;
   // "Sorguyu göster" menü kalemi için: paneli besleyen sorgunun/isteğin
   // insan-okur özeti. Verilmezse kalem çizilmez.
   queryText?: string;
@@ -118,7 +124,7 @@ export interface CorePanelProps {
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
-  defaultHidden, xRange,
+  defaultHidden, xRange, headerExtra, note,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -418,8 +424,9 @@ export function CorePanel({
         {data.state === 'ready' && data.partial && (
           <span className="badge b-warn" title={data.partial}>kısmi</span>
         )}
+        {headerExtra && <span style={{ marginLeft: 'auto' }}>{headerExtra}</span>}
         {/* FAZ 2D — panel menüsü: tam ekran / CSV / sorguyu göster / log. */}
-        <span ref={menuRef} style={{ marginLeft: 'auto', position: 'relative' }}>
+        <span ref={menuRef} style={{ marginLeft: headerExtra ? 0 : 'auto', position: 'relative' }}>
           <button className="sec" aria-label="Panel menüsü" aria-expanded={menuOpen}
             style={{ fontSize: 11, padding: '0 6px' }}
             onClick={() => setMenuOpen(o => !o)}>⋯</button>
@@ -482,6 +489,10 @@ export function CorePanel({
           </Empty>
         )}
       </div>
+
+      {note && (
+        <div style={{ fontSize: 10, color: 'var(--text3)' }}>{note}</div>
+      )}
 
       {data.state === 'ready' && aligned.names.length > 0 && (
         <div style={{ fontSize: 11 }}>

@@ -162,7 +162,11 @@ func metricAutoStep(from, to time.Time) int {
 // metricAutoStepPx snaps the pixel-derived step UP to one of these so bucket
 // boundaries align across queries and the step (hence cache key) stays a small
 // bounded set instead of every raw px ratio.
-var metricStepLadder = []int{1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400}
+// v0.9.705 — 14400 (4 sa) EKLENDİ: FE STEP_RUNGS'ta vardı, burada yoktu;
+// FE 4 saatlik adım isteyince merdiven 21600'e yuvarlıyor ve span/metrik
+// yüzeyleri FARKLI kafese oturuyordu. route_pins_test.go artık iki
+// listeyi birbirine çiviliyor — bir daha sessizce ayrışamazlar.
+var metricStepLadder = []int{1, 2, 5, 10, 15, 20, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 14400, 21600, 43200, 86400}
 
 // metricAutoStepPx — pixel-adaptive bucket step (F1 display fidelity, v0.9.105).
 // Grafana model: step ≈ rangeSec / maxDataPoints where maxDataPoints ≈ the

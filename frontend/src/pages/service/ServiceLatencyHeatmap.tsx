@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
+import { heatmapBucketCount } from '@/lib/chartStep';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { Spinner } from '@/components/Spinner';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
@@ -75,7 +76,8 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
     if (collapsed) return;
     setData(undefined);
     api.spanHeatmap({
-      from, to, buckets: 60,
+      // v0.9.707 — sabit 60 → genişlik-türevi (40..240).
+      from, to, buckets: heatmapBucketCount(1),
       filters: JSON.stringify(heatmapFilters(service, picked, operation, rootOnly)),
     })
       .then(r => setData(r ?? null))

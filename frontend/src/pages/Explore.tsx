@@ -16,6 +16,7 @@ import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer'
 import type { PivotAnchor } from '@/lib/types';
 import type { ExploreVizKind } from '@/components/ExploreViz';
 import { api } from '@/lib/api';
+import { heatmapBucketCount } from '@/lib/chartStep';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
@@ -339,7 +340,8 @@ function ExploreInner() {
     api.spanHeatmap({
       filters: fs.length ? JSON.stringify(fs) : undefined,
       dsl: a.dsl.trim() || undefined,
-      from, to, buckets: 80,
+      // v0.9.707 — sabit 80 → genişlik-türevi (~12px/sütun, 40..240).
+      from, to, buckets: heatmapBucketCount(1),
     })
       .then(h => { if (!cancelled) setHeatmap(h ?? null); })
       .catch(() => { if (!cancelled) setHeatmap(null); });

@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { panelMaxDataPoints } from '@/lib/chartStep';
 import { useServiceDeploys } from '@/lib/queries';
 import { Spinner } from '@/components/Spinner';
 import { TimeSeriesPanel, type TSSeries } from '@/components/viz/TimeSeriesPanel';
@@ -189,6 +190,9 @@ export function RuntimeCharts({ service, from, to, onZoom, onZoomReset }: {
         filters: line.filters ? JSON.stringify(line.filters) : undefined,
         groupBy: line.groupBy,
         from, to, step: 0,
+        // v0.9.707 — default 1500 nokta tek aşan yüzeydi (~1.3 nokta/px).
+        // Tam-genişlik istifli kartlar → panelMaxDataPoints(1).
+        maxDataPoints: panelMaxDataPoints(1),
       }).then(r => r ?? []),
       staleTime: 60_000,
       enabled: !!family,

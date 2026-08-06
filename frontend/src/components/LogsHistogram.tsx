@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react';
 import { api } from '@/lib/api';
+import { logsBucketSec } from '@/lib/chartStep';
 import { severityBandOf } from '@/lib/severityBand';
 import { TimeChart, type TimeChartSeries } from '@/components/charts/TimeChart';
 
@@ -155,13 +156,10 @@ export function LogsHistogram({ range, filter, onRangeSelect, onZoomReset, onSer
 // heuristic Explore uses, so the chart never has more than ~120 buckets
 // (browser-friendly) or fewer than ~20 (looks empty).
 function pickBucket(range: { from?: number; to?: number }): number {
+  // v0.9.707 — Logs.pickVolumeBucket ile TEK kaynak: logsBucketSec.
+  // "Aynı kalmalı" yorumu artık yapısal — kopya merdiven kalktı.
   if (!range.from || !range.to) return 30;
-  const spanSec = (range.to - range.from) / 1_000_000_000;
-  if (spanSec < 60 * 15)     return 5;     // <15min  → 5s buckets
-  if (spanSec < 60 * 60)     return 30;    // <1h     → 30s
-  if (spanSec < 60 * 60 * 6) return 60;    // <6h     → 1m
-  if (spanSec < 60 * 60 * 24) return 5*60; // <24h    → 5m
-  return 15 * 60;                          // ≥24h    → 15m
+  return logsBucketSec((range.to - range.from) / 1_000_000_000);
 }
 
 function fmtPct(v: number): string {

@@ -3,6 +3,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -140,6 +141,11 @@ func rollingRate(pts []ratePoint, stepSec, windowSec int, mode string) []ratePoi
 		if mode == "rate" {
 			v = sum / float64(windowSec)
 		}
+		// Kayan toplamın çıkarma artığı (~1e-13) "-0.000" olarak
+		// görüntülenir; gerçek sıfırı geri ver (v0.9.724, prod ekranı).
+		if v != 0 && math.Abs(v) < 1e-9 {
+			v = 0
+		}
 		out[i] = ratePoint{bucket: incs[i].b, value: v}
 	}
 	return out
@@ -164,9 +170,17 @@ func metricSeriesKeyExpr(hasFp bool) string {
 	// pod'lar arası bağımsız-reset'li kümülatif counter'lar karışıp YANLIŞ
 	// delta üretir. metric zaten WHERE'de sabit; service.instance.id +
 	// service.name + sıralı dpAttr yeterli.
+	// v0.9.724 — yazar kimliği zinciri ingest ile SİMETRİK
+	// (convert.go): instance.id → k8s.pod.name → host_name. Zincirin
+	// yokluğunda instance.id yaymayan çok-pod'lu servislerin sayaçları
+	// tek sk'ya çöküp interleave ediyordu (prod testere vakası).
+	writer := `if(res_values[indexOf(res_keys, 'service.instance.id')] != '', ` +
+		`res_values[indexOf(res_keys, 'service.instance.id')], ` +
+		`if(res_values[indexOf(res_keys, 'k8s.pod.name')] != '', ` +
+		`res_values[indexOf(res_keys, 'k8s.pod.name')], host_name))`
 	synthetic := `cityHash64(concat(` +
 		`service_name, '||', ` +
-		`res_values[indexOf(res_keys, 'service.instance.id')], '||', ` +
+		writer + `, '||', ` +
 		`arrayStringConcat(arraySort(arrayMap((k, v) -> concat(k, '=', v), attr_keys, attr_values)), ',')))`
 	if hasFp {
 		return `toString(if(series_fingerprint != 0, series_fingerprint, ` + synthetic + `))`
@@ -712,7 +726,7 @@ type rateSQLParams struct {
 	SeriesKey string // yalnız cumulative
 	// v0.9.714 — seri monotonikliği SELECT'e taşındı (0'lar artık okunuyor;
 	// delta telafisi Go'da bu bayrağa göre). Kolon yoksa "toUInt8(1)".
-	MonoExpr string
+	MonoExpr  string
 	GroupExpr string
 	ValueExpr string
 	Where     string

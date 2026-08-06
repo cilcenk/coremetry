@@ -22,5 +22,11 @@ export default defineConfig({
     include: ['src/**/*.test.ts'],
     // Surface slow tests early; pure helpers should be sub-millisecond.
     slowTestThreshold: 50,
+    // v0.9.700 — @grafana/data (FAZ 1 DataFrame köprüsü) moment-timezone'u
+    // CJS'ten named-import ediyor; vitest'in node ESM yolunda bu "does not
+    // provide an export named 'tz'" ile patlıyor. Paketi inline etmek
+    // vite'ın CJS-interop dönüşümünden geçirir. Yalnız @grafana/* —
+    // genel bir inline tüm testleri yavaşlatırdı.
+    server: { deps: { inline: [/@grafana\//] } },
   },
 });

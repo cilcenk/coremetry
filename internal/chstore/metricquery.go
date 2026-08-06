@@ -29,6 +29,12 @@ type MetricQueryFilter struct {
 	// wide windows expose the sub-bucket resolution OTLP metrics carry. 0 =
 	// px unknown → fixed ladder. clampStepToExport still caps the LOWER bound.
 	MaxDataPoints int
+	// RateWindowSec (v0.9.718, parite) — PromQL rate([W]) eşdeğeri kayan
+	// pencere: her bucket'ta değer, (t-W, t] aralığındaki artışın W'ye
+	// bölümü. 0/`<=step` → eski davranış (pencere = tek bucket).
+	// Operatörün Grafana referansı [3m]@1s — pencere OLMADAN aynı veri
+	// testere dişi görünüyor (kesikli şikâyeti).
+	RateWindowSec int
 }
 
 // buildMetricQuerySQL builds the metric_points query SQL + bound args for a

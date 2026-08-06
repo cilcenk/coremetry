@@ -588,7 +588,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                     defaultHidden paritesi: P99 kapalı açılır. */}
                 <CorePanelMultiLazy
                   title={scopedChartTitle('Response time', usingAllSpans)}
-                  storageKey="ov-response-time-v2" height={200} unit="ms"
+                  storageKey="ov-response-time-v2" height={200} unit="ms" xRange={xRange}
                   items={[
                     { name: 'avg', role: 'data' as const, series: lat?.avg ?? [] },
                     { name: 'P50', role: 'data' as const, series: lat?.p50 ?? [] },
@@ -652,7 +652,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             <Suspense fallback={<Spinner />}>
               <CorePanelMultiLazy
                 title={scopedChartTitle('Throughput', usingAllSpans)}
-                storageKey="ov-throughput-v2" height={200} unit="reqps"
+                storageKey="ov-throughput-v2" height={200} unit="reqps" xRange={xRange}
                 items={[
                   { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
                   { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },
@@ -693,7 +693,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                   <CorePanelMultiLazy
                     title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
                     storageKey="ov-throughput-metric-v2"
-                    height={200}
+                    height={200} xRange={xRange}
                     unit="reqps"
                     items={(metricTputQ.data?.series ?? []).map((s0, i) => ({
                       series: [s0],
@@ -746,7 +746,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             <Suspense fallback={<Spinner />}>
               <CorePanelMultiLazy
                 title={scopedChartTitle('Failure rate', usingAllSpans)}
-                storageKey="ov-failure-rate-v2" height={200} unit="percent"
+                storageKey="ov-failure-rate-v2" height={200} unit="percent" xRange={xRange}
                 items={[{ name: 'errors', role: 'error', series: lat?.error_rate ?? [] }]}
                 thresholds={failureThresholds} regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}

@@ -65,6 +65,40 @@ describe('visibleRangeStats', () => {
 // Bir sayfa doğrudan import ederse dört-kopya-chart hastalığı @grafana/ui
 // katmanında yeniden başlar (v0.9.97 engine.ts'in kapattığı borç).
 // ---------------------------------------------------------------------------
+// v0.9.704 — self-review'ın beş doğrulanmış kusuru için kaynak kapıları.
+// Saf test CorePanel'i render EDEMEZ (uPlot canvas ister); kapılar
+// düzeltmelerin kaynakta durduğunu çiviler — bugün altı kez işe yarayan
+// desen (mutasyonla doğrulanmış).
+describe('CorePanel self-review düzeltmeleri', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('🔴 onZoom ms→sn böler', () => {
+    expect(src).toMatch(/posToVal\(u\.select\.left, 'x'\) \/ 1000/);
+  });
+
+  it('🟠 config bağımlılığında vis/onZoom kimliği YOK — overlaySig var', () => {
+    const dep = src.match(/\}, \[aligned\.names\.join[^\]]*\]\);/)?.[0] ?? '';
+    expect(dep).not.toContain(' vis,');
+    expect(dep).not.toContain('onZoom,');
+    expect(dep).toContain('overlaySig');
+  });
+
+  it('🟠 görünürlük setSeries ile — config rebuild değil', () => {
+    expect(src).toMatch(/setSeries\(i \+ 1, \{ show \}/);
+  });
+
+  it('🟠 legend kalıcılığı legendCollapseKey ailesinde', () => {
+    expect(src).toMatch(/legendCollapseKey\(storageKey\)/);
+    expect(src).toMatch(/setItem\(legendCollapseKey/);
+  });
+
+  it('doktrin: spanNulls connectNulls üzerinden, varsayılan sıkı', () => {
+    expect(src).toMatch(/spanNulls: connectNulls \?\? false/);
+  });
+});
+
 describe('CorePanel tekeli', () => {
   const SRC = resolve(__dirname, '../..');
 

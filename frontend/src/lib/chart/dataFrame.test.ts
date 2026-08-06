@@ -99,6 +99,39 @@ describe('framesToAligned', () => {
   it('boş girdi çökmez', () => {
     expect(framesToAligned([])).toEqual({ data: [[]], names: [] });
   });
+
+  // v0.9.704 (self-review 🟠) — REVIEW'IN BİREBİR SENARYOSU. Eski sezgi
+  // uzunluk+uçlara bakıyordu: A=[0,60,120,300] ve B=[0,60,240,300] aynı
+  // kafes sayılıp B'nin t=240 değeri x=120'ye çizilirdi — çizgi, legend
+  // istatistiği ve CSV birden sessizce yanlış. Sunucu seyrek üretiyor
+  // (WITH FILL yok); bu vaka kurgu değil, gerçek şekil.
+  it('aynı uzunluk + aynı uçlar ama FARKLI iç kafes → birleşim, bindirme değil', () => {
+    const mk = (times: number[], vals: number[], key: string) => {
+      const f = spanSeriesToFrames([series(
+        times.map((t, i) => ({ time: t * NS_PER_MS, value: vals[i] })), [key],
+      )], {}, theme)[0];
+      return f;
+    };
+    const A = mk([0, 60, 120, 300], [1, 2, 3, 4], 'a');
+    const B = mk([0, 60, 240, 300], [10, 20, 30, 40], 'b');
+    const { data } = framesToAligned([A, B]);
+    // Birleşik eksen 5 nokta: 0,60,120,240,300
+    expect(data[0]).toEqual([0, 60, 120, 240, 300]);
+    // B'nin 30 değeri x=240'TA — x=120'de DEĞİL (eski hata oraya koyardı)
+    expect(data[2]).toEqual([10, 20, null, 30, 40]);
+    expect(data[1]).toEqual([1, 2, 3, null, 4]);
+  });
+
+  // v0.9.704 (self-review 🟡) — çok seride opts.name önek olur, kimlik
+  // groupKey'den; tek seride ad aynen. Eskisi hepsine aynı adı basıp
+  // duplicate React key + tek renk üretiyordu.
+  it('opts.name: tek seride ad, çok seride önek', () => {
+    const one = spanSeriesToFrames([series([], ['a'])], { name: 'p95' }, theme);
+    expect(one[0].name).toBe('p95');
+    const two = spanSeriesToFrames(
+      [series([], ['a']), series([], ['b'])], { name: 'p95' }, theme);
+    expect(two.map(f => f.name)).toEqual(['p95 · a', 'p95 · b']);
+  });
 });
 
 describe('nokta bütçesi (spec: nokta ≤ piksel)', () => {

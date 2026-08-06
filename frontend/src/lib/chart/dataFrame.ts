@@ -91,7 +91,13 @@ export function spanSeriesToFrames(
       values[i] = typeof p.value === 'number' && Number.isFinite(p.value) ? p.value : null;
     }
 
-    const name = opts.name ?? (s.groupKey.length ? s.groupKey.join(' · ') : 'value');
+    // v0.9.704 (self-review 🟡) — opts.name yalnız TEK seride ad olur.
+    // Çok seride hepsine aynı adı basmak duplicate React key + tek renk
+    // demekti (seriesRoleColor etikete göre çözer). Çok seride name
+    // ÖNEK olur, kimlik groupKey'den gelir.
+    const base = s.groupKey.length ? s.groupKey.join(' · ') : 'value';
+    const name = opts.name == null ? base
+      : (series.length === 1 ? opts.name : `${opts.name} · ${base}`);
 
     const config: FieldConfig = {
       unit: opts.unit,
@@ -154,12 +160,21 @@ export function framesToAligned(frames: ReadonlyArray<DataFrame>): {
   if (frames.length === 0) return { data: [[]], names: [] };
 
   const t0 = frames[0].fields[0].values as number[];
+  // v0.9.704 (self-review 🟠) — TAM eşitlik. İlk yazımım uzunluk+uçlara
+  // bakıyordu ("tam tarama boşa iş" diye) ve seyrek bucket'lı seride
+  // ÇÖKÜYORDU: A=[0,60,120,300], B=[0,60,240,300] aynı-kafes sayılıp
+  // B'nin t=240 değeri x=120'ye çizilirdi — çizgi, legend istatistiği ve
+  // CSV birden yanlış. Sunucu GERÇEKTEN seyrek üretiyor (WITH FILL yok;
+  // alignSeries.ts v0.9.87 yorumu aynı sınıfı belgeliyor). Eleman
+  // taraması sayı karşılaştırması: 800×6 ≈ 5k işlem, "pahalı" değil —
+  // o varsayım erken optimizasyondu ve major bir kusur üretti.
+  // Referans-paylaşım hızlı yolu duruyor (aynı diziyse tarama yok).
   const sameGrid = frames.every(f => {
     const t = f.fields[0].values as number[];
+    if (t === t0) return true;
     if (t.length !== t0.length) return false;
-    // Uzunluk eşitse uçları karşılaştırmak yeter: sunucu hizalı üretiyor,
-    // tam eleman taraması her poll'da O(n×seri) boşa iş olur.
-    return t.length === 0 || (t[0] === t0[0] && t[t.length - 1] === t0[t.length - 1]);
+    for (let i = 0; i < t.length; i++) if (t[i] !== t0[i]) return false;
+    return true;
   });
 
   if (sameGrid) {

@@ -237,8 +237,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // bu başlı başına bir bulgu (örnekleme, giriş-span kapsamı, ya da
   // metriğin farklı bir yüzeyi ölçmesi).
   const metricTputQ = useQuery({
-    queryKey: ['service-metric-throughput', service, from, to],
-    queryFn: () => api.serviceMetricThroughput(service, from, to),
+    // v0.9.706 — redMdp anahtarda VE istekte: metrik paneli artık kardeş
+    // RED grafikleriyle aynı nokta bütçesini geçiyor (px pilotu). Sunucu
+    // desteği v0.9.105'ten beri hazırdı; geçiren ilk yüzey bu.
+    queryKey: ['service-metric-throughput', service, from, to, redMdp],
+    queryFn: () => api.serviceMetricThroughput(service, from, to, undefined, redMdp),
     staleTime: 30_000,
   });
 

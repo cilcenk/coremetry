@@ -642,6 +642,28 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               çiziliyor. */}
           {metricLatLines.length > 0 && (
             <div style={{ marginTop: 10 }}>
+              {chartsV2() ? (
+                <Suspense key="rt-metric-v2" fallback={<Spinner />}>
+                  {/* v0.9.729 — dalga-2 son kalem: metrik-türevli gecikme.
+                      Birim yalnız TANINDIĞINDA 'ms' (Grafana display
+                      processor ölçekler); tanınmadıysa birimsiz çizilir,
+                      alttaki uyarı notu (mevcut) durumu söyler. Kaynak
+                      bilgisi (metrik adı + eşleşme) note'ta — CorePanel'de
+                      titleTip yok, bilgi kaybolmasın. */}
+                  <CorePanelMultiLazy
+                    title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
+                    storageKey="ov-response-time-metric-v2" height={200}
+                    unit={metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) ? 'ms' : undefined}
+                    xRange={xRange}
+                    items={metricLatLines.map(l => ({
+                      name: l.label ?? '', role: 'data' as const, series: l.series,
+                    }))}
+                    note={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}`}
+                    regions={deployRegions}
+                    onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
+                  />
+                </Suspense>
+              ) : (
               <ChartCard
                 title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
                 titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}${metricTputQ.data?.latencyUnitKnown === false ? ' · BİRİM TANINMADI, ölçeklenmedi' : ''}`}
@@ -651,6 +673,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 syncKey={chartSync} xRange={xRange}
                 legendStorageKey="ov-response-time-metric" statsDefaultCollapsed
                 lines={metricLatLines} />
+              )}
               {metricTputQ.data?.envAmbiguous && <EnvAmbiguousNote />}
               {!metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) && (
                 <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>

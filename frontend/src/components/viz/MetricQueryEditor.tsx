@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeFilters } from '@/lib/urlState';
+import { promqlTokenAt, replaceToken, type PromqlToken } from '@/lib/promqlToken';
 import { timeRangeToNs } from '@/lib/utils';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
@@ -373,6 +374,16 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   // PromQL mode (v0.9.116, F4 Phase 5) — raw PromQL text → /api/metrics/promql.
   const [promqlText, setPromqlText] = useState('');
   const [promqlQ, setPromqlQ] = useState('');
+  // PromQL metrik-adı autocomplete (v0.9.766, Faz 1) — imlecin altındaki
+  // token'ı SUNUCUDA arar (picker disiplini: eager katalog YASAK). Süslü
+  // parantez içi label key/value önerisi Faz 2'nin işi; promqlTokenAt
+  // orada null döndürdüğü için kutu kendiliğinden kapanır.
+  const promqlRef = useRef<HTMLTextAreaElement | null>(null);
+  const [sug, setSug] = useState<string[]>([]);
+  const [sugIdx, setSugIdx] = useState(0);
+  const [sugTok, setSugTok] = useState<PromqlToken | null>(null);
+  const [caretTo, setCaretTo] = useState<number | null>(null);
+  const sugMute = useRef(false);
   // "Add to dashboard" (step 3) — picker modal state.
   const [dashOpen, setDashOpen] = useState(false);
   const [dashList, setDashList] = useState<DashboardSummary[] | null>(null);
@@ -400,6 +411,60 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
     const t = window.setTimeout(() => setPromqlQ(promqlText.trim()), 300);
     return () => clearTimeout(t);
   }, [promqlText]);
+
+  // --- PromQL autocomplete (v0.9.766) -------------------------------------
+  // Aranan sorgu SADECE token metnidir; imleç kayınca token metni aynı
+  // kaldığı sürece yeniden fetch YOK (obje kimliği değil metin dep'i).
+  const sugQ = sugTok && sugTok.text.length >= 2 ? sugTok.text : '';
+  useEffect(() => {
+    if (!sugQ || view !== 'promql') { setSug([]); return; }
+    let alive = true;
+    const t = window.setTimeout(() => {
+      api.metricNamesSearch('', sugQ, 20, 0)
+        .then(r => { if (alive) { setSug((r.names ?? []).map(n => n.name)); setSugIdx(0); } })
+        .catch(() => { if (alive) setSug([]); });
+    }, 250);
+    return () => { alive = false; clearTimeout(t); };
+  }, [sugQ, view]);
+
+  // Öneri uygulandıktan sonra imleci eklenen adın sonuna koy. Layout
+  // effect: React yeni değeri commit ETTİKTEN sonra, boyanmadan önce.
+  useLayoutEffect(() => {
+    if (caretTo == null) return;
+    const el = promqlRef.current;
+    if (el) { el.focus(); el.setSelectionRange(caretTo, caretTo); }
+    setCaretTo(null);
+  }, [caretTo]);
+
+  const sugList = sug.slice(0, 8); // kutu en fazla 8 satır
+  const sugOpen = view === 'promql' && sugTok != null && sugList.length > 0;
+
+  const closeSug = () => { setSug([]); setSugTok(null); };
+  // Her yazımda VE her imleç hareketinde token'ı tazele. sugMute: bir
+  // öneri uygulandıktan sonra setSelectionRange'in tetiklediği TEK select
+  // olayını yutar — yoksa kutu tam-eşleşmeyle hemen geri açılırdı.
+  const syncSug = (text: string, pos: number, typed = false) => {
+    if (typed) sugMute.current = false;
+    else if (sugMute.current) { sugMute.current = false; return; }
+    setSugTok(promqlTokenAt(text, pos));
+  };
+
+  const applySug = (name: string) => {
+    if (!sugTok) return;
+    const out = replaceToken(promqlRef.current?.value ?? promqlText, sugTok, name);
+    setPromqlText(out.text);
+    closeSug();
+    sugMute.current = true;
+    setCaretTo(out.pos);
+  };
+
+  const onPromqlKey = (e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (!sugOpen) return; // kutu kapalıyken Enter = yeni satır; dokunma
+    if (e.key === 'ArrowDown') { e.preventDefault(); setSugIdx(i => (i + 1) % sugList.length); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); setSugIdx(i => (i - 1 + sugList.length) % sugList.length); }
+    else if (e.key === 'Enter') { e.preventDefault(); applySug(sugList[Math.min(sugIdx, sugList.length - 1)]); }
+    else if (e.key === 'Escape') { e.preventDefault(); closeSug(); }
+  };
 
   // Serialise the model to ?mq= (replace — refining a query shouldn't spam
   // history). Coexists with the Metrics page's other params untouched.
@@ -701,9 +766,38 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
         </div>
       ) : (
         <div className="mqe-code">
-          <textarea spellCheck={false} value={promqlText} onChange={e => setPromqlText(e.target.value)}
-            rows={3}
-            placeholder={'histogram_quantile(0.95, http.server.duration)\nsum by (service.name) (rate(http.server.duration[5m]))'} />
+          <div style={{ position: 'relative' }}>
+            <textarea spellCheck={false} value={promqlText} ref={promqlRef}
+              onChange={e => { setPromqlText(e.target.value); syncSug(e.target.value, e.target.selectionStart ?? e.target.value.length, true); }}
+              onSelect={e => syncSug(e.currentTarget.value, e.currentTarget.selectionStart ?? 0)}
+              onKeyDown={onPromqlKey}
+              onBlur={() => window.setTimeout(closeSug, 120)}
+              rows={3}
+              placeholder={'histogram_quantile(0.95, http.server.duration)\nsum by (service.name) (rate(http.server.duration[5m]))'} />
+            {sugOpen && (
+              <div className="card" role="listbox" style={{
+                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30,
+                marginTop: 2, padding: 3, background: 'var(--bg1)',
+                border: '1px solid var(--border)', borderRadius: 8,
+              }}>
+                {sugList.map((name, i) => (
+                  <div key={name} role="option" aria-selected={i === sugIdx}
+                    onMouseDown={e => { e.preventDefault(); applySug(name); }}
+                    onMouseEnter={() => setSugIdx(i)}
+                    title={name}
+                    style={{
+                      padding: '3px 7px', borderRadius: 5, cursor: 'pointer',
+                      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
+                      fontSize: 12, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                      background: i === sugIdx ? 'var(--bg2)' : 'transparent',
+                      color: i === sugIdx ? 'var(--text)' : 'var(--text2)',
+                    }}>
+                    {name}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
           <div className="mqe-code-foot">
             {promqlRes.error
               ? <span className="mqe-code-err">⚠ {promqlRes.error instanceof Error ? promqlRes.error.message : String(promqlRes.error)}</span>

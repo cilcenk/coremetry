@@ -32,6 +32,7 @@ import type uPlot from 'uplot';
 import {
   UPlotChart, UPlotConfigBuilder,
   AxisPlacement, ScaleOrientation, ScaleDirection, ScaleDistribution,
+  GraphGradientMode,
 } from '@grafana/ui';
 import type { DataFrame } from '@grafana/data';
 import { framesToAligned, chartTheme } from '@/lib/chart/dataFrame';
@@ -287,6 +288,12 @@ export function CorePanel({
         scaleKey: 'y', theme,
         lineColor: resolveVar(seriesRoleColor(name, roles?.[i] ?? 'data')),
         lineWidth: 1.5,
+        // v0.9.756 (operatör: "çizgiler basit geldi") — Grafana'nın imza
+        // görünümü: çizgi renginden türeyen hafif opaklık-degradeli alan
+        // dolgusu (fillOpacity 12, Opacity gradyanı). Tema-canlı: renk
+        // rebuild'de çözülür (themeTick dep'i zaten var).
+        fillOpacity: 12,
+        gradientMode: GraphGradientMode.Opacity,
         // show BURADA SABİT true: görünürlük setSeries ile uygulanıyor
         // (aşağıdaki effect). Config'e gömmek her legend tıkını full
         // rebuild yapardı — uPlot'un ucuz toggle'ı varken.

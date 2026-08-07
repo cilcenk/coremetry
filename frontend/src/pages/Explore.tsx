@@ -431,6 +431,17 @@ function ExploreInner() {
     return next;
   });
 
+  // v0.9.757 — düz tık İZOLE: yalnız tıklanan görünür (CorePanel lejant
+  // semantiği). Zaten izoleyse ikinci tık hepsini geri açar. Anahtar
+  // evreni panels'ten (tüm seriler), gizli kümesi "diğerleri".
+  const isolateHidden = (rowKey: string) => setHiddenKeys(prev => {
+    const all: string[] = [];
+    for (const p of panels) for (const s of p.series) all.push(`${p.letter}:${s.label}`);
+    const others = all.filter(k => k !== rowKey);
+    const isIsolated = prev.size === others.length && others.every(k => prev.has(k));
+    return isIsolated ? new Set() : new Set(others);
+  });
+
   // "Fetch this window" — promote the visual zoom into the page range so the
   // backend re-buckets at the finer step (plan chart-wrapper addition #1).
   const fetchZoomWindow = () => {
@@ -809,6 +820,7 @@ name ~ checkout`}
                 <GroupTable panels={panels}
                   hiddenKeys={hiddenKeys}
                   onToggleHidden={toggleHidden}
+                  onIsolate={isolateHidden}
                   onFocus={setFocusKey} />
               </>
             )}

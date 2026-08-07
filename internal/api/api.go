@@ -4322,7 +4322,12 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	to := parseTime(q.Get("to"))
 	// v0.9.458 (dürüstlük A1) — zarf {series, rowsCapped}: anahtar v2
 	// (gövde şekli değişti, v0.9.443 dersi).
-	key := fmt.Sprintf("metric-query:v2:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d",
+	// v0.9.776 → v3: histogram+delta agg=avg artık gözlem-ağırlıklı gerçek
+	// ortalama (sum(sum_value)/sum(count)). Gövde ŞEKLİ aynı ama SAYILAR
+	// değişti — anahtar bumplanmazsa rolling deploy'da 30 sn boyunca eski
+	// (ortalamaların ortalaması) değerler servis edilirdi ve iki pod aynı
+	// panelde farklı sayı gösterirdi (v0.9.443/458 dersi).
+	key := fmt.Sprintf("metric-query:v3:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d",
 		name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		series, qerr := s.store.QueryMetric(ctx, chstore.MetricQueryFilter{

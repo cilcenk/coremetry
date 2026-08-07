@@ -1971,6 +1971,10 @@ export interface ServiceMetricThroughput {
   latency?: { p50?: SpanMetricSeries[]; p95?: SpanMetricSeries[]; p99?: SpanMetricSeries[] };
   latencyUnit?: string;
   latencyUnitKnown?: boolean;
+  // v0.9.761 — gecikme BOŞ döndüğünde sunucunun tek-sorgu teşhisi
+  // (satır yok / kova yok / SINIRLAR boş / beklenmedik şekil). Panel
+  // notu gösterir; boş panel artık sebepsiz değil.
+  latencyDiag?: string;
   // v0.9.679 — eşleşme ORTAMLA ayrıştırılamadı. Metrik tarafında servis
   // adı eksiz olduğu için `-uat`/`-prod` aynı ada iniyor; ortam kısıtı
   // tutmazsa seri birden çok ortamın verisini taşıyor OLABİLİR.

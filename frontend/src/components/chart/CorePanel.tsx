@@ -527,6 +527,7 @@ export function CorePanel({
             {legendOpen ? '▼' : '▶'} Series ({aligned.names.length})
           </button>
           {legendOpen && (
+            <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', marginTop: 4 }}>
               <thead><tr>
                 <th style={{ textAlign: 'left' }}>Seri</th>
@@ -569,6 +570,7 @@ export function CorePanel({
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </div>
       )}

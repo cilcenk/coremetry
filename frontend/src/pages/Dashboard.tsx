@@ -20,6 +20,7 @@ import type {
 } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
 import { serializeDashboard, suggestedFilename } from '@/lib/dashboardIO';
+import { panelToExploreHref } from '@/pages/explore/panelToExplore';
 
 // Wrapper handles the Suspense requirement of useSearchParams() in App
 // Router with static export.
@@ -220,6 +221,38 @@ function Inner() {
     setDraft({ ...draft, panels: panels.filter(p => p.id !== id) });
     setEditingPanel(null);
   };
+  // v0.9.773 — duplicate a panel in place (Grafana's "Copy" on the panel
+  // menu). The copy lands immediately AFTER its source so the operator sees
+  // it without hunting the bottom of the board.
+  //
+  // Two details that would be bugs if missed:
+  //   • structuredClone, not a spread. Panel.config carries nested objects
+  //     (stat/gauge thresholds, the metric/span sub-config); a shallow copy
+  //     would leave the two panels sharing one thresholds array, so editing
+  //     the copy would silently rewrite the original.
+  //   • enter edit mode. `draft` is only persisted by Save, which only
+  //     exists in edit mode — duplicating from the view mode would look
+  //     like it worked and vanish on reload. Flipping to editing makes the
+  //     unsaved state visible and saveable.
+  const duplicatePanel = (pid: string) => {
+    const idx = panels.findIndex(p => p.id === pid);
+    if (idx < 0) return;
+    const copy: Panel = {
+      ...structuredClone(panels[idx]),
+      id: rid(),
+      title: `${panels[idx].title} (kopya)`,
+    };
+    const next = [...panels];
+    next.splice(idx + 1, 0, copy);
+    if (!editing) setEditing(true);
+    setDraft({ ...draft, panels: next });
+  };
+  // Edit requested from the panel menu — reachable in view mode, so it has
+  // to open edit mode first (the editor writes into `draft`).
+  const requestEditPanel = (pid: string) => {
+    if (!editing) setEditing(true);
+    setEditingPanel(pid);
+  };
   // Reorder by drop: move srcId to immediately before targetId.
   // No-op when src === target. Used by the drag-and-drop
   // handlers wired below the panel render block.
@@ -347,7 +380,10 @@ function Inner() {
             range={range}
             vars={varValues}
             editing={editing}
+            canEdit={isAdmin}
             onEditPanel={setEditingPanel}
+            onEditRequest={requestEditPanel}
+            onDuplicatePanel={duplicatePanel}
             onDeletePanel={deletePanel}
             onMovePanel={movePanel}
             onZoom={handleZoom}
@@ -364,6 +400,99 @@ function Inner() {
         )}
       </div>
     </>
+  );
+}
+
+// PanelMenu (v0.9.773) — the ⋯ on a dashboard panel's TITLE row.
+//
+// Deliberately NOT a second chart menu. With chartsV2 on, metric /
+// spanmetric / promql panels are drawn by CorePanel, which already owns a ⋯
+// for chart-level actions (fullscreen / CSV / show query). This one carries
+// PANEL-level actions only — things about the tile, not about the plot — so
+// the two never overlap and the operator learns one rule: outer menu = the
+// panel, inner menu = the picture.
+//
+// Delete stays OUT. It lives on the edit-mode × where an accidental click is
+// already guarded by having entered edit mode on purpose; promoting it into
+// a hover menu that a viewer can also open is how boards lose panels.
+function PanelMenu({ panel, vars, range, canEdit, onDuplicate, onEdit }: {
+  panel: Panel;
+  vars?: Record<string, string>;
+  range: TimeRange;
+  canEdit: boolean;
+  onDuplicate: (id: string) => void;
+  onEdit: (id: string) => void;
+}) {
+  const navigate = useNavigate();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLSpanElement | null>(null);
+
+  // A panel's own range override wins — Explore should open the window the
+  // operator is actually looking at, not the dashboard's.
+  const exploreHref = panelToExploreHref(panel, vars, panel.rangeOverride ?? range);
+
+  // Same keyboard contract CorePanel learned in v0.9.711: promising
+  // role="menu" without ESC and outside-click is lying to a screen reader.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    window.addEventListener('mousedown', onDown);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      window.removeEventListener('mousedown', onDown);
+    };
+  }, [open]);
+
+  // A menu with nothing in it is worse than no menu: a viewer on a stat panel
+  // has neither a convertible query nor edit rights.
+  if (!exploreHref && !canEdit) return null;
+
+  const item = (label: string, onClick: () => void) => (
+    <button className="sec" role="menuitem" key={label}
+      onClick={() => { setOpen(false); onClick(); }}
+      style={{
+        display: 'block', width: '100%', textAlign: 'left',
+        fontWeight: 400, borderRadius: 4,
+      }}>
+      {label}
+    </button>
+  );
+
+  return (
+    <span ref={ref} style={{ position: 'relative', display: 'inline-flex' }}
+      // The card is draggable in edit mode; a press on the menu must not
+      // start a drag (and must not be read as an outside-click either).
+      draggable={false}
+      onMouseDown={e => e.stopPropagation()}>
+      <button className="sec dash-panel-menu-btn" type="button"
+        aria-label="Panel menüsü" aria-haspopup="menu" aria-expanded={open}
+        title="Panel actions"
+        onClick={() => setOpen(o => !o)}
+        style={{
+          width: 26, height: 24, padding: 0, lineHeight: '20px',
+          fontSize: 13, borderRadius: 'var(--radius-sm)',
+        }}>⋯</button>
+      {open && (
+        <div role="menu" style={{
+          position: 'absolute', top: '100%', right: 0, marginTop: 4,
+          minWidth: 188, background: 'var(--bg2)',
+          border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
+          boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 60,
+          display: 'flex', flexDirection: 'column', gap: 2,
+        }}>
+          {/* Absent for panel shapes the builder can't express (stat, gauge,
+              markdown, heatmap, raw PromQL) — panelToExploreHref returns null
+              rather than opening a query that isn't this panel's. */}
+          {exploreHref && item("↗ Explore'da aç", () => navigate(exploreHref))}
+          {canEdit && item('⧉ Çoğalt', () => onDuplicate(panel.id))}
+          {canEdit && item('✎ Düzenle', () => onEdit(panel.id))}
+        </div>
+      )}
+    </span>
   );
 }
 
@@ -429,13 +558,23 @@ function normalizePanels(raw: unknown): Panel[] {
 // not persisted across reloads (matches Grafana's default behaviour;
 // add a localStorage layer if users start asking for it).
 function DashboardGrid({
-  panels, range, vars, editing, onEditPanel, onDeletePanel, onMovePanel, onZoom, onZoomReset, dashboardId, bundlePanelData,
+  panels, range, vars, editing, canEdit, onEditPanel, onEditRequest, onDuplicatePanel,
+  onDeletePanel, onMovePanel, onZoom, onZoomReset, dashboardId, bundlePanelData,
 }: {
   panels: Panel[];
   range: TimeRange;
   vars?: Record<string, string>;
   editing: boolean;
+  // Whether this operator may mutate the board (admin/editor). A viewer
+  // still gets the menu — "open in Explore" is a read — but not the
+  // mutating half of it.
+  canEdit: boolean;
   onEditPanel: (id: string) => void;
+  // v0.9.773 — edit asked for from the panel menu, which is reachable in
+  // VIEW mode; the parent flips into editing first. onEditPanel stays the
+  // already-editing path (the inline Edit button).
+  onEditRequest: (id: string) => void;
+  onDuplicatePanel: (id: string) => void;
   onDeletePanel: (id: string) => void;
   onMovePanel: (srcId: string, targetId: string) => void;
   // onZoom propagates a chart's drag-to-zoom selection up to
@@ -528,6 +667,7 @@ function DashboardGrid({
               }}>
                 {g.panels.map(p => (
                   <div key={p.id}
+                    className="dash-panel"
                     draggable={editing}
                     onDragStart={e => {
                       if (!editing) return;
@@ -578,6 +718,13 @@ function DashboardGrid({
                           fontWeight: 600, color: 'var(--text)',
                           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                         }}>{p.title}</span>
+                        {/* v0.9.773 — operator note. A dashboard is scanned,
+                            so the text lives in a tooltip, not in the card
+                            body where it would push the chart down. */}
+                        {p.description && (
+                          <i className="dash-panel-info" title={p.description}
+                            aria-label={`Panel description: ${p.description}`}>i</i>
+                        )}
                         {/* v0.6.20 — range-override indicator. When
                             a panel locks its own window, surface
                             the preset next to the title so the
@@ -593,14 +740,18 @@ function DashboardGrid({
                           </span>
                         )}
                       </span>
-                      {editing && (
-                        <span className="row gap-1">
-                          <Button variant="secondary" size="sm"
-                            onClick={() => onEditPanel(p.id)}>Edit</Button>
-                          <Button variant="danger" size="sm" title="Delete panel"
-                            onClick={() => onDeletePanel(p.id)}>×</Button>
-                        </span>
-                      )}
+                      <span className="row gap-1">
+                        {editing && (
+                          <>
+                            <Button variant="secondary" size="sm"
+                              onClick={() => onEditPanel(p.id)}>Edit</Button>
+                            <Button variant="danger" size="sm" title="Delete panel"
+                              onClick={() => onDeletePanel(p.id)}>×</Button>
+                          </>
+                        )}
+                        <PanelMenu panel={p} vars={vars} range={range} canEdit={canEdit}
+                          onDuplicate={onDuplicatePanel} onEdit={onEditRequest} />
+                      </span>
                     </div>
                     <PanelRenderer panel={p} range={range} vars={vars}
                                    syncKey={`dashboard:${dashboardId}`}

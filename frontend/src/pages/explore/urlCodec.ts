@@ -193,7 +193,13 @@ function vizFromLegacy(v: string | null): ExploreViz {
 // extractScope — pull a single-value service pin out of a chip list into the
 // builder's scope slot; the rest stay as chips. effectiveFilters() reverses
 // this at fetch time, so the backend sees the identical filter set.
-function extractScope(filters: FilterExpr[]): { scope: string; rest: FilterExpr[] } {
+//
+// Exported since v0.9.773: panelToExplore does the same lift when it turns a
+// dashboard spanmetric panel back into a builder query (queryToPanel folded
+// the scope INTO the flat filter list, so the inverse has to lift it out).
+// Sharing the one implementation is the point — a second copy would be free
+// to disagree about which keys count as a service pin.
+export function extractScope(filters: FilterExpr[]): { scope: string; rest: FilterExpr[] } {
   const i = filters.findIndex(f =>
     (f.k === 'service.name' || f.k === 'resource.service.name') &&
     f.op === '=' && f.v.length === 1);

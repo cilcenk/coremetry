@@ -1109,6 +1109,26 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .dash-row-title  { font-weight: 600; font-size: 13px; color: var(--text); }
 .dash-row-count  { font-size: 11px; color: var(--text3); margin-left: 6px; }
 
+/* v0.9.773 — panel ⋯ menu. Grafana-style hover reveal: the affordance is
+   quiet until the operator is actually on the card, so a 12-panel board
+   doesn't read as 12 buttons. Kept in CSS (not per-card hover state) so
+   hovering one card never re-renders the grid. Stays visible while the menu
+   is open and whenever focus is inside the card — a keyboard user must be
+   able to reach a control they can see. */
+.dash-panel .dash-panel-menu-btn { opacity: 0; transition: opacity .12s ease; }
+.dash-panel:hover .dash-panel-menu-btn,
+.dash-panel:focus-within .dash-panel-menu-btn,
+.dash-panel .dash-panel-menu-btn[aria-expanded="true"] { opacity: 1; }
+
+/* Panel description marker — hoverable ⓘ next to the title. */
+.dash-panel-info {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 14px; height: 14px; flex: 0 0 14px;
+  border: 1px solid var(--border); border-radius: 50%;
+  color: var(--text3); font-size: 9px; font-style: normal;
+  line-height: 1; cursor: help; user-select: none;
+}
+
 /* ── Status page (industry-standard component grid) ─────────────────── */
 .status-banner {
   display: flex; align-items: center; gap: 14px;

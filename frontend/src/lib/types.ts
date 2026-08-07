@@ -2786,6 +2786,13 @@ export interface Panel {
   id: string;
   type: PanelType;
   title: string;
+  // v0.9.773 — optional operator note ("what does this panel actually
+  // measure / when should I care"). Rendered as a hoverable ⓘ next to the
+  // title, never as body text — a dashboard is scanned, not read. Optional
+  // on purpose: every panel saved before v0.9.773 has no field and decodes
+  // unchanged. The backend stores panels as opaque JSON
+  // (chstore/dashboard.go), so this round-trips with no migration.
+  description?: string;
   width: PanelWidth;
   // v0.6.20 — optional per-panel time-range override
   // (Grafana-parity). When set, this panel's data fetch ignores

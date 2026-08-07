@@ -91,6 +91,17 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
             style={{ width: '100%' }} />
         </Field>
 
+        {/* v0.9.773 — optional note surfaced as a hoverable ⓘ next to the
+            panel title on the dashboard. Blank string is normalized back to
+            undefined so clearing the box removes the field rather than
+            saving an empty one (which would render a dot with no tooltip). */}
+        <Field label="Description (optional — shown as ⓘ on the panel)">
+          <input value={panel.description ?? ''}
+            placeholder="What this panel measures, and when it matters"
+            onChange={e => update('description', e.target.value.trim() ? e.target.value : undefined)}
+            style={{ width: '100%' }} />
+        </Field>
+
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <Field label="Type">
             <select value={panel.type}

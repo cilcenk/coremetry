@@ -60,13 +60,17 @@ export function encodeBuilder(st: BuilderState): string {
 // initial chart is right (e.g. p99 for a histogram) — the bare ?metric=
 // legacy branch can't carry it.
 export function metricCatalogueHref(
-  name: string, opts?: { service?: string; agg?: string },
+  name: string, opts?: { service?: string; agg?: string; splitBy?: string[] },
 ): string {
+  // v0.9.746 (operatör: "metric explorer route'a göre kırmadan
+  // gösteriyor") — splitBy geçilirse seed kırılımı taşır; Overview'un
+  // route panelinden geçiş http.route ile gelir.
   const q: BuilderQuery = {
     ...blankQuery('A', 'metric'),
     metric: name,
     agg: opts?.agg || 'avg',
     scope: opts?.service || '',
+    ...(opts?.splitBy?.length ? { splitBy: opts.splitBy } : {}),
   };
   const state: BuilderState = { queries: [q], formula: '', viz: 'line', step: 0 };
   return `/explore?q=${encodeURIComponent(encodeBuilder(state))}`;

@@ -321,10 +321,12 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // v0.9.742 (operatör tercihi) — metrik paneline tık Metrics sayfasına
   // götürür (tam ekran yerine); mevcut ?range korunur.
   const navigate = useNavigate();
-  const metricsHref = () => {
+  const metricsHref = (opts?: { by?: string }) => {
     const m = metricTputQ.data?.metric ?? '';
     const r = searchParams.get('range');
-    return `/metrics?metric=${encodeURIComponent(m)}&service=${encodeURIComponent(service)}${r ? `&range=${encodeURIComponent(r)}` : ''}`;
+    return `/metrics?metric=${encodeURIComponent(m)}&service=${encodeURIComponent(service)}`
+      + (opts?.by ? `&by=${encodeURIComponent(opts.by)}` : '')
+      + (r ? `&range=${encodeURIComponent(r)}` : '');
   };
   const splitByOp = searchParams.get('rtops') === '1';
   const setSplitByOp = (next: boolean) => setSearchParams(prev => {
@@ -664,7 +666,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               <CorePanelMultiLazy
                 title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
                 storageKey="ov-throughput-metric-v2"
-                height={200} xRange={xRange} onExpandClick={() => navigate(metricsHref())}
+                height={200} xRange={xRange} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
                 unit="reqps"
                 items={(metricTputQ.data?.series ?? []).map((s0) => ({
                   series: [s0],

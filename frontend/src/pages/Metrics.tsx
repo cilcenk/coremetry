@@ -78,6 +78,9 @@ export default function MetricsPage() {
     ? metricCatalogueHref(legacyMetric, {
         service: searchParams.get('service') || undefined,
         agg: searchParams.get('agg') || undefined,
+        // v0.9.746 — ?by=http.route (virgüllü çoklu) kırılımı Explore
+        // seed'ine taşır; Overview route paneli geçişi bunu kullanır.
+        splitBy: searchParams.get('by')?.split(',').filter(Boolean) || undefined,
       }) + (searchParams.get('range') ? `&range=${encodeURIComponent(searchParams.get('range')!)}` : '')
     : null;
 

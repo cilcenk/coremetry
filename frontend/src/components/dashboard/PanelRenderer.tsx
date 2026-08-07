@@ -8,6 +8,46 @@ import type {
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
 import { MultiLineChart } from '../MultiLineChart';
+import { lazy, Suspense } from 'react';
+import { chartsV2 } from '@/lib/featureFlags';
+
+// v0.9.758 (operatör "önerinle devam" — Grafana deneyimi #1) — dashboard
+// LINE panelleri CorePanel'de: "her yerde aynı grafik"in son büyük
+// istisnası buydu; Explore'dan pinlenen panel artık pinlendiği gibi
+// görünür. stat/gauge/heatmap/markdown ve line-dışı viz'ler (DashboardViz
+// SVG motoru) kapsam DIŞI — eski yolda. ?chartsV2=0 toptan kaçış.
+const DashCorePanelLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
+
+function DashLineChart({ series, unit, syncKey, onZoom, onZoomReset, storageKey }: {
+  series: import('@/lib/types').SpanMetricSeries[];
+  unit?: string;
+  syncKey?: string;
+  onZoom?: (f: number, t: number) => void;
+  onZoomReset?: () => void;
+  storageKey: string;
+}) {
+  if (!chartsV2()) {
+    return <MultiLineChart series={series} height={280} unit={unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />;
+  }
+  return (
+    <Suspense fallback={<div style={{ height: 280, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
+      <DashCorePanelLazy
+        title=""
+        storageKey={storageKey}
+        height={280}
+        unit={unit}
+        items={series.map((s0, i) => ({
+          name: s0.groupKey?.length ? s0.groupKey.join(' · ') : `seri ${i + 1}`,
+          role: 'data' as const,
+          series: [s0],
+        }))}
+        syncKey={syncKey}
+        onZoom={onZoom} onZoomReset={onZoomReset}
+      />
+    </Suspense>
+  );
+}
 import { DashboardViz } from '../DashboardViz';
 import { LatencyHeatmap } from '../LatencyHeatmap';
 import { histogramResultToHeatmap } from './histogramHeatmap';
@@ -284,7 +324,7 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }:
         : !series || series.length === 0 ? <PanelEmpty />
         // Madde 4 sweep — cfg.unit eksene/tooltip'e iner (promql paneli
         // pariteli; yokluğu = eski birimsiz davranış).
-        : <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />}
+        : <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-m-${cfg.metricName}`} />}
     </div>
   );
 }
@@ -387,7 +427,7 @@ function PromqlPanel({ cfg, range, syncKey, onZoom, onZoomReset }: {
       {series === undefined ? <PanelLoading />
         : !series || series.length === 0 ? <PanelEmpty />
         : viz === 'line'
-          ? <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />
+          ? <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-q-${cfg.query.slice(0, 60)}`} />
           : <DashboardViz series={series} viz={viz} height={280} unit={cfg.unit} />}
     </div>
   );
@@ -446,7 +486,7 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
         : viz === 'line'
           // Madde 4 sweep — cfg.unit MLC'ye iner. DashboardViz (SVG bar/
           // area) kapsam DIŞI bırakıldı (madde 13 notu — ayrı SVG motoru).
-          ? <MultiLineChart series={series} height={280} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />
+          ? <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} />
           : <DashboardViz series={series} viz={viz} height={280} />}
     </div>
   );

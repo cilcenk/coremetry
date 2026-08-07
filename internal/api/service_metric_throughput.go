@@ -514,9 +514,18 @@ func (s *Server) attachMetricLatency(ctx context.Context, out map[string]any, f 
 	out["latencyUnit"] = unit
 	out["latencyUnitKnown"] = known
 
+	// v0.9.749 (operatör ekranı: 65 operasyonlu serviste "P95 · /route"
+	// diye 65×3 seri) — gecikme yüzdelikleri HER ZAMAN servis-geneli:
+	// route kırılımı throughput'un tercihidir, yüzdelik panelinin değil.
+	// Kırılımlı yüzdelik hem paneli okunmaz yapıyor hem defaultHidden
+	// ('P50'/'P95' adları) eşleşmesini kırıyordu. Kovalar route'lar
+	// üzerinden TOPLANIP tek yüzdelik hesaplanır (matematiksel doğru yol;
+	// yüzdeliklerin ortalaması değil).
+	lf := f
+	lf.GroupBy = nil
 	lat := map[string][]chstore.SpanMetricSeries{}
 	for _, agg := range []string{"p50", "p95", "p99"} {
-		ser, err := s.store.QueryMetricHistogramPercentile(ctx, f, agg)
+		ser, err := s.store.QueryMetricHistogramPercentile(ctx, lf, agg)
 		if err != nil || len(ser) == 0 {
 			continue
 		}

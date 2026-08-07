@@ -91,8 +91,25 @@ func foldRollupHist(rows []histRollupRow, q float64) (pts []SpanMetricPoint, ski
 	return pts, skipped
 }
 
-// tryRollupHistogramQuantile — ok=false → çağıran ham yola aynen devam.
+// tryRollupHistogramQuantile — tekil sarmalayıcı: çoklunun [q] hâli.
 func (s *Store) tryRollupHistogramQuantile(ctx context.Context, f MetricQueryFilter, q float64) ([]SpanMetricSeries, bool) {
+	out, ok := s.tryRollupHistogramQuantiles(ctx, f, []float64{q})
+	if !ok {
+		return nil, false
+	}
+	return out[0], true
+}
+
+// tryRollupHistogramQuantiles — ok=false → çağıran ham yola aynen devam.
+//
+// v0.9.768: SQL + satır çekimi TEK; satırlar belleğe alınıp her q için aynı
+// küme üstünde foldRollupHist ile katlanır (fold salt-okur, satırları
+// mutasyona uğratmaz — bkz. TestFoldRollupHistMultiQNoMutation). Uygunluk
+// probları (instrument/temporality/kapsam) da bir kez koşar.
+func (s *Store) tryRollupHistogramQuantiles(ctx context.Context, f MetricQueryFilter, qs []float64) ([][]SpanMetricSeries, bool) {
+	if len(qs) == 0 {
+		return nil, false
+	}
 	inst := s.metricInstrument(ctx, f.Name, f.Service, f.From, f.To)
 	if !isHistogramInstrument(inst) {
 		return nil, false
@@ -125,9 +142,16 @@ func (s *Store) tryRollupHistogramQuantile(ctx context.Context, f MetricQueryFil
 	if rows.Err() != nil || len(hrs) == 0 {
 		return nil, false
 	}
-	pts, _ := foldRollupHist(hrs, q)
-	if len(pts) == 0 {
-		return nil, false
+	out := make([][]SpanMetricSeries, len(qs))
+	for i, q := range qs {
+		pts, _ := foldRollupHist(hrs, q)
+		// Boş katlama → HEPSİ ham yola (fail-open, tekil davranışla
+		// birebir). Kova/bounds elemesi q'dan bağımsız olduğu için
+		// pratikte ya hepsi dolu ya hepsi boş.
+		if len(pts) == 0 {
+			return nil, false
+		}
+		out[i] = []SpanMetricSeries{{GroupKey: nil, Points: pts}}
 	}
-	return []SpanMetricSeries{{GroupKey: nil, Points: pts}}, true
+	return out, true
 }

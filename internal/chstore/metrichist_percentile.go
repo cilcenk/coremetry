@@ -107,11 +107,44 @@ func (s *Store) QueryMetricHistogramQuantile(ctx context.Context, f MetricQueryF
 	return s.queryHistogramQuantile(ctx, f, q)
 }
 
-// queryHistogramQuantile — histogram_quantile core (bucket dağılımından, q ∈
-// [0,1]). Step F1 disiplini (metricAutoStepPx + clampStepToExport + nTime cap)
-// uygulanıp alt yollara geçer. Boş zaman-bucket'ları (gözlem yok) nokta
-// ÜRETMEZ → sahte p=0 spike yerine gap (PromQL semantiği).
+// QueryMetricHistogramQuantiles — v0.9.768: TEK taramadan N yüzdelik.
+//
+// attachMetricLatency p50/p95/p99 için QueryMetricHistogramPercentile'ı ÜÇ
+// KEZ çağırıyordu; her çağrı aynı metric_points penceresini (prod'da 35k
+// satır + ağır attr dizileri) BAŞTAN tarıyordu. Operatör: "metrik panelleri
+// Prometheus kadar hızlı değil". Üç tarama → bir.
+//
+// Yol seçimi tekil fonksiyonla AYNI (rollup fail-open → global); pencere
+// (histWindowK/slidingSumCounts, v0.9.765) bir kez uygulanır, her q aynı
+// birleşik dağılımdan okunur. Dönen dilim qs ile aynı sırada ve uzunlukta.
+func (s *Store) QueryMetricHistogramQuantiles(ctx context.Context, f MetricQueryFilter, qs []float64) ([][]SpanMetricSeries, error) {
+	for _, q := range qs {
+		if q < 0 || q > 1 {
+			return nil, fmt.Errorf("histogram_quantile: quantile %g out of range [0,1]", q)
+		}
+	}
+	return s.queryHistogramQuantiles(ctx, f, qs)
+}
+
+// queryHistogramQuantile — tekil sarmalayıcı: çoklu çekirdeğin [q] hâli.
+// Mevcut çağıranların hepsi (agg-string ucu + keyfi-q ucu) davranış
+// değişimsiz kalır.
 func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter, q float64) ([]SpanMetricSeries, error) {
+	out, err := s.queryHistogramQuantiles(ctx, f, []float64{q})
+	if err != nil {
+		return nil, err
+	}
+	return out[0], nil
+}
+
+// queryHistogramQuantiles — histogram_quantile core (bucket dağılımından, her
+// q ∈ [0,1]). Step F1 disiplini (metricAutoStepPx + clampStepToExport + nTime
+// cap) uygulanıp alt yollara geçer. Boş zaman-bucket'ları (gözlem yok) nokta
+// ÜRETMEZ → sahte p=0 spike yerine gap (PromQL semantiği).
+func (s *Store) queryHistogramQuantiles(ctx context.Context, f MetricQueryFilter, qs []float64) ([][]SpanMetricSeries, error) {
+	if len(qs) == 0 {
+		return nil, nil
+	}
 	now := time.Now()
 	if f.To.IsZero() {
 		f.To = now
@@ -136,14 +169,25 @@ func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter,
 	// dağılımından percentile alır (yoksa tüm gruplar tek global satıra
 	// karışırdı — sessiz regresyon).
 	if len(f.GroupBy) > 0 {
-		return s.queryHistogramPercentileGrouped(ctx, f, q)
+		// Kırılımlı yol q başına kendi accum'unu kurar (panelde artık
+		// kullanılmıyor — v0.9.749'dan beri yüzdelikler servis-geneli —
+		// yani N=1 tipik; döngü kabul).
+		out := make([][]SpanMetricSeries, len(qs))
+		for i, q := range qs {
+			ser, err := s.queryHistogramPercentileGrouped(ctx, f, q)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = ser
+		}
+		return out, nil
 	}
 
 	// v0.9.751 — delta histogram + filtresiz servis-geneli okuma
 	// rollup'tan (0003 hist_counts); uygun değilse / tablolar yoksa /
 	// kapsam tutmuyorsa SESSİZCE ham yol (fail-open).
-	if ser, ok := s.tryRollupHistogramQuantile(ctx, f, q); ok {
-		return ser, nil
+	if sers, ok := s.tryRollupHistogramQuantiles(ctx, f, qs); ok {
+		return sers, nil
 	}
 
 	// Global: test'li QueryMetricHistogram'ı yeniden kullan; keyfi q'yu onun
@@ -153,8 +197,12 @@ func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter,
 	if err != nil {
 		return nil, err
 	}
+	out := make([][]SpanMetricSeries, len(qs))
 	if hs == nil || len(hs.Times) == 0 {
-		return []SpanMetricSeries{}, nil
+		for i := range out {
+			out[i] = []SpanMetricSeries{}
+		}
+		return out, nil
 	}
 	// v0.9.765 (operatör Grafana Query Inspector kanıtı) — Grafana'nın
 	// gecikmesi histogram_quantile(sum(rate(_bucket[3m])) by le):
@@ -163,19 +211,25 @@ func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter,
 	// kalmıştı (daha tırtıklı + boşluklu). Delta kova dizileri pencere
 	// boyunca toplanır, yüzdelik birleşik dağılımdan alınır — birebir
 	// Prometheus semantiği.
+	//
+	// v0.9.768 — pencere BİR KEZ kurulur, her q aynı `counts` dizisinden
+	// okur (percentileFromBuckets salt-okur). Tek tarama, N katlama.
 	counts := hs.Counts
 	if k := histWindowK(f.RateWindowSec, f.StepSeconds); k > 1 {
 		counts = slidingSumCounts(hs.Counts, k)
 	}
-	pts := make([]SpanMetricPoint, 0, len(hs.Times))
-	for i, t := range hs.Times {
-		// Boş pencere (gözlem yok) → nokta atla (gap), sahte 0 DEĞİL.
-		if i >= len(counts) || bucketTotal(counts[i]) == 0 {
-			continue
+	for qi, q := range qs {
+		pts := make([]SpanMetricPoint, 0, len(hs.Times))
+		for i, t := range hs.Times {
+			// Boş pencere (gözlem yok) → nokta atla (gap), sahte 0 DEĞİL.
+			if i >= len(counts) || bucketTotal(counts[i]) == 0 {
+				continue
+			}
+			pts = append(pts, SpanMetricPoint{Time: t, Value: percentileFromBuckets(hs.Bounds, counts[i], q)})
 		}
-		pts = append(pts, SpanMetricPoint{Time: t, Value: percentileFromBuckets(hs.Bounds, counts[i], q)})
+		out[qi] = []SpanMetricSeries{{GroupKey: nil, Points: pts}}
 	}
-	return []SpanMetricSeries{{GroupKey: nil, Points: pts}}, nil
+	return out, nil
 }
 
 // histWindowK — SAF: quantile penceresinin bucket sayısı (ceil(W/step),

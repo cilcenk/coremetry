@@ -313,3 +313,26 @@ describe('servicePivotHref → ?q= round-trip', () => {
     expect(st!.queries[0].scope).toBe('checkout/v2 svc');
   });
 });
+
+// v0.9.746 — kırılımlı katalog geçişi: splitBy seed'e taşınır (operatör:
+// "metric explorer route'a göre kırmadan gösteriyor"). Href'in q'su decode
+// edilince kırılım aynen geri gelmeli — yoksa geçiş sessizce düz grafiğe
+// düşer (şikâyetin kendisi).
+describe('metricCatalogueHref splitBy (v0.9.746)', () => {
+  it('splitBy round-trip: http.route seed edilir ve decode ile geri gelir', () => {
+    const href = metricCatalogueHref('http.server.request.duration', {
+      service: 'cm-get-service', splitBy: ['http.route'],
+    });
+    const q = new URL('http://x' + href).searchParams.get('q')!;
+    const state = decodeBuilder(q);
+    expect(state?.queries[0].splitBy).toEqual(['http.route']);
+    expect(state?.queries[0].metric).toBe('http.server.request.duration');
+    expect(state?.queries[0].scope).toBe('cm-get-service');
+  });
+
+  it('splitBy verilmezse seed kırılımsız (eski davranış)', () => {
+    const href = metricCatalogueHref('m', {});
+    const state = decodeBuilder(new URL('http://x' + href).searchParams.get('q')!);
+    expect(state?.queries[0].splitBy).toEqual([]);
+  });
+});

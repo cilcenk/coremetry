@@ -731,20 +731,17 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         </MetricPanel>
         <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('line')}>
           {chartsV2() ? (
-            /* v0.9.736 (operatör düzeni): 3. slot BİRLEŞİK panel — span
-               türevli OK (yeşil) + Errors (kırmızı), req/s. Failure %
-               paneli v2'den kalktı (bilgi Errors serisi + KPI'da; % SLO
-               eşiği % eksenine aitti, req/s'e taşınamaz — v1'de duruyor).
-               Tek eksen kuralı: rate ile % aynı eksene KONMAZ. */
-            <Suspense key="tput-failure-v2" fallback={<Spinner />}>
+            /* v0.9.738 (operatör düzeltmesi): 3. slot TRACE türevli Failure
+               rate — v0.9.736'daki birleşik OK+Errors req/s paneli yerine
+               % ekseni + SLO eşiği geri geldi ("en sağdaki traces failure
+               rate olsun, throughput değil"). "· trace" eki, soldaki iki
+               "· metrik" panelle kaynak ayrımını okutur. */
+            <Suspense key="failure-rate-v2" fallback={<Spinner />}>
               <CorePanelMultiLazy
-                title={scopedChartTitle('Throughput / Failure rate', usingAllSpans)}
-                storageKey="ov-throughput-failure-v2" height={200} unit="reqps" xRange={xRange}
-                items={[
-                  { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
-                  { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },
-                ]}
-                regions={deployRegions}
+                title={scopedChartTitle('Failure rate · trace', usingAllSpans)}
+                storageKey="ov-failure-rate-v2" height={200} unit="percent" xRange={xRange}
+                items={[{ name: 'errors', role: 'error', series: lat?.error_rate ?? [] }]}
+                thresholds={failureThresholds} regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>

@@ -42,9 +42,14 @@ export interface CorePanelMultiItem {
 export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'roles'> {
   items: CorePanelMultiItem[];
   unit?: string;
+  // v0.9.748 (operatör: "yüklenirken 'aralığı genişlet' çıkıyor") —
+  // sorgu sürerken boş items "veri yok" boş-durumuna düşmesin; loading
+  // true iken Spinner'lı yükleme durumu çizilir.
+  loading?: boolean;
 }
 
-export function CorePanelMulti({ items, unit, ...rest }: CorePanelMultiProps) {
+export function CorePanelMulti({ items, unit, loading, ...rest }: CorePanelMultiProps) {
+  if (loading) return <CorePanel {...rest} data={{ state: 'loading' }} />;
   // TEK geçiş: frames + rol hizası birlikte (çifte dönüşüm = çifte
   // display-processor kurulumu olurdu).
   const frames: ReturnType<typeof spanSeriesToFrames> = [];

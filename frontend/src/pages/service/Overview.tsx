@@ -594,6 +594,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               <CorePanelMultiLazy
                 title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
                 storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref())}
+                loading={metricTputQ.isLoading}
                 unit={metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) ? 'ms' : undefined}
                 xRange={xRange}
                 items={metricLatLines.map(l => ({
@@ -670,6 +671,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               <CorePanelMultiLazy
                 title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
                 storageKey="ov-throughput-metric-v2"
+                loading={metricTputQ.isLoading}
                 height={200} xRange={xRange} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
                 unit="reqps"
                 items={(metricTputQ.data?.series ?? []).map((s0) => ({
@@ -754,6 +756,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               <CorePanelMultiLazy
                 title={scopedChartTitle('Failure rate · trace', usingAllSpans)}
                 storageKey="ov-throughput-failure-v2" height={200} unit="reqps" xRange={xRange}
+                loading={latStatus === 'loading'}
                 items={[
                   { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
                   { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },

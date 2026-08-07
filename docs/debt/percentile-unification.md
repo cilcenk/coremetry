@@ -131,3 +131,28 @@ değil.
 **0008 adayı:** endpoint kırılımlı metrik rollup tier'ı (route boyutu
 `LowCardinality(String)` kolon olarak). `/clickhouse-schema` kapısından
 geçmeden açılmaz — MV/ORDER BY/partition kararları oraya ait.
+
+---
+
+## Ayrıca: `avgOrNull(value)`'nun histogram metrikteki matematiksel sınırı
+
+v0.9.774'te Overview'un RT paneli Explore'un `agg=avg` yoluna bağlandı.
+O yol `metricquery.go:232` üzerinden `avgOrNull(value)` çalıştırıyor.
+Histogram enstrümanında `value` kolonu **per-export ORTALAMA**dır, yani
+`avgOrNull(value)` = *ortalamaların ortalaması*: export'lar farklı gözlem
+sayısı taşıdığında ağırlıksız ve GERÇEK ortalama değil.
+
+Matematiksel doğrusu `sum(sum_value) / sum(count)` türetmesi (histogram
+satırlarının toplam ve sayım kolonlarından). Bugün YAPILMIYOR — bilinçli
+borç, iki gerekçeyle:
+
+1. Panel bu haliyle Explore ile **TUTARLI**: aynı metrik, aynı agg, aynı
+   sayı. İkisi birlikte yanlışsa bu görünür bir tutarsızlık üretmiyor;
+   yalnız Explore'u düzeltmek panelle Explore'u ayrıştırırdı.
+2. Düzeltmenin yeri panel değil `metricAggToSQL` — yani Explore'un,
+   PromQL'in ve dashboard panellerinin hepsini birden etkiler.
+
+**Düzeltilirse:** `avg` için instrument'a bakıp histogram'da
+`sumOrNull(sum_value) / sumOrNull(count)` seçilmeli (sum/gauge'da bugünkü
+ifade doğru). Regresyon testi: eşit-gözlemli ve eşitsiz-gözlemli iki
+export serisi — ikincisi bugünkü ifadeyle sapar, doğrusuyla sapmaz.

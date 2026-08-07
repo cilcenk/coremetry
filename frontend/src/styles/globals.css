@@ -1909,6 +1909,13 @@ button.accent.copied {
    inline SVG (the existing Sparkline pattern). All `ov-` namespaced.
    ════════════════════════════════════════════════════════════════════════ */
 .ov-grid { display: grid; gap: 16px; }
+/* v0.9.741 (operatör: "paneller fix boyutta, küçük ekranda sığmıyor") —
+   grid çocuğunun varsayılanı min-width:auto: lejant tablosu/canvas
+   içerik genişliğinin altına İNMEZ ve 1fr kolonlar taşar; panel
+   küçülmüyormuş gibi görünür. min-width:0 klasik düzeltme — panel
+   daralır, CorePanel'in ResizeObserver'ı canvas'ı yeni genişliğe
+   uydurur. */
+.ov-grid > * { min-width: 0; }
 .ov-grid.ov-mb { margin-bottom: 16px; }
 /* v0.9.483 — "Response time · median" karosu kaldı, şerit 5 → 4 karo
    (operatör). 5'te bırakılsaydı sağda boş bir hücre kalırdı. */

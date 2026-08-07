@@ -5,9 +5,13 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNum, fmtBytes } from '@/lib/utils';
-import { useClickhouseHealth, useCHCoordinators, useDDLQueueHealth } from '@/lib/queries';
+import { useClickhouseHealth, useCHCoordinators, useDDLQueueHealth, useRollupStatus } from '@/lib/queries';
 import { useQuery } from '@tanstack/react-query';
 import { makeBaseline, nodeWorkView, type Baseline, type NodeWorkRow } from '@/lib/chNodeWork';
+import { Button, Modal } from '@/components/ui';
+import type {
+  RollupActionResult, RollupPreflightResult, RollupTableStatus, RollupTarget,
+} from '@/lib/types';
 
 // AdminClickhouse — v0.5.329. Datadog-style CH self-stats:
 // slow queries, in-flight merges, part hotspots, replication lag.
@@ -715,6 +719,13 @@ export default function AdminClickhousePage() {
                 sorgu yolunda değil, yazma/merge tarafındadır. */}
             <NodeWorkPanel />
 
+            {/* v0.9.770 — rollup kurulum sihirbazı. Topolojinin hemen
+                altında değil BURADA: operatör önce kümenin sağlıklı
+                olduğunu (DDL kuyruğu boş, node'lar dengeli) okumalı;
+                tıkalı bir DDL kuyruğuna 19 ifade daha göndermek en
+                kötü sıralama olurdu. */}
+            <RollupWizardPanel />
+
             <Section title="Slow queries (>500ms, last 1h)">
               {(!data.slowQueries || data.slowQueries.length === 0)
                 ? <EmptyNote text="No slow queries in the last hour" />
@@ -886,6 +897,347 @@ export default function AdminClickhousePage() {
         )}
       </div>
     </>
+  );
+}
+
+// ── Rollup kurulum sihirbazı — v0.9.770 ─────────────────────────────
+//
+// Operatörün sorusu: "sen kontrol edip yapabilir misin". Öncesinde 0001
+// + 0003 elle yapıştırılan ~300 satır DDL'di; cluster adı yanlış
+// yazıldığında DDL dağıtık kuyrukta süresiz bekliyordu (v0.9.613 vakası).
+//
+// Kart üç adımda ilerler ve HER adım geri alınabilir:
+//   1. Durum — hangi tablo var, kaç satır (kurulmuşsa "Kur" no-op).
+//   2. Ön kontrol — küme listesi + kaynak tablo/kolon denetimi. Hüküm
+//      SUNUCUDA verilir (Supported); UI yalnız çizer.
+//   3. Kur / Geri Al — onaylı, ifade-ifade sonuçlu.
+//
+// OTOMATİK DEĞİL: boot'ta asla koşmaz. MV kurmak ingest yoluna yazar;
+// bozuk bir MV write_failed üretir ve ingest'i düşürür. O kararın
+// sahibi operatör.
+
+const ROLLUP_COLS: DataTableColumn<RollupTableStatus>[] = [
+  { id: 'table',  label: 'Tablo',   sortValue: r => r.table,  naturalDir: 'asc', width: 250 },
+  { id: 'family', label: 'Aile',    sortValue: r => r.family, naturalDir: 'asc', width: 100 },
+  { id: 'exists', label: 'Durum',   sortValue: r => (r.exists ? 1 : 0), numeric: true, naturalDir: 'desc', width: 120 },
+  { id: 'rows',   label: 'Satır',   sortValue: r => r.rows,   numeric: true, naturalDir: 'desc', width: 130 },
+  { id: 'minTs',  label: 'En eski', sortValue: r => r.minTsMs, numeric: true, naturalDir: 'asc', width: 200 },
+];
+
+const TARGET_LABEL: Record<RollupTarget, string> = {
+  both: 'Her ikisi (0001 + 0003)',
+  narrow: 'Yalnız dar span zinciri (0001)',
+  metrics: 'Yalnız metrik zinciri (0003)',
+};
+
+function RollupWizardPanel() {
+  const status = useRollupStatus();
+  // Ön kontrol / eylem durumu YEREL: bunlar paylaşılabilir bir GÖRÜNÜM
+  // değil, tek seferlik bir kurulum akışı. URL'e yazmak "linki aç,
+  // kurulum onayı hazır beklesin" gibi tehlikeli bir şey üretirdi.
+  const [pre, setPre] = useState<RollupPreflightResult | null>(null);
+  const [preBusy, setPreBusy] = useState(false);
+  const [preErr, setPreErr] = useState<string | null>(null);
+  const [cluster, setCluster] = useState('');
+  const [target, setTarget] = useState<RollupTarget>('both');
+  const [confirmKind, setConfirmKind] = useState<'apply' | 'rollback' | null>(null);
+  // busyKind — HANGİ eylemin uçtuğu. Düz bir boolean, "Kur"a basıldığında
+  // "Geri Al"ı da spinner'a sokardı; operatör hangi işin koştuğunu
+  // görmeli (DDL dakikalar sürebiliyor).
+  const [busyKind, setBusyKind] = useState<'apply' | 'rollback' | null>(null);
+  const busy = busyKind !== null;
+  const [action, setAction] = useState<{ kind: 'apply' | 'rollback'; res: RollupActionResult } | null>(null);
+  const [actionErr, setActionErr] = useState<string | null>(null);
+
+  const rows = status.data?.tables ?? [];
+  const dt = useDataTable<RollupTableStatus>({
+    storageKey: 'ch-rollup-status', columns: ROLLUP_COLS, rows,
+  });
+
+  const runPreflight = async () => {
+    setPreBusy(true); setPreErr(null);
+    try {
+      const r = await api.rollupPreflight();
+      setPre(r);
+      // Ön-seçim: Coremetry'nin KENDİ cluster adı listede varsa o.
+      // Yoksa tek küme varsa o. Birden çok küme varsa BOŞ bırakılır —
+      // yanlış kümeye DDL göndermek sessiz bir kayıp olurdu, seçimi
+      // operatör yapsın.
+      const suggested = r.suggestedCluster && r.clusters.includes(r.suggestedCluster)
+        ? r.suggestedCluster
+        : r.clusters.length === 1 ? r.clusters[0] : '';
+      setCluster(suggested);
+    } catch (e: unknown) {
+      setPreErr(e instanceof Error ? e.message : String(e));
+      setPre(null);
+    } finally {
+      setPreBusy(false);
+    }
+  };
+
+  const runAction = async (kind: 'apply' | 'rollback') => {
+    setConfirmKind(null);
+    setBusyKind(kind); setActionErr(null); setAction(null);
+    try {
+      const res = kind === 'apply'
+        ? await api.rollupApply(cluster, target)
+        : await api.rollupRollback(cluster, target);
+      setAction({ kind, res });
+    } catch (e: unknown) {
+      setActionErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusyKind(null);
+      // Durum eylemden SONRA tazelenir — kartın gösterdiği tablo
+      // listesi eylemin gerçek sonucudur, iddiası değil.
+      status.refetch();
+      // Ön kontrol de bayatladı (narrowInstalled/metricsInstalled
+      // değişmiş olabilir); sessizce yenile.
+      void runPreflight();
+    }
+  };
+
+  const canApply = !!pre?.supported && !!cluster && !busy;
+
+  return (
+    <Section title="Rollup katmanı (0001 + 0003)">
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px', lineHeight: 1.55 }}>
+        Dar span rollup zinciri (10s→1m→5m→1h) ve metrik rollup zinciri (1m→5m→1h).
+        Okuma katmanı zaten bu tabloları arıyor; yoksa ham yola düşüyor. Kurulum{' '}
+        <strong>otomatik değildir</strong> — boot'ta asla koşmaz, tek tetikleyici bu buton.
+      </p>
+
+      {/* ── 1. Durum ── */}
+      {status.isPending && <Spinner />}
+      {status.isError && <Empty icon="⚠" title="Rollup durumu okunamadı" />}
+      {status.data && (
+        <div className="table-wrap is-fit" style={{ marginBottom: 10 }}>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} />
+            <DataTableHead dt={dt} />
+            <tbody>
+              {dt.sortedRows.map(t => (
+                <tr key={t.table}>
+                  <td className="mono">{t.table}</td>
+                  <td style={{ fontSize: 11, color: 'var(--text3)' }}>{t.family}</td>
+                  <td>
+                    {t.err
+                      ? <span className="badge b-warn" title={t.err}>OKUNAMADI</span>
+                      : t.exists
+                        ? <span className="badge b-ok">VAR</span>
+                        : <span className="badge b-gray">YOK</span>}
+                  </td>
+                  <td className="num mono">{t.exists && !t.err ? fmtNum(t.rows) : '—'}</td>
+                  <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
+                    {t.minTsMs > 0 ? new Date(t.minTsMs).toLocaleString() : '—'}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* ── 2. Ön kontrol ── */}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }}>
+        <Button variant="secondary" size="sm" onClick={runPreflight} loading={preBusy}>
+          Ön kontrol
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => status.refetch()} disabled={status.isFetching}>
+          Durumu yenile
+        </Button>
+        {preErr && <span style={{ color: 'var(--err)', fontSize: 12 }}>{preErr}</span>}
+      </div>
+
+      {pre && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 6, marginBottom: 12,
+          border: `1px solid ${pre.supported ? 'var(--ok)' : 'var(--warn)'}`,
+          background: pre.supported ? 'rgba(34, 197, 94, 0.08)' : 'rgba(250, 204, 21, 0.10)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+            <span className={`badge ${pre.supported ? 'b-ok' : 'b-warn'}`}>
+              {pre.supported ? 'UYGULANABİLİR' : 'UYGULANAMAZ'}
+            </span>
+            <span style={{ fontSize: 12.5, color: 'var(--text2)', lineHeight: 1.5 }}>{pre.detail}</span>
+          </div>
+          <div className="table-wrap" style={{ marginBottom: 8 }}>
+            <table style={{ width: '100%' }}>
+              <thead><tr><th>Kontrol</th><th>Sonuç</th></tr></thead>
+              <tbody>
+                <PreRow label="spans_local" ok={pre.spansLocal} />
+                <PreRow label="metric_points_local" ok={pre.metricPointsLocal} />
+                <PreRow label="Kaynak kolonlar tam"
+                        ok={pre.missingColumns.length === 0}
+                        note={pre.missingColumns.join(', ')} />
+                <PreRow label="Tanımlı küme"
+                        ok={pre.clusters.length > 0}
+                        note={pre.clusters.join(', ')} />
+                <PreRow label="rollup_spans_narrow_10s zaten kurulu"
+                        ok={pre.narrowInstalled} neutral />
+                <PreRow label="rollup_metrics_1m zaten kurulu"
+                        ok={pre.metricsInstalled} neutral />
+              </tbody>
+            </table>
+          </div>
+          {pre.probeErrors && pre.probeErrors.length > 0 && (
+            <div style={{ fontSize: 11.5, color: 'var(--warn)' }}>
+              Probe hataları: {pre.probeErrors.join(' · ')}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── 3. Kur / Geri Al ── */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
+          Küme
+          {/* Sabit ve küçük küme (genelde 1-2 ad) → düz select
+              (frontend-conventions §3). Elle yazdırmıyoruz: yanlış ad
+              DDL'i kuyrukta süresiz bekletir. */}
+          <select value={cluster} onChange={e => setCluster(e.target.value)}
+                  disabled={!pre || pre.clusters.length === 0}>
+            <option value="">{pre ? '— seçiniz —' : 'önce ön kontrol'}</option>
+            {(pre?.clusters ?? []).map(c => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
+          Hedef
+          <select value={target} onChange={e => setTarget(e.target.value as RollupTarget)}>
+            {(['both', 'narrow', 'metrics'] as RollupTarget[]).map(t => (
+              <option key={t} value={t}>{TARGET_LABEL[t]}</option>
+            ))}
+          </select>
+        </label>
+        <Button onClick={() => setConfirmKind('apply')} disabled={!canApply}
+                loading={busyKind === 'apply'}>
+          Kur
+        </Button>
+        {/* Geri Al HER ZAMAN görünür (ön kontrolden bağımsız): bozuk bir
+            MV ingest'i düşürürken önce ön kontrol koşturmak gerekmemeli. */}
+        <Button variant="danger" onClick={() => setConfirmKind('rollback')} disabled={busy}
+                loading={busyKind === 'rollback'}>
+          Geri Al (MV'leri düşür)
+        </Button>
+      </div>
+
+      {actionErr && (
+        <div style={{ marginTop: 10, fontSize: 12, color: 'var(--err)' }}>{actionErr}</div>
+      )}
+
+      {action && (
+        <div style={{ marginTop: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, flexWrap: 'wrap' }}>
+            <span className={`badge ${action.res.ok ? 'b-ok' : 'b-err'}`}>
+              {action.kind === 'apply' ? 'KURULUM' : 'GERİ ALMA'} — {action.res.ok ? 'TAMAM' : 'HATA'}
+            </span>
+            <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>
+              {action.res.statements.filter(s => s.ok).length} / {action.res.statements.length} ifade
+            </span>
+          </div>
+          <div className="table-wrap">
+            <table style={{ width: '100%' }}>
+              <thead><tr><th style={{ width: 60 }}>#</th><th>İfade</th><th style={{ width: 90 }}>Sonuç</th></tr></thead>
+              <tbody>
+                {action.res.statements.map((s, i) => (
+                  <tr key={i}>
+                    <td className="mono" style={{ color: 'var(--text3)' }}>{i + 1}</td>
+                    <td className="mono" style={{ fontSize: 11 }} title={s.err || s.head}>
+                      {s.head}
+                      {s.err && (
+                        <div style={{ color: 'var(--err)', fontSize: 11, marginTop: 2, whiteSpace: 'normal' }}>
+                          {s.err}
+                        </div>
+                      )}
+                    </td>
+                    <td>{s.ok ? <span style={{ color: 'var(--ok)' }}>✓</span> : <span style={{ color: 'var(--err)' }}>✗</span>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {action.kind === 'apply' && !action.res.ok && (
+            <div style={{
+              marginTop: 10, padding: '10px 12px', borderRadius: 6,
+              border: '1px solid var(--err)', background: 'rgba(239, 68, 68, 0.08)',
+              fontSize: 12, color: 'var(--text)', lineHeight: 1.55,
+            }}>
+              <strong style={{ color: 'var(--err)' }}>Kurulum yarıda kesildi.</strong>{' '}
+              İfadeler SIRAYLA koşar ve ilk hatada durur — yukarıdaki ✗ satırı gerçek
+              ilk nedendir. Zincirin yarısı kurulmuş olabilir: kurulan MV'ler ingest'e
+              yazmaya BAŞLAMIŞ durumda. Nedeni gidermeden önce{' '}
+              <strong>Geri Al</strong> ile yazımı kesin.
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Kalıcı not — kartın en altında, her durumda görünür. */}
+      <div style={{
+        marginTop: 14, padding: '10px 12px', borderRadius: 6,
+        background: 'var(--bg2)', border: '1px dashed var(--border)',
+        fontSize: 11.5, color: 'var(--text2)', lineHeight: 1.6,
+      }}>
+        <strong>Kur sonrası 5 dk boyunca <code className="mono">/api/health</code>'te{' '}
+        <code className="mono">write_failed=0</code> doğrulayın.</strong>{' '}
+        Artış = MV bozuk (kolon/tip uyuşmazlığı ingest INSERT'ünü düşürüyor) →{' '}
+        <strong>Geri Al</strong>. Geri alma YALNIZ MV'leri düşürür; tablolar ve
+        içlerindeki veri kalır, okuma katmanı boş tabloyu görüp ham yola döner.
+      </div>
+
+      <Modal
+        open={confirmKind !== null}
+        onClose={() => setConfirmKind(null)}
+        title={confirmKind === 'apply' ? 'Rollup DDL uygulansın mı?' : 'MV\'ler düşürülsün mü?'}
+        footer={
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Button variant="secondary" onClick={() => setConfirmKind(null)}>Vazgeç</Button>
+            <Button variant={confirmKind === 'apply' ? 'primary' : 'danger'}
+                    onClick={() => confirmKind && runAction(confirmKind)}>
+              {confirmKind === 'apply' ? 'Uygula' : 'Geri Al'}
+            </Button>
+          </div>
+        }
+      >
+        {confirmKind === 'apply' ? (
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+            DDL <strong>prod ClickHouse üzerinde</strong> koşacak.
+            <div style={{ marginTop: 8 }}>
+              Küme: <code className="mono">{cluster}</code><br />
+              Hedef: <code className="mono">{TARGET_LABEL[target]}</code>
+            </div>
+            <div style={{ marginTop: 8, color: 'var(--text2)' }}>
+              Tablolar + MV'ler yaratılır (hepsi <code>IF NOT EXISTS</code>).
+              MV'ler yaratıldığı andan itibaren ingest yoluna yazmaya başlar.
+            </div>
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, lineHeight: 1.6 }}>
+            <strong>{target === 'both' ? 7 : target === 'narrow' ? 4 : 3}</strong> materialized
+            view düşürülecek{cluster ? <> (<code className="mono">{cluster}</code>)</> : ' (ON CLUSTER\'sız)'}.
+            <div style={{ marginTop: 8, color: 'var(--text2)' }}>
+              Tablolar ve içlerindeki veri <strong>kalır</strong> — bu "kurulumu geri al"
+              değil, "yazımı kes" düğmesi.
+            </div>
+          </div>
+        )}
+      </Modal>
+    </Section>
+  );
+}
+
+function PreRow({ label, ok, note, neutral }: {
+  label: string; ok: boolean; note?: string; neutral?: boolean;
+}) {
+  return (
+    <tr>
+      <td className="mono" style={{ fontSize: 11.5 }}>{label}</td>
+      <td>
+        <span style={{ color: ok ? 'var(--ok)' : neutral ? 'var(--text3)' : 'var(--err)' }}>
+          {ok ? '✓' : neutral ? '—' : '✗'}
+        </span>
+        {note && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text3)' }}>{note}</span>}
+      </td>
+    </tr>
   );
 }
 

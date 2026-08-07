@@ -132,3 +132,22 @@ func TestSpanMetricBatchKeyRateWindow(t *testing.T) {
 		t.Fatal("rateWindow=0 ve 180 aynı cache key üretti — çapraz zehirlenme (v0.5.187)")
 	}
 }
+
+// v0.9.761 — "kötüleşenler önce" saf sıralayıcı: tanımlı delta önce
+// (azalan), prior'suzlar arkada calls DESC, eşitlikte (service,path),
+// limit kesimi.
+func TestSortEndpointsByP99Delta(t *testing.T) {
+	rows := []chstore.EndpointRow{
+		{Service: "s", Path: "/stabil", P99Ms: 100, PriorP99Ms: 100, Calls: 50},
+		{Service: "s", Path: "/yeni", P99Ms: 30, Calls: 900}, // prior yok
+		{Service: "s", Path: "/patlayan", P99Ms: 300, PriorP99Ms: 100, Calls: 10},
+		{Service: "s", Path: "/iyilesen", P99Ms: 50, PriorP99Ms: 100, Calls: 70},
+	}
+	got := sortEndpointsByP99Delta(rows, 3)
+	if len(got) != 3 {
+		t.Fatalf("limit kesimi çalışmadı: %d", len(got))
+	}
+	if got[0].Path != "/patlayan" || got[1].Path != "/stabil" || got[2].Path != "/iyilesen" {
+		t.Fatalf("sıra yanlış: %s, %s, %s", got[0].Path, got[1].Path, got[2].Path)
+	}
+}

@@ -2828,6 +2828,40 @@ func (s *Server) getServiceAttrs(w http.ResponseWriter, r *http.Request) {
 // v0.9.313 — entry joins the key: the HTTP and RPC tabs are DIFFERENT
 // row sets from the same endpoint, so sharing an entry would serve one
 // tab's table under the other's heading.
+// sortEndpointsByP99Delta — SAF: P99 kötüleşme yüzdesine göre azalan;
+// prior'u olmayanlar (yeni endpoint, delta tanımsız) gerçek
+// regresyonların ARKASINA, kendi içinde calls DESC. Eşitlikte
+// (service, path) — refetch'ler arası kararlı. Sonuç limit'e kesilir.
+func sortEndpointsByP99Delta(rows []chstore.EndpointRow, limit int) []chstore.EndpointRow {
+	deltaOf := func(r chstore.EndpointRow) (float64, bool) {
+		if r.PriorP99Ms <= 0 {
+			return 0, false
+		}
+		return (r.P99Ms - r.PriorP99Ms) / r.PriorP99Ms, true
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		di, oi := deltaOf(rows[i])
+		dj, oj := deltaOf(rows[j])
+		if oi != oj {
+			return oi // tanımlı delta önce
+		}
+		if !oi {
+			return rows[i].Calls > rows[j].Calls
+		}
+		if di != dj {
+			return di > dj
+		}
+		if rows[i].Service != rows[j].Service {
+			return rows[i].Service < rows[j].Service
+		}
+		return rows[i].Path < rows[j].Path
+	})
+	if limit > 0 && len(rows) > limit {
+		rows = rows[:limit]
+	}
+	return rows
+}
+
 func endpointsListKey(bucket, service, search, cluster, env string, limit int, compare, bySignature bool, sortBy, sortDir, entry string) string {
 	return fmt.Sprintf("endpoints:%s:%s:%s:%s:env=%s:%d:cmp=%v:sig=%v:sort=%s:dir=%s:entry=%s",
 		bucket, service, search, cluster, env, limit, compare, bySignature, sortBy, sortDir, entry)
@@ -2891,12 +2925,33 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 		// CTE survives only behind the cluster + env filters
 		// (dimensions the MV lacks). Dispatch lives in
 		// chstore.GetEndpoints.
+		// v0.9.761 (mockup onayı: "kötüleşenler önce") — sort=p99Delta
+		// SUNUCUDA sıralanır ama delta SQL'de yok: aday havuzu deseni.
+		// Çağrıya göre ilk N*5 (500..1000) aday çekilir, prior birleşir,
+		// delta hesaplanıp sıralanır, orijinal limit'e kesilir. Dürüstlük:
+		// evren "en çok çağrılan ilk <havuz>" — UI notu bunu söyler.
+		// compare bu sıralamada ZORUNLU (delta prior'suz tanımsız).
+		deltaSort := sortBy == "p99Delta"
+		if deltaSort {
+			compare = true
+		}
 		eq := chstore.EndpointsQuery{
 			From: from, To: to,
 			Service: service, Search: search, Cluster: cluster, Env: env,
 			Limit: limit, BySignature: bySignature,
 			Sort: sortBy, Dir: sortDir,
 			Entry: entry,
+		}
+		if deltaSort {
+			pool := limit * 5
+			if pool < 500 {
+				pool = 500
+			}
+			if pool > 1000 {
+				pool = 1000
+			}
+			eq.Limit = pool
+			eq.Sort, eq.Dir = "calls", "desc" // aday havuzu tabanı
 		}
 		rows, err := s.store.GetEndpoints(ctx, eq)
 		if err != nil {
@@ -2934,6 +2989,9 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 				rows[i].PriorAvgMs = p.AvgMs
 				rows[i].PriorP99Ms = p.P99Ms
 			}
+		}
+		if deltaSort {
+			rows = sortEndpointsByP99Delta(rows, limit)
 		}
 		return rows, nil
 	})

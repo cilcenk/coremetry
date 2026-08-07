@@ -2390,3 +2390,14 @@ thead th:hover .th-remove { opacity: 1; }
 .cm-ai-fab { transition: transform .18s, box-shadow .18s; }
 .cm-ai-fab:hover { transform: scale(1.08); }
 @media (prefers-reduced-motion: reduce) { .cm-ai-spark, .cm-ai-cursor { animation: none; } .cm-ai-spark { stroke-dashoffset: 0; } }
+
+/* ── TV / kiosk modu (v0.9.779) ──────────────────────────────────────
+   ?kiosk=1 → AppShell kök elemana data-kiosk="1" yazar. Kural sadece
+   KROM'u siliyor: sol menü ve duyuru şeridi gider, #main zaten flex:1
+   olduğu için panolar ekranın tamamına yayılır.
+
+   CopilotChat / AIDrawer / Toaster RENDER'da kalır — JS köklerini
+   sökmek yerine dokunmuyoruz; ikisi de kapalıyken görünmez, açıksa
+   operatörün kendi eylemi. */
+[data-kiosk="1"] #sidebar { display: none; }
+[data-kiosk="1"] .announcement-banner { display: none; }

@@ -19,6 +19,10 @@ import type {
   MetricPanelConfig, SpanMetricPanelConfig,
 } from '@/lib/types';
 import { timeRangeToNs } from '@/lib/utils';
+import {
+  DASHBOARD_RESERVED_PARAMS, isDashboardVariableParam,
+  parseRefreshParam, refreshLabel, REFRESH_CHOICES,
+} from '@/lib/dashboardUrl';
 import { serializeDashboard, suggestedFilename } from '@/lib/dashboardIO';
 import { panelToExploreHref } from '@/pages/explore/panelToExplore';
 
@@ -29,7 +33,7 @@ export default function DashboardPage() {
 }
 
 function Inner() {
-  const [sp] = useSearchParams();
+  const [sp, setSp] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
   const id = sp.get('id') ?? '';
@@ -55,11 +59,67 @@ function Inner() {
       // Reserve route params like id/edit/range for their own slots; everything
       // else becomes a candidate variable value. Cheaper than parsing the
       // dashboard's variable list synchronously here.
-      if (k === 'id' || k === 'edit' || k === 'range') return;
+      if (!isDashboardVariableParam(k)) return;
       init[k] = v;
     });
     return init;
   });
+
+  // ── Auto-refresh + kiosk (v0.9.779) ───────────────────────────────
+  // İkisi de ADRESTE yaşıyor: paylaşılan link aynı yenileme aralığını
+  // ve aynı TV görünümünü açar. Yazım react-router üzerinden (aşağıdaki
+  // değişken aynası ham replaceState kullandığı için router'ın kendi
+  // location'ı bayat kalabiliyor; kiosk'u AppShell okuyacağından yazımın
+  // router'a GÖRÜNMESİ şart).
+  const refreshSec = parseRefreshParam(sp.get('refresh'));
+  const kiosk = sp.get('kiosk') === '1';
+  const setRefreshSec = useCallback((sec: number) => {
+    setSp(prev => {
+      const next = new URLSearchParams(prev);
+      if (sec > 0) next.set('refresh', String(sec)); else next.delete('refresh');
+      return next;
+    }, { replace: true });
+  }, [setSp]);
+  const setKiosk = useCallback((on: boolean) => {
+    setSp(prev => {
+      const next = new URLSearchParams(prev);
+      if (on) next.set('kiosk', '1'); else next.delete('kiosk');
+      return next;
+    }, { replace: true });
+  }, [setSp]);
+
+  // refreshTick — auto-refresh'in TEK mekaniği (Clusters v0.9.43 emsali).
+  //
+  // Neden sayaç, neden setRange DEĞİL: bir preset range'in ('30m')
+  // kimliği ASLA değişmez (useUrlRange ham string üzerinden memo'lar),
+  // dolayısıyla tick olmadan hiçbir fetch effect'i yeniden koşmaz —
+  // "yeniliyorum" diyen ama hiçbir şey istemeyen bir düğme kalırdı.
+  // setRange yazmak ise zoom geri-yığınını siler (usePageZoomRange),
+  // adresi kirletir ve her panelin sunucu cache anahtarını çevirir.
+  // Sayaç bunların hiçbirini yapmaz: yalnızca effect'leri tekrar koşturur
+  // ve timeRangeToNs(range) o an yeniden hesaplandığı için pencere de
+  // kendiliğinden ilerler.
+  //
+  // Düzenleme modunda ve custom (zoom'lanmış) pencerede KAPALI: birincisi
+  // kaydedilmemiş taslağın üstüne veri çeker, ikincisi operatörün elle
+  // seçtiği sabit pencereyi tazelemenin bir anlamı yok.
+  const [refreshTick, setRefreshTick] = useState(0);
+  useEffect(() => {
+    if (!refreshSec || editing || range.preset === 'custom') return;
+    const id = setInterval(() => {
+      if (!document.hidden) setRefreshTick(t => t + 1); // gizli sekmede istek yok
+    }, refreshSec * 1000);
+    return () => clearInterval(id);
+  }, [refreshSec, editing, range.preset]);
+
+  // Kiosk'tan ESC ile çıkış (PanelMenu / CorePanel klavye sözleşmesinin
+  // aynısı) — sidebar gizliyken görünür ✕ tek çıkış olmasın.
+  useEffect(() => {
+    if (!kiosk) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setKiosk(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [kiosk, setKiosk]);
 
   useEffect(() => {
     if (!id) return;
@@ -83,17 +143,27 @@ function Inner() {
   // order. Putting this after the early returns crashed the page on
   // second render (when doc finished loading) because the hook count
   // changed mid-mount.
+  //
+  // v0.9.779 — rezerve set artık DASHBOARD_RESERVED_PARAMS (testli, tek
+  // yer). 'refresh' / 'kiosk' listeye girmeseydi bu effect onları her
+  // yazımda silerdi: auto-refresh açılır, bir sonraki render'da sessizce
+  // kapanırdı.
+  //
+  // `sp` de bağımlılıkta: bu ayna ham replaceState yazıyor, yani
+  // react-router'ın location'ı onu GÖRMÜYOR. Router üzerinden bir yazım
+  // olduğunda (Topbar'ın range seçimi, aşağıdaki refresh/kiosk yazımları)
+  // router'ın bayat snapshot'ı değişken paramlarını adresten düşürüyordu;
+  // sp değişince ayna tekrar koşup onları geri koyar.
   useEffect(() => {
     const url = new URL(window.location.href);
-    const reserved = new Set(['id', 'edit', 'range']);
     for (const key of Array.from(url.searchParams.keys())) {
-      if (!reserved.has(key)) url.searchParams.delete(key);
+      if (!DASHBOARD_RESERVED_PARAMS.has(key)) url.searchParams.delete(key);
     }
     for (const [k, v] of Object.entries(varValues)) {
       if (v) url.searchParams.set(k, v);
     }
     window.history.replaceState({}, '', url.toString());
-  }, [varValues]);
+  }, [varValues, sp]);
 
   // Parsed variable definitions (live from the dashboard doc) drive
   // both the picker bar and what gets substituted into panels. Same
@@ -146,6 +216,11 @@ function Inner() {
   // or any variable value changes. Each of those re-keys the
   // server-side cache anyway, so we want the bundle aligned.
   useEffect(() => {
+    // v0.9.779 — auto-refresh tetikleyicisi. Sadece bağımlılık; range
+    // preset'te sabit kimlikli olduğu için tick olmadan bu effect
+    // yeniden koşmaz. timeRangeToNs aşağıda YENİDEN hesaplandığından
+    // pencere de her tick'te ilerler.
+    void refreshTick;
     if (bundleablePanels.length === 0) {
       setBundlePanelData({});
       return;
@@ -192,7 +267,7 @@ function Inner() {
       .then(out => { if (!cancelled) setBundlePanelData(out as Record<string, PanelDataOverride>); })
       .catch(() => { if (!cancelled) setBundlePanelData({}); });
     return () => { cancelled = true; };
-  }, [bundleablePanels, range, varValues, contentW]);
+  }, [bundleablePanels, range, varValues, contentW, refreshTick]);
 
   if (!id) return <Empty icon="◫" title="No dashboard selected" />;
   if (doc === undefined) return <Spinner />;
@@ -319,6 +394,19 @@ function Inner() {
   return (
     <>
       <Topbar title={draft.name} range={range} onRangeChange={setRange} />
+      {/* Kiosk çıkışı — sidebar gizliyken tek görünür çıkış. ESC de
+          çalışır (yukarıdaki dinleyici), ama görünmeyen bir kısayol tek
+          çıkış olamaz: bir TV'de kimse ESC'i bilmiyor. */}
+      {kiosk && (
+        <button className="sec" type="button" onClick={() => setKiosk(false)}
+          title="Kiosk modundan çık (ESC)"
+          style={{
+            position: 'fixed', top: 10, right: 12, zIndex: 80,
+            fontSize: 11, padding: '3px 8px', borderRadius: 'var(--radius-sm)',
+          }}>
+          Kiosk'tan çık ✕
+        </button>
+      )}
       <div id="content">
         <div className="controls" style={{ marginBottom: 14 }}>
           {editing ? (
@@ -340,6 +428,15 @@ function Inner() {
                 <span style={{ color: 'var(--text2)', fontSize: 12 }}>{draft.description}</span>
               )}
               <span style={{ marginLeft: 'auto' }} />
+              {/* v0.9.779 — auto-refresh + TV modu. Topbar'a DOKUNULMADI
+                  (49 dosya import ediyor); ikisi de bu sayfanın kendi
+                  şeridinde yaşıyor. */}
+              <RefreshControl seconds={refreshSec} onChange={setRefreshSec}
+                disabled={range.preset === 'custom'} />
+              <Button variant="secondary" size="sm" onClick={() => setKiosk(true)}
+                title="TV/kiosk modu — sol menüyü gizler, panoyu tam genişliğe açar. ESC ile çıkılır.">
+                ⛶ TV
+              </Button>
               {/* Export is read-only → available to every role so a
                   viewer can grab a board to share / version. */}
               <Button variant="secondary" onClick={exportDashboard}
@@ -389,6 +486,7 @@ function Inner() {
             onZoom={handleZoom}
             onZoomReset={handleZoomReset}
             dashboardId={id}
+            refreshTick={refreshTick}
             bundlePanelData={bundlePanelData} />
         )}
 
@@ -400,6 +498,52 @@ function Inner() {
         )}
       </div>
     </>
+  );
+}
+
+// RefreshControl (v0.9.779) — auto-refresh anahtarı + aralık seçimi.
+//
+// Görsel dil Clusters'ın LiveToggle'ı (v0.9.38): ikincil buton + nabız
+// noktası. İki parça bilinçli: buton HIZLI aç/kapa (operatör aralığı
+// zaten seçmiştir), select aralığı değiştirir.
+//
+// Etiket dürüstlüğü (v0.9.43 dersi): burada "Live" YAZMIYOR. Panel
+// verisinin efektif tazeliği sunucu cache TTL'ine bağlı; 30s'de bir
+// sormak 30s'lik veri garantisi vermez. Buton "Auto" der, ayrıntı
+// title'da durur.
+function RefreshControl({ seconds, onChange, disabled }: {
+  seconds: number;
+  onChange: (sec: number) => void;
+  disabled?: boolean;
+}) {
+  const on = seconds > 0;
+  const why = disabled
+    ? 'Elle seçilmiş (zoom/custom) pencerede auto-refresh kapalı — sabit bir aralığı tazelemenin karşılığı yok.'
+    : on
+      ? `Auto-refresh açık — her ${refreshLabel(seconds)} panel verileri yeniden istenir. `
+        + 'Panel verileri sunucu cache tazeliğine tabidir; gizli sekmede döngü durur. Kapatmak için tıkla.'
+      : 'Auto-refresh kapalı — açmak için tıkla.';
+  return (
+    <span className="row gap-1">
+      <Button variant="secondary" size="sm" disabled={disabled}
+        onClick={() => onChange(on ? 0 : 60)}
+        title={why}
+        style={{ whiteSpace: 'nowrap' }}
+        leftIcon={<span className={on && !disabled ? 'pulse-dot' : ''} style={{
+          display: 'inline-block', width: 8, height: 8, borderRadius: '50%',
+          background: on && !disabled ? 'var(--ok)' : 'var(--text3)',
+        }} />}>
+        {on ? 'Auto' : 'Paused'}
+      </Button>
+      <select value={String(seconds)} disabled={disabled}
+        aria-label="Auto-refresh aralığı" title={why}
+        onChange={e => onChange(Number(e.target.value))}
+        style={{ fontSize: 11, padding: '2px 4px', width: 84 }}>
+        {REFRESH_CHOICES.map(sec => (
+          <option key={sec} value={String(sec)}>{refreshLabel(sec)}</option>
+        ))}
+      </select>
+    </span>
   );
 }
 
@@ -559,7 +703,8 @@ function normalizePanels(raw: unknown): Panel[] {
 // add a localStorage layer if users start asking for it).
 function DashboardGrid({
   panels, range, vars, editing, canEdit, onEditPanel, onEditRequest, onDuplicatePanel,
-  onDeletePanel, onMovePanel, onZoom, onZoomReset, dashboardId, bundlePanelData,
+  onDeletePanel, onMovePanel, onZoom, onZoomReset, dashboardId, refreshTick,
+  bundlePanelData,
 }: {
   panels: Panel[];
   range: TimeRange;
@@ -588,6 +733,12 @@ function DashboardGrid({
   // the dashboard hovers in lockstep so the operator reads 8
   // panels as one view.
   dashboardId: string;
+  // v0.9.779 — auto-refresh sayacı. Bundle'ı tazelemek YETMEZ: stat /
+  // gauge / heatmap / promql panelleri (ve builder dışı promql modundaki
+  // metric paneli) kendi fetch'lerini yapıyor. Yalnız bundle'ı yenilemek
+  // donmuş stat kutuları bırakırdı — v0.9.43'te bire bir yaşanan
+  // dürüstlük hatası. Sayaç her panel effect'inin bağımlılığına iner.
+  refreshTick?: number;
   // Pre-fetched panel data keyed by panel id (v0.5.81 bundle).
   // Each metric / spanmetric PanelRenderer reads its slot and
   // skips its own fetch. Missing entries fall through to the
@@ -757,6 +908,7 @@ function DashboardGrid({
                                    syncKey={`dashboard:${dashboardId}`}
                                    onZoom={onZoom}
                                    onZoomReset={onZoomReset}
+                                   refreshTick={refreshTick}
                                    dataOverride={bundlePanelData[p.id]} />
                   </div>
                 ))}

@@ -1,5 +1,5 @@
 import { useId, useMemo } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
 import { timeRangeToNs, rangeToSince } from '@/lib/utils';
@@ -318,6 +318,14 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // ile yazıyor — bu sayfada `prev` bayat bir alt küme DEĞİL, o yüzden düz
   // prev formu yeterli (ham replaceState yazan sayfalarda olmaz).
   const [searchParams, setSearchParams] = useSearchParams();
+  // v0.9.742 (operatör tercihi) — metrik paneline tık Metrics sayfasına
+  // götürür (tam ekran yerine); mevcut ?range korunur.
+  const navigate = useNavigate();
+  const metricsHref = () => {
+    const m = metricTputQ.data?.metric ?? '';
+    const r = searchParams.get('range');
+    return `/metrics?metric=${encodeURIComponent(m)}&service=${encodeURIComponent(service)}${r ? `&range=${encodeURIComponent(r)}` : ''}`;
+  };
   const splitByOp = searchParams.get('rtops') === '1';
   const setSplitByOp = (next: boolean) => setSearchParams(prev => {
     const p = new URLSearchParams(prev);
@@ -583,7 +591,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             <Suspense key="rt-metric-v2-main" fallback={<Spinner />}>
               <CorePanelMultiLazy
                 title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
-                storageKey="ov-response-time-metric-v2" height={200} clickExpand
+                storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref())}
                 unit={metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) ? 'ms' : undefined}
                 xRange={xRange}
                 items={metricLatLines.map(l => ({
@@ -656,7 +664,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               <CorePanelMultiLazy
                 title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
                 storageKey="ov-throughput-metric-v2"
-                height={200} xRange={xRange} clickExpand
+                height={200} xRange={xRange} onExpandClick={() => navigate(metricsHref())}
                 unit="reqps"
                 items={(metricTputQ.data?.series ?? []).map((s0) => ({
                   series: [s0],

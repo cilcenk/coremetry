@@ -119,18 +119,18 @@ export interface CorePanelProps {
   // Log ölçek kullanıcıya AÇILSIN mı (menüde toggle). logScale prop'u
   // başlangıç değeri; toggle panel-yerel state'e biner.
   logScaleToggle?: boolean;
-  // v0.9.737 (operatör: "tıklayınca büyük hali açılsın") — plot alanına
-  // TEK tık tam ekranı açar. Drag-zoom ve çift-tık (zoom reset) ile
-  // çatışmaz: 5px'ten fazla sürüklenen basış tık sayılmaz, tek tık
-  // 250ms çift-tık beklemesinden sonra işler. Menüdeki "Tam ekran"
-  // kalemi aynen duruyor (keşfedilebilirlik).
-  clickExpand?: boolean;
+  // v0.9.737 tek-tık büyütme → v0.9.742 (operatör tercihi): tık artık
+  // ÇAĞIRANIN verdiği eyleme gider (ör. Metrics sayfasına navigasyon);
+  // tam ekran menüde duruyor. Drag-zoom ve çift-tık (zoom reset) ile
+  // çatışmaz: >5px sürüklenen basış tık sayılmaz, tek tık 250ms
+  // çift-tık beklemesinden sonra işler.
+  onExpandClick?: () => void;
 }
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
-  defaultHidden, xRange, headerExtra, note, clickExpand,
+  defaultHidden, xRange, headerExtra, note, onExpandClick,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -406,7 +406,10 @@ export function CorePanel({
     legendCountRef.current = n;
     if (legendTouchedRef.current) return;
     const stored = getItem<boolean | null>(legendCollapseKey(storageKey), null);
-    setLegendOpen(!resolveLegendCollapsed(stored, undefined, n, 6));
+    // v0.9.743 (operatör): Series lejantı VARSAYILAN KAPALI gelir —
+    // kullanıcı isterse açar; localStorage'daki kullanıcı tercihi
+    // (stored) her zaman kazanır.
+    setLegendOpen(!resolveLegendCollapsed(stored, true, n, 6));
   }, [aligned.names.length, storageKey]);
   const toggleLegend = () => {
     legendTouchedRef.current = true;
@@ -480,14 +483,14 @@ export function CorePanel({
         }}>{queryText}</pre>
       )}
 
-      <div ref={wrapRef} style={{ minHeight: height, position: 'relative', cursor: clickExpand && !fullscreen ? 'zoom-in' : undefined }}
-        onPointerDown={clickExpand ? (e) => { clickRef.current = { x: e.clientX, y: e.clientY }; } : undefined}
-        onClick={clickExpand && !fullscreen ? (e) => {
+      <div ref={wrapRef} style={{ minHeight: height, position: 'relative', cursor: onExpandClick && !fullscreen ? 'pointer' : undefined }}
+        onPointerDown={onExpandClick ? (e) => { clickRef.current = { x: e.clientX, y: e.clientY }; } : undefined}
+        onClick={onExpandClick && !fullscreen ? (e) => {
           const d = clickRef.current;
           // Drag-zoom basışı tık değildir (5px eşiği).
           if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
           if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
-          clickTimerRef.current = window.setTimeout(() => setFullscreen(true), 250);
+          clickTimerRef.current = window.setTimeout(() => onExpandClick(), 250);
         } : undefined}
         onDoubleClick={(e) => {
           if (clickTimerRef.current) { window.clearTimeout(clickTimerRef.current); clickTimerRef.current = null; }

@@ -2103,8 +2103,13 @@ export interface DDLQueueHealth {
  *  0001 (dar span zinciri) + 0003 (metrik zinciri) migration'ları
  *  operatörün elle SQL koşmasına gerek kalmadan uygulanır. OTOMATİK
  *  DEĞİL: boot'ta asla koşmaz, tek tetikleyici admin'in butonu.
- *  Gerekçe: internal/chstore/rollup_admin.go başlığı. */
-export type RollupTarget = 'narrow' | 'metrics' | 'both';
+ *  Gerekçe: internal/chstore/rollup_admin.go başlığı.
+ *
+ *  v0.9.777 — 'route' (0008: endpoint kırılımlı metrik zinciri) AYRI bir
+ *  hedef. 'both' bilerek 0001+0003 olarak KALDI: bugüne kadar "Her ikisi"ni
+ *  seçmiş bir operatörün geri-alma düğmesi, hiç kurmadığı bir zinciri
+ *  düşürmeye kalkmamalı. */
+export type RollupTarget = 'narrow' | 'metrics' | 'route' | 'both';
 
 /** Tek bir DDL ifadesinin sonucu. Head = ifadenin ilk 90 karakteri. */
 export interface RollupStmtResult {
@@ -2126,6 +2131,8 @@ export interface RollupPreflightResult {
   /** Zincirin TABANI zaten kurulu mu (DDL'ler IF NOT EXISTS). */
   narrowInstalled: boolean;
   metricsInstalled: boolean;
+  /** 0008 (route kırılımlı metrik zinciri) tabanı var mı — v0.9.777. */
+  routeInstalled: boolean;
   /** "tablo.kolon" biçiminde; boş = tam. */
   missingColumns: string[];
   probeErrors?: string[];
@@ -2137,7 +2144,7 @@ export interface RollupPreflightResult {
 /** Tek bir rollup tablosunun canlı durumu. minTsMs=0 → boş ya da okunamadı. */
 export interface RollupTableStatus {
   table: string;
-  family: 'narrow' | 'metrics';
+  family: 'narrow' | 'metrics' | 'route';
   exists: boolean;
   rows: number;
   minTsMs: number;

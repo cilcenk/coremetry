@@ -116,7 +116,11 @@ func (s *Store) rollupCoverageFloor(ctx context.Context, table string) (time.Tim
 	}
 	rollupCov.floor = map[string]time.Time{}
 	rollupCov.at = time.Now()
-	for _, tr := range metricRollupTiers {
+	// v0.9.777 — 0008'in route tabloları DA taranır. Atlanırsa route tier'ı
+	// SONSUZA DEK sessizce kapalı kalır: aşağıdaki fail-open "tablo yok"u
+	// yutuyor, yani hata bile görünmezdi.
+	probe := append(append([]metricRollupTier{}, metricRollupTiers...), metricRollupRouteTiers...)
+	for _, tr := range probe {
 		var mn time.Time
 		// Tablo yoksa (migration uygulanmamış kurulum) sorgu hata verir →
 		// haritaya girmez → o kademe kapalı kalır. FAIL-OPEN hama.

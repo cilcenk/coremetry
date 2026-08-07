@@ -79,10 +79,12 @@ func decodeRollupAction(w http.ResponseWriter, r *http.Request) (rollupActionBod
 	if b.Target == "" {
 		b.Target = "both"
 	}
+	// v0.9.777 — "route" (0008) AYRI bir hedef; "both" bilerek 0001+0003
+	// olarak kaldı (bkz. rollupRollbackStatements gerekçesi).
 	switch b.Target {
-	case "narrow", "metrics", "both":
+	case "narrow", "metrics", "route", "both":
 	default:
-		http.Error(w, "target must be narrow | metrics | both", http.StatusBadRequest)
+		http.Error(w, "target must be narrow | metrics | route | both", http.StatusBadRequest)
 		return b, false
 	}
 	return b, true

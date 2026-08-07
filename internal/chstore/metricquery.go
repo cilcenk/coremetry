@@ -166,6 +166,21 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		}
 	}
 
+	// v0.9.777 — 0008 route (endpoint) kırılımlı tier. Aile-C'den ÖNCE
+	// denenir çünkü şekilleri ayrık: aile-C GRUPSUZ sorguları alır, bu yol
+	// yalnız `group by http.route` olanı. Servis burada bir FİLTRE ÇİPİ
+	// olarak da gelebilir — terfi (promoteServiceFilter) yalnız rollup
+	// KARARINDA kullanılır, aşağıya giden f'e dokunulmaz, dolayısıyla ham
+	// yolun SQL'i bayt-bayt aynı kalır.
+	//
+	// Konum bilinçli: yukarıdaki (2) numaralı histogram-percentile dalından
+	// SONRA. Öne alınsaydı p50/p95/p99 sorguları buradan geçerdi ve 0008
+	// yüzdelik taşımadığı için ya yanlış cevap ya da boşuna prob olurdu
+	// (v0.9.669 sınıfı: prob penceresini/WHERE'ini oynatan sıra hatası).
+	if ser, ok := s.tryMetricRollupRoute(ctx, f); ok {
+		return ser, nil
+	}
+
 	// v0.9.712 (parite dilim 4B) — aile-C rollup yönlendirmesi. Yalnız
 	// 0003 şemasının DOĞRU cevapladığı şekiller (metric_rollup_read.go
 	// başlığındaki tablo); cumulative + filtreli/gruplu HER ZAMAN ham.

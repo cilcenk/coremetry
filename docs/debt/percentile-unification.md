@@ -119,7 +119,23 @@ gitmemeli: her biri farklı bir yüzeyin sayısını değiştirebilir.
 
 ---
 
-## Ayrıca: endpoint kırılımlı METRİK rollup tier'ı YOK
+## ~~Ayrıca: endpoint kırılımlı METRİK rollup tier'ı YOK~~ — KAPANDI (v0.9.777)
+
+**Durum:** `migrations/0008_rollup_metrics_route.sql` + okuyucusu
+(`internal/chstore/metric_rollup_route_read.go`) gemide; kurulum
+sihirbazında ayrı hedef ("route"). Aşağıdaki teşhis tarihsel kayıt.
+
+Gerçekleşen kapsam, aday metninden İKİ SAPMAYLA:
+1. Yüzdelik YOK. 0008 bucket taşımıyor — gerekçe DDL başlığında (prod'da
+   bounds kararsızlığı çözülmeden route boyutuyla çarpmak "p95 var" deyip
+   yanlış sayı göstermek olurdu). Kapsam avg · sum · min · max.
+2. Boyut `service_key` (= `coalesce(k8s.deployment.name, service_name)`),
+   düz `service_name` değil — prod kimlik tuzağı (channel_code v0.9.626).
+
+Bu başlığın ASIL gerekçesi de netleşti: mesele hız değil RETANSİYON.
+`metric_points` TTL 7 gün, yani 30 günlük route sorgusu yavaş değil
+CEVAPSIZDI; 0008 aynı sayıyı 14g/90g/13ay taşıyor.
+
 
 `metricRollupPlan` (`metric_rollup_read.go:64`) filtreli VEYA gruplu her
 sorguyu reddediyor, ve 0003 şeması attr taşımıyor. Yani "metrik, route
@@ -128,7 +144,7 @@ HER ZAMAN ham `metric_points` okuyor. 3 saatlik pencerede ölçülen maliyet
 kabul edilebilir (aşağıya bkz. v0.9.774 ölçümü), ama 7g/30g pencerede
 değil.
 
-**0008 adayı:** endpoint kırılımlı metrik rollup tier'ı (route boyutu
+**0008 adayı (ARTIK GEMİDE — yukarı bkz.):** endpoint kırılımlı metrik rollup tier'ı (route boyutu
 `LowCardinality(String)` kolon olarak). `/clickhouse-schema` kapısından
 geçmeden açılmaz — MV/ORDER BY/partition kararları oraya ait.
 

@@ -70,7 +70,7 @@ func TestSplitSQLStatements(t *testing.T) {
 // iki dosya için yazıldı; sentetik örnek geçip gerçeği bölemezse
 // sihirbaz prod'da patlar.
 func TestSplitSQLStatementsEmbedded(t *testing.T) {
-	for _, f := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql"} {
+	for _, f := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql", "0008_rollup_metrics_route.sql"} {
 		t.Run(f, func(t *testing.T) {
 			raw, err := migrations.FS.ReadFile(f)
 			if err != nil {
@@ -105,7 +105,7 @@ func TestSplitSQLStatementsEmbedded(t *testing.T) {
 // bir küme adına elle güncellenirse) Adapt sessizce hiçbir şey
 // değiştirmez ve DDL yanlış kümeye gider.
 func TestEmbeddedFilesCarryClusterToken(t *testing.T) {
-	for _, f := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql"} {
+	for _, f := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql", "0008_rollup_metrics_route.sql"} {
 		raw, err := migrations.FS.ReadFile(f)
 		if err != nil {
 			t.Fatalf("%s okunamadı: %v", f, err)
@@ -166,7 +166,7 @@ func TestAdaptRollupDDL(t *testing.T) {
 // kalmamalı. Kalırsa o ifade "uptrace_all" adlı olmayan bir kümeye
 // gider ve DDL kuyruğunda süresiz bekler (v0.9.613 sınıfı).
 func TestAdaptRollupDDLEmbedded(t *testing.T) {
-	for _, f := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql"} {
+	for _, f := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql", "0008_rollup_metrics_route.sql"} {
 		raw, err := migrations.FS.ReadFile(f)
 		if err != nil {
 			t.Fatalf("%s okunamadı: %v", f, err)
@@ -209,7 +209,17 @@ func TestRollupRollbackStatements(t *testing.T) {
 			},
 		},
 		{
-			name: "both = 7 MV", cluster: "coremetry", target: "both",
+			// v0.9.777 — 0008 AYRI hedef; "both" onu kapsamaz.
+			name: "route", cluster: "c1", target: "route",
+			want: []string{
+				"DROP TABLE IF EXISTS mv_rollup_metrics_route_1m ON CLUSTER c1 SYNC",
+				"DROP TABLE IF EXISTS mv_rollup_metrics_route_5m ON CLUSTER c1 SYNC",
+				"DROP TABLE IF EXISTS mv_rollup_metrics_route_1h ON CLUSTER c1 SYNC",
+			},
+		},
+		{
+			// 7, 10 DEĞİL: route MV'leri bilerek dışarıda (geriye uyum).
+			name: "both = 7 MV (route HARİÇ)", cluster: "coremetry", target: "both",
 			want: []string{
 				"DROP TABLE IF EXISTS mv_rollup_spans_narrow_10s ON CLUSTER coremetry SYNC",
 				"DROP TABLE IF EXISTS mv_rollup_spans_narrow_1m ON CLUSTER coremetry SYNC",
@@ -253,16 +263,23 @@ func TestRollupRollbackStatements(t *testing.T) {
 // TestRollupRollbackCoversEveryMV — geri alma listesi, DDL'in YARATTIĞI
 // her MV'yi kapsamalı. Kaynak dosyaya yeni bir kaskad eklenip listeye
 // eklenmezse burada patlar.
+//
+// v0.9.777 — kapsam TÜM hedeflerin birleşimi, yalnız "both" değil: 0008
+// bilinçli olarak "both"un dışında ("route" ayrı satır), ama geri
+// alınabilir OLMAK ZORUNDA. Birleşim almasaydık ya bu test 0008'i
+// kaçırırdı ya da bizi 0008'i "both"a sokmaya zorlardı.
 func TestRollupRollbackCoversEveryMV(t *testing.T) {
 	dropped := map[string]bool{}
-	for _, stmt := range rollupRollbackStatements("c1", "both") {
-		for _, f := range strings.Fields(stmt) {
-			if strings.HasPrefix(f, "mv_") {
-				dropped[f] = true
+	for _, target := range []string{"narrow", "metrics", "route", "both"} {
+		for _, stmt := range rollupRollbackStatements("c1", target) {
+			for _, f := range strings.Fields(stmt) {
+				if strings.HasPrefix(f, "mv_") {
+					dropped[f] = true
+				}
 			}
 		}
 	}
-	for _, file := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql"} {
+	for _, file := range []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql", "0008_rollup_metrics_route.sql"} {
 		raw, err := migrations.FS.ReadFile(file)
 		if err != nil {
 			t.Fatalf("%s okunamadı: %v", file, err)
@@ -297,6 +314,10 @@ func TestRollupSources(t *testing.T) {
 	}{
 		{"narrow", []string{"0001_rollup_narrow.sql"}, false},
 		{"metrics", []string{"0003_rollup_metrics.sql"}, false},
+		{"route", []string{"0008_rollup_metrics_route.sql"}, false},
+		// v0.9.777 — "both" 0001+0003 olarak KALDI. 0008'i buraya eklemek
+		// geriye uyumu kırardı: "Her ikisi"ni seçen operatör, kurmadığı bir
+		// zinciri de düşürmeye/kurmaya çalışırdı. Bu satır o kararın pini.
 		{"both", []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql"}, false},
 		{"", nil, true},
 		{"wide", nil, true},

@@ -392,12 +392,20 @@ export function CorePanel({
       tt.style.display = 'block';
       const host = wrapRef.current;
       if (host) {
+        // v0.9.755 (operatör: "tooltip imlecin üzerinde kalıyor") —
+        // kıstırma sınırı KART değil EKRAN: 200px'lik panelde 8 satırlık
+        // kutu iki eksende de yer bulamayıp imlece ortalanıyordu.
+        // Kutu kartın dışına taşabilir (absolute + z-index), yalnız
+        // viewport'a kıstırılır → "imlecin sonrası/öncesi" hemen her
+        // zaman yer bulur, işaretçi kutunun ÜSTÜNE gelmez.
+        const hr = host.getBoundingClientRect();
         const pl = placeTooltip(
           u.cursor.left ?? 0, u.cursor.top ?? 0,
           tt.offsetWidth, tt.offsetHeight,
           u.over.clientWidth, u.over.clientHeight,
           u.over.offsetLeft, u.over.offsetTop,
-          host.clientWidth, host.clientHeight,
+          Math.max(host.clientWidth, window.innerWidth - hr.left - 8),
+          Math.max(host.clientHeight, window.innerHeight - hr.top - 8),
         );
         tt.style.left = `${pl.x}px`;
         tt.style.top = `${pl.y}px`;

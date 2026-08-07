@@ -1,9 +1,25 @@
-import { memo } from 'react';
+import { memo, lazy, Suspense } from 'react';
 import { TimeSeriesPanel, type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
 import { publishCursor } from './cursorBus';
 import type { PanelData } from './PanelStack';
+import { chartsV2 } from '@/lib/featureFlags';
+import type { ChartTimeRegion, ChartThreshold } from '@/lib/chart/overlays';
+
+// v0.9.745 (Explore v2) — line modunda panel gövdesi CorePanel'e
+// (@grafana/ui motoru, Overview ile AYNI render). bars/stacked/area eski
+// TimeSeriesPanel'de kalır (CorePanel o mark'ları henüz çizmiyor —
+// dürüst kademeli geçiş, ?chartsV2=0 toptan kaçış). Lazy: corePanelEntry
+// vendor'ı sayfaya statik bağlamaz (708 bundle dersi).
+//
+// Bilinen v2 farkları (bilinçli, eski yol bir bayrak uzakta):
+//   • focusedLabel (GroupTable hover vurgusu) v2'de henüz yok.
+//   • Karma modlu sayfada (bars paneli + line paneli) crosshair senkronu
+//     motorlar arası çalışmaz — v2 panelleri kendi anahtarında senkron
+//     (x ekseni ms vs sn; yanlış hizalı senkron daha kötü olurdu).
+const CorePanelMultiLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
 // QueryPanel (explore-v2 Phase 2) — one query's chart card in the stack.
 // Crosshair syncs across panels via uPlot.sync('explore-v2'); drag-zoom on
@@ -83,6 +99,34 @@ export const QueryPanel = memo(function QueryPanel({
             ? 'Formül için ortak zaman aralığında veri yok'
             : 'Bu pencerede veri yok — aralığı genişlet veya filtreleri azalt'}
         </div>
+      ) : (chartsV2() && mode === 'line') ? (
+        <Suspense fallback={<div style={{ height: PANEL_HEIGHT, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
+          <CorePanelMultiLazy
+            title=""
+            storageKey={`explore-panel-${panel.key}`}
+            height={PANEL_HEIGHT}
+            unit={panel.unit || undefined}
+            items={panel.series.map(ts => ({
+              name: ts.label,
+              role: 'data' as const,
+              series: [{ groupKey: [], points: ts.points
+                .filter(pt => pt.value != null)
+                .map(pt => ({ time: pt.time, value: pt.value as number })) }],
+              exemplars: ts.exemplars,
+            }))}
+            hiddenNames={hiddenLabels}
+            hideLegend
+            xRange={zoomWindow ?? xRange}
+            regions={exploreRegions(panel)}
+            thresholds={exploreThresholds(panel)}
+            logScale={logScale}
+            syncKey={`${SYNC_KEY}-ms`}
+            onCursorTime={publishCursor}
+            onExemplarClick={onExemplarClick}
+            onZoom={onZoom}
+            onZoomReset={onZoomReset}
+          />
+        </Suspense>
       ) : (
         <TimeSeriesPanel
           series={panel.series}
@@ -106,3 +150,22 @@ export const QueryPanel = memo(function QueryPanel({
     </div>
   );
 });
+
+
+// Saf eşlemeler — deploy ▼ (ns) ve operatör olayları (A7) CorePanel'in
+// region kanalına iner: fromSec===toSec ince dikey bant çizer.
+function exploreRegions(panel: PanelData): ChartTimeRegion[] | undefined {
+  const out: ChartTimeRegion[] = [];
+  for (const d of panel.deploys ?? []) {
+    out.push({ fromSec: d / 1e9, toSec: d / 1e9, color: 'var(--accent2)', label: 'deploy' });
+  }
+  for (const e of panel.events ?? []) {
+    out.push({ fromSec: e.timeUnixNs / 1e9, toSec: e.timeUnixNs / 1e9, label: e.label });
+  }
+  return out.length ? out : undefined;
+}
+
+function exploreThresholds(panel: PanelData): ChartThreshold[] | undefined {
+  if (!panel.thresholds?.length) return undefined;
+  return panel.thresholds.map(t => ({ value: t.value, label: t.label, color: t.color }));
+}

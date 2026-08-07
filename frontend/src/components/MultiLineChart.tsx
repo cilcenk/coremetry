@@ -2,6 +2,9 @@ import { useEffect, useMemo, useRef } from 'react';
 import uPlot from 'uplot';
 import { escapeHTML } from '@/lib/utils';
 import type { SpanMetricSeries } from '@/lib/types';
+import { lazy, Suspense } from 'react';
+import { chartsV2 } from '@/lib/featureFlags';
+import { Spinner } from '@/components/Spinner';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { placeTooltip } from '@/lib/chartTooltip';
 import { useThemeTick } from '@/lib/useThemeTick';
@@ -166,7 +169,60 @@ function computeChartData(
   return { eff, allSeries, labels, data, compareEnabled };
 }
 
-export function MultiLineChart({
+// v0.9.760 (operatör: "Endpoint/Database sayfalarındaki chartlar da yeni
+// Grafana stili") — TEK KALDIRAÇ: gelişmiş prop kullanmayan her MLC
+// çağrısı (Endpoints detayları, Databases/Dependencies panelleri,
+// drawer'lar, ServiceCharts) chartsV2'de CorePanel gövdesiyle çizilir.
+// Gelişmiş özellikler (compare bindirmesi, bucket-tık drilldown, özel
+// renk/lejant kancaları, log toggle dışı durumlar) CorePanel'de henüz
+// yok — o çağrılar ESKİ gövdede kalır (sessiz özellik kaybı olmaz),
+// parite dilimleri geldikçe kapsam genişler. ?chartsV2=0 toptan kaçış.
+const CoreMultiLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
+
+export function MultiLineChart(props: Parameters<typeof MultiLineChartInner>[0]) {
+  const {
+    series, unit, height = 320, deploys, thresholds, regions, syncKey,
+    onZoom, onZoomReset, xRange, legendStorageKey, defaultHidden,
+    compareSeries, onBucketClick, colorOf, selectedOps, onLegendClick, logScale,
+  } = props;
+  const canV2 = chartsV2()
+    && !compareSeries && !onBucketClick && !colorOf && !selectedOps && !onLegendClick;
+  if (!canV2) return <MultiLineChartInner {...props} />;
+  return (
+    <Suspense fallback={<div style={{ height, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
+      <CoreMultiLazy
+        title=""
+        storageKey={legendStorageKey ?? 'mlc'}
+        height={height}
+        unit={unit}
+        items={series.map((s0, i) => ({
+          name: s0.groupKey?.length ? s0.groupKey.join(' · ') : `seri ${i + 1}`,
+          role: 'data' as const,
+          series: [s0],
+        }))}
+        defaultHidden={defaultHidden ? [...defaultHidden] : undefined}
+        xRange={xRange}
+        logScale={logScale}
+        regions={[
+          ...(regions ?? []),
+          ...(deploys ?? []).map(d => ({
+            fromSec: d.timeUnixNs / 1e9, toSec: d.timeUnixNs / 1e9,
+            color: 'var(--accent2)', label: d.label,
+          })),
+        ]}
+        thresholds={(thresholds ?? []).map(t => ({
+          value: t.value, label: t.label,
+          color: t.severity === 'err' ? 'var(--err)' : 'var(--warn)',
+        }))}
+        syncKey={syncKey ? `${syncKey}-ms` : undefined}
+        onZoom={onZoom} onZoomReset={onZoomReset}
+      />
+    </Suspense>
+  );
+}
+
+function MultiLineChartInner({
   series, unit, height = 320, deploys, thresholds, regions, syncKey, onZoom, onZoomReset,
   compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
   selectedOps, onLegendClick, xRange, maxSeries, legendStorageKey, defaultHidden,

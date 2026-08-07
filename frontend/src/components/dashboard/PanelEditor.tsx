@@ -2,10 +2,14 @@ import { MetricNamePicker } from '../MetricNamePicker';
 import { Button } from '@/components/ui';
 import { STEP_OPTIONS } from '@/pages/explore/presets';
 import type {
-  Panel, PanelType, PanelWidth,
+  Panel, PanelType, PanelWidth, PanelHeight,
   MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
   HeatmapPanelConfig, PromqlPanelConfig,
 } from '@/lib/types';
+// v0.9.778 — ONE band palette. This file used to keep its own PALETTE copy of
+// the same rgb() literals as PanelRenderer, so the editor swatch and the
+// rendered panel were two independent sources that could (and did) drift.
+import { THRESHOLD_COLOURS } from './panelChrome';
 
 const TYPE_LABELS: Record<PanelType, string> = {
   metric:     'Metric (line)',
@@ -30,6 +34,15 @@ const WIDTH_LABELS: Record<PanelWidth, string> = {
   2: 'Half (2/4)',
   3: 'Three quarters (3/4)',
   4: 'Full row',
+};
+
+// v0.9.778 — panel body height. Grafana lets you drag any pixel value; three
+// rungs keep a dashboard reading as a grid instead of a ragged wall, and the
+// grid's row-stretch does the rest (a tall panel lifts its whole row).
+const HEIGHT_LABELS: Record<PanelHeight, string> = {
+  s: 'Short (S)',
+  m: 'Regular (M)',
+  l: 'Tall (L)',
 };
 
 const SPAN_AGGS = ['count', 'rate', 'errors', 'error_rate', 'avg', 'sum', 'min', 'max',
@@ -72,6 +85,9 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
     onChange({ ...panel, [k]: v });
   const updateConfig = (cfg: Panel['config']) =>
     onChange({ ...panel, config: cfg });
+  // Height is meaningless for the two types that have no fixed body: a row is
+  // a layout marker, markdown flows with its text.
+  const showHeight = panel.type !== 'row' && panel.type !== 'markdown';
 
   return (
     <div onClick={onClose} style={{
@@ -102,7 +118,7 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
             style={{ width: '100%' }} />
         </Field>
 
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: showHeight ? '1fr 1fr 1fr' : '1fr 1fr', gap: 12 }}>
           <Field label="Type">
             <select value={panel.type}
               onChange={e => {
@@ -120,6 +136,22 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
                 <option key={w} value={w}>{WIDTH_LABELS[w]}</option>)}
             </select>
           </Field>
+          {showHeight && (
+            <Field label="Height">
+              {/* 'm' stores UNDEFINED, not the literal — the StepSelect
+                  contract (v0.8.248): the default must never write a field
+                  into the saved document, so a dashboard the operator only
+                  opened and closed round-trips byte-identical. */}
+              <select value={panel.height ?? 'm'}
+                onChange={e => {
+                  const h = e.target.value as PanelHeight;
+                  update('height', h === 'm' ? undefined : h);
+                }}>
+                {(Object.keys(HEIGHT_LABELS) as PanelHeight[]).map(h =>
+                  <option key={h} value={h}>{HEIGHT_LABELS[h]}</option>)}
+              </select>
+            </Field>
+          )}
         </div>
 
         {/* v0.6.20 — optional time-range override. "Default" =
@@ -491,9 +523,6 @@ function ThresholdEditor({ thresholds, onChange }: {
     const value = last ? last.value + 10 : 0;
     onChange([...sorted, { value, color }]);
   };
-  const PALETTE: Record<'green' | 'amber' | 'red', string> = {
-    green: 'rgb(46,160,67)', amber: 'rgb(217,119,6)', red: 'rgb(220,38,38)',
-  };
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
       {sorted.length === 0 && (
@@ -506,7 +535,7 @@ function ThresholdEditor({ thresholds, onChange }: {
         <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 }}>
           <span style={{
             width: 14, height: 14, borderRadius: 3,
-            background: PALETTE[t.color], flexShrink: 0,
+            background: THRESHOLD_COLOURS[t.color], flexShrink: 0,
           }} />
           <span style={{ color: 'var(--text2)', minWidth: 50 }}>{t.color}</span>
           <span style={{ color: 'var(--text3)' }}>≥</span>

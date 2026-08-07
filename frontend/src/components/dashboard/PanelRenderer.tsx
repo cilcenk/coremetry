@@ -3,7 +3,7 @@ import { api } from '@/lib/api';
 import type {
   Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
   HeatmapPanelConfig, HistogramResult, LatencyHeatmap as HeatmapData, PromqlPanelConfig,
-  SpanMetricSeries, TimeRange,
+  SpanMetricSeries, TimeRange, PanelHeight,
 } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
@@ -19,23 +19,27 @@ import { chartsV2 } from '@/lib/featureFlags';
 const DashCorePanelLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
-function DashLineChart({ series, unit, syncKey, onZoom, onZoomReset, storageKey }: {
+function DashLineChart({ series, unit, syncKey, onZoom, onZoomReset, storageKey, height }: {
   series: import('@/lib/types').SpanMetricSeries[];
   unit?: string;
   syncKey?: string;
   onZoom?: (f: number, t: number) => void;
   onZoomReset?: () => void;
   storageKey: string;
+  // v0.9.778 — resolved pixel height (panelChartHeight of Panel.height).
+  // Absent → the pre-v0.9.778 280.
+  height?: number;
 }) {
+  const h = height ?? panelChartHeight();
   if (!chartsV2()) {
-    return <MultiLineChart series={series} height={280} unit={unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />;
+    return <MultiLineChart series={series} height={h} unit={unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />;
   }
   return (
-    <Suspense fallback={<div style={{ height: 280, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
+    <Suspense fallback={<div style={{ height: h, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
       <DashCorePanelLazy
         title=""
         storageKey={storageKey}
-        height={280}
+        height={h}
         unit={unit}
         items={series.map((s0, i) => ({
           name: s0.groupKey?.length ? s0.groupKey.join(' · ') : `seri ${i + 1}`,
@@ -54,6 +58,9 @@ import { histogramResultToHeatmap } from './histogramHeatmap';
 import { Spinner } from '../Spinner';
 import { effectivePanelStep } from './panelStep';
 import { usePanelWidth } from './usePanelWidth';
+// v0.9.778 — band palette + the S/M/L pixel map. Shared with PanelEditor so
+// the editor's swatch and the panel's paint can never drift apart.
+import { THRESHOLD_COLOURS, thresholdTint, panelBoxHeight, panelChartHeight } from './panelChrome';
 
 // PanelRenderer dispatches on panel.type. Self-contained — fetches its
 // own data, re-fetches when `range` changes. Errors are surfaced inline
@@ -124,20 +131,26 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, onZoomReset
   // their independent fetch.
   const effectiveRange = panel.rangeOverride ?? range;
   const effectiveDataOverride = panel.rangeOverride ? undefined : dataOverride;
+  // v0.9.778 — S/M/L travels as a COMPONENT PROP, never inside `config`:
+  // StatPanel / GaugePanel / HeatmapPanel key their fetch effect on
+  // JSON.stringify(cfg), so a height living in config would fire a fresh
+  // ClickHouse query every time the operator resized a tile.
+  const h = panel.height;
   switch (panel.type) {
     case 'metric':
-      return <MetricPanel cfg={applyVarsToMetric(panel.config as MetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} dataOverride={effectiveDataOverride} />;
+      return <MetricPanel cfg={applyVarsToMetric(panel.config as MetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} dataOverride={effectiveDataOverride} height={h} />;
     case 'spanmetric':
-      return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} dataOverride={effectiveDataOverride} />;
+      return <SpanMetricPanel cfg={applyVarsToSpan(panel.config as SpanMetricPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} dataOverride={effectiveDataOverride} height={h} />;
     case 'stat':
-      return <StatPanel cfg={applyVarsToStat(panel.config as StatPanelConfig, vars)} range={effectiveRange} />;
+      return <StatPanel cfg={applyVarsToStat(panel.config as StatPanelConfig, vars)} range={effectiveRange} height={h} />;
     case 'gauge':
-      return <GaugePanel cfg={applyVarsToGauge(panel.config as GaugePanelConfig, vars)} range={effectiveRange} />;
+      return <GaugePanel cfg={applyVarsToGauge(panel.config as GaugePanelConfig, vars)} range={effectiveRange} height={h} />;
     case 'heatmap':
-      return <HeatmapPanel cfg={applyVarsToHeatmap(panel.config as HeatmapPanelConfig, vars)} range={effectiveRange} />;
+      return <HeatmapPanel cfg={applyVarsToHeatmap(panel.config as HeatmapPanelConfig, vars)} range={effectiveRange} height={h} />;
     case 'promql':
-      return <PromqlPanel cfg={applyVarsToPromql(panel.config as PromqlPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} />;
+      return <PromqlPanel cfg={applyVarsToPromql(panel.config as PromqlPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} height={h} />;
     case 'markdown':
+      // Markdown flows with its text — no fixed height to size.
       return <MarkdownPanel cfg={panel.config as MarkdownPanelConfig} />;
     case 'row':
       // Row markers are layout-only; the dashboard page intercepts them
@@ -145,7 +158,7 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, onZoomReset
       // rogue render path doesn't crash the page.
       return null;
     default:
-      return <PanelError msg={`Unknown panel type: ${(panel as Panel).type}`} />;
+      return <PanelError msg={`Unknown panel type: ${(panel as Panel).type}`} height={panelChartHeight(h)} />;
   }
 }
 
@@ -244,12 +257,14 @@ export function applyVarsToPromql(cfg: PromqlPanelConfig, vars?: Record<string, 
 
 // ── Metric line chart ───────────────────────────────────────────────────────
 
-function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }: {
+function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride, height }: {
   cfg: MetricPanelConfig; range: TimeRange; syncKey?: string;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
   onZoomReset?: () => void;
   dataOverride?: PanelDataOverride;
+  height?: PanelHeight;
 }) {
+  const boxPx = panelChartHeight(height);
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [capped, setCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -316,15 +331,15 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }:
       .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride), widthPx]);
 
-  if (error) return <PanelError msg={error} />;
+  if (error) return <PanelError msg={error} height={boxPx} />;
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       {capped && <CapHint />}
-      {series === undefined ? <PanelLoading />
-        : !series || series.length === 0 ? <PanelEmpty />
+      {series === undefined ? <PanelLoading height={boxPx} />
+        : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
         // Madde 4 sweep — cfg.unit eksene/tooltip'e iner (promql paneli
         // pariteli; yokluğu = eski birimsiz davranış).
-        : <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-m-${cfg.metricName}`} />}
+        : <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-m-${cfg.metricName}`} height={boxPx} />}
     </div>
   );
 }
@@ -334,9 +349,10 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }:
 // /api/metrics/histogram (bounds + per-time bucket counts), adapts to the
 // LatencyHeatmap viz. Global distribution (no agg/groupBy — a heatmap blends
 // the whole distribution). Width-aware auto step like the metric panels.
-function HeatmapPanel({ cfg, range }: {
-  cfg: HeatmapPanelConfig; range: TimeRange;
+function HeatmapPanel({ cfg, range, height }: {
+  cfg: HeatmapPanelConfig; range: TimeRange; height?: PanelHeight;
 }) {
+  const boxPx = panelChartHeight(height);
   const [data, setData] = useState<HeatmapData | null | undefined>(undefined);
   const [honesty, setHonesty] = useState<{ skipped: number; rowCapped: boolean }>({ skipped: 0, rowCapped: false });
   const [error, setError] = useState<string | null>(null);
@@ -362,7 +378,7 @@ function HeatmapPanel({ cfg, range }: {
       .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range, widthPx]);
 
-  if (error) return <PanelError msg={error} />;
+  if (error) return <PanelError msg={error} height={boxPx} />;
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       {(honesty.skipped > 0 || honesty.rowCapped) && (
@@ -374,9 +390,9 @@ function HeatmapPanel({ cfg, range }: {
           ⚠ {honesty.rowCapped ? 'kesik' : ''}{honesty.rowCapped && honesty.skipped > 0 ? ' · ' : ''}{honesty.skipped > 0 ? `${honesty.skipped} seri hariç` : ''}
         </span>
       )}
-      {data === undefined ? <PanelLoading />
-        : !data || data.maxCount === 0 ? <PanelEmpty />
-        : <LatencyHeatmap data={data} height={280} />}
+      {data === undefined ? <PanelLoading height={boxPx} />
+        : !data || data.maxCount === 0 ? <PanelEmpty height={boxPx} />
+        : <LatencyHeatmap data={data} height={boxPx} />}
     </div>
   );
 }
@@ -385,11 +401,13 @@ function HeatmapPanel({ cfg, range }: {
 // A dashboard chart driven by a raw PromQL query (/api/metrics/promql, the
 // Phase 1-3 engine). Own-fetch, width-aware step, standard loading/empty/error
 // states; a parse/eval error surfaces inline (the backend message).
-function PromqlPanel({ cfg, range, syncKey, onZoom, onZoomReset }: {
+function PromqlPanel({ cfg, range, syncKey, onZoom, onZoomReset, height }: {
   cfg: PromqlPanelConfig; range: TimeRange; syncKey?: string;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
   onZoomReset?: () => void;
+  height?: PanelHeight;
 }) {
+  const boxPx = panelChartHeight(height);
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const { ref, widthPx } = usePanelWidth();
@@ -420,27 +438,29 @@ function PromqlPanel({ cfg, range, syncKey, onZoom, onZoomReset }: {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [debouncedQuery, cfg.step, range, widthPx]);
 
-  if (error) return <PanelError msg={error} />;
+  if (error) return <PanelError msg={error} height={boxPx} />;
   const viz = cfg.viz ?? 'line';
   return (
     <div ref={ref}>
-      {series === undefined ? <PanelLoading />
-        : !series || series.length === 0 ? <PanelEmpty />
+      {series === undefined ? <PanelLoading height={boxPx} />
+        : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
         : viz === 'line'
-          ? <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-q-${cfg.query.slice(0, 60)}`} />
-          : <DashboardViz series={series} viz={viz} height={280} unit={cfg.unit} />}
+          ? <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-q-${cfg.query.slice(0, 60)}`} height={boxPx} />
+          : <DashboardViz series={series} viz={viz} height={boxPx} unit={cfg.unit} />}
     </div>
   );
 }
 
 // ── Span metric line chart ──────────────────────────────────────────────────
 
-function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride }: {
+function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverride, height }: {
   cfg: SpanMetricPanelConfig; range: TimeRange; syncKey?: string;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
   onZoomReset?: () => void;
   dataOverride?: PanelDataOverride;
+  height?: PanelHeight;
 }) {
+  const boxPx = panelChartHeight(height);
   const [series, setSeries] = useState<SpanMetricSeries[] | null | undefined>(undefined);
   const [capped, setCapped] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -473,7 +493,7 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
       .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride), widthPx]);
 
-  if (error) return <PanelError msg={error} />;
+  if (error) return <PanelError msg={error} height={boxPx} />;
   // Dispatch on the configured viz. 'line' (default) keeps the
   // existing uPlot multi-line path; everything else routes
   // through the small SVG-based DashboardViz component.
@@ -481,13 +501,13 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       {capped && <CapHint />}
-      {series === undefined ? <PanelLoading />
-        : !series || series.length === 0 ? <PanelEmpty />
+      {series === undefined ? <PanelLoading height={boxPx} />
+        : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
         : viz === 'line'
           // Madde 4 sweep — cfg.unit MLC'ye iner. DashboardViz (SVG bar/
           // area) kapsam DIŞI bırakıldı (madde 13 notu — ayrı SVG motoru).
-          ? <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} />
-          : <DashboardViz series={series} viz={viz} height={280} />}
+          ? <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} height={boxPx} />
+          : <DashboardViz series={series} viz={viz} height={boxPx} />}
     </div>
   );
 }
@@ -506,7 +526,8 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, dataOverrid
 // half computes the prior baseline. One round trip, no extra
 // API surface.
 
-function StatPanel({ cfg, range }: { cfg: StatPanelConfig; range: TimeRange }) {
+function StatPanel({ cfg, range, height }: { cfg: StatPanelConfig; range: TimeRange; height?: PanelHeight }) {
+  const boxPx = panelBoxHeight(height);
   const [value, setValue] = useState<number | null | undefined>(undefined);
   const [prior, setPrior] = useState<number | null>(null);
   const [points, setPoints] = useState<{ time: number; value: number }[]>([]);
@@ -548,8 +569,8 @@ function StatPanel({ cfg, range }: { cfg: StatPanelConfig; range: TimeRange }) {
       .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range]);
 
-  if (error) return <PanelError msg={error} />;
-  if (value === undefined) return <PanelLoading />;
+  if (error) return <PanelError msg={error} height={boxPx} />;
+  if (value === undefined) return <PanelLoading height={boxPx} />;
 
   const agg = cfg.source === 'spanmetric' ? (cfg.span?.agg ?? '') : (cfg.metric?.agg ?? '');
   const display = formatStatValue(value, cfg.unit, cfg.decimals);
@@ -566,22 +587,30 @@ function StatPanel({ cfg, range }: { cfg: StatPanelConfig; range: TimeRange }) {
   // operator-defined per panel via PanelEditor.
   const band = pickThresholdBand(value, cfg.thresholds);
   const colorMode = cfg.colorMode ?? 'none';
-  const thresholdHex = band ? THRESHOLD_COLOURS[band.color] : null;
-  const valueColour = colorMode === 'value' && thresholdHex
-    ? thresholdHex
+  const bandColour = band ? THRESHOLD_COLOURS[band.color] : null;
+  const valueColour = colorMode === 'value' && bandColour
+    ? bandColour
     : 'var(--accent2)';
-  const bgTint = colorMode === 'background' && thresholdHex
-    ? hexToRgba(thresholdHex, 0.12)
+  const bgTint = colorMode === 'background' && bandColour
+    ? thresholdTint(bandColour)
     : 'transparent';
 
   return (
     <div style={{
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      height: 220, gap: 6,
+      height: boxPx, gap: 6,
       background: bgTint,
+      // v0.9.778 — band stripe down the left edge. Independent of colorMode:
+      // thresholds configured at all = the tile carries its status even when
+      // the operator kept the number and the background neutral, so a wall of
+      // stat tiles is scannable without reading a single number. No band
+      // (no thresholds, or the value sits under the lowest floor) = no
+      // border at all, i.e. the pre-v0.9.778 look — NOT a grey stripe, which
+      // would read as "a status exists and it is muted".
+      ...(bandColour ? { borderLeft: `3px solid ${bandColour}` } : null),
       borderRadius: 6,
-      transition: 'background 120ms ease',
+      transition: 'background 120ms ease, border-color 120ms ease',
     }}>
       <div style={{ fontSize: 42, fontWeight: 600, color: valueColour, lineHeight: 1.05,
         transition: 'color 120ms ease' }}>
@@ -624,7 +653,8 @@ function StatPanel({ cfg, range }: { cfg: StatPanelConfig; range: TimeRange }) {
 // recent half-window. No prior-period overlay (the gauge's
 // visual job is "current state", not "trend"; the Stat panel
 // covers the trend story).
-function GaugePanel({ cfg, range }: { cfg: GaugePanelConfig; range: TimeRange }) {
+function GaugePanel({ cfg, range, height }: { cfg: GaugePanelConfig; range: TimeRange; height?: PanelHeight }) {
+  const boxPx = panelBoxHeight(height);
   const [value, setValue] = useState<number | null | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
 
@@ -651,8 +681,8 @@ function GaugePanel({ cfg, range }: { cfg: GaugePanelConfig; range: TimeRange })
       .catch(e => setError(e.message));
   }, [JSON.stringify(cfg), range]);
 
-  if (error) return <PanelError msg={error} />;
-  if (value === undefined) return <PanelLoading />;
+  if (error) return <PanelError msg={error} height={boxPx} />;
+  if (value === undefined) return <PanelLoading height={boxPx} />;
 
   const min = cfg.min ?? 0;
   const max = cfg.max ?? 100;
@@ -679,7 +709,7 @@ function GaugePanel({ cfg, range }: { cfg: GaugePanelConfig; range: TimeRange })
     <div style={{
       display: 'flex', flexDirection: 'column',
       alignItems: 'center', justifyContent: 'center',
-      height: 220, gap: 4,
+      height: boxPx, gap: 4,
     }}>
       <svg width={220} height={130} viewBox="0 0 200 120">
         {/* Background track — paints the full arc in a soft
@@ -838,19 +868,6 @@ function pickThresholdBand(
   return pick;
 }
 
-const THRESHOLD_COLOURS: Record<'green' | 'amber' | 'red', string> = {
-  green: 'rgb(46,160,67)',
-  amber: 'rgb(217,119,6)',
-  red:   'rgb(220,38,38)',
-};
-
-function hexToRgba(rgb: string, alpha: number): string {
-  // Accepts our `rgb(r,g,b)` tokens; pulls digits, formats rgba.
-  const m = rgb.match(/(\d+)\s*,\s*(\d+)\s*,\s*(\d+)/);
-  if (!m) return rgb;
-  return `rgba(${m[1]},${m[2]},${m[3]},${alpha})`;
-}
-
 function mean(arr: number[]): number {
   if (arr.length === 0) return 0;
   let s = 0;
@@ -913,15 +930,20 @@ function MarkdownPanel({ cfg }: { cfg: MarkdownPanelConfig }) {
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-function PanelLoading() {
-  return <div style={{ height: 220, display: 'grid', placeItems: 'center' }}><Spinner /></div>;
+// v0.9.778 — the three placeholder states take the SAME pixel height as the
+// panel they stand in for. They were hard-coded 220 while a chart body was
+// 280, so every dashboard load already shifted 60px when the data arrived;
+// with S/M/L in play the mismatch would have grown to 180px on a tall chart.
+// Absent height → 220, i.e. the old constant.
+function PanelLoading({ height }: { height?: number }) {
+  return <div style={{ height: height ?? panelBoxHeight(), display: 'grid', placeItems: 'center' }}><Spinner /></div>;
 }
-function PanelEmpty() {
-  return <div style={{ height: 220, display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 13 }}>No data</div>;
+function PanelEmpty({ height }: { height?: number }) {
+  return <div style={{ height: height ?? panelBoxHeight(), display: 'grid', placeItems: 'center', color: 'var(--text3)', fontSize: 13 }}>No data</div>;
 }
-function PanelError({ msg }: { msg: string }) {
+function PanelError({ msg, height }: { msg: string; height?: number }) {
   return (
-    <div style={{ height: 220, display: 'grid', placeItems: 'center', padding: 12 }}>
+    <div style={{ height: height ?? panelBoxHeight(), display: 'grid', placeItems: 'center', padding: 12 }}>
       <div style={{ color: 'var(--err)', fontSize: 12, textAlign: 'center' }}>⚠ {msg}</div>
     </div>
   );

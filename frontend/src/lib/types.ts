@@ -2668,6 +2668,11 @@ export interface SLORow extends SLO {
 
 export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'gauge' | 'markdown' | 'row' | 'heatmap' | 'promql';
 export type PanelWidth = 1 | 2 | 3 | 4;  // 1=quarter … 4=full (12-col grid)
+// v0.9.778 — panel body height. Three rungs rather than a free pixel number:
+// a dashboard reads as a grid, and arbitrary heights turn it into a ragged
+// wall. The pixel map lives in components/dashboard/panelChrome.ts (one
+// constant, two families — a chart needs more room than a number tile).
+export type PanelHeight = 's' | 'm' | 'l';
 
 // Each panel type has a different config shape. Kept as a tagged union so
 // the renderer can switch on `type` exhaustively.
@@ -2801,6 +2806,12 @@ export interface Panel {
   // (chstore/dashboard.go), so this round-trips with no migration.
   description?: string;
   width: PanelWidth;
+  // v0.9.778 — optional body height (s / m / l). Deliberately NOT in the
+  // per-type config: StatPanel's fetch effect keys on JSON.stringify(cfg), so
+  // a height stored there would re-run the ClickHouse query on every resize.
+  // Absent → 'm', which is the pre-v0.9.778 hard-coded 220 / 280 — every
+  // dashboard saved before this release decodes byte-identical.
+  height?: PanelHeight;
   // v0.6.20 — optional per-panel time-range override
   // (Grafana-parity). When set, this panel's data fetch ignores
   // the dashboard-level Topbar range and uses this preset

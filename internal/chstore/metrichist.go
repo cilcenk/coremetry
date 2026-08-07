@@ -146,16 +146,18 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 		return nil, err
 	}
 
-	// Canonical bounds = the first series' bounds. Series whose layout
-	// differs (producer changed config / a different metric reused the
-	// name) are skipped rather than summed into the wrong bucket.
-	var canonical []float64
+	// v0.9.754 (operatör: 749 sonrası RT·metrik boş) — kanonik bounds
+	// artık İLK değil BASKIN seri düzeni: 19+ fiziksel serili prod
+	// servisinde ilk karşılaşılan seri azınlık bounds-set'indeyse eski
+	// politika kalan her şeyi atlayıp paneli BOŞALTIYORDU (749 gecikmeyi
+	// gruplu yoldan bu global yola taşıyınca görünür oldu). Ağırlık =
+	// serinin nokta sayısı; eşitlikte ilk görülen (deterministik).
+	// Uyumsuz serilerin atlanması (yanlış kovaya toplamama) DEĞİŞMEDİ.
+	bw := make([]boundsWeight, 0, len(order))
 	for _, k := range order {
-		if len(seriesMap[k].bounds) > 0 {
-			canonical = seriesMap[k].bounds
-			break
-		}
+		bw = append(bw, boundsWeight{Bounds: seriesMap[k].bounds, Weight: len(seriesMap[k].pts)})
 	}
+	canonical := dominantBounds(bw)
 	if canonical == nil || f.From.IsZero() || f.To.IsZero() {
 		return &HistogramSeries{Bounds: canonical}, nil
 	}
@@ -203,12 +205,12 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 	}
 
 	out := &HistogramSeries{
-		Bounds:  canonical,
-		Times:   make([]int64, nTime),
-		Counts:  accum,
-		P50:     make([]float64, nTime),
-		P95:     make([]float64, nTime),
-		P99:     make([]float64, nTime),
+		Bounds:    canonical,
+		Times:     make([]int64, nTime),
+		Counts:    accum,
+		P50:       make([]float64, nTime),
+		P95:       make([]float64, nTime),
+		P99:       make([]float64, nTime),
 		Skipped:   skipped,
 		RowCapped: rowsScanned >= 200000,
 	}
@@ -395,4 +397,45 @@ func boundsEqual(a, b []float64) bool {
 		}
 	}
 	return true
+}
+
+// boundsWeight — dominantBounds girdisi: bir serinin bounds düzeni +
+// ağırlığı (nokta sayısı).
+type boundsWeight struct {
+	Bounds []float64
+	Weight int
+}
+
+// dominantBounds — SAF: en çok toplam ağırlığa sahip bounds-set;
+// eşitlikte ilk görülen kazanır. Boş bounds aday değildir.
+func dominantBounds(entries []boundsWeight) []float64 {
+	type cand struct {
+		bounds []float64
+		weight int
+	}
+	var cands []cand
+	for _, e := range entries {
+		if len(e.Bounds) == 0 {
+			continue
+		}
+		found := false
+		for i := range cands {
+			if boundsEqual(cands[i].bounds, e.Bounds) {
+				cands[i].weight += e.Weight
+				found = true
+				break
+			}
+		}
+		if !found {
+			cands = append(cands, cand{e.Bounds, e.Weight})
+		}
+	}
+	var best []float64
+	bestW := -1
+	for _, c := range cands {
+		if c.weight > bestW {
+			best, bestW = c.bounds, c.weight
+		}
+	}
+	return best
 }

@@ -75,9 +75,11 @@ func TestBuildRollupHistSQLDiscipline(t *testing.T) {
 func TestFoldRollupHistCanonicalPolicy(t *testing.T) {
 	b1 := []float64{0.1, 1, 10}
 	b2 := []float64{0.5, 5}
+	// v0.9.754 güncellemesi: kanonik artık BASKIN bounds (gözlem
+	// ağırlıklı) — b1 toplam 20 gözlemle baskın, b2 (5) atlanır.
 	rows := []histRollupRow{
 		{Bucket: 1e9, Bounds: b1, Counts: []uint64{10, 0, 0, 0}}, // p50 ilk kovada
-		{Bucket: 2e9, Bounds: b2, Counts: []uint64{100, 0, 0}},   // FARKLI bounds → atla
+		{Bucket: 2e9, Bounds: b2, Counts: []uint64{5, 0, 0}},     // azınlık bounds → atla
 		{Bucket: 3e9, Bounds: b1, Counts: []uint64{0, 0, 0, 0}},  // toplam 0 → gap
 		{Bucket: 4e9, Bounds: b1, Counts: []uint64{0, 10, 0, 0}}, // p50 ikinci kovada
 	}
@@ -97,4 +99,43 @@ func TestFoldRollupHistCanonicalPolicy(t *testing.T) {
 			t.Fatal("bounds'suz satırlardan nokta üretilmemeli")
 		}
 	})
+}
+
+// v0.9.754 — kanonik = BASKIN bounds (operatör: 749 sonrası RT·metrik
+// boş). İlk seri azınlık bounds-set'indeyse eski ilk-görülen politikası
+// kalan her şeyi atlayıp paneli boşaltıyordu; baskın politika çoğunluğu
+// seçer, uyumsuzları atlamaya devam eder.
+func TestDominantBoundsOutlierFirst(t *testing.T) {
+	minority := []float64{0.5, 5}
+	majority := []float64{0.1, 1, 10}
+	got := dominantBounds([]boundsWeight{
+		{Bounds: minority, Weight: 3}, // İLK görülen ama azınlık
+		{Bounds: majority, Weight: 40},
+		{Bounds: majority, Weight: 60},
+	})
+	if !boundsEqual(got, majority) {
+		t.Fatalf("dominantBounds = %v, çoğunluk %v bekleniyordu", got, majority)
+	}
+	// Eşitlikte ilk görülen (deterministik).
+	got = dominantBounds([]boundsWeight{
+		{Bounds: minority, Weight: 10},
+		{Bounds: majority, Weight: 10},
+	})
+	if !boundsEqual(got, minority) {
+		t.Fatal("eşitlikte ilk görülen kazanmalı")
+	}
+}
+
+func TestFoldRollupHistDominantPolicy(t *testing.T) {
+	minority := []float64{0.5, 5}
+	majority := []float64{0.1, 1, 10}
+	rows := []histRollupRow{
+		{Bucket: 1e9, Bounds: minority, Counts: []uint64{3, 0, 0}}, // ilk ama azınlık → atla
+		{Bucket: 2e9, Bounds: majority, Counts: []uint64{50, 0, 0, 0}},
+		{Bucket: 3e9, Bounds: majority, Counts: []uint64{60, 0, 0, 0}},
+	}
+	pts, skipped := foldRollupHist(rows, 0.5)
+	if skipped != 1 || len(pts) != 2 {
+		t.Fatalf("skipped=%d pts=%d — baskın politika ilk-azınlığı atlamalıydı", skipped, len(pts))
+	}
 }

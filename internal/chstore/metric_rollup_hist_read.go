@@ -67,13 +67,14 @@ type histRollupRow struct {
 // kanonik bounds = İLK boş-olmayan; farklı bounds atlanır (skipped
 // sayılır); toplam-0 bucket nokta ÜRETMEZ (gap — PromQL semantiği).
 func foldRollupHist(rows []histRollupRow, q float64) (pts []SpanMetricPoint, skipped int) {
-	var canonical []float64
+	// v0.9.754 — ham yolla aynı politika güncellemesi: kanonik = BASKIN
+	// bounds (ağırlık = satırın toplam gözlemi); ilk-görülen politikası
+	// azınlık-önce sıralamada paneli boşaltıyordu.
+	bw := make([]boundsWeight, 0, len(rows))
 	for _, r := range rows {
-		if len(r.Bounds) > 0 {
-			canonical = r.Bounds
-			break
-		}
+		bw = append(bw, boundsWeight{Bounds: r.Bounds, Weight: int(bucketTotal(r.Counts))})
 	}
+	canonical := dominantBounds(bw)
 	if canonical == nil {
 		return nil, 0
 	}

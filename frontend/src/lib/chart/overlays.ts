@@ -180,3 +180,82 @@ export function drawTimeRegions(u: uPlot, regions: ChartTimeRegion[]): void {
   }
   ctx.restore();
 }
+
+// ── Exemplar ◆ katmanı (v0.9.744, Explore v2) ───────────────────────────
+//
+// TimeSeriesPanel'in Phase 3.2 çiziminin CorePanel karşılığı: her
+// (görünür seri, trace'li bucket) için elmas; panel-arka-planı halosu
+// aynı renkli çizgi üstünde okunurluk sağlar. Renkler ÇİZİM anında
+// çözülür (tema-canlı). CorePanel'in x ölçeği MS (Grafana frame
+// sözleşmesi) — TimeSeriesPanel'deki /1e9 burada /1e6.
+export interface ChartExemplar {
+  time: number;   // unix NANOS (bucket başlangıcı)
+  value: number;  // elmasın y konumu (seri değeri)
+  traceId: string;
+  kind: 'slow' | 'error' | 'otlp';
+}
+
+export function exemplarColorVar(kind: ChartExemplar['kind']): string {
+  return kind === 'error' ? 'var(--err)' : kind === 'otlp' ? 'var(--purple)' : 'var(--accent2)';
+}
+
+export function drawExemplars(
+  u: uPlot,
+  perSeries: (ChartExemplar[] | undefined)[],
+  visible: boolean[],
+  resolve: (cssVar: string) => string,
+  halo: string,
+): void {
+  const ctx = u.ctx;
+  const minX = u.scales.x.min ?? 0;
+  const maxX = u.scales.x.max ?? 0;
+  ctx.save();
+  for (let si = 0; si < perSeries.length; si++) {
+    const exs = perSeries[si];
+    if (!exs?.length || visible[si] === false) continue;
+    for (const ex of exs) {
+      const t = ex.time / 1e6; // ns → ms
+      if (t < minX || t > maxX) continue;
+      const x = u.valToPos(t, 'x', true);
+      const y = u.valToPos(ex.value, 'y', true);
+      ctx.beginPath();
+      ctx.moveTo(x, y - 4);
+      ctx.lineTo(x + 4, y);
+      ctx.lineTo(x, y + 4);
+      ctx.lineTo(x - 4, y);
+      ctx.closePath();
+      ctx.fillStyle = resolve(exemplarColorVar(ex.kind)) || '#a371f7';
+      ctx.strokeStyle = halo;
+      ctx.lineWidth = 1;
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+  ctx.restore();
+}
+
+// exemplarAt — tık isabeti: CSS-piksel konumuna en yakın ◆ (tolerans
+// içinde) ya da null. Tık trace açar; panel tık-eylemi (navigasyon)
+// İKİNCİ önceliktir — çağıran önce bunu sorar.
+export function exemplarAt(
+  u: uPlot,
+  perSeries: (ChartExemplar[] | undefined)[],
+  visible: boolean[],
+  cssX: number,
+  cssY: number,
+  tolPx = 6,
+): ChartExemplar | null {
+  let best: ChartExemplar | null = null;
+  let bestD = tolPx;
+  for (let si = 0; si < perSeries.length; si++) {
+    const exs = perSeries[si];
+    if (!exs?.length || visible[si] === false) continue;
+    for (const ex of exs) {
+      const x = u.valToPos(ex.time / 1e6, 'x', false);
+      const y = u.valToPos(ex.value, 'y', false);
+      const d = Math.max(Math.abs(x - cssX), Math.abs(y - cssY));
+      if (d <= bestD) { bestD = d; best = ex; }
+    }
+  }
+  return best;
+}

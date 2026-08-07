@@ -35,6 +35,8 @@ export interface CorePanelMultiItem {
   series: SpanMetricSeries[];
   name: string;
   role?: 'data' | 'error' | 'success' | 'muted';
+  // v0.9.744 (Explore v2) — bu item'ın ilk frame'ine bağlı ◆ listesi.
+  exemplars?: import('@/lib/chart/overlays').ChartExemplar[];
 }
 
 export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'roles'> {
@@ -47,10 +49,18 @@ export function CorePanelMulti({ items, unit, ...rest }: CorePanelMultiProps) {
   // display-processor kurulumu olurdu).
   const frames: ReturnType<typeof spanSeriesToFrames> = [];
   const roles: NonNullable<CorePanelProps['roles']> = [];
+  const exemplars: NonNullable<CorePanelProps['exemplars']> = [];
+  let anyEx = false;
   for (const it of items) {
     const fs = spanSeriesToFrames(it.series, { unit, name: it.name });
     frames.push(...fs);
-    for (let i = 0; i < fs.length; i++) roles.push(it.role ?? 'data');
+    for (let i = 0; i < fs.length; i++) {
+      roles.push(it.role ?? 'data');
+      // ◆'lar item'ın İLK frame'ine biner (Explore: item = tek seri).
+      exemplars.push(i === 0 ? it.exemplars : undefined);
+      if (i === 0 && it.exemplars?.length) anyEx = true;
+    }
   }
-  return <CorePanel {...rest} roles={roles} data={{ state: 'ready', frames }} />;
+  return <CorePanel {...rest} roles={roles} exemplars={anyEx ? exemplars : undefined}
+    data={{ state: 'ready', frames }} />;
 }

@@ -43,8 +43,8 @@ import {
 } from '@/lib/chart/legendVisibility';
 import { resolveVar } from '@/lib/chart/resolveVar';
 import {
-  drawThresholds, drawTimeRegions,
-  type ChartThreshold, type ChartTimeRegion,
+  drawThresholds, drawTimeRegions, drawExemplars, exemplarAt,
+  type ChartThreshold, type ChartTimeRegion, type ChartExemplar,
 } from '@/lib/chart/overlays';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
@@ -125,12 +125,17 @@ export interface CorePanelProps {
   // çatışmaz: >5px sürüklenen basış tık sayılmaz, tek tık 250ms
   // çift-tık beklemesinden sonra işler.
   onExpandClick?: () => void;
+  // v0.9.744 (Explore v2) — seri-hizalı exemplar ◆ listeleri (frames ile
+  // aynı indeks). Tık önceliği: ◆ isabeti trace açar (onExemplarClick),
+  // panel tık-eylemi (onExpandClick) ancak isabet yoksa çalışır.
+  exemplars?: (ChartExemplar[] | undefined)[];
+  onExemplarClick?: (traceId: string) => void;
 }
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
-  defaultHidden, xRange, headerExtra, note, onExpandClick,
+  defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -153,6 +158,12 @@ export function CorePanel({
   // v0.9.737 — tek-tık/tam-ekran ayrımı için basış konumu + bekleme.
   const clickRef = useRef<{ x: number; y: number } | null>(null);
   const clickTimerRef = useRef<number | null>(null);
+  // v0.9.744 — exemplar'lar draw-hook'ta REF'ten okunur: poll'da yeni
+  // dizi gelse de config yeniden kurulmaz (704 kimlik dersi).
+  const exemplarsRef = useRef(exemplars);
+  exemplarsRef.current = exemplars;
+  const exemplarClickRef = useRef(onExemplarClick);
+  exemplarClickRef.current = onExemplarClick;
   const [showQuery, setShowQuery] = useState(false);
   const [logLocal, setLogLocal] = useState(!!logScale);
   const effLog = logScaleToggle ? logLocal : !!logScale;
@@ -228,6 +239,7 @@ export function CorePanel({
         u.setSeries(i + 1, { show }, false);
       }
     });
+    u.redraw(false, true); // v0.9.744 — gizlenen serinin ◆'ları da kalksın
   }, [vis]);
 
   const config = useMemo(() => {
@@ -279,9 +291,15 @@ export function CorePanel({
     // Eşik çizgileri + annotation bölgeleri: M3 çizim çekirdeği. Renk
     // token'ları DRAW anında çözülür (tema-canlı) — build anında değil;
     // themeTick yalnız seri renklerini tazeler.
-    if (thresholds?.length || regions?.length) {
+    {
       b.addHook('draw', (u) => {
         if (regions?.length) drawTimeRegions(u, regions);
+        // v0.9.744 — exemplar ◆'ları en son (çizgilerin üstünde);
+        // ref'ten canlı okunur, halo panel arka planından.
+        if (exemplarsRef.current?.some(e => e?.length)) {
+          drawExemplars(u, exemplarsRef.current, visRef.current, resolveVar,
+            resolveVar('var(--bg1)') || '#0d1117');
+        }
         if (thresholds?.length) {
           drawThresholds(u, thresholds.map(th => ({
             value: th.value, label: th.label,
@@ -484,11 +502,25 @@ export function CorePanel({
       )}
 
       <div ref={wrapRef} style={{ minHeight: height, position: 'relative', cursor: onExpandClick && !fullscreen ? 'pointer' : undefined }}
-        onPointerDown={onExpandClick ? (e) => { clickRef.current = { x: e.clientX, y: e.clientY }; } : undefined}
-        onClick={onExpandClick && !fullscreen ? (e) => {
+        onPointerDown={(onExpandClick || onExemplarClick) ? (e) => { clickRef.current = { x: e.clientX, y: e.clientY }; } : undefined}
+        onClick={(onExpandClick || onExemplarClick) && !fullscreen ? (e) => {
           const d = clickRef.current;
           // Drag-zoom basışı tık değildir (5px eşiği).
           if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
+          // v0.9.744 — ◆ isabeti ÖNCELİKLİ: trace açar, panel eylemi
+          // (navigasyon) devreye girmez. Bekleme yok — anında.
+          const u = plotRef.current;
+          if (u && exemplarClickRef.current && exemplarsRef.current?.some(x => x?.length)) {
+            const r = u.over.getBoundingClientRect();
+            const hit = exemplarAt(u, exemplarsRef.current, visRef.current,
+              e.clientX - r.left, e.clientY - r.top);
+            if (hit) {
+              if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+              exemplarClickRef.current(hit.traceId);
+              return;
+            }
+          }
+          if (!onExpandClick) return;
           if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
           clickTimerRef.current = window.setTimeout(() => onExpandClick(), 250);
         } : undefined}

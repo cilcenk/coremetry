@@ -5,7 +5,11 @@
 // ([5m] gibi aralıklar metrik adı değildir).
 
 import { describe, it, expect } from 'vitest';
-import { promqlTokenAt, replaceToken } from './promqlToken';
+import {
+  promqlTokenAt, replaceToken,
+  promqlLabelContext, applyLabelKey, applyLabelValue,
+  type PromqlLabelCtx,
+} from './promqlToken';
 
 // cursor("rate(http.ser|") → { text: 'rate(http.ser', pos: 13 }
 function cursor(marked: string): { text: string; pos: number } {
@@ -118,4 +122,139 @@ describe('replaceToken', () => {
       expect(out.text.slice(out.pos - c.pick.length, out.pos)).toBe(c.pick);
     });
   }
+});
+
+// ── Faz 2 (v0.9.771) — süslü parantez içi label bağlamı ────────────────────
+
+describe('promqlLabelContext', () => {
+  type Want = { phase: 'key' | 'value'; metric: string; key?: string; partial: string; quoted?: boolean };
+  const cases: Array<{ name: string; input: string; want: Want | null }> = [
+    // — anahtar fazı —
+    { name: 'boş süslü → tüm anahtarlar', input: 'm{|', want: { phase: 'key', metric: 'm', partial: '' } },
+    { name: 'anahtar parçası', input: 'm{htt|', want: { phase: 'key', metric: 'm', partial: 'htt' } },
+    { name: 'virgülden sonra yeni anahtar', input: 'm{a="x",ser|', want: { phase: 'key', metric: 'm', partial: 'ser' } },
+    { name: 'virgül + boşluk sonrası boş anahtar', input: 'm{a="x", |', want: { phase: 'key', metric: 'm', partial: '' } },
+    { name: 'iç içe çağrıda metrik adı doğru', input: 'sum(rate(cpu{po|', want: { phase: 'key', metric: 'cpu', partial: 'po' } },
+    { name: 'kapanan süslüden sonra yeni selector', input: 'm{a="b"} + n{k|', want: { phase: 'key', metric: 'n', partial: 'k' } },
+
+    // — değer fazı —
+    { name: 'tırnaksız değer (operatörden hemen sonra)', input: 'm{route=|', want: { phase: 'value', metric: 'm', key: 'route', partial: '', quoted: false } },
+    { name: 'tırnak açılmış değer parçası', input: 'm{route="/ap|', want: { phase: 'value', metric: 'm', key: 'route', partial: '/ap', quoted: true } },
+    { name: 'regex operatörü =~', input: 'm{route=~"a|', want: { phase: 'value', metric: 'm', key: 'route', partial: 'a', quoted: true } },
+    { name: 'negatif regex !~', input: 'm{route!~"a|', want: { phase: 'value', metric: 'm', key: 'route', partial: 'a', quoted: true } },
+    { name: 'eşit değil !=', input: 'm{route!="a|', want: { phase: 'value', metric: 'm', key: 'route', partial: 'a', quoted: true } },
+    { name: 'anahtarın çevresindeki boşluk trim edilir', input: 'm{ route = "x|', want: { phase: 'value', metric: 'm', key: 'route', partial: 'x', quoted: true } },
+    { name: 'sayıyla başlayan değer serbest', input: 'm{code="5|', want: { phase: 'value', metric: 'm', key: 'code', partial: '5', quoted: true } },
+
+    // — tırnak farkındalığı: virgül/operatör/süslü değerin İÇİNDE —
+    { name: 'tırnak içi virgül segmenti bölmez', input: 'm{a="x,y|', want: { phase: 'value', metric: 'm', key: 'a', partial: 'x,y', quoted: true } },
+    { name: 'tırnak içi != operatör sanılmaz', input: 'm{a="x!=y|', want: { phase: 'value', metric: 'm', key: 'a', partial: 'x!=y', quoted: true } },
+    { name: 'tırnak içi { süslü saymaz', input: 'm{route="/a{b|', want: { phase: 'value', metric: 'm', key: 'route', partial: '/a{b', quoted: true } },
+    { name: 'kaçırılmış tırnak stringi kapatmaz', input: 'm{a="x\\"y|', want: { phase: 'value', metric: 'm', key: 'a', partial: 'x\\"y', quoted: true } },
+
+    // — null: burası Faz 1'in işi —
+    { name: 'kapanmış süslüden sonra → null (metrik moduna düşer)', input: 'm{a="x"} + rat|', want: null },
+    { name: 'metriksiz çıplak selector → null', input: '{a|', want: null },
+    { name: 'süslü hiç yok → null', input: 'rate(http.ser|', want: null },
+    { name: 'süslüden hemen önce → null', input: 'metric|{a="b"}', want: null },
+  ];
+
+  for (const c of cases) {
+    it(c.name, () => {
+      const { text, pos } = cursor(c.input);
+      const ctx = promqlLabelContext(text, pos);
+      if (c.want === null) { expect(ctx).toBeNull(); return; }
+      expect(ctx).not.toBeNull();
+      expect(ctx!.phase).toBe(c.want.phase);
+      expect(ctx!.metric).toBe(c.want.metric);
+      expect(ctx!.partial).toBe(c.want.partial);
+      if (c.want.key !== undefined) expect(ctx!.key).toBe(c.want.key);
+      if (c.want.quoted !== undefined) expect(ctx!.quoted).toBe(c.want.quoted);
+      // start/end MUST bracket the partial in the source text — applyLabel*
+      // replaces exactly that range, so a wrong range corrupts the query.
+      expect(text.slice(ctx!.start, ctx!.end)).toBe(ctx!.partial);
+    });
+  }
+
+  it('Faz 1 ile örtüşmez: biri null derken diğeri cevap verir', () => {
+    const inside = cursor('m{ser|');
+    expect(promqlTokenAt(inside.text, inside.pos)).toBeNull();
+    expect(promqlLabelContext(inside.text, inside.pos)?.phase).toBe('key');
+    const outside = cursor('m{a="x"} + rat|');
+    expect(promqlLabelContext(outside.text, outside.pos)).toBeNull();
+    expect(promqlTokenAt(outside.text, outside.pos)?.text).toBe('rat');
+  });
+
+  it('aralık dışı konumlar null', () => {
+    expect(promqlLabelContext('m{a', -1)).toBeNull();
+    expect(promqlLabelContext('m{a', 9)).toBeNull();
+  });
+});
+
+describe('applyLabelKey / applyLabelValue', () => {
+  function ctxOf(marked: string): { text: string; ctx: PromqlLabelCtx } {
+    const { text, pos } = cursor(marked);
+    const ctx = promqlLabelContext(text, pos);
+    if (!ctx) throw new Error(`no label context: ${marked}`);
+    return { text, ctx };
+  }
+
+  it('anahtar: partial değişir, kuyruk korunur', () => {
+    const { text, ctx } = ctxOf('m{htt|="x"}');
+    const out = applyLabelKey(text, ctx, 'http.route');
+    expect(out.text).toBe('m{http.route="x"}');
+    expect(out.pos).toBe(12); // imleç anahtarın sonunda — operatörü operatör yazar
+    expect(out.text.slice(0, out.pos)).toBe('m{http.route');
+  });
+
+  it('anahtar: boş süslüye ilk anahtarı yazar', () => {
+    const { text, ctx } = ctxOf('m{|}');
+    const out = applyLabelKey(text, ctx, 'service.name');
+    expect(out.text).toBe('m{service.name}');
+    expect(out.pos).toBe(14);
+  });
+
+  it('değer: tırnaksızken iki tırnak da eklenir, imleç kapanışın SONRASINDA', () => {
+    const { text, ctx } = ctxOf('m{route=|');
+    const out = applyLabelValue(text, ctx, '/api/orders');
+    expect(out.text).toBe('m{route="/api/orders"');
+    expect(out.pos).toBe(21);
+    expect(out.text[out.pos - 1]).toBe('"');
+  });
+
+  it('değer: tırnak açıkken yalnız kapanış eklenir', () => {
+    const { text, ctx } = ctxOf('m{route="/ap|');
+    const out = applyLabelValue(text, ctx, '/api');
+    expect(out.text).toBe('m{route="/api"');
+    expect(out.pos).toBe(14);
+    expect(out.text[out.pos - 1]).toBe('"');
+  });
+
+  it('değer: kapanış tırnağı zaten varsa çift yazmaz, üstünden atlar', () => {
+    const { text, ctx } = ctxOf('m{route="/ap|"}');
+    const out = applyLabelValue(text, ctx, '/api');
+    expect(out.text).toBe('m{route="/api"}');
+    expect(out.pos).toBe(14);
+    expect(out.text.slice(out.pos)).toBe('}');
+  });
+
+  it('değer: regex operatöründen sonra da aynı tırnaklama', () => {
+    const { text, ctx } = ctxOf('m{route=~"a|');
+    const out = applyLabelValue(text, ctx, 'a.*');
+    expect(out.text).toBe('m{route=~"a.*"');
+    expect(out.pos).toBe(14);
+  });
+
+  it('değer: tırnak ve ters bölü kaçırılır', () => {
+    const { text, ctx } = ctxOf('m{q=|');
+    const out = applyLabelValue(text, ctx, 'a"b\\c');
+    expect(out.text).toBe('m{q="a\\"b\\\\c"');
+    expect(out.text[out.pos - 1]).toBe('"');
+  });
+
+  it('değer: virgülden sonraki ikinci matcher yerinde kalır', () => {
+    const { text, ctx } = ctxOf('m{a="x",b="y|"}');
+    const out = applyLabelValue(text, ctx, 'yes');
+    expect(out.text).toBe('m{a="x",b="yes"}');
+  });
 });

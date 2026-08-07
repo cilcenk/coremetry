@@ -1839,6 +1839,11 @@ export const api = {
   },
   metricLabels: (metric: string, key: string, since: GoDuration = '24h') =>
     get<string[] | null>(`/api/metrics/labels?metric=${encodeURIComponent(metric)}&key=${encodeURIComponent(key)}&since=${since}`),
+  // v0.9.771 — metricLabels'in anahtar yarısı: bir metrikte GÖRÜLMÜŞ datapoint
+  // attribute anahtarları. PromQL editöründe `{` yazınca ne yazılabileceğini
+  // sunucudan öğrenmek için (sabit LABEL_KEYS listesi tahmin, bu ölçüm).
+  metricAttrKeys: (metric: string, service = '', since: GoDuration = '24h') =>
+    get<string[] | null>(`/api/metrics/attr-keys?metric=${encodeURIComponent(metric)}&service=${encodeURIComponent(service)}&since=${since}`),
 
   profiles:        (params: ProfilesParams) => get<ProfileRow[] | null>(`/api/profiles?${qs(params)}`),
   profile:         (id: string)             => get<ProfileDetail>(`/api/profiles/${id}`),

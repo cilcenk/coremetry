@@ -3,7 +3,10 @@ import { useQueries, useQuery } from '@tanstack/react-query';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { encodeFilters } from '@/lib/urlState';
-import { promqlTokenAt, replaceToken, type PromqlToken } from '@/lib/promqlToken';
+import {
+  promqlTokenAt, replaceToken, promqlLabelContext, applyLabelKey, applyLabelValue,
+  type PromqlToken, type PromqlLabelCtx,
+} from '@/lib/promqlToken';
 import { timeRangeToNs } from '@/lib/utils';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
@@ -59,6 +62,37 @@ const LABEL_KEYS = [
   'status_class', 'rpc.service', 'rpc.method', 'db.system', 'db.operation.name',
   'messaging.system', 'messaging.destination.name', 'host.name', 'deployment.environment',
 ];
+
+// ── PromQL label autocomplete cache (v0.9.771, Faz 2) ─────────────────────
+// Süslü parantez içinde her tuş vuruşu bir istek DEĞİL: bir metriğin anahtar
+// listesi (ve bir anahtarın değer listesi) editör oturumu boyunca sabit sayılır.
+// 60s TTL sunucudaki serveCached TTL'iyle aynı — istemci daha taze görünmeye
+// çalışıp sunucunun bayat cevabını tekrar tekrar çekmesin (ES-maliyet
+// disiplini: staleTime ≥ sunucu TTL). Promise'ı cache'lemek uçuştaki isteği de
+// tekilleştirir; hata cache'lenmez.
+const PROMQL_SUG_TTL = 60_000;
+const promqlSugCache = new Map<string, { at: number; p: Promise<string[]> }>();
+function cachedSugList(key: string, fetcher: () => Promise<string[] | null>): Promise<string[]> {
+  const hit = promqlSugCache.get(key);
+  if (hit && Date.now() - hit.at < PROMQL_SUG_TTL) return hit.p;
+  const p = fetcher().then(r => r ?? []);
+  p.catch(() => { if (promqlSugCache.get(key)?.p === p) promqlSugCache.delete(key); });
+  promqlSugCache.set(key, { at: Date.now(), p });
+  return p;
+}
+// Anahtar/değer listeleri KÜÇÜK (bir metriğin onlarca attr'ı) — filtre
+// istemcide: önce prefix eşleşmeleri, sonra içerenler, en fazla 20 satır.
+function filterSugList(all: string[], partial: string): string[] {
+  if (!partial) return all.slice(0, 20);
+  const q = partial.toLowerCase();
+  const pre: string[] = [], inc: string[] = [];
+  for (const x of all) {
+    const l = x.toLowerCase();
+    if (l.startsWith(q)) pre.push(x);
+    else if (l.includes(q)) inc.push(x);
+  }
+  return [...pre, ...inc].slice(0, 20);
+}
 
 interface MQQuery {
   id: string;            // 'A', 'B', 'C', …
@@ -374,14 +408,16 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   // PromQL mode (v0.9.116, F4 Phase 5) — raw PromQL text → /api/metrics/promql.
   const [promqlText, setPromqlText] = useState('');
   const [promqlQ, setPromqlQ] = useState('');
-  // PromQL metrik-adı autocomplete (v0.9.766, Faz 1) — imlecin altındaki
-  // token'ı SUNUCUDA arar (picker disiplini: eager katalog YASAK). Süslü
-  // parantez içi label key/value önerisi Faz 2'nin işi; promqlTokenAt
-  // orada null döndürdüğü için kutu kendiliğinden kapanır.
+  // PromQL autocomplete (v0.9.766 Faz 1 + v0.9.771 Faz 2) — imlecin altındaki
+  // token'ı SUNUCUDA arar (picker disiplini: eager katalog YASAK). İki mod tek
+  // kutu: süslü parantez DIŞINDA metrik adı (sugTok), İÇİNDE label anahtarı /
+  // değeri (sugCtx). İkisi birbirini dışlar — promqlLabelContext cevap
+  // verdiğinde promqlTokenAt zaten null döner.
   const promqlRef = useRef<HTMLTextAreaElement | null>(null);
   const [sug, setSug] = useState<string[]>([]);
   const [sugIdx, setSugIdx] = useState(0);
   const [sugTok, setSugTok] = useState<PromqlToken | null>(null);
+  const [sugCtx, setSugCtx] = useState<PromqlLabelCtx | null>(null);
   const [caretTo, setCaretTo] = useState<number | null>(null);
   const sugMute = useRef(false);
   // "Add to dashboard" (step 3) — picker modal state.
@@ -412,20 +448,36 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
     return () => clearTimeout(t);
   }, [promqlText]);
 
-  // --- PromQL autocomplete (v0.9.766) -------------------------------------
-  // Aranan sorgu SADECE token metnidir; imleç kayınca token metni aynı
-  // kaldığı sürece yeniden fetch YOK (obje kimliği değil metin dep'i).
-  const sugQ = sugTok && sugTok.text.length >= 2 ? sugTok.text : '';
+  // --- PromQL autocomplete (v0.9.766 + v0.9.771) --------------------------
+  // Effect deps PRIMİTİF: imleç kayınca (obje kimliği değişse de) aranan şey
+  // aynı kaldığı sürece yeniden fetch YOK.
+  const sugQ = !sugCtx && sugTok && sugTok.text.length >= 2 ? sugTok.text : '';
+  const labelPhase = sugCtx?.phase ?? '';
+  const labelMetric = sugCtx?.metric ?? '';
+  const labelKey = sugCtx?.key ?? '';
+  const labelPartial = sugCtx?.partial ?? '';
   useEffect(() => {
-    if (!sugQ || view !== 'promql') { setSug([]); return; }
+    if (view !== 'promql') { setSug([]); return; }
     let alive = true;
+    // — Faz 2: süslü içi. Anahtar fazında partial'a uzunluk kısıtı YOK: `{`
+    //   yazar yazmaz metriğin TÜM anahtarları listelenir (Grafana davranışı).
+    if (labelPhase && labelMetric && (labelPhase === 'key' || labelKey)) {
+      const p = labelPhase === 'key'
+        ? cachedSugList(`k ${labelMetric}`, () => api.metricAttrKeys(labelMetric, '', '24h'))
+        : cachedSugList(`v ${labelMetric} ${labelKey}`, () => api.metricLabels(labelMetric, labelKey, '24h'));
+      p.then(all => { if (alive) { setSug(filterSugList(all, labelPartial)); setSugIdx(0); } })
+        .catch(() => { if (alive) setSug([]); });
+      return () => { alive = false; };
+    }
+    // — Faz 1: metrik adı. Sunucu-taraflı arama, 250ms debounce.
+    if (!sugQ) { setSug([]); return; }
     const t = window.setTimeout(() => {
       api.metricNamesSearch('', sugQ, 20, 0)
         .then(r => { if (alive) { setSug((r.names ?? []).map(n => n.name)); setSugIdx(0); } })
         .catch(() => { if (alive) setSug([]); });
     }, 250);
     return () => { alive = false; clearTimeout(t); };
-  }, [sugQ, view]);
+  }, [sugQ, view, labelPhase, labelMetric, labelKey, labelPartial]);
 
   // Öneri uygulandıktan sonra imleci eklenen adın sonuna koy. Layout
   // effect: React yeni değeri commit ETTİKTEN sonra, boyanmadan önce.
@@ -437,21 +489,29 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   }, [caretTo]);
 
   const sugList = sug.slice(0, 8); // kutu en fazla 8 satır
-  const sugOpen = view === 'promql' && sugTok != null && sugList.length > 0;
+  const sugOpen = view === 'promql' && (sugTok != null || sugCtx != null) && sugList.length > 0;
+  // Kutunun başlığı hangi modda olduğumuzu söyler — aynı kutu üç farklı şey
+  // önerdiği için "bu ne listesi?" sorusu görünür cevaplanmalı.
+  const sugHint = sugCtx ? (sugCtx.phase === 'key' ? 'label' : `değer: ${sugCtx.key}`) : '';
 
-  const closeSug = () => { setSug([]); setSugTok(null); };
-  // Her yazımda VE her imleç hareketinde token'ı tazele. sugMute: bir
+  const closeSug = () => { setSug([]); setSugTok(null); setSugCtx(null); };
+  // Her yazımda VE her imleç hareketinde bağlamı tazele. sugMute: bir
   // öneri uygulandıktan sonra setSelectionRange'in tetiklediği TEK select
   // olayını yutar — yoksa kutu tam-eşleşmeyle hemen geri açılırdı.
   const syncSug = (text: string, pos: number, typed = false) => {
     if (typed) sugMute.current = false;
     else if (sugMute.current) { sugMute.current = false; return; }
-    setSugTok(promqlTokenAt(text, pos));
+    const ctx = promqlLabelContext(text, pos);
+    setSugCtx(ctx);
+    setSugTok(ctx ? null : promqlTokenAt(text, pos));
   };
 
   const applySug = (name: string) => {
-    if (!sugTok) return;
-    const out = replaceToken(promqlRef.current?.value ?? promqlText, sugTok, name);
+    const cur = promqlRef.current?.value ?? promqlText;
+    const out = sugCtx
+      ? (sugCtx.phase === 'key' ? applyLabelKey(cur, sugCtx, name) : applyLabelValue(cur, sugCtx, name))
+      : (sugTok ? replaceToken(cur, sugTok, name) : null);
+    if (!out) return;
     setPromqlText(out.text);
     closeSug();
     sugMute.current = true;
@@ -780,6 +840,9 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
                 marginTop: 2, padding: 3, background: 'var(--bg1)',
                 border: '1px solid var(--border)', borderRadius: 8,
               }}>
+                {sugHint && (
+                  <div style={{ padding: '2px 7px 3px', fontSize: 10, color: 'var(--text3)' }}>{sugHint}</div>
+                )}
                 {sugList.map((name, i) => (
                   <div key={name} role="option" aria-selected={i === sugIdx}
                     onMouseDown={e => { e.preventDefault(); applySug(name); }}

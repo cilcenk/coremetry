@@ -139,3 +139,38 @@ func TestFoldRollupHistDominantPolicy(t *testing.T) {
 		t.Fatalf("skipped=%d pts=%d — baskın politika ilk-azınlığı atlamalıydı", skipped, len(pts))
 	}
 }
+
+// v0.9.765 — quantile penceresi (Grafana histogram_quantile(rate[3m])
+// paritesi): delta kova dizileri k-pencereli toplanır; W<=step eski
+// davranış (k=1).
+func TestHistWindowK(t *testing.T) {
+	if k := histWindowK(180, 20); k != 9 {
+		t.Fatalf("180/20 = %d, 9 bekleniyordu", k)
+	}
+	if k := histWindowK(180, 300); k != 1 {
+		t.Fatal("W<=step pencere açmamalı")
+	}
+	if k := histWindowK(0, 20); k != 1 {
+		t.Fatal("W=0 pencere açmamalı")
+	}
+	if k := histWindowK(600, 10); k != 30 {
+		t.Fatal("k tavanı 30 uygulanmalı")
+	}
+}
+
+func TestSlidingSumCounts(t *testing.T) {
+	in := [][]uint64{{1, 0}, {2, 1}, {0, 3}, {4, 0}}
+	out := slidingSumCounts(in, 2)
+	want := [][]uint64{{1, 0}, {3, 1}, {2, 4}, {4, 3}}
+	for i := range want {
+		for b := range want[i] {
+			if out[i][b] != want[i][b] {
+				t.Fatalf("out[%d][%d] = %d, %d bekleniyordu", i, b, out[i][b], want[i][b])
+			}
+		}
+	}
+	// Girdi mutasyona uğramamalı.
+	if in[1][0] != 2 {
+		t.Fatal("girdi dizisi mutasyona uğradı")
+	}
+}

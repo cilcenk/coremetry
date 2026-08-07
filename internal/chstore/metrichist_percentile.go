@@ -156,15 +156,61 @@ func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter,
 	if hs == nil || len(hs.Times) == 0 {
 		return []SpanMetricSeries{}, nil
 	}
+	// v0.9.765 (operatör Grafana Query Inspector kanıtı) — Grafana'nın
+	// gecikmesi histogram_quantile(sum(rate(_bucket[3m])) by le):
+	// yüzdelik, kova sayımlarının [W] KAYAN PENCERESİNDEN hesaplanır.
+	// 723 pencereyi rate yollarına taşımıştı; quantile yolu penceresiz
+	// kalmıştı (daha tırtıklı + boşluklu). Delta kova dizileri pencere
+	// boyunca toplanır, yüzdelik birleşik dağılımdan alınır — birebir
+	// Prometheus semantiği.
+	counts := hs.Counts
+	if k := histWindowK(f.RateWindowSec, f.StepSeconds); k > 1 {
+		counts = slidingSumCounts(hs.Counts, k)
+	}
 	pts := make([]SpanMetricPoint, 0, len(hs.Times))
 	for i, t := range hs.Times {
-		// Boş bucket (gözlem yok) → nokta atla (gap), sahte 0 DEĞİL.
-		if i >= len(hs.Counts) || bucketTotal(hs.Counts[i]) == 0 {
+		// Boş pencere (gözlem yok) → nokta atla (gap), sahte 0 DEĞİL.
+		if i >= len(counts) || bucketTotal(counts[i]) == 0 {
 			continue
 		}
-		pts = append(pts, SpanMetricPoint{Time: t, Value: percentileFromBuckets(hs.Bounds, hs.Counts[i], q)})
+		pts = append(pts, SpanMetricPoint{Time: t, Value: percentileFromBuckets(hs.Bounds, counts[i], q)})
 	}
 	return []SpanMetricSeries{{GroupKey: nil, Points: pts}}, nil
+}
+
+// histWindowK — SAF: quantile penceresinin bucket sayısı (ceil(W/step),
+// tavan 30 — spanMetricWindow ile aynı disiplin). W<=step → 1 (pencere
+// yok, eski davranış bayt-bayt).
+func histWindowK(rateWindowSec, stepSec int) int {
+	if rateWindowSec <= 0 || stepSec <= 0 || rateWindowSec <= stepSec {
+		return 1
+	}
+	if rateWindowSec > 600 {
+		rateWindowSec = 600
+	}
+	k := (rateWindowSec + stepSec - 1) / stepSec
+	if k > 30 {
+		k = 30
+	}
+	return k
+}
+
+// slidingSumCounts — SAF: delta kova dizilerinin k-pencereli kayan
+// toplamı (dizi uzunlukları farklıysa kısa olana kadar toplanır —
+// bounds değişimi zaten canonical filtresinde ayıklanıyor).
+func slidingSumCounts(counts [][]uint64, k int) [][]uint64 {
+	out := make([][]uint64, len(counts))
+	for i := range counts {
+		acc := append([]uint64(nil), counts[i]...)
+		for j := i - 1; j > i-k && j >= 0; j-- {
+			c := counts[j]
+			for b := 0; b < len(acc) && b < len(c); b++ {
+				acc[b] += c[b]
+			}
+		}
+		out[i] = acc
+	}
+	return out
 }
 
 // bucketTotal — bir zaman-bucket'ındaki toplam gözlem (delta bucket sayıları).

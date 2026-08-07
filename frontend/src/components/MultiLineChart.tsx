@@ -187,8 +187,19 @@ export function MultiLineChart(props: Parameters<typeof MultiLineChartInner>[0])
     compareSeries, onBucketClick, colorOf, selectedOps, onLegendClick, logScale,
   } = props;
   const canV2 = chartsV2()
-    && !compareSeries && !onBucketClick && !colorOf && !selectedOps && !onLegendClick;
+    && !onBucketClick && !colorOf && !selectedOps && !onLegendClick;
   if (!canV2) return <MultiLineChartInner {...props} />;
+  // v0.9.764 — önceki-dönem hayaleti: compareSeries offset'le bugünün
+  // eksenine kaydırılıp kesikli/soluk ghost olarak biner (mockup dilim
+  // 3; MLC'nin compare bindirmesinin v2 karşılığı).
+  const offsetNs = props.compareOffsetNs ?? 0;
+  const ghostItems = (compareSeries?.length && offsetNs > 0)
+    ? compareSeries.map((s0, i) => ({
+        name: s0.groupKey?.length ? s0.groupKey.join(' · ') : `seri ${i + 1}`,
+        role: 'muted' as const,
+        series: [{ groupKey: s0.groupKey, points: s0.points.map(pt => ({ ...pt, time: pt.time + offsetNs })) }],
+      }))
+    : undefined;
   return (
     <Suspense fallback={<div style={{ height, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
       <CoreMultiLazy
@@ -215,6 +226,7 @@ export function MultiLineChart(props: Parameters<typeof MultiLineChartInner>[0])
           value: t.value, label: t.label,
           color: t.severity === 'err' ? 'var(--err)' : 'var(--warn)',
         }))}
+        ghostItems={ghostItems}
         syncKey={syncKey ? `${syncKey}-ms` : undefined}
         onZoom={onZoom} onZoomReset={onZoomReset}
       />

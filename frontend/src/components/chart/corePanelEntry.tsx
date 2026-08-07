@@ -39,16 +39,20 @@ export interface CorePanelMultiItem {
   exemplars?: import('@/lib/chart/overlays').ChartExemplar[];
 }
 
-export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'roles'> {
+export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'roles' | 'dashed'> {
   items: CorePanelMultiItem[];
   unit?: string;
+  // v0.9.764 — önceki-dönem hayaleti: zamanları ÇAĞIRAN kaydırmış
+  // (bugünün eksenine bindirilmiş) seriler; kesikli + soluk çizilir,
+  // adları "(önceki)" ekiyle lejantta.
+  ghostItems?: CorePanelMultiItem[];
   // v0.9.748 (operatör: "yüklenirken 'aralığı genişlet' çıkıyor") —
   // sorgu sürerken boş items "veri yok" boş-durumuna düşmesin; loading
   // true iken Spinner'lı yükleme durumu çizilir.
   loading?: boolean;
 }
 
-export function CorePanelMulti({ items, unit, loading, ...rest }: CorePanelMultiProps) {
+export function CorePanelMulti({ items, unit, loading, ghostItems, ...rest }: CorePanelMultiProps) {
   if (loading) return <CorePanel {...rest} data={{ state: 'loading' }} />;
   // TEK geçiş: frames + rol hizası birlikte (çifte dönüşüm = çifte
   // display-processor kurulumu olurdu).
@@ -66,6 +70,17 @@ export function CorePanelMulti({ items, unit, loading, ...rest }: CorePanelMulti
       if (i === 0 && it.exemplars?.length) anyEx = true;
     }
   }
+  const dashed: boolean[] = frames.map(() => false);
+  for (const g of ghostItems ?? []) {
+    const fs = spanSeriesToFrames(g.series, { unit, name: `${g.name} (önceki)` });
+    frames.push(...fs);
+    for (let i = 0; i < fs.length; i++) {
+      roles.push('muted');
+      exemplars.push(undefined);
+      dashed.push(true);
+    }
+  }
   return <CorePanel {...rest} roles={roles} exemplars={anyEx ? exemplars : undefined}
+    dashed={ghostItems?.length ? dashed : undefined}
     data={{ state: 'ready', frames }} />;
 }

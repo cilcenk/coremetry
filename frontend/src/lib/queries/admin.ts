@@ -77,6 +77,26 @@ export function useDDLQueueHealth() {
   });
 }
 
+/** v0.9.770 — rollup katmanının canlı durumu (kurulum sihirbazı kartı).
+ *
+ *  POLL YOK — bilinçli. Bu 7 tablo üzerinde count() + min(ts) demek;
+ *  min(ts) birincil anahtarın öneki değil, yani tek kolon taraması.
+ *  Kart açık kaldığı sürece 10 saniyede bir taratmanın teşhis değeri
+ *  yok: durum operatörün KENDİ eylemiyle değişiyor (Kur / Geri Al) ve
+ *  kart o eylemden sonra kendisi tazeliyor.
+ *
+ *  staleTime 0 + sunucu tarafında da cache YOK: "Kur"dan saniyeler
+ *  sonra basılan Yenile bayat gövde döndürürse operatör kurulumun
+ *  tutmadığını sanar. */
+export function useRollupStatus() {
+  return useQuery({
+    queryKey: ['admin', 'rollup-status'],
+    queryFn: () => api.rollupStatus(),
+    staleTime: 0,
+    retry: false,
+  });
+}
+
 // Multi-pod HA roster for /admin/cluster. 10s poll matches the
 // heartbeat interval so a freshly-rolled pod appears within one
 // tick; hidden tabs pause automatically.

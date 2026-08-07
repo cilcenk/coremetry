@@ -22,6 +22,7 @@ export {
   useSystemStats, useCardinality,
   useAuditLog,
   useClickhouseHealth, useCHCoordinators, useDDLQueueHealth, useClusterMembers,
+  useRollupStatus,
   useElasticIndices, useElasticErrors, useTraceContext, useSqlSchema,
   useStatusPageConfig, useUpdateStatusPageConfig,
   useStatusPageComponents, useCreateStatusComponent,

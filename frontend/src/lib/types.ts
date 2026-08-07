@@ -2099,6 +2099,63 @@ export interface DDLQueueHealth {
   generated: number;
 }
 
+/** v0.9.770 — rollup kurulum sihirbazı (/api/admin/rollup/*).
+ *  0001 (dar span zinciri) + 0003 (metrik zinciri) migration'ları
+ *  operatörün elle SQL koşmasına gerek kalmadan uygulanır. OTOMATİK
+ *  DEĞİL: boot'ta asla koşmaz, tek tetikleyici admin'in butonu.
+ *  Gerekçe: internal/chstore/rollup_admin.go başlığı. */
+export type RollupTarget = 'narrow' | 'metrics' | 'both';
+
+/** Tek bir DDL ifadesinin sonucu. Head = ifadenin ilk 90 karakteri. */
+export interface RollupStmtResult {
+  head: string;
+  ok: boolean;
+  err?: string;
+}
+
+/** Kurulum ÖNCESİ hüküm. Supported=false iken "Kur" butonu KAPALI —
+ *  yarım uygulanmış bir zincir hiç kurulmamış olandan kötüdür. */
+export interface RollupPreflightResult {
+  /** system.clusters'taki adlar. UI <select>'e döker; elle yazdırmıyoruz
+   *  çünkü yanlış ad DDL'i kuyrukta süresiz bekletir (v0.9.613). */
+  clusters: string[];
+  /** Coremetry'nin kendi yapılandırmasındaki ad — ön-seçili gelir. */
+  suggestedCluster?: string;
+  spansLocal: boolean;
+  metricPointsLocal: boolean;
+  /** Zincirin TABANI zaten kurulu mu (DDL'ler IF NOT EXISTS). */
+  narrowInstalled: boolean;
+  metricsInstalled: boolean;
+  /** "tablo.kolon" biçiminde; boş = tam. */
+  missingColumns: string[];
+  probeErrors?: string[];
+  supported: boolean;
+  detail: string;
+  generated: number;
+}
+
+/** Tek bir rollup tablosunun canlı durumu. minTsMs=0 → boş ya da okunamadı. */
+export interface RollupTableStatus {
+  table: string;
+  family: 'narrow' | 'metrics';
+  exists: boolean;
+  rows: number;
+  minTsMs: number;
+  err?: string;
+}
+
+export interface RollupStatusResult {
+  cluster: string;
+  tables: RollupTableStatus[];
+  generated: number;
+}
+
+/** apply / rollback yanıtı — ifade-ifade sonuç + toplu hüküm. */
+export interface RollupActionResult {
+  statements: RollupStmtResult[];
+  ok: boolean;
+}
+
 export interface MetricResolveResult {
   series: SpanMetricSeries[];
   tier: string;

@@ -558,6 +558,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// v0.9.613 — dağıtık DDL kuyruğu teşhisi (üç gecelik prod vakası,
 	// ch_ddl_queue.go). registerXxxRoutes deseni.
 	s.registerCHDDLQueueRoutes(mux)
+	// v0.9.770 — rollup kurulum sihirbazı: 0001+0003 migration'ları
+	// /admin/clickhouse'tan, ön kontrollü. Boot'ta ASLA koşmaz —
+	// tek tetikleyici admin (gerekçe: admin_rollup.go başlığı).
+	s.registerRollupAdminRoutes(mux)
 	mux.HandleFunc("GET /api/correlations", s.getCorrelations)
 	// v0.9.135 (scale-audit 2026-07-20) — admin-only (Redis internals);
 	// only AdminStats reads it, handler had no role check.

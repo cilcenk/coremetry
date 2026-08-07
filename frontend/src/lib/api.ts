@@ -2314,6 +2314,38 @@ export const api = {
     }>('/api/admin/clickhouse/nodework'),
   /** v0.9.613 — DDL kuyruğu teşhisi. Verdict + eylem cümlesi sunucudan. */
   chDDLQueue: () => get<import('./types').DDLQueueHealth>('/api/admin/clickhouse/ddl-queue'),
+
+  // ── v0.9.770 — rollup kurulum sihirbazı ────────────────────────
+  // Dördü de admin. Okumalar CACHE'SİZ (sunucu tarafında da): "Kur"a
+  // bastıktan saniyeler sonra basılan "Yenile" bayat bir gövde
+  // döndürürse operatör kurulumun tutmadığını sanar.
+  /** Canlı durum: hangi rollup tablosu var, kaç satır, en eski ts. */
+  rollupStatus: () =>
+    get<import('./types').RollupStatusResult>('/api/admin/rollup/status'),
+  /** Ön kontrol — hiçbir şey yazmaz. Supported hükmü + gerekçe. */
+  rollupPreflight: () =>
+    get<import('./types').RollupPreflightResult>('/api/admin/rollup/preflight'),
+  /** DDL'i koşar. İlk hatada durur — kaskad zaten çöker, 12 satır
+   *  hata gerçek ilk nedeni gömerdi.
+   *  timeoutMs 330s: ON CLUSTER DDL dağıtık kuyruğa girer ve her ifade
+   *  distributed_ddl_task_timeout (varsayılan 180s) kadar bekleyebilir.
+   *  Sunucu tarafı 5 dk'da keser; istemci ondan SONRA pes etmeli, yoksa
+   *  operatör "zaman aşımı" görür ama DDL aslında koşmaya devam eder. */
+  rollupApply: (cluster: string, target: import('./types').RollupTarget) =>
+    request<import('./types').RollupActionResult>('/api/admin/rollup/apply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster, target }),
+      timeoutMs: 330_000,
+    }),
+  /** YALNIZ MV'leri düşürür (yazımı kes); tablolar ve veri kalır. */
+  rollupRollback: (cluster: string, target: import('./types').RollupTarget) =>
+    request<import('./types').RollupActionResult>('/api/admin/rollup/rollback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cluster, target }),
+      timeoutMs: 210_000,
+    }),
   chCoordinators: (windowS: number) =>
     get<{
       nodes: Array<{

@@ -49,7 +49,14 @@ type MetricQueryFilter struct {
 // twin). A degenerate call with no window scanned every partition unbounded.
 // Now the window always defaults to the last 24h and max_execution_time caps
 // wall-clock at 30s, mirroring metrichist.go.
-func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, error) {
+//
+// v0.9.776 — instrument/temporality parametreleri: agg=avg histogramda
+// `avgOrNull(value)` ile YANLIŞ hesaplanıyordu (bkz. metricAvgExpr).
+// Ayrı argüman, MetricQueryFilter alanı DEĞİL: değerler probe'la
+// ÖĞRENİLİR (QueryMetric), çağıranın verdiği bir filtre girdisi değil —
+// aynı kalıp metricRollupPlan(f, instrument, temporality, now)'da da var.
+// Boş/boş çağrı (testler, ham çağıranlar) eski SQL'i BAYT-BAYT üretir.
+func buildMetricQuerySQL(f MetricQueryFilter, now time.Time, instrument, temporality string) (string, []any, error) {
 	// Always time-bound: default the window so `time >= ?` / `time <= ?`
 	// below can prune partitions even on a from/to-less call.
 	if f.To.IsZero() {
@@ -87,7 +94,7 @@ func buildMetricQuerySQL(f MetricQueryFilter, now time.Time) (string, []any, err
 		step = metricAutoStepPx(f.From, f.To, f.MaxDataPoints)
 	}
 
-	aggExpr, err := metricAggToSQL(f.Aggregation)
+	aggExpr, err := metricAggToSQL(f.Aggregation, instrument, temporality)
 	if err != nil {
 		return "", nil, err
 	}
@@ -144,16 +151,30 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		}
 	}
 
+	// v0.9.776 — instrument/temporality TEK prob, İKİ tüketici: aşağıdaki
+	// rollup yönlendirmesi ve agg=avg'ın SQL ifadesi (metricAvgExpr).
+	// Prob yalnız gerektiğinde atılır — avg olmayan + Service'siz sorgu
+	// v0.9.775'teki gibi hiç prob atmaz.
+	isAvg := f.Aggregation == "" || strings.EqualFold(f.Aggregation, "avg")
+	instrument, temporality := "", ""
+	if f.Service != "" || isAvg {
+		instrument = s.metricInstrument(ctx, f.Name, f.Service, f.From, f.To)
+		// sum → rollup planı temporality'ye bakar (yalnız Service dalında).
+		// histogram + avg → metricAvgExpr temporality'ye bakar.
+		if (f.Service != "" && instrument == "sum") || (isAvg && isHistogramInstrument(instrument)) {
+			temporality = s.metricTemporalityFiltered(ctx, f.Name, f.Service, f.Filters)
+		}
+	}
+
 	// v0.9.712 (parite dilim 4B) — aile-C rollup yönlendirmesi. Yalnız
 	// 0003 şemasının DOĞRU cevapladığı şekiller (metric_rollup_read.go
 	// başlığındaki tablo); cumulative + filtreli/gruplu HER ZAMAN ham.
 	// Her uygunsuzluk/hata FAIL-OPEN hama düşer.
+	//
+	// NOT: histogram için metricRollupPlan default dalında ham'a düşer —
+	// yani v0.9.776'nın histogram temporality probu rollup kararını
+	// DEĞİŞTİRMEZ (gauge de temporality'ye bakmaz).
 	if f.Service != "" {
-		instrument := s.metricInstrument(ctx, f.Name, f.Service, f.From, f.To)
-		temporality := ""
-		if instrument == "sum" {
-			temporality = s.metricTemporalityFiltered(ctx, f.Name, f.Service, f.Filters)
-		}
 		if tr, ok := metricRollupPlan(f, instrument, temporality, time.Now()); ok {
 			if floor, ok2 := s.rollupCoverageFloor(ctx, tr.table); ok2 && !f.From.Before(floor) {
 				if ser, err := s.queryMetricRollup(ctx, f, tr); err == nil {
@@ -185,7 +206,7 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 
-	sql, args, err := buildMetricQuerySQL(f, now)
+	sql, args, err := buildMetricQuerySQL(f, now, instrument, temporality)
 	if err != nil {
 		return nil, err
 	}
@@ -225,11 +246,52 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 	return out, rows.Err()
 }
 
-func metricAggToSQL(agg string) (string, error) {
+// metricAvgExpr — agg=avg'ın İÇ SQL ifadesi (saf, tablo-testli; sarmalama
+// çağırana ait). v0.9.776.
+//
+// Sorun: histogram enstrümanda `value` per-export ÖZET'tir — ingest onu
+// sum/count olarak yazar (otlp/convert.go, Metric_Histogram dalı). Bu
+// satırların `avg`ı ORTALAMALARIN ORTALAMASI olur: her export penceresi,
+// içindeki gözlem sayısına bakılmaksızın eşit ağırlık alır. 3 istek gören
+// bir bucket ile 3000 istek gören bir bucket aynı ağırlıkta. Doğrusu
+// gözlem-ağırlıklı ortalama: sum(sum_value) / sum(count).
+//
+// Sapma gözlem dağılımının tekdüzeliğiyle orantılı: lokal demoda ≤%2,5
+// (per-export gözlem sayısı neredeyse sabit — demo artefaktı), prod-şekilli
+// (diurnal + hata patlamalı) örnekte %28.
+//
+// Yalnız DELTA. Diğer dallar bilerek `avgOrNull(value)`da kalıyor:
+//
+//   - gauge / sum — `value` zaten ölçümün kendisi; sum_value/count 0'dır,
+//     ağırlıklı ifade 0/0 verirdi.
+//   - histogram + CUMULATIVE — sum_value ve count monoton BİRİKİMLİ. Tek
+//     bir toplama ifadesiyle doğru yazılamaz: önce per-seri reset-korumalı
+//     cross-bucket delta gerekir (metrichist.go'daki makine). Tek ifadeyle
+//     yazmak birikmiş toplamları üst üste toplar — bugünkünden DAHA yanlış.
+//     Bu yüzden cumulative bilinçli olarak eski (yaklaşık) yolda kalıyor;
+//     sınır burada, docs/DECISIONS.md'de değil.
+//   - summary — "histogram gibi ama histogram değil": ingest value'yu yine
+//     sum/count yazıyor (convert.go:379) ve sum_value/count kolonları da
+//     dolu. Teknik olarak aynı düzeltme uygulanabilirdi; bu sürümde
+//     BİLİNÇLİ dokunulmuyor — summary üreten SDK'lar (Prometheus köprüleri)
+//     kurulumda yok, ve isHistogramInstrument'in kapsamını genişletmek
+//     percentile yönlendirmesini de etkilerdi. Ayrı karar.
+func metricAvgExpr(instrument, temporality string) string {
+	if isHistogramInstrument(instrument) && strings.EqualFold(temporality, "delta") {
+		return "sum(sum_value) / nullIf(sum(count), 0)"
+	}
+	return "avgOrNull(value)"
+}
+
+// metricAggToSQL — agg etiketi → metric_points üstünde SQL ifadesi.
+// instrument/temporality YALNIZ avg dalında okunur (metricAvgExpr); diğer
+// her agg'in ürettiği SQL onlardan bağımsızdır ve v0.9.776 öncesiyle
+// bayt-bayt aynıdır.
+func metricAggToSQL(agg, instrument, temporality string) (string, error) {
 	wrap := func(s string) string { return "toNullable(toFloat64(" + s + "))" }
 	switch strings.ToLower(agg) {
 	case "", "avg":
-		return wrap("avgOrNull(value)"), nil
+		return wrap(metricAvgExpr(instrument, temporality)), nil
 	case "sum":
 		return wrap("sumOrNull(value)"), nil
 	case "min":

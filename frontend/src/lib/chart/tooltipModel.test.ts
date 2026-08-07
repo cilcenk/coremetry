@@ -4,7 +4,7 @@
 // identically (the whole reason it's shared, not per-panel).
 
 import { describe, it, expect } from 'vitest';
-import { sortedTooltipRows, type TooltipItem } from './tooltipModel';
+import { sortedTooltipRows, capTooltipRows, type TooltipItem } from './tooltipModel';
 
 describe('sortedTooltipRows — ordering', () => {
   it('sorts by value DESC by default (hottest series first)', () => {
@@ -136,5 +136,25 @@ describe('fmt override', () => {
       { label: 'a', color: '#000', value: null, fmt: 'HAYALET' },
     ]);
     expect(rows).toEqual([]);
+  });
+});
+
+// v0.9.750 — tooltip üst-N sınırı: 65×3 serili ekranda tooltip grafiği
+// örtüyordu; ilk max satır + "+N seri daha" özeti.
+describe('capTooltipRows (v0.9.750)', () => {
+  const mk = (n: number) => Array.from({ length: n }, (_, i) => ({
+    label: `s${i}`, color: '#fff', text: `${i}`, value: i,
+  }));
+  it('taşmada ilk max + özet satırı', () => {
+    const out = capTooltipRows(mk(20), 8);
+    expect(out).toHaveLength(9);
+    expect(out[8].label).toBe('+12 seri daha');
+    expect(out[8].text).toBe('');
+  });
+  it('taşma yoksa aynen', () => {
+    expect(capTooltipRows(mk(5), 8)).toHaveLength(5);
+  });
+  it('max<=0 sınırsız', () => {
+    expect(capTooltipRows(mk(30), 0)).toHaveLength(30);
   });
 });

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { PanelRenderer, applyVarsToMetric, applyVarsToSpan, type PanelDataOverride } from '@/components/dashboard/PanelRenderer';
 import { PanelEditor, defaultConfig } from '@/components/dashboard/PanelEditor';
+import { VariableEditor } from '@/components/dashboard/VariableEditor';
 import { VariablesBar } from '@/components/dashboard/VariablesBar';
 import type { DashboardVariable } from '@/lib/types';
 import { api } from '@/lib/api';
@@ -97,6 +98,9 @@ function Inner() {
   // both the picker bar and what gets substituted into panels. Same
   // Rules-of-Hooks reasoning as the URL mirror — declared before any
   // conditional returns.
+  // v0.9.759 — düzenleme modunda değişken tanımları düzenlenebilir;
+  // null = dokunulmadı (doc'unki geçerli). Save effVariables'ı yazar.
+  const [varDefs, setVarDefs] = useState<DashboardVariable[] | null>(null);
   const variables: DashboardVariable[] = useMemo(() => {
     const raw = doc?.variables;
     if (!raw) return [];
@@ -106,6 +110,7 @@ function Inner() {
       return Array.isArray(parsed) ? parsed : [];
     } catch { return []; }
   }, [doc?.variables]);
+  const effVariables = varDefs ?? variables;
 
   // Bundled panel data — v0.5.81 perf nudge. Instead of every
   // metric / spanmetric panel firing its own /api/{metrics,
@@ -236,8 +241,12 @@ function Inner() {
     try {
       const updated = await api.updateDashboard(id, {
         name: draft.name, description: draft.description, panels: draft.panels,
+        // v0.9.759 — değişken tanımları da kaydedilir (backend merge
+        // semantiği: alan yoksa korunur, açık boş liste boşaltır).
+        variables: effVariables,
       });
       setDoc({ ...updated, panels: normalizePanels(updated.panels) });
+      setVarDefs(null);
       setEditing(false);
     } finally {
       setBusy(false);
@@ -245,6 +254,7 @@ function Inner() {
   };
   const cancel = () => {
     setDraft({ ...doc, panels: normalizePanels(doc.panels) });
+    setVarDefs(null); // v0.9.759 — düzenlenen değişkenler de geri alınır
     setEditing(false);
     setEditingPanel(null);
   };
@@ -261,7 +271,7 @@ function Inner() {
   // side download with no backend round-trip.
   const exportDashboard = () => {
     if (!draft) return;
-    const json = serializeDashboard({ ...draft, panels, variables });
+    const json = serializeDashboard({ ...draft, panels, variables: effVariables });
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -311,13 +321,16 @@ function Inner() {
           )}
         </div>
 
+        {editing && (
+          <VariableEditor value={effVariables} onChange={setVarDefs} />
+        )}
         {/* Grafana-style variables bar — only renders when the
             dashboard declares variables. Each variable's selection
             persists in the URL as ?<name>=<value> and the renderer
             substitutes ${name} into panel DSLs / service / groupBy. */}
-        {!editing && variables.length > 0 && (
+        {!editing && effVariables.length > 0 && (
           <VariablesBar
-            variables={variables}
+            variables={effVariables}
             values={varValues}
             onChange={(k, v) => setVarValues(prev => ({ ...prev, [k]: v }))}
           />

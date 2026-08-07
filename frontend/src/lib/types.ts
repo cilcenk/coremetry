@@ -2746,7 +2746,9 @@ export interface Panel {
 export interface DashboardVariable {
   name: string;          // e.g. "service" — used as ${service} in panels
   label?: string;        // display label (default: name)
-  type: 'service' | 'custom';
+  // v0.9.759 — 'database': /api/databases kataloğundan (system/instance/
+  // dbName) ad seçici; DB sayısı küçük küme (≤~10) → düz select ev kuralı.
+  type: 'service' | 'database' | 'custom';
   options?: string[];    // custom-type only
   defaultValue?: string; // empty → "all" / no override
 }

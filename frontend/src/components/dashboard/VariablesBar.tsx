@@ -1,4 +1,34 @@
 import { ServicePicker } from '../ServicePicker';
+import { useQuery } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+
+// v0.9.759 — database değişkeni: /api/databases kataloğundan ad listesi
+// (dbName ?? instance; tekilleştirilmiş). DB sayısı küçük küme → düz
+// select (ev kuralı: ≤~10 sabit küme picker istemez). Son 24h penceresi
+// katalog için yeterli; 60s staleTime sunucu cache'iyle uyumlu.
+function useDbNames(): string[] {
+  const q = useQuery({
+    queryKey: ['dash-var-db-names'],
+    queryFn: () => {
+      const to = Date.now() * 1e6;
+      return api.databases(to - 24 * 3600 * 1e9, to);
+    },
+    staleTime: 60_000,
+  });
+  const names = new Set<string>();
+  for (const r of q.data ?? []) names.add(r.dbName || r.instance);
+  return [...names].sort();
+}
+
+function DatabaseSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const names = useDbNames();
+  return (
+    <select value={value} onChange={e => onChange(e.target.value)} style={{ minWidth: 160 }}>
+      <option value="">(all)</option>
+      {names.map(n => <option key={n} value={n}>{n}</option>)}
+    </select>
+  );
+}
 import { Button } from '@/components/ui';
 import type { DashboardVariable } from '@/lib/types';
 
@@ -35,6 +65,11 @@ export function VariablesBar({ variables, values, onChange }: {
               onChange={x => onChange(v.name, x)}
               placeholder="(all)"
               width={220}
+            />
+          ) : v.type === 'database' ? (
+            <DatabaseSelect
+              value={values[v.name] ?? ''}
+              onChange={x => onChange(v.name, x)}
             />
           ) : (
             <select

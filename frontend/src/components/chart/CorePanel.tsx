@@ -139,13 +139,18 @@ export interface CorePanelProps {
   hiddenNames?: Set<string>;
   hideLegend?: boolean;
   onCursorTime?: (timeSec: number | null) => void;
+  // v0.9.764 (mockup dilim 3) — frame-hizalı KESİKLİ çizim işareti:
+  // önceki-dönem hayaleti (Grafana timeShift görünümü). true olan
+  // frame 5-4 kesikli, dolgusuz çizilir; rol rengi aynen (muted
+  // öneriliyor ama çağıranın kararı).
+  dashed?: boolean[];
 }
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
   defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
-  hiddenNames, hideLegend, onCursorTime,
+  hiddenNames, hideLegend, onCursorTime, dashed,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -292,8 +297,9 @@ export function CorePanel({
         // görünümü: çizgi renginden türeyen hafif opaklık-degradeli alan
         // dolgusu (fillOpacity 12, Opacity gradyanı). Tema-canlı: renk
         // rebuild'de çözülür (themeTick dep'i zaten var).
-        fillOpacity: 12,
+        fillOpacity: dashed?.[i] ? 0 : 12,
         gradientMode: GraphGradientMode.Opacity,
+        lineStyle: dashed?.[i] ? { fill: 'dash' as const, dash: [5, 4] } : undefined,
         // show BURADA SABİT true: görünürlük setSeries ile uygulanıyor
         // (aşağıdaki effect). Config'e gömmek her legend tıkını full
         // rebuild yapardı — uPlot'un ucuz toggle'ı varken.

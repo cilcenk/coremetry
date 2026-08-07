@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowDownToLine } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useServicesMetadata } from '@/lib/queries';
 import { fmtFixed, tsLong } from '@/lib/utils';
 import { Spinner } from '@/components/Spinner';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
@@ -122,6 +123,26 @@ function DeployBox({ version, ageSeconds }: { version: string; ageSeconds: numbe
 // occTimes/occSeries are memoized so a Copy/state re-render doesn't tear
 // down the uPlot (v0.5.184 unstable-input class), and the detail bar keeps
 // ShareButton + Esc-back as the affordances for the kept shareable link.
+
+// v0.9.740 (operatör) — ug/sy ekip rozetleri: service_metadata
+// katalogundan (60s cache'li ortak sorgu; sayfayla aynı queryKey,
+// RQ tekilleştirir — ek istek yok). Boşsa rozet çizilmez.
+function useServiceTeams(service: string): { ug?: string; sy?: string } {
+  const catalogQ = useServicesMetadata();
+  const m = catalogQ.data?.[service];
+  return { ug: m?.ownerTeam || undefined, sy: m?.sreTeam || undefined };
+}
+
+function TeamChips({ service }: { service: string }) {
+  const { ug, sy } = useServiceTeams(service);
+  if (!ug && !sy) return null;
+  return (
+    <>
+      {ug && <span className="chip"><span className="k">ug-team</span><b className="mono">{ug}</b></span>}
+      {sy && <span className="chip"><span className="k">sy-team</span><b className="mono">{sy}</b></span>}
+    </>
+  );
+}
 
 export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
   group: ExceptionGroup;
@@ -300,7 +321,13 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
 
       {/* Meta chips */}
       <div className="meta-row" style={{ marginBottom: 18 }}>
-        <span className="chip"><span className="k">service</span><b className="mono">{group.service}</b></span>
+        {/* v0.9.740 (operatör): servis adı TIKLANABİLİR + ug/sy rozetleri. */}
+        <Link to={`/service?name=${encodeURIComponent(group.service)}`}
+          className="chip" style={{ textDecoration: 'none' }}
+          title="Servis sayfasını aç">
+          <span className="k">service</span><b className="mono" style={{ color: 'var(--accent2)' }}>{group.service}</b>
+        </Link>
+        <TeamChips service={group.service} />
         <span className="chip"><span className="k">first seen</span><b className="mono">{tsLong(group.firstSeen)}</b></span>
         <span className="chip"><span className="k">last seen</span><b className="mono">{tsLong(group.lastSeen)}</b></span>
       </div>
@@ -569,6 +596,10 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 style={{ textDecoration: 'none', color: 'var(--accent2)' }}>
                 <span className="dot" /> <span className="mono">{problem.service}</span>
               </Link>
+              {/* v0.9.740 (operatör): ug/sy ekip rozetleri problem
+                  detayında da — katalogdan; Problem.ownerTeam alanı
+                  boş kalabildiği için tek kaynak katalog. */}
+              <TeamChips service={problem.service} />
               {/* v0.9.401 (operator-reported) — runtime pod problemleri artık
                   gerçek servis adı taşıyor; pod kimliği deterministik ID'nin
                   son segmentinde (runtime:<check>:<svc>:<pod> — evaluator

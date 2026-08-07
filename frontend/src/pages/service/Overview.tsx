@@ -28,7 +28,7 @@ const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 import { metricLatencyComparable, metricLatencyUnitLabel } from './metricLatencyUnit';
 import { EnvAmbiguousNote } from './EnvAmbiguousNote';
-import { buildRootOpLines, buildRootOpItems } from './charts/rootOpSeries';
+import { buildRootOpLines } from './charts/rootOpSeries';
 import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
 import { TopEndpointsCard } from './TopEndpointsCard';
@@ -336,8 +336,6 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const opsQ = useRootOpLatency(service, from, to, opsStep, splitByOp);
   // Saf projeksiyon: alan bazlı ilk 5, union zaman ekseni, "+N daha" notu.
   const opsView = useMemo(() => buildRootOpLines(opsQ.data), [opsQ.data]);
-  // v0.9.728 — v2 projeksiyonu (CorePanelMulti): hizalama/renk CorePanel'de.
-  const opsItems = useMemo(() => buildRootOpItems(opsQ.data), [opsQ.data]);
   const opsStatus: 'loading' | 'error' | 'ready' =
     opsQ.isLoading ? 'loading' : opsQ.isError ? 'error' : 'ready';
   // Fallback (usingAllSpans) durumunda kırılım YAPISAL olarak boş: kırılım
@@ -577,52 +575,31 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               örneği YENİDEN KULLANIRDI ve uPlot örneği bir görünümün seri
               kümesiyle kurulmuşken diğerinin verisini alırdı (lejant
               görünürlüğü afterBuild'de okunuyor). Ayrı key = temiz kurulum. */}
-          {splitByOp ? (
-            chartsV2() ? (
-              <Suspense key="rt-ops-v2" fallback={<Spinner />}>
-                {/* v0.9.728 — dalga-2 son Overview dilimi: operasyon
-                    kırılımı. items tek-serili (op başına bir frame);
-                    renk CorePanel'in deterministik paletinden. */}
-                <CorePanelMultiLazy
-                  title={scopedChartTitle('Response time', usingAllSpans)}
-                  storageKey="ov-response-time-ops-v2" height={200} unit="ms" xRange={xRange}
-                  items={opsItems.items}
-                  note={usingAllSpans
-                    ? 'Bu serviste giriş span’i (server/consumer) yok — operasyon kırılımı boş.'
-                    : opsItems.note}
-                  headerExtra={rtSegment}
-                  regions={deployRegions}
-                  onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
-                />
-              </Suspense>
-            ) : (
+          {chartsV2() ? (
+            /* v0.9.736 (operatör düzeni): v2'de yalnız METRİK response time —
+               span rt-agg/rt-ops panelleri v2'den kalktı ("sadece metric
+               olan chart kalsın"); v1 yolu aynen duruyor (tek adım geri
+               dönüş). Alt karttaki metrik paneli BURAYA taşındı. */
+            <Suspense key="rt-metric-v2-main" fallback={<Spinner />}>
+              <CorePanelMultiLazy
+                title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
+                storageKey="ov-response-time-metric-v2" height={200}
+                unit={metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) ? 'ms' : undefined}
+                xRange={xRange}
+                items={metricLatLines.map(l => ({
+                  name: l.label ?? '', role: 'data' as const, series: l.series,
+                }))}
+                note={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}`}
+                regions={deployRegions}
+                onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
+              />
+            </Suspense>
+          ) : splitByOp ? (
             <ChartCard key="rt-ops" title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={opsStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
               headerAside={rtSegment} note={opsNote}
               legendStorageKey="ov-response-time-ops" statsDefaultCollapsed
               lines={opsView.lines} />
-            )
           ) : (
-            chartsV2() ? (
-              <Suspense key="rt-agg-v2" fallback={<Spinner />}>
-                {/* v0.9.720 — dalga-2: agregat Response time. Ops kırılım
-                    görünümü (rt-ops) ESKİ yolda kaldı — ayrı dilim.
-                    defaultHidden paritesi: P99 kapalı açılır. */}
-                <CorePanelMultiLazy
-                  title={scopedChartTitle('Response time', usingAllSpans)}
-                  storageKey="ov-response-time-v2" height={200} unit="ms" xRange={xRange}
-                  headerExtra={rtSegment}
-                  items={[
-                    { name: 'avg', role: 'data' as const, series: lat?.avg ?? [] },
-                    { name: 'P50', role: 'data' as const, series: lat?.p50 ?? [] },
-                    { name: 'P95', role: 'data' as const, series: lat?.p95 ?? [] },
-                    { name: 'P99', role: 'data' as const, series: lat?.p99 ?? [] },
-                  ]}
-                  defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
-                  regions={deployRegions}
-                  onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
-                />
-              </Suspense>
-            ) : (
             <ChartCard key="rt-agg" title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
               headerAside={rtSegment}
               legendStorageKey="ov-response-time" statsDefaultCollapsed
@@ -633,37 +610,15 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
               { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
             ]} />
-            )
           )}
           {/* v0.9.676 — metrik türevli gecikme KENDİ kartında, span
               türevlinin ALTINDA (throughput'takiyle aynı düzen).
               Yüzdelikler histogram KOVA SINIRLARINDAN; bir sayaçta
               gecikme diye bir şey olmadığı için yalnız histogramda
               çiziliyor. */}
-          {metricLatLines.length > 0 && (
+          {!chartsV2() && metricLatLines.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              {chartsV2() ? (
-                <Suspense key="rt-metric-v2" fallback={<Spinner />}>
-                  {/* v0.9.729 — dalga-2 son kalem: metrik-türevli gecikme.
-                      Birim yalnız TANINDIĞINDA 'ms' (Grafana display
-                      processor ölçekler); tanınmadıysa birimsiz çizilir,
-                      alttaki uyarı notu (mevcut) durumu söyler. Kaynak
-                      bilgisi (metrik adı + eşleşme) note'ta — CorePanel'de
-                      titleTip yok, bilgi kaybolmasın. */}
-                  <CorePanelMultiLazy
-                    title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
-                    storageKey="ov-response-time-metric-v2" height={200}
-                    unit={metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) ? 'ms' : undefined}
-                    xRange={xRange}
-                    items={metricLatLines.map(l => ({
-                      name: l.label ?? '', role: 'data' as const, series: l.series,
-                    }))}
-                    note={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}`}
-                    regions={deployRegions}
-                    onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
-                  />
-                </Suspense>
-              ) : (
+              {(
               <ChartCard
                 title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
                 titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}${metricTputQ.data?.latencyUnitKnown === false ? ' · BİRİM TANINMADI, ölçeklenmedi' : ''}`}
@@ -694,16 +649,25 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               yeşil/kırmızı). Bilinen fark: ▼ deploy işareti v2'de henüz yok
               (regions eşlemesi ayrı dilim); eski yol aynen duruyor. */}
           {chartsV2() ? (
-            <Suspense fallback={<Spinner />}>
+            /* v0.9.736 (operatör düzeni): orta slot artık METRİK throughput
+               (route kırılımı) — alt karttan buraya taşındı. Span OK/Errors
+               paneli 3. slota ("Throughput / Failure rate") geçti. */
+            <Suspense key="tput-metric-v2-main" fallback={<Spinner />}>
               <CorePanelMultiLazy
-                title={scopedChartTitle('Throughput', usingAllSpans)}
-                storageKey="ov-throughput-v2" height={200} unit="reqps" xRange={xRange}
-                items={[
-                  { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
-                  { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },
-                ]}
+                title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
+                storageKey="ov-throughput-metric-v2"
+                height={200} xRange={xRange}
+                unit="reqps"
+                items={(metricTputQ.data?.series ?? []).map((s0) => ({
+                  series: [s0],
+                  name: s0.groupKey?.length ? s0.groupKey.join(' · ')
+                    : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
+                  role: 'data' as const,
+                }))}
                 regions={deployRegions}
-                onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
+                onZoom={onZoom} onZoomReset={onZoomReset}
+                syncKey={chartSync}
+                queryText={`metric=${metricTputQ.data?.metric ?? '?'} · instrument=${metricTputQ.data?.instrument ?? '?'} · eşleşme=${metricTputQ.data?.matchedBy ?? '?'} · mdp=${redMdp}`}
               />
             </Suspense>
           ) : (
@@ -721,7 +685,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               farklı ölçüm yöntemi üst üste binince hangisinin ne olduğu
               okunmuyordu. Ayrı kart ikisini kıyaslanabilir tutuyor:
               aynı pencere, aynı birim, ayrı eksen. */}
-          {metricTputLine && (
+          {!chartsV2() && metricTputLine && (
             <div style={{ marginTop: 10 }}>
               {/* v0.9.708 — FAZ 3 PİLOTU. chartsV2 bayrağıyla bu TEK panel
                   CorePanel'e (@grafana/ui hattı) geçiyor; eski ChartCard
@@ -730,28 +694,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                   Pilot bu panel çünkü zincirin en taze ucu: px bütçesi
                   (v0.9.706) + DataFrame köprüsü aynı veriyle burada
                   buluşuyor. */}
-              {chartsV2() ? (
-                <Suspense fallback={<Spinner />}>
-                  {/* v0.9.718 — route kırılımı: her seri kendi groupKey'iyle
-                      (http.route) gelir; CorePanelMulti ad+rol hizalar.
-                      Rol 'data': route'lar veri serisi, semantik değil. */}
-                  <CorePanelMultiLazy
-                    title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
-                    storageKey="ov-throughput-metric-v2"
-                    height={200} xRange={xRange}
-                    unit="reqps"
-                    items={(metricTputQ.data?.series ?? []).map((s0, i) => ({
-                      series: [s0],
-                      name: s0.groupKey?.length ? s0.groupKey.join(' · ')
-                        : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
-                      role: 'data' as const,
-                    }))}
-                    onZoom={onZoom} onZoomReset={onZoomReset}
-                    syncKey={chartSync}
-                    queryText={`metric=${metricTputQ.data?.metric ?? '?'} · instrument=${metricTputQ.data?.instrument ?? '?'} · eşleşme=${metricTputQ.data?.matchedBy ?? '?'} · mdp=${redMdp}`}
-                  />
-                </Suspense>
-              ) : (
+              {(
                 <ChartCard
                   title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
                   titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · instrument ${metricTputQ.data?.instrument ?? '?'} · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}. Span türevli throughput'tan BAĞIMSIZ bir ölçüm — ayrışıyorlarsa bu başlı başına bir bulgu.`}
@@ -788,12 +731,20 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         </MetricPanel>
         <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
           {chartsV2() ? (
-            <Suspense fallback={<Spinner />}>
+            /* v0.9.736 (operatör düzeni): 3. slot BİRLEŞİK panel — span
+               türevli OK (yeşil) + Errors (kırmızı), req/s. Failure %
+               paneli v2'den kalktı (bilgi Errors serisi + KPI'da; % SLO
+               eşiği % eksenine aitti, req/s'e taşınamaz — v1'de duruyor).
+               Tek eksen kuralı: rate ile % aynı eksene KONMAZ. */
+            <Suspense key="tput-failure-v2" fallback={<Spinner />}>
               <CorePanelMultiLazy
-                title={scopedChartTitle('Failure rate', usingAllSpans)}
-                storageKey="ov-failure-rate-v2" height={200} unit="percent" xRange={xRange}
-                items={[{ name: 'errors', role: 'error', series: lat?.error_rate ?? [] }]}
-                thresholds={failureThresholds} regions={deployRegions}
+                title={scopedChartTitle('Throughput / Failure rate', usingAllSpans)}
+                storageKey="ov-throughput-failure-v2" height={200} unit="reqps" xRange={xRange}
+                items={[
+                  { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
+                  { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },
+                ]}
+                regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>

@@ -63,10 +63,14 @@ export function buildGroupRows(panels: PanelData[]): GroupRow[] {
   return rows;
 }
 
-export function GroupTable({ panels, hiddenKeys, onToggleHidden, onFocus }: {
+export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFocus }: {
   panels: PanelData[];
   hiddenKeys: Set<string>;
   onToggleHidden: (rowKey: string) => void;
+  // v0.9.757 (operatör: "bir tanesine bastığımda sadece o gözüksün") —
+  // düz tık İZOLE eder (CorePanel lejantı semantiği); Ctrl/Cmd+tık eski
+  // tekil gizle/göster. İzole olanı yeniden tıklamak hepsini geri açar.
+  onIsolate: (rowKey: string) => void;
   onFocus: (rowKey: string | null) => void;
 }) {
   const rows = useMemo(() => buildGroupRows(panels), [panels]);
@@ -115,8 +119,8 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onFocus }: {
             return (
               <tr key={r.rowKey}
                 onMouseEnter={() => onFocus(hidden ? null : r.rowKey)}
-                onClick={() => onToggleHidden(r.rowKey)}
-                title="Tıkla: seriyi gizle/göster · üzerine gel: panelde vurgula"
+                onClick={(e) => (e.ctrlKey || e.metaKey) ? onToggleHidden(r.rowKey) : onIsolate(r.rowKey)}
+                title="Tıkla: yalnız bu seri · Ctrl/Cmd+tık: gizle-göster · üzerine gel: panelde vurgula"
                 style={{ cursor: 'pointer', opacity: hidden ? 0.45 : 1,
                          contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                 <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>

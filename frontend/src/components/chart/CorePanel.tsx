@@ -130,12 +130,21 @@ export interface CorePanelProps {
   // panel tık-eylemi (onExpandClick) ancak isabet yoksa çalışır.
   exemplars?: (ChartExemplar[] | undefined)[];
   onExemplarClick?: (traceId: string) => void;
+  // v0.9.745 (Explore v2) — KONTROLLÜ görünürlük modu: Explore'da lejant
+  // GroupTable'dadır; hiddenNames verildiğinde iç lejant durumu değil BU
+  // küme görünürlüğün kaynağıdır (ada göre). hideLegend iç tabloyu
+  // gizler. onCursorTime crosshair zamanını (unix sn; null=ayrıldı)
+  // yayınlar — cursorBus buradan beslenir.
+  hiddenNames?: Set<string>;
+  hideLegend?: boolean;
+  onCursorTime?: (timeSec: number | null) => void;
 }
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
   defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
+  hiddenNames, hideLegend, onCursorTime,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -164,6 +173,8 @@ export function CorePanel({
   exemplarsRef.current = exemplars;
   const exemplarClickRef = useRef(onExemplarClick);
   exemplarClickRef.current = onExemplarClick;
+  const onCursorTimeRef = useRef(onCursorTime);
+  onCursorTimeRef.current = onCursorTime;
   const [showQuery, setShowQuery] = useState(false);
   const [logLocal, setLogLocal] = useState(!!logScale);
   const effLog = logScaleToggle ? logLocal : !!logScale;
@@ -207,7 +218,7 @@ export function CorePanel({
 
   // Görünürlük: tıkla = izole, Ctrl/Cmd = çoklu seçim (spec). Sorgu
   // TETİKLEMEZ — yalnız çizim gizlenir.
-  const [vis, setVis] = useState<boolean[]>([]);
+  const [visLocal, setVis] = useState<boolean[]>([]);
   useEffect(() => {
     const v = resetSeriesVisibility(aligned.names.length);
     // v0.9.720 — defaultHidden tohumu (yalnız seri kümesi değişince).
@@ -217,6 +228,13 @@ export function CorePanel({
     setVis(v);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aligned.names.join('|')]);
+  // v0.9.745 — kontrollü mod: hiddenNames verildiyse görünürlüğün kaynağı
+  // ODUR (iç lejant durumu değil); ada göre türetilir.
+  const vis = useMemo(
+    () => hiddenNames
+      ? aligned.names.map(n => !hiddenNames.has(n))
+      : visLocal,
+    [hiddenNames, visLocal, aligned.names.join('|')]);
 
   // Görünen aralık (uPlot x scale) — legend istatistikleri bundan.
   const [xWin, setXWin] = useState<[number, number] | null>(null);
@@ -329,6 +347,17 @@ export function CorePanel({
     // DataFrame display processor'dan — birim çevirisi köprü sözleşmesi
     // gereği elle yazılmaz.
     b.addHook('setCursor', (u) => {
+      // v0.9.745 — crosshair zaman kanalı (cursorBus): tooltip'ten
+      // bağımsız, ref üzerinden canlı.
+      const idx0 = u.cursor.idx;
+      if (onCursorTimeRef.current) {
+        if (idx0 == null || u.cursor.left == null || u.cursor.left < 0) {
+          onCursorTimeRef.current(null);
+        } else {
+          const t = (u.data[0] as number[])[idx0];
+          if (t != null) onCursorTimeRef.current(t / 1000);
+        }
+      }
       const tt = ttRef.current;
       if (!tt) return;
       const idx = u.cursor.idx;
@@ -555,7 +584,7 @@ export function CorePanel({
         <div style={{ fontSize: 10, color: 'var(--text3)' }}>{note}</div>
       )}
 
-      {data.state === 'ready' && aligned.names.length > 0 && (
+      {data.state === 'ready' && aligned.names.length > 0 && !hideLegend && (
         <div style={{ fontSize: 11 }}>
           <button className="sec" style={{ fontSize: 10, padding: '1px 6px' }}
             onClick={toggleLegend}>

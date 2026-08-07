@@ -1305,16 +1305,28 @@ func newNamespaceResolver(ch *chstore.Store) func(context.Context, string) strin
 // check IsLeader and skip when not leader. Other pods sit idle
 // instead of executing redundant work.
 // nextExceptionRefreshSince runs one errors-inbox refresh pass and
-// returns the window for the NEXT pass. The window ALWAYS advances to a
-// 5-min trailing slice — after success OR failure — which is the
-// v0.9.188 contract: a persistently-failing 24h first-tick (prod OOM /
-// CH code 241) must NOT wedge the loop retrying the same window forever
-// (the inbox would then never reach the cheap 5-min steady state, and
-// no new exception ever lands). Extracted from the loop so main_test.go
-// pins the advance-regardless-of-error behaviour.
-func nextExceptionRefreshSince(refresh func(time.Time) (int, error), since, now time.Time) (nextSince time.Time, n int, err error) {
-	n, err = refresh(since)
-	return now.Add(-5 * time.Minute), n, err
+// returns the window for the NEXT pass.
+//
+// v0.9.769 — BAŞARIDA pencere CHECKPOINT'lenir: yeni `since`, biten
+// geçişin taradığı üst sınır (`until`). Pencereler böyle örtüşmez ve
+// mergeExceptionGroup gelen sayıyı ARTIM olarak toplayabilir. Eski
+// davranış her geçişte now-5m'e atlıyordu; ardışık pencereler ~5dk
+// örtüşüyor, çift sayımı önlemek için merge max() alıyor, dolayısıyla
+// artımlar yutuluyordu — operatör ekranında sayı 191'de donarken
+// lastSeen ilerliyordu.
+//
+// BAŞARISIZLIKTA davranış AYNEN v0.9.188 sözleşmesi: pencere yine de
+// 5-dakikalık trailing dilime ilerler. Kalıcı olarak patlayan bir 24h
+// ilk-tick (prod OOM / CH code 241) loop'u aynı pencerede sonsuza
+// kilitlememeli (yoksa inbox ucuz 5dk rejimine hiç geçemez ve yeni
+// hiçbir exception görünmez). Döngüden ayrıştırıldı ki main_test.go
+// her iki dalı da pinleyebilsin.
+func nextExceptionRefreshSince(refresh func(time.Time) (int, time.Time, error), since, now time.Time) (nextSince time.Time, n int, err error) {
+	n, until, err := refresh(since)
+	if err != nil {
+		return now.Add(-5 * time.Minute), n, err
+	}
+	return until, n, nil
 }
 
 func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache.Lock) {
@@ -1323,10 +1335,21 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 	leader := cache.NewLeaderHolder(lock, lockKey, 90*time.Second)
 	leader.Start(ctx)
 
-	// First pass scans the last 24h so an existing install backfills.
-	// Subsequent ticks scan a 5-minute trailing window — generous overlap
-	// to catch ingest lag, harmless because UpsertExceptionGroup is idempotent.
+	// Boot tohumu (v0.9.769): kayıtlı en taze last_seen'den devam et.
+	// Sayaçlar artık toplandığı için (mergeExceptionGroup) her restart'ta
+	// 24 saati baştan taramak geçmişi İKİNCİ kez saymak demekti. Kayıtlı
+	// damgadan devam edince pod'un ayakta olmadığı aralık tam bir kez
+	// sayılır, öncesi hiç. Tablo boşsa (ilk kurulum) 24h backfill'e düşeriz.
+	// Sonraki tikler bir öncekinin `until`'ından başlar — pencereler
+	// örtüşmez.
 	since := time.Now().Add(-24 * time.Hour)
+	seedCtx, cancelSeed := context.WithTimeout(ctx, 5*time.Second)
+	if last, ok := store.MaxExceptionGroupLastSeen(seedCtx); ok && last.After(since) {
+		since = last
+		log.Printf("[errors-inbox] boot tohumu: kayıtlı last_seen %s",
+			last.UTC().Format(time.RFC3339))
+	}
+	cancelSeed()
 	// v0.6.24 — auto-resolve any open/acknowledged group whose last
 	// occurrence is older than this threshold (the "Resolved tab stays
 	// empty forever" fix). Window + rationale live next to exResolveGrace
@@ -1342,14 +1365,14 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 		if !leader.IsLeader() {
 			return
 		}
-		// v0.9.188 — pencere HER pass'te ilerler (nextExceptionRefreshSince
-		// helper'ında açıklandı): başarısız 24h ilk-tick loop'u aynı
-		// pencerede sonsuza kilitlemesin diye `since` sonuç ne olursa olsun
-		// 5dk trailing'e taşınır.
+		// Pencere yönetimi nextExceptionRefreshSince helper'ında:
+		// BAŞARIDA checkpoint (yeni since = biten geçişin until'ı, örtüşme
+		// yok — v0.9.769), BAŞARISIZLIKTA 5dk trailing'e ilerleme (v0.9.188
+		// kilitlenme koruması). Her iki dal da main_test.go'da pinli.
 		var n int
 		var err error
 		since, n, err = nextExceptionRefreshSince(
-			func(s time.Time) (int, error) { return store.RefreshExceptionGroups(ctx, s) },
+			func(s time.Time) (int, time.Time, error) { return store.RefreshExceptionGroups(ctx, s) },
 			since, time.Now())
 		if err != nil {
 			log.Printf("[errors-inbox] refresh: %v", err)

@@ -37,12 +37,35 @@ func TestMergeExceptionGroupCarriesOperatorState(t *testing.T) {
 	if got.State != ExStateIgnored {
 		t.Errorf("ignored durumu korunmamış: %q — susturma anlamını yitirir", got.State)
 	}
-	// Yarış koruması: taze tarama daha DÜŞÜK sayı gördüyse kayıtlı sayı kalır.
-	if got.Occurrences != 500 {
-		t.Errorf("occurrence geriye düşmüş: %d (500 olmalı)", got.Occurrences)
+	// v0.9.769 — gelen sayı ARTIMDIR, kayıtlının üstüne eklenir (eski max()
+	// semantiği örtüşen pencerelerin çift sayımına karşıydı; pencereler
+	// artık checkpoint'li, örtüşmüyor). 500 + 3 = 503.
+	if got.Occurrences != 503 {
+		t.Errorf("occurrence toplanmamış: %d (503 olmalı)", got.Occurrences)
 	}
 	if got.ResolvedAt == nil || *got.ResolvedAt != resolved {
 		t.Error("resolved_at ileri taşınmamış")
+	}
+}
+
+// v0.9.769 — operatör: SQLTimeoutException grubu 191'de DONUK, hatalar
+// akıyor (timeline Σ697), lastSeen ilerliyor. Kök: yenileme pencereleri
+// örtüşüyordu ve merge çift sayıma karşı max(mevcut, gelen) alıyordu;
+// dolayısıyla ilk büyük pencereden sonra hiçbir artım eklenmiyordu.
+// Pencereler checkpoint'lendi (nextExceptionRefreshSince), merge artık
+// TOPLUYOR. Bu pin, max() semantiğinin geri sızmasını yakalar: max()
+// altında sonuç 191, toplama altında 251.
+func TestMergeExceptionGroupAccumulatesOccurrences(t *testing.T) {
+	existing := &ExceptionGroup{
+		Fingerprint: "fp", State: ExStateAcknowledged, FirstSeen: 100, Occurrences: 191,
+	}
+	fresh := ExceptionGroup{Fingerprint: "fp", LastSeen: 900, Occurrences: 60}
+
+	got := mergeExceptionGroup(fresh, existing)
+
+	if got.Occurrences != 251 {
+		t.Errorf("occurrence %d — 251 olmalı (191 kayıtlı + 60 artım); "+
+			"191 görüyorsan max() semantiği geri gelmiş, sayaç yine donar", got.Occurrences)
 	}
 }
 

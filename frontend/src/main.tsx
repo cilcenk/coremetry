@@ -13,6 +13,23 @@ import './styles/globals.css';
 // ters kenar doğmaz.
 import 'uplot/dist/uPlot.min.css';
 
+// v0.9.753 (operatör: "752 sonrası Service Overview hataya düşüyor") —
+// deploy sonrası BAYAT CHUNK sınıfı: açık sekmenin eski index.html'i,
+// yeni deploy'un sildiği hash'li lazy chunk'ı ister → dynamic import
+// 404 → error boundary ("Failed to fetch dynamically imported module").
+// Vite bu durumda 'vite:preloadError' yayar; bir kez güvenli oto-yenile
+// (taze index → taze hash'ler). 30 sn'lik sessionStorage korkuluğu
+// gerçek bir ağ kesintisinde yenileme DÖNGÜSÜNÜ engeller — ikinci
+// hata error boundary'ye düşer (Reload page affordance'ı orada).
+window.addEventListener('vite:preloadError', (e) => {
+  const KEY = 'cm.reload.preloadError';
+  const last = Number(sessionStorage.getItem(KEY) || 0);
+  if (Date.now() - last < 30_000) return;
+  sessionStorage.setItem(KEY, String(Date.now()));
+  (e as Event).preventDefault();
+  window.location.reload();
+});
+
 // Defer AND gate the OpenTelemetry browser SDK off the critical path
 // (v0.7.84 deferred; gating added to shrink the cold path further).
 // The SDK + auto-instrumentations are ~26kB gzip (its own 'otel' chunk)

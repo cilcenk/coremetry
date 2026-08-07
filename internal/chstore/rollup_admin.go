@@ -51,6 +51,15 @@ var rollupMetricsTables = []string{
 	"rollup_metrics_1h",
 }
 
+// rollupRouteTables — 0008: route (endpoint) kırılımlı metrik zinciri.
+// 0003'ün kardeşi, halefi DEĞİL: ikisi yan yana yaşar ve okuma katmanı
+// sorgu şekline göre birini seçer (metric_rollup_route_read.go).
+var rollupRouteTables = []string{
+	"rollup_metrics_route_1m",
+	"rollup_metrics_route_5m",
+	"rollup_metrics_route_1h",
+}
+
 // rollupNarrowMVs / rollupMetricsMVs — geri alma hedefleri. YALNIZ
 // MV'ler: MV'yi düşürmek yazımı keser (ingest kurtarma), tablolar ve
 // içlerindeki veri KALIR. Tabloyu da düşürmek geri alınamaz veri kaybı
@@ -72,13 +81,30 @@ var rollupMetricsMVs = []string{
 	"mv_rollup_metrics_1h",
 }
 
+var rollupRouteMVs = []string{
+	"mv_rollup_metrics_route_1m",
+	"mv_rollup_metrics_route_5m",
+	"mv_rollup_metrics_route_1h",
+}
+
 // rollupRequiredCols — preflight'ın DESCRIBE ile aradığı kolonlar.
 // Kaynak: 0001/0003'ün MV SELECT'lerinde GEÇEN kolonlar. Eksik biri
 // varsa DDL uygulama ANINDA patlar; preflight bunu ÖNCEDEN söyler ki
 // operatör yarım uygulanmış bir zincirle kalmasın.
+//
+// v0.9.777 — metric_points_local listesi 0008'in MV SELECT'ini de
+// kapsayacak şekilde genişledi: attr_keys/attr_values (route_raw),
+// res_keys/res_values (service_key), sum_value + count (obs-ağırlıklı
+// avg — v0.9.776 düzeltmesinin şeması). Bu satırın varlık sebebi
+// yukarıdaki yorum: "preflight yeşil deyip apply'da patlamak YASAK".
 var rollupRequiredCols = map[string][]string{
-	"spans_local":         {"service_name", "kind", "status_code", "duration"},
-	"metric_points_local": {"metric", "service_name", "instrument", "unit", "value", "bucket_bounds", "bucket_counts"},
+	"spans_local": {"service_name", "kind", "status_code", "duration"},
+	"metric_points_local": {
+		"metric", "service_name", "instrument", "unit", "value",
+		"bucket_bounds", "bucket_counts",
+		"attr_keys", "attr_values", "res_keys", "res_values",
+		"sum_value", "count",
+	},
 }
 
 // ─────────────────────────── saf çekirdekler ───────────────────────────
@@ -145,7 +171,13 @@ func rollupRollbackStatements(cluster, target string) []string {
 		names = rollupNarrowMVs
 	case "metrics":
 		names = rollupMetricsMVs
+	case "route":
+		names = rollupRouteMVs
 	default: // "both"
+		// v0.9.777 — "both" 0001+0003 olarak KALIR, 0008'i KAPSAMAZ.
+		// Geriye uyum: bugüne kadar "Her ikisi"ni seçmiş bir operatörün
+		// geri-alma düğmesi, o operatörün hiç kurmadığı bir zinciri de
+		// düşürmeye çalışmamalı. 0008 ayrı bir satır ("route").
 		names = append(append([]string{}, rollupNarrowMVs...), rollupMetricsMVs...)
 	}
 	onCluster := ""
@@ -168,10 +200,12 @@ func rollupSources(target string) ([]string, error) {
 		return []string{"0001_rollup_narrow.sql"}, nil
 	case "metrics":
 		return []string{"0003_rollup_metrics.sql"}, nil
+	case "route":
+		return []string{"0008_rollup_metrics_route.sql"}, nil
 	case "both":
 		return []string{"0001_rollup_narrow.sql", "0003_rollup_metrics.sql"}, nil
 	}
-	return nil, fmt.Errorf("bilinmeyen hedef %q — narrow | metrics | both bekleniyor", target)
+	return nil, fmt.Errorf("bilinmeyen hedef %q — narrow | metrics | route | both bekleniyor", target)
 }
 
 // stmtHead — sonuç listesinde gösterilecek kısa ifade özeti. Tam DDL
@@ -210,6 +244,8 @@ type RollupPreflightResult struct {
 	// operatörün bunu ÖNCEDEN bilmesi gerekir.
 	NarrowInstalled  bool `json:"narrowInstalled"`
 	MetricsInstalled bool `json:"metricsInstalled"`
+	// RouteInstalled — 0008 (route kırılımlı metrik zinciri) tabanı var mı.
+	RouteInstalled bool `json:"routeInstalled"`
 
 	// MissingColumns — "tablo.kolon" biçiminde. Boş = tam.
 	MissingColumns []string `json:"missingColumns"`
@@ -225,7 +261,7 @@ type RollupPreflightResult struct {
 // RollupTableStatus — tek bir rollup tablosunun canlı durumu.
 type RollupTableStatus struct {
 	Table  string `json:"table"`
-	Family string `json:"family"` // "narrow" | "metrics"
+	Family string `json:"family"` // "narrow" | "metrics" | "route"
 	Exists bool   `json:"exists"`
 	Rows   uint64 `json:"rows"`
 	// MinTsMs — en eski satır (unix ms). 0 = tablo boş ya da okunamadı.
@@ -322,6 +358,7 @@ func (s *Store) RollupPreflight(ctx context.Context) (RollupPreflightResult, err
 	out.MetricPointsLocal = probe("metric_points_local")
 	out.NarrowInstalled = probe(rollupNarrowTables[0])
 	out.MetricsInstalled = probe(rollupMetricsTables[0])
+	out.RouteInstalled = probe(rollupRouteTables[0])
 
 	// ── kolonlar ── (yalnız var olan tablolar için; yoksa DESCRIBE patlar
 	// ve "eksik kolon" listesi anlamsız gürültüye döner)
@@ -369,7 +406,7 @@ func (s *Store) RollupPreflight(ctx context.Context) (RollupPreflightResult, err
 	default:
 		out.Detail = "Ön kontrol temiz. DDL'lerin tamamı IF NOT EXISTS — " +
 			"zaten kurulu bir zincir üzerinde tekrar koşmak güvenlidir."
-		if out.NarrowInstalled || out.MetricsInstalled {
+		if out.NarrowInstalled || out.MetricsInstalled || out.RouteInstalled {
 			out.Detail += " (Zincirin bir bölümü ZATEN kurulu.)"
 		}
 	}
@@ -466,6 +503,7 @@ func (s *Store) RollupStatus(ctx context.Context) (RollupStatusResult, error) {
 	}{
 		{"narrow", rollupNarrowTables},
 		{"metrics", rollupMetricsTables},
+		{"route", rollupRouteTables},
 	}
 	for _, fam := range fams {
 		for _, t := range fam.tables {

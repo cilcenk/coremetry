@@ -924,10 +924,14 @@ const ROLLUP_COLS: DataTableColumn<RollupTableStatus>[] = [
   { id: 'minTs',  label: 'En eski', sortValue: r => r.minTsMs, numeric: true, naturalDir: 'asc', width: 200 },
 ];
 
+// v0.9.777 — 'route' AYRI satır. 'both' bilerek 0001+0003 olarak kaldı:
+// "Her ikisi"ni seçmiş bir operatörün Geri Al'ı, hiç kurmadığı bir zinciri
+// düşürmeye kalkmamalı (geriye uyum).
 const TARGET_LABEL: Record<RollupTarget, string> = {
   both: 'Her ikisi (0001 + 0003)',
   narrow: 'Yalnız dar span zinciri (0001)',
   metrics: 'Yalnız metrik zinciri (0003)',
+  route: 'Yalnız route kırılımlı metrik zinciri (0008)',
 };
 
 function RollupWizardPanel() {
@@ -999,11 +1003,20 @@ function RollupWizardPanel() {
   const canApply = !!pre?.supported && !!cluster && !busy;
 
   return (
-    <Section title="Rollup katmanı (0001 + 0003)">
+    <Section title="Rollup katmanı (0001 + 0003 + 0008)">
       <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px', lineHeight: 1.55 }}>
-        Dar span rollup zinciri (10s→1m→5m→1h) ve metrik rollup zinciri (1m→5m→1h).
+        Dar span rollup zinciri (10s→1m→5m→1h), metrik rollup zinciri (1m→5m→1h) ve
+        route (endpoint) kırılımlı metrik zinciri (1m→5m→1h).
         Okuma katmanı zaten bu tabloları arıyor; yoksa ham yola düşüyor. Kurulum{' '}
         <strong>otomatik değildir</strong> — boot'ta asla koşmaz, tek tetikleyici bu buton.
+      </p>
+      {/* v0.9.777 — 0008 bir HIZ değil RETANSİYON katmanı; operatörün "zaten
+          hızlı, niye kurayım" diye atlamaması için gerekçe kartta yazılı. */}
+      <p style={{ fontSize: 12, color: 'var(--text2)', margin: '0 0 10px', lineHeight: 1.55 }}>
+        <strong>0008 neden ayrı:</strong> ham <code className="mono">metric_points</code> 7 gün
+        saklanıyor, yani "bu endpoint'in ortalaması geçen ay neydi" sorusu bugün
+        yavaş değil — <em>cevapsız</em>. Route zinciri aynı sayıyı 14 gün / 90 gün /
+        13 ay taşır. Kapsam avg · sum · min · max; yüzdelik taşımaz.
       </p>
 
       {/* ── 1. Durum ── */}
@@ -1076,6 +1089,8 @@ function RollupWizardPanel() {
                         ok={pre.narrowInstalled} neutral />
                 <PreRow label="rollup_metrics_1m zaten kurulu"
                         ok={pre.metricsInstalled} neutral />
+                <PreRow label="rollup_metrics_route_1m zaten kurulu"
+                        ok={pre.routeInstalled} neutral />
               </tbody>
             </table>
           </div>
@@ -1103,7 +1118,7 @@ function RollupWizardPanel() {
         <label style={{ display: 'grid', gap: 4, fontSize: 11, color: 'var(--text3)' }}>
           Hedef
           <select value={target} onChange={e => setTarget(e.target.value as RollupTarget)}>
-            {(['both', 'narrow', 'metrics'] as RollupTarget[]).map(t => (
+            {(['both', 'narrow', 'metrics', 'route'] as RollupTarget[]).map(t => (
               <option key={t} value={t}>{TARGET_LABEL[t]}</option>
             ))}
           </select>

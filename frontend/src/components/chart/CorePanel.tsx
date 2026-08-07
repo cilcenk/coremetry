@@ -119,12 +119,18 @@ export interface CorePanelProps {
   // Log ölçek kullanıcıya AÇILSIN mı (menüde toggle). logScale prop'u
   // başlangıç değeri; toggle panel-yerel state'e biner.
   logScaleToggle?: boolean;
+  // v0.9.737 (operatör: "tıklayınca büyük hali açılsın") — plot alanına
+  // TEK tık tam ekranı açar. Drag-zoom ve çift-tık (zoom reset) ile
+  // çatışmaz: 5px'ten fazla sürüklenen basış tık sayılmaz, tek tık
+  // 250ms çift-tık beklemesinden sonra işler. Menüdeki "Tam ekran"
+  // kalemi aynen duruyor (keşfedilebilirlik).
+  clickExpand?: boolean;
 }
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
-  defaultHidden, xRange, headerExtra, note,
+  defaultHidden, xRange, headerExtra, note, clickExpand,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -144,6 +150,9 @@ export function CorePanel({
   // taşıma yok, ESC ile çıkılır. Log toggle logScale prop'unu TOHUM alır.
   const [menuOpen, setMenuOpen] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  // v0.9.737 — tek-tık/tam-ekran ayrımı için basış konumu + bekleme.
+  const clickRef = useRef<{ x: number; y: number } | null>(null);
+  const clickTimerRef = useRef<number | null>(null);
   const [showQuery, setShowQuery] = useState(false);
   const [logLocal, setLogLocal] = useState(!!logScale);
   const effLog = logScaleToggle ? logLocal : !!logScale;
@@ -471,8 +480,20 @@ export function CorePanel({
         }}>{queryText}</pre>
       )}
 
-      <div ref={wrapRef} style={{ minHeight: height, position: 'relative' }}
-        onDoubleClick={onZoomReset}
+      <div ref={wrapRef} style={{ minHeight: height, position: 'relative', cursor: clickExpand && !fullscreen ? 'zoom-in' : undefined }}
+        onPointerDown={clickExpand ? (e) => { clickRef.current = { x: e.clientX, y: e.clientY }; } : undefined}
+        onClick={clickExpand && !fullscreen ? (e) => {
+          const d = clickRef.current;
+          // Drag-zoom basışı tık değildir (5px eşiği).
+          if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
+          if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+          clickTimerRef.current = window.setTimeout(() => setFullscreen(true), 250);
+        } : undefined}
+        onDoubleClick={(e) => {
+          if (clickTimerRef.current) { window.clearTimeout(clickTimerRef.current); clickTimerRef.current = null; }
+          onZoomReset?.();
+          void e;
+        }}
         onMouseLeave={() => { if (ttRef.current) ttRef.current.style.display = 'none'; }}>
         {/* v0.9.710 — tooltip overlay; .ov-tt sınıfları evdeki tooltip
             görseliyle birebir (OVC/TC/MLC aynı CSS'i kullanıyor). */}

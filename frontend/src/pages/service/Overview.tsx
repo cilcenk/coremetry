@@ -583,7 +583,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             <Suspense key="rt-metric-v2-main" fallback={<Spinner />}>
               <CorePanelMultiLazy
                 title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
-                storageKey="ov-response-time-metric-v2" height={200}
+                storageKey="ov-response-time-metric-v2" height={200} clickExpand
                 unit={metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) ? 'ms' : undefined}
                 xRange={xRange}
                 items={metricLatLines.map(l => ({
@@ -640,7 +640,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             </div>
           )}
         </MetricPanel>
-        <MetricPanel compact title="Throughput" metricQuery={mkThroughput('line')}>
+        <MetricPanel compact menuOnly title="Throughput" metricQuery={mkThroughput('line')}>
           {/* v0.9.253 — status ve seri artık ENTRY sorgusundan. Kart üstündeki
               KPI giriş span'lerini sayarken altındaki grafiğin tüm span'leri
               çizmesi, aynı kartta iki farklı servisi üst üste koymak olurdu. */}
@@ -656,7 +656,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               <CorePanelMultiLazy
                 title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
                 storageKey="ov-throughput-metric-v2"
-                height={200} xRange={xRange}
+                height={200} xRange={xRange} clickExpand
                 unit="reqps"
                 items={(metricTputQ.data?.series ?? []).map((s0) => ({
                   series: [s0],
@@ -729,7 +729,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             <MetricThroughputNote d={metricTputQ.data} />
           )}
         </MetricPanel>
-        <MetricPanel compact title="Failure rate" metricQuery={mkFailureRate('line')}>
+        <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('line')}>
           {chartsV2() ? (
             /* v0.9.736 (operatör düzeni): 3. slot BİRLEŞİK panel — span
                türevli OK (yeşil) + Errors (kırmızı), req/s. Failure %

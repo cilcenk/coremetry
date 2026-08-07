@@ -139,6 +139,13 @@ func (s *Store) queryHistogramQuantile(ctx context.Context, f MetricQueryFilter,
 		return s.queryHistogramPercentileGrouped(ctx, f, q)
 	}
 
+	// v0.9.751 — delta histogram + filtresiz servis-geneli okuma
+	// rollup'tan (0003 hist_counts); uygun değilse / tablolar yoksa /
+	// kapsam tutmuyorsa SESSİZCE ham yol (fail-open).
+	if ser, ok := s.tryRollupHistogramQuantile(ctx, f, q); ok {
+		return ser, nil
+	}
+
 	// Global: test'li QueryMetricHistogram'ı yeniden kullan; keyfi q'yu onun
 	// per-time-bucket accum'undan (hs.Counts) + bounds'undan hesapla
 	// (percentileFromBuckets — precomputed p50/p95/p99'a bağlı kalmadan).

@@ -76,6 +76,9 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// v0.9.712 — SAF telemetri: rollup_metrics_* (metric_points'in
 		// AggregatingMergeTree türevi) + coverage min(ts) probu. State yok.
 		"metric_rollup_read.go": true,
+		// v0.9.751 — histogram rollup okuyucusu: rollup_metrics_* telemetri
+		// SELECT'i, RoundRobin havuzu doğru adres.
+		"metric_rollup_hist_read.go": true,
 		// v0.9.580 — SAF telemetri: tek FROM'u spans. State tablosu
 		// okumuyor (aşağıdaki FROM testi de pinliyor).
 		"correlation_ids.go": true, // spans'ten örnek request_id/correlation_id'ler

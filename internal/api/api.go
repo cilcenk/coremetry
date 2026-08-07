@@ -1026,6 +1026,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.putRuntimeAlerts))
 	mux.HandleFunc("GET /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.getProblemEscalation))
 	mux.HandleFunc("PUT /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.putProblemEscalation))
+	// v0.9.775 — exception triyaj basamağının pencereleri (P1 tazeliği /
+	// P2 aynı-gün / bayat auto-resolve). Ayrı anahtar: problem
+	// escalation her Problem'e, bu yalnız exception gruplarına uygulanır.
+	mux.HandleFunc("GET /api/settings/exception-triage", auth.RequireRole(auth.RoleAdmin, s.getExceptionTriage))
+	mux.HandleFunc("PUT /api/settings/exception-triage", auth.RequireRole(auth.RoleAdmin, s.putExceptionTriage))
 	mux.HandleFunc("GET /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.getAISettings))
 	mux.HandleFunc("PUT /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.putAISettings))
 	// External Tempo backend — admin-only because the token grants

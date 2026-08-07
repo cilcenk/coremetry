@@ -121,7 +121,9 @@ func TestRegressedDoesNotShadowBurst(t *testing.T) {
 }
 
 // Bayat bir patlama P1 OLMAMALI: bir hafta önce patlayıp susmuş grup
-// oncall'ı şimdi ilgilendirmiyor. Tazelik kapısı (son 1 saat) duruyor.
+// oncall'ı şimdi ilgilendirmiyor. Tazelik kapısı duruyor — v0.9.775'te
+// varsayılanı 4 saat, ama bir kapı olmaya devam ediyor. Bu vaka (6 sa)
+// bilerek pencerenin dışında seçildi.
 func TestStaleBurstIsNotP1(t *testing.T) {
 	now := time.Now()
 	last := now.Add(-6 * time.Hour)

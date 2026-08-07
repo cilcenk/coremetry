@@ -25,7 +25,8 @@ import type {
   Role, LDAPConfig, LDAPDirectoryUser,
   FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
-  OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings } from './types';
+  OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
+  ExceptionTriageConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
@@ -882,6 +883,16 @@ export const api = {
     enabled: boolean; infoToWarningSec: number; warningToCriticalSec: number;
   }) =>
     request<typeof c>(`/api/settings/problem-escalation`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
+  // v0.9.775 — exception triyaj pencereleri. problem-escalation'dan
+  // ayrı anahtar: o HER Problem'e uygulanır, bu yalnız exception
+  // gruplarının P1/P2/P3 basamağına.
+  getExceptionTriage: () =>
+    get<ExceptionTriageConfig>(`/api/settings/exception-triage`),
+  putExceptionTriage: (c: ExceptionTriageConfig) =>
+    request<ExceptionTriageConfig>(`/api/settings/exception-triage`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
     }),

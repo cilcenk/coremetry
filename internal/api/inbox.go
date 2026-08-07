@@ -1538,10 +1538,27 @@ func inboxSinceDuration(v string) time.Duration {
 	return 0
 }
 
+// exceptionPriority — satır başına çağrılan sarmalayıcı. Pencereler
+// paket-global atomik config'ten okunur (exception_triage.go); burada CH
+// okuması YOK, aksi hâlde 200 satırlık bir inbox listesi 200 ayar
+// sorgusu demek olurdu.
 func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
-	age := time.Now().UnixNano() - g.LastSeen
+	return exceptionPriorityAt(g, currentExceptionTriage(), time.Now())
+}
+
+// exceptionPriorityAt — SAF çekirdek (config + "şimdi" dışarıdan).
+// Tablo testleri buradan geçer; sarmalayıcı yalnız zamanı ve ayarı
+// bağlar.
+func exceptionPriorityAt(g chstore.ExceptionGroup, cfg chstore.ExceptionTriageConfig, now time.Time) (string, string) {
+	age := now.UnixNano() - g.LastSeen
 	freshMin := time.Duration(age) <= 5*time.Minute
-	freshHour := time.Duration(age) <= time.Hour
+	// v0.9.775 — adı artık pencerenin DEĞERİNİ değil ANLAMINI söylüyor.
+	// "freshHour" idi ve pencere 4 saate çıkınca isim yalan olurdu; bu
+	// sabitin üç kez ötelendiği bir yerde ismin değere çakılı olması
+	// başlı başına bir tuzak.
+	p1Window := cfg.P1Window()
+	p2Window := cfg.P2Window()
+	fresh := time.Duration(age) <= p1Window
 
 	// v0.9.627 — operatör-bildirimli: tek servisten 12 dakikada 11.260
 	// olay P2 göründü.
@@ -1585,6 +1602,19 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 	//   taze (≤1sa) → P1 · aynı gün (≤24sa) → P2 · sonrası → P3
 	// Uçurum yerine basamak. Gerekçe her basamakta patlamanın gerçek
 	// büyüklüğünü taşıyor, "steady" gibi yanlış bir cümle değil.
+	//
+	// v0.9.775 — operatör-bildirimli, AYNI SINIF ÜÇÜNCÜ KEZ:
+	//
+	//	22:37'de biten 1.575'lik patlama, 00:22'de bakıldı (1sa 45dk)
+	//	→ P2 göründü, beklenen P1
+	//	191'lik SQLTimeout 1 saati aşınca P2 → P3 oldu, beklenen P2
+	//
+	// Basamak fikri doğruydu, basamağın YERİ dardı. İki değişiklik:
+	// (a) P1 tazeliği varsayılan olarak 4 saat — problem tarafındaki
+	// "critical open ≥4h → P1" ile simetrik, ve gece nöbetinde iki
+	// saat önce biten bir patlamayı hâlâ "şimdi" sayacak kadar geniş.
+	// (b) Pencereler artık system_settings'te (exception_triage):
+	// dördüncü vaka bir sürüm değil bir ayar değişikliği olsun.
 	burst := exceptionIsBurst(g.Occurrences, g.FirstSeen, g.LastSeen)
 	burstDesc := ""
 	if burst {
@@ -1592,10 +1622,10 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 			fmtThousands(g.Occurrences),
 			shortDur(time.Duration(g.LastSeen-g.FirstSeen)),
 			exceptionBurstRate(g.Occurrences, g.FirstSeen, g.LastSeen))
-		if freshHour {
+		if fresh {
 			return "P1", burstDesc
 		}
-		if time.Duration(age) <= 24*time.Hour {
+		if time.Duration(age) <= p2Window {
 			// Bitiş yaşı gerekçeye giriyor: operatör satıra bakarken
 			// "neden P1 değil" sorusunun cevabını da görsün.
 			return "P2", burstDesc + " · " + shortDur(time.Duration(age)) + " önce bitti"
@@ -1619,8 +1649,19 @@ func exceptionPriority(g chstore.ExceptionGroup) (string, string) {
 	if freshMin && g.Occurrences >= 500 {
 		return "P1", fmt.Sprintf("active in last 5min · %s total", fmtThousands(g.Occurrences))
 	}
-	if freshHour && g.Occurrences >= 100 {
-		return "P2", fmt.Sprintf("seen in last hour · %s total", fmtThousands(g.Occurrences))
+	// v0.9.775 — bu kapı da AYNI pencereye bağlandı. Operatörün ikinci
+	// şikâyeti tam buydu: 191 olaylık SQLTimeout grubu 1sa50dk'da
+	// pencereyi aşınca P2'den doğrudan P3'e düştü. İki kapının ayrı
+	// sabitlere bağlı olması, v0.9.699'da patlama tarafında düzelttiğim
+	// uçurumun patlama-DEĞİL tarafında hâlâ durduğu anlamına geliyordu.
+	//
+	// Gerekçe metni pencereyi SÖYLER, "last hour" diye sabitlemez:
+	// pencere ayarlanabilir olduğu an "seen in last hour" bir yalana
+	// dönüşürdü ve bu depoda kural açık — öncelik düşebilir, cümle
+	// yalan olamaz (v0.9.524, v0.9.699).
+	if fresh && g.Occurrences >= 100 {
+		return "P2", fmt.Sprintf("seen in last %s · %s total",
+			shortDur(p1Window), fmtThousands(g.Occurrences))
 	}
 	// v0.9.699 — "steady" YALNIZ gerçekten öyle olanlar için. 24 saati
 	// geçmiş bir patlama P3'e düşer (aciliyet gitti) ama gerekçesi hâlâ

@@ -10,6 +10,9 @@ import { DependenciesTable } from '@/components/DependenciesTable';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs } from '@/lib/utils';
+import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
+import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
+import type { SlowQueryRow } from '@/lib/types';
 import type { DBInstance } from '@/lib/types';
 
 // /databases — two distinct panels driven by data origin:
@@ -75,6 +78,39 @@ export default function DatabasesPage() {
   // resolved fresh every render reshuffles the useQuery key
   // and the table refetches on every paint.
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+
+  // v0.9.763 (mockup dilim 2) — EN PAHALI İFADELER sayfanın İÇİNDE:
+  // "slow queries için ayrı sayfaya gidiyorum" akışı bitiyor. Mevcut
+  // dbsys/dbname filtreleri kapsamı daraltır; satır tıkı URL-first
+  // ifade çekmecesini (?stmt=, v0.8.378 D2) BURADA açar. Tam katalog
+  // linki duruyor. limit=10: özet görünüm; devamı katalogda.
+  const stmtsQ = useQuery({
+    queryKey: ['db-top-statements', from, to, dbsys, dbname],
+    queryFn: () => api.slowQueries({
+      from, to,
+      db_system: dbsys || undefined, db_name: dbname || undefined,
+      limit: 10,
+    }),
+    staleTime: 30_000,
+  });
+  const stmtRef = useMemo(() => decodeStmtParam(sp.get('stmt')), [sp]);
+  const openStmt = (r: SlowQueryRow) => {
+    if (!r.stmtHash) return;
+    setSp(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('stmt', encodeStmtParam({ hash: r.stmtHash!, system: r.dbSystem }));
+      return next;
+    }, { replace: true });
+  };
+  const closeStmt = () => setSp(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete('stmt');
+    next.delete('stmtcmp');
+    return next;
+  }, { replace: true });
+  const stmtRow = useMemo(
+    () => (stmtsQ.data ?? []).find(r => r.stmtHash === stmtRef?.hash),
+    [stmtsQ.data, stmtRef]);
   const q = useQuery({
     queryKey: ['databases', from, to, compare],
     queryFn: () => api.databases(from, to, compare ? 'prior' : undefined).then(r => r ?? []),
@@ -223,7 +259,60 @@ export default function DatabasesPage() {
             ) : (
               <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} openRowKey={openRow} onOpenRowChange={setOpenRow} />
             )}
+
+            {/* v0.9.763 (mockup dilim 2) — EN PAHALI İFADELER sayfanın
+                içinde; dbsys/dbname filtreleri kapsamı daraltır, satır
+                tıkı ifade çekmecesini burada açar. Tam katalog linki
+                üstte duruyor. */}
+            <div style={{ marginTop: 18 }}>
+              <SectionHeader
+                title={`En pahalı ifadeler${dbname ? ` · ${dbname}` : dbsys ? ` · ${dbsys}` : ''} (ilk 10)`}
+                subtitle="Toplam süreye göre; satır tıkı ifade detayını açar ("
+                code="?stmt="
+                tail=" derin-linklenebilir). Tam katalog: Slow queries →" />
+              {stmtsQ.isPending && <TableSkeleton rows={5} cols={6} wideFirst />}
+              {stmtsQ.data && stmtsQ.data.length === 0 && (
+                <EmptyHint>Bu pencerede eşleşen ifade yok.</EmptyHint>
+              )}
+              {(stmtsQ.data ?? []).length > 0 && (
+                <table className="tbl" style={{ width: '100%', fontSize: 12 }}>
+                  <thead><tr>
+                    <th style={{ textAlign: 'left' }}>İfade</th>
+                    <th style={{ textAlign: 'left' }}>Service</th>
+                    <th className="num">Çağrı</th>
+                    <th className="num">P95</th>
+                    <th className="num">Toplam</th>
+                    <th className="num">DB</th>
+                  </tr></thead>
+                  <tbody>
+                    {(stmtsQ.data ?? []).map((r, i) => (
+                      <tr key={r.stmtHash ?? i}
+                        onClick={() => openStmt(r)}
+                        title={r.sampleStatement || r.statement}
+                        style={{ cursor: r.stmtHash ? 'pointer' : 'default' }}>
+                        <td className="mono" style={{ maxWidth: 480, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                          {r.statement}
+                        </td>
+                        <td>{r.service}</td>
+                        <td className="num mono">{r.count}</td>
+                        <td className="num mono">{r.p95Ms.toFixed(1)} ms</td>
+                        <td className="num mono"><b>{(r.totalMs / 1000).toFixed(1)} s</b></td>
+                        <td className="num">{r.dbName || r.dbSystem}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
           </>
+        )}
+        {stmtRef && (
+          <StmtDetailDrawer
+            refObj={stmtRef}
+            row={stmtRow}
+            range={range}
+            onClose={closeStmt}
+          />
         )}
       </div>
     </>

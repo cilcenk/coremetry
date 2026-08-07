@@ -740,6 +740,10 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// the span-derived RED on /services.
 	mux.HandleFunc("GET /api/spanmetrics/services", s.getSpanMetricsByService)
 	mux.HandleFunc("GET /api/metrics/labels", s.getMetricLabelValues)
+	// v0.9.771 — the key half of /api/metrics/labels (which answers values).
+	// Same open posture as its sibling: a label-name list is no more sensitive
+	// than the metric catalogue the picker already serves.
+	mux.HandleFunc("GET /api/metrics/attr-keys", s.getMetricAttrKeys)
 	mux.HandleFunc("GET /api/spans/metric", s.spanMetric)
 	mux.HandleFunc("POST /api/spans/metric-batch", s.spanMetricBatch)
 	mux.HandleFunc("POST /api/dashboards/data", s.dashboardsData)
@@ -4389,6 +4393,28 @@ func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("metric-labels:m=%s:k=%s:since=%s", metric, lkey, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.MetricLabelValues(ctx, metric, lkey, since)
+	})
+}
+
+// getMetricAttrKeys — v0.9.771: the KEY half of the pair above. The store
+// method (MetricAttrKeys, v0.9.124) already existed for PromQL `without(L)`
+// but was never reachable over HTTP; the PromQL editor's label autocomplete
+// (Faz 2) needs it to answer "what can I write inside {}?".
+//
+// Same posture as getMetricLabelValues: suggestion list, not a measurement —
+// 60s staleness is invisible, and the window is clamped in the HANDLER so the
+// cache key names the window actually queried (v0.9.275). Key hashes ALL
+// inputs (metric, service, since) — v0.5.187.
+func (s *Server) getMetricAttrKeys(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	since := parseDuration(q.Get("since"), 24*time.Hour)
+	if since > 7*24*time.Hour {
+		since = 7 * 24 * time.Hour
+	}
+	metric, service := q.Get("metric"), q.Get("service")
+	key := fmt.Sprintf("metric-attr-keys:m=%s:svc=%s:since=%s", metric, service, since)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.MetricAttrKeys(ctx, metric, service, since)
 	})
 }
 

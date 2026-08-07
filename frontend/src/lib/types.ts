@@ -4319,3 +4319,23 @@ export interface CorrelationLinkSettings {
   placeholder: string;
   envs: string[];
 }
+
+// v0.9.775 — exception triyaj basamağının pencereleri (backend:
+// chstore.ExceptionTriageConfig / system_settings key "exception_triage").
+//
+// Sabit olarak üç kez öteledikten sonra (v0.9.627, v0.9.699, 2026-08-08)
+// operatörün eline verildi: "ne kadar taze hâlâ acildir" filoya ve nöbet
+// devrine göre değişiyor, kodda tahmin edilecek bir şey değil.
+export interface ExceptionTriageConfig {
+  // Patlamanın P1 kaldığı tazelik penceresi (saat). Aynı pencere,
+  // patlama olmayan ama ≥100 hacimli grupların P2 kapısı için de
+  // kullanılır — iki kapı ayrı sabitlere bağlıysa satır P2'yi atlayıp
+  // P3'e düşüyor (v0.9.699).
+  p1FreshHours: number;
+  // Patlamanın P2 ("bugün") kaldığı pencere; sonrası P3. p1FreshHours'tan
+  // küçük olamaz.
+  p2SameDayHours: number;
+  // Yeni olay görmeyen açık/ack'li bir grubun kendiliğinden resolved'a
+  // geçmesi için gereken sessizlik (saat).
+  staleResolveHours: number;
+}

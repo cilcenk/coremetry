@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
+import type { ExceptionTriageConfig } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
 
 // ── Anomaly promotion tab ───────────────────────────────────────
@@ -135,6 +136,9 @@ export function AnomalyPromotionTab() {
 
       <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
       <EscalationSection />
+
+      <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
+      <ExceptionTriageSection />
     </div>
   );
 }
@@ -231,6 +235,116 @@ function EscalationSection() {
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
             <Button variant="primary" onClick={save} disabled={busy}>
               {busy ? 'Saving…' : 'Save'}
+            </Button>
+            {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Exception triyajı (v0.9.775) ────────────────────────────────
+//
+// Aynı tabda, çünkü operatör buraya tek bir soruyla geliyor: "bir şey
+// ne zaman ve ne kadar süre gündemimde kalsın?" Üstteki iki bölüm
+// Problem tarafını (promosyon kapısı + yaşa göre tırmanma) ayarlıyor;
+// bu bölüm exception gruplarının P1/P2/P3 basamağını ayarlıyor.
+//
+// Neden bir vida gerekti: pencere üç kez sabit olarak öteledi
+// (v0.9.627 5dk→1sa, v0.9.699 uçurum→basamak, v0.9.775 1sa→4sa) ve
+// operatör her seferinde bir çentik ötede aynı duvara çarptı. "Ne kadar
+// taze hâlâ acildir" filoya, nöbet devrine ve ekrana bakma sıklığına
+// bağlı — kodda tahmin edilecek bir sayı değil.
+function ExceptionTriageSection() {
+  const [cfg, setCfg] = useState<ExceptionTriageConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    api.getExceptionTriage()
+      .then(c => setCfg(c))
+      .catch(err => setFlash({ kind: 'err', text: humanize(err) }));
+  }, []);
+
+  const save = async () => {
+    if (!cfg) return;
+    setBusy(true); setFlash(null);
+    try {
+      const saved = await api.putExceptionTriage(cfg);
+      setCfg(saved);
+      setFlash({ kind: 'ok', text: 'Kaydedildi — /inbox bir sonraki okumada yeni pencereleri kullanır.' });
+    } catch (err) {
+      setFlash({ kind: 'err', text: humanize(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Basamak ters dönerse kaydetmeden ÖNCE söyle: backend zaten 400
+  // döner, ama operatör hatayı alanın yanında görmeli.
+  const inverted = !!cfg && cfg.p2SameDayHours < cfg.p1FreshHours;
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Exception triyajı</h2>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 18, lineHeight: 1.55 }}>
+        Bir exception grubunun /inbox&apos;taki önceliği iki şeyden çıkar: <b>şiddet</b> (hacim
+        ve dakikadaki hız) ve <b>tazelik</b> (en son ne zaman görüldü). Şiddet zamanla
+        silinmez, yalnız aciliyeti düşer — bu yüzden basamak: taze bir patlama P1,
+        aynı gün içindeki P2, sonrası P3. Aşağıdaki pencereler o basamağın yerini
+        belirler.
+      </p>
+
+      {!cfg ? (
+        flash ? <FlashBox kind={flash.kind}>{flash.text}</FlashBox> : <Spinner />
+      ) : (
+        <>
+          <div style={{ display: 'grid', gap: 12 }}>
+            <Field label="P1 tazelik penceresi (saat)">
+              <input type="number" min={1} max={168} step={1}
+                value={cfg.p1FreshHours}
+                onChange={e => setCfg({ ...cfg, p1FreshHours: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Son görülmesi bu kadar saat içinde olan bir patlama P1 kalır. Aynı
+                pencere, patlama sayılmayan ama 100+ olaylık grupların P2 kapısı için
+                de kullanılır. Varsayılan 4 saat &mdash; Problem tarafındaki
+                &laquo;4 saattir açık critical &rarr; P1&raquo; kuralıyla simetrik.
+              </div>
+            </Field>
+
+            <Field label="P2 aynı-gün penceresi (saat)">
+              <input type="number" min={cfg.p1FreshHours} max={720} step={1}
+                value={cfg.p2SameDayHours}
+                onChange={e => setCfg({ ...cfg, p2SameDayHours: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                P1 penceresi kapandıktan sonra patlama bu süre boyunca P2
+                (&laquo;bugün&raquo;) kalır, sonrası P3. Varsayılan 24 saat.
+                P1 penceresinden küçük olamaz.
+                {inverted && (
+                  <div style={{ color: 'var(--warn)', marginTop: 4 }}>
+                    P1 penceresinden küçük: basamak ters döner, taze bir patlama
+                    P1&apos;i atlayıp doğrudan P3&apos;e düşerdi.
+                  </div>
+                )}
+              </div>
+            </Field>
+
+            <Field label="Sessiz grubu otomatik çözme (saat)">
+              <input type="number" min={1} max={720} step={1}
+                value={cfg.staleResolveHours}
+                onChange={e => setCfg({ ...cfg, staleResolveHours: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Bu kadar süredir yeni olay görmeyen açık/ack&apos;li bir grup
+                kendiliğinden <b>resolved</b>&apos;a geçer. Varsayılan 24 saat.
+                Süpürme yaklaşık 6 dakikada bir koşar.
+              </div>
+            </Field>
+          </div>
+
+          <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="primary" onClick={save} disabled={busy || inverted}>
+              {busy ? 'Kaydediliyor…' : 'Kaydet'}
             </Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
           </div>

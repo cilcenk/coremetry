@@ -1041,6 +1041,12 @@ func main() {
 
 	srv := api.NewServer(cfg.Listen.HTTP, ing, store, logsStore, webFS, authSvc, oidcSvc, ldapSvc, cacheImpl, notifier, copilotSvc, bus)
 	srv.SetRAG(ragSvc)
+	// v0.9.775 — exception triyaj pencereleri (P1 tazeliği / P2 aynı-gün)
+	// system_settings'ten. Boot'ta hidrate, sonra 30 sn'de bir yenile:
+	// çok-pod kurulumda bir podda yapılan PUT diğerlerine bu döngüyle
+	// ulaşır (tempo/copilot/ldap StartConfigRefresh deseni).
+	srv.LoadExceptionTriage(ctx)
+	go srv.StartExceptionTriageRefresh(ctx, 30*time.Second)
 	srv.SetLdapGroupSync(ldapGroupSync) // v0.8.526 — LDAP group-sync admin surface + snapshot reads
 	// v0.8.444 — cmk_ servis token'ları: cache'i bağla (GenAI Studio →
 	// MCP kimliği). Adapter chstore→auth tip köprüsü.
@@ -1355,7 +1361,12 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 	// empty forever" fix). Window + rationale live next to exResolveGrace
 	// in chstore so both exception-lifecycle timings are co-located +
 	// unit-tested. v0.8.x: 14d → 24h (operator: transitions too slow).
-	const staleHorizon = chstore.DefaultExceptionStaleHorizon
+	//
+	// v0.9.775 — artık operatör vidası: exception_triage.staleResolveHours.
+	// Süpürme 6 tikte bir (≈6 dk) koşuyor, yani ayarı orada okumak 6
+	// dakikada BİR ayar sorgusu demek — ihmal edilebilir, ve karşılığında
+	// ayar değişikliği yeniden başlatma beklemiyor. Kayıt yoksa /
+	// CH tökezlerse Get varsayılana (24sa) düşer.
 	// Sweep cadence is generous — the cutoff moves a minute at a
 	// time; running this every 6 ticks (6 min) is plenty. Use a
 	// modulo on a tick counter rather than a second ticker so the
@@ -1388,6 +1399,7 @@ func runExceptionRefresher(ctx context.Context, store *chstore.Store, lock cache
 		// want the group cleared from the inbox by tomorrow.
 		tickCount++
 		if tickCount%6 == 0 {
+			staleHorizon := store.GetExceptionTriage(ctx).StaleHorizon()
 			swept, err := store.AutoResolveStaleExceptionGroups(ctx, staleHorizon)
 			if err != nil {
 				log.Printf("[errors-inbox] stale auto-resolve: %v", err)

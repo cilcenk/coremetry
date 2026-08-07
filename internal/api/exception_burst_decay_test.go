@@ -52,8 +52,15 @@ func TestBurstDecaysByStepNotCliff(t *testing.T) {
 	}{
 		{"taze — hâlâ akıyor", 30 * time.Second, "P1"},
 		{"59 dk — pencere içinde", 59 * time.Minute, "P1"},
-		// ASIL VAKA: v0.9.698 ve öncesinde burası "P3" idi.
-		{"66 dk — operatörün gördüğü an", 66 * time.Minute, "P2"},
+		// ASIL VAKA: v0.9.698 ve öncesinde burası "P3" idi. v0.9.699
+		// onu P2'ye çıkardı; v0.9.775 P1 tazelik penceresini 4 saate
+		// açınca P1 oldu — operatörün o gün yazdığı beklentinin
+		// ("P1 ya da P2'ydi bence doğru") üst ucu. Bu satırın ASLA
+		// P3 olmaması pinin özü; basamak yükseldi, kalkmadı.
+		{"66 dk — operatörün gördüğü an", 66 * time.Minute, "P1"},
+		{"3sa 59dk — P1 penceresinin son ucu", 3*time.Hour + 59*time.Minute, "P1"},
+		// Pencere kapandı, gün kapanmadı: uçurum değil basamak.
+		{"5 sa — aciliyet düştü", 5 * time.Hour, "P2"},
 		{"23 sa — hâlâ bugün", 23 * time.Hour, "P2"},
 		{"25 sa — artık sırası gelince", 25 * time.Hour, "P3"},
 	}
@@ -92,11 +99,21 @@ func TestBurstReasonNeverSaysSteady(t *testing.T) {
 // Ters yön — GENİŞLETME DEĞİL. Patlama olmayan eski bir grup P3 ve
 // "steady" kalmalı; yoksa düzeltme her şeyi P2'ye terfi ettirir ve
 // öncelik anlamını kaybeder (P1/P2 kutusu şişerse kimse bakmaz).
+//
+// v0.9.775 — yaş 3 saatten 6 saate çekildi. Sebep açıkça yazılsın:
+// tazelik penceresi 1 saatten 4 saate çıktı, yani "son N saatte
+// görülmüş VE ≥100 toplam" kapısı artık 3 saatlik bir grubu da
+// yakalıyor — operatörün ikinci şikâyeti (191 olay, 1sa50dk, P3
+// görünüyordu) tam olarak bunu istiyordu. Bu testin koruduğu şey
+// pencerenin GENİŞLİĞİ değil, pencere KAPANDIĞINDA satırın gerçekten
+// P3'e düşmesi ve gerekçesinin "steady" olması. Terfiyi asıl sınırlayan
+// kapı hacim tabanı (≥100), o hiç dokunulmadan duruyor —
+// TestExceptionPriorityDefaultLadder'daki "99 olay" satırı onu çiviler.
 func TestNonBurstStillDecaysToP3(t *testing.T) {
-	last := time.Now().Add(-3 * time.Hour)
+	last := time.Now().Add(-6 * time.Hour)
 	g := chstore.ExceptionGroup{
 		Service:     "quiet-service",
-		Occurrences: 120, // eşiğin (1000) altında
+		Occurrences: 120, // patlama eşiğinin (1000) altında
 		FirstSeen:   ns(last.Add(-48 * time.Hour)),
 		LastSeen:    ns(last),
 	}

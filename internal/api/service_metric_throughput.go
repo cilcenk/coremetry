@@ -561,6 +561,22 @@ func (s *Server) attachMetricLatency(ctx context.Context, out map[string]any, f 
 	default:
 		out["latencyDiag"] = fmt.Sprintf("satır=%d, kovalı=%d, sınırsız=%d, temporality=%s — yüzdelik katmanına ulaşan veri şekli beklenmedik", total, withCounts, noBounds, temp)
 	}
+
+	// v0.9.767 — teşhis derinleşti: histogram yolunun KENDİ gördüğü
+	// (filtreli tarama) + uygulanan filtre anahtarları. times=0&bounds=0
+	// iken düz sayım 35k ise fark FİLTREDEN geliyor demektir (span-şekilli
+	// ApplyFilters vs metrik-bilinçli ApplyMetricFilters ayrışması şüphesi).
+	fkeys := make([]string, 0, len(lf.Filters))
+	for _, fe := range lf.Filters {
+		fkeys = append(fkeys, fe.Key+fe.Op+strings.Join(fe.Values, ","))
+	}
+	if hs, herr := s.store.QueryMetricHistogram(ctx, lf); herr != nil {
+		out["latencyDiag"] = fmt.Sprintf("%v · histYol HATA: %v · filtre=%v · eşleşme=%s",
+			out["latencyDiag"], herr, fkeys, fmt.Sprint(out["matchedBy"]))
+	} else if hs != nil {
+		out["latencyDiag"] = fmt.Sprintf("%v · histYol: times=%d bounds=%d skipped=%d · filtre=%v · eşleşme=%s",
+			out["latencyDiag"], len(hs.Times), len(hs.Bounds), hs.Skipped, fkeys, fmt.Sprint(out["matchedBy"]))
+	}
 }
 
 // svcAttempt — service_name kolonu üzerinden TEK bir deneme.

@@ -26,7 +26,9 @@ export function AnnouncementBanner() {
 
   const warn = a!.tone === 'warn';
   return (
-    <div role="status" style={{
+    // className v0.9.779 — kiosk modu şeridi CSS ile gizleyebilsin
+    // (inline stiller kalıyor; sınıf yalnızca hedeflenebilirlik için).
+    <div role="status" className="announcement-banner" style={{
       display: 'flex', alignItems: 'center', gap: 10,
       padding: '6px 14px', fontSize: 12.5,
       background: warn

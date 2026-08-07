@@ -59,7 +59,7 @@ export function isPathAllowed(pathname: string, allowedPages: string[]): boolean
 // under this layout still won't render the sidebar to a
 // not-yet-authenticated visitor.
 export function AppShell() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const navigate = useNavigate();
   const { user, loading } = useAuth();
   const isPublic = isPublicPath(pathname);
@@ -82,6 +82,26 @@ export function AppShell() {
   // 'g o' / 'g m' and pointed at a hidden route ('g o' → Monitors) and
   // a retired path ('g c' → /admin/stats). One registry now — see
   // GlobalShortcuts.tsx.
+
+  // Kiosk/TV modu (v0.9.779) — ?kiosk=1 kök elemana data-kiosk yazar,
+  // gerisini CSS yapar (globals.css: sidebar + duyuru şeridi gizlenir,
+  // #main artan genişliği kendiliğinden emer). DensityToggle'ın
+  // data-density deseninin aynısı; body.classList bu kod tabanında
+  // kullanılmıyor.
+  //
+  // Bilinçli olarak SADECE görsel: /kiosk PUBLIC_PATHS'e EKLENMEZ —
+  // o bayrak auth kapısı + SSE anahtarı; kiosk kimlik doğrulamalı bir
+  // oturumun içinde yaşar, yoksa bir TV linki panoları herkese açardı.
+  //
+  // Sayfadan çıkınca temizlenir (cleanup): kiosk /dashboard'a ait bir
+  // görünüm; başka bir sayfaya gidip sol menüsüz kalmak hata olurdu.
+  const kiosk = new URLSearchParams(search).get('kiosk') === '1';
+  useEffect(() => {
+    const el = document.documentElement;
+    if (kiosk) el.setAttribute('data-kiosk', '1');
+    else el.removeAttribute('data-kiosk');
+    return () => el.removeAttribute('data-kiosk');
+  }, [kiosk]);
 
   // Custom-role route guard (v0.5.251). When the user has a
   // customRolePages list, redirect any URL outside that set to

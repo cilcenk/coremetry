@@ -6,6 +6,15 @@ import { encodeFilters } from '@/lib/urlState';
 import { timeRangeToNs } from '@/lib/utils';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
+import { lazy, Suspense } from 'react';
+import { chartsV2 } from '@/lib/featureFlags';
+
+// v0.9.752 (operatör: "Metrics altında da aynı grafikler") — editör
+// önizlemesi line modunda CorePanel'de (Explore QueryPanel ile aynı
+// desen, v0.9.745); diğer viz modları eski gövdede. Lazy: vendor
+// sayfaya statik binmez (708 dersi).
+const MQECorePanelLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 import { isSteppedInstrument } from '@/lib/chart/steppedInstrument';
 import { GroupedMetricPicker } from '@/components/viz/GroupedMetricPicker';
 import { seriesColor } from '@/lib/chartFmt';
@@ -736,12 +745,35 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
             <p>The query returned no series. Widen the time range or relax the filters.</p>
           </Empty>
         ) : (
+          (chartsV2() && model.viz === 'line') ? (
+            <Suspense fallback={<div style={{ height: 340, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
+              <MQECorePanelLazy
+                title=""
+                storageKey="mqe-preview-v2"
+                height={340}
+                items={chartSeries.map(ts => ({
+                  name: ts.label,
+                  role: 'data' as const,
+                  series: [{ groupKey: [], points: ts.points
+                    .filter(pt => pt.value != null)
+                    .map(pt => ({ time: pt.time, value: pt.value as number })) }],
+                  exemplars: ts.exemplars,
+                }))}
+                xRange={zoomWindow ?? { from: from / 1e9, to: to / 1e9 }}
+                regions={(deploys ?? []).map(d => ({ fromSec: d / 1e9, toSec: d / 1e9, color: 'var(--accent2)', label: 'deploy' }))}
+                logScale={model.logScale}
+                onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
+                onZoomReset={() => setZoomWindow(null)}
+              />
+            </Suspense>
+          ) : (
           <TimeSeriesPanel series={chartSeries} height={340} deploys={deploys}
             mode={model.viz} logScale={model.logScale} syncKey="mqe-preview"
             xRange={{ from: from / 1e9, to: to / 1e9 }}
             zoomWindow={zoomWindow}
             onZoom={(f, t) => setZoomWindow({ from: f, to: t })}
             onZoomReset={() => setZoomWindow(null)} />
+          )
         )}
       </div>
 

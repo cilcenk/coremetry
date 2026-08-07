@@ -6,6 +6,7 @@ import { Modal } from '@/components/ui';
 import { Button } from '@/components/ui/Button';
 import { Field, SelectField } from '@/components/ui/Field';
 import { Spinner } from '@/components/Spinner';
+import { dashboardHref } from '@/lib/dashboardHref';
 import type { Panel } from '@/lib/types';
 
 // PinToDashboardModal (v0.8.419, DE4) — target picker for an Explore
@@ -77,7 +78,7 @@ export function PinToDashboardModal({ panel, onClose }: {
       {done ? (
         <div style={{ fontSize: 13, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <span>Panel eklendi: <b>{done.name}</b></span>
-          <Link to={`/dashboards/${done.id}`} style={{ color: 'var(--accent2)' }}>
+          <Link to={dashboardHref(done.id)} style={{ color: 'var(--accent2)' }}>
             Dashboard&apos;u aç →
           </Link>
         </div>

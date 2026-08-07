@@ -731,17 +731,20 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
         </MetricPanel>
         <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('line')}>
           {chartsV2() ? (
-            /* v0.9.738 (operatör düzeltmesi): 3. slot TRACE türevli Failure
-               rate — v0.9.736'daki birleşik OK+Errors req/s paneli yerine
-               % ekseni + SLO eşiği geri geldi ("en sağdaki traces failure
-               rate olsun, throughput değil"). "· trace" eki, soldaki iki
-               "· metrik" panelle kaynak ayrımını okutur. */
+            /* v0.9.739 (operatör netleştirmesi): GRAFİK 736'daki birleşik
+               OK+Errors (req/s) — v0.9.738 grafiği değiştirerek yanlış
+               okumuştu; istenen yalnız BAŞLIKTI. "Failure rate · trace"
+               adı + span türevli OK/Errors gövdesi; % SLO eşiği % eksenine
+               ait olduğu için burada yok (v1'de duruyor). */
             <Suspense key="failure-rate-v2" fallback={<Spinner />}>
               <CorePanelMultiLazy
                 title={scopedChartTitle('Failure rate · trace', usingAllSpans)}
-                storageKey="ov-failure-rate-v2" height={200} unit="percent" xRange={xRange}
-                items={[{ name: 'errors', role: 'error', series: lat?.error_rate ?? [] }]}
-                thresholds={failureThresholds} regions={deployRegions}
+                storageKey="ov-throughput-failure-v2" height={200} unit="reqps" xRange={xRange}
+                items={[
+                  { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
+                  { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },
+                ]}
+                regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>

@@ -47,7 +47,7 @@ import {
   type ChartThreshold, type ChartTimeRegion, type ChartExemplar,
 } from '@/lib/chart/overlays';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
-import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
 import { placeTooltip } from '@/lib/chartTooltip';
 import { fmtTooltipTime } from '@/lib/chartFmt';
 import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
@@ -369,7 +369,7 @@ export function CorePanel({
       const tMs = xs[idx];
       if (tMs == null) { tt.style.display = 'none'; return; }
       const stepSec = xs.length > 1 ? Math.abs(xs[1] - xs[0]) / 1000 : null;
-      const rows = sortedTooltipRows(aligned.names.map((label, i) => {
+      const rows = capTooltipRows(sortedTooltipRows(aligned.names.map((label, i) => {
         const si = u.cursor.idxs?.[i + 1] ?? idx;
         const v = visRef.current[i] === false ? null
           : ((u.data[i + 1] as (number | null)[])?.[si] ?? null);
@@ -384,7 +384,7 @@ export function CorePanel({
           unit: undefined,
           fmt: v != null && disp ? (() => { const d = disp(v); return `${d.text}${d.suffix ?? ''}`; })() : undefined,
         };
-      }));
+      })));
       if (rows.length === 0) { tt.style.display = 'none'; return; }
       tt.innerHTML = `<div class="ov-tt-t">${fmtTooltipTime(tMs / 1000, stepSec)}</div>` + rows.map(r =>
         `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,

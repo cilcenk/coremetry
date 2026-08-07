@@ -60,3 +60,20 @@ export function sortedTooltipRows(
   if (sort === 'desc') rows.sort((a, b) => b.value - a.value);
   return rows;
 }
+
+// capTooltipRows (v0.9.750, operatör: "tooltip grafiği kapatıyor") —
+// çok-serili panelde (65 route × 3 yüzdelik ekranı) tooltip sınırsız
+// büyüyüp grafiği örtüyordu. Grafana gibi üst-N: sıralı satırların ilk
+// max'ı kalır, kalanı tek "+N daha" özet satırına iner (soluk renk;
+// değeri yok). max <= 0 ya da taşma yoksa liste aynen döner.
+export function capTooltipRows(rows: TooltipRow[], max = 8): TooltipRow[] {
+  if (max <= 0 || rows.length <= max) return rows;
+  const kept = rows.slice(0, max);
+  kept.push({
+    label: `+${rows.length - max} seri daha`,
+    color: 'var(--text3)',
+    text: '',
+    value: NaN,
+  });
+  return kept;
+}

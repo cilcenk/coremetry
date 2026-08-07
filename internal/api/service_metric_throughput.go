@@ -524,19 +524,29 @@ func (s *Server) attachMetricLatency(ctx context.Context, out map[string]any, f 
 	lf := f
 	lf.GroupBy = nil
 	lat := map[string][]chstore.SpanMetricSeries{}
-	for _, agg := range []string{"p50", "p95", "p99"} {
-		ser, err := s.store.QueryMetricHistogramPercentile(ctx, lf, agg)
-		if err != nil || len(ser) == 0 {
-			continue
-		}
-		if scale != 1 {
-			for i := range ser {
-				for j := range ser[i].Points {
-					ser[i].Points[j].Value *= scale
+	// v0.9.768 — ÜÇ yüzdelik TEK taramadan. Burada agg başına
+	// QueryMetricHistogramPercentile çağrılıyordu; her çağrı aynı
+	// metric_points penceresini (prod'da 35k satır + ağır attr dizileri)
+	// baştan tarıyordu — tek panel için üç kat iş. Operatör: "metrik
+	// panelleri Prometheus kadar hızlı değil". Yol seçimi, pencere ve gap
+	// semantiği birebir aynı; hata yine YUTULUYOR (gecikme bir ek).
+	aggs := []string{"p50", "p95", "p99"}
+	qs := []float64{0.50, 0.95, 0.99}
+	sers, err := s.store.QueryMetricHistogramQuantiles(ctx, lf, qs)
+	if err == nil {
+		for i, ser := range sers {
+			if len(ser) == 0 {
+				continue
+			}
+			if scale != 1 {
+				for a := range ser {
+					for j := range ser[a].Points {
+						ser[a].Points[j].Value *= scale
+					}
 				}
 			}
+			lat[aggs[i]] = ser
 		}
-		lat[agg] = ser
 	}
 	if len(lat) > 0 {
 		out["latency"] = lat

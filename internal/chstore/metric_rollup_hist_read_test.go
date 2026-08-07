@@ -174,3 +174,87 @@ func TestSlidingSumCounts(t *testing.T) {
 		t.Fatal("girdi dizisi mutasyona uğradı")
 	}
 }
+
+// v0.9.768 — çoklu-q TEK tarama. tryRollupHistogramQuantiles satırları BİR
+// KEZ çekip aynı küme üstünde q başına foldRollupHist koşuyor. Bu ancak fold
+// salt-okursa doğru: satırları mutasyona uğratsaydı ikinci ve üçüncü yüzdelik
+// bozulmuş dağılım görürdü — sessiz ve YALNIZ çoklu yolda görünen bir hata.
+// Pin: (a) satırlar dokunulmamış kalır, (b) her q'nun sonucu taze satırlarla
+// tek başına katlandığındakiyle birebir aynıdır.
+func TestFoldRollupHistMultiQNoMutation(t *testing.T) {
+	mkRows := func() []histRollupRow {
+		b := []float64{0.1, 1, 10}
+		return []histRollupRow{
+			{Bucket: 1e9, Bounds: b, Counts: []uint64{90, 8, 2, 0}},
+			{Bucket: 2e9, Bounds: b, Counts: []uint64{0, 0, 0, 0}}, // gap
+			{Bucket: 3e9, Bounds: b, Counts: []uint64{10, 80, 9, 1}},
+		}
+	}
+	qs := []float64{0.50, 0.95, 0.99}
+
+	// Çoklu yolun yaptığı: TEK satır kümesi, q başına katlama.
+	shared := mkRows()
+	got := make([][]SpanMetricPoint, len(qs))
+	for i, q := range qs {
+		got[i], _ = foldRollupHist(shared, q)
+	}
+
+	// (a) Satırlar dokunulmadı.
+	for i, r := range mkRows() {
+		for b := range r.Counts {
+			if shared[i].Counts[b] != r.Counts[b] {
+				t.Fatalf("satır %d kova %d mutasyona uğradı: %d ≠ %d",
+					i, b, shared[i].Counts[b], r.Counts[b])
+			}
+		}
+	}
+
+	// (b) Tekil (taze satır) = çoklu[i], nokta nokta.
+	for i, q := range qs {
+		want, _ := foldRollupHist(mkRows(), q)
+		if len(got[i]) != len(want) {
+			t.Fatalf("q=%g: %d nokta, %d bekleniyordu", q, len(got[i]), len(want))
+		}
+		for j := range want {
+			if got[i][j].Time != want[j].Time || got[i][j].Value != want[j].Value {
+				t.Fatalf("q=%g nokta %d: %+v ≠ %+v", q, j, got[i][j], want[j])
+			}
+		}
+		// Gap semantiği q'dan bağımsız: toplam-0 bucket hiçbir q'da
+		// nokta üretmez.
+		if len(got[i]) != 2 {
+			t.Fatalf("q=%g: %d nokta — toplam-0 bucket gap kalmalıydı", q, len(got[i]))
+		}
+	}
+
+	// Testin gerçekten yüzdelik ayırt ettiğini kanıtla (üç q aynı çıksaydı
+	// yukarıdaki eşitlikler boş yere geçerdi).
+	if !(got[0][0].Value < got[2][0].Value) {
+		t.Fatalf("p50 (%v) p99'dan (%v) küçük olmalı", got[0][0].Value, got[2][0].Value)
+	}
+}
+
+// v0.9.768 — GLOBAL yolun aynı invaryantı: pencere (slidingSumCounts) bir kez
+// kurulur, her q AYNI `counts` dizisinden okur. percentileFromBuckets bu
+// diziyi mutasyona uğratırsa ikinci q bozuk dağılım görür.
+func TestPercentileFromBucketsNoMutation(t *testing.T) {
+	bounds := []float64{0.1, 1, 10}
+	counts := []uint64{90, 8, 2, 0}
+	snapshot := append([]uint64(nil), counts...)
+	qs := []float64{0.50, 0.95, 0.99}
+	vals := make([]float64, len(qs))
+	for i, q := range qs {
+		vals[i] = percentileFromBuckets(bounds, counts, q)
+	}
+	for i := range snapshot {
+		if counts[i] != snapshot[i] {
+			t.Fatalf("kova %d mutasyona uğradı: %d ≠ %d", i, counts[i], snapshot[i])
+		}
+	}
+	// İkinci tur birebir aynı değerleri vermeli (paylaşılan dizi).
+	for i, q := range qs {
+		if v := percentileFromBuckets(bounds, counts, q); v != vals[i] {
+			t.Fatalf("q=%g ikinci turda %v, %v bekleniyordu", q, v, vals[i])
+		}
+	}
+}

@@ -69,7 +69,13 @@ func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Ti
 	// mdp ANAHTARDA (hash-all-inputs, v0.5.187 sınıfı): farklı nokta
 	// bütçeleri farklı adım → farklı sonuç. panelMaxDataPoints kuantalı
 	// (200px kova) olduğu için kardinalite sınırlı (v0.8.270 disiplini).
-	return fmt.Sprintf("svc-metric-tput:%s:%s:%s:%s:mdp%d:bd%s:rw%d", service, metric, jobLabel, cacheBucket(from, to), mdp, breakdown, rateWin)
+	//
+	// :v2: — v0.9.774. GİRDİLER aynı kaldı ama YANIT ZARFI değişti
+	// (latency/latencyUnit/latencyUnitKnown/latencyDiag gitti, metricUnit
+	// geldi). Sürümsüz anahtar, rolling deploy sırasında eski zarfı yeni
+	// koda servis ederdi: panel 30 sn boyunca birimsiz çizerdi. Zarf
+	// değişimi anahtar sürümü ister — v0.9.443/458 dersi.
+	return fmt.Sprintf("svc-metric-tput:v2:%s:%s:%s:%s:mdp%d:bd%s:rw%d", service, metric, jobLabel, cacheBucket(from, to), mdp, breakdown, rateWin)
 }
 
 func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int) (string, chstore.MetricQueryFilter) {
@@ -198,8 +204,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 						if b.EnvAmbiguous {
 							out["envAmbiguous"] = true
 						}
-						mf := f
-						s.attachMetricLatency(ctx, out, mf, b.Metric, name)
+						out["metricUnit"] = s.metricUnitFor(ctx, b.Metric, name)
 						return out, nil
 					}
 					// bayat bağ → düş ve yeniden keşfet
@@ -357,21 +362,23 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 			out["candidateErrors"] = candErrs
 		}
 
-		// 5) GECİKME — aynı eşleşen filtreden (operatör: "response time
-		// için de bir panel yapabilir misin").
+		// 5) BİRİM — çözülen metriğin OTLP birimi.
 		//
-		// Çözümlemeyi (ad → instrument → kimlik etiketi) TEKRARLAMIYOR:
-		// throughput hangi seriyi bulduysa gecikme de onu okuyor. İki
-		// panelin farklı serilere bakması, kıyaslamayı sessizce anlamsız
-		// kılardı.
+		// v0.9.774: burada PANELE ÖZEL bir yüzdelik yolu vardı
+		// (attachMetricLatency → histogram kovalarından P50/P95/P99).
+		// Prod'da bu yol sessizce boş dönüyordu: metric_points satırları
+		// bucket_counts taşıyıp bucket_bounds taşımıyor, sınırsız kovadan
+		// yüzdelik hesaplanamıyor. Panel artık Explore'un ÇALIŞAN avg
+		// yolundan (GET /api/metrics/query) besleniyor, yani bu uçtan
+		// yalnız KİMLİK bilgisi isteniyor: metriğin adı (yukarıda) ve
+		// birimi (burada) — çizimi başka bir uç yapıyor.
 		//
-		// Yalnız HISTOGRAM: yüzdelikler kova sınırlarından geliyor. Bir
-		// sayaçta gecikme diye bir şey yok.
-		if matched != nil && instrument == "histogram" {
-			s.attachMetricLatency(ctx, out, *matched, resolved, name)
-		}
-
+		// Birim ölçekleme YOK: frontend değeri @grafana/data'nın display
+		// processor'ına birimiyle veriyor (dataFrame.ts sözleşmesi:
+		// "birim ölçekleme elle yazılmaz"). Eskiden burada ms'ye
+		// çevriliyordu çünkü çizim katmanı birim bilmiyordu.
 		if matched != nil {
+			out["metricUnit"] = s.metricUnitFor(ctx, resolved, name)
 			return out, nil
 		}
 		out["matched"] = 0
@@ -492,101 +499,23 @@ func identityLabelCandidates(explicit string) []string {
 	return chstore.ServiceIdentityLabels
 }
 
-// attachMetricLatency — histogram yüzdeliklerini (P50/P95/P99) cevaba
-// ekler, MİLİSANİYEYE çevirerek.
+// metricUnitFor — çözülen metriğin OTLP birimi ("s", "ms", "By", …).
 //
-// v0.9.676. Birim çevirisi şart: span türevli Response time paneli ms
-// çiziyor, OTel semconv duration metriği ise SANİYE. Çevirmezsek iki
-// panel 1000× farklı görünür — operatör ya hata sanar ya da daha
-// kötüsü, sanmaz ve yanlış sayıya güvenir.
+// v0.9.774. Servis kapsamlı prob önce; boş dönerse kapsamsız (kimlik
+// başka bir etikette olabilir — metric_points.service_name yazılmamış
+// olsa da metrik var). Bu iki-adımlı düşüş v0.9.676'dan beri
+// attachMetricLatency içinde yaşıyordu; yüzdelik yolu silinirken
+// KORUNDU çünkü ölçtüğü şey doğru: birimi olmayan bir metriğin ekseni
+// de olmaz.
 //
-// BİRİM BİLİNMİYORSA ÖLÇEKLENMİYOR ve bu cevapta SÖYLENİYOR
-// (latencyUnitKnown=false). Tahmin etmek yazı-tura; yanlış ölçekli bir
-// grafik, ölçeksiz olandan kötüdür.
-//
-// Hata YUTULUYOR: gecikme bir ek: throughput cevabı onsuz da geçerli.
-func (s *Server) attachMetricLatency(ctx context.Context, out map[string]any, f chstore.MetricQueryFilter, metric, service string) {
-	unit := s.store.MetricUnit(ctx, metric, service)
-	if unit == "" {
-		unit = s.store.MetricUnit(ctx, metric, "")
+// Birim BURADA ÖLÇEKLEMEYE ÇEVRİLMİYOR. Çizim @grafana/data'nın display
+// processor'ında; ms/s dönüşümünü elle yazmak dataFrame.ts sözleşmesinin
+// açıkça yasakladığı şey. Uç yalnız birimi SÖYLER, panel eksenine basar.
+func (s *Server) metricUnitFor(ctx context.Context, metric, service string) string {
+	if u := s.store.MetricUnit(ctx, metric, service); u != "" {
+		return u
 	}
-	scale, known := chstore.LatencyScaleToMs(unit)
-	out["latencyUnit"] = unit
-	out["latencyUnitKnown"] = known
-
-	// v0.9.749 (operatör ekranı: 65 operasyonlu serviste "P95 · /route"
-	// diye 65×3 seri) — gecikme yüzdelikleri HER ZAMAN servis-geneli:
-	// route kırılımı throughput'un tercihidir, yüzdelik panelinin değil.
-	// Kırılımlı yüzdelik hem paneli okunmaz yapıyor hem defaultHidden
-	// ('P50'/'P95' adları) eşleşmesini kırıyordu. Kovalar route'lar
-	// üzerinden TOPLANIP tek yüzdelik hesaplanır (matematiksel doğru yol;
-	// yüzdeliklerin ortalaması değil).
-	lf := f
-	lf.GroupBy = nil
-	lat := map[string][]chstore.SpanMetricSeries{}
-	// v0.9.768 — ÜÇ yüzdelik TEK taramadan. Burada agg başına
-	// QueryMetricHistogramPercentile çağrılıyordu; her çağrı aynı
-	// metric_points penceresini (prod'da 35k satır + ağır attr dizileri)
-	// baştan tarıyordu — tek panel için üç kat iş. Operatör: "metrik
-	// panelleri Prometheus kadar hızlı değil". Yol seçimi, pencere ve gap
-	// semantiği birebir aynı; hata yine YUTULUYOR (gecikme bir ek).
-	aggs := []string{"p50", "p95", "p99"}
-	qs := []float64{0.50, 0.95, 0.99}
-	sers, err := s.store.QueryMetricHistogramQuantiles(ctx, lf, qs)
-	if err == nil {
-		for i, ser := range sers {
-			if len(ser) == 0 {
-				continue
-			}
-			if scale != 1 {
-				for a := range ser {
-					for j := range ser[a].Points {
-						ser[a].Points[j].Value *= scale
-					}
-				}
-			}
-			lat[aggs[i]] = ser
-		}
-	}
-	if len(lat) > 0 {
-		out["latency"] = lat
-		return
-	}
-	// v0.9.761 — BOŞ gecikme artık nedenini SÖYLER (operatör ekranları:
-	// throughput çalışırken RT·metrik ısrarla boş; kök prod verisinde ve
-	// buradan görülemiyor). Tek ucuz teşhis sorgusu: satır var mı, kova
-	// sınırları boş mu (dağıtık-ingest probe sınıfı → yüzdelik hesaplanamaz),
-	// temporality ne. Yanıt latencyDiag'da; Overview notu gösterir.
-	total, noBounds, withCounts, temp, err := s.store.HistogramLatencyDiag(ctx, metric, service, f.From, f.To)
-	if err != nil {
-		return
-	}
-	switch {
-	case total == 0:
-		out["latencyDiag"] = "pencerede hiç metrik satırı yok"
-	case withCounts == 0:
-		out["latencyDiag"] = "satırlar var ama histogram kovası yok (bucket_counts boş) — SDK histogram export etmiyor olabilir"
-	case noBounds >= total:
-		out["latencyDiag"] = "kova sayımları var ama SINIRLAR boş (bucket_bounds) — ingest bounds kolonunu yazamamış; yüzdelik hesaplanamaz"
-	default:
-		out["latencyDiag"] = fmt.Sprintf("satır=%d, kovalı=%d, sınırsız=%d, temporality=%s — yüzdelik katmanına ulaşan veri şekli beklenmedik", total, withCounts, noBounds, temp)
-	}
-
-	// v0.9.767 — teşhis derinleşti: histogram yolunun KENDİ gördüğü
-	// (filtreli tarama) + uygulanan filtre anahtarları. times=0&bounds=0
-	// iken düz sayım 35k ise fark FİLTREDEN geliyor demektir (span-şekilli
-	// ApplyFilters vs metrik-bilinçli ApplyMetricFilters ayrışması şüphesi).
-	fkeys := make([]string, 0, len(lf.Filters))
-	for _, fe := range lf.Filters {
-		fkeys = append(fkeys, fe.Key+fe.Op+strings.Join(fe.Values, ","))
-	}
-	if hs, herr := s.store.QueryMetricHistogram(ctx, lf); herr != nil {
-		out["latencyDiag"] = fmt.Sprintf("%v · histYol HATA: %v · filtre=%v · eşleşme=%s",
-			out["latencyDiag"], herr, fkeys, fmt.Sprint(out["matchedBy"]))
-	} else if hs != nil {
-		out["latencyDiag"] = fmt.Sprintf("%v · histYol: times=%d bounds=%d skipped=%d · filtre=%v · eşleşme=%s",
-			out["latencyDiag"], len(hs.Times), len(hs.Bounds), hs.Skipped, fkeys, fmt.Sprint(out["matchedBy"]))
-	}
+	return s.store.MetricUnit(ctx, metric, "")
 }
 
 // svcAttempt — service_name kolonu üzerinden TEK bir deneme.

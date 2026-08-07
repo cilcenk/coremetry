@@ -54,6 +54,51 @@ func TestMetricThroughputCacheKeyCoversEveryInput(t *testing.T) {
 
 func mustKey(k string, _ any) string { return k }
 
+// v0.9.774 (operatör-bildirimi: prod'da "Response time · metrik" paneli
+// boş) — REGRESYON KAPISI, iki parça:
+//
+//  1. ZARF SÜRÜMÜ. Yanıttan latency/latencyUnit/latencyUnitKnown/
+//     latencyDiag kalktı, metricUnit geldi. Girdiler DEĞİŞMEDİĞİ için
+//     anahtar da değişmezdi ve rolling deploy sırasında yeni kod eski
+//     zarfı 30 sn servis ederdi (v0.9.443/458 dersi: zarf değişimi
+//     anahtar sürümü ister).
+//  2. ÖLÜ YOL. attachMetricLatency ve yazdığı alanlar kaynakta
+//     KALMAMALI; panel artık Explore'un avg yolundan besleniyor.
+func TestMetricThroughputCacheKeyIsEnvelopeVersioned(t *testing.T) {
+	svc, from, to := planFixture(t)
+	k, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180)
+	if !strings.HasPrefix(k, "svc-metric-tput:v2:") {
+		t.Errorf("zarf sürümü anahtarda değil: %q", k)
+	}
+}
+
+func TestMetricLatencyPathIsGone(t *testing.T) {
+	raw, err := os.ReadFile("service_metric_throughput.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := stripAPILineComments(string(raw))
+	for _, gone := range []string{
+		"attachMetricLatency",
+		`out["latency"]`,
+		`out["latencyUnit"]`,
+		`out["latencyUnitKnown"]`,
+		`out["latencyDiag"]`,
+		"QueryMetricHistogramQuantiles",
+		"HistogramLatencyDiag",
+		"LatencyScaleToMs",
+	} {
+		if strings.Contains(src, gone) {
+			t.Errorf("panele özel yüzdelik yolu hâlâ kaynakta: %s", gone)
+		}
+	}
+	// Birim yerine geçti — iki eşleşme yolunda da (bağ hızlı yolu +
+	// tam keşif). Biri düşerse panelin ekseni birimsiz kalır.
+	if got := strings.Count(src, `out["metricUnit"] = s.metricUnitFor(`); got != 2 {
+		t.Errorf("metricUnit %d yerde yazılıyor, beklenen 2 (bağ + keşif)", got)
+	}
+}
+
 // Operatör `=` kullansaydık desen DÜZ METİN olarak aranır ve hiçbir job
 // eşleşmezdi; grafik sessizce boş kalır, sebebi de görünmezdi.
 func TestMetricThroughputFilterUsesRegexOperator(t *testing.T) {

@@ -107,25 +107,6 @@ func (s *Store) QueryMetricHistogramQuantile(ctx context.Context, f MetricQueryF
 	return s.queryHistogramQuantile(ctx, f, q)
 }
 
-// QueryMetricHistogramQuantiles — v0.9.768: TEK taramadan N yüzdelik.
-//
-// attachMetricLatency p50/p95/p99 için QueryMetricHistogramPercentile'ı ÜÇ
-// KEZ çağırıyordu; her çağrı aynı metric_points penceresini (prod'da 35k
-// satır + ağır attr dizileri) BAŞTAN tarıyordu. Operatör: "metrik panelleri
-// Prometheus kadar hızlı değil". Üç tarama → bir.
-//
-// Yol seçimi tekil fonksiyonla AYNI (rollup fail-open → global); pencere
-// (histWindowK/slidingSumCounts, v0.9.765) bir kez uygulanır, her q aynı
-// birleşik dağılımdan okunur. Dönen dilim qs ile aynı sırada ve uzunlukta.
-func (s *Store) QueryMetricHistogramQuantiles(ctx context.Context, f MetricQueryFilter, qs []float64) ([][]SpanMetricSeries, error) {
-	for _, q := range qs {
-		if q < 0 || q > 1 {
-			return nil, fmt.Errorf("histogram_quantile: quantile %g out of range [0,1]", q)
-		}
-	}
-	return s.queryHistogramQuantiles(ctx, f, qs)
-}
-
 // queryHistogramQuantile — tekil sarmalayıcı: çoklu çekirdeğin [q] hâli.
 // Mevcut çağıranların hepsi (agg-string ucu + keyfi-q ucu) davranış
 // değişimsiz kalır.
@@ -432,19 +413,4 @@ func (s *Store) queryHistogramPercentileGrouped(ctx context.Context, f MetricQue
 		out = append(out, SpanMetricSeries{GroupKey: g.gk, Points: pts})
 	}
 	return out, nil
-}
-
-
-// HistogramLatencyDiag — v0.9.761: boş gecikme panelinin NEDEN teşhisi
-// (tek ucuz sorgu). total=0 → satır yok; withCounts=0 → histogram kovası
-// yok; noBounds>=total → sınırlar boş (dağıtık-ingest probe sınıfı;
-// yüzdelik hesaplanamaz).
-func (s *Store) HistogramLatencyDiag(ctx context.Context, metric, service string, from, to time.Time) (total, noBounds, withCounts uint64, temporality string, err error) {
-	err = s.conn.QueryRow(ctx, `
-		SELECT count(), countIf(length(bucket_bounds) = 0), countIf(length(bucket_counts) > 0), any(temporality)
-		FROM metric_points
-		WHERE metric = ? AND service_name = ? AND time >= ? AND time <= ?
-		SETTINGS max_execution_time = 5`,
-		metric, service, from, to).Scan(&total, &noBounds, &withCounts, &temporality)
-	return
 }

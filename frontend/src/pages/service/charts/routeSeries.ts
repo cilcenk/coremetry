@@ -1,0 +1,104 @@
+// routeSeries — Service Overview "Response time · avg (by route)" panelinin
+// SAF yardımcıları (v0.9.774).
+//
+// NEDEN AYRI DOSYA: panelin iki kararı da test edilebilir olmalı.
+//
+//   1) KIRPMA. Metrik yolunda SUNUCU TOP-N YOK — /api/metrics/query
+//      (chstore.QueryMetric) grup başına bir seri döndürür ve yalnız 50k
+//      SATIR tavanına çarpar. 65 route'lu bir serviste panel 65 çizgi
+//      çizerdi; span türevli kardeşi (rootOpSeries) sunucu top-N'i olmasa
+//      da 5'e kırpıyor. Burada kırpma İSTEMCİDE ve SÖYLENİYOR.
+//
+//   2) BİRİM. Yüzdelik yolu silinince (v0.9.774) ms'ye çeviren sunucu
+//      kodu da gitti; artık ham değer + OTLP birimi geliyor ve ekseni
+//      @grafana/data'nın display processor'ı biçimlendiriyor. Eşleme
+//      DEĞER+BİRİM şablonudur: bu kod tabanının kayıtlı dersi, her dalın
+//      ship anında test edilmesi (feedback-unit-mixing-needs-both-
+//      branches) — prod 's', lokal 'ms' üretiyor, yani eksen-dışı dal
+//      GERÇEKTEN canlıda çalışıyor.
+//
+// Kırpma ölçütü ALAN (Σ|değer|): Explore'un panel slotu (PanelStack.tsx
+// "Biggest-by-area win the panel slots") ve rootOpSeries AYNI ölçütü
+// kullanıyor — üçüncü bir sıralama fikri icat etmiyoruz.
+
+import type { SpanMetricSeries } from '@/lib/types';
+import { rankRootOps, rootOpName } from './rootOpSeries';
+
+/** Kaç route çizilir. 10: panel 200px ve lejant varsayılan kapalı;
+ *  daha fazlası okunmuyor. rootOpSeries'in 5'inden yüksek çünkü burada
+ *  tek agg var (orada her operasyon zaten kendi P95 çizgisi). */
+export const ROUTE_TOP_N = 10;
+
+export interface RouteItem {
+  name: string;
+  role: 'data';
+  series: SpanMetricSeries[];
+}
+
+export interface RouteItems {
+  items: RouteItem[];
+  /** Dürüstlük notu (yoksa null). */
+  note: string | null;
+}
+
+// routeMoreNote — İKİ AYRI eksiklik, ikisi de söylenir:
+//   • more       — evrende daha çok route var, çizilen ilk N (alan bazlı).
+//   • rowsCapped — sorgu 50k satır tavanına çarptı: "+N daha" bile
+//                  gerçek evreni bilmiyor.
+// more=0 iken taban not YOK (rootOpMoreNote deseni): lejant zaten
+// "Series (N)" yazıyor, tekrarı gürültü.
+export function routeMoreNote(total: number, shown: number, cap: number, rowsCapped = false): string | null {
+  const more = Math.max(0, total - shown);
+  const base = more > 0
+    ? `${shown} seri · +${more} daha (alan bazlı: Σ|değer| en yüksek ${cap})`
+    : null;
+  if (!rowsCapped) return base;
+  const capped = '⚠ satır tavanı doldu — liste eksik olabilir';
+  return base ? `${base} · ${capped}` : capped;
+}
+
+// topRoutesByArea — ham seri kümesi → panel item'ları + not.
+//
+// Hizalama YOK: CorePanel'in frame birleşimi (framesToAligned) zaman
+// eksenini kendisi kurar ve eksik bucket null olur (sıkı doktrin) —
+// buildRootOpItems ile aynı gerekçe.
+export function topRoutesByArea(
+  series: readonly SpanMetricSeries[] | null | undefined,
+  cap = ROUTE_TOP_N,
+  rowsCapped = false,
+): RouteItems {
+  const all = series ?? [];
+  const top = rankRootOps(all, cap);
+  return {
+    items: top.map(s => ({ name: rootOpName(s.groupKey), role: 'data' as const, series: [s] })),
+    note: routeMoreNote(all.length, top.length, cap, rowsCapped),
+  };
+}
+
+// ── Birim eşlemesi ────────────────────────────────────────────────────────
+//
+// OTLP birimi → @grafana/data birim kimliği. Sözleşme dar BİLEREK:
+// tanınan iki süre birimi ('s', 'ms') eşlenir, kalan her şey undefined
+// döner ve panel eksenini ham sayı olarak (fmtSmart) çizip notta
+// "birim tanınmadı" der.
+//
+// TAHMİN YOK: boş birimli bir süre metriği saniye de olabilir milisaniye
+// de, ve yanlış ölçekli bir grafik ölçeksiz olandan kötüdür — operatör
+// ona güvenir (v0.9.676'da silinen LatencyScaleToMs'in de gerekçesiydi;
+// karar burada yaşamaya devam ediyor, ölçekleme değil ETİKETLEME olarak).
+export function metricUnitToGrafana(u: string | undefined): 's' | 'ms' | undefined {
+  switch ((u ?? '').trim().toLowerCase()) {
+    case 's':
+    case 'sec':
+    case 'secs':
+    case 'second':
+    case 'seconds':
+      return 's';
+    case 'ms':
+    case 'millisecond':
+    case 'milliseconds':
+      return 'ms';
+    default:
+      return undefined;
+  }
+}

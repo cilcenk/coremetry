@@ -1964,17 +1964,17 @@ export interface ServiceMetricThroughput {
   // "sorgu hata verdi" bambaşka şeyler; ikincisi sessiz kalırsa
   // operatör sonsuza kadar deseni kovalar.
   candidateErrors?: string[];
-  // v0.9.676 — histogram yüzdelikleri, MİLİSANİYEYE çevrilmiş.
-  // latencyUnitKnown=false ise ölçekleme YAPILMADI (birim tanınmadı) —
-  // panel bunu söylemek zorunda, yoksa yanlış ölçekli bir sayıya
-  // güvenilir.
-  latency?: { p50?: SpanMetricSeries[]; p95?: SpanMetricSeries[]; p99?: SpanMetricSeries[] };
-  latencyUnit?: string;
-  latencyUnitKnown?: boolean;
-  // v0.9.761 — gecikme BOŞ döndüğünde sunucunun tek-sorgu teşhisi
-  // (satır yok / kova yok / SINIRLAR boş / beklenmedik şekil). Panel
-  // notu gösterir; boş panel artık sebepsiz değil.
-  latencyDiag?: string;
+  // v0.9.774 — çözülen metriğin OTLP birimi ("s" / "ms" / …).
+  //
+  // v0.9.676-773 arası burada latency/latencyUnit/latencyUnitKnown/
+  // latencyDiag vardı: uç histogram KOVALARINDAN P50/P95/P99 hesaplayıp
+  // ms'ye çevirerek gönderiyordu. Prod'da metric_points satırları
+  // bucket_counts taşıyıp bucket_bounds taşımadığı için o yol sessizce
+  // boş dönüyordu. Panel artık Explore'un çalışan avg yolundan
+  // (/api/metrics/query) besleniyor; bu uçtan yalnız KİMLİK isteniyor —
+  // metriğin adı ve birimi. Ölçekleme yok: birim display processor'a
+  // gidiyor (dataFrame.ts sözleşmesi).
+  metricUnit?: string;
   // v0.9.679 — eşleşme ORTAMLA ayrıştırılamadı. Metrik tarafında servis
   // adı eksiz olduğu için `-uat`/`-prod` aynı ada iniyor; ortam kısıtı
   // tutmazsa seri birden çok ortamın verisini taşıyor OLABİLİR.

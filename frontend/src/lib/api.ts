@@ -1782,8 +1782,13 @@ export const api = {
   metricQuery: (params: MetricQueryParams) =>
     get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`)
       .then(r => (r ? r.series : null)),
-  metricQueryFull: (params: MetricQueryParams) =>
-    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`),
+  // v0.9.774 — opsiyonel signal: Service Overview'un RT paneli RQ v5
+  // semantiğiyle ({ signal } destructure) çağırıyor, aralık/servis
+  // değişince uçuşan istek iptal ediliyor. İptal isCanceled sınıfına
+  // uyar (CanceledError) — hata DEĞİL, çağıranın kendi eylemi.
+  // Mevcut çağıranlar (Explore, PanelRenderer) argümansız kalır.
+  metricQueryFull: (params: MetricQueryParams, signal?: AbortSignal) =>
+    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`, signal),
   // v0.6.56 — explicit-histogram heatmap + percentile bands. Reuses
   // MetricQueryParams (agg/groupBy ignored server-side for histograms).
   metricHistogram: (params: MetricQueryParams) =>

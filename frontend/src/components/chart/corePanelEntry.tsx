@@ -50,10 +50,30 @@ export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'role
   // sorgu sürerken boş items "veri yok" boş-durumuna düşmesin; loading
   // true iken Spinner'lı yükleme durumu çizilir.
   loading?: boolean;
+  // v0.9.774 — HATA ve BOŞ kanalları. PanelData'nın 'error'/'empty'
+  // varyantları v0.9.704'ten beri tipte ve render dalları CorePanel'de
+  // hazırdı ama HİÇBİR çağıran onları üretemiyordu: çok-serili giriş
+  // yalnız loading/ready kurabiliyordu. Sonuç, başarısız bir sorgunun
+  // "Bu aralıkta çizilecek nokta yok · Aralığı genişletmeyi deneyin"
+  // yazması — yanlış teşhis, yanlış eylem.
+  //
+  // İkisi de PRİMİTİF (string): CorePanel'e giden prop kimliği her
+  // render'da değişip config'i yıkmasın (v0.9.704 destroy/recreate dersi).
+  // Verilmezse davranış bayt-bayt bugünküdür.
+  error?: string;
+  emptyReason?: string;
+  emptyHint?: string;
 }
 
-export function CorePanelMulti({ items, unit, loading, ghostItems, ...rest }: CorePanelMultiProps) {
+export function CorePanelMulti({
+  items, unit, loading, ghostItems, error, emptyReason, emptyHint, ...rest
+}: CorePanelMultiProps) {
   if (loading) return <CorePanel {...rest} data={{ state: 'loading' }} />;
+  // Sıra ÖNEMLİ: hata boşluğu kapsar (başarısız sorgunun serisi de yok).
+  if (error) return <CorePanel {...rest} data={{ state: 'error', message: error }} />;
+  if (emptyReason) {
+    return <CorePanel {...rest} data={{ state: 'empty', reason: emptyReason, hint: emptyHint }} />;
+  }
   // TEK geçiş: frames + rol hizası birlikte (çifte dönüşüm = çifte
   // display-processor kurulumu olurdu).
   const frames: ReturnType<typeof spanSeriesToFrames> = [];

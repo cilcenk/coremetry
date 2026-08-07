@@ -276,31 +276,6 @@ func TestEnvSuffixesMirrorLogstore(t *testing.T) {
 	}
 }
 
-// v0.9.676 — birim çevirisi. Span türevli panel ms, metrik saniye.
-// Çevirmezsek iki panel 1000× farklı görünür.
-func TestLatencyScaleToMs(t *testing.T) {
-	cases := []struct {
-		unit  string
-		scale float64
-		ok    bool
-	}{
-		{"s", 1000, true}, {"S", 1000, true}, {"seconds", 1000, true},
-		{" s ", 1000, true}, // boşluk kırpılır
-		{"ms", 1, true}, {"milliseconds", 1, true},
-		{"us", 0.001, true}, {"µs", 0.001, true},
-		{"ns", 0.000001, true},
-		// BİLİNMEYEN ÇEVRİLMEZ: tahmin yazı-tura, yanlış ölçekli grafik
-		// ölçeksizden kötü.
-		{"", 1, false}, {"By", 1, false}, {"requests", 1, false},
-	}
-	for _, c := range cases {
-		got, ok := LatencyScaleToMs(c.unit)
-		if got != c.scale || ok != c.ok {
-			t.Errorf("LatencyScaleToMs(%q) = (%v, %v), beklenen (%v, %v)", c.unit, got, ok, c.scale, c.ok)
-		}
-	}
-}
-
 // v0.9.681 — ORTAM DEĞERİ ORTAM+KÜME olabiliyor.
 //
 // Operatör: "Deploy env-cluster şeklinde sanki geliyor

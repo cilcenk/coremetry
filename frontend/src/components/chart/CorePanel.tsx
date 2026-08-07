@@ -38,7 +38,7 @@ import type { DataFrame } from '@grafana/data';
 import { framesToAligned, chartTheme } from '@/lib/chart/dataFrame';
 import { seriesRoleColor, type SeriesRole } from '@/lib/chart/seriesRole';
 import { visibleRangeStats } from '@/lib/chart/visibleStats';
-import { resolveLegendCollapsed } from '@/lib/chart/legendStats';
+import { resolveLegendCollapsed, isAdditiveUnit } from '@/lib/chart/legendStats';
 import {
   toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility,
 } from '@/lib/chart/legendVisibility';
@@ -286,7 +286,20 @@ export function CorePanel({
     b.addAxis({ scaleKey: 'x', isTime: true, placement: AxisPlacement.Bottom, theme });
     b.addAxis({
       scaleKey: 'y', placement: AxisPlacement.Left, theme,
-      formatValue: (v: unknown) => fmtSmart(typeof v === 'number' ? v : Number(v)),
+      // v0.9.774 — eksen BİRİMLİ. Tooltip (aşağıda) v0.9.710'dan beri
+      // display processor'dan geçiyordu, eksen ise ham fmtSmart'taydı:
+      // aynı panelde tooltip "1.04 s" derken eksen "1042" yazıyordu.
+      // Birim ÇEVİRİSİ elle yazılmaz (dataFrame.ts sözleşmesi) — ilk
+      // frame'in display'i çağrılır. Frame'ler ref'ten CANLI okunur:
+      // config bağımlılığına girmezler, yani birim değişimi uPlot'u
+      // destroy/recreate ETMEZ (v0.9.704 kimlik dersi).
+      formatValue: (v: unknown) => {
+        const n = typeof v === 'number' ? v : Number(v);
+        const disp = framesRef.current[0]?.fields[1].display;
+        if (!disp || n == null || !isFinite(n)) return fmtSmart(n);
+        const d = disp(n);
+        return `${d.text}${d.suffix ?? ''}`;
+      },
     });
     aligned.names.forEach((name, i) => {
       b.addSeries({
@@ -446,6 +459,23 @@ export function CorePanel({
     a.click();
     URL.revokeObjectURL(url);
   };
+
+  // v0.9.774 — lejant hücreleri de BİRİMLİ (eksen + tooltip ile aynı
+  // kaynak). field.display'i köprü (dataFrame.ts) frame'i kurarken
+  // yarattı; burada yalnız ÇAĞRILIYOR — hücre başına yeni nesne/işlemci
+  // üretilmiyor (sıcak yol), ve birim mantığı köprünün tekelinde kalıyor.
+  const fmtCell = (i: number, v: number | null): string => {
+    if (v == null || !isFinite(v)) return fmtSmart(v);
+    const disp = frames[i]?.fields[1].display;
+    if (!disp) return fmtSmart(v);
+    const d = disp(v);
+    return `${d.text}${d.suffix ?? ''}`;
+  };
+  // TOPLAM yalnız toplanabilir birimde anlamlı — v1 StatsLegend paritesi
+  // (legendStats.isAdditiveUnit): pod'lar arası p95 latency'yi toplamak
+  // anlamsız, yüzdeleri toplamak yanlış. Birimsiz panel bugünkü davranışta
+  // kalır (isAdditiveUnit('') === true).
+  const sumAdditive = isAdditiveUnit(frames[0]?.fields[1].config.unit);
 
   // Legend istatistikleri — GÖRÜNEN aralıktan (spec). Zoom bir sorgu
   // değil pencerelemedir; visibleRangeStats saf.
@@ -646,11 +676,11 @@ export function CorePanel({
                       }} />
                       {s.name}
                     </td>
-                    <td className="num">{fmtSmart(s.stat.last)}</td>
-                    <td className="num">{fmtSmart(s.stat.min)}</td>
-                    <td className="num">{fmtSmart(s.stat.max)}</td>
-                    <td className="num">{fmtSmart(s.stat.mean)}</td>
-                    <td className="num">{fmtSmart(s.stat.sum)}</td>
+                    <td className="num">{fmtCell(i, s.stat.last)}</td>
+                    <td className="num">{fmtCell(i, s.stat.min)}</td>
+                    <td className="num">{fmtCell(i, s.stat.max)}</td>
+                    <td className="num">{fmtCell(i, s.stat.mean)}</td>
+                    <td className="num">{sumAdditive ? fmtCell(i, s.stat.sum) : '—'}</td>
                   </tr>
                 ))}
               </tbody>

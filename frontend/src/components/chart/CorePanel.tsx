@@ -410,7 +410,12 @@ export function CorePanel({
   };
 
   return (
-    <div className="panel" style={{
+    // v0.9.735 (operatör: "arka plan PatternFly'da gri kalıyor") — "panel"
+    // sınıfı globals.css'te TANIMLI DEĞİLDİ; kök çıplak kalıp sayfa
+    // arka planını gösteriyordu. ChartCard'ın çizdiği kart kabuğu (.card:
+    // bg1 + border + radius + gölge) buraya taşındı — redhat/light'ta
+    // beyaz, dark'ta koyu; tema token'ları karar verir.
+    <div className="card" style={{
       display: 'flex', flexDirection: 'column', gap: 6,
       // Tam ekran: CSS overlay. Route/DOM taşınmaz — uPlot instance'ı
       // yaşamaya devam eder, ResizeObserver genişliği kendisi yakalar.

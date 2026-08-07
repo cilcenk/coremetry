@@ -144,17 +144,22 @@ func TestExampleRunbooks(t *testing.T) {
 // persistently-failing 24h first-tick (prod-scale OOM, CH code 241)
 // retried the SAME window forever and the inbox never reached the
 // cheap 5-min steady state. The contract under test: the window
-// advances to now-5m after failure exactly as after success.
+// advances to now-5m after failure.
+//
+// v0.9.769 — the SUCCESS branch changed: it now checkpoints to the
+// pass's own `until` instead of jumping to now-5m. Pinned separately
+// in TestNextExceptionRefreshSinceCheckpointsOnSuccess; the failure
+// branch below is untouched on purpose.
 func TestNextExceptionRefreshSinceAdvancesOnError(t *testing.T) {
 	now := time.Date(2026, 7, 23, 12, 0, 0, 0, time.UTC)
 	backfill := now.Add(-24 * time.Hour)
 	want := now.Add(-5 * time.Minute)
 
-	fail := func(s time.Time) (int, error) {
+	fail := func(s time.Time) (int, time.Time, error) {
 		if !s.Equal(backfill) {
 			t.Fatalf("refresh got window %v, want the 24h backfill %v", s, backfill)
 		}
-		return 0, errors.New("code: 241, memory limit exceeded")
+		return 0, time.Time{}, errors.New("code: 241, memory limit exceeded")
 	}
 	next, n, err := nextExceptionRefreshSince(fail, backfill, now)
 	if err == nil || n != 0 {
@@ -163,13 +168,54 @@ func TestNextExceptionRefreshSinceAdvancesOnError(t *testing.T) {
 	if !next.Equal(want) {
 		t.Fatalf("since after FAILED pass = %v, want %v (the v0.9.188 wedge: it must advance)", next, want)
 	}
+}
 
-	okFn := func(s time.Time) (int, error) { return 7, nil }
-	next2, n2, err2 := nextExceptionRefreshSince(okFn, next, now)
-	if err2 != nil || n2 != 7 {
-		t.Fatalf("success pass: n=%d err=%v", n2, err2)
+// v0.9.769 — operatör: SQLTimeoutException grubu 191'de donuk kalırken
+// zaman çizelgesi Σ697 gösteriyor, lastSeen ilerliyor. Kök: her geçiş
+// now-5m'den başlıyordu, yani ardışık pencereler örtüşüyordu; merge de
+// çift sayıma karşı max() aldığı için artımlar yutuluyordu.
+//
+// Sözleşme: BAŞARILI geçişte bir sonraki `since` TAM OLARAK o geçişin
+// taradığı üst sınır olur (checkpoint) — böylece ardışık pencereler ne
+// örtüşür ne de boşluk bırakır ve mergeExceptionGroup toplayabilir.
+func TestNextExceptionRefreshSinceCheckpointsOnSuccess(t *testing.T) {
+	now := time.Date(2026, 8, 7, 12, 0, 0, 0, time.UTC)
+	since := now.Add(-5 * time.Minute)
+	// Gerçek RefreshExceptionGroups `until = time.Now()` alır; burada
+	// çağrıdan biraz sonrasını temsilen now+1s dönüyoruz ki checkpoint'in
+	// now-5m'e DEĞİL, geçişin kendi sınırına bağlandığı görünsün.
+	until := now.Add(1 * time.Second)
+
+	var got time.Time
+	refresh := func(s time.Time) (int, time.Time, error) {
+		got = s
+		return 3, until, nil
 	}
-	if !next2.Equal(want) {
-		t.Fatalf("since after success = %v, want %v", next2, want)
+	next, n, err := nextExceptionRefreshSince(refresh, since, now)
+	if err != nil || n != 3 {
+		t.Fatalf("success pass: n=%d err=%v", n, err)
+	}
+	if !got.Equal(since) {
+		t.Fatalf("refresh %v ile çağrılmış, %v bekleniyordu", got, since)
+	}
+	if !next.Equal(until) {
+		t.Fatalf("checkpoint yok: since=%v, until=%v bekleniyordu (örtüşen pencere = donuk sayaç)", next, until)
+	}
+
+	// İkinci geçiş birincinin bittiği yerden başlar — tek olay iki
+	// pencerede birden sayılmaz.
+	until2 := until.Add(60 * time.Second)
+	next2, _, err2 := nextExceptionRefreshSince(
+		func(s time.Time) (int, time.Time, error) {
+			if !s.Equal(until) {
+				t.Fatalf("ikinci geçiş %v'den başladı, %v bekleniyordu", s, until)
+			}
+			return 1, until2, nil
+		}, next, until2)
+	if err2 != nil {
+		t.Fatalf("ikinci geçiş hata: %v", err2)
+	}
+	if !next2.Equal(until2) {
+		t.Fatalf("ikinci checkpoint = %v, %v bekleniyordu", next2, until2)
 	}
 }

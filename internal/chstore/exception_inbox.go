@@ -291,10 +291,11 @@ func mergeExceptionGroup(g ExceptionGroup, existing *ExceptionGroup) ExceptionGr
 			// Stay ignored — silence is the whole point.
 			g.State = ExStateIgnored
 		}
-		// Use the larger occurrence count (avoid races resetting to lower)
-		if existing.Occurrences > g.Occurrences {
-			g.Occurrences = existing.Occurrences
-		}
+		// v0.9.769 — pencereler artık örtüşmez (checkpoint since): gelen değer
+		// ARTIMDIR, toplanır. Eski max() örtüşen pencerelerin çift sayımına
+		// karşıydı ama artımları yutuyordu — sayı ilk büyük pencerede donuyor,
+		// lastSeen ilerliyordu (operatör ekranı: 191 donuk, timeline Σ697).
+		g.Occurrences += existing.Occurrences
 		g.ResolvedAt = existing.ResolvedAt
 	} else {
 		g.State = ExStateNew
@@ -467,6 +468,28 @@ func (s *Store) GetExceptionGroup(ctx context.Context, fingerprint string) (*Exc
 		g.ResolvedAt = &ns
 	}
 	return &g, nil
+}
+
+// MaxExceptionGroupLastSeen — refresher'ın BOOT tohumu (v0.9.769).
+//
+// Sayaçlar artık toplandığı için (mergeExceptionGroup), yeniden başlayan bir
+// pod'un 24 saati baştan taraması geçmişi İKİNCİ kez saymak demek. Kayıtlı en
+// taze last_seen'den devam edersek restart aralığı tam bir kez, fazlası hiç
+// sayılmaz. FINAL gereksiz: max() monoton, eski sürüm satırları sonucu
+// büyütemez. Tek satır, 3 sn bütçe — bulunamazsa çağıran 24h fallback'ine
+// düşer (ok=false).
+func (s *Store) MaxExceptionGroupLastSeen(ctx context.Context) (time.Time, bool) {
+	row := s.conn.QueryRow(ctx, `
+		SELECT max(last_seen) FROM exception_groups
+		SETTINGS max_execution_time = 3`)
+	var t time.Time
+	if err := row.Scan(&t); err != nil {
+		return time.Time{}, false
+	}
+	if t.IsZero() || t.Unix() <= 0 {
+		return time.Time{}, false
+	}
+	return t, true
 }
 
 type ExceptionGroupFilter struct {
@@ -1048,6 +1071,11 @@ func fillOccurrenceBuckets(fromNs, toNs, stepSec int64, counts map[int64]uint64)
 // Step 1 is a coarse SQL-side aggregation by (type, message, service) +
 // the most-recent stacktrace per bucket; step 2 is a Go-side re-merge by
 // the v2 fingerprint into a smaller set of canonical groups.
+//
+// v0.9.769 — taranan pencerenin ÜST sınırı (`until`) da dönülür: çağıran
+// bunu bir sonraki geçişin `since`'i olarak kullanıp pencereleri
+// örtüştürmez. Sayaçlar artık toplandığı için (mergeExceptionGroup)
+// örtüşme = çift sayım; checkpoint bunu kökten keser.
 // exGroupsRefreshMaxGroups caps one refresh pass's raw (type, msg,
 // service) groups. ORDER BY cnt DESC makes the cut deterministic and
 // keeps the HOT groups — the tail past 20k is single-digit-count noise
@@ -1056,7 +1084,7 @@ func fillOccurrenceBuckets(fromNs, toNs, stepSec int64, counts map[int64]uint64)
 // (silent truncation reads as "covered everything").
 const exGroupsRefreshMaxGroups = 20000
 
-func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (int, error) {
+func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (int, time.Time, error) {
 	f := exFragments(s.hasExCols)
 	// v0.8.565 — this scan ran with `time >= ?` alone: no upper bound,
 	// no LIMIT, no max_execution_time — a live hard-constraint violation
@@ -1087,7 +1115,7 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 		LIMIT ?
 		SETTINGS max_execution_time = 60`, since, until, exGroupsRefreshMaxGroups)
 	if err != nil {
-		return 0, err
+		return 0, time.Time{}, err
 	}
 	defer rows.Close()
 
@@ -1102,7 +1130,7 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 		var cnt uint64
 		var firstSeen, lastSeen int64
 		if err := rows.Scan(&exType, &exMsg, &svc, &stack, &cnt, &firstSeen, &lastSeen); err != nil {
-			return 0, err
+			return 0, time.Time{}, err
 		}
 		fp := FingerprintException(exType, exMsg, svc, stack)
 		if g, ok := merged[fp]; ok {
@@ -1132,7 +1160,7 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 		log.Printf("[errors-inbox] refresh hit the %d-group cap — coldest tail truncated this pass (first-tick warmup on a big backlog; steady 5m ticks stay far below it)", exGroupsRefreshMaxGroups)
 	}
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return 0, time.Time{}, err
 	}
 
 	batch := make([]ExceptionGroup, 0, len(merged))
@@ -1140,7 +1168,7 @@ func (s *Store) RefreshExceptionGroups(ctx context.Context, since time.Time) (in
 		batch = append(batch, *g)
 	}
 	if err := s.UpsertExceptionGroups(ctx, batch); err != nil {
-		return 0, err
+		return 0, time.Time{}, err
 	}
-	return len(merged), nil
+	return len(merged), until, nil
 }

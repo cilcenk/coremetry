@@ -5,7 +5,8 @@ import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/l
 import { timeRangeToNs, rangeToSince } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { entryLatencyDSL } from '@/lib/entrySpans';
-import { panelMaxDataPoints, stepForPoints } from '@/lib/chartStep';
+import { panelMaxDataPoints, stepForPoints, stepForWidth } from '@/lib/chartStep';
+import { encodeFilters } from '@/lib/urlState';
 import { Tabs } from '@/components/ui';
 import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { useServiceDeploys, useSLOs } from '@/lib/queries';
@@ -26,9 +27,9 @@ const CorePanelLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelWithFrames })));
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
-import { metricLatencyComparable, metricLatencyUnitLabel } from './metricLatencyUnit';
 import { EnvAmbiguousNote } from './EnvAmbiguousNote';
 import { buildRootOpLines } from './charts/rootOpSeries';
+import { topRoutesByArea, metricUnitToGrafana, ROUTE_TOP_N } from './charts/routeSeries';
 import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
 import { TopEndpointsCard } from './TopEndpointsCard';
@@ -467,19 +468,62 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     };
   }, [metricTputQ.data]);
 
-  // v0.9.676 (operatör: "response time için de bir panel yapabilir
-  // misin") — metrik türevli gecikme. Aynı uçtan, THROUGHPUT'UN BULDUĞU
-  // seriden geliyor: iki panelin farklı serilere bakması kıyaslamayı
-  // sessizce anlamsız kılardı.
-  const metricLatLines = useMemo<ChartLine[]>(() => {
-    const l = metricTputQ.data?.latency;
-    if (!l) return [];
-    const out: ChartLine[] = [];
-    if (l.p50) out.push({ series: l.p50, color: 'var(--purple)', label: 'P50' });
-    if (l.p95) out.push({ series: l.p95, color: 'var(--orange)', label: 'P95' });
-    if (l.p99) out.push({ series: l.p99, color: 'var(--err)', label: 'P99' });
-    return out;
-  }, [metricTputQ.data]);
+  // ── Response time · metrik (v0.9.774, operatör-bildirimi: prod'da bu
+  // panel boş) ─────────────────────────────────────────────────────────
+  //
+  // KÖK NEDEN: panelin KENDİNE ÖZEL bir veri yolu vardı —
+  // /metric-throughput → attachMetricLatency → histogram KOVALARINDAN
+  // P50/P95/P99. Prod'daki metric_points satırları bucket_counts taşıyıp
+  // bucket_bounds taşımıyor, sınırsız kovadan yüzdelik hesaplanamıyor,
+  // yol sessizce boş dönüyordu (sunucu teşhisi: "histYol times=0
+  // bounds=0"). Aynı sayfadaki "Response time · P99" KAROSU farklı
+  // zincirden (dar rollup tDigest) beslendiği için çalışıyordu — panel
+  // boşken karo dolu, en kötü kombinasyon.
+  //
+  // ÇÖZÜM: panele özel yolu silip Explore'un ÇALIŞAN yoluna bağlamak.
+  // Explore aynı metriği ham metric_points üzerinden avgOrNull(value)
+  // ile okuyor ve prod'da çalışıyor. Panel artık AYNI ucu, AYNI
+  // parametre şekliyle çağırıyor: iki yüzey ayrışamaz, çünkü tek yol var.
+  //
+  // Metrik ADI hardcode DEĞİL: throughput ucunun keşfettiği ad kullanılır
+  // (prod'da http.server.request.duration, lokalde http.server.duration).
+  const metricName = metricTputQ.data?.metric ?? '';
+  // Adım: Explore paritesi (stepForWidth). Genişlik kaynağı kardeş RED
+  // panelleriyle AYNI (redMdp = quantizeWidth(içerik/3)/2 nokta), yani
+  // px ≈ redMdp×2 — deterministik, rung'a snap'li, cache-key kardinalitesi
+  // sınırlı (v0.8.270). mdp GÖNDERİLMİYOR: metricQueryFull'un sabit 1500
+  // varsayılanı Explore ile bayt-aynı istek üretir.
+  const rtStep = useMemo(
+    () => stepForWidth(Math.max(1, (to - from) / 1e9), redMdp * 2),
+    [from, to, redMdp]);
+  const rtFilters = useMemo(
+    () => encodeFilters([{ k: 'service.name', op: '=', v: [service] }]),
+    [service]);
+  const rtAvgQ = useQuery({
+    queryKey: ['service-rt-avg-route', service, metricName, from, to, rtStep],
+    enabled: !!metricName,
+    staleTime: 30_000,
+    queryFn: ({ signal }) => api.metricQueryFull({
+      name: metricName,
+      agg: 'avg',
+      groupBy: 'http.route',
+      filters: rtFilters,
+      from, to,
+      step: rtStep,
+    }, signal),
+  });
+  // Sunucu top-N YOK bu yolda (grup başına seri, 50k satır tavanına dek):
+  // kırpma istemcide, ve SÖYLENİYOR.
+  const rtView = useMemo(
+    () => topRoutesByArea(rtAvgQ.data?.series, ROUTE_TOP_N, rtAvgQ.data?.rowsCapped),
+    [rtAvgQ.data]);
+  const rtUnit = metricUnitToGrafana(metricTputQ.data?.metricUnit);
+  const rtNote = [
+    rtView.note,
+    // v1 dürüstlük deseni: tanınmayan birimde eksen ham sayı çizer ve
+    // bunu SÖYLER — sessizce "ms" yazmak yanlış sayıya güven üretir.
+    rtUnit ? null : 'birim tanınmadı',
+  ].filter(Boolean).join(' · ') || null;
 
   // v0.9.170 (operatör-bildirimi: cluster çözülemeyen / metrik-yoğun
   // servislerde "bütün Service Overview boş"). Service-summary bundle (info)
@@ -520,6 +564,18 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     metricQuery({ metric: 'calls_total', agg: 'error_rate', unit: '%', filters: svcFilter, viz, range });
   const mkLatency = (agg: 'p50' | 'p95' | 'p99', viz: MetricQuery['viz']) =>
     metricQuery({ metric: 'duration_milliseconds_bucket', agg, unit: 'ms', filters: svcFilter, viz, range });
+  // v0.9.774 — Response time GRAFİĞİNİN kapı tanımlayıcısı, KAROSUNUNKİ
+  // değil. İkisi ayrı zincirden besleniyor (karo: dar rollup tDigest P99;
+  // grafik: metrik avg, route kırılımlı) ve tek bir descriptor ikisini
+  // birden temsil edemez. ⋮ menüsü panelin GERÇEK sorgusunu yansıtsın:
+  // p99 yazıp avg çizmek, doorway'in vaadini ("aynı nesne hem çizer hem
+  // açar") boşa çıkarırdı.
+  const mkMetricResponseTime = () =>
+    metricQuery({
+      metric: metricName || 'duration_milliseconds_bucket',
+      agg: 'avg', unit: 'ms', filters: svcFilter,
+      groupBy: ['http.route'], viz: 'line', range,
+    });
   // v0.9.491 (operatör: "Service overview'de apdex'e gerek yok") — v0.9.476
   // Apdex karosu + grafiği kaldırıldı. Backend apdex agg'ı ve MV state'leri
   // yaşıyor; Explore'dan calls_total/apdex hâlâ sorgulanabilir.
@@ -574,7 +630,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           bozuk/zıplıyor" diye yaşıyordu. Doorway hover ⋮ ve `e` kısayoluyla
           erişilebilir kalıyor; KPI karoları gövde-tıklamasını koruyor. */}
       <div className="ov-grid ov-charts-3 ov-mb">
-        <MetricPanel compact menuOnly title="Response time" metricQuery={mkLatency('p99', 'line')}>
+        <MetricPanel compact menuOnly title="Response time" metricQuery={mkMetricResponseTime()}>
           {/* v0.9.484 — TEK kart, iki görünüm. Başlık/kapsam tooltip'i
               (v0.9.483) ve deploy ▼ / eşik / zoom / sync kablolaması ikisinde
               de AYNI; değişen yalnız çizgiler, durum ve lejant anahtarı.
@@ -592,21 +648,34 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                dönüş). Alt karttaki metrik paneli BURAYA taşındı. */
             <Suspense key="rt-metric-v2-main" fallback={<Spinner />}>
               <CorePanelMultiLazy
-                title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
+                // v0.9.774 — başlıkta AGG YAZILI. Panel P50/P95/P99
+                // çizdiğini iddia ediyordu ve boş geliyordu; artık ne
+                // çizdiğini söylüyor: route kırılımlı ORTALAMA.
+                title={`Response time · avg (by route)${metricName ? ` — ${metricName}` : ''}`}
+                // storageKey AYNEN: kullanıcının lejant/görünürlük tercihi
+                // panel yeniden bağlandı diye sıfırlanmasın.
                 storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref())}
-                loading={metricTputQ.isLoading}
-                unit={metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) ? 'ms' : undefined}
+                loading={metricTputQ.isLoading || rtAvgQ.isLoading}
+                // Birim SUNUCUDAN gelen OTLP birimine göre; tanınmazsa
+                // undefined (ham sayı) ve not bunu söyler.
+                unit={rtUnit}
                 xRange={xRange}
-                items={metricLatLines.map(l => ({
-                  name: l.label ?? '', role: 'data' as const, series: l.series,
-                }))}
-                // v0.9.747 (operatör: "sadece P50 ya da P99 gözükse") —
-                // varsayılan görünen P99 (KPI karosuyla aynı); P50/P95
-                // lejantta bir tık uzakta, kullanıcı seçimi kalıcı kazanır.
-                defaultHidden={['P50', 'P95']}
-                note={metricLatLines.length === 0 && metricTputQ.data?.latencyDiag
-                  ? `Neden: ${metricTputQ.data.latencyDiag}`
-                  : `Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}`}
+                items={rtView.items}
+                // defaultHidden YOK: tek agg var, gizlenecek P50/P95 de.
+                note={rtNote}
+                // Hata ve boşluk AYRI: birincisi sorgu patladı, ikincisi
+                // sorgu çalıştı ama bu filtrede veri yok. Aynı ekranı
+                // göstermek yanlış eyleme yönlendirir.
+                error={rtAvgQ.isError
+                  ? (rtAvgQ.error instanceof Error ? rtAvgQ.error.message : 'Metrik sorgusu başarısız')
+                  : undefined}
+                emptyReason={!rtAvgQ.isError && !rtAvgQ.isLoading && rtView.items.length === 0
+                  ? (metricName ? 'Bu filtrede veri yok' : 'Servise bağlı metrik bulunamadı')
+                  : undefined}
+                emptyHint={metricName ? `${metricName} · service.name = ${service}` : undefined}
+                // Geliştirici detayı — mevcut ⋯ → "Sorguyu göster".
+                queryText={`avg(${metricName || '?'}) by (http.route), service.name="${service}", step=${rtStep}s`
+                  + (rtAvgQ.isError ? `\n\nHATA: ${String(rtAvgQ.error)}` : '')}
                 regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
@@ -628,34 +697,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
             ]} />
           )}
-          {/* v0.9.676 — metrik türevli gecikme KENDİ kartında, span
-              türevlinin ALTINDA (throughput'takiyle aynı düzen).
-              Yüzdelikler histogram KOVA SINIRLARINDAN; bir sayaçta
-              gecikme diye bir şey olmadığı için yalnız histogramda
-              çiziliyor. */}
-          {!chartsV2() && metricLatLines.length > 0 && (
-            <div style={{ marginTop: 10 }}>
-              {(
-              <ChartCard
-                title={`Response time · metrik (${metricTputQ.data?.metric ?? ''})`}
-                titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}${metricTputQ.data?.latencyUnitKnown === false ? ' · BİRİM TANINMADI, ölçeklenmedi' : ''}`}
-                unit={metricLatencyUnitLabel(metricTputQ.data?.latencyUnitKnown, metricTputQ.data?.latencyUnit)}
-                mode="line"
-                deploy={deploy} onZoom={onZoom} onZoomReset={onZoomReset}
-                syncKey={chartSync} xRange={xRange}
-                legendStorageKey="ov-response-time-metric" statsDefaultCollapsed
-                lines={metricLatLines} />
-              )}
-              {metricTputQ.data?.envAmbiguous && <EnvAmbiguousNote />}
-              {!metricLatencyComparable(metricTputQ.data?.latencyUnitKnown) && (
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
-                  Metriğin birimi tanınmadı (<code>{metricTputQ.data?.latencyUnit || 'boş'}</code>)
-                  — değerler ms'ye ÇEVRİLMEDİ, üstteki panelle doğrudan
-                  kıyaslanamaz.
-                </div>
-              )}
-            </div>
-          )}
+          {/* v0.9.774 — v1'deki "Response time · metrik" ALT KARTI
+              silindi. Beslediği yüzdelik yolu (histogram kovaları) artık
+              yok; v1 dalında span türevli rt-agg/rt-ops panelleri
+              yaşamaya devam ediyor, yani bu bayrakta Response time
+              slotu boş kalmıyor. */}
         </MetricPanel>
         <MetricPanel compact menuOnly title="Throughput" metricQuery={mkThroughput('line')}>
           {/* v0.9.253 — status ve seri artık ENTRY sorgusundan. Kart üstündeki

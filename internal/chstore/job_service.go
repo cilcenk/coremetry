@@ -215,32 +215,6 @@ var ThroughputMetricCandidates = []string{
 	"http_server_requests_seconds_count",         // Micrometer → Prometheus
 }
 
-// LatencyScaleToMs — süre biriminden MİLİSANİYE çarpanı.
-//
-// v0.9.676 (operatör: "response time için de bir panel yapabilir
-// misin") — span türevli Response time paneli `ms` çiziyor, metrik ise
-// KENDİ biriminde geliyor: OTel semconv `http.server.request.duration`
-// SANİYE. Çevirmezsek iki panel 1000× farklı görünür ve operatör bunu
-// hata sanır — ya da daha kötüsü, sanmaz ve yanlış sayıya güvenir.
-//
-// BİLİNMEYEN BİRİM ÇEVRİLMİYOR (ok=false). Tahmin etmek yazı-tura:
-// boş birimli bir süre metriği saniye de olabilir milisaniye de.
-// Çağıran o durumda ölçeklemeden çizip birimi OLDUĞU GİBİ yazmalı —
-// yanlış ölçekli bir grafik, ölçeksiz olandan kötüdür.
-func LatencyScaleToMs(unit string) (float64, bool) {
-	switch strings.ToLower(strings.TrimSpace(unit)) {
-	case "s", "sec", "secs", "second", "seconds":
-		return 1000, true
-	case "ms", "millisecond", "milliseconds":
-		return 1, true
-	case "us", "µs", "microsecond", "microseconds":
-		return 0.001, true
-	case "ns", "nanosecond", "nanoseconds":
-		return 0.000001, true
-	}
-	return 1, false
-}
-
 // EnvValueRegex — ortam değeri deseni.
 //
 // v0.9.681 (operatör-bildirimi): "Deploy env-cluster şeklinde sanki

@@ -333,3 +333,18 @@ func (s *Store) queryHistogramPercentileGrouped(ctx context.Context, f MetricQue
 	}
 	return out, nil
 }
+
+
+// HistogramLatencyDiag — v0.9.761: boş gecikme panelinin NEDEN teşhisi
+// (tek ucuz sorgu). total=0 → satır yok; withCounts=0 → histogram kovası
+// yok; noBounds>=total → sınırlar boş (dağıtık-ingest probe sınıfı;
+// yüzdelik hesaplanamaz).
+func (s *Store) HistogramLatencyDiag(ctx context.Context, metric, service string, from, to time.Time) (total, noBounds, withCounts uint64, temporality string, err error) {
+	err = s.conn.QueryRow(ctx, `
+		SELECT count(), countIf(length(bucket_bounds) = 0), countIf(length(bucket_counts) > 0), any(temporality)
+		FROM metric_points
+		WHERE metric = ? AND service_name = ? AND time >= ? AND time <= ?
+		SETTINGS max_execution_time = 5`,
+		metric, service, from, to).Scan(&total, &noBounds, &withCounts, &temporality)
+	return
+}

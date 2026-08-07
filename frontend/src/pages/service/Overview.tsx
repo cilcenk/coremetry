@@ -604,7 +604,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // varsayılan görünen P99 (KPI karosuyla aynı); P50/P95
                 // lejantta bir tık uzakta, kullanıcı seçimi kalıcı kazanır.
                 defaultHidden={['P50', 'P95']}
-                note={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}`}
+                note={metricLatLines.length === 0 && metricTputQ.data?.latencyDiag
+                  ? `Neden: ${metricTputQ.data.latencyDiag}`
+                  : `Kaynak: ${metricTputQ.data?.metric ?? '?'} · histogram kovalarından · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}`}
                 regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />

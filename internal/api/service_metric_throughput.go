@@ -540,6 +540,26 @@ func (s *Server) attachMetricLatency(ctx context.Context, out map[string]any, f 
 	}
 	if len(lat) > 0 {
 		out["latency"] = lat
+		return
+	}
+	// v0.9.761 — BOŞ gecikme artık nedenini SÖYLER (operatör ekranları:
+	// throughput çalışırken RT·metrik ısrarla boş; kök prod verisinde ve
+	// buradan görülemiyor). Tek ucuz teşhis sorgusu: satır var mı, kova
+	// sınırları boş mu (dağıtık-ingest probe sınıfı → yüzdelik hesaplanamaz),
+	// temporality ne. Yanıt latencyDiag'da; Overview notu gösterir.
+	total, noBounds, withCounts, temp, err := s.store.HistogramLatencyDiag(ctx, metric, service, f.From, f.To)
+	if err != nil {
+		return
+	}
+	switch {
+	case total == 0:
+		out["latencyDiag"] = "pencerede hiç metrik satırı yok"
+	case withCounts == 0:
+		out["latencyDiag"] = "satırlar var ama histogram kovası yok (bucket_counts boş) — SDK histogram export etmiyor olabilir"
+	case noBounds >= total:
+		out["latencyDiag"] = "kova sayımları var ama SINIRLAR boş (bucket_bounds) — ingest bounds kolonunu yazamamış; yüzdelik hesaplanamaz"
+	default:
+		out["latencyDiag"] = fmt.Sprintf("satır=%d, kovalı=%d, sınırsız=%d, temporality=%s — yüzdelik katmanına ulaşan veri şekli beklenmedik", total, withCounts, noBounds, temp)
 	}
 }
 

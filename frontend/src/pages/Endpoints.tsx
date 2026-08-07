@@ -100,6 +100,10 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
   { id: 'p90Ms',     label: 'P90',        sortValue: r => r.p90Ms ?? 0, numeric: true, width: 72 },
   { id: 'p95Ms',     label: 'P95',        sortValue: r => r.p95Ms ?? 0, numeric: true, width: 72 },
   { id: 'p99Ms',     label: 'P99',        sortValue: r => r.p99Ms,     numeric: true, width: 72 },
+  // v0.9.761 (mockup: "kötüleşenler önce") — P99 kötüleşme yüzdesi;
+  // sunucu sıralaması aday-havuzu desenli (çağrıya göre ilk ~1000
+  // içinde en çok kötüleşenler; not tabloda).
+  { id: 'p99Delta',  label: 'P99 Δ',      sortValue: r => (r.priorP99Ms ?? 0) > 0 ? (r.p99Ms - (r.priorP99Ms ?? 0)) / (r.priorP99Ms ?? 1) : -1, numeric: true, width: 84 },
   // v0.9.305 — Spread = p99/p50. Purely derived, zero query cost, and
   // it answers a question no single percentile does: is this endpoint
   // slow for EVERYONE (spread near 1, the whole distribution moved) or
@@ -124,8 +128,11 @@ const ENDPOINT_COLS: DataTableColumn<EndpointRow>[] = [
 const SORT_KEYS = [
   'service', 'path', 'calls', 'errors', 'errorRate',
   'avgMs', 'p50Ms', 'p90Ms', 'p95Ms', 'p99Ms', 'reqPerMin', 'impact',
+  'p99Delta', // v0.9.761 — sunucuda aday-havuzu sıralaması
 ] as const;
-const DEFAULT_ENDPOINTS_SORT = { id: 'calls', dir: 'desc' as const };
+// v0.9.761 (mockup onayı) — varsayılan sıralama "kötüleşenler önce":
+// sayfayı açma sebebi neredeyse hep "ne bozuldu". Hacim bir tık uzakta.
+const DEFAULT_ENDPOINTS_SORT = { id: 'p99Delta', dir: 'desc' as const };
 
 // Visible-column universe for the ?cols= codec (v0.8.574) — every
 // rendered column; headerHidden `impact` is sort-only and can't be
@@ -205,12 +212,14 @@ export default function EndpointsPage() {
     else next.delete('limit');
     return next;
   }, { replace: true });
-  // compare (v0.5.404): prior-window comparison, off by default —
-  // doubles backend scan cost, operator opts in.
-  const compare = params.get('compare') === 'prior';
+  // compare (v0.5.404 → v0.9.761): prior-window comparison artık
+  // VARSAYILAN AÇIK (mockup onayı: Δ chip'leri ilk bakışta). ?compare=0
+  // kapatır; eski ?compare=prior linkleri de "açık" okur. Maliyet notu:
+  // prior taraması 30s cache arkasında.
+  const compare = params.get('compare') !== '0';
   const setCompare = (v: boolean) => setParams(prev => {
     const next = new URLSearchParams(prev);
-    if (v) next.set('compare', 'prior'); else next.delete('compare');
+    if (v) next.delete('compare'); else next.set('compare', '0');
     return next;
   }, { replace: true });
   // shape (v0.8.x): Uptrace-style "group by shape" — cluster paths
@@ -469,6 +478,12 @@ export default function EndpointsPage() {
               <>
                 Top {fmtNum(rows.length)} by{' '}
                 {ENDPOINT_COLS.find(c => c.id === sortBy)?.label.toLowerCase() ?? sortBy}
+                {sortBy === 'p99Delta' && (
+                  <span style={{ color: 'var(--text3)', marginLeft: 6 }}
+                        title="Kötüleşme sıralaması, çağrıya göre ilk ~1000 endpoint içinde hesaplanır — düşük hacimli uç noktalar havuz dışında kalabilir">
+                    (aday havuzu: en çok çağrılan ~1000)
+                  </span>
+                )}
                 {rows.length >= limit && (
                   <span style={{ color: 'var(--warn)', marginLeft: 6 }}
                         title="Result hit the limit — long-tail endpoints may be hidden">
@@ -675,6 +690,15 @@ export default function EndpointsPage() {
                         {visibleCols.has('p99Ms') && <td className="num mono">
                           {r.p99Ms.toFixed(0)} ms
                           {compare && <TrendDelta cur={r.p99Ms} prior={r.priorP99Ms} kind="lowerBetter" />}
+                        </td>}
+                        {visibleCols.has('p99Delta') && <td className="num mono">
+                          {(() => {
+                            const pr = r.priorP99Ms ?? 0;
+                            if (pr <= 0) return <span style={{ color: 'var(--text3)' }} title="Önceki pencerede yoktu">YENİ</span>;
+                            const pct = (r.p99Ms - pr) / pr * 100;
+                            const cls = pct > 5 ? 'var(--err)' : pct < -5 ? 'var(--ok)' : 'var(--text3)';
+                            return <b style={{ color: cls }}>{pct > 0 ? '▲' : pct < 0 ? '▼' : ''}{Math.abs(pct).toFixed(0)}%</b>;
+                          })()}
                         </td>}
                         {visibleCols.has('spread') && <td className="num mono"
                           title="p99 ÷ p50 — the SHAPE of the latency, not its level.\nNear 1: the whole distribution moved, every caller is slow (dependency, pool, node).\nHigh: most calls are fine and a tail is dragging (retries, GC, cold cache, one bad shard).\nSame p99, opposite causes.">

@@ -166,11 +166,15 @@ export function DetailsMetricsSection({ service, rangeNs, onZoom, onZoomReset }:
                   metricCatalogueHref(panel.metrics[0].name, { service, agg: panel.agg }))}
                 onZoom={onZoom}
                 onZoomReset={onZoomReset}
-                // Sayfadaki TÜM CorePanel'lerle aynı crosshair grubu
-                // (Overview + Details/Performance). Bilinen ayrışma: v1
-                // MultiLineChart yolu syncKey'e '-ms' ekliyor, o yüzden
-                // eski motorda ayrı grupta kalır — dokunulmadı.
-                syncKey={`service:${service}`}
+                // v0.9.789 — '-ms' grubu. '-ms' bir MOTOR AD ALANIDIR:
+                // CorePanel x'i milisaniye, v1 uPlot gövdesi saniye tutar ve
+                // uPlot.sync imleci karşı grafiğe DEĞER olarak taşır, yani
+                // karışık grup crosshair'i 1000× yanlış yere koyar. Bu panel
+                // ham `service:X` kullanıyordu: aynı sekmedeki Performance
+                // (ServiceCharts → MLC v2 → `service:X-ms`) panelleriyle
+                // crosshair HİÇ senkronlanmıyordu, ?chartsV2=0 kaçışında ise
+                // v1 saniye panelleriyle AYNI gruba düşüp bozuluyordu.
+                syncKey={`service:${service}-ms`}
               />
             </Suspense>
           </LazyMount>

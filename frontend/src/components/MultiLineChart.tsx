@@ -14,6 +14,7 @@ import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { yRefitScale } from '@/lib/chart/zoomState';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
+import { bucketWindowNs } from '@/lib/chart/bucketWindow';
 import { isAdditiveUnit } from '@/lib/chart/legendStats';
 import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
@@ -170,13 +171,15 @@ function computeChartData(
 }
 
 // v0.9.760 (operatör: "Endpoint/Database sayfalarındaki chartlar da yeni
-// Grafana stili") — TEK KALDIRAÇ: gelişmiş prop kullanmayan her MLC
-// çağrısı (Endpoints detayları, Databases/Dependencies panelleri,
-// drawer'lar, ServiceCharts) chartsV2'de CorePanel gövdesiyle çizilir.
-// Gelişmiş özellikler (compare bindirmesi, bucket-tık drilldown, özel
-// renk/lejant kancaları, log toggle dışı durumlar) CorePanel'de henüz
-// yok — o çağrılar ESKİ gövdede kalır (sessiz özellik kaybı olmaz),
-// parite dilimleri geldikçe kapsam genişler. ?chartsV2=0 toptan kaçış.
+// Grafana stili") — TEK KALDIRAÇ: her MLC çağrısı (Endpoints detayları,
+// Databases/Dependencies panelleri, drawer'lar, ServiceCharts) chartsV2'de
+// CorePanel gövdesiyle çizilir.
+//
+// v0.9.789 — KAPI KALKTI. Eskiden dört prop v2'yi diskalifiye ediyordu;
+// üçü (colorOf/selectedOps/onLegendClick) repo genelinde SIFIR tüketiciyle
+// ölü koddu ve silindi, dördüncüsü (bucket-tık) artık CorePanel'de var.
+// Yani koşul yalnız bayrak: `chartsV2()`. MultiLineChartInner tek bir iş
+// için yaşıyor — ?chartsV2=0 kaçışı (tek adım geri dönüş doktrini).
 const CoreMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
@@ -184,11 +187,9 @@ export function MultiLineChart(props: Parameters<typeof MultiLineChartInner>[0])
   const {
     series, unit, height = 320, deploys, thresholds, regions, syncKey,
     onZoom, onZoomReset, xRange, legendStorageKey, defaultHidden,
-    compareSeries, onBucketClick, colorOf, selectedOps, onLegendClick, logScale,
+    compareSeries, onBucketClick, logScale,
   } = props;
-  const canV2 = chartsV2()
-    && !onBucketClick && !colorOf && !selectedOps && !onLegendClick;
-  if (!canV2) return <MultiLineChartInner {...props} />;
+  if (!chartsV2()) return <MultiLineChartInner {...props} />;
   // v0.9.764 — önceki-dönem hayaleti: compareSeries offset'le bugünün
   // eksenine kaydırılıp kesikli/soluk ghost olarak biner (mockup dilim
   // 3; MLC'nin compare bindirmesinin v2 karşılığı).
@@ -227,8 +228,15 @@ export function MultiLineChart(props: Parameters<typeof MultiLineChartInner>[0])
           color: t.severity === 'err' ? 'var(--err)' : 'var(--warn)',
         }))}
         ghostItems={ghostItems}
+        // '-ms' eki MOTOR AD ALANIDIR, süs değil: v1 gövdesi x'i saniye,
+        // CorePanel milisaniye tutar ve uPlot.sync değeri karşı grafiğin
+        // ölçeğine VALUE olarak taşır. Aynı anahtarı paylaşan iki motor
+        // crosshair'i 1000× yanlış yere koyardı (Pod sayfası: v1 ChartCard
+        // + v2 MLC aynı `podjmx:` kökünü kullanıyor). Doğrudan CorePanel
+        // çağıranları da bu gruba girer (DetailsMetricsSection, v0.9.789).
         syncKey={syncKey ? `${syncKey}-ms` : undefined}
         onZoom={onZoom} onZoomReset={onZoomReset}
+        onBucketClick={onBucketClick}
       />
     </Suspense>
   );
@@ -236,8 +244,8 @@ export function MultiLineChart(props: Parameters<typeof MultiLineChartInner>[0])
 
 function MultiLineChartInner({
   series, unit, height = 320, deploys, thresholds, regions, syncKey, onZoom, onZoomReset,
-  compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick, colorOf,
-  selectedOps, onLegendClick, xRange, maxSeries, legendStorageKey, defaultHidden,
+  compareSeries, compareOffsetNs, compareLabel, logScale, onBucketClick,
+  xRange, maxSeries, legendStorageKey, defaultHidden,
 }: {
   series: SpanMetricSeries[];
   unit?: string;
@@ -246,11 +254,6 @@ function MultiLineChartInner({
   // (default 8). Raise it for panels that must show every series with
   // no tail cut, e.g. JBoss datasource breakdowns (v0.9.148).
   maxSeries?: number;
-  // Optional per-series colour override keyed by the joined label. Returns a
-  // CSS colour (e.g. var(--accent) or #rrggbb) to win over the default stable
-  // seriesColor palette, or undefined to fall through to it. Lets a caller
-  // (the metric query editor) pin a query's colour. (v0.7.128)
-  colorOf?: (label: string) => string | undefined;
   // Optional dashed vertical lines painted at the given times.
   // Hovering near a marker shows label + description in the
   // chart's tooltip panel.
@@ -308,21 +311,13 @@ function MultiLineChartInner({
   // depths, percentile latencies that move from 5ms to 5s).
   // Linear by default; toggleable from the parent.
   logScale?: boolean;
-  // Controlled legend selection shared across sibling charts (the 3
-  // by-operation panels). null/undefined = all visible; a Set lists
-  // the ONLY operations to show (isolate). When provided, legend clicks
-  // call onLegendClick instead of mutating this chart locally, so the
-  // parent can sync every sibling chart to one selection.
-  selectedOps?: Set<string> | null;
-  onLegendClick?: (label: string, additive: boolean) => void;
   // v0.9.83 (uPlot Aşama 2 madde 2) — x-eksenini sorgu penceresine sabitle
   // (unix sec); zoom isteği aynen geçer. Verilmezse eski davranış.
   xRange?: XPin | null;
   // Grafana-parite madde 4 (legend persist) — verilirse kullanıcı lejant
   // seçimi bu anahtar altında localStorage'da KALICI (gizli etiket listesi;
   // lib/chart/legendVisibility persist katmanı) ve rebuild'de geri uygulanır.
-  // Kullanıcı seçimi her zaman defaultHidden'ı ezer. Kontrollü modda
-  // (selectedOps/onLegendClick) yok sayılır — kontrollü sürücü kazanır.
+  // Kullanıcı seçimi her zaman defaultHidden'ı ezer.
   legendStorageKey?: string;
   // Kayıtlı kullanıcı seçimi YOKKEN gizli başlayacak etiketler (operatör
   // default'u: latency panellerinde p99). Hepsi-gizli'ye yol açarsa çekirdek
@@ -331,7 +326,7 @@ function MultiLineChartInner({
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   // plotRef, motorun döndürdüğü uPlot örneğidir (aşağıda useChartEngine ile
-  // atanır) — isolate-click + selectedOps efektleri canlı örneğe buradan erişir.
+  // atanır) — isolate-click efekti canlı örneğe buradan erişir.
 
   // Latest onBucketClick held in a ref so the click listener
   // (registered once per plot build) always calls the current
@@ -342,14 +337,8 @@ function MultiLineChartInner({
   bucketClickRef.current = onBucketClick;
   // Legend labels per data-series index (current eff + compare),
   // refreshed on each build so the click handler can resolve a clicked
-  // legend row to its operation name. onLegendClick held in a ref so the
-  // once-per-build click listener always calls the latest callback.
+  // legend row to its operation name.
   const labelsRef = useRef<string[]>([]);
-  const onLegendClickRef = useRef(onLegendClick);
-  onLegendClickRef.current = onLegendClick;
-  // Latest controlled selection, read by the apply-effect below.
-  const selectedRef = useRef<Set<string> | null | undefined>(selectedOps);
-  selectedRef.current = selectedOps;
 
   // Mirror of the live "this index is currently visible" set.
   // Kept in a ref instead of useState so the click handler can
@@ -363,7 +352,7 @@ function MultiLineChartInner({
   // deps destroyed+recreated the plot on every parent render (canvas flicker,
   // lost cursor). Now the build deps track PRESENCE only (!!onZoom, via the
   // signature); the live callback flows through here. Same pattern as
-  // bucketClickRef / onLegendClickRef above.
+  // bucketClickRef above.
   const onZoomRef = useRef(onZoom);
   onZoomRef.current = onZoom;
   const xRangeRef = useRef(xRange); xRangeRef.current = xRange;
@@ -441,11 +430,6 @@ function MultiLineChartInner({
     hasBucketClick: !!onBucketClick,
     compareOffsetNs, compareLabel,
     deploys, thresholds, regions,
-    // v0.9.100 (Adım 4) — colorOf, motora göçte artık build-effect dep'i değil;
-    // her label'ın çözülen override rengini imzaya kat (yoksa null; folded
-    // "others" tail colorOf'u yok sayar → null). Böylece motorun [signature,
-    // themeTick] rebuild tetikleyicisi eski colorOf-identity dep'ini karşılar.
-    colorOverrides: bundle.labels.map(l => (l === OTHERS_KEY ? null : (colorOf?.(l) ?? null))),
   });
 
   // buildOptions (v0.9.100, chart-consolidation Adım 4) — renkleri REBUILD
@@ -471,10 +455,7 @@ function MultiLineChartInner({
     const deployCol = css.getPropertyValue('--purple').trim() || '#a371f7';
     // Stable colour per series name; the folded "others" tail is always muted grey.
     const colorFor = (label: string) =>
-      label === OTHERS_KEY ? mutedGray : (colorOf?.(label) ?? seriesColor(label));
-    // Controlled visibility (isolate). null/undefined selection = all
-    // visible; otherwise only the listed operations show.
-    const isVis = (label: string) => selectedOps == null || selectedOps.has(label);
+      label === OTHERS_KEY ? mutedGray : seriesColor(label);
     // Grafana-style legend columns: Last / Min / Max / Avg over the
     // CURRENTLY VISIBLE x-range. uPlot re-invokes this on every redraw
     // (incl. after a zoom), so the stats track the zoomed window. The
@@ -572,7 +553,12 @@ function MultiLineChartInner({
               points: { show: false },
               // v0.9.84 (madde 3) — kısa boşluk köprülenir, kesinti kırık.
               gaps: stepGapsRefiner,
-              show: isVis(label),
+              // v0.9.789 — kontrollü lejant (selectedOps) SİLİNDİ; başlangıç
+              // görünürlüğü tek kaynaktan gelir: afterBuild'in
+              // visibilityFor'u (kalıcı seçim > defaultHidden > hepsi açık)
+              // setSeries ile uygular. Kontrolsüz modda isVis ZATEN sabit
+              // true döndürüyordu — davranış birebir.
+              show: true,
               value: (_u: uPlot, v: number | null) => fmtSmart(v, unit) +
                 (v != null ? ` (${compareLabel ?? 'past'})` : ''),
               values: mkValues,
@@ -592,7 +578,7 @@ function MultiLineChartInner({
             // yarattığı 1-bucket'lık delikler köprülenir; gerçek kesinti
             // (≥ 1.5×step null-run) kırık kalır.
             gaps: stepGapsRefiner,
-            show: isVis(label),
+            show: true, // görünürlük tek sahibi: afterBuild (v0.9.789)
             value: (_u: uPlot, v: number | null) => fmtSmart(v, unit),
             values: mkValues,
           } satisfies uPlot.Series;
@@ -687,37 +673,14 @@ function MultiLineChartInner({
               if (left < 0) return;
               const xSec = u.posToVal(left, 'x'); // unix seconds at cursor
               if (!isFinite(xSec)) return;
-              const xs = u.data[0];
+              const xs = u.data[0] as number[] | undefined;
               if (!xs || xs.length === 0) return;
-              // Bucket width in seconds. Prefer the gap between the
-              // two data points straddling the cursor (handles
-              // irregular spacing); fall back to the first gap, then
-              // to a 60s default for a single-point series so we
-              // still open a sane window rather than a zero-width one.
-              let stepSec = 60;
-              if (xs.length >= 2) {
-                // Find the nearest point and measure its local gap.
-                let nearestI = 0;
-                let best = Infinity;
-                for (let i = 0; i < xs.length; i++) {
-                  const d = Math.abs((xs[i] as number) - xSec);
-                  if (d < best) { best = d; nearestI = i; }
-                }
-                const lo = nearestI > 0 ? (xs[nearestI] as number) - (xs[nearestI - 1] as number) : Infinity;
-                const hi = nearestI < xs.length - 1 ? (xs[nearestI + 1] as number) - (xs[nearestI] as number) : Infinity;
-                const gap = Math.min(lo, hi);
-                if (isFinite(gap) && gap > 0) stepSec = gap;
-                else {
-                  const fallback = (xs[1] as number) - (xs[0] as number);
-                  if (fallback > 0) stepSec = fallback;
-                }
-              }
-              const fromSec = xSec - stepSec / 2;
-              const toSec = xSec + stepSec / 2;
-              // unix seconds → ns. Math.round avoids float drift on
-              // the *1e9 scale-up so the server's BETWEEN matches.
-              const fromNs = Math.round(fromSec * 1e9);
-              const toNs = Math.round(toSec * 1e9);
+              // v0.9.789 — pencere hesabı SAF modülde (lib/chart/bucketWindow):
+              // yerel-boşluk kuralı + [merkez ± adım/2] + ns yuvarlaması. v2
+              // motoru (CorePanel) AYNI fonksiyonu çağırır, yani ?chartsV2=0
+              // kaçışı aynı tıkta aynı exemplar'ı açar. Bu gövdenin x'i
+              // SANİYE → unitsPerSec varsayılanı (1).
+              const { fromNs, toNs } = bucketWindowNs(xs, xSec);
               bucketClickRef.current?.(fromNs, toNs);
             });
           },
@@ -942,9 +905,7 @@ function MultiLineChartInner({
   // isolation'ı sıfırlar (allSeries hepsi görünür) — eski build effect'in
   // visibleRef reset'i; data-only fast-path setData ile series `show`
   // flag'lerini KORUR, o yüzden reset yalnız rebuild'de. MLC'de DOM deploy
-  // bayrağı yok → afterData/onResize gereksiz. colorOf artık imzada
-  // (colorOverrides), o yüzden motorun [signature, themeTick] tetikleyicisi
-  // eski [buildSig, colorOf, themeTick]'i birebir karşılar.
+  // bayrağı yok → afterData/onResize gereksiz.
   const plotRef = useChartEngine(hostRef, {
     signature: buildSig,
     height,
@@ -953,37 +914,30 @@ function MultiLineChartInner({
     buildOptions,
     // Grafana-parite #2 — rebuild: pin çözülür (tooltip DOM'u yaşar ama
     // içerik bayatlardı) + pin tık dinleyicisi taze u.over'a bağlanır.
-    // Madde 4 (legend persist) — rebuild görünürlüğü artık visibilityFor'dan:
+    // Madde 4 (legend persist) — rebuild görünürlüğü visibilityFor'dan:
     // kalıcı kullanıcı seçimi > defaultHidden > hepsi görünür (eski
     // resetSeriesVisibility davranışının üst kümesi; anahtar/default yokken
-    // birebir aynı "hepsi görünür"). Kontrollü modda (selectedOps sürücüsü)
-    // persist devre dışı — series `show` zaten isVis(label)'dan geliyor.
+    // birebir aynı "hepsi görünür"). v0.9.789 — kontrollü lejant dalı
+    // (selectedOps/onLegendClick) SİLİNDİ: sıfır tüketicisi vardı, yani
+    // `controlled` her zaman false'tu; kalan yol o dalın birebiri.
     afterBuild: u => {
       if (pinRef.current != null) unpinTooltip();
-      const controlled = selectedOps != null || !!onLegendClick;
-      let vis: boolean[];
-      if (controlled) {
-        vis = bundle.labels.map(l => selectedOps == null || selectedOps.has(l));
-      } else {
-        // v0.9.206 review-fix: kalıcı-seçim/default çözümü yalnız GERÇEK
-        // seriler (eff dilimi) üzerinden — restore-all kuralı compare ghost
-        // satırlarını saymasın (save tarafı da yalnız eff dilimini yazar).
-        // Ghost, görünürlüğü ham-etiket ikizinden alır; current'ta ikizi
-        // olmayan ghost (ör. "others"a katlanan seri) görünür kalır.
-        const effLen = bundle.eff.length;
-        const realLabels = bundle.labels.slice(0, effLen);
-        const realVis = visibilityFor(
-          realLabels,
-          legendStorageKey ? loadLegendVisibility(legendStorageKey) : null,
-          defaultHidden,
-        );
-        vis = bundle.labels.map((l, i) =>
-          i < effLen ? realVis[i] : (realVis[realLabels.indexOf(l)] ?? true));
-      }
+      // v0.9.206 review-fix: kalıcı-seçim/default çözümü yalnız GERÇEK
+      // seriler (eff dilimi) üzerinden — restore-all kuralı compare ghost
+      // satırlarını saymasın (save tarafı da yalnız eff dilimini yazar).
+      // Ghost, görünürlüğü ham-etiket ikizinden alır; current'ta ikizi
+      // olmayan ghost (ör. "others"a katlanan seri) görünür kalır.
+      const effLen = bundle.eff.length;
+      const realLabels = bundle.labels.slice(0, effLen);
+      const realVis = visibilityFor(
+        realLabels,
+        legendStorageKey ? loadLegendVisibility(legendStorageKey) : null,
+        defaultHidden,
+      );
+      const vis = bundle.labels.map((l, i) =>
+        i < effLen ? realVis[i] : (realVis[realLabels.indexOf(l)] ?? true));
       visibleRef.current = vis;
-      if (!controlled) {
-        for (let i = 0; i < vis.length; i++) if (!vis[i]) u.setSeries(i + 1, { show: false });
-      }
+      for (let i = 0; i < vis.length; i++) if (!vis[i]) u.setSeries(i + 1, { show: false });
       attachPinListener(u);
     },
     // Grafana-parite M1 — çift-tık: sayfa geri-yığınına devret (spec canlı
@@ -1029,16 +983,6 @@ function MultiLineChartInner({
       e.stopPropagation();
       e.preventDefault();
 
-      // Controlled mode (sibling-synced legend): hand the click to the
-      // parent, which recomputes the shared selection; every sibling
-      // chart then re-applies it via the selectedOps effect below.
-      // Mutating this plot locally would let the three charts drift.
-      if (onLegendClickRef.current) {
-        const label = labelsRef.current[dataIdx];
-        if (label != null) onLegendClickRef.current(label, e.ctrlKey || e.metaKey);
-        return;
-      }
-
       const u = plotRef.current;
       const visible = visibleRef.current;
       // v0.5.364 — Ctrl/Cmd+click is additive (flip THIS series only, so an
@@ -1082,22 +1026,6 @@ function MultiLineChartInner({
     // ref (never re-identifies) → intentionally NOT a dep (v0.9.100).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [series.length, compareSeries?.length, legendStorageKey]);
-
-  // Apply the controlled selection to the live plot WITHOUT a rebuild
-  // (zoom + cursor survive). Matches by operation label so sibling
-  // charts with different folded top-8 sets still sync by name.
-  useEffect(() => {
-    const u = plotRef.current;
-    if (!u) return;
-    const labels = labelsRef.current;
-    for (let i = 0; i < labels.length; i++) {
-      const vis = selectedOps == null || selectedOps.has(labels[i]);
-      u.setSeries(i + 1, { show: vis });
-      if (visibleRef.current[i] != null) visibleRef.current[i] = vis;
-    }
-    // plotRef = useChartEngine'in stabil ref'i → deps'e girmez (v0.9.100).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedOps]);
 
   // Container does NOT pin its height — uPlot creates a canvas
   // of `height` pixels plus a legend table beneath it, and we

@@ -17,6 +17,20 @@ import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 //
 // Lightweight SVG — no chart-library dep. Hover crosshair shows
 // the per-series value at the bucket under the pointer.
+//
+// ── KULLANIM DARALDI (v0.9.796) ────────────────────────────────────────
+// Bu bileşen artık dashboard'ın VARSAYILAN bar/alan motoru DEĞİL. Kalan
+// iki tüketicisi var ve ikisi de bilinçli:
+//
+//   1. stacked-bar + stacked-area panelleri — v2 motorunda (CorePanel)
+//      yığılmış ÇUBUK markı yok; 'stacked' orada yığılmış ALAN demek.
+//      Yığılmışları yarısı yeni yarısı eski bırakmamak için ikisi de
+//      burada. Gerekçenin tamamı: components/dashboard/panelViz.ts.
+//   2. ?chartsV2=0 kaçış kapısı — bar/alan panelleri v2 kapalıyken
+//      BAYT BAYT bu motora düşer (DashChart'ın fallback dalı).
+//
+// Yani SİLİNMEZ; ama yeni bir mark eklerken varsayılan adres burası
+// değil, CorePanel'dir.
 
 export function DashboardViz({ series, viz, height = 280, unit }: {
   series: SpanMetricSeries[];

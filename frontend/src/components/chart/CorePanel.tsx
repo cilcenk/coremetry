@@ -355,6 +355,11 @@ export function CorePanel({
   // ayrılmış: bantlar (çubukta YOK) ve çizim sırası (çubukta TERS).
   const stackedBars = viz === 'stacked-bars';
   const stacked = viz === 'stacked' || stackedBars;
+  // v0.9.811 — `bars` config useMemo'sunun İÇİNDEYDİ, artık bileşen
+  // kapsamında: y ölçeği (config'in en başında kurulur) de çubuk mu
+  // çiziyoruz sorusunu sormak zorunda. İki ayrı tanım yerine tek yer —
+  // ikisi ayrışsaydı taban bir markta sıfırlanır ötekinde kalırdı.
+  const bars = viz === 'bars' || stackedBars;
   const hiddenIdx = useMemo(() => {
     const s = new Set<number>();
     vis.forEach((show, i) => { if (show === false) s.add(i); });
@@ -536,6 +541,23 @@ export function CorePanel({
       orientation: ScaleOrientation.Vertical, direction: ScaleDirection.Up,
       distribution: effLog ? ScaleDistribution.Log : ScaleDistribution.Linear,
       log: effLog ? 10 : undefined,
+      // ── v0.9.811 — ÇUBUK AİLESİNDE TABAN SIFIR ────────────────────────
+      //
+      // Bir çubuğun UZUNLUĞU değeri kodlar; okur onu tabandan ölçer. uPlot
+      // otomatik aralığı ise veriye göre kayıyor: 1200-1260 arasında gezen
+      // bir seride taban ~1190 olur ve 1200'lük çubuk 1260'lık çubuğun
+      // BEŞTE BİRİ boyunda çizilir. Aynı grafik çizgi olarak çizilseydi
+      // doğru olurdu (çizgide kodlanan KONUM, uzunluk değil) — o yüzden
+      // line/area DOKUNULMADAN kalıyor; bu bir mark kuralı, panel kuralı
+      // değil. Grafana'nın Bar chart varsayılanı da budur.
+      //
+      // `min: 0` DEĞİL `softMin: 0`: negatif değer taşıyan bir seride
+      // (delta metriği, fark paneli) sıfırı sert taban yapmak veriyi
+      // KIRPARDI. @grafana/ui softMin'i uPlot'un soft-mode 1'ine çevirir
+      // ve uPlot yalnız veri minimumu ≥ 0 iken tabanı 0'a çeker; negatif
+      // veride soft limit yok sayılır. Log ölçekte de güvenli: builder
+      // softMin ≤ 0'ı Log dağılımında null'lar (sıfır log'da tanımsız).
+      softMin: bars ? 0 : undefined,
     });
     b.addAxis({ scaleKey: 'x', isTime: true, placement: AxisPlacement.Bottom, theme });
     b.addAxis({
@@ -597,7 +619,6 @@ export function CorePanel({
     //
     // DÖNGÜ ÇİZİM SIRASINDA, `i` MANTIKSAL indeks: rol/kesikli/renk hep
     // mantıksal seriye ait, uPlot'a eklenme SIRASI ise drawOrder'dan gelir.
-    const bars = viz === 'bars' || stackedBars;
     const area = viz === 'area';
     drawOrder.forEach((i) => {
       const name = aligned.names[i];

@@ -47,6 +47,7 @@ import { queryToPanel, isPinnable } from './explore/pinToDashboard';
 import { PinToDashboardModal } from './explore/PinToDashboardModal';
 import { GroupTable } from './explore/GroupTable';
 import { SummaryViz } from './explore/SummaryViz';
+import { RowsCappedNote } from './explore/RowsCappedNote';
 import { QueryRow } from './explore/QueryRow';
 import { FormulaRow } from './explore/FormulaRow';
 import { VizRail } from './explore/VizRail';
@@ -338,7 +339,8 @@ function ExploreInner({ onSelfWrite }: {
   // single-service catalogue-metric queries; clicks ride the same
   // onExemplarClick → CorrelationContextDrawer path as the span-derived ones.
   const {
-    byLetter, totalByLetter, cappedByLetter, exemplarsByLetter, otlpExemplarsByLetter,
+    byLetter, totalByLetter, cappedByLetter, stepByLetter,
+    exemplarsByLetter, otlpExemplarsByLetter,
     anyLoading, errorByLetter,
   } = useExploreQueries(
     debounced,
@@ -356,10 +358,11 @@ function ExploreInner({ onSelfWrite }: {
       from: builderFrom,
       errorByLetter,
       exemplarsByLetter, overlaysByLetter, totalByLetter,
-      otlpExemplarsByLetter, cappedByLetter,
+      otlpExemplarsByLetter, cappedByLetter, stepByLetter,
     }),
     [debounced, byLetter, builderFrom, errorByLetter, exemplarsByLetter,
-     overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter],
+     overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter,
+     stepByLetter],
   );
   // Harf başına hata bandı — panellerin İÇİNDEKİ mesajın üstünde, sayfa
   // seviyesinde bir özet. Eskiden yalnız ilk hatayı basıyordu.
@@ -878,6 +881,15 @@ name ~ checkout`}
                       });
                       if (p) setPinPanel(p);
                     }} />
+                )}
+                {/* v0.9.809 — satır tavanı şeridi GRAFİKSİZ görünümlerde de.
+                    Çizgi ailesinde her QueryPanel kendi başlığında zaten
+                    söylüyor; table/stat/toplist/pie'da panel yok, uyarı da
+                    yoktu. Şerit yalnız o dallarda çizilir — çizgi ailesinde
+                    iki kez söylemek gürültü olurdu. */}
+                {debounced.viz !== 'line' && debounced.viz !== 'area'
+                  && debounced.viz !== 'bars' && debounced.viz !== 'stacked' && (
+                  <RowsCappedNote panels={panels} />
                 )}
                 {(debounced.viz === 'stat' || debounced.viz === 'toplist' || debounced.viz === 'pie') && (
                   <SummaryViz panels={panels} mode={debounced.viz} />

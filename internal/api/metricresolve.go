@@ -72,7 +72,14 @@ func (s *Server) resolveMetric(w http.ResponseWriter, r *http.Request) {
 	// agg/filters/groupBy — so embedding it raw is correct (not a length
 	// collapse). from/to bucketed to the minute to share a warm entry across
 	// a polling window.
-	key := fmt.Sprintf("metric-resolve:m=%s:from=%d:to=%d:step=%d:ex=%t",
+	//
+	// v0.9.809 → v2: gövde ŞEKLİ değişti (rowsCapped alanı) VE bazı
+	// sorguların SAYILARI değişti (kademe bölünebilirliği step=15'i ham
+	// yola aldı). Önek bumplanmazsa rolling deploy'da 30 sn boyunca eski
+	// (şeritsiz + testereli) yanıt servis edilir ve yenilemeyi farklı
+	// anlarda yapan iki pod aynı panelde farklı sayı gösterir — v0.9.443/458
+	// dersi.
+	key := fmt.Sprintf("metric-resolve:v2:m=%s:from=%d:to=%d:step=%d:ex=%t",
 		m, from.Unix()/60, to.Unix()/60, step, exemplars)
 
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {

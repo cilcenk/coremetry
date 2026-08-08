@@ -1215,6 +1215,24 @@ export interface TempoSettingsInput {
 // convention the source-window fetcher applies. Unlike the PAT these
 // are NOT secrets and DO round-trip; the snapshot echoes them
 // RESOLVED, i.e. the bundled defaults appear when nothing was saved.
+// AICodeContext (v0.9.831) — "Kodu da incele" isteğinin yanıtındaki
+// kaynak-kod KÜNYESİ. Kodun KENDİSİ burada YOKTUR ve olmamalıdır:
+// kaynak modele gider, tarayıcıya değil. Buradaki alanlar yalnız
+// cevabın altındaki kaynak satırını ("core-service / release,
+// 2 dosya") ve kod bulunamadığında gösterilen dürüst notu besler.
+//
+// files boş + reason dolu = kod okunamadı; UI bunu cevabın BAŞINDA
+// tek satır olarak söyler, çünkü "kodu da incele" kutusunu işaretleyip
+// kodsuz bir cevap almak sessizce yanıltıcıdır.
+export interface AICodeContext {
+  repo?: string;
+  branch?: string;
+  /** 'pin' = service_metadata.repository, 'convention' = önek/ek soyma. */
+  source?: string;
+  files?: { path: string; fromLine: number; toLine: number }[];
+  reason?: string;
+}
+
 export type DevOpsFlavor = 'auto' | 'azure-devops-server' | 'tfs';
 export interface DevOpsSnapshot {
   baseUrl: string;

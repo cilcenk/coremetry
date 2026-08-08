@@ -5,6 +5,7 @@ import { Spinner } from '@/components/Spinner';
 import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
 import { aiSubjectQuestion } from '@/components/ai/drawerChat';
 import type { AIKind } from '@/lib/aiSubject';
+import type { AICodeContext } from '@/lib/types';
 import { IconSparkles } from './icons';
 import { RenderedMarkdown } from '@/components/Markdown';
 
@@ -34,6 +35,13 @@ import { RenderedMarkdown } from '@/components/Markdown';
 //                               in past resolved instances of the same rule.
 // Each endpoint uses a kind-specific system prompt so the model's
 // answers match the operator's question.
+//
+// v0.9.831 — "Kodu da incele" (yalnız exception + trace): işaretlenince
+// istek `includeCode:true` ile YENİDEN gider, sunucu stack trace'teki
+// uygulama satırlarının kaynak kodunu Azure DevOps/TFS'ten çekip
+// prompt'a ekler. Varsayılan KAPALI. Kod GELMEZSE cevabın başında tek
+// satır dürüst not, geldiyse altında hangi depo/branş/dosya okunduğu.
+// Kodun kendisi tarayıcıya inmez — yalnız künyesi.
 export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, onEvidence, onEvidenceTraces, onAnswer }: {
   kind: AIKind;
   id: string;
@@ -71,6 +79,14 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   // v0.9.409 (operatör isteği): buton ilk kullanıma kadar nabız atar —
   // gözden kaçıyordu. İlk tıklama kalıcı susturur (bu mount için).
   const [used, setUsed] = useState(false);
+  // v0.9.831 — "Kodu da incele" (yalnız exception/trace). Varsayılan
+  // KAPALI: kod okumak bir depo listelemesi + dosya çekmesi demek ve
+  // her Explain tıkında ödenecek bir maliyet değil. İşaretlemek
+  // isteği YENİDEN çalıştırır — kutuyu işaretleyip ekranda eski
+  // cevabı bırakmak, olmayan bir kod analizini varmış gibi gösterir.
+  const codeCapable = kind === 'exception' || kind === 'trace';
+  const [includeCode, setIncludeCode] = useState(false);
+  const [code, setCode] = useState<AICodeContext | null>(null);
 
   // applyText — cevabı hem panele yaz hem üst bileşene duyur (v0.9.479).
   // BOŞ model cevabı bağlam olamaz: onAnswer'a boş string gider, çekmece
@@ -81,9 +97,13 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
     onAnswer?.(raw);
   };
 
-  const run = async () => {
+  // withCode parametresi state yerine ARGÜMAN: checkbox onChange'inden
+  // hemen sonra run() çağrıldığında setState henüz uygulanmamış olur ve
+  // istek eski değerle gider (React batching). Operatör kutuyu
+  // işaretler, kodsuz cevap alır, nedenini göremez.
+  const run = async (withCode = includeCode) => {
     setUsed(true);
-    setBusy(true); setError(null); setText(null); setMeta(null);
+    setBusy(true); setError(null); setText(null); setMeta(null); setCode(null);
     onAnswer?.(''); // "Yeniden sor" bayat bağlamı taşımasın
     try {
       if (kind === 'runbook') {
@@ -96,13 +116,15 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           ? `Based on ${r.similarCount} past resolved instance${r.similarCount === 1 ? '' : 's'} of this rule on this service.`
           : `No past resolutions found — first-principles only.`);
       } else {
-        const r = kind === 'trace'          ? await api.copilotExplainTrace(id).then(rr => {
+        const r = kind === 'trace'          ? await api.copilotExplainTrace(id, withCode).then(rr => {
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
+                                                  setCode(rr.code ?? null);
                                                   return rr;
                                                 })
-                : kind === 'exception'      ? await api.copilotExplainException(id).then(rr => {
+                : kind === 'exception'      ? await api.copilotExplainException(id, withCode).then(rr => {
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
                                                   if (rr.evidenceTraceIds?.length) onEvidenceTraces?.(rr.evidenceTraceIds);
+                                                  setCode(rr.code ?? null);
                                                   return rr;
                                                 })
                 : kind === 'span'           ? await api.copilotExplainSpan(id, spanId ?? '')
@@ -153,9 +175,25 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
       display: 'inline-flex', flexDirection: 'column', gap: 8,
       alignItems: 'flex-start', maxWidth: '100%',
     }}>
-      {auto && busy && <Spinner label="CoSRE düşünüyor…" />}
+      {codeCapable && (
+        <label style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          fontSize: 11, color: 'var(--text2)', cursor: busy ? 'default' : 'pointer',
+        }} title="Stack trace'teki uygulama satırlarının kaynak kodunu da modele ver (Ayarlar → Kod entegrasyonu gerekir)">
+          <input type="checkbox" checked={includeCode} disabled={busy}
+            onChange={e => {
+              const next = e.target.checked;
+              setIncludeCode(next);
+              // Kutuyu değiştirmek isteği YENİDEN çalıştırır — aksi
+              // halde ekrandaki cevap kutunun durumuyla çelişirdi.
+              if (text !== null || error !== null || auto) void run(next);
+            }} />
+          <span>Kodu da incele</span>
+        </label>
+      )}
+      {auto && busy && <Spinner label={includeCode ? 'CoSRE kodu okuyor…' : 'CoSRE düşünüyor…'} />}
       {showButton && (
-        <Button variant="accent" size="sm" onClick={run} disabled={busy}
+        <Button variant="accent" size="sm" onClick={() => void run()} disabled={busy}
           className={used || auto ? undefined : 'ai-attn'}>
           {busy
             ? <><IconSparkles /> <span>Thinking…</span></>
@@ -187,6 +225,21 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               {meta}
             </div>
           )}
+          {/* v0.9.831 — DÜRÜSTLÜK NOTU. Operatör "Kodu da incele"yi
+              işaretledi ama kod gelmedi: cevabın BAŞINDA tek satır
+              söylenir. Sessiz kalmak, kodsuz bir çıkarımı kod
+              destekliymiş gibi okutur — bu yüzeyin verebileceği en
+              pahalı yanlış izlenim. */}
+          {code && !code.files?.length && (
+            <div style={{
+              fontSize: 11, color: 'var(--warn, var(--text3))', marginBottom: 8,
+              display: 'flex', gap: 6, alignItems: 'flex-start',
+            }}>
+              <span>⚠</span>
+              <span>Kod okunamadı — <strong>kodsuz</strong> analiz.
+                {code.reason ? ` (${code.reason})` : ''}</span>
+            </div>
+          )}
           {/* v0.9.641 — operatör-bildirimli: "neden kök neden ipucu veya
               öncelikli inceleme başlıkları bold yazmıyor". Model markdown
               üretiyor (**Kök Neden İpucu:**) ama burası {text}'i HAM
@@ -200,6 +253,24 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               whiteSpace:'pre-wrap' KALKTI: Markdown kendi blok düzenini
               kuruyor, ikisi birlikte satır aralarını ikiye katlıyordu. */}
           <RenderedMarkdown text={text} />
+          {/* Kaynak satırı: hangi depo/branş okundu, hangi dosyalar.
+              Depo çözümü bir TAHMİN olabilir (konvansiyon) — cevabın
+              yanlış dosyaya dayandığından şüphelenen operatör bunu
+              görmeden anlayamaz. */}
+          {code && !!code.files?.length && (
+            <div style={{ marginTop: 10, fontSize: 10.5, color: 'var(--text3)', lineHeight: 1.6 }}>
+              <div>
+                📄 Kaynak: <strong>{code.repo}</strong>
+                {code.branch ? ` · ${code.branch}` : ''}
+                {code.source === 'pin' ? ' · katalog pini' : code.source === 'convention' ? ' · ad konvansiyonu' : ''}
+              </div>
+              {code.files.map(f => (
+                <div key={`${f.path}:${f.fromLine}`} style={{ fontFamily: 'var(--mono, monospace)' }}>
+                  {f.path}:{f.fromLine}-{f.toLine}
+                </div>
+              ))}
+            </div>
+          )}
           {/* v0.9.479 — çekmecede (auto) bu link ÇİZİLMEZ: sohbet aynı
               çekmecenin içinde, ekrandaki açıklamayı bağlam alarak açılır
               (AIDrawer). Satır-içi yüzeylerde köprü aynen duruyor. */}

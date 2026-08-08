@@ -5,6 +5,7 @@ import (
 
 	"github.com/cilcenk/coremetry/internal/anomaly"
 	"github.com/cilcenk/coremetry/internal/copilot"
+	"github.com/cilcenk/coremetry/internal/devops"
 )
 
 // copilot_exception.go — exception grubu kök-sebep açıklaması
@@ -31,8 +32,22 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 		http.Error(w, "exception group not found", http.StatusNotFound)
 		return
 	}
+	opts := decodeExplainOptions(r)
 	in := anomaly.BuildExceptionExplainInput(r.Context(), s.store, s.logs, g)
-	out, err := s.copilotExplain(r, copilot.SystemPromptException(), in.User)
+
+	// v0.9.831 — "Kodu da incele". Varsayılan KAPALI: kod çekmek bir
+	// depo listelemesi + dosya okuması demek, her Explain tıkında
+	// ödenecek bir maliyet değil. İşaretlendiğinde de fail-open —
+	// kod gelmezse açıklama yine üretilir, cc.Reason yanıtta döner.
+	var cc devops.CodeContext
+	var out string
+	if opts.IncludeCode {
+		cc = s.buildCodeContext(r.Context(), g.Service, in.Stack)
+		out, err = s.copilotExplainCode(r,
+			copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), in.User, cc)
+	} else {
+		out, err = s.copilotExplain(r, copilot.SystemPromptException(), in.User)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -41,5 +56,6 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 		"explanation":      out,
 		"evidenceTraceIds": in.EvTraces,
 		"evidenceSpanIds":  in.EvSpans,
+		"code":             codePayload(cc, opts.IncludeCode),
 	})
 }

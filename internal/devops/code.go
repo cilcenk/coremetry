@@ -86,6 +86,23 @@ type CodeContext struct {
 // Empty — kod bağlamı yok mu?
 func (c CodeContext) Empty() bool { return len(c.Windows) == 0 }
 
+// Halved — kod bütçesini YARIYA indirir (v0.9.831).
+//
+// Sağlayıcı bağlam taşması 400'ü döndüğünde çağıran BİR kez bununla
+// yeniden dener. Kod, prompt'a en son eklenen ve tek başına en büyük
+// parçadır; taşmada ilk küçültülecek şey odur — exception bağlamının
+// kendisi (stack, trace, loglar) kod olmadan da cevap üretebilir,
+// tersi doğru değil.
+//
+// Yeni bir ağ isteği YOK: eldeki pencereler kırpılır.
+func (c CodeContext) Halved() CodeContext {
+	if c.Empty() {
+		return c
+	}
+	c.Windows, _ = ClampCodeWindows(c.Windows, codeBudgetRunes/2)
+	return c
+}
+
 // treeEntry — cache'lenen depo ağacı.
 type treeEntry struct {
 	paths []string

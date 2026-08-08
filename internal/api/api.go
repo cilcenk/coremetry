@@ -8613,12 +8613,28 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	out, err := s.copilotExplain(r, copilot.SystemPromptTrace(), in.User)
+	// v0.9.831 — "Kodu da incele" (opsiyonel gövde). Kod bağlamı
+	// trace'in LOGLARINDAKİ stacktrace'ten çıkar ve o stack'i basan
+	// SERVİSİN deposunda aranır (bkz. traceExplainInput.StackService).
+	opts := decodeExplainOptions(r)
+	var cc devops.CodeContext
+	var out string
+	if opts.IncludeCode {
+		cc = s.buildCodeContext(r.Context(), in.StackService, in.Stack)
+		out, err = s.copilotExplainCode(r,
+			copilot.SystemPromptTrace(), copilot.SystemPromptTraceWithCode(), in.User, cc)
+	} else {
+		out, err = s.copilotExplain(r, copilot.SystemPromptTrace(), in.User)
+	}
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"explanation": out, "evidenceSpanIds": in.Evidence})
+	writeJSON(w, map[string]any{
+		"explanation":     out,
+		"evidenceSpanIds": in.Evidence,
+		"code":            codePayload(cc, opts.IncludeCode),
+	})
 }
 
 // copilotExplainSpan focuses the LLM on ONE span instead of the

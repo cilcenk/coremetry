@@ -107,6 +107,41 @@ func (s *Server) copilotExplain(r *http.Request, system, user string) (string, e
 	return s.copilot.Explain(ctx, system, user)
 }
 
+// copilotExplainMasked (v0.9.831) — copilotExplain'in, ai_calls
+// kaydına prompt'un MASKELİ bir kopyasını yazan ikizi. Aynı /ai atıf
+// yolu; tek fark, kaydedilen örneğin `logUser`dan kurulması.
+//
+// Neden var: "Kodu da incele" yolunda prompt müşterinin KAYNAK KODUNU
+// taşıyor. Kod modele gitmek zorunda — özelliğin tamamı bu. ai_calls'a
+// gitmek zorunda DEĞİL: o tablo /ai sayfasında render ediliyor,
+// ClickHouse'ta saklanıyor ve admin export'una giriyor. Kaynak kodu
+// telemetri deposuna kopyalamak, kimsenin istemediği bir yerde ikinci
+// bir kod deposu yaratır.
+//
+// logUser boşsa ya da gerçekle aynıysa hiçbir override yazılmaz —
+// maskeleme yalnız gerçekten maskelenecek bir şey varken devrede.
+// PromptChars maskelenmez (bkz. copilot.CallMeta.PromptLogOverride):
+// çağrının maliyeti gerçek prompt üzerinden raporlanır.
+func (s *Server) copilotExplainMasked(r *http.Request, system, user, logUser string) (string, error) {
+	c := auth.FromContext(r.Context())
+	uid, email := "", ""
+	if c != nil {
+		uid, email = c.UserID, c.Email
+	}
+	meta := copilot.CallMeta{
+		Surface:   aiSurfaceFromPath(r.URL.Path),
+		UserID:    uid,
+		UserEmail: email,
+		// Çağıran ctx'e bir exchange kimliği koyduysa TAŞI (v0.9.593
+		// ile aynı sözleşme — geri bildirim rayı kopmasın).
+		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
+	}
+	if logUser != "" && logUser != user {
+		meta.PromptLogOverride = system + "\n\n" + logUser
+	}
+	return s.copilot.Explain(copilot.WithMeta(r.Context(), meta), system, user)
+}
+
 // copilotExplainJSON (v0.9.517) — modelden KATI JSON bekleyen yüzeyler
 // için. copilotExplain ile aynı /ai atıf yolu, tek farkı sunucu tarafında
 // çözümlemenin JSON'a kısıtlanması.

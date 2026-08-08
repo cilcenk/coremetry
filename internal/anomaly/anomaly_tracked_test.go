@@ -20,9 +20,9 @@ import (
 // listede olmayan metrik için TEK bir sorgu bile açılmaz.
 func TestBatchSeriesSkipsDisabledMetric(t *testing.T) {
 	var bucketCalls, seasonalCalls []string
-	fetchBuckets := func(m string) (map[string][]float64, error) {
+	fetchBuckets := func(m string) (map[string][]float64, map[string][]float64, error) {
 		bucketCalls = append(bucketCalls, m)
-		return map[string][]float64{"svc-a": {1, 2, 3}}, nil
+		return map[string][]float64{"svc-a": {1, 2, 3}}, map[string][]float64{"svc-a": {9, 9, 9}}, nil
 	}
 	fetchSeasonal := func(m string) (map[string][]float64, error) {
 		seasonalCalls = append(seasonalCalls, m)
@@ -35,7 +35,7 @@ func TestBatchSeriesSkipsDisabledMetric(t *testing.T) {
 		t.Fatalf("varsayılan izlenen set %v — bu test request_rate'in KAPALI olduğunu varsayıyor", tracked)
 	}
 
-	buckets, seasonal := batchSeries(tracked, fetchBuckets, fetchSeasonal)
+	buckets, seasonal, _ := batchSeries(tracked, fetchBuckets, fetchSeasonal)
 
 	if !reflect.DeepEqual(bucketCalls, []string{"error_rate", "p99_ms"}) {
 		t.Errorf("consecutive okumalar %v — kapalı metrik için sorgu açıldı", bucketCalls)
@@ -54,7 +54,7 @@ func TestBatchSeriesSkipsDisabledMetric(t *testing.T) {
 	if got := seriesFor(buckets["request_rate"], "svc-a"); len(got) != 0 {
 		t.Errorf("seriesFor(kapalı metrik) = %v, want boş", got)
 	}
-	if enoughHistory(0) {
+	if enoughHistory(0, defDwell()) {
 		t.Errorf("enoughHistory(0) = true — kapalı metrik yine de değerlendirilirdi")
 	}
 }
@@ -63,9 +63,9 @@ func TestBatchSeriesSkipsDisabledMetric(t *testing.T) {
 // ölçülür (geri dönüş tek tık: sürüm değil ayar).
 func TestBatchSeriesAllOn(t *testing.T) {
 	var calls []string
-	fetch := func(m string) (map[string][]float64, error) {
+	fetch := func(m string) (map[string][]float64, map[string][]float64, error) {
 		calls = append(calls, m)
-		return nil, nil
+		return nil, nil, nil
 	}
 	cfg := chstore.AnomalyTrackedConfig{"error_rate": true, "p99_ms": true, "request_rate": true}
 	batchSeries(cfg.Enabled(), fetch, nil)
@@ -81,12 +81,12 @@ func TestBatchSeriesAllOn(t *testing.T) {
 func TestBatchSeriesErrorBehaviour(t *testing.T) {
 	boom := errors.New("ch timeout")
 	seasonalSeen := []string{}
-	buckets, seasonal := batchSeries([]string{"error_rate", "p99_ms"},
-		func(m string) (map[string][]float64, error) {
+	buckets, seasonal, _ := batchSeries([]string{"error_rate", "p99_ms"},
+		func(m string) (map[string][]float64, map[string][]float64, error) {
 			if m == "error_rate" {
-				return nil, boom
+				return nil, nil, boom
 			}
-			return map[string][]float64{"svc-a": {1, 2}}, nil
+			return map[string][]float64{"svc-a": {1, 2}}, map[string][]float64{"svc-a": {5, 5}}, nil
 		},
 		func(m string) (map[string][]float64, error) {
 			seasonalSeen = append(seasonalSeen, m)
@@ -117,11 +117,16 @@ func TestTrackedMetricSetMatchesDetectorKnowledge(t *testing.T) {
 		if _, err := metricValueExpr(m); err != nil {
 			t.Errorf("kanonik metrik %q dedektörde tanımsız: %v", m, err)
 		}
-		if _, ok := metricPolicies[m]; !ok {
-			t.Errorf("kanonik metrik %q için metricPolicy yok", m)
+		if _, ok := metricDirections[m]; !ok {
+			t.Errorf("kanonik metrik %q için yön tanımı yok", m)
+		}
+		// v0.9.826 — eşikler de kanonik varsayılan sette olmalı; eksikse
+		// operatör o metriğin hassasiyetini ayarlayamaz.
+		if _, ok := chstore.DefaultAnomalySensitivity().Metrics[m]; !ok {
+			t.Errorf("kanonik metrik %q için varsayılan hassasiyet yok", m)
 		}
 	}
-	for m := range metricPolicies {
+	for m := range metricDirections {
 		found := false
 		for _, c := range chstore.AnomalyTrackedMetrics {
 			if c == m {

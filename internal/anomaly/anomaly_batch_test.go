@@ -94,7 +94,8 @@ func TestBatchQueriesUseCorrectMetricExpr(t *testing.T) {
 // returned no (or fewer than minSamples+dwellBuckets) rows for is skipped, so a
 // service absent from the batch map behaves exactly as before.
 func TestEnoughHistory(t *testing.T) {
-	need := minSamples + dwellBuckets
+	dwell := defDwell()
+	need := minSamples + dwell
 	cases := []struct {
 		n    int
 		want bool
@@ -105,7 +106,7 @@ func TestEnoughHistory(t *testing.T) {
 		{need + 100, true},
 	}
 	for _, c := range cases {
-		if got := enoughHistory(c.n); got != c.want {
+		if got := enoughHistory(c.n, dwell); got != c.want {
 			t.Errorf("enoughHistory(%d) = %v, want %v (need=%d)", c.n, got, c.want, need)
 		}
 	}
@@ -143,7 +144,7 @@ func TestAccumulateSeriesAndSeriesFor(t *testing.T) {
 	if got := seriesFor(byService, "svc-missing"); got != nil {
 		t.Errorf("seriesFor(missing service) = %v, want nil", got)
 	}
-	if enoughHistory(len(seriesFor(byService, "svc-missing"))) {
+	if enoughHistory(len(seriesFor(byService, "svc-missing")), defDwell()) {
 		t.Error("a missing service (nil series) must be skipped by enoughHistory")
 	}
 	// A nil map (the metric's whole batch read errored this tick) → nil series

@@ -26,7 +26,8 @@ import type {
   FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
-  ExceptionTriageConfig, MetricExclusions, AnomalyTrackedConfig } from './types';
+  ExceptionTriageConfig, MetricExclusions, AnomalyTrackedConfig,
+  AnomalySensitivityConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
@@ -914,6 +915,19 @@ export const api = {
     get<AnomalyTrackedConfig>(`/api/settings/anomaly-tracked`),
   putAnomalyTracked: (c: AnomalyTrackedConfig) =>
     request<AnomalyTrackedConfig>(`/api/settings/anomaly-tracked`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
+  // v0.9.826 — dedektörün EŞİKLERİ. anomaly-tracked'in kardeşi.
+  //
+  // Sunucu REDDETMEZ, KELEPÇELER: anlamsız bir alan (negatif, NaN,
+  // aralık dışı) varsayılanına döner ve yanıt kaydedilenin TAMAMINI
+  // taşır — çağıran dönen değeri state'e yazarak operatöre gerçekte
+  // neyin kaydedildiğini gösterir.
+  getAnomalySensitivity: () =>
+    get<AnomalySensitivityConfig>(`/api/settings/anomaly-sensitivity`),
+  putAnomalySensitivity: (c: AnomalySensitivityConfig) =>
+    request<AnomalySensitivityConfig>(`/api/settings/anomaly-sensitivity`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
     }),

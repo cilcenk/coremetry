@@ -42,7 +42,7 @@ func TestDecideAnomaly_Directional(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			d := decideAnomaly(c.metric, c.z, c.current, c.median)
+			d := decideAnomaly(c.metric, c.z, c.current, c.median, defPolicy(c.metric), defCriticalZ())
 			if d.open != c.wantOpen {
 				t.Fatalf("open=%v, want %v", d.open, c.wantOpen)
 			}
@@ -80,7 +80,7 @@ func TestResolvedFor_Directional(t *testing.T) {
 }
 
 func TestPolicyFor_DefaultsToBoth(t *testing.T) {
-	p := policyFor("some_unmapped_metric")
+	p := policyFor("some_unmapped_metric", defSens())
 	if p.direction != "both" || p.floorPct <= 0 {
 		t.Errorf("default policy = %+v, want {both, >0}", p)
 	}
@@ -95,8 +95,8 @@ func TestAnomalyTuning_StrictOpenFastResolve(t *testing.T) {
 	if openZ < 3.5 {
 		t.Errorf("openZ %.2f loosened below the tuned 3.5σ floor — would re-introduce noise", openZ)
 	}
-	if dwellBuckets < 3 {
-		t.Errorf("dwellBuckets %d below the tuned 3 (15-min sustained) — instant spikes would open again", dwellBuckets)
+	if d := defDwell(); d < 3 {
+		t.Errorf("varsayılan dwell %d, ayarlanmış 3'ün (15 dk sürekli) altında — anlık spike'lar yeniden açardı", d)
 	}
 	if resolveZ >= openZ {
 		t.Errorf("resolveZ %.2f must stay below openZ %.2f (open/resolve hysteresis)", resolveZ, openZ)

@@ -21,32 +21,32 @@ func TestEvalWindow_Dwell(t *testing.T) {
 	)
 
 	// Single transient spike (only the most recent bucket) must NOT open.
-	if open, _, _ := evalWindow("p99_ms", median, mad, []float64{normal, spike}); open {
+	if open, _, _ := evalWindow("p99_ms", median, mad, []float64{normal, spike}, defPolicy("p99_ms"), defCriticalZ()); open {
 		t.Error("single-bucket spike must NOT open (dwell not satisfied)")
 	}
 	// Two consecutive spikes → open, direction from the latest bucket.
-	if open, _, cur := evalWindow("p99_ms", median, mad, []float64{spike, spike}); !open || cur.direction != "spiked" {
+	if open, _, cur := evalWindow("p99_ms", median, mad, []float64{spike, spike}, defPolicy("p99_ms"), defCriticalZ()); !open || cur.direction != "spiked" {
 		t.Errorf("two consecutive spikes must open spiked; open=%v dir=%q", open, cur.direction)
 	}
 	// Spike then back to normal → not sustained → must NOT open.
-	if open, _, _ := evalWindow("p99_ms", median, mad, []float64{spike, normal}); open {
+	if open, _, _ := evalWindow("p99_ms", median, mad, []float64{spike, normal}, defPolicy("p99_ms"), defCriticalZ()); open {
 		t.Error("spike→normal must NOT open (not sustained)")
 	}
 	// Two normals → not open, fully resolved.
-	if open, res, _ := evalWindow("p99_ms", median, mad, []float64{normal, normal}); open || !res {
+	if open, res, _ := evalWindow("p99_ms", median, mad, []float64{normal, normal}, defPolicy("p99_ms"), defCriticalZ()); open || !res {
 		t.Errorf("two normals: want open=false resolved=true; got open=%v resolved=%v", open, res)
 	}
 	// request_rate "both": spike then drop (opposite directions) must NOT
 	// open — that's flapping, not a sustained anomaly.
-	if open, _, _ := evalWindow("request_rate", median, mad, []float64{bigUp, bigDn}); open {
+	if open, _, _ := evalWindow("request_rate", median, mad, []float64{bigUp, bigDn}, defPolicy("request_rate"), defCriticalZ()); open {
 		t.Error("rps spike→drop must NOT open (direction flip)")
 	}
 	// request_rate sustained drop → open dropped.
-	if open, _, cur := evalWindow("request_rate", median, mad, []float64{bigDn, bigDn}); !open || cur.direction != "dropped" {
+	if open, _, cur := evalWindow("request_rate", median, mad, []float64{bigDn, bigDn}, defPolicy("request_rate"), defCriticalZ()); !open || cur.direction != "dropped" {
 		t.Errorf("sustained rps drop must open dropped; open=%v dir=%q", open, cur.direction)
 	}
 	// Empty window → not open, not resolved (defensive).
-	if open, res, _ := evalWindow("p99_ms", median, mad, nil); open || res {
+	if open, res, _ := evalWindow("p99_ms", median, mad, nil, defPolicy("p99_ms"), defCriticalZ()); open || res {
 		t.Errorf("empty window must be open=false resolved=false; got %v %v", open, res)
 	}
 }

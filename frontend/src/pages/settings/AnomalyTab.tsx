@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
-import type { AnomalyTrackedConfig, ExceptionTriageConfig } from '@/lib/types';
+import type { AnomalyTrackedConfig, AnomalySensitivityConfig, ExceptionTriageConfig } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
 
 // ── Anomaly promotion tab ───────────────────────────────────────
@@ -138,6 +138,9 @@ export function AnomalyPromotionTab() {
       <TrackedMetricsSection />
 
       <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
+      <SensitivitySection />
+
+      <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
       <EscalationSection />
 
       <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
@@ -238,6 +241,168 @@ function TrackedMetricsSection() {
 
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
             <Button variant="primary" onClick={save} disabled={busy || noneOn}>
+              {busy ? 'Kaydediliyor…' : 'Kaydet'}
+            </Button>
+            {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Dedektör hassasiyeti (v0.9.826) ─────────────────────────────
+//
+// Üstteki bölüm hangi metriğin ÖLÇÜLECEĞİNİ ayarlıyor; bu bölüm
+// ölçülenin ne zaman OLAY sayılacağını.
+//
+// Neden vida gerekti: bu eşikler bugüne kadar ALTI kez kodda değişti
+// (v0.8.220 dwell, v0.9.48 düz-MAD tabanı, v0.9.180 mutlak taban,
+// v0.9.193 criticalZ 5→6…) ve her seferinde operatör bir çentik ötede
+// aynı duvara çarptı. Son vaka: medyanı 1.90ms olan bir op 9.69ms'e
+// çıkınca 8.0σ critical anomali açılıyordu — istatistiksel olarak
+// gerçek, operasyonel olarak hiçbir şey.
+const SENSITIVITY_METRICS: { key: string; label: string; unit: string }[] = [
+  { key: 'error_rate', label: 'Hata oranı (error_rate)', unit: '%' },
+  { key: 'p99_ms', label: 'P99 gecikme (p99_ms)', unit: 'ms' },
+  { key: 'request_rate', label: 'İstek hızı (request_rate)', unit: '/sn' },
+];
+
+// Alan sözlüğü — her vidanın NE kapattığını tek cümlede söyler.
+// Ayrı bir tablo çünkü metrik başına üç kez tekrarlanıyor ve metinlerin
+// ayrışması (aynı vidanın iki metrikte farklı anlatılması) bu ekranın
+// en olası bozulma biçimi.
+const SENSITIVITY_FIELDS: {
+  key: 'floorPct' | 'absFloor' | 'minAbsDelta' | 'minMAD' | 'minBaselineRate';
+  label: string; hint: string; step: number; unitKind: 'ratio' | 'value' | 'rate';
+}[] = [
+  { key: 'floorPct', label: 'Göreli değişim tabanı', step: 0.01, unitKind: 'ratio',
+    hint: '|fark| / medyan. 0.10 = medyanın %10\'undan küçük hareketler olay sayılmaz.' },
+  { key: 'absFloor', label: 'Mutlak değer tabanı', step: 0.5, unitKind: 'value',
+    hint: 'Güncel değer bunun ALTINDAysa yükseliş yönlü anomali açılmaz. Düşüşleri etkilemez.' },
+  { key: 'minAbsDelta', label: 'Mutlak fark tabanı', step: 0.5, unitKind: 'value',
+    hint: '|güncel − medyan| bunun altındaysa açılmaz. Küçük medyanlarda yüzde tabanının kör noktasını kapatır.' },
+  { key: 'minMAD', label: 'En küçük MAD (σ tabanı)', step: 0.1, unitKind: 'value',
+    hint: 'Sapma ölçüsünün alt sınırı. Çok sıkı bir geçmişte z\'nin patlamasını engeller — asıl gürültü kaynağı budur.' },
+  { key: 'minBaselineRate', label: 'En düşük hacim', step: 0.5, unitKind: 'rate',
+    hint: 'Son 5 dakikanın istek hızı bunun altındaysa AÇILMAZ. Düşük hacimde yüzdeler gürültüdür. Çözülmeyi etkilemez.' },
+];
+
+function SensitivitySection() {
+  const [cfg, setCfg] = useState<AnomalySensitivityConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    api.getAnomalySensitivity()
+      .then(c => setCfg(c))
+      .catch(err => setFlash({ kind: 'err', text: humanize(err) }));
+  }, []);
+
+  const save = async () => {
+    if (!cfg) return;
+    setBusy(true); setFlash(null);
+    try {
+      // Sunucu kelepçeleyip KAYDEDİLENİ döndürüyor; onu state'e yazmak
+      // şart — operatör anlamsız bir değer girdiyse (negatif, aralık
+      // dışı) alanın varsayılana döndüğünü GÖRMELİ, yoksa yazdığını
+      // kaydedilmiş sanır.
+      const saved = await api.putAnomalySensitivity(cfg);
+      setCfg(saved);
+      setFlash({ kind: 'ok', text: 'Kaydedildi — dedektör bir sonraki taramada yeni eşikleri kullanır.' });
+    } catch (err) {
+      setFlash({ kind: 'err', text: humanize(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const setMetricField = (metric: string, field: string, v: number) => {
+    if (!cfg) return;
+    setCfg({
+      ...cfg,
+      metrics: { ...cfg.metrics, [metric]: { ...cfg.metrics[metric], [field]: v } },
+    });
+  };
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Dedektör hassasiyeti</h2>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 18, lineHeight: 1.55 }}>
+        Bir sapmanın ne zaman <b>olay</b> sayılacağını belirler. Dedektör her metriği
+        kendi 5 dakikalık geçmişine göre puanlar (medyan + MAD ile sağlam z-skoru);
+        aşağıdaki tabanlar, istatistiksel olarak büyük ama operasyonel olarak
+        önemsiz sapmaları eler. Örnek: medyanı 1,90 ms olan bir işlemin 9,69 ms&apos;e
+        çıkması 8σ&apos;dır ama kimsenin fark etmediği bir şeydir.
+      </p>
+
+      {!cfg ? (
+        flash ? <FlashBox kind={flash.kind}>{flash.text}</FlashBox> : <Spinner />
+      ) : (
+        <>
+          <div style={{ display: 'grid', gap: 12, marginBottom: 22 }}>
+            <Field label="Kritik z-skoru (açılma eşiği)">
+              <input type="number" min={1} max={50} step={0.5}
+                value={cfg.criticalZ}
+                onChange={e => setCfg({ ...cfg, criticalZ: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Bu σ değerinin üstündeki sapmalar <b>critical</b> sayılır. Dedektör yalnız
+                critical sapmalarda Problem açtığı için (v0.9.193) bu, fiilen açılma
+                eşiğidir: yükseltmek daha az, düşürmek daha çok anomali demek.
+                Varsayılan 6,0.
+              </div>
+            </Field>
+
+            <Field label="Süreklilik (kaç 5-dakikalık dilim)">
+              <input type="number" min={1} max={24} step={1}
+                value={cfg.dwellBuckets}
+                onChange={e => setCfg({ ...cfg, dwellBuckets: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Bir anomalinin açılması için üst üste bu kadar dilimde ateşlemesi gerekir
+                &mdash; anlık bir sıçrama sayfa göndermez. Varsayılan 3
+                ({(cfg.dwellBuckets || 3) * 5} dakika sürekli). Çözülme bundan
+                etkilenmez: tek bir dilimin banda dönmesi problemi kapatır.
+              </div>
+            </Field>
+          </div>
+
+          {SENSITIVITY_METRICS.map(m => {
+            const s = cfg.metrics?.[m.key];
+            if (!s) return null;
+            // Birim etiketi alan tipine göre: oran birimsiz, değer
+            // metriğin birimi, hacim her zaman istek/sn.
+            const unitFor = (kind: string) =>
+              kind === 'ratio' ? '' : kind === 'rate' ? 'istek/sn' : m.unit;
+            return (
+              <div key={m.key} style={{ marginBottom: 22 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 8 }}>
+                  {m.label}
+                </div>
+                <div style={{ display: 'grid', gap: 10, marginLeft: 12 }}>
+                  {SENSITIVITY_FIELDS.map(f => (
+                    <Field key={f.key} label={`${f.label}${unitFor(f.unitKind) ? ` (${unitFor(f.unitKind)})` : ''}`}>
+                      <input type="number" min={0} step={f.step}
+                        value={s[f.key]}
+                        onChange={e => setMetricField(m.key, f.key, Number(e.target.value))} />
+                      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                        {f.hint} <b>0 = kapalı.</b>
+                      </div>
+                    </Field>
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+            Bu eşikler yalnız <b>anomali dedektörünü</b> bağlar. Elle kurduğunuz alarm
+            kuralları kendi eşiklerini kullanır ve buradan etkilenmez. Sertleştirmek açık
+            kayıtları silmez: yeni tespit üretilmez, mevcut anomaliler kendi bantlarına
+            dönünce kapanır.
+          </div>
+
+          <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="primary" onClick={save} disabled={busy}>
               {busy ? 'Kaydediliyor…' : 'Kaydet'}
             </Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}

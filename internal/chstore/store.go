@@ -63,6 +63,14 @@ type Store struct {
 	// nil-güvenli: hidrasyondan önceki ilk tik varsayılan seti görür.
 	anomalyTracked atomic.Pointer[AnomalyTrackedConfig]
 
+	// anomalySensitivity (v0.9.826) — dedektörün EŞİKLERİ, AYNI kablo
+	// (anomaly_sensitivity.go). anomalyTracked hangi metriğin ölçüleceğini
+	// söylüyor; bu, ölçülenin ne zaman OLAY sayılacağını.
+	//
+	// Sıfır değeri (hiç Store edilmemiş) nil'dir ve AnomalySensitivity()
+	// nil-güvenli: hidrasyondan önceki ilk tik varsayılanları görür.
+	anomalySensitivity atomic.Pointer[AnomalySensitivityConfig]
+
 	conn driver.Conn
 	// ingest is the RoundRobin pool used ONLY for high-volume telemetry
 	// INSERTs — see the two-pool rationale at the clickhouse.Open calls

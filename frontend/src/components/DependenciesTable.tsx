@@ -8,6 +8,7 @@ import { Button } from './ui/Button';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { trendsEnabled, latencyPresent } from '@/lib/depsTable';
+import { msgBalance, msgP99Delta, type MsgBalanceState } from '@/lib/msgBalance';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -217,6 +218,19 @@ export function DependenciesTable({
       ? [
           { id: 'produce', label: 'Produce/min', sortValue: (r: DepRow) => r.producePerMin ?? 0, numeric: true, naturalDir: 'desc', width: 116 } as DataTableColumn<DepRow>,
           { id: 'consume', label: 'Consume/min', sortValue: (r: DepRow) => r.consumePerMin ?? 0, numeric: true, naturalDir: 'desc', width: 116 } as DataTableColumn<DepRow>,
+          // v0.9.815 — Denge. Produce/min ile Consume/min YAN YANA iki
+          // sayıydı ve aralarındaki ilişkiyi kurmayı operatörün gözüne
+          // bırakıyordu: 1.240 ile 1.190 arasındaki farkın önemli olup
+          // olmadığı iki sayıya bakarak anlaşılmaz. Bu kolon farkı orana
+          // çevirip eşiğe vurur. sortValue = oran, yani DESC sıralama
+          // "en çok birikenler" demek; ölçülemeyen satırlar null ile
+          // en alta düşer.
+          { id: 'balance', label: 'Denge', sortValue: (r: DepRow) => msgBalance(r.produceCount, r.consumeCount).ratio, naturalDir: 'desc', width: 118 } as DataTableColumn<DepRow>,
+          // v0.9.815 — P99 Δ. compare=prior açıkken önceki eşit pencereye
+          // göre kötüleşme oranı; kapalıyken HER satır null döner, sortRows
+          // hepsini kararlı bırakır ve sıra sunucudan gelen spanCount DESC
+          // olarak kalır (brief'teki "prior yoksa spanCount DESC'e düş").
+          { id: 'p99delta', label: 'P99 Δ', sortValue: (r: DepRow) => msgP99Delta(r.p99DurationMs, r.priorP99Ms), numeric: true, naturalDir: 'desc', width: 92 } as DataTableColumn<DepRow>,
         ]
       : []),
     { id: 'errorRate', label: 'Err %', sortValue: r => r.errorRate, numeric: true, naturalDir: NATURAL.errorRate, width: 96 },
@@ -252,7 +266,21 @@ export function DependenciesTable({
     storageKey: `deps-${kind}`,
     columns: depCols,
     rows: filtered,
-    initialSort: { id: 'spanCount', dir: 'desc' },
+    // v0.9.815 — /messaging varsayılanı "KÖTÜLEŞENLER ÖNCE" (Endpoints
+    // v0.9.761 kararının messaging'e uygulanmışı): sayfayı açma sebebi
+    // neredeyse hep "ne bozuldu", hacim bir tık uzakta.
+    //
+    // Fallback AYRI BİR KOD YOLU DEĞİL: p99delta'nın sortValue'su prior
+    // yokken null döner, sortRows null'ları en alta koyar ve kendi
+    // aralarında GELDİĞİ sırayı korur — yani sunucudan gelen spanCount
+    // DESC. compare kapalıyken TÜM satırlar null olur ve tablo bugünkü
+    // sırasında kalır.
+    //
+    // /databases DEĞİŞMEDİ: p99delta kolonu yalnız kind='queue' için
+    // kuruluyor, DB tarafı spanCount varsayılanını koruyor.
+    initialSort: kind === 'queue'
+      ? { id: 'p99delta', dir: 'desc' }
+      : { id: 'spanCount', dir: 'desc' },
     // v0.9.404 (desen paritesi) — j/k/Enter klavye gezinmesi: Enter satır
     // drawer'ını Endpoints'teki gibi açar/kapar. /databases + /messaging
     // bu tablo üzerinden aynı anda kazandı.
@@ -527,6 +555,8 @@ export function DependenciesTable({
                         <KindRateCell perMin={r.consumePerMin} count={r.consumeCount}
                           errors={r.consumeErrors} priorPerMin={r.priorConsumePerMin}
                           compare={compare} what="consume" />
+                        <BalanceCell produce={r.produceCount} consume={r.consumeCount} />
+                        <P99DeltaCell cur={r.p99DurationMs} prior={r.priorP99Ms} compare={compare} />
                       </>
                     )}
                     <td className="mono" style={{ textAlign: 'right' }}>
@@ -657,6 +687,71 @@ function KindRateCell({ perMin, count, errors, priorPerMin, compare, what }: {
         </span>
       )}
       {compare && <TrendDelta cur={perMin ?? 0} prior={priorPerMin} kind="neutral" />}
+    </td>
+  );
+}
+
+// BALANCE_UI — Denge durumunun tek görsel sözlüğü (v0.9.815). Çip
+// metni DURUMU söyler, sayıyı değil: "%12" tek başına yön taşımıyor,
+// "birikiyor" taşıyor. Oranın kendisi tooltip'te ve sıralamada.
+const BALANCE_UI: Record<MsgBalanceState, { label: string; glyph: string; tone: string }> = {
+  accumulating: { label: 'birikiyor', glyph: '▲', tone: 'warn' },
+  balanced:     { label: 'dengede',   glyph: '=', tone: 'ok' },
+  draining:     { label: 'boşalıyor', glyph: '▼', tone: 'gray' },
+  unknown:      { label: '—',         glyph: '',  tone: 'gray' },
+};
+
+// BalanceCell — üretim/tüketim dengesi çipi.
+//
+// "boşalıyor" UYARI DEĞİL: tüketimin üretimi geçmesi normalde iyi
+// haberdir (birikmiş iş eriyor) ya da pencere sınırı artefaktıdır
+// (üretim pencereden önce olmuş). Yalnız "birikiyor" sarı — backlog
+// büyüyor demek.
+function BalanceCell({ produce, consume }: { produce?: number; consume?: number }) {
+  const b = msgBalance(produce, consume);
+  const ui = BALANCE_UI[b.state];
+  if (b.state === 'unknown') {
+    return (
+      <td>
+        <span style={{ color: 'var(--text3)' }}
+          title="Bu satırda producer/consumer ayrımı oluşmadı — span'ler kind taşımıyor ya da yalnız broker chatter'ı var.">—</span>
+      </td>
+    );
+  }
+  const pct = Math.abs((b.ratio ?? 0) * 100);
+  return (
+    <td>
+      <span className={`badge b-${ui.tone}`} style={{ textTransform: 'none', letterSpacing: 0 }}
+        title={`üretim ${Math.round(produce ?? 0).toLocaleString()} · tüketim ${Math.round(consume ?? 0).toLocaleString()} span — (üretim−tüketim)/üretim = ${((b.ratio ?? 0) * 100).toFixed(1)}%. Bu bir consumer LAG değil: broker metriği ingest edilmiyor, oran yalnız span sayılarından.`}>
+        {ui.glyph} {ui.label}{pct >= 1 ? ` ${pct.toFixed(0)}%` : ''}
+      </span>
+    </td>
+  );
+}
+
+// P99DeltaCell — önceki eşit pencereye göre p99 kötüleşmesi.
+// compare kapalıyken prior HİÇ gelmez, o yüzden hücre '—' der ve
+// "değişmedi" demez: ölçülmeyen ile değişmeyen aynı şey değil.
+function P99DeltaCell({ cur, prior, compare }: {
+  cur: number; prior?: number; compare?: boolean;
+}) {
+  const d = msgP99Delta(cur, prior);
+  if (d === null) {
+    return (
+      <td className="mono" style={{ textAlign: 'right' }}>
+        <span style={{ color: 'var(--text3)' }}
+          title={compare
+            ? 'Önceki pencerede bu destination yok — karşılaştırılacak taban değeri de yok.'
+            : 'Karşılaştırma kapalı. "Compare vs prior" ile önceki eşit pencereye göre kötüleşme gelir.'}>—</span>
+      </td>
+    );
+  }
+  const pct = d * 100;
+  const tone = pct >= 20 ? 'var(--err)' : pct >= 5 ? 'var(--warn)' : pct <= -5 ? 'var(--ok)' : 'var(--text2)';
+  return (
+    <td className="mono" style={{ textAlign: 'right', color: tone }}
+      title={`p99 ${cur.toFixed(1)}ms · önceki ${(prior ?? 0).toFixed(1)}ms`}>
+      {pct > 0 ? '+' : ''}{Math.abs(pct) < 10 ? pct.toFixed(1) : pct.toFixed(0)}%
     </td>
   );
 }

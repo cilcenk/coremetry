@@ -4424,3 +4424,15 @@ export interface MetricExclusionRule {
 export interface MetricExclusions {
   rules: MetricExclusionRule[];
 }
+
+// v0.9.800 — anomali dedektörünün İZLEDİĞİ metrik seti (backend:
+// chstore.AnomalyTrackedConfig / system_settings key "anomaly_tracked").
+//
+// Anahtarlar metrik ADLARI (error_rate / p99_ms / request_rate), alan
+// adları değil — o yüzden snake_case: aynı kimlikler alarm kurallarında
+// da bu yazımla geçiyor (alerts/constants.ts). Sunucu her zaman kanonik
+// üçlüyü döndürür; bilinmeyen anahtar okuma yolunda düşürülür.
+//
+// Varsayılan: error_rate + p99_ms açık, request_rate KAPALI (operatör
+// 2026-08-09: request_rate anomalileri false-pozitif).
+export type AnomalyTrackedConfig = Record<string, boolean>;

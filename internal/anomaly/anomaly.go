@@ -68,9 +68,39 @@ const (
 	seasonalNeighborBuckets = 3  // ± same-class neighbour buckets (±15 min) folded into the baseline
 )
 
-// trackedMetrics is intentionally small: cardinality stays bounded
-// (services × len(trackedMetrics) checks per tick).
-var trackedMetrics = []string{"error_rate", "p99_ms", "request_rate"}
+// The tracked-metric SET is intentionally small (cardinality stays
+// bounded: services × tracked checks per tick) and, since v0.9.800,
+// OPERATOR-DRIVEN — system_settings key "anomaly_tracked", published on
+// the Store (chstore.AnomalyTrackedConfig). Varsayılan: error_rate +
+// p99_ms açık, request_rate KAPALI (operatör 2026-08-09: request_rate
+// anomalileri false-pozitif; hacim bu filoda kampanya/batch/nöbet
+// devriyle normalde de sıçrıyor).
+//
+// Kapalı bir metrik HİÇ ölçülmez: ne toplu MV okuması açılır ne de
+// checkOne çalışır — tarama maliyeti de metrik başına 2 sorgu düşer.
+// Kanonik liste ve varsayılanlar chstore.AnomalyTrackedMetrics /
+// DefaultAnomalyTracked'de; buradaki metricPolicies + metricValueExpr
+// ile aynı küme olmak zorunda.
+//
+// trackedMetricsNow — bu tikte ölçülecek metrikler. Atomic load (CH
+// okuması değil): blob boot'ta hidrate edilir, admin PUT'unda takas
+// edilir, çok-pod kurulumlarda 30 sn'de yakınsar — internal/api/
+// anomaly_tracked.go. Bilinmeyen bir metrik adı buraya SIZAMAZ:
+// chstore tarafı kanonik olmayan anahtarları düşürür, burada da
+// metricValueExpr'i olmayan her ad ayıklanır (elle düzenlenmiş bir
+// settings satırı dedektöre var olmayan bir MV ifadesi sorduramaz).
+func (d *Detector) trackedMetricsNow() []string {
+	enabled := d.store.AnomalyTracked().Enabled()
+	out := make([]string, 0, len(enabled))
+	for _, m := range enabled {
+		if _, err := metricValueExpr(m); err != nil {
+			log.Printf("[anomaly] bilinmeyen izlenen metrik %q — atlanıyor", m)
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
 
 // metricPolicy makes detection metric-aware: which DIRECTION of deviation
 // matters, and the relative-change floor that filters statistically-
@@ -250,6 +280,12 @@ type Detector struct {
 	lock     cache.Lock
 	leader   *cache.LeaderHolder // v0.5.429 — long-lived leader designation
 	notifier *notify.Notifier
+	// lastTracked — en son loglanan izlenen-metrik seti (v0.9.800).
+	// Set DEĞİŞTİĞİNDE bir satır logluyoruz, her tikte değil: operatör
+	// vidayı çevirdiğinde etkiyi logta görsün, ama 2 dakikada bir aynı
+	// satır tekrarlanmasın. YALNIZ scan()'den, yani tek goroutine'den
+	// (leader tik döngüsü) yazılır.
+	lastTracked string
 }
 
 // New takes a cache.Lock so multiple replicas don't all open the same
@@ -268,6 +304,12 @@ func New(store *chstore.Store, interval time.Duration, lock cache.Lock, notifier
 
 func (d *Detector) Start(ctx context.Context) {
 	d.leader.Start(ctx)
+	// v0.9.800 — izlenen metrik setini boot'ta bir kez CH'den hidrate
+	// et. API sunucusu da aynı blob'u hidrate edip 30 sn'de bir
+	// yeniliyor, ama dedektör main.go'da ondan ÖNCE başlıyor ve ilk
+	// taramayı hemen aşağıda yapıyor: bu satır olmasa operatörün
+	// kaydettiği set ilk tikte görülmezdi.
+	d.store.LoadAnomalyTracked(ctx)
 	t := time.NewTicker(d.interval)
 	defer t.Stop()
 	d.runIfLeader(ctx) // run once immediately
@@ -303,41 +345,38 @@ func (d *Detector) scan(ctx context.Context) {
 	// blob — one anomaly settings surface, not two. v0.8.250.
 	days, minSamples, neighbor := seasonalParams(d.store.GetAnomalyPromotion(ctx))
 
+	// v0.9.800 — izlenen metrik seti (operatör ayarı). Kapalı bir metrik
+	// bu listeden hiç çıkmaz, dolayısıyla ne toplu okuması açılır ne de
+	// checkOne'ı koşar.
+	tracked := d.trackedMetricsNow()
+	if joined := strings.Join(tracked, ","); joined != d.lastTracked {
+		log.Printf("[anomaly] izlenen metrikler: %s", joined)
+		d.lastTracked = joined
+	}
+
 	// v0.8.507 — batch the per-(service,metric) MV reads into ONE
 	// GROUP BY service_name pass PER metric (×2: consecutive + seasonal),
-	// replacing the old services × trackedMetrics × 2 per-service queries.
+	// replacing the old services × tracked × 2 per-service queries.
 	// At prod scale that loop was ~1400 svc × 3 metrics × 2 reads ≈ 8400
 	// queries / 2-min tick, each re-reading ~the whole window's granules
 	// (query_log: 46-65K read_rows apiece, ~708M rows/hr re-scanning the
-	// same window). The batched form reads those rows ONCE — 6 queries /
-	// tick — then distributes the per-service series to checkOne. Same
-	// pattern the evaluator adopted in v0.8.352. One `now` for the whole
-	// tick keeps the window (and the seasonal slot) consistent across
-	// every service, instead of the old per-checkOne time.Now() drift.
+	// same window). The batched form reads those rows ONCE — 2 queries per
+	// TRACKED metric / tick — then distributes the per-service series to
+	// checkOne. Same pattern the evaluator adopted in v0.8.352. One `now`
+	// for the whole tick keeps the window (and the seasonal slot)
+	// consistent across every service, instead of the old per-checkOne
+	// time.Now() drift.
 	now := time.Now()
-	bucketsByMetric := make(map[string]map[string][]float64, len(trackedMetrics))
-	seasonalByMetric := make(map[string]map[string][]float64, len(trackedMetrics))
-	for _, m := range trackedMetrics {
-		all, err := d.fetchAllBuckets(ctx, m, now)
-		if err != nil {
-			// Whole-metric batch read errored this tick → skip the metric
-			// (every service's series is absent below → checkOne skips it),
-			// matching the old per-service "fetch error → skip" behavior.
-			log.Printf("[anomaly] batch buckets %s: %v", m, err)
-			continue
-		}
-		bucketsByMetric[m] = all
-		if seasonalBaseline {
-			// Best-effort: a seasonal read error leaves the metric absent
-			// from seasonalByMetric → seriesFor returns nil → chooseBaseline
-			// falls back to the consecutive window (unchanged behavior).
-			if s, err := d.fetchAllSeasonal(ctx, m, now, days, neighbor); err == nil {
-				seasonalByMetric[m] = s
-			} else {
-				log.Printf("[anomaly] batch seasonal %s: %v", m, err)
-			}
-		}
+	fetchSeasonal := func(m string) (map[string][]float64, error) {
+		return d.fetchAllSeasonal(ctx, m, now, days, neighbor)
 	}
+	if !seasonalBaseline {
+		fetchSeasonal = nil
+	}
+	bucketsByMetric, seasonalByMetric := batchSeries(tracked,
+		func(m string) (map[string][]float64, error) {
+			return d.fetchAllBuckets(ctx, m, now)
+		}, fetchSeasonal)
 
 	// v0.9.691 (perf taraması #2) — AÇIK PROBLEMLER TEK SORGUDA.
 	//
@@ -363,12 +402,52 @@ func (d *Detector) scan(ctx context.Context) {
 	}
 
 	for _, svc := range services {
-		for _, m := range trackedMetrics {
+		for _, m := range tracked {
 			buckets := seriesFor(bucketsByMetric[m], svc)
 			seasonal := seriesFor(seasonalByMetric[m], svc)
 			d.checkOne(ctx, svc, m, buckets, seasonal, minSamples, snap)
 		}
 	}
+}
+
+// batchSeries — bir tikin TOPLU OKUMALARINI toplar: izlenen her metrik
+// için bir consecutive, bir de (seasonal açıksa) same-slot okuması.
+// Okuyucular parametre olarak geliyor ki "kapalı bir metrik için hiç
+// sorgu açılmadığı" testlenebilsin (v0.9.800 — casus fonksiyonlarla
+// pinlenmiş); scan() gerçek fetchAll* metotlarını veriyor.
+//
+// Hata davranışı v0.8.507'den aynen korunuyor:
+//   - consecutive okuma hatası → metrik bu tikte TAMAMEN atlanır (her
+//     servisin serisi aşağıda yok → checkOne enoughHistory'de eler);
+//   - seasonal okuma hatası → best-effort, metrik seasonal haritasında
+//     yok kalır → chooseBaseline consecutive pencereye düşer.
+//
+// fetchSeasonal nil ise seasonal baseline kapalı demektir.
+func batchSeries(
+	tracked []string,
+	fetchBuckets func(metric string) (map[string][]float64, error),
+	fetchSeasonal func(metric string) (map[string][]float64, error),
+) (buckets, seasonal map[string]map[string][]float64) {
+	buckets = make(map[string]map[string][]float64, len(tracked))
+	seasonal = make(map[string]map[string][]float64, len(tracked))
+	for _, m := range tracked {
+		all, err := fetchBuckets(m)
+		if err != nil {
+			log.Printf("[anomaly] batch buckets %s: %v", m, err)
+			continue
+		}
+		buckets[m] = all
+		if fetchSeasonal == nil {
+			continue
+		}
+		s, err := fetchSeasonal(m)
+		if err != nil {
+			log.Printf("[anomaly] batch seasonal %s: %v", m, err)
+			continue
+		}
+		seasonal[m] = s
+	}
+	return buckets, seasonal
 }
 
 // checkOne runs the anomaly verdict for one (service, metric) from PRE-BATCHED

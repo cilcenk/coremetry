@@ -55,6 +55,14 @@ type Store struct {
 	// nil-güvenli: Store{} kuran testler kuralsız davranır.
 	metricExclusions atomic.Pointer[CompiledMetricExclusions]
 
+	// anomalyTracked (v0.9.800) — anomali dedektörünün ölçtüğü metrik
+	// seti, AYNI kablo (anomaly_tracked.go). Dedektör her tikte buradan
+	// okur: tik başına bir CH okuması daha eklemeden ayar canlı kalır.
+	//
+	// Sıfır değeri (hiç Store edilmemiş) nil'dir ve AnomalyTracked()
+	// nil-güvenli: hidrasyondan önceki ilk tik varsayılan seti görür.
+	anomalyTracked atomic.Pointer[AnomalyTrackedConfig]
+
 	conn driver.Conn
 	// ingest is the RoundRobin pool used ONLY for high-volume telemetry
 	// INSERTs — see the two-pool rationale at the clickhouse.Open calls

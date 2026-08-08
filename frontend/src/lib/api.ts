@@ -26,7 +26,7 @@ import type {
   FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
-  ExceptionTriageConfig, MetricExclusions } from './types';
+  ExceptionTriageConfig, MetricExclusions, AnomalyTrackedConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
@@ -903,6 +903,17 @@ export const api = {
     get<MetricExclusions>(`/api/settings/metric-exclusions`),
   putMetricExclusions: (c: MetricExclusions) =>
     request<MetricExclusions>(`/api/settings/metric-exclusions`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
+  // v0.9.800 — anomali dedektörünün izlediği metrik seti. Ayrı anahtar:
+  // anomaly-promotion sinyalin Problem'e TERFİSİNİ ayarlar, bu ise
+  // sinyalin hiç ÖLÇÜLÜP ölçülmeyeceğini. Sunucu "hepsi kapalı"yı 400
+  // ile reddeder (motoru tümden kapatmanın yolu bu vida değil).
+  getAnomalyTracked: () =>
+    get<AnomalyTrackedConfig>(`/api/settings/anomaly-tracked`),
+  putAnomalyTracked: (c: AnomalyTrackedConfig) =>
+    request<AnomalyTrackedConfig>(`/api/settings/anomaly-tracked`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
     }),

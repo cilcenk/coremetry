@@ -1022,6 +1022,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/settings/retention", auth.RequireRole(auth.RoleAdmin, s.putRetention))
 	mux.HandleFunc("GET /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.getAnomalyPromotion))
 	mux.HandleFunc("PUT /api/settings/anomaly-promotion", auth.RequireRole(auth.RoleAdmin, s.putAnomalyPromotion))
+	// v0.9.800 — anomali dedektörünün İZLEDİĞİ metrik seti. Ayrı
+	// anahtar: anomaly_promotion sinyalin Problem'e TERFİSİNİ ayarlar,
+	// bu ise sinyalin hiç ÖLÇÜLÜP ölçülmeyeceğini. request_rate
+	// varsayılan kapalı (operatör: false-pozitif).
+	mux.HandleFunc("GET /api/settings/anomaly-tracked", auth.RequireRole(auth.RoleAdmin, s.getAnomalyTracked))
+	mux.HandleFunc("PUT /api/settings/anomaly-tracked", auth.RequireRole(auth.RoleAdmin, s.putAnomalyTracked))
 	mux.HandleFunc("GET /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.getRuntimeAlerts))
 	mux.HandleFunc("PUT /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.putRuntimeAlerts))
 	mux.HandleFunc("GET /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.getProblemEscalation))

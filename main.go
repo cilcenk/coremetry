@@ -1055,6 +1055,13 @@ func main() {
 	// ve oraya pipeline'ın kendi StartConfigRefresh'iyle yayılır.
 	srv.LoadMetricExclusions(ctx)
 	go srv.StartMetricExclusionsRefresh(ctx, 30*time.Second)
+	// v0.9.800 — anomali dedektörünün izlediği metrik seti, AYNI kablo.
+	// request_rate varsayılan KAPALI (operatör: false-pozitif). Dedektör
+	// bu satırdan ÖNCE başlıyor ve kendi Start'ında bir kez hidrate
+	// ediyor; buradaki yenileme döngüsü çok-pod yakınsaması için (PUT
+	// başka bir pod'a düşse de lider pod 30 sn içinde görür).
+	srv.LoadAnomalyTracked(ctx)
+	go srv.StartAnomalyTrackedRefresh(ctx, 30*time.Second)
 	srv.SetLdapGroupSync(ldapGroupSync) // v0.8.526 — LDAP group-sync admin surface + snapshot reads
 	// v0.8.444 — cmk_ servis token'ları: cache'i bağla (GenAI Studio →
 	// MCP kimliği). Adapter chstore→auth tip köprüsü.

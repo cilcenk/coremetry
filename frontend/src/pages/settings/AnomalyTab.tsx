@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
-import type { ExceptionTriageConfig } from '@/lib/types';
+import type { AnomalyTrackedConfig, ExceptionTriageConfig } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
 
 // ── Anomaly promotion tab ───────────────────────────────────────
@@ -135,10 +135,115 @@ export function AnomalyPromotionTab() {
       </div>
 
       <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
+      <TrackedMetricsSection />
+
+      <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
       <EscalationSection />
 
       <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
       <ExceptionTriageSection />
+    </div>
+  );
+}
+
+// ── İzlenen metrikler (v0.9.800) ────────────────────────────────
+//
+// Yukarıdaki bölüm bir sinyalin Problem'e TERFİ edip etmeyeceğini
+// ayarlıyor; bu bölüm sinyalin hiç ÖLÇÜLÜP ölçülmeyeceğini. İkisi ayrı
+// sorular: promosyonu kısmak gürültüyü azaltır ama metrik yine
+// hesaplanır ve /anomalies'te görünür.
+//
+// request_rate VARSAYILAN OLARAK KAPALI (operatör 2026-08-09): istek
+// hacmi bu filoda kampanya, batch penceresi ve nöbet devriyle normalde
+// de sıçrayıp düşüyor — "istek hızı beklenenden farklı" bir olay değil.
+// Metrik koddan sökülmedi, vidaya bağlandı: geri açmak tek tık.
+const TRACKED_METRICS: { key: string; label: string; hint: string }[] = [
+  { key: 'error_rate', label: 'Hata oranı (error_rate)', hint: 'Yükselen hata oranı. Gerçek olay sinyali — açık kalması önerilir.' },
+  { key: 'p99_ms', label: 'P99 gecikme (p99_ms)', hint: 'Yükselen kuyruk gecikmesi. Gerçek olay sinyali — açık kalması önerilir.' },
+  { key: 'request_rate', label: 'İstek hızı (request_rate)', hint: 'Hacim sıçraması VE düşüşü. Varsayılan kapalı: false-pozitif üretiyor (kampanya, batch, nöbet devri).' },
+];
+
+function TrackedMetricsSection() {
+  const [cfg, setCfg] = useState<AnomalyTrackedConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    api.getAnomalyTracked()
+      .then(c => setCfg(c))
+      .catch(err => setFlash({ kind: 'err', text: humanize(err) }));
+  }, []);
+
+  const save = async () => {
+    if (!cfg) return;
+    setBusy(true); setFlash(null);
+    try {
+      const saved = await api.putAnomalyTracked(cfg);
+      setCfg(saved);
+      setFlash({ kind: 'ok', text: 'Kaydedildi — dedektör bir sonraki taramada yeni seti kullanır.' });
+    } catch (err) {
+      setFlash({ kind: 'err', text: humanize(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // En az biri açık kalmalı. Backend zaten 400 döner; operatör kaydet
+  // düğmesine basmadan görmeli — motoru tümden kapatmanın yolu bu vida
+  // değil (Background ayarları).
+  const noneOn = !!cfg && !TRACKED_METRICS.some(m => cfg[m.key]);
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>İzlenen metrikler</h2>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 18, lineHeight: 1.55 }}>
+        Dedektör her taramada yalnız burada seçili metrikleri ölçer: kapalı bir metrik
+        için baseline sorgusu bile açılmaz, dolayısıyla ne yeni tespit üretilir ne de
+        tarama maliyeti ödenir. Üstteki promosyon kapısından farkı şu &mdash; o, ölçülen
+        bir sapmanın <b>Problem&apos;e dönüşüp dönüşmeyeceğini</b> ayarlar; bu ise
+        sapmanın <b>hiç aranıp aranmayacağını</b>.
+      </p>
+
+      {!cfg ? (
+        flash ? <FlashBox kind={flash.kind}>{flash.text}</FlashBox> : <Spinner />
+      ) : (
+        <>
+          <div style={{ display: 'grid', gap: 12 }}>
+            {TRACKED_METRICS.map(m => (
+              <div key={m.key}>
+                <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  <input type="checkbox" checked={!!cfg[m.key]}
+                    onChange={e => setCfg({ ...cfg, [m.key]: e.target.checked })} />
+                  <span style={{ fontSize: 13, color: 'var(--text)' }}>{m.label}</span>
+                </label>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, marginLeft: 24 }}>
+                  {m.hint}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {noneOn && (
+            <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 10 }}>
+              En az bir metrik açık kalmalı. Anomali motorunu tümden kapatmak için
+              Background ayarlarını kullanın.
+            </div>
+          )}
+
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12, lineHeight: 1.5 }}>
+            Bir metriği kapatmak açık kayıtları silmez: yeni tespit üretilmez, mevcut
+            açık anomaliler bayat ufkuyla kendiliğinden kapanır. Elle kurulmuş alarm
+            kuralları bu vidadan etkilenmez.
+          </div>
+
+          <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="primary" onClick={save} disabled={busy || noneOn}>
+              {busy ? 'Kaydediliyor…' : 'Kaydet'}
+            </Button>
+            {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
+          </div>
+        </>
+      )}
     </div>
   );
 }

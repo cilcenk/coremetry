@@ -3,7 +3,7 @@ import { api } from '@/lib/api';
 import type {
   Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
   HeatmapPanelConfig, HistogramResult, LatencyHeatmap as HeatmapData, PromqlPanelConfig,
-  SpanMetricSeries, TimeRange, PanelHeight,
+  SpanMetricSeries, TimeRange, PanelHeight, TopNPanelConfig,
 } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
@@ -61,6 +61,12 @@ import { usePanelWidth } from './usePanelWidth';
 // v0.9.778 — band palette + the S/M/L pixel map. Shared with PanelEditor so
 // the editor's swatch and the panel's paint can never drift apart.
 import { THRESHOLD_COLOURS, thresholdTint, panelBoxHeight, panelChartHeight } from './panelChrome';
+// v0.9.781 — Top-N bar panel's pure core (single-bucket step, limit clamp,
+// row reduction, "+N more"). Lives in its own module so the arithmetic is
+// unit-tested without mounting React.
+import { topNStep, topNWindowSec, clampTopNLimit, topNRowValue, topNMoreLabel, topNRowFilters } from './topN';
+import { tracesPivotHref } from '@/lib/pivotHref';
+import { encodeFilters } from '@/lib/urlState';
 
 // PanelRenderer dispatches on panel.type. Self-contained — fetches its
 // own data, re-fetches when `range` changes. Errors are surfaced inline
@@ -157,6 +163,12 @@ export function PanelRenderer({ panel, range, vars, syncKey, onZoom, onZoomReset
       return <HeatmapPanel cfg={applyVarsToHeatmap(panel.config as HeatmapPanelConfig, vars)} range={effectiveRange} refreshTick={refreshTick} height={h} />;
     case 'promql':
       return <PromqlPanel cfg={applyVarsToPromql(panel.config as PromqlPanelConfig, vars)} range={effectiveRange} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} refreshTick={refreshTick} height={h} />;
+    // v0.9.781 — non-temporal (ranked bars, no time axis): no syncKey, no
+    // onZoom — there is no cursor to sync and no x-range to drag. Carries
+    // panelId instead so the dashboard's panel-actions menu can anchor to it
+    // (frontend-dashboard-panel skill, step 9).
+    case 'topn':
+      return <TopNPanel cfg={applyVarsToTopN(panel.config as TopNPanelConfig, vars)} range={effectiveRange} refreshTick={refreshTick} height={h} panelId={panel.id} />;
     case 'markdown':
       // Markdown flows with its text — no fixed height to size.
       return <MarkdownPanel cfg={panel.config as MarkdownPanelConfig} />;
@@ -261,6 +273,20 @@ export function expandPromqlVars(query: string, vars?: Record<string, string>): 
 export function applyVarsToPromql(cfg: PromqlPanelConfig, vars?: Record<string, string>): PromqlPanelConfig {
   if (!vars || !cfg.query) return cfg;
   return { ...cfg, query: expandPromqlVars(cfg.query, vars) };
+}
+
+// v0.9.781 — the Top-N panel speaks the same span-query vocabulary as the
+// spanmetric panel (dsl + groupBy + filters), so it expands the same three
+// fields through the same shared `expand`: an empty variable DROPS its DSL
+// line rather than producing service.name = "".
+export function applyVarsToTopN(cfg: TopNPanelConfig, vars?: Record<string, string>): TopNPanelConfig {
+  if (!vars) return cfg;
+  return {
+    ...cfg,
+    dsl:     expand(cfg.dsl, vars),
+    groupBy: expand(cfg.groupBy, vars) ?? '',
+    filters: expand(cfg.filters, vars),
+  };
 }
 
 // ── Metric line chart ───────────────────────────────────────────────────────
@@ -464,6 +490,142 @@ function PromqlPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick, he
           : <DashboardViz series={series} viz={viz} height={boxPx} unit={cfg.unit} />}
     </div>
   );
+}
+
+// ── Top-N bars (v0.9.781) ───────────────────────────────────────────────────
+// Ranked horizontal bars over the WHOLE window — Datadog's Top List shape.
+// Non-temporal: no cursor sync, no drag-zoom, no bundle (the dashboard bundle
+// only speaks 'metric' | 'spanMetric', and api.go's dashboardData would reject
+// an unknown 'topn' request), so this panel owns its fetch like heatmap and
+// promql do.
+//
+// The single-bucket step is the whole trick — see topN.ts for why anything
+// else silently lies about p99 / error_rate.
+function TopNPanel({ cfg, range, refreshTick, height, panelId }: {
+  cfg: TopNPanelConfig; range: TimeRange; refreshTick?: number;
+  height?: PanelHeight; panelId?: string;
+}) {
+  const boxPx = panelBoxHeight(height);
+  const [rows, setRows] = useState<{ key: string[]; value: number | null }[] | undefined>(undefined);
+  const [more, setMore] = useState<string | null>(null);
+  const [capped, setCapped] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const limit = clampTopNLimit(cfg.limit);
+
+  useEffect(() => {
+    if (!cfg.agg) { setError('Configure an aggregation'); return; }
+    if (!cfg.groupBy || !cfg.groupBy.trim()) { setError('Configure a group-by key'); return; }
+    // timeRangeToNs ONLY inside the effect (v0.5.184) — bare in JSX it ticks
+    // now() on every render and refetches forever.
+    const { from, to } = timeRangeToNs(range);
+    const step = topNStep(from, to);
+    const windowSec = topNWindowSec(from, to);
+    setRows(undefined); setError(null);
+    api.spanMetricTopN({
+      agg: cfg.agg, field: cfg.field, groupBy: cfg.groupBy,
+      filters: cfg.filters, dsl: cfg.dsl,
+      from, to, step,
+    }).then(r => {
+      const series = r?.series ?? [];
+      // The server ranks by area only WHEN it trimmed; an untrimmed response
+      // arrives in group-key alphabetical order, so the ranking is ours to do.
+      const ranked = series
+        .map(s => ({ key: s.groupKey, value: topNRowValue(s.points, cfg.agg, step, windowSec) }))
+        .sort((a, b) => Math.abs(b.value ?? -Infinity) - Math.abs(a.value ?? -Infinity));
+      const shown = ranked.slice(0, limit);
+      setRows(shown);
+      setMore(topNMoreLabel(shown.length, series.length, r?.totalSeries));
+      setCapped(r?.rowsCapped ?? false);
+    }).catch(e => setError(e.message));
+    // refreshTick: v0.9.779 — auto-refresh (bundle DIŞI panel).
+  }, [JSON.stringify(cfg), range, limit, refreshTick]);
+
+  if (error) return <PanelError msg={error} height={boxPx} />;
+  if (rows === undefined) return <PanelLoading height={boxPx} />;
+  if (rows.length === 0) return <PanelEmpty height={boxPx} />;
+
+  // Scale to the LARGEST VISIBLE bar, not to the untrimmed maximum: the panel
+  // shows `limit` rows, so scaling to a row nobody can see would squash every
+  // bar for no reason.
+  const max = Math.max(...rows.map(r => Math.abs(r.value ?? 0)), 0);
+
+  return (
+    <div data-panel-id={panelId}
+      style={{ position: 'relative', height: boxPx, overflowY: 'auto', padding: '4px 10px' }}>
+      {capped && <CapHint />}
+      {rows.map((r, i) => (
+        <TopNRow key={i} row={r} max={max} cfg={cfg} range={range} />
+      ))}
+      {more && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', padding: '4px 2px 2px' }}
+          title="Sunucu yüksek kardinaliteli group-by'ı en büyük 50 seriye kırpar; bu satır kalanı sayar.">
+          {more}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// TopNRow — one bar. Label (mono, ellipsised, full value in title) over a
+// track+fill pair, value right-aligned. Colours are tokens / color-mix so the
+// bar re-resolves per theme (dark / light / redhat) like everything else.
+function TopNRow({ row, max, cfg, range }: {
+  row: { key: string[]; value: number | null };
+  max: number;
+  cfg: TopNPanelConfig;
+  range: TimeRange;
+}) {
+  const label = row.key.length ? row.key.join(' · ') : '(empty)';
+  const share = max > 0 && row.value != null ? Math.abs(row.value) / max : 0;
+  const href = topNRowHref(cfg, row.key, range);
+  const body = (
+    <>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 3 }}>
+        <span className="mono" title={label}
+          style={{
+            fontSize: 11, color: 'var(--text)', flex: 1, minWidth: 0,
+            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>{label}</span>
+        <span className="mono" title={row.value != null ? String(row.value) : 'no single-bucket value'}
+          style={{ fontSize: 11, color: 'var(--text2)', flexShrink: 0 }}>
+          {row.value != null ? fmtSmart(row.value, cfg.unit) : '—'}
+        </span>
+      </div>
+      <div style={{ height: 7, borderRadius: 2, background: 'var(--bg2)' }}>
+        <div style={{
+          height: '100%', borderRadius: 2,
+          width: `${Math.max(4, share * 100)}%`,
+          background: 'linear-gradient(90deg, var(--teal, #2dd4bf), color-mix(in srgb, var(--teal, #2dd4bf) 35%, transparent))',
+        }} />
+      </div>
+    </>
+  );
+  if (!href) return <div style={{ padding: '5px 0' }}>{body}</div>;
+  return (
+    <a href={href} style={{ display: 'block', padding: '5px 0', textDecoration: 'none' }}>
+      {body}
+    </a>
+  );
+}
+
+// topNRowHref — the row's pivot, or null when the operator left linkTo at
+// 'none'. Never guessed: 'service' reads the FIRST group-by value as a
+// service name, 'traces' rebuilds the row's exact population as span filters
+// (topNRowFilters) and carries the window, which tracesPivotHref requires
+// precisely so a pivot can't silently re-ask the question over another hour.
+function topNRowHref(cfg: TopNPanelConfig, groupKey: string[], range: TimeRange): string | null {
+  const mode = cfg.linkTo ?? 'none';
+  if (mode === 'none' || groupKey.length === 0) return null;
+  if (mode === 'service') {
+    if (!groupKey[0]) return null;
+    return `/service?name=${encodeURIComponent(groupKey[0])}`;
+  }
+  const filters = topNRowFilters(cfg.groupBy, groupKey);
+  return tracesPivotHref({
+    window: range,
+    filters: filters.length ? encodeFilters(filters) : undefined,
+  });
 }
 
 // ── Span metric line chart ──────────────────────────────────────────────────

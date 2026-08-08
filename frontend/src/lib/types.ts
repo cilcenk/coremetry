@@ -2666,7 +2666,7 @@ export interface SLORow extends SLO {
 
 // ── Dashboards ───────────────────────────────────────────────────────────────
 
-export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'gauge' | 'markdown' | 'row' | 'heatmap' | 'promql';
+export type PanelType = 'metric' | 'spanmetric' | 'stat' | 'gauge' | 'markdown' | 'row' | 'heatmap' | 'promql' | 'topn';
 export type PanelWidth = 1 | 2 | 3 | 4;  // 1=quarter … 4=full (12-col grid)
 // v0.9.778 — panel body height. Three rungs rather than a free pixel number:
 // a dashboard reads as a grid, and arbitrary heights turn it into a ragged
@@ -2785,6 +2785,35 @@ export interface PromqlPanelConfig {
   viz?: PanelVizType;      // line (default) / bar / area / stacked
 }
 
+// v0.9.781 — Top-N bar panel. The "which N are worst right now" surface every
+// APM has (Datadog's Top List, Grafana's Bar gauge): one horizontal bar per
+// group, ranked by the aggregation over the WHOLE window — not a time series.
+//
+// Same data source as the spanmetric panel (/api/spans/metric), but asked a
+// different way: the panel requests a bucket size that collapses the window
+// into ONE bucket (components/dashboard/topN.ts `topNStep`), so each series
+// carries exactly one point and that point is the exact window aggregate. Any
+// other framing ranks partial buckets, which is a silent lie on p99 /
+// error_rate; the rationale + the live-ClickHouse evidence live in topN.ts.
+//
+// `limit` is capped at the server's own 50-series trim; `linkTo` is opt-in and
+// deliberately offers only pivots that can be built EXACTLY from the row's
+// group-key tuple.
+export interface TopNPanelConfig {
+  agg: string;             // count | error_rate | p95 | … (SpanMetricPanelConfig twin)
+  field?: string;          // duration_ms (default) or attribute
+  groupBy: string;         // comma-sep keys; the bars ARE these groups
+  dsl?: string;            // multi-line DSL (AND-joined)
+  filters?: string;        // JSON FilterExpr[]
+  unit?: string;           // value formatting ('ms' | '%' | 'rps' | free text)
+  limit?: number;          // rows to render; clamped to ≤50 (server trim)
+  // Row click target. 'service' expects the FIRST group-by key to be a
+  // service name; 'traces' rebuilds the row's exact population as span
+  // filters. 'none' (default) leaves the row unclickable rather than
+  // guessing a destination.
+  linkTo?: 'none' | 'service' | 'traces';
+}
+
 export interface MarkdownPanelConfig {
   text: string;
 }
@@ -2819,7 +2848,7 @@ export interface Panel {
   // a "last 15min" incident chart on the same dashboard.
   // undefined / missing → fall back to the dashboard's range.
   rangeOverride?: TimeRange;
-  config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | GaugePanelConfig | MarkdownPanelConfig | RowPanelConfig | HeatmapPanelConfig | PromqlPanelConfig;
+  config: MetricPanelConfig | SpanMetricPanelConfig | StatPanelConfig | GaugePanelConfig | MarkdownPanelConfig | RowPanelConfig | HeatmapPanelConfig | PromqlPanelConfig | TopNPanelConfig;
 }
 
 // DashboardVariable — Grafana-style variable. Referenced as ${name} in

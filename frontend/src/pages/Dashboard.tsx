@@ -686,6 +686,7 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
     gauge: 'Gauge',
     heatmap: 'Heatmap (latency density)',
     promql: 'PromQL query',
+    topn: 'Top-N bar',
     markdown: 'Markdown / notes',
   };
   return (
@@ -698,7 +699,12 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
           borderRadius: 6, padding: 4, zIndex: 50, minWidth: 180,
           boxShadow: 'var(--shadow-pop)',
         }}>
-          {(['row', 'metric', 'spanmetric', 'promql', 'stat', 'markdown'] as PanelType[]).map(t => (
+          {/* v0.9.781 — this list is a HAND-MAINTAINED array behind an
+              `as PanelType[]` cast, so TypeScript does NOT check it against
+              the union: gauge and heatmap both shipped renderable but
+              unreachable because only the `labels` record above was updated.
+              Any new type goes in BOTH places. */}
+          {(['row', 'metric', 'spanmetric', 'promql', 'topn', 'stat', 'markdown'] as PanelType[]).map(t => (
             <button key={t} className="ghost"
               onClick={() => { onAdd(t); setOpen(false); }}
               style={{

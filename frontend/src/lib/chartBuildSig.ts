@@ -11,17 +11,13 @@
 //
 // Deliberately NOT in the signature (each handled without a rebuild):
 //   • series data points + x values → the setData() fast-path itself.
-//   • selectedOps  → applied live via setSeries in its own effect.
 //   • theme        → useThemeTick counter; a separate dep so a toggle
 //                    re-resolves the CSS-var colors (theme change MUST rebuild).
 //
-// IN the signature (v0.9.100, chart-consolidation Adım 4):
-//   • colorOverrides → colorOf(label) resolved per label. When MLC owned its
-//     own build effect, colorOf rode the deps by IDENTITY; migrating to
-//     useChartEngine (rebuild on [signature, themeTick] only) means a colour
-//     override that changes the drawn stroke has to move the signature — the
-//     same way TC/OVC/TSP already fold their static series.color. A poll (same
-//     overrides) leaves it identical, so the setData fast-path still holds.
+// v0.9.789 — `colorOverrides` (v0.9.100'de colorOf'u imzaya katan alan) KALKTI:
+// colorOf prop'unun repo genelinde tüketicisi kalmamıştı ve MLC ile birlikte
+// silindi. Geriye-uyum şimi eklenmedi (ev kuralı) — alan geri gelirse, o gün
+// gerçekten bir çağıranı olur.
 //
 // Keeping this pure + exported lets a vitest table assert the exact contract:
 // data-only change → same signature (fast-path); any structural/option change
@@ -84,12 +80,6 @@ export interface ChartBuildSigInput {
   thresholds?: ChartSigThreshold[];
   // Grafana-parite M3 — problem/anomali x-bölgeleri (değere göre digest).
   regions?: ChartSigRegion[];
-  // v0.9.100 (Adım 4) — per-label colour overrides, resolved from the caller's
-  // colorOf(label) at render (null where absent / for the folded "others"
-  // tail). Parallel to `labels`; a label change already moves the signature, so
-  // this only adds the extra "the SAME label now draws a different colour"
-  // trigger that colorOf used to supply via the build-effect deps.
-  colorOverrides?: (string | null)[];
 }
 
 export function chartBuildSignature(p: ChartBuildSigInput): string {
@@ -107,7 +97,6 @@ export function chartBuildSignature(p: ChartBuildSigInput): string {
     // fresh array of identical markers each render doesn't force a rebuild.
     (p.deploys ?? []).map(d => [d.timeUnixNs, d.label, d.description ?? '']),
     (p.thresholds ?? []).map(t => [t.value, t.label ?? '', t.severity ?? 'warn']),
-    p.colorOverrides ?? [],
     regionsDigest(p.regions),
   ]);
 }

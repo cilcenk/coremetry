@@ -90,6 +90,12 @@ describe('CorePanel self-review düzeltmeleri', () => {
     for (const d of deps) {
       expect(d).not.toContain(' vis,');
       expect(d).not.toContain('onZoom,');
+      // v0.9.789 — bucket-tık callback'i AYNI kuralda: çağıranlar her
+      // render'da taze ok fonksiyonu veriyor (ServiceCharts useCallback'li
+      // ama CorrelationContextDrawer inline), kimliği bir dep dizisine
+      // girerse uPlot her poll tick'inde destroy/recreate olur.
+      expect(d).not.toContain('onBucketClick,');
+      expect(d).not.toContain('onBucketClick]');
     }
   });
 
@@ -244,6 +250,106 @@ describe('CorePanel yığılmış alan (v0.9.788)', () => {
     // testte zaten tüm dizilerde taranıyor — burada kaynağını çiviliyoruz.
     expect(src).toMatch(/const hiddenIdx = useMemo\(/);
     expect(src).toMatch(/\[stacked, aligned, hiddenIdx\]\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.789 — bucket-tık ("spike → exemplar") v2 motorunda.
+//
+// Kanca v0.7.22'den beri MultiLineChart'ın uPlot hook'undaydı ve v2'ye geçen
+// her panel onu SESSİZCE kaybediyordu — bu yüzden ServiceCharts'ın error-rate
+// ve latency panelleri eski gövdede tutuluyordu. Buradaki kapılar üç şeyi
+// çiviler: (a) jest önceliği (◆ > bucket > panel eylemi), (b) pencere
+// hesabının SAF modülden gelmesi (iki motor tek fonksiyon), (c) afordans.
+// ---------------------------------------------------------------------------
+describe('CorePanel bucket-tık (v0.9.789)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('prop tipte + callback REF üzerinden okunur', () => {
+    expect(src).toMatch(/onBucketClick\?: \(fromNs: number, toNs: number\) => void/);
+    expect(src).toMatch(/const bucketClickRef = useRef\(onBucketClick\)/);
+    expect(src).toMatch(/bucketClickRef\.current = onBucketClick/);
+  });
+
+  it('🔴 pencere hesabı SAF modülden — CorePanel kendi kopyasını yazmaz', () => {
+    expect(src).toMatch(/import \{ bucketWindowNs \} from '@\/lib\/chart\/bucketWindow'/);
+    // ms ekseni (dataFrame köprüsü) → unitsPerSec 1000.
+    expect(src).toMatch(/bucketWindowNs\(xs, xMs, 1000\)/);
+    // Yerel kopya izleri: v1'in adım taraması + ns yuvarlaması burada
+    // OLMAMALI. (Çıplak /stepSec/ ARAMAYIN — tooltip'in KENDİ stepSec'i
+    // var, fmtTooltipTime çözünürlüğü için; kapı onu yakalayıp yanlış
+    // kızarır. v0.9.720/785'in aşırı-geniş-regex dersi.)
+    expect(src).not.toMatch(/let stepSec = 60/);
+    expect(src).not.toMatch(/nearestI/);
+    expect(src).not.toMatch(/1e9/);
+  });
+
+  it('🔴 ◆ isabeti ÖNCELİKLİ kalır: exemplar dalı bucket dalından ÖNCE', () => {
+    const ex = src.indexOf('exemplarClickRef.current(hit.traceId)');
+    const bk = src.indexOf('bucketClickRef.current');
+    // (bucketClickRef ilk olarak ref tanımında geçiyor — tık gövdesindeki
+    //  kullanımı arıyoruz, o yüzden `if (bucketClickRef.current) {` aranır.)
+    const bkGate = src.indexOf('if (bucketClickRef.current) {');
+    expect(ex).toBeGreaterThan(0);
+    expect(bkGate).toBeGreaterThan(0);
+    expect(bk).toBeGreaterThan(0);
+    expect(ex).toBeLessThan(bkGate);
+  });
+
+  it('sürükleme + çift-tık kapıları bucket-tık için de geçerli', () => {
+    // 5px drag eşiği tık gövdesinin BAŞINDA — üç eylem de aynı kapıdan geçer.
+    expect(src).toMatch(/Math\.hypot\(e\.clientX - d\.x, e\.clientY - d\.y\) > 5\) return;/);
+    // Çift-tık zoom-geri: bekleyen bucket-tık zamanlayıcısını iptal eder.
+    expect(src).toMatch(/setTimeout\(\(\) => cb\(w\.fromNs, w\.toNs\), 250\)/);
+    expect(src).toMatch(/onDoubleClick=\{\(e\) => \{\s*if \(clickTimerRef\.current\)/);
+  });
+
+  it('çizim alanı DIŞINDAKİ tık pencere üretmez', () => {
+    expect(src).toMatch(/if \(left < 0 \|\| left > u\.over\.clientWidth\) return null;/);
+    expect(src).toMatch(/if \(top < 0 \|\| top > u\.over\.clientHeight\) return null;/);
+  });
+
+  it('afordans: pointer imleç + "tık → örnek trace" ipucu', () => {
+    expect(src).toMatch(/cursor: \(onExpandClick \|\| onBucketClick\) && !fullscreen \? 'pointer'/);
+    expect(src).toMatch(/tık → örnek trace/);
+    // İpucu tıkı yutmamalı.
+    expect(src).toMatch(/pointerEvents: 'none', opacity: 0\.75/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.789 — ölü kancaların silinmesi (geriye-uyum şimi YOK kuralı).
+// colorOf / selectedOps / onLegendClick üçlüsünün repo genelinde tüketicisi
+// kalmamıştı; MLC'nin v2 kapısını da yalnız onlar kapalı tutuyordu. Kapı
+// kaynak taramasıdır: bir gün "lazım olur" diye geri sızarlarsa kızarır.
+// ---------------------------------------------------------------------------
+describe('MultiLineChart ölü kancaları (v0.9.789)', () => {
+  const mlc = readFileSync(
+    resolve(__dirname, '../MultiLineChart.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('üç ölü prop kaynakta YOK', () => {
+    expect(mlc).not.toMatch(/\bcolorOf\b/);
+    expect(mlc).not.toMatch(/\bselectedOps\b/);
+    expect(mlc).not.toMatch(/\bonLegendClick\b/);
+  });
+
+  it('v2 kapısı yalnız bayrağa bakar — bucket-tık artık diskalifiye etmez', () => {
+    expect(mlc).toMatch(/if \(!chartsV2\(\)\) return <MultiLineChartInner/);
+    expect(mlc).not.toMatch(/canV2/);
+    expect(mlc).toMatch(/onBucketClick=\{onBucketClick\}/);
+  });
+
+  it('🔴 v1 gövdesi de SAF modülü çağırır — iki motor tek hesap', () => {
+    expect(mlc).toMatch(/import \{ bucketWindowNs \} from '@\/lib\/chart\/bucketWindow'/);
+    expect(mlc).toMatch(/const \{ fromNs, toNs \} = bucketWindowNs\(xs, xSec\)/);
+    expect(mlc).not.toMatch(/let stepSec = 60/);
+  });
+
+  it("'-ms' sync ad alanı korunur (v1 sn ↔ v2 ms karışmasın)", () => {
+    expect(mlc).toMatch(/syncKey=\{syncKey \? `\$\{syncKey\}-ms` : undefined\}/);
   });
 });
 

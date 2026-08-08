@@ -48,6 +48,7 @@ import {
   type ChartThreshold, type ChartTimeRegion, type ChartExemplar,
 } from '@/lib/chart/overlays';
 import { stackData, stackBands } from '@/lib/chart/stacking';
+import { bucketWindowNs } from '@/lib/chart/bucketWindow';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
 import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
 import { placeTooltip } from '@/lib/chartTooltip';
@@ -56,6 +57,27 @@ import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtSmart } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
+
+// bucketWindowAt (v0.9.789) — sayfa koordinatındaki bir tıkı, tıklanan
+// bucket'ın ns penceresine çevirir. Çizim alanı DIŞINDA (eksen şeridi,
+// başlık boşluğu, lejant kenarı) kalan tık null döner: bucket-tık
+// "grafiğe tıkladım" jestidir, karta değil.
+//
+// Modül kapsamında ve saf: tek iş, uPlot'un canlı ölçeğinden x değerini
+// okuyup saf bucketWindow çekirdeğine devretmek. Eksen MİLİSANİYE
+// (dataFrame.ts köprü sözleşmesi) → unitsPerSec = 1000.
+function bucketWindowAt(u: uPlot, clientX: number, clientY: number) {
+  const r = u.over.getBoundingClientRect();
+  const left = clientX - r.left;
+  const top = clientY - r.top;
+  if (left < 0 || left > u.over.clientWidth) return null;
+  if (top < 0 || top > u.over.clientHeight) return null;
+  const xMs = u.posToVal(left, 'x');
+  if (!isFinite(xMs)) return null;
+  const xs = u.data[0] as number[] | undefined;
+  if (!xs || xs.length === 0) return null;
+  return bucketWindowNs(xs, xMs, 1000);
+}
 
 export type PanelData =
   | { state: 'loading' }
@@ -132,6 +154,20 @@ export interface CorePanelProps {
   // panel tık-eylemi (onExpandClick) ancak isabet yoksa çalışır.
   exemplars?: (ChartExemplar[] | undefined)[];
   onExemplarClick?: (traceId: string) => void;
+  // v0.9.789 — "spike → exemplar": çizim alanına DÜZ TIK, tıklanan
+  // bucket'ın zaman penceresini NANOSANİYE olarak çağırana verir
+  // (çağıran tipik olarak o pencerenin temsilci trace'ini açar).
+  // v0.7.22'den beri MultiLineChart'ın kancasıydı; v2 motoruna taşındı
+  // ve Service sayfasının error-rate/latency panelleri buradan çiziliyor.
+  //
+  // Pencere hesabı SAF: lib/chart/bucketWindow — MLC'nin eski gövdesi de
+  // AYNI fonksiyonu çağırır, yani ?chartsV2=0 kaçışı aynı tıkta aynı
+  // pencereyi açar (iki kopya = iki farklı exemplar demekti).
+  //
+  // JEST ÖNCELİĞİ (yukarıdan aşağı): exemplar ◆ isabeti > bucket-tık >
+  // onExpandClick. Sürükleme (>5px) ve çift-tık (zoom-geri) elenir —
+  // onExpandClick'in 250ms bekleme koruması bucket-tık için de geçerli.
+  onBucketClick?: (fromNs: number, toNs: number) => void;
   // v0.9.745 (Explore v2) — KONTROLLÜ görünürlük modu: Explore'da lejant
   // GroupTable'dadır; hiddenNames verildiğinde iç lejant durumu değil BU
   // küme görünürlüğün kaynağıdır (ada göre). hideLegend iç tabloyu
@@ -164,7 +200,7 @@ export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
   defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
-  hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
+  onBucketClick, hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -192,6 +228,13 @@ export function CorePanel({
   exemplarsRef.current = exemplars;
   const exemplarClickRef = useRef(onExemplarClick);
   exemplarClickRef.current = onExemplarClick;
+  // v0.9.789 — bucket-tık callback'i de REF'te (onZoomRef deseni).
+  // Çağıranlar her render'da taze bir ok fonksiyonu veriyor; kimliği bir
+  // bağımlılık dizisine sokmak uPlot'u her poll tick'inde destroy/recreate
+  // ederdi (v0.9.704 dersi). Bu yüzden hiçbir dep dizisinde YOK —
+  // corePanelContracts 'onBucketClick,' pini bunu çiviler.
+  const bucketClickRef = useRef(onBucketClick);
+  bucketClickRef.current = onBucketClick;
   const onCursorTimeRef = useRef(onCursorTime);
   onCursorTimeRef.current = onCursorTime;
   const [showQuery, setShowQuery] = useState(false);
@@ -710,9 +753,9 @@ export function CorePanel({
         }}>{queryText}</pre>
       )}
 
-      <div ref={wrapRef} style={{ minHeight: height, position: 'relative', cursor: onExpandClick && !fullscreen ? 'pointer' : undefined }}
-        onPointerDown={(onExpandClick || onExemplarClick) ? (e) => { clickRef.current = { x: e.clientX, y: e.clientY }; } : undefined}
-        onClick={(onExpandClick || onExemplarClick) && !fullscreen ? (e) => {
+      <div ref={wrapRef} style={{ minHeight: height, position: 'relative', cursor: (onExpandClick || onBucketClick) && !fullscreen ? 'pointer' : undefined }}
+        onPointerDown={(onExpandClick || onExemplarClick || onBucketClick) ? (e) => { clickRef.current = { x: e.clientX, y: e.clientY }; } : undefined}
+        onClick={(onExpandClick || onExemplarClick || onBucketClick) && !fullscreen ? (e) => {
           const d = clickRef.current;
           // Drag-zoom basışı tık değildir (5px eşiği).
           if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
@@ -731,6 +774,19 @@ export function CorePanel({
               return;
             }
           }
+          // v0.9.789 — bucket-tık: ◆ isabeti YOKSA sıra burada (MLC'nin
+          // v0.7.22 sırası: ◆ varsa o kazanır). Çift-tık zoom-geri
+          // jestidir ve ilk tıkı bir exemplar çekmecesi açmamalı — bu
+          // yüzden onExpandClick'le AYNI 250ms bekleme kullanılır:
+          // ikinci tık/dblclick zamanlayıcıyı iptal eder.
+          if (bucketClickRef.current) {
+            if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
+            const w = u ? bucketWindowAt(u, e.clientX, e.clientY) : null;
+            if (!w) return;
+            const cb = bucketClickRef.current;
+            clickTimerRef.current = window.setTimeout(() => cb(w.fromNs, w.toNs), 250);
+            return;
+          }
           if (!onExpandClick) return;
           if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
           clickTimerRef.current = window.setTimeout(() => onExpandClick(), 250);
@@ -744,6 +800,18 @@ export function CorePanel({
         {/* v0.9.710 — tooltip overlay; .ov-tt sınıfları evdeki tooltip
             görseliyle birebir (OVC/TC/MLC aynı CSS'i kullanıyor). */}
         <div ref={ttRef} className="ov-tt" style={{ display: 'none', position: 'absolute', zIndex: 10, pointerEvents: 'none' }} />
+        {/* v0.9.789 — bucket-tık afordansı. MLC'nin "click → exemplar"
+            rozetinin v2 karşılığı; dil ve token'lar panelin note satırıyla
+            aynı (10px / var(--text3)), imleç zaten pointer. pointerEvents
+            none: rozet kendi üstündeki tıkı yutmaz. */}
+        {onBucketClick && data.state === 'ready' && (
+          <div style={{
+            position: 'absolute', top: 2, right: 6, zIndex: 6,
+            fontSize: 10, color: 'var(--text3)', pointerEvents: 'none', opacity: 0.75,
+          }}>
+            tık → örnek trace
+          </div>
+        )}
         {data.state === 'loading' && <Spinner />}
         {data.state === 'error' && (
           <Empty icon="⚠" title="Grafik yüklenemedi">{data.message}</Empty>

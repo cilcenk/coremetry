@@ -178,6 +178,23 @@ type CallMeta struct {
 	// Explain self-recording path (guided chat) stamp the same id
 	// without new parameters on either call chain.
 	ExchangeID string
+	// PromptLogOverride (v0.9.831) — what ai_calls.prompt_sample
+	// records INSTEAD of the real prompt. Empty = record the real one
+	// (every surface but one).
+	//
+	// Exists for exactly one reason: the "Kodu da incele" path puts
+	// the customer's SOURCE CODE in the prompt. That code has to reach
+	// the model, but it has no business being copied into a telemetry
+	// table that /ai renders, ClickHouse retains and an export dumps.
+	// The caller substitutes a `[kod: repo/dosya:aralık · N satır]`
+	// summary here, so the trail still says which file was consulted
+	// without storing the file.
+	//
+	// Deliberately affects the SAMPLE only — PromptChars keeps
+	// counting the REAL prompt. A masked size would understate the
+	// call's cost, and the /ai page's whole job is telling the truth
+	// about cost.
+	PromptLogOverride string
 }
 
 // WithMeta returns ctx tagged with the given CallMeta. The api
@@ -426,6 +443,14 @@ func (s *Service) recordNarration(ctx context.Context, started time.Time,
 	}
 	meta := MetaFromContext(ctx)
 	fullPrompt := systemPrompt + "\n\n" + userPrompt
+	// v0.9.831 — the recorded SAMPLE may be a masked copy (source
+	// code stripped, see CallMeta.PromptLogOverride). PromptChars
+	// below stays on fullPrompt: the row must report what the call
+	// actually cost.
+	logPrompt := fullPrompt
+	if meta.PromptLogOverride != "" {
+		logPrompt = meta.PromptLogOverride
+	}
 	rec := CallRecord{
 		CreatedAt:      started,
 		Surface:        meta.Surface,
@@ -441,7 +466,7 @@ func (s *Service) recordNarration(ctx context.Context, started time.Time,
 		ResponseChars:  uint32(len(out)),
 		UserID:         meta.UserID,
 		UserEmail:      meta.UserEmail,
-		PromptSample:   truncForSample(fullPrompt),
+		PromptSample:   truncForSample(logPrompt),
 		ResponseSample: truncForSample(out),
 	}
 	if err != nil {
@@ -1136,7 +1161,11 @@ func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provid
 // by TestProsePromptsAnswerInTurkish.
 const AnswerInTurkish = "\n\nHer zaman Türkçe yanıt ver."
 
-const systemTrace = `You are a senior SRE assistant inside an APM tool. Given a JSON
+// v0.9.831 — split into a BODY constant so the code-context variant
+// (systemTraceCode, bottom of file) can insert its addendum BEFORE
+// the language directive. systemTrace itself is byte-for-byte what
+// it was; TestProsePromptsAnswerInTurkish still pins the suffix.
+const systemTraceBody = `You are a senior SRE assistant inside an APM tool. Given a JSON
 representation of a single distributed trace (a list of spans with
 service, name, parent, duration, status), explain in 4-8 short bullet
 points: (1) the user-facing operation this trace represents, (2) the
@@ -1145,7 +1174,9 @@ errors are concentrated if any, (4) the most plausible root cause hint
 the operator should investigate next.
 
 Be terse and concrete — the operator is reading this on a pager call.
-No preamble, no headers — just the bullets.` + AnswerInTurkish
+No preamble, no headers — just the bullets.`
+
+const systemTrace = systemTraceBody + AnswerInTurkish
 
 // systemSpan — focused per-span explain (v0.5.144). Inputs are
 // the target span + parent + immediate children + any error
@@ -1265,13 +1296,16 @@ Kanıt:
 2. checkout → payment-db yolundaki hata trace örneklerini aç
 3. payment-db bağlantı/timeout log kalıplarına bak` + AnswerInTurkish
 
-const systemException = `You are a senior SRE assistant inside an APM tool. Given a code
+// v0.9.831 — body split, see systemTraceBody.
+const systemExceptionBody = `You are a senior SRE assistant inside an APM tool. Given a code
 exception (type, message, stacktrace, service), explain in 3-5
 bullets: (1) what the exception class typically means, (2) the most
 likely cause given the call site shown in the stacktrace, (3) the
 fix hint or first investigation step.
 
-Be terse and direct — the operator is debugging in real time.` + AnswerInTurkish
+Be terse and direct — the operator is debugging in real time.`
+
+const systemException = systemExceptionBody + AnswerInTurkish
 
 // systemIncident — used when the operator hits "Explain" on an
 // incident detail or row. Incidents are higher-level than
@@ -1889,3 +1923,47 @@ TÜRKÇE yaz; kimlikleri (E1, N2) ve enum değerlerini İNGİLİZCE bırak.` + A
 
 // SystemPromptRCAVerdict — hakem prompt'u (v0.9.559).
 func SystemPromptRCAVerdict() string { return systemRCAVerdict }
+
+// ─────────────────────────────────────────────────────────────────
+// v0.9.831 — "Kodu da incele": kod bağlamlı Explain prompt'ları.
+//
+// Ayrı sabitler, çünkü kod bağlamı OPSİYONEL: kodsuz istek bayt-bayt
+// eski prompt'u kullanmaya devam ediyor (ne modelin davranışı ne de
+// mevcut testler kayıyor), kodlu istek ek talimatı alıyor.
+//
+// Ek, dil direktifinden ÖNCE giriyor: AnswerInTurkish her iki
+// varyantta da SON cümle kalmalı — küçük modeller son talimatı en
+// güçlü tutuyor ve düzyazı sözleşmesi (v0.8.374) buna dayanıyor.
+// ─────────────────────────────────────────────────────────────────
+
+// systemCodeAddendum — kaynak kod pencereleri prompt'a girdiğinde
+// eklenen talimat.
+//
+// Ağırlık UYDURMAMA tarafında: kod bağlamı halüsinasyon YÜZEYİNİ
+// büyütür. Model bir sınıfın 60 satırını görür ve geri kalanını
+// bildiğini sanır; "bu pencerede görünmüyor" demeyi açıkça meşru
+// kılmazsak, gördüğü tek metottan tüm sınıfın davranışını uydurur.
+// Depo-çalışan sürüm farkı da gerçek: kod release branşından gelir,
+// hata prod'da çalışan sürümden.
+const systemCodeAddendum = `
+
+Bu istekte KOD BAĞLAMI da var: stacktrace'teki uygulama satırlarının
+depodaki kaynak kodu, gerçek satır numaralarıyla.
+
+- Kök nedeni mümkün olduğunca KODA dayandır: hangi satırdaki koşul,
+  çağrı ya da eksik kontrol bu hatayı üretiyor? Satır numarasını yaz.
+- Pencerede GÖRMEDİĞİN kod hakkında tahmin yürütme. Bir şeyi görmen
+  gerekiyorsa "bu pencerede görünmüyor" de — bu doğru cevaptır,
+  eksiklik değil.
+- Kodda olmayan bir metot, alan ya da davranış UYDURMA.
+- Kod ile stacktrace çelişiyorsa (depodaki branş, çalışan sürümden
+  farklı olabilir) bunu tek cümleyle söyle.
+- Düzeltme önerin somut olsun: hangi dosyanın hangi satırına ne.`
+
+const systemTraceCode = systemTraceBody + systemCodeAddendum + AnswerInTurkish
+const systemExceptionCode = systemExceptionBody + systemCodeAddendum + AnswerInTurkish
+
+// SystemPromptTraceWithCode / SystemPromptExceptionWithCode —
+// yalnız includeCode isteklerinde kullanılır.
+func SystemPromptTraceWithCode() string     { return systemTraceCode }
+func SystemPromptExceptionWithCode() string { return systemExceptionCode }

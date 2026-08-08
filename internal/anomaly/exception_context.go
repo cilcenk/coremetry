@@ -33,6 +33,15 @@ type ExceptionExplainInput struct {
 	// soruları ("logda ne yazıyor") log içeriğine dairdir. Explain
 	// yolunda kullanılmaz; User bayt-bayt eskisidir.
 	LogsBlock string
+	// Stack — User'ın İÇİNDEKİ temsilî stacktrace, ayrıca ham olarak
+	// taşınır (v0.9.831). "Kodu da incele" yolu bunu stackparse'a
+	// verip kaynak penceresi çeker.
+	//
+	// Yeniden okumak yerine taşınıyor: örnek seçimi (ilk stack'li
+	// örnek) burada yapılıyor ve iki yerde tekrarlanırsa model bir
+	// stack'i, kod çekici BAŞKA bir stack'i görebilir — sessizce
+	// yanlış dosya. User bayt-bayt eskisidir.
+	Stack string
 }
 
 // BuildExceptionExplainInput — grup meta + occurrence trendi + temsilî
@@ -202,6 +211,7 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		EvTraces:  evTraces,
 		EvSpans:   evSpans,
 		LogsBlock: logsBlock,
+		Stack:     stack,
 	}
 }
 

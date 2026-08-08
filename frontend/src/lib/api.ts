@@ -60,6 +60,24 @@ export function setUnauthorizedHandler(fn: (() => void) | null) {
 // signal via init.
 const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
 
+// explainInit (v0.9.831) — Explain uçlarının istek gövdesi.
+//
+// includeCode verilmediyse gövde HİÇ gönderilmez: bu uçlar bugüne
+// kadar gövdesiz POST alıyor ve sunucu boş gövdeyi "kodsuz" olarak
+// çözüyor. Boş bir `{}` göndermek de çalışırdı ama "değişmedi"
+// niyetini kaybederdi.
+//
+// Kod okuma bir depo listelemesi + dosya çekmesi demek; varsayılan
+// KAPALI olması ve yalnız operatör isteyince açılması bilinçli.
+function explainInit(includeCode?: boolean): RequestInit {
+  if (!includeCode) return { method: 'POST' };
+  return {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ includeCode: true }),
+  };
+}
+
 // v0.8.413 — heavy, deliberate admin actions (telemetry purge) may
 // legitimately outlive the 60s default; callers pass timeoutMs to
 // keep the connection open while the server works.
@@ -1518,8 +1536,11 @@ export const api = {
       { method: 'POST' },
     ),
 
-  copilotExplainTrace:   (id: string) =>
-    request<{ explanation: string; evidenceSpanIds?: string[] }>(`/api/copilot/explain-trace/${id}`, { method: 'POST' }),
+  // v0.9.831 — includeCode: opsiyonel gövde. Verilmediğinde istek
+  // GÖVDESİZ gider, yani bugünkü davranış bayt-bayt korunur.
+  copilotExplainTrace:   (id: string, includeCode?: boolean) =>
+    request<{ explanation: string; evidenceSpanIds?: string[]; code?: import('./types').AICodeContext }>(
+      `/api/copilot/explain-trace/${id}`, explainInit(includeCode)),
   // Per-span explain (v0.5.144). Backend pulls target span +
   // parent + children + error siblings for a focused prompt.
   copilotExplainSpan:    (traceId: string, spanId: string) =>
@@ -1531,9 +1552,10 @@ export const api = {
   // v0.9.414 — exception grubu kök-sebep: backend örnek trace + trace
   // loglarını + deploy penceresini otomatik toplar; kanıt trace/span
   // id'leri deterministik döner (UI örnek satırlarını kutular).
-  copilotExplainException: (fingerprint: string) =>
-    request<{ explanation: string; evidenceTraceIds?: string[]; evidenceSpanIds?: string[] }>(
-      `/api/copilot/explain-exception/${encodeURIComponent(fingerprint)}`, { method: 'POST' }),
+  copilotExplainException: (fingerprint: string, includeCode?: boolean) =>
+    request<{ explanation: string; evidenceTraceIds?: string[]; evidenceSpanIds?: string[];
+              code?: import('./types').AICodeContext }>(
+      `/api/copilot/explain-exception/${encodeURIComponent(fingerprint)}`, explainInit(includeCode)),
   copilotExplainIncident: (id: string) =>
     request<{ explanation: string }>(`/api/copilot/explain-incident/${id}`, { method: 'POST' }),
   copilotExplainAnomaly: (id: string) =>

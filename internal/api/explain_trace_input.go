@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/logstore"
@@ -57,6 +58,17 @@ type traceExplainInput struct {
 	// sohbetinde bütçe aşılırsa span listesi budanır, LOGLAR KORUNUR
 	// (operatörün takip soruları log içeriğine dair — clampDrawerEvidence).
 	LogsBlock string
+	// Stack / StackService (v0.9.831) — "Kodu da incele" yolunun girdisi:
+	// bu trace'in loglarındaki İLK exception.stacktrace ve onu basan
+	// servis. Boş = trace'te stacktrace yok (kod bağlamı atlanır).
+	//
+	// Servis ayrıca taşınıyor çünkü depo çözümü SERVİS adından yapılıyor
+	// ve stack'i basan servis, trace'in kök servisi olmak zorunda değil:
+	// aşağı akıştaki bir servis patlar, kök yalnız 500'ü görür. Kökün
+	// deposunda o dosya YOKTUR — yanlış depoda arama, sessiz bir
+	// "eşleşme yok" olurdu.
+	Stack        string
+	StackService string
 }
 
 // buildTraceExplainInput — trace'in span'lerini çekip kompakt JSON'a
@@ -115,7 +127,7 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 	// span'larından ±1dk, bounded limit 30, hata-öncelikli, gövde/stack
 	// truncate'li (2B prompt bütçesi). Log store yok/yavaş/boşsa sessizce
 	// trace-only'e düşer — explain'i asla düşürmez.
-	var logsBlock string
+	var logsBlock, rawStack, stackService string
 	if s.logs != nil {
 		from := time.Unix(0, minT).Add(-time.Minute)
 		to := time.Unix(0, maxT).Add(time.Minute)
@@ -139,6 +151,16 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 				if lg.Attributes != nil {
 					e.ExType = lg.Attributes["exception.type"]
 					e.Stack = truncate(lg.Attributes["exception.stacktrace"], 900)
+					// v0.9.831 — kod çekici için HAM stack (prompt'a giren
+					// 900-byte kesilmiş kopya değil): frame'ler dosya+satır
+					// taşıyor ve kesik bir satır konumlandırılamaz. İlk
+					// stack'li log kazanır; sıralama severity-öncelikli
+					// olduğu için bu, trace'in EN CİDDİ hatası.
+					if rawStack == "" {
+						if st := lg.Attributes["exception.stacktrace"]; strings.TrimSpace(st) != "" {
+							rawStack, stackService = st, lg.ServiceName
+						}
+					}
 				}
 				ll = append(ll, e)
 			}
@@ -150,9 +172,11 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 	}
 
 	return traceExplainInput{
-		User:      traceExplainUser(id, len(compact), totalSpans, string(payload), logsBlock),
-		Evidence:  traceEvidenceSpanIDs(compact),
-		LogsBlock: logsBlock,
+		User:         traceExplainUser(id, len(compact), totalSpans, string(payload), logsBlock),
+		Evidence:     traceEvidenceSpanIDs(compact),
+		LogsBlock:    logsBlock,
+		Stack:        rawStack,
+		StackService: stackService,
 	}, nil
 }
 

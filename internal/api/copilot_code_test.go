@@ -1,0 +1,473 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/cilcenk/coremetry/internal/copilot"
+	"github.com/cilcenk/coremetry/internal/devops"
+	"github.com/cilcenk/coremetry/internal/stackparse"
+)
+
+// copilot_code_test.go — v0.9.831 "Kodu da incele".
+//
+// Tüm sahte sunucular JENERİKtir; gerçek bir müşteri host'u, koleksiyonu
+// ya da uygulama adı bu depoya girmez.
+
+// ── opsiyonel gövde ──────────────────────────────────────────────
+
+// TestDecodeExplainOptions — GERİYE UYUMLULUK pini. Bu uçlar bugüne
+// kadar gövdesiz POST alıyor; boş/eksik/bozuk gövde 400 değil,
+// includeCode=false demek.
+func TestDecodeExplainOptions(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"gövde yok (mevcut çağıranlar)", "", false},
+		{"boş JSON", "{}", false},
+		{"yalnız boşluk", "   \n", false},
+		{"açıkça false", `{"includeCode":false}`, false},
+		{"açıkça true", `{"includeCode":true}`, true},
+		{"bilinmeyen alanlarla birlikte", `{"includeCode":true,"foo":1}`, true},
+		{"bozuk JSON → varsayılan, 400 DEĞİL", `{"includeCode":`, false},
+		{"JSON olmayan gövde", `not json at all`, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-exception/fp1",
+				strings.NewReader(tc.body))
+			if got := decodeExplainOptions(r).IncludeCode; got != tc.want {
+				t.Fatalf("IncludeCode=%v, istenen %v", got, tc.want)
+			}
+		})
+	}
+	t.Run("nil body", func(t *testing.T) {
+		r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-trace/t1", nil)
+		r.Body = nil
+		if decodeExplainOptions(r).IncludeCode {
+			t.Fatal("nil gövde true döndürdü")
+		}
+	})
+}
+
+// ── taşma teşhisi ────────────────────────────────────────────────
+
+// TestIsContextOverflowErr — 400 ≠ taşma. Yalnız taşmaya işaret eden
+// 400'lerde kod yarıya iner; response_format reddi gibi başka bir 400
+// yanlış teşhisle ikinci bir çağrı yakmamalı.
+func TestIsContextOverflowErr(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{
+			"vLLM maximum context length",
+			errors.New("openai: 400 This model's maximum context length is 8192 tokens. However, you requested 9500"),
+			true,
+		},
+		{
+			"Ollama input length exceeds",
+			errors.New("copilot: http 400: input length exceeds context length"),
+			true,
+		},
+		{
+			"Anthropic prompt is too long",
+			errors.New("anthropic 400 invalid_request_error: prompt is too long: 210000 tokens > 200000 maximum"),
+			true,
+		},
+		{"413 request too large", errors.New("http 413: request entity too large"), true},
+		{
+			// Mevcut JSON-mode merdiveninin 400'ü — TAŞMA DEĞİL.
+			"response_format reddi",
+			errors.New("openai: 400 unknown parameter: response_format"),
+			false,
+		},
+		{"düz 400", errors.New("http 400: bad request"), false},
+		{"401", errors.New("http 401: unauthorized"), false},
+		{"500", errors.New("http 500: maximum context length is 8192"), false},
+		{"timeout", errors.New("context deadline exceeded"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isContextOverflowErr(tc.err); got != tc.want {
+				t.Fatalf("isContextOverflowErr=%v, istenen %v (%v)", got, tc.want, tc.err)
+			}
+		})
+	}
+}
+
+// ── sahte sağlayıcı + kayıt edici ────────────────────────────────
+
+// capRecorder — ai_calls sink'i yerine geçen kayıt yakalayıcı.
+type capRecorder struct {
+	mu   sync.Mutex
+	recs []copilot.CallRecord
+	done chan struct{}
+}
+
+func newCapRecorder() *capRecorder { return &capRecorder{done: make(chan struct{}, 8)} }
+
+func (c *capRecorder) RecordCall(_ context.Context, rec copilot.CallRecord) {
+	c.mu.Lock()
+	c.recs = append(c.recs, rec)
+	c.mu.Unlock()
+	c.done <- struct{}{}
+}
+
+func (c *capRecorder) wait(t *testing.T, n int) []copilot.CallRecord {
+	t.Helper()
+	for i := 0; i < n; i++ {
+		<-c.done
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]copilot.CallRecord(nil), c.recs...)
+}
+
+// fakeProvider — OpenAI uyumlu sahte uç. prompts, sağlayıcıya GERÇEKTEN
+// giden gövdeleri toplar; overflowFirst true ise ilk çağrı bağlam
+// taşması 400'ü döner.
+type fakeProvider struct {
+	srv           *httptest.Server
+	mu            sync.Mutex
+	prompts       []string
+	overflowFirst bool
+	calls         int
+}
+
+func newFakeProvider(t *testing.T, overflowFirst bool) *fakeProvider {
+	t.Helper()
+	f := &fakeProvider{overflowFirst: overflowFirst}
+	f.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		var sb strings.Builder
+		for _, m := range body.Messages {
+			sb.WriteString(m.Content)
+			sb.WriteString("\n")
+		}
+		f.mu.Lock()
+		f.calls++
+		n := f.calls
+		f.prompts = append(f.prompts, sb.String())
+		f.mu.Unlock()
+
+		if f.overflowFirst && n == 1 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			fmt.Fprint(w, `{"error":{"message":"This model's maximum context length is 8192 tokens. However, you requested 12000 tokens"}}`)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"choices":[{"message":{"content":"kök neden: 246. satırdaki null kontrolü eksik"}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}`)
+	}))
+	t.Cleanup(f.srv.Close)
+	return f
+}
+
+func (f *fakeProvider) sent() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.prompts...)
+}
+
+// codeServer — s.copilot'u sahte sağlayıcıya bağlı bir Server.
+func codeServer(t *testing.T, fp *fakeProvider, rec copilot.Recorder) *Server {
+	t.Helper()
+	cop := copilot.New(copilot.ProviderOpenAI, "test-key", "gemma4")
+	cop.Configure(copilot.ProviderOpenAI, "test-key", "gemma4", fp.srv.URL, false, true)
+	cop.SetRecorder(rec)
+	if !cop.Active() {
+		t.Fatal("sahte copilot aktif değil")
+	}
+	return &Server{copilot: cop}
+}
+
+// ── uçtan uca: sahte TFS + sahte sağlayıcı ───────────────────────
+
+const secretCodeMarker = "SECRET_BUSINESS_RULE_MARKER"
+
+// fetchFakeCodeContext — sahte TFS'ten gerçek FetchCode akışıyla
+// (listing → eşleşme → pencere) kod bağlamı üretir.
+func fetchFakeCodeContext(t *testing.T) devops.CodeContext {
+	t.Helper()
+	const path = "/src/main/java/com/example/card/CardDetailBusiness.java"
+	files := map[string]string{}
+	var sb strings.Builder
+	sb.WriteString("package com.example.card;\n")
+	for i := 2; i <= 400; i++ {
+		if i == 246 {
+			fmt.Fprintf(&sb, "    if (hostResponse == null) { throw new HostException(\"%s\"); }\n", secretCodeMarker)
+			continue
+		}
+		// Uzun dolgu satırları BİLİNÇLİ: ±30 satırlık pencere kod
+		// bütçesini gerçekten dolduracak boyda olmalı ki yarıya-indirme
+		// yolu testte gerçekten tetiklensin.
+		fmt.Fprintf(&sb, "    // dolgu satiri %d — bu satir pencere butcesini doldurmak icin uzun tutuldu\n", i)
+	}
+	files[path] = sb.String()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p, q := r.URL.Path, r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(p, "/refs"):
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"value": []map[string]string{{"name": "refs/heads/release"}, {"name": "refs/heads/master"}},
+			})
+		case strings.HasSuffix(p, "/items") && q.Get("recursionLevel") == "Full":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"value": []map[string]any{{"path": path, "gitObjectType": "blob"}},
+			})
+		case strings.HasSuffix(p, "/items"):
+			_ = json.NewEncoder(w).Encode(map[string]any{"content": files[q.Get("path")]})
+		default:
+			_ = json.NewEncoder(w).Encode(map[string]any{"defaultBranch": "refs/heads/master"})
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	dv := devops.New()
+	dv.Configure(devops.Settings{
+		BaseURL: srv.URL, Collection: "DefaultCollection", Project: "Payments",
+		PAT: "test-pat", Flavor: devops.FlavorServer,
+	})
+	stack := "\tat deployment.APPWEB.war//com.example.card.CardDetailBusiness.handle(CardDetailBusiness.java:246)\n"
+	cc := dv.FetchCode(context.Background(), "core-service", stackparse.ParseJava(stack))
+	if cc.Empty() {
+		t.Fatalf("sahte TFS'ten kod çekilemedi: %s", cc.Reason)
+	}
+	cc.Source = devops.RepoSourceConvention
+	return cc
+}
+
+// TestExplainCodeMasksPromptInAICalls — SÖZLEŞMENİN PİNİ.
+//
+// Sağlayıcıya giden prompt kodu TAŞIR; ai_calls kaydına giren örnek
+// TAŞIMAZ, yerine `[kod: repo/dosya:aralık · N satır]` özeti geçer.
+// PromptChars ise GERÇEK prompt boyutunu bildirir — maskeli bir boyut
+// çağrının maliyetini olduğundan küçük gösterirdi.
+func TestExplainCodeMasksPromptInAICalls(t *testing.T) {
+	cc := fetchFakeCodeContext(t)
+	fp := newFakeProvider(t, false)
+	rec := newCapRecorder()
+	s := codeServer(t, fp, rec)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-exception/fp1", nil)
+	user := "Exception GRUBU:\n```json\n{\"type\":\"HostException\"}\n```"
+	out, err := s.copilotExplainCode(r,
+		copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), user, cc)
+	if err != nil {
+		t.Fatalf("explain hata verdi: %v", err)
+	}
+	if out == "" {
+		t.Fatal("boş cevap")
+	}
+
+	// (1) Sağlayıcıya giden prompt kodu TAŞIR.
+	sent := fp.sent()
+	if len(sent) != 1 {
+		t.Fatalf("sağlayıcı çağrısı sayısı=%d, istenen 1", len(sent))
+	}
+	if !strings.Contains(sent[0], secretCodeMarker) {
+		t.Fatal("kod sağlayıcıya GİTMEDİ — özelliğin kendisi kırık")
+	}
+	if !strings.Contains(sent[0], "KOD BAĞLAMI") {
+		t.Fatal("kod bağlamı bloğu prompt'ta yok")
+	}
+	// Kod prompt'u kullanıldı mı? (kodsuz taban değil)
+	if !strings.Contains(sent[0], "bu pencerede görünmüyor") {
+		t.Error("kod ekli system prompt'u kullanılmamış")
+	}
+
+	// (2) ai_calls kaydı kodu TAŞIMAZ.
+	recs := rec.wait(t, 1)
+	if len(recs) != 1 {
+		t.Fatalf("ai_calls kaydı sayısı=%d, istenen 1", len(recs))
+	}
+	got := recs[0]
+	if strings.Contains(got.PromptSample, secretCodeMarker) {
+		t.Fatalf("KOD ai_calls kaydına sızdı:\n%s", got.PromptSample)
+	}
+	if strings.Contains(got.PromptSample, "dolgu 2") || strings.Contains(got.PromptSample, "```java") {
+		t.Fatalf("kod gövdesi ai_calls kaydında:\n%s", got.PromptSample)
+	}
+	// Özet: hangi depo + hangi dosya + hangi aralık + kaç satır.
+	// Aralık, bütçe kırpmasından SONRAKİ gerçek aralıktır — kayıt
+	// "modele ne gitti"yi söylemeli, ne göndermeyi planladığımızı değil.
+	if !strings.Contains(got.PromptSample,
+		"[kod: core-service/src/main/java/com/example/card/CardDetailBusiness.java:216-") ||
+		!strings.Contains(got.PromptSample, " satır]") {
+		t.Fatalf("maskeli kayıtta kaynak özeti yok:\n%s", got.PromptSample)
+	}
+	// Kod dışı bağlam kayıtta AYNEN durmalı — maskeleme yalnız kodu alır.
+	if !strings.Contains(got.PromptSample, "Exception GRUBU") {
+		t.Fatalf("kod dışı bağlam kayıttan düştü:\n%s", got.PromptSample)
+	}
+	// (3) PromptChars GERÇEK boyut: maskeli örnekten büyük olmalı.
+	if int(got.PromptChars) <= len(got.PromptSample) {
+		t.Errorf("PromptChars=%d maskeli örnek uzunluğundan (%d) büyük değil — maliyet olduğundan küçük raporlanıyor",
+			got.PromptChars, len(got.PromptSample))
+	}
+	if got.Surface != "explain-exception" {
+		t.Errorf("Surface=%q, istenen explain-exception (/ai atıfı)", got.Surface)
+	}
+}
+
+// TestExplainCodeRetriesHalvedOnOverflow — bağlam taşması 400'ünde kod
+// YARIYA inip BİR kez yeniden denenir; ikinci deneme daha kısa kod
+// taşır ve cevap üretilir.
+func TestExplainCodeRetriesHalvedOnOverflow(t *testing.T) {
+	cc := fetchFakeCodeContext(t)
+	fp := newFakeProvider(t, true) // ilk çağrı taşma 400'ü
+	rec := newCapRecorder()
+	s := codeServer(t, fp, rec)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-exception/fp1", nil)
+	out, err := s.copilotExplainCode(r,
+		copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), "Exception GRUBU: x", cc)
+	if err != nil {
+		t.Fatalf("yeniden deneme sonrası hâlâ hata: %v", err)
+	}
+	if out == "" {
+		t.Fatal("boş cevap")
+	}
+
+	sent := fp.sent()
+	if len(sent) != 2 {
+		t.Fatalf("sağlayıcı çağrısı=%d, istenen 2 (bir taşma + bir yeniden deneme)", len(sent))
+	}
+	if len(sent[1]) >= len(sent[0]) {
+		t.Fatalf("ikinci prompt kısalmadı: %d → %d", len(sent[0]), len(sent[1]))
+	}
+	// Kod hâlâ VAR (tümüyle atılmadı) — yarıya indi.
+	if !strings.Contains(sent[1], "KOD BAĞLAMI") {
+		t.Error("yeniden denemede kod bağlamı tümüyle düşmüş; istenen YARIYA inmesi")
+	}
+	// SADECE BİR kez: üçüncü bir deneme yok.
+	recs := rec.wait(t, 2)
+	if len(recs) != 2 {
+		t.Fatalf("ai_calls kaydı=%d, istenen 2", len(recs))
+	}
+	// Maskeleme yeniden denemede de geçerli.
+	for i, rc := range recs {
+		if strings.Contains(rc.PromptSample, secretCodeMarker) {
+			t.Fatalf("%d. kayıtta kod sızdı", i+1)
+		}
+	}
+}
+
+// TestExplainCodeFallsBackWhenNoCode — kod bağlamı boşsa KODSUZ
+// prompt'la normal yol işler (fail-open); tek çağrı, maskeleme yok.
+func TestExplainCodeFallsBackWhenNoCode(t *testing.T) {
+	fp := newFakeProvider(t, false)
+	rec := newCapRecorder()
+	s := codeServer(t, fp, rec)
+
+	r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-exception/fp1", nil)
+	empty := devops.CodeContext{Reason: "depo çözülemedi"}
+	out, err := s.copilotExplainCode(r,
+		copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), "Exception GRUBU: x", empty)
+	if err != nil || out == "" {
+		t.Fatalf("fail-open çalışmadı: out=%q err=%v", out, err)
+	}
+	sent := fp.sent()
+	if len(sent) != 1 {
+		t.Fatalf("sağlayıcı çağrısı=%d, istenen 1", len(sent))
+	}
+	if strings.Contains(sent[0], "KOD BAĞLAMI") {
+		t.Fatal("kod yokken kod ekli prompt gönderilmiş — modele olmayan kanıt vaat ediliyor")
+	}
+	recs := rec.wait(t, 1)
+	if strings.Contains(recs[0].PromptSample, "[kod:") {
+		t.Fatal("kod yokken maskeleme özeti yazılmış")
+	}
+}
+
+// TestCodePayload — yanıtın `code` alanı: kod GÖVDESİ tarayıcıya
+// gitmez, yalnız hangi dosyanın hangi aralığı okundu.
+func TestCodePayload(t *testing.T) {
+	cc := devops.CodeContext{
+		Repo: "core-service", Branch: "release", Source: devops.RepoSourceConvention,
+		Windows: []devops.CodeWindow{{
+			Path: "/src/A.java", FromLine: 10, ToLine: 70,
+			Content: "10| " + secretCodeMarker,
+		}},
+	}
+	t.Run("istenmediyse alan hiç yok", func(t *testing.T) {
+		if codePayload(cc, false) != nil {
+			t.Fatal("includeCode=false iken code alanı üretildi")
+		}
+	})
+	t.Run("istendiyse yalnız referans", func(t *testing.T) {
+		p := codePayload(cc, true)
+		b, _ := json.Marshal(p)
+		if strings.Contains(string(b), secretCodeMarker) {
+			t.Fatalf("kod gövdesi API yanıtına sızdı: %s", b)
+		}
+		if p.Repo != "core-service" || p.Branch != "release" || p.Source != devops.RepoSourceConvention {
+			t.Fatalf("kaynak satırı bilgisi eksik: %+v", p)
+		}
+		if len(p.Files) != 1 || p.Files[0].Path != "/src/A.java" ||
+			p.Files[0].FromLine != 10 || p.Files[0].ToLine != 70 {
+			t.Fatalf("dosya referansı hatalı: %+v", p.Files)
+		}
+	})
+	t.Run("boş bağlamda neden taşınır", func(t *testing.T) {
+		p := codePayload(devops.CodeContext{Reason: "depo erişilemedi"}, true)
+		if p == nil || p.Reason != "depo erişilemedi" {
+			t.Fatalf("dürüst not taşınmadı: %+v", p)
+		}
+		if len(p.Files) != 0 {
+			t.Fatal("boş bağlamda dosya listesi dolu")
+		}
+	})
+}
+
+// TestExplainCodeDropsCodeWhenHalvingCannotShrink — kod zaten bütçenin
+// yarısından küçükken taşma geldiyse, kod prompt'un sorunu DEĞİLDİR.
+// Yarıya indirmek hiçbir şey kazandırmayacağı için elimizdeki tek kol
+// kalır: kodu tümüyle bırakıp kodsuz dene. Operatör cevapsız kalmaz.
+func TestExplainCodeDropsCodeWhenHalvingCannotShrink(t *testing.T) {
+	fp := newFakeProvider(t, true) // ilk çağrı taşma 400'ü
+	rec := newCapRecorder()
+	s := codeServer(t, fp, rec)
+
+	// Tek satırlık minik pencere: yarıya indirme onu kırpamaz.
+	tiny := devops.CodeContext{
+		Repo: "core-service", Branch: "release",
+		Windows: []devops.CodeWindow{{
+			Path: "/src/A.java", FromLine: 9, ToLine: 9, Content: "9| int x = 1;",
+		}},
+	}
+	r := httptest.NewRequest(http.MethodPost, "/api/copilot/explain-exception/fp1", nil)
+	out, err := s.copilotExplainCode(r,
+		copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), "Exception GRUBU: x", tiny)
+	if err != nil || out == "" {
+		t.Fatalf("kodsuz geri düşüş çalışmadı: out=%q err=%v", out, err)
+	}
+	sent := fp.sent()
+	if len(sent) != 2 {
+		t.Fatalf("sağlayıcı çağrısı=%d, istenen 2", len(sent))
+	}
+	if strings.Contains(sent[1], "KOD BAĞLAMI") {
+		t.Fatal("ikinci denemede kod hâlâ var — kırpılamayan kod bırakılmalıydı")
+	}
+	rec.wait(t, 2)
+}

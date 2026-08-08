@@ -111,6 +111,29 @@ func (s *Server) getDatabasesSeries(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// getDBSaturation (v0.9.822) — havuz doygunluğu karosunun kaynağı.
+//
+// Bu ölçüler v0.7'den beri VARDI ama yalnız alert evaluator'ı okuyordu:
+// operatör "oturum havuzu dolmak üzere" bilgisini ancak bir Problem
+// AÇILDIKTAN sonra görüyordu; o soruyu sormak için gidilen sayfa hiç
+// bilmiyordu. Aynı gauge'lar, aynı okuma katmanı, ikinci bir tüketici —
+// eşik/karar evaluator'da KALIYOR (iki nüsha eşik, biri değişince
+// sayfayla alarmın birbirini yalanlaması demekti).
+//
+// PENCERE ALMAZ. Gauge "şu anki doluluk" anlatıyor ve okuma katmanı son
+// 10 dakikanın EN SON değerini alıyor; sayfa penceresine bağlansaydı
+// 24 saatlik bir seçimde karo, görülmesi gereken zirveyi ortalayarak
+// saklardı. Anahtar bu yüzden PENCERE DEĞİL, 30 sn'lik bir ızgara:
+// sayfanın range'i değişince aynı slot okunmaya devam eder ve okuma
+// boşuna tekrarlanmaz.
+func (s *Server) getDBSaturation(w http.ResponseWriter, r *http.Request) {
+	now := time.Now()
+	key := fmt.Sprintf("db-saturation:v1:%d", now.Truncate(30*time.Second).Unix())
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetDBSaturation(ctx)
+	})
+}
+
 // getDBTrends serves the per-row RED sparklines (#1) + latest-bucket
 // health snapshot (#6) for the /databases + /messaging overview
 // grid. One DBTrend per (db_system, instance, db_name) — keyed

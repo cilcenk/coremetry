@@ -623,6 +623,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/databases", s.getDatabases)
 	// v0.9.820 — sayfa üstü KPI şeridi + üç grafik (api_databases.go).
 	mux.HandleFunc("GET /api/databases/series", s.getDatabasesSeries)
+	// v0.9.822 — koşullu havuz doygunluğu karosu (api_databases.go).
+	mux.HandleFunc("GET /api/databases/saturation", s.getDBSaturation)
 	mux.HandleFunc("GET /api/databases/trends", s.getDBTrends)
 	mux.HandleFunc("GET /api/databases/detail", s.getDatabaseDetail)
 	// Cross-service slow-query catalog (v0.5.165). One row per

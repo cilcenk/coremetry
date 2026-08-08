@@ -23,6 +23,7 @@ import {
   visibilityFor, loadLegendVisibility, saveLegendVisibility,
 } from '@/lib/chart/legendVisibility';
 import { legendMode } from '@/lib/chart/legendMode';
+import { foldTopN, foldNote, isOthersSeries, OTHERS_KEY } from '@/lib/chart/foldTopN';
 import { drawThresholds, drawTimeRegions, type ChartTimeRegion } from '@/lib/chart/overlays';
 
 // v0.9.131 (chart-consolidation Adım 3) — TimeSeriesPanel artık placeTooltip'i
@@ -76,40 +77,12 @@ export interface Threshold {
   severity?: 'warn' | 'err'; // default 'warn'
 }
 
-// foldTopN — when more than N series would render, keep the N with
-// the largest area (Σ|value|) and fold the long tail into a single
-// muted "others" line so the legend + palette stay legible. Additive
-// units (rps / counts / bytes) SUM the tail; rate / latency units
-// (%, ms, s) AVERAGE it — summing percentages or percentiles is
-// meaningless. Same input → same kept set → stable colours.
-const OTHERS_KEY = 'others';
-function foldTopN(series: SpanMetricSeries[], unit: string | undefined, n = 8): SpanMetricSeries[] {
-  if (series.length <= n) return series;
-  const u = (unit || '').trim().toLowerCase();
-  const mean = u === '%' || u === 'ms' || u === 's';
-  const ranked = series
-    .map(s => ({ s, area: s.points.reduce((a, p) => a + Math.abs(p.value ?? 0), 0) }))
-    .sort((a, b) => b.area - a.area);
-  const keep = ranked.slice(0, n).map(r => r.s);
-  const tail = ranked.slice(n).map(r => r.s);
-  const sumByTime = new Map<number, number>();
-  const cntByTime = new Map<number, number>();
-  for (const s of tail) {
-    for (const p of s.points) {
-      if (p.value == null) continue;
-      sumByTime.set(p.time, (sumByTime.get(p.time) ?? 0) + p.value);
-      cntByTime.set(p.time, (cntByTime.get(p.time) ?? 0) + 1);
-    }
-  }
-  const others: SpanMetricSeries = {
-    ...tail[0],
-    groupKey: [OTHERS_KEY],
-    points: [...sumByTime.entries()]
-      .sort((a, b) => a[0] - b[0])
-      .map(([time, sum]) => ({ time, value: mean ? sum / (cntByTime.get(time) || 1) : sum })),
-  };
-  return [...keep, others];
-}
+// v0.9.807 — foldTopN gövdesi SAF modüle taşındı (lib/chart/foldTopN.ts).
+// Buradaki kopya v2 yoluyla ayrışmıştı: CorePanel dalı katlamasız TÜM
+// serileri çiziyordu, yani aynı panel iki motorda farklı sayıda seri
+// gösteriyordu. Artık iki dal da aşağıdaki tek fonksiyonu çağırıyor —
+// davranış (alan sıralaması, oran birimlerinde ortalama, OTHERS_KEY)
+// bayt bayt aynı, gerekçelerin tamamı modülün başında.
 
 // computeChartData (v0.8.520) — pure data prep shared by the build effect (the
 // initial plot) AND the setData fast-path. Folds the tail, shifts the compare
@@ -187,9 +160,15 @@ export function MultiLineChart(props: Parameters<typeof MultiLineChartInner>[0])
   const {
     series, unit, height = 320, deploys, thresholds, regions, syncKey,
     onZoom, onZoomReset, xRange, legendStorageKey, defaultHidden,
-    compareSeries, onBucketClick, logScale,
+    compareSeries, onBucketClick, logScale, maxSeries,
   } = props;
   if (!chartsV2()) return <MultiLineChartInner {...props} />;
+  // v0.9.807 — "others" katlaması v2 dalında da. v0.9.789'da kapı kalkarken
+  // bu adım atlanmıştı: v1 gövdesi >N seriyi katlarken v2 yolu HEPSİNİ
+  // çiziyordu (ServiceCharts by-op error-rate/latency/RPS üçlüsünde gözle
+  // görülür). maxSeries çağıranın tavanı — JBoss datasource panelleri 40
+  // veriyor (v0.9.148), yani orada katlama pratikte hiç olmuyor.
+  const eff = foldTopN(series, unit, maxSeries ?? undefined);
   // v0.9.764 — önceki-dönem hayaleti: compareSeries offset'le bugünün
   // eksenine kaydırılıp kesikli/soluk ghost olarak biner (mockup dilim
   // 3; MLC'nin compare bindirmesinin v2 karşılığı).
@@ -208,11 +187,17 @@ export function MultiLineChart(props: Parameters<typeof MultiLineChartInner>[0])
         storageKey={legendStorageKey ?? 'mlc'}
         height={height}
         unit={unit}
-        items={series.map((s0, i) => ({
+        items={eff.map((s0, i) => ({
           name: s0.groupKey?.length ? s0.groupKey.join(' · ') : `seri ${i + 1}`,
-          role: 'data' as const,
+          // Katlanan kuyruk SESSİZ gri: v1 gövdesinin mutedGray'inin rol
+          // karşılığı (seriesRoleColor('muted') → var(--text3)). Renk yine
+          // tek kanaldan gelir, burada ikinci bir palet doğmaz.
+          role: (isOthersSeries(s0) ? 'muted' : 'data') as 'muted' | 'data',
           series: [s0],
         }))}
+        // Kırpma notu (dürüstlük satırı): kaç seri katlandı ve NEYE göre.
+        // Katlama yoksa null → satır hiç çizilmez.
+        note={foldNote(series.length, maxSeries ?? undefined)}
         defaultHidden={defaultHidden ? [...defaultHidden] : undefined}
         xRange={xRange}
         logScale={logScale}

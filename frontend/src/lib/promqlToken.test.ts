@@ -7,7 +7,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   promqlTokenAt, replaceToken,
-  promqlLabelContext, applyLabelKey, applyLabelValue,
+  promqlLabelContext, applyLabelKey, applyLabelValue, insertMatcher, promqlActiveMetric,
   type PromqlLabelCtx,
 } from './promqlToken';
 
@@ -256,5 +256,139 @@ describe('applyLabelKey / applyLabelValue', () => {
     const { text, ctx } = ctxOf('m{a="x",b="y|"}');
     const out = applyLabelValue(text, ctx, 'yes');
     expect(out.text).toBe('m{a="x",b="yes"}');
+  });
+});
+
+// ── insertMatcher (v0.9.782) — etiket gezgini chip'i sorguya matcher yazar ──
+// applyLabelValue'dan farkı: imleç DOĞRU yerde olmak zorunda değil. Tablo
+// imlecin her makul konumunu ("|") ve sorgunun her hâlini (boş / süslüsüz /
+// süslü içi / aynı anahtar dolu) tek tek dener.
+describe('insertMatcher', () => {
+  const cases: Array<{ name: string; input: string; metric: string; key: string; value: string; want: string }> = [
+    {
+      name: 'boş sorgu: selector kurar',
+      input: '|', metric: 'http.server.duration', key: 'service.name', value: 'checkout',
+      want: 'http.server.duration{service.name="checkout"}',
+    },
+    {
+      name: 'metrik var süslü yok: adın hemen ardına süslü açar',
+      input: 'rate(http.server.duration|[5m])', metric: 'http.server.duration', key: 'service.name', value: 'checkout',
+      want: 'rate(http.server.duration{service.name="checkout"}[5m])',
+    },
+    {
+      name: 'imleç sorgunun başındayken de metriği bulur',
+      input: '|sum(http.server.duration)', metric: 'http.server.duration', key: 'env', value: 'prod',
+      want: 'sum(http.server.duration{env="prod"})',
+    },
+    {
+      name: 'boş süslü içinde: virgülsüz yazar',
+      input: 'm{|}', metric: 'm', key: 'env', value: 'prod',
+      want: 'm{env="prod"}',
+    },
+    {
+      name: 'dolu süslü içinde: virgülle ekler',
+      input: 'm{a="x"|}', metric: 'm', key: 'b', value: 'y',
+      want: 'm{a="x",b="y"}',
+    },
+    {
+      name: 'aynı anahtar mevcut: DEĞERİ değişir, ikinci matcher eklenmez',
+      input: 'm{env="dev"|}', metric: 'm', key: 'env', value: 'prod',
+      want: 'm{env="prod"}',
+    },
+    {
+      name: 'aynı anahtar ortadaysa da yerinde değişir',
+      input: 'm{a="x",env="dev",b="y"}|', metric: 'm', key: 'env', value: 'prod',
+      want: 'm{a="x",env="prod",b="y"}',
+    },
+    {
+      name: 'regex operatörü korunur, sadece değer yenilenir',
+      input: 'm{route=~"/a.*"}|', metric: 'm', key: 'route', value: '/b',
+      want: 'm{route=~"/b"}',
+    },
+    {
+      name: 'kaçışlı değer: tırnak ve ters bölü kaçırılır',
+      input: 'm{|}', metric: 'm', key: 'q', value: 'a"b\\c',
+      want: 'm{q="a\\"b\\\\c"}',
+    },
+    {
+      name: 'kapanmamış süslü: yarım sorgu da düzenlenebilir',
+      input: 'm{a="x"|', metric: 'm', key: 'b', value: 'y',
+      want: 'm{a="x",b="y"',
+    },
+    {
+      name: 'sondaki virgül ikinci virgülü doğurmaz',
+      input: 'm{a="x",|}', metric: 'm', key: 'b', value: 'y',
+      want: 'm{a="x",b="y"}',
+    },
+    {
+      name: 'başka metriğin süslüsü içindeyken kendi metriğine yazar',
+      input: 'sum(a{x="1"|}) / b', metric: 'b', key: 'k', value: 'v',
+      want: 'sum(a{x="1"}) / b{k="v"}',
+    },
+    {
+      name: 'metrik sorguda yoksa imlece selector yazar',
+      input: '1 + |', metric: 'm', key: 'k', value: 'v',
+      want: '1 + m{k="v"}',
+    },
+    {
+      name: 'tırnak içindeki metrik adı eşleşme sayılmaz',
+      input: 'm{note="cpu"}|', metric: 'cpu', key: 'k', value: 'v',
+      want: 'm{note="cpu"}cpu{k="v"}',
+    },
+  ];
+  for (const c of cases) {
+    it(c.name, () => {
+      const { text, pos } = cursor(c.input);
+      const out = insertMatcher(text, pos, c.metric, c.key, c.value);
+      expect(out.text).toBe(c.want);
+    });
+  }
+
+  it('imleç değerin kapanış tırnağından sonra kalır', () => {
+    const { text, pos } = cursor('m{|}');
+    const out = insertMatcher(text, pos, 'm', 'env', 'prod');
+    expect(out.text.slice(out.pos)).toBe('}');
+    expect(out.text[out.pos - 1]).toBe('"');
+  });
+
+  it('yeni selector kurulunca imleç kapanış süslüsünün önünde durur', () => {
+    const out = insertMatcher('', 0, 'm', 'k', 'v');
+    expect(out.text.slice(out.pos)).toBe('}');
+  });
+
+  it('ön ek olan metrik adı uzun metriğin süslüsüne yazmaz', () => {
+    const out = insertMatcher('http.server.duration{a="1"}', 27, 'http.server', 'k', 'v');
+    expect(out.text.startsWith('http.server.duration{a="1"}')).toBe(true);
+  });
+
+  it('metrik ya da anahtar boşsa sorgu değişmez', () => {
+    expect(insertMatcher('m{}', 2, '', 'k', 'v')).toEqual({ text: 'm{}', pos: 2 });
+    expect(insertMatcher('m{}', 2, 'm', '', 'v')).toEqual({ text: 'm{}', pos: 2 });
+  });
+});
+
+// ── promqlActiveMetric (v0.9.782) — gezginin "hangi metrik?" cevabı ────────
+describe('promqlActiveMetric', () => {
+  const cases: Array<{ name: string; input: string; want: string }> = [
+    { name: 'çıplak metrik adı', input: 'http.server.duration|', want: 'http.server.duration' },
+    { name: 'fonksiyon içindeki metrik', input: 'rate(http.server.duration|[5m])', want: 'http.server.duration' },
+    { name: 'süslü içindeyken sahibi', input: 'http.server.duration{service.name="a|"}', want: 'http.server.duration' },
+    { name: 'boş süslü içinde de sahibi', input: 'cpu{|}', want: 'cpu' },
+    { name: 'iç içe çağrıda doğru metrik', input: 'sum(rate(cpu{po|', want: 'cpu' },
+    { name: 'PromQL sözcüğü metrik değildir', input: 'rate|', want: '' },
+    { name: 'histogram_quantile metrik değildir', input: 'histogram_quantile|', want: '' },
+    { name: 'boş sorgu', input: '|', want: '' },
+    { name: 'aralık sayısı metrik değildir', input: 'rate(m[5m|', want: '' },
+  ];
+  for (const c of cases) {
+    it(c.name, () => {
+      const { text, pos } = cursor(c.input);
+      expect(promqlActiveMetric(text, pos)).toBe(c.want);
+    });
+  }
+
+  it('aralık dışı konumlar kırılmaz', () => {
+    expect(promqlActiveMetric('cpu', 99)).toBe('cpu');
+    expect(promqlActiveMetric('cpu', -5)).toBe('');
   });
 });

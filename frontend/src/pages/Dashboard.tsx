@@ -1,5 +1,6 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui';
@@ -35,6 +36,7 @@ export default function DashboardPage() {
 function Inner() {
   const [sp, setSp] = useSearchParams();
   const navigate = useNavigate();
+  const qc = useQueryClient();
   const { user } = useAuth();
   const id = sp.get('id') ?? '';
   const startInEdit = sp.get('edit') === '1';
@@ -47,6 +49,10 @@ function Inner() {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState<Dashboard | null>(null);
   const [editingPanel, setEditingPanel] = useState<string | null>(null); // panel id
+  // v0.9.780 — etiket girdisinin HAM metni. null = dokunulmadı (değer
+  // draft.tags'ten türetilir). Ayrı tutulmasının nedeni edit alanının
+  // yanında açıklanıyor: türetilmiş değer virgülü yutuyor.
+  const [tagsInput, setTagsInput] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Resolved values for the dashboard's Grafana-style variables.
   // URL-persisted so reloads + share-links keep the choice.
@@ -352,9 +358,18 @@ function Inner() {
         // v0.9.759 — değişken tanımları da kaydedilir (backend merge
         // semantiği: alan yoksa korunur, açık boş liste boşaltır).
         variables: effVariables,
+        // v0.9.780 — etiketler. Aynı merge semantiği: burada AÇIKÇA
+        // gönderiliyor, yani operatör hepsini silerse ([]) boş kalır.
+        tags: draft.tags ?? [],
       });
       setDoc({ ...updated, panels: normalizePanels(updated.panels) });
       setVarDefs(null);
+      setTagsInput(null);
+      // v0.9.780 — /dashboards listesi ad/açıklama/etiket gösteriyor ve
+      // 60s staleTime ile duruyor; geçersiz kılmazsak operatör bir
+      // etiketi kaydedip listeye dönünce eski hâlini görürdü. ['dashboards']
+      // ön-eki hem 'list' hem PinToDashboardModal'ın anahtarını kapsıyor.
+      void qc.invalidateQueries({ queryKey: ['dashboards'] });
       setEditing(false);
     } finally {
       setBusy(false);
@@ -363,6 +378,7 @@ function Inner() {
   const cancel = () => {
     setDraft({ ...doc, panels: normalizePanels(doc.panels) });
     setVarDefs(null); // v0.9.759 — düzenlenen değişkenler de geri alınır
+    setTagsInput(null); // v0.9.780 — etiket girdisi de taslakla birlikte
     setEditing(false);
     setEditingPanel(null);
   };
@@ -417,6 +433,26 @@ function Inner() {
               <input value={draft.description} placeholder="Description" aria-label="Dashboard description"
                 onChange={e => setDraft({ ...draft, description: e.target.value })}
                 style={{ width: 320 }} />
+              {/* v0.9.780 — etiketler. Virgülle ayrılmış düz metin:
+                  bir rozet-editörü kurmak yerine yazmayı serbest
+                  bırakıyoruz; etiket kümesi kapalı değil ve operatör
+                  zaten kendi sözlüğünü kuruyor. Ayrıştırma kaydederken
+                  değil YAZARKEN yapılıyor ki draft tek doğru olsun. */}
+              <input value={tagsInput ?? (draft.tags ?? []).join(', ')}
+                placeholder="Etiketler (virgülle)" aria-label="Dashboard tags"
+                title="Virgülle ayrılmış etiketler — panolar listesinde görünür ve aranabilir"
+                onChange={e => {
+                  // HAM metin ayrı tutuluyor: gösterilen değeri
+                  // ayrıştırılmış diziden türetseydik, yazılan virgül
+                  // (ve ardındaki boşluk) filtreden düşer ve operatör
+                  // ikinci etiketi hiç yazamazdı.
+                  setTagsInput(e.target.value);
+                  setDraft({
+                    ...draft,
+                    tags: e.target.value.split(',').map(t => t.trim()).filter(Boolean),
+                  });
+                }}
+                style={{ width: 220 }} />
               <AddPanelMenu onAdd={addPanel} />
               <span style={{ marginLeft: 'auto' }} />
               <Button variant="secondary" onClick={cancel}>Cancel</Button>

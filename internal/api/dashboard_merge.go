@@ -53,6 +53,14 @@ func mergeDashboardUpdate(incoming, existing chstore.Dashboard) chstore.Dashboar
 	if out.Variables == nil {
 		out.Variables = existing.Variables
 	}
+	// v0.9.780 — etiketler de aynı sözleşmeye tabi. Bu dal olmasaydı
+	// panel/değişkenle BİREBİR aynı sessiz kayıp yaşanırdı: Dashboard
+	// düzenleme kaydı ve Explore'un "panoya pinle"si gövdeye `tags`
+	// koymuyor, dolayısıyla ilk kaydetmede operatörün etiketleri
+	// silinirdi — hata yok, uyarı yok, sadece boşalan bir kolon.
+	if out.Tags == nil {
+		out.Tags = existing.Tags
+	}
 	return out
 }
 

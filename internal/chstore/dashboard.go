@@ -24,14 +24,24 @@ type Dashboard struct {
 	// only fetched on the single-dashboard endpoint).
 	Panels      json.RawMessage `json:"panels,omitempty"`
 	Variables   json.RawMessage `json:"variables,omitempty"`
+	// Tags (v0.9.780) — panoya ait, PAYLAŞILAN serbest-metin etiketler
+	// (["prod","ödeme"]). Yıldızın aksine kullanıcı-başı değil: bir
+	// panonun ne olduğu herkes için aynı şey.
+	//
+	// panels/variables'ın aksine LİSTE yanıtında da dönüyor — /dashboards
+	// tablosu etiket kolonunu gösteriyor ve etiketler tanımı gereği
+	// küçük (panel gövdesi gibi kilobaytlar değil).
+	Tags        json.RawMessage `json:"tags,omitempty"`
 	CreatedAt   int64           `json:"createdAt"`     // unix ns
 	UpdatedAt   int64           `json:"updatedAt"`     // unix ns
 }
 
 func (s *Store) ListDashboards(ctx context.Context) ([]Dashboard, error) {
 	// List view is small — skip the panels payload to keep it light.
+	// tags (v0.9.780) BİLİNÇLİ olarak dahil: liste sayfası etiket
+	// kolonu çiziyor, ve etiketler panel gövdesinin aksine küçük.
 	rows, err := s.conn.Query(ctx, `
-		SELECT id, name, description,
+		SELECT id, name, description, tags,
 		       toUnixTimestamp64Nano(created_at),
 		       toUnixTimestamp64Nano(updated_at)
 		FROM dashboards FINAL
@@ -43,9 +53,14 @@ func (s *Store) ListDashboards(ctx context.Context) ([]Dashboard, error) {
 	var out []Dashboard
 	for rows.Next() {
 		var d Dashboard
-		if err := rows.Scan(&d.ID, &d.Name, &d.Description, &d.CreatedAt, &d.UpdatedAt); err != nil {
+		var tags string
+		if err := rows.Scan(&d.ID, &d.Name, &d.Description, &tags, &d.CreatedAt, &d.UpdatedAt); err != nil {
 			return nil, err
 		}
+		if tags == "" {
+			tags = "[]"
+		}
+		d.Tags = json.RawMessage(tags)
 		out = append(out, d)
 	}
 	return out, rows.Err()
@@ -53,15 +68,15 @@ func (s *Store) ListDashboards(ctx context.Context) ([]Dashboard, error) {
 
 func (s *Store) GetDashboard(ctx context.Context, id string) (*Dashboard, error) {
 	row := s.conn.QueryRow(ctx, `
-		SELECT id, name, description, panels, variables,
+		SELECT id, name, description, panels, variables, tags,
 		       toUnixTimestamp64Nano(created_at),
 		       toUnixTimestamp64Nano(updated_at)
 		FROM dashboards FINAL
 		WHERE id = ?
 		LIMIT 1`, id)
 	var d Dashboard
-	var panels, variables string
-	if err := row.Scan(&d.ID, &d.Name, &d.Description, &panels, &variables, &d.CreatedAt, &d.UpdatedAt); err != nil {
+	var panels, variables, tags string
+	if err := row.Scan(&d.ID, &d.Name, &d.Description, &panels, &variables, &tags, &d.CreatedAt, &d.UpdatedAt); err != nil {
 		if err.Error() == "sql: no rows in result set" {
 			return nil, nil
 		}
@@ -73,8 +88,12 @@ func (s *Store) GetDashboard(ctx context.Context, id string) (*Dashboard, error)
 	if variables == "" {
 		variables = "[]"
 	}
+	if tags == "" {
+		tags = "[]"
+	}
 	d.Panels = json.RawMessage(panels)
 	d.Variables = json.RawMessage(variables)
+	d.Tags = json.RawMessage(tags)
 	return &d, nil
 }
 
@@ -90,18 +109,24 @@ func (s *Store) UpsertDashboard(ctx context.Context, d Dashboard) error {
 	if len(d.Variables) == 0 {
 		d.Variables = json.RawMessage("[]")
 	}
+	if len(d.Tags) == 0 {
+		d.Tags = json.RawMessage("[]")
+	}
 	now := time.Now().UnixNano()
 	if d.CreatedAt == 0 {
 		d.CreatedAt = now
 	}
 	d.UpdatedAt = now
 
-	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO dashboards (id, name, description, panels, variables, created_at, updated_at, version)")
+	// Kolon listesi ile aşağıdaki Append argümanları 1:1 kalmalı —
+	// v0.7.36'daki "expected N arguments got M" hatası tam olarak
+	// birinin diğeri olmadan büyümesiydi ve her kaydı düşürüyordu.
+	batch, err := s.conn.PrepareBatch(ctx, "INSERT INTO dashboards (id, name, description, panels, variables, tags, created_at, updated_at, version)")
 	if err != nil {
 		return fmt.Errorf("prepare dashboards: %w", err)
 	}
 	if err := batch.Append(
-		d.ID, d.Name, d.Description, string(d.Panels), string(d.Variables),
+		d.ID, d.Name, d.Description, string(d.Panels), string(d.Variables), string(d.Tags),
 		time.Unix(0, d.CreatedAt).UTC(),
 		time.Unix(0, d.UpdatedAt).UTC(),
 		uint64(now),

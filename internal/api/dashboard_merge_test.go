@@ -23,7 +23,31 @@ func TestMergeDashboardUpdate(t *testing.T) {
 		CreatedAt: 1111,
 		Panels:    json.RawMessage(`[{"id":"p1"}]`),
 		Variables: json.RawMessage(`[{"name":"service","type":"service"}]`),
+		Tags:      json.RawMessage(`["prod","ödeme"]`),
 	}
+
+	// v0.9.780 — etiketler panel/değişkenle AYNI sözleşmeye girdi.
+	// Bu iki alt-test o dalı pinliyor: Dashboard kaydı da Explore'un
+	// "panoya pinle"si de gövdeye `tags` koymuyor, yani taşıma dalı
+	// olmasaydı ilk kaydetmede operatörün etiketleri sessizce silinirdi.
+	t.Run("gövde tags GÖNDERMEDİ → korunur", func(t *testing.T) {
+		in := chstore.Dashboard{Name: "yeni ad", Panels: json.RawMessage(`[{"id":"p2"}]`)}
+		got := mergeDashboardUpdate(in, existing)
+		if string(got.Tags) != string(existing.Tags) {
+			t.Errorf("etiketler kayboldu: %s — panoyu düzenleyen ya da "+
+				"Explore'dan panel pinleyen herkes etiketleri siler",
+				string(got.Tags))
+		}
+	})
+
+	t.Run("gövde tags AÇIKÇA boşalttı → boş kalır", func(t *testing.T) {
+		// Operatör etiketleri bilerek temizlediyse geri GELMEMELİ.
+		in := chstore.Dashboard{Name: "x", Tags: json.RawMessage(`[]`)}
+		got := mergeDashboardUpdate(in, existing)
+		if string(got.Tags) != `[]` {
+			t.Errorf("açıkça boşaltılan etiketler geri gelmiş: %s", string(got.Tags))
+		}
+	})
 
 	t.Run("gövde variables GÖNDERMEDİ → korunur", func(t *testing.T) {
 		// TAM BUG SENARYOSU: frontend {name, description, panels}

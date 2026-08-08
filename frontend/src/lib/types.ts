@@ -2843,6 +2843,10 @@ export interface DashboardSummary {
   id: string;
   name: string;
   description: string;
+  // v0.9.780 — panoya ait, PAYLAŞILAN serbest-metin etiketler. Liste
+  // yanıtında da geliyor (panels/variables'ın aksine: etiketler küçük
+  // ve /dashboards tablosu onları çiziyor). Eski kayıtlarda yok → `?`.
+  tags?: string[];
   createdAt: number;
   updatedAt: number;
 }

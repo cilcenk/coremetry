@@ -1,9 +1,11 @@
-import { useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { NotificationChannel, ChannelType } from '@/lib/types';
 import { Field, Row, FlashBox, humanize } from './shared';
 import { ZoomChannelPicker } from './ZoomChannelPicker';
+import { useServicesMetadata } from '@/lib/queries';
+import { teamOptionsCI } from '@/lib/teamOptions';
 
 export function ChannelModal({ initial, onClose, onSaved }: {
   initial: NotificationChannel | null;
@@ -56,8 +58,21 @@ export function ChannelModal({ initial, onClose, onSaved }: {
   const [matchClusters, setMatchClusters] = useState((initial?.matchRules?.clusters ?? []).join(', '));
   const [matchQuietHours, setMatchQuietHours] = useState(initial?.matchRules?.quietHours ?? '');
   const [matchQuietHoursTz, setMatchQuietHoursTz] = useState(initial?.matchRules?.quietHoursTz ?? '');
+  // v0.9.828 — en düşük triyaj basamağı. Boş = hepsi (mevcut kanallar
+  // aynen davranır; alan match_rules JSON'ında olmadığı için DDL yok).
+  const [matchMinPriority, setMatchMinPriority] =
+    useState<'' | 'P1' | 'P2' | 'P3'>(initial?.matchRules?.minPriority ?? '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // v0.9.828 — takım adı ÖNERİLERİ. Katalog zaten yüklü (60 sn cache,
+  // Settings'in başka sekmeleri de okuyor), yani ek istek yok.
+  // teamOptionsCI harf-durumu varyantlarını tekilleştiriyor: aynı takım
+  // "avengerSY" ve "Avengersy" olarak iki kez listelenmesin (v0.8.330).
+  const mdQ = useServicesMetadata();
+  const teamOptions = useMemo(
+    () => teamOptionsCI(Object.values(mdQ.data ?? {}).flatMap(m => [m.sreTeam, m.ownerTeam])),
+    [mdQ.data]);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -125,6 +140,7 @@ export function ChannelModal({ initial, onClose, onSaved }: {
         clusters:     splitCSL(matchClusters),
         quietHours:   matchQuietHours.trim(),
         quietHoursTz: matchQuietHoursTz.trim(),
+        minPriority:  matchMinPriority,
       };
       const payload = { name, type, config, enabled, minSeverity, matchRules };
       if (initial) await api.updateChannel(initial.id, payload);
@@ -382,14 +398,24 @@ export function ChannelModal({ initial, onClose, onSaved }: {
                   onChange={e => setMatchServices(e.target.value)}
                   style={{ width: '100%' }} />
               </Field>
+              {/* v0.9.828 — takım alanları ZATEN çalışıyordu (sunucu
+                  tarafında ChannelMatchRules.SRETeams/OwnerTeams +
+                  MatchesProblem); eksik olan GÖRÜNÜRLÜKTÜ: operatör
+                  katalogda hangi takım adlarının geçtiğini bilmeden
+                  buraya bir şey yazamıyordu. datalist o adları öneriyor
+                  — serbest metin olarak kalıyor, çünkü katalog henüz
+                  doldurulmamış bir takım da yazılabilmeli. */}
+              <datalist id="ch-team-options">
+                {teamOptions.map(t => <option key={t} value={t} />)}
+              </datalist>
               <Field label="Match SRE teams (comma-separated)">
-                <input value={matchSREs}
+                <input value={matchSREs} list="ch-team-options"
                   placeholder="platform, sre-storefront"
                   onChange={e => setMatchSREs(e.target.value)}
                   style={{ width: '100%' }} />
               </Field>
               <Field label="Match owner teams (comma-separated)">
-                <input value={matchOwners}
+                <input value={matchOwners} list="ch-team-options"
                   placeholder="payments, ml"
                   onChange={e => setMatchOwners(e.target.value)}
                   style={{ width: '100%' }} />
@@ -415,6 +441,40 @@ export function ChannelModal({ initial, onClose, onSaved }: {
                     style={{ width: '100%' }} />
                 </Field>
               </div>
+              {/* v0.9.828 — triyaj basamağı kapısı. minSeverity'nin
+                  YANINDA, yerine değil: ciddiyet "ne kadar kötü",
+                  öncelik "ne kadar acil" diyor. */}
+              <Field label="En düşük öncelik (triyaj basamağı)">
+                <select value={matchMinPriority}
+                  onChange={e => setMatchMinPriority(e.target.value as '' | 'P1' | 'P2' | 'P3')}
+                  style={{ width: '100%' }}>
+                  <option value="">Hepsi (süzgeç yok)</option>
+                  <option value="P1">Yalnız P1 — şimdi</option>
+                  <option value="P2">P2 ve üstü — bugün</option>
+                  <option value="P3">P3 ve üstü — hepsi</option>
+                </select>
+                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+                  Kanal yalnız bu basamak <b>ve üstündeki</b> problemleri alır. Ciddiyet
+                  süzgecinden ayrıdır: <b>ciddiyet</b> ne kadar kötü olduğunu,
+                  <b> öncelik</b> ne kadar acil olduğunu söyler &mdash; bir critical
+                  problem P2 olabilir, tamamen erişilemez bir monitör ise P1&apos;dir.
+                  {/* DÜRÜSTLÜK NOTU — bu iki sınır gerçek ve operatör
+                      kanal kurarken bilmeli; keşifte açıkça saptandı. */}
+                  <div style={{ marginTop: 6 }}>
+                    <b>Bilmeniz gereken iki sınır:</b>
+                    <br />
+                    &bull; Öncelik <b>bildirim anında</b> hesaplanır. Açılış anında bir
+                    problem henüz 4 saattir açık olamayacağı için, P1 pratikte
+                    &laquo;critical + eşiğin 2 katı&raquo; ya da &laquo;tamamen
+                    kayıp&raquo; demektir.
+                    <br />
+                    &bull; Bir problem sonradan P2&apos;den P1&apos;e yükselirse
+                    <b> yeniden bildirim gönderilmez</b>: tekrar yalnız <i>ciddiyet</i>
+                    değiştiğinde tetiklenir. Yani P1 kanalı, açılışta P1 olmayan bir
+                    problemi sonradan da almaz.
+                  </div>
+                </div>
+              </Field>
               <p style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
                 Predicates AND together — every non-empty rule must match.
                 e.g. services=<code>payments</code> +

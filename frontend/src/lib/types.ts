@@ -2788,6 +2788,13 @@ export interface NotificationChannel {
     clusters?: string[];
     quietHours?: string;    // "HH:MM-HH:MM"; window may cross midnight
     quietHoursTz?: string;  // IANA tz; empty = UTC
+    // v0.9.828 — en düşük triyaj basamağı. Boş = hepsi. "P2" seçilen
+    // kanal P1 ve P2 alır, P3 almaz (BU BASAMAK VE ÜSTÜ).
+    //
+    // minSeverity'den AYRI: ciddiyet "ne kadar kötü", öncelik "ne kadar
+    // acil" diyor ve ikisi ayrışabiliyor — bir critical problem P2
+    // olabilir, bir monitor DOWN ise tam kayıp olduğu için P1'dir.
+    minPriority?: 'P1' | 'P2' | 'P3' | '';
   };
   // Type-specific union. Optional fields keep the existing email/slack/
   // webhook callers happy; new channels (mattermost shares slack's

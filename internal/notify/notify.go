@@ -430,6 +430,16 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 			p = enriched[0]
 		}
 	}
+	// v0.9.828 — ÖNCELİK, funnel'ın başında ve BİR KEZ.
+	//
+	// computePriority saf ve bildirim anındaki beş alandan (severity,
+	// value, threshold, status, startedAt) tamamen hesaplanabilir — CH
+	// okuması yok. Burada hesaplanıp aşağıdaki HER ŞEYE aynı değerle
+	// iniyor: SSE yayını, ekip-maili, kanal süzgeci (minPriority) ve
+	// bütün kanal biçimleri. Kanal döngüsünün içinde hesaplasaydık aynı
+	// bildirimin iki kanalda farklı öncelik göstermesi mümkün olurdu
+	// (dört saatlik "açık kritik" sınırının tam üstünde).
+	p = withPriority(p)
 	switch p.Status {
 	case "open":
 		n.Publish("problem.open", p)
@@ -500,6 +510,9 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 		Service:  p.Service,
 		Metadata: md,
 		Clusters: p.Clusters,
+		// v0.9.828 — minPriority yüklemi için. Yukarıda bir kez
+		// hesaplandı; kanal döngüsü boyunca sabit.
+		Priority: p.Priority,
 	}
 	relKind := problemRelatedKind(p)
 	// v0.9.587 — çözülme, o problem hakkındaki bastırma durumunu
@@ -918,7 +931,7 @@ func (n *Notifier) sendEmail(ctx context.Context, c chstore.NotificationChannel,
 		return errors.New("channel has no recipients")
 	}
 
-	subject := fmt.Sprintf("[%s] %s — %s", strings.ToUpper(p.Severity), p.Service, p.RuleName)
+	subject := alertTitle(p)
 
 	from := smtpCfg.From
 	fromHeader := from
@@ -1011,6 +1024,17 @@ func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 	fmt.Fprintf(&b, "Service:    %s\n", p.Service)
 	fmt.Fprintf(&b, "Rule:       %s\n", p.RuleName)
 	fmt.Fprintf(&b, "Severity:   %s\n", strings.ToUpper(p.Severity))
+	// v0.9.828 — öncelik + GEREKÇESİ. Gerekçe olmadan "P1" bir otorite
+	// beyanı olurdu; operatör onunla tartışabilmeli ("critical + 3.2x
+	// threshold" ya da "tamamen kayıp (0/1)"). Boşsa hiçbir şey basılmaz
+	// ve mail biçimi birebir eskisi gibi kalır.
+	if p.Priority != "" {
+		if p.PriorityReason != "" {
+			fmt.Fprintf(&b, "Priority:   %s (%s)\n", p.Priority, p.PriorityReason)
+		} else {
+			fmt.Fprintf(&b, "Priority:   %s\n", p.Priority)
+		}
+	}
 	fmt.Fprintf(&b, "Metric:     %s\n", p.Metric)
 	fmt.Fprintf(&b, "Value:      %.2f (threshold %.2f)\n", p.Value, p.Threshold)
 	fmt.Fprintf(&b, "Started at: %s\n", t)
@@ -1076,7 +1100,11 @@ func (n *Notifier) buildEmailHTML(p chstore.Problem) string {
 	// Severity badge: single-cell table so the pill's padding sits on a
 	// td. Word squares the corners; the colour is what carries meaning.
 	b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0"><tr><td bgcolor="` + severityColor(p.Severity) +
-		`" style="` + font + `;padding:2px 10px;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.5px">` + esc(sev) + `</td></tr></table>`)
+		`" style="` + font + `;padding:2px 10px;color:#ffffff;font-size:11px;font-weight:700;letter-spacing:.5px">` + esc(sev) +
+		// v0.9.828 — öncelik, ciddiyet rozetinin YANINDA aynı hücrede.
+		// Ayrı bir <td> Word'de satır kaydırırdı; aynı hücrede ince bir
+		// ayraçla yazmak her istemcide aynı görünür.
+		priorityBadgeHTML(p) + `</td></tr></table>`)
 	b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%"><tr><td style="` + font + `;padding:12px 0 0;font-size:16px;font-weight:600;color:#111827">` +
 		esc(p.Service) + ` — ` + esc(p.RuleName) + `</td></tr>`)
 	if p.Description != "" {
@@ -1233,6 +1261,10 @@ func (n *Notifier) sendSlack(ctx context.Context, c chstore.NotificationChannel,
 	fields := []map[string]any{
 		{"title": "Service", "value": p.Service, "short": true},
 		{"title": "Severity", "value": strings.ToUpper(p.Severity), "short": true},
+		// v0.9.828 — öncelik GEREKÇESİYLE. Kanal listesinde "P1" tek
+		// başına bir otorite beyanı; gerekçe operatörün onunla
+		// tartışabilmesini sağlıyor.
+		{"title": "Priority", "value": priorityField(p), "short": true},
 		{"title": "Metric", "value": p.Metric, "short": true},
 		{"title": "Value", "value": fmt.Sprintf("%.2f (threshold %.2f)", p.Value, p.Threshold), "short": true},
 		{"title": "Started", "value": t, "short": false},
@@ -1254,7 +1286,7 @@ func (n *Notifier) sendSlack(ctx context.Context, c chstore.NotificationChannel,
 		})
 	}
 	body := map[string]any{
-		"text": fmt.Sprintf("[%s] %s — %s", strings.ToUpper(p.Severity), p.Service, p.RuleName),
+		"text": alertTitle(p),
 		"attachments": []map[string]any{{
 			"color":  color,
 			"text":   p.Description,
@@ -1284,6 +1316,7 @@ func (n *Notifier) sendTeams(ctx context.Context, c chstore.NotificationChannel,
 	facts := []map[string]string{
 		{"name": "Service", "value": p.Service},
 		{"name": "Severity", "value": strings.ToUpper(p.Severity)},
+		{"name": "Priority", "value": priorityField(p)},
 		{"name": "Metric", "value": p.Metric},
 		{"name": "Value", "value": fmt.Sprintf("%.2f (threshold %.2f)", p.Value, p.Threshold)},
 		{"name": "Started", "value": t},
@@ -1291,9 +1324,9 @@ func (n *Notifier) sendTeams(ctx context.Context, c chstore.NotificationChannel,
 	body := map[string]any{
 		"@type":      "MessageCard",
 		"@context":   "https://schema.org/extensions",
-		"summary":    fmt.Sprintf("[%s] %s — %s", strings.ToUpper(p.Severity), p.Service, p.RuleName),
+		"summary":    alertTitle(p),
 		"themeColor": colour,
-		"title":      fmt.Sprintf("[%s] %s — %s", strings.ToUpper(p.Severity), p.Service, p.RuleName),
+		"title":      alertTitle(p),
 		"text":       p.Description,
 		"sections":   []map[string]any{{"facts": facts}},
 	}
@@ -1419,12 +1452,11 @@ func (n *Notifier) sendZoomChat(ctx context.Context, c chstore.NotificationChann
 	}
 
 	t := time.Unix(0, p.StartedAt).UTC().Format(time.RFC3339)
-	header := fmt.Sprintf("[%s] %s — %s",
-		strings.ToUpper(p.Severity), p.Service, p.RuleName)
+	header := alertTitle(p)
 	msg := fmt.Sprintf(
-		"%s\n%s\n\n• Service: %s\n• Severity: %s\n• Metric: %s\n• Value: %.2f (threshold %.2f)\n• Started: %s",
+		"%s\n%s\n\n• Service: %s\n• Severity: %s\n• Priority: %s\n• Metric: %s\n• Value: %.2f (threshold %.2f)\n• Started: %s",
 		header, p.Description, p.Service, strings.ToUpper(p.Severity),
-		p.Metric, p.Value, p.Threshold, t)
+		priorityField(p), p.Metric, p.Value, p.Threshold, t)
 	if p.RunbookURL != "" {
 		msg += "\n• Runbook: " + p.RunbookURL
 	}
@@ -1845,10 +1877,11 @@ func normaliseWhatsAppAddr(addr string) string {
 
 func buildWhatsAppText(p chstore.Problem) string {
 	t := time.Unix(0, p.StartedAt).UTC().Format("15:04 MST")
+	// WhatsApp mrkdwn: başlığın tamamı kalın. alertTitle zaten
+	// "[CRITICAL][P1] servis — kural" üretiyor.
 	out := fmt.Sprintf(
-		"*[%s]* %s — %s\n%s\nValue: %.2f (threshold %.2f)\nStarted: %s",
-		strings.ToUpper(p.Severity), p.Service, p.RuleName,
-		p.Description, p.Value, p.Threshold, t,
+		"*%s*\n%s\nValue: %.2f (threshold %.2f)\nStarted: %s",
+		alertTitle(p), p.Description, p.Value, p.Threshold, t,
 	)
 	if p.RunbookURL != "" {
 		out += "\nRunbook: " + p.RunbookURL

@@ -24,6 +24,7 @@ import type { TimeRange, MetricPanelConfig, Panel, SpanMetricPanelConfig } from 
 import { decodeFilters, encodeRange } from '@/lib/urlState';
 import { applyVarsToMetric, applyVarsToSpan } from '@/components/dashboard/PanelRenderer';
 import { blankQuery, type BuilderQuery, type BuilderState } from './model';
+import { vizFromPanel } from './pinToDashboard';
 import { encodeBuilder, extractScope } from './urlCodec';
 
 // splitKeys — panel configs carry group-by as a comma-separated string; the
@@ -62,6 +63,8 @@ export function panelToBuilder(
       splitBy: splitKeys(cfg.groupBy),
       filters: decodeFilters(cfg.filters),
     };
+    // viz 'line' SABİT: MetricPanelConfig'de viz alanı yok ve MetricPanel
+    // koşulsuz çizgi çiziyor — okunacak bir mark mevcut değil.
     return { queries: [q], formula: '', viz: 'line', step: cfg.step ?? 0 };
   }
 
@@ -81,7 +84,12 @@ export function panelToBuilder(
       filters: rest,
       dsl: cfg.dsl ?? '',
     };
-    return { queries: [q], formula: '', viz: 'line', step: cfg.step ?? 0 };
+    // v0.9.786 — panelin markı da geri geliyor. Sabit 'line' yazmak, bars
+    // panelinden Explore'a giden operatöre gördüğünden BAŞKA bir grafik
+    // açıyordu (pin yönündeki kaybın aynadaki eşi).
+    return {
+      queries: [q], formula: '', viz: vizFromPanel(cfg.viz), step: cfg.step ?? 0,
+    };
   }
 
   // stat / gauge / markdown / row / heatmap / promql — no builder form.

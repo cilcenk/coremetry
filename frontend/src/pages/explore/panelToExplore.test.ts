@@ -3,7 +3,7 @@ import { panelToBuilder, panelToExploreHref } from './panelToExplore';
 import { queryToPanel } from './pinToDashboard';
 import { decodeBuilder } from './urlCodec';
 import { blankQuery } from './model';
-import type { FilterExpr, Panel } from '@/lib/types';
+import type { FilterExpr, Panel, PanelVizType } from '@/lib/types';
 
 // v0.9.773 — panelToExplore is the inverse of pinToDashboard. The two
 // properties worth pinning are the ones a hand-written converter gets wrong:
@@ -197,5 +197,47 @@ describe('panelToExploreHref', () => {
       undefined, { preset: 'custom', fromMs: 1_700_000_000_000, toMs: 1_700_000_900_000 });
     const sp = new URLSearchParams(href!.slice(href!.indexOf('?') + 1));
     expect(sp.get('range')).toBe('custom:1700000000000-1700000900000');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.786 — the return trip carries the MARK too. Before this, panelToBuilder
+// hard-coded viz:'line', so an operator opening a bars/area/stacked panel in
+// Explore was shown a different chart than the one they clicked from. Every
+// PanelVizType gets a row — the bug lives exactly in the names that don't
+// match ('bar' vs 'bars') and in the one with no twin ('stacked-bar').
+// ---------------------------------------------------------------------------
+describe('panelToBuilder — viz round-trip', () => {
+  const rows: [PanelVizType | undefined, string][] = [
+    ['line', 'line'],
+    ['bar', 'bars'],
+    ['area', 'area'],
+    ['stacked-area', 'stacked'],
+    ['stacked-bar', 'stacked'],   // no Explore twin — stacking beats the mark
+    [undefined, 'line'],          // absent = panel default
+  ];
+  for (const [cfgViz, want] of rows) {
+    it(`spanmetric viz=${cfgViz ?? 'undefined'} opens Explore as ${want}`, () => {
+      const st = panelToBuilder(mk({
+        type: 'spanmetric',
+        config: { agg: 'p95', ...(cfgViz ? { viz: cfgViz } : {}) },
+      }), undefined);
+      expect(st!.viz).toBe(want);
+    });
+  }
+
+  it('pin → open round-trips the mark for every time-series viz', () => {
+    const q = { ...blankQuery('A', 'span'), agg: 'p99', scope: 'payments' };
+    for (const v of ['line', 'bars', 'area', 'stacked'] as const) {
+      const panel = queryToPanel(q, { viz: v })!;
+      expect(panelToBuilder(panel, undefined)!.viz, `viz=${v}`).toBe(v);
+    }
+  });
+
+  it('metric panels stay line — MetricPanelConfig has no viz slot', () => {
+    const st = panelToBuilder(mk({
+      type: 'metric', config: { metricName: 'cpu.util', agg: 'avg' },
+    }), undefined);
+    expect(st!.viz).toBe('line');
   });
 });

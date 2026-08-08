@@ -389,9 +389,12 @@ export default function EndpointsPage() {
     dir: sortDir,
     entry: entry === 'rpc' ? 'rpc' : undefined, // v0.9.313
   });
+  // v0.9.812 — zarf: satırlar + sıralama havuzunun gerçeği.
   const rows: EndpointRow[] | null | undefined =
-    rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data ?? [];
-  useEffect(() => { setTableRows(rowsQ.data ?? []); }, [rowsQ.data]);
+    rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data?.rows ?? [];
+  const pool = rowsQ.data?.pool ?? 0;
+  const poolCapped = rowsQ.data?.poolCapped === true;
+  useEffect(() => { setTableRows(rowsQ.data?.rows ?? []); }, [rowsQ.data]);
 
   // Cluster picker options — mirror Services page so symmetry is
   // intuitive for operators landing here after filtering there.
@@ -478,15 +481,20 @@ export default function EndpointsPage() {
               <>
                 Top {fmtNum(rows.length)} by{' '}
                 {ENDPOINT_COLS.find(c => c.id === sortBy)?.label.toLowerCase() ?? sortBy}
-                {sortBy === 'p99Delta' && (
+                {/* v0.9.812 — havuz boyutu artık SUNUCUDAN gelir. Sabit
+                    "~1000" metni v0.9.762'den beri yanlıştı: havuz limit
+                    ile birlikte büyüyor. */}
+                {sortBy === 'p99Delta' && pool > 0 && (
                   <span style={{ color: 'var(--text3)', marginLeft: 6 }}
-                        title="Kötüleşme sıralaması, çağrıya göre ilk ~1000 endpoint içinde hesaplanır — düşük hacimli uç noktalar havuz dışında kalabilir">
-                    (aday havuzu: en çok çağrılan ~1000)
+                        title={`Kötüleşme sıralaması, çağrıya göre ilk ${pool} endpoint içinde hesaplanır — düşük hacimli uç noktalar havuz dışında kalabilir`}>
+                    (aday havuzu: en çok çağrılan {fmtNum(pool)})
                   </span>
                 )}
-                {rows.length >= limit && (
+                {(rows.length >= limit || poolCapped) && (
                   <span style={{ color: 'var(--warn)', marginLeft: 6 }}
-                        title="Result hit the limit — long-tail endpoints may be hidden">
+                        title={poolCapped
+                          ? `Sıralama havuzu ${pool} aday ile sınırlı — havuz doldu, dışında kalan endpoint'ler var`
+                          : 'Result hit the limit — long-tail endpoints may be hidden'}>
                     (capped)
                   </span>
                 )}
@@ -542,6 +550,28 @@ export default function EndpointsPage() {
             visible={visibleCols}
             onChange={setVisibleCols} />
         </PageControls>
+
+        {/* v0.9.812 — sıralama havuzu şeridi. "Kötüleşenler önce"
+            sıralaması delta'yı SQL'de hesaplayamaz: sunucu çağrıya göre
+            ilk `pool` adayı çeker, prior'la birleştirir, delta'ya göre
+            sıralar. Havuz dolduysa evrenin dışında kalan endpoint'ler
+            VARDIR ve bunu söylemeyen bir liste "en çok kötüleşenler
+            bunlar" diye okunur. Küçük ipucu metni her zaman görünür;
+            bu şerit yalnız havuz gerçekten dolduğunda çıkar. */}
+        {poolCapped && (
+          <div style={{
+            padding: '8px 12px', marginBottom: 12, fontSize: 12,
+            border: '1px solid var(--border)', borderLeft: '3px solid var(--warn)',
+            borderRadius: 6, background: 'var(--bg2)', color: 'var(--text2)',
+            lineHeight: 1.5,
+          }}>
+            Sıralama havuzu <b>{fmtNum(pool)}</b> aday ile sınırlı — liste eksik
+            olabilir. Kötüleşme sıralaması, pencerede en çok çağrılan ilk{' '}
+            {fmtNum(pool)} endpoint içinde hesaplanır; daha düşük hacimli bir uç
+            nokta kötüleşse bile bu tabloya giremez. Daralt (servis / yol filtresi)
+            ya da başka bir kolona göre sırala.
+          </div>
+        )}
 
         {rows === undefined && <TableSkeleton cols={8} wideFirst />}
         {rows === null && (

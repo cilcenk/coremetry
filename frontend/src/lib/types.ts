@@ -3069,6 +3069,24 @@ export interface EndpointRow {
   priorP99Ms?: number;
 }
 
+// EndpointsListResponse — v0.9.812. /api/endpoints artık çıplak dizi
+// değil zarf döndürüyor: "kötüleşenler önce" (sort=p99Delta) sıralaması
+// SUNUCUDA, çağrıya göre ilk `pool` aday üzerinde yapılır ve bu gerçeğin
+// UI'ya taşınacak bir yeri yoktu — sayfa onu sabit "~1000" metniyle
+// TAHMİN ediyordu, havuz limit'e göre değiştiği anda da yalan oluyordu.
+export interface EndpointsListResponse {
+  rows: EndpointRow[] | null;
+  /** Sıralama evreninin boyutu (en çok çağrılan ilk N). Yalnız p99Delta. */
+  pool?: number;
+  /**
+   * Havuz tasarım niyetinden (limit×5) kısıldı VE gerçekten doldu:
+   * evrenin dışında kalan endpoint'ler var, liste eksik olabilir.
+   * Havuza her şey sığdıysa gelmez — false alarm basmak, bu zarfın
+   * kaldırmak için var olduğu sessiz yanlışın aynısı olurdu.
+   */
+  poolCapped?: boolean;
+}
+
 // EndpointWhereTheTimeGoes — v0.9.311 (brief N4). Where one route's
 // latency actually goes, plus who calls it.
 //

@@ -4,7 +4,7 @@ import type {
   LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
-  SpanMetricsServicesResponse, EndpointRow, EndpointDetail, EndpointSplitResponse, EndpointDownstream, ServiceAttrsResponse,
+  SpanMetricsServicesResponse, EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, ServiceAttrsResponse,
   AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
@@ -1849,7 +1849,9 @@ export const api = {
     // v0.9.313 (brief N1) — which inbound surface. Omitted = http, the
     // pre-v0.9.313 table.
     entry?: 'rpc' }, signal?: AbortSignal) =>
-    get<EndpointRow[] | null>(`/api/endpoints?${qs(params)}`, signal),
+    // v0.9.812 — zarf: satırların yanında sıralama havuzunun boyutu ve
+    // havuzun dolup dolmadığı (EndpointsListResponse).
+    get<EndpointsListResponse | null>(`/api/endpoints?${qs(params)}`, signal),
   // v0.8.360 — endpoint detail drill-down (Stage-2 slice E2). One
   // payload with per-section null tolerance; sig=1 marks path as an
   // ID-collapsed signature (the table's "group by shape" mode).

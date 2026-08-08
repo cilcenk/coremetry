@@ -28,8 +28,9 @@ import type { SpanMetricSeries, MetricExemplar, ChartAnnotation, OtlpExemplar } 
 import { annotationsInWindow } from '@/lib/chartAnnotations';
 import { resolveStepSec } from './stepAlign';
 import {
-  type BuilderState, produces, effectiveFilters, querySignature, exemplarDescriptor,
-  pinnedService, pinnedOperation, queryUnit, hasGroupedFilter, effectiveFilterGroup,
+  type BuilderState, type BuilderQuery, produces, effectiveFilters, querySignature,
+  exemplarDescriptor, pinnedService, pinnedOperation, queryUnit, hasGroupedFilter,
+  effectiveFilterGroup, compareOffsetNs,
 } from './model';
 
 export interface ExploreQueriesResult {
@@ -62,6 +63,18 @@ export interface ExploreQueriesResult {
   // appeared nowhere and C's panel (data left undefined by react-query on
   // isError) span forever. Absent letter = that query did not fail.
   errorByLetter: Record<string, string>;
+  // ── v0.9.824 — önceki dönem (hayalet) ────────────────────────────────────
+  // letter → AYNI sorgunun KAYDIRILMIŞ penceredeki serileri. Yalnız
+  // state.cmp açıkken dolar; kapalıyken fan-out hiç koşmaz ve harita boştur.
+  // undefined = yükleniyor ya da istenmedi; [] = koştu, veri yok.
+  compareByLetter: Record<string, SpanMetricSeries[] | undefined>;
+  // letter → hayalet fetch'in GERÇEK bucket çözünürlüğü (saniye, 0 =
+  // bilinmiyor). Güncelle uyuşmuyorsa hayalet ÇİZİLMEZ: farklı ızgaradaki
+  // iki seriyi üst üste bindirmek, hizalıymış gibi görünen bir yalandır.
+  compareStepByLetter: Record<string, number>;
+  // Kaydırma miktarı (ns). 0 = karşılaştırma kapalı. Hayalet noktaları
+  // bugünün eksenine bununla bindirilir, o yüzden tüketiciye de lazım.
+  compareOffsetNs: number;
 }
 
 // QueryData — one producing query's fetched payload. Eligible span queries
@@ -83,6 +96,90 @@ interface QueryData {
   stepSeconds?: number;
 }
 
+// exploreQueryFn — ONE producing query's fetch, for an ARBITRARY window.
+//
+// v0.9.824'te inline closure'dan çıkarıldı: önceki-dönem hayaleti AYNI üç
+// yolu KAYDIRILMIŞ pencereyle koşmak zorunda. İkinci bir kopya yazmak,
+// resolver-uygunluk kararının / filterGroup dalının / DSL geçişinin bir gün
+// iki yerde ayrışması demekti — yani hayaletin güncelden BAŞKA bir sorgu
+// olması, ve bunu kimsenin fark etmemesi.
+//
+// withExemplars: hayalet ◆ TAŞIMAZ (bkz. çağırma noktası) — resolver'a
+// exemplars istememek boşuna argMax okuması ödememek demek.
+function exploreQueryFn(
+  q: BuilderQuery, from: number, to: number, effStep: number, withExemplars: boolean,
+): (ctx: { signal?: AbortSignal }) => Promise<QueryData> {
+  const filters = effectiveFilters(q);
+  // D5 — resolver-eligible span queries (exemplarDescriptor != null: the
+  // rollup-servable tier-dim shape) fetch SERIES AND EXEMPLARS in ONE
+  // /api/metrics/resolve call instead of api.spanMetric + a separate
+  // exemplar fetch. .series is byte-identical to api.spanMetric (verified)
+  // and rides the finer 1s/10s/1m tiers. Ineligible span queries keep
+  // api.spanMetric; metric queries keep api.metricQuery; both carry no
+  // exemplars. The endpoint is a deterministic function of the query, so
+  // the querySignature cache key stays consistent.
+  const desc = q.source === 'span' ? exemplarDescriptor(q) : null;
+  // v0.9.810 — signal DESTRUCTURE edilir ve ÜÇ yola da iletilir
+  // (v0.9.617 sınıfı: React Query queryFn'e bir AbortSignal veriyor,
+  // 174 çağrı noktasının sıfırı iletiyordu). Explore'un fan-out'u
+  // sayfanın en pahalı okuması: operatör her aralık/filtre
+  // dokunuşunda 4 sorguyu birden yeniliyor ve eskiler ClickHouse'ta
+  // sonuna kadar koşuyordu. RQ signal'i YALNIZ son observer
+  // kalktığında abort eder, yani sonuca kimse bakmıyorken; iptal
+  // isCanceled sınıfına uyar ve ekrana hata DÜŞÜRMEZ.
+  // v0.9.824 — hayalet fan-out'u da AYNI kanalı kullanır: karşılaştırma
+  // açıkken iptal edilmeyen istek sayısı ikiye katlanırdı.
+  return ({ signal }): Promise<QueryData> =>
+    desc
+      ? api.resolveMetric(desc, { from, to }, { step: effStep, exemplars: withExemplars, signal })
+          .then(r => ({
+            series: r?.series ?? [], exemplars: r?.exemplars ?? [],
+            // v0.9.809 — resolver yolu da dürüstlük taşıyor: satır
+            // tavanı (alfabetik kesim) + sunucunun kelepçelediği step.
+            rowsCapped: r?.rowsCapped, stepSeconds: r?.stepSeconds,
+          }))
+      : q.source === 'span'
+        ? api.spanMetricTopN({
+            agg: q.agg,
+            field: q.metric || undefined,
+            groupBy: q.splitBy.join(',') || undefined,
+            // Grouped (genuine OR / nested) query → send filterGroup and
+            // suppress flat filters (never both; backend prefers
+            // filterGroup). effectiveFilterGroup folds the scope pin in as
+            // a top-level AND leaf so scoping matches the flat path.
+            // Flat / absent group → legacy filters= path, byte-identical
+            // (encodeFilterGroup returns '' for it so the param is
+            // omitted and the query string + cache key are unchanged).
+            filters: hasGroupedFilter(q)
+              ? undefined
+              : (filters.length ? JSON.stringify(filters) : undefined),
+            filterGroup: hasGroupedFilter(q)
+              ? (encodeFilterGroup(effectiveFilterGroup(q)) || undefined)
+              : undefined,
+            dsl: q.dsl.trim() || undefined,
+            from, to,
+            step: effStep,
+          }, signal).then(r => ({ series: r?.series ?? [], exemplars: [], totalSeries: r?.totalSeries, rowsCapped: r?.rowsCapped }))
+        : api.metricQueryFull({
+            name: q.metric,
+            agg: q.agg,
+            groupBy: q.splitBy.length ? q.splitBy.join(',') : undefined,
+            filters: filters.length ? encodeFilters(filters) : undefined,
+            from, to,
+            step: effStep,
+          }, signal).then(r => ({ series: r?.series ?? [], exemplars: [], rowsCapped: r?.rowsCapped }));
+}
+
+// GHOST_SIG — hayalet fetch'in cache anahtarına eklenen ayraç.
+//
+// ŞART, süs değil. Hayalet ◆ İSTEMEZ (exemplars:false); ayraç olmasaydı
+// anahtar `sig + kaydırılmış pencere` olurdu ve o pencere operatörün bir
+// sonraki hamlesinde GÜNCEL pencere olabilir (cmp='prev' iken aralığı bir
+// pencere geri almak tam olarak bunu yapar). O anda güncel fetch, hayaletin
+// bıraktığı ◆'sız girdiyi taze bulup yeniden kullanır ve elmaslar sessizce
+// kaybolurdu — v0.5.187 çapraz-zehirleme sınıfının aynısı.
+const GHOST_SIG = '§cmp';
+
 export function useExploreQueries(
   state: BuilderState,
   from: number,
@@ -102,76 +199,48 @@ export function useExploreQueries(
   const effStep = state.step > 0 ? state.step : stepForWidth(rangeSec, contentWidth);
 
   const results = useQueries({
-    queries: state.queries.map(q => {
-      const filters = effectiveFilters(q);
-      // D5 — resolver-eligible span queries (exemplarDescriptor != null: the
-      // rollup-servable tier-dim shape) fetch SERIES AND EXEMPLARS in ONE
-      // /api/metrics/resolve call instead of api.spanMetric + a separate
-      // exemplar fetch. .series is byte-identical to api.spanMetric (verified)
-      // and rides the finer 1s/10s/1m tiers. Ineligible span queries keep
-      // api.spanMetric; metric queries keep api.metricQuery; both carry no
-      // exemplars. The endpoint is a deterministic function of the query, so
-      // the querySignature cache key stays consistent.
-      const desc = q.source === 'span' ? exemplarDescriptor(q) : null;
-      return {
-        queryKey: keys.explore.query(querySignature(q, effStep), from, to),
-        // v0.9.810 — signal DESTRUCTURE edilir ve ÜÇ yola da iletilir
-        // (v0.9.617 sınıfı: React Query queryFn'e bir AbortSignal veriyor,
-        // 174 çağrı noktasının sıfırı iletiyordu). Explore'un fan-out'u
-        // sayfanın en pahalı okuması: operatör her aralık/filtre
-        // dokunuşunda 4 sorguyu birden yeniliyor ve eskiler ClickHouse'ta
-        // sonuna kadar koşuyordu. RQ signal'i YALNIZ son observer
-        // kalktığında abort eder, yani sonuca kimse bakmıyorken; iptal
-        // isCanceled sınıfına uyar ve ekrana hata DÜŞÜRMEZ.
-        queryFn: ({ signal }): Promise<QueryData> =>
-          desc
-            ? api.resolveMetric(desc, { from, to }, { step: effStep, exemplars: true, signal })
-                .then(r => ({
-                  series: r?.series ?? [], exemplars: r?.exemplars ?? [],
-                  // v0.9.809 — resolver yolu da dürüstlük taşıyor: satır
-                  // tavanı (alfabetik kesim) + sunucunun kelepçelediği step.
-                  rowsCapped: r?.rowsCapped, stepSeconds: r?.stepSeconds,
-                }))
-            : q.source === 'span'
-              ? api.spanMetricTopN({
-                  agg: q.agg,
-                  field: q.metric || undefined,
-                  groupBy: q.splitBy.join(',') || undefined,
-                  // Grouped (genuine OR / nested) query → send filterGroup and
-                  // suppress flat filters (never both; backend prefers
-                  // filterGroup). effectiveFilterGroup folds the scope pin in as
-                  // a top-level AND leaf so scoping matches the flat path.
-                  // Flat / absent group → legacy filters= path, byte-identical
-                  // (encodeFilterGroup returns '' for it so the param is
-                  // omitted and the query string + cache key are unchanged).
-                  filters: hasGroupedFilter(q)
-                    ? undefined
-                    : (filters.length ? JSON.stringify(filters) : undefined),
-                  filterGroup: hasGroupedFilter(q)
-                    ? (encodeFilterGroup(effectiveFilterGroup(q)) || undefined)
-                    : undefined,
-                  dsl: q.dsl.trim() || undefined,
-                  from, to,
-                  step: effStep,
-                }, signal).then(r => ({ series: r?.series ?? [], exemplars: [], totalSeries: r?.totalSeries, rowsCapped: r?.rowsCapped }))
-              : api.metricQueryFull({
-                  name: q.metric,
-                  agg: q.agg,
-                  groupBy: q.splitBy.length ? q.splitBy.join(',') : undefined,
-                  filters: filters.length ? encodeFilters(filters) : undefined,
-                  from, to,
-                  step: effStep,
-                }, signal).then(r => ({ series: r?.series ?? [], exemplars: [], rowsCapped: r?.rowsCapped })),
-        enabled: produces(q) && from > 0,
-        // v0.9.810 — staleTime SUNUCU TTL'İNDEN BÜYÜK (30s değil 35s).
-        // Üç endpoint de serveCached'de 30 sn tutuyor; istemci eşiği tam
-        // 30 sn olunca yenileme sunucu girdisinin son anına denk geliyor
-        // ve istek çoğu zaman SOĞUK cache'e düşüyordu — yani her poll,
-        // tasarruf etmesi gereken cache'i ıskalıyordu. v0.8.270 disiplini:
-        // "staleTime ≥ sunucu TTL", eşitlik değil.
-        staleTime: 35_000,
-      };
-    }),
+    queries: state.queries.map(q => ({
+      queryKey: keys.explore.query(querySignature(q, effStep), from, to),
+      queryFn: exploreQueryFn(q, from, to, effStep, true),
+      enabled: produces(q) && from > 0,
+      // v0.9.810 — staleTime SUNUCU TTL'İNDEN BÜYÜK (30s değil 35s).
+      // Üç endpoint de serveCached'de 30 sn tutuyor; istemci eşiği tam
+      // 30 sn olunca yenileme sunucu girdisinin son anına denk geliyor
+      // ve istek çoğu zaman SOĞUK cache'e düşüyordu — yani her poll,
+      // tasarruf etmesi gereken cache'i ıskalıyordu. v0.8.270 disiplini:
+      // "staleTime ≥ sunucu TTL", eşitlik değil.
+      staleTime: 35_000,
+    })),
+  });
+
+  // ── v0.9.824 — İKİNCİ fan-out: önceki dönem (hayalet) ─────────────────────
+  //
+  // KAPALIYKEN HİÇ KOŞMAZ. offset 0 → her sorgu enabled:false, yani ağ turu
+  // da react-query girdisi de yok. Bu, özelliğin tüm maliyet sözleşmesi:
+  // varsayılan kapalı, açan operatör şeritteki uyarıda ne ödediğini okuyor.
+  //
+  // effStep AYNI — bilerek. Sunucu step'i kendi kelepçesinden geçiriyor
+  // (stepAlign.ts: üç yol üç ayrı kelepçe), ama İSTEK aynı olmazsa hizayı
+  // tartışmanın anlamı kalmaz. Aynı step istendiği hâlde iki taraf farklı
+  // ızgara döndürürse hayalet ÇİZİLMEZ ve panel nedenini söyler
+  // (buildPanels; compareStepByLetter bu yüzden dışarı veriliyor).
+  //
+  // querySignature'a `cmp` GİRMEZ: karşılaştırmayı açmak, operatörün zaten
+  // baktığı GÜNCEL serileri yeniden çekmemeli. Anahtarı ayıran şey pencere
+  // (+ GHOST_SIG), sorgunun kendisi değil.
+  const offsetNs = compareOffsetNs(state.cmp, from, to);
+  const cmpFrom = offsetNs > 0 ? from - offsetNs : 0;
+  const cmpTo = offsetNs > 0 ? to - offsetNs : 0;
+  const cmpResults = useQueries({
+    queries: state.queries.map(q => ({
+      queryKey: keys.explore.query(querySignature(q, effStep) + GHOST_SIG, cmpFrom, cmpTo),
+      // withExemplars:false — hayalet çizgide ◆ YOK. Kaydırılmış pencerenin
+      // exemplar'ı bugünün trace'ine götürmez; glif basmak "bu ana tıkla"
+      // vaadini bozardı, üstelik argMax okuması boşuna ödenirdi.
+      queryFn: exploreQueryFn(q, cmpFrom, cmpTo, effStep, false),
+      enabled: offsetNs > 0 && produces(q) && from > 0,
+      staleTime: 35_000,
+    })),
   });
 
   // v0.8.332 (pivot Phase 3) — REAL OTLP exemplar ◆ for catalogue-metric
@@ -230,9 +299,15 @@ export function useExploreQueries(
 
   // Stabilise on data identity, not array identity (MQE perf pattern).
   const dataSig = results.map(r => (r.data ? r.dataUpdatedAt : r.isError ? -1 : 0)).join('|')
-    + '◆' + otlpResults.map(r => (r.data ? r.dataUpdatedAt : 0)).join('|');
+    + '◆' + otlpResults.map(r => (r.data ? r.dataUpdatedAt : 0)).join('|')
+    // Hayalet fan-out'u da imzaya girer, yoksa önceki-dönem verisi gelince
+    // memo yeniden hesaplanmaz ve hayaletler ilk boyamada HİÇ çizilmezdi.
+    + '👻' + cmpResults.map(r => (r.data ? r.dataUpdatedAt : r.isError ? -1 : 0)).join('|')
+    + '@' + offsetNs;
   return useMemo(() => {
     const byLetter: Record<string, SpanMetricSeries[] | undefined> = {};
+    const compareByLetter: Record<string, SpanMetricSeries[] | undefined> = {};
+    const compareStepByLetter: Record<string, number> = {};
     const totalByLetter: Record<string, number | undefined> = {};
     const cappedByLetter: Record<string, boolean> = {};
     const stepByLetter: Record<string, number> = {};
@@ -262,10 +337,20 @@ export function useExploreQueries(
       stepByLetter[q.letter] = resolveStepSec(r.data?.stepSeconds, series);
       exemplarsByLetter[q.letter] = r.data?.exemplars ?? [];
       otlpExemplarsByLetter[q.letter] = otlpResults[i].data ?? [];
+      // Hayalet. Hatası panelin durumunu DEĞİŞTİRMEZ: karşılaştırma bir
+      // dekorasyon, güncel seriler onsuz da doğru. Başarısız bir hayalet
+      // fetch'i harfi 'error'a düşürseydi, ikincil bir okuma birincil
+      // cevabı ekrandan siler ve operatör baktığı veriyi kaybederdi.
+      if (offsetNs > 0) {
+        const cr = cmpResults[i];
+        compareByLetter[q.letter] = cr.data === undefined ? undefined : (cr.data.series ?? []);
+        compareStepByLetter[q.letter] = resolveStepSec(cr.data?.stepSeconds, cr.data?.series);
+      }
     });
     return {
       byLetter, totalByLetter, cappedByLetter, stepByLetter,
       exemplarsByLetter, otlpExemplarsByLetter, anyLoading, errorByLetter,
+      compareByLetter, compareStepByLetter, compareOffsetNs: offsetNs,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSig, state]);

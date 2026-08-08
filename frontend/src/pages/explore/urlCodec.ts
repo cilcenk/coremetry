@@ -19,7 +19,8 @@ import { decodeMetricQuery, type MetricQuery } from '@/lib/metricQuery';
 import type { FilterExpr, FilterGroup } from '@/lib/types';
 import {
   type BuilderState, type BuilderQuery, type ExploreViz, type QuerySource,
-  EXPLORE_VIZ, QUERY_LETTERS, MAX_QUERIES, blankQuery, spanNeedsField,
+  type ExploreCompare,
+  EXPLORE_VIZ, EXPLORE_COMPARE, QUERY_LETTERS, MAX_QUERIES, blankQuery, spanNeedsField,
 } from './model';
 
 // ── ?q= codec ───────────────────────────────────────────────────────────────
@@ -32,6 +33,10 @@ export function encodeBuilder(st: BuilderState): string {
     ...(st.step ? { s: st.step } : {}),
     ...(st.topN ? { n: st.topN } : {}),
     ...(st.logY ? { ly: 1 } : {}),
+    // c — önceki-dönem karşılaştırması (v0.9.824). KAPALIYKEN HİÇ YAZILMAZ,
+    // yani v0.9.824 öncesi paylaşılmış her ?q= bayt-bayt aynı kalır ve alanı
+    // olmayan eski bir link karşılaştırma KAPALI açılır (varsayılan).
+    ...(st.cmp ? { c: st.cmp } : {}),
     ...(st.formula.trim() ? { f: st.formula.trim() } : {}),
     q: st.queries.map(q => ({
       l: q.letter,
@@ -178,6 +183,10 @@ export function decodeBuilder(s: string | null | undefined): BuilderState | null
       step: typeof o.s === 'number' && o.s > 0 ? o.s : 0,
       topN: typeof o.n === 'number' && o.n > 0 ? o.n : undefined,
       logY: o.ly === 1 || undefined,
+      // Tanınmayan bir değer (elle yazılmış link, ileri sürümden gelen kip)
+      // undefined'a düşer = KAPALI. Bilinmeyen bir kipi "bir şeye" eşlemek,
+      // operatöre sormadığı bir pencereyi çizdirirdi.
+      cmp: EXPLORE_COMPARE.includes(o.c as ExploreCompare) ? (o.c as ExploreCompare) : undefined,
     };
   } catch {
     return null;

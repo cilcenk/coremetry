@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildGroupRows } from './GroupTable';
+import { buildGroupRows, deltaPct, groupTableCols } from './GroupTable';
 import type { PanelData } from './PanelStack';
 import { seriesColor } from '@/lib/chartFmt';
 
@@ -136,5 +136,119 @@ describe('buildGroupRows — hazır olmayan paneller', () => {
   it.each(['idle', 'loading', 'error'] as const)('%s paneli satır üretmez', (state) => {
     const rows = buildGroupRows([panel({ state, series: [{ label: 'x', points: pts(1) }] })]);
     expect(rows).toHaveLength(0);
+  });
+});
+
+// ── v0.9.824 — Δ % sütunu ───────────────────────────────────────────────────
+//
+// Δ, iki dönemin AYNI sayı ailesinden karşılaştırılmasıdır: toplanabilir
+// birimde TOPLAM, toplanamaz birimde ORTALAMA. Aile GroupTable'ın "Toplam"
+// sütununu yöneten kapının aynısı (isAdditiveUnit) — ayrışsalardı satırın
+// Δ'sı kendi Toplam hücresiyle çelişirdi.
+
+const ghost = (label: string, ...vals: number[]) => ({
+  label, color: '#000',
+  points: vals.map((value, i) => ({ time: 1_751_980_000_000_000_000 + i * 60e9, value })),
+});
+
+describe('deltaPct — saf hesap', () => {
+  const cases: Array<{
+    name: string;
+    cur: { sum: number; mean: number } | null;
+    prev: { sum: number; mean: number } | null;
+    additive: boolean;
+    want: number | null;
+  }> = [
+    { name: 'toplanabilir: TOPLAM karşılaştırılır', additive: true,
+      cur: { sum: 150, mean: 15 }, prev: { sum: 100, mean: 50 }, want: 50 },
+    { name: 'toplanamaz: ORTALAMA karşılaştırılır', additive: false,
+      cur: { sum: 150, mean: 15 }, prev: { sum: 100, mean: 30 }, want: -50 },
+    { name: 'değişim yok → 0', additive: true,
+      cur: { sum: 10, mean: 1 }, prev: { sum: 10, mean: 1 }, want: 0 },
+    { name: 'önceki dönemde seri yok → null ("—")', additive: true,
+      cur: { sum: 10, mean: 1 }, prev: null, want: null },
+    { name: 'güncel yok → null', additive: true,
+      cur: null, prev: { sum: 10, mean: 1 }, want: null },
+    { name: 'önceki SIFIR → null (yüzde değişim tanımsız, "∞" uydurmuyoruz)',
+      additive: true, cur: { sum: 10, mean: 1 }, prev: { sum: 0, mean: 0 }, want: null },
+    { name: 'NaN girdide null (boş seri)', additive: false,
+      cur: { sum: NaN, mean: NaN }, prev: { sum: 1, mean: 1 }, want: null },
+  ];
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(deltaPct(c.cur, c.prev, c.additive)).toBe(c.want);
+    });
+  }
+
+  // Payda MUTLAK DEĞER. -20 → -10 bir ARTIŞTIR (%+50); payda işaretli olsaydı
+  // %-50 çıkar ve iyileşme kötüleşme gibi okunurdu.
+  it('negatif tabanda işaret DÖNMEZ (payda |prev|)', () => {
+    expect(deltaPct({ sum: -10, mean: -10 }, { sum: -20, mean: -20 }, true)).toBe(50);
+    expect(deltaPct({ sum: -30, mean: -30 }, { sum: -20, mean: -20 }, true)).toBe(-50);
+  });
+});
+
+describe('buildGroupRows — Δ hayaletten okunur', () => {
+  it('toplanabilir birimde toplamlar oranlanır', () => {
+    const [r] = buildGroupRows([panel({
+      unit: 'req/s',
+      series: [{ label: 'checkout', points: pts(6, 6) }],   // toplam 12
+      ghosts: [ghost('checkout', 4, 4)],                     // toplam 8
+    })]);
+    expect(r.deltaPct).toBe(50);
+  });
+
+  it('toplanamaz birimde ortalamalar oranlanır (toplam DEĞİL)', () => {
+    const [r] = buildGroupRows([panel({
+      unit: 'ms',
+      series: [{ label: 'x', points: pts(100, 100) }],  // ort 100, toplam 200
+      ghosts: [ghost('x', 50, 50, 50, 50)],             // ort 50,  toplam 200
+    })]);
+    // Toplamlar EŞİT; ortalama iki katı. Aile yanlış seçilse 0 çıkardı.
+    expect(r.deltaPct).toBe(100);
+  });
+
+  it('hayalet yoksa (karşılaştırma kapalı) Δ null → "—"', () => {
+    const [r] = buildGroupRows([panel({
+      unit: 'req/s', series: [{ label: 'x', points: pts(1, 2) }],
+    })]);
+    expect(r.deltaPct).toBeNull();
+  });
+
+  it('eşleşmeyen etiket Δ üretmez, eşleşen üretir', () => {
+    const rows = buildGroupRows([panel({
+      unit: '',
+      series: [
+        { label: 'a', points: pts(2) },
+        { label: 'b', points: pts(2) },
+      ],
+      ghosts: [ghost('a', 1)],
+    })]);
+    expect(rows.map(r => [r.label, r.deltaPct])).toEqual([['a', 100], ['b', null]]);
+  });
+
+  it('boş hayalet serisi Δ üretmez (sıfır sanılmaz)', () => {
+    const [r] = buildGroupRows([panel({
+      unit: '', series: [{ label: 'x', points: pts(5) }],
+      ghosts: [{ label: 'x', color: '#000', points: pts(null, null) }],
+    })]);
+    expect(r.deltaPct).toBeNull();
+  });
+});
+
+describe('groupTableCols — Δ sütunu koşullu', () => {
+  it('karşılaştırma verisi yokken sütun HİÇ yok (baştan aşağı "—" olurdu)', () => {
+    expect(groupTableCols(false).map(c => c.id)).not.toContain('delta');
+  });
+
+  it('varken Toplam ile Bucket ARASINA girer (karşılaştırdığı sayının yanına)', () => {
+    const ids = groupTableCols(true).map(c => c.id);
+    expect(ids).toEqual(['series', 'cursor', 'last', 'min', 'max', 'avg', 'sum', 'delta', 'buckets']);
+  });
+
+  it('sortValue null döndürebilir → sortRows null\'ı iki yönde de EN DİBE indirir', () => {
+    const col = groupTableCols(true).find(c => c.id === 'delta')!;
+    expect(col.sortValue!({ deltaPct: null } as never)).toBeNull();
+    expect(col.sortValue!({ deltaPct: -12.5 } as never)).toBe(-12.5);
   });
 });

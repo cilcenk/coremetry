@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildPanels, IDLE_HINT, type PanelInputs } from './PanelStack';
-import { blankQuery, defaultBuilderState, type BuilderState } from './model';
+import { buildPanels, buildGhostSeries, IDLE_HINT, type PanelInputs } from './PanelStack';
+import { blankQuery, defaultBuilderState, seriesGroupLabel, type BuilderState } from './model';
 import type { SpanMetricSeries } from '@/lib/types';
 
 // v0.9.804 regression — buildPanels had exactly ONE branch for "no data":
@@ -241,5 +241,173 @@ describe('buildPanels — üretmeyen sorgular panel açmaz', () => {
     };
     const panels = buildPanels(s, { byLetter: {}, from: 0 });
     expect(panels.map(p => p.letter)).toEqual(['B']);
+  });
+});
+
+// ── v0.9.824 — önceki dönem (hayalet) ───────────────────────────────────────
+//
+// Hayalet iki şeyi vaat ediyor: (1) çizgi BUGÜNÜN eksenine bindirilmiş,
+// (2) bindirme BİREBİR. İkisinden biri sessizce bozulursa grafik yine
+// çizilir ve karşılaştırma yanlış yerde ya da yanlış ölçekte okunur.
+// Bu testler ikisini de saf tarafta sabitliyor.
+
+const HOUR_NS = 3600 * 1e9;
+const GHOST_OFFSET = 24 * HOUR_NS;
+
+// Etiketler PRODUCTION türetmesinden gelir (seriesGroupLabel) — elle
+// yazılmış bir etiket, eşleşme kapısını gerçekte sınamazdı.
+const GQ = blankQuery('A');
+const lbl = (l: string) => seriesGroupLabel(GQ, [l], 'd');
+
+// shownSeries — buildGhostSeries'e giden "panelde görünen" seri.
+const shownSeries = (label: string) => ({
+  label: lbl(label), color: '#000',
+  points: [{ time: ACTIVE_FROM, value: 10 }],
+});
+
+describe('buildGhostSeries — bindirme + kapılar', () => {
+  const qA = blankQuery('A');
+
+  it('noktalar +offset ile bugünün eksenine kayar (BİREBİR)', () => {
+    const cmp: SpanMetricSeries[] = [{
+      groupKey: ['x'],
+      points: [
+        { time: ACTIVE_FROM - GHOST_OFFSET, value: 4 },
+        { time: ACTIVE_FROM - GHOST_OFFSET + 60e9, value: 6 },
+      ],
+    } as SpanMetricSeries];
+    const g = buildGhostSeries(qA, 'desc', [shownSeries('x')], cmp, 60, 60, GHOST_OFFSET);
+    expect(g.note).toBeUndefined();
+    expect(g.ghosts).toHaveLength(1);
+    // Kaydırılmış zamanlar GÜNCEL pencerenin zamanlarıyla BİREBİR aynı.
+    expect(g.ghosts[0].points.map(p => p.time))
+      .toEqual([ACTIVE_FROM, ACTIVE_FROM + 60e9]);
+    expect(g.ghosts[0].points.map(p => p.value)).toEqual([4, 6]);
+    // Etiket ekSİZ — " (önceki)" ekini CorePanelMulti basar, biz değil
+    // (iki taraf da basarsa "x (önceki) (önceki)" olurdu).
+    expect(g.ghosts[0].label).toBe(lbl('x'));
+  });
+
+  it('offset 0 (karşılaştırma kapalı) → hayalet de not da yok', () => {
+    const cmp = [{ groupKey: ['x'], points: [{ time: 1, value: 1 }] }] as SpanMetricSeries[];
+    expect(buildGhostSeries(qA, 'd', [shownSeries('x')], cmp, 60, 60, 0))
+      .toEqual({ ghosts: [] });
+  });
+
+  it('önceki dönem YÜKLENİYOR (undefined) → not YOK (henüz söylenecek bir şey yok)', () => {
+    expect(buildGhostSeries(qA, 'd', [shownSeries('x')], undefined, 60, 60, GHOST_OFFSET))
+      .toEqual({ ghosts: [] });
+  });
+
+  it('ÇÖZÜNÜRLÜK uyuşmazlığı → hayalet ÇİZİLMEZ ve sebebi yazılır', () => {
+    const cmp = [{ groupKey: ['x'], points: [{ time: 1, value: 1 }] }] as SpanMetricSeries[];
+    const g = buildGhostSeries(qA, 'd', [shownSeries('x')], cmp, 15, 60, GHOST_OFFSET);
+    expect(g.ghosts).toHaveLength(0);
+    expect(g.note).toContain('1dk');
+    expect(g.note).toContain('15s');
+    expect(g.note).toContain('ölçek');
+  });
+
+  it('step BİLİNMİYORSA (0) düşürülmez — bilmemek uyuşmamak değildir', () => {
+    const cmp = [{
+      groupKey: ['x'], points: [{ time: ACTIVE_FROM - GHOST_OFFSET, value: 3 }],
+    }] as SpanMetricSeries[];
+    for (const [cur, prev] of [[0, 60], [60, 0], [0, 0]]) {
+      const g = buildGhostSeries(qA, 'd', [shownSeries('x')], cmp, cur, prev, GHOST_OFFSET);
+      expect(g.ghosts).toHaveLength(1);
+      expect(g.note).toBeUndefined();
+    }
+  });
+
+  it('önceki dönemde HİÇ veri yok → boş liste + açık cümle', () => {
+    const g = buildGhostSeries(qA, 'd', [shownSeries('x')], [], 60, 60, GHOST_OFFSET);
+    expect(g.ghosts).toHaveLength(0);
+    expect(g.note).toBe('önceki dönemde veri yok');
+  });
+
+  it('yalnız GÖRÜNEN etiketlerin hayaleti çizilir (top-N hayalete de uygulanır)', () => {
+    const cmp = ['x', 'y', 'z'].map(l => ({
+      groupKey: [l], points: [{ time: ACTIVE_FROM - GHOST_OFFSET, value: 1 }],
+    })) as SpanMetricSeries[];
+    const g = buildGhostSeries(qA, 'd', [shownSeries('x'), shownSeries('z')], cmp, 60, 60, GHOST_OFFSET);
+    expect(g.ghosts.map(s => s.label)).toEqual([lbl('x'), lbl('z')]);
+  });
+
+  it('hiçbir etiket eşleşmiyorsa boş + sebep', () => {
+    const cmp = [{ groupKey: ['eski'], points: [{ time: 1, value: 1 }] }] as SpanMetricSeries[];
+    const g = buildGhostSeries(qA, 'd', [shownSeries('yeni')], cmp, 60, 60, GHOST_OFFSET);
+    expect(g.ghosts).toHaveLength(0);
+    expect(g.note).toContain('eşleşmedi');
+  });
+
+  it('GÜNCEL pencerede seri yoksa not da YOK (panel zaten "veri yok" diyor)', () => {
+    const cmp = [{ groupKey: ['x'], points: [{ time: 1, value: 1 }] }] as SpanMetricSeries[];
+    expect(buildGhostSeries(qA, 'd', [], cmp, 60, 60, GHOST_OFFSET))
+      .toEqual({ ghosts: [] });
+  });
+});
+
+describe('buildPanels — hayalet eşlemesi ve FORMÜL MUAFİYETİ', () => {
+  const cmpSeries = (label: string, value: number): SpanMetricSeries => ({
+    groupKey: [label],
+    points: [{ time: ACTIVE_FROM - GHOST_OFFSET, value }],
+  } as SpanMetricSeries);
+
+  const inputs = (over: Partial<PanelInputs> = {}): PanelInputs => ({
+    byLetter: { A: [series('x', 10)], B: [series('x', 20)] },
+    from: ACTIVE_FROM,
+    stepByLetter: { A: 60, B: 60 },
+    compareByLetter: { A: [cmpSeries('x', 5)], B: [cmpSeries('x', 8)] },
+    compareStepByLetter: { A: 60, B: 60 },
+    compareOffsetNs: GHOST_OFFSET,
+    ...over,
+  });
+
+  it('her harf panelinde hayalet var ve bugünün eksenine binmiş', () => {
+    const panels = buildPanels(stateWith(['A', 'B']), inputs());
+    for (const p of panels) {
+      expect(p.ghosts).toHaveLength(1);
+      expect(p.ghosts![0].points[0].time).toBe(ACTIVE_FROM);
+    }
+  });
+
+  it('FORMÜL paneli hayalet TAŞIMAZ (formül yalnız güncel)', () => {
+    const panels = buildPanels(stateWith(['A', 'B'], 'A / B'), inputs());
+    const f = panels.find(p => p.isFormula)!;
+    expect(f.ghosts).toBeUndefined();
+    expect(f.compareNote).toBeUndefined();
+    // …ama harflerin kendi panelleri hayaleti taşımaya devam eder.
+    expect(panels.filter(p => !p.isFormula).every(p => p.ghosts?.length === 1)).toBe(true);
+  });
+
+  it('karşılaştırma KAPALIYKEN hiçbir panelde hayalet/not yok', () => {
+    const panels = buildPanels(stateWith(['A', 'B'], 'A / B'), inputs({
+      compareByLetter: {}, compareStepByLetter: {}, compareOffsetNs: 0,
+    }));
+    for (const p of panels) {
+      expect(p.ghosts).toBeUndefined();
+      expect(p.compareNote).toBeUndefined();
+    }
+  });
+
+  it('bir harfin çözünürlüğü uyuşmazsa YALNIZ o harf düşer', () => {
+    const panels = buildPanels(stateWith(['A', 'B']), inputs({
+      compareStepByLetter: { A: 15, B: 60 },
+    }));
+    const a = panels.find(p => p.letter === 'A')!;
+    const b = panels.find(p => p.letter === 'B')!;
+    expect(a.ghosts).toBeUndefined();
+    expect(a.compareNote).toContain('hayalet çizilmedi');
+    expect(b.ghosts).toHaveLength(1);
+    expect(b.compareNote).toBeUndefined();
+  });
+
+  it('hayalet, ANA serilerin sayısını / sırasını değiştirmez', () => {
+    const withCmp = buildPanels(stateWith(['A']), inputs());
+    const without = buildPanels(stateWith(['A']), inputs({
+      compareByLetter: {}, compareOffsetNs: 0,
+    }));
+    expect(withCmp[0].series).toEqual(without[0].series);
+    expect(withCmp[0].more).toBe(without[0].more);
   });
 });

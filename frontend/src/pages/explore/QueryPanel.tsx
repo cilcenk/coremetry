@@ -91,6 +91,13 @@ export const QueryPanel = memo(function QueryPanel({
             {panel.unit ? ` · ${panel.unit}` : ''}
           </span>
         )}
+        {/* v0.9.824 — karşılaştırma açık ama hayalet çizilmediyse SEBEBİ.
+            Sessiz düşürme "önceki dönemde veri yokmuş" diye okunurdu. */}
+        {panel.state === 'ready' && panel.compareNote && (
+          <span style={{ color: 'var(--warn)' }} title={panel.compareNote}>
+            ⚠ {panel.compareNote}
+          </span>
+        )}
         {onPin && (
           <Button variant="ghost" size="sm" onClick={onPin}
             title="Dashboard'a pinle — bu sorgu canlı bir panel olarak eklenir"
@@ -152,6 +159,25 @@ export const QueryPanel = memo(function QueryPanel({
               // çizgi o dili sürdürür. Lejantta değişiklik yok.
               dashed: panel.isFormula,
             }))}
+            // v0.9.824 — önceki dönem. Noktalar buildPanels'te ZATEN bugünün
+            // eksenine kaydırıldı; burada yalnız kanala veriliyor. Ad ekini
+            // (" (önceki)"), kesikliliği ve soluk rolü CorePanelMulti kendi
+            // basıyor — v0.9.764'ün ghost dilinin tek sahibi orası.
+            //
+            // ESKİ MOTORDA (?chartsV2=0) HAYALET YOK: TimeSeriesPanel'in
+            // karşılaştırma kanalı hiç olmadı. Kaçış kapısı bir hata ayıklama
+            // yolu (v0.9.743'ten beri v2 varsayılan); oraya ikinci bir ghost
+            // uygulaması yazmak, silinmeye aday bir motorda ikinci bir
+            // hizalama hatası kaynağı açmak olurdu.
+            ghostItems={panel.ghosts?.length
+              ? panel.ghosts.map(g => ({
+                  name: g.label,
+                  role: 'muted' as const,
+                  series: [{ groupKey: [], points: g.points
+                    .filter(pt => pt.value != null)
+                    .map(pt => ({ time: pt.time, value: pt.value as number })) }],
+                }))
+              : undefined}
             hiddenNames={hiddenLabels}
             focusedLabel={focusedLabel}
             hideLegend

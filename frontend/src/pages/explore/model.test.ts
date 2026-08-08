@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   blankQuery, exemplarDescriptor, pinnedService, pinnedOperation,
-  seriesGroupLabel, queryUnit, type BuilderQuery,
+  seriesGroupLabel, queryUnit, compareOffsetNs, compareLabel,
+  type BuilderQuery, type ExploreCompare,
 } from './model';
 import type { FilterExpr } from '@/lib/types';
 
@@ -172,5 +173,72 @@ describe('queryUnit', () => {
 
   it('span sorgusunun q.unit alanı GÖRMEZDEN gelinir (birim agg\'den)', () => {
     expect(queryUnit(q({ agg: 'p95', unit: 'By' }))).toBe('ms');
+  });
+});
+
+// ── v0.9.824 — önceki döneme karşılaştırma penceresi ────────────────────────
+//
+// compareOffsetNs, hayaletin bugünün eksenine BİREBİR bindirilmesini sağlayan
+// tek sayı. Yanlış olursa grafik yine çizilir — yalnız yanlış yerde, ve bunu
+// gösteren hiçbir şey yoktur. Bu yüzden üç kip de, DST sınırı da tabloda.
+
+describe('compareOffsetNs (v0.9.824)', () => {
+  // 2026-08-08 10:00Z → 11:00Z, unix ns.
+  const from = Date.UTC(2026, 7, 8, 10, 0, 0) * 1e6;
+  const to = Date.UTC(2026, 7, 8, 11, 0, 0) * 1e6;
+
+  const cases: Array<{ cmp: ExploreCompare | undefined; want: number; why: string }> = [
+    { cmp: undefined, want: 0, why: 'kapalı — ikinci fan-out HİÇ koşmaz' },
+    { cmp: '24h', want: 24 * 3600 * 1e9, why: 'tam 24 saat' },
+    { cmp: '7d', want: 7 * 24 * 3600 * 1e9, why: 'tam 7 gün' },
+    { cmp: 'prev', want: 3600 * 1e9, why: 'pencerenin kendi genişliği (1 saat)' },
+  ];
+  for (const c of cases) {
+    it(`${c.cmp ?? '(kapalı)'} → ${c.why}`, () => {
+      expect(compareOffsetNs(c.cmp, from, to)).toBe(c.want);
+    });
+  }
+
+  it('prev: 7 günlük pencerede offset de 7 gün', () => {
+    const f = Date.UTC(2026, 7, 1) * 1e6;
+    const t = Date.UTC(2026, 7, 8) * 1e6;
+    expect(compareOffsetNs('prev', f, t)).toBe(7 * 24 * 3600 * 1e9);
+  });
+
+  it('ters / sıfır pencerede prev = 0 (hayalet KAPANIR, uydurulmuş kaydırma yok)', () => {
+    expect(compareOffsetNs('prev', to, from)).toBe(0);
+    expect(compareOffsetNs('prev', from, from)).toBe(0);
+  });
+
+  // DST — asıl mesele. 2026'da Avrupa'da saatler 25 Ekim'de geri alınıyor.
+  // O sınırı KAPSAYAN bir pencerede bile offset TAM 24 saattir: hesap UTC
+  // nanosaniye aritmetiği, takvim değil. Takvim-duyarlı bir offset kullansaydık
+  // hayalet kovaları bir saat kayar ve çizgi güncelin YANINA değil ARASINA
+  // düşerdi — operatör bunu "veri kaymış" diye okur.
+  it('DST sınırını geçen pencerede bile 24h TAM 24 saat (UTC ns aritmetiği)', () => {
+    const dstFrom = Date.UTC(2026, 9, 25, 0, 30, 0) * 1e6;   // 25 Ekim 00:30Z
+    const dstTo = Date.UTC(2026, 9, 25, 3, 30, 0) * 1e6;
+    expect(compareOffsetNs('24h', dstFrom, dstTo)).toBe(24 * 3600 * 1e9);
+    // prev de saf fark — 3 saat, 4 değil.
+    expect(compareOffsetNs('prev', dstFrom, dstTo)).toBe(3 * 3600 * 1e9);
+  });
+
+  it('offset pencereden BAĞIMSIZ (24h/7d) — aralık değişimi kaydırmayı oynatmaz', () => {
+    const wide = compareOffsetNs('24h', from, from + 30 * 24 * 3600 * 1e9);
+    expect(wide).toBe(compareOffsetNs('24h', from, to));
+  });
+});
+
+describe('compareLabel', () => {
+  it.each([
+    ['24h', '24 saat önce'],
+    ['7d', '7 gün önce'],
+    ['prev', 'önceki pencere'],
+  ] as const)('%s → %s', (cmp, want) => {
+    expect(compareLabel(cmp)).toBe(want);
+  });
+
+  it('kapalı kip boş metin (şerit başlığı hiç çizilmez)', () => {
+    expect(compareLabel(undefined)).toBe('');
   });
 });

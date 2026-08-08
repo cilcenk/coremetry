@@ -3,7 +3,7 @@ import type { SpanMetricSeries, MetricExemplar, ChartAnnotation, OtlpExemplar } 
 import type { TSSeries, TSThreshold } from '@/components/viz/TimeSeriesPanel';
 import { seriesColor } from '@/lib/chartFmt';
 import { formulaSeries } from './formulaSeries';
-import { alignFormulaLetters } from './stepAlign';
+import { alignFormulaLetters, fmtStep } from './stepAlign';
 import {
   type BuilderState, type BuilderQuery, produces, queryDesc, queryUnit,
   seriesGroupLabel, effectiveTopN,
@@ -53,6 +53,85 @@ export interface PanelData {
   deploys?: number[];      // ▼ deploy markers (Phase 3.3 — pinned-service queries)
   events?: ChartAnnotation[]; // operator-event annotation lines (A7 — v0.8.284)
   thresholds?: TSThreshold[]; // SLO latency threshold lines (Phase 3.3)
+  // v0.9.824 — önceki dönemin serileri, zamanları BUGÜNÜN eksenine
+  // kaydırılmış. CorePanelMulti'nin ghostItems kanalına iner: kesikli +
+  // soluk (role 'muted') çizilir ve ada " (önceki)" eki O TARAFTA basılır —
+  // burada eklemek çift ek yazdırırdı (v0.9.764 dili).
+  ghosts?: TSSeries[];
+  // Karşılaştırma açık ama hayalet ÇİZİLMEDİYSE sebebi. Sessiz düşürme
+  // "önceki dönemde veri yokmuş" diye okunur — yani ölçülmemiş bir şeyi
+  // ölçülmüş gibi gösterir.
+  compareNote?: string;
+}
+
+// GhostBuild — buildGhostSeries'in dönüşü: çizilecek hayaletler + (varsa)
+// neden çizilmediğinin cümlesi. İkisi AYNI fonksiyondan çıkar ki "hayalet
+// yok" ile "hayalet yok ÇÜNKÜ" hiçbir zaman ayrışmasın.
+export interface GhostBuild {
+  ghosts: TSSeries[];
+  note?: string;
+}
+
+// buildGhostSeries — SAF. Önceki dönemin serilerini bugünün eksenine bindirir.
+//
+// ÜÇ KAPI, bu sırayla:
+//
+//  1. ÇÖZÜNÜRLÜK. İki tarafın bucket ızgarası farklıysa hayalet ÇİZİLMEZ.
+//     Bindirme `time + offset` ile yapılıyor; 15 saniyelik bir ızgarayı 60
+//     saniyelik bir ızgaranın üstüne koymak, noktaları hizalıymış gibi
+//     GÖSTERİR ama her hayalet nokta dört kat uzun bir pencerede sayılmış
+//     bir değerdir. Grafik çizilir, kimse sorgulamaz, ve karşılaştırma
+//     dörtte bir ölçekte yalan söyler — formül hizasının (v0.9.809) tam
+//     olarak aynı sınıfı. İki taraf da AYNI effStep'i istiyor, ama üç okuma
+//     yolu step'i ayrı kelepçeliyor, yani uyuşmazlık CANLI bir olasılık.
+//     Step'i BİLİNMEYEN taraf düşürmez: bilmemek uyuşmamak değildir.
+//
+//  2. ETİKET EŞLEŞMESİ. Yalnız PANELDE GÖRÜNEN serilerin hayaleti çizilir.
+//     Önceki dönemin fan-out'u kendi top-N'ini getirir; eşleşmeyenleri de
+//     çizmek, güncelde karşılığı olmayan gri çizgiler eklerdi — operatör
+//     onları "kaybolmuş seri" diye okur, oysa yalnızca bugünün top-N'ine
+//     girememişlerdir.
+//
+//  3. KAYDIRMA. Nokta zamanları +offset. Saf toplama: compareOffsetNs UTC
+//     nanosaniye üretiyor, takvim aritmetiği yok (bkz. model.ts).
+export function buildGhostSeries(
+  q: BuilderQuery, desc: string, shown: TSSeries[],
+  compareSeries: SpanMetricSeries[] | undefined,
+  curStepSec: number, cmpStepSec: number, offsetNs: number,
+): GhostBuild {
+  if (offsetNs <= 0) return { ghosts: [] };
+  if (compareSeries === undefined) return { ghosts: [] };   // yükleniyor — not YOK
+  // Güncel pencerede hiç seri yoksa hayalet de NOT da yok: panel zaten
+  // "Bu pencerede veri yok" diyor, üstüne "önceki dönem eşleşmedi" eklemek
+  // operatörü karşılaştırmanın bozuk olduğunu sanmaya götürürdü.
+  if (shown.length === 0) return { ghosts: [] };
+  if (curStepSec > 0 && cmpStepSec > 0 && curStepSec !== cmpStepSec) {
+    return {
+      ghosts: [],
+      note: `önceki dönem ${fmtStep(cmpStepSec)} ızgarada geldi, güncel `
+        + `${fmtStep(curStepSec)} — hayalet çizilmedi (farklı uzunlukta `
+        + `pencereleri üst üste bindirmek sessiz bir ölçek hatasıdır). `
+        + `Adımı elle sabitle.`,
+    };
+  }
+  if (compareSeries.length === 0) {
+    return { ghosts: [], note: 'önceki dönemde veri yok' };
+  }
+  const shownLabels = new Set(shown.map(s => s.label));
+  const ghosts: TSSeries[] = [];
+  for (const s of compareSeries) {
+    const label = seriesGroupLabel(q, s.groupKey, desc);
+    if (!shownLabels.has(label)) continue;
+    ghosts.push({
+      label,
+      color: seriesColor(label),
+      points: s.points.map(p => ({ time: p.time + offsetNs, value: p.value })),
+    });
+  }
+  if (ghosts.length === 0) {
+    return { ghosts: [], note: 'önceki dönemin serileri görünen seri kümesiyle eşleşmedi' };
+  }
+  return { ghosts };
 }
 
 // buildPanels — pure projection BuilderState + fetch results → panel data.
@@ -128,9 +207,15 @@ export interface PanelInputs {
   otlpExemplarsByLetter?: Record<string, OtlpExemplar[]>;
   cappedByLetter?: Record<string, boolean>;
   // v0.9.809 — letter → o sorgunun GERÇEK bucket çözünürlüğü (saniye,
-  // 0 = bilinmiyor). Yalnız formül paneli okur: farklı çözünürlükteki
-  // harfleri birleştirmek sessiz bir ölçek hatasıdır (stepAlign.ts).
+  // 0 = bilinmiyor). Formül paneli + hayalet kapısı okur: farklı
+  // çözünürlükteki serileri birleştirmek sessiz bir ölçek hatasıdır
+  // (stepAlign.ts).
   stepByLetter?: Record<string, number>;
+  // v0.9.824 — önceki dönem (hayalet). compareOffsetNs 0 iken üçü de
+  // atıldır ve hiçbir panel ghost taşımaz.
+  compareByLetter?: Record<string, SpanMetricSeries[] | undefined>;
+  compareStepByLetter?: Record<string, number>;
+  compareOffsetNs?: number;
 }
 
 // IDLE_HINT — the paramless-workspace sentence. Deliberately an instruction,
@@ -142,6 +227,7 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
     byLetter, from = 0, errorByLetter = {}, exemplarsByLetter = {},
     overlaysByLetter = {}, totalByLetter = {}, otlpExemplarsByLetter = {},
     cappedByLetter = {}, stepByLetter = {},
+    compareByLetter = {}, compareStepByLetter = {}, compareOffsetNs = 0,
   } = inputs;
   // active === false → nothing was ever requested. Every producing query is
   // idle, whatever the (necessarily empty) result maps say.
@@ -228,6 +314,12 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
     const total = totalByLetter[q.letter] ?? ranked.length;
     const shown = Math.min(cap, ranked.length);
     const shownSeries = ranked.slice(0, cap).map(x => x.s);
+    // v0.9.824 — hayalet, GÖRÜNEN seri kümesinden SONRA kurulur: top-N
+    // kırpması hayaleti de kapsamalı, yoksa panelde karşılığı olmayan gri
+    // çizgiler kalırdı.
+    const gb = buildGhostSeries(
+      q, desc, shownSeries, compareByLetter[q.letter],
+      stepByLetter[q.letter] ?? 0, compareStepByLetter[q.letter] ?? 0, compareOffsetNs);
     out.push({
       ...base, state: 'ready',
       emptyReason: shownSeries.length === 0
@@ -239,6 +331,8 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
       deploys: ov?.deploys?.length ? ov.deploys : undefined,
       events: ov?.events?.length ? ov.events : undefined,
       thresholds: ov?.thresholds?.length ? ov.thresholds : undefined,
+      ghosts: gb.ghosts.length ? gb.ghosts : undefined,
+      compareNote: gb.note,
     });
   }
   // Formula panel — dashed, gaps where a referenced bucket is missing.
@@ -287,6 +381,14 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
         points: pts.map(p => ({ time: p.time, value: p.value })),
       }] : [],
       more: 0,
+      // v0.9.824 — FORMÜLE HAYALET UYGULANMAZ, bilerek. Önceki dönemin
+      // A/B'sini çizmek için harflerin hayalet serilerini formülden
+      // geçirmek gerekirdi; o da hem KESİŞİM eşlemesini (formulaSeries) hem
+      // çözünürlük hizasını (alignFormulaLetters) İKİNCİ bir veri kümesi
+      // üzerinde tekrar kurmak demek. İki hesabın bir gün ayrışması, "A/B
+      // geçen haftaya göre iyileşmiş" gibi okunan ve DOĞRULANAMAYAN bir
+      // sayı üretir. Formül panelinin sözleşmesi net kalıyor: yalnız güncel.
+      // Harflerin kendi panelleri hayaleti zaten taşıyor.
     });
   }
   return out;

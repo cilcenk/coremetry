@@ -1863,6 +1863,17 @@ export const api = {
     // v0.9.812 — zarf: satırların yanında sıralama havuzunun boyutu ve
     // havuzun dolup dolmadığı (EndpointsListResponse).
     get<EndpointsListResponse | null>(`/api/endpoints?${qs(params)}`, signal),
+  // v0.9.819 — sayfa üstü KPI şeridi + üç grafik. service/search/entry
+  // TABLONUN filtrelerinin ta kendisi, böylece şeritteki sayı ile
+  // listedeki satırlar aynı kümeyi anlatır. env/cluster de taşınır ama
+  // CEVAPLANAMAZLIK kapısı olarak: spanmetrics MV'sinde o boyutlar yok,
+  // sunucu bunu unsupportedScope ile İLAN eder (filtresiz bir filo
+  // grafiğini filtreli tablonun üstüne koymaz).
+  endpointsSeries: (params: {
+    from: number; to: number; service?: string; search?: string;
+    entry?: 'rpc'; env?: string; cluster?: string; compare?: 'prior';
+  }, signal?: AbortSignal) =>
+    get<import('./types').EndpointsSeries | null>(`/api/endpoints/series?${qs(params)}`, signal),
   // v0.8.360 — endpoint detail drill-down (Stage-2 slice E2). One
   // payload with per-section null tolerance; sig=1 marks path as an
   // ID-collapsed signature (the table's "group by shape" mode).

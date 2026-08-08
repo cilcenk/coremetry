@@ -705,6 +705,59 @@ export interface MessagingSeries {
   errorCount: number;
 }
 
+// SeriesWindow — MV-kovalı seri uçlarının ORTAK ZARFI (v0.9.819;
+// internal/chstore/series_window.go). İki şeyi İLAN eder, hiçbir sayıyı
+// değiştirmez:
+//   · coveredFrom/To — serinin GERÇEKTEN kapsadığı aralık. Kova
+//     hizalaması yüzünden coveredFromNs istenen from'dan ERKEN olabilir.
+//   · partialLastBucket — son nokta DOLMAKTA olan bir kovadan geliyor;
+//     frontend onu soluk çizer, yoksa her yenilemede sonu aşağı kıvrılan
+//     sahte bir düşüş görünür.
+export interface SeriesWindow {
+  bucketSeconds: number;
+  coveredFromNs: number;
+  coveredToNs: number;
+  partialLastBucket?: boolean;
+}
+
+// EndpointsSeriesPoint / EndpointsSeries — /api/endpoints/series
+// (v0.9.819). Sayfanın KPI şeridi + üç grafiği TEK MV taramasından.
+//
+// Pencere KPI'ları (calls/errors/p50/p95) serinin KENDİ sorgusundaki
+// WITH ROLLUP satırından gelir: p50/p95 kova değerlerinden TÜRETİLEMEZ
+// (quantile ne toplanır ne ortalanır), ROLLUP ise tüm kova state'lerini
+// tek merge'de birleştirir.
+export interface EndpointsSeriesPoint {
+  timeS: number;
+  calls: number;
+  errors: number;
+  rps: number;
+  errorRate: number;
+  p50Ms: number;
+  p95Ms: number;
+}
+
+export interface EndpointsSeries extends SeriesWindow {
+  points: EndpointsSeriesPoint[];
+  /** Okunan spanmetrics tier'ı — kapsam notu bunu yazar. */
+  sourceMV: string;
+  calls: number;
+  errors: number;
+  callsPerMin: number;
+  errorRate: number;
+  p50Ms: number;
+  p95Ms: number;
+  /** Bir önceki eş pencerenin p95'i (compare açıkken). Yoksa Δ çizilmez. */
+  priorP95Ms?: number;
+  /**
+   * Bu kapsam bu uçtan CEVAPLANAMAZ ("env" / "cluster" / "env + cluster").
+   * spanmetrics MV'sinde o boyutlar yok; tablo ham span'lere düşüyor.
+   * Filtresiz bir filo grafiğini filtrelenmiş bir tablonun üstüne koymak
+   * yerine sunucu durumu İLAN ediyor ve CH'ye hiç gitmiyor.
+   */
+  unsupportedScope?: string;
+}
+
 // BreakdownPoint — one bucket of the Elastic-APM-style "span
 // breakdown" stacked-area chart. Cumulative ms of duration
 // grouped by span category for the service detail page.

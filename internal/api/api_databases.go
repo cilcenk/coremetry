@@ -180,17 +180,22 @@ func (s *Server) getMessaging(w http.ResponseWriter, r *http.Request) {
 	// read keeps the pre-M1 key byte-identical so the background
 	// warm loop in api.go (warm("messaging", …)) still primes the
 	// slot the page load hits; compare rides its own slot.
-	key := "messaging:" + cacheBucket(from, to)
+	// v0.9.813 — anahtar öneki v2'ye çıktı ÇÜNKÜ zarf değişti (çıplak
+	// dizi → MessagingOverview). Önek sürümlenmeseydi rolling deploy
+	// sırasında eski dizi payload'ı 30 sn boyunca yeni SPA'ya servis
+	// edilir ve sayfa boş açılırdı (v0.9.443/458 dersi). Warm loop
+	// (api.go) aynı öneki kullanır — yoksa ısıtılan slot hiç okunmaz.
+	key := "messaging:v2:" + cacheBucket(from, to)
 	if compare {
-		key = "messaging:cmp:" + cacheBucket(from, to)
+		key = "messaging:v2:cmp:" + cacheBucket(from, to)
 	}
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		rows, err := s.store.GetMessaging(ctx, from, to)
+		ov, err := s.store.GetMessaging(ctx, from, to)
 		if err != nil {
 			return nil, err
 		}
-		if !compare || len(rows) == 0 {
-			return rows, nil
+		if !compare || len(ov.Rows) == 0 {
+			return ov, nil
 		}
 		// Prior window: same length, shifted back by exactly the
 		// window width so the comparison stays apples-to-apples.
@@ -201,10 +206,10 @@ func (s *Server) getMessaging(w http.ResponseWriter, r *http.Request) {
 		dur := to.Sub(from)
 		priorRows, err := s.store.GetMessagingRollup(ctx, from.Add(-dur), from)
 		if err != nil {
-			return rows, nil
+			return ov, nil
 		}
-		mergeMessagingPrior(rows, priorRows)
-		return rows, nil
+		mergeMessagingPrior(ov.Rows, priorRows)
+		return ov, nil
 	})
 }
 

@@ -648,6 +648,19 @@ export interface MessagingInstance {
   callers: string[];
 }
 
+// MessagingOverview — /api/messaging'in zarfı (v0.9.813).
+//
+// Uç ÇIPLAK DİZİ döndürüyordu ve bir dizi "kesildim" diyemez: sunucu
+// tarafındaki LIMIT 200 tamamen görünmez bir kesme noktasıydı, 1000
+// topic'li bir kurulumda operatör 200 satır görüp listeyi TAM sanıyordu.
+// rowsCapped o kesmeyi İLAN eder; rowLimit sayıyı taşır ki UI şeridi
+// 200'ü hardcode etmesin.
+export interface MessagingOverview {
+  rows: MessagingInstance[];
+  rowsCapped?: boolean;
+  rowLimit?: number;
+}
+
 // BreakdownPoint — one bucket of the Elastic-APM-style "span
 // breakdown" stacked-area chart. Cumulative ms of duration
 // grouped by span category for the service detail page.

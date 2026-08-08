@@ -67,10 +67,13 @@ func (s *Server) guidedDBHealthBundle(ctx context.Context, emit func(string, any
 
 func (s *Server) guidedMessagingBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time, rangeS int64) (string, string, error) {
 	emitGuidedStep(emit, "messaging_summary", "")
-	rows, err := s.store.GetMessaging(ctx, from, to)
+	// v0.9.813 — GetMessaging artık zarf döndürüyor (RowsCapped ilanı
+	// için); copilot bağlamı satırların kendisini istiyor.
+	ov, err := s.store.GetMessaging(ctx, from, to)
 	if err != nil {
 		return "", "", err
 	}
+	rows := ov.Rows
 	var b strings.Builder
 	fmt.Fprintf(&b, "Mesajlaşma kırılımı — son %s, filo geneli.\n", fmtAgoTR(rangeS))
 	if service != "" {

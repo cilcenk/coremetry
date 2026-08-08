@@ -952,8 +952,11 @@ export const api = {
   // (v0.8.364) merges the immediately-preceding equal-length
   // window onto each row as prior* fields — opt-in, doubles the
   // backend scan.
+  // v0.9.813 — zarf: çıplak dizi yerine {rows, rowsCapped, rowLimit}.
+  // Sunucu anahtar öneki de v2'ye çıktı, yani rolling deploy sırasında
+  // eski dizi payload'ı bu koda servis EDİLEMEZ.
   messaging: (fromNs: number, toNs: number, compare?: 'prior') =>
-    get<import('./types').MessagingInstance[] | null>(
+    get<import('./types').MessagingOverview | null>(
       `/api/messaging?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`),
   // /external overview — one row per third-party destination in the
   // window, from topology_edges_5m external edges (v0.8.446, Wave 3 A1).

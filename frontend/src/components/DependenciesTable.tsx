@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { messagingTracesHref, dbTracesHref } from '@/lib/pivotHref';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { Empty } from './Spinner';
 import { Sparkline } from './Sparkline';
 import { TrendDelta } from './TrendDelta';
@@ -109,8 +109,28 @@ export function DependenciesTable({
   openRowKey?: string | null;
   onOpenRowChange?: (row: DepRow | null) => void;
 }) {
-  const [systemFilter, setSystemFilter] = useState<string>('');
-  const [search, setSearch] = useState('');
+  // v0.9.813 — System filtresi + arama URL'e taşındı (?msys= / ?q=).
+  //
+  // Bunlar sayfanın GÖRÜNÜMÜNÜ belirleyen seçimlerdi ama yalnız bileşen
+  // state'inde yaşıyordu: kopyalanan bir link filtrelenmemiş tabloyu
+  // açıyor, SavedViewsBar ise "kaydedilmiş görünüm" diye filtresiz bir
+  // görünüm kaydediyordu — yani kaydedilen şey ekranda duran şey
+  // DEĞİLDİ.
+  //
+  // YEREL AYNA YOK, bu yüzden sig-guard'a da gerek yok (v0.8.253'ün
+  // konusu URL→state kopyalayan desendi): tek doğruluk kaynağı URL,
+  // okuma doğrudan oradan. replace:true — her tuş vuruşu geçmişe
+  // girmemeli.
+  const [tparams, setTparams] = useSearchParams();
+  const systemFilter = tparams.get('msys') ?? '';
+  const search = tparams.get('q') ?? '';
+  const setParam = (key: string, v: string) => setTparams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set(key, v); else next.delete(key);
+    return next;
+  }, { replace: true });
+  const setSystemFilter = (v: string) => setParam('msys', v);
+  const setSearch = (v: string) => setParam('q', v);
   // Which row's drawer is open. Stores `system|cluster|name` so the
   // drawer survives sort + filter changes (stable identifiers).
   // Controlled mode (v0.8.364) hands ownership to the parent so

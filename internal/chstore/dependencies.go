@@ -618,14 +618,22 @@ func (s *Store) GetMessagingDetail(
 		bucketStart, to, system, cluster, destination)
 	if err == nil {
 		for sRows.Next() {
-			var t int64
+			// v0.9.817 — `toUnixTimestamp()` UInt32 döndürür. Bu satır
+			// `int64` bağlıyordu; sürücü dönüşümü DESTEKLEMİYOR, yani Scan
+			// HER satırda hata veriyor ve aşağıdaki `continue` onu yutuyordu.
+			// Sonuç: seri HER ZAMAN boş, drawer'ın produce/consume
+			// sparkline'ları hiç çizilmedi — hata da yok, log da yok.
+			// Kardeş okumaların hepsi bu tipi doğru bağlıyor (external.go:221,
+			// anomaly.go:690, heatmap.go:201); yalnız messaging kaçırmıştı.
+			var t uint32
 			var kind string
 			var c uint64
 			if err := sRows.Scan(&t, &kind, &c); err != nil {
 				continue
 			}
-			if n := len(out.Series); n == 0 || out.Series[n-1].TimeS != t {
-				out.Series = append(out.Series, MsgKindPoint{TimeS: t})
+			ts := int64(t)
+			if n := len(out.Series); n == 0 || out.Series[n-1].TimeS != ts {
+				out.Series = append(out.Series, MsgKindPoint{TimeS: ts})
 			}
 			p := &out.Series[len(out.Series)-1]
 			switch kind {

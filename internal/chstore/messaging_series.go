@@ -229,10 +229,14 @@ func (s *Store) GetMessagingSeries(
 	for tRows.Next() {
 		var r msgSeriesTotalsRow
 		var p50, p95 *float64
-		if err := tRows.Scan(&r.t, &r.spanCount, &r.errorCount, &p50, &p95); err != nil {
+		// toUnixTimestamp() UInt32 döndürür — sürücü *int64'e çevirmez
+		// (v0.9.817'de messaging'in iki kardeşini bu yüzden düzelttik).
+		var t uint32
+		if err := tRows.Scan(&t, &r.spanCount, &r.errorCount, &p50, &p95); err != nil {
 			tRows.Close()
 			return nil, err
 		}
+		r.t = int64(t)
 		// v0.5.301 sınıfı — NaN/Inf JSON'a çıkmadan temizlenir.
 		r.p50Ms = safeF(p50)
 		r.p95Ms = safeF(p95)
@@ -262,9 +266,11 @@ func (s *Store) GetMessagingSeries(
 	if err == nil {
 		for kRows.Next() {
 			var r msgSeriesKindRow
-			if err := kRows.Scan(&r.t, &r.kind, &r.count); err != nil {
+			var t uint32
+			if err := kRows.Scan(&t, &r.kind, &r.count); err != nil {
 				continue
 			}
+			r.t = int64(t)
 			kinds = append(kinds, r)
 		}
 		kRows.Close()

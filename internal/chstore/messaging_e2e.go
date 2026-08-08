@@ -212,9 +212,16 @@ func (s *Store) getMessagingE2E(
 	var scanned []msgE2ERow
 	for rows.Next() {
 		var r msgE2ERow
-		if err := rows.Scan(&r.t, &r.n, &r.avgMs, &r.qs, &r.maxMs, &r.slowC, &r.slowP); err != nil {
+		// v0.9.817 — `toUnixTimestamp(b)` UInt32 döndürür ve sürücü onu
+		// *int64'e ÇEVİREMEZ. Burada hata yutulmuyor, döndürülüyor —
+		// ama çağıran (GetMessagingDetail) E2E'yi best-effort okuyor
+		// (`if e2e, err := ...; err == nil`), yani sonuç yine sessizlikti:
+		// uçtan uca gecikme bloğu v0.8.372'den beri HİÇ çizilmedi.
+		var t uint32
+		if err := rows.Scan(&t, &r.n, &r.avgMs, &r.qs, &r.maxMs, &r.slowC, &r.slowP); err != nil {
 			return nil, err
 		}
+		r.t = int64(t)
 		scanned = append(scanned, r)
 	}
 	if err := rows.Err(); err != nil {

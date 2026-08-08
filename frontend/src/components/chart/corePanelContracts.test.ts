@@ -178,8 +178,11 @@ describe('CorePanel bars markı (v0.9.785)', () => {
     expect(src).toMatch(/lineWidth: bars \? 1 : 1\.5/);
     // v0.9.788 — area/stacked dalları eklendi; line ve bars uçları
     // (12 / 35 + dashed ghost'un 0'ı) BAYT BAYT yerinde kalmalı.
+    // v0.9.808 — stackedBars dalı EN ÖNE eklendi (100, opak). Sırası
+    // önemli: `bars` yığılmış çubuğu da kapsıyor, arkada kalsaydı 35'e
+    // düşer ve üst üste binen kümülatif çubuklar birbirini gösterirdi.
     expect(src).toMatch(
-      /fillOpacity: bars \? 35 : area \? 60 : stacked \? 28 : \(dashed\?\.\[i\] \? 0 : 12\)/);
+      /fillOpacity: stackedBars \? 100 : bars \? 35 : area \? 60 : stacked \? 28 : \(dashed\?\.\[i\] \? 0 : 12\)/);
   });
 
   it('🔴 config bağımlılığı viz + dashed + connectNulls TAŞIR', () => {
@@ -206,8 +209,9 @@ describe('CorePanel yığılmış alan (v0.9.788)', () => {
     resolve(__dirname, './CorePanel.tsx'), 'utf8',
   ).replace(/\/\/.*$/gm, '');
 
-  it('viz union DÖRT mark taşır', () => {
-    expect(src).toMatch(/viz\?: 'line' \| 'bars' \| 'area' \| 'stacked'/);
+  it('viz union BEŞ mark taşır (v0.9.808: + stacked-bars)', () => {
+    expect(src).toMatch(
+      /viz\?: 'line' \| 'bars' \| 'area' \| 'stacked' \| 'stacked-bars';/);
   });
 
   it('🔴 HAM VERİ KANALI: kümülatif matris aligned\'a yazılmaz', () => {
@@ -258,6 +262,86 @@ describe('CorePanel yığılmış alan (v0.9.788)', () => {
     // testte zaten tüm dizilerde taranıyor — burada kaynağını çiviliyoruz.
     expect(src).toMatch(/const hiddenIdx = useMemo\(/);
     expect(src).toMatch(/\[stacked, aligned, hiddenIdx\]\)/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.808 — yığılmış ÇUBUK (stacked-bars).
+//
+// Yeni kusur sınıfı: MANTIKSAL sıra ile ÇİZİM sırası artık ayrışıyor.
+// Kümülatif çubuklar tabandan çizildiği için en üst katman en uzundur ve
+// mantıksal sırada çizilirse alttakileri tamamen örter — çözüm ters çizim
+// sırası, bedeli ise uPlot'un 1-tabanlı series[] dizisine dokunan HER
+// yolun çeviriden geçmek zorunda olması. Çevirisi unutulan yol sessizce
+// YANLIŞ SERİYE bakar: tooltip komşu katmanın değerini, lejant hover'ı
+// başka bir çizgiyi vurgular. Kapılar üç yolu da (görünürlük · tooltip ·
+// odak) ve markın kendi ayarlarını (opak dolgu · bant yok) çiviler.
+// ---------------------------------------------------------------------------
+describe('CorePanel yığılmış çubuk (v0.9.808)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('🔴 sıra tabloları SAF çekirdekten — panel kendi ters çevirmesini yazmaz', () => {
+    expect(src).toMatch(
+      /seriesDrawOrder, drawPosOf, reorderSeries,\s*\n?\s*\} from '@\/lib\/chart\/stacking'/);
+    expect(src).toMatch(/seriesDrawOrder\(aligned\.names\.length, stackedBars\)/);
+    expect(src).toMatch(/drawPosOf\(drawOrder\)/);
+    expect(src).toMatch(/reorderSeries\(stackedData, drawOrder\)/);
+    // Yerel kopya izi: elle ters çevirme burada OLMAMALI.
+    expect(src).not.toMatch(/\.reverse\(\)/);
+  });
+
+  it('yığın AİLESİ: stacked her iki markı da kapsar, bars markı çubuğu', () => {
+    expect(src).toMatch(/const stackedBars = viz === 'stacked-bars';/);
+    expect(src).toMatch(/const stacked = viz === 'stacked' \|\| stackedBars;/);
+    expect(src).toMatch(/const bars = viz === 'bars' \|\| stackedBars;/);
+  });
+
+  it('🔴 üç uPlot yolu da ÇEVİRİDEN geçer (görünürlük · tooltip · odak)', () => {
+    // Görünürlük: döngü çizim pozisyonunda, bayrak mantıksal seriden.
+    expect(src).toMatch(/drawOrder\.forEach\(\(li, i\) => \{\s*\n\s*const show = vis\[li\];/);
+    // Tooltip: imleç indeksi çizim pozisyonundan, ham değer mantıksal seriden.
+    expect(src).toMatch(/u\.cursor\.idxs\?\.\[drawPos\[i\] \+ 1\] \?\? idx/);
+    expect(src).toMatch(/rawRef\.current\[i \+ 1\]/);
+    // Odak: resolveFocusIdx mantıksal döner, config.getSeries() çizim sırasında.
+    expect(src).toMatch(/focusIdx < 0 \? -1 : \(drawPos\[focusIdx\] \?\? -1\)/);
+  });
+
+  it('🔴 seri kurulumu çizim sırasında, rol/renk/kesikli MANTIKSAL indeksle', () => {
+    expect(src).toMatch(/drawOrder\.forEach\(\(i\) => \{\s*\n\s*const name = aligned\.names\[i\];/);
+    // Eski (mantıksal sıralı) döngü geri gelmemeli.
+    expect(src).not.toMatch(/aligned\.names\.forEach\(\(name, i\) => \{/);
+  });
+
+  it('çubuk dolgusu OPAK — yarı saydam kümülatif çubuk alttakini gösterirdi', () => {
+    expect(src).toMatch(/fillOpacity: stackedBars \? 100 :/);
+    // Düz dolgu + dikişsiz hizalama yığın ailesinin İKİSİNDE de.
+    expect(src).toMatch(/gradientMode: stacked \? GraphGradientMode\.None/);
+    expect(src).toMatch(/pxAlign: stacked \? false : undefined/);
+  });
+
+  it('çubukta BANT YOK — bant iki çizgi arasını doldurur, çubuk zaten dolu', () => {
+    expect(src).toMatch(
+      /stacked && !stackedBars \? stackBands\(aligned\.names\.length, hiddenIdx\) : null/);
+  });
+
+  it('exemplar ◆ yığın AİLESİNDE bastırılır (stacked her iki markı kapsar)', () => {
+    expect(src).toMatch(/if \(!stacked && exemplarsRef\.current\?\.some/);
+    expect(src).toMatch(/u && !stacked && exemplarClickRef\.current/);
+  });
+
+  it('🟠 sıra tabloları config bağımlılığına KİMLİKLE sızmaz', () => {
+    // drawOrder/drawPos yalnız names.length + viz'den türer; ikisi de config
+    // dizisinde ZATEN var. Tabloları ayrıca eklemek her poll'da yeni kimlik
+    // riski taşırdı (v0.9.704 destroy/recreate dersi).
+    const deps = src.match(/\}, \[[^\]]*\]\);/g) ?? [];
+    const cfg = deps.filter(d => d.includes('overlaySig'));
+    expect(cfg.length).toBe(1);
+    expect(cfg[0]).not.toContain('drawOrder');
+    expect(cfg[0]).not.toContain('drawPos');
+    expect(cfg[0]).toContain('viz');
+    expect(cfg[0]).toContain("aligned.names.join(' ')");
   });
 });
 

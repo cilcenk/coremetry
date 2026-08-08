@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { stackData, stackBands, type SeriesMatrix } from './stacking';
+import {
+  stackData, stackBands, seriesDrawOrder, drawPosOf, reorderSeries,
+  type SeriesMatrix,
+} from './stacking';
 
 // v0.9.788 — yığılmış alan modunun saf çekirdeği. Tablo testleri
 // TimeSeriesPanel'in yaşayan davranışını (null→0, ardışık bant çifti)
@@ -84,6 +87,102 @@ describe('stackBands', () => {
 
   it('boş: sıfır seri → boş liste', () => {
     expect(stackBands(0, new Set())).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.808 — YIĞILMIŞ ÇUBUK çizim sırası.
+//
+// Kusur sınıfı: kümülatif matriste her çubuk TABANDAN çizilir, yani en üst
+// katman en uzundur. Mantıksal sırada çizilirse her katman bir öncekini
+// tamamen örter — panelde tek renk kalır ve hata mesajı YOKTUR. Ters sıra
+// bunu çözer, ama ters çevrilen YALNIZ çizimdir: lejant/tooltip/renk
+// mantıksal sırada kalmalı. Aşağıdaki eşleme tablosu ikisini birlikte
+// çiviliyor — biri diğerinden kayarsa operatör yanlış seriye bakar.
+// ---------------------------------------------------------------------------
+describe('seriesDrawOrder / drawPosOf — eşleme tablosu (3 seri)', () => {
+  // Mantıksal sıra: 0=A (en alt katman), 1=B, 2=C (en üst katman).
+  const names = ['A', 'B', 'C'];
+
+  it('kimlik sırası: yığılmış-çubuk DIŞINDA hiçbir şey değişmez', () => {
+    expect(seriesDrawOrder(3, false)).toEqual([0, 1, 2]);
+    expect(drawPosOf(seriesDrawOrder(3, false))).toEqual([0, 1, 2]);
+  });
+
+  it('ters sıra: en uzun kümülatif (en üst katman) ÖNCE çizilir', () => {
+    expect(seriesDrawOrder(3, true)).toEqual([2, 1, 0]);
+  });
+
+  it('ÇİZİM sırası C·B·A iken LEJANT sırası A·B·C kalır', () => {
+    const order = seriesDrawOrder(3, true);
+    // Çizim: pozisyon 0'da C, 1'de B, 2'de A.
+    expect(order.map(i => names[i])).toEqual(['C', 'B', 'A']);
+    // Lejant/istatistik ham `names` dizisini okur — dokunulmaz.
+    expect(names).toEqual(['A', 'B', 'C']);
+  });
+
+  it('RENK eşleşmesi: her mantıksal seri kendi çizim pozisyonunu bulur', () => {
+    const order = seriesDrawOrder(3, true);
+    const pos = drawPosOf(order);
+    // A(0)→pozisyon 2, B(1)→1, C(2)→0.
+    expect(pos).toEqual([2, 1, 0]);
+    // Tur kapanışı: pozisyondan mantıksal indekse geri dönüş kayıpsız.
+    names.forEach((_, li) => expect(order[pos[li]]).toBe(li));
+  });
+
+  it('drawPosOf kimlik sırasında da tam tersi (kendi kendinin tersi)', () => {
+    expect(drawPosOf([0, 1, 2])).toEqual([0, 1, 2]);
+    expect(drawPosOf(drawPosOf([2, 1, 0]))).toEqual([2, 1, 0]);
+  });
+
+  it('sınırlar: 0 ve 1 seri', () => {
+    expect(seriesDrawOrder(0, true)).toEqual([]);
+    expect(seriesDrawOrder(1, true)).toEqual([0]);
+    expect(drawPosOf([])).toEqual([]);
+  });
+});
+
+describe('reorderSeries — çizim matrisi', () => {
+  it('kimlik sırasında GİRDİ AYNEN döner (kopya bile yok)', () => {
+    const m: SeriesMatrix = [t, [1, 2, 3], [10, 20, 30]];
+    expect(reorderSeries(m, [0, 1])).toBe(m);
+  });
+
+  it('ters sırada satırlar taşınır, ZAMAN satırı yerinde kalır', () => {
+    const m: SeriesMatrix = [t, [1, 2, 3], [10, 20, 30], [100, 200, 300]];
+    expect(reorderSeries(m, [2, 1, 0])).toEqual([
+      t, [100, 200, 300], [10, 20, 30], [1, 2, 3],
+    ]);
+  });
+
+  it('yığma + ters sıra ZİNCİRİ: en uzun kümülatif ilk satırda', () => {
+    // Ham katmanlar A=1, B=10, C=100 → kümülatif 1 / 11 / 111.
+    const raw: SeriesMatrix = [t, [1, 1, 1], [10, 10, 10], [100, 100, 100]];
+    const cum = stackData(raw, new Set()) as SeriesMatrix;
+    expect(cum).toEqual([t, [1, 1, 1], [11, 11, 11], [111, 111, 111]]);
+    const drawn = reorderSeries(cum, seriesDrawOrder(3, true));
+    // İlk çizilen = 111 (en uzun); son çizilen = 1 (en kısa, en üstte kalır).
+    expect(drawn).toEqual([t, [111, 111, 111], [11, 11, 11], [1, 1, 1]]);
+  });
+
+  it('gizli katman zinciri: yeniden hesap + ters sıra birlikte çalışır', () => {
+    const raw: SeriesMatrix = [t, [1, 1, 1], [10, 10, 10], [100, 100, 100]];
+    // Ortadaki (B) gizli → C doğrudan A'nın üstüne (1 / 1 / 101).
+    const cum = stackData(raw, new Set([1])) as SeriesMatrix;
+    expect(cum).toEqual([t, [1, 1, 1], [1, 1, 1], [101, 101, 101]]);
+    expect(reorderSeries(cum, seriesDrawOrder(3, true))).toEqual([
+      t, [101, 101, 101], [1, 1, 1], [1, 1, 1],
+    ]);
+  });
+
+  it('ham matris MUTASYONA UĞRAMAZ — satır referansları paylaşılır', () => {
+    const a = [1, 2, 3];
+    const b = [10, 20, 30];
+    const m: SeriesMatrix = [t, a, b];
+    const out = reorderSeries(m, [1, 0]);
+    expect(out[1]).toBe(b);
+    expect(out[2]).toBe(a);
+    expect(m).toEqual([t, [1, 2, 3], [10, 20, 30]]);
   });
 });
 

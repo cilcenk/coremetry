@@ -51,7 +51,9 @@ import {
   drawThresholds, drawTimeRegions, drawExemplars, exemplarAt,
   type ChartThreshold, type ChartTimeRegion, type ChartExemplar,
 } from '@/lib/chart/overlays';
-import { stackData, stackBands } from '@/lib/chart/stacking';
+import {
+  stackData, stackBands, seriesDrawOrder, drawPosOf, reorderSeries,
+} from '@/lib/chart/stacking';
 import { bucketWindowNs } from '@/lib/chart/bucketWindow';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
 import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
@@ -224,10 +226,15 @@ export interface CorePanelProps {
   //   • 'area'    = line dalı + kalın dolgu (başka fark yok).
   //   • 'stacked' = yığılmış ALAN. Kümülatif matris yalnız ÇİZİME gider;
   //     tooltip/lejant/CSV ham değeri okur (aşağıdaki ham-veri kanalı).
-  // ('stacked-bar' dashboard-only bir panel tipidir, buraya gelmez.)
   // Union genişledi ve QueryPanel kapısı da genişledi — ikisi birlikte,
   // "gelemeyecek mark'ı tipte vaat etme" kuralı gereği.
-  viz?: 'line' | 'bars' | 'area' | 'stacked';
+  //
+  // v0.9.808 — union BEŞE çıktı: 'stacked-bars' = yığılmış ÇUBUK. Aynı
+  // kümülatif matris, farklı mark (DrawStyle.Bars) ve TERS çizim sırası
+  // (stacking.seriesDrawOrder — gerekçe orada). Dashboard'ın
+  // 'stacked-bar' markı buraya düşer; bant YOKTUR, çubuklar opaktır ve
+  // tooltip yine HAM katman değerini okur.
+  viz?: 'line' | 'bars' | 'area' | 'stacked' | 'stacked-bars';
 }
 
 export function CorePanel({
@@ -341,7 +348,13 @@ export function CorePanel({
   // KÜMÜLATİF değeri "bu serinin değeri" diye gösterirdi — grafiğin en
   // çok güvenilen parçası yalan söylerdi (TSP:609-625 aynı dersi
   // bundleRef ile öğrenmişti).
-  const stacked = viz === 'stacked';
+  // v0.9.808 — yığın AİLESİ iki marklı: alan ('stacked') ve çubuk
+  // ('stacked-bars'). Kümülatif matris, gizleme yeniden hesabı, pxAlign,
+  // düz dolgu ve exemplar bastırması İKİSİNDE de aynı — o yüzden `stacked`
+  // aileyi temsil eder. Ayrışan iki şey var ve ikisi de aşağıda ADIYLA
+  // ayrılmış: bantlar (çubukta YOK) ve çizim sırası (çubukta TERS).
+  const stackedBars = viz === 'stacked-bars';
+  const stacked = viz === 'stacked' || stackedBars;
   const hiddenIdx = useMemo(() => {
     const s = new Set<number>();
     vis.forEach((show, i) => { if (show === false) s.add(i); });
@@ -350,15 +363,35 @@ export function CorePanel({
   // Gizleme = YENİDEN HESAP: bir katman kapanınca üsttekiler gerçekten
   // aşağı iner. Bu bir VERİ memo'su, config değil — ' vis,' config
   // bağımlılığına girmez (corePanelContracts 🟠 pini korunur).
-  const drawData = useMemo(
+  const stackedData = useMemo(
     () => (stacked ? stackData(aligned.data, hiddenIdx) : aligned.data),
     [stacked, aligned, hiddenIdx]);
+  // ÇİZİM SIRASI (v0.9.808). uPlot sonraki seriyi ÜSTE boyar ve bars path
+  // builder her çubuğu TABANDAN çizer: kümülatifte en üst katman en uzun
+  // olduğundan mantıksal sırada çizmek alttakileri tamamen örter. Ters
+  // sırada (en uzun önce) doğru yığın görünür. Kimlik sırası dışındaki her
+  // markta bu tablo [0..n-1]'dir, yani ek bir kod yolu doğmaz.
+  const drawOrder = useMemo(
+    () => seriesDrawOrder(aligned.names.length, stackedBars),
+    [aligned.names.length, stackedBars]);
+  // Ters tablo: MANTIKSAL indeks → çizim pozisyonu. uPlot'un 1-tabanlı
+  // series[] dizisine dokunan üç yol bundan geçer (görünürlük, tooltip'in
+  // cursor.idxs okuması, odak stilleri); lejant/istatistik/CSV mantıksal
+  // sırada kalır.
+  const drawPos = useMemo(() => drawPosOf(drawOrder), [drawOrder]);
+  const drawData = useMemo(
+    () => reorderSeries(stackedData, drawOrder), [stackedData, drawOrder]);
   // Bantlar TÜRETİLMİŞ veridir: liste her render'da yeni kimlik alır, o
   // yüzden config imzasına İÇERİKÇE katılır (v0.9.704 — kimliğe bağlansa
   // her poll tick'i uPlot'u destroy/recreate ederdi).
+  //
+  // v0.9.808 — yığılmış ÇUBUKTA bant YOK: bant iki çizgi ARASINI doldurur,
+  // çubuk zaten tabandan dolu çizilir. Bant eklemek üst üste binen iki
+  // dolgu üretirdi (ve uPlot'un "bir seri en fazla bir bandın üst kenarı"
+  // kuralına gereksizce yüklenirdi).
   const stackedBands = useMemo(
-    () => (stacked ? stackBands(aligned.names.length, hiddenIdx) : null),
-    [stacked, aligned.names.length, hiddenIdx]);
+    () => (stacked && !stackedBars ? stackBands(aligned.names.length, hiddenIdx) : null),
+    [stacked, stackedBars, aligned.names.length, hiddenIdx]);
   // v0.9.788 — stacked iken PROP bands (p50-p99) imzaya bile girmez:
   // aşağıda yok sayılıyor, imzada tutmak sahte rebuild üretirdi.
   const overlaySig = JSON.stringify([
@@ -421,13 +454,18 @@ export function CorePanel({
   useEffect(() => {
     const u = plotRef.current;
     if (!u) return;
-    vis.forEach((show, i) => {
+    // v0.9.808 — döngü ÇİZİM pozisyonunda: uPlot'un series[i+1]'i çizim
+    // sırasındaki seridir, görünürlük bayrağı ise mantıksal seriye ait.
+    // Kimlik sırasında (yığılmış çubuk dışındaki her mark) drawOrder[i]===i
+    // olduğundan davranış bayt bayt eskisidir.
+    drawOrder.forEach((li, i) => {
+      const show = vis[li];
       if (u.series[i + 1] && u.series[i + 1].show !== show) {
         u.setSeries(i + 1, { show }, false);
       }
     });
     u.redraw(false, true); // v0.9.744 — gizlenen serinin ◆'ları da kalksın
-  }, [vis]);
+  }, [drawOrder, vis]);
 
   // ── v0.9.799 — y ekseni oluk genişliği (operatör: "00 req/s") ────────────
   //
@@ -549,9 +587,20 @@ export function CorePanel({
     // (Grafana'nın "Fill opacity" kaydırağı); stacked'in çizgi/mark
     // ayarı da line'ın aynısıdır — farkı VERİ (kümülatif matris) ve
     // BANTLAR yapar, mark değil.
-    const bars = viz === 'bars';
+    //
+    // v0.9.808 — 'stacked-bars' İKİ dala birden girer: mark tarafında
+    // `bars` (DrawStyle.Bars + genişlik tavanı), veri tarafında `stacked`
+    // (kümülatif matris + pxAlign + düz dolgu). Ayrıştığı tek yer dolgu
+    // OPAKLIĞI: kümülatif çubuklar tabandan çizildiği için üst üste
+    // biner ve yarı saydam bir çubuk altındaki daha uzun çubuğu gösterip
+    // rengi kirletir — 100 bir tercih değil, ters çizim sırasının şartı.
+    //
+    // DÖNGÜ ÇİZİM SIRASINDA, `i` MANTIKSAL indeks: rol/kesikli/renk hep
+    // mantıksal seriye ait, uPlot'a eklenme SIRASI ise drawOrder'dan gelir.
+    const bars = viz === 'bars' || stackedBars;
     const area = viz === 'area';
-    aligned.names.forEach((name, i) => {
+    drawOrder.forEach((i) => {
+      const name = aligned.names[i];
       b.addSeries({
         scaleKey: 'y', theme,
         lineColor: resolveVar(seriesRoleColor(name, roles?.[i] ?? 'data')),
@@ -571,7 +620,9 @@ export function CorePanel({
         // Bars'ta dolgu ASIL gövdedir (12 solgun kalırdı) → 35.
         // v0.9.788 — area 60 (dolgu markın kendisi); stacked 28, eski
         // motorun '47' alpha'sının (0x47/0xff ≈ %28) birebiri.
-        fillOpacity: bars ? 35 : area ? 60 : stacked ? 28 : (dashed?.[i] ? 0 : 12),
+        // v0.9.808 — stackedBars dalı EN ÖNDE: `bars` onu da kapsıyor ama
+        // 35 saydamlık kümülatif çubuklarda yanlış renk üretir (yukarıya bkz).
+        fillOpacity: stackedBars ? 100 : bars ? 35 : area ? 60 : stacked ? 28 : (dashed?.[i] ? 0 : 12),
         // Stacked'te dolgu DÜZ olmalı: bantlar üst serinin dolgusunu
         // yeniden kullanıyor (aşağıya bkz.) ve degrade bir bandın içinde
         // katman sınırını bulanıklaştırır. None + fillOpacity =
@@ -729,7 +780,12 @@ export function CorePanel({
       if (tMs == null) { tt.style.display = 'none'; return; }
       const stepSec = xs.length > 1 ? Math.abs(xs[1] - xs[0]) / 1000 : null;
       const rows = capTooltipRows(sortedTooltipRows(aligned.names.map((label, i) => {
-        const si = u.cursor.idxs?.[i + 1] ?? idx;
+        // v0.9.808 — satırlar MANTIKSAL sırada kurulur (lejantla aynı),
+        // ama uPlot'un imleç indeksi ÇİZİM pozisyonundan okunur: yığılmış
+        // çubukta ikisi ters. Ham değer yine rawRef[i+1]'den, yani mantıksal
+        // seriden — tooltip hangi çizim sırasında olursa olsun doğru katmanı
+        // gösterir.
+        const si = u.cursor.idxs?.[drawPos[i] + 1] ?? idx;
         // v0.9.788 — değer u.data'dan DEĞİL ham matris ref'inden. Stacked
         // panelde u.data kümülatiftir; oradan okunan "değer" katmanın
         // kendi değeri değil altındakilerin toplamıdır.
@@ -812,9 +868,14 @@ export function CorePanel({
     // Taban genişlik config'in KENDİSİNDEN okunur (builder props'u) — burada
     // ikinci bir "1.5 / bars ise 1" kopyası tutmuyoruz; mark değişince taban
     // kendiliğinden doğru gelir.
+    // v0.9.808 — config.getSeries() ÇİZİM sırasındadır, resolveFocusIdx ise
+    // MANTIKSAL indeks döndürür (adlar mantıksal sırada). Yığılmış çubukta
+    // ikisi ters: çeviri yapılmazsa lejantın en üst satırına gelen imleç
+    // en alttaki seriyi vurgulardı.
+    const focusIdx = resolveFocusIdx(aligned.names, focusName);
     const styles = focusSeriesStyle(
       config.getSeries().map(s => s.props.lineWidth),
-      resolveFocusIdx(aligned.names, focusName));
+      focusIdx < 0 ? -1 : (drawPos[focusIdx] ?? -1));
     let changed = false;
     styles.forEach((st, i) => {
       const s = u.series[i + 1];
@@ -826,7 +887,7 @@ export function CorePanel({
     // uPlot'u YIKMIYORUZ — bu sadece bir yeniden çizim (v0.9.704 dersi).
     if (changed) u.redraw(true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focusName, config, aligned.names.join('|'), plotMounted]);
+  }, [focusName, config, drawPos, aligned.names.join('|'), plotMounted]);
 
   // v0.9.792 — config kimliği değişince UPlotChart destroy/recreate eder ve
   // pinli index bayat bir kutuya işaret eder (eksen/seri kümesi değişmiş

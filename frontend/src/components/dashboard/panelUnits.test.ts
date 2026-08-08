@@ -16,13 +16,13 @@ import { resolve } from 'node:path';
 // gelemesin — bu dosyanın var olma sebebi zaten bir call-site'ın
 // kardeşinden sapmasıydı.
 //
-// v0.9.796 — motor dağılımı DEĞİŞTİ, kapı onunla birlikte dürüstçe
-// güncellendi. Bugünkü dağılım:
-//   • line / bar / area  → DashChart (v2: CorePanelMulti, v2 kapalıysa
-//     eski motor) — üç panel tipinden de çağrılır.
-//   • stacked-bar / stacked-area → DashboardViz (v2'de yığılmış çubuk yok).
-// Kapı bu yüzden ARTIK İKİ hattı birden tarıyor: bar/alan yeni yola
-// taşındı diye birim taşıma güvencesi yeni yolda boşa düşmesin.
+// v0.9.796 → v0.9.808 — motor dağılımı İKİ KEZ değişti, kapı her ikisinde
+// de dürüstçe güncellendi. Bugünkü dağılım TEK hat:
+//   • beş markın BEŞİ de → DashChart (v2: CorePanelMulti) — üç panel
+//     tipinden de çağrılır.
+//   • DashboardViz yalnız DashChart'ın ?chartsV2=0 fallback dalında.
+// Kapı yine iki hattı birden tarıyor: kaçış dalı da birim taşımalı, yoksa
+// v2 kapatan operatör birimsiz eksen görür.
 describe('PanelRenderer — grafik çağrıları birim taşır', () => {
   const src = readFileSync(
     resolve(__dirname, './PanelRenderer.tsx'), 'utf8',
@@ -34,14 +34,13 @@ describe('PanelRenderer — grafik çağrıları birim taşır', () => {
   const dashSites = src.match(/<DashChart\b[^>]*\/>/g) ?? [];
   const coreSite  = src.match(/<DashCorePanelLazy\b[\s\S]*?\/>/g) ?? [];
 
-  // ── Eski SVG motoru (yığılmışlar + ?chartsV2=0 kaçışı) ──────────────
+  // ── Eski SVG motoru (yalnız ?chartsV2=0 kaçışı, v0.9.808) ───────────
   //
-  // Dört çağrı yeri: üç panel tipinin yığılmış dalı + DashChart'ın v2
-  // kapalı fallback'i. Alt sınır SINIFI koruyor, sayıyı ezberlemiyor:
-  // bir dal silinirse kapı kızarır, ama yeni bir dal eklemek kapıyı
-  // bozmaz (eklenen dalın da unit taşıması aşağıdaki testle şart).
-  it('DashboardViz çağrı yerleri duruyor (yığılmış dallar + v2-kapalı kaçış)', () => {
-    expect(vizSites.length).toBeGreaterThanOrEqual(4);
+  // TEK çağrı yeri kaldı: DashChart'ın v2 kapalı fallback'i. Alt sınır
+  // yine SINIFI koruyor — kaçış dalı silinirse kapı kızarır (tek adımlık
+  // geri dönüş doktrini sessizce kaybolmasın).
+  it('DashboardViz kaçış dalı duruyor (v2-kapalı yol)', () => {
+    expect(vizSites.length).toBeGreaterThanOrEqual(1);
   });
 
   it('HER DashboardViz çağrısı unit prop geçirir', () => {

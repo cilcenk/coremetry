@@ -71,3 +71,54 @@ export function stackBands(
   }
   return out;
 }
+
+// ── v0.9.808 — YIĞILMIŞ ÇUBUK: çizim sırası ────────────────────────────
+//
+// Yığılmış ALAN'da katmanlar bantlarla dolar, çizim sırası önemsizdir.
+// Yığılmış ÇUBUK'ta değildir ve sebebi uPlot'un bars path builder'ında:
+// her çubuk TABANDAN (y=0) kümülatif değere kadar çizilir. Kümülatif
+// matriste en ÜST katmanın çubuğu en uzundur; seriler mantıksal sırada
+// (alttan üste) çizilirse her katman bir öncekini tamamen ÖRTER ve
+// panelde yalnız en üst katmanın rengi kalır — yığın görünmez olur.
+//
+// Çözüm: iç çizim sırasını TERS çevirmek. En uzun kümülatif ÖNCE çizilir,
+// üstüne gitgide kısalan çubuklar biner; ekranda kalan görüntü doğru
+// katmanlanmış yığındır. Dolgunun OPAK olması şart (CorePanel: stacked-bars
+// fillOpacity 100) — yarı saydam bir çubuk altındaki daha uzun çubuğu
+// gösterir ve renkler karışır.
+//
+// Ters çevrilen YALNIZ çizim sırasıdır: lejant, tooltip, renk ve istatistik
+// MANTIKSAL sırada kalır. Bu modül iki tabloyu birlikte üretir, çünkü
+// ikisini ayrı yerlerde türetmek klasik "bir gün kayan hizalama" hatasıdır.
+
+// seriesDrawOrder — çizim pozisyonu → MANTIKSAL seri indeksi.
+// reversed=false ise kimlik ([0,1,…,n-1]); yani yığılmış-çubuk DIŞINDAKİ
+// her mark bugünkü davranışta kalır ve çağıranın ikinci bir kod yolu
+// tutmasına gerek olmaz.
+export function seriesDrawOrder(count: number, reversed: boolean): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < count; i++) out.push(reversed ? count - 1 - i : i);
+  return out;
+}
+
+// drawPosOf — TERS tablo: mantıksal seri indeksi → çizim pozisyonu.
+// uPlot'un series[] dizisine (1-tabanlı) erişen her yol bundan geçer:
+// görünürlük setSeries'i, tooltip'in cursor.idxs okuması, odak stilleri.
+export function drawPosOf(order: readonly number[]): number[] {
+  const out = new Array<number>(order.length);
+  order.forEach((logical, pos) => { out[logical] = pos; });
+  return out;
+}
+
+// reorderSeries — matris satırlarını çizim sırasına dizer. Zaman satırı
+// (index 0) yerinde kalır; yalnız seri satırları taşınır. Kimlik sırasında
+// GİRDİ AYNEN döner (yeni dizi bile ayrılmaz): non-stacked-bars yolunda
+// poll başına gereksiz bir kopya çıkmasın — o matris uPlot'a giden sıcak
+// veridir ve kimliği config karşılaştırmasına dokunur.
+export function reorderSeries(data: AlignedData, order: readonly number[]): AlignedData {
+  let identity = true;
+  for (let i = 0; i < order.length; i++) if (order[i] !== i) { identity = false; break; }
+  if (identity) return data;
+  const ys = data.slice(1);
+  return [data[0], ...order.map(i => ys[i])] as AlignedData;
+}

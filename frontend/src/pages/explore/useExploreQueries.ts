@@ -50,8 +50,12 @@ export interface ExploreQueriesResult {
   // [] for span queries, group-by charts, and unscoped metric queries.
   otlpExemplarsByLetter: Record<string, OtlpExemplar[]>;
   anyLoading: boolean;
-  // first error among producing queries, with the letter that raised it
-  error: { letter: string; message: string } | null;
+  // v0.9.804 — letter → error message, for EVERY producing query that
+  // failed. This replaced a single `error: {letter, message} | null` that
+  // reported only the first failure: with A and C both failing, C's reason
+  // appeared nowhere and C's panel (data left undefined by react-query on
+  // isError) span forever. Absent letter = that query did not fail.
+  errorByLetter: Record<string, string>;
 }
 
 // QueryData — one producing query's fetched payload. Eligible span queries
@@ -202,14 +206,18 @@ export function useExploreQueries(
     const cappedByLetter: Record<string, boolean> = {};
     const exemplarsByLetter: Record<string, MetricExemplar[]> = {};
     const otlpExemplarsByLetter: Record<string, OtlpExemplar[]> = {};
+    // v0.9.804 — HARF BAŞINA hata. Eskiden yalnız İLK başarısız sorgu
+    // raporlanıyordu: A ve C birlikte patladığında C'nin sebebi hiçbir
+    // yerde görünmüyor, C'nin paneli ise (data undefined kaldığı için)
+    // sonsuza dek dönüyordu.
+    const errorByLetter: Record<string, string> = {};
     let anyLoading = false;
-    let error: { letter: string; message: string } | null = null;
     state.queries.forEach((q, i) => {
       const r = results[i];
       if (!produces(q)) return;
       if (r.isLoading) anyLoading = true;
-      if (r.isError && !error) {
-        error = { letter: q.letter, message: r.error instanceof Error ? r.error.message : String(r.error) };
+      if (r.isError) {
+        errorByLetter[q.letter] = r.error instanceof Error ? r.error.message : String(r.error);
       }
       const series = r.data === undefined ? undefined : (r.data.series ?? []);
       byLetter[q.letter] = series;
@@ -220,7 +228,7 @@ export function useExploreQueries(
       exemplarsByLetter[q.letter] = r.data?.exemplars ?? [];
       otlpExemplarsByLetter[q.letter] = otlpResults[i].data ?? [];
     });
-    return { byLetter, totalByLetter, cappedByLetter, exemplarsByLetter, otlpExemplarsByLetter, anyLoading, error };
+    return { byLetter, totalByLetter, cappedByLetter, exemplarsByLetter, otlpExemplarsByLetter, anyLoading, errorByLetter };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSig, state]);
 }

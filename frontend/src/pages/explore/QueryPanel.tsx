@@ -79,7 +79,7 @@ export const QueryPanel = memo(function QueryPanel({
         }}>{panel.letter}</span>
         <span style={{ color: 'var(--accent2)', fontWeight: 600 }}>{panel.desc}</span>
         <span style={{ flex: 1 }} />
-        {!panel.loading && (
+        {panel.state === 'ready' && (
           <span style={{ color: 'var(--text3)' }}>
             {panel.series.length} seri{panel.more > 0 ? ` · +${panel.more} daha (alan bazlı kırpıldı)` : ''}
             {panel.rowsCapped && (
@@ -99,16 +99,36 @@ export const QueryPanel = memo(function QueryPanel({
           </Button>
         )}
       </div>
-      {panel.loading ? (
+      {/* v0.9.804 — DÖRT durum, dördü de kendi cümlesini kuruyor. Tek
+          `loading` bayrağı varken "hiç sorulmadı" ve "sorgu hata verdi"
+          durumları da spinner'a düşüyor ve panel SONSUZA DEK dönüyordu. */}
+      {panel.state === 'idle' ? (
+        <div style={{
+          height: PANEL_HEIGHT, display: 'grid', placeItems: 'center',
+          color: 'var(--text3)', fontSize: 12, textAlign: 'center', padding: '0 16px',
+        }}>
+          {panel.emptyReason}
+        </div>
+      ) : panel.state === 'loading' ? (
         <div style={{ height: PANEL_HEIGHT, display: 'grid', placeItems: 'center' }}><Spinner /></div>
+      ) : panel.state === 'error' ? (
+        <div role="alert" style={{
+          height: PANEL_HEIGHT, display: 'flex', flexDirection: 'column',
+          alignItems: 'center', justifyContent: 'center', gap: 6,
+          color: 'var(--err)', fontSize: 12, textAlign: 'center', padding: '0 16px',
+        }}>
+          <span style={{ fontSize: 18 }}>⚠</span>
+          <span>Sorgu {panel.letter} hata verdi</span>
+          <span style={{ color: 'var(--text2)', wordBreak: 'break-word' }}>
+            {panel.errorMessage}
+          </span>
+        </div>
       ) : panel.series.length === 0 ? (
         <div style={{
           height: PANEL_HEIGHT, display: 'grid', placeItems: 'center',
-          color: 'var(--text3)', fontSize: 12,
+          color: 'var(--text3)', fontSize: 12, textAlign: 'center', padding: '0 16px',
         }}>
-          {panel.isFormula
-            ? 'Formül için ortak zaman aralığında veri yok'
-            : 'Bu pencerede veri yok — aralığı genişlet veya filtreleri azalt'}
+          {panel.emptyReason}
         </div>
       ) : chartsV2() ? (
         <Suspense fallback={<div style={{ height: PANEL_HEIGHT, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>

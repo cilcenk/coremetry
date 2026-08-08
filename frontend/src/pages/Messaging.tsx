@@ -10,7 +10,7 @@ import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeDestinationParam, decodeDestinationParam } from './messaging/destinationParam';
-import type { MessagingInstance } from '@/lib/types';
+import type { MessagingInstance, MessagingOverview } from '@/lib/types';
 
 // /messaging — top-level queue / topic technologies overview.
 // Kafka brokers, RabbitMQ vhosts, IBM MQ queues, NATS subjects,
@@ -102,9 +102,16 @@ export default function MessagingPage() {
   // /min rates here. Prior windows are equal-length by
   // construction, so the same divisor applies.
   const windowMins = Math.max((to - from) / 60e9, 1 / 60);
+  // v0.9.813 — zarf. `?? []` HER İKİ eksikliği karşılar: yanıt yok ve
+  // rows yok. Tavan bilgisi ayrı okunur — şerit tabloyu değil listeyi
+  // niteliyor, bu yüzden filtrelenmiş satır sayısına DEĞİL sunucunun
+  // döndürdüğü ham sayıya bakar.
+  const ov = q.data as MessagingOverview | undefined;
+  const list = useMemo(() => ov?.rows ?? [], [ov]);
+  const rowsCapped = ov?.rowsCapped === true;
+  const rowLimit = ov?.rowLimit ?? 0;
   const rows = useMemo<DepRow[]>(() => {
-    const list = (q.data as MessagingInstance[] | undefined) ?? [];
-    return list.map(d => {
+    return list.map((d: MessagingInstance) => {
       const hasPrior = d.priorSpanCount !== undefined;
       return {
         system: d.system,
@@ -137,7 +144,7 @@ export default function MessagingPage() {
         callers: d.callers ?? [],
       };
     });
-  }, [q.data, windowMins]);
+  }, [list, windowMins]);
 
   return (
     <>
@@ -167,14 +174,29 @@ export default function MessagingPage() {
             the range selector above re-runs the fetch.
           </Empty>
         )}
-        {q.data && (q.data as MessagingInstance[]).length === 0 && (
+        {q.data && list.length === 0 && (
           <Empty icon="◯" title="No messaging activity in this window">
             No spans with a <code>messaging.system</code> attribute landed in the
             selected range. Widen the time range, or instrument a producer /
             consumer with the OTel messaging semconv to see queues and topics here.
           </Empty>
         )}
-        {q.data && (q.data as MessagingInstance[]).length > 0 && (
+        {/* v0.9.813 — TAVAN ŞERİDİ. Sunucu LIMIT'e dayandığında liste
+            EKSİK ve bunu söylemeyen bir tablo "estate'in tamamı bu"
+            diye okunur. Şerit yalnız kesme GERÇEKTEN olduğunda çıkar;
+            eylem de veriyor (arama daraltır → sunucu değil istemci
+            filtresi, ama operatörün gördüğü küme netleşir). */}
+        {rowsCapped && (
+          <div className="badge b-warn" style={{
+            display: 'block', marginBottom: 10, padding: '7px 11px',
+            fontSize: 11.5, lineHeight: 1.45, textTransform: 'none', letterSpacing: 0,
+          }}>
+            ⚠ Yalnız en yoğun {rowLimit} destination gösteriliyor — bu pencerede
+            daha fazlası var. Liste çağrı hacmine göre kesildi; aradığın topic
+            listede yoksa aramayı daralt ya da pencereyi kısalt.
+          </div>
+        )}
+        {q.data && list.length > 0 && (
           <DependenciesTable
             rows={rows}
             kind="queue"

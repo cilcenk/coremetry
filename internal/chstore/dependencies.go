@@ -2,6 +2,7 @@ package chstore
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -483,6 +484,14 @@ func (s *Store) GetMessagingDetail(
 		'unknown'
 	)`
 
+	// v0.9.813 — MV okumaları için hizalanmış pencere başlangıcı.
+	// SADECE time_bucket sorgularında kullanılır: aşağıdaki TopOps ham
+	// `spans`'i `time` ile, getMessagingE2E ise ham span_links'i okuyor —
+	// onları geri kaydırmak taranan aralığı GERÇEKTEN genişletir ve
+	// drawer'ın sayıları tablodan sapardı. Hizalama kova etiketlemesinin
+	// düzeltmesidir, pencereyi büyütme lisansı değil.
+	bucketStart := alignBucketStart(from)
+
 	out := &MessagingDetail{
 		System: system, Cluster: cluster, Destination: destination,
 		Callers: []DBCallerBreakdown{},
@@ -508,7 +517,7 @@ func (s *Store) GetMessagingDetail(
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND msg_system = ? AND cluster = ? AND destination = ?
 		SETTINGS max_execution_time = 8`,
-		from, to, system, cluster, destination)
+		bucketStart, to, system, cluster, destination)
 	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p50Ms, &p95Ms, &p99Ms); err != nil {
 		return nil, err
 	}
@@ -542,7 +551,7 @@ func (s *Store) GetMessagingDetail(
 		ORDER BY countMerge(span_count_state) DESC
 		LIMIT 500
 		SETTINGS max_execution_time = 8`,
-		from, to, system, cluster, destination)
+		bucketStart, to, system, cluster, destination)
 	if err != nil {
 		return out, nil
 	}
@@ -589,7 +598,7 @@ func (s *Store) GetMessagingDetail(
 		ORDER BY t
 		LIMIT 5000
 		SETTINGS max_execution_time = 8`,
-		from, to, system, cluster, destination)
+		bucketStart, to, system, cluster, destination)
 	if err == nil {
 		for sRows.Next() {
 			var t int64
@@ -920,14 +929,84 @@ func (s *Store) discoverReceiverInstances(
 	return out, nil
 }
 
+// msgOverviewRowLimit — /messaging genel bakışın satır tavanı. Tavana
+// DAYANMAK sessiz bir yalandır: 200 satır dönen bir sayfa "estateın
+// tamamı bu" gibi okunur, oysa 201. destination hiç görünmez. v0.9.813
+// bu yüzden tavanı zarfta İLAN ediyor (MessagingOverview.RowsCapped).
+const msgOverviewRowLimit = 200
+
+// msgTopCallersPerDest — satır başına taşınan üst çağıran sayısı.
+// Frontend zaten ilk 3'ü çizip "+N" diyor; 5 hem eski davranışın
+// (len(Callers) < 5) birebir aynısı hem de LIMIT n BY'ın n'i.
+const msgTopCallersPerDest = 5
+
+// MessagingOverview — /api/messaging'in zarfı (v0.9.813).
+//
+// ZARF NEDEN: eski uç çıplak dizi döndürüyordu ve bir dizi "kesildim"
+// diyemez. RowsCapped olmadan LIMIT 200 tamamen görünmez bir kesme
+// noktasıydı: 1000 topic'li bir kurulumda operatör 200 satır görüp
+// listeyi tam sanıyordu. Zarf değişimi cache anahtar önekini de
+// sürümledi (messaging:v2:) — v0.9.443/458 dersi: eski zarf yeni
+// koda 30 sn boyunca servis edilirse sayfa boş açılır.
+type MessagingOverview struct {
+	Rows []MessagingInstance `json:"rows"`
+	// RowsCapped — okuma tavana dayandı, liste EKSİK olabilir.
+	RowsCapped bool `json:"rowsCapped,omitempty"`
+	// RowLimit — tavanın kendisi; UI şeridi sayıyı hardcode etmesin.
+	RowLimit int `json:"rowLimit,omitempty"`
+}
+
+// msgTopCallersSQL — satır başına ÜST çağıranlar (v0.9.813).
+//
+// ESKİ HÂLİ ALFABETİK KESİYORDU: `ORDER BY msg_system, cluster,
+// destination, c DESC LIMIT 1000` — sıralama önce KİMLİĞE göre, kesme
+// ise global 1000'de. Yani destination adı alfabenin sonunda kalan her
+// topic'in çağıranları tamamen düşüyordu ve tabloda "—" görünüyordu:
+// "bu topic'e kimse yazmıyor" diye okunan bir boşluk, oysa yalnız
+// listenin 1000. satırından sonraya düşmüştü. 200 destination × 5
+// çağıran zaten 1000'e dayanıyor, yani kesme İSTİSNA değil KURALDI.
+//
+// CH'nin `LIMIT n BY` tam olarak bunun için var: kesme artık grup
+// BAŞINA uygulanıyor, ORDER BY ise saf `c DESC`. Davranış "her
+// destination'ın en yoğun 5 çağıranı" — ilan edilen şeyin ta kendisi.
+// Dıştaki LIMIT tel-bayt tavanı olarak kalıyor (200 × 5 = 1000 tam
+// oturur; tavan hiçbir destination'ı ayrım gözetmeden kesmez).
+var msgTopCallersSQL = `
+	SELECT msg_system,
+	       cluster,
+	       destination,
+	       service_name,
+	       countMerge(span_count_state) AS c
+	FROM messaging_caller_summary_5m
+	WHERE time_bucket >= ? AND time_bucket <= ?
+	GROUP BY msg_system, cluster, destination, service_name
+	ORDER BY c DESC
+	LIMIT ` + strconv.Itoa(msgTopCallersPerDest) + ` BY msg_system, cluster, destination
+	LIMIT ` + strconv.Itoa(msgOverviewRowLimit*msgTopCallersPerDest) + `
+	SETTINGS max_execution_time = 8`
+
+// msgOverviewCapped — okunan satır sayısı tavana dayandı mı? SAF;
+// tablo-güdümlü test v0.9.813. `>=` bilinçli: CH tam LIMIT kadar satır
+// döndürdüğünde daha fazlası VAR MI bilinmiyor demektir, ve "bilmiyorum"
+// burada "eksik olabilir" tarafına yuvarlanmalı.
+func msgOverviewCapped(rowCount int) bool { return rowCount >= msgOverviewRowLimit }
+
 // GetMessaging is the structural parallel for messaging systems.
 // Resolves the destination name from messaging.destination.name
 // when present (OTel semconv), falling back to peer.service.
 // arrayElement / indexOf is cheap because attr_keys is bounded
 // per row + the WHERE prunes by msg_system on the indexed column
 // first.
-func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) ([]MessagingInstance, error) {
-	return s.getMessaging(ctx, from, to, true)
+func (s *Store) GetMessaging(ctx context.Context, from, to time.Time) (*MessagingOverview, error) {
+	rows, err := s.getMessaging(ctx, from, to, true)
+	if err != nil {
+		return nil, err
+	}
+	return &MessagingOverview{
+		Rows:       rows,
+		RowsCapped: msgOverviewCapped(len(rows)),
+		RowLimit:   msgOverviewRowLimit,
+	}, nil
 }
 
 // GetMessagingRollup — v0.8.364 (Stage-2 M1). Prior-window read
@@ -962,6 +1041,14 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 	if to.IsZero() {
 		to = time.Now()
 	}
+	// v0.9.813 — PENCERE HİZALAMASI. MV kovaları BAŞLANGIÇLARIYLA
+	// etiketli; hizalanmamış `time_bucket >= from` baştaki KISMİ kovayı
+	// tamamen eler (from=10:03 → 10:00–10:05 arasındaki her şey düşer).
+	// Kardeşleri (GetDatabases, GetMessagingTrends) bunu zaten yapıyordu;
+	// messaging genel bakışı yapmıyordu, yani Calls kolonu ile satır-içi
+	// Trend sparkline'ı AYNI pencereyi farklı okuyordu — tablo trendden
+	// az sayı gösteriyordu ve ikisi de "doğru" görünüyordu.
+	bucketStart := alignBucketStart(from)
 	// MV-backed read from messaging_summary_5m (added v0.5.9).
 	// Pre-aggregated by (msg_system, cluster, destination, 5min);
 	// the cluster + destination derived expressions are
@@ -984,8 +1071,8 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		GROUP BY msg_system, cluster, destination
 		ORDER BY span_count DESC
-		LIMIT 200
-		SETTINGS max_execution_time = 15`, from, to)
+		LIMIT `+strconv.Itoa(msgOverviewRowLimit)+`
+		SETTINGS max_execution_time = 15`, bucketStart, to)
 	if err != nil {
 		return nil, err
 	}
@@ -1039,7 +1126,7 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 		GROUP BY msg_system, cluster, destination, kind
 		ORDER BY c DESC
 		LIMIT 2000
-		SETTINGS max_execution_time = 8`, from, to)
+		SETTINGS max_execution_time = 8`, bucketStart, to)
 	if err == nil {
 		for kRows.Next() {
 			var system, cluster, destination, kind string
@@ -1058,20 +1145,7 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 		return out, nil
 	}
 
-	// MV-backed callers read from messaging_caller_summary_5m.
-	// LIMIT 1000 mirrors the DB path's wire-byte cap.
-	cRows, err := s.telemetryReadConn().Query(ctx, `
-		SELECT msg_system,
-		       cluster,
-		       destination,
-		       service_name,
-		       countMerge(span_count_state) AS c
-		FROM messaging_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
-		GROUP BY msg_system, cluster, destination, service_name
-		ORDER BY msg_system, cluster, destination, c DESC
-		LIMIT 1000
-		SETTINGS max_execution_time = 8`, from, to)
+	cRows, err := s.telemetryReadConn().Query(ctx, msgTopCallersSQL, bucketStart, to)
 	if err != nil {
 		return out, nil
 	}
@@ -1086,7 +1160,7 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 		if !ok {
 			continue
 		}
-		if len(out[i].Callers) < 5 && svc != "" {
+		if len(out[i].Callers) < msgTopCallersPerDest && svc != "" {
 			out[i].Callers = append(out[i].Callers, svc)
 		}
 	}

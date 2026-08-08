@@ -1399,7 +1399,9 @@ func (s *Server) warmDependenciesCache() {
 		from := to.Add(-warmWin)
 		warm("databases", "databases:"+cacheBucket(from, to), ttl,
 			func(ctx context.Context) (any, error) { return s.store.GetDatabases(ctx, from, to) })
-		warm("messaging", "messaging:"+cacheBucket(from, to), ttl,
+		// v0.9.813 — önek getMessaging handler'ıyla BİREBİR aynı kalmalı
+		// (messaging:v2:), yoksa ısıtılan slotu kimse okumaz.
+		warm("messaging", "messaging:v2:"+cacheBucket(from, to), ttl,
 			func(ctx context.Context) (any, error) { return s.store.GetMessaging(ctx, from, to) })
 		// Services list — the page operators open first after
 		// login. Use the same key shape as listServices so the

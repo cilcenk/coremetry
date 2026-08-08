@@ -102,3 +102,88 @@ describe('decidePinClick — ignore', () => {
     },
   );
 });
+
+// ---------------------------------------------------------------------------
+// decidePinGesture (v0.9.792) — CorePanel'in DOLU tık zincirinde pin.
+//
+// Buradaki tek soru: bir tıkı pin mi sahiplendi, yoksa çağıranın ◆/bucket/
+// panel zinciri mi işlemeli? Tablo, MLC v1 sözleşmesinin (:387) üç köşesini
+// çiviler: (a) düz tık pin yokken zincire düşer, (b) modifiyeli tık pinler ve
+// zincire ASLA düşmez, (c) PİNLİYKEN her tık unpin'e gider — düz olsun
+// modifiyeli olsun — ve yine zincire düşmez.
+// ---------------------------------------------------------------------------
+import { decidePinGesture, type PinGesture } from './tooltipPin';
+
+describe('decidePinGesture — jest yönlendirmesi', () => {
+  type Row = {
+    name: string;
+    pinnedIdx: number | null;
+    cursorIdx: number | null | undefined;
+    shiftKey?: boolean;
+    altKey?: boolean;
+    dragPx?: number;
+    detail?: number;
+    want: PinGesture;
+  };
+
+  const rows: Row[] = [
+    // (a) pin yok + modifiye yok → zincir çağıranda sürer.
+    { name: 'düz tık, pin yok → passthrough (◆/bucket zinciri işler)',
+      pinnedIdx: null, cursorIdx: 7, dragPx: 0, want: { action: 'passthrough' } },
+    { name: 'düz tık, pin yok, imleç boşta → yine passthrough',
+      pinnedIdx: null, cursorIdx: null, dragPx: 0, want: { action: 'passthrough' } },
+
+    // (b) modifiyeli tık pinler — İKİ jest de aynı kapı.
+    { name: 'Shift+tık (operatör jesti) → pin',
+      pinnedIdx: null, cursorIdx: 7, shiftKey: true, dragPx: 0, want: { action: 'pin', idx: 7 } },
+    { name: 'Alt+tık (MLC v1 kas hafızası) → pin',
+      pinnedIdx: null, cursorIdx: 7, altKey: true, dragPx: 0, want: { action: 'pin', idx: 7 } },
+    { name: 'Shift+Alt birlikte → yine tek pin',
+      pinnedIdx: null, cursorIdx: 3, shiftKey: true, altKey: true, dragPx: 0,
+      want: { action: 'pin', idx: 3 } },
+    { name: 'idx 0 modifiyeli tıkta da geçerli hedef',
+      pinnedIdx: null, cursorIdx: 0, shiftKey: true, dragPx: 0, want: { action: 'pin', idx: 0 } },
+
+    // (b′) modifiyeli ama pinlenemez tık YUTULUR — zincire düşmez.
+    { name: 'Shift+sürükleme → swallow (exemplar çekmecesi açılmaz)',
+      pinnedIdx: null, cursorIdx: 7, shiftKey: true, dragPx: 40, want: { action: 'swallow' } },
+    { name: 'Alt+çift-tık click\'i (detail 2) → swallow',
+      pinnedIdx: null, cursorIdx: 7, altKey: true, dragPx: 0, detail: 2, want: { action: 'swallow' } },
+    { name: 'Shift+tık ama imleç veri noktasında değil → swallow',
+      pinnedIdx: null, cursorIdx: null, shiftKey: true, dragPx: 0, want: { action: 'swallow' } },
+    { name: 'Shift+tık, cursorIdx -1 → swallow',
+      pinnedIdx: null, cursorIdx: -1, shiftKey: true, dragPx: 0, want: { action: 'swallow' } },
+
+    // (c) PİNLİYKEN her tık çözer ve zincire düşmez (MLC:387 birebir).
+    { name: 'pinliyken DÜZ tık → unpin (bucket\'a DÜŞMEZ)',
+      pinnedIdx: 5, cursorIdx: 9, dragPx: 0, want: { action: 'unpin' } },
+    { name: 'pinliyken Shift+tık → unpin',
+      pinnedIdx: 5, cursorIdx: 9, shiftKey: true, dragPx: 0, want: { action: 'unpin' } },
+    { name: 'pinliyken Alt+tık → unpin',
+      pinnedIdx: 5, cursorIdx: 9, altKey: true, dragPx: 0, want: { action: 'unpin' } },
+    { name: 'pinliyken imleç boşta düz tık → yine unpin',
+      pinnedIdx: 5, cursorIdx: null, dragPx: 0, want: { action: 'unpin' } },
+    { name: 'pin 0 (falsy) da çözülür',
+      pinnedIdx: 0, cursorIdx: 4, dragPx: 0, want: { action: 'unpin' } },
+
+    // (c′) pinliyken sürükleme/çift-tık pin'e DOKUNMAZ ama tıkı da yutar:
+    // zoom jestinin kuyruğu bir exemplar açamaz.
+    { name: 'pinliyken sürükleme kuyruğu → swallow (pin korunur)',
+      pinnedIdx: 5, cursorIdx: 9, dragPx: 40, want: { action: 'swallow' } },
+    { name: 'pinliyken çift-tık click\'i → swallow (dblclick dinleyicisi çözer)',
+      pinnedIdx: 5, cursorIdx: 9, dragPx: 0, detail: 2, want: { action: 'swallow' } },
+  ];
+
+  it.each(rows)('$name', ({ want, ...args }) => {
+    expect(decidePinGesture(args)).toEqual(want);
+  });
+
+  it('eşik decidePinClick ile AYNI kanaldan geçer (dragThresholdPx)', () => {
+    expect(decidePinGesture({
+      pinnedIdx: null, cursorIdx: 8, shiftKey: true, dragPx: 3, dragThresholdPx: 2,
+    })).toEqual({ action: 'swallow' });
+    expect(decidePinGesture({
+      pinnedIdx: null, cursorIdx: 8, shiftKey: true, dragPx: 1, dragThresholdPx: 2,
+    })).toEqual({ action: 'pin', idx: 8 });
+  });
+});

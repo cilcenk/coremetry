@@ -15,15 +15,34 @@ import { tsLong, fmtNum } from '@/lib/utils';
 import type { DashboardSummary } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 
+// STAR_PAGE (v0.9.780) — yıldızlar saved_views'te yaşıyor, YENİ ŞEMA YOK
+// (CLAUDE.md: kullanıcı-kaydı state için saved_views). Satır başına
+// page='dashboard-star', queryString=<pano id>, name=<pano adı>.
+// Kullanıcı-başı olması doğru davranış: yıldız kişisel bir kısayol,
+// etiketler ise panonun kendisine ait ve paylaşılan.
+//
+// /api/views'te rol kapısı yok — viewer da yıldızlayabilir, öyle olmalı.
+// `shared` ASLA gönderilmiyor: true olsaydı yıldız herkese yapışır ve
+// admin olmayan kimse söküp atamazdı.
+const STAR_PAGE = 'dashboard-star';
+
 // Columns for the shared sortable + resizable DataTable primitive. The
 // list is a small fetched array (saved dashboards), so client-side sort
-// applies. Default = most-recently-updated first (matches the operator's
-// "what did I touch last" mental model).
-const DASH_COLS: DataTableColumn<DashboardSummary>[] = [
-  { id: 'name',        label: 'Dashboard',  sortValue: r => r.name,        naturalDir: 'asc', width: 240 },
-  { id: 'description', label: 'Description', sortValue: r => r.description, naturalDir: 'asc', width: 360 },
-  { id: 'updatedAt',   label: 'Updated',    sortValue: r => r.updatedAt,   numeric: true,     width: 150 },
-];
+// applies.
+//
+// Sıralama (v0.9.780): varsayılan yıldız DESC. Sunucu zaten
+// updated_at DESC döndürüyor ve sortRows STABLE olduğundan sonuç
+// "yıldızlılar üstte, her grup içinde en son güncellenen önce" —
+// yani eski varsayılan grupların İÇİNDE aynen korunuyor.
+function dashCols(starMap: Map<string, string>): DataTableColumn<DashboardSummary>[] {
+  return [
+    { id: 'star',        label: '',           sortValue: r => (starMap.has(r.id) ? 1 : 0), numeric: true, width: 36, minWidth: 36 },
+    { id: 'name',        label: 'Dashboard',  sortValue: r => r.name,        naturalDir: 'asc', width: 240 },
+    { id: 'tags',        label: 'Tags',       sortValue: r => (r.tags ?? []).join(','), naturalDir: 'asc', width: 180 },
+    { id: 'description', label: 'Description', sortValue: r => r.description, naturalDir: 'asc', width: 300 },
+    { id: 'updatedAt',   label: 'Updated',    sortValue: r => r.updatedAt,   numeric: true,     width: 150 },
+  ];
+}
 
 export default function DashboardsPage() {
   const { user } = useAuth();
@@ -67,15 +86,63 @@ export default function DashboardsPage() {
       ? null
       : dashboardsQ.data ?? [];
 
-  // Substring filter over name + description, case-insensitive.
+  // Substring filter over name + description + tags, case-insensitive.
+  // Etiketler filtreye v0.9.780'de girdi: bir etiketi görüp aramak
+  // ("prod" yazmak) etiketlerin var olma sebebi.
   const filtered = useMemo(() => {
     if (!items) return items;
     const needle = q.trim().toLowerCase();
     if (!needle) return items;
     return items.filter(d =>
       d.name.toLowerCase().includes(needle) ||
-      (d.description ?? '').toLowerCase().includes(needle));
+      (d.description ?? '').toLowerCase().includes(needle) ||
+      (d.tags ?? []).some(t => t.toLowerCase().includes(needle)));
   }, [items, q]);
+
+  // ── Yıldızlar (v0.9.780) ──────────────────────────────────────────
+  // saved_views(page='dashboard-star') → Map<pano id, saved view id>.
+  const starsQ = useQuery({
+    queryKey: ['dashboard-stars'],
+    queryFn: async () => (await api.savedViews(STAR_PAGE)) ?? [],
+    staleTime: 60_000,
+  });
+  const starMap = useMemo(() => {
+    const m = new Map<string, string>();
+    // TUZAK: createSavedView UPSERT DEĞİL — her POST yeni satır üretir
+    // (Alerts.tsx'teki "server dedups" yorumu yanlış). Çift-tık yarışında
+    // aynı pano için iki satır kalabilir; okuma tarafı Map'e indirgeyerek
+    // zararsızlaştırıyor, silme ilk bulduğu satırı kaldırır.
+    for (const v of starsQ.data ?? []) {
+      if (v.queryString && !m.has(v.queryString)) m.set(v.queryString, v.id);
+    }
+    return m;
+  }, [starsQ.data]);
+  const [starBusy, setStarBusy] = useState<string | null>(null);
+  const toggleStar = async (d: DashboardSummary) => {
+    if (starBusy) return;
+    setStarBusy(d.id);
+    try {
+      const viewId = starMap.get(d.id);
+      if (viewId) {
+        await api.deleteSavedView(viewId);
+      } else {
+        await api.createSavedView({
+          // name BOŞ OLAMAZ: boş ad saved_views'te tombstone demek
+          // (okuma yolu name != '' filtreliyor), yani yıldız daha
+          // doğarken silinmiş sayılırdı.
+          name: d.name || d.id,
+          page: STAR_PAGE,
+          queryString: d.id,
+          // `shared` bilinçli GÖNDERİLMİYOR — bkz. STAR_PAGE notu.
+        });
+      }
+      await starsQ.refetch();
+    } catch (err) {
+      toast.error('Yıldız güncellenemedi: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setStarBusy(null);
+    }
+  };
 
   // Single global "spans/min over last 1h" series. Every row
   // renders the same sparkline because the metric is system-
@@ -104,11 +171,15 @@ export default function DashboardsPage() {
   // Shared sortable + resizable table with operator-speed keyboard nav
   // (j/k move, Enter/o open, "/" focuses the filter). Called
   // unconditionally (hooks rule) with [] while loading.
+  const columns = useMemo(() => dashCols(starMap), [starMap]);
   const dt = useDataTable<DashboardSummary>({
     storageKey: 'dashboards',
-    columns: DASH_COLS,
+    columns,
     rows: filtered ?? [],
-    initialSort: { id: 'updatedAt', dir: 'desc' },
+    // v0.9.780 — yıldızlılar üstte. Sunucu sırası zaten updated_at DESC
+    // ve sortRows stable, dolayısıyla grup İÇİ sıra eski varsayılanın
+    // aynısı kalıyor.
+    initialSort: { id: 'star', dir: 'desc' },
     onOpen: d => navigate(`/dashboard?id=${d.id}`),
     searchRef,
   });
@@ -171,8 +242,33 @@ export default function DashboardsPage() {
                       onMouseEnter={() => dt.nav.setSelected(i)}
                       onClick={() => navigate(`/dashboard?id=${d.id}`)}
                       style={{ cursor: 'pointer' }}>
+                    {/* <td> SIRASI dashCols() ile BİREBİR olmak zorunda —
+                        tableLayout:fixed + colgroup, kayma tsc'ye
+                        görünmez. Sıra: star · name · tags · description
+                        · updatedAt. */}
+                    <td>
+                      <button type="button"
+                        aria-label={starMap.has(d.id) ? `${d.name} yıldızını kaldır` : `${d.name} panosunu yıldızla`}
+                        aria-pressed={starMap.has(d.id)}
+                        title={starMap.has(d.id) ? 'Yıldızı kaldır' : 'Yıldızla — listenin başına gelir'}
+                        disabled={starBusy === d.id}
+                        // Satırın kendi onClick'i panoya gidiyor;
+                        // durdurulmazsa her yıldız tıklaması sayfayı
+                        // değiştirirdi.
+                        onClick={e => { e.stopPropagation(); void toggleStar(d); }}
+                        style={{
+                          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                          fontSize: 14, lineHeight: 1,
+                          color: starMap.has(d.id) ? 'var(--warn)' : 'var(--text3)',
+                        }}>
+                        {starMap.has(d.id) ? '★' : '☆'}
+                      </button>
+                    </td>
                     <td>
                       <span style={{ fontWeight: 600, color: 'var(--text)' }}>{d.name}</span>
+                    </td>
+                    <td title={(d.tags ?? []).join(', ') || undefined}>
+                      <TagBadges tags={d.tags} />
                     </td>
                     <td style={{ color: 'var(--text2)' }} title={d.description || undefined}>
                       {d.description || <span style={{ color: 'var(--text3)' }}>—</span>}
@@ -220,6 +316,27 @@ export default function DashboardsPage() {
         )}
       </div>
     </>
+  );
+}
+
+// TagBadges (v0.9.780) — etiket rozetleri. İlk 3 + "+N": kolon
+// genişliği sabit (tableLayout:fixed) ve taşan içerik sessizce
+// kırpılırdı; sayı görünür kalsın diye kalanı tek rozette toplanıyor,
+// tamamı hücrenin title'ında.
+function TagBadges({ tags }: { tags?: string[] }) {
+  const list = tags ?? [];
+  if (list.length === 0) return <span style={{ color: 'var(--text3)' }}>—</span>;
+  const shown = list.slice(0, 3);
+  const rest = list.length - shown.length;
+  return (
+    <span className="row gap-1" style={{ flexWrap: 'nowrap', minWidth: 0 }}>
+      {shown.map(t => (
+        <span key={t} className="badge b-gray" style={{
+          maxWidth: 90, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{t}</span>
+      ))}
+      {rest > 0 && <span className="badge b-gray" title={list.join(', ')}>+{rest}</span>}
+    </span>
   );
 }
 

@@ -1018,6 +1018,14 @@ func (s *Store) migrate(ctx context.Context) error {
 			description  String       DEFAULT '',
 			panels       String       DEFAULT '[]' CODEC(ZSTD(3)),
 			variables    String       DEFAULT '[]' CODEC(ZSTD(3)),
+			-- tags (v0.9.780): panoya ait, PAYLAŞILAN etiketler. JSON
+			-- dizisi olarak saklanıyor (Array(LowCardinality(String))
+			-- değil) çünkü etiketler serbest metin: operatör "ödeme",
+			-- "prod", "gece nöbeti" yazar, kardinalite düşük olsa da
+			-- kümesi kapalı değil. panels/variables ile aynı biçim
+			-- kalması okuma/yazma yolunun tek tip olmasını sağlıyor —
+			-- json.RawMessage üçü için de aynı nil/boş ayrımını taşıyor.
+			tags         String       DEFAULT '[]' CODEC(ZSTD(3)),
 			created_at   DateTime64(9) DEFAULT now64(9),
 			updated_at   DateTime64(9) DEFAULT now64(9),
 			version      UInt64       DEFAULT toUnixTimestamp64Nano(now64(9))
@@ -1026,6 +1034,8 @@ func (s *Store) migrate(ctx context.Context) error {
 		// Forward-compat: add the variables column to installs that
 		// pre-date the Grafana-style variable system.
 		`ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS variables String DEFAULT '[]' CODEC(ZSTD(3))`,
+		// v0.9.780 — aynı forward-compat, etiketler için.
+		`ALTER TABLE dashboards ADD COLUMN IF NOT EXISTS tags String DEFAULT '[]' CODEC(ZSTD(3))`,
 
 		// maintenance_windows: operator-declared time ranges that
 		// suppress alert notifications + auto-incident attach.

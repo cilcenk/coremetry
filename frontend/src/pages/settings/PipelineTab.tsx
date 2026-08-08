@@ -12,10 +12,24 @@ import { Field, FlashBox, humanize } from './shared';
 // the chosen signal gets dropped (or enriched / sampled) before the
 // consumer sees it — no CH write. Per-signal drop counts are exposed on
 // /admin/stats so the effect is observable without log-grepping.
+// SPAN_ROUTE_PREFILL — "Metrik dışlamaları" kartındaki span köprüsünün
+// açtığı yeni-kural taslağı (v0.9.802). Kart RE2 desenleriyle çalıştığı
+// için operatör aynı dilde devam etsin diye `=~` seçili gelir; anahtar
+// `http.route`, ki v0.9.802'den beri TÜRETİLMİŞ route alanından eşleşir
+// (url.path basan servisler dahil).
+const SPAN_ROUTE_PREFILL: Partial<PipelineRule> = {
+  kind: 'drop',
+  signal: 'spans',
+  when: { key: 'http.route', op: '=~', value: '' },
+};
+
 export function PipelineTab() {
   const [rules, setRules] = useState<PipelineRule[] | null | undefined>(undefined);
   const [editing, setEditing] = useState<PipelineRule | null>(null);
   const [creating, setCreating] = useState(false);
+  // spanPrefill — creating ile birlikte yaşar; hangi taslakla açıldığını
+  // söyler ("+ New rule" boş, dışlama kartının köprüsü span/route dolu).
+  const [spanPrefill, setSpanPrefill] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
   const load = () => {
@@ -134,8 +148,9 @@ export function PipelineTab() {
       {(creating || editing) && (
         <PipelineRuleModal
           existing={editing}
-          onClose={() => { setCreating(false); setEditing(null); }}
-          onSaved={() => { setCreating(false); setEditing(null); load(); }}
+          prefill={spanPrefill ? SPAN_ROUTE_PREFILL : null}
+          onClose={() => { setCreating(false); setEditing(null); setSpanPrefill(false); }}
+          onSaved={() => { setCreating(false); setEditing(null); setSpanPrefill(false); load(); }}
         />
       )}
 
@@ -147,7 +162,10 @@ export function PipelineTab() {
           motoru). Ayrı bir sekmeye koysaydık iki liste birbirinden
           habersiz görünürdü. */}
       <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
-        <MetricExclusionsSection onChanged={load} />
+        <MetricExclusionsSection
+          onChanged={load}
+          onSpanRule={() => { setSpanPrefill(true); setCreating(true); }}
+        />
       </div>
     </div>
   );
@@ -164,7 +182,10 @@ export function PipelineTab() {
 // İKİ KADEME ve farkları operatöre AÇIK YAZILIYOR: okuma filtresi geri
 // alınabilir (kural silinince geçmiş veri aynen döner), ingest drop'u
 // geri alınamaz (yazılmayan datapoint yok).
-function MetricExclusionsSection({ onChanged }: { onChanged: () => void }) {
+function MetricExclusionsSection({ onChanged, onSpanRule }: {
+  onChanged: () => void;
+  onSpanRule: () => void;
+}) {
   const [rules, setRules] = useState<MetricExclusionRule[] | null>(null);
   const [busy, setBusy] = useState(false);
   const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -222,6 +243,35 @@ function MetricExclusionsSection({ onChanged }: { onChanged: () => void }) {
         span türevli, onlara dokunulmaz.
       </p>
 
+      {/* v0.9.802 — SPAN KÖPRÜSÜ. Kart yalnız metrik datapoint'lerini
+          kapsıyor ve operatör buraya "healthcheck gürültüsü gitsin"
+          diye geliyor: span tarafının nerede olduğunu SÖYLEMEZSEK kartı
+          yarım bir çözüm sanıp span kuralını hiç kurmuyor.
+
+          Karta span kural TİPİ EKLENMEDİ (yalnız yönlendirme): iki
+          motorun sahibi pipeline, ve aynı kuralı iki yerden yazılabilir
+          yapmak UI çoğaltması olurdu. Link yukarıdaki tabloya taslak
+          açar — tek sahip, tek liste. */}
+      <div style={{
+        display: 'flex', gap: 10, alignItems: 'baseline', flexWrap: 'wrap',
+        marginBottom: 14, padding: '8px 12px', borderRadius: 6,
+        border: '1px solid var(--border)', background: 'var(--bg2)',
+        fontSize: 12, color: 'var(--text2)', lineHeight: 1.55,
+      }}>
+        <span style={{ flex: '1 1 340px' }}>
+          <b>Span&apos;ler için:</b> yukarıdaki Pipeline kuralları tablosunda
+          {' '}<code>kind=drop</code> bir kural (<code>http.route</code> ya da span
+          adı eşleşmesi). Span tarafında OKUMA filtresi <b>yok</b>: dar rollup ve
+          {' '}<code>operation_summary_5m</code> route bilmiyor, okuma filtresi
+          entry-RED&apos;i her istekte ham <code>spans</code> taramasına düşürürdü.
+          Bu yüzden span dışlaması <b>yalnız ingest&apos;te</b> uygulanır &mdash;
+          geçmiş veriyi etkilemez, ileriye dönük yazılmaz.
+        </span>
+        <Button variant="secondary" size="sm" onClick={onSpanRule}>
+          + Span drop kuralı
+        </Button>
+      </div>
+
       {rules.length === 0 ? (
         <Empty icon="⊘" title="Dışlama kuralı yok">
           Healthcheck route&apos;larını grafiklerden düşürmek için bir kural ekleyin.
@@ -278,18 +328,22 @@ function MetricExclusionsSection({ onChanged }: { onChanged: () => void }) {
   );
 }
 
-function PipelineRuleModal({ existing, onClose, onSaved }: {
+// prefill — YALNIZ yeni kuralda (existing === null) okunur; var olan bir
+// kuralı düzenlerken taslağın kaydı ezmesi olurdu (v0.9.802).
+function PipelineRuleModal({ existing, prefill, onClose, onSaved }: {
   existing: PipelineRule | null;
+  prefill?: Partial<PipelineRule> | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
+  const draft = existing ? null : prefill ?? null;
   const [name,    setName]    = useState(existing?.name ?? '');
-  const [kind,    setKind]    = useState<PipelineRule['kind']>(existing?.kind ?? 'drop');
-  const [signal,  setSignal]  = useState<PipelineRule['signal']>(existing?.signal ?? 'spans');
+  const [kind,    setKind]    = useState<PipelineRule['kind']>(existing?.kind ?? draft?.kind ?? 'drop');
+  const [signal,  setSignal]  = useState<PipelineRule['signal']>(existing?.signal ?? draft?.signal ?? 'spans');
   const [enabled, setEnabled] = useState(existing?.enabled ?? true);
-  const [whenKey, setWhenKey] = useState(existing?.when.key ?? 'service.name');
-  const [whenOp,  setWhenOp]  = useState<PipelineRule['when']['op']>(existing?.when.op ?? '=');
-  const [whenVal, setWhenVal] = useState(existing?.when.value ?? '');
+  const [whenKey, setWhenKey] = useState(existing?.when.key ?? draft?.when?.key ?? 'service.name');
+  const [whenOp,  setWhenOp]  = useState<PipelineRule['when']['op']>(existing?.when.op ?? draft?.when?.op ?? '=');
+  const [whenVal, setWhenVal] = useState(existing?.when.value ?? draft?.when?.value ?? '');
   // v0.5.270 — enrich + sample fields. Enrich uses a single
   // key/value pair for the MVP (multi-attr could come later
   // via a chip list — start narrow).
@@ -305,6 +359,14 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
   const [rate, setRate] = useState<number>(existing?.rate ?? 0.1);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // v0.9.802 — bozuk RE2 deseni backend'de 400 ile reddediliyor
+  // (validateCondition, v0.9.797). O hatayı formun DİBİNDEKİ genel
+  // kutuya bırakmak, operatörü hatayla düzelteceği alan arasında
+  // gezdirir; `=~` seçiliyken desen hatası alanın ALTINA düşer ve
+  // genel kutuda TEKRAR gösterilmez.
+  const patternError =
+    error && whenOp === '=~' && /RE2|pattern|desen/i.test(error) ? error : null;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -327,7 +389,10 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
       await api.upsertPipelineRule(body);
       onSaved();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // v0.9.802 — humanize: "HTTP 400: {"error":"invalid RE2 pattern …"}"
+      // yerine sade mesaj. Desen hatasının alan altında okunabilir
+      // görünmesi buna bağlı.
+      setError(humanize(err));
     } finally {
       setBusy(false);
     }
@@ -391,11 +456,21 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
                 <option value="contains">contains</option>
                 <option value="startsWith">startsWith</option>
                 <option value="endsWith">endsWith</option>
+                {/* v0.9.802 — motor `=~` destekliyordu (v0.9.797, RE2 +
+                    validateCondition) ama dropdown sunmuyordu; operatör
+                    contains ile idare ediyordu. */}
+                <option value="=~">=~ (regex)</option>
               </select>
               <input value={whenVal} onChange={e => setWhenVal(e.target.value)} required
-                placeholder="value"
+                placeholder={whenOp === '=~' ? 'RE2 pattern, e.g. ^/health' : 'value'}
                 style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }} />
             </div>
+            {/* v0.9.802 — bozuk desen backend'de 400 döner (validateCondition).
+                O hata genel kutuda değil DESENİN ALTINDA görünsün: operatör
+                düzelteceği alana bakıyor. */}
+            {patternError && (
+              <div style={{ fontSize: 11, color: 'var(--err)', marginTop: 4 }}>{patternError}</div>
+            )}
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
               {signal === 'logs' ? (
                 <>Well-known log fields branch directly: <code>service.name</code>,
@@ -407,9 +482,31 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
                 {' '}<code>host.name</code>.</>
               ) : (
                 <>Well-known span fields branch directly: <code>service.name</code>,
-                {' '}<code>name</code>, <code>kind</code>, <code>status_code</code>.</>
+                {' '}<code>name</code>, <code>kind</code>, <code>status_code</code>,
+                {' '}<code>http.route</code>.</>
               )}
               {' '}Custom attributes via <code>attr.foo</code> / <code>resource.foo</code> prefix.
+              {' '}<code>=~</code> is an <b>unanchored RE2</b> pattern — <code>/health</code>{' '}
+              matches anywhere in the value; use <code>^…$</code> for a full match.
+              {/* v0.9.802 — türetilmiş route + trace bütünlüğü. İkisi de
+                  spans'e özgü, o yüzden yalnız bu dalda. */}
+              {signal === 'spans' && (
+                <>
+                  <div style={{ marginTop: 6 }}>
+                    <code>http.route</code> matches the <b>derived</b> route, not the raw
+                    attribute: services that only emit <code>url.path</code> (no route
+                    templating) still match, via the id-stripped template
+                    (<code>/api/accounts/12345</code> → <code>/api/accounts/:id</code>).
+                    Use <code>attr.http.route</code> if you need the raw attribute.
+                  </div>
+                  <div style={{ marginTop: 6 }}>
+                    Trace integrity: a drop rule removes <b>the matching span only</b> —
+                    the rest of its trace is still written, so a child can be left without
+                    its parent. Match on the entry span of a self-contained trace
+                    (health checks / probes) rather than mid-trace spans.
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -460,7 +557,7 @@ function PipelineRuleModal({ existing, onClose, onSaved }: {
             <input type="checkbox" checked={enabled} onChange={e => setEnabled(e.target.checked)} />
             Enabled
           </label>
-          {error && (
+          {error && !patternError && (
             <div style={{
               color: 'var(--err)', fontSize: 12,
               padding: '4px 8px', background: 'rgba(220,38,38,0.08)',

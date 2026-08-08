@@ -2473,7 +2473,11 @@ export interface PipelineRule {
   kind: 'drop' | 'enrich' | 'sample';
   signal: 'spans' | 'logs' | 'metrics';
   enabled: boolean;
-  when: { key: string; op: '=' | '!=' | 'contains' | 'startsWith' | 'endsWith'; value: string };
+  // op — backend'in Op kümesiyle birebir (internal/pipeline/pipeline.go).
+  // '=~' RE2 ve ANKORSUZ (v0.9.797 motoru); UI'a v0.9.802'de açıldı —
+  // motor destekliyordu ama dropdown sunmadığı için operatör contains ile
+  // idare ediyordu.
+  when: { key: string; op: '=' | '!=' | 'contains' | 'startsWith' | 'endsWith' | '=~'; value: string };
   // Enrich rules only — resource attribute key/value pairs to
   // set when the predicate matches. Existing keys are
   // overridden, new keys append.

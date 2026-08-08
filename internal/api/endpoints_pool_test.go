@@ -76,6 +76,37 @@ func TestEndpointsPoolNeverExceedsStoreCeiling(t *testing.T) {
 	}
 }
 
+// Şerit yüklemi — HER İKİ dal da ölçülür (v0.6.36 sınıfı: koşullu bir
+// şablonun yalnız bir dalını doğrulamak, öbür dalın sessizce yanlış
+// olmasına izin verir). true dalı lokal kurulumda canlıya çıkamaz —
+// 26 endpoint havuzu asla doldurmaz — bu yüzden burada pinlenir.
+func TestEndpointsPoolCappedPredicate(t *testing.T) {
+	cases := []struct {
+		name    string
+		pool    int
+		want    bool
+		gotRows int
+		expect  bool
+	}{
+		// Havuz kısıldı VE doldu → evrenin dışında endpoint var.
+		{"kısıldı ve doldu", 10000, true, 10000, true},
+		{"kısıldı ve taştı", 10000, true, 12000, true},
+		// Havuz kısıldı ama evren sığdı → uyarı YALAN olurdu.
+		{"kısıldı ama sığdı", 10000, true, 26, false},
+		// Havuz hiç kısılmadı → niyet karşılandı, uyarı yok.
+		{"kısılmadı, dolu", 500, false, 500, false},
+		{"kısılmadı, boş", 500, false, 0, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := endpointsPoolCapped(tc.pool, tc.want, tc.gotRows); got != tc.expect {
+				t.Fatalf("endpointsPoolCapped(%d, %v, %d) = %v, want %v",
+					tc.pool, tc.want, tc.gotRows, got, tc.expect)
+			}
+		})
+	}
+}
+
 // Zarf alanları JSON'da beklenen adlarla ve doğru omitempty davranışıyla
 // çıkmalı: FE '(capped)' rozetini ve şeridi bu bayrağa göre basıyor.
 // Delta DIŞI sıralamalarda havuz kavramı yok → alanlar hiç görünmemeli.

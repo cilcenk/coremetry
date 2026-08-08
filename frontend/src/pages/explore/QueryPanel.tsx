@@ -11,19 +11,20 @@ import type { ChartTimeRegion, ChartThreshold } from '@/lib/chart/overlays';
 // (@grafana/ui motoru, Overview ile AYNI render). Lazy: corePanelEntry
 // vendor'ı sayfaya statik bağlamaz (708 bundle dersi).
 //
-// v0.9.785 — bars da v2 motorunda (CorePanel viz='bars', Grafana'nın
-// kendi Bars draw-style'ı). stacked/area eski TimeSeriesPanel'de kalır:
-// CorePanel o markları henüz çizmiyor, dürüst kademeli geçiş —
-// ?chartsV2=0 hâlâ toptan kaçış.
+// v0.9.788 — DÖRT mark da v2 motorunda (line · bars · area · stacked).
+// Kademeli geçiş bitti: mod artık motoru SEÇMİYOR, yalnız chartsV2
+// bayrağı seçiyor (?chartsV2=0 hâlâ toptan kaçış).
 //
-// Bilinen v2 farkları (bilinçli, eski yol bir bayrak uzakta):
+// Bunun doğrudan sonucu: SAYFADAKİ ÇİFT SENKRON GRUBU ayrımı SONA ERDİ.
+// Eskiden karma bir sayfa (bars paneli + stacked paneli) iki ayrı uPlot
+// sync grubuna bölünüyordu ve crosshair motorlar arasında geçmiyordu;
+// artık bir sayfadaki tüm paneller aynı motorda, yani tek grupta.
+// Anahtar hâlâ MOTORA göre ayrışır (v2 x'i ms, eski motor sn — yanlış
+// hizalı senkron, hiç senkron olmamaktan kötüdür) ama bayrak sayfa
+// çapında olduğu için sayfa başına DAİMA tek grup düşer.
+//
+// Bilinen v2 farkı (bilinçli, eski yol bir bayrak uzakta):
 //   • focusedLabel (GroupTable hover vurgusu) v2'de henüz yok.
-//   • GEÇİCİ AYRIM: v2 panelleri `${SYNC_KEY}-ms` grubunda, eski motor
-//     `SYNC_KEY`'de senkron olur (x ekseni ms vs sn — yanlış hizalı
-//     senkron hiç senkron olmamaktan kötüdür). Yani karma bir sayfada
-//     (bars/line paneli + stacked paneli) crosshair motorlar arasında
-//     geçmez. stacked dilimi bu ayrımı kapatacak; o gün iki grup teke
-//     iner.
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
@@ -33,7 +34,10 @@ const CorePanelMultiLazy = lazy(() =>
 // plan's perf guards — only the touched panel re-renders on hover/zoom
 // state changes that don't concern it.
 
+// Sayfa başına TEK senkron grubu; anahtar motorun x birimini taşır
+// (v2 = ms). Mod artık anahtara karışmaz.
 const SYNC_KEY = 'explore-v2';
+const SYNC_KEY_V2 = `${SYNC_KEY}-ms`;
 const PANEL_HEIGHT = 200;
 
 export const QueryPanel = memo(function QueryPanel({
@@ -105,15 +109,15 @@ export const QueryPanel = memo(function QueryPanel({
             ? 'Formül için ortak zaman aralığında veri yok'
             : 'Bu pencerede veri yok — aralığı genişlet veya filtreleri azalt'}
         </div>
-      ) : (chartsV2() && (mode === 'line' || mode === 'bars')) ? (
+      ) : chartsV2() ? (
         <Suspense fallback={<div style={{ height: PANEL_HEIGHT, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
           <CorePanelMultiLazy
             title=""
             storageKey={`explore-panel-${panel.key}`}
             height={PANEL_HEIGHT}
-            // Kapı yalnız bu ikisini geçiriyor; ternary üçüncü bir mark'ı
-            // sessizce line'a düşürmez çünkü üçüncü mark buraya GELMEZ.
-            viz={mode === 'bars' ? 'bars' : 'line'}
+            // TSMode ile CorePanel'in viz union'ı artık AYNI dört değer:
+            // eşleme yok, düşürme yok — mark olduğu gibi geçer.
+            viz={mode}
             unit={panel.unit || undefined}
             items={panel.series.map(ts => ({
               name: ts.label,
@@ -129,7 +133,7 @@ export const QueryPanel = memo(function QueryPanel({
             regions={exploreRegions(panel)}
             thresholds={exploreThresholds(panel)}
             logScale={logScale}
-            syncKey={`${SYNC_KEY}-ms`}
+            syncKey={SYNC_KEY_V2}
             onCursorTime={publishCursor}
             onExemplarClick={onExemplarClick}
             onZoom={onZoom}

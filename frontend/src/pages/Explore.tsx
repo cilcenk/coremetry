@@ -553,8 +553,18 @@ function ExploreInner() {
                 {/* v0.8.418 (DE3) — log10 y-axis. Dynatrace Data-Explorer
                     affordance for series spanning decades (p50 vs p99, RPS
                     across hot+cold services). Rides ?q= like every other
-                    builder knob; only meaningful on the line/area/bars set. */}
-                {(builder.viz === 'line' || builder.viz === 'area' || builder.viz === 'bars' || builder.viz === 'stacked') && (
+                    builder knob; only meaningful on the line/area/bars set.
+
+                    v0.9.788 — 'stacked' bu kümeden ÇIKTI. Yığılmış alanda
+                    çizilen sayı katmanın kendi değeri değil kümülatif
+                    toplamıdır; logaritmik eksende katman KALINLIKLARI
+                    değerleriyle orantısını tamamen kaybeder (alttaki 10
+                    birim panelin yarısı, üstteki 90 birim kalan yarısı).
+                    Okunan şekil veriyi anlatmaz — toggle görünmez, ve
+                    aşağıda logScale de stacked'te geçirilmez (bayrak ?q='de
+                    kalmış olabilir; görünmeyen bir anahtarın sessizce
+                    çalışması daha kötü olurdu). */}
+                {(builder.viz === 'line' || builder.viz === 'area' || builder.viz === 'bars') && (
                   <div className="segmented" style={{ marginLeft: 4 }}>
                     <button type="button"
                       onClick={() => setBuilder(b => ({ ...b, logY: !b.logY || undefined }))}
@@ -798,7 +808,7 @@ name ~ checkout`}
                 {(debounced.viz === 'line' || debounced.viz === 'area' || debounced.viz === 'bars' || debounced.viz === 'stacked') && (
                   <PanelStack panels={panels}
                     viz={debounced.viz}
-                    logScale={!!debounced.logY}
+                    logScale={debounced.viz !== 'stacked' && !!debounced.logY}
                     hiddenKeys={hiddenKeys}
                     focusKey={focusKey}
                     zoomWindow={zoomWindow}

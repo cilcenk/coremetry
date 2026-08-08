@@ -131,6 +131,9 @@ export default function MessagingPage() {
         consumeCount: d.consumeCount,
         produceErrors: d.produceErrors,
         consumeErrors: d.consumeErrors,
+        // v0.9.816 — gecikme ayrışması (publish vs process p95).
+        produceP95Ms: d.produceP95Ms,
+        consumeP95Ms: d.consumeP95Ms,
         // Prior fields only when the row had a prior twin —
         // otherwise the delta badges must stay hidden (a zeroed
         // prior would render a bogus NEW badge). omitempty on the

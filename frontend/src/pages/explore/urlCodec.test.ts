@@ -367,3 +367,51 @@ describe('metricCatalogueHref splitBy (v0.9.746)', () => {
     expect(state?.queries[0].splitBy).toEqual([]);
   });
 });
+
+// ── v0.9.824 — `c` anahtarı (önceki döneme karşılaştırma) ───────────────────
+//
+// Sözleşme: KAPALIYKEN ALAN HİÇ YAZILMAZ. Bu, v0.9.824 öncesi paylaşılmış
+// her ?q='in bayt-bayt aynı kalması demek — ve daha önemlisi, o eski
+// linklerin karşılaştırma KAPALI açılması. Varsayılanı sessizce açan bir
+// codec, paylaşılan her linkin sorgu maliyetini ikiye katlardı.
+describe('?q= codec — cmp (v0.9.824)', () => {
+  it.each(['24h', '7d', 'prev'] as const)('cmp=%s gidiş-dönüş', (cmp) => {
+    const st: BuilderState = { ...defaultBuilderState(), cmp };
+    expect(decodeBuilder(encodeBuilder(st))).toEqual(st);
+  });
+
+  it('kapalıyken `c` anahtarı URL\'e HİÇ yazılmaz', () => {
+    const enc = encodeBuilder(defaultBuilderState());
+    expect(JSON.parse(enc)).not.toHaveProperty('c');
+    expect(enc).not.toContain('"c"');
+  });
+
+  it('açıkken yazılan anahtar tam olarak `c`', () => {
+    const enc = encodeBuilder({ ...defaultBuilderState(), cmp: '7d' });
+    expect(JSON.parse(enc).c).toBe('7d');
+  });
+
+  it('ESKİ LİNK (alan yok) → karşılaştırma kapalı', () => {
+    // v0.9.824 öncesi bir ?q=: `c` diye bir şey bilmiyor.
+    const st = decodeBuilder('{"q":[{"l":"A","a":"p95","m":"duration_ms"}]}');
+    expect(st).not.toBeNull();
+    expect(st!.cmp).toBeUndefined();
+    expect(st!.queries[0].agg).toBe('p95');
+  });
+
+  it('TANINMAYAN kip → kapalı (uydurulmuş bir pencere çizilmez)', () => {
+    for (const bogus of ['"30d"', '"off"', '1', 'null', '{}']) {
+      const st = decodeBuilder(`{"c":${bogus},"q":[{"l":"A"}]}`);
+      expect(st!.cmp).toBeUndefined();
+    }
+  });
+
+  it('cmp öteki alanların kodlamasını DEĞİŞTİRMEZ (yalnız bir anahtar ekler)', () => {
+    const base: BuilderState = {
+      ...defaultBuilderState(), viz: 'bars', step: 60, topN: 20, formula: 'A / 2',
+    };
+    const a = JSON.parse(encodeBuilder(base));
+    const b = JSON.parse(encodeBuilder({ ...base, cmp: '24h' }));
+    expect(b).toEqual({ ...a, c: '24h' });
+  });
+});

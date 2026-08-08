@@ -34,7 +34,7 @@ import { useQueryHistory } from './explore/useQueryHistory';
 import {
   type BuilderState, defaultBuilderState, blankQuery, nextLetter,
   produces, effectiveFilters, builderDesc, MAX_QUERIES,
-  PANEL_SERIES_CAP, TOP_N_OPTIONS,
+  PANEL_SERIES_CAP, TOP_N_OPTIONS, EXPLORE_COMPARE, compareLabel,
 } from './explore/model';
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
 import {
@@ -343,6 +343,9 @@ function ExploreInner({ onSelfWrite }: {
     byLetter, totalByLetter, cappedByLetter, stepByLetter,
     exemplarsByLetter, otlpExemplarsByLetter,
     anyLoading, errorByLetter,
+    // v0.9.824 — önceki dönem (hayalet). Karşılaştırma kapalıyken üçü de
+    // boş/0 döner ve ikinci fan-out HİÇ koşmaz.
+    compareByLetter, compareStepByLetter, compareOffsetNs,
   } = useExploreQueries(
     debounced,
     builderFrom,
@@ -360,10 +363,11 @@ function ExploreInner({ onSelfWrite }: {
       errorByLetter,
       exemplarsByLetter, overlaysByLetter, totalByLetter,
       otlpExemplarsByLetter, cappedByLetter, stepByLetter,
+      compareByLetter, compareStepByLetter, compareOffsetNs,
     }),
     [debounced, byLetter, builderFrom, errorByLetter, exemplarsByLetter,
      overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter,
-     stepByLetter],
+     stepByLetter, compareByLetter, compareStepByLetter, compareOffsetNs],
   );
   // Harf başına hata bandı — panellerin İÇİNDEKİ mesajın üstünde, sayfa
   // seviyesinde bir özet. Eskiden yalnız ilk hatayı basıyordu.
@@ -641,6 +645,33 @@ function ExploreInner({ onSelfWrite }: {
                     </button>
                   </div>
                 )}
+                {/* v0.9.824 — önceki döneme karşılaştırma. VARSAYILAN KAPALI
+                    ve maliyeti başlıkta YAZIYOR: açık her kip, üreten her
+                    sorgu için ikinci bir fan-out koşturur. Grafik ailesine
+                    özel (heatmap'in hayaleti olmaz — heatmap'te karo başına
+                    iki dönem üst üste binmez, mod seçilince şerit çıkmaz). */}
+                {builder.viz !== 'heatmap' && (<>
+                  <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 4 }}>Karşılaştır:</span>
+                  <div className="segmented">
+                    <button type="button"
+                      onClick={() => setBuilder(b => ({ ...b, cmp: undefined }))}
+                      aria-pressed={!builder.cmp}
+                      className={!builder.cmp ? 'active' : ''}
+                      title="Karşılaştırma kapalı — tek sorgu turu (varsayılan)">
+                      Kapalı
+                    </button>
+                    {EXPLORE_COMPARE.map(m => (
+                      <button key={m} type="button"
+                        onClick={() => setBuilder(b => ({ ...b, cmp: m }))}
+                        aria-pressed={builder.cmp === m}
+                        className={builder.cmp === m ? 'active' : ''}
+                        title={`${compareLabel(m)} ile karşılaştır — kesikli soluk hayalet çizgiler + Δ %. `
+                          + 'Sorgu maliyetini İKİYE KATLAR: her sorgu bir de kaydırılmış pencerede koşar.'}>
+                        {m === 'prev' ? 'Önceki' : m}
+                      </button>
+                    ))}
+                  </div>
+                </>)}
               </>
             )}
             <span style={{ flex: 1 }} />

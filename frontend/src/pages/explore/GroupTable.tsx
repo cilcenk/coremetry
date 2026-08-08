@@ -38,6 +38,36 @@ export interface GroupRow {
   additive: boolean;
   buckets: number;
   points: { time: number; value: number | null }[];  // for the @imleç lookup
+  // v0.9.824 — önceki döneme göre yüzde değişim. null = hesaplanamaz
+  // ("—" basılır): karşılaştırma kapalı, bu serinin önceki dönemde
+  // karşılığı yok, ya da önceki değer SIFIR. Sıfırdan yüzde değişim
+  // tanımsızdır (0'dan 5'e "sonsuz artış") — uydurulmuş bir sayı yerine
+  // boşluk basmak dürüst olan.
+  deltaPct: number | null;
+}
+
+// deltaPct — güncel vs önceki, BİRİM AİLESİNE göre. SAF.
+//
+// Toplanabilir birimde (istek/sn, adet, bayt) karşılaştırılan şey
+// TOPLAMDIR: pencerede kaç istek geldi. Toplanamaz birimde (ms, %) toplam
+// bir sayı değil bir sayı yığınıdır — orada karşılaştırılan ORTALAMADIR.
+// Aynı ayrım GroupTable'ın "Toplam" sütununu da yönetiyor (v0.9.806,
+// isAdditiveUnit); iki yerde iki farklı aile tanımı olsaydı satırın Δ'sı
+// kendi Toplam hücresiyle çelişirdi.
+//
+// Payda MUTLAK DEĞER: önceki -20'den bugün -10'a çıkmak %+50'dir, %-50
+// değil. (Explore'da negatif seri nadirdir ama bir formül/metrik pekâlâ
+// üretir ve işaretin sessizce dönmesi en kötü sınıf hatadır.)
+export function deltaPct(
+  cur: { sum: number; mean: number } | null,
+  prev: { sum: number; mean: number } | null,
+  additive: boolean,
+): number | null {
+  if (!cur || !prev) return null;
+  const c = additive ? cur.sum : cur.mean;
+  const p = additive ? prev.sum : prev.mean;
+  if (!isFinite(c) || !isFinite(p) || p === 0) return null;
+  return (c - p) / Math.abs(p) * 100;
 }
 
 // @imleç is intentionally NOT sortable (no sortValue): its value changes every
@@ -47,7 +77,7 @@ export interface GroupRow {
 // v0.9.806 — Min + Toplam eklendi; sıra Son·Min·Maks·Ort·Toplam. Toplam'ın
 // sortValue'su toplanamaz birimde NULL döner: sortRows null'ı yön ne olursa
 // olsun en dibe indirir, yani "—" basan satırlar sıralamayı kirletmez.
-const COLS: DataTableColumn<GroupRow>[] = [
+const BASE_COLS: DataTableColumn<GroupRow>[] = [
   { id: 'series',  label: 'Seri',     sortValue: r => `${r.letter} ${r.label}`, naturalDir: 'asc', width: 320 },
   { id: 'cursor',  label: '@imleç',   numeric: true, width: 110 },
   { id: 'last',    label: 'Son',      sortValue: r => r.last,    numeric: true, width: 110 },
@@ -58,6 +88,29 @@ const COLS: DataTableColumn<GroupRow>[] = [
   { id: 'buckets', label: 'Bucket',   sortValue: r => r.buckets, numeric: true, width: 90 },
 ];
 
+// v0.9.824 — Δ % sütunu YALNIZ karşılaştırma verisi VARKEN eklenir.
+//
+// Hep basılsaydı, varsayılan (karşılaştırma kapalı) durumda baştan aşağı
+// "—" yazan ölü bir sütun olurdu; ölü sütun okuyanı "burada bir sayı olmalı,
+// neden yok?" diye yanlış soruya götürür. Bedeli, useDataTable'ın kalıcı
+// GENİŞLİKLERİNİN toggle'da sıfırlanmasıdır (columnLayoutSig, v0.9.695
+// kolon-kümesi mührü) — bilinçli takas: sıralama (ayrı anahtar) korunuyor,
+// yalnız sürüklenmiş genişlikler tazeleniyor.
+const DELTA_COL: DataTableColumn<GroupRow> = {
+  id: 'delta', label: 'Δ %',
+  // null'lar sortRows'ta yön ne olursa olsun EN DİBE iner (Toplam
+  // sütununun v0.9.806'daki kuralı) — "—" basan satırlar sıralamayı
+  // kirletmez ve bir başa bir sona zıplamaz.
+  sortValue: r => r.deltaPct,
+  numeric: true, width: 100,
+};
+
+export function groupTableCols(hasCompare: boolean): DataTableColumn<GroupRow>[] {
+  if (!hasCompare) return BASE_COLS;
+  // Δ, karşılaştırdığı sayıların (Ort / Toplam) HEMEN SAĞINDA.
+  return [...BASE_COLS.slice(0, -1), DELTA_COL, BASE_COLS[BASE_COLS.length - 1]];
+}
+
 export function buildGroupRows(panels: PanelData[]): GroupRow[] {
   const rows: GroupRow[] = [];
   for (const p of panels) {
@@ -65,6 +118,17 @@ export function buildGroupRows(panels: PanelData[]): GroupRow[] {
     // v0.9.806 — Toplam sütununun kapısı panel BAŞINA sorulur: birim
     // paneldeki tüm serilerde aynı.
     const additive = isAdditiveUnit(p.unit);
+    // v0.9.824 — önceki dönemin istatistikleri ETİKETE göre. Hayaletler
+    // buildGhostSeries'ten geliyor, yani etiketleri seriesGroupLabel'in
+    // AYNI türetmesinden — elle kurulmuş bir eşleşme anahtarı, bir gün
+    // farklı bir seriye Δ yazdırırdı. Hayalet yoksa harita boş: her satır
+    // "—" basar, sütun sessizce sıfır göstermez.
+    const prevByLabel = new Map<string, { sum: number; mean: number }>();
+    for (const g of p.ghosts ?? []) {
+      const gs = seriesStats(g.points.map(x => x.value));
+      if (!gs.count) continue;
+      prevByLabel.set(g.label, { sum: gs.sum, mean: gs.mean ?? NaN });
+    }
     for (const s of p.series) {
       // seriesStats — lejantla PAYLAŞILAN tek geçişli çekirdek (v0.9.103).
       // Kendi reduce/Math.max zincirimizi yazmak, aynı sayının iki yerde
@@ -87,6 +151,10 @@ export function buildGroupRows(panels: PanelData[]): GroupRow[] {
         additive,
         buckets: st.count,
         points: s.points,
+        deltaPct: deltaPct(
+          st.count ? { sum: st.sum, mean: st.mean ?? NaN } : null,
+          prevByLabel.get(s.label) ?? null,
+          additive),
       });
     }
   }
@@ -108,9 +176,15 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFo
   // the crosshair moves — the charts stay out of React via uPlot's own sync.
   const cursorSec = useCursorTime();
 
+  // Δ sütunu ancak ÇİZİLMİŞ bir hayalet varsa. Karşılaştırma açık ama
+  // hayalet düşmüşse (çözünürlük uyuşmazlığı / önceki dönemde veri yok)
+  // sütun da çıkmaz — panel şeridi sebebini zaten söylüyor.
+  const hasCompare = useMemo(() => panels.some(p => p.ghosts?.length), [panels]);
+  const columns = useMemo(() => groupTableCols(hasCompare), [hasCompare]);
+
   const dt = useDataTable<GroupRow>({
     storageKey: 'explore-group-table',
-    columns: COLS,
+    columns,
     rows,
     initialSort: { id: 'max', dir: 'desc' },
   });
@@ -186,6 +260,20 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFo
                     : `Toplam bu birimde anlamlı değil (${r.unit || 'birimsiz'})`}>
                   {r.additive ? fmtSmart(r.sum, r.unit) : '—'}
                 </td>
+                {/* v0.9.824 — Δ %: artış KIRMIZI değil NÖTR renk ailesinde
+                    kalır. "Daha çok istek" iyi, "daha çok gecikme" kötü;
+                    tabloda hangi yönün iyi olduğunu bilen tek şey birim
+                    değil operatörün niyeti. Yön OKLA söylenir (↑/↓), değer
+                    yargısı RENKLE söylenmez. */}
+                {hasCompare && (
+                  <td className="mono" style={{ textAlign: 'right' }}
+                    title={r.deltaPct == null
+                      ? 'Önceki dönemde bu serinin karşılığı yok ya da önceki değer sıfır — yüzde değişim tanımsız'
+                      : `${r.additive ? 'Toplam' : 'Ortalama'} bazında önceki döneme göre`}>
+                    {r.deltaPct == null ? '—'
+                      : `${r.deltaPct >= 0 ? '↑' : '↓'} ${Math.abs(r.deltaPct).toFixed(1)}%`}
+                  </td>
+                )}
                 <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(r.buckets)}</td>
               </tr>
             );

@@ -62,6 +62,15 @@ export interface BuilderQuery {
   dsl: string;             // advanced span DSL (legacy decode surface; AND-joined with filters)
 }
 
+// ExploreCompare — önceki döneme karşılaştırma kipi (v0.9.824).
+// undefined = KAPALI ve bu VARSAYILAN: açık bir kip, üreten her sorgu için
+// İKİNCİ bir fan-out koşturur, yani sayfanın sorgu maliyetini ikiye katlar.
+// ServiceCharts'ın CompareMode'uyla aynı üç seçenek (v0.8 dili) ama 'off'
+// yok — yokluk zaten kapalı demek, ve iki temsili olan bir bayrak URL'de
+// er geç ayrışır.
+export type ExploreCompare = '24h' | '7d' | 'prev';
+export const EXPLORE_COMPARE: ExploreCompare[] = ['24h', '7d', 'prev'];
+
 export interface BuilderState {
   queries: BuilderQuery[];
   formula: string;         // '' = none. Expression over letters, e.g. "A / B * 100"
@@ -69,6 +78,42 @@ export interface BuilderState {
   step: number;            // seconds; 0 = auto. GLOBAL so formula buckets stay aligned.
   topN?: number;           // top-N series per panel by area (Uptrace top10). 0/undef = PANEL_SERIES_CAP.
   logY?: boolean;          // v0.8.418 (DE3) — log10 y-axis on the line/area/bars panels.
+  // v0.9.824 — önceki döneme karşılaştırma. Yokluk = kapalı.
+  cmp?: ExploreCompare;
+}
+
+// compareOffsetNs — pencerenin NE KADAR geriye kaydırılacağı, NANOSANİYE.
+//
+// SAF ve UTC. Takvim aritmetiği YOK, yerel saat YOK: '24h' tam 24×3600×1e9
+// nanosaniyedir, DST geçişinde 23 ya da 25 saate DÖNMEZ. Bu bilinçli —
+// hayalet serinin tek işi bugünün eksenine BİREBİR bindirilmek, ve bindirme
+// `time + offset` ile yapılıyor. Takvim-duyarlı bir offset kullansaydık
+// DST sınırını geçen bir pencerede kovalar bir saat kayar, hayalet çizgi
+// güncel çizginin yanına DEĞİL arasına düşerdi; operatör bunu "veri kaymış"
+// diye okur. Aynı gerekçe ServiceCharts'ın compareOffsetNs'inde de geçerli
+// (v0.8, aynı hesap).
+//
+// 'prev' = pencerenin kendi genişliği (bitişik önceki pencere). Bozuk/ters
+// bir aralıkta 0 döner — 0 hayaleti KAPATIR, uydurulmuş bir kaydırma değil.
+export function compareOffsetNs(
+  cmp: ExploreCompare | undefined, from: number, to: number,
+): number {
+  switch (cmp) {
+    case '24h': return 24 * 3600 * 1e9;
+    case '7d':  return 7 * 24 * 3600 * 1e9;
+    case 'prev': return to > from ? to - from : 0;
+    default:    return 0;
+  }
+}
+
+// compareLabel — kipin insan adı (şerit başlığı + Δ sütunu title'ı).
+export function compareLabel(cmp: ExploreCompare | undefined): string {
+  switch (cmp) {
+    case '24h': return '24 saat önce';
+    case '7d':  return '7 gün önce';
+    case 'prev': return 'önceki pencere';
+    default:    return '';
+  }
 }
 
 export const MAX_QUERIES = 4;

@@ -704,7 +704,7 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
               the union: gauge and heatmap both shipped renderable but
               unreachable because only the `labels` record above was updated.
               Any new type goes in BOTH places. */}
-          {(['row', 'metric', 'spanmetric', 'promql', 'topn', 'stat', 'markdown'] as PanelType[]).map(t => (
+          {(['row', 'metric', 'spanmetric', 'promql', 'topn', 'stat', 'gauge', 'heatmap', 'markdown'] as PanelType[]).map(t => (
             <button key={t} className="ghost"
               onClick={() => { onAdd(t); setOpen(false); }}
               style={{

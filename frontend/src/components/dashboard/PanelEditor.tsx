@@ -4,8 +4,12 @@ import { STEP_OPTIONS } from '@/pages/explore/presets';
 import type {
   Panel, PanelType, PanelWidth, PanelHeight,
   MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
-  HeatmapPanelConfig, PromqlPanelConfig,
+  HeatmapPanelConfig, PromqlPanelConfig, TopNPanelConfig,
 } from '@/lib/types';
+// v0.9.781 — ONE limit ceiling. The editor's options and the panel's slice
+// read the same clamp, so the dropdown can never offer more rows than the
+// server's 50-series trim can actually deliver.
+import { TOPN_SERVER_CAP } from './topN';
 // v0.9.778 — ONE band palette. This file used to keep its own PALETTE copy of
 // the same rgb() literals as PanelRenderer, so the editor swatch and the
 // rendered panel were two independent sources that could (and did) drift.
@@ -25,6 +29,8 @@ const TYPE_LABELS: Record<PanelType, string> = {
   heatmap:    'Heatmap (latency density)',
   // v0.9.117 (F4) — a chart driven by a raw PromQL query.
   promql:     'PromQL query',
+  // v0.9.781 — ranked bars over the whole window (Datadog "Top List").
+  topn:       'Top-N bar',
   markdown:   'Markdown / notes',
   row:        'Row (collapsible group)',
 };
@@ -197,6 +203,9 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
         )}
         {panel.type === 'promql' && (
           <PromqlFields cfg={panel.config as PromqlPanelConfig} onChange={updateConfig} />
+        )}
+        {panel.type === 'topn' && (
+          <TopNFields cfg={panel.config as TopNPanelConfig} onChange={updateConfig} />
         )}
         {panel.type === 'markdown' && (
           <Field label="Markdown text">
@@ -390,6 +399,69 @@ function SpanMetricFields({ cfg, onChange }: {
       <Field label="DSL filter (optional)">
         <textarea value={cfg.dsl ?? ''}
           placeholder='service_name = "checkout"\nduration > 100ms'
+          onChange={e => update('dsl', e.target.value)}
+          style={{ width: '100%', minHeight: 70, fontFamily: 'monospace', fontSize: 12 }} />
+      </Field>
+    </>
+  );
+}
+
+// v0.9.781 — Top-N bar fields. Same span-query vocabulary as SpanMetricFields
+// (agg / field / group-by / DSL) minus everything time-series-shaped: no step
+// (the panel derives a single-bucket step from the window itself — topN.ts)
+// and no viz (a Top-N panel IS the bar list).
+function TopNFields({ cfg, onChange }: {
+  cfg: TopNPanelConfig; onChange: (c: TopNPanelConfig) => void;
+}) {
+  const update = <K extends keyof TopNPanelConfig>(k: K, v: TopNPanelConfig[K]) =>
+    onChange({ ...cfg, [k]: v });
+  return (
+    <>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <Field label="Aggregation">
+          <select value={cfg.agg ?? 'p99'} onChange={e => update('agg', e.target.value)}>
+            {SPAN_AGGS.map(a => <option key={a} value={a}>{a}</option>)}
+          </select>
+        </Field>
+        <Field label="Field (for percentiles)">
+          <input value={cfg.field ?? 'duration_ms'} placeholder="duration_ms"
+            onChange={e => update('field', e.target.value)} />
+        </Field>
+        {/* Capped at the server's own trim — offering 100 would render a
+            "top 100" that is really a top 50 with a missing tail. */}
+        <Field label="Rows">
+          <select value={cfg.limit ?? 10}
+            onChange={e => update('limit', Number(e.target.value))}>
+            {[5, 10, 20, TOPN_SERVER_CAP].map(n =>
+              <option key={n} value={n}>{`Top ${n}`}</option>)}
+          </select>
+        </Field>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12 }}>
+        {/* Dotted semconv spelling: `http.route` resolves to the indexed
+            http_route column, while the underscore form falls through to the
+            attribute-array lookup and returns ONE empty group (verified
+            against live ClickHouse, v0.9.781). */}
+        <Field label="Group by (comma-sep keys — these ARE the bars)">
+          <input value={cfg.groupBy ?? ''} placeholder="service.name, http.route"
+            onChange={e => update('groupBy', e.target.value)} style={{ width: '100%' }} />
+        </Field>
+        <Field label="Unit">
+          <input value={cfg.unit ?? ''} placeholder="ms / % / rps"
+            onChange={e => update('unit', e.target.value)} />
+        </Field>
+      </div>
+      <Field label="Row click">
+        <select value={cfg.linkTo ?? 'none'}
+          onChange={e => update('linkTo', e.target.value as TopNPanelConfig['linkTo'])}>
+          <option value="none">Not clickable</option>
+          <option value="service">Service detail (first group-by key must be a service)</option>
+          <option value="traces">Traces, filtered to this row</option>
+        </select>
+      </Field>
+      <Field label="DSL filter (optional)">
+        <textarea value={cfg.dsl ?? ''}
+          placeholder='service.name = "checkout"\nduration > 100ms'
           onChange={e => update('dsl', e.target.value)}
           style={{ width: '100%', minHeight: 70, fontFamily: 'monospace', fontSize: 12 }} />
       </Field>
@@ -592,6 +664,14 @@ export function defaultConfig(t: PanelType): Panel['config'] {
     // v0.9.117 (F4) — empty query → PromqlPanel shows the "type a query"
     // prompt (never a blank panel).
     case 'promql':     return { query: '', viz: 'line' };
+    // v0.9.781 — renderable with ZERO further input: "slowest services in the
+    // window" is both a real answer and the panel's own demo. groupBy uses the
+    // DOTTED semconv key — `service_name` also resolves, but the underscore
+    // form of http.route does NOT, so the dotted spelling is the one to teach.
+    case 'topn':       return {
+      agg: 'p99', field: 'duration_ms', groupBy: 'service.name',
+      unit: 'ms', limit: 10, linkTo: 'none',
+    };
     case 'markdown':   return { text: '## Notes\n\nDescribe what this dashboard shows.' };
     // Row panels carry no config of their own — title is on the panel
     // itself, default-collapsed is opt-in.

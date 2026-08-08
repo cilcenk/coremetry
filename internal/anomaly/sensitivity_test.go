@@ -3,6 +3,9 @@ package anomaly
 
 import (
 	"math"
+	"os"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -350,6 +353,96 @@ func TestDefaultsMatchShippedBehaviour(t *testing.T) {
 		t.Errorf("global varsayılanlar dwell=%d criticalZ=%.1f — 3 / 6.0 olmalı",
 			d.DwellBuckets, d.CriticalZ)
 	}
+}
+
+// TestIncidentAttachDefaultsToOn — v0.9.827.
+//
+// Bu sürüm bir GÖRÜNÜRLÜK sürümü: var olan davranışı kapatılabilir
+// yapıyor, kendiliğinden değiştirmiyor. Bayrak yazılmamışsa (bu
+// sürümden ESKİ her settings satırı) davranış aynen sürmeli.
+func TestIncidentAttachDefaultsToOn(t *testing.T) {
+	if !chstore.DefaultAnomalySensitivity().AttachesToIncident() {
+		t.Error("varsayılan KAPALI — bu sürüm davranışı sessizce değiştirirdi")
+	}
+	// Eski satır: alan hiç yok.
+	var old chstore.AnomalySensitivityConfig
+	if !old.AttachesToIncident() {
+		t.Error("bayrağı olmayan eski satır KAPALI okundu — yükseltme, " +
+			"operatörün hiç istemediği bir davranış değişikliği yapardı")
+	}
+	// Açıkça kapatılmış.
+	off := false
+	if (chstore.AnomalySensitivityConfig{AttachToIncident: &off}).AttachesToIncident() {
+		t.Error("açıkça false yazılmış bayrak AÇIK okundu — operatörün " +
+			"kararı yok sayılıyor")
+	}
+	// Normalize bayrağı SOMUTLAŞTIRMALI: kaydedilen blob ne olduğunu
+	// açıkça söylesin, sonraki okuyucu varsayılanı tahmin etmesin.
+	n := chstore.NormalizeAnomalySensitivity(chstore.AnomalySensitivityConfig{DwellBuckets: 3, CriticalZ: 6})
+	if n.AttachToIncident == nil {
+		t.Error("Normalize bayrağı nil bıraktı — kaydedilen blob kendini anlatmıyor")
+	}
+	// …ve operatörün kapatma kararını EZMEMELİ.
+	n2 := chstore.NormalizeAnomalySensitivity(chstore.AnomalySensitivityConfig{
+		DwellBuckets: 3, CriticalZ: 6, AttachToIncident: &off,
+	})
+	if n2.AttachesToIncident() {
+		t.Error("Normalize operatörün kapatma kararını ezdi")
+	}
+}
+
+// TestIncidentAttachIsGatedButNotifyIsNot — VİDANIN SINIRI.
+//
+// Bu vida "bana haber verme" DEĞİL, "bunu olay yönetimine sokma" demek.
+// Kapalıyken problem yine açılmalı ve bildirim yine gitmeli; yalnız
+// incident açılmamalı. Kapı yanlış yere konursa (notify'ı da kapsarsa)
+// operatör sessizce sayfa almamaya başlar ve bunu kimse fark etmez.
+func TestIncidentAttachIsGatedButNotifyIsNot(t *testing.T) {
+	src := readAnomalySource(t)
+	i := strings.Index(src, "func (d *Detector) checkOne(")
+	if i < 0 {
+		t.Fatal("checkOne bulunamadı — test bayatladı")
+	}
+	body := src[i:]
+	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
+		body = body[:j+1]
+	}
+	gate := strings.Index(body, "cfg.AttachesToIncident()")
+	attach := strings.Index(body, "AttachProblemToIncident(")
+	notify := strings.Index(body, "SendProblemAlert(")
+	upsert := strings.Index(body, "UpsertProblem(ctx, p)")
+	if gate < 0 {
+		t.Fatal("incident bağlama kapısı YOK — Settings'teki kutucuk hiçbir şey yapmaz")
+	}
+	if attach < 0 || notify < 0 || upsert < 0 {
+		t.Fatal("checkOne'ın açma dalı tanınamadı — test bayatladı")
+	}
+	if gate > attach {
+		t.Error("kapı AttachProblemToIncident'tan SONRA — incident yine açılıyor")
+	}
+	// Bildirim kapının DIŞINDA olmalı: kapı bloğu attach ile notify
+	// arasında kapanmalı.
+	closeIdx := strings.Index(body[attach:], "\n\t\t}")
+	if closeIdx < 0 {
+		t.Fatal("kapı bloğunun kapanışı bulunamadı — test bayatladı")
+	}
+	if attach+closeIdx > notify {
+		t.Error("SendProblemAlert kapının İÇİNDE kaldı. Bu vida 'bana haber " +
+			"verme' değil, 'bunu olay yönetimine sokma' demek — bildirimi de " +
+			"kesmek operatörü sessizce sayfasız bırakırdı.")
+	}
+}
+
+func readAnomalySource(t *testing.T) string {
+	t.Helper()
+	b, err := os.ReadFile("anomaly.go")
+	if err != nil {
+		t.Fatalf("anomaly.go okunamadı: %v", err)
+	}
+	// Yorumları at: bu oturumda iki kez, kaynak-tarama testi kendi
+	// düzeltmesinin yorumunda alıntılanan ESKİ kodla eşleşip yanlış
+	// yeşil verdi.
+	return regexp.MustCompile(`(?m)^\s*//.*$`).ReplaceAllString(string(b), "")
 }
 
 // TestVolumeRidesTheSameQuery — MALİYET sözleşmesi.

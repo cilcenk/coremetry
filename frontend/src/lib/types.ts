@@ -4706,4 +4706,12 @@ export interface AnomalySensitivityConfig {
   // Bu |z|'nin üstü critical. Dedektör YALNIZ critical verdict'te
   // Problem açtığı için (v0.9.193) bu fiilen açılma eşiğidir.
   criticalZ: number;
+  // v0.9.827 — dedektörün açtığı metrik problemi otomatik incident'a
+  // bağlansın mı?
+  //
+  // OPSİYONEL çünkü backend'de *bool: bu sürümden ESKİ settings
+  // satırlarında alan hiç yok ve "yok" = bugünkü davranış (bağla).
+  // Bu yüzden okuma daima `!== false` ile yapılmalı, `=== true` ile
+  // DEĞİL — ikincisi eski satırları sessizce kapalı gösterirdi.
+  attachToIncident?: boolean;
 }

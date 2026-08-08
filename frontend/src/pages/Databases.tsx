@@ -10,6 +10,7 @@ import { DependenciesTable } from '@/components/DependenciesTable';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs } from '@/lib/utils';
+import { DatabasesSummary } from '@/pages/databases/DatabasesSummary';
 import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
 import type { SlowQueryRow } from '@/lib/types';
@@ -220,6 +221,17 @@ export default function DatabasesPage() {
         {/* v0.9.405 — URL-state taşıyan sayfa görünüm kaydedebilmeli
             (saved_views şeması hazır; Endpoints emsali). */}
         <SavedViewsBar page="databases" />
+        {/* v0.9.820 — KPI şeridi + üç grafik. Sayfa bugüne dek iki tablo
+            + bir ifade listesiydi: "veritabanı ne zaman yavaşladı"
+            sorusu ancak satır açılıp drawer'a bakılarak, instance
+            instance cevaplanabiliyordu. Şerit tablonun kendi
+            filtrelerini (dbsys/dbname/compare) okuyor, yani üstteki sayı
+            ile alttaki satırlar AYNI kümeyi anlatıyor. Tablo sorgusunun
+            durumundan BAĞIMSIZ mount edilir — kendi loading/error/empty
+            kanalları var ve tablo hata verse bile grafik doğru. */}
+        <DatabasesSummary
+          fromNs={from} toNs={to}
+          dbsys={dbsys} dbname={dbname} compare={compare} />
         {q.isPending && <TableSkeleton rows={8} cols={11} wideFirst />}
         {q.isError && (
           <div style={{ color: 'var(--err)', fontSize: 12 }}>

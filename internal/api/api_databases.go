@@ -67,6 +67,31 @@ func mergeDBPrior(cur, prior []chstore.DBInstance) {
 	}
 }
 
+// getDatabasesSeries (v0.9.820) — /databases'in KPI şeridi + üç
+// grafiğinin TEK kaynağı. Sayfanın kendi filtrelerini (?dbsys= /
+// ?dbname=) okur ki şeritteki sayı ile tablodaki satırlar aynı kümeyi
+// anlatsın.
+//
+// Anahtar TÜM girdileri hashler (v0.5.187 sınıfı): pencere + dbsys +
+// dbname + compare. İkisi de KATALOG değeri (tablonun select'lerinden
+// geliyor, serbest metin değil), yani anahtar kardinalitesi kurulumdaki
+// motor × şema sayısıyla sınırlı. 30 sn TTL — genel bakışla aynı rung,
+// sayfa yüklemesi ikisini de sıcak yakalar.
+func (s *Server) getDatabasesSeries(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	from, to := parseFromTo(r, time.Hour)
+	dbsys := q.Get("dbsys")
+	dbname := q.Get("dbname")
+	compare := q.Get("compare") == "prior"
+	key := fmt.Sprintf("db-series:v1:%s:sys=%s:name=%s:cmp=%v",
+		cacheBucket(from, to), dbsys, dbname, compare)
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetDatabasesSeries(ctx, chstore.DatabasesSeriesQuery{
+			From: from, To: to, DBSystem: dbsys, DBName: dbname, Compare: compare,
+		})
+	})
+}
+
 // getDBTrends serves the per-row RED sparklines (#1) + latest-bucket
 // health snapshot (#6) for the /databases + /messaging overview
 // grid. One DBTrend per (db_system, instance, db_name) — keyed

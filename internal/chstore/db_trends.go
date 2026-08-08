@@ -41,10 +41,45 @@ type DBTrend struct {
 
 	Points []DBTrendPoint `json:"points"`
 
-	// Latest-bucket health snapshot (gauge source).
+	// Son TAM kovanın sağlık anlık görüntüsü (rozet kaynağı).
+	//
+	// v0.9.820 — "son kova" idi, "son TAM kova" oldu. Canlı bir pencerede
+	// en son kova henüz DOLUYOR: 5 dakikalık bir kovanın ilk saniyesinde
+	// okunan rps neredeyse sıfır, p99 ise o ana dek görülmüş birkaç
+	// span'in quantile'ı. Rozet bu yüzden her sayfa yenilemesinde
+	// "trafik durdu / gecikme düzeldi" diye parlıyordu ve operatör
+	// sayfayı yenileyince kendi kendine "düzelen" bir sistem görüyordu.
+	// Sağlık göstergesinin dalgalanması, sağlık göstergesinin olmamasından
+	// kötüdür.
 	CurRps       float64 `json:"curRps"`
 	CurErrorRate float64 `json:"curErrorRate"` // 0..100
 	CurP99Ms     float64 `json:"curP99Ms"`
+	// CurFromPartial — pencerede TEK BİR tam kova bile yoktu, rozet
+	// dolmakta olan kovadan okundu. omitempty: normal hâlde alan hiç
+	// çıkmaz; çıktığında frontend tooltip'i bunu söyler.
+	CurFromPartial bool `json:"curFromPartial,omitempty"`
+}
+
+// dbTrendCurrentIdx — sağlık rozetinin okunacağı noktanın indeksi.
+// SAF; tablo-güdümlü test (databases_series_test.go).
+//
+// Sondan geriye ilk TAM kovayı arar. Hiç yoksa (pencere tek ve hâlâ
+// dolan bir kovadan ibaret) son noktaya düşer ve partial=true ile bunu
+// İLAN eder — sessizce yanlış bir sayı basmaktansa "bu sayı henüz
+// oturmadı" demek.
+//
+// Boş seri → (-1, false): çağıran Cur* alanlarına dokunmaz.
+func dbTrendCurrentIdx(pts []DBTrendPoint, bucketSec, nowUnix int64) (int, bool) {
+	if len(pts) == 0 {
+		return -1, false
+	}
+	for i := len(pts) - 1; i >= 0; i-- {
+		start := pts[i].T / 1e9
+		if start+bucketSec <= nowUnix {
+			return i, false
+		}
+	}
+	return len(pts) - 1, true
 }
 
 // dbTrendBucketSeconds is the MV bucket width in seconds. The
@@ -145,18 +180,32 @@ func (s *Store) GetDBTrends(ctx context.Context, from, to time.Time) ([]DBTrend,
 			pt.ErrorRate = float64(errorCount) / float64(spanCount) * 100
 		}
 		out[i].Points = append(out[i].Points, pt)
-
-		// ORDER BY time_bucket ascending means the last point we
-		// see for a key is its latest bucket — keep overwriting so
-		// Cur* lands on the freshest snapshot without a second pass.
-		out[i].CurRps = pt.Rps
-		out[i].CurErrorRate = pt.ErrorRate
-		out[i].CurP99Ms = pt.P99Ms
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// v0.9.820 — Cur* artık son TAM kovadan. Eskiden döngü içinde her
+	// noktada üzerine yazılıyordu, yani daima DOLMAKTA olan son kovaya
+	// oturuyordu (gerekçe: DBTrend başlığı).
+	applyDBTrendCurrent(out, time.Now().Unix())
 	return out, nil
+}
+
+// applyDBTrendCurrent — her trendin Cur* alanlarını son TAM kovadan
+// doldurur. GetDBTrends ve GetMessagingTrends'in ORTAK adımı: iki
+// sayfanın sağlık rozeti aynı tanımdan okumalı.
+func applyDBTrendCurrent(out []DBTrend, nowUnix int64) {
+	for i := range out {
+		idx, partial := dbTrendCurrentIdx(out[i].Points, dbTrendBucketSeconds, nowUnix)
+		if idx < 0 {
+			continue
+		}
+		p := out[i].Points[idx]
+		out[i].CurRps = p.Rps
+		out[i].CurErrorRate = p.ErrorRate
+		out[i].CurP99Ms = p.P99Ms
+		out[i].CurFromPartial = partial
+	}
 }
 
 // DbNamesBySystem returns the dominant db.name (schema / instance) per
@@ -275,12 +324,11 @@ func (s *Store) GetMessagingTrends(ctx context.Context, from, to time.Time) ([]D
 			pt.ErrorRate = float64(errorCount) / float64(spanCount) * 100
 		}
 		out[i].Points = append(out[i].Points, pt)
-		out[i].CurRps = pt.Rps
-		out[i].CurErrorRate = pt.ErrorRate
-		out[i].CurP99Ms = pt.P99Ms
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	// v0.9.820 — DB ikiziyle aynı kural: rozet son TAM kovadan.
+	applyDBTrendCurrent(out, time.Now().Unix())
 	return out, nil
 }

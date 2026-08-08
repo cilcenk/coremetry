@@ -48,6 +48,7 @@ import { PinToDashboardModal } from './explore/PinToDashboardModal';
 import { GroupTable } from './explore/GroupTable';
 import { SummaryViz } from './explore/SummaryViz';
 import { RowsCappedNote } from './explore/RowsCappedNote';
+import { heatmapQuerySig } from './explore/heatmapSig';
 import { QueryRow } from './explore/QueryRow';
 import { FormulaRow } from './explore/FormulaRow';
 import { VizRail } from './explore/VizRail';
@@ -373,6 +374,17 @@ function ExploreInner({ onSelfWrite }: {
 
   // Heatmap viz — the LatencyHeatmap path, driven by query A (panel header
   // states it). Gated exactly like the pre-v2 heatmap fetch.
+  //
+  // v0.9.810 — bağımlılık DARALDI. Eskiden `debounced` (tüm builder state)
+  // ve `exploreRange` nesnesi dep'teydi; oysa istek yalnız ÜRETEN İLK
+  // SORGUNUN filtrelerini + DSL'ini + pencereyi + bucket sayısını
+  // taşıyor. B'nin agg'ini değiştirmek ya da formülü yazmak, girdisine hiç
+  // dokunmadan sayfanın en pahalı taramasını (ham spans log-ölçek ızgarası)
+  // yeniden tetikliyordu. İmza SAF ve testli (heatmapSig.ts) — bir alan
+  // isteğe girerse imzaya da girmek zorunda.
+  const heatmapBuckets = heatmapBucketCount(1);
+  const heatmapSig = heatmapQuerySig(
+    debounced, exploreRange.from, exploreRange.to, heatmapBuckets);
   useEffect(() => {
     // Any query / range / viz change invalidates a pending box-select — the
     // dragged rectangle no longer maps onto the heatmap about to render.
@@ -390,12 +402,17 @@ function ExploreInner({ onSelfWrite }: {
       filters: fs.length ? JSON.stringify(fs) : undefined,
       dsl: a.dsl.trim() || undefined,
       // v0.9.707 — sabit 80 → genişlik-türevi (~12px/sütun, 40..240).
-      from, to, buckets: heatmapBucketCount(1),
+      from, to, buckets: heatmapBuckets,
     })
       .then(h => { if (!cancelled) setHeatmap(h ?? null); })
       .catch(() => { if (!cancelled) setHeatmap(null); });
     return () => { cancelled = true; };
-  }, [builderActive, debounced, exploreRange]);
+    // debounced/exploreRange BİLEREK dep değil: ikisinin de heatmap'e
+    // giden parçaları heatmapSig'in İÇİNDE ve effect gövdesi her koşuda
+    // güncel değerleri okuyor. Kimliklerini dep'e koymak daraltmayı
+    // geçersiz kılardı.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [builderActive, heatmapSig]);
 
   // ── Traces / repeats fetches (pre-v2 behaviour, scoped to their modes) ───
   useEffect(() => {

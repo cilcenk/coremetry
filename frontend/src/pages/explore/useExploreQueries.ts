@@ -115,9 +115,17 @@ export function useExploreQueries(
       const desc = q.source === 'span' ? exemplarDescriptor(q) : null;
       return {
         queryKey: keys.explore.query(querySignature(q, effStep), from, to),
-        queryFn: (): Promise<QueryData> =>
+        // v0.9.810 — signal DESTRUCTURE edilir ve ÜÇ yola da iletilir
+        // (v0.9.617 sınıfı: React Query queryFn'e bir AbortSignal veriyor,
+        // 174 çağrı noktasının sıfırı iletiyordu). Explore'un fan-out'u
+        // sayfanın en pahalı okuması: operatör her aralık/filtre
+        // dokunuşunda 4 sorguyu birden yeniliyor ve eskiler ClickHouse'ta
+        // sonuna kadar koşuyordu. RQ signal'i YALNIZ son observer
+        // kalktığında abort eder, yani sonuca kimse bakmıyorken; iptal
+        // isCanceled sınıfına uyar ve ekrana hata DÜŞÜRMEZ.
+        queryFn: ({ signal }): Promise<QueryData> =>
           desc
-            ? api.resolveMetric(desc, { from, to }, { step: effStep, exemplars: true })
+            ? api.resolveMetric(desc, { from, to }, { step: effStep, exemplars: true, signal })
                 .then(r => ({
                   series: r?.series ?? [], exemplars: r?.exemplars ?? [],
                   // v0.9.809 — resolver yolu da dürüstlük taşıyor: satır
@@ -145,7 +153,7 @@ export function useExploreQueries(
                   dsl: q.dsl.trim() || undefined,
                   from, to,
                   step: effStep,
-                }).then(r => ({ series: r?.series ?? [], exemplars: [], totalSeries: r?.totalSeries, rowsCapped: r?.rowsCapped }))
+                }, signal).then(r => ({ series: r?.series ?? [], exemplars: [], totalSeries: r?.totalSeries, rowsCapped: r?.rowsCapped }))
               : api.metricQueryFull({
                   name: q.metric,
                   agg: q.agg,
@@ -153,9 +161,15 @@ export function useExploreQueries(
                   filters: filters.length ? encodeFilters(filters) : undefined,
                   from, to,
                   step: effStep,
-                }).then(r => ({ series: r?.series ?? [], exemplars: [], rowsCapped: r?.rowsCapped })),
+                }, signal).then(r => ({ series: r?.series ?? [], exemplars: [], rowsCapped: r?.rowsCapped })),
         enabled: produces(q) && from > 0,
-        staleTime: 30_000,
+        // v0.9.810 — staleTime SUNUCU TTL'İNDEN BÜYÜK (30s değil 35s).
+        // Üç endpoint de serveCached'de 30 sn tutuyor; istemci eşiği tam
+        // 30 sn olunca yenileme sunucu girdisinin son anına denk geliyor
+        // ve istek çoğu zaman SOĞUK cache'e düşüyordu — yani her poll,
+        // tasarruf etmesi gereken cache'i ıskalıyordu. v0.8.270 disiplini:
+        // "staleTime ≥ sunucu TTL", eşitlik değil.
+        staleTime: 35_000,
       };
     }),
   });
@@ -198,7 +212,9 @@ export function useExploreQueries(
               filters: fstr, from: fromB, to: toB, limit: 50,
             }).then(r => r?.items ?? []),
           enabled: from > 0,
-          staleTime: 30_000,
+          // v0.9.810 — sunucu TTL'i 30s (pivotExemplarKey); eşiği eşit
+          // bırakmak soğuk düşürüyordu (yukarıdaki gerekçe).
+          staleTime: 35_000,
         };
       }
       return {
@@ -207,7 +223,7 @@ export function useExploreQueries(
           api.exemplars({ metric: q.metric, service: svc, from: fromB, to: toB, limit: 50 })
             .then(r => r?.items ?? []),
         enabled: eligible && from > 0,
-        staleTime: 30_000,
+        staleTime: 35_000,
       };
     }),
   });

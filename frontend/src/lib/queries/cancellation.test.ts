@@ -24,6 +24,15 @@ const HEAVY: { file: string; hooks: string[] }[] = [
   { file: 'services.ts', hooks: ['api.services(', 'api.serviceMap('] },
   { file: 'logs.ts', hooks: ['api.logs('] },
   { file: 'endpoints.ts', hooks: ['api.endpoints(', 'api.endpointDetail(', 'api.endpointSplit(', 'api.endpointDownstream('] },
+  // v0.9.810 — Explore'un fan-out'u. Bu dosya lib/queries'te DEĞİL
+  // (pages/explore altında) ama kusur sınıfı birebir aynı ve ölçeği daha
+  // büyük: operatör her aralık/filtre/viz dokunuşunda DÖRT sorguyu birden
+  // yeniliyor, üçü de ham spans / metric_points taramasına düşebiliyor ve
+  // eskiler ClickHouse'ta sonuna kadar koşuyordu.
+  {
+    file: '../../pages/explore/useExploreQueries.ts',
+    hooks: ['api.resolveMetric(', 'api.spanMetricTopN(', 'api.metricQueryFull('],
+  },
 ];
 
 // stripComments — kaynağı YORUMSUZ okur.
@@ -36,16 +45,37 @@ function stripComments(src: string): string {
   return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 }
 
+// callSpan — çağrının AÇILIŞ parantezinden EŞLEŞEN kapanışına kadar olan
+// metin.
+//
+// v0.9.810'a dek tarama "çağrının kendi SATIRI"na bakıyordu. O kestirme,
+// argümanları tek satıra sığan çağrılar için yeterliydi; Explore'un
+// fan-out'unda ise `api.spanMetricTopN({ … }, signal)` on satıra yayılıyor
+// ve signal KAPANIŞ satırında duruyor — kestirme onu göremez ve düzeltme
+// yerindeyken kırmızı verirdi. Dengeli parantez, çağrının gerçek sınırı.
+function callSpan(src: string, hook: string): string | null {
+  const start = src.indexOf(hook);
+  if (start < 0) return null;
+  let depth = 0;
+  for (let i = start + hook.length - 1; i < src.length; i++) {
+    const c = src[i];
+    if (c === '(') depth++;
+    else if (c === ')') {
+      depth--;
+      if (depth === 0) return src.slice(start, i + 1);
+    }
+  }
+  return src.slice(start);
+}
+
 describe('pahalı okumalar iptal edilebilir', () => {
   for (const { file, hooks } of HEAVY) {
     const src = stripComments(readFileSync(new URL(`./${file}`, import.meta.url), 'utf8'));
     for (const hook of hooks) {
       it(`${file}: ${hook}…) signal alıyor`, () => {
-        const i = src.indexOf(hook);
-        expect(i, `${hook} bulunamadı — test bayatladı`).toBeGreaterThan(-1);
-        // Çağrının kendi satırında signal geçilmeli.
-        const line = src.slice(i, src.indexOf('\n', i));
-        expect(line, `${hook} signal iletmiyor — operatör aralığı değiştirince ` +
+        const span = callSpan(src, hook);
+        expect(span, `${hook} bulunamadı — test bayatladı`).not.toBeNull();
+        expect(span!, `${hook} signal iletmiyor — operatör aralığı değiştirince ` +
           `bu sorgu ClickHouse'ta sonuna kadar koşmaya devam eder`).toContain('signal');
       });
     }

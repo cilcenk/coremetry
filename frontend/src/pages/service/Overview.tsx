@@ -14,7 +14,7 @@ import type { ChartThreshold } from '@/lib/chart/overlays';
 import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { ChartCard, type ChartLine } from './charts/ChartCard';
 import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
-import { sumNullableSeries } from './charts/throughputTotal';
+import { sumNullableSeries, sumSeries } from './charts/throughputTotal';
 import { MetricThroughputNote } from './MetricThroughputNote';
 // v0.9.708 — CorePanel LAZY: @grafana/* vendor ağırlığı (~126 KB gzip)
 // yalnız chartsV2 bayrağı açık ve panel gerçekten çizilirken iner.
@@ -29,7 +29,10 @@ const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 import { EnvAmbiguousNote } from './EnvAmbiguousNote';
 import { buildRootOpLines } from './charts/rootOpSeries';
-import { topRoutesByArea, metricUnitToGrafana, ROUTE_TOP_N } from './charts/routeSeries';
+import {
+  topRoutesByArea, metricUnitToGrafana, ROUTE_TOP_N,
+  withTotalPrefix, metricAvgToMs,
+} from './charts/routeSeries';
 import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
 import { TopEndpointsCard } from './TopEndpointsCard';
@@ -130,12 +133,21 @@ function OvSparkline({ data, color }: { data: number[]; color: string }) {
   );
 }
 
-function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp, note }: {
+function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp, note, sub }: {
   lab: string; val: string; unit?: string; accent: string; spark?: number[];
   delta?: Delta | null; goodWhenUp?: boolean;
   // v0.9.240 — hover text stating WHAT the number is measured over. Latency
   // tiles carry the entry-span scope so the definition isn't folklore.
   note?: string;
+  // v0.9.798 — İKİNCİL SATIR: karonun büyük sayısıyla AYNI kavramın
+  // başka bir kaynaktan/agg'den okunmuş hâli. Bugünkü tek tüketici
+  // "P99 (span)" — Response time karosu metrik AVG'ye geçince kuyruk
+  // görünürlüğü kaybolmasın diye (metrikten P99 prod'da VERİLEMEZ:
+  // bucket_bounds yok, v0.9.774'ün kökü).
+  //
+  // Ayrı ve küçük bir prop olması bilinçli: bu satır tek commit'le geri
+  // alınabilir olmalı — kaldırıldığında karo bugünkü hâline döner.
+  sub?: string;
 }) {
   // Color by whether the move is GOOD for this metric (README §Status
   // semantics): throughput/apdex up = good (green); failure/latency up =
@@ -153,6 +165,11 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp, note }: {
         <div className={deltaCls}>
           {delta.dir === 'up' ? '▲' : delta.dir === 'down' ? '▼' : '—'} {delta.pct}%
           <span style={{ color: 'var(--text3)', fontWeight: 500 }}>vs prior</span>
+        </div>
+      )}
+      {sub && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, lineHeight: 1.35 }}>
+          {sub}
         </div>
       )}
       {spark && spark.length > 1 && <OvSparkline data={spark} color={accent} />}
@@ -468,6 +485,21 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     };
   }, [metricTputQ.data]);
 
+  // v0.9.798 — metrik throughput'un "Toplam"ı: route serilerinin İSTEMCİ
+  // tarafında toplamı. EK SORGU YOK ve gerekmiyor — rate TOPLANABİLİR
+  // (istek/sn), route'ların toplamı servis genelidir. Response time'ın
+  // Toplam'ı bunun tersi (ortalama toplanmaz) ve o yüzden ayrı sorgu
+  // atıyor; iki panelin iki farklı yolu izlemesi ölçtükleri şeyin
+  // matematiği.
+  //
+  // Hem PANELİN Toplam çizgisini hem KPI KAROSUNU besliyor: iki yüzey
+  // tek kaynaktan okusun, yoksa karo ile grafik ayrışır (v0.9.774'ün
+  // "panel boşken karo dolu" vakası — en kötü kombinasyon).
+  const metricTputTotal = useMemo<SpanMetricSeries | null>(() => {
+    const ser = metricTputQ.data?.series ?? [];
+    return ser.length > 0 ? sumSeries(ser) : null;
+  }, [metricTputQ.data]);
+
   // ── Response time · metrik (v0.9.774, operatör-bildirimi: prod'da bu
   // panel boş) ─────────────────────────────────────────────────────────
   //
@@ -517,9 +549,54 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const rtView = useMemo(
     () => topRoutesByArea(rtAvgQ.data?.series, ROUTE_TOP_N, rtAvgQ.data?.rowsCapped),
     [rtAvgQ.data]);
+
+  // ── "Toplam" serisi (v0.9.798, operatör isteği) ──────────────────────
+  //
+  // Route kırılımının YANINDA duran tek çizgi: servis geneli ortalama.
+  //
+  // AYRI SORGU, ve bu pazarlık konusu DEĞİL: ortalama TOPLANMAZ ve
+  // ortalanamaz. Route ortalamalarının ortalaması, 3 istek gören bir
+  // route ile 3000 istek gören bir route'u eşit ağırlıklar — v0.9.776'nın
+  // sunucuda düzelttiği hatanın (ortalamaların ortalaması) istemci
+  // tarafındaki birebir ikizi olurdu. Grupsuz sorgu ise sunucuda
+  // gözlem-ağırlıklı hesaplanır (sum(sum_value)/sum(count)), yani DOĞRU
+  // toplam.
+  //
+  // Throughput'un Toplam'ı bunun TERSİ (sumSeries, ek sorgu yok): rate
+  // toplanabilir bir büyüklük. İki panelin iki farklı yolu izlemesi
+  // tutarsızlık değil, ölçtükleri şeyin matematiği.
+  //
+  // v0.9.797 sayesinde bu çizgi TEMİZ: dışlama kuralları sunucuda
+  // grupsuz sorgulara da uygulanıyor, yani healthcheck route'ları
+  // Toplam'ı aşağı çekmiyor.
+  const rtTotalQ = useQuery({
+    queryKey: ['service-rt-avg-total', service, metricName, from, to, rtStep],
+    enabled: !!metricName,
+    staleTime: 30_000,
+    queryFn: ({ signal }) => api.metricQueryFull({
+      name: metricName,
+      agg: 'avg',
+      // groupBy YOK — servis geneli, gözlem-ağırlıklı.
+      filters: rtFilters,
+      from, to,
+      step: rtStep,
+    }, signal),
+  });
+  // Grupsuz sorgu tek seri döndürür; boşsa Toplam çizilmez (uydurma
+  // çizgi yok) ve panel yalnız route'ları gösterir.
+  const rtTotalSeries = rtTotalQ.data?.series?.[0];
+  const rtItems = useMemo(() => {
+    const total = (rtTotalSeries?.points?.length ?? 0) > 0
+      ? [{ name: 'Toplam', role: 'data' as const, series: [rtTotalSeries as SpanMetricSeries], emphasis: true }]
+      : [];
+    // Toplam ÖNCE: lejantın en üstünde, kalın ve accent renginde —
+    // panelde önce okunması gereken çizgi o.
+    return [...total, ...rtView.items];
+  }, [rtTotalSeries, rtView.items]);
+
   const rtUnit = metricUnitToGrafana(metricTputQ.data?.metricUnit);
   const rtNote = [
-    rtView.note,
+    withTotalPrefix(rtView.note, rtItems.length > rtView.items.length),
     // v1 dürüstlük deseni: tanınmayan birimde eksen ham sayı çizer ve
     // bunu SÖYLER — sessizce "ms" yazmak yanlış sayıya güven üretir.
     rtUnit ? null : 'birim tanınmadı',
@@ -551,6 +628,58 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const errorRatePct = firstNum(errNow, info ? info.errorRate : undefined);
   const p99Ms = firstNum(p99Now, info?.p99DurationMs);
 
+  // ── KPI karoları METRİKTEN (v0.9.798, operatör isteği) ───────────────
+  //
+  // Response time ve Throughput karoları artık altlarındaki METRİK
+  // panelleriyle AYNI kaynaktan besleniyor. Sebep v0.9.774'ün kendi
+  // teşhisinde yazılı: panel metrikten, karo span'den okuyunca ikisi
+  // ayrışıyor ve operatör hangisine bakacağını bilemiyor ("panel boşken
+  // karo dolu, en kötü kombinasyon").
+  //
+  // Response time karosunun agg'ı AVG, P99 DEĞİL — ve bu bir tercih
+  // değil bir SINIR: metrikten P99 prod'da verilemez (metric_points
+  // satırları bucket_counts taşıyıp bucket_bounds taşımıyor, sınırsız
+  // kovadan yüzdelik hesaplanamıyor — v0.9.774'ün kökü). Karo bunu
+  // etiketinde SÖYLÜYOR ("Response time · avg") ve kuyruk görünürlüğü
+  // ikincil satırda span P99 olarak duruyor.
+  //
+  // METRİK BAĞI YOKSA karolar eski span davranışına DÜŞER (boş karo
+  // YASAK) ve başlıklarına "· span" eki gelir — dürüstlük: sayı hangi
+  // kaynaktan geliyorsa o yazar.
+  const metricUnitRaw = metricTputQ.data?.metricUnit;
+  // Response time · metrik: grupsuz (gözlem-ağırlıklı) avg serisi, ms'e
+  // çevrilmiş. Birim tanınmazsa null → span'e düşülür (TAHMİN YOK).
+  const rtAvgMsSeries = useMemo(() => {
+    const pts = rtTotalSeries?.points ?? [];
+    return pts
+      .map(p => metricAvgToMs(p.value, metricUnitRaw))
+      .filter((v): v is number => v != null);
+  }, [rtTotalSeries, metricUnitRaw]);
+  const rtAvgMsNow = rtAvgMsSeries.slice(-1)[0];
+  // Throughput · metrik: route toplamının son değeri (kırılım kapalıysa
+  // sunucu zaten tek seri döndürür ve toplamı kendisidir).
+  const metricRpsSeries = useMemo(
+    () => (metricTputTotal?.points ?? []).map(p => p.value),
+    [metricTputTotal]);
+  const metricRpsNow = metricRpsSeries.slice(-1)[0];
+
+  // Kaynak KARARI karo başına ayrı: metrik throughput'u eşleşmiş ama
+  // response-time metriği birim taşımıyor olabilir. Tek bir "metrik modu"
+  // bayrağı ikisini birbirine kilitlerdi ve biri yüzünden diğeri de
+  // span'e düşerdi.
+  const rtFromMetric = rtAvgMsNow != null;
+  const tputFromMetric = metricRpsNow != null;
+  const rtLabel = rtFromMetric ? 'Response time · avg' : 'Response time · P99 (span)';
+  const tputLabel = tputFromMetric ? 'Throughput' : 'Throughput (span)';
+  // Karo tooltip'i kaynağı TAM yazar — kapsam rozeti span kapsamını
+  // anlatıyor ve metrik karosunda o rozet geçerli DEĞİL.
+  const rtTileNote = rtFromMetric
+    ? `Kaynak: ${metricName} · gözlem-ağırlıklı ortalama (grupsuz), service.name = ${service}`
+    : latScopeNote;
+  const tputTileNote = tputFromMetric
+    ? `Kaynak: ${metricTputQ.data?.metric ?? '?'} · rate toplamı (route'ların toplamı), eşleşme ${metricTputQ.data?.matchedBy ?? '?'}`
+    : latScopeNote;
+
   // "Every metric is a doorway" (Phase C) — canonical descriptors for each KPI
   // + RED chart. The SAME object that the panel carries is what the Explorer
   // re-opens via MetricPanel's ⋮ / body-click / `e`. filters ALWAYS pin the
@@ -576,6 +705,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
       agg: 'avg', unit: 'ms', filters: svcFilter,
       groupBy: ['http.route'], viz: 'line', range,
     });
+  // v0.9.798 — KARONUN kapı tanımlayıcısı: grupsuz (servis geneli) avg,
+  // stat vitrini. Grafiğinkinden AYRI olmak zorunda (yukarıdaki v0.9.774
+  // gerekçesinin aynısı, bir seviye aşağıda): karo tek bir sayı
+  // gösteriyor ve o sayı route kırılımından değil grupsuz sorgudan
+  // geliyor. groupBy ile açılan bir Explore, karonun sayısını üretemez.
+  const mkMetricResponseTimeTotal = () =>
+    metricQuery({
+      metric: metricName || 'duration_milliseconds_bucket',
+      agg: 'avg', unit: 'ms', filters: svcFilter, viz: 'stat', range,
+    });
   // v0.9.491 (operatör: "Service overview'de apdex'e gerek yok") — v0.9.476
   // Apdex karosu + grafiği kaldırıldı. Backend apdex agg'ı ve MV state'leri
   // yaşıyor; Explore'dan calls_total/apdex hâlâ sorgulanabilir.
@@ -597,17 +736,40 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           wrapped in the reusable MetricPanel doorway (compact: a hover-revealed
           ⋮ + body-click → Explore); the tile body renders verbatim. */}
       <div className="ov-grid ov-kpis ov-mb">
-        <MetricPanel compact menuOnly title="Throughput" metricQuery={mkThroughput('stat')}>
-          <KpiTile lab="Throughput" val={rps.toFixed(rps < 10 ? 1 : 0)} unit=" req/s" accent="var(--accent)" spark={vals(lat?.rate)} delta={computeDelta(vals(lat?.rate))} goodWhenUp note={latScopeNote} />
+        {/* v0.9.798 (operatör isteği) — SIRA DEĞİŞTİ: Response time önce,
+            Throughput sonra, Failure rate yerinde. Altındaki grafik
+            şeridinin sırası da bu (Response time · Throughput · Failure
+            rate), yani her karo kendi eğrisinin tam üstünde okunuyor —
+            v0.9.631'de Failure rate için kurulan hizanın diğer ikiye
+            uygulanmış hâli. */}
+        <MetricPanel compact title={rtLabel} metricQuery={rtFromMetric ? mkMetricResponseTimeTotal() : mkLatency('p99', 'stat')}>
+          <KpiTile lab={rtLabel}
+            val={rtFromMetric ? (rtAvgMsNow as number).toFixed(0) : p99Ms.toFixed(0)}
+            unit=" ms" accent="var(--orange)"
+            spark={rtFromMetric ? rtAvgMsSeries : vals(lat?.p99)}
+            delta={computeDelta(rtFromMetric ? rtAvgMsSeries : vals(lat?.p99))}
+            goodWhenUp={false} note={rtTileNote}
+            // v0.9.798 — İKİNCİL SATIR (tek commit'le geri alınabilir):
+            // büyük sayı metrik AVG olunca kuyruk görünürlüğü kaybolmasın.
+            // Değer ZATEN çekiliyor (latencyQ) — ek sorgu yok.
+            sub={rtFromMetric && p99Now != null ? `P99 (span) · ${p99Ms.toFixed(0)} ms` : undefined}
+          />
+        </MetricPanel>
+        <MetricPanel compact menuOnly title={tputLabel} metricQuery={mkThroughput('stat')}>
+          <KpiTile lab={tputLabel}
+            val={tputFromMetric
+              ? (metricRpsNow as number).toFixed((metricRpsNow as number) < 10 ? 1 : 0)
+              : rps.toFixed(rps < 10 ? 1 : 0)}
+            unit=" req/s" accent="var(--accent)"
+            spark={tputFromMetric ? metricRpsSeries : vals(lat?.rate)}
+            delta={computeDelta(tputFromMetric ? metricRpsSeries : vals(lat?.rate))}
+            goodWhenUp note={tputTileNote} />
         </MetricPanel>
         {/* v0.9.631 (operatör: "failure rate yüzdesi grafiğin üzerinde olsun,
-            p99 ile yer değişsin") — Failure rate karosu SON sıraya alındı,
-            böylece altındaki RED grafik şeridinin ÜÇÜNCÜ grafiği (Failure
-            rate) ile aynı kolona düşüyor: yüzde, ait olduğu eğrinin tam
-            üstünde okunuyor. */}
-        <MetricPanel compact title="Response time · P99" metricQuery={mkLatency('p99', 'stat')}>
-          <KpiTile lab="Response time · P99" val={p99Ms.toFixed(0)} unit=" ms" accent="var(--orange)" spark={vals(lat?.p99)} delta={computeDelta(vals(lat?.p99))} goodWhenUp={false} note={latScopeNote} />
-        </MetricPanel>
+            p99 ile yer değişsin") — Failure rate karosu SON sırada; altındaki
+            RED grafik şeridinin ÜÇÜNCÜ grafiğiyle (Failure rate) aynı kolona
+            düşüyor. v0.9.798'de kaynağı DEĞİŞMEDİ: hata oranı span türevli
+            (giriş-span ilkesi) ve metrik tarafında karşılığı yok. */}
         <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('stat')}>
           <KpiTile lab="Failure rate" val={`${errorRatePct.toFixed(2)}%`} accent="var(--err)" spark={vals(lat?.error_rate)} delta={computeDelta(vals(lat?.error_rate))} goodWhenUp={false} note={latScopeNote} />
         </MetricPanel>
@@ -661,12 +823,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // gösteriyordu" diyordu. Throughput paneli (:723) doğru
                 // deseni zaten taşıyordu.
                 storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
-                loading={metricTputQ.isLoading || rtAvgQ.isLoading}
+                loading={metricTputQ.isLoading || rtAvgQ.isLoading || rtTotalQ.isLoading}
                 // Birim SUNUCUDAN gelen OTLP birimine göre; tanınmazsa
                 // undefined (ham sayı) ve not bunu söyler.
                 unit={rtUnit}
                 xRange={xRange}
-                items={rtView.items}
+                // v0.9.798 — Toplam (kalın, accent) + ilk N route.
+                items={rtItems}
                 // defaultHidden YOK: tek agg var, gizlenecek P50/P95 de.
                 note={rtNote}
                 // Hata ve boşluk AYRI: birincisi sorgu patladı, ikincisi
@@ -675,12 +838,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 error={rtAvgQ.isError
                   ? (rtAvgQ.error instanceof Error ? rtAvgQ.error.message : 'Metrik sorgusu başarısız')
                   : undefined}
-                emptyReason={!rtAvgQ.isError && !rtAvgQ.isLoading && rtView.items.length === 0
+                // Boşluk ölçütü rtItems: Toplam gelmiş ama route kırılımı
+                // boşsa panel DOLU (tek çizgi) — "veri yok" demek yalan
+                // olurdu.
+                emptyReason={!rtAvgQ.isError && !rtAvgQ.isLoading && rtItems.length === 0
                   ? (metricName ? 'Bu filtrede veri yok' : 'Servise bağlı metrik bulunamadı')
                   : undefined}
                 emptyHint={metricName ? `${metricName} · service.name = ${service}` : undefined}
                 // Geliştirici detayı — mevcut ⋯ → "Sorguyu göster".
                 queryText={`avg(${metricName || '?'}) by (http.route), service.name="${service}", step=${rtStep}s`
+                  + `\nToplam: avg(${metricName || '?'}), service.name="${service}" (grupsuz, gözlem-ağırlıklı)`
                   + (rtAvgQ.isError ? `\n\nHATA: ${String(rtAvgQ.error)}` : '')}
                 regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
@@ -728,12 +895,22 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 loading={metricTputQ.isLoading}
                 height={200} xRange={xRange} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
                 unit="reqps"
-                items={(metricTputQ.data?.series ?? []).map((s0) => ({
-                  series: [s0],
-                  name: s0.groupKey?.length ? s0.groupKey.join(' · ')
-                    : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
-                  role: 'data' as const,
-                }))}
+                // v0.9.798 — "Toplam" (kalın, accent) + route serileri.
+                // Toplam İSTEMCİDE hesaplanıyor (sumSeries): rate
+                // toplanabilir, ek sorgu gereksiz. YALNIZ çok serili
+                // kırılımda çiziliyor — tek seri varsa toplam ZATEN o
+                // seri ve aynı çizgiyi üst üste basmak olurdu.
+                items={[
+                  ...((metricTputQ.data?.series?.length ?? 0) > 1 && metricTputTotal
+                    ? [{ series: [metricTputTotal], name: 'Toplam', role: 'data' as const, emphasis: true }]
+                    : []),
+                  ...(metricTputQ.data?.series ?? []).map((s0) => ({
+                    series: [s0],
+                    name: s0.groupKey?.length ? s0.groupKey.join(' · ')
+                      : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
+                    role: 'data' as const,
+                  })),
+                ]}
                 regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset}
                 syncKey={chartSync}

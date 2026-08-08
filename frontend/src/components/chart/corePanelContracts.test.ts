@@ -172,7 +172,9 @@ describe('CorePanel bars markı (v0.9.785)', () => {
 
   it('line dalı korunur: viz varsayılan line, eski değerler yerinde', () => {
     expect(src).toMatch(/viz = 'line'/);
-    expect(src).toMatch(/lineWidth: bars \? 1 : 1\.5/);
+    // v0.9.798 — VURGU dalı eklendi (Overview "Toplam" çizgisi 2.5px).
+    // Kapının koruduğu şey değişmedi: bars 1, VURGUSUZ taban 1.5.
+    expect(src).toMatch(/lineWidth: bars \? 1 : emphasis\?\.\[i\] \? 2\.5 : 1\.5/);
     // v0.9.788 — area/stacked dalları eklendi; line ve bars uçları
     // (12 / 35 + dashed ghost'un 0'ı) BAYT BAYT yerinde kalmalı.
     expect(src).toMatch(
@@ -438,8 +440,9 @@ describe('CorePanel focusedLabel (v0.9.793)', () => {
 
   it('taban genişlik CONFIG\'den okunur — ikinci "1.5" kopyası yok', () => {
     expect(src).toMatch(/config\.getSeries\(\)\.map\(s => s\.props\.lineWidth\)/);
-    // Config'deki tek taban ifadesi yerinde kalmalı (v0.9.785 kapısı).
-    expect(src).toMatch(/lineWidth: bars \? 1 : 1\.5/);
+    // Config'deki tek taban ifadesi yerinde kalmalı (v0.9.785 kapısı;
+    // v0.9.798'de vurgu dalı eklendi, taban 1.5 aynen duruyor).
+    expect(src).toMatch(/lineWidth: bars \? 1 : emphasis\?\.\[i\] \? 2\.5 : 1\.5/);
   });
 
   it('iki sürücü tek kanal: kontrollü prop kazanır, yoksa iç lejant hover', () => {
@@ -545,5 +548,54 @@ describe('CorePanel tekeli', () => {
       }
     }
     expect(offenders, 'CorePanel dışında @grafana/ui chart primitifi').toEqual([]);
+  });
+});
+
+// ── VURGU kanalı (v0.9.798) ─────────────────────────────────────────────
+//
+// Overview'ın "Toplam" çizgisi route kırılımının yanında duruyor ve
+// ondan FARKLI bir şey ölçüyor (gözlem-ağırlıklı servis geneli). Aynı
+// kalınlıkta çizilseydi 11 çizgiden biri gibi görünürdü.
+//
+// Kapının koruduğu asıl şey RENK TEKLİĞİ: rengi ÜÇ yer okuyor (uPlot
+// config, tooltip satırı, lejant swatch'ı) ve üçü ayrışırsa operatör
+// grafikte accent, lejantta başka renk görür.
+
+describe('CorePanel vurgu kanalı (v0.9.798)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('renk TEK saf çekirdekten — üç okuma yeri de seriesLineColor', () => {
+    expect(src).toMatch(
+      /import \{ seriesLineColor, type SeriesRole \} from '@\/lib\/chart\/seriesRole'/);
+    // Üç çağrı: config lineColor + tooltip satırı + lejant swatch'ı.
+    expect((src.match(/seriesLineColor\(/g) ?? []).length).toBe(3);
+    // Eski doğrudan çağrı KALMAMALI: kalsaydı o yüzey vurguyu görmezdi.
+    expect(src).not.toMatch(/resolveVar\(seriesRoleColor\(/);
+  });
+
+  it('🔴 config bağımlılığı emphasis TAŞIR (yoksa vurgu geç gelir)', () => {
+    const deps = src.match(/\}, \[[^\]]*\]\);/g) ?? [];
+    const cfg = deps.filter(d => d.includes('overlaySig'));
+    expect(cfg.length, 'config useMemo dizisi bulunamadı').toBe(1);
+    expect(cfg[0]).toContain("emphasis?.join(',')");
+  });
+});
+
+describe('CorePanelMulti vurgu işareti (v0.9.798)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './corePanelEntry.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('item başına emphasis, dashed ile AYNI tek geçişte', () => {
+    expect(src).toMatch(/emphasis\?: boolean;/);
+    expect(src).toMatch(/emphasis\.push\(!!it\.emphasis\)/);
+    // Prop yalnız GERÇEKTEN vurgu varsa geçer (dashed sözleşmesi).
+    expect(src).toMatch(/emphasis=\{anyEmph \? emphasis : undefined\}/);
+  });
+
+  it('hayalet ASLA vurgulu değil (soluk+kesikli olmasının tek sebebi geri planda kalması)', () => {
+    expect(src).toMatch(/emphasis\.push\(false\)/);
   });
 });

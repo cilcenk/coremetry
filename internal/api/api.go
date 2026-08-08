@@ -632,6 +632,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/messaging", s.getMessaging)
 	// v0.9.434 — /messaging satır-içi trend (getDBTrends paritesi).
 	mux.HandleFunc("GET /api/messaging/trends", s.getMessagingTrends)
+	mux.HandleFunc("GET /api/messaging/series", s.getMessagingSeries)
 	mux.HandleFunc("GET /api/messaging/detail", s.getMessagingDetail)
 	mux.HandleFunc("GET /api/services/{name}/backtrace", s.getServiceBacktrace)
 	mux.HandleFunc("GET /api/services/{name}/infra", s.getServiceInfraMetrics)

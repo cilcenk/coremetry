@@ -1,19 +1,36 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { messagingTracesHref } from '@/lib/pivotHref';
 import { Link } from 'react-router-dom';
 import { Spinner } from '@/components/Spinner';
-import { Sparkline } from '@/components/Sparkline';
+import { LazyMount } from '@/components/LazyMount';
 import { api } from '@/lib/api';
 import { fmtNum, fmtNs, timeRangeToNs } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { TimeRange, DBDetail, MessagingDetail } from '@/lib/types';
+import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries } from '@/lib/types';
 import { Stat, statementTracesHref } from './panels/shared';
 import { OraclePanel } from './panels/OraclePanel';
 import { PostgresPanel } from './panels/PostgresPanel';
 import { MySQLPanel } from './panels/MySQLPanel';
 import { RedisPanel } from './panels/RedisPanel';
 import { WaitLockStrip, isWaitLockEngine } from './panels/WaitLockStrip';
+
+// v0.9.814 — drawer'ın mini panelleri de CorePanel. LAZY: @grafana/*
+// statik import edilseydi /messaging + /databases vendor chunk'ı ~1 MB
+// büyürdü ve drawer AÇILMADAN da ödenirdi (Overview.tsx:26-29 ölçümü).
+const CorePanelMultiLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
+
+// kindSeries — {timeS, …} kovalarını CorePanel'in tek serisine çevirir.
+// time unix NANOSANİYE (SpanMetricSeries sözleşmesi).
+function kindSeries<T extends { timeS: number }>(
+  points: T[], pick: (p: T) => number, label: string,
+): SpanMetricSeries[] {
+  return [{
+    groupKey: [label],
+    points: points.map(p => ({ time: p.timeS * 1e9, value: pick(p) })),
+  }];
+}
 
 // msOrDash — v0.9.263. A duration the backend didn't send is '—', never
 // "0.0 ms". These fields are optional precisely because a warm cached payload
@@ -58,6 +75,20 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
     p.then(r => setData(r ?? null))
      .catch(() => setData(null));
   }, [system, cluster, name, kind, range]);
+
+  // v0.9.814 — mini panellerin x ekseni sorgu penceresine sabitlenir
+  // (v0.9.83 kuralı): veri seyrekse eksen kendi kendine daralıp iki
+  // paneli farklı zaman aralığına yayardı ve imleç senkronu yalan olurdu.
+  // timeRangeToNs MEMO içinde — çıplak JSX'te sonsuz refetch (v0.5.184).
+  // ERKEN DÖNÜŞLERDEN ÖNCE: hook sırası sabit kalmalı.
+  const drawerXRange = useMemo(() => {
+    const { from, to } = timeRangeToNs(range);
+    return { from: from / 1e9, to: to / 1e9 };
+  }, [range]);
+  // Sync grubu destination BAŞINA: iki farklı satırın panelleri aynı
+  // gruba düşerse imleç komşu destination'ın grafiğinde gezinir.
+  // '-ms' soneki motor ad alanı (v0.9.789).
+  const drawerSync = `msg-drawer:${system}|${cluster}|${name}-ms`;
 
   if (data === undefined) return <Spinner />;
   if (data === null) return (
@@ -114,6 +145,7 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
     ? (data as MessagingDetail).e2e
     : undefined;
   const e2eSeries = e2e?.series ?? [];
+  const e2eLagSeries = kindSeries(e2eSeries, p => p.avgMs, 'E2E lag');
 
   return (
     <div>
@@ -176,43 +208,46 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
           tones below (producer = accent, consumer = ok).
           v0.8.372 — the third (pre-seated) slot carries the e2e
           lag sparkline: avg produce→consume latency per bucket. */}
+      {/* v0.9.814 — üç sparkline CorePanel mini paneline döndü. Eski
+          <Sparkline> 26px'lik, eksensiz, tooltip'siz bir şeritti: eğrinin
+          ŞEKLİ görünüyor ama "ne zaman" ve "ne kadar" görünmüyordu, yani
+          drawer'ı açan operatör olayın saatini yine tablodan tahmin
+          etmek zorundaydı. Üçü AYNI sync grubunda (destination başına
+          ayrı grup) — imleç birlikte gezer, yani üretim düşüşü ile
+          gecikme sıçraması aynı x'te okunur. */}
       {(msgSeries.length > 1 || e2eSeries.length > 1) && (
-        <div style={{ display: 'flex', gap: 28, marginBottom: 14, flexWrap: 'wrap' }}>
+        <div className="ov-grid ov-charts-3 ov-mb">
           {msgSeries.length > 1 && (
-            <>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)',
-                              textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>
-                  Produce /min
-                </div>
-                <Sparkline
-                  values={msgSeries.map(p => p.produceCount / 5)}
-                  width={220} height={26} unit="/min"
-                  title="produce rate · 5-min buckets" />
-              </div>
-              <div>
-                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)',
-                              textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>
-                  Consume /min
-                </div>
-                <Sparkline
-                  values={msgSeries.map(p => p.consumeCount / 5)}
-                  width={220} height={26} color="var(--ok)" unit="/min"
-                  title="consume rate · 5-min buckets" />
-              </div>
-            </>
+            <LazyMount minHeight={170}>
+              <Suspense fallback={<div style={{ height: 170, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
+                <CorePanelMultiLazy
+                  title="Üretim vs Tüketim"
+                  storageKey="msg-drawer-rate"
+                  height={150} unit="cpm" xRange={drawerXRange} syncKey={drawerSync}
+                  items={[
+                    { name: 'Üretim', role: 'data', series: kindSeries(msgSeries, p => p.produceCount / 5, 'Üretim') },
+                    { name: 'Tüketim', role: 'success', series: kindSeries(msgSeries, p => p.consumeCount / 5, 'Tüketim') },
+                  ]} />
+              </Suspense>
+            </LazyMount>
           )}
           {e2eSeries.length > 1 && (
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text3)',
-                            textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 3 }}>
-                E2E lag
-              </div>
-              <Sparkline
-                values={e2eSeries.map(p => p.avgMs)}
-                width={220} height={26} color="var(--warn)" unit="ms"
-                title="produce → consume end-to-end lag · 5-min bucket avg" />
-            </div>
+            <LazyMount minHeight={170}>
+              <Suspense fallback={<div style={{ height: 170, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
+                <CorePanelMultiLazy
+                  // Bu panel UÇTAN UCA gecikme (produce→consume, span_links
+                  // korelasyonu) — sayfa üstündeki "span gecikmesi"
+                  // panelinden FARKLI bir büyüklük. Başlık ikisini
+                  // karıştırmasın diye kaynağını söylüyor.
+                  title="Uçtan uca gecikme · kova ortalaması"
+                  storageKey="msg-drawer-e2e"
+                  height={150} unit="ms" xRange={drawerXRange} syncKey={drawerSync}
+                  note="produce→consume, span_links korelasyonu; kova başına ORTALAMA (p50/p95 aşağıdaki blokta, pencere geneli)"
+                  items={[
+                    { name: 'E2E lag', role: 'data', series: e2eLagSeries },
+                  ]} />
+              </Suspense>
+            </LazyMount>
           )}
         </div>
       )}

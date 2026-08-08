@@ -96,6 +96,11 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"endpoints_detail.go": true, // spans
 		"business_dims.go":    true, // spans — kanal/fonksiyon kodu kırılımı (v0.9.511)
 		"trace_count.go":      true, // trace_summary_5m / trace_service_index_5m — tavanlı sayım (v0.9.638)
+		// v0.9.814 — SAF telemetri: iki FROM'u messaging_summary_5m ve
+		// messaging_caller_summary_5m (ikisi de AggregatingMergeTree
+		// telemetri MV'si, state tablosu DEĞİL). dependencies.go'daki
+		// kardeş okumalarla aynı havuz.
+		"messaging_series.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

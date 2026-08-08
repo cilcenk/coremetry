@@ -241,6 +241,27 @@ func mergeMessagingPrior(cur, prior []chstore.MessagingInstance) {
 	}
 }
 
+// getMessagingSeries (v0.9.814) — /messaging'in KPI şeridi + üç
+// grafiğinin kaynağı. Tabloyla AYNI pencereyi ve AYNI filtreleri okur
+// (?system= / ?q= tablodaki System seçicisi ve arama kutusudur) ki
+// şeritteki sayı ile tablodaki satırlar aynı kümeyi anlatsın.
+//
+// Anahtar TÜM girdileri hashler (v0.5.187 sınıfı): pencere + system + q.
+// q sunucu tarafında kırpılıyor (msgSeriesQueryMax), yani serbest metin
+// anahtar kardinalitesini sınırsız büyütemez. 30 sn TTL — genel bakışla
+// aynı rung, sayfa yüklemesi ikisini de sıcak yakalar.
+func (s *Server) getMessagingSeries(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	system := q.Get("system")
+	search := q.Get("q")
+	from, to := parseFromTo(r, time.Hour)
+	key := fmt.Sprintf("msg-series:v1:sys=%s:q=%s:w=%s",
+		system, search, cacheBucket(from, to))
+	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.GetMessagingSeries(ctx, from, to, system, search)
+	})
+}
+
 // getMessagingDetail is the parallel handler for queues /
 // topics. Takes ?system=&cluster=&destination=&from=&to=. The
 // cluster query param defaults to "(default)" for single-

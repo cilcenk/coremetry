@@ -4671,3 +4671,39 @@ export interface MetricExclusions {
 // Varsayılan: error_rate + p99_ms açık, request_rate KAPALI (operatör
 // 2026-08-09: request_rate anomalileri false-pozitif).
 export type AnomalyTrackedConfig = Record<string, boolean>;
+
+// v0.9.826 — anomali dedektörünün EŞİKLERİ (backend:
+// chstore.AnomalySensitivityConfig / system_settings key
+// "anomaly_sensitivity").
+//
+// anomaly_tracked'in kardeşi: o hangi metriğin ÖLÇÜLECEĞİNİ ayarlar,
+// bu ölçülenin ne zaman OLAY sayılacağını.
+//
+// Beş alan da BİRLİKTE "bu sapma bir olay mı" sorusunu cevaplıyor ama
+// farklı boşlukları kapatıyorlar; biri diğerinin yerine geçmez. 0 =
+// vida kapalı (meşru bir istek); negatif değer sunucuda varsayılana
+// döner.
+export interface AnomalyMetricSensitivity {
+  // Göreli değişim tabanı: |current-median|/|median|.
+  floorPct: number;
+  // Mutlak DEĞER tabanı — current bunun altındaysa yükseliş yönlü
+  // anomali açılmaz. Düşüşleri etkilemez.
+  absFloor: number;
+  // Mutlak FARK tabanı — |current-median| bunun altındaysa açılmaz.
+  minAbsDelta: number;
+  // MAD'in alt sınırı, MAX olarak uygulanır. Sıkı baseline'da z'nin
+  // patlamasını engeller.
+  minMAD: number;
+  // Hacim kapısı (istek/sn) — son bucket bunun altındaysa AÇILMAZ.
+  // Çözülmeye uygulanmaz.
+  minBaselineRate: number;
+}
+
+export interface AnomalySensitivityConfig {
+  metrics: Record<string, AnomalyMetricSensitivity>;
+  // Açılmak için üst üste ateşlemesi gereken 5-dk bucket sayısı.
+  dwellBuckets: number;
+  // Bu |z|'nin üstü critical. Dedektör YALNIZ critical verdict'te
+  // Problem açtığı için (v0.9.193) bu fiilen açılma eşiğidir.
+  criticalZ: number;
+}

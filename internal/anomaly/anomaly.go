@@ -44,8 +44,14 @@ const (
 	// artık YALNIZ critical verdict'te açıyor (warning-grade anomali hiç
 	// Problem olmaz). request_rate DÜŞÜŞÜ istisna: trafik kaybı z'den
 	// bağımsız critical'dır ve openZ'de açılmaya devam eder.
-	criticalZ    = 6.0    // |z| above this escalates warning → critical
-	dwellBuckets = 3      // consecutive buckets that must all fire to open (anti-flap)
+	// v0.9.826 — criticalZ ve dwellBuckets ARTIK BURADA DEĞİL.
+	//
+	// İkisi de operatör ayarı oldu (system_settings "anomaly_sensitivity");
+	// varsayılanları chstore.DefaultAnomalySensitivity()'de. Sabitleri
+	// burada bırakmak en tehlikelisi olurdu: derleyici uyarmaz, kod
+	// okunur görünür, ama biri onları referans aldığında ayarı SESSİZCE
+	// atlamış olur — bu depoda tekrarlayan hata sınıfı. Yokluk, doğru
+	// yere bakmaya zorluyor.
 	minSamples   = 12     // need at least this many baseline buckets
 	madScale     = 0.6745 // scales MAD to a normal-dist stdev (modified z-score)
 	magnitudeEps = 1e-9   // denominator guard for the relative-change floor
@@ -117,20 +123,54 @@ type metricPolicy struct {
 	// yüksek z üretse bile Problem'e dönmez (operatör: "milyonlarca istekte
 	// 1-2-3 hata problem olmasın"). 0 = mutlak taban yok. Düşüşleri etkilemez.
 	absFloor float64
+	// minAbsDelta — mutlak FARK tabanı (v0.9.826). |current-median| bunun
+	// altındaysa açılmaz. floorPct'in kör noktası: küçük bir medyanda %10
+	// göreli değişim mutlak olarak hiçbir şey ifade etmeyebilir.
+	minAbsDelta float64
+	// minMAD — MAD'in alt sınırı, MAX olarak uygulanır (v0.9.826).
+	// checkOne'da kullanılır (z hesabından ÖNCE), decideAnomaly'de değil.
+	minMAD float64
+	// minBaselineRate — hacim kapısı (istek/sn). checkOne'da uygulanır;
+	// yalnız AÇILMAYA, çözülmeye değil.
+	minBaselineRate float64
 }
 
-var metricPolicies = map[string]metricPolicy{
-	"error_rate":   {direction: "up", floorPct: 0.10, absFloor: 1.0}, // rising errors only; <%1 = birkaç-hata gürültüsü, açma
-	"p99_ms":       {direction: "up", floorPct: 0.10},                // only rising latency matters
-	"request_rate": {direction: "both", floorPct: 0.15},              // drop AND spike both matter
+// metricDirections — metriğin HANGİ yönünün olay sayıldığı. Bu, ayara
+// bağlanmadı ve bu bilinçli: yön bir eşik değil, metriğin ANLAMI.
+// "p99 düşüşü de anomali olsun" diyen bir vida, iyi haberi sayfaya
+// çevirirdi (v0.9.180'in kapattığı sınıf). Vidalar NE KADAR sorusunu
+// ayarlar, NE sorusunu değil.
+var metricDirections = map[string]string{
+	"error_rate":   "up",   // rising errors only
+	"p99_ms":       "up",   // only rising latency matters
+	"request_rate": "both", // drop AND spike both matter
 }
 
-// policyFor returns a metric's policy, defaulting to a symmetric 10% floor.
-func policyFor(metric string) metricPolicy {
-	if p, ok := metricPolicies[metric]; ok {
-		return p
+// directionFor — metriğin yönü; bilinmeyen metrik simetrik davranır.
+func directionFor(metric string) string {
+	if d, ok := metricDirections[metric]; ok {
+		return d
 	}
-	return metricPolicy{direction: "both", floorPct: 0.10}
+	return "both"
+}
+
+// policyFor — bir metriğin ÇÖZÜLMÜŞ politikası: sabit yön + operatörün
+// ayarladığı eşikler (v0.9.826, system_settings "anomaly_sensitivity").
+//
+// Eşikler artık kodda sabit DEĞİL çünkü altı kez kodda değiştiler ve her
+// seferinde operatör bir çentik ötede aynı duvara çarptı — "ne kadar
+// sapma olay sayılır" filoya bağlı bir sayı. Gerekçenin tamamı
+// chstore/anomaly_sensitivity.go'da.
+func policyFor(metric string, cfg chstore.AnomalySensitivityConfig) metricPolicy {
+	s := cfg.For(metric)
+	return metricPolicy{
+		direction:       directionFor(metric),
+		floorPct:        s.FloorPct,
+		absFloor:        s.AbsFloor,
+		minAbsDelta:     s.MinAbsDelta,
+		minMAD:          s.MinMAD,
+		minBaselineRate: s.MinBaselineRate,
+	}
 }
 
 // flatMADFloor — düz (MAD≈0) baseline'da modified z-score'u tanımlı
@@ -157,6 +197,36 @@ func flatMADFloor(metric string, median float64) float64 {
 	}
 }
 
+// effectiveMAD — z hesabında KULLANILACAK MAD. İki taban üst üste:
+//
+//  1. flatMADFloor (v0.9.48) — YALNIZ mad≈0 iken. Tarihi hiç kıpırdamamış
+//     bir seride z tanımsızdı ve dedektör o servisi HİÇ değerlendirmiyordu;
+//     en temiz servisler en görünmez olanlardı.
+//  2. minMAD (v0.9.826) — HER ZAMAN, MAX olarak. 1'in kör noktası:
+//     "neredeyse hiç kıpırdamamış" seri korumasız kalıyordu ve gerçek
+//     false-pozitifler tam o kümede.
+//
+// OPERATÖRÜN VAKASI: medyan 1.90ms, mad 0.657, current 9.69ms.
+//
+//	minMAD kapalı → z = 0.6745 × 7.79 / 0.657 = 8.0σ → critical → AÇILIR
+//	minMAD 1.0ms  → z = 0.6745 × 7.79 / 1.0   = 5.25σ → criticalZ 6.0
+//	                kapısının altında → AÇILMAZ
+//
+// 8 ms'lik bir sıçrama hiçbir kullanıcının fark etmediği bir şey; sorun
+// sapmanın istatistiksel büyüklüğü değil, BİRİMİNİN önemsizliğiydi.
+//
+// Saf — checkOne'dan ayrıldı ki bu zincir canlı CH olmadan tablo-testli
+// olsun (fırtına vakası pinlenmiş: sensitivity_test.go).
+func effectiveMAD(metric string, median, mad, minMAD float64) float64 {
+	if mad < 1e-9 {
+		mad = flatMADFloor(metric, median)
+	}
+	if minMAD > 0 {
+		mad = math.Max(mad, minMAD)
+	}
+	return mad
+}
+
 // anomalyDecision is the pure open/severity/direction verdict for one sample.
 type anomalyDecision struct {
 	open      bool
@@ -169,8 +239,12 @@ type anomalyDecision struct {
 // store-free so the policy is unit-testable without a Detector. A 3σ p99 DROP
 // returns open=false ("up" only); a request_rate DROP escalates to critical
 // (traffic loss is worse than a spike).
-func decideAnomaly(metric string, z, current, median float64) anomalyDecision {
-	pol := policyFor(metric)
+//
+// v0.9.826 — politika ve criticalZ ARTIK PARAMETRE. Eskiden ikisi de
+// paket sabitlerinden okunuyordu; operatörün vidası bu fonksiyona
+// ulaşamadan kalırdı. Saf kalmaya devam ediyor: girdi genişledi, bağımlılık
+// eklenmedi.
+func decideAnomaly(metric string, z, current, median float64, pol metricPolicy, criticalZ float64) anomalyDecision {
 	dirOpen := false
 	switch pol.direction {
 	case "up":
@@ -180,8 +254,16 @@ func decideAnomaly(metric string, z, current, median float64) anomalyDecision {
 	default: // "both"
 		dirOpen = math.Abs(z) >= openZ
 	}
-	relChange := math.Abs(current-median) / math.Max(math.Abs(median), magnitudeEps)
+	absDelta := math.Abs(current - median)
+	relChange := absDelta / math.Max(math.Abs(median), magnitudeEps)
 	if !dirOpen || relChange < pol.floorPct {
+		return anomalyDecision{}
+	}
+	// Mutlak FARK tabanı (v0.9.826): göreli floor'un kör noktası. Küçük bir
+	// medyanda %10 göreli değişim mutlak olarak hiçbir şey ifade etmeyebilir
+	// (1.9ms → 2.1ms yüzde olarak eşiği geçer ama kimse uyanmaz). Yöne
+	// bakmadan uygulanır: küçüklük, sapmanın hangi tarafa olduğundan bağımsız.
+	if pol.minAbsDelta > 0 && absDelta < pol.minAbsDelta {
 		return anomalyDecision{}
 	}
 	// Mutlak-değer tabanı (v0.9.180): yükseliş yönlü bir anomali current bu
@@ -215,8 +297,13 @@ func decideAnomaly(metric string, z, current, median float64) anomalyDecision {
 
 // resolvedFor reports whether the metric has returned inside the resolve band
 // for its policy direction (the directional counterpart of |z| <= resolveZ).
+//
+// YÖNE bağlı, EŞİKLERE değil — bu yüzden ayardan etkilenmiyor ve
+// etkilenmemeli: hassasiyet vidaları AÇILMAYI ayarlar. Çözülmeyi de
+// kısmak, operatörün "daha az gürültü" isteğini "problemler ekranda
+// takılı kalsın"a çevirirdi.
 func resolvedFor(metric string, z float64) bool {
-	switch policyFor(metric).direction {
+	switch directionFor(metric) {
 	case "up":
 		return z <= resolveZ
 	case "down":
@@ -233,7 +320,7 @@ func resolvedFor(metric string, z float64) bool {
 // verdict, which drives the reported severity/direction). Pure + store-free
 // so the dwell/M-of-N policy is unit-testable, and stateless so a leader
 // handoff loses no in-memory streak counter.
-func evalWindow(metric string, median, mad float64, window []float64) (allOpen, allResolved bool, cur anomalyDecision) {
+func evalWindow(metric string, median, mad float64, window []float64, pol metricPolicy, criticalZ float64) (allOpen, allResolved bool, cur anomalyDecision) {
 	if len(window) == 0 {
 		return false, false, anomalyDecision{}
 	}
@@ -241,7 +328,7 @@ func evalWindow(metric string, median, mad float64, window []float64) (allOpen, 
 	dir := ""
 	for i, v := range window {
 		zv := madScale * (v - median) / mad
-		dv := decideAnomaly(metric, zv, v, median)
+		dv := decideAnomaly(metric, zv, v, median, pol, criticalZ)
 		cur = dv
 		if i == 0 {
 			dir = dv.direction
@@ -286,6 +373,26 @@ type Detector struct {
 	// satır tekrarlanmasın. YALNIZ scan()'den, yani tek goroutine'den
 	// (leader tik döngüsü) yazılır.
 	lastTracked string
+	// lastSensitivity — en son loglanan hassasiyet özeti (v0.9.826).
+	// lastTracked ile aynı sözleşme: DEĞİŞİNCE bir satır, her tikte
+	// değil. Operatör vidayı çevirdiğinde etkinin gerçekten canlıya
+	// indiğini logtan doğrulayabilmeli — çok-pod kurulumlarda "PUT hangi
+	// pod'a düştü, dedektör gördü mü" sorusunun tek cevabı bu satır.
+	lastSensitivity string
+}
+
+// sensitivityLogLine — hassasiyet ayarının tek satırlık, KARARLI özeti.
+// Kararlı olmak zorunda: map üzerinde gezmek sıra garantisi vermez ve
+// aynı ayar her tikte farklı görünüp log seli üretirdi.
+func sensitivityLogLine(c chstore.AnomalySensitivityConfig) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "dwell=%d criticalZ=%.1f", c.DwellBuckets, c.CriticalZ)
+	for _, m := range chstore.AnomalySensitivityMetrics {
+		s := c.For(m)
+		fmt.Fprintf(&b, " | %s floorPct=%.2f absFloor=%.2f minAbsDelta=%.2f minMAD=%.2f minRate=%.2f",
+			m, s.FloorPct, s.AbsFloor, s.MinAbsDelta, s.MinMAD, s.MinBaselineRate)
+	}
+	return b.String()
 }
 
 // New takes a cache.Lock so multiple replicas don't all open the same
@@ -310,6 +417,12 @@ func (d *Detector) Start(ctx context.Context) {
 	// taramayı hemen aşağıda yapıyor: bu satır olmasa operatörün
 	// kaydettiği set ilk tikte görülmezdi.
 	d.store.LoadAnomalyTracked(ctx)
+	// v0.9.826 — hassasiyet eşikleri de boot'ta hidrate edilir, AYNI
+	// gerekçeyle: dedektör main.go'da API sunucusundan ÖNCE başlıyor ve
+	// ilk taramayı hemen aşağıda yapıyor. Bu satır olmasa operatörün
+	// kaydettiği eşikler ilk tikte görülmez, yani vidalanmış bir kurulum
+	// her restart'ta bir tur varsayılanlarla tarardı.
+	d.store.LoadAnomalySensitivity(ctx)
 	t := time.NewTicker(d.interval)
 	defer t.Stop()
 	d.runIfLeader(ctx) // run once immediately
@@ -354,6 +467,19 @@ func (d *Detector) scan(ctx context.Context) {
 		d.lastTracked = joined
 	}
 
+	// v0.9.826 — hassasiyet eşikleri (operatör ayarı). Atomic load, CH
+	// okuması DEĞİL: blob boot'ta hidrate edilir, admin PUT'unda takas
+	// edilir, çok-pod kurulumlarda 30 sn'de yakınsar. Tik BAŞINA BİR KEZ
+	// okunuyor ve tik boyunca sabit kalıyor — checkOne içinde okusaydık
+	// aynı taramanın ilk ve son servisi farklı eşiklerle değerlendirilebilir,
+	// yani tarama kendi içinde tutarsız olurdu (aynı gerekçe `now` için de
+	// geçerli, v0.8.507).
+	sens := d.store.AnomalySensitivity()
+	if line := sensitivityLogLine(sens); line != d.lastSensitivity {
+		log.Printf("[anomaly] hassasiyet: %s", line)
+		d.lastSensitivity = line
+	}
+
 	// v0.8.507 — batch the per-(service,metric) MV reads into ONE
 	// GROUP BY service_name pass PER metric (×2: consecutive + seasonal),
 	// replacing the old services × tracked × 2 per-service queries.
@@ -373,8 +499,8 @@ func (d *Detector) scan(ctx context.Context) {
 	if !seasonalBaseline {
 		fetchSeasonal = nil
 	}
-	bucketsByMetric, seasonalByMetric := batchSeries(tracked,
-		func(m string) (map[string][]float64, error) {
+	bucketsByMetric, seasonalByMetric, ratesByMetric := batchSeries(tracked,
+		func(m string) (map[string][]float64, map[string][]float64, error) {
 			return d.fetchAllBuckets(ctx, m, now)
 		}, fetchSeasonal)
 
@@ -405,7 +531,8 @@ func (d *Detector) scan(ctx context.Context) {
 		for _, m := range tracked {
 			buckets := seriesFor(bucketsByMetric[m], svc)
 			seasonal := seriesFor(seasonalByMetric[m], svc)
-			d.checkOne(ctx, svc, m, buckets, seasonal, minSamples, snap)
+			rates := seriesFor(ratesByMetric[m], svc)
+			d.checkOne(ctx, svc, m, buckets, seasonal, rates, minSamples, snap, sens)
 		}
 	}
 }
@@ -425,18 +552,22 @@ func (d *Detector) scan(ctx context.Context) {
 // fetchSeasonal nil ise seasonal baseline kapalı demektir.
 func batchSeries(
 	tracked []string,
-	fetchBuckets func(metric string) (map[string][]float64, error),
+	fetchBuckets func(metric string) (values, rates map[string][]float64, err error),
 	fetchSeasonal func(metric string) (map[string][]float64, error),
-) (buckets, seasonal map[string]map[string][]float64) {
+) (buckets, seasonal, rates map[string]map[string][]float64) {
 	buckets = make(map[string]map[string][]float64, len(tracked))
 	seasonal = make(map[string]map[string][]float64, len(tracked))
+	rates = make(map[string]map[string][]float64, len(tracked))
 	for _, m := range tracked {
-		all, err := fetchBuckets(m)
+		all, rt, err := fetchBuckets(m)
 		if err != nil {
 			log.Printf("[anomaly] batch buckets %s: %v", m, err)
 			continue
 		}
 		buckets[m] = all
+		// v0.9.826 — hacim serisi AYNI okumadan geliyor (ek sorgu yok),
+		// dolayısıyla ayrı bir hata dalı da yok.
+		rates[m] = rt
 		if fetchSeasonal == nil {
 			continue
 		}
@@ -447,7 +578,7 @@ func batchSeries(
 		}
 		seasonal[m] = s
 	}
-	return buckets, seasonal
+	return buckets, seasonal, rates
 }
 
 // checkOne runs the anomaly verdict for one (service, metric) from PRE-BATCHED
@@ -456,15 +587,18 @@ func batchSeries(
 // than fetched here per service. A nil/short `buckets` (service absent from the
 // batch, or the metric's batch read errored this tick) is skipped by the
 // enoughHistory guard — identical to the old per-service fetch returning empty.
-func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets, seasonal []float64, seasonalMinSamples int, openSnap *chstore.OpenProblems) {
-	if !enoughHistory(len(buckets)) {
+func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets, seasonal, rates []float64, seasonalMinSamples int, openSnap *chstore.OpenProblems, cfg chstore.AnomalySensitivityConfig) {
+	// v0.9.826 — eşikler operatörün ayarından; yön ve resolve bandı koddan.
+	pol := policyFor(metric, cfg)
+	dwell := cfg.DwellBuckets
+	if !enoughHistory(len(buckets), dwell) {
 		return // not enough history + a full dwell window yet
 	}
-	// Dwell / M-of-N anti-flap: judge the LAST dwellBuckets, not just the most
+	// Dwell / M-of-N anti-flap: judge the LAST dwell buckets, not just the most
 	// recent one, so a single transient bucket can't flap a problem open/
 	// closed around the z threshold. The window is derived entirely from the
 	// fetched series → stateless, so a leader handoff loses no streak counter.
-	split := len(buckets) - dwellBuckets
+	split := len(buckets) - dwell
 	window := buckets[split:]
 	current := buckets[len(buckets)-1]
 
@@ -482,18 +616,8 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 	// baseline bucket inflates the stdev and masks today's spike. Median +
 	// MAD are outlier-robust; madScale rescales MAD to a normal-dist sigma so
 	// openZ / resolveZ keep their σ meaning.
-	median, mad := medianMAD(baseline)
-	if mad < 1e-9 {
-		// v0.9.48 (operatör vakası: bsa-callcenter op %0 → %30, Problem
-		// yok) — düz baseline SKIP'i kör noktaydı: tarihi hiç hata
-		// görmemiş (MAD=0) bir servis %30 hataya fırladığında "z
-		// tanımsız" diye HİÇ değerlendirilmiyordu; en temiz servisler
-		// en görünmez olanlardı. Skip yerine MAD'e metrik-farkındalı
-		// taban: sapma z'ye çevrilebilir olur, gerçekten düz kalan seri
-		// (current == median) z≈0 ile yine sessizdir. openZ/dwell/
-		// yön/floor kapıları aynen geçerli — blip yine açamaz.
-		mad = flatMADFloor(metric, median)
-	}
+	median, rawMAD := medianMAD(baseline)
+	mad := effectiveMAD(metric, median, rawMAD, pol.minMAD)
 	z := madScale * (current - median) / mad
 
 	ruleID := "anomaly:" + service + ":" + metric
@@ -506,12 +630,26 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 	// Open only when ALL dwell buckets fire (same direction); resolve as soon as
 	// the most-recent bucket is back inside the band (v0.8.220 fast-resolve). cur
 	// is the most-recent verdict; the pure anomalyAction decides open/resolve/none.
-	allOpen, _, cur := evalWindow(metric, median, mad, window)
+	allOpen, _, cur := evalWindow(metric, median, mad, window, pol, cfg.CriticalZ)
+	// v0.9.826 — HACİM KAPISI, yalnız AÇILMAYA.
+	//
+	// Düşük hacimli bir serviste yüzdeler ve kuyruk gecikmeleri
+	// gürültüdür: 20 isteğin 1'i hata %5'tir ama olay değildir; 3 isteğin
+	// p99'u tek bir isteğin süresidir. Bu servisler anomali fabrikası
+	// oluyordu çünkü baseline'ları da aynı ölçüde gürültülü.
+	//
+	// ÇÖZÜLMEYE UYGULANMAZ ve bu bilinçli: susan bir servisin hacmi
+	// sıfıra iner, kapıyı çözülmeye de koysaydık o servisin AÇIK problemi
+	// kapanamaz, ekranda sonsuza dek takılı kalırdı — v0.9.449'un
+	// (donmuş kuyruk) düzelttiği sınıfın aynısını geri getirirdik.
+	if allOpen && !hasEnoughVolume(rates, pol.minBaselineRate) {
+		allOpen = false
+	}
 	action := anomalyAction(hasOpen, allOpen, metric, z)
 	if action == "open" {
 		severity := cur.severity
 		desc := fmt.Sprintf("%s %s on %s — current %.2f%s vs baseline %.2f%s (%.1fσ, sustained %d buckets).",
-			displayMetric(metric), cur.direction, service, current, unitOf(metric), median, unitOf(metric), z, dwellBuckets)
+			displayMetric(metric), cur.direction, service, current, unitOf(metric), median, unitOf(metric), z, dwell)
 		if hasOpen {
 			open.Value = current
 			open.Description = desc
@@ -588,7 +726,25 @@ func metricValueExpr(metric string) (string, error) {
 // skipped here — the same guard the old per-service fetchBuckets + len check
 // applied. Pure so the "empty/sparse service is skipped" contract is testable
 // without a live ClickHouse. v0.8.507.
-func enoughHistory(n int) bool { return n >= minSamples+dwellBuckets }
+// v0.9.826 — dwell operatör ayarı olduğu için parametre; sabitken bir
+// operatör dwell'i 12'ye çıkardığında pencere seriden UZUN olabilir ve
+// buckets[split:] negatif indeksle panikleyebilirdi.
+func enoughHistory(n, dwell int) bool { return n >= minSamples+dwell }
+
+// hasEnoughVolume — son bucket'ın istek hızı hacim kapısını geçiyor mu?
+// (v0.9.826)
+//
+// AÇIK GEÇER iki halde: kapı kapalıysa (min<=0) ve hacim SERİSİ YOKSA.
+// İkincisi önemli — hacim okuması bir gün başarısız olursa ya da yeni bir
+// çağıran seriyi geçirmeyi unutursa, dedektörün SESSİZCE kapanması
+// (hiçbir anomali açmaması) mümkün olmamalı. Bu depoda sessiz kapanma
+// tekrarlayan bir hata sınıfı; kapı ölçemediğinde ölçmeden geçirir.
+func hasEnoughVolume(rates []float64, min float64) bool {
+	if min <= 0 || len(rates) == 0 {
+		return true
+	}
+	return rates[len(rates)-1] >= min
+}
 
 // seriesFor returns the batched series for a service, or nil when the metric's
 // batch query returned no rows for it (new/sparse service, OR the batch read
@@ -650,13 +806,24 @@ func padTrailingSilence(series []float64, lastBucketUnix int64, upperUnix int64)
 // per-service N+1 fan-out into one pass: prod was ~1400 svc × 3 metrics × 2
 // reads ≈ 8400 queries / 2-min tick, each re-scanning ~the whole window's
 // granules; the batch reads those rows ONCE.
+// v0.9.826 — HACİM AYNI SORGUDA. Kapı için gereken istek hızı, ayrı bir
+// okuma AÇMADAN geliyor: countMerge(span_count_state) zaten bu MV'nin
+// aynı granüllerinde ve error_rate/request_rate ifadeleri onu ZATEN
+// merge ediyor. İkinci bir sorgu, tik başına metrik başına bir tam
+// pencere taraması daha demek olurdu — v0.8.507'nin toparladığı maliyeti
+// geri açardık. Ek kolon, taranan granülü değiştirmez.
 func buildAllBucketsQuery(vexpr string) string {
 	// v0.8.316 — complete buckets only (time_bucket < lastCompleteBucketStart):
 	// the still-filling bucket made request_rate (÷ fixed 300s) read
 	// ~elapsed/300 of the true rate, so a live spike looked baseline one minute
 	// into each bucket and the fast-resolve closed the open anomaly mid-incident.
+	//
+	// `rate` bölmesi request_rate ifadesiyle BİREBİR aynı (÷300.0), yani
+	// hacim kapısının birimi operatörün /metrics'te gördüğü istek/sn ile
+	// aynı şey — ayar sayfasında "istek/sn" yazarken bu garanti gerekli.
 	return fmt.Sprintf(`
-		SELECT service_name, toUnixTimestamp(time_bucket) AS t, %s AS v
+		SELECT service_name, toUnixTimestamp(time_bucket) AS t, %s AS v,
+		       countMerge(span_count_state) / 300.0 AS rate
 		FROM service_summary_5m
 		WHERE time_bucket >= ? AND time_bucket < ?
 		GROUP BY service_name, t
@@ -671,39 +838,45 @@ func buildAllBucketsQuery(vexpr string) string {
 // service absent from the map had no complete buckets in the window; checkOne's
 // enoughHistory guard skips it. `now` is fixed by the caller for the whole tick
 // so every service shares one window. v0.8.507.
-func (d *Detector) fetchAllBuckets(ctx context.Context, metric string, now time.Time) (map[string][]float64, error) {
+func (d *Detector) fetchAllBuckets(ctx context.Context, metric string, now time.Time) (map[string][]float64, map[string][]float64, error) {
 	vexpr, err := metricValueExpr(metric)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	cutoff := now.Add(-time.Duration(historyHours) * time.Hour)
 	upper := lastCompleteBucketStart(now)
 	rows, err := d.store.TelemetryReadConn().Query(ctx, buildAllBucketsQuery(vexpr), cutoff, upper)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	out := make(map[string][]float64)
+	rates := make(map[string][]float64)
 	lastT := make(map[string]int64)
 	for rows.Next() {
 		var svc string
 		var t uint32
-		var v float64
-		if err := rows.Scan(&svc, &t, &v); err != nil {
-			return nil, err
+		var v, rate float64
+		if err := rows.Scan(&svc, &t, &v, &rate); err != nil {
+			return nil, nil, err
 		}
 		accumulateSeries(out, svc, v)
+		accumulateSeries(rates, svc, rate)
 		lastT[svc] = int64(t) // ORDER BY service, t — son görülen kazanır
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// v0.9.449 — donmuş kuyruk: susan servis pencere sonuna dek sıfırla
 	// doldurulur ki son dolu bucket "şimdi" sanılmasın (padTrailingSilence).
+	// Hacim serisi de AYNI dolguyu alır: iki seri hizada kalmalı, yoksa
+	// "son bucket" ikisinde farklı zamanı gösterir. Sıfır hacim zaten
+	// sessizliğin dürüst temsili ve kapı çözülmeye uygulanmıyor.
 	for svc, series := range out {
 		out[svc] = padTrailingSilence(series, lastT[svc], upper.Unix())
+		rates[svc] = padTrailingSilence(rates[svc], lastT[svc], upper.Unix())
 	}
-	return out, nil
+	return out, rates, nil
 }
 
 // lastCompleteBucketStart is the exclusive upper bound for MV series reads

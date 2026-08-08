@@ -1062,6 +1062,9 @@ func main() {
 	// başka bir pod'a düşse de lider pod 30 sn içinde görür).
 	srv.LoadAnomalyTracked(ctx)
 	go srv.StartAnomalyTrackedRefresh(ctx, 30*time.Second)
+	// v0.9.826 — dedektörün EŞİKLERİ, aynı kablo ve aynı gerekçe.
+	srv.LoadAnomalySensitivity(ctx)
+	go srv.StartAnomalySensitivityRefresh(ctx, 30*time.Second)
 	srv.SetLdapGroupSync(ldapGroupSync) // v0.8.526 — LDAP group-sync admin surface + snapshot reads
 	// v0.8.444 — cmk_ servis token'ları: cache'i bağla (GenAI Studio →
 	// MCP kimliği). Adapter chstore→auth tip köprüsü.

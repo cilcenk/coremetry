@@ -1044,6 +1044,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// varsayılan kapalı (operatör: false-pozitif).
 	mux.HandleFunc("GET /api/settings/anomaly-tracked", auth.RequireRole(auth.RoleAdmin, s.getAnomalyTracked))
 	mux.HandleFunc("PUT /api/settings/anomaly-tracked", auth.RequireRole(auth.RoleAdmin, s.putAnomalyTracked))
+	// v0.9.826 — dedektörün EŞİKLERİ (anomaly-tracked'in kardeşi: o
+	// hangi metriğin ölçüleceğini, bu ölçülenin ne zaman olay
+	// sayılacağını ayarlar).
+	mux.HandleFunc("GET /api/settings/anomaly-sensitivity", auth.RequireRole(auth.RoleAdmin, s.getAnomalySensitivity))
+	mux.HandleFunc("PUT /api/settings/anomaly-sensitivity", auth.RequireRole(auth.RoleAdmin, s.putAnomalySensitivity))
 	mux.HandleFunc("GET /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.getRuntimeAlerts))
 	mux.HandleFunc("PUT /api/settings/runtime-alerts", auth.RequireRole(auth.RoleAdmin, s.putRuntimeAlerts))
 	mux.HandleFunc("GET /api/settings/problem-escalation", auth.RequireRole(auth.RoleAdmin, s.getProblemEscalation))

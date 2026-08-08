@@ -111,7 +111,7 @@ func TestFlatBaselineFloor(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			allOpen, _, cur := evalWindow("error_rate", 0, mad, c.window)
+			allOpen, _, cur := evalWindow("error_rate", 0, mad, c.window, defPolicy("error_rate"), defCriticalZ())
 			if allOpen != c.wantOpen {
 				t.Fatalf("allOpen=%v bekleniyordu, got %v (cur=%+v)", c.wantOpen, allOpen, cur)
 			}

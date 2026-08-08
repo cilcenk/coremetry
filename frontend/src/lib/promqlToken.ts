@@ -168,12 +168,18 @@ export function applyLabelKey(text: string, ctx: PromqlLabelCtx, key: string): {
   return { text: next, pos: ctx.start + key.length };
 }
 
+// escapeValue — matcher değerinin PromQL string gövdesi. Ters bölü ÖNCE
+// kaçırılır, yoksa eklenen kaçışlar tekrar kaçırılırdı.
+function escapeValue(value: string): string {
+  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+}
+
 // applyLabelValue — değeri TIRNAKLI yazar ve imleci kapanış tırnağının
 // SONRASINA koyar: bir sonraki tuş vuruşu ',' ya da '}' olabilsin. Tırnak
 // zaten açıksa yalnız kapanışı ekler; kapanış da zaten oradaysa (imleç var
 // olan tırnakların arasında) hiç eklemez, sadece üstünden atlar.
 export function applyLabelValue(text: string, ctx: PromqlLabelCtx, value: string): { text: string; pos: number } {
-  const esc = value.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  const esc = escapeValue(value);
   if (ctx.quoted) {
     const closed = text[ctx.end] === '"';
     const next = text.slice(0, ctx.start) + esc + (closed ? '' : '"') + text.slice(ctx.end);
@@ -181,4 +187,155 @@ export function applyLabelValue(text: string, ctx: PromqlLabelCtx, value: string
   }
   const next = text.slice(0, ctx.start) + '"' + esc + '"' + text.slice(ctx.end);
   return { text: next, pos: ctx.start + esc.length + 2 };
+}
+
+// ── Etiket gezgini (v0.9.782) — aktif metrik + chip tıkına matcher yazma ───
+
+// Metrik sanılmaması gereken PromQL sözcükleri: imleç `rate` yazarken de bir
+// token verir ama `rate` bir metrik adı değildir — gezgin ona etiket sormaz.
+const PROMQL_WORDS = new Set([
+  'rate', 'irate', 'increase', 'delta', 'idelta', 'sum', 'avg', 'min', 'max', 'count',
+  'count_values', 'stddev', 'stdvar', 'topk', 'bottomk', 'quantile', 'histogram_quantile',
+  'abs', 'ceil', 'floor', 'round', 'clamp_max', 'clamp_min', 'sort', 'sort_desc',
+  'by', 'without', 'offset', 'ignoring', 'on', 'group_left', 'group_right',
+  'and', 'or', 'unless', 'bool',
+]);
+
+// promqlActiveMetric — imlecin bulunduğu yerden "hangi metriğin etiketleri?"
+// sorusunu cevaplar: süslü içindeysek matcher'ın sahibi, değilse imlecin
+// altındaki token. Cevap yoksa '' — çağıran picker'a düşer.
+export function promqlActiveMetric(text: string, pos: number): string {
+  const p = Math.max(0, Math.min(pos, text.length));
+  const ctx = promqlLabelContext(text, p);
+  if (ctx) return ctx.metric;
+  const tok = promqlTokenAt(text, p);
+  if (!tok || PROMQL_WORDS.has(tok.text)) return '';
+  return tok.text;
+}
+
+// insertMatcher — chip tıkına matcher YAZAN saf çekirdek.
+// applyLabelKey/applyLabelValue imlecin ZATEN doğru yerde olmasını şart koşar
+// (autocomplete yolu). Gezginde chip'e tıklayan operatörün imleci nerede olursa
+// olsun sorgu doğru değişmeli: süslü içindeyse oraya, metrik süslüsüzse süslü
+// açılarak, metrik hiç yoksa selector kurularak. Aynı anahtar zaten varsa
+// DEĞERİ değişir — ikinci `{env="a",env="b"}` hiçbir seri döndürmez.
+
+// matchingClose — `open`daki '{' için tırnak-farkında kapanış; kapanmamışsa
+// text.length (yarım yazılmış sorgu da düzenlenebilir olmalı).
+function matchingClose(text: string, open: number): number {
+  let inQ = false, depth = 0;
+  for (let i = open; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '\\') { i++; continue; }
+      if (c === '"') inQ = false;
+      continue;
+    }
+    if (c === '"') inQ = true;
+    else if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) return i; }
+  }
+  return text.length;
+}
+
+// segmentsIn — [from,to) aralığını ÜST SEVİYE virgüllerde böler (tırnak içi
+// virgül bölmez). Boş aralıkta bile tek (boş) segment döner.
+function segmentsIn(text: string, from: number, to: number): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = [];
+  let inQ = false, s = from;
+  for (let i = from; i < to; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '\\') { i++; continue; }
+      if (c === '"') inQ = false;
+      continue;
+    }
+    if (c === '"') inQ = true;
+    else if (c === ',') { out.push({ start: s, end: i }); s = i + 1; }
+  }
+  out.push({ start: s, end: to });
+  return out;
+}
+
+// findMetricToken — metrik adının TAM token eşleşmesi (tırnak dışında,
+// komşusu token karakteri olmayan). Yoksa -1. `http.server` araması
+// `http.server.duration` içindeki ön eke tutunmaz.
+function findMetricToken(text: string, metric: string): number {
+  if (!metric) return -1;
+  let inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '\\') { i++; continue; }
+      if (c === '"') inQ = false;
+      continue;
+    }
+    if (c === '"') { inQ = true; continue; }
+    if (!text.startsWith(metric, i)) continue;
+    const before = i > 0 ? text[i - 1] : '';
+    const after = text[i + metric.length] ?? '';
+    if (before && TOKEN_CH.test(before)) continue;
+    if (after && TOKEN_CH.test(after)) continue;
+    return i;
+  }
+  return -1;
+}
+
+// matcherRegion — düzenlenecek `{…}`: önce imlecin içinde bulunduğu (ve AYNI
+// metriğe ait) süslü, yoksa metrik adının hemen ardındaki süslü.
+function matcherRegion(text: string, pos: number, metric: string): { open: number; close: number } | null {
+  const ctx = promqlLabelContext(text, pos);
+  if (ctx && ctx.metric === metric) {
+    const open = openBraceBefore(text, pos);
+    if (open >= 0) return { open, close: matchingClose(text, open) };
+  }
+  const idx = findMetricToken(text, metric);
+  if (idx >= 0 && text[idx + metric.length] === '{') {
+    const open = idx + metric.length;
+    return { open, close: matchingClose(text, open) };
+  }
+  return null;
+}
+
+// upsertInRegion — aralıkta anahtar varsa değerini değiştirir (operatör
+// korunur: `=~` regex matcher'ı `=`ye düşürülmez), yoksa sona ekler.
+function upsertInRegion(text: string, r: { open: number; close: number }, key: string, esc: string): { text: string; pos: number } {
+  const from = r.open + 1, to = r.close;
+  for (const seg of segmentsIn(text, from, to)) {
+    const s = text.slice(seg.start, seg.end);
+    const op = findOp(s);
+    if (!op || s.slice(0, op.at).trim() !== key) continue;
+    const vStart = seg.start + op.at + op.len;
+    const next = text.slice(0, vStart) + '"' + esc + '"' + text.slice(seg.end);
+    return { text: next, pos: vStart + esc.length + 2 };
+  }
+  const body = text.slice(from, to);
+  const kept = body.replace(/\s+$/, '');          // sondaki boşluk eklemeden sonraya kalsın
+  const add = (kept.length && !kept.endsWith(',') ? ',' : '') + key + '="' + esc + '"';
+  const at = from + kept.length;
+  return { text: text.slice(0, at) + add + text.slice(at), pos: at + add.length };
+}
+
+// insertMatcher — gezginden `key="value"` yazar. Dönen `pos` her zaman
+// yazılan değerin kapanış tırnağından SONRASI: sıradaki tuş ',' ya da '}'.
+export function insertMatcher(
+  text: string, pos: number, metric: string, key: string, value: string,
+): { text: string; pos: number } {
+  if (!metric || !key) return { text, pos };
+  const esc = escapeValue(value);
+  const p = Math.max(0, Math.min(pos, text.length));
+  const region = matcherRegion(text, p, metric);
+  if (region) return upsertInRegion(text, region, key, esc);
+
+  const sel = '{' + key + '="' + esc + '"}';
+  const idx = findMetricToken(text, metric);
+  if (idx >= 0) {
+    const at = idx + metric.length;
+    return { text: text.slice(0, at) + sel + text.slice(at), pos: at + sel.length - 1 };
+  }
+  // Metrik sorguda yok: boş sorguda selector'ü KURAR, dolu sorguda imlece yazar
+  // (operatörün düzenlediği yer orası — sona iliştirmek ifadeyi bozardı).
+  const whole = metric + sel;
+  if (!text.trim()) return { text: whole, pos: whole.length - 1 };
+  return { text: text.slice(0, p) + whole + text.slice(p), pos: p + whole.length - 1 };
 }

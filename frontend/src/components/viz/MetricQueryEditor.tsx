@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { encodeFilters } from '@/lib/urlState';
 import {
   promqlTokenAt, replaceToken, promqlLabelContext, applyLabelKey, applyLabelValue,
+  insertMatcher, promqlActiveMetric,
   type PromqlToken, type PromqlLabelCtx,
 } from '@/lib/promqlToken';
 import { timeRangeToNs } from '@/lib/utils';
@@ -21,6 +22,7 @@ const MQECorePanelLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 import { isSteppedInstrument } from '@/lib/chart/steppedInstrument';
 import { GroupedMetricPicker } from '@/components/viz/GroupedMetricPicker';
+import { MetricNamePicker } from '@/components/MetricNamePicker';
 import { seriesColor } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
@@ -341,6 +343,143 @@ function GroupByEditor({ value, onChange }: { value: string[]; onChange: (g: str
   );
 }
 
+// ── Etiket gezgini (v0.9.782) — PromQL modunda metrik → anahtar → değer ────
+// Grafana'nın label browser'ı: matcher'ı ezberden yazmak yerine ÖLÇÜLMÜŞ
+// anahtar/değerlerden tıklayarak kurulur (attr-keys + labels uçları, v0.9.771).
+// Varsayılan KAPALI ve durumu localStorage'ta — kapalı bölüm hiçbir istek
+// üretmez. Fetch yalnız (açık && metrik belli) iken; listeler Faz 2'nin 60s
+// mini-cache'ini PAYLAŞIR, yani autocomplete'in çektiği anahtar listesi
+// gezginde ikinci kez çekilmez (ES-maliyet disiplini).
+const LB_OPEN_KEY = 'cm.mqe.labelBrowser';
+// İmleçten türeyen metrik yazarken parça parça değişir (http.se → http.ser…);
+// debounce olmadan her tuş vuruşu bir attr-keys isteği olurdu.
+const LB_DEBOUNCE = 350;
+function LabelBrowser({ cursorMetric, onApply }: {
+  cursorMetric: string;                                     // imleçten türeyen metrik ('' → picker)
+  onApply: (metric: string, key: string, value: string) => void;
+}) {
+  const [open, setOpen] = useState(() => {
+    try { return localStorage.getItem(LB_OPEN_KEY) === '1'; } catch { return false; }
+  });
+  const [pickText, setPickText] = useState('');
+  const [picked, setPicked] = useState('');
+  const [key, setKey] = useState('');
+  const [kq, setKq] = useState('');
+  const [vq, setVq] = useState('');
+  // null = yükleniyor / henüz istenmedi; [] = ölçülmüş ama boş.
+  const [keys, setKeys] = useState<string[] | null>(null);
+  const [vals, setVals] = useState<string[] | null>(null);
+
+  const metric = cursorMetric || picked;
+
+  const toggle = () => setOpen(o => {
+    const next = !o;
+    try { localStorage.setItem(LB_OPEN_KEY, next ? '1' : '0'); } catch { /* private mode */ }
+    return next;
+  });
+
+  // Metrik değişince seçili anahtar bayatlar — başka metriğin anahtarı.
+  useEffect(() => { setKey(''); setVq(''); }, [metric]);
+
+  useEffect(() => {
+    if (!open || !metric) { setKeys(null); return; }
+    let alive = true;
+    setKeys(null);
+    const t = window.setTimeout(() => {
+      cachedSugList(`k ${metric}`, () => api.metricAttrKeys(metric, '', '24h'))
+        .then(all => { if (alive) setKeys(all); })
+        .catch(() => { if (alive) setKeys([]); });
+    }, LB_DEBOUNCE);
+    return () => { alive = false; clearTimeout(t); };
+  }, [open, metric]);
+
+  useEffect(() => {
+    if (!open || !metric || !key) { setVals(null); return; }
+    let alive = true;
+    setVals(null);
+    // Anahtar TIKLAMAYLA değişir — debounce'a gerek yok.
+    cachedSugList(`v ${metric} ${key}`, () => api.metricLabels(metric, key, '24h'))
+      .then(all => { if (alive) setVals(all); })
+      .catch(() => { if (alive) setVals([]); });
+    return () => { alive = false; };
+  }, [open, metric, key]);
+
+  const shownKeys = keys ? filterSugList(keys, kq) : [];
+  const shownVals = vals ? filterSugList(vals, vq) : [];
+
+  return (
+    <div className="mqe-lb">
+      <button type="button" className="mqe-lb-toggle" onClick={toggle} aria-expanded={open}>
+        <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+        Etiket gezgini
+        {metric && <span className="mqe-lb-metric" title={metric}>{metric}</span>}
+      </button>
+      {open && (
+        <div className="mqe-lb-body">
+          {!cursorMetric && (
+            <div className="mqe-lb-pick">
+              <span className="mqe-lbl">metrik</span>
+              <MetricNamePicker service="" value={pickText} width={260} placeholder="metrik ara…"
+                onChange={v => { setPickText(v); if (!v) setPicked(''); }}
+                onPick={m => setPicked(m.name)}
+                onEnter={v => setPicked((v ?? pickText).trim())} />
+            </div>
+          )}
+          {!metric ? (
+            <div className="mqe-lb-hint">
+              İmleci sorgudaki metrik adının üstüne getir ya da yukarıdan bir metrik seç.
+            </div>
+          ) : (
+            <div className="mqe-lb-cols">
+              <div className="mqe-lb-col">
+                <div className="mqe-lb-colhead">
+                  <span className="mqe-lbl">anahtar</span>
+                  <input className="mqe-lb-search" value={kq} placeholder="ara" aria-label="Anahtar ara"
+                    onChange={e => setKq(e.target.value)} />
+                </div>
+                {keys === null ? <Spinner />
+                  : shownKeys.length === 0
+                    ? <div className="mqe-lb-hint">{keys.length ? 'Eşleşen anahtar yok.' : 'Bu metrikte ölçülmüş etiket yok.'}</div>
+                    : (
+                      <div className="mqe-lb-chips">
+                        {shownKeys.map(k => (
+                          <button key={k} type="button" title={k}
+                            className={'mqe-gchip' + (k === key ? ' on' : '')}
+                            onClick={() => setKey(k)}>{k}</button>
+                        ))}
+                      </div>
+                    )}
+                {shownKeys.length >= 20 && <div className="mqe-lb-hint">İlk 20 — aramayla daralt.</div>}
+              </div>
+              <div className="mqe-lb-col">
+                <div className="mqe-lb-colhead">
+                  <span className="mqe-lbl">{key ? `değer: ${key}` : 'değer'}</span>
+                  <input className="mqe-lb-search" value={vq} placeholder="ara" aria-label="Değer ara"
+                    disabled={!key} onChange={e => setVq(e.target.value)} />
+                </div>
+                {!key ? <div className="mqe-lb-hint">Önce bir anahtar seç.</div>
+                  : vals === null ? <Spinner />
+                    : shownVals.length === 0
+                      ? <div className="mqe-lb-hint">{vals.length ? 'Eşleşen değer yok.' : 'Bu anahtarın ölçülmüş değeri yok.'}</div>
+                      : (
+                        <div className="mqe-lb-chips">
+                          {shownVals.map(v => (
+                            <button key={v} type="button" title={`${key}="${v}" ekle`}
+                              className="mqe-gchip"
+                              onClick={() => onApply(metric, key, v)}>{v}</button>
+                          ))}
+                        </div>
+                      )}
+                {shownVals.length >= 20 && <div className="mqe-lb-hint">İlk 20 — aramayla daralt.</div>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── One query row ─────────────────────────────────────────────────────────
 function QueryRow({ q, canRemove, onChange, onDuplicate, onRemove }: {
   q: MQQuery; canRemove: boolean;
@@ -420,6 +559,10 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   const [sugCtx, setSugCtx] = useState<PromqlLabelCtx | null>(null);
   const [caretTo, setCaretTo] = useState<number | null>(null);
   const sugMute = useRef(false);
+  // İmleç konumu ayrı state: sugTok/sugCtx blur'da temizlenir (kutu kapanır),
+  // ama etiket gezgini chip'ine tıklamak textarea'yı blur EDER — gezginin
+  // "aktif metrik" cevabı o tıktan sonra da doğru kalmalı (v0.9.782).
+  const [promqlPos, setPromqlPos] = useState(0);
   // "Add to dashboard" (step 3) — picker modal state.
   const [dashOpen, setDashOpen] = useState(false);
   const [dashList, setDashList] = useState<DashboardSummary[] | null>(null);
@@ -499,6 +642,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
   // öneri uygulandıktan sonra setSelectionRange'in tetiklediği TEK select
   // olayını yutar — yoksa kutu tam-eşleşmeyle hemen geri açılırdı.
   const syncSug = (text: string, pos: number, typed = false) => {
+    setPromqlPos(pos);   // mute edilen olayda bile konum güncel kalsın
     if (typed) sugMute.current = false;
     else if (sugMute.current) { sugMute.current = false; return; }
     const ctx = promqlLabelContext(text, pos);
@@ -513,6 +657,22 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
       : (sugTok ? replaceToken(cur, sugTok, name) : null);
     if (!out) return;
     setPromqlText(out.text);
+    setPromqlPos(out.pos);
+    closeSug();
+    sugMute.current = true;
+    setCaretTo(out.pos);
+  };
+
+  // Etiket gezgini (v0.9.782) — chip tıkı sorguya matcher yazar. Kaynak metin
+  // ref'ten okunur (state 300ms debounce'lu değil ama textarea her zaman
+  // gerçeği söyler), imleç konumu izlenen promqlPos'tan.
+  const lbMetric = useMemo(() => promqlActiveMetric(promqlText, promqlPos), [promqlText, promqlPos]);
+  const applyMatcher = (metric: string, key: string, value: string) => {
+    const cur = promqlRef.current?.value ?? promqlText;
+    const out = insertMatcher(cur, promqlPos, metric, key, value);
+    if (out.text === cur) return;
+    setPromqlText(out.text);
+    setPromqlPos(out.pos);
     closeSug();
     sugMute.current = true;
     setCaretTo(out.pos);
@@ -866,6 +1026,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
               ? <span className="mqe-code-err">⚠ {promqlRes.error instanceof Error ? promqlRes.error.message : String(promqlRes.error)}</span>
               : <span className="mqe-hint">PromQL over the OTel metric store — selectors, rate()/increase(), histogram_quantile(0.5/0.95/0.99, …), sum/avg/min/max by(…). Dotted OTel names (http.server.duration) and {'{service.name="checkout"}'} matchers.</span>}
           </div>
+          <LabelBrowser cursorMetric={lbMetric} onApply={applyMatcher} />
         </div>
       )}
 

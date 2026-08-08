@@ -2167,6 +2167,13 @@ export interface MetricResolveResult {
   series: SpanMetricSeries[];
   tier: string;
   stepSeconds: number;
+  // v0.9.809 (dürüstlük) — 50k satır tavanı doldu: ORDER BY gk alfabetik
+  // olduğundan geç harfli seriler KOMPLE düşmüş olabilir. Kardeş zarflar
+  // (SpanMetricResult, /api/metrics/query) bunu v0.9.458'den beri
+  // taşıyordu; resolver yolu şeritsizdi. totalSeries YOK ve olmayacak:
+  // bu yolda top-N kırpması hiç yaşanmıyor, tavan ısırdığında da gerçek
+  // toplam sorgudan bilinemiyor (bkz. chstore/metricresolve.go).
+  rowsCapped?: boolean;
   exemplars?: MetricExemplar[];
 }
 

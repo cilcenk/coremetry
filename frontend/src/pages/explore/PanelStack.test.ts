@@ -178,6 +178,50 @@ describe('buildPanels — formül paneli durumu girdilerini izler', () => {
     expect(p.state).toBe('ready');
     expect(p.emptyReason).toBe('Formül için ortak zaman aralığında veri yok');
   });
+
+  // ── v0.9.809 — ÇÖZÜNÜRLÜK HİZASI ──────────────────────────────────────
+  // formulaSeries bucket'ları KESİŞİMLE eşliyor, yani A 15 saniyelik ve B
+  // 60 saniyelik bucket'larda gelse bile zaman damgaları örtüşür ve A+B
+  // hesaplanır — farklı uzunlukta pencerelerde sayılmış değerleri
+  // toplayarak. Boş panel değil, MAKUL GÖRÜNEN yanlış bir sayı.
+  const gridSeries = (stepSec: number): SpanMetricSeries[] => ([{
+    groupKey: ['x'],
+    points: [0, 1, 2].map(i => ({
+      time: 1_751_980_000_000_000_000 + i * stepSec * 1e9, value: 1,
+    })),
+  } as SpanMetricSeries]);
+
+  it('🔴 harfler farklı çözünürlükte → formül HESAPLANMAZ, sebep yazılır', () => {
+    const p = formulaPanel({
+      byLetter: { A: gridSeries(15), B: gridSeries(60) },
+      from: ACTIVE_FROM,
+      stepByLetter: { A: 15, B: 60 },
+    });
+    expect(p.state).toBe('ready');
+    expect(p.series).toEqual([]);
+    expect(p.emptyReason).toContain('B 1dk');
+    expect(p.emptyReason).toContain('15s');
+  });
+
+  it('aynı çözünürlük → formül eskisi gibi çizilir', () => {
+    const p = formulaPanel({
+      byLetter: { A: gridSeries(15), B: gridSeries(15) },
+      from: ACTIVE_FROM,
+      stepByLetter: { A: 15, B: 15 },
+    });
+    expect(p.state).toBe('ready');
+    expect(p.series.length).toBe(1);
+    expect(p.series[0].points.length).toBe(3);
+  });
+
+  it('step bilinmiyorsa (0) davranış BAYT BAYT eski — kapı sessiz kalır', () => {
+    const p = formulaPanel({
+      byLetter: { A: gridSeries(15), B: gridSeries(15) },
+      from: ACTIVE_FROM,
+      // stepByLetter hiç verilmedi (eski çağıranlar / bilinmeyen step).
+    });
+    expect(p.series.length).toBe(1);
+  });
 });
 
 describe('buildPanels — üretmeyen sorgular panel açmaz', () => {

@@ -26,6 +26,7 @@ import { useContentWidth } from '@/lib/useContentWidth';
 import { encodeFilters, encodeFilterGroup } from '@/lib/urlState';
 import type { SpanMetricSeries, MetricExemplar, ChartAnnotation, OtlpExemplar } from '@/lib/types';
 import { annotationsInWindow } from '@/lib/chartAnnotations';
+import { resolveStepSec } from './stepAlign';
 import {
   type BuilderState, produces, effectiveFilters, querySignature, exemplarDescriptor,
   pinnedService, pinnedOperation, queryUnit, hasGroupedFilter, effectiveFilterGroup,
@@ -41,6 +42,11 @@ export interface ExploreQueriesResult {
   // "+N more" instead of inferring it from the (already-capped) series count.
   totalByLetter: Record<string, number | undefined>;
   cappedByLetter: Record<string, boolean>;
+  // v0.9.809 — letter → o sorgunun GERÇEK bucket çözünürlüğü (saniye).
+  // Sunucu söylediyse onun sözü (resolver zarfı `stepSeconds`), yoksa gelen
+  // ızgaradan ölçüm (stepAlign.resolveStepSec). 0 = bilinmiyor. Formül
+  // paneli bunu hizayı denetlemek için okur.
+  stepByLetter: Record<string, number>;
   // letter → per-bucket slow/error exemplar trace_ids (◆ glyphs). Populated
   // ONLY for resolver-eligible span queries — which now fetch series AND
   // exemplars in the SAME api.resolveMetric call (D5). [] for everything else.
@@ -71,6 +77,10 @@ interface QueryData {
   // v0.9.458 (dürüstlük A1) — 50k satır tavanı doldu (alfabetik kesim);
   // top-N kırpmasından ayrı sinyal, panel şeridi ayrıca söyler.
   rowsCapped?: boolean;
+  // v0.9.809 — SUNUCUNUN söylediği efektif step (saniye). Yalnız resolver
+  // zarfı taşıyor; öteki iki yol step'ini beş ayrı dönüş dalında ayrı
+  // hesaplıyor ve dışarı vermiyor, orada ızgaradan ölçülür.
+  stepSeconds?: number;
 }
 
 export function useExploreQueries(
@@ -108,7 +118,12 @@ export function useExploreQueries(
         queryFn: (): Promise<QueryData> =>
           desc
             ? api.resolveMetric(desc, { from, to }, { step: effStep, exemplars: true })
-                .then(r => ({ series: r?.series ?? [], exemplars: r?.exemplars ?? [] }))
+                .then(r => ({
+                  series: r?.series ?? [], exemplars: r?.exemplars ?? [],
+                  // v0.9.809 — resolver yolu da dürüstlük taşıyor: satır
+                  // tavanı (alfabetik kesim) + sunucunun kelepçelediği step.
+                  rowsCapped: r?.rowsCapped, stepSeconds: r?.stepSeconds,
+                }))
             : q.source === 'span'
               ? api.spanMetricTopN({
                   agg: q.agg,
@@ -204,6 +219,7 @@ export function useExploreQueries(
     const byLetter: Record<string, SpanMetricSeries[] | undefined> = {};
     const totalByLetter: Record<string, number | undefined> = {};
     const cappedByLetter: Record<string, boolean> = {};
+    const stepByLetter: Record<string, number> = {};
     const exemplarsByLetter: Record<string, MetricExemplar[]> = {};
     const otlpExemplarsByLetter: Record<string, OtlpExemplar[]> = {};
     // v0.9.804 — HARF BAŞINA hata. Eskiden yalnız İLK başarısız sorgu
@@ -225,10 +241,16 @@ export function useExploreQueries(
       // doesn't report one — resolver / metric queries are never trimmed.
       totalByLetter[q.letter] = series === undefined ? undefined : (r.data?.totalSeries ?? series.length);
       cappedByLetter[q.letter] = r.data?.rowsCapped ?? false;
+      // v0.9.809 — sunucunun sözü > ölçüm. Ölçüm bir tahmin değil: dönen
+      // bucket ızgarasının kendisi (stepAlign.measureStepSec gerekçesi).
+      stepByLetter[q.letter] = resolveStepSec(r.data?.stepSeconds, series);
       exemplarsByLetter[q.letter] = r.data?.exemplars ?? [];
       otlpExemplarsByLetter[q.letter] = otlpResults[i].data ?? [];
     });
-    return { byLetter, totalByLetter, cappedByLetter, exemplarsByLetter, otlpExemplarsByLetter, anyLoading, errorByLetter };
+    return {
+      byLetter, totalByLetter, cappedByLetter, stepByLetter,
+      exemplarsByLetter, otlpExemplarsByLetter, anyLoading, errorByLetter,
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dataSig, state]);
 }

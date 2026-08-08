@@ -46,10 +46,24 @@ type MetricResolveQuery struct {
 // MetricResolveResult carries the series plus which tier served them (so the
 // caller / operator can see whether the fine rollups or the fallback answered)
 // and the resolved step.
+//
+// v0.9.809 (dürüstlük) — RowsCapped. Bu yolun SQL'i satır tavanını ÇIPLAK
+// bir `LIMIT 50000` literaliyle taşıyordu ve dolduğunda KİMSE söylemiyordu:
+// ORDER BY gk alfabetik olduğu için geç harfli seriler komple düşer, panel
+// kalan ilk serileri "evren" gibi çizerdi. Kardeş yollar (/api/spans/metric
+// v0.9.458, /api/metrics/query v0.9.458, dashboard batch) bu bayrağı ZATEN
+// döndürüyordu — resolver onlardan ayrışmıştı.
+//
+// TotalSeries BİLEREK YOK: bu yolda top-N kırpması hiç olmuyor, yani
+// "kırpma öncesi toplam" ile dönen seri sayısı aynı şey. Tavan ısırdığında
+// ise gerçek toplam bu sorgudan BİLİNEMEZ (LIMIT sayımı da kesiyor) —
+// uydurulmuş bir toplam, tavanın kendisinden daha büyük bir yalan olurdu.
+// RowsCapped tam olarak bunu söyler: "liste eksik, evreni bilmiyorum".
 type MetricResolveResult struct {
 	Series      []SpanMetricSeries `json:"series"`
 	Tier        string             `json:"tier"` // 1s|10s|1m|operation_summary_5m|spans
 	StepSeconds int                `json:"stepSeconds"`
+	RowsCapped  bool               `json:"rowsCapped,omitempty"`
 	Exemplars   []MetricExemplar   `json:"exemplars,omitempty"`
 }
 
@@ -232,12 +246,29 @@ func dimsFitTiers(filters map[string]string, groupBy []string) bool {
 }
 
 // selectMetricTier is the pure grain-selection planner. It returns the
-// coarsest tier whose grain ≤ step and whose retention + cutover floor cover
-// the window, or ok=false to signal the caller must use the fallback path.
+// coarsest tier whose grain DIVIDES the step and whose retention + cutover
+// floor cover the window, or ok=false to signal the caller must use the
+// fallback path.
 //
 //   - coverageStart: earliest available bucket (forward-only cutover, also
 //     raised by TTL). Windows starting before it must dual-read the fallback.
 //   - now: injected so the test can pin "now" deterministically.
+//
+// v0.9.809 — BÖLÜNEBİLİRLİK. Kapı v0.8.51'den beri yalnız `grainSec > step`
+// eliyordu, yani "kademe step'ten ince olsun" diyordu ama TAM BÖLSÜN
+// demiyordu. step=15 + 10s kademesi bunun canlı sonucudur:
+// toStartOfInterval(time_bucket, 15s) 10 saniyelik satırları 2-1-2-1 diye
+// paylaştırır ve count/rate serisi 2:1 TESTERE çizer — veri değil, hizalama
+// artefaktı. Emsal aynı depoda: pickNarrowRollupTier (rollup_fastpath.go)
+// `stepSec % t.baseSec == 0` şartını taşıyor ve bölen kademe yoksa ham yola
+// düşüyor. Burada da aynısı: uyduramıyorsak testere çizmek yerine ham yolun
+// doğru cevabını verelim.
+//
+// v0.9.27 OKUMA TABANI da bu yüzden ARTIK AÇIKÇA burada. Eskiden 1s
+// kademesini "step ≥ 10 olduğu için 10s her zaman önce eşleşir" tesadüfü
+// kapatıyordu; bölünebilirlik şartı o tesadüfü bozar (step=15 → 10s elenir
+// → 1s açılırdı). Tabanı kapıya yazmak operatör kararını (okuma 10s'te
+// taban, yazım dokunulmaz) koda bağlar.
 func selectMetricTier(from, to time.Time, stepSec int, coverageStart, now time.Time, filters map[string]string, groupBy []string) (spanmetricTier, bool) {
 	// Off-dimension filter/groupBy → only raw spans can answer it.
 	if !dimsFitTiers(filters, groupBy) {
@@ -258,8 +289,14 @@ func selectMetricTier(from, to time.Time, stepSec int, coverageStart, now time.T
 	// Iterate coarse→fine and take the FIRST tier that fits, so we read the
 	// fewest rows for the requested resolution.
 	for _, t := range spanmetricTiers {
+		if t.grainSec < minMetricStepSec {
+			continue // okuma tabanı (v0.9.27): 1s kademesi resolver'dan okunmaz
+		}
 		if t.grainSec > step {
 			continue // tier bucket coarser than the step → can't render at this resolution; try a finer tier
+		}
+		if step%t.grainSec != 0 {
+			continue // kademe step'i TAM BÖLMÜYOR → 2:1 testere; ham yol doğruyu verir
 		}
 		if needRoute && !t.hasRoute {
 			continue // 1s drops http_route, so it can't satisfy a route predicate
@@ -353,7 +390,10 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 		if err != nil {
 			return MetricResolveResult{}, err
 		}
-		return MetricResolveResult{Series: series, Tier: "spans", StepSeconds: step}, nil
+		return MetricResolveResult{
+			Series: series, Tier: "spans", StepSeconds: step,
+			RowsCapped: SeriesRowsCapped(series),
+		}, nil
 	}
 
 	aggExpr, err := spanmetricStateAgg(q.Agg, step)
@@ -395,9 +435,10 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 		WHERE %s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
-		LIMIT 50000
+		LIMIT %d
 		SETTINGS max_execution_time = 25`,
-		step, groupSelect, aggExpr, exemplarCols, s.spanmetricsSourceFor(tier.table), strings.Join(conds, " AND "))
+		step, groupSelect, aggExpr, exemplarCols, s.spanmetricsSourceFor(tier.table), strings.Join(conds, " AND "),
+		SpanMetricRowCap)
 
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
@@ -448,7 +489,10 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 	for _, k := range order {
 		out = append(out, *seriesMap[k])
 	}
-	return MetricResolveResult{Series: out, Tier: tier.label, StepSeconds: step, Exemplars: exemplars}, nil
+	return MetricResolveResult{
+		Series: out, Tier: tier.label, StepSeconds: step, Exemplars: exemplars,
+		RowsCapped: SeriesRowsCapped(out),
+	}, nil
 }
 
 // toSpanMetricFilter maps the descriptor onto the legacy SpanMetricFilter so
@@ -534,7 +578,13 @@ func (s *Store) resolveBand(ctx context.Context, q MetricResolveQuery, step int)
 		for _, agg := range []string{"p50", "p95", "p99"} {
 			out = append(out, relabelBandSeries(m[agg], agg)...)
 		}
-		return MetricResolveResult{Series: out, Tier: "spans", StepSeconds: step}, nil
+		// Tavan ÜÇ çizginin toplamından değil, TEK bir agg'in kendi
+		// kümesinden ölçülür: üçünü toplamak 3×nokta üretir ve tavana
+		// çarpmamış bir bandı "kırpıldı" diye işaretlerdi.
+		return MetricResolveResult{
+			Series: out, Tier: "spans", StepSeconds: step,
+			RowsCapped: SeriesRowsCapped(m["p99"]),
+		}, nil
 	}
 
 	groupSelect := "[]::Array(String)"
@@ -567,9 +617,10 @@ func (s *Store) resolveBand(ctx context.Context, q MetricResolveQuery, step int)
 		WHERE %s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
-		LIMIT 50000
+		LIMIT %d
 		SETTINGS max_execution_time = 25`,
-		step, groupSelect, bandProjection(), exemplarCols, s.spanmetricsSourceFor(tier.table), strings.Join(conds, " AND "))
+		step, groupSelect, bandProjection(), exemplarCols, s.spanmetricsSourceFor(tier.table), strings.Join(conds, " AND "),
+		SpanMetricRowCap)
 
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
@@ -583,7 +634,12 @@ func (s *Store) resolveBand(ctx context.Context, q MetricResolveQuery, step int)
 	groups := make(map[string]*bandGroup)
 	var order []string
 	var exemplars []MetricExemplar
+	// Tavan SATIRDAN sayılır, noktadan değil: bir (bucket, gk) satırı DÖRT
+	// çizgiye birden nokta basıyor, yani SeriesRowsCapped(out) tavanı 4×
+	// erken görürdü ve kırpılmamış bir bandı "eksik" diye işaretlerdi.
+	rowCount := 0
 	for rows.Next() {
+		rowCount++
 		var bucket uint64
 		var gk []string
 		var band []float64
@@ -633,7 +689,10 @@ func (s *Store) resolveBand(ctx context.Context, q MetricResolveQuery, step int)
 			out = append(out, *ln)
 		}
 	}
-	return MetricResolveResult{Series: out, Tier: tier.label, StepSeconds: step, Exemplars: exemplars}, nil
+	return MetricResolveResult{
+		Series: out, Tier: tier.label, StepSeconds: step, Exemplars: exemplars,
+		RowsCapped: rowCount >= SpanMetricRowCap,
+	}, nil
 }
 
 // spanmetricsCoverageStart returns the earliest available spanmetrics bucket —

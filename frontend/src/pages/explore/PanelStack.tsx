@@ -3,6 +3,7 @@ import type { SpanMetricSeries, MetricExemplar, ChartAnnotation, OtlpExemplar } 
 import type { TSSeries, TSThreshold } from '@/components/viz/TimeSeriesPanel';
 import { seriesColor } from '@/lib/chartFmt';
 import { formulaSeries } from './formulaSeries';
+import { alignFormulaLetters } from './stepAlign';
 import {
   type BuilderState, type BuilderQuery, produces, queryDesc, queryUnit,
   seriesGroupLabel, effectiveTopN,
@@ -126,6 +127,10 @@ export interface PanelInputs {
   // no-splitBy queries; [] everywhere else).
   otlpExemplarsByLetter?: Record<string, OtlpExemplar[]>;
   cappedByLetter?: Record<string, boolean>;
+  // v0.9.809 — letter → o sorgunun GERÇEK bucket çözünürlüğü (saniye,
+  // 0 = bilinmiyor). Yalnız formül paneli okur: farklı çözünürlükteki
+  // harfleri birleştirmek sessiz bir ölçek hatasıdır (stepAlign.ts).
+  stepByLetter?: Record<string, number>;
 }
 
 // IDLE_HINT — the paramless-workspace sentence. Deliberately an instruction,
@@ -136,7 +141,7 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
   const {
     byLetter, from = 0, errorByLetter = {}, exemplarsByLetter = {},
     overlaysByLetter = {}, totalByLetter = {}, otlpExemplarsByLetter = {},
-    cappedByLetter = {},
+    cappedByLetter = {}, stepByLetter = {},
   } = inputs;
   // active === false → nothing was ever requested. Every producing query is
   // idle, whatever the (necessarily empty) result maps say.
@@ -239,7 +244,16 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
   // Formula panel — dashed, gaps where a referenced bucket is missing.
   const expr = state.formula.trim();
   if (expr) {
-    const pts = formulaSeries(expr, byLetter);
+    // v0.9.809 — ÇÖZÜNÜRLÜK HİZASI, hesaptan ÖNCE. formulaSeries bucket'ları
+    // KESİŞİMLE eşliyor: A 15 saniyelik, B 60 saniyelik bucket'larda gelirse
+    // zaman damgaları yine örtüşür ve A/B hesaplanır — ama "15 saniyede
+    // sayılan"ı "60 saniyede sayılan"a bölerek. Sonuç boş panel değil,
+    // dörtte bir büyüklüğünde MAKUL GÖRÜNEN bir sayıdır; kimse sorgulamaz.
+    // Üç okuma yolu step'i ayrı kelepçelediği için bu canlı bir olasılık
+    // (gerekçe: stepAlign.ts). Uyuşmuyorsa formül HESAPLANMAZ ve panel
+    // nedenini söyler.
+    const align = alignFormulaLetters(expr, stepByLetter);
+    const pts = align.aligned ? formulaSeries(expr, byLetter) : [];
     const label = `ƒ: ${expr}`;
     // The formula depends on its referenced letters, so it inherits their
     // situation: idle while nothing is asked, error as soon as ANY letter
@@ -250,9 +264,11 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
       ? 'idle'
       : failed.length > 0
         ? 'error'
-        : pts.length === 0 && Object.values(byLetter).some(v => v === undefined)
-          ? 'loading'
-          : 'ready';
+        : !align.aligned
+          ? 'ready' // hesaplanamaz ama HATA değil — açıklaması emptyReason'da
+          : pts.length === 0 && Object.values(byLetter).some(v => v === undefined)
+            ? 'loading'
+            : 'ready';
     out.push({
       key: 'ƒ', letter: 'ƒ', desc: expr, unit: '', isFormula: true,
       state: fState,
@@ -261,9 +277,11 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
         : undefined,
       emptyReason: fState === 'idle'
         ? IDLE_HINT
-        : fState === 'ready' && pts.length === 0
-          ? 'Formül için ortak zaman aralığında veri yok'
-          : undefined,
+        : !align.aligned && fState === 'ready'
+          ? align.note ?? undefined
+          : fState === 'ready' && pts.length === 0
+            ? 'Formül için ortak zaman aralığında veri yok'
+            : undefined,
       series: pts.length ? [{
         label, color: seriesColor(label), dash: [6, 4],
         points: pts.map(p => ({ time: p.time, value: p.value })),

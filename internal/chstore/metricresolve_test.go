@@ -1,6 +1,8 @@
 package chstore
 
 import (
+	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -78,12 +80,32 @@ func TestSelectMetricTier(t *testing.T) {
 
 		// retention horizons.
 		{name: "40d window beyond 1m ttl → fallback", from: -40 * 24 * time.Hour, step: 3600, coverage: oldCoverage, wantTier: ""},
-		{name: "7h window step1 → 10s (floor escapes 1s 6h ttl)", from: -7 * time.Hour, step: 1, coverage: oldCoverage, wantTier: "10s"},
+		// v0.9.809 — bu satır ESKİDEN "10s" bekliyordu ve BEKLENTİSİ YANLIŞTI.
+		// 7 saatlik pencerede nokta bütçesi step'i 35'e yükseltiyor (clampMetricStep:
+		// ceil(25200/720)); 35 saniyelik bucket'lar 10 saniyelik satırları 4-3-4-3
+		// diye paylaştırır. Test o testereyi "doğru kademe" diye çiviliyordu.
+		{name: "7h window step1 → bütçe step'i 35'e çıkarır, 10s BÖLMEZ → ham yol", from: -7 * time.Hour, step: 1, coverage: oldCoverage, wantTier: ""},
 		{name: "exactly at 30d ttl edge → 1m", from: -30 * 24 * time.Hour, step: 3600, coverage: oldCoverage, wantTier: "1m"},
 
 		// forward-only cutover: window predates available fine-grain data.
 		{name: "window predates cutover → fallback", from: -2 * time.Minute, step: 1, coverage: now.Add(-1 * time.Minute), wantTier: ""},
 		{name: "window starts at cutover, step1 → 10s (v0.9.27 floor)", from: -1 * time.Minute, step: 1, coverage: now.Add(-1 * time.Minute), wantTier: "10s"},
+
+		// ── v0.9.809 — KADEME BÖLÜNEBİLİRLİĞİ ────────────────────────────
+		// Kapı eskiden yalnız "kademe step'ten ince mi" diye soruyordu.
+		// step=15 + 10s kademesi bu yüzden geçiyordu ve CH tarafında
+		// toStartOfInterval(bucket,15s) 10s satırlarını 2-1-2-1 paylaştırıp
+		// count/rate'te 2:1 TESTERE çiziyordu. Emsal: pickNarrowRollupTier.
+		{name: "step15 → 10s BÖLMEZ (15%10=5) → ham yol", from: -30 * time.Minute, step: 15, coverage: oldCoverage, wantTier: ""},
+		{name: "step20 → 10s BÖLER → 10s", from: -30 * time.Minute, step: 20, coverage: oldCoverage, wantTier: "10s"},
+		{name: "step30 → 10s BÖLER (1m hâlâ kaba) → 10s", from: -30 * time.Minute, step: 30, coverage: oldCoverage, wantTier: "10s"},
+		{name: "step45 → ne 1m ne 10s böler → ham yol", from: -30 * time.Minute, step: 45, coverage: oldCoverage, wantTier: ""},
+		{name: "step90 → 1m BÖLMEZ, 10s BÖLER → 10s", from: -30 * time.Minute, step: 90, coverage: oldCoverage, wantTier: "10s"},
+		{name: "step120 → 1m BÖLER → 1m", from: -6 * time.Hour, step: 120, coverage: oldCoverage, wantTier: "1m"},
+		// Okuma tabanı ARTIK AÇIK: bölünebilirlik 1s kademesini "her step'i
+		// böler" diye açardı (v0.9.27 operatör kararının sessiz iptali).
+		{name: "step15 + route → 1s kademesi AÇILMAZ (okuma tabanı 10s)", from: -30 * time.Minute, step: 15, coverage: oldCoverage, filters: route, wantTier: ""},
+		{name: "step25 (route yok) → 1s kademesi AÇILMAZ", from: -30 * time.Minute, step: 25, coverage: oldCoverage, wantTier: ""},
 	}
 
 	for _, c := range cases {
@@ -102,6 +124,34 @@ func TestSelectMetricTier(t *testing.T) {
 		}
 		if tier.label != c.wantTier {
 			t.Errorf("%s: tier = %q, want %q", c.name, tier.label, c.wantTier)
+		}
+	}
+}
+
+// v0.9.809 — satır tavanı TEK sabitten. Üç resolver SQL'i (fine, band,
+// tracemetrics) tavanı ÇIPLAK `LIMIT 50000` literaliyle taşıyordu: kardeş
+// yollar SpanMetricRowCap'e geçerken (v0.9.458) bu üçü geride kalmıştı ve
+// sabit değişse sessizce ayrışırlardı. Kaynak taraması, tavanı raporlayan
+// RowsCapped bayrağının ölçtüğü eşikle SQL'in kestiği eşiği birbirine
+// çiviler — ikisi ayrışırsa şerit ya erken ya hiç yanar.
+func TestResolverRowCapFromConstant(t *testing.T) {
+	// Yorumlar ATILIR. Bu oturumda AYNI tuzak frontend tarafında da vardı
+	// (cancellation.test.ts stripComments): düzeltmeyi ANLATAN yorum eski
+	// literali içeriyor ve tarama ona takılıp yanlış kırmızı veriyor.
+	// SQL'ler backtick dizesinde, içlerinde `//` yok — satır yorumlarını
+	// atmak güvenli.
+	lineComment := regexp.MustCompile(`(?m)^\s*//.*$`)
+	for _, f := range []string{"metricresolve.go", "tracemetric.go"} {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("%s okunamadı: %v", f, err)
+		}
+		src := lineComment.ReplaceAllString(string(raw), "")
+		if strings.Contains(string(src), "LIMIT 50000") {
+			t.Errorf("%s: çıplak `LIMIT 50000` — SpanMetricRowCap kullanılmalı", f)
+		}
+		if !strings.Contains(string(src), "SpanMetricRowCap") {
+			t.Errorf("%s: SpanMetricRowCap referansı yok", f)
 		}
 	}
 }

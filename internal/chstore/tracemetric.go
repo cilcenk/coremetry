@@ -152,9 +152,9 @@ func (s *Store) resolveTraceMetric(ctx context.Context, q MetricResolveQuery, st
 		%s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
-		LIMIT 50000
+		LIMIT %d
 		SETTINGS max_execution_time = 25`,
-		step, groupSelect, aggExpr, exemplarCols, inner, outerWhere)
+		step, groupSelect, aggExpr, exemplarCols, inner, outerWhere, SpanMetricRowCap)
 
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
@@ -205,5 +205,8 @@ func (s *Store) resolveTraceMetric(ctx context.Context, q MetricResolveQuery, st
 	for _, k := range order {
 		out = append(out, *seriesMap[k])
 	}
-	return MetricResolveResult{Series: out, Tier: "trace_summary_5m", StepSeconds: step, Exemplars: exemplars}, nil
+	return MetricResolveResult{
+		Series: out, Tier: "trace_summary_5m", StepSeconds: step, Exemplars: exemplars,
+		RowsCapped: SeriesRowsCapped(out),
+	}, nil
 }

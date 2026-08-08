@@ -43,7 +43,7 @@ const COLS: DataTableColumn<GroupRow>[] = [
 export function buildGroupRows(panels: PanelData[]): GroupRow[] {
   const rows: GroupRow[] = [];
   for (const p of panels) {
-    if (p.loading) continue;
+    if (p.state !== 'ready') continue;   // v0.9.804 — idle/loading/error satır üretmez
     for (const s of p.series) {
       const vs = s.points.map(x => x.value).filter((v): v is number => v != null && isFinite(v));
       rows.push({

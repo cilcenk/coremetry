@@ -19,7 +19,10 @@ export function csvField(v: string): string {
 export function panelsToCSV(panels: PanelData[]): string {
   const lines: string[] = ['query,series,unit,time,value'];
   for (const p of panels) {
-    if (p.loading) continue;
+    // v0.9.804 — yalnız GERÇEKTEN sonuç dönmüş paneller dışa aktarılır;
+    // idle / loading / error panellerinin serisi zaten boş, ama durumu
+    // açıkça sormak "boş CSV" ile "hata verdi" arasındaki farkı korur.
+    if (p.state !== 'ready') continue;
     // v0.9.467 (dürüstlük A14) — export GÖRÜNEN serilerdir (top-N
     // kırpılmış küme); 3K serilik splitBy'da Excel pivot toplamları
     // gerçeğin kesri olur. Kırpma varsa CSV kendisi söyler (# yorum

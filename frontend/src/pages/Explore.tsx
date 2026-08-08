@@ -324,7 +324,7 @@ function ExploreInner() {
   // onExemplarClick → CorrelationContextDrawer path as the span-derived ones.
   const {
     byLetter, totalByLetter, cappedByLetter, exemplarsByLetter, otlpExemplarsByLetter,
-    anyLoading, error: builderError,
+    anyLoading, errorByLetter,
   } = useExploreQueries(
     debounced,
     builderFrom,
@@ -333,9 +333,24 @@ function ExploreInner() {
   // Phase 3.3 — deploy markers + SLO thresholds for pinned-service queries.
   const overlaysByLetter = useExploreOverlays(debounced, builderFrom, exploreRange.to);
   const panels = useMemo(
-    () => buildPanels(debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter),
-    [debounced, byLetter, exemplarsByLetter, overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter],
+    () => buildPanels(debounced, {
+      byLetter,
+      // v0.9.804 — builderFrom, AYNEN fetch'e giden değer. 0 = fan-out
+      // devre dışı (paramsız /explore) ve paneller "idle" olur; bu ayrım
+      // olmadan A paneli sonsuza dek dönüyordu.
+      from: builderFrom,
+      errorByLetter,
+      exemplarsByLetter, overlaysByLetter, totalByLetter,
+      otlpExemplarsByLetter, cappedByLetter,
+    }),
+    [debounced, byLetter, builderFrom, errorByLetter, exemplarsByLetter,
+     overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter],
   );
+  // Harf başına hata bandı — panellerin İÇİNDEKİ mesajın üstünde, sayfa
+  // seviyesinde bir özet. Eskiden yalnız ilk hatayı basıyordu.
+  const builderErrors = useMemo(
+    () => Object.entries(errorByLetter).sort(([a], [b]) => a.localeCompare(b)),
+    [errorByLetter]);
   const anyProduces = debounced.queries.some(produces);
 
   // Heatmap viz — the LatencyHeatmap path, driven by query A (panel header
@@ -793,9 +808,14 @@ name ~ checkout`}
         {/* ── Metric mode · panel stack ─────────────────────────────────────── */}
         {resultMode === 'metric' && debounced.viz !== 'heatmap' && (
           <>
-            {builderError && (
+            {/* v0.9.804 — HER başarısız harf listelenir. Tek satır yalnız
+                ilkini basıyordu; iki sorgu birlikte patladığında ikincinin
+                sebebi hiçbir yerde görünmüyordu. */}
+            {builderErrors.length > 0 && (
               <div className="trp-error" style={{ marginBottom: 10 }}>
-                Sorgu {builderError.letter} hata verdi: {builderError.message}
+                {builderErrors.map(([letter, message]) => (
+                  <div key={letter}>Sorgu {letter} hata verdi: {message}</div>
+                ))}
               </div>
             )}
             {!anyProduces && (

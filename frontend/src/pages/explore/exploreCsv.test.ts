@@ -15,7 +15,7 @@ describe('csvField (RFC 4180)', () => {
 describe('panelsToCSV', () => {
   const panel = (over: Partial<PanelData>): PanelData => ({
     key: 'A', letter: 'A', desc: '', unit: 'ms', isFormula: false,
-    loading: false, series: [], more: 0,
+    state: 'ready', series: [], more: 0,
     ...over,
   } as PanelData);
 
@@ -35,8 +35,10 @@ describe('panelsToCSV', () => {
     expect(lines[2]).toBe('A,"service=checkout, p99",ms,2025-07-08T13:07:40.000Z,');
   });
 
-  it('skips loading panels', () => {
-    const csv = panelsToCSV([panel({ loading: true, series: [{ label: 'x', points: [{ time: 1, value: 1 }] }] })]);
+  // v0.9.804 — `loading: boolean` yerine dört durumlu `state`. Hazır
+  // olmayan HER durum dışa aktarımdan düşer.
+  it.each(['idle', 'loading', 'error'] as const)('skips %s panels', (state) => {
+    const csv = panelsToCSV([panel({ state, series: [{ label: 'x', points: [{ time: 1, value: 1 }] }] })]);
     expect(csv.trimEnd()).toBe('query,series,unit,time,value');
   });
 });

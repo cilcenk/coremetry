@@ -16,13 +16,34 @@ import type { ExploreOverlay } from './useExploreQueries';
 // precedent, generalised). Per-panel series are capped to the biggest
 // PANEL_SERIES_CAP by area (plan perf guard: 4 panels × ≤10 series).
 
+// PanelState (v0.9.804) — a panel's rendering branch. Before this the only
+// signal was `loading: boolean`, derived from `data === undefined`, and TWO
+// distinct non-loading situations decoded to "spinner forever":
+//
+//   idle  — the fan-out is DISABLED (paramless /explore keeps builderFrom at
+//           0 so react-query never runs). data stays undefined for the life
+//           of the page, so panel A span the moment the workspace rendered
+//           and never stopped. Nothing was loading; nothing was going to.
+//   error — the query ran and FAILED. useExploreQueries left data undefined
+//           on isError, so the panel spun on top of a query that was already
+//           dead, and only the FIRST failing letter got a message anywhere.
+//
+// Making the state explicit is what lets each branch say the true thing.
+export type PanelState = 'idle' | 'loading' | 'error' | 'ready';
+
 export interface PanelData {
   key: string;             // letter, or 'ƒ' for the formula panel
   letter: string;
   desc: string;
   unit: string;
   isFormula: boolean;
-  loading: boolean;
+  state: PanelState;
+  // Set only when state === 'error' — the failing letter's own message.
+  errorMessage?: string;
+  // Set only when state === 'ready' && series.length === 0 — why the chart
+  // area is blank, phrased for THIS panel (a formula with no overlapping
+  // buckets is a different sentence from a query that matched nothing).
+  emptyReason?: string;
   series: TSSeries[];      // capped, labeled, coloured
   more: number;            // series dropped by the cap
   // v0.9.458 (dürüstlük A1) — 50k satır tavanı doldu: seriler ALFABETİK
@@ -80,30 +101,66 @@ function otlpMarkersFor(
   return out;
 }
 
-export function buildPanels(
-  state: BuilderState,
-  byLetter: Record<string, SpanMetricSeries[] | undefined>,
-  exemplarsByLetter: Record<string, MetricExemplar[]> = {},
-  overlaysByLetter: Record<string, ExploreOverlay> = {},
+// PanelInputs — everything the projection needs beyond the builder state.
+// v0.9.804 turned the old positional tail (six defaulted Record params) into
+// a named bag: `from` and `errorByLetter` had to join it, and a
+// seven-then-eight-positional-argument signature is where a call site
+// silently passes the wrong map.
+export interface PanelInputs {
+  byLetter: Record<string, SpanMetricSeries[] | undefined>;
+  // from — the fetch window start in unix ns, exactly as handed to
+  // useExploreQueries. 0 means the fan-out is DISABLED (paramless /explore),
+  // which is the difference between "waiting" and "not asked yet".
+  from?: number;
+  // letter → error message for a query whose fetch FAILED.
+  errorByLetter?: Record<string, string>;
+  exemplarsByLetter?: Record<string, MetricExemplar[]>;
+  overlaysByLetter?: Record<string, ExploreOverlay>;
   // letter → pre-trim series count. The server caps a high-cardinality span
   // groupBy to TOP_N_MAX, so ranked.length here is already ≤50; the true
   // "+N more" must come from this total, not the capped slice. Falls back to
   // the received series count when absent (resolver / metric paths).
-  totalByLetter: Record<string, number | undefined> = {},
+  totalByLetter?: Record<string, number | undefined>;
   // v0.8.332 (pivot Phase 3) — letter → REAL OTLP exemplars for catalogue-
   // metric queries (useExploreQueries gates the fetch to single-service,
   // no-splitBy queries; [] everywhere else).
-  otlpExemplarsByLetter: Record<string, OtlpExemplar[]> = {},
-  cappedByLetter: Record<string, boolean> = {},
-): PanelData[] {
+  otlpExemplarsByLetter?: Record<string, OtlpExemplar[]>;
+  cappedByLetter?: Record<string, boolean>;
+}
+
+// IDLE_HINT — the paramless-workspace sentence. Deliberately an instruction,
+// not an apology: the operator has landed on a tool with nothing asked yet.
+export const IDLE_HINT = 'Sorgunu kur — çalıştıkça burada çizilir';
+
+export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData[] {
+  const {
+    byLetter, from = 0, errorByLetter = {}, exemplarsByLetter = {},
+    overlaysByLetter = {}, totalByLetter = {}, otlpExemplarsByLetter = {},
+    cappedByLetter = {},
+  } = inputs;
+  // active === false → nothing was ever requested. Every producing query is
+  // idle, whatever the (necessarily empty) result maps say.
+  const active = from > 0;
   const out: PanelData[] = [];
   for (const q of state.queries) {
     if (!produces(q)) continue;
     const data = byLetter[q.letter];
     const unit = queryUnit(q);
     const desc = queryDesc(q);
+    const base = { key: q.letter, letter: q.letter, desc, unit, isFormula: false };
+    if (!active) {
+      out.push({ ...base, state: 'idle', emptyReason: IDLE_HINT, series: [], more: 0 });
+      continue;
+    }
+    // Error BEFORE the undefined check: react-query leaves data undefined on
+    // a failed fetch, so an errored letter looks exactly like a loading one.
+    const err = errorByLetter[q.letter];
+    if (err) {
+      out.push({ ...base, state: 'error', errorMessage: err, series: [], more: 0 });
+      continue;
+    }
     if (data === undefined) {
-      out.push({ key: q.letter, letter: q.letter, desc, unit, isFormula: false, loading: true, series: [], more: 0 });
+      out.push({ ...base, state: 'loading', series: [], more: 0 });
       continue;
     }
     const exemplars = exemplarsByLetter[q.letter] ?? [];
@@ -165,9 +222,13 @@ export function buildPanels(
     // reflects what actually exists, not just what came over the wire.
     const total = totalByLetter[q.letter] ?? ranked.length;
     const shown = Math.min(cap, ranked.length);
+    const shownSeries = ranked.slice(0, cap).map(x => x.s);
     out.push({
-      key: q.letter, letter: q.letter, desc, unit, isFormula: false, loading: false,
-      series: ranked.slice(0, cap).map(x => x.s),
+      ...base, state: 'ready',
+      emptyReason: shownSeries.length === 0
+        ? 'Bu pencerede veri yok — aralığı genişlet veya filtreleri azalt'
+        : undefined,
+      series: shownSeries,
       more: Math.max(0, total - shown),
       rowsCapped: cappedByLetter[q.letter] || undefined,
       deploys: ov?.deploys?.length ? ov.deploys : undefined,
@@ -180,9 +241,29 @@ export function buildPanels(
   if (expr) {
     const pts = formulaSeries(expr, byLetter);
     const label = `ƒ: ${expr}`;
+    // The formula depends on its referenced letters, so it inherits their
+    // situation: idle while nothing is asked, error as soon as ANY letter
+    // failed (its inputs can't arrive), loading while one is still in
+    // flight. Only then is an empty result genuinely "no overlap".
+    const failed = Object.keys(errorByLetter);
+    const fState: PanelState = !active
+      ? 'idle'
+      : failed.length > 0
+        ? 'error'
+        : pts.length === 0 && Object.values(byLetter).some(v => v === undefined)
+          ? 'loading'
+          : 'ready';
     out.push({
       key: 'ƒ', letter: 'ƒ', desc: expr, unit: '', isFormula: true,
-      loading: pts.length === 0 && Object.values(byLetter).some(v => v === undefined),
+      state: fState,
+      errorMessage: fState === 'error'
+        ? `Girdi sorgusu ${failed.sort().join(', ')} hata verdi`
+        : undefined,
+      emptyReason: fState === 'idle'
+        ? IDLE_HINT
+        : fState === 'ready' && pts.length === 0
+          ? 'Formül için ortak zaman aralığında veri yok'
+          : undefined,
       series: pts.length ? [{
         label, color: seriesColor(label), dash: [6, 4],
         points: pts.map(p => ({ time: p.time, value: p.value })),

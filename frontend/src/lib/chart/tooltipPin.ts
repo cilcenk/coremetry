@@ -55,6 +55,50 @@ export function decidePinClick(args: {
   return { action: 'pin', idx: cursorIdx };
 }
 
+// ── decidePinGesture (v0.9.792) — MODİFİYELİ pin + tık ZİNCİRİ yönlendirmesi ─
+//
+// CorePanel'in çizim alanı tıkı DOLU: ◆ exemplar isabeti > bucket-tık >
+// panel eylemi (v0.9.744/789 sırası). Düz tıkı pin'e vermek o zinciri
+// kırardı, o yüzden pin tetiği MODİFİYELİ: Shift+tık (operatör onaylı jest)
+// ya da Alt+tık (MLC v1 kas hafızası, MultiLineChart:387).
+//
+// Bu fonksiyon decidePinClick'in ÜSTÜNE tek bir soruyu ekler: "bu tıkı pin
+// mi sahiplendi, yoksa çağıranın kendi zinciri mi işlemeli?" Dört cevap:
+//   • pin / unpin  → pin durumu değişti, tık BURADA bitti.
+//   • swallow      → jest pin'e aitti ama bir şey değişmedi (sürükleme
+//                    kuyruğu, çift-tık click'i, boş imleç). Tık YUTULUR:
+//                    Shift'li bir sürükleme bir exemplar çekmecesi açamaz.
+//   • passthrough  → pin ilgilenmiyor; çağıran ◆/bucket/panel zincirini
+//                    aynen sürdürür.
+//
+// MLC v1 sözleşmesinin (:387) birebiri PİNLİYKEN görülür: pin varken HER
+// tık — düz olsun modifiyeli olsun — unpin'e gider ve bucket'a DÜŞMEZ.
+// "tık / Esc çözer" ipucu böylece her preset'te doğru kalır.
+export type PinGesture =
+  | { action: 'pin'; idx: number }
+  | { action: 'unpin' }
+  | { action: 'swallow' }
+  | { action: 'passthrough' };
+
+export function decidePinGesture(args: {
+  pinnedIdx: number | null;
+  cursorIdx: number | null | undefined;
+  // Pin tetikleyen modifiyeler — ikisi de aynı kapıya çıkar.
+  shiftKey?: boolean;
+  altKey?: boolean;
+  dragPx?: number | null;
+  dragThresholdPx?: number;
+  detail?: number;
+}): PinGesture {
+  const wantsPin = !!args.shiftKey || !!args.altKey;
+  // Modifiyesiz tık + pin yok = pin'in işi değil; zincir çağıranda sürer.
+  if (!wantsPin && args.pinnedIdx == null) return { action: 'passthrough' };
+  const d = decidePinClick(args);
+  if (d.action === 'unpin') return { action: 'unpin' };
+  if (d.action === 'pin') return { action: 'pin', idx: d.idx };
+  return { action: 'swallow' };
+}
+
 // ── DOM yardımcıları (saf değil; preset'lerde 4× kopyayı önler) ─────────────
 
 // Pin görsel ipucu — tooltip içeriği pin süresince yeniden yazılmadığından

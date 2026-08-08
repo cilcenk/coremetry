@@ -51,6 +51,7 @@ import { stackData, stackBands } from '@/lib/chart/stacking';
 import { bucketWindowNs } from '@/lib/chart/bucketWindow';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
 import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
+import { decidePinGesture, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
 import { placeTooltip } from '@/lib/chartTooltip';
 import { fmtTooltipTime } from '@/lib/chartFmt';
 import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
@@ -78,6 +79,15 @@ function bucketWindowAt(u: uPlot, clientX: number, clientY: number) {
   if (!xs || xs.length === 0) return null;
   return bucketWindowNs(xs, xMs, 1000);
 }
+
+// v0.9.792 — pin AFORDANSI. Tooltip'in ALT satırına soluk tek satır; yalnız
+// pin YOKKEN yazılır (pinliyken setCursor erken döner, yerine applyPinStyle'ın
+// "📌 sabit — tık / Esc çözer" başlık satırı geçer). Token'lar note satırıyla
+// aynı (10px / var(--text3)) — panelde üçüncü bir tipografi dili doğmaz.
+const PIN_TIP_HTML =
+  '<div class="ov-tt-tip" style="margin-top:4px;padding-top:4px;' +
+  'border-top:1px solid var(--border);color:var(--text3);font-size:10px">' +
+  'Shift+tık: sabitle</div>';
 
 export type PanelData =
   | { state: 'loading' }
@@ -349,6 +359,32 @@ export function CorePanel({
   // olduğundan davranış bayt bayt aynıdır, stacked'te ise doğru olur.
   const rawRef = useRef(aligned.data);
   rawRef.current = aligned.data;
+
+  // ── v0.9.792 — tooltip sabitleme (Grafana-parite #2, v2 motorunda) ────────
+  // pinRef: pinli veri index'i (null = pin yok). Dört preset'in (OVC/TC/MLC/
+  // TSP) taşıdığı sözleşmenin CorePanel karşılığı; karar mantığı saf ve
+  // paylaşımlı (tooltipPin.decidePinGesture), burada yalnız DOM tarafı var.
+  // Ad da paylaşımlı: dört preset'in hepsinde `pinRef`.
+  //
+  // Ref, state DEĞİL — ve hiçbir bağımlılık dizisine GİRMEZ (v0.9.704 kimlik
+  // dersi): pin bir çizim durumu değil, tooltip DOM'unun donma anahtarıdır.
+  // State olsaydı her pin/unpin panelin tümünü yeniden render ederdi; config
+  // dizisine sızsaydı uPlot'u destroy/recreate ederdi. corePanelContracts'ın
+  // 'pinRef' + 'pinnedIdx' dep yasağı pinleri bunu çiviler.
+  const pinRef = useRef<number | null>(null);
+  const unpinTooltip = () => {
+    pinRef.current = null;
+    if (ttRef.current) clearPinStyle(ttRef.current, 'display');
+  };
+  // Esc → pin çöz. Tam ekranın ESC'inden AYRI dinleyici: pin fullscreen'siz
+  // de yaşar. unpinTooltip yalnız ref'lere dokunur → dizi boş kalabilir.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     const u = plotRef.current;
     if (!u) return;
@@ -520,6 +556,9 @@ export function CorePanel({
       const fromSec = u.posToVal(u.select.left, 'x') / 1000;
       const toSec = u.posToVal(u.select.left + u.select.width, 'x') / 1000;
       u.setSelect({ left: 0, top: 0, width: 0, height: 0 }, false);
+      // v0.9.792 — pencere değişiyorsa pin bayatlar (pinli index başka bir
+      // zamana denk gelir): zoom pin'i çözer. "ikinci tık / Esc / pan çözer".
+      unpinTooltip();
       onZoomRef.current(fromSec, toSec);
     });
     // v0.9.710 — tooltip: "tüm seriler, değere göre sıralı" (spec
@@ -542,6 +581,10 @@ export function CorePanel({
       }
       const tt = ttRef.current;
       if (!tt) return;
+      // v0.9.792 — PİNLİYKEN tooltip donuk: içerik de konum da dokunulmaz.
+      // Guard cursorTime kanalının SONRASINDA (TSP:600 sırası): crosshair ve
+      // senkron paneller yaşamaya devam eder, yalnız kutu donar.
+      if (pinRef.current != null) return;
       const idx = u.cursor.idx;
       if (idx == null || u.cursor.left == null || u.cursor.left < 0) {
         tt.style.display = 'none';
@@ -573,7 +616,7 @@ export function CorePanel({
       if (rows.length === 0) { tt.style.display = 'none'; return; }
       tt.innerHTML = `<div class="ov-tt-t">${fmtTooltipTime(tMs / 1000, stepSec)}</div>` + rows.map(r =>
         `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,
-      ).join('');
+      ).join('') + PIN_TIP_HTML;
       tt.style.display = 'block';
       const host = wrapRef.current;
       if (host) {
@@ -619,6 +662,14 @@ export function CorePanel({
     //                değişince boşluk doktrini gerçekten değişmeliydi.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), connectNulls]);
+
+  // v0.9.792 — config kimliği değişince UPlotChart destroy/recreate eder ve
+  // pinli index bayat bir kutuya işaret eder (eksen/seri kümesi değişmiş
+  // olabilir). Rebuild pin'i çözer — TSP'nin afterBuild sözleşmesi.
+  useEffect(() => {
+    if (pinRef.current != null) unpinTooltip();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config]);
 
   // CSV: ekranda ne varsa o iner (görünen veri, ayrı export sorgusu yok).
   const downloadCsv = () => {
@@ -754,14 +805,39 @@ export function CorePanel({
       )}
 
       <div ref={wrapRef} style={{ minHeight: height, position: 'relative', cursor: (onExpandClick || onBucketClick) && !fullscreen ? 'pointer' : undefined }}
-        onPointerDown={(onExpandClick || onExemplarClick || onBucketClick) ? (e) => { clickRef.current = { x: e.clientX, y: e.clientY }; } : undefined}
-        onClick={(onExpandClick || onExemplarClick || onBucketClick) && !fullscreen ? (e) => {
+        // v0.9.792 — dinleyiciler KOŞULSUZ bağlı: pin jesti her panelde
+        // çalışır (bir tık callback'i olmayan panelde de). Zincirin geri
+        // kalanı aşağıda kendi kapılarını koruyor.
+        onPointerDown={(e) => { clickRef.current = { x: e.clientX, y: e.clientY }; }}
+        onClick={(e) => {
           const d = clickRef.current;
+          const u = plotRef.current;
+          // v0.9.792 — PIN ÖNCE. Shift+tık (operatör jesti) VE Alt+tık (MLC
+          // v1 kas hafızası) pinler; PİNLİYKEN her tık unpin eder ve alttaki
+          // zincire DÜŞMEZ (MLC:387 sözleşmesinin birebiri). Karar saf
+          // çekirdekte: sürükleme kuyruğu / çift-tık click'i / boş imleç
+          // 'swallow' döner — Shift'li bir sürükleme exemplar açamaz.
+          const g = decidePinGesture({
+            pinnedIdx: pinRef.current,
+            cursorIdx: u?.cursor.idx,
+            shiftKey: e.shiftKey, altKey: e.altKey,
+            dragPx: d ? Math.abs(e.clientX - d.x) : 0,
+            detail: e.detail,
+          });
+          if (g.action === 'unpin') { unpinTooltip(); return; }
+          if (g.action === 'pin') {
+            const tt = ttRef.current;
+            if (tt && tt.style.display !== 'none') { pinRef.current = g.idx; applyPinStyle(tt); }
+            return;
+          }
+          if (g.action === 'swallow') return;
+          // ── mevcut jest zinciri (◆ > bucket > panel eylemi) ─────────────
+          if (!onExpandClick && !onExemplarClick && !onBucketClick) return;
+          if (fullscreen) return;
           // Drag-zoom basışı tık değildir (5px eşiği).
           if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return;
           // v0.9.744 — ◆ isabeti ÖNCELİKLİ: trace açar, panel eylemi
           // (navigasyon) devreye girmez. Bekleme yok — anında.
-          const u = plotRef.current;
           // stacked'te ◆ çizilmiyor (draw hook'u bastırıyor) → isabet
           // testi de kapalı: görünmeyen bir işarete tıklatmak olmaz.
           if (u && !stacked && exemplarClickRef.current && exemplarsRef.current?.some(x => x?.length)) {
@@ -790,13 +866,19 @@ export function CorePanel({
           if (!onExpandClick) return;
           if (clickTimerRef.current) window.clearTimeout(clickTimerRef.current);
           clickTimerRef.current = window.setTimeout(() => onExpandClick(), 250);
-        } : undefined}
+        }}
         onDoubleClick={(e) => {
           if (clickTimerRef.current) { window.clearTimeout(clickTimerRef.current); clickTimerRef.current = null; }
+          // v0.9.792 — çift-tık (zoom-geri) pin'i DETERMİNİSTİK çözer: aksi
+          // halde geri adımdan sonra bayat bir pinli kutu asılı kalırdı
+          // (dört preset'in dblclick dinleyicisiyle aynı gerekçe).
+          unpinTooltip();
           onZoomReset?.();
           void e;
         }}
-        onMouseLeave={() => { if (ttRef.current) ttRef.current.style.display = 'none'; }}>
+        // v0.9.792 — pinliyken imleç ayrılması kutuyu KAPATMAZ: pin'in tek
+        // vaadi bu ("imleç ayrılınca da sabit kalır").
+        onMouseLeave={() => { if (pinRef.current == null && ttRef.current) ttRef.current.style.display = 'none'; }}>
         {/* v0.9.710 — tooltip overlay; .ov-tt sınıfları evdeki tooltip
             görseliyle birebir (OVC/TC/MLC aynı CSS'i kullanıyor). */}
         <div ref={ttRef} className="ov-tt" style={{ display: 'none', position: 'absolute', zIndex: 10, pointerEvents: 'none' }} />

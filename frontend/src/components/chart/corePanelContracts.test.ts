@@ -96,6 +96,11 @@ describe('CorePanel self-review düzeltmeleri', () => {
       // girerse uPlot her poll tick'inde destroy/recreate olur.
       expect(d).not.toContain('onBucketClick,');
       expect(d).not.toContain('onBucketClick]');
+      // v0.9.792 — pin durumu da AYNI kuralda: tooltip'in donma anahtarı bir
+      // çizim girdisi değil. Bir dep dizisine sızarsa her pin/unpin uPlot'u
+      // destroy/recreate ederdi — pinlemek grafiği yok edip yeniden çizerdi.
+      expect(d).not.toContain('pinRef');
+      expect(d).not.toContain('pinnedIdx');
     }
   });
 
@@ -316,6 +321,79 @@ describe('CorePanel bucket-tık (v0.9.789)', () => {
     expect(src).toMatch(/tık → örnek trace/);
     // İpucu tıkı yutmamalı.
     expect(src).toMatch(/pointerEvents: 'none', opacity: 0\.75/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.792 — tooltip sabitleme (Grafana-parite #2) v2 motorunda.
+//
+// Dört preset (OVC/TC/MLC/TSP) bu jesti taşıyordu, CorePanel taşımıyordu:
+// v2'ye geçen her panel pin'i SESSİZCE kaybediyordu. Kapılar üç şeyi çiviler:
+// (a) karar mantığının PAYLAŞILAN saf çekirdekten gelmesi (CorePanel kendi
+// durum makinesini yazmaz), (b) pinliyken tooltip'in gerçekten donması —
+// setCursor guard'ı + mouseleave istisnası, (c) çözme yollarının hepsi:
+// ikinci tık, Esc, çift-tık, zoom, rebuild.
+// ---------------------------------------------------------------------------
+describe('CorePanel tooltip pin (v0.9.792)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('🔴 karar SAF çekirdekten — CorePanel kendi durum makinesini yazmaz', () => {
+    expect(src).toMatch(
+      /import \{ decidePinGesture, applyPinStyle, clearPinStyle \} from '@\/lib\/chart\/tooltipPin'/);
+    expect(src).toMatch(/const g = decidePinGesture\(\{/);
+    // Yerel kopya izleri: eşik/`detail` kuralları burada TEKRAR yazılmamalı.
+    expect(src).not.toMatch(/e\.detail > 1/);
+  });
+
+  it('İKİ jest de pinler: Shift+tık ve Alt+tık', () => {
+    expect(src).toMatch(/shiftKey: e\.shiftKey, altKey: e\.altKey/);
+  });
+
+  it('🔴 pin zincirin BAŞINDA — modifiyeli tık bucket/exemplar\'a düşmez', () => {
+    const pin = src.indexOf('decidePinGesture({');
+    const ex = src.indexOf('exemplarClickRef.current(hit.traceId)');
+    const bkGate = src.indexOf('if (bucketClickRef.current) {');
+    expect(pin).toBeGreaterThan(0);
+    expect(pin).toBeLessThan(ex);
+    expect(pin).toBeLessThan(bkGate);
+    // 'swallow' zinciri kesmeli; 'passthrough' düşerek devam etmeli.
+    expect(src).toMatch(/if \(g\.action === 'swallow'\) return;/);
+    expect(src).toMatch(/if \(g\.action === 'unpin'\) \{ unpinTooltip\(\); return; \}/);
+  });
+
+  it('dinleyiciler KOŞULSUZ — pin tık callback\'i olmayan panelde de çalışır', () => {
+    expect(src).toMatch(/onPointerDown=\{\(e\) => \{ clickRef\.current = /);
+    expect(src).toMatch(/onClick=\{\(e\) => \{/);
+    // Eski koşullu bağlama geri gelmemeli.
+    expect(src).not.toMatch(/onClick=\{\(onExpandClick \|\| onExemplarClick/);
+    // Zincirin kendi kapısı gövdeye taşındı (pin'den SONRA).
+    expect(src).toMatch(/if \(!onExpandClick && !onExemplarClick && !onBucketClick\) return;/);
+    expect(src).toMatch(/if \(fullscreen\) return;/);
+  });
+
+  it('🔴 pinliyken tooltip DONUK: setCursor erken döner, mouseleave kapatmaz', () => {
+    expect(src).toMatch(/if \(pinRef\.current != null\) return;\s*\n\s*const idx = u\.cursor\.idx;/);
+    expect(src).toMatch(/onMouseLeave=\{\(\) => \{ if \(pinRef\.current == null && ttRef\.current\)/);
+  });
+
+  it('çözme yolları eksiksiz: Esc · çift-tık · zoom · rebuild', () => {
+    expect(src).toMatch(/e\.key === 'Escape' && pinRef\.current != null/);
+    expect(src).toMatch(/onDoubleClick=\{\(e\) => \{[\s\S]{0,200}?unpinTooltip\(\);/);
+    // setSelect (drag-zoom) pencereyi kaydırır → pin bayatlar.
+    expect(src).toMatch(/unpinTooltip\(\);\s*\n\s*onZoomRef\.current\(fromSec, toSec\);/);
+    expect(src).toMatch(/\}, \[config\]\);/);
+  });
+
+  it('📌 göstergesi + "Shift+tık: sabitle" ipucu paylaşımlı dilde', () => {
+    // 📌 satırı applyPinStyle'dan gelir (dört preset'le AYNI metin).
+    expect(src).toMatch(/applyPinStyle\(tt\)/);
+    expect(src).toMatch(/clearPinStyle\(ttRef\.current, 'display'\)/);
+    // İpucu: note satırıyla aynı token'lar, tooltip'in ALTINDA.
+    expect(src).toMatch(/Shift\+tık: sabitle/);
+    expect(src).toMatch(/color:var\(--text3\);font-size:10px/);
+    expect(src).toMatch(/\.join\(''\) \+ PIN_TIP_HTML;/);
   });
 });
 

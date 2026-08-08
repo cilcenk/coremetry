@@ -4400,3 +4400,27 @@ export interface ExceptionTriageConfig {
   // geçmesi için gereken sessizlik (saat).
   staleResolveHours: number;
 }
+
+// v0.9.797 — metrik route dışlama kuralı (backend:
+// chstore.MetricExclusionRule / system_settings key "metric_exclusions").
+//
+// Healthcheck / probe route'ları grafiklerden düşürmek için. İki kademe:
+// okuma filtresi HER ZAMAN (geçmiş dahil, geri alınabilir) ve opsiyonel
+// ingest drop'u (kural başına çekbox — yazılmayan datapoint geri gelmez).
+export interface MetricExclusionRule {
+  // Tam metrik adı ya da '*' (her metrik).
+  metric: string;
+  // Bugün yalnız 'http.route'. Alan modelde: genişletme bir şema
+  // değişikliği değil bir doğrulama gevşetmesi olsun.
+  attrKey?: string;
+  // RE2 deseni, ANKORSUZ: '/health' yolun herhangi bir yerinde eşleşir.
+  // Tam eşleşme için ^...$ yazılır.
+  pattern: string;
+  // Datapoint hiç yazılmasın. Türetilmiş bir Pipeline kuralı olarak
+  // uygulanır (tek drop motoru) — Settings → Pipeline'da da görünür.
+  dropAtIngest?: boolean;
+}
+
+export interface MetricExclusions {
+  rules: MetricExclusionRule[];
+}

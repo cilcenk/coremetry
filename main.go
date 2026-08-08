@@ -1047,6 +1047,14 @@ func main() {
 	// ulaşır (tempo/copilot/ldap StartConfigRefresh deseni).
 	srv.LoadExceptionTriage(ctx)
 	go srv.StartExceptionTriageRefresh(ctx, 30*time.Second)
+	// v0.9.797 — metrik route dışlama kuralları, AYNI kablo. Derlenmiş set
+	// Store'a yayınlanır; okuma yolları (metricquery / metricrate /
+	// metrichist / route-tier) her sorguda oradan okur, yani ayar sıcak
+	// yolda bir CH okuması DEĞİL bir atomic load. dropAtIngest işaretli
+	// kuralların ingest ikizi pipeline motorunda yaşıyor (tek drop motoru)
+	// ve oraya pipeline'ın kendi StartConfigRefresh'iyle yayılır.
+	srv.LoadMetricExclusions(ctx)
+	go srv.StartMetricExclusionsRefresh(ctx, 30*time.Second)
 	srv.SetLdapGroupSync(ldapGroupSync) // v0.8.526 — LDAP group-sync admin surface + snapshot reads
 	// v0.8.444 — cmk_ servis token'ları: cache'i bağla (GenAI Studio →
 	// MCP kimliği). Adapter chstore→auth tip köprüsü.

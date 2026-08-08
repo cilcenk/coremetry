@@ -56,7 +56,7 @@ func TestMetricRollupPlan(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			tr, ok := metricRollupPlan(tc.f, tc.instrument, tc.temporality, now)
+			tr, ok := metricRollupPlan(tc.f, tc.instrument, tc.temporality, now, nil)
 			got := ""
 			if ok {
 				got = tr.table

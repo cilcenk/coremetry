@@ -26,7 +26,7 @@ import type {
   FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
-  ExceptionTriageConfig } from './types';
+  ExceptionTriageConfig, MetricExclusions } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
@@ -893,6 +893,16 @@ export const api = {
     get<ExceptionTriageConfig>(`/api/settings/exception-triage`),
   putExceptionTriage: (c: ExceptionTriageConfig) =>
     request<ExceptionTriageConfig>(`/api/settings/exception-triage`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
+  // v0.9.797 — metrik route dışlamaları. Admin; PUT desenleri sunucuda
+  // regexp.Compile ile doğrular (bozuk desen 400) ve dropAtIngest'li
+  // kuralların Pipeline ikizlerini senkronlar.
+  getMetricExclusions: () =>
+    get<MetricExclusions>(`/api/settings/metric-exclusions`),
+  putMetricExclusions: (c: MetricExclusions) =>
+    request<MetricExclusions>(`/api/settings/metric-exclusions`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
     }),

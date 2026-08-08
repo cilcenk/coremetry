@@ -31,6 +31,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand/v2"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -69,6 +70,17 @@ const (
 	OpContains   Op = "contains"
 	OpStartsWith Op = "startsWith"
 	OpEndsWith   Op = "endsWith"
+	// OpMatches — RE2 deseni, ANKORSUZ (v0.9.797). Ops listesi bilerek
+	// dardı ("full FilterExpr-grade ops belong on the query side") ve bu
+	// dördüncü değil BEŞİNCİ operatör olarak eklenmesinin tek gerekçesi
+	// var: metric_exclusions kuralları RE2 desen taşıyor ve okuma
+	// filtresiyle ingest drop'unun AYNI kümeyi seçmesi şart. startsWith
+	// ile yaklaşık bir çeviri yapmak, iki kademenin sessizce ayrışması
+	// demekti (grafikte yok ama tabloda var / tersi).
+	//
+	// Sıcak yol maliyeti: derleme SONUÇLARI süreç-genelinde önbellekli
+	// (regexCache), yani datapoint başına bir sync.Map okuması.
+	OpMatches Op = "=~"
 )
 
 // Condition is a single attribute predicate. Key supports the
@@ -89,6 +101,20 @@ type Rule struct {
 	Signal  Signal    `json:"signal"`
 	Enabled bool      `json:"enabled"`
 	When    Condition `json:"when"`
+
+	// And — EK koşullar, hepsi When ile birlikte sağlanmalı (v0.9.797).
+	// Boş/eksik = v0.9.796 davranışı bayt-bayt (tek predicate).
+	//
+	// Neden gerekti: metric_exclusions köprüsü "şu METRİĞİN şu ROUTE'u"
+	// demek zorunda. Tek koşulla yazılabilen en yakın şey route-only bir
+	// kuraldır ve o, operatörün tek bir metrik için kurduğu dışlamayı
+	// BÜTÜN metriklere uygularak istenmeyen veri kaybı üretirdi.
+	//
+	// Depth 1: koşullar düz bir AND listesi, iç içe grup YOK — ingest
+	// bütçesi mikro-saniye ve sorgu tarafındaki FilterGroup dilini buraya
+	// taşımak paketin açılış yorumundaki "ikinci bir konfig sistemi
+	// büyütme" uyarısına girer.
+	And []Condition `json:"and,omitempty"`
 
 	// SetAttributes — enrich rules only (v0.5.270). When the
 	// rule matches, every key/value pair is written to the
@@ -220,6 +246,23 @@ func (e *Engine) Upsert(ctx context.Context, st store, r Rule) (Rule, error) {
 	if r.When.Key == "" {
 		return Rule{}, fmt.Errorf("rule predicate key required")
 	}
+	// v0.9.797 — desen ve ek koşullar KAYIT anında doğrulanır. Bozuk bir
+	// RE2 deseni sıcak yolda "hiçbir şeyi eşleştirmeyen" sessiz bir kural
+	// olurdu: operatör drop kuralını kurar, hiçbir şey düşmez, sebep
+	// görünmez. Kapı burada.
+	if err := validateCondition(r.When); err != nil {
+		return Rule{}, err
+	}
+	for i := range r.And {
+		r.And[i].Key = strings.TrimSpace(r.And[i].Key)
+		r.And[i].Value = strings.TrimSpace(r.And[i].Value)
+		if r.And[i].Key == "" {
+			return Rule{}, fmt.Errorf("and[%d]: predicate key required", i)
+		}
+		if err := validateCondition(r.And[i]); err != nil {
+			return Rule{}, fmt.Errorf("and[%d]: %w", i, err)
+		}
+	}
 
 	e.mu.Lock()
 	idx := -1
@@ -315,6 +358,12 @@ func (e *Engine) AcceptSpan(sp *chstore.Span) bool {
 		if !matchSpan(r.When, sp) {
 			continue
 		}
+		// v0.9.797 — ek AND koşulları. Boş liste → sıfır ek iş (len
+		// kontrolü döngüden önce), yani kural taşımayan kurulumda sıcak
+		// yol bayt-bayt eski.
+		if !matchAll(r.And, func(c Condition) bool { return matchSpan(c, sp) }) {
+			continue
+		}
 		switch r.Kind {
 		case KindDrop:
 			return false
@@ -367,6 +416,9 @@ func (e *Engine) AcceptLog(l *chstore.Log) bool {
 		if !matchLog(r.When, l) {
 			continue
 		}
+		if !matchAll(r.And, func(c Condition) bool { return matchLog(c, l) }) {
+			continue
+		}
 		switch r.Kind {
 		case KindDrop:
 			return false
@@ -409,6 +461,9 @@ func (e *Engine) AcceptMetric(m *chstore.MetricPoint) bool {
 			continue
 		}
 		if !matchMetric(r.When, m) {
+			continue
+		}
+		if !matchAll(r.And, func(c Condition) bool { return matchMetric(c, m) }) {
 			continue
 		}
 		switch r.Kind {
@@ -564,6 +619,43 @@ func matchMetric(c Condition, m *chstore.MetricPoint) bool {
 	return matchOp(c.Op, got, c.Value)
 }
 
+// validateCondition — SAF (tablo-testli). Bugün yalnız `=~` bir şey
+// doğrulatıyor; kalan operatörler v0.9.796'daki gibi serbest.
+//
+// Bilinmeyen operatör BURADA reddedilMİYOR: kural kataloğu eski
+// sürümlerden gelen değerler taşıyabilir ve matchOp bilinmeyene false
+// döner (kural hiçbir şeyi eşleştirmez, veri kaybı yok). Reddetmek,
+// mevcut bir kataloğu kaydedilemez hâle getirirdi.
+func validateCondition(c Condition) error {
+	if c.Op != OpMatches {
+		return nil
+	}
+	if c.Value == "" {
+		return fmt.Errorf("op %s needs a pattern", OpMatches)
+	}
+	if _, err := regexp.Compile(c.Value); err != nil {
+		return fmt.Errorf("invalid RE2 pattern %q: %w", c.Value, err)
+	}
+	return nil
+}
+
+// matchAll — Rule.And'in sinyal-bağımsız değerlendiricisi (v0.9.797).
+// Boş liste TRUE döner (koşul yok = kısıt yok) ve tek `len` kontrolüyle
+// çıkar: kural taşımayan kurulumlarda closure bile çağrılmaz.
+//
+// Kısa devre AND: ilk sağlanmayan koşulda durur.
+func matchAll(conds []Condition, ok func(Condition) bool) bool {
+	if len(conds) == 0 {
+		return true
+	}
+	for _, c := range conds {
+		if !ok(c) {
+			return false
+		}
+	}
+	return true
+}
+
 func lookupAttr(keys, values []string, want string) string {
 	for i := 0; i < len(keys) && i < len(values); i++ {
 		if keys[i] == want {
@@ -585,8 +677,41 @@ func matchOp(op Op, got, want string) bool {
 		return strings.HasPrefix(got, want)
 	case OpEndsWith:
 		return strings.HasSuffix(got, want)
+	case OpMatches:
+		re := cachedRegex(want)
+		return re != nil && re.MatchString(got)
 	}
 	return false
+}
+
+// regexCache — desen → derlenmiş RE2. Süreç ömrü boyunca yaşar; kural
+// kataloğu küçük (<<100) olduğu için sınırsız büyüme riski yok.
+//
+// Neden derleme kural yükleme anında DEĞİL: Rule düz JSON'a serialize
+// edilen bir değer tipi ve normalise/Upsert/LoadPersisted'ın üçü de onu
+// kopyalıyor. Derlenmiş bir alan taşımak, o kopyaların hepsinde geçerli
+// kalmak zorunda olan bir yan-durum demekti. Bunun yerine derleme
+// sonucu PAYLAŞILAN bir önbellekte: datapoint başına tek sync.Map
+// okuması, ve kural silinip yeniden eklendiğinde bile sıcak.
+var regexCache sync.Map // string → *regexp.Regexp (nil = bozuk desen)
+
+// cachedRegex — nil dönerse desen bozuk: eşleşme YOK. Bozuk desen zaten
+// Upsert'te reddediliyor (400); buradaki nil dalı elle düzenlenmiş bir
+// system_settings satırına karşı savunma — bozuk bir desenin HER
+// datapoint'i eşleştirmesi (fail-open) sessiz veri kaybı olurdu.
+func cachedRegex(pattern string) *regexp.Regexp {
+	if v, ok := regexCache.Load(pattern); ok {
+		re, _ := v.(*regexp.Regexp)
+		return re
+	}
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		log.Printf("[pipeline] geçersiz RE2 deseni %q: %v — kural HİÇBİR kaydı eşleştirmiyor", pattern, err)
+		regexCache.Store(pattern, (*regexp.Regexp)(nil))
+		return nil
+	}
+	regexCache.Store(pattern, re)
+	return re
 }
 
 // normalise sorts the slice for deterministic persistence —

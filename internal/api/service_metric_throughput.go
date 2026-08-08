@@ -65,7 +65,13 @@ func (s *Server) throughputMetricName(ctx context.Context) string {
 //     sınıfı.
 //   - Filtre operatörü `=~` olmalı. `=` olsaydı desen düz metin olarak
 //     aranır ve HİÇBİR job eşleşmezdi; grafik sessizce boş kalırdı.
-func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int) string {
+//
+// v0.9.797 — `mx` (dışlama seti özeti) EKLENDİ. Bu ucun serisi
+// QueryMetricRate'ten geliyor ve o yol artık WHERE'e NOT match ekliyor:
+// özet anahtarda olmasaydı kural eklendikten sonra 30 sn boyunca eski
+// (dışlanmamış) seriler servis edilirdi. Kuralsız kurulumda değer sabit
+// "0", yani anahtar kardinalitesi değişmez.
+func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int, mx string) string {
 	// mdp ANAHTARDA (hash-all-inputs, v0.5.187 sınıfı): farklı nokta
 	// bütçeleri farklı adım → farklı sonuç. panelMaxDataPoints kuantalı
 	// (200px kova) olduğu için kardinalite sınırlı (v0.8.270 disiplini).
@@ -75,12 +81,12 @@ func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Ti
 	// geldi). Sürümsüz anahtar, rolling deploy sırasında eski zarfı yeni
 	// koda servis ederdi: panel 30 sn boyunca birimsiz çizerdi. Zarf
 	// değişimi anahtar sürümü ister — v0.9.443/458 dersi.
-	return fmt.Sprintf("svc-metric-tput:v2:%s:%s:%s:%s:mdp%d:bd%s:rw%d", service, metric, jobLabel, cacheBucket(from, to), mdp, breakdown, rateWin)
+	return fmt.Sprintf("svc-metric-tput:v2:%s:%s:%s:%s:mdp%d:bd%s:rw%d:mx%s", service, metric, jobLabel, cacheBucket(from, to), mdp, breakdown, rateWin, mx)
 }
 
-func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int) (string, chstore.MetricQueryFilter) {
+func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int, mx string) (string, chstore.MetricQueryFilter) {
 	pattern := chstore.JobServiceRegex(service)
-	key := metricThroughputCacheKey(service, metric, jobLabel, from, to, mdp, breakdown, rateWin)
+	key := metricThroughputCacheKey(service, metric, jobLabel, from, to, mdp, breakdown, rateWin, mx)
 	return key, chstore.MetricQueryFilter{
 		Name:        metric,
 		Filters:     []chstore.FilterExpr{{Key: jobLabel, Op: "=~", Values: []string{pattern}}},
@@ -153,7 +159,10 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		rateWin = 600
 	}
 
-	key := metricThroughputCacheKey(name, metric, jobLabel, from, to, mdp, breakdown, rateWin)
+	// mx: dışlama seti özeti — seri QueryMetricRate'ten geliyor ve o yol
+	// artık kuralları uyguluyor.
+	mx := s.store.MetricExclusions().Digest()
+	key := metricThroughputCacheKey(name, metric, jobLabel, from, to, mdp, breakdown, rateWin, mx)
 	pattern := chstore.JobServiceRegex(name)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		out := map[string]any{
@@ -268,7 +277,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		var candErrs []string
 		for _, lb := range labels {
 			triedLabels = append(triedLabels, lb)
-			_, f := metricThroughputPlan(name, resolved, lb, from, to, mdp, breakdown, rateWin)
+			_, f := metricThroughputPlan(name, resolved, lb, from, to, mdp, breakdown, rateWin, mx)
 			ser, err := rate(ctx, f, "rate")
 			if err != nil {
 				// v0.9.683 — TEK ADAYIN HATASI TÜM CEVABI ÖLDÜRMESİN.
@@ -306,7 +315,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// Prometheus dünyasında kimlik bir etikette; OTLP dünyasında
 		// kaynak özniteliğinden gelen service_name kolonunda.
 		if matched == nil {
-			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to, mdp, breakdown, rateWin)
+			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to, mdp, breakdown, rateWin, mx)
 			// v0.9.678 — KOLON DA İKİ BİÇİM DENİYOR.
 			//
 			// Operatörün sorusu ("Coremetry ingest ederken env kesiyor

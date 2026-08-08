@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -42,6 +43,17 @@ type Store struct {
 	// finishDeferredDDL ile temizlenir.
 	deferDDL    bool
 	deferredDDL []string
+
+	// metricExclusions (v0.9.797) — operatörün route dışlama kuralları,
+	// DERLENMİŞ hâlde. Okuma yolları (buildMetricQuerySQL, queryRateFrom,
+	// route-tier) her sorguda buradan okur, yani bir CH okuması sıcak
+	// yola giremez: blob boot'ta hidrate edilir, admin PUT'unda anında
+	// değişir, çok-pod kurulumlarda 30 sn'lik yenilemeyle yakınsar
+	// (exception_triage kablosunun aynısı — internal/api/metric_exclusions.go).
+	//
+	// Sıfır değeri (hiç Store edilmemiş) nil'dir ve TÜM metotlar
+	// nil-güvenli: Store{} kuran testler kuralsız davranır.
+	metricExclusions atomic.Pointer[CompiledMetricExclusions]
 
 	conn driver.Conn
 	// ingest is the RoundRobin pool used ONLY for high-volume telemetry

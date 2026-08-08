@@ -1,12 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Zap, ChevronRight, ChevronDown } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
-import { Empty } from '@/components/Spinner';
+import { Empty, Spinner } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
-import { MultiLineChart } from '@/components/MultiLineChart';
 import { EventMarkers } from '@/components/EventMarkers';
 import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -22,6 +21,7 @@ import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
 import { encodeEndpointParam, decodeEndpointParam } from '@/pages/endpoints/endpointParam';
 import { parseColsParam, formatColsParam } from '@/pages/endpoints/endpointCols';
 import { ColumnToggle } from '@/pages/endpoints/ColumnToggle';
+import { EndpointsSummary } from '@/pages/endpoints/EndpointsSummary';
 import {
   DETAIL_PARAM, EXP_PARAM, LIST_NEW_LABEL, LIST_NEW_TITLE,
   decodeExpandedParam, decodeEndpointRowKey, encodeExpandedParam,
@@ -670,25 +670,32 @@ export default function EndpointsPage() {
         )}
         {rows && rows.length > 0 && (
           <>
-            {/* v0.9.818 — KPI şeridi EV DİLİNE geçti (.card.ov-kpi +
-                .ov-kpi-accent + .ov-lab/.ov-val — Service Overview'ın
-                KpiTile'ı ile AYNI token seti) ve etiketleri dürüstleşti.
-                Sayılar hep GÖRÜNEN satırların toplamıydı; "Total calls"
-                ise filo iddiasıydı. Bir operatör bu karoyu "sistemin
-                toplam trafiği" diye okuyup limit=100'ün altında kalan
-                uzun kuyruğu hiç göremezdi. */}
-            <div className="ov-grid ov-kpis ov-mb">
-              <EpKpi lab="Listelenen endpoint" accent="var(--accent)"
-                val={fmtNum(listed.rows)}
-                note={`Sunucudan dönen satır sayısı — filo geneli DEĞİL. Bu sayıyı limit (top ${fmtNum(limit)}), servis/yol filtresi ve seçili sekme (${entry === 'rpc' ? 'RPC & Messaging' : 'HTTP'}) belirler.`} />
-              <EpKpi lab="Listelenen çağrı" accent="var(--accent2)"
-                val={fmtNum(listed.calls)}
-                note={`Yalnız yukarıdaki ${fmtNum(listed.rows)} satırın toplamı. Listeye girmeyen endpoint'lerin çağrıları bu sayıya DAHİL DEĞİL.`} />
-              <EpKpi lab="Listelenen hata" accent="var(--err)"
-                val={fmtNum(listed.errors)}
-                sub={`${listed.errorRate.toFixed(2)}%`}
-                subCls={listed.errorRate >= 5 ? 'err' : listed.errorRate >= 1 ? 'warn' : ''}
-                note={`Oran pencere TOPLAMLARINDAN: ${fmtNum(listed.errors)} hata / ${fmtNum(listed.calls)} çağrı. Satır oranlarının ortalaması DEĞİL.`} />
+            {/* v0.9.818 — KPI'lar ev diline + dürüst etiketlere geçti.
+                v0.9.819 — şerit ARTIK GRAFİKLERLE BİRLİKTE
+                (EndpointsSummary): sayfa bugüne dek yalnız tabloydu ve
+                "ne zaman bozuldu" sorusu satır satır sparkline açarak
+                cevaplanıyordu. Tek çağrı hem şeridi hem üç grafiği
+                besliyor; rows/limit karolara "listelenen" ve "kötüleşen"
+                gerçeğini veriyor (ikisi de TABLODAN, seriden değil). */}
+            <EndpointsSummary
+              fromNs={from} toNs={to}
+              service={service} search={search.trim()} entry={entry}
+              env={env} cluster={cluster} compare={compare}
+              rows={rows} limit={limit}
+              onZoom={handleZoom} onZoomReset={handleZoomReset} />
+            {/* Listelenen çağrı / hata — şeritteki "İstek/dk" karosu
+                pencerenin TAMAMINI (limit dışını da) sayıyor, bu satır
+                ise SADECE görünen satırları. İki farklı soru, bu yüzden
+                iki ayrı yer; ikisini tek karoda toplamak v0.9.818'de
+                kapattığımız kapsam yalanının geri gelmesi olurdu. */}
+            <div style={{ marginBottom: 12, fontSize: 11.5, color: 'var(--text3)' }}
+              title={`Oran pencere TOPLAMLARINDAN: ${fmtNum(listed.errors)} hata / ${fmtNum(listed.calls)} çağrı. Satır oranlarının ortalaması DEĞİL.`}>
+              Listelenen {fmtNum(listed.rows)} satırın toplamı:{' '}
+              <b style={{ color: 'var(--text2)' }}>{fmtNum(listed.calls)}</b> çağrı ·{' '}
+              <b style={{
+                color: listed.errorRate >= 5 ? 'var(--err)'
+                  : listed.errorRate >= 1 ? 'var(--warn)' : 'var(--text2)',
+              }}>{fmtNum(listed.errors)}</b> hata ({listed.errorRate.toFixed(2)}%)
             </div>
             <div className="table-wrap">
               <table style={{ tableLayout: 'fixed', width: '100%' }}>
@@ -999,11 +1006,10 @@ export default function EndpointsPage() {
 // Deep links into /traces and the service detail page close
 // the metric → trace loop on the (service, path) tuple.
 //
-// v0.5.391 — upgraded from three bare Sparklines to MultiLineChart
-// instances so the metric view answers "what was happening at
-// 14:23" not just "is this endpoint spiky-shaped". Time axis,
-// crosshair sync, and tooltip per series — the same uPlot
-// affordances the Metrics / Explore pages use.
+// v0.5.391 — upgraded from three bare Sparklines to full time-axis
+// charts so the metric view answers "what was happening at 14:23" not
+// just "is this endpoint spiky-shaped". Time axis, crosshair sync, and
+// tooltip per series. v0.9.819 — motor CorePanel (gerekçe: MetricTile).
 function EndpointMetricModal({
   refObj, row, rowIsStale, onClose, range, env, cluster, onZoom, onZoomReset,
 }: {
@@ -1092,17 +1098,22 @@ function EndpointMetricModal({
       }}>
         {/* v0.6.16 — EventMarkers overlay on each chart. Per-tile
             absolute overlay reads the same time window the tile's
-            MultiLineChart uses; vertical lines anchor incidents
+            chart uses; vertical lines anchor incidents
             and deploys to the curve so the operator can spot
             "p99 spike after the 14:23 deploy" without leaving
             the modal. service is row.service — these charts are
             always endpoint-scoped to one service. */}
+        {/* v0.9.819 — birimler @grafana/data katalog kimlikleri:
+            'rps' → 'reqps', '%' → 'percent'. Eski v1 gövdesi serbest
+            metin kabul ediyordu; CorePanel tanımadığı bir kimlikte
+            ekseni birimsiz çizerdi (sessiz kalite kaybı). */}
         <MetricTile
           label="Calls"
+          storageKey="calls"
           big={fmtNum(row.calls)}
           sub={`peak ${fmtNum(peakCalls)} / bucket`}
           series={series.calls}
-          unit="rps"
+          unit="reqps"
           service={row.service}
           range={range}
           emptyLabel={emptyLabel}
@@ -1111,11 +1122,13 @@ function EndpointMetricModal({
         />
         <MetricTile
           label="Errors"
+          storageKey="errors"
           big={fmtNum(row.errors)}
           sub={`${row.errorRate.toFixed(2)}% rate`}
           subCls={errCls}
           series={series.errors}
-          unit="%"
+          unit="percent"
+          role="error"
           service={row.service}
           range={range}
           emptyLabel={emptyLabel}
@@ -1124,6 +1137,7 @@ function EndpointMetricModal({
         />
         <MetricTile
           label="P99 latency"
+          storageKey="p99"
           big={`${row.p99Ms.toFixed(0)} ms`}
           sub={`peak ${maxP99.toFixed(0)} ms · avg ${row.avgMs.toFixed(0)} ms`}
           series={series.p99}
@@ -1170,11 +1184,33 @@ function EndpointMetricModal({
   );
 }
 
+// MetricTile — modal'ın üç RED karosu.
+//
+// v0.9.819 — GRAFİK MOTORU MultiLineChart'tan CorePanel'e geçti. Bu
+// sayfada artık iki grafik nesli yan yana duracaktı: üstteki şerit
+// CorePanel (v0.9.819), modal ise v1 uPlot gövdesi. Aynı ekranda iki
+// farklı tooltip, iki farklı lejant, iki farklı eksen biçimi — ve daha
+// kötüsü, iki farklı crosshair sync ad alanı (v0.9.789: v1 gövdesi x'i
+// SANİYE, CorePanel MİLİSANİYE tutar; karışık grup imleci 1000× yanlış
+// yere koyar). Tek motora inmek bunu tanım gereği imkânsız kılıyor.
+//
+// LAZY: @grafana/* statik import edilseydi /endpoints'in vendor chunk'ı
+// modal hiç açılmadan da ~1 MB büyürdü.
+//
+// EventMarkers KORUNDU: deploy/incident işaretleri ayrı bir veri
+// yolundan gelen mutlak-konumlu bir overlay, grafik motorundan bağımsız.
+const CorePanelMultiLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
+
 function MetricTile({
-  label, big, sub, subCls, series, unit, service, range, emptyLabel, onZoom, onZoomReset,
+  label, big, sub, subCls, series, unit, role, storageKey, service, range,
+  emptyLabel, onZoom, onZoomReset,
 }: {
   label: string; big: string; sub: string; subCls?: string;
   series: SpanMetricSeries[]; unit?: string;
+  // Rol ÇAĞIRANDAN gelir, etiketten tahmin edilmez (seriesRole.ts).
+  role?: 'data' | 'error' | 'success' | 'muted';
+  storageKey: string;
   // v0.6.16 — pass service + range so the tile can overlay
   // EventMarkers on its chart. Optional so the component stays
   // usable on pages that don't have an event story yet.
@@ -1192,6 +1228,13 @@ function MetricTile({
     if (!range) return null;
     return timeRangeToNs(range);
   }, [range]);
+  // x ekseni SORGU aralığına mıhlanır (v0.9.725): veri seyrekse eksen
+  // kendi kendine daralır ve üç karo farklı zaman aralığı gösterir —
+  // imleç senkronu o zaman yalan söyler.
+  const xRange = useMemo(
+    () => (bounds ? { from: bounds.from / 1e9, to: bounds.to / 1e9 } : null),
+    [bounds]);
+  const hasData = series.length > 0 && series[0].points.length > 0;
   return (
     <div style={{
       padding: '10px 12px', border: '1px solid var(--border)',
@@ -1203,36 +1246,37 @@ function MetricTile({
         fontSize: 11, marginBottom: 8,
         color: subCls === 'err' ? 'var(--err)' : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
       }}>{sub}</div>
-      {series.length > 0 && series[0].points.length > 0 ? (
-        <div style={{ position: 'relative' }}>
-          <MultiLineChart
-            series={series}
-            unit={unit}
+      <div style={{ position: 'relative' }}>
+        <Suspense fallback={<div style={{ height: 140, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
+          <CorePanelMultiLazy
+            title={label}
+            storageKey={`endpoints-modal-${storageKey}`}
             height={140}
-            syncKey="endpoints-detail"
+            unit={unit}
+            xRange={xRange}
+            // syncKey'in '-ms' soneki MOTOR AD ALANI (v0.9.789) —
+            // sayfanın üst şeridi de aynı motorda, ama AYRI grup:
+            // modal kendi penceresini anlatıyor.
+            syncKey="endpoints-modal-ms"
+            emptyReason={hasData ? undefined : (emptyLabel ?? 'Bu pencerede veri yok')}
+            items={[{ name: label, role: role ?? 'data', series }]}
             onZoom={onZoom}
-            onZoomReset={onZoomReset}
+            onZoomReset={onZoomReset} />
+        </Suspense>
+        {bounds && hasData && (
+          <EventMarkers
+            fromNs={bounds.from}
+            toNs={bounds.to}
+            service={service || undefined}
           />
-          {bounds && (
-            <EventMarkers
-              fromNs={bounds.from}
-              toNs={bounds.to}
-              service={service || undefined}
-            />
-          )}
-        </div>
-      ) : (
-        <div style={{
-          height: 140, display: 'flex', alignItems: 'center',
-          justifyContent: 'center', color: 'var(--text3)', fontSize: 11,
-        }}>{emptyLabel ?? 'no data in window'}</div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
 
 // bucketsToSeries converts the row's three 30-bucket sparkline
-// arrays into SpanMetricSeries shape so MultiLineChart can plot
+// arrays into SpanMetricSeries shape so the chart can plot
 // them on a time axis. The backend doesn't ship per-bucket
 // timestamps (the payload size is bounded that way) so we
 // reconstruct them client-side from the page's selected range
@@ -1481,30 +1525,6 @@ function compactNum(n: number): string {
   return (n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0) + 'M';
 }
 
-// EpKpi — /endpoints KPI karosu (v0.9.818). Sayfa-yerel elle çizilmiş
-// kutu (padding/border/radius inline) yerine EV DİLİ: .card.ov-kpi +
-// .ov-kpi-accent + .ov-lab / .ov-val / .ov-unit — Service Overview'ın
-// KpiTile'ı ve /messaging'in MsgKpi'ı ile AYNI token seti, aynı yoğunluk
-// varyantları (data-density). KpiTile dışa açılmadığı için sınıflar
-// burada yeniden kuruluyor; uydurulmuş bir stil DEĞİL.
-//
-// note = title: karonun neyi TOPLADIĞINI söyleyen cümle. Bu sayfada
-// kritik, çünkü hepsi top-N kapsamlı.
-function EpKpi({ lab, val, sub, subCls, accent, note }: {
-  lab: string; val: string; sub?: string; subCls?: string;
-  accent: string; note?: string;
-}) {
-  return (
-    <div className="card ov-kpi" title={note}>
-      <div className="ov-kpi-accent" style={{ background: accent }} />
-      <div className="ov-lab">{lab}</div>
-      <div className="ov-val">{val}</div>
-      {sub && (
-        <div className="ov-delta" style={{
-          color: subCls === 'err' ? 'var(--err)'
-            : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
-        }}>{sub}</div>
-      )}
-    </div>
-  );
-}
+// KPI karosu v0.9.819'da EndpointsSummary'ye taşındı (şerit artık
+// grafiklerle tek bileşen). Sayfa-yerel bir kopya bırakmıyoruz: iki
+// nüsha, ikisi ayrı ayrı sürüklenen iki farklı görünüm demek.

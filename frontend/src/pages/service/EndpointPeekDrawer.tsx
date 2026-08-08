@@ -4,6 +4,7 @@ import { Sparkline } from '@/components/Sparkline';
 import { Button } from '@/components/ui/Button';
 import type { EndpointRow, TimeRange } from '@/lib/types';
 import { encodeRange } from '@/lib/urlState';
+import { encodeEndpointParam } from '@/pages/endpoints/endpointParam';
 
 // EndpointPeekDrawer — v0.9.379, redesign D3 (mockup af7419e5).
 // Top endpoints satırına tık = sağdan 380px peek: mini RED üçlüsü +
@@ -44,6 +45,23 @@ export function EndpointPeekDrawer({ service, range, row, onClose }: {
 
   const tracesHref =
     `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(row.path)}&range=${rangeParam}&view=list&rootOnly=false`;
+
+  // v0.9.819 — "Tam analiz →" KÖPRÜSÜ. Bu peek, bundle'ın zaten taşıdığı
+  // alanları çiziyor (sıfır fetch) ve orada BİTİYORDU: gecikme dağılımı,
+  // durum kırılımı, rota üstündeki exception'lar, başarısız trace'ler ve
+  // split-by — hepsi /endpoints çekmecesinde yaşıyor ve buradan
+  // görünmüyordu. Operatör "peki bu neden yavaş" diye sorduğunda gidecek
+  // yeri yoktu.
+  //
+  // Hedef, tam çekmecenin KENDİ codec'i (?endpoint=, v0.8.360): yeni bir
+  // URL şeması uydurulmuyor, aynı alan sınırları (alanlar önce
+  // URI-encode) ve aynı sig sözleşmesi. sig=false: /service Top
+  // endpoints kartı ham rotayı listeliyor, "group by shape" onun bir
+  // kipi değil — sig:true göndermek alıcıya farklı bir kümeyi açardı.
+  const fullAnalysisHref =
+    `/endpoints?range=${rangeParam}` +
+    `&service=${encodeURIComponent(service)}` +
+    `&endpoint=${encodeURIComponent(encodeEndpointParam({ service, path: row.path, sig: false }))}`;
 
   return (
     <>
@@ -93,7 +111,14 @@ export function EndpointPeekDrawer({ service, range, row, onClose }: {
             : <span style={{ color: 'var(--text3)', fontStyle: 'italic' }}>yavaş exemplar&#39;ı yok</span>}
         </div>
 
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {/* v0.9.819 — BİRİNCİL çıkış: peek'in cevaplayamadığı her şey
+              (gecikme dağılımı, durum kırılımı, exception'lar, başarısız
+              trace'ler, split-by) /endpoints çekmecesinde. */}
+          <Link to={fullAnalysisHref} style={{ textDecoration: 'none' }}
+            title="Bu rotanın tam analizini /endpoints çekmecesinde aç — gecikme dağılımı, durum kırılımı, rota üstündeki exception'lar, başarısız trace'ler, split-by.">
+            <Button variant="primary" size="sm">Tam analiz →</Button>
+          </Link>
           <Link to={tracesHref} style={{ textDecoration: 'none' }}>
             <Button variant="secondary" size="sm">Traces →</Button>
           </Link>

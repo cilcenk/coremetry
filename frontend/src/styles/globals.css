@@ -1941,6 +1941,11 @@ button.accent.copied {
    (operatör). 5'te bırakılsaydı sağda boş bir hücre kalırdı. */
 /* v0.9.483: 5→4 (median karosu kalktı) · v0.9.491: 4→3 (Apdex karosu kalktı) */
 .ov-kpis { grid-template-columns: repeat(3, 1fr); }
+/* v0.9.819 — /endpoints şeridi 4 karo (Listelenen · İstek/dk · Filo p95 ·
+   Kötüleşen). .ov-kpis'in 3'lüsü Service Overview'ın kendi kararı ve
+   orada kalıyor; dar ekran davranışı ikisinde de aynı (aşağıdaki
+   media query). */
+.ov-kpis-4 { grid-template-columns: repeat(4, 1fr); }
 .ov-charts-3 { grid-template-columns: repeat(3, 1fr); }
 .ov-cols-2 { grid-template-columns: 1.35fr 1fr; }
 /* Service Details tab (v0.8.370) — question-grouped sections in an
@@ -1960,7 +1965,7 @@ button.accent.copied {
 .dtl-toc { display: none; }
 @media (min-width: 1100px) { .dtl-toc { display: block; } }
 @media (max-width: 1100px) {
-  .ov-kpis { grid-template-columns: repeat(2, 1fr); }
+  .ov-kpis, .ov-kpis-4 { grid-template-columns: repeat(2, 1fr); }
   .ov-charts-3, .ov-cols-2, .dtl-cols { grid-template-columns: 1fr; }
 }
 

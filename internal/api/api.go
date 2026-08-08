@@ -616,6 +616,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/topology/flow/drawio", s.exportFlowTopologyDrawIO)
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
 	mux.HandleFunc("GET /api/endpoints", s.getEndpoints)
+	// v0.9.819 — sayfa üstü KPI şeridi + üç grafik (endpoints_series.go).
+	mux.HandleFunc("GET /api/endpoints/series", s.getEndpointsSeries)
 	mux.HandleFunc("GET /api/endpoints/downstream", s.getEndpointDownstream)
 	mux.HandleFunc("GET /api/services/{name}/attrs", s.getServiceAttrs)
 	mux.HandleFunc("GET /api/databases", s.getDatabases)

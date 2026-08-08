@@ -101,6 +101,11 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// telemetri MV'si, state tablosu DEĞİL). dependencies.go'daki
 		// kardeş okumalarla aynı havuz.
 		"messaging_series.go": true,
+		// v0.9.819 — SAF telemetri: tek FROM'u spanmetrics_1m /
+		// spanmetrics_10s (doorway AggregatingMergeTree rollup'ları, state
+		// tablosu DEĞİL). endpoints.go'daki kardeş okumayla aynı kaynak,
+		// aynı tier seçimi (endpointsSparkGrid).
+		"endpoints_series.go": true,
 		// TAŞINMAZ ÜÇÜNCÜ SINIF: sysstats.go + cluster.go system.* okuyor.
 		// Bunlar NODE-LOKAL tablolar; RoundRobin'e verilirse disk/utilizasyon
 		// panelleri her çağrıda BAŞKA node'u raporlar (SQL konsolunun in-order

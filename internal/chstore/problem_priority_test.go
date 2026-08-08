@@ -44,6 +44,94 @@ func TestComputePriorityReasonUsesFlippedRatio(t *testing.T) {
 	})
 }
 
+// TestTotalLossIsP1 — v0.9.825, operatör-raporlu.
+//
+// computePriority'nin ters-çevirme kapısı `ratio < 1 && ratio > 0`
+// diyordu. TAM SIFIR bu aralığın DIŞINDA (0 > 0 yanlış), yani ratio 0'da
+// kalıyor, `ratio >= 2` hiç tutmuyor ve bigBreach false oluyordu.
+//
+// Sonuç: monitor DOWN problemi (runner.go — Value 0, Threshold 1,
+// critical) 4 saat boyunca P2'ye kilitliydi; ancak stale-critical
+// kuralıyla P1'e çıkabiliyordu. Yani TAMAMEN ERİŞİLEMEZ bir servis,
+// öncelik listesinde "%50 yavaşlamış" bir servisin ALTINDA duruyordu.
+//
+// Tablo her "<" ailesini geziyor: sıfır o ailede ihlalin EN AĞIR hâli.
+func TestTotalLossIsP1(t *testing.T) {
+	now := time.Now().UnixNano()
+	fresh := now - int64(10*time.Minute) // genç: stale-critical yolu kapalı
+
+	cases := []struct {
+		name             string
+		sev              string
+		value, threshold float64
+		wantPri          string
+		wantReason       string
+	}{
+		// FIRTINANIN VAKASI: monitor DOWN, birebir runner.go'daki alanlar.
+		{"monitor DOWN (0/1)", "critical", 0, 1, "P1", "tamamen kayıp"},
+		{"uptime tamamen düştü (0/99)", "critical", 0, 99, "P1", "tamamen kayıp"},
+		{"sağlıklı pod kalmadı (0/3)", "critical", 0, 3, "P1", "tamamen kayıp"},
+		{"warning seviyesinde tam kayıp (0/95)", "warning", 0, 95, "P2", "tamamen kayıp"},
+
+		// KOMŞU DALLAR — düzeltme bunları BOZMAMALI.
+		{"kısmi düşüş hâlâ oranla (40/99)", "critical", 40, 99, "P1", "2.5x"},
+		{"sınırın altında kalan düşüş (60/99)", "critical", 60, 99, "P2", ""},
+		{"eşik sıfır → oran yok", "critical", 0, 0, "P2", ""},
+		{"negatif eşik: sıfır tam kayıp DEĞİL", "critical", 0, -5, "P2", ""},
+		{"yükselen ihlal etkilenmedi (30/10)", "warning", 30, 10, "P2", "3.0x"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := Problem{
+				Severity: c.sev, Status: "open",
+				Value: c.value, Threshold: c.threshold,
+				StartedAt: fresh,
+			}
+			pri, reason := computePriority(p, now)
+			if pri != c.wantPri {
+				t.Errorf("öncelik = %s (%q), %s bekleniyordu.\n\n"+
+					"Tam kayıp (value 0, '<' sınıfı eşik) ihlalin EN AĞIR hâlidir; "+
+					"P2'ye kilitlenmesi TAMAMEN ERİŞİLEMEZ bir servisi yavaşlamış "+
+					"bir servisin altına koyar.", pri, reason, c.wantPri)
+			}
+			if c.wantReason != "" && !strings.Contains(reason, c.wantReason) {
+				t.Errorf("gerekçe %q, %q içermeliydi — operatör SIRAYI gerekçeden "+
+					"okuyor; '0.0x threshold' ya da '+Inf' yanlış bilgi olurdu",
+					reason, c.wantReason)
+			}
+		})
+	}
+
+	// Gerekçe metninde oran GÖRÜNMEMELİ: 0/1 için "0.0x" ya da "+Inf"
+	// ikisi de yanlış olurdu.
+	_, reason := computePriority(Problem{
+		Severity: "critical", Status: "open", Value: 0, Threshold: 1, StartedAt: fresh,
+	}, now)
+	if strings.Contains(reason, "x threshold") {
+		t.Errorf("tam kayıp gerekçesi hâlâ oran yazıyor: %q", reason)
+	}
+	if !strings.Contains(reason, "0/1") {
+		t.Errorf("gerekçe eşiği göstermiyor: %q — operatör neyin kaybolduğunu görmeli", reason)
+	}
+}
+
+// TestTrimFloatKeepsThresholdsReadable — gerekçe metni operatörün
+// gözüyle okunuyor; "0/1.00000" gürültüdür, "0/99.5" bilgidir.
+func TestTrimFloatKeepsThresholdsReadable(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want string
+	}{
+		{1, "1"}, {99, "99"}, {99.5, "99.5"}, {0.25, "0.25"}, {3, "3"},
+	}
+	for _, c := range cases {
+		if got := trimFloat(c.in); got != c.want {
+			t.Errorf("trimFloat(%v) = %q, %q bekleniyordu", c.in, got, c.want)
+		}
+	}
+}
+
 // TestFreshDeployDoesNotDrivePriority — v0.9.612, operatör kararı.
 //
 // Önceki kural "critical + son 5 dk içinde deploy → P1" idi. Prod'da

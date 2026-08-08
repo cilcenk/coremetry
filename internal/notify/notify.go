@@ -188,12 +188,21 @@ type Notifier struct {
 	smtp     SMTPSettings
 	smtpRead time.Time // last refresh — short TTL avoids hammering CH on every alert
 
-	// awaiting (v0.9.513) — P1 e-postası AI özetini beklerken aynı
-	// problem için ikinci bir bekleyici doğmasın. sendTeamMail'in dedup'ı
-	// notification_log'a YAZILDIKTAN sonra çalışır; bekleme penceresinde
-	// (≤45sn) eşzamanlı bir SendProblemAlert dedup'ı ikinci kez geçip
-	// ÇİFT mail attırabilirdi. Süreç-içi koruma o pencereyi kapatır;
-	// pod'lar arası garanti zaten notification_log'da.
+	// awaiting (v0.9.513, kapsamı v0.9.825'te genişledi) — ekip-maili
+	// için süreç-içi talep kümesi: "bu problemin maili ŞU AN işleniyor".
+	//
+	// sendTeamMail'in kalıcı dedup'ı (notification_log) KONTROL-ET-SONRA-
+	// YAP: okuma ile yazma arasında bir SMTP gidiş-dönüşü var ve
+	// SendProblemAlert dokuz yerden `go` ile çağrılıyor. O pencerede giren
+	// ikinci çağrı da "gitmemiş" görür → ÇİFT mail.
+	//
+	// v0.9.513 yalnız AI-bekleme dalını kilitliyordu; senkron dal (critical
+	// olmayan ya da özeti dolu HER problem) korumasızdı — prod'daki çift
+	// mailler oradan geldi. Talep artık okumadan ÖNCE alınıp gönderim
+	// bitince bırakılıyor (claimTeamMail / releaseTeamMail).
+	//
+	// Pod'lar arası garanti değişmedi: o notification_log'da, üstelik
+	// üreten hatlar lider-kilitli.
 	awaitMu  sync.Mutex
 	awaiting map[string]bool
 
@@ -503,18 +512,24 @@ func (n *Notifier) SendProblemAlert(ctx context.Context, p chstore.Problem) {
 		if !c.MatchRules.MatchesProblem(in) {
 			continue
 		}
-		// Tekrar tabanı: birebir aynı (problem, kanal, durum,
-		// ciddiyet) 15 dk içinde ikinci kez gitmez. Gerekçe ve
-		// bastıramadıkları problem_dedup.go'da.
+		// Tekrar tabanı — İKİ KATMAN (v0.9.587, v0.9.825):
+		//   1. birebir aynısı (ciddiyet dahil) 15 dk içinde gitmez;
+		//   2. aynı (problem, kanal, durum, started_at) 1 saat içinde
+		//      gitmez — ciddiyet salınımı bu kapıyı AÇAMAZ; yalnız
+		//      ciddiyet basamağının gerçekten yükselmesi açar.
+		// Gerekçe ve bastıramadıkları problem_dedup.go'da.
+		//
+		// started_at anahtarda: aynı kimlikle kapanıp yeniden açılan
+		// (flap) problemin ikinci açılışı ayrı bir olaydır.
 		//
 		// Log YALNIZ iki uçta: bastırma başlarken bir kez, pencere
 		// kapanıp geçen gönderim önceki turda yutulmuş tekrarları
 		// taşıyorsa bir kez. Her bastırmayı loglamak, tam da
 		// söndürdüğümüz seli log tarafında yeniden kurardı.
-		ok, n2 := n.allowChannelSend(p.ID, c.ID, p.Status, p.Severity)
+		ok, n2 := n.allowChannelSend(p.ID, c.ID, p.Status, p.Severity, p.StartedAt)
 		if !ok {
 			if n2 == 1 {
-				log.Printf("[notify] tekrar bastırılıyor — %s · %s (%s): aynısı 15 dk içinde gitmişti. Bir dedektör aynı problemi her tikte yeniden açıyor olabilir.",
+				log.Printf("[notify] tekrar bastırılıyor — %s · %s (%s): aynı durum 1 sa içinde gitmişti. Bir dedektör aynı problemi her tikte yeniden açıyor ya da ciddiyetini salındırıyor olabilir.",
 					p.ID, c.Name, c.Type)
 			}
 			continue
@@ -649,6 +664,38 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 	if len(to) == 0 {
 		return
 	}
+	// ── v0.9.825 (operatör-raporlu): ÇİFT EKİP-MAİLİ ───────────────
+	//
+	// "İlk defa" kapısı KONTROL-ET-SONRA-YAP: HasNotification okur,
+	// sonra mail gider, EN SON notification_log'a yazılır. Aradaki
+	// boşluk bir SMTP gidiş-dönüşü kadar — saniyeler. SendProblemAlert
+	// dokuz ayrı yerden `go` ile çağrılıyor; o boşlukta giren ikinci
+	// çağrı da "gitmemiş" görür ve İKİNCİ mail atar.
+	//
+	// v0.9.513 bu yarışı GÖRDÜ ama yalnız AI-bekleme dalına kilit
+	// koydu (n.awaiting). Senkron dal — yani critical olmayan ya da
+	// özeti zaten dolu HER problem — korumasız kaldı. Prod'daki çift
+	// mailler oradan geldi.
+	//
+	// NEDEN async_insert DEĞİL: notification_log yazımı asyncInsertCtx
+	// kullanıyor ama `wait_for_async_insert=1` ile — çağrı döndüğünde
+	// satır ZATEN okunabilir. Yani yazım tarafı senkron; kusur okuma
+	// ile yazım ARASINDAKİ pencerede. Insert'i "senkronlaştırmak"
+	// hiçbir şey düzeltmez, yalnız toplu yazım kazancını yakardı.
+	//
+	// Talep okumadan ÖNCE alınır ve gönderim bitene kadar tutulur.
+	// Pod'lar arası garanti değişmedi: o notification_log'da ve
+	// dedektör/evaluator hatları zaten lider-kilitli (runIfLeader) —
+	// yani aynı problemi iki pod aynı anda açmıyor.
+	if !n.claimTeamMail(p.ID) {
+		return
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			n.releaseTeamMail(p.ID)
+		}
+	}()
 	// "İlk defa" — one mail per problem lifetime. The severity-bump
 	// path re-enters SendProblemAlert with status=open for the SAME
 	// problem id; the successful first send gates every retry.
@@ -682,6 +729,9 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 		}
 	}
 	if !shouldAwaitAISummary(p) {
+		// Talep gönderim BİTENE kadar tutulur (defer bırakır): sendOne
+		// dönerken notification_log satırı yazılmış olur, yani bundan
+		// sonra gelen çağrı kalıcı kapıya takılır.
 		send(ctx, p)
 		return
 	}
@@ -689,29 +739,53 @@ func (n *Notifier) sendTeamMail(ctx context.Context, p chstore.Problem, md *chst
 	// fan-out'undan ÖNCE çağrılıyor, burada senkron beklemek Slack/webhook
 	// bildirimlerini de geciktirirdi. Operatörün onayladığı şey yalnız
 	// e-postanın beklemesiydi.
-	n.awaitMu.Lock()
-	if n.awaiting == nil {
-		n.awaiting = map[string]bool{}
-	}
-	if n.awaiting[p.ID] {
-		n.awaitMu.Unlock()
-		return // bu problem için zaten bir bekleyici var
-	}
-	n.awaiting[p.ID] = true
-	n.awaitMu.Unlock()
-
+	//
+	// Talep goroutine'e DEVREDİLİR — bekleme penceresi boyunca (≤45sn)
+	// açık kalmalı, yoksa yarış tam da orada yeniden açılırdı.
+	handedOff = true
 	go func() {
-		defer func() {
-			n.awaitMu.Lock()
-			delete(n.awaiting, p.ID)
-			n.awaitMu.Unlock()
-		}()
+		defer n.releaseTeamMail(p.ID)
 		// Çağıranın ctx'i iptal olursa bekleme ölmesin — SendProblemAlert
 		// zaten `go` ile çağrılıyor ve çoğu çağıran Background veriyor.
 		bg, cancel := context.WithTimeout(context.WithoutCancel(ctx), aiSummaryWaitMax+aiSummaryPoll)
 		defer cancel()
 		send(bg, n.awaitAISummary(bg, p))
 	}()
+}
+
+// claimTeamMail — süreç-içi "bu problemin ekip-maili şu an işleniyor"
+// talebi (v0.9.825). true = talep BENİM, gönderimi ben yürüteceğim;
+// false = başka bir goroutine zaten yürütüyor, sessizce çekil.
+//
+// Kalıcı kapı notification_log'dur; bu yalnız o kapının kontrol-et-
+// sonra-yap penceresini kapatır. İkisi birlikte: pencere içinde süreç-içi
+// talep, pencere dışında kalıcı kayıt.
+func (n *Notifier) claimTeamMail(problemID string) bool {
+	if problemID == "" {
+		return true // kimliksizi kilitleyemeyiz; haber kaybetmektense geç
+	}
+	n.awaitMu.Lock()
+	defer n.awaitMu.Unlock()
+	if n.awaiting == nil {
+		n.awaiting = map[string]bool{}
+	}
+	if n.awaiting[problemID] {
+		return false
+	}
+	n.awaiting[problemID] = true
+	return true
+}
+
+// releaseTeamMail — talebi bırakır. Bırakılmazsa o problem için ekip-maili
+// süreç ömrü boyunca bir daha DENENMEZ (sessiz kayıp), o yüzden her
+// çıkış yolunda defer ile bırakılıyor.
+func (n *Notifier) releaseTeamMail(problemID string) {
+	if problemID == "" {
+		return
+	}
+	n.awaitMu.Lock()
+	delete(n.awaiting, problemID)
+	n.awaitMu.Unlock()
 }
 
 // SendRunbookComplete fans a finished runbook execution out to the configured

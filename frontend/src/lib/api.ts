@@ -2059,6 +2059,25 @@ export const api = {
   // capped at 200 silently on installs with >200 open problems.
   problemsCount: (params: { status?: string; service?: string; severity?: string; env?: string } = {}) =>
     get<{ count: number }>(`/api/problems/count?${qs(params)}`),
+  // v0.9.825 — bildirim derin linkinin TEKİL okuma ucu.
+  //
+  // Liste ucu "herhangi bir durumdan en yeni 200" penceresi; bildirim
+  // gönderilen problem çoğu zaman çözülür ve o pencereden düşer, yani
+  // e-postadaki bağlantı tam da en çok gerektiği anda "not found"
+  // diyordu. Bu uç kaydı kimlikten okur (problems FINAL, 90g TTL).
+  //
+  // 404 = kayıt GERÇEKTEN yok → null. Bu bir hata DEĞİL, dürüst bir boş
+  // durum; çağıran boş ekranı çizer. Başka her hata (500, ağ, timeout)
+  // fırlatır — "sunucu bozuk" ile "kayıt yok"un ayrılması düzeltmenin
+  // bütün amacı, ikisini tek dala toplamak hatayı geri getirirdi.
+  problem: async (id: string): Promise<Problem | null> => {
+    try {
+      return await get<Problem>(`/api/problems/${encodeURIComponent(id)}`);
+    } catch (err) {
+      if (err instanceof Error && err.message.startsWith('HTTP 404')) return null;
+      throw err;
+    }
+  },
   // v0.9.550 — evaluator kalp atışı (worker pod'u Redis'e yazar,
   // API okur). Filtre YOK: sağlık her filtreden bağımsızdır ve
   // parametre eklemek gereksiz cache parçalanması olurdu.

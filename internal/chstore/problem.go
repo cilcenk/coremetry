@@ -7,6 +7,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"time"
 )
 
@@ -231,6 +232,11 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 	// vs threshold 99) correctly ranked P1 but told the operator
 	// "critical + 0.4x threshold" instead of ~2.5x.
 	bigBreach := false
+	// totalLoss — "<" sınıfı bir kuralda değer TAM SIFIR (v0.9.825).
+	// Ters çevrilecek bir oran yok; ihlal sonsuz. Ayrı bir bayrak,
+	// çünkü gerekçe metni de ayrı olmalı: "%.1fx threshold" burada
+	// ya +Inf ya da (eski hâlde) 0.0x yazardı.
+	totalLoss := false
 	ratio := 0.0
 	if p.Threshold != 0 {
 		ratio = p.Value / p.Threshold
@@ -243,6 +249,33 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 		if ratio >= 2 {
 			bigBreach = true
 		}
+	}
+
+	// v0.9.825 (operatör-raporlu) — MONITOR DOWN KALICI P2'YE KİLİTLİYDİ.
+	//
+	// Yukarıdaki ters-çevirme `ratio < 1 && ratio > 0` diyor. TAM SIFIR
+	// bu aralığın DIŞINDA: 0 > 0 yanlış. Yani ratio 0'da kalıyor,
+	// `ratio >= 2` hiç tutmuyor ve bigBreach false oluyordu.
+	//
+	// Sonuç: monitor DOWN problemi (runner.go — Value 0, Threshold 1,
+	// critical) bigBreach OLAMIYOR ve "default: P2" dalına düşüyordu.
+	// Bir servis TAMAMEN ERİŞİLEMEZ durumdayken 4 saat boyunca P2
+	// kalıyor, ancak stale-critical kuralıyla P1'e çıkıyordu — yani
+	// öncelik listesinde "%50 yavaşlamış" bir servisin ALTINDA.
+	//
+	// Aynı sınıf her "<" kuralında var: uptime 0/99, başarı oranı 0/95,
+	// sağlıklı-pod 0/3. Sıfır, o kural ailesinde ihlalin EN AĞIR hâli —
+	// en hafifi gibi sıralanıyordu.
+	//
+	// Threshold > 0 şartı bilinçli: negatif eşikli bir ">" kuralında
+	// (value 0, threshold -5) oran zaten ihlal değildir ve sıfır orada
+	// "tam kayıp" anlamına gelmez.
+	//
+	// SÜRÜM 4'ün ÖN KOŞULU: minPriority=P1 olan bir kanal, bu düzeltme
+	// olmadan DOWN bildirimlerini süzüp atardı.
+	if p.Value == 0 && p.Threshold > 0 {
+		bigBreach = true
+		totalLoss = true
 	}
 
 	// v0.9.612 (operatör kararı): TAZE DEPLOY artık öncelik BELİRLEMİYOR.
@@ -266,10 +299,20 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 	openHours := float64(nowNs-p.StartedAt) / float64(time.Hour)
 	staleCritical := p.Status != "resolved" && openHours >= 4
 
+	// breachReason — ihlal büyüklüğünün operatöre görünen hâli. Tam
+	// kayıpta oran yazmak yanlış olurdu (0.0x ya da +Inf); "tamamen
+	// kayıp" ihlalin ne olduğunu doğrudan söylüyor.
+	breachReason := func(prefix string) string {
+		if totalLoss {
+			return prefix + " + tamamen kayıp (0/" + trimFloat(p.Threshold) + ")"
+		}
+		return fmt.Sprintf("%s + %.1fx threshold", prefix, ratio)
+	}
+
 	if sev == "critical" {
 		switch {
 		case bigBreach:
-			return "P1", fmt.Sprintf("critical + %.1fx threshold", ratio)
+			return "P1", breachReason("critical")
 		case staleCritical:
 			return "P1", fmt.Sprintf("critical open %.1fh", openHours)
 		default:
@@ -280,10 +323,17 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 	// severity = warning
 	switch {
 	case bigBreach:
-		return "P2", fmt.Sprintf("warning + %.1fx threshold", ratio)
+		return "P2", breachReason("warning")
 	default:
 		return "P3", "warning steady"
 	}
+}
+
+// trimFloat — eşiği gereksiz sıfırlar olmadan yazar (1 → "1",
+// 99.5 → "99.5"). Gerekçe metni operatörün gözüyle okunuyor; "0/1.00"
+// gürültüdür.
+func trimFloat(f float64) string {
+	return strconv.FormatFloat(f, 'f', -1, 64)
 }
 
 // EnrichProblemsWithClusters fills each problem's Clusters
@@ -1191,6 +1241,14 @@ func (s *Store) GetOpenProblemCountsByService(ctx context.Context) (map[string]O
 
 // GetProblem fetches a single problem by id, or nil when no
 // row matches. Lighter than ListProblems for the patch-one path.
+//
+// v0.9.825 — YOK olan bir kayıt artık (nil, nil) döner, sürücünün
+// "sql: no rows in result set" hatası değil (depo geneli sözleşme:
+// user.go, monitor.go, rootcause_hypothesis.go aynı kalıp). Eskisi
+// iki yeri birden bozuyordu: SetProblemAssignee'nin `cur == nil`
+// dalı ULAŞILAMAZDI (üstteki `err != nil` her zaman önce dönüyordu,
+// yani operatör "not found" yerine ham sürücü hatası görüyordu), ve
+// yeni by-id ucu 404 ile 500'ü ayırt edemezdi.
 func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {
 	var p Problem
 	var resolvedAt *time.Time
@@ -1207,6 +1265,9 @@ func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {
 			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
 			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
 	if err != nil {
+		if isNoRows(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 	if resolvedAt != nil {

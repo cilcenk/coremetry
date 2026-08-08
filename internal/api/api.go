@@ -797,6 +797,15 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Admin'e kilitlemek, viewer'ı tam da bu ayrımdan mahrum bırakırdı.
 	mux.HandleFunc("GET    /api/problems/evaluator", s.getEvaluatorHealth)
 	mux.HandleFunc("GET    /api/problems/buckets", s.listProblemBuckets)
+	// v0.9.825 — bildirim derin linkinin tekil okuma ucu. Liste "en yeni
+	// 200" penceresiydi; çözülmüş bir problem oradan düşünce e-postadaki
+	// bağlantı "not found" diyordu (gerekçe: problem_by_id.go).
+	//
+	// Rota sırası ÖNEMSİZ: Go 1.22 ServeMux'ta literal segment joker'i
+	// yener, yani yukarıdaki /count · /evaluator · /buckets bu desene
+	// DÜŞMEZ. Yetki de liste ucuyla aynı (rol kapısı yok) — aynı veriyi
+	// iki farklı kurala bağlamamak için.
+	mux.HandleFunc("GET    /api/problems/{id}", s.getProblemByID)
 	mux.HandleFunc("GET    /api/problems/{id}/rootcause", s.getProblemRootCause)
 	// Copilot prose narration of the persisted problem hypothesis (rc #4) —
 	// problem-anchored sibling of the anomaly explain route. Lazy/opt-in,
@@ -11373,6 +11382,18 @@ func writeErr(w http.ResponseWriter, err error) {
 	// still falls through to the 500 path. v0.7.13.
 	if errors.Is(err, context.Canceled) {
 		w.WriteHeader(statusClientClosedRequest)
+		return
+	}
+	// v0.9.825 — "bu kayıt yok" 500 DEĞİLDİR. Bir tekil okuma ucu
+	// (ilk kullanıcı: GET /api/problems/{id}) eksik kimliği 500 ile
+	// bildirirse istemci "sunucu bozuk" ile "kayıt gitmiş"i ayırt
+	// edemez ve hata ekranı gösterir — oysa doğru cevap dürüst bir boş
+	// durumdur. Loglanmaz da: eksik bir derin link operatör hatası
+	// değil, normal bir istektir.
+	if errors.Is(err, errNotFound) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	log.Printf("[api] error: %v", err)

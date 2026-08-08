@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   blankQuery, exemplarDescriptor, pinnedService, pinnedOperation,
-  seriesGroupLabel, type BuilderQuery,
+  seriesGroupLabel, queryUnit, type BuilderQuery,
 } from './model';
 import type { FilterExpr } from '@/lib/types';
 
@@ -122,5 +122,55 @@ describe('seriesGroupLabel', () => {
   it('band: non-band queries are untouched by the peel', () => {
     const query = q({ agg: 'p95', splitBy: ['service.name'] });
     expect(seriesGroupLabel(query, ['checkout'], 'desc')).toBe('name=checkout');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// queryUnit — v0.9.801. Panelin GÖRÜNTÜ birimini çözen tek fonksiyon.
+//
+// Operatör raporu (Explore süre metrikleri çıplak saniye basıyordu) iki ayrı
+// kusur ortaya çıkardı ve ikisi de buradan geçer:
+//   1. tohum yolları q.unit'i hiç doldurmuyordu → '' → birimsiz panel
+//      (doldurma tarafı metricUnits.test.ts'te),
+//   2. dolan birim HAM OTLP'ydi ve Grafana kimliğine çevrilmiyordu —
+//      's'/'ms' iki alfabede aynı yazıldığı için o dal KAZARA doğruydu,
+//      'By'/'1' ise bilinmeyen kimlik olarak iniyordu.
+//
+// SPAN DALI PİNLİ: bu değişiklik span sorgularının birimine dokunmaz.
+// ---------------------------------------------------------------------------
+describe('queryUnit', () => {
+  const metricQ = (over: Partial<BuilderQuery>): BuilderQuery =>
+    ({ ...blankQuery('A', 'metric'), ...over });
+
+  const metricCases: [string, string][] = [
+    ['s', 's'],           // prod semconv süre metriği → alt-saniye "348 ms" olur
+    ['ms', 'ms'],         // lokal demo süre metriği
+    ['ns', 'ns'],
+    ['By', 'bytes'],      // UCUM → Grafana kimliği (eskiden ham geçiyordu)
+    ['%', 'percent'],
+    ['1', ''],            // boyutsuz = birim YOK
+    ['', ''],             // katalogda birim yok → dürüstçe birimsiz
+    ['{request}', ''],    // UCUM annotation → ham sayı
+    ['furlong', ''],      // bilinmeyen → sessizce ms DEĞİL
+  ];
+  for (const [raw, want] of metricCases) {
+    it(`metric source: katalog '${raw}' → panel '${want}'`, () => {
+      expect(queryUnit(metricQ({ metric: 'm', unit: raw }))).toBe(want);
+    });
+  }
+
+  // spanAggUnit sözleşmesi DEĞİŞMEDİ — bu satırlar regresyon çapası.
+  const spanCases: [string, string][] = [
+    ['count', ''], ['rate', '/s'], ['per_min', '/min'], ['error_rate', '%'],
+    ['apdex', ''], ['avg', 'ms'], ['p95', 'ms'], ['p999', 'ms'], ['band', 'ms'],
+  ];
+  for (const [agg, want] of spanCases) {
+    it(`span source: ${agg} → '${want}'`, () => {
+      expect(queryUnit(q({ agg }))).toBe(want);
+    });
+  }
+
+  it('span sorgusunun q.unit alanı GÖRMEZDEN gelinir (birim agg\'den)', () => {
+    expect(queryUnit(q({ agg: 'p95', unit: 'By' }))).toBe('ms');
   });
 });

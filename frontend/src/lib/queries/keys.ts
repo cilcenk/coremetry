@@ -132,5 +132,9 @@ export const keys = {
     all:         ['explore'] as const,
     query:       (sig: string, from: number, to: number) =>
                    ['explore', 'query', sig, from, to] as const,
+    // v0.9.801 — bir metrik adının KATALOG birimi. Zaman aralığından
+    // BAĞIMSIZ (birim metriğin özelliği, penceresinin değil): aralık
+    // anahtara girseydi her zoom yeni bir arama isteği doğururdu.
+    metricUnit:  (name: string) => ['explore', 'metric-unit', name] as const,
   },
 } as const;

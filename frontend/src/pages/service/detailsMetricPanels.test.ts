@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { buildDetailsMetricPanels, otlpUnitToGrafana } from './detailsMetricPanels';
+import { buildDetailsMetricPanels } from './detailsMetricPanels';
 import type { MetricInfo } from '@/lib/types';
 
 // v0.9.784 — Details "Metrikler" bölümünün kural tablosu.
@@ -59,25 +59,8 @@ const MONOLITHIC: MetricInfo[] = [
   m('runtime.uptime', 'sum', 'ms'),
 ];
 
-describe('otlpUnitToGrafana', () => {
-  const cases: { unit: string | undefined; want: string | undefined }[] = [
-    { unit: 'By', want: 'bytes' },
-    { unit: 'ms', want: 'ms' },
-    { unit: 's', want: 's' },
-    { unit: 'ns', want: 'ns' },
-    { unit: '%', want: 'percent' },
-    { unit: '1', want: undefined },          // boyutsuz = birim yok
-    { unit: '', want: undefined },
-    { unit: undefined, want: undefined },
-    { unit: '{connection}', want: undefined }, // UCUM annotation → ham sayı
-    { unit: 'furlong', want: undefined },      // bilinmeyen → sessizce ms DEĞİL
-  ];
-  for (const c of cases) {
-    it(`${String(c.unit)} → ${String(c.want)}`, () => {
-      expect(otlpUnitToGrafana(c.unit)).toBe(c.want);
-    });
-  }
-});
+// otlpUnitToGrafana'nın tablosu v0.9.801'de ortak leaf'e taşındı —
+// testi de onunla gitti: src/lib/chart/metricUnit.test.ts.
 
 describe('buildDetailsMetricPanels — aile kuralları', () => {
   const cases: {

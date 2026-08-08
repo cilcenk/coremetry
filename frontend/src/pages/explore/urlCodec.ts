@@ -59,8 +59,13 @@ export function encodeBuilder(st: BuilderState): string {
 // source=metrics panel. agg should be the classifyMetric default so the
 // initial chart is right (e.g. p99 for a histogram) — the bare ?metric=
 // legacy branch can't carry it.
+// v0.9.801 — `unit` HAM KATALOG birimidir (MetricInfo.unit: 's','ms','By').
+// Elinde MetricInfo olan çağıran geçsin: link ilk boyamada birimli açılır.
+// Geçmeyen çağıran için Explore birimi katalogdan geç doldurur
+// (metricUnits.ts) — ama o bir ağ turu, bu bedava.
+// GRAFANA KİMLİĞİ GEÇİRME: q.unit ham OTLP yuvasıdır, çeviri queryUnit'te.
 export function metricCatalogueHref(
-  name: string, opts?: { service?: string; agg?: string; splitBy?: string[] },
+  name: string, opts?: { service?: string; agg?: string; splitBy?: string[]; unit?: string },
 ): string {
   // v0.9.746 (operatör: "metric explorer route'a göre kırmadan
   // gösteriyor") — splitBy geçilirse seed kırılımı taşır; Overview'un
@@ -70,6 +75,7 @@ export function metricCatalogueHref(
     metric: name,
     agg: opts?.agg || 'avg',
     scope: opts?.service || '',
+    unit: (opts?.unit ?? '').trim(),
     ...(opts?.splitBy?.length ? { splitBy: opts.splitBy } : {}),
   };
   const state: BuilderState = { queries: [q], formula: '', viz: 'line', step: 0 };

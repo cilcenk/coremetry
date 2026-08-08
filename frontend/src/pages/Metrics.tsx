@@ -115,8 +115,11 @@ export default function MetricsPage() {
 
   // classifyMetric picks the default agg (e.g. p99 for a histogram) so the
   // chart lands right; metricCatalogueHref encodes it into the ?q= seed.
+  // v0.9.801 — birim de tohuma girer. Katalog satırı zaten elimizde;
+  // geçmezsek Explore aynı birimi bir ağ turuyla yeniden çözmek zorunda
+  // kalır ve ilk boyamada süre metrikleri çıplak sayı basar.
   const openMetric = (m: MetricInfo) =>
-    navigate(metricCatalogueHref(m.name, { agg: classifyMetric(m)?.agg }));
+    navigate(metricCatalogueHref(m.name, { agg: classifyMetric(m)?.agg, unit: m.unit }));
 
   return (
     <>

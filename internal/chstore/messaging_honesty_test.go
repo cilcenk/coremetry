@@ -118,3 +118,44 @@ func TestMessagingMVReadsAlign(t *testing.T) {
 		t.Error("detay kova sorgusu HAM from bağlıyor — pencere hizası regresyonu (v0.9.813)")
 	}
 }
+
+// TestMessagingUnixTimestampScanType — v0.9.817 regresyon testi.
+//
+// BULUNAN HATA: `toUnixTimestamp()` ClickHouse'ta UInt32 döndürür ve
+// clickhouse-go onu *int64'e ÇEVİREMEZ ("converting UInt32 to *int64 is
+// unsupported"). İki messaging okuması bu tipi int64 bağlıyordu:
+//
+//   · dependencies.go drawer serisi — Scan hatası `continue` ile
+//     yutuluyordu, yani seri HER ZAMAN boş döndü ve drawer'ın
+//     produce/consume sparkline'ları v0.8.364'ten beri HİÇ çizilmedi;
+//   · messaging_e2e.go — hata döndürülüyordu ama çağıran E2E'yi
+//     best-effort okuyor, yani uçtan uca gecikme bloğu v0.8.372'den beri
+//     HİÇ çizilmedi.
+//
+// İkisi de SESSİZDİ: hata yok, log yok, boş-durum yok. Yalnız olmayan
+// bir grafik. Canlı kanıt (v0.9.816 dağıtımı, 878 span'lik pencere):
+// /api/messaging/detail → "series": [] ve "e2e" alanı hiç yok.
+//
+// Kardeş okumaların HEPSİ bu tipi doğru bağlıyor (external.go,
+// anomaly.go, heatmap.go: `var x uint32` + int64'e çevir) — yalnız
+// messaging kaçırmıştı. Bu test o sapmanın geri gelmemesini sağlıyor.
+func TestMessagingUnixTimestampScanType(t *testing.T) {
+	for _, f := range []string{"dependencies.go", "messaging_e2e.go", "messaging_series.go"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("%s okunamadı: %v", f, err)
+		}
+		src := string(b)
+		// toUnixTimestamp( kullanan her dosya uint32 bağı taşımalı.
+		// (toUnixTimestamp64Nano AYRI bir fonksiyon — Int64 döndürür ve
+		// doğrudan int64'e bağlanır; onu saymamak için tam eşleşme.)
+		uses := strings.Count(src, "toUnixTimestamp(")
+		if uses == 0 {
+			continue
+		}
+		if !strings.Contains(src, "var t uint32") {
+			t.Errorf("%s: toUnixTimestamp() kullanıyor ama `var t uint32` bağı yok — "+
+				"UInt32→*int64 dönüşümü sürücüde YOK ve hatası sessizce yutulabilir (v0.9.817)", f)
+		}
+	}
+}

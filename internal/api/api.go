@@ -1402,8 +1402,16 @@ func (s *Server) warmDependenciesCache() {
 		}
 		to := time.Now()
 		from := to.Add(-warmWin)
-		warm("databases", "databases:"+cacheBucket(from, to), ttl,
-			func(ctx context.Context) (any, error) { return s.store.GetDatabases(ctx, from, to) })
+		// v0.9.821 — önek getDatabases handler'ıyla BİREBİR aynı kalmalı
+		// (databases:v2:…:env=…:cmp=…), yoksa ısıtılan slotu kimse okumaz.
+		// Isıtılan slot filtresiz + compare'siz olan: sayfayı açan
+		// operatörün ilk isteği bu.
+		warm("databases", fmt.Sprintf("databases:v2:%s:env=:cmp=false", cacheBucket(from, to)), ttl,
+			func(ctx context.Context) (any, error) {
+				return s.store.GetDatabases(ctx, chstore.DatabasesQuery{
+					From: from, To: to, IncludeCallers: true, IncludeReceivers: true,
+				})
+			})
 		// v0.9.813 — önek getMessaging handler'ıyla BİREBİR aynı kalmalı
 		// (messaging:v2:), yoksa ısıtılan slotu kimse okumaz.
 		warm("messaging", "messaging:v2:"+cacheBucket(from, to), ttl,

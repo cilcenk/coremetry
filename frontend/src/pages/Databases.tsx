@@ -7,14 +7,16 @@ import { Topbar } from '@/components/Topbar';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Button } from '@/components/ui/Button';
 import { DependenciesTable } from '@/components/DependenciesTable';
+import { depRowKey } from '@/lib/depsTable';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { timeRangeToNs } from '@/lib/utils';
 import { DatabasesSummary } from '@/pages/databases/DatabasesSummary';
 import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
 import type { SlowQueryRow } from '@/lib/types';
-import type { DBInstance } from '@/lib/types';
+import type { DBInstance, DatabasesOverview } from '@/lib/types';
 
 // /databases — two distinct panels driven by data origin:
 //
@@ -47,10 +49,18 @@ export default function DatabasesPage() {
   // (anahtar system|cluster|name — çakışma yok).
   const [dbRowParams, setDbRowParams] = useSearchParams();
   const openRow = dbRowParams.get('row');
-  const setOpenRow = (row: { system: string; cluster?: string; name?: string; dbName?: string } | null) => setDbRowParams(prev => {
+  // v0.9.821 — anahtar TEK NÜSHADAN (depRowKey). Elle yazılmış kopya
+  // hem db.name'i taşımıyordu (bir host'taki her veritabanı aynı
+  // anahtara düşüyordu) hem de `name ?? dbName` gibi bir düşüşle
+  // tablonun ürettiği anahtardan ayrışma riski taşıyordu — ayrışsalar
+  // drawer hiç açılmazdı ve hiçbir tip hatası bunu yakalamazdı.
+  const setOpenRow = (row: { system: string; cluster?: string; instance?: string; destination?: string; name?: string; dbName?: string } | null) => setDbRowParams(prev => {
     const next = new URLSearchParams(prev);
-    // DependenciesTable'ın iç anahtar şekli: system|cluster|name
-    const k = row ? `${row.system}|${row.cluster ?? ''}|${row.name ?? row.dbName ?? ''}` : null;
+    const k = row ? depRowKey({
+      system: row.system, cluster: row.cluster,
+      instance: row.instance ?? row.name, destination: row.destination,
+      dbName: row.dbName,
+    }) : null;
     if (k) next.set('row', k); else next.delete('row');
     return next;
   }, { replace: true });
@@ -112,19 +122,29 @@ export default function DatabasesPage() {
   const stmtRow = useMemo(
     () => (stmtsQ.data ?? []).find(r => r.stmtHash === stmtRef?.hash),
     [stmtsQ.data, stmtRef]);
+  // v0.9.821 — GLOBAL ENV FİLTRESİ. Bu sayfa Topbar'ın env seçimini
+  // SESSİZCE YOK SAYIYORDU: operatör env=uat seçince /endpoints ve
+  // /services daralıyor, /databases ise tüm ortamların veritabanlarını
+  // göstermeye devam ediyordu ve hiçbir şey bunu söylemiyordu. Sessizce
+  // filtrelenmemiş bir liste, filtrelenmiş gibi okunur.
+  //
+  // Ayrı bir sayfa-yerel select AÇILMADI: env tek bir kavram ve tek bir
+  // doğruluk kaynağı olmalı (Topbar). İki seçici, iki gerçek demekti.
+  const [env] = useUrlEnv();
   const q = useQuery({
-    queryKey: ['databases', from, to, compare],
-    queryFn: () => api.databases(from, to, compare ? 'prior' : undefined).then(r => r ?? []),
+    queryKey: ['databases', from, to, compare, env],
+    queryFn: () => api.databases(from, to, compare ? 'prior' : undefined, env || undefined),
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   });
+  const ov = q.data as DatabasesOverview | null | undefined;
 
   // Split rows by origin. Span-derived rows go to the top
   // panel; receiver-discovered rows go to the bottom. Either
   // panel can be empty — we render the heading + an empty
   // state so the operator sees that we did look.
   const { spanRows, receiverRows, systems, dbNames } = useMemo(() => {
-    const all = (q.data ?? []) as DBInstance[];
+    const all = (ov?.rows ?? []) as DBInstance[];
     const sysSet = new Set<string>();
     const nameSet = new Set<string>();
     for (const d of all) {
@@ -136,7 +156,14 @@ export default function DatabasesPage() {
     const recv: DBInstance[] = [];
     for (const d of all) {
       if (dbsys && d.system !== dbsys) continue;
-      if (dbname && d.dbName !== dbname) continue;
+      // v0.9.821 — db.name filtresi RECEIVER satırlarına UYGULANMAZ.
+      // Receiver satırları metric_points'ten geliyor ve db.name TAŞIMAZ
+      // (kimlikleri instance seviyesinde), yani her db.name seçimi
+      // receiver panelini sessizce boşaltıyor ve "bu filtreye uyan
+      // receiver yok" gibi okunuyordu — oysa doğru cümle "receiver
+      // satırları bu boyutu hiç taşımaz". Panel artık FİLTRELENMEZ,
+      // GİZLENİR ve sebebi yazılır (aşağıdaki render).
+      if (dbname && d.source !== 'receiver' && d.dbName !== dbname) continue;
       if (d.source === 'receiver') recv.push(d);
       else span.push(d);
     }
@@ -144,7 +171,7 @@ export default function DatabasesPage() {
       spanRows: span, receiverRows: recv,
       systems: [...sysSet].sort(), dbNames: [...nameSet].sort(),
     };
-  }, [q.data, dbsys, dbname]);
+  }, [ov, dbsys, dbname]);
 
   const toRow = (d: DBInstance) => ({
     system: d.system,
@@ -232,13 +259,46 @@ export default function DatabasesPage() {
         <DatabasesSummary
           fromNs={from} toNs={to}
           dbsys={dbsys} dbname={dbname} compare={compare} />
+        {/* v0.9.821 — DÜRÜSTLÜK ŞERİTLERİ. Üçü de yalnız gerçekten
+            geçerliyken çıkar; her sayfada duran bir uyarı, hiçbir sayfada
+            okunmayan bir uyarıdır. */}
+        {ov?.source === 'raw' && (
+          <HonestyStrip tone="var(--accent)">
+            Kaynak: <b>ham spans</b> — <code>env={env}</code> filtresi
+            db_summary_5m rollup&#39;ında olmayan bir boyut, okuma ham
+            span&#39;lere düşüyor. Sayılar rollup yolununkiyle birebir aynı
+            OLMAYABİLİR (quantile&#39;lar burada ham span&#39;lerden hesaplanıyor)
+            ve bu okuma prod ölçeğinde belirgin biçimde daha pahalı.
+            {ov?.receiversSkipped === 'env' && <> Receiver paneli bu modda
+            {' '}<b>doldurulmuyor</b>: metric_points <code>deploy_env</code>
+            {' '}taşımıyor, yani receiver satırları env&#39;e göre daraltılamaz
+            ve daraltılmamış satırları daraltılmış bir listenin yanına
+            koymak aynı yalan olurdu.</>}
+          </HonestyStrip>
+        )}
+        {ov?.rowsCapped && (
+          <HonestyStrip tone="var(--warn)">
+            Satır okuması <b>{ov.rowLimit?.toLocaleString()}</b> tavanına
+            dayandı — liste EKSİK olabilir. Tip / db.name filtresiyle
+            daraltın; aşağıdaki panel sayıları yalnız dönen satırları
+            anlatır.
+          </HonestyStrip>
+        )}
+        {ov?.receiversCapped && (
+          <HonestyStrip tone="var(--warn)">
+            Receiver keşfi motor başına{' '}
+            <b>{ov.receiverLimit?.toLocaleString()}</b> instance tavanına
+            dayandı — en az veri yayanlar listeden düşmüş olabilir
+            (sıralama datapoint hacmine göre, alfabetik değil).
+          </HonestyStrip>
+        )}
         {q.isPending && <TableSkeleton rows={8} cols={11} wideFirst />}
         {q.isError && (
           <div style={{ color: 'var(--err)', fontSize: 12 }}>
             Failed to load databases overview.
           </div>
         )}
-        {q.data && (
+        {ov && (
           <>
             <SectionHeader
               title={`Called from services (${spanRows.length})`}
@@ -257,19 +317,46 @@ export default function DatabasesPage() {
 
             <div style={{ height: 24 }} />
 
-            <SectionHeader
-              title={`DB receiver instances (${receiverRows.length})`}
-              subtitle="OpenTelemetry database-receiver instances — discovered from "
-              code="oracledb.* / postgresql.* / mysql.* / redis.*"
-              tail=" metric_points. Expand a row to see receiver-specific drill-downs (sessions, wait classes, buffer pool, keyspaces…)." />
-            {receiverRows.length === 0 ? (
-              <EmptyHint>
-                {dbsys || dbname
-                  ? 'No receiver instances match the current filter.'
-                  : 'No receiver-detected instances in this window. Point an OpenTelemetry database receiver (oracledb / postgresql / mysql / redis) at one of your databases and the discovered instance will appear here.'}
-              </EmptyHint>
+            {/* v0.9.821 — db.name filtresi altında bu panel GİZLENİR.
+                Receiver satırları metric_points'ten geliyor ve db.name
+                TAŞIMAZ; filtre uygulandığında panel sessizce boşalıyor ve
+                "bu filtreye uyan receiver yok" diye okunuyordu. Doğru
+                cümle "receiver satırları bu boyutu hiç taşımaz" ve bunu
+                boş bir tablo söyleyemez. */}
+            {dbname ? (
+              <>
+                <SectionHeader
+                  title="DB receiver instances (gizli)"
+                  subtitle="Receiver satırları "
+                  code="db.name"
+                  tail=" taşımaz — kimlikleri instance seviyesindedir (metric_points'te böyle bir boyut yok)." />
+                <EmptyHint>
+                  <b>db.name = {dbname}</b> filtresi açıkken bu panel gizleniyor.
+                  Filtreyi uygulasaydık panel boşalır ve &quot;bu veritabanına ait
+                  receiver yok&quot; gibi okunurdu; oysa receiver satırları o
+                  boyutu hiç taşımıyor. Filtreyi temizleyin ({receiverRows.length}
+                  {' '}instance bekliyor).
+                </EmptyHint>
+              </>
             ) : (
-              <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} openRowKey={openRow} onOpenRowChange={setOpenRow} />
+              <>
+                <SectionHeader
+                  title={`DB receiver instances (${receiverRows.length})`}
+                  subtitle="OpenTelemetry database-receiver instances — discovered from "
+                  code="oracledb.* / postgresql.* / mysql.* / redis.*"
+                  tail=" metric_points. Expand a row to see receiver-specific drill-downs (sessions, wait classes, buffer pool, keyspaces…)." />
+                {receiverRows.length === 0 ? (
+                  <EmptyHint>
+                    {ov?.receiversSkipped === 'env'
+                      ? `env=${env} filtresi açıkken receiver keşfi hiç çalışmıyor (metric_points deploy_env taşımıyor) — bu panel "boş" değil, SORULMADI.`
+                      : dbsys
+                        ? 'No receiver instances match the current filter.'
+                        : 'No receiver-detected instances in this window. Point an OpenTelemetry database receiver (oracledb / postgresql / mysql / redis) at one of your databases and the discovered instance will appear here.'}
+                  </EmptyHint>
+                ) : (
+                  <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} openRowKey={openRow} onOpenRowChange={setOpenRow} />
+                )}
+              </>
             )}
 
             {/* v0.9.763 (mockup dilim 2) — EN PAHALI İFADELER sayfanın
@@ -309,7 +396,27 @@ export default function DatabasesPage() {
                         <td className="num mono">{r.count}</td>
                         <td className="num mono">{r.p95Ms.toFixed(1)} ms</td>
                         <td className="num mono"><b>{(r.totalMs / 1000).toFixed(1)} s</b></td>
-                        <td className="num">{r.dbName || r.dbSystem}</td>
+                        {/* v0.9.821 — ÇOK-DB BELİRSİZLİK İŞARETİ geri
+                            geldi. SlowQueries sayfası bunu v0.9.272'den
+                            beri çiziyordu ama bu KARDEŞ tablo yalnız adı
+                            basıyordu: aynı ifadenin pencerede birden çok
+                            veritabanına gittiği durumda burada tek bir ad
+                            görünüyor ve o veritabanına aitmiş gibi
+                            okunuyordu. Gruplama db_name'i katlıyor, yani
+                            gösterilen ad onlardan BİRİ. */}
+                        <td className="num">
+                          {r.dbName
+                            ? <>
+                                {r.dbName}
+                                {r.dbNameCount > 1 && (
+                                  <span style={{ color: 'var(--text3)', marginLeft: 4 }}
+                                    title={`Bu ifade pencerede ${r.dbNameCount} farklı veritabanına gitti; gösterilen onlardan biri.`}>
+                                    +{r.dbNameCount - 1}
+                                  </span>
+                                )}
+                              </>
+                            : r.dbSystem}
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -347,6 +454,20 @@ function SectionHeader({ title, subtitle, code, tail }: {
         {subtitle}<code>{code}</code>{tail}
       </div>
     </>
+  );
+}
+
+// HonestyStrip — kaynak / tavan şeritlerinin tek görsel dili
+// (v0.9.821). Endpoints'in havuz şeridiyle aynı anatomi: sol kenarda
+// renkli çubuk, yumuşak zemin, tek paragraf.
+function HonestyStrip({ tone, children }: { tone: string; children: React.ReactNode }) {
+  return (
+    <div style={{
+      padding: '8px 12px', marginBottom: 10, fontSize: 11.5,
+      border: '1px solid var(--border)', borderLeft: `3px solid ${tone}`,
+      borderRadius: 6, background: 'var(--bg2)', color: 'var(--text2)',
+      lineHeight: 1.5,
+    }}>{children}</div>
   );
 }
 

@@ -16,7 +16,11 @@ import (
 
 func (s *Server) guidedDBHealthBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time, rangeS int64) (string, string, error) {
 	emitGuidedStep(emit, "db_summary", "")
-	dbs, err := s.store.GetDatabases(ctx, from, to)
+	// v0.9.821 — çağıran listesi ve receiver keşfi bu bundle'a hiç
+	// girmiyor (aşağıda yalnız sayaç/quantile okunuyor), o yüzden HAFİF
+	// ikiz: dört katalog probu + dört metric_points taraması + bir tam
+	// çağıran taraması boşuna ödenmiyor.
+	dbs, err := s.store.GetDatabasesRollup(ctx, from, to, "")
 	if err != nil {
 		return "", "", err
 	}

@@ -51,3 +51,27 @@ export function latencyPresent(
 ): v is number {
   return source !== 'receiver' && v !== undefined;
 }
+
+// depRowKey — satırın KİMLİĞİ (v0.9.821).
+//
+// BUG: anahtar `system|cluster|name` idi ve DB tarafında `name`, satırın
+// GÖRÜNEN etiketiydi (instance). Bir host üzerinde N veritabanı olan her
+// kurulumda — canlı doğrulandı: oracle/oracle üzerinde 6, postgres
+// üzerinde 9 — bütün o satırlar AYNI anahtarı üretiyordu. Sonuç iki
+// katmanlı: bir satıra tıklamak altı çekmeceyi birden açıyordu ve
+// kopyalanan ?row= linki hangi veritabanını kastettiğini taşımıyordu.
+//
+// db.name kimliğin ÜÇÜNCÜ alanı; messaging tarafında yok, o yüzden
+// opsiyonel ve boş geçilince anahtar bayt-bayt eski hâlinde kalır
+// (mevcut ?row= linkleri bozulmaz).
+//
+// TEK NÜSHA olması şart: anahtarı ÜRETEN (DependenciesTable satırı) ile
+// URL'e YAZAN (Databases sayfası) ayrışırsa drawer hiç açılmaz — sessiz,
+// tip hatası vermeyen bir kırılma.
+export function depRowKey(r: {
+  system: string; cluster?: string; instance?: string;
+  destination?: string; dbName?: string;
+}): string {
+  const name = r.instance ?? r.destination ?? '';
+  return `${r.system}|${r.cluster ?? ''}|${name}|${r.dbName ?? ''}`;
+}

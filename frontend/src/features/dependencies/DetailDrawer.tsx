@@ -48,13 +48,28 @@ function msOrDash(v?: number): string {
 // cheap even for a 50-pod fleet.
 // Split out of the DependenciesTable monolith (v0.8.252 refactor)
 // verbatim.
-export function DetailDrawer({ system, cluster, name, kind, source, range }: {
+export function DetailDrawer({ system, cluster, name, instance, dbName, kind, source, range }: {
   system: string;
   // Cluster identifier — only meaningful for queue/messaging
   // rows. DB callers pass "(default)" and the backend ignores
   // it (DB queries don't have a cluster dimension).
   cluster: string;
+  /** GÖRÜNEN etiket. DB tarafında SORGU KİMLİĞİ DEĞİL (aşağıya bak). */
   name: string;
+  /**
+   * v0.9.821 — DB satırının GERÇEK instance'ı. `name` bunun yerine
+   * kullanılamaz: DependenciesTable'ın nameOf'u instance 'unknown'
+   * olduğunda ETİKET olarak db.name'i basıyor, yani çekmece
+   * instance=<db.name> soruyor ve MV'de instance='unknown' olduğu için
+   * HİÇBİR ŞEY eşleşmiyordu — sessizce boş bir çekmece.
+   */
+  instance?: string;
+  /**
+   * v0.9.821 — satır kimliğinin ÜÇÜNCÜ alanı. Olmadan bir host'ta N
+   * veritabanı olan kurulumlarda her satır AYNI çekmeceyi açıyor ve
+   * host'un TOPLAMINI gösteriyordu.
+   */
+  dbName?: string;
   kind: 'db' | 'queue';
   // 'spans' = row came from app-emitted traces; 'receiver' = row
   // came from an OTel DB receiver. We only render the receiver-
@@ -71,11 +86,14 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
     setData(undefined);
     const { from, to } = timeRangeToNs(range);
     const p = kind === 'db'
-      ? api.databaseDetail(system, name, from, to)
+      // v0.9.821 — kimlik ÜÇLÜ ve GÖRÜNEN ETİKETTEN bağımsız:
+      // (system, instance, dbName). instance verilmemişse (messaging
+      // tarafı, eski çağıranlar) etikete düşülür.
+      ? api.databaseDetail(system, instance ?? name, dbName ?? '', from, to)
       : api.messagingDetail(system, cluster, name, from, to);
     p.then(r => setData(r ?? null))
      .catch(() => setData(null));
-  }, [system, cluster, name, kind, range]);
+  }, [system, cluster, name, instance, dbName, kind, range]);
 
   // v0.9.814 — mini panellerin x ekseni sorgu penceresine sabitlenir
   // (v0.9.83 kuralı): veri seyrekse eksen kendi kendine daralıp iki
@@ -198,6 +216,26 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
               ▲ tüketim üretimden %{Math.round((drawerBalance.ratio ?? 0) * 100)} yavaş — backlog riski
             </span>
           )}
+        </div>
+      )}
+
+      {/* v0.9.821 — KAPSAM SATIRI. Çekmecenin hangi kimliği anlattığı
+          artık YAZILI. Eskiden çekmece (system, instance) soruyordu ama
+          satır (system, instance, db_name) idi: bir host'ta N
+          veritabanı olan kurulumlarda hangi satıra tıklanırsa tıklansın
+          aynı toplam açılıyordu ve hiçbir şey bunu söylemiyordu. Boş
+          dbName hâlâ mümkün (eski derin linkler) ve o zaman da AÇIKÇA
+          "tüm veritabanları" deniyor — sessiz bir kapsam bir daha
+          olmasın. */}
+      {kind === 'db' && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+          Kapsam:{' '}
+          <span className="mono" style={{ color: 'var(--text2)' }}>
+            {system} / {instance ?? name}
+          </span>
+          {dbName
+            ? <> · veritabanı <span className="mono" style={{ color: 'var(--text2)' }}>{dbName}</span></>
+            : <> · <b>tüm veritabanları</b> (bu instance üzerindeki her db.name)</>}
         </div>
       )}
 
@@ -399,6 +437,25 @@ export function DetailDrawer({ system, cluster, name, kind, source, range }: {
               ? `Top ${allTopOps.length} statements (first 80 chars)`
               : `Top ${allTopOps.length} operations`}
           </div>
+          {/* v0.9.821 — KİMLİK FARKI TEK SATIRDA. Bu tablo ham
+              db_statement'ın İLK 80 KARAKTERİNE göre grupluyor; sayfadaki
+              "En pahalı ifadeler" tablosu ve /databases/slow-queries ise
+              NORMALİZE edilmiş ifadenin hash'ine (stmt_hash) göre. İki
+              gruplama aynı SQL'i farklı sayıda satıra bölebilir —
+              parametreleri satır içinde taşıyan iki sorgu ilk 80 karakterde
+              aynıysa burada TEK satır, hash'te İKİ satır olur (ya da tam
+              tersi: 80. karakterden sonra ayrışan iki sorgu burada iki
+              satır, normalizasyondan sonra tek). Sayılar bu yüzden birebir
+              tutmayabilir ve bu bir hata DEĞİL. */}
+          {kind === 'db' && (
+            <div style={{ fontSize: 10.5, color: 'var(--text3)', marginBottom: 6, lineHeight: 1.45 }}>
+              Gruplama <b>ham ifadenin ilk 80 karakteri</b>. Sayfadaki
+              &quot;En pahalı ifadeler&quot; ve Slow queries katalogu
+              <b> normalize edilmiş ifadenin hash&#39;ine</b> göre gruplar —
+              aynı SQL iki tabloda farklı sayıda satıra düşebilir; sayılar
+              birebir tutmayabilir.
+            </div>
+          )}
           <div className="table-wrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
             <table>
               <thead style={{ position: 'sticky', top: 0, background: 'var(--bg1)', zIndex: 1 }}>

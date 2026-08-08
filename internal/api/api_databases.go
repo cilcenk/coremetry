@@ -9,7 +9,9 @@ package api
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -19,29 +21,46 @@ func (s *Server) getDatabases(w http.ResponseWriter, r *http.Request) {
 	from, to := parseFromTo(r, time.Hour)
 	// v0.9.433 (desen paritesi, kuyruk #3a) — ?compare=prior: messaging
 	// v0.8.364 sözleşmesinin birebiri. Opt-in (CH maliyeti ikiye katlar);
-	// varsayılan anahtar bayt-bayt eski — warm loop aynı slotu ısıtmaya
-	// devam eder, compare kendi slotunda yaşar. Prior hatası ölümcül
-	// değil: sayfa delta'sız gelir, 500 olmaz.
+	// Prior hatası ölümcül değil: sayfa delta'sız gelir, 500 olmaz.
 	compare := r.URL.Query().Get("compare") == "prior"
-	key := "databases:" + cacheBucket(from, to)
-	if compare {
-		key = "databases:cmp:" + cacheBucket(from, to)
-	}
+	// v0.9.821 — global Topbar env filtresi. Bugüne dek bu uç env'i
+	// SESSİZCE YOK SAYIYORDU: /endpoints ve /services daralırken
+	// /databases tüm ortamları göstermeye devam ediyor ve hiçbir şey
+	// bunu söylemiyordu. db_summary_5m'de deploy_env boyutu olmadığı
+	// için env okumayı ham span'lere düşürüyor (endpoints v0.8.385 ile
+	// aynı forcesRaw takası) — zarf kaynağı ilan ediyor.
+	env := strings.TrimSpace(r.URL.Query().Get("env"))
+	// v0.9.821 — anahtar öneki v2'ye çıktı ÇÜNKÜ zarf değişti (çıplak
+	// dizi → DatabasesOverview). Önek sürümlenmeseydi yuvarlanan deploy
+	// sırasında eski dizi payload'ı 30 sn boyunca yeni SPA'ya servis
+	// edilir ve sayfa boş açılırdı (v0.9.443/458 + messaging v0.9.813
+	// dersi). Warm loop (api.go) aynı öneki kullanır — yoksa ısıtılan
+	// slot hiç okunmaz. env de anahtarda: farklı env = farklı liste.
+	key := fmt.Sprintf("databases:v2:%s:env=%s:cmp=%v", cacheBucket(from, to), env, compare)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		rows, err := s.store.GetDatabases(ctx, from, to)
+		ov, err := s.store.GetDatabases(ctx, chstore.DatabasesQuery{
+			From: from, To: to, Env: env,
+			IncludeCallers: true, IncludeReceivers: true,
+		})
 		if err != nil {
 			return nil, err
 		}
-		if !compare || len(rows) == 0 {
-			return rows, nil
+		if !compare || len(ov.Rows) == 0 {
+			return ov, nil
 		}
+		// Prior penceresi HAFİF ikizden (v0.9.821): receiver keşfini ve
+		// çağıran turunu atlar — delta rozetleri yalnız sayaç + quantile
+		// okuyor. Öncesinde prior çağrısı TAM okumayı koşuyordu, yani
+		// her compare'li sayfa yüklemesinde dört katalog probu, dört
+		// metric_points taraması ve bir tam çağıran taraması BOŞUNA
+		// ödeniyordu.
 		dur := to.Sub(from)
-		priorRows, err := s.store.GetDatabases(ctx, from.Add(-dur), from)
+		priorRows, err := s.store.GetDatabasesRollup(ctx, from.Add(-dur), from, env)
 		if err != nil {
-			return rows, nil
+			return ov, nil
 		}
-		mergeDBPrior(rows, priorRows)
-		return rows, nil
+		mergeDBPrior(ov.Rows, priorRows)
+		return ov, nil
 	})
 }
 
@@ -121,23 +140,48 @@ func (s *Server) getMessagingTrends(w http.ResponseWriter, r *http.Request) {
 }
 
 // getDatabaseDetail returns the drawer payload for one
-// (db_system, instance) pair — per-(service, pod) caller
+// (db_system, instance, db_name) TRIPLE — per-(service, pod) caller
 // breakdown plus the top db_statement prefixes. Cached 30s.
-// Distinct cache keys per (system, instance, window) so the
-// row click is sub-100ms warm cache.
+//
+// v0.9.821 — ?dbName= imzaya girdi. Öncesinde uç yalnız (system,
+// instance) soruyordu, oysa TABLO SATIRI üçlü kimlikteydi: bir host'ta
+// N veritabanı olan her kurulumda — Oracle SID'leri, PostgreSQL
+// şemaları, MSSQL DB'leri — hangi satıra tıklanırsa tıklansın AYNI
+// çekmece açılıyor ve o host'un TOPLAMINI gösteriyordu. Satır 4.200
+// sorgu diyor, çekmece 31.000 gösteriyordu; ikisi de doğru görünüyordu.
+//
+// dbName CACHE ANAHTARINA da girer — girmeseydi ilk açılan
+// veritabanının çekmecesi 30 sn boyunca diğerlerine de servis edilirdi,
+// yani düzeltilen yalan cache katmanında yaşamaya devam ederdi.
 func (s *Server) getDatabaseDetail(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	system := q.Get("system")
 	instance := q.Get("instance")
+	dbName := q.Get("dbName")
 	if system == "" {
 		http.Error(w, `{"error":"system required"}`, http.StatusBadRequest)
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	key := fmt.Sprintf("db-detail:%s:%s:%s", system, instance, cacheBucket(from, to))
+	key := dbDetailKey(system, instance, dbName, cacheBucket(from, to))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetDatabaseDetail(ctx, system, instance, from, to)
+		return s.store.GetDatabaseDetail(ctx, system, instance, dbName, from, to)
 	})
+}
+
+// dbDetailKey — çekmece cache anahtarı. Alan sınırları FNV digest ile
+// çözülüyor (endpointKeyDigest'in üç alanlı ikizi): instance ve dbName
+// operatör verisi ve `:` ile birleştirilirse "a:b" + "c" ile "a" + "b:c"
+// aynı anahtara düşerdi — v0.5.187 belirsizlik sınıfının string hâli.
+// SAF; regresyon testi db_detail_key_test.go.
+func dbDetailKey(system, instance, dbName, bucket string) string {
+	h := fnv.New64a()
+	h.Write([]byte(system))
+	h.Write([]byte{0})
+	h.Write([]byte(instance))
+	h.Write([]byte{0})
+	h.Write([]byte(dbName))
+	return fmt.Sprintf("db-detail:v2:%x:%s", h.Sum64(), bucket)
 }
 
 // getOracleMetrics returns the OracleDB-receiver drill-down for

@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeDestinationParam, decodeDestinationParam } from './messaging/destinationParam';
+import { depRowKey } from '@/lib/depsTable';
 import { MessagingSummary } from './messaging/MessagingSummary';
 import type { MessagingInstance, MessagingOverview } from '@/lib/types';
 
@@ -81,10 +82,17 @@ export default function MessagingPage() {
       return next;
     }, { replace: true });
   }, [setParams]);
-  // Same `system|cluster|name` key shape DependenciesTable builds
-  // internally — the controlled drawer joins on it.
+  // v0.9.821 — anahtar TEK NÜSHADAN (depRowKey). Elle yazılmış kopya
+  // DependenciesTable'ın ürettiği anahtarla ayrışabilirdi ve ayrışsa
+  // drawer HİÇ AÇILMAZDI: sessiz, tip hatası vermeyen bir kırılma.
+  // (Anahtar db.name alanı kazandı; messaging satırları onu taşımadığı
+  // için burada boş kalıyor ve şekil eskisiyle uyumlu.)
   const openRowKey = destRef
-    ? `${destRef.system}|${destRef.cluster}|${destRef.destination}`
+    ? depRowKey({
+        system: destRef.system,
+        cluster: destRef.cluster,
+        destination: destRef.destination,
+      })
     : null;
 
   // Esc clears the drawer param (✕ inside the drawer does the same

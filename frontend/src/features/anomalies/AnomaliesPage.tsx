@@ -26,6 +26,7 @@ import type {
 } from '@/lib/types';
 import { AlertProblemDetail, ProblemDetail } from './ProblemDetail';
 import { withProblemParam, withExcParam } from './problemLink';
+import { emptySamplesNote, type SampleScanEnvelope } from './exceptionSamples';
 import { PageControls } from '@/components/ui/PageControls';
 import { RenderedMarkdown, stripMarkdown } from '@/components/Markdown';
 
@@ -1334,7 +1335,9 @@ function PriorityBadge({ p, reason }: { p?: 'P1' | 'P2' | 'P3'; reason?: string 
 // link out to the waterfall.
 function SamplesPanel({ fingerprint, occurrences }: { fingerprint: string; occurrences?: number }) {
   const [samples, setSamples] = useState<ExceptionSample[] | null | undefined>(undefined);
-  const [samplesCapped, setSamplesCapped] = useState(false);
+  // v0.9.795 — boş listenin nedenini zarf söyler (tavan / pencere bitti /
+  // gerçekten yok); tek bir "capped" bayrağı üçünü aynı cümleye sıkıştırıyordu.
+  const [scan, setScan] = useState<SampleScanEnvelope>(null);
   const [limit, setLimit] = useState(10);
   // v0.9.314 — the total the table no longer shows. Kept here rather
   // than dropped: how often a group fires is real context ONCE you are
@@ -1343,17 +1346,16 @@ function SamplesPanel({ fingerprint, occurrences }: { fingerprint: string; occur
   useEffect(() => {
     setSamples(undefined);
     api.exceptionGroupSamples(fingerprint, limit)
-      .then(r => { setSamples(r?.samples ?? []); setSamplesCapped(r?.scanCapped ?? false); })
+      .then(r => { setSamples(r?.samples ?? []); setScan(r ?? null); })
       .catch(() => setSamples(null));
   }, [fingerprint, limit]);
 
   if (samples === undefined) return <Spinner />;
   if (!samples || samples.length === 0) {
+    const note = emptySamplesNote(scan, 'No sample occurrences found.');
     return (
-      <div style={{ color: samplesCapped ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
-        {samplesCapped
-          ? '⚠ En yeni 500 aday tarandı, bu grubun örneği pencerede yok (sıcak serviste kardeş gruplar adayları doldurabilir).'
-          : 'No sample occurrences found.'}
+      <div style={{ color: note.warn ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
+        {note.text}
       </div>
     );
   }

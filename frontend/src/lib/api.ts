@@ -1929,9 +1929,12 @@ export const api = {
   getExceptionGroup: (fingerprint: string) =>
     get<ExceptionGroup>(`/api/exception-groups/${encodeURIComponent(fingerprint)}`),
   // v0.9.463 (dürüstlük A11) — zarf: scanned/scanCapped ile boş liste
-  // "örnek yok" mu "500 aday penceresi yetmedi" mi ayırt edilir.
+  // "örnek yok" mu "aday penceresi yetmedi" mi ayırt edilir.
+  // v0.9.795 — tarama partili; scanned KÜMÜLATİF, scanCapped yalnız 5000
+  // aday tavanına çarpınca true, windowExhausted grubun kendi penceresinin
+  // sonuna kadar okunduğunu söyler (dürüst-boş).
   exceptionGroupSamples: (fingerprint: string, limit = 10) =>
-    get<{ samples: ExceptionSample[]; scanned: number; scanCapped: boolean } | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
+    get<{ samples: ExceptionSample[]; scanned: number; scanCapped: boolean; windowExhausted?: boolean } | null>(`/api/exception-groups/${fingerprint}/samples?limit=${limit}`),
   exceptionGroupOccurrences: (fingerprint: string) =>
     get<OccurrencePoint[] | null>(`/api/exception-groups/${fingerprint}/occurrences`),
   // v0.9.252 — bulk sibling. One request, one audit row, one set of

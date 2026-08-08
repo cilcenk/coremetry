@@ -4323,6 +4323,54 @@ func buildMetricCatalogWhere(service, pattern string) whereClause {
 	return wc
 }
 
+// metricCatalogSelectSQL — the metric_catalog SELECT, pure so the
+// column list is table-tested (v0.9.833).
+//
+// The two enrichment columns are free riders:
+//
+//   • last_seen — maxMerge(last_seen_state) was ALREADY computed for
+//     the HAVING that ages silent metrics out of the picker; it was
+//     just never projected. Reading it costs nothing extra.
+//   • serviceCount — service_name is metric_catalog's FIRST ORDER BY
+//     column and every row read here already carries it, so uniqExact
+//     over the existing GROUP BY adds no scan.
+//
+// Neither needs a schema change (measured against live data before
+// the code was written) — which matters, because an MV state-column
+// addition opens a rolling-deploy read-error window.
+//
+// `paged` false is the defaultUnlimited call (picker prefetch): no
+// LIMIT/OFFSET, everything else identical.
+func metricCatalogSelectSQL(where string, paged bool) string {
+	q := `SELECT metric, anyMerge(description_state), anyMerge(unit_state), anyMerge(instrument_state),
+			toUnixTimestamp64Nano(maxMerge(last_seen_state)), uniqExact(service_name)
+		 FROM metric_catalog ` + where + `
+		 GROUP BY metric
+		 HAVING maxMerge(last_seen_state) >= ?
+		 ORDER BY metric`
+	if paged {
+		q += " LIMIT ? OFFSET ?"
+	}
+	return q + " SETTINGS max_execution_time = 10"
+}
+
+// metricNamesRawSelectSQL — the bounded raw metric_points fallback,
+// projecting the SAME columns as the catalog path. Pure + tested for
+// exactly that reason: the fallback runs on fresh upgrades, so a
+// column list that drifts from the catalog's would ship a silently
+// emptier catalogue for the first minutes after every deploy — the
+// window nobody watches.
+func metricNamesRawSelectSQL(where string, paged bool) string {
+	q := `SELECT metric, any(description), any(unit), any(instrument),
+			toUnixTimestamp64Nano(max(time)), uniqExact(service_name)
+		 FROM metric_points ` + where + `
+		 GROUP BY metric ORDER BY metric`
+	if paged {
+		q += " LIMIT ? OFFSET ?"
+	}
+	return q + " SETTINGS max_execution_time = 25"
+}
+
 // listMetricNamesFromCatalog is the metric_catalog fast path
 // (v0.8.396): a few thousand catalog rows instead of the raw
 // metric_points GROUP BY that outgrew max_execution_time at prod
@@ -4345,17 +4393,11 @@ func (s *Store) listMetricNamesFromCatalog(ctx context.Context, service, pattern
 		}
 	}
 
-	query := `SELECT metric, anyMerge(description_state), anyMerge(unit_state), anyMerge(instrument_state)
-		 FROM metric_catalog ` + wc.sql() + `
-		 GROUP BY metric
-		 HAVING maxMerge(last_seen_state) >= ?
-		 ORDER BY metric`
+	query := metricCatalogSelectSQL(wc.sql(), !defaultUnlimited)
 	args := append(append([]any{}, wc.args...), since)
 	if !defaultUnlimited {
-		query += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
-	query += " SETTINGS max_execution_time = 10"
 	rows, err := s.telemetryReadConn().Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
@@ -4364,7 +4406,7 @@ func (s *Store) listMetricNamesFromCatalog(ctx context.Context, service, pattern
 	out := []MetricInfo{}
 	for rows.Next() {
 		var m MetricInfo
-		if err := rows.Scan(&m.Name, &m.Description, &m.Unit, &m.Type); err != nil {
+		if err := rows.Scan(&m.Name, &m.Description, &m.Unit, &m.Type, &m.LastSeenNs, &m.ServiceCount); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, m)
@@ -4486,15 +4528,11 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 		}
 	}
 
-	query := `SELECT metric, any(description), any(unit), any(instrument)
-		 FROM metric_points ` + wc.sql() +
-		` GROUP BY metric ORDER BY metric`
+	query := metricNamesRawSelectSQL(wc.sql(), !defaultUnlimited)
 	args := append([]any{}, wc.args...)
 	if !defaultUnlimited {
-		query += " LIMIT ? OFFSET ?"
 		args = append(args, limit, offset)
 	}
-	query += " SETTINGS max_execution_time = 25"
 	rows, err := s.telemetryReadConn().Query(ctx, query, args...)
 	if err != nil {
 		return nil, 0, err
@@ -4503,7 +4541,7 @@ func (s *Store) ListMetricNames(ctx context.Context, service, pattern string, li
 	var out []MetricInfo
 	for rows.Next() {
 		var mi MetricInfo
-		if err := rows.Scan(&mi.Name, &mi.Description, &mi.Unit, &mi.Type); err != nil {
+		if err := rows.Scan(&mi.Name, &mi.Description, &mi.Unit, &mi.Type, &mi.LastSeenNs, &mi.ServiceCount); err != nil {
 			return nil, 0, err
 		}
 		out = append(out, mi)

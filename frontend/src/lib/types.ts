@@ -2132,6 +2132,16 @@ export interface MetricInfo {
   description: string;
   unit: string;
   type: string;
+  // v0.9.833 — katalog satırı zenginliği. İkisi de metric_catalog
+  // MV'sinden şema değişikliği OLMADAN geliyor (last_seen zaten
+  // HAVING'de okunuyordu, service_name MV'nin ilk ORDER BY kolonu).
+  // `?:` — v0.9.833 öncesi bir sunucuya bakan arayüz alanları
+  // görmez; kolonlar o durumda "—" basar, sıfır basmaz.
+  lastSeenNs?: number;
+  // Sorgunun kapsamındaki farklı servis sayısı. Servis filtresi
+  // açıkken tanım gereği 1'dir (satır ZATEN o çift), o yüzden kolon
+  // servis seçiliyken gizlenir.
+  serviceCount?: number;
 }
 
 export interface MetricPoint {

@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   metricGroup, decodeFacet, facetUrlValue, decodeCatalogParams, applyCatalogParams,
-  catalogCountLabel, facetCountsComplete, nextCatalogLimit,
-  CATALOG_PAGE, CATALOG_MAX,
+  catalogCountLabel, facetCountsComplete, nextCatalogLimit, metricIsStale,
+  CATALOG_PAGE, CATALOG_MAX, CATALOG_LOOKBACK_MS, METRIC_STALE_MS,
   type MFacet,
 } from './metricsCatalog';
 
@@ -127,6 +127,36 @@ describe('facetCountsComplete', () => {
   });
   it('incomplete on a truncated prefix — the chips must say so', () => {
     expect(facetCountsComplete(1240, 200)).toBe(false);
+  });
+});
+
+// v0.9.833 — "Son veri" kolonu. Eşik 24 saat, 7 gün DEĞİL: 7 gün
+// sunucunun ELEME eşiği (chstore.metricNameLookback), yani onu aşan
+// satır listede zaten yok ve "7g+ soluk" hiçbir satırı boyayamazdı.
+describe('metricIsStale', () => {
+  const now = Date.UTC(2026, 7, 9, 12, 0, 0);
+  const nsAgo = (ms: number) => (now - ms) * 1e6;
+
+  const cases: [string, number | undefined, boolean][] = [
+    ['just now', nsAgo(0), false],
+    ['5 minutes', nsAgo(5 * 60_000), false],
+    ['23h59m — still fresh', nsAgo(METRIC_STALE_MS - 60_000), false],
+    ['exactly 24h — not yet stale', nsAgo(METRIC_STALE_MS), false],
+    ['24h + 1ms — stale', nsAgo(METRIC_STALE_MS + 1), true],
+    ['3 days', nsAgo(3 * 24 * 3600_000), true],
+    // Bilinmeyen ≠ bayat. v0.9.833 öncesi bir sunucu alanı hiç
+    // göndermez; onu "bayat" boyamak uydurma olurdu.
+    ['unknown (undefined)', undefined, false],
+    ['unknown (0)', 0, false],
+    ['negative garbage', -1, false],
+  ];
+  it.each(cases)('%s', (_label, ns, want) => {
+    expect(metricIsStale(ns, now)).toBe(want);
+  });
+
+  it('the stale threshold sits inside the server lookback', () => {
+    // Aksi halde kural ölü olurdu: sunucu 7 günü aşanı zaten eliyor.
+    expect(METRIC_STALE_MS).toBeLessThan(CATALOG_LOOKBACK_MS);
   });
 });
 

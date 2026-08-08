@@ -13,9 +13,10 @@ import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { classifyMetric } from '@/lib/metricTemplates';
 import { metricCatalogueHref } from './explore/urlCodec';
+import { fmtAgoNs } from '@/lib/utils';
 import {
   METRIC_FACETS, CATALOG_PAGE, metricGroup, decodeCatalogParams, applyCatalogParams,
-  catalogCountLabel, facetCountsComplete, nextCatalogLimit, type MFacet,
+  catalogCountLabel, facetCountsComplete, nextCatalogLimit, metricIsStale, type MFacet,
 } from './metricsCatalog';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { MetricInfo } from '@/lib/types';
@@ -34,12 +35,26 @@ import { PageControls } from '@/components/ui/PageControls';
 // v0.9.832 — facet sınıflandırması + URL kodeki + dürüst sayaç metinleri
 // pages/metricsCatalog.ts'e taşındı (saf + tablo testli).
 
-const CATALOG_COLS: DataTableColumn<MetricInfo>[] = [
-  { id: 'name', label: 'Metric',      sortValue: m => m.name,             naturalDir: 'asc', width: 360 },
-  { id: 'type', label: 'Type',        sortValue: m => m.type,             naturalDir: 'asc', width: 120 },
-  { id: 'unit', label: 'Unit',        sortValue: m => m.unit || '',       naturalDir: 'asc', width: 100 },
-  { id: 'desc', label: 'Description', sortValue: m => m.description || '', naturalDir: 'asc', width: 460 },
-];
+// v0.9.833 — "Last seen" + "Services" kolonları. sortValue'lar HAM
+// sayıyı döndürür (biçimlenmiş metni değil): "5m ago" metnine göre
+// sıralamak alfabetik saçmalık üretirdi.
+//
+// Services kolonu servis filtresi açıkken GİZLENİR: o kapsamda sayı
+// tanım gereği 1'dir ve sabit bir "1" kolonu yer kaplamaktan başka bir
+// şey yapmaz.
+function catalogColumns(showServices: boolean): DataTableColumn<MetricInfo>[] {
+  const cols: DataTableColumn<MetricInfo>[] = [
+    { id: 'name', label: 'Metric',    sortValue: m => m.name,             naturalDir: 'asc', width: 340 },
+    { id: 'type', label: 'Type',      sortValue: m => m.type,             naturalDir: 'asc', width: 110 },
+    { id: 'unit', label: 'Unit',      sortValue: m => m.unit || '',       naturalDir: 'asc', width: 90 },
+    { id: 'seen', label: 'Last data', sortValue: m => m.lastSeenNs ?? 0,  naturalDir: 'desc', width: 110, numeric: true },
+  ];
+  if (showServices) {
+    cols.push({ id: 'svcs', label: 'Services', sortValue: m => m.serviceCount ?? 0, naturalDir: 'desc', width: 90, numeric: true });
+  }
+  cols.push({ id: 'desc', label: 'Description', sortValue: m => m.description || '', naturalDir: 'asc', width: 400 });
+  return cols;
+}
 
 export default function MetricsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -144,6 +159,11 @@ export default function MetricsPage() {
     enabled: !redirectTo && !editor,
   });
   const catalog = useMemo<MetricInfo[]>(() => catalogQ.data?.names ?? [], [catalogQ.data]);
+  // Bayatlık referans anı VERİYLE birlikte sabitlenir, her render'da
+  // değil: Date.now()'ı doğrudan JSX'te çağırmak aynı listeyi iki
+  // render'da farklı boyayabilir ve eşiğe komşu bir satır titrer.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const nowMs = useMemo(() => Date.now(), [catalogQ.data]);
   const total = catalogQ.data?.total ?? catalog.length;
   const hasMore = catalogQ.data?.hasMore ?? false;
   const nextLimit = nextCatalogLimit(limit, hasMore);
@@ -157,9 +177,11 @@ export default function MetricsPage() {
     () => catalog.filter(m => facet === 'all' || metricGroup(m.name) === facet),
     [catalog, facet]);
 
+  const showServices = !service;
+  const columns = useMemo(() => catalogColumns(showServices), [showServices]);
   const dt = useDataTable<MetricInfo>({
     storageKey: 'metric-catalog',
-    columns: CATALOG_COLS,
+    columns,
     rows: filtered,
     initialSort: { id: 'name', dir: 'asc' },
   });
@@ -180,12 +202,38 @@ export default function MetricsPage() {
   // Servis filtresi açıkken tohum o servise KAPSANIR (scope): operatör
   // "api-gateway'in metrikleri"ne bakıyorsa, açılan grafik de o servisin
   // olmalı — yoksa katalog daraltması Explore'a geçerken sessizce kaybolur.
-  const metricHref = (m: MetricInfo) =>
-    metricCatalogueHref(m.name, {
-      agg: classifyMetric(m)?.agg,
+  //
+  // v0.9.833 — KAPI ONARIMI. classifyMetric bir ŞABLON döndürür (agg +
+  // groupBy + threshold + unit) ama bu çağrı yalnız `agg`ı taşıyordu:
+  // "p99 of http.server.request.duration BY http.route" öneren kayıt,
+  // Explore'a yalnız "p99" olarak varıyordu. Kırılım şablonun asıl
+  // değeriydi ve 16 şablonun 15'inde groupBy dolu, yani öneri
+  // altyapısının neredeyse tamamı ölü kod olarak duruyordu. Artık
+  // splitBy de tohuma giriyor.
+  //
+  // Seri patlaması yok: panel varsayılanı alana göre top-10
+  // (explore/model.ts PANEL_SERIES_CAP), yani 99 servisli bir sayaç
+  // 99 çizgi değil 10 çizgi çiziyor. Metrikte olmayan bir anahtar
+  // hata da vermiyor — groupKeyExprMetric attr yoksa boş dizge döner
+  // (tek seri), yani şablon yanlış eşleşse bile grafik bozulmuyor.
+  //
+  // `unit` BİLEREK ham katalog birimi (m.unit) kalıyor, şablonunki
+  // değil: urlCodec sözleşmesi q.unit'in HAM OTLP yuvası olduğunu
+  // söylüyor (çeviri queryUnit → otlpUnitToGrafana'da). Şablonun unit
+  // alanı bir GÖRÜNTÜ ipucudur ('bytes', '%'), OTLP yuvası değil
+  // ('By', '1'); onu geçirmek v0.9.801'in kurduğu zinciri bozardı.
+  //
+  // `threshold` taşınmıyor — builder'ın eşik alanı yok. Şablonun o
+  // parçası hâlâ kullanılmıyor (bilinçli, ayrı kapı).
+  const metricHref = (m: MetricInfo) => {
+    const t = classifyMetric(m);
+    return metricCatalogueHref(m.name, {
+      agg: t?.agg,
       unit: m.unit,
+      splitBy: t?.groupBy,
       service: service || undefined,
     });
+  };
 
   return (
     <>
@@ -291,6 +339,29 @@ export default function MetricsPage() {
                             </td>
                             <td>{m.type}</td>
                             <td className="mono">{m.unit || '·'}</td>
+                            {/* Son veri (v0.9.833). Bilinmeyen "—" basar,
+                                "0s ago" değil — v0.9.833 öncesi bir
+                                sunucu alanı hiç göndermez ve uydurma bir
+                                tazelik en kötü yalandır. */}
+                            <td style={{
+                              color: metricIsStale(m.lastSeenNs, nowMs) ? 'var(--text3)' : 'var(--text2)',
+                              opacity: metricIsStale(m.lastSeenNs, nowMs) ? 0.65 : 1,
+                              fontVariantNumeric: 'tabular-nums',
+                            }}
+                              title={m.lastSeenNs
+                                ? new Date(m.lastSeenNs / 1e6).toLocaleString()
+                                  + (metricIsStale(m.lastSeenNs, nowMs) ? ' — no data in the last 24h' : '')
+                                : 'The server did not report a last-seen timestamp for this metric.'}>
+                              {m.lastSeenNs ? fmtAgoNs(m.lastSeenNs) : '—'}
+                            </td>
+                            {showServices && (
+                              <td style={{ fontVariantNumeric: 'tabular-nums' }}
+                                title={m.serviceCount
+                                  ? `${m.serviceCount.toLocaleString()} service${m.serviceCount === 1 ? '' : 's'} reported ${m.name} in the last 7 days`
+                                  : undefined}>
+                                {m.serviceCount ? m.serviceCount.toLocaleString() : '—'}
+                              </td>
+                            )}
                             <td style={{ color: 'var(--text2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                               title={m.description}>
                               {m.description || '—'}

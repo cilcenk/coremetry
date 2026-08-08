@@ -123,6 +123,34 @@ export function facetCountsComplete(total: number, listed: number): boolean {
 }
 
 /**
+ * Sunucunun katalog tazelik TAVANI — chstore.metricNameLookback (7 gün).
+ * Bundan uzun süredir susan bir metrik listeye HİÇ girmez; "Son veri"
+ * kolonunun üst sınırı budur ve arayüz bunu söylemek zorundadır, yoksa
+ * operatör kataloğu "her metrik" sanır.
+ */
+export const CATALOG_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * Bu eşiği aşan satır SOLUK çizilir: "bugün veri gelmedi".
+ *
+ * Neden 24 saat, 7 gün değil: 7 gün sunucunun ELEME eşiği. 7 günü aşan
+ * satır zaten listede olmadığı için "7g+ soluk" kuralı hiçbir satırı
+ * boyayamazdı — ölü bir görsel. 24 saat ulaşılabilir ve anlamlı:
+ * dünden beri susan metrik bakılmayı hak eder.
+ */
+export const METRIC_STALE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Satır bayat mı? Bilinmeyen (0 / alan yok, v0.9.833 öncesi sunucu)
+ * BAYAT DEĞİLDİR — bilmemek ile susmuş olmak aynı şey değil, ve
+ * arayüz bilinmeyeni "—" basar.
+ */
+export function metricIsStale(lastSeenNs: number | undefined, nowMs: number): boolean {
+  if (!lastSeenNs || lastSeenNs <= 0) return false;
+  return nowMs - lastSeenNs / 1e6 > METRIC_STALE_MS;
+}
+
+/**
  * "Load more" bir sonraki limiti verir; daha fazlası yoksa null.
  *
  * Tavan sunucununkiyle AYNI (1000). Tavana varınca buton kaybolur ve

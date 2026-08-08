@@ -22,6 +22,12 @@ import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
 import { encodeEndpointParam, decodeEndpointParam } from '@/pages/endpoints/endpointParam';
 import { parseColsParam, formatColsParam } from '@/pages/endpoints/endpointCols';
 import { ColumnToggle } from '@/pages/endpoints/ColumnToggle';
+import {
+  DETAIL_PARAM, EXP_PARAM, LIST_NEW_LABEL, LIST_NEW_TITLE,
+  decodeExpandedParam, decodeEndpointRowKey, encodeExpandedParam,
+  endpointP99Delta, endpointRowKey, endpointsSourceNote, listedTotals,
+  toggleExpanded,
+} from '@/lib/endpointHonesty';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
@@ -246,7 +252,15 @@ export default function EndpointsPage() {
   // which services this endpoint's service typically calls
   // downstream. Cached per-service so expanding 3 endpoints of
   // the same service hits the network once.
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  //
+  // v0.9.818 — açık satırlar URL'de (?exp=). Bunlar ekranda DURAN bir
+  // seçimdi ama yalnız bileşen state'inde yaşıyordu: kopyalanan link
+  // şeritleri kapalı açıyor, SavedViewsBar da kapalı bir görünüm
+  // kaydediyordu — yani kaydedilen şey ekrandaki şey değildi (v0.8.253
+  // sınıfı). YEREL AYNA YOK: okuma doğrudan params'tan, yazma
+  // replace:true, dolayısıyla sig-guard'a da gerek yok.
+  const expandedRows = useMemo(
+    () => decodeExpandedParam(params.get(EXP_PARAM)), [params]);
   // v0.9.257 — keyed `${service}@${since}`; value carries sampledFrom so the
   // strip can state how many traces the counts came from instead of implying
   // they are fleet totals.
@@ -263,35 +277,70 @@ export default function EndpointsPage() {
   // downstream neighbours for its service. Cache is per-service
   // so expanding multiple endpoints of the same service hits
   // /api/services/{svc}/neighbors only once.
-  const onToggleExpand = (rowKey: string, service: string) => {
-    setExpandedRows(prev => {
-      const next = new Set(prev);
-      if (next.has(rowKey)) next.delete(rowKey); else next.add(rowKey);
-      return next;
-    });
-    // v0.9.257 — cache key is (service, window), not service alone. The old
-    // key meant the FIRST window an operator expanded stuck to that service
-    // for the rest of the session: changing the page range refetched every
-    // other panel but left this strip showing the original numbers, with no
-    // spinner and no visible change to hint at it.
-    const ck = `${service}@${dep.since}`;
-    if (!depsByService[ck]) {
-      api.serviceNeighbors(service, dep.since, 100, false)
-        .then(r => setDepsByService(prev => ({
+  const onToggleExpand = (rowKey: string) => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    const v = encodeExpandedParam(toggleExpanded(decodeExpandedParam(prev.get(EXP_PARAM)), rowKey));
+    if (v) next.set(EXP_PARAM, v); else next.delete(EXP_PARAM);
+    return next;
+  }, { replace: true });
+
+  // v0.9.818 — bağımlılık getirmesi ARTIK tıka değil, AÇIK KÜMEYE bağlı.
+  // Tıka bağlıyken ?exp= taşıyan bir derin link şeritleri açıyor ama
+  // hiçbirini doldurmuyordu: kalıcı "Loading …" — kapalıdan beter, çünkü
+  // bir şey geleceğini vaat ediyor. Efekt hem tıkı hem derin-linki hem de
+  // pencere değişimini (dep.since anahtarın parçası) tek yoldan karşılar.
+  //
+  // v0.9.257 — önbellek anahtarı (service, window); yalnız service olsaydı
+  // operatörün İLK açtığı pencere o servise oturur, range değişince diğer
+  // paneller tazelenirken bu şerit eski sayıları göstermeye devam ederdi.
+  useEffect(() => {
+    const wanted = new Set<string>();
+    for (const key of expandedRows) {
+      const ref = decodeEndpointRowKey(key);
+      if (ref) wanted.add(ref.service);
+    }
+    for (const svc of wanted) {
+      const ck = `${svc}@${dep.since}`;
+      if (depsByService[ck]) continue;
+      api.serviceNeighbors(svc, dep.since, 100, false)
+        .then(r => setDepsByService(prev => prev[ck] ? prev : ({
           ...prev, [ck]: { deps: r?.downstream ?? [], sampledFrom: r?.sampledFrom ?? 0 },
         })))
-        .catch(() => setDepsByService(prev => ({
+        .catch(() => setDepsByService(prev => prev[ck] ? prev : ({
           ...prev, [ck]: { deps: [], sampledFrom: 0 },
         })));
     }
+  }, [expandedRows, dep.since, depsByService]);
+  // v0.5.387 — sparkline-click drill-in. Modal renders the three RED
+  // sparklines (calls / errors / p99) side-by-side with their summary
+  // stats so the operator confirms "is this endpoint spiky" at a glance,
+  // then drills further via the same "view traces" link the table row
+  // already exposes.
+  //
+  // v0.9.818 — KİMLİK URL'DE (?detail=, ?endpoint='in codec'i birebir).
+  // Modal ekranın yarısını kaplayan bir görünümdü ve kopyalanan link onu
+  // taşımıyordu; bir postmortem'e yapıştırılan bağlantı alıcıyı çıplak
+  // tabloya indiriyordu. Aşağıdaki state artık DOĞRULUK KAYNAĞI DEĞİL,
+  // yalnız tık anındaki satırın kopyası: taze liste satırı bulunamazsa
+  // başlık/kimlik ondan çizilir (grafikler ÇİZİLMEZ, rowIsStale).
+  const detailRef = useMemo(
+    () => decodeEndpointParam(params.get(DETAIL_PARAM)), [params]);
+  const [detailSnap, setDetailSnap] = useState<EndpointRow | null>(null);
+  const openDetail = (r: EndpointRow) => {
+    setDetailSnap(r);
+    setParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set(DETAIL_PARAM, encodeEndpointParam({
+        service: r.service, path: r.path, sig: bySignature,
+      }));
+      return next;
+    }, { replace: true });
   };
-  // v0.5.387 — sparkline-click drill-in. Holds the row whose
-  // trend was clicked; modal renders the three RED sparklines
-  // (calls / errors / p99) side-by-side with their summary
-  // stats so the operator confirms "is this endpoint spiky" at
-  // a glance, then drills further via the same "view traces"
-  // link the table row already exposes.
-  const [detail, setDetail] = useState<EndpointRow | null>(null);
+  const closeDetail = () => setParams(prev => {
+    const next = new URLSearchParams(prev);
+    next.delete(DETAIL_PARAM);
+    return next;
+  }, { replace: true });
 
   // v0.8.360 — URL-first detail drawer (Stage-2 slice E2). Row click
   // (not the sparkline — that keeps its RED modal above) writes
@@ -390,8 +439,13 @@ export default function EndpointsPage() {
     entry: entry === 'rpc' ? 'rpc' : undefined, // v0.9.313
   });
   // v0.9.812 — zarf: satırlar + sıralama havuzunun gerçeği.
-  const rows: EndpointRow[] | null | undefined =
-    rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data?.rows ?? [];
+  // v0.9.818 — MEMO. Üçlü koşul her render'da YENİ bir dizi kimliği
+  // üretiyordu; `rows`'a bağlı her useMemo (KPI toplamları) fiilen her
+  // render'da yeniden koşardı. Kimlik artık yalnız sorgu durumu
+  // değiştiğinde değişir.
+  const rows: EndpointRow[] | null | undefined = useMemo(
+    () => (rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data?.rows ?? []),
+    [rowsQ.isPending, rowsQ.isError, rowsQ.data]);
   const pool = rowsQ.data?.pool ?? 0;
   const poolCapped = rowsQ.data?.poolCapped === true;
   useEffect(() => { setTableRows(rowsQ.data?.rows ?? []); }, [rowsQ.data]);
@@ -401,22 +455,37 @@ export default function EndpointsPage() {
   const clustersQ = useClusters(from, to);
   const clusterOptions = clustersQ.data ?? [];
 
-  const totalCalls = (rows ?? []).reduce((s, r) => s + r.calls, 0);
-  const totalErrors = (rows ?? []).reduce((s, r) => s + r.errors, 0);
-  const totalErrorRate = totalCalls > 0 ? (totalErrors / totalCalls) * 100 : 0;
+  // v0.9.818 — KPI'lar GÖRÜNEN satırların toplamı ve etiketleri artık
+  // bunu söylüyor. Sayılar zaten hep buydu; yalanı etiket söylüyordu
+  // ("Total calls" = filo iddiası, oysa okuma top-N + filtreli).
+  const listed = useMemo(() => listedTotals(rows ?? []), [rows]);
+  // Kaynak notu: env/cluster seçiliyken okuma MV'den ham spans'e düşer
+  // ve POPÜLASYON değişir (endpointHonesty.endpointsSourceNote).
+  const sourceNote = useMemo(() => endpointsSourceNote(cluster, env), [cluster, env]);
 
   // v0.9.206 review-fix — modal'daki satırın MEVCUT range'e ait taze
   // kopyası. Zoom range'i yeniden yazınca endpoint taze top-N'den
-  // düşebilir (limit varsayılanı 100); o durumda click-time `detail`
-  // satırına sessiz geri düşmek, bucketsToSeries'in ESKİ pencere
-  // sayaçlarını YENİ eksene yayıp yeni bucket genişliğine bölmesi
-  // demekti (30m→5m zoom'da rps 6x şişik, taze veri gibi). Kimlik/
-  // başlık bayat satırdan kalabilir; time-series üretimini modal
-  // rowIsStale ile keser.
-  const freshDetailRow = detail
-    ? (rows ?? []).find(x =>
-        x.service === detail.service && x.path === detail.path && x.method === detail.method)
+  // düşebilir (limit varsayılanı 100); o durumda click-time satıra
+  // sessiz geri düşmek, bucketsToSeries'in ESKİ pencere sayaçlarını
+  // YENİ eksene yayıp yeni bucket genişliğine bölmesi demekti (30m→5m
+  // zoom'da rps 6x şişik, taze veri gibi). Kimlik/başlık bayat satırdan
+  // kalabilir; time-series üretimini modal rowIsStale ile keser.
+  //
+  // v0.9.818 — kimlik URL'den geldiği için (service, path) ile eşleşiyor;
+  // method eşleşmesi kalktı çünkü ?detail= onu taşımıyor ve satır kimliği
+  // MV grenine göre zaten (service, path) — method satırın İÇİNDE toplanan
+  // temsilî bir değer (anyHeavy), kimliğin parçası değil.
+  const freshDetailRow = detailRef
+    ? (rows ?? []).find(x => x.service === detailRef.service && x.path === detailRef.path)
     : undefined;
+  // Tık anındaki kopya yalnız AYNI satırsa devreye girer — başka bir
+  // satırın sayılarını yeni kimliğin başlığı altında göstermek, bu
+  // sürümün kapattığı sınıfın ta kendisi olurdu.
+  const snapMatches = !!detailRef && !!detailSnap
+    && detailSnap.service === detailRef.service && detailSnap.path === detailRef.path;
+  const detailRow: EndpointRow | null = detailRef
+    ? (freshDetailRow ?? (snapMatches ? detailSnap : null))
+    : null;
 
   return (
     <>
@@ -601,15 +670,25 @@ export default function EndpointsPage() {
         )}
         {rows && rows.length > 0 && (
           <>
-            <div style={{
-              display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-              gap: 12, marginBottom: 14,
-            }}>
-              <KPI label="Endpoints" value={fmtNum(rows.length)} />
-              <KPI label="Total calls" value={fmtNum(totalCalls)} />
-              <KPI label="Errors" value={fmtNum(totalErrors)}
-                   sub={`${totalErrorRate.toFixed(2)}%`}
-                   cls={totalErrorRate >= 5 ? 'err' : totalErrorRate >= 1 ? 'warn' : ''} />
+            {/* v0.9.818 — KPI şeridi EV DİLİNE geçti (.card.ov-kpi +
+                .ov-kpi-accent + .ov-lab/.ov-val — Service Overview'ın
+                KpiTile'ı ile AYNI token seti) ve etiketleri dürüstleşti.
+                Sayılar hep GÖRÜNEN satırların toplamıydı; "Total calls"
+                ise filo iddiasıydı. Bir operatör bu karoyu "sistemin
+                toplam trafiği" diye okuyup limit=100'ün altında kalan
+                uzun kuyruğu hiç göremezdi. */}
+            <div className="ov-grid ov-kpis ov-mb">
+              <EpKpi lab="Listelenen endpoint" accent="var(--accent)"
+                val={fmtNum(listed.rows)}
+                note={`Sunucudan dönen satır sayısı — filo geneli DEĞİL. Bu sayıyı limit (top ${fmtNum(limit)}), servis/yol filtresi ve seçili sekme (${entry === 'rpc' ? 'RPC & Messaging' : 'HTTP'}) belirler.`} />
+              <EpKpi lab="Listelenen çağrı" accent="var(--accent2)"
+                val={fmtNum(listed.calls)}
+                note={`Yalnız yukarıdaki ${fmtNum(listed.rows)} satırın toplamı. Listeye girmeyen endpoint'lerin çağrıları bu sayıya DAHİL DEĞİL.`} />
+              <EpKpi lab="Listelenen hata" accent="var(--err)"
+                val={fmtNum(listed.errors)}
+                sub={`${listed.errorRate.toFixed(2)}%`}
+                subCls={listed.errorRate >= 5 ? 'err' : listed.errorRate >= 1 ? 'warn' : ''}
+                note={`Oran pencere TOPLAMLARINDAN: ${fmtNum(listed.errors)} hata / ${fmtNum(listed.calls)} çağrı. Satır oranlarının ortalaması DEĞİL.`} />
             </div>
             <div className="table-wrap">
               <table style={{ tableLayout: 'fixed', width: '100%' }}>
@@ -618,10 +697,15 @@ export default function EndpointsPage() {
                 <tbody>
                   {dt.sortedRows.map((r, i) => {
                     const errCls = r.errorRate >= 5 ? 'b-err' : r.errorRate >= 1 ? 'b-warn' : 'b-ok';
-                    const rowKey = `${r.service}|${r.path}|${i}`;
+                    // v0.9.818 — genişletme anahtarı artık KARARLI ve
+                    // URL-güvenli: eskiden satır INDEKSİNİ taşıyordu, yani
+                    // sıralama/filtre değişince açık şerit başka bir satıra
+                    // atlıyordu (ve URL'e yazılamazdı). Kimlik MV grenidir:
+                    // (service, path).
+                    const rowKey = endpointRowKey(r.service, r.path);
                     const isExpanded = expandedRows.has(rowKey);
                     return (
-                      <React.Fragment key={rowKey}>
+                      <React.Fragment key={`${rowKey}|${i}`}>
                       <tr {...dt.rowProps(i)}
                         onMouseEnter={() => dt.nav.setSelected(i)}
                         onClick={e => {
@@ -648,7 +732,7 @@ export default function EndpointsPage() {
                               per service across rows of same svc)
                               and renders a strip below the row. */}
                           <button type="button"
-                            onClick={() => onToggleExpand(rowKey, r.service)}
+                            onClick={() => onToggleExpand(rowKey)}
                             style={{
                               all: 'unset', cursor: 'pointer',
                               color: 'var(--text3)',
@@ -723,11 +807,20 @@ export default function EndpointsPage() {
                         </td>}
                         {visibleCols.has('p99Delta') && <td className="num mono">
                           {(() => {
-                            const pr = r.priorP99Ms ?? 0;
-                            if (pr <= 0) return <span style={{ color: 'var(--text3)' }} title="Önceki pencerede yoktu">YENİ</span>;
-                            const pct = (r.p99Ms - pr) / pr * 100;
-                            const cls = pct > 5 ? 'var(--err)' : pct < -5 ? 'var(--ok)' : 'var(--text3)';
-                            return <b style={{ color: cls }}>{pct > 0 ? '▲' : pct < 0 ? '▼' : ''}{Math.abs(pct).toFixed(0)}%</b>;
+                            // v0.9.818 — "YENİ" YALANDI. Prior okuma da
+                            // top-N (api.go getEndpoints prior taraması aynı
+                            // limit/havuzla koşuyor), yani prior alanının boş
+                            // olması "bu endpoint önceki pencerede YOKTU"
+                            // demek değil; "önceki pencerenin LİSTESİNE
+                            // girmemiş" demek. İkisi çok farklı: birincisi
+                            // yeni bir deploy, ikincisi sadece sıralama.
+                            const d = endpointP99Delta(r.p99Ms, r.priorP99Ms);
+                            if (d.kind === 'listNew') {
+                              return <span style={{ color: 'var(--text3)' }}
+                                title={LIST_NEW_TITLE}>{LIST_NEW_LABEL}</span>;
+                            }
+                            const cls = d.pct > 5 ? 'var(--err)' : d.pct < -5 ? 'var(--ok)' : 'var(--text3)';
+                            return <b style={{ color: cls }}>{d.pct > 0 ? '▲' : d.pct < 0 ? '▼' : ''}{Math.abs(d.pct).toFixed(0)}%</b>;
                           })()}
                         </td>}
                         {visibleCols.has('spread') && <td className="num mono"
@@ -744,7 +837,7 @@ export default function EndpointsPage() {
                         {visibleCols.has('trend') && <td>
                           <button
                             type="button"
-                            onClick={() => setDetail(r)}
+                            onClick={() => openDetail(r)}
                             title="Click for calls / errors / p99 detail"
                             style={{
                               background: 'transparent', border: 0, padding: 0,
@@ -829,6 +922,24 @@ export default function EndpointsPage() {
                 </tbody>
               </table>
             </div>
+            {/* v0.9.818 — KAYNAK DEĞİŞİMİ ARTIK GÖRÜNÜR. env/cluster
+                seçiliyken okuma spanmetrics MV'sinden HAM spans'e düşüyor
+                (EndpointsQuery.forcesRaw) ve dönen POPÜLASYON değişiyor:
+                rotasız client span'leri listeye katılıyor, exemplar
+                kısayolları ise hiç gelmiyor. Bugüne dek sayfa bunu
+                söylemiyordu; aynı filtreyi açıp kapatan operatör satır
+                sayısının neden oynadığını ve ⚡/✖ ikonlarının neden
+                kaybolduğunu tahmin etmek zorundaydı. Not YALNIZ gerçekten
+                ham yoldayken çıkar — her sayfada duran bir uyarı, hiçbir
+                sayfada okunmayan bir uyarıdır. */}
+            {sourceNote && (
+              <div style={{
+                marginTop: 10, padding: '7px 11px', fontSize: 11.5,
+                border: '1px solid var(--border)', borderLeft: '3px solid var(--accent)',
+                borderRadius: 6, background: 'var(--bg2)', color: 'var(--text2)',
+                lineHeight: 1.5,
+              }}>{sourceNote}</div>
+            )}
             <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
               {/* v0.8.356 — the default read rides the spanmetrics_1m MV,
                   whose route dimension is filled from http.route with an
@@ -845,14 +956,18 @@ export default function EndpointsPage() {
           </>
         )}
         {/* Madde 4 sweep — zoom range'i değiştirince modal'daki satır bayat
-            kalmasın: aynı (service,path,method) satırının TAZE kopyası
-            rows'tan yeniden bulunur (drawer'ın v0.8.360 find deseni).
+            kalmasın: aynı (service,path) satırının TAZE kopyası rows'tan
+            yeniden bulunur (drawer'ın v0.8.360 find deseni).
             v0.9.206 review-fix — taze kopya YOKSA grafikler bayat satırdan
-            üretilmez (rowIsStale); modal açık kalır, kimlik/başlık durur. */}
+            üretilmez (rowIsStale); modal açık kalır, kimlik/başlık durur.
+            v0.9.818 — açık/kapalı ve kimlik URL'den (?detail=); ne taze
+            satır ne tık-anı kopyası varsa (başka bir sekmede kopyalanmış
+            derin link) modal DÜRÜST bir boş hâl çizer, sessizce kapanmaz. */}
         <EndpointMetricModal
-          row={detail ? freshDetailRow ?? detail : null}
-          rowIsStale={!!detail && !freshDetailRow}
-          onClose={() => setDetail(null)} range={range}
+          refObj={detailRef}
+          row={detailRow}
+          rowIsStale={!!detailRef && !freshDetailRow}
+          onClose={closeDetail} range={range}
           env={env} cluster={cluster}
           onZoom={handleZoom} onZoomReset={handleZoomReset} />
         {/* v0.8.360 — route-scoped drill-down drawer. row may be
@@ -890,8 +1005,13 @@ export default function EndpointsPage() {
 // crosshair sync, and tooltip per series — the same uPlot
 // affordances the Metrics / Explore pages use.
 function EndpointMetricModal({
-  row, rowIsStale, onClose, range, env, cluster, onZoom, onZoomReset,
+  refObj, row, rowIsStale, onClose, range, env, cluster, onZoom, onZoomReset,
 }: {
+  // v0.9.818 — açık/kapalı URL'den (?detail=). refObj null = kapalı.
+  // row null AMA refObj dolu = derin link mevcut listede karşılığı
+  // olmayan bir endpoint'e işaret ediyor; modal o zaman sayı UYDURMAZ,
+  // durumu söyler ve pivotlarını kimlikten kurar.
+  refObj: import('@/pages/endpoints/endpointParam').EndpointRef | null;
   row: EndpointRow | null; onClose: () => void; range: TimeRange;
   // v0.9.307 — the scope this modal's row was read under, so its
   // pivots ask the same question the table did.
@@ -916,7 +1036,35 @@ function EndpointMetricModal({
     return bucketsToSeries(row, range);
   }, [row, rowIsStale, range]);
 
-  if (!row) return <Modal open={false} onClose={onClose} />;
+  if (!refObj) return <Modal open={false} onClose={onClose} />;
+  // v0.9.818 — kimlik VAR, satır YOK. Eskiden bu hâl imkânsızdı (modal
+  // yalnız tıkla açılırdı ve tık satırı taşırdı); URL-first olunca
+  // mümkün oldu: kopyalanan link farklı bir pencerede / farklı bir
+  // limitle açılıyor ve endpoint top-N'e girmiyor. SESSİZCE KAPANMAK
+  // yanlış olurdu ("link bozuk" diye okunur) — durumu söyle, çıkışları
+  // ver, sayı UYDURMA.
+  if (!row) {
+    return (
+      <Modal open onClose={onClose} size="md"
+        title={<span className="mono" style={{ fontSize: 13 }}>{refObj.path}
+          <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>({refObj.service})</span>
+        </span>}>
+        <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, marginBottom: 14 }}>
+          Bu endpoint <b>mevcut listede yok</b>, o yüzden RED grafikleri çizilemiyor —
+          seri verisi tablo satırının kendisinden geliyor. Muhtemel sebep: seçili
+          zaman penceresi ya da <code>limit</code> (şu an top-N) bu endpoint'i
+          kapsamıyor. Pencereyi genişletin ya da limiti yükseltin; kimlik
+          korunuyor, modal yeniden dolacak.
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <Link to={tracesLink(refObj, range, env, cluster)}
+            style={{ fontSize: 12, color: 'var(--accent2)' }}>View traces →</Link>
+          <Link to={`/service?name=${encodeURIComponent(refObj.service)}`}
+            style={{ fontSize: 12, color: 'var(--accent2)' }}>Service detail →</Link>
+        </div>
+      </Modal>
+    );
+  }
   // v0.9.206 review-fix — bayat satırda boş hâl mesajı sebebi söyler.
   const emptyLabel = rowIsStale
     ? 'no data for this endpoint in the zoomed window' : undefined;
@@ -1133,7 +1281,12 @@ function bucketsToSeries(row: EndpointRow, range: TimeRange): {
 // under env=uat opened an UNFILTERED trace list: the pivot silently
 // widened the question it was launched from, which is the same
 // silent-scope class v0.9.306 closed inside the drawer.
-function tracesLink(r: EndpointRow, range: TimeRange, env?: string, cluster?: string): string {
+// v0.9.818 — parametre yalnız KİMLİK alıyor (EndpointRow'un tamamı
+// değil): modal, satırı olmayan bir derin-linkte de aynı pivotu kurmak
+// zorunda ve o hâlde elimizde sadece (service, path) var.
+function tracesLink(
+  r: { service: string; path: string }, range: TimeRange, env?: string, cluster?: string,
+): string {
   return `/traces?service=${encodeURIComponent(r.service)}` +
     `&search=${encodeURIComponent(r.path)}` +
     `&range=${encodeURIComponent(encodeRange(range))}` +
@@ -1328,18 +1481,30 @@ function compactNum(n: number): string {
   return (n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0) + 'M';
 }
 
-function KPI({ label, value, sub, cls }: { label: string; value: string; sub?: string; cls?: string }) {
+// EpKpi — /endpoints KPI karosu (v0.9.818). Sayfa-yerel elle çizilmiş
+// kutu (padding/border/radius inline) yerine EV DİLİ: .card.ov-kpi +
+// .ov-kpi-accent + .ov-lab / .ov-val / .ov-unit — Service Overview'ın
+// KpiTile'ı ve /messaging'in MsgKpi'ı ile AYNI token seti, aynı yoğunluk
+// varyantları (data-density). KpiTile dışa açılmadığı için sınıflar
+// burada yeniden kuruluyor; uydurulmuş bir stil DEĞİL.
+//
+// note = title: karonun neyi TOPLADIĞINI söyleyen cümle. Bu sayfada
+// kritik, çünkü hepsi top-N kapsamlı.
+function EpKpi({ lab, val, sub, subCls, accent, note }: {
+  lab: string; val: string; sub?: string; subCls?: string;
+  accent: string; note?: string;
+}) {
   return (
-    <div style={{
-      padding: '8px 14px', border: '1px solid var(--border)',
-      borderRadius: 6, background: 'var(--bg1)',
-    }}>
-      <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 2 }}>{label}</div>
-      <div style={{
-        fontSize: 22, fontWeight: 600,
-        color: cls === 'err' ? 'var(--err)' : cls === 'warn' ? 'var(--warn)' : 'var(--text)',
-      }}>{value}</div>
-      {sub && <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{sub}</div>}
+    <div className="card ov-kpi" title={note}>
+      <div className="ov-kpi-accent" style={{ background: accent }} />
+      <div className="ov-lab">{lab}</div>
+      <div className="ov-val">{val}</div>
+      {sub && (
+        <div className="ov-delta" style={{
+          color: subCls === 'err' ? 'var(--err)'
+            : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
+        }}>{sub}</div>
+      )}
     </div>
   );
 }

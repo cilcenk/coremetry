@@ -264,6 +264,37 @@ describe('metricCatalogueHref → ?q= round-trip', () => {
     expect(a.agg).toBe('avg');
     expect(a.scope).toBe('');
   });
+
+  // v0.9.801 — BİRİM DE TAŞINIR. Bu href'in birim taşımaması, operatörün
+  // "Explore süreleri çıplak saniye basıyor" raporunun kök halkasıydı:
+  // /metrics kataloğundan · Overview route panelinden · Dependencies
+  // drill'inden gelen her sorgu unit:'' ile doğuyordu.
+  it("unit geçilirse ?q='u' alanıyla gidiş-dönüş yapar (prod 's' dalı)", () => {
+    const st = decode(metricCatalogueHref('http.server.request.duration', {
+      agg: 'avg', splitBy: ['http.route'], unit: 's',
+    }));
+    const a = st!.queries[0];
+    expect(a.unit).toBe('s');
+    expect(a.splitBy).toEqual(['http.route']);
+  });
+
+  it("unit gidiş-dönüşü 'ms' dalında da bozulmaz (lokal katalog)", () => {
+    expect(decode(metricCatalogueHref('http.server.duration', { unit: 'ms' }))!
+      .queries[0].unit).toBe('ms');
+  });
+
+  it('unit geçilmezse alan BOŞ kalır — uydurulmuş birim yok', () => {
+    expect(decode(metricCatalogueHref('http.server.duration'))!
+      .queries[0].unit).toBe('');
+  });
+
+  it("ham OTLP birimi AYNEN taşınır ('By' → 'bytes' çevirisi queryUnit'te)", () => {
+    // q.unit ham yuvadır: URL katalog birimini saklar, Grafana kimliğini
+    // değil. İki alfabeyi karıştırmak, 'bytes'ı bir daha çözemeyeceğimiz
+    // (UNIT_MAP'te yok) tek yönlü bir kayıp olurdu.
+    expect(decode(metricCatalogueHref('http.server.request.size', { unit: 'By' }))!
+      .queries[0].unit).toBe('By');
+  });
 });
 
 // v0.9.208 — the cross-signal pivot drawer's "open in Explore" link emitted

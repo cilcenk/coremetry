@@ -12,6 +12,9 @@ import type { FilterExpr, FilterGroup, SpanAgg } from '@/lib/types';
 import { isFlatAndGroup } from '@/lib/urlState';
 import { metricQuery, type MetricQuery, type MetricAgg } from '@/lib/metricQuery';
 import { TIER_DIM_KEYS, EXEMPLAR_AGGS } from '@/lib/resolverEligibility';
+// Saf leaf (haritanın kendisi, @grafana bağımlılığı YOK) — model.ts'in
+// "chart bundle olmadan test edilebilir" sözleşmesi bozulmuyor.
+import { otlpUnitToGrafana } from '@/lib/chart/metricUnit';
 
 // Per-query source: 'span' aggregates the spans table via api.spanMetric
 // (rate / error_rate / percentiles over duration_ms or any numeric attr);
@@ -40,7 +43,10 @@ export interface BuilderQuery {
   // span source: the measured numeric field ('duration_ms' default; '' for
   // count-shaped aggs). metric source: the catalogue metric name.
   metric: string;
-  unit: string;            // metric source: MetricInfo.unit; span source: derived from agg
+  // metric source: MetricInfo.unit — HAM katalog birimi (OTLP/UCUM), URL'e
+  // de bu yazılır; görüntü kimliğine çeviri queryUnit()'in işi.
+  // span source: agg'den türetilir (spanAggUnit), alan boş kalır.
+  unit: string;
   agg: string;             // SpanAgg (span source) | MetricCatalogAgg (metric source)
   scope: string;           // service.name pin ('' = all) — synthesized into a filter at fetch
   splitBy: string[];       // group-by keys → series fan-out
@@ -179,9 +185,20 @@ export function querySignature(q: BuilderQuery, step: number): string {
   });
 }
 
-// queryUnit — resolved display unit for a query's series.
+// queryUnit — resolved DISPLAY unit for a query's series.
+//
+// q.unit metrik kaynağında HAM KATALOG birimidir (OTLP/UCUM: 's', 'ms',
+// 'By', '1', '{request}'). Panel/legend/eksen ise @grafana/data'nın birim
+// KİMLİĞİNİ bekler. v0.9.801'e kadar ham değer doğrudan geçiyordu:
+// 's'/'ms' iki alfabede de aynı yazıldığı için o dal kazara doğruydu,
+// 'By' Grafana'ya bilinmeyen bir kimlik olarak iniyor, '1' ise ham sayının
+// yanına "1" yazdırıyordu. Çeviri TEK yerde, burada — çağıranların
+// hiçbiri q.unit'i kendi eliyle eşlemez.
+//
+// Bilinmeyen birim '' döner (birimsiz): uydurulmuş bir birim, birimsiz
+// olandan kötüdür.
 export function queryUnit(q: BuilderQuery): string {
-  return q.source === 'span' ? spanAggUnit(q.agg) : q.unit;
+  return q.source === 'span' ? spanAggUnit(q.agg) : (otlpUnitToGrafana(q.unit) ?? '');
 }
 
 // queryDesc — one-line human summary ("p95 of duration_ms by service.name").

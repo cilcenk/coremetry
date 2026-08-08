@@ -201,6 +201,46 @@ describe('display processor ondalığı (v0.9.799)', () => {
     expect(fmt('ms', 1042)).toBe('1.04 s');
   });
 
+  // v0.9.801 — OPERATÖR RAPORUNUN SAYISI. Explore'da
+  // avg(http.server.request.duration) tooltip/lejant/eksende "0.348"
+  // basıyordu; birim panele akınca aynı ham değer "348 ms" olur.
+  //
+  // ELLE ÖLÇEKLEME YOK: köprü 0.348'i olduğu gibi saklar, ×1000'i
+  // @grafana/data'nın 's' formatlayıcısı yapar. Bu test o sözleşmenin
+  // kanıtı — bir gün biri "ms'e çevirelim" diye çarpma eklerse ham
+  // değer kontrolü (aşağıda) düşer.
+  //
+  // İKİ BİRİM DALI DA (feedback-unit-mixing-needs-both-branches): prod
+  // semconv 'http.server.request.duration' SANİYE, lokal demo
+  // 'http.server.duration' MİLİSANİYE basıyor — ikisi de canlı.
+  it("süre metriği · 's' dalı: 0.348 → 348 ms (ölçekleme processor'ın)", () => {
+    const [f] = spanSeriesToFrames(
+      [series([{ time: 60e9, value: 0.348 }])], { unit: 's' }, theme);
+    expect((f.fields[1].values as number[])[0]).toBe(0.348); // ham değer BOZULMAZ
+    const d = f.fields[1].display!(0.348);
+    expect(`${d.text}${d.suffix ?? ''}`).toBe('348 ms');
+  });
+
+  it("süre metriği · 'ms' dalı: 348 → 348 ms (aynı okuma)", () => {
+    const [f] = spanSeriesToFrames(
+      [series([{ time: 60e9, value: 348 }])], { unit: 'ms' }, theme);
+    expect((f.fields[1].values as number[])[0]).toBe(348);
+    const d = f.fields[1].display!(348);
+    expect(`${d.text}${d.suffix ?? ''}`).toBe('348 ms');
+  });
+
+  it('birim YOKSA çıplak sayı — bu, hatanın kendisiydi', () => {
+    // Regresyon çapası: tohum yolu birimi taşımazsa operatörün gördüğü
+    // ekran TAM OLARAK budur. Testin varlığı "birimsiz = çıplak" olgusunu
+    // sabitler; düzeltme birimin AKMASINDA, formatlayıcıda değil.
+    expect(fmt('', 0.348)).toBe('0.348');
+  });
+
+  it("'s' dalı alt-saniyenin dışında da doğru okur", () => {
+    expect(fmt('s', 1.5)).toBe('1.50 s');
+    expect(fmt('s', 0.0005)).toBe('500 µs');
+  });
+
   // SAPMA KAPISI: axisSize.decimalsForIncr, @grafana/ui'nin eksen
   // sarmalayıcısındaki guessDecimals(roundDecimals(incr, 6)) ifadesinin
   // ikizi (o kod bize kapalı, oluk hesabı için aynı sayıya ihtiyacımız

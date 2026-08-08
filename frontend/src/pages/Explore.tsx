@@ -38,6 +38,7 @@ import {
 } from './explore/model';
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
 import { useExploreQueries, useExploreOverlays } from './explore/useExploreQueries';
+import { metricsNeedingUnit, useMetricUnits, withMetricUnits } from './explore/metricUnits';
 import { PanelStack, buildPanels } from './explore/PanelStack';
 import { queryToPanel, isPinnable } from './explore/pinToDashboard';
 import { PinToDashboardModal } from './explore/PinToDashboardModal';
@@ -105,6 +106,21 @@ function ExploreInner() {
     const t = window.setTimeout(() => setDebounced(builder), 300);
     return () => clearTimeout(t);
   }, [builder]);
+
+  // v0.9.801 — KATALOG BİRİMİ GEÇ DOLDURMA. Picker dışındaki her tohum
+  // yolu (metricCatalogueHref, ?metric= legacy dalı, dashboard panelinden
+  // geçiş, v0.9.801 öncesi paylaşılmış ?q=) metrik-kaynaklı sorguyu
+  // birimsiz kuruyordu; süre metrikleri o yüzden çıplak saniye basıyordu.
+  // Halka burada kapanıyor: birimi eksik olan metriklerin katalog birimi
+  // çözülüp STATE'e yazılıyor — böylece bir sonraki ?q= yazımı da 'u'
+  // taşır ve link birimli paylaşılır. Katalog boşsa alan boş kalır.
+  const unitPending = useMemo(() => metricsNeedingUnit(builder), [builder]);
+  const resolvedUnits = useMetricUnits(unitPending);
+  useEffect(() => {
+    // withMetricUnits hiçbir şey değişmediyse AYNI referansı döndürür →
+    // setBuilder bail-out eder, döngü yok.
+    setBuilder(b => withMetricUnits(b, resolvedUnits));
+  }, [resolvedUnits]);
 
   // Ephemeral interaction state — NOT in the URL (plan state model).
   const [zoomWindow, setZoomWindow] = useState<{ from: number; to: number } | null>(null);

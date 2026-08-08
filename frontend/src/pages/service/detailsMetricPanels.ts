@@ -1,4 +1,7 @@
 import type { MetricInfo } from '@/lib/types';
+// v0.9.801 — birim eşlemesi bu dosyadan ORTAK leaf'e taşındı: Explore'un
+// metrik-kaynaklı panelleri de aynı haritadan geçiyor (lib/chart/metricUnit).
+import { otlpUnitToGrafana } from '@/lib/chart/metricUnit';
 
 // detailsMetricPanels — v0.9.784. Service /details sekmesinin "Metrikler"
 // bölümünü KATALOGDAN kuran saf çekirdek.
@@ -39,32 +42,6 @@ export interface DetailsPanelSpec {
   /** SADECE kural tablosunda yazan ailede dolu (DB havuzu → state). */
   groupBy?: string;
   metrics: DetailsPanelMetric[];
-}
-
-// ── Birim eşlemesi ───────────────────────────────────────────────────────
-//
-// OTLP birimi (UCUM) → @grafana/data birim kimliği. Bilinmeyen ve
-// ANNOTATION birimleri ({connection}, {request}) undefined döner: eksen ham
-// sayı çizer. Sessizce "ms" varsaymak yanlış sayıya güven üretir
-// (v0.9.774 dürüstlük deseni).
-//
-// '1' (boyutsuz) BİLİNEN bir birimdir ve karşılığı "birim yok"tur — bu
-// yüzden haritada AÇIKÇA duruyor, `default` dalına düşmüyor.
-const UNIT_MAP: Record<string, string | undefined> = {
-  'By': 'bytes',
-  'ms': 'ms',
-  's': 's',
-  'ns': 'ns',
-  'us': 'µs',
-  'µs': 'µs',
-  '%': 'percent',
-  '1': undefined,
-  '': undefined,
-};
-
-export function otlpUnitToGrafana(unit: string | undefined): string | undefined {
-  const t = (unit ?? '').trim();
-  return Object.prototype.hasOwnProperty.call(UNIT_MAP, t) ? UNIT_MAP[t] : undefined;
 }
 
 // ── Ad eşleme yardımcıları ───────────────────────────────────────────────

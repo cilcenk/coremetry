@@ -18,19 +18,18 @@ import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 // Lightweight SVG — no chart-library dep. Hover crosshair shows
 // the per-series value at the bucket under the pointer.
 //
-// ── KULLANIM DARALDI (v0.9.796) ────────────────────────────────────────
-// Bu bileşen artık dashboard'ın VARSAYILAN bar/alan motoru DEĞİL. Kalan
-// iki tüketicisi var ve ikisi de bilinçli:
+// ── KULLANIM TEK BİR DALA İNDİ (v0.9.796 → v0.9.808) ──────────────────
+// Bu bileşen artık dashboard'ın çizim motoru DEĞİL. v0.9.796'da bar/alan,
+// v0.9.808'de yığın ailesi (stacked-bar + stacked-area) CorePanel'e geçti;
+// CorePanel yığılmış ÇUBUK markını da taşıyor ('stacked-bars', ters çizim
+// sırasıyla — gerekçe lib/chart/stacking.ts'te).
 //
-//   1. stacked-bar + stacked-area panelleri — v2 motorunda (CorePanel)
-//      yığılmış ÇUBUK markı yok; 'stacked' orada yığılmış ALAN demek.
-//      Yığılmışları yarısı yeni yarısı eski bırakmamak için ikisi de
-//      burada. Gerekçenin tamamı: components/dashboard/panelViz.ts.
-//   2. ?chartsV2=0 kaçış kapısı — bar/alan panelleri v2 kapalıyken
-//      BAYT BAYT bu motora düşer (DashChart'ın fallback dalı).
+// KALAN TEK TÜKETİCİ: `?chartsV2=0` kaçış kapısı. v2 kapalıyken çizgi
+// dışındaki her mark BAYT BAYT bu motora düşer (PanelRenderer'daki
+// DashChart'ın fallback dalı) — tek adımlık geri dönüş doktrini.
 //
-// Yani SİLİNMEZ; ama yeni bir mark eklerken varsayılan adres burası
-// değil, CorePanel'dir.
+// Yani SİLİNMEZ; ama yeni bir mark eklerken adres burası değil,
+// CorePanel'dir. panelViz.test.ts bu tekliği kaynakta kapıyor.
 
 export function DashboardViz({ series, viz, height = 280, unit }: {
   series: SpanMetricSeries[];

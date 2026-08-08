@@ -1,18 +1,26 @@
-// panelViz — dashboard MARKININ hangi motora gideceğine karar veren saf
-// çekirdek (v0.9.796).
+// panelViz — dashboard MARKININ CorePanel karşılığını veren saf çekirdek
+// (v0.9.796, v0.9.808'de tamamlandı).
 //
-// Dashboard beş mark tanır (PanelVizType). v2 motoru (CorePanel/@grafana/ui)
-// bunların ÜÇÜNÜ taşır — line · bar · area — ve markları kendi adlarıyla
-// bilir ('bar' değil 'bars'). Kalan ikisi eski SVG motorunda (DashboardViz)
-// kalır:
+// Dashboard beş mark tanır (PanelVizType) ve v0.9.808'den beri BEŞİ DE v2
+// motorunda (CorePanel/@grafana/ui). Yığın ailesi son taşınandı:
 //
-//   • stacked-bar  — DÜRÜST SINIR: v2'de yığılmış ÇUBUK markı YOK.
-//     CorePanel'in 'stacked'ı yığılmış ALAN'dır; stacked-bar'ı oraya
-//     bağlamak paneli sessizce BAŞKA bir grafiğe çevirirdi (çubuk → alan).
-//     Ayrı dilim adayı; bu dilimde eskide kalıyor.
-//   • stacked-area — bu dilimin mockup onayı "bar/area" için alındı;
-//     yığılmışlar kapsam dışı bırakıldı, ikisi birden eski görünümde
-//     kalsın diye (yarısı yeni yarısı eski bir yığın ailesi bırakmamak).
+//   • stacked-area → CorePanel'in 'stacked'ı. CorePanel'in yığını zaten
+//     yığılmış ALAN'dır (v0.9.788), yani eşleme birebir.
+//   • stacked-bar  → CorePanel'in 'stacked-bars'ı (v0.9.808). Aynı
+//     kümülatif matris, DrawStyle.Bars markı ve TERS çizim sırası —
+//     gerekçe lib/chart/stacking.ts'te (kümülatif çubuklar tabandan
+//     çizilir, mantıksal sırada çizilirse birbirini örterler).
+//
+// v0.9.796'da ikisi bilinçli olarak eski SVG motorunda (DashboardViz)
+// bırakılmıştı: o dilimin mockup onayı "bar/area" içindi ve yığılmış
+// çubuğun v2'de karşılığı henüz yoktu. Yarısı yeni yarısı eski bir yığın
+// ailesi bırakmamak için ikisi birlikte bekletildi, ikisi birlikte taşındı.
+//
+// isV2Viz KALKTI (v0.9.808): beş markın beşi de v2'ye gittiği için guard
+// tautolojiye dönüyordu ve PanelRenderer'ın üç çağrı yerindeki
+// `: <DashboardViz …>` dalları ÖLÜ kalıyordu. Geriye-uyum şimi
+// bırakmıyoruz (CLAUDE.md). DashboardViz SİLİNMEDİ — tek tüketicisi artık
+// DashChart'ın `?chartsV2=0` kaçış dalı, orada yorumla işaretli.
 //
 // Karar SAF ve tek yerde: PanelRenderer'ın üç paneli (metric · spanmetric ·
 // promql) aynı fonksiyonu çağırır, üç kopya dallanma değil — kopya sınıfının
@@ -21,23 +29,21 @@
 
 import type { PanelVizType } from '@/lib/types';
 
-// v2 motorunun taşıyabildiği dashboard markları.
-export type DashV2Viz = 'line' | 'bar' | 'area';
-
 // CorePanel'in mark adları (viz union'ının dashboard'a düşen alt kümesi).
-export type CoreViz = 'line' | 'bars' | 'area';
+export type CoreViz = 'line' | 'bars' | 'area' | 'stacked' | 'stacked-bars';
 
-export function isV2Viz(viz: PanelVizType): viz is DashV2Viz {
-  return viz === 'line' || viz === 'bar' || viz === 'area';
-}
-
-// toCoreViz — dashboard adı → CorePanel adı. Tek fark 'bar' → 'bars';
-// eşlemeyi elle yazmak yerine buradan geçirmek, üçüncü bir mark
-// eklendiğinde derleyicinin (exhaustive switch) uyarmasını sağlar.
-export function toCoreViz(viz: DashV2Viz): CoreViz {
+// toCoreViz — dashboard adı → CorePanel adı. Adlar ÜÇ yerde ayrışıyor
+// ('bar'→'bars', 'stacked-area'→'stacked', 'stacked-bar'→'stacked-bars');
+// eşlemeyi elle yazmak yerine buradan geçirmek, altıncı bir mark
+// eklendiğinde derleyicinin (exhaustive switch) uyarmasını sağlar. Tek
+// harflik bir sapma CorePanel'in viz union'ında eşleşmez ve panel sessizce
+// varsayılan 'line'a düşer — hata mesajı yok, yalnız yanlış grafik.
+export function toCoreViz(viz: PanelVizType): CoreViz {
   switch (viz) {
-    case 'bar':  return 'bars';
-    case 'area': return 'area';
-    case 'line': return 'line';
+    case 'bar':          return 'bars';
+    case 'area':         return 'area';
+    case 'line':         return 'line';
+    case 'stacked-area': return 'stacked';
+    case 'stacked-bar':  return 'stacked-bars';
   }
 }

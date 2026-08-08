@@ -3,7 +3,7 @@ import { api } from '@/lib/api';
 import type {
   Panel, MetricPanelConfig, SpanMetricPanelConfig, StatPanelConfig, GaugePanelConfig, MarkdownPanelConfig,
   HeatmapPanelConfig, HistogramResult, LatencyHeatmap as HeatmapData, PromqlPanelConfig,
-  SpanMetricSeries, TimeRange, PanelHeight, TopNPanelConfig,
+  SpanMetricSeries, TimeRange, PanelHeight, TopNPanelConfig, PanelVizType,
 } from '@/lib/types';
 import { timeRangeToNs, substituteVars } from '@/lib/utils';
 import { fmtSmart } from '@/lib/chartFmt';
@@ -16,6 +16,9 @@ import { chartsV2 } from '@/lib/featureFlags';
 // istisnası buydu; Explore'dan pinlenen panel artık pinlendiği gibi
 // görünür. stat/gauge/heatmap/markdown ve line-dışı viz'ler (DashboardViz
 // SVG motoru) kapsam DIŞI — eski yolda. ?chartsV2=0 toptan kaçış.
+// (Bu satırın "line-dışı viz'ler eski yolda" kısmı v0.9.796'da bar/alan,
+//  v0.9.808'de yığın ailesiyle geçersizleşti — aşağıdaki iki nota bkz.
+//  stat/gauge/heatmap/markdown hâlâ kapsam dışı, onlar zaman serisi değil.)
 //
 // v0.9.796 (mockup onaylı) — BAR ve ALAN da bu hattan geçiyor. Ayrı SVG
 // motorunda kalmalarının görünür bedeli vardı: DashboardViz'de drag-zoom
@@ -25,17 +28,17 @@ import { chartsV2 } from '@/lib/featureFlags';
 // imleç-altı değer satırının kalkıp bilginin tooltip (üst-8, Shift+tık
 // sabitler) + istatistik lejantına taşınması.
 //
-// Geriye kalan iki mark (stacked-bar, stacked-area) eski motorda —
-// gerekçe panelViz.ts'te, tek yerde.
+// v0.9.808 — YIĞIN AİLESİ de bu hattan geçiyor: stacked-area CorePanel'in
+// 'stacked'ına, stacked-bar yeni 'stacked-bars' markına düşer. Beş markın
+// beşi de v2'de, yani dashboard'da artık iki farklı grafik motoru YOK.
+// Eski SVG motoru (DashboardViz) yalnız ?chartsV2=0 kaçışında yaşar.
 const DashCorePanelLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
 function DashChart({ series, viz = 'line', unit, syncKey, onZoom, onZoomReset, storageKey, height }: {
   series: import('@/lib/types').SpanMetricSeries[];
-  // v0.9.796 — v2 motorunun taşıdığı üç mark. Yığılmışlar buraya HİÇ
-  // gelmez (çağıran onları DashboardViz'e ayırır), o yüzden tipte de yok:
-  // "gelemeyecek mark'ı tipte vaat etme".
-  viz?: DashV2Viz;
+  // v0.9.808 — dashboard'ın BEŞ markı da buraya gelir; ayıklama yok.
+  viz?: PanelVizType;
   unit?: string;
   syncKey?: string;
   onZoom?: (f: number, t: number) => void;
@@ -87,7 +90,7 @@ import { THRESHOLD_COLOURS, thresholdTint, panelBoxHeight, panelChartHeight } fr
 import { topNStep, topNWindowSec, clampTopNLimit, topNRowValue, topNMoreLabel, topNRowFilters } from './topN';
 // v0.9.796 — mark → motor kararı tek saf yerde (üç panel de aynı çekirdeği
 // çağırır; kopya dallanma v0.9.790'da metric panelini geride bırakmıştı).
-import { isV2Viz, toCoreViz, type DashV2Viz } from './panelViz';
+import { toCoreViz } from './panelViz';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { encodeFilters } from '@/lib/urlState';
 
@@ -404,11 +407,11 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick, da
       {capped && <CapHint />}
       {series === undefined ? <PanelLoading height={boxPx} />
         : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
-        : isV2Viz(viz)
         // Madde 4 sweep — cfg.unit eksene/tooltip'e iner (promql paneli
         // pariteli; yokluğu = eski birimsiz davranış).
-          ? <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-m-${cfg.metricName}`} height={boxPx} />
-          : <DashboardViz series={series} viz={viz} height={boxPx} unit={cfg.unit} />}
+        // v0.9.808 — mark ayıklaması KALKTI: beş mark da DashChart'a gider,
+        // eski motora düşüş yalnız ?chartsV2=0 kaçışında (DashChart içinde).
+        : <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-m-${cfg.metricName}`} height={boxPx} />}
     </div>
   );
 }
@@ -516,9 +519,7 @@ function PromqlPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick, he
     <div ref={ref}>
       {series === undefined ? <PanelLoading height={boxPx} />
         : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
-        : isV2Viz(viz)
-          ? <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-q-${cfg.query.slice(0, 60)}`} height={boxPx} />
-          : <DashboardViz series={series} viz={viz} height={boxPx} unit={cfg.unit} />}
+        : <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-q-${cfg.query.slice(0, 60)}`} height={boxPx} />}
     </div>
   );
 }
@@ -705,25 +706,22 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick
   }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride), widthPx, refreshTick]);
 
   if (error) return <PanelError msg={error} height={boxPx} />;
-  // Dispatch on the configured viz. line / bar / area go to the v2 engine
-  // (CorePanel — uPlot + tooltip + stats legend + zoom/sync); the two
-  // stacked marks stay on the small SVG-based DashboardViz (panelViz.ts
-  // holds the reason in one place).
+  // Dispatch on the configured viz. v0.9.808'den beri BEŞ mark da v2
+  // motoruna (CorePanel — uPlot + tooltip + istatistik lejantı +
+  // zoom/senkron) gider; ad eşlemesi tek saf yerde (panelViz.toCoreViz).
   const viz = cfg.viz ?? 'line';
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       {capped && <CapHint />}
       {series === undefined ? <PanelLoading height={boxPx} />
         : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
-        : isV2Viz(viz)
-          // Madde 4 sweep — cfg.unit MLC'ye iner. DashboardViz o taramada
-          // "ayrı SVG motoru" diye kapsam dışı bırakılmıştı (madde 13
-          // notu) ama motor farkı bir GEREKÇE değildi: bileşen unit'i
-          // zaten alıyor ve hem y-ekseni etiketlerinde hem hover
-          // okumasında fmtSmart'a veriyor. Geçilmeyince aynı panelin
-          // çizgi hali "142 ms", bar hali çıplak "142" yazıyordu.
-          ? <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} height={boxPx} />
-          : <DashboardViz series={series} viz={viz} height={boxPx} unit={cfg.unit} />}
+        // Madde 4 sweep — cfg.unit grafiğe iner. DashboardViz o taramada
+        // "ayrı SVG motoru" diye kapsam dışı bırakılmıştı (madde 13
+        // notu) ama motor farkı bir GEREKÇE değildi: bileşen unit'i
+        // zaten alıyor ve hem y-ekseni etiketlerinde hem hover
+        // okumasında fmtSmart'a veriyor. Geçilmeyince aynı panelin
+        // çizgi hali "142 ms", bar hali çıplak "142" yazıyordu.
+        : <DashChart series={series} viz={viz} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} height={boxPx} />}
     </div>
   );
 }

@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   ROUTE_TOP_N, routeMoreNote, topRoutesByArea, metricUnitToGrafana,
+  withTotalPrefix, metricAvgToMs,
 } from './routeSeries';
 import type { SpanMetricSeries } from '@/lib/types';
 
@@ -118,4 +119,56 @@ describe('metricUnitToGrafana', () => {
       expect(metricUnitToGrafana(c.in)).toBe(c.want);
     });
   }
+});
+
+// ── withTotalPrefix (v0.9.798) ──────────────────────────────────────────
+//
+// Panelde route serilerinin YANINDA bir de "Toplam" çizgisi var; kırpma
+// notu bunu söylemezse operatör çizilen 11 çizgiyi sayıp notu yalancı
+// bulur (ve haklıdır: Toplam bir route değil).
+
+describe('withTotalPrefix', () => {
+  it('kırpma notu varsa önek ekler', () => {
+    expect(withTotalPrefix('10 seri · +55 daha', true)).toBe('Toplam + 10 seri · +55 daha');
+  });
+  it('Toplam yoksa nota dokunmaz', () => {
+    expect(withTotalPrefix('10 seri · +55 daha', false)).toBe('10 seri · +55 daha');
+  });
+  it('taban not yokken önek de yok (lejant zaten sayıyı yazıyor)', () => {
+    expect(withTotalPrefix(null, true)).toBeNull();
+    expect(withTotalPrefix('', true)).toBe('');
+  });
+});
+
+// ── metricAvgToMs (v0.9.798) ────────────────────────────────────────────
+//
+// HER İKİ BİRİM DALI da test edilir — bu kod tabanının kayıtlı dersi
+// (feedback-unit-mixing-needs-both-branches): prod 's', lokal 'ms'
+// üretiyor, yani eksen-dışı dal gerçekten canlıda çalışıyor.
+
+describe('metricAvgToMs', () => {
+  it("ms → aynen", () => {
+    expect(metricAvgToMs(42.5, 'ms')).toBe(42.5);
+    expect(metricAvgToMs(42.5, 'milliseconds')).toBe(42.5);
+  });
+  it("s → ×1000 (PROD dalı)", () => {
+    expect(metricAvgToMs(0.0425, 's')).toBeCloseTo(42.5, 6);
+    expect(metricAvgToMs(1, 'seconds')).toBe(1000);
+  });
+  it('tanınmayan birim → null (TAHMİN YOK, çağıran span\'e düşer)', () => {
+    expect(metricAvgToMs(42.5, undefined)).toBeNull();
+    expect(metricAvgToMs(42.5, '')).toBeNull();
+    expect(metricAvgToMs(42.5, 'By')).toBeNull();
+    expect(metricAvgToMs(42.5, 'us')).toBeNull();
+  });
+  it('değer yok / sonlu değil → null', () => {
+    expect(metricAvgToMs(null, 'ms')).toBeNull();
+    expect(metricAvgToMs(undefined, 'ms')).toBeNull();
+    expect(metricAvgToMs(NaN, 'ms')).toBeNull();
+    expect(metricAvgToMs(Infinity, 's')).toBeNull();
+  });
+  it('0 meşru bir değer (null değil)', () => {
+    expect(metricAvgToMs(0, 'ms')).toBe(0);
+    expect(metricAvgToMs(0, 's')).toBe(0);
+  });
 });

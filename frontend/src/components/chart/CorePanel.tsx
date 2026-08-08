@@ -36,7 +36,7 @@ import {
 } from '@grafana/ui';
 import type { DataFrame } from '@grafana/data';
 import { framesToAligned, chartTheme } from '@/lib/chart/dataFrame';
-import { seriesRoleColor, type SeriesRole } from '@/lib/chart/seriesRole';
+import { seriesLineColor, type SeriesRole } from '@/lib/chart/seriesRole';
 import { visibleRangeStats } from '@/lib/chart/visibleStats';
 import { resolveLegendCollapsed, isAdditiveUnit } from '@/lib/chart/legendStats';
 import {
@@ -199,6 +199,20 @@ export interface CorePanelProps {
   // frame 5-4 kesikli, dolgusuz çizilir; rol rengi aynen (muted
   // öneriliyor ama çağıranın kararı).
   dashed?: boolean[];
+  // v0.9.798 — frame-hizalı VURGU işareti: bu seri kalın (2.5px) ve tema
+  // accent renginde çizilir, lejant/tooltip swatch'ı da öyle.
+  //
+  // İlk tüketici Overview'ın "Toplam" serisi: route kırılımının yanında
+  // duran ve ondan FARKLI bir şey ölçen (gözlem-ağırlıklı servis geneli)
+  // tek çizgi. Aynı kalınlıkta çizilseydi 11 çizgiden biri gibi
+  // görünürdü — oysa okunması gereken ÖNCE o.
+  //
+  // Neden rol DEĞİL: roller anlam taşıyor (error kırmızı, success yeşil)
+  // ve "vurgulu" bir anlam değil bir ÖNEM derecesi; ikisini tek kanala
+  // sıkıştırmak, yarın "vurgulu hata serisi"ni imkânsız kılardı.
+  // dashed[] ile AYNI kablo (indeks hizalı boolean dizisi, join(',')
+  // imzasıyla rebuild dep'i).
+  emphasis?: boolean[];
   // v0.9.785 — çizim markı. 'line' varsayılan (bugünkü davranış, bayt
   // bayt); 'bars' Grafana'nın Bars draw-style'ı. PRİMİTİF string olarak
   // taşınır — nesne/dizi bir prop config kimliğini her render'da yıkar
@@ -219,7 +233,7 @@ export function CorePanel({
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
   defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
   onBucketClick, hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
-  focusedLabel,
+  focusedLabel, emphasis,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -468,9 +482,11 @@ export function CorePanel({
     aligned.names.forEach((name, i) => {
       b.addSeries({
         scaleKey: 'y', theme,
-        lineColor: resolveVar(seriesRoleColor(name, roles?.[i] ?? 'data')),
+        lineColor: resolveVar(seriesLineColor(name, roles?.[i] ?? 'data', emphasis?.[i])),
         // Çubuk kenarı ince (1) — 1.5px stroke dar çubuğu şişman gösterir.
-        lineWidth: bars ? 1 : 1.5,
+        // v0.9.798 — vurgulu seri 2.5px: route kırılımının yanında duran
+        // "Toplam" çizgisi 11 çizgiden biri gibi görünmesin.
+        lineWidth: bars ? 1 : emphasis?.[i] ? 2.5 : 1.5,
         // v0.9.93 (uPlot Aşama 3) dersinin bu motordaki karşılığı: yığın
         // dolguları arasında saç-teli beyaz dikişler kalır çünkü komşu
         // katmanların kenarları ayrı ayrı piksele yuvarlanır. pxAlign
@@ -621,7 +637,7 @@ export function CorePanel({
         const disp = framesRef.current[i]?.fields[1].display;
         return {
           label,
-          color: resolveVar(seriesRoleColor(label, roles?.[i] ?? 'data')),
+          color: resolveVar(seriesLineColor(label, roles?.[i] ?? 'data', emphasis?.[i])),
           value: v,
           // display processor varsa text'i o üretir; TooltipRow.text'i
           // model kurar ama biz biçimli metni unit alanına gömmüyoruz —
@@ -678,7 +694,7 @@ export function CorePanel({
     //   • connectNulls — spanNulls eşiği; panel-başına açık tercih
     //                değişince boşluk doktrini gerçekten değişmeliydi.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), connectNulls]);
+  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), emphasis?.join(','), connectNulls]);
 
   // ── v0.9.793 — focusedLabel (lejant hover vurgusu) ───────────────────────
   //
@@ -1010,7 +1026,7 @@ export function CorePanel({
                     <td>
                       <span style={{
                         display: 'inline-block', width: 8, height: 8, borderRadius: 2,
-                        background: resolveVar(seriesRoleColor(s.name, roles?.[i] ?? 'data')),
+                        background: resolveVar(seriesLineColor(s.name, roles?.[i] ?? 'data', emphasis?.[i])),
                         marginRight: 6,
                       }} />
                       {s.name}

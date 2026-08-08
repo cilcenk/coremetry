@@ -30,8 +30,7 @@ const CorePanelMultiLazy = lazy(() =>
 import { EnvAmbiguousNote } from './EnvAmbiguousNote';
 import { buildRootOpLines } from './charts/rootOpSeries';
 import {
-  topRoutesByArea, metricUnitToGrafana, ROUTE_TOP_N,
-  withTotalPrefix, metricAvgToMs,
+  topRoutesByArea, metricUnitToGrafana, ROUTE_TOP_N, metricAvgToMs,
 } from './charts/routeSeries';
 import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
@@ -485,16 +484,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     };
   }, [metricTputQ.data]);
 
-  // v0.9.798 — metrik throughput'un "Toplam"ı: route serilerinin İSTEMCİ
+  // v0.9.798 — metrik throughput'un toplamı: route serilerinin İSTEMCİ
   // tarafında toplamı. EK SORGU YOK ve gerekmiyor — rate TOPLANABİLİR
-  // (istek/sn), route'ların toplamı servis genelidir. Response time'ın
-  // Toplam'ı bunun tersi (ortalama toplanmaz) ve o yüzden ayrı sorgu
-  // atıyor; iki panelin iki farklı yolu izlemesi ölçtükleri şeyin
-  // matematiği.
+  // (istek/sn), route'ların toplamı servis genelidir.
   //
-  // Hem PANELİN Toplam çizgisini hem KPI KAROSUNU besliyor: iki yüzey
-  // tek kaynaktan okusun, yoksa karo ile grafik ayrışır (v0.9.774'ün
-  // "panel boşken karo dolu" vakası — en kötü kombinasyon).
+  // v0.9.799 (operatör netleştirmesi) — bu toplam artık YALNIZ KPI
+  // KAROSUNU besliyor. v0.9.798 onu büyük panele de bir "Toplam" çizgisi
+  // olarak koymuştu; operatörün kastı üstteki karolardı ("kalın çizgili
+  // hali kötü, eski hali daha iyiydi"), grafik v0.9.796'daki saf route
+  // kırılımına döndü. Karo–panel kaynak birliği KORUNUYOR: karo bu
+  // toplamı, panel aynı sorgunun route serilerini çiziyor.
   const metricTputTotal = useMemo<SpanMetricSeries | null>(() => {
     const ser = metricTputQ.data?.series ?? [];
     return ser.length > 0 ? sumSeries(ser) : null;
@@ -550,9 +549,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     () => topRoutesByArea(rtAvgQ.data?.series, ROUTE_TOP_N, rtAvgQ.data?.rowsCapped),
     [rtAvgQ.data]);
 
-  // ── "Toplam" serisi (v0.9.798, operatör isteği) ──────────────────────
-  //
-  // Route kırılımının YANINDA duran tek çizgi: servis geneli ortalama.
+  // ── Grupsuz (servis geneli) ortalama — KPI KAROSU için (v0.9.798) ────
   //
   // AYRI SORGU, ve bu pazarlık konusu DEĞİL: ortalama TOPLANMAZ ve
   // ortalanamaz. Route ortalamalarının ortalaması, 3 istek gören bir
@@ -560,15 +557,17 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // sunucuda düzelttiği hatanın (ortalamaların ortalaması) istemci
   // tarafındaki birebir ikizi olurdu. Grupsuz sorgu ise sunucuda
   // gözlem-ağırlıklı hesaplanır (sum(sum_value)/sum(count)), yani DOĞRU
-  // toplam.
+  // servis geneli.
   //
-  // Throughput'un Toplam'ı bunun TERSİ (sumSeries, ek sorgu yok): rate
-  // toplanabilir bir büyüklük. İki panelin iki farklı yolu izlemesi
-  // tutarsızlık değil, ölçtükleri şeyin matematiği.
+  // v0.9.799 — bu seri GRAFİĞE İTEM OLARAK GİRMİYOR (operatör: büyük
+  // panelde kalın "Toplam" çizgisi istenmiyordu, istenen üstteki
+  // karoydu). Sorgu yaşıyor çünkü Response time KAROSUNUN değeri,
+  // sparkline'ı ve vs-prior deltası ondan besleniyor — karo ile panelin
+  // aynı METRİKTEN okuması v0.9.774'ün teşhisinin gereği.
   //
-  // v0.9.797 sayesinde bu çizgi TEMİZ: dışlama kuralları sunucuda
+  // v0.9.797 sayesinde bu sayı TEMİZ: dışlama kuralları sunucuda
   // grupsuz sorgulara da uygulanıyor, yani healthcheck route'ları
-  // Toplam'ı aşağı çekmiyor.
+  // ortalamayı aşağı çekmiyor.
   const rtTotalQ = useQuery({
     queryKey: ['service-rt-avg-total', service, metricName, from, to, rtStep],
     enabled: !!metricName,
@@ -582,21 +581,15 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
       step: rtStep,
     }, signal),
   });
-  // Grupsuz sorgu tek seri döndürür; boşsa Toplam çizilmez (uydurma
-  // çizgi yok) ve panel yalnız route'ları gösterir.
+  // Grupsuz sorgu tek seri döndürür; boşsa karo span türevli P99'a düşer.
   const rtTotalSeries = rtTotalQ.data?.series?.[0];
-  const rtItems = useMemo(() => {
-    const total = (rtTotalSeries?.points?.length ?? 0) > 0
-      ? [{ name: 'Toplam', role: 'data' as const, series: [rtTotalSeries as SpanMetricSeries], emphasis: true }]
-      : [];
-    // Toplam ÖNCE: lejantın en üstünde, kalın ve accent renginde —
-    // panelde önce okunması gereken çizgi o.
-    return [...total, ...rtView.items];
-  }, [rtTotalSeries, rtView.items]);
 
   const rtUnit = metricUnitToGrafana(metricTputQ.data?.metricUnit);
   const rtNote = [
-    withTotalPrefix(rtView.note, rtItems.length > rtView.items.length),
+    // v0.9.799 — not yine SADE: "10 seri · +N daha". v0.9.798'in
+    // "Toplam + " öneki, panelde kırpmanın dışında duran bir çizgi
+    // olduğu için vardı; o çizgi kalkınca önek yalan olurdu.
+    rtView.note,
     // v1 dürüstlük deseni: tanınmayan birimde eksen ham sayı çizer ve
     // bunu SÖYLER — sessizce "ms" yazmak yanlış sayıya güven üretir.
     rtUnit ? null : 'birim tanınmadı',
@@ -823,13 +816,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // gösteriyordu" diyordu. Throughput paneli (:723) doğru
                 // deseni zaten taşıyordu.
                 storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
-                loading={metricTputQ.isLoading || rtAvgQ.isLoading || rtTotalQ.isLoading}
+                loading={metricTputQ.isLoading || rtAvgQ.isLoading}
                 // Birim SUNUCUDAN gelen OTLP birimine göre; tanınmazsa
                 // undefined (ham sayı) ve not bunu söyler.
                 unit={rtUnit}
                 xRange={xRange}
-                // v0.9.798 — Toplam (kalın, accent) + ilk N route.
-                items={rtItems}
+                // v0.9.799 — SAF route kırılımı (v0.9.796 görünümü).
+                // v0.9.798'in "Toplam" çizgisi kalktı: operatörün istediği
+                // toplam ÜSTTEKİ karodaydı, panelde kalın bir çizgi
+                // kırılımı okunmaz hâle getiriyordu.
+                items={rtView.items}
                 // defaultHidden YOK: tek agg var, gizlenecek P50/P95 de.
                 note={rtNote}
                 // Hata ve boşluk AYRI: birincisi sorgu patladı, ikincisi
@@ -838,16 +834,14 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 error={rtAvgQ.isError
                   ? (rtAvgQ.error instanceof Error ? rtAvgQ.error.message : 'Metrik sorgusu başarısız')
                   : undefined}
-                // Boşluk ölçütü rtItems: Toplam gelmiş ama route kırılımı
-                // boşsa panel DOLU (tek çizgi) — "veri yok" demek yalan
-                // olurdu.
-                emptyReason={!rtAvgQ.isError && !rtAvgQ.isLoading && rtItems.length === 0
+                emptyReason={!rtAvgQ.isError && !rtAvgQ.isLoading && rtView.items.length === 0
                   ? (metricName ? 'Bu filtrede veri yok' : 'Servise bağlı metrik bulunamadı')
                   : undefined}
                 emptyHint={metricName ? `${metricName} · service.name = ${service}` : undefined}
-                // Geliştirici detayı — mevcut ⋯ → "Sorguyu göster".
+                // Geliştirici detayı — mevcut ⋯ → "Sorguyu göster". Grupsuz
+                // sorgu burada YAZILMAZ (v0.9.799): panel onu çizmiyor,
+                // yalnız üstteki karo okuyor.
                 queryText={`avg(${metricName || '?'}) by (http.route), service.name="${service}", step=${rtStep}s`
-                  + `\nToplam: avg(${metricName || '?'}), service.name="${service}" (grupsuz, gözlem-ağırlıklı)`
                   + (rtAvgQ.isError ? `\n\nHATA: ${String(rtAvgQ.error)}` : '')}
                 regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
@@ -895,22 +889,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 loading={metricTputQ.isLoading}
                 height={200} xRange={xRange} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
                 unit="reqps"
-                // v0.9.798 — "Toplam" (kalın, accent) + route serileri.
-                // Toplam İSTEMCİDE hesaplanıyor (sumSeries): rate
-                // toplanabilir, ek sorgu gereksiz. YALNIZ çok serili
-                // kırılımda çiziliyor — tek seri varsa toplam ZATEN o
-                // seri ve aynı çizgiyi üst üste basmak olurdu.
-                items={[
-                  ...((metricTputQ.data?.series?.length ?? 0) > 1 && metricTputTotal
-                    ? [{ series: [metricTputTotal], name: 'Toplam', role: 'data' as const, emphasis: true }]
-                    : []),
-                  ...(metricTputQ.data?.series ?? []).map((s0) => ({
-                    series: [s0],
-                    name: s0.groupKey?.length ? s0.groupKey.join(' · ')
-                      : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
-                    role: 'data' as const,
-                  })),
-                ]}
+                // v0.9.799 — SAF route kırılımı (v0.9.796 görünümü).
+                // v0.9.798'in istemci-toplamı "Toplam" çizgisi kalktı:
+                // toplam ÜSTTEKİ karoda yaşıyor (aynı sumSeries çıktısı),
+                // grafikte kalın bir çizgi olarak kırılımı bastırıyordu.
+                items={(metricTputQ.data?.series ?? []).map((s0) => ({
+                  series: [s0],
+                  name: s0.groupKey?.length ? s0.groupKey.join(' · ')
+                    : `metrik (${metricTputQ.data?.matchedBy ?? 'job'})`,
+                  role: 'data' as const,
+                }))}
                 regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset}
                 syncKey={chartSync}

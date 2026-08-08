@@ -172,9 +172,10 @@ describe('CorePanel bars markı (v0.9.785)', () => {
 
   it('line dalı korunur: viz varsayılan line, eski değerler yerinde', () => {
     expect(src).toMatch(/viz = 'line'/);
-    // v0.9.798 — VURGU dalı eklendi (Overview "Toplam" çizgisi 2.5px).
-    // Kapının koruduğu şey değişmedi: bars 1, VURGUSUZ taban 1.5.
-    expect(src).toMatch(/lineWidth: bars \? 1 : emphasis\?\.\[i\] \? 2\.5 : 1\.5/);
+    // v0.9.799 — v0.9.798'in vurgu dalı KALKTI (Overview "Toplam" çizgisi
+    // operatör isteğiyle geri alındı); taban ifade v0.9.785'teki hâline
+    // döndü: bars 1, çizgi 1.5.
+    expect(src).toMatch(/lineWidth: bars \? 1 : 1\.5/);
     // v0.9.788 — area/stacked dalları eklendi; line ve bars uçları
     // (12 / 35 + dashed ghost'un 0'ı) BAYT BAYT yerinde kalmalı.
     expect(src).toMatch(
@@ -440,9 +441,8 @@ describe('CorePanel focusedLabel (v0.9.793)', () => {
 
   it('taban genişlik CONFIG\'den okunur — ikinci "1.5" kopyası yok', () => {
     expect(src).toMatch(/config\.getSeries\(\)\.map\(s => s\.props\.lineWidth\)/);
-    // Config'deki tek taban ifadesi yerinde kalmalı (v0.9.785 kapısı;
-    // v0.9.798'de vurgu dalı eklendi, taban 1.5 aynen duruyor).
-    expect(src).toMatch(/lineWidth: bars \? 1 : emphasis\?\.\[i\] \? 2\.5 : 1\.5/);
+    // Config'deki tek taban ifadesi yerinde kalmalı (v0.9.785 kapısı).
+    expect(src).toMatch(/lineWidth: bars \? 1 : 1\.5/);
   });
 
   it('iki sürücü tek kanal: kontrollü prop kazanır, yoksa iç lejant hover', () => {
@@ -551,51 +551,98 @@ describe('CorePanel tekeli', () => {
   });
 });
 
-// ── VURGU kanalı (v0.9.798) ─────────────────────────────────────────────
+// ── VURGU kanalı KALDIRILDI (v0.9.799) ──────────────────────────────────
 //
-// Overview'ın "Toplam" çizgisi route kırılımının yanında duruyor ve
-// ondan FARKLI bir şey ölçüyor (gözlem-ağırlıklı servis geneli). Aynı
-// kalınlıkta çizilseydi 11 çizgiden biri gibi görünürdü.
-//
-// Kapının koruduğu asıl şey RENK TEKLİĞİ: rengi ÜÇ yer okuyor (uPlot
-// config, tooltip satırı, lejant swatch'ı) ve üçü ayrışırsa operatör
-// grafikte accent, lejantta başka renk görür.
+// v0.9.798 emphasis[] kablosunu Overview'ın "Toplam" çizgisi için kurdu;
+// operatör o çizgiyi büyük grafiklerden geri aldırınca kanal tüketicisiz
+// kaldı ve SİLİNDİ (CLAUDE.md: geriye-uyum şimi YOK). Kapı ters yönde
+// çalışıyor: bir gün "lazım olur" diye geri sızarsa kızarır — MLC'nin ölü
+// kancaları (v0.9.789) için kurulan desenin aynısı.
 
-describe('CorePanel vurgu kanalı (v0.9.798)', () => {
+describe('CorePanel vurgu kanalı SİLİNDİ (v0.9.799)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+  const entry = readFileSync(
+    resolve(__dirname, './corePanelEntry.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+  const role = readFileSync(
+    resolve(__dirname, '../../lib/chart/seriesRole.ts'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('prop, dizi ve sarmalayıcı üç dosyada da YOK', () => {
+    expect(src).not.toMatch(/\bemphasis\b/);
+    expect(entry).not.toMatch(/\bemphasis\b/);
+    expect(role).not.toMatch(/seriesLineColor/);
+  });
+
+  it('renk yine TEK saf çekirdekten — üç okuma yeri de seriesRoleColor', () => {
+    expect(src).toMatch(
+      /import \{ seriesRoleColor, type SeriesRole \} from '@\/lib\/chart\/seriesRole'/);
+    // Üç çağrı: config lineColor + tooltip satırı + lejant swatch'ı.
+    expect((src.match(/seriesRoleColor\(/g) ?? []).length).toBe(3);
+  });
+
+  it('config bağımlılığı da temizlendi (ölü imza rebuild üretmesin)', () => {
+    const deps = src.match(/\}, \[[^\]]*\]\);/g) ?? [];
+    const cfg = deps.filter(d => d.includes('overlaySig'));
+    expect(cfg.length, 'config useMemo dizisi bulunamadı').toBe(1);
+    expect(cfg[0]).not.toContain('emphasis');
+    // dashed kablosu YAŞIYOR — kaldırılan yalnız vurgu.
+    expect(cfg[0]).toContain("dashed?.join(',')");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.799 — eksen kırpması + ondalık + imleç noktaları (operatör-raporlu).
+//
+// Üçü de aynı sınıftan: @grafana/ui'nin varsayılanları Grafana'nın KENDİ
+// bağlamını (Inter fontu, her zaman sayı olan pointSize) varsayıyor ve o
+// varsayım Coremetry'de tutmuyor. Kapılar düzeltmelerin kaynakta durduğunu
+// çiviler — regresyonun sessiz olduğu bir alan (kimse ekseni test etmiyor).
+// ---------------------------------------------------------------------------
+describe('CorePanel eksen + imleç (v0.9.799)', () => {
   const src = readFileSync(
     resolve(__dirname, './CorePanel.tsx'), 'utf8',
   ).replace(/\/\/.*$/gm, '');
 
-  it('renk TEK saf çekirdekten — üç okuma yeri de seriesLineColor', () => {
-    expect(src).toMatch(
-      /import \{ seriesLineColor, type SeriesRole \} from '@\/lib\/chart\/seriesRole'/);
-    // Üç çağrı: config lineColor + tooltip satırı + lejant swatch'ı.
-    expect((src.match(/seriesLineColor\(/g) ?? []).length).toBe(3);
-    // Eski doğrudan çağrı KALMAMALI: kalsaydı o yüzey vurguyu görmezdi.
-    expect(src).not.toMatch(/resolveVar\(seriesRoleColor\(/);
+  it('🔴 formatValue ondalığı YUTMAZ — display processor\'a geçer', () => {
+    expect(src).toMatch(/formatValue: \(v: unknown, decimals\?: DecimalCount\) =>/);
+    expect(src).toMatch(/const d = disp\(n, decimals\);/);
+    // Eski (ondalığı düşüren) çağrı geri gelmemeli.
+    expect(src).not.toMatch(/const d = disp\(n\);/);
   });
 
-  it('🔴 config bağımlılığı emphasis TAŞIR (yoksa vurgu geç gelir)', () => {
+  it('🔴 oluk genişliği SAF modülden — panel kendi ölçüm kopyasını yazmaz', () => {
+    expect(src).toMatch(/from '@\/lib\/chart\/axisSize'/);
+    expect(src).toMatch(/size: yGutter\.px \|\| undefined/);
+    expect(src).toMatch(/axisGutterPx\(/);
+    expect(src).toMatch(/axisTickPlan\(/);
+    // Ölçüm GERÇEK eksen fontuyla (Grafana'nın sabit 'Inter'i DEĞİL).
+    expect(src).toMatch(/AXIS_FONT_SIZE\}px \$\{chartTheme\(\)\.typography\.fontFamily\}/);
+  });
+
+  it('🟠 oluk MANDALI: seri kümesi boyunca yalnız büyür (rebuild thrash yok)', () => {
+    expect(src).toMatch(/yGutterNeeded > prev\.px \? \{ sig: seriesSig, px: yGutterNeeded \} : prev/);
+    // Yeni seri kümesi = temiz sayfa (o an config zaten yeniden kuruluyor).
+    expect(src).toMatch(/if \(prev\.sig !== seriesSig\) return \{ sig: seriesSig, px: yGutterNeeded \};/);
     const deps = src.match(/\}, \[[^\]]*\]\);/g) ?? [];
     const cfg = deps.filter(d => d.includes('overlaySig'));
-    expect(cfg.length, 'config useMemo dizisi bulunamadı').toBe(1);
-    expect(cfg[0]).toContain("emphasis?.join(',')");
-  });
-});
-
-describe('CorePanelMulti vurgu işareti (v0.9.798)', () => {
-  const src = readFileSync(
-    resolve(__dirname, './corePanelEntry.tsx'), 'utf8',
-  ).replace(/\/\/.*$/gm, '');
-
-  it('item başına emphasis, dashed ile AYNI tek geçişte', () => {
-    expect(src).toMatch(/emphasis\?: boolean;/);
-    expect(src).toMatch(/emphasis\.push\(!!it\.emphasis\)/);
-    // Prop yalnız GERÇEKTEN vurgu varsa geçer (dashed sözleşmesi).
-    expect(src).toMatch(/emphasis=\{anyEmph \? emphasis : undefined\}/);
+    expect(cfg[0]).toContain('yGutter.px');
   });
 
-  it('hayalet ASLA vurgulu değil (soluk+kesikli olmasının tek sebebi geri planda kalması)', () => {
-    expect(src).toMatch(/emphasis\.push\(false\)/);
+  it('🔴 imleç noktası SAYISAL boyut alır — "show: true" YASAK', () => {
+    expect(src).toMatch(/points: \{ size: CURSOR_POINT_PX, width: CURSOR_POINT_BORDER_PX \}/);
+    // uPlot points.show'dan HTMLElement bekler; `show: true` fnOrSelf'ten
+    // geçip `true` döner ve noktalar HİÇ oluşturulmaz — açmak isterken
+    // kapatan tuzak (v0.9.799 gerekçesi).
+    expect(src).not.toMatch(/points: \{ show: true/);
+    expect(src).not.toMatch(/show: true,\s*size: CURSOR_POINT_PX/);
+  });
+
+  it('imleç ayarı KOŞULSUZ — sync\'siz panelde de nokta var', () => {
+    // Eski hâli yalnız syncKey varken setCursor çağırıyordu.
+    expect(src).not.toMatch(/if \(syncKey\) b\.setCursor/);
+    expect(src).toMatch(/\.\.\.\(syncKey \? \{ sync: \{ key: syncKey \} \} : \{\}\)/);
   });
 });

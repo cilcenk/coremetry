@@ -7,10 +7,12 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { guessDecimals, roundDecimals } from '@grafana/data';
 import {
   spanSeriesToFrames, framesToAligned, maxPointsForWidth, stepSecondsFor,
   chartTheme, NS_PER_MS,
 } from './dataFrame';
+import { decimalsForIncr } from './axisSize';
 import type { SpanMetricSeries } from '@/lib/types';
 
 // dataFrame köprüsünün sözleşme testleri (FAZ 1).
@@ -155,6 +157,60 @@ describe('nokta bütçesi (spec: nokta ≤ piksel)', () => {
     const spanSec = 7000, width = 600;
     const step = stepSecondsFor(0, spanSec * 1e9, width);
     expect(spanSec / step).toBeLessThanOrEqual(maxPointsForWidth(width));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.799 — EKSEN ONDALIĞI (operatör: "failure rate panelinde her tick
+// '0 req/s'").
+//
+// @grafana/ui'nin eksen sarmalayıcısı tick ARTIŞINDAN ondalık türetip
+// formatValue(v, decimals) diye çağırıyor; CorePanel o ikinci parametreyi
+// yutuyordu. display processor'ın sözleşmesi burada kanıtlanır:
+// `adjacentDecimals` verildiğinde ondalık artışa uyar ve sondaki sıfırlar
+// kırpılır — küçük aralık okunur olur, büyük aralık bugünkü hâlinde kalır.
+//
+// İKİ BİRİM DE test edilir (feedback-unit-mixing-needs-both-branches):
+// throughput panelleri 'reqps', latency panelleri 'ms'.
+// ---------------------------------------------------------------------------
+describe('display processor ondalığı (v0.9.799)', () => {
+  function fmt(unit: string, value: number, decimals?: number): string {
+    const [f] = spanSeriesToFrames([series([{ time: 60e9, value: 1 }])], { unit }, theme);
+    const d = f.fields[1].display!(value, decimals);
+    return `${d.text}${d.suffix ?? ''}`;
+  }
+
+  it('reqps · küçük aralık: ondalık VERİLİNCE tick okunur olur', () => {
+    // decimalsForIncr(0.05) === 2 → CorePanel bunu geçiriyor.
+    expect(fmt('reqps', 0.05, 2)).toBe('0.05 req/s');
+    expect(fmt('reqps', 0.1, 2)).toBe('0.1 req/s');
+    expect(fmt('reqps', 0.15, 2)).toBe('0.15 req/s');
+    // Ondalıksız (v0.9.798 davranışı) gereksiz uzun: kırpılan eksende
+    // operatörün gördüğü "0 req/s" tam buradan çıkıyordu.
+    expect(fmt('reqps', 0.05)).toBe('0.0500 req/s');
+  });
+
+  it('reqps · büyük aralık: ondalık 0 → tam sayı, birim korunur', () => {
+    expect(fmt('reqps', 100)).toBe('100 req/s');
+    expect(fmt('reqps', 300)).toBe('300 req/s');
+  });
+
+  it('ms · her iki uçta da doğru (birim ÖLÇEKLEMESİ köprünün işi)', () => {
+    expect(fmt('ms', 0.05, 2)).toBe('0.05 ms');
+    expect(fmt('ms', 300)).toBe('300 ms');
+    expect(fmt('ms', 1042)).toBe('1.04 s');
+  });
+
+  // SAPMA KAPISI: axisSize.decimalsForIncr, @grafana/ui'nin eksen
+  // sarmalayıcısındaki guessDecimals(roundDecimals(incr, 6)) ifadesinin
+  // ikizi (o kod bize kapalı, oluk hesabı için aynı sayıya ihtiyacımız
+  // var). İkiz olduğu SÖYLENMEZ, kanıtlanır — ayrışırlarsa oluk bir
+  // etikete, eksen başka bir etikete göre kurulur.
+  it('decimalsForIncr ≡ guessDecimals(roundDecimals(incr, 6))', () => {
+    for (const incr of [100, 50, 10, 1, 0.5, 0.2, 0.1, 0.05, 0.02, 0.001, 0.0001, 2.5, 0]) {
+      expect(decimalsForIncr(incr), `incr=${incr}`)
+        .toBe(guessDecimals(roundDecimals(incr, 6)));
+    }
   });
 });
 

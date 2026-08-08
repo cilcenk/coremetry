@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import {
-  ROUTE_TOP_N, routeMoreNote, topRoutesByArea, metricUnitToGrafana,
-  withTotalPrefix, metricAvgToMs,
+  ROUTE_TOP_N, routeMoreNote, topRoutesByArea, metricUnitToGrafana, metricAvgToMs,
 } from './routeSeries';
 import type { SpanMetricSeries } from '@/lib/types';
 
@@ -121,24 +122,9 @@ describe('metricUnitToGrafana', () => {
   }
 });
 
-// ── withTotalPrefix (v0.9.798) ──────────────────────────────────────────
-//
-// Panelde route serilerinin YANINDA bir de "Toplam" çizgisi var; kırpma
-// notu bunu söylemezse operatör çizilen 11 çizgiyi sayıp notu yalancı
-// bulur (ve haklıdır: Toplam bir route değil).
-
-describe('withTotalPrefix', () => {
-  it('kırpma notu varsa önek ekler', () => {
-    expect(withTotalPrefix('10 seri · +55 daha', true)).toBe('Toplam + 10 seri · +55 daha');
-  });
-  it('Toplam yoksa nota dokunmaz', () => {
-    expect(withTotalPrefix('10 seri · +55 daha', false)).toBe('10 seri · +55 daha');
-  });
-  it('taban not yokken önek de yok (lejant zaten sayıyı yazıyor)', () => {
-    expect(withTotalPrefix(null, true)).toBeNull();
-    expect(withTotalPrefix('', true)).toBe('');
-  });
-});
+// v0.9.799 — withTotalPrefix testleri SİLİNDİ: fonksiyonun tek
+// tüketicisi panelin "Toplam" çizgisiydi, o da kaldırıldı (operatör
+// netleştirmesi). Ölü kod için ölü test bırakmıyoruz.
 
 // ── metricAvgToMs (v0.9.798) ────────────────────────────────────────────
 //
@@ -170,5 +156,59 @@ describe('metricAvgToMs', () => {
   it('0 meşru bir değer (null değil)', () => {
     expect(metricAvgToMs(0, 'ms')).toBe(0);
     expect(metricAvgToMs(0, 's')).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.799 — "Toplam" büyük grafiklerden KALKTI + karo kaynak birliği.
+//
+// v0.9.798 Toplam'ı hem üst KPI karolarına hem büyük panellere koydu;
+// operatörün kastı YALNIZ karolardı ("kalın çizgili hali kötü, eski hali
+// daha iyiydi"). Panel v0.9.796'daki saf route kırılımına döndü, karolar
+// aynen kaldı. Kapılar iki şeyi çiviler: (a) çizginin gerçekten kalktığı,
+// (b) karoların DEĞER/SPARKLINE/DELTA üçlüsünün TEK kaynaktan geldiği —
+// karışık kaynak, operatörün "hangisine bakayım" sorusunu geri getirir.
+// ---------------------------------------------------------------------------
+describe('Service Overview — Toplam çizgisi ve karo kaynak birliği (v0.9.799)', () => {
+  const src = readFileSync(
+    resolve(__dirname, '../Overview.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('büyük paneller SAF route kırılımı — Toplam item\'ı ve vurgu YOK', () => {
+    expect(src).not.toMatch(/\bemphasis\b/);
+    expect(src).not.toMatch(/name: 'Toplam'/);
+    expect(src).not.toMatch(/withTotalPrefix/);
+    // Response time paneli doğrudan kırpma çıktısını çiziyor.
+    expect(src).toMatch(/items=\{rtView\.items\}/);
+    // Kırpma notu yine sade.
+    expect(src).toMatch(/rtView\.note,/);
+  });
+
+  it('grupsuz sorgu YAŞIYOR — karo onu okuyor (panelde değil)', () => {
+    expect(src).toMatch(/'service-rt-avg-total'/);
+    expect(src).toMatch(/const rtTotalSeries = rtTotalQ\.data\?\.series\?\.\[0\];/);
+    // Panelin yükleme kapısı artık grupsuz sorguyu BEKLEMİYOR.
+    expect(src).toMatch(/loading=\{metricTputQ\.isLoading \|\| rtAvgQ\.isLoading\}/);
+  });
+
+  it('🔴 Response time karosu: değer + sparkline + delta AYNI metrik serisinden', () => {
+    expect(src).toMatch(/val=\{rtFromMetric \? \(rtAvgMsNow as number\)\.toFixed\(0\) : p99Ms\.toFixed\(0\)\}/);
+    expect(src).toMatch(/spark=\{rtFromMetric \? rtAvgMsSeries : vals\(lat\?\.p99\)\}/);
+    expect(src).toMatch(/delta=\{computeDelta\(rtFromMetric \? rtAvgMsSeries : vals\(lat\?\.p99\)\)\}/);
+  });
+
+  it('🔴 Throughput karosu: değer + sparkline + delta AYNI metrik serisinden', () => {
+    expect(src).toMatch(/spark=\{tputFromMetric \? metricRpsSeries : vals\(lat\?\.rate\)\}/);
+    expect(src).toMatch(/delta=\{computeDelta\(tputFromMetric \? metricRpsSeries : vals\(lat\?\.rate\)\)\}/);
+    // Değer de aynı seriden (son nokta).
+    expect(src).toMatch(/const metricRpsNow = metricRpsSeries\.slice\(-1\)\[0\];/);
+  });
+
+  it('düşüş KARO BAŞINA ayrı — tek bayrak ikisini kilitlemez', () => {
+    expect(src).toMatch(/const rtFromMetric = rtAvgMsNow != null;/);
+    expect(src).toMatch(/const tputFromMetric = metricRpsNow != null;/);
+    // Ve başlık kaynağı SÖYLÜYOR (dürüstlük deseni).
+    expect(src).toMatch(/'Response time · P99 \(span\)'/);
+    expect(src).toMatch(/'Throughput \(span\)'/);
   });
 });

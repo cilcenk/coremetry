@@ -29,18 +29,7 @@ export function seriesRoleColor(label: string, role: SeriesRole = 'data'): strin
   }
 }
 
-// seriesLineColor — rol rengi + VURGU (v0.9.798).
-//
-// Vurgulu seri tema accent'inde çizilir; ötekiler yukarıdaki rol
-// kuralında kalır. Ayrı bir fonksiyon çünkü rengi ÜÇ yer okuyor
-// (uPlot config, tooltip satırı, lejant swatch'ı) ve üçü ayrışırsa
-// operatör grafikte accent, lejantta başka renk görür.
-//
-// Vurgu SEMANTİK rolü EZER: bir seri hem "error" hem "vurgulu" ise
-// accent kazanır — vurgu zaten "ötekilerden ayrıl" demek ve iki sinyali
-// üst üste bindirmek ikisini de okunmaz yapardı. Bugünkü tek tüketici
-// (Overview "Toplam") 'data' rolünde, yani bu dal pratikte tetiklenmiyor;
-// kural yine de YAZILI olsun ki ilerideki çağıran tahmin etmesin.
-export function seriesLineColor(label: string, role: SeriesRole = 'data', emphasis = false): string {
-  return emphasis ? 'var(--accent)' : seriesRoleColor(label, role);
-}
+// v0.9.799 — seriesLineColor (v0.9.798'in vurgu sarmalayıcısı) SİLİNDİ.
+// Tek gerekçesi Overview'ın accent renkli "Toplam" çizgisiydi; çizgi
+// büyük grafiklerden kalkınca sarmalayıcı seriesRoleColor'ın önünde
+// duran boş bir katman olurdu. Renk yine TEK yerden: seriesRoleColor.

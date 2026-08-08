@@ -34,9 +34,13 @@ import {
   AxisPlacement, ScaleOrientation, ScaleDirection, ScaleDistribution,
   GraphGradientMode, DrawStyle, PointVisibility,
 } from '@grafana/ui';
-import type { DataFrame } from '@grafana/data';
+import type { DataFrame, DecimalCount } from '@grafana/data';
 import { framesToAligned, chartTheme } from '@/lib/chart/dataFrame';
-import { seriesLineColor, type SeriesRole } from '@/lib/chart/seriesRole';
+import {
+  AXIS_FONT_SIZE, axisTickPlan, decimalsForIncr, widestLabelPx, axisGutterPx,
+  seriesExtent, paddedExtent,
+} from '@/lib/chart/axisSize';
+import { seriesRoleColor, type SeriesRole } from '@/lib/chart/seriesRole';
 import { visibleRangeStats } from '@/lib/chart/visibleStats';
 import { resolveLegendCollapsed, isAdditiveUnit } from '@/lib/chart/legendStats';
 import {
@@ -85,6 +89,13 @@ function bucketWindowAt(u: uPlot, clientX: number, clientY: number) {
 // pin YOKKEN yazılır (pinliyken setCursor erken döner, yerine applyPinStyle'ın
 // "📌 sabit — tık / Esc çözer" başlık satırı geçer). Token'lar note satırıyla
 // aynı (10px / var(--text3)) — panelde üçüncü bir tipografi dili doğmaz.
+// v0.9.799 — imleç noktası ölçüleri. Kutu 10px, kenarlık 2px → görünen
+// dolu çekirdek 6px (uplot.css: box-sizing border-box + background-clip
+// padding-box), kenarlık yarı saydam bir hale olur. Grafana TimeSeries'in
+// imleç noktası ölçüsü de bu civarda (seri nokta çapı × 2).
+const CURSOR_POINT_PX = 10;
+const CURSOR_POINT_BORDER_PX = 2;
+
 const PIN_TIP_HTML =
   '<div class="ov-tt-tip" style="margin-top:4px;padding-top:4px;' +
   'border-top:1px solid var(--border);color:var(--text3);font-size:10px">' +
@@ -199,20 +210,11 @@ export interface CorePanelProps {
   // frame 5-4 kesikli, dolgusuz çizilir; rol rengi aynen (muted
   // öneriliyor ama çağıranın kararı).
   dashed?: boolean[];
-  // v0.9.798 — frame-hizalı VURGU işareti: bu seri kalın (2.5px) ve tema
-  // accent renginde çizilir, lejant/tooltip swatch'ı da öyle.
-  //
-  // İlk tüketici Overview'ın "Toplam" serisi: route kırılımının yanında
-  // duran ve ondan FARKLI bir şey ölçen (gözlem-ağırlıklı servis geneli)
-  // tek çizgi. Aynı kalınlıkta çizilseydi 11 çizgiden biri gibi
-  // görünürdü — oysa okunması gereken ÖNCE o.
-  //
-  // Neden rol DEĞİL: roller anlam taşıyor (error kırmızı, success yeşil)
-  // ve "vurgulu" bir anlam değil bir ÖNEM derecesi; ikisini tek kanala
-  // sıkıştırmak, yarın "vurgulu hata serisi"ni imkânsız kılardı.
-  // dashed[] ile AYNI kablo (indeks hizalı boolean dizisi, join(',')
-  // imzasıyla rebuild dep'i).
-  emphasis?: boolean[];
+  // v0.9.799 — emphasis[] KANALI KALDIRILDI. v0.9.798'de tek tüketicisi
+  // Overview'ın "Toplam" çizgisiydi; operatör o çizgiyi büyük
+  // grafiklerden geri aldırınca kanal tüketicisiz kaldı. Ölü bir prop
+  // bırakmak, bir sonraki okuyucuya "bu kablo çalışıyor" diye yalan
+  // söylerdi (CLAUDE.md: geriye-uyum şimi YOK).
   // v0.9.785 — çizim markı. 'line' varsayılan (bugünkü davranış, bayt
   // bayt); 'bars' Grafana'nın Bars draw-style'ı. PRİMİTİF string olarak
   // taşınır — nesne/dizi bir prop config kimliğini her render'da yıkar
@@ -233,7 +235,7 @@ export function CorePanel({
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
   defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
   onBucketClick, hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
-  focusedLabel, emphasis,
+  focusedLabel,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -427,6 +429,59 @@ export function CorePanel({
     u.redraw(false, true); // v0.9.744 — gizlenen serinin ◆'ları da kalksın
   }, [vis]);
 
+  // ── v0.9.799 — y ekseni oluk genişliği (operatör: "00 req/s") ────────────
+  //
+  // Kök neden ve neden Grafana'nın otomatiğine güvenemediğimiz
+  // axisSize.ts'in dosya başında: measureText fontu SABİT 'Inter' yazıyor,
+  // biz o fontu kullanmıyoruz, ölçüm çizilenden dar çıkıyor ve etiketin
+  // baş rakamı kırpılıyor.
+  //
+  // Burada tick kümesi ÇİZİMDEN ÖNCE tahmin edilir (uPlot'un 1/2/5
+  // merdiveni), etiketler panelin KENDİ display processor'ıyla üretilir
+  // (birim + ondalık tek kaynaktan) ve GERÇEK eksen fontuyla ölçülür.
+  //
+  // Uçlar TÜM seriden okunur — gizli seriler ve zoom penceresi dışarıda
+  // kalan noktalar dahil. uPlot ölçeği onları dışlar, yani oluk gerektiği
+  // kadar VEYA biraz daha geniş çıkar. Yön bilinçli: fazla oluk birkaç
+  // piksel yer yer, eksik oluk etiketi kırpar (düzelttiğimiz kusur).
+  const yGutterNeeded = useMemo(() => {
+    if (data.state !== 'ready' || frames.length === 0) return 0;
+    const ext = seriesExtent(drawData.slice(1) as (number | null)[][]);
+    if (!ext) return 0;
+    // Log ölçekte dolgu yok (decade'ler zaten sınırları kapsıyor).
+    const [lo, hi] = effLog ? ext : paddedExtent(ext);
+    // Çizim yüksekliği ≈ panel yüksekliği − x ekseni şeridi.
+    const plan = axisTickPlan(lo, hi, Math.max(40, height - 34), effLog);
+    if (plan.ticks.length === 0) return 0;
+    const dec = decimalsForIncr(plan.incr);
+    const disp = frames[0]?.fields[1].display;
+    const labels = plan.ticks.map((v) => {
+      if (!disp) return fmtSmart(v);
+      const d = disp(v, dec > 0 ? dec : undefined);
+      return `${d.text}${d.suffix ?? ''}`;
+    });
+    return axisGutterPx(
+      widestLabelPx(labels, `${AXIS_FONT_SIZE}px ${chartTheme().typography.fontFamily}`),
+      width);
+    // themeTick: font ailesi temayla değişebilir → ölçüm tazelenir.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.state, frames, drawData, effLog, height, width, themeTick]);
+
+  // MANDAL — oluk seri kümesi boyunca YALNIZ BÜYÜR. Genişlik config'in bir
+  // parçası ve config kimliği değişince UPlotChart uPlot'u
+  // destroy/recreate ediyor (v0.9.704). Son değeri 98↔102 arasında
+  // salınan bir panelde oluğu her poll'da yeniden hesaplayıp küçültseydik
+  // grafik 10 saniyede bir yeniden doğardı. Küçülme YALNIZ seri kümesi
+  // değişince olur — o an config zaten yeniden kuruluyor, yani bedava.
+  const seriesSig = aligned.names.join('|');
+  const [yGutter, setYGutter] = useState<{ sig: string; px: number }>({ sig: '', px: 0 });
+  useEffect(() => {
+    setYGutter(prev => {
+      if (prev.sig !== seriesSig) return { sig: seriesSig, px: yGutterNeeded };
+      return yGutterNeeded > prev.px ? { sig: seriesSig, px: yGutterNeeded } : prev;
+    });
+  }, [yGutterNeeded, seriesSig]);
+
   const config = useMemo(() => {
     const theme = chartTheme();
     const b = new UPlotConfigBuilder();
@@ -454,13 +509,30 @@ export function CorePanel({
       // frame'in display'i çağrılır. Frame'ler ref'ten CANLI okunur:
       // config bağımlılığına girmezler, yani birim değişimi uPlot'u
       // destroy/recreate ETMEZ (v0.9.704 kimlik dersi).
-      formatValue: (v: unknown) => {
+      //
+      // v0.9.799 (operatör-bildirimi: "failure-rate panelinde her tick
+      // '0 req/s'") — İKİNCİ PARAMETRE artık geçiriliyor. @grafana/ui'nin
+      // eksen sarmalayıcısı tick ARTIŞINDAN ondalık türetip
+      // formatValue(v, decimals) diye çağırıyor; biz onu YUTUYORDUK ve
+      // display processor kendi otomatiğine düşüyordu — küçük aralıkta
+      // ya "0.0500" gibi gereksiz uzun ya da (kırpılınca) "0" okunuyordu.
+      // Adı `adjacentDecimals`: verildiğinde processor sondaki sıfırları
+      // da kırpar, yani 0-0.2 aralığı "0.05 / 0.1 / 0.15" olur, 0-300
+      // aralığı tam sayı kalır. Grafana TimeSeries ekseninin birebiri.
+      formatValue: (v: unknown, decimals?: DecimalCount) => {
         const n = typeof v === 'number' ? v : Number(v);
         const disp = framesRef.current[0]?.fields[1].display;
         if (!disp || n == null || !isFinite(n)) return fmtSmart(n);
-        const d = disp(n);
+        const d = disp(n, decimals);
         return `${d.text}${d.suffix ?? ''}`;
       },
+      // v0.9.799 — OLUK GENİŞLİĞİ BİZDEN (operatör-bildirimi: "eksende
+      // 00 req/s yazıyor"). Grafana'nın otomatiği en uzun etiketi SABİT
+      // 'Inter' fontuyla ölçüyor; Coremetry'de o font yok, ölçüm çizilen
+      // fonttan dar çıkıyor ve etiketin baş rakamı kırpılıyor
+      // (axisSize.ts dosya başı). 0 iken Grafana otomatiği devrede kalır
+      // — ilk boyanmada (ölçüm henüz yokken) davranış bugünküdür.
+      size: yGutter.px || undefined,
     });
     // v0.9.785 — bars markı. Grafana'nın kendi UPlotSeriesBuilder'ı
     // drawStyle=Bars görünce path builder'ı `bars({size:[barWidthFactor,
@@ -482,11 +554,9 @@ export function CorePanel({
     aligned.names.forEach((name, i) => {
       b.addSeries({
         scaleKey: 'y', theme,
-        lineColor: resolveVar(seriesLineColor(name, roles?.[i] ?? 'data', emphasis?.[i])),
+        lineColor: resolveVar(seriesRoleColor(name, roles?.[i] ?? 'data')),
         // Çubuk kenarı ince (1) — 1.5px stroke dar çubuğu şişman gösterir.
-        // v0.9.798 — vurgulu seri 2.5px: route kırılımının yanında duran
-        // "Toplam" çizgisi 11 çizgiden biri gibi görünmesin.
-        lineWidth: bars ? 1 : emphasis?.[i] ? 2.5 : 1.5,
+        lineWidth: bars ? 1 : 1.5,
         // v0.9.93 (uPlot Aşama 3) dersinin bu motordaki karşılığı: yığın
         // dolguları arasında saç-teli beyaz dikişler kalır çünkü komşu
         // katmanların kenarları ayrı ayrı piksele yuvarlanır. pxAlign
@@ -526,7 +596,38 @@ export function CorePanel({
         spanNulls: connectNulls ?? false,
       });
     });
-    if (syncKey) b.setCursor({ sync: { key: syncKey } });
+    // ── v0.9.799 — İMLEÇ NOKTALARI (operatör: "çizgiler üzerinde imleçle
+    // ilerlediğimde nokta hareket etse güzel olur") ─────────────────────
+    //
+    // uPlot'un imleç noktaları ZATEN açıktı ama GÖRÜNMÜYORDU, ve sebebi
+    // kaynakta okunabilir bir zincir: @grafana/ui'nin seri kurucusu
+    // `points.size`ı KOŞULLU yazıyor (`!pointSize || pointSize < lineWidth
+    // ? undefined : pointSize`) ve biz pointSize vermiyoruz → nesnede
+    // `size: undefined` ALANI var. uPlot varsayılanları Object.assign ile
+    // birleştiriyor, yani tanımlı-ama-undefined alan varsayılan çapı
+    // (ptDia) EZİYOR. Grafana'nın imleç varsayılanı da o çapı okuyor
+    // (`series[i].points.size * 2`) → NaN → `width: NaNpx` → sıfır
+    // boyutlu, görünmez bir div. Grafana'nın kendi TimeSeries'inde bu
+    // olmuyor çünkü orada pointSize her zaman bir sayı.
+    //
+    // Düzeltme SAYIYI BURADA vermek: 10px kutu + 2px kenarlık = 6px dolu
+    // çekirdek + hale halkası (uplot.css'te box-sizing:border-box ve
+    // background-clip:padding-box). Renk kanalına DOKUNMUYORUZ — dolgu
+    // seri rengi, kenarlık aynı renk %50 alfa; ikisi de Grafana'nın
+    // pointColorFn'inden geliyor ve seri rengi zaten tema token'ından
+    // çözülüyor (seriesRoleColor → resolveVar).
+    //
+    // `show` GEÇİLMEZ ve geçilmemeli: uPlot `points.show`u fnOrSelf'ten
+    // geçirip dönen değerin HTMLElement olmasını bekliyor. `show: true`
+    // yazmak `() => true` üretir, `true instanceof HTMLElement` false'tur
+    // ve noktalar HİÇ oluşturulmaz — yani "açmak" için true yazmak tam
+    // tersini yapar.
+    //
+    // STATİK ayar: bir bağımlılık gerektirmez (v0.9.704 kimlik disiplini).
+    b.setCursor({
+      points: { size: CURSOR_POINT_PX, width: CURSOR_POINT_BORDER_PX },
+      ...(syncKey ? { sync: { key: syncKey } } : {}),
+    });
     // v0.9.788 — İKİ bant kaynağı vardır ve AYNI ANDA kullanılamazlar:
     // uPlot'ta bir seri en fazla BİR bandın üst kenarı olabilir
     // (`bands.find(b => b.series[0] == si)`), iki liste çakışırsa katman
@@ -637,7 +738,7 @@ export function CorePanel({
         const disp = framesRef.current[i]?.fields[1].display;
         return {
           label,
-          color: resolveVar(seriesLineColor(label, roles?.[i] ?? 'data', emphasis?.[i])),
+          color: resolveVar(seriesRoleColor(label, roles?.[i] ?? 'data')),
           value: v,
           // display processor varsa text'i o üretir; TooltipRow.text'i
           // model kurar ama biz biçimli metni unit alanına gömmüyoruz —
@@ -693,8 +794,11 @@ export function CorePanel({
     //                inline [] her render'da yeni kimlik = sürekli yıkım).
     //   • connectNulls — spanNulls eşiği; panel-başına açık tercih
     //                değişince boşluk doktrini gerçekten değişmeliydi.
+    //   • yGutter.px — eksen oluk genişliği (v0.9.799). Bir ÇİZİM girdisi
+    //                değil ÖLÇÜ; mandal yüzünden yalnız büyür, yani
+    //                rebuild seyrek ve gerçekten gerekli olduğunda olur.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), emphasis?.join(','), connectNulls]);
+  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), connectNulls, yGutter.px]);
 
   // ── v0.9.793 — focusedLabel (lejant hover vurgusu) ───────────────────────
   //
@@ -1026,7 +1130,7 @@ export function CorePanel({
                     <td>
                       <span style={{
                         display: 'inline-block', width: 8, height: 8, borderRadius: 2,
-                        background: resolveVar(seriesLineColor(s.name, roles?.[i] ?? 'data', emphasis?.[i])),
+                        background: resolveVar(seriesRoleColor(s.name, roles?.[i] ?? 'data')),
                         marginRight: 6,
                       }} />
                       {s.name}

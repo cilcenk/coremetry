@@ -1629,8 +1629,14 @@ export const api = {
   // ≤TOP_N_MAX series by area (the exact set PanelStack renders); totalSeries
   // is the pre-trim count (omitted when no trim happened) so the "+N more"
   // count stays accurate without shipping thousands of series over the wire.
-  spanMetricTopN: (params: SpanMetricParams) =>
-    get<SpanMetricResult | null>(`/api/spans/metric?${qs(params)}`),
+  // v0.9.810 — opsiyonel signal (metricQueryFull deseninin ikizi: params
+  // nesnesi + ikinci arg). Explore'un fan-out'undaki EN pahalı yol bu:
+  // resolver dışı kalan her span sorgusu (DSL, off-dim filtre, p999/min/max)
+  // buradan geçiyor ve ham spans GROUP BY'a düşebiliyor. Operatör aralığı
+  // ya da filtreyi değiştirince uçuşan istek ClickHouse'ta sonuna kadar
+  // koşmaya devam ediyordu. Mevcut çağıranlar argümansız kalır.
+  spanMetricTopN: (params: SpanMetricParams, signal?: AbortSignal) =>
+    get<SpanMetricResult | null>(`/api/spans/metric?${qs(params)}`, signal),
 
   // resolveMetric — "every metric is a doorway" D4. Resolves a MetricQuery
   // descriptor server-side: the descriptor rides as ?m=<base64url(JSON)> (the
@@ -1638,15 +1644,19 @@ export const api = {
   // the spanmetrics tier / tracemetrics path. from/to are unix nanoseconds
   // (RangeParams convention). Pass exemplars to get per-bucket slow/error
   // trace_ids for "click a bucket → open the trace".
+  // v0.9.810 — signal OPTS NESNESİNDE, dördüncü pozisyonel argüman olarak
+  // değil: bu imzanın üçüncü argümanı zaten bir opsiyon çantası, yanına
+  // dördüncüsünü koymak çağrı yerinde `undefined` dolgusu gerektirirdi.
   resolveMetric: (
     mq: MetricQuery,
     r: RangeParams,
-    opts?: { step?: number; exemplars?: boolean },
+    opts?: { step?: number; exemplars?: boolean; signal?: AbortSignal },
   ) =>
     get<MetricResolveResult | null>(
       `/api/metrics/resolve?m=${encodeMetricQuery(mq)}&from=${r.from}&to=${r.to}` +
         (opts?.step ? `&step=${opts.step}` : '') +
         (opts?.exemplars ? `&exemplars=1` : ''),
+      opts?.signal,
     ),
 
   // dashboardData — N panel requests in one HTTP round trip.

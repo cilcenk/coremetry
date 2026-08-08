@@ -52,6 +52,7 @@ import { bucketWindowNs } from '@/lib/chart/bucketWindow';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
 import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinGesture, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
+import { resolveFocusIdx, focusSeriesStyle } from '@/lib/chart/seriesFocus';
 import { placeTooltip } from '@/lib/chartTooltip';
 import { fmtTooltipTime } from '@/lib/chartFmt';
 import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
@@ -186,6 +187,13 @@ export interface CorePanelProps {
   hiddenNames?: Set<string>;
   hideLegend?: boolean;
   onCursorTime?: (timeSec: number | null) => void;
+  // v0.9.793 — KONTROLLÜ odak (TimeSeriesPanel.focusedLabel sözleşmesinin
+  // birebiri): verilen etiketin serisi tam opaklıkta + yarım piksel kalın
+  // çizilir, ötekiler soluklaşır. Explore'da lejant GroupTable'dadır ve
+  // satır hover'ı buradan iner (QueryPanel:27'de "v2'de henüz yok" diye
+  // belgelenen boşluk). Panel KENDİ lejantını çiziyorsa satır hover'ı da
+  // aynı kanaldan geçer — prop verilmediğinde iç hover kazanır.
+  focusedLabel?: string | null;
   // v0.9.764 (mockup dilim 3) — frame-hizalı KESİKLİ çizim işareti:
   // önceki-dönem hayaleti (Grafana timeShift görünümü). true olan
   // frame 5-4 kesikli, dolgusuz çizilir; rol rengi aynen (muted
@@ -211,6 +219,7 @@ export function CorePanel({
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
   defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
   onBucketClick, hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
+  focusedLabel,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -342,6 +351,14 @@ export function CorePanel({
 
   // Görünen aralık (uPlot x scale) — legend istatistikleri bundan.
   const [xWin, setXWin] = useState<[number, number] | null>(null);
+
+  // v0.9.793 — "uPlot canlı mı" TEK ifade. Hem JSX kapısı hem de plotRef'e
+  // bağımlı efektlerin tetiği: örnek MOUNT ANINDA doğar (ilk render'da
+  // width 0'dır, ResizeObserver ölçene kadar UPlotChart hiç çizilmez), o
+  // yüzden yalnız kendi girdisine bakan bir efekt plotRef'i sonsuza dek
+  // null görebilir. focusedLabel bunu canlı yakaladı: mount'ta verilen odak
+  // hiç uygulanmıyordu (hover'la gelen odak çalıştığı için gözden kaçardı).
+  const plotMounted = data.state === 'ready' && width > 0 && aligned.data[0].length >= 2;
 
   // Görünürlük uPlot'a setSeries ile uygulanır — config rebuild DEĞİL.
   const plotRef = useRef<uPlot | null>(null);
@@ -663,6 +680,34 @@ export function CorePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), connectNulls]);
 
+  // ── v0.9.793 — focusedLabel (lejant hover vurgusu) ───────────────────────
+  //
+  // İki sürücü, TEK kanal: kontrollü prop (Explore → GroupTable satırı) ya da
+  // panelin KENDİ lejant satırı hover'ı. Prop kazanır; verilmezse iç hover.
+  const [hoverName, setHoverName] = useState<string | null>(null);
+  const focusName = focusedLabel ?? hoverName;
+  useEffect(() => {
+    const u = plotRef.current;
+    if (!u) return;
+    // Taban genişlik config'in KENDİSİNDEN okunur (builder props'u) — burada
+    // ikinci bir "1.5 / bars ise 1" kopyası tutmuyoruz; mark değişince taban
+    // kendiliğinden doğru gelir.
+    const styles = focusSeriesStyle(
+      config.getSeries().map(s => s.props.lineWidth),
+      resolveFocusIdx(aligned.names, focusName));
+    let changed = false;
+    styles.forEach((st, i) => {
+      const s = u.series[i + 1];
+      if (!s) return;
+      if (s.alpha !== st.alpha) { s.alpha = st.alpha; changed = true; }
+      if (s.width !== st.width) { s.width = st.width; changed = true; }
+    });
+    // rebuildPaths=true: kalınlık path'e giriyor, cache'li Path2D eskir.
+    // uPlot'u YIKMIYORUZ — bu sadece bir yeniden çizim (v0.9.704 dersi).
+    if (changed) u.redraw(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusName, config, aligned.names.join('|'), plotMounted]);
+
   // v0.9.792 — config kimliği değişince UPlotChart destroy/recreate eder ve
   // pinli index bayat bir kutuya işaret eder (eksen/seri kümesi değişmiş
   // olabilir). Rebuild pin'i çözer — TSP'nin afterBuild sözleşmesi.
@@ -901,7 +946,7 @@ export function CorePanel({
         {data.state === 'empty' && (
           <Empty icon="◫" title={data.reason}>{data.hint ?? ''}</Empty>
         )}
-        {data.state === 'ready' && width > 0 && aligned.data[0].length >= 2 && (
+        {plotMounted && (
           // v0.9.788 — ÇİZİME giden matris (stacked'te kümülatif); ham
           // matris aligned'da durur ve tooltip/lejant/CSV oradan okur.
           <UPlotChart data={drawData} width={width} height={height} config={config}
@@ -940,7 +985,18 @@ export function CorePanel({
                     role="button"
                     aria-pressed={vis[i] !== false}
                     aria-label={`${s.name} — Enter: izole et, Boşluk: gizle/göster`}
-                    style={{ opacity: vis[i] === false ? 0.35 : 1, cursor: 'pointer' }}
+                    style={{
+                      opacity: vis[i] === false ? 0.35 : 1, cursor: 'pointer',
+                      background: focusName === s.name ? 'var(--bg2)' : undefined,
+                    }}
+                    // v0.9.793 — hover/fokus SERİYİ VURGULAR (TSP sözleşmesi).
+                    // Klavye fokusu da aynı kanaldan geçer: vurgu yalnız fareye
+                    // ait olsaydı Tab'la gezen operatör hangi satırın hangi
+                    // çizgi olduğunu göremezdi (v0.9.711 erişim dersi).
+                    onMouseEnter={() => setHoverName(s.name)}
+                    onMouseLeave={() => setHoverName(n => (n === s.name ? null : n))}
+                    onFocus={() => setHoverName(s.name)}
+                    onBlur={() => setHoverName(n => (n === s.name ? null : n))}
                     onClick={e => setVis(v =>
                       e.ctrlKey || e.metaKey
                         ? toggleSeriesVisibility(v, i)

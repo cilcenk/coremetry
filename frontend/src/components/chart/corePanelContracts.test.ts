@@ -398,6 +398,99 @@ describe('CorePanel tooltip pin (v0.9.792)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// v0.9.793 — focusedLabel (lejant hover vurgusu) + formül kesikli.
+//
+// İkisi de "v2 motoruna geçerken sessizce kaybolan davranış" sınıfından —
+// QueryPanel:27 focusedLabel boşluğunu BELGELEYEREK taşıyordu. Kapılar
+// üç şeyi çiviler: (a) odak uPlot'u YIKMADAN uygulanır (v0.9.704 dersi),
+// (b) taban çizgi kalınlığı config'in kendisinden okunur — panelde ikinci
+// bir "1.5" kopyası yok, (c) kesikli işareti ghost kanalıyla AYNI prop'a
+// iner, ikinci bir çizim yolu doğmaz.
+// ---------------------------------------------------------------------------
+describe('CorePanel focusedLabel (v0.9.793)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('prop tipte + TSP ile aynı sözleşme (string | null)', () => {
+    expect(src).toMatch(/focusedLabel\?: string \| null;/);
+  });
+
+  it('🔴 REBUILD YOK: seri alpha/genişliği mutasyon + redraw ile uygulanır', () => {
+    expect(src).toMatch(/if \(changed\) u\.redraw\(true\);/);
+    expect(src).toMatch(/s\.alpha = st\.alpha/);
+    expect(src).toMatch(/s\.width = st\.width/);
+    // Odak bir config girdisi DEĞİL: config useMemo dizisine sızarsa her
+    // lejant hover'ı uPlot'u destroy/recreate ederdi.
+    const deps = src.match(/\}, \[[^\]]*\]\);/g) ?? [];
+    const cfg = deps.filter(d => d.includes('overlaySig'));
+    expect(cfg.length).toBe(1);
+    expect(cfg[0]).not.toContain('focus');
+  });
+
+  it('🔴 hesap SAF çekirdekten — panel kendi alpha sabitini yazmaz', () => {
+    expect(src).toMatch(
+      /import \{ resolveFocusIdx, focusSeriesStyle \} from '@\/lib\/chart\/seriesFocus'/);
+    expect(src).toMatch(/focusSeriesStyle\(/);
+    expect(src).toMatch(/resolveFocusIdx\(aligned\.names, focusName\)/);
+    expect(src).not.toMatch(/alpha: 0\.25/);
+  });
+
+  it('taban genişlik CONFIG\'den okunur — ikinci "1.5" kopyası yok', () => {
+    expect(src).toMatch(/config\.getSeries\(\)\.map\(s => s\.props\.lineWidth\)/);
+    // Config'deki tek taban ifadesi yerinde kalmalı (v0.9.785 kapısı).
+    expect(src).toMatch(/lineWidth: bars \? 1 : 1\.5/);
+  });
+
+  it('iki sürücü tek kanal: kontrollü prop kazanır, yoksa iç lejant hover', () => {
+    expect(src).toMatch(/const focusName = focusedLabel \?\? hoverName;/);
+    expect(src).toMatch(/onMouseEnter=\{\(\) => setHoverName\(s\.name\)\}/);
+    // ♿ klavye fokusu da aynı kanaldan (v0.9.711 erişim dersinin devamı).
+    expect(src).toMatch(/onFocus=\{\(\) => setHoverName\(s\.name\)\}/);
+    expect(src).toMatch(/onBlur=/);
+  });
+});
+
+describe('CorePanelMulti kesikli işareti (v0.9.793)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './corePanelEntry.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('item başına dashed + ghost AYNI diziyi doldurur (tek çizim yolu)', () => {
+    expect(src).toMatch(/dashed\?: boolean;/);
+    expect(src).toMatch(/dashed\.push\(!!it\.dashed\)/);
+    expect(src).toMatch(/dashed\.push\(true\)/);
+    // Prop yalnız GERÇEKTEN kesikli varsa geçer: boş bir dizi kimliği
+    // config imzasını (dashed?.join(',')) gereksizce oynatırdı.
+    expect(src).toMatch(/dashed=\{anyDash \? dashed : undefined\}/);
+    expect(src).not.toMatch(/dashed=\{ghostItems\?\.length \? dashed : undefined\}/);
+  });
+
+  it('🟠 hizalama TEK geçişte — ikinci sayaç yok', () => {
+    // Eski hâli `frames.map(() => false)` ile diziyi SONRADAN kuruyordu;
+    // item başına işaret gelince o yol iki ayrı frame sayacı gerektirirdi.
+    expect(src).not.toMatch(/frames\.map\(\(\) => false\)/);
+  });
+});
+
+describe('Explore v2 formül paneli kesikli (v0.9.793)', () => {
+  const src = readFileSync(
+    resolve(__dirname, '../../pages/explore/QueryPanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('formül serisi kesikli + GroupTable odağı v2 motoruna bağlı', () => {
+    expect(src).toMatch(/dashed: panel\.isFormula,/);
+    expect(src).toMatch(/focusedLabel=\{focusedLabel\}/);
+  });
+
+  it('v2 "focusedLabel yok" şerhi kaldırıldı — belge koda uydu', () => {
+    const raw = readFileSync(
+      resolve(__dirname, '../../pages/explore/QueryPanel.tsx'), 'utf8');
+    expect(raw).not.toMatch(/focusedLabel \(GroupTable hover vurgusu\) v2'de henüz yok/);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // v0.9.789 — ölü kancaların silinmesi (geriye-uyum şimi YOK kuralı).
 // colorOf / selectedOps / onLegendClick üçlüsünün repo genelinde tüketicisi
 // kalmamıştı; MLC'nin v2 kapısını da yalnız onlar kapalı tutuyordu. Kapı

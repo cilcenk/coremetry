@@ -37,6 +37,12 @@ export interface CorePanelMultiItem {
   role?: 'data' | 'error' | 'success' | 'muted';
   // v0.9.744 (Explore v2) — bu item'ın ilk frame'ine bağlı ◆ listesi.
   exemplars?: import('@/lib/chart/overlays').ChartExemplar[];
+  // v0.9.793 — bu item KESİKLİ çizilsin. Ghost (önceki-dönem) kanalıyla AYNI
+  // CorePanel prop'una (dashed[]) iner; fark yalnız kimin işaretlediği:
+  // ghost'u CorePanelMulti kendi işaretler, bunu ÇAĞIRAN işaretler.
+  // İlk tüketici Explore'un formül paneli — "bu seri ölçülmedi, HESAPLANDI"
+  // ayrımı QueryPanel rozetinde (kesikli kenarlık) zaten kurulu bir dil.
+  dashed?: boolean;
 }
 
 export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'roles' | 'dashed'> {
@@ -79,7 +85,12 @@ export function CorePanelMulti({
   const frames: ReturnType<typeof spanSeriesToFrames> = [];
   const roles: NonNullable<CorePanelProps['roles']> = [];
   const exemplars: NonNullable<CorePanelProps['exemplars']> = [];
+  // v0.9.793 — kesikli işaretler frame'lerle BİRLİKTE toplanır (ayrı bir
+  // ikinci geçiş ghost/normal item sayılarını yeniden türetmek zorunda
+  // kalırdı; iki sayaç = bir gün kayan hizalama).
+  const dashed: boolean[] = [];
   let anyEx = false;
+  let anyDash = false;
   for (const it of items) {
     const fs = spanSeriesToFrames(it.series, { unit, name: it.name });
     frames.push(...fs);
@@ -88,9 +99,10 @@ export function CorePanelMulti({
       // ◆'lar item'ın İLK frame'ine biner (Explore: item = tek seri).
       exemplars.push(i === 0 ? it.exemplars : undefined);
       if (i === 0 && it.exemplars?.length) anyEx = true;
+      dashed.push(!!it.dashed);
+      if (it.dashed) anyDash = true;
     }
   }
-  const dashed: boolean[] = frames.map(() => false);
   for (const g of ghostItems ?? []) {
     const fs = spanSeriesToFrames(g.series, { unit, name: `${g.name} (önceki)` });
     frames.push(...fs);
@@ -98,9 +110,10 @@ export function CorePanelMulti({
       roles.push('muted');
       exemplars.push(undefined);
       dashed.push(true);
+      anyDash = true;
     }
   }
   return <CorePanel {...rest} roles={roles} exemplars={anyEx ? exemplars : undefined}
-    dashed={ghostItems?.length ? dashed : undefined}
+    dashed={anyDash ? dashed : undefined}
     data={{ state: 'ready', frames }} />;
 }

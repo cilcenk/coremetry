@@ -162,10 +162,31 @@ describe('queryToPanel — viz config e iner', () => {
       .toBe('area');
   });
 
-  it('metric paneli viz TAŞIMAZ — MetricPanelConfig te alan yok', () => {
-    const p = queryToPanel(
-      { ...blankQuery('A', 'metric'), metric: 'jvm.memory.used' }, { viz: 'bars' })!;
+  // v0.9.790 — metric kaynağı da markı taşır. v0.9.786'da bu testin tersi
+  // yazılıydı ("metric paneli viz TAŞIMAZ"): o zaman MetricPanelConfig'de
+  // alan yoktu ve yazılan viz okunmayacaktı. Alan + renderer dispatch +
+  // editör select geldiğine göre kapsam sınırı kalktı; iki kaynak da AYNI
+  // eşlemeyi kullanmalı — sapma ancak burada yakalanır.
+  const metric = { ...blankQuery('A', 'metric'), metric: 'jvm.memory.used' };
+
+  it('metric kaynağı da viz taşır (v0.9.786 kapsam sınırının kapanışı)', () => {
+    const p = queryToPanel(metric, { viz: 'bars' })!;
     expect(p.type).toBe('metric');
-    expect((p.config as Record<string, unknown>).viz).toBeUndefined();
+    expect((p.config as MetricPanelConfig).viz).toBe('bar');
+  });
+
+  it('metric: line/verilmemiş viz alanı YAZMAZ — eski config şekli korunur', () => {
+    expect((queryToPanel(metric, { viz: 'line' })!.config as MetricPanelConfig).viz)
+      .toBeUndefined();
+    expect((queryToPanel(metric)!.config as MetricPanelConfig).viz).toBeUndefined();
+  });
+
+  it('iki kaynak AYNI eşlemeyi kullanır — her ExploreViz için', () => {
+    for (const v of EXPLORE_VIZ) {
+      const m = (queryToPanel(metric, { viz: v })!.config as MetricPanelConfig).viz;
+      const s = (queryToPanel(span, { viz: v })!.config as SpanMetricPanelConfig).viz;
+      expect(m, `viz=${v}`).toBe(s);
+      expect(m, `viz=${v}`).toBe(vizToPanel(v));
+    }
   });
 });

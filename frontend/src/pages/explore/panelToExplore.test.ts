@@ -234,7 +234,33 @@ describe('panelToBuilder — viz round-trip', () => {
     }
   });
 
-  it('metric panels stay line — MetricPanelConfig has no viz slot', () => {
+  // v0.9.790 — metric panelleri de markı geri getirir. Bu blok v0.9.786'da
+  // "metric panels stay line" diye sabitlenmişti (MetricPanelConfig'de viz
+  // alanı yoktu); alan geldiğine göre dönüş bileti spanmetric'le aynı satır
+  // setinden geçmeli.
+  for (const [cfgViz, want] of rows) {
+    it(`metric viz=${cfgViz ?? 'undefined'} opens Explore as ${want}`, () => {
+      const st = panelToBuilder(mk({
+        type: 'metric',
+        config: { metricName: 'cpu.util', agg: 'avg', ...(cfgViz ? { viz: cfgViz } : {}) },
+      }), undefined);
+      expect(st!.viz).toBe(want);
+    });
+  }
+
+  it('metric pin → open round-trips the mark for every time-series viz', () => {
+    const q = { ...blankQuery('A', 'metric'), metric: 'cpu.util', agg: 'avg' };
+    for (const v of ['line', 'bars', 'area', 'stacked'] as const) {
+      const panel = queryToPanel(q, { viz: v })!;
+      expect(panel.type).toBe('metric');
+      expect(panelToBuilder(panel, undefined)!.viz, `viz=${v}`).toBe(v);
+    }
+  });
+
+  // Alanın YOKLUĞU hâlâ çizgi demek: v0.9.790 öncesi kaydedilmiş her metric
+  // paneli viz taşımıyor ve onları bars'a kaydırmak sessiz bir görsel
+  // regresyon olurdu.
+  it('viz alanı olmayan ESKİ metric paneli çizgi kalır', () => {
     const st = panelToBuilder(mk({
       type: 'metric', config: { metricName: 'cpu.util', agg: 'avg' },
     }), undefined);

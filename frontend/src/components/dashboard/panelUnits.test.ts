@@ -25,8 +25,12 @@ describe('PanelRenderer — DashboardViz birim taşır', () => {
   // (bileşen yeniden adlandırılıp kapı sessizce boşa düşmesin).
   const sites = src.match(/<DashboardViz\b[^>]*\/>/g) ?? [];
 
-  it('en az iki çağrı yeri var (promql + spanmetric)', () => {
-    expect(sites.length).toBeGreaterThanOrEqual(2);
+  // v0.9.790 — üçüncü çağrı yeri geldi (metric paneli de viz'e göre
+  // dallanıyor). Alt sınır onunla birlikte yükseldi: kapı "en az iki" de
+  // kalsaydı, metric dalının dispatch'i sessizce geri alındığında bu dosya
+  // hâlâ yeşil kalırdı.
+  it('en az üç çağrı yeri var (promql + spanmetric + metric)', () => {
+    expect(sites.length).toBeGreaterThanOrEqual(3);
   });
 
   it('HER çağrı yeri unit prop geçirir', () => {

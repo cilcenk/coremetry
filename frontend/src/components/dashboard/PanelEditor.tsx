@@ -283,6 +283,22 @@ function MetricFields({ cfg, onChange }: {
           </Field>
         </>
       )}
+      {/* v0.9.790 — mark seçimi (SpanMetricFields'in ikizi). Builder/PromQL
+          koşulunun DIŞINDA duruyor çünkü MetricPanel'in çizim dalı iki modda
+          da aynı: viz'i yalnız builder'a koymak, PromQL'e geçen operatörün
+          config'inde okunan ama düzenlenemeyen bir alan bırakırdı. */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+        <Field label="Visualization">
+          <select value={cfg.viz ?? 'line'}
+            onChange={e => update('viz', e.target.value as MetricPanelConfig['viz'])}>
+            <option value="line">Line</option>
+            <option value="bar">Bar</option>
+            <option value="stacked-bar">Stacked bar</option>
+            <option value="area">Area</option>
+            <option value="stacked-area">Stacked area</option>
+          </select>
+        </Field>
+      </div>
     </>
   );
 }

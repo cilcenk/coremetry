@@ -845,7 +845,7 @@ var dbTopCallersSQL = `
 	       service_name,
 	       countMerge(span_count_state) AS c
 	FROM db_caller_summary_5m
-	WHERE time_bucket >= ? AND time_bucket <= ?
+	WHERE time_bucket >= ? AND time_bucket < ?
 	GROUP BY db_system, instance, db_name, service_name
 	ORDER BY c DESC
 	LIMIT ` + strconv.Itoa(dbTopCallersPerRow) + ` BY db_system, instance, db_name
@@ -885,6 +885,18 @@ func (s *Store) GetDatabases(ctx context.Context, q DatabasesQuery) (*DatabasesO
 	// stopgap from ~5-10M-row GROUP BY to ~thousands of rows of
 	// merged state — typically sub-100ms vs the prior 1-5s on
 	// wider windows.
+	//
+	// v0.9.823 — ÜST SINIR `< to`, `<= to` DEĞİL. Alt sınır aşağı
+	// yuvarlanıyor (kovalar BAŞLANGIÇLARIYLA etiketli, hizalanmamış
+	// `>= from` baştaki kısmi kovayı elerdi); üst sınırda ise aynı
+	// etiketleme TERS yönde ısırıyordu: `<= to`, başlangıcı tam `to`
+	// olan kovayı da alıyordu ve o kova [to, to+5dk) aralığını, yani
+	// pencerenin TAMAMEN dışını sayıyordu. Satır toplamlarına beş
+	// dakikalık fazladan trafik biniyordu. Aynı sınır bu turdaki üst
+	// çağıran okumasında da (dbTopCallersSQL) geçerli — iki okuma
+	// AYNI (bucketStart, to) çiftiyle koşuyor, ayrışırlarsa çağıran
+	// sıralaması satır toplamının saymadığı bir kovayı sayardı.
+	// GetDatabasesSeries'in v0.9.820'deki sınırıyla aynı sözleşme.
 	bucketStart := from.Truncate(5 * time.Minute)
 	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT db_system,
@@ -898,7 +910,7 @@ func (s *Store) GetDatabases(ctx context.Context, q DatabasesQuery) (*DatabasesO
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		GROUP BY db_system, instance, db_name
 		ORDER BY span_count DESC
 		LIMIT 5000

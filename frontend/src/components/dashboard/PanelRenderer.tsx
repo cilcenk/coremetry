@@ -684,10 +684,14 @@ function SpanMetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick
       {series === undefined ? <PanelLoading height={boxPx} />
         : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
         : viz === 'line'
-          // Madde 4 sweep — cfg.unit MLC'ye iner. DashboardViz (SVG bar/
-          // area) kapsam DIŞI bırakıldı (madde 13 notu — ayrı SVG motoru).
+          // Madde 4 sweep — cfg.unit MLC'ye iner. DashboardViz o taramada
+          // "ayrı SVG motoru" diye kapsam dışı bırakılmıştı (madde 13
+          // notu) ama motor farkı bir GEREKÇE değildi: bileşen unit'i
+          // zaten alıyor ve hem y-ekseni etiketlerinde hem hover
+          // okumasında fmtSmart'a veriyor. Geçilmeyince aynı panelin
+          // çizgi hali "142 ms", bar hali çıplak "142" yazıyordu.
           ? <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-s-${cfg.agg}-${cfg.groupBy ?? ''}`} height={boxPx} />
-          : <DashboardViz series={series} viz={viz} height={boxPx} />}
+          : <DashboardViz series={series} viz={viz} height={boxPx} unit={cfg.unit} />}
     </div>
   );
 }

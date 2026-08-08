@@ -79,7 +79,7 @@ func TestApplyMsgKindSplit(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var r MessagingInstance
 			for _, f := range tc.folds {
-				applyMsgKindSplit(&r, f.kind, f.calls, f.errs)
+				applyMsgKindSplit(&r, f.kind, f.calls, f.errs, 0)
 			}
 			if r.ProduceCount != tc.wantProduce || r.ProduceErrors != tc.wantProduceErrs ||
 				r.ConsumeCount != tc.wantConsume || r.ConsumeErrors != tc.wantConsumeErrs {
@@ -89,4 +89,58 @@ func TestApplyMsgKindSplit(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestApplyMsgKindSplitP95 — v0.9.816. Gecikme ayrışması: üretim p95
+// (publish) ile işleme p95 (process) AYRI kovalara iner.
+//
+// SAYILAR TOPLANIR, QUANTİLE TOPLANMAZ. Sorgu (system, cluster,
+// destination, kind) ile grupladığı için satır başına tek p95 gelir;
+// fold yine de MAX alır, çünkü o değişmez bir gün bozulursa (GROUP BY
+// genişler) keyfi bir "son yazan" değil GÖRÜLEN EN KÖTÜSÜ raporlanmalı:
+// gecikme kolonunun sessizce iyimser olması, kötümser olmasından
+// tehlikelidir.
+func TestApplyMsgKindSplitP95(t *testing.T) {
+	t.Run("üretim ve işleme AYRI kovalara iner", func(t *testing.T) {
+		var r MessagingInstance
+		applyMsgKindSplit(&r, "producer", 100, 0, 12.5)
+		applyMsgKindSplit(&r, "consumer", 100, 0, 480)
+		if r.ProduceP95Ms != 12.5 {
+			t.Errorf("ProduceP95Ms = %v, beklenen 12.5", r.ProduceP95Ms)
+		}
+		if r.ConsumeP95Ms != 480 {
+			t.Errorf("ConsumeP95Ms = %v, beklenen 480", r.ConsumeP95Ms)
+		}
+		// Sızma olmamalı: hızlı üretici yavaş tüketiciyi maskelememeli.
+		if r.ProduceP95Ms > r.ConsumeP95Ms {
+			t.Error("kovalar karıştı — ayrışmanın tüm sebebi bu ayrım")
+		}
+	})
+
+	t.Run("tekrarlı fold EN KÖTÜYÜ tutar (quantile ortalanamaz)", func(t *testing.T) {
+		var r MessagingInstance
+		applyMsgKindSplit(&r, "consumer", 10, 0, 900)
+		applyMsgKindSplit(&r, "consumer", 10, 0, 300)
+		if r.ConsumeP95Ms != 900 {
+			t.Errorf("ConsumeP95Ms = %v, beklenen 900 — sonraki düşük değer YÜKSEĞİ EZMEMELİ", r.ConsumeP95Ms)
+		}
+	})
+
+	t.Run("ayrım dışı kind p95 taşımaz", func(t *testing.T) {
+		var r MessagingInstance
+		applyMsgKindSplit(&r, "client", 10, 0, 5000)
+		applyMsgKindSplit(&r, "", 10, 0, 5000)
+		if r.ProduceP95Ms != 0 || r.ConsumeP95Ms != 0 {
+			t.Errorf("broker chatter'ı p95 kovalarına sızdı: produce=%v consume=%v",
+				r.ProduceP95Ms, r.ConsumeP95Ms)
+		}
+	})
+
+	t.Run("ölçüm yok → 0 kalır (omitempty ile alan düşer, FE '—' basar)", func(t *testing.T) {
+		var r MessagingInstance
+		applyMsgKindSplit(&r, "producer", 100, 0, 0)
+		if r.ProduceP95Ms != 0 {
+			t.Errorf("ProduceP95Ms = %v, beklenen 0", r.ProduceP95Ms)
+		}
+	})
 }

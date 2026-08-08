@@ -58,6 +58,10 @@ export interface DepRow {
   produceErrors?: number;
   consumeErrors?: number;
   p50DurationMs?: number;
+  // v0.9.816 — kind'a ayrışmış p95: publish (üretim) ve process
+  // (işleme) ayrı kolonlar. undefined = ölçüm yok → '—'.
+  produceP95Ms?: number;
+  consumeP95Ms?: number;
   // v0.9.259 — p95 rode the /api/messaging payload from the day the
   // MV shipped (dependencies.go:863, index 2 of the 3-wide state) and
   // was declared in types.ts, but DepRow never carried it so nothing
@@ -231,6 +235,15 @@ export function DependenciesTable({
           // hepsini kararlı bırakır ve sıra sunucudan gelen spanCount DESC
           // olarak kalır (brief'teki "prior yoksa spanCount DESC'e düş").
           { id: 'p99delta', label: 'P99 Δ', sortValue: (r: DepRow) => msgP99Delta(r.p99DurationMs, r.priorP99Ms), numeric: true, naturalDir: 'desc', width: 92 } as DataTableColumn<DepRow>,
+          // v0.9.816 — GECİKME AYRIŞMASI. Aşağıdaki tek P95 kolonu
+          // üretici + tüketici span'lerini TEK dağılımda topluyor:
+          // publish (broker'a yazma, hızlı) ile process (iş mantığı,
+          // yavaş) aynı sayıda eriyor ve "bu topic yavaş" deyip NEREDE
+          // yavaş olduğunu söylemiyor. Bu ikisi soruyu bitiriyor.
+          // sortValue null → ölçümsüz satırlar en alta (0 DEĞİL: 0 ms
+          // "anında" diye okunurdu, v0.9.262 dersi).
+          { id: 'producep95', label: 'Üretim P95', sortValue: (r: DepRow) => r.produceP95Ms ?? null, numeric: true, naturalDir: 'desc', width: 104 } as DataTableColumn<DepRow>,
+          { id: 'consumep95', label: 'İşleme P95', sortValue: (r: DepRow) => r.consumeP95Ms ?? null, numeric: true, naturalDir: 'desc', width: 104 } as DataTableColumn<DepRow>,
         ]
       : []),
     { id: 'errorRate', label: 'Err %', sortValue: r => r.errorRate, numeric: true, naturalDir: NATURAL.errorRate, width: 96 },
@@ -557,6 +570,12 @@ export function DependenciesTable({
                           compare={compare} what="consume" />
                         <BalanceCell produce={r.produceCount} consume={r.consumeCount} />
                         <P99DeltaCell cur={r.p99DurationMs} prior={r.priorP99Ms} compare={compare} />
+                        {/* v0.9.816 — ayrışmış p95. '—' iki ayrı yokluğu
+                            kapsar: bu pencerede o kind'da span yok, ya da
+                            payload eski (rolling deploy). İkisi de "0 ms"
+                            DEĞİL. */}
+                        <KindP95Cell v={r.produceP95Ms} what="üretim (publish)" />
+                        <KindP95Cell v={r.consumeP95Ms} what="işleme (process)" />
                       </>
                     )}
                     <td className="mono" style={{ textAlign: 'right' }}>
@@ -687,6 +706,29 @@ function KindRateCell({ perMin, count, errors, priorPerMin, compare, what }: {
         </span>
       )}
       {compare && <TrendDelta cur={perMin ?? 0} prior={priorPerMin} kind="neutral" />}
+    </td>
+  );
+}
+
+// KindP95Cell — kind'a ayrışmış p95 hücresi (v0.9.816).
+//
+// undefined → '—', ASLA "0.0ms". İki ayrı yokluk aynı işarete iner
+// (bu pencerede o kind'da span yok / payload eski bir backend'den) ve
+// ikisi de "anında tamamlandı" demek değil — LatencyCell'in v0.9.262'de
+// öğrendiği ders, yeni kolonlarda tekrarlanmasın.
+function KindP95Cell({ v, what }: { v?: number; what: string }) {
+  if (v === undefined || v === null || !(v > 0)) {
+    return (
+      <td className="mono" style={{ textAlign: 'right' }}>
+        <span style={{ color: 'var(--text3)' }}
+          title={`Bu pencerede ${what} span'i ölçülmedi.`}>—</span>
+      </td>
+    );
+  }
+  return (
+    <td className="mono" style={{ textAlign: 'right' }}
+      title={`${what} span süresi, p95`}>
+      {v.toFixed(1)}ms
     </td>
   );
 }

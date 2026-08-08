@@ -105,6 +105,23 @@ type MessagingInstance struct {
 	ConsumeCount  uint64 `json:"consumeCount"`
 	ProduceErrors uint64 `json:"produceErrors"`
 	ConsumeErrors uint64 `json:"consumeErrors"`
+	// v0.9.816 — GECİKME AYRIŞMASI. Satırın tek P95'i üretici ve tüketici
+	// span'lerini TEK dağılımda topluyordu, oysa bunlar farklı işler:
+	// publish (broker'a yazma, tipik olarak hızlı) ile process (mesajı
+	// işleme, iş mantığının kendisi). Karışık p95, yavaş bir tüketiciyi
+	// hızlı üreticinin içinde saklıyordu — "bu topic yavaş" deyip nerede
+	// yavaş olduğunu söylemiyordu.
+	//
+	// Kaynak messaging_caller_summary_5m'in ZATEN taşıdığı duration_q_state
+	// (kind boyutu o MV'de var). Ana MV'ye DOKUNULMADI ve ikinci bir tur
+	// atılmadı: bu iki alan, kind ayrımını okuyan MEVCUT sorgunun aynı
+	// merge'ünden projekte ediliyor. Ölçüm (24s pencere, query_log medyanı,
+	// n=7): tarama satırı BİREBİR AYNI (67.470), süre 18ms → 27ms.
+	//
+	// omitempty: 0 ms bir ölçüm değil, ölçüm YOKLUĞUDUR — alan düşer ve
+	// frontend '—' basar (rolling deploy'da eski payload da böyle davranır).
+	ProduceP95Ms float64 `json:"produceP95Ms,omitempty"`
+	ConsumeP95Ms float64 `json:"consumeP95Ms,omitempty"`
 	// Prior* — same rollup over the immediately-preceding
 	// equal-length window. Populated only when /api/messaging runs
 	// with compare=prior (v0.8.364; the endpoints v0.5.404
@@ -1018,19 +1035,34 @@ func (s *Store) GetMessagingRollup(ctx context.Context, from, to time.Time) ([]M
 	return s.getMessaging(ctx, from, to, false)
 }
 
-// applyMsgKindSplit folds one (kind, calls, errors) rollup row from
+// applyMsgKindSplit folds one (kind, calls, errors, p95) rollup row from
 // messaging_caller_summary_5m onto its overview row. Producer /
 // consumer land in the split buckets; every other span kind
 // (client/server/internal broker chatter) intentionally counts
 // toward SpanCount only. Pure — table-driven tested (v0.8.364).
-func applyMsgKindSplit(r *MessagingInstance, kind string, calls, errs uint64) {
+//
+// v0.9.816 — p95 katıldı. SAYILAR TOPLANIR, QUANTİLE TOPLANMAZ: iki
+// TDigest'in p95'i toplanamaz da ortalanamaz da. Sorgu (msg_system,
+// cluster, destination, kind) ile GROUP BY yaptığı için satır başına
+// tek değer gelir ve atama yeterlidir; yine de burada MAX alınıyor.
+// Gerekçe: o değişmez bir gün bozulursa (GROUP BY genişler, iki MV
+// birleşir) keyfi bir "son yazan kazanır" değeri değil, GÖRÜLEN EN
+// KÖTÜSÜ raporlanır. Gecikme kolonunun sessizce İYİMSER olması, sessizce
+// kötümser olmasından tehlikelidir.
+func applyMsgKindSplit(r *MessagingInstance, kind string, calls, errs uint64, p95Ms float64) {
 	switch kind {
 	case "producer":
 		r.ProduceCount += calls
 		r.ProduceErrors += errs
+		if p95Ms > r.ProduceP95Ms {
+			r.ProduceP95Ms = p95Ms
+		}
 	case "consumer":
 		r.ConsumeCount += calls
 		r.ConsumeErrors += errs
+		if p95Ms > r.ConsumeP95Ms {
+			r.ConsumeP95Ms = p95Ms
+		}
 	}
 }
 
@@ -1113,13 +1145,18 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 	// it onto the overview rows. Rows outside the top-200 overview
 	// simply don't match the index and are dropped. Failure is
 	// non-fatal — the split columns render as zero.
+	// v0.9.816 — p95 AYNI merge'den projekte edildi. duration_q_state
+	// quantilesTDigestState(0.5, 0.95, 0.99); eleman 2 = p95. Ek TARAMA
+	// yok (ölçüm: read_rows birebir aynı), ek TUR hiç yok — kolonlar
+	// zaten çalışan bu sorgunun içinde doğuyor. Ana MV'ye dokunulmadı.
 	kRows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT msg_system,
 		       cluster,
 		       destination,
 		       kind,
 		       countMerge(span_count_state)  AS c,
-		       countMerge(error_count_state) AS e
+		       countMerge(error_count_state) AS e,
+		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms
 		FROM messaging_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
 		  AND kind IN ('producer', 'consumer')
@@ -1131,11 +1168,13 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 		for kRows.Next() {
 			var system, cluster, destination, kind string
 			var c, e uint64
-			if err := kRows.Scan(&system, &cluster, &destination, &kind, &c, &e); err != nil {
+			var p95 *float64
+			if err := kRows.Scan(&system, &cluster, &destination, &kind, &c, &e, &p95); err != nil {
 				continue
 			}
 			if i, ok := idxByKey[key{system, cluster, destination}]; ok {
-				applyMsgKindSplit(&out[i], kind, c, e)
+				// safeF — NaN/Inf JSON'a çıkmadan temizlenir (v0.5.301).
+				applyMsgKindSplit(&out[i], kind, c, e, safeF(p95))
 			}
 		}
 		kRows.Close()

@@ -637,6 +637,14 @@ export interface MessagingInstance {
   consumeCount?: number;
   produceErrors?: number;
   consumeErrors?: number;
+  // v0.9.816 — gecikme ayrışması. Satırın tek P95'i üretici ve tüketici
+  // span'lerini TEK dağılımda topluyordu; bunlar farklı işler (publish
+  // vs process) ve karışık p95 yavaş tüketiciyi hızlı üreticinin içinde
+  // saklıyordu. Kaynak messaging_caller_summary_5m'in zaten taşıdığı
+  // TDigest state — ana MV'ye dokunulmadı, ek tur atılmadı.
+  // omitempty: 0 ms ölçüm değil ölçüm YOKLUĞU → alan düşer, hücre '—'.
+  produceP95Ms?: number;
+  consumeP95Ms?: number;
   // Prior equal-length window — present only with compare=prior.
   priorSpanCount?: number;
   priorErrorCount?: number;

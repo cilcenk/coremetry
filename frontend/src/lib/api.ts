@@ -958,6 +958,14 @@ export const api = {
   messaging: (fromNs: number, toNs: number, compare?: 'prior') =>
     get<import('./types').MessagingOverview | null>(
       `/api/messaging?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`),
+  // v0.9.814 — /messaging KPI şeridi + üç grafik. system/q TABLODAKİ
+  // filtrelerin ta kendisi (?msys= / ?q=), böylece şeritteki sayı ile
+  // tablodaki satırlar aynı kümeyi anlatır.
+  messagingSeries: (fromNs: number, toNs: number, system?: string, q?: string) =>
+    get<import('./types').MessagingSeries | null>(
+      `/api/messaging/series?from=${fromNs}&to=${toNs}`
+      + (system ? `&system=${encodeURIComponent(system)}` : '')
+      + (q ? `&q=${encodeURIComponent(q)}` : '')),
   // /external overview — one row per third-party destination in the
   // window, from topology_edges_5m external edges (v0.8.446, Wave 3 A1).
   external: (fromNs: number, toNs: number) =>

@@ -661,6 +661,42 @@ export interface MessagingOverview {
   rowLimit?: number;
 }
 
+// MessagingSeriesPoint / MessagingSeries — /api/messaging/series
+// (v0.9.814). Sayfanın KPI şeridi + üç grafiği tek çağrıdan beslenir.
+//
+// KPI alanları serinin KENDİ satırlarından türetilir (sunucuda), yani
+// şerit ile grafiklerin farklı sayı göstermesi imkânsız. errorRate
+// pencere TOPLAMLARINDAN gelir, kova oranlarının ortalamasından değil.
+//
+// E2E (produce→consume) serisi bilerek YOK: o zincir destination başına
+// sınırlandığında dürüst, sayfa geneline açıldığında keyfi bir 50k
+// örneklemi olurdu (ölçüm + gerekçe: internal/chstore/messaging_series.go
+// başlığı). Üçüncü grafik ÖLÇÜLEN span gecikmesi — tablodaki P50/P95
+// kolonlarıyla aynı TDigest state'i.
+export interface MessagingSeriesPoint {
+  timeS: number;
+  // spanCount TÜM messaging span'lerini sayar; produce/consume yalnız
+  // producer/consumer kind'larını — broker chatter'ı toplamda var,
+  // ayrımda yok.
+  spanCount: number;
+  errorCount: number;
+  produceCount: number;
+  consumeCount: number;
+  errorRate: number;
+  p50Ms: number;
+  p95Ms: number;
+}
+
+export interface MessagingSeries {
+  points: MessagingSeriesPoint[];
+  bucketSeconds: number;
+  producePerMin: number;
+  consumePerMin: number;
+  errorRate: number;
+  spanCount: number;
+  errorCount: number;
+}
+
 // BreakdownPoint — one bucket of the Elastic-APM-style "span
 // breakdown" stacked-area chart. Cumulative ms of duration
 // grouped by span category for the service detail page.

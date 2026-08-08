@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
@@ -10,6 +10,7 @@ import { api } from '@/lib/api';
 import { timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeDestinationParam, decodeDestinationParam } from './messaging/destinationParam';
+import { MessagingSummary } from './messaging/MessagingSummary';
 import type { MessagingInstance, MessagingOverview } from '@/lib/types';
 
 // /messaging — top-level queue / topic technologies overview.
@@ -167,6 +168,13 @@ export default function MessagingPage() {
         {/* v0.9.405 — URL-state taşıyan sayfa görünüm kaydedebilmeli
             (saved_views şeması hazır; Endpoints emsali). */}
         <SavedViewsBar page="messaging" />
+        {/* v0.9.814 — KPI şeridi + üç grafik. Tablonun URL filtrelerini
+            (?msys= / ?q=) AYNEN okur: şeritteki sayı ile tablodaki
+            satırlar aynı kümeyi anlatmalı, yoksa aynı sayfada iki farklı
+            "üretim hızı" olur. Tablo boşken de kurulur — grafiğin boş
+            durumu "bu pencerede trafik yok" bilgisinin kendisidir. */}
+        <MessagingSummary fromNs={from} toNs={to}
+          system={params.get('msys') ?? ''} search={params.get('q') ?? ''} />
         {q.isPending && <TableSkeleton rows={8} cols={9} wideFirst />}
         {q.isError && (
           <Empty icon="⚠" title="Couldn't load messaging overview">

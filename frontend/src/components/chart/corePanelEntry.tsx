@@ -43,12 +43,13 @@ export interface CorePanelMultiItem {
   // İlk tüketici Explore'un formül paneli — "bu seri ölçülmedi, HESAPLANDI"
   // ayrımı QueryPanel rozetinde (kesikli kenarlık) zaten kurulu bir dil.
   dashed?: boolean;
-  // v0.9.798 — bu item VURGULU çizilsin (2.5px + tema accent). dashed ile
-  // aynı kablo; ilk tüketici Overview'ın "Toplam" serisi.
-  emphasis?: boolean;
+  // v0.9.799 — emphasis KALDIRILDI (v0.9.798'de eklenmişti). Tek
+  // tüketicisi Overview'ın "Toplam" item'ıydı; operatör o çizgiyi büyük
+  // grafiklerden geri aldırınca kanal tüketicisiz kaldı ve CorePanel
+  // tarafıyla birlikte silindi — yarım kablo bırakmıyoruz.
 }
 
-export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'roles' | 'dashed' | 'emphasis'> {
+export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'roles' | 'dashed'> {
   items: CorePanelMultiItem[];
   unit?: string;
   // v0.9.764 — önceki-dönem hayaleti: zamanları ÇAĞIRAN kaydırmış
@@ -92,13 +93,8 @@ export function CorePanelMulti({
   // ikinci geçiş ghost/normal item sayılarını yeniden türetmek zorunda
   // kalırdı; iki sayaç = bir gün kayan hizalama).
   const dashed: boolean[] = [];
-  // v0.9.798 — vurgu işaretleri de AYNI geçişte toplanır (dashed'in
-  // gerekçesi birebir: ikinci bir geçiş item sayılarını yeniden türetmek
-  // zorunda kalır, iki sayaç = bir gün kayan hizalama).
-  const emphasis: boolean[] = [];
   let anyEx = false;
   let anyDash = false;
-  let anyEmph = false;
   for (const it of items) {
     const fs = spanSeriesToFrames(it.series, { unit, name: it.name });
     frames.push(...fs);
@@ -109,8 +105,6 @@ export function CorePanelMulti({
       if (i === 0 && it.exemplars?.length) anyEx = true;
       dashed.push(!!it.dashed);
       if (it.dashed) anyDash = true;
-      emphasis.push(!!it.emphasis);
-      if (it.emphasis) anyEmph = true;
     }
   }
   for (const g of ghostItems ?? []) {
@@ -121,13 +115,9 @@ export function CorePanelMulti({
       exemplars.push(undefined);
       dashed.push(true);
       anyDash = true;
-      // Hayalet ASLA vurgulu değil: soluk+kesikli olmasının tek sebebi
-      // geri planda kalması.
-      emphasis.push(false);
     }
   }
   return <CorePanel {...rest} roles={roles} exemplars={anyEx ? exemplars : undefined}
     dashed={anyDash ? dashed : undefined}
-    emphasis={anyEmph ? emphasis : undefined}
     data={{ state: 'ready', frames }} />;
 }

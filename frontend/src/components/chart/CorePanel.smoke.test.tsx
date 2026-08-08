@@ -78,12 +78,21 @@ vi.mock('@grafana/ui', async (importOriginal) => {
   return {
     ...actual,
     UPlotChart: ({ config, width, height, plotRef }: {
-      config: { getConfig: () => { series?: unknown[]; bands?: unknown[] } };
+      config: { getConfig: () => {
+        series?: unknown[]; bands?: unknown[];
+        axes?: { scale?: string; size?: unknown }[];
+        cursor?: { points?: { size?: unknown; width?: unknown; show?: unknown } };
+      } };
       width: number; height: number;
       plotRef?: (u: unknown) => void;
     }) => {
       const cfg = config.getConfig();
       const n = (cfg.series ?? []).length;
+      // v0.9.799 — eksen oluğu + imleç noktası KURULAN config'ten okunur:
+      // kaynak taraması "satır duruyor mu" der, bu "builder gerçekten
+      // üretti mi" der (iki kapı ayrı sınıfları yakalar).
+      const yAxis = (cfg.axes ?? []).find(a => a.scale === 'y');
+      const pts = cfg.cursor?.points ?? {};
       // SAHTE uPlot örneği: yalnız CorePanel'in dokunduğu yüzey (series[],
       // cursor, setSeries, redraw). Odak efektinin ALPHA/GENİŞLİK yazdığını
       // gerçekten ölçebilmemizi sağlar — stub'sız bir testte plotRef hiç
@@ -103,6 +112,8 @@ vi.mock('@grafana/ui', async (importOriginal) => {
         <div data-testid="uplot"
           data-series={String(n)}
           data-bands={String((cfg.bands ?? []).length)}
+          data-yaxis-size={String(yAxis?.size ?? '')}
+          data-cursor-pt={`${String(pts.size ?? '')}/${String(pts.width ?? '')}/${String(pts.show ?? '')}`}
           data-w={String(width)} data-h={String(height)} />
       );
     },
@@ -284,6 +295,25 @@ describe('CorePanel render duman testi (UPlotChart vi.mock ile stub)', () => {
       data={{ state: 'ready', frames: TWO_SERIES }} />);
     expect(plot().series[1]!.alpha).toBe(1);
     expect(plot().series[2]!.alpha).toBe(1);
+  });
+
+  // ── v0.9.799 — eksen oluğu + imleç noktaları (operatör-raporlu) ────────
+  it('y ekseni oluk genişliği SAYISAL gelir — Grafana otomatiğine bırakılmaz', () => {
+    const el = render(<CorePanel title="L" storageKey="smoke-gutter"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    const size = el.querySelector('[data-testid="uplot"]')!.getAttribute('data-yaxis-size');
+    // jsdom'da canvas ölçmez → kaba tahmine düşer; kapının derdi ZATEN
+    // mutlak piksel değil, oluğun HESAPLANMIŞ olması.
+    expect(Number(size), 'eksen size verilmedi').toBeGreaterThan(0);
+  });
+
+  it('imleç noktası boyutu SAYI, show hiç yazılmaz (uPlot tuzağı)', () => {
+    const el = render(<CorePanel title="L" storageKey="smoke-cursor"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    const pt = el.querySelector('[data-testid="uplot"]')!.getAttribute('data-cursor-pt');
+    // size/width/show — show BOŞ olmalı: `show: true` yazmak uPlot'ta
+    // noktaları tamamen kapatır (fnOrSelf(true) HTMLElement döndürmez).
+    expect(pt).toBe('10/2/');
   });
 
   it('iç lejant satırı hover\'ı da odak kanalını sürer', () => {

@@ -86,20 +86,10 @@ export function topRoutesByArea(
 // de, ve yanlış ölçekli bir grafik ölçeksiz olandan kötüdür — operatör
 // ona güvenir (v0.9.676'da silinen LatencyScaleToMs'in de gerekçesiydi;
 // karar burada yaşamaya devam ediyor, ölçekleme değil ETİKETLEME olarak).
-// withTotalPrefix — kırpma notuna "Toplam + " öneki (v0.9.798).
+// v0.9.799 — withTotalPrefix SİLİNDİ. Tek tüketicisi panelin "Toplam"
+// çizgisiydi; çizgi kalkınca "Toplam + 10 seri · +N daha" öneki operatöre
+// olmayan bir çizgiyi sayardı. Geriye-uyum şimi bırakmıyoruz (CLAUDE.md).
 //
-// Panelde artık N route serisinin YANINDA bir de "Toplam" çizgisi var.
-// Not "10 seri · +55 daha" derse operatör çizilen 11 çizgiyi sayıp
-// notu yalancı bulur — ve haklıdır: Toplam bir route DEĞİL, kırpmanın
-// dışında duran ayrı bir ölçüm.
-//
-// Taban not YOKKEN (kırpma yok) önek de yok: lejant zaten seri sayısını
-// yazıyor, "Toplam +" tek başına gürültü.
-export function withTotalPrefix(note: string | null, hasTotal: boolean): string | null {
-  if (!note || !hasTotal) return note;
-  return `Toplam + ${note}`;
-}
-
 // metricAvgToMs — metrik ORTALAMASINI KPI karosunun milisaniyesine
 // çevirir (v0.9.798). Bilinmeyen birimde null → çağıran span'e düşer.
 //

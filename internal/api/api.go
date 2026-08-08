@@ -2924,6 +2924,20 @@ func endpointsPool(limit int) (pool int, capped bool) {
 	return pool, pool < want
 }
 
+// endpointsPoolCapped — şeridi basıp basmayacağımıza karar veren SAF
+// yüklem. İKİ koşul birden gerekir:
+//
+//	want   — havuz tasarım niyetinden (limit×5) kısıldı, VE
+//	filled — havuz gerçekten doldu (dönen aday sayısı havuz kadar).
+//
+// İkincisi olmadan uyarı yalan olur: 26 endpoint'lik bir kurulumda
+// evrenin tamamı havuza sığar, dışarıda kalan hiçbir şey yoktur ve
+// "liste eksik olabilir" demek, bu sürümün kaldırdığı sessiz yanlışın
+// ta kendisidir — sadece ters yönde.
+func endpointsPoolCapped(pool int, want bool, gotRows int) bool {
+	return want && gotRows >= pool
+}
+
 // endpointsListResponse — /api/endpoints zarfı (v0.9.812). Liste
 // eskiden çıplak dizi dönüyordu; p99Delta sıralamasının "evren = en çok
 // çağrılan ilk N" gerçeğini taşıyacak bir yer yoktu, UI da bunu
@@ -3043,7 +3057,7 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 		resp := endpointsListResponse{Rows: rows}
 		if deltaSort {
 			resp.Pool = pool
-			resp.PoolCapped = poolWantCapped && len(rows) >= pool
+			resp.PoolCapped = endpointsPoolCapped(pool, poolWantCapped, len(rows))
 		}
 		if !compare || len(rows) == 0 {
 			return resp, nil

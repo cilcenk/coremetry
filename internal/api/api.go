@@ -35,6 +35,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/cluster"
 	"github.com/cilcenk/coremetry/internal/config"
 	"github.com/cilcenk/coremetry/internal/copilot"
+	"github.com/cilcenk/coremetry/internal/devops"
 	"github.com/cilcenk/coremetry/internal/ldap"
 	"github.com/cilcenk/coremetry/internal/logstore"
 	"github.com/cilcenk/coremetry/internal/mcp"
@@ -145,6 +146,12 @@ type Server struct {
 	// /clusters yüzeyi + Settings → Clusters. nil ya da boş liste →
 	// rotalar 404/boş snapshot döner.
 	thanos *thanos.Service
+
+	// devops — Azure DevOps Server / TFS bağlantısı (v0.9.829).
+	// ŞİMDİLİK YALNIZ BAĞLANTI: ayar + kimlik + erişilebilirlik
+	// testi. Repo eşleme ve kod-inceleme sonraki dilim, dolayısıyla
+	// bu istemcinin henüz tüketicisi yok. nil-safe.
+	devops *devops.Service
 
 	// cluster — per-pod heartbeat / membership service (v0.5.253).
 	// Always non-nil when Set; the service degenerates to a single-
@@ -282,6 +289,14 @@ func (s *Server) SetTempo(t *tempo.Service) {
 // any cluster.
 func (s *Server) SetThanos(t *thanos.Service) {
 	s.thanos = t
+}
+
+// SetDevOps wires the Azure DevOps / TFS connection client
+// (v0.9.829). Always called from main() with a non-nil service;
+// Configured() reports whether the operator filled in a server
+// URL. Connection layer only — no reader consumes it yet.
+func (s *Server) SetDevOps(d *devops.Service) {
+	s.devops = d
 }
 
 // SetCluster wires the per-pod heartbeat / membership service
@@ -1075,6 +1090,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("PUT /api/settings/correlation-link", auth.RequireRole(auth.RoleAdmin, s.putCorrelationLinkSetting))
 	mux.HandleFunc("GET /api/settings/thanos", auth.RequireRole(auth.RoleAdmin, s.getThanosSettings))
 	mux.HandleFunc("PUT /api/settings/thanos", auth.RequireRole(auth.RoleAdmin, s.putThanosSettings))
+	// Azure DevOps / TFS bağlantısı (v0.9.829) — admin-only: kayıtlı
+	// PAT operatörün tüm koleksiyonunu okur. Test ucu kaydetmeden
+	// dener, sonucu {ok,error} olarak 200 ile döner.
+	mux.HandleFunc("GET  /api/settings/devops", auth.RequireRole(auth.RoleAdmin, s.getDevOpsSettings))
+	mux.HandleFunc("PUT  /api/settings/devops", auth.RequireRole(auth.RoleAdmin, s.putDevOpsSettings))
+	mux.HandleFunc("POST /api/settings/devops/test", auth.RequireRole(auth.RoleAdmin, s.testDevOpsSettings))
 	mux.HandleFunc("GET  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.getLogstoreESSettings))
 	mux.HandleFunc("PUT  /api/settings/logstore", auth.RequireRole(auth.RoleAdmin, s.putLogstoreESSettings))
 	mux.HandleFunc("POST /api/settings/logstore/test", auth.RequireRole(auth.RoleAdmin, s.testLogstoreESSettings))

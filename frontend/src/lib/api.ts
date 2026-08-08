@@ -18,6 +18,7 @@ import type {
   RetentionSpec,
   AISettings, AISettingsInput,
   TempoSnapshot, TempoSettingsInput,
+  DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
   ClusterPodsTrendResponse, ClusterNetworkTrendResponse, ClusterDeploymentsResponse, ClusterResourceTrendResponse, ClusterAlertsResponse, ClusterDeployTrendResponse, ClusterJMXTrendResponse, ClusterJMXMetricsResponse,
@@ -1170,6 +1171,25 @@ export const api = {
   putTempoSettings: (s: TempoSettingsInput) =>
     request<TempoSnapshot>(`/api/settings/tempo`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+
+  // Azure DevOps Server / TFS connection (v0.9.829, admin).
+  // Tempo contract: GET is masked (hasPat), PUT's empty `pat`
+  // preserves the stored one. The test endpoint probes the
+  // submitted values WITHOUT saving and answers 200 with
+  // {ok:false, error} on a failed connection — a failed probe is
+  // a successful answer to the operator's question, not an HTTP
+  // error.
+  getDevOpsSettings: () => get<DevOpsSnapshot>(`/api/settings/devops`),
+  putDevOpsSettings: (s: DevOpsSettingsInput) =>
+    request<DevOpsSnapshot>(`/api/settings/devops`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  testDevOpsSettings: (s: DevOpsSettingsInput) =>
+    request<DevOpsTestResult>(`/api/settings/devops/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),
   // Thanos multi-cluster config (v0.8.577, admin). Tempo contract:

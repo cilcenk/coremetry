@@ -30,6 +30,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/consumer"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/correlator"
+	"github.com/cilcenk/coremetry/internal/devops"
 	"github.com/cilcenk/coremetry/internal/elasticml"
 	"github.com/cilcenk/coremetry/internal/evaluator"
 	"github.com/cilcenk/coremetry/internal/ldap"
@@ -990,6 +991,15 @@ func main() {
 		log.Printf("[thanos] load persisted config: %v", err)
 	}
 	go thanosSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.9.829 — Azure DevOps Server / TFS bağlantısı (tempo/thanos
+	// simetriği). BİLİNÇLİ DAR: yalnız ayar + kimlik + bağlantı
+	// testi; repo eşleme ve kod-inceleme sonraki dilim, bu yüzden
+	// istemcinin şimdilik okuyucusu yok ve hiçbir davranış değişmiyor.
+	devopsSvc := devops.New()
+	if err := devopsSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[devops] load persisted config: %v", err)
+	}
+	go devopsSvc.StartConfigRefresh(ctx, store, 30*time.Second)
 	if tempoSvc.Configured() {
 		t := tempoSvc.Snapshot()
 		log.Printf("[tempo] external backend enabled (baseUrl=%s authType=%s orgId=%s)",
@@ -1129,6 +1139,7 @@ func main() {
 	srv.SetBackgroundConfig(cfg.Background)
 	srv.SetTempo(tempoSvc)
 	srv.SetThanos(thanosSvc)
+	srv.SetDevOps(devopsSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes
 	// to the Redis pub/sub channel so a putBranding /
 	// putTempoSettings / etc. on one pod evicts the cached

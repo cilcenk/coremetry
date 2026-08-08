@@ -92,18 +92,21 @@ export function queryToPanel(
   const step = opts?.step && opts.step > 0 ? opts.step : undefined;
   const groupBy = q.splitBy.length ? q.splitBy.join(',') : undefined;
 
+  // v0.9.790 — viz artık İKİ kaynakta da taşınır. v0.9.786 bunu bilerek
+  // spanmetric ile sınırlamıştı: MetricPanelConfig'in viz alanı yoktu ve
+  // MetricPanel koşulsuz çizgi çiziyordu, yani yazılan alan okunmayacaktı.
+  // O dilim (alan + renderer dispatch + editör select) gemide olduğu için
+  // sınır kalktı — tek eşleme, iki kaynak.
+  const viz = vizToPanel(opts?.viz);
+
   if (q.source === 'metric') {
-    // viz BURADA taşınmaz — MetricPanelConfig'in viz alanı YOK ve
-    // PanelRenderer'ın MetricPanel'i koşulsuz DashLineChart çiziyor
-    // (spanmetric ve promql panelleri dispatch ediyor, metric etmiyor).
-    // Okunmayacak bir alan yazmak "taşındı" yanılsaması üretirdi; gerçek
-    // düzeltme metric panelinin kendi viz desteğidir — ayrı dilim.
     const config: MetricPanelConfig = {
       metricName: q.metric,
       ...(q.scope ? { service: q.scope } : {}),
       ...(q.agg ? { agg: q.agg } : {}),
       ...(groupBy ? { groupBy } : {}),
       ...(step ? { step } : {}),
+      ...(viz ? { viz } : {}),
       ...(q.filters.length ? { filters: JSON.stringify(q.filters) } : {}),
     };
     return { id: rid(), type: 'metric', title, width: 2, config };
@@ -114,7 +117,6 @@ export function queryToPanel(
   const filters: FilterExpr[] = q.scope
     ? [{ k: 'service.name', op: '=', v: [q.scope] }, ...q.filters]
     : q.filters;
-  const viz = vizToPanel(opts?.viz);
   const config: SpanMetricPanelConfig = {
     agg: q.agg,
     ...(q.metric && q.metric !== 'duration_ms' ? { field: q.metric } : {}),

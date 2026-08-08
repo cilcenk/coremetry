@@ -2696,6 +2696,16 @@ export interface MetricPanelConfig {
   // vardı); Metrics builder'ın "Add to dashboard"u metriğin katalog
   // birimiyle doldurur. Yokluğu = birimsiz (eski davranış).
   unit?: string;
+  // v0.9.790 — çizim markı. SpanMetricPanelConfig.viz'in ikizi ve aynı
+  // sözleşme: YOKLUĞU = 'line'. `?:` bilinçli — bugüne dek kaydedilmiş her
+  // metric paneli viz alanı taşımıyor ve alansız config'in çizgi çizmesi
+  // gerekiyor; alan zorunlu olsaydı eski dashboard'lar decode edilemezdi.
+  //
+  // v0.9.786'da viz yalnız spanmetric için taşınmıştı çünkü BURASI yoktu:
+  // Explore'da bars/area seçip metric-kaynaklı bir sorguyu pinleyen operatör
+  // çizgi paneli alıyordu. Alan hem builder hem PromQL modunda geçerli —
+  // MetricPanel'in çizim dalı ikisinde de aynı (cfg.unit gibi).
+  viz?: PanelVizType;
 }
 export interface SpanMetricPanelConfig {
   agg: string;             // count | error_rate | p95 | …

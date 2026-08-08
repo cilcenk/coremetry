@@ -63,9 +63,13 @@ export function panelToBuilder(
       splitBy: splitKeys(cfg.groupBy),
       filters: decodeFilters(cfg.filters),
     };
-    // viz 'line' SABİT: MetricPanelConfig'de viz alanı yok ve MetricPanel
-    // koşulsuz çizgi çiziyor — okunacak bir mark mevcut değil.
-    return { queries: [q], formula: '', viz: 'line', step: cfg.step ?? 0 };
+    // v0.9.790 — mark artık BURADA da okunuyor. Sabit 'line' idi çünkü
+    // MetricPanelConfig'in viz alanı yoktu; alan gelince sabit yazmak
+    // spanmetric dalındaki hatanın metric hali olurdu (bars panelinden
+    // Explore'a çizgiyle açmak).
+    return {
+      queries: [q], formula: '', viz: vizFromPanel(cfg.viz), step: cfg.step ?? 0,
+    };
   }
 
   if (panel.type === 'spanmetric') {

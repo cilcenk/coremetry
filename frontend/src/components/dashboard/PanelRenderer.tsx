@@ -370,14 +370,22 @@ function MetricPanel({ cfg, range, syncKey, onZoom, onZoomReset, refreshTick, da
   }, [JSON.stringify(cfg), range, hasOverride, JSON.stringify(dataOverride), widthPx, refreshTick]);
 
   if (error) return <PanelError msg={error} height={boxPx} />;
+  // v0.9.790 — markı da dispatch et. Bu dal v0.9.786'ya kadar KOŞULSUZ
+  // DashLineChart çiziyordu: spanmetric ve promql panelleri viz'e göre
+  // dallanırken metric paneli dallanmıyordu, yani Explore'dan bars/area
+  // pinleyen operatörün config'indeki mark okunacak bir yer bulamıyordu.
+  // Dallanma spanmetric dalının birebir ikizi (aşağıda), unit dahil.
+  const viz = cfg.viz ?? 'line';
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       {capped && <CapHint />}
       {series === undefined ? <PanelLoading height={boxPx} />
         : !series || series.length === 0 ? <PanelEmpty height={boxPx} />
+        : viz === 'line'
         // Madde 4 sweep — cfg.unit eksene/tooltip'e iner (promql paneli
         // pariteli; yokluğu = eski birimsiz davranış).
-        : <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-m-${cfg.metricName}`} height={boxPx} />}
+          ? <DashLineChart series={series} unit={cfg.unit} syncKey={syncKey} onZoom={onZoom} onZoomReset={onZoomReset} storageKey={`dash-m-${cfg.metricName}`} height={boxPx} />
+          : <DashboardViz series={series} viz={viz} height={boxPx} unit={cfg.unit} />}
     </div>
   );
 }

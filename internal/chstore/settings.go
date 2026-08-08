@@ -84,6 +84,9 @@ type NotificationChannel struct {
 //     clusters=[prod-staging]
 //   • "Weekend on-call inbox":
 //     ownerTeams=[payments], quietHours empty
+//   - minPriority = "P1" | "P2" | "P3" (boş = hepsi). Kanal YALNIZ bu
+//     triyaj basamağında ya da ÜSTÜNDE olan problemleri alır (v0.9.828):
+//     "P2" seçilen bir kanal P1 ve P2 alır, P3 almaz.
 type ChannelMatchRules struct {
 	Services     []string `json:"services,omitempty"`
 	SRETeams     []string `json:"sreTeams,omitempty"`
@@ -91,6 +94,56 @@ type ChannelMatchRules struct {
 	Clusters     []string `json:"clusters,omitempty"`
 	QuietHours   string   `json:"quietHours,omitempty"`
 	QuietHoursTz string   `json:"quietHoursTz,omitempty"`
+	// MinPriority — en düşük triyaj basamağı (v0.9.828). Boş = hepsi.
+	//
+	// DDL GEREKMEZ: match_rules zaten notification_channels üzerinde tek
+	// bir JSON kolonu, yani yeni alan mevcut satırlara "yok" olarak
+	// gelir ve "yok" = filtre yok = bugünkü davranış.
+	//
+	// Ciddiyet süzgeciyle (MinSeverity) NEDEN AYRI: ciddiyet "ne kadar
+	// kötü", öncelik "ne kadar acil" diyor ve ikisi ayrışabiliyor. Bir
+	// critical problem P2 olabilir (eşiğin 2 katına çıkmamış, 4 saattir
+	// açık değil); bir monitor DOWN ise tam kayıp olduğu için P1'dir.
+	// Çağrı cihazına yalnız "şimdi kalk" olanları göndermek isteyen
+	// operatörün ihtiyacı olan kapı budur.
+	MinPriority string `json:"minPriority,omitempty"`
+}
+
+// priorityRank — triyaj basamağının sayısal karşılığı; YALNIZ
+// karşılaştırma için. Tanınmayan/boş değer 0 alır ve aşağıdaki yüklem
+// onu "ölçemedim" sayıp AÇIK GEÇER.
+func priorityRank(p string) int {
+	switch strings.ToUpper(strings.TrimSpace(p)) {
+	case "P1":
+		return 3
+	case "P2":
+		return 2
+	case "P3":
+		return 1
+	}
+	return 0
+}
+
+// allowsPriority — kanal bu önceliği alır mı?
+//
+// İKİ HALDE AÇIK GEÇER ve ikisi de bilinçli:
+//   - kural boş (operatör süzgeç kurmamış);
+//   - problemin önceliği HESAPLANMAMIŞ (bu funnel'dan geçmeyen bir
+//     çağrı, ya da tanınmayan bir etiket).
+//
+// İkincisi kritik: ölçemediğimiz bir alan yüzünden bir sayfayı YEMEK,
+// bu kapının çözmeye çalıştığı sorundan çok daha pahalı. Süzgecin işi
+// gürültüyü kırpmak, haber kaybetmek değil.
+func (m ChannelMatchRules) allowsPriority(problemPriority string) bool {
+	want := priorityRank(m.MinPriority)
+	if want == 0 {
+		return true
+	}
+	got := priorityRank(problemPriority)
+	if got == 0 {
+		return true
+	}
+	return got >= want
 }
 
 // MatchInput bundles the runtime signals Matches needs. We
@@ -102,6 +155,10 @@ type MatchInput struct {
 	Metadata *ServiceMetadata
 	Clusters []string  // problem.Clusters after enrichment
 	Now      time.Time // override for tests; zero = time.Now()
+	// Priority — problemin triyaj basamağı (P1/P2/P3), bildirim anında
+	// hesaplanmış (v0.9.828). Boş = hesaplanmamış; minPriority yüklemi
+	// o durumda AÇIK GEÇER (bkz. allowsPriority).
+	Priority string
 }
 
 // MatchesProblem evaluates every predicate against a Problem's
@@ -140,6 +197,11 @@ func (m ChannelMatchRules) MatchesProblem(in MatchInput) bool {
 		if isInQuietWindow(now, m.QuietHours, m.QuietHoursTz) {
 			return false
 		}
+	}
+	// v0.9.828 — triyaj basamağı kapısı. En sonda çünkü en yeni ve
+	// diğerlerinden bağımsız; sırası sonucu değiştirmiyor (hepsi AND).
+	if !m.allowsPriority(in.Priority) {
+		return false
 	}
 	return true
 }

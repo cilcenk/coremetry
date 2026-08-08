@@ -104,6 +104,25 @@ export function TeamRoutingTab() {
         çoğaltılabilir; adresi boş takımlar sessizce atlanır.
       </p>
 
+      {/* v0.9.828 — DÜRÜSTLÜK NOTU.
+          Bu kart "Team routing" adını taşıyor ve operatörün takım-bazlı
+          YÖNLENDİRMEYİ buradan kuracağını sanması çok doğal. Oysa burası
+          yalnız E-POSTA gönderiyor; Slack/Teams/Zoom/webhook'u takıma
+          göre yönlendirme yeteneği BAŞKA bir yerde ve ZATEN ÇALIŞIYOR
+          (kanal kurallarındaki "Match SRE/owner teams" alanları). Eksik
+          olan yetenek değil, o yeteneğin görünürlüğüydü. */}
+      <p style={{
+        color: 'var(--text2)', fontSize: 12, marginBottom: 16, lineHeight: 1.55,
+        padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 4,
+      }}>
+        <b>Kapsam:</b> bu kart yalnız <b>e-posta</b> gönderir. Slack, Teams, Zoom
+        Chat veya webhook&apos;u takıma göre yönlendirmek için
+        <b> Bildirim kanalları</b>&apos;nda kanalı düzenleyip <b>Match SRE teams</b> /
+        <b> Match owner teams</b> alanlarını doldurun &mdash; o yönlendirme
+        katalogdaki takım adlarına göre çalışır ve buradaki adres listesinden
+        bağımsızdır.
+      </p>
+
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', marginBottom: 14 }}>
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }}>
           <input type="checkbox" checked={tc.enabled}

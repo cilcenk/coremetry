@@ -3,7 +3,6 @@ package notify
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/url"
 	"strings"
@@ -55,7 +54,7 @@ func (n *Notifier) recordNotification(ctx context.Context, c chstore.Notificatio
 // notificationSubject mirrors the subject line the channels render so
 // the log row reads the same as what the recipient saw.
 func notificationSubject(p chstore.Problem) string {
-	return fmt.Sprintf("[%s] %s — %s", strings.ToUpper(p.Severity), p.Service, p.RuleName)
+	return alertTitle(p)
 }
 
 // channelTarget extracts the human-facing destination for a channel —

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { fmtSmart, seriesColor } from '@/lib/chartFmt';
+import { fmtSmart } from '@/lib/chartFmt';
 import { buildGroupRows } from './GroupTable';
 import type { PanelData } from './PanelStack';
 
@@ -37,7 +37,8 @@ export function SummaryViz({ panels, mode }: { panels: PanelData[]; mode: 'stat'
   // v0.8.427 (DE5) — donut per query letter: share of each series'
   // CURRENT value within its query (same `last` semantics stat/toplist
   // use, same buildGroupRows labels/colors — zero new fetches). Inline
-  // SVG stroke-arc donut; series colors come from seriesColor so the
+  // SVG stroke-arc donut; series colors come from GroupRow.color (v0.9.806 —
+  // tek türetim: satır rengi = çizgi rengi = seriesColor(label)) so the
   // slices match the line chart + table dots exactly.
   if (mode === 'pie') {
     const byLetter = new Map<string, typeof rows>();
@@ -72,7 +73,7 @@ export function SummaryViz({ panels, mode }: { panels: PanelData[]; mode: 'stat'
                   acc += frac;
                   return (
                     <circle key={r.rowKey} cx={size / 2} cy={size / 2} r={rad} fill="none"
-                      stroke={seriesColor(r.label)} strokeWidth={stroke}
+                      stroke={r.color} strokeWidth={stroke}
                       strokeDasharray={`${dash} ${circ - dash}`}
                       strokeDashoffset={off}
                       transform={`rotate(-90 ${size / 2} ${size / 2})`}>
@@ -100,7 +101,7 @@ export function SummaryViz({ panels, mode }: { panels: PanelData[]; mode: 'stat'
                 </div>
                 {slices.slice(0, 8).map(r => (
                   <div key={r.rowKey} style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11.5, marginBottom: 2, minWidth: 0 }}>
-                    <i style={{ width: 8, height: 8, borderRadius: 2, background: seriesColor(r.label), flex: 'none' }} />
+                    <i style={{ width: 8, height: 8, borderRadius: 2, background: r.color, flex: 'none' }} />
                     <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.label}>{r.label}</span>
                     <span className="mono" style={{ marginLeft: 'auto', color: 'var(--text2)' }}>
                       {total > 0 ? `${((r.v / total) * 100).toFixed(1)}%` : '—'}
@@ -165,7 +166,7 @@ export function SummaryViz({ panels, mode }: { panels: PanelData[]; mode: 'stat'
               </span>
             </span>
             <span style={{ flex: 1, position: 'relative', height: 18, background: 'var(--bg2)', borderRadius: 3, overflow: 'hidden' }}>
-              <span style={{ position: 'absolute', inset: 0, width: `${pct}%`, background: seriesColor(r.label), opacity: 0.5 }} />
+              <span style={{ position: 'absolute', inset: 0, width: `${pct}%`, background: r.color, opacity: 0.5 }} />
             </span>
             <span className="mono" style={{ width: 96, textAlign: 'right', flexShrink: 0 }}>
               {fmtSmart(r.last, r.unit)}

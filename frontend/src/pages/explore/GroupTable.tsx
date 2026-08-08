@@ -3,7 +3,8 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import { Button } from '@/components/ui/Button';
 import { panelsToCSV } from './exploreCsv';
 import type { DataTableColumn } from '@/lib/dataTable';
-import { fmtSmart } from '@/lib/chartFmt';
+import { fmtSmart, seriesColor } from '@/lib/chartFmt';
+import { seriesStats, isAdditiveUnit } from '@/lib/chart/legendStats';
 import { fmtNum } from '@/lib/utils';
 import { useCursorTime, valueAtCursor } from './cursorBus';
 import type { PanelData } from './PanelStack';
@@ -21,9 +22,20 @@ export interface GroupRow {
   isFormula: boolean;
   label: string;
   unit: string;
+  // color — the series' chart colour. BOTH render engines derive a line's
+  // colour from seriesColor(label) (the legacy TimeSeriesPanel through
+  // PanelData.series[].color, the v2 CorePanel through seriesRoleColor's
+  // 'data' role), so a row can be tinted to match its line without the two
+  // ever drifting.
+  color: string;
   last: number;
+  min: number;
   avg: number;
   max: number;
+  // sum — MEANINGFUL only when `additive`; a p95-latency column summed
+  // across pods is a number with no referent.
+  sum: number;
+  additive: boolean;
   buckets: number;
   points: { time: number; value: number | null }[];  // for the @imleç lookup
 }
@@ -31,12 +43,18 @@ export interface GroupRow {
 // @imleç is intentionally NOT sortable (no sortValue): its value changes every
 // cursor frame, so making it a sort key would force a re-sort per mousemove.
 // Omitting sortValue keeps the column resizable but inert — rows stay stable.
+//
+// v0.9.806 — Min + Toplam eklendi; sıra Son·Min·Maks·Ort·Toplam. Toplam'ın
+// sortValue'su toplanamaz birimde NULL döner: sortRows null'ı yön ne olursa
+// olsun en dibe indirir, yani "—" basan satırlar sıralamayı kirletmez.
 const COLS: DataTableColumn<GroupRow>[] = [
   { id: 'series',  label: 'Seri',     sortValue: r => `${r.letter} ${r.label}`, naturalDir: 'asc', width: 320 },
-  { id: 'cursor',  label: '@imleç',   numeric: true, width: 120 },
-  { id: 'last',    label: 'Son',      sortValue: r => r.last,    numeric: true, width: 120 },
-  { id: 'avg',     label: 'Ort',      sortValue: r => r.avg,     numeric: true, width: 120 },
-  { id: 'max',     label: 'Maks',     sortValue: r => r.max,     numeric: true, width: 120 },
+  { id: 'cursor',  label: '@imleç',   numeric: true, width: 110 },
+  { id: 'last',    label: 'Son',      sortValue: r => r.last,    numeric: true, width: 110 },
+  { id: 'min',     label: 'Min',      sortValue: r => r.min,     numeric: true, width: 110 },
+  { id: 'max',     label: 'Maks',     sortValue: r => r.max,     numeric: true, width: 110 },
+  { id: 'avg',     label: 'Ort',      sortValue: r => r.avg,     numeric: true, width: 110 },
+  { id: 'sum',     label: 'Toplam',   sortValue: r => (r.additive ? r.sum : null), numeric: true, width: 110 },
   { id: 'buckets', label: 'Bucket',   sortValue: r => r.buckets, numeric: true, width: 90 },
 ];
 
@@ -44,18 +62,30 @@ export function buildGroupRows(panels: PanelData[]): GroupRow[] {
   const rows: GroupRow[] = [];
   for (const p of panels) {
     if (p.state !== 'ready') continue;   // v0.9.804 — idle/loading/error satır üretmez
+    // v0.9.806 — Toplam sütununun kapısı panel BAŞINA sorulur: birim
+    // paneldeki tüm serilerde aynı.
+    const additive = isAdditiveUnit(p.unit);
     for (const s of p.series) {
-      const vs = s.points.map(x => x.value).filter((v): v is number => v != null && isFinite(v));
+      // seriesStats — lejantla PAYLAŞILAN tek geçişli çekirdek (v0.9.103).
+      // Kendi reduce/Math.max zincirimizi yazmak, aynı sayının iki yerde
+      // farklı hesaplanma riskini geri getirirdi; ayrıca Math.max(...vs)
+      // spread'i uzun serilerde yığın sınırına dayanır.
+      const st = seriesStats(s.points.map(x => x.value));
       rows.push({
         rowKey: `${p.letter}:${s.label}`,
         letter: p.letter,
         isFormula: p.isFormula,
         label: s.label,
         unit: p.unit,
-        last: vs.length ? vs[vs.length - 1] : NaN,
-        avg: vs.length ? vs.reduce((a, b) => a + b, 0) / vs.length : NaN,
-        max: vs.length ? Math.max(...vs) : NaN,
-        buckets: vs.length,
+        color: seriesColor(s.label),
+        // Boş seride NaN — fmtSmart bunu "—" basar (mevcut sözleşme).
+        last: st.last ?? NaN,
+        min: st.min ?? NaN,
+        avg: st.mean ?? NaN,
+        max: st.max ?? NaN,
+        sum: st.count ? st.sum : NaN,
+        additive,
+        buckets: st.count,
         points: s.points,
       });
     }
@@ -124,7 +154,14 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFo
                 style={{ cursor: 'pointer', opacity: hidden ? 0.45 : 1,
                          contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                 <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  <span style={{ marginRight: 6, fontSize: 11 }}>{hidden ? '○' : '◉'}</span>
+                  {/* v0.9.806 — glif SERİNİN RENGİNDE. Tablo tek lejant ama
+                      renksizdi: 10 serilik bir panelde satırı çizgiyle
+                      eşleştirmek imkânsızdı. Gizli seride --text3, çünkü
+                      renk "bu çizgi ekranda" demektir. */}
+                  <span aria-hidden style={{
+                    marginRight: 6, fontSize: 11,
+                    color: hidden ? 'var(--text3)' : r.color,
+                  }}>{hidden ? '○' : '◉'}</span>
                   <span style={{
                     display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
                     width: 16, height: 16, borderRadius: 3, marginRight: 6,
@@ -138,8 +175,17 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFo
                   {cursorSec == null ? '·' : fmtSmart(valueAtCursor(r.points, cursorSec), r.unit)}
                 </td>
                 <td className="mono" style={{ textAlign: 'right' }}>{fmtSmart(r.last, r.unit)}</td>
-                <td className="mono" style={{ textAlign: 'right' }}>{fmtSmart(r.avg, r.unit)}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{fmtSmart(r.min, r.unit)}</td>
                 <td className="mono" style={{ textAlign: 'right' }}>{fmtSmart(r.max, r.unit)}</td>
+                <td className="mono" style={{ textAlign: 'right' }}>{fmtSmart(r.avg, r.unit)}</td>
+                {/* Toplam yalnız TOPLANABİLİR birimde. ms/%/latency'de
+                    pod'lar arası toplam anlamsız bir sayı olurdu — "—"
+                    basıp neden olduğunu title'da söylüyoruz. */}
+                <td className="mono" style={{ textAlign: 'right' }}
+                  title={r.additive ? undefined
+                    : `Toplam bu birimde anlamlı değil (${r.unit || 'birimsiz'})`}>
+                  {r.additive ? fmtSmart(r.sum, r.unit) : '—'}
+                </td>
                 <td className="mono" style={{ textAlign: 'right' }}>{fmtNum(r.buckets)}</td>
               </tr>
             );

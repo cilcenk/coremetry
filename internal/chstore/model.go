@@ -295,11 +295,30 @@ type LogRow struct {
 	ResourceAttributes map[string]string `json:"resourceAttributes"`
 }
 
+// MetricInfo — a catalogue row.
+//
+// v0.9.833 — LastSeenNs + ServiceCount. Both come free from the
+// metric_catalog MV: freshness was ALREADY read (the HAVING that ages
+// silent metrics out of the picker, listMetricNamesFromCatalog) and
+// simply thrown away, and service_name is the MV's first ORDER BY
+// column, so uniqExact over the GROUP BY metric costs a merge of
+// what the query already reads. NO SCHEMA CHANGE — measured on live
+// data before writing the code.
+//
+// ServiceCount is scoped by the query: with a `service` filter it is
+// 1 by construction. That is honest — the row IS the pair — and the
+// UI hides the column when a service is pinned.
 type MetricInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
 	Unit        string `json:"unit"`
 	Type        string `json:"type"`
+	// Unix nanoseconds of the newest point for this metric, 0 when
+	// unknown (never `omitempty`: an absent field and "no data" must
+	// not be the same wire shape).
+	LastSeenNs int64 `json:"lastSeenNs"`
+	// Distinct services reporting this metric within the query's scope.
+	ServiceCount uint64 `json:"serviceCount"`
 }
 
 type MetricPointRow struct {

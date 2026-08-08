@@ -4390,8 +4390,14 @@ func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 	offset := parseInt(q.Get("offset"), 0)
 	// Old shape — no pagination params → return MetricInfo[]
 	// like pre-v0.5.181 callers expect.
+	//
+	// v0.9.833 — cache anahtarları `:v2`. MetricInfo zarfı büyüdü
+	// (lastSeenNs + serviceCount); sürüm eklemeden deploy edilirse
+	// Redis'teki eski gövdeler TTL boyunca (60s / 30s) yeni alanları
+	// EKSİK döner ve arayüz "Son veri: —" gösterip sanki metrik
+	// susmuş gibi yalan söyler. Zarf değişti = anahtar değişti.
 	if pattern == "" && limit == 0 && offset == 0 {
-		s.serveCached(w, r, "metric-names:svc="+svc, 60*time.Second, func(ctx context.Context) (any, error) {
+		s.serveCached(w, r, "metric-names:v2:svc="+svc, 60*time.Second, func(ctx context.Context) (any, error) {
 			return s.store.GetMetricNames(ctx, svc)
 		})
 		return
@@ -4399,7 +4405,7 @@ func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 	if limit > 1000 {
 		limit = 1000
 	}
-	key := fmt.Sprintf("metric-names:svc=%s:q=%s:limit=%d:offset=%d", svc, pattern, limit, offset)
+	key := fmt.Sprintf("metric-names:v2:svc=%s:q=%s:limit=%d:offset=%d", svc, pattern, limit, offset)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		names, total, err := s.store.ListMetricNames(ctx, svc, pattern, limit, offset)
 		if err != nil {

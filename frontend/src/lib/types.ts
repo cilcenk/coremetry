@@ -1201,6 +1201,50 @@ export interface TempoSettingsInput {
   insecureSkipVerify?: boolean;
 }
 
+// Azure DevOps Server / TFS connection (v0.9.829). CONNECTION
+// LAYER ONLY — repo mapping and code review are a later slice, so
+// nothing reads this config yet. Tempo secret contract: the PAT
+// never round-trips (hasPat is the stored indicator), and an
+// empty `pat` on submit preserves the stored one.
+//
+// flavor picks the api-version: azure-devops-server → 6.0,
+// tfs → 4.1, auto → probe. detectedFlavor/detectedApiVersion
+// report what the last successful probe actually spoke; they are
+// in-memory on the server and never persisted, so they may be
+// absent until someone hits "Test connection".
+export type DevOpsFlavor = 'auto' | 'azure-devops-server' | 'tfs';
+export interface DevOpsSnapshot {
+  baseUrl: string;
+  collection?: string;
+  project?: string;
+  username?: string;
+  hasPat: boolean;
+  flavor?: DevOpsFlavor;
+  insecureSkipVerify?: boolean;
+  detectedFlavor?: DevOpsFlavor;
+  detectedApiVersion?: string;
+}
+export interface DevOpsSettingsInput {
+  baseUrl: string;
+  collection?: string;
+  project?: string;
+  username?: string;
+  pat?: string;
+  flavor?: DevOpsFlavor;
+  insecureSkipVerify?: boolean;
+}
+export interface DevOpsTestResult {
+  ok: boolean;
+  detectedFlavor?: DevOpsFlavor;
+  apiVersion?: string;
+  projectCount: number;
+  // True when a project name was supplied and the project lookup
+  // actually ran — so the UI can say what it verified rather than
+  // implying more than it checked.
+  projectChecked?: boolean;
+  error?: string;
+}
+
 // Thanos multi-cluster config (v0.8.577, audit: docs/audit/
 // thanos-multicluster-metrics-audit.md). Snapshot masks tokens
 // per cluster (hasToken); input's empty token preserves the

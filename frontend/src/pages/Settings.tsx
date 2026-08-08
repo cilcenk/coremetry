@@ -22,6 +22,7 @@ import { MaintenanceTab } from './settings/MaintenanceTab';
 import { AITab } from './settings/AiTab';
 import { KnowledgeTab } from './settings/KnowledgeTab';
 import { TempoTab } from './settings/TempoTab';
+import { DevOpsTab } from './settings/DevOpsTab';
 import { ClustersTab } from './settings/ClustersTab';
 import { ElasticTab } from './settings/ElasticTab';
 import { KibanaTab } from './settings/KibanaTab';
@@ -61,6 +62,10 @@ const TABS: SettingsTab[] = [
   // v0.9.657 — CoSRE cevaplarındaki request_id'den dış log sistemine
   // köprü. Kibana sekmesinin yanına: aynı sınıf, dış derin-link.
   { slug: 'log-bridge',  label: 'Log köprüsü',           Comp: LogBridgeTab },
+  // v0.9.829 — Azure DevOps / TFS bağlantısı. Şimdilik YALNIZ
+  // bağlantı katmanı (ayar + PAT + erişim testi); repo eşleme ve
+  // kod-inceleme sonraki dilimde bu ayarı tüketecek.
+  { slug: 'devops',      label: 'Kod entegrasyonu',      Comp: DevOpsTab },
   { slug: 'ldap',        label: 'LDAP / AD',             Comp: LDAPTab },
   { slug: 'sso',         label: 'SSO presets',           Comp: SSOPresetsTab },
   { slug: 'retention',   label: 'Data retention',        Comp: RetentionTab },

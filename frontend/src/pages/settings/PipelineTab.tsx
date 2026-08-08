@@ -2,6 +2,8 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Modal, Button, Stack } from '@/components/ui';
 import { api, type PipelineRule } from '@/lib/api';
+import type { MetricExclusionRule } from '@/lib/types';
+import { Field, FlashBox, humanize } from './shared';
 
 // ── Pipeline tab (v0.5.263; logs + metrics v0.8.282) ────────────────────────
 //
@@ -136,6 +138,142 @@ export function PipelineTab() {
           onSaved={() => { setCreating(false); setEditing(null); load(); }}
         />
       )}
+
+      {/* v0.9.797 — metrik route dışlamaları. AYNI SEKMEDE, çünkü
+          operatör buraya tek bir soruyla geliyor: "bu gürültü ne olsun?"
+          Üstteki tablo ham ingest kurallarını yönetiyor; bu kart onun
+          metrik-grafik yüzeyindeki hâli — ve dropAtIngest işaretlendiğinde
+          ÜSTTEKİ tabloda görünen türetilmiş bir kural yazıyor (tek drop
+          motoru). Ayrı bir sekmeye koysaydık iki liste birbirinden
+          habersiz görünürdü. */}
+      <div style={{ marginTop: 28, paddingTop: 20, borderTop: '1px solid var(--border)' }}>
+        <MetricExclusionsSection onChanged={load} />
+      </div>
+    </div>
+  );
+}
+
+// ── Metrik dışlamaları (v0.9.797) ───────────────────────────────────
+//
+// İSTEK: healthcheck / probe route'ları metrik grafiklerinden düşsün.
+// Yüksek hacimli ve tekdüze oldukları için route kırılımlı panelin ilk
+// 10 serisini yiyorlar ve GRUPSUZ toplamda ortalamayı aşağı çekiyorlar —
+// "Toplam" çizgisi sağlıklı görünürken gerçek endpoint'ler yavaşlıyor
+// olabiliyor.
+//
+// İKİ KADEME ve farkları operatöre AÇIK YAZILIYOR: okuma filtresi geri
+// alınabilir (kural silinince geçmiş veri aynen döner), ingest drop'u
+// geri alınamaz (yazılmayan datapoint yok).
+function MetricExclusionsSection({ onChanged }: { onChanged: () => void }) {
+  const [rules, setRules] = useState<MetricExclusionRule[] | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    api.getMetricExclusions()
+      .then(c => setRules(c.rules ?? []))
+      .catch(err => setFlash({ kind: 'err', text: humanize(err) }));
+  }, []);
+
+  const save = async () => {
+    if (!rules) return;
+    setBusy(true); setFlash(null);
+    try {
+      const saved = await api.putMetricExclusions({ rules });
+      setRules(saved.rules ?? []);
+      setFlash({
+        kind: 'ok',
+        text: 'Kaydedildi — grafikler bir sonraki okumada (≤30 sn) filtreli gelir.',
+      });
+      // İngest ikizleri değişmiş olabilir: üstteki Pipeline listesini
+      // tazele ki operatör türetilen kuralı GÖRSÜN.
+      onChanged();
+    } catch (err) {
+      setFlash({ kind: 'err', text: humanize(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const patch = (i: number, p: Partial<MetricExclusionRule>) =>
+    setRules(rs => (rs ?? []).map((r, j) => (j === i ? { ...r, ...p } : r)));
+
+  if (rules === null) {
+    return flash ? <FlashBox kind={flash.kind}>{flash.text}</FlashBox> : <Spinner />;
+  }
+
+  return (
+    <div>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 8 }}>
+        <h2 style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>Metrik dışlamaları</h2>
+        <Button variant="secondary" size="sm"
+          onClick={() => setRules([...(rules ?? []), { metric: '*', pattern: '', dropAtIngest: false }])}>
+          + Kural
+        </Button>
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 14, lineHeight: 1.55 }}>
+        Healthcheck route&apos;larını metrik grafiklerinden düşürmek için. Kural
+        eklendiği anda <b>geçmiş dahil</b> tüm metrik okumaları filtrelenir;
+        kural silinince veri aynen geri gelir &mdash; hiçbir şey kaybolmaz.
+        Desen <b>RE2</b> ve ankorsuz: <code>/health</code> yolun herhangi bir
+        yerinde eşleşir, tam eşleşme için <code>^...$</code> yazın. Metrik alanı
+        tam ad ya da <code>*</code> (her metrik). Kapsam yalnız <b>metrik
+        datapoint&apos;leri</b>: trace&apos;ler, servis RED&apos;i ve hata oranı
+        span türevli, onlara dokunulmaz.
+      </p>
+
+      {rules.length === 0 ? (
+        <Empty icon="⊘" title="Dışlama kuralı yok">
+          Healthcheck route&apos;larını grafiklerden düşürmek için bir kural ekleyin.
+        </Empty>
+      ) : (
+        <div style={{ display: 'grid', gap: 10 }}>
+          {rules.map((r, i) => (
+            <div key={i} style={{
+              display: 'flex', gap: 10, alignItems: 'flex-start', flexWrap: 'wrap',
+              padding: '10px 12px', border: '1px solid var(--border)', borderRadius: 6,
+              background: 'var(--bg2)',
+            }}>
+              <div style={{ flex: '1 1 220px' }}>
+                <Field label="Metrik">
+                  <input value={r.metric} placeholder="* veya http.server.duration"
+                    onChange={e => patch(i, { metric: e.target.value })} style={{ width: '100%' }} />
+                </Field>
+              </div>
+              <div style={{ flex: '2 1 280px' }}>
+                <Field label="http.route deseni (RE2)">
+                  <input value={r.pattern} placeholder="^/health"
+                    onChange={e => patch(i, { pattern: e.target.value })} style={{ width: '100%' }} />
+                </Field>
+              </div>
+              <div style={{ flex: '1 1 260px', paddingTop: 18 }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, fontSize: 12.5 }}>
+                  <input type="checkbox" checked={!!r.dropAtIngest}
+                    onChange={e => patch(i, { dropAtIngest: e.target.checked })} />
+                  <span>
+                    ingest&apos;te düşür
+                    <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
+                      Pipeline kuralı olarak uygulanır &mdash; yukarıdaki listede de
+                      görünür. Yazılmayan datapoint <b>geri gelmez</b>.
+                    </div>
+                  </span>
+                </label>
+              </div>
+              <div style={{ paddingTop: 18 }}>
+                <Button variant="secondary" size="sm"
+                  onClick={() => setRules(rules.filter((_, j) => j !== i))}>Sil</Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
+        <Button variant="primary" onClick={save} disabled={busy}>
+          {busy ? 'Kaydediliyor…' : 'Kaydet'}
+        </Button>
+        {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
+      </div>
     </div>
   );
 }

@@ -397,7 +397,7 @@ func TestRollupRouteAggExpr(t *testing.T) {
 // Bunlardan biri kayarsa kademe geçişi panelde görünür bir kırılma yapar
 // (1000× kaymış zaman ekseni, değişen lejant, farklı kırpma eşiği).
 func TestBuildRollupRouteSQL_Parity(t *testing.T) {
-	sql := buildRollupRouteSQL("rollup_metrics_route_5m", "sum(value_sum)")
+	sql := buildRollupRouteSQL("rollup_metrics_route_5m", "sum(value_sum)", nil)
 
 	mustContain := []string{
 		// Kaynak tablo.
@@ -433,7 +433,7 @@ func TestBuildRollupRouteSQL_Parity(t *testing.T) {
 	}
 
 	// Enstrümana göre agg ifadesi gövdeye giriyor mu.
-	histSQL := buildRollupRouteSQL("rollup_metrics_route_1m", "sum(sum_value_sum) / nullIf(sum(obs_count), 0)")
+	histSQL := buildRollupRouteSQL("rollup_metrics_route_1m", "sum(sum_value_sum) / nullIf(sum(obs_count), 0)", nil)
 	if !strings.Contains(histSQL, "sum(sum_value_sum) / nullIf(sum(obs_count), 0)") {
 		t.Errorf("histogram avg ifadesi SQL'e girmedi:\n%s", histSQL)
 	}
@@ -485,7 +485,7 @@ func TestRawMetricSQLUnchangedByPromotion(t *testing.T) {
 		Filters:     []FilterExpr{{Key: "service.name", Op: "=", Values: []string{"api-gateway"}}},
 	}
 
-	before, argsBefore, err := buildMetricQuerySQL(f, now, "histogram", "delta")
+	before, argsBefore, err := buildMetricQuerySQL(f, now, "histogram", "delta", nil)
 	if err != nil {
 		t.Fatalf("beklenmeyen hata: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestRawMetricSQLUnchangedByPromotion(t *testing.T) {
 		t.Fatal("terfi bekleniyordu — test kurulumu bozuk")
 	}
 
-	after, argsAfter, err := buildMetricQuerySQL(f, now, "histogram", "delta")
+	after, argsAfter, err := buildMetricQuerySQL(f, now, "histogram", "delta", nil)
 	if err != nil {
 		t.Fatalf("beklenmeyen hata: %v", err)
 	}

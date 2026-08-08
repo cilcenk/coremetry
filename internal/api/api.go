@@ -1031,6 +1031,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// escalation her Problem'e, bu yalnız exception gruplarına uygulanır.
 	mux.HandleFunc("GET /api/settings/exception-triage", auth.RequireRole(auth.RoleAdmin, s.getExceptionTriage))
 	mux.HandleFunc("PUT /api/settings/exception-triage", auth.RequireRole(auth.RoleAdmin, s.putExceptionTriage))
+	// v0.9.797 — metrik route dışlamaları. Admin: kural HER operatörün
+	// gördüğü grafiği değiştiriyor (ve dropAtIngest'te veriyi hiç
+	// yazmıyor), yani editor yetkisi yetmez.
+	mux.HandleFunc("GET /api/settings/metric-exclusions", auth.RequireRole(auth.RoleAdmin, s.getMetricExclusions))
+	mux.HandleFunc("PUT /api/settings/metric-exclusions", auth.RequireRole(auth.RoleAdmin, s.putMetricExclusions))
 	mux.HandleFunc("GET /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.getAISettings))
 	mux.HandleFunc("PUT /api/settings/ai", auth.RequireRole(auth.RoleAdmin, s.putAISettings))
 	// External Tempo backend — admin-only because the token grants
@@ -4327,8 +4332,16 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	// değişti — anahtar bumplanmazsa rolling deploy'da 30 sn boyunca eski
 	// (ortalamaların ortalaması) değerler servis edilirdi ve iki pod aynı
 	// panelde farklı sayı gösterirdi (v0.9.443/458 dersi).
-	key := fmt.Sprintf("metric-query:v3:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d",
-		name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60)
+	// v0.9.797 — DIŞLAMA SETİNİN ÖZETİ ANAHTARDA. Kural seti sorgunun
+	// SONUCUNU değiştiriyor (WHERE'e NOT match ekleniyor, rollup kademesi
+	// kapanıyor); anahtarda olmasaydı kural eklenir eklenmez 30 sn boyunca
+	// filtresiz sonuç servis edilir, ve yenilemeyi farklı anlarda yapan
+	// iki pod aynı panelde farklı sayı gösterirdi. Özet SIRADAN BAĞIMSIZ
+	// FNV (v0.5.187 kuralı: len() değil, tüm girdiler); kural yokken sabit
+	// "0" — kuralsız kurulumda anahtar kardinalitesi artmaz.
+	key := fmt.Sprintf("metric-query:v3:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d:mx=%s",
+		name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60,
+		s.store.MetricExclusions().Digest())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		series, qerr := s.store.QueryMetric(ctx, chstore.MetricQueryFilter{
 			Name:          name,
@@ -4366,8 +4379,12 @@ func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
 	filtersRaw := q.Get("filters")
 	from := parseTime(q.Get("from"))
 	to := parseTime(q.Get("to"))
-	key := fmt.Sprintf("metric-hist:name=%s:svc=%s:step=%d:f=%s:from=%d:to=%d",
-		name, svc, step, filtersRaw, from.Unix()/60, to.Unix()/60)
+	// mx: dışlama seti özeti — ısı haritası da NOT match'li WHERE'den
+	// okuyor (metrichist.go), yani aynı çapraz-zehirlenme kapısı burada da
+	// açıktı.
+	key := fmt.Sprintf("metric-hist:name=%s:svc=%s:step=%d:f=%s:from=%d:to=%d:mx=%s",
+		name, svc, step, filtersRaw, from.Unix()/60, to.Unix()/60,
+		s.store.MetricExclusions().Digest())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		return s.store.QueryMetricHistogram(ctx, chstore.MetricQueryFilter{
 			Name:        name,

@@ -459,6 +459,11 @@ func (s *Store) queryRateFrom(ctx context.Context, f MetricQueryFilter, mode str
 	// damgalı seri pratikte tek damga; max=1 → telafili, temkinli taraf).
 	// Kolon yoksa (external-distributed) eski best-effort duruş.
 	ApplyMetricFilters(&wc, f.Filters)
+	// v0.9.797 — route dışlamaları rate/increase yolunda DA uygulanır.
+	// Throughput paneli buradan besleniyor: dışlanan route grafikte
+	// kalırsa "healthcheck'i düşür" ayarı yarısı çalışan bir ayar olurdu
+	// (latency temiz, throughput kirli). Kural yoksa SQL bayt-bayt eski.
+	applyMetricExclusionWhere(&wc, s.MetricExclusions(), f.Name)
 
 	// Kullanıcı groupBy ifadesi (yeniden-toplama anahtarı).
 	groupSelect := "[]::Array(String)"

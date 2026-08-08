@@ -71,6 +71,11 @@ func (s *Store) QueryMetricHistogram(ctx context.Context, f MetricQueryFilter) (
 		wc.add("time <= ?", f.To)
 	}
 	ApplyFilters(&wc, f.Filters)
+	// v0.9.797 — route dışlamaları ısı haritasında da geçerli. Bu yol
+	// AYNI ZAMANDA grupsuz histogram_quantile'ın çekirdeği
+	// (queryHistogramQuantiles → QueryMetricHistogram), yani tek satır
+	// iki yüzeyi birden temizliyor.
+	applyMetricExclusionWhere(&wc, s.MetricExclusions(), f.Name)
 	// Only explicit-histogram rows carry buckets; skip gauges/sums that
 	// share the metric name (and pre-v0.5.358 rows with empty arrays).
 	wc.add("length(bucket_counts) > 0")

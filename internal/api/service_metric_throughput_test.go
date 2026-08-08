@@ -26,19 +26,24 @@ func planFixture(t *testing.T) (string, time.Time, time.Time) {
 // ve bu sefer operatör YANLIŞ TRAFİK GRAFİĞİ görürdü.
 func TestMetricThroughputCacheKeyCoversEveryInput(t *testing.T) {
 	svc, from, to := planFixture(t)
-	base, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180)
+	base, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0")
 
 	cases := map[string]string{
-		"servis":       mustKey(metricThroughputPlan("other-service", "m1", "job", from, to, 600, "", 180)),
-		"metrik adı":   mustKey(metricThroughputPlan(svc, "m2", "job", from, to, 600, "", 180)),
-		"etiket adı":   mustKey(metricThroughputPlan(svc, "m1", "service_job", from, to, 600, "", 180)),
-		"zaman kovası": mustKey(metricThroughputPlan(svc, "m1", "job", from.Add(-48*time.Hour), to, 600, "", 180)),
+		"servis":       mustKey(metricThroughputPlan("other-service", "m1", "job", from, to, 600, "", 180, "0")),
+		"metrik adı":   mustKey(metricThroughputPlan(svc, "m2", "job", from, to, 600, "", 180, "0")),
+		"etiket adı":   mustKey(metricThroughputPlan(svc, "m1", "service_job", from, to, 600, "", 180, "0")),
+		"zaman kovası": mustKey(metricThroughputPlan(svc, "m1", "job", from.Add(-48*time.Hour), to, 600, "", 180, "0")),
 		// v0.9.706 — nokta bütçesi de girdi: farklı mdp farklı adım üretir,
 		// anahtardan düşerse 400px'lik panel 1200px'in sonucunu okur.
-		"nokta bütçesi": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 1200, "", 180)),
+		"nokta bütçesi": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 1200, "", 180, "0")),
 		// v0.9.718 — kırılım ve pencere de girdi (hash-all-inputs):
-		"kırılım":       mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "route", 180)),
-		"rate penceresi": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 300)),
+		"kırılım":       mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "route", 180, "0")),
+		"rate penceresi": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 300, "0")),
+		// v0.9.797 — dışlama seti de girdi: kural eklendiğinde sunucu
+		// WHERE'e NOT match ekliyor, yani AYNI sorgu FARKLI seri döndürüyor.
+		// Özet anahtardan düşerse kural eklendikten sonra 30 sn boyunca
+		// dışlanmamış seriler servis edilir (v0.5.187 sınıfı).
+		"dışlama seti": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "deadbeef")),
 	}
 	for name, k := range cases {
 		if k == base {
@@ -47,7 +52,7 @@ func TestMetricThroughputCacheKeyCoversEveryInput(t *testing.T) {
 	}
 
 	// Aynı girdi → aynı anahtar (yoksa önbellek hiç isabet etmez).
-	if again, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180); again != base {
+	if again, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0"); again != base {
 		t.Error("aynı girdi farklı anahtar üretti — önbellek asla isabet etmez")
 	}
 }
@@ -66,7 +71,7 @@ func mustKey(k string, _ any) string { return k }
 //     KALMAMALI; panel artık Explore'un avg yolundan besleniyor.
 func TestMetricThroughputCacheKeyIsEnvelopeVersioned(t *testing.T) {
 	svc, from, to := planFixture(t)
-	k, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180)
+	k, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0")
 	if !strings.HasPrefix(k, "svc-metric-tput:v2:") {
 		t.Errorf("zarf sürümü anahtarda değil: %q", k)
 	}
@@ -103,7 +108,7 @@ func TestMetricLatencyPathIsGone(t *testing.T) {
 // eşleşmezdi; grafik sessizce boş kalır, sebebi de görünmezdi.
 func TestMetricThroughputFilterUsesRegexOperator(t *testing.T) {
 	svc, from, to := planFixture(t)
-	_, f := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180)
+	_, f := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0")
 
 	if len(f.Filters) != 1 {
 		t.Fatalf("tek filtre bekleniyordu, alınan %d", len(f.Filters))
@@ -128,7 +133,7 @@ func TestMetricThroughputFilterUsesRegexOperator(t *testing.T) {
 // arar ve farklı etiket kullananlarda özellik sessizce çalışmaz.
 func TestMetricThroughputHonoursCustomJobLabel(t *testing.T) {
 	svc, from, to := planFixture(t)
-	_, f := metricThroughputPlan(svc, "m1", "kubernetes_job", from, to, 600, "", 180)
+	_, f := metricThroughputPlan(svc, "m1", "kubernetes_job", from, to, 600, "", 180, "0")
 	if f.Filters[0].Key != "kubernetes_job" {
 		t.Errorf("özel etiket adı filtreye geçmedi: %q", f.Filters[0].Key)
 	}
@@ -138,7 +143,7 @@ func TestMetricThroughputHonoursCustomJobLabel(t *testing.T) {
 // başka bir şey ölçer.
 func TestMetricThroughputFilterCarriesWindowAndName(t *testing.T) {
 	svc, from, to := planFixture(t)
-	_, f := metricThroughputPlan(svc, "http_requests_total", "job", from, to, 600, "", 180)
+	_, f := metricThroughputPlan(svc, "http_requests_total", "job", from, to, 600, "", 180, "0")
 	if f.Name != "http_requests_total" {
 		t.Errorf("metrik adı: %q", f.Name)
 	}

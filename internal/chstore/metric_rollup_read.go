@@ -59,9 +59,18 @@ var rollupEligibleAggs = map[string]bool{
 // metricRollupPlan — SAF uygunluk kararı (tablo-testli). ok=false → ham.
 //
 // instrument ve temporality ÇAĞIRANDAN gelir (Store zaten çözüyor);
-// burada CH'ye gidilmez — karar saf kalır.
-func metricRollupPlan(f MetricQueryFilter, instrument, temporality string, now time.Time) (metricRollupTier, bool) {
+// burada CH'ye gidilmez — karar saf kalır. `ex` (v0.9.797) aynı kalıp:
+// sunucu politikası, çağıran girdisi değil. nil → eski davranış.
+func metricRollupPlan(f MetricQueryFilter, instrument, temporality string, now time.Time, ex *CompiledMetricExclusions) (metricRollupTier, bool) {
 	if f.Name == "" || len(f.Filters) > 0 || len(f.GroupBy) > 0 || f.Instance != "" || f.Engine != "" {
+		return metricRollupTier{}, false
+	}
+	// v0.9.797 — ROLLUP DÜRÜSTLÜK KAPISI. Bu şema attr taşımıyor: satırlar
+	// route boyutunda ZATEN katlanmış, dolayısıyla dışlanan route'un
+	// katkısı sayının İÇİNDE ve ayrıştırılamaz. Kural aktifken ham yola
+	// düşülür (orada NOT match uygulanabiliyor). Gerekçenin tamamı:
+	// metric_exclusions.go → rollupAttrlessBlocked.
+	if rollupAttrlessBlocked(ex, f.Name) {
 		return metricRollupTier{}, false
 	}
 	agg := strings.ToLower(f.Aggregation)

@@ -283,6 +283,9 @@ func (s *Store) queryHistogramPercentileGrouped(ctx context.Context, f MetricQue
 	wc.add("time >= ?", f.From)
 	wc.add("time <= ?", f.To)
 	ApplyMetricFilters(&wc, f.Filters)
+	// v0.9.797 — kırılımlı histogram yüzdeliği de dışlamayı görür
+	// (grupsuz ikizi QueryMetricHistogram üzerinden zaten görüyor).
+	applyMetricExclusionWhere(&wc, s.MetricExclusions(), f.Name)
 	wc.add("length(bucket_counts) > 0")
 
 	args := append(gkArgs, wc.args...)

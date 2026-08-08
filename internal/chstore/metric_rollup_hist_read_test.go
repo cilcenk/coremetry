@@ -37,7 +37,7 @@ func TestMetricRollupHistPlan(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			tier, ok := metricRollupHistPlan(c.f, c.inst, c.tmp, now)
+			tier, ok := metricRollupHistPlan(c.f, c.inst, c.tmp, now, nil)
 			if ok != c.ok || (ok && tier.table != c.wantTable) {
 				t.Fatalf("plan = (%q,%v), (%q,%v) bekleniyordu", tier.table, ok, c.wantTable, c.ok)
 			}
@@ -46,12 +46,12 @@ func TestMetricRollupHistPlan(t *testing.T) {
 	t.Run("groupBy/filtre/instance ham", func(t *testing.T) {
 		f := histF(60, 3)
 		f.GroupBy = []string{"http.route"}
-		if _, ok := metricRollupHistPlan(f, "histogram", "delta", now); ok {
+		if _, ok := metricRollupHistPlan(f, "histogram", "delta", now, nil); ok {
 			t.Fatal("groupBy'lı okuma rollup'a girmemeli")
 		}
 		f = histF(60, 3)
 		f.Filters = []FilterExpr{{Key: "k", Op: "=", Values: []string{"v"}}}
-		if _, ok := metricRollupHistPlan(f, "histogram", "delta", now); ok {
+		if _, ok := metricRollupHistPlan(f, "histogram", "delta", now, nil); ok {
 			t.Fatal("filtreli okuma rollup'a girmemeli")
 		}
 	})

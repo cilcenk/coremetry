@@ -196,7 +196,15 @@ func rollupRouteAggExpr(agg, instrument string) (string, bool) {
 // 'ms' ve 's' satırları AYRI. Filtre olmasaydı iki birim tek seride
 // toplanırdı — 0003 okuyucusunda açık duran sessiz karışım kapısı burada
 // AÇILMIYOR.
-func buildRollupRouteSQL(table, aggExpr string) string {
+//
+// v0.9.797 — exclPatterns: operatörün route dışlamaları. Bu tier attr'sız
+// kardeşlerinden AYRILIYOR: burada route bir KOLON, yani satırlar
+// katlanMADAN önce elenebiliyor ve tier AÇIK kalabiliyor (aile-C ise
+// kural aktifken tamamen devre dışı — rollupAttrlessBlocked). Desenler
+// bind-arg, sıraları RoutePatterns'ın deterministik sırası; boş liste →
+// SQL bayt-bayt eski.
+func buildRollupRouteSQL(table, aggExpr string, exclPatterns []string) string {
+	excl := strings.Repeat("\n\t\t  AND NOT match(route, ?)", len(exclPatterns))
 	return fmt.Sprintf(`
 		SELECT
 			toUnixTimestamp(toStartOfInterval(ts, INTERVAL ? SECOND)) * 1000000000 AS bucket,
@@ -204,11 +212,11 @@ func buildRollupRouteSQL(table, aggExpr string) string {
 			toNullable(toFloat64(%s)) AS v
 		FROM %s
 		WHERE metric = ? AND service_key IN (?) AND instrument = ? AND unit = ?
-		  AND ts >= ? AND ts <= ?
+		  AND ts >= ? AND ts <= ?%s
 		GROUP BY bucket, gk
 		ORDER BY gk, bucket
 		LIMIT %d
-		SETTINGS max_execution_time = 10`, aggExpr, table, SpanMetricRowCap)
+		SETTINGS max_execution_time = 10`, aggExpr, table, excl, SpanMetricRowCap)
 }
 
 // rollupRouteServiceKeys — WHERE'e girecek service_key adayları. SAF.
@@ -235,9 +243,15 @@ func (s *Store) queryMetricRollupRoute(
 	if !ok {
 		return nil, fmt.Errorf("rollup route: desteklenmeyen agg %q", f.Aggregation)
 	}
+	// v0.9.797 — dışlama desenleri WHERE'in SONUNA, aynı sırayla arg
+	// listesine. Sıra sözleşmesi: SQL'deki `?` sırası = args sırası.
+	pats := s.MetricExclusions().RoutePatterns(f.Name)
+	args := []any{f.StepSeconds, f.Name, rollupRouteServiceKeys(f.Service), instrument, unit, f.From, f.To}
+	for _, p := range pats {
+		args = append(args, p)
+	}
 	rows, err := s.telemetryReadConn().Query(ctx,
-		buildRollupRouteSQL(tr.table, aggExpr),
-		f.StepSeconds, f.Name, rollupRouteServiceKeys(f.Service), instrument, unit, f.From, f.To)
+		buildRollupRouteSQL(tr.table, aggExpr, pats), args...)
 	if err != nil {
 		return nil, err
 	}

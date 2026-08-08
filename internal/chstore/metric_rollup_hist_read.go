@@ -18,9 +18,17 @@ import (
 // Tablolar yoksa / pencereyi kapsamıyorsa SESSİZCE ham yol (fail-open,
 // family-C ile aynı sözleşme).
 
-// metricRollupHistPlan — SAF uygunluk (tablo-testli).
-func metricRollupHistPlan(f MetricQueryFilter, instrument, temporality string, now time.Time) (metricRollupTier, bool) {
+// metricRollupHistPlan — SAF uygunluk (tablo-testli). `ex` v0.9.797:
+// aile-C ikiziyle AYNI dürüstlük kapısı (hist_counts de attr'sız
+// katlanmış).
+func metricRollupHistPlan(f MetricQueryFilter, instrument, temporality string, now time.Time, ex *CompiledMetricExclusions) (metricRollupTier, bool) {
 	if f.Name == "" || f.Service == "" {
+		return metricRollupTier{}, false
+	}
+	// v0.9.797 — dışlama kuralı aktifken bu kademe YANLIŞ cevap verir:
+	// kovalar route boyutunda katlanmış, dışlanan route'un gözlemleri
+	// yüzdeliğin içinde. Ham yola düş (metric_exclusions.go gerekçesi).
+	if rollupAttrlessBlocked(ex, f.Name) {
 		return metricRollupTier{}, false
 	}
 	if len(f.Filters) > 0 || len(f.GroupBy) > 0 || f.Instance != "" || f.Engine != "" {
@@ -115,7 +123,7 @@ func (s *Store) tryRollupHistogramQuantiles(ctx context.Context, f MetricQueryFi
 		return nil, false
 	}
 	temp := s.metricTemporalityFiltered(ctx, f.Name, f.Service, nil)
-	tier, ok := metricRollupHistPlan(f, inst, temp, time.Now())
+	tier, ok := metricRollupHistPlan(f, inst, temp, time.Now(), s.MetricExclusions())
 	if !ok {
 		return nil, false
 	}

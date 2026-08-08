@@ -53,7 +53,7 @@ func TestBuildMetricQuerySQL_CHBounds(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sql, args, err := buildMetricQuerySQL(tc.f, now, "", "")
+			sql, args, err := buildMetricQuerySQL(tc.f, now, "", "", nil)
 			if err != nil {
 				t.Fatalf("buildMetricQuerySQL: %v", err)
 			}
@@ -85,7 +85,7 @@ func TestBuildMetricQuerySQL_CHBounds(t *testing.T) {
 
 func TestBuildMetricQuerySQL_BadAgg(t *testing.T) {
 	now := time.Date(2026, 6, 5, 12, 0, 0, 0, time.UTC)
-	_, _, err := buildMetricQuerySQL(MetricQueryFilter{Name: "m", Aggregation: "nope"}, now, "", "")
+	_, _, err := buildMetricQuerySQL(MetricQueryFilter{Name: "m", Aggregation: "nope"}, now, "", "", nil)
 	if err == nil {
 		t.Fatal("want error for unknown aggregation, got nil")
 	}
@@ -197,7 +197,7 @@ func TestBuildMetricQuerySQL_AvgHistogramDelta(t *testing.T) {
 		From: from, To: now, StepSeconds: 60,
 	}
 
-	histSQL, _, err := buildMetricQuerySQL(f, now, "histogram", "delta")
+	histSQL, _, err := buildMetricQuerySQL(f, now, "histogram", "delta", nil)
 	if err != nil {
 		t.Fatalf("buildMetricQuerySQL(histogram, delta): %v", err)
 	}
@@ -208,7 +208,7 @@ func TestBuildMetricQuerySQL_AvgHistogramDelta(t *testing.T) {
 		t.Errorf("histogram+delta avg hâlâ avgOrNull(value) içeriyor\n--- SQL ---\n%s", histSQL)
 	}
 
-	gaugeSQL, _, err := buildMetricQuerySQL(f, now, "gauge", "delta")
+	gaugeSQL, _, err := buildMetricQuerySQL(f, now, "gauge", "delta", nil)
 	if err != nil {
 		t.Fatalf("buildMetricQuerySQL(gauge): %v", err)
 	}

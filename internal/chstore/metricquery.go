@@ -56,7 +56,12 @@ type MetricQueryFilter struct {
 // ÖĞRENİLİR (QueryMetric), çağıranın verdiği bir filtre girdisi değil —
 // aynı kalıp metricRollupPlan(f, instrument, temporality, now)'da da var.
 // Boş/boş çağrı (testler, ham çağıranlar) eski SQL'i BAYT-BAYT üretir.
-func buildMetricQuerySQL(f MetricQueryFilter, now time.Time, instrument, temporality string) (string, []any, error) {
+//
+// v0.9.797 — `ex` (route dışlama kuralları) AYNI gerekçeyle dördüncü
+// argüman, MetricQueryFilter alanı DEĞİL: bu bir SUNUCU POLİTİKASI
+// (system_settings), çağıranın verdiği bir filtre girdisi değil. nil /
+// kuralsız set → SQL bayt-bayt eski (metric_exclusions_test.go pini).
+func buildMetricQuerySQL(f MetricQueryFilter, now time.Time, instrument, temporality string, ex *CompiledMetricExclusions) (string, []any, error) {
 	// Always time-bound: default the window so `time >= ?` / `time <= ?`
 	// below can prune partitions even on a from/to-less call.
 	if f.To.IsZero() {
@@ -84,6 +89,12 @@ func buildMetricQuerySQL(f MetricQueryFilter, now time.Time, instrument, tempora
 	// metric-aware variant reroutes those keys to array lookups
 	// (deployment.environment picked in the Explore filter 500'd).
 	ApplyMetricFilters(&wc, f.Filters)
+	// v0.9.797 — operatörün route dışlamaları. KONUM ÖNEMLİ: groupBy
+	// argümanlarının başa eklenmesinden (aşağıda) ÖNCE, çünkü o prepend
+	// WHERE argümanlarının kendi içindeki sırasını korumak zorunda.
+	// Grupsuz sorgular da buradan geçer — "Toplam" çizgisinin temizliği
+	// buna bağlı.
+	applyMetricExclusionWhere(&wc, ex, f.Name)
 
 	step := f.StepSeconds
 	if step <= 0 {
@@ -190,7 +201,7 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 	// yani v0.9.776'nın histogram temporality probu rollup kararını
 	// DEĞİŞTİRMEZ (gauge de temporality'ye bakmaz).
 	if f.Service != "" {
-		if tr, ok := metricRollupPlan(f, instrument, temporality, time.Now()); ok {
+		if tr, ok := metricRollupPlan(f, instrument, temporality, time.Now(), s.MetricExclusions()); ok {
 			if floor, ok2 := s.rollupCoverageFloor(ctx, tr.table); ok2 && !f.From.Before(floor) {
 				if ser, err := s.queryMetricRollup(ctx, f, tr); err == nil {
 					return ser, nil
@@ -221,7 +232,7 @@ func (s *Store) QueryMetric(ctx context.Context, f MetricQueryFilter) ([]SpanMet
 		f.StepSeconds = clampStepToExport(f.StepSeconds, iv)
 	}
 
-	sql, args, err := buildMetricQuerySQL(f, now, instrument, temporality)
+	sql, args, err := buildMetricQuerySQL(f, now, instrument, temporality, s.MetricExclusions())
 	if err != nil {
 		return nil, err
 	}

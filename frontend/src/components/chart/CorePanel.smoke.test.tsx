@@ -81,6 +81,7 @@ vi.mock('@grafana/ui', async (importOriginal) => {
       config: { getConfig: () => {
         series?: unknown[]; bands?: unknown[];
         axes?: { scale?: string; size?: unknown }[];
+        scales?: Record<string, { range?: unknown } | undefined>;
         cursor?: { points?: { size?: unknown; width?: unknown; show?: unknown } };
       } };
       width: number; height: number;
@@ -93,6 +94,20 @@ vi.mock('@grafana/ui', async (importOriginal) => {
       // üretti mi" der (iki kapı ayrı sınıfları yakalar).
       const yAxis = (cfg.axes ?? []).find(a => a.scale === 'y');
       const pts = cfg.cursor?.points ?? {};
+      // v0.9.811 — y ÖLÇEĞİNİN GERÇEK aralık fonksiyonu çağrılır. Kaynak
+      // taraması "softMin: 0 satırı duruyor" der; bu, @grafana/ui'nin o
+      // prop'u uPlot'un soft-mode'una çevirdiğini ve uPlot'un TABANI
+      // gerçekten 0'a çektiğini ölçer. İki ayrı sınıf: birincisi düzeltmenin
+      // yazıldığını, ikincisi ÇALIŞTIĞINI korur (@grafana/ui majör göçünde
+      // softMin semantiği kayarsa yalnız bu kapı kızarır).
+      // Sahte uPlot: rangeFn yalnız u.scales[key].distr okuyor (1 = Linear).
+      const yProbe = (dataMin: number, dataMax: number): string => {
+        const r = cfg.scales?.y?.range;
+        if (typeof r !== 'function') return 'norange';
+        const out = (r as (u: unknown, a: number, b: number, k: string) => number[])(
+          { scales: { y: { distr: 1 } } }, dataMin, dataMax, 'y');
+        return out.join(',');
+      };
       // SAHTE uPlot örneği: yalnız CorePanel'in dokunduğu yüzey (series[],
       // cursor, setSeries, redraw). Odak efektinin ALPHA/GENİŞLİK yazdığını
       // gerçekten ölçebilmemizi sağlar — stub'sız bir testte plotRef hiç
@@ -114,6 +129,11 @@ vi.mock('@grafana/ui', async (importOriginal) => {
           data-bands={String((cfg.bands ?? []).length)}
           data-yaxis-size={String(yAxis?.size ?? '')}
           data-cursor-pt={`${String(pts.size ?? '')}/${String(pts.width ?? '')}/${String(pts.show ?? '')}`}
+          // Yüksek ve dar bir veri aralığı: taban kaymasının en görünür
+          // olduğu şekil (1200-1260 arası gezen bir seri).
+          data-yrange-pos={yProbe(1200, 1260)}
+          // Negatif taşıyan seri: soft taban UYGULANMAMALI, yoksa veri kırpılır.
+          data-yrange-neg={yProbe(-40, -10)}
           data-w={String(width)} data-h={String(height)} />
       );
     },
@@ -328,5 +348,62 @@ describe('CorePanel render duman testi (UPlotChart vi.mock ile stub)', () => {
     expect(plot().series[2]!.alpha).toBe(0.25);
     act(() => { row.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); });
     expect(plot().series[2]!.alpha).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.811 — ÇUBUK AİLESİNDE Y TABANI SIFIR.
+//
+// Çubuğun UZUNLUĞU değeri kodlar ve okur onu tabandan ölçer. uPlot'un
+// otomatik aralığı ise veriye göre kayıyor: 1200-1260 arasında gezen bir
+// seride taban ~1190 olur ve 1200'lük çubuk 1260'lık çubuğun beşte biri
+// boyunda çizilir — grafiğin okunan tek bilgisi yanlış. Çizgide aynı
+// kayma DOĞRUDUR (çizgide kodlanan konum, uzunluk değil), o yüzden bu bir
+// MARK kuralıdır ve line/area'ya dokunmaz.
+//
+// Kapılar aralık fonksiyonunu GERÇEKTEN çağırır: @grafana/ui softMin'i
+// uPlot soft-mode'una çeviriyor mu, uPlot tabanı çekiyor mu, ve negatif
+// veride soft limiti yok sayıyor mu (yoksa `min: 0` gibi veriyi kırpardı).
+// ---------------------------------------------------------------------------
+describe('CorePanel çubuk tabanı sıfır (v0.9.811)', () => {
+  const yRange = (el: HTMLElement, attr: 'pos' | 'neg') =>
+    el.querySelector('[data-testid="uplot"]')!.getAttribute(`data-yrange-${attr}`)!;
+
+  it('🔴 bars: yüksek+dar veride taban 0\'a iner', () => {
+    const el = render(<CorePanel title="L" storageKey="smoke-bars-base" viz="bars"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    expect(yRange(el, 'pos').split(',')[0]).toBe('0');
+  });
+
+  it('🔴 stacked-bars da yığın ailesinin çubuk markı — aynı taban', () => {
+    const el = render(<CorePanel title="L" storageKey="smoke-sbars-base" viz="stacked-bars"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    expect(yRange(el, 'pos').split(',')[0]).toBe('0');
+  });
+
+  it('🔴 line ETKİLENMEZ — otomatik aralık veriye yakın kalır', () => {
+    const el = render(<CorePanel title="L" storageKey="smoke-line-base" viz="line"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    const lo = Number(yRange(el, 'pos').split(',')[0]);
+    expect(lo).toBeGreaterThan(1000); // 0'a inmedi
+    expect(lo).toBeLessThanOrEqual(1200);
+  });
+
+  it('area ve stacked de dokunulmadan kalır (dolgu markı ≠ çubuk markı)', () => {
+    for (const viz of ['area', 'stacked'] as const) {
+      const el = render(<CorePanel title="L" storageKey={`smoke-${viz}-base`} viz={viz}
+        data={{ state: 'ready', frames: TWO_SERIES }} />);
+      expect(Number(yRange(el, 'pos').split(',')[0]), viz).toBeGreaterThan(1000);
+      if (root) act(() => root!.unmount());
+      host?.remove();
+      root = null; host = null;
+    }
+  });
+
+  it('🔴 NEGATİF veride soft taban YOK SAYILIR — `min: 0` olsaydı kırpardı', () => {
+    const el = render(<CorePanel title="L" storageKey="smoke-bars-neg" viz="bars"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    const lo = Number(yRange(el, 'neg').split(',')[0]);
+    expect(lo).toBeLessThan(-40); // veri minimumunun ALTINDA, 0'da değil
   });
 });

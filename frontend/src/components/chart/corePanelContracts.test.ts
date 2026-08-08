@@ -346,6 +346,54 @@ describe('CorePanel yığılmış çubuk (v0.9.808)', () => {
 });
 
 // ---------------------------------------------------------------------------
+// v0.9.811 — çubuk ailesinde y tabanı sıfır.
+//
+// Kaynak kapıları DAVRANIŞ kapısının (CorePanel.smoke.test.tsx, aralık
+// fonksiyonunu gerçekten çağırır) tamamlayıcısı: burada korunan, düzeltmenin
+// DOĞRU ŞEKİLDE yazıldığı — `min` değil `softMin`, `bars` tek yerde tanımlı,
+// ve line/area dallarına sıfır tabanın sızmamış olması.
+// ---------------------------------------------------------------------------
+describe('CorePanel çubuk tabanı (v0.9.811)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('🔴 y ölçeği çubuk ailesinde softMin 0 alır', () => {
+    expect(src).toMatch(/softMin: bars \? 0 : undefined/);
+  });
+
+  it('🔴 `min: 0` YASAK — negatif taşıyan seriyi kırpardı', () => {
+    // Sert taban, delta/fark panellerinde veriyi görünmez yapar. Soft taban
+    // ise uPlot'ta yalnız veri minimumu ≥ 0 iken uygulanır.
+    expect(src).not.toMatch(/scaleKey: 'y',[\s\S]{0,400}?\bmin: 0\b/);
+  });
+
+  it('`bars` TEK yerde tanımlı — y ölçeği ve seri kurulumu aynı ifadeyi okur', () => {
+    expect((src.match(/const bars = viz === 'bars' \|\| stackedBars;/g) ?? []).length).toBe(1);
+    // Eski (config useMemo'sunun içindeki) tanım geri gelmemeli: iki tanım
+    // ayrışırsa taban bir markta sıfırlanır ötekinde kalırdı.
+    expect(src).toMatch(/const stacked = viz === 'stacked' \|\| stackedBars;\s*\n\s*const bars =/);
+  });
+
+  it('mark ayrımı korunur: line/area kendi dallarında, taban yalnız çubukta', () => {
+    // fillOpacity zinciri v0.9.808'deki sırasıyla yerinde (mark başına ayrı
+    // dal); sıfır taban o zincire karışmadı.
+    expect(src).toMatch(
+      /fillOpacity: stackedBars \? 100 : bars \? 35 : area \? 60 : stacked \? 28 : \(dashed\?\.\[i\] \? 0 : 12\)/);
+    expect(src).toMatch(/const area = viz === 'area';/);
+  });
+
+  it('🟠 taban config bağımlılığına yeni kimlik SOKMAZ (viz zaten var)', () => {
+    const deps = src.match(/\}, \[[^\]]*\]\);/g) ?? [];
+    const cfg = deps.filter(d => d.includes('overlaySig'));
+    expect(cfg.length).toBe(1);
+    expect(cfg[0]).toContain('viz');
+    expect(cfg[0]).not.toContain('bars');
+    expect(cfg[0]).not.toContain('softMin');
+  });
+});
+
+// ---------------------------------------------------------------------------
 // v0.9.789 — bucket-tık ("spike → exemplar") v2 motorunda.
 //
 // Kanca v0.7.22'den beri MultiLineChart'ın uPlot hook'undaydı ve v2'ye geçen

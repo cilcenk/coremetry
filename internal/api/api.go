@@ -2886,8 +2886,67 @@ func sortEndpointsByP99Delta(rows []chstore.EndpointRow, limit int) []chstore.En
 	return rows
 }
 
+// endpointsPoolCap — p99Delta aday havuzunun üst sınırı. 10000 KEYFİ
+// DEĞİL: chstore.GetEndpoints'in kendi tavanı da 10000 ve üstünü
+// SESSİZCE 500'e düşürür (`q.Limit > 10000 → 500`), yani daha büyük bir
+// havuz istemek havuzu büyütmez, çökertir. Aynı sayı UI'daki
+// "All (10000)" seçeneğinin zaten ödediği maliyet: ölçüm (lokal 24s
+// penceresi, 1.15M MV satırı, query_log medyanı, n=7) LIMIT 1000 →
+// 595ms / 33MiB, LIMIT 10000 → 843ms / 121MiB; TARAMA İKİSİNDE AYNI
+// (read_rows birebir eşit), fark yalnız sıralama+serileştirme. 1s
+// altı = sıcak olmayan okuma bütçesi içinde.
+const endpointsPoolCap = 10000
+
+// endpointsPool, p99Delta sıralamasının aday havuzunu ve havuzun
+// tasarım niyetinden kısılıp kısılmadığını döndürür.
+//
+// v0.9.762'de havuz `clamp(limit*5, 500, 1000)` idi: limit ∈
+// {2000,5000,10000} seçildiğinde havuz 1000'de kalıyordu, sonuç da
+// havuzdan büyük olamayacağı için tablo EN FAZLA 1000 satır dönüyordu —
+// menüdeki üç seçenek ÖLÜYDÜ ve hiçbir şey bunu söylemiyordu. Tavan
+// artık limit'ten bağımsız (endpointsPoolCap), böylece havuz her menü
+// seçeneği için ≥ limit.
+//
+// capped = tasarım niyeti (limit×5 aday) tavana takıldı demektir;
+// sıralama evreni istenen genişlikten dar. Çağıran bunu havuzun GERÇEK
+// dolduğu durumla birleştirir (aşağıda) — 26 endpoint'lik bir kurulumda
+// "liste eksik olabilir" uyarısı basmak, bu düzeltmenin kaldırmaya
+// çalıştığı sessiz yalanın aynadaki hâli olurdu.
+func endpointsPool(limit int) (pool int, capped bool) {
+	want := limit * 5
+	pool = want
+	if pool < 500 {
+		pool = 500
+	}
+	if pool > endpointsPoolCap {
+		pool = endpointsPoolCap
+	}
+	return pool, pool < want
+}
+
+// endpointsListResponse — /api/endpoints zarfı (v0.9.812). Liste
+// eskiden çıplak dizi dönüyordu; p99Delta sıralamasının "evren = en çok
+// çağrılan ilk N" gerçeğini taşıyacak bir yer yoktu, UI da bunu
+// sabit "~1000" metniyle tahmin ediyordu. pool/poolCapped yalnız delta
+// sıralamasında dolar (diğer sıralamalarda havuz kavramı yok).
+type endpointsListResponse struct {
+	Rows []chstore.EndpointRow `json:"rows"`
+	// Pool — sıralama evreninin boyutu (çağrıya göre ilk N aday).
+	Pool int `json:"pool,omitempty"`
+	// PoolCapped — havuz tasarım niyetinden (limit×5) kısıldı VE
+	// gerçekten doldu: evrenin dışında kalan endpoint'ler var.
+	PoolCapped bool `json:"poolCapped,omitempty"`
+}
+
+// v0.9.812 — "v2" ad alanı, yanıtın çıplak diziden zarfa geçmesi
+// yüzünden ZORUNLU: yuvarlanan deploy sırasında eski ve yeni pod'lar
+// AYNI Redis anahtarlarını paylaşır. Ad alanı olmasa yeni pod eski
+// pod'un yazdığı çıplak diziyi okuyup zarf sanır (tablo sessizce boş)
+// ya da eski frontend zarfı dizi sanıp render'da patlardı. Ayrı ad
+// alanı iki sürümü birbirinden yalıtır; eski anahtarlar kendi TTL'iyle
+// düşer.
 func endpointsListKey(bucket, service, search, cluster, env string, limit int, compare, bySignature bool, sortBy, sortDir, entry string) string {
-	return fmt.Sprintf("endpoints:%s:%s:%s:%s:env=%s:%d:cmp=%v:sig=%v:sort=%s:dir=%s:entry=%s",
+	return fmt.Sprintf("endpoints:v2:%s:%s:%s:%s:env=%s:%d:cmp=%v:sig=%v:sort=%s:dir=%s:entry=%s",
 		bucket, service, search, cluster, env, limit, compare, bySignature, sortBy, sortDir, entry)
 }
 
@@ -2966,14 +3025,11 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 			Sort: sortBy, Dir: sortDir,
 			Entry: entry,
 		}
+		// v0.9.812 — havuz artık limit'e saygılı (endpointsPool);
+		// eski clamp(…, 1000) menünün üst üç seçeneğini ölü bırakıyordu.
+		pool, poolWantCapped := 0, false
 		if deltaSort {
-			pool := limit * 5
-			if pool < 500 {
-				pool = 500
-			}
-			if pool > 1000 {
-				pool = 1000
-			}
+			pool, poolWantCapped = endpointsPool(limit)
 			eq.Limit = pool
 			eq.Sort, eq.Dir = "calls", "desc" // aday havuzu tabanı
 		}
@@ -2981,8 +3037,16 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return nil, err
 		}
+		// Havuz uyarısı yalnız havuz GERÇEKTEN dolduğunda anlamlı:
+		// evren tavandan darsa ama tüm endpoint'ler havuza sığdıysa
+		// eksik bir şey yok.
+		resp := endpointsListResponse{Rows: rows}
+		if deltaSort {
+			resp.Pool = pool
+			resp.PoolCapped = poolWantCapped && len(rows) >= pool
+		}
 		if !compare || len(rows) == 0 {
-			return rows, nil
+			return resp, nil
 		}
 		// Prior window: same length, shifted back by exactly the
 		// window width so the comparison stays apples-to-apples.
@@ -2996,8 +3060,15 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 		priorRows, err := s.store.GetEndpoints(ctx, prior)
 		if err != nil {
 			// Prior failure is non-fatal — return current rows
-			// without trends rather than 500'ing the page.
-			return rows, nil
+			// without trends rather than 500'ing the page. Delta
+			// sıralaması prior'suz yapılamaz: havuz satırları
+			// (limit'ten büyük olabilir) yine limit'e kesilir,
+			// yoksa "top 100" sessizce 500 satır dönerdi.
+			if deltaSort && limit > 0 && len(rows) > limit {
+				rows = rows[:limit]
+			}
+			resp.Rows = rows
+			return resp, nil
 		}
 		// Index prior by (service, path) so we don't do an O(N²)
 		// linear scan when merging.
@@ -3017,7 +3088,8 @@ func (s *Server) getEndpoints(w http.ResponseWriter, r *http.Request) {
 		if deltaSort {
 			rows = sortEndpointsByP99Delta(rows, limit)
 		}
-		return rows, nil
+		resp.Rows = rows
+		return resp, nil
 	})
 }
 

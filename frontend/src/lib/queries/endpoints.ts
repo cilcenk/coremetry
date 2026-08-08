@@ -10,10 +10,13 @@ import { api } from '@/lib/api';
 // page never refreshed without a manual reload). React Query pauses
 // refetchInterval on hidden tabs by default, satisfying the
 // document.hidden house rule.
+// v0.9.812 — zarf döner (rows + pool + poolCapped). Boş yanıt, satırsız
+// ama zarf şekilli bir sabite düşer; çağıran `data.rows` okur.
 export function useEndpoints(params: Parameters<typeof api.endpoints>[0]) {
   return useQuery({
     queryKey: ['endpoints', 'list', params],
-    queryFn: async ({ signal }) => (await api.endpoints(params, signal)) ?? [],
+    queryFn: async ({ signal }) =>
+      (await api.endpoints(params, signal)) ?? { rows: [] },
     refetchInterval: 30_000,
     // v0.8.462 — staleTime = refetchInterval: poll penceresi içindeki
     // re-mount, zaten planlı arka plan poll'unun üstüne ikinci fetch

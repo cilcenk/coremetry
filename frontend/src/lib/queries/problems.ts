@@ -48,6 +48,33 @@ export function useProblems(filter: {
   });
 }
 
+// useProblemByID (v0.9.825) — bildirim derin linkinin YEDEK yolu.
+//
+// AlertProblemHost önce listeden çözer (sıfır maliyet: açık
+// problemlerin neredeyse tamamı zaten yüklü olan sayfalardadır).
+// Bulamazsa bu hook devreye girer. Sıra bilinçli — her derin link için
+// koşulsuz bir tekil okuma açmak, listeden zaten gelen satırlar için
+// bedava bir CH sorgusu demek olurdu.
+//
+// `enabled` çağıranda: listede BULUNAMADIĞINDA açılır. Yani sorgu ancak
+// gerçekten gerekince koşar.
+//
+// data === null → kayıt gerçekten yok (404). undefined → henüz
+// yüklenmedi. İkisi ayrı: "bulunamadı" ekranını yalnız null çizmeli,
+// yoksa yükleme anında yanlış cümle kurulur.
+export function useProblemByID(id: string, opts?: { enabled?: boolean }) {
+  return useQuery<Problem | null>({
+    queryKey: keys.problems.byID(id),
+    queryFn: () => api.problem(id),
+    enabled: (opts?.enabled ?? true) && !!id,
+    // Tek kayıt okuması; sunucu 15 sn cache'liyor. Daha sık sormak yeni
+    // bir şey öğretmez — bu ekran bir ARŞİV görünümü, canlı bir liste değil.
+    staleTime: 15_000,
+    // Yok olan bir kimlik yeniden denemekle var olmaz.
+    retry: (count, err) => (err instanceof Error && err.message.startsWith('HTTP 404') ? false : count < 2),
+  });
+}
+
 // Open-problem count for the sidebar badge. v0.5.398 — switched
 // from fetching limit=200 rows + counting the array to a
 // dedicated /api/problems/count endpoint. The old approach

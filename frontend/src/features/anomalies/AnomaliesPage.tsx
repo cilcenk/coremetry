@@ -12,7 +12,7 @@ import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { ArrowDownToLine, Users, ChevronRight, ChevronDown, CornerDownRight } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBell, IconSparkles } from '@/components/icons';
-import { useProblems, useServicesMetadata, keys } from '@/lib/queries';
+import { useProblems, useProblemByID, useServicesMetadata, keys } from '@/lib/queries';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type UserRow } from '@/lib/api';
 import { fmtNum, fmtFixed, tsLong } from '@/lib/utils';
@@ -26,6 +26,7 @@ import type {
 } from '@/lib/types';
 import { AlertProblemDetail, ProblemDetail } from './ProblemDetail';
 import { withProblemParam, withExcParam } from './problemLink';
+import { findProblemInCaches } from './problemResolve';
 import { emptySamplesNote, type SampleScanEnvelope } from './exceptionSamples';
 import { PageControls } from '@/components/ui/PageControls';
 import { RenderedMarkdown, stripMarkdown } from '@/components/Markdown';
@@ -1239,12 +1240,22 @@ function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
 }
 
 // AlertProblemHost — resolves ?problem=<id> to a row and renders the
-// Variant-B full-page detail. Cache-first: the list the operator
-// clicked may be a FILTERED query whose rows fall outside this host's
-// own 200-newest-any-status window on churn-heavy installs — every
-// cached problems list is searched before the broad fetch decides, so
-// a visible row can never land on "not found". Deep links resolve via
-// the fetch; a stale id degrades to an honest empty state.
+// Variant-B full-page detail.
+//
+// ÜÇ BASAMAKLI ÇÖZÜM, ucuzdan pahalıya:
+//   1. cache — açık sayfaların halihazırda yüklü listeleri (bedava);
+//   2. liste — "herhangi bir durumdan en yeni 200" (zaten pollanıyor);
+//   3. by-id — tekil okuma (v0.9.825), YALNIZ ilk ikisi başarısızsa.
+//
+// 3. basamak neden şart: bildirim gönderilen problem çoğu zaman
+// ÇÖZÜLÜR ve liste penceresinden düşer. Yani e-postadaki bağlantı tam
+// da en çok gerektiği anda — "gece 3'te gelen sayfayı sabah aç" —
+// "Problem not found" diyordu. Kayıt aslında duruyordu (problems
+// tablosu, 90 günlük TTL); ekran olmayan bir veri kaybı bildiriyordu.
+//
+// Artık "bulunamadı" YALNIZ sunucu 404 döndüğünde çıkıyor — yani kayıt
+// GERÇEKTEN yokken. Çözülmüş kayıt tam detayıyla, RESOLVED rozeti ve
+// çözülme damgasıyla açılıyor (AlertProblemDetail).
 function AlertProblemHost({ id, isAdmin, onBack }: {
   id: string;
   isAdmin: boolean;
@@ -1252,15 +1263,26 @@ function AlertProblemHost({ id, isAdmin, onBack }: {
 }) {
   const qc = useQueryClient();
   const q = useProblems({ limit: 200 });
-  const cached = useMemo(() => {
-    for (const [, rows] of qc.getQueriesData<Problem[] | null>({ queryKey: keys.problems.all })) {
-      const hit = Array.isArray(rows) ? rows.find(x => x.id === id) : undefined;
-      if (hit) return hit;
-    }
-    return undefined;
+  const cached = useMemo(() => findProblemInCaches(qc.getQueriesData({ queryKey: keys.problems.all }), id),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qc, id, q.dataUpdatedAt]);
-  const p = cached ?? (q.data?.items ?? []).find(x => x.id === id);
+    [qc, id, q.dataUpdatedAt]);
+  const fromList = cached ?? (q.data?.items ?? []).find(x => x.id === id);
+
+  // Tekil okuma YALNIZ liste yolu bitip satır çıkmadığında açılır.
+  // Koşulsuz açmak, listeden zaten gelen her satır için bedava bir CH
+  // sorgusu demek olurdu — açık problemlerin neredeyse tamamı listede.
+  const listSettled = !q.isLoading && !q.isFetching;
+  const byID = useProblemByID(id, { enabled: !fromList && listSettled });
+  const p = fromList ?? byID.data ?? undefined;
+
+  // Sunucu 404 dedi = kayıt GERÇEKTEN yok. null ile undefined ayrı:
+  // undefined "henüz yüklenmedi" demek ve o anda "bulunamadı" yazmak
+  // yanlış cümle olurdu.
+  const genuinelyGone = byID.isSuccess && byID.data === null;
+  const loading = !p && !genuinelyGone && (q.isLoading || byID.isLoading || byID.isFetching);
+  // Liste hatası ancak tekil okuma da kurtaramadıysa hata ekranıdır.
+  const failed = !p && !genuinelyGone && !loading && (q.isError || byID.isError);
+
   return (
     <>
       {/* Singular: this is ONE problem, reached from a notification deep
@@ -1271,22 +1293,25 @@ function AlertProblemHost({ id, isAdmin, onBack }: {
           problem={p}
           isAdmin={isAdmin}
           onBack={onBack}
-          onChanged={() => { void q.refetch(); void qc.invalidateQueries({ queryKey: keys.problems.all }); }}
+          onChanged={() => {
+            void q.refetch();
+            void qc.invalidateQueries({ queryKey: keys.problems.all });
+          }}
         />
-      ) : q.isLoading ? (
+      ) : loading ? (
         <div id="content"><Spinner /></div>
-      ) : q.isError ? (
+      ) : failed ? (
         <div id="content">
-          <Empty icon="⚠" title="Problemler yüklenemedi">
-            <Button variant="secondary" size="sm" onClick={() => { void q.refetch(); }}>Tekrar dene</Button>{' '}
+          <Empty icon="⚠" title="Problem yüklenemedi">
+            <Button variant="secondary" size="sm" onClick={() => { void q.refetch(); void byID.refetch(); }}>Tekrar dene</Button>{' '}
             <Button variant="secondary" size="sm" onClick={onBack}>← Exceptions</Button>
           </Empty>
         </div>
       ) : (
         <div id="content">
-          <Empty icon="❓" title="Problem not found">
-            Bu problem kaydı artık listede yok — çözülüp 200-satır penceresinin
-            dışına düşmüş olabilir.{' '}
+          <Empty icon="❓" title="Problem kaydı yok">
+            Bu kimlikle bir problem bulunamadı — kayıt 90 günlük saklama
+            penceresini aşmış ya da bağlantı eksik kopyalanmış olabilir.{' '}
             <Button variant="secondary" size="sm" onClick={onBack}>← Exceptions</Button>
           </Empty>
         </div>

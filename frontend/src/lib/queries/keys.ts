@@ -64,6 +64,13 @@ export const keys = {
     all:         ['problems'] as const,
     list:        (filter: { status?: string; service?: string; ownerTeam?: string; sreTeam?: string; env?: string; limit?: number }) =>
                    ['problems', 'list', filter] as const,
+    // v0.9.825 — tekil kayıt (bildirim derin linki yedek yolu).
+    // 'problems' ağacının altında, yani bir problem değiştiğinde
+    // yapılan toplu invalidate bunu da tazeler. 'list' ile KARDEŞ
+    // (alt dalı değil): AlertProblemHost cache'teki listeleri gezip
+    // satır arıyor ve iki şeklin aynı dala düşmesi o taramayı
+    // gereksizce şekil-ayırt etmeye zorlardı.
+    byID:        (id: string) => ['problems', 'byid', id] as const,
   },
 
   anomalies: {

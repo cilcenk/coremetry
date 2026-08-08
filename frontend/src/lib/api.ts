@@ -931,9 +931,19 @@ export const api = {
   // grouped by span category (db / queue / http / kind).
   // /databases overview — one row per (db_system, instance) over
   // the window. Drives the Dynatrace-style Databases page.
-  databases: (fromNs: number, toNs: number, compare?: 'prior') =>
-    get<import('./types').DBInstance[] | null>(
-      `/api/databases?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`),
+  // v0.9.821 — zarf: çıplak dizi yerine {rows, rowsCapped, rowLimit,
+  // receiversCapped, source, receiversSkipped}. Bir dizi "kesildim"
+  // diyemez ve bu sayfada ÜÇ ayrı kesme noktası vardı (satırlar,
+  // receiver keşfi, çağıranlar) — üçü de tamamen görünmezdi. Sunucu
+  // anahtar öneki de v2'ye çıktı, yani rolling deploy sırasında eski
+  // dizi payload'ı bu koda servis EDİLEMEZ.
+  //
+  // env: db_summary_5m'de deploy_env boyutu yok, o yüzden env okumayı
+  // ham span'lere düşürüyor ve zarf source='raw' der.
+  databases: (fromNs: number, toNs: number, compare?: 'prior', env?: string) =>
+    get<import('./types').DatabasesOverview | null>(
+      `/api/databases?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`
+      + (env ? `&env=${encodeURIComponent(env)}` : '')),
   // v0.9.820 — /databases KPI şeridi + üç grafik. dbsys/dbname SAYFANIN
   // filtrelerinin ta kendisi, böylece şeritteki sayı ile tablodaki
   // satırlar aynı kümeyi anlatır.
@@ -993,11 +1003,20 @@ export const api = {
     get<import('./types').HostDetail | null>(
       `/api/hosts/detail?host=${encodeURIComponent(host)}&from=${fromNs}&to=${toNs}`),
   // Detail drawers — per-(service, pod) caller breakdown + top
-  // operations for one (system, instance) tuple. Drives the
+  // operations for one (system, instance, dbName) TRIPLE. Drives the
   // row-click drawer on /databases and /messaging.
-  databaseDetail: (system: string, instance: string, fromNs: number, toNs: number) =>
+  //
+  // v0.9.821 — dbName imzaya girdi. Öncesinde çekmece yalnız (system,
+  // instance) soruyordu, oysa TABLO SATIRI üçlü kimlikteydi: bir
+  // host'ta N veritabanı olan kurulumlarda hangi satıra tıklanırsa
+  // tıklansın aynı çekmece açılıyor ve host'un TOPLAMINI gösteriyordu.
+  // Boş dbName hâlâ geçerli ("tüm veritabanları") — eski derin linkler
+  // ve messaging tarafı için; çekmece bu hâli açıkça yazıyor.
+  databaseDetail: (system: string, instance: string, dbName: string, fromNs: number, toNs: number) =>
     get<import('./types').DBDetail | null>(
-      `/api/databases/detail?system=${encodeURIComponent(system)}&instance=${encodeURIComponent(instance)}&from=${fromNs}&to=${toNs}`),
+      `/api/databases/detail?system=${encodeURIComponent(system)}&instance=${encodeURIComponent(instance)}`
+      + (dbName ? `&dbName=${encodeURIComponent(dbName)}` : '')
+      + `&from=${fromNs}&to=${toNs}`),
   // Cross-engine waits & locks strip (v0.8.391, Stage-2 D3) — one
   // normalized wait/lock model per (system, instance), fed by
   // whatever the engine's OTel receiver actually emits. Lazy:

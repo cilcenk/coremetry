@@ -15,8 +15,10 @@ function useDbNames(): string[] {
     },
     staleTime: 60_000,
   });
+  // v0.9.821 — /api/databases zarfa geçti ({rows, …}); dizi yerine
+  // rows okunuyor. Değişkenin anlamı aynı: pencerede görülen db adları.
   const names = new Set<string>();
-  for (const r of q.data ?? []) names.add(r.dbName || r.instance);
+  for (const r of q.data?.rows ?? []) names.add(r.dbName || r.instance);
   return [...names].sort();
 }
 

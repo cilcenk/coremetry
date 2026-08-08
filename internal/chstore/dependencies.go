@@ -179,6 +179,35 @@ const dbInstanceExpr = `coalesce(
 	'unknown'
 )`
 
+// dbNameExpr — db_summary_5m'in `db_name` kimliğinin HAM SPANS ikizi,
+// birebir (store.go db_summary_5m DDL'i). dbInstanceExpr ile aynı
+// gerekçe: bu ifadeyi farklı yazan bir ham sorgu, AYNI mantıksal
+// veritabanını FARKLI bir adla çözer ve tablonun iki yarısı birbiriyle
+// çelişir. 'default' düşüşü de MV ile aynı — db.name yayınlamayan bir
+// instrumentasyon her iki yolda da 'default' kovasına düşer.
+const dbNameExpr = `coalesce(nullIf(attr_values[indexOf(attr_keys, 'db.name')], ''), 'default')`
+
+// dbDetailNameFilter — çekmece sorgularının db_name yüklemi + args'ı.
+// SAF (regresyon testi: db_detail_identity_test.go).
+//
+// v0.9.821 — ÇEKMECE KİMLİĞİ EKSİKTİ. Satır kimliği (system, instance,
+// db_name) üçlüsüydü ama çekmece yalnız (system, instance) soruyordu.
+// Sonuç: aynı host üzerinde birden çok veritabanı olan her kurulumda —
+// yani Oracle SID'leri, PostgreSQL şemaları, MSSQL DB'leri — hangi
+// satıra tıklanırsa tıklansın AYNI çekmece açılıyor ve o host'un TÜM
+// veritabanlarının toplamını gösteriyordu. Satır "COREBANK: 4.200 sorgu"
+// diyor, çekmece 31.000 gösteriyordu; ikisi de "doğru" görünüyordu.
+//
+// expr çağıranca verilir: MV yolunda kolon adı (`db_name`), ham
+// spans yolunda dbNameExpr. Boş dbName → yüklem YOK (tüm db'ler),
+// çünkü eski derin linkler ve messaging tarafı db_name taşımıyor.
+func dbDetailNameFilter(expr, dbName string) (string, []any) {
+	if dbName == "" {
+		return "", nil
+	}
+	return " AND " + expr + " = ?", []any{dbName}
+}
+
 // DBCallerBreakdown is one row of the per-(service, pod)
 // breakdown shown in the DB detail drawer. Pod is derived from
 // resource.host.name on the calling span — k8s pod name on
@@ -227,8 +256,13 @@ type DBOpStat struct {
 // frontend renders it as a three-section drawer: time-series
 // (call rate), per-(service, pod) breakdown, top operations.
 type DBDetail struct {
-	System     string  `json:"system"`
-	Instance   string  `json:"instance"`
+	System   string `json:"system"`
+	Instance string `json:"instance"`
+	// DBName — v0.9.821. Çekmecenin CEVAPLADIĞI soru artık üçlü kimlikte:
+	// (system, instance, db_name). Boş = "bu instance'ın tüm
+	// veritabanları" (eski davranış, eski derin linkler için korunuyor)
+	// ve frontend bunu açıkça yazıyor.
+	DBName     string  `json:"dbName,omitempty"`
 	SpanCount  uint64  `json:"spanCount"`
 	ErrorCount uint64  `json:"errorCount"`
 	ErrorRate  float64 `json:"errorRate"`
@@ -267,8 +301,16 @@ func distinctCallerServices(callers []DBCallerBreakdown) []string {
 	return out
 }
 
+// GetDatabaseDetail — bir (db_system, instance, db_name) ÜÇLÜSÜNÜN
+// çekmece yükü.
+//
+// v0.9.821 — dbName imzaya girdi. Öncesinde çekmece yalnız (system,
+// instance) soruyordu, oysa satır kimliği üçlüydü: bir host'ta N
+// veritabanı olan her kurulumda hangi satıra tıklanırsa tıklansın aynı
+// çekmece açılıyor ve o host'un TOPLAMINI gösteriyordu. Boş dbName eski
+// davranış (tüm db'ler) — messaging tarafı ve eski derin linkler için.
 func (s *Store) GetDatabaseDetail(
-	ctx context.Context, system, instance string, from, to time.Time,
+	ctx context.Context, system, instance, dbName string, from, to time.Time,
 ) (*DBDetail, error) {
 	if system == "" {
 		return nil, nil
@@ -291,10 +333,14 @@ func (s *Store) GetDatabaseDetail(
 	// `data.topOps.length` and a null spread / null property
 	// access crashes the page boundary.
 	out := &DBDetail{
-		System: system, Instance: instance,
+		System: system, Instance: instance, DBName: dbName,
 		Callers: []DBCallerBreakdown{},
 		TopOps:  []DBOpStat{},
 	}
+	// v0.9.821 — db_name yüklemi. MV yolunda kolon adı, ham spans
+	// yolunda dbNameExpr — ikisi de AYNI mantıksal veritabanını çözer.
+	mvNameSQL, mvNameArgs := dbDetailNameFilter("db_name", dbName)
+	rawNameSQL, rawNameArgs := dbDetailNameFilter(dbNameExpr, dbName)
 
 	// Aggregate stats for the (system, instance) pair — read
 	// from db_caller_summary_5m and roll up across every caller.
@@ -316,6 +362,7 @@ func (s *Store) GetDatabaseDetail(
 	}
 	// Scan is POSITIONAL — pointer order must mirror the SELECT exactly.
 	var avgMs, p50Ms, p95Ms, p99Ms *float64
+	aggArgs := append([]any{bucketStart, to, system, mvInstance}, mvNameArgs...)
 	row := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT countMerge(span_count_state),
 		       countMerge(error_count_state),
@@ -326,9 +373,9 @@ func (s *Store) GetDatabaseDetail(
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
-		  AND db_system = ? AND instance = ?
+		  AND db_system = ? AND instance = ?`+mvNameSQL+`
 		SETTINGS max_execution_time = 8`,
-		bucketStart, to, system, mvInstance)
+		aggArgs...)
 	if err := row.Scan(&out.SpanCount, &out.ErrorCount, &avgMs, &p50Ms, &p95Ms, &p99Ms); err != nil {
 		return nil, err
 	}
@@ -354,12 +401,12 @@ func (s *Store) GetDatabaseDetail(
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
 		WHERE time_bucket >= ? AND time_bucket <= ?
-		  AND db_system = ? AND instance = ?
+		  AND db_system = ? AND instance = ?`+mvNameSQL+`
 		GROUP BY service_name, pod
 		ORDER BY countMerge(span_count_state) DESC
 		LIMIT 500
 		SETTINGS max_execution_time = 8`,
-		bucketStart, to, system, mvInstance)
+		aggArgs...)
 	if err != nil {
 		return out, nil // partial result fine — overview-only mode
 	}
@@ -404,12 +451,16 @@ func (s *Store) GetDatabaseDetail(
 	// list, not a subquery). Empty list → unscoped fallback (nothing to show
 	// anyway when the MV has no callers).
 	callerSvcs := distinctCallerServices(out.Callers)
+	// v0.9.821 — ham taramaya da db_name yüklemi: aksi hâlde çekmecenin
+	// üst yarısı tek bir veritabanını, "Top statements" tablosu ise
+	// host'un TÜMÜNÜ anlatırdı — aynı çekmecede iki farklı kapsam.
 	stmtSQL := `
 		SELECT substring(db_statement, 1, 80) AS stmt,
 		       count(), avg(duration) / 1e6
 		FROM spans
-		WHERE time >= ? AND time <= ? AND db_system = ? AND ` + instancePredicate
+		WHERE time >= ? AND time <= ? AND db_system = ? AND ` + instancePredicate + rawNameSQL
 	stmtArgs := append([]any{from, to, system}, argIfNeeded(instancePredicate, instanceArg)...)
+	stmtArgs = append(stmtArgs, rawNameArgs...)
 	if len(callerSvcs) > 0 {
 		stmtSQL += ` AND service_name IN (?)`
 		stmtArgs = append(stmtArgs, callerSvcs)
@@ -717,12 +768,115 @@ const (
 	DBSourceReceiver DBSource = "receiver" // from oracledb.* metric_points only
 )
 
-func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInstance, error) {
+const (
+	// dbOverviewRowLimit — genel bakışın satır tavanı. Tavana DAYANMAK
+	// sessiz bir yalandır (v0.9.813'ün messaging dersi): tavan kadar satır
+	// dönen bir sayfa "estate'in tamamı bu" diye okunur. Zarf artık
+	// RowsCapped ile İLAN ediyor.
+	dbOverviewRowLimit = 5000
+	// dbTopCallersPerRow — satır başına taşınan üst çağıran sayısı.
+	// Frontend ilk 3'ü çizip "+N" diyor; 5 hem eski davranışın birebir
+	// aynısı hem de `LIMIT n BY`ın n'i.
+	dbTopCallersPerRow = 5
+	// dbReceiverLimit — motor başına keşfedilecek receiver instance
+	// tavanı (v0.5.240'ta 100'den yükseltilmişti).
+	dbReceiverLimit = 2000
+)
+
+// DatabasesOverview — /api/databases zarfı (v0.9.821).
+//
+// ZARF NEDEN: eski uç ÇIPLAK DİZİ döndürüyordu ve bir dizi "kesildim"
+// diyemez. Bu sayfada üç ayrı yerde kesme var (satırlar, receiver
+// keşfi, çağıranlar) ve üçü de tamamen görünmezdi.
+type DatabasesOverview struct {
+	Rows []DBInstance `json:"rows"`
+	// RowsCapped — satır okuması tavana dayandı, liste EKSİK olabilir.
+	RowsCapped bool `json:"rowsCapped,omitempty"`
+	RowLimit   int  `json:"rowLimit,omitempty"`
+	// ReceiversCapped — receiver keşfi tavana dayandı (motor bazında).
+	ReceiversCapped bool `json:"receiversCapped,omitempty"`
+	ReceiverLimit   int  `json:"receiverLimit,omitempty"`
+	// Source — "" = MV (varsayılan), "raw" = ham spans (env filtresi).
+	Source string `json:"source,omitempty"`
+	// ReceiversSkipped — receiver paneli neden hiç doldurulmadı.
+	// Boş = doldu. Şu an tek sebep var: "env".
+	ReceiversSkipped string `json:"receiversSkipped,omitempty"`
+}
+
+// DatabasesQuery — /databases genel bakış girdileri (v0.9.821).
+type DatabasesQuery struct {
+	From, To time.Time
+	// Env — global Topbar env seçimi. db_summary_5m'de deploy_env
+	// BOYUTU YOK, o yüzden okuma ham span'lere düşer (endpoints
+	// v0.8.385 ile aynı forcesRaw sınıfı). Bugüne dek bu sayfa env'i
+	// SESSİZCE YOK SAYIYORDU: operatör env=uat seçip tüm ortamların
+	// veritabanlarını görüyordu ve hiçbir şey bunu söylemiyordu.
+	Env string
+	// IncludeCallers / IncludeReceivers — prior (compare) okuması
+	// ikisini de atlar; delta rozetleri yalnız sayaç + quantile okuyor.
+	IncludeCallers   bool
+	IncludeReceivers bool
+}
+
+// dbOverviewCapped — okunan satır sayısı tavana dayandı mı? SAF.
+// `>=` bilinçli: CH tam LIMIT kadar satır döndürdüğünde daha fazlası
+// VAR MI bilinmiyor demektir ve "bilmiyorum" burada "eksik olabilir"
+// tarafına yuvarlanmalı (msgOverviewCapped ile aynı kural).
+func dbOverviewCapped(rowCount int) bool { return rowCount >= dbOverviewRowLimit }
+
+// dbTopCallersSQL — satır başına ÜST çağıranlar (v0.9.821).
+//
+// ESKİ HÂLİ ALFABETİK KESİYORDU: `ORDER BY db_system, instance,
+// db_name, c DESC LIMIT 2000` — sıralama önce KİMLİĞE göre, kesme ise
+// global 2000'de. Yani adı alfabenin sonunda kalan her veritabanının
+// çağıranları tamamen düşüyor ve tabloda "—" görünüyordu: "bu db'yi
+// kimse çağırmıyor" diye okunan bir boşluk, oysa yalnız listenin
+// 2000. satırından sonraya düşmüştü. 5000 satır × 5 çağıran = 25.000,
+// yani kesme İSTİSNA değil KURALDI.
+//
+// CH'nin `LIMIT n BY` tam olarak bunun için var: kesme artık grup
+// BAŞINA, ORDER BY ise saf `c DESC`. Dıştaki LIMIT tel-bayt tavanı
+// olarak kalıyor ve tam oturuyor — hiçbir db'yi ayrım gözetmeden
+// kesmiyor. (messaging SÜRÜM 1 / v0.9.813 emsali.)
+var dbTopCallersSQL = `
+	SELECT db_system,
+	       instance,
+	       db_name,
+	       service_name,
+	       countMerge(span_count_state) AS c
+	FROM db_caller_summary_5m
+	WHERE time_bucket >= ? AND time_bucket <= ?
+	GROUP BY db_system, instance, db_name, service_name
+	ORDER BY c DESC
+	LIMIT ` + strconv.Itoa(dbTopCallersPerRow) + ` BY db_system, instance, db_name
+	LIMIT ` + strconv.Itoa(dbOverviewRowLimit*dbTopCallersPerRow) + `
+	SETTINGS max_execution_time = 8`
+
+// GetDatabasesRollup — v0.9.821. compare=prior okumasının HAFİF ikizi:
+// receiver keşfini VE çağıran turunu atlar. Delta rozetleri yalnız
+// sayaçları ve quantile'ları tüketiyor, oysa prior çağrısı bugüne dek
+// TAM okumayı koşuyordu — yani her compare açık sayfa yüklemesinde
+// dört receiver katalog probu + bir tam çağıran taraması BOŞUNA
+// ödeniyordu. (messaging GetMessagingRollup / endpoints SkipStatus
+// emsali.)
+func (s *Store) GetDatabasesRollup(ctx context.Context, from, to time.Time, env string) ([]DBInstance, error) {
+	ov, err := s.GetDatabases(ctx, DatabasesQuery{From: from, To: to, Env: env})
+	if err != nil {
+		return nil, err
+	}
+	return ov.Rows, nil
+}
+
+func (s *Store) GetDatabases(ctx context.Context, q DatabasesQuery) (*DatabasesOverview, error) {
+	from, to := q.From, q.To
 	if from.IsZero() {
 		from = time.Now().Add(-1 * time.Hour)
 	}
 	if to.IsZero() {
 		to = time.Now()
+	}
+	if q.Env != "" {
+		return s.getDatabasesRaw(ctx, q, from, to)
 	}
 	// v0.5.327 — back on the MV path. db_summary_5m now carries
 	// the db_name dim (added by the migration in store.go's
@@ -785,8 +939,14 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	ov := &DatabasesOverview{
+		Rows:          out,
+		RowsCapped:    dbOverviewCapped(len(out)),
+		RowLimit:      dbOverviewRowLimit,
+		ReceiverLimit: dbReceiverLimit,
+	}
 	if len(out) == 0 {
-		return out, nil
+		return ov, nil
 	}
 
 	// v0.5.327 — caller pass is precise per-db now that the MV
@@ -795,45 +955,38 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	// approximation. db_caller_summary_5m's GROUP BY produces
 	// distinct rollups keyed on the same triple plus the calling
 	// service / host.
-	cRows, err := s.telemetryReadConn().Query(ctx, `
-		SELECT db_system,
-		       instance,
-		       db_name,
-		       service_name,
-		       countMerge(span_count_state) AS c
-		FROM db_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
-		GROUP BY db_system, instance, db_name, service_name
-		ORDER BY db_system, instance, db_name, c DESC
-		LIMIT 2000
-		SETTINGS max_execution_time = 8`, bucketStart, to)
-	if err != nil {
-		return out, nil // partial result is fine — callers are optional
-	}
-	defer cRows.Close()
-	for cRows.Next() {
-		var system, instance, dbName, svc string
-		var c uint64
-		if err := cRows.Scan(&system, &instance, &dbName, &svc, &c); err != nil {
-			continue
-		}
-		i, ok := idxByKey[key{system, instance, dbName}]
-		if !ok {
-			continue
-		}
-		if len(out[i].Callers) >= 5 || svc == "" {
-			continue
-		}
-		dup := false
-		for _, x := range out[i].Callers {
-			if x == svc {
-				dup = true
-				break
+	// v0.9.821 — prior (compare) okuması bu turu ATLAR: delta rozetleri
+	// çağıran listesini hiç okumuyor.
+	if q.IncludeCallers {
+		cRows, err := s.telemetryReadConn().Query(ctx, dbTopCallersSQL, bucketStart, to)
+		if err == nil {
+			for cRows.Next() {
+				var system, instance, dbName, svc string
+				var c uint64
+				if err := cRows.Scan(&system, &instance, &dbName, &svc, &c); err != nil {
+					continue
+				}
+				i, ok := idxByKey[key{system, instance, dbName}]
+				if !ok {
+					continue
+				}
+				if len(out[i].Callers) >= dbTopCallersPerRow || svc == "" {
+					continue
+				}
+				dup := false
+				for _, x := range out[i].Callers {
+					if x == svc {
+						dup = true
+						break
+					}
+				}
+				if !dup {
+					out[i].Callers = append(out[i].Callers, svc)
+				}
 			}
+			cRows.Close()
 		}
-		if !dup {
-			out[i].Callers = append(out[i].Callers, svc)
-		}
+		// Hata ÖLÜMCÜL DEĞİL — çağıranlar opsiyonel dekorasyon.
 	}
 
 	// Receiver-discovery — pull every distinct DB instance that
@@ -863,22 +1016,150 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 	// TAZELİK ŞART: katalogda TTL YOK. `maxMerge(last_seen_state)`
 	// olmadan, bir kez bağlanıp sonra sökülen bir motor kapıyı sonsuza
 	// kadar açık tutardı — yani kapı zamanla kendiliğinden anlamsızlaşır.
-	for _, prefix := range []struct{ metric, system string }{
-		{"oracledb.", "oracle"},
-		{"postgresql.", "postgresql"},
-		{"mysql.", "mysql"},
-		{"redis.", "redis"},
-	} {
-		if !s.receiverPrefixActive(ctx, prefix.metric) {
-			continue
+	//
+	// v0.9.821 — prior (compare) okuması bu keşfi de ATLAR: receiver
+	// satırlarının RED'i zaten sıfır, yani delta rozetine hiçbir şey
+	// katmıyorlar; dört katalog probu + dört metric_points taraması
+	// boşuna ödeniyordu.
+	if q.IncludeReceivers {
+		for _, prefix := range []struct{ metric, system string }{
+			{"oracledb.", "oracle"},
+			{"postgresql.", "postgresql"},
+			{"mysql.", "mysql"},
+			{"redis.", "redis"},
+		} {
+			if !s.receiverPrefixActive(ctx, prefix.metric) {
+				continue
+			}
+			extra, capped, err := s.discoverReceiverInstances(ctx, from, to, prefix.metric, prefix.system, nil)
+			if err != nil {
+				continue
+			}
+			if capped {
+				ov.ReceiversCapped = true
+			}
+			out = append(out, extra...)
 		}
-		extra, err := s.discoverReceiverInstances(ctx, from, to, prefix.metric, prefix.system, nil)
-		if err != nil {
-			continue
-		}
-		out = append(out, extra...)
 	}
-	return out, nil
+	ov.Rows = out
+	return ov, nil
+}
+
+// getDatabasesRaw — env filtresi altındaki HAM SPANS yolu (v0.9.821).
+//
+// db_summary_5m'de deploy_env BOYUTU YOK. Bugüne dek /databases global
+// env seçimini SESSİZCE YOK SAYIYORDU: operatör Topbar'dan env=uat
+// seçiyor, /endpoints ve /services daralıyor, /databases ise TÜM
+// ortamların veritabanlarını göstermeye devam ediyordu ve hiçbir şey
+// bunu söylemiyordu. Sessizce filtrelenmemiş bir liste, filtrelenmiş
+// gibi okunur — bu sayfadaki en pahalı yalan sınıfı.
+//
+// Kimlik ifadeleri MV'nin BİREBİR aynısı (dbInstanceExpr / dbNameExpr),
+// yoksa iki yol aynı veritabanını farklı adla çözer ve env'i açıp
+// kapatmak satırların kimliğini değiştirirmiş gibi görünür.
+//
+// MALİYET, ÖLÇÜLDÜ (chc-0, 60 dk pencere, query_log): 218k satır /
+// 2.08 MiB / 7 ms. Prod ölçeğinde bu tarama MV yolundan kat kat
+// pahalıdır — v0.5.327'nin MV'ye geçme gerekçesi tam buydu. Bu yüzden
+// yol YALNIZ env seçiliyken açılıyor, 30 sn cache'in arkasında ve
+// frontend kaynağın değiştiğini şeritte SÖYLÜYOR (endpoints v0.8.385
+// ile aynı takas).
+//
+// Receiver keşfi bu yolda ATLANIR: metric_points'te deploy_env yok,
+// yani receiver satırları env'e göre daraltılamaz ve daraltılmamış
+// satırları daraltılmış bir listenin yanına koymak aynı yalan olurdu.
+// Zarf bunu ReceiversSkipped ile İLAN eder.
+func (s *Store) getDatabasesRaw(
+	ctx context.Context, q DatabasesQuery, from, to time.Time,
+) (*DatabasesOverview, error) {
+	rows, err := s.telemetryReadConn().Query(ctx, `
+		SELECT db_system,
+		       `+dbInstanceExpr+` AS instance,
+		       `+dbNameExpr+`     AS db_name,
+		       count()                                        AS span_count,
+		       countIf(status_code = 'error')                 AS error_count,
+		       sum(duration) / 1e6 / nullIf(count(), 0)       AS avg_ms,
+		       arrayElement(quantilesTDigest(0.5, 0.95, 0.99)(duration), 1) / 1e6 AS p50_ms,
+		       arrayElement(quantilesTDigest(0.5, 0.95, 0.99)(duration), 2) / 1e6 AS p95_ms,
+		       arrayElement(quantilesTDigest(0.5, 0.95, 0.99)(duration), 3) / 1e6 AS p99_ms
+		FROM spans
+		WHERE time >= ? AND time <= ? AND db_system != '' AND deploy_env = ?
+		GROUP BY db_system, instance, db_name
+		ORDER BY span_count DESC
+		LIMIT `+strconv.Itoa(dbOverviewRowLimit)+`
+		SETTINGS max_execution_time = 15`, from, to, q.Env)
+	if err != nil {
+		return nil, err
+	}
+	out := []DBInstance{}
+	type key struct{ system, instance, dbName string }
+	idxByKey := map[key]int{}
+	for rows.Next() {
+		var r DBInstance
+		var avgMs, p50Ms, p95Ms, p99Ms *float64
+		if err := rows.Scan(&r.System, &r.Instance, &r.DBName, &r.SpanCount, &r.ErrorCount,
+			&avgMs, &p50Ms, &p95Ms, &p99Ms); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		r.AvgMs = safeF(avgMs)
+		r.P50Ms = safeF(p50Ms)
+		r.P95Ms = safeF(p95Ms)
+		r.P99Ms = safeF(p99Ms)
+		if r.SpanCount > 0 {
+			r.ErrorRate = float64(r.ErrorCount) / float64(r.SpanCount) * 100
+		}
+		r.Callers = []string{}
+		out = append(out, r)
+		idxByKey[key{r.System, r.Instance, r.DBName}] = len(out) - 1
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	ov := &DatabasesOverview{
+		Rows:             out,
+		RowsCapped:       dbOverviewCapped(len(out)),
+		RowLimit:         dbOverviewRowLimit,
+		Source:           "raw",
+		ReceiversSkipped: "env",
+	}
+	if len(out) == 0 || !q.IncludeCallers {
+		return ov, nil
+	}
+	// Çağıranlar da ham yoldan, aynı `LIMIT n BY` disipliniyle: grup
+	// başına en yoğun 5, alfabetik kesme YOK.
+	cRows, err := s.telemetryReadConn().Query(ctx, `
+		SELECT db_system,
+		       `+dbInstanceExpr+` AS instance,
+		       `+dbNameExpr+`     AS db_name,
+		       service_name,
+		       count() AS c
+		FROM spans
+		WHERE time >= ? AND time <= ? AND db_system != '' AND deploy_env = ?
+		GROUP BY db_system, instance, db_name, service_name
+		ORDER BY c DESC
+		LIMIT `+strconv.Itoa(dbTopCallersPerRow)+` BY db_system, instance, db_name
+		LIMIT `+strconv.Itoa(dbOverviewRowLimit*dbTopCallersPerRow)+`
+		SETTINGS max_execution_time = 10`, from, to, q.Env)
+	if err != nil {
+		return ov, nil // çağıranlar opsiyonel
+	}
+	for cRows.Next() {
+		var system, instance, dbName, svc string
+		var c uint64
+		if err := cRows.Scan(&system, &instance, &dbName, &svc, &c); err != nil {
+			continue
+		}
+		i, ok := idxByKey[key{system, instance, dbName}]
+		if !ok || svc == "" || len(out[i].Callers) >= dbTopCallersPerRow {
+			continue
+		}
+		out[i].Callers = append(out[i].Callers, svc)
+	}
+	cRows.Close()
+	ov.Rows = out
+	return ov, nil
 }
 
 // discoverReceiverInstances returns one DBInstance per distinct
@@ -901,19 +1182,30 @@ func (s *Store) GetDatabases(ctx context.Context, from, to time.Time) ([]DBInsta
 // Generalised from the prior Oracle-only helper so all four
 // engines we support (oracle / postgres / mysql / redis) share
 // one discovery path.
+// v0.9.821 — ikinci dönüş değeri: tavana DAYANILDI mı? Zarf bunu ilan
+// eder, frontend şeride basar.
 func (s *Store) discoverReceiverInstances(
 	ctx context.Context, from, to time.Time,
 	metricPrefix, system string,
 	alreadyCovered func(system, instance string) bool,
-) ([]DBInstance, error) {
+) ([]DBInstance, bool, error) {
 	// <prefix>instance.name turns into e.g. "oracledb.instance.name"
 	// — receivers commonly emit a self-naming attr like this on
 	// every datapoint.
 	specificAttr := metricPrefix + "instance.name"
 	// v0.5.240 — LIMIT bumped 100→2000. The "DBA fleet" topology
 	// (hundreds of receiver-instrumented DBs per engine kind)
-	// hit the prior cap. ORDER BY inst stays alphabetical so the
-	// result is deterministic; frontend filter narrows further.
+	// hit the prior cap.
+	//
+	// v0.9.821 — SIRALAMA ALFABETİKTEN HACME GEÇTİ. `ORDER BY inst`
+	// deterministikti ama tavana dayanan bir kurulumda kesme kriteri
+	// ADIN HARFİYDİ: 2001. instance'ın kaybolmasının tek sebebi adının
+	// alfabede sonra gelmesiydi, ve "zA-oracle" diye adlandırılmış bir
+	// prod veritabanı sessizce listeden düşerdi. `ORDER BY n DESC`
+	// (o pencerede yayılan datapoint sayısı) ile kesme artık EN AZ
+	// VERİ YAYANI atıyor — hâlâ bir kayıp, ama açıklanabilir bir kayıp,
+	// ve tavana dayanıldığı zarfta İLAN ediliyor.
+	// İkincil `inst` sıralaması: eşit hacimde sonuç deterministik kalsın.
 	q := `
 		SELECT coalesce(
 			nullIf(attr_values[indexOf(attr_keys, ?)], ''),
@@ -921,26 +1213,30 @@ func (s *Store) discoverReceiverInstances(
 			nullIf(attr_values[indexOf(attr_keys, 'server.address')], ''),
 			nullIf(res_values[indexOf(res_keys, 'service.name')], ''),
 			''
-		) AS inst
+		) AS inst,
+		count() AS n
 		FROM metric_points
 		WHERE time >= ? AND time <= ?
 		  AND startsWith(metric, ?)
 		GROUP BY inst
 		HAVING inst != ''
-		ORDER BY inst
-		LIMIT 2000
+		ORDER BY n DESC, inst ASC
+		LIMIT ` + strconv.Itoa(dbReceiverLimit) + `
 		SETTINGS max_execution_time = 8`
 	rows, err := s.telemetryReadConn().Query(ctx, q, specificAttr, from, to, metricPrefix)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	defer rows.Close()
 	out := []DBInstance{}
+	seen := 0
 	for rows.Next() {
 		var inst string
-		if err := rows.Scan(&inst); err != nil {
+		var n uint64
+		if err := rows.Scan(&inst, &n); err != nil {
 			continue
 		}
+		seen++
 		if alreadyCovered != nil && alreadyCovered(system, inst) {
 			continue
 		}
@@ -951,7 +1247,10 @@ func (s *Store) discoverReceiverInstances(
 			Callers:  []string{},
 		})
 	}
-	return out, nil
+	// Tavan kontrolü OKUNAN satır sayısından, filtrelenmiş çıktıdan
+	// DEĞİL: alreadyCovered eleyince çıktı tavanın altında kalır ama
+	// sorgu yine de kesilmiştir.
+	return out, seen >= dbReceiverLimit, nil
 }
 
 // msgOverviewRowLimit — /messaging genel bakışın satır tavanı. Tavana

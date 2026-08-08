@@ -7,7 +7,7 @@ import { TrendDelta } from './TrendDelta';
 import { Button } from './ui/Button';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
-import { trendsEnabled, latencyPresent } from '@/lib/depsTable';
+import { trendsEnabled, latencyPresent, depRowKey } from '@/lib/depsTable';
 import { msgBalance, msgP99Delta, type MsgBalanceState } from '@/lib/msgBalance';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
@@ -298,7 +298,7 @@ export function DependenciesTable({
     // drawer'ını Endpoints'teki gibi açar/kapar. /databases + /messaging
     // bu tablo üzerinden aynı anda kazandı.
     onOpen: (row) => {
-      const rowKey = `${row.system}|${row.cluster ?? ''}|${nameOf(row)}`;
+      const rowKey = depRowKey(row);
       setOpen(openKey === rowKey ? null : row, openKey === rowKey ? null : rowKey);
     },
   });
@@ -443,7 +443,11 @@ export function DependenciesTable({
               // Key includes cluster so two rows with the same
               // (system, destination) but different physical
               // Kafka clusters don't collide in expansion state.
-              const rowKey = `${r.system}|${r.cluster ?? ''}|${nameOf(r)}`;
+              // v0.9.821 — db.name da kimliğe girdi (depRowKey): eskiden
+              // bir host'taki N veritabanı AYNI anahtarı üretiyordu, yani
+              // bir satıra tıklamak hepsinin çekmecesini birden açıyordu
+              // (canlı: oracle/oracle üzerinde 6, postgres üzerinde 9).
+              const rowKey = depRowKey(r);
               const isOpen = openKey === rowKey;
               return (
                 <Fragment key={`${rowKey}|${i}`}>
@@ -612,7 +616,19 @@ export function DependenciesTable({
                         when no trend joins (or trends failed/loading). */}
                     {trendsEnabled(kind) && (
                       <td onClick={e => e.stopPropagation()}>
-                        <TrendCell trend={trendFor(r)} loading={trends === undefined} />
+                        {/* v0.9.821 — RECEIVER SATIRI TREND ÖDÜNÇ ALMAZ.
+                            trendFor'un gevşek anahtarı (system|instance)
+                            aynı (system, instance) için SPAN türevli bir
+                            trendi de yakalıyordu: receiver satırı — ki
+                            tanımı gereği uygulama trafiği YOK — komşusunun
+                            sparkline'ını, p99'unu ve hata rozetini kendi
+                            satırında gösteriyordu. LatencyCell'in
+                            v0.9.262'de öğrendiği dersin aynısı: bir ölçüm
+                            yokluğu, başkasının ölçümüyle doldurulmaz. */}
+                        {r.source === 'receiver'
+                          ? <span style={{ color: 'var(--text3)', fontSize: 11 }}
+                              title="Receiver ile keşfedildi — uygulama span'i yok, dolayısıyla RED trendi de yok. Motor metrikleri için satırı açın.">—</span>
+                          : <TrendCell trend={trendFor(r)} loading={trends === undefined} />}
                       </td>
                     )}
                     <td style={{ fontSize: 11 }} onClick={e => e.stopPropagation()}>
@@ -652,10 +668,20 @@ export function DependenciesTable({
                             title="Close detail (Esc)"
                             onClick={() => setOpen(null, null)}>✕</Button>
                         </div>
+                        {/* v0.9.821 — KİMLİK, ETİKET DEĞİL. nameOf(r)
+                            instance 'unknown' iken db.name'i ETİKET olarak
+                            basıyor; çekmeceye onu vermek instance=<db.name>
+                            sormak demekti ve MV'de instance='unknown' olduğu
+                            için hiçbir şey eşleşmiyordu — sessizce boş bir
+                            çekmece. dbName ise satır kimliğinin ÜÇÜNCÜ
+                            alanı: olmadan bir host'taki her veritabanı aynı
+                            çekmeceyi açıyor ve host TOPLAMINI gösteriyordu. */}
                         <DetailDrawer
                           system={r.system}
                           cluster={r.cluster ?? '(default)'}
                           name={nameOf(r)}
+                          instance={kind === 'db' ? (r.instance ?? '') : undefined}
+                          dbName={kind === 'db' ? r.dbName : undefined}
                           kind={kind}
                           source={r.source ?? 'spans'}
                           range={range} />

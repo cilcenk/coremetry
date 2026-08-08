@@ -764,6 +764,26 @@ export interface EndpointsSeries extends SeriesWindow {
   unsupportedScope?: string;
 }
 
+// DatabasesOverview — /api/databases zarfı (v0.9.821).
+//
+// ZARF NEDEN: eski uç ÇIPLAK DİZİ döndürüyordu ve bir dizi "kesildim"
+// diyemez. Bu sayfada ÜÇ ayrı kesme noktası var (satırlar, receiver
+// keşfi, çağıranlar) ve üçü de tamamen görünmezdi: tavan kadar satır
+// dönen bir sayfa "estate'in tamamı bu" diye okunuyordu.
+export interface DatabasesOverview {
+  rows: DBInstance[];
+  /** Satır okuması tavana dayandı — liste EKSİK olabilir. */
+  rowsCapped?: boolean;
+  rowLimit?: number;
+  /** Receiver keşfi motor başına tavana dayandı. */
+  receiversCapped?: boolean;
+  receiverLimit?: number;
+  /** "" = MV (varsayılan), "raw" = ham spans (env filtresi). */
+  source?: string;
+  /** Receiver paneli neden hiç doldurulmadı ("env"). Boş = doldu. */
+  receiversSkipped?: string;
+}
+
 // DatabasesSeries — /api/databases/series (v0.9.820). TEK MV taraması
 // (iki seviyeli WITH ROLLUP) üç şeyi birden veriyor: motor kırılımlı
 // hacim (engines), kova başına FİLO toplamı + gerçek merge edilmiş

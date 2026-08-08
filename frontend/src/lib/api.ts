@@ -934,6 +934,13 @@ export const api = {
   databases: (fromNs: number, toNs: number, compare?: 'prior') =>
     get<import('./types').DBInstance[] | null>(
       `/api/databases?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`),
+  // v0.9.820 — /databases KPI şeridi + üç grafik. dbsys/dbname SAYFANIN
+  // filtrelerinin ta kendisi, böylece şeritteki sayı ile tablodaki
+  // satırlar aynı kümeyi anlatır.
+  databasesSeries: (params: {
+    from: number; to: number; dbsys?: string; dbname?: string; compare?: 'prior';
+  }) =>
+    get<import('./types').DatabasesSeries | null>(`/api/databases/series?${qs(params)}`),
   // Per-row RED sparklines + latest-bucket health snapshot for the
   // /databases + /messaging overview grid. One DBTrend per
   // (dbSystem, instance, dbName) — join to the overview rows by

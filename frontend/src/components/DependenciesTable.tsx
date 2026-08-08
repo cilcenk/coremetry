@@ -865,6 +865,18 @@ function TrendCell({ trend, loading }: {
   const p99Tone: 'err' | 'warn' | 'ok' =
     trend.curP99Ms > 500 ? 'err'
     : trend.curP99Ms > 200 ? 'warn' : 'ok';
+  // v0.9.820 — rozetler artık son TAM kovadan (backend
+  // applyDBTrendCurrent). Tooltip'ler bunu SÖYLÜYOR, çünkü "şu an" ile
+  // "son kapanmış 5 dakika" arasındaki fark bir olay sırasında kritik:
+  // rozet eskiden dolmakta olan kovayı okuyordu ve her sayfa
+  // yenilemesinde "trafik durdu / gecikme düzeldi" diye parlıyordu.
+  //
+  // curFromPartial: pencerede TEK bir tam kova bile yoktu (çok dar
+  // aralık) — o zaman rozet dolmakta olandan okunuyor ve bunu ilan
+  // ediyor. Yanlış bir sayıyı sessizce basmaktansa "henüz oturmadı".
+  const bucketNote = trend.curFromPartial
+    ? 'Bu pencerede kapanmış bir 5 dk kovası yok — değer HÂLÂ DOLAN kovadan, düşük görünür.'
+    : 'Son TAM 5 dk kovası (dolmakta olan kova bilerek atlanır: sayısı düşük gelir ve sahte bir düzelme gibi okunur).';
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
       <Sparkline
@@ -873,15 +885,15 @@ function TrendCell({ trend, loading }: {
         height={20}
         color={sparkColor}
         unit="/s"
-        title={`call-rate · cur ${trend.curRps.toFixed(1)}/s`} />
+        title={`çağrı hızı · son tam kova ${trend.curRps.toFixed(1)}/s\n${bucketNote}`} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
         <span className={`badge b-${p99Tone}`} style={{ fontSize: 9 }}
-          title="latest-bucket p99">
+          title={`p99 · ${bucketNote}`}>
           {trend.curP99Ms.toFixed(0)}ms
         </span>
         {trend.curErrorRate > 0 && (
           <span className={`badge b-${errTone}`} style={{ fontSize: 9 }}
-            title="latest-bucket error rate">
+            title={`hata oranı · ${bucketNote}`}>
             {trend.curErrorRate.toFixed(1)}%
           </span>
         )}

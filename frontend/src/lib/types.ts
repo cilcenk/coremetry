@@ -310,9 +310,15 @@ export interface DBTrend {
   dbName: string;
   cluster: string;
   points: DBTrendPoint[];
+  // v0.9.820 — cur* artık son TAM kovadan. Eskiden son kovaydı ve canlı
+  // bir pencerede o kova DOLUYOR: rozet her yenilemede "trafik durdu /
+  // gecikme düzeldi" diye parlıyor, operatör kendi kendine düzelen bir
+  // sistem görüyordu.
   curRps: number;
   curErrorRate: number;  // 0..100
   curP99Ms: number;
+  /** Pencerede tek bir TAM kova bile yoktu — rozet dolmakta olandan. */
+  curFromPartial?: boolean;
 }
 
 // DBCallerBreakdown — one row of the per-(service, pod)
@@ -756,6 +762,50 @@ export interface EndpointsSeries extends SeriesWindow {
    * yerine sunucu durumu İLAN ediyor ve CH'ye hiç gitmiyor.
    */
   unsupportedScope?: string;
+}
+
+// DatabasesSeries — /api/databases/series (v0.9.820). TEK MV taraması
+// (iki seviyeli WITH ROLLUP) üç şeyi birden veriyor: motor kırılımlı
+// hacim (engines), kova başına FİLO toplamı + gerçek merge edilmiş
+// quantile (points) ve pencere KPI'ları.
+//
+// Motor serileri gecikme TAŞIMAZ: kırılım hacim grafiği için var;
+// motor başına quantile da taşımak, aynı ekranda farklı merge'lerden
+// gelen iki p95 seti üretirdi.
+export interface DBSeriesPoint {
+  timeS: number;
+  queries: number;
+  errors: number;
+  queriesPerMin: number;
+  errorRate: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+}
+
+export interface DBEngineSeriesPoint {
+  timeS: number;
+  queries: number;
+  queriesPerMin: number;
+}
+
+export interface DBEngineSeries {
+  system: string;
+  points: DBEngineSeriesPoint[];
+}
+
+export interface DatabasesSeries extends SeriesWindow {
+  points: DBSeriesPoint[];
+  engines: DBEngineSeries[];
+  queries: number;
+  errors: number;
+  queriesPerMin: number;
+  errorRate: number;
+  p50Ms: number;
+  p95Ms: number;
+  p99Ms: number;
+  /** Bir önceki eş pencerenin p95'i (compare açıkken). Yoksa Δ çizilmez. */
+  priorP95Ms?: number;
 }
 
 // BreakdownPoint — one bucket of the Elastic-APM-style "span

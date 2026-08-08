@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 // DetailsToc — v0.9.380, redesign D4 (mockup af7419e5). Details
 // sekmesinin sağında 140px yapışkan mini-ToC rayı: dtl-cols grid'i
@@ -6,17 +6,28 @@ import { useEffect, useState } from 'react';
 // Scroll-spy IntersectionObserver'la — aktif bölüm accent çizgili.
 // Salt sunum: veri/fetch yok, URL'e yazmaz (geçici görünüm durumu).
 
-const SECTIONS: Array<{ id: string; label: string }> = [
-  { id: 'dtl-props', label: 'Properties' },
-  { id: 'dtl-perf', label: 'Performance' },
-  { id: 'dtl-latency', label: 'Latency' },
-  { id: 'dtl-db', label: 'Database' },
-  { id: 'dtl-runtime', label: 'Runtime & rollouts' },
-  { id: 'deploys', label: 'Rollouts' },
-];
+// v0.9.784 — "Metrikler" KOŞULLU girdi: bölüm servisin metrik kataloğuna
+// bağlı olarak kurulur ya da hiç kurulmaz. Sabit listede tutulsaydı,
+// metrik yayınlamayan bir serviste hiçbir yere gitmeyen ölü bir ToC satırı
+// kalırdı (tık → scrollIntoView null üstünde sessizce no-op). Bu yüzden
+// liste bir SABİT değil, showMetrics'e göre kurulan bir dizi.
+function sectionsFor(showMetrics: boolean): Array<{ id: string; label: string }> {
+  return [
+    { id: 'dtl-props', label: 'Properties' },
+    { id: 'dtl-perf', label: 'Performance' },
+    ...(showMetrics ? [{ id: 'dtl-metrics', label: 'Metrikler' }] : []),
+    { id: 'dtl-latency', label: 'Latency' },
+    { id: 'dtl-db', label: 'Database' },
+    { id: 'dtl-runtime', label: 'Runtime & rollouts' },
+    { id: 'deploys', label: 'Rollouts' },
+  ];
+}
 
-export function DetailsToc() {
-  const [active, setActive] = useState<string>(SECTIONS[0].id);
+export function DetailsToc({ showMetrics = false }: { showMetrics?: boolean }) {
+  const SECTIONS = useMemo(() => sectionsFor(showMetrics), [showMetrics]);
+  const [active, setActive] = useState<string>('dtl-props');
+  // SECTIONS bağımlılık: bölüm sonradan belirince (katalog geç geldi)
+  // observer yeniden kurulmalı, yoksa yeni başlık scroll-spy dışında kalır.
   useEffect(() => {
     if (typeof IntersectionObserver === 'undefined') return;
     // En üstteki görünür bölüm kazanır; rootMargin üstten dar tutulur ki
@@ -37,7 +48,7 @@ export function DetailsToc() {
       if (el) io.observe(el);
     }
     return () => io.disconnect();
-  }, []);
+  }, [SECTIONS]);
   return (
     <nav aria-label="Details bölümleri" style={{
       position: 'sticky', top: 70, alignSelf: 'flex-start',

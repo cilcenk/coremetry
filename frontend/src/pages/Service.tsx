@@ -22,6 +22,7 @@ import { DBQueriesPanel } from '@/components/DBQueriesPanel';
 import { DeployHistoryPanel } from '@/components/DeployHistoryPanel';
 import { DetailsPropsStrip } from './service/DetailsPropsStrip';
 import { DetailsToc } from './service/DetailsToc';
+import { DetailsMetricsSection, useDetailsMetricPanels } from './service/DetailsMetricsSection';
 import { chartsV2 } from '@/lib/featureFlags';
 import { panelMaxDataPoints } from '@/lib/chartStep';
 import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
@@ -163,6 +164,15 @@ function ServiceDetailInner() {
     p.delete('jds');
     return p;
   }, { replace: true });
+
+  // v0.9.784 — Details'in "Metrikler" bölümü KOŞULLU: servisin metrik
+  // kataloğunda eşleşen aile yoksa hiç kurulmaz. ToC girdisi ve ?op=
+  // kapsam beyanı AYNI sinyali okumak zorunda — olmayan bir bölüme ToC
+  // satırı ya da kapsam iddiası koymak ölü UI olur. Bölümün kendi
+  // sorgusuyla AYNI queryKey + staleTime ⇒ RQ dedupe, ek ağ isteği YOK;
+  // yalnız Details sekmesinde etkin.
+  const { panels: metricPanels } = useDetailsMetricPanels(svc, tab === 'details');
+  const hasMetricPanels = metricPanels.length > 0;
 
   // v0.8.415 (Tempo-parity T3) — operation scope lives in the URL
   // (?op=) so the RED charts AND the latency heatmap ride one
@@ -557,8 +567,14 @@ function ServiceDetailInner() {
                       op: {opScope}
                       <span onClick={() => setOpScope('')} style={{ cursor: 'pointer' }} title="Operasyon kapsamını kaldır">✕</span>
                     </span>
+                    {/* v0.9.784 — beyan sayfa SIRASINI izler ve KOŞULLU
+                        bölümü ancak kuruluysa anar. Metrikler yalnız
+                        service.name ile filtreleniyor (metric_points'te
+                        operasyon boyutu yok) → kapsam DIŞI. */}
                     <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                      kapsam: Performance ✓ · Latency ✓ · <span style={{ opacity: .65 }}>Database ✗ · Runtime ✗</span>
+                      kapsam: Performance ✓ ·{' '}
+                      {hasMetricPanels && <span style={{ opacity: .65 }}>Metrikler ✗ · </span>}
+                      Latency ✓ · <span style={{ opacity: .65 }}>Database ✗ · Runtime ✗</span>
                     </span>
                   </div>
                 )}
@@ -583,6 +599,13 @@ function ServiceDetailInner() {
                     geri aynı yol). Problem x-bölgeleri chart İÇİNDE kalır. */}
                 <ServiceAnnotationLane service={svc} fromNs={rangeNs.from} toNs={rangeNs.to}
                   onZoomTo={handleZoom} />
+                {/* v0.9.784 — OTLP metrik satırı. Details'te bugüne dek
+                    metric_points türevli TEK panel yoktu; panel seti
+                    servisin KENDİ kataloğundan kurulur (ad hardcode YOK),
+                    ailesi olmayan panel hiç kurulmaz, hiç panel yoksa
+                    bölüm de ToC girdisi de gizli. */}
+                <DetailsMetricsSection service={svc} rangeNs={rangeNs}
+                  onZoom={handleZoom} onZoomReset={handleZoomReset} />
                 <div className="dtl-sech" id="dtl-latency">Latency
                   {opScope && <span className="badge b-info" style={{ textTransform: 'none', letterSpacing: 0 }}>op kapsamı</span>}
                 </div>
@@ -623,7 +646,7 @@ function ServiceDetailInner() {
                   </LazyMount>
                 </div>
               </div>
-              <DetailsToc />
+              <DetailsToc showMetrics={hasMetricPanels} />
               </div>
             )}
 

@@ -2,9 +2,9 @@
 // BuilderQuery → dashboard Panel mapping so a builder edit can't silently
 // change what a pinned panel renders.
 import { describe, expect, it } from 'vitest';
-import { isPinnable, queryToPanel } from './pinToDashboard';
-import { blankQuery } from './model';
-import type { MetricPanelConfig, SpanMetricPanelConfig } from '@/lib/types';
+import { isPinnable, queryToPanel, vizFromPanel, vizToPanel } from './pinToDashboard';
+import { blankQuery, EXPLORE_VIZ, type ExploreViz } from './model';
+import type { MetricPanelConfig, PanelVizType, SpanMetricPanelConfig } from '@/lib/types';
 
 describe('queryToPanel — metric source', () => {
   const q = {
@@ -73,5 +73,99 @@ describe('queryToPanel — span source', () => {
     };
     expect(isPinnable(grouped)).toBe(false);
     expect(queryToPanel(grouped)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.786 — viz taşıma. Birim-karıştırma kuralının (her Nh/Nd, her ms/s
+// dalı ayrı test) viz hali: TEK bir viz değerini denemek yalan söyler,
+// çünkü hata tam da eşleşmeyen adlarda ('bars' vs 'bar') ve zaman-serisi
+// OLMAYAN markların düşüşünde saklı. Her ExploreViz değeri satır alır.
+// ---------------------------------------------------------------------------
+describe('vizToPanel — ExploreViz → PanelVizType', () => {
+  const rows: [ExploreViz, PanelVizType | undefined][] = [
+    ['line', undefined],          // alan yokluğu = panel varsayılanı
+    ['bars', 'bar'],              // yazım kayması — asıl hata buradaydı
+    ['area', 'area'],
+    ['stacked', 'stacked-area'],  // Explore'un stacked'i ALAN yığını
+    ['stat', undefined],          // zaman-serisi markı değil
+    ['toplist', undefined],
+    ['pie', undefined],
+    ['table', undefined],
+    ['heatmap', undefined],
+  ];
+  for (const [from, to] of rows) {
+    it(`${from} → ${to ?? '(taşınmaz)'}`, () => {
+      expect(vizToPanel(from)).toBe(to);
+    });
+  }
+
+  it('tüm union değerleri kapsanır — yeni bir viz sessizce düşmesin', () => {
+    expect(rows.map(r => r[0]).sort()).toEqual([...EXPLORE_VIZ].sort());
+  });
+
+  it('undefined → taşınmaz', () => {
+    expect(vizToPanel(undefined)).toBeUndefined();
+  });
+});
+
+describe('vizFromPanel — PanelVizType → ExploreViz', () => {
+  const rows: [PanelVizType | undefined, ExploreViz][] = [
+    ['line', 'line'],
+    ['bar', 'bars'],
+    ['area', 'area'],
+    ['stacked-area', 'stacked'],
+    // Explore ikizi yok: yığma semantiktir, mark değil — yığma korunur.
+    ['stacked-bar', 'stacked'],
+    [undefined, 'line'],
+  ];
+  for (const [from, to] of rows) {
+    it(`${from ?? 'undefined'} → ${to}`, () => {
+      expect(vizFromPanel(from)).toBe(to);
+    });
+  }
+
+  it('zaman-serisi markları GİDİP GERİ aynı kalır', () => {
+    for (const v of ['line', 'bars', 'area', 'stacked'] as ExploreViz[]) {
+      expect(vizFromPanel(vizToPanel(v))).toBe(v);
+    }
+  });
+
+  it('zaman-serisi olmayan markların dönüşü line', () => {
+    for (const v of ['stat', 'toplist', 'pie', 'table', 'heatmap'] as ExploreViz[]) {
+      expect(vizFromPanel(vizToPanel(v))).toBe('line');
+    }
+  });
+});
+
+describe('queryToPanel — viz config e iner', () => {
+  const span = {
+    ...blankQuery('A', 'span'),
+    agg: 'p99', scope: 'payments', splitBy: ['name'],
+  };
+
+  it('bars pinlenince panel bar olur (v0.9.786 hatası)', () => {
+    const cfg = queryToPanel(span, { viz: 'bars' })!.config as SpanMetricPanelConfig;
+    expect(cfg.viz).toBe('bar');
+  });
+
+  it('line/verilmemiş viz alanı YAZMAZ — eski config şekli korunur', () => {
+    expect((queryToPanel(span, { viz: 'line' })!.config as SpanMetricPanelConfig).viz)
+      .toBeUndefined();
+    expect((queryToPanel(span)!.config as SpanMetricPanelConfig).viz).toBeUndefined();
+  });
+
+  it('stacked → stacked-area, area → area', () => {
+    expect((queryToPanel(span, { viz: 'stacked' })!.config as SpanMetricPanelConfig).viz)
+      .toBe('stacked-area');
+    expect((queryToPanel(span, { viz: 'area' })!.config as SpanMetricPanelConfig).viz)
+      .toBe('area');
+  });
+
+  it('metric paneli viz TAŞIMAZ — MetricPanelConfig te alan yok', () => {
+    const p = queryToPanel(
+      { ...blankQuery('A', 'metric'), metric: 'jvm.memory.used' }, { viz: 'bars' })!;
+    expect(p.type).toBe('metric');
+    expect((p.config as Record<string, unknown>).viz).toBeUndefined();
   });
 });

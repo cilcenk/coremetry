@@ -809,7 +809,12 @@ name ~ checkout`}
                     pinnableLetters={pinnableLetters}
                     onPin={letter => {
                       const q = builder.queries.find(x => x.letter === letter);
-                      const p = q && queryToPanel(q, { step: builder.step || undefined });
+                      // v0.9.786 — viz de gider. builder.viz (debounced değil):
+                      // debounce yalnız SORGU alanları için; mark bir açılır
+                      // menü seçimi, operatörün son niyeti anında geçerlidir.
+                      const p = q && queryToPanel(q, {
+                        step: builder.step || undefined, viz: builder.viz,
+                      });
                       if (p) setPinPanel(p);
                     }} />
                 )}

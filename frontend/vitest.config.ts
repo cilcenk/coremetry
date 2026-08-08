@@ -11,6 +11,12 @@ import { defineConfig } from 'vitest/config';
 // functions, so no jsdom. When the first component/hook test lands (render
 // traps, URL-state sync), add a jsdom project rather than flipping the global
 // env — most of the value is in fast, DOM-free pure-function tests.
+//
+// v0.9.793 — o ilk bileşen testi geldi (CorePanel.smoke.test.tsx). Global env
+// YİNE node: 2000+ saf test jsdom kurulumunu ödemesin. Bileşen testleri kendi
+// `// @vitest-environment jsdom` docblock'unu taşır — dosya başına opt-in,
+// yani jsdom'un bedelini yalnız ona ihtiyacı olan dosya öder. include artık
+// .tsx'i de kapsıyor (JSX olmadan bir bileşen mount edilemez).
 export default defineConfig({
   // Mirror the Vite `@` → src alias so tests can import components that use it
   // (e.g. ServicePicker imports '@/lib/api').
@@ -19,7 +25,7 @@ export default defineConfig({
   },
   test: {
     environment: 'node',
-    include: ['src/**/*.test.ts'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
     // Surface slow tests early; pure helpers should be sub-millisecond.
     slowTestThreshold: 50,
     // v0.9.700 — @grafana/data (FAZ 1 DataFrame köprüsü) moment-timezone'u

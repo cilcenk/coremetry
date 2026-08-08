@@ -1,0 +1,302 @@
+// @vitest-environment jsdom
+//
+// CorePanel RENDER duman testi (v0.9.793) — deponun İLK bileşen testi.
+//
+// Bugüne dek CorePanel'in tek koruması KAYNAK TARAMASIydı
+// (corePanelContracts.test.ts): "şu satır dosyada duruyor mu?". O kapılar
+// altı kez işe yaradı ama bir şeyi hiç görmediler — bileşenin gerçekten
+// MOUNT olup olmadığını. Bir import hatası, bir hook sırası ihlali, bir
+// null-deref: hepsi tarayıcıda beyaz ekran, testte yeşil.
+//
+// KAPSAM, DÜRÜSTÇE: burada ÇİZİM test EDİLMİYOR. @grafana/ui'nin UPlotChart'ı
+// vi.mock ile stub'lanıyor çünkü jsdom'da <canvas>.getContext("2d") null
+// döner ve uPlot ilk çizimde patlar (canvas paketi bir devDependency olarak
+// eklenmeye değmez — çizimin doğruluğunu zaten piksel testiyle koruyamayız).
+// Test edilen: (a) dört PanelData durumunun (loading/error/empty/ready)
+// render çıktısı, (b) lejant katmanı — satır sayısı + hücre birimleri,
+// (c) config'in gerçekten KURULABİLİYOR olması — stub, builder'ın
+// getConfig()'ini çağırır, yani addScale/addAxis/addSeries/addBand/hook
+// zinciri patlarsa test kızarır. Yani "çizilen doğru mu" değil, "çizmeye
+// giden her şey ayakta mı".
+
+import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
+import { act } from 'react';
+import { createRoot, type Root } from 'react-dom/client';
+import { spanSeriesToFrames } from '@/lib/chart/dataFrame';
+
+// jsdom'da window.matchMedia YOK ve uPlot onu MODÜL YÜKLENİRKEN çağırıyor
+// (setPxRatio, uPlot.cjs.js:80) — yani import zincirinden önce durmalı.
+// vi.hoisted, vi.mock'la birlikte dosyanın en tepesine kaldırılır; normal bir
+// beforeAll ÇOK GEÇ olurdu (importlar çoktan patlamış olurdu).
+// Stub'ın CorePanel'e verdiği SAHTE uPlot örneği testlere buradan sızar.
+// vi.hoisted, vi.mock factory'sinin okuyabileceği tek dış bağlam
+// (factory hoist edilir, normal bir `const` ondan sonra tanımlanır).
+interface FakePlot {
+  series: { show?: boolean; alpha?: number; width?: number }[];
+  cursor: { idx?: number | null };
+  redraws: number;
+  redraw: (rebuild?: boolean) => void;
+  setSeries: () => void;
+}
+const holder = vi.hoisted(() => ({ plot: null as null | {
+  series: { show?: boolean; alpha?: number; width?: number }[];
+  cursor: { idx?: number | null };
+  redraws: number;
+  redraw: (rebuild?: boolean) => void;
+  setSeries: () => void;
+} }));
+
+vi.hoisted(() => {
+  window.matchMedia = ((q: string) => ({
+    matches: false, media: q, onchange: null,
+    addListener() {}, removeListener() {},
+    addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false,
+  })) as unknown as typeof window.matchMedia;
+  // Aynı gerekçe localStorage için: @grafana/ui'nin logger'ı MODÜL
+  // SEVİYESİNDE getItem çağırıyor. Node 22'nin deneysel yerleşik
+  // localStorage'ı jsdom'unkini gölgeliyor ve metotları çalışmıyor
+  // (--localstorage-file uyarısı) → bellek-içi bir uygulama koyuyoruz.
+  const mem = new Map<string, string>();
+  Object.defineProperty(window, 'localStorage', {
+    configurable: true,
+    value: {
+      getItem: (k: string) => (mem.has(k) ? mem.get(k)! : null),
+      setItem: (k: string, v: string) => { mem.set(k, String(v)); },
+      removeItem: (k: string) => { mem.delete(k); },
+      clear: () => mem.clear(),
+      key: (i: number) => Array.from(mem.keys())[i] ?? null,
+      get length() { return mem.size; },
+    },
+  });
+});
+
+// UPlotChart stub — config'i GERÇEKTEN kurar (patlarsa test kızarır) ve
+// sonucu DOM'a nitelik olarak yazar. Builder'ın kendisi (UPlotConfigBuilder,
+// enum'lar) ORİJİNAL kalır: mock'lasaydık test kendi kendini onaylardı.
+vi.mock('@grafana/ui', async (importOriginal) => {
+  const actual = await importOriginal<Record<string, unknown>>();
+  return {
+    ...actual,
+    UPlotChart: ({ config, width, height, plotRef }: {
+      config: { getConfig: () => { series?: unknown[]; bands?: unknown[] } };
+      width: number; height: number;
+      plotRef?: (u: unknown) => void;
+    }) => {
+      const cfg = config.getConfig();
+      const n = (cfg.series ?? []).length;
+      // SAHTE uPlot örneği: yalnız CorePanel'in dokunduğu yüzey (series[],
+      // cursor, setSeries, redraw). Odak efektinin ALPHA/GENİŞLİK yazdığını
+      // gerçekten ölçebilmemizi sağlar — stub'sız bir testte plotRef hiç
+      // dolmaz ve efekt sessizce hiçbir şey yapmazdı.
+      if (!holder.plot || holder.plot.series.length !== n) {
+        holder.plot = {
+          series: Array.from({ length: n }, (_, i) =>
+            (i === 0 ? {} : { show: true, alpha: 1, width: 1.5 })),
+          cursor: { idx: null },
+          redraws: 0,
+          redraw() { this.redraws++; },
+          setSeries() {},
+        };
+      }
+      plotRef?.(holder.plot);
+      return (
+        <div data-testid="uplot"
+          data-series={String(n)}
+          data-bands={String((cfg.bands ?? []).length)}
+          data-w={String(width)} data-h={String(height)} />
+      );
+    },
+  };
+});
+
+// Import AFTER the mock factory is registered (vi.mock hoists, ama okuyucu
+// için sıra anlamlı: CorePanel stub'lı @grafana/ui ile yüklenir).
+const { CorePanel } = await import('./CorePanel');
+
+beforeAll(() => {
+  // jsdom'da yok — CorePanel genişliği ResizeObserver'dan öğrenir.
+  class RO {
+    constructor(private cb: () => void) {}
+    observe() { this.cb(); }
+    unobserve() {}
+    disconnect() {}
+  }
+  globalThis.ResizeObserver = RO as unknown as typeof ResizeObserver;
+  // jsdom layout yapmaz → clientWidth hep 0 olurdu ve `width > 0` kapısı
+  // grafiği HİÇ mount etmezdi (test sessizce hiçbir şey ölçmezdi).
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', {
+    configurable: true, get: () => 600,
+  });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true, get: () => 200,
+  });
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+});
+
+let root: Root | null = null;
+let host: HTMLDivElement | null = null;
+
+afterEach(() => {
+  if (root) act(() => root!.unmount());
+  host?.remove();
+  root = null; host = null;
+  holder.plot = null;
+  localStorage.clear();
+});
+
+// Testler sahte örneği tipli okusun (holder'ın tipi hoist yüzünden inline).
+const plot = () => holder.plot as unknown as FakePlot;
+
+function render(el: React.ReactElement): HTMLDivElement {
+  host = document.createElement('div');
+  document.body.appendChild(host);
+  const r = createRoot(host);
+  root = r;
+  act(() => r.render(el));
+  return host;
+}
+
+// İki serilik sahte veri — biri delikli (null taşıma yolu da yürüsün).
+const TWO_SERIES = spanSeriesToFrames([
+  { groupKey: ['checkout'], points: [
+    { time: 1_000_000_000_000_000, value: 10 },
+    { time: 1_000_060_000_000_000, value: 20 },
+    { time: 1_000_120_000_000_000, value: 30 },
+  ] },
+  { groupKey: ['payments'], points: [
+    { time: 1_000_000_000_000_000, value: 5 },
+    { time: 1_000_060_000_000_000, value: null as unknown as number },
+    { time: 1_000_120_000_000_000, value: 7 },
+  ] },
+], { unit: 'ms' });
+
+describe('CorePanel render duman testi (UPlotChart vi.mock ile stub)', () => {
+  it('ready: crash yok, başlık + grafik katmanı + lejant birlikte', () => {
+    const el = render(
+      <CorePanel title="Latency" storageKey="smoke-ready"
+        data={{ state: 'ready', frames: TWO_SERIES }} />);
+
+    expect(el.textContent).toContain('Latency');
+    const plot = el.querySelector('[data-testid="uplot"]');
+    expect(plot, 'grafik katmanı mount olmadı').not.toBeNull();
+    // uPlot serisi = x + iki veri serisi.
+    expect(plot!.getAttribute('data-series')).toBe('3');
+    expect(plot!.getAttribute('data-w')).toBe('600');
+    // Lejant VARSAYILAN KAPALI (v0.9.743) ama seri sayısını duyurur.
+    expect(el.textContent).toContain('Series (2)');
+  });
+
+  it('ready: lejant açılınca seri BAŞINA bir satır', () => {
+    const el = render(
+      <CorePanel title="Latency" storageKey="smoke-legend"
+        data={{ state: 'ready', frames: TWO_SERIES }} />);
+
+    const toggle = Array.from(el.querySelectorAll('button'))
+      .find(b => b.textContent?.includes('Series'));
+    expect(toggle, 'lejant aç/kapa düğmesi yok').toBeDefined();
+    act(() => { toggle!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+
+    const rows = el.querySelectorAll('tbody tr');
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain('checkout');
+    expect(rows[1].textContent).toContain('payments');
+    // Hücreler birim taşır (v0.9.774: eksen/tooltip/lejant tek kaynak).
+    expect(rows[0].textContent).toMatch(/ms/);
+  });
+
+  it('loading: spinner çizilir, lejant ve grafik YOK', () => {
+    const el = render(
+      <CorePanel title="Latency" storageKey="smoke-loading" data={{ state: 'loading' }} />);
+    expect(el.querySelector('[data-testid="uplot"]')).toBeNull();
+    expect(el.textContent).not.toContain('Series (');
+    // Spinner bir metin taşımaz; DOM'da bir düğüm bırakmalı.
+    expect(el.querySelector('div')).not.toBeNull();
+  });
+
+  it('error: MESAJ yazılır — "veri yok" teşhisine düşmez', () => {
+    const el = render(
+      <CorePanel title="Latency" storageKey="smoke-error"
+        data={{ state: 'error', message: 'ClickHouse timeout' }} />);
+    expect(el.textContent).toContain('Grafik yüklenemedi');
+    expect(el.textContent).toContain('ClickHouse timeout');
+    expect(el.textContent).not.toContain('Aralığı genişletmeyi deneyin');
+    expect(el.querySelector('[data-testid="uplot"]')).toBeNull();
+  });
+
+  it('empty: SEBEP + sonraki adım birlikte (spec: boş durum açıklamadır)', () => {
+    const el = render(
+      <CorePanel title="Latency" storageKey="smoke-empty"
+        data={{ state: 'empty', reason: 'Bu serviste span yok', hint: 'Filtreleri azalt' }} />);
+    expect(el.textContent).toContain('Bu serviste span yok');
+    expect(el.textContent).toContain('Filtreleri azalt');
+    expect(el.querySelector('[data-testid="uplot"]')).toBeNull();
+  });
+
+  it('tek noktalı ready: çizim yerine "çizilecek nokta yok" (kenar durum)', () => {
+    const one = spanSeriesToFrames([
+      { groupKey: ['solo'], points: [{ time: 1_000_000_000_000_000, value: 1 }] },
+    ], {});
+    const el = render(
+      <CorePanel title="Latency" storageKey="smoke-one" data={{ state: 'ready', frames: one }} />);
+    expect(el.textContent).toContain('Bu aralıkta çizilecek nokta yok');
+    expect(el.querySelector('[data-testid="uplot"]')).toBeNull();
+  });
+
+  it('v0.9.788 stacked: bantlar config\'e girer, kümülatif matris aligned\'ı bozmaz', () => {
+    const el = render(
+      <CorePanel title="Throughput" storageKey="smoke-stacked" viz="stacked"
+        data={{ state: 'ready', frames: TWO_SERIES }} />);
+    const plot = el.querySelector('[data-testid="uplot"]');
+    expect(plot).not.toBeNull();
+    // İki görünür katman = ardışık çift = 1 bant.
+    expect(plot!.getAttribute('data-bands')).toBe('1');
+  });
+
+  it('v0.9.792/793: pin ipucu ve kesikli işaret mount\'u kırmaz', () => {
+    const el = render(
+      <CorePanel title="Latency" storageKey="smoke-mixed"
+        dashed={[false, true]} onBucketClick={() => {}}
+        data={{ state: 'ready', frames: TWO_SERIES }} />);
+    expect(el.querySelector('[data-testid="uplot"]')).not.toBeNull();
+    // bucket-tık afordansı (v0.9.789) ready durumda görünür.
+    expect(el.textContent).toContain('tık → örnek trace');
+  });
+
+  // ── v0.9.793 focusedLabel: efektin GERÇEKTEN yazdığını ölç ───────────────
+  it('focusedLabel yokken seriler nötr (alpha 1, taban genişlik)', () => {
+    render(<CorePanel title="L" storageKey="smoke-nofocus"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    expect(plot().series[1]).toMatchObject({ alpha: 1, width: 1.5 });
+    expect(plot().series[2]).toMatchObject({ alpha: 1, width: 1.5 });
+  });
+
+  it('focusedLabel: odaklanan kalın+tam, öteki SOLUK — rebuild değil redraw', () => {
+    render(<CorePanel title="L" storageKey="smoke-focus" focusedLabel="payments"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    expect(plot().series[1]).toMatchObject({ alpha: 0.25, width: 1.5 }); // checkout
+    expect(plot().series[2]).toMatchObject({ alpha: 1, width: 2 });      // payments
+    // Odak bir YENİDEN ÇİZİMDİR; uPlot yaşamaya devam eder (v0.9.704).
+    expect(plot().redraws).toBeGreaterThan(0);
+  });
+
+  it('focusedLabel bu panelde yoksa kimse solmaz (Explore çapraz-panel hover)', () => {
+    render(<CorePanel title="L" storageKey="smoke-otherpanel" focusedLabel="billing"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    expect(plot().series[1]!.alpha).toBe(1);
+    expect(plot().series[2]!.alpha).toBe(1);
+  });
+
+  it('iç lejant satırı hover\'ı da odak kanalını sürer', () => {
+    const el = render(<CorePanel title="L" storageKey="smoke-hover"
+      data={{ state: 'ready', frames: TWO_SERIES }} />);
+    const toggle = Array.from(el.querySelectorAll('button'))
+      .find(b => b.textContent?.includes('Series'))!;
+    act(() => { toggle.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    const row = el.querySelectorAll('tbody tr')[0];
+    act(() => { row.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); });
+    expect(plot().series[1]).toMatchObject({ alpha: 1, width: 2 });
+    expect(plot().series[2]!.alpha).toBe(0.25);
+    act(() => { row.dispatchEvent(new MouseEvent('mouseout', { bubbles: true })); });
+    expect(plot().series[2]!.alpha).toBe(1);
+  });
+});

@@ -23,8 +23,9 @@ import type { ChartTimeRegion, ChartThreshold } from '@/lib/chart/overlays';
 // hizalı senkron, hiç senkron olmamaktan kötüdür) ama bayrak sayfa
 // çapında olduğu için sayfa başına DAİMA tek grup düşer.
 //
-// Bilinen v2 farkı (bilinçli, eski yol bir bayrak uzakta):
-//   • focusedLabel (GroupTable hover vurgusu) v2'de henüz yok.
+// v0.9.793 — son iki v2 farkı da kapandı: focusedLabel (GroupTable hover
+// vurgusu) CorePanel'in kontrollü odak kanalına, formül panelinin kesikli
+// çizgisi de item.dashed'e bağlandı. v2 artık eski yolun görsel üstkümesi.
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
@@ -126,8 +127,13 @@ export const QueryPanel = memo(function QueryPanel({
                 .filter(pt => pt.value != null)
                 .map(pt => ({ time: pt.time, value: pt.value as number })) }],
               exemplars: ts.exemplars,
+              // v0.9.793 — formül serisi KESİKLİ: "ölçülmedi, hesaplandı".
+              // Panelin ƒ rozeti (yukarıda) zaten kesikli kenarlık kullanıyor;
+              // çizgi o dili sürdürür. Lejantta değişiklik yok.
+              dashed: panel.isFormula,
             }))}
             hiddenNames={hiddenLabels}
+            focusedLabel={focusedLabel}
             hideLegend
             xRange={zoomWindow ?? xRange}
             regions={exploreRegions(panel)}

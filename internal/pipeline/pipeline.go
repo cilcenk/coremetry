@@ -85,8 +85,8 @@ const (
 
 // Condition is a single attribute predicate. Key supports the
 // well-known span fields directly (service.name, name, kind,
-// status_code) plus any attribute via the "attr." or "resource."
-// prefix.
+// status_code, http.route) plus any attribute via the "attr." or
+// "resource." prefix.
 type Condition struct {
 	Key   string `json:"key"`
 	Op    Op     `json:"op"`
@@ -524,6 +524,10 @@ func applyEnrichAttrs(keys, values *[]string, set map[string]string) {
 // "resource.foo" prefixes — the same naming the FilterBuilder
 // uses on the query side.
 //
+// "http.route" is a well-known field on purpose (v0.9.802) — it
+// is a DERIVED column, not a verbatim attribute; see the case
+// body for the silent-no-match trap that motivated it.
+//
 // Span attributes live as parallel AttrKeys / AttrValues slices
 // (CH-friendly layout); the helper walks them linearly. Spans
 // rarely carry > 20 attrs and the hot path runs once per span,
@@ -539,6 +543,26 @@ func matchSpan(c Condition, sp *chstore.Span) bool {
 		got = sp.Kind
 	case "status_code":
 		got = sp.StatusCode
+	case "http.route":
+		// v0.9.802 — TÜRETİLMİŞ alandan, attr dizisinden DEĞİL.
+		//
+		// Tuzak: ingest'te http_route bir attr KOPYASI değil, türetilmiş
+		// bir kolon (otlp/convert.go). Sırayla http.route → http.target
+		// denenir, ikisi de yoksa url.path normalize edilip yazılır
+		// (v0.9.71). Yani route templating'i olmayan bir servis
+		// http_route='/livez' kolonunu doldurur ama attr dizisinde
+		// 'http.route' anahtarı HİÇ yoktur.
+		//
+		// Eski davranışta bu anahtar default dalına düşüp attr taraması
+		// yapıyordu: operatör "http.route = /livez" drop kuralını kurar,
+		// kural HİÇBİR span'i eşleştirmez, sebep de görünmez (bozuk
+		// desenle aynı sessiz-kural sınıfı, bkz. validateCondition).
+		// Türetilmiş alan attr'ın ÜST KÜMESİ — attr varsa zaten oradan
+		// geliyor — dolayısıyla köprü attr'lı servisleri de bozmaz.
+		//
+		// Sınır: 'attr.http.route' AÇIKÇA attr dizisini okur (aşağıdaki
+		// prefix dalı). Ham attr'ı isteyen operatörün yolu kapanmıyor.
+		got = sp.HTTPRoute
 	default:
 		if strings.HasPrefix(c.Key, "attr.") {
 			got = lookupAttr(sp.AttrKeys, sp.AttrValues, strings.TrimPrefix(c.Key, "attr."))

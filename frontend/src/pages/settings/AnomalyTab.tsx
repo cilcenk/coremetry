@@ -55,18 +55,35 @@ export function AnomalyPromotionTab() {
   return (
     <div style={{ maxWidth: 640 }}>
       <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Anomaly auto-promotion</h2>
-      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 18, lineHeight: 1.55 }}>
-        The anomaly detector flags patterns that exceed their rolling baseline; this
-        promoter graduates the strong, sustained ones into first-class Problems so
-        the on-call pager fires. Tighten the thresholds when the detector is too
-        chatty, or disable the whole feature while you calibrate it.
+      {/* v0.9.827 — DÜRÜSTLÜK DÜZELTMESİ.
+          Eski metin "the anomaly detector" diyordu ve bu, sayfadaki en
+          pahalı yanlış anlamaydı: operatör bu kutucuğu kapatıp METRİK
+          dedektörünün susacağını sanıyordu. Aşağıdaki vidalar YALNIZ
+          log/trace desen anomalilerinin (recorder → AnomalyEvent)
+          terfi hattını yönetiyor. Metrik dedektörü (error_rate, p99,
+          istek hızı) tamamen ayrı bir hat ve eşikleri "Dedektör
+          hassasiyeti" bölümünde. */}
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 10, lineHeight: 1.55 }}>
+        Log ve iz (trace) verisinde tekrarlayan desenler kendi hareketli
+        ortalamalarına göre işaretlenir; bu bölüm o işaretlerden hangilerinin
+        birinci sınıf <b>Problem</b>&apos;e terfi edeceğini ayarlar. Dedektör çok
+        konuşkansa eşikleri sıkın, ya da kalibre ederken tümden kapatın.
+      </p>
+      <p style={{
+        fontSize: 12, color: 'var(--text2)', marginBottom: 18, lineHeight: 1.55,
+        padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 4,
+      }}>
+        <b>Kapsam:</b> bu vidalar yalnız <b>log/iz desen anomalilerinin terfi
+        hattını</b> yönetir. <b>Metrik</b> dedektörü (hata oranı, P99 gecikme,
+        istek hızı) ayrı bir hattır ve bu kutucuktan etkilenmez &mdash; onun
+        eşikleri aşağıdaki <b>Dedektör hassasiyeti</b> bölümünde.
       </p>
 
       <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
         <input type="checkbox" checked={cfg.enabled}
           onChange={e => setCfg({ ...cfg, enabled: e.target.checked })} />
         <span style={{ fontSize: 13, color: 'var(--text)' }}>
-          Promote strong anomalies into Problems
+          Güçlü log/iz anomalilerini Problem&apos;e terfi ettir
         </span>
       </label>
 
@@ -394,11 +411,35 @@ function SensitivitySection() {
             );
           })}
 
-          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
-            Bu eşikler yalnız <b>anomali dedektörünü</b> bağlar. Elle kurduğunuz alarm
-            kuralları kendi eşiklerini kullanır ve buradan etkilenmez. Sertleştirmek açık
-            kayıtları silmez: yeni tespit üretilmez, mevcut anomaliler kendi bantlarına
-            dönünce kapanır.
+          {/* v0.9.827 — dedektör → incident kapısı.
+              Bu çağrı bugüne kadar KOŞULSUZDU ve Settings'teki hiçbir vida
+              ona ulaşmıyordu: üstteki "terfi ettir" kutucuğu BAŞKA bir
+              hattı yönetiyor. Operatör onu kapatıp metrik dedektörünün
+              incident açmaya devam ettiğini görüyordu. */}
+          <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4 }}>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <input type="checkbox" checked={cfg.attachToIncident !== false}
+                onChange={e => setCfg({ ...cfg, attachToIncident: e.target.checked })} />
+              <span style={{ fontSize: 13, color: 'var(--text)' }}>
+                Dedektör problemini otomatik incident&apos;a bağla
+              </span>
+            </label>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, marginLeft: 24, lineHeight: 1.5 }}>
+              Açıkken, dedektörün açtığı her metrik problemi servis ve şiddetine göre
+              aktif bir incident&apos;a iliştirilir (yoksa yenisi açılır). Varsayılan
+              açık &mdash; bugüne kadarki davranış budur.
+              <br />
+              <b>Kapatırsanız problem yine açılır ve bildirim yine gider</b>; yalnız
+              incident açılmaz. Bu vida &laquo;bana haber verme&raquo; değil,
+              &laquo;bunu olay yönetimine sokma&raquo; demektir.
+            </div>
+          </div>
+
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 16, lineHeight: 1.5 }}>
+            Bu eşikler yalnız <b>metrik anomali dedektörünü</b> bağlar. Elle kurduğunuz
+            alarm kuralları kendi eşiklerini kullanır; log/iz desen anomalileri ise
+            yukarıdaki terfi hattından geçer. Sertleştirmek açık kayıtları silmez: yeni
+            tespit üretilmez, mevcut anomaliler kendi bantlarına dönünce kapanır.
           </div>
 
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>

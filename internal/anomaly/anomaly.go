@@ -386,7 +386,7 @@ type Detector struct {
 // aynı ayar her tikte farklı görünüp log seli üretirdi.
 func sensitivityLogLine(c chstore.AnomalySensitivityConfig) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "dwell=%d criticalZ=%.1f", c.DwellBuckets, c.CriticalZ)
+	fmt.Fprintf(&b, "dwell=%d criticalZ=%.1f incident=%v", c.DwellBuckets, c.CriticalZ, c.AttachesToIncident())
 	for _, m := range chstore.AnomalySensitivityMetrics {
 		s := c.For(m)
 		fmt.Fprintf(&b, " | %s floorPct=%.2f absFloor=%.2f minAbsDelta=%.2f minMAD=%.2f minRate=%.2f",
@@ -679,8 +679,21 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 			service, metric, current, unitOf(metric), median, mad, z)
 		// Auto-attach to the active incident for this service+severity
 		// (same convention as evaluator-opened problems).
-		if _, err := d.store.AttachProblemToIncident(ctx, p); err != nil {
-			log.Printf("[anomaly] incident attach: %v", err)
+		//
+		// v0.9.827 — ARTIK KAPATILABİLİR. Bu çağrı bugüne kadar KOŞULSUZDU
+		// ve Settings'teki hiçbir vida ona ulaşmıyordu: "Promote strong
+		// anomalies" kutucuğu BAŞKA bir hattı yönetiyor (evaluator.
+		// promoteStrongAnomalies ← recorder'ın log/trace AnomalyEvent'leri).
+		// Operatör o kutucuğu kapatıp metrik dedektörünün incident açmaya
+		// devam ettiğini görüyordu — ayar sayfası yalan söylüyordu.
+		//
+		// KAPALIYKEN PROBLEM YİNE AÇILIR ve bildirim YİNE gider; yalnız
+		// incident açılmaz/bağlanmaz. Ayrım bilinçli: bu vida "bana haber
+		// verme" değil, "bunu OLAY YÖNETİMİNE sokma" demek.
+		if cfg.AttachesToIncident() {
+			if _, err := d.store.AttachProblemToIncident(ctx, p); err != nil {
+				log.Printf("[anomaly] incident attach: %v", err)
+			}
 		}
 		if d.notifier != nil {
 			go d.notifier.SendProblemAlert(context.Background(), p)

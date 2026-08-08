@@ -33,6 +33,28 @@ type AnomalySensitivityConfig struct {
 	// dedektör YALNIZ critical verdict'te Problem açtığı için bu, fiilen
 	// "açılma eşiği"dir; operatörün en çok çevireceği vida budur.
 	CriticalZ float64 `json:"criticalZ"`
+	// AttachToIncident — dedektörün açtığı metrik problemi otomatik
+	// olarak aktif incident'a bağlansın mı? (v0.9.827)
+	//
+	// NEDEN GEREKTİ: dedektör hattının HİÇBİR kapısı yoktu. Settings'teki
+	// "Promote strong anomalies" vidaları (15× / 1800s / 1000) BAŞKA bir
+	// hattı yönetiyor — evaluator.promoteStrongAnomalies, recorder'ın
+	// AnomalyEvent'lerinden (log/trace desen anomalileri) besleniyor.
+	// Metrik dedektörü kendi problemini KOŞULSUZ açıp koşulsuz incident'a
+	// bağlıyordu; o kutucuk KAPALIYKEN bile. Operatör "anomali terfisini
+	// kapattım" sanıp incident akışının devam ettiğini görüyordu.
+	//
+	// *bool ÇÜNKÜ VARSAYILAN TRUE: düz bool'da JSON'ın sıfır değeri false
+	// ve "alan yok" ile "operatör kapattı" ayırt edilemezdi — bu sürümden
+	// ESKİ her settings satırı sessizce davranış değiştirirdi. nil =
+	// "yazılmamış" = bugünkü davranış (bağla).
+	AttachToIncident *bool `json:"attachToIncident,omitempty"`
+}
+
+// AttachesToIncident — nil-güvenli okuma. Yazılmamış = BAĞLA (bugünkü
+// davranış); bir ayarın yokluğu asla davranış değiştirmemeli.
+func (c AnomalySensitivityConfig) AttachesToIncident() bool {
+	return c.AttachToIncident == nil || *c.AttachToIncident
 }
 
 // AnomalyMetricSensitivity — tek bir metriğin eşikleri. Beşi de
@@ -115,8 +137,14 @@ func DefaultAnomalySensitivity() AnomalySensitivityConfig {
 		},
 		DwellBuckets: 3,   // v0.8.220 — 3 × 5dk = 15 dk sürekli ateşleme
 		CriticalZ:    6.0, // v0.9.193 — operatör: yalnız P1-sınıfı gelsin
+		// v0.9.827 — AÇIK = bugünkü davranış. Bu sürüm bir GÖRÜNÜRLÜK
+		// sürümü: var olan davranışı kapatılabilir yapıyor, kendiliğinden
+		// değiştirmiyor.
+		AttachToIncident: boolPtr(true),
 	}
 }
+
+func boolPtr(b bool) *bool { return &b }
 
 // NormalizeAnomalySensitivity kanonik anahtarları tamamlar, bilinmeyenleri
 // düşürür ve her alanı kelepçeler.
@@ -131,6 +159,11 @@ func NormalizeAnomalySensitivity(c AnomalySensitivityConfig) AnomalySensitivityC
 		Metrics:      make(map[string]AnomalyMetricSensitivity, len(AnomalySensitivityMetrics)),
 		DwellBuckets: c.DwellBuckets,
 		CriticalZ:    c.CriticalZ,
+		// Normalize SOMUTLAŞTIRIR: nil gelen bayrak açık haliyle yazılır.
+		// Böylece kaydedilen blob her zaman ne olduğunu AÇIKÇA söyler ve
+		// bir sonraki okuyucu (ya da elle bakan operatör) varsayılanı
+		// tahmin etmek zorunda kalmaz.
+		AttachToIncident: boolPtr(c.AttachesToIncident()),
 	}
 	for _, m := range AnomalySensitivityMetrics {
 		def := d.Metrics[m]

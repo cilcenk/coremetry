@@ -654,7 +654,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 title={`Response time · avg (by route)${metricName ? ` — ${metricName}` : ''}`}
                 // storageKey AYNEN: kullanıcının lejant/görünürlük tercihi
                 // panel yeniden bağlandı diye sıfırlanmasın.
-                storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref())}
+                // v0.9.794 (operatör bulgusu) — tık hedefi panelin ÇİZDİĞİ
+                // kırılımı taşır. v0.9.774'te panel avg BY http.route'a
+                // geçti ama tık `by`siz kaldı: Metrics sayfası tek toplam
+                // çizgi açıyor, operatör "eskiden route grafiğini
+                // gösteriyordu" diyordu. Throughput paneli (:723) doğru
+                // deseni zaten taşıyordu.
+                storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
                 loading={metricTputQ.isLoading || rtAvgQ.isLoading}
                 // Birim SUNUCUDAN gelen OTLP birimine göre; tanınmazsa
                 // undefined (ham sayı) ve not bunu söyler.

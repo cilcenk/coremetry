@@ -784,6 +784,36 @@ export interface DatabasesOverview {
   receiversSkipped?: string;
 }
 
+// DBSaturationRow / DBSaturation — /api/databases/saturation (v0.9.822).
+//
+// Havuz doygunluğu: kullanılan/tavan gauge çiftleri (Oracle
+// sessions/processes/tablespace, Postgres backends, MySQL connections).
+// Gauge'u OLMAYAN motor için satır DÖNMEZ ve hiç satır yoksa frontend
+// karoyu HİÇ KURMAZ — uydurulmuş bir "%0 doygunluk", ölçülmemiş bir
+// şeyi ölçülmüş gibi gösterirdi.
+export interface DBSaturationRow {
+  /** DBInstance.system ile AYNI kelime — satır çekmecesine tık bununla joinler. */
+  system: string;
+  instance: string;
+  /** "sessions" / "processes" / "tablespace" / "connections" */
+  check: string;
+  /** Boyutlu kontrollerde dolu (Oracle tablespace adı). */
+  subkey?: string;
+  usage: number;
+  limit: number;
+  pct: number;
+}
+
+export interface DBSaturation {
+  rows: DBSaturationRow[];
+  /**
+   * Okumanın GERÇEK penceresi (sn) — sayfa range'i DEĞİL. Gauge "şu anki
+   * doluluk" anlatıyor; 24 saate ortalanmış bir doygunluk tam da
+   * görülmesi gereken zirveyi saklardı. Karo bu sayıyı yazıyor.
+   */
+  lookbackSeconds: number;
+}
+
 // DatabasesSeries — /api/databases/series (v0.9.820). TEK MV taraması
 // (iki seviyeli WITH ROLLUP) üç şeyi birden veriyor: motor kırılımlı
 // hacim (engines), kova başına FİLO toplamı + gerçek merge edilmiş

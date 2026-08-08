@@ -951,6 +951,12 @@ export const api = {
     from: number; to: number; dbsys?: string; dbname?: string; compare?: 'prior';
   }) =>
     get<import('./types').DatabasesSeries | null>(`/api/databases/series?${qs(params)}`),
+  // v0.9.822 — havuz doygunluğu. PENCERE ALMAZ: gauge "şu anki doluluk"
+  // anlatıyor, sunucu son 10 dakikanın EN SON değerini okuyor. Sayfa
+  // range'ine bağlansaydı 24 saatlik bir seçimde karo zirveyi ortalayarak
+  // saklardı.
+  dbSaturation: () =>
+    get<import('./types').DBSaturation | null>('/api/databases/saturation'),
   // Per-row RED sparklines + latest-bucket health snapshot for the
   // /databases + /messaging overview grid. One DBTrend per
   // (dbSystem, instance, dbName) — join to the overview rows by

@@ -859,78 +859,179 @@ type ExceptionSample struct {
 	StatusMsg  string `json:"statusMsg"`  // span status message
 }
 
+// ExceptionSamples is the sample-scan envelope. The counters are not
+// decoration: an empty Samples list means three different things to an
+// operator, and only the envelope can tell them apart (v0.9.463 dürüstlük
+// A11, extended v0.9.795).
+type ExceptionSamples struct {
+	Samples []ExceptionSample `json:"samples"`
+	// Scanned — candidates examined, CUMULATIVE across pages.
+	Scanned int `json:"scanned"`
+	// ScanCapped — stopped at the exSampleMaxScan ceiling, i.e. the window
+	// still had candidates left. Empty + capped = "we gave up", not "none".
+	ScanCapped bool `json:"scanCapped"`
+	// WindowExhausted — the group's own window was read to the end. Empty +
+	// exhausted = honestly none left (span retention, most likely), and the
+	// UI must say THAT instead of blaming the candidate budget.
+	WindowExhausted bool `json:"windowExhausted"`
+}
+
+// Candidate paging: one page is exSampleBatch rows; exSampleMaxScan is the
+// HARD ceiling on candidates examined for one request across all pages.
+const (
+	exSampleBatch   = 500
+	exSampleMaxScan = 5000
+)
+
+// exceptionScanWindow bounds the candidate scan to the group's own life.
+//
+// v0.8.454 gave the scan a window at all (before that, every problems-drawer
+// open scanned all span history). v0.9.795 (operator-reported) fixes its
+// upper bound: it was last_seen+1h, and a group member CANNOT exist after
+// last_seen. That hour bought nothing and cost everything — on a hot service
+// the newest-first candidate budget was spent inside it on SIBLING
+// fingerprints sharing (service, exception.type) (one shared wrapper type is
+// enough), so a group that had stopped firing read "no samples" and "no
+// stack trace" while its occurrences chart showed thousands of hits.
+//
+// The upper slack is now 2 minutes: enough for spans that arrived after the
+// group row was last refreshed, too little to hand the budget to siblings.
+// The lower bound keeps -1h — first_seen comes from the 5m-grain group row
+// and can lag the true first span.
+func exceptionScanWindow(firstSeenNs, lastSeenNs int64) (time.Time, time.Time) {
+	from := time.Unix(0, firstSeenNs).Add(-time.Hour)
+	to := time.Unix(0, lastSeenNs).Add(2 * time.Minute)
+	if !to.After(from) {
+		// Degenerate group row (clock skew / partial merge left last_seen
+		// far behind first_seen): keep a non-empty window rather than a
+		// query that can never match.
+		to = from.Add(time.Minute)
+	}
+	return from, to
+}
+
+// exSampleFetch pulls ONE candidate page: the newest `size` rows in
+// [from, to] matching the group's (service, exception.type), time DESC.
+type exSampleFetch func(from, to time.Time, size int) ([]ExceptionSample, error)
+
+// scanExceptionSamples walks the candidate pages until it has `limit`
+// group members, the window runs out, or the hard ceiling is hit.
+//
+// v0.9.795 (operator-reported) — this loop replaces a single LIMIT 500
+// shot. One page is not a sample of the group, it is a sample of the
+// (service, type) TRAFFIC: sibling fingerprints filled it and the scan
+// gave up without ever reaching the group's own rows. Paging keeps the
+// per-page cost identical (same SQL shape, same LIMIT, same
+// max_execution_time) and bounds the total at exSampleMaxScan.
+func scanExceptionSamples(from, to time.Time, limit int, fetch exSampleFetch, match func(ExceptionSample) bool) (ExceptionSamples, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	res := ExceptionSamples{Samples: make([]ExceptionSample, 0, limit)}
+	cursor := to
+	for {
+		size := exSampleBatch
+		if rem := exSampleMaxScan - res.Scanned; size > rem {
+			size = rem
+		}
+		if size <= 0 {
+			res.ScanCapped = true
+			return res, nil
+		}
+		rows, err := fetch(from, cursor, size)
+		if err != nil {
+			return res, err
+		}
+		res.Scanned += len(rows)
+		for _, row := range rows {
+			if !match(row) {
+				continue
+			}
+			res.Samples = append(res.Samples, row)
+			if len(res.Samples) >= limit {
+				return res, nil
+			}
+		}
+		if len(rows) < size {
+			// A short page ends the window: pages come back newest-first
+			// under LIMIT size, so fewer rows means there are no more.
+			res.WindowExhausted = true
+			return res, nil
+		}
+		// Keyset cursor — continue strictly older than this page's oldest
+		// row (DESC, so the last one). Stepping back 1ns keeps the SQL shape
+		// identical (`time <= ?`) instead of growing a second predicate.
+		// Two spans of one service sharing an exact nanosecond would lose
+		// the tie; at ns resolution that is not a real population.
+		cursor = time.Unix(0, rows[len(rows)-1].Time).Add(-time.Nanosecond)
+		if cursor.Before(from) {
+			res.WindowExhausted = true
+			return res, nil
+		}
+	}
+}
+
 // GetExceptionGroupSamples returns up to `limit` recent occurrences of
 // the group (by fingerprint), most-recent first. Because v2 fingerprints
 // merge messages that differ only in dynamic IDs, we can't filter the
-// candidate set by exact message — instead we scan recent spans matching
-// (service, type), recompute the fingerprint per row in Go, and return
-// the first `limit` that match.
-// v0.9.463 (dürüstlük A11) — dönüş zarfı scanned/scanCapped taşır:
-// aday taraması (service, type) üzerinden en-yeni-500'dür; sıcak
-// serviste kardeş fingerprint 500'ü doldurunca 10K occurrence'lı grup
-// "No samples" okuyordu — yanlış-boş. Şerit artık "en yeni 500 aday
-// tarandı, bu grubun örneği pencerede yok" diyebiliyor.
-func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string, limit int) ([]ExceptionSample, int, bool, error) {
+// candidate set by exact message — instead we scan spans matching
+// (service, type) inside the group's own window, recompute the
+// fingerprint per row in Go, and return the first `limit` that match.
+//
+// The scan is PAGED (v0.9.795): sibling fingerprints on a shared
+// exception type no longer starve the group out of its own samples.
+func (s *Store) GetExceptionGroupSamples(ctx context.Context, fingerprint string, limit int) (ExceptionSamples, error) {
 	f := exFragments(s.hasExCols)
 	if limit <= 0 || limit > 100 {
 		limit = 10
 	}
 	g, err := s.GetExceptionGroup(ctx, fingerprint)
 	if err != nil {
-		return nil, 0, false, err
+		return ExceptionSamples{}, err
 	}
 	if g == nil {
-		return nil, 0, false, nil
+		return ExceptionSamples{}, nil
 	}
-	// Pull a wide candidate window so even rare messages within the group
-	// have a chance to surface, capped to bound memory.
-	//
-	// v0.8.454 — tarama artık grubun KENDİ yaşam penceresine bağlı
-	// (first_seen-1h .. last_seen+1h): grup zaten span'lerden türedi,
-	// dışındaki zamanda üyesi olamaz; slack saat-hizalama/geç-varış
-	// payı. Önceden zaman sınırı hiç yoktu — problems drawer'ın her
-	// açılışı tüm span tarihçesini duration-bağımsız tarıyordu
-	// (1B+/gün ölçeğinde hard-constraint ihlali).
-	const maxCandidates = 500
-	winFrom := time.Unix(0, g.FirstSeen).Add(-time.Hour)
-	winTo := time.Unix(0, g.LastSeen).Add(time.Hour)
-	rows, err := s.conn.Query(ctx, `
+	winFrom, winTo := exceptionScanWindow(g.FirstSeen, g.LastSeen)
+	// One page = one bounded raw-spans read: single service + exception
+	// type + time-bounded WHERE + LIMIT + max_execution_time. Every page
+	// reuses this exact shape, so the hard constraint holds per page and
+	// scanExceptionSamples caps how many pages there can be.
+	query := `
 		SELECT trace_id, span_id, toUnixTimestamp64Nano(time),
-		       `+f.Msg+` AS message,
-		       `+f.Stack+` AS stacktrace,
+		       ` + f.Msg + ` AS message,
+		       ` + f.Stack + ` AS stacktrace,
 		       name, status_msg
 		FROM spans
 		WHERE service_name = ?
 		  AND time >= ? AND time <= ?
-		  AND `+f.Match+`
-		  AND `+f.Type+` = ?
+		  AND ` + f.Match + `
+		  AND ` + f.Type + ` = ?
 		ORDER BY time DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 10`, g.Service, winFrom, winTo, g.Type, maxCandidates)
-	if err != nil {
-		return nil, 0, false, err
-	}
-	defer rows.Close()
-	out := make([]ExceptionSample, 0, limit)
-	scanned := 0
-	for rows.Next() {
-		var sm ExceptionSample
-		if err := rows.Scan(&sm.TraceID, &sm.SpanID, &sm.Time, &sm.Message, &sm.Stacktrace, &sm.SpanName, &sm.StatusMsg); err != nil {
-			return nil, 0, false, err
-		}
-		scanned++
-		// Filter to samples that belong to this group — keeps message
-		// variants together while excluding spans whose stacktrace puts
-		// them in a different inbox row.
-		if FingerprintException(g.Type, sm.Message, g.Service, sm.Stacktrace) != fingerprint {
-			continue
-		}
-		out = append(out, sm)
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out, scanned, scanned >= maxCandidates, rows.Err()
+		SETTINGS max_execution_time = 10`
+	return scanExceptionSamples(winFrom, winTo, limit,
+		func(from, to time.Time, size int) ([]ExceptionSample, error) {
+			rows, err := s.conn.Query(ctx, query, g.Service, from, to, g.Type, size)
+			if err != nil {
+				return nil, err
+			}
+			defer rows.Close()
+			page := make([]ExceptionSample, 0, size)
+			for rows.Next() {
+				var sm ExceptionSample
+				if err := rows.Scan(&sm.TraceID, &sm.SpanID, &sm.Time, &sm.Message, &sm.Stacktrace, &sm.SpanName, &sm.StatusMsg); err != nil {
+					return nil, err
+				}
+				page = append(page, sm)
+			}
+			return page, rows.Err()
+		},
+		// Group membership: keeps message variants together while excluding
+		// spans whose stacktrace puts them in a different inbox row.
+		func(sm ExceptionSample) bool {
+			return FingerprintException(g.Type, sm.Message, g.Service, sm.Stacktrace) == fingerprint
+		})
 }
 
 // OccurrencePoint is one time-bucket of the "occurrences over time"

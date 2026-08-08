@@ -16,6 +16,7 @@ import { TimeChart } from '@/components/charts/TimeChart';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import { statusColor } from '@/lib/statusColor';
 import { fmtDurationNs, fmtStartedTs } from './problemTime';
+import { emptySamplesNote } from './exceptionSamples';
 import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { ShareButton } from '@/components/ShareButton';
@@ -181,10 +182,10 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
   // aşağıdaki satırların `data-trace-id`'si + aiEvents.scrollToAttr; bu
   // bileşenin ek bir dinleyiciye ihtiyacı yok.)
   const samples = samplesQ.data?.samples ?? [];
-  // v0.9.463 (dürüstlük A11) — sahte-boş ayrımı: sıcak serviste kardeş
-  // fingerprint 500 adayı doldurunca liste boş kalır ama bu "örnek yok"
-  // demek değildir.
-  const samplesCapped = samplesQ.data?.scanCapped ?? false;
+  // v0.9.463 (dürüstlük A11) — sahte-boş ayrımı: liste boş kalabilir ama bu
+  // "örnek yok" demek değildir. v0.9.795: tarama partili, üç ayrı son var
+  // (tavan / pencere bitti / gerçekten yok) ve üçü ayrı cümle.
+  const emptyNote = emptySamplesNote(samplesQ.data, 'No sample traces.');
 
   // Occurrences-over-time is a real server-side, gap-filled COUNT over the
   // group's whole window (v0.8.309) — NOT bucketed from the sampled
@@ -403,8 +404,14 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
           </div>
           <div className="ov-card-b" style={{ background: 'var(--bg2)', borderRadius: '0 0 8px 8px' }}>
             {stackLines.length === 0 ? (
-              <div style={{ color: 'var(--text3)', fontSize: 12 }}>
-                {samplesQ.isLoading ? 'Loading…' : 'No stack trace on the sampled occurrences.'}
+              // v0.9.795 — stack kutusu örneklerden beslenir, o yüzden
+              // örnek YOKKEN "No stack trace on the sampled occurrences"
+              // demek yanlış-boş: taranmış örnek yoktu ki. Örnek varken
+              // (hepsinin stack'i boşsa) eski dürüst mesaj kalır.
+              <div style={{ color: samples.length === 0 && emptyNote.warn ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
+                {samplesQ.isLoading ? 'Loading…'
+                  : samples.length === 0 ? emptyNote.text
+                  : 'No stack trace on the sampled occurrences.'}
               </div>
             ) : (
               <pre className="mono" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.7, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
@@ -424,10 +431,8 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
               <tbody>
                 {samplesQ.isLoading && <tr><td style={{ padding: 12 }}><Spinner /></td></tr>}
                 {!samplesQ.isLoading && samples.length === 0 && (
-                  <tr><td style={{ padding: 12, color: samplesCapped ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
-                    {samplesCapped
-                      ? '⚠ En yeni 500 aday tarandı, bu grubun örneği pencerede yok — grup daha eski/seyrek ateşliyor olabilir; occurrences grafiği gerçek dağılımı gösterir.'
-                      : 'No sample traces.'}
+                  <tr><td style={{ padding: 12, color: emptyNote.warn ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
+                    {emptyNote.text}
                   </td></tr>
                 )}
                 {samples.slice(0, 14).map((s, i) => {

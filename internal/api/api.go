@@ -7516,16 +7516,22 @@ func (s *Server) getExceptionGroup(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) getExceptionGroupSamples(w http.ResponseWriter, r *http.Request) {
 	limit := parseInt(r.URL.Query().Get("limit"), 10)
-	out, scanned, capped, err := s.store.GetExceptionGroupSamples(r.Context(), r.PathValue("fp"), limit)
+	res, err := s.store.GetExceptionGroupSamples(r.Context(), r.PathValue("fp"), limit)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	// v0.9.463 (dürüstlük A11) — zarf: sıcak serviste kardeş fingerprint
-	// 500 adayı doldurunca boş liste "örnek yok" DEĞİL "aday penceresi
-	// yetmedi"dir; frontend farkı söyler. Eski çıplak dizi tüketicisi
-	// kalmadı (tek çağıran ProblemDetail, aynı sürümde zarfa geçti).
-	writeJSON(w, map[string]any{"samples": out, "scanned": scanned, "scanCapped": capped})
+	if res.Samples == nil {
+		res.Samples = []chstore.ExceptionSample{}
+	}
+	// v0.9.463 (dürüstlük A11) — zarf: boş liste "örnek yok" DEĞİL "aday
+	// penceresi yetmedi" olabilir; frontend farkı söyler. v0.9.795 zarfa
+	// windowExhausted ekledi: tarama artık partili, yani "5000 aday tavanına
+	// çarptık" ile "grubun penceresini sonuna kadar okuduk" iki AYRI
+	// cevaptır ve ekranda iki ayrı cümle olmalı. Bu uç serveCached'li
+	// DEĞİL (zaten fingerprint başına tek atış) — anahtar sürümü kuralı
+	// uygulanmıyor.
+	writeJSON(w, res)
 }
 
 // getExceptionGroupOccurrences serves the "occurrences over time"

@@ -40,7 +40,8 @@ type ExceptionExplainInput struct {
 // FirstSeen-merkezli deploy penceresi. logs nil olabilir (CH-only
 // kurulum ya da işçi bağlamı) — log bloğu atlanır.
 func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs logstore.Store, g *chstore.ExceptionGroup) ExceptionExplainInput {
-	samples, _, _, _ := store.GetExceptionGroupSamples(ctx, g.Fingerprint, 5)
+	sres, _ := store.GetExceptionGroupSamples(ctx, g.Fingerprint, 5)
+	samples := sres.Samples
 
 	trend := ""
 	if occ, oerr := store.GetExceptionOccurrences(ctx, g.Fingerprint); oerr == nil && len(occ) > 0 {

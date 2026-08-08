@@ -106,6 +106,14 @@ const dbTrendBucketSeconds = 300.0
 // snaps to bucket boundaries (the same trick GetDatabases uses) —
 // keeps the cache key + bucket alignment stable across adjacent
 // polls.
+//
+// v0.9.823 — ÜST SINIR `< to`, `<= to` DEĞİL. MV kovaları
+// BAŞLANGIÇLARIYLA etiketli: `<= to` ile başlangıcı tam `to` olan kova
+// da giriyor, oysa o kova [to, to+5dk) aralığını kapsıyor — istenen
+// pencerenin TAMAMEN dışında. Sparkline'ın sonuna pencereye ait
+// olmayan bir nokta ekleniyordu (fark yalnız `to` kova sınırına tam
+// oturduğunda görünür; hizalanmamış `to`'da iki operatör aynı sonucu
+// verir). GetDatabasesSeries'in v0.9.820'deki sınırıyla aynı sözleşme.
 func (s *Store) GetDBTrends(ctx context.Context, from, to time.Time) ([]DBTrend, error) {
 	if from.IsZero() {
 		from = time.Now().Add(-1 * time.Hour)
@@ -134,7 +142,7 @@ func (s *Store) GetDBTrends(ctx context.Context, from, to time.Time) ([]DBTrend,
 		       countIfMerge(error_count_state)                                         AS error_count,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		GROUP BY db_system, instance, db_name, time_bucket
 		ORDER BY db_system, instance, db_name, time_bucket
 		LIMIT 200000

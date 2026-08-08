@@ -11231,6 +11231,27 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 	json.NewEncoder(w).Encode(v)
 }
 
+// writeJSONError — status code + a REAL JSON {"error": …} body.
+//
+// v0.9.803: the handlers hand-built this body by string concatenation
+// (`http.Error(w, `{"error":"`+err.Error()+`"}`, code)`), which produces
+// INVALID JSON the moment the message carries a double quote. That is not a
+// theoretical case: pipeline's validateCondition formats the offending
+// pattern with %q ("invalid RE2 pattern %q: %w"), so EVERY bad-regex 400
+// shipped a broken body. The SPA's humanize() JSON.parses the body and falls
+// back to the raw string on failure, so v0.9.802's under-the-field pattern
+// error rendered the raw `{"error":"invalid RE2 pattern "[": …"}` blob at the
+// operator instead of the message.
+//
+// Marshalling through encoding/json escapes quotes, backslashes and control
+// characters, so any message is safe. Header MUST be set before WriteHeader —
+// that ordering is the reason this can't just be `WriteHeader` + writeJSON.
+func writeJSONError(w http.ResponseWriter, code int, msg string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(code)
+	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
 // serveCached lives in cache.go — multi-tier (L1 + Redis +
 // singleflight + SWR). Kept here as a pointer for grep.
 

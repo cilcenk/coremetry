@@ -2467,17 +2467,32 @@ export const api = {
 
 };
 
+// op — backend'in Op kümesiyle birebir (internal/pipeline/pipeline.go).
+// '=~' RE2 ve ANKORSUZ (v0.9.797 motoru); UI'a v0.9.802'de açıldı — motor
+// destekliyordu ama dropdown sunmadığı için operatör contains ile idare
+// ediyordu.
+export type PipelineCondOp = '=' | '!=' | 'contains' | 'startsWith' | 'endsWith' | '=~';
+
+export interface PipelineCondition {
+  key: string;
+  op: PipelineCondOp;
+  value: string;
+}
+
 export interface PipelineRule {
   id: string;
   name: string;
   kind: 'drop' | 'enrich' | 'sample';
   signal: 'spans' | 'logs' | 'metrics';
   enabled: boolean;
-  // op — backend'in Op kümesiyle birebir (internal/pipeline/pipeline.go).
-  // '=~' RE2 ve ANKORSUZ (v0.9.797 motoru); UI'a v0.9.802'de açıldı —
-  // motor destekliyordu ama dropdown sunmadığı için operatör contains ile
-  // idare ediyordu.
-  when: { key: string; op: '=' | '!=' | 'contains' | 'startsWith' | 'endsWith' | '=~'; value: string };
+  when: PipelineCondition;
+  // and — EK koşullar; hepsi `when` ile BİRLİKTE sağlanmalı (motor:
+  // internal/pipeline/pipeline.go Rule.And, v0.9.797). Türetilmiş
+  // "metric-excl-*" kuralları bunu taşır: `when: http.route =~ …` +
+  // `and: metric = X`. v0.9.803'e kadar tipte YOKTU, dolayısıyla düzenleme
+  // modalı gövdeyi sıfırdan kurarken koşulu sessizce düşürüyor ve tek bir
+  // metrik için kurulan dışlamayı BÜTÜN metriklere yayıyordu.
+  and?: PipelineCondition[];
   // Enrich rules only — resource attribute key/value pairs to
   // set when the predicate matches. Existing keys are
   // overridden, new keys append.

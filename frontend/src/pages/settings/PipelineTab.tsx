@@ -4,6 +4,7 @@ import { Modal, Button, Stack } from '@/components/ui';
 import { api, type PipelineRule } from '@/lib/api';
 import type { MetricExclusionRule } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
+import { buildPipelineRuleBody, describeCondition } from './pipelineRuleBody';
 
 // ── Pipeline tab (v0.5.263; logs + metrics v0.8.282) ────────────────────────
 //
@@ -116,6 +117,16 @@ export function PipelineTab() {
                   <td style={{ fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
                     {r.when.key} <b>{r.when.op}</b>{' '}
                     <span style={{ color: 'var(--text2)' }}>"{r.when.value}"</span>
+                    {/* v0.9.803 — EK koşullar listede de görünür. Yalnız
+                        `when`'i basmak, tek-metrik kısıtlı türetilmiş bir
+                        kuralı "her metrik" gibi okutuyordu. */}
+                    {(r.and ?? []).map((c, i) => (
+                      <span key={i}>
+                        {' '}<b style={{ color: 'var(--text3)' }}>AND</b>{' '}
+                        {c.key} <b>{c.op}</b>{' '}
+                        <span style={{ color: 'var(--text2)' }}>"{c.value}"</span>
+                      </span>
+                    ))}
                     {r.kind === 'enrich' && r.setAttributes && Object.entries(r.setAttributes).map(([k, v]) => (
                       <span key={k} style={{ marginLeft: 8, color: 'var(--accent2)' }}>
                         → {k}=<b>"{v}"</b>
@@ -372,20 +383,15 @@ function PipelineRuleModal({ existing, prefill, onClose, onSaved }: {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const body: PipelineRule = {
-        id: existing?.id ?? '',
-        name: name.trim(),
-        kind, signal, enabled,
-        when: { key: whenKey.trim(), op: whenOp, value: whenVal.trim() },
-      };
-      if (kind === 'enrich') {
-        body.setAttributes = enrichKey.trim()
-          ? { [enrichKey.trim()]: enrichVal.trim() }
-          : {};
-      }
-      if (kind === 'sample') {
-        body.rate = rate;
-      }
+      // v0.9.803 — gövde SAF fonksiyondan (pipelineRuleBody.ts, tablo-testli).
+      // Satır içinde kurulduğunda formun bilmediği alanlar sessizce
+      // düşüyordu; `and` kaybı tek-metrik dışlamasını bütün metriklere
+      // yayan geri alınamaz bir veri kaybıydı.
+      const body = buildPipelineRuleBody(existing, {
+        name, kind, signal, enabled,
+        whenKey, whenOp, whenValue: whenVal,
+        enrichKey, enrichValue: enrichVal, rate,
+      });
       await api.upsertPipelineRule(body);
       onSaved();
     } catch (err) {
@@ -509,6 +515,33 @@ function PipelineRuleModal({ existing, prefill, onClose, onSaved }: {
               )}
             </div>
           </div>
+
+          {/* v0.9.803 — EK KOŞULLAR, salt-okunur.
+              Form bunları düzenlemiyor ama kayıtta AYNEN geri yazılıyor
+              (buildPipelineRuleBody). Görünür olmaları şart: bir operatör
+              "when: http.route =~ ^/health" satırını görüp kuralı "her
+              route" sanmamalı — kısıtın ikinci yarısı burada. */}
+          {existing?.and && existing.and.length > 0 && (
+            <div>
+              <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+                Ek koşullar (AND) — salt okunur
+              </label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {existing.and.map((c, i) => (
+                  <code key={i} style={{
+                    fontSize: 11, padding: '3px 8px', borderRadius: 4,
+                    border: '1px solid var(--border)', background: 'var(--bg2)',
+                  }}>{describeCondition(c)}</code>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Kural yalnız <b>hepsi</b> sağlandığında eşleşir. Bu koşullar bu
+                formda düzenlenmez ve kaydederken <b>olduğu gibi korunur</b> —
+                genelde türetilmiş bir kuralın (<code>metric-excl-…</code>) metrik
+                kısıtıdır. Kaldırmak için kuralı üreten kaydı düzenleyin.
+              </div>
+            </div>
+          )}
 
           {/* v0.5.270 — enrich-only fields */}
           {kind === 'enrich' && (

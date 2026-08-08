@@ -23,17 +23,21 @@ func (s *Server) listPipelineRules(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) upsertPipelineRule(w http.ResponseWriter, r *http.Request) {
 	if s.pipeline == nil {
-		http.Error(w, `{"error":"pipeline engine not configured"}`, http.StatusServiceUnavailable)
+		writeJSONError(w, http.StatusServiceUnavailable, "pipeline engine not configured")
 		return
 	}
 	var body pipeline.Rule
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		http.Error(w, `{"error":"invalid JSON: `+err.Error()+`"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
+	// v0.9.803 — writeJSONError, NOT string concatenation. Upsert's
+	// validateCondition reports a bad pattern with %q, so the message
+	// itself contains double quotes and the old hand-built body was
+	// invalid JSON exactly on the path v0.9.802 wired to the field.
 	saved, err := s.pipeline.Upsert(r.Context(), s.store, body)
 	if err != nil {
-		http.Error(w, `{"error":"`+err.Error()+`"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	s.publishConfigReload(r.Context(), "pipeline")
@@ -44,12 +48,12 @@ func (s *Server) upsertPipelineRule(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deletePipelineRule(w http.ResponseWriter, r *http.Request) {
 	if s.pipeline == nil {
-		http.Error(w, `{"error":"pipeline engine not configured"}`, http.StatusServiceUnavailable)
+		writeJSONError(w, http.StatusServiceUnavailable, "pipeline engine not configured")
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
-		http.Error(w, `{"error":"id required"}`, http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "id required")
 		return
 	}
 	if err := s.pipeline.Delete(r.Context(), s.store, id); err != nil {

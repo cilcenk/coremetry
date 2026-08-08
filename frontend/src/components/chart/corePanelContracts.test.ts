@@ -122,6 +122,60 @@ describe('CorePanel self-review düzeltmeleri', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// v0.9.785 — bars markı + config bağımlılık bütünlüğü.
+//
+// Aynı 🟠 kimlik dersinin (v0.9.704) ÖTEKİ ucu: orada fazla bağımlılık
+// config'i gereksiz yıkıyordu, burada EKSİK bağımlılık değişikliği yutuyor.
+// bars↔line geçişi seri ADLARINI değiştirmediği için names.join() imzası
+// sabit kalır — `viz` dizide olmasa panel sessizce çizgi kalırdı. Aynı tuzak
+// dashed ve connectNulls için ZATEN canlıydı (bu sürümde kapandı).
+// ---------------------------------------------------------------------------
+describe('CorePanel bars markı (v0.9.785)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('import @grafana/ui alias adlarından — @grafana/schema YASAK', () => {
+    // GraphDrawStyle @grafana/ui'den DERLENMEZ (index.d.ts:305 onu
+    // DrawStyle olarak yeniden dışa aktarır) ve @grafana/schema
+    // package.json'da YOK — hayalet bağımlılık, prod build'de patlar.
+    expect(src).toMatch(/DrawStyle, PointVisibility,?\s*\n?\s*\} from '@grafana\/ui'/);
+    expect(src).not.toMatch(/@grafana\/schema/);
+    expect(src).not.toMatch(/\bGraphDrawStyle\b/);
+  });
+
+  it('bars dalı: drawStyle + showPoints + genişlik TAVANI birlikte', () => {
+    expect(src).toMatch(/drawStyle: DrawStyle\.Bars/);
+    // showPoints geçilmezse uPlot çubukların üstüne nokta basar.
+    expect(src).toMatch(/showPoints: PointVisibility\.Auto/);
+    expect(src).toMatch(/barWidthFactor: 0\.6/);
+    // v0.9.245 dersi: tavansız [0.85, Infinity] "barlar çok büyük".
+    // (Çıplak /Infinity/ ARAMAYIN — legend penceresi xWin ?? [-Infinity,
+    // Infinity] kullanıyor ve kapı ONU yakalayıp yanlış kızarır; v0.9.720
+    // ile aynı aşırı-geniş-regex hatası.)
+    expect(src).toMatch(/barMaxWidth: 40/);
+    expect(src).not.toMatch(/barMaxWidth: Infinity/);
+    expect(src).not.toMatch(/size: \[0\.85/);
+  });
+
+  it('line dalı korunur: viz varsayılan line, eski değerler yerinde', () => {
+    expect(src).toMatch(/viz = 'line'/);
+    expect(src).toMatch(/lineWidth: bars \? 1 : 1\.5/);
+    expect(src).toMatch(/fillOpacity: bars \? 35 : \(dashed\?\.\[i\] \? 0 : 12\)/);
+  });
+
+  it('🔴 config bağımlılığı viz + dashed + connectNulls TAŞIR', () => {
+    const deps = src.match(/\}, \[[^\]]*\]\);/g) ?? [];
+    const cfg = deps.filter(d => d.includes('overlaySig'));
+    expect(cfg.length, 'config useMemo dizisi bulunamadı').toBe(1);
+    expect(cfg[0]).toContain('viz');
+    // dizi KİMLİĞİ değil İÇERİK imzası — inline [] her render'da yeni.
+    expect(cfg[0]).toContain("dashed?.join(',')");
+    expect(cfg[0]).toContain('connectNulls');
+  });
+});
+
 describe('CorePanel tekeli', () => {
   const SRC = resolve(__dirname, '../..');
 

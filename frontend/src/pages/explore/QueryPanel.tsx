@@ -8,16 +8,22 @@ import { chartsV2 } from '@/lib/featureFlags';
 import type { ChartTimeRegion, ChartThreshold } from '@/lib/chart/overlays';
 
 // v0.9.745 (Explore v2) — line modunda panel gövdesi CorePanel'e
-// (@grafana/ui motoru, Overview ile AYNI render). bars/stacked/area eski
-// TimeSeriesPanel'de kalır (CorePanel o mark'ları henüz çizmiyor —
-// dürüst kademeli geçiş, ?chartsV2=0 toptan kaçış). Lazy: corePanelEntry
+// (@grafana/ui motoru, Overview ile AYNI render). Lazy: corePanelEntry
 // vendor'ı sayfaya statik bağlamaz (708 bundle dersi).
+//
+// v0.9.785 — bars da v2 motorunda (CorePanel viz='bars', Grafana'nın
+// kendi Bars draw-style'ı). stacked/area eski TimeSeriesPanel'de kalır:
+// CorePanel o markları henüz çizmiyor, dürüst kademeli geçiş —
+// ?chartsV2=0 hâlâ toptan kaçış.
 //
 // Bilinen v2 farkları (bilinçli, eski yol bir bayrak uzakta):
 //   • focusedLabel (GroupTable hover vurgusu) v2'de henüz yok.
-//   • Karma modlu sayfada (bars paneli + line paneli) crosshair senkronu
-//     motorlar arası çalışmaz — v2 panelleri kendi anahtarında senkron
-//     (x ekseni ms vs sn; yanlış hizalı senkron daha kötü olurdu).
+//   • GEÇİCİ AYRIM: v2 panelleri `${SYNC_KEY}-ms` grubunda, eski motor
+//     `SYNC_KEY`'de senkron olur (x ekseni ms vs sn — yanlış hizalı
+//     senkron hiç senkron olmamaktan kötüdür). Yani karma bir sayfada
+//     (bars/line paneli + stacked paneli) crosshair motorlar arasında
+//     geçmez. stacked dilimi bu ayrımı kapatacak; o gün iki grup teke
+//     iner.
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
@@ -99,12 +105,15 @@ export const QueryPanel = memo(function QueryPanel({
             ? 'Formül için ortak zaman aralığında veri yok'
             : 'Bu pencerede veri yok — aralığı genişlet veya filtreleri azalt'}
         </div>
-      ) : (chartsV2() && mode === 'line') ? (
+      ) : (chartsV2() && (mode === 'line' || mode === 'bars')) ? (
         <Suspense fallback={<div style={{ height: PANEL_HEIGHT, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
           <CorePanelMultiLazy
             title=""
             storageKey={`explore-panel-${panel.key}`}
             height={PANEL_HEIGHT}
+            // Kapı yalnız bu ikisini geçiriyor; ternary üçüncü bir mark'ı
+            // sessizce line'a düşürmez çünkü üçüncü mark buraya GELMEZ.
+            viz={mode === 'bars' ? 'bars' : 'line'}
             unit={panel.unit || undefined}
             items={panel.series.map(ts => ({
               name: ts.label,

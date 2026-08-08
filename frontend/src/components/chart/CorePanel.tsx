@@ -32,7 +32,7 @@ import type uPlot from 'uplot';
 import {
   UPlotChart, UPlotConfigBuilder,
   AxisPlacement, ScaleOrientation, ScaleDirection, ScaleDistribution,
-  GraphGradientMode,
+  GraphGradientMode, DrawStyle, PointVisibility,
 } from '@grafana/ui';
 import type { DataFrame } from '@grafana/data';
 import { framesToAligned, chartTheme } from '@/lib/chart/dataFrame';
@@ -144,13 +144,23 @@ export interface CorePanelProps {
   // frame 5-4 kesikli, dolgusuz çizilir; rol rengi aynen (muted
   // öneriliyor ama çağıranın kararı).
   dashed?: boolean[];
+  // v0.9.785 — çizim markı. 'line' varsayılan (bugünkü davranış, bayt
+  // bayt); 'bars' Grafana'nın Bars draw-style'ı. PRİMİTİF string olarak
+  // taşınır — nesne/dizi bir prop config kimliğini her render'da yıkar
+  // (v0.9.704 destroy/recreate dersi).
+  //
+  // Neden UNION ve neden yalnız iki değer: stacked/area hâlâ eski
+  // TimeSeriesPanel motorunda (QueryPanel kapısı), yani buraya
+  // gelemeyecek bir mark'ı tipte vaat etmek yalan olurdu. Union
+  // genişleyince kapı da genişler — ikisi birlikte.
+  viz?: 'line' | 'bars';
 }
 
 export function CorePanel({
   title, data, height = 200, roles, onZoom, onZoomReset, syncKey, logScale, storageKey,
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
   defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
-  hiddenNames, hideLegend, onCursorTime, dashed,
+  hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -301,17 +311,37 @@ export function CorePanel({
         return `${d.text}${d.suffix ?? ''}`;
       },
     });
+    // v0.9.785 — bars markı. Grafana'nın kendi UPlotSeriesBuilder'ı
+    // drawStyle=Bars görünce path builder'ı `bars({size:[barWidthFactor,
+    // barMaxWidth]})` ile kurar. İKİ alan da ŞART:
+    //   • barWidthFactor 0.6 → bucket'ın %60'ı çubuk, %40'ı nefes payı.
+    //   • barMaxWidth 40px → v0.9.245 dersi ("barlar çok büyük"): eski
+    //     motor [0.85, Infinity] kullanıyordu ve seyrek pencerede tek
+    //     çubuk yarım paneli kaplıyordu. Tavan olmadan bars okunmuyor.
+    // showPoints AÇIKÇA geçilir: builder Auto'yu görmezse points.show'u
+    // hiç set etmez ve uPlot çubukların TEPESİNE nokta basar
+    // (UPlotSeriesBuilder.mjs — Auto + Bars = points kapalı).
+    const bars = viz === 'bars';
     aligned.names.forEach((name, i) => {
       b.addSeries({
         scaleKey: 'y', theme,
         lineColor: resolveVar(seriesRoleColor(name, roles?.[i] ?? 'data')),
-        lineWidth: 1.5,
+        // Çubuk kenarı ince (1) — 1.5px stroke dar çubuğu şişman gösterir.
+        lineWidth: bars ? 1 : 1.5,
         // v0.9.756 (operatör: "çizgiler basit geldi") — Grafana'nın imza
         // görünümü: çizgi renginden türeyen hafif opaklık-degradeli alan
         // dolgusu (fillOpacity 12, Opacity gradyanı). Tema-canlı: renk
         // rebuild'de çözülür (themeTick dep'i zaten var).
-        fillOpacity: dashed?.[i] ? 0 : 12,
+        // Bars'ta dolgu ASIL gövdedir (12 solgun kalırdı) → 35.
+        fillOpacity: bars ? 35 : (dashed?.[i] ? 0 : 12),
         gradientMode: GraphGradientMode.Opacity,
+        // Line dalı bayt-bayt eskisi: bar alanları yalnız bars'ta var.
+        ...(bars ? {
+          drawStyle: DrawStyle.Bars,
+          showPoints: PointVisibility.Auto,
+          barWidthFactor: 0.6,
+          barMaxWidth: 40,
+        } : {}),
         lineStyle: dashed?.[i] ? { fill: 'dash' as const, dash: [5, 4] } : undefined,
         // show BURADA SABİT true: görünürlük setSeries ile uygulanıyor
         // (aşağıdaki effect). Config'e gömmek her legend tıkını full
@@ -445,8 +475,21 @@ export function CorePanel({
     });
     return b;
     // themeTick: tema değişince renkler yeniden çözülsün diye bağımlılıkta.
+    //
+    // v0.9.785 — ÜÇ eksik bağımlılık kapatıldı. Bu useMemo config'i kurar
+    // ve config === ile karşılaştırılır (v0.9.704): dizide OLMAYAN bir
+    // girdi değiştiğinde uPlot ESKİ config'le çizmeye devam eder, yani
+    // değişiklik sessizce YUTULUR. Üçü de gövdede OKUNUYORDU:
+    //   • viz      — bars↔line geçişi seri ADLARINI değiştirmez, o yüzden
+    //                names.join() imzası sabit kalır ve panel çizgi
+    //                kalırdı (bu sürümün asıl hatası; yeni prop olduğu
+    //                için ilk günden latent değil, doğrudan bozuk olurdu).
+    //   • dashed   — join(',') ile İÇERİK imzası (dizi kimliği değil:
+    //                inline [] her render'da yeni kimlik = sürekli yıkım).
+    //   • connectNulls — spanNulls eşiği; panel-başına açık tercih
+    //                değişince boşluk doktrini gerçekten değişmeliydi.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to]);
+  }, [aligned.names.join(' '), roles?.join(), syncKey, effLog, themeTick, overlaySig, xRange?.from, xRange?.to, viz, dashed?.join(','), connectNulls]);
 
   // CSV: ekranda ne varsa o iner (görünen veri, ayrı export sorgusu yok).
   const downloadCsv = () => {

@@ -4,17 +4,23 @@ import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { DevOpsFlavor, DevOpsTestResult } from '@/lib/types';
 
-// DevOpsTab — Azure DevOps Server / TFS bağlantısı (v0.9.829).
-//
-// BİLİNÇLİ DAR DİLİM: yalnız bağlantı katmanı. Repo eşleme ve
-// kod-inceleme sonraki adımda; şu an bu ayarı okuyan bir yüzey
-// YOK. Kart açıklaması bunu açıkça söylüyor — "kaydettim, artık
-// stack trace'te kod göreceğim" beklentisi yaratmak, özelliğin
-// kendisinden daha pahalıya patlar.
+// DevOpsTab — Azure DevOps Server / TFS bağlantısı (v0.9.829),
+// v0.9.830'da adlandırma konvansiyonu eklendi.
 //
 // TempoTab şablonu: PAT hiç geri dönmez (hasPat = "kayıtlı"
 // göstergesi), boş bırakılan PAT alanı saklı değeri korur, TLS
 // atlama kutusu aynı uyarı metniyle.
+//
+// Konvansiyon alanları VİRGÜLLE yazılır, sunucuya dizi gider.
+// Alan boş bırakılırsa sunucu nil kaydeder ve varsayılan uygulanır;
+// snapshot çözülmüş değeri geri döndüğü için kutu asla boş kalmaz —
+// operatör çözücünün gerçekte neyi soyduğunu ekranda görür.
+// splitList — "bsa-, svc-" → ['bsa-','svc-']. Boş girdi [] döner ve
+// sunucu onu nil'e çevirip varsayılana düşer (cleanConventionList).
+function splitList(s: string): string[] {
+  return s.split(',').map(x => x.trim()).filter(Boolean);
+}
+
 export function DevOpsTab() {
   const [loaded, setLoaded] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
@@ -25,6 +31,8 @@ export function DevOpsTab() {
   const [hasPat, setHasPat] = useState(false);
   const [flavor, setFlavor] = useState<DevOpsFlavor>('auto');
   const [insecure, setInsecure] = useState(false);
+  const [repoPrefixes, setRepoPrefixes] = useState('');
+  const [branchOrder, setBranchOrder] = useState('');
   const [detected, setDetected] = useState<{ flavor?: DevOpsFlavor; apiVersion?: string }>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -39,6 +47,8 @@ export function DevOpsTab() {
       setHasPat(s.hasPat);
       setFlavor((s.flavor || 'auto') as DevOpsFlavor);
       setInsecure(!!s.insecureSkipVerify);
+      setRepoPrefixes((s.repoPrefixes || []).join(', '));
+      setBranchOrder((s.branchOrder || []).join(', '));
       setDetected({ flavor: s.detectedFlavor, apiVersion: s.detectedApiVersion });
       setLoaded(true);
     }).catch(() => setLoaded(true));
@@ -50,6 +60,8 @@ export function DevOpsTab() {
   const buildInput = () => ({
     baseUrl, collection, project, username, flavor,
     insecureSkipVerify: insecure,
+    repoPrefixes: splitList(repoPrefixes),
+    branchOrder: splitList(branchOrder),
     ...(pat ? { pat } : {}),
   });
 
@@ -76,6 +88,10 @@ export function DevOpsTab() {
       const next = await api.putDevOpsSettings(buildInput());
       setHasPat(next.hasPat);
       setPat('');
+      // Sunucu konvansiyonu ÇÖZÜLMÜŞ döner: alanı boş bırakan operatör
+      // kaydettiği anda varsayılanı kutuda görür.
+      setRepoPrefixes((next.repoPrefixes || []).join(', '));
+      setBranchOrder((next.branchOrder || []).join(', '));
       setDetected({ flavor: next.detectedFlavor, apiVersion: next.detectedApiVersion });
       setMsg({ kind: 'ok', text: next.baseUrl
         ? 'Kaydedildi — bağlantı bilgileri saklandı (tüm pod’lar <30s içinde eşitlenir).'
@@ -100,10 +116,11 @@ export function DevOpsTab() {
       </h2>
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Şirket içi Azure DevOps Server / TFS koleksiyonuna okuma bağlantısı.
-        <strong style={{ color: 'var(--text1)' }}> Şimdilik yalnız bağlantı</strong> —
-        repo eşleme ve kod-inceleme sonraki adım. Yani burayı doldurmak
-        henüz hiçbir ekranı değiştirmez; amaç sunucu adresinin ve PAT’ın
-        çalıştığını, o özellik gelmeden önce doğrulayabilmek.
+        Yapılandırıldığında CoSRE, exception ve trace açıklamalarında
+        stack trace’teki uygulama satırlarının <strong style={{ color: 'var(--text1)' }}>
+        kaynak kodunu</strong> da okuyabilir (AI çekmecesindeki
+        “Kodu da incele” kutusu). Kod yalnız modele gider; AI çağrı
+        kaydına kod gövdesi değil, yalnız <code>dosya:aralık</code> özeti yazılır.
       </p>
 
       <div className={`status-banner status-banner-${configured ? 'operational' : 'degraded'}`}>
@@ -199,6 +216,37 @@ export function DevOpsTab() {
               <> Son tespit: <strong>{flavorLabel(detected.flavor)}</strong>
                 {detected.apiVersion ? ` · api-version ${detected.apiVersion}` : ''}.</>
             )}
+          </div>
+        </label>
+
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+            Servis adı önekleri <span style={{ color: 'var(--text3)' }}>(virgülle)</span>
+          </div>
+          <input value={repoPrefixes}
+            onChange={e => setRepoPrefixes(e.target.value)}
+            placeholder="bsa-"
+            style={{ width: '100%' }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Servis adından depo adı türetilirken soyulur; ortam eki
+            (<code>-prod/-int/-uat/-prep</code>) her hâlükârda soyulur.
+            Örnek: <code>bsa-odeme-servisi-prod</code> → <code>odeme-servisi</code>.
+            Katalogdaki <strong>Repository</strong> alanı doluysa O kazanır —
+            elle pin konvansiyonu ezer.
+          </div>
+        </label>
+
+        <label style={{ display: 'block', marginBottom: 12 }}>
+          <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+            Branş sırası <span style={{ color: 'var(--text3)' }}>(virgülle)</span>
+          </div>
+          <input value={branchOrder}
+            onChange={e => setBranchOrder(e.target.value)}
+            placeholder="release, master"
+            style={{ width: '100%' }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            İlk <strong>var olan</strong> branş kullanılır. Hiçbiri yoksa deponun
+            kendi varsayılan branşına düşülür.
           </div>
         </label>
 

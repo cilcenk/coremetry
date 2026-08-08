@@ -79,6 +79,15 @@ type Settings struct {
 	// InsecureSkipVerify relaxes TLS chain verification, for the
 	// internal CA / self-signed certs common on on-prem servers.
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+	// RepoPrefixes / BranchOrder (v0.9.830) — the service→repo naming
+	// convention. Empty = the bundled defaults (see repo_resolve.go).
+	//
+	// These live in the SAME blob rather than a new settings key: one
+	// integration, one row (invariant 5's spirit — no new schema per
+	// surface). They are not secrets and DO round-trip through the
+	// snapshot, unlike the PAT — the secret contract is unchanged.
+	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
+	BranchOrder  []string `json:"branchOrder,omitempty"`
 }
 
 // Snapshot is the public view returned by GET /api/settings/devops.
@@ -99,6 +108,13 @@ type Snapshot struct {
 	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
 	DetectedFlavor     string `json:"detectedFlavor,omitempty"`
 	DetectedAPIVersion string `json:"detectedApiVersion,omitempty"`
+	// RepoPrefixes / BranchOrder (v0.9.830) — echoed back RESOLVED, i.e.
+	// the defaults appear when the operator saved nothing. The card
+	// would otherwise render two empty boxes next to a resolver that is
+	// quietly using "bsa-" and release→master, and the first question
+	// out of a failed lookup would be "but what IS it stripping?".
+	RepoPrefixes []string `json:"repoPrefixes,omitempty"`
+	BranchOrder  []string `json:"branchOrder,omitempty"`
 }
 
 // TestResult is the POST /api/settings/devops/test response.
@@ -124,6 +140,11 @@ type Service struct {
 	// Last successful probe of the live config. Advisory only.
 	detFlavor  string
 	detVersion string
+
+	// code — repo-tree cache for the source-window fetcher
+	// (v0.9.830). Its own mutex: a recursive listing takes seconds
+	// and must not block Snapshot() / the settings page behind it.
+	code codeCache
 }
 
 func New() *Service {
@@ -239,6 +260,7 @@ func (s *Service) Snapshot() Snapshot {
 	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	rc := s.resolveConfigLocked()
 	return Snapshot{
 		BaseURL:            s.cfg.BaseURL,
 		Collection:         s.cfg.Collection,
@@ -249,7 +271,29 @@ func (s *Service) Snapshot() Snapshot {
 		InsecureSkipVerify: s.cfg.InsecureSkipVerify,
 		DetectedFlavor:     s.detFlavor,
 		DetectedAPIVersion: s.detVersion,
+		RepoPrefixes:       rc.RepoPrefixes,
+		BranchOrder:        rc.BranchOrder,
 	}
+}
+
+// ResolveConfig returns the service→repo convention with defaults
+// already folded in, so callers never have to know what the fallback
+// is. Safe on a nil Service (returns the bundled defaults).
+func (s *Service) ResolveConfig() ResolveConfig {
+	if s == nil {
+		return ResolveConfig{}.withDefaults()
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.resolveConfigLocked()
+}
+
+// resolveConfigLocked — caller holds at least the read lock.
+func (s *Service) resolveConfigLocked() ResolveConfig {
+	return ResolveConfig{
+		RepoPrefixes: s.cfg.RepoPrefixes,
+		BranchOrder:  s.cfg.BranchOrder,
+	}.withDefaults()
 }
 
 // CurrentSettings returns the full config INCLUDING the PAT.
@@ -467,12 +511,22 @@ func probeProject(ctx context.Context, cli *http.Client, cfg Settings, apiVersio
 const bodyCap = 1 << 20
 
 // doGet performs the authenticated request and returns the body
-// on 2xx. Auth is HTTP Basic: PAT in the PASSWORD field with an
-// empty username, which is the documented Azure DevOps PAT form
-// (v0.8.451 uses the same shape for the RAG wiki crawler). When
-// the operator supplied a username — NTLM-era TFS setups — it is
-// sent alongside.
+// on 2xx, capped at bodyCap.
 func doGet(ctx context.Context, cli *http.Client, rawURL string, cfg Settings) ([]byte, error) {
+	return doGetCapped(ctx, cli, rawURL, cfg, bodyCap)
+}
+
+// doGetCapped is doGet with an explicit read ceiling. The recursive
+// repo listing (v0.9.830) legitimately runs to several MB on a large
+// monorepo, so it passes its own cap rather than raising the ceiling
+// for every probe — a settings-page reachability check has no reason
+// to read more than 1MB of a server error page.
+//
+// Auth is HTTP Basic: PAT in the PASSWORD field with an empty
+// username, which is the documented Azure DevOps PAT form (v0.8.451
+// uses the same shape for the RAG wiki crawler). When the operator
+// supplied a username — NTLM-era TFS setups — it is sent alongside.
+func doGetCapped(ctx context.Context, cli *http.Client, rawURL string, cfg Settings, cap int64) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return nil, err
@@ -487,7 +541,7 @@ func doGet(ctx context.Context, cli *http.Client, rawURL string, cfg Settings) (
 		return nil, err
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, bodyCap))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, cap))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return nil, fmt.Errorf("http %d — check the PAT and its scopes (Code: Read)", resp.StatusCode)
 	}

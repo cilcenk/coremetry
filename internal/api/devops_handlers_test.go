@@ -221,7 +221,11 @@ func TestDevOpsAuditDetails_NoSecrets(t *testing.T) {
 		t.Fatalf("audit details are not valid JSON: %v", err)
 	}
 	// Exact key set — a future field can't drift in unreviewed.
-	want := []string{"baseUrl", "collection", "project", "flavor", "hasPat", "insecureSkipVerify"}
+	// repoPrefixes / branchOrder joined in v0.9.830: not secrets, and
+	// a convention edit silently repoints which source file every AI
+	// answer quotes, so the trail wants it.
+	want := []string{"baseUrl", "collection", "project", "flavor", "hasPat",
+		"insecureSkipVerify", "repoPrefixes", "branchOrder"}
 	if len(got) != len(want) {
 		t.Errorf("audit keys = %v, want exactly %v", keysOf(got), want)
 	}
@@ -258,4 +262,76 @@ func keysOf(m map[string]any) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+// ── v0.9.830: adlandırma konvansiyonu alanları ──────────────────
+
+// TestMergeDevOpsSettings_ConventionLists — repoPrefixes / branchOrder
+// normalizasyonu. Kritik olan BOŞ → nil: alanı temizleyen operatör
+// varsayılana dönmeli, "tek bir imkânsız önek" listesine değil.
+func TestMergeDevOpsSettings_ConventionLists(t *testing.T) {
+	cases := []struct {
+		name string
+		in   []string
+		want []string
+	}{
+		{"nil stays nil (defaults apply)", nil, nil},
+		{"empty slice → nil", []string{}, nil},
+		{"blank entries dropped → nil", []string{"", "   "}, nil},
+		{"entries trimmed", []string{" bsa- ", "svc-"}, []string{"bsa-", "svc-"}},
+		{"blank entry dropped, rest kept", []string{"bsa-", "", "svc-"}, []string{"bsa-", "svc-"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := baseInput()
+			in.RepoPrefixes = tc.in
+			in.BranchOrder = tc.in
+			cfg, bad := mergeDevOpsSettings(in, baseCur())
+			if bad != "" {
+				t.Fatalf("unexpected 400: %s", bad)
+			}
+			if !equalStrings(cfg.RepoPrefixes, tc.want) {
+				t.Errorf("RepoPrefixes = %v, want %v", cfg.RepoPrefixes, tc.want)
+			}
+			if !equalStrings(cfg.BranchOrder, tc.want) {
+				t.Errorf("BranchOrder = %v, want %v", cfg.BranchOrder, tc.want)
+			}
+		})
+	}
+}
+
+// TestDevOpsSnapshotEchoesResolvedConvention — snapshot RESOLVED
+// değerleri döner: hiçbir şey kaydedilmemişken kart iki boş kutu
+// göstermemeli, çözücünün gerçekte neyi soyduğunu göstermeli.
+func TestDevOpsSnapshotEchoesResolvedConvention(t *testing.T) {
+	svc := devops.New()
+	svc.Configure(devops.Settings{BaseURL: "https://dev.example.local/tfs"})
+	snap := svc.Snapshot()
+	if !equalStrings(snap.RepoPrefixes, devops.DefaultRepoPrefixes()) {
+		t.Errorf("RepoPrefixes = %v, want defaults %v", snap.RepoPrefixes, devops.DefaultRepoPrefixes())
+	}
+	if !equalStrings(snap.BranchOrder, devops.DefaultBranchOrder()) {
+		t.Errorf("BranchOrder = %v, want defaults %v", snap.BranchOrder, devops.DefaultBranchOrder())
+	}
+
+	svc.Configure(devops.Settings{
+		BaseURL:      "https://dev.example.local/tfs",
+		RepoPrefixes: []string{"svc-"}, BranchOrder: []string{"main"},
+	})
+	snap = svc.Snapshot()
+	if !equalStrings(snap.RepoPrefixes, []string{"svc-"}) || !equalStrings(snap.BranchOrder, []string{"main"}) {
+		t.Errorf("saved convention not echoed: %v / %v", snap.RepoPrefixes, snap.BranchOrder)
+	}
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

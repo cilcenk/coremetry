@@ -37,6 +37,10 @@ type devopsSettingsInput struct {
 	PAT                string `json:"pat"`
 	Flavor             string `json:"flavor"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	// RepoPrefixes / BranchOrder (v0.9.830) — the service→repo naming
+	// convention. Omitted or empty = keep the bundled defaults.
+	RepoPrefixes []string `json:"repoPrefixes"`
+	BranchOrder  []string `json:"branchOrder"`
 }
 
 // mergeDevOpsSettings validates the input and folds it over the
@@ -62,6 +66,8 @@ func mergeDevOpsSettings(in devopsSettingsInput, cur devops.Settings) (devops.Se
 		PAT:                in.PAT,
 		Flavor:             strings.TrimSpace(in.Flavor),
 		InsecureSkipVerify: in.InsecureSkipVerify,
+		RepoPrefixes:       cleanConventionList(in.RepoPrefixes),
+		BranchOrder:        cleanConventionList(in.BranchOrder),
 	}
 	if cfg.Flavor == "" {
 		cfg.Flavor = devops.FlavorAuto
@@ -88,6 +94,26 @@ func mergeDevOpsSettings(in devopsSettingsInput, cur devops.Settings) (devops.Se
 		cfg.PAT = ""
 	}
 	return cfg, ""
+}
+
+// cleanConventionList normalises a repo-prefix / branch-order list:
+// trim each entry, drop the empties, nil when nothing is left.
+//
+// nil MATTERS — it is what makes the resolver fall back to its
+// bundled defaults. A saved [""] would otherwise be a list with one
+// impossible prefix, i.e. an operator who cleared the field would
+// silently disable prefix stripping instead of restoring the default.
+func cleanConventionList(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // getDevOpsSettings returns the saved connection config minus the
@@ -142,6 +168,12 @@ func (s *Server) putDevOpsSettings(w http.ResponseWriter, r *http.Request) {
 // The server URL is not a secret and is the single most useful
 // thing to have in the trail when someone asks "who pointed this
 // at the wrong collection?".
+//
+// v0.9.830 adds the naming convention for the same reason: a repo
+// prefix or branch order edited by one admin silently changes which
+// SOURCE FILE every AI answer quotes for every other admin. That is
+// exactly the class of change the trail exists for, and neither
+// field is a secret.
 func devopsAuditDetails(snap devops.Snapshot) []byte {
 	b, _ := json.Marshal(map[string]any{
 		"baseUrl":            snap.BaseURL,
@@ -150,6 +182,8 @@ func devopsAuditDetails(snap devops.Snapshot) []byte {
 		"flavor":             snap.Flavor,
 		"hasPat":             snap.HasPAT,
 		"insecureSkipVerify": snap.InsecureSkipVerify,
+		"repoPrefixes":       snap.RepoPrefixes,
+		"branchOrder":        snap.BranchOrder,
 	})
 	return b
 }

@@ -1201,17 +1201,20 @@ export interface TempoSettingsInput {
   insecureSkipVerify?: boolean;
 }
 
-// Azure DevOps Server / TFS connection (v0.9.829). CONNECTION
-// LAYER ONLY — repo mapping and code review are a later slice, so
-// nothing reads this config yet. Tempo secret contract: the PAT
-// never round-trips (hasPat is the stored indicator), and an
-// empty `pat` on submit preserves the stored one.
+// Azure DevOps Server / TFS connection (v0.9.829). Tempo secret
+// contract: the PAT never round-trips (hasPat is the stored
+// indicator), and an empty `pat` on submit preserves the stored one.
 //
 // flavor picks the api-version: azure-devops-server → 6.0,
 // tfs → 4.1, auto → probe. detectedFlavor/detectedApiVersion
 // report what the last successful probe actually spoke; they are
 // in-memory on the server and never persisted, so they may be
 // absent until someone hits "Test connection".
+//
+// v0.9.830 — repoPrefixes / branchOrder: the service→repo naming
+// convention the source-window fetcher applies. Unlike the PAT these
+// are NOT secrets and DO round-trip; the snapshot echoes them
+// RESOLVED, i.e. the bundled defaults appear when nothing was saved.
 export type DevOpsFlavor = 'auto' | 'azure-devops-server' | 'tfs';
 export interface DevOpsSnapshot {
   baseUrl: string;
@@ -1223,6 +1226,8 @@ export interface DevOpsSnapshot {
   insecureSkipVerify?: boolean;
   detectedFlavor?: DevOpsFlavor;
   detectedApiVersion?: string;
+  repoPrefixes?: string[];
+  branchOrder?: string[];
 }
 export interface DevOpsSettingsInput {
   baseUrl: string;
@@ -1232,6 +1237,8 @@ export interface DevOpsSettingsInput {
   pat?: string;
   flavor?: DevOpsFlavor;
   insecureSkipVerify?: boolean;
+  repoPrefixes?: string[];
+  branchOrder?: string[];
 }
 export interface DevOpsTestResult {
   ok: boolean;

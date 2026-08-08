@@ -37,6 +37,9 @@ import {
   PANEL_SERIES_CAP, TOP_N_OPTIONS,
 } from './explore/model';
 import { encodeBuilder, seedFromLegacyParams } from './explore/urlCodec';
+import {
+  hasMeaningfulParams, exploreQuerySig, nextExploreKey, type ExploreKeyState,
+} from './explore/exploreRouteKey';
 import { useExploreQueries, useExploreOverlays } from './explore/useExploreQueries';
 import { metricsNeedingUnit, useMetricUnits, withMetricUnits } from './explore/metricUnits';
 import { PanelStack, buildPanels } from './explore/PanelStack';
@@ -66,7 +69,13 @@ import { Button } from '@/components/ui/Button';
 // so a paramless /explore keeps showing the entry cards.
 const DEFAULT_Q = encodeBuilder(defaultBuilderState());
 
-function ExploreInner() {
+function ExploreInner({ onSelfWrite }: {
+  // v0.9.805 — "state şu an bu URL'i kodluyor" bildirimi. ExplorePage bunu
+  // kullanarak KENDİ yazımımızı dışarıdan gelen bir navigasyondan ayırıyor;
+  // olmasaydı sorgu imzasını anahtara katmak her düzenlemede remount
+  // tetiklerdi.
+  onSelfWrite: (search: string) => void;
+}) {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
@@ -273,6 +282,12 @@ function ExploreInner() {
     const queryQs = buildQuery(queryEntries);
     const qs = buildQuery([...queryEntries, ['range', encodeRange(range)]]);
     const next = qs ? `?${qs}` : '';
+    // v0.9.805 — navigate'ten ÖNCE ve KOŞULSUZ. Bu satır "ekrandaki state
+    // şu URL'e karşılık geliyor" diyor; ExplorePage gelen bir URL'i bununla
+    // karşılaştırıp kendi yankımızı remount etmiyor. Koşulsuz, çünkü
+    // navigate atlanan durumda da (next zaten adres çubuğundaysa) bildirim
+    // güncel olmalı — remount sonrası kanonikleşen URL bunun tipik hâli.
+    onSelfWrite(next);
     if (next !== window.location.search) {
       navigate(`/explore${next}`, { preventScrollReset: true, replace: true });
     }
@@ -298,7 +313,7 @@ function ExploreInner() {
     // searchParams intentionally omitted: it's only read for the
     // metrics/logs passthrough whose values never change while mounted.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [source, resultMode, debounced, filters, dslDebounced, mode, range, traceLimit, showTotal, extraCols, repeatMin, repeatGroupBy, legacyViz, navigate, saveHistory]);
+  }, [source, resultMode, debounced, filters, dslDebounced, mode, range, traceLimit, showTotal, extraCols, repeatMin, repeatGroupBy, legacyViz, navigate, saveHistory, onSelfWrite]);
 
   // Service options for the traces/repeats filter suggestions. Gated on
   // hasParams (entry screen fires no workspace fetches — Phase-1 finding).
@@ -1017,13 +1032,9 @@ name ~ checkout`}
 }
 
 // hasMeaningfulParams — true when the URL carries a real query (any param
-// other than `range`). Unchanged from Phase-1.
-function hasMeaningfulParams(sp: URLSearchParams): boolean {
-  for (const k of sp.keys()) {
-    if (k !== 'range') return true;
-  }
-  return false;
-}
+// other than `range`). Unchanged from Phase-1 — tanım v0.9.805'te
+// exploreRouteKey.ts'e taşındı (remount kararıyla AYNI kural olmak
+// zorunda; iki kopya sessizce ayrışırdı).
 
 // legacyHistoryDesc — recent-queries label for the traces/repeats console.
 function legacyHistoryDesc(s: {
@@ -1043,14 +1054,29 @@ function legacyHistoryDesc(s: {
 }
 
 export default function ExplorePage() {
-  // Key the inner workspace on entry-vs-deep-link so an entry ↔ deep-link
-  // transition remounts ExploreInner and its useState initializers re-seed
-  // from the new params (Phase-1 mechanism, unchanged).
+  // v0.9.805 — anahtar artık yalnız giriş↔workspace SINIRINI değil, SORGUYU
+  // da taşıyor. Eskiden çalışan bir Explore'da saved view / derin link
+  // uygulamak URL'i değiştiriyor ama anahtar sabit kaldığı için remount
+  // olmuyordu: ExploreInner URL'i mount başına bir kez okur, dolayısıyla
+  // ekran eski sorguda kalıyor ve ilk düzenlemede state→URL yazımı saved
+  // view'i tamamen eziyordu (one-way-read sınıfının 4. vakası).
+  //
+  // Kendi yazımımız remount ETMEZ: ExploreInner navigate'ten önce URL'ini
+  // bildiriyor, nextExploreKey o imzayı görünce anahtarı sabit tutuyor.
+  // Karar saf ve tablo-testli (exploreRouteKey.ts).
   const { search } = useLocation();
-  const meaningful = hasMeaningfulParams(new URLSearchParams(search));
+  const selfWriteSigRef = useRef<string | null>(null);
+  const keyRef = useRef<ExploreKeyState | null>(null);
+  const onSelfWrite = useCallback((next: string) => {
+    selfWriteSigRef.current = exploreQuerySig(next);
+  }, []);
+  // Render sırasında türetiliyor: aynı search ile ikinci kez çağrılmak
+  // sonucu değiştirmez (prev.sig === sig → prev döner), o yüzden StrictMode
+  // çift render'ı güvenli.
+  keyRef.current = nextExploreKey(keyRef.current, search, selfWriteSigRef.current);
   return (
     <Suspense fallback={<Spinner />}>
-      <ExploreInner key={meaningful ? 'workspace' : 'entry'} />
+      <ExploreInner key={keyRef.current.key} onSelfWrite={onSelfWrite} />
     </Suspense>
   );
 }

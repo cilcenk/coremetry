@@ -47,6 +47,7 @@ import {
   drawThresholds, drawTimeRegions, drawExemplars, exemplarAt,
   type ChartThreshold, type ChartTimeRegion, type ChartExemplar,
 } from '@/lib/chart/overlays';
+import { stackData, stackBands } from '@/lib/chart/stacking';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
 import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
 import { placeTooltip } from '@/lib/chartTooltip';
@@ -149,11 +150,14 @@ export interface CorePanelProps {
   // taşınır — nesne/dizi bir prop config kimliğini her render'da yıkar
   // (v0.9.704 destroy/recreate dersi).
   //
-  // Neden UNION ve neden yalnız iki değer: stacked/area hâlâ eski
-  // TimeSeriesPanel motorunda (QueryPanel kapısı), yani buraya
-  // gelemeyecek bir mark'ı tipte vaat etmek yalan olurdu. Union
-  // genişleyince kapı da genişler — ikisi birlikte.
-  viz?: 'line' | 'bars';
+  // v0.9.788 — union DÖRDE çıktı, Explore'un mark kümesiyle birebir:
+  //   • 'area'    = line dalı + kalın dolgu (başka fark yok).
+  //   • 'stacked' = yığılmış ALAN. Kümülatif matris yalnız ÇİZİME gider;
+  //     tooltip/lejant/CSV ham değeri okur (aşağıdaki ham-veri kanalı).
+  // ('stacked-bar' dashboard-only bir panel tipidir, buraya gelmez.)
+  // Union genişledi ve QueryPanel kapısı da genişledi — ikisi birlikte,
+  // "gelemeyecek mark'ı tipte vaat etme" kuralı gereği.
+  viz?: 'line' | 'bars' | 'area' | 'stacked';
 }
 
 export function CorePanel({
@@ -175,7 +179,6 @@ export function CorePanel({
   // imzasına biner; yalnız İÇERİK değişince rebuild.
   const onZoomRef = useRef(onZoom);
   onZoomRef.current = onZoom;
-  const overlaySig = JSON.stringify([thresholds ?? null, regions ?? null, bands ?? null]);
   // FAZ 2D — panel menüsü durumları. Tam ekran CSS overlay: route/DOM
   // taşıma yok, ESC ile çıkılır. Log toggle logScale prop'unu TOHUM alır.
   const [menuOpen, setMenuOpen] = useState(false);
@@ -252,6 +255,38 @@ export function CorePanel({
       : visLocal,
     [hiddenNames, visLocal, aligned.names.join('|')]);
 
+  // ── v0.9.788 — HAM VERİ KANALI (yığılmış alan) ────────────────────────
+  //
+  // Kümülatif matris `aligned`'a YAZILMAZ. aligned ham kalır ve lejant
+  // istatistikleri, CSV ve tooltip ONDAN okur; uPlot'a giden `drawData`
+  // ayrı bir türetmedir. Tek matris tutsaydık stacked'te tooltip
+  // KÜMÜLATİF değeri "bu serinin değeri" diye gösterirdi — grafiğin en
+  // çok güvenilen parçası yalan söylerdi (TSP:609-625 aynı dersi
+  // bundleRef ile öğrenmişti).
+  const stacked = viz === 'stacked';
+  const hiddenIdx = useMemo(() => {
+    const s = new Set<number>();
+    vis.forEach((show, i) => { if (show === false) s.add(i); });
+    return s;
+  }, [vis]);
+  // Gizleme = YENİDEN HESAP: bir katman kapanınca üsttekiler gerçekten
+  // aşağı iner. Bu bir VERİ memo'su, config değil — ' vis,' config
+  // bağımlılığına girmez (corePanelContracts 🟠 pini korunur).
+  const drawData = useMemo(
+    () => (stacked ? stackData(aligned.data, hiddenIdx) : aligned.data),
+    [stacked, aligned, hiddenIdx]);
+  // Bantlar TÜRETİLMİŞ veridir: liste her render'da yeni kimlik alır, o
+  // yüzden config imzasına İÇERİKÇE katılır (v0.9.704 — kimliğe bağlansa
+  // her poll tick'i uPlot'u destroy/recreate ederdi).
+  const stackedBands = useMemo(
+    () => (stacked ? stackBands(aligned.names.length, hiddenIdx) : null),
+    [stacked, aligned.names.length, hiddenIdx]);
+  // v0.9.788 — stacked iken PROP bands (p50-p99) imzaya bile girmez:
+  // aşağıda yok sayılıyor, imzada tutmak sahte rebuild üretirdi.
+  const overlaySig = JSON.stringify([
+    thresholds ?? null, regions ?? null, stacked ? null : (bands ?? null), stackedBands,
+  ]);
+
   // Görünen aralık (uPlot x scale) — legend istatistikleri bundan.
   const [xWin, setXWin] = useState<[number, number] | null>(null);
 
@@ -265,6 +300,12 @@ export function CorePanel({
   visRef.current = vis;
   const framesRef = useRef(frames);
   framesRef.current = frames;
+  // v0.9.788 — HAM matris ref'i. Tooltip bugüne dek u.data'dan okuyordu;
+  // stacked'te u.data KÜMÜLATİF olduğu için oradan okumak yalan olurdu.
+  // Her modda buradan okunur: line/bars/area'da drawData === aligned.data
+  // olduğundan davranış bayt bayt aynıdır, stacked'te ise doğru olur.
+  const rawRef = useRef(aligned.data);
+  rawRef.current = aligned.data;
   useEffect(() => {
     const u = plotRef.current;
     if (!u) return;
@@ -321,20 +362,39 @@ export function CorePanel({
     // showPoints AÇIKÇA geçilir: builder Auto'yu görmezse points.show'u
     // hiç set etmez ve uPlot çubukların TEPESİNE nokta basar
     // (UPlotSeriesBuilder.mjs — Auto + Bars = points kapalı).
+    //
+    // v0.9.788 — area/stacked dalları. area SADECE dolgu kalınlığıdır
+    // (Grafana'nın "Fill opacity" kaydırağı); stacked'in çizgi/mark
+    // ayarı da line'ın aynısıdır — farkı VERİ (kümülatif matris) ve
+    // BANTLAR yapar, mark değil.
     const bars = viz === 'bars';
+    const area = viz === 'area';
     aligned.names.forEach((name, i) => {
       b.addSeries({
         scaleKey: 'y', theme,
         lineColor: resolveVar(seriesRoleColor(name, roles?.[i] ?? 'data')),
         // Çubuk kenarı ince (1) — 1.5px stroke dar çubuğu şişman gösterir.
         lineWidth: bars ? 1 : 1.5,
+        // v0.9.93 (uPlot Aşama 3) dersinin bu motordaki karşılığı: yığın
+        // dolguları arasında saç-teli beyaz dikişler kalır çünkü komşu
+        // katmanların kenarları ayrı ayrı piksele yuvarlanır. pxAlign
+        // kapatılınca dolgular sürekli hizalanır. `false` uPlot'ta 0'a
+        // eşittir (`s.pxAlign = +ifNull(s.pxAlign, 1)`); non-stacked'te
+        // dokunulmaz, crisp gridline için varsayılan 1 kalır.
+        pxAlign: stacked ? false : undefined,
         // v0.9.756 (operatör: "çizgiler basit geldi") — Grafana'nın imza
         // görünümü: çizgi renginden türeyen hafif opaklık-degradeli alan
         // dolgusu (fillOpacity 12, Opacity gradyanı). Tema-canlı: renk
         // rebuild'de çözülür (themeTick dep'i zaten var).
         // Bars'ta dolgu ASIL gövdedir (12 solgun kalırdı) → 35.
-        fillOpacity: bars ? 35 : (dashed?.[i] ? 0 : 12),
-        gradientMode: GraphGradientMode.Opacity,
+        // v0.9.788 — area 60 (dolgu markın kendisi); stacked 28, eski
+        // motorun '47' alpha'sının (0x47/0xff ≈ %28) birebiri.
+        fillOpacity: bars ? 35 : area ? 60 : stacked ? 28 : (dashed?.[i] ? 0 : 12),
+        // Stacked'te dolgu DÜZ olmalı: bantlar üst serinin dolgusunu
+        // yeniden kullanıyor (aşağıya bkz.) ve degrade bir bandın içinde
+        // katman sınırını bulanıklaştırır. None + fillOpacity =
+        // alpha(lineColor, %28) — renk yine token kanalından gelir.
+        gradientMode: stacked ? GraphGradientMode.None : GraphGradientMode.Opacity,
         // Line dalı bayt-bayt eskisi: bar alanları yalnız bars'ta var.
         ...(bars ? {
           drawStyle: DrawStyle.Bars,
@@ -355,12 +415,27 @@ export function CorePanel({
       });
     });
     if (syncKey) b.setCursor({ sync: { key: syncKey } });
-    // p50-p99 bandı: uPlot native band — iki mevcut serinin arası dolar.
-    for (const band of bands ?? []) {
-      b.addBand({
-        series: [band.above, band.below],
-        fill: resolveVar(band.fill ?? 'var(--accent-soft)'),
-      });
+    // v0.9.788 — İKİ bant kaynağı vardır ve AYNI ANDA kullanılamazlar:
+    // uPlot'ta bir seri en fazla BİR bandın üst kenarı olabilir
+    // (`bands.find(b => b.series[0] == si)`), iki liste çakışırsa katman
+    // dolgusu sessizce p50-p99 bandına kayar. Bu yüzden stacked iken
+    // PROP bands YOK SAYILIR — yığma bir mark kararıdır; çağıran ikisini
+    // birden istiyorsa mark yanlış seçilmiştir.
+    if (stacked) {
+      // Yığın bantları: ardışık görünür katmanların arası. fill BİLEREK
+      // verilmez — uPlot bant dolgusu boşsa üst serinin kendi dolgusuna
+      // düşer (`b.fill(self, bi) || fillStyle`), yani katman rengi tek
+      // kanaldan (seriesRoleColor → fillOpacity) gelir ve burada ikinci
+      // bir palet doğmaz.
+      for (const sb of stackedBands ?? []) b.addBand({ series: sb.series });
+    } else {
+      // p50-p99 bandı: uPlot native band — iki mevcut serinin arası dolar.
+      for (const band of bands ?? []) {
+        b.addBand({
+          series: [band.above, band.below],
+          fill: resolveVar(band.fill ?? 'var(--accent-soft)'),
+        });
+      }
     }
     // Eşik çizgileri + annotation bölgeleri: M3 çizim çekirdeği. Renk
     // token'ları DRAW anında çözülür (tema-canlı) — build anında değil;
@@ -370,7 +445,15 @@ export function CorePanel({
         if (regions?.length) drawTimeRegions(u, regions);
         // v0.9.744 — exemplar ◆'ları en son (çizgilerin üstünde);
         // ref'ten canlı okunur, halo panel arka planından.
-        if (exemplarsRef.current?.some(e => e?.length)) {
+        //
+        // v0.9.788 — stacked'te BASTIRILIR. ◆'ın y'si HAM değerden
+        // valToPos ile bulunuyor (overlays.ts:219/254) ama çizilen çizgi
+        // KÜMÜLATİF: elmas katmandan kopar, rastgele bir yükseklikte
+        // asılı kalır ve tık isabeti (exemplarAt, aynı ham hesap)
+        // görünenle uyuşmaz. Yığın kümülatif olduğu sürece "bu noktadaki
+        // trace" diye gösterilecek dürüst bir konum yok — çizmemek,
+        // yanlış yere çizmekten iyidir.
+        if (!stacked && exemplarsRef.current?.some(e => e?.length)) {
           drawExemplars(u, exemplarsRef.current, visRef.current, resolveVar,
             resolveVar('var(--bg1)') || '#0d1117');
         }
@@ -427,8 +510,11 @@ export function CorePanel({
       const stepSec = xs.length > 1 ? Math.abs(xs[1] - xs[0]) / 1000 : null;
       const rows = capTooltipRows(sortedTooltipRows(aligned.names.map((label, i) => {
         const si = u.cursor.idxs?.[i + 1] ?? idx;
+        // v0.9.788 — değer u.data'dan DEĞİL ham matris ref'inden. Stacked
+        // panelde u.data kümülatiftir; oradan okunan "değer" katmanın
+        // kendi değeri değil altındakilerin toplamıdır.
         const v = visRef.current[i] === false ? null
-          : ((u.data[i + 1] as (number | null)[])?.[si] ?? null);
+          : ((rawRef.current[i + 1] as (number | null)[] | undefined)?.[si] ?? null);
         const disp = framesRef.current[i]?.fields[1].display;
         return {
           label,
@@ -633,7 +719,9 @@ export function CorePanel({
           // v0.9.744 — ◆ isabeti ÖNCELİKLİ: trace açar, panel eylemi
           // (navigasyon) devreye girmez. Bekleme yok — anında.
           const u = plotRef.current;
-          if (u && exemplarClickRef.current && exemplarsRef.current?.some(x => x?.length)) {
+          // stacked'te ◆ çizilmiyor (draw hook'u bastırıyor) → isabet
+          // testi de kapalı: görünmeyen bir işarete tıklatmak olmaz.
+          if (u && !stacked && exemplarClickRef.current && exemplarsRef.current?.some(x => x?.length)) {
             const r = u.over.getBoundingClientRect();
             const hit = exemplarAt(u, exemplarsRef.current, visRef.current,
               e.clientX - r.left, e.clientY - r.top);
@@ -664,7 +752,9 @@ export function CorePanel({
           <Empty icon="◫" title={data.reason}>{data.hint ?? ''}</Empty>
         )}
         {data.state === 'ready' && width > 0 && aligned.data[0].length >= 2 && (
-          <UPlotChart data={aligned.data} width={width} height={height} config={config}
+          // v0.9.788 — ÇİZİME giden matris (stacked'te kümülatif); ham
+          // matris aligned'da durur ve tooltip/lejant/CSV oradan okur.
+          <UPlotChart data={drawData} width={width} height={height} config={config}
             plotRef={(u) => { plotRef.current = u; }} />
         )}
         {data.state === 'ready' && aligned.data[0].length < 2 && (

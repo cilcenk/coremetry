@@ -162,7 +162,10 @@ describe('CorePanel bars markı (v0.9.785)', () => {
   it('line dalı korunur: viz varsayılan line, eski değerler yerinde', () => {
     expect(src).toMatch(/viz = 'line'/);
     expect(src).toMatch(/lineWidth: bars \? 1 : 1\.5/);
-    expect(src).toMatch(/fillOpacity: bars \? 35 : \(dashed\?\.\[i\] \? 0 : 12\)/);
+    // v0.9.788 — area/stacked dalları eklendi; line ve bars uçları
+    // (12 / 35 + dashed ghost'un 0'ı) BAYT BAYT yerinde kalmalı.
+    expect(src).toMatch(
+      /fillOpacity: bars \? 35 : area \? 60 : stacked \? 28 : \(dashed\?\.\[i\] \? 0 : 12\)/);
   });
 
   it('🔴 config bağımlılığı viz + dashed + connectNulls TAŞIR', () => {
@@ -173,6 +176,74 @@ describe('CorePanel bars markı (v0.9.785)', () => {
     // dizi KİMLİĞİ değil İÇERİK imzası — inline [] her render'da yeni.
     expect(cfg[0]).toContain("dashed?.join(',')");
     expect(cfg[0]).toContain('connectNulls');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.788 — yığılmış alan + area.
+//
+// Buradaki kapıların hepsi TEK bir kusur sınıfını hedefler: türetilmiş
+// (kümülatif) verinin ham veriyle karışması. Tooltip'in u.data'dan okuması,
+// bant listesinin config imzasına katılmaması, exemplar'ın ham y ile
+// kümülatif çizgi arasında asılı kalması — üçü de "aynı matris sanmak".
+// ---------------------------------------------------------------------------
+describe('CorePanel yığılmış alan (v0.9.788)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './CorePanel.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('viz union DÖRT mark taşır', () => {
+    expect(src).toMatch(/viz\?: 'line' \| 'bars' \| 'area' \| 'stacked'/);
+  });
+
+  it('🔴 HAM VERİ KANALI: kümülatif matris aligned\'a yazılmaz', () => {
+    // drawData ayrı bir türetme; uPlot ONU alır, aligned ham kalır.
+    expect(src).toMatch(/const drawData = useMemo\(/);
+    expect(src).toMatch(/stacked \? stackData\(aligned\.data, hiddenIdx\) : aligned\.data/);
+    expect(src).toMatch(/<UPlotChart data=\{drawData\}/);
+    // CSV + lejant istatistikleri HÂLÂ ham matristen.
+    expect(src).toMatch(/alignedToCsv\(aligned\.names, aligned\.data/);
+  });
+
+  it('🔴 tooltip HAM değeri ref\'ten okur — u.data\'dan DEĞİL', () => {
+    expect(src).toMatch(/rawRef\.current = aligned\.data/);
+    expect(src).toMatch(/rawRef\.current\[i \+ 1\] as \(number \| null\)\[\] \| undefined/);
+    // Eski (yalan söyleyen) okuma geri gelmemeli.
+    expect(src).not.toMatch(/u\.data\[i \+ 1\]/);
+  });
+
+  it('🟠 bant imzası overlaySig\'e katılır — poll tick\'i uPlot\'u yıkmasın', () => {
+    expect(src).toMatch(/const overlaySig = JSON\.stringify\(\[[\s\S]*?stackedBands,?[\s\S]*?\]\)/);
+    // stacked iken prop bands imzadan da düşer (sahte rebuild üretirdi).
+    expect(src).toMatch(/stacked \? null : \(bands \?\? null\)/);
+  });
+
+  it('bant listesi saf çekirdekten; stacked iken prop bands YOK SAYILIR', () => {
+    expect(src).toMatch(/stackBands\(aligned\.names\.length, hiddenIdx\)/);
+    expect(src).toMatch(/if \(stacked\) \{[\s\S]*?b\.addBand\(\{ series: sb\.series \}\)/);
+    // Fill VERİLMEZ: uPlot üst serinin kendi dolgusuna düşer.
+    expect(src).not.toMatch(/addBand\(\{ series: sb\.series, fill/);
+  });
+
+  it('pxAlign stacked\'te kapalı (uPlot\'ta false ≡ 0) — dikiş yok', () => {
+    expect(src).toMatch(/pxAlign: stacked \? false : undefined/);
+  });
+
+  it('stacked dolgusu DÜZ: gradient katman sınırını bulanıklaştırır', () => {
+    expect(src).toMatch(
+      /gradientMode: stacked \? GraphGradientMode\.None : GraphGradientMode\.Opacity/);
+  });
+
+  it('exemplar ◆ stacked\'te bastırılır — çizim VE tık isabeti birlikte', () => {
+    expect(src).toMatch(/if \(!stacked && exemplarsRef\.current\?\.some/);
+    expect(src).toMatch(/u && !stacked && exemplarClickRef\.current/);
+  });
+
+  it('🟠 gizleme yeniden hesaptır ama config bağımlılığı DEĞİL', () => {
+    // hiddenIdx bir VERİ memo'su besler; ' vis,' pini (v0.9.704) yukarıdaki
+    // testte zaten tüm dizilerde taranıyor — burada kaynağını çiviliyoruz.
+    expect(src).toMatch(/const hiddenIdx = useMemo\(/);
+    expect(src).toMatch(/\[stacked, aligned, hiddenIdx\]\)/);
   });
 });
 

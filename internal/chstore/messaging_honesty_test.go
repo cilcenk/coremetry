@@ -140,7 +140,10 @@ func TestMessagingMVReadsAlign(t *testing.T) {
 // anomaly.go, heatmap.go: `var x uint32` + int64'e çevir) — yalnız
 // messaging kaçırmıştı. Bu test o sapmanın geri gelmemesini sağlıyor.
 func TestMessagingUnixTimestampScanType(t *testing.T) {
-	for _, f := range []string{"dependencies.go", "messaging_e2e.go", "messaging_series.go"} {
+	// v0.9.834 — messaging_series.go listeden düştü: /api/messaging/series
+	// ve okuyucusu kaldırıldı (üst KPI şeridi + üç grafik operatör
+	// kararıyla gitti). Sözleşme kalan iki okumada aynen sürüyor.
+	for _, f := range []string{"dependencies.go", "messaging_e2e.go"} {
 		b, err := os.ReadFile(f)
 		if err != nil {
 			t.Fatalf("%s okunamadı: %v", f, err)

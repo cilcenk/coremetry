@@ -896,7 +896,8 @@ func (s *Store) GetDatabases(ctx context.Context, q DatabasesQuery) (*DatabasesO
 	// çağıran okumasında da (dbTopCallersSQL) geçerli — iki okuma
 	// AYNI (bucketStart, to) çiftiyle koşuyor, ayrışırlarsa çağıran
 	// sıralaması satır toplamının saymadığı bir kovayı sayardı.
-	// GetDatabasesSeries'in v0.9.820'deki sınırıyla aynı sözleşme.
+	// Sözleşme db_bucket_bound_test.go'da sabitli; GetDBTrends ile
+	// AYNI sınır.
 	bucketStart := from.Truncate(5 * time.Minute)
 	rows, err := s.telemetryReadConn().Query(ctx, `
 		SELECT db_system,

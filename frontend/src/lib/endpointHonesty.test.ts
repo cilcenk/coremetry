@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
   endpointP99Delta,
-  worseningCount,
   listedTotals,
   endpointRowKey,
   decodeEndpointRowKey,
@@ -55,30 +54,6 @@ describe('endpointP99Delta', () => {
     const d = endpointP99Delta(500, 0);
     expect(d.kind).toBe('listNew');
     if (d.kind === 'delta') expect(Number.isFinite(d.pct)).toBe(true);
-  });
-});
-
-describe('worseningCount', () => {
-  const rows = [
-    { p99Ms: 200, priorP99Ms: 100 }, // +%100 → sayılır
-    { p99Ms: 106, priorP99Ms: 100 }, // +%6   → sayılır
-    { p99Ms: 103, priorP99Ms: 100 }, // +%3   → eşik altı, sayılmaz
-    { p99Ms: 50, priorP99Ms: 100 },  // iyileşme, sayılmaz
-    { p99Ms: 900, priorP99Ms: 0 },   // listede yeni, sayılmaz
-    { p99Ms: 900 },                  // prior alanı hiç yok, sayılmaz
-  ];
-  it('yalnız eşiği aşan ÖLÇÜLMÜŞ kötüleşmeleri sayar', () => {
-    expect(worseningCount(rows)).toBe(2);
-  });
-  it('eşik ayarlanabilir', () => {
-    expect(worseningCount(rows, 50)).toBe(1);
-    expect(worseningCount(rows, 0)).toBe(3); // +100, +6, +3
-  });
-  it('boş liste 0', () => {
-    expect(worseningCount([])).toBe(0);
-  });
-  it('"listede yeni" satır kötüleşmiş SAYILMAZ (taban yok)', () => {
-    expect(worseningCount([{ p99Ms: 1e9, priorP99Ms: 0 }])).toBe(0);
   });
 });
 

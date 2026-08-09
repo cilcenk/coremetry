@@ -12,8 +12,6 @@ import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { timeRangeToNs } from '@/lib/utils';
-import { DatabasesSummary } from '@/pages/databases/DatabasesSummary';
-import { SaturationKpi } from '@/pages/databases/SaturationKpi';
 import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
 import type { SlowQueryRow } from '@/lib/types';
@@ -140,37 +138,6 @@ export default function DatabasesPage() {
   });
   const ov = q.data as DatabasesOverview | null | undefined;
 
-  // v0.9.822 — doygunluk karosunun tıkı: en dar havuzun satırını AÇ.
-  //
-  // Anahtar YÜKLÜ SATIRDAN çözülür, elle kurulmaz. Sebep gerçek bir
-  // ayrışma riski: receiver keşfi instance adını dört kademeli bir
-  // coalesce ile buluyor (<prefix>instance.name → instance →
-  // server.address → res service.name), doygunluk okuması ise ÜÇ
-  // kademeli farklı bir zincirle (instance → res service.name →
-  // service_name). Bu kurulumda ikisi birebir aynı sonucu veriyor
-  // (canlı doğrulandı: corebank-dg.prod / corebank-scan.prod), ama
-  // yalnız `oracledb.instance.name` yayan bir receiver'da ayrışırlardı
-  // ve elle kurulmuş bir anahtar hiçbir satıra denk gelmez, tık da
-  // HİÇBİR ŞEY yapmamış gibi görünürdü — bu serinin temizlediği sessiz
-  // kırılma sınıfının ta kendisi.
-  //
-  // Eşleşme yoksa yine de en iyi tahmini yazıyoruz (satır sonradan
-  // gelebilir), ama filtreleri de temizliyoruz: karo bir oracle
-  // instance'ını işaret ederken sayfada dbsys=postgresql seçiliyse
-  // satır listede olmazdı.
-  const focusInstance = (system: string, instance: string) => setSp(prev => {
-    const next = new URLSearchParams(prev);
-    next.delete('dbsys');
-    next.delete('dbname');
-    const hit = (ov?.rows ?? []).find(
-      d => d.system === system && d.instance === instance && d.source === 'receiver')
-      ?? (ov?.rows ?? []).find(d => d.system === system && d.instance === instance);
-    next.set('row', hit
-      ? depRowKey({ system: hit.system, instance: hit.instance, dbName: hit.dbName })
-      : depRowKey({ system, instance }));
-    return next;
-  }, { replace: true });
-
   // Split rows by origin. Span-derived rows go to the top
   // panel; receiver-discovered rows go to the bottom. Either
   // panel can be empty — we render the heading + an empty
@@ -280,24 +247,13 @@ export default function DatabasesPage() {
         {/* v0.9.405 — URL-state taşıyan sayfa görünüm kaydedebilmeli
             (saved_views şeması hazır; Endpoints emsali). */}
         <SavedViewsBar page="databases" />
-        {/* v0.9.820 — KPI şeridi + üç grafik. Sayfa bugüne dek iki tablo
-            + bir ifade listesiydi: "veritabanı ne zaman yavaşladı"
-            sorusu ancak satır açılıp drawer'a bakılarak, instance
-            instance cevaplanabiliyordu. Şerit tablonun kendi
-            filtrelerini (dbsys/dbname/compare) okuyor, yani üstteki sayı
-            ile alttaki satırlar AYNI kümeyi anlatıyor. Tablo sorgusunun
-            durumundan BAĞIMSIZ mount edilir — kendi loading/error/empty
-            kanalları var ve tablo hata verse bile grafik doğru. */}
-        {/* v0.9.822 — KOŞULLU havuz doygunluğu karosu. Gauge yoksa
-            SaturationKpi null döner ve şerit üç karo kalır: dördüncü bir
-            yer tutucu çizilmez (messaging'in consumer-lag karosunu HİÇ
-            kurmama kararıyla aynı disiplin). Tık, en dar havuzun satır
-            çekmecesini açar — doygunluğun detayı (oturumlar, wait
-            class'ları, tablespace) zaten orada yaşıyor. */}
-        <DatabasesSummary
-          fromNs={from} toNs={to}
-          dbsys={dbsys} dbname={dbname} compare={compare}
-          extraKpi={<SaturationKpi onFocusInstance={focusInstance} />} />
+        {/* v0.9.834 — v0.9.820'nin KPI şeridi + üç grafiği ve v0.9.822'nin
+            doygunluk karosu KALDIRILDI (operatör: bu metrikler gereksiz).
+            Doygunluk VERİSİ kaybolmadı: receiver satırının çekmecesinde
+            (oturumlar, wait class'ları, tablespace) yaşamaya devam
+            ediyor — giden yalnız karo ve karodan çekmeceye giden tık
+            kısayolu. /api/databases/series ile /api/databases/saturation
+            uçları ve okuyucuları da silindi. */}
         {/* v0.9.821 — DÜRÜSTLÜK ŞERİTLERİ. Üçü de yalnız gerçekten
             geçerliyken çıkar; her sayfada duran bir uyarı, hiçbir sayfada
             okunmayan bir uyarıdır. */}

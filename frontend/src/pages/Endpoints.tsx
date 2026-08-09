@@ -21,7 +21,6 @@ import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
 import { encodeEndpointParam, decodeEndpointParam } from '@/pages/endpoints/endpointParam';
 import { parseColsParam, formatColsParam } from '@/pages/endpoints/endpointCols';
 import { ColumnToggle } from '@/pages/endpoints/ColumnToggle';
-import { EndpointsSummary } from '@/pages/endpoints/EndpointsSummary';
 import {
   DETAIL_PARAM, EXP_PARAM, LIST_NEW_LABEL, LIST_NEW_TITLE,
   decodeExpandedParam, decodeEndpointRowKey, encodeExpandedParam,
@@ -670,24 +669,16 @@ export default function EndpointsPage() {
         )}
         {rows && rows.length > 0 && (
           <>
-            {/* v0.9.818 — KPI'lar ev diline + dürüst etiketlere geçti.
-                v0.9.819 — şerit ARTIK GRAFİKLERLE BİRLİKTE
-                (EndpointsSummary): sayfa bugüne dek yalnız tabloydu ve
-                "ne zaman bozuldu" sorusu satır satır sparkline açarak
-                cevaplanıyordu. Tek çağrı hem şeridi hem üç grafiği
-                besliyor; rows/limit karolara "listelenen" ve "kötüleşen"
-                gerçeğini veriyor (ikisi de TABLODAN, seriden değil). */}
-            <EndpointsSummary
-              fromNs={from} toNs={to}
-              service={service} search={search.trim()} entry={entry}
-              env={env} cluster={cluster} compare={compare}
-              rows={rows} limit={limit}
-              onZoom={handleZoom} onZoomReset={handleZoomReset} />
-            {/* Listelenen çağrı / hata — şeritteki "İstek/dk" karosu
-                pencerenin TAMAMINI (limit dışını da) sayıyor, bu satır
-                ise SADECE görünen satırları. İki farklı soru, bu yüzden
-                iki ayrı yer; ikisini tek karoda toplamak v0.9.818'de
-                kapattığımız kapsam yalanının geri gelmesi olurdu. */}
+            {/* v0.9.834 — v0.9.818/819'un KPI şeridi + üç grafiği
+                KALDIRILDI (operatör: bu metrikler gereksiz). Sayfa
+                yeniden tablo-önce: aşağıdaki "listelenen toplam" satırı
+                ve satır içi sparkline'lar duruyor, /api/endpoints/series
+                ve okuyucusu ise silindi. */}
+            {/* Listelenen çağrı / hata — KAPSAM SADECE GÖRÜNEN SATIRLAR
+                (limit dışı endpoint'ler burada YOK). Cümle bunu açıkça
+                "Listelenen N satırın toplamı" diye kuruyor: v0.9.818'de
+                kapattığımız kapsam yalanı, tam da bu sayıyı filo geneli
+                gibi okutmaktı. */}
             <div style={{ marginBottom: 12, fontSize: 11.5, color: 'var(--text3)' }}
               title={`Oran pencere TOPLAMLARINDAN: ${fmtNum(listed.errors)} hata / ${fmtNum(listed.calls)} çağrı. Satır oranlarının ortalaması DEĞİL.`}>
               Listelenen {fmtNum(listed.rows)} satırın toplamı:{' '}
@@ -1525,6 +1516,7 @@ function compactNum(n: number): string {
   return (n / 1_000_000).toFixed(n < 10_000_000 ? 1 : 0) + 'M';
 }
 
-// KPI karosu v0.9.819'da EndpointsSummary'ye taşındı (şerit artık
-// grafiklerle tek bileşen). Sayfa-yerel bir kopya bırakmıyoruz: iki
-// nüsha, ikisi ayrı ayrı sürüklenen iki farklı görünüm demek.
+// KPI karosu v0.9.819'da EndpointsSummary'ye taşınmıştı; v0.9.834'te
+// şeridin tamamı KALDIRILDI (operatör: bu metrikler gereksiz). Sayfa-
+// yerel bir kopya geri getirilmiyor — kaldırılan bir yüzeyin arkasına
+// bırakılan "küçük" bir nüsha, kaldırma kararını sessizce geri alır.

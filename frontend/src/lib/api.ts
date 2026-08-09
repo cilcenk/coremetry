@@ -977,19 +977,6 @@ export const api = {
     get<import('./types').DatabasesOverview | null>(
       `/api/databases?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`
       + (env ? `&env=${encodeURIComponent(env)}` : '')),
-  // v0.9.820 — /databases KPI şeridi + üç grafik. dbsys/dbname SAYFANIN
-  // filtrelerinin ta kendisi, böylece şeritteki sayı ile tablodaki
-  // satırlar aynı kümeyi anlatır.
-  databasesSeries: (params: {
-    from: number; to: number; dbsys?: string; dbname?: string; compare?: 'prior';
-  }) =>
-    get<import('./types').DatabasesSeries | null>(`/api/databases/series?${qs(params)}`),
-  // v0.9.822 — havuz doygunluğu. PENCERE ALMAZ: gauge "şu anki doluluk"
-  // anlatıyor, sunucu son 10 dakikanın EN SON değerini okuyor. Sayfa
-  // range'ine bağlansaydı 24 saatlik bir seçimde karo zirveyi ortalayarak
-  // saklardı.
-  dbSaturation: () =>
-    get<import('./types').DBSaturation | null>('/api/databases/saturation'),
   // Per-row RED sparklines + latest-bucket health snapshot for the
   // /databases + /messaging overview grid. One DBTrend per
   // (dbSystem, instance, dbName) — join to the overview rows by
@@ -1014,14 +1001,6 @@ export const api = {
   messaging: (fromNs: number, toNs: number, compare?: 'prior') =>
     get<import('./types').MessagingOverview | null>(
       `/api/messaging?from=${fromNs}&to=${toNs}${compare ? `&compare=${compare}` : ''}`),
-  // v0.9.814 — /messaging KPI şeridi + üç grafik. system/q TABLODAKİ
-  // filtrelerin ta kendisi (?msys= / ?q=), böylece şeritteki sayı ile
-  // tablodaki satırlar aynı kümeyi anlatır.
-  messagingSeries: (fromNs: number, toNs: number, system?: string, q?: string) =>
-    get<import('./types').MessagingSeries | null>(
-      `/api/messaging/series?from=${fromNs}&to=${toNs}`
-      + (system ? `&system=${encodeURIComponent(system)}` : '')
-      + (q ? `&q=${encodeURIComponent(q)}` : '')),
   // /external overview — one row per third-party destination in the
   // window, from topology_edges_5m external edges (v0.8.446, Wave 3 A1).
   external: (fromNs: number, toNs: number) =>
@@ -1951,17 +1930,6 @@ export const api = {
     // v0.9.812 — zarf: satırların yanında sıralama havuzunun boyutu ve
     // havuzun dolup dolmadığı (EndpointsListResponse).
     get<EndpointsListResponse | null>(`/api/endpoints?${qs(params)}`, signal),
-  // v0.9.819 — sayfa üstü KPI şeridi + üç grafik. service/search/entry
-  // TABLONUN filtrelerinin ta kendisi, böylece şeritteki sayı ile
-  // listedeki satırlar aynı kümeyi anlatır. env/cluster de taşınır ama
-  // CEVAPLANAMAZLIK kapısı olarak: spanmetrics MV'sinde o boyutlar yok,
-  // sunucu bunu unsupportedScope ile İLAN eder (filtresiz bir filo
-  // grafiğini filtreli tablonun üstüne koymaz).
-  endpointsSeries: (params: {
-    from: number; to: number; service?: string; search?: string;
-    entry?: 'rpc'; env?: string; cluster?: string; compare?: 'prior';
-  }, signal?: AbortSignal) =>
-    get<import('./types').EndpointsSeries | null>(`/api/endpoints/series?${qs(params)}`, signal),
   // v0.8.360 — endpoint detail drill-down (Stage-2 slice E2). One
   // payload with per-section null tolerance; sig=1 marks path as an
   // ID-collapsed signature (the table's "group by shape" mode).

@@ -113,7 +113,8 @@ const dbTrendBucketSeconds = 300.0
 // pencerenin TAMAMEN dışında. Sparkline'ın sonuna pencereye ait
 // olmayan bir nokta ekleniyordu (fark yalnız `to` kova sınırına tam
 // oturduğunda görünür; hizalanmamış `to`'da iki operatör aynı sonucu
-// verir). GetDatabasesSeries'in v0.9.820'deki sınırıyla aynı sözleşme.
+// verir). Sözleşme db_bucket_bound_test.go'da sabitli; GetDatabases ve
+// dbTopCallersSQL ile AYNI sınır.
 func (s *Store) GetDBTrends(ctx context.Context, from, to time.Time) ([]DBTrend, error) {
 	if from.IsZero() {
 		from = time.Now().Add(-1 * time.Hour)

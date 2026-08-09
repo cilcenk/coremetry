@@ -154,6 +154,36 @@ export function nextLetter(queries: BuilderQuery[]): string | null {
   return null;
 }
 
+// duplicateQueryAt (v0.9.847) — i. sorgunun DERİN kopyasını hemen ALTINA
+// ekler, sıradaki boş harfle.
+//
+// NEDEN: "+ Sorgu" bugüne dek sabit bir blankQuery basıyordu, oysa ikinci
+// sorgunun gerçek hayattaki hâli neredeyse her zaman "A'nın aynısı ama p50"
+// ya da "A'nın aynısı ama status=error". Operatör scope + 3 filtre + split'i
+// elle bir kez daha kuruyordu; çoğaltma o kopyalama işini kaldırıyor.
+//
+// KOPYA DERİN olmak ZORUNDA: filters / splitBy / filterGroup referans
+// tiplerdir, sığ bir `{...src}` iki sorguyu AYNI dizilere bağlardı ve
+// kopyaya bir çip eklemek sessizce orijinali de değiştirirdi (ve tersi).
+// structuredClone, iç içe FilterGroup ağacını da elle gezmeden çözer.
+//
+// Harf yalnız bir KİMLİKTİR (formülün başvurduğu şey), sıra numarası değil:
+// [A,B]'de A çoğaltılırsa dizi [A,C,B] olur. Kopyanın kaynağının HEMEN
+// altında durması, listenin sonuna atılmasından daha okunur — düzenlenecek
+// satır göz hizasında kalır.
+//
+// Dolu (MAX_QUERIES) ya da geçersiz indekste GİRDİ AYNEN döner (yeni dizi
+// bile ayrılmaz) — çağıran setBuilder içinde bail-out eder, render olmaz.
+export function duplicateQueryAt(queries: BuilderQuery[], i: number): BuilderQuery[] {
+  const src = queries[i];
+  if (!src) return queries;
+  const letter = nextLetter(queries);
+  if (!letter) return queries;
+  const out = queries.slice();
+  out.splice(i + 1, 0, { ...structuredClone(src), letter });
+  return out;
+}
+
 // spanNeedsField — latency-style span aggs measure a field; count-style
 // don't (mirrors presets.needsField, kept here so model.ts stays leaf).
 export function spanNeedsField(agg: string): boolean {

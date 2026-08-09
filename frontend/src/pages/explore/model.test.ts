@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   blankQuery, exemplarDescriptor, pinnedService, pinnedOperation,
   seriesGroupLabel, queryUnit, compareOffsetNs, compareLabel,
+  duplicateQueryAt, MAX_QUERIES,
   type BuilderQuery, type ExploreCompare,
 } from './model';
 import type { FilterExpr } from '@/lib/types';
@@ -240,5 +241,76 @@ describe('compareLabel', () => {
 
   it('kapalı kip boş metin (şerit başlığı hiç çizilmez)', () => {
     expect(compareLabel(undefined)).toBe('');
+  });
+});
+
+// ── v0.9.847 — sorgu çoğaltma ───────────────────────────────────────────────
+//
+// Çoğaltmanın TEK gerçek riski SIĞ kopyadır: filters / splitBy / filterGroup
+// referans tiplerdir ve `{...src}` iki sorguyu aynı dizilere bağlar. Bunun
+// belirtisi sessizdir — kopyaya bir çip eklenir, ORİJİNAL panel de değişir,
+// hiçbir hata mesajı çıkmaz. Bu blok o sızıntıyı her alan için ayrı ayrı
+// zorlar; hepsi tek bir "deep clone" iddiasına dayandığı için biri kaçarsa
+// diğerleri de kaçardı.
+
+describe('duplicateQueryAt (v0.9.847)', () => {
+  const src = (): BuilderQuery => q({
+    agg: 'p95', metric: 'duration_ms', scope: 'checkout',
+    splitBy: ['name'], filters: [f('kind', 'server')], dsl: 'duration > 500ms',
+    filterGroup: { join: 'OR', filters: [f('status_code', 'error')] },
+  });
+
+  it('kopyayı KAYNAĞIN HEMEN ALTINA, sıradaki harfle ekler', () => {
+    const before = [q({ letter: 'A' }), q({ letter: 'B' })];
+    const after = duplicateQueryAt(before, 0);
+    // A çoğaltıldı → boş harf C; kopya A'nın altında, B aşağı kaydı.
+    expect(after.map(x => x.letter)).toEqual(['A', 'C', 'B']);
+  });
+
+  it('kopya, kaynağın HER alanını aynen taşır (harf hariç)', () => {
+    const [orig] = [src()];
+    const after = duplicateQueryAt([orig], 0);
+    const copy = after[1];
+    expect(copy.letter).toBe('B');
+    expect({ ...copy, letter: orig.letter }).toEqual(orig);
+  });
+
+  it('DERİN kopya: kopyanın çipini değiştirmek orijinali ETKİLEMEZ', () => {
+    const orig = src();
+    const after = duplicateQueryAt([orig], 0);
+    const copy = after[1];
+    copy.filters.push(f('http.method', 'POST'));
+    copy.splitBy.push('service.name');
+    copy.filterGroup!.filters!.push(f('kind', 'client'));
+    expect(orig.filters).toHaveLength(1);
+    expect(orig.splitBy).toEqual(['name']);
+    expect(orig.filterGroup!.filters).toHaveLength(1);
+  });
+
+  it('DERİN kopya, ters yönde de: orijinali değiştirmek kopyaya sızmaz', () => {
+    const orig = src();
+    const after = duplicateQueryAt([orig], 0);
+    orig.filters.push(f('http.method', 'GET'));
+    expect(after[1].filters).toHaveLength(1);
+  });
+
+  it('dolu builder (MAX_QUERIES) GİRDİYİ AYNEN döner — yeni dizi bile yok', () => {
+    const full = ['A', 'B', 'C', 'D'].map(l => q({ letter: l }));
+    expect(full).toHaveLength(MAX_QUERIES);
+    expect(duplicateQueryAt(full, 0)).toBe(full);
+  });
+
+  it('geçersiz indekste GİRDİ AYNEN döner', () => {
+    const one = [q({ letter: 'A' })];
+    expect(duplicateQueryAt(one, 7)).toBe(one);
+    expect(duplicateQueryAt(one, -1)).toBe(one);
+  });
+
+  it('girdi dizisini MUTASYONA uğratmaz (yeni dizi döner)', () => {
+    const before = [q({ letter: 'A' })];
+    const after = duplicateQueryAt(before, 0);
+    expect(before).toHaveLength(1);
+    expect(after).not.toBe(before);
+    expect(after).toHaveLength(2);
   });
 });

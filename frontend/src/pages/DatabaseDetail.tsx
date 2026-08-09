@@ -15,7 +15,6 @@ import { dbTracesHref } from '@/lib/pivotHref';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
-import { WaitLockStrip, isWaitLockEngine } from '@/features/dependencies/panels/WaitLockStrip';
 import { OraclePanel } from '@/features/dependencies/panels/OraclePanel';
 import { PostgresPanel } from '@/features/dependencies/panels/PostgresPanel';
 import { MySQLPanel } from '@/features/dependencies/panels/MySQLPanel';
@@ -37,11 +36,22 @@ import type {
 // version before: the row click navigates.
 //
 // NO NEW BACKEND. Every read here already existed behind the drawer:
-// /api/databases/detail (the v0.9.821 identity TRIPLE), /trends,
-// /waitlock, the four engine panels and /slow-queries. The trends read
-// is the page-wide one the table also issues — same params, so React
-// Query serves this page from the same cache entry rather than adding
-// a per-row parameter to a shared endpoint.
+// /api/databases/detail (the v0.9.821 identity TRIPLE), /trends, the
+// four engine panels and /slow-queries. The trends read is the
+// page-wide one the table also issues — same params, so React Query
+// serves this page from the same cache entry rather than adding a
+// per-row parameter to a shared endpoint.
+//
+// NO WAITS & LOCKS (v0.9.846, operator's call). The wait/lock strip
+// read /api/databases/waitlock, which is fed by the OpenTelemetry
+// database receivers' engine metric families — and this install does
+// not ingest them. The panel therefore had exactly two states, both
+// content-free: an empty strip, or a paragraph explaining that the
+// engine has no such metric family. A cell that can only ever explain
+// its own emptiness is worth less than the table that took its place.
+// The endpoint, the chstore reader and the WaitLockStrip component all
+// STAY: `features/dependencies/DetailDrawer` still mounts the strip for
+// its own `kind === 'db'` rows, so this is not dead code.
 //
 // IDENTITY (v0.9.821, the trap): a row is (system, instance, dbName),
 // never the printed label. When dbName is empty the page says "every
@@ -261,71 +271,65 @@ export default function DatabaseDetailPage() {
               gap: 12,
             }}>
               <CallersCard callers={d.callers ?? []} />
-              {isWaitLockEngine(refObj.system) ? (
-                <Card header={<PanelTitle sub="wait classes">Waits &amp; locks</PanelTitle>}>
-                  <WaitLockStrip system={refObj.system} instance={refObj.instance} range={range} />
-                </Card>
-              ) : (
-                <Card header={<PanelTitle>Waits &amp; locks</PanelTitle>}>
-                  <div style={{ fontSize: 11.5, color: 'var(--text3)', lineHeight: 1.6 }}>
-                    <code>{refObj.system}</code> has no wait / lock metric family
-                    in its OpenTelemetry receiver, so there is nothing to show —
-                    this panel is empty by the engine's design, not by a gap in
-                    the window.
-                  </div>
-                </Card>
-              )}
-            </div>
 
-            <Card header={
-              <PanelTitle sub={refObj.dbName
-                ? `narrowed to ${refObj.dbName} · click a row for statement detail`
-                : `every database on this instance · click a row for statement detail`}>
-                Top statements
-              </PanelTitle>
-            }>
-              {stmtsQ.isPending && <TableSkeleton rows={5} cols={5} wideFirst />}
-              {stmtsQ.data && stmtsQ.data.length === 0 && (
-                <Empty icon="◷" title="No statement in this window">
-                  Nothing matched <code>{refObj.system}</code>
-                  {refObj.dbName ? <> / <code>{refObj.dbName}</code></> : null} in the
-                  selected range.
-                </Empty>
-              )}
-              {(stmtsQ.data ?? []).length > 0 && (
-                <div className="table-wrap">
-                  <table style={{ width: '100%', fontSize: 12 }}>
-                    <thead><tr>
-                      <th style={{ textAlign: 'left' }}>Statement</th>
-                      <th style={{ textAlign: 'left', width: 190 }}>Service</th>
-                      <th className="num" style={{ width: 80 }}>Calls</th>
-                      <th className="num" style={{ width: 88 }}>P95</th>
-                      <th className="num" style={{ width: 88 }}>Total</th>
-                    </tr></thead>
-                    <tbody>
-                      {(stmtsQ.data ?? []).map((r, i) => (
-                        <tr key={r.stmtHash ?? i}
-                          onClick={() => openStmt(r)}
-                          title={r.sampleStatement || r.statement}
-                          style={{ cursor: r.stmtHash ? 'pointer' : 'default' }}>
-                          <td className="mono" style={{
-                            maxWidth: 0, overflow: 'hidden',
-                            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }}>{r.statement}</td>
-                          <td className="mono" style={{
-                            maxWidth: 0, overflow: 'hidden',
-                            textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                          }} title={r.service}>{r.service}</td>
-                          <td className="num mono">{fmtNum(r.count)}</td>
-                          <td className="num mono">{r.p95Ms.toFixed(1)} ms</td>
-                          <td className="num mono"><b>{(r.totalMs / 1000).toFixed(1)} s</b></td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
+              {/* TOP STATEMENTS — v0.9.846 moved up into the grid, taking
+                  the cell "Waits & locks" used to hold. The operator does
+                  not ingest DB engine metrics, so the wait/lock strip had
+                  no data to draw and its whole cell was a permanent
+                  explanation of why it was empty. The statement list is
+                  the answer the page is actually asked for, so it moves
+                  next to "Who calls this": who hits this DB, and with
+                  what. The ?stmt= click-through is unchanged.
+
+                  The Service column is dropped here and NOT lost: in a
+                  340px-min cell it would have starved the statement text,
+                  which is the column being read. It rides in the row's
+                  title alongside the sample statement. */}
+              <Card header={
+                <PanelTitle sub={refObj.dbName
+                  ? `${refObj.dbName} · click a row for detail`
+                  : `every database here · click a row for detail`}>
+                  Top statements
+                </PanelTitle>
+              }>
+                {stmtsQ.isPending && <TableSkeleton rows={5} cols={4} wideFirst />}
+                {stmtsQ.data && stmtsQ.data.length === 0 && (
+                  <Empty icon="◷" title="No statement in this window">
+                    Nothing matched <code>{refObj.system}</code>
+                    {refObj.dbName ? <> / <code>{refObj.dbName}</code></> : null} in the
+                    selected range.
+                  </Empty>
+                )}
+                {(stmtsQ.data ?? []).length > 0 && (
+                  <div className="table-wrap">
+                    <table style={{ width: '100%', fontSize: 12 }}>
+                      <thead><tr>
+                        <th style={{ textAlign: 'left' }}>Statement</th>
+                        <th className="num" style={{ width: 72 }}>Calls</th>
+                        <th className="num" style={{ width: 80 }}>P95</th>
+                        <th className="num" style={{ width: 80 }}>Total</th>
+                      </tr></thead>
+                      <tbody>
+                        {(stmtsQ.data ?? []).map((r, i) => (
+                          <tr key={r.stmtHash ?? i}
+                            onClick={() => openStmt(r)}
+                            title={`${r.sampleStatement || r.statement}\n\ncalled by ${r.service}`}
+                            style={{ cursor: r.stmtHash ? 'pointer' : 'default' }}>
+                            <td className="mono" style={{
+                              maxWidth: 0, overflow: 'hidden',
+                              textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                            }}>{r.statement}</td>
+                            <td className="num mono">{fmtNum(r.count)}</td>
+                            <td className="num mono">{r.p95Ms.toFixed(1)} ms</td>
+                            <td className="num mono"><b>{(r.totalMs / 1000).toFixed(1)} s</b></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </Card>
+            </div>
 
             {/* Engine panel — receiver rows ONLY. A span-derived row has
                 no receiver behind it, and rendering the panel anyway

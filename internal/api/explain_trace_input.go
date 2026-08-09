@@ -150,7 +150,22 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 				e := liteLog{Sev: lg.SeverityText, Svc: lg.ServiceName, Body: truncate(lg.Body, 600)}
 				if lg.Attributes != nil {
 					e.ExType = lg.Attributes["exception.type"]
-					e.Stack = truncate(lg.Attributes["exception.stacktrace"], 900)
+					// v0.9.842 — the FIRST log carrying a stacktrace gets a
+					// bigger budget (1500 vs 900). Because the sort above is
+					// severity-first, that log is the trace's most serious
+					// error, and it is the one the new "Stacktrace Detayı"
+					// section is asked to name a class, a method and a
+					// deployment unit from. 900 bytes routinely cut the frame
+					// list before the application frames — the framework
+					// preamble survived and the answer to "where in OUR code"
+					// did not. Only the first: the remaining stacks stay at
+					// 900 so the prompt budget does not grow with every
+					// duplicate of the same failure.
+					stackLimit := 900
+					if rawStack == "" && strings.TrimSpace(lg.Attributes["exception.stacktrace"]) != "" {
+						stackLimit = 1500
+					}
+					e.Stack = truncate(lg.Attributes["exception.stacktrace"], stackLimit)
 					// v0.9.831 — kod çekici için HAM stack (prompt'a giren
 					// 900-byte kesilmiş kopya değil): frame'ler dosya+satır
 					// taşıyor ve kesik bir satır konumlandırılamaz. İlk

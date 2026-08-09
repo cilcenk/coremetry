@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest';
 import {
   mergeHistory,
   parseHistory,
+  historyRelTime,
+  historyItemView,
   MAX_HISTORY,
+  HISTORY_LABEL_MAX,
   type QueryHistoryEntry,
 } from './useQueryHistory';
 
@@ -89,5 +92,96 @@ describe('parseHistory', () => {
     for (const d of ['a', 'b', 'c']) acc = mergeHistory(acc, e(d));
     const roundTripped = parseHistory(JSON.stringify(acc));
     expect(roundTripped).toEqual(acc);
+  });
+});
+
+// ── v0.9.849 — halkanın GÖRÜNEN hâli ────────────────────────────────────────
+//
+// Halka v0.9.562'den beri yazıyordu ama okuyanı yoktu (giriş ekranı
+// kaldırılınca tek tüketicisi gitti). Görünür olduğu andan itibaren iki
+// şey sessizce yanlış olabilir: kırpma (bozuk glif) ve göreli zaman
+// (geri alınmış saatte "-3 dk önce"). İkisi de burada tabloda.
+
+describe('historyRelTime', () => {
+  const now = 1_754_000_000_000;
+  const cases: Array<{ ago: number; want: string; why: string }> = [
+    { ago: 0, want: 'şimdi', why: 'az önce kaydedildi' },
+    { ago: 59_000, want: 'şimdi', why: 'bir dakikanın altı' },
+    { ago: 60_000, want: '1 dk önce', why: 'dakika eşiği' },
+    { ago: 59 * 60_000, want: '59 dk önce', why: 'saatin hemen altı' },
+    { ago: 3_600_000, want: '1 sa önce', why: 'saat eşiği' },
+    { ago: 23 * 3_600_000, want: '23 sa önce', why: 'günün hemen altı' },
+    { ago: 86_400_000, want: '1 gün önce', why: 'gün eşiği' },
+    { ago: 9 * 86_400_000, want: '9 gün önce', why: 'eski kayıt' },
+  ];
+  for (const c of cases) {
+    it(`${c.why} → "${c.want}"`, () => {
+      expect(historyRelTime(now - c.ago, now)).toBe(c.want);
+    });
+  }
+
+  it('GELECEK damgalı kayıt "şimdi" — saati geri alınmış makinede "-3 dk önce" yazmaz', () => {
+    expect(historyRelTime(now + 10 * 60_000, now)).toBe('şimdi');
+  });
+});
+
+describe('historyItemView', () => {
+  const now = 1_754_000_000_000;
+
+  it('kısa özet AYNEN geçer, tam metin title\'da', () => {
+    const v = historyItemView(e('A: rate · checkout', '?q=1', now), now);
+    expect(v.text).toBe('A: rate · checkout');
+    expect(v.title).toContain('A: rate · checkout');
+    expect(v.title).toContain('şimdi');
+  });
+
+  it('uzun özet kırpılır ve … ile biter (sınır dahil)', () => {
+    const long = 'x'.repeat(HISTORY_LABEL_MAX + 40);
+    const v = historyItemView(e(long, '?q=1', now), now);
+    expect(Array.from(v.text)).toHaveLength(HISTORY_LABEL_MAX);
+    expect(v.text.endsWith('…')).toBe(true);
+    // Kırpma bilgi KAYBI değil GİZLEME: tam metin title'da duruyor.
+    expect(v.title).toContain(long);
+  });
+
+  it('tam sınırdaki özet KIRPILMAZ', () => {
+    const exact = 'y'.repeat(HISTORY_LABEL_MAX);
+    expect(historyItemView(e(exact, '?q=1', now), now).text).toBe(exact);
+  });
+
+  it('kırpma KOD NOKTASI bazında — surrogate çifti ikiye bölünmez', () => {
+    // Her biri UTF-16'da İKİ birim tutan glifler; slice() ile kırpılsaydı
+    // metnin sonunda yarım bir surrogate (bozuk glif) kalırdı.
+    const emoji = '🚀'.repeat(HISTORY_LABEL_MAX + 5);
+    const v = historyItemView(e(emoji, '?q=1', now), now);
+    expect(Array.from(v.text)).toHaveLength(HISTORY_LABEL_MAX);
+    // Yarım surrogate kalmadı: geri çevirim kayıpsız.
+    expect(v.text).toBe(Array.from(v.text).join(''));
+    expect(v.text.endsWith('…')).toBe(true);
+  });
+
+  it('uygulanabilir kayıt arama dizesini taşır', () => {
+    expect(historyItemView(e('d', '?q=abc', now), now).search).toBe('?q=abc');
+  });
+
+  const unusable: Array<{ state: unknown; why: string }> = [
+    { state: '', why: 'boş dize' },
+    { state: 'q=abc', why: "'?' ile başlamıyor" },
+    { state: 42, why: 'sayı' },
+    { state: null, why: 'null' },
+    { state: { q: 'x' }, why: 'nesne (Phase-1 öncesi bir şekil)' },
+  ];
+  for (const c of unusable) {
+    it(`uygulanamaz kayıt (${c.why}) → search boş`, () => {
+      expect(historyItemView(e('d', c.state, now), now).search).toBe('');
+    });
+  }
+
+  // Alan tamamen EKSİK olabilir (parseHistory state'i doğrulamaz, bilerek:
+  // Phase-1'den beri opak). Varsayılan parametreye düşmemek için kayıt
+  // burada elle kuruluyor.
+  it('uygulanamaz kayıt (state alanı yok) → search boş', () => {
+    const bare = { desc: 'd', tm: now } as QueryHistoryEntry;
+    expect(historyItemView(bare, now).search).toBe('');
   });
 });

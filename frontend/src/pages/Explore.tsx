@@ -21,7 +21,6 @@ import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
-import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { TimeRange, FilterExpr, LatencyHeatmap as Heatmap } from '@/lib/types';
 import {
   REPEAT_PRESETS, STEP_OPTIONS,
@@ -31,6 +30,7 @@ import { NLQueryBox } from './explore/NLQueryBox';
 import { TracesResult } from './explore/TracesResult';
 import { RepeatsResult } from './explore/RepeatsResult';
 import { useQueryHistory } from './explore/useQueryHistory';
+import { RecentQueries } from './explore/RecentQueries';
 import {
   type BuilderState, type PivotPair, defaultBuilderState, blankQuery, nextLetter,
   duplicateQueryAt,
@@ -243,6 +243,18 @@ function ExploreInner({ onSelfWrite }: {
 
   // Recent-queries ring + entry-screen gate (Phase-1 behaviour preserved).
   const { history, save: saveHistory } = useQueryHistory();
+  // v0.9.849 — halkadan geri yükleme. Kayıt TAM arama dizesini saklıyor,
+  // yani geri dönüş builder state'ini elle kurmak değil o URL'e GİTMEK.
+  // ExplorePage'in imza-anahtarı (v0.9.805) bu navigasyonu kendi
+  // yazımızdan ayırıp remount tetikliyor; ExploreInner de URL'i mount'ta
+  // bir kez okuyor — mekanizma zaten yerindeydi, eksik olan listeydi.
+  //
+  // PUSH (replace DEĞİL): sayfanın kendi state→URL yazımı geçmişi
+  // kirletmemek için replace kullanır, ama bu bir operatör navigasyonudur
+  // ve tarayıcının geri düğmesi onu geri alabilmeli.
+  const applyHistory = useCallback((search: string) => {
+    navigate(`/explore${search}`, { preventScrollReset: true });
+  }, [navigate]);
   const [hasParams, setHasParams] = useState(() => hasMeaningfulParams(searchParams));
   const seedNextRef = useRef<string | null>(null);
 
@@ -605,6 +617,11 @@ function ExploreInner({ onSelfWrite }: {
               ))}
             </div>
             <span style={{ flex: 1 }} />
+            {/* v0.9.849 — halka artık GÖRÜNÜR. Kayıtlı görünümlerin yanı,
+                çünkü ikisi de "daha önce kurduğum sorguya dön" ailesinden;
+                fark kalıcılık (saved_views, paylaşılabilir) ile bu
+                tarayıcıya özgü son 4 kayıt arasında. */}
+            <RecentQueries history={history} onApply={applyHistory} />
             <SavedViewsBar page="explore" />
             {/* sm: this bar is SavedViewsBar's sm buttons, not bare ones. */}
             <ShareButton size="sm" />

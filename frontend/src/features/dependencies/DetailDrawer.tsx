@@ -13,7 +13,6 @@ import { OraclePanel } from './panels/OraclePanel';
 import { PostgresPanel } from './panels/PostgresPanel';
 import { MySQLPanel } from './panels/MySQLPanel';
 import { RedisPanel } from './panels/RedisPanel';
-import { WaitLockStrip, isWaitLockEngine } from './panels/WaitLockStrip';
 
 // v0.9.814 — drawer'ın mini panelleri de CorePanel. LAZY: @grafana/*
 // statik import edilseydi /messaging + /databases vendor chunk'ı ~1 MB
@@ -336,17 +335,6 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
             </div>
           )}
         </div>
-      )}
-
-      {/* v0.8.391 (Stage-2 D3) — cross-engine waits & locks strip.
-          ONE common model (wait classes + lock stats) for every DB
-          engine whose receiver has any wait/lock family, fed by
-          whatever that receiver actually emits. Renders for span-
-          derived rows too: the honest per-engine empty ("no lock
-          telemetry from this receiver") is the signal to wire the
-          receiver, never a fake zero. */}
-      {kind === 'db' && isWaitLockEngine(system) && (
-        <WaitLockStrip system={system} instance={name} range={range} />
       )}
 
       {/* Oracle-specific drill-down — only renders when the system

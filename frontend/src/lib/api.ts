@@ -27,7 +27,7 @@ import type {
   FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
-  ExceptionTriageConfig, MetricExclusions, AnomalyTrackedConfig,
+  ExceptionTriageConfig, ProblemPriorityConfig, MetricExclusions, AnomalyTrackedConfig,
   AnomalySensitivityConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
@@ -913,6 +913,17 @@ export const api = {
     get<ExceptionTriageConfig>(`/api/settings/exception-triage`),
   putExceptionTriage: (c: ExceptionTriageConfig) =>
     request<ExceptionTriageConfig>(`/api/settings/exception-triage`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
+  // v0.9.838 — ALERT problemi öncelik merdiveninin vidaları. Üçüncü ayrı
+  // anahtar: problem-escalation yaşa göre TIRMANMA, exception-triage
+  // exception GRUPLARI, bu ise alert kurallarının P1/P2/P3 basamağı.
+  // Aynı vida bildirim min-öncelik süzgecini de besliyor.
+  getProblemPriority: () =>
+    get<ProblemPriorityConfig>(`/api/settings/problem-priority`),
+  putProblemPriority: (c: ProblemPriorityConfig) =>
+    request<ProblemPriorityConfig>(`/api/settings/problem-priority`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
     }),

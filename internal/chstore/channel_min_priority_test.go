@@ -102,7 +102,7 @@ func TestDownProblemReachesAP1Channel(t *testing.T) {
 		Value: 0, Threshold: 1, // monitor/runner.go'daki birebir alanlar
 		StartedAt: time.Now().Add(-10 * time.Minute).UnixNano(),
 	}
-	pri, reason := computePriority(down, time.Now().UnixNano())
+	pri, reason := computePriority(down, time.Now().UnixNano(), DefaultProblemPriority())
 	if pri != "P1" {
 		t.Fatalf("DOWN problemi %s (%s) — P1 olmalıydı (v0.9.825)", pri, reason)
 	}

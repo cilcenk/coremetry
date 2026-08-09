@@ -191,16 +191,22 @@ type RecentDeploy struct {
 // PriorityReason and can argue with it):
 //
 //	P1 (drop-everything) when ANY of:
-//	  • severity = critical AND value ≥ 2x threshold     (significant breach)
-//	  • severity = critical AND deploy ≤ 5min ago        (post-deploy critical)
-//	  • severity = critical AND open ≥ 4h                (stale critical)
+//	  • severity = critical AND value ≥ Nx threshold     (significant breach)
+//	  • severity = critical AND value tamamen kayıp      (0/X, v0.9.825)
+//	  • severity = critical AND open ≥ N hours           (stale critical)
 //
 //	P2 (today) when ANY of:
 //	  • severity = critical                              (criticals default to P2)
-//	  • severity = warning  AND value ≥ 2x threshold     (significant warning)
-//	  • severity = warning  AND deploy ≤ 5min ago        (post-deploy warning)
+//	  • severity = warning  AND value ≥ Nx threshold     (significant warning)
 //
 //	P3 otherwise — steady warnings, info-level rules.
+//
+// v0.9.838 — iki "N" artık AYARLANABİLİR (ProblemPriorityConfig,
+// system_settings anahtarı "problem_priority"): ihlal katı (varsayılan
+// 2.0×) ve bayat-critical saati (varsayılan 4h, 0 = kapalı). Sabitleri
+// bir çentik ötelemek exception tarafında üç kez çalışmadı (v0.9.775);
+// aynı hatayı burada tekrarlamıyoruz. Varsayılanlar v0.9.838 öncesinin
+// birebir aynısı, yani vidaya dokunmayan kurulum aynı sıralamayı görür.
 //
 // "Value above threshold" only makes sense when comparator is
 // >= / >; for < comparators we use the inverse ratio. info
@@ -211,15 +217,28 @@ type RecentDeploy struct {
 // ago" beats "1.8x threshold" when both apply, because the
 // former is the more actionable correlate).
 func EnrichProblemsWithPriority(problems []Problem) []Problem {
+	// v0.9.838 — vida BİR KEZ okunuyor (atomic load, CH değil) ve tüm
+	// dilime aynı config uygulanıyor: aynı okumanın satırları farklı
+	// merdivenlerden geçemez. Bildirim hattı (notify/alert_title.go)
+	// bu fonksiyonu çağırdığı için kopya kural YOK — aynı vida.
+	cfg := CurrentProblemPriority()
 	now := time.Now().UnixNano()
 	for i := range problems {
 		p := &problems[i]
-		p.Priority, p.PriorityReason = computePriority(*p, now)
+		p.Priority, p.PriorityReason = computePriority(*p, now, cfg)
 	}
 	return problems
 }
 
-func computePriority(p Problem, nowNs int64) (string, string) {
+// computePriority SAF kalır: config parametre olarak gelir, global
+// okumaz. Test edilebilirliğin yanında asıl sebep bu — bildirim hattı
+// ile okuma hattı aynı fonksiyonu aynı girdilerle çağırıyor, yani
+// e-postadaki P1 ile ekrandaki P1 aynı hesabın sonucu.
+func computePriority(p Problem, nowNs int64, cfg ProblemPriorityConfig) (string, string) {
+	// Kelepçe BURADA da uygulanıyor: elle kurulmuş bir config ile
+	// çağıran bir test/çağıran, BigBreachRatio 0'da `ratio >= 0`
+	// yüzünden HER problemi büyük ihlal yapardı.
+	cfg = NormalizeProblemPriority(cfg)
 	sev := p.Severity
 	if sev == "info" {
 		return "P3", "info"
@@ -246,7 +265,7 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 		if ratio < 1 && ratio > 0 {
 			ratio = 1 / ratio
 		}
-		if ratio >= 2 {
+		if ratio >= cfg.BigBreachRatio {
 			bigBreach = true
 		}
 	}
@@ -295,9 +314,13 @@ func computePriority(p Problem, nowNs int64) (string, string) {
 	// kritik. İkisi de problemin KENDİ şiddetinden türüyor, yakınındaki
 	// bir olaydan değil.
 
-	// Stale-critical: still open after 4h of operator inactivity.
+	// Stale-critical: still open after N hours of operator inactivity.
+	// v0.9.838 — N ayarlanabilir; 0 terfiyi TAMAMEN kapatır ("uzun süre
+	// açık" = ilgilenilmedi, "şu an daha acil" değil — operatörün P1
+	// selini kesmek için isteyebileceği ilk vida).
 	openHours := float64(nowNs-p.StartedAt) / float64(time.Hour)
-	staleCritical := p.Status != "resolved" && openHours >= 4
+	staleCritical := cfg.StaleCriticalHours > 0 &&
+		p.Status != "resolved" && openHours >= cfg.StaleCriticalHours
 
 	// breachReason — ihlal büyüklüğünün operatöre görünen hâli. Tam
 	// kayıpta oran yazmak yanlış olurdu (0.0x ya da +Inf); "tamamen

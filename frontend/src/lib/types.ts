@@ -4559,6 +4559,25 @@ export interface ExceptionTriageConfig {
   staleResolveHours: number;
 }
 
+// v0.9.838 — ALERT PROBLEMİ öncelik merdiveninin vidaları (backend:
+// chstore.ProblemPriorityConfig / system_settings key "problem_priority").
+//
+// ExceptionTriageConfig'ten AYRI hat: o exception gruplarının, bu alert
+// kurallarının (threshold + SLO burn) P1/P2/P3 basamağı. Operatör-
+// bildirimli: "hâlâ çok fazla alert rule'dan P1 geliyor" — prod'da 29
+// critical'in 22'si P1'di. Varsayılanlar v0.9.838 öncesi sabitlerin
+// birebir aynısı; bu sürüm davranış değil VİDA getirdi.
+export interface ProblemPriorityConfig {
+  // Büyük ihlal kapısı: değer eşiğin bu kadar katına çıktığında
+  // (">" kuralları) ya da bu kadar katı altına düştüğünde ("<" kuralları,
+  // oran ters çevrilir) ihlal büyük sayılır. critical + büyük ihlal = P1,
+  // warning + büyük ihlal = P2. Varsayılan 2.0, alt sınır 1.1.
+  bigBreachRatio: number;
+  // Bir critical problem bu kadar saattir AÇIKSA tek başına P1'e terfi
+  // eder. Varsayılan 4. 0 = terfi tamamen kapalı.
+  staleCriticalHours: number;
+}
+
 // v0.9.797 — metrik route dışlama kuralı (backend:
 // chstore.MetricExclusionRule / system_settings key "metric_exclusions").
 //

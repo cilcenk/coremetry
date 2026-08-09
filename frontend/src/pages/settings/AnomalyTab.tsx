@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
-import type { AnomalyTrackedConfig, AnomalySensitivityConfig, ExceptionTriageConfig } from '@/lib/types';
+import type { AnomalyTrackedConfig, AnomalySensitivityConfig, ExceptionTriageConfig, ProblemPriorityConfig } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
 
 // ── Anomaly promotion tab ───────────────────────────────────────
@@ -162,6 +162,9 @@ export function AnomalyPromotionTab() {
 
       <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
       <ExceptionTriageSection />
+
+      <hr style={{ border: 0, borderTop: '1px solid var(--border)', margin: '28px 0 22px' }} />
+      <ProblemPrioritySection />
     </div>
   );
 }
@@ -655,6 +658,117 @@ function ExceptionTriageSection() {
 
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
             <Button variant="primary" onClick={save} disabled={busy || inverted}>
+              {busy ? 'Kaydediliyor…' : 'Kaydet'}
+            </Button>
+            {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Alert problemi önceliği (v0.9.838) ──────────────────────────
+//
+// Operatör-bildirimli: "hâlâ çok fazla alert rule'dan P1 geliyor".
+// Prod'da 29 açık critical'in 22'si P1 rozetiyle duruyordu; örnek bir
+// error_rate problemi 3.93/1.31 = 3.0× oranıyla gömülü "2× ihlal"
+// kapısından geçip otomatik P1 oluyordu. P1'in "her şeyi bırak" anlamı,
+// listenin dörtte üçü P1 olduğunda kalmıyor.
+//
+// Üstteki Exception triyajı bölümünün KARDEŞİ ama AYRI hat: o exception
+// gruplarının basamağını, bu alert kurallarının (threshold + SLO burn)
+// basamağını ayarlıyor. Aynı tabda çünkü operatör buraya tek bir soruyla
+// geliyor: "ne zaman ve ne kadarı gece kaldırsın?"
+function ProblemPrioritySection() {
+  const [cfg, setCfg] = useState<ProblemPriorityConfig | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [flash, setFlash] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  useEffect(() => {
+    api.getProblemPriority()
+      .then(c => setCfg(c))
+      .catch(err => setFlash({ kind: 'err', text: humanize(err) }));
+  }, []);
+
+  const save = async () => {
+    if (!cfg) return;
+    setBusy(true); setFlash(null);
+    try {
+      const saved = await api.putProblemPriority(cfg);
+      setCfg(saved);
+      setFlash({ kind: 'ok', text: 'Kaydedildi — /inbox ve bildirimler bir sonraki okumada yeni merdiveni kullanır.' });
+    } catch (err) {
+      setFlash({ kind: 'err', text: humanize(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Backend zaten 400 döner, ama operatör hatayı alanın yanında görmeli.
+  const ratioBad = !!cfg && (cfg.bigBreachRatio < 1.1 || cfg.bigBreachRatio > 100);
+  const staleBad = !!cfg && (cfg.staleCriticalHours < 0 || cfg.staleCriticalHours > 720);
+
+  return (
+    <div>
+      <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Alert problemi önceliği</h2>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 18, lineHeight: 1.55 }}>
+        <b>P1</b> = critical + eşiğin N katı ihlal, tamamen kayıp (0/X) veya N saattir açık.{' '}
+        <b>P2</b> = düz critical, ya da warning + büyük ihlal.{' '}
+        <b>P3</b> = geri kalan (sabit warning, info seviyesi).{' '}
+        Aşağıdaki iki değer o merdivenin yerini belirler. <b>Değerler bildirim
+        min-öncelik süzgecini de besler</b> — katı sıkmak, P1&apos;e ayarlı bir
+        kanalın daha az mesaj göndermesi demektir.
+      </p>
+
+      {!cfg ? (
+        flash ? <FlashBox kind={flash.kind}>{flash.text}</FlashBox> : <Spinner />
+      ) : (
+        <>
+          <div style={{ display: 'grid', gap: 12 }}>
+            <Field label="Büyük ihlal katı (× eşik)">
+              <input type="number" min={1.1} max={100} step={0.1}
+                value={cfg.bigBreachRatio}
+                onChange={e => setCfg({ ...cfg, bigBreachRatio: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Değer eşiğin bu kadar katına çıktığında (ya da &laquo;&lt;&raquo;
+                kurallarında bu kadar katı altına düştüğünde) ihlal
+                &laquo;büyük&raquo; sayılır: critical + büyük ihlal &rarr; P1,
+                warning + büyük ihlal &rarr; P2. Varsayılan <b>2.0</b>.
+                Yükseltmek P1 sayısını azaltır &mdash; örnek: 3.93/1.31 = 3.0×
+                bir problem 2.0&apos;da P1, 4.0&apos;da P2 olur. Alt sınır 1.1;
+                1.0 &laquo;eşiği aşan her şey büyük ihlal&raquo; demek olurdu.
+                {ratioBad && (
+                  <div style={{ color: 'var(--warn)', marginTop: 4 }}>
+                    1.1 ile 100 arasında olmalı.
+                  </div>
+                )}
+              </div>
+            </Field>
+
+            <Field label="Bayat-critical terfisi (saat, 0 = kapalı)">
+              <input type="number" min={0} max={720} step={1}
+                value={cfg.staleCriticalHours}
+                onChange={e => setCfg({ ...cfg, staleCriticalHours: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Bu kadar saattir açık (çözülmemiş) bir critical, başka hiçbir
+                tetikleyici olmasa da P1&apos;e çıkar. Varsayılan <b>4 saat</b>.
+                <b> 0 yazmak bu terfiyi tamamen kapatır</b> &mdash; uzun süre açık
+                kalmak &laquo;ilgilenilmedi&raquo; demek, &laquo;şu an daha
+                acil&raquo; demek değil; P1 selini kesmek için ilk vida bu
+                olabilir. Kapatmak P1&apos;i büsbütün kapatmaz: ihlal katı ve
+                tamamen kayıp kapıları çalışmaya devam eder.
+                {staleBad && (
+                  <div style={{ color: 'var(--warn)', marginTop: 4 }}>
+                    0 ile 720 arasında olmalı.
+                  </div>
+                )}
+              </div>
+            </Field>
+          </div>
+
+          <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+            <Button variant="primary" onClick={save} disabled={busy || ratioBad || staleBad}>
               {busy ? 'Kaydediliyor…' : 'Kaydet'}
             </Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}

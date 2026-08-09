@@ -1066,6 +1066,13 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// escalation her Problem'e, bu yalnız exception gruplarına uygulanır.
 	mux.HandleFunc("GET /api/settings/exception-triage", auth.RequireRole(auth.RoleAdmin, s.getExceptionTriage))
 	mux.HandleFunc("PUT /api/settings/exception-triage", auth.RequireRole(auth.RoleAdmin, s.putExceptionTriage))
+	// v0.9.838 — ALERT PROBLEMİ öncelik merdiveninin vidaları (ihlal katı
+	// + bayat-critical saati). Üçüncü ayrı anahtar, çünkü üç ayrı hat:
+	// problem-escalation yaşa göre TIRMANMA, exception-triage exception
+	// GRUPLARI, bu ise alert kurallarının P1/P2/P3 basamağı. Aynı bildirim
+	// min-öncelik süzgecini de besliyor (notify/alert_title.go).
+	mux.HandleFunc("GET /api/settings/problem-priority", auth.RequireRole(auth.RoleAdmin, s.getProblemPriority))
+	mux.HandleFunc("PUT /api/settings/problem-priority", auth.RequireRole(auth.RoleAdmin, s.putProblemPriority))
 	// v0.9.797 — metrik route dışlamaları. Admin: kural HER operatörün
 	// gördüğü grafiği değiştiriyor (ve dropAtIngest'te veriyi hiç
 	// yazmıyor), yani editor yetkisi yetmez.

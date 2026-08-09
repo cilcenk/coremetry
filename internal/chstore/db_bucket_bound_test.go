@@ -13,9 +13,17 @@
 // görünür; hizalanmamış bir `to`'da iki operatör aynı sonucu verir —
 // bu yüzden gözden kaçtı ve "bazen bir kova fazla" gibi davrandı.
 //
-// Doğru sınır repoda zaten vardı: GetDatabasesSeries (v0.9.820,
-// databases_series.go:246/291) `< ?` kullanıyor. Bu test sözleşmenin
-// kardeş okumalardan da kaybolmamasını sağlıyor.
+// Doğru sınır repoda zaten vardı: GetDatabasesSeries (v0.9.820) `< ?`
+// kullanıyordu ve emsal oydu. Bu test sözleşmenin kardeş okumalardan da
+// kaybolmamasını sağlıyor.
+//
+// v0.9.834 — o emsal dosya SİLİNDİ (/api/databases/series ve okuyucusu
+// operatör kararıyla kaldırıldı), dolayısıyla kaynağını okuyan ikinci
+// test de gitti. KAPSAM KAYBI YOK: aşağıdaki davranış tablosunun "tam
+// to'daki kova DIŞARIDA" satırı üç okumanın da `<` kullanmasını zaten
+// ZORUNLU kılıyor — `<=`'ye dönen bir okuma o satırda kırmızıya düşer.
+// Silinen test o zorunluluğu ikinci kez, artık var olmayan bir dosyaya
+// bakarak söylüyordu.
 package chstore
 
 import (
@@ -170,37 +178,6 @@ func TestDBReadsExcludeUpperBucket(t *testing.T) {
 						c.bucket.Format("15:04"))
 				}
 			})
-		}
-	}
-}
-
-// TestDBReadsShareSeriesBound — üç okuma ile /databases serisinin
-// sınırı AYNI olmalı. Ayrışırlarsa aynı sayfadaki KPI şeridi ile satır
-// tablosu farklı pencereden sayar ve operatör iki farklı "toplam"
-// görür; bu, düzeltilen hatadan daha kötüsüdür çünkü hangisinin doğru
-// olduğu yüzeyden anlaşılmaz.
-func TestDBReadsShareSeriesBound(t *testing.T) {
-	series := funcSource(t, "databases_series.go",
-		"func (s *Store) GetDatabasesSeries(")
-	// Serinin iki sorgusu var (ana + prior p95); ikisi de `< ?`.
-	m := bucketPredRe.FindAllStringSubmatch(series, -1)
-	if len(m) == 0 {
-		t.Fatal("GetDatabasesSeries içinde kova yüklemi bulunamadı")
-	}
-	for _, x := range m {
-		if x[1] != "<" {
-			t.Fatalf("GetDatabasesSeries üst sınırı %q — emsal bozuldu", x[1])
-		}
-	}
-
-	for _, r := range []struct{ name, sql string }{
-		{"GetDatabases", funcSource(t, "dependencies.go",
-			"func (s *Store) GetDatabases(ctx context.Context, q DatabasesQuery)")},
-		{"dbTopCallersSQL", dbTopCallersSQL},
-		{"GetDBTrends", funcSource(t, "db_trends.go", "func (s *Store) GetDBTrends(")},
-	} {
-		if op := upperBoundOp(t, r.name, r.sql); op != "<" {
-			t.Errorf("%s üst sınırı %q, seri ise \"<\" — aynı sayfada iki pencere", r.name, op)
 		}
 	}
 }

@@ -86,54 +86,6 @@ func mergeDBPrior(cur, prior []chstore.DBInstance) {
 	}
 }
 
-// getDatabasesSeries (v0.9.820) — /databases'in KPI şeridi + üç
-// grafiğinin TEK kaynağı. Sayfanın kendi filtrelerini (?dbsys= /
-// ?dbname=) okur ki şeritteki sayı ile tablodaki satırlar aynı kümeyi
-// anlatsın.
-//
-// Anahtar TÜM girdileri hashler (v0.5.187 sınıfı): pencere + dbsys +
-// dbname + compare. İkisi de KATALOG değeri (tablonun select'lerinden
-// geliyor, serbest metin değil), yani anahtar kardinalitesi kurulumdaki
-// motor × şema sayısıyla sınırlı. 30 sn TTL — genel bakışla aynı rung,
-// sayfa yüklemesi ikisini de sıcak yakalar.
-func (s *Server) getDatabasesSeries(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	from, to := parseFromTo(r, time.Hour)
-	dbsys := q.Get("dbsys")
-	dbname := q.Get("dbname")
-	compare := q.Get("compare") == "prior"
-	key := fmt.Sprintf("db-series:v1:%s:sys=%s:name=%s:cmp=%v",
-		cacheBucket(from, to), dbsys, dbname, compare)
-	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetDatabasesSeries(ctx, chstore.DatabasesSeriesQuery{
-			From: from, To: to, DBSystem: dbsys, DBName: dbname, Compare: compare,
-		})
-	})
-}
-
-// getDBSaturation (v0.9.822) — havuz doygunluğu karosunun kaynağı.
-//
-// Bu ölçüler v0.7'den beri VARDI ama yalnız alert evaluator'ı okuyordu:
-// operatör "oturum havuzu dolmak üzere" bilgisini ancak bir Problem
-// AÇILDIKTAN sonra görüyordu; o soruyu sormak için gidilen sayfa hiç
-// bilmiyordu. Aynı gauge'lar, aynı okuma katmanı, ikinci bir tüketici —
-// eşik/karar evaluator'da KALIYOR (iki nüsha eşik, biri değişince
-// sayfayla alarmın birbirini yalanlaması demekti).
-//
-// PENCERE ALMAZ. Gauge "şu anki doluluk" anlatıyor ve okuma katmanı son
-// 10 dakikanın EN SON değerini alıyor; sayfa penceresine bağlansaydı
-// 24 saatlik bir seçimde karo, görülmesi gereken zirveyi ortalayarak
-// saklardı. Anahtar bu yüzden PENCERE DEĞİL, 30 sn'lik bir ızgara:
-// sayfanın range'i değişince aynı slot okunmaya devam eder ve okuma
-// boşuna tekrarlanmaz.
-func (s *Server) getDBSaturation(w http.ResponseWriter, r *http.Request) {
-	now := time.Now()
-	key := fmt.Sprintf("db-saturation:v1:%d", now.Truncate(30*time.Second).Unix())
-	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetDBSaturation(ctx)
-	})
-}
-
 // getDBTrends serves the per-row RED sparklines (#1) + latest-bucket
 // health snapshot (#6) for the /databases + /messaging overview
 // grid. One DBTrend per (db_system, instance, db_name) — keyed
@@ -331,27 +283,6 @@ func mergeMessagingPrior(cur, prior []chstore.MessagingInstance) {
 		cur[i].PriorP50Ms = p.P50Ms
 		cur[i].PriorP99Ms = p.P99Ms
 	}
-}
-
-// getMessagingSeries (v0.9.814) — /messaging'in KPI şeridi + üç
-// grafiğinin kaynağı. Tabloyla AYNI pencereyi ve AYNI filtreleri okur
-// (?system= / ?q= tablodaki System seçicisi ve arama kutusudur) ki
-// şeritteki sayı ile tablodaki satırlar aynı kümeyi anlatsın.
-//
-// Anahtar TÜM girdileri hashler (v0.5.187 sınıfı): pencere + system + q.
-// q sunucu tarafında kırpılıyor (msgSeriesQueryMax), yani serbest metin
-// anahtar kardinalitesini sınırsız büyütemez. 30 sn TTL — genel bakışla
-// aynı rung, sayfa yüklemesi ikisini de sıcak yakalar.
-func (s *Server) getMessagingSeries(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
-	system := q.Get("system")
-	search := q.Get("q")
-	from, to := parseFromTo(r, time.Hour)
-	key := fmt.Sprintf("msg-series:v1:sys=%s:q=%s:w=%s",
-		system, search, cacheBucket(from, to))
-	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetMessagingSeries(ctx, from, to, system, search)
-	})
 }
 
 // getMessagingDetail is the parallel handler for queues /

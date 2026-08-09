@@ -631,15 +631,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/topology/flow/drawio", s.exportFlowTopologyDrawIO)
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
 	mux.HandleFunc("GET /api/endpoints", s.getEndpoints)
-	// v0.9.819 — sayfa üstü KPI şeridi + üç grafik (endpoints_series.go).
-	mux.HandleFunc("GET /api/endpoints/series", s.getEndpointsSeries)
 	mux.HandleFunc("GET /api/endpoints/downstream", s.getEndpointDownstream)
 	mux.HandleFunc("GET /api/services/{name}/attrs", s.getServiceAttrs)
 	mux.HandleFunc("GET /api/databases", s.getDatabases)
-	// v0.9.820 — sayfa üstü KPI şeridi + üç grafik (api_databases.go).
-	mux.HandleFunc("GET /api/databases/series", s.getDatabasesSeries)
-	// v0.9.822 — koşullu havuz doygunluğu karosu (api_databases.go).
-	mux.HandleFunc("GET /api/databases/saturation", s.getDBSaturation)
 	mux.HandleFunc("GET /api/databases/trends", s.getDBTrends)
 	mux.HandleFunc("GET /api/databases/detail", s.getDatabaseDetail)
 	// Cross-service slow-query catalog (v0.5.165). One row per
@@ -653,7 +647,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/messaging", s.getMessaging)
 	// v0.9.434 — /messaging satır-içi trend (getDBTrends paritesi).
 	mux.HandleFunc("GET /api/messaging/trends", s.getMessagingTrends)
-	mux.HandleFunc("GET /api/messaging/series", s.getMessagingSeries)
 	mux.HandleFunc("GET /api/messaging/detail", s.getMessagingDetail)
 	mux.HandleFunc("GET /api/services/{name}/backtrace", s.getServiceBacktrace)
 	mux.HandleFunc("GET /api/services/{name}/infra", s.getServiceInfraMetrics)

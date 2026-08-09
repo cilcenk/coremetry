@@ -55,29 +55,6 @@ export function endpointP99Delta(cur: number, prior?: number): EndpointDelta {
   return { kind: 'delta', pct: ((cur - p) / p) * 100 };
 }
 
-/**
- * worseningCount — "Kötüleşen" KPI karosunun sayacı (v0.9.819 tüketicisi;
- * burada duruyor çünkü tanımı p99Delta hücresiyle AYNI olmak ZORUNDA —
- * karonun sayısı ile tablodaki ▲ işaretli satır sayısı ayrışırsa şerit
- * tabloyla çelişir).
- *
- * Eşik yüzde CİNSİNDEN ve varsayılan 5: TrendDelta'nın gürültü eşiğiyle
- * aynı sayı, yani "·" basılan bir satır burada da sayılmaz.
- * "listede yeni" satırlar SAYILMAZ — tabanı olmayan bir satır kötüleşmiş
- * OLAMAZ, sadece bilinmiyordur.
- */
-export function worseningCount(
-  rows: Array<{ p99Ms: number; priorP99Ms?: number }>,
-  thresholdPct = 5,
-): number {
-  let n = 0;
-  for (const r of rows) {
-    const d = endpointP99Delta(r.p99Ms, r.priorP99Ms);
-    if (d.kind === 'delta' && d.pct >= thresholdPct) n++;
-  }
-  return n;
-}
-
 // ───────────────────────── 2. KPI kapsamı ─────────────────────────
 
 export interface ListedTotals {

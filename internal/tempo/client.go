@@ -334,6 +334,64 @@ type otlpSpan struct {
 		Code    otlpEnum `json:"code"`
 		Message string   `json:"message"`
 	} `json:"status"`
+	// Events — v0.9.859 (operator-reported). This field was MISSING, so
+	// every span event a Tempo-resolved trace carried was dropped on the
+	// floor. The visible symptom: opening a red DB-error span (unique
+	// constraint) showed no "Exceptions" section, because the frontend
+	// builds that section from events named "exception". Traces served
+	// from ClickHouse were fine; only the Tempo fallback lost them, which
+	// is why it read as "exceptions disappeared" rather than "Tempo is
+	// broken".
+	Events []otlpEvent `json:"events"`
+}
+
+// otlpEvent — an OTLP span event as Tempo's JSON emits it.
+//
+// TimeUnixNano uses otlpNano rather than a bare string because the value
+// arrives BOTH ways in the wild (the JSON-pb mapping writes int64 as a
+// string; older proto-to-JSON paths write a bare number). A bare `string`
+// field would make json.Unmarshal fail on the numeric form and take the
+// WHOLE trace down with it, turning a formatting difference into an empty
+// waterfall.
+type otlpEvent struct {
+	TimeUnixNano otlpNano   `json:"timeUnixNano"`
+	Name         string     `json:"name"`
+	Attributes   []otlpAttr `json:"attributes"`
+}
+
+// otlpNano holds a Unix-nanosecond timestamp submitted as either a JSON
+// string or a JSON number. Same both-shapes tolerance otlpEnum provides for
+// enums; an unparseable value stays 0 rather than failing the decode.
+type otlpNano uint64
+
+func (n *otlpNano) UnmarshalJSON(data []byte) error {
+	// String form first — the canonical JSON-pb encoding for int64.
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		v, _ := strconv.ParseUint(s, 10, 64)
+		*n = otlpNano(v)
+		return nil
+	}
+	var v uint64
+	if err := json.Unmarshal(data, &v); err == nil {
+		*n = otlpNano(v)
+		return nil
+	}
+	// Unknown shape — leave zero. A missing timestamp must not cost the
+	// operator the event's name and attributes.
+	return nil
+}
+
+// tempoSpanEvent mirrors the shape internal/otlp writes into the stored
+// events column: {"name":…,"timeNano":…,"attributes":{…}}. The JSON tags must
+// stay identical to internal/otlp/convert.go's spanEvent and to the frontend's
+// SpanEvent interface — the Tempo path and the ClickHouse path must be
+// indistinguishable downstream, or "which store answered" becomes a visible
+// behaviour difference.
+type tempoSpanEvent struct {
+	Name       string            `json:"name"`
+	TimeNano   uint64            `json:"timeNano"`
+	Attributes map[string]string `json:"attributes"`
 }
 
 // otlpEnum stores an OTLP proto enum value submitted as either
@@ -524,6 +582,34 @@ func parseOTLPTrace(data []byte) ([]chstore.SpanRow, error) {
 					if v, err := strconv.Atoi(hsRaw); err == nil && v >= 0 && v <= 65535 {
 						row.HTTPStatus = uint16(v)
 					}
+				}
+				// v0.9.859 (operator-reported) — span events carried through to
+				// SpanRow.Events in the SAME JSON shape the OTLP ingest path
+				// writes (internal/otlp/convert.go convertEvents). Left EMPTY
+				// when the span has no events, matching that path byte-for-byte
+				// so a Tempo-resolved span is indistinguishable from a
+				// ClickHouse-resolved one downstream.
+				// SpanRow.Events is `interface{}` on the API-facing model: the
+				// ClickHouse read path json.Unmarshals the stored column INTO it
+				// (chstore/aggregate.go), so the wire value the frontend sees is a
+				// decoded ARRAY (`SpanEvent[]`), never a JSON string. Assigning the
+				// slice directly produces the same wire shape; assigning a string
+				// here would hand the frontend a value its `events.filter(...)`
+				// cannot walk — the exact symptom, one layer further down.
+				if len(sp.Events) > 0 {
+					evs := make([]tempoSpanEvent, 0, len(sp.Events))
+					for _, e := range sp.Events {
+						em := make(map[string]string, len(e.Attributes))
+						for _, a := range e.Attributes {
+							em[a.Key] = a.String()
+						}
+						evs = append(evs, tempoSpanEvent{
+							Name:       e.Name,
+							TimeNano:   uint64(e.TimeUnixNano),
+							Attributes: em,
+						})
+					}
+					row.Events = evs
 				}
 				out = append(out, row)
 			}

@@ -16,6 +16,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { logsRangeParam } from '@/lib/logsUrl';
 import { useOutsideClose } from '@/lib/useOutsideClose';
 import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
@@ -371,8 +372,13 @@ function TraceDetailInner() {
                     Operators jump trace→logs constantly during
                     incident investigation; carrying the trace_id
                     saves the manual paste step. */}
+                {/* v0.9.853 (UX denetimi K3): bu buton pencereyi `from/to`
+                    adlarıyla gönderiyordu — /logs pencereyi YALNIZ `?range=`
+                    ten okur (lib/logsUrl.ts readLogsParams). Sonuç: eski her
+                    trace'te sticky pencere + "log yok". Tek üretici:
+                    logsRangeParam (ns→ms). */}
                 <DrillButton to="/logs"
-                  params={{ traceId: id, from: logWin?.from, to: logWin?.to }}
+                  params={{ traceId: id, range: logsRangeParam(logWin?.from, logWin?.to) }}
                   title="Logs correlated to this trace_id"
                   label="≡ Logs" variant="secondary" />
                 {/* Correlated Signals (task #6) — open the cross-signal pivot

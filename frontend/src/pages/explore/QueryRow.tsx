@@ -18,10 +18,16 @@ import type { FilterGroup } from '@/lib/types';
 // source-specific slots (metric/agg/unit) but keeps scope/filters/splitBy —
 // the operator's narrowing intent survives the flip.
 
-export function QueryRow({ q, canRemove, onChange, onRemove }: {
+export function QueryRow({ q, canRemove, canDuplicate, onChange, onDuplicate, onRemove }: {
   q: BuilderQuery;
   canRemove: boolean;
+  // v0.9.847 — çoğaltma harf havuzu (A–D) dolduğunda kapanır. Butonu
+  // GİZLEMEK yerine disabled bırakıyoruz: kaybolan bir düğme "bu satırda
+  // çoğaltma yok" diye okunur, gri bir düğme "yer kalmadı" der (title
+  // sebebini söyler) — silme düğmesinin v2'den beri süregelen dili.
+  canDuplicate: boolean;
   onChange: (q: BuilderQuery) => void;
+  onDuplicate: () => void;
   onRemove: () => void;
 }) {
   const setSource = (source: QuerySource) => {
@@ -159,6 +165,21 @@ export function QueryRow({ q, canRemove, onChange, onRemove }: {
 
       <span style={{ color: 'var(--text2)', fontSize: 12, alignSelf: 'center' }}>Split:</span>
       <SplitByPicker value={q.splitBy} onChange={by => onChange({ ...q, splitBy: by })} />
+
+      {/* v0.9.847 — ⧉ Çoğalt. Silme düğmesinin SOLUNDA ve aynı sessiz
+          dilde: ikinci sorgu pratikte hep "A'nın aynısı ama p50" ya da
+          "A'nın aynısı ama status=error"dur, ve o ana kadar operatör
+          scope + çipler + split'i elle bir kez daha kuruyordu. */}
+      <button type="button" onClick={onDuplicate} disabled={!canDuplicate}
+        aria-label="Sorguyu çoğalt"
+        title={canDuplicate
+          ? 'Sorguyu çoğalt — filtreler, scope, split ve DSL aynen kopyalanır'
+          : 'En fazla 4 sorgu (A–D)'}
+        style={{
+          all: 'unset', cursor: canDuplicate ? 'pointer' : 'not-allowed',
+          color: 'var(--text3)', fontSize: 13, padding: '2px 6px', marginTop: 1,
+          opacity: canDuplicate ? 1 : 0.4,
+        }}>⧉</button>
 
       <button type="button" onClick={onRemove} disabled={!canRemove}
         aria-label="Sorguyu sil" title={canRemove ? 'Sorguyu sil' : 'Son sorgu silinemez'}

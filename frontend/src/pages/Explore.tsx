@@ -33,6 +33,7 @@ import { RepeatsResult } from './explore/RepeatsResult';
 import { useQueryHistory } from './explore/useQueryHistory';
 import {
   type BuilderState, defaultBuilderState, blankQuery, nextLetter,
+  duplicateQueryAt,
   produces, effectiveFilters, builderDesc, MAX_QUERIES,
   PANEL_SERIES_CAP, TOP_N_OPTIONS, EXPLORE_COMPARE, compareLabel,
 } from './explore/model';
@@ -475,6 +476,14 @@ function ExploreInner({ onSelfWrite }: {
     const l = nextLetter(b.queries);
     return l ? { ...b, queries: [...b.queries, blankQuery(l)] } : b;
   });
+  // v0.9.847 — çoğaltma. Karar SAF (model.duplicateQueryAt): harf tahsisi,
+  // konum ve DERİN kopya tek yerde ve tabloyla test'li. Dolu havuzda helper
+  // GİRDİYİ AYNEN döndürdüğü için setBuilder bail-out eder (yeni state
+  // nesnesi bile kurulmaz), render tetiklenmez.
+  const duplicateQuery = (i: number) => setBuilder(b => {
+    const queries = duplicateQueryAt(b.queries, i);
+    return queries === b.queries ? b : { ...b, queries };
+  });
   const removeQuery = (i: number) =>
     setBuilder(b => ({ ...b, queries: b.queries.filter((_, j) => j !== i) }));
 
@@ -702,7 +711,9 @@ function ExploreInner({ onSelfWrite }: {
               {builder.queries.map((q, i) => (
                 <QueryRow key={q.letter} q={q}
                   canRemove={builder.queries.length > 1}
+                  canDuplicate={builder.queries.length < MAX_QUERIES}
                   onChange={nq => setQuery(i, nq)}
+                  onDuplicate={() => duplicateQuery(i)}
                   onRemove={() => removeQuery(i)} />
               ))}
               <div style={ZONE}>

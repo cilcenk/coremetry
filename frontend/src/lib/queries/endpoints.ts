@@ -78,3 +78,19 @@ export function useEndpointDownstream(
     staleTime: 60_000,
   });
 }
+
+// v0.9.839 — "Who calls this endpoint" (/endpoint page). Two bounded
+// raw-spans passes behind a 60s server cache, so the same discipline
+// the downstream walk gets: fetch on page load, NEVER polled, staleTime
+// pinned to the server TTL so a back-navigation inside the minute costs
+// nothing.
+export function useEndpointCallers(
+  params: Parameters<typeof api.endpointCallers>[0] | null,
+) {
+  return useQuery({
+    queryKey: ['endpoints', 'callers', params],
+    queryFn: async ({ signal }) => api.endpointCallers(params!, signal),
+    enabled: params !== null,
+    staleTime: 60_000,
+  });
+}

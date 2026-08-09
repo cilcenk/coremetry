@@ -94,6 +94,10 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		"dbstmt_detail.go":    true, // db_statement_summary_5m / spans
 		"db_capacity.go":      true, // metric_points
 		"endpoints_detail.go": true, // spans
+		// v0.9.839 — SAF telemetri: iki FROM'u da spans (rotanın giriş
+		// span'leri + ebeveynlerinin service_name'i). endpoints_detail.go
+		// ile aynı kaynak, aynı havuz.
+		"endpoints_callers.go": true, // spans
 		"business_dims.go":    true, // spans — kanal/fonksiyon kodu kırılımı (v0.9.511)
 		"trace_count.go":      true, // trace_summary_5m / trace_service_index_5m — tavanlı sayım (v0.9.638)
 		// v0.9.814 — SAF telemetri: iki FROM'u messaging_summary_5m ve
@@ -200,6 +204,7 @@ func TestTelemetryReadFilesTouchNoStateTables(t *testing.T) {
 		"summary.go", "repo.go", "topology.go", "dependencies.go", "problem_telemetry.go",
 		"deploys.go", "oracle.go", "profile.go", "spanmetric.go", "dbstmt_detail.go",
 		"db_capacity.go", "endpoints_detail.go", "business_dims.go",
+		"endpoints_callers.go",
 	} {
 		b, err := os.ReadFile(f)
 		if err != nil {

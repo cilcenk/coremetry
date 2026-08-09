@@ -4,7 +4,7 @@ import type {
   LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
-  SpanMetricsServicesResponse, EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, ServiceAttrsResponse,
+  SpanMetricsServicesResponse, EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, EndpointCallersResponse, ServiceAttrsResponse,
   AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
   Runbook, RunbookExecution,
   Dashboard, DashboardSummary, SLO, SLORow, SLOStatus,
@@ -1954,6 +1954,12 @@ export const api = {
   // cache, so this is fetch-on-open and never polled.
   endpointDownstream: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string }, signal?: AbortSignal) =>
     get<EndpointDownstream>(`/api/endpoints/downstream?${qs(params)}`, signal),
+  // v0.9.839 — "Who calls this endpoint" (operator ask). Same columns
+  // as the /databases caller table. SAMPLED: no MV pairs route with
+  // caller, so the backend resolves parents over a bounded, unbiased
+  // sample of the route's entry spans — the payload says how many.
+  endpointCallers: (params: { service: string; path: string; from: number; to: number; sig?: '1'; env?: string; cluster?: string; limit?: number }, signal?: AbortSignal) =>
+    get<EndpointCallersResponse>(`/api/endpoints/callers?${qs(params)}`, signal),
   // v0.8.360 — split-by: top-10 values of one whitelisted attribute
   // with RED each. `by` must match the backend whitelist
   // (chstore.EndpointSplitDims — mirrored in ENDPOINT_SPLIT_DIMS).

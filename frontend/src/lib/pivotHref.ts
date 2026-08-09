@@ -1,5 +1,5 @@
 import { encodeRange, encodeFilterGroup, encodeFilters } from '@/lib/urlState';
-import type { TimeRange } from '@/lib/types';
+import type { TimeRange, FilterExpr } from '@/lib/types';
 
 // pivotHref — cross-signal deep links that CANNOT drop the time window.
 //
@@ -72,6 +72,43 @@ export function tracesPivotHref(p: TracesPivot): string {
   return `/traces?${q.toString()}`;
 }
 
+
+// operationTracesHref — v0.9.855 (UX denetimi K4). Pivot into /traces scoped
+// to ONE operation (span name).
+//
+// Two bugs this replaces, both "the destination silently answers a DIFFERENT
+// question than the one asked":
+//
+//  1. DEAD PARAM (K4). ⌘K's endpoint results linked to
+//     `/traces?operation=<name>`. /traces has no `operation` reader, and its
+//     State→URL effect rebuilds the whole query string from a whitelist — so
+//     the param was not merely ignored, it was DELETED on the first state
+//     write. The operator typed an endpoint name and got an unfiltered trace
+//     list with a clean URL: "search is broken".
+//  2. SUBSTRING SEARCH (v0.8.488, operator-reported). `search=` matches ANY
+//     span in a trace, so an operation pivot dragged in unrelated traces that
+//     merely touched a similarly-named span.
+//
+// The correct scope is an EXACT span-name filter, which is what the fixed
+// sibling (OperationsTable) already emits. `rootOnly:false` because an
+// operation is not necessarily the trace root — the /traces default would
+// list nothing (v0.8.585 class).
+export function operationTracesHref(p: {
+  window: TracesPivot['window'];
+  operation: string;
+  service?: string;
+  hasError?: boolean;
+}): string {
+  const filters: FilterExpr[] = [{ k: 'name', op: '=', v: [p.operation] }];
+  return tracesPivotHref({
+    window: p.window,
+    service: p.service,
+    hasError: p.hasError,
+    filters: encodeFilters(filters),
+    view: 'list',
+    rootOnly: false,
+  });
+}
 
 // messagingTracesHref — pivot from a queue/topic row into /traces.
 //

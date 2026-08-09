@@ -610,7 +610,7 @@ function LogsInner() {
           into a new (wider/shifted) window with a stale cursor silently
           drops every row newer than it from page 1. resetPaging mirrors
           the apply/reset/search/URL-sync handlers. (v0.7.81 fix) */}
-      <Topbar title="Logs" range={range} onRangeChange={(r) => { setRange(r); resetPaging(); }} />
+      <Topbar title="Logs" range={range} onRangeChange={(r) => { setRange(r); resetPaging(); }} envApplies />
       <div id="content">
         {/* v0.9.574 (operatör: "Discover'ı TR yazısının altında sağ üstte
             olması gerekiyor") — Kibana derin linki Live-tail satırından

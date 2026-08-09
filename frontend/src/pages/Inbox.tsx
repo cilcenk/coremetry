@@ -526,7 +526,7 @@ export default function InboxPage() {
       {/* v0.9.837 — ?problem= tam-sayfa detayı açıkken kuyruk GİZLENİR
           (unmount DEĞİL): facet/seçim/scroll state'i "← Problems"te
           yerinde duruyor. /problems'taki v0.8.426/428 deseninin aynısı. */}
-      {!problemParam && <Topbar title="Problems" showEnv />}
+      {!problemParam && <Topbar title="Problems" showEnv envApplies />}
       <div id="content" style={problemParam ? { display: 'none' } : undefined}>
         {/* v0.9.255 — kayıtlı görünümler. Backend `page`'i serbest string alıyor,
             yani bu tek satır; birleşik triage yüzeyinin /problems'ın yerini

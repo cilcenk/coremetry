@@ -758,7 +758,7 @@ function TracesPageInner() {
     <>
       {/* v0.9.430 — Topbar seçimi out-of-band: hook yığını kendisi
           geçersizleştirir, elle temizlik gerekmez. */}
-      <Topbar title="Traces" range={range} onRangeChange={setRange} />
+      <Topbar title="Traces" range={range} onRangeChange={setRange} envApplies />
       <div id="content">
         {/* v0.9.304 (operatör) — Trace ID araması sayfanın SAĞ ÜSTÜNE,
             zaman aralığı seçicisinin hemen altına taşındı. Filtre satırının

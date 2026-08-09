@@ -442,7 +442,7 @@ export default function EndpointsPage() {
 
   return (
     <>
-      <Topbar title="Endpoints" range={range} onRangeChange={setRange} />
+      <Topbar title="Endpoints" range={range} onRangeChange={setRange} envApplies />
       <div id="content">
         {/* v0.9.308 (brief N6c) — the page's whole selection already
             lives in the URL: service, search, cluster, limit, compare,

@@ -120,7 +120,7 @@ export default function EndpointDetailPage() {
 
   return (
     <>
-      <Topbar title="Endpoint" range={range} onRangeChange={setRange} />
+      <Topbar title="Endpoint" range={range} onRangeChange={setRange} envApplies />
       <div id="content">
         <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
           <Link to="/endpoints">Endpoints</Link> › endpoint detail

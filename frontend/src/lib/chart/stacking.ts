@@ -110,6 +110,59 @@ export function drawPosOf(order: readonly number[]): number[] {
   return out;
 }
 
+// ── v0.9.850 — YIĞIN AİLESİ: KATMAN SIRASI ─────────────────────────────────
+//
+// Bu, yukarıdaki "çizim sırası"ndan BAŞKA bir sıradır. Orası uPlot'un bars
+// path builder'ının örtme sorunuydu (teknik); burası OKUNABİLİRLİK.
+//
+// Eski SVG motoru (DashboardViz, v0.9.844'te söküldü) yığılmış panellerde
+// serileri TOPLAM BÜYÜKLÜĞE göre sıralayıp AĞIRI ALTA koyuyordu. CorePanel'e
+// geçişte (v0.9.796/808) bu davranış taşınmadı: v2 motoru sorgunun döndürdüğü
+// sırayı koruyor. Sonuç, ince bir katmanın tabanda, kalın bir katmanın onun
+// üstünde durması — yığının alt kenarı zaten düz olduğu için ALTTAKİ katman
+// en kolay okunandır ve oraya en anlamlı (en büyük) katman gelmelidir. Üstteki
+// katmanlar zaten dalgalı bir tabana oturur, ince olanların yeri orasıdır.
+//
+// SIRALAMA YALNIZ YIĞIN AİLESİNDE. line/bars/area'da katman kavramı yoktur;
+// orada sıra lejant sırasıdır ve onu değiştirmek operatörün kurduğu düzeni
+// (A, B, C) sebepsiz bozardı.
+//
+// RENKLER ETKİLENMEZ: CorePanel seri rengini ADDAN türetiyor
+// (seriesRoleColor(name, role)), indeksten değil — aynı seri sıradan bağımsız
+// aynı rengi alır. Sıralama indeks-tabanlı bir palete dokunsaydı, panelin
+// renkleri her veri tazelemesinde zıplardı.
+
+// seriesMagnitude — bir katmanın toplam büyüklüğü: Σ|değer|.
+//
+// MUTLAK DEĞER: negatif üretebilen bir seri (formül, delta metriği) toplamda
+// sıfıra yaklaşır ve "hiç yok" gibi sıralanırdı — oysa ekranda kapladığı alan
+// gerçektir. null/NaN atlanır (ölçülmemiş bir bucket sıfır DEĞİLDİR).
+export function seriesMagnitude(
+  points: ReadonlyArray<{ value: number | null | undefined }>,
+): number {
+  let sum = 0;
+  for (const p of points) {
+    const v = p.value;
+    if (v == null || !isFinite(v)) continue;
+    sum += Math.abs(v);
+  }
+  return sum;
+}
+
+// stackItemOrder — mantıksal item indeksleri, AĞIR ÖNCE (= alt katman).
+//
+// stacked=false → KİMLİK (aynı dizi bile ayrılmaz), yani yığın dışındaki
+// markların kod yolu bayt-bayt bugünküdür.
+//
+// SIRALAMA KARARLI: eşit büyüklükteki katmanlar girdi sırasını korur (JS
+// sort ES2019'dan beri stable). Kararsız olsaydı iki eşit seri her poll'de
+// yer değiştirir, panel sebepsiz titrerdi.
+export function stackItemOrder(mags: readonly number[], stacked: boolean): number[] {
+  const idx = mags.map((_, i) => i);
+  if (!stacked) return idx;
+  return idx.sort((a, b) => mags[b] - mags[a]);
+}
+
 // reorderSeries — matris satırlarını çizim sırasına dizer. Zaman satırı
 // (index 0) yerinde kalır; yalnız seri satırları taşınır. Kimlik sırasında
 // GİRDİ AYNEN döner (yeni dizi bile ayrılmaz): non-stacked-bars yolunda

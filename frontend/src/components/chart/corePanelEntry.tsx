@@ -7,6 +7,7 @@
 
 import { CorePanel, type CorePanelProps } from './CorePanel';
 import { spanSeriesToFrames } from '@/lib/chart/dataFrame';
+import { seriesMagnitude, stackItemOrder } from '@/lib/chart/stacking';
 import type { SpanMetricSeries } from '@/lib/types';
 
 export interface CorePanelWithFramesProps
@@ -76,14 +77,33 @@ export interface CorePanelMultiProps extends Omit<CorePanelProps, 'data' | 'role
 }
 
 export function CorePanelMulti({
-  items, unit, loading, ghostItems, error, emptyReason, emptyHint, ...rest
+  items, unit, loading, ghostItems, error, emptyReason, emptyHint, viz, ...rest
 }: CorePanelMultiProps) {
-  if (loading) return <CorePanel {...rest} data={{ state: 'loading' }} />;
+  if (loading) return <CorePanel {...rest} viz={viz} data={{ state: 'loading' }} />;
   // Sıra ÖNEMLİ: hata boşluğu kapsar (başarısız sorgunun serisi de yok).
-  if (error) return <CorePanel {...rest} data={{ state: 'error', message: error }} />;
+  if (error) return <CorePanel {...rest} viz={viz} data={{ state: 'error', message: error }} />;
   if (emptyReason) {
-    return <CorePanel {...rest} data={{ state: 'empty', reason: emptyReason, hint: emptyHint }} />;
+    return <CorePanel {...rest} viz={viz} data={{ state: 'empty', reason: emptyReason, hint: emptyHint }} />;
   }
+  // v0.9.850 — YIĞIN AİLESİNDE katman sırası: ağır ALTTA.
+  //
+  // Eski SVG motoru (DashboardViz) yığılmış panelleri toplam büyüklüğe göre
+  // sıralayıp ağırı tabana koyuyordu; v2'ye geçişte (v0.9.796/808) bu
+  // taşınmadı ve paneller sorgu sırasını korur oldu. Yığının alt kenarı düz
+  // olduğu için ALTTAKİ katman en kolay okunandır — en büyük katman oraya
+  // gelmeli, ince olanlar dalgalı tabana otursun.
+  //
+  // Yalnız 'stacked' + 'stacked-bars'. line/bars/area'da katman kavramı yok,
+  // sıra lejant sırasıdır ve onu bozmak operatörün kurduğu düzeni (A,B,C)
+  // sebepsiz karıştırırdı. Karar SAF ve tablo-testli (lib/chart/stacking).
+  //
+  // Renkler ETKİLENMEZ: CorePanel seri rengini ADDAN türetir, indeksten
+  // değil — sıralama palete dokunmaz.
+  const stackedFamily = viz === 'stacked' || viz === 'stacked-bars';
+  const order = stackItemOrder(
+    items.map(it => it.series.reduce((a, s) => a + seriesMagnitude(s.points), 0)),
+    stackedFamily);
+  const ordered = stackedFamily ? order.map(i => items[i]) : items;
   // TEK geçiş: frames + rol hizası birlikte (çifte dönüşüm = çifte
   // display-processor kurulumu olurdu).
   const frames: ReturnType<typeof spanSeriesToFrames> = [];
@@ -95,7 +115,7 @@ export function CorePanelMulti({
   const dashed: boolean[] = [];
   let anyEx = false;
   let anyDash = false;
-  for (const it of items) {
+  for (const it of ordered) {
     const fs = spanSeriesToFrames(it.series, { unit, name: it.name });
     frames.push(...fs);
     for (let i = 0; i < fs.length; i++) {
@@ -117,7 +137,7 @@ export function CorePanelMulti({
       anyDash = true;
     }
   }
-  return <CorePanel {...rest} roles={roles} exemplars={anyEx ? exemplars : undefined}
+  return <CorePanel {...rest} viz={viz} roles={roles} exemplars={anyEx ? exemplars : undefined}
     dashed={anyDash ? dashed : undefined}
     data={{ state: 'ready', frames }} />;
 }

@@ -21,6 +21,14 @@ describe('isPathAllowed — list pages reach their detail routes', () => {
     ['/services', '/service'],
     ['/services', '/service/backtrace'],
     ['/databases', '/databases/slow-queries'],
+    // v0.9.854 (UX denetimi K5) — v0.9.839/840 detayları sibling rotalara
+    // taşıdı (/endpoints → /endpoint, /databases → /database) ama istisna
+    // listesi güncellenmedi: yalnız bu listeler verilen custom-rol
+    // kullanıcısında satır tıkı detay yerine ilk izinli sayfaya
+    // ışınlıyordu. Aynı sınıfın ÜÇÜNCÜ tekrarı (v0.9.230 iki taneydi) —
+    // bu satırlar yeni sibling detay rotası doğduğunda hatırlatıcıdır.
+    ['/endpoints', '/endpoint'],
+    ['/databases', '/database'],
   ];
   for (const [granted, detail] of cases) {
     it(`${granted} grants ${detail}`, () => {
@@ -43,6 +51,11 @@ describe('isPathAllowed — separate checkboxes stay separate', () => {
     expect(isPathAllowed('/logs', ['/incidents'])).toBe(false);
     expect(isPathAllowed('/pod', ['/incidents'])).toBe(false);
     expect(isPathAllowed('/runbook', ['/clusters'])).toBe(false);
+    // v0.9.854 — istisna tek yönlü: detay sayfası listeyi geri açmaz ve
+    // iki aile birbirine sızmaz.
+    expect(isPathAllowed('/endpoints', ['/endpoint'])).toBe(false);
+    expect(isPathAllowed('/database', ['/endpoints'])).toBe(false);
+    expect(isPathAllowed('/endpoint', ['/databases'])).toBe(false);
   });
   it('an empty grant list allows nothing but the always-allowed set', () => {
     expect(isPathAllowed('/logs', [])).toBe(false);

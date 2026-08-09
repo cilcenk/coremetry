@@ -17,6 +17,7 @@ import { useShortcuts } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { logsRangeParam } from '@/lib/logsUrl';
+import { raceGuard } from '@/lib/raceGuard';
 import { useOutsideClose } from '@/lib/useOutsideClose';
 import { useCorrelatedLogs, spanHasError, traceLogWindow } from '@/lib/otel';
 import { fmtNs, tsLong, tsRel, displaySpanName } from '@/lib/utils';
@@ -110,19 +111,30 @@ function TraceDetailInner() {
       ? (logsQuery.data.reason || 'log backend slow/unreachable')
       : null;
 
+  // v0.9.857 (UX denetimi K7) — YARIŞ: bu effect'te ne cancelled bayrağı ne
+  // cleanup ne AbortController vardı. Büyük/yavaş bir trace (A) açıp
+  // beklemeden küçük bir trace (B) açan operatör B'nin URL'inde A'nın
+  // waterfall'unu görebiliyordu — ekranda spanların BAŞKA bir trace'e ait
+  // olduğunu söyleyen hiçbir şey yok. Deponun kendi v0.8.300 + v0.9.603
+  // ikilisi (bayrak + gerçek iptal) bu dosyaya uygulanmamıştı.
   useEffect(() => {
     if (!id) return;
     setSpans(undefined);
     setSource(undefined);
     setStub(undefined);
-    api.trace(id)
+    const g = raceGuard();
+    api.trace(id, g.signal)
       .then(d => {
+        if (!g.ok()) return;
         setSpans(d.spans ?? []);
         setSource(d.source);
         setStub(d.stub);
         setSpanCap({ capped: d.spanCapped ?? false, total: d.spanTotal });
       })
-      .catch(() => setSpans(null));
+      // İptal de reject eder: guard'sız catch, operatörün kendi
+      // gezinmesini hata durumuna çevirirdi.
+      .catch(() => { if (g.ok()) setSpans(null); });
+    return g.cancel;
   }, [id]);
 
   // Mirror selectedId + tab to the URL via replaceState so the Share

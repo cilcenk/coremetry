@@ -505,7 +505,10 @@ export const api = {
   // Span-relationship / structural query (Gap 3). Parent + child predicate
   // sets are JSON-encoded into the query string; the backend runs a bounded
   // self-join over raw spans and returns the resolved trace rows.
-  trace:     (id: string)            => get<TraceDetailResponse>(`/api/traces/${id}`),
+  // v0.9.857 (UX denetimi K7) — signal: hızlı trace geçişinde eski istek
+  // gerçekten iptal edilsin (yanıtı atmak yetmez; süperseded sorgu CH'de
+  // max_execution_time'a kadar koşuyordu).
+  trace:     (id: string, signal?: AbortSignal) => get<TraceDetailResponse>(`/api/traces/${id}`, signal),
 
   // v0.8.332 (pivot Phase 3) — real OTLP exemplars for a metric window
   // (GET /api/exemplars, pivot Phase 2). Either a comma-separated
@@ -1983,7 +1986,7 @@ export const api = {
     get<string[] | null>(`/api/metrics/attr-keys?metric=${encodeURIComponent(metric)}&service=${encodeURIComponent(service)}&since=${since}`),
 
   profiles:        (params: ProfilesParams) => get<ProfileRow[] | null>(`/api/profiles?${qs(params)}`),
-  profile:         (id: string)             => get<ProfileDetail>(`/api/profiles/${id}`),
+  profile:         (id: string, signal?: AbortSignal) => get<ProfileDetail>(`/api/profiles/${id}`, signal),
   profilesForSpan: (service: string, startNs: number, endNs: number) =>
     get<ProfileRow[] | null>(`/api/profiles/by-span?service=${encodeURIComponent(service)}&start=${startNs}&end=${endNs}`),
   spanHotspots: (service: string, startNs: number, endNs: number, top = 10) =>
@@ -2168,7 +2171,7 @@ export const api = {
 
   // ── Dashboards ───────────────────────────────────────────────────────────
   listDashboards: () => get<DashboardSummary[] | null>('/api/dashboards'),
-  getDashboard:   (id: string) => get<Dashboard>(`/api/dashboards/${id}`),
+  getDashboard:   (id: string, signal?: AbortSignal) => get<Dashboard>(`/api/dashboards/${id}`, signal),
   createDashboard: (d: Omit<Dashboard, 'id' | 'createdAt' | 'updatedAt'>) =>
     request<Dashboard>('/api/dashboards', {
       method: 'POST',

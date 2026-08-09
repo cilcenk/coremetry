@@ -9,6 +9,7 @@ import { BreakdownBar } from '@/components/KindBadge';
 import { CopyButton } from '@/components/CopyButton';
 import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
+import { raceGuard } from '@/lib/raceGuard';
 import { tsLong, fmtNum } from '@/lib/utils';
 import { diffFlame } from '@/lib/flameDiff';
 import type { ProfileDetail, ProfileRow } from '@/lib/types';
@@ -38,16 +39,27 @@ function ProfileDetailInner() {
   const [pickerOpen, setPickerOpen] = useState(false);
   const [recentProfiles, setRecentProfiles] = useState<ProfileRow[]>([]);
 
+  // v0.9.857 (UX denetimi K7) — Trace.tsx ile aynı yarış deseni; burada iki
+  // kopya var (profil + baseline) ve karşılaştırma sayfası olduğu için ikisi
+  // arasında hızlı geçiş normal kullanım.
   useEffect(() => {
     if (!id) return;
     setData(undefined);
-    api.profile(id).then(setData).catch(() => setData(null));
+    const g = raceGuard();
+    api.profile(id, g.signal)
+      .then(d => { if (g.ok()) setData(d); })
+      .catch(() => { if (g.ok()) setData(null); });
+    return g.cancel;
   }, [id]);
 
   useEffect(() => {
     if (!baselineId) { setBaseData(undefined); return; }
     setBaseData(undefined);
-    api.profile(baselineId).then(setBaseData).catch(() => setBaseData(null));
+    const g = raceGuard();
+    api.profile(baselineId, g.signal)
+      .then(d => { if (g.ok()) setBaseData(d); })
+      .catch(() => { if (g.ok()) setBaseData(null); });
+    return g.cancel;
   }, [baselineId]);
 
   // Build the diff lazily when both flames are present. Memo

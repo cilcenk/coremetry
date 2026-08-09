@@ -66,6 +66,38 @@ function isEditableTarget(t: EventTarget | null): boolean {
   return false;
 }
 
+// isActivationTarget — v0.9.860 sınıfı, v0.9.863 (UX denetimi K13).
+//
+// Bug: /services, /traces, /inbox, /logs gibi klavye-nav'lı her sayfada Tab
+// ile bir butona gelip Enter'a basınca HİÇBİR ŞEY olmuyordu; j/k ile bir satır
+// seçiliyse Enter butonu değil SATIRI açıyordu. Klavyeyle aksiyon akışı bu
+// sayfalarda fiilen kırıktı.
+//
+// Kök neden: useTableNav Enter'ı GLOBAL registry'e kaydediyor ve dispatch
+// eşleşen her kısayolda KOŞULSUZ preventDefault() çağırıyor. Tarayıcı,
+// odaklı bir butonda Enter'ı ancak varsayılan davranış iptal edilmezse click'e
+// çevirir — yani sayfanın satır kısayolu, butonun kendi aktivasyonunu yutuyordu.
+//
+// Neden isEditableTarget'a BUTTON eklemek DEĞİL: o bayrak TÜM kısayolları
+// kapatır. Bir toolbar butonuna tıkladıktan sonra odak o butonda kalır; blanket
+// muafiyet j/k gezinmesini o andan itibaren öldürürdü — bir bug'ı daha
+// sinsi bir bug'la değişmek olurdu. Susturulan yalnızca AKTİVASYON tuşları,
+// yalnızca aktive edilebilir bir eleman odaktayken.
+const ACTIVATION_KEYS = new Set(['Enter', ' ']);
+
+export function isActivationTarget(t: EventTarget | null, combo: string): boolean {
+  if (!ACTIVATION_KEYS.has(combo)) return false;
+  if (!(t instanceof HTMLElement)) return false;
+  const el = t.closest('button, a[href], [role="button"], summary');
+  if (!el) return false;
+  // Space bir LİNK'i aktive etmez (sayfayı kaydırır), o yüzden bir kısayolu
+  // yalnız link odaklı diye susturmak kullanıcıdan bir şey çalmak olurdu.
+  if (combo === ' ' && el.tagName === 'A') return false;
+  // Devre dışı buton hiçbir şey aktive etmez — kısayol çalışsın.
+  if (el instanceof HTMLButtonElement && el.disabled) return false;
+  return true;
+}
+
 // Normalise a KeyboardEvent into the same string format we
 // register: 'mod+k' / 'g s' / 'a'. Multi-key sequences are
 // resolved via pendingPrefix, not here.
@@ -134,7 +166,10 @@ function installListener(): void {
 
     // Single-combo path.
     const sc = registry.get(combo);
-    if (sc && (!inEditable || sc.evenInInputs)) {
+    // v0.9.863 (UX denetimi K13) — odaklı buton/link kendi aktivasyon tuşunu
+    // GERİ ALIR: aksi hâlde preventDefault() tarayıcının click sentezini iptal
+    // ediyor ve Enter hiçbir şey yapmıyordu.
+    if (sc && (!inEditable || sc.evenInInputs) && !isActivationTarget(e.target, combo)) {
       e.preventDefault();
       sc.handler(e);
     }

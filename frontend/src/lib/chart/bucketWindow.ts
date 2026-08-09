@@ -1,10 +1,11 @@
 // bucketWindow — "spike → exemplar" tıkının çözdüğü ZAMAN PENCERESİ.
 //
 // v0.7.22'den beri MultiLineChart'ın `ready` hook'unun içinde YAŞIYORDU.
-// v0.9.789'da bucket-tık CorePanel'e (v2 motoru) taşınınca hesap İKİ
-// motorda birden gerekti — ve iki kopya, aynı tıkın iki farklı pencere
-// üretmesi demekti: aynı ekranda ?chartsV2=0 ile 1 farklı exemplar
-// açardı. Saf modül, "iki motor AYNI fonksiyonu çağırır" garantisidir.
+// v0.9.789'da bucket-tık CorePanel'e taşınınca hesap İKİ motorda birden
+// gerekti — ve iki kopya, aynı tıkın iki farklı pencere üretmesi
+// demekti (aynı ekranda iki farklı exemplar). Eski motor v0.9.844'te
+// söküldü; modül kaldı, çünkü hesabın SAF ve testli olması motor
+// sayısından bağımsız bir kazanç.
 //
 // KURAL (MLC'nin v0.7.22 davranışının birebiri):
 //   1. İmlecin en yakın x noktası bulunur.

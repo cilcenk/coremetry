@@ -1,108 +1,28 @@
-// chartBuildSignature — v0.8.520 (perf proposal #5 + #15).
+// Chart build signatures — v0.8.520/531 (perf proposal #5 + #15).
 //
-// The build signature is the pure seam behind MultiLineChart's "rebuild vs
-// setData" decision. Symptom it guards against: uPlot charts destroy()+new
-// uPlot() on every 30s poll (canvas flicker, lost hover cursor / zoom /
-// isolation) because the whole build effect keyed on the fresh `series`
-// identity. The contract this file pins:
+// A build signature is the pure seam behind a chart's "rebuild vs setData"
+// decision. Symptom they guard against: uPlot charts destroy()+new uPlot()
+// on every 30s poll (canvas flicker, lost hover cursor / zoom / isolation)
+// because the whole build effect keyed on the fresh `series` identity. The
+// contract this file pins, for each surviving engine:
 //   • a DATA-ONLY refresh (same series count/labels/options) → IDENTICAL
 //     signature → the build effect is skipped, setData() fast-path runs;
 //   • any STRUCTURAL / OPTION change → DIFFERENT signature → full re-create;
 //   • callbacks are tracked by PRESENCE, not identity (a fresh arrow each
 //     render must not churn); overlays are digested by VALUE, not array
 //     identity.
+//
+// v0.9.844 — `chartBuildSignature` (MLC'nin kendi imzası) ve onun ÜÇ describe
+// bloğu SİLİNDİ: eski MultiLineChart gövdesi söküldü, yani imzalayacak bir
+// build effect kalmadı. Kalan üç imza (TimeChart / OverviewChart /
+// TimeSeriesPanel) bayraksız tek-yol motorlara ait ve aynı kontratı taşıyor.
 
 import { describe, it, expect } from 'vitest';
 import {
-  chartBuildSignature, type ChartBuildSigInput,
   timeChartBuildSignature, type TimeChartSigInput,
   overviewChartBuildSignature, type OverviewChartSigInput,
   timeSeriesPanelBuildSignature, type TSPBuildSigInput,
 } from './chartBuildSig';
-
-const base: ChartBuildSigInput = {
-  labels: ['frontend', 'checkout', 'cart'],
-  unit: 'ms',
-  height: 320,
-  syncKey: 'svc',
-  logScale: false,
-  hasZoom: true,
-  hasBucketClick: false,
-  compareOffsetNs: 0,
-  compareLabel: '',
-  deploys: [{ timeUnixNs: 1_700_000_000_000_000_000, label: 'v1.2.3', description: '153 spans' }],
-  thresholds: [{ value: 500, label: 'SLO 500ms', severity: 'warn' }],
-};
-
-const clone = (o: ChartBuildSigInput): ChartBuildSigInput => JSON.parse(JSON.stringify(o));
-
-describe('chartBuildSignature — data-only refresh keeps the same signature (setData fast-path)', () => {
-  // Each case is the SAME chart after a poll: the caller hands a brand-new
-  // object / arrays, but the structure + options are unchanged. All must equal
-  // the base signature so the build effect is skipped.
-  const sameCases: [string, ChartBuildSigInput][] = [
-    ['fresh object, identical contents', clone(base)],
-    ['fresh labels array, same names/order', { ...base, labels: [...base.labels] }],
-    ['fresh deploys array, same values', { ...base, deploys: base.deploys!.map(d => ({ ...d })) }],
-    ['fresh thresholds array, same values', { ...base, thresholds: base.thresholds!.map(t => ({ ...t })) }],
-    // onZoom / onBucketClick are booleans here — same presence ⇒ same sig even
-    // though the caller passed a different closure identity upstream.
-    ['same zoom/bucket presence', { ...base, hasZoom: true, hasBucketClick: false }],
-  ];
-  it.each(sameCases)('%s → identical signature', (_name, input) => {
-    expect(chartBuildSignature(input)).toBe(chartBuildSignature(base));
-  });
-});
-
-describe('chartBuildSignature — structural / option change forces a rebuild', () => {
-  const diffCases: [string, ChartBuildSigInput][] = [
-    ['series added', { ...base, labels: [...base.labels, 'payments'] }],
-    ['series removed', { ...base, labels: base.labels.slice(0, 2) }],
-    ['series renamed', { ...base, labels: ['frontend', 'checkout', 'basket'] }],
-    ['series reordered', { ...base, labels: ['checkout', 'frontend', 'cart'] }],
-    ['unit changed', { ...base, unit: 's' }],
-    ['height changed', { ...base, height: 280 }],
-    ['syncKey changed', { ...base, syncKey: 'other' }],
-    ['logScale toggled', { ...base, logScale: true }],
-    ['zoom presence toggled off', { ...base, hasZoom: false }],
-    ['bucket-click presence toggled on', { ...base, hasBucketClick: true }],
-    ['compareOffsetNs changed', { ...base, compareOffsetNs: 86_400_000_000_000 }],
-    ['compareLabel changed', { ...base, compareLabel: '24h ago' }],
-    ['deploy time changed', { ...base, deploys: [{ ...base.deploys![0], timeUnixNs: 1 }] }],
-    ['deploy label changed', { ...base, deploys: [{ ...base.deploys![0], label: 'v9' }] }],
-    ['deploy added', { ...base, deploys: [...base.deploys!, { timeUnixNs: 2, label: 'v2' }] }],
-    ['threshold value changed', { ...base, thresholds: [{ ...base.thresholds![0], value: 250 }] }],
-    ['threshold severity changed', { ...base, thresholds: [{ ...base.thresholds![0], severity: 'err' }] }],
-    ['threshold removed', { ...base, thresholds: [] }],
-  ];
-  it.each(diffCases)('%s → different signature', (_name, input) => {
-    expect(chartBuildSignature(input)).not.toBe(chartBuildSignature(base));
-  });
-});
-
-describe('chartBuildSignature — optional-field normalisation', () => {
-  it('treats undefined optionals as their stable defaults', () => {
-    const a: ChartBuildSigInput = { labels: ['a'], height: 320, hasZoom: false, hasBucketClick: false };
-    const b: ChartBuildSigInput = {
-      labels: ['a'], height: 320, hasZoom: false, hasBucketClick: false,
-      unit: '', syncKey: '', logScale: false, compareOffsetNs: 0, compareLabel: '',
-      deploys: [], thresholds: [],
-    };
-    expect(chartBuildSignature(a)).toBe(chartBuildSignature(b));
-  });
-
-  it('empty vs one deploy differ (empty-overlay guard)', () => {
-    const empty: ChartBuildSigInput = { labels: ['a'], height: 320, hasZoom: false, hasBucketClick: false };
-    const withDeploy: ChartBuildSigInput = { ...empty, deploys: [{ timeUnixNs: 1, label: 'v1' }] };
-    expect(chartBuildSignature(empty)).not.toBe(chartBuildSignature(withDeploy));
-  });
-});
-
-// v0.9.789 — v0.9.100'ün `colorOverrides` bloğu SİLİNDİ. Alan, MLC'nin colorOf
-// prop'unu imzaya katmak için vardı; o prop'un repo genelinde tüketicisi
-// kalmamıştı ve üç ölü kancayla (colorOf/selectedOps/onLegendClick) birlikte
-// kaldırıldı. Geriye-uyum şimi YOK (ev kuralı): imzada olmayan bir alanı test
-// etmek, silinmiş bir davranışı canlıymış gibi belgelerdi.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // timeChartBuildSignature — v0.8.531 (perf #5/#15). The <TimeChart> seam
@@ -290,22 +210,9 @@ describe('Grafana-parite M3 — regions + colour-thresholds in the signatures', 
   const region = { fromSec: 1_700_000_000, toSec: 1_700_003_600, color: 'var(--err)', label: 'P1' };
   const cth = { value: 1.5, label: 'err ≤ 1.50%', color: 'var(--err)' };
 
-  it('MLC: fresh regions array, same values → identical signature', () => {
-    expect(chartBuildSignature({ ...base, regions: [{ ...region }] }))
-      .toBe(chartBuildSignature({ ...base, regions: [{ ...region }] }));
-  });
-  it('MLC: undefined vs empty regions normalise equal', () => {
-    expect(chartBuildSignature({ ...base, regions: undefined }))
-      .toBe(chartBuildSignature({ ...base, regions: [] }));
-  });
-  it('MLC: region window changed → different signature', () => {
-    expect(chartBuildSignature({ ...base, regions: [{ ...region, toSec: 1_700_007_200 }] }))
-      .not.toBe(chartBuildSignature({ ...base, regions: [{ ...region }] }));
-  });
-  it('MLC: region appears (none→some) → different signature', () => {
-    expect(chartBuildSignature({ ...base, regions: [region] }))
-      .not.toBe(chartBuildSignature(base));
-  });
+  // v0.9.844 — DÖRT MLC bölge vakası silindi: chartBuildSignature eski
+  // motorla birlikte gitti. Kalan üç imza (TC / OVC / TSP) aynı
+  // regionsDigest'i paylaşıyor, yani kontrat hâlâ kapılı.
 
   it('TC: fresh thresholds/regions, same values → identical signature', () => {
     expect(timeChartBuildSignature({ ...tcBase, thresholds: [{ ...cth }], regions: [{ ...region }] }))

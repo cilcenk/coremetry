@@ -184,9 +184,10 @@ export interface CorePanelProps {
   // v0.7.22'den beri MultiLineChart'ın kancasıydı; v2 motoruna taşındı
   // ve Service sayfasının error-rate/latency panelleri buradan çiziliyor.
   //
-  // Pencere hesabı SAF: lib/chart/bucketWindow — MLC'nin eski gövdesi de
-  // AYNI fonksiyonu çağırır, yani ?chartsV2=0 kaçışı aynı tıkta aynı
-  // pencereyi açar (iki kopya = iki farklı exemplar demekti).
+  // Pencere hesabı SAF: lib/chart/bucketWindow. v0.9.789'da MLC'nin eski
+  // gövdesi de AYNI fonksiyonu çağırsın diye ayrıştırılmıştı (iki kopya =
+  // aynı tıkta iki farklı exemplar); o gövde v0.9.844'te söküldü, modül
+  // kaldı — hesap hâlâ tek yerde ve testli.
   //
   // JEST ÖNCELİĞİ (yukarıdan aşağı): exemplar ◆ isabeti > bucket-tık >
   // onExpandClick. Sürükleme (>5px) ve çift-tık (zoom-geri) elenir —

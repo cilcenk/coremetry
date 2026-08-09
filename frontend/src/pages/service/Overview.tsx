@@ -5,34 +5,27 @@ import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/l
 import { timeRangeToNs, rangeToSince } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { entryLatencyDSL } from '@/lib/entrySpans';
-import { panelMaxDataPoints, stepForPoints, stepForWidth } from '@/lib/chartStep';
+import { panelMaxDataPoints, stepForWidth } from '@/lib/chartStep';
 import { encodeFilters } from '@/lib/urlState';
-import { Tabs } from '@/components/ui';
 import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
-import { useServiceDeploys, useSLOs } from '@/lib/queries';
-import type { ChartThreshold } from '@/lib/chart/overlays';
-import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
-import { ChartCard, type ChartLine } from './charts/ChartCard';
+import { useServiceDeploys } from '@/lib/queries';
+// ChartLine — throughput memo'sunun taşıyıcı şekli. TİP-ONLY import:
+// ChartCard BİLEŞENİ v0.9.844'te bu sayfadan çıktı (eski motor söküldü),
+// dosyası ise yaşıyor (Runtime paneli tüketiyor).
+import { type ChartLine } from './charts/ChartCard';
 import { scopedChartTitle, scopeTitleTip } from './charts/scopeTitle';
-import { sumNullableSeries, sumSeries } from './charts/throughputTotal';
+import { sumSeries } from './charts/throughputTotal';
 import { MetricThroughputNote } from './MetricThroughputNote';
 // v0.9.708 — CorePanel LAZY: @grafana/* vendor ağırlığı (~126 KB gzip)
-// yalnız chartsV2 bayrağı açık ve panel gerçekten çizilirken iner.
-// Statik import her sayfanın vendor chunk'ını 35 KB→1 MB yapıyordu —
-// ölçüldü; bayrak kapalı kullanıcı bunu ödememeli.
+// yalnız panel gerçekten çizilirken iner. Statik import her sayfanın
+// vendor chunk'ını 35 KB→1 MB yapıyordu — ölçüldü.
 import { lazy, Suspense } from 'react';
-import { chartsV2 } from '@/lib/featureFlags';
 import { Spinner } from '@/components/Spinner';
-const CorePanelLazy = lazy(() =>
-  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelWithFrames })));
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
-import { EnvAmbiguousNote } from './EnvAmbiguousNote';
-import { buildRootOpLines } from './charts/rootOpSeries';
 import {
   topRoutesByArea, metricUnitToGrafana, ROUTE_TOP_N, metricAvgToMs,
 } from './charts/routeSeries';
-import { useRootOpLatency } from './charts/useRootOpLatency';
 import { OpsCard, DbCard } from './OverviewTables';
 import { TopEndpointsCard } from './TopEndpointsCard';
 import { MetricPanel } from '@/components/MetricPanel';
@@ -204,12 +197,14 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // gerektiğinde d'den okunur.
   const redMdp = panelMaxDataPoints(3);
   const seriesQ = useQuery({
-    // v0.9.723 — chartsV2'de 180s rate penceresi (Grafana [3m] paritesi);
-    // bayrak + pencere anahtarda: iki mod farklı seri kümesi döndürür.
-    queryKey: ['service-overview-red', service, from, to, redMdp, chartsV2()],
+    // v0.9.723 — 180s rate penceresi (Grafana [3m] paritesi).
+    // v0.9.844 — motor bayrağı anahtardan ÇIKTI, pencere SABİT: tek mod
+    // kaldı. Service.tsx'in prefetch'i AYNI commit'te aynı şekli aldı
+    // (ayrı düşerse prefetch ölür — v0.9.723 review bulgusu).
+    queryKey: ['service-overview-red', service, from, to, redMdp],
     queryFn: () => api.spanMetricBatch({
       from, to, maxDataPoints: redMdp,
-      rateWindow: chartsV2() ? 180 : undefined,
+      rateWindow: 180,
       dsl: `service.name = "${service.replace(/"/g, '\\"')}"`,
       aggs: [
         { name: 'rate', agg: 'rate' },
@@ -271,20 +266,20 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     // v0.9.706 — redMdp anahtarda VE istekte: metrik paneli artık kardeş
     // RED grafikleriyle aynı nokta bütçesini geçiyor (px pilotu). Sunucu
     // desteği v0.9.105'ten beri hazırdı; geçiren ilk yüzey bu.
-    // v0.9.718 — chartsV2'de route kırılımı + 180s rate penceresi
-    // (Grafana by(http_route) + [3m] referansı). Bayrak anahtarda:
-    // iki mod farklı seri kümesi döndürür.
-    queryKey: ['service-metric-throughput', service, from, to, redMdp, chartsV2()],
+    // v0.9.718 — route kırılımı + 180s rate penceresi (Grafana
+    // by(http_route) + [3m] referansı).
+    // v0.9.844 — bayrak anahtardan çıktı, breakdown='route' sabitlendi.
+    queryKey: ['service-metric-throughput', service, from, to, redMdp],
     queryFn: () => api.serviceMetricThroughput(service, from, to, undefined, redMdp,
-      chartsV2() ? { breakdown: 'route', rateWindow: 180 } : { rateWindow: 180 }),
+      { breakdown: 'route', rateWindow: 180 }),
     staleTime: 30_000,
   });
 
   const latencyQ = useQuery({
-    queryKey: ['service-overview-entry-red', service, from, to, redMdp, chartsV2()],
+    queryKey: ['service-overview-entry-red', service, from, to, redMdp],
     queryFn: () => api.spanMetricBatch({
       from, to, maxDataPoints: redMdp,
-      rateWindow: chartsV2() ? 180 : undefined,
+      rateWindow: 180,
       dsl: entryLatencyDSL(service),
       aggs: [
         { name: 'rate', agg: 'rate' },
@@ -325,16 +320,13 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // güncellenip diğeri bayatlıyordu).
   const latScopeNote = scopeTitleTip(usingAllSpans);
 
-  // ── Response time · operasyon kırılımı (v0.9.484, operatör onayı: "root
-  // spanler için multichart") ────────────────────────────────────────────
-  //
-  // Seçim URL'de (?rtops=1): ev kuralı — ekranda ne görüldüğünü değiştiren
-  // her operatör seçimi kopyalanabilir linke biner. Yabancı parametreler
-  // korunur (prev kopyası), replace:true (geri tuşu görünüm değiştirmekle
-  // dolmaz). Service.tsx zaten kendi parametrelerini setSearchParams(prev)
-  // ile yazıyor — bu sayfada `prev` bayat bir alt küme DEĞİL, o yüzden düz
-  // prev formu yeterli (ham replaceState yazan sayfalarda olmaz).
-  const [searchParams, setSearchParams] = useSearchParams();
+  // v0.9.844 — v0.9.484'ün "Response time · operasyon kırılımı" görünümü ve
+  // onu taşıyan ?rtops URL parametresi SİLİNDİ (v0.9.736 operatör düzeninin
+  // gecikmiş kod karşılığı). URL'den bir seçim kalkarken tek risk eski bir
+  // kayıtlı link: ?rtops=1 taşıyan bir URL artık YOK SAYILIR (parametre
+  // okunmuyor), sayfa metrik panelini açar — kırık ekran değil, farklı
+  // panel.
+  const [searchParams] = useSearchParams();
   // v0.9.742 (operatör tercihi) — metrik paneline tık Metrics sayfasına
   // götürür (tam ekran yerine); mevcut ?range korunur.
   const navigate = useNavigate();
@@ -345,64 +337,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
       + (opts?.by ? `&by=${encodeURIComponent(opts.by)}` : '')
       + (r ? `&range=${encodeURIComponent(r)}` : '');
   };
-  const splitByOp = searchParams.get('rtops') === '1';
-  const setSplitByOp = (next: boolean) => setSearchParams(prev => {
-    const p = new URLSearchParams(prev);
-    if (next) p.set('rtops', '1'); else p.delete('rtops');
-    return p;
-  }, { replace: true });
-
-  // Toplam görünüm batch'i maxDataPoints ile, /api/spans/metric ise step
-  // (saniye) ile konuşuyor. Aynı pencereyi aynı çözünürlükte görmek için
-  // nokta bütçesi rung'a çevrilir — görünüm değiştirince bucket boyu
-  // değişip grafik zıplamaz.
-  const opsStep = useMemo(
-    () => stepForPoints(Math.max(1, (to - from) / 1e9), redMdp),
-    [from, to, redMdp]);
-  // İstek YALNIZ kırılım açıkken (ES/CH maliyet disiplini — varsayılan bedava).
-  const opsQ = useRootOpLatency(service, from, to, opsStep, splitByOp);
-  // Saf projeksiyon: alan bazlı ilk 5, union zaman ekseni, "+N daha" notu.
-  const opsView = useMemo(() => buildRootOpLines(opsQ.data), [opsQ.data]);
-  const opsStatus: 'loading' | 'error' | 'ready' =
-    opsQ.isLoading ? 'loading' : opsQ.isError ? 'error' : 'ready';
-  // Fallback (usingAllSpans) durumunda kırılım YAPISAL olarak boş: kırılım
-  // giriş span'lerinden okur, o servisin hiç giriş span'i yok. ChartCard'ın
-  // jenerik "No data in this window"u burada yalan söylerdi ("pencere boş"
-  // değil, "bu servis bu kırılımı üretemez"), o yüzden sebebi SÖYLENİR.
-  const opsNote = usingAllSpans
-    ? 'Bu serviste giriş span’i (server/consumer) yok — operasyon kırılımı boş.'
-    : opsView.note;
-  const rtSegment = (
-    <Tabs variant="segmented" ariaLabel="Response time görünümü"
-      value={splitByOp ? 'ops' : 'agg'}
-      onChange={k => setSplitByOp(k === 'ops')}
-      items={[
-        { key: 'agg', label: 'Toplam', hint: 'Servisin giriş span’leri — avg / P50 / P95 / P99' },
-        { key: 'ops', label: 'Operasyonlar', hint: 'En yüksek P95 alanına sahip 5 giriş operasyonu, her biri kendi P95 çizgisi' },
-      ]} />
-  );
-
-  // Grafana-parite M3 — failure-rate paneline SLO hata-bütçesi eşiği.
-  // ServiceCharts'ın error-rate threshold KAYNAĞININ aynısı (useSLOs →
-  // availability SLO → (1-target)·100), OverviewChart'ın yeni thresholds
-  // prop'uyla çizilir; alert eşiğiyle grafik arasında görsel bağ kurulur.
-  // useSLOs RQ-dedupe'lu — Performance sekmesindeki ServiceCharts ile aynı
-  // sorguyu paylaşır, ek yük yok.
-  const slosQ = useSLOs();
-  const failureThresholds = useMemo<ChartThreshold[] | undefined>(() => {
-    const t: ChartThreshold[] = [];
-    for (const slo of slosQ.data ?? []) {
-      if (slo.service !== service || slo.sliType !== 'availability') continue;
-      const errBudgetPct = (1 - slo.target) * 100;
-      const opSuffix = slo.operation ? ` (${slo.operation})` : '';
-      t.push({
-        value: errBudgetPct,
-        label: `err ≤ ${errBudgetPct.toFixed(2)}%${opSuffix}`,
-        color: 'var(--err)',
-      });
-    }
-    return t.length > 0 ? t : undefined;
-  }, [slosQ.data, service]);
+  // v0.9.844 — kırılım sorgusu (useRootOpLatency + opsStep + buildRootOpLines
+  // projeksiyonu) ve SLO hata-bütçesi eşikleri (useSLOs → failureThresholds)
+  // de bu panellerle birlikte gitti. Eşik çizgisi % eksenine aitti; kalan
+  // Failure rate paneli req/s çiziyor, yani eşiği ORADA çizmek yanlış eksene
+  // yatay çizgi koymak olurdu (geri isteniyorsa % eksenli ayrı panel dilimi).
 
   const deploysQ = useServiceDeploys(service, from, to);
   // The single deploy marker drawn on the charts = the latest deploy inside
@@ -431,15 +370,12 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // Errors = rate × err%, OK = the remainder; the two add up to the total rate.
   // (A 4xx-vs-5xx split would need an HTTP-status MV dimension.)
   //
-  // v0.9.483 (operatör: yığılmış alan sorgulandı) — kart artık ÇİZGİ modunda
-  // ve iki çizgi taşıyor: "Toplam" (var(--accent)) + "Errors" (var(--err)).
-  // Yığın kalkınca toplam görsel olarak okunamaz oldu, bu yüzden VERİ olarak
-  // çiziliyor (sumNullableSeries — boşluk semantiği testli).
-  //   chart → çizilen çizgiler   (Toplam, Errors)
-  //   stats → alttaki tablo      (OK, Errors + tfoot "Toplam") — v0.9.103'ten
-  //           beri ne gösteriyorsa aynısı; Toplam'ı satır olarak da koysaydık
-  //           tfoot toplamı trafiği iki katı gösterirdi.
-  const throughput = useMemo<{ chart: ChartLine[]; stats: ChartLine[] }>(() => {
+  // v0.9.844 — memo artık TEK liste döndürüyor (OK + Errors). Eskiden iki
+  // vardı: `chart` (Toplam + Errors çizgileri) eski motorun ChartCard'ına,
+  // `stats` alttaki tabloya gidiyordu. ChartCard dalı sökülünce `chart`
+  // tarafının ve onu üreten istemci-toplamının (sumNullableSeries) tüketicisi
+  // kalmadı; kalan panel iki seriyi rol renkleriyle (success/error) çiziyor.
+  const throughput = useMemo<ChartLine[]>(() => {
     // v0.9.253 — `lat` is the entry-scoped series when the service has entry
     // spans, and the all-span series when it doesn't (usingAllSpans). Reading
     // through it keeps throughput, error rate and latency on ONE population:
@@ -449,40 +385,20 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     const erPts = lat?.error_rate?.[0]?.points ?? [];
     if (ratePts.length < 2) {
       // Tek nokta / veri yok — ayrıştıracak bir şey yok, ham hız çizilir.
-      const only: ChartLine[] = [{ series: lat?.rate ?? [], color: 'var(--accent)', label: 'Toplam' }];
-      return { chart: only, stats: only };
+      return [{ series: lat?.rate ?? [], color: 'var(--accent)', label: 'Toplam' }];
     }
     const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
     const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
     const okLine: ChartLine = { series: [{ groupKey: [], points: okPts }], color: 'var(--ok)', label: 'OK' };
     const errLine: ChartLine = { series: [{ groupKey: [], points: errPts }], color: 'var(--err)', label: 'Errors' };
-    // Toplam = OK + Errors, eleman-eleman (boşluklar korunur). series boş:
-    // x ekseni Errors çizgisinden gelir — ikisi de ratePts'ten türediği için
-    // aynı bucket kümesi, index kayması yok (ChartCard hizalama sözleşmesi).
-    const totalLine: ChartLine = {
-      series: [], color: 'var(--accent)', label: 'Toplam',
-      values: sumNullableSeries(okPts.map(p => p.value), errPts.map(p => p.value)),
-    };
-    return { chart: [totalLine, errLine], stats: [okLine, errLine] };
+    return [okLine, errLine];
   }, [lat]);
 
-  // Metrik türevli çizgi, span türevli olanın YANINA. Yerine geçmiyor:
-  // hangisinin doğru olduğuna operatör bakarak karar versin — sessizce
-  // kaynak değiştirmek, grafiğin ne anlattığını belirsizleştirirdi.
-  const metricTputLine = useMemo<ChartLine | null>(() => {
-    const d = metricTputQ.data;
-    if (!d?.series || d.series.length === 0) return null;
-    // v0.9.675 — etiket KAYNAĞI söylüyor. Sabit "Metrik (job)" yazıyordu,
-    // oysa v0.9.671'den beri eşleşme job / service / name / service_name
-    // kolonundan gelebiliyor. `name`den eşleşen bir çizgiyi "(job)" diye
-    // etiketlemek lejantı yalancı yapardı — ve bu çizginin TEK işi span
-    // türevli sayımla kıyaslanmak, yani neyi ölçtüğü okunabilir olmalı.
-    return {
-      series: d.series,
-      color: 'var(--teal)',
-      label: `Metrik · ${d.matchedBy ?? '?'}`,
-    };
-  }, [metricTputQ.data]);
+  // v0.9.844 — `metricTputLine` (metrik türevli tek ChartLine) SİLİNDİ: eski
+  // motorun alt kartını besliyordu. Tanılama tarafı YAŞIYOR — aşağıdaki
+  // MetricThroughputNote artık serinin BOŞ olup olmadığına doğrudan bakıyor
+  // (aynı koşul: `!d.series?.length`), çizim tipine değil.
+  const metricTputEmpty = (metricTputQ.data?.series?.length ?? 0) === 0;
 
   // v0.9.798 — metrik throughput'un toplamı: route serilerinin İSTEMCİ
   // tarafında toplamı. EK SORGU YOK ve gerekmiyor — rate TOPLANABİLİR
@@ -796,11 +712,12 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               örneği YENİDEN KULLANIRDI ve uPlot örneği bir görünümün seri
               kümesiyle kurulmuşken diğerinin verisini alırdı (lejant
               görünürlüğü afterBuild'de okunuyor). Ayrı key = temiz kurulum. */}
-          {chartsV2() ? (
-            /* v0.9.736 (operatör düzeni): v2'de yalnız METRİK response time —
-               span rt-agg/rt-ops panelleri v2'den kalktı ("sadece metric
-               olan chart kalsın"); v1 yolu aynen duruyor (tek adım geri
-               dönüş). Alt karttaki metrik paneli BURAYA taşındı. */
+          {(
+            /* v0.9.736 (operatör düzeni): yalnız METRİK response time —
+               span türevli rt-agg/rt-ops panelleri kalktı ("sadece metric
+               olan chart kalsın"). Alt karttaki metrik paneli BURAYA
+               taşınmıştı; v0.9.844'te eski motor sökülünce bu tek yol
+               kaldı. */
             <Suspense key="rt-metric-v2-main" fallback={<Spinner />}>
               <CorePanelMultiLazy
                 // v0.9.774 — başlıkta AGG YAZILI. Panel P50/P95/P99
@@ -847,38 +764,21 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>
-          ) : splitByOp ? (
-            <ChartCard key="rt-ops" title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={opsStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-              headerAside={rtSegment} note={opsNote}
-              legendStorageKey="ov-response-time-ops" statsDefaultCollapsed
-              lines={opsView.lines} />
-          ) : (
-            <ChartCard key="rt-agg" title={scopedChartTitle('Response time', usingAllSpans)} titleTip={latScopeNote} unit=" ms" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-              headerAside={rtSegment}
-              legendStorageKey="ov-response-time" statsDefaultCollapsed
-              defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
-              lines={[
-              { series: lat?.avg ?? [], color: 'var(--teal)', label: 'avg' },
-              { series: lat?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
-              { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
-              { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
-            ]} />
           )}
-          {/* v0.9.774 — v1'deki "Response time · metrik" ALT KARTI
-              silindi. Beslediği yüzdelik yolu (histogram kovaları) artık
-              yok; v1 dalında span türevli rt-agg/rt-ops panelleri
-              yaşamaya devam ediyor, yani bu bayrakta Response time
-              slotu boş kalmıyor. */}
+          {/* v0.9.844 — SPAN TÜREVLİ İKİ PANEL BİLİNÇLİ OLARAK GİTTİ:
+              "Toplam" (avg/P50/P95/P99) ve "Operasyonlar" (giriş
+              operasyonu başına P95) görünümleri + onları seçen ?rtops
+              parametresi. Karar v0.9.736'nın operatör düzeniydi ("sadece
+              metric olan chart kalsın"); o gün eski motor kaçış kapısı
+              olarak yaşadığı için kod duruyordu, bugün o kapı da yok.
+              Kuyruk görünürlüğü kaybolmadı: span P99 üstteki karonun
+              ikincil satırında (v0.9.798). */}
         </MetricPanel>
         <MetricPanel compact menuOnly title="Throughput" metricQuery={mkThroughput('line')}>
           {/* v0.9.253 — status ve seri artık ENTRY sorgusundan. Kart üstündeki
               KPI giriş span'lerini sayarken altındaki grafiğin tüm span'leri
               çizmesi, aynı kartta iki farklı servisi üst üste koymak olurdu. */}
-          {/* v0.9.717 (dalga-2 dilim 1) — Throughput chartsV2 bayrağıyla
-              CorePanel'de: OK=success/Errors=error rolleri (deterministik
-              yeşil/kırmızı). Bilinen fark: ▼ deploy işareti v2'de henüz yok
-              (regions eşlemesi ayrı dilim); eski yol aynen duruyor. */}
-          {chartsV2() ? (
+          {(
             /* v0.9.736 (operatör düzeni): orta slot artık METRİK throughput
                (route kırılımı) — alt karttan buraya taşındı. Span OK/Errors
                paneli 3. slota ("Throughput / Failure rate") geçti. */
@@ -905,43 +805,15 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 queryText={`metric=${metricTputQ.data?.metric ?? '?'} · instrument=${metricTputQ.data?.instrument ?? '?'} · eşleşme=${metricTputQ.data?.matchedBy ?? '?'} · mdp=${redMdp}`}
               />
             </Suspense>
-          ) : (
-            <ChartCard title={scopedChartTitle('Throughput', usingAllSpans)} titleTip={latScopeNote} unit=" req/s" mode="line" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-              legendStorageKey="ov-throughput" statsDefaultCollapsed
-              lines={throughput.chart} statsLines={throughput.stats} />
           )}
           {/* v0.9.665 — TANILAMA. Boş bir grafik "metrik yok" ile "desen
               tutmadı"yı aynı gösterir; ikisi bambaşka eylem gerektiriyor
               (collector'ı düzelt / deseni düzelt). Bu yüzden neden
               yazılıyor, gerçek `job` değerleriyle birlikte. */}
-          {/* v0.9.675 (operatör: "Throughput'un altında ayrı bir panel
-              olsun") — metrik türevli seri KENDİ kartında.
-              Önce span türevli çizginin yanına konmuştu; aynı eksende iki
-              farklı ölçüm yöntemi üst üste binince hangisinin ne olduğu
-              okunmuyordu. Ayrı kart ikisini kıyaslanabilir tutuyor:
-              aynı pencere, aynı birim, ayrı eksen. */}
-          {!chartsV2() && metricTputLine && (
-            <div style={{ marginTop: 10 }}>
-              {/* v0.9.708 — FAZ 3 PİLOTU. chartsV2 bayrağıyla bu TEK panel
-                  CorePanel'e (@grafana/ui hattı) geçiyor; eski ChartCard
-                  yolu aynen duruyor — tek adımda geri dönüş. Veri +
-                  tanılama yolu ORTAK: yalnız çizim gövdesi değişiyor.
-                  Pilot bu panel çünkü zincirin en taze ucu: px bütçesi
-                  (v0.9.706) + DataFrame köprüsü aynı veriyle burada
-                  buluşuyor. */}
-              {(
-                <ChartCard
-                  title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
-                  titleTip={`Kaynak: ${metricTputQ.data?.metric ?? '?'} · instrument ${metricTputQ.data?.instrument ?? '?'} · eşleşme ${metricTputQ.data?.matchedBy ?? '?'}. Span türevli throughput'tan BAĞIMSIZ bir ölçüm — ayrışıyorlarsa bu başlı başına bir bulgu.`}
-                  unit=" req/s" mode="line"
-                  deploy={deploy} onZoom={onZoom} onZoomReset={onZoomReset}
-                  syncKey={chartSync} xRange={xRange}
-                  legendStorageKey="ov-throughput-metric" statsDefaultCollapsed
-                  lines={[metricTputLine]} />
-              )}
-              {metricTputQ.data?.envAmbiguous && <EnvAmbiguousNote />}
-            </div>
-          )}
+          {/* v0.9.844 — v0.9.675'in "Throughput · metrik" ALT KARTI gitti.
+              İçeriği v0.9.736'da zaten ÜSTTEKİ slota taşınmıştı; alt kart
+              yalnız eski motorun kaçış kapısında çiziliyordu, yani
+              varsayılan görünümde bir yılı aşkın süredir görünmüyordu. */}
           {/* v0.9.683 — HATA DURUMU. Burada yalnız `data` varsa çizim
               vardı: uç 500 dönünce data undefined kalıyor ve HİÇBİR ŞEY
               çizilmiyordu — operatörün gördüğü "panel gelmiyor" tam
@@ -960,36 +832,33 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               </div>
             </div>
           )}
-          {metricTputQ.data && !metricTputLine && (
+          {metricTputQ.data && metricTputEmpty && (
             <MetricThroughputNote d={metricTputQ.data} />
           )}
         </MetricPanel>
         <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('line')}>
-          {chartsV2() ? (
+          {(
             /* v0.9.739 (operatör netleştirmesi): GRAFİK 736'daki birleşik
                OK+Errors (req/s) — v0.9.738 grafiği değiştirerek yanlış
                okumuştu; istenen yalnız BAŞLIKTI. "Failure rate · trace"
-               adı + span türevli OK/Errors gövdesi; % SLO eşiği % eksenine
-               ait olduğu için burada yok (v1'de duruyor). */
+               adı + span türevli OK/Errors gövdesi.
+               v0.9.844 — BİLİNÇLİ KAYIP: % eksenli eski panel (errors %
+               + SLO hata-bütçesi eşiği) eski motorla birlikte gitti. Eşik
+               çizgisi % eksenine aitti ve bu panel req/s çiziyor; % + SLO
+               eşiğini geri isteyen operatör için ayrı bir dilim. */
             <Suspense key="failure-rate-v2" fallback={<Spinner />}>
               <CorePanelMultiLazy
                 title={scopedChartTitle('Failure rate · trace', usingAllSpans)}
                 storageKey="ov-throughput-failure-v2" height={200} unit="reqps" xRange={xRange}
                 loading={latStatus === 'loading'}
                 items={[
-                  { name: 'OK', role: 'success', series: throughput.stats[0]?.series ?? [] },
-                  { name: 'Errors', role: 'error', series: throughput.stats[1]?.series ?? [] },
+                  { name: 'OK', role: 'success', series: throughput[0]?.series ?? [] },
+                  { name: 'Errors', role: 'error', series: throughput[1]?.series ?? [] },
                 ]}
                 regions={deployRegions}
                 onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync}
               />
             </Suspense>
-          ) : (
-            <ChartCard title={scopedChartTitle('Failure rate', usingAllSpans)} titleTip={latScopeNote} unit="%" mode="area" deploy={deploy} status={latStatus} onZoom={onZoom} onZoomReset={onZoomReset} syncKey={chartSync} xRange={xRange}
-              legendStorageKey="ov-failure-rate" statsDefaultCollapsed
-              thresholds={failureThresholds} lines={[
-              { series: lat?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
-            ]} />
           )}
         </MetricPanel>
         {/* v0.9.491 — v0.9.476 Apdex grafiği kaldırıldı (operatör kararı);

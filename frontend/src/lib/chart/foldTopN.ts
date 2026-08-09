@@ -1,14 +1,14 @@
 // foldTopN — "others" katlamasının SAF çekirdeği (v0.9.807).
 //
-// Gövde MultiLineChart.tsx:79-112'den ALINDI, yeniden yazılmadı. Sebep bir
-// davranış farkıydı: v1 gövdesi (MultiLineChartInner) >N seriyi katlıyor,
-// v0.9.789'da açılan v2 yolu (CorePanel) TÜM serileri çiziyordu. Aynı
-// panelin iki motoru farklı sayıda seri gösteriyordu — ServiceCharts'ın
-// by-op error-rate / latency / RPS üçlüsünde gözle görülür (v0.9.789
-// raporunun davranış notu). Katlama artık TEK kaynakta: iki motor da
-// buradan geçer, yani "?chartsV2=0 ile aynı grafik" vaadi korunur.
+// Gövde MultiLineChart.tsx'in eski uPlot gövdesinden ALINDI, yeniden
+// yazılmadı. Sebep bir davranış farkıydı: eski gövde >N seriyi katlıyor,
+// v0.9.789'da açılan CorePanel yolu TÜM serileri çiziyordu. Aynı panelin
+// iki motoru farklı sayıda seri gösteriyordu — ServiceCharts'ın by-op
+// error-rate / latency / RPS üçlüsünde gözle görülür. Eski motor
+// v0.9.844'te söküldü; katlama TEK kaynakta kaldı ve MLC sarmalayıcısı
+// hâlâ buradan geçiyor.
 //
-// SÖZLEŞME (v1'den birebir devralındı — İCAT YOK):
+// SÖZLEŞME (eski gövdeden birebir devralındı — İCAT YOK):
 //
 //   • Sıralama ALAN bazlı: Σ|değer| büyükten küçüğe. null nokta 0 sayılır
 //     (Math.abs(p.value ?? 0)), yani delikli bir seri sırf delikleri

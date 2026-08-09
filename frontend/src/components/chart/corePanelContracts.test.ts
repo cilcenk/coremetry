@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { seriesRoleColor } from '@/lib/chart/seriesRole';
 import { visibleRangeStats } from '@/lib/chart/visibleStats';
@@ -628,10 +628,15 @@ describe('Explore v2 formül paneli kesikli (v0.9.793)', () => {
 // ---------------------------------------------------------------------------
 // v0.9.789 — ölü kancaların silinmesi (geriye-uyum şimi YOK kuralı).
 // colorOf / selectedOps / onLegendClick üçlüsünün repo genelinde tüketicisi
-// kalmamıştı; MLC'nin v2 kapısını da yalnız onlar kapalı tutuyordu. Kapı
-// kaynak taramasıdır: bir gün "lazım olur" diye geri sızarlarsa kızarır.
+// kalmamıştı. Kapı kaynak taramasıdır: geri sızarlarsa kızarır.
+//
+// v0.9.844 — MLC'nin kendi uPlot gövdesi (MultiLineChartInner) ve onu seçen
+// motor bayrağı SÖKÜLDÜ. İki pin bu yüzden düştü: motor kapısının regex'i
+// (artık kapı yok) ve "v1 gövdesi de bucketWindowNs çağırır" pini (artık
+// tek gövde var, hesabı CorePanel yapıyor). '-ms' pini KALDI ve kalması
+// ŞART — aşağıdaki gerekçeye bkz.
 // ---------------------------------------------------------------------------
-describe('MultiLineChart ölü kancaları (v0.9.789)', () => {
+describe('MultiLineChart — sökülmüş gövde geri sızmasın (v0.9.789/844)', () => {
   const mlc = readFileSync(
     resolve(__dirname, '../MultiLineChart.tsx'), 'utf8',
   ).replace(/\/\/.*$/gm, '');
@@ -642,20 +647,60 @@ describe('MultiLineChart ölü kancaları (v0.9.789)', () => {
     expect(mlc).not.toMatch(/\bonLegendClick\b/);
   });
 
-  it('v2 kapısı yalnız bayrağa bakar — bucket-tık artık diskalifiye etmez', () => {
-    expect(mlc).toMatch(/if \(!chartsV2\(\)\) return <MultiLineChartInner/);
-    expect(mlc).not.toMatch(/canV2/);
+  it('eski gövde YOK — MLC saf adaptör, kendi uPlot\'unu kurmaz', () => {
+    expect(mlc).not.toMatch(/MultiLineChartInner/);
+    expect(mlc).not.toMatch(/from 'uplot'/);
+    expect(mlc).not.toMatch(/useChartEngine/);
+    expect(mlc).not.toMatch(/chartBuildSignature/);
+  });
+
+  it('bucket-tık kanalı motora geçmeye devam ediyor', () => {
     expect(mlc).toMatch(/onBucketClick=\{onBucketClick\}/);
   });
 
-  it('🔴 v1 gövdesi de SAF modülü çağırır — iki motor tek hesap', () => {
-    expect(mlc).toMatch(/import \{ bucketWindowNs \} from '@\/lib\/chart\/bucketWindow'/);
-    expect(mlc).toMatch(/const \{ fromNs, toNs \} = bucketWindowNs\(xs, xSec\)/);
-    expect(mlc).not.toMatch(/let stepSec = 60/);
+  it("'-ms' sync ad alanı korunur (saniye-eksenli motorlarla karışmasın)", () => {
+    expect(mlc).toMatch(/syncKey=\{syncKey \? `\$\{syncKey\}-ms` : undefined\}/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.844 — YENİDEN SIZMA KİLİDİ.
+//
+// Eski motor "bayrak + iki gövde" olarak yaşıyordu. Bayrak dosyası
+// (lib/featureFlags.ts) silindi, ama bir bayrağı yeniden yazmak on satırlık
+// bir iş — ve o gün depo sessizce iki motorlu hâline döner. Bu kapı
+// kelimenin KENDİSİNİ yasaklıyor: kaynakta (test dışı) hiçbir yerde
+// geçmemeli. İğne parça parça kuruluyor ki bu dosya kendi kendini
+// eşleştirmesin.
+// ---------------------------------------------------------------------------
+describe('eski motor bayrağı geri gelmedi (v0.9.844)', () => {
+  const SRC = resolve(__dirname, '../..');
+  const NEEDLE = 'charts' + 'V2';
+
+  function* walkAll(dir: string): Generator<string> {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = resolve(dir, e.name);
+      if (e.isDirectory()) yield* walkAll(p);
+      else if (/\.(ts|tsx)$/.test(e.name) && !/\.test\./.test(e.name)) yield p;
+    }
+  }
+
+  it('kelime frontend/src kaynağında HİÇ geçmez (yorum dahil)', () => {
+    const offenders: string[] = [];
+    for (const f of walkAll(SRC)) {
+      if (readFileSync(f, 'utf8').includes(NEEDLE)) offenders.push(f);
+    }
+    expect(offenders, 'eski motor bayrağı geri sızmış').toEqual([]);
   });
 
-  it("'-ms' sync ad alanı korunur (v1 sn ↔ v2 ms karışmasın)", () => {
-    expect(mlc).toMatch(/syncKey=\{syncKey \? `\$\{syncKey\}-ms` : undefined\}/);
+  it('bayrak modülü ve iki eski gövde dosya olarak YOK', () => {
+    for (const rel of [
+      '../../lib/featureFlags.ts',
+      '../DashboardViz.tsx',
+      '../../pages/service/charts/useRootOpLatency.ts',
+    ]) {
+      expect(existsSync(resolve(__dirname, rel)), rel).toBe(false);
+    }
   });
 });
 

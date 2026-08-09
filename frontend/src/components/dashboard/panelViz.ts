@@ -11,16 +11,16 @@
 //     gerekçe lib/chart/stacking.ts'te (kümülatif çubuklar tabandan
 //     çizilir, mantıksal sırada çizilirse birbirini örterler).
 //
-// v0.9.796'da ikisi bilinçli olarak eski SVG motorunda (DashboardViz)
-// bırakılmıştı: o dilimin mockup onayı "bar/area" içindi ve yığılmış
+// v0.9.796'da ikisi bilinçli olarak eski SVG motorunda bırakılmıştı:
+// o dilimin mockup onayı "bar/area" içindi ve yığılmış
 // çubuğun v2'de karşılığı henüz yoktu. Yarısı yeni yarısı eski bir yığın
 // ailesi bırakmamak için ikisi birlikte bekletildi, ikisi birlikte taşındı.
 //
-// isV2Viz KALKTI (v0.9.808): beş markın beşi de v2'ye gittiği için guard
-// tautolojiye dönüyordu ve PanelRenderer'ın üç çağrı yerindeki
-// `: <DashboardViz …>` dalları ÖLÜ kalıyordu. Geriye-uyum şimi
-// bırakmıyoruz (CLAUDE.md). DashboardViz SİLİNMEDİ — tek tüketicisi artık
-// DashChart'ın `?chartsV2=0` kaçış dalı, orada yorumla işaretli.
+// isV2Viz KALKTI (v0.9.808): beş markın beşi de yeni motora gittiği için
+// guard tautolojiye dönüyordu ve PanelRenderer'ın üç çağrı yerindeki eski
+// SVG dalları ÖLÜ kalıyordu. Geriye-uyum şimi bırakmıyoruz (CLAUDE.md).
+// v0.9.844 — o SVG motoru (DashboardViz) dosyasıyla birlikte SİLİNDİ:
+// kalan tek tüketicisi motor kaçış kapısıydı, kapı da gitti.
 //
 // Karar SAF ve tek yerde: PanelRenderer'ın üç paneli (metric · spanmetric ·
 // promql) aynı fonksiyonu çağırır, üç kopya dallanma değil — kopya sınıfının

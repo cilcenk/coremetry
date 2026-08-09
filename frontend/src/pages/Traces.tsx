@@ -45,6 +45,7 @@ import { lastReachablePage } from '@/lib/traceReach';
 import type { TraceCountResponse } from '@/lib/types';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
+import { upsertAttrFilter } from '@/lib/aggDrill';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
 // v0.9.841 — kolon SIRASI ve varsayılan attr seti tek yerde, saf ve
 // testli (traceColumns.ts). İkisi de karar; mekanik değil.
@@ -1216,7 +1217,19 @@ function TracesPageInner() {
             onDrill={(a) => {
               if (groupBy === 'service') { setFilter({ ...filter, service: a.groupKey }); setDraft({ ...draft, service: a.groupKey }); }
               else if (groupBy === 'operation') { setFilter({ ...filter, search: a.groupKey, service: a.groupExtra ?? filter.service }); setDraft({ ...draft, search: a.groupKey, service: a.groupExtra ?? draft.service }); }
-              else if (a.groupExtra) { setFilter({ ...filter, service: a.groupExtra }); setDraft({ ...draft, service: a.groupExtra }); }
+              else {
+                // v0.9.856 (UX denetimi K11) — attribute grubunda tıklanan
+                // DEĞER düşüyordu: yalnız servis taşınıyor, liste o servisin
+                // TÜM trace'lerini gösteriyordu. Satır sayısı grup sayısıyla
+                // tutmuyor, kullanıcı "X100'ün trace'leri bunlar" sanıyordu —
+                // sessizce GENİŞLEYEN soru. Değer artık FilterBuilder çipine
+                // dönüşüyor: URL'de görünür, kaldırılabilir, paylaşılabilir.
+                if (groupBy === 'attr') {
+                  if (grouped) setAdvGroup(g => (g ? { ...g, filters: upsertAttrFilter(g.filters, groupAttr, a.groupKey) } : g));
+                  else setAdvFilters(f => upsertAttrFilter(f, groupAttr, a.groupKey));
+                }
+                if (a.groupExtra) { setFilter({ ...filter, service: a.groupExtra }); setDraft({ ...draft, service: a.groupExtra }); }
+              }
               setView('list'); setPage(0);
             }} />
           </div>

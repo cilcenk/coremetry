@@ -503,7 +503,9 @@ export function SubHeader({ label }: { label: string }) {
 // reference Grafana dashboard. Sum of perSec across classes is the
 // total wait pressure: a 1.0 result means one concurrent client
 // fully blocked on the DB. Moved here from OraclePanel (v0.8.391,
-// Stage-2 D3) so the cross-engine WaitLockStrip reuses it verbatim.
+// Stage-2 D3) so the cross-engine wait/lock strip could reuse it;
+// o strip v0.9.852'de söküldü ve tek tüketici yeniden OraclePanel —
+// dosya değiştirilmedi, taşımayı geri almak sebepsiz bir diff olurdu.
 export function WaitClassesBar({ waits, onClickClass }: {
   waits: { name: string; perSec: number }[];
   onClickClass?: (cls: string) => void;

@@ -169,8 +169,9 @@ export function OraclePanel({ instance, range }: { instance: string; range: Time
   );
 }
 
-// WaitClassesBar moved to shared.tsx (v0.8.391, Stage-2 D3) — the
-// cross-engine WaitLockStrip reuses the same stacked bar.
+// WaitClassesBar moved to shared.tsx (v0.8.391, Stage-2 D3) for the
+// cross-engine wait/lock strip; o strip v0.9.852'de söküldü ve bu panel
+// yeniden tek tüketici.
 
 function TablespaceBar({ ts, onClick }: {
   ts: { name: string; usedBytes: number; maxBytes: number; usedPct: number };

@@ -42,16 +42,18 @@ import type {
 // serves this page from the same cache entry rather than adding a
 // per-row parameter to a shared endpoint.
 //
-// NO WAITS & LOCKS (v0.9.846, operator's call). The wait/lock strip
-// read /api/databases/waitlock, which is fed by the OpenTelemetry
-// database receivers' engine metric families — and this install does
-// not ingest them. The panel therefore had exactly two states, both
-// content-free: an empty strip, or a paragraph explaining that the
-// engine has no such metric family. A cell that can only ever explain
-// its own emptiness is worth less than the table that took its place.
-// The endpoint, the chstore reader and the WaitLockStrip component all
-// STAY: `features/dependencies/DetailDrawer` still mounts the strip for
-// its own `kind === 'db'` rows, so this is not dead code.
+// NO WAITS & LOCKS (v0.9.846, operator's call; v0.9.852'de TAMAMEN
+// SÖKÜLDÜ). The wait/lock strip read /api/databases/waitlock, which is
+// fed by the OpenTelemetry database receivers' engine metric families —
+// and this install does not ingest them. The panel therefore had exactly
+// two states, both content-free: an empty strip, or a paragraph
+// explaining that the engine has no such metric family. A cell that can
+// only ever explain its own emptiness is worth less than the table that
+// took its place. v0.9.846'da bileşen, "DetailDrawer hâlâ mount ediyor"
+// gerekçesiyle bırakılmıştı; o dal ÇALIŞMA ZAMANINDA ERİŞİLEMEZDİ
+// (/databases artık onRowNavigate veriyor, satır tıklaması çekmece
+// açmıyor; /messaging ise kind="queue"). v0.9.852: uç + chstore okuyucusu
+// + tip + istemci metodu + bileşen gitti; geri dönüş git geçmişinden.
 //
 // IDENTITY (v0.9.821, the trap): a row is (system, instance, dbName),
 // never the printed label. When dbName is empty the page says "every

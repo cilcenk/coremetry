@@ -776,7 +776,6 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	s.registerAPITokenRoutes(mux)        // v0.8.330 — cross-signal pivot query layer (exemplars / trace links / window metrics), pivot.go
 	s.registerEndpointsDetailRoutes(mux) // v0.8.360 — /endpoints detail drill-down (histogram / status / exceptions / failing traces / split), endpoints_detail.go
 	s.registerDBStmtDetailRoutes(mux)    // v0.8.378 — /slow-queries statement drill-down (trend / callers / exemplars / compare), dbstmt_detail.go
-	s.registerDBWaitLockRoutes(mux)      // v0.8.391 — cross-engine waits & locks strip on the /databases drawer (Stage-2 D3), db_waitlock.go
 	s.registerExternalRoutes(mux)        // v0.8.446 — /external third-party API inventory from topology_edges_5m (Wave 3 / A1), external.go
 	s.registerHostRoutes(mux)            // v0.8.449 — /hosts host/pod inventory from metric_points (Wave 3 / A4), hosts.go
 	s.registerLdapGroupSyncRoutes(mux)   // v0.8.526 — LDAP/AD group-membership sync (summary / sync-now / preview), ldap_groupsync.go

@@ -1,34 +1,32 @@
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Zap, ChevronRight, ChevronDown } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
-import { Empty, Spinner } from '@/components/Spinner';
+import { Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Sparkline } from '@/components/Sparkline';
-import { EventMarkers } from '@/components/EventMarkers';
-import { Modal } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useEndpoints, useClusters } from '@/lib/queries';
 import { timeRangeToNs, rangeToSince, fmtNum } from '@/lib/utils';
-import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
+import { encodeRange } from '@/lib/urlState';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { TrendDelta } from '@/components/TrendDelta';
-import { EndpointDetailDrawer } from '@/pages/endpoints/DetailDrawer';
-import { encodeEndpointParam, decodeEndpointParam } from '@/pages/endpoints/endpointParam';
+import { endpointDetailHref, legacyEndpointTarget } from '@/pages/endpoints/endpointParam';
+import { tracesLink } from '@/pages/endpoints/links';
 import { parseColsParam, formatColsParam } from '@/pages/endpoints/endpointCols';
 import { ColumnToggle } from '@/pages/endpoints/ColumnToggle';
 import {
-  DETAIL_PARAM, EXP_PARAM, LIST_NEW_LABEL, LIST_NEW_TITLE,
+  EXP_PARAM, LIST_NEW_LABEL, LIST_NEW_TITLE,
   decodeExpandedParam, decodeEndpointRowKey, encodeExpandedParam,
   endpointP99Delta, endpointRowKey, endpointsSourceNote, listedTotals,
   toggleExpanded,
 } from '@/lib/endpointHonesty';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { EndpointRow, TimeRange, SpanMetricSeries } from '@/lib/types';
+import type { EndpointRow } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 
 // /endpoints — operator-asked v0.5.365. Cross-service inbound
@@ -169,7 +167,7 @@ export default function EndpointsPage() {
   // v0.9.429 — zoom-yığını paylaşılan usePageZoomRange hook'unda
   // (üstelik handler'lar artık useCallback-stabil — buradaki inline
   // kopya panel alt-ağacını her render'da yeniden çiziyordu).
-  const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('30m');
+  const { range, setRange } = usePageZoomRange('30m');
   // Global env filter (v0.8.385, env-separation Phase 2) — written by
   // the Topbar EnvPicker. Forwarded to /api/endpoints, where it forces
   // the bounded raw-spans path with a deploy_env conjunct (the
@@ -310,59 +308,35 @@ export default function EndpointsPage() {
         })));
     }
   }, [expandedRows, dep.since, depsByService]);
-  // v0.5.387 — sparkline-click drill-in. Modal renders the three RED
-  // sparklines (calls / errors / p99) side-by-side with their summary
-  // stats so the operator confirms "is this endpoint spiky" at a glance,
-  // then drills further via the same "view traces" link the table row
-  // already exposes.
+  // v0.9.839 — ÇEKMECE VE MODAL EMEKLİ. Satır tıkı artık /endpoint TAM
+  // SAYFASINA gidiyor (operatör kararı 2026-08-09). İki kaplama görünüm
+  // (620px çekmece + sparkline modalı) aynı endpoint'in hikâyesini ikiye
+  // bölüyordu, ikisi aynı anda açılamıyordu ve hiçbirinde tabloya yer
+  // yoktu. Sayfa hepsini tam genişlikte taşıyor.
   //
-  // v0.9.818 — KİMLİK URL'DE (?detail=, ?endpoint='in codec'i birebir).
-  // Modal ekranın yarısını kaplayan bir görünümdü ve kopyalanan link onu
-  // taşımıyordu; bir postmortem'e yapıştırılan bağlantı alıcıyı çıplak
-  // tabloya indiriyordu. Aşağıdaki state artık DOĞRULUK KAYNAĞI DEĞİL,
-  // yalnız tık anındaki satırın kopyası: taze liste satırı bulunamazsa
-  // başlık/kimlik ondan çizilir (grafikler ÇİZİLMEZ, rowIsStale).
-  const detailRef = useMemo(
-    () => decodeEndpointParam(params.get(DETAIL_PARAM)), [params]);
-  const [detailSnap, setDetailSnap] = useState<EndpointRow | null>(null);
-  const openDetail = (r: EndpointRow) => {
-    setDetailSnap(r);
-    setParams(prev => {
-      const next = new URLSearchParams(prev);
-      next.set(DETAIL_PARAM, encodeEndpointParam({
-        service: r.service, path: r.path, sig: bySignature,
-      }));
-      return next;
-    }, { replace: true });
-  };
-  const closeDetail = () => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.delete(DETAIL_PARAM);
-    return next;
-  }, { replace: true });
+  // ESKİ DERİN LİNKLER (?endpoint= / ?detail=) yeni sayfaya yönlenir:
+  // saved_views satırları ve postmortem'lere yapıştırılmış bağlantılar
+  // kırılmasın. Bu bir GERİYE-UYUM ŞİMİ DEĞİL — arkasında eski yüzeyler
+  // yok, tek yönlendirme efekti var ve bu paramları artık kimse YAZMIYOR.
+  useEffect(() => {
+    const target = legacyEndpointTarget(params.toString());
+    if (target) navigate(target, { replace: true });
+  }, [params, navigate]);
 
-  // v0.8.360 — URL-first detail drawer (Stage-2 slice E2). Row click
-  // (not the sparkline — that keeps its RED modal above) writes
-  // ?endpoint=<svc>|<path>[|sig] with replace:true; Esc/✕/overlay
-  // clears it. Copy-link reproduces the exact drill-down: sig rides
-  // the param itself, so a link copied in "group by shape" mode keeps
-  // aggregating the collapsed route for the recipient.
-  const endpointRef = useMemo(
-    () => decodeEndpointParam(params.get('endpoint')),
-    [params],
-  );
-  const openEndpoint = (r: EndpointRow) => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.set('endpoint', encodeEndpointParam({
-      service: r.service, path: r.path, sig: bySignature,
-    }));
-    return next;
-  }, { replace: true });
-  const closeEndpoint = () => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.delete('endpoint');
-    return next;
-  }, { replace: true });
+  // openEndpointPage — satır tıkının, klavye Enter/o'sunun ve sparkline
+  // tıkının TEK hedefi. Kapsam (range/env/cluster/compare/entry) pivotla
+  // birlikte gider: bir satır env=uat altında okunduysa açılan sayfa da
+  // aynı soruyu sormalı (v0.9.307 kuralı).
+  const openEndpointPage = (r: EndpointRow) => navigate(endpointDetailHref(
+    { service: r.service, path: r.path, sig: bySignature },
+    {
+      range: encodeRange(range),
+      env: env || undefined,
+      cluster: cluster || undefined,
+      compare,
+      entry: entry === 'rpc' ? 'rpc' : undefined,
+    },
+  ));
 
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
@@ -415,7 +389,11 @@ export default function EndpointsPage() {
     rows: tableRows,
     serverSort: true,
     initialSort: DEFAULT_ENDPOINTS_SORT,
-    onOpen: r => navigate(`/service?name=${encodeURIComponent(r.service)}`),
+    // v0.9.839 — Enter/o goes where the CLICK goes. It used to open the
+    // row's SERVICE, so the mouse and the keyboard answered two
+    // different questions from the same selected row; the drill-down
+    // now has a page of its own and both affordances land on it.
+    onOpen: openEndpointPage,
     searchRef,
   });
   const sortOk = (SORT_KEYS as readonly string[]).includes(dt.sort.id ?? '');
@@ -461,30 +439,6 @@ export default function EndpointsPage() {
   // Kaynak notu: env/cluster seçiliyken okuma MV'den ham spans'e düşer
   // ve POPÜLASYON değişir (endpointHonesty.endpointsSourceNote).
   const sourceNote = useMemo(() => endpointsSourceNote(cluster, env), [cluster, env]);
-
-  // v0.9.206 review-fix — modal'daki satırın MEVCUT range'e ait taze
-  // kopyası. Zoom range'i yeniden yazınca endpoint taze top-N'den
-  // düşebilir (limit varsayılanı 100); o durumda click-time satıra
-  // sessiz geri düşmek, bucketsToSeries'in ESKİ pencere sayaçlarını
-  // YENİ eksene yayıp yeni bucket genişliğine bölmesi demekti (30m→5m
-  // zoom'da rps 6x şişik, taze veri gibi). Kimlik/başlık bayat satırdan
-  // kalabilir; time-series üretimini modal rowIsStale ile keser.
-  //
-  // v0.9.818 — kimlik URL'den geldiği için (service, path) ile eşleşiyor;
-  // method eşleşmesi kalktı çünkü ?detail= onu taşımıyor ve satır kimliği
-  // MV grenine göre zaten (service, path) — method satırın İÇİNDE toplanan
-  // temsilî bir değer (anyHeavy), kimliğin parçası değil.
-  const freshDetailRow = detailRef
-    ? (rows ?? []).find(x => x.service === detailRef.service && x.path === detailRef.path)
-    : undefined;
-  // Tık anındaki kopya yalnız AYNI satırsa devreye girer — başka bir
-  // satırın sayılarını yeni kimliğin başlığı altında göstermek, bu
-  // sürümün kapattığı sınıfın ta kendisi olurdu.
-  const snapMatches = !!detailRef && !!detailSnap
-    && detailSnap.service === detailRef.service && detailSnap.path === detailRef.path;
-  const detailRow: EndpointRow | null = detailRef
-    ? (freshDetailRow ?? (snapMatches ? detailSnap : null))
-    : null;
 
   return (
     <>
@@ -707,14 +661,15 @@ export default function EndpointsPage() {
                       <tr {...dt.rowProps(i)}
                         onMouseEnter={() => dt.nav.setSelected(i)}
                         onClick={e => {
-                          // v0.8.360 — row click opens the detail
-                          // drawer. Links / buttons inside the row
-                          // (service link, expander, sparkline,
-                          // traces →) keep their own affordances.
+                          // v0.9.839 — row click NAVIGATES to the full
+                          // endpoint page (was: the 620px drawer).
+                          // Links / buttons inside the row (service
+                          // link, expander, sparkline, traces →) keep
+                          // their own affordances.
                           if ((e.target as HTMLElement).closest('a, button')) return;
-                          openEndpoint(r);
+                          openEndpointPage(r);
                         }}
-                        title="Click for endpoint detail (latency distribution, errors, failing traces)"
+                        title="Open the endpoint detail page (RED series, latency distribution, callers, failing traces)"
                         style={{
                           contentVisibility: 'auto', containIntrinsicSize: 'auto 32px',
                           cursor: 'pointer',
@@ -835,8 +790,12 @@ export default function EndpointsPage() {
                         {visibleCols.has('trend') && <td>
                           <button
                             type="button"
-                            onClick={() => openDetail(r)}
-                            title="Click for calls / errors / p99 detail"
+                            // v0.9.839 — the sparkline modal is retired;
+                            // its three RED charts are the first thing
+                            // on the detail page, so this goes to the
+                            // same place the row does.
+                            onClick={() => openEndpointPage(r)}
+                            title="Open the endpoint detail page — calls / errors / p99 on a time axis"
                             style={{
                               background: 'transparent', border: 0, padding: 0,
                               cursor: 'pointer', display: 'inline-block',
@@ -953,410 +912,9 @@ export default function EndpointsPage() {
             </div>
           </>
         )}
-        {/* Madde 4 sweep — zoom range'i değiştirince modal'daki satır bayat
-            kalmasın: aynı (service,path) satırının TAZE kopyası rows'tan
-            yeniden bulunur (drawer'ın v0.8.360 find deseni).
-            v0.9.206 review-fix — taze kopya YOKSA grafikler bayat satırdan
-            üretilmez (rowIsStale); modal açık kalır, kimlik/başlık durur.
-            v0.9.818 — açık/kapalı ve kimlik URL'den (?detail=); ne taze
-            satır ne tık-anı kopyası varsa (başka bir sekmede kopyalanmış
-            derin link) modal DÜRÜST bir boş hâl çizer, sessizce kapanmaz. */}
-        <EndpointMetricModal
-          refObj={detailRef}
-          row={detailRow}
-          rowIsStale={!!detailRef && !freshDetailRow}
-          onClose={closeDetail} range={range}
-          env={env} cluster={cluster}
-          onZoom={handleZoom} onZoomReset={handleZoomReset} />
-        {/* v0.8.360 — route-scoped drill-down drawer. row may be
-            undefined on a stale deep-link (endpoint not in the loaded
-            page) — the drawer soft-falls back and still loads its
-            sections from /api/endpoints/detail. */}
-        {endpointRef && (
-          <EndpointDetailDrawer
-            refObj={endpointRef}
-            row={(rows ?? []).find(x =>
-              x.service === endpointRef.service && x.path === endpointRef.path)}
-            range={range}
-            compare={compare}
-            env={env}
-            cluster={cluster}
-            onClose={closeEndpoint}
-          />
-        )}
       </div>
     </>
   );
-}
-
-// EndpointMetricModal — opens on sparkline click. Renders the
-// three RED dimensions (calls, errors, p99) as full uPlot
-// time-axis charts so the operator can read tick marks, hover
-// for exact values, and visually correlate spikes across all
-// three at the same instant via syncKey-linked crosshairs.
-// Deep links into /traces and the service detail page close
-// the metric → trace loop on the (service, path) tuple.
-//
-// v0.5.391 — upgraded from three bare Sparklines to full time-axis
-// charts so the metric view answers "what was happening at 14:23" not
-// just "is this endpoint spiky-shaped". Time axis, crosshair sync, and
-// tooltip per series. v0.9.819 — motor CorePanel (gerekçe: MetricTile).
-function EndpointMetricModal({
-  refObj, row, rowIsStale, onClose, range, env, cluster, onZoom, onZoomReset,
-}: {
-  // v0.9.818 — açık/kapalı URL'den (?detail=). refObj null = kapalı.
-  // row null AMA refObj dolu = derin link mevcut listede karşılığı
-  // olmayan bir endpoint'e işaret ediyor; modal o zaman sayı UYDURMAZ,
-  // durumu söyler ve pivotlarını kimlikten kurar.
-  refObj: import('@/pages/endpoints/endpointParam').EndpointRef | null;
-  row: EndpointRow | null; onClose: () => void; range: TimeRange;
-  // v0.9.307 — the scope this modal's row was read under, so its
-  // pivots ask the same question the table did.
-  env?: string; cluster?: string;
-  // v0.9.206 review-fix — true = row, MEVCUT range'in sonuçlarında
-  // bulunamayan bayat click-time satırı. Kimlik/başlık ondan çizilir
-  // ama time-series ondan ÜRETİLMEZ: bucketsToSeries eski pencere
-  // bucket'larını yeni eksene yayıp yeni bucket genişliğine böler
-  // (rps pencere oranı kadar şişer).
-  rowIsStale?: boolean;
-  // Madde 4 sweep — modal grafiklerinde drag-zoom → sayfa range'i,
-  // çift-tık → sayfa zoom geri-yığını (MetricTile üzerinden MLC'ye iner).
-  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
-  onZoomReset?: () => void;
-}) {
-  // Hooks must run unconditionally — call useMemo before any
-  // early return (React rules-of-hooks).
-  const series = useMemo(() => {
-    // v0.9.206 review-fix — bayat satırdan seri fabrikasyonu yok;
-    // boş seri MetricTile'ın "no data" boş hâlini düşürür.
-    if (!row || rowIsStale) return { calls: [], errors: [], p99: [] };
-    return bucketsToSeries(row, range);
-  }, [row, rowIsStale, range]);
-
-  if (!refObj) return <Modal open={false} onClose={onClose} />;
-  // v0.9.818 — kimlik VAR, satır YOK. Eskiden bu hâl imkânsızdı (modal
-  // yalnız tıkla açılırdı ve tık satırı taşırdı); URL-first olunca
-  // mümkün oldu: kopyalanan link farklı bir pencerede / farklı bir
-  // limitle açılıyor ve endpoint top-N'e girmiyor. SESSİZCE KAPANMAK
-  // yanlış olurdu ("link bozuk" diye okunur) — durumu söyle, çıkışları
-  // ver, sayı UYDURMA.
-  if (!row) {
-    return (
-      <Modal open onClose={onClose} size="md"
-        title={<span className="mono" style={{ fontSize: 13 }}>{refObj.path}
-          <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>({refObj.service})</span>
-        </span>}>
-        <div style={{ fontSize: 12, color: 'var(--text2)', lineHeight: 1.6, marginBottom: 14 }}>
-          Bu endpoint <b>mevcut listede yok</b>, o yüzden RED grafikleri çizilemiyor —
-          seri verisi tablo satırının kendisinden geliyor. Muhtemel sebep: seçili
-          zaman penceresi ya da <code>limit</code> (şu an top-N) bu endpoint'i
-          kapsamıyor. Pencereyi genişletin ya da limiti yükseltin; kimlik
-          korunuyor, modal yeniden dolacak.
-        </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <Link to={tracesLink(refObj, range, env, cluster)}
-            style={{ fontSize: 12, color: 'var(--accent2)' }}>View traces →</Link>
-          <Link to={`/service?name=${encodeURIComponent(refObj.service)}`}
-            style={{ fontSize: 12, color: 'var(--accent2)' }}>Service detail →</Link>
-        </div>
-      </Modal>
-    );
-  }
-  // v0.9.206 review-fix — bayat satırda boş hâl mesajı sebebi söyler.
-  const emptyLabel = rowIsStale
-    ? 'no data for this endpoint in the zoomed window' : undefined;
-  const peakCalls = (row.sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
-  const totalErrs = (row.errorsSparkline ?? []).reduce((s, v) => s + v, 0);
-  const maxP99 = (row.p99Sparkline ?? []).reduce((m, v) => Math.max(m, v), 0);
-  const errCls = row.errorRate >= 5 ? 'err' : row.errorRate >= 1 ? 'warn' : '';
-  return (
-    <Modal
-      open
-      onClose={onClose}
-      size="lg"
-      title={
-        <span className="mono" style={{ fontSize: 13 }}>
-          {row.method ? row.method + ' ' : ''}{row.path}
-          <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>
-            ({row.service})
-          </span>
-        </span>
-      }
-    >
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 12, marginBottom: 14,
-      }}>
-        {/* v0.6.16 — EventMarkers overlay on each chart. Per-tile
-            absolute overlay reads the same time window the tile's
-            chart uses; vertical lines anchor incidents
-            and deploys to the curve so the operator can spot
-            "p99 spike after the 14:23 deploy" without leaving
-            the modal. service is row.service — these charts are
-            always endpoint-scoped to one service. */}
-        {/* v0.9.819 — birimler @grafana/data katalog kimlikleri:
-            'rps' → 'reqps', '%' → 'percent'. Eski v1 gövdesi serbest
-            metin kabul ediyordu; CorePanel tanımadığı bir kimlikte
-            ekseni birimsiz çizerdi (sessiz kalite kaybı). */}
-        <MetricTile
-          label="Calls"
-          storageKey="calls"
-          big={fmtNum(row.calls)}
-          sub={`peak ${fmtNum(peakCalls)} / bucket`}
-          series={series.calls}
-          unit="reqps"
-          service={row.service}
-          range={range}
-          emptyLabel={emptyLabel}
-          onZoom={onZoom}
-          onZoomReset={onZoomReset}
-        />
-        <MetricTile
-          label="Errors"
-          storageKey="errors"
-          big={fmtNum(row.errors)}
-          sub={`${row.errorRate.toFixed(2)}% rate`}
-          subCls={errCls}
-          series={series.errors}
-          unit="percent"
-          role="error"
-          service={row.service}
-          range={range}
-          emptyLabel={emptyLabel}
-          onZoom={onZoom}
-          onZoomReset={onZoomReset}
-        />
-        <MetricTile
-          label="P99 latency"
-          storageKey="p99"
-          big={`${row.p99Ms.toFixed(0)} ms`}
-          sub={`peak ${maxP99.toFixed(0)} ms · avg ${row.avgMs.toFixed(0)} ms`}
-          series={series.p99}
-          unit="ms"
-          service={row.service}
-          range={range}
-          emptyLabel={emptyLabel}
-          onZoom={onZoom}
-          onZoomReset={onZoomReset}
-        />
-      </div>
-      <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
-        Hover any chart to read the bucket value; the crosshair
-        syncs across all three so you can correlate calls /
-        errors / p99 at the same instant. Total errors in window:
-        {' '}<strong>{fmtNum(totalErrs)}</strong>.
-      </div>
-      <div style={{ display: 'flex', gap: 10 }}>
-        <Link
-          to={tracesLink(row, range, env, cluster)}
-          style={{ fontSize: 12, color: 'var(--accent2)' }}
-        >
-          View traces →
-        </Link>
-        {/* v0.9.307 (brief N6b) — http.route is a resolver tier
-            dimension, so Explore answers this from the spanmetrics
-            rollups: zero new queries, and the p99 series arrives
-            already grouped by the route this modal is about. */}
-        <Link
-          to={exploreLink(row, range, 'p99', env, cluster)}
-          title="Open this route's p99 in Explore — charted from the metric rollups, where you can add dimensions or compare against another query."
-          style={{ fontSize: 12, color: 'var(--accent2)' }}
-        >
-          Open in Explore →
-        </Link>
-        <Link
-          to={`/service?name=${encodeURIComponent(row.service)}`}
-          style={{ fontSize: 12, color: 'var(--accent2)' }}
-        >
-          Service detail →
-        </Link>
-      </div>
-    </Modal>
-  );
-}
-
-// MetricTile — modal'ın üç RED karosu.
-//
-// v0.9.819 — GRAFİK MOTORU MultiLineChart'tan CorePanel'e geçti. Bu
-// sayfada artık iki grafik nesli yan yana duracaktı: üstteki şerit
-// CorePanel (v0.9.819), modal ise v1 uPlot gövdesi. Aynı ekranda iki
-// farklı tooltip, iki farklı lejant, iki farklı eksen biçimi — ve daha
-// kötüsü, iki farklı crosshair sync ad alanı (v0.9.789: v1 gövdesi x'i
-// SANİYE, CorePanel MİLİSANİYE tutar; karışık grup imleci 1000× yanlış
-// yere koyar). Tek motora inmek bunu tanım gereği imkânsız kılıyor.
-//
-// LAZY: @grafana/* statik import edilseydi /endpoints'in vendor chunk'ı
-// modal hiç açılmadan da ~1 MB büyürdü.
-//
-// EventMarkers KORUNDU: deploy/incident işaretleri ayrı bir veri
-// yolundan gelen mutlak-konumlu bir overlay, grafik motorundan bağımsız.
-const CorePanelMultiLazy = lazy(() =>
-  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
-
-function MetricTile({
-  label, big, sub, subCls, series, unit, role, storageKey, service, range,
-  emptyLabel, onZoom, onZoomReset,
-}: {
-  label: string; big: string; sub: string; subCls?: string;
-  series: SpanMetricSeries[]; unit?: string;
-  // Rol ÇAĞIRANDAN gelir, etiketten tahmin edilmez (seriesRole.ts).
-  role?: 'data' | 'error' | 'success' | 'muted';
-  storageKey: string;
-  // v0.6.16 — pass service + range so the tile can overlay
-  // EventMarkers on its chart. Optional so the component stays
-  // usable on pages that don't have an event story yet.
-  service?: string; range?: TimeRange;
-  // v0.9.206 review-fix — boş hâl mesajı override'ı (bayat-satır hâli).
-  emptyLabel?: string;
-  // Madde 4 sweep — drag-zoom → sayfa range'i, çift-tık → geri-yığın.
-  onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
-  onZoomReset?: () => void;
-}) {
-  // Compute window bounds once; the EventMarkers component
-  // already memoises internally, but pre-computing here keeps
-  // the prop signature stable across re-renders.
-  const bounds = useMemo(() => {
-    if (!range) return null;
-    return timeRangeToNs(range);
-  }, [range]);
-  // x ekseni SORGU aralığına mıhlanır (v0.9.725): veri seyrekse eksen
-  // kendi kendine daralır ve üç karo farklı zaman aralığı gösterir —
-  // imleç senkronu o zaman yalan söyler.
-  const xRange = useMemo(
-    () => (bounds ? { from: bounds.from / 1e9, to: bounds.to / 1e9 } : null),
-    [bounds]);
-  const hasData = series.length > 0 && series[0].points.length > 0;
-  return (
-    <div style={{
-      padding: '10px 12px', border: '1px solid var(--border)',
-      borderRadius: 6, background: 'var(--bg1)',
-    }}>
-      <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 2 }}>{big}</div>
-      <div style={{
-        fontSize: 11, marginBottom: 8,
-        color: subCls === 'err' ? 'var(--err)' : subCls === 'warn' ? 'var(--warn)' : 'var(--text3)',
-      }}>{sub}</div>
-      <div style={{ position: 'relative' }}>
-        <Suspense fallback={<div style={{ height: 140, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
-          <CorePanelMultiLazy
-            title={label}
-            storageKey={`endpoints-modal-${storageKey}`}
-            height={140}
-            unit={unit}
-            xRange={xRange}
-            // syncKey'in '-ms' soneki MOTOR AD ALANI (v0.9.789) —
-            // sayfanın üst şeridi de aynı motorda, ama AYRI grup:
-            // modal kendi penceresini anlatıyor.
-            syncKey="endpoints-modal-ms"
-            emptyReason={hasData ? undefined : (emptyLabel ?? 'Bu pencerede veri yok')}
-            items={[{ name: label, role: role ?? 'data', series }]}
-            onZoom={onZoom}
-            onZoomReset={onZoomReset} />
-        </Suspense>
-        {bounds && hasData && (
-          <EventMarkers
-            fromNs={bounds.from}
-            toNs={bounds.to}
-            service={service || undefined}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-// bucketsToSeries converts the row's three 30-bucket sparkline
-// arrays into SpanMetricSeries shape so the chart can plot
-// them on a time axis. The backend doesn't ship per-bucket
-// timestamps (the payload size is bounded that way) so we
-// reconstruct them client-side from the page's selected range
-// — bucket i sits at the midpoint of its slice of the window.
-// Matches the bucketing the backend's per_bucket CTE uses
-// (intDiv(time - from, bucketNs)).
-function bucketsToSeries(row: EndpointRow, range: TimeRange): {
-  calls: SpanMetricSeries[]; errors: SpanMetricSeries[]; p99: SpanMetricSeries[];
-} {
-  const { from, to } = timeRangeToNs(range);
-  const calls = row.sparkline ?? [];
-  const errs = row.errorsSparkline ?? [];
-  const p99s = row.p99Sparkline ?? [];
-  const n = Math.max(calls.length, errs.length, p99s.length);
-  if (n === 0 || to <= from) {
-    return { calls: [], errors: [], p99: [] };
-  }
-  const bucketNs = (to - from) / n;
-  const bucketSec = bucketNs / 1e9;
-  const timeAtBucket = (i: number) => from + bucketNs * i + bucketNs / 2;
-  const buildPoints = (arr: number[]) => arr.map((v, i) => ({
-    time: timeAtBucket(i),
-    value: v,
-  }));
-  // Madde 4 sweep — Calls/Errors birimsiz HAM SAYAÇTI ("12500" neyin
-  // nesi?). Calls per-bucket sayacı bucket genişliğine bölünüp gerçek
-  // rps olur; Errors, calls'a oranlanıp error % olur (calls=0 → 0%).
-  // Tile başlık istatistikleri (total/peak) ham sayaçtan okumaya devam
-  // eder — yalnız chart eksen/tooltip'i orana döner (Datadog dili).
-  const rpsPoints = calls.map((v, i) => ({
-    time: timeAtBucket(i),
-    value: bucketSec > 0 ? v / bucketSec : v,
-  }));
-  const errPctPoints = errs.map((v, i) => ({
-    time: timeAtBucket(i),
-    value: (calls[i] ?? 0) > 0 ? (v / calls[i]) * 100 : 0,
-  }));
-  return {
-    calls: calls.length ? [{ groupKey: ['calls'], points: rpsPoints }] : [],
-    errors: errs.length ? [{ groupKey: ['errors'], points: errPctPoints }] : [],
-    p99: p99s.length ? [{ groupKey: ['p99 ms'], points: buildPoints(p99s) }] : [],
-  };
-}
-
-// v0.9.307 — env/cluster ride the pivot. Without them a row read
-// under env=uat opened an UNFILTERED trace list: the pivot silently
-// widened the question it was launched from, which is the same
-// silent-scope class v0.9.306 closed inside the drawer.
-// v0.9.818 — parametre yalnız KİMLİK alıyor (EndpointRow'un tamamı
-// değil): modal, satırı olmayan bir derin-linkte de aynı pivotu kurmak
-// zorunda ve o hâlde elimizde sadece (service, path) var.
-function tracesLink(
-  r: { service: string; path: string }, range: TimeRange, env?: string, cluster?: string,
-): string {
-  return `/traces?service=${encodeURIComponent(r.service)}` +
-    `&search=${encodeURIComponent(r.path)}` +
-    `&range=${encodeURIComponent(encodeRange(range))}` +
-    (env ? `&env=${encodeURIComponent(env)}` : '') +
-    (cluster ? `&cluster=${encodeURIComponent(cluster)}` : '') +
-    `&view=list&rootOnly=false`;
-}
-
-// exploreLink — "Open in Explore →" (v0.9.307, brief N6b).
-//
-// Zero new queries: http.route is already a resolver tier dimension
-// (TIER_DIM_KEYS), so Explore answers this from the spanmetrics
-// rollups rather than raw spans. The URL is the SAME legacy
-// ?result=metric shape OperationsTable already emits — no new scheme
-// invented, and seedFromLegacyParams decodes it unchanged.
-//
-// env rides along for the same reason it rides tracesLink: a pivot
-// must carry the scope it was launched from, or it answers a wider
-// question than the one on screen.
-function exploreLink(
-  r: EndpointRow, range: TimeRange, agg: string, env?: string, cluster?: string,
-): string {
-  const filters = encodeFilters([
-    { k: 'service.name', op: '=', v: [r.service] },
-    { k: 'http.route', op: '=', v: [r.path] },
-  ]);
-  return `/explore?${buildQuery([
-    ['range', encodeRange(range)],
-    ['filters', filters],
-    ['agg', agg],
-    ['field', 'duration_ms'],
-    ['result', 'metric'],
-    ['env', env ?? ''],
-    ['cluster', cluster ?? ''],
-  ])}`;
 }
 
 // StatusBreakdown — inline 2xx / 3xx / 4xx / 5xx pills for one

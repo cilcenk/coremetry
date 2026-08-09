@@ -25,6 +25,10 @@ const TraceCompare      = lazy(() => import('./pages/TraceCompare'));
 const Logs              = lazy(() => import('./pages/Logs'));
 const Metrics           = lazy(() => import('./pages/Metrics'));
 const Endpoints         = lazy(() => import('./pages/Endpoints'));
+// v0.9.839 — full-page endpoint detail; the drawer + sparkline modal it
+// replaces are gone. Old ?endpoint= / ?detail= deep links redirect here
+// from /endpoints.
+const EndpointDetail    = lazy(() => import('./pages/EndpointDetail'));
 const Explore           = lazy(() => import('./pages/Explore'));
 const Runbooks          = lazy(() => import('./pages/Runbooks'));
 const Runbook           = lazy(() => import('./pages/Runbook'));
@@ -123,6 +127,7 @@ export default function App() {
             <Route path="/logs"           element={<Logs />} />
             <Route path="/metrics"        element={<Metrics />} />
             <Route path="/endpoints"      element={<Endpoints />} />
+            <Route path="/endpoint"       element={<EndpointDetail />} />
             <Route path="/explore"        element={<Explore />} />
             <Route path="/runbooks"      element={<Runbooks />} />
             <Route path="/runbook"       element={<Runbook />} />

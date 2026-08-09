@@ -81,6 +81,19 @@ func endpointDownstreamKey(service, path string, sig bool, from, to time.Time, e
 		pivotMinuteBucket(from), pivotMinuteBucket(to))
 }
 
+// endpointCallersKey builds the /api/endpoints/callers cache key —
+// v0.9.839. Same hash-ALL-inputs contract as its siblings: the (service,
+// path) FNV digest with its NUL separator, the signature flag, env,
+// cluster, the row limit and the minute-bucketed window. limit is IN the
+// key because it changes the answer's LENGTH — a top-5 entry served to a
+// top-20 request would silently truncate the panel, the v0.5.187 class
+// with a different surface.
+func endpointCallersKey(service, path string, sig bool, from, to time.Time, env, cluster string, limit int) string {
+	return fmt.Sprintf("endpoints-callers:sp=%s:sig=%v:env=%s:clu=%s:lim=%d:from=%d:to=%d",
+		endpointKeyDigest(service, path), sig, env, cluster, limit,
+		pivotMinuteBucket(from), pivotMinuteBucket(to))
+}
+
 func endpointSplitKey(service, path string, sig bool, by string, from, to time.Time, env, cluster string) string {
 	return fmt.Sprintf("endpoints-split:sp=%s:sig=%v:by=%s:env=%s:clu=%s:from=%d:to=%d",
 		endpointKeyDigest(service, path), sig, by, env, cluster,
@@ -278,5 +291,49 @@ func (s *Server) getEndpointDownstream(w http.ResponseWriter, r *http.Request) {
 			From: from, To: to,
 			Env: env, Cluster: cluster,
 		})
+	})
+}
+
+// getEndpointCallers serves GET /api/endpoints/callers —
+//
+//	?service=<name>&path=<route>&from=&to=&sig=1&env=&cluster=&limit=
+//
+// The /endpoint page's "Who calls this" panel (v0.9.839, operator ask:
+// the /databases caller table, on the endpoint surface). Two bounded
+// raw-spans passes — no MV carries (route × caller), and the nearest
+// one keys on span NAME, which is NOT this page's identity. See
+// chstore/endpoints_callers.go for the full why.
+//
+// Bare (viewer-visible) like every read in this family, serveCached 60s
+// to match the sibling downstream walk: the read is the second-most
+// expensive thing the page can issue and re-opening a route inside the
+// TTL must not re-run it.
+func (s *Server) getEndpointCallers(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	service := strings.TrimSpace(q.Get("service"))
+	path := q.Get("path")
+	if service == "" || path == "" {
+		http.Error(w, "service and path required", http.StatusBadRequest)
+		return
+	}
+	sig := q.Get("sig") == "1"
+	from, to := parseFromTo(r, time.Hour)
+	env := strings.TrimSpace(q.Get("env"))
+	cluster := strings.TrimSpace(q.Get("cluster"))
+	// Clamped BEFORE the key so a crafted ?limit= can't mint unbounded
+	// distinct cache entries for one answer (the store clamps too — this
+	// one is about the cache, that one about the query).
+	limit := parseInt(q.Get("limit"), 20)
+	if limit <= 0 || limit > 50 {
+		limit = 20
+	}
+
+	key := endpointCallersKey(service, path, sig, from, to, env, cluster, limit)
+	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		return s.store.EndpointCallers(ctx, chstore.EndpointDetailQuery{
+			Service: service, Path: path, BySignature: sig,
+			From: from, To: to,
+			Env: env, Cluster: cluster,
+		}, limit)
 	})
 }

@@ -3256,6 +3256,48 @@ export interface EndpointDownstream {
   totalMs: number;
 }
 
+// EndpointCallers — v0.9.839. "Who calls this endpoint", the panel the
+// operator asked for on the /endpoint page in the /databases caller
+// table's exact shape (service · calls · error % · p95 · impact).
+//
+// SAMPLED BY CONSTRUCTION, like EndpointDownstream: no MV carries the
+// pair (route, caller) — service_callers_5m keys on the receiving
+// SERVICE and topology_op_edges_5m keys on the span NAME, which is not
+// this page's identity. The backend reads a bounded, unbiased sample of
+// the route's entry spans and resolves their parents.
+export interface EndpointCaller {
+  service: string;
+  calls: number;
+  errors: number;
+  errorRate: number;
+  /** p95 of THIS route's duration when called by this service. */
+  p95Ms: number;
+  shareMs: number;
+  sharePct: number;
+}
+
+export interface EndpointCallersResponse {
+  callers: EndpointCaller[] | null;
+  /** Entry spans behind every number above. */
+  sampledSpans: number;
+  /**
+   * true = the window held MORE entry spans than were read, so these
+   * are estimates. false = the sample IS the window, and the UI must
+   * not label a complete answer "sampled".
+   */
+  sampled: boolean;
+  /** Sampled entry spans with no parent at all — entered from outside. */
+  directEntries: number;
+  /**
+   * Sampled entry spans whose parent id resolved to nothing. "We could
+   * not see the caller" — deliberately NOT folded into directEntries,
+   * which is a different and much stronger claim.
+   */
+  unresolved: number;
+  /** The sample's total entry duration — the share denominator. */
+  totalMs: number;
+}
+
 // EndpointDetail — v0.8.360 (Stage-2 slice E2). One payload for the
 // /endpoints detail drawer, mirroring internal/api/endpoints_detail.go's
 // endpointDetailPayload. Sections are NULL-TOLERANT by contract: a

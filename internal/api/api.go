@@ -632,6 +632,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/service-map", s.getServiceMap)
 	mux.HandleFunc("GET /api/endpoints", s.getEndpoints)
 	mux.HandleFunc("GET /api/endpoints/downstream", s.getEndpointDownstream)
+	mux.HandleFunc("GET /api/endpoints/callers", s.getEndpointCallers)
 	mux.HandleFunc("GET /api/services/{name}/attrs", s.getServiceAttrs)
 	mux.HandleFunc("GET /api/databases", s.getDatabases)
 	mux.HandleFunc("GET /api/databases/trends", s.getDBTrends)

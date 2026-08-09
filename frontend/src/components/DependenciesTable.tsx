@@ -91,6 +91,7 @@ const NATURAL: Record<SortKey, 'asc' | 'desc'> = {
 // click lands on /explore scoped to that system+instance.
 export function DependenciesTable({
   rows, kind, range, compare, extraControls, openRowKey, onOpenRowChange,
+  onRowNavigate,
 }: {
   rows: DepRow[];
   // 'db' → uses instance + filters by db.system; 'queue' → uses
@@ -113,6 +114,16 @@ export function DependenciesTable({
   // pages (/databases) keep the internal useState behaviour.
   openRowKey?: string | null;
   onOpenRowChange?: (row: DepRow | null) => void;
+  // v0.9.840 — NAVIGATE MODE, opt-in and deliberately narrow.
+  //
+  // /databases retires the inline row drawer: a row click goes to the
+  // full /database page. This table is SHARED (/databases, /messaging,
+  // and any future consumer), so the retirement is a prop, not a
+  // rewrite — pass it and the row navigates and grows no expander;
+  // omit it and every existing consumer behaves exactly as before.
+  // Both affordances move together: the mouse click and the keyboard
+  // Enter/o must never disagree about what opening a row means.
+  onRowNavigate?: (row: DepRow) => void;
 }) {
   // v0.9.813 — System filtresi + arama URL'e taşındı (?msys= / ?q=).
   //
@@ -295,6 +306,7 @@ export function DependenciesTable({
     // drawer'ını Endpoints'teki gibi açar/kapar. /databases + /messaging
     // bu tablo üzerinden aynı anda kazandı.
     onOpen: (row) => {
+      if (onRowNavigate) { onRowNavigate(row); return; } // v0.9.840
       const rowKey = depRowKey(row);
       setOpen(openKey === rowKey ? null : row, openKey === rowKey ? null : rowKey);
     },
@@ -445,18 +457,23 @@ export function DependenciesTable({
               // bir satıra tıklamak hepsinin çekmecesini birden açıyordu
               // (canlı: oracle/oracle üzerinde 6, postgres üzerinde 9).
               const rowKey = depRowKey(r);
-              const isOpen = openKey === rowKey;
+              // v0.9.840 — navigate mode never has an open row: there is
+              // no inline drawer to be open.
+              const isOpen = !onRowNavigate && openKey === rowKey;
               return (
                 <Fragment key={`${rowKey}|${i}`}>
-                  <tr onClick={() => setOpen(isOpen ? null : r, isOpen ? null : rowKey)}
+                  <tr onClick={() => (onRowNavigate
+                        ? onRowNavigate(r)
+                        : setOpen(isOpen ? null : r, isOpen ? null : rowKey))}
                       style={{ cursor: 'pointer',
                                // scale-audit v0.8.203 — skip off-screen rows
                                // (matches the instance table below); at a bank
                                // with many DB schemas this list reaches 1000s.
                                contentVisibility: 'auto', containIntrinsicSize: 'auto 32px',
                                background: isOpen ? 'var(--bg2)' : undefined }}>
-                    <td style={{ color: 'var(--text3)', width: 24, textAlign: 'center' }}>
-                      {isOpen ? '▾' : '▸'}
+                    <td style={{ color: 'var(--text3)', width: 24, textAlign: 'center' }}
+                        title={onRowNavigate ? 'Open the detail page' : undefined}>
+                      {onRowNavigate ? '›' : isOpen ? '▾' : '▸'}
                     </td>
                     <td>
                       <SystemBadge system={r.system} kind={kind} />

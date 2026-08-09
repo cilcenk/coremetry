@@ -34,6 +34,10 @@ const Runbooks          = lazy(() => import('./pages/Runbooks'));
 const Runbook           = lazy(() => import('./pages/Runbook'));
 const RunbookExecution  = lazy(() => import('./pages/RunbookExecution'));
 const Databases         = lazy(() => import('./pages/Databases'));
+// v0.9.840 — full-page database detail; the inline row drawer it
+// replaces is gone from /databases (it lives on for /messaging, which
+// shares the table). Old ?row= deep links redirect here.
+const DatabaseDetail    = lazy(() => import('./pages/DatabaseDetail'));
 const Deploys           = lazy(() => import('./pages/Deploys')); // v0.9.435
 const External          = lazy(() => import('./pages/External'));
 const Hosts             = lazy(() => import('./pages/Hosts'));
@@ -133,6 +137,7 @@ export default function App() {
             <Route path="/runbook"       element={<Runbook />} />
             <Route path="/runbook-exec"  element={<RunbookExecution />} />
             <Route path="/databases"      element={<Databases />} />
+            <Route path="/database"       element={<DatabaseDetail />} />
             <Route path="/deploys"        element={<Deploys />} />
             <Route path="/databases/slow-queries" element={<SlowQueries />} />
             <Route path="/external"       element={<External />} />

@@ -77,6 +77,62 @@ export function parseHistory(raw: string | null): QueryHistoryEntry[] {
   return out.slice(0, MAX_HISTORY);
 }
 
+// ── v0.9.849 — halkanın GÖRÜNEN hâli ────────────────────────────────────────
+//
+// Halka v0.9.562'den beri yazıyordu ama hiçbir yer OKUMUYORDU: giriş ekranı
+// (soru kartları) kaldırılınca tek tüketicisi de gitti, hook öksüz kaldı.
+// Aşağıdaki iki saf fonksiyon o listeyi geri görünür kılıyor.
+//
+// SAF ve NOW'U DIŞARIDAN ALIR: Date.now()'u içeriden okusaydı test bir
+// saat dilimine/anlık zamana bağlanır, ve React tarafında da her render'da
+// tazelenip gereksiz iş üretirdi (bu depoda timeRangeToNs'in v0.5.184
+// dersi tam olarak bu).
+
+// Etiket kırpma sınırı. 4 slotluk bir açılır listede satır başına bir
+// SATIR var; builderDesc dört sorgu + formül + viz taşıyabildiği için
+// kırpılmazsa panel yatay olarak taşar.
+export const HISTORY_LABEL_MAX = 72;
+
+export interface HistoryItemView {
+  text: string;    // kırpılmış, tek satırlık özet
+  when: string;    // "3 dk önce"
+  title: string;   // TAM özet (kırpma bilgi kaybı değil, gizleme olsun)
+  search: string;  // uygulanacak arama dizesi; '' = uygulanamaz
+}
+
+// historyRelTime — kaba göreli zaman. Kaba olması BİLİNÇLİ: bu liste
+// "az önce neye bakıyordum" sorusuna cevap verir, bir denetim kaydı değil.
+//
+// NEGATİF FARK SIFIR SAYILIR. Kayıtlar localStorage'da yaşıyor ve makinenin
+// saati geri alınabilir (NTP düzeltmesi, uçuş modundan dönüş); "-3 dk önce"
+// yazan bir satır okuyanı veriden şüpheye düşürür.
+export function historyRelTime(tm: number, nowMs: number): string {
+  const d = Math.max(0, nowMs - tm);
+  if (d < 60_000) return 'şimdi';
+  if (d < 3_600_000) return `${Math.floor(d / 60_000)} dk önce`;
+  if (d < 86_400_000) return `${Math.floor(d / 3_600_000)} sa önce`;
+  return `${Math.floor(d / 86_400_000)} gün önce`;
+}
+
+// historyItemView — bir kaydın satır gösterimi.
+//
+// KIRPMA KOD NOKTASI BAZINDA (Array.from), byte ya da UTF-16 birimi
+// bazında DEĞİL: operatörün sorgusunda Türkçe karakter ya da '·'/'ƒ' gibi
+// işaretler var ve slice() bir surrogate çiftini ikiye bölerse ekrana
+// bozuk glif düşer.
+export function historyItemView(e: QueryHistoryEntry, nowMs: number): HistoryItemView {
+  const cps = Array.from(e.desc);
+  const text = cps.length > HISTORY_LABEL_MAX
+    ? cps.slice(0, HISTORY_LABEL_MAX - 1).join('') + '…'
+    : e.desc;
+  const when = historyRelTime(e.tm, nowMs);
+  // state Phase-1'den beri OPAK (unknown) — daraltmayı burada yapıyoruz ki
+  // bozuk/eski bir kayıt tıklanınca navigate'e çöp gitmesin. '?' ile
+  // başlamayan her şey uygulanamaz sayılır.
+  const search = typeof e.state === 'string' && e.state.startsWith('?') ? e.state : '';
+  return { text, when, title: `${e.desc}\n${when}`, search };
+}
+
 function readHistory(): QueryHistoryEntry[] {
   if (typeof window === 'undefined') return [];
   // getRaw absorbs disabled-storage throws; parseHistory absorbs

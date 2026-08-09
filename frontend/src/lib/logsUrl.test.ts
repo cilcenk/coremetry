@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { logsUrlSig, writeLogsParams, readLogsParams, type LogsUrlFilter } from './logsUrl';
+import { logsUrlSig, writeLogsParams, readLogsParams, logsRangeParam, type LogsUrlFilter } from './logsUrl';
+import { decodeRange } from './urlState';
 
 // v0.8.546 — /logs `severity` was a live filter that never round-tripped
 // through the URL: writeUrl didn't write it, urlSig didn't hash it, and the
@@ -108,5 +109,77 @@ describe('other params keep their pre-v0.8.546 behaviour', () => {
   it('hasTrace is 1/absent, not true/false', () => {
     expect(writeLogsParams(new URLSearchParams(), { ...base, hasTrace: true }, '', '').get('hasTrace')).toBe('1');
     expect(writeLogsParams(new URLSearchParams(), base, '', '').has('hasTrace')).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v0.9.853 — UX denetimi K3: Trace detayının ana "≡ Logs" butonu pencereyi
+// `?from=<ns>&to=<ns>` diye gönderiyordu. readLogsParams (yukarıda) from/to
+// BİLMEZ — /logs penceresini yalnız `?range=`ten alır. Parametreler ölü yük
+// olarak URL'de duruyor, sayfa sticky pencereyle açılıyordu: sticky
+// pencereden eski HER trace'te "log yok" (loglar duruyorken).
+//
+// Bu blok tek üreticiyi (logsRangeParam) kilitler: NANOSANİYE girer,
+// MİLİSANİYE `custom:` token'ı çıkar (v0.6.36 birim-karıştırma sınıfı) ve
+// çıktının decodeRange'in kabul testinden geçtiğini doğrular.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('logsRangeParam — K3 ölü from/to parametresi', () => {
+  const MS = 1_000_000; // ns per ms
+
+  it('ns penceresini /logs tarafının okuduğu ms token\'ına çevirir', () => {
+    expect(logsRangeParam(1_700_000_000_000 * MS, 1_700_000_060_000 * MS))
+      .toBe('custom:1700000000000-1700000060000');
+  });
+
+  it('round-trip: ürettiği token decodeRange tarafından AYNI pencereye çözülür', () => {
+    const token = logsRangeParam(1_700_000_000_000 * MS, 1_700_000_060_000 * MS);
+    expect(decodeRange(token, { preset: '30m' }))
+      .toEqual({ preset: 'custom', fromMs: 1_700_000_000_000, toMs: 1_700_000_060_000 });
+  });
+
+  it('token /logs okuyucusunun pencere kanalına düşer (from/to DEĞİL)', () => {
+    // Bug'ın özü: ne yazarsak yazalım, `from`/`to` adları okunmuyor.
+    const dead = readLogsParams(new URLSearchParams('traceId=abc&from=1&to=2'));
+    expect(dead.traceId).toBe('abc');
+    expect(Object.keys(dead)).not.toContain('from');
+    // Doğru kanal `range` — logsUrl'in filtre şeması değil, useUrlRange okur;
+    // burada garanti ettiğimiz, üretilen token'ın o kanalın dilinde olması.
+    expect(logsRangeParam(5_000 * MS, 6_000 * MS).startsWith('custom:')).toBe(true);
+  });
+
+  describe('padNs — birim disiplini (ns girer, ms çıkar)', () => {
+    const cases: Array<{ name: string; padNs: number; fromMs: number; toMs: number }> = [
+      { name: 'yastıksız',      padNs: 0,                fromMs: 1_000_000, toMs: 1_000_060 },
+      { name: '60 sn (trace)',  padNs: 60_000_000_000,   fromMs:   940_000, toMs: 1_060_060 },
+      { name: '15 dk (span)',   padNs: 900_000_000_000,  fromMs:   100_000, toMs: 1_900_060 },
+      { name: '1 ms',           padNs: 1_000_000,        fromMs:   999_999, toMs: 1_000_061 },
+    ];
+    for (const c of cases) {
+      it(`${c.name}: pencereyi ms cinsinden simetrik genişletir`, () => {
+        expect(logsRangeParam(1_000_000 * MS, 1_000_060 * MS, c.padNs))
+          .toBe(`custom:${c.fromMs}-${c.toMs}`);
+      });
+    }
+  });
+
+  it('yuvarlama pencereyi DARALTMAZ (alt sınır floor, üst sınır ceil)', () => {
+    // Yarım ms'lik kenarlar: her iki uç da dışarı yuvarlanmalı, yoksa kenardaki
+    // log satırı pencerenin dışında kalır.
+    const t = logsRangeParam(1_700_000_000_000 * MS + 500_000, 1_700_000_060_000 * MS + 500_000);
+    expect(t).toBe('custom:1700000000000-1700000060001');
+  });
+
+  it('kullanılamaz pencerede boş döner — çağıran paramı DÜŞÜRSÜN', () => {
+    // DrillButton/Link boş değeri atar; bozuk bir `custom:` token'ı yazmak
+    // decodeRange'i fallback'e düşürürdü (sessiz yanlış pencere).
+    for (const [from, to] of [
+      [undefined, undefined], [0, 5_000 * MS], [5_000 * MS, 0],
+      [5_000 * MS, 5_000 * MS],            // sıfır genişlik
+      [6_000 * MS, 5_000 * MS],            // ters
+      [NaN, 5_000 * MS], [5_000 * MS, NaN],
+      [-1 * MS, 0],
+    ] as Array<[number | undefined, number | undefined]>) {
+      expect(logsRangeParam(from, to), `${from}..${to} boş dönmeli`).toBe('');
+    }
   });
 });

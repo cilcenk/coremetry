@@ -66,3 +66,34 @@ export function readLogsParams(p: URLSearchParams): LogsUrlFilter {
     hasTrace: p.get('hasTrace') === '1', // v0.8.406
   };
 }
+
+// logsRangeParam — v0.9.853 (UX denetimi K3). The ONE producer of the time
+// window token /logs actually reads.
+//
+// The bug it kills: Trace detail's main "≡ Logs" button shipped
+// `?from=<ns>&to=<ns>`. readLogsParams above has no from/to — /logs takes its
+// window from `?range=` ONLY. So the params rode along as dead weight and the
+// page fell back to the sticky range: on any trace older than the sticky
+// window the operator got "no logs" for a trace whose logs exist. The last
+// step of the alert→service→endpoint→trace→logs journey, silently broken.
+//
+// Unit discipline (v0.6.36 class): span times and traceLogWindow are Unix
+// NANOSECONDS; `custom:` is MILLISECONDS. The conversion lives here once
+// instead of being re-derived at each call site — SpanDetail had the only
+// correct copy (v0.8.484) and Trace.tsx had none.
+//
+// `padNs` widens the window symmetrically (ingest lag / clock skew). Floor the
+// low edge and ceil the high edge so rounding never NARROWS the window.
+// Returns '' when the window is unusable, so callers can drop the param
+// rather than emit a `custom:` token decodeRange would reject anyway.
+export function logsRangeParam(
+  fromNs?: number | null, toNs?: number | null, padNs = 0,
+): string {
+  if (!fromNs || !toNs || !Number.isFinite(fromNs) || !Number.isFinite(toNs)) return '';
+  const fromMs = Math.floor((fromNs - padNs) / 1e6);
+  const toMs = Math.ceil((toNs + padNs) / 1e6);
+  // Mirror decodeRange's acceptance test (urlState.ts): anything it would
+  // reject must not be emitted.
+  if (!(fromMs > 0) || !(toMs > fromMs)) return '';
+  return `custom:${fromMs}-${toMs}`;
+}

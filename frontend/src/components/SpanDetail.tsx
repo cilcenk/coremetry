@@ -4,6 +4,7 @@ import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow } from '@/lib/ty
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
 import { api } from '@/lib/api';
 import { getRaw, setRaw } from '@/lib/storage';
+import { logsRangeParam } from '@/lib/logsUrl';
 import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
 import { AIExplainButton } from './ai/AIExplainButton';
@@ -87,6 +88,8 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   // reintroduce the v0.5.223 "old traces vanish" bug.
   const logsFromBound = logsFrom ?? (span.startTime ? span.startTime - SPAN_LOG_WINDOW_BUFFER_NS : undefined);
   const logsToBound   = logsTo   ?? (span.endTime   ? span.endTime   + SPAN_LOG_WINDOW_BUFFER_NS : undefined);
+  // v0.9.853 — ns→ms `custom:` üretimi tek yerde (lib/logsUrl.ts).
+  const logsLinkRange = logsRangeParam(logsFromBound, logsToBound, LOGS_LINK_EXTRA_NS);
   const [spanLogs, setSpanLogs] = useState<LogRow[]>([]);
   // v0.9.461 (dürüstlük A5) — zarf düşürülmesin: degraded/hata "log yok"
   // gibi OKUNMASIN (ES brownout'ta emin bir "No logs attached" basılıyordu);
@@ -318,10 +321,11 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
                 q'yu kolonla DA eşliyor, iki dünya da bulur). Pencere
                 ±15 dk: ingest-gecikmeli @timestamp'ler ±60s'yi
                 kaçırıyordu. */}
+            {/* v0.9.853 — ns→ms dönüşümü artık tek üreticide
+                (lib/logsUrl.ts logsRangeParam); bu dosya doğru kopyaydı,
+                Trace.tsx'in hiç yoktu (K3). */}
             <Link to={`/logs?q=${span.traceId}` +
-                      (logsFromBound && logsToBound
-                        ? `&range=custom:${Math.floor((logsFromBound - LOGS_LINK_EXTRA_NS) / 1e6)}-${Math.ceil((logsToBound + LOGS_LINK_EXTRA_NS) / 1e6)}`
-                        : '')}
+                      (logsLinkRange ? `&range=${logsLinkRange}` : '')}
               style={{ marginLeft: 8, fontSize: 10, fontWeight: 400, color: 'var(--accent2)' }}>
               open in Logs ↗
             </Link>

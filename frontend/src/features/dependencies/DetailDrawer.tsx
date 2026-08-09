@@ -5,7 +5,6 @@ import { Spinner } from '@/components/Spinner';
 import { LazyMount } from '@/components/LazyMount';
 import { api } from '@/lib/api';
 import { fmtNum, fmtNs, timeRangeToNs } from '@/lib/utils';
-import { msgBalance } from '@/lib/msgBalance';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries } from '@/lib/types';
@@ -166,14 +165,6 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
   const e2eSeries = e2e?.series ?? [];
   const e2eLagSeries = kindSeries(e2eSeries, p => p.avgMs, 'E2E lag');
 
-  // v0.9.815 — pencere geneli üretim/tüketim dengesi. Kaynak, satırın
-  // kendisi değil DRAWER'ın kendi serisi: drawer ayrı bir sorgudan
-  // besleniyor ve satırdan sayı taşımak iki farklı okumayı tek çipte
-  // birleştirmek olurdu.
-  const drawerProduce = msgSeries.reduce((a, p) => a + p.produceCount, 0);
-  const drawerConsume = msgSeries.reduce((a, p) => a + p.consumeCount, 0);
-  const drawerBalance = msgBalance(drawerProduce, drawerConsume);
-
   return (
     <div>
       {/* v0.9.257 (operator-reported, second round: "messaging
@@ -202,19 +193,6 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
                   title="Only the failing spans on this topic">
               Failed traces ({fmtNum(data.errorCount)}) →
             </Link>
-          )}
-          {/* v0.9.815 — SAĞLIK ÇİPİ. YALNIZ eşik aşılınca çıkar:
-              her destination'da duran bir "dengede" rozeti, gerçekten
-              biriken topic'i göze batmaz hâle getirirdi (uyarı
-              enflasyonu). Metin ne olduğunu VE neden önemli olduğunu
-              söylüyor; oran span sayılarından, broker lag'ından değil
-              — tooltip bunu açıkça yazıyor. */}
-          {drawerBalance.state === 'accumulating' && (
-            <span className="badge b-warn"
-              style={{ textTransform: 'none', letterSpacing: 0, alignSelf: 'center' }}
-              title={`Pencerede ${fmtNum(drawerProduce)} producer, ${fmtNum(drawerConsume)} consumer span'i görüldü. Bu bir consumer LAG ölçümü DEĞİL (broker metriği ingest edilmiyor) — span sayılarının oranı. Örnekleme iki tarafı farklı kırpıyorsa oran yanıltabilir.`}>
-              ▲ tüketim üretimden %{Math.round((drawerBalance.ratio ?? 0) * 100)} yavaş — backlog riski
-            </span>
           )}
         </div>
       )}

@@ -317,6 +317,33 @@ export function seriesGroupLabel(q: BuilderQuery, groupKey: string[], desc: stri
   return grp || desc;
 }
 
+// PivotPair (v0.9.848) — bir serinin (splitBy anahtarı, değer) çifti.
+// GroupTable satırından filtre çipine giden pivotun para birimi.
+export interface PivotPair { k: string; v: string; }
+
+// seriesGroupPairs — seriesGroupLabel'in ÇİFT hâli: aynı groupKey'i etikete
+// değil (anahtar, değer) listesine çevirir. İkisi AYNI dosyada ve AYNI band
+// soyma kuralıyla, çünkü ayrışırlarsa satırda okunan etiket ile o satırdan
+// üretilen filtre farklı boyutlara işaret ederdi — ekranda hiçbir belirtisi
+// olmayan bir hata sınıfı.
+//
+// splitBy'da karşılığı OLMAYAN bir groupKey elemanı ATLANIR: adlandıramadığımız
+// bir boyutu 'g' gibi uydurma bir anahtarla filtreye yazmak, backend'de hiçbir
+// şeyle eşleşmeyen bir çip üretirdi (boş panel, sebep yok).
+export function seriesGroupPairs(q: BuilderQuery, groupKey: string[]): PivotPair[] {
+  // band (v0.8.411): resolver quantile etiketini SON groupKey elemanına
+  // katlar — seriesGroupLabel'deki soymanın birebir aynısı.
+  const keys = (q.agg === 'band' && groupKey.length === q.splitBy.length + 1)
+    ? groupKey.slice(0, -1)
+    : groupKey;
+  const out: PivotPair[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    const k = q.splitBy[i];
+    if (k) out.push({ k, v: keys[i] });
+  }
+  return out;
+}
+
 // ── Phase-3 — per-query context pins (SLO thresholds + deploy markers) ──────
 
 // pinnedService — the single service this query is unambiguously scoped to:

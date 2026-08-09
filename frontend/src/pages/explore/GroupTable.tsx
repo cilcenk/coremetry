@@ -7,7 +7,9 @@ import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 import { seriesStats, isAdditiveUnit } from '@/lib/chart/legendStats';
 import { fmtNum } from '@/lib/utils';
 import { useCursorTime, valueAtCursor } from './cursorBus';
-import type { PanelData } from './PanelStack';
+import type { PanelData, PivotAffordance } from './PanelStack';
+import type { PivotMode } from './pivotQuery';
+import type { PivotPair } from './model';
 
 // GroupTable (explore-v2 Phase 2/3) — ONE combined per-series breakdown across
 // every panel (SUMMARY_COLS clone; col0 = letter badge + group label). Row
@@ -38,6 +40,10 @@ export interface GroupRow {
   additive: boolean;
   buckets: number;
   points: { time: number; value: number | null }[];  // for the @imleç lookup
+  // v0.9.848 — satırdan pivot: (splitBy anahtarı, değer) çiftleri + varsa
+  // "neden olmaz" cümlesi. Yokluğu = bu satırdan daraltılacak bir boyut yok
+  // (splitsiz panel, formül satırı).
+  pivot?: PivotAffordance;
   // v0.9.824 — önceki döneme göre yüzde değişim. null = hesaplanamaz
   // ("—" basılır): karşılaştırma kapalı, bu serinin önceki dönemde
   // karşılığı yok, ya da önceki değer SIFIR. Sıfırdan yüzde değişim
@@ -151,6 +157,7 @@ export function buildGroupRows(panels: PanelData[]): GroupRow[] {
         additive,
         buckets: st.count,
         points: s.points,
+        pivot: s.pivot,
         deltaPct: deltaPct(
           st.count ? { sum: st.sum, mean: st.mean ?? NaN } : null,
           prevByLabel.get(s.label) ?? null,
@@ -161,10 +168,63 @@ export function buildGroupRows(panels: PanelData[]): GroupRow[] {
   return rows;
 }
 
-export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFocus }: {
+// PivotButtons (v0.9.848) — satırdan tek tıkla daraltma / hariç tutma.
+//
+// Sağ-tık ya da ⋯ menüsü DEĞİL: iki eylem var, ikisi de tek tık, ve bir
+// menü açmak (aç → oku → seç) tek bir çipin maliyetini üçe katlardı. Jest
+// dili satırın kendisiyle çakışmasın diye her ikisi de stopPropagation
+// yapıyor — düz tık hâlâ "yalnız bu seriyi göster" (izole).
+//
+// EXCLUDE ÇOK BOYUTLU SATIRDA PASİF: iki anahtarlı bir split'te satır bir
+// KOMBİNASYONDUR ve o kombinasyonun değili düz AND çiplerle yazılamaz
+// (`k1!=v1 AND k2!=v2` satırdan çok fazlasını eler). Yaklaşık bir filtreyi
+// doğruymuş gibi göstermektense düğme gri kalır, sebep title'da.
+function PivotButtons({ pivot, onPivot }: {
+  pivot: PivotAffordance;
+  onPivot: (pairs: PivotPair[], mode: PivotMode) => void;
+}) {
+  const label = pivot.pairs.map(p => `${p.k}=${p.v}`).join(' · ');
+  const excludeWhy = pivot.disabled
+    ?? (pivot.pairs.length > 1
+      ? 'Çok boyutlu satırda "hariç tut" düz AND filtresiyle yazılamaz — satırdan fazlasını elerdi'
+      : undefined);
+  const btn = (
+    disabled: string | undefined, glyph: string, aria: string, title: string,
+    mode: PivotMode,
+  ) => (
+    <button type="button"
+      aria-label={aria}
+      title={disabled ?? title}
+      disabled={!!disabled}
+      onClick={e => { e.stopPropagation(); if (!disabled) onPivot(pivot.pairs, mode); }}
+      style={{
+        all: 'unset', flexShrink: 0,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        color: 'var(--text3)', fontSize: 11, lineHeight: 1,
+        padding: '2px 3px', borderRadius: 3,
+        opacity: disabled ? 0.35 : 1,
+      }}>{glyph}</button>
+  );
+  return (
+    <>
+      {btn(pivot.disabled, '⊕', 'Yalnız bu değere daralt',
+        `Yalnız bu değere daralt — ${label} filtre çipi olarak eklenir, boyut splitten düşer`,
+        'only')}
+      {btn(excludeWhy, '⊖', 'Bu değeri hariç tut',
+        `Bu değeri hariç tut — ${label} için != çipi eklenir, split korunur`,
+        'exclude')}
+    </>
+  );
+}
+
+export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFocus, onPivot }: {
   panels: PanelData[];
   hiddenKeys: Set<string>;
   onToggleHidden: (rowKey: string) => void;
+  // v0.9.848 — satır pivotu. Hangi sorgunun düzenleneceğini SAYFA bilir
+  // (harf → BuilderQuery); tablo yalnız hangi satırdan hangi çiftlerle
+  // istendiğini söyler.
+  onPivot?: (letter: string, pairs: PivotPair[], mode: PivotMode) => void;
   // v0.9.757 (operatör: "bir tanesine bastığımda sadece o gözüksün") —
   // düz tık İZOLE eder (CorePanel lejantı semantiği); Ctrl/Cmd+tık eski
   // tekil gizle/göster. İzole olanı yeniden tıklamak hepsini geri açar.
@@ -227,23 +287,37 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFo
                 title="Tıkla: yalnız bu seri · Ctrl/Cmd+tık: gizle-göster · üzerine gel: panelde vurgula"
                 style={{ cursor: 'pointer', opacity: hidden ? 0.45 : 1,
                          contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
-                <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {/* v0.9.806 — glif SERİNİN RENGİNDE. Tablo tek lejant ama
-                      renksizdi: 10 serilik bir panelde satırı çizgiyle
-                      eşleştirmek imkânsızdı. Gizli seride --text3, çünkü
-                      renk "bu çizgi ekranda" demektir. */}
-                  <span aria-hidden style={{
-                    marginRight: 6, fontSize: 11,
-                    color: hidden ? 'var(--text3)' : r.color,
-                  }}>{hidden ? '○' : '◉'}</span>
-                  <span style={{
-                    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-                    width: 16, height: 16, borderRadius: 3, marginRight: 6,
-                    background: r.isFormula ? 'var(--bg3)' : 'var(--accent2)',
-                    color: r.isFormula ? 'var(--text2)' : 'var(--bg)',
-                    fontSize: 10, fontWeight: 700, verticalAlign: 'middle',
-                  }}>{r.letter}</span>
-                  <b>{r.label}</b>
+                {/* v0.9.848 — hücre FLEX oldu. Pivot düğmeleri etiketin
+                    SOLUNDA ve flexShrink:0: sağına konsaydı uzun bir grup
+                    etiketi (ellipsis + nowrap) onları sessizce kırpardı —
+                    bu depoda tekrar eden bir kesilme sınıfı. Taşan tek şey
+                    etiket, ve o zaten title'da tam hâliyle duruyor. */}
+                <td style={{ overflow: 'hidden' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
+                    {/* v0.9.806 — glif SERİNİN RENGİNDE. Tablo tek lejant ama
+                        renksizdi: 10 serilik bir panelde satırı çizgiyle
+                        eşleştirmek imkânsızdı. Gizli seride --text3, çünkü
+                        renk "bu çizgi ekranda" demektir. */}
+                    <span aria-hidden style={{
+                      marginRight: 4, fontSize: 11, flexShrink: 0,
+                      color: hidden ? 'var(--text3)' : r.color,
+                    }}>{hidden ? '○' : '◉'}</span>
+                    <span style={{
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      width: 16, height: 16, borderRadius: 3, marginRight: 4, flexShrink: 0,
+                      background: r.isFormula ? 'var(--bg3)' : 'var(--accent2)',
+                      color: r.isFormula ? 'var(--text2)' : 'var(--bg)',
+                      fontSize: 10, fontWeight: 700,
+                    }}>{r.letter}</span>
+                    {onPivot && r.pivot && (
+                      <PivotButtons pivot={r.pivot}
+                        onPivot={(pairs, mode) => onPivot(r.letter, pairs, mode)} />
+                    )}
+                    <b title={r.label} style={{
+                      marginLeft: 4, minWidth: 0,
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{r.label}</b>
+                  </div>
                 </td>
                 <td className="mono" style={{ textAlign: 'right', color: cursorSec == null ? 'var(--text3)' : 'var(--accent2)' }}>
                   {cursorSec == null ? '·' : fmtSmart(valueAtCursor(r.points, cursorSec), r.unit)}

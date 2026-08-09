@@ -5,8 +5,9 @@ import { seriesColor } from '@/lib/chartFmt';
 import { formulaSeries } from './formulaSeries';
 import { alignFormulaLetters, fmtStep } from './stepAlign';
 import {
-  type BuilderState, type BuilderQuery, produces, queryDesc, queryUnit,
-  seriesGroupLabel, effectiveTopN,
+  type BuilderState, type BuilderQuery, type PivotPair,
+  produces, queryDesc, queryUnit,
+  seriesGroupLabel, seriesGroupPairs, hasGroupedFilter, effectiveTopN,
 } from './model';
 import { valueAtCursor } from './cursorBus';
 import { QueryPanel } from './QueryPanel';
@@ -32,6 +33,26 @@ import type { ExploreOverlay } from './useExploreQueries';
 // Making the state explicit is what lets each branch say the true thing.
 export type PanelState = 'idle' | 'loading' | 'error' | 'ready';
 
+// PivotAffordance (v0.9.848) — bu serinin GroupTable satırından pivotlanıp
+// pivotlanamayacağı ve pivotlanacaksa hangi (anahtar, değer) çiftleriyle.
+//
+// Kararın burada verilmesinin sebebi: pivot sorgunun splitBy'ını ve gruplu
+// filtre kipini bilmek zorunda, ikisi de burada (q) elimizde. GroupTable
+// sunum katmanı kalıyor — hangi sorgunun neye izin verdiğini o bilmiyor.
+//
+// disabled DOLU ise düğme ÇİZİLİR ama pasif ve sebebi title'da: kaybolan bir
+// düğme "burada pivot yok" diye okunur, gri bir düğme "şu yüzden olmaz" der.
+export interface PivotAffordance {
+  pairs: PivotPair[];
+  disabled?: string;
+}
+
+// PanelSeries — TSSeries + pivot kanalı. TSSeries'e alan EKLEMİYORUZ: o tip
+// MQE + TimeSeriesPanel ile paylaşılıyor ve pivot Explore'a özgü.
+export interface PanelSeries extends TSSeries {
+  pivot?: PivotAffordance;
+}
+
 export interface PanelData {
   key: string;             // letter, or 'ƒ' for the formula panel
   letter: string;
@@ -45,7 +66,7 @@ export interface PanelData {
   // area is blank, phrased for THIS panel (a formula with no overlapping
   // buckets is a different sentence from a query that matched nothing).
   emptyReason?: string;
-  series: TSSeries[];      // capped, labeled, coloured
+  series: PanelSeries[];   // capped, labeled, coloured (+ pivot kanalı)
   more: number;            // series dropped by the cap
   // v0.9.458 (dürüstlük A1) — 50k satır tavanı doldu: seriler ALFABETİK
   // kesildi; more'un anlattığı alan-bazlı top-N kırpmasından ayrı yalan.
@@ -255,16 +276,27 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
       continue;
     }
     const exemplars = exemplarsByLetter[q.letter] ?? [];
-    const labeled: TSSeries[] = data.map(s => {
+    // v0.9.848 — pivot kapısı SORGU BAŞINA: gruplu (OR/iç içe) bir filtre
+    // açıkken fetch'e giden şey filterGroup'tur, düz `filters` değil; oraya
+    // yazılan bir çip ekranda görünür ama sorguya HİÇ girmezdi.
+    const pivotBlocked = hasGroupedFilter(q)
+      ? 'Gruplu AND/OR filtresi açıkken pivot düz çipe yazılamaz — önce ⊟ Flatten to chips'
+      : undefined;
+    const labeled: PanelSeries[] = data.map(s => {
       const label = seriesGroupLabel(q, s.groupKey, desc);
       const points = s.points.map(p => ({ time: p.time, value: p.value }));
       const ex = exemplars.length ? exemplarMarkersFor(q, desc, label, points, exemplars) : [];
+      // Çiftler etiketle AYNI türetmeden (seriesGroupPairs ↔ seriesGroupLabel,
+      // aynı band soyması) — satırda okunan ile filtreye yazılan hiç ayrışmaz.
+      const pairs = seriesGroupPairs(q, s.groupKey);
       return {
         label,
         color: seriesColor(label),
         unit: unit || undefined,
         points,
         exemplars: ex.length ? ex : undefined,
+        // splitBy'sız panelde daraltılacak boyut yok — kanal hiç açılmaz.
+        pivot: pairs.length ? { pairs, disabled: pivotBlocked } : undefined,
       };
     });
     // v0.8.332 (pivot Phase 3) — single-series panels attach the OTLP ◆

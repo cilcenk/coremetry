@@ -32,7 +32,7 @@ import { TracesResult } from './explore/TracesResult';
 import { RepeatsResult } from './explore/RepeatsResult';
 import { useQueryHistory } from './explore/useQueryHistory';
 import {
-  type BuilderState, defaultBuilderState, blankQuery, nextLetter,
+  type BuilderState, type PivotPair, defaultBuilderState, blankQuery, nextLetter,
   duplicateQueryAt,
   produces, effectiveFilters, builderDesc, MAX_QUERIES,
   PANEL_SERIES_CAP, TOP_N_OPTIONS, EXPLORE_COMPARE, compareLabel,
@@ -47,6 +47,7 @@ import { PanelStack, buildPanels } from './explore/PanelStack';
 import { queryToPanel, isPinnable } from './explore/pinToDashboard';
 import { PinToDashboardModal } from './explore/PinToDashboardModal';
 import { GroupTable } from './explore/GroupTable';
+import { pivotQuery, type PivotMode } from './explore/pivotQuery';
 import { SummaryViz } from './explore/SummaryViz';
 import { RowsCappedNote } from './explore/RowsCappedNote';
 import { heatmapQuerySig } from './explore/heatmapSig';
@@ -486,6 +487,22 @@ function ExploreInner({ onSelfWrite }: {
   });
   const removeQuery = (i: number) =>
     setBuilder(b => ({ ...b, queries: b.queries.filter((_, j) => j !== i) }));
+
+  // v0.9.848 — GroupTable satırından pivot. Tablo hangi HARFTEN hangi
+  // çiftlerle istendiğini söylüyor; sorguyu bulup düzenlemek sayfanın işi.
+  // pivotQuery null döndüğünde (uygulanamaz ya da sonuç bugünkünün AYNISI)
+  // state'e dokunulmuyor — aynı çipi silip yeniden eklemek `filters`
+  // dizisinin sırasını, dolayısıyla querySignature'ı değiştirir ve veri hiç
+  // değişmemişken garanti bir cache MISS + yeni fan-out üretirdi.
+  const pivotFromRow = useCallback((
+    letter: string, pairs: PivotPair[], mode: PivotMode,
+  ) => setBuilder(b => {
+    const i = b.queries.findIndex(x => x.letter === letter);
+    if (i < 0) return b;
+    const next = pivotQuery(b.queries[i], pairs, mode);
+    if (!next) return b;
+    return { ...b, queries: b.queries.map((x, j) => (j === i ? next : x)) };
+  }), []);
 
   // Result-mode switch — entering traces/repeats from the builder carries
   // query A's narrowing along when the legacy console is still empty.
@@ -958,7 +975,8 @@ name ~ checkout`}
                   hiddenKeys={hiddenKeys}
                   onToggleHidden={toggleHidden}
                   onIsolate={isolateHidden}
-                  onFocus={setFocusKey} />
+                  onFocus={setFocusKey}
+                  onPivot={pivotFromRow} />
               </>
             )}
           </>

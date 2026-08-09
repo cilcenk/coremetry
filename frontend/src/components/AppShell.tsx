@@ -46,6 +46,14 @@ export function isPathAllowed(pathname: string, allowedPages: string[]): boolean
     if (p === '/incidents' && pathname === '/incident') return true;
     if (p === '/runbooks' && (pathname === '/runbook' || pathname === '/runbook-exec')) return true;
     if (p === '/clusters' && pathname === '/pod') return true;
+    // v0.9.854 (UX denetimi K5) — v0.9.839/840'ta endpoint ve database
+    // detayları çekmeceden SIBLING rotalara taşındı; istisna listesi
+    // güncellenmedi. Yalnız /endpoints (ya da /databases) verilen
+    // custom-rol kullanıcısı listeyi görüyor ama HER satır tıkı ilk
+    // izinli sayfaya ışınlıyordu — iki detay sayfası o kullanıcı sınıfı
+    // için tamamen ulaşılmaz. v0.9.230'un birebir tekrarı.
+    if (p === '/endpoints' && pathname === '/endpoint') return true;
+    if (p === '/databases' && pathname === '/database') return true;
   }
   return false;
 }

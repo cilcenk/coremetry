@@ -33,6 +33,7 @@ import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { keys } from '@/lib/queries/keys';
 import type { Service, Problem, OperationSummary, SLORow, TimeRange } from '@/lib/types';
 import { stripMarkdown } from '@/components/Markdown';
+import { QueryError } from '@/components/QueryError';
 
 // v0.9.257 — SINCE_MAP deleted: it had no remaining reader here, and the
 // dormant copy is how the divergence spread (pages/service/Overview.tsx
@@ -95,6 +96,11 @@ function ServiceDetailInner() {
   // dedicated endpoint.
   const [slos, setSlos] = useState<SLORow[]>([]);
   const [loading, setLoading] = useState(true);
+  // v0.9.858 (UX denetimi K6) — bundle hatası. Öncesi: catch info'yu null'a
+  // çekiyor, null'ın render dalı olmadığı için sayfa SESSİZCE soyuluyordu
+  // (operatör "bu servisin telemetrisi yok" sanıyor).
+  const [bundleErr, setBundleErr] = useState<string | null>(null);
+  const [retryNonce, setRetryNonce] = useState(0);
   // v0.8.480 (perf dalga-3 #10) — range/servis değişiminde gövde
   // (TabStrip dahil) unmount edilmez: elde veri varken yalnız
   // solgunlaştırılır, Spinner ilk yüklemeye iner.
@@ -252,6 +258,7 @@ function ServiceDetailInner() {
     });
     const applyBundle = (b: Awaited<ReturnType<typeof api.serviceBundle>>) => {
       if (cancelled) return;
+      setBundleErr(null);
       setInfo(b?.service ?? null);
       setProblems(b?.problems ?? []);
       setOperations(b?.operations ?? []);
@@ -285,9 +292,13 @@ function ServiceDetailInner() {
           if (refreshed) applyBundle(refreshed);
         }
       })
-      .catch(() => {
+      .catch(e => {
         if (cancelled) return;
+        // v0.9.858 (UX denetimi K6) — info=null'ın render dalı yoktu:
+        // sayfa sessizce SOYULUYOR, operatör servisin telemetrisiz
+        // olduğunu sanıyordu. Hata metni saklanıp gösteriliyor.
         setInfo(null); setProblems([]); setOperations([]); setEndpoints([]);
+        setBundleErr(e instanceof Error ? e.message : String(e));
       })
       .finally(() => {
         if (!cancelled) {
@@ -297,7 +308,7 @@ function ServiceDetailInner() {
         }
       });
     return () => { cancelled = true; };
-  }, [svc, rangeNs, queryClient]);
+  }, [svc, rangeNs, queryClient, retryNonce]);
 
   // v0.6.51 — SLO strip. Separate from the bundle because SLO
   // status moves slowly (window_days horizon) and is service-
@@ -510,6 +521,12 @@ function ServiceDetailInner() {
         )}
 
         {loading && <Spinner />}
+        {!loading && bundleErr && (
+          <QueryError message={bundleErr} onRetry={() => setRetryNonce(n => n + 1)}>
+            This service's data could not be loaded. The sections below are
+            missing because the read failed — not because the service is idle.
+          </QueryError>
+        )}
         {!loading && (
           <div style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
             aria-busy={refreshing}>

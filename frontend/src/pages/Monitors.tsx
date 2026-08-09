@@ -10,6 +10,8 @@ import {
 } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
 import type { Monitor, MonitorRow, MonitorStats, MonitorType } from '@/lib/types';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 
 // /monitors — synthetic uptime + heartbeat dashboard.
 //
@@ -45,8 +47,15 @@ export default function MonitorsPage() {
             </span>
           </div>
         )}
-        {items === undefined && <Spinner />}
-        {items !== undefined && (!items || items.length === 0) && (
+        {readState(items) === 'loading' && <Spinner />}
+        {/* v0.9.858 (UX denetimi K6) — hata "No monitors yet" olarak
+            sunuluyordu; operatör monitörlerinin gittiğini sanabilir. */}
+        {readState(items) === 'error' && (
+          <QueryError onRetry={() => monitorsQ.refetch()}>
+            Monitors could not be loaded — this is a failed read, not an empty list.
+          </QueryError>
+        )}
+        {readState(items) === 'empty' && (
           <Empty icon="◉" title="No monitors yet">
             {isAdmin ? (
               <>Create an HTTP, TCP-port, SSL-certificate, or keyword monitor (actively probed on a

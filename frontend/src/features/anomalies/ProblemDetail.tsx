@@ -21,6 +21,7 @@ import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { ShareButton } from '@/components/ShareButton';
 import { copyToClipboard } from '@/lib/clipboard';
+import { QueryErrorInline } from '@/components/QueryError';
 
 // ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
 // Two surfaces share one skeleton: a top triage bar (badges + ID +
@@ -376,9 +377,18 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         </div>
         <div className="ov-card-b">
           {occ.length === 0 ? (
-            <div style={{ color: 'var(--text3)', fontSize: 12 }}>
-              {occQ.isLoading ? 'Loading…' : 'No occurrences to chart.'}
-            </div>
+            /* v0.9.858 (UX denetimi K6) — hata "No occurrences to chart."
+               oluyordu: sorgu düştüğünde grup hiç patlamamış gibi
+               okunuyordu. */
+            occQ.isError ? (
+              <QueryErrorInline
+                text={`Occurrence series could not be loaded${occQ.error instanceof Error ? ` — ${occQ.error.message}` : ''}`}
+                onRetry={() => occQ.refetch()} />
+            ) : (
+              <div style={{ color: 'var(--text3)', fontSize: 12 }}>
+                {occQ.isLoading ? 'Loading…' : 'No occurrences to chart.'}
+              </div>
+            )
           ) : (
             <TimeChart times={occTimes} series={occSeries} height={110} regions={probRegions}
               onBrush={(fromMs, toMs) => setZoomMs({ from: fromMs, to: toMs })}
@@ -408,11 +418,19 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
               // örnek YOKKEN "No stack trace on the sampled occurrences"
               // demek yanlış-boş: taranmış örnek yoktu ki. Örnek varken
               // (hepsinin stack'i boşsa) eski dürüst mesaj kalır.
-              <div style={{ color: samples.length === 0 && emptyNote.warn ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
-                {samplesQ.isLoading ? 'Loading…'
-                  : samples.length === 0 ? emptyNote.text
-                  : 'No stack trace on the sampled occurrences.'}
-              </div>
+              /* v0.9.858 (UX denetimi K6) — örnek sorgusunun hatası
+                 "No sample traces." olarak sunuluyordu. */
+              samplesQ.isError ? (
+                <QueryErrorInline
+                  text={`Samples could not be loaded${samplesQ.error instanceof Error ? ` — ${samplesQ.error.message}` : ''}`}
+                  onRetry={() => samplesQ.refetch()} />
+              ) : (
+                <div style={{ color: samples.length === 0 && emptyNote.warn ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>
+                  {samplesQ.isLoading ? 'Loading…'
+                    : samples.length === 0 ? emptyNote.text
+                    : 'No stack trace on the sampled occurrences.'}
+                </div>
+              )
             ) : (
               <pre className="mono" style={{ margin: 0, fontSize: 11.5, lineHeight: 1.7, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
                 {stackLines.map((l, i) => (

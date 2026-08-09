@@ -21,6 +21,7 @@ import {
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { MetricInfo } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { QueryError } from '@/components/QueryError';
 
 // Metrics — v0.8.x Phase-5 collapse. /metrics is now a CATALOGUE: a
 // server-side-searchable, sortable index of every metric name (name / type /
@@ -298,6 +299,17 @@ export default function MetricsPage() {
             </PageControls>
 
             {catalogQ.isLoading ? <Spinner />
+              /* v0.9.858 (UX denetimi K6) — hata "No metrics match" olarak
+                 sunuluyordu: katalog sorgusu düştüğünde operatör arama
+                 terimini/servisini suçluyordu. */
+              : catalogQ.isError ? (
+                <QueryError
+                  message={catalogQ.error instanceof Error ? catalogQ.error.message : undefined}
+                  onRetry={() => catalogQ.refetch()}>
+                  The metric catalogue could not be loaded — this is a failed
+                  read, not an empty catalogue.
+                </QueryError>
+              )
               : filtered.length === 0 ? (
                 <Empty icon="∿" title="No metrics match">
                   {service

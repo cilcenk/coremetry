@@ -18,6 +18,7 @@ import { defaultLatencyHidden } from '@/lib/chart/legendVisibility';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import type { Problem, SpanMetricSeries, TimeRange } from '@/lib/types';
+import { QueryError } from '@/components/QueryError';
 
 // ServiceCharts — three core trend panels for the focused
 // service: throughput (RPS by operation), error rate (%) by
@@ -124,6 +125,9 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
   const [errSeries, setErrSeries] = useState<SpanMetricSeries[] | null>(null);
   const [p99Series, setP99Series] = useState<SpanMetricSeries[] | null>(null);
   const [loading, setLoading] = useState(true);
+  // v0.9.858 (UX denetimi K6) — RED fetch hatası + Retry nonce.
+  const [redErr, setRedErr] = useState<string | null>(null);
+  const [redRetry, setRedRetry] = useState(0);
 
   // Compare-to-previous-period toggle. 'off' suppresses the
   // second fetch entirely; '24h' / '7d' / 'prev' (matched
@@ -262,17 +266,22 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
     setLoading(true);
     fetchRed(from, to).then(res => {
       if (cancelled) return;
+      setRedErr(null);
       setRpsSeries(res.rate);
       setErrSeries(res.error_rate);
       setP99Series(res.p99);
-    }).catch(() => {
+    }).catch(e => {
       if (cancelled) return;
+      // v0.9.858 (UX denetimi K6) — hata BOŞ SERİYE eziliyordu: üç RED
+      // grafiği boş çiziliyor, servis "trafik yok" gibi okunuyordu. En
+      // yanıltıcı boş-durum: grafik "sağlıklı sessizlik" izlenimi verir.
       setRpsSeries([]); setErrSeries([]); setP99Series([]);
+      setRedErr(e instanceof Error ? e.message : String(e));
     }).finally(() => {
       if (!cancelled) setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [from, to, fetchRed]);
+  }, [from, to, fetchRed, redRetry]);
 
   // Compare fetch — only fires when toggle is on. Same batch
   // trick: one CH pass for the previous window's three
@@ -536,6 +545,17 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
           minHeight: 200, display: 'grid', placeItems: 'center',
         }}>
           <Spinner />
+        </div>
+      ) : redErr ? (
+        <div style={{
+          background: 'var(--bg1)', border: '1px solid var(--border)',
+          borderRadius: 8, padding: 14,
+          minHeight: 200, display: 'grid', placeItems: 'center',
+        }}>
+          <QueryError message={redErr} onRetry={() => setRedRetry(n => n + 1)}>
+            The RED series could not be loaded. Empty charts here would have
+            read as "no traffic".
+          </QueryError>
         </div>
       ) : (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>

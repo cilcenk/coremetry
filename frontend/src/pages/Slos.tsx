@@ -12,6 +12,8 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { SLIType, SLORow } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 
 // v0.6.44 — sortable columns on /slos. Forecast + 7d trend stay
 // non-sortable because their values are loaded asynchronously per
@@ -80,8 +82,16 @@ export default function SLOsPage() {
           )}
         </PageControls>
 
-        {items === undefined && <Spinner />}
-        {items !== undefined && (!items || items.length === 0) && (
+        {readState(items) === 'loading' && <Spinner />}
+        {/* v0.9.858 (UX denetimi K6) — hata dalı "No SLOs defined"e
+            eziliyordu: yüklenemeyen SLO listesi hiç tanımlanmamış gibi
+            okunuyordu. */}
+        {readState(items) === 'error' && (
+          <QueryError onRetry={() => slosQ.refetch()}>
+            SLOs could not be loaded — this is a failed read, not an empty list.
+          </QueryError>
+        )}
+        {readState(items) === 'empty' && (
           <Empty icon="◉" title="No SLOs defined">
             {isAdmin ? 'Create one to start tracking error budgets.' : 'Ask an admin to define SLOs.'}
           </Empty>

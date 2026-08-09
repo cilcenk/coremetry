@@ -19,6 +19,7 @@ import { ThresholdField } from './alerts/ThresholdField';
 import { ConditionPreview } from './alerts/ConditionPreview';
 import { NoisyRulesPanel } from './alerts/NoisyRulesPanel';
 import { WatcherImportModal } from './alerts/WatcherImportModal';
+import { QueryError } from '@/components/QueryError';
 
 export default function AlertsPage() {
   const { user } = useAuth();
@@ -176,7 +177,10 @@ export default function AlertsPage() {
   // Rules query + 4 mutations. Each mutation auto-invalidates
   // the rules cache on success — no manual refresh() coordinator.
   const rulesQ = useAlertRules();
-  const rulesAll = rulesQ.isLoading ? undefined : rulesQ.data ?? [];
+  // v0.9.858 (UX denetimi K6) — `?? []` hatayı BOŞ LİSTEYE çeviriyordu:
+  // /api/alert-rules düştüğünde sayfa "No alert rules" + "+ New rule"
+  // basıyor, operatör kurallarının silindiğini sanıyordu. null = hata.
+  const rulesAll = rulesQ.isLoading ? undefined : rulesQ.isError ? null : rulesQ.data ?? [];
   // v0.5.305 — filter chip strip: All / Metric / Watcher.
   // Watchers = saved-search log alerts (metric='log_query') PLUS
   // imported ES Watcher definitions (metric='watcher', Faz-1);
@@ -184,7 +188,7 @@ export default function AlertsPage() {
   // rules with a clear visual scope.
   const [ruleKind, setRuleKind] = useState<'all' | 'metric' | 'watcher'>('all');
   const isWatcherRule = (r: AlertRule) => r.metric === 'log_query' || r.metric === 'watcher';
-  const rules = !rulesAll ? undefined : rulesAll.filter(r => {
+  const rules = rulesAll == null ? rulesAll : rulesAll.filter(r => {
     if (ruleKind === 'all') return true;
     return ruleKind === 'watcher' ? isWatcherRule(r) : !isWatcherRule(r);
   });
@@ -284,7 +288,7 @@ export default function AlertsPage() {
             (Apply/Disable suggestions pre-filling the edit form a
             viewer doesn't have). */}
         {canEdit && (
-          <NoisyRulesPanel rules={rules} onEditFromSuggestion={editFromSuggestion} />
+          <NoisyRulesPanel rules={rules ?? undefined} onEditFromSuggestion={editFromSuggestion} />
         )}
 
         {showForm && (
@@ -530,6 +534,12 @@ export default function AlertsPage() {
               </Button>
             ))}
           </div>
+        )}
+        {rules === null && (
+          <QueryError message={rulesQ.error instanceof Error ? rulesQ.error.message : undefined} onRetry={() => rulesQ.refetch()}>
+            Alert rules could not be loaded. This is a failed read, not an empty
+            rule set — do not create replacements until it succeeds.
+          </QueryError>
         )}
         {rules && rules.length === 0 && (
           <Empty icon="🔔" title="No alert rules"

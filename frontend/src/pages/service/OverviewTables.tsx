@@ -8,6 +8,7 @@ import { Sparkline } from '@/components/Sparkline';
 import { Spinner } from '@/components/Spinner';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { OperationSummary, DBQueryStat, TimeRange } from '@/lib/types';
+import { operationTracesHref } from '@/lib/pivotHref';
 
 // Service Overview tables (v0.7.96) — the compact Operations + Top DB
 // statements pair from the design handoff. Both use the shared
@@ -27,6 +28,23 @@ const OP_COLS: DataTableColumn<OperationSummary>[] = [
   { id: 'trend', label: 'Trend', width: 96 },
 ];
 
+// overviewOpHref — v0.9.861 (UX denetimi Ö6). Overview'un Operations
+// kartından /traces'e operasyon pivotu.
+//
+// Öncesi: `search=<op>` — serbest metin. `search` trace'in HERHANGİ bir
+// span'ında eşleşir ve bu satır KÖK operasyonu gösterdiğinden listeye başka
+// operasyonların trace'leri de düşüyordu. Operatör "bu operasyonun
+// trace'leri" sanıp yanlış teşhis kuruyordu.
+//
+// Aynı hata v0.8.488'de operatör raporuyla Operations TABLOSUNDA
+// düzeltilmişti; bu kart kalan yarısıydı — iki yüzey aynı hedefe gittiğini
+// söylerken farklı sorular soruyordu. Kesin isim filtresi tek üreticiden.
+//
+// Modül seviyesinde: bileşenin içinde kalsaydı düzeltme test edilemezdi.
+export function overviewOpHref(service: string, range: TimeRange, op: string): string {
+  return operationTracesHref({ window: range, operation: op, service });
+}
+
 export function OpsCard({ service, range, operations }: {
   service: string; range: TimeRange; operations: OperationSummary[];
 }) {
@@ -36,8 +54,7 @@ export function OpsCard({ service, range, operations }: {
   // destination the full Operations tab uses. onOpen also lights up j/k/Enter
   // keyboard nav (UX#4); no searchRef here — the compact card has no filter
   // input of its own.
-  const opHref = (op: string) =>
-    `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(op)}&range=${rangeParam}&view=list&rootOnly=false`;
+  const opHref = (op: string) => overviewOpHref(service, range, op);
   const dt = useDataTable<OperationSummary>({
     storageKey: 'svc-ov-ops',
     columns: OP_COLS,

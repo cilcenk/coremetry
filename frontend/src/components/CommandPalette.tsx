@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
+import { operationTracesHref } from '@/lib/pivotHref';
+import { currentRange } from '@/lib/useUrlRange';
 import { getRecentServices, getPinnedServices } from '@/lib/recentServices';
 import { useShortcuts } from '@/lib/keyboard';
 import { useAuth } from '@/components/AuthProvider';
@@ -98,6 +100,9 @@ const TRACE_ID_RE = /^[a-f0-9]{16,32}$/i;
 
 export function CommandPalette() {
   const navigate = useNavigate();
+  // v0.9.855 — pivot href'leri operatörün BAKTIĞI pencereyi taşısın diye
+  // sayfanın aralığı (useUrlRange önceliğiyle) buradan çözülür.
+  const { search: locationSearch } = useLocation();
   const { user } = useAuth();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState('');
@@ -256,17 +261,23 @@ export function CommandPalette() {
       api.operationNames(undefined, q, 6)
         .then(r => {
           if (cancelled) return;
+          // v0.9.855 (UX denetimi K4) — link `?operation=` taşıyordu:
+          // /traces'in okuyucusu bu adı BİLMEZ ve State→URL efekti query
+          // string'i beyaz-listeden sıfırdan kurduğu için param anında
+          // SİLİNİYORDU. Sonuç: endpoint adını yazan operatör filtresiz,
+          // alakasız bir liste görüyor ("arama bozuk"). Artık kesin
+          // isim filtresi + pencere (pivotHref ailesi).
           setEndpoints((r?.names ?? []).map(name => ({
             kind: 'endpoint' as const,
             label: name,
             hint: 'Endpoint',
-            to: `/traces?operation=${encodeURIComponent(name)}`,
+            to: operationTracesHref({ window: currentRange(locationSearch), operation: name }),
           })));
         })
         .catch(() => { if (!cancelled) setEndpoints([]); });
     }, 200);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [query, open]);
+  }, [query, open, locationSearch]);
 
   // Score: pages with the query as a prefix beat substring beat
   // fuzzy. Exact matches sort to the top. Hand-rolled rather than

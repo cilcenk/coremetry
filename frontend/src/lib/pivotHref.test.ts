@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { tracesPivotHref, messagingTracesHref, dbTracesHref } from './pivotHref';
+import { tracesPivotHref, messagingTracesHref, dbTracesHref, operationTracesHref } from './pivotHref';
 import { decodeRange } from './urlState';
 
 // v0.9.213 — the cross-signal pivot into /traces dropped its time window in
@@ -228,5 +228,64 @@ describe('dbTracesHref', () => {
     expect(p.get('filterGroup')).toBeNull();
     const flat = JSON.parse(decodeURIComponent(p.get('filters') ?? '[]'));
     expect(flat.map((f: { k: string }) => f.k)).toContain('db.system');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// v0.9.855 — UX denetimi K4: ⌘K endpoint sonucu `/traces?operation=<ad>`e
+// gidiyordu. /traces'in URL okuyucusu `operation` diye bir param BİLMEZ ve
+// State→URL efekti query string'i beyaz-listeden SIFIRDAN kurduğu için param
+// ilk state yazımında silinir. Operatör endpoint adını yazıyor, filtresiz ve
+// alakasız bir liste alıyordu — "arama bozuk".
+//
+// İkinci yarısı v0.8.488 (operatör-reported): serbest metin `search=` trace'in
+// HERHANGİ bir span'ında eşleşir; operasyon pivotu bu yüzden alakasız
+// trace'leri sürüklüyordu. Doğru kapsam KESİN isim filtresi.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('operationTracesHref — K4 ölü ?operation= parametresi', () => {
+  const href = operationTracesHref({ window: { preset: '6h' }, operation: 'GET /cart' });
+  const p = params(href);
+
+  it('/traces\'in TANIMADIĞI param adlarını ASLA yazmaz', () => {
+    // Bu bug'ın kökü: okunmayan bir ada yazmak. `operation` (ve `op`)
+    // beyaz-listede yok — yazılırsa sessizce silinir.
+    expect(p.has('operation')).toBe(false);
+    expect(p.has('op')).toBe(false);
+  });
+
+  it('kapsamı KESİN isim filtresiyle kurar, substring search ile değil', () => {
+    expect(p.has('search')).toBe(false);
+    expect(JSON.parse(p.get('filters') ?? '[]'))
+      .toEqual([{ k: 'name', op: '=', v: ['GET /cart'] }]);
+  });
+
+  it('pencereyi taşır (pivotHref ailesinin zorunlu sözleşmesi)', () => {
+    expect(p.get('range')).toBe('6h');
+    const abs = params(operationTracesHref({
+      window: { fromNs: 1_700_000_000_000_000_000, toNs: 1_700_000_060_000_000_000 },
+      operation: 'GET /cart',
+    }));
+    expect(decodeRange(abs.get('range'), { preset: '30m' }))
+      .toEqual({ preset: 'custom', fromMs: 1_700_000_000_000, toMs: 1_700_000_060_000 });
+  });
+
+  it('rootOnly=false — operasyon span\'i kök olmak zorunda değil (v0.8.585)', () => {
+    expect(p.get('rootOnly')).toBe('false');
+    expect(p.get('view')).toBe('list');
+  });
+
+  it('servis verildiğinde kapsamı daraltır, verilmediğinde filo geneli kalır', () => {
+    expect(params(operationTracesHref({
+      window: { preset: '1h' }, operation: 'GET /cart', service: 'checkout',
+    })).get('service')).toBe('checkout');
+    expect(p.has('service')).toBe(false);
+  });
+
+  it('özel karakterli operasyon adı encode edilir ve aynen geri çözülür', () => {
+    const weird = 'GET /a b?c=1&d#2';
+    const back = JSON.parse(params(operationTracesHref({
+      window: { preset: '1h' }, operation: weird,
+    })).get('filters') ?? '[]');
+    expect(back).toEqual([{ k: 'name', op: '=', v: [weird] }]);
   });
 });

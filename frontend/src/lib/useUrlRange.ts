@@ -73,6 +73,29 @@ export function storedRangeString(): string | null {
   return readStoredRange();
 }
 
+// pickRangeString — v0.9.855. useUrlRange's precedence chain (URL `?range=` →
+// sticky → default) as a PURE function, so a non-hook caller can resolve the
+// window the operator is currently looking at without duplicating the rule.
+//
+// Why it exists: href BUILDERS outside a range-owning page (⌘K palette) must
+// hand pivotHref a window, and pivotHref makes the window REQUIRED precisely
+// because "forgot the window" shipped four times. Re-deriving the precedence
+// by hand at each such call site is how the fifth one ships.
+export function pickRangeString(
+  urlRaw: string | null, stored: string | null, defaultPreset = '30m',
+): string {
+  // Mirror readStoredRange's self-heal: an absolute window must never come
+  // back through the sticky channel (v0.8.409).
+  const usableStored = stored && persistableRange(stored) ? stored : null;
+  return urlRaw ?? usableStored ?? defaultPreset;
+}
+
+/** Resolved TimeRange for a non-hook caller. `search` = location.search. */
+export function currentRange(search: string, defaultPreset = '30m'): TimeRange {
+  const raw = new URLSearchParams(search).get('range');
+  return decodeRange(pickRangeString(raw, readStoredRange(), defaultPreset), { preset: defaultPreset });
+}
+
 export function useUrlRange(
   defaultPreset = '30m',
 ): [TimeRange, (r: TimeRange | ((prev: TimeRange) => TimeRange)) => void] {

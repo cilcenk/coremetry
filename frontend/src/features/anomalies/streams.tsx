@@ -610,7 +610,27 @@ function logsLinkForPattern(a: LogPatternAnomaly): string {
   if (clauses.length > 0) {
     params.set('q', clauses.join(' AND '));
   }
+  // v0.9.862 (UX denetimi Ö2) — PENCERE. Bu link yalnız `q` yazıyordu:
+  // birkaç saat önceki bir anomaliden /logs'a geçen operatör sticky
+  // pencerede boş sonuç görüyor, "loglar silinmiş" sanıyordu. Kardeş yüzey
+  // (AnomalyDetailDrawer) spike penceresini v0.9.213'ten beri taşıyor;
+  // aynı lead-in formülü burada da: desenin son görülmesi etrafında
+  // 30 dk öncesi + 10 dk sonrası, karşılaştırılacak bir taban kalsın.
+  const win = patternLogWindow(a.lastSeenNs);
+  if (win) params.set('range', win);
   return `/logs?${params.toString()}`;
+}
+
+// patternLogWindow — v0.9.862. lastSeenNs etrafındaki /logs penceresi,
+// `custom:<fromMs>-<toMs>` olarak. Damga yoksa/bozuksa '' döner ve çağıran
+// paramı hiç yazmaz: decodeRange'in reddedeceği bir token yazmak adres
+// çubuğunda kendinden emin ama SAHTE bir pencere gösterirdi.
+export function patternLogWindow(lastSeenNs: number | undefined | null): string {
+  if (!lastSeenNs || !Number.isFinite(lastSeenNs)) return '';
+  const fromMs = Math.floor((lastSeenNs - 30 * 60 * 1e9) / 1e6);
+  const toMs = Math.ceil((lastSeenNs + 10 * 60 * 1e9) / 1e6);
+  if (!(fromMs > 0) || !(toMs > fromMs)) return '';
+  return `custom:${fromMs}-${toMs}`;
 }
 
 // DeployChip — v0.5.286. Inline chip on the anomaly row when a

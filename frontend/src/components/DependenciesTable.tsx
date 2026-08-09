@@ -8,7 +8,7 @@ import { Button } from './ui/Button';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { trendsEnabled, latencyPresent, depRowKey } from '@/lib/depsTable';
-import { msgBalance, msgP99Delta, type MsgBalanceState } from '@/lib/msgBalance';
+import { msgP99Delta } from '@/lib/msgBalance';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -222,14 +222,11 @@ export function DependenciesTable({
       ? [
           { id: 'produce', label: 'Produce/min', sortValue: (r: DepRow) => r.producePerMin ?? 0, numeric: true, naturalDir: 'desc', width: 116 } as DataTableColumn<DepRow>,
           { id: 'consume', label: 'Consume/min', sortValue: (r: DepRow) => r.consumePerMin ?? 0, numeric: true, naturalDir: 'desc', width: 116 } as DataTableColumn<DepRow>,
-          // v0.9.815 — Denge. Produce/min ile Consume/min YAN YANA iki
-          // sayıydı ve aralarındaki ilişkiyi kurmayı operatörün gözüne
-          // bırakıyordu: 1.240 ile 1.190 arasındaki farkın önemli olup
-          // olmadığı iki sayıya bakarak anlaşılmaz. Bu kolon farkı orana
-          // çevirip eşiğe vurur. sortValue = oran, yani DESC sıralama
-          // "en çok birikenler" demek; ölçülemeyen satırlar null ile
-          // en alta düşer.
-          { id: 'balance', label: 'Denge', sortValue: (r: DepRow) => msgBalance(r.produceCount, r.consumeCount).ratio, naturalDir: 'desc', width: 118 } as DataTableColumn<DepRow>,
+          // v0.9.835 — v0.9.815'in "Denge" kolonu KALDIRILDI. Broker
+          // metriği (consumer lag) OTel'e ingest edilmediği için
+          // span-türevli denge yanıltıcı sayılar üretiyordu (canlıda
+          // "boşalıyor %148"). Aşağıdaki P99 Δ sıralaması GECİKME
+          // tabanlı, dengeden bağımsız — o duruyor.
           // v0.9.815 — P99 Δ. compare=prior açıkken önceki eşit pencereye
           // göre kötüleşme oranı; kapalıyken HER satır null döner, sortRows
           // hepsini kararlı bırakır ve sıra sunucudan gelen spanCount DESC
@@ -572,7 +569,6 @@ export function DependenciesTable({
                         <KindRateCell perMin={r.consumePerMin} count={r.consumeCount}
                           errors={r.consumeErrors} priorPerMin={r.priorConsumePerMin}
                           compare={compare} what="consume" />
-                        <BalanceCell produce={r.produceCount} consume={r.consumeCount} />
                         <P99DeltaCell cur={r.p99DurationMs} prior={r.priorP99Ms} compare={compare} />
                         {/* v0.9.816 — ayrışmış p95. '—' iki ayrı yokluğu
                             kapsar: bu pencerede o kind'da span yok, ya da
@@ -755,44 +751,6 @@ function KindP95Cell({ v, what }: { v?: number; what: string }) {
     <td className="mono" style={{ textAlign: 'right' }}
       title={`${what} span süresi, p95`}>
       {v.toFixed(1)}ms
-    </td>
-  );
-}
-
-// BALANCE_UI — Denge durumunun tek görsel sözlüğü (v0.9.815). Çip
-// metni DURUMU söyler, sayıyı değil: "%12" tek başına yön taşımıyor,
-// "birikiyor" taşıyor. Oranın kendisi tooltip'te ve sıralamada.
-const BALANCE_UI: Record<MsgBalanceState, { label: string; glyph: string; tone: string }> = {
-  accumulating: { label: 'birikiyor', glyph: '▲', tone: 'warn' },
-  balanced:     { label: 'dengede',   glyph: '=', tone: 'ok' },
-  draining:     { label: 'boşalıyor', glyph: '▼', tone: 'gray' },
-  unknown:      { label: '—',         glyph: '',  tone: 'gray' },
-};
-
-// BalanceCell — üretim/tüketim dengesi çipi.
-//
-// "boşalıyor" UYARI DEĞİL: tüketimin üretimi geçmesi normalde iyi
-// haberdir (birikmiş iş eriyor) ya da pencere sınırı artefaktıdır
-// (üretim pencereden önce olmuş). Yalnız "birikiyor" sarı — backlog
-// büyüyor demek.
-function BalanceCell({ produce, consume }: { produce?: number; consume?: number }) {
-  const b = msgBalance(produce, consume);
-  const ui = BALANCE_UI[b.state];
-  if (b.state === 'unknown') {
-    return (
-      <td>
-        <span style={{ color: 'var(--text3)' }}
-          title="Bu satırda producer/consumer ayrımı oluşmadı — span'ler kind taşımıyor ya da yalnız broker chatter'ı var.">—</span>
-      </td>
-    );
-  }
-  const pct = Math.abs((b.ratio ?? 0) * 100);
-  return (
-    <td>
-      <span className={`badge b-${ui.tone}`} style={{ textTransform: 'none', letterSpacing: 0 }}
-        title={`üretim ${Math.round(produce ?? 0).toLocaleString()} · tüketim ${Math.round(consume ?? 0).toLocaleString()} span — (üretim−tüketim)/üretim = ${((b.ratio ?? 0) * 100).toFixed(1)}%. Bu bir consumer LAG değil: broker metriği ingest edilmiyor, oran yalnız span sayılarından.`}>
-        {ui.glyph} {ui.label}{pct >= 1 ? ` ${pct.toFixed(0)}%` : ''}
-      </span>
     </td>
   );
 }

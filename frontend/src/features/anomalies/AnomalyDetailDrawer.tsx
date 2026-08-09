@@ -8,6 +8,7 @@ import { LogsHistogram } from '@/components/LogsHistogram';
 import { fmtNum, tsLong } from '@/lib/utils';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import type { AnomalyEvent } from '@/lib/types';
+import { serviceHref } from '@/lib/serviceHref';
 
 // AnomalyDetailDrawer — v0.8.267, operator-requested: "Anomalies
 // sayfasında üzerine tıklayınca ne zaman spike oldu ve benzeri
@@ -109,7 +110,10 @@ export function AnomalyDetailDrawer({ event, onClose }: {
         </Badge>
         <span className="badge b-gray" style={{ fontSize: 10 }}>{KIND_LABEL[event.kind]}</span>
         {event.service && (
-          <Link to={`/service?name=${encodeURIComponent(event.service)}`}
+          /* v0.9.860 (UX denetimi K1) — kardeş logs/traces linkleri (yukarıda)
+             spike penceresini v0.9.213'ten beri taşırken servis linki
+             taşımıyordu: aynı bileşende iki standart. */
+          <Link to={serviceHref(event.service, { range: { fromNs: chartRange.from, toNs: chartRange.to } })}
             style={{ fontWeight: 700, fontSize: 14 }}>
             {event.service}
           </Link>
@@ -182,7 +186,8 @@ export function AnomalyDetailDrawer({ event, onClose }: {
 
           {/* Root cause + AI — same affordances the row had, in situ. */}
           <div style={{ marginBottom: 12 }}>
-            <RootCauseRibbon anchor="anomaly" id={event.id} summary={event.rootCause} />
+            <RootCauseRibbon anchor="anomaly" id={event.id} summary={event.rootCause}
+          window={{ fromNs: chartRange.from, toNs: chartRange.to }} />
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             {/* v0.9.477 — BİLEREK satır-içi kaldı (tek istisna). Bu yüzey

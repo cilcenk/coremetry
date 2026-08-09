@@ -5,6 +5,7 @@ import { IconFlame } from './icons';
 import { api } from '@/lib/api';
 import { fmtFixed, fmtDurShort } from '@/lib/utils';
 import type { RootCause, BubbleUpValue } from '@/lib/types';
+import { serviceHref } from '@/lib/serviceHref';
 
 // RootCausePanel — the single "what changed / likely cause" surface for a
 // Problem (v0.7.52, backend bundle shipped v0.7.51). Fetches
@@ -19,7 +20,12 @@ import type { RootCause, BubbleUpValue } from '@/lib/types';
 //   5. Exemplar trace (one representative bad trace)
 // Every sub-signal is best-effort server-side, so a partial bundle still
 // renders — the panel only shows the Empty state when nothing correlated.
-export function RootCausePanel({ problemId, service }: { problemId: string; service: string }) {
+// v0.9.860 (UX denetimi K1) — `window`: bu paneldeki servis linkleri OLAY
+// bağlamında yaşıyor (problemin penceresi). Pencere üstten gelir; panelin
+// kendi verisi zaman taşımıyor.
+export function RootCausePanel({ problemId, service, window: win }: {
+  problemId: string; service: string; window?: { fromNs: number; toNs: number };
+}) {
   const [rc, setRc] = useState<RootCause | null | undefined>(undefined);
   useEffect(() => {
     setRc(undefined);
@@ -120,7 +126,7 @@ export function RootCausePanel({ problemId, service }: { problemId: string; serv
                     .map(c => (
                       <tr key={c.service}>
                         <td>
-                          <Link to={`/service?name=${encodeURIComponent(c.service)}`} style={{ fontWeight: 600 }}>
+                          <Link to={serviceHref(c.service, { range: win })} style={{ fontWeight: 600 }}>
                             {c.service}
                           </Link>
                         </td>
@@ -163,7 +169,7 @@ export function RootCausePanel({ problemId, service }: { problemId: string; serv
                   <tr key={c.service}>
                     <td className="mono" style={{ color: 'var(--text3)' }}>{i + 1}</td>
                     <td>
-                      <Link to={`/service?name=${encodeURIComponent(c.service)}`} style={{ fontWeight: 600 }}>
+                      <Link to={serviceHref(c.service, { range: win })} style={{ fontWeight: 600 }}>
                         {c.service}
                       </Link>
                     </td>

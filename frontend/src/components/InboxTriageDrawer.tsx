@@ -18,6 +18,7 @@ import {
   buildAnomalySilenceBody,
 } from '@/lib/inboxDrawer';
 import type { InboxItem, ExceptionGroupState } from '@/lib/types';
+import { serviceHref, inboxItemWindow } from '@/lib/serviceHref';
 
 // InboxTriageDrawer — v0.8.292 (Option B slice 3): the /inbox row-click opens
 // this right-side drawer so the operator triages WITHOUT leaving the inbox,
@@ -58,7 +59,9 @@ export function InboxTriageDrawer({ item, onClose, onOpenSource }: {
           {(item?.source ?? 'ITEM').toUpperCase()}
         </span>
         {item?.service && (
-          <Link to={`/service?name=${encodeURIComponent(item.service)}`}
+          /* v0.9.860 (UX denetimi K1) — öğenin kendi penceresi (başlangıç →
+             son görülme, ±tampon) linke biner. */
+          <Link to={serviceHref(item.service, { range: inboxItemWindow(item) })}
             style={{ fontWeight: 700, fontSize: 14 }}>
             {item.service}
           </Link>
@@ -106,7 +109,8 @@ function DrawerBody({ item, onClose, onOpenSource }: {
           fan-out endpoint, so they show the exception detail instead. */}
       {rc && (
         <div style={{ marginBottom: 14 }}>
-          <RootCauseRibbon anchor={rc.anchor} id={rc.id} summary={undefined} defaultOpen />
+          <RootCauseRibbon anchor={rc.anchor} id={rc.id} summary={undefined} defaultOpen
+          window={inboxItemWindow(item)} />
         </div>
       )}
       {(item.kind === 'exception' || item.kind === 'httperror') && item.exception && (

@@ -45,6 +45,32 @@ describe('isAdditiveUnit', () => {
   it('bilinmeyen birim → kapalı (conservative)', () => {
     expect(isAdditiveUnit('widgets')).toBe(false);
   });
+
+  // v0.9.851 — UCUM bayt ailesi. YAZIM boşluğuydu: 'MB'/'GB'/'bytes' zaten
+  // toplanabilirdi, yani "bayt toplanır" kararı çoktan verilmişti; yalnız
+  // OTel'in kendi yazdığı biçim ('By') desende yoktu. İKİ YÖN de burada,
+  // çünkü tek yönlü bir test deseni gevşetip 'ms'yi de toplanabilir yapan
+  // bir düzenlemeyi yakalamaz.
+  const byteCases = ['By', 'by', ' By ', 'KiBy', 'MiBy', 'GiBy', 'TiBy', 'kBy', 'MBy'];
+  for (const u of byteCases) {
+    it(`UCUM bayt "${u}" → toplanabilir`, () => {
+      expect(isAdditiveUnit(u)).toBe(true);
+    });
+  }
+
+  it('süre birimleri HÂLÂ toplanamaz (mevcut pinler korunuyor)', () => {
+    for (const u of ['ms', 's', 'ns', 'µs', 'min', 'h', '%']) {
+      expect(isAdditiveUnit(u), `non-additive: "${u}"`).toBe(false);
+    }
+  });
+
+  it("bayt deseni FAZLA yakalamıyor — 'by' geçen rastgele birim toplanmaz", () => {
+    // Desen TAM eşleşme: içinde 'by' geçen bir ad ('bytes' hariç, o zaten
+    // ayrı daldan geçiyor) bayt sanılmaz.
+    for (const u of ['byz', 'flyby', 'by/s2', 'ruby']) {
+      expect(isAdditiveUnit(u), `should not match: "${u}"`).toBe(false);
+    }
+  });
 });
 
 // v0.9.483 (operatör: "Series tablosu varsayılan kapalı olsun") — açılış

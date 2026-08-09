@@ -51,13 +51,28 @@ export function resolveLegendCollapsed(
 
 // isAdditiveUnit — Sum/Σ (ve "Toplam" satırı) bu birimde ANLAMLI mı?
 // Toplanabilir: boş (sayaç/adet), oran/hız (rps, req/s, /s, ops), bytes
-// (B/KB/MB/GB). Toplanamaz: yüzde (%), gecikme/süre (ms/s/µs/ns/min/h) —
-// pod'lar arası p95 latency'yi TOPLAMAK anlamsız. Belirsizde KAPALI (Sum
-// gizlensin — yanlış toplam göstermekten iyidir).
+// (B/KB/MB/GB/bytes ve UCUM 'By' ailesi). Toplanamaz: yüzde (%),
+// gecikme/süre (ms/s/µs/ns/min/h) — pod'lar arası p95 latency'yi TOPLAMAK
+// anlamsız. Belirsizde KAPALI (Sum gizlensin — yanlış toplam göstermekten
+// iyidir).
 export function isAdditiveUnit(unit: string | undefined): boolean {
   const u = (unit || '').trim().toLowerCase();
   if (u === '') return true;                                   // birimsiz sayaç/adet
   if (u.includes('%')) return false;                          // yüzde
+  // v0.9.851 — UCUM BAYT AİLESİ ('By', 'KiBy', 'MiBy', 'GiBy', 'kBy'…).
+  //
+  // Bu bir YAZIM boşluğuydu, semantik bir karar değil: 'MB', 'GB', 'bytes',
+  // 'decbytes' zaten aşağıdaki desene takılıp toplanabilir sayılıyordu, yani
+  // "bayt toplanır" kararı çoktan verilmişti. Yalnız OTel'in kendi yazdığı
+  // biçim ('By') desende yoktu ve o birimi HAM taşıyan yüzeylerde Σ/"Toplam"
+  // sütunu "—" basıyordu. Desene eklenmesi tek satır ama etkisi GENEL:
+  // isAdditiveUnit hem CorePanel lejantının Σ'sını hem Explore GroupTable'ın
+  // "Toplam" sütununu hem de Δ%'nin hangi sayı ailesini (toplam mı ortalama
+  // mı) karşılaştıracağını yönetir.
+  //
+  // 'By' düz desene eklenemezdi: `\b[kmgt]?b\b` 'by' içinde eşleşmiyor (b'den
+  // sonra 'y' geliyor, kelime sınırı yok). O yüzden AYRI ve TAM eşleşme.
+  if (/^(ki|mi|gi|ti|[kmgt])?by$/.test(u)) return true;
   // hız / oran / adet / bytes → toplanabilir (süreden ÖNCE bakılır ki
   // "req/s" gecikme sanılıp elenmesin).
   if (/\/s\b|\brps\b|\breq|\bops\b|count|error|request|byte|\b[kmgt]?b\b/.test(u)) return true;

@@ -110,9 +110,13 @@ func (s *Store) BubbleUp(
 		return nil, fmt.Errorf("bubbleup totals: %w", err)
 	}
 	if selTotal == 0 || baseTotal == 0 {
+		// Attributes NON-NIL: nil dilim JSON'a `null` çıkar ve panel
+		// `.attributes.length` derken çöker (v0.9.836). "Hiç açıklayıcı
+		// attribute yok" DÜRÜST şekli boş dizidir, null değil.
 		return &BubbleUpResult{
 			SelectionTotal: int64(selTotal),
 			BaselineTotal:  int64(baseTotal),
+			Attributes:     []BubbleUpAttribute{},
 		}, nil
 	}
 
@@ -157,9 +161,11 @@ func (s *Store) BubbleUp(
 	}
 	keysRows.Close()
 	if len(keys) == 0 {
+		// Aynı sözleşme: boş dizi, null değil (v0.9.836).
 		return &BubbleUpResult{
 			SelectionTotal: int64(selTotal),
 			BaselineTotal:  int64(baseTotal),
+			Attributes:     []BubbleUpAttribute{},
 		}, nil
 	}
 
@@ -169,9 +175,13 @@ func (s *Store) BubbleUp(
 	// total, well within the 30s execution cap. The
 	// alternative (one giant GROUP BY (k, v)) blows up at
 	// high cardinality.
+	// Ana yol da boş dizi ile BAŞLAR: hiçbir attribute
+	// `len(attr.Values) > 0`'ı geçemezse append hiç çalışmaz ve nil
+	// kalırdı — erken dönüşlerle aynı çökme (v0.9.836).
 	out := &BubbleUpResult{
 		SelectionTotal: int64(selTotal),
 		BaselineTotal:  int64(baseTotal),
+		Attributes:     []BubbleUpAttribute{},
 	}
 	for _, key := range keys {
 		valSQL := fmt.Sprintf(`

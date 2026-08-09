@@ -11,6 +11,7 @@ import { VariableEditor } from '@/components/dashboard/VariableEditor';
 import { VariablesBar } from '@/components/dashboard/VariablesBar';
 import type { DashboardVariable } from '@/lib/types';
 import { api } from '@/lib/api';
+import { raceGuard } from '@/lib/raceGuard';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { quantizeWidth } from '@/lib/chartStep';
@@ -127,17 +128,23 @@ function Inner() {
     return () => window.removeEventListener('keydown', onKey);
   }, [kiosk, setKiosk]);
 
+  // v0.9.857 (UX denetimi K7) — Trace.tsx ile aynı yarış deseni: cleanup'sız
+  // manuel fetch adası. Düşük frekanslı ama aynı sınıf; iki pano arasında
+  // hızlı geçişte eski pano yenisinin üstüne yazabilirdi.
   useEffect(() => {
     if (!id) return;
     setDoc(undefined);
-    api.getDashboard(id).then(d => {
+    const g = raceGuard();
+    api.getDashboard(id, g.signal).then(d => {
+      if (!g.ok()) return;
       setDoc(d);
       // panels arrives as JSON-encoded string on the wire (json.RawMessage),
       // normalize it to an array for our local state.
       const panels = normalizePanels(d.panels);
       setDraft({ ...d, panels });
       if (startInEdit && user?.role === 'admin') setEditing(true);
-    }).catch(() => setDoc(null));
+    }).catch(() => { if (g.ok()) setDoc(null); });
+    return g.cancel;
   }, [id]);
 
   // Mirror the variable values into the URL so the selection survives

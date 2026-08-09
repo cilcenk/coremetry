@@ -46,6 +46,9 @@ import type { TraceCountResponse } from '@/lib/types';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
+// v0.9.841 — kolon SIRASI ve varsayılan attr seti tek yerde, saf ve
+// testli (traceColumns.ts). İkisi de karar; mekanik değil.
+import { DEFAULT_TRACE_COLUMNS, traceColumnOrder } from '@/lib/traceColumns';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import type { TracesResponse, TraceRow, TimeRange, SortColumn, SortOrder, AggregateRow, FilterExpr, FilterGroup, SpanMetricSeries } from '@/lib/types';
 
@@ -90,7 +93,6 @@ const AGG_NATURAL: Record<AggSort, SortOrder> = {
 // and adopts only the resize half of the primitive. We give the data columns
 // no `sortValue` (client-sorting a 50-row server page would scramble server
 // order); the header click routes to the server sort below.
-const FIXED_COLS = ['time', 'service', 'operation', 'duration', 'spans', 'status'] as const;
 const COL_LABEL: Record<string, string> = {
   time: 'Time', service: 'Service', operation: 'Operation',
   duration: 'Duration', spans: 'Spans', status: 'Status',
@@ -107,12 +109,6 @@ const COL_W: Record<string, number> = {
   time: 168, service: 130, operation: 260, duration: 150, spans: 72, status: 84,
 };
 const ATTR_W = 130;
-// FAZ 2B — default attribute-column set (operator decision 2026-07-23:
-// ONLY the fixed columns by default; attribute columns are opt-in, so a
-// fresh session always gets the fastest narrow list). Selection precedence
-// on load: URL ?cols= (shareable source of truth) → localStorage
-// (per-browser continuity) → this default.
-const DEFAULT_TRACE_COLUMNS: string[] = [];
 const EXTRA_COLS_LS_KEY = 'traces-extra-cols';
 // Shared value-suggestion seeds for the advanced filter builders (flat +
 // grouped). Hoisted so both render paths use the identical hints.
@@ -237,9 +233,11 @@ function TracesPageInner() {
   const grouped = advGroup !== null;
   const advGroupParam = useMemo(() => encodeFilterGroup(advGroup), [advGroup]);
   const [extraCols, setExtraCols] = useState<string[]>(() => {
-    // URL ?cols= wins; then the persisted per-browser selection; then the
-    // default (empty — FAZ 2B operator decision). The URL-write effect
-    // below re-serialises whichever source won, so the URL stays the
+    // URL ?cols= wins; then the persisted per-browser selection; then
+    // DEFAULT_TRACE_COLUMNS (v0.9.841 — no longer empty; see the
+    // constant for the two operator decisions behind it). This
+    // precedence chain is UNCHANGED: the URL-write effect below
+    // re-serialises whichever source won, so the URL stays the
     // shareable source of truth after mount.
     const url = (searchParams.get('cols') ?? '').split(',').map(s => s.trim()).filter(Boolean);
     if (url.length) return url;
@@ -694,10 +692,12 @@ function TracesPageInner() {
   // (renderTraceCell) colIds üzerinden çiziliyor, yani ikisi ayrışamaz.
   // Genişlik/sıralama durumu id'ye bağlı olduğu için kalıcı ayarlar
   // (localStorage) bu değişiklikten etkilenmiyor.
-  const colIds = useMemo(
-    () => ['time', ...extraCols, ...FIXED_COLS.filter(c => c !== 'time')],
-    [extraCols],
-  );
+  // v0.9.841 — sıra artık saf yardımcıda: Time · Service · Operation ·
+  // <attr kolonları> · Duration · Spans · Status (operatör isteği
+  // 2026-08-09). Attr kolonları eskiden Time'ın hemen ARKASINDAYDI ve
+  // satırı KİMLİKLEYEN iki alanı (Service, Operation) dört attr'ın
+  // sağına itiyordu.
+  const colIds = useMemo(() => traceColumnOrder(extraCols), [extraCols]);
   const columns: DataTableColumn<TraceRow>[] = useMemo(() =>
     colIds.map(id => {
       const server = SERVER_SORTABLE[id];

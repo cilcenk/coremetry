@@ -72,16 +72,23 @@ describe('buildGroupRows — Toplam additive kapısı', () => {
     { unit: 'req/s', additive: true },
     { unit: 'count', additive: true },
     { unit: 'MB',    additive: true },   // bytes
+    { unit: 'bytes', additive: true },   // Grafana kimliği (queryUnit çevirisi)
+    { unit: 'By',    additive: true },   // UCUM — v0.9.851'e kadar "—" basıyordu
     { unit: 'ms',    additive: false },  // gecikme — pod'lar arası toplam anlamsız
     { unit: 's',     additive: false },
     { unit: '%',     additive: false },
     { unit: 'µs',    additive: false },
   ];
   // NOT (v0.9.806): kapı PAYLAŞILAN isAdditiveUnit — lejantın Σ satırıyla
-  // aynı kural, bilinçli. Bilinen boşluğu da paylaşıyor: UCUM 'By' (OTel'in
-  // bayt birimi) desene takılmadığı için toplanamaz sayılıyor, yani bayt
-  // metriklerinde Toplam "—" basar. Yanlış sayı değil, eksik sütun; helper'ı
-  // değiştirmek lejantı da etkilediğinden ayrı bir karar.
+  // aynı kural, bilinçli.
+  //
+  // v0.9.851 — buradaki "bilinen boşluk" şerhi KALKTI: UCUM 'By' artık
+  // desende. Boşluk bir YAZIM meselesiydi ('MB'/'bytes' zaten toplanabilirdi).
+  // Explore'un kendi yolu bu satırlara zaten HAM 'By' göndermiyor —
+  // queryUnit (v0.9.801) katalog birimini Grafana kimliğine çeviriyor, yani
+  // panel 'bytes' alıyordu ve Toplam sütunu ORADA çalışıyordu; boşluk ham
+  // OTLP birimini ileten yüzeylerde (dashboard panelinin serbest metin
+  // 'Unit' alanı gibi) biterdi. İki yazım da tabloda ki tekrar ayrışmasın.
   for (const c of cases) {
     it(`"${c.unit || '(boş)'}" → additive=${c.additive}`, () => {
       const [r] = buildGroupRows([panel({

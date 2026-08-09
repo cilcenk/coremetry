@@ -37,7 +37,10 @@ export function RootCausePanel({ problemId, service }: { problemId: string; serv
 
   const bubble = topBubble(rc);
   const blast = rc.blastRadius && rc.blastRadius.totalCallers > 0 ? rc.blastRadius : null;
-  const corr = rc.correlations.filter(c => c.service !== service);
+  // v0.9.836 — `?? []`: correlations da null gelebiliyordu (rootcause.go
+  // goroutine'i nil dönüşle `[]` zarfını eziyordu). Aynı çökme sınıfı,
+  // farklı metot ('filter').
+  const corr = (rc.correlations ?? []).filter(c => c.service !== service);
   const headline = likelyCause(rc, service, bubble);
   const nothing = !rc.recentDeploy && !bubble && !blast && corr.length === 0 && !rc.exemplar;
 
@@ -97,7 +100,7 @@ export function RootCausePanel({ problemId, service }: { problemId: string; serv
       {blast && (
         <Section title="Blast radius"
                  subtitle={`${blast.totalCallers} caller${blast.totalCallers === 1 ? '' : 's'}, ${blast.cascadingCallers} already cascading`}>
-          {blast.callers.length === 0 ? (
+          {(blast.callers ?? []).length === 0 ? (
             <div style={{ fontSize: 12, color: 'var(--text3)' }}>
               No inbound callers in the window — <b>{service}</b> is an entry point.
             </div>
@@ -111,7 +114,7 @@ export function RootCausePanel({ problemId, service }: { problemId: string; serv
                   <th style={{ width: 90 }}>State</th>
                 </tr></thead>
                 <tbody>
-                  {[...blast.callers]
+                  {[...(blast.callers ?? [])]
                     .sort((a, b) => b.errorRate - a.errorRate || b.rps - a.rps)
                     .slice(0, 6)
                     .map(c => (
@@ -247,7 +250,7 @@ function likelyCause(
         error spans vs {pct(top.baselinePct)} of all spans.</>,
     };
   }
-  const co = rc.correlations.find(c => c.service !== service && c.score >= 20);
+  const co = (rc.correlations ?? []).find(c => c.service !== service && c.score >= 20);
   if (co) {
     return {
       ...corr,
@@ -264,11 +267,18 @@ function likelyCause(
 // topBubble flattens the bubble-up result to the single most over-represented
 // attribute (the one whose top value has the highest score), returning its
 // values sorted desc for the bar list. null when bubble-up is absent or flat.
-function topBubble(rc: RootCause): { key: string; values: BubbleUpValue[] } | null {
-  if (!rc.bubbleUp || rc.bubbleUp.attributes.length === 0) return null;
+//
+// v0.9.836 — NULL TOLERANSI. Sunucu `"attributes": null` gönderebiliyordu
+// (bubbleup.go erken dönüşleri) ve `.length` orada çöküyordu: ErrorBoundary,
+// sayfanın tamamı. Backend artık boş dizi gönderiyor AMA bu tolerans
+// kalıyor — prod'da eski binary ve 60 sn cache'li ESKİ yanıtlar dolaşımda.
+// Test edilebilir olsun diye export edildi (RootCausePanel.test.ts).
+export function topBubble(rc: RootCause): { key: string; values: BubbleUpValue[] } | null {
+  const attrs = rc.bubbleUp?.attributes ?? [];
+  if (attrs.length === 0) return null;
   let best: { key: string; values: BubbleUpValue[] } | null = null;
-  for (const attr of rc.bubbleUp.attributes) {
-    const values = [...attr.values].sort((a, b) => b.score - a.score);
+  for (const attr of attrs) {
+    const values = [...(attr.values ?? [])].sort((a, b) => b.score - a.score);
     const topScore = values[0]?.score ?? 0;
     if (topScore > 0 && (!best || topScore > (best.values[0]?.score ?? 0))) {
       best = { key: attr.key, values };

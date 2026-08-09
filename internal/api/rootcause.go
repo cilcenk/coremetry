@@ -147,7 +147,11 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if cs, e := s.store.GetCorrelatedChanges(ctx, started, windowSec, windowSec*4); e == nil {
+			// cs != nil ŞART: nil atamak handler'ın başta koyduğu `[]`
+			// zarfını EZER ve JSON `"correlations": null` çıkar; panel
+			// `.correlations.filter` derken çöker (v0.9.836, bubbleUp
+			// ile aynı sınıf).
+			if cs, e := s.store.GetCorrelatedChanges(ctx, started, windowSec, windowSec*4); e == nil && cs != nil {
 				out.Correlations = cs
 			}
 		}()
@@ -259,7 +263,11 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if cs, e := s.store.GetCorrelatedChanges(ctx, started, windowSec, windowSec*4); e == nil {
+			// cs != nil ŞART: nil atamak handler'ın başta koyduğu `[]`
+			// zarfını EZER ve JSON `"correlations": null` çıkar; panel
+			// `.correlations.filter` derken çöker (v0.9.836, bubbleUp
+			// ile aynı sınıf).
+			if cs, e := s.store.GetCorrelatedChanges(ctx, started, windowSec, windowSec*4); e == nil && cs != nil {
 				out.Correlations = cs
 			}
 		}()

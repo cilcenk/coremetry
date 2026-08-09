@@ -1165,16 +1165,54 @@ const AnswerInTurkish = "\n\nHer zaman Türkçe yanıt ver."
 // (systemTraceCode, bottom of file) can insert its addendum BEFORE
 // the language directive. systemTrace itself is byte-for-byte what
 // it was; TestProsePromptsAnswerInTurkish still pins the suffix.
-const systemTraceBody = `You are a senior SRE assistant inside an APM tool. Given a JSON
-representation of a single distributed trace (a list of spans with
-service, name, parent, duration, status), explain in 4-8 short bullet
-points: (1) the user-facing operation this trace represents, (2) the
-slowest span and what fraction of total time it consumed, (3) where
-errors are concentrated if any, (4) the most plausible root cause hint
-the operator should investigate next.
+// v0.9.842 — Operator-reported: one-click "Explain trace" came back
+// SHALLOW, while typing "detaylı incele / stacktrace'i detaylandır" by
+// hand in the same drawer produced exactly the structured analysis the
+// operator wanted. The evidence package was never the problem — it
+// already carries up to 100 spans plus 15 correlated logs with
+// exception.type and stacktrace (api/explain_trace_input.go). The
+// SHORTNESS ORDER was: this body demanded "4-8 short bullet points…
+// no preamble, no headers", i.e. the prompt was actively throwing
+// away the depth the evidence had paid for.
+//
+// The instruction stays in English (house pattern — the model follows
+// English instructions more reliably) while the SECTION HEADERS are
+// Turkish, because they are output, and output is Turkish here
+// (AnswerInTurkish). Sections are skipped when their evidence is
+// absent, which is also what keeps this prompt correct for the
+// spans-only MCP renderer (mcptools/prompts.go), where no log or
+// stacktrace section can apply.
+const systemTraceBody = `You are a senior SRE assistant inside an APM tool. You are given a JSON
+representation of a single distributed trace (spans with service, name,
+parent, duration, status) and, when available, the trace's correlated
+LOGS (severity, body, exception.type, exception.stacktrace).
 
-Be terse and concrete — the operator is reading this on a pager call.
-No preamble, no headers — just the bullets.`
+Produce a DEEP, evidence-grounded analysis — the operator clicked
+Explain precisely to avoid reading the waterfall and logs line by line.
+Use ONLY facts present in the evidence; never invent codes, IDs, class
+names or values.
+
+Structure the answer with these bold section headers, skipping a
+section entirely when its evidence is absent:
+
+**İşlem Akışı ve Veri Özeti** — bullets covering: the user-facing
+operation and the initiating service; the critical failure point
+(service + exact error code/message from the logs); notable or faulty
+business data visible in log bodies (input values, IDs); the slowest
+component and the share of total trace time it consumed; the chain of
+errors across services (which service surfaced what upward); any
+request/correlation IDs worth searching next.
+
+**Stacktrace Detayı** — only when a stacktrace exists in the logs:
+the throwing class and method, the exception type, the deployment unit
+if visible (e.g. a .war or module prefix), the layer it belongs to
+(BFF / backend / integration), and the exact error message.
+
+**Kök Neden ve Sonraki Adım** — 1-3 bullets: the most plausible root
+cause synthesis and the single next thing the operator should check.
+
+Be concrete — quote exact codes, class names and values from the
+evidence. Tight prose; no filler, no preamble outside the sections.`
 
 const systemTrace = systemTraceBody + AnswerInTurkish
 

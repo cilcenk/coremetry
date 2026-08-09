@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/sync/singleflight"
 
@@ -8998,9 +8999,21 @@ func (s *Server) copilotExplainAnomaly(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{"explanation": out})
 }
 
+// truncate caps s at n BYTES, cutting on a rune boundary.
+//
+// v0.9.842 — the cut used to be a bare s[:n], which lands mid-rune on
+// any multi-byte character. json.Marshal then replaces the fragment
+// with U+FFFD, so every truncated Turkish log body ended in a silent
+// "" — evidence corruption in exactly the field the Explain prompts
+// quote from (the v0.9.414 lesson, one layer down). The budget stays a
+// BYTE budget so no caller's prompt cost changes; only the cut moves,
+// by at most three bytes.
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
 	}
 	return s[:n] + "…"
 }

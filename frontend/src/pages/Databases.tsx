@@ -1,15 +1,16 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
-import { Link, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Turtle } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Button } from '@/components/ui/Button';
-import { DependenciesTable } from '@/components/DependenciesTable';
-import { depRowKey } from '@/lib/depsTable';
+import { DependenciesTable, type DepRow } from '@/components/DependenciesTable';
+import { databaseDetailHref, legacyDatabaseRowTarget } from '@/pages/databases/databaseParam';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { encodeRange } from '@/lib/urlState';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { timeRangeToNs } from '@/lib/utils';
 import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
@@ -42,27 +43,24 @@ export default function DatabasesPage() {
   // korunur); seçenekler zaten çekilmiş satırlardan türetilir — ekstra
   // sorgu/katalog fetch'i YOK (satır sayısı sınırlı, client-side yeterli).
   const [sp, setSp] = useSearchParams();
-  // v0.9.399 (desen paritesi) — satır drawer'ı URL-first (?row=,
-  // controlled mod DependenciesTable'da zaten hazırdı): kopyalanan
-  // link artık drawer'ı da açıyor. İki tablo aynı param'ı paylaşır
-  // (anahtar system|cluster|name — çakışma yok).
-  const [dbRowParams, setDbRowParams] = useSearchParams();
-  const openRow = dbRowParams.get('row');
-  // v0.9.821 — anahtar TEK NÜSHADAN (depRowKey). Elle yazılmış kopya
-  // hem db.name'i taşımıyordu (bir host'taki her veritabanı aynı
-  // anahtara düşüyordu) hem de `name ?? dbName` gibi bir düşüşle
-  // tablonun ürettiği anahtardan ayrışma riski taşıyordu — ayrışsalar
-  // drawer hiç açılmazdı ve hiçbir tip hatası bunu yakalamazdı.
-  const setOpenRow = (row: { system: string; cluster?: string; instance?: string; destination?: string; name?: string; dbName?: string } | null) => setDbRowParams(prev => {
-    const next = new URLSearchParams(prev);
-    const k = row ? depRowKey({
-      system: row.system, cluster: row.cluster,
-      instance: row.instance ?? row.name, destination: row.destination,
-      dbName: row.dbName,
-    }) : null;
-    if (k) next.set('row', k); else next.delete('row');
-    return next;
-  }, { replace: true });
+  // v0.9.840 — SATIR-ALTI ÇEKMECE EMEKLİ. Satır tıkı artık /database
+  // TAM SAYFASINA gidiyor (operatör kararı 2026-08-09, /endpoint ile
+  // aynı gerekçe): çekmece caller tablosunu, bekleme/kilit şeridini,
+  // motor panelini ve ifade listesini 12px dolgulu TEK bir hücreye
+  // sıkıştırıyordu.
+  //
+  // DEĞİŞİKLİK DAR: DependenciesTable PAYLAŞILAN bir bileşen ve
+  // /messaging onu satır-altı çekmecesiyle kullanmaya DEVAM ediyor.
+  // Emeklilik bir prop (onRowNavigate) — geçen tek tüketici bu sayfa.
+  const navigate = useNavigate();
+  // Eski ?row= derin linkleri (saved_views satırları, postmortem'lere
+  // yapıştırılmış bağlantılar) yeni sayfaya iner. Şim değil: arkasında
+  // eski yüzey yok ve bu paramı artık bu sayfa YAZMIYOR. Anahtarın
+  // cluster alanı doluysa o satır /messaging'e ait — dokunulmaz.
+  useEffect(() => {
+    const target = legacyDatabaseRowTarget(sp.toString());
+    if (target) navigate(target, { replace: true });
+  }, [sp, navigate]);
 
   const dbsys = sp.get('dbsys') ?? '';
   const dbname = sp.get('dbname') ?? '';
@@ -171,6 +169,17 @@ export default function DatabasesPage() {
       systems: [...sysSet].sort(), dbNames: [...nameSet].sort(),
     };
   }, [ov, dbsys, dbname]);
+
+  // openDatabasePage — satır tıkının ve klavye Enter/o'sunun TEK
+  // hedefi. Kimlik ÜÇLÜ (system, instance, dbName) ve ETİKETTEN
+  // bağımsız (v0.9.821): nameOf() instance 'unknown' iken db.name'i
+  // etiket olarak basıyor, onu kimlik sanmak boş bir sayfa demekti.
+  const openDatabasePage = (r: DepRow) => navigate(databaseDetailHref({
+    system: r.system,
+    instance: r.instance ?? '',
+    dbName: r.dbName ?? '',
+    source: r.source === 'receiver' ? 'receiver' : 'spans',
+  }, { range: encodeRange(range), env: env || undefined }));
 
   const toRow = (d: DBInstance) => ({
     system: d.system,
@@ -299,7 +308,7 @@ export default function DatabasesPage() {
               title={`Called from services (${spanRows.length})`}
               subtitle={`Derived from spans with a populated `}
               code="db.system"
-              tail=" attribute. Click a row to drill into matching traces." />
+              tail=" attribute. Satır tıkı veritabanı detay SAYFASINI açar." />
             {spanRows.length === 0 ? (
               <EmptyHint>
                 {dbsys || dbname
@@ -307,7 +316,7 @@ export default function DatabasesPage() {
                   : 'No service-emitted database spans in this window. Wire an OTel SDK into one of the application services to see this section populate.'}
               </EmptyHint>
             ) : (
-              <DependenciesTable rows={spanRows.map(toRow)} kind="db" range={range} openRowKey={openRow} onOpenRowChange={setOpenRow} />
+              <DependenciesTable rows={spanRows.map(toRow)} kind="db" range={range} onRowNavigate={openDatabasePage} />
             )}
 
             <div style={{ height: 24 }} />
@@ -339,7 +348,7 @@ export default function DatabasesPage() {
                   title={`DB receiver instances (${receiverRows.length})`}
                   subtitle="OpenTelemetry database-receiver instances — discovered from "
                   code="oracledb.* / postgresql.* / mysql.* / redis.*"
-                  tail=" metric_points. Expand a row to see receiver-specific drill-downs (sessions, wait classes, buffer pool, keyspaces…)." />
+                  tail=" metric_points. Satır tıkı detay sayfasını açar; motor paneli (oturumlar, wait class'ları, buffer pool, keyspace'ler…) orada." />
                 {receiverRows.length === 0 ? (
                   <EmptyHint>
                     {ov?.receiversSkipped === 'env'
@@ -349,7 +358,7 @@ export default function DatabasesPage() {
                         : 'No receiver-detected instances in this window. Point an OpenTelemetry database receiver (oracledb / postgresql / mysql / redis) at one of your databases and the discovered instance will appear here.'}
                   </EmptyHint>
                 ) : (
-                  <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} openRowKey={openRow} onOpenRowChange={setOpenRow} />
+                  <DependenciesTable rows={receiverRows.map(toRow)} kind="db" range={range} onRowNavigate={openDatabasePage} />
                 )}
               </>
             )}

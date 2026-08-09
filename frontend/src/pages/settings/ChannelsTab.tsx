@@ -6,6 +6,8 @@ import type { NotificationChannel } from '@/lib/types';
 import { IconBell } from '@/components/icons';
 import { FlashBox, humanize } from './shared';
 import { ChannelModal } from './ChannelModal';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 
 // ── Channels tab ────────────────────────────────────────────────────────────
 
@@ -46,8 +48,17 @@ export function ChannelsTab() {
 
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
 
-      {items === undefined && <Spinner />}
-      {items !== undefined && (!items || items.length === 0) && (
+      {readState(items) === 'loading' && <Spinner />}
+      {/* v0.9.858 (UX denetimi K6) — hata "No channels yet" olarak
+          sunuluyordu: operatör var olan kanalların üstüne yeni kanal
+          kurmaya yönlendiriliyordu. */}
+      {readState(items) === 'error' && (
+        <QueryError onRetry={refresh}>
+          Channels could not be loaded — this is a failed read, not an empty list.
+          Existing channels may still be configured.
+        </QueryError>
+      )}
+      {readState(items) === 'empty' && (
         <Empty icon={<IconBell size={28} />} title="No channels yet">
           Create one to start receiving alert notifications.
         </Empty>

@@ -59,6 +59,7 @@ import { MiniWaterfall } from '@/components/traces/MiniWaterfall';
 import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
 import { PageControls } from '@/components/ui/PageControls';
+import { QueryError } from '@/components/QueryError';
 
 // v0.9.304 (operatör) — 'relations' kaldırıldı. Yapısal self-join
 // sorgusu ham spans üzerinde koşuyordu, yani sayfadaki en pahalı okuma
@@ -283,6 +284,9 @@ function TracesPageInner() {
   const [aggRefreshing, setAggRefreshing] = useState(false);
   const aggRef = useRef<AggregateRow[] | null | undefined>(undefined);
   const [agg, setAgg] = useState<AggregateRow[] | null | undefined>(undefined);
+  // v0.9.858 (UX denetimi K6) — aggregate sorgusunun hata metni. Liste
+  // dalının listErr'ının kardeşi; ikisi de aynı Retry nonce'ını kullanır.
+  const [aggErr, setAggErr] = useState<string | null>(null);
   aggRef.current = agg;
   const [listErr, setListErr] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
@@ -569,10 +573,16 @@ function TracesPageInner() {
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
       having: debouncedHaving.length ? encodeHavingParam(debouncedHaving) : undefined,
-    }).then(a => { if (!cancelled) { setAgg(a); setAggRefreshing(false); } })
-      .catch(() => { if (!cancelled) { setAgg(null); setAggRefreshing(false); } });
+    }).then(a => { if (!cancelled) { setAgg(a); setAggErr(null); setAggRefreshing(false); } })
+      // v0.9.858 (UX denetimi K6) — agg null HİÇBİR render dalına
+      // girmiyordu: sorgu hatası BOŞ EKRAN demekti (spinner yok, mesaj yok).
+      .catch(e => {
+        if (cancelled) return;
+        setAgg(null); setAggRefreshing(false);
+        setAggErr(e instanceof Error ? e.message : String(e));
+      });
     return () => { cancelled = true; };
-  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, env, advFilters, advGroupParam]);
+  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, env, advFilters, advGroupParam, retryNonce]);
 
   // apply commits the draft as the live filter (overrideService sidesteps the
   // picker auto-commit race).
@@ -1209,6 +1219,12 @@ function TracesPageInner() {
               )}
             </div>
           </Empty>
+        )}
+        {view === 'aggregate' && agg === null && (
+          <QueryError message={aggErr} onRetry={() => setRetryNonce(n => n + 1)}>
+            The aggregate query errored or timed out. Try a narrower time range
+            or fewer groups, then retry.
+          </QueryError>
         )}
         {view === 'aggregate' && agg && agg.length > 0 && (
           <div style={{ opacity: aggRefreshing ? 0.55 : 1, transition: 'opacity 120ms' }} aria-busy={aggRefreshing}>

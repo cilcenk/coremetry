@@ -25,6 +25,7 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getItem, setItem } from '@/lib/storage';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { QueryError } from '@/components/QueryError';
 
 // v0.8.251 — the page's hand-rolled SortKey/NATURAL_DIR/SortTh server-sort
 // system moved into the shared DataTable primitive's serverSort mode. The
@@ -44,6 +45,12 @@ export default function ServicesPage() {
   // v0.8.479 (perf dalga-3 #9) — refetch'te tablo+filtre çubuğu ekranda
   // kalır (keep-data + solgunluk); skeleton yalnız ilk yüklemede.
   const [refreshing, setRefreshing] = useState(false);
+  // v0.9.858 (UX denetimi K6) — hata dalına Retry verebilmek için nonce
+  // (Traces'in listRetry deseni). Effect deps'ine girer.
+  const [retryNonce, setRetryNonce] = useState(0);
+  // Sunucunun söylediğini operatöre AYNEN göster — bu metinler yapıştırılıp
+  // ticket'a düşüyor.
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const dataRef = useRef<Service[] | null | undefined>(undefined);
   dataRef.current = data;
   // Sayfa-sıfırlama çift fetch'i: page>0 iken range/sort/filtre değişince
@@ -283,9 +290,13 @@ export default function ServicesPage() {
       if (names.length > 0 && !env) {
         api.serviceSparklines(r, names).then(d => { if (!cancelled) setSparklines(d ?? {}); }).catch(() => {});
       }
-    }).catch(() => { if (!cancelled) { setData(null); setRefreshing(false); setHasMore(false); } });
+    }).catch(e => {
+      if (cancelled) return;
+      setData(null); setRefreshing(false); setHasMore(false);
+      setLoadErr(e instanceof Error ? e.message : String(e));
+    });
     return () => { cancelled = true; };
-  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99]);
+  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99, retryNonce]);
 
   // Reset to page 0 whenever the search filter, time range,
   // sort, or team / cluster / env filter changes — staying on page 5
@@ -564,7 +575,19 @@ export default function ServicesPage() {
         )}
 
         {data === undefined && <TableSkeleton rows={10} cols={7} />}
-        {data !== undefined && (!data || data.length === 0) && (
+        {/* v0.9.858 (UX denetimi K6) — BU sayfanın hata dalı denetimin en
+            pahalı örneğiydi: /api/services hatası "No services yet — point
+            your OTLP exporter…" basıyordu. Backend arızası INSTRUMENTATION
+            eksikliği gibi sunuluyor, operatör saatlerce collector tarafında
+            arıyordu. Hata artık hata olarak duruyor. */}
+        {data === null && (
+          <QueryError message={loadErr} onRetry={() => setRetryNonce(n => n + 1)}>
+            The service list could not be loaded. This is a failed read — your
+            services and their telemetry are unaffected; do not go looking at
+            the collector until this succeeds.
+          </QueryError>
+        )}
+        {data && data.length === 0 && (
           <Empty icon="⬡" title="No services yet">
             Point your OTLP exporter at the collector — <code>OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:14318</code> (HTTP) or <code>:14317</code> (gRPC).
           </Empty>

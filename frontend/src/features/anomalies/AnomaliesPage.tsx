@@ -26,6 +26,7 @@ import { PageControls } from '@/components/ui/PageControls';
 // The ?problem= deep-link host stays HERE too: notification e-mails
 // point at /problems?problem=<id> and that contract is test-locked.
 import { AlertProblemHost } from './ProblemsSection';
+import { QueryError, QueryErrorInline } from '@/components/QueryError';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -154,6 +155,8 @@ export default function ProblemsPage() {
   // solgunlaşarak kalır, skeleton yalnız ilk yüklemede (Traces/Services/
   // Service-detay ile aynı keep-data dili).
   const [refreshing, setRefreshing] = useState(false);
+  // v0.9.858 — sunucunun hata metni; hata dalı bunu aynen gösterir.
+  const [loadErr, setLoadErr] = useState<string | null>(null);
   const dataRef = useRef<ExceptionGroup[] | null | undefined>(undefined);
   dataRef.current = data;
   const [total, setTotal] = useState(0);
@@ -238,8 +241,14 @@ export default function ProblemsPage() {
       limit: PAGE_SIZE, offset: page * PAGE_SIZE,
       minOccurrences: minOcc > 0 ? minOcc : undefined, // v0.9.315
     })
-      .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); setRefreshing(false); })
-      .catch(() => { setData(null); setRefreshing(false); });
+      .then(d => { setData(d.items ?? []); setTotal(d.total ?? 0); setLoadErr(null); setRefreshing(false); })
+      // v0.9.858 (UX denetimi K6) — null hiçbir render dalına girmiyordu:
+      // exception listesinin sorgu hatası BOŞ EKRAN demekti ve "exception
+      // yok, temiziz" diye okunuyordu. Sinyal kaybının en pahalı yeri.
+      .catch(e => {
+        setData(null); setRefreshing(false);
+        setLoadErr(e instanceof Error ? e.message : String(e));
+      });
   };
   // Page reset on filter change is owned by setTab/setService/setTeam
   // (they delete ?page=); search resets it itself. A SORT change also
@@ -422,6 +431,12 @@ export default function ProblemsPage() {
         </PageControls>
 
         {data === undefined && <Spinner />}
+        {data === null && (
+          <QueryError message={loadErr} onRetry={refreshExceptionGroups}>
+            The exception list could not be loaded. This is a failed read — an
+            empty page here would have read as "no exceptions".
+          </QueryError>
+        )}
         {data && filtered.length === 0 && (
           <Empty icon="✓" title={tab === 'open'
             ? 'Inbox is clear — no untriaged exceptions'
@@ -626,6 +641,8 @@ function SamplesPanel({ fingerprint, occurrences }: { fingerprint: string; occur
   // gerçekten yok); tek bir "capped" bayrağı üçünü aynı cümleye sıkıştırıyordu.
   const [scan, setScan] = useState<SampleScanEnvelope>(null);
   const [limit, setLimit] = useState(10);
+  const [err, setErr] = useState<string | null>(null);
+  const [retry, setRetry] = useState(0);
   // v0.9.314 — the total the table no longer shows. Kept here rather
   // than dropped: how often a group fires is real context ONCE you are
   // looking at the group, it was only misleading as a scan-time column.
@@ -633,11 +650,17 @@ function SamplesPanel({ fingerprint, occurrences }: { fingerprint: string; occur
   useEffect(() => {
     setSamples(undefined);
     api.exceptionGroupSamples(fingerprint, limit)
-      .then(r => { setSamples(r?.samples ?? []); setScan(r ?? null); })
-      .catch(() => setSamples(null));
-  }, [fingerprint, limit]);
+      .then(r => { setSamples(r?.samples ?? []); setScan(r ?? null); setErr(null); })
+      .catch(e => { setSamples(null); setErr(e instanceof Error ? e.message : String(e)); });
+  }, [fingerprint, limit, retry]);
 
   if (samples === undefined) return <Spinner />;
+  // v0.9.858 (UX denetimi K6) — hata "No sample occurrences found." olarak
+  // sunuluyordu: taranmış-ama-boş ile sorgu-düştü ayırt edilemiyordu.
+  if (samples === null) {
+    return <QueryErrorInline text={err ? `Samples could not be loaded — ${err}` : 'Samples could not be loaded.'}
+      onRetry={() => setRetry(n => n + 1)} />;
+  }
   if (!samples || samples.length === 0) {
     const note = emptySamplesNote(scan, 'No sample occurrences found.');
     return (

@@ -586,6 +586,40 @@ describe('CorePanel focusedLabel (v0.9.793)', () => {
   });
 });
 
+// v0.9.850 — katman sırası YALNIZ yığın ailesinde.
+//
+// Sözleşme testi, çünkü kusurun belirtisi bir sayı değil bir GÖRÜNTÜdür:
+// line/bars/area panellerinde de sıralasaydık operatörün kurduğu A·B·C
+// lejant düzeni sebepsiz karışırdı ve hiçbir test bunu yakalamazdı.
+describe('CorePanelMulti katman sırası (v0.9.850)', () => {
+  const src = readFileSync(
+    resolve(__dirname, './corePanelEntry.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('kapı YALNIZ iki yığın markı — line/bars/area DOKUNULMAZ', () => {
+    expect(src).toMatch(
+      /const stackedFamily = viz === 'stacked' \|\| viz === 'stacked-bars';/);
+  });
+
+  it('sıralama SAF çekirdekten gelir (kendi reduce/sort zinciri değil)', () => {
+    expect(src).toMatch(/import \{ seriesMagnitude, stackItemOrder \} from '@\/lib\/chart\/stacking';/);
+    expect(src).toMatch(/stackItemOrder\(/);
+  });
+
+  it('yığın dışında items AYNEN kullanılır (yeniden dizilmez)', () => {
+    expect(src).toMatch(/const ordered = stackedFamily \? order\.map\(i => items\[i\]\) : items;/);
+    // Tek çizim döngüsü sıralanmış listeyi gezer — iki liste olsaydı
+    // rol/exemplar/dashed hizalaması bir gün kayardı.
+    expect(src).toMatch(/for \(const it of ordered\)/);
+  });
+
+  it('viz PROP OLARAK geçer — rest\'ten düşürülüp panele ulaşmaması sessiz bir mark kaybı olurdu', () => {
+    expect(src).toMatch(/items, unit, loading, ghostItems, error, emptyReason, emptyHint, viz, \.\.\.rest/);
+    // Dört dönüş yolunun DÖRDÜ de viz taşır (loading/error/empty/ready).
+    expect(src.match(/<CorePanel \{\.\.\.rest\} viz=\{viz\}/g) ?? []).toHaveLength(4);
+  });
+});
+
 describe('CorePanelMulti kesikli işareti (v0.9.793)', () => {
   const src = readFileSync(
     resolve(__dirname, './corePanelEntry.tsx'), 'utf8',

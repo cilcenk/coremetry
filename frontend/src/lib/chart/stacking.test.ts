@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   stackData, stackBands, seriesDrawOrder, drawPosOf, reorderSeries,
+  seriesMagnitude, stackItemOrder,
   type SeriesMatrix,
 } from './stacking';
 
@@ -206,5 +207,60 @@ describe('stacking.ts saflığı', () => {
   it('chart primitifi adları kodda hiç geçmez', () => {
     expect(src).not.toMatch(/UPlotChart/);
     expect(src).not.toMatch(/UPlotConfigBuilder/);
+  });
+});
+
+// ── v0.9.850 — KATMAN SIRASI (okunabilirlik) ────────────────────────────────
+//
+// Yukarıdaki seriesDrawOrder bir ÖRTME sorununu çözer (uPlot bars path
+// builder). Bu ayrı bir sıradır: eski SVG motoru (DashboardViz) yığılmış
+// panelleri toplam büyüklüğe göre sıralayıp AĞIRI ALTA koyuyordu, v2'ye
+// geçişte taşınmadı. Yığının alt kenarı düz olduğu için alttaki katman en
+// kolay okunandır; en büyük katman oraya gelmeli.
+
+describe('seriesMagnitude', () => {
+  const pts = (...vs: (number | null)[]) => vs.map(value => ({ value }));
+
+  it('Σ|değer| — mutlak değer', () => {
+    expect(seriesMagnitude(pts(1, 2, 3))).toBe(6);
+  });
+
+  it('NEGATİF seri sıfıra yaklaşmaz — ekranda kapladığı alan gerçek', () => {
+    // Toplam 0 olurdu; mutlak değer olmasaydı bu seri "hiç yok" sıralanırdı.
+    expect(seriesMagnitude(pts(-5, 5, -5, 5))).toBe(20);
+  });
+
+  it('null/NaN ATLANIR (ölçülmemiş bucket sıfır DEĞİLDİR)', () => {
+    expect(seriesMagnitude(pts(3, null, 4))).toBe(7);
+    expect(seriesMagnitude([{ value: NaN }, { value: 2 }])).toBe(2);
+  });
+
+  it('boş seri 0', () => {
+    expect(seriesMagnitude([])).toBe(0);
+  });
+});
+
+describe('stackItemOrder', () => {
+  it('yığın: AĞIR ÖNCE (dizinin başı = alt katman)', () => {
+    expect(stackItemOrder([3, 10, 7], true)).toEqual([1, 2, 0]);
+  });
+
+  it('yığın DIŞI: KİMLİK — line/bars/area lejant sırasını korur', () => {
+    expect(stackItemOrder([3, 10, 7], false)).toEqual([0, 1, 2]);
+  });
+
+  it('eşit büyüklükte KARARLI — panel poll başına titremez', () => {
+    expect(stackItemOrder([5, 5, 5, 5], true)).toEqual([0, 1, 2, 3]);
+    // Kısmî eşitlik: 4'ler kendi aralarında girdi sırasını korur.
+    expect(stackItemOrder([4, 9, 4], true)).toEqual([1, 0, 2]);
+  });
+
+  it('tek katman ve boş liste', () => {
+    expect(stackItemOrder([7], true)).toEqual([0]);
+    expect(stackItemOrder([], true)).toEqual([]);
+  });
+
+  it('sıfır büyüklükteki katmanlar en sona iner (ama düşmez)', () => {
+    expect(stackItemOrder([0, 2, 0, 5], true)).toEqual([3, 1, 0, 2]);
   });
 });

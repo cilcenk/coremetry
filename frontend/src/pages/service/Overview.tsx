@@ -373,8 +373,9 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // v0.9.844 — memo artık TEK liste döndürüyor (OK + Errors). Eskiden iki
   // vardı: `chart` (Toplam + Errors çizgileri) eski motorun ChartCard'ına,
   // `stats` alttaki tabloya gidiyordu. ChartCard dalı sökülünce `chart`
-  // tarafının ve onu üreten istemci-toplamının (sumNullableSeries) tüketicisi
-  // kalmadı; kalan panel iki seriyi rol renkleriyle (success/error) çiziyor.
+  // tarafının ve onu üreten istemci-toplamının tüketicisi kalmadı; kalan
+  // panel iki seriyi rol renkleriyle (success/error) çiziyor. (v0.9.845 —
+  // o toplayıcı, sumNullableSeries, öksüz kalınca silindi.)
   const throughput = useMemo<ChartLine[]>(() => {
     // v0.9.253 — `lat` is the entry-scoped series when the service has entry
     // spans, and the all-span series when it doesn't (usingAllSpans). Reading

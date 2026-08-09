@@ -6,8 +6,9 @@
 //   1) KIRPMA. Metrik yolunda SUNUCU TOP-N YOK — /api/metrics/query
 //      (chstore.QueryMetric) grup başına bir seri döndürür ve yalnız 50k
 //      SATIR tavanına çarpar. 65 route'lu bir serviste panel 65 çizgi
-//      çizerdi; span türevli kardeşi (rootOpSeries) sunucu top-N'i olmasa
-//      da 5'e kırpıyor. Burada kırpma İSTEMCİDE ve SÖYLENİYOR.
+//      çizerdi. Burada kırpma İSTEMCİDE ve SÖYLENİYOR — ölçüt de ithal:
+//      rankRootOps (rootOpSeries), span türevli kardeş panelin sıralama
+//      çekirdeğiydi ve v0.9.845'ten sonra TEK tüketicisi bu dosya.
 //
 //   2) BİRİM. Yüzdelik yolu silinince (v0.9.774) ms'ye çeviren sunucu
 //      kodu da gitti; artık ham değer + OTLP birimi geliyor ve ekseni
@@ -45,8 +46,9 @@ export interface RouteItems {
 //   • more       — evrende daha çok route var, çizilen ilk N (alan bazlı).
 //   • rowsCapped — sorgu 50k satır tavanına çarptı: "+N daha" bile
 //                  gerçek evreni bilmiyor.
-// more=0 iken taban not YOK (rootOpMoreNote deseni): lejant zaten
-// "Series (N)" yazıyor, tekrarı gürültü.
+// more=0 iken taban not YOK: lejant zaten "Series (N)" yazıyor, tekrarı
+// gürültü. (v0.9.845 — bu desenin ikizi rootOpMoreNote'tu; o panel gidince
+// silindi, sözleşme ARTIK YALNIZ BURADA yaşıyor ve testi de burada.)
 export function routeMoreNote(total: number, shown: number, cap: number, rowsCapped = false): string | null {
   const more = Math.max(0, total - shown);
   const base = more > 0
@@ -60,8 +62,9 @@ export function routeMoreNote(total: number, shown: number, cap: number, rowsCap
 // topRoutesByArea — ham seri kümesi → panel item'ları + not.
 //
 // Hizalama YOK: CorePanel'in frame birleşimi (framesToAligned) zaman
-// eksenini kendisi kurar ve eksik bucket null olur (sıkı doktrin) —
-// buildRootOpItems ile aynı gerekçe.
+// eksenini kendisi kurar ve eksik bucket null olur (sıkı doktrin). Eski
+// motorun ChartCard'ı değerleri İNDEKSLE eşlediği için orada union hizalama
+// şarttı; v2'de hizalayan taraf panel, o yüzden burada hizalamamak DOĞRU.
 export function topRoutesByArea(
   series: readonly SpanMetricSeries[] | null | undefined,
   cap = ROUTE_TOP_N,

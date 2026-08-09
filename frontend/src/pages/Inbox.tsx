@@ -28,6 +28,7 @@ import { useAuth } from '@/components/AuthProvider';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
 import { stripMarkdown } from '@/components/Markdown';
+import { serviceHref, inboxItemWindow } from '@/lib/serviceHref';
 
 // Facet vocab + defaults (v0.8.291) — both defaults are what the URL codec
 // omits so a fresh link stays clean.
@@ -805,7 +806,10 @@ export default function InboxPage() {
                     </td>
                     <td style={{ fontSize: 11, color: 'var(--text3)' }}>{it.source}</td>
                     <td>
-                      <Link to={`/service?name=${encodeURIComponent(it.service)}`}
+                      {/* v0.9.860 (UX denetimi K1) — satırın kendi olay
+                          penceresi taşınır; aksi hâlde servis sayfası
+                          "şimdi" açılır ve olay görünmez. */}
+                      <Link to={serviceHref(it.service, { range: inboxItemWindow(it) })}
                         onClick={e => e.stopPropagation()}
                         style={{ fontWeight: 600 }}>
                         {it.service || <span style={{ color: 'var(--text3)' }}>(none)</span>}

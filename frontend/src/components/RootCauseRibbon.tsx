@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import type { RootCauseSummary, RootCause, AnomalyRootCause, ScoredCause, RCAVerdict } from '@/lib/types';
 import { RCAVerdictPanel } from './RCAVerdictPanel';
 import { fmtDurShort } from '@/lib/utils';
+import { serviceHref } from '@/lib/serviceHref';
 
 // RootCauseRibbon (rc #3) — the in-page "Root cause: <suspect> (NN%) ▸" chip on
 // each /anomalies + /problems row. The COLLAPSED chip renders straight from the
@@ -21,11 +22,13 @@ import { fmtDurShort } from '@/lib/utils';
 // an anomaly id → anomalyRootCause. Both return the shared RootCause shape (the
 // anomaly variant just adds anchor fields), so the expanded body renders one way.
 export function RootCauseRibbon({
-  anchor, id, summary, defaultOpen,
+  anchor, id, summary, defaultOpen, window: win,
 }: {
   anchor: 'problem' | 'anomaly';
   id: string;
   summary?: RootCauseSummary | null;
+  // v0.9.860 (UX denetimi K1) — olay penceresi; servis linkleri bunu taşır.
+  window?: { fromNs: number; toNs: number };
   // v0.8.515 (perf raporu #21) — drawer TEK öğe için açıldığında ribbon
   // otomatik genişler: fetch drawer-open anıyla eş (ES-cost disiplini
   // aynen — liste hâlâ lazy, prefetch yok), triage bir tık kısalır.
@@ -116,7 +119,7 @@ export function RootCauseRibbon({
               Root-cause analysis failed to load. Check the server log.
             </div>
           )}
-          {rc && <ExpandedBody rc={rc} />}
+          {rc && <ExpandedBody rc={rc} window={win} />}
           {/* Optional Copilot prose narration on top of the deterministic
               ranking (rc #4). Lazy — only fetched when the operator clicks
               ✨ Explain (Copilot calls cost), never on mount/expand. */}
@@ -146,7 +149,12 @@ function ConfidencePct({ conf }: { conf: number }) {
 // ExpandedBody renders the ranked candidates + recent deploy + exemplar from the
 // fetched fan-out. Shows an honest Empty when nothing correlated — a partial
 // bundle (any of candidates / deploy / exemplar) still renders.
-function ExpandedBody({ rc }: { rc: RootCause | AnomalyRootCause }) {
+function ExpandedBody({ rc, window: win }: {
+  rc: RootCause | AnomalyRootCause;
+  // v0.9.860 (UX denetimi K1) — olay penceresi ribbon'dan iner; servis
+  // linkleri onu taşır, yoksa servis sayfası "şimdi" ile açılır.
+  window?: { fromNs: number; toNs: number };
+}) {
   // The persisted ranking isn't on the live fan-out; the candidates the operator
   // cares about here are the correlated services (the same signal the worker
   // ranks). Map them to the ScoredCause-shaped reason lines the ribbon shows.
@@ -171,7 +179,7 @@ function ExpandedBody({ rc }: { rc: RootCause | AnomalyRootCause }) {
           <div>
             <code>service.version={rc.recentDeploy.version}</code> first seen{' '}
             <b>{fmtDurShort(rc.recentDeploy.ageSeconds)}</b> before onset on{' '}
-            <Link to={`/service?name=${encodeURIComponent(rc.service)}#deploys`} style={{ fontWeight: 600 }}>
+            <Link to={serviceHref(rc.service, { range: win, hash: 'deploys' })} style={{ fontWeight: 600 }}>
               {rc.service}
             </Link>.
           </div>
@@ -186,7 +194,7 @@ function ExpandedBody({ rc }: { rc: RootCause | AnomalyRootCause }) {
             {candidates.slice(0, 5).map((c, i) => (
               <div key={c.service} style={{ display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12 }}>
                 <span className="mono" style={{ color: 'var(--text3)', flex: '0 0 16px' }}>{i + 1}</span>
-                <Link to={`/service?name=${encodeURIComponent(c.service)}`} style={{ fontWeight: 600, flex: '0 0 auto' }}>
+                <Link to={serviceHref(c.service, { range: win })} style={{ fontWeight: 600, flex: '0 0 auto' }}>
                   {c.service}
                 </Link>
                 <span className="badge b-info" style={{ fontSize: 10 }}>{Math.round(c.score)}</span>

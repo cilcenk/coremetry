@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/Button';
 import { ShareButton } from '@/components/ShareButton';
 import { copyToClipboard } from '@/lib/clipboard';
 import { QueryErrorInline } from '@/components/QueryError';
+import { serviceHref } from '@/lib/serviceHref';
 
 // ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
 // Two surfaces share one skeleton: a top triage bar (badges + ID +
@@ -324,7 +325,10 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
       {/* Meta chips */}
       <div className="meta-row" style={{ marginBottom: 18 }}>
         {/* v0.9.740 (operatör): servis adı TIKLANABİLİR + ug/sy rozetleri. */}
-        <Link to={`/service?name=${encodeURIComponent(group.service)}`}
+        {/* v0.9.860 (UX denetimi K1) — grubun kendi penceresi (ilk→son
+            görülme) linke biner: aksi hâlde servis sayfası "şimdi" ile
+            açılır ve exception'ın izi görünmez. */}
+        <Link to={serviceHref(group.service, { range: { fromNs: group.firstSeen, toNs: group.lastSeen } })}
           className="chip" style={{ textDecoration: 'none' }}
           title="Servis sayfasını aç">
           <span className="k">service</span><b className="mono" style={{ color: 'var(--accent2)' }}>{group.service}</b>
@@ -510,6 +514,9 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
 
   const logsFrom = Math.round((problem.startedAt - 60 * 60 * 1e9) / 1e6);
   const logsTo = Math.round((endNs + 10 * 60 * 1e9) / 1e6);
+  // v0.9.860 (UX denetimi K1) — problem penceresi, servis/pod pivotları için
+  // (logs/traces linkleriyle AYNI sınırlar; ns cinsinden).
+  const probWindow = { fromNs: problem.startedAt - 60 * 60 * 1e9, toNs: endNs + 10 * 60 * 1e9 };
   const logsHref = `/logs?q=${encodeURIComponent(`service.name:"${problem.service.replace(/"/g, '\\"')}"`)}&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`;
 
   return (
@@ -546,7 +553,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
               {isAnomaly && <span className="badge b-info" style={{ marginRight: 6 }}>ANOMALY</span>}
               <b>{problem.ruleName}</b>
             </div>
-            <RootCausePanel problemId={problem.id} service={problem.service} />
+            <RootCausePanel problemId={problem.id} service={problem.service} window={probWindow} />
             {/* Background problemExplainer's persisted first-look blurb —
                 full prose here (the feed card only tooltips it). */}
             {problem.aiSummary && (
@@ -614,7 +621,13 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
         <div style={{ minWidth: 0 }}>
           <Sect title="Blast radius">
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              <Link to={`/service?name=${encodeURIComponent(problem.service)}`}
+              {/* v0.9.860 (UX denetimi K1) — triage yolculuğunun BELKEMİĞİ.
+                  Gece 03:14 alarmının "Blast radius" pill'i servis sayfasını
+                  sticky "şimdi" penceresiyle açıyordu: alarm anının izi yok,
+                  "sorun geçmiş" yanılgısı. Pencere AYNI bileşende
+                  (logsFrom/logsTo) zaten hesaplı, yalnız logs/traces
+                  linklerine konuyordu. */}
+              <Link to={serviceHref(problem.service, { range: probWindow })}
                 className={`pb-pill${problem.status === 'open' ? ' err' : ''}`}
                 style={{ textDecoration: 'none', color: 'var(--accent2)' }}>
                 <span className="dot" /> <span className="mono">{problem.service}</span>
@@ -641,7 +654,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 }
                 if (!pod || pod === problem.service) return null;
                 return (
-                  <Link to={`/service?name=${encodeURIComponent(problem.service)}&tab=pods&jpod=${encodeURIComponent(pod)}`}
+                  <Link to={serviceHref(problem.service, { range: probWindow, tab: 'pods', params: { jpod: pod } })}
                     className="pb-pill"
                     style={{ textDecoration: 'none', color: 'var(--accent2)' }}
                     title="Bu podun JMX/runtime grafikleri (Pods sekmesi, pod daraltmalı)">

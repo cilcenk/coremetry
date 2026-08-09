@@ -7,6 +7,7 @@ import { fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { DBQueryStat, FilterExpr } from '@/lib/types';
+import { tracesPivotHref } from '@/lib/pivotHref';
 
 // Database query analyzer — Datadog DBM-style "where is my
 // query time going" view for a single service in a time
@@ -200,7 +201,7 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
                               wildcards so all literal variants of the
                               same query class show up in one search. */}
                           <td onClick={e => e.stopPropagation()}>
-                            <Link to={tracesURL(service, r)}
+                            <Link to={tracesURL(service, r, { fromNs: from, toNs: to })}
                                   className="sec"
                                   title={`Open /traces filtered to ${service} + this query class`}
                                   style={{
@@ -308,7 +309,15 @@ function fmtMs(ms: number): string {
 //                      finds nothing (db spans are never the
 //                      trace root). Disabling root-only lets
 //                      the search hit non-root spans.
-function tracesURL(service: string, r: DBQueryStat): string {
+// v0.9.862 (UX denetimi Ö1) — PENCERE. Bu link `range` yazmıyordu: zoom'lu
+// bir custom pencerede DB satırının "traces" linki sticky pencereyle
+// açılıyor, boş liste "bu sorgunun trace'i yok" diye okunuyordu. Panel
+// from/to'yu PROP olarak zaten biliyordu. pivotHref.ts bu sınıfı kendi
+// yorumunda "the exact class pivotHref exists to prevent" diye belgeliyor —
+// bu yüzden pencere artık ZORUNLU argüman.
+export function tracesURL(
+  service: string, r: DBQueryStat, window: { fromNs: number; toNs: number },
+): string {
   const filters: FilterExpr[] = [
     { k: 'service.name', op: '=', v: [service] },
   ];
@@ -326,9 +335,12 @@ function tracesURL(service: string, r: DBQueryStat): string {
   } else if (r.sampleStatement) {
     filters.push({ k: 'db.statement', op: '=', v: [r.sampleStatement] });
   }
-  const params = new URLSearchParams();
-  params.set('view', 'list');
-  params.set('rootOnly', 'false');
-  params.set('filters', encodeFilters(filters));
-  return `/traces?${params.toString()}`;
+  return tracesPivotHref({
+    window,
+    // view=list: /traces aggregate görünümü her eşleşmeyi tek satıra
+    // çökertirdi. rootOnly=false: db span'i asla kök değildir.
+    view: 'list',
+    rootOnly: false,
+    filters: encodeFilters(filters),
+  });
 }

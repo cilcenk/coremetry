@@ -1057,6 +1057,13 @@ func main() {
 	// ulaşır (tempo/copilot/ldap StartConfigRefresh deseni).
 	srv.LoadExceptionTriage(ctx)
 	go srv.StartExceptionTriageRefresh(ctx, 30*time.Second)
+	// v0.9.838 — alert-problem öncelik merdiveninin vidaları (ihlal katı /
+	// bayat-critical saati), AYNI kablo. Config chstore'da paket-global
+	// bir atomic pointer'da yaşıyor çünkü EnrichProblemsWithPriority
+	// notify ve anomaly paketlerinden de çağrılıyor; bu satır olmadan
+	// varsayılanlarda kalır (yani v0.9.838 öncesi davranış).
+	srv.LoadProblemPriority(ctx)
+	go srv.StartProblemPriorityRefresh(ctx, 30*time.Second)
 	// v0.9.797 — metrik route dışlama kuralları, AYNI kablo. Derlenmiş set
 	// Store'a yayınlanır; okuma yolları (metricquery / metricrate /
 	// metrichist / route-tier) her sorguda oradan okur, yani ayar sıcak

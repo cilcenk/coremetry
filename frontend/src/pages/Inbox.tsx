@@ -18,6 +18,13 @@ import { FacetMultiSelect } from '@/components/ui/FacetMultiSelect';
 import { InboxTriageDrawer } from '@/components/InboxTriageDrawer';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { resolveSelectedItem } from '@/lib/inboxDrawer';
+// v0.9.837 (operator-reported) — "Alert rules" bölümü Exceptions
+// sayfasından buraya taşındı: alert kuralları triage kuyruğunun
+// parçası, exception kuyruğunun değil. Modül yolundan import (barrel
+// değil): barrel AnomaliesPage'i de /inbox chunk'ına sürüklerdi.
+import { ProblemsSection, AlertProblemHost } from '@/features/anomalies/ProblemsSection';
+import { withProblemParam } from '@/features/anomalies/problemLink';
+import { useAuth } from '@/components/AuthProvider';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { InboxItem, InboxKind } from '@/lib/types';
 import { stripMarkdown } from '@/components/Markdown';
@@ -199,6 +206,13 @@ export default function InboxPage() {
   // Drawer selection is one more URL-backed facet (v0.8.292): ?item=<inboxId>.
   // Deep-linking /inbox?item=<id> opens the drawer; closing deletes the key.
   const selectedId = searchParams.get('item');
+  // v0.9.837 — ?problem=<id> tam-sayfa host'u, /problems'takinin aynısı.
+  // Alert-rules bölümünün satır tıkı bu parametreyi yazar, yani detay
+  // AYNI sayfada açılır; liste + bölüm MOUNTED kalır (display:none) ki
+  // facet/seçim state'i "← Problems"te yerinde dursun.
+  const problemParam = searchParams.get('problem');
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin' || user?.role === 'editor';
 
   // Single URL writer — replace:true + copy prev so foreign params (a future
   // ?problem= drawer, range, etc.) survive. Empty/null deletes the key.
@@ -347,7 +361,15 @@ export default function InboxPage() {
   // page reads its respective query param on mount.
   const goToSource = (it: InboxItem) => {
     if (it.kind === 'problem' && it.problem) {
-      navigate(`/problems?problem=${encodeURIComponent(it.problem.id)}`);
+      // v0.9.837 — problem detayı artık BU sayfada açılıyor (alert-rules
+      // bölümüyle birlikte taşındı), o yüzden /problems'a atlamak yerine
+      // ?problem= yazıyoruz. ?item= siliniyor: "kaynağı aç" çekmeceden
+      // ÇIKMAK demek, geri dönüş kuyruğun kendisine olmalı.
+      setSearchParams(prev => {
+        const p = withProblemParam(prev, it.problem!.id);
+        p.delete('item');
+        return p;
+      }, { replace: true });
     } else if (isExcFamily(it)) {
       navigate(`/problems?tab=open&exception=${encodeURIComponent(it.exception!.fingerprint)}`);
     } else if (it.kind === 'anomaly' && it.anomaly) {
@@ -500,8 +522,11 @@ export default function InboxPage() {
       {/* v0.9.323 — triage merge: this page IS the queue now, so it carries
           the name. The route stays /inbox so saved views, notification deep
           links and dashboard markdown keep resolving — only the label moved. */}
-      <Topbar title="Problems" showEnv />
-      <div id="content">
+      {/* v0.9.837 — ?problem= tam-sayfa detayı açıkken kuyruk GİZLENİR
+          (unmount DEĞİL): facet/seçim/scroll state'i "← Problems"te
+          yerinde duruyor. /problems'taki v0.8.426/428 deseninin aynısı. */}
+      {!problemParam && <Topbar title="Problems" showEnv />}
+      <div id="content" style={problemParam ? { display: 'none' } : undefined}>
         {/* v0.9.255 — kayıtlı görünümler. Backend `page`'i serbest string alıyor,
             yani bu tek satır; birleşik triage yüzeyinin /problems'ın yerini
             tutabilmesi için gereken paritenin en ucuz parçası.
@@ -883,14 +908,34 @@ export default function InboxPage() {
             </table>
           </div>
         )}
+
+        {/* ── Alert rules (firing thresholds + SLO burn) ───────────
+            v0.9.837 (operatör): bölüm Exceptions sayfasından buraya
+            taşındı. Yukarıdaki birleşik feed "insan gerektiren her
+            şey"; bu bölüm onun kural-tabanlı yarısının tam envanteri
+            (kendi durum/şiddet/öncelik/takım süzgeçleriyle).
+            ?service= süzgecini feed ile PAYLAŞIR. Kolon genişlikleri
+            hâlâ 'alert-rules' storageKey'inde — operatörün ayarladığı
+            genişlikler taşınmayla kaybolmasın. */}
+        <ProblemsSection serviceFilter={serviceFilter} />
       </div>
 
       {/* In-place triage drawer (v0.8.292). Rendered only once the list has
           settled (Array.isArray) so a deep-linked ?item= doesn't flash the
           soft-fallback during the initial load. `selected` is undefined when
-          the id isn't in the current list → the drawer's own fallback shows. */}
-      {selectedId && Array.isArray(data) && (
+          the id isn't in the current list → the drawer's own fallback shows.
+          v0.9.837 — ?problem= tam-sayfa detayı açıkken çekmece çizilmez:
+          ikisi aynı anda görünürse detayın üstüne panel biner. */}
+      {!problemParam && selectedId && Array.isArray(data) && (
         <InboxTriageDrawer item={selected} onClose={closeDrawer} onOpenSource={goToSource} />
+      )}
+      {problemParam && (
+        <AlertProblemHost
+          id={problemParam}
+          isAdmin={isAdmin}
+          backLabel="← Problems"
+          onBack={() => setSearchParams(prev => withProblemParam(prev, null), { replace: true })}
+        />
       )}
     </>
   );

@@ -1,31 +1,31 @@
 import { memo, lazy, Suspense } from 'react';
-import { TimeSeriesPanel, type TSMode } from '@/components/viz/TimeSeriesPanel';
+import { type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
 import { publishCursor } from './cursorBus';
 import type { PanelData } from './PanelStack';
-import { chartsV2 } from '@/lib/featureFlags';
 import type { ChartTimeRegion, ChartThreshold } from '@/lib/chart/overlays';
 
 // v0.9.745 (Explore v2) — line modunda panel gövdesi CorePanel'e
 // (@grafana/ui motoru, Overview ile AYNI render). Lazy: corePanelEntry
 // vendor'ı sayfaya statik bağlamaz (708 bundle dersi).
 //
-// v0.9.788 — DÖRT mark da v2 motorunda (line · bars · area · stacked).
-// Kademeli geçiş bitti: mod artık motoru SEÇMİYOR, yalnız chartsV2
-// bayrağı seçiyor (?chartsV2=0 hâlâ toptan kaçış).
+// v0.9.788 — DÖRT mark da yeni motorda (line · bars · area · stacked).
+// Kademeli geçiş bitti: mod motoru SEÇMİYOR.
 //
 // Bunun doğrudan sonucu: SAYFADAKİ ÇİFT SENKRON GRUBU ayrımı SONA ERDİ.
 // Eskiden karma bir sayfa (bars paneli + stacked paneli) iki ayrı uPlot
 // sync grubuna bölünüyordu ve crosshair motorlar arasında geçmiyordu;
 // artık bir sayfadaki tüm paneller aynı motorda, yani tek grupta.
-// Anahtar hâlâ MOTORA göre ayrışır (v2 x'i ms, eski motor sn — yanlış
-// hizalı senkron, hiç senkron olmamaktan kötüdür) ama bayrak sayfa
-// çapında olduğu için sayfa başına DAİMA tek grup düşer.
 //
-// v0.9.793 — son iki v2 farkı da kapandı: focusedLabel (GroupTable hover
+// v0.9.793 — son iki fark da kapandı: focusedLabel (GroupTable hover
 // vurgusu) CorePanel'in kontrollü odak kanalına, formül panelinin kesikli
-// çizgisi de item.dashed'e bağlandı. v2 artık eski yolun görsel üstkümesi.
+// çizgisi de item.dashed'e bağlandı.
+//
+// v0.9.844 — eski motor SÖKÜLDÜ: TimeSeriesPanel dalı ve onu seçen bayrak
+// gitti, panelin TEK gövdesi CorePanelMulti. `TSMode` tipi TSP'den gelmeye
+// devam ediyor — dosyanın kendisi YAŞIYOR (RuntimeCharts bayraksız tek-yol
+// tüketicisi, PanelStack tipleri oradan alıyor).
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
@@ -36,9 +36,15 @@ const CorePanelMultiLazy = lazy(() =>
 // state changes that don't concern it.
 
 // Sayfa başına TEK senkron grubu; anahtar motorun x birimini taşır
-// (v2 = ms). Mod artık anahtara karışmaz.
-const SYNC_KEY = 'explore-v2';
-const SYNC_KEY_V2 = `${SYNC_KEY}-ms`;
+// (CorePanel = ms). Mod anahtara karışmaz.
+//
+// v0.9.844 — SYNC_KEY / SYNC_KEY_V2 ikilisi tek anahtara indi. İkisi
+// vardı çünkü sayfada iki motor olabiliyordu (saniye-eksenli TSP ve
+// ms-eksenli CorePanel); TSP dalı sökülünce ayrım anlamını yitirdi.
+// '-ms' eki KALIYOR ve süs değil: uPlot.sync değeri karşı grafiğin
+// ölçeğine VALUE olarak taşır, yani ad alanı motorun x birimini
+// söylemeye devam etmeli (repoda saniye-eksenli motorlar hâlâ var).
+const SYNC_KEY = 'explore-v2-ms';
 const PANEL_HEIGHT = 200;
 
 export const QueryPanel = memo(function QueryPanel({
@@ -137,7 +143,7 @@ export const QueryPanel = memo(function QueryPanel({
         }}>
           {panel.emptyReason}
         </div>
-      ) : chartsV2() ? (
+      ) : (
         <Suspense fallback={<div style={{ height: PANEL_HEIGHT, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
           <CorePanelMultiLazy
             title=""
@@ -164,11 +170,11 @@ export const QueryPanel = memo(function QueryPanel({
             // (" (önceki)"), kesikliliği ve soluk rolü CorePanelMulti kendi
             // basıyor — v0.9.764'ün ghost dilinin tek sahibi orası.
             //
-            // ESKİ MOTORDA (?chartsV2=0) HAYALET YOK: TimeSeriesPanel'in
-            // karşılaştırma kanalı hiç olmadı. Kaçış kapısı bir hata ayıklama
-            // yolu (v0.9.743'ten beri v2 varsayılan); oraya ikinci bir ghost
-            // uygulaması yazmak, silinmeye aday bir motorda ikinci bir
-            // hizalama hatası kaynağı açmak olurdu.
+            // v0.9.824'te eski motorda hayalet YOKTU (TimeSeriesPanel'in
+            // karşılaştırma kanalı hiç olmadı) ve ikinci bir uygulama
+            // yazmak, silinmeye aday bir motorda ikinci bir hizalama
+            // hatası kaynağı açmak olurdu. v0.9.844'te o motor söküldü —
+            // karar geriye dönük olarak doğrulandı.
             ghostItems={panel.ghosts?.length
               ? panel.ghosts.map(g => ({
                   name: g.label,
@@ -185,32 +191,13 @@ export const QueryPanel = memo(function QueryPanel({
             regions={exploreRegions(panel)}
             thresholds={exploreThresholds(panel)}
             logScale={logScale}
-            syncKey={SYNC_KEY_V2}
+            syncKey={SYNC_KEY}
             onCursorTime={publishCursor}
             onExemplarClick={onExemplarClick}
             onZoom={onZoom}
             onZoomReset={onZoomReset}
           />
         </Suspense>
-      ) : (
-        <TimeSeriesPanel
-          series={panel.series}
-          deploys={panel.deploys}
-          events={panel.events}
-          thresholds={panel.thresholds}
-          height={PANEL_HEIGHT}
-          mode={mode}
-          logScale={logScale}
-          syncKey={SYNC_KEY}
-          hideLegend
-          zoomWindow={zoomWindow}
-          xRange={xRange}
-          hiddenLabels={hiddenLabels}
-          focusedLabel={focusedLabel}
-          onCursorTime={publishCursor}
-          onExemplarClick={onExemplarClick}
-          onZoom={onZoom}
-          onZoomReset={onZoomReset} />
       )}
     </div>
   );

@@ -12,11 +12,10 @@ import { timeRangeToNs } from '@/lib/utils';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { lazy, Suspense } from 'react';
-import { chartsV2 } from '@/lib/featureFlags';
 
 // v0.9.752 (operatör: "Metrics altında da aynı grafikler") — editör
 // önizlemesi line modunda CorePanel'de (Explore QueryPanel ile aynı
-// desen, v0.9.745); diğer viz modları eski gövdede. Lazy: vendor
+// desen, v0.9.745); diğer viz modları TimeSeriesPanel'de. Lazy: vendor
 // sayfaya statik binmez (708 dersi).
 const MQECorePanelLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
@@ -1063,7 +1062,12 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
             <p>The query returned no series. Widen the time range or relax the filters.</p>
           </Empty>
         ) : (
-          (chartsV2() && model.viz === 'line') ? (
+          // v0.9.844 — motor bayrağı kalktı; koşul artık yalnız MARK.
+          // line → CorePanel, diğer üç mark → TimeSeriesPanel. Alttaki TSP
+          // dalı eski motorun kaçış kapısı DEĞİL: bu editörde bars/area/
+          // stacked'in TEK render yolu o, yani sökülecek bir şey değil,
+          // henüz kapatılmamış bir geçiş dilimi.
+          (model.viz === 'line') ? (
             <Suspense fallback={<div style={{ height: 340, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
               <MQECorePanelLazy
                 title=""

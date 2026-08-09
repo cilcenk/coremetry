@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { SpanMetricSeries } from '@/lib/types';
 import {
   ROOT_OP_COLORS, ROOT_OP_TOP_N,
-  buildRootOpItems, buildRootOpLines, rankRootOps, rootOpColorAt,
+  buildRootOpItems, rankRootOps, rootOpColorAt,
   rootOpLineLabel, rootOpMoreNote, rootOpName,
 } from './rootOpSeries';
 
@@ -97,62 +97,11 @@ describe('rootOpMoreNote — iki ayrı yalan ayrı ayrı söylenir', () => {
   });
 });
 
-describe('buildRootOpLines', () => {
-  it('boş zarf → çizgi yok, not yok', () => {
-    expect(buildRootOpLines(null)).toEqual({ lines: [], shown: 0, note: null });
-    expect(buildRootOpLines({ series: [] })).toEqual({ lines: [], shown: 0, note: null });
-  });
-
-  it('boş zarf + satır tavanı → çizgi yok ama uyarı VAR', () => {
-    expect(buildRootOpLines({ series: [], rowsCapped: true }).note)
-      .toBe('⚠ satır tavanı doldu — liste eksik olabilir');
-  });
-
-  it('ayrık bucket kümeleri union eksende hizalanır, eksik bucket null olur', () => {
-    // a: t=1,2 · b: t=2,3 → union 1,2,3. Ham points verilseydi ChartCard
-    // b'nin ilk noktasını t=1'e çizerdi (indeks eşlemesi) — bu testin sebebi.
-    const res = { series: [s('a', [[1, 10], [2, 20]]), s('b', [[2, 7], [3, 9]])] };
-    const { lines, shown } = buildRootOpLines(res);
-    expect(shown).toBe(2);
-    expect(lines[0].label).toBe('a · P95');
-    expect(lines[0].values).toEqual([10, 20, null]);
-    expect(lines[1].label).toBe('b · P95');
-    expect(lines[1].values).toEqual([null, 7, 9]);
-  });
-
-  it('tüm çizgiler AYNI zaman eksenini paylaşır (ChartCard x-ekseni sözleşmesi)', () => {
-    const res = { series: [s('a', [[1, 10], [2, 20]]), s('b', [[2, 7], [3, 9]])] };
-    const { lines } = buildRootOpLines(res);
-    const axisTimes = lines[0].series[0].points.map(p => p.time);
-    expect(axisTimes).toEqual([1, 2, 3]);
-    for (const l of lines) {
-      expect(l.series).toBe(lines[0].series);            // referansla paylaşılan eksen
-      expect(l.values).toHaveLength(axisTimes.length);   // her çizgi eksen boyunda
-    }
-  });
-
-  it('çizgiler alan sırasına göre renk alır', () => {
-    const res = { series: [s('yavas', [[1, 900]]), s('hizli', [[1, 3]])] };
-    const { lines } = buildRootOpLines(res);
-    expect(lines.map(l => l.label)).toEqual(['yavas · P95', 'hizli · P95']);
-    expect(lines.map(l => l.color)).toEqual([ROOT_OP_COLORS[0], ROOT_OP_COLORS[1]]);
-  });
-
-  it('totalSeries (sunucu kırpması öncesi) "+N daha"yı besler, seri sayısı DEĞİL', () => {
-    const res = {
-      series: Array.from({ length: 8 }, (_, i) => s(`op${i}`, [[1, i + 1]])),
-      totalSeries: 41,
-    };
-    const { shown, note } = buildRootOpLines(res);
-    expect(shown).toBe(ROOT_OP_TOP_N);
-    expect(note).toBe('+36 operasyon daha (alan bazlı kırpıldı)');
-  });
-
-  it('totalSeries yoksa gelen seri sayısına düşer', () => {
-    const res = { series: Array.from({ length: 8 }, (_, i) => s(`op${i}`, [[1, i + 1]])) };
-    expect(buildRootOpLines(res).note).toBe('+3 operasyon daha (alan bazlı kırpıldı)');
-  });
-});
+// v0.9.844 — `buildRootOpLines` describe bloğu (7 vaka) SİLİNDİ:
+// fonksiyonun kendisi eski motorla birlikte gitti (tek tüketicisi
+// Service Overview'un ChartCard rt-ops paneliydi). Hizalama/sıralama/
+// "+N daha" kontratı kaybolmadı — aşağıdaki buildRootOpItems bloğu
+// AYNI çekirdeği (rankRootOps + rootOpMoreNote) kapılıyor.
 
 // v0.9.728 — v2 projeksiyonu: CorePanelMulti item'ları. Hizalama BİLEREK
 // yok (CorePanel frame birleşimi yapar) — ham points korunmalı; sıralama

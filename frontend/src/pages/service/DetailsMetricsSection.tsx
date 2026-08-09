@@ -167,13 +167,15 @@ export function DetailsMetricsSection({ service, rangeNs, onZoom, onZoomReset }:
                 onZoom={onZoom}
                 onZoomReset={onZoomReset}
                 // v0.9.789 — '-ms' grubu. '-ms' bir MOTOR AD ALANIDIR:
-                // CorePanel x'i milisaniye, v1 uPlot gövdesi saniye tutar ve
+                // CorePanel x'i milisaniye, saniye-eksenli motorlar
+                // (ChartCard / TimeChart / OverviewChart) saniye tutar ve
                 // uPlot.sync imleci karşı grafiğe DEĞER olarak taşır, yani
                 // karışık grup crosshair'i 1000× yanlış yere koyar. Bu panel
                 // ham `service:X` kullanıyordu: aynı sekmedeki Performance
-                // (ServiceCharts → MLC v2 → `service:X-ms`) panelleriyle
-                // crosshair HİÇ senkronlanmıyordu, ?chartsV2=0 kaçışında ise
-                // v1 saniye panelleriyle AYNI gruba düşüp bozuluyordu.
+                // (ServiceCharts → MLC → `service:X-ms`) panelleriyle
+                // crosshair HİÇ senkronlanmıyordu. v0.9.844'ten sonra da
+                // ŞART: sökülen eski MLC gövdesiydi, saniye-eksenli
+                // kardeşler (Pod sayfası karışık motor) yaşıyor.
                 syncKey={`service:${service}-ms`}
               />
             </Suspense>

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { toCoreViz } from './panelViz';
 import type { PanelVizType } from '@/lib/types';
@@ -55,27 +55,30 @@ describe('panelViz — mark eşlemesi (beş markın beşi v2 motorunda)', () => 
 });
 
 // ---------------------------------------------------------------------------
-// v0.9.808 — eski motorun KALAN tek tüketicisi.
+// v0.9.844 — SÖZLEŞME TERSİNE DÖNDÜ (operatör onayı 2026-08-09: "eski
+// motoru tamamen sök").
 //
-// DashboardViz silinmedi ve silinmemeli: ?chartsV2=0 tek adımlık geri dönüş
-// doktrininin bar/alan/yığın yarısı ondan geçiyor. Ama panel dağıtımından
-// çıktı — bir gün "yeni mark eklerken oraya da bir dal atayım" diye geri
-// sızarsa iki motorlu dashboard geri gelir. Kapı bunu kaynakta durdurur.
+// v0.9.808'de bu blok "DashboardViz silinmedi ve silinmemeli" diyordu:
+// motor kaçış kapısının bar/alan/yığın yarısı ondan geçiyordu. Kapı
+// kalkınca gerekçe de kalktı. Yeni kapı bunun ZITTINI koruyor: eski SVG
+// motoru DOSYA OLARAK yok ve panel dağıtımına geri sızamaz. Bir gün "yeni
+// mark eklerken oraya da bir dal atayım" refleksi gelirse burada kızarır.
 // ---------------------------------------------------------------------------
-describe('DashboardViz yalnız ?chartsV2=0 kaçışında', () => {
+describe('eski SVG motoru SÖKÜLDÜ (v0.9.844)', () => {
   const src = readFileSync(
     resolve(__dirname, './PanelRenderer.tsx'), 'utf8',
   ).replace(/\/\/.*$/gm, '');
 
-  it('PanelRenderer\'da TEK DashboardViz çağrısı var', () => {
-    expect((src.match(/<DashboardViz\b/g) ?? []).length).toBe(1);
+  it('DashboardViz.tsx dosyası YOK', () => {
+    expect(existsSync(resolve(__dirname, '../DashboardViz.tsx'))).toBe(false);
   });
 
-  it('o çağrı chartsV2 kapısının FALSE dalında', () => {
-    const gate = src.indexOf('if (!chartsV2()) {');
-    const call = src.indexOf('<DashboardViz');
-    expect(gate).toBeGreaterThan(0);
-    expect(call).toBeGreaterThan(gate);
+  it('PanelRenderer eski motoru ne import eder ne çağırır', () => {
+    expect(src).not.toMatch(/DashboardViz/);
+  });
+
+  it('PanelRenderer\'da motor bayrağı YOK — dallanmasız tek yol', () => {
+    expect(src).not.toMatch(new RegExp('charts' + 'V2'));
   });
 
   it('mark ayıklaması kalktı — isV2Viz izi YOK', () => {

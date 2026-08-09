@@ -150,9 +150,14 @@ describe('foldedCount / foldNote — kırpma notu', () => {
 });
 
 // ---------------------------------------------------------------------------
-// TEK KAYNAK KAPISI. Katlama iki motorda da BU modülden gelmeli; bir gün
-// "hızlı olsun" diye MLC'ye ya da CorePanel yoluna ikinci bir kopya
-// düşerse iki motor yine ayrışır — kapı bunu kaynakta durdurur.
+// TEK KAYNAK KAPISI. Katlama BU modülden gelmeli; bir gün "hızlı olsun"
+// diye MLC'ye ya da CorePanel yoluna ikinci bir kopya düşerse aynı panel
+// yine farklı sayıda seri gösterir — kapı bunu kaynakta durdurur.
+//
+// v0.9.844 — sayı pini 2'den 1'e indi ve bu bir GEVŞEME DEĞİL: iki çağrı
+// vardı çünkü iki motor vardı (v1 computeChartData + v2 items
+// projeksiyonu). Eski motor sökülünce çağrı yeri de tekleşti; kapının
+// koruduğu şey (kopya gövde YOK) aynen duruyor.
 // ---------------------------------------------------------------------------
 describe('tek kaynak — foldTopN kopyası YOK', () => {
   const mlc = readFileSync(
@@ -166,12 +171,11 @@ describe('tek kaynak — foldTopN kopyası YOK', () => {
     expect(mlc).not.toMatch(/const OTHERS_KEY = 'others'/);
   });
 
-  it('v1 gövdesi ve v2 dalı AYNI fonksiyonu çağırır', () => {
-    // v1: computeChartData içinde; v2: items projeksiyonundan önce.
-    expect((mlc.match(/foldTopN\(/g) ?? []).length).toBe(2);
+  it('TEK çağrı yeri — katlama motora girmeden önce, bir kez', () => {
+    expect((mlc.match(/foldTopN\(/g) ?? []).length).toBe(1);
   });
 
-  it('v2 dalı katlanan seriyi "muted" rolüne + notu panele bağlar', () => {
+  it('katlanan seri "muted" rolüne + notu panele bağlanır', () => {
     expect(mlc).toMatch(/isOthersSeries\(s0\) \? 'muted'/);
     expect(mlc).toMatch(/note=\{foldNote\(/);
   });

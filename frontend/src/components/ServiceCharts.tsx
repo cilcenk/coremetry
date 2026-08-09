@@ -150,9 +150,10 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
       default:     return 0;
     }
   }, [compare, from, to]);
-  const compareLabel = compare === '24h' ? '24h ago'
-    : compare === '7d' ? '7d ago'
-    : compare === 'prev' ? 'prev window' : '';
+  // v0.9.844 — `compareLabel` ("24h ago" / "7d ago" / "prev window") SİLİNDİ.
+  // Tek tüketicisi eski MLC gövdesinin lejant ekiydi; CorePanel hayaleti
+  // kendi " (önceki)" ekini basar (v0.9.764'ten beri ghost dilinin tek
+  // sahibi orası), yani prop v2'de zaten yok sayılıyordu.
 
   // GRAN-D (v0.8.249) — width-aware step for the resolver path. Full-row
   // charts inside #content, so the page-level bucket (GRAN-A hook) is the
@@ -556,7 +557,6 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               syncKey={syncKey}
                               compareSeries={rpsPrev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
-                              compareLabel={compareLabel}
                               onZoom={onZoom}
                               onZoomReset={onZoomReset} />
             </div>
@@ -573,7 +573,6 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               syncKey={syncKey}
                               compareSeries={errPrev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
-                              compareLabel={compareLabel}
                               onZoom={onZoom}
                               onZoomReset={onZoomReset}
                               onBucketClick={onErrorBucketClick} />
@@ -601,7 +600,6 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                                 : undefined}
                               compareSeries={p99Prev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
-                              compareLabel={compareLabel}
                               onZoom={onZoom}
                               onZoomReset={onZoomReset}
                               onBucketClick={onLatencyBucketClick} />

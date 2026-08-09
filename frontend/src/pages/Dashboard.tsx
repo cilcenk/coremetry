@@ -585,8 +585,8 @@ function RefreshControl({ seconds, onChange, disabled }: {
 
 // PanelMenu (v0.9.773) — the ⋯ on a dashboard panel's TITLE row.
 //
-// Deliberately NOT a second chart menu. With chartsV2 on, metric /
-// spanmetric / promql panels are drawn by CorePanel, which already owns a ⋯
+// Deliberately NOT a second chart menu. Metric / spanmetric / promql
+// panels are drawn by CorePanel, which already owns a ⋯
 // for chart-level actions (fullscreen / CSV / show query). This one carries
 // PANEL-level actions only — things about the tile, not about the plot — so
 // the two never overlap and the operator learns one rule: outer menu = the

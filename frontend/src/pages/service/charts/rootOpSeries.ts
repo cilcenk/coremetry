@@ -10,11 +10,10 @@
 // Bu dosya SAF: fetch yok, React yok. Sebebi tek — hizalama, sıralama,
 // etiket ve "+N daha" türetimi testlenebilir kalsın (ChartCard'ın index
 // eşlemesi hizasız seride sessizce yanlış zamana çizer, bkz. alignToUnion
-// başlığı). Hook tarafı useRootOpLatency.ts.
+// başlığı). v0.9.844: hook tarafı (useRootOpLatency.ts) silindi — kırılım
+// paneli eski motorla birlikte kalktı; kalan projeksiyon buildRootOpItems.
 
 import type { SpanMetricSeries, SpanMetricResult } from '@/lib/types';
-import { alignToUnion } from '@/lib/chart/alignSeries';
-import type { ChartLine } from './ChartCard';
 
 // Kaç operasyon çizilir. 5: kartın yüksekliği ~150px ve lejant tablosu
 // varsayılan kapalı (v0.9.483) — daha fazlası okunmuyor, ayırt edilebilir
@@ -88,49 +87,13 @@ export function rootOpMoreNote(total: number, shown: number, rowsCapped = false)
   return base ? `${base} · ${capped}` : capped;
 }
 
-export interface RootOpLines {
-  /** ChartCard'a verilecek çizgiler; hepsi AYNI union zaman eksenine hizalı. */
-  lines: ChartLine[];
-  /** Çizilen operasyon sayısı. */
-  shown: number;
-  /** Kırpma + tavan notu (yoksa null). */
-  note: string | null;
-}
-
-// buildRootOpLines — zarf → ChartCard çizgileri.
-//
-// Hizalama: her operasyon AYRI bir GROUP BY satır kümesi, bir bucket'ta hiç
-// span üretmemiş olabilir (zero-fill yok). ChartCard değerleri İNDEKSLE
-// eşler, dolayısıyla ham points'i vermek çizgiyi yanlış zamana kaydırırdı
-// (RuntimeCharts'ta yaşanan sınıf). alignToUnion ile tek eksen + eksik
-// bucket'ta null (boşluk) → ChartLine.values (v0.9.483 kaçış kapısı; points
-// tipi number olduğu için boşluk taşıyamıyor).
-//
-// Zaman ekseni: ChartCard `times`i İLK boş-olmayan series'ten okur. Tüm
-// çizgilere AYNI eksen nesnesi (referansla paylaşılan) verilir — sıralama
-// değişse de eksen sabit kalır.
-export function buildRootOpLines(
-  res: SpanMetricResult | null | undefined,
-  cap = ROOT_OP_TOP_N,
-): RootOpLines {
-  const all = res?.series ?? [];
-  const top = rankRootOps(all, cap);
-  if (top.length === 0) {
-    return { lines: [], shown: 0, note: rootOpMoreNote(0, 0, res?.rowsCapped ?? false) };
-  }
-  const { times, cols } = alignToUnion(top.map(s => s.points ?? []));
-  // Eksen taşıyıcısı: değer okunmaz (her çizgide `values` var), yalnız
-  // ChartCard'ın x eksenini türettiği yer.
-  const axis: SpanMetricSeries[] = [{ groupKey: [], points: times.map(t => ({ time: t, value: 0 })) }];
-  const lines: ChartLine[] = top.map((s, i) => ({
-    series: axis,
-    color: rootOpColorAt(i),
-    label: rootOpLineLabel(s.groupKey),
-    values: cols[i],
-  }));
-  const total = res?.totalSeries ?? all.length;
-  return { lines, shown: top.length, note: rootOpMoreNote(total, top.length, res?.rowsCapped ?? false) };
-}
+// v0.9.844 — `buildRootOpLines` (+ RootOpLines) SİLİNDİ. Zarfı eski
+// motorun ChartCard çizgilerine çeviriyordu; o panel (Response time ·
+// Operasyonlar) v0.9.736'da operatör düzeniyle görünümden kalkmış, kod ise
+// motor kaçış kapısında yaşamaya devam etmişti — kapı da gitti. Union
+// hizalama (alignToUnion) burada gerekiyordu çünkü ChartCard değerleri
+// İNDEKSLE eşliyor; CorePanel frame birleşimini kendi yapar, o yüzden
+// aşağıdaki v2 projeksiyonunda hizalama YOK ve olmaması doğru.
 
 // ── v0.9.728 — CorePanelMulti (v2) projeksiyonu ─────────────────────────
 //

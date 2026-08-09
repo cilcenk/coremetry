@@ -14,19 +14,26 @@ import type { TimeRange } from '@/lib/types';
 // AMA env-filtreli sayfalar picker'ı ayrıca isteyebilir. Eskiden env
 // bu sayfalarda UYGULANIYOR ama DEĞİŞTİRİLEMİYORDU — başka sayfada
 // seçilen 'uat' inbox'ı sessizce daraltıp kalıyordu.
-export function Topbar({ title, range, onRangeChange, showEnv }: {
+//
+// v0.9.864 (UX denetimi §4.3 seçenek (b), operatör onayı 2026-08-09) —
+// envApplies: bu sayfa env filtresini GERÇEKTEN uyguluyor mu? Varsayılan
+// false; picker uygulamayan sayfada devre dışı + dürüst ipuçlu görünür.
+// Gerekçe ve neden gizlemek yerine devre dışı: EnvPicker.tsx.
+export function Topbar({ title, range, onRangeChange, showEnv, envApplies }: {
   title: string;
   range?: TimeRange;
   onRangeChange?: (r: TimeRange) => void;
   showEnv?: boolean;
+  /** Sayfa `?env=` değerini kendi sorgularına GEÇİRİYORSA true. */
+  envApplies?: boolean;
 }) {
   return (
     <div id="topbar">
       <h1>{title}</h1>
-      {showEnv && !(range && onRangeChange) && <EnvPicker />}
+      {showEnv && !(range && onRangeChange) && <EnvPicker applies={envApplies} />}
       {range && onRangeChange && (
         <>
-          <EnvPicker />
+          <EnvPicker applies={envApplies} />
           <TimeRangePicker value={range} onChange={onRangeChange} />
         </>
       )}

@@ -209,7 +209,7 @@ export default function DatabasesPage() {
 
   return (
     <>
-      <Topbar title="Databases" range={range} onRangeChange={setRange} />
+      <Topbar title="Databases" range={range} onRangeChange={setRange} envApplies />
       <div id="content">
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
           <select value={dbsys} onChange={e => setFilter('dbsys', e.target.value)}

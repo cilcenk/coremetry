@@ -454,7 +454,7 @@ export default function ServicesPage() {
 
   return (
     <>
-      <Topbar title="Services" range={range} onRangeChange={setRange} />
+      <Topbar title="Services" range={range} onRangeChange={setRange} envApplies />
       <div id="content">
         {data != null && (
           <PageControls sticky>

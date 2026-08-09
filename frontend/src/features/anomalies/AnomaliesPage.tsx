@@ -334,7 +334,7 @@ export default function ProblemsPage() {
   if (detail) {
     return (
       <>
-        <Topbar title="Exceptions" showEnv />
+        <Topbar title="Exceptions" showEnv envApplies={false} />
         <ProblemDetail
           group={detail}
           isAdmin={isAdmin}
@@ -350,7 +350,7 @@ export default function ProblemsPage() {
   if (excParam && excNotFound) {
     return (
       <>
-        <Topbar title="Exceptions" showEnv />
+        <Topbar title="Exceptions" showEnv envApplies={false} />
         <div id="content">
           <Empty icon="❓" title="Exception not found">
             Bu exception grubu artık mevcut değil.{' '}
@@ -363,7 +363,7 @@ export default function ProblemsPage() {
   if (excParam && !excNotFound) {
     return (
       <>
-        <Topbar title="Exceptions" showEnv />
+        <Topbar title="Exceptions" showEnv envApplies={false} />
         <div id="content"><Spinner /></div>
       </>
     );
@@ -379,7 +379,7 @@ export default function ProblemsPage() {
     <>
       {/* v0.9.323 — this list is exception GROUPS; "Problems" now names the
           merged triage queue at /inbox. Same page, same route, honest label. */}
-      {!problemParam && <Topbar title="Exceptions" showEnv />}
+      {!problemParam && <Topbar title="Exceptions" showEnv envApplies={false} />}
       {/* Hidden (NOT unmounted) while the full-page detail is open — the
           duplicate #content id is inert here: nothing on this route calls
           getElementById('content') (useContentWidth is dashboard-only). */}

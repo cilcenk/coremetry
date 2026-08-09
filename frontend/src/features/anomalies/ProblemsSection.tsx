@@ -704,7 +704,7 @@ export function AlertProblemHost({ id, isAdmin, onBack, backLabel = '← Excepti
     <>
       {/* Singular: this is ONE problem, reached from a notification deep
           link. Plural "Problems" is the merged queue (v0.9.323). */}
-      <Topbar title="Problem" showEnv />
+      <Topbar title="Problem" showEnv envApplies />
       {p ? (
         <AlertProblemDetail
           problem={p}

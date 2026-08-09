@@ -25,10 +25,26 @@ import { useUrlEnv } from '@/lib/useUrlEnv';
 // Consumers: /traces (v0.8.383), /services + /endpoints (v0.8.385),
 // /problems + /inbox + sidebar badge (v0.8.387, service-scoped),
 // /logs (v0.8.400 — both backends; ES self-discovers its env field
-// and reports honestly when none resolves). Other pages ignore
-// `?env=` until their backends grow the filter — the title says so
-// instead of implying a global effect.
-export function EnvPicker() {
+// and reports honestly when none resolves).
+//
+// v0.9.864 (UX denetimi §4.3 seçenek (b), operatör onayı 2026-08-09) —
+// `applies`: env yarı-uygulanan bir global filtre. Picker range verilen HER
+// sayfada basılıyor ama tüketen sayfa sayısı sınırlı. Bugünkü ara durum en
+// kötüsüydü: kullanıcıya UYGULANMAYAN bir filtre aktif gösteriliyordu, ve
+// `env=uat` seçili bir operatör /messaging, /clusters, /hosts, /metrics
+// gezerken tüm ortamların verisine bakıp env'e güveniyordu.
+//
+// Uygulamayan sayfada picker GİZLENMEZ, devre dışı bırakılır: gizlemek
+// operatörün sticky bir env seçimi olduğunu ve burada yok sayıldığını
+// göremeyeceği anlamına gelirdi — sessizce yanlış olan tam da buydu. ✕
+// (temizle) çalışır kalır; bayat bir global env'i her sayfadan bırakabilmek
+// tam olarak bu ekranda işe yarar.
+//
+// Varsayılan FALSE (opt-in): işaretlenmemiş bir sayfanın env'i uygulaMAdığı
+// istatistiksel olarak da doğru, ve varsayılanın hata biçimi DÜRÜSTLÜK
+// (atıl olduğu yazan atıl bir kontrol) — yalan değil. Seçenek (a) (env'i
+// her API'ye gerçekten uygulamak) sayfa-başına backlog, bu sürümün dışında.
+export function EnvPicker({ applies = false }: { applies?: boolean }) {
   const [env, setEnv] = useUrlEnv();
   const listId = useId();
   // draft = what's in the input while typing; committed env only
@@ -81,27 +97,37 @@ export function EnvPicker() {
     }
   };
 
+  const inertTitle =
+    'This page does not apply the environment filter — the data below covers ALL environments.\n' +
+    (env ? `Your selection (env=${env}) stays active and applies on Traces, Services, Endpoints, Databases, Problems, Inbox and Logs.\n` : '') +
+    'Clear it with ✕ if you want it gone everywhere.';
+
   return (
     <div className="cb-wrap" style={{ width: 150 }}>
       <input
         className="env-picker"
         list={listId}
         value={draft}
-        placeholder="All environments"
+        placeholder={applies ? 'All environments' : 'env not applied'}
         aria-label="Environment filter"
+        aria-disabled={!applies}
+        disabled={!applies}
         autoComplete="off"
         spellCheck={false}
+        // Atıl hâlde tıklanabilirlik de kalkar; opacity YALNIZ görsel ipucu
+        // olarak kalsaydı kullanıcı yazmayı deneyip sessizce başarısız olurdu.
+        style={!applies ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
         onChange={e => handleChange(e.target.value)}
         onKeyDown={e => { if (e.key === 'Enter') commit(draft.trim()); }}
         onBlur={() => { if (draft.trim() === '') commit(''); else setDraft(env); }}
-        title={
-          (truncated
-            ? `Showing the ${fetched.length} busiest of ${total} environments — type to search all (last 24h).\n`
-            : '') +
-          'Filter by deployment environment (deployment.environment.name).\n' +
-          'Applies to Traces, Services, Endpoints, Problems, Inbox and Logs today; more pages follow in upcoming releases.\n' +
-          'On Problems/Inbox the filter is service-scoped: rows whose service runs in the environment.\n' +
-          'On Logs the Elasticsearch backend discovers its environment field automatically and shows a chip when none resolves.'
+        title={applies
+          ? (truncated
+              ? `Showing the ${fetched.length} busiest of ${total} environments — type to search all (last 24h).\n`
+              : '') +
+            'Filter by deployment environment (deployment.environment.name).\n' +
+            'On Problems/Inbox the filter is service-scoped: rows whose service runs in the environment.\n' +
+            'On Logs the Elasticsearch backend discovers its environment field automatically and shows a chip when none resolves.'
+          : inertTitle
         }
       />
       {env && (

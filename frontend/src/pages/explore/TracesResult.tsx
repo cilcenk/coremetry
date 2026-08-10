@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 import { ColumnManager } from '@/components/ColumnManager';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
 import { fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
@@ -51,8 +53,17 @@ export function TracesResult({
   onShowTotal,
   extraCols,
   setExtraCols,
+  errorText,
+  onRetry,
 }: {
   traces: TraceRow[] | null | undefined;
+  // v0.9.867 (tutarlılık denetimi MT1) — `traces === null` (okuma hatası)
+  // HİÇBİR render dalına girmiyordu: sorgu patladığında sonuç alanı bomboş
+  // kalıyor, "bu filtreyle trace yok" diye okunuyordu. Sunucunun metni
+  // ebeveynde tutuluyor (DSL kutusu ondan besleniyor), buraya prop olarak
+  // iniyor — aynı metni iki yerde türetmemek için.
+  errorText?: string | null;
+  onRetry?: () => void;
   // v0.9.284 — undefined = not counted (the default 'skip' mode). The
   // header must say so rather than render a 0, which reads as "no other
   // traces exist" — the blind-spot class this page keeps producing.
@@ -78,8 +89,14 @@ export function TracesResult({
 
   return (
     <>
-      {traces === undefined && <Spinner />}
-      {traces && traces.length === 0 && (
+      {readState(traces) === 'loading' && <Spinner />}
+      {readState(traces) === 'error' && (
+        <QueryError message={errorText} onRetry={onRetry}>
+          Traces could not be loaded — this is a failed read, not an empty
+          result. Try a narrower time range, then retry.
+        </QueryError>
+      )}
+      {readState(traces) === 'empty' && (
         <Empty icon="⋮" title="No matching traces">
           Loosen your filters or widen the time range.
         </Empty>

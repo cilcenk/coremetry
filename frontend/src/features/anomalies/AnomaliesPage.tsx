@@ -661,7 +661,11 @@ function SamplesPanel({ fingerprint, occurrences }: { fingerprint: string; occur
     return <QueryErrorInline text={err ? `Samples could not be loaded — ${err}` : 'Samples could not be loaded.'}
       onRetry={() => setRetry(n => n + 1)} />;
   }
-  if (!samples || samples.length === 0) {
+  // v0.9.867 — `!samples ||` buradan SİLİNDİ: null dalı yukarıda kendi
+  // dönüşüne kavuştuğu için (v0.9.858) artık ölü, ama null-yutan guard'ın
+  // birebir yazım şekli olduğu için okuyanı yanıltıyor ve hata dalı bir gün
+  // yer değiştirirse sınıfı sessizce geri getirir.
+  if (samples.length === 0) {
     const note = emptySamplesNote(scan, 'No sample occurrences found.');
     return (
       <div style={{ color: note.warn ? 'var(--warn)' : 'var(--text3)', fontSize: 12 }}>

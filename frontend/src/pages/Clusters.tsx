@@ -19,7 +19,7 @@ import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
-import { Button, Card, Drawer, DrawerSection } from '@/components/ui';
+import { Button, Card, Drawer, DrawerSection, IconButton } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
@@ -867,12 +867,12 @@ export default function ClustersPage() {
                                 <td style={{ textAlign: 'center' }}>
                                   {/* v0.9.5 — trend drawer'ı; satırın filtre
                                       davranışına karışmaz (stopPropagation). */}
-                                  <button type="button"
+                                  <IconButton
+                                    variant="bare" size="xs" className="ib-accent"
                                     onClick={e => { e.stopPropagation(); openNsDrawer(r); }}
+                                    aria-label={`Open per-pod trend charts for namespace ${r.namespace}`}
                                     title="Per-pod trend charts for this namespace"
-                                    style={{ all: 'unset', cursor: 'pointer', color: 'var(--accent2)', display: 'inline-flex' }}>
-                                    <ChartSpline size={14} strokeWidth={1.75} />
-                                  </button>
+                                    icon={<ChartSpline size={14} strokeWidth={1.75} />} />
                                 </td>
                               </tr>
                             );

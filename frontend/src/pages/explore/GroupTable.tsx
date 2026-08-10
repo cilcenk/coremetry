@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 import { panelsToCSV } from './exploreCsv';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { fmtSmart, seriesColor } from '@/lib/chartFmt';
@@ -192,18 +193,13 @@ function PivotButtons({ pivot, onPivot }: {
     disabled: string | undefined, glyph: string, aria: string, title: string,
     mode: PivotMode,
   ) => (
-    <button type="button"
+    <IconButton
       aria-label={aria}
       title={disabled ?? title}
       disabled={!!disabled}
+      variant="bare" size="xs"
       onClick={e => { e.stopPropagation(); if (!disabled) onPivot(pivot.pairs, mode); }}
-      style={{
-        all: 'unset', flexShrink: 0,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        color: 'var(--text3)', fontSize: 11, lineHeight: 1,
-        padding: '2px 3px', borderRadius: 3,
-        opacity: disabled ? 0.35 : 1,
-      }}>{glyph}</button>
+      icon={glyph} />
   );
   return (
     <>

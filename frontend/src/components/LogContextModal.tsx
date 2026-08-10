@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
-import { Modal } from '@/components/ui';
+import { Modal, IconButton } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum, tsLong } from '@/lib/utils';
@@ -151,14 +151,12 @@ export function LogContextModal({
                   </span>
                   <span style={{ textAlign: 'right' }}>
                     {l.traceId && onTracePeek && (
-                      <button type="button"
+                      <IconButton
+                        variant="bare" size="xs" className="ib-accent"
                         onClick={() => onTracePeek(l.traceId)}
+                        aria-label={`Peek trace ${l.traceId.slice(0, 12)}`}
                         title={`Peek trace ${l.traceId.slice(0, 12)}…`}
-                        style={{
-                          all: 'unset', cursor: 'pointer',
-                          padding: '0 4px', color: 'var(--accent2)',
-                          fontSize: 11,
-                        }}>👁</button>
+                        icon="👁" />
                     )}
                   </span>
                 </div>

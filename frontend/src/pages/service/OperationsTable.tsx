@@ -58,9 +58,12 @@ const TREND_C = {
   p99:    'var(--teal)',
 } as const;
 
+// v0.9.888 — kroma `.btn-bare` sınıfına taşındı; burada yalnız YERLEŞİM
+// kaldı. Eski hâli `all: unset` değildi ama aynı sonucu veriyordu:
+// element-seviyesi buton kuralını satır içi stille ezmek. Sınıf hem
+// :focus-visible halkasını yaşatıyor hem de üç kopyayı teke indiriyor.
 const miniSparkBtn: React.CSSProperties = {
-  background: 'transparent', border: '1px solid transparent', borderRadius: 4,
-  padding: '1px 2px', cursor: 'pointer', display: 'inline-block', marginRight: 2,
+  padding: '1px 2px', marginRight: 2,
 };
 
 const OP_COLS: DataTableColumn<OperationSummary>[] = [
@@ -476,7 +479,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                       type="button"
                       onClick={() => { setOpFocus('calls'); setOpDetail(op); }}
                       title={`Calls — ${fmtNum(op.spanCount)} · tıkla: bu metriğin grafiği`}
-                      style={miniSparkBtn}
+                      className="btn-bare" style={miniSparkBtn}
                     >
                       <Sparkline values={op.sparkline ?? []} color={TREND_C.calls}
                         width={SPARK_W} title="" />
@@ -488,7 +491,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                     <button type="button"
                       onClick={() => { setOpFocus('errors'); setOpDetail(op); }}
                       title={`Errors — %${op.errorRate.toFixed(2)} · tıkla: bu metriğin grafiği`}
-                      style={miniSparkBtn}
+                      className="btn-bare" style={miniSparkBtn}
                     >
                       <Sparkline values={op.errorsSparkline ?? []}
                         color={TREND_C.errors} width={SPARK_W} title="" />
@@ -496,7 +499,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                     <button type="button"
                       onClick={() => { setOpFocus('p99'); setOpDetail(op); }}
                       title={`P99 — ${op.p99DurationMs.toFixed(0)}ms · tıkla: bu metriğin grafiği`}
-                      style={miniSparkBtn}
+                      className="btn-bare" style={miniSparkBtn}
                     >
                       <Sparkline values={op.p99Sparkline ?? []} color={TREND_C.p99}
                         width={SPARK_W} title="" />
@@ -694,11 +697,8 @@ function OperationMetricPanel({
           {op.name}
           <span style={{ color: 'var(--text3)', marginLeft: 8, fontSize: 11 }}>({service})</span>
         </span>
-        <button type="button" onClick={onClose}
-          style={{
-            marginLeft: 'auto', background: 'transparent', border: '1px solid var(--border)',
-            borderRadius: 5, color: 'var(--text2)', fontSize: 11, padding: '2px 9px', cursor: 'pointer',
-          }}>kapat</button>
+        <Button variant="secondary" size="sm" onClick={onClose}
+          style={{ marginLeft: 'auto' }}>kapat</Button>
       </div>
       <div style={{
         display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',

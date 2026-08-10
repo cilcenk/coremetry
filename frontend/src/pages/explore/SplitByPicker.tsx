@@ -23,8 +23,14 @@ export function SplitByPicker({ value, onChange }: {
   // Basamak hem sunucu cache anahtarına hem react-query anahtarına aynen
   // giriyor: serbest bir pencere ikisini de her dokunuşta ıskalatırdı
   // (v0.8.270).
+  // useMemo ŞART (v0.9.956, v0.5.184 sınıfı): attrKeySince içeride
+  // timeRangeToNs çağırıyor ve o da preset aralıklarda now() okuyor.
+  // Çıplak çağrı bugün zararsız görünüyor (snapSince beş basamağa
+  // yuvarladığı için dize sabit kalıyor, yani sorgu anahtarı oynamıyor)
+  // AMA yasak olan ŞEKLİN kendisi: basamak listesi bir gün incelirse
+  // aynı satır sessizce sonsuz refetch'e döner.
   const [range] = useUrlRange();
-  const since = attrKeySince(range);
+  const since = useMemo(() => attrKeySince(range), [range]);
   const keysQ = useQuery({
     queryKey: ['attribute-keys', since],
     queryFn: () => api.attributeKeys(since, 200),

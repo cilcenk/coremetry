@@ -12,6 +12,8 @@
 //      (1 saat) düşerdi, yani düzeltme hiç uygulanmamış görünürdü.
 
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { snapSince, attrKeySince, ATTR_KEY_RUNGS } from './attrKeyWindow';
 import type { TimeRange } from './types';
 
@@ -109,5 +111,48 @@ describe('attrKeySince — TimeRange girişi', () => {
     const toMs = Date.now();
     const fromMs = toMs - 3 * 24 * 3600 * 1000;
     expect(attrKeySince({ preset: 'custom', fromMs, toMs } as TimeRange)).toBe('168h');
+  });
+});
+
+// v0.9.956 — RENDER TUZAĞI KAPISI (v0.5.184 sınıfı).
+//
+// attrKeySince içeride timeRangeToNs çağırıyor ve o da PRESET aralıklarda
+// Date.now() okuyor. Çıplak bir render-gövdesi çağrısı, bu depoda sonsuz
+// refetch'in klasik şekli.
+//
+// v0.9.953'te SplitByPicker tam bu şekli taşıyordu. Bugün zararsızdı
+// (snapSince beş basamağa yuvarladığı için dize sabit kalıyor, sorgu
+// anahtarı oynamıyor) ama YASAK OLAN ŞEKLİN kendisi: basamak listesi bir
+// gün incelirse aynı satır sessizce sonsuz refetch'e döner. Zararsız
+// görünen doğru şekil, zararsız görünen yanlış şekilden iyidir.
+describe('attrKeySince çağrıları memolu (v0.9.956)', () => {
+  const SRC = join(__dirname, '..');
+  const CONSUMERS = [
+    'pages/Traces.tsx',
+    'components/FilterBuilder.tsx',
+    'components/ColumnManager.tsx',
+    'pages/explore/SplitByPicker.tsx',
+  ];
+
+  it('hiçbir çağrı render gövdesinde ÇIPLAK değil', () => {
+    const bare: string[] = [];
+    for (const rel of CONSUMERS) {
+      const src = readFileSync(join(SRC, rel), 'utf8').replace(/\/\/.*$/gm, '');
+      for (const m of src.matchAll(/attrKeySince\(/g)) {
+        // Çağrıdan geriye 220 karakter: useMemo/useEffect sarmalayıcısı
+        // ya da bir ok fonksiyonu gövdesi bu pencerede görünür.
+        const before = src.slice(Math.max(0, m.index! - 220), m.index!);
+        if (!/useMemo\(|useEffect\(/.test(before)) bare.push(`${rel}@${m.index}`);
+      }
+    }
+    expect(bare,
+      'attrKeySince timeRangeToNs → Date.now() okuyor; çıplak çağrı v0.5.184 sonsuz-refetch şekli.')
+      .toEqual([]);
+  });
+
+  it('en az bir gerçek tüketici taranıyor — kapı boşa dönmesin', () => {
+    const total = CONSUMERS.reduce((n, rel) =>
+      n + (readFileSync(join(SRC, rel), 'utf8').match(/attrKeySince\(/g) ?? []).length, 0);
+    expect(total).toBeGreaterThanOrEqual(CONSUMERS.length);
   });
 });

@@ -48,13 +48,21 @@ const primitives = readdirSync(UI)
   .filter(f => f.endsWith('.tsx') && !f.includes(TEST_MARK))
   .sort();
 
-/** `const xClass: Record<Foo, string> = { a: 'cls', … }` bloklarının DEĞERLERİ. */
-function emittedClasses(src: string): { file: string; cls: string }[] {
-  const out: { file: string; cls: string }[] = [];
+/**
+ * Bir primitifin ÇALIŞMA ANINDA basabildiği bütün sınıflar. İki kaynak:
+ *   1. `const xClass: Record<Foo, string> = { a: 'cls', … }` haritaları,
+ *   2. `const classes = [ 'taban', xClass[…], koşul ? 'x' : '' ]` dizisi —
+ *      taban sınıf (`btn-icon`) yalnız burada geçer, haritada geçmez.
+ */
+function emittedClasses(src: string): string[] {
+  const out: string[] = [];
   const body = stripComments(src);
   for (const blk of body.matchAll(/Record<[^>]*,\s*string>\s*=\s*\{([\s\S]*?)\n\}/g))
     for (const m of blk[1].matchAll(/:\s*'([^']*)'/g))
-      if (m[1]) out.push({ file: '', cls: m[1] });
+      if (m[1]) out.push(m[1]);
+  for (const blk of body.matchAll(/const classes\s*=\s*\[([\s\S]*?)\n\s*\]/g))
+    for (const m of blk[1].matchAll(/'([^']*)'/g))
+      if (m[1]) out.push(m[1]);
   return out;
 }
 
@@ -69,7 +77,7 @@ describe('primitiveClasses — atomun bastığı her sınıfın CSS karşılığ
     const offenders: string[] = [];
     for (const f of primitives) {
       const src = readFileSync(join(UI, f), 'utf8');
-      for (const { cls } of emittedClasses(src)) {
+      for (const cls of emittedClasses(src)) {
         if (/\s/.test(cls)) {
           offenders.push(`ui/${f}: '${cls}' çok-token — birleştirme/ayrıştırma bozulur`);
         } else if (!definedClasses.has(cls)) {

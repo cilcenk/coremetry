@@ -10,6 +10,7 @@ import { Sparkline } from '@/components/Sparkline';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 import {
   SERVICE_COLS, DEFAULT_SERVICES_SORT,
   sanitizeServicesSort, decodeLegacyServicesSort,
@@ -697,21 +698,19 @@ export default function ServicesPage() {
                               the top of the list regardless of
                               sort. Operator's 3-5 daily-touched
                               services stay sticky. */}
-                          <button type="button"
+                          <IconButton
+                            aria-label={pinned.has(s.name)
+                              ? `${s.name} sabitlemesini kaldır`
+                              : `${s.name} servisini listenin başına sabitle`}
+                            active={pinned.has(s.name)}
+                            variant="bare" size="xs" className="ib-star"
+                            style={{ marginRight: 6, verticalAlign: 'middle' }}
                             onClick={e => { e.stopPropagation(); togglePin(s.name); }}
                             title={pinned.has(s.name)
                               ? 'Unpin — service falls back into the sorted list'
                               : 'Pin — float to top of the list'}
-                            style={{
-                              all: 'unset', cursor: 'pointer',
-                              marginRight: 6, verticalAlign: 'middle',
-                              color: pinned.has(s.name) ? 'var(--warn)' : 'var(--text3)',
-                              opacity: pinned.has(s.name) ? 1 : 0.4,
-                              transition: 'opacity .15s, color .15s',
-                            }}>
-                            <Star size={14} strokeWidth={1.75}
-                              fill={pinned.has(s.name) ? 'currentColor' : 'none'} />
-                          </button>
+                            icon={<Star size={14} strokeWidth={1.75}
+                              fill={pinned.has(s.name) ? 'currentColor' : 'none'} />} />
                           {/* v0.5.274 — auto-scored health dot.
                               Red/yellow/green from errorRate +
                               open problem counts (computed

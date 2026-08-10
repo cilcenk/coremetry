@@ -28,6 +28,7 @@ import {
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { IconButton } from '@/components/ui/IconButton';
 
 // /endpoints — operator-asked v0.5.365. Cross-service inbound
 // RED rollup keyed on http.route (templated) with url.path /
@@ -684,21 +685,22 @@ export default function EndpointsPage() {
                               downstream neighbours once (cached
                               per service across rows of same svc)
                               and renders a strip below the row. */}
-                          <button type="button"
+                          <IconButton
+                            variant="bare" size="xs"
                             onClick={() => onToggleExpand(rowKey)}
-                            style={{
-                              all: 'unset', cursor: 'pointer',
-                              color: 'var(--text3)',
-                              padding: '0 4px',
-                              display: 'inline-flex', alignItems: 'center',
-                            }}
+                            // v0.9.887 — `aria-expanded` ilk kez burada: bu
+                            // bir açılır-kapanır tetik ve ekran okuyucu
+                            // bugüne dek durumunu HİÇ duyurmuyordu.
+                            aria-expanded={isExpanded}
+                            aria-label={isExpanded
+                              ? 'Hide downstream dependencies'
+                              : 'Show downstream dependencies'}
                             title={isExpanded
                               ? 'Hide downstream dependencies'
-                              : 'Show services / dbs this endpoint\'s service typically calls'}>
-                            {isExpanded
+                              : 'Show services / dbs this endpoint\'s service typically calls'}
+                            icon={isExpanded
                               ? <ChevronDown size={13} strokeWidth={1.75} />
-                              : <ChevronRight size={13} strokeWidth={1.75} />}
-                          </button>
+                              : <ChevronRight size={13} strokeWidth={1.75} />} />
                         </td>
                         {/* v0.8.574 — every data cell renders only when
                             its column is visible (?cols=); order stays in

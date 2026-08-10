@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
-import { Modal, Field, Button, Stack } from '@/components/ui';
+import { Modal, Field, Button, Stack, IconButton } from '@/components/ui';
 import { Sparkline } from '@/components/Sparkline';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -247,22 +247,17 @@ export default function DashboardsPage() {
                         görünmez. Sıra: star · name · tags · description
                         · updatedAt. */}
                     <td>
-                      <button type="button"
+                      <IconButton
                         aria-label={starMap.has(d.id) ? `${d.name} yıldızını kaldır` : `${d.name} panosunu yıldızla`}
-                        aria-pressed={starMap.has(d.id)}
+                        active={starMap.has(d.id)}
+                        variant="bare" size="xs" className="ib-star"
                         title={starMap.has(d.id) ? 'Yıldızı kaldır' : 'Yıldızla — listenin başına gelir'}
                         disabled={starBusy === d.id}
                         // Satırın kendi onClick'i panoya gidiyor;
                         // durdurulmazsa her yıldız tıklaması sayfayı
                         // değiştirirdi.
                         onClick={e => { e.stopPropagation(); void toggleStar(d); }}
-                        style={{
-                          background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                          fontSize: 14, lineHeight: 1,
-                          color: starMap.has(d.id) ? 'var(--warn)' : 'var(--text3)',
-                        }}>
-                        {starMap.has(d.id) ? '★' : '☆'}
-                      </button>
+                        icon={starMap.has(d.id) ? '★' : '☆'} />
                     </td>
                     <td>
                       <span style={{ fontWeight: 600, color: 'var(--text)' }}>{d.name}</span>

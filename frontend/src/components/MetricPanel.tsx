@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReactNode, KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CopyButton } from '@/components/CopyButton';
-import { Button } from '@/components/ui';
+import { Button, IconButton, MenuItem } from '@/components/ui';
 import { copyToClipboard } from '@/lib/clipboard';
 import {
   describeMetricQuery,
@@ -155,24 +155,23 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
   // enclosing wrapper differs.
   const overflow = (
     <div ref={menuRef} style={{ position: 'relative' }}>
-      <button
-        type="button"
+      <IconButton
         aria-label="Panel menu"
         aria-haspopup="menu"
         aria-expanded={menuOpen}
         onClick={() => setMenuOpen(o => !o)}
-        className="sec"
+        variant="secondary" size="sm"
         style={{
           // Reveal on hover / focus-within / when open — Grafana-style.
           opacity: hovered || menuOpen ? 1 : 0,
           transition: 'opacity .12s ease',
-          width: 26, height: 24, padding: 0, lineHeight: '20px',
-          fontSize: 15, borderRadius: 'var(--radius-sm)',
         }}
         title="Panel actions"
-      >
-        ⋮
-      </button>
+        // v0.9.890 — glif ⋮ değil ⋯. Bu tetik ile Dashboard'ınki AYNI
+        // işti, aynı 26×24 kutuydu ve GLİFLERİ farklıydı; denetim bunu
+        // ayrıca kusur olarak işaretledi. İkisi de yatay üç nokta.
+        icon="⋯"
+      />
 
       {menuOpen && (
         <div
@@ -314,20 +313,9 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
 // app's dropdowns.
 function PanelMenuItem({ children, onClick }: { children: ReactNode; onClick: () => void }) {
   return (
-    <button
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-      style={{
-        display: 'block', width: '100%', textAlign: 'left',
-        padding: '7px 10px', border: 'none', background: 'transparent',
-        color: 'var(--text2)', fontSize: 13, cursor: 'pointer',
-        borderRadius: 4, whiteSpace: 'nowrap',
-      }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg3, var(--bg))')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-    >
-      {children}
-    </button>
+    // v0.9.890 — eskiden JS-hover'lıydı (onMouseEnter/onMouseLeave ile
+    // satır içi background). Klavye focus'u HİÇ vurgulanmıyordu: menüde
+    // ok tuşlarıyla gezen operatör nerede olduğunu göremiyordu.
+    <MenuItem onClick={onClick}>{children}</MenuItem>
   );
 }

@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
-import { Card, Badge, Row, Button } from '@/components/ui';
+import { Card, Badge, Row, Button, MenuItem } from '@/components/ui';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { ClusterChips } from '@/components/ClusterChips';
@@ -172,15 +172,9 @@ function SnoozeButton({ onMute }: { onMute: (durationSec: number) => void }) {
           display: 'flex', flexDirection: 'column', gap: 2,
         }} onClick={e => e.stopPropagation()}>
           {opts.map(o => (
-            <button key={o.sec} type="button"
-              onClick={() => { setOpen(false); onMute(o.sec); }}
-              style={{
-                fontSize: 11, padding: '4px 10px', textAlign: 'left',
-                background: 'transparent', border: 'none',
-                color: 'var(--text)', cursor: 'pointer', whiteSpace: 'nowrap',
-              }}>
+            <MenuItem key={o.sec} onClick={() => { setOpen(false); onMute(o.sec); }}>
               {o.label}
-            </button>
+            </MenuItem>
           ))}
         </div>
       )}

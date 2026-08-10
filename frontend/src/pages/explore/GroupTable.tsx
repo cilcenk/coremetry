@@ -10,6 +10,7 @@ import { fmtNum } from '@/lib/utils';
 import { useCursorTime, valueAtCursor } from './cursorBus';
 import type { PanelData, PivotAffordance } from './PanelStack';
 import type { PivotMode } from './pivotQuery';
+import type { SourceTarget } from './sourceHref';
 import type { PivotPair } from './model';
 
 // GroupTable (explore-v2 Phase 2/3) — ONE combined per-series breakdown across
@@ -213,10 +214,39 @@ function PivotButtons({ pivot, onPivot }: {
   );
 }
 
-export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFocus, onPivot }: {
+// SourceButton (v0.9.930) — "kaynağa git". ⊕/⊖ ile AYNI ailede, üçüncü çip.
+//
+// Neden ayrı bir düğme ve neden düz tık DEĞİL: düz tık zaten izole ediyor
+// (v0.9.757, operatör talebi) ve Ctrl/Cmd+tık gizle-göster. Üçüncü bir tık
+// jesti kalmadı. Enter/o klavye yolu var ama tek başına KEŞFEDİLEMEZ olurdu:
+// ekranda görünmeyen bir yetenek yok sayılır.
+//
+// İfade edilemeyen durumda düğme KAYBOLMUYOR, pasifleşiyor ve sebep title'da
+// — v0.9.848'in ⊖ kararıyla aynı dil.
+function SourceButton({ target, onOpen }: { target: SourceTarget; onOpen: () => void }) {
+  return (
+    <IconButton
+      aria-label="Kaynağa git — bu satırı üreten spanlar"
+      title={target.ok
+        ? 'Kaynağa git — bu satırı üreten span listesi, aynı pencere ve aynı filtrelerle (Enter)'
+        : target.why}
+      disabled={!target.ok}
+      variant="bare" size="xs"
+      onClick={e => { e.stopPropagation(); if (target.ok) onOpen(); }}
+      icon="⇥" />
+  );
+}
+
+export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFocus, onPivot, sourceTarget, onOpenSource }: {
   panels: PanelData[];
   hiddenKeys: Set<string>;
   onToggleHidden: (rowKey: string) => void;
+  // v0.9.930 — satırdan KAYNAĞA iniş. Tablo hangi harften hangi çiftlerle
+  // istendiğini söyler; hangi sorgunun hangi pencereyle URL'e çevrileceğini
+  // SAYFA bilir (onPivot ile aynı iş bölümü). `sourceTarget` aynı kararın
+  // salt-okunur hâli: düğmenin pasif olup olmayacağı ve sebebi.
+  sourceTarget?: (letter: string, pairs: PivotPair[]) => SourceTarget;
+  onOpenSource?: (letter: string, pairs: PivotPair[]) => void;
   // v0.9.848 — satır pivotu. Hangi sorgunun düzenleneceğini SAYFA bilir
   // (harf → BuilderQuery); tablo yalnız hangi satırdan hangi çiftlerle
   // istendiğini söyler.
@@ -238,11 +268,23 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFo
   const hasCompare = useMemo(() => panels.some(p => p.ghosts?.length), [panels]);
   const columns = useMemo(() => groupTableCols(hasCompare), [hasCompare]);
 
+  // v0.9.930 — satır "açmak" = KAYNAĞA GİTMEK. Bu tablonun düz tıkı zaten
+  // izole ediyor, yani Enter'ın satırı "genişletmesi" diye bir şey yok;
+  // açık kalan ürün kararı (v0.9.918) operatör tarafından kaynağa iniş
+  // olarak cevaplandı. İfade edilemeyen satırda Enter sessizce hiçbir şey
+  // yapmıyor — sebep aynı satırdaki pasif ⇥ düğmesinin title'ında yazıyor.
   const dt = useDataTable<GroupRow>({
     storageKey: 'explore-group-table',
     columns,
     rows,
     initialSort: { id: 'max', dir: 'desc' },
+    onOpen: onOpenSource
+      ? (r) => {
+        const pairs = r.pivot?.pairs ?? [];
+        if (sourceTarget && !sourceTarget(r.letter, pairs).ok) return;
+        onOpenSource(r.letter, pairs);
+      }
+      : undefined,
   });
 
   if (rows.length === 0) return null;
@@ -274,13 +316,15 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFo
         <DataTableColgroup dt={dt} />
         <DataTableHead dt={dt} />
         <tbody>
-          {dt.sortedRows.map(r => {
+          {dt.sortedRows.map((r, i) => {
             const hidden = hiddenKeys.has(r.rowKey);
+            const target = sourceTarget?.(r.letter, r.pivot?.pairs ?? []);
             return (
               <tr key={r.rowKey}
+                {...dt.rowProps(i)}
                 onMouseEnter={() => onFocus(hidden ? null : r.rowKey)}
                 onClick={(e) => (e.ctrlKey || e.metaKey) ? onToggleHidden(r.rowKey) : onIsolate(r.rowKey)}
-                title="Tıkla: yalnız bu seri · Ctrl/Cmd+tık: gizle-göster · üzerine gel: panelde vurgula"
+                title="Tıkla: yalnız bu seri · Ctrl/Cmd+tık: gizle-göster · Enter: kaynağa git · üzerine gel: panelde vurgula"
                 style={{ cursor: 'pointer', opacity: hidden ? 0.45 : 1,
                          contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}>
                 {/* v0.9.848 — hücre FLEX oldu. Pivot düğmeleri etiketin
@@ -308,6 +352,10 @@ export function GroupTable({ panels, hiddenKeys, onToggleHidden, onIsolate, onFo
                     {onPivot && r.pivot && (
                       <PivotButtons pivot={r.pivot}
                         onPivot={(pairs, mode) => onPivot(r.letter, pairs, mode)} />
+                    )}
+                    {onOpenSource && target && (
+                      <SourceButton target={target}
+                        onOpen={() => onOpenSource(r.letter, r.pivot?.pairs ?? [])} />
                     )}
                     <b title={r.label} style={{
                       marginLeft: 4, minWidth: 0,

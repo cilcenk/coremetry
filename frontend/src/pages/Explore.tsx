@@ -48,6 +48,7 @@ import { queryToPanel, isPinnable } from './explore/pinToDashboard';
 import { PinToDashboardModal } from './explore/PinToDashboardModal';
 import { GroupTable } from './explore/GroupTable';
 import { pivotQuery, type PivotMode } from './explore/pivotQuery';
+import { exploreSourceHref, type SourceTarget } from './explore/sourceHref';
 import { SummaryViz } from './explore/SummaryViz';
 import { RowsCappedNote } from './explore/RowsCappedNote';
 import { heatmapQuerySig } from './explore/heatmapSig';
@@ -530,6 +531,27 @@ function ExploreInner({ onSelfWrite }: {
     return { ...b, queries: b.queries.map((x, j) => (j === i ? next : x)) };
   }), []);
 
+  // v0.9.930 — GroupTable satırından KAYNAĞA iniş. Karar saf
+  // (explore/sourceHref.ts); burası yalnız harfi sorguya çeviriyor ve
+  // pencereyi veriyor. Pencere `range` — panellerin fetch edildiği aralığın
+  // ta kendisi; ayrı bir "şimdi" hesaplamak pivotHref'in var olma sebebi
+  // olan kaymayı geri getirirdi.
+  //
+  // Formül satırının (ƒ) tek bir kaynağı YOK: birden çok harfin aritmetiği
+  // hangi span kümesine iner sorusunun dürüst cevabı "hiçbirine".
+  const sourceTargetFor = useCallback((letter: string, pairs: PivotPair[]): SourceTarget => {
+    const q = builder.queries.find(x => x.letter === letter);
+    if (!q) {
+      return { ok: false, why: 'Formül satırı birden çok sorgunun aritmetiği — tek bir ham kaynağı yok' };
+    }
+    return exploreSourceHref(q, pairs, range);
+  }, [builder.queries, range]);
+
+  const openSourceFromRow = useCallback((letter: string, pairs: PivotPair[]) => {
+    const t = sourceTargetFor(letter, pairs);
+    if (t.ok) navigate(t.href);
+  }, [sourceTargetFor, navigate]);
+
   // Result-mode switch — entering traces/repeats from the builder carries
   // query A's narrowing along when the legacy console is still empty.
   const switchResultMode = (m: ResultMode) => {
@@ -1007,7 +1029,9 @@ name ~ checkout`}
                   onToggleHidden={toggleHidden}
                   onIsolate={isolateHidden}
                   onFocus={setFocusKey}
-                  onPivot={pivotFromRow} />
+                  onPivot={pivotFromRow}
+                  sourceTarget={sourceTargetFor}
+                  onOpenSource={openSourceFromRow} />
               </>
             )}
           </>

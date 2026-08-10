@@ -15,6 +15,7 @@ import {
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { Wordmark } from './Wordmark';
+import { MenuItem, IconButton, DisclosureButton } from '@/components/ui';
 
 // adminOnly entries are hidden from non-admin users in the
 // sidebar. The pages themselves still enforce admin-role at
@@ -303,16 +304,9 @@ export function Sidebar() {
   return (
     <>
       {isMobile && (
-        <button onClick={() => setDrawerOpen(true)} aria-label="Open menu"
-          style={{
-            position: 'fixed', top: 10, left: 10, zIndex: 60,
-            width: 36, height: 36, padding: 0,
-            background: 'var(--bg2)', color: 'var(--text)',
-            border: '1px solid var(--border)', borderRadius: 6,
-            fontSize: 18, lineHeight: '32px',
-          }}>
-          ☰
-        </button>
+        <IconButton aria-label="Open menu" icon="☰"
+          variant="secondary" size="md" className="sb-hamburger"
+          onClick={() => setDrawerOpen(true)} />
       )}
       {isMobile && drawerOpen && (
         <div onClick={() => setDrawerOpen(false)} style={{
@@ -337,12 +331,11 @@ export function Sidebar() {
           <TelescopeIcon size={22} />
           {showLabels && <span className="title"><Wordmark /></span>}
           {!isMobile && (
-            <button onClick={toggleCollapsed}
-              className="theme-toggle"
-              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              style={{ marginLeft: 'auto', fontSize: 12 }}>
-              {collapsed ? '»' : '«'}
-            </button>
+            <IconButton onClick={toggleCollapsed}
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              icon={collapsed ? '»' : '«'}
+              variant="secondary" size="md" className="sb-collapse"
+              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} />
           )}
         </div>
         <div id="nav">
@@ -445,19 +438,19 @@ export function Sidebar() {
               }}>
                 {user.role === 'admin' && (
                   <>
-                    <MenuItem onClick={() => { setMenuOpen(false); navigate('/users'); }}>
-                      ◯ {t('user.manageUsers')}
+                    <MenuItem icon="◯" onClick={() => { setMenuOpen(false); navigate('/users'); }}>
+                      {t('user.manageUsers')}
                     </MenuItem>
-                    <MenuItem onClick={() => { setMenuOpen(false); navigate('/settings'); }}>
-                      ⚙ {t('user.settings')}
+                    <MenuItem icon="⚙" onClick={() => { setMenuOpen(false); navigate('/settings'); }}>
+                      {t('user.settings')}
                     </MenuItem>
                   </>
                 )}
-                <MenuItem onClick={() => { setMenuOpen(false); setShowChangePw(true); }}>
-                  ⚿ {t('user.changePassword')}
+                <MenuItem icon="⚿" onClick={() => { setMenuOpen(false); setShowChangePw(true); }}>
+                  {t('user.changePassword')}
                 </MenuItem>
-                <MenuItem onClick={() => { setMenuOpen(false); logout(); }}>
-                  ⏻ {t('user.signOut')}
+                <MenuItem icon="⏻" onClick={() => { setMenuOpen(false); logout(); }}>
+                  {t('user.signOut')}
                 </MenuItem>
               </div>
             )}
@@ -543,35 +536,15 @@ function NavGroupBlock({
     );
   }
   return (
-    <div className="nav-group">
-      <button type="button"
-        onClick={onToggle}
-        className="nav-group-header"
-        aria-expanded={isOpen}
-        style={{
-          display: 'flex', alignItems: 'center', width: '100%',
-          // Mirror the link rows' geometry so the header
-          // title lines up with the labels below — same
-          // 16px left padding, same 10px gap, same 16px
-          // icon column. Without this the header text sat
-          // 14px left of every link label and the eye read
-          // it as a misalignment during fast triage scans.
-          padding: '10px 16px 4px',
-          gap: 10,
-          background: 'transparent', border: 'none',
-          color: 'var(--text2)', fontSize: 12, fontWeight: 700,
-          letterSpacing: '0.5px', textTransform: 'uppercase',
-          cursor: 'pointer', textAlign: 'left',
-        }}>
-        <span style={{
-          width: 16, display: 'inline-block', textAlign: 'center',
-          color: 'var(--text3)',
-          flexShrink: 0,
-        }}>
-          {isOpen ? '▾' : '▸'}
-        </span>
+    <div>
+      {/* Geometry lives in `.nav-group-header` (globals.css): the glyph
+          column and gap mirror the link rows below so the header title
+          lines up with every label. It used to be inline here, and the
+          class name was a dangling reference with no CSS behind it. */}
+      <DisclosureButton expanded={isOpen} onClick={onToggle}
+        className="nav-group-header">
         <span>{t(titleKey)}</span>
-      </button>
+      </DisclosureButton>
       {isOpen && items.map(n => (
         <Link key={n.href} to={n.href}
           className={isActive(pathname, n.href) ? 'active' : ''}>
@@ -583,20 +556,6 @@ function NavGroupBlock({
         </Link>
       ))}
     </div>
-  );
-}
-
-function MenuItem({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
-  return (
-    <button onClick={onClick} style={{
-      display: 'block', width: '100%', textAlign: 'left',
-      padding: '7px 10px', border: 'none', background: 'transparent',
-      color: 'var(--text2)', fontSize: 13, cursor: 'pointer', borderRadius: 4,
-    }}
-      onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg3, var(--bg))')}
-      onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-      {children}
-    </button>
   );
 }
 

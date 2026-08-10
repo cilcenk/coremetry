@@ -1694,6 +1694,38 @@ tbody tr.wf-evidence:hover > td { background: color-mix(in srgb, var(--warn) 14%
   stroke-dasharray: 6 8;
 }
 
+/* ── Sidebar atom modifiers (v0.9.899, R14) ─────────────────────────
+   The sidebar took four families in one commit: MenuItem, the nav-group
+   disclosure, and two buttons that were wearing `.theme-toggle` for its
+   looks rather than its meaning (mB5).
+
+   `.nav-group-header` used to be a DANGLING class name — it was on the
+   element, but no CSS defined it, and every value came from an inline
+   style. `undefinedCssRefs` carried it as a documented exemption. The
+   geometry moved here and the exemption is gone.
+
+   The glyph column is 16px, not the atom's default: it mirrors the icon
+   column of the link rows below so the group title lines up with every
+   label under it. Getting that wrong put the header 14px off and the eye
+   read it as a misalignment during fast triage scans. */
+.btn-disclose.nav-group-header {
+  width: 100%; gap: 10px; padding: 10px 16px 4px;
+  font-size: 12px; font-weight: 700;
+  letter-spacing: .5px; text-transform: uppercase;
+}
+.btn-disclose.nav-group-header .dsc-glyph {
+  width: 16px; text-align: center; font-size: 10px; flex: none;
+}
+/* Both sidebar icon buttons keep a transparent field: `ib-sec`'s --bg3
+   fill would make them read as raised controls inside a flat rail. */
+.btn-icon.sb-hamburger {
+  position: fixed; top: 10px; left: 10px; z-index: 60;
+  width: 36px; height: 36px; font-size: 18px;
+  background: var(--bg2); color: var(--text);
+}
+.btn-icon.sb-collapse { margin-left: auto; background: transparent; }
+.btn-icon.sb-collapse:hover:not(:disabled) { background: var(--bg2); border-color: var(--accent); }
+
 /* Theme toggle (top of sidebar) */
 .theme-toggle {
   background: transparent; border: 1px solid var(--border);

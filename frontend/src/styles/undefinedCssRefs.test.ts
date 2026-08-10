@@ -96,8 +96,9 @@ describe('undefinedCssRefs — sessizce düşen token/sınıf referansları', ()
       // ── Dalga 3'ün BİLİNEN açıkları — sıraya alındı, burada YAKALANMAMALI
       // (`tbl` / MT12 v0.9.874'te KAPANDI ve buradan çıkarıldı — izin listesi
       //  bayatlarsa test yanlış sebeple yeşil kalır.)
-      ['nav-group-header',   'mB3 (Dalga 3) — Sidebar disclosure ailesi'],
-      ['nav-group',          'mB3 (Dalga 3) — aynı Sidebar sitesi, aynı commit\'te ele alınacak'],
+      // (`nav-group-header` / `nav-group` — mB3, v0.9.899'da KAPANDI ve
+      //  buradan çıkarıldı: ilki gerçek bir CSS kuralına kavuştu,
+      //  ikincisi ölü sınıftı ve elementten silindi.)
       // ── Davranışsal kancalar: stil sınıfı DEĞİL, querySelector hedefi.
       // Stilleri satır içinde; sınıf yalnız DOM\'da bulunmak için var.
       ['tsp-tooltip',        'JS kancası — TimeSeriesPanel.tsx:223,572,789 querySelector ile buluyor'],

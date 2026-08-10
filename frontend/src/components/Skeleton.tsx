@@ -76,13 +76,15 @@ export function TableSkeleton({
 // stacked rectangles approximate the shape closely enough.
 export function CardSkeleton({ height = 96 }: { height?: number }) {
   return (
-    <div style={{
-      background: 'var(--bg1)',
-      border: '1px solid var(--border)',
-      borderRadius: 8,
-      padding: 14,
+    // mK11 (v0.9.921) — `.card-static`, `.card` DEĞİL. `.card`
+    // globals.css'te İKİ KEZ tanımlı ve ikinci tanım `cursor: pointer` +
+    // `:hover { border-color: accent }` taşıyor (gezinilebilir kart
+    // ızgaraları için). Bir YÜKLEME iskeletine onu vermek iskeleti
+    // tıklanabilir gösterirdi — operatör henüz var olmayan bir şeye
+    // tıklamaya çalışır. Ayrı sınıf, aynı görsel kutu.
+    <div className="card-static" style={{
       height,
-      display: 'flex', flexDirection: 'column', gap: 8,
+      display: 'flex', flexDirection: 'column', gap: 'var(--sp-4)',
     }}>
       <Skeleton width="40%" height={10} />
       <Skeleton width="60%" height={22} />

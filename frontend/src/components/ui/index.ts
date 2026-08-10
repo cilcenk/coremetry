@@ -53,3 +53,13 @@ export type { StackProps, RowProps } from './Stack';
 
 export { VirtualList } from './VirtualList';
 export type { VirtualListProps } from './VirtualList';
+
+// mK7 (v0.9.921) — dört primitif barrel'da EKSİKTİ. Çağrı yerleri
+// bugün dosyaya doğrudan uzanıyor, yani "ui/ kapalı tasarım-sistemi
+// sınırı" kuralı bu dördü için fiilen uygulanmıyordu. Ekleme SALT
+// EKLEME: mevcut doğrudan import'lar taşınmıyor (14 dosyalık bir
+// süpürme, kendi kararı), ama yeni çağrı yeri artık barrel'ı bulur.
+export { VirtualTable } from './VirtualTable';
+export { FacetMultiSelect } from './FacetMultiSelect';
+export { PageControls } from './PageControls';
+export { RouteSkeleton } from './RouteSkeleton';

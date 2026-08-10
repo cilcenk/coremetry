@@ -72,6 +72,7 @@ export default function HostsPage() {
     columns: HOST_COLS,
     rows: rows ?? [],
     initialSort: { id: 'cpuPct', dir: 'desc' },
+    onOpen: r => openHost(r.host),
   });
 
   return (
@@ -98,8 +99,8 @@ export default function HostsPage() {
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />
               <tbody>
-                {dt.sortedRows.map(r => (
-                  <tr key={r.host}
+                {dt.sortedRows.map((r, i) => (
+                  <tr key={r.host} {...dt.rowProps(i)}
                     onClick={() => openHost(r.host)}
                     style={{
                       cursor: 'pointer',

@@ -50,6 +50,7 @@ export function RepeatsResult({
     columns: cols,
     rows: repeats ?? [],
     initialSort: { id: 'count', dir: 'desc' },
+    onOpen: r => navigate(`/trace?id=${r.traceId}`),
   });
 
   return (
@@ -82,7 +83,7 @@ export function RepeatsResult({
               <DataTableHead dt={repeatsDt} />
               <tbody>
                 {repeatsDt.sortedRows.map((r, i) => (
-                  <tr key={`${r.traceId}|${i}`}
+                  <tr key={`${r.traceId}|${i}`} {...repeatsDt.rowProps(i)}
                       onClick={() => navigate(`/trace?id=${r.traceId}`)}
                       style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>
                     <td>

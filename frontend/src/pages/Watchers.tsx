@@ -107,6 +107,7 @@ export default function WatchersPage() {
   const dt = useDataTable<WatcherRow>({
     storageKey: 'watchers', columns: cols,
     rows: rows ?? [], initialSort: { id: 'lastFire', dir: 'desc' },
+    onOpen: r => openWatcher(r.id),
   });
 
   const selected = selectedId ? rows?.find(r => r.id === selectedId) : undefined;
@@ -167,8 +168,8 @@ export default function WatchersPage() {
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />
               <tbody>
-                {dt.sortedRows.map(r => (
-                  <tr key={r.id}
+                {dt.sortedRows.map((r, i) => (
+                  <tr key={r.id} {...dt.rowProps(i)}
                     onClick={() => openWatcher(r.id)}
                     style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 38px' }}
                     title="Open fire / notification / resolve history">

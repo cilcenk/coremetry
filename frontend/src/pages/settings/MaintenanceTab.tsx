@@ -7,6 +7,8 @@ import { api, type MaintenanceWindow } from '@/lib/api';
 import { Field, Row } from './shared';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { tsLong } from '@/lib/utils';
+import { formatDateTime, parseDateTime } from '@/lib/rangePicker';
 
 // v0.9.871 (tutarlılık denetimi MT7) — 30 günlük pencere listesi paylaşılan
 // primitife geçti. Kolon kümesi/sıra/etiket AYNEN korundu.
@@ -136,8 +138,8 @@ export function MaintenanceTab() {
                   <tr key={w.id}>
                     <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{w.service}</td>
                     <td className="mono" style={{ fontSize: 11, textTransform: 'uppercase' }}>{w.severity}</td>
-                    <td className="mono" style={{ fontSize: 11 }}>{new Date(w.startAt / 1e6).toLocaleString()}</td>
-                    <td className="mono" style={{ fontSize: 11 }}>{new Date(w.endAt / 1e6).toLocaleString()}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{tsLong(w.startAt)}</td>
+                    <td className="mono" style={{ fontSize: 11 }}>{tsLong(w.endAt)}</td>
                     <td style={{ fontSize: 12, color: 'var(--text2)' }}>{w.reason || '—'}</td>
                     <td style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'monospace' }}>{w.createdBy || '—'}</td>
                     <td>
@@ -172,14 +174,15 @@ function NewMaintenanceModal({ onClose, onCreated }: {
 }) {
   const [service, setService] = useState('*');
   const [severity, setSeverity] = useState('*');
-  // Default to "right now → +60 min". datetime-local needs YYYY-MM-DDTHH:MM
-  // formatted in the operator's local zone.
-  const toLocalInput = (d: Date) => {
-    const off = d.getTimezoneOffset();
-    return new Date(d.getTime() - off * 60_000).toISOString().slice(0, 16);
-  };
-  const [startAt, setStartAt] = useState(() => toLocalInput(new Date()));
-  const [endAt, setEndAt] = useState(() => toLocalInput(new Date(Date.now() + 60 * 60_000)));
+  // Default to "right now → +60 min", local zone.
+  // v0.9.879 — these were `<input type="datetime-local">`, whose time half
+  // renders with an AM/PM segment on an en-US browser; the operator wants
+  // 24-hour everywhere and `lang` is not a reliable override in Chrome.
+  // Hand-drawn text fields now, on the SAME "YYYY-MM-DD HH:mm:ss" grammar
+  // (and the same parser) as the global time picker's absolute inputs.
+  // Trade accepted per brief: no native drop-down calendar here.
+  const [startAt, setStartAt] = useState(() => formatDateTime(Date.now()));
+  const [endAt, setEndAt] = useState(() => formatDateTime(Date.now() + 60 * 60_000));
   const [reason, setReason] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -188,9 +191,11 @@ function NewMaintenanceModal({ onClose, onCreated }: {
     e.preventDefault();
     setBusy(true); setError(null);
     try {
-      const startMs = new Date(startAt).getTime();
-      const endMs = new Date(endAt).getTime();
-      if (!isFinite(startMs) || !isFinite(endMs)) throw new Error('Invalid date');
+      const startMs = parseDateTime(startAt);
+      const endMs = parseDateTime(endAt);
+      if (startMs === null || endMs === null) {
+        throw new Error('Invalid date — expected YYYY-MM-DD HH:mm:ss');
+      }
       if (endMs <= startMs) throw new Error('End must be after start');
       await api.createMaintenanceWindow({
         service: service.trim() || '*',
@@ -233,14 +238,22 @@ function NewMaintenanceModal({ onClose, onCreated }: {
           </Field>
           <Row>
             <Field label="Starts at" flex={1}>
-              <input type="datetime-local" required value={startAt}
+              <input type="text" required value={startAt} spellCheck={false}
+                placeholder="2026-08-10 14:00:00" inputMode="numeric"
                 onChange={e => setStartAt(e.target.value)}
-                style={{ width: '100%' }} />
+                style={{
+                  width: '100%', fontFamily: 'monospace',
+                  ...(parseDateTime(startAt) === null ? { borderColor: 'var(--err)' } : {}),
+                }} />
             </Field>
             <Field label="Ends at" flex={1}>
-              <input type="datetime-local" required value={endAt}
+              <input type="text" required value={endAt} spellCheck={false}
+                placeholder="2026-08-10 15:00:00" inputMode="numeric"
                 onChange={e => setEndAt(e.target.value)}
-                style={{ width: '100%' }} />
+                style={{
+                  width: '100%', fontFamily: 'monospace',
+                  ...(parseDateTime(endAt) === null ? { borderColor: 'var(--err)' } : {}),
+                }} />
             </Field>
           </Row>
           <Field label='Reason (optional) — e.g. "deploy payment-api v2.34"'>

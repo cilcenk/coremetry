@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Spinner, Empty } from '@/components/Spinner';
+import { fmtDateTime, tsLong } from '@/lib/utils';
 
 // /public-status — customer-facing status page. Standalone
 // layout (no sidebar, no auth, no Coremetry chrome). Polls
@@ -247,7 +248,7 @@ function Hero({ status, description, checkedAt }: {
       <div style={{
         fontSize: 11, color: 'var(--text3)',
       }}>
-        Last updated {new Date(checkedAt).toLocaleString()} · refreshes every 30s
+        Last updated {fmtDateTime(new Date(checkedAt))} · refreshes every 30s
       </div>
     </div>
   );
@@ -435,8 +436,8 @@ function IncidentItem({ i, first }: { i: IncidentRow; first: boolean }) {
         color: 'var(--text3)', fontSize: 11, marginTop: 8,
         fontFamily: 'ui-monospace, monospace',
       }}>
-        {started.toLocaleString()}
-        {i.resolvedAt && ` → ${new Date(i.resolvedAt / 1e6).toLocaleString()}`}
+        {fmtDateTime(started)}
+        {i.resolvedAt && ` → ${tsLong(i.resolvedAt)}`}
       </div>
     </div>
   );

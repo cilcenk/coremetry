@@ -26,7 +26,7 @@ import { DetailsMetricsSection, useDetailsMetricPanels } from './service/Details
 import { panelMaxDataPoints } from '@/lib/chartStep';
 import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { api } from '@/lib/api';
-import { timeRangeToNs, fmtAgoNs } from '@/lib/utils';
+import { timeRangeToNs, fmtAgoNs, tsLong } from '@/lib/utils';
 import { IconSparkles } from '@/components/icons';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ServiceRuntimeBadge } from '@/components/ServiceRuntimeBadge';
@@ -511,7 +511,7 @@ function ServiceDetailInner() {
                       </div>
                     )}
                     <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4, fontFamily: 'monospace' }}>
-                      since {new Date(p.startedAt / 1e6).toLocaleString()}
+                      since {tsLong(p.startedAt)}
                     </div>
                   </div>
                 );

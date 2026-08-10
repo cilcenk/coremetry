@@ -17,7 +17,7 @@ import type { PivotAnchor } from '@/lib/types';
 import type { ExploreVizKind } from '@/components/ExploreViz';
 import { api } from '@/lib/api';
 import { heatmapBucketCount } from '@/lib/chartStep';
-import { timeRangeToNs, fmtNum } from '@/lib/utils';
+import { timeRangeToNs, fmtNum, fmtClock } from '@/lib/utils';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
@@ -1059,7 +1059,7 @@ name ~ checkout`}
                     { k: 'duration_ms', op: '>=', v: [String(Math.max(0, boxSel.lowDurMs))] },
                     { k: 'duration_ms', op: '<=', v: [String(boxSel.highDurMs)] },
                   ];
-                  const tFmt = (ns: number) => new Date(ns / 1e6).toLocaleTimeString();
+                  const tFmt = (ns: number) => fmtClock(ns / 1e6);
                   return (
                     <div style={{ marginTop: 12 }}>
                       <div style={{

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { timeRangeToNs } from '@/lib/utils';
+import { timeRangeToNs, fmtClock } from '@/lib/utils';
 import { heatmapBucketCount } from '@/lib/chartStep';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { Spinner } from '@/components/Spinner';
@@ -158,7 +158,7 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
                 tek hücre = örnek trace · sürükle = zaman × gecikme bandı seç
               </div>
               {boxSel && (() => {
-                const tFmt = (ns: number) => new Date(ns / 1e6).toLocaleTimeString();
+                const tFmt = (ns: number) => fmtClock(ns / 1e6);
                 const lo = Math.max(0, Math.floor(boxSel.lowDurMs));
                 const hi = Math.ceil(boxSel.highDurMs);
                 const tracesHref = `/traces?service=${encodeURIComponent(service)}`

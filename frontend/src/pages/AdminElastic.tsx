@@ -4,7 +4,7 @@ import { Empty, Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
-import { fmtNum, fmtBytes } from '@/lib/utils';
+import { fmtNum, fmtBytes, fmtClock } from '@/lib/utils';
 import { useElasticIndices, useElasticErrors, useTraceContext } from '@/lib/queries';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -118,7 +118,7 @@ function QueryErrorsPanel() {
                 <tr onClick={() => setOpen(open === k ? null : k)}
                   style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
                   title="Click to show the exact query body sent">
-                  <td className="mono" style={{ fontSize: 11 }}>{new Date(e.at).toLocaleTimeString()}</td>
+                  <td className="mono" style={{ fontSize: 11 }}>{fmtClock(e.at)}</td>
                   <td>{e.op}</td>
                   <td className="mono" style={{ textAlign: 'right' }}>
                     <span className="badge" style={{ background: 'rgba(220,38,38,0.22)' }}>

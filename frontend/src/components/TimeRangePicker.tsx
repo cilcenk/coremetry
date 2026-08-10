@@ -7,8 +7,8 @@ import { useLang, useT } from '@/lib/i18n';
 import {
   DOW_SHORT, MONTHS_LONG, QUICK_PRESETS, RECENTS_KEY,
   absRangeLabel, calendarGrid, dayClickRange, formatDateTime, formatTimeOfDay,
-  parseDateTime, parseRecents, pushRecent, resolveRangeMs, utcOffsetLabel,
-  withTimeOfDay, zoomOutRange, type CalCell,
+  parseDateTime, parseRecents, parseTimeOfDay, pushRecent, resolveRangeMs,
+  utcOffsetLabel, withTimeOfDay, zoomOutRange, type CalCell,
 } from '@/lib/rangePicker';
 import { Button } from './ui/Button';
 import { IconClock, IconZoomOut } from './icons';
@@ -48,6 +48,16 @@ export function TimeRangePicker({ value, onChange }: {
   // True between the first and second calendar day clicks — the two-click
   // From→To flow. Typing in either input breaks out of it.
   const [calPending, setCalPending] = useState(false);
+  // v0.9.879 — the two time fields are hand-drawn text inputs ("HH:mm:ss")
+  // instead of `<input type="time">`, which renders a 12-hour AM/PM segment
+  // on an en-US browser (`lang` is not a reliable override in Chrome) and
+  // the operator wants 24-hour everywhere. Each field is CANONICAL while
+  // idle — the value is derived from fromMs/toMs, so calendar clicks and
+  // datetime typing keep flowing into it with no sync code — and switches
+  // to a raw draft string only while the operator is mid-keystroke. Blur
+  // drops the draft, so an unparseable entry snaps back to the old value.
+  const [fromTimeDraft, setFromTimeDraft] = useState<string | null>(null);
+  const [toTimeDraft, setToTimeDraft] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
   const fromInputRef = useRef<HTMLInputElement>(null);
   // Refs to every preset button so we can auto-focus the active
@@ -108,6 +118,10 @@ export function TimeRangePicker({ value, onChange }: {
   const openPanel = () => {
     setError('');
     setCalPending(false);
+    // Escape / click-outside close the panel without blurring the time
+    // field, so a half-typed draft would survive to the next open.
+    setFromTimeDraft(null);
+    setToTimeDraft(null);
     const now = Date.now();
     const abs = resolveRangeMs(value, now);
     setFromInput(formatDateTime(abs.fromMs));
@@ -158,12 +172,19 @@ export function TimeRangePicker({ value, onChange }: {
     });
 
   const onTimeChange = (which: 'from' | 'to') => (e: React.ChangeEvent<HTMLInputElement>) => {
-    const [base, set] = which === 'from'
-      ? [fromMs, setFromInput] : [toMs, setToInput];
-    if (base === null || !e.target.value) return;
-    const ms = withTimeOfDay(base, e.target.value);
+    const raw = e.target.value;
+    const [base, set, setDraft] = which === 'from'
+      ? [fromMs, setFromInput, setFromTimeDraft] as const
+      : [toMs, setToInput, setToTimeDraft] as const;
+    setDraft(raw);
+    if (base === null || !raw) return;
+    const ms = withTimeOfDay(base, raw);
     if (ms !== null) { set(formatDateTime(ms)); setError(''); }
   };
+
+  // Idle → canonical (derived from the parsed datetime); editing → raw draft.
+  const timeValue = (draft: string | null, base: number | null): string =>
+    draft ?? (base !== null ? formatTimeOfDay(base) : '');
 
   const rangeLabel = (r: TimeRange): string => {
     if (r.preset === 'custom' && r.fromMs && r.toMs) {
@@ -214,9 +235,14 @@ export function TimeRangePicker({ value, onChange }: {
                     onChange={e => { setFromInput(e.target.value); setCalPending(false); setError(''); }}
                     onKeyDown={e => e.key === 'Enter' && applyCustom()}
                     placeholder="2026-07-24 08:00:00" />
-                  <input type="time" step={1} className="trp-time"
-                    value={fromMs !== null ? formatTimeOfDay(fromMs) : ''}
-                    onChange={onTimeChange('from')} />
+                  <input type="text" inputMode="numeric" spellCheck={false}
+                    className={'trp-time' + (fromTimeDraft !== null
+                      && parseTimeOfDay(fromTimeDraft) === null ? ' bad' : '')}
+                    aria-label={t('trp.from')} placeholder="HH:mm:ss" maxLength={8}
+                    value={timeValue(fromTimeDraft, fromMs)}
+                    onChange={onTimeChange('from')}
+                    onBlur={() => setFromTimeDraft(null)}
+                    onKeyDown={e => e.key === 'Enter' && applyCustom()} />
                 </div>
               </label>
 
@@ -227,9 +253,14 @@ export function TimeRangePicker({ value, onChange }: {
                     onChange={e => { setToInput(e.target.value); setCalPending(false); setError(''); }}
                     onKeyDown={e => e.key === 'Enter' && applyCustom()}
                     placeholder="2026-07-24 12:30:00" />
-                  <input type="time" step={1} className="trp-time"
-                    value={toMs !== null ? formatTimeOfDay(toMs) : ''}
-                    onChange={onTimeChange('to')} />
+                  <input type="text" inputMode="numeric" spellCheck={false}
+                    className={'trp-time' + (toTimeDraft !== null
+                      && parseTimeOfDay(toTimeDraft) === null ? ' bad' : '')}
+                    aria-label={t('trp.to')} placeholder="HH:mm:ss" maxLength={8}
+                    value={timeValue(toTimeDraft, toMs)}
+                    onChange={onTimeChange('to')}
+                    onBlur={() => setToTimeDraft(null)}
+                    onKeyDown={e => e.key === 'Enter' && applyCustom()} />
                 </div>
               </label>
 

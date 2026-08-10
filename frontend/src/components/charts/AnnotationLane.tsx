@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import type { AnnotationItem } from '@/lib/types';
+import { fmtClock } from '@/lib/utils';
 
 // AnnotationLane — v0.9.395, Faz C-2 Ş2 (mockup 52b05851 operatör onaylı).
 // Chart'ın ALTINDA x-hizalı ince olay bandı: deploy ▲ / rollout ↻ /
@@ -160,7 +161,7 @@ export function AnnotationLane({ items, fromNs, toNs, onZoomTo }: {
           boxShadow: '0 8px 22px rgba(0,0,0,.4)',
         }}>
           <div style={{ fontWeight: 700, marginBottom: 4 }}>
-            {new Date(clusters[open].ts / 1e6).toLocaleTimeString()} · {clusters[open].items.length} olay
+            {fmtClock(clusters[open].ts / 1e6)} · {clusters[open].items.length} olay
           </div>
           <div style={{ display: 'grid', gap: 3, maxHeight: 140, overflowY: 'auto' }}>
             {clusters[open].items.map((it, j) => {

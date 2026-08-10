@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { seriesColor } from '@/lib/chartFmt';
+import { fmtClock } from '@/lib/utils';
 import { MultiLineChart } from './MultiLineChart';
 import type { ExploreSeries, SpanMetricSeries } from '@/lib/types';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -266,5 +267,5 @@ function fmt(v: number, unit?: string): string {
 
 function fmtTime(t: number): string {
   const d = new Date(t / 1e6);
-  return d.toLocaleTimeString('en', { hour12: false });
+  return fmtClock(d);
 }

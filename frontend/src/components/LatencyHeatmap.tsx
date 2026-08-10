@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { LatencyHeatmap as Heatmap } from '@/lib/types';
 import { fmtSmart } from '@/lib/chartFmt';
+import { fmtClock } from '@/lib/utils';
 
 // LatencyHeatmap — Honeycomb-style 2D density visualisation.
 // X = time (left → right), Y = log-scale latency
@@ -481,7 +482,7 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
           boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
         }}>
           <div style={{ fontWeight: 600 }}>
-            {new Date(hover.time / 1e6).toLocaleTimeString()}
+            {fmtClock(hover.time / 1e6)}
           </div>
           <div style={{ color: 'var(--text2)' }}>
             {data.overflowTop && hover.row === data.durationBins.length - 1 && data.durationBins.length >= 2

@@ -4,7 +4,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
-import { fmtNum, fmtBytes } from '@/lib/utils';
+import { fmtNum, fmtBytes, fmtClock, fmtDateTime } from '@/lib/utils';
 import { useClickhouseHealth, useCHCoordinators, useDDLQueueHealth, useRollupStatus } from '@/lib/queries';
 import { useQuery } from '@tanstack/react-query';
 import { makeBaseline, nodeWorkView, type Baseline, type NodeWorkRow } from '@/lib/chNodeWork';
@@ -738,7 +738,7 @@ export default function AdminClickhousePage() {
                         {slowDt.sortedRows.map((q, i) => (
                           <tr key={i}>
                             <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
-                              {new Date(q.eventTimeNs / 1e6).toLocaleTimeString()}
+                              {fmtClock(q.eventTimeNs / 1e6)}
                             </td>
                             <td className="mono" style={{ fontSize: 11 }}>{q.user || '—'}</td>
                             <td className="num mono">{q.elapsedMs.toFixed(0)} ms</td>
@@ -1041,7 +1041,7 @@ function RollupWizardPanel() {
                   </td>
                   <td className="num mono">{t.exists && !t.err ? fmtNum(t.rows) : '—'}</td>
                   <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
-                    {t.minTsMs > 0 ? new Date(t.minTsMs).toLocaleString() : '—'}
+                    {t.minTsMs > 0 ? fmtDateTime(t.minTsMs) : '—'}
                   </td>
                 </tr>
               ))}

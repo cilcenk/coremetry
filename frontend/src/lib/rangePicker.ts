@@ -126,10 +126,23 @@ export function formatDateTime(ms: number): string {
     ` ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
 }
 
-/** "HH:mm:ss" time-of-day for the native `<input type="time" step=1>`. */
+/** "HH:mm:ss" time-of-day for the picker's time field. */
 export function formatTimeOfDay(ms: number): string {
   const d = new Date(ms);
   return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+
+/** Parse "HH:mm" / "HH:mm:ss" into seconds since local midnight, or null.
+ *  v0.9.879 — extracted so the time field can colour itself red on a bad
+ *  keystroke WITHOUT a valid base datetime to hang withTimeOfDay off. The
+ *  field is hand-drawn text now: `<input type="time">` renders 12-hour with
+ *  an AM/PM segment on an en-US browser, which the operator rejected. */
+export function parseTimeOfDay(hms: string): number | null {
+  const m = hms.trim().match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
+  if (!m) return null;
+  const [h, mi, se] = [+m[1], +m[2], m[3] ? +m[3] : 0];
+  if (h > 23 || mi > 59 || se > 59) return null;
+  return h * 3600 + mi * 60 + se;
 }
 
 /** Parse an absolute LOCAL datetime: "YYYY-MM-DD", "YYYY-MM-DD HH:mm",
@@ -152,12 +165,12 @@ export function parseDateTime(s: string): number | null {
 
 /** Replace the local time-of-day of `ms` with "HH:mm" / "HH:mm:ss". */
 export function withTimeOfDay(ms: number, hms: string): number | null {
-  const m = hms.match(/^(\d{2}):(\d{2})(?::(\d{2}))?$/);
-  if (!m) return null;
-  const [h, mi, se] = [+m[1], +m[2], m[3] ? +m[3] : 0];
-  if (h > 23 || mi > 59 || se > 59) return null;
+  const sod = parseTimeOfDay(hms);
+  if (sod === null) return null;
   const d = new Date(ms);
-  d.setHours(h, mi, se, 0);
+  // setHours over the seconds-of-day so DST transitions land the same way
+  // they always did (Date arithmetic, not ms addition).
+  d.setHours(Math.floor(sod / 3600), Math.floor(sod / 60) % 60, sod % 60, 0);
   return d.getTime();
 }
 

@@ -1678,9 +1678,13 @@ button.accent.copied {
 .trp-custom input { font-family: monospace; }
 .trp-row { display: flex; gap: 4px; }
 .trp-row input[type="text"] { flex: 1; min-width: 0; }
-/* Native time input — hour/minute/second refinement next to the text
-   field; the mini calendar drives the date part. */
-.trp-time { width: 96px; flex-shrink: 0; }
+/* Time-of-day field — hour/minute/second refinement next to the text field;
+   the mini calendar drives the date part. v0.9.879: this was
+   `<input type="time">`; it is a hand-drawn text input now because the
+   native widget renders an AM/PM segment on an en-US browser. Explicit
+   flex basis because the sibling rule above would otherwise stretch it. */
+.trp-time { flex: 0 0 96px; width: 96px; text-align: center; }
+.trp-time.bad { border-color: var(--err); }
 /* Hand-rolled mini month calendar (no date-lib dependency). */
 .trp-calwrap { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
 .trp-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }

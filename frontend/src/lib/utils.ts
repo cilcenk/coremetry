@@ -161,10 +161,35 @@ export function fmtNs(ns: number): string {
   return ns + 'ns';
 }
 
+// v0.9.879 — the ONE clock formatter. "HH:mm:ss", 24-hour, hand-rolled.
+// Operator-reported: eight surfaces called bare `toLocaleTimeString()`,
+// which follows the BROWSER locale — an en-US Chrome renders "11:22:34 PM"
+// while the waterfall next to it renders "23:22:34". Hand-rolled rather
+// than `toLocaleTimeString('en', { hour12: false })` because that spelling
+// resolves to the h24 cycle on some ICU builds and prints midnight as
+// "24:00:00". Accepts unix-ms or a Date; nanoseconds must be divided by
+// the caller (tsShort/tsLong below are the ns-native wrappers).
+export function fmtClock(v: number | Date): string {
+  const d = v instanceof Date ? v : new Date(v);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+// v0.9.879 — the ONE date+time formatter: "dd.mm.yyyy HH:mm:ss", 24-hour.
+// Same operator request as fmtClock, other half of the inventory: bare
+// `new Date(x).toLocaleString()` prints "8/10/2026, 11:22:34 PM" on an
+// en-US browser. tsLong (v0.6.65) already owned this format for ns
+// callers — this is its unix-ms/Date sibling and its implementation.
+export function fmtDateTime(v: number | Date): string {
+  const d = v instanceof Date ? v : new Date(v);
+  const p = (n: number) => String(n).padStart(2, '0');
+  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} ${fmtClock(d)}`;
+}
+
 export function tsShort(ns: number): string {
   if (!ns) return '—';
   const d = new Date(ns / 1e6);
-  return d.toLocaleTimeString('en', { hour12: false }) + '.' + String(d.getMilliseconds()).padStart(3, '0');
+  return fmtClock(d) + '.' + String(d.getMilliseconds()).padStart(3, '0');
 }
 
 // v0.5.321 — Operator-reported: Traces page's Time column showed
@@ -185,17 +210,15 @@ export function tsDateTime(ns: number): string {
   return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}.${ms}`;
 }
 
+// v0.6.65 — dd.mm.yyyy HH:mm:ss, 24-hour. Operator-reported: the prior
+// toLocaleString('en', …) rendered US M/D/YY + 12h ("5/28/26, 11:22:34
+// PM"), which (a) clashed with the 24h waterfall timeline ("23:22:34")
+// and (b) isn't the operator's gün.ay.yıl convention. Manual format so
+// it's locale-stable regardless of the browser/container locale.
+// v0.9.879 — body moved to fmtDateTime so ms/Date callers share it.
 export function tsLong(ns: number): string {
   if (!ns) return '—';
-  const d = new Date(ns / 1e6);
-  const p = (n: number) => String(n).padStart(2, '0');
-  // v0.6.65 — dd.mm.yyyy HH:mm:ss, 24-hour. Operator-reported: the prior
-  // toLocaleString('en', …) rendered US M/D/YY + 12h ("5/28/26, 11:22:34
-  // PM"), which (a) clashed with the 24h waterfall timeline ("23:22:34")
-  // and (b) isn't the operator's gün.ay.yıl convention. Manual format so
-  // it's locale-stable regardless of the browser/container locale.
-  return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()} `
-       + `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+  return fmtDateTime(ns / 1e6);
 }
 
 // tsRel renders a unix-ns timestamp as a coarse relative duration

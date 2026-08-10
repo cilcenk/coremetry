@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { Spinner } from './Spinner';
 import { api } from '@/lib/api';
 import { fmtSmart } from '@/lib/chartFmt';
-import { tsLong } from '@/lib/utils';
+import { fmtClock, tsLong } from '@/lib/utils';
 import type { TraceRow, FilterExpr } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 
@@ -100,7 +100,7 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
           </span>
           <span style={{ fontSize: 12, color: 'var(--text3)', flex: 1 }}>
             {fmtSmart(cell.lowDurMs, 'ms')} – {fmtSmart(cell.highDurMs, 'ms')} ·{' '}
-            {new Date(cell.timeNs / 1e6).toLocaleTimeString()} ·{' '}
+            {fmtClock(cell.timeNs / 1e6)} ·{' '}
             {cell.count.toLocaleString()} spans in cell
           </span>
           <Button variant="secondary" size="sm" onClick={onClose} title="Close">✕</Button>

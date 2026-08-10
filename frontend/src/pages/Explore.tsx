@@ -205,6 +205,13 @@ function ExploreInner({ onSelfWrite }: {
     return () => clearTimeout(t);
   }, [dsl]);
   const [queryError, setQueryError] = useState<string | null>(null);
+  // v0.9.867 (tutarlılık denetimi MT1) — queryError YALNIZ DSL sözdizimi
+  // hatasını taşır (textarea'nın altındaki alan-seviyesi kutu). Okuma
+  // hatasının sunucu metni ayrı tutuluyor, yoksa non-DSL hatalarda
+  // atılıyordu ve sonuç alanı sessizce boş kalıyordu.
+  const [readErr, setReadErr] = useState<string | null>(null);
+  // Retry kaynağı: bu iki okuma elle fetch, react-query refetch'i yok.
+  const [retryNonce, setRetryNonce] = useState(0);
   const [repeatGroupBy, setRepeatGroupBy] = useState<string[]>(
     () => (searchParams.get('groupBy') ?? '').split(',').filter(Boolean));
   const [repeatMin, setRepeatMin] = useState(
@@ -436,6 +443,7 @@ function ExploreInner({ onSelfWrite }: {
   useEffect(() => {
     if (!hasParams || source !== 'spans' || resultMode === 'metric') return;
     setQueryError(null);
+    setReadErr(null);
     let cancelled = false; // v0.8.300 — stale-overwrite guard
     const { from, to } = timeRangeToNs(range);
     const filterArg = mode === 'builder' && filters.length ? JSON.stringify(filters) : undefined;
@@ -461,7 +469,12 @@ function ExploreInner({ onSelfWrite }: {
           if (cancelled) return;
           setTraces(null);
           const msg = String(err?.message ?? err);
+          // DSL sözdizimi hatası textarea'nın ALTINDA (alan-seviyesi); her
+          // okuma hatasının metni ise sonuç alanındaki QueryError'a iner.
+          // v0.9.867 öncesi ikincisi ATILIYORDU ve null hiçbir dala girmediği
+          // için sonuç alanı bomboş kalıyordu (MT1).
           setQueryError(msg.includes('DSL') ? msg : null);
+          setReadErr(msg);
         });
     } else {
       setRepeats(undefined);
@@ -477,10 +490,11 @@ function ExploreInner({ onSelfWrite }: {
           setRepeats(null);
           const msg = String(err?.message ?? err);
           setQueryError(msg.includes('DSL') ? msg : null);
+          setReadErr(msg);
         });
     }
     return () => { cancelled = true; };
-  }, [resultMode, range, filters, dslDebounced, mode, traceLimit, showTotal, extraCols, repeatMin, repeatGroupBy, hasParams, source]);
+  }, [resultMode, range, filters, dslDebounced, mode, traceLimit, showTotal, extraCols, repeatMin, repeatGroupBy, hasParams, source, retryNonce]);
 
   // ── Builder mutators ──────────────────────────────────────────────────────
   const setQuery = (i: number, q: BuilderState['queries'][number]) =>
@@ -1091,7 +1105,12 @@ name ~ checkout`}
             traceHasMore={traceHasMore}
             onShowTotal={() => setShowTotal(true)}
             extraCols={extraCols}
-            setExtraCols={setExtraCols} />
+            setExtraCols={setExtraCols}
+            // Çift-render koruması: DSL hatası zaten textarea'nın altında
+            // harfi harfine gösteriliyor; aynı metni sonuç alanında ikinci
+            // kez basmayalım — QueryError genel cümlesiyle kalsın.
+            errorText={queryError ? null : readErr}
+            onRetry={() => setRetryNonce(n => n + 1)} />
         )}
 
         {/* ── Repeats mode ─────────────────────────────────────────────────── */}
@@ -1099,7 +1118,12 @@ name ~ checkout`}
           <RepeatsResult
             repeats={repeats}
             repeatMin={repeatMin}
-            groupBy={repeatGroupBy} />
+            groupBy={repeatGroupBy}
+            // Çift-render koruması: DSL hatası zaten textarea'nın altında
+            // harfi harfine gösteriliyor; aynı metni sonuç alanında ikinci
+            // kez basmayalım — QueryError genel cümlesiyle kalsın.
+            errorText={queryError ? null : readErr}
+            onRetry={() => setRetryNonce(n => n + 1)} />
         )}
             </div>
           </div>

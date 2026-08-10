@@ -1,6 +1,8 @@
 import { useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Spinner, Empty } from '@/components/Spinner';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { fmtNum, tsLong } from '@/lib/utils';
 import type { RepeatedSpanRow } from '@/lib/types';
@@ -24,10 +26,17 @@ export function RepeatsResult({
   repeats,
   repeatMin,
   groupBy,
+  errorText,
+  onRetry,
 }: {
   repeats: RepeatedSpanRow[] | null | undefined;
   repeatMin: number;
   groupBy: string[];
+  // v0.9.867 (tutarlılık denetimi MT1) — `repeats === null` (okuma hatası)
+  // hiçbir render dalına girmiyordu: sorgu patladığında sonuç alanı bomboş
+  // kalıyor, "N+1 yok, temiziz" diye okunuyordu.
+  errorText?: string | null;
+  onRetry?: () => void;
 }) {
   const navigate = useNavigate();
 
@@ -45,8 +54,14 @@ export function RepeatsResult({
 
   return (
     <>
-      {repeats === undefined && <Spinner />}
-      {repeats && repeats.length === 0 && (
+      {readState(repeats) === 'loading' && <Spinner />}
+      {readState(repeats) === 'error' && (
+        <QueryError message={errorText} onRetry={onRetry}>
+          Repeated span shapes could not be computed — this is a failed read,
+          not a clean result. Try a narrower time range, then retry.
+        </QueryError>
+      )}
+      {readState(repeats) === 'empty' && (
         <Empty icon="⟳" title="No repeated span shapes found">
           No trace has the same (group-by) shape repeating ≥ {repeatMin} times in this window.
           Try lowering the threshold or switching the split-by (e.g. <code>name</code> + <code>peer.service</code> for chatty RPC, <code>http.route</code> for endpoint fan-out).

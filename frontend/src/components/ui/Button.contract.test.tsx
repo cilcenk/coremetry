@@ -97,12 +97,21 @@ describe('Button — variant/size class mapping', () => {
     ['danger', 'danger'],
     ['ghost', 'ghost'],
     ['accent', 'accent'],
+    ['ghost-danger', 'ghost-danger'],
   ] as const)('variant=%s → .%s', (variant, expected) => {
     expect(cls(<Button variant={variant}>x</Button>).split(' ')).toContain(expected);
   });
 
-  it.each([['sm', 'sm'], ['lg', 'lg']] as const)('size=%s → .%s', (size, expected) => {
+  it.each([['xs', 'xs'], ['sm', 'sm'], ['lg', 'lg']] as const)('size=%s → .%s', (size, expected) => {
     expect(cls(<Button size={size}>x</Button>).split(' ')).toContain(expected);
+  });
+
+  // v0.9.884. `ghost-danger` tek bir sınıf TOKEN'ı — `.danger`ın soluk bir
+  // kardeşi değil. Eğer `'ghost danger'` diye İKİ token basılsaydı, dolu
+  // kırmızı `button.danger` kuralı devreye girer ve "sessiz yıkıcı"nın bütün
+  // anlamı kaybolurdu. Ayrım tam da bu yüzden yoklanıyor.
+  it('ghost-danger does NOT also emit the solid .danger class', () => {
+    expect(cls(<Button variant="ghost-danger">x</Button>).split(' ')).not.toContain('danger');
   });
 
   it('variant and size compose (secondary + sm keeps both)', () => {
@@ -163,6 +172,22 @@ describe('Button — loading / disabled', () => {
 
   it('the label stays readable while loading (spinner is additive)', () => {
     expect(btn(render(<Button loading>Save</Button>)).textContent).toContain('Save');
+  });
+
+  // v0.9.884 (R7). Gösterge statik `…`ten `.spinner.sm`e geçti. Bu, KOD
+  // DÜZENLENMEDEN ~15 mevcut çağrı sitesinin görünümünü değiştiren bir
+  // karar; sözleşmeyi burada çiviliyoruz ki geri kayması sessiz olmasın.
+  it('the loading indicator is the sized spinner, not a text glyph', () => {
+    const b = btn(render(<Button loading>Save</Button>));
+    const spinner = b.querySelector('.spinner');
+    expect(spinner).not.toBeNull();
+    expect(spinner!.className).toContain('sm');
+    expect(b.textContent).not.toContain('…');
+  });
+
+  it('the spinner is hidden from screen readers (aria-busy already says it)', () => {
+    const spinner = btn(render(<Button loading>Save</Button>)).querySelector('.spinner')!;
+    expect(spinner.getAttribute('aria-hidden')).toBe('true');
   });
 });
 

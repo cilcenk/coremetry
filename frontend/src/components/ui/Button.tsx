@@ -19,8 +19,17 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 // ProblemDetail action bar — two equally loud blues, which is exactly
 // the "too prominent" critique Grafana#84110 took. Reach for it when a
 // control must out-rank `secondary` without claiming `primary`.
-type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'accent';
-type Size    = 'sm' | 'md' | 'lg';
+// `ghost-danger` (v0.9.884) is the "quiet destructive" layer. Six
+// sites had already invented it by hand (`secondary`/`ghost` + an
+// inline `color: var(--err)`) because solid `danger` is too loud for
+// a row-level Remove/Revoke sitting inside a list. Three different
+// hand-rolled looks for one meaning; this is the single contract.
+type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'accent'
+             | 'ghost-danger';
+// `xs` (v0.9.884) absorbs the made-up 10-11px buttons that live under
+// charts and inside the command palette. They were off the scale
+// entirely, so every one of them re-declared its own padding.
+type Size    = 'xs' | 'sm' | 'md' | 'lg';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: Variant;
@@ -33,13 +42,15 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variantClass: Record<Variant, string> = {
-  primary:   '',
-  secondary: 'sec',
-  danger:    'danger',
-  ghost:     'ghost',
-  accent:    'accent',
+  primary:        '',
+  secondary:      'sec',
+  danger:         'danger',
+  ghost:          'ghost',
+  accent:         'accent',
+  'ghost-danger': 'ghost-danger',
 };
 const sizeClass: Record<Size, string> = {
+  xs: 'xs',
   sm: 'sm',
   md: '',
   lg: 'lg',
@@ -65,7 +76,12 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
       aria-busy={loading || undefined}
       {...rest}>
       {loading ? <span className="row gap-2">
-        <span aria-hidden="true">…</span>
+        {/* v0.9.884: was a static `…`, which read as "truncated label"
+            rather than "working". Teams took one look and went back to
+            hand-rolling `{busy ? 'Saving…' : 'Save'}` instead of using
+            `loading` — 12 sites did exactly that. `.spinner.sm` is the
+            sub-14px variant sized for a button's line box. */}
+        <span className="spinner sm" aria-hidden="true" />
         {children}
       </span> : <span className="row gap-2">
         {leftIcon}

@@ -358,6 +358,20 @@ button.ghost { background: transparent; color: var(--text2); border: 1px solid t
 button.ghost:hover:not(:disabled) { background: var(--bg2); color: var(--text); }
 button.sm { padding: 3px 9px; font-size: 11px; border-radius: 4px; }
 button.lg { padding: 8px 18px; font-size: 14px; }
+/* `ghost-danger` (v0.9.884) — quiet destructive. Solid `.danger` is a
+   commitment ("this is THE action of this dialog"); a Remove sitting in
+   a list row is not. Six sites had already hand-rolled this with an
+   inline `color: var(--err)` on top of `.sec`/`.ghost`, in three
+   different looks. Tint comes from the token, never a literal rgba. */
+button.ghost-danger { background: transparent; color: var(--err); border: 1px solid transparent; }
+button.ghost-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+  border-color: color-mix(in srgb, var(--err) 40%, transparent);
+  color: var(--err);
+}
+/* `xs` (v0.9.884) — the sub-`sm` rung the chart footers and the command
+   palette were inventing per file (fontSize 10/11, ad-hoc padding). */
+button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 
 /* ── Card / panel primitive ─────────────────────────────────────
    The repeated bg1 + border + 8px radius pattern that 30+ inline
@@ -1285,6 +1299,12 @@ canvas { max-width: 100%; }
 
 /* Spinner */
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }
+/* `.spinner.sm` (v0.9.884) — Button's loading indicator. The 14px base
+   is taller than an `sm` button's 11px line box, so reusing it made the
+   button GROW mid-request (layout jump right when the operator is
+   waiting). `currentColor` keeps it legible on solid primary/danger
+   fills, where `--accent` on `--accent` would be invisible. */
+.spinner.sm { width: 10px; height: 10px; border-width: 1.5px; border-color: color-mix(in srgb, currentColor 30%, transparent); border-top-color: currentColor; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 /* Logs filtered to a trace/span (banner above the table) */

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { fmtSmart } from '@/lib/chartFmt';
 import { seriesStats, isAdditiveUnit, resolveLegendCollapsed } from '@/lib/chart/legendStats';
 import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
+import { DisclosureButton } from '@/components/ui';
 
 // StatsLegend (v0.9.103, Grafana-parity #1) — kompakt OVC/TC grafiklerinin
 // ALTINA seri-başı istatistik tablosu (Seçenek A, operatör onaylı). MLC/TSP'de
@@ -86,15 +87,10 @@ export function StatsLegend({ series, onToggle, isVisible, defaultCollapsed, sto
 
   return (
     <div style={{ marginTop: 8 }}>
-      <button type="button" onClick={toggleCollapsed}
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px',
-          fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 4,
-        }}
+      <DisclosureButton expanded={!collapsed} onClick={toggleCollapsed}
         title={collapsed ? 'İstatistikleri göster' : 'İstatistikleri gizle'}>
-        <span style={{ fontSize: 9 }}>{collapsed ? '▶' : '▼'}</span>
         Series ({series.length})
-      </button>
+      </DisclosureButton>
       {!collapsed && (
         <div style={{ overflowX: 'auto', marginTop: 4 }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>

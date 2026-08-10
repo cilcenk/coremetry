@@ -517,6 +517,46 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 .btn-icon.ib-star:hover:not(:disabled) { opacity: 1; color: var(--text2); background: transparent; }
 .btn-icon.ib-star.active { color: var(--warn); opacity: 1; background: transparent; border-color: transparent; }
 
+/* ── DisclosureButton (v0.9.898) — mB3 ──────────────────────────────
+   Six sites hand-rolled this; five of them shipped without
+   `aria-expanded`, and the chevron glyph came in two dialects (▶▼ vs ▸▾)
+   that were visible on the same page. One glyph pair, two anatomies —
+   operator decision 2026-08-10.
+
+   Every :hover below restates `background`: without it the element-level
+   `button:hover:not(:disabled)` (0,2,1) wins that property and the
+   heading goes solid accent (the v0.9.895 incident). */
+.btn-disclose {
+  display: inline-flex; align-items: center;
+  background: transparent; border: none; border-radius: 0;
+  color: var(--text2); cursor: pointer; text-align: left;
+  font-family: inherit;
+  transition: color .15s, border-color .15s;
+}
+.btn-disclose:hover:not(:disabled) { background: transparent; color: var(--text); }
+.btn-disclose:disabled { opacity: .4; cursor: not-allowed; }
+/* `row` — flows inline next to other controls. */
+.btn-disclose.dsc-row { gap: 4px; padding: 2px 4px; font-size: 11px; }
+.btn-disclose.dsc-row .dsc-glyph { font-size: 9px; color: var(--text3); }
+/* `section` — a card's own heading. The glyph column is FIXED WIDTH so
+   labels line up at the same x whether the section is open or closed. */
+.btn-disclose.dsc-section {
+  display: flex; width: 100%; gap: 12px; padding: 14px;
+  font-size: 12px; font-weight: 600; color: var(--text2);
+  border-bottom: 1px solid transparent;
+}
+.btn-disclose.dsc-section .dsc-glyph {
+  width: 14px; flex: none; font-size: 11px; color: var(--text2);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+/* Bound to the ARIA state, not to a second class: the divider and the
+   announced state can never disagree. */
+.btn-disclose.dsc-section[aria-expanded="true"] { border-bottom-color: var(--border); }
+/* `dsc-caps` — the uppercase section label used above in-page charts
+   ("LATENCY DISTRIBUTION"). A caller modifier rather than a third
+   anatomy: it changes typography only, not layout. */
+.btn-disclose.dsc-caps { font-weight: 700; text-transform: uppercase; letter-spacing: .4px; }
+
 /* ── Chip (v0.9.894) — bordered, labelled affordance ────────────────
    mB2's 10+ hand-rolled sites, three of which re-derived this exact
    accent tint with an inline color-mix while --accent-bg / --accent-border

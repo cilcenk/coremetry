@@ -3,6 +3,22 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { Field2, FlashBox, Row } from './shared';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+import type { RagDocument } from '@/lib/types';
+
+// v0.9.871 (tutarlılık denetimi BT17) — RAG doküman kataloğu paylaşılan
+// primitife geçti. Katalog yüzlere büyüyebilir ve bugün sıralanamıyordu.
+// Kolon kümesi/sıra/etiket AYNEN korundu; ek olarak mT4'ün başlık hizası
+// bedavaya geliyor: sayısal kolonların BAŞLIKLARI da sağa yaslanıyor
+// (hücreler zaten sağdaydı, başlıklar solda kalmıştı).
+const DOC_COLS: DataTableColumn<RagDocument>[] = [
+  { id: 'docName',    label: 'Doküman',  sortValue: d => d.docName,          naturalDir: 'asc', flex: true },
+  { id: 'source',     label: 'Kaynak',   sortValue: d => d.source,           naturalDir: 'asc', width: 150 },
+  { id: 'chunks',     label: 'Parça',    sortValue: d => d.chunks,           numeric: true,     width: 100 },
+  { id: 'bytes',      label: 'Boyut',    sortValue: d => d.bytes,            numeric: true,     width: 110 },
+  { id: 'uploadedBy', label: 'Yükleyen', sortValue: d => d.uploadedBy ?? '', naturalDir: 'asc', width: 170 },
+];
 
 // KnowledgeTab — doküman soru-cevap (RAG) yapılandırması (v0.8.491).
 // v0.8.441'de AI Copilot sekmesinin altına RagSection olarak doğdu;
@@ -41,6 +57,12 @@ export function KnowledgeTab() {
   const [pasteName, setPasteName] = useState('');
   const [pasteText, setPasteText] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
+  // v0.9.871 — useDataTable de bir HOOK: yukarıdaki v0.9.178 şerhinin
+  // kapsamına giriyor, erken-return'lerin ÜSTÜNDE kalmalı.
+  const dt = useDataTable<RagDocument>({
+    storageKey: 'settings-rag-documents', columns: DOC_COLS, rows: docs ?? [],
+    initialSort: { id: 'docName', dir: 'asc' },
+  });
 
   const load = () => {
     api.getRagConfig().then(c => {
@@ -297,15 +319,16 @@ export function KnowledgeTab() {
       )}
       {docs && docs.length > 0 && (
         <div className="table-wrap" style={{ marginTop: 8 }}>
-          <table>
-            <thead><tr><th>Doküman</th><th>Kaynak</th><th>Parça</th><th>Boyut</th><th>Yükleyen</th><th></th></tr></thead>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} trailing={[90]} />
+            <DataTableHead dt={dt} trailing={<th></th>} />
             <tbody>
-              {docs.map(d => (
+              {dt.sortedRows.map(d => (
                 <tr key={d.docId}>
                   <td className="mono" style={{ fontSize: 12 }}>{d.docName}</td>
                   <td><span className="badge b-gray">{d.source}</span></td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{d.chunks}</td>
-                  <td className="mono" style={{ textAlign: 'right' }}>{(d.bytes / 1024).toFixed(1)} KB</td>
+                  <td className="num mono">{d.chunks}</td>
+                  <td className="num mono">{(d.bytes / 1024).toFixed(1)} KB</td>
                   <td style={{ fontSize: 11, color: 'var(--text2)' }}>{d.uploadedBy || '—'}</td>
                   <td style={{ textAlign: 'right' }}>
                     <Button variant="danger" size="sm" type="button" disabled={busy}

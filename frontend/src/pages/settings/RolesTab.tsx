@@ -1,7 +1,19 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Modal, Button, Stack } from '@/components/ui';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { api, type CustomRole, type AvailablePage } from '@/lib/api';
+
+// v0.9.871 (tutarlılık denetimi BT13) — paylaşılan primitif. Kolon kümesi,
+// sıra, etiketler ve hücre içerikleri AYNEN korundu; kazanılan tek şey
+// sıralama + yeniden boyutlandırma + kalıcı genişlik.
+const ROLE_COLS: DataTableColumn<CustomRole>[] = [
+  { id: 'name',  label: 'Name',  sortValue: r => r.name,             naturalDir: 'asc', width: 220 },
+  // Hücre sayfa adlarını virgülle basıyor; sıralama da GÖRÜNENE göre
+  // olsun (sayıya göre sıralamak metin gösteren bir kolonda şaşırtır).
+  { id: 'pages', label: 'Pages', sortValue: r => r.pages.join(', '), naturalDir: 'asc', flex: true },
+];
 
 // ── Custom roles tab ────────────────────────────────────────────────────────
 //
@@ -50,6 +62,12 @@ export function CustomRolesTab() {
     }
   };
 
+  // Koşulsuz hook — erken dönüşlerin ÜSTÜNDE kalmalı (rules-of-hooks).
+  const dt = useDataTable<CustomRole>({
+    storageKey: 'settings-custom-roles', columns: ROLE_COLS, rows: roles ?? [],
+    initialSort: { id: 'name', dir: 'asc' },
+  });
+
   if (roles === undefined || pages === undefined) return <Spinner />;
   if (roles === null || pages === null) {
     return <Empty icon="!" title="Failed to load custom roles">Reload the page.</Empty>;
@@ -82,16 +100,11 @@ export function CustomRolesTab() {
         </Empty>
       ) : (
         <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Pages</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} trailing={[160]} />
+            <DataTableHead dt={dt} trailing={<th style={{ textAlign: 'right' }}>Actions</th>} />
             <tbody>
-              {roles.map(r => (
+              {dt.sortedRows.map(r => (
                 <tr key={r.name}>
                   <td style={{ fontWeight: 600 }}>{r.name}</td>
                   <td style={{ fontSize: 12, color: 'var(--text2)' }}>

@@ -50,9 +50,34 @@ export interface Shortcut {
   evenInInputs?: boolean;
 }
 
-type Registry = Map<string, Shortcut>;
+// v0.9.926 — kayıt defteri YIĞIN tutuyor, tek değer değil.
+//
+// Öncesinde `Map<string, Shortcut>`ti ve `registry.set(sc.keys, sc)`
+// ikinci kaydı birincinin ÜZERİNE yazıyordu. İki nav'lı tablo aynı anda
+// mount olduğunda (ör. bir sayfada hem liste hem yan tablo) j/k'nın
+// hangisine gideceği MOUNT SIRASINA kalıyordu — ve daha kötüsü, ikinci
+// tablo unmount olduğunda kaldırma koruması (`registry.get === sc`)
+// tuttuğu için binding TAMAMEN siliniyordu: geriye kalan tablonun
+// klavye gezinmesi ÖLÜYORDU ve bir daha geri gelmiyordu.
+//
+// Yığınla: en son kaydolan sahip (bugünkü davranış, artık AÇIKÇA
+// yazılı), ama unmount olduğunda bir öncekine DÜŞÜYOR. Kimse sessizce
+// kaybolmuyor.
+//
+// AÇIK KALAN ÜRÜN KARARI: iki tablo aynı anda GÖRÜNÜRken j/k hangisine
+// gitmeli? "En son mount olan" bir varsayılan, bir tasarım değil —
+// odak/hover takibi ve seçili tablonun görsel işareti operatör kararı.
+// O karar verilene kadar iki nav'lı tablolu sayfalar (traces/ShapesView,
+// anomalies/ProblemsSection) onOpen ALMIYOR.
+type Registry = Map<string, Shortcut[]>;
 
 const registry: Registry = new Map();
+
+/** Bir tuş için ŞU AN sahip olan binding (yığının tepesi). */
+function owner(keys: string): Shortcut | undefined {
+  const stack = registry.get(keys);
+  return stack && stack.length ? stack[stack.length - 1] : undefined;
+}
 let listenerInstalled = false;
 let pendingPrefix: string | null = null;
 let prefixTimer: number | null = null;
@@ -131,7 +156,7 @@ function installListener(): void {
     // reset the prefix.
     if (pendingPrefix && e.key && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
       const seq = `${pendingPrefix} ${e.key.toLowerCase()}`;
-      const sc = registry.get(seq);
+      const sc = owner(seq);
       if (sc && (!inEditable || sc.evenInInputs)) {
         e.preventDefault();
         sc.handler(e);
@@ -165,7 +190,7 @@ function installListener(): void {
     }
 
     // Single-combo path.
-    const sc = registry.get(combo);
+    const sc = owner(combo);
     // v0.9.863 (UX denetimi K13) — odaklı buton/link kendi aktivasyon tuşunu
     // GERİ ALIR: aksi hâlde preventDefault() tarayıcının click sentezini iptal
     // ediyor ve Enter hiçbir şey yapmıyordu.
@@ -199,15 +224,20 @@ export function useShortcuts(shortcuts: Shortcut[], deps: unknown[] = []): void 
   useEffect(() => {
     installListener();
     for (const sc of shortcuts) {
-      registry.set(sc.keys, sc);
+      const stack = registry.get(sc.keys) ?? [];
+      stack.push(sc);
+      registry.set(sc.keys, stack);
     }
     return () => {
       for (const sc of shortcuts) {
-        // Only remove if WE registered it — a later registration
-        // overwriting ours wins on the way down too.
-        if (registry.get(sc.keys) === sc) {
-          registry.delete(sc.keys);
-        }
+        // KENDİ kaydımızı çıkarıyoruz, nerede olursa olsun. Eskiden
+        // "yalnız tepedeysek sil" idi; o kural, tepedeyken silince
+        // ALTTAKİNİ de yok ediyordu (Map tek değer tutuyordu).
+        const stack = registry.get(sc.keys);
+        if (!stack) continue;
+        const i = stack.lastIndexOf(sc);
+        if (i >= 0) stack.splice(i, 1);
+        if (stack.length === 0) registry.delete(sc.keys);
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -218,5 +248,10 @@ export function useShortcuts(shortcuts: Shortcut[], deps: unknown[] = []): void 
 // by the Help modal so the shortcut list there always
 // reflects what's actually bound right now.
 export function listShortcuts(): Shortcut[] {
-  return Array.from(registry.values());
+  // Yardım ekranı SAHİP olan binding'leri listeliyor — altta kalan
+  // gölgelenmiş kayıtlar gösterilirse operatöre çalışmayan bir kısayol
+  // vaat edilmiş olur.
+  return Array.from(registry.values())
+    .map(stack => stack[stack.length - 1])
+    .filter((sc): sc is Shortcut => !!sc);
 }

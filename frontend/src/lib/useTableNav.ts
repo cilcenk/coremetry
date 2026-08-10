@@ -59,11 +59,17 @@ export function useTableNav<T>(
   // changes.
   useEffect(() => {
     if (selected < 0) return;
+    // v0.9.926 — kapsamlı arama. Öncesinde `document.querySelector` ile
+    // BELGEDEKİ İLK `[data-row-idx]` bulunuyordu: iki tablolu bir sayfada
+    // j/k bir tabloda seçim yaparken kaydırma DİĞERİNDE oluyordu.
+    // `pageId` tablonun kabına `data-table-id` olarak basılıyor.
     const sel = document.querySelector(
-      `[data-row-idx="${selected}"]`,
+      options.pageId
+        ? `[data-table-id="${options.pageId}"][data-row-idx="${selected}"]`
+        : `[data-row-idx="${selected}"]`,
     ) as HTMLElement | null;
     if (sel) sel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [selected]);
+  }, [selected, options.pageId]);
 
   const open = options.onOpen;
   useShortcuts(

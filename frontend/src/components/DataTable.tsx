@@ -49,7 +49,7 @@ export interface DataTable<T> {
   // bindings) unless the caller supplied onOpen. Spread `rowProps(i)` on each
   // <tr> for data-row-idx + the .row-selected accent.
   nav: TableNav<T>;
-  rowProps: (index: number) => { 'data-row-idx': number; className?: string };
+  rowProps: (index: number) => { 'data-row-idx': number; 'data-table-id': string; className?: string };
 }
 
 export function useDataTable<T>({ storageKey, columns, rows, initialSort, serverSort, onSortChange, urlSortFallback, onOpen, searchRef }: {
@@ -188,12 +188,18 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
       : [],
     [onOpen, searchRef, storageKey],
   );
+  // v0.9.926 — satır KENDİ tablosunun kimliğini de taşıyor. Oto-kaydırma
+  // eskiden `document.querySelector('[data-row-idx=N]')` ile belgedeki
+  // İLK eşleşeni buluyordu: iki tablolu bir sayfada j/k bir tabloda
+  // seçim yaparken kaydırma DİĞERİNDE oluyordu. Kimliği satıra basmak,
+  // sarmalayıcıya basmaktan daha ucuz (sayfaların `<div>`ine dokunmuyor).
   const rowProps = useCallback(
     (index: number) => ({
       'data-row-idx': index,
+      'data-table-id': storageKey,
       className: nav.selected === index ? 'row-selected' : undefined,
     }),
-    [nav],
+    [nav, storageKey],
   );
 
   return { columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout, nav, rowProps };

@@ -10,7 +10,7 @@ import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { useChartEngine } from '@/lib/chart/engine';
 import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { StatsLegend } from '@/components/chart/StatsLegend';
-import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
 import {
   toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility,
@@ -324,13 +324,17 @@ export function OverviewChart({
             // Grafana-parite #2 — lejanttan gizlenen seri tooltip'ten de
             // düşer (value null → model satırı atar); hiçbir seri
             // gizlenmemişse (visRef null) birebir eski davranış.
-            const rows = sortedTooltipRows(
+            // v0.9.944 (D1/Ö23) — satır tavanı; gerekçe TimeChart'takiyle
+            // aynı (v0.9.750 CorePanel'de kalmıştı). RED üçlüsü gibi 3-4
+            // serili kartlarda no-op, route kırılımlı kartlarda hayat
+            // kurtarır.
+            const rows = capTooltipRows(sortedTooltipRows(
               series.map((s, i) => ({
                 label: s.label, color: colors[i],
                 value: visRef.current?.[i] === false ? null : (raw[i]?.data[idx] ?? null),
                 unit,
               })),
-            );
+            ));
             if (rows.length === 0) { tt.style.display = 'none'; return; }
             // v0.9.483 (operatör: "çıkan hover'da ay gün saat yok") — tarih
             // artık tooltip'te: paylaşımlı fmtTooltipTime (lib/chartFmt).

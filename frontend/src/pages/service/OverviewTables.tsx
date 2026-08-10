@@ -9,6 +9,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { OperationSummary, DBQueryStat, TimeRange } from '@/lib/types';
 import { operationTracesHref } from '@/lib/pivotHref';
+import { tracesURL } from '@/components/DBQueriesPanel';
 
 // Service Overview tables (v0.7.96) — the compact Operations + Top DB
 // statements pair from the design handoff. Both use the shared
@@ -114,15 +115,45 @@ export function DbCard({ service, range, from, to }: { service: string; range: T
   });
   const rows = useMemo(() => dbQ.data ?? [], [dbQ.data]);
   const maxTime = useMemo(() => Math.max(1, ...rows.map(r => r.avgMs)), [rows]);
+  // v0.9.960 (UX denetimi G1/K12) — kart TAMAMEN ÇIKIŞSIZDI: satır tıkı
+  // yok, başlıkta "View all" yok. Operatör servisinin en pahalı DB
+  // ifadesini görüyor ve derinleşmek için sidebar → /databases → ifadeyi
+  // filo katalogda GÖZLE yeniden bulmak zorunda kalıyordu. Hemen
+  // yanındaki Operations kartı ikisini de veriyor, yani kart "bozuk"
+  // okunuyordu.
+  //
+  // Satır hedefi DBQueriesPanel'in tracesURL'i — YENİ bir üretici
+  // yazılmadı: aynı satır tipinden aynı soruyu soran bir link zaten
+  // vardı (LIKE deseniyle sınıfın TÜM literal varyantları + view=list +
+  // rootOnly=false; db span'leri hiçbir zaman kök değildir). İkinci bir
+  // üretici iki yüzeyin sessizce farklı sorular sorması demekti.
+  const navigate = useNavigate();
+  const dbHref = (r: DBQueryStat) => tracesURL(service, r, { fromNs: from, toNs: to });
   const dt = useDataTable<DBQueryStat>({
     storageKey: 'svc-ov-db',
     columns: DB_COLS,
     rows,
     initialSort: { id: 'time', dir: 'desc' },
+    // onOpen j/k/Enter klavye gezinmesini de açar (OpsCard emsali).
+    onOpen: (r) => navigate(dbHref(r)),
   });
   return (
     <div className="card">
-      <div className="ov-card-h"><h3>Top DB statements</h3></div>
+      <div className="ov-card-h">
+        <h3>Top DB statements</h3>
+        {/* Kartın kendi sayfa-içi devamı: Details sekmesindeki tam
+            Database bölümü (DetailsToc'un 'dtl-db' çapası). tab=details
+            ŞART — çapa tek başına varsayılan sekmede çözülür ve operatör
+            "View all"a bastığı Overview'a geri döner (v0.9.211'in dersi). */}
+        {rows.length > 0 && (
+          <span className="ov-right">
+            <Link className="ov-sub"
+              to={`/service?name=${encodeURIComponent(service)}&range=${encodeRange(range)}&tab=details#dtl-db`}>
+              View all {rows.length} →
+            </Link>
+          </span>
+        )}
+      </div>
       {dbQ.isLoading ? (
         <div className="ov-card-b" style={{ display: 'grid', placeItems: 'center', padding: 16 }}><Spinner /></div>
       ) : dbQ.isError ? (
@@ -140,7 +171,8 @@ export function DbCard({ service, range, from, to }: { service: string; range: T
             <DataTableHead dt={dt} />
             <tbody>
               {dt.sortedRows.slice(0, 8).map((r, i) => (
-                <tr key={i}>
+                <tr key={i} {...dt.rowProps(i)} style={{ cursor: 'pointer' }}
+                    onClick={() => navigate(dbHref(r))}>
                   <td>
                     <div className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.sampleStatement || r.statement}>{r.statement}</div>
                     <div className="ov-st">{r.dbSystem}</div>

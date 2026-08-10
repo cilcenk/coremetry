@@ -3,6 +3,22 @@ import { Spinner } from '@/components/Spinner';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import type { TimeRange, PostgresMetrics } from '@/lib/types';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// v0.9.873 (tutarlılık denetimi BT15) — sabit `sizeBytes desc` sıralaması
+// primitife devredildi; artık aynı sıra VARSAYILAN, ama Backends veya
+// Rollbacks/s'e göre sıralamak da mümkün (bir PG kümesinde "hangi veritabanı
+// rollback üretiyor" sorusu boyuta göre sıralı listede kayboluyordu).
+type PGDatabase = PostgresMetrics['databases'][number];
+
+const PG_DB_COLS: DataTableColumn<PGDatabase>[] = [
+  { id: 'name',      label: 'Name',         sortValue: d => d.name,            naturalDir: 'asc', flex: true },
+  { id: 'size',      label: 'Size',         sortValue: d => d.sizeBytes,       numeric: true, width: 100 },
+  { id: 'backends',  label: 'Backends',     sortValue: d => d.backendCount,    numeric: true, width: 110 },
+  { id: 'commits',   label: 'Commits/s',    sortValue: d => d.commitsPerSec,   numeric: true, width: 115 },
+  { id: 'rollbacks', label: 'Rollbacks/s',  sortValue: d => d.rollbacksPerSec, numeric: true, width: 125 },
+];
 import {
   Stat, GaugeStat, OracleMetricDrillModal, TopSQLSection,
   PanelHeader, PanelErr, SubHeader, fmtBytes,
@@ -22,6 +38,11 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
       .then(r => setData(r ?? null))
       .catch(() => setData(null));
   }, [instance, range]);
+  const dbDt = useDataTable<PGDatabase>({
+    storageKey: 'deps-postgres-databases', columns: PG_DB_COLS,
+    rows: data?.databases ?? [],
+    initialSort: { id: 'size', dir: 'desc' },
+  });
   return (
     <div style={{
       marginTop: 6, marginBottom: 14, padding: 12, borderRadius: 6,
@@ -80,19 +101,12 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
           {data.databases.length > 0 && (
             <div style={{ marginBottom: 12 }}>
               <SubHeader label={`Databases (${data.databases.length})`} />
-              <div className="table-wrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
-                <table>
-                  <thead style={{ position: 'sticky', top: 0, background: 'var(--bg1)', zIndex: 1 }}>
-                    <tr>
-                      <th>Name</th>
-                      <th className="num">Size</th>
-                      <th className="num">Backends</th>
-                      <th className="num">Commits/s</th>
-                      <th className="num">Rollbacks/s</th>
-                    </tr>
-                  </thead>
+              <div className="table-wrap is-scroll" style={{ maxHeight: 240, overflowY: 'auto' }}>
+                <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                  <DataTableColgroup dt={dbDt} />
+                  <DataTableHead dt={dbDt} />
                   <tbody>
-                    {[...data.databases].sort((a, b) => b.sizeBytes - a.sizeBytes).map(d => (
+                    {dbDt.sortedRows.map(d => (
                       <tr key={d.name}
                         onClick={() => setDrill({
                           metric: 'postgresql.database.size',

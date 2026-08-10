@@ -8,7 +8,20 @@ import { encodeFilters } from '@/lib/urlState';
 import type { FilterExpr } from '@/lib/types';
 import { metricCatalogueHref } from '@/pages/explore/urlCodec';
 import { Button } from '@/components/ui/Button';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, SpanMetricSeries } from '@/lib/types';
+
+// v0.9.873 (tutarlılık denetimi BT9) — tek dokunuş ÜÇ paneli düzeltiyor:
+// TopSQLTable Oracle / Postgres / MySQL tarafından paylaşılıyor.
+export type TopSQLRow = { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number };
+
+const TOPSQL_COLS: DataTableColumn<TopSQLRow>[] = [
+  { id: 'sql',     label: 'SQL',     sortValue: r => r.sql,          naturalDir: 'asc', flex: true },
+  { id: 'elapsed', label: 'Elapsed', sortValue: r => r.elapsedSec,   numeric: true, width: 110 },
+  { id: 'execs',   label: 'Execs',   sortValue: r => r.executions,   numeric: true, width: 110 },
+  { id: 'avg',     label: 'Avg',     sortValue: r => r.avgElapsedMs, numeric: true, width: 110 },
+];
 
 // panels/shared — the chrome + drill plumbing every DB-receiver
 // engine panel (Oracle / Postgres / MySQL / Redis) composes:
@@ -280,9 +293,13 @@ export function OracleMetricDrillModal({ drill, range, instance, engine, onClose
 // down: V$SQL sees everything the DB executes, traces only see
 // what the application emits.
 export function TopSQLTable({ rows, instance }: {
-  rows: { sql: string; elapsedSec: number; executions: number; avgElapsedMs: number }[];
+  rows: TopSQLRow[];
   instance: string;
 }) {
+  const dt = useDataTable<TopSQLRow>({
+    storageKey: 'deps-topsql', columns: TOPSQL_COLS, rows,
+    initialSort: { id: 'elapsed', dir: 'desc' },
+  });
   return (
     <div style={{ marginBottom: 14 }}>
       <div style={{
@@ -291,18 +308,14 @@ export function TopSQLTable({ rows, instance }: {
       }}>
         Top SQL by elapsed time
       </div>
-      <div className="table-wrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
-        <table>
-          <thead style={{ position: 'sticky', top: 0, background: 'var(--bg1)', zIndex: 1 }}>
-            <tr>
-              <th>SQL</th>
-              <th className="num">Elapsed</th>
-              <th className="num">Execs</th>
-              <th className="num">Avg</th>
-            </tr>
-          </thead>
+      {/* is-scroll: iç kaydırmalı kapta yapışkan başlık. `is-fit` DEĞİL
+          (top: var(--controls-h) burada yanlış referans — R7/v0.9.697). */}
+      <div className="table-wrap is-scroll" style={{ maxHeight: 240, overflowY: 'auto' }}>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={dt} />
+          <DataTableHead dt={dt} />
           <tbody>
-            {rows.map((r, i) => (
+            {dt.sortedRows.map((r, i) => (
               <tr key={i}>
                 <td style={{
                   fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 11,

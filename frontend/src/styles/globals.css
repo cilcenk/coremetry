@@ -656,6 +656,32 @@ button.lg { padding: 8px 18px; font-size: 14px; }
   background: var(--bg1);
   box-shadow: inset 0 -1px 0 var(--border);
 }
+/* .table-wrap.is-scroll — v0.9.873 (tutarlılık denetimi R5 / MT5).
+
+   İÇ KAYDIRMALI kap için yapışkan başlık. `.is-fit`ten AYRI olmasının
+   sebebi tek satır: `top`.
+
+   `.is-fit` sayfayla birlikte kayan bir tabloyu hedefliyor ve başlığı
+   sayfanın yapışkan filtre barının ALTINA yapıştırıyor
+   (`top: var(--controls-h)`). Kendi `overflow-y: auto` kabı olan bir
+   drawer/panel tablosunda o değer YANLIŞ: kaydırma kabın İÇİNDE oluyor,
+   dolayısıyla referans sayfa barı değil kabın üstü — `top` 0 olmalı.
+   `.is-fit` verilirse başlık kabın içinde bar yüksekliği kadar aşağıda
+   asılı kalır (v0.9.697 olayının birebir tekrarı).
+
+   Neden gerekti: BT8/BT9/BT15 dönüşümünde başlıklar `<thead style={{
+   position: 'sticky' }}>` ile SATIR İÇİ yapışkandı. DataTableHead
+   v0.9.697'den beri `position`ı satır içi YAZMIYOR (bilerek), yani
+   primitife geçiş yapışkanlığı SESSİZCE düşürürdü — MT5'in ta kendisi,
+   itirafı DetailDrawer.tsx'in kendi yorumunda duruyor. */
+.table-wrap.is-scroll thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  /* Opak zemin + gölge-kenarlık gerekçesi `.is-fit` ile aynı. */
+  background: var(--bg1);
+  box-shadow: inset 0 -1px 0 var(--border);
+}
 table { width: 100%; border-collapse: collapse; font-size: 12px; }
 thead th {
   padding: 9px 12px; text-align: left;

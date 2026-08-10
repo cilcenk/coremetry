@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { Sparkline } from '@/components/Sparkline';
 
@@ -30,13 +31,58 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
   bodyStyle?: React.CSSProperties;
   children: React.ReactNode;
 }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const lastFocusRef = useRef<Element | null>(null);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [onClose]);
 
-  return (
+  // mK1 (v0.9.927) — odak taşıma + kaydırma kilidi YALNIZ perde kipinde.
+  //
+  // Bu şartın kaldırılması dalganın tek gerçek regresyon riskiydi:
+  // `backdrop={false}` CoSRE sohbetidir ve varlık gerekçesi açıkken
+  // sayfayla ÇALIŞILABİLMESİ (operatör tabloyu kaydırıyor, başka bir
+  // trace açıyor, sonra sorusunu yazıyor). Odağı sohbete hapsetmek ve
+  // `body{overflow:hidden}` basmak o gerekçeyi BİREBİR tersine çevirirdi
+  // — sohbet, eşlik ettiği işi imkânsız kılan bir modale dönüşürdü.
+  //
+  // Perde kipinde ise çekmece zaten modaldir (arkası karartılmış ve
+  // tıklanamaz), dolayısıyla odağın içeri gelmesi ve sayfanın
+  // kaydırılmaması BEKLENEN davranıştır.
+  useEffect(() => {
+    if (!backdrop) return;
+    lastFocusRef.current = document.activeElement;
+    const t = setTimeout(() => {
+      const root = panelRef.current;
+      if (!root) return;
+      const first = root.querySelector<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      (first ?? root).focus({ preventScroll: true });
+    }, 0);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      clearTimeout(t);
+      document.body.style.overflow = prevOverflow;
+      if (lastFocusRef.current instanceof HTMLElement) {
+        lastFocusRef.current.focus({ preventScroll: true });
+      }
+    };
+  }, [backdrop]);
+
+  // Portal: çekmece `#main`in DOM ağacından çıkıp `document.body`ye
+  // taşınıyor. Görsel çıktı birebir aynı — panel zaten `position:fixed`
+  // ve depoda onu hapsedecek bir yığınlama bağlamı (ata elemanda
+  // transform/filter/contain) ÖLÇÜLDÜ, yok. Kazanç: çekmece artık
+  // çağıranın `overflow`/`contain` kurallarının insafına kalmıyor.
+  //
+  // Portal'ın z beraberliğini DOM-sırası kumarına çevirme riski
+  // v0.9.911'de kapandı: Drawer'ın irtifası artık kipe bağlı ayrı bir
+  // rung ve PageLoader ile olan 30 beraberliği `--z-app-splash`e taşındı.
+  return createPortal(
     <>
       {backdrop && (
         <div onClick={onClose}
@@ -45,7 +91,7 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
             zIndex: 'var(--z-drawer)', animation: 'fadeIn 120ms ease-out',
           }} />
       )}
-      <div style={{
+      <div ref={panelRef} tabIndex={-1} style={{
         position: 'fixed', right: 0, top: 0, bottom: 0,
         width: `min(${width}px, 100vw)`,
         background: 'var(--bg)', borderLeft: '1px solid var(--border)',
@@ -74,7 +120,8 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
         </div>
         {children}
       </div>
-    </>
+    </>,
+    document.body,
   );
 }
 

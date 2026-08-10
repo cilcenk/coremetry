@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 import { useSystemStats, useTraceContext, keys } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { fmtNum, fmtClock, tsLong } from '@/lib/utils';
@@ -156,8 +157,8 @@ export default function AdminStatsPage() {
             cached 60s · system.parts + service_summary_5m MV
           </span>
           <span style={{ flex: 1 }} />
-          <button className="sec" onClick={() => setRefreshTick(t => t + 1)}
-            title="Force a fresh recompute">↻ Refresh</button>
+          <Button variant="secondary" onClick={() => setRefreshTick(t => t + 1)}
+            title="Force a fresh recompute">↻ Refresh</Button>
         </div>
 
         {data === undefined && <Spinner />}

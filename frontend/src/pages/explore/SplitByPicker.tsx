@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Combobox } from '@/components/Combobox';
+import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { SUGGESTED_GROUPBY } from './presets';
 
@@ -55,7 +56,7 @@ export function SplitByPicker({ value, onChange }: {
         placeholder="+ split key" width={160}
         onEnter={() => add(draft)} />
       {draft && (
-        <button className="sec" type="button" onClick={() => add(draft)}>Add</button>
+        <Button variant="secondary" onClick={() => add(draft)}>Add</Button>
       )}
     </>
   );

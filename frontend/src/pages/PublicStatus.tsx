@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { TelescopeIcon } from '@/components/TelescopeIcon';
 import { ThemeToggle } from '@/components/ThemeToggle';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 import { fmtDateTime, tsLong } from '@/lib/utils';
 
 // /public-status — customer-facing status page. Standalone
@@ -489,9 +490,9 @@ function SubscribeForm() {
           placeholder="you@example.com"
           aria-label="Email address to subscribe"
           style={{ flex: 1 }} />
-        <button type="submit" disabled={busy}>
+        <Button type="submit" disabled={busy}>
           {busy ? 'Subscribing…' : 'Subscribe'}
-        </button>
+        </Button>
       </form>
       {msg && (
         <div style={{

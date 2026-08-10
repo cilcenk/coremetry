@@ -104,7 +104,7 @@ export default function UsersPage() {
       <Topbar title="Users" />
       <div id="content">
         <PageControls sticky>
-          <button onClick={() => setShowNew(true)}>+ New user</button>
+          <Button onClick={() => setShowNew(true)}>+ New user</Button>
           {teamOptions.length > 0 && (
             <select value={teamFilter}
               onChange={e => setTeamFilter(e.target.value)}
@@ -264,17 +264,17 @@ export default function UsersPage() {
                         {tsMinute(u.createdAt)}
                       </td>
                       <td style={{ textAlign: 'right' }}>
-                        <button className="sec" onClick={() => setResetFor(u)}
+                        <Button variant="secondary" onClick={() => setResetFor(u)}
                           disabled={isOIDC}
                           title={isOIDC ? 'OIDC users authenticate via SSO — no local password' : 'Set a new password'}
                           style={{ marginRight: 6 }}>
                           Reset password
-                        </button>
-                        <button className="sec" onClick={() => onDelete(u)}
+                        </Button>
+                        <Button variant="secondary" onClick={() => onDelete(u)}
                           disabled={isMe}
                           title={isMe ? "You can't delete your own account" : 'Disable user'}>
                           Delete
-                        </button>
+                        </Button>
                       </td>
                     </tr>
                   );

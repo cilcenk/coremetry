@@ -87,7 +87,7 @@ export default function IncidentsPage() {
           <ServicePicker value={serviceFilter} onChange={setServiceFilter}
             placeholder="Filter by service…" width={220} />
           {isAdmin && (
-            <button onClick={() => setShowNew(true)}>+ Declare incident</button>
+            <Button onClick={() => setShowNew(true)}>+ Declare incident</Button>
           )}
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             <b style={{ color: 'var(--err)' }}>{counts.open}</b> open ·

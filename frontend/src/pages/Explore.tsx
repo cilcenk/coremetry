@@ -770,11 +770,11 @@ function ExploreInner({ onSelfWrite }: {
                   onChange={f => setBuilder(b => ({ ...b, formula: f }))}
                   letters={builder.queries.filter(produces).map(q => q.letter)} />
                 <span style={VDIV} />
-                <button className="sec" type="button" onClick={addQuery}
+                <Button variant="secondary" onClick={addQuery}
                   disabled={builder.queries.length >= MAX_QUERIES}
                   title={builder.queries.length >= MAX_QUERIES ? 'En fazla 4 sorgu (A–D)' : 'Yeni sorgu ekle'}>
                   + Sorgu
-                </button>
+                </Button>
               </div>
             </>
           )}

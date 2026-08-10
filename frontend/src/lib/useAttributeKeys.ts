@@ -15,6 +15,7 @@
 // gömüyordu.
 
 import { useEffect, useMemo, useState } from 'react';
+import type { GoDuration } from './utils';
 import { api } from '@/lib/api';
 import type { FilterExpr } from '@/lib/types';
 
@@ -69,7 +70,7 @@ export function scopedKey(r: { scope: string; key: string }): string {
  * @param filters bağlam filtreleri; verilirse anahtarlar O DİLİM altında
  *                veri taşıyanlarla sınırlanır (global top-N değil).
  */
-export function useAttributeKeys(filters?: FilterExpr[]): {
+export function useAttributeKeys(filters?: FilterExpr[], since: GoDuration = '1h'): {
   keys: string[];
   observed: ObservedKey[];
 } {
@@ -86,7 +87,10 @@ export function useAttributeKeys(filters?: FilterExpr[]): {
     const t = window.setTimeout(() => {
       const parsed = JSON.parse(sig) as FilterExpr[];
       const ctx = parsed.length > 0 ? sig : undefined;
-      api.attributeKeys('1h', 500, ctx)
+      // v0.9.953 (F3/Ö14c) — pencere SAYFANIN aralığından, basamaklı.
+      // Sabit '1h' iken 7 günlük pencereye bakan operatör son bir saatte
+      // görülmemiş bir anahtarı öneride bulamıyordu.
+      api.attributeKeys(since, 500, ctx)
         .then(rows => {
           if (cancelled) return;
           setObserved((rows ?? []).map(r => ({ key: scopedKey(r), count: r.count })));
@@ -94,7 +98,7 @@ export function useAttributeKeys(filters?: FilterExpr[]): {
         .catch(() => { if (!cancelled) setObserved([]); });
     }, 200);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [sig]);
+  }, [sig, since]);
 
   const keys = useMemo(() => mergeKeys(observed), [observed]);
   return { keys, observed };

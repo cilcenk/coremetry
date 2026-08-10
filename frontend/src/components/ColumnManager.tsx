@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { attrKeySince } from '@/lib/attrKeyWindow';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { api } from '@/lib/api';
 import { canAddCustomColumn } from '@/lib/customColumn';
 
@@ -22,9 +24,14 @@ export function ColumnManager({ cols, onAdd }: {
   const [query, setQuery] = useState('');
   const ref = useRef<HTMLDivElement>(null);
 
+  const [range] = useUrlRange();
   useEffect(() => {
     if (!open || keys !== null) return;
-    api.attributeKeys('1h', 500)
+    // v0.9.953 (F3/Ö14c) — kolon keşfi de sayfanın penceresinden
+    // (basamaklı). Operatör 7 günlük bir pencerede bir attribute'u
+    // kolon olarak eklemek isterken, son bir saatte görülmediyse
+    // listede bulamıyordu.
+    api.attributeKeys(attrKeySince(range), 500)
       .then(res => {
         const live = (res ?? []).map(r => r.key);
         const seed = [

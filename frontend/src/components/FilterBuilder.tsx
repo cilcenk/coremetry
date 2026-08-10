@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { attrKeySince } from '@/lib/attrKeyWindow';
 import { useEscLayer } from '@/lib/escLayer';
 import { Combobox } from './Combobox';
 import { Button, Chip } from '@/components/ui';
@@ -31,7 +32,20 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
   // İki kopya olsaydı biri er geç bayatlardı — ve bayatlayanın belirtisi
   // "bazı anahtarlar bir kutuda var, diğerinde yok" gibi açıklanamaz bir
   // tutarsızlık olurdu.
-  const { keys: allKeys, observed: observedKeys } = useAttributeKeys(value);
+  // v0.9.953 (F3/Ö14c) — ANAHTAR keşfi de sayfanın penceresinden.
+  //
+  // DEĞER autocomplete'i bunu v0.8.x'te (trace-query gap-1) zaten
+  // yapıyordu — aşağıdaki DraftEditor'ın useUrlRange çağrısı ve yorumu
+  // ("not a hard-coded 1h, so a value picked on a 24h/7d view matches
+  // the rows actually shown") birebir bu gerekçeyi yazıyor. ANAHTAR
+  // tarafı geride kalmıştı: aynı kutuda değerler doğru pencereden,
+  // anahtarlar sabit 1 saatten geliyordu.
+  //
+  // Pencere BASAMAKLI (attrKeyWindow): ham geçirmek sunucunun 60 sn'lik
+  // cache anahtarını her dokunuşta ıskalatırdı (v0.8.270).
+  const [keyRange] = useUrlRange();
+  const attrSince = useMemo(() => attrKeySince(keyRange), [keyRange]);
+  const { keys: allKeys, observed: observedKeys } = useAttributeKeys(value, attrSince);
   // Top-5 hint surfaced under the picker so the operator sees
   // "what's heavy right now" without scrolling the dropdown.
   const topHints = observedKeys.slice(0, 5);

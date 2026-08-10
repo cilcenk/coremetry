@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react';
+import { attrKeySince } from '@/lib/attrKeyWindow';
+import { useUrlRange } from '@/lib/useUrlRange';
 import { useQuery } from '@tanstack/react-query';
 import { Combobox } from '@/components/Combobox';
 import { Button } from '@/components/ui';
@@ -17,9 +19,15 @@ export function SplitByPicker({ value, onChange }: {
 }) {
   const [draft, setDraft] = useState('');
 
+  // v0.9.953 (F3/Ö14c) — keşif penceresi sayfanın aralığından, BASAMAKLI.
+  // Basamak hem sunucu cache anahtarına hem react-query anahtarına aynen
+  // giriyor: serbest bir pencere ikisini de her dokunuşta ıskalatırdı
+  // (v0.8.270).
+  const [range] = useUrlRange();
+  const since = attrKeySince(range);
   const keysQ = useQuery({
-    queryKey: ['attribute-keys', '1h'],
-    queryFn: () => api.attributeKeys('1h', 200),
+    queryKey: ['attribute-keys', since],
+    queryFn: () => api.attributeKeys(since, 200),
     staleTime: 60_000,
   });
 

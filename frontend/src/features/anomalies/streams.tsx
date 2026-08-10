@@ -14,6 +14,8 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
 import { Card, Badge, Row, Button } from '@/components/ui';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { ClusterChips } from '@/components/ClusterChips';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
@@ -344,6 +346,7 @@ function HistorySection({ items, meta }: {
       )}
       {active.length > 0 && (
         <AnomalyTable rows={active}
+          storageKey="anomaly-history-active"
           rowRefs={rowRefs} highlight={highlight}
           onOpen={openDetail}
           title={`Active (${active.length})`} />
@@ -381,6 +384,7 @@ function HistorySection({ items, meta }: {
           {expanded && (
             <div style={{ marginTop: 6, opacity: 0.85 }}>
               <AnomalyTable rows={cleared}
+                storageKey="anomaly-history-cleared"
                 rowRefs={rowRefs} highlight={highlight}
                 onOpen={openDetail} />
             </div>
@@ -391,12 +395,46 @@ function HistorySection({ items, meta }: {
   );
 }
 
+// anomalyKindLabel — the Kind hücresinin bastığı rozet metni. Hem hücre
+// hem de sıralama accessor'ı buradan okur: kolon GÖRÜNENE göre sıralansın
+// (ham `log_template_new` alfabetik olarak "NEW SHAPE"ten farklı yere düşer
+// ve operatör başlığa tıklayınca beklemediği bir düzen görür).
+function anomalyKindLabel(kind: AnomalyEvent['kind']): string {
+  return kind === 'log_pattern' ? 'LOG'
+    : kind === 'elastic_ml' ? 'ELASTIC ML'
+    : kind === 'log_template_new' ? 'NEW SHAPE'
+    : 'TRACE OP';
+}
+
+// v0.9.877 (tutarlılık denetimi BT2) — elle yazılmış <colgroup> + <thead>
+// paylaşılan primitife taşındı. Kolon kümesi, sıra, etiketler ve hücre
+// içerikleri AYNEN korundu; kazanılan tek şey sıralama + yeniden
+// boyutlandırma + kalıcı genişlik. Pattern kolonu '24%' yerine flex:true —
+// yüzde bir px genişliğe çevrilseydi geniş desenler kırpılırdı.
+const ANOMALY_HISTORY_COLS: DataTableColumn<AnomalyEvent>[] = [
+  { id: 'status',   label: 'Status',      sortValue: e => e.status,                 naturalDir: 'asc', width: 76 },
+  { id: 'pattern',  label: 'Pattern',     sortValue: e => e.pattern,                naturalDir: 'asc', flex: true },
+  { id: 'service',  label: 'Service',     sortValue: e => e.service,                naturalDir: 'asc', width: 260 },
+  { id: 'kind',     label: 'Kind',        sortValue: e => anomalyKindLabel(e.kind), naturalDir: 'asc', width: 80 },
+  // Etiketteki boşluk SERT boşluk (U+00A0) — eski markup'taki &nbsp;'in
+  // aynısı, "Peak" ile "×" iki satıra bölünmesin.
+  { id: 'peak',     label: 'Peak ×', sortValue: e => e.peakRatio,              numeric: true, width: 56 },
+  // Zaman kolonları sola hizalı mono kalıyor (numeric:true başlığı sağa
+  // iterdi) — yalnız sıralanabilirlik ekleniyor.
+  { id: 'started',  label: 'Started',     sortValue: e => e.startedAt,              width: 134 },
+  { id: 'lastSeen', label: 'Last seen',   sortValue: e => e.lastSeen,               width: 134 },
+];
+
 // AnomalyTable — extracted from HistorySection so the active +
 // cleared groups share one render path (v0.5.279). Same
 // columns / styling as before; only the title row above the
 // table is optional now.
-function AnomalyTable({ rows, rowRefs, highlight, onOpen, title }: {
+function AnomalyTable({ rows, storageKey, rowRefs, highlight, onOpen, title }: {
   rows: AnomalyEvent[];
+  // İKİ örnek render ediliyor (Active + Cleared). Ayrı anahtarlar şart:
+  // tek anahtar iki tablonun sırasını ve sürüklenen genişliklerini
+  // birbirine bağlar, üstelik ikisi de aynı `s_<key>` URL paramına yazar.
+  storageKey: string;
   rowRefs: React.MutableRefObject<Record<string, HTMLTableRowElement | null>>;
   highlight: string;
   // Row click → detail drawer (v0.8.267). Clicks on interactive
@@ -405,6 +443,12 @@ function AnomalyTable({ rows, rowRefs, highlight, onOpen, title }: {
   onOpen: (id: string) => void;
   title?: string;
 }) {
+  // Varsayılan sıra sunucununkiyle birebir: handler `status = 'active' DESC,
+  // last_seen DESC` döndürüyor ve sayfa zaten active/cleared olarak ayırıyor.
+  const dt = useDataTable<AnomalyEvent>({
+    storageKey, columns: ANOMALY_HISTORY_COLS, rows,
+    initialSort: { id: 'lastSeen', dir: 'desc' },
+  });
   return (
     <div>
       {title && (
@@ -419,28 +463,10 @@ function AnomalyTable({ rows, rowRefs, highlight, onOpen, title }: {
             inside the card (no horizontal scroll) while letting Pattern /
             Service flex; numerics + timestamps get fixed mono columns. */}
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
-          <colgroup>
-            <col style={{ width: 76 }} />
-            <col style={{ width: '24%' }} />
-            <col />
-            <col style={{ width: 80 }} />
-            <col style={{ width: 56 }} />
-            <col style={{ width: 134 }} />
-            <col style={{ width: 134 }} />
-            <col style={{ width: 44 }} />
-          </colgroup>
-          <thead><tr>
-            <th>Status</th>
-            <th>Pattern</th>
-            <th>Service</th>
-            <th>Kind</th>
-            <th className="num">Peak&nbsp;×</th>
-            <th>Started</th>
-            <th>Last seen</th>
-            <th>AI</th>
-          </tr></thead>
+          <DataTableColgroup dt={dt} trailing={[44]} />
+          <DataTableHead dt={dt} trailing={<th>AI</th>} />
           <tbody>
-            {rows.map(e => (
+            {dt.sortedRows.map(e => (
               <tr key={e.id}
                 ref={el => { rowRefs.current[e.id] = el; }}
                 onClick={ev => {
@@ -490,10 +516,7 @@ function AnomalyTable({ rows, rowRefs, highlight, onOpen, title }: {
                 </td>
                 <td>
                   <span className="badge b-gray" style={{ fontSize: 10 }}>
-                    {e.kind === 'log_pattern' ? 'LOG'
-                      : e.kind === 'elastic_ml' ? 'ELASTIC ML'
-                      : e.kind === 'log_template_new' ? 'NEW SHAPE'
-                      : 'TRACE OP'}
+                    {anomalyKindLabel(e.kind)}
                   </span>
                 </td>
                 <td className="num mono" style={{ fontWeight: 700 }}>{e.peakRatio.toFixed(1)}</td>

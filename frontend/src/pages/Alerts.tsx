@@ -3,6 +3,8 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { Button } from '@/components/ui';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { useAuth } from '@/components/AuthProvider';
 import {
   useAlertRules,
@@ -20,6 +22,33 @@ import { ConditionPreview } from './alerts/ConditionPreview';
 import { NoisyRulesPanel } from './alerts/NoisyRulesPanel';
 import { WatcherImportModal } from './alerts/WatcherImportModal';
 import { QueryError } from '@/components/QueryError';
+
+// alertTypeLabel — Type hücresinin bastığı rozet metni. Sıralama accessor'ı
+// buradan okuyor ki kolon GÖRÜNENE göre sıralansın (ham `metric` alanı
+// 'log_query' / 'watcher' değerleriyle rozetlerden bambaşka bir düzen verir).
+function alertTypeLabel(r: AlertRule): string {
+  return r.metric === 'watcher' ? 'ES WATCHER'
+    : r.metric === 'log_query' ? 'WATCHER'
+    : r.builtIn ? 'BUILT-IN'
+    : 'metric';
+}
+
+// v0.9.877 (tutarlılık denetimi BT3) — elle yazılmış <thead> paylaşılan
+// primitife taşındı. Kolon kümesi, sıra, etiketler ve hücre içerikleri AYNEN
+// korundu; kazanılan sıralama + yeniden boyutlandırma + kalıcı genişlik.
+// Severity metin değil SIRA'ya göre sıralanıyor (info < warning < critical);
+// alfabetik sıra critical'ı info'nun üstüne koyup ciddiyeti tersine çevirirdi.
+const ALERT_RULE_COLS: DataTableColumn<AlertRule>[] = [
+  { id: 'name',      label: 'Name',      sortValue: r => r.name,                     naturalDir: 'asc', width: 220 },
+  { id: 'service',   label: 'Service',   sortValue: r => r.service ?? '',            naturalDir: 'asc', width: 160 },
+  // Condition hücresi üç ayrı şekil basıyor (ES watcher / log watcher /
+  // metrik); ortak eksen kuralın metriği, gruplamayı o veriyor.
+  { id: 'condition', label: 'Condition', sortValue: r => r.metric,                   naturalDir: 'asc', flex: true },
+  { id: 'window',    label: 'Window',    sortValue: r => r.windowSec,                width: 95 },
+  { id: 'severity',  label: 'Severity',  sortValue: r => SEVERITIES.indexOf(r.severity), width: 105 },
+  { id: 'enabled',   label: 'Enabled',   sortValue: r => (r.enabled ? 1 : 0),        width: 95 },
+  { id: 'type',      label: 'Type',      sortValue: r => alertTypeLabel(r),          naturalDir: 'asc', width: 120 },
+];
 
 export default function AlertsPage() {
   const { user } = useAuth();
@@ -194,6 +223,16 @@ export default function AlertsPage() {
   });
   const watcherCount = rulesAll?.filter(isWatcherRule).length ?? 0;
   const metricCount  = (rulesAll?.length ?? 0) - watcherCount;
+  // initialSort YOK — bilinçli. Sunucu `ORDER BY created_at DESC` döndürüyor
+  // ve created_at bu tabloda GÖRÜNÜR bir kolon değil; bir varsayılan sıra
+  // uydurmak, denetimin dokunmaması gereken satır düzenini sessizce
+  // değiştirirdi. id:null → satırlar sunucudan geldiği gibi kalıyor.
+  const dt = useDataTable<AlertRule>({
+    // 'alert-rules' ALINMIŞ — tarihsel bir isimle /problems tablosuna ait
+    // (ProblemsSection.tsx); aynı anahtarı kullanmak iki tablonun sırasını
+    // ve `s_alert-rules` URL paramını birbirine bağlardı.
+    storageKey: 'alert-rules-list', columns: ALERT_RULE_COLS, rows: rules ?? [],
+  });
   const createRule = useCreateAlertRule();
   const updateRule = useUpdateAlertRule();
   const deleteRule  = useDeleteAlertRule();
@@ -555,21 +594,11 @@ export default function AlertsPage() {
         )}
         {rules && rules.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Service</th>
-                  <th>Condition</th>
-                  <th>Window</th>
-                  <th>Severity</th>
-                  <th>Enabled</th>
-                  <th>Type</th>
-                  <th></th>
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} trailing={[250]} />
+              <DataTableHead dt={dt} trailing={<th />} />
               <tbody>
-                {rules.map(r => {
+                {dt.sortedRows.map(r => {
                   // v0.5.305 — Watchers (Logs → Create watcher;
                   // saved-search alerts) live in the same
                   // alert_rules table with metric='log_query'.

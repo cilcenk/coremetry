@@ -8,6 +8,8 @@ import { MethodHotspots } from '@/components/MethodHotspots';
 import { BreakdownBar } from '@/components/KindBadge';
 import { CopyButton } from '@/components/CopyButton';
 import { Button } from '@/components/ui/Button';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { raceGuard } from '@/lib/raceGuard';
 import { tsLong, fmtNum } from '@/lib/utils';
@@ -23,6 +25,21 @@ import type { ProfileDetail, ProfileRow } from '@/lib/types';
 // canonical "did the regression I'm investigating land in
 // this function?" tool — single biggest profiler navigation
 // shortcut after the basic flame.
+
+// v0.9.877 (tutarlılık denetimi MT11) — elle yazılmış <thead> paylaşılan
+// primitife taşındı. Kolon kümesi, sıra, etiketler ve hücre içerikleri AYNEN
+// korundu; kazanılan sıralama + yeniden boyutlandırma + kalıcı genişlik —
+// baseline seçerken "en uzun pencere" ya da "en çok örnek" hangisi diye
+// bakmak artık tek tık.
+const BASELINE_COLS: DataTableColumn<ProfileRow>[] = [
+  // Zaman mono ve SOLA hizalı kalıyor (numeric:true başlığı sağa iterdi).
+  { id: 'when',     label: 'When',       sortValue: p => p.startTime,      width: 170 },
+  { id: 'id',       label: 'Profile ID', sortValue: p => p.profileId,      naturalDir: 'asc', width: 180 },
+  { id: 'type',     label: 'Type',       sortValue: p => p.profileType,    naturalDir: 'asc', width: 95 },
+  { id: 'host',     label: 'Host',       sortValue: p => p.hostName ?? '', naturalDir: 'asc', flex: true },
+  { id: 'duration', label: 'Duration',   sortValue: p => p.durationMs,     numeric: true, width: 110 },
+  { id: 'samples',  label: 'Samples',    sortValue: p => p.sampleCount,    numeric: true, width: 110 },
+];
 
 function ProfileDetailInner() {
   const navigate = useNavigate();
@@ -83,6 +100,20 @@ function ProfileDetailInner() {
       .then(rows => setRecentProfiles(rows ?? []))
       .catch(() => setRecentProfiles([]));
   }, [pickerOpen, data, recentProfiles.length]);
+
+  // Aday listesi: kendisiyle diff alınamaz. Filtre JSX'ten çıkıp memoya
+  // taşındı — her render'da yeni bir dizi üretmek sortedRows memosunu
+  // boşuna geçersiz kılıyordu.
+  const baselineRows = useMemo(
+    () => recentProfiles.filter(p => p.profileId !== id),
+    [recentProfiles, id],
+  );
+  // Varsayılan sıra sunucununkiyle birebir: ListProfiles `ORDER BY
+  // start_time DESC` — bir önceki profil (en doğal baseline) en üstte kalır.
+  const dt = useDataTable<ProfileRow>({
+    storageKey: 'profile-baseline-picker', columns: BASELINE_COLS, rows: baselineRows,
+    initialSort: { id: 'when', dir: 'desc' },
+  });
 
   function setBaseline(profileId: string) {
     const next = new URLSearchParams(searchParams);
@@ -160,15 +191,11 @@ function ProfileDetailInner() {
               ? <div style={{ fontSize: 12, color: 'var(--text3)' }}>Loading…</div>
               : (
                 <div className="table-wrap">
-                  <table>
-                    <thead><tr>
-                      <th>When</th><th>Profile ID</th><th>Type</th><th>Host</th>
-                      <th className="num">Duration</th><th className="num">Samples</th><th></th>
-                    </tr></thead>
+                  <table style={{ tableLayout: 'fixed', width: '100%' }}>
+                    <DataTableColgroup dt={dt} trailing={[180]} />
+                    <DataTableHead dt={dt} trailing={<th />} />
                     <tbody>
-                      {recentProfiles
-                        .filter(p => p.profileId !== id) // can't diff a profile against itself
-                        .map(p => (
+                      {dt.sortedRows.map(p => (
                           <tr key={p.profileId}>
                             <td className="mono" style={{ fontSize: 11 }}>{tsLong(p.startTime)}</td>
                             <td className="mono" style={{ fontSize: 11 }}>{p.profileId.slice(0, 16)}…</td>

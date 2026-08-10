@@ -58,8 +58,14 @@ describe('kısayol defteri yığın', () => {
   it('yardım ekranı yalnız SAHİP binding\'leri listeliyor', () => {
     // Gölgelenmiş kayıtlar listelenirse operatöre çalışmayan bir kısayol
     // vaat edilmiş olur.
+    //
+    // v0.9.928 — "sahip" tanımı yığının tepesi olmaktan çıkıp ARBİTRAJIN
+    // cevabı oldu (son etkileşim). Yardım ekranı da aynı fonksiyondan
+    // geçmeli; `stack[stack.length - 1]` diye sabit kalsaydı iki tablolu
+    // bir sayfada j/k'yı YANLIŞ tabloya atfederdi. Kapı artık dispatch ile
+    // yardım ekranının AYNI kaynağı kullandığını çiviliyor.
     const i = SRC.indexOf('export function listShortcuts');
-    expect(SRC.slice(i)).toContain('stack[stack.length - 1]');
+    expect(SRC.slice(i)).toContain('pickOwner(stack, active)');
   });
 });
 

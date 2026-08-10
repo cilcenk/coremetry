@@ -37,6 +37,11 @@ const DEFAULT_W = 120;
 const DEFAULT_MIN = 48;
 
 export interface DataTable<T> {
+  // v0.9.928 — tablonun kimliği. `rowProps` zaten satıra basıyordu ama
+  // BAŞLIK tıkı (sıralama) hiçbir kimlik taşımıyordu: j/k arbitrajı
+  // "operatör bu tabloyla etkileşti" sinyalini kaçırıyordu. DataTableHead
+  // aynı damgayı `<thead>`e basmak için buradan okuyor.
+  storageKey: string;
   columns: DataTableColumn<T>[];
   sortedRows: T[];
   sort: SortState;
@@ -202,7 +207,7 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
     [nav, storageKey],
   );
 
-  return { columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout, nav, rowProps };
+  return { storageKey, columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout, nav, rowProps };
 }
 
 // resolveInitialSort — the precedence the hook restores a sort with, hoisted
@@ -313,7 +318,11 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
   renderLabel?: (c: DataTable<T>['columns'][number]) => ReactNode;
 }) {
   return (
-    <thead>
+    // v0.9.928 — başlık da tablonun kimliğini taşıyor: bir kolona tıklayıp
+    // sıralamak "bu tabloyla çalışıyorum" demektir ve j/k sahipliği o tıkla
+    // buraya geçmeli. Kimlik `<thead>`de çünkü tıklar `<th>`ye, glife veya
+    // resize tutamağına gelir; `closest()` üçünü de buraya toplar.
+    <thead data-table-id={dt.storageKey}>
       <tr>
         {leading}
         {dt.columns.filter(c => !c.headerHidden).map(c => {

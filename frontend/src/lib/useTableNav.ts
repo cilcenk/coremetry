@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useShortcuts } from './keyboard';
+import { useShortcuts, type Shortcut } from './keyboard';
 
 // useTableNav adds Vim/Datadog-style row navigation to any
 // table-like list page:
@@ -26,6 +26,11 @@ export interface TableNav<T> {
   selected: number;
   setSelected: (i: number) => void;
   selectedItem: T | null;
+  // v0.9.928 — tablonun kimliği (options.pageId), tüketiciye GERİ verilir.
+  // Kendi <tr>'sini basan sayfalar (Services, LogTable) kimliği buradan
+  // alıp `data-table-id` olarak damgalıyor; ayrı bir prop uydurmak iki
+  // kimlik kaynağı yaratır ve biri sessizce bayatlar.
+  pageId?: string;
 }
 
 export function useTableNav<T>(
@@ -72,8 +77,14 @@ export function useTableNav<T>(
   }, [selected, options.pageId]);
 
   const open = options.onOpen;
+  // v0.9.928 — HER binding kapsamı taşır. Tek tek yazmak yerine map:
+  // sekiz kaydın birinde `scope` unutulursa o tuş arbitrajın dışında
+  // kalır ve "j çalışıyor ama Enter yanlış tabloyu açıyor" gibi yarım
+  // bozuk bir durum doğar — en pahalı hata tipi.
+  const scoped = (list: Shortcut[]): Shortcut[] =>
+    options.pageId ? list.map(sc => ({ ...sc, scope: options.pageId })) : list;
   useShortcuts(
-    !enabled ? [] : [
+    !enabled ? [] : scoped([
       {
         keys: 'j',
         label: 'Move selection down',
@@ -131,7 +142,7 @@ export function useTableNav<T>(
         evenInInputs: true,
         handler: () => setSelected(-1),
       },
-    ],
+    ]),
     [items, selected, open, options.pageId],
   );
 
@@ -139,5 +150,6 @@ export function useTableNav<T>(
     selected,
     setSelected,
     selectedItem: selected >= 0 && selected < items.length ? items[selected] : null,
+    pageId: options.pageId,
   };
 }

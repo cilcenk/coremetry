@@ -26,6 +26,7 @@
 //      on unmount via the returned cleanup function.
 
 import { useEffect, useRef } from 'react';
+import { getActiveNavScope, noteInteraction, pickOwner } from './navScope';
 
 export interface Shortcut {
   // Combo — single key like '?', '/', 'k', or modifier-prefixed
@@ -48,6 +49,13 @@ export interface Shortcut {
   // focused. Default false — prevents typing-eats-shortcut
   // bugs.
   evenInInputs?: boolean;
+  // v0.9.928 — sahiplenme kapsamı. Aynı tuşa birden fazla yüzey
+  // kaydolduğunda (iki gezinilebilir tablo aynı ekranda) kazananı
+  // SON ETKİLEŞİM belirler; `scope` o etkileşimin damgasıyla
+  // (`data-table-id`) eşleşen değerdir. Kapsamsız binding'ler
+  // (global 'g s', '?', 'mod+k') arbitrajın dışında: onlar için
+  // yığının tepesi kuralı aynen sürüyor.
+  scope?: string;
 }
 
 // v0.9.926 — kayıt defteri YIĞIN tutuyor, tek değer değil.
@@ -64,19 +72,23 @@ export interface Shortcut {
 // yazılı), ama unmount olduğunda bir öncekine DÜŞÜYOR. Kimse sessizce
 // kaybolmuyor.
 //
-// AÇIK KALAN ÜRÜN KARARI: iki tablo aynı anda GÖRÜNÜRken j/k hangisine
-// gitmeli? "En son mount olan" bir varsayılan, bir tasarım değil —
-// odak/hover takibi ve seçili tablonun görsel işareti operatör kararı.
-// O karar verilene kadar iki nav'lı tablolu sayfalar (traces/ShapesView,
-// anomalies/ProblemsSection) onOpen ALMIYOR.
+// v0.9.928 — o gün AÇIK BIRAKILAN ürün kararı (iki tablo aynı anda
+// GÖRÜNÜRken j/k hangisine gider?) operatör tarafından cevaplandı:
+// **SON ETKİLEŞİM** alan tablo, son mount olan DEĞİL. Arbitraj
+// `lib/navScope.ts`te saf bir fonksiyon (`pickOwner`); burası yalnız
+// onu çağırır ve etkileşimleri besler.
 type Registry = Map<string, Shortcut[]>;
 
 const registry: Registry = new Map();
 
-/** Bir tuş için ŞU AN sahip olan binding (yığının tepesi). */
+/**
+ * Bir tuş için ŞU AN sahip olan binding: aktif kapsama ait kayıt varsa o,
+ * yoksa yığının tepesi (v0.9.928 arbitrajı — bkz. lib/navScope.ts).
+ */
 function owner(keys: string): Shortcut | undefined {
   const stack = registry.get(keys);
-  return stack && stack.length ? stack[stack.length - 1] : undefined;
+  if (!stack) return undefined;
+  return pickOwner(stack, getActiveNavScope());
 }
 let listenerInstalled = false;
 let pendingPrefix: string | null = null;
@@ -147,7 +159,16 @@ export function comboFromEvent(e: KeyboardEvent): string {
 function installListener(): void {
   if (listenerInstalled) return;
   listenerInstalled = true;
+  // v0.9.928 — etkileşim takibi. Tık ve odak YAKALAMA fazında dinleniyor:
+  // bir satırın kendi onClick'i stopPropagation çağırsa bile (ProblemsSection'ın
+  // hücreleri tam olarak bunu yapıyor) sahiplik yine de güncellensin.
+  document.addEventListener('pointerdown', (e) => { noteInteraction(e.target); }, true);
+  document.addEventListener('focusin', (e) => { noteInteraction(e.target); }, true);
   document.addEventListener('keydown', (e) => {
+    // Klavye de bir etkileşim: Tab ile bir tablonun satırına gelip Enter'a
+    // basmak o tabloyu sahiplendirir. Hedef hiçbir kapsamın içinde değilse
+    // (j/k belgeye gelir, target = body) sahiplik DEĞİŞMEZ — yapışkanlık.
+    noteInteraction(e.target);
     const inEditable = isEditableTarget(e.target);
 
     // Two-key sequence path. If we have a pending prefix, the
@@ -250,8 +271,11 @@ export function useShortcuts(shortcuts: Shortcut[], deps: unknown[] = []): void 
 export function listShortcuts(): Shortcut[] {
   // Yardım ekranı SAHİP olan binding'leri listeliyor — altta kalan
   // gölgelenmiş kayıtlar gösterilirse operatöre çalışmayan bir kısayol
-  // vaat edilmiş olur.
+  // vaat edilmiş olur. v0.9.928: sahiplik artık arbitrajın cevabı, o
+  // yüzden yardım ekranı da `pickOwner`dan geçiyor — aksi hâlde iki
+  // tablolu bir sayfada yardım listesi j/k'yı YANLIŞ tabloya atfederdi.
+  const active = getActiveNavScope();
   return Array.from(registry.values())
-    .map(stack => stack[stack.length - 1])
+    .map(stack => pickOwner(stack, active))
     .filter((sc): sc is Shortcut => !!sc);
 }

@@ -202,7 +202,7 @@ export function TeamRoutingTab() {
       </div>
 
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
-      <Button type="submit" disabled={busy}>{busy ? 'Saving…' : 'Save'}</Button>
+      <Button type="submit" loading={busy}>Save</Button>
     </form>
     {/* v0.9.427 — takım alias tablosu, routing'in doğal komşusu. */}
     <TeamAliasesCard />

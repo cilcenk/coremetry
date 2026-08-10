@@ -107,7 +107,7 @@ export function SMTPTab() {
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
 
       <div style={{ display: 'flex', gap: 8, marginTop: 18, alignItems: 'center' }}>
-        <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Saving…' : 'Save settings'}</Button>
+        <Button type="submit" variant="primary" loading={busy}>Save settings</Button>
         <div style={{ flex: 1 }} />
         <input type="email" value={testTo} placeholder="recipient@example.com"
           onChange={e => setTestTo(e.target.value)} style={{ width: 240 }} />

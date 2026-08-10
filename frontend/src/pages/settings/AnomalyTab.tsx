@@ -145,8 +145,8 @@ export function AnomalyPromotionTab() {
       </div>
 
       <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Button variant="primary" onClick={save} disabled={busy}>
-          {busy ? 'Saving…' : 'Save'}
+        <Button variant="primary" onClick={save} loading={busy}>
+          Save
         </Button>
         {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
       </div>
@@ -260,8 +260,8 @@ function TrackedMetricsSection() {
           </div>
 
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Button variant="primary" onClick={save} disabled={busy || noneOn}>
-              {busy ? 'Kaydediliyor…' : 'Kaydet'}
+            <Button variant="primary" onClick={save} disabled={noneOn} loading={busy}>
+              Kaydet
             </Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
           </div>
@@ -446,8 +446,8 @@ function SensitivitySection() {
           </div>
 
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Button variant="primary" onClick={save} disabled={busy}>
-              {busy ? 'Kaydediliyor…' : 'Kaydet'}
+            <Button variant="primary" onClick={save} loading={busy}>
+              Kaydet
             </Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
           </div>
@@ -547,8 +547,8 @@ function EscalationSection() {
           </div>
 
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Button variant="primary" onClick={save} disabled={busy}>
-              {busy ? 'Saving…' : 'Save'}
+            <Button variant="primary" onClick={save} loading={busy}>
+              Save
             </Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
           </div>
@@ -657,8 +657,8 @@ function ExceptionTriageSection() {
           </div>
 
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Button variant="primary" onClick={save} disabled={busy || inverted}>
-              {busy ? 'Kaydediliyor…' : 'Kaydet'}
+            <Button variant="primary" onClick={save} disabled={inverted} loading={busy}>
+              Kaydet
             </Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
           </div>
@@ -768,8 +768,8 @@ function ProblemPrioritySection() {
           </div>
 
           <div style={{ marginTop: 18, display: 'flex', gap: 8, alignItems: 'center' }}>
-            <Button variant="primary" onClick={save} disabled={busy || ratioBad || staleBad}>
-              {busy ? 'Kaydediliyor…' : 'Kaydet'}
+            <Button variant="primary" onClick={save} disabled={ratioBad || staleBad} loading={busy}>
+              Kaydet
             </Button>
             {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
           </div>

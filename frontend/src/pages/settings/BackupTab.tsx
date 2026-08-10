@@ -111,8 +111,8 @@ export function BackupTab() {
 
       <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginBottom: 20 }}>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>Export</div>
-        <Button variant="primary" disabled={busy} onClick={onExport}>
-          {busy ? 'Working…' : 'Download config (JSON)'}
+        <Button variant="primary" onClick={onExport} loading={busy}>
+          Download config (JSON)
         </Button>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>
           File contains every row from system_settings, alert_rules,
@@ -161,17 +161,17 @@ export function BackupTab() {
         </label>
         <div style={{ display: 'flex', gap: 8 }}>
           <Button
-            disabled={busy || !file}
+            disabled={!file}
             onClick={onPreviewDiff}
-            title="Dry-run: shows what would be added / overwritten / left alone, no writes.">
-            {busy ? 'Working…' : 'Preview diff'}
+            title="Dry-run: shows what would be added / overwritten / left alone, no writes." loading={busy}>
+            Preview diff
           </Button>
           <Button
             variant="primary"
-            disabled={busy || !file}
+            disabled={!file}
             onClick={onImport}
-          >
-            {busy ? 'Working…' : 'Upload + apply'}
+           loading={busy}>
+            Upload + apply
           </Button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 6 }}>

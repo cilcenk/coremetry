@@ -325,8 +325,8 @@ export function LDAPTab() {
         )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? 'Saving…' : 'Save'}
+          <Button type="submit" variant="primary" loading={busy}>
+            Save
           </Button>
           <Button type="button" variant="secondary" disabled={busy} onClick={test}>
             Test connection
@@ -516,8 +516,8 @@ function GroupSyncStatus() {
             </FlashBox>
           )}
           <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-            <Button variant="primary" size="sm" type="button" disabled={busy} onClick={() => { void syncNow(); }}>
-              {busy ? 'Çalışıyor…' : '⟳ Şimdi senkronla'}
+            <Button variant="primary" size="sm" type="button" onClick={() => { void syncNow(); }} loading={busy}>
+              ⟳ Şimdi senkronla
             </Button>
             <Button variant="secondary" size="sm" type="button" disabled={busy} onClick={() => { void preview(); }}>
               Önizle (dry-run)

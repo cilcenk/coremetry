@@ -194,8 +194,8 @@ export function TempoTab() {
         )}
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? 'Saving…' : 'Save'}
+          <Button type="submit" variant="primary" loading={busy}>
+            Save
           </Button>
           {hasToken && authType !== 'none' && (
             <Button type="button" variant="secondary" disabled={busy} onClick={clearToken}>

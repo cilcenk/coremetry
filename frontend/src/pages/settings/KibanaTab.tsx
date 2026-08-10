@@ -114,8 +114,8 @@ export function KibanaTab() {
           </div>
         )}
 
-        <Button type="submit" variant="primary" disabled={busy}>
-          {busy ? 'Saving…' : 'Save'}
+        <Button type="submit" variant="primary" loading={busy}>
+          Save
         </Button>
       </form>
     </div>

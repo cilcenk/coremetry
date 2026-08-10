@@ -85,8 +85,8 @@ export function ApiTokensTab() {
             <option value="admin">admin</option>
           </select>
         </Field2>
-        <Button onClick={() => { void create(); }} disabled={busy || !name.trim()} style={{ marginTop: 18 }}>
-          {busy ? 'Üretiliyor…' : '+ Token üret'}
+        <Button onClick={() => { void create(); }} disabled={!name.trim()} style={{ marginTop: 18 }} loading={busy}>
+          + Token üret
         </Button>
       </Row>
 

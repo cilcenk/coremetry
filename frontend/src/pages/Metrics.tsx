@@ -393,10 +393,9 @@ export default function MetricsPage() {
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', color: 'var(--text3)', fontSize: 11 }}>
                     {nextLimit !== null && (
                       <Button variant="secondary" size="sm"
-                        disabled={catalogQ.isFetching}
                         onClick={() => setLimit(nextLimit)}
-                        title={`Fetch the next ${CATALOG_PAGE} catalogue rows`}>
-                        {catalogQ.isFetching ? 'Loading…' : '↓ Load more'}
+                        title={`Fetch the next ${CATALOG_PAGE} catalogue rows`} loading={catalogQ.isFetching}>
+                        ↓ Load more
                       </Button>
                     )}
                     <span>{catalogCountLabel(total, catalog.length)}</span>

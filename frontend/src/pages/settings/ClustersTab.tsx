@@ -216,8 +216,8 @@ export function ClustersTab() {
             onClick={() => setRows(rs => [...rs, { ...EMPTY_ROW }])}>
             + Add cluster
           </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? 'Saving…' : 'Save all'}
+          <Button type="submit" variant="primary" loading={busy}>
+            Save all
           </Button>
         </div>
       </form>

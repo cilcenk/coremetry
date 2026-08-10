@@ -673,9 +673,9 @@ export default function InboxPage() {
             </span>
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
               {bulkNote && <span style={{ fontSize: 11, color: 'var(--text2)' }}>{bulkNote}</span>}
-              <Button variant="primary" size="sm" disabled={bulkBusy || ackable === 0}
-                onClick={bulkAcknowledge}>
-                {bulkBusy ? 'Onaylanıyor…' : `Onayla (${ackable})`}
+              <Button variant="primary" size="sm" disabled={ackable === 0}
+                onClick={bulkAcknowledge} loading={bulkBusy}>
+                {`Onayla (${ackable})`}
               </Button>
               <Button variant="secondary" size="sm" disabled={bulkBusy}
                 onClick={() => { setPicked(new Set()); setBulkNote(null); }}>

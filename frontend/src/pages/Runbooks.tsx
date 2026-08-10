@@ -86,9 +86,9 @@ export default function RunbooksPage() {
             ordered list of manual, query, HTTP, JavaScript, or Bash steps.
           </span>
           {canEdit && (
-            <Button variant="primary" size="sm" onClick={newRunbook} disabled={createRb.isPending}
-                    style={{ marginLeft: 'auto' }}>
-              {createRb.isPending ? 'Creating…' : '+ New runbook'}
+            <Button variant="primary" size="sm" onClick={newRunbook}
+                    style={{ marginLeft: 'auto' }} loading={createRb.isPending}>
+              + New runbook
             </Button>
           )}
         </div>

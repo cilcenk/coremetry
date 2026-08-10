@@ -1104,10 +1104,9 @@ function LogsInner() {
               }}>
                 {data.nextCursor && (
                   <Button variant="secondary" size="sm"
-                    disabled={staticQ.isFetching}
                     onClick={() => { if (data.nextCursor) setCursor(data.nextCursor); }}
-                    title="Fetch the next page and append it below">
-                    {staticQ.isFetching ? 'Loading…' : '↓ Load more'}
+                    title="Fetch the next page and append it below" loading={staticQ.isFetching}>
+                    ↓ Load more
                   </Button>
                 )}
                 {/* v0.9.288 — "of 10,000" was a lie on the ES backend:

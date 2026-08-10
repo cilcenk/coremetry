@@ -346,8 +346,8 @@ function MetricExclusionsSection({ onChanged, onSpanRule }: {
       )}
 
       <div style={{ marginTop: 16, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Button variant="primary" onClick={save} disabled={busy}>
-          {busy ? 'Kaydediliyor…' : 'Kaydet'}
+        <Button variant="primary" onClick={save} loading={busy}>
+          Kaydet
         </Button>
         {flash && <FlashBox kind={flash.kind}>{flash.text}</FlashBox>}
       </div>

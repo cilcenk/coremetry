@@ -91,8 +91,8 @@ export function DangerZoneTab() {
             style={{ maxWidth: 280, marginBottom: 12, display: 'block' }}
           />
           <div style={{ display: 'flex', gap: 8 }}>
-            <Button variant="danger" disabled={phrase.trim() !== CONFIRM || busy} onClick={onPurge}>
-              {busy ? 'Purging…' : 'Confirm — delete all telemetry'}
+            <Button variant="danger" disabled={phrase.trim() !== CONFIRM} onClick={onPurge} loading={busy}>
+              Confirm — delete all telemetry
             </Button>
             <Button variant="ghost" disabled={busy} onClick={() => { setArming(false); setPhrase(''); }}>
               Cancel

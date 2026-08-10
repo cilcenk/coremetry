@@ -17,6 +17,9 @@ export type { IconButtonProps } from './IconButton';
 export { LinkButton } from './LinkButton';
 export type { LinkButtonProps } from './LinkButton';
 
+export { MenuItem } from './Menu';
+export type { MenuItemProps } from './Menu';
+
 export { Card } from './Card';
 export type { CardProps } from './Card';
 

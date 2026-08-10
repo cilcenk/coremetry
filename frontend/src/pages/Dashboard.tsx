@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, IconButton, MenuItem } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { PanelRenderer, applyVarsToMetric, applyVarsToSpan, type PanelDataOverride } from '@/components/dashboard/PanelRenderer';
 import { PanelEditor, defaultConfig } from '@/components/dashboard/PanelEditor';
@@ -639,14 +639,9 @@ function PanelMenu({ panel, vars, range, canEdit, onDuplicate, onEdit }: {
   if (!exploreHref && !canEdit) return null;
 
   const item = (label: string, onClick: () => void) => (
-    <button className="sec" role="menuitem" key={label}
-      onClick={() => { setOpen(false); onClick(); }}
-      style={{
-        display: 'block', width: '100%', textAlign: 'left',
-        fontWeight: 400, borderRadius: 4,
-      }}>
+    <MenuItem key={label} onClick={() => { setOpen(false); onClick(); }}>
       {label}
-    </button>
+    </MenuItem>
   );
 
   return (
@@ -655,14 +650,12 @@ function PanelMenu({ panel, vars, range, canEdit, onDuplicate, onEdit }: {
       // start a drag (and must not be read as an outside-click either).
       draggable={false}
       onMouseDown={e => e.stopPropagation()}>
-      <button className="sec dash-panel-menu-btn" type="button"
+      <IconButton className="dash-panel-menu-btn"
+        variant="secondary" size="sm"
         aria-label="Panel menüsü" aria-haspopup="menu" aria-expanded={open}
         title="Panel actions"
         onClick={() => setOpen(o => !o)}
-        style={{
-          width: 26, height: 24, padding: 0, lineHeight: '20px',
-          fontSize: 13, borderRadius: 'var(--radius-sm)',
-        }}>⋯</button>
+        icon="⋯" />
       {open && (
         <div role="menu" style={{
           position: 'absolute', top: '100%', right: 0, marginTop: 4,
@@ -712,14 +705,9 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
               unreachable because only the `labels` record above was updated.
               Any new type goes in BOTH places. */}
           {(['row', 'metric', 'spanmetric', 'promql', 'topn', 'stat', 'gauge', 'heatmap', 'markdown'] as PanelType[]).map(t => (
-            <button key={t} className="ghost"
-              onClick={() => { onAdd(t); setOpen(false); }}
-              style={{
-                display: 'block', width: '100%', textAlign: 'left',
-                borderRadius: 4, fontWeight: 400,
-              }}>
+            <MenuItem key={t} onClick={() => { onAdd(t); setOpen(false); }}>
               {labels[t]}
-            </button>
+            </MenuItem>
           ))}
         </div>
       )}

@@ -390,6 +390,32 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 .btn-bare:hover:not(:disabled) { background: transparent; }
 .btn-bare:disabled { opacity: .4; cursor: not-allowed; }
 
+/* ── MenuItem (v0.9.890) — the dropdown row ─────────────────────────
+   Four hand-rolled copies, two of them hovering via JS. A JS hover
+   handler only ever watches the POINTER, so keyboard focus was never
+   highlighted — arrowing through a menu gave no indication of where
+   you were. Hover and focus are the same visual state here on purpose:
+   the row under the pointer and the row under the caret are equally
+   "the one you are about to pick". */
+.menuitem {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; box-sizing: border-box;
+  background: transparent; border: 0; border-radius: 4px;
+  padding: 6px 10px; font-family: inherit; font-size: 12.5px; font-weight: 400;
+  color: var(--text); text-align: left; white-space: nowrap; cursor: pointer;
+  transition: background .12s, color .12s;
+}
+.menuitem:hover:not(:disabled),
+.menuitem:focus-visible { background: var(--bg3); color: var(--text); }
+.menuitem:disabled { opacity: .4; cursor: not-allowed; }
+.menuitem.mi-danger { color: var(--err); }
+.menuitem.mi-danger:hover:not(:disabled),
+.menuitem.mi-danger:focus-visible { background: color-mix(in srgb, var(--err) 12%, transparent); color: var(--err); }
+/* Fixed-width icon slot so labels line up whether or not a row has a
+   glyph — a menu where only some rows are indented reads as broken. */
+.menuitem-icon { display: inline-flex; justify-content: center; width: 14px; flex-shrink: 0; }
+.menuitem-label { flex: 1; min-width: 0; }
+
 /* ── LinkButton (v0.9.889) — looks like a link, IS a button ─────────
    Eight sites hand-rolled this in five different looks, none with a
    defined hover or focus. Same `all: unset` root cause as .btn-bare:

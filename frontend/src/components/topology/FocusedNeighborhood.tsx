@@ -9,6 +9,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
+import { nodeDetailHref } from '@/components/topology/nodeDetailHref';
 
 // FocusedNeighborhood — the focused topology graph (service-detail Topology
 // tab). Since v0.8.294 the neighborhood is walked SERVER-side
@@ -225,6 +226,10 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
 
   const pinnedNode = pinned ? nb.nodes.find(n => n.id === pinned) : null;
   const hoverNode = pinnedNode ?? (hover ? nb.nodes.find(n => n.id === hover) : null);
+  // v0.9.958 (G3-b) — DB düğümünün detay hedefi. null = adından instance
+  // türetilemedi; o hâlde link HİÇ çizilmez (uydurma bir instance ile
+  // sorgulamak sessizce boş bir sayfa açardı).
+  const dbHref = hoverNode ? nodeDetailHref(hoverNode, { range: encodeRange(range) }) : null;
   const height = Math.round(window.innerHeight * 0.74);
 
   // v0.9.363 — 500, CH max_execution_time timeout'u ve gerçekten komşusuz
@@ -304,7 +309,14 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
             <span style={{ width: 9, height: 9, borderRadius: '50%', background: healthToken(hoverNode.errorRate) }} />
             <span style={{ fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{hoverNode.name}</span>
             {pinnedNode && <span title="Sabitlendi — ✕ ile bırak">📌</span>}
-            <Button variant="secondary" size="sm" onClick={() => onRecenter(hoverNode.name)} style={{ marginLeft: 'auto' }}>Recenter</Button>
+            {/* v0.9.958 (UX denetimi G3/Ö10) — Recenter yalnız SERVİS
+                düğümünde. onRecenter düğüm adını servis adı sanıp
+                `/service?name=oracle@oracle` açıyordu: var olmayan bir
+                sayfa, ve db/queue pill'inde görünen TEK eylem buydu.
+                Kapatılan şey bir özellik değil, yanlış bir vaat. */}
+            {hoverNode.kind === 'service' && (
+              <Button variant="secondary" size="sm" onClick={() => onRecenter(hoverNode.name)} style={{ marginLeft: 'auto' }}>Recenter</Button>
+            )}
             {pinnedNode && (
               <Button variant="ghost" size="sm" onClick={() => setPinned(null)}>✕</Button>
             )}
@@ -342,6 +354,21 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
                   Traces ({focus} ∧ {hoverNode.name}) →
                 </Link>
               )}
+            </span>
+          )}
+          {/* v0.9.958 (UX denetimi G3-b/Ö10) — DB düğümünün detay çıkışı.
+              CANLI VERİYLE doğrulandı: düğüm adı `<system>@<instance>` ve
+              o instance /api/databases satırıyla birebir eşleşiyor.
+              dbName BİLEREK taşınmıyor — düğüm instance düzeyinde
+              toplanmış, taşıdığı dbName yalnız bir örnek; linke koymak
+              soruyu sessizce daraltırdı. Etiket bu yüzden "instance" der.
+              Kuyruk düğümleri kapsam dışı: `/messaging` kimliği CLUSTER
+              istiyor, topoloji düğümü taşımıyor (nodeDetailHref). */}
+          {hoverNode.kind === 'database' && dbHref && (
+            <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <Link to={dbHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+                Open instance →
+              </Link>
             </span>
           )}
         </div>

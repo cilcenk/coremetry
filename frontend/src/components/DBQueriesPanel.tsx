@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Spinner } from './Spinner';
+import { DisclosureButton } from '@/components/ui';
 import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
@@ -99,18 +100,7 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
       background: 'var(--bg1)', border: '1px solid var(--border)',
       borderRadius: 8, marginBottom: 14,
     }}>
-      <button type="button" onClick={() => setOpen(o => !o)}
-        style={{
-          display: 'flex', alignItems: 'center', gap: 12,
-          width: '100%', padding: 14,
-          background: 'transparent', border: 'none', cursor: 'pointer',
-          textAlign: 'left', color: 'var(--text)',
-          borderBottom: open ? '1px solid var(--border)' : 'none',
-        }}>
-        <span style={{
-          width: 14, color: 'var(--text2)', fontSize: 11,
-          fontFamily: 'ui-monospace, monospace',
-        }}>{open ? '▼' : '▶'}</span>
+      <DisclosureButton anatomy="section" expanded={open} onClick={() => setOpen(o => !o)}>
         <span style={{ fontSize: 12, color: 'var(--text2)', fontWeight: 600 }}>
           DB queries by <span style={{ color: 'var(--text)' }}>{service}</span>
         </span>
@@ -133,7 +123,7 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
             click to expand
           </span>
         )}
-      </button>
+      </DisclosureButton>
 
       {open && (
         <div style={{ padding: 14, paddingTop: 10 }}>

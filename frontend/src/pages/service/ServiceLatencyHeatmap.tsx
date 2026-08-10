@@ -5,6 +5,7 @@ import { timeRangeToNs, fmtClock } from '@/lib/utils';
 import { heatmapBucketCount } from '@/lib/chartStep';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { Spinner } from '@/components/Spinner';
+import { DisclosureButton } from '@/components/ui';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { heatmapFilters } from './heatmapFilters';
 import { HeatmapCellExemplars } from '@/components/HeatmapCellExemplars';
@@ -95,17 +96,10 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
       <div style={{
         display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6,
       }}>
-        <button type="button" onClick={toggle}
-          style={{
-            all: 'unset', cursor: 'pointer',
-            fontSize: 11, fontWeight: 700, color: 'var(--text2)',
-            textTransform: 'uppercase', letterSpacing: 0.4,
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-          }}
-          title={collapsed ? 'Expand' : 'Collapse'}>
-          <span style={{ color: 'var(--text3)' }}>{collapsed ? '▸' : '▾'}</span>
+        <DisclosureButton expanded={!collapsed} onClick={toggle}
+          className="dsc-caps" title={collapsed ? 'Expand' : 'Collapse'}>
           Latency distribution
-        </button>
+        </DisclosureButton>
         {operation && (
           <span title="Scoped to the operation picked in the RED charts above (?op=)."
             style={{

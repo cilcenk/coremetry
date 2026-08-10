@@ -23,6 +23,9 @@ export type { MenuItemProps } from './Menu';
 export { Chip } from './Chip';
 export type { ChipProps } from './Chip';
 
+export { DisclosureButton } from './DisclosureButton';
+export type { DisclosureButtonProps } from './DisclosureButton';
+
 export { Card } from './Card';
 export type { CardProps } from './Card';
 

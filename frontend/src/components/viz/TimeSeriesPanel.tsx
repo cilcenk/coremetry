@@ -4,6 +4,7 @@ import { downsampleXY } from '@/lib/perf/lttb';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
 import { escapeHTML } from '@/lib/utils';
 import { placeTooltip } from '@/lib/chartTooltip';
+import { DisclosureButton } from '@/components/ui';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { timeSeriesPanelBuildSignature } from '@/lib/chartBuildSig';
 import { resolveVar as resolveColor } from '@/lib/chart/resolveVar';
@@ -975,15 +976,10 @@ function TimeSeriesLegend({ rows, isVisible, onToggle }: {
   const [collapsed, setCollapsed] = useState(true);
   return (
     <div style={{ marginTop: 8 }}>
-      <button type="button" onClick={() => setCollapsed(c => !c)}
-        style={{
-          background: 'none', border: 'none', cursor: 'pointer', padding: '2px 4px',
-          fontSize: 11, color: 'var(--text2)', display: 'inline-flex', alignItems: 'center', gap: 4,
-        }}
+      <DisclosureButton expanded={!collapsed} onClick={() => setCollapsed(c => !c)}
         title={collapsed ? 'Show series legend' : 'Hide series legend'}>
-        <span style={{ fontSize: 9 }}>{collapsed ? '▶' : '▼'}</span>
         Series ({rows.length})
-      </button>
+      </DisclosureButton>
       {/* v0.9.541 (operatör, mockup C + otomatik seçim) — kalabalık
           lejant YATAY akar: 40 seri 40 satır yerine birkaç satırda
           sığar. Last/Min/Max/Avg burada gösterilmez (okunmuyordu ve

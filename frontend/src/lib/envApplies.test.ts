@@ -47,6 +47,12 @@ const readsEnv = (text: string) => text.includes('useUrlEnv');
 
 // Env'i kendi SORGULARINA geçiren sayfalar — koddan doğrulandı 2026-08-09.
 const APPLIES = new Set([
+  // v0.9.941 (B1/K8) — /problems Exceptions sekmesi. Seçici bu sayfada
+  // GÖRÜNÜYOR ama uygulanmıyordu (`envApplies={false}`): operatör prod'u
+  // seçip int/uat exception'larını listede görmeye devam ediyordu.
+  // Sunucu artık env'i üye servislere çözüp `service IN (…)` ile
+  // daraltıyor, yani daraltma limit/offset'ten ÖNCE ısırıyor.
+  'features/anomalies/AnomaliesPage.tsx',
   'features/anomalies/ProblemsSection.tsx',
   'pages/Databases.tsx',
   'pages/EndpointDetail.tsx',
@@ -113,15 +119,23 @@ describe('envApplies — §4.3 (b) dürüstlük sözleşmesi', () => {
     }
   });
 
-  it('Exceptions listesi bayrağı AÇIKÇA reddeder (K8)', () => {
-    // Sayfa picker'ı açıkça istiyor (showEnv) ama liste sorgusu env geçirmiyor;
-    // sidebar rozeti ise env-scoped. Rozet "3" derken sayfa 40 satır gösteriyordu.
-    // Backend `/api/exception-groups`'a env parametresi kazanana dek AÇIK
-    // reddetme, sessiz varsayılandan daha iyi belgedir.
+  it('Exceptions listesi env\'i GERÇEKTEN uyguluyor (K8 kapandı)', () => {
+    // v0.9.941 — bu test v0.9.864'te TERSİNİ pinliyordu: backend
+    // `/api/exception-groups` env parametresi kazanana dek AÇIK reddetme
+    // (bayrağı açıkça kapatmak) sessiz varsayılandan daha iyi belgeydi.
+    // Sidebar rozeti env-scoped olduğu için rozet "3" derken sayfa 40
+    // satır gösteriyordu — o tutarsızlık artık yok.
+    //
+    // Uç parametreyi kazandı; dolayısıyla pinin YÖNÜ de dönüyor. Eski
+    // beklentiyi bırakmak, kapanmış bir kusuru sonsuza kadar "açık"
+    // olarak zorunlu kılmak olurdu.
     const page = topbarPages.find(f => f.rel === 'features/anomalies/AnomaliesPage.tsx');
     expect(page).toBeTruthy();
-    expect(page!.text.includes('envApplies={false}')).toBe(true);
-    expect(claimsApplies(page!.text)).toBe(false);
+    expect(page!.text.includes('envApplies={false}'),
+      'AÇIK reddetme geri gelmiş — uç artık env destekliyor').toBe(false);
+    expect(claimsApplies(page!.text)).toBe(true);
+    // Bayrak yalnız işaret; asıl sözleşme parametrenin İSTEĞE girmesi.
+    expect(page!.text).toContain('env: env || undefined,');
   });
 
   it('picker atıl hâlde GİZLENMEZ, devre dışı kalır', () => {

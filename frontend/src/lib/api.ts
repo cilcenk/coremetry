@@ -2047,7 +2047,11 @@ export const api = {
   // offset } so the UI can paginate without losing the global count.
   // sort/dir/q (v0.8.318) — ordering + substring search run server-side
   // across the WHOLE paginated set (whitelisted columns backend-side).
-  exceptionGroups: (params: { state?: string; service?: string; assignee?: string; ownerTeam?: string; sreTeam?: string; sort?: string; dir?: string; q?: string; limit?: number; offset?: number;
+  // env (v0.9.941, B1/K8) — ortam süzgeci. Sekme Topbar seçicisini
+  // GÖSTERİYOR ama uygulamıyordu; sunucu tarafı env'i üye servislere
+  // çözüp `service IN (…)` ile daraltıyor, yani limit/offset'ten ÖNCE
+  // ısırıyor.
+  exceptionGroups: (params: { state?: string; service?: string; assignee?: string; ownerTeam?: string; sreTeam?: string; env?: string; sort?: string; dir?: string; q?: string; limit?: number; offset?: number;
     // v0.9.315 (operatör) — occurrence floor. One-off exceptions (a
     // single Java socket timeout) rendered rows indistinguishable from
     // sustained outages. Omitted = no floor.

@@ -5,6 +5,7 @@ import { timeRangeToNs, fmtClock } from '@/lib/utils';
 import { heatmapBucketCount } from '@/lib/chartStep';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { Spinner } from '@/components/Spinner';
+import { raceGuard } from '@/lib/raceGuard';
 import { DisclosureButton } from '@/components/ui';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { heatmapFilters } from './heatmapFilters';
@@ -29,6 +30,9 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
   rootOnly?: boolean;
 }) {
   const [data, setData] = useState<import('@/lib/types').LatencyHeatmap | null | undefined>(undefined);
+  // busy — veri EKRANDA kalırken süren okuma (keep-previous). `data ===
+  // undefined` ilk yükleme demek; ikisi ayrı sorular.
+  const [busy, setBusy] = useState(false);
   const [picked, setPicked] = useState<string>(''); // '' = all
   // v0.9.379 (redesign D3, mockup af7419e5) — LatencyHeatmap primitifi
   // onCellClick/onBoxSelect'i Explore BubbleUp'tan beri taşıyor; bu sekme
@@ -73,16 +77,34 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
     if (picked && !clusters.includes(picked)) setPicked('');
   }, [clusters, picked]);
 
+  // v0.9.939 (UX denetimi C1/Ö20) — YARIŞ + BLANK.
+  //
+  // İki kusur birlikte yaşıyordu. (a) `setData(undefined)` her pencere/op/
+  // cluster değişiminde paneli BOŞALTIP spinner'a düşürüyordu: sayfanın en
+  // pahalı sorgusu (≤3s bütçe) her düzenlemede sıfırdan çiziliyor, operatör
+  // her tıkta grafiğini kaybediyordu — aynı sayfadaki RED grafikleri
+  // keepPreviousData ile akıcı. (b) Ne bayrak ne iptal vardı: hızlı iki
+  // değişiklikte ESKİ pencerenin heatmap'i yenisinin ÜSTÜNE yazabiliyordu
+  // (v0.9.857/K7 ile aynı sınıf) ve superseded CH taraması
+  // max_execution_time'a kadar koşmaya devam ediyordu.
+  //
+  // Artık: eldeki veri EKRANDA KALIR, üstünde bir "yenileniyor" izi belirir;
+  // ilk yüklemede (veri yok) eski davranış — spinner. raceGuard iki yarımı
+  // birden verir: ok() geç yanıtı atar, signal isteği iptal eder.
   useEffect(() => {
     if (collapsed) return;
-    setData(undefined);
+    const g = raceGuard();
+    setBusy(true);
     api.spanHeatmap({
       // v0.9.707 — sabit 60 → genişlik-türevi (40..240).
       from, to, buckets: heatmapBucketCount(1),
       filters: JSON.stringify(heatmapFilters(service, picked, operation, rootOnly)),
-    })
-      .then(r => setData(r ?? null))
-      .catch(() => setData(null));
+    }, g.signal)
+      .then(r => { if (!g.ok()) return; setData(r ?? null); setBusy(false); })
+      // İptal de reject eder; guard'sız catch operatörün kendi
+      // düzenlemesini "sorgu hatası"na çevirirdi.
+      .catch(() => { if (!g.ok()) return; setData(null); setBusy(false); });
+    return g.cancel;
   }, [service, from, to, collapsed, picked, operation, rootOnly]);
 
   const toggle = () => {
@@ -126,6 +148,12 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
           <span style={{ fontSize: 11, color: 'var(--text3)' }}>
             peak {data.maxCount.toLocaleString()} spans/cell · log-scale y-axis
           </span>
+        )}
+        {/* v0.9.939 — yenileme izi. Grafik ekranda kaldığı için operatöre
+            "bu hâlâ ESKİ pencere" demenin bir yolu gerekiyor; sessiz
+            keep-previous, bayat veriyi taze gibi gösterirdi. */}
+        {!collapsed && busy && data !== undefined && (
+          <span style={{ fontSize: 11, color: 'var(--text3)' }}>· yenileniyor…</span>
         )}
       </div>
       {!collapsed && (

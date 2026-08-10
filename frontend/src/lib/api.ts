@@ -1081,7 +1081,9 @@ export const api = {
   spanRepeats: (params: {
     from: number; to: number; dsl?: string; filters?: string;
     groupBy?: string[]; minRepeats?: number; limit?: number;
-  }) => {
+    // v0.9.939 (C3) — signal: ham spans taraması, iptal edilmezse
+    // superseded sorgu max_execution_time'a kadar koşar.
+  }, signal?: AbortSignal) => {
     const q = new URLSearchParams();
     q.set('from', String(params.from));
     q.set('to',   String(params.to));
@@ -1090,7 +1092,7 @@ export const api = {
     if (params.groupBy && params.groupBy.length) q.set('groupBy', params.groupBy.join(','));
     if (params.minRepeats) q.set('minRepeats', String(params.minRepeats));
     if (params.limit) q.set('limit', String(params.limit));
-    return get<import('./types').RepeatedSpanRow[] | null>(`/api/spans/repeats?${q}`);
+    return get<import('./types').RepeatedSpanRow[] | null>(`/api/spans/repeats?${q}`, signal);
   },
   // v0.8.486 — sayfa-üstü duyuru şeridi (admin Settings'ten yönetir).
   getAnnouncement: () =>
@@ -1826,10 +1828,15 @@ export const api = {
   // 2D latency density grid. Same filter shape as spanMetric
   // — a heatmap toggle on /explore swaps between "line trend"
   // and "density" without re-typing the predicate.
+  // v0.9.939 (UX denetimi C3) — signal. Bu, sayfanın EN pahalı sorgusu
+  // (ham spans log-ölçek ızgarası, ≤3s bütçe). İptal edilmeden bırakılan
+  // bir tarama `max_execution_time`'a kadar CH'de koşmaya devam ediyor;
+  // hızlı pencere/filtre değişimi üst üste tarama yığıp operatörün
+  // GERÇEKTEN beklediği sorguyu yavaşlatıyordu.
   spanHeatmap: (params: {
     from?: number; to?: number; filters?: string; dsl?: string; buckets?: number;
-  }) =>
-    get<import('./types').LatencyHeatmap>(`/api/spans/heatmap?${qs(params)}`),
+  }, signal?: AbortSignal) =>
+    get<import('./types').LatencyHeatmap>(`/api/spans/heatmap?${qs(params)}`, signal),
 
   // BubbleUp — attribute divergence between selection and
   // baseline. `filters`/`dsl` define the baseline population;

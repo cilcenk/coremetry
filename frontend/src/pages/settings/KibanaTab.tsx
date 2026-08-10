@@ -1,9 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { KibanaSettings } from '@/lib/types';
-import { SettingRow } from './shared';
+import { SettingRow, SettingsLoadError, useSettingsLoad } from './shared';
 
 // KibanaTab — external Kibana deep-link config (v0.5.236).
 // Operator pastes the base URL of their Kibana install; the
@@ -15,21 +15,20 @@ import { SettingRow } from './shared';
 // + time bounds via the _g / _a state params so the Kibana
 // landing surface matches the row's context.
 export function KibanaTab() {
-  const [loaded, setLoaded] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
   const [dataView, setDataView] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  useEffect(() => {
-    api.getKibanaSettings().then(s => {
+  const { loaded, error: loadErr, retry } = useSettingsLoad(
+    () => api.getKibanaSettings(),
+    s => {
       setEnabled(!!s.enabled);
       setBaseUrl(s.baseUrl || '');
       setDataView(s.dataView || '');
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
-  }, []);
+    },
+  );
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -47,6 +46,7 @@ export function KibanaTab() {
     }
   };
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!loaded) return <Spinner />;
 
   const ready = enabled && baseUrl.trim() !== '';

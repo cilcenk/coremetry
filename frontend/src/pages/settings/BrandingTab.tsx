@@ -3,7 +3,7 @@ import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { DEFAULT_BRANDING, invalidateBranding, type BrandingSettings } from '@/lib/branding';
-import { Field, Row } from './shared';
+import { Field, Row, SettingsLoadError, useSettingsLoad } from './shared';
 
 // BrandingTab — white-label / customisation form. Admin paints the
 // login page (logo + title + button label + footer) and the
@@ -17,17 +17,18 @@ import { Field, Row } from './shared';
 // enough that the system_settings row stays cheap to fetch on
 // every login page render.
 export function BrandingTab() {
-  const [loaded, setLoaded] = useState(false);
   const [b, setB] = useState<BrandingSettings>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  useEffect(() => {
-    api.getBranding()
-      .then(v => { setB(v ?? {}); setLoaded(true); })
-      .catch(() => setLoaded(true));
-  }, []);
+  const { loaded, error: loadErr, retry } = useSettingsLoad(
+    () => api.getBranding(),
+    v => {
+      setB(v ?? {});
+    },
+  );
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!loaded) return <Spinner />;
 
   const set = (k: keyof BrandingSettings, v: string) =>

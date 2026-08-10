@@ -1,8 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
-import { SettingRow } from './shared';
+import { SettingRow, SettingsLoadError, useSettingsLoad } from './shared';
 
 // LogBridgeTab — dış log sistemine köprü şablonları (v0.9.657).
 //
@@ -27,19 +27,18 @@ const ENV_ROWS: { key: string; label: string; hint: string }[] = [
 ];
 
 export function LogBridgeTab() {
-  const [loaded, setLoaded] = useState(false);
   const [tpls, setTpls] = useState<Record<string, string>>({});
   const [placeholder, setPlaceholder] = useState('{value}');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  useEffect(() => {
-    api.getCorrelationLink().then(s => {
+  const { loaded, error: loadErr, retry } = useSettingsLoad(
+    () => api.getCorrelationLink(),
+    s => {
       setTpls(s.templates ?? {});
       if (s.placeholder) setPlaceholder(s.placeholder);
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
-  }, []);
+    },
+  );
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -60,6 +59,7 @@ export function LogBridgeTab() {
     }
   };
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!loaded) return <Spinner />;
 
   const configured = Object.values(tpls).filter(v => v.trim() !== '').length;

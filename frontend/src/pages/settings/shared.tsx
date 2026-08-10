@@ -5,7 +5,11 @@
 // tabs. Pulling them here keeps the per-section files importing a single
 // stable module instead of re-declaring the same markup. Behaviour is
 // unchanged — these are the exact functions the tabs used before.
-import { cloneElement, isValidElement, useId, type ReactElement, type ReactNode } from 'react';
+import {
+  cloneElement, isValidElement, useCallback, useEffect, useId, useRef, useState,
+  type ReactElement, type ReactNode,
+} from 'react';
+import { QueryError } from '@/components/QueryError';
 
 // ── Tiny shared form atoms ──────────────────────────────────────────────────
 
@@ -107,6 +111,64 @@ export function humanize(err: unknown): string {
     if (j && typeof j.error === 'string') return j.error;
   } catch {}
   return body || msg;
+}
+
+// ── Ayar okuma kapısı (v0.9.938, UX denetimi C4) ────────────────────────────
+//
+// SEKİZ Settings sekmesi ayar okumasını `.catch(() => setLoaded(true))` ile
+// yutuyordu: GET başarısız olunca form YÜKLENDİ sayılıp BOŞ çiziliyordu ve
+// Kaydet aktifti. Operatörün tek tıkla mevcut ayarın üstüne boş değerler
+// yazması mümkündü — denetimdeki tek VERİ KAYBETTİREN bulgu. Sessiz olması
+// daha da kötüsüydü: hiçbir yerde "okuyamadım" yazmıyordu, form gerçekten
+// boş sanılıyordu.
+//
+// Kapının üç garantisi:
+//   1. Hata AYRI bir hâl — "boş form" ile "okunamadı" bir daha karışamaz.
+//   2. Kaydet ERİŞİLEMEZ — hata dalında form hiç çizilmez, yani "kaydete
+//      basma" disiplinine değil, render ağacına bağlı.
+//   3. Tekrar dene — ileri giden bir yol olmayan hata ekranı yarım çözüm.
+//
+// Yarış koruması da burada: sekme hızlı değiştirilince geç dönen bir yanıt
+// sökülmüş bileşene yazmaya çalışırdı (C3 sınıfı). `alive` bayrağı onu keser.
+export function useSettingsLoad<T>(
+  load: () => Promise<T>,
+  apply: (value: T) => void,
+): { loaded: boolean; error: string | null; retry: () => void } {
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+  // Ref'ler: çağıranlar bu iki fonksiyonu her render'da yeniden kuruyor
+  // (setter fan-out'u closure'da). Dep listesine koysaydık efekt her
+  // render'da yeniden koşar, yani sonsuz GET döngüsü olurdu.
+  const loadRef = useRef(load); loadRef.current = load;
+  const applyRef = useRef(apply); applyRef.current = apply;
+
+  useEffect(() => {
+    let alive = true;
+    setError(null);
+    loadRef.current()
+      .then(v => { if (!alive) return; applyRef.current(v); setLoaded(true); })
+      // loaded BİLEREK false kalıyor: "okuduk ama boştu" ile "okuyamadık"
+      // ayrı hâller ve ikincisinde form çizilmemeli.
+      .catch(e => { if (!alive) return; setError(humanize(e)); });
+    return () => { alive = false; };
+  }, [attempt]);
+
+  const retry = useCallback(() => setAttempt(a => a + 1), []);
+  return { loaded, error, retry };
+}
+
+// SettingsLoadError — kapının hata ekranı. QueryError'ın (v0.9.858) Settings
+// bağlamındaki yüzü: neden tehlikeli olduğunu da söylüyor, çünkü operatör
+// "boş görünüyor, kaydedeyim" refleksinden korunmalı.
+export function SettingsLoadError({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <QueryError title="Ayarlar okunamadı" message={error} onRetry={onRetry}>
+      Bu sekmenin kayıtlı ayarı sunucudan alınamadı. Form <b>bilerek</b>{' '}
+      çizilmiyor: boş bir formu kaydetmek mevcut ayarın üstüne boş değerler
+      yazardı.
+    </QueryError>
+  );
 }
 
 // ── New reusable section/row wrappers (operator request) ────────────────────

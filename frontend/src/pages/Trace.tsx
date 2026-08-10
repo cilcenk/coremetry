@@ -897,8 +897,8 @@ function CompareTracesButton({ aId }: { aId: string }) {
           placeholder="Other trace ID (hex)"
           className="mono"
           style={{ width: 320, fontSize: 12 }} />
-        <Button variant="primary" size="sm" onClick={submit} disabled={busy}>
-          {busy ? 'Thinking…' : 'Compare'}
+        <Button variant="primary" size="sm" onClick={submit} loading={busy}>
+          Compare
         </Button>
         <Button variant="secondary" size="sm"
           onClick={() => { setOpen(false); setText(null); setError(null); }}>
@@ -1136,10 +1136,10 @@ function SharePopover({ traceId }: { traceId: string }) {
             </select>
           </div>
           {!publicURL ? (
-            <Button onClick={generatePublic} disabled={busy}
+            <Button onClick={generatePublic} loading={busy}
               leftIcon={<IconLink />}
               style={{ width: '100%', display: 'inline-flex', justifyContent: 'center' }}>
-              {busy ? 'Generating…' : 'Generate public link'}
+              Generate public link
             </Button>
           ) : (
             <>

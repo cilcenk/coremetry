@@ -429,6 +429,13 @@ button {
 }
 button:hover:not(:disabled) { background: var(--accent2); }
 button:disabled { opacity: .4; cursor: not-allowed; }
+/* MB3 (v0.9.925) — YÜKLENEN buton solmaz. `Button` atomu `loading`
+   iken `disabled` de basıyor (tıkı yutmak için), dolayısıyla yukarıdaki
+   kural spinner'ı %40 opaklıkta çiziyordu: tam da "çalışıyorum" demesi
+   gereken anda gösterge en zor görüleni oluyordu. `aria-busy` iki
+   durumu ayırt eden tek işaret — "kullanılamaz" ile "şu an çalışıyor"
+   aynı şey değil ve aynı görünmemeli. */
+button[aria-busy="true"]:disabled { opacity: 1; cursor: wait; }
 /* a11y (v0.7.86) — a visible keyboard focus ring on EVERY focusable
    element, not just <button>. Operators who drive by keyboard (and
    screen-reader users) need to see where focus is on links, nav items,

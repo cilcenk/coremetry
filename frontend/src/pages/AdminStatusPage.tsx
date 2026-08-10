@@ -105,7 +105,7 @@ function ConfigTab() {
         <input type="url" value={c.supportUrl ?? ''} onChange={e => edit({ supportUrl: e.target.value })}
           placeholder="https://support.example.com" style={{ width: '100%' }} />
       </Field>
-      <Button type="submit" variant="primary" disabled={busy} style={{ marginTop: 12 }}>{busy ? 'Saving…' : 'Save'}</Button>
+      <Button type="submit" variant="primary" loading={busy} style={{ marginTop: 12 }}>Save</Button>
       {msg && <span style={{ marginLeft: 10, fontSize: 12, color: 'var(--text2)' }}>{msg}</span>}
     </form>
   );
@@ -249,7 +249,7 @@ function ComponentModal({ initial, monitors, onClose, onSaved }: {
           {error && <div className="trp-error" style={{ marginTop: 10 }}>{error}</div>}
           <div style={{ display: 'flex', gap: 8, marginTop: 16, justifyContent: 'flex-end' }}>
             <Button type="button" variant="secondary" onClick={onClose}>Cancel</Button>
-            <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Saving…' : initial ? 'Save' : 'Create'}</Button>
+            <Button type="submit" variant="primary" loading={busy}>{initial ? 'Save' : 'Create'}</Button>
           </div>
         </form>
       </div>

@@ -324,8 +324,8 @@ export default function SQLPlaygroundPage() {
                 Elasticsearch
               </button>
             </div>
-            <Button onClick={run} disabled={running}>
-              {running ? 'Running…' : 'Run'} <span style={{ color: 'var(--text3)' }}>⌘↵</span>
+            <Button onClick={run} loading={running}>
+              Run <span style={{ color: 'var(--text3)' }}>⌘↵</span>
             </Button>
             <select onChange={e => {
               const list = backend === 'elasticsearch' ? ES_SAMPLES : SAMPLES;

@@ -207,8 +207,8 @@ function CatalogEditor({ initial, onSave, onCancel }: {
           onChange={ls => update({ customLinks: ls })} />
       </div>
       <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, marginTop: 4 }}>
-        <Button size="sm" onClick={submit} disabled={busy}>
-          {busy ? 'Saving…' : 'Save'}
+        <Button size="sm" onClick={submit} loading={busy}>
+          Save
         </Button>
         <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
           Cancel

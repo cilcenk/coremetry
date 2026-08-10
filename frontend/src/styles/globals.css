@@ -78,6 +78,13 @@
   --backdrop:      rgba(0, 0, 0, .55);
   --fatal:         #ff6b6b;
   --shadow-modal:  0 20px 60px rgba(0, 0, 0, .5);
+  /* MK1 (v0.9.908) — dört rung. --radius-xs mikro yüzeyler için
+     (rozet, ince tutamak, 1-2 satırlık banner). Rapor 4px'i --radius-sm'e
+     çekmeyi öneriyordu; ölçüldü, o BÜYÜTME olurdu (dark/light'ta 4→6px)
+     yani "squarer corners" hedefinin tam tersi. Ayrı rung, redhat'te
+     2px: PF kimliği sadece --radius-sm/--radius/-lg'de değil mikro
+     yüzeylerde de kare kalıyor. */
+  --radius-xs: 4px;
   --radius-sm: 6px;
   --radius:    8px;
   --radius-lg: 12px;
@@ -184,6 +191,7 @@
   --fatal:         #a30000;
   --shadow-modal:  0 20px 60px rgba(21, 21, 21, .20);
   /* PatternFly runs squarer than Primer. */
+  --radius-xs: 2px;
   --radius-sm: 3px;
   --radius:    4px;
   --radius-lg: 8px;
@@ -337,14 +345,14 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 }
 input, select {
   background: var(--bg2); border: 1px solid var(--border); color: var(--text);
-  border-radius: 6px; padding: 5px 10px; font-size: 13px; outline: none;
+  border-radius: var(--radius-sm); padding: 5px 10px; font-size: 13px; outline: none;
   transition: border-color .15s; font-family: inherit;
 }
 input:focus, select:focus { border-color: var(--accent); }
 select option { background: var(--bg2); }
 button {
   background: var(--accent); color: var(--on-accent); border: none;
-  border-radius: 6px; padding: 5px 14px; font-size: 13px; cursor: pointer;
+  border-radius: var(--radius-sm); padding: 5px 14px; font-size: 13px; cursor: pointer;
   transition: background .15s; font-family: inherit;
 }
 button:hover:not(:disabled) { background: var(--accent2); }
@@ -387,7 +395,7 @@ button.danger { background: var(--err); color: var(--on-accent); }
 button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 88%, white); }
 button.ghost { background: transparent; color: var(--text2); border: 1px solid transparent; }
 button.ghost:hover:not(:disabled) { background: var(--bg2); color: var(--text); }
-button.sm { padding: 3px 9px; font-size: 11px; border-radius: 4px; }
+button.sm { padding: 3px 9px; font-size: 11px; border-radius: var(--radius-xs); }
 button.lg { padding: 8px 18px; font-size: 14px; }
 /* `ghost-danger` (v0.9.884) — quiet destructive. Solid `.danger` is a
    commitment ("this is THE action of this dialog"); a Remove sitting in
@@ -416,7 +424,7 @@ button.ghost-danger:hover:not(:disabled) {
 }
 /* `xs` (v0.9.884) — the sub-`sm` rung the chart footers and the command
    palette were inventing per file (fontSize 10/11, ad-hoc padding). */
-button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
+button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: var(--radius-xs); }
 
 /* `.btn-bare` (v0.9.888) — the honest replacement for `all: unset` on a
    button that wraps NON-square content: a sparkline, a label fragment.
@@ -445,7 +453,7 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 .menuitem {
   display: flex; align-items: center; gap: 8px;
   width: 100%; box-sizing: border-box;
-  background: transparent; border: 0; border-radius: 4px;
+  background: transparent; border: 0; border-radius: var(--radius-xs);
   padding: 6px 10px; font-family: inherit; font-size: 12.5px; font-weight: 400;
   color: var(--text); text-align: left; white-space: nowrap; cursor: pointer;
   transition: background .12s, color .12s;
@@ -665,11 +673,11 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
 .card {
   background: var(--bg1);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
   padding: 14px;
   box-shadow: var(--shadow-sm);
 }
-.card-tight { padding: 10px; border-radius: 6px; background: var(--bg2); }
+.card-tight { padding: 10px; border-radius: var(--radius-sm); background: var(--bg2); }
 
 /* Dashboard listing card hover — used by /dashboards. Subtle
    border-tint so the link target is obvious without flipping
@@ -733,7 +741,7 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
   margin-left: auto;
   background: transparent; border: none; color: var(--text3);
   font-size: 18px; line-height: 1; padding: 4px 8px; cursor: pointer;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 .modal-close:hover { background: var(--bg2); color: var(--text); }
 
@@ -823,7 +831,7 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
 .segmented {
   display: inline-flex;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   overflow: hidden;
   background: var(--bg2);
 }
@@ -894,7 +902,7 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
    never shipped as dead weight. */
 .fsel { position: relative; display: inline-block; }
 .fsel-btn { display: inline-flex; align-items: center; gap: 5px;
-  font-size: 11.5px; padding: 4px 11px; border-radius: 6px;
+  font-size: 11.5px; padding: 4px 11px; border-radius: var(--radius-sm);
   border: 1px solid var(--border); background: var(--bg2); color: var(--text);
   cursor: pointer; }
 .fsel-btn:hover { background: var(--bg3); }
@@ -923,7 +931,7 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
 /* Cards */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
 .card {
-  background: var(--bg1); border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 14px; cursor: pointer; transition: border-color .15s;
 }
 .card:hover { border-color: var(--accent); }
@@ -933,7 +941,7 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
 .card-stat .v.ok { color: var(--ok); } .card-stat .v.err { color: var(--err); } .card-stat .v.warn { color: var(--warn); }
 
 /* Table */
-.table-wrap { border: 1px solid var(--border); border-radius: 8px; overflow-x: auto; overflow-y: hidden; }
+.table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; overflow-y: hidden; }
 
 /* v0.9.644 — YAPIŞKAN TABLO BAŞLIĞI, tablo başına OPT-IN.
    (denetim bulgusu #10: "sticky tablo başlığı yok VE .table-wrap
@@ -1060,7 +1068,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 /* Badges — sized to the design handoff's .pill (2px8px / radius6 / 11px / 700).
    inline-flex + gap so an icon/dot sits flush with the label; tabular-nums for
    numeric badges (error %, counts). Density modes below shrink these. */
-.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 6px; font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.badge { display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .b-ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
 .b-err { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
 .b-warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
@@ -1098,7 +1106,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .pager button { padding: 3px 8px; font-size: 12px; }
 
 /* Waterfall */
-#wf-outer { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; font-size: 12px; }
+#wf-outer { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font-size: 12px; }
 .wf-header { display: flex; position: sticky; top: 0; z-index: 10; background: var(--bg2); border-bottom: 2px solid var(--border); height: 42px; user-select: none; }
 .wf-col-name { flex-shrink: 0; padding: 0 10px; display: flex; align-items: center; border-right: 1px solid var(--border); font-size: 10px; font-weight: 700; color: var(--text2); text-transform: uppercase; letter-spacing: .06em; }
 .wf-col-bar { flex: 1; position: relative; overflow: hidden; }
@@ -1249,7 +1257,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   flex-shrink: 0;
   padding: 0 6px;
   margin-left: 6px;
-  border-radius: 8px;
+  border-radius: var(--radius);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--accent2);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
@@ -1445,7 +1453,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   display: flex; align-items: center; gap: 8px;
   padding: 6px 10px; cursor: pointer; user-select: none;
   border-bottom: 1px solid var(--border);
-  background: var(--bg1); border-radius: 4px;
+  background: var(--bg1); border-radius: var(--radius-xs);
   transition: background .07s;
 }
 .dash-row-header:hover { background: var(--bg2); }
@@ -1497,7 +1505,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .status-dot-degraded    { background: var(--warn); box-shadow: 0 0 6px color-mix(in srgb, var(--warn) 45%, transparent); }
 .status-dot-outage      { background: var(--err); box-shadow: 0 0 6px color-mix(in srgb, var(--err) 45%, transparent); }
 
-.status-grid { margin-top: 18px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.status-grid { margin-top: 18px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 .status-row {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px 16px; border-bottom: 1px solid var(--border);
@@ -1518,7 +1526,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   position: fixed; top: 12px; right: 12px; bottom: 12px; z-index: 40;
   width: 340px; max-width: calc(100vw - 80px);
   background: var(--bg1); border: 1px solid var(--border);
-  border-radius: 8px; overflow: auto;
+  border-radius: var(--radius); overflow: auto;
   display: flex; flex-direction: column;
   box-shadow: var(--shadow-pop);
 }
@@ -1540,7 +1548,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
    nowrap+110px fixed column. Min-width keeps short keys aligned. */
 .ps-kv td:first-child { color: var(--text2); min-width: 140px; max-width: 320px; word-break: break-word; font-family: monospace; }
 .ps-kv td:last-child { font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; word-break: normal; }
-.ps-event { margin: 3px 0; padding: 5px 8px; background: var(--bg2); border-radius: 4px; font-size: 12px; }
+.ps-event { margin: 3px 0; padding: 5px 8px; background: var(--bg2); border-radius: var(--radius-xs); font-size: 12px; }
 
 /* Trace layout */
 #td-outer { display: flex; gap: 10px; min-height: 400px; height: calc(100vh - 185px); }
@@ -1578,20 +1586,20 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 .kv-filterable:hover td { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 
 /* Metrics */
-#metric-chart-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin-top: 14px; }
+#metric-chart-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin-top: 14px; }
 canvas { max-width: 100%; }
 
 /* Service Graph */
 /* v0.8.299 — token, literal değil: redhat temasında (yalnız light override'ı
    olan) #0d1117 literal'i beyaz sayfada simsiyah canvas bırakıyordu. */
-#graph-wrap { background: var(--bg0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+#graph-wrap { background: var(--bg0); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 [data-theme="light"] #graph-wrap { background: var(--bg1); }
 #graph-svg { display: block; width: 100%; cursor: grab; user-select: none; }
 #graph-svg:active { cursor: grabbing; }
 .graph-node { cursor: pointer; }
 .graph-node rect { transition: stroke .15s, filter .15s; }
 .graph-node:hover rect { filter: brightness(1.25); }
-.graph-tooltip { position: fixed; background: var(--bg2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; font-size: 12px; pointer-events: none; z-index: 100; max-width: 240px; white-space: pre-line; font-family: monospace; }
+.graph-tooltip { position: fixed; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12px; pointer-events: none; z-index: 100; max-width: 240px; white-space: pre-line; font-family: monospace; }
 
 /* Empty state */
 .empty { text-align: center; padding: 60px 20px; color: var(--text2); }
@@ -1617,7 +1625,7 @@ canvas { max-width: 100%; }
   padding: 6px 10px; margin-bottom: 10px;
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  border-radius: 6px; font-size: 12px; color: var(--text2);
+  border-radius: var(--radius-sm); font-size: 12px; color: var(--text2);
 }
 .trace-lock code {
   background: var(--bg2); border: 1px solid var(--border);
@@ -1629,7 +1637,7 @@ canvas { max-width: 100%; }
 /* Compact log line in the span detail panel */
 .ps-log {
   padding: 5px 8px; margin: 3px 0;
-  background: var(--bg2); border-radius: 4px;
+  background: var(--bg2); border-radius: var(--radius-xs);
   border-left: 2px solid var(--border);
 }
 
@@ -1638,7 +1646,7 @@ canvas { max-width: 100%; }
   background: color-mix(in srgb, var(--err) 6%, transparent);
   border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
   border-left-width: 3px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   padding: 8px 10px;
   margin: 4px 0 8px;
   font-size: 12px;
@@ -1665,7 +1673,7 @@ canvas { max-width: 100%; }
 .ex-toggle:hover { color: var(--text); }
 .ex-stack {
   margin-top: 8px; padding: 8px 10px;
-  background: var(--bg0); border: 1px solid var(--border); border-radius: 4px;
+  background: var(--bg0); border: 1px solid var(--border); border-radius: var(--radius-xs);
   font-family: monospace; font-size: 11px; line-height: 1.45;
   color: var(--text2); white-space: pre; overflow: auto;
   max-height: 360px; max-width: 100%;
@@ -1794,7 +1802,7 @@ tbody tr.wf-evidence:hover > td { background: color-mix(in srgb, var(--warn) 14%
 .theme-toggle {
   background: transparent; border: 1px solid var(--border);
   color: var(--text2); cursor: pointer;
-  width: 28px; height: 28px; border-radius: 6px;
+  width: 28px; height: 28px; border-radius: var(--radius-sm);
   font-size: 14px; line-height: 1;
   display: inline-flex; align-items: center; justify-content: center;
   transition: background .12s, color .12s, border-color .12s;
@@ -1809,8 +1817,8 @@ tbody tr.wf-evidence:hover > td { background: color-mix(in srgb, var(--warn) 14%
 /* Density + theme toggle pill group in the topbar */
 .topbar-prefs { display: flex; align-items: center; flex-shrink: 0; }
 .topbar-prefs .theme-toggle { border-radius: 0; border-right: none; }
-.topbar-prefs .theme-toggle:first-child { border-radius: 6px 0 0 6px; }
-.topbar-prefs .theme-toggle:last-child  { border-radius: 0 6px 6px 0; border-right: 1px solid var(--border); }
+.topbar-prefs .theme-toggle:first-child { border-radius: var(--radius-sm) 0 0 var(--radius-sm); }
+.topbar-prefs .theme-toggle:last-child  { border-radius: 0 var(--radius-sm) var(--radius-sm) 0; border-right: 1px solid var(--border); }
 .topbar-prefs .theme-toggle:hover { position: relative; z-index: 1; }
 /* Vertical separator between the time-range picker and the pref group */
 .topbar-prefs-sep { width: 1px; height: 20px; background: var(--border); flex-shrink: 0; margin: 0 8px; }
@@ -1863,7 +1871,7 @@ button.accent.copied {
   display: inline-flex; align-items: center; gap: 0;
   background: var(--bg1);
   border: 1px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
   padding: 0 4px 0 8px;
   box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 18%, transparent);
 }
@@ -1885,7 +1893,7 @@ button.accent.copied {
 .trace-lookup .tl-go {
   background: var(--accent); color: var(--on-accent); border: 0;
   padding: 4px 12px; font-size: 12px; font-weight: 600;
-  border-radius: 4px; margin-left: 4px; cursor: pointer;
+  border-radius: var(--radius-xs); margin-left: 4px; cursor: pointer;
 }
 .trace-lookup .tl-go:hover { background: var(--accent2); }
 
@@ -1905,7 +1913,7 @@ button.accent.copied {
 .adv-query textarea {
   width: 100%; resize: vertical; min-height: 110px;
   background: var(--bg1); color: var(--text);
-  border: 1px solid var(--border); border-radius: 6px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 10px 12px; font-family: monospace; font-size: 12px;
   line-height: 1.55; outline: none; tab-size: 2;
 }
@@ -1916,13 +1924,13 @@ button.accent.copied {
 .fb-chips {
   display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
   padding: 6px 8px;
-  background: var(--bg1); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius-sm);
   min-height: 36px;
 }
 .fb-chip {
   display: inline-flex; align-items: center; gap: 4px;
   background: var(--bg3); border: 1px solid var(--border);
-  border-radius: 12px; padding: 2px 6px 2px 10px; font-size: 12px;
+  border-radius: var(--radius-lg); padding: 2px 6px 2px 10px; font-size: 12px;
   cursor: pointer; max-width: 480px;
 }
 .fb-chip:hover { border-color: var(--accent); }
@@ -1944,11 +1952,11 @@ button.accent.copied {
 .fb-chip-x:hover, .btn-chip-x:hover { background: var(--err); color: var(--on-accent); }
 .fb-add {
   background: transparent; border: 1px dashed var(--border); color: var(--text2);
-  padding: 3px 10px; font-size: 12px; cursor: pointer; border-radius: 12px;
+  padding: 3px 10px; font-size: 12px; cursor: pointer; border-radius: var(--radius-lg);
 }
 .fb-add:hover { border-color: var(--accent); color: var(--accent2); }
 .fb-form {
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm);
   padding: 10px; margin-top: 6px;
 }
 .fb-form-grid {
@@ -1980,7 +1988,7 @@ button.accent.copied {
   position: absolute; left: 0; top: calc(100% + 4px); z-index: 50;
   min-width: 100%; max-width: 520px;
   max-height: 280px; overflow-y: auto;
-  background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm);
   box-shadow: var(--shadow-pop);
   padding: 4px 0;
 }
@@ -2014,7 +2022,7 @@ button.accent.copied {
 .trp-zoom { padding: 5px 7px; font-size: 12px; line-height: 1; }
 .trp-panel {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
-  background: var(--bg1); border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius);
   padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 500px;
   box-shadow: var(--shadow-pop);
 }
@@ -2032,7 +2040,7 @@ button.accent.copied {
 }
 .trp-preset {
   background: transparent; color: var(--text); border: 0;
-  padding: 5px 8px; border-radius: 4px; font-size: 12px;
+  padding: 5px 8px; border-radius: var(--radius-xs); font-size: 12px;
   text-align: left; cursor: pointer;
 }
 .trp-preset:hover { background: var(--bg2); }
@@ -2054,12 +2062,12 @@ button.accent.copied {
 .trp-time { flex: 0 0 96px; width: 96px; text-align: center; }
 .trp-time.bad { border-color: var(--err); }
 /* Hand-rolled mini month calendar (no date-lib dependency). */
-.trp-calwrap { border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+.trp-calwrap { border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px; }
 .trp-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
 .trp-cal-title { font-size: 11px; font-weight: 600; color: var(--text); }
 .trp-cal-nav {
   background: transparent; border: 0; color: var(--text2); cursor: pointer;
-  font-size: 14px; line-height: 1; padding: 2px 8px; border-radius: 4px;
+  font-size: 14px; line-height: 1; padding: 2px 8px; border-radius: var(--radius-xs);
 }
 .trp-cal-nav:hover:not(:disabled) { background: var(--bg2); color: var(--text); }
 .trp-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); row-gap: 1px; }
@@ -2069,7 +2077,7 @@ button.accent.copied {
 }
 .trp-cal-day {
   background: transparent; border: 0; color: var(--text); cursor: pointer;
-  font-size: 11px; padding: 4px 0; border-radius: 4px; text-align: center;
+  font-size: 11px; padding: 4px 0; border-radius: var(--radius-xs); text-align: center;
   transition: none;
 }
 .trp-cal-day:hover:not(:disabled) { background: var(--bg2); }
@@ -2082,7 +2090,7 @@ button.accent.copied {
 .trp-recents { display: flex; flex-direction: column; gap: 2px; }
 .trp-error {
   background: color-mix(in srgb, var(--err) 8%, transparent); border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
-  color: var(--err); padding: 6px 8px; border-radius: 4px;
+  color: var(--err); padding: 6px 8px; border-radius: var(--radius-xs);
   font-size: 11px;
 }
 .trp-foot {
@@ -2117,7 +2125,7 @@ button.accent.copied {
     max-width: 100vw;
     left: 0; right: 0; bottom: 0; top: auto;
     max-height: 55vh;
-    border-radius: 8px 8px 0 0;
+    border-radius: var(--radius) var(--radius) 0 0;
   }
   .span-panel-resizer { display: none; }
 
@@ -2280,7 +2288,7 @@ button.accent.copied {
   min-width: 240px;
   max-width: 420px;
   padding: 10px 14px;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   font-size: 12px;
   cursor: pointer;
   display: flex;
@@ -2449,11 +2457,11 @@ button.accent.copied {
 .chip b { color: var(--text); font-weight: 600; }
 .prob { display: flex; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .prob:last-child { border-bottom: none; }
-.prob .ic { width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; flex: none; }
+.prob .ic { width: 30px; height: 30px; border-radius: var(--radius); display: grid; place-items: center; flex: none; }
 .prob .ti { font-weight: 600; font-size: 13px; }
 .prob .de { color: var(--text2); font-size: 12px; margin-top: 2px; }
 .prob .tm { margin-left: auto; color: var(--text3); font-size: 11px; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.ud-pill { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg0); font-size: 12.5px; font-weight: 600; text-decoration: none; color: inherit; }
+.ud-pill { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg0); font-size: 12.5px; font-weight: 600; text-decoration: none; color: inherit; }
 .ud-pill:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .ud-pill .mult { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--text3); font-weight: 500; }
 /* .volbars — compact occurrence/volume histogram (Problem detail occurrences
@@ -2479,14 +2487,14 @@ button.accent.copied {
 .ov-barcell { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; width: 100%; }
 .ov-minibar { height: 6px; border-radius: 3px; background: var(--bg2); overflow: hidden; flex: 1; max-width: 90px; }
 .ov-minibar i { display: block; height: 100%; border-radius: 3px; }
-.ov-tag { display: inline-block; padding: 1px 5px; border-radius: 4px; font-size: 9.5px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg2); color: var(--text2); margin-right: 7px; vertical-align: middle; }
+.ov-tag { display: inline-block; padding: 1px 5px; border-radius: var(--radius-xs); font-size: 9.5px; font-weight: 700; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg2); color: var(--text2); margin-right: 7px; vertical-align: middle; }
 .ov-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
 .ov-dot.green { background: var(--ok); }
 .ov-dot.amber { background: var(--warn); }
 .ov-dot.red { background: var(--err); }
 
 /* Aggregate topology — tiered pill-card node-link graph (prototype .topo-*) */
-.topo { position: relative; width: 100%; background: var(--bg2); border-radius: 8px; overflow: hidden; }
+.topo { position: relative; width: 100%; background: var(--bg2); border-radius: var(--radius); overflow: hidden; }
 /* v0.8.296 — zoom/pan: svg + chip + pill katmanlarını tek transform sarmalar */
 .topo-viewport { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
 .topo.pannable { cursor: grab; }
@@ -2522,7 +2530,7 @@ button.accent.copied {
 /* v0.8.281 — kenar RED chip'i (hacim/dk · p99 · err%). Pill'lerin altında
    kalsın diye z-index aynı (DOM sırası: chip'ler node'lardan önce);
    pointer-events yok — hover/hit-test kenarın kendisinde kalır. */
-.topo-chip { position: absolute; transform: translate(-50%, -50%); z-index: 2; pointer-events: none; font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 7px; border-radius: 6px; background: var(--bg1); border: 1px solid var(--border); color: var(--text2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.topo-chip { position: absolute; transform: translate(-50%, -50%); z-index: 2; pointer-events: none; font: 600 10px ui-monospace, SFMono-Regular, Menlo, monospace; padding: 2px 7px; border-radius: var(--radius-sm); background: var(--bg1); border: 1px solid var(--border); color: var(--text2); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .topo-chip.hot { border-color: var(--accent); color: var(--text); }
 .topo-chip .chip-err { color: var(--err); }
 
@@ -2533,18 +2541,18 @@ button.accent.copied {
 .mqe-topn { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--text2); }
 .mqe-topn select { font-size: 12px; }
 .mqe-rows { display: flex; flex-direction: column; gap: 8px; }
-.mqe-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg1); }
+.mqe-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg1); }
 .mqe-row.off { opacity: .55; }
-.mqe-id { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--text2); cursor: pointer; }
+.mqe-id { display: inline-flex; align-items: center; gap: 4px; padding: 3px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg2); color: var(--text2); cursor: pointer; }
 .mqe-id-letter { font-weight: 700; font-size: 12px; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .mqe-eye { font-size: 11px; color: var(--text3); }
 .mqe-picker { position: relative; }
-.mqe-pickbtn { display: inline-flex; align-items: center; gap: 8px; min-width: 190px; max-width: 280px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg2); color: var(--text); cursor: pointer; font-size: 12.5px; }
+.mqe-pickbtn { display: inline-flex; align-items: center; gap: 8px; min-width: 190px; max-width: 280px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg2); color: var(--text); cursor: pointer; font-size: 12.5px; }
 .mqe-pickbtn:hover { border-color: var(--border-strong); }
 .mqe-pickname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
-.mqe-unit { font-size: 10px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg3); padding: 1px 5px; border-radius: 4px; }
+.mqe-unit { font-size: 10px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg3); padding: 1px 5px; border-radius: var(--radius-xs); }
 .mqe-caret { color: var(--text3); font-size: 10px; }
-.mqe-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; width: 320px; max-width: 92vw; background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-pop); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.mqe-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; width: 320px; max-width: 92vw; background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-pop); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .mqe-search { width: 100%; }
 .mqe-facets { display: flex; gap: 4px; flex-wrap: wrap; }
 .mqe-facet { padding: 3px 8px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg2); color: var(--text2); font-size: 10.5px; font-weight: 600; cursor: pointer; }
@@ -2578,7 +2586,7 @@ button.accent.copied {
 .mqe-addfilter:disabled { opacity: .5; cursor: not-allowed; }
 .mqe-groupby { display: inline-flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .mqe-lbl { font-size: 11px; color: var(--text3); }
-.mqe-gchip { padding: 2px 7px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg2); color: var(--text2); font-size: 10.5px; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.mqe-gchip { padding: 2px 7px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--bg2); color: var(--text2); font-size: 10.5px; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .mqe-gchip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 /* `.row-actions` (v0.9.902, MB8) — was `.mqe-rowact`, renamed because it
    is not a metric-editor thing: the two sibling query editors (Explore's
@@ -2590,15 +2598,15 @@ button.accent.copied {
    glyph-only buttons with accessible names, which is exactly IconButton's
    anatomy. Only the container survives here. */
 .row-actions { display: inline-flex; gap: 2px; margin-left: auto; }
-.mqe-addq { align-self: flex-start; padding: 6px 12px; border: 1px dashed var(--border-strong); border-radius: 6px; background: transparent; color: var(--text2); font-size: 12px; cursor: pointer; }
+.mqe-addq { align-self: flex-start; padding: 6px 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text2); font-size: 12px; cursor: pointer; }
 .mqe-addq:hover { color: var(--accent); border-color: var(--accent); }
 .mqe-code { display: flex; flex-direction: column; gap: 4px; }
-.mqe-code textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.6; padding: 10px 12px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg1); color: var(--text); resize: vertical; }
+.mqe-code textarea { width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; line-height: 1.6; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg1); color: var(--text); resize: vertical; }
 .mqe-code-foot { font-size: 11px; }
 .mqe-code-err { color: var(--err); font-size: 11.5px; }
 /* v0.9.782 — PromQL etiket gezgini: katlanabilir anahtar/değer sütunları.
    Chip'ler .mqe-gchip'i paylaşır (group-by chip'iyle tek dil). */
-.mqe-lb { border: 1px solid var(--border); border-radius: 8px; background: var(--bg1); }
+.mqe-lb { border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg1); }
 .mqe-lb-toggle { all: unset; box-sizing: border-box; display: flex; align-items: center; gap: 6px; width: 100%; padding: 6px 10px; cursor: pointer; font-size: 11.5px; color: var(--text2); }
 .mqe-lb-toggle:hover { color: var(--text); }
 .mqe-lb-metric { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 320px; }
@@ -2638,7 +2646,7 @@ button.accent.copied {
 .ov-logbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .ov-facet {
   display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
-  padding: 4px 9px; border-radius: 6px; font-size: 12px; color: var(--text2);
+  padding: 4px 9px; border-radius: var(--radius-sm); font-size: 12px; color: var(--text2);
   border: 1px solid var(--border); background: var(--bg1); user-select: none;
 }
 .ov-facet:hover { border-color: var(--border-strong); color: var(--text); }
@@ -2691,7 +2699,7 @@ button.accent.copied {
    kullanıyor, yani ikisi de bu düzeltmeden yararlanıyor. */
 .ov-tt {
   position: absolute; pointer-events: none; background: var(--bg1);
-  border: 1px solid var(--border-strong); border-radius: 8px; box-shadow: var(--shadow-pop);
+  border: 1px solid var(--border-strong); border-radius: var(--radius); box-shadow: var(--shadow-pop);
   padding: 8px 10px; font-size: 11.5px; z-index: 30; min-width: 130px;
 }
 .ov-tt .ov-tt-t { color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; margin-bottom: 5px; }
@@ -2702,7 +2710,7 @@ button.accent.copied {
 /* VirtualTable (v0.8.6 Phase 0) — windowed <table> scroller. The header is a
    real <thead> rendered by DataTableHead; pin it while the body scrolls. The
    scroll container owns the height, so the header sticks to its top edge. */
-.vt-scroll { border: 1px solid var(--border); border-radius: 8px; }
+.vt-scroll { border: 1px solid var(--border); border-radius: var(--radius); }
 .vt-scroll > table { border-collapse: collapse; }
 .vt-scroll thead { position: sticky; top: 0; z-index: 2; }
 .vt-scroll thead th { background: var(--bg2); }
@@ -2715,14 +2723,14 @@ button.accent.copied {
   flex: 0 0 188px; position: sticky; top: 12px;
   display: flex; flex-direction: column; gap: 2px;
   padding: 8px; background: var(--bg1);
-  border: 1px solid var(--border); border-radius: 8px;
+  border: 1px solid var(--border); border-radius: var(--radius);
 }
 .sys-subnav-title {
   font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text3); padding: 4px 8px 8px;
 }
 .sys-subnav-item {
-  display: block; padding: 7px 10px; border-radius: 6px;
+  display: block; padding: 7px 10px; border-radius: var(--radius-sm);
   font-size: 13px; color: var(--text2); text-decoration: none;
   border-left: 2px solid transparent;
 }

@@ -334,7 +334,7 @@ export default function MetricsPage() {
                               if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
                               navigate(metricHref(m));
                             }}
-                            style={{ cursor: 'pointer' }}
+                            style={{ cursor: 'pointer', ...(dt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 33px' } : null) }}
                             title={`Open ${m.name} in Explore`}>
                             <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                               {/* Gerçek <a>: ⌘-tık yeni sekme, sağ-tık menüsü,

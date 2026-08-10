@@ -271,7 +271,8 @@ function TraceContextCard() {
                 <DataTableHead dt={dt} />
                 <tbody>
                   {dt.sortedRows.map(r => (
-                    <tr key={r.service}>
+                    <tr key={r.service}
+                      style={dt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 33px' } : undefined}>
                       <td className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.service}>{r.service}</td>
                       <td className="num">{fmtNum(r.total)}</td>
                       <td className="num">{fmtNum(r.withTrace)}</td>

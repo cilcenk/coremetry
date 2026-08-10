@@ -798,7 +798,7 @@ export default function ClustersPage() {
                               className={r.deployment === depFilter ? 'row-selected' : undefined}
                               onClick={() => setSection('pods', p => p.set('deployment', r.deployment))}
                               title="Open the pod list filtered to this workload"
-                              style={{ cursor: 'pointer' }}>
+                              style={{ cursor: 'pointer', ...(depdt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 33px' } : null) }}>
                               <td className="mono" style={{ fontSize: 12 }}>{r.deployment}</td>
                               {/* v0.9.39 — ready/desired rozeti + statü; KSM
                                   yoksa '—'. v0.9.42: surge'de (ready>desired,
@@ -850,7 +850,7 @@ export default function ClustersPage() {
                                 title={selected
                                   ? 'Clear the namespace selection'
                                   : 'Show workloads in this namespace'}
-                                style={{ cursor: 'pointer' }}>
+                                style={{ cursor: 'pointer', ...(nsdt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 33px' } : null) }}>
                                 <td className="mono" style={{ fontSize: 12 }}>{r.namespace}</td>
                                 <td className="num mono">{r.pods ? fmtNum(r.pods) : '—'}</td>
                                 <td className="num mono">{fmtCores(r.cpuCores)}</td>

@@ -171,7 +171,8 @@ export default function UsersPage() {
                   const isMe = me?.id === u.id;
                   const isOIDC = u.authProvider === 'oidc';
                   return (
-                    <tr key={u.id}>
+                    <tr key={u.id}
+                      style={users.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 44px' } : undefined}>
                       <td>
                         {/* v0.8.238 — LDAP photo avatar; initials chip
                             fallback keeps rows aligned. */}

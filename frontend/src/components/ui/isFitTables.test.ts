@@ -224,3 +224,26 @@ describe('sürüklenmiş genişlikten çıkış', () => {
     expect(dt).toContain('resetLayout = useCallback(() => setColWidths({})');
   });
 });
+
+// ── mT5 (v0.9.912) — `<td>` hücre kalmalı ──────────────────────────────
+// `display:flex` bir `<td>`ye yazıldığında hücre `table-cell` olmaktan
+// ÇIKAR. Bozulan şey GÖRÜNTÜ değil ÖLÇÜ: genişlik kolon algoritmasına
+// katılmaz (kolon yeniden boyutlandırma o hücrede tutmaz),
+// `vertical-align` uygulanmaz, satır yüksekliği komşularıyla hizasını
+// kaybeder. Tablo "çalışıyor gibi" görünür — bu yüzden hiçbir kapı
+// yakalamıyordu ve bu yüzden tam olarak bu ailenin kapısı gerekiyor.
+//
+// Doğru biçim: `<td><div className="cell-actions">…</div></td>`.
+describe('mT5 — td hücre semantiği', () => {
+  it('hiçbir <td> satır-içi display:flex/grid taşımıyor', () => {
+    const bad: string[] = [];
+    for (const file of walk(SRC)) {
+      readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+        if (/<td[^>]*display:\s*['"](flex|grid|inline-flex)/.test(line)) {
+          bad.push(`${file.slice(SRC.length + 1)}:${i + 1} ${line.trim().slice(0, 90)}`);
+        }
+      });
+    }
+    expect(bad).toEqual([]);
+  });
+});

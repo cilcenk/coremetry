@@ -117,7 +117,7 @@ export function DevOpsTab() {
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Şirket içi Azure DevOps Server / TFS koleksiyonuna okuma bağlantısı.
         Yapılandırıldığında CoSRE, exception ve trace açıklamalarında
-        stack trace’teki uygulama satırlarının <strong style={{ color: 'var(--text1)' }}>
+        stack trace’teki uygulama satırlarının <strong style={{ color: 'var(--text)' }}>
         kaynak kodunu</strong> da okuyabilir (AI çekmecesindeki
         “Kodu da incele” kutusu). Kod yalnız modele gider; AI çağrı
         kaydına kod gövdesi değil, yalnız <code>dosya:aralık</code> özeti yazılır.

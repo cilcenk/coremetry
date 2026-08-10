@@ -270,7 +270,7 @@ export function CopilotChat() {
                     /api/auth/me'den, durum açık P1'lerden. Durum satırı
                     yüklenirken BOŞ döner: "P1 yok" yanlış iddiası
                     operatörü yanıltırdı (greeting.ts). */}
-                <div style={{ marginBottom: 4, color: 'var(--text1)', fontSize: 13, fontWeight: 600 }}>
+                <div style={{ marginBottom: 4, color: 'var(--text)', fontSize: 13, fontWeight: 600 }}>
                   {greetHello(user?.firstName)}
                 </div>
                 {greetStatus(p1s) && (

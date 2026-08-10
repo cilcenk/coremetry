@@ -257,9 +257,15 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
             title="Back to the service picker" style={{ marginLeft: 2 }}>✕</Button>
         </span>
         <>
-            <div className="seg">
-              <button className={hops === 1 ? 'on' : ''} onClick={() => onHops(1)}>1 hop</button>
-              <button className={hops === 2 ? 'on' : ''} onClick={() => onHops(2)}>2 hops</button>
+            {/* v0.9.868 (tutarlılık denetimi BB1) — `.seg` ve `.on` HİÇBİR
+                CSS'te tanımlı değildi. Sonuç: iki buton element-seviyesi
+                global `button` kuralına düşüyor (dolu mavi primary) ve AKTİF
+                HOP SEÇİMİ GÖRSEL OLARAK AYIRT EDİLEMİYORDU — topolojide "kaç
+                hop bakıyorum" sorusunun tek cevabı bu çift. Ev deseni
+                `.segmented` + `.active` (globals.css:510-537). */}
+            <div className="segmented">
+              <button className={hops === 1 ? 'active' : ''} onClick={() => onHops(1)}>1 hop</button>
+              <button className={hops === 2 ? 'active' : ''} onClick={() => onHops(2)}>2 hops</button>
             </div>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text2)', cursor: 'pointer' }}>
               <input type="checkbox" checked={errorsOnly} onChange={e => onErrorsOnly(e.target.checked)} /> Errors only

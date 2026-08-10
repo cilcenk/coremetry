@@ -28,10 +28,10 @@ export function Card({
     <div className={cls} {...rest}>
       {header && (
         <div style={{
-          marginBottom: 10,
-          paddingBottom: 8,
+          marginBottom: 'var(--sp-5)',
+          paddingBottom: 'var(--sp-4)',
           borderBottom: '1px solid var(--border)',
-          fontSize: 13, fontWeight: 600,
+          fontSize: 'var(--fs-md)', fontWeight: 600,
         }}>
           {header}
         </div>
@@ -39,10 +39,10 @@ export function Card({
       {children}
       {footer && (
         <div style={{
-          marginTop: 10,
-          paddingTop: 8,
+          marginTop: 'var(--sp-5)',
+          paddingTop: 'var(--sp-4)',
           borderTop: '1px solid var(--border)',
-          fontSize: 11, color: 'var(--text3)',
+          fontSize: 'var(--fs-xs)', color: 'var(--text3)',
         }}>
           {footer}
         </div>

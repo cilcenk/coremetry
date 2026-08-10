@@ -89,6 +89,42 @@
   --radius:    8px;
   --radius-lg: 12px;
 
+  /* ── mK4 / mK5 (v0.9.909) — geometri merdivenleri ────────────────────────
+     Renk token seti üç temada eksiksizdi, GEOMETRİ katmanı ise yoktu:
+     globals.css'te 96 farklı padding, 19 farklı gap, 21 farklı font boyu
+     serbestçe yazılmıştı. Sonuç: her yeni yüzey göz kararı bir değer
+     seçiyor ve "yakın ama aynı olmayan" boyutlar birikiyor.
+
+     Merdivenler ÖLÇÜLEN dağılımdan türetildi, masabaşı değil — kullanım
+     sayıları yorumda: uydurulmuş bir ölçek deponun gerçek ritmine
+     oturmaz ve ilk çağrı yerinde terk edilir.
+
+     KAPSAM (operatör kararı): tanım + `components/ui/` içi kullanım.
+     Sayfa süpürmesi bilinçli olarak plan DIŞI — 96 padding değerini tek
+     dalgada normalize etmek görsel bir yeniden tasarım olurdu, mekanik
+     bir tutarlılık işi değil. Merdiven şimdilik atomların ölçeği; sayfa
+     tarafı ayrı bir karar. */
+  --sp-1: 2px;   /*  7× */
+  --sp-2: 4px;   /* 18× */
+  --sp-3: 6px;   /* 23× */
+  --sp-4: 8px;   /* 26× — modal ritim birimi */
+  --sp-5: 10px;  /* 17× */
+  --sp-6: 12px;  /* 11× */
+  --sp-7: 16px;  /*  5× */
+  --sp-8: 24px;  /*  1× — bölüm arası */
+
+  --fs-3xs: 9px;   /*  9× */
+  --fs-2xs: 10px;  /* 28× — mikro etiket, uppercase başlık */
+  --fs-xs:  11px;  /* 46× */
+  --fs-sm:  12px;  /* 50× — gövde varsayılanı */
+  --fs-md:  13px;  /* 20× — kontrol/buton metni */
+  --fs-lg:  14px;  /*  8× */
+  --fs-xl:  18px;  /*  3× — sayfa başlığı */
+  /* Merdiven DIŞI kalanlar bilinçli: 9.5/10.5/11.5/12.5px yarım pikselleri
+     (42 kullanım, yoğunluk sisteminin ince ayarı) ve 15/16/22px teklikleri.
+     Bunları en yakın rung'a yuvarlamak görünür bir tipografi değişikliği
+     olurdu; merdiven onları YUTMUYOR, yanlarında duruyor. */
+
   color-scheme: dark;
 }
 

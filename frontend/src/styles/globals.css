@@ -1011,6 +1011,16 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
    :focus-within satırın içindeki butona Tab'la ulaşıldığında da
    gösteriyor — fare kullanmayan operatör için tek erişim yolu. */
 .fsel-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* `.sb-user-trigger` (v0.9.923) — sidebar kullanıcı menüsünün tetiği.
+   `background` HER kuralda açıkça bildiriliyor: element seviyesindeki
+   `button:hover:not(:disabled) { background: var(--accent2) }` (0,2,1)
+   bir :hover kuralı ve bu sınıfın (0,1,0) taban bildirimi onu YENEMEZ —
+   modifier :hover'ı background yazmazsa tetik dolu mavi olur.
+   v0.9.895'te ib-bare'in 12 sitesi tam böyle kırılmıştı. */
+.sb-user-trigger { background: transparent; border: 0; color: inherit; cursor: pointer; font: inherit; border-radius: 0; }
+.sb-user-trigger:hover:not(:disabled) { background: var(--bg2); }
+.sb-user-trigger:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .fsel-sep { border-top: 1px solid var(--border); margin: 5px 0; }
 .fsel-all { display: block; width: 100%; text-align: left; font-size: 11.5px;
   color: var(--accent2); background: none; border: none; cursor: pointer;

@@ -378,12 +378,32 @@ export function Sidebar() {
         {user && (
           <div ref={menuRef} id="user-menu" style={{
             position: 'relative',
-            padding: showLabels ? '8px 14px' : '8px 0',
             borderTop: '1px solid var(--border)',
-            display: 'flex', alignItems: 'center',
-            justifyContent: showLabels ? 'flex-start' : 'center',
-            gap: 8, cursor: 'pointer',
-          }} onClick={() => setMenuOpen(o => !o)}>
+          }}>
+            {/* v0.9.923 (Zincir E) — tetik artık gerçek bir <button>.
+                Önce `<div onClick>`ti: role/tabIndex yok, yani kullanıcı
+                menüsü — çıkış yolunun da bulunduğu tek yer — klavyeyle
+                AÇILAMIYORDU. Fare olmadan oturum kapatılamıyordu.
+
+                Menü tetiğin İÇİNE konamaz (buton içinde buton geçersiz),
+                bu yüzden konumlandırma kabı dış <div>de kaldı ve tetik
+                onun ilk çocuğu oldu.
+
+                `.sb-user-trigger`in :hover kuralı `background` BİLDİRMEK
+                ZORUNDA: element seviyesindeki
+                `button:hover:not(:disabled) { background: var(--accent2) }`
+                (özgüllük 0,2,1) aksi hâlde kazanır ve tetik üstüne
+                gelindiğinde DOLU MAVİ olur — v0.9.895'in birebir aynısı. */}
+            <button type="button" className="sb-user-trigger"
+              aria-haspopup="menu" aria-expanded={menuOpen}
+              aria-label={user.fullName || user.email}
+              onClick={() => setMenuOpen(o => !o)}
+              style={{
+                padding: showLabels ? '8px 14px' : '8px 0',
+                display: 'flex', alignItems: 'center', width: '100%',
+                justifyContent: showLabels ? 'flex-start' : 'center',
+                gap: 'var(--sp-4)', textAlign: 'left',
+              }}>
             {/* v0.8.238 — LDAP directory photo when stored; initials
                 fallback otherwise (and on a broken image byte-stream). */}
             {user.hasPhoto ? (
@@ -424,9 +444,10 @@ export function Sidebar() {
                     {user.role}{user.org ? ` · ${user.org}` : ''}
                   </div>
                 </div>
-                <span style={{ color: 'var(--text3)', fontSize: 10 }}>{menuOpen ? '▾' : '▸'}</span>
+                <span style={{ color: 'var(--text3)', fontSize: 10 }} aria-hidden="true">{menuOpen ? '▾' : '▸'}</span>
               </>
             )}
+            </button>
 
             {menuOpen && (
               <div onClick={e => e.stopPropagation()} style={{

@@ -114,6 +114,11 @@ function PodDetail() {
     () => resolvePodCluster(searchClusters, podsQs.map(q => q.data?.pods), pod, nsParam, clusterParam),
     [searchClusters, podsQs, pod, nsParam, clusterParam],
   );
+  // v0.9.959 (UX denetimi G8/Ö22) — pod ARAMASI kesik listede yapıldıysa
+  // "bulunamadı" bir KANIT değil: sunucu topk(500) ile en işlek pod'ları
+  // döndürür ve sakin bir pod tam olarak o kuyruğun dışında kalır.
+  // Bu sayfa `truncated`ı hiç okumuyordu ve sessizce "eşlenmedi" diyordu.
+  const searchTruncated = podsQs.some(q => q.data?.truncated);
 
   // Per-pod RED — Overview.tsx'in iki batch'ini birebir aynala + host.name.
   const podScope = `service.name = "${service.replace(/"/g, '\\"')}" AND host.name = "${pod.replace(/"/g, '\\"')}"`;
@@ -282,7 +287,17 @@ function PodDetail() {
             </div>
           </>
         ) : (
-          <Empty icon="—" title="Bu pod bir Coremetry servisine eşlenmedi — RED metrikleri yok (infra + JVM aşağıda)." />
+          <Empty icon="—" title="Bu pod bir Coremetry servisine eşlenmedi — RED metrikleri yok (infra + JVM aşağıda).">
+            {/* v0.9.959 (G8/Ö22) — "eşlenmedi" ile "kesik listede
+                bulunamadı" aynı ekran olamaz. İkincisi bir eksiklik
+                beyanıdır, bir sonuç değil. */}
+            {searchTruncated && !row && (
+              <div style={{ marginTop: 6 }}>
+                ⚠ Pod listesi sunucuda kesildi (topk 500) — bu pod kesilen
+                kuyrukta kalmış olabilir; &laquo;eşlenmedi&raquo; kesin değil.
+              </div>
+            )}
+          </Empty>
         )}
 
         {/* Infra — tek-pod CPU/Mem trend (drawer'dan taşındı). cluster

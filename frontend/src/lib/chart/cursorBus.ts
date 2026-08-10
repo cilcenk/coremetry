@@ -8,6 +8,19 @@ import { useSyncExternalStore } from 'react';
 // own cursor.sync mirrors the crosshair across charts — so the 60fps
 // mousemove path stays out of React entirely (plan perf guard).
 //
+// v0.9.948 (UX denetimi D5 / Ö26) — pages/explore/ altından lib/chart/'a
+// TAŞINDI. Kanalın Explore'a özgü hiçbir yanı yoktu ve ikinci tüketici
+// Explore dışında doğdu: LatencyHeatmap. Heatmap bir CANVAS, yani
+// uPlot.sync'e KATILAMAZ — uPlot yalnız kendi örneklerini senkronlar.
+// Bileşenin kendi yorumu ("Same time axis as the metric line chart")
+// paylaşılan bir zaman ekseni VAAT EDİYORDU ama imleç izi hiç çıkmıyordu;
+// bu otobüs o vaadin tek uygulanabilir taşıyıcısı.
+//
+// TEK KANAL (grup anahtarı YOK) bilinçli: bir sayfada tek zaman ekseni
+// var. Grup anahtarı eklemek, uPlot.sync'in `-ms` ad alanı sorununu
+// (v0.9.945) ikinci bir yerde yeniden üretmek olurdu — bu otobüs
+// SANİYE taşıyor, ölçek belirsizliği yok.
+//
 // Publishes are rAF-throttled: writes between frames collapse to the last
 // value, and subscribers are only notified when the flushed value actually
 // changed. uPlot sync means N panels publish the SAME time per frame — the

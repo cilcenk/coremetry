@@ -2,7 +2,7 @@ import { memo, lazy, Suspense } from 'react';
 import { type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
-import { publishCursor } from './cursorBus';
+import { publishCursor } from '@/lib/chart/cursorBus';
 import type { PanelData } from './PanelStack';
 import type { ChartTimeRegion, ChartThreshold } from '@/lib/chart/overlays';
 

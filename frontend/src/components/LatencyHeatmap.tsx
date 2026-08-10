@@ -2,6 +2,11 @@ import { useEffect, useRef, useState } from 'react';
 import type { LatencyHeatmap as Heatmap } from '@/lib/types';
 import { fmtSmart } from '@/lib/chartFmt';
 import { fmtClock } from '@/lib/utils';
+// v0.9.948 (UX denetimi D5 / Ö26) — paylaşılan crosshair kanalı.
+// Heatmap bir CANVAS: uPlot.sync'e KATILAMAZ (uPlot yalnız kendi
+// örneklerini senkronlar), o yüzden imleç izi bu otobüsten geliyor.
+import { useCursorTime } from '@/lib/chart/cursorBus';
+import { heatmapCursorCol, heatmapCursorX } from '@/lib/chart/heatmapCursor';
 
 // LatencyHeatmap — Honeycomb-style 2D density visualisation.
 // X = time (left → right), Y = log-scale latency
@@ -110,6 +115,16 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
   onBoxSelect?: (box: { timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number }) => void;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  // v0.9.948 (D5/Ö26) — KARDEŞ GRAFİKLERİN imleç zamanı (unix sn; null =
+  // imleç yok). Bileşenin dosya başı yorumu ("Same time axis as the metric
+  // line chart so an operator can flip between the two views and read the
+  // same window") paylaşılan bir zaman ekseni VAAT EDİYORDU, ama RED
+  // grafiklerinde gezerken burada hiçbir iz çıkmıyordu.
+  //
+  // Kanal rAF-kısıtlı, yani bu bileşen kare başına EN FAZLA bir kez
+  // yeniden render olur; çizim de canvas'ı YENİDEN BOYAMAZ — iz, mutlak
+  // konumlu 1px'lik bir div. 60fps yolu canvas'a hiç dokunmuyor.
+  const sharedCursorSec = useCursorTime();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [hover, setHover] = useState<{
     x: number; y: number;
@@ -293,6 +308,18 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
     return { col, row };
   };
 
+  // v0.9.948 (D5/Ö26) — paylaşılan imleç zamanının piksel karşılığı.
+  // Sütuna ÇEVİRİP merkeze koyuyoruz (heatmapCursor.ts): ham zamanı
+  // doğrudan piksele çevirmek izi kovanın kenarına düşürür ve operatör bir
+  // kova yandaki hücreyi okuduğunu sanır. Pencere dışında null — kardeş
+  // grafik daha geniş bir aralık çiziyorsa izi kenara YAPIŞTIRMAK yanlış
+  // bir anı işaretlemek olurdu.
+  const cursorX = (w: number, cursorSec: number): number | null => {
+    const col = heatmapCursorCol(data.times, cursorSec);
+    if (col == null) return null;
+    return heatmapCursorX(col, PAD_L, gridDims(w).cellW);
+  };
+
   // mousedown starts a box gesture (only when a box-select consumer is wired).
   const onMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
     if (!onBoxSelect || e.button !== 0) return;
@@ -465,6 +492,22 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
             background: 'rgba(63,140,253,0.15)',
             border: '1px solid var(--accent, #3f8cfd)',
             borderRadius: 2,
+          }} />
+        );
+      })()}
+      {/* v0.9.948 (D5/Ö26) — paylaşılan crosshair izi. Kardeş bir uPlot
+          paneli üzerinde gezinirken bu heatmap'te de aynı AN işaretlenir.
+          Kendi hover'ımız varsa çizilmez: iki dikey çizgi (biri fareyi
+          takip eden, biri uzaktan gelen) aynı anda yanıltıcı olurdu. */}
+      {sharedCursorSec != null && hover == null && (() => {
+        const w = containerRef.current?.clientWidth ?? 0;
+        const x = cursorX(w, sharedCursorSec);
+        if (x == null) return null;
+        return (
+          <div style={{
+            position: 'absolute', pointerEvents: 'none', zIndex: 2,
+            left: x, top: PAD_T, width: 1, height: Math.max(0, height - PAD_T - PAD_B),
+            background: 'var(--text3)', opacity: 0.75,
           }} />
         );
       })()}

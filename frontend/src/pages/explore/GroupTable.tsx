@@ -7,7 +7,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import { fmtSmart, seriesColor } from '@/lib/chartFmt';
 import { seriesStats, isAdditiveUnit } from '@/lib/chart/legendStats';
 import { fmtNum } from '@/lib/utils';
-import { useCursorTime, valueAtCursor } from './cursorBus';
+import { useCursorTime, valueAtCursor } from '@/lib/chart/cursorBus';
 import type { PanelData, PivotAffordance } from './PanelStack';
 import type { PivotMode } from './pivotQuery';
 import type { SourceTarget } from './sourceHref';

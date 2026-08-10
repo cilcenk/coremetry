@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { encodeFilters } from '@/lib/urlState';
 import { panelMaxDataPoints, stepForWidth } from '@/lib/chartStep';
 import { LazyMount } from '@/components/LazyMount';
+import { publishCursor } from '@/lib/chart/cursorBus';
 import { Spinner } from '@/components/Spinner';
 import { metricCatalogueHref } from '@/pages/explore/urlCodec';
 import { buildDetailsMetricPanels, type DetailsPanelSpec } from './detailsMetricPanels';
@@ -166,6 +167,12 @@ export function DetailsMetricsSection({ service, rangeNs, onZoom, onZoomReset }:
                   metricCatalogueHref(panel.metrics[0].name, { service, agg: panel.agg }))}
                 onZoom={onZoom}
                 onZoomReset={onZoomReset}
+                // v0.9.948 (D5/Ö26) — imleç zamanını paylaşılan kanala
+                // yayınlar. Bu sekmenin ALTINDA duran LatencyHeatmap bir
+                // CANVAS, yani uPlot.sync'e katılamaz; "aynı zaman ekseni"
+                // vaadinin tek taşıyıcısı bu otobüs. Yayın rAF-kısıtlı,
+                // 60fps mousemove yolu React'a girmez.
+                onCursorTime={publishCursor}
                 // v0.9.789 — '-ms' grubu. '-ms' bir MOTOR AD ALANIDIR:
                 // CorePanel x'i milisaniye, saniye-eksenli motorlar
                 // (ChartCard / TimeChart / OverviewChart) saniye tutar ve

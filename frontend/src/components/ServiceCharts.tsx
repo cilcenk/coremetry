@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MultiLineChart, type DeployMarker } from './MultiLineChart';
+import { publishCursor } from '@/lib/chart/cursorBus';
 import { MetricPanel } from './MetricPanel';
 import { OperationPicker } from './OperationPicker';
 import { Spinner } from './Spinner';
@@ -569,6 +570,11 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               deploys={deployMarkers}
                               regions={problemRegions}
                               syncKey={syncKey}
+                              // v0.9.948 (D5/Ö26) — imleç zamanı paylaşılan
+                              // kanala. Aynı sekmedeki LatencyHeatmap bir
+                              // CANVAS ve uPlot.sync'e katılamaz; "aynı
+                              // zaman ekseni" vaadinin tek taşıyıcısı bu.
+                              onCursorTime={publishCursor}
                               compareSeries={rpsPrev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
                               onZoom={onZoom}
@@ -585,6 +591,11 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               thresholds={errorThresholds}
                               regions={problemRegions}
                               syncKey={syncKey}
+                              // v0.9.948 (D5/Ö26) — imleç zamanı paylaşılan
+                              // kanala. Aynı sekmedeki LatencyHeatmap bir
+                              // CANVAS ve uPlot.sync'e katılamaz; "aynı
+                              // zaman ekseni" vaadinin tek taşıyıcısı bu.
+                              onCursorTime={publishCursor}
                               compareSeries={errPrev ?? undefined}
                               compareOffsetNs={compareOffsetNs}
                               onZoom={onZoom}
@@ -607,6 +618,11 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
                               thresholds={latencyThresholds}
                               regions={problemRegions}
                               syncKey={syncKey}
+                              // v0.9.948 (D5/Ö26) — imleç zamanı paylaşılan
+                              // kanala. Aynı sekmedeki LatencyHeatmap bir
+                              // CANVAS ve uPlot.sync'e katılamaz; "aynı
+                              // zaman ekseni" vaadinin tek taşıyıcısı bu.
+                              onCursorTime={publishCursor}
                               legendStorageKey={opScope ? 'svc-duration-band' : undefined}
                               defaultHidden={opScope
                                 ? defaultLatencyHidden(['avg', 'p50', 'p90', 'p95', 'p99'],

@@ -247,3 +247,25 @@ describe('mT5 — td hücre semantiği', () => {
     expect(bad).toEqual([]);
   });
 });
+
+// ── MT2 (v0.9.913) — content-visibility süpürülmüş yüzeylerde KALMALI ──
+// Statik bir tarama "bu tablo 100 satırı aşar mı" sorusunu CEVAPLAYAMAZ
+// (satır sayısı çalışma anında belli olur), o yüzden kapı genel bir
+// kural değil DONMUŞ liste: v0.9.913'te CV verilen 8 yüzey. Buradan bir
+// girdi kaybolursa ya CV silinmiştir (regresyon) ya da tablo yeniden
+// yazılmıştır (girdiyi güncelle). İkisi de gözden geçirilmeli.
+describe('MT2 — content-visibility donmuş liste', () => {
+  const CV_SURFACES = [
+    'pages/Metrics.tsx', 'pages/Profiling.tsx', 'pages/AdminElastic.tsx',
+    'pages/settings/ZoomChannelPicker.tsx', 'pages/Users.tsx',
+    'components/DBQueriesPanel.tsx', 'pages/Clusters.tsx',
+  ];
+  it.each(CV_SURFACES)('%s satır CV\'sini koruyor', file => {
+    const src = readFileSync(join(SRC, file), 'utf8');
+    expect(src.includes("contentVisibility: 'auto'"), `${file} CV kaybetti`).toBe(true);
+    // Kör kopyalanmış `containIntrinsicSize` R5'in uyarısı: değişken
+    // satır yüksekliğinde SABİT bir yükseklik kaydırma çubuğunu zıplatır.
+    // `auto <N>px` biçimi tarayıcıya "gerçek ölçüyü hatırla" der.
+    expect(/containIntrinsicSize: '(auto )?\d+px'/.test(src), `${file} containIntrinsicSize yok`).toBe(true);
+  });
+});

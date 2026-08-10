@@ -169,7 +169,8 @@ export default function ProfilingPage() {
                   <DataTableHead dt={profileDt} />
                   <tbody>
                     {profileDt.sortedRows.map(p => (
-                      <tr key={p.profileId} onClick={() => navigate(`/profile?id=${p.profileId}`)}>
+                      <tr key={p.profileId} onClick={() => navigate(`/profile?id=${p.profileId}`)}
+                        style={profileDt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' } : undefined}>
                         <td className="mono">{tsShort(p.startTime)}</td>
                         <td>
                           <span style={{ fontSize: 11, padding: '1px 6px', background: 'var(--bg3)', borderRadius: 3, fontFamily: 'monospace' }}>

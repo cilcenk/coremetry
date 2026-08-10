@@ -182,7 +182,7 @@ export function ZoomChannelPicker({
                   {filtered.map(r => (
                     <tr key={r.id || r.jid}
                       onClick={() => { onPick(r.jid); setOpen(false); }}
-                      style={{ cursor: 'pointer' }}
+                      style={{ cursor: 'pointer', ...(filtered.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' } : null) }}
                       onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg3)')}
                       onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
                       <td style={{ fontSize: 12, fontWeight: 600 }}>{r.name || '(unnamed)'}</td>

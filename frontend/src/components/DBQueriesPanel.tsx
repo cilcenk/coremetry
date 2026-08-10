@@ -156,7 +156,7 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
                     return (
                       <Row key={i}>
                         <tr onClick={() => setExpandedIdx(e => e === i ? null : i)}
-                            style={{ cursor: 'pointer' }}>
+                            style={{ cursor: 'pointer', ...(dt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' } : null) }}>
                           <td className="mono"
                               style={{ maxWidth: 540, overflow: 'hidden',
                                        textOverflow: 'ellipsis', whiteSpace: 'nowrap',

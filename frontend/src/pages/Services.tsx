@@ -598,7 +598,7 @@ export default function ServicesPage() {
         )}
         {sorted && sorted.length > 0 && (
           <>
-            <div className="table-wrap"
+            <div className="table-wrap is-fit"
               style={{ opacity: refreshing ? 0.55 : 1, transition: 'opacity 120ms' }}
               aria-busy={refreshing}>
               <table style={{ tableLayout: 'fixed', width: '100%' }}>

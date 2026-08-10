@@ -546,7 +546,7 @@ export default function AdminStatsPage() {
               <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>
                 Daily history
               </div>
-              <div className="table-wrap" style={{ maxHeight: 360, overflowY: 'auto' }}>
+              <div className="table-wrap is-scroll" style={{ maxHeight: 360, overflowY: 'auto' }}>
                 <table style={{ tableLayout: 'fixed', width: '100%' }}>
                   <DataTableColgroup dt={historyDt} />
                   <DataTableHead dt={historyDt} />

@@ -151,7 +151,7 @@ export default function WatchersPage() {
           </Empty>
         )}
         {rows && rows.length > 0 && (
-          <div className="table-wrap">
+          <div className="table-wrap is-fit">
             {/* v0.9.196 review-fix: summary rollup hatası sessiz sıfır-dolgu
                 olarak sunulmaz — sütunların güvenilmez olduğu söylenir. */}
             {summaryQ.isError && (

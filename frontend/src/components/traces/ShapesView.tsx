@@ -115,7 +115,7 @@ export function ShapesView({ range, service }: { range: TimeRange; service?: str
 
   return (
     <>
-      <div className="table-wrap">
+      <div className="table-wrap is-fit">
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
           <DataTableColgroup dt={dt} />
           <DataTableHead dt={dt} />

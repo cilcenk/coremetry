@@ -49,7 +49,12 @@ function walk(dir: string, out: string[] = []): string[] {
 //
 // Artık iki biçim de eşleşiyor ve dosyanın içe aktardığı modüller de
 // taranıyor (bir seviye). Fazladan atıf yalnızca kuralı SIKILAŞTIRIR.
-const COLS_RE = /DataTableColumn<[^>]*>\[\]\s*(?:=\s*\[|>\(\(\)\s*=>\s*\[)/g;
+// v0.9.917 (N3) — ÜÇÜNCÜ biçim eklendi: `: DataTableColumn<R>[] =
+// useMemo(() => [`. Bu biçim regex'te YOKTU, dolayısıyla `ShapesView`
+// gibi dosyalarda ölçüm `[]` dönüyor ve test SESSİZCE yeşil geçiyordu —
+// yani 890px'lik bir tabloya `is-fit` verilseydi kapı hiç ötmezdi.
+// "Ölçemediğini geçiren" bir kapı, olmayan bir kapıdan tehlikelidir.
+const COLS_RE = /DataTableColumn<[^>]*>\[\]\s*(?:=\s*useMemo\(\(\)\s*=>\s*\[|=\s*\[|>\(\(\)\s*=>\s*\[)/g;
 
 /** Kaynaktaki her DataTableColumn dizisinin beyan edilen genişlik toplamı. */
 function tableWidths(src: string): number[] {

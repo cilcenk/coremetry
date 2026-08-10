@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { api } from '@/lib/api';
+import { QueryErrorInline } from '@/components/QueryError';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -24,6 +25,9 @@ export function ServiceAttrsPanel({ service, range }: {
 }) {
   const [rows, setRows] = useState<ServiceAttrRow[] | null | undefined>(undefined);
   const [filter, setFilter] = useState('');
+  // v0.9.866 (tutarlılık denetimi MT1) — Retry kaynağı: bu panel elle fetch
+  // ediyor, react-query refetch'i yok. v0.9.858'in nonce deseni.
+  const [retryNonce, setRetryNonce] = useState(0);
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
 
   useEffect(() => {
@@ -32,7 +36,7 @@ export function ServiceAttrsPanel({ service, range }: {
     api.serviceAttrs(service, from, to, { top: 80, samples: 5 })
       .then(r => setRows(r?.attrs ?? []))
       .catch(() => setRows(null));
-  }, [service, from, to]);
+  }, [service, from, to, retryNonce]);
 
   if (rows === undefined) {
     return (
@@ -45,9 +49,23 @@ export function ServiceAttrsPanel({ service, range }: {
       </div>
     );
   }
-  if (rows === null || rows.length === 0) {
+  // v0.9.866 (tutarlılık denetimi MT1) — `rows === null` bu koşulun içindeydi:
+  // /api/service-attrs 500'lediğinde panel TAMAMEN YOK OLUYORDU, yani "bu
+  // servis attr basmıyor" diye okunuyordu. Attr envanteri SDK teşhisinin
+  // girdisi olduğu için yanlış-boş burada doğrudan yanlış teşhise götürüyor.
+  if (rows === null) {
+    return (
+      <div style={{ marginTop: 14 }}>
+        <QueryErrorInline
+          text="Attributes could not be loaded — this is a failed read, not an instrumentation gap."
+          onRetry={() => setRetryNonce(n => n + 1)} />
+      </div>
+    );
+  }
+  if (rows.length === 0) {
     // Self-hide when nothing — empty panel adds visual noise
     // to services that haven't pushed enough spans yet.
+    // (KORUNDU: boş dal hâlâ sessiz, yalnız hata dalı ayrıldı.)
     return null;
   }
 

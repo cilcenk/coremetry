@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { useAuditLog } from '@/lib/queries';
@@ -98,8 +100,12 @@ export default function AuditPage() {
     action: action.trim() || undefined,
     target: target.trim() || undefined,
   });
-  const data = !isAdmin ? null
-    : auditQ.isLoading ? undefined
+  // v0.9.866 (tutarlılık denetimi MT1) — YASAK ≠ HATALI ≠ BOŞ. `!isAdmin`
+  // burada null'a katlanıyordu, yani "yetkin yok" ile "okuma başarısız" aynı
+  // değerdi; üstelik null hiçbir render dalına girmediği için hata durumu
+  // BOMBOŞ EKRANDI. Yasak dalının kendi erken dönüşü zaten aşağıda (Admin
+  // only), bu ifade artık yalnız okumanın üç durumunu taşıyor.
+  const data = auditQ.isLoading ? undefined
     : auditQ.isError ? null
     : auditQ.data ?? [];
 
@@ -204,8 +210,14 @@ export default function AuditPage() {
           </a>
         </PageControls>
 
-        {data === undefined && <Spinner />}
-        {data !== undefined && data?.length === 0 && (
+        {readState(data) === 'loading' && <Spinner />}
+        {readState(data) === 'error' && (
+          <QueryError onRetry={() => auditQ.refetch()}>
+            The audit log could not be loaded — this is a failed read, not an
+            empty range. Recorded actions are still there.
+          </QueryError>
+        )}
+        {readState(data) === 'empty' && (
           <Empty icon="◇" title="No audit entries in this range" />
         )}
         {data && data.length > 0 && visible.length === 0 && (

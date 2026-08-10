@@ -18,6 +18,7 @@ import type { ExploreVizKind } from '@/components/ExploreViz';
 import { api } from '@/lib/api';
 import { heatmapBucketCount } from '@/lib/chartStep';
 import { timeRangeToNs, fmtNum, fmtClock } from '@/lib/utils';
+import { raceGuard } from '@/lib/raceGuard';
 import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
@@ -238,6 +239,10 @@ function ExploreInner({ onSelfWrite }: {
 
   const [services, setServices] = useState<string[]>([]);
   const [heatmap, setHeatmap] = useState<Heatmap | null | undefined>(undefined);
+  // busy — veri EKRANDA kalırken süren okuma (v0.9.939, C2 keep-previous).
+  // `undefined` ilk yükleme, `busy` yenileme; ikisi ayrı sorular ve tek
+  // bayrakla anlatılamaz.
+  const [busy, setBusy] = useState(false);
   const [cellExemplar, setCellExemplar] = useState<HeatmapCellRef | null>(null);
   // Phase 4.2 — heatmap box-select → BubbleUp. The dragged (time × latency)
   // rectangle becomes the selection; query A's filters/DSL are the baseline.
@@ -418,10 +423,19 @@ function ExploreInner({ onSelfWrite }: {
     if (!builderActive || debounced.viz !== 'heatmap') return;
     const a = debounced.queries.find(produces);
     if (!a) { setHeatmap(null); return; }
-    setHeatmap(undefined);
+    // v0.9.939 (UX denetimi C2/Ö18) — BLANK YOK. `setHeatmap(undefined)`
+    // her ayarlanmış düzenlemede sayfanın EN pahalı sorgusunu (ham spans
+    // log-ölçek ızgarası, ≤3s bütçe) sıfırdan çizdiriyordu: operatör her
+    // filtre dokunuşunda grafiğini kaybediyor, aynı sayfadaki ÇİZGİ modu
+    // ise keepPreviousData ile akıcı kalıyordu. Artık eldeki ızgara
+    // ekranda kalır, başlıkta "yenileniyor" izi belirir; ilk yüklemede
+    // (veri yok) davranış aynı — spinner.
+    setBusy(true);
     // v0.8.300 (quality bar S3) — the debounced builder still fires on every
     // settled edit; without cancellation an older heatmap can land last.
-    let cancelled = false;
+    // v0.9.939 (C3) — bayrağa GERÇEK İPTAL eklendi: superseded tarama
+    // aksi halde max_execution_time'a kadar CH'de koşuyordu.
+    const g = raceGuard();
     const fs = effectiveFilters(a);
     const { from, to } = exploreRange;
     api.spanHeatmap({
@@ -429,10 +443,10 @@ function ExploreInner({ onSelfWrite }: {
       dsl: a.dsl.trim() || undefined,
       // v0.9.707 — sabit 80 → genişlik-türevi (~12px/sütun, 40..240).
       from, to, buckets: heatmapBuckets,
-    })
-      .then(h => { if (!cancelled) setHeatmap(h ?? null); })
-      .catch(() => { if (!cancelled) setHeatmap(null); });
-    return () => { cancelled = true; };
+    }, g.signal)
+      .then(h => { if (!g.ok()) return; setHeatmap(h ?? null); setBusy(false); })
+      .catch(() => { if (!g.ok()) return; setHeatmap(null); setBusy(false); });
+    return g.cancel;
     // debounced/exploreRange BİLEREK dep değil: ikisinin de heatmap'e
     // giden parçaları heatmapSig'in İÇİNDE ve effect gövdesi her koşuda
     // güncel değerleri okuyor. Kimliklerini dep'e koymak daraltmayı
@@ -445,13 +459,17 @@ function ExploreInner({ onSelfWrite }: {
     if (!hasParams || source !== 'spans' || resultMode === 'metric') return;
     setQueryError(null);
     setReadErr(null);
-    let cancelled = false; // v0.8.300 — stale-overwrite guard
+    // v0.9.939 (C2/C3) — bayrak + GERÇEK İPTAL (raceGuard) ve BLANK YOK:
+    // liste/repeats modları her düzenlemede ekranı boşaltıyordu, çizgi modu
+    // boşaltmıyordu. Superseded ham-spans taraması artık iptal ediliyor.
+    const g = raceGuard();
+    const cancelledRef = { get v() { return !g.ok(); } };
     const { from, to } = timeRangeToNs(range);
     const filterArg = mode === 'builder' && filters.length ? JSON.stringify(filters) : undefined;
     const dslArg    = mode === 'advanced' && dslDebounced.trim() ? dslDebounced : undefined;
 
+    setBusy(true);
     if (resultMode === 'traces') {
-      setTraces(undefined);
       api.traces({
         filters: filterArg, dsl: dslArg,
         from, to,
@@ -459,15 +477,17 @@ function ExploreInner({ onSelfWrite }: {
         limit: traceLimit,
         count: showTotal ? 'exact' : 'skip',
         extraAttrs: extraCols.length ? extraCols.join(',') : undefined,
-      })
+      }, g.signal)
         .then(r => {
-          if (cancelled) return;
+          if (cancelledRef.v) return;
+          setBusy(false);
           setTraces(r.traces ?? []);
           setTraceTotal(r.total);
           setTraceHasMore(r.hasMore ?? false);
         })
         .catch(err => {
-          if (cancelled) return;
+          if (cancelledRef.v) return;
+          setBusy(false);
           setTraces(null);
           const msg = String(err?.message ?? err);
           // DSL sözdizimi hatası textarea'nın ALTINDA (alan-seviyesi); her
@@ -478,23 +498,23 @@ function ExploreInner({ onSelfWrite }: {
           setReadErr(msg);
         });
     } else {
-      setRepeats(undefined);
       api.spanRepeats({
         filters: filterArg, dsl: dslArg,
         from, to,
         groupBy: repeatGroupBy.length ? repeatGroupBy : ['db.statement'],
         minRepeats: repeatMin,
-      })
-        .then(r => { if (!cancelled) setRepeats(r ?? []); })
+      }, g.signal)
+        .then(r => { if (cancelledRef.v) return; setBusy(false); setRepeats(r ?? []); })
         .catch(err => {
-          if (cancelled) return;
+          if (cancelledRef.v) return;
+          setBusy(false);
           setRepeats(null);
           const msg = String(err?.message ?? err);
           setQueryError(msg.includes('DSL') ? msg : null);
           setReadErr(msg);
         });
     }
-    return () => { cancelled = true; };
+    return g.cancel;
   }, [resultMode, range, filters, dslDebounced, mode, traceLimit, showTotal, extraCols, repeatMin, repeatGroupBy, hasParams, source, retryNonce]);
 
   // ── Builder mutators ──────────────────────────────────────────────────────
@@ -1035,6 +1055,20 @@ name ~ checkout`}
               </>
             )}
           </>
+        )}
+
+        {/* v0.9.939 (C2) — YENİLEME İZİ. Sonuç artık her düzenlemede
+            boşalmıyor (keep-previous), dolayısıyla operatöre "bu hâlâ ESKİ
+            pencerenin cevabı" demenin bir yolu gerekiyor: sessiz bir
+            keep-previous, bayat veriyi taze gibi gösterirdi. */}
+        {busy && (
+          (resultMode === 'metric' && debounced.viz === 'heatmap' && heatmap !== undefined)
+          || (resultMode === 'traces' && traces !== undefined)
+          || (resultMode === 'repeats' && repeats !== undefined)
+        ) && (
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 6 }}>
+            yenileniyor… (gösterilen sonuç bir önceki sorgudan)
+          </div>
         )}
 
         {/* ── Metric mode · heatmap viz (query A drives it) ────────────────── */}

@@ -40,7 +40,7 @@ import { type AggSort, toAggSort, decodeLegacyAggSort } from './traces/aggSort';
 import { api, isCanceled } from '@/lib/api';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
-import { tsDateTime, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
+import { tsDateTime, tsLong, timeRangeToNs, fmtNum, fmtFixed } from '@/lib/utils';
 import { alignTraceWindow } from '@/lib/traceWindow';
 import { suggestAttrKey, type AttrKeySuggestion } from '@/lib/attrKeySuggest';
 import { traceCountReasonHint } from '@/lib/traceCountReason';
@@ -1240,7 +1240,7 @@ function TracesPageInner() {
                   {data?.narrowedFromNs ? (
                     <span className="badge b-err" style={{ marginLeft: 6 }}
                       title={'This query ran out of memory or time over the range you selected, so the backend answered over a shorter, more recent window instead of failing.\nThe list below is NOT your full range — narrow the range or add a filter for an answer that covers it.'}>
-                      ⚠ shortened to {new Date(data.narrowedFromNs / 1e6).toLocaleString()} →
+                      ⚠ shortened to {tsLong(data.narrowedFromNs)} →
                     </span>
                   ) : null}
                   {data?.rankedWithinRecent ? (

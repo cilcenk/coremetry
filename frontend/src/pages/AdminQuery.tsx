@@ -5,7 +5,7 @@ import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { IconLock } from '@/components/icons';
-import { timeRangeToNs } from '@/lib/utils';
+import { timeRangeToNs, tsLong } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import type { TimeRange, SpanMetricSeries } from '@/lib/types';
 
@@ -212,8 +212,8 @@ export default function AdminQueryPage() {
 
             <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text3)' }}>
               {result.series.length} series · window{' '}
-              {new Date(result.window.fromNs / 1e6).toLocaleString()} →{' '}
-              {new Date(result.window.toNs / 1e6).toLocaleString()}
+              {tsLong(result.window.fromNs)} →{' '}
+              {tsLong(result.window.toNs)}
             </div>
           </>
         )}

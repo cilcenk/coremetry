@@ -13,7 +13,7 @@ import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { classifyMetric } from '@/lib/metricTemplates';
 import { metricCatalogueHref } from './explore/urlCodec';
-import { fmtAgoNs } from '@/lib/utils';
+import { fmtAgoNs, tsLong } from '@/lib/utils';
 import {
   METRIC_FACETS, CATALOG_PAGE, metricGroup, decodeCatalogParams, applyCatalogParams,
   catalogCountLabel, facetCountsComplete, nextCatalogLimit, metricIsStale, type MFacet,
@@ -361,7 +361,7 @@ export default function MetricsPage() {
                               fontVariantNumeric: 'tabular-nums',
                             }}
                               title={m.lastSeenNs
-                                ? new Date(m.lastSeenNs / 1e6).toLocaleString()
+                                ? tsLong(m.lastSeenNs)
                                   + (metricIsStale(m.lastSeenNs, nowMs) ? ' — no data in the last 24h' : '')
                                 : 'The server did not report a last-seen timestamp for this metric.'}>
                               {m.lastSeenNs ? fmtAgoNs(m.lastSeenNs) : '—'}

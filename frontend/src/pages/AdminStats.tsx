@@ -5,7 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useSystemStats, useTraceContext, keys } from '@/lib/queries';
 import { api } from '@/lib/api';
-import { fmtNum, tsLong } from '@/lib/utils';
+import { fmtNum, fmtClock, tsLong } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type {
@@ -129,7 +129,7 @@ export default function AdminStatsPage() {
         {/* ── Live status banner + components ────────────────────── */}
         <SectionHeader title="Live status"
           sub={status?.checkedAt
-            ? `last checked ${new Date(status.checkedAt).toLocaleTimeString()} · auto-refreshes every 30s`
+            ? `last checked ${fmtClock(new Date(status.checkedAt))} · auto-refreshes every 30s`
             : 'probing…'} />
         {status === undefined && <Spinner />}
         {status === null && (

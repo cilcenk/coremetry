@@ -65,6 +65,7 @@ import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtSmart } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 
 // bucketWindowAt (v0.9.789) — sayfa koordinatındaki bir tıkı, tıklanan
 // bucket'ın ns penceresine çevirir. Çizim alanı DIŞINDA (eksen şeridi,
@@ -1023,22 +1024,22 @@ export function CorePanel({
               borderRadius: 6, padding: 4, display: 'flex',
               flexDirection: 'column', gap: 2, minWidth: 150,
             }}>
-              <button className="sec" onClick={() => { setFullscreen(f => !f); setMenuOpen(false); }}>
+              <Button variant="secondary" onClick={() => { setFullscreen(f => !f); setMenuOpen(false); }}>
                 {fullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
-              </button>
-              <button className="sec" disabled={data.state !== 'ready'}
+              </Button>
+              <Button variant="secondary" disabled={data.state !== 'ready'}
                 onClick={() => { downloadCsv(); setMenuOpen(false); }}>
                 CSV indir
-              </button>
+              </Button>
               {queryText && (
-                <button className="sec" onClick={() => { setShowQuery(q => !q); setMenuOpen(false); }}>
+                <Button variant="secondary" onClick={() => { setShowQuery(q => !q); setMenuOpen(false); }}>
                   Sorguyu göster
-                </button>
+                </Button>
               )}
               {logScaleToggle && (
-                <button className="sec" onClick={() => setLogLocal(l => !l)}>
+                <Button variant="secondary" onClick={() => setLogLocal(l => !l)}>
                   {effLog ? '✓ ' : ''}Log ölçek
-                </button>
+                </Button>
               )}
             </div>
           )}

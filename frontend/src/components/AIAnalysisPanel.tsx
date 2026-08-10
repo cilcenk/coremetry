@@ -128,7 +128,7 @@ export function AIAnalysisPanel({ service, rangeS = 1800 }: { service: string; r
                 // JSON blob'u yerine dostane ipucuyla gösterilir.
                 : (aiErrorHint(errMsg) ?? errMsg)}
             </div>
-            <button className="sec" onClick={() => run(false)}>Tekrar dene</button>
+            <Button variant="secondary" onClick={() => run(false)}>Tekrar dene</Button>
           </div>
         )}
 

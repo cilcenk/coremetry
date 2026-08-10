@@ -1680,6 +1680,15 @@ canvas { max-width: 100%; }
 .empty p { font-size: 12px; }
 .empty code { background: var(--bg2); border: 1px solid var(--border); padding: 1px 5px; border-radius: 3px; font-family: monospace; }
 .empty .empty-action { margin-top: 14px; display: flex; justify-content: center; gap: 8px; }
+/* `.empty-compact` (v0.9.915, mT1) — panel İÇİ ölçek. Sayfa boşluğunun
+   60px'i bir kartın içinde paneli üç katına çıkarıyor; bu yüzden panel
+   içi yüzeyler boş-durum dilini kullanmak yerine elle gri metin
+   yazıyordu. Aynı yapı, küçük ölçek. */
+.empty.empty-compact { padding: var(--sp-7) var(--sp-6); }
+.empty.empty-compact .icon { font-size: 20px; margin-bottom: var(--sp-3); }
+.empty.empty-compact h3 { font-size: var(--fs-md); margin-bottom: var(--sp-1); }
+.empty.empty-compact p { font-size: var(--fs-xs); }
+.empty.empty-compact .empty-action { margin-top: var(--sp-5); }
 
 /* Spinner */
 .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .7s linear infinite; }

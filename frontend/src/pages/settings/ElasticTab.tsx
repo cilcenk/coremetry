@@ -253,11 +253,11 @@ export function ElasticTab() {
         )}
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button type="button" variant="secondary" disabled={busy} onClick={test}>
-            {busy ? 'Working…' : 'Test connection'}
+          <Button type="button" variant="secondary" loading={busy} onClick={test}>
+            Test connection
           </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? 'Working…' : 'Save & apply'}
+          <Button type="submit" variant="primary" loading={busy}>
+            Save &amp; apply
           </Button>
         </div>
       </form>

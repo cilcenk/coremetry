@@ -26,6 +26,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import type { ReactNode } from 'react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { Button } from './Button';
 
 let host: HTMLDivElement | null = null;
@@ -212,5 +214,27 @@ describe('Button — icons and passthrough', () => {
     expect(b.getAttribute('title')).toBe('tip');
     expect(b.getAttribute('aria-label')).toBe('Zoom out');
     expect(b.getAttribute('data-testid')).toBe('z');
+  });
+});
+
+// ── MB3 (v0.9.925) — yüklenen buton SOLMAZ ─────────────────────────────
+// Atom `loading` iken `disabled` de basıyor (tıkı yutmak için). Element
+// seviyesindeki `button:disabled { opacity: .4 }` bu yüzden spinner'ı
+// %40 opaklıkta çiziyordu: tam da "çalışıyorum" demesi gereken anda
+// gösterge en zor görüleni oluyordu. `aria-busy` "kullanılamaz" ile
+// "şu an çalışıyor"u ayıran tek işaret; ikisi aynı görünmemeli.
+describe('MB3 — loading görünürlüğü', () => {
+  it('aria-busy istisnası CSS\'te tanımlı', () => {
+    const css = readFileSync(
+      resolve(__dirname, '..', '..', 'styles', 'globals.css'), 'utf8');
+    const SEL = 'button[aria-busy=' + '"true"]:disabled';
+    const m = new RegExp(`${SEL.replace(/[[\]]/g, m => '\\' + m)}\\s*\\{[^}]*opacity:\\s*1`).exec(css);
+    expect(m, 'yüklenen buton hâlâ %40 opaklıkta soluyor').not.toBeNull();
+  });
+
+  it('taban solma kuralı hâlâ var (istisna hâlâ gerekli)', () => {
+    const css = readFileSync(
+      resolve(__dirname, '..', '..', 'styles', 'globals.css'), 'utf8');
+    expect(css.includes('button:disabled { opacity: .4;')).toBe(true);
   });
 });

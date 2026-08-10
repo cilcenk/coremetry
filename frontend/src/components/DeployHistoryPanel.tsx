@@ -149,14 +149,11 @@ export function DeployHistoryPanel({ service, onZoomWindow }: {
                 </span>
                 <span style={{ flex: 1 }} />
                 {onZoomWindow && (
-                  <button type="button"
+                  <Button variant="secondary" size="xs"
                     onClick={(e) => { e.stopPropagation(); onZoomWindow(r.timeUnixNs); }}
-                    title="Grafikleri bu rollout'un ±30 dakikasına daralt (çift-tık = geri)"
-                    style={{
-                      all: 'unset', cursor: 'pointer', fontSize: 11,
-                      border: '1px solid var(--border)', borderRadius: 4,
-                      padding: '1px 7px', color: 'var(--text2)',
-                    }}>⏱ pencereye git</button>
+                    title="Grafikleri bu rollout'un ±30 dakikasına daralt (çift-tık = geri)">
+                    ⏱ pencereye git
+                  </Button>
                 )}
                 {r.impact ? <DeltaChips imp={r.impact} /> : (
                   <span style={{ fontSize: 11, color: 'var(--text3)' }}>

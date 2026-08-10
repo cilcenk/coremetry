@@ -471,22 +471,16 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
           textTransform: 'uppercase', letterSpacing: 0.4, fontWeight: 700,
         }}>Compare to:</span>
         {(['off', '24h', '7d', 'prev'] as CompareMode[]).map(m => (
-          <button key={m} type="button"
+          <Button key={m} size="xs"
+            variant={compare === m ? 'accent' : 'secondary'}
+            aria-pressed={compare === m}
             onClick={() => setCompareAndPersist(m)}
             title={m === 'off' ? 'No comparison'
               : m === 'prev' ? 'Previous window of the same length'
               : `${m} ago at the same time`}
-            style={{
-              all: 'unset', cursor: 'pointer',
-              fontSize: 11, padding: '2px 8px', borderRadius: 3,
-              fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-              background: compare === m ? 'var(--accent2)' : 'var(--bg2)',
-              color: compare === m ? 'var(--bg)' : 'var(--text2)',
-              border: `1px solid ${compare === m ? 'var(--accent2)' : 'var(--border)'}`,
-              fontWeight: compare === m ? 600 : 400,
-            }}>
+            style={{ fontFamily: 'ui-monospace, SFMono-Regular, monospace' }}>
             {m === 'off' ? 'off' : m === 'prev' ? 'prev window' : m}
-          </button>
+          </Button>
         ))}
         {/* v0.8.414 (Tempo-parity T2) — operation scope. Narrows all
             three RED panels to the picked operation and upgrades the

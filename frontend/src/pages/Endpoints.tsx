@@ -28,6 +28,7 @@ import {
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
 
 // /endpoints — operator-asked v0.5.365. Cross-service inbound
@@ -555,19 +556,14 @@ export default function EndpointsPage() {
           {/* v0.5.405 — fix-me-first preset. Sorts by composite
               impact (calls × p99 × (1+errorRate)) so high-traffic
               slow + erroring endpoints float to the top. */}
-          <button type="button"
+          <Button size="sm"
+            variant={dt.sort.id === 'impact' ? 'accent' : 'secondary'}
+            aria-pressed={dt.sort.id === 'impact'}
             onClick={() => dt.setSort({ id: 'impact', dir: 'desc' })}
             title="Sort by composite impact (calls × p99 × (1+errorRate)) — fix-me-first list"
-            style={{
-              padding: '3px 8px', fontSize: 11, borderRadius: 4,
-              background: dt.sort.id === 'impact' ? 'var(--accent-soft)' : 'var(--bg2)',
-              border: '1px solid ' + (dt.sort.id === 'impact' ? 'var(--accent)' : 'var(--border)'),
-              color: dt.sort.id === 'impact' ? 'var(--accent2)' : 'var(--text2)',
-              cursor: 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-            }}>
-            <Zap size={12} strokeWidth={1.75} /> Worst by impact
-          </button>
+            leftIcon={<Zap size={12} strokeWidth={1.75} />}>
+            Worst by impact
+          </Button>
           <ColumnToggle
             columns={ENDPOINT_COLS.filter(c => !c.headerHidden).map(c => ({ id: c.id, label: c.label }))}
             visible={visibleCols}

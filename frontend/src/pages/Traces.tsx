@@ -32,8 +32,11 @@ import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
 import { stepForPoints, barPanelMaxDataPoints } from '@/lib/chartStep';
 import { VirtualTable } from '@/components/ui/VirtualTable';
-import { useDataTable } from '@/components/DataTable';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTable } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { formatSortParam } from '@/lib/dataTable';
+import { type AggSort, toAggSort, decodeLegacyAggSort } from './traces/aggSort';
 import { api, isCanceled } from '@/lib/api';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
@@ -84,11 +87,8 @@ const GROUP_OPTIONS: { value: GroupBy; label: string }[] = [
   { value: 'attr',        label: 'Attribute…' },
 ];
 
-type AggSort = 'count' | 'perMin' | 'errorRate' | 'avg' | 'p50' | 'p95' | 'p99' | 'max' | 'name';
-const AGG_NATURAL: Record<AggSort, SortOrder> = {
-  count: 'desc', perMin: 'desc', errorRate: 'desc', avg: 'desc',
-  p50: 'desc', p95: 'desc', p99: 'desc', max: 'desc', name: 'asc',
-};
+// v0.9.878 — AGG_NATURAL SİLİNDİ: doğal yön artık kolon tanımındaki
+// `naturalDir` (name: 'asc', sayısal kolonlar varsayılan 'desc').
 
 // Fixed list columns. The trace list is SERVER-paged (50/page), so per the
 // useDataTable contract it keeps its SERVER sort (header click → server sort)
@@ -311,8 +311,21 @@ function TracesPageInner() {
       ['page',     page > 0 ? page : ''],
       ['groupBy',  view === 'aggregate' && groupBy !== 'operation' ? groupBy : ''],
       ['groupAttr', view === 'aggregate' && groupBy === 'attr' ? groupAttr : ''],
-      ['aggSort',  view === 'aggregate' && aggSort !== 'count' ? aggSort : ''],
-      ['aggOrder', view === 'aggregate' && aggOrder !== 'desc' ? aggOrder : ''],
+      // v0.9.878 (tutarlılık denetimi BT6, risk R1) — aggregate sıralaması
+      // artık primitifin KENDİ kanalından gidiyor: `s_traces-agg`.
+      //
+      // Bu effect sorgu dizesini SIFIRDAN kuruyor, yani listede olmayan her
+      // parametreyi bir render sonra SİLER. Primitif `s_traces-agg`i kendisi
+      // yazıyor; burada üretmezsek yazdığı an siliniyor ve paylaşılan
+      // sıralama linki sessizce kayboluyor — alıcı kendi localStorage'ıyla
+      // açar, BAŞLIK p99 der ama sunucu count'a göre sıralar.
+      //
+      // Tek kaynak aggSort/aggOrder durumu; primitif onu okuyor, biz onu
+      // yazıyoruz. Eski `?aggSort=`/`?aggOrder=` linkleri artık ÜRETİLMİYOR
+      // ama decodeLegacyAggSort köprüsüyle hâlâ OKUNUYOR.
+      ['s_traces-agg', view === 'aggregate'
+        ? (formatSortParam({ id: aggSort, dir: aggOrder }) ?? '')
+        : ''],
       ['having',   view === 'aggregate' ? encodeHavingParam(debouncedHaving) : ''],
       ['service',  filter.service],
       ['search',   filter.search],
@@ -606,10 +619,61 @@ function TracesPageInner() {
     setDraft(empty); setFilter(empty); setPage(0);
     setAdvFilters([]); setAdvGroup(null); setExpanded(null);
   };
-  const toggleAggSort = (col: AggSort) => {
-    if (aggSort === col) setAggOrder(aggOrder === 'desc' ? 'asc' : 'desc');
-    else { setAggSort(col); setAggOrder(AGG_NATURAL[col]); }
-  };
+  // v0.9.878 (tutarlılık denetimi BT6) — aggregate tablosu paylaşılan
+  // primitife, `serverSort` kipinde. Sıralama bir görüntüleme tercihi DEĞİL:
+  // `sort` API'ye gidiyor ve backend LIMIT 200 ile en ağır grupları
+  // döndürüyor, yani sıralama HANGİ 200 SATIRIN geldiğini belirliyor.
+  // serverSort kipinde primitif satırları yeniden sıralamaz; sayfa yeni
+  // sırayla re-fetch eder (Services'in v0.8.251 emsali).
+  //
+  // Kolon KÜMESİ groupBy'a bağlı (Service kolonu yalnız groupBy !== 'service'
+  // iken var), bu yüzden memo. storageKey SABİT tutuldu: sıralama paylaşılan
+  // bir link parametresi, groupBy'a göre adı değişirse link taşınamaz.
+  // Genişlikler zaten columnLayoutSig ile korunuyor — Service kolonu gelip
+  // gidince imza değişir ve bayat genişlikler DÜŞER (istenen davranış).
+  const aggCols = useMemo<DataTableColumn<AggregateRow>[]>(() => [
+    { id: 'name', label: groupLabel(groupBy, groupAttr), sortValue: () => '', naturalDir: 'asc', flex: true },
+    // Service sıralanabilir DEĞİL (sunucu bu eksende sıralamıyor) — sortValue
+    // yok, dolayısıyla başlık tıklanmaz. Eski elle <th>Service</th> ile aynı.
+    ...(groupBy !== 'service'
+      ? [{ id: 'service', label: 'Service', width: 170 } as DataTableColumn<AggregateRow>]
+      : []),
+    { id: 'count',     label: 'Traces',  sortValue: () => 0, numeric: true, width: 130 },
+    { id: 'perMin',    label: 'Per min', sortValue: () => 0, numeric: true, width: 100 },
+    { id: 'errorRate', label: 'Error %', sortValue: () => 0, numeric: true, width: 100 },
+    { id: 'avg',       label: 'Avg',     sortValue: () => 0, numeric: true, width: 95 },
+    { id: 'p50',       label: 'P50',     sortValue: () => 0, numeric: true, width: 95 },
+    { id: 'p95',       label: 'P95',     sortValue: () => 0, numeric: true, width: 95 },
+    { id: 'p99',       label: 'P99',     sortValue: () => 0, numeric: true, width: 95 },
+    { id: 'max',       label: 'Max',     sortValue: () => 0, numeric: true, width: 95 },
+  ], [groupBy, groupAttr]);
+
+  // Eski link köprüsü: `?aggSort=p99&aggOrder=asc`. Önceliği `s_traces-agg`in
+  // ALTINDA, localStorage'ın ÜSTÜNDE — paylaşılan linkin niyeti alıcının
+  // kişisel varsayılanını yenmeli (primitifin resolveInitialSort sözleşmesi).
+  const legacyAggSort = useMemo(
+    () => decodeLegacyAggSort(searchParams.get('aggSort'), searchParams.get('aggOrder')),
+    // Yalnız İLK okuma anlamlı; searchParams her yazımda değişiyor ve
+    // bağımlılığa koymak köprüyü canlı bir kanala çevirirdi.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    []);
+
+  const aggDt = useDataTable<AggregateRow>({
+    storageKey: 'traces-agg',
+    columns: aggCols,
+    rows: agg ?? [],
+    serverSort: true,
+    initialSort: { id: aggSort, dir: aggOrder },
+    urlSortFallback: legacyAggSort,
+    onSortChange: s => {
+      const id = toAggSort(s.id);
+      // Tanınmayan id sunucuya gitmemeli (400). Primitif yalnız kendi
+      // kolonlarını üretir, ama URL'den gelen çöp de bu yolu kullanıyor.
+      if (!id) return;
+      setAggSort(id);
+      setAggOrder(s.dir);
+    },
+  });
 
   const traces = data?.traces ?? [];
   // v0.9.638 — tavanlı sayım, AYRI istek. Yalnız operatör "toplamı göster"
@@ -1228,8 +1292,7 @@ function TracesPageInner() {
         )}
         {view === 'aggregate' && agg && agg.length > 0 && (
           <div style={{ opacity: aggRefreshing ? 0.55 : 1, transition: 'opacity 120ms' }} aria-busy={aggRefreshing}>
-          <AggregateTable agg={agg} groupBy={groupBy} groupAttr={groupAttr}
-            aggSort={aggSort} aggOrder={aggOrder} onSort={toggleAggSort}
+          <AggregateTable agg={agg} groupBy={groupBy} dt={aggDt}
             onDrill={(a) => {
               if (groupBy === 'service') { setFilter({ ...filter, service: a.groupKey }); setDraft({ ...draft, service: a.groupKey }); }
               else if (groupBy === 'operation') { setFilter({ ...filter, search: a.groupKey, service: a.groupExtra ?? filter.service }); setDraft({ ...draft, search: a.groupKey, service: a.groupExtra ?? draft.service }); }
@@ -1278,41 +1341,26 @@ function renderTraceCell(id: string, t: TraceRow, visibleMax: number) {
   }
 }
 
-function AggHeader({ col, label, sort, order, onSort, align }: {
-  col: AggSort; label: string; sort: AggSort; order: SortOrder;
-  onSort: (c: AggSort) => void; align?: 'left' | 'right';
-}) {
-  const active = sort === col;
-  return (
-    <th className={`sortable${active ? ' sorted' : ''}`} onClick={() => onSort(col)} style={{ textAlign: align ?? 'left' }}>
-      {label}<span className="sort-arrow">{active ? (order === 'desc' ? '▼' : '▲') : '↕'}</span>
-    </th>
-  );
-}
+// v0.9.878 — AggHeader SİLİNDİ. Elle basılan sıralanabilir başlık artık
+// DataTableHead'in işi; bırakılsaydı iki başlık anatomisi ve iki ok glifi
+// yan yana yaşardı (bu dalganın kapatmaya çalıştığı şeyin ta kendisi).
 
-function AggregateTable({ agg, groupBy, groupAttr, aggSort, aggOrder, onSort, onDrill }: {
-  agg: AggregateRow[]; groupBy: GroupBy; groupAttr: string;
-  aggSort: AggSort; aggOrder: SortOrder; onSort: (c: AggSort) => void;
+function AggregateTable({ agg, groupBy, dt, onDrill }: {
+  agg: AggregateRow[]; groupBy: GroupBy;
+  // v0.9.878 — sıralama durumu artık primitifte; sayfa `dt`yi kuruyor
+  // (serverSort kipi) ve buraya veriyor. aggSort/aggOrder/onSort propları
+  // düştü: üçü de dt.sort ve dt.toggleSort'un kopyasıydı.
+  dt: DataTable<AggregateRow>;
   onDrill: (a: AggregateRow) => void;
 }) {
   return (
     <>
       <div className="table-wrap">
-        <table>
-          <thead><tr>
-            <AggHeader col="name"      label={groupLabel(groupBy, groupAttr)} sort={aggSort} order={aggOrder} onSort={onSort} />
-            {groupBy !== 'service' && <th>Service</th>}
-            <AggHeader col="count"     label="Traces"  sort={aggSort} order={aggOrder} onSort={onSort} align="right" />
-            <AggHeader col="perMin"    label="Per min" sort={aggSort} order={aggOrder} onSort={onSort} align="right" />
-            <AggHeader col="errorRate" label="Error %" sort={aggSort} order={aggOrder} onSort={onSort} align="right" />
-            <AggHeader col="avg"       label="Avg"     sort={aggSort} order={aggOrder} onSort={onSort} align="right" />
-            <AggHeader col="p50"       label="P50"     sort={aggSort} order={aggOrder} onSort={onSort} align="right" />
-            <AggHeader col="p95"       label="P95"     sort={aggSort} order={aggOrder} onSort={onSort} align="right" />
-            <AggHeader col="p99"       label="P99"     sort={aggSort} order={aggOrder} onSort={onSort} align="right" />
-            <AggHeader col="max"       label="Max"     sort={aggSort} order={aggOrder} onSort={onSort} align="right" />
-          </tr></thead>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={dt} />
+          <DataTableHead dt={dt} />
           <tbody>
-            {agg.map(a => {
+            {dt.sortedRows.map(a => {
               const errCls = a.errorRate > 5 ? 'b-err' : a.errorRate > 0 ? 'b-warn' : 'b-ok';
               const drillable = a.withRawAvailable ?? a.traceCount;
               const missingRaw = a.traceCount - drillable;
@@ -1343,7 +1391,7 @@ function AggregateTable({ agg, groupBy, groupAttr, aggSort, aggOrder, onSort, on
         </table>
       </div>
       <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text3)' }}>
-        {agg.length} groups · grouped by <b style={{ color: 'var(--accent2)' }}>{groupBy}</b> · sorted by <b>{aggSort}</b> {aggOrder} · click a row to drill down
+        {agg.length} groups · grouped by <b style={{ color: 'var(--accent2)' }}>{groupBy}</b> · sorted by <b>{dt.sort.id ?? 'count'}</b> {dt.sort.dir} · click a row to drill down
       </div>
     </>
   );

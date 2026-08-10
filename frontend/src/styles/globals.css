@@ -804,6 +804,11 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
   color: var(--accent);
   font-weight: 600;
 }
+/* `sg-sm` (v0.9.901, MB9) — the dense rung. Two card headers had already
+   invented it by hand at exactly these values (11px / 2px 8px), because
+   the canonical 13px / 6px 14px control is too tall to sit on a card's
+   title row. Generalising the house pattern beats a third hand copy. */
+.segmented.sg-sm > button { font-size: 11px; padding: 2px 8px; }
 
 /* Facet filter bar (v0.8.38) — one grouped row of compact filter chips,
    the repo equivalent of the design's .logbar / .facet / .facet.on. Used

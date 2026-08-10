@@ -161,15 +161,10 @@ export function SSOPresetsTab() {
         deployment), then restart the pod. Live runtime persistence of OIDC config is queued for
         a follow-up — for now the file-driven path keeps things auditable in source control.
       </p>
-      <div style={{ display: 'flex', gap: 4, marginBottom: 12, borderBottom: '1px solid var(--border)' }}>
+      <div className="tab-strip">
         {presets.map(p => (
-          <button key={p.key} onClick={() => setActiveKey(p.key)}
-            style={{
-              padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer',
-              background: 'transparent', border: 'none', borderBottom: '2px solid',
-              borderColor: activeKey === p.key ? 'var(--accent)' : 'transparent',
-              color: activeKey === p.key ? 'var(--text)' : 'var(--text3)',
-            }}>
+          <button key={p.key} type="button" onClick={() => setActiveKey(p.key)}
+            className={activeKey === p.key ? 'active' : ''}>
             {p.label}
           </button>
         ))}

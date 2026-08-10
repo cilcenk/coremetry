@@ -83,12 +83,22 @@ export function PageLoader({ label }: { label?: string }) {
 // `action` (v0.8.301, quality bar U3) — optional primary action under
 // the body, completing the PF empty-state anatomy (icon / title /
 // body / action). Pass a <Button> or link; renders nothing when absent.
-export function Empty({ icon, title, children, action }: {
+// `compact` (v0.9.915, mT1) — panel İÇİ boş durum. Varsayılan `.empty`
+// 60px dikey padding + 36px ikon taşıyor; bu bir SAYFA boşluğu için
+// doğru (sayfa gövdesi zaten boş, ölçek ekranla orantılı) ama bir
+// kartın ya da tablonun içine konduğunda paneli üç katına çıkarıp
+// düzeni bozuyor. Pratikte bu yüzden panel içi yüzeyler `<Empty>`
+// kullanmayıp elle `<div style={{color:'var(--text3)'}}>Yok</div>`
+// yazıyordu — yani boş-durum dili panel içinde HİÇ uygulanmıyordu.
+// compact aynı yapıyı küçük ölçekte verir; çıktı ağaç olarak birebir
+// aynı, yalnız ölçek sınıfı ekleniyor.
+export function Empty({ icon, title, children, action, compact }: {
   icon: React.ReactNode; title: string; children?: React.ReactNode;
   action?: React.ReactNode;
+  compact?: boolean;
 }) {
   return (
-    <div className="empty">
+    <div className={compact ? 'empty empty-compact' : 'empty'}>
       <div className="icon">{icon}</div>
       <h3>{title}</h3>
       {children && <p>{children}</p>}

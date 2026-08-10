@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
-import { Button } from '@/components/ui';
+import { Button, Chip } from '@/components/ui';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { useAuth } from '@/components/AuthProvider';
@@ -396,28 +396,13 @@ export default function AlertsPage() {
                 {presets.length > 0 ? (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                     {presets.map(p => (
-                      <span key={p.id} style={{
-                        display: 'inline-flex', alignItems: 'center',
-                        gap: 4, padding: '4px 4px 4px 10px',
-                        borderRadius: 14,
-                        background: 'var(--bg2)',
-                        border: '1px solid var(--border)',
-                        fontSize: 11,
-                      }}>
-                        <button type="button" onClick={() => setDraft({ ...emptyDraft, ...p.draft })}
-                          title={`Load preset · ${p.shared ? 'shared with team' : 'personal'}`}
-                          style={{
-                            background: 'transparent', border: 'none',
-                            padding: 0, color: 'inherit', cursor: 'pointer',
-                            fontSize: 11,
-                          }}>
-                          {p.shared ? '◍ ' : '★ '}{p.name}
-                        </button>
-                        <Button variant="ghost-danger" size="xs"
-                          onClick={() => deletePreset(p.id)}
-                          title="Delete preset"
-                          aria-label={`Delete preset ${p.name}`}>×</Button>
-                      </span>
+                      <Chip key={p.id}
+                        onClick={() => setDraft({ ...emptyDraft, ...p.draft })}
+                        title={`Load preset · ${p.shared ? 'shared with team' : 'personal'}`}
+                        onRemove={() => deletePreset(p.id)}
+                        removeLabel={`Delete preset ${p.name}`}>
+                        {p.shared ? '◍ ' : '★ '}{p.name}
+                      </Chip>
                     ))}
                   </div>
                 ) : (

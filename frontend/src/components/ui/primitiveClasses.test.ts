@@ -136,7 +136,11 @@ describe('primitiveClasses — atomun bastığı her sınıfın CSS karşılığ
 
     const offenders: string[] = [];
     for (const [f, base] of bases) {
-      const re = new RegExp(`className=[{]?["'\`][^"'\`]*\\b${base}\\b`);
+      // Sınır `\b` OLAMAZ: regex'te `-` bir kelime sınırıdır, dolayısıyla
+      // `\bbtn-chip\b` `btn-chip-x`in İÇİNDE de eşleşir — ve `btn-chip-x`
+      // farklı bir sınıf (MB6'nın kanonik ×'i, `.badge` gövdeli sitelerde
+      // tek başına kullanılıyor). Tam token istiyoruz.
+      const re = new RegExp(`className=[{]?["'\`][^"'\`]*(?<![\\w-])${base}(?![\\w-])`);
       for (const p of outside) {
         const lines = stripComments(readFileSync(p, 'utf8')).split('\n');
         lines.forEach((l, i) => {

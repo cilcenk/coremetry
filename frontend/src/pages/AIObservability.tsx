@@ -405,15 +405,10 @@ function RouterGapsPanel() {
         <span className="ov-sub">
           guided intent'e OTURMAYAN sorular — serbest tool döngüsüne düştüler
         </span>
-        <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 4 }}>
+        <span className="segmented sg-sm" style={{ marginLeft: 'auto' }}>
           {([1, 7, 30] as const).map(d => (
             <button key={d} type="button" onClick={() => setDays(d)}
-              style={{
-                all: 'unset', cursor: 'pointer', padding: '2px 8px', fontSize: 11,
-                borderRadius: 4, border: '1px solid var(--border)',
-                background: days === d ? 'var(--accent-soft)' : 'transparent',
-                color: days === d ? 'var(--accent2)' : 'var(--text3)',
-              }}>{d}g</button>
+              className={days === d ? 'active' : ''}>{d}g</button>
           ))}
         </span>
       </div>

@@ -65,15 +65,11 @@ export function MetricArea({ title, subtitle, byLabel, totalLabel = 'Total', by,
           )}
         </span>
         {onToggle && byLabel && (
-          <span style={{ display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 4, overflow: 'hidden' }}>
+          <span className="segmented sg-sm">
             {([[totalLabel, false], [byLabel, true]] as const).map(([label, v]) => (
               <button key={label} type="button"
-                onClick={e => { e.stopPropagation(); onToggle(v); }}
-                style={{
-                  all: 'unset', cursor: 'pointer', padding: '2px 8px', fontSize: 11,
-                  background: by === v ? 'var(--accent-soft)' : 'transparent',
-                  color: by === v ? 'var(--accent2)' : 'var(--text3)',
-                }}>{label}</button>
+                className={by === v ? 'active' : ''}
+                onClick={e => { e.stopPropagation(); onToggle(v); }}>{label}</button>
             ))}
           </span>
         )}

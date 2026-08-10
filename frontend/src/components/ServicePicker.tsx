@@ -36,12 +36,17 @@ export function shouldAutoCommit(prev: string, next: string, isKnownOption: bool
  * users understand they're seeing a subset and need to type to narrow.
  */
 export function ServicePicker({
-  value, onChange, placeholder, width, onEnter,
+  value, onChange, placeholder, width, onEnter, shortcutSearch,
 }: {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
   width?: number | string;
+  // shortcutSearch (v0.9.951, E5/Ö31) — bu picker sayfanın `/` KISAYOL
+  // hedefi mi? GlobalShortcuts'ın açık opt-in işareti; verilmezse
+  // fallback (ilk görünür metin kutusu) sürer ve o fallback /traces'te
+  // yanlış kutuya düşüyordu.
+  shortcutSearch?: boolean;
   // onEnter fires when the operator either presses Enter or
   // picks an option from the datalist. When triggered by a
   // datalist pick the freshly-selected value is passed as the
@@ -118,6 +123,13 @@ export function ServicePicker({
         list={listId}
         value={value}
         placeholder={placeholder}
+        // v0.9.951 (E5/Ö31) — `/` kısayolunun AÇIK hedefi. İşaret
+        // olmadan GlobalShortcuts "ilk görünür metin kutusu"na düşüyor
+        // ve /traces'te o kutu "Trace ID…" — yani `/` basan operatör
+        // servis aramak isterken trace-id kutusuna düşüyordu.
+        // Mekanizma v0.5.454'te tam bu vaka için yazılmıştı ama işaret
+        // hiçbir sayfaya konmamıştı.
+        {...(shortcutSearch ? { 'data-shortcut-search': '' } : {})}
         onChange={e => handleChange(e.target.value)}
         onKeyDown={e => e.key === 'Enter' && onEnter?.(undefined)}
         autoComplete="off"

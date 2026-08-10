@@ -39,7 +39,7 @@ func TestBuildGetTracesWhere_v0_5_440_NarrowServiceScope(t *testing.T) {
 	to := from.Add(1 * time.Hour)
 	f := TraceFilter{Service: "checkout", Search: "POST /payment", From: from, To: to}
 
-	wc := buildGetTracesWhere(f)
+	wc := buildGetTracesWhere(f, clusterDeriveExpr)
 	sql := wc.sql()
 
 	if !strings.Contains(sql, "service_name = ?") {
@@ -68,7 +68,7 @@ func TestBuildGetTracesWhere_RequireServicesUsesINList(t *testing.T) {
 		From:            time.Now().Add(-1 * time.Hour),
 		To:              time.Now(),
 	}
-	wc := buildGetTracesWhere(f)
+	wc := buildGetTracesWhere(f, clusterDeriveExpr)
 	sql := wc.sql()
 
 	if !strings.Contains(sql, "service_name IN (?,?)") {
@@ -84,7 +84,7 @@ func TestBuildGetTracesWhere_EmptyFilter(t *testing.T) {
 	// `wc.sql()` to be the empty string here so the assembled
 	// query collapses to `SELECT ... FROM spans` with no WHERE
 	// (the caller adds time bounds upstream when needed).
-	empty := buildGetTracesWhere(TraceFilter{})
+	empty := buildGetTracesWhere(TraceFilter{}, clusterDeriveExpr)
 	if got := empty.sql(); got != "" {
 		t.Fatalf("expected empty WHERE for empty filter; got %q", got)
 	}
@@ -97,7 +97,7 @@ func TestBuildGetTracesWhere_TimeBoundsAlignTo5Min(t *testing.T) {
 	// operation_summary_5m's read semantics from v0.5.299).
 	from := time.Date(2026, 5, 25, 12, 7, 33, 0, time.UTC) // not aligned
 	to := from.Add(1 * time.Hour)
-	wc := buildGetTracesWhere(TraceFilter{From: from, To: to})
+	wc := buildGetTracesWhere(TraceFilter{From: from, To: to}, clusterDeriveExpr)
 
 	// First arg is the aligned `from` — minute should be a multiple of 5.
 	if len(wc.args) < 1 {
@@ -124,7 +124,7 @@ func TestBuildGetTracesWhere_TraceIDExactOnly(t *testing.T) {
 		"0",                                // single char
 	}
 	for _, tid := range cases {
-		wc := buildGetTracesWhere(TraceFilter{TraceID: tid})
+		wc := buildGetTracesWhere(TraceFilter{TraceID: tid}, clusterDeriveExpr)
 		sql := wc.sql()
 		if !strings.Contains(sql, "trace_id = ?") {
 			t.Fatalf("trace ID %q should use equality; got:\n%s", tid, sql)

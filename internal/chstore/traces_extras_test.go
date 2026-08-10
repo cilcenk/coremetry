@@ -23,7 +23,7 @@ import (
 // (1) The raw-path list query must NEVER inline attribute projections again.
 func TestBuildGetTracesListSQL_NoInlineExtras(t *testing.T) {
 	from := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
-	wc := buildGetTracesWhere(TraceFilter{From: from, To: from.Add(time.Hour)})
+	wc := buildGetTracesWhere(TraceFilter{From: from, To: from.Add(time.Hour)}, clusterDeriveExpr)
 	sql := buildGetTracesListSQL(wc.sql(), "", "trace_start", "DESC")
 
 	for _, needle := range []string{"attr_values", "res_values", "attr_keys", "res_keys", "indexOf("} {

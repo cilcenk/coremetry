@@ -175,6 +175,16 @@ function TracesPageInner() {
   // it applies to List + Aggregated — Relations/Shapes follow with
   // env-separation Phase 2+.
   const [env] = useUrlEnv();
+  // v0.9.943 (B3/Ö5) — `?cluster=`. /endpoints ve EndpointDetail'in
+  // "Traces →" pivotu bu paramı v0.9.307'den beri yazıyordu; bu sayfa
+  // onu OKUMUYORDU, yani cluster=A altında bakılan bir satırın pivotu
+  // TÜM cluster'ların trace'lerini listeliyordu — pivot soruyu sessizce
+  // GENİŞLETİYORDU.
+  //
+  // env gibi state'e KOPYALANMIYOR: bu sayfanın kurduğu bir filtre değil,
+  // gelen linkin taşıdığı kapsam. A7'nin rebuildPreserving'i sahiplenmediği
+  // parametreleri zaten koruyor, yani URL tek kaynak olarak yeterli.
+  const clusterScope = searchParams.get('cluster') ?? '';
   const [view, setView] = useState<View>(() => {
     const v = searchParams.get('view');
     // Kayıtlı bir görünüm ?view=relations taşıyorsa listeye düşer —
@@ -414,6 +424,9 @@ function TracesPageInner() {
       // Global Topbar env filter (v0.8.383) — first-class param so it
       // composes with filters AND filterGroup server-side.
       env: env || undefined,
+      // v0.9.943 (B3) — pivotun taşıdığı cluster kapsamı. Aynı
+      // birinci-sınıf gerekçe: FilterRoot düz filtreleri supersede eder.
+      cluster: clusterScope || undefined,
       services: filter.requireServices.length ? filter.requireServices : undefined,
       // Grouped builder supersedes the flat filters when an OR/nested group is
       // active; flat-AND encodes to '' so the legacy filters path stays in use.
@@ -437,7 +450,7 @@ function TracesPageInner() {
       setRefreshing(false);
     });
     return () => { cancelled = true; ctl.abort(); };
-  }, [view, listRangeNs, sort, order, page, filter, env, advFilters, advGroupParam, showTotal, retryNonce]);
+  }, [view, listRangeNs, sort, order, page, filter, env, clusterScope, advFilters, advGroupParam, showTotal, retryNonce]);
 
   // ── Extras enrichment (FAZ 2 — docs/audit/traces-attribute-columns.md
   // §6B). Fires when the page rows are in and attribute columns are
@@ -516,6 +529,10 @@ function TracesPageInner() {
     // grouped mode where the group itself is omitted (see above).
     const chartFilters: FilterExpr[] = (!grouped && advFilters.length) ? [...advFilters] : [];
     if (env) chartFilters.push({ k: 'deployment.environment', op: '=', v: [env] });
+    // v0.9.943 (B3) — hacim şeridi de aynı kapsamı çizmeli, yoksa grafik
+    // tablonun saymadığı trace'leri gösterirdi. `cluster` v0.9.942'den beri
+    // spans tarafında da well-known bir filtre anahtarı.
+    if (clusterScope) chartFilters.push({ k: 'cluster', op: '=', v: [clusterScope] });
     const common = {
       from, to, step,
       search: filter.search || undefined,
@@ -553,7 +570,7 @@ function TracesPageInner() {
       })
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setVolSeries(null); });
     return () => { cancelled = true; ctl.abort(); };
-  }, [view, listRangeNs, filter.service, filter.search, env, advFilters, grouped]);
+  }, [view, listRangeNs, filter.service, filter.search, env, clusterScope, advFilters, grouped]);
 
   // v0.9.637 — anahtar önerisi YALNIZ boş sonuçta çekilir. CLAUDE.md
   // ES/CH maliyet disiplini: liste boyunca prefetch yok, poll yok —
@@ -597,6 +614,9 @@ function TracesPageInner() {
       maxMs: filter.maxMs || undefined,
       // Global Topbar env filter (v0.8.383).
       env: env || undefined,
+      // v0.9.943 (B3) — toplu görünüm listeyle AYNI kapsamı okur; sekme
+      // değiştirmek soruyu genişletemez.
+      cluster: clusterScope || undefined,
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
       having: debouncedHaving.length ? encodeHavingParam(debouncedHaving) : undefined,
@@ -609,7 +629,7 @@ function TracesPageInner() {
         setAggErr(e instanceof Error ? e.message : String(e));
       });
     return () => { cancelled = true; };
-  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, env, advFilters, advGroupParam, retryNonce]);
+  }, [view, aggRangeNs, groupBy, groupAttr, aggSort, aggOrder, debouncedHaving, filter, env, clusterScope, advFilters, advGroupParam, retryNonce]);
 
   // apply commits the draft as the live filter (overrideService sidesteps the
   // picker auto-commit race).
@@ -707,6 +727,10 @@ function TracesPageInner() {
       hasError: filter.hasError || undefined,
       rootOnly: filter.rootOnly || undefined,
       env: env || undefined,
+      // v0.9.943 (B3) — sayım listeyle AYNI evreni saymak ZORUNDA
+      // (v0.9.638 sözleşmesi); cluster düşerse rozet listeden fazlasını
+      // söyler.
+      cluster: clusterScope || undefined,
       filterGroup: advGroupParam || undefined,
       filters: advGroupParam ? undefined : (advFilters.length ? JSON.stringify(advFilters) : undefined),
     }, ctl.signal)
@@ -714,7 +738,7 @@ function TracesPageInner() {
       .catch((e: unknown) => { if (!cancelled && !isCanceled(e)) setCountRes(null); });
     return () => { cancelled = true; ctl.abort(); };
   }, [showTotal, view, listRangeNs, filter.service, filter.minMs, filter.maxMs,
-      filter.hasError, filter.rootOnly, env, advFilters, advGroupParam]);
+      filter.hasError, filter.rootOnly, env, clusterScope, advFilters, advGroupParam]);
   const hasMore = data?.hasMore ?? false;
 
   // Quick-filter chips narrow the CURRENT page client-side (instant).
@@ -881,6 +905,7 @@ function TracesPageInner() {
               if (filter.hasError) p.set('hasError', 'true');
               if (filter.rootOnly) p.set('rootOnly', 'true');
               if (env) p.set('env', env); // v0.8.383 — export matches the on-screen env filter
+              if (clusterScope) p.set('cluster', clusterScope); // v0.9.943 (B3) — aynı gerekçe
               if (filter.requireServices.length) p.set('services', filter.requireServices.join(','));
               if (advFilters.length) p.set('filters', JSON.stringify(advFilters));
               if (extraCols.length)  p.set('extraAttrs', extraCols.join(','));

@@ -66,11 +66,11 @@ func TestFlatAndGroup_ByteIdenticalToLegacy_InGetTracesWhere(t *testing.T) {
 	legacy := buildGetTracesWhere(TraceFilter{
 		Service: "checkout", From: from, To: to, HasError: true, MinMs: 25,
 		Filters: filters,
-	})
+	}, clusterDeriveExpr)
 	grouped := buildGetTracesWhere(TraceFilter{
 		Service: "checkout", From: from, To: to, HasError: true, MinMs: 25,
 		FilterRoot: &FilterGroup{Join: "AND", Filters: filters},
-	})
+	}, clusterDeriveExpr)
 
 	if legacy.sql() != grouped.sql() {
 		t.Fatalf("back-compat regression: flat-AND FilterRoot WHERE differs from legacy Filters.\nlegacy:  %q\ngrouped: %q", legacy.sql(), grouped.sql())

@@ -2787,6 +2787,12 @@ export interface AggregateParams {
   // param (NOT an injected FilterExpr) so it survives the backend's
   // filterGroup-supersedes-filters rule.
   env?: string;
+  // cluster — derived k8s/openshift cluster name (?cluster=, v0.9.943 /
+  // B3). Same first-class reasoning as env: it must survive the backend's
+  // filterGroup-supersedes-filters rule. Non-empty disqualifies the
+  // trace_summary MV fast-path (the MV has no cluster dim); EMPTY leaves
+  // it open — that conditional is the whole point (H15).
+  cluster?: string;
   filters?: string;     // JSON-encoded FilterExpr[]
   // filterGroup — grouped AND/OR builder JSON (v0.8.x gap-2). When present it
   // SUPERSEDES `filters` server-side; a flat-AND group is byte-identical to
@@ -2829,6 +2835,12 @@ export interface TracesParams {
   // param (NOT an injected FilterExpr) so it survives the backend's
   // filterGroup-supersedes-filters rule.
   env?: string;
+  // cluster — derived k8s/openshift cluster name (?cluster=, v0.9.943 /
+  // B3). Same first-class reasoning as env: it must survive the backend's
+  // filterGroup-supersedes-filters rule. Non-empty disqualifies the
+  // trace_summary MV fast-path (the MV has no cluster dim); EMPTY leaves
+  // it open — that conditional is the whole point (H15).
+  cluster?: string;
   filters?: string;     // JSON-encoded FilterExpr[]
   // filterGroup — grouped AND/OR builder JSON (v0.8.x gap-2). Supersedes
   // `filters` server-side when present; flat-AND is byte-identical so this is

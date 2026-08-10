@@ -268,7 +268,15 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
   const stack = samples.find(s => s.stacktrace)?.stacktrace ?? '';
   const stackLines = stack ? stack.split('\n') : [];
 
+  // v0.9.882 (Dalga 2, W2.2) — bu dört buton bugüne dek HİÇBİR çift-tık
+  // koruması taşımıyordu: ikinci tık ikinci PUT ve backend tarafında ikinci
+  // audit girdisi üretiyordu. `acting` hangi aksiyonun uçtuğunu tutuyor —
+  // yalnız ona basılan buton dönerken diğerleri de kilitleniyor, çünkü
+  // dördü de AYNI durumu yazıyor ve yarış hâlinde son yanıt kazanırdı.
+  const [acting, setActing] = useState<ExceptionGroupState | null>(null);
   const act = async (next: ExceptionGroupState) => {
+    if (acting) return;
+    setActing(next);
     setState(next);
     try {
       await api.setExceptionGroupState(group.fingerprint, next);
@@ -276,6 +284,8 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
     } catch (err) {
       alert(err instanceof Error ? err.message : String(err));
       setState(group.state);
+    } finally {
+      setActing(null);
     }
   };
   // v0.8.548 — was `navigator.clipboard?.writeText(stack).then(…)`: the
@@ -304,13 +314,17 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
         <ShareButton copiedLabel="Copied" />
         {isAdmin && (state === 'new' || state === 'regressed' || state === 'acknowledged') && (
           <>
-            {state !== 'acknowledged' && <button className="sec" onClick={() => act('acknowledged')}>Acknowledge</button>}
-            <button className="sec" onClick={() => act('ignored')}>Ignore</button>
-            <button onClick={() => act('resolved')}>Resolve</button>
+            {state !== 'acknowledged' && <Button variant="secondary" onClick={() => act('acknowledged')}
+              loading={acting === 'acknowledged'} disabled={acting !== null}>Acknowledge</Button>}
+            <Button variant="secondary" onClick={() => act('ignored')}
+              loading={acting === 'ignored'} disabled={acting !== null}>Ignore</Button>
+            <Button onClick={() => act('resolved')}
+              loading={acting === 'resolved'} disabled={acting !== null}>Resolve</Button>
           </>
         )}
         {isAdmin && (state === 'resolved' || state === 'ignored') && (
-          <button className="sec" onClick={() => act('new')}>Reopen</button>
+          <Button variant="secondary" onClick={() => act('new')}
+            loading={acting === 'new'} disabled={acting !== null}>Reopen</Button>
         )}
       </div>
 

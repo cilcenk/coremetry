@@ -21,6 +21,11 @@ export default function IncidentPage() {
   return <Suspense fallback={<Spinner />}><Inner /></Suspense>;
 }
 
+// Hangi yazma yolunun uçtuğunu tutan etiket. Dördü de admin yazması,
+// yani her biri backend'de bir audit girdisi bırakıyor — çift tık,
+// çift audit demekti (v0.9.882).
+type IncidentAction = 'ack' | 'resolve' | 'note' | 'pm';
+
 function Inner() {
   const [sp] = useSearchParams();
   const { user } = useAuth();
@@ -39,6 +44,7 @@ function Inner() {
   const [note, setNote] = useState('');
   const [postmortemDraft, setPostmortemDraft] = useState('');
   const [editingPM, setEditingPM] = useState(false);
+  const [busy, setBusy] = useState<IncidentAction | null>(null);
 
   useEffect(() => {
     if (inc && !editingPM) setPostmortemDraft(inc.postmortem ?? '');
@@ -85,16 +91,27 @@ function Inner() {
   if (inc === undefined) return <Spinner />;
   if (inc === null)      return <Empty icon="⚠" title="Incident not found" />;
 
-  const ack     = async () => { await api.ackIncident(id); refresh(); };
-  const resolve = async () => { await api.resolveIncident(id); refresh(); };
-  const submitNote = async () => {
-    if (!note.trim()) return;
-    await api.addIncidentNote(id, note.trim()); setNote(''); refresh();
+  // v0.9.882 (Dalga 2, W2.2) — dördü de korumasız yazma yoluydu: ikinci
+  // tık ikinci POST/PUT ve ikinci audit girdisi. `busy` hangi aksiyonun
+  // uçtuğunu tutuyor, `run` sarmalayıcısı da guard + finally'yi tek yerde
+  // topluyor (dört ayrı try/finally kopyası kayma üretirdi).
+  const run = async (kind: IncidentAction, fn: () => Promise<void>) => {
+    if (busy) return;
+    setBusy(kind);
+    try { await fn(); } finally { setBusy(null); }
   };
-  const savePM = async () => {
+  const ack     = () => run('ack',     async () => { await api.ackIncident(id); refresh(); });
+  const resolve = () => run('resolve', async () => { await api.resolveIncident(id); refresh(); });
+  const submitNote = () => {
+    if (!note.trim()) return;
+    return run('note', async () => {
+      await api.addIncidentNote(id, note.trim()); setNote(''); refresh();
+    });
+  };
+  const savePM = () => run('pm', async () => {
     await api.updateIncident(id, { ...inc, postmortem: postmortemDraft });
     setEditingPM(false); refresh();
-  };
+  });
 
   const elapsedNs = (inc.resolvedAt ?? Date.now() * 1_000_000) - inc.startedAt;
 
@@ -128,8 +145,10 @@ function Inner() {
           {/* v0.9.477 — aksiyon çubuğunda buton, cevap sağ AI çekmecesinde
               (eskiden çubuğun altına satır-içi panel açıyordu). */}
           <AIExplainButton subject={{ kind: 'incident', id: inc.id }} />
-          {isAdmin && inc.status === 'open' && <button className="sec" onClick={ack}>Acknowledge</button>}
-          {isAdmin && inc.status !== 'resolved' && <button onClick={resolve}>Resolve</button>}
+          {isAdmin && inc.status === 'open' && <Button variant="secondary" onClick={ack}
+            loading={busy === 'ack'} disabled={busy !== null}>Acknowledge</Button>}
+          {isAdmin && inc.status !== 'resolved' && <Button onClick={resolve}
+            loading={busy === 'resolve'} disabled={busy !== null}>Resolve</Button>}
         </div>
 
         {/* Title + meta chips */}
@@ -179,7 +198,8 @@ function Inner() {
                   onKeyDown={e => e.key === 'Enter' && submitNote()}
                   placeholder="Add a note (mitigation tried, hypothesis, who's on it)…"
                   style={{ flex: 1 }} />
-                <button onClick={submitNote} disabled={!note.trim()}>Add note</button>
+                <Button onClick={submitNote} loading={busy === 'note'}
+                  disabled={!note.trim() || busy !== null}>Add note</Button>
               </div>
             )}
           </div>
@@ -266,8 +286,9 @@ function Inner() {
                       rows={12} style={{ width: '100%', resize: 'vertical', fontFamily: 'ui-monospace, monospace', fontSize: 12 }}
                       placeholder={POSTMORTEM_TEMPLATE} />
                     <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
-                      <button className="sec" onClick={() => { setEditingPM(false); setPostmortemDraft(inc.postmortem ?? ''); }}>Cancel</button>
-                      <button onClick={savePM}>Save</button>
+                      <Button variant="secondary" disabled={busy !== null}
+                        onClick={() => { setEditingPM(false); setPostmortemDraft(inc.postmortem ?? ''); }}>Cancel</Button>
+                      <Button onClick={savePM} loading={busy === 'pm'} disabled={busy !== null}>Save</Button>
                     </div>
                   </div>
                 ) : inc.postmortem ? (

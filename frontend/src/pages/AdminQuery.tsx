@@ -155,9 +155,9 @@ export default function AdminQueryPage() {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') run();
           }} />
         <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-          <button onClick={run} disabled={busy}>
+          <Button onClick={run} disabled={busy}>
             {busy ? 'Running…' : 'Run (⌘+Enter)'}
-          </button>
+          </Button>
           <span style={{ flex: 1 }} />
           <span style={{ color: 'var(--text3)', fontSize: 11 }}>
             Range applies to every query · admin-only · same auth as /admin/sql

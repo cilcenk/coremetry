@@ -24,6 +24,7 @@ import { ShareButton } from '@/components/ShareButton';
 import { copyToClipboard } from '@/lib/clipboard';
 import { QueryErrorInline } from '@/components/QueryError';
 import { serviceHref } from '@/lib/serviceHref';
+import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
 
 // ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
 // Two surfaces share one skeleton: a top triage bar (badges + ID +
@@ -691,6 +692,24 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
                 listeleniyordu; hasError linki root filtresini kapatır. */}
             <SignalLink to={`/traces?service=${encodeURIComponent(problem.service)}&hasError=true&rootOnly=false&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`}
               label="⋮ Error traces" sub="service, problem window" />
+            {/* v0.9.961 (UX denetimi G4/Ö7) — GECİKME alarmının kendi
+                pivotu. Tek trace linki `hasError=true` sabitliydi ve bir
+                p99-eşik alarmında yavaşlık çoğu zaman HATASIZ span'lerde
+                olur: operatör boş bir "Error traces" listesi görüp yavaş
+                trace'i servis→endpoint→traces turuyla arıyordu.
+                Link yalnız birimi ADINDA beyan eden (`*_ms`) metriklerde
+                çizilir — yanlış birimle kıstırılmış bir liste "yavaş
+                trace yok" diye okunurdu (v0.6.36 sınıfı). */}
+            {(() => {
+              const thr = latencyThresholdMs(problem);
+              if (thr === null) return null;
+              return (
+                <SignalLink
+                  to={slowTracesHref(problem.service, thr, { fromNs: logsFrom, toNs: logsTo })}
+                  label="◷ Slow traces"
+                  sub={`≥ ${Math.round(thr)} ms (eşik), problem window`} />
+              );
+            })()}
             <SignalLink to={`/service-map?focus=${encodeURIComponent(problem.service)}`}
               label="◉ Service map" sub="focused" />
           </Sect>

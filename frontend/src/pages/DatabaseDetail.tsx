@@ -305,10 +305,21 @@ export default function DatabaseDetailPage() {
                   340px-min cell it would have starved the statement text,
                   which is the column being read. It rides in the row's
                   title alongside the sample statement. */}
+              {/* v0.9.961 (UX denetimi G6/Ö11) — KAPSAM BEYANI. Bu panel
+                  instance'ı HİÇ filtrelemiyor: sorgu yalnız
+                  (db_system, db_name) ile gidiyor (stmtsQ) ve API
+                  imzasında instance yok. Sayfanın Scope satırı ise
+                  instance vadediyor. Aynı motordan iki instance'lı bir
+                  kurulumda operatör DİĞER makinenin ifadesini bu makineye
+                  atfediyordu — optimizasyonun yanlış makineye yapılması.
+                  Tek-instance kurulumda görünmez, o yüzden sessizce yaşadı.
+                  Tam düzeltme (uca opsiyonel instance) bilinçli olarak
+                  KAPSAM DIŞI (/clickhouse-schema kapısı); v0.9.821'in aynı
+                  sayfadaki emsali gibi, kapsam ÖNCE söyleniyor. */}
               <Card header={
                 <PanelTitle sub={refObj.dbName
-                  ? `${refObj.dbName} · click a row for detail`
-                  : `every database here · click a row for detail`}>
+                  ? `${refObj.dbName} · all ${refObj.system} instances · click a row for detail`
+                  : `every database here · all ${refObj.system} instances · click a row for detail`}>
                   Top statements
                 </PanelTitle>
               }>

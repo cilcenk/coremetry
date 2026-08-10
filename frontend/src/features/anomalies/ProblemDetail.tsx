@@ -5,8 +5,8 @@ import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowDownToLine } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useServicesMetadata } from '@/lib/queries';
-import { fmtFixed, tsLong } from '@/lib/utils';
-import { Spinner } from '@/components/Spinner';
+import { fmtFixed, fmtNum, tsLong } from '@/lib/utils';
+import { Spinner, Empty } from '@/components/Spinner';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { useAiEvidence } from '@/components/ai/aiEvents';
@@ -25,6 +25,8 @@ import { copyToClipboard } from '@/lib/clipboard';
 import { QueryErrorInline } from '@/components/QueryError';
 import { serviceHref } from '@/lib/serviceHref';
 import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
+import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
+import { operationTracesHref } from '@/lib/pivotHref';
 
 // ProblemDetail — Variant B (Dynatrace problem feed) full-page details.
 // Two surfaces share one skeleton: a top triage bar (badges + ID +
@@ -71,6 +73,92 @@ function Sect({ title, accent, sub, children }: {
       </div>
       <div className="b">{children}</div>
     </div>
+  );
+}
+
+// ProblemOffenders — v0.9.962 (UX denetimi G5 / Ö8). "Hangi endpoint
+// yavaşlattı / hata verdi" sorusunun SAYFADAKİ cevabı.
+//
+// Alarm servis seviyesinde geliyor; sorumlusunu bulmak için operatör
+// /service'e geçip pencereyi ELLE kurup Operations tablosunu sıralamak
+// zorundaydı — denetimin "ideal yol farkının en büyük parçası" dediği
+// adım. Veri zaten var ve zaten MV'den geliyor; YENİ BACKEND UCU YOK,
+// yalnız problem penceresiyle soruluyor.
+//
+// PENCERE BASAMAKLI (problemOffenders.problemWindowNs): açık bir
+// problemde üst uç `Date.now()`tur ve ham hâliyle sorgu anahtarına
+// girerse her render yeni anahtar üretir — durmadan refetch, ve
+// sunucudaki serveCached anahtarı sınırsız değere dağılır. v0.5.184'ün
+// render'da now() tıklatan sınıfı.
+function ProblemOffenders({ problem }: { problem: Problem }) {
+  // now'u BİR KEZ oku: problem kimliği/çözülme anı değişmedikçe pencere
+  // de sabit kalsın (basamak zaten dakikada bir ilerletiyor).
+  const win = useMemo(
+    () => problemWindowNs(problem.startedAt, problem.resolvedAt, Date.now()),
+    [problem.startedAt, problem.resolvedAt],
+  );
+  const opsQ = useQuery({
+    queryKey: ['problem-offenders', problem.service, win.fromNs, win.toNs],
+    queryFn: () => api.serviceOperations(problem.service, { from: win.fromNs, to: win.toNs }),
+    enabled: !!problem.service,
+    staleTime: 60_000,
+  });
+  const rows = useMemo(() => topOffenders(opsQ.data ?? []), [opsQ.data]);
+  return (
+    <Sect title="Top offenders" sub="problem window · total time">
+      {opsQ.isPending && <Spinner />}
+      {/* Hata dalı AYRI: boşa ezmek "bu pencerede operasyon yok" diye
+          okunur ve operatör yanlış yerde arar (K6 sınıfı). */}
+      {opsQ.isError && (
+        <div style={{ fontSize: 12, color: 'var(--err)' }}>
+          Operations could not be loaded — this is a failed read, not an idle service.
+        </div>
+      )}
+      {opsQ.data && rows.length === 0 && (
+        <Empty compact icon="◯" title="No operations in the problem window" />
+      )}
+      {rows.length > 0 && (
+        <table style={{ width: '100%', tableLayout: 'fixed' }}>
+          <colgroup><col /><col style={{ width: 72 }} /><col style={{ width: 80 }} /><col style={{ width: 76 }} /></colgroup>
+          <thead>
+            <tr>
+              <th style={{ textAlign: 'left' }}>Operation</th>
+              <th className="num">Calls</th>
+              <th className="num">P99</th>
+              <th className="num">Err %</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map(o => (
+              <tr key={o.name}>
+                <td style={{ overflow: 'hidden' }}>
+                  <Link
+                    to={operationTracesHref({
+                      window: { fromNs: win.fromNs, toNs: win.toNs },
+                      operation: o.name, service: problem.service,
+                    })}
+                    className="mono"
+                    style={{
+                      display: 'block', overflow: 'hidden', textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap', textDecoration: 'none', color: 'var(--accent2)',
+                    }}
+                    title={o.name}>
+                    {o.name}
+                  </Link>
+                </td>
+                <td className="num">{fmtNum(o.spanCount)}</td>
+                <td className="num mono">{o.p99DurationMs.toFixed(0)} ms</td>
+                <td className="num">
+                  <span className={`badge ${o.errorRate > 5 ? 'b-err' : o.errorRate > 1 ? 'b-warn' : 'b-ok'}`}>
+                    {o.errorRate.toFixed(1)}%
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </Sect>
   );
 }
 
@@ -606,6 +694,8 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
               <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 6 }}>{problem.priorityReason}</div>
             )}
           </Sect>
+
+          <ProblemOffenders problem={problem} />
 
           <Sect title="Problem timeline">
             <ul className="pb-tl">

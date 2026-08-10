@@ -40,6 +40,7 @@ import {
   AXIS_FONT_SIZE, axisTickPlan, decimalsForIncr, widestLabelPx, axisGutterPx,
   seriesExtent, paddedExtent,
 } from '@/lib/chart/axisSize';
+import { IconButton } from '@/components/ui/IconButton';
 import { seriesRoleColor, type SeriesRole } from '@/lib/chart/seriesRole';
 import { visibleRangeStats } from '@/lib/chart/visibleStats';
 import { resolveLegendCollapsed, isAdditiveUnit } from '@/lib/chart/legendStats';
@@ -1014,9 +1015,9 @@ export function CorePanel({
         {headerExtra && <span style={{ marginLeft: 'auto' }}>{headerExtra}</span>}
         {/* FAZ 2D — panel menüsü: tam ekran / CSV / sorguyu göster / log. */}
         <span ref={menuRef} style={{ marginLeft: headerExtra ? 0 : 'auto', position: 'relative' }}>
-          <button className="sec" aria-label="Panel menüsü" aria-expanded={menuOpen}
-            style={{ fontSize: 11, padding: '0 6px' }}
-            onClick={() => setMenuOpen(o => !o)}>⋯</button>
+          <IconButton variant="secondary" size="xs"
+            aria-label="Panel menüsü" aria-haspopup="menu" aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(o => !o)} icon="⋯" />
           {menuOpen && (
             <div role="menu" style={{
               position: 'absolute', right: 0, top: '100%', zIndex: 20,
@@ -1169,10 +1170,10 @@ export function CorePanel({
 
       {data.state === 'ready' && aligned.names.length > 0 && !hideLegend && (
         <div style={{ fontSize: 11 }}>
-          <button className="sec" style={{ fontSize: 10, padding: '1px 6px' }}
-            onClick={toggleLegend}>
+          <Button variant="secondary" size="xs"
+            aria-expanded={legendOpen} onClick={toggleLegend}>
             {legendOpen ? '▼' : '▶'} Series ({aligned.names.length})
-          </button>
+          </Button>
           {legendOpen && (
             <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', marginTop: 4 }}>

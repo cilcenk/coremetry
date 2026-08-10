@@ -11,6 +11,7 @@ import {
   type Action, type ParamValues, type SuggestItem,
 } from '@/lib/actions';
 import { toast } from '@/lib/toast';
+import { Button, LinkButton } from '@/components/ui';
 
 // CommandPalette — global Cmd-K / Ctrl-K spotlight (v0.5.162).
 // Mounted once at AppShell level; listens for the hotkey and pops
@@ -518,17 +519,11 @@ export function CommandPalette() {
                       {cur.label}:
                     </span>
                     {opts.map(o => (
-                      <button key={o.label} type="button"
+                      <Button key={o.label} variant="secondary" size="sm"
                         onClick={() => advanceParam(cur.name, o.seconds)}
-                        disabled={running}
-                        style={{
-                          padding: '5px 12px', borderRadius: 4, fontSize: 12,
-                          background: 'var(--bg2)',
-                          border: '1px solid var(--border)',
-                          color: 'var(--text)', cursor: 'pointer',
-                        }}>
+                        disabled={running}>
                         {o.label}
-                      </button>
+                      </Button>
                     ))}
                   </div>
                 );
@@ -617,15 +612,12 @@ export function CommandPalette() {
                   return isLast ? '↵ run · Esc cancel' : '↵ next';
                 })()}
               </span>
-              <button type="button"
+              <LinkButton tone="muted"
                 onClick={() => { resetState(); }}
                 disabled={running}
-                style={{
-                  background: 'transparent', border: 'none',
-                  color: 'var(--text3)', cursor: 'pointer', fontSize: 11,
-                }}>
+                style={{ fontSize: 11 }}>
                 ← back to search
-              </button>
+              </LinkButton>
             </div>
           </>
         ) : (

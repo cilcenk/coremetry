@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 // (rcaVerdictView.ts) ve vitest ile pinli; ikinci bir kopya yazmak
 // aynı sözleşmenin iki yerde ayrışması demekti.
 import { canRateVerdict } from './rcaVerdictView';
+import { IconButton } from '@/components/ui/IconButton';
 
 // AIAnalysisPanel — embedded "AI ile analiz et" affordance for a service /
 // incident / error-group (NOT logs). The operator clicks; the screen context
@@ -251,10 +252,12 @@ function Result({ res, fb, setFb, showCtx, setShowCtx, kibanaHref, service }: {
       <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
         {canRateVerdict(res.exchangeId) && (<>
           <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>Bu analiz yararlı mıydı?</span>
-          <button className="sec" style={fbBtn(fb === 1)} aria-pressed={fb === 1}
-            onClick={() => rateAnalysis(res.exchangeId!, 1, fb, setFb)} aria-label="faydalı">👍</button>
-          <button className="sec" style={fbBtn(fb === -1)} aria-pressed={fb === -1}
-            onClick={() => rateAnalysis(res.exchangeId!, -1, fb, setFb)} aria-label="faydasız">👎</button>
+          <IconButton variant="secondary" size="sm" active={fb === 1}
+            onClick={() => rateAnalysis(res.exchangeId!, 1, fb, setFb)}
+            aria-label="faydalı" icon="👍" />
+          <IconButton variant="secondary" size="sm" active={fb === -1}
+            onClick={() => rateAnalysis(res.exchangeId!, -1, fb, setFb)}
+            aria-label="faydasız" icon="👎" />
           {fb && <span style={{ fontSize: 11, color: 'var(--text3)' }}>Kaydedildi.</span>}
         </>)}
         <span style={{ flex: 1 }} />
@@ -327,6 +330,6 @@ const pStyle: React.CSSProperties = { margin: 0, fontSize: 13, lineHeight: 1.5, 
 const ulStyle: React.CSSProperties = { margin: 0, paddingLeft: 18, display: 'flex', flexDirection: 'column', gap: 4 };
 const liStyle: React.CSSProperties = { fontSize: 12.5, lineHeight: 1.45, color: 'var(--text2)' };
 const evLink: React.CSSProperties = { fontSize: 11, color: 'var(--accent)', textDecoration: 'none', border: '1px solid var(--border)', borderRadius: 4, padding: '2px 7px', whiteSpace: 'nowrap' };
-function fbBtn(active: boolean): React.CSSProperties {
-  return { padding: '2px 8px', fontSize: 13, opacity: active ? 1 : 0.6, borderColor: active ? 'var(--accent)' : 'var(--border)' };
-}
+// v0.9.891 — `fbBtn` kaldırıldı. Seçili durumu opacity + borderColor ile
+// ELLE çiziyordu; IconButton'un `active`i aynı işi `aria-pressed` + `.active`
+// tint'iyle yapıyor, yani durum artık yalnız GÖRÜLMÜYOR, DUYURULUYOR da.

@@ -268,8 +268,8 @@ function CustomLinksEditor({ links, onChange }: {
             title="Remove link">×</Button>
         </div>
       ))}
-      <Button variant="secondary" size="sm" onClick={add}
-        style={{ alignSelf: 'flex-start', color: 'var(--accent2)' }}>
+      <Button variant="accent" size="sm" onClick={add}
+        style={{ alignSelf: 'flex-start' }}>
         + Add link
       </Button>
     </div>

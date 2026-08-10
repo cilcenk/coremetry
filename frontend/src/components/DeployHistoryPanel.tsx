@@ -184,9 +184,8 @@ export function DeployHistoryPanel({ service, onZoomWindow }: {
                           </span>
                         )}
                         {(st.kind === 'idle' || st.kind === 'err') && (
-                          <Button variant="secondary" size="sm"
+                          <Button variant="accent" size="sm"
                             onClick={() => askCopilot(r)}
-                            style={{ color: 'var(--accent2)' }}
                             title="Ask CoSRE whether this rollout looks clean, regressed, or rollback-worthy">
                             ✨ {st.kind === 'err' ? 'Re-ask' : 'Explain'} rollout
                           </Button>

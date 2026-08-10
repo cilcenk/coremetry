@@ -723,9 +723,8 @@ function DeployImpactButton({ service, deploys }: {
 
   return (
     <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
-      <Button variant="secondary" size="sm" onClick={run} disabled={busy}
+      <Button variant="accent" size="sm" onClick={run} disabled={busy}
         leftIcon={<IconSparkles />}
-        style={{ color: 'var(--accent2)' }}
         title={`Compare ±10 min around the latest deploy (${latest.version})`}>
         {busy ? 'Thinking…' : `Explain deploy ${latest.version}`}
       </Button>

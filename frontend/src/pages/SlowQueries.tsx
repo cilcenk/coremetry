@@ -343,9 +343,8 @@ export default function SlowQueriesPage() {
                                   return <span style={{ color: 'var(--text3)' }}>✨ Thinking…</span>;
                                 }
                                 return (
-                                  <Button variant="secondary" size="sm"
+                                  <Button variant="accent" size="sm"
                                     onClick={() => askCopilot(key, r)}
-                                    style={{ color: 'var(--accent2)' }}
                                     title="Ask CoSRE for the likely cause + one concrete remediation">
                                     ✨ {ex === 'idle' ? 'Explain' : 'Re-ask'} CoSRE
                                   </Button>

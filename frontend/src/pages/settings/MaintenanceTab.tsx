@@ -1,5 +1,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 import { Modal, Button, Stack } from '@/components/ui';
 import { api, type MaintenanceWindow } from '@/lib/api';
 import { Field, Row } from './shared';
@@ -65,8 +67,18 @@ export function MaintenanceTab() {
           border: `1px solid ${msg.kind === 'ok' ? 'rgba(63,185,80,0.35)' : 'rgba(220,38,38,0.3)'}`,
         }}>{msg.text}</div>
       )}
-      {items === undefined && <Spinner />}
-      {items !== undefined && (!items || items.length === 0) && (
+      {readState(items) === 'loading' && <Spinner />}
+      {/* v0.9.865 (tutarlılık denetimi MT1) — `!items` null için de doğru
+          olduğundan okuma hatası "No maintenance windows" oluyordu. En pahalı
+          yanlış-boş: operatör aktif bir bakım penceresi olmadığını sanıp
+          deploy'a giriyor, susturulacak alarmlar fan-out ediyor. */}
+      {readState(items) === 'error' && (
+        <QueryError onRetry={load}>
+          Maintenance windows could not be loaded — this is a failed read, not
+          an empty list. An active window may still be suppressing alerts.
+        </QueryError>
+      )}
+      {readState(items) === 'empty' && (
         <Empty icon="◯" title="No maintenance windows">
           Declare a window before a planned deploy to silence alerts on the
           affected services. They auto-expire — no clean-up needed.

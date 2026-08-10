@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState, FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 import { useAuth } from '@/components/AuthProvider';
 import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
 import { keys, useUsers, useCustomRoles } from '@/lib/queries';
@@ -142,8 +144,19 @@ export default function UsersPage() {
           </div>
         )}
 
-        {users === undefined && <Spinner />}
-        {users !== undefined && (!users || users.length === 0) && (
+        {readState(users) === 'loading' && <Spinner />}
+        {/* v0.9.865 (tutarlılık denetimi MT1) — `!users` null için de doğru
+            olduğundan okuma hatası "No users yet / create the first user"
+            oluyordu: dolu bir LDAP filosu boş kullanıcı tabanı gibi
+            okunuyor, operatör var olanın üstüne kullanıcı kurmaya
+            yönlendiriliyordu. */}
+        {readState(users) === 'error' && (
+          <QueryError onRetry={() => usersQ.refetch()}>
+            Users could not be loaded — this is a failed read, not an empty
+            directory. Existing accounts are unaffected.
+          </QueryError>
+        )}
+        {readState(users) === 'empty' && (
           <Empty icon="◯" title="No users yet">
             Create the first user to get started.
           </Empty>

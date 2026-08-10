@@ -6,6 +6,8 @@ import { useAuth } from '@/components/AuthProvider';
 import { ServicePicker } from '@/components/ServicePicker';
 import { ClusterChips as ClusterChipsRef } from '@/components/ClusterChips';
 import { Modal, Button, Field, SelectField, TextareaField, Row } from '@/components/ui';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 import { useIncidents, useCreateIncident } from '@/lib/queries';
 import { tsLong, fmtNum } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -106,8 +108,17 @@ export default function IncidentsPage() {
             Durum/servis süzgeciyle daralt.
           </div>
         )}
-        {items === undefined && <Spinner />}
-        {items !== undefined && (!items || items.length === 0) && (
+        {readState(items) === 'loading' && <Spinner />}
+        {/* v0.9.865 (tutarlılık denetimi MT1) — `!items` null için de doğru
+            olduğundan okuma hatası "No incidents" olarak sunuluyordu:
+            açık bir olay varken sayfa "olay yok" diyordu. */}
+        {readState(items) === 'error' && (
+          <QueryError onRetry={() => incidentsQ.refetch()}>
+            Incidents could not be loaded — this is a failed read, not an
+            all-clear. Open incidents may still exist.
+          </QueryError>
+        )}
+        {readState(items) === 'empty' && (
           <Empty icon="⚠" title="No incidents">
             Incidents auto-create from same-service same-severity Problems firing within 30 minutes.
             {isAdmin && ' Or click "+ Declare incident" to create one manually.'}

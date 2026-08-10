@@ -469,7 +469,7 @@ export function CommandPalette() {
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)',
         display: 'flex', justifyContent: 'center',
         alignItems: 'flex-start', paddingTop: '12vh',
-        zIndex: 100,
+        zIndex: 'var(--z-modal)',
       }}>
       <div onClick={e => e.stopPropagation()}
         onKeyDown={onKeyDown}

@@ -321,7 +321,7 @@ export function Sidebar() {
         style={{
           width: computedWidth,
           ...(isMobile ? {
-            position: 'fixed', top: 0, bottom: 0, left: 0, zIndex: 50,
+            position: 'fixed', top: 0, bottom: 0, left: 0, zIndex: 'var(--z-drawer)',
             transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)',
             transition: 'transform .2s ease',
             boxShadow: drawerOpen ? '4px 0 20px rgba(0,0,0,0.4)' : 'none',
@@ -434,7 +434,7 @@ export function Sidebar() {
                 right: showLabels ? 8 : 4, marginBottom: 4, minWidth: 180,
                 background: 'var(--bg2)', border: '1px solid var(--border)',
                 borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
-                padding: 4, zIndex: 50,
+                padding: 4, zIndex: 'var(--z-dropdown)',
               }}>
                 {user.role === 'admin' && (
                   <>

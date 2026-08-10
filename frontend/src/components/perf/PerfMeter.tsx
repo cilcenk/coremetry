@@ -14,7 +14,7 @@ export function PerfMeter() {
 
   const fpsColor = s.fps >= 55 ? 'var(--ok)' : s.fps >= 30 ? 'var(--warn)' : 'var(--err)';
   const box: React.CSSProperties = {
-    position: 'fixed', bottom: 8, left: 8, zIndex: 99999,
+    position: 'fixed', bottom: 8, left: 8, zIndex: 'var(--z-debug)',
     font: '11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace',
     background: 'var(--bg1)', border: '1px solid var(--border)', borderRadius: 6,
     color: 'var(--text2)', boxShadow: '0 1px 2px rgba(20,30,45,.12)',

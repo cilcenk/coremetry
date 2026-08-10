@@ -98,7 +98,7 @@ export function LDAPUserPicker() {
       {provisionFor && (
         <div onClick={() => setProvisionFor(null)} style={{
           position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-          display: 'grid', placeItems: 'center', zIndex: 100,
+          display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal)',
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             width: 380, padding: 20, borderRadius: 8,

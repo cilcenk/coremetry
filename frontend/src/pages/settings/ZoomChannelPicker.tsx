@@ -123,7 +123,7 @@ export function ZoomChannelPicker({
       {open && (
         <div onClick={() => setOpen(false)} style={{
           position: 'fixed', inset: 0, background: 'var(--backdrop)',
-          display: 'grid', placeItems: 'center', zIndex: 250,
+          display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal-nested)',
         }}>
           <div onClick={e => e.stopPropagation()} style={{
             width: 720, maxWidth: '94vw', maxHeight: '82vh',

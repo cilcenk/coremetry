@@ -98,7 +98,7 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-      display: 'grid', placeItems: 'center', zIndex: 100,
+      display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal)',
     }}>
       <div onClick={e => e.stopPropagation()} style={{
         width: 520, maxHeight: '90vh', overflow: 'auto',

@@ -635,7 +635,7 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
           chart layout, auto-dismisses after a few seconds. */}
       {exemplarNote && (
         <div role="status" aria-live="polite" style={{
-          position: 'fixed', bottom: 18, right: 18, zIndex: 50,
+          position: 'fixed', bottom: 18, right: 18, zIndex: 'var(--z-toast)',
           background: 'var(--bg2)', border: '1px solid var(--border)',
           borderRadius: 6, padding: '8px 12px', fontSize: 12,
           color: 'var(--text2)', boxShadow: '0 4px 14px rgba(0,0,0,0.35)',

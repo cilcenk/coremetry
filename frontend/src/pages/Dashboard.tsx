@@ -424,7 +424,7 @@ function Inner() {
         <button className="sec" type="button" onClick={() => setKiosk(false)}
           title="Kiosk modundan çık (ESC)"
           style={{
-            position: 'fixed', top: 10, right: 12, zIndex: 80,
+            position: 'fixed', top: 10, right: 12, zIndex: 'var(--z-fab)',
             fontSize: 11, padding: '3px 8px', borderRadius: 'var(--radius-sm)',
           }}>
           Kiosk'tan çık ✕
@@ -661,7 +661,7 @@ function PanelMenu({ panel, vars, range, canEdit, onDuplicate, onEdit }: {
           position: 'absolute', top: '100%', right: 0, marginTop: 4,
           minWidth: 188, background: 'var(--bg2)',
           border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-          boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 60,
+          boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 'var(--z-dropdown)',
           display: 'flex', flexDirection: 'column', gap: 2,
         }}>
           {/* Absent for panel shapes the builder can't express (stat, gauge,
@@ -696,7 +696,7 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
         <div style={{
           position: 'absolute', top: '100%', left: 0, marginTop: 4,
           background: 'var(--bg1)', border: '1px solid var(--border)',
-          borderRadius: 6, padding: 4, zIndex: 50, minWidth: 180,
+          borderRadius: 6, padding: 4, zIndex: 'var(--z-dropdown)', minWidth: 180,
           boxShadow: 'var(--shadow-pop)',
         }}>
           {/* v0.9.781 — this list is a HAND-MAINTAINED array behind an

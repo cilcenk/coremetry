@@ -67,7 +67,7 @@ export function RecentQueries({ history, onApply }: {
       {open && (
         <div role="listbox" aria-label="Son sorgular"
           style={{
-            position: 'absolute', top: '100%', right: 0, zIndex: 30, marginTop: 4,
+            position: 'absolute', top: '100%', right: 0, zIndex: 'var(--z-dropdown)', marginTop: 4,
             minWidth: 320, maxWidth: 560,
             background: 'var(--bg1)', border: '1px solid var(--border)',
             borderRadius: 8, padding: 4,

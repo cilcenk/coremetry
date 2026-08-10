@@ -164,7 +164,7 @@ export function AggregateFlame({ roots, totalWidth = 1100 }: {
             position: 'fixed', left: hover.x + 14, top: hover.y - 10,
             background: 'var(--bg2)', border: '1px solid var(--border)',
             padding: '8px 12px', borderRadius: 6, fontSize: 12,
-            pointerEvents: 'none', zIndex: 100, maxWidth: 480,
+            pointerEvents: 'none', zIndex: 'var(--z-tooltip)', maxWidth: 480,
             color: 'var(--text)',
             boxShadow: '0 4px 14px rgba(0,0,0,0.35)',
           }}>

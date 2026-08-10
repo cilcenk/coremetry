@@ -198,7 +198,7 @@ export function CopilotChat() {
           title={criticalOpen > 0 ? `CoSRE — ${criticalOpen} açık kritik problem` : "CoSRE'ye sor"}
           aria-label={criticalOpen > 0 ? `CoSRE, ${criticalOpen} açık kritik problem` : 'CoSRE'}
           style={{
-            position: 'fixed', right: 18, bottom: 18, zIndex: 60,
+            position: 'fixed', right: 18, bottom: 18, zIndex: 'var(--z-fab)',
             width: 48, height: 48, borderRadius: 24,
             background: 'linear-gradient(135deg, var(--accent-soft), var(--bg1))',
             border: '1px solid var(--accent2)',

@@ -238,7 +238,7 @@ export function OracleMetricDrillModal({ drill, range, instance, engine, onClose
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
-      display: 'grid', placeItems: 'center', zIndex: 200,
+      display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal)',
     }}>
       <div onClick={e => e.stopPropagation()} style={{
         width: 880, maxWidth: '94vw', maxHeight: '88vh', overflow: 'auto',

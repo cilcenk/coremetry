@@ -235,7 +235,7 @@ export function KqlSearchInput({
           background: 'var(--bg)', color: 'var(--text)',
           border: '1px solid var(--border)', borderRadius: 4,
           boxShadow: '0 6px 24px rgba(0,0,0,0.18)',
-          zIndex: 200, maxHeight: 280, overflowY: 'auto',
+          zIndex: 'var(--z-dropdown)', maxHeight: 280, overflowY: 'auto',
           marginTop: 2,
         }}>
           <div style={{

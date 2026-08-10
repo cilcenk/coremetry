@@ -156,7 +156,7 @@ export function ChannelModal({ initial, onClose, onSaved }: {
   return (
     <div onClick={onClose} style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-      display: 'grid', placeItems: 'center', zIndex: 100,
+      display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal)',
     }}>
       <div onClick={e => e.stopPropagation()} style={{
         width: 460, padding: 24, borderRadius: 8,

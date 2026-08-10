@@ -996,7 +996,7 @@ export function MetricQueryEditor({ range }: { range: TimeRange }) {
               placeholder={'histogram_quantile(0.95, http.server.duration)\nsum by (service.name) (rate(http.server.duration[5m]))'} />
             {sugOpen && (
               <div className="card" role="listbox" style={{
-                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30,
+                position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 'var(--z-dropdown)',
                 marginTop: 2, padding: 3, background: 'var(--bg1)',
                 border: '1px solid var(--border)', borderRadius: 8,
               }}>

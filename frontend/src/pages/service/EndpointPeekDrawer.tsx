@@ -67,10 +67,10 @@ export function EndpointPeekDrawer({ service, range, row, onClose }: {
     <>
       {/* arka fon — tık = kapat */}
       <div onClick={onClose} style={{
-        position: 'fixed', inset: 0, zIndex: 60, background: 'rgba(0,0,0,.28)',
+        position: 'fixed', inset: 0, zIndex: 'var(--z-drawer)', background: 'rgba(0,0,0,.28)',
       }} />
       <div role="dialog" aria-label={`Endpoint peek: ${row.path}`} style={{
-        position: 'fixed', top: 0, right: 0, bottom: 0, width: 380, zIndex: 61,
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 380, zIndex: 'var(--z-drawer-panel)',
         background: 'var(--bg1)', borderLeft: '1px solid var(--border)',
         boxShadow: '-16px 0 40px rgba(0,0,0,.35)', padding: '14px 16px',
         overflowY: 'auto',

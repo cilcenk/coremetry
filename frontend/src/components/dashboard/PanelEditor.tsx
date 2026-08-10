@@ -217,10 +217,9 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
         )}
 
         <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 18 }}>
-          <button type="button" className="sec" onClick={onDelete}
-            style={{ color: 'var(--err)' }}>
+          <Button variant="ghost-danger" onClick={onDelete}>
             Delete panel
-          </button>
+          </Button>
           <button type="button" onClick={onClose}>Done</button>
         </div>
       </div>

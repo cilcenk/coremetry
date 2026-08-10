@@ -566,8 +566,8 @@ function StepRow({ step, index, canEdit, isDragging, onDragStart, onDragEnd, onD
           placeholder="Step title" style={{ flex: 1 }} />
         <span style={{ color: 'var(--text3)', fontSize: 11, fontFamily: 'ui-monospace, monospace' }}>#{index + 1}</span>
         {canEdit && (
-          <Button variant="secondary" size="sm" onClick={onRemove} title="Remove step"
-            style={{ color: 'var(--err)', padding: '4px 8px' }}>
+          <Button variant="ghost-danger" size="sm" onClick={onRemove} title="Remove step"
+            aria-label="Remove step">
             <X size={14} strokeWidth={2} />
           </Button>
         )}

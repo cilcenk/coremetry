@@ -8,6 +8,7 @@ import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/Dat
 import { fmtNum, tsLong, rowClickHandlers } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TraceRow } from '@/lib/types';
+import { IconButton } from '@/components/ui/IconButton';
 
 // TracesResult — the Explore "Traces" result-mode table (the block
 // that renders BELOW the query console, in the right column).
@@ -126,13 +127,11 @@ export function TracesResult({
                 renderLabel={c => c.id.startsWith(ATTR_PREFIX)
                   ? <>
                       <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: 11 }}>{c.label}</span>
-                      <button type="button" title="Remove column"
+                      <IconButton variant="bare" size="xs"
+                        title="Remove column" aria-label={`Remove the ${c.label} column`}
                         onClick={e => { e.stopPropagation(); setExtraCols(extraCols.filter(x => x !== c.label)); }}
-                        style={{
-                          marginLeft: 6, padding: '0 4px', fontSize: 10, lineHeight: 1,
-                          background: 'transparent', border: 'none', color: 'var(--text3)',
-                          cursor: 'pointer',
-                        }}>×</button>
+                        style={{ marginLeft: 6 }}
+                        icon="×" />
                     </>
                   : c.label}
                 trailing={

@@ -33,6 +33,10 @@ import { lazy, Suspense } from 'react';
 // stat/gauge/heatmap/markdown hâlâ kapsam dışı — onlar zaman serisi değil.
 const DashCorePanelLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
+// v0.9.946 (D3/Ö25) — MLC'nin kullandığı SAF katlama çekirdeği; ikinci
+// bir kopya oran birimlerindeki ortalama/toplam ayrımını bir gün
+// kaybederdi (foldTopN.ts sözleşmesi).
+import { foldTopN, foldNote, isOthersSeries } from '@/lib/chart/foldTopN';
 
 function DashChart({ series, viz = 'line', unit, syncKey, onZoom, onZoomReset, storageKey, height }: {
   series: import('@/lib/types').SpanMetricSeries[];
@@ -48,6 +52,21 @@ function DashChart({ series, viz = 'line', unit, syncKey, onZoom, onZoomReset, s
   height?: number;
 }) {
   const h = height ?? panelChartHeight();
+  // v0.9.946 (UX denetimi D3 / Ö25) — "others" KATLAMASI dashboard'a da.
+  //
+  // foldTopN v0.9.807'de MultiLineChart adaptöründe kalmıştı; DashChart
+  // her seriyi çiziyordu. Group-by'lı yüksek-kardinaliteli bir panel
+  // (route kırılımı, pod kırılımı) okunmaz bir spagetti + N satırlık
+  // lejant oluyordu — ve DAHA KÖTÜSÜ: kırpma OLMADIĞI için dürüstlük
+  // notu da yoktu, yani operatör panelin her şeyi gösterip
+  // göstermediğini bilemiyordu. Aynı sorgu Explore'da 8 seri + "+N
+  // katlandı" notu, dashboard'da 60 çizgi olarak görünüyordu.
+  //
+  // AYNI saf çekirdek (ikinci bir kopya, oran birimlerinde toplama/
+  // ortalama ayrımını bir gün kaybederdi). ≤8 seride foldTopN girdiyi
+  // AYNEN döndürür — mevcut panellerin çıktısı bayt-bayt aynı.
+  const folded = foldTopN(series, unit);
+  const note = foldNote(series.length);
   return (
     <Suspense fallback={<div style={{ height: h, display: 'grid', placeItems: 'center' }}><Spinner /></div>}>
       <DashCorePanelLazy
@@ -56,9 +75,14 @@ function DashChart({ series, viz = 'line', unit, syncKey, onZoom, onZoomReset, s
         height={h}
         unit={unit}
         viz={toCoreViz(viz)}
-        items={series.map((s0, i) => ({
+        // Kırpma SESSİZ OLAMAZ: notu vermeden katlamak, spagettiyi
+        // "temiz panel" sanmakla aynı sınıfa girerdi.
+        note={note}
+        items={folded.map((s0, i) => ({
           name: s0.groupKey?.length ? s0.groupKey.join(' · ') : `seri ${i + 1}`,
-          role: 'data' as const,
+          // Katlanan kuyruk 'muted' rolde: uzun kuyruk sessiz gri kalır
+          // (MLC yolundaki davranışın aynısı, seriesRoleColor üzerinden).
+          role: isOthersSeries(s0) ? ('muted' as const) : ('data' as const),
           series: [s0],
         }))}
         syncKey={syncKey}

@@ -180,3 +180,38 @@ describe('tek kaynak — foldTopN kopyası YOK', () => {
     expect(mlc).toMatch(/note=\{foldNote\(/);
   });
 });
+
+// v0.9.946 (UX denetimi D3 / Ö25) — DASHBOARD DA KATLAR.
+//
+// Orijinal belirti: foldTopN v0.9.807'de yalnız MultiLineChart
+// adaptörüne bağlandı; dashboard'ın DashChart'ı her seriyi çiziyordu.
+// Group-by'lı yüksek-kardinaliteli bir panel okunmaz spagetti + N
+// satırlık lejant oluyordu ve — asıl kusur — DÜRÜSTLÜK NOTU da yoktu:
+// kırpma olmadığı için "+N katlandı" satırı hiç çıkmıyordu, operatör
+// panelin her şeyi gösterip göstermediğini bilemiyordu. Aynı sorgu
+// Explore'da 8 seri, dashboard'da 60 çizgi görünüyordu.
+describe('dashboard katlaması (v0.9.946)', () => {
+  const dash = readFileSync(
+    resolve(__dirname, '../../components/dashboard/PanelRenderer.tsx'), 'utf8',
+  ).replace(/\/\/.*$/gm, '');
+
+  it('DashChart saf modülü import eder, kopya gövde taşımaz', () => {
+    expect(dash).toMatch(/import \{[^}]*foldTopN[^}]*\} from '@\/lib\/chart\/foldTopN'/);
+    expect(dash).not.toMatch(/function foldTopN\(/);
+  });
+
+  it('katlama panel projeksiyonundan ÖNCE, tek çağrı', () => {
+    expect((dash.match(/foldTopN\(/g) ?? []).length).toBe(1);
+  });
+
+  it('KIRPMA SESSİZ DEĞİL — not panele bağlanır', () => {
+    // Notu vermeden katlamak, spagettiyi "temiz panel" sanmakla aynı
+    // sınıfa girerdi: kırpıldığını söylemeyen bir grafik yalan söyler.
+    expect(dash).toMatch(/note=\{note\}/);
+    expect(dash).toMatch(/foldNote\(series\.length\)/);
+  });
+
+  it('katlanan kuyruk "muted" rolünde — MLC yoluyla aynı gri', () => {
+    expect(dash).toMatch(/isOthersSeries\(s0\)/);
+  });
+});

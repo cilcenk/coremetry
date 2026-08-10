@@ -6,6 +6,8 @@ import {
 } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 import { useAuth } from '@/components/AuthProvider';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { Button } from '@/components/ui/Button';
@@ -204,12 +206,25 @@ const EXEC_COLS: DataTableColumn<RunbookExecution>[] = [
 function ExecutionsTab({ runbookId }: { runbookId: string }) {
   const navigate = useNavigate();
   const q = useRunbookExecutions({ runbookId });
-  const execs = q.isLoading ? undefined : q.data ?? [];
+  // v0.9.865 (tutarlılık denetimi MT1) — `?? []` okuma hatasını "No runs yet"e
+  // çeviriyordu: koşmuş bir runbook hiç koşmamış gibi okunuyordu.
+  const execs = q.isLoading ? undefined : q.isError ? null : q.data ?? [];
   const dt = useDataTable<RunbookExecution>({
     storageKey: 'runbook-executions', columns: EXEC_COLS, rows: execs ?? [],
     initialSort: { id: 'startedAt', dir: 'desc' },
   });
+  // NOTE: her erken dönüş useDataTable'ın ALTINDA kalmalı — hook sırası.
+  // Erken-dönüş konumunda readState() yerine düz karşılaştırma: TS daraltması
+  // yardımcı fonksiyonun içinden akmıyor (JSX dallarında readState kullanılır).
   if (execs === undefined) return <Spinner />;
+  if (execs === null) {
+    return (
+      <QueryError onRetry={() => q.refetch()}>
+        Executions could not be loaded — this is a failed read, not an unrun
+        runbook. Past runs are still recorded.
+      </QueryError>
+    );
+  }
   if (execs.length === 0) {
     return <Empty icon="▷" title="No runs yet">Click Run to execute this runbook. Every run is recorded here — who ran it, when, and which steps executed.</Empty>;
   }
@@ -251,8 +266,19 @@ function AuditTab({ runbookId, isAdmin }: { runbookId: string; isAdmin: boolean 
   if (!isAdmin) {
     return <Empty icon="🔒" title="Admin only">The change/run audit log (audit_events) is admin-only. The per-run step audit — who ticked each step, when, with what output — is on the Executions tab and visible to everyone.</Empty>;
   }
-  const rows = q.isLoading ? undefined : q.data ?? [];
+  // v0.9.865 (tutarlılık denetimi MT1) — yasak ≠ hatalı ≠ boş. `!isAdmin`
+  // yukarıda kendi dalında; burada `?? []` okuma hatasını "No audit entries"e
+  // eziyordu (denetim kaydının kaybolması en pahalı yanlış-boş).
+  const rows = q.isLoading ? undefined : q.isError ? null : q.data ?? [];
   if (rows === undefined) return <Spinner />;
+  if (rows === null) {
+    return (
+      <QueryError onRetry={() => q.refetch()}>
+        The audit log could not be loaded — this is a failed read, not an empty
+        history.
+      </QueryError>
+    );
+  }
   if (rows.length === 0) {
     return <Empty icon="▤" title="No audit entries">No recorded changes or runs for this runbook in the last 30 days.</Empty>;
   }

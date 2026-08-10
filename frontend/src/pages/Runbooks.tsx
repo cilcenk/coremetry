@@ -2,6 +2,8 @@ import { useNavigate } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
+import { QueryError } from '@/components/QueryError';
+import { readState } from '@/lib/readState';
 import { useAuth } from '@/components/AuthProvider';
 import {
   useRunbooks,
@@ -26,7 +28,12 @@ export default function RunbooksPage() {
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
 
   const runbooksQ = useRunbooks();
-  const runbooks = runbooksQ.isLoading ? undefined : runbooksQ.data ?? [];
+  // v0.9.865 (tutarlılık denetimi MT1) — `?? []` okuma hatasını BOŞ KATALOĞA
+  // çeviriyordu: 3am'de runbook arayan oncall'a "hiç runbook yok" deniyordu.
+  // Tri-state sözleşmesi: undefined = yükleniyor, null = okuma başarısız.
+  const runbooks = runbooksQ.isLoading ? undefined
+    : runbooksQ.isError ? null
+    : runbooksQ.data ?? [];
 
   const createRb  = useCreateRunbook();
   const deleteRb  = useDeleteRunbook();
@@ -66,9 +73,16 @@ export default function RunbooksPage() {
           )}
         </div>
 
-        {runbooks === undefined && <Spinner />}
+        {readState(runbooks) === 'loading' && <Spinner />}
 
-        {runbooks && runbooks.length === 0 && (
+        {readState(runbooks) === 'error' && (
+          <QueryError onRetry={() => runbooksQ.refetch()}>
+            Runbooks could not be loaded — this is a failed read, not an empty
+            catalogue. Your runbooks are still there.
+          </QueryError>
+        )}
+
+        {readState(runbooks) === 'empty' && (
           <Empty icon="▤" title="No runbooks">
             <div style={{ marginTop: 6, color: 'var(--text2)' }}>
               Runbooks turn tribal knowledge into repeatable, executable

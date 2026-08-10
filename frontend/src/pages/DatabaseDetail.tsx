@@ -5,6 +5,7 @@ import { Turtle } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Card } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
+import { QueryError } from '@/components/QueryError';
 import { TableSkeleton } from '@/components/Skeleton';
 import { LazyMount } from '@/components/LazyMount';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -295,6 +296,18 @@ export default function DatabaseDetailPage() {
                 </PanelTitle>
               }>
                 {stmtsQ.isPending && <TableSkeleton rows={5} cols={4} wideFirst />}
+                {/* v0.9.865 (tutarlılık denetimi MT1) — hata dalı HİÇ YOKTU:
+                    sorgu 500'lediğinde kart gövdesi bomboş kalıyordu (ne
+                    iskelet, ne mesaj), yani "bu pencerede pahalı ifade yok"
+                    diye okunuyordu. Boş dalın kardeşi olarak aynı Empty
+                    anatomisini kullanıyoruz. */}
+                {stmtsQ.isError && (
+                  <QueryError onRetry={() => stmtsQ.refetch()}
+                    message={stmtsQ.error instanceof Error ? stmtsQ.error.message : undefined}>
+                    Top statements could not be loaded — this is a failed read,
+                    not an idle database.
+                  </QueryError>
+                )}
                 {stmtsQ.data && stmtsQ.data.length === 0 && (
                   <Empty icon="◷" title="No statement in this window">
                     Nothing matched <code>{refObj.system}</code>

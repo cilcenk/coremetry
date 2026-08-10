@@ -6,6 +6,7 @@ import { highlightSegments } from '@/lib/logFilters';
 import { tsLong, sevName, sevClass } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { LogRow } from '@/lib/types';
+import { Button, IconButton } from '@/components/ui';
 
 // Column model (Discover revamp step 3): Time is fixed left, Message
 // is fixed right (flexes), the Trace deep-link column trails when
@@ -79,30 +80,18 @@ function KvRow({ k, v, onAdd, onExclude }: {
               display: 'inline-flex', gap: 2,
             }}>
               {onAdd && (
-                <button type="button"
+                <IconButton variant="bare" size="xs" className="ib-add"
                   onClick={(e) => { e.stopPropagation(); onAdd(k, v); }}
                   title={`Filter for ${k}: ${v}`}
-                  style={{
-                    all: 'unset', cursor: 'pointer',
-                    padding: '0 5px', borderRadius: 3,
-                    fontSize: 11, lineHeight: '14px',
-                    color: 'var(--accent2)',
-                    background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
-                    border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
-                  }}>⊕</button>
+                  aria-label={`Filter for ${k}: ${v}`}
+                  icon="⊕" />
               )}
               {onExclude && (
-                <button type="button"
+                <IconButton variant="bare" size="xs" className="ib-not"
                   onClick={(e) => { e.stopPropagation(); onExclude(k, v); }}
                   title={`Filter out ${k}: ${v}`}
-                  style={{
-                    all: 'unset', cursor: 'pointer',
-                    padding: '0 5px', borderRadius: 3,
-                    fontSize: 11, lineHeight: '14px',
-                    color: 'var(--err)',
-                    background: 'rgba(239,68,68,0.10)',
-                    border: '1px solid rgba(239,68,68,0.30)',
-                  }}>⊖</button>
+                  aria-label={`Filter out ${k}: ${v}`}
+                  icon="⊖" />
               )}
             </span>
           )}
@@ -467,14 +456,12 @@ function LogRow({
                     above stays for the operator who wants the
                     proper waterfall surface. */}
                 {onTracePeek && (
-                  <button type="button"
+                  <IconButton variant="bare" size="xs" className="ib-accent"
                     onClick={e => { e.stopPropagation(); onTracePeek(l.traceId); }}
                     title="Peek trace inline (summary + sibling logs)"
-                    style={{
-                      all: 'unset', cursor: 'pointer',
-                      marginLeft: 4, padding: '0 4px',
-                      fontSize: 11, color: 'var(--accent2)',
-                    }}>👁</button>
+                    aria-label="Peek trace inline"
+                    style={{ marginLeft: 4 }}
+                    icon="👁" />
                 )}
               </>
             ) : '—'}
@@ -499,16 +486,11 @@ function LogRow({
               </div>
               <div style={{ flex: 1 }} />
               {onContextOpen && (
-                <button type="button"
+                <Button variant="accent" size="sm"
                   onClick={e => { e.stopPropagation(); onContextOpen(l); }}
-                  title="Show 50 logs before and after this one (same service)"
-                  style={{
-                    fontSize: 11, padding: '3px 10px', borderRadius: 4,
-                    background: 'var(--bg2)', border: '1px solid var(--border)',
-                    color: 'var(--accent2)', cursor: 'pointer',
-                  }}>
+                  title="Show 50 logs before and after this one (same service)">
                   ≡ View ±50 surrounding context
-                </button>
+                </Button>
               )}
               {extraExpanded && extraExpanded(l)}
             </div>

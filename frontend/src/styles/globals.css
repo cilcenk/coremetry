@@ -475,6 +475,29 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
    colours. */
 .btn-icon.ib-accent { color: var(--accent2); }
 .btn-icon.ib-accent:hover:not(:disabled) { color: var(--accent); background: var(--bg2); }
+/* `ib-add` / `ib-not` (v0.9.892) — the ⊕ / ⊖ filter pills, MB7.
+   The same affordance spoke two dialects that are visible AT THE SAME
+   TIME on /logs: a tinted pill in the log row, a bare glyph in the
+   fields panel. One dialect now. The ⊖ tint was also the last
+   hard-coded `rgba(239,68,68,…)` on this path — a literal red does not
+   follow the theme, so on the light and redhat themes it was a colour
+   that belonged to no palette. `color-mix(var(--err))` does. */
+.btn-icon.ib-add {
+  color: var(--accent2);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+}
+.btn-icon.ib-add:hover:not(:disabled) { color: var(--accent2); background: var(--accent-bg); border-color: var(--accent); }
+.btn-icon.ib-not {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 10%, transparent);
+  border-color: color-mix(in srgb, var(--err) 30%, transparent);
+}
+.btn-icon.ib-not:hover:not(:disabled) {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 18%, transparent);
+  border-color: color-mix(in srgb, var(--err) 55%, transparent);
+}
 .btn-icon.active { color: var(--accent2); background: var(--accent-bg); border-color: var(--accent-border); }
 /* `ib-star` — the favourite/pin modifier. The generic `.active` accent
    tint is right for filter-ish toggles (negate, pin-a-column) but WRONG

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 import { getRaw, setRaw } from '@/lib/storage';
 import type { CSSProperties } from 'react';
 
@@ -73,18 +74,16 @@ function FieldAccordion({ field, scope, isColumn, onToggleColumn, onPillAdd, onP
                 fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
               }}>{v.value}</span>
               <span style={{ color: 'var(--text3)' }}>{pct.toFixed(pct >= 10 ? 0 : 1)}%</span>
-              <button type="button" onClick={() => onPillAdd(field, v.value)}
+              <IconButton variant="bare" size="xs" className="ib-add"
+                onClick={() => onPillAdd(field, v.value)}
                 title={`Filter for ${field}: ${v.value}`}
-                style={{
-                  all: 'unset', cursor: 'pointer', padding: '0 3px', borderRadius: 3,
-                  fontSize: 11, color: 'var(--accent2)',
-                }}>⊕</button>
-              <button type="button" onClick={() => onPillExclude(field, v.value)}
+                aria-label={`Filter for ${field}: ${v.value}`}
+                icon="⊕" />
+              <IconButton variant="bare" size="xs" className="ib-not"
+                onClick={() => onPillExclude(field, v.value)}
                 title={`Filter out ${field}: ${v.value}`}
-                style={{
-                  all: 'unset', cursor: 'pointer', padding: '0 3px', borderRadius: 3,
-                  fontSize: 11, color: 'var(--err)',
-                }}>⊖</button>
+                aria-label={`Filter out ${field}: ${v.value}`}
+                icon="⊖" />
             </div>
             <div style={{ height: 3, background: 'var(--bg3)', borderRadius: 2, marginTop: 2 }}>
               <div style={{

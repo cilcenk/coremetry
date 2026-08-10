@@ -356,10 +356,16 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
               {sortable && (
                 <span className="sort-arrow">{active ? (dt.sort.dir === 'desc' ? '▼' : '▲') : '↕'}</span>
               )}
-              <span className="col-resize-handle"
-                    onMouseDown={e => dt.startResize(c.id, e)}
-                    onClick={e => e.stopPropagation()}
-                    title="Drag to resize" />
+              {/* MK3 (v0.9.919) — elle basılan kopya yerine PAYLAŞILAN
+                  tutamak. v0.9.662'nin "çıkmaz sokaktan kurtuluş yolu"
+                  (çift tık → resetLayout) `ColResizeHandle`e yazılmıştı
+                  ama o bileşenin depoda SIFIR çağrı yeri vardı: her
+                  DataTableHead tablosu burada kendi `<span>`ini basıyordu
+                  ve o kopyada `onDoubleClick` YOKTU. Yani kurtuluş yolu
+                  117 tablonun HİÇBİRİNE ulaşmıyordu — yazılmış,
+                  test edilmiş, bağlanmamış (v0.9.660 sınıfı). Tek satır
+                  delegasyon hepsini kapsıyor. */}
+              <ColResizeHandle dt={dt} colId={c.id} />
             </th>
           );
         })}

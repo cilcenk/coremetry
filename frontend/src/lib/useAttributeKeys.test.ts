@@ -58,16 +58,32 @@ describe('keşif TEK kaynaktan', () => {
 
   it('FilterBuilder hooku kullanıyor, kendi kopyasını tutmuyor', () => {
     const src = read(['components', 'FilterBuilder.tsx']);
-    expect(src).toContain('useAttributeKeys(value)');
+    // v0.9.953 (F3) — hook artık PENCERE de alıyor (ikinci argüman).
+    // Pin `useAttributeKeys(value)` idi; sabit-pencere çağrısını zorunlu
+    // kılıyordu, yani düzeltilmiş bir kusuru geri isteyecekti.
+    expect(src).toMatch(/useAttributeKeys\(value, attrSince\)/);
     // Kendi fetch'ini geri koyan bir değişiklik iki listeyi ayırırdı.
     expect(src.includes('api.attributeKeys(')).toBe(false);
   });
 
   it('/traces aggregate anahtar kutusu çıplak input DEĞİL', () => {
     const src = read(['pages', 'Traces.tsx']);
-    expect(src).toContain('useAttributeKeys()');
+    expect(src).toMatch(/useAttributeKeys\(undefined, attrSince\)/);
     expect(src).toContain('options={attrKeys}');
     // Eski çıplak hâl geri gelmemeli.
     expect(src.includes('<input placeholder="attribute key')).toBe(false);
+  });
+
+  it('keşif penceresi SABİT DEĞİL — basamaklı (v0.9.953, F3/Ö14c)', () => {
+    // Ö14c: anahtar keşfi sabit '1h' penceresindeydi, sayfa aralığından
+    // bağımsız. Beş çağıranın hepsi artık attrKeySince'ten geçiyor.
+    for (const p of [
+      ['lib', 'useAttributeKeys.ts'], ['pages', 'Traces.tsx'],
+      ['components', 'FilterBuilder.tsx'], ['components', 'ColumnManager.tsx'],
+      ['pages', 'explore', 'SplitByPicker.tsx'],
+    ]) {
+      const src = read(p);
+      expect(src.includes("attributeKeys('1h'"), `${p.join('/')} hâlâ sabit '1h'`).toBe(false);
+    }
   });
 });

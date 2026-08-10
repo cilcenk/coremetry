@@ -1,5 +1,12 @@
 import { useId, type InputHTMLAttributes, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from 'react';
 
+// mK10 (v0.9.921) — `aria-describedby` üç varyantta da AYNI kalıpta.
+// `Field` bunu v0.9.8xx'ten beri yapıyordu, `SelectField` ve
+// `TextareaField` yapmıyordu: ipucu/hata metni EKRANDA duruyor ama
+// ekran okuyucu alana odaklandığında OKUNMUYOR. Yani "Bu alan şu
+// biçimde olmalı" uyarısı, tam da ona en çok ihtiyaç duyan kullanıcıya
+// ulaşmıyordu. Görsel çıktı değişmiyor; eklenen tek şey bağ.
+//
 // Field — labelled input with optional hint or error. Replaces
 // the `<label>{x}</label><input ... />` pairs sprinkled across
 // Settings, Login, ChangePassword, and form-driven admin pages.
@@ -42,9 +49,11 @@ export function SelectField({ label, hint, error, id, children, ...select }: Sel
   return (
     <div className="field">
       <label htmlFor={fieldId} className="field-label">{label}</label>
-      <select id={fieldId} aria-invalid={error ? 'true' : undefined} {...select}>{children}</select>
-      {error && <span className="field-error">{error}</span>}
-      {!error && hint && <span className="field-hint">{hint}</span>}
+      <select id={fieldId} aria-invalid={error ? 'true' : undefined}
+              aria-describedby={hint || error ? `${fieldId}-hint` : undefined}
+              {...select}>{children}</select>
+      {error && <span id={`${fieldId}-hint`} className="field-error">{error}</span>}
+      {!error && hint && <span id={`${fieldId}-hint`} className="field-hint">{hint}</span>}
     </div>
   );
 }
@@ -61,9 +70,11 @@ export function TextareaField({ label, hint, error, id, rows = 4, ...ta }: Texta
   return (
     <div className="field">
       <label htmlFor={fieldId} className="field-label">{label}</label>
-      <textarea id={fieldId} rows={rows} aria-invalid={error ? 'true' : undefined} {...ta} />
-      {error && <span className="field-error">{error}</span>}
-      {!error && hint && <span className="field-hint">{hint}</span>}
+      <textarea id={fieldId} rows={rows} aria-invalid={error ? 'true' : undefined}
+                aria-describedby={hint || error ? `${fieldId}-hint` : undefined}
+                {...ta} />
+      {error && <span id={`${fieldId}-hint`} className="field-error">{error}</span>}
+      {!error && hint && <span id={`${fieldId}-hint`} className="field-hint">{hint}</span>}
     </div>
   );
 }

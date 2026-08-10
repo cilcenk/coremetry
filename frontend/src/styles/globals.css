@@ -750,6 +750,18 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
   box-shadow: var(--shadow-sm);
 }
 .card-tight { padding: 10px; border-radius: var(--radius-sm); background: var(--bg2); }
+/* `.card-static` (v0.9.921, mK11) — `.card`ın etkileşimsiz ikizi.
+   `.card` bu dosyada İKİ KEZ tanımlı; ikinci tanım (`:1005`)
+   `cursor: pointer` + accent hover taşıyor çünkü gezinilebilir kart
+   ızgaraları için yazıldı. Yükleme iskeleti gibi TIKLANMAYAN kutular
+   onu devralmamalı: tıklanabilir görünen ama hiçbir şey yapmayan bir
+   yüzey, yavaş bir sayfadan daha kötü bir izlenim bırakır. */
+.card-static {
+  background: var(--bg1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+}
 
 /* Dashboard listing card hover — used by /dashboards. Subtle
    border-tint so the link target is obvious without flipping

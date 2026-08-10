@@ -1004,7 +1004,13 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
   font-size: 10.5px; color: var(--text3); }
 .fsel-solo { font-size: 10px; color: var(--accent2); background: none;
   border: none; cursor: pointer; padding: 0 3px; visibility: hidden; }
-.fsel-row:hover .fsel-solo { visibility: visible; }
+.fsel-row:hover .fsel-solo, .fsel-row:focus-within .fsel-solo { visibility: visible; }
+/* mK9 — `.fsel-solo` yalnız :hover'da görünürdü, yani "sadece" kısayolu
+   klavyeyle ASLA erişilemiyordu: `visibility: hidden` bir öğeyi
+   odak sırasından da çıkarır, dolayısıyla Tab onu hiç bulamazdı.
+   :focus-within satırın içindeki butona Tab'la ulaşıldığında da
+   gösteriyor — fare kullanmayan operatör için tek erişim yolu. */
+.fsel-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .fsel-sep { border-top: 1px solid var(--border); margin: 5px 0; }
 .fsel-all { display: block; width: 100%; text-align: left; font-size: 11.5px;
   color: var(--accent2); background: none; border: none; cursor: pointer;

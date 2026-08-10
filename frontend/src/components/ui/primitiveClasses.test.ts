@@ -97,6 +97,56 @@ describe('primitiveClasses — atomun bastığı her sınıfın CSS karşılığ
     expect(css).toMatch(/button\.ghost-danger\s*\{/);
   });
 
+  // ── SAHİPLENİLMEMİŞ ÇAKIŞMA (v0.9.894) ──────────────────────────────
+  // Yukarıdaki iddia "sınıfın CSS'te KARŞILIĞI var mı" diye sorar. Onu
+  // geçen ama yine de yıkıcı olan bir durum var: sınıf CSS'te TANIMLI —
+  // ama BAŞKA BİR ŞEY olarak. P5'te tam bu oldu: Chip atomunun doğal adı
+  // `chip`di, ve `.chip` bu depoda zaten CANLI (ProblemDetail + Incident
+  // sayfalarının statik key/value meta rozeti, radius 20px, sekiz
+  // tüketici). Atom o adı basmış olsaydı iki detay sayfası sessizce
+  // yeniden boyanırdı ve YUKARIDAKİ KAPI YEŞİL KALIRDI.
+  //
+  // Kural: bir primitifin TABAN sınıfı (classes dizisinin ilk literali)
+  // yalnız o atoma ait olmalı — `components/ui/` dışında hiçbir dosya
+  // onu elle className olarak yazmamalı. Değiştiriciler (`ib-star`,
+  // `ch-dashed`, `active`) bu kuralın DIŞINDA: onları çağıranın yazması
+  // tasarımın parçası. Yalnız taban adı tekil olmak zorunda.
+  //
+  // KAPSAM SINIRI DÜRÜSTÇE: yalnız TSX'te literal className yazımını
+  // görür. Bir sınıf CSS'te var olup yalnız torun seçiciyle
+  // (`.foo .bar`) kullanılıyorsa bu kapı onu kaçırır.
+  it('primitif taban sınıfları ui/ dışında elle yazılmamış (sahipsiz çakışma)', () => {
+    const srcFiles: string[] = [];
+    (function walk(dir: string) {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        const p = join(dir, e.name);
+        if (e.isDirectory()) { if (e.name !== 'node_modules') walk(p); }
+        else if (/\.tsx?$/.test(p) && !p.includes(TEST_MARK)) srcFiles.push(p);
+      }
+    })(SRC);
+    const outside = srcFiles.filter(p => !p.startsWith(join(SRC, 'components', 'ui')));
+
+    const bases: Array<[string, string]> = [];
+    for (const f of primitives) {
+      const body = stripComments(readFileSync(join(UI, f), 'utf8'));
+      const m = body.match(/const classes\s*=\s*\[\s*'([^']+)'/);
+      if (m) bases.push([f, m[1]]);
+    }
+    expect(bases.length, 'taban sınıflı primitif bulunamadı — desen kaymış').toBeGreaterThan(2);
+
+    const offenders: string[] = [];
+    for (const [f, base] of bases) {
+      const re = new RegExp(`className=[{]?["'\`][^"'\`]*\\b${base}\\b`);
+      for (const p of outside) {
+        const lines = stripComments(readFileSync(p, 'utf8')).split('\n');
+        lines.forEach((l, i) => {
+          if (re.test(l)) offenders.push(`${p.slice(SRC.length + 1)}:${i + 1} elle '.${base}' yazıyor — ui/${f}'in taban sınıfı`);
+        });
+      }
+    }
+    expect(offenders, `Taban sınıfı çakışması:\n${offenders.join('\n')}`).toEqual([]);
+  });
+
   it('.spinner.sm bileşik kuralı var — loading butonu büyütmesin (R7)', () => {
     // Bu, `undefinedCssRefs`in yapısal olarak KAÇIRDIĞI durum: Button
     // `className="spinner sm"` basıyor, iki token da ayrı ayrı tanımlı

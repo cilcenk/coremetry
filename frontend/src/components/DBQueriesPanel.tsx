@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Spinner } from './Spinner';
+import { Spinner, Empty } from './Spinner';
 import { DisclosureButton } from '@/components/ui';
 import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
 import { api } from '@/lib/api';
@@ -138,10 +138,10 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
             </div>
           )}
           {data && data.length === 0 && (
-            <div style={{ fontSize: 12, color: 'var(--text3)', fontStyle: 'italic', padding: '12px 4px' }}>
-              No spans with <code>db.statement</code> from <code>{service}</code> in this window.
+            <Empty compact icon="◯" title="No database statements in this window">
+              No spans carry <code>db.statement</code> from <code>{service}</code>.
               {' '}If your DB instrumentation strips statements for security, that's expected.
-            </div>
+            </Empty>
           )}
           {data && data.length > 0 && (
             <div className="table-wrap">

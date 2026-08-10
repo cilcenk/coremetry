@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui';
+import { Empty } from '@/components/Spinner';
 
 // ZoomChannel mirrors the backend ZoomChannel struct.
 interface ZoomChannelRow {
@@ -163,10 +164,9 @@ export function ZoomChannelPicker({
               }}>{err}</div>
             )}
             {rows && rows.length === 0 && !busy && !err && (
-              <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                No channels visible to this S2S app. The bot user must be a
-                member of the channel for it to appear here.
-              </div>
+              <Empty compact icon="◯" title="No channels visible to this S2S app">
+                The bot user must be a member of the channel for it to appear here.
+              </Empty>
             )}
 
             <div style={{ flex: 1, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4 }}>

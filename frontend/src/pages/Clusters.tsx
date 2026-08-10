@@ -729,9 +729,9 @@ export default function ClustersPage() {
                     </div>
                   )}
                   {!nodeErr && !nodeQs[0]?.isPending && nodeRows.length === 0 && (
-                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-                      node-exporter series came back empty — see the runbook probe step.
-                    </div>
+                    <Empty compact icon="◯" title="node-exporter series came back empty">
+                      See the runbook probe step.
+                    </Empty>
                   )}
                   {nodeRows.length > 0 && (
                     <div className="table-wrap is-fit">

@@ -315,7 +315,7 @@ export function KnowledgeTab() {
       {docs === undefined && <Spinner />}
       {docs === null && <Empty icon="📄" title="Doküman listesi yüklenemedi" />}
       {docs && docs.length === 0 && (
-        <p style={{ fontSize: 12, color: 'var(--text3)', marginTop: 8 }}>Henüz doküman yok.</p>
+        <Empty compact icon="◯" title="Henüz doküman yok" />
       )}
       {docs && docs.length > 0 && (
         <div className="table-wrap" style={{ marginTop: 8 }}>

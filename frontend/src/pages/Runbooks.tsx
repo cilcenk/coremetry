@@ -4,6 +4,21 @@ import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+import type { Runbook } from '@/lib/types';
+
+// v0.9.872 (tutarlılık denetimi BT11) — `is-fit` sınıfı vardı, primitif
+// yoktu. Genişlikler beyan edilmediği için isFitTables.test.ts bu tabloyu
+// ÖLÇEMİYOR ve UNMEASURED istisnasında bekliyordu.
+// Toplam: flex + 90 + 100 + 260 + 165 = 615 + trailing 260 = 875px < 1150.
+const RUNBOOK_COLS: DataTableColumn<Runbook>[] = [
+  { id: 'title',   label: 'Title',   sortValue: r => r.title || '(untitled)', naturalDir: 'asc', flex: true },
+  { id: 'steps',   label: 'Steps',   sortValue: r => r.steps?.length ?? 0,    numeric: true, width: 90 },
+  { id: 'enabled', label: 'Enabled', sortValue: r => (r.enabled ? 1 : 0),     width: 100 },
+  { id: 'labels',  label: 'Labels',  sortValue: r => (r.labels ?? []).join(', '), naturalDir: 'asc', width: 260 },
+  { id: 'updated', label: 'Updated', sortValue: r => r.updatedAt,             width: 165 },
+];
 import { useAuth } from '@/components/AuthProvider';
 import {
   useRunbooks,
@@ -34,6 +49,11 @@ export default function RunbooksPage() {
   const runbooks = runbooksQ.isLoading ? undefined
     : runbooksQ.isError ? null
     : runbooksQ.data ?? [];
+
+  const dt = useDataTable<Runbook>({
+    storageKey: 'runbooks', columns: RUNBOOK_COLS, rows: runbooks ?? [],
+    initialSort: { id: 'updated', dir: 'desc' },
+  });
 
   const createRb  = useCreateRunbook();
   const deleteRb  = useDeleteRunbook();
@@ -96,19 +116,11 @@ export default function RunbooksPage() {
 
         {runbooks && runbooks.length > 0 && (
           <div className="table-wrap is-fit">
-            <table>
-              <thead>
-                <tr>
-                  <th>Title</th>
-                  <th className="num">Steps</th>
-                  <th>Enabled</th>
-                  <th>Labels</th>
-                  <th>Updated</th>
-                  <th></th>
-                </tr>
-              </thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} trailing={[260]} />
+              <DataTableHead dt={dt} trailing={<th></th>} />
               <tbody>
-                {runbooks.map(rb => (
+                {dt.sortedRows.map(rb => (
                   <tr key={rb.id}>
                     <td>
                       <a href={`/runbook?id=${encodeURIComponent(rb.id)}`}

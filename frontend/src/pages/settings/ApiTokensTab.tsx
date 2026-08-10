@@ -6,6 +6,23 @@ import { copyToClipboard } from '@/lib/clipboard';
 import type { APIToken } from '@/lib/types';
 import { Field2, FlashBox, Row } from './shared';
 import { tsLong } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// v0.9.872 (tutarlılık denetimi BT5) — `is-fit` sınıfı vardı, primitif
+// yoktu. Kolon genişliği BEYAN EDİLMEDİĞİ için isFitTables.test.ts bu
+// tabloyu ÖLÇEMİYOR ve UNMEASURED istisnasında bekliyordu; genişlikler
+// beyan edildiği an ölçüme giriyor ve istisnadan çıkarılıyor.
+// Toplam: 170+120+110+150+165+110 = 825 + trailing 120 = 945px < 1150 eşiği.
+const TOKEN_COLS: DataTableColumn<APIToken>[] = [
+  { id: 'name',      label: 'Ad',     sortValue: t => t.name,            naturalDir: 'asc', width: 170 },
+  { id: 'prefix',    label: 'Token',  sortValue: t => t.prefix,          naturalDir: 'asc', width: 120 },
+  { id: 'role',      label: 'Rol',    sortValue: t => t.role,            naturalDir: 'asc', width: 110 },
+  { id: 'createdBy', label: 'Üreten', sortValue: t => t.createdBy ?? '', naturalDir: 'asc', width: 150 },
+  { id: 'createdAt', label: 'Tarih',  sortValue: t => t.createdAt,       width: 165 },
+  // Aktif token'lar üstte: iptal edilmişler arşiv, canlı olanlar envanter.
+  { id: 'revoked',   label: 'Durum',  sortValue: t => (t.revoked ? 0 : 1), width: 110 },
+];
 
 // ApiTokensTab — v0.8.444. Harici agent platformlarının (GenAI Studio
 // vb.) MCP/REST erişimi için servis token'ları. Düz token create
@@ -23,6 +40,11 @@ export function ApiTokensTab() {
   const [copyOk, setCopyOk] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const dt = useDataTable<APIToken>({
+    storageKey: 'settings-api-tokens', columns: TOKEN_COLS, rows: tokens ?? [],
+    initialSort: { id: 'createdAt', dir: 'desc' },
+  });
 
   const load = () => {
     api.listAPITokens().then(r => setTokens(r.tokens ?? [])).catch(() => setTokens(null));
@@ -110,10 +132,11 @@ export function ApiTokensTab() {
       )}
       {tokens && tokens.length > 0 && (
         <div className="table-wrap is-fit">
-          <table>
-            <thead><tr><th>Ad</th><th>Token</th><th>Rol</th><th>Üreten</th><th>Tarih</th><th>Durum</th><th></th></tr></thead>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} trailing={[120]} />
+            <DataTableHead dt={dt} trailing={<th></th>} />
             <tbody>
-              {tokens.map(t => (
+              {dt.sortedRows.map(t => (
                 <tr key={t.id} style={{ opacity: t.revoked ? 0.55 : 1 }}>
                   <td style={{ fontWeight: 600 }}>{t.name}</td>
                   <td className="mono" style={{ fontSize: 11 }}>{t.prefix}</td>

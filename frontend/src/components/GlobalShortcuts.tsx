@@ -1,5 +1,6 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useShortcuts } from '@/lib/keyboard';
+import { navHref } from '@/lib/navHref';
 
 // GlobalShortcuts (v0.5.444) — registers app-wide power-user
 // shortcuts: '/' to focus the page search input, and 'g <x>'
@@ -81,6 +82,10 @@ function focusPageSearch(): void {
 
 export function GlobalShortcuts() {
   const navigate = useNavigate();
+  // v0.9.932 (UX denetimi K2) — `g x` kısayolları da mutlak pencereyi
+  // taşıyor. Bu yüzey en sinsi olanıydı: klavyeyle gezinen operatör
+  // sinyaller arasında en hızlı geçen, yani pencereyi en çok kaybeden.
+  const { search } = useLocation();
 
   useShortcuts(
     [
@@ -97,12 +102,13 @@ export function GlobalShortcuts() {
         keys: p.key,
         label: p.label,
         group: 'Navigation',
-        handler: () => navigate(p.to),
+        handler: () => navigate(navHref(p.to, search)),
       })),
     ],
-    // navigate identity is stable across renders, so an empty
-    // dep list registers once and lives for the shell lifetime.
-    [],
+    // v0.9.932 — `search` DEP: navigate kimliği sabit ama handler artık
+    // location'ı kapatıyor. Boş dep listesiyle binding ilk mount'taki
+    // pencereyi sonsuza dek taşırdı — düzeltilen bug'ın daha sinsi hâli.
+    [search],
   );
 
   return null;

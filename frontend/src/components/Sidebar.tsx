@@ -12,6 +12,7 @@ import {
   LayoutDashboard, Bell, Target, CircleGauge, Search, Hash, Eye,
   Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, type LucideIcon,
 } from 'lucide-react';
+import { navHref } from '@/lib/navHref';
 import { useAuth } from './AuthProvider';
 import { ChangePasswordModal } from './ChangePasswordModal';
 import { Wordmark } from './Wordmark';
@@ -511,6 +512,11 @@ function NavGroupBlock({
   counts: { triage: number; exceptions: number };
   t: (key: string) => string;
 }) {
+  // v0.9.932 (UX denetimi K2) — sidebar bağlantıları operatörün BAKTIĞI
+  // mutlak pencereyi taşıyor. Çıplak `to={n.href}` iken custom bir pencere
+  // her sinyal geçişinde düşüyordu: hedef sticky/varsayılan pencereyi
+  // yükleyip boş liste çiziyor, o da "veri yok" diye okunuyordu.
+  const { search } = useLocation();
   // navBadge — the count rendered on a nav entry. v0.9.442: manşet
   // (/inbox) yalnız triage toplamı; Exceptions girişi (/problems) kendi
   // sayısını SÖNÜK rozetle taşır — bilgi, alarm değil. 0 renders nothing.
@@ -525,7 +531,7 @@ function NavGroupBlock({
     return (
       <>
         {items.map(n => (
-          <Link key={n.href} to={n.href}
+          <Link key={n.href} to={navHref(n.href, search)}
             className={isActive(pathname, n.href) ? 'active' : ''}
             title={t(n.label)}
             style={{ justifyContent: 'center', padding: '10px 0' }}>
@@ -544,7 +550,7 @@ function NavGroupBlock({
     return (
       <>
         {items.map(n => (
-          <Link key={n.href} to={n.href}
+          <Link key={n.href} to={navHref(n.href, search)}
             className={isActive(pathname, n.href) ? 'active' : ''}>
             <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
             <span className="nav-label">{t(n.label)}</span>
@@ -567,7 +573,7 @@ function NavGroupBlock({
         <span>{t(titleKey)}</span>
       </DisclosureButton>
       {isOpen && items.map(n => (
-        <Link key={n.href} to={n.href}
+        <Link key={n.href} to={navHref(n.href, search)}
           className={isActive(pathname, n.href) ? 'active' : ''}>
           <span className="icon"><n.icon size={16} strokeWidth={1.75} /></span>
           <span className="nav-label">{t(n.label)}</span>

@@ -128,7 +128,7 @@ function ProfileDetailInner() {
       <Topbar title="Profile" />
       <div id="content">
         <div style={{ marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <button className="sec" onClick={() => navigate(-1)}>← Back</button>
+          <Button variant="secondary" onClick={() => navigate(-1)}>← Back</Button>
           {data && (
             <>
               <code style={{ fontSize: 11, color: 'var(--text2)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>

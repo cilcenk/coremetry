@@ -654,7 +654,7 @@ function LogsInner() {
               <span>· span</span>
               <code>{filter.spanId}</code>
             </>)}
-            <button className="sec" onClick={clearTraceLock}>✕ Clear</button>
+            <Button variant="secondary" onClick={clearTraceLock}>✕ Clear</Button>
           </div>
         )}
         <PageControls sticky>
@@ -713,21 +713,22 @@ function LogsInner() {
               Keeps only rows with a trace correlation, so every
               visible line's Trace cell can pivot to /trace. Auto-
               applies like the severity facet chips. */}
-          <button className={filter.hasTrace ? '' : 'sec'}
+          <Button variant={filter.hasTrace ? 'primary' : 'secondary'}
             aria-pressed={filter.hasTrace}
             onClick={toggleHasTrace}
             title="Show only logs correlated with a trace — every row can pivot to its trace">
             ◆ With trace
-          </button>
-          <button onClick={apply}>Search</button>
-          <button className="sec" onClick={reset}>Reset</button>
+          </Button>
+          <Button onClick={apply}>Search</Button>
+          <Button variant="secondary" onClick={reset}>Reset</Button>
           <ShareButton label="Copy link" copiedLabel="Copied" title={LOG_SHARE_TITLE} />
-          <button className={live ? 'live-on' : 'sec'}
+          <Button variant={live ? 'primary' : 'secondary'}
+            className={live ? 'live-on' : undefined}
             onClick={() => setLive(v => !v)}
             style={{ marginLeft: 'auto' }}
             title="Stream the latest logs live (server-pushed; pauses when the tab is hidden)">
             {live ? '⏸ Pause Live' : '▶ Live tail'}
-          </button>
+          </Button>
           {live && liveGap && (
             <span className="badge b-warn" title="A busy service produced more lines than one tick could read — narrow the filter to see them all.">
               ⚠ high volume — some lines skipped

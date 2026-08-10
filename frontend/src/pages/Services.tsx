@@ -522,7 +522,7 @@ export default function ServicesPage() {
                 onChange={e => setErrorsOnly(e.target.checked)} />
               Errors only
             </label>
-            <button className="sec" onClick={reset}>Reset</button>
+            <Button variant="secondary" onClick={reset}>Reset</Button>
             {/* v0.9.344 warned that these three only narrowed the visible
                 page. v0.9.345 made that untrue — they are HAVING predicates
                 now, so paging walks the matching services and the warning

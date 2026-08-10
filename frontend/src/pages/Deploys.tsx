@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs, tsLong } from '@/lib/utils';
@@ -90,8 +91,8 @@ export default function DeploysPage() {
             onEnter={v => setParam('service', v ?? draft)}
             placeholder="Servis (tam churn taraması için seç)…" width={280} />
           {service && (
-            <button className="sec" style={{ fontSize: 11, padding: '3px 8px' }}
-              onClick={() => { setDraft(''); setParam('service', ''); }}>✕ {service}</button>
+            <Button variant="secondary" style={{ fontSize: 11, padding: '3px 8px' }}
+              onClick={() => { setDraft(''); setParam('service', ''); }}>✕ {service}</Button>
           )}
           <div className="segmented">
             {(['', 'deploy', 'rollout', 'restart'] as const).map(k => (

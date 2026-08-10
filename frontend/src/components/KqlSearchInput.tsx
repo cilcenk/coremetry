@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { detectFieldNameToken, rankFieldNames, applyFieldName } from '@/lib/kqlFieldToken';
 
 // KqlSearchInput (v0.5.464) — drop-in replacement for the bare
 // <input> on /logs search. Layers field-aware autocomplete on
@@ -41,6 +42,12 @@ interface KqlSearchInputProps {
   // keystroke. Optional — the server clamps and defaults on its own, so
   // a caller that omits it still gets a bounded query, just a wider one.
   since?: string;
+  // v0.9.955 (F4/Ö16) — ALAN ADI tamamlaması için kullanılabilir alanlar.
+  // Sayfa bu listeyi ZATEN çekiyor (/api/logs/fields, LogFieldsPanel'in
+  // "Available fields" bölümü), yani yeni bir ağ turu YOK — operatörün
+  // "elastic api kullanımını çok artırma" şartı korunuyor. Verilmezse
+  // davranış bayt-bayt eski hâl (yalnız değer tamamlaması).
+  fields?: string[];
 }
 
 interface TokenInfo {
@@ -100,7 +107,7 @@ function quoteIfNeeded(v: string): string {
 }
 
 export function KqlSearchInput({
-  value, onChange, onSubmit, placeholder, title, width = 380, since,
+  value, onChange, onSubmit, placeholder, title, width = 380, since, fields,
 }: KqlSearchInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [cursor, setCursor] = useState(0);
@@ -110,6 +117,28 @@ export function KqlSearchInput({
   const [loading, setLoading] = useState(false);
 
   const token = useMemo(() => detectFieldToken(value, cursor), [value, cursor]);
+  // v0.9.955 (F4/Ö16) — ALAN ADI konumu. Değer token'ı VARSA burası
+  // null döner (detectFieldNameToken ':' gördüğünde çekilir), yani iki
+  // öneri kaynağı asla çakışmaz.
+  const nameToken = useMemo(
+    () => (token ? null : detectFieldNameToken(value, cursor)),
+    [token, value, cursor]);
+  const nameSuggestions = useMemo(
+    () => (nameToken && fields?.length ? rankFieldNames(fields, nameToken.prefix) : []),
+    [nameToken, fields]);
+  // Açık liste HANGİ kaynaktan? Değer önerileri ağ turu ister ve
+  // gecikmelidir; alan adları elde HAZIR, o yüzden anında açılır.
+  const nameMode = nameSuggestions.length > 0;
+  const items = nameMode ? nameSuggestions : values;
+
+  // v0.9.955 (F4/Ö16) — alan adı listesi AĞ TURU BEKLEMEZ: liste elde
+  // hazır olduğu için açılış anında. Değer listesinin `open`ı fetch
+  // sonrası set ediliyor (yukarıdaki effect); iki kaynağın açılış
+  // koşulunu ayrı tutmak, hazır bir listeyi 180 ms debounce'un arkasında
+  // bekletmemek için.
+  useEffect(() => {
+    if (nameMode) { setOpen(true); setHighlight(0); }
+  }, [nameMode, nameToken?.prefix]);
 
   // v0.8.217 — single-line Kibana-style bar (was an auto-growing textarea): the
   // KQL query stays on ONE line and scrolls horizontally instead of wrapping +
@@ -144,6 +173,23 @@ export function KqlSearchInput({
     return () => { cancelled = true; clearTimeout(t); };
   }, [token?.field, token?.valuePrefix, since]);
 
+  // v0.9.955 (F4/Ö16) — alan adını yazar ve ':' EKLER. İki nokta süs
+  // değil: alan adı tek başına KQL'de SERBEST METİNDİR, yani tamamlama
+  // operatörü tam da kaçındığı hâle (yanlış sorgu, sıfır satır)
+  // bırakırdı. Üstelik ':' değer tamamlamasının tetikleyicisi — tek
+  // seçimle zincirin ikinci halkası açılıyor.
+  const insertFieldName = (f: string) => {
+    if (!nameToken) return;
+    const next = applyFieldName(value, nameToken, f);
+    onChange(next.text);
+    setOpen(false);
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(next.cursor, next.cursor);
+      setCursor(next.cursor);
+    });
+  };
+
   const insertValue = (v: string) => {
     if (!token) return;
     const quoted = quoteIfNeeded(v);
@@ -161,11 +207,16 @@ export function KqlSearchInput({
     });
   };
 
+  const pick = (i: number) => {
+    if (nameMode) insertFieldName(nameSuggestions[i]);
+    else insertValue(values[i]);
+  };
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (open && values.length > 0) {
+    if (open && items.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        setHighlight(h => Math.min(values.length - 1, h + 1));
+        setHighlight(h => Math.min(items.length - 1, h + 1));
         return;
       }
       if (e.key === 'ArrowUp') {
@@ -175,7 +226,7 @@ export function KqlSearchInput({
       }
       if (e.key === 'Enter') {
         e.preventDefault();
-        insertValue(values[highlight]);
+        pick(highlight);
         return;
       }
       if (e.key === 'Escape') {
@@ -186,7 +237,7 @@ export function KqlSearchInput({
       if (e.key === 'Tab') {
         // Tab picks like Enter without firing submit.
         e.preventDefault();
-        insertValue(values[highlight]);
+        pick(highlight);
         return;
       }
     }
@@ -228,7 +279,7 @@ export function KqlSearchInput({
         spellCheck={false}
         autoComplete="off"
         style={{ width: '100%', paddingLeft: 28 }} />
-      {open && values.length > 0 && (
+      {open && items.length > 0 && (
         <div style={{
           position: 'absolute', top: '100%', left: 0,
           width: '100%', minWidth: 260,
@@ -243,12 +294,17 @@ export function KqlSearchInput({
             borderBottom: '1px solid var(--border)',
             fontFamily: 'ui-monospace, monospace',
           }}>
-            {token?.field}: {loading && '· searching…'}
+            {/* v0.9.955 (F4/Ö16) — başlık HANGİ soruya cevap verdiğimizi
+                söyler. Alan adı listesi ile değer listesi ekranda aynı
+                görünseydi operatör "field" ile "value"yu karıştırırdı. */}
+            {nameMode
+              ? `alan adı · ${nameSuggestions.length} eşleşme`
+              : `${token?.field}: ${loading ? '· searching…' : ''}`}
           </div>
-          {values.map((v, i) => (
+          {items.map((v, i) => (
             <div key={v}
               onMouseEnter={() => setHighlight(i)}
-              onMouseDown={e => { e.preventDefault(); insertValue(v); }}
+              onMouseDown={e => { e.preventDefault(); pick(i); }}
               style={{
                 padding: '6px 10px', cursor: 'pointer', fontSize: 12,
                 fontFamily: 'ui-monospace, monospace',

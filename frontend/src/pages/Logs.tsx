@@ -680,6 +680,14 @@ function LogsInner() {
             // Memoised: a bare rangeToSince(range) in JSX is the
             // infinite-refetch shape (v0.5.184).
             since={autocompleteSince}
+            // v0.9.955 (F4/Ö16) — ALAN ADI tamamlaması. Liste ZATEN
+            // burada (yan paneldeki "Available fields" ile AYNI state,
+            // tek /api/logs/fields turu): kutuya bağlamak sıfır ek ES
+            // maliyeti. Öncesinde operatör CHANNEL_CODE'un ES'teki tam
+            // yazımını dışarıdan bilmek zorundaydı ve yanlış yazımın
+            // bedeli sessizdi — sıfır satır "böyle log yok" diye
+            // okunuyordu, "adı farklı" diye değil.
+            fields={fields}
             value={draft.search}
             onChange={v => setDraft({ ...draft, search: v })}
             onSubmit={apply}

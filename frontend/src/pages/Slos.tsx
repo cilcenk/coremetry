@@ -483,10 +483,9 @@ function BurnExplainButton({ sloId }: { sloId: string }) {
 
   return (
     <>
-      <Button variant="secondary" size="sm" onClick={run} disabled={busy}
+      <Button variant="accent" size="sm" onClick={run} disabled={busy}
         title="Ask copilot whether this SLO's budget is on track or burning fast"
-        leftIcon={<IconSparkles size={12} />}
-        style={{ color: 'var(--accent2)' }}>
+        leftIcon={<IconSparkles size={12} />}>
         Explain burn
       </Button>
       {open && (

@@ -302,9 +302,8 @@ function EditRow({ draft, busy, onChange, onSave, onCancel }: {
         <td><Inp v={draft.repository} on={v => u({ repository: v })} ph="https://github/..." /></td>
         <td>
           <span style={{ display: 'inline-flex', gap: 4 }}>
-            <Button variant="secondary" size="sm" onClick={aiSuggest} disabled={busy || aiBusy}
-              title="Auto-fill owner / SRE team / description from this service's recent telemetry"
-              style={{ color: 'var(--accent2)' }}>
+            <Button variant="accent" size="sm" onClick={aiSuggest} disabled={busy || aiBusy}
+              title="Auto-fill owner / SRE team / description from this service's recent telemetry">
               {aiBusy ? '…' : '✨ AI'}
             </Button>
             <Button size="sm" onClick={onSave} disabled={busy}>

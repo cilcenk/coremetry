@@ -268,12 +268,9 @@ function NodeWorkPanel() {
               : `${Math.round(view.elapsedMs / 60_000)}dk`)
             : 'taban alındı'}
         </span>
-        <button type="button" onClick={() => {
+        <Button variant="accent" size="sm" onClick={() => {
           if (raw) { baseRef.current = makeBaseline(raw.nodes, raw.generatedAt); bump(n => n + 1); }
-        }} style={{
-          background: 'transparent', color: 'var(--accent2)', border: '1px solid var(--border)',
-          borderRadius: 6, fontSize: 11, padding: '3px 8px', cursor: 'pointer',
-        }}>tabanı sıfırla</button>
+        }}>tabanı sıfırla</Button>
         {/* Dengesizlik rozetleri YALNIZ ölçüm varken. null → '—' + gri:
             "ölçülemedi" ile "dengeli" aynı şey değil. */}
         {view?.cpuImbalance != null && (
@@ -559,10 +556,7 @@ function CoordinatorPanel() {
                 ? `${Math.max(1, Math.round(elapsedMs / 1000))}sn`
                 : `${Math.round(elapsedMs / 60_000)}dk`}
             </span>
-            <button type="button" onClick={resetBaseline} style={{
-              background: 'transparent', color: 'var(--accent2)', border: '1px solid var(--border)',
-              borderRadius: 6, fontSize: 11, padding: '3px 8px', cursor: 'pointer',
-            }}>tabanı sıfırla</button>
+            <Button variant="accent" size="sm" onClick={resetBaseline}>tabanı sıfırla</Button>
           </>
         )}
         {data && (

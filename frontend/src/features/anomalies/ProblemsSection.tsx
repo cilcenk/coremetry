@@ -255,11 +255,21 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // pair encoded). Sort + widths persist under 'alert-rules'; the URL
   // param is `s_alert-rules`, namespaced so it can't collide with the
   // exception inbox's `s_exception-inbox` on the same page.
+  // v0.9.929 — klavye gezinmesi. v0.9.918'de bilinçli ERTELENMİŞTİ: /inbox'ta
+  // bu tablo ikinci nav'lı tablo olarak mount oluyor ve o gün j/k'nın sahibi
+  // "son mount olan"dı — onOpen vermek üstteki kuyruğun gezinmesini çalardı.
+  // v0.9.928 arbitrajı (sahip = son etkileşim) o riski kaldırdı.
+  //
+  // Enter'ı satırın KENDİ onKeyDown'u da işliyor (role="button" + tabIndex);
+  // ikisi çakışmıyor çünkü isActivationTarget (v0.9.863) odaklı bir
+  // role="button" üzerindeyken global Enter binding'ini susturuyor. Yani
+  // odak satırdaysa satır açar, odak hiçbir yerdeyken j/k seçimi açar.
   const dt = useDataTable<Problem>({
     storageKey: 'alert-rules',
     columns: PROBLEM_COLS,
     rows,
     initialSort: { id: 'priority', dir: 'desc' },
+    onOpen: (p) => openDetail(p.id),
   });
   // Preserve the tri-state contract (undefined loading / null error /
   // rows) the render below branches on.
@@ -488,10 +498,11 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
               }
               trailing={<><th>Assignee</th><th>Triage</th></>} />
             <tbody>
-              {sorted.map(p => {
+              {sorted.map((p, i) => {
                 const isAnomaly = p.ruleId?.startsWith('anomaly:');
                 return (
                   <tr key={p.id}
+                      {...dt.rowProps(i)}
                       onClick={() => openDetail(p.id)}
                       onKeyDown={(e) => {
                         // Keyboard accessibility — Enter/Space opens the same

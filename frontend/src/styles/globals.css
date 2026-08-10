@@ -466,7 +466,15 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 .btn-icon.ib-sec:hover:not(:disabled) { background: var(--bg2); }
 /* `bare` is the honest replacement for `all: unset`: no chrome at all,
    but the focus ring and a colour hover survive. */
-.btn-icon.ib-bare:hover:not(:disabled) { color: var(--accent2); }
+/* `background` here is NOT decoration — it is the fix for v0.9.895.
+   The element-level `button:hover:not(:disabled) { background: var(--accent2) }`
+   has specificity (0,2,1); `.btn-icon { background: transparent }` is only
+   (0,1,0) and is not a :hover rule at all, so on hover it lost and all
+   twelve `variant="bare"` sites (log rows, Services pin, Clusters,
+   Dashboards, GroupTable) flashed a SOLID ACCENT square. Every :hover
+   rule on a primitive must restate `background` unless the primitive's
+   base :hover rule already declares one. */
+.btn-icon.ib-bare:hover:not(:disabled) { background: transparent; color: var(--accent2); }
 /* `ib-accent` (v0.9.888) — glyphs that are "open this" affordances inside
    a dense row (👁 peek trace, ⌁ namespace trends). They were accent-tinted
    at REST on purpose: in a wall of monospace log text, the tint is what
@@ -532,7 +540,10 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
   cursor: pointer; line-height: 1.4; max-width: 100%;
   transition: background .15s, color .15s, border-color .15s;
 }
-.btn-chip:hover:not(:disabled) { border-color: var(--accent); }
+/* Every :hover rule below restates `background` on purpose — see the
+   v0.9.895 note on .btn-icon.ib-bare. Omitting it hands the chip to
+   `button:hover:not(:disabled)` and it goes solid accent. */
+.btn-chip:hover:not(:disabled) { background: var(--bg2); border-color: var(--accent); }
 .btn-chip:disabled { opacity: .4; cursor: not-allowed; }
 .btn-chip.ch-pill { border-radius: 999px; }
 .btn-chip.ch-xs { font-size: 10px; padding: 1px 6px; gap: 4px; }
@@ -542,21 +553,25 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
    this" state — same tint, different reason, so both exist. */
 .btn-chip.ch-accent { color: var(--accent2); background: var(--accent-bg); border-color: var(--accent-border); }
 .btn-chip.active { color: var(--accent2); background: var(--accent-bg); border-color: var(--accent-border); }
+/* Without these the base :hover (0,3,0) would strip the tint back to --bg2
+   and a selected chip would look UNselected while the pointer is on it. */
+.btn-chip.ch-accent:hover:not(:disabled),
+.btn-chip.active:hover:not(:disabled) { background: var(--accent-bg); border-color: var(--accent); }
 /* `ch-dashed` — the "nothing assigned yet, click to add" chip. Dashed
    border is the established affordance for it (see .fb-add). */
 .btn-chip.ch-dashed { background: transparent; color: var(--text3); border-style: dashed; }
-.btn-chip.ch-dashed:hover:not(:disabled) { color: var(--accent2); border-color: var(--accent); }
+.btn-chip.ch-dashed:hover:not(:disabled) { background: transparent; color: var(--accent2); border-color: var(--accent); }
 /* Wrapper form (onRemove): the box itself is not clickable, only the
    buttons inside it are. */
 .btn-chip.ch-static { cursor: default; }
-.btn-chip.ch-static:hover { border-color: var(--border); }
+.btn-chip.ch-static:hover { background: var(--bg3); border-color: var(--border); }
 .btn-chip-label {
   background: transparent; border: 0; padding: 0; margin: 0;
   color: inherit; font: inherit; line-height: inherit;
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 button.btn-chip-label { cursor: pointer; }
-button.btn-chip-label:hover { color: var(--accent2); }
+button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
 
 /* ── Card / panel primitive ─────────────────────────────────────
    The repeated bg1 + border + 8px radius pattern that 30+ inline

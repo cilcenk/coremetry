@@ -147,6 +147,59 @@ describe('primitiveClasses — atomun bastığı her sınıfın CSS karşılığ
     expect(offenders, `Taban sınıfı çakışması:\n${offenders.join('\n')}`).toEqual([]);
   });
 
+  // ── :hover'da ARKA PLAN KAYBI (v0.9.895 regresyon testi) ────────────
+  // SEMPTOM: `variant="bare"` IconButton'ların on iki sitesi (log satırı
+  // ⊕/⊖, trace peek 👁, Services pin, Clusters, Dashboards, GroupTable)
+  // fare üzerine gelince DOLU MAVİ KAREYE dönüyordu.
+  //
+  // KÖK NEDEN — özgüllük: element seviyesindeki
+  // `button:hover:not(:disabled) { background: var(--accent2) }` (0,2,1)
+  // bir :hover kuralı. `.btn-icon { background: transparent }` ise (0,1,0)
+  // VE :hover kuralı değil. `.btn-icon.ib-bare:hover:not(:disabled)`
+  // yalnız `color` bildiriyordu; `background` bildirmediği için o
+  // özelliğin kazananı `button:hover` oldu. `undefinedCssRefs` sessiz
+  // (sınıf tanımlı), `primitiveClasses`ın ilk iddiası sessiz (karşılığı
+  // var), `tsc` sessiz. Yalnız GÖZLE görülür bir hataydı.
+  //
+  // KURAL: bir primitifin TABAN :hover kuralı `background` bildirmiyorsa,
+  // o primitifin HER değiştirici :hover kuralı bildirmek ZORUNDA.
+  // `.btn-link` bunu taban kuralında yapıyor → değiştiricileri muaf
+  // (yanlış pozitif üretmiyor).
+  it('primitif :hover kuralları arka planı geri bildiriyor (button:hover kaçağı)', () => {
+    const css = stripComments(readFileSync(resolve(SRC, 'styles/globals.css'), 'utf8'));
+
+    // Kaçağın KAYNAĞI hâlâ orada mı? Kural kaldırılmışsa bu kapı gereksiz
+    // yere kısıtlıyor demektir — o zaman burası kırmızıya dönüp haber verir.
+    const LEAK = 'button:' + 'hover:not(:disabled)';
+    expect(css, `${LEAK} kuralı yok — bu kapının dayanağı kalmamış`).toContain(LEAK);
+
+    const bases: string[] = [];
+    for (const f of primitives) {
+      const body = stripComments(readFileSync(join(UI, f), 'utf8'));
+      const m = body.match(/const classes\s*=\s*\[\s*'([^']+)'/);
+      if (m) bases.push(m[1]);
+    }
+
+    const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)]
+      .map(m => ({ sel: m[1].trim().replace(/\s+/g, ' '), body: m[2] }));
+
+    const offenders: string[] = [];
+    for (const base of bases) {
+      const mine = rules.filter(r => r.sel.includes(`.${base}`) && r.sel.includes(':hover'));
+      // Taban :hover kuralı = seçicide `.base` var, başka bir `.mod` yok.
+      const baseHover = mine.filter(r =>
+        new RegExp(`\\.${base}(?![\\w-])(:|,|\\s|$)`).test(r.sel) &&
+        !new RegExp(`\\.${base}\\.`).test(r.sel));
+      if (baseHover.some(r => r.body.includes('background'))) continue;
+      for (const r of mine) {
+        if (!r.body.includes('background')) {
+          offenders.push(`${r.sel} → 'background' bildirmiyor; ${LEAK} kazanır ve dolu accent olur`);
+        }
+      }
+    }
+    expect(offenders, `:hover arka plan kaçağı:\n${offenders.join('\n')}`).toEqual([]);
+  });
+
   it('.spinner.sm bileşik kuralı var — loading butonu büyütmesin (R7)', () => {
     // Bu, `undefinedCssRefs`in yapısal olarak KAÇIRDIĞI durum: Button
     // `className="spinner sm"` basıyor, iki token da ayrı ayrı tanımlı

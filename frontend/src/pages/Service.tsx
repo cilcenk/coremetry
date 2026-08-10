@@ -774,36 +774,21 @@ function TabStrip({ tab, onChange, opCount }: {
     { key: 'topology',   label: 'Topology' },
     { key: 'logs',       label: 'Logs' },
   ];
+  // The house `.tab-strip` set — same active colour, underline weight and
+  // padding as Settings, Anomalies, Endpoints and the eight other strips
+  // (v0.9.900, BB7). `svc-tabs` adds only the sticky behaviour: the strip
+  // stays pinned to the top of the #main scroll viewport while the body
+  // scrolls under it, with the page bg masking the content behind it.
   return (
-    <div style={{
-      display: 'flex', gap: 0, marginTop: 16, marginBottom: 12,
-      borderBottom: '1px solid var(--border)',
-      // Sticky tab strip (design): stays pinned to the top of the #main
-      // scroll viewport while the body scrolls under it. Page bg masks the
-      // content; z-index keeps it above the scrolling panels.
-      position: 'sticky', top: 0, zIndex: 5,
-      background: 'var(--bg0)', paddingTop: 8,
-    }}>
+    <div className="tab-strip svc-tabs">
       {items.map(it => {
         const active = tab === it.key;
         return (
           <button key={it.key} type="button"
-            onClick={() => onChange(it.key)}
-            style={{
-              all: 'unset', cursor: 'pointer',
-              padding: '8px 18px',
-              fontSize: 13, fontWeight: active ? 700 : 500,
-              color: active ? 'var(--text)' : 'var(--text2)',
-              borderBottom: active ? '2px solid var(--accent2)' : '2px solid transparent',
-              marginBottom: -1,
-            }}>
+            className={active ? 'active' : ''}
+            onClick={() => onChange(it.key)}>
             {it.label}
-            {it.hint && (
-              <span style={{
-                marginLeft: 6, fontSize: 11, color: 'var(--text3)',
-                fontFamily: 'ui-monospace, monospace',
-              }}>{it.hint}</span>
-            )}
+            {it.hint && <span className="tab-count">{it.hint}</span>}
           </button>
         );
       })}

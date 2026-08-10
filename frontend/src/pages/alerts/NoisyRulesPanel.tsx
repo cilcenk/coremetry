@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui';
+import { QueryErrorInline } from '@/components/QueryError';
 import { useUpdateAlertRule, useDisableAlertRule } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
@@ -27,7 +28,12 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
   // Noisy-rules report (v0.5.131). 24h window by default; server
   // caches the heavy GROUP BY for 5 min so a fleet of operators
   // hitting /alerts at the same time shares one round-trip.
-  const [noisy, setNoisy] = useState<NoisyRule[] | null>(null);
+  // v0.9.866 (tutarlılık denetimi MT1) — durum şekli değişti: başlangıç
+  // `null` idi, `.catch` de `null` yazıyordu. Yani "henüz yüklenmedi" ile
+  // "rapor alınamadı" AYNI DEĞERDİ ve ikisi de `return null` ile sessizce
+  // gizleniyordu. Gürültülü kural raporu 500'lediğinde operatör panelin hiç
+  // olmadığını sanıyordu. Tri-state: undefined = yükleniyor, null = hata.
+  const [noisy, setNoisy] = useState<NoisyRule[] | null | undefined>(undefined);
   // Bulk-apply selection set (v0.5.151). One operator complaint we
   // kept hitting: 5+ rules need the same flap-suppression treatment
   // and clicking Apply → save → close for each one is annoying.
@@ -35,11 +41,16 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
   const [bulkBusy, setBulkBusy] = useState(false);
   const updateRule = useUpdateAlertRule();
   const disableRule = useDisableAlertRule();
-  useEffect(() => {
+  // Tek okuma yolu — hem ilk yükleme hem Retry buradan geçer, böylece hata
+  // dalı iki yerde ayrı ayrı yazılmak zorunda kalmıyor (MT1'i mümkün kılan
+  // şey guard'ın elle çoğaltılmasıydı).
+  const load = useCallback(() => {
+    setNoisy(undefined);
     api.alertTuningNoisyRules('24h', 10)
       .then(r => setNoisy((r?.rules ?? []).filter(n => n.suggestion !== '')))
       .catch(() => setNoisy(null));
   }, []);
+  useEffect(load, [load]);
   const applySuggestion = (n: NoisyRule) => {
     const base = (rules ?? []).find(r => r.id === n.ruleId);
     if (!base) return;
@@ -136,7 +147,21 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
     }
   };
 
-  if (!noisy || noisy.length === 0) return null;
+  // İlk boyamada hata banner'ı ÇAKMAMALI: yükleniyorken panel sessiz kalır
+  // (bu bir öneri paneli, sayfanın gövdesi değil). Hata dalı QueryErrorInline
+  // — <Empty> değil, çünkü boş-durum anlatısı tam da kaçınmaya çalıştığımız
+  // yanlış mesaj. Gerçekten öneri yoksa panel eskisi gibi kendini gizler.
+  if (noisy === undefined) return null;
+  if (noisy === null) {
+    return (
+      <div style={{ marginBottom: 14 }}>
+        <QueryErrorInline
+          text="Noisy-rules report could not be loaded — tuning suggestions are unavailable, not absent."
+          onRetry={load} />
+      </div>
+    );
+  }
+  if (noisy.length === 0) return null;
 
   return (
     <div style={{

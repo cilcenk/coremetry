@@ -47,7 +47,7 @@ import { suggestAttrKey, type AttrKeySuggestion } from '@/lib/attrKeySuggest';
 import { traceCountReasonHint } from '@/lib/traceCountReason';
 import { lastReachablePage } from '@/lib/traceReach';
 import type { TraceCountResponse } from '@/lib/types';
-import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
+import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery, rebuildPreserving } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import { upsertAttrFilter } from '@/lib/aggDrill';
 import { useAttributeKeys } from '@/lib/useAttributeKeys';
@@ -303,7 +303,14 @@ function TracesPageInner() {
   // `range` is included via encodeRange so the URL stays the single source of
   // truth even when useUrlRange's own writer and this effect both touch it.
   useEffect(() => {
-    const qs = buildQuery([
+    // v0.9.940 (A7) — rebuildPreserving: bu efekt sorgu dizesini SIFIRDAN
+    // kuruyor, yani aşağıdaki listede olmayan her parametreyi bir render
+    // sonra silerdi. `?env=` (v0.8.383/K4) ve `?s_traces-agg` (v0.9.878/K9)
+    // tam olarak böyle kayboldu ve ikisi de tek tek listeye eklenerek
+    // yamandı. Artık varsayım tersine: efekt yalnız KENDİ parametrelerine
+    // sahip, tanımadığını taşır. İkisi listede KALIYOR — sahiplik ancak
+    // adı geçen anahtarı temizleme (boş değer) hakkı verir.
+    const qs = rebuildPreserving(window.location.search, [
       ['range',    encodeRange(range)],
       // Global env filter rides this page's URL like range does — this
       // effect rebuilds the whole query string, so omitting it here

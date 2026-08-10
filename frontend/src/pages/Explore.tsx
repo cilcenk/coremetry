@@ -19,7 +19,7 @@ import { api } from '@/lib/api';
 import { heatmapBucketCount } from '@/lib/chartStep';
 import { timeRangeToNs, fmtNum, fmtClock } from '@/lib/utils';
 import { raceGuard } from '@/lib/raceGuard';
-import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery } from '@/lib/urlState';
+import { encodeRange, decodeRange, encodeFilters, decodeFilters, buildQuery, rebuildPreserving } from '@/lib/urlState';
 import { storedRangeString } from '@/lib/useUrlRange';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import type { TimeRange, FilterExpr, LatencyHeatmap as Heatmap } from '@/lib/types';
@@ -308,8 +308,17 @@ function ExploreInner({ onSelfWrite }: {
         ['minRepeats', resultMode === 'repeats' && repeatMin !== 5 ? repeatMin : ''],
       ];
     }
+    // queryQs — SAHİP OLUNAN parametrelerin dizesi; `meaningful` bunun
+    // uzunluğundan çıkıyor. rebuildPreserving KULLANILMAZ: yabancı bir
+    // parametre (ör. `?ai=`) boş bir sorguyu "anlamlı" gösterir ve
+    // paramsız /explore giriş ekranı (soru kartları) kaybolurdu.
     const queryQs = buildQuery(queryEntries);
-    const qs = buildQuery([...queryEntries, ['range', encodeRange(range)]]);
+    // v0.9.940 (A7) — asıl URL yazımı yabancı parametreleri KORUR. Bu
+    // efekt dizeyi sıfırdan kuruyordu, yani AI çekmecesinin `?ai=`i bir
+    // filtre düzenlemesinde siliniyor, çekmece kendiliğinden kapanıyordu
+    // (K4/K9 ile aynı sınıfın üçüncü doğuşu).
+    const qs = rebuildPreserving(window.location.search,
+      [...queryEntries, ['range', encodeRange(range)]]);
     const next = qs ? `?${qs}` : '';
     // v0.9.805 — navigate'ten ÖNCE ve KOŞULSUZ. Bu satır "ekrandaki state
     // şu URL'e karşılık geliyor" diyor; ExplorePage gelen bir URL'i bununla

@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
-import { Card } from '@/components/ui';
+import { Card, LinkButton } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TrendDelta } from '@/components/TrendDelta';
 import { useEndpoints, useEndpointDetail } from '@/lib/queries';
@@ -301,14 +301,11 @@ function REDStrip({ row, pending, compare, onToggleCompare }: {
           {compare && <TrendDelta cur={row.p99Ms} prior={row.priorP99Ms} kind="lowerBetter" />}
         </Stat>
       </div>
-      <button type="button" onClick={onToggleCompare}
+      <LinkButton onClick={onToggleCompare}
         title="Compare each number against the previous window of the same length"
-        style={{
-          all: 'unset', cursor: 'pointer', fontSize: 11,
-          color: 'var(--accent2)', marginTop: 6,
-        }}>
+        style={{ fontSize: 11, marginTop: 6 }}>
         {compare ? '✓ comparing to prior window' : 'compare to prior window'}
-      </button>
+      </LinkButton>
     </div>
   );
 }

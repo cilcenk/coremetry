@@ -19,7 +19,7 @@ import { MultiLineChart } from '@/components/MultiLineChart';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
-import { Button, Card, Drawer, DrawerSection, IconButton } from '@/components/ui';
+import { Button, Card, Drawer, DrawerSection, IconButton, LinkButton } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
@@ -638,10 +638,9 @@ export default function ClustersPage() {
         {isDetail && (
           <>
             <div style={{ marginBottom: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
-              <button type="button" onClick={backToOverview}
-                style={{ all: 'unset', cursor: 'pointer', color: 'var(--accent2)', fontSize: 12 }}>
+              <LinkButton onClick={backToOverview} style={{ fontSize: 12 }}>
                 ← All clusters
-              </button>
+              </LinkButton>
               <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 14, fontWeight: 600 }}>
                 {clusterParam}
               </span>

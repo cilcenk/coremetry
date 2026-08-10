@@ -390,6 +390,29 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 .btn-bare:hover:not(:disabled) { background: transparent; }
 .btn-bare:disabled { opacity: .4; cursor: not-allowed; }
 
+/* ── LinkButton (v0.9.889) — looks like a link, IS a button ─────────
+   Eight sites hand-rolled this in five different looks, none with a
+   defined hover or focus. Same `all: unset` root cause as .btn-bare:
+   it resets outline-style, so the focus ring never painted.
+   `font: inherit` on purpose — these sit inside prose and breadcrumbs
+   at whatever size the surrounding text runs at. */
+.btn-link {
+  background: transparent; border: 0; padding: 0; margin: 0;
+  font: inherit; color: var(--accent2); text-align: inherit;
+  display: inline-flex; align-items: center; gap: 4px;
+  cursor: pointer; text-decoration: none;
+}
+.btn-link:hover:not(:disabled) { background: transparent; text-decoration: underline; }
+.btn-link:disabled { opacity: .4; cursor: not-allowed; }
+.btn-link.lb-muted { color: var(--text2); }
+.btn-link.lb-muted:hover:not(:disabled) { color: var(--text); }
+/* dotted = "this value is a shortcut you can click", the house hint on
+   tag chips (AdminAudit). Hover promotes it to a solid underline so the
+   affordance confirms itself under the pointer. */
+.btn-link.lb-dotted { text-decoration: underline dotted; }
+.btn-link.lb-dotted:hover:not(:disabled) { text-decoration: underline; }
+.btn-link.lb-plain:hover:not(:disabled) { text-decoration: none; }
+
 /* ── IconButton (v0.9.887) — square, glyph-only ─────────────────────
    10+ sites hand-rolled this with `all: unset` + inline padding. The
    `all: unset` form silently kills the :focus-visible ring, so none of

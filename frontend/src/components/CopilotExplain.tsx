@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { LinkButton } from '@/components/ui/LinkButton';
 import { Spinner } from '@/components/Spinner';
 import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
 import { aiSubjectQuestion } from '@/components/ai/drawerChat';
@@ -276,14 +277,11 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               (AIDrawer). Satır-içi yüzeylerde köprü aynen duruyor. */}
           {!auto && (
             <div style={{ marginTop: 8 }}>
-              <button type="button" onClick={askInChat}
+              <LinkButton onClick={askInChat}
                 title="CoSRE chat'te bu konuda devam et"
-                style={{
-                  all: 'unset', cursor: 'pointer', fontSize: 11, color: 'var(--accent2)',
-                  display: 'inline-flex', alignItems: 'center', gap: 4,
-                }}>
+                style={{ fontSize: 11 }}>
                 💬 Chat'te devam et →
-              </button>
+              </LinkButton>
             </div>
           )}
         </div>

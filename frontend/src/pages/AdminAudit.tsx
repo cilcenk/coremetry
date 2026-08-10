@@ -3,7 +3,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
-import { Button } from '@/components/ui';
+import { Button, LinkButton } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { useAuditLog } from '@/lib/queries';
 import { tsLong, type GoDuration } from '@/lib/utils';
@@ -307,15 +307,10 @@ export default function AuditPage() {
 // target" without retyping.
 function FilterClick({ children, onClick }: { children: React.ReactNode; onClick: () => void }) {
   return (
-    <button onClick={onClick}
-      style={{
-        all: 'unset', cursor: 'pointer',
-        color: 'var(--accent2)',
-        textDecoration: 'underline dotted',
-      }}
+    <LinkButton onClick={onClick} underline="dotted"
       title="Click to filter by this value">
       {children}
-    </button>
+    </LinkButton>
   );
 }
 

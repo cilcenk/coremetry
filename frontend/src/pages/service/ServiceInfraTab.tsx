@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Card } from '@/components/ui';
+import { Card, LinkButton } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MetricArea } from '@/pages/clusters/MetricArea';
 import { servicePodRegex } from '@/pages/clusters/podWorkload';
@@ -160,10 +160,9 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
       {/* Drill breadcrumb — All clusters › cluster, ?icluster'dan (çip filtresi). */}
       {icluster && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap', fontSize: 12, marginBottom: 10 }}>
-          <button type="button" style={{ all: 'unset', cursor: 'pointer', color: 'var(--accent2)' }}
-            title="Clear cluster filter" onClick={() => setICluster('')}>
+          <LinkButton title="Clear cluster filter" onClick={() => setICluster('')}>
             All clusters
-          </button>
+          </LinkButton>
           <span style={{ color: 'var(--text3)' }}>›</span>
           <span className="mono" style={{ color: 'var(--text)' }}>{icluster}</span>
         </div>

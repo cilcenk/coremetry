@@ -15,7 +15,7 @@ import type {
 } from '@/lib/types';
 import { SectionHeader, KPI, fmtBytes, fmtRate } from './adminstats/shared';
 import { statusHeadline, Banner, ComponentRow, Legend } from './adminstats/StatusSection';
-import { DropsPanel, RedisPanel, ApiCachePanel } from './adminstats/panels';
+import { DropsPanel, BehaviorPanel, RedisPanel, ApiCachePanel } from './adminstats/panels';
 
 // Row types for the shared sortable + resizable DataTable adoption.
 type TableStatRow = SystemStats['tables'][number];
@@ -239,6 +239,9 @@ export default function AdminStatsPage() {
 
             {/* ── Ingest data loss ────────────────────────────────── */}
             <DropsPanel drops={data.drops} />
+
+            {/* ── Davranış motoru (v0.9.936) ──────────────────────── */}
+            <BehaviorPanel behavior={data.behavior} />
 
             {/* ── 30-day history ──────────────────────────────────── */}
             <div style={{

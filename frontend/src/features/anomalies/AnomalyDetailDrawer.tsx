@@ -7,7 +7,7 @@ import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { fmtNum, tsLong } from '@/lib/utils';
 import { tracesPivotHref } from '@/lib/pivotHref';
-import type { AnomalyEvent } from '@/lib/types';
+import type { AnomalyEvent, BehaviorChangeDetails } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
 
 // AnomalyDetailDrawer — v0.8.267, operator-requested: "Anomalies
@@ -54,7 +54,88 @@ const KIND_LABEL: Record<AnomalyEvent['kind'], string> = {
   trace_op: 'TRACE OP',
   elastic_ml: 'ELASTIC ML',
   log_template_new: 'NEW LOG SHAPE',
+  behavior_change: 'BEHAVIOR',
 };
+
+// v0.9.936 — davranış olaylarının `sample` alanı serbest metin DEĞİL,
+// yapılandırılmış kanıt (BehaviorChangeDetails JSON). Ham JSON'u <pre>
+// içinde göstermek teknik olarak "boş panel değil" ama operasyonel
+// olarak okunamaz; bu kutu onu tek bakışta okunur hâle getiriyor.
+//
+// AYRIŞTIRMA HER ZAMAN KORUMALI: eski bir satır, elle düzenlenmiş bir
+// kayıt ya da ileride değişen bir şekil geçerli JSON olmayabilir.
+// Ayrıştırılamazsa null döner ve çağıran ham <pre>'ye düşer — çekmece
+// asla patlamaz, en kötü ihtimalle daha az güzel görünür.
+function parseBehaviorDetails(sample: string): BehaviorChangeDetails | null {
+  try {
+    const d = JSON.parse(sample) as BehaviorChangeDetails;
+    if (!d || typeof d.metric !== 'string' || typeof d.ratio !== 'number') return null;
+    return d;
+  } catch {
+    return null;
+  }
+}
+
+// hourOfWeekLabel — 0..167 kovasını insan diline çevirir. Kova UTC'de
+// hesaplanıyor (Go ve SQL tarafı da öyle), etiket de öyle diyor:
+// operatörün "10:00 dedin ama bizde 13:00'tü" demesi bir hata raporu
+// değil, bir birim karışıklığı olurdu.
+const HOW_DAYS = ['Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt', 'Paz'];
+function hourOfWeekLabel(how: number): string {
+  if (!Number.isFinite(how) || how < 0 || how > 167) return '—';
+  const day = HOW_DAYS[Math.floor(how / 24)] ?? '—';
+  return `${day} ${String(how % 24).padStart(2, '0')}:00 UTC`;
+}
+
+function BehaviorDetailsBox({ d }: { d: BehaviorChangeDetails }) {
+  const up = d.direction === 'up';
+  const signalLabel = d.signal === 'regime'
+    ? 'Regime shift — sustained against the same hour-of-week baseline'
+    : 'Seasonal deviation — far from its own hour-of-week baseline';
+  const fmt = (v: number) => `${fmtNum(Math.round(v * 100) / 100)}${d.unit}`;
+  return (
+    <div style={{
+      border: '1px solid var(--border)', borderRadius: 6,
+      padding: '10px 12px', marginBottom: 12, background: 'var(--bg1)',
+    }}>
+      <div style={{ fontSize: 12, color: 'var(--text)', marginBottom: 8 }}>
+        {signalLabel}
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 16, fontSize: 12 }}>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600 }}>BASELINE</div>
+          <div className="mono">{fmt(d.baseline)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600 }}>NOW</div>
+          <div className="mono" style={{ color: up ? 'var(--err)' : 'var(--warn)' }}>{fmt(d.current)}</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600 }}>CHANGE</div>
+          <div className="mono">{up ? '↑' : '↓'} {fmtNum(Math.round(d.ratio * 100) / 100)}×</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600 }}>ROBUST z</div>
+          <div className="mono">{fmtNum(Math.round(d.z * 10) / 10)}σ</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600 }}>SUSTAINED</div>
+          <div className="mono">{d.dwell} × 5 min</div>
+        </div>
+        <div>
+          <div style={{ fontSize: 10, color: 'var(--text3)', fontWeight: 600 }}>BASELINE BUCKET</div>
+          <div className="mono">{hourOfWeekLabel(d.hourOfWeek)}</div>
+        </div>
+      </div>
+      {d.deploy && (
+        <div style={{ fontSize: 12, color: 'var(--text2)', marginTop: 8 }}>
+          ⬇ Deploy <b className="mono">{d.deploy.version}</b> landed{' '}
+          <b>{Math.max(1, Math.round(d.deploy.ageSeconds / 60))}m before</b> the shift started.
+        </div>
+      )}
+    </div>
+  );
+}
 
 export function AnomalyDetailDrawer({ event, onClose }: {
   event: AnomalyEvent;
@@ -63,6 +144,16 @@ export function AnomalyDetailDrawer({ event, onClose }: {
   const isLogKind = event.kind === 'log_pattern' || event.kind === 'log_template_new'
     || event.kind === 'elastic_ml';
   const durationNs = Math.max(0, event.lastSeen - event.startedAt);
+
+  // v0.9.936 — davranış olayının yapılandırılmış kanıtı. Memo: her
+  // render'da JSON.parse etmek gereksiz, ve yeni bir nesne kimliği
+  // aşağıdaki koşulu her seferinde yeniden değerlendirtirdi.
+  const behaviorDetails = useMemo(
+    () => (event.kind === 'behavior_change' && event.sample
+      ? parseBehaviorDetails(event.sample)
+      : null),
+    [event.kind, event.sample],
+  );
 
   // Chart window: 3× the spike duration of lead-in (min 30 min) so
   // the baseline is visible left of the spike, plus a 10-minute
@@ -161,7 +252,12 @@ export function AnomalyDetailDrawer({ event, onClose }: {
             </div>
           )}
 
-          {event.sample && (
+          {/* v0.9.936 — davranış olayının kanıtı yapılandırılmış; ham
+              JSON yerine okunur kutu. Ayrıştırılamazsa aşağıdaki <pre>
+              devreye girer (şekil değişse bile kanıt kaybolmaz). */}
+          {behaviorDetails && <BehaviorDetailsBox d={behaviorDetails} />}
+
+          {event.sample && !behaviorDetails && (
             <pre style={{
               fontSize: 11, fontFamily: 'ui-monospace, SFMono-Regular, monospace',
               whiteSpace: 'pre-wrap', overflowWrap: 'anywhere',

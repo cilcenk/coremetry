@@ -395,6 +395,10 @@ function anomalyKindLabel(kind: AnomalyEvent['kind']): string {
   return kind === 'log_pattern' ? 'LOG'
     : kind === 'elastic_ml' ? 'ELASTIC ML'
     : kind === 'log_template_new' ? 'NEW SHAPE'
+    // v0.9.936 — davranış motoru. Bu satır OLMADAN behavior_change
+    // rozeti "TRACE OP" basardı (fallback dalı): yanlış etiket, yanlış
+    // sıralama, ve operatör iz anomalisi sanıp trace arardı.
+    : kind === 'behavior_change' ? 'BEHAVIOR'
     : 'TRACE OP';
 }
 

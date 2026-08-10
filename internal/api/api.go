@@ -1950,6 +1950,20 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 			st.SpanLinks.Ingested = int64(s.ing.SpanLinksIngested())
 			st.SpanLinks.DroppedInvalid = int64(s.ing.SpanLinksDroppedInvalid())
 		}
+		// v0.9.936 — davranış motorunun tik ölçümü. Süreç-içi atomikler
+		// (ingest sayaçlarıyla aynı kablo): motor bu pod'da koşmuyorsa
+		// (COREMETRY_MODE=api, ya da lider başka pod) sıfır kalır ve bu
+		// DOĞRU cevaptır — o pod gerçekten tarama yapmıyor.
+		obs := anomaly.BehaviorObservability()
+		st.Behavior = chstore.BehaviorDetectorStats{
+			Ticks:          obs.Ticks,
+			Candidates:     obs.Candidates,
+			LastUnix:       obs.LastUnix,
+			LastDurationMs: obs.LastDurationMs,
+			LastCandidates: obs.LastCandidates,
+			LastServices:   obs.LastServices,
+			LastError:      obs.LastError,
+		}
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
 		// the lock fell back to always-leader Noop). main.go owns the lock state;
 		// since v0.8.341 the re-probe clears it live, hence the atomic load.

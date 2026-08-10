@@ -392,6 +392,10 @@ func sensitivityLogLine(c chstore.AnomalySensitivityConfig) string {
 		fmt.Fprintf(&b, " | %s floorPct=%.2f absFloor=%.2f minAbsDelta=%.2f minMAD=%.2f minRate=%.2f",
 			m, s.FloorPct, s.AbsFloor, s.MinAbsDelta, s.MinMAD, s.MinBaselineRate)
 	}
+	// v0.9.936 — davranış motoru AYNI satırda. Ayrı bir log satırı
+	// ikinci bir "değişti mi" takibi demek olurdu; operatörün sorusu
+	// tek: "vidalarım canlıya indi mi?".
+	b.WriteString(behaviorLogLine(c.Behavior))
 	return b.String()
 }
 
@@ -535,6 +539,17 @@ func (d *Detector) scan(ctx context.Context) {
 			d.checkOne(ctx, svc, m, buckets, seasonal, rates, minSamples, snap, sens)
 		}
 	}
+
+	// v0.9.936 — DAVRANIŞ MOTORU, aynı tikin sonunda.
+	//
+	// SONDA olması bilinçli: ani-sapma dedektörü operatörün bugün
+	// güvendiği hat ve onun gecikmesi/başarısı bu motorun ek iki
+	// sorgusuna bağlanmamalı. scanBehavior kendi içinde soft-fail —
+	// panik/hata buraya sızmaz, tarama tamamlanmış sayılır.
+	//
+	// AYNI `now`: kova hesabı ve pencere sınırı yukarıdaki okumalarla
+	// hizalı kalsın (v0.8.507 tik-tutarlılığı).
+	d.scanBehavior(ctx, now, sens)
 }
 
 // batchSeries — bir tikin TOPLU OKUMALARINI toplar: izlenen her metrik

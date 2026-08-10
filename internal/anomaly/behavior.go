@@ -180,7 +180,9 @@ func buildBehaviorBucketsQuery() string {
 	return fmt.Sprintf(`
 		SELECT service_name,
 		       toUnixTimestamp(time_bucket) AS t,
-		       %[1]s AS how,
+		       -- toInt32: UInt8 aritmetiği CH'de sürüme göre farklı tipe
+		       -- terfi eder; sürücü tarafında Scan hedefi SABİT olmalı.
+		       toInt32(%[1]s) AS how,
 		       countMerge(span_count_state) AS spans,
 		       countMerge(error_count_state) AS errs,
 		       quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state)[3] / 1e6 AS p99_ms

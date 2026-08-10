@@ -20,6 +20,71 @@ const TOPKEY_COLS: DataTableColumn<TopKeyRow>[] = [
   { id: 'hits', label: 'Hits', sortValue: k => k.hits, numeric: true, naturalDir: 'desc', width: 100 },
 ];
 
+// BehaviorPanel — davranış motorunun (v0.9.936) tik ölçümü.
+//
+// NEDEN KENDİ KARTI: motorun tek pahalı yanı 28 GÜNLÜK bir MV
+// taraması ve prod'da bütçesi 10 saniye. Süre görünmezse "vidaları
+// sıkmalı mıyım" sorusunun cevabı da yok; sessizce 20 saniyeye çıkmış
+// bir tarama başka hiçbir ekranda iz bırakmazdı.
+//
+// ÜÇ HÂL, ÜÇ FARKLI CEVAP — hepsi dürüst:
+//   alan yok / hiç tik yok → "bu pod taramıyor" (lider başka pod, ya da
+//     COREMETRY_MODE=api). Sıfır göstermek YANLIŞ olurdu: sıfır aday ile
+//     hiç koşmamak aynı şey değil.
+//   lastError dolu        → motor koştu ve PATLADI. Sessiz kapanma bu
+//     depoda tekrarlayan hata sınıfı; hata burada görünür.
+//   temiz                 → süre + aday + kapsam.
+export function BehaviorPanel({ behavior }: { behavior: SystemStats['behavior'] }) {
+  const b = behavior;
+  const neverRan = !b || b.ticks === 0;
+  const slow = !!b && b.lastDurationMs > 10_000;
+  return (
+    <div style={{
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+      borderRadius: 8, padding: 14, marginBottom: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: neverRan ? 0 : 12 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Davranış motoru</span>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          haftanın saati baseline&apos;ı · 28 gün · anomaly_events kind=behavior_change
+        </span>
+        <span style={{ flex: 1 }} />
+        {neverRan
+          ? <span style={{ fontSize: 12, color: 'var(--text3)' }}>bu pod taramıyor</span>
+          : b.lastError
+            ? <span className="err" style={{ fontSize: 12, fontWeight: 700 }}>⚠ son tarama hata verdi</span>
+            : <span className={slow ? 'warn' : 'ok'} style={{ fontSize: 12, fontWeight: 600 }}>
+                {slow ? `⚠ ${fmtNum(b.lastDurationMs)} ms` : `✓ ${fmtNum(b.lastDurationMs)} ms`}
+              </span>}
+      </div>
+      {!neverRan && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+            <KPI label="Son tarama" value={b.lastUnix ? fmtUptime(Math.max(0, Math.floor(Date.now() / 1000) - b.lastUnix)) + ' önce' : '—'} />
+            <KPI label="Son bulgu" value={fmtNum(b.lastCandidates)} />
+            <KPI label="Kapsanan servis" value={fmtNum(b.lastServices)} />
+            <KPI label="Toplam tarama" value={fmtNum(b.ticks)} />
+            <KPI label="Toplam bulgu" value={fmtNum(b.candidates)} />
+          </div>
+          {b.lastError && (
+            <div className="err" style={{
+              fontSize: 11, marginTop: 10, fontFamily: 'ui-monospace, monospace',
+              overflowWrap: 'anywhere',
+            }}>{b.lastError}</div>
+          )}
+          {slow && !b.lastError && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, lineHeight: 1.5 }}>
+              Tarama 10 saniyelik bütçeyi aştı. Settings &rarr; Anomali &rarr;
+              <b> Davranış değişimi</b> bölümünden kalıcılık dilimlerini yükseltmek
+              ya da motoru geçici olarak kapatmak yükü düşürür.
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // DropsPanel renders the cumulative ingest data-loss counters (since process
 // start). Compact "✓ no loss" when clean; a red per-signal breakdown when any
 // counter is non-zero — queue-full (receiver buffer overflow) vs write-failed

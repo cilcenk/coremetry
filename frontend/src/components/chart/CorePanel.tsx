@@ -28,6 +28,7 @@
 // durum NEDENİNİ ve sonraki adımı söyler; kısmi veri görsel işaretlenir.
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import type uPlot from 'uplot';
 import {
   UPlotChart, UPlotConfigBuilder,
@@ -286,27 +287,28 @@ export function CorePanel({
   const [logLocal, setLogLocal] = useState(!!logScale);
   const effLog = logScaleToggle ? logLocal : !!logScale;
 
-  useEffect(() => {
-    if (!fullscreen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setFullscreen(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [fullscreen]);
+  // v0.9.950 (E2/Ö28) — Esc KATMAN yığınında. Tam ekran ve menü AYRI
+  // katmanlar: tam ekranken menüyü açan operatörün ilk Esc'i menüyü,
+  // ikincisi tam ekranı kapatır (LIFO). Öncesinde ikisi de bağımsız
+  // document dinleyicisiydi ve tek Esc İKİSİNİ birden kapatıyordu.
+  useEscLayer(fullscreen, () => setFullscreen(false));
 
   // v0.9.711 (self-review WCAG bulgusu, kendim doğruladım) — menü
   // klavye sözleşmesi: role=menu vaat edip ESC/dış-tık vermemek ekran
   // okuyucuya yalan söylemek. ESC kapatır, dışarı tık kapatır.
   const menuRef = useRef<HTMLSpanElement | null>(null);
+  // v0.9.950 (E2/Ö28) — menü kendi katmanı; tam ekranın ÜSTÜNDE açılırsa
+  // ilk Esc menüyü kapatır (LIFO), tam ekranı değil.
+  useEscLayer(menuOpen, () => setMenuOpen(false));
   useEffect(() => {
     if (!menuOpen) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMenuOpen(false); };
+    // v0.9.950 (E2/Ö28) — Esc katmanda (useEscLayer, aşağıda); burada
+    // yalnız dış-tık kaldı.
     const onDown = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
     };
-    window.addEventListener('keydown', onKey);
     window.addEventListener('mousedown', onDown);
     return () => {
-      window.removeEventListener('keydown', onKey);
       window.removeEventListener('mousedown', onDown);
     };
   }, [menuOpen]);
@@ -445,19 +447,20 @@ export function CorePanel({
   // State olsaydı her pin/unpin panelin tümünü yeniden render ederdi; config
   // dizisine sızsaydı uPlot'u destroy/recreate ederdi. corePanelContracts'ın
   // 'pinRef' + 'pinnedIdx' dep yasağı pinleri bunu çiviler.
+  const [pinned, setPinned] = useState(false);
   const pinRef = useRef<number | null>(null);
   const unpinTooltip = () => {
     pinRef.current = null;
+    setPinned(false);
     if (ttRef.current) clearPinStyle(ttRef.current, 'display');
   };
-  // Esc → pin çöz. Tam ekranın ESC'inden AYRI dinleyici: pin fullscreen'siz
-  // de yaşar. unpinTooltip yalnız ref'lere dokunur → dizi boş kalabilir.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  // Esc → pin çöz. v0.9.950 (E2/Ö28) — KATMAN: pin, altındaki sayfa
+  // kısayollarının ÜSTÜNDE ama açık bir menü/modalın ALTINDA. Öncesinde
+  // bağımsız bir document dinleyicisiydi ve menüyü kapatan Esc pinlenmiş
+  // tooltip'i de çözüyordu. `pinned` state aynası bunun için var: katman
+  // yalnız GERÇEKTEN pin varken yığında durmalı, yoksa no-op bir tepe
+  // katmanı alttakinin Esc'ini yerdi.
+  useEscLayer(pinned, unpinTooltip);
 
   useEffect(() => {
     const u = plotRef.current;
@@ -1077,7 +1080,7 @@ export function CorePanel({
           if (g.action === 'unpin') { unpinTooltip(); return; }
           if (g.action === 'pin') {
             const tt = ttRef.current;
-            if (tt && tt.style.display !== 'none') { pinRef.current = g.idx; applyPinStyle(tt); }
+            if (tt && tt.style.display !== 'none') { pinRef.current = g.idx; setPinned(true); applyPinStyle(tt); }
             return;
           }
           if (g.action === 'swallow') return;

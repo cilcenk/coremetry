@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
 import { Sparkline } from '@/components/Sparkline';
 import { Button } from '@/components/ui/Button';
@@ -37,11 +38,9 @@ export function EndpointPeekDrawer({ service, range, row, onClose }: {
   service: string; range: TimeRange; row: EndpointRow; onClose: () => void;
 }) {
   const rangeParam = encodeRange(range);
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // v0.9.950 (E2/Ö28) — Esc KATMAN. Üstünde bir modal açıkken Esc ona
+  // aittir; bu çekmece ancak en üstteyken kapanır.
+  useEscLayer(true, onClose);
 
   const tracesHref =
     `/traces?service=${encodeURIComponent(service)}&search=${encodeURIComponent(row.path)}&range=${rangeParam}&view=list&rootOnly=false`;

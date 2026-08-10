@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
 import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow } from '@/lib/types';
 import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils';
@@ -177,18 +178,12 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   };
 
   // Esc closes the drawer (v0.8.112 — it floats over the waterfall now,
-  // so a keyboard exit matters; skip when focus is in an input so Esc
-  // keeps its native "clear field" behavior there).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-      onClose();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // so a keyboard exit matters).
+  //
+  // v0.9.950 (E2/Ö28) — KATMAN. Elle yazılmış "input'taysan sus" kontrolü
+  // de kalktı: kural artık odak TİPİNE değil NİYETE bakıyor (keyboard.ts,
+  // defaultPrevented). Üstünde bir modal açıkken Esc ona ait.
+  useEscLayer(true, onClose);
 
   return (
     <ServiceLinkCtx.Provider value={serviceLinks}>

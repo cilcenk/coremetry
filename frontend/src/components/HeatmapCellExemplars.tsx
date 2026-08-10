@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
 import { Spinner } from './Spinner';
 import { api } from '@/lib/api';
@@ -53,13 +54,10 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
 }) {
   const [traces, setTraces] = useState<TraceRow[] | null | undefined>(undefined);
 
-  useEffect(() => {
-    // Esc closes the modal — standard chrome on every modal in
-    // this app.
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // Esc closes the modal — standard chrome on every modal in this app.
+  // v0.9.950 (E2/Ö28) — KATMAN: modalın ALTINDAKİ çekmece/panel aynı
+  // Esc'le kapanmasın.
+  useEscLayer(true, onClose);
 
   useEffect(() => {
     const half = Math.max(bucketWidthNs / 2, 30 * 1e9); // 30s floor

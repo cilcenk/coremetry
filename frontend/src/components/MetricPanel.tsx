@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import type { ReactNode, KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CopyButton } from '@/components/CopyButton';
@@ -75,14 +76,9 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
   }, [menuOpen]);
 
   // Esc closes the "View query" popover.
-  useEffect(() => {
-    if (!viewOpen) return;
-    const onKey = (e: globalThis.KeyboardEvent) => {
-      if (e.key === 'Escape') setViewOpen(false);
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [viewOpen]);
+  // v0.9.950 (E2/Ö28) — KATMAN: panelin altındaki sayfa/çekmece aynı
+  // Esc'le kapanmasın.
+  useEscLayer(viewOpen, () => setViewOpen(false));
 
   const explore = () => navigate(href);
 

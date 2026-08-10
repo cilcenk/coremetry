@@ -27,6 +27,7 @@
 
 import { useEffect, useRef } from 'react';
 import { getActiveNavScope, noteInteraction, pickOwner } from './navScope';
+import { topEscLayer } from './escLayer';
 
 export interface Shortcut {
   // Combo — single key like '?', '/', 'k', or modifier-prefixed
@@ -207,6 +208,45 @@ function installListener(): void {
     }
 
     const combo = comboFromEvent(e);
+
+    // ── Esc KATMAN DİSİPLİNİ (v0.9.950, UX denetimi E2 / Ö28) ─────────────
+    //
+    // Esc'i TEK kapı yönetiyor ve o kapı burası. Öncesinde 30'u aşkın
+    // bağımsız document dinleyicisi vardı; hiçbiri ötekinden haberdar
+    // değildi, dolayısıyla bir Esc birden çok katmanı kapatıyordu (drawer
+    // açıkken ⌘K'yı kapatmak drawer'ı da götürüyordu).
+    //
+    // İKİNCİ BİR DİNLEYİCİ YAZILMADI — bilinçli. Ayrı bir listener'ın
+    // sırası kayıt sırasına kalırdı ve iki document dinleyicisi arasındaki
+    // yarış, çözmeye çalıştığımız sorunun kendisidir. Kayıt defteri zaten
+    // burada, dinleyici zaten tek.
+    if (combo === 'Escape') {
+      // ELEMANIN HAKKI ÖNCE. Ö28'in ikinci yarısı: drawer içindeki bir
+      // input'ta Esc, alanı temizlemek yerine ÇEKMECEYİ kapatıyordu —
+      // operatör bir arama kutusunu temizlerken bağlamını kaybediyordu.
+      //
+      // Sözleşme `defaultPrevented`: React sentetik dinleyicileri kök
+      // kapsayıcıda, yani BU document dinleyicisinden ÖNCE koşar. Esc'i
+      // kendi işine harcayan bir eleman (açık bir öneri listesi, dolu bir
+      // filtre kutusu, düzenlemedeki bir hücre) preventDefault çağırır ve
+      // katman yığını ona DOKUNMAZ.
+      //
+      // "inEditable ise hep sus" KURALI DEĞİL — bilinçli: ⌘K paletinin
+      // GÖVDESİ bir input'tur ve orada Esc'in işi paleti kapatmaktır.
+      // Odak tipine bakan bir kural o yüzeyi kırardı; niyete bakan kural
+      // ikisini de doğru yapıyor.
+      if (e.defaultPrevented) return;
+      const layer = topEscLayer();
+      if (layer) {
+        e.preventDefault();
+        // Kayıt defterindeki Escape bağlarına (useTableNav'ın satır
+        // seçimi temizleme kısayolu) DÜŞMEZ: bir katman açıkken Esc
+        // ona aittir. Katman yoksa aşağıdaki normal yol sürer, yani
+        // liste sayfalarında Esc eskisi gibi seçimi temizler.
+        layer();
+        return;
+      }
+    }
 
     // Two-key sequence start? Only when no modifiers are held
     // and no editable target is focused.

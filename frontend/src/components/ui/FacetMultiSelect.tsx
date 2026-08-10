@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 
 // FacetMultiSelect — v0.9.357 (operator-approved mockup C).
 //
@@ -48,14 +49,12 @@ export function FacetMultiSelect({ label, options, selected, onToggle, onSolo, o
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
+    return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
+  // v0.9.950 (E2/Ö28) — Esc KATMAN: bu popover bir çekmecenin içinde
+  // açılmışsa ilk Esc popover'ı kapatır, çekmeceyi değil.
+  useEscLayer(open, () => setOpen(false));
 
   const selLabels = options.filter(o => selected.has(o.value)).map(o => o.label);
   const allOn = selLabels.length >= options.length;

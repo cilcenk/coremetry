@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, keepPreviousData } from '@tanstack/react-query';
@@ -96,14 +97,9 @@ export default function MessagingPage() {
 
   // Esc clears the drawer param (✕ inside the drawer does the same
   // through onOpenRowChange(null)).
-  useEffect(() => {
-    if (!destRef) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpenRow(null);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [destRef, setOpenRow]);
+  // v0.9.950 (E2/Ö28) — KATMAN. Çekmecenin İÇİNDE bir popover açıkken
+  // ilk Esc ona ait; çekmece ancak en üstteyken kapanır.
+  useEscLayer(!!destRef, () => setOpenRow(null));
 
   // The backend ships raw window counts (window-independent,
   // compare-safe); the page owns the window so it derives the

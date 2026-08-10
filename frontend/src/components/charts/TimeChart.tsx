@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import uPlot from 'uplot';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtXTicks, fmtAxisTick, fmtTooltipTime } from '@/lib/chartFmt';
@@ -111,9 +112,11 @@ export function TimeChart({
   const themeTick = useThemeTick();
 
   // ── Grafana-parite #2: tooltip pin + interaktif lejant (OVC ile aynı) ────
+  const [pinned, setPinned] = useState(false);
   const pinRef = useRef<number | null>(null);
   const unpinTooltip = () => {
     pinRef.current = null;
+    setPinned(false);
     if (ttRef.current) clearPinStyle(ttRef.current, 'display');
   };
   const visRef = useRef<boolean[] | null>(null);
@@ -139,16 +142,17 @@ export function TimeChart({
         detail: e.detail,
       });
       if (d.action === 'unpin') unpinTooltip();
-      else if (d.action === 'pin' && tt.style.display !== 'none') { pinRef.current = d.idx; applyPinStyle(tt); }
+      else if (d.action === 'pin' && tt.style.display !== 'none') { pinRef.current = d.idx; setPinned(true); applyPinStyle(tt); }
     });
   };
 
-  // Esc → pin çöz.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []); // unpinTooltip yalnız ref'lere dokunur — stable
+  // Esc → pin çöz. v0.9.950 (E2/Ö28) — KATMAN: pin, altındaki sayfa
+  // kısayollarının ÜSTÜNDE ama açık bir menü/modalın ALTINDA. Öncesinde
+  // bağımsız bir document dinleyicisiydi ve menüyü kapatan Esc pinlenmiş
+  // tooltip'i de çözüyordu. `pinned` state aynası bunun için var: katman
+  // yalnız GERÇEKTEN pin varken yığında durmalı, yoksa no-op bir tepe
+  // katmanı alttakinin Esc'ini yerdi.
+  useEscLayer(pinned, unpinTooltip); // unpinTooltip yalnız ref'lere dokunur — stable
 
   // uPlot's aligned data — memoised on the DATA inputs only so a poll recomputes
   // it once and either seeds a rebuild (structure changed) or rides setData.

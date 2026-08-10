@@ -514,7 +514,12 @@ describe('CorePanel tooltip pin (v0.9.792)', () => {
   });
 
   it('çözme yolları eksiksiz: Esc · çift-tık · zoom · rebuild', () => {
-    expect(src).toMatch(/e\.key === 'Escape' && pinRef\.current != null/);
+    // v0.9.950 (E2/Ö28) — Esc yolu artık KATMAN. Eski pin (elle
+    // `e.key === 'Escape' && pinRef.current != null` document dinleyicisi)
+    // tam da Ö28'in kök nedeniydi: menüyü kapatan Esc pinlenmiş tooltip'i
+    // de çözüyordu. Pin'in Esc'i KAYBOLMADI — `pinned` state aynası
+    // sayesinde katman yalnız gerçekten pin varken yığında.
+    expect(src).toMatch(/useEscLayer\(pinned, unpinTooltip\)/);
     expect(src).toMatch(/onDoubleClick=\{\(e\) => \{[\s\S]{0,200}?unpinTooltip\(\);/);
     // setSelect (drag-zoom) pencereyi kaydırır → pin bayatlar.
     expect(src).toMatch(/unpinTooltip\(\);\s*\n\s*onZoomRef\.current\(fromSec, toSec\);/);

@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
@@ -993,17 +994,15 @@ function SharePopover({ traceId }: { traceId: string }) {
   // Escape for the span-detail panel, so the popover NOT honouring it was
   // the odd one out. Capture phase + stopPropagation so Esc dismisses the
   // popover WITHOUT also clearing the span selection underneath.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return;
-      e.stopPropagation();
-      setOpen(false);
-      triggerRef.current?.focus();
-    };
-    document.addEventListener('keydown', onKey, true);
-    return () => document.removeEventListener('keydown', onKey, true);
-  }, [open]);
+  // v0.9.950 (E2/Ö28) — KATMAN. Öncesi CAPTURE fazında dinleyip
+  // stopPropagation çağıran EL YAPIMI bir öncelik yamasıydı ve tam da
+  // katman modelinin genelleştirdiği şeydi: her yeni yüzey kendi
+  // yamasını yazmak zorunda kalıyordu. Yığın "en son açılan en üstte"
+  // dediği için popover span seçimini artık kendiliğinden gölgeliyor.
+  useEscLayer(open, () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  });
 
   // Fetch active shares when popover opens so the operator sees
   // what's already out there before minting another.

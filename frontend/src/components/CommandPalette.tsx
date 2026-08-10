@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
 import { api } from '@/lib/api';
@@ -194,16 +195,17 @@ export function CommandPalette() {
     },
   }], []);
 
-  // Esc to close — local listener since the global one pauses in
-  // editable targets and our input IS editable.
-  useEffect(() => {
-    if (!open) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open]);
+  // v0.9.950 (E2/Ö28) — Esc KATMAN yığınında.
+  //
+  // Eski yorum "global dinleyici düzenlenebilir hedeflerde duraklar, bizim
+  // input'umuz da düzenlenebilir" diyordu ve bu yüzden kendi document
+  // dinleyicisini kuruyordu. Sonuç: bir çekmece açıkken paleti Esc'le
+  // kapatmak ÇEKMECEYİ DE kapatıyordu (iki dinleyici, aynı olay).
+  //
+  // Katman kuralı odak tipine değil NİYETE bakıyor (keyboard.ts:
+  // defaultPrevented), yani palet input'u artık istisna gerektirmiyor ve
+  // yığın "en son açılan en üstte" diyor.
+  useEscLayer(open, () => setOpen(false));
 
   // Focus the input + refresh the pivot rotation on open.
   useEffect(() => {

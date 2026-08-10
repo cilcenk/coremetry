@@ -509,6 +509,55 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 .btn-icon.ib-star:hover:not(:disabled) { opacity: 1; color: var(--text2); background: transparent; }
 .btn-icon.ib-star.active { color: var(--warn); opacity: 1; background: transparent; border-color: transparent; }
 
+/* ── Chip (v0.9.894) — bordered, labelled affordance ────────────────
+   mB2's 10+ hand-rolled sites, three of which re-derived this exact
+   accent tint with an inline color-mix while --accent-bg / --accent-border
+   sat unused two files away.
+
+   The base class is `btn-chip`, NOT `chip`: `.chip` is already taken by
+   the static key/value meta pill on the Problem + Incident detail pages
+   (further down this file, radius 20px). Naming the atom `chip` would
+   have silently repainted those eight sites — and the primitiveClasses
+   gate could not have caught it, because the class IS defined, just as
+   something else.
+
+   Radius is TWO rungs by operator decision (2026-08-10): `ch-pill` (999)
+   for filter/label chips, and --radius-sm otherwise. The repo's 14 / 8 / 3
+   deviations normalise onto those two; the small visual delta is
+   deliberate. */
+.btn-chip {
+  display: inline-flex; align-items: center; gap: 5px;
+  background: var(--bg3); color: var(--text);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  cursor: pointer; line-height: 1.4; max-width: 100%;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.btn-chip:hover:not(:disabled) { border-color: var(--accent); }
+.btn-chip:disabled { opacity: .4; cursor: not-allowed; }
+.btn-chip.ch-pill { border-radius: 999px; }
+.btn-chip.ch-xs { font-size: 10px; padding: 1px 6px; gap: 4px; }
+.btn-chip.ch-sm { font-size: 12px; padding: 3px 9px; }
+/* `accent` is the "this chip carries emphasis at rest" tone (the AI
+   starter chip, an assigned team). `active` is the "you are filtered by
+   this" state — same tint, different reason, so both exist. */
+.btn-chip.ch-accent { color: var(--accent2); background: var(--accent-bg); border-color: var(--accent-border); }
+.btn-chip.active { color: var(--accent2); background: var(--accent-bg); border-color: var(--accent-border); }
+/* `ch-dashed` — the "nothing assigned yet, click to add" chip. Dashed
+   border is the established affordance for it (see .fb-add). */
+.btn-chip.ch-dashed { background: transparent; color: var(--text3); border-style: dashed; }
+.btn-chip.ch-dashed:hover:not(:disabled) { color: var(--accent2); border-color: var(--accent); }
+/* Wrapper form (onRemove): the box itself is not clickable, only the
+   buttons inside it are. */
+.btn-chip.ch-static { cursor: default; }
+.btn-chip.ch-static:hover { border-color: var(--border); }
+.btn-chip-label {
+  background: transparent; border: 0; padding: 0; margin: 0;
+  color: inherit; font: inherit; line-height: inherit;
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+button.btn-chip-label { cursor: pointer; }
+button.btn-chip-label:hover { color: var(--accent2); }
+
 /* ── Card / panel primitive ─────────────────────────────────────
    The repeated bg1 + border + 8px radius pattern that 30+ inline
    <div style={{...}}> use across the app. .card-tight is the
@@ -1724,12 +1773,19 @@ button.accent.copied {
 .fb-chip b { color: var(--accent2); font-weight: 600; }
 .fb-chip-op { color: var(--text2); font-family: monospace; font-size: 11px; }
 .fb-chip-val { color: var(--text); font-family: monospace; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.fb-chip-x {
+/* `.btn-chip-x` is the same affordance under the Chip atom's namespace
+   (v0.9.894, MB6). One rule, two selectors — an alias rather than a copy,
+   so the two can never drift the way the four hand-rolled `×` buttons did.
+   FilterBuilder / SplitByPicker keep the `fb-` name because their chip
+   body (`.fb-chip`) is a documented house pattern, not an atom site. */
+.fb-chip-x, .btn-chip-x {
   background: transparent; border: 0; color: var(--text2);
   cursor: pointer; padding: 0 4px; line-height: 1; border-radius: 50%;
   width: 18px; height: 18px;
+  display: inline-flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
 }
-.fb-chip-x:hover { background: var(--err); color: #fff; }
+.fb-chip-x:hover, .btn-chip-x:hover { background: var(--err); color: #fff; }
 .fb-add {
   background: transparent; border: 1px dashed var(--border); color: var(--text2);
   padding: 3px 10px; font-size: 12px; cursor: pointer; border-radius: 12px;

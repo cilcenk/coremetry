@@ -2,6 +2,7 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useLocation, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { Chip } from '@/components/ui/Chip';
 import { Drawer } from '@/components/ui/Drawer';
 import { useOpenCriticalCount, useProblems } from '@/lib/queries';
 import { useAuth } from '@/components/AuthProvider';
@@ -298,18 +299,12 @@ export function CopilotChat() {
                       Otomatik açıklama DEĞİL — sohbeti açmak bir LLM
                       çağrısı tetiklememeli (gerekçe lib/chatContext.ts). */}
                   {ctxStarter && (
-                    <button type="button" onClick={() => submit(ctxStarter.question)}
-                      style={{
-                        all: 'unset', cursor: 'pointer', fontSize: 12, color: 'var(--accent2)',
-                        border: '1px solid var(--accent)', borderRadius: 999, padding: '4px 11px',
-                      }}>✨ {ctxStarter.chip}</button>
+                    <Chip pill tone="accent" onClick={() => submit(ctxStarter.question)}>
+                      ✨ {ctxStarter.chip}
+                    </Chip>
                   )}
                   {STARTERS.map(q => (
-                    <button key={q} type="button" onClick={() => submit(q)}
-                      style={{
-                        all: 'unset', cursor: 'pointer', fontSize: 12, color: 'var(--text)',
-                        border: '1px solid var(--border)', borderRadius: 999, padding: '4px 11px',
-                      }}>{q}</button>
+                    <Chip key={q} pill onClick={() => submit(q)}>{q}</Chip>
                   ))}
                 </div>
               </div>
@@ -325,11 +320,7 @@ export function CopilotChat() {
           {showFollowups && (
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '0 12px 8px' }}>
               {(last.suggestions?.length ? last.suggestions : FOLLOWUPS).map(q => (
-                <button key={q} type="button" onClick={() => submit(q)}
-                  style={{
-                    all: 'unset', cursor: 'pointer', fontSize: 12, color: 'var(--text)',
-                    border: '1px solid var(--border)', borderRadius: 999, padding: '4px 11px',
-                  }}>↳ {q}</button>
+                <Chip key={q} pill onClick={() => submit(q)}>↳ {q}</Chip>
               ))}
             </div>
           )}

@@ -20,6 +20,9 @@ export type { LinkButtonProps } from './LinkButton';
 export { MenuItem } from './Menu';
 export type { MenuItemProps } from './Menu';
 
+export { Chip } from './Chip';
+export type { ChipProps } from './Chip';
+
 export { Card } from './Card';
 export type { CardProps } from './Card';
 

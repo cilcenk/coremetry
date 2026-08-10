@@ -9,6 +9,15 @@ import { QueryError } from '@/components/QueryError';
 import { TableSkeleton } from '@/components/Skeleton';
 import { LazyMount } from '@/components/LazyMount';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+
+// v0.9.874 (tutarlılık denetimi BT18). Genişlikler eski elle yazılmış
+// <th style={{width}}> değerlerinden AYNEN alındı.
+const DB_DETAIL_STMT_COLS: DataTableColumn<SlowQueryRow>[] = [
+  { id: 'statement', label: 'Statement', sortValue: r => r.statement, naturalDir: 'asc', flex: true },
+  { id: 'calls',     label: 'Calls',     sortValue: r => r.count,     numeric: true, width: 80 },
+  { id: 'p95',       label: 'P95',       sortValue: r => r.p95Ms,     numeric: true, width: 90 },
+  { id: 'total',     label: 'Total',     sortValue: r => r.totalMs,   numeric: true, width: 90 },
+];
 import { api } from '@/lib/api';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
@@ -110,6 +119,14 @@ export default function DatabaseDetailPage() {
     enabled: !!refObj,
     staleTime: 30_000,
   });
+  // v0.9.874 (tutarlılık denetimi BT18) — kardeşi CallersCard primitifteydi,
+  // bu tablo elle <thead>'liydi. Genişlikler eski <th style={{width}}>
+  // değerlerinden AYNEN alındı; Statement kolonu esner.
+  const stmtDt = useDataTable<SlowQueryRow>({
+    storageKey: 'database-detail-statements', columns: DB_DETAIL_STMT_COLS,
+    rows: stmtsQ.data ?? [], initialSort: { id: 'total', dir: 'desc' },
+  });
+
   const stmtRef = useMemo(() => decodeStmtParam(params.get('stmt')), [params]);
   const stmtRow = useMemo(
     () => (stmtsQ.data ?? []).find(r => r.stmtHash === stmtRef?.hash),
@@ -317,15 +334,11 @@ export default function DatabaseDetailPage() {
                 )}
                 {(stmtsQ.data ?? []).length > 0 && (
                   <div className="table-wrap">
-                    <table style={{ width: '100%', fontSize: 12 }}>
-                      <thead><tr>
-                        <th style={{ textAlign: 'left' }}>Statement</th>
-                        <th className="num" style={{ width: 72 }}>Calls</th>
-                        <th className="num" style={{ width: 80 }}>P95</th>
-                        <th className="num" style={{ width: 80 }}>Total</th>
-                      </tr></thead>
+                    <table style={{ width: '100%', fontSize: 12, tableLayout: 'fixed' }}>
+                      <DataTableColgroup dt={stmtDt} />
+                      <DataTableHead dt={stmtDt} />
                       <tbody>
-                        {(stmtsQ.data ?? []).map((r, i) => (
+                        {stmtDt.sortedRows.map((r, i) => (
                           <tr key={r.stmtHash ?? i}
                             onClick={() => openStmt(r)}
                             title={`${r.sampleStatement || r.statement}\n\ncalled by ${r.service}`}

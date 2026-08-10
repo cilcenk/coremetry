@@ -93,8 +93,9 @@ describe('undefinedCssRefs — sessizce düşen token/sınıf referansları', ()
     // Yalnız LİTERAL `className="…"`. Şablon/koşullu ifadeler kapsam dışı:
     // statik olarak çözülemezler ve zorlamak yanlış pozitif üretir.
     const ALLOW = new Map<string, string>([
-      // ── Dalga 1/3'ün BİLİNEN açıkları — sıraya alındı, burada YAKALANMAMALI
-      ['tbl',                'MT12 (Dalga 1) — Databases.tsx:381, `.table-wrap` kabıyla birlikte düzeltilecek'],
+      // ── Dalga 3'ün BİLİNEN açıkları — sıraya alındı, burada YAKALANMAMALI
+      // (`tbl` / MT12 v0.9.874'te KAPANDI ve buradan çıkarıldı — izin listesi
+      //  bayatlarsa test yanlış sebeple yeşil kalır.)
       ['nav-group-header',   'mB3 (Dalga 3) — Sidebar disclosure ailesi'],
       ['nav-group',          'mB3 (Dalga 3) — aynı Sidebar sitesi, aynı commit\'te ele alınacak'],
       // ── Davranışsal kancalar: stil sınıfı DEĞİL, querySelector hedefi.

@@ -9,6 +9,7 @@ import {
   type PromqlToken, type PromqlLabelCtx,
 } from '@/lib/promqlToken';
 import { timeRangeToNs } from '@/lib/utils';
+import { IconButton } from '@/components/ui';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { lazy, Suspense } from 'react';
@@ -518,9 +519,9 @@ function QueryRow({ q, canRemove, onChange, onDuplicate, onRemove }: {
         {q.color && <button type="button" className="mqe-color-x" aria-label="Clear colour"
           onClick={e => { e.preventDefault(); onChange({ ...q, color: '' }); }}>×</button>}
       </label>
-      <div className="mqe-rowact">
-        <button type="button" title="Duplicate" aria-label="Duplicate query" onClick={onDuplicate}>⧉</button>
-        <button type="button" title="Remove" aria-label="Remove query" onClick={onRemove} disabled={!canRemove}>×</button>
+      <div className="row-actions">
+        <IconButton icon="⧉" title="Duplicate" aria-label="Duplicate query" onClick={onDuplicate} />
+        <IconButton icon="×" title="Remove" aria-label="Remove query" onClick={onRemove} disabled={!canRemove} />
       </div>
     </div>
   );

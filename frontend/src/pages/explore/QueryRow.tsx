@@ -3,6 +3,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui';
 import { GroupedMetricPicker } from '@/components/viz/GroupedMetricPicker';
 import { AGG_OPTIONS } from './presets';
 import { SplitByPicker } from './SplitByPicker';
@@ -170,24 +171,20 @@ export function QueryRow({ q, canRemove, canDuplicate, onChange, onDuplicate, on
           dilde: ikinci sorgu pratikte hep "A'nın aynısı ama p50" ya da
           "A'nın aynısı ama status=error"dur, ve o ana kadar operatör
           scope + çipler + split'i elle bir kez daha kuruyordu. */}
-      <button type="button" onClick={onDuplicate} disabled={!canDuplicate}
-        aria-label="Sorguyu çoğalt"
-        title={canDuplicate
-          ? 'Sorguyu çoğalt — filtreler, scope, split ve DSL aynen kopyalanır'
-          : 'En fazla 4 sorgu (A–D)'}
-        style={{
-          all: 'unset', cursor: canDuplicate ? 'pointer' : 'not-allowed',
-          color: 'var(--text3)', fontSize: 13, padding: '2px 6px', marginTop: 1,
-          opacity: canDuplicate ? 1 : 0.4,
-        }}>⧉</button>
-
-      <button type="button" onClick={onRemove} disabled={!canRemove}
-        aria-label="Sorguyu sil" title={canRemove ? 'Sorguyu sil' : 'Son sorgu silinemez'}
-        style={{
-          all: 'unset', cursor: canRemove ? 'pointer' : 'not-allowed',
-          color: 'var(--text3)', fontSize: 14, padding: '2px 6px', marginTop: 1,
-          opacity: canRemove ? 1 : 0.4,
-        }}>×</button>
+      {/* Kardeş sorgu editörüyle (MetricQueryEditor) TEK dil — MB8.
+          İkisi de aynı satır aksiyonlarını taşıyor; biri CSS'li ve
+          hover'lıydı, bu taraf `all: unset` ile hover'sız ve focus
+          halkasızdı. */}
+      <div className="row-actions">
+        <IconButton icon="⧉" onClick={onDuplicate} disabled={!canDuplicate}
+          aria-label="Sorguyu çoğalt"
+          title={canDuplicate
+            ? 'Sorguyu çoğalt — filtreler, scope, split ve DSL aynen kopyalanır'
+            : 'En fazla 4 sorgu (A–D)'} />
+        <IconButton icon="×" onClick={onRemove} disabled={!canRemove}
+          aria-label="Sorguyu sil"
+          title={canRemove ? 'Sorguyu sil' : 'Son sorgu silinemez'} />
+      </div>
     </div>
   );
 }

@@ -146,7 +146,7 @@ export default function AdminCardinalityPage() {
 
 function TopRowList({ rows, unit }: { rows: { name: string; rows: number }[]; unit: string }) {
   if (rows.length === 0) {
-    return <div style={{ fontSize: 12, color: 'var(--text3)' }}>No data in the last 24h.</div>;
+    return <Empty compact icon="◯" title="No data in the last 24h" />;
   }
   const max = Math.max(...rows.map(r => r.rows));
   return (
@@ -198,7 +198,7 @@ function AttrKeyTable({ rows }: { rows: AttrKeyRow[] }) {
     initialSort: { id: 'distinct', dir: 'desc' },
   });
   if (rows.length === 0) {
-    return <div style={{ fontSize: 12, color: 'var(--text3)' }}>No attributes sampled.</div>;
+    return <Empty compact icon="◯" title="No attributes sampled" />;
   }
   return (
     <div className="table-wrap is-fit">
@@ -445,7 +445,7 @@ function ColumnTable({ rows }: { rows: ColumnRow[] }) {
     initialSort: { id: 'compressed', dir: 'desc' },
   });
   if (rows.length === 0) {
-    return <div style={{ fontSize: 12, color: 'var(--text3)' }}>system.columns empty.</div>;
+    return <Empty compact icon="◯" title="system.columns empty" />;
   }
   return (
     <div className="table-wrap is-fit">

@@ -5,7 +5,7 @@ import { api } from '@/lib/api';
 import { encodeRange } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { Sparkline } from '@/components/Sparkline';
-import { Spinner } from '@/components/Spinner';
+import { Spinner, Empty } from '@/components/Spinner';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { OperationSummary, DBQueryStat, TimeRange } from '@/lib/types';
 import { operationTracesHref } from '@/lib/pivotHref';
@@ -130,8 +130,8 @@ export function DbCard({ service, range, from, to }: { service: string; range: T
           Failed to load DB statements.
         </div>
       ) : rows.length === 0 ? (
-        <div className="ov-card-b" style={{ color: 'var(--text2)', fontSize: 13 }}>
-          No db.statement spans for {service} in this window.
+        <div className="ov-card-b">
+          <Empty compact icon="◯" title={`No db.statement spans for ${service} in this window`} />
         </div>
       ) : (
         <div style={{ overflowX: 'auto' }}>

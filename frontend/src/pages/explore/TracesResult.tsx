@@ -86,6 +86,7 @@ export function TracesResult({
     columns,
     rows: traces ?? [],
     initialSort: { id: 'time', dir: 'desc' },
+    onOpen: t => navigate(`/trace?id=${t.traceId}`),
   });
 
   return (
@@ -142,8 +143,8 @@ export function TracesResult({
                   </th>
                 } />
               <tbody>
-                {dt.sortedRows.map(t => (
-                  <tr key={t.traceId}
+                {dt.sortedRows.map((t, i) => (
+                  <tr key={t.traceId} {...dt.rowProps(i)}
                       {...rowClickHandlers(`/trace?id=${t.traceId}`,
                                            () => navigate(`/trace?id=${t.traceId}`))}
                       style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' }}>

@@ -90,6 +90,9 @@ export default function ExternalPage() {
     columns: EXT_COLS,
     rows: rows ?? [],
     initialSort: { id: 'calls', dir: 'desc' },
+    // mT3 — klavye j/k/Enter satır açma. Tık zaten bağlıydı; onOpen
+    // aynı eylemi klavyeye de veriyor (fare-only afordans sonu).
+    onOpen: r => openHost(r.host),
   });
 
   return (
@@ -120,8 +123,8 @@ export default function ExternalPage() {
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />
               <tbody>
-                {dt.sortedRows.map(r => (
-                  <tr key={r.host}
+                {dt.sortedRows.map((r, i) => (
+                  <tr key={r.host} {...dt.rowProps(i)}
                     onClick={() => openHost(r.host)}
                     style={{
                       cursor: 'pointer',

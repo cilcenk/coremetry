@@ -185,6 +185,10 @@ export default function MetricsPage() {
     columns,
     rows: filtered,
     initialSort: { id: 'name', dir: 'asc' },
+    // mT3 — `rowProps` bu tabloda ZATEN yayılıyordu ama `onOpen`
+    // olmadığı için klavye gezinmesi İNERT'ti: data-row-idx basılıyor,
+    // hiçbir tuş bağlanmıyordu. Yazılmış-ama-bağlanmamış kod.
+    onOpen: m => navigate(metricHref(m)),
   });
 
   if (redirectTo) return <Navigate replace to={redirectTo} />;

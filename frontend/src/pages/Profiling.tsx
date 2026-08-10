@@ -100,6 +100,7 @@ export default function ProfilingPage() {
   const profileDt = useDataTable<ProfileRow>({
     storageKey: 'profiles', columns: PROFILE_COLS,
     rows: data ?? [], initialSort: { id: 'time', dir: 'desc' },
+    onOpen: p => navigate(`/profile?id=${p.profileId}`),
   });
   // Setup recipes accordion — empty/no profiles is the common
   // first-run state, and operators end up grepping the demo source
@@ -168,8 +169,8 @@ export default function ProfilingPage() {
                   <DataTableColgroup dt={profileDt} />
                   <DataTableHead dt={profileDt} />
                   <tbody>
-                    {profileDt.sortedRows.map(p => (
-                      <tr key={p.profileId} onClick={() => navigate(`/profile?id=${p.profileId}`)}
+                    {profileDt.sortedRows.map((p, i) => (
+                      <tr key={p.profileId} {...profileDt.rowProps(i)} onClick={() => navigate(`/profile?id=${p.profileId}`)}
                         style={profileDt.sortedRows.length > 100 ? { contentVisibility: 'auto', containIntrinsicSize: 'auto 34px' } : undefined}>
                         <td className="mono">{tsShort(p.startTime)}</td>
                         <td>

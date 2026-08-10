@@ -3,34 +3,9 @@ import { Combobox } from './Combobox';
 import { Button, Chip } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { FilterExpr, FilterOp } from '@/lib/types';
+import { useAttributeKeys } from '@/lib/useAttributeKeys';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { timeRangeToNs } from '@/lib/utils';
-
-// Suggested attribute keys for the autocomplete. Users can type anything else
-// (custom span/resource attributes) — backend looks them up in the matching
-// array. Tempo-style scope prefixes choose where to look:
-//   resource.X  → resource attribute (env, host, etc.)
-//   span.X      → span attribute
-//   X (bare)    → well-known column if any, else span attribute
-const SUGGESTED_KEYS = [
-  // Span — well-known
-  'name', 'operation', 'kind', 'status', 'duration_ms',
-  'http.method', 'http.route', 'http.status_code',
-  'db.system', 'db.statement',
-  'rpc.system', 'rpc.method',
-  'peer.service', 'messaging.system',
-  // Span — explicit scope
-  'span.http.method', 'span.http.route', 'span.http.status_code',
-  'span.db.system', 'span.db.statement',
-  'span.peer.service',
-  // Resource (process / host / deployment)
-  'resource.service.name',
-  'resource.host.name',
-  'resource.deployment.environment',
-  'resource.service.version',
-  'resource.telemetry.sdk.name',
-  'resource.telemetry.sdk.language',
-];
 
 const OPS: FilterOp[] = ['=', '!=', 'LIKE', 'NOT LIKE', 'IN', 'NOT IN', '>', '>=', '<', '<=', 'EXISTS', 'NOT EXISTS'];
 
@@ -50,69 +25,12 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
 }) {
   const [draft, setDraft] = useState<FilterExpr | null>(null);
 
-  // Live-load attribute keys actually observed in the last hour and
-  // merge with the static suggestion list. Custom attrs (function_code,
-  // channel_code, etc.) emitted by the operator's collector now surface
-  // as picker suggestions instead of relying on the operator typing the
-  // exact key from memory. Resource-scoped keys are prefixed with
-  // "resource." so they slot into the right backend lookup.
-  //
-  // v0.5.261 — context-aware. When the operator already has filters
-  // active, the suggester scans for keys WITH data under those
-  // filters (not the global top-N), so the dropdown matches the
-  // slice they're already looking at. Re-fetches when the filter
-  // chip set changes.
-  const [observedKeys, setObservedKeys] = useState<{ key: string; count: number }[]>([]);
-  // v0.9.602 (traces D4) — debounce + yarış koruması.
-  //
-  // Önceki hâl her chip değişiminde ANINDA ateşliyordu: operatör bir
-  // filtre kurarken (anahtar seç → operatör seç → değer yaz) her adım
-  // ayrı bir /api/attribute-keys çağrısı doğuruyordu. Kardeş etki
-  // (değer önerileri, aşağıda) zaten 200ms debounce'lu — bu yol
-  // atlanmıştı.
-  //
-  // İkinci ve daha sinsi kusur: `cancelled` muhafızı YOKTU. İki istek
-  // uçuştayken GEÇ dönen ESKİ yanıt yeni state'i ezebiliyordu, yani
-  // operatör filtresini daralttıkça daha ESKİ bir anahtar listesi
-  // görebiliyordu. Sıralı gelme garantisi yok.
-  useEffect(() => {
-    let cancelled = false;
-    const t = window.setTimeout(() => {
-      const filterCtx = value.length > 0 ? JSON.stringify(value) : undefined;
-      api.attributeKeys('1h', 500, filterCtx)
-        .then(rows => {
-          if (cancelled) return;
-          setObservedKeys(
-            (rows ?? []).map(r => ({
-              key: r.scope === 'resource' ? `resource.${r.key}` : r.key,
-              count: r.count,
-            }))
-          );
-        })
-        .catch(() => { if (!cancelled) setObservedKeys([]); });
-    }, 200);
-    return () => { cancelled = true; window.clearTimeout(t); };
-  }, [JSON.stringify(value)]);
-  const allKeys = useMemo(() => {
-    // v0.5.261 — observed-by-count first (real data leads), then
-    // static OTel semconv suggestions for anything still missing.
-    // Previous order (static-first) buried real custom attributes
-    // below stale hardcoded keys; the new ordering matches the
-    // operator's mental model "what's in MY data right now".
-    const seen = new Set<string>();
-    const out: string[] = [];
-    for (const o of observedKeys) {
-      if (seen.has(o.key)) continue;
-      seen.add(o.key);
-      out.push(o.key);
-    }
-    for (const k of SUGGESTED_KEYS) {
-      if (seen.has(k)) continue;
-      seen.add(k);
-      out.push(k);
-    }
-    return out;
-  }, [observedKeys]);
+  // v0.9.933 — keşif `useAttributeKeys`e taşındı: /traces'in aggregate
+  // "group by attribute" kutusu da AYNI listeyi kullanabilsin diye (Ö14).
+  // İki kopya olsaydı biri er geç bayatlardı — ve bayatlayanın belirtisi
+  // "bazı anahtarlar bir kutuda var, diğerinde yok" gibi açıklanamaz bir
+  // tutarsızlık olurdu.
+  const { keys: allKeys, observed: observedKeys } = useAttributeKeys(value);
   // Top-5 hint surfaced under the picker so the operator sees
   // "what's heavy right now" without scrolling the dropdown.
   const topHints = observedKeys.slice(0, 5);

@@ -145,17 +145,17 @@ export default function AdminClusterPage() {
                             <span style={{
                               marginLeft: 8, fontSize: 10,
                               padding: '1px 6px', borderRadius: 3,
-                              background: 'rgba(34,197,94,0.15)',
-                              color: 'var(--ok, #22c55e)',
+                              background: 'color-mix(in srgb, var(--ok) 15%, transparent)',
+                              color: 'var(--ok)',
                               textTransform: 'uppercase',
-                              border: '1px solid rgba(34,197,94,0.3)',
+                              border: '1px solid color-mix(in srgb, var(--ok) 30%, transparent)',
                             }}>this pod</span>
                           )}
                           {stale && (
                             <span style={{
                               marginLeft: 8, fontSize: 10,
                               padding: '1px 6px', borderRadius: 3,
-                              background: 'rgba(220,38,38,0.15)',
+                              background: 'color-mix(in srgb, var(--err) 15%, transparent)',
                               color: 'var(--err)',
                               textTransform: 'uppercase',
                             }}>stale</span>

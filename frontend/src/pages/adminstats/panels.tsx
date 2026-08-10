@@ -203,12 +203,12 @@ export function RedisPanel({ data }: { data: RedisStats | null | undefined }) {
 // (fresh process, no traffic).
 const TIER_ORDER = ['HIT-L1', 'HIT', 'STALE', 'HIT-LEGACY', 'MISS', 'BYPASS'] as const;
 const TIER_COLOR: Record<string, string> = {
-  'HIT-L1':     '#4ade80', // green — best, no network
-  'HIT':        '#22d3ee', // teal — Redis fresh
-  'STALE':      '#facc15', // amber — served stale, refresh fired
-  'HIT-LEGACY': '#94a3b8', // grey — pre-envelope entry
-  'MISS':       '#f87171', // red — upstream hit
-  'BYPASS':     '#a78bfa', // purple — operator forced refresh
+  'HIT-L1':     'var(--ok)',     // green — best, no network
+  'HIT':        'var(--teal)',   // teal — Redis fresh
+  'STALE':      'var(--warn)',   // amber — served stale, refresh fired
+  'HIT-LEGACY': 'var(--text3)',  // grey — pre-envelope entry
+  'MISS':       'var(--err)',    // red — upstream hit
+  'BYPASS':     'var(--purple)', // purple — operator forced refresh
 };
 export function ApiCachePanel({ data }: { data: CacheStats | null | undefined }) {
   // Shared sortable + resizable hot-keys table — hook BEFORE the

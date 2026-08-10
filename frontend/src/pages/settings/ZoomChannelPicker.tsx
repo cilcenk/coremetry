@@ -122,7 +122,7 @@ export function ZoomChannelPicker({
       </button>
       {open && (
         <div onClick={() => setOpen(false)} style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
+          position: 'fixed', inset: 0, background: 'var(--backdrop)',
           display: 'grid', placeItems: 'center', zIndex: 250,
         }}>
           <div onClick={e => e.stopPropagation()} style={{
@@ -159,7 +159,7 @@ export function ZoomChannelPicker({
               <div style={{
                 fontSize: 11, color: 'var(--err)', padding: '6px 8px',
                 borderRadius: 4, marginBottom: 8,
-                background: 'rgba(220,38,38,0.08)', border: '1px solid rgba(220,38,38,0.3)',
+                background: 'color-mix(in srgb, var(--err) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--err) 30%, transparent)',
               }}>{err}</div>
             )}
             {rows && rows.length === 0 && !busy && !err && (

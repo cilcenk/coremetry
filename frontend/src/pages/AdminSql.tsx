@@ -381,8 +381,8 @@ export default function SQLPlaygroundPage() {
           {result && result.error && (
             <div style={{
               fontSize: 12, color: 'var(--err)', padding: '8px 12px',
-              background: 'rgba(220,38,38,0.08)',
-              border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4,
+              background: 'color-mix(in srgb, var(--err) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--err) 30%, transparent)', borderRadius: 4,
               fontFamily: 'monospace', whiteSpace: 'pre-wrap',
             }}>
               {result.error}

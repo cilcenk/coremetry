@@ -55,10 +55,10 @@ type Event = {
 // Kind→colour palette matches EventMarkers.tsx so the same event
 // reads consistently on the chart overlay and on this page.
 const KIND_COLOURS: Record<string, string> = {
-  deploy:      'rgb(46,160,67)',
-  config:      'rgb(56,139,253)',
-  incident:    'rgb(220,38,38)',
-  maintenance: 'rgb(217,143,28)',
+  deploy:      'var(--ok)',
+  config:      'var(--accent)',
+  incident:    'var(--err)',
+  maintenance: 'var(--warn)',
   custom:      'var(--text2)',
 };
 

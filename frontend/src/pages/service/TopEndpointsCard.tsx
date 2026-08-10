@@ -104,7 +104,7 @@ export function TopEndpointsCard({ service, range, endpoints }: {
                         width: `${Math.max(4, share * 100)}%`,
                         background: r.errorRate > 1
                           ? 'linear-gradient(90deg, var(--warn), color-mix(in srgb, var(--warn) 35%, transparent))'
-                          : 'linear-gradient(90deg, var(--teal, #2dd4bf), color-mix(in srgb, var(--teal, #2dd4bf) 35%, transparent))',
+                          : 'linear-gradient(90deg, var(--teal), color-mix(in srgb, var(--teal) 35%, transparent))',
                       }} />
                   </td>
                 </tr>

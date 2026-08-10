@@ -106,8 +106,14 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
           <Button variant="secondary" size="sm" onClick={onClose} title="Close">✕</Button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
+          {/* v0.9.869 (tutarlılık denetimi MT3 sınıfı, YENİ bulgu) — eski
+              metin "Click a row to open the waterfall" diyordu. Satırda
+              onClick YOK; yalnız trace-id hücresi bir <Link>. Satır gövdesine
+              tıklayan operatör hiçbir şey görmüyor ve modal'ın bozuk
+              olduğunu sanıyor. MT3'le aynı karar: vaat düzeltilir, tık
+              bağlanmaz. */}
           Top 20 traces ordered by duration desc, applying the heatmap's
-          current filter set. Click a row to open the waterfall.
+          current filter set. Click a trace id to open its waterfall.
         </div>
 
         {traces === undefined && <Spinner />}

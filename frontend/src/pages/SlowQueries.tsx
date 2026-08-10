@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
@@ -225,7 +225,13 @@ export default function SlowQueriesPage() {
                   const p99Color = r.p99Ms > 1000 ? 'var(--err)'
                     : r.p99Ms > 200 ? 'var(--warn)' : undefined;
                   return (
-                    <>
+                    // v0.9.869 (tutarlılık denetimi MT4) — burası keyless bir
+                    // <> fragment'ıydı: key içteki <tr>'lerdeydi, listenin
+                    // ELEMANINDA değil. React uyarı basıyor ve sıralama
+                    // değiştiğinde reconcile yanlış eşleşiyordu — açık olan
+                    // satırın genişletilmiş gövdesi başka bir ifadenin
+                    // altında kalabiliyordu. Fragment key'i dışa taşındı.
+                    <Fragment key={key}>
                       {/* v0.8.378 — row click opens the statement detail
                           drawer (URL-first, keyed on stmtHash); the chevron
                           cell keeps the inline sample+Copilot expand. Rows
@@ -383,7 +389,7 @@ export default function SlowQueriesPage() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })}
               </tbody>

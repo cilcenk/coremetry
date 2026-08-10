@@ -298,8 +298,14 @@ function AlignedDiff({ aQ, bQ }: {
         <span>{aligned.matched} matched</span>
         <span style={{ color: 'var(--warn)' }}>{aligned.onlyInA} only in A</span>
         <span style={{ color: 'var(--warn)' }}>{aligned.onlyInB} only in B</span>
+        {/* v0.9.869 (tutarlılık denetimi MT3) — "click a row to focus the
+            path in either waterfall" cümlesi SİLİNDİ. Satırlarda onClick
+            yoktu, cursor:pointer bile yoktu: var olmayan bir etkileşim vaat
+            ediliyordu. Operatör tıklar, hiçbir şey olmaz, UI'ın bozuk
+            olduğunu sanar. Tıkı BAĞLAMIYORUZ (kapsam kararı) — yanlış olan
+            vaatti, eksik olan özellik değil. */}
         <span style={{ marginLeft: 'auto', color: 'var(--text3)' }}>
-          Sorted by absolute Δ desc · click a row to focus the path in either waterfall
+          Sorted by absolute Δ desc
         </span>
       </div>
       <div className="table-wrap">

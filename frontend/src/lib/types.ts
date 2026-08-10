@@ -3518,7 +3518,10 @@ export interface AnomalyEvent {
   id: string;
   // v0.6.27 added `log_template_new` — Drain-discovered log shape
   // appearing for the first time in the lookback window.
-  kind: 'log_pattern' | 'trace_op' | 'elastic_ml' | 'log_template_new';
+  // v0.9.936 added `behavior_change` — davranış motorunun (haftanın
+  // saati baseline'ı, 28 gün) bulduğu KALICI kayma. Diğerlerinden farkı:
+  // `sample` alanı serbest metin değil, BehaviorChangeDetails JSON'u.
+  kind: 'log_pattern' | 'trace_op' | 'elastic_ml' | 'log_template_new' | 'behavior_change';
   pattern: string;
   service: string;
   startedAt: number;     // unix ns — first observation
@@ -3859,6 +3862,25 @@ export interface SystemStats {
     // Redis configured but unreachable → always-leader fallback. In a multi-pod
     // deployment every pod becomes leader → duplicate alerts/notifications.
     lockDegraded: boolean;
+  };
+  // v0.9.936 — davranış motorunun kendi ölçümü. Motorun tek pahalı yanı
+  // 28 GÜNLÜK bir MV taraması; süresi görünmezse "vidaları sıkmalı
+  // mıyım" sorusunun cevabı da yok.
+  //
+  // OPSİYONEL: bu sürümden eski bir backend'e bakan bir tarayıcı sekmesi
+  // alanı hiç görmez. Motor bu pod'da koşmuyorsa (COREMETRY_MODE=api, ya
+  // da lider başka pod) sayaçlar SIFIR olur ve bu doğru cevaptır.
+  behavior?: {
+    ticks: number;            // süreç başından beri koşan tarama sayısı
+    candidates: number;       // yazılan aday (tavandan SONRA)
+    lastUnix: number;         // son taramanın bitiş anı (0 = hiç koşmadı)
+    lastDurationMs: number;   // son taramanın toplam süresi
+    lastCandidates: number;
+    lastServices: number;
+    // Son taramanın hatası ("" / yok = temiz). Sessiz kapanma bu depoda
+    // tekrarlayan hata sınıfı — motor bir CH hatasıyla hiç aday
+    // üretmiyor olabilir ve başka hiçbir ekran bunu söylemez.
+    lastError?: string;
   };
 }
 
@@ -4676,4 +4698,61 @@ export interface AnomalySensitivityConfig {
   // Bu yüzden okuma daima `!== false` ile yapılmalı, `=== true` ile
   // DEĞİL — ikincisi eski satırları sessizce kapalı gösterirdi.
   attachToIncident?: boolean;
+  // v0.9.936 — davranış motoru AŞAMA 1'in vidaları. Üstteki alanlar
+  // ANİ sapmayı (5-dk pencere, 24s geçmiş) ayarlıyor; bu bölüm KALICI
+  // davranış değişimini (haftanın saati baseline'ı, 28 gün).
+  //
+  // OPSİYONEL çünkü bu sürümden ESKİ settings satırlarında alan yok;
+  // sunucu Normalize'da varsayılanlarla dolduruyor, ama tip GET'in
+  // döndürebileceği her şekli kabul etmeli.
+  behavior?: AnomalyBehaviorConfig;
+}
+
+// v0.9.936 — davranış motorunun eşikleri (backend:
+// chstore.AnomalyBehaviorConfig).
+//
+// Ani-sapma vidalarından AYRI olması bilinçli: "şu an sıçradı mı" ile
+// "bu servis artık başka türlü mü davranıyor" aynı eşikle
+// cevaplanmaz. Bir rejim kayması 1.5× ile gerçektir ve 6σ'ya hiç
+// ulaşmayabilir.
+export interface AnomalyBehaviorConfig {
+  // Motor koşsun mu? OPSİYONEL çünkü backend'de *bool ve varsayılan
+  // AÇIK — okuma daima `!== false` ile yapılmalı (attachToIncident ile
+  // aynı tuzak).
+  enabled?: boolean;
+  // Mevsimsel sapmanın açılma eşiği (robust z, σ).
+  seasonalZ: number;
+  // Rejim kaymasının açılma oranı (× baseline medyanı). Düşüş
+  // tarafında karşılığı 1/regimeRatio.
+  regimeRatio: number;
+  // Kaç ardışık 5-dk dilimin AYNI yönde ateşlemesi gerektiği.
+  dwellSeasonal: number;
+  dwellRegime: number;
+  // Fırtına koruması: tik başına yazılacak EN GÜÇLÜ aday sayısı.
+  maxCandidatesPerTick: number;
+}
+
+// BehaviorChangeDetails — `behavior_change` kindli bir AnomalyEvent'in
+// `sample` alanındaki JSON. Backend: internal/anomaly.behaviorDetails.
+//
+// Neden `sample`: yeni kolon/tablo açmamak için (invariant #5 ile aynı
+// duruş). Alan zaten "tespit anında yakalanan kanıt" demek; log/trace
+// kindlerinde serbest metin, burada yapılandırılmış kanıt.
+//
+// Ayrıştırma DAİMA try/catch ile: eski bir satır ya da elle düzenlenmiş
+// bir kayıt geçerli JSON olmayabilir ve çekmece ham metne düşmeli,
+// patlamamalı.
+export interface BehaviorChangeDetails {
+  metric: string;
+  signal: 'seasonal' | 'regime';
+  direction: 'up' | 'down';
+  ratio: number;
+  z: number;
+  baseline: number;
+  current: number;
+  unit: string;
+  hourOfWeek: number;   // 0..167, UTC, pazartesi=0
+  dwell: number;        // kaç 5-dk dilim sürdü
+  onsetNs: number;      // kaymanın başlangıcı
+  deploy?: { version: string; ageSeconds: number };
 }

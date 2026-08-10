@@ -34,6 +34,31 @@ type SystemStats struct {
 	Health    SystemHealth   `json:"health"`
 	Exemplars ExemplarIngest `json:"exemplars"`
 	SpanLinks SpanLinkIngest `json:"spanLinks"`
+	// Behavior (v0.9.936) — davranış motorunun kendi ölçümü: son tikin
+	// süresi, ürettiği aday sayısı, kapsadığı servis sayısı ve son
+	// hatası. Ingest sayaçlarıyla AYNI kablo: API getSystemStats
+	// handler'ı süreç-içi atomiklerden doldurur, GetSystemStats (yalnız
+	// CH) sıfır bırakır — chstore, anomaly paketini import ETMEZ (ters
+	// yön: anomaly zaten chstore'u import ediyor).
+	//
+	// NEDEN GEREKLİ: bu motorun tek pahalı yanı 28 GÜNLÜK bir MV
+	// taraması. Süresi görünmezse "vidaları sıkmalı mıyım" sorusunun
+	// cevabı da yok; sessizce 20 saniyeye çıkmış bir tarama hiçbir
+	// ekranda iz bırakmazdı.
+	Behavior BehaviorDetectorStats `json:"behavior"`
+}
+
+// BehaviorDetectorStats — davranış motorunun /admin/stats görüntüsü.
+// Alan adları internal/anomaly.BehaviorStats ile birebir; ayrı tip
+// çünkü chstore o paketi import edemez (döngü).
+type BehaviorDetectorStats struct {
+	Ticks          int64  `json:"ticks"`
+	Candidates     int64  `json:"candidates"`
+	LastUnix       int64  `json:"lastUnix"`
+	LastDurationMs int64  `json:"lastDurationMs"`
+	LastCandidates int64  `json:"lastCandidates"`
+	LastServices   int64  `json:"lastServices"`
+	LastError      string `json:"lastError,omitempty"`
 }
 
 // ExemplarIngest — the two OTLP metric-exemplar ingest totals (cumulative

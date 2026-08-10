@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
-import type { AnomalyTrackedConfig, AnomalySensitivityConfig, ExceptionTriageConfig, ProblemPriorityConfig } from '@/lib/types';
+import type { AnomalyTrackedConfig, AnomalySensitivityConfig, AnomalyBehaviorConfig, ExceptionTriageConfig, ProblemPriorityConfig } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
 
 // ── Anomaly promotion tab ───────────────────────────────────────
@@ -414,6 +414,11 @@ function SensitivitySection() {
             );
           })}
 
+          <BehaviorSubsection
+            behavior={cfg.behavior}
+            onChange={b => setCfg({ ...cfg, behavior: b })}
+          />
+
           {/* v0.9.827 — dedektör → incident kapısı.
               Bu çağrı bugüne kadar KOŞULSUZDU ve Settings'teki hiçbir vida
               ona ulaşmıyordu: üstteki "terfi ettir" kutucuğu BAŞKA bir
@@ -453,6 +458,146 @@ function SensitivitySection() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ── Davranış değişimi (v0.9.936) ────────────────────────────────
+//
+// "Dedektör hassasiyeti"nin ALT BÖLÜMÜ, kardeş bölüm değil: aynı
+// blob'un (anomaly_sensitivity) parçası ve aynı Kaydet düğmesiyle
+// kaydediliyor. Operatör buraya tek bir soruyla geliyor — "ne zaman
+// olay sayılsın?" — ve cevabın iki yarısı var: ANİ sapma (üstteki
+// alanlar) ve KALICI değişim (burası).
+//
+// DÜRÜST KAPSAM METNİ: bu aşamada LLM YOK. Motor tamamen istatistiksel
+// (medyan + MAD, haftanın saati baseline'ı). Bunu yazmak zorundayız,
+// çünkü "davranış motoru" adı kolayca "yapay zekâ karar veriyor" diye
+// okunur ve operatör eşikleri neden ayarladığını anlamaz.
+function BehaviorSubsection({ behavior, onChange }: {
+  behavior?: AnomalyBehaviorConfig;
+  onChange: (b: AnomalyBehaviorConfig) => void;
+}) {
+  // Sunucu Normalize'da daima dolduruyor; bu düşüş yalnız bu sürümden
+  // ESKİ bir backend'e bakan bir sekme için. Boş kutu göstermek yerine
+  // varsayılanlarla çiziyoruz — kaydedilirse sunucu zaten kelepçeler.
+  const b: AnomalyBehaviorConfig = behavior ?? {
+    enabled: true, seasonalZ: 4, regimeRatio: 1.5,
+    dwellSeasonal: 3, dwellRegime: 6, maxCandidatesPerTick: 50,
+  };
+  // `!== false` ŞART: alan yoksa (eski satır) motor AÇIKtır.
+  const on = b.enabled !== false;
+  const set = (patch: Partial<AnomalyBehaviorConfig>) => onChange({ ...b, ...patch });
+
+  return (
+    <div style={{ borderTop: '1px solid var(--border)', paddingTop: 16, marginTop: 4, marginBottom: 18 }}>
+      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>
+        Davranış değişimi
+      </div>
+      <p style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 12, lineHeight: 1.55 }}>
+        Yukarıdaki eşikler <b>ani</b> sapmayı ölçer (son 5 dakika, 24 saatlik geçmiş).
+        Bu bölüm <b>kalıcı</b> değişimi ölçer: her servisin hata oranı, P99 gecikmesi ve
+        istek hızı <b>haftanın aynı saatine</b> (168 kova, son 28 gün) göre
+        karşılaştırılır. Deploy sonrası P99&apos;un 120 ms&apos;ten 190 ms&apos;e
+        <i> oturması</i> 24 saat içinde &laquo;yeni normal&raquo; olur ve ani-sapma
+        dedektörü onu ertesi gün göremez &mdash; bu motor tam olarak onu söyler.
+      </p>
+      <p style={{
+        fontSize: 12, color: 'var(--text2)', marginBottom: 14, lineHeight: 1.55,
+        padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 4,
+      }}>
+        <b>Yöntem:</b> tamamen istatistiksel &mdash; medyan + MAD ile sağlam z-skoru ve
+        oran karşılaştırması. <b>Bu aşamada yapay zekâ kullanılmıyor.</b> Bulgular
+        /anomalies akışına <span className="mono">behavior_change</span> olarak düşer ve
+        yukarıdaki <b>terfi kapısından</b> geçer; kendiliğinden Problem açmaz.
+        Yukarıdaki metrik tabanları (mutlak değer / fark / MAD / hacim) bu motora da
+        aynen uygulanır &mdash; 1,90 ms&apos;ten 2,90 ms&apos;e kalıcı bir kayma
+        istatistiksel olarak gerçektir ve kimseyi ilgilendirmez.
+      </p>
+
+      <label style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 14 }}>
+        <input type="checkbox" checked={on} onChange={e => set({ enabled: e.target.checked })} />
+        <span style={{ fontSize: 13, color: 'var(--text)' }}>
+          Kalıcı davranış değişimlerini ara
+        </span>
+      </label>
+
+      <div style={{ display: 'grid', gap: 10, marginLeft: 12, opacity: on ? 1 : 0.5 }}>
+        <Field label="Rejim kayması oranı (× baseline)">
+          <input type="number" min={1.05} max={100} step={0.05}
+            value={b.regimeRatio}
+            onChange={e => set({ regimeRatio: Number(e.target.value) })}
+            disabled={!on} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Bu kadar katına çıkan (ya da bu kadar katı altına düşen) ve orada
+            <b> kalan</b> bir metrik &laquo;davranış değişti&raquo; sayılır.
+            Varsayılan <b>1,5</b>. Düşürmek daha çok, yükseltmek daha az bulgu demek.
+          </div>
+        </Field>
+
+        <Field label="Kalıcılık — rejim (kaç 5-dakikalık dilim)">
+          <input type="number" min={1} max={24} step={1}
+            value={b.dwellRegime}
+            onChange={e => set({ dwellRegime: Number(e.target.value) })}
+            disabled={!on} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Kaymanın kesintisiz sürmesi gereken dilim sayısı. Varsayılan <b>6</b>
+            {' '}({(b.dwellRegime || 6) * 5} dakika). <b>Geçici sıçramayı kalıcı
+            kaymadan ayıran tek vida budur</b> &mdash; kısaltırsanız ani-sapma
+            dedektörüyle çakışmaya başlar.
+          </div>
+        </Field>
+
+        <Field label="Mevsimsel sapma eşiği (σ)">
+          <input type="number" min={1} max={50} step={0.5}
+            value={b.seasonalZ}
+            onChange={e => set({ seasonalZ: Number(e.target.value) })}
+            disabled={!on} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Rejim eşiğini geçmeyen ama kendi haftalık kovasından çok uzak değerler
+            için. Varsayılan <b>4,0</b> &mdash; üstteki kritik z&apos;den (6,0) düşük
+            olması normaldir: burada gürültünün mevsimsel bileşeni baseline&apos;dan
+            zaten çıkarılmış.
+          </div>
+        </Field>
+
+        <Field label="Kalıcılık — mevsimsel (kaç dilim)">
+          <input type="number" min={1} max={24} step={1}
+            value={b.dwellSeasonal}
+            onChange={e => set({ dwellSeasonal: Number(e.target.value) })}
+            disabled={!on} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Varsayılan <b>3</b> ({(b.dwellSeasonal || 3) * 5} dakika). Rejim
+            kalıcılığından küçük olmalı; kalıcı bir kayma ikisini de tetiklerse
+            <b> rejim</b> kazanır, yani aynı olay iki satır olarak görünmez.
+            {b.dwellSeasonal >= b.dwellRegime && (
+              <div style={{ color: 'var(--warn)', marginTop: 4 }}>
+                Rejim kalıcılığından küçük değil: iki sinyalin anlamı çakışır.
+              </div>
+            )}
+          </div>
+        </Field>
+
+        <Field label="Tik başına en fazla bulgu">
+          <input type="number" min={1} max={5000} step={10}
+            value={b.maxCandidatesPerTick}
+            onChange={e => set({ maxCandidatesPerTick: Number(e.target.value) })}
+            disabled={!on} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Fırtına koruması: filo geneli bir olayda (ortak bağımlılık çöktü) her
+            servis birden bulgu üretir. Tavan <b>en güçlü</b> N tanesini geçirir;
+            kesilenler kaybolmaz, bir sonraki taramada hâlâ değişikse yine sıraya
+            girerler. Varsayılan <b>50</b>.
+          </div>
+        </Field>
+      </div>
+
+      <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12, marginLeft: 12, lineHeight: 1.5 }}>
+        Yeni bir servis ilk dört haftasında <b>sessiz</b> kalır: baseline&apos;ı
+        yoksa motor bulgu üretmez (&laquo;veri yok&raquo; bir anomali değildir).
+        Motorun tarama süresini <span className="mono">/admin/stats</span> &rarr;
+        Davranış motoru kartından izleyebilirsiniz.
+      </div>
     </div>
   );
 }

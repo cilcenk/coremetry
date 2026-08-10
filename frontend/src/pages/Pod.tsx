@@ -1,4 +1,4 @@
-import { Suspense, useCallback, useEffect, useMemo, useRef } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -10,7 +10,11 @@ import { Topbar } from '@/components/Topbar';
 import { Card } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MultiLineChart } from '@/components/MultiLineChart';
-import { ChartCard, type ChartLine } from '@/pages/service/charts/ChartCard';
+// v0.9.945 (D2/K10) — RED kartları ChartCard'dan (saniye eksenli
+// OverviewChart motoru) CorePanelMulti'ye taşındı; gerekçe grid'in
+// başında. Lazy: sayfa @grafana/data'ya STATİK bağlanmamalı
+// (corePanelEntry.tsx yorumunun ölçümü — 35 KB → 1 MB).
+import type { CorePanelMultiItem } from '@/components/chart/corePanelEntry';
 import { ThanosTrendPanel } from '@/pages/clusters/TrendPanel';
 import { namedSeriesToSeries } from '@/pages/clusters/trendSeries';
 import { PromQLList } from '@/pages/clusters/PromQLList';
@@ -18,6 +22,9 @@ import { promQuote } from '@/pages/clusters/promQuote';
 import { podWorkloadName } from '@/pages/clusters/podWorkload';
 import { fmtCores, podPhaseBadge } from '@/pages/clusters/thresholds';
 import { resolvePodCluster } from '@/pages/service/podResolve';
+
+const CorePanelMultiLazy = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
 // Pod detay sayfası (v0.9.151) — H.Polat önerisi: pod'a tıklayınca cramped
 // drawer YERİNE tam sayfa. Üç kaynak tek yerde, hepsi POD'a scope'lu:
@@ -62,6 +69,16 @@ function PodDetail() {
   const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('1h');
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
   const xRange = useMemo(() => ({ from: from / 1e9, to: to / 1e9 }), [from, to]);
+  // v0.9.945 (D2/K10) — SAYFANIN TEK crosshair grubu.
+  //
+  // `-ms` bir MOTOR AD ALANI, süs değil (MultiLineChart.tsx:164-172):
+  // uPlot.sync imleci karşı grafiğin ÖLÇEĞİNE VALUE olarak taşır, yani
+  // ms-eksenli ve saniye-eksenli iki motor aynı anahtarı paylaşırsa
+  // crosshair 1000× yanlış yere düşer. MLC kendi syncKey'ine bu eki
+  // KENDİ ekliyor; CorePanel'i DOĞRUDAN çağıran (RED üçlüsü) ekin
+  // kendisini yazmak zorunda — DetailsMetricsSection'ın v0.9.789'da
+  // kurduğu desen.
+  const podChartSync = `podjmx:${pod}-ms`;
 
   // Sunucu 6h clamp — Infra/JMX Thanos sorgularıyla aynı dürüstlük (Clusters/
   // ServiceInfraTab emsali). RED spans tarafında clamp YOK (raw-spans zaten
@@ -131,15 +148,19 @@ function PodDetail() {
   const latStatus: 'loading' | 'error' | 'ready' = latQ.isLoading ? 'loading' : latQ.isError ? 'error' : 'ready';
 
   // Throughput OK/Errors band türetimi — Overview ile birebir (ek sorgu yok).
-  const throughputBands = useMemo<ChartLine[]>(() => {
+  // v0.9.945 — CorePanelMultiItem şekli: renk ARTIK ROLDEN geliyor
+  // (success/error), elle var(--ok)/var(--err) verilmiyor. Overview'un
+  // "Failure rate · trace" paneliyle aynı sözleşme, yani iki sayfa aynı
+  // bandı aynı renkte çiziyor.
+  const throughputBands = useMemo<CorePanelMultiItem[]>(() => {
     const ratePts = s?.rate?.[0]?.points ?? [];
     const erPts = s?.error_rate?.[0]?.points ?? [];
-    if (ratePts.length < 2) return [{ series: s?.rate ?? [], color: 'var(--accent)', label: 'req/s' }];
+    if (ratePts.length < 2) return [{ series: s?.rate ?? [], name: 'req/s', role: 'data' }];
     const okPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * (1 - (erPts[i]?.value ?? 0) / 100)) }));
     const errPts = ratePts.map((p, i) => ({ time: p.time, value: Math.max(0, p.value * ((erPts[i]?.value ?? 0) / 100)) }));
     return [
-      { series: [{ groupKey: [], points: okPts }], color: 'var(--ok)', label: 'OK' },
-      { series: [{ groupKey: [], points: errPts }], color: 'var(--err)', label: 'Errors' },
+      { series: [{ groupKey: [], points: okPts }], name: 'OK', role: 'success' },
+      { series: [{ groupKey: [], points: errPts }], name: 'Errors', role: 'error' },
     ];
   }, [s]);
 
@@ -194,24 +215,70 @@ function PodDetail() {
               Service metrics · this pod
               <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {service}</span>
             </h3>
+            {/* v0.9.945 (UX denetimi D2 / K10) — RED üçlüsü ChartCard'dan
+                CorePanelMulti'ye TAŞINDI.
+
+                v0.9.388 bu üçlüyü sayfanın `podjmx` crosshair grubuna
+                kattığını yazıyordu ve o vaat SESSİZCE kırılmıştı:
+                MultiLineChart syncKey'e `-ms` ekliyor (MultiLineChart.tsx
+                yorumunun gerekçesi: uPlot.sync değeri karşı grafiğin
+                ÖLÇEĞİNE taşır, ms-eksenli ve saniye-eksenli motorlar aynı
+                grubu paylaşırsa crosshair 1000× yanlış yere düşer). RED
+                kartları ChartCard → OverviewChart (saniye ekseni) idi, JMX
+                kartları MLC → CorePanel (ms ekseni): iki AYRI grup, hiç
+                buluşmayan iki crosshair.
+
+                KESTİRME (`-ms` ekini kaldırmak) BİLİNÇLİ OLARAK
+                REDDEDİLDİ — o, bugün doğru olan ölçek yalıtımını kırardı.
+                Tek doğru yol motoru birleştirmekti: artık sayfadaki HER
+                panel ms eksenli CorePanel, dolayısıyla hepsi `-ms` ad
+                alanında ve crosshair GERÇEKTEN paylaşılıyor.
+
+                Kayıp yok: başlık/yükleme/hata/boş durumları CorePanel'in
+                kendi kabuğunda (üstelik hata ve boşluk AYRI kanallarda —
+                ChartCard ikisini de tek kutuda gösteriyordu), lejant
+                kalıcılığı storageKey'de, gizli-varsayılan latency serileri
+                defaultHidden'da. */}
             <div className="ov-grid ov-charts-3 ov-mb">
-              {/* v0.9.388 (grafik-audit Faz A) — RED üçlüsü sayfanın
-                  podjmx grubuna katıldı: JMX kartlarında hover'ken RED'de
-                  aynı an vurgulanıyor (aynı olayı iki panelde okuma). */}
-              <ChartCard title="Response time" unit=" ms" mode="line" status={latStatus} onZoom={undefined} xRange={xRange}
-                syncKey={`podjmx:${pod}`}
-                legendStorageKey="pod-response-time"
-                defaultHidden={defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])}
-                lines={[
-                { series: lat?.avg ?? [], color: 'var(--teal)', label: 'avg' },
-                { series: lat?.p50 ?? [], color: 'var(--purple)', label: 'P50' },
-                { series: lat?.p95 ?? [], color: 'var(--orange)', label: 'P95' },
-                { series: lat?.p99 ?? [], color: 'var(--err)', label: 'P99' },
-              ]} />
-              <ChartCard title="Throughput" unit=" req/s" mode="stacked" status={redStatus} xRange={xRange} syncKey={`podjmx:${pod}`} lines={throughputBands} />
-              <ChartCard title="Failure rate" unit="%" mode="area" status={redStatus} xRange={xRange} syncKey={`podjmx:${pod}`} lines={[
-                { series: s?.error_rate ?? [], color: 'var(--err)', label: 'errors' },
-              ]} />
+              <Suspense fallback={<Spinner />}>
+                <CorePanelMultiLazy
+                  title="Response time"
+                  storageKey="pod-response-time" height={200}
+                  unit="ms" viz="line" xRange={xRange}
+                  syncKey={podChartSync}
+                  loading={latStatus === 'loading'}
+                  error={latStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
+                  defaultHidden={[...defaultLatencyHidden(['avg', 'P50', 'P95', 'P99'])]}
+                  items={[
+                    { name: 'avg', role: 'data', series: lat?.avg ?? [] },
+                    { name: 'P50', role: 'data', series: lat?.p50 ?? [] },
+                    { name: 'P95', role: 'data', series: lat?.p95 ?? [] },
+                    { name: 'P99', role: 'data', series: lat?.p99 ?? [] },
+                  ]}
+                />
+              </Suspense>
+              <Suspense fallback={<Spinner />}>
+                <CorePanelMultiLazy
+                  title="Throughput"
+                  storageKey="pod-throughput" height={200}
+                  unit="reqps" viz="stacked" xRange={xRange}
+                  syncKey={podChartSync}
+                  loading={redStatus === 'loading'}
+                  error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
+                  items={throughputBands}
+                />
+              </Suspense>
+              <Suspense fallback={<Spinner />}>
+                <CorePanelMultiLazy
+                  title="Failure rate"
+                  storageKey="pod-failure-rate" height={200}
+                  unit="percent" viz="area" xRange={xRange}
+                  syncKey={podChartSync}
+                  loading={redStatus === 'loading'}
+                  error={redStatus === 'error' ? 'Metrikler yüklenemedi' : undefined}
+                  items={[{ name: 'errors', role: 'error', series: s?.error_rate ?? [] }]}
+                />
+              </Suspense>
             </div>
           </>
         ) : (
@@ -253,6 +320,8 @@ function PodDetail() {
                         sayfa range'ine, çift-tık geri-yığınına. */}
                     <MultiLineChart series={namedSeriesToSeries(data, m)} height={180}
                       unit={unit} maxSeries={isJboss ? 40 : undefined}
+                      // syncKey EK'SİZ: MLC `-ms`i kendi ekliyor, yani bu
+                      // panel de podChartSync grubuna düşer (v0.9.945).
                       syncKey={`podjmx:${pod}`} onZoom={handleZoom} onZoomReset={handleZoomReset} />
                   </Card>
                 );

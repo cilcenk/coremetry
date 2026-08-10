@@ -9,6 +9,16 @@ import type { ReactNode } from 'react';
 // Accessibility: tab buttons get `role="tab"` and the active one
 // gets `aria-selected`. Keyboard-aware (Left/Right arrow + Home/
 // End cycle through tabs without leaving the strip).
+//
+// v0.9.900 (BB7) — `aria-controls="tab-panel-<key>"` was removed. It
+// pointed at element ids that existed on NO page: an aria-controls
+// reference to a missing id is worse than none, because a screen
+// reader announces a relationship and then finds nothing to move to.
+// Verified page by page before deleting rather than adding the ids —
+// this component currently has no consumers at all, so there was no
+// panel anywhere to give an id to. If a consumer ever wires a real
+// panel, it should own `id` + `role="tabpanel"` itself and pass
+// `aria-controls` through; a prop for it now would be speculative API.
 
 export interface TabItem<T extends string = string> {
   key: T;
@@ -63,7 +73,6 @@ export function Tabs<T extends string = string>({
             type="button"
             role="tab"
             aria-selected={active}
-            aria-controls={`tab-panel-${item.key}`}
             disabled={item.disabled}
             tabIndex={active ? 0 : -1}
             title={item.hint}

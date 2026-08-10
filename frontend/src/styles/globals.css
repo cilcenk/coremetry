@@ -760,6 +760,20 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
   opacity: 0.45;
   cursor: not-allowed;
 }
+/* `svc-tabs` (v0.9.900, BB7) — the /service strip is the only one that
+   pins. It used to hand-roll the whole strip inline, which is how its
+   active colour drifted to --accent2 with a 700 weight while every other
+   strip used --accent at 600. Sticky is the ONLY thing that is special
+   about it, so sticky is the only thing this class carries. */
+.tab-strip.svc-tabs {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--bg0); padding-top: 8px; margin-top: 16px;
+}
+/* The count that rides along a tab label ("Operations 412"). */
+.tab-strip .tab-count {
+  margin-left: 6px; font-size: 11px; color: var(--text3);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
 
 .segmented {
   display: inline-flex;

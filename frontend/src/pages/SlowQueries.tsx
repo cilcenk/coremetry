@@ -17,6 +17,7 @@ import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { serviceHref } from '@/lib/serviceHref';
 
 // Columns for the shared sortable + resizable DataTable primitive.
 // Default order matches the backend's total-wall-clock sort so the
@@ -252,7 +253,7 @@ export default function SlowQueriesPage() {
                           </span>
                         </td>
                         <td>
-                          <Link to={`/service?name=${encodeURIComponent(r.service)}`}
+                          <Link to={serviceHref(r.service, { range })}
                             onClick={e => e.stopPropagation()}
                             style={{ fontSize: 12, fontFamily: 'ui-monospace, monospace' }}>
                             {r.service}

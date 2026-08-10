@@ -11,6 +11,7 @@ import { api } from '@/lib/api';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { buildDeployTimeline, type TimelineRow } from '@/lib/deploysTimeline';
+import { serviceHref } from '@/lib/serviceHref';
 
 // /deploys (v0.9.435, operatör istegi) — filo Deploys/Rollouts geçmişi:
 // imaj/sürüm değişimleri + pod-churn (rollout/restart, pod adları
@@ -134,7 +135,7 @@ export default function DeploysPage() {
                     <td className="mono" style={{ fontSize: 11.5 }}>{tsLong(r.timeNs)}</td>
                     <td><span className={`badge ${KIND_BADGE[r.kind].cls}`}>{KIND_BADGE[r.kind].label}</span></td>
                     <td>
-                      <Link to={`/service?name=${encodeURIComponent(r.service)}${r.kind !== 'deploy' ? '&tab=pods' : ''}`}
+                      <Link to={serviceHref(r.service, { range, tab: r.kind !== 'deploy' ? 'pods' : null })}
                         className="mono" style={{ color: 'var(--accent2)', textDecoration: 'none', fontSize: 12 }}>
                         {r.service}
                       </Link>

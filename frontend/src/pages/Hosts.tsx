@@ -11,6 +11,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { HostRow, HostDetail, HostServiceRow, TimeRange } from '@/lib/types';
+import { serviceHref } from '@/lib/serviceHref';
 
 // v0.9.873 (tutarlılık denetimi BT12) — HostDrawer'ın servis tablosu.
 // Yoğun bir host'ta "CPU'yu kim yiyor" sorusu bugün göz taramasıyla
@@ -118,7 +119,7 @@ export default function HostsPage() {
                         {r.services.slice(0, 2).map((s, i) => (
                           <span key={s}>
                             {i > 0 && ', '}
-                            <Link to={`/service?name=${encodeURIComponent(s)}`} style={{ fontSize: 11 }}>{s}</Link>
+                            <Link to={serviceHref(s, { range })} style={{ fontSize: 11 }}>{s}</Link>
                           </span>
                         ))}
                         {r.services.length > 2 && ` +${r.services.length - 2}`}
@@ -212,7 +213,7 @@ function HostDrawer({ host, range, onClose }: {
                     {svcDt.sortedRows.map(s => (
                       <tr key={s.service}>
                         <td>
-                          <Link to={`/service?name=${encodeURIComponent(s.service)}`}
+                          <Link to={serviceHref(s.service, { range })}
                             style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>
                             {s.service}
                           </Link>

@@ -12,6 +12,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import type { CallerRow, TimeRange } from '@/lib/types';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { tracesPivotHref } from '@/lib/pivotHref';
+import { serviceHref } from '@/lib/serviceHref';
 
 // Dynatrace-style "service consumers" / backtrace view. One row per
 // distinct (caller service × pod/instance × client IP × user-agent)
@@ -103,7 +104,7 @@ function BacktraceInner() {
       <Topbar title={`Backtrace · ${svc}`} range={range} onRangeChange={setRange} />
       <div id="content">
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-          <Link to={`/service?name=${encodeURIComponent(svc)}`} className="sec" style={{
+          <Link to={serviceHref(svc, { range })} className="sec" style={{
             padding: '5px 12px', border: '1px solid var(--border)',
             borderRadius: 6, fontSize: 12, color: 'var(--text)', textDecoration: 'none',
           }}>← Service overview</Link>
@@ -144,7 +145,7 @@ function BacktraceInner() {
                   return (
                     <tr key={i} style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 44px' }}>
                       <td>
-                        <Link to={`/service?name=${encodeURIComponent(r.callerService)}`}
+                        <Link to={serviceHref(r.callerService, { range })}
                               style={{ display: 'inline-flex', alignItems: 'center', gap: 8, color: 'var(--text)', textDecoration: 'none' }}>
                           <span style={{ width: 8, height: 8, borderRadius: '50%', background: color }} />
                           {r.callerService}

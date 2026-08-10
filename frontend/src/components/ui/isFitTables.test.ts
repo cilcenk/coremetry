@@ -274,3 +274,42 @@ describe('MT2 — content-visibility donmuş liste', () => {
     expect(/containIntrinsicSize: '(auto )?\d+px'/.test(src), `${file} containIntrinsicSize yok`).toBe(true);
   });
 });
+
+// ── MK3 (v0.9.919) — tutamak DELEGE edilmiş olmalı ─────────────────────
+// Yukarıdaki "çift tıkla sıfırla" testi `ColResizeHandle`in GÖVDESİNE
+// bakıyor ve v0.9.662'den beri yeşil. Ama bileşenin depoda SIFIR çağrı
+// yeri vardı: `DataTableHead` kendi `<span className="col-resize-handle">`
+// kopyasını basıyordu ve o kopyada `onDoubleClick` YOKTU. Yani test
+// yeşilken kurtuluş yolu 117 tablonun hiçbirine ulaşmıyordu — kapı
+// "davranış var mı" değil "davranış BAĞLI mı" sorusunu sormalıydı.
+//
+// v0.9.660'ın dersinin aynısı: yazılmış-ama-bağlanmamış kod, testi de
+// kandırır. Bu blok bağlantıyı çiviliyor.
+describe('MK3 — resize tutamağı tek kaynaktan', () => {
+  const dt = readFileSync(join(SRC, 'components/DataTable.tsx'), 'utf8');
+
+  it('DataTableHead paylaşılan bileşeni ÇAĞIRIYOR', () => {
+    const i = dt.indexOf('export function DataTableHead');
+    expect(i).toBeGreaterThan(-1);
+    expect(dt.slice(i)).toContain('<ColResizeHandle');
+  });
+
+  it('primitif dışında elle basılmış tutamak yok', () => {
+    const CLS = 'col-resize' + '-handle';
+    const bad: string[] = [];
+    for (const file of walk(SRC)) {
+      if (file.endsWith('components/DataTable.tsx')) continue;
+      readFileSync(file, 'utf8').split('\n').forEach((line, i) => {
+        if (line.includes(`className="${CLS}"`)) {
+          bad.push(`${file.slice(SRC.length + 1)}:${i + 1}`);
+        }
+      });
+    }
+    expect(bad).toEqual([]);
+  });
+
+  it('DataTable.tsx içinde de tek bir tutamak tanımı var', () => {
+    const CLS = 'col-resize' + '-handle';
+    expect(dt.split(`className="${CLS}"`).length - 1).toBe(1);
+  });
+});

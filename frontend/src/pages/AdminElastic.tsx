@@ -8,7 +8,18 @@ import { fmtNum, fmtBytes } from '@/lib/utils';
 import { useElasticIndices, useElasticErrors, useTraceContext } from '@/lib/queries';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { TraceContextServiceCoverage } from '@/lib/types';
+import type { TraceContextServiceCoverage, ESQueryError } from '@/lib/types';
+import { esErrorKey } from './admin/esErrorKey';
+
+// v0.9.876 (tutarlılık denetimi BT14) — genişlikler eski <colgroup>'tan
+// AYNEN alındı; Error kolonu esner (eski `<col />` genişliksizdi).
+const ES_ERR_COLS: DataTableColumn<ESQueryError>[] = [
+  { id: 'time',   label: 'Time',   sortValue: e => e.at,     width: 150 },
+  { id: 'op',     label: 'Op',     sortValue: e => e.op,     naturalDir: 'asc', width: 170 },
+  { id: 'status', label: 'Status', sortValue: e => e.status, numeric: true, width: 90 },
+  { id: 'index',  label: 'Index',  sortValue: e => e.index,  naturalDir: 'asc', width: 260 },
+  { id: 'error',  label: 'Error',  sortValue: e => e.error,  naturalDir: 'asc', flex: true },
+];
 
 // AdminElastic (v0.5.466) — operator-facing inventory of the
 // logs backend's indices: name, doc count, size, health, ILM
@@ -69,10 +80,22 @@ const ELASTIC_COLS: DataTableColumn<Row>[] = [
 // error banner covers hard failures.
 function QueryErrorsPanel() {
   const diag = useElasticErrors().data;
-  const [open, setOpen] = useState<number | null>(null);
+  // v0.9.876 (tutarlılık denetimi BT14, risk R4) — açık satır artık DİZİ
+  // İNDEKSİ değil, satırdan türetilen KARARLI ANAHTAR. Sıralama geldiği an
+  // indeks ile satır arasındaki birebirlik bitiyor ve `open === i` YANLIŞ
+  // SORGUNUN gövdesini açıyordu (sessiz: ekranda bir şey bozulmuyor, sadece
+  // yanlış JSON gösteriliyor — üstelik bu tablo "hangi sorgu patladı"
+  // sorusunu cevaplamak için var).
+  const [open, setOpen] = useState<string | null>(null);
+  // `errs` erken dönüşün ÜSTÜNDE hesaplanıyor: useDataTable bir hook ve
+  // `if (!diag) return null`'ın altında kalamaz (rules-of-hooks).
+  const errs = diag?.recentErrors ?? [];
+  const errDt = useDataTable<ESQueryError>({
+    storageKey: 'admin-es-query-errors', columns: ES_ERR_COLS, rows: errs,
+    initialSort: { id: 'time', dir: 'desc' },
+  });
 
   if (!diag) return null;
-  const errs = diag.recentErrors ?? [];
   return (
     <div style={{ marginTop: 24 }}>
       <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
@@ -85,17 +108,14 @@ function QueryErrorsPanel() {
         <Empty icon="✓" title="No failed queries since boot" />
       ) : (
         <table style={{ tableLayout: 'fixed', width: '100%' }}>
-          <colgroup>
-            <col style={{ width: 150 }} /><col style={{ width: 170 }} />
-            <col style={{ width: 70 }} /><col style={{ width: 260 }} /><col />
-          </colgroup>
-          <thead>
-            <tr><th>Time</th><th>Op</th><th className="num">Status</th><th>Index</th><th>Error</th></tr>
-          </thead>
+          <DataTableColgroup dt={errDt} />
+          <DataTableHead dt={errDt} />
           <tbody>
-            {errs.map((e, i) => (
-              <Fragment key={i}>
-                <tr onClick={() => setOpen(open === i ? null : i)}
+            {errDt.sortedRows.map(e => {
+              const k = esErrorKey(e);
+              return (
+              <Fragment key={k}>
+                <tr onClick={() => setOpen(open === k ? null : k)}
                   style={{ cursor: 'pointer', contentVisibility: 'auto', containIntrinsicSize: 'auto 36px' }}
                   title="Click to show the exact query body sent">
                   <td className="mono" style={{ fontSize: 11 }}>{new Date(e.at).toLocaleTimeString()}</td>
@@ -108,9 +128,9 @@ function QueryErrorsPanel() {
                   <td className="mono" style={{ fontSize: 11, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.index}>{e.index}</td>
                   <td style={{ fontSize: 12, color: 'var(--err)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={e.error}>{e.error}</td>
                 </tr>
-                {open === i && (
+                {open === k && (
                   <tr>
-                    <td colSpan={5}>
+                    <td colSpan={errDt.columns.length}>
                       <pre style={{
                         margin: '4px 0 8px', padding: 8, fontSize: 11, maxHeight: 240,
                         overflow: 'auto', background: 'var(--bg2)',
@@ -121,7 +141,8 @@ function QueryErrorsPanel() {
                   </tr>
                 )}
               </Fragment>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}

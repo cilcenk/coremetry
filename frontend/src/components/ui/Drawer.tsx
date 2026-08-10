@@ -50,16 +50,16 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
         width: `min(${width}px, 100vw)`,
         background: 'var(--bg)', borderLeft: '1px solid var(--border)',
         boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-        zIndex: 31, padding: 16,
+        zIndex: 31, padding: 'var(--sp-7)',
         // Overlay'siz kipte gövdeyi çağıran düzenliyor; modal kipte
         // bugünkü davranış (tek dikey kaydırma) aynen sürüyor.
         ...(bodyStyle ?? { overflowY: 'auto' }),
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', marginBottom: 'var(--sp-2)' }}>
           {header}
           <span style={{ flex: 1 }} />
           <button className="sec" onClick={onClose} aria-label="Close"
-            style={{ padding: '4px 6px', display: 'inline-flex' }}>
+            style={{ padding: 'var(--sp-2) var(--sp-3)', display: 'inline-flex' }}>
             <X size={14} />
           </button>
         </div>
@@ -77,8 +77,8 @@ export function DrawerSection({ title, children }: {
   return (
     <div style={{ marginBottom: 18 }}>
       <div style={{
-        fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase',
-        letterSpacing: 0.5, marginBottom: 6, fontWeight: 600,
+        fontSize: 'var(--fs-2xs)', color: 'var(--text3)', textTransform: 'uppercase',
+        letterSpacing: 0.5, marginBottom: 'var(--sp-3)', fontWeight: 600,
       }}>{title}</div>
       {children}
     </div>
@@ -98,8 +98,8 @@ export function DrawerTrendRow({ label, values, color, onClick }: {
   onClick?: () => void;
 }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-      <span style={{ fontSize: 11, color: 'var(--text2)', width: 60 }}>{label}</span>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-5)' }}>
+      <span style={{ fontSize: 'var(--fs-xs)', color: 'var(--text2)', width: 60 }}>{label}</span>
       <span
         onClick={onClick}
         style={onClick ? { cursor: 'pointer' } : undefined}

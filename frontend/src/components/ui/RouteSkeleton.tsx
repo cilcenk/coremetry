@@ -24,22 +24,22 @@ export function RouteSkeleton() {
 
   return (
     <div style={{ padding: 22 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--sp-7)' }}>
         <Skeleton width={200} height={20} />
         <Skeleton width={120} height={28} />
       </div>
       {isGrid ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 'var(--sp-7)' }}>
           {Array.from({ length: 8 }).map((_, i) => <CardSkeleton key={i} height={140} />)}
         </div>
       ) : isTable ? (
         <TableSkeleton rows={12} cols={6} />
       ) : (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 16, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 'var(--sp-7)', marginBottom: 'var(--sp-7)' }}>
             {Array.from({ length: 5 }).map((_, i) => <CardSkeleton key={i} height={96} />)}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 'var(--sp-7)' }}>
             {Array.from({ length: 3 }).map((_, i) => <CardSkeleton key={i} height={160} />)}
           </div>
         </>

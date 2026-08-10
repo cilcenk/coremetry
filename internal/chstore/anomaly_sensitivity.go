@@ -33,6 +33,17 @@ type AnomalySensitivityConfig struct {
 	// dedektör YALNIZ critical verdict'te Problem açtığı için bu, fiilen
 	// "açılma eşiği"dir; operatörün en çok çevireceği vida budur.
 	CriticalZ float64 `json:"criticalZ"`
+	// Behavior — DAVRANIŞ MOTORU AŞAMA 1 (v0.9.935). Aynı blob'un
+	// altında, çünkü operatör buraya tek bir soruyla geliyor: "ne zaman
+	// olay sayılsın?". Üstteki alanlar ANİ sapmayı (5-dk pencere, 24s
+	// geçmiş) ayarlıyor; bu bölüm KALICI davranış değişimini (haftanın
+	// saati baseline'ı, 28 gün) ayarlıyor.
+	//
+	// AYRI VİDA GEREKTİ çünkü iki soru farklı: "şu an sıçradı mı" ile
+	// "bu servis artık başka türlü davranıyor mu" aynı eşikle
+	// cevaplanmaz. Bir rejim kayması 1.5× ile gerçektir ve 6σ'ya hiç
+	// ulaşmayabilir; bir sıçrama 6σ ile gerçektir ve 30 dakika sürmez.
+	Behavior AnomalyBehaviorConfig `json:"behavior"`
 	// AttachToIncident — dedektörün açtığı metrik problemi otomatik
 	// olarak aktif incident'a bağlansın mı? (v0.9.827)
 	//
@@ -55,6 +66,120 @@ type AnomalySensitivityConfig struct {
 // davranış); bir ayarın yokluğu asla davranış değiştirmemeli.
 func (c AnomalySensitivityConfig) AttachesToIncident() bool {
 	return c.AttachToIncident == nil || *c.AttachToIncident
+}
+
+// AnomalyBehaviorConfig — davranış motoru AŞAMA 1'in vidaları
+// (v0.9.935). Motorun kendisi internal/anomaly/behavior.go'da.
+//
+// NE YAPAR: her servisin RED metriklerini (hata oranı, P99, istek hızı)
+// HAFTANIN SAATİ kovasına göre (168 kova, UTC) son 28 günün MV
+// bucket'larından öğrenilen medyan+MAD baseline'ına karşı puanlar. İki
+// sinyal üretir:
+//
+//	mevsimsel sapma : kendi kovasının baseline'ından robust-z ile ayrılma
+//	                  (DwellSeasonal ardışık dilim boyunca, aynı yönde)
+//	rejim kayması   : baseline'a karşı KALICI oransal kayma
+//	                  (DwellRegime dilim; deploy ilişkisi varsa iliştirilir)
+//
+// İkisi de anomaly_events'e kind="behavior_change" olarak düşer — yeni
+// tablo, yeni lane, yeni bildirim hunisi YOK. Mevcut terfi kapısı
+// (anomaly_promotion) hangisinin Problem olacağına karar verir.
+//
+// NEDEN VİDA: eşikler filoya bağlı. 1.5× kalıcı kayma bir ödeme
+// servisinde olaydır, bir batch işçisinde günlük rutindir.
+type AnomalyBehaviorConfig struct {
+	// Enabled — motor koşsun mu? *bool ÇÜNKÜ VARSAYILAN TRUE: düz
+	// bool'da JSON'ın sıfır değeri false olurdu ve bu sürümden ESKİ
+	// her settings satırı motoru sessizce kapalı gösterirdi
+	// (AttachToIncident ile aynı gerekçe). nil = "yazılmamış" = açık.
+	Enabled *bool `json:"enabled,omitempty"`
+	// SeasonalZ — mevsimsel sapmanın açılma eşiği (robust z, σ).
+	// Ani-sapma dedektörünün CriticalZ'sinden AYRI ve daha düşük
+	// olması normaldir: burada baseline haftanın aynı saatinden
+	// geliyor, yani gürültünün mevsimsel bileşeni zaten çıkarılmış.
+	SeasonalZ float64 `json:"seasonalZ"`
+	// RegimeRatio — rejim kaymasının açılma oranı (× baseline
+	// medyanı). Düşüş tarafında karşılığı 1/RegimeRatio'dur.
+	RegimeRatio float64 `json:"regimeRatio"`
+	// DwellSeasonal / DwellRegime — kaç ardışık 5-dk dilimin AYNI
+	// yönde ateşlemesi gerektiği. Geçici sıçramayı kalıcı kaymadan
+	// ayıran tek şey bu: rejim kayması varsayılan 6 dilim = 30 dakika.
+	DwellSeasonal int `json:"dwellSeasonal"`
+	DwellRegime   int `json:"dwellRegime"`
+	// MaxCandidatesPerTick — fırtına koruması. Filo geneli bir olayda
+	// (ortak bağımlılık çöktü) her servis birden aday üretir; tavan,
+	// EN GÜÇLÜ N tanesini geçirir. Kesilenler kaybolmaz, bir sonraki
+	// tikte hâlâ ateşliyorlarsa yine sıraya girerler.
+	MaxCandidatesPerTick int `json:"maxCandidatesPerTick"`
+}
+
+// IsEnabled — nil-güvenli okuma. Yazılmamış = AÇIK.
+func (b AnomalyBehaviorConfig) IsEnabled() bool {
+	return b.Enabled == nil || *b.Enabled
+}
+
+// Davranış motoru kelepçeleri. Üst sınırlar "vidayı sonuna kadar
+// çevirdim, motor sustu / motor her şeyi açtı" hallerini engelliyor.
+const (
+	behaviorMinSeasonalZ   = 1.0
+	behaviorMaxSeasonalZ   = 50.0
+	behaviorMinRegimeRatio = 1.05 // 1.0 = "her kıpırtı rejim kaymasıdır"
+	behaviorMaxRegimeRatio = 100.0
+	behaviorMinDwell       = 1
+	behaviorMaxDwell       = 24 // 2 saat; ötesi "hiç açma" demek
+	behaviorMinCandidates  = 1
+	behaviorMaxCandidates  = 5000
+)
+
+// DefaultAnomalyBehavior — spec'te onaylanan varsayılanlar
+// (2026-08-10). Ayrı fonksiyon çünkü Normalize hem eksik alanı hem de
+// aralık dışı alanı BURADAN dolduruyor.
+func DefaultAnomalyBehavior() AnomalyBehaviorConfig {
+	return AnomalyBehaviorConfig{
+		Enabled:              boolPtr(true),
+		SeasonalZ:            4.0,
+		RegimeRatio:          1.5,
+		DwellSeasonal:        3, // 15 dk
+		DwellRegime:          6, // 30 dk
+		MaxCandidatesPerTick: 50,
+	}
+}
+
+// NormalizeAnomalyBehavior — her alanı kelepçeler; aralık dışı ya da
+// sayı-olmayan değer VARSAYILANA döner (sıfırlanmaz).
+//
+// Ani-sapma alanlarından FARKLI duruş: orada 0 meşrudur ("vidayı
+// kapat"), burada değildir. seasonalZ=0 ya da dwell=0 "her bucket
+// aday" demek olurdu, yani motoru kapatmak değil AÇIK SONUNA KADAR
+// açmak. Motoru kapatmanın yolu Enabled=false.
+func NormalizeAnomalyBehavior(b AnomalyBehaviorConfig) AnomalyBehaviorConfig {
+	d := DefaultAnomalyBehavior()
+	out := AnomalyBehaviorConfig{
+		// Normalize SOMUTLAŞTIRIR: nil gelen bayrak açık haliyle
+		// yazılır, böylece kaydedilen blob ne olduğunu AÇIKÇA söyler.
+		Enabled:              boolPtr(b.IsEnabled()),
+		SeasonalZ:            clampRangeF(b.SeasonalZ, behaviorMinSeasonalZ, behaviorMaxSeasonalZ, d.SeasonalZ),
+		RegimeRatio:          clampRangeF(b.RegimeRatio, behaviorMinRegimeRatio, behaviorMaxRegimeRatio, d.RegimeRatio),
+		DwellSeasonal:        clampRangeI(b.DwellSeasonal, behaviorMinDwell, behaviorMaxDwell, d.DwellSeasonal),
+		DwellRegime:          clampRangeI(b.DwellRegime, behaviorMinDwell, behaviorMaxDwell, d.DwellRegime),
+		MaxCandidatesPerTick: clampRangeI(b.MaxCandidatesPerTick, behaviorMinCandidates, behaviorMaxCandidates, d.MaxCandidatesPerTick),
+	}
+	return out
+}
+
+// clampRangeF / clampRangeI — aralık dışı (ya da NaN/Inf) → varsayılan.
+func clampRangeF(v, min, max, def float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < min || v > max {
+		return def
+	}
+	return v
+}
+
+func clampRangeI(v, min, max, def int) int {
+	if v < min || v > max {
+		return def
+	}
+	return v
 }
 
 // AnomalyMetricSensitivity — tek bir metriğin eşikleri. Beşi de
@@ -137,6 +262,10 @@ func DefaultAnomalySensitivity() AnomalySensitivityConfig {
 		},
 		DwellBuckets: 3,   // v0.8.220 — 3 × 5dk = 15 dk sürekli ateşleme
 		CriticalZ:    6.0, // v0.9.193 — operatör: yalnız P1-sınıfı gelsin
+		// v0.9.935 — davranış motoru AŞAMA 1; varsayılan AÇIK, ama
+		// adaylar mevcut terfi kapısından geçtiği için kendiliğinden
+		// Problem/bildirim üretmez: /anomalies akışına düşerler.
+		Behavior: DefaultAnomalyBehavior(),
 		// v0.9.827 — AÇIK = bugünkü davranış. Bu sürüm bir GÖRÜNÜRLÜK
 		// sürümü: var olan davranışı kapatılabilir yapıyor, kendiliğinden
 		// değiştirmiyor.
@@ -164,6 +293,11 @@ func NormalizeAnomalySensitivity(c AnomalySensitivityConfig) AnomalySensitivityC
 		// bir sonraki okuyucu (ya da elle bakan operatör) varsayılanı
 		// tahmin etmek zorunda kalmaz.
 		AttachToIncident: boolPtr(c.AttachesToIncident()),
+		// v0.9.935 — davranış bölümü kendi kelepçesinden geçer. Eksik
+		// bölüm (bu sürümden ESKİ her settings satırı) varsayılanını
+		// alır: sıfır-değerli bir AnomalyBehaviorConfig aralık dışıdır,
+		// dolayısıyla Normalize onu varsayılanlara doldurur.
+		Behavior: NormalizeAnomalyBehavior(c.Behavior),
 	}
 	for _, m := range AnomalySensitivityMetrics {
 		def := d.Metrics[m]

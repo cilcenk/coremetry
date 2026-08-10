@@ -28,6 +28,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { FilterBuilder } from '@/components/FilterBuilder';
 import { FilterGroupBuilder } from '@/components/FilterGroupBuilder';
 import { Button } from '@/components/ui/Button';
+import { Chip } from '@/components/ui/Chip';
 import { Pager } from '@/components/Pager';
 import { ColumnManager } from '@/components/ColumnManager';
 import { stepForPoints, barPanelMaxDataPoints } from '@/lib/chartStep';
@@ -1069,12 +1070,10 @@ function TracesPageInner() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: '8px 12px', marginBottom: 8, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 12 }}>
             <span style={{ color: 'var(--text2)', fontWeight: 600 }}>Trace must include:</span>
             {filter.requireServices.map((s) => (
-              <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', borderRadius: 4, background: 'var(--bg3)', border: '1px solid var(--border)', fontFamily: 'ui-monospace, monospace' }}>
+              <Chip key={s} className="mono" removeLabel={`Remove ${s} from the required services`}
+                onRemove={() => setFilter({ ...filter, requireServices: filter.requireServices.filter(x => x !== s) })}>
                 {s}
-                <button type="button" title="Remove"
-                  onClick={() => setFilter({ ...filter, requireServices: filter.requireServices.filter(x => x !== s) })}
-                  style={{ background: 'transparent', border: 'none', color: 'var(--text3)', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1 }}>×</button>
-              </span>
+              </Chip>
             ))}
             <Button variant="secondary" size="sm" onClick={() => setFilter({ ...filter, requireServices: [] })} style={{ marginLeft: 'auto' }}>
               Clear all

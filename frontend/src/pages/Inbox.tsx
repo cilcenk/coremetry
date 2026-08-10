@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Button } from '@/components/ui';
+import { Button, Chip } from '@/components/ui';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Users, Shield } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
@@ -641,12 +641,11 @@ export default function InboxPage() {
             title="Case-insensitive substring match across the service, the title and the source label."
             style={{ fontSize: 12, padding: '4px 8px', minWidth: 220 }} />
           {serviceFilter && (
-            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 11, padding: '3px 8px', borderRadius: 11, background: 'var(--bg3)', border: '1px solid var(--border)' }}
+            <Chip onRemove={() => setServiceFilter('')}
+              removeLabel={`Remove the ${serviceFilter} service filter`}
               title="Service filter carried in the URL (?service=). Narrows on top of the search box.">
               service: {serviceFilter}
-              <button type="button" title="Remove" onClick={() => setServiceFilter('')}
-                style={{ background: 'transparent', border: 'none', color: 'var(--text3)', cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1 }}>×</button>
-            </span>
+            </Chip>
           )}
         </div>
 
@@ -817,34 +816,28 @@ export default function InboxPage() {
                       {(it.ownerTeam || it.sreTeam) && (
                         <div style={{ marginTop: 2, display: 'flex', gap: 4, flexWrap: 'wrap' }}>
                           {it.ownerTeam && (
-                            <button type="button"
+                            <Chip size="xs" active={ownerFilter === it.ownerTeam}
                               onClick={e => {
                                 e.stopPropagation();
                                 setOwnerFilter(ownerFilter === it.ownerTeam ? '' : (it.ownerTeam ?? ''));
                               }}
                               title={ownerFilter === it.ownerTeam
                                 ? `Clear owner filter`
-                                : `Filter inbox to owner ${it.ownerTeam}`}
-                              style={{ all: 'unset', cursor: 'pointer' }}>
-                              <span className={`badge ${ownerFilter === it.ownerTeam ? 'b-info' : 'b-gray'}`}>
-                                <Users size={11} strokeWidth={1.75} /> {it.ownerTeam}
-                              </span>
-                            </button>
+                                : `Filter inbox to owner ${it.ownerTeam}`}>
+                              <Users size={11} strokeWidth={1.75} /> {it.ownerTeam}
+                            </Chip>
                           )}
                           {it.sreTeam && (
-                            <button type="button"
+                            <Chip size="xs" active={sreFilter === it.sreTeam}
                               onClick={e => {
                                 e.stopPropagation();
                                 setSreFilter(sreFilter === it.sreTeam ? '' : (it.sreTeam ?? ''));
                               }}
                               title={sreFilter === it.sreTeam
                                 ? `Clear SRE filter`
-                                : `Filter inbox to SRE ${it.sreTeam}`}
-                              style={{ all: 'unset', cursor: 'pointer' }}>
-                              <span className={`badge ${sreFilter === it.sreTeam ? 'b-info' : 'b-gray'}`}>
-                                <Shield size={11} strokeWidth={1.75} /> {it.sreTeam}
-                              </span>
-                            </button>
+                                : `Filter inbox to SRE ${it.sreTeam}`}>
+                              <Shield size={11} strokeWidth={1.75} /> {it.sreTeam}
+                            </Chip>
                           )}
                         </div>
                       )}

@@ -258,12 +258,10 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
             </span>
             <span style={{ color: 'var(--text3)' }}>{remainStr} left</span>
             {canEdit && (
-              <button type="button" onClick={() => onUnmute(s.id)}
-                title="Unmute now"
-                style={{
-                  background: 'transparent', border: 'none', color: 'var(--text3)',
-                  cursor: 'pointer', padding: 0, fontSize: 12, lineHeight: 1,
-                }}>×</button>
+              <button type="button" className="btn-chip-x" onClick={() => onUnmute(s.id)}
+                title="Unmute now" aria-label={`Unmute ${s.pattern}`}>
+                <span aria-hidden="true">×</span>
+              </button>
             )}
           </span>
         );

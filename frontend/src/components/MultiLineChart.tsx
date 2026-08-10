@@ -69,6 +69,11 @@ export interface MultiLineChartProps {
   // positions. Hovering one chart paints the crosshair on every chart
   // sharing the key (Grafana / Datadog dashboard behaviour).
   syncKey?: string;
+  // onCursorTime (v0.9.948, D5/Ö26) — imleç zamanı (unix SANİYE; null =
+  // ayrıldı). uPlot.sync YALNIZ uPlot örneklerini senkronlar; aynı zaman
+  // eksenini paylaşan CANVAS yüzeyler (LatencyHeatmap) ancak bu kanaldan
+  // haberdar olabilir. Verilmezse hiçbir maliyet yok.
+  onCursorTime?: (timeSec: number | null) => void;
   // onZoom — click-drag a horizontal range to zoom. Receives unix SECONDS;
   // the page maps it onto its TimeRange state and re-fetches.
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
@@ -108,7 +113,7 @@ const CoreMultiLazy = lazy(() =>
 export function MultiLineChart(props: MultiLineChartProps) {
   const {
     series, unit, height = 320, deploys, thresholds, regions, syncKey,
-    onZoom, onZoomReset, xRange, legendStorageKey, defaultHidden,
+    onZoom, onZoomReset, onCursorTime, xRange, legendStorageKey, defaultHidden,
     compareSeries, onBucketClick, logScale, maxSeries,
   } = props;
   // v0.9.807 — "others" katlaması. v0.9.789'da v2 kapısı açılırken bu adım
@@ -171,7 +176,7 @@ export function MultiLineChart(props: MultiLineChartProps) {
         // SONRA DA ŞART — sökülen v1 gövdesiydi, saniye-eksenli kardeşler
         // değil.
         syncKey={syncKey ? `${syncKey}-ms` : undefined}
-        onZoom={onZoom} onZoomReset={onZoomReset}
+        onZoom={onZoom} onZoomReset={onZoomReset} onCursorTime={onCursorTime}
         onBucketClick={onBucketClick}
       />
     </Suspense>

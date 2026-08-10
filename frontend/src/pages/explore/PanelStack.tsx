@@ -9,7 +9,7 @@ import {
   produces, queryDesc, queryUnit,
   seriesGroupLabel, seriesGroupPairs, hasGroupedFilter, effectiveTopN,
 } from './model';
-import { valueAtCursor } from './cursorBus';
+import { valueAtCursor } from '@/lib/chart/cursorBus';
 import { QueryPanel } from './QueryPanel';
 import type { ExploreOverlay } from './useExploreQueries';
 

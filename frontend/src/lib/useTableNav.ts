@@ -98,12 +98,15 @@ export function useTableNav<T>(
         handler: () => setSelected(s => s <= 0 ? 0 : s - 1),
       },
       {
-        keys: 'G',
-        label: 'Jump to last row',
-        group: 'Lists',
-        handler: () => setSelected(items.length > 0 ? items.length - 1 : -1),
-      },
-      {
+        // v0.9.949 (E1/Ö27) — TEK kayıt. Öncesinde hem 'G' hem 'shift+g'
+        // kayıtlıydı ve İKİSİ de ölüydü: comboFromEvent Shift+G'yi 'g'ye
+        // katlıyordu, yani ne 'G' ne 'shift+g' üretiliyordu. Üstelik 'g'
+        // dizi öneki olduğu için Shift+G bir `g s`/`g t` sekansı
+        // başlatıyordu (Ö27'nin ikinci yarısı).
+        //
+        // Katlama düzeldikten sonra ÜRETİLEN combo 'shift+g'dir; 'G'
+        // kaydı ulaşılamaz olurdu, o yüzden kaldırıldı — çalışmayan bir
+        // kısayolu yardım ekranında listelemek operatöre yalan söylemek.
         keys: 'shift+g',
         label: 'Jump to last row (Shift+G)',
         group: 'Lists',

@@ -6,7 +6,17 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import { useEndpointSplit, useEndpointDownstream, useEndpointCallers } from '@/lib/queries';
 import { fmtNum, tsLong } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { EndpointDetail, EndpointSplitValue, EndpointCaller } from '@/lib/types';
+import type { EndpointDetail, EndpointSplitValue, EndpointCaller, EndpointFailingTrace } from '@/lib/types';
+
+// v0.9.874 (tutarlılık denetimi BT10) — aynı dosyadaki Split ve Callers
+// tabloları çoktan primitifteydi, bu kalmıştı. Kolon genişlikleri elle
+// yazılmış <th style={{width}}>'lerden AYNEN alındı; Error kolonu esner.
+const FAILING_TRACE_COLS: DataTableColumn<EndpointFailingTrace>[] = [
+  { id: 'time',     label: 'Time',     sortValue: t => t.timeNs,     width: 96 },
+  { id: 'trace',    label: 'Trace',    sortValue: t => t.traceId,    naturalDir: 'asc', width: 150 },
+  { id: 'error',    label: 'Error',    sortValue: t => t.statusMsg || t.spanName, naturalDir: 'asc', flex: true },
+  { id: 'duration', label: 'Duration', sortValue: t => t.durationMs, numeric: true, width: 92 },
+];
 import { trimHistogram, type EndpointRef } from './endpointParam';
 
 // detailSections — the /endpoint page's body (v0.9.839).
@@ -247,6 +257,10 @@ export function ExceptionsSection({ detail }: { detail: EndpointDetail }) {
 export function FailingTracesSection({ detail }: { detail: EndpointDetail }) {
   const traces = detail.failingTraces;
   const ex = detail.exemplars;
+  const dt = useDataTable<EndpointFailingTrace>({
+    storageKey: 'endpoint-failing-traces', columns: FAILING_TRACE_COLS,
+    rows: traces ?? [], initialSort: { id: 'time', dir: 'desc' },
+  });
   return (
     <Card header={
       <PanelTitle sub="worst first" right={
@@ -278,17 +292,11 @@ export function FailingTracesSection({ detail }: { detail: EndpointDetail }) {
       )}
       {traces && traces.length > 0 && (
         <div className="table-wrap">
-          <table style={{ width: '100%' }}>
-            <thead>
-              <tr>
-                <th style={{ width: 96 }}>Time</th>
-                <th style={{ width: 150 }}>Trace</th>
-                <th>Error</th>
-                <th className="num" style={{ width: 92 }}>Duration</th>
-              </tr>
-            </thead>
+          <table style={{ width: '100%', tableLayout: 'fixed' }}>
+            <DataTableColgroup dt={dt} />
+            <DataTableHead dt={dt} />
             <tbody>
-              {traces.map(t => (
+              {dt.sortedRows.map(t => (
                 <tr key={t.traceId}>
                   <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
                     {tsLong(t.timeNs)}

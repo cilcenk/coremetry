@@ -16,6 +16,20 @@ import { timeRangeToNs } from '@/lib/utils';
 import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
 import type { SlowQueryRow } from '@/lib/types';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// v0.9.874 (tutarlılık denetimi MT12) — "En pahalı ifadeler" tablosu.
+// Kardeşi /slow-queries çoktan primitifte; bu tablo hem sıralanamıyordu
+// hem de tanımsız `.tbl` sınıfıyla, kapsız çiziliyordu.
+const DB_STMT_COLS: DataTableColumn<SlowQueryRow>[] = [
+  { id: 'statement', label: 'İfade',  sortValue: r => r.statement, naturalDir: 'asc', flex: true },
+  { id: 'service',   label: 'Service', sortValue: r => r.service,  naturalDir: 'asc', width: 170 },
+  { id: 'count',     label: 'Çağrı',  sortValue: r => r.count,     numeric: true, width: 95 },
+  { id: 'p95',       label: 'P95',    sortValue: r => r.p95Ms,     numeric: true, width: 100 },
+  { id: 'total',     label: 'Toplam', sortValue: r => r.totalMs,   numeric: true, width: 105 },
+  { id: 'db',        label: 'DB',     sortValue: r => r.dbName || r.dbSystem, naturalDir: 'asc', width: 130 },
+];
 import type { DBInstance, DatabasesOverview } from '@/lib/types';
 
 // /databases — two distinct panels driven by data origin:
@@ -102,6 +116,11 @@ export default function DatabasesPage() {
     staleTime: 30_000,
   });
   const stmtRef = useMemo(() => decodeStmtParam(sp.get('stmt')), [sp]);
+  const stmtDt = useDataTable<SlowQueryRow>({
+    storageKey: 'databases-top-statements', columns: DB_STMT_COLS,
+    rows: stmtsQ.data ?? [], initialSort: { id: 'total', dir: 'desc' },
+  });
+
   const openStmt = (r: SlowQueryRow) => {
     if (!r.stmtHash) return;
     setSp(prev => {
@@ -378,17 +397,17 @@ export default function DatabasesPage() {
                 <EmptyHint>Bu pencerede eşleşen ifade yok.</EmptyHint>
               )}
               {(stmtsQ.data ?? []).length > 0 && (
-                <table className="tbl" style={{ width: '100%', fontSize: 12 }}>
-                  <thead><tr>
-                    <th style={{ textAlign: 'left' }}>İfade</th>
-                    <th style={{ textAlign: 'left' }}>Service</th>
-                    <th className="num">Çağrı</th>
-                    <th className="num">P95</th>
-                    <th className="num">Toplam</th>
-                    <th className="num">DB</th>
-                  </tr></thead>
+                // v0.9.874 (tutarlılık denetimi MT12) — ÖNCE KAP, SONRA
+                // PRİMİTİF. Bu tablo `.tbl` sınıfıyla çiziliyordu; o sınıf
+                // globals.css'te TANIMSIZ (ölü sınıf, okuyanı yanıltıyordu)
+                // ve `.table-wrap` kabı da YOKTU. Sabit düzen + kap yokluğu
+                // = dar ekranda sayfanın yatay taşması (v0.9.640 sızıntısı).
+                <div className="table-wrap">
+                  <table style={{ width: '100%', fontSize: 12, tableLayout: 'fixed' }}>
+                    <DataTableColgroup dt={stmtDt} />
+                    <DataTableHead dt={stmtDt} />
                   <tbody>
-                    {(stmtsQ.data ?? []).map((r, i) => (
+                    {stmtDt.sortedRows.map((r, i) => (
                       <tr key={r.stmtHash ?? i}
                         onClick={() => openStmt(r)}
                         title={r.sampleStatement || r.statement}
@@ -423,8 +442,9 @@ export default function DatabasesPage() {
                         </td>
                       </tr>
                     ))}
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </>

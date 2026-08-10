@@ -64,26 +64,115 @@ func FingerprintAnomaly(kind, pattern, service string) string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-// UpsertAnomalyEvent records (or refreshes) an event. ReplacingMergeTree
-// picks the latest version on read. peak_ratio is monotonic — we
-// pass max(prev, new) in the application layer because CH lacks an
-// atomic max-on-upsert primitive on this engine.
-func (s *Store) UpsertAnomalyEvent(ctx context.Context, e AnomalyEvent) error {
-	// Look up the previous peak_ratio + started_at — if the event
-	// already exists we keep the original started_at (so the row
-	// represents a single continuous anomaly span) and only bump
-	// peak_ratio if the new ratio is higher.
-	var prevStartedAt time.Time
-	var prevPeak float64
-	row := s.conn.QueryRow(ctx,
-		`SELECT started_at, peak_ratio FROM anomaly_events FINAL WHERE id = ?`, e.ID)
-	if err := row.Scan(&prevStartedAt, &prevPeak); err != nil {
-		// "no rows" → first sighting; use the current values.
-		prevStartedAt = time.Unix(0, e.StartedAt)
-		prevPeak = e.CurrentRatio
+// uniqueAnomalyIDs — toplu okumanın IN listesi: her id BİR KEZ.
+//
+// Tekilleştirme gerekli çünkü aynı tikte aynı fingerprint'e iki olay
+// gelebilir (aynı servis+metrik iki kez aday olursa) ve `id IN (x, x)`
+// hem gereksiz bind argümanı hem de okurken çift satır demek. Saf +
+// SIRA KORUNUR: bind argümanlarının sırası deterministik olmalı, yoksa
+// aynı yazım iki podda iki farklı sorgu metni üretir ve query_log'da
+// tek bir ifade olarak görünmez.
+func uniqueAnomalyIDs(evs []AnomalyEvent) []string {
+	ids := make([]string, 0, len(evs))
+	seen := make(map[string]struct{}, len(evs))
+	for _, e := range evs {
+		if _, ok := seen[e.ID]; ok {
+			continue
+		}
+		seen[e.ID] = struct{}{}
+		ids = append(ids, e.ID)
 	}
-	if e.CurrentRatio > prevPeak {
-		prevPeak = e.CurrentRatio
+	return ids
+}
+
+// mergeAnomalyCarry — var olan satırın started_at/peak_ratio'sunun yeni
+// gözlemle birleşimi. SAF ve tablo-testli (anomaly_event_test.go), çünkü
+// toplu yazıma geçerken (v0.9.957) sessizce bozulabilecek TEK semantik
+// bu: started_at'ın korunması "süregelen anomali tek satırdır"
+// sözleşmesinin tamamı, peak_ratio'nun monotonluğu da terfi kapısının
+// girdisi.
+//
+//	exists=false → ilk görülme: olayın kendi değerleri.
+//	exists=true  → started_at KORUNUR (asla tazelenmez),
+//	               peak_ratio yalnız YÜKSELİR.
+func mergeAnomalyCarry(e AnomalyEvent, prevStartedAt time.Time, prevPeak float64, exists bool) (time.Time, float64) {
+	if !exists {
+		return time.Unix(0, e.StartedAt), e.CurrentRatio
+	}
+	peak := prevPeak
+	if e.CurrentRatio > peak {
+		peak = e.CurrentRatio
+	}
+	return prevStartedAt, peak
+}
+
+// UpsertAnomalyEvent records (or refreshes) one event. Thin wrapper over
+// UpsertAnomalyEvents so the peak_ratio / started_at carry-forward
+// semantics live in EXACTLY ONE place — the two paths silently drifting
+// apart would show up as anomalies that reset their own start time.
+func (s *Store) UpsertAnomalyEvent(ctx context.Context, e AnomalyEvent) error {
+	return s.UpsertAnomalyEvents(ctx, []AnomalyEvent{e})
+}
+
+// UpsertAnomalyEvents records (or refreshes) a BATCH of events in two
+// round-trips total: one FINAL lookup for the whole id set, one INSERT.
+//
+// ── Neden toplu (v0.9.957) ───────────────────────────────────────────
+// Davranış motoru (internal/anomaly/behavior_scan.go) bir tikte 37 olay
+// yazıyordu ve bunu 37 ardışık UpsertAnomalyEvent çağrısıyla yapıyordu.
+// ÖLÇÜLDÜ: 25.6 saniyelik tikin ~20 saniyesi buradaydı — MV sorgusu
+// değil, olay YAZIMI. Her çağrı iki gidiş-dönüş (FINAL SELECT + INSERT)
+// demek, yani 74 round-trip; her biri tek satır için.
+//
+// FINAL bir ReplacingMergeTree üzerinde ucuz değildir: parçaları okuma
+// anında birleştirir. Tek `id` için çalıştırmak da, 37 `id` için
+// çalıştırmak da neredeyse aynı maliyeti öder — bu yüzden kazanç
+// doğrusal değil, N katı.
+//
+// IN bir DEĞER LİSTESİ, alt sorgu DEĞİL: Distributed bir kurulumda
+// GLOBAL IN gerektiren şey shard-yerel koşacak ALT SORGUdur (v0.5.427);
+// bind edilmiş sabit liste her shard'a olduğu gibi gider.
+//
+// Boş dilim → HİÇ sorgu yok. "Aday üretmeyen tik CH'ye dokunmamalı"
+// hem ucuz hem de dürüst: query_log'da iz bırakmayan bir tik gerçekten
+// bir şey yazmamıştır.
+func (s *Store) UpsertAnomalyEvents(ctx context.Context, evs []AnomalyEvent) error {
+	if len(evs) == 0 {
+		return nil
+	}
+	// TEK okuma: mevcut satırların started_at + peak_ratio'su. Var olan
+	// bir olayın started_at'ı KORUNUR (satır tek sürekli bir anomaliyi
+	// temsil eder) ve peak_ratio yalnız yükselir — CH'de bu motorda
+	// atomik max-on-upsert primitifi yok, uygulama katmanı taşıyor.
+	type prevRow struct {
+		startedAt time.Time
+		peak      float64
+	}
+	prev := make(map[string]prevRow, len(evs))
+	ids := uniqueAnomalyIDs(evs)
+	rows, err := s.conn.Query(ctx,
+		`SELECT id, started_at, peak_ratio FROM anomaly_events FINAL
+		 WHERE id IN (`+chPlaceholders(len(ids))+`)`, toAnySlice(ids)...)
+	if err != nil {
+		// YUMUŞAK DÜŞÜŞ: geçmişi okuyamamak yazmamak için gerekçe değil.
+		// prev boş kalır → her olay "ilk görülme" gibi yazılır; sonuç
+		// started_at'ın tazelenmesi, olayın kaybolması değil.
+		prev = map[string]prevRow{}
+	} else {
+		for rows.Next() {
+			var id string
+			var p prevRow
+			if err := rows.Scan(&id, &p.startedAt, &p.peak); err != nil {
+				rows.Close()
+				return err
+			}
+			prev[id] = p
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
 	}
 
 	// Explicit column list: anomaly_events has a `version` column with a
@@ -93,20 +182,26 @@ func (s *Store) UpsertAnomalyEvent(ctx context.Context, e AnomalyEvent) error {
 	// which spammed the logs once the table grew that DEFAULT column.
 	// Naming the columns we actually populate lets the DEFAULT do its
 	// job and the recorder stays in sync without handcrafting a version
-	// value here.
+	// value here. DEFAULT toplu yazımda da doğru çalışır: her satır
+	// KENDİ now64()'ünü alır, yani ReplacingMergeTree'nin version
+	// semantiği (aynı id için en son sürüm kazanır) korunur.
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO anomaly_events
 		(id, kind, pattern, service, started_at, last_seen,
 		 peak_ratio, current_ratio, current_count, sample)`)
 	if err != nil {
 		return err
 	}
-	if err := batch.Append(
-		e.ID, e.Kind, e.Pattern, e.Service,
-		prevStartedAt,
-		time.Unix(0, e.LastSeen),
-		prevPeak, e.CurrentRatio, e.CurrentCount, e.Sample,
-	); err != nil {
-		return err
+	for _, e := range evs {
+		p, exists := prev[e.ID]
+		startedAt, peak := mergeAnomalyCarry(e, p.startedAt, p.peak, exists)
+		if err := batch.Append(
+			e.ID, e.Kind, e.Pattern, e.Service,
+			startedAt,
+			time.Unix(0, e.LastSeen),
+			peak, e.CurrentRatio, e.CurrentCount, e.Sample,
+		); err != nil {
+			return err
+		}
 	}
 	return batch.Send()
 }

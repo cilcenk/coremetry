@@ -36,8 +36,11 @@ var behaviorObs struct {
 	candidates   atomic.Int64
 	lastUnix     atomic.Int64
 	lastMs       atomic.Int64
+	lastQueryMs  atomic.Int64
+	lastWriteMs  atomic.Int64
 	lastCands    atomic.Int64
 	lastServices atomic.Int64
+	lastScarce   atomic.Int64
 	lastErr      atomic.Value // string
 }
 
@@ -54,9 +57,22 @@ type BehaviorStats struct {
 	// LastDurationMs — son taramanın TOPLAM süresi (sorgu + karar +
 	// yazım). Bütçe göstergesi: 10 sn'yi aşarsa vidalar sıkılmalı.
 	LastDurationMs int64 `json:"lastDurationMs"`
+	// LastQueryMs / LastWriteMs — bütçenin KIRILIMI (v0.9.957). Toplam
+	// süre tek başına ne yapılacağını söylemiyor: yük 28 günlük MV
+	// sorgusundaysa vidalar (tavan/pencere) sorumludur, olay yazımındaysa
+	// toplu yazım hattı. v0.9.936'nın 25.6 saniyesi bu kırılım olmadığı
+	// için "MV pahalı" diye okunmuştu; ölçünce ~20 saniyenin YAZIMDA
+	// olduğu ortaya çıktı.
+	LastQueryMs int64 `json:"lastQueryMs"`
+	LastWriteMs int64 `json:"lastWriteMs"`
 	// LastCandidates / LastServices — son tikin çıktısı ve kapsamı.
 	LastCandidates int64 `json:"lastCandidates"`
 	LastServices   int64 `json:"lastServices"`
+	// LastScarceBuckets — YETERSİZ geçmiş yüzünden atlanan kova sayısı
+	// (v0.9.957). Sessizliğin GEREKÇESİ: motor aday üretmiyorsa bunun
+	// "her şey normal" mi yoksa "henüz öğrenecek kadar geçmiş yok" mu
+	// olduğunu başka hiçbir ekran söyleyemezdi.
+	LastScarceBuckets int64 `json:"lastScarceBuckets"`
 	// LastError — son taramanın hatası ("" = temiz). Sessiz kapanma bu
 	// depoda tekrarlayan hata sınıfı: motor bir CH hatasıyla hiç aday
 	// üretmiyor olabilir ve hiçbir ekran bunu söylemezdi.
@@ -67,12 +83,15 @@ type BehaviorStats struct {
 // çağırır (aynı süreçte koşuyorsa dolu, koşmuyorsa sıfır).
 func BehaviorObservability() BehaviorStats {
 	s := BehaviorStats{
-		Ticks:          behaviorObs.ticks.Load(),
-		Candidates:     behaviorObs.candidates.Load(),
-		LastUnix:       behaviorObs.lastUnix.Load(),
-		LastDurationMs: behaviorObs.lastMs.Load(),
-		LastCandidates: behaviorObs.lastCands.Load(),
-		LastServices:   behaviorObs.lastServices.Load(),
+		Ticks:             behaviorObs.ticks.Load(),
+		Candidates:        behaviorObs.candidates.Load(),
+		LastUnix:          behaviorObs.lastUnix.Load(),
+		LastDurationMs:    behaviorObs.lastMs.Load(),
+		LastQueryMs:       behaviorObs.lastQueryMs.Load(),
+		LastWriteMs:       behaviorObs.lastWriteMs.Load(),
+		LastCandidates:    behaviorObs.lastCands.Load(),
+		LastServices:      behaviorObs.lastServices.Load(),
+		LastScarceBuckets: behaviorObs.lastScarce.Load(),
 	}
 	if v, ok := behaviorObs.lastErr.Load().(string); ok {
 		s.LastError = v
@@ -93,6 +112,13 @@ func (d *Detector) scanBehavior(ctx context.Context, now time.Time, cfg chstore.
 	}
 	start := time.Now()
 	rowsByService, err := d.fetchBehaviorBuckets(ctx, now, b)
+	// queryMs — 28 GÜNLÜK MV sorgusunun kendi payı. Toplam süreden AYRI
+	// ölçülüyor (v0.9.957) çünkü "tik yavaş" tek başına ne yapılacağını
+	// söylemiyor: yük sorgudaysa vidalar (pencere/tavan), yazımdaysa
+	// toplu yazım hattı sorumludur. Bu ayrım olmadan v0.9.936'nın 25.6
+	// saniyesi "MV pahalı" diye okunmuştu; ölçünce ~20 saniyenin
+	// YAZIMDA olduğu çıktı.
+	queryMs := time.Since(start).Milliseconds()
 	if err != nil {
 		behaviorObs.lastErr.Store(err.Error())
 		log.Printf("[behavior] bucket okuması: %v — bu tik aday YOK", err)
@@ -113,10 +139,18 @@ func (d *Detector) scanBehavior(ctx context.Context, now time.Time, cfg chstore.
 
 	recentCutoff := lastCompleteBucketStart(now).Add(-behaviorRecentHours * time.Hour).Unix()
 	var cands []behaviorCandidate
+	scarce := 0
 	for service, rows := range rowsByService {
-		for _, metric := range behaviorMetrics {
+		for mi, metric := range behaviorMetrics {
 			pol := policyFor(metric, cfg)
 			baseline, recent := splitBehaviorSeries(rows, metric, recentCutoff)
+			// Kıtlık sayımı METRİKTEN BAĞIMSIZ (kovanın örnek sayısı ve
+			// gün çeşitliliği aynı satırlardan çıkıyor), o yüzden servis
+			// başına BİR KEZ — üç metrikte saymak aynı kovayı üç kez
+			// raporlar ve kart üç katı bir sayı gösterirdi.
+			if mi == 0 {
+				scarce += countScarceBuckets(baseline, b)
+			}
 			c, ok := evalBehavior(service, metric, baseline, recent, pol, b)
 			if !ok {
 				continue
@@ -127,26 +161,48 @@ func (d *Detector) scanBehavior(ctx context.Context, now time.Time, cfg chstore.
 	}
 	cands = capBehaviorCandidates(cands, b.MaxCandidatesPerTick)
 
+	// TEK TOPLU YAZIM (v0.9.957). Eskiden burada aday başına bir
+	// UpsertAnomalyEvent vardı; ÖLÇÜLDÜ: 37 adaylı bir tikte 25.6
+	// saniyenin ~20'si bu döngüdeydi (aday başına iki gidiş-dönüş, her
+	// biri tek satır için, ve her FINAL SELECT bir ReplacingMergeTree
+	// birleştirmesi ödüyordu).
+	//
+	// HEPSİ-YA-HİÇ: toplu yazım tek bir INSERT, dolayısıyla hata
+	// hâlinde bu tikin adaylarının HİÇBİRİ yazılmaz. Eski davranışta
+	// bir aday patlarsa diğerleri yazılıyordu. Bu bilinçli bir takas:
+	// motor durum tutmadığı için bir sonraki tik (2 dakika) hâlâ
+	// ateşleyen her adayı yeniden üretir — kayıp kalıcı değil, gecikme.
+	// Karşılığında yazım yolu tek ifade, tek hata, tek ölçüm.
+	writeStart := time.Now()
 	written := 0
+	events := make([]chstore.AnomalyEvent, 0, len(cands))
 	for _, c := range cands {
-		if err := d.store.UpsertAnomalyEvent(ctx, behaviorEvent(c, now)); err != nil {
-			log.Printf("[behavior] upsert %s/%s: %v", c.Service, c.Metric, err)
-			continue
-		}
-		written++
-		log.Printf("[behavior] %s · %s %s %s — %.2f%s → %.2f%s (%.2f×, %.1fσ, %d dilim)%s",
-			c.Service, displayMetric(c.Metric), behaviorSignalTR(c.Signal), behaviorDirectionTR(c.Direction),
-			c.Baseline, unitOf(c.Metric), c.Current, unitOf(c.Metric),
-			c.Ratio, c.Z, c.Dwell, behaviorDeploySuffix(c))
+		events = append(events, behaviorEvent(c, now))
 	}
+	if err := d.store.UpsertAnomalyEvents(ctx, events); err != nil {
+		behaviorObs.lastErr.Store(err.Error())
+		log.Printf("[behavior] toplu upsert (%d aday): %v — bu tik YAZIM YOK", len(events), err)
+	} else {
+		written = len(events)
+		for _, c := range cands {
+			log.Printf("[behavior] %s · %s %s %s — %.2f%s → %.2f%s (%.2f×, %.1fσ, %d dilim)%s",
+				c.Service, displayMetric(c.Metric), behaviorSignalTR(c.Signal), behaviorDirectionTR(c.Direction),
+				c.Baseline, unitOf(c.Metric), c.Current, unitOf(c.Metric),
+				c.Ratio, c.Z, c.Dwell, behaviorDeploySuffix(c))
+		}
+		behaviorObs.lastErr.Store("")
+	}
+	writeMs := time.Since(writeStart).Milliseconds()
 
 	behaviorObs.ticks.Add(1)
 	behaviorObs.candidates.Add(int64(written))
 	behaviorObs.lastUnix.Store(time.Now().Unix())
 	behaviorObs.lastMs.Store(time.Since(start).Milliseconds())
+	behaviorObs.lastQueryMs.Store(queryMs)
+	behaviorObs.lastWriteMs.Store(writeMs)
 	behaviorObs.lastCands.Store(int64(written))
 	behaviorObs.lastServices.Store(int64(len(rowsByService)))
-	behaviorObs.lastErr.Store("")
+	behaviorObs.lastScarce.Store(int64(scarce))
 }
 
 const (

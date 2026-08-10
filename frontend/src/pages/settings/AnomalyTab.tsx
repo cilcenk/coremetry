@@ -484,6 +484,7 @@ function BehaviorSubsection({ behavior, onChange }: {
   const b: AnomalyBehaviorConfig = behavior ?? {
     enabled: true, seasonalZ: 4, regimeRatio: 1.5,
     dwellSeasonal: 3, dwellRegime: 6, maxCandidatesPerTick: 50,
+    minSamplesPerBucket: 12, minBucketRepeats: 3,
   };
   // `!== false` ŞART: alan yoksa (eski satır) motor AÇIKtır.
   const on = b.enabled !== false;
@@ -590,13 +591,43 @@ function BehaviorSubsection({ behavior, onChange }: {
             girerler. Varsayılan <b>50</b>.
           </div>
         </Field>
+
+        {/* v0.9.957 — örnek-kıtlığı kapısı. İKİ vida çünkü iki farklı
+            soru: "kaç örneğim var" ve "kaç FARKLI GÜN gördüm". */}
+        <Field label="Kova başına en az örnek">
+          <input type="number" min={1} max={576} step={1}
+            value={b.minSamplesPerBucket ?? 12}
+            onChange={e => set({ minSamplesPerBucket: Number(e.target.value) })}
+            disabled={!on} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Bir haftanın-saati kovasının baseline sayılması için gereken en az
+            5&#8209;dakikalık örnek. Altında o kova <b>sessiz</b> kalır.
+            Varsayılan <b>12</b>.
+          </div>
+        </Field>
+
+        <Field label="Kova başına en az farklı gün">
+          <input type="number" min={1} max={4} step={1}
+            value={b.minBucketRepeats ?? 3}
+            onChange={e => set({ minBucketRepeats: Number(e.target.value) })}
+            disabled={!on} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Örnek <b>sayısı</b> yetmez, <b>çeşitliliği</b> de gerekir: 24 örneğin
+            hepsi iki günden geliyorsa haftadan haftaya yayılım iki gözlemden
+            kestiriliyor demektir, sapma ölçüsü patlar ve normal dalgalanmalar
+            bulgu görünür. 28 günlük pencerede en fazla <b>4</b> tekrar olur;
+            varsayılan <b>3</b>.
+          </div>
+        </Field>
       </div>
 
       <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 12, marginLeft: 12, lineHeight: 1.5 }}>
         Yeni bir servis ilk dört haftasında <b>sessiz</b> kalır: baseline&apos;ı
         yoksa motor bulgu üretmez (&laquo;veri yok&raquo; bir anomali değildir).
-        Motorun tarama süresini <span className="mono">/admin/stats</span> &rarr;
-        Davranış motoru kartından izleyebilirsiniz.
+        Yeni <b>kurulan</b> bir Coremetry de aynı sebeple sessizdir; kaç kovanın
+        bu yüzden atlandığını ve motorun tarama süresini{' '}
+        <span className="mono">/admin/stats</span> &rarr; Davranış motoru
+        kartından izleyebilirsiniz.
       </div>
     </div>
   );

@@ -3875,8 +3875,22 @@ export interface SystemStats {
     candidates: number;       // yazılan aday (tavandan SONRA)
     lastUnix: number;         // son taramanın bitiş anı (0 = hiç koşmadı)
     lastDurationMs: number;   // son taramanın toplam süresi
+    // v0.9.957 — bütçenin KIRILIMI. Toplam süre tek başına ne
+    // yapılacağını söylemiyor: yük 28 günlük MV sorgusundaysa vidalar,
+    // olay yazımındaysa toplu yazım hattı sorumludur. v0.9.936'nın 25.6
+    // saniyesi bu kırılım olmadığı için "MV pahalı" diye okunmuştu;
+    // ölçünce ~20 saniyenin YAZIMDA olduğu çıktı.
+    //
+    // OPSİYONEL: bu sürümden eski bir backend alanı hiç döndürmez.
+    lastQueryMs?: number;
+    lastWriteMs?: number;
     lastCandidates: number;
     lastServices: number;
+    // Yetersiz geçmiş yüzünden atlanan kova sayısı. SESSİZLİĞİN
+    // GEREKÇESİ: motor aday üretmiyorsa bunun "her şey normal" mi yoksa
+    // "henüz öğrenecek kadar geçmiş yok" mu olduğunu başka hiçbir ekran
+    // söyleyemez.
+    lastScarceBuckets?: number;
     // Son taramanın hatası ("" / yok = temiz). Sessiz kapanma bu depoda
     // tekrarlayan hata sınıfı — motor bir CH hatasıyla hiç aday
     // üretmiyor olabilir ve başka hiçbir ekran bunu söylemez.
@@ -4730,6 +4744,18 @@ export interface AnomalyBehaviorConfig {
   dwellRegime: number;
   // Fırtına koruması: tik başına yazılacak EN GÜÇLÜ aday sayısı.
   maxCandidatesPerTick: number;
+  // v0.9.957 — örnek-kıtlığı kapısının iki boyutu. OPSİYONEL çünkü bu
+  // sürümden ESKİ settings satırlarında alan yok; sunucu Normalize'da
+  // varsayılanlarla dolduruyor.
+  //
+  // minSamplesPerBucket : kova başına asgari 5-dk örneği (vars. 12).
+  // minBucketRepeats    : kovanın kaç FARKLI GÜNDEN geldiği (vars. 3).
+  //
+  // İkisi AYRI soru: 24 örnek bol görünür ama hepsi iki günden
+  // geliyorsa mevsimsel yayılım n=2'den kestiriliyor demektir ve z
+  // patlar. Ölçülmüş vaka: lokal 9 günlük geçmişte tek tikte 178 aday.
+  minSamplesPerBucket?: number;
+  minBucketRepeats?: number;
 }
 
 // BehaviorChangeDetails — `behavior_change` kindli bir AnomalyEvent'in

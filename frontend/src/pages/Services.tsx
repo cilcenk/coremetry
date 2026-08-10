@@ -677,6 +677,13 @@ export default function ServicesPage() {
                     return (
                       <tr key={s.name}
                           data-row-idx={i}
+                          // v0.9.928 — kimlik damgası. Bu tablo kendi <tr>'sini
+                          // basıyor (useDataTable rowProps'undan geçmiyor), o
+                          // yüzden v0.9.926'nın KAPSAMLI oto-kaydırma sorgusu
+                          // burada hiçbir şey bulamıyordu: seçim yürüyor ama
+                          // satır görünüre kaydırılmıyordu. Aynı damga j/k
+                          // arbitrajının da etkileşim sinyali.
+                          data-table-id={tableNav.pageId}
                           className={isSelected ? 'row-selected' : undefined}
                           onMouseEnter={() => {
                             tableNav.setSelected(i);

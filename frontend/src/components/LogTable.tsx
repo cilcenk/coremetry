@@ -199,6 +199,11 @@ export function LogTable({
   nav?: {
     selected: number;
     setSelected: (n: number) => void;
+    // v0.9.928 — ebeveynin useTableNav kimliği. Satıra `data-table-id`
+    // olarak basılıyor: v0.9.926'nın kapsamlı oto-kaydırma sorgusu bu
+    // damga olmadan /logs'ta hiçbir satır bulamıyordu, ve j/k arbitrajı
+    // "operatör log tablosuyla etkileşti" sinyalini alamıyordu.
+    pageId?: string;
   };
   // Controlled mode: parent owns the expanded set + receives
   // a toggle callback. Used by /logs so the j/k useTableNav
@@ -289,6 +294,7 @@ export function LogTable({
                 key={l.id}
                 l={l}
                 idx={idx}
+                tableId={nav?.pageId}
                 cols={cols}
                 colIds={colIds}
                 highlightTerms={highlightTerms}
@@ -314,11 +320,12 @@ export function LogTable({
 }
 
 function LogRow({
-  l, idx, cols, colIds, highlightTerms, hideTraceColumn, selected, expanded, onClick, extraExpanded,
+  l, idx, tableId, cols, colIds, highlightTerms, hideTraceColumn, selected, expanded, onClick, extraExpanded,
   onFilterAdd, onFilterExclude, onTracePeek, onContextOpen,
 }: {
   l: LogRow;
   idx: number;
+  tableId?: string;
   cols: number;
   colIds: string[];
   highlightTerms?: string[];
@@ -362,6 +369,7 @@ function LogRow({
     <>
       <tr onClick={onClick}
           data-row-idx={idx}
+          data-table-id={tableId}
           className={`${selected ? 'row-selected ' : ''}${l.severity >= 17 ? 'log-error' : l.severity >= 13 ? 'log-warn' : ''}`.trim() || undefined}
           /* content-visibility lets the browser skip layout/paint of
              off-screen log rows — the table > 100 rows hard constraint.

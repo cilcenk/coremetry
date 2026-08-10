@@ -190,15 +190,11 @@ export default function LoginPage() {
 
         {oidcEnabled && (
           <>
-            <button type="button"
+            <Button variant="secondary" size="lg"
               onClick={() => { window.location.href = '/api/auth/oidc/start'; }}
-              style={{
-                width: '100%', padding: '9px 12px', marginBottom: 14,
-                background: 'var(--bg)', color: 'var(--text)',
-                border: '1px solid var(--border)',
-              }}>
+              style={{ width: '100%', marginBottom: 14, justifyContent: 'center' }}>
               ⚿ {t('login.signInWith')} {oidcLabel}
-            </button>
+            </Button>
             <div style={{
               display: 'flex', alignItems: 'center', gap: 8,
               color: 'var(--text3)', fontSize: 11, margin: '6px 0 14px',

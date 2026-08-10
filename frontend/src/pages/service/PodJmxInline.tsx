@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Card } from '@/components/ui';
+import { Card, Button } from '@/components/ui';
 import { Spinner } from '@/components/Spinner';
 import { MultiLineChart } from '@/components/MultiLineChart';
 import { namedSeriesToSeries } from '@/pages/clusters/trendSeries';
@@ -49,13 +49,10 @@ export function PodJmxInline({ cluster, ns, deploy, pod, cFrom, cTo, onFull }: {
         <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)' }}>
           JVM / JBoss (JMX) · <span className="mono">{pod}</span>
         </span>
-        <button type="button" onClick={onFull} title="Tam pod detayı (RED + infra + JMX)"
-          style={{
-            all: 'unset', cursor: 'pointer', fontSize: 12, color: 'var(--accent2)',
-            border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px',
-          }}>
+        <Button variant="accent" size="sm" onClick={onFull}
+          title="Tam pod detayı (RED + infra + JMX)">
           Tam detay → /pod
-        </button>
+        </Button>
       </div>
       {metricsQ.isSuccess && metrics.length === 0 ? (
         // v0.9.574 (operatör: "podlara tıklayınca cpu memory

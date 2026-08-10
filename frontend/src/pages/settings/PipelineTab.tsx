@@ -5,6 +5,25 @@ import { api, type PipelineRule } from '@/lib/api';
 import type { MetricExclusionRule } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
 import { buildPipelineRuleBody, describeCondition } from './pipelineRuleBody';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// v0.9.875 (tutarlılık denetimi MT6) — kural tablosu paylaşılan primitife.
+// v0.9.797'den beri türetilmiş-metrik kuralları da buraya yazılıyor ve liste
+// SINIRSIZ büyüyor; sıralama yoktu.
+//
+// Predicate kolonu birleşik bir gösterim (when + AND'ler + setAttributes /
+// rate). Sıralama görüneni takip etsin diye anahtar+op+değer üzerinden
+// yapılıyor — aynı attr'ı hedefleyen kurallar yan yana geliyor, ki bu
+// listedeki en sık soru ("bu key'e dokunan kaç kural var").
+const RULE_COLS: DataTableColumn<PipelineRule>[] = [
+  { id: 'name',      label: 'Name',      sortValue: r => r.name,   naturalDir: 'asc', width: 200 },
+  { id: 'kind',      label: 'Kind',      sortValue: r => r.kind,   naturalDir: 'asc', width: 110 },
+  { id: 'signal',    label: 'Signal',    sortValue: r => r.signal, naturalDir: 'asc', width: 110 },
+  { id: 'predicate', label: 'Predicate',
+    sortValue: r => `${r.when.key} ${r.when.op} ${r.when.value}`, naturalDir: 'asc', flex: true },
+  { id: 'enabled',   label: 'Enabled',   sortValue: r => (r.enabled ? 1 : 0), width: 95 },
+];
 
 // ── Pipeline tab (v0.5.263; logs + metrics v0.8.282) ────────────────────────
 //
@@ -32,6 +51,11 @@ export function PipelineTab() {
   // söyler ("+ New rule" boş, dışlama kartının köprüsü span/route dolu).
   const [spanPrefill, setSpanPrefill] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const dt = useDataTable<PipelineRule>({
+    storageKey: 'settings-pipeline-rules', columns: RULE_COLS, rows: rules ?? [],
+    initialSort: { id: 'name', dir: 'asc' },
+  });
 
   const load = () => {
     setRules(undefined);
@@ -91,19 +115,11 @@ export function PipelineTab() {
         </Empty>
       ) : (
         <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Kind</th>
-                <th>Signal</th>
-                <th>Predicate</th>
-                <th>Enabled</th>
-                <th style={{ textAlign: 'right' }}>Actions</th>
-              </tr>
-            </thead>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} trailing={[160]} />
+            <DataTableHead dt={dt} trailing={<th style={{ textAlign: 'right' }}>Actions</th>} />
             <tbody>
-              {rules.map(r => (
+              {dt.sortedRows.map(r => (
                 <tr key={r.id}>
                   <td style={{ fontWeight: 600 }}>{r.name}</td>
                   <td>

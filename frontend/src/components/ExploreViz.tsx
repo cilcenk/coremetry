@@ -2,6 +2,16 @@ import { useMemo } from 'react';
 import { seriesColor } from '@/lib/chartFmt';
 import { MultiLineChart } from './MultiLineChart';
 import type { ExploreSeries, SpanMetricSeries } from '@/lib/types';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+type TopNRow = { name: string; latest: number; total: number };
+
+const TOPN_COLS: DataTableColumn<TopNRow>[] = [
+  { id: 'name',   label: 'Name',         sortValue: r => r.name,   naturalDir: 'asc', flex: true },
+  { id: 'latest', label: 'Latest',       sortValue: r => r.latest, numeric: true, width: 130 },
+  { id: 'total',  label: 'Window total', sortValue: r => r.total,  numeric: true, width: 150 },
+];
 
 // Visualization picker covering the four shapes the operator
 // switches between in the Data Explorer:
@@ -167,20 +177,21 @@ function TopNViz({ series, unit }: { series: ExploreSeries[]; unit?: string }) {
       .sort((a, b) => b.latest - a.latest);
   }, [series]);
   const max = rows.length > 0 ? Math.max(...rows.map(r => r.latest)) : 1;
+  // v0.9.875 (tutarlılık denetimi MT8) — TopN sonuç tablosu sabit
+  // `latest desc` idi; "Window total"a göre sıralamak MÜMKÜN DEĞİLDİ,
+  // oysa iki sıralama farklı soruları cevaplıyor (şu an mı, toplamda mı).
+  const dt = useDataTable<TopNRow>({
+    storageKey: 'explore-viz-topn', columns: TOPN_COLS, rows,
+    initialSort: { id: 'latest', dir: 'desc' },
+  });
 
   return (
     <div className="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Name</th>
-            <th className="num">Latest</th>
-            <th className="num">Window total</th>
-            <th></th>
-          </tr>
-        </thead>
+      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+        <DataTableColgroup dt={dt} trailing={[240]} />
+        <DataTableHead dt={dt} trailing={<th></th>} />
         <tbody>
-          {rows.map(r => (
+          {dt.sortedRows.map(r => (
             <tr key={r.name}>
               <td>
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>

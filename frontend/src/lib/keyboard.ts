@@ -148,7 +148,23 @@ export function comboFromEvent(e: KeyboardEvent): string {
   // (password managers, IME composition, autofill dispatch). Normalise to ''
   // so .length / .toLowerCase() never throw (v0.8.x crash fix).
   const key = e.key ?? '';
-  if (e.shiftKey && key.length > 1) parts.push('shift');
+  // v0.9.949 (UX denetimi E1 / Ö27) — Shift KATLANMASI yalnız A-Z'de.
+  //
+  // Eski kural (`key.length > 1`) TÜM tek karakterlerde shift'i yutuyordu.
+  // Sonuç: Shift+G → 'g' üretiyordu, yani `G` (son satıra atla) HİÇBİR
+  // listede çalışmıyordu — üstelik 'g' iki-tuşlu dizi ÖNEKİ olduğu için
+  // Shift+G'den sonra 1.2 sn içinde `s` basan kendini /services'te
+  // buluyordu. Yardım ekranı ise "Jump to last row (G)" diyordu.
+  //
+  // NAİF DÜZELTME (`if (e.shiftKey)`) `?` KISAYOLUNU ÖLDÜRÜR: Shift+/ →
+  // e.key '?' gelir ve kural onu 'shift+?' yapardı; yardım modalının
+  // kısayolu sessizce kaybolurdu. Noktalama zaten SHIFT'İN ÜRÜNÜ — orada
+  // shift bilgisi tuşun kendisindedir, ikinci kez kodlanamaz.
+  //
+  // Harfler ise farklı: 'A' ile 'a' AYNI tuş ve tek fark shift. Kural
+  // tam olarak bu kümeye daraltıldı.
+  const shiftFolds = key.length > 1 || /^[A-Za-z]$/.test(key);
+  if (e.shiftKey && shiftFolds) parts.push('shift');
   // Use lowercase letter for printable keys; dedicated names
   // for special keys.
   const k = key.length === 1 ? key.toLowerCase() : key;

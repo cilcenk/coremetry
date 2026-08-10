@@ -23,7 +23,7 @@ import { Button, Card, Drawer, DrawerSection, IconButton, LinkButton } from '@/c
 import { api } from '@/lib/api';
 import { useClusters } from '@/lib/queries';
 import { timeRangeToNs, fmtBytes, fmtNum } from '@/lib/utils';
-import { useUrlRange } from '@/lib/useUrlRange';
+import { useUrlRange, rememberRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
 import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -255,8 +255,8 @@ export default function ClustersPage() {
   // setTw('') + setRange çağrılarında son yazan kazanıp tw'yi hayatta
   // bırakıyordu — drawer grafiği tw'den pencerelendiğinden zoom ölü
   // görünüyor, sayfa range'i overlay arkasında sessizce değişiyordu.
-  // setRange yerine doğrudan setParams güvenli: custom range
-  // persistableRange dışı, localStorage yazımı zaten no-op'tu.
+  // setRange yerine doğrudan setParams güvenli; oturum kaydı v0.9.937'de
+  // elden yazılıyor (rememberRange, aşağıda).
   // clearTw opt-in kalır — sayfa grafiği zoom'u operatörün kalıcı tw
   // tercihini silmemeli (v0.9.17 "tw bilinçli kalır").
   const chartZoom = useCallback((fromUnixSec: number, toUnixSec: number, opts?: { clearTw?: boolean }) => {
@@ -265,11 +265,18 @@ export default function ClustersPage() {
     setParams(prev => {
       const next = new URLSearchParams(prev);
       if (opts?.clearTw) next.delete('tw');
-      next.set('range', encodeRange({
+      const enc = encodeRange({
         preset: 'custom',
         fromMs: Math.round(fromUnixSec * 1000),
         toMs: Math.round(toUnixSec * 1000),
-      }));
+      });
+      // v0.9.937 — setRange atlandığı için oturum kaydını ELDEN yaz.
+      // Yukarıdaki yorumun "localStorage yazımı zaten no-op'tu"
+      // gerekçesi ARTIK GEÇERSİZ: seçilen aralık (mutlak dahil) sekme
+      // oturumunda saklanıyor, yani burada yazmazsak Clusters'ta zoom
+      // yapan operatör başka sayfaya geçince penceresini kaybeder.
+      rememberRange(enc);
+      next.set('range', enc);
       return next;
     }, { replace: true });
   }, [setParams]);

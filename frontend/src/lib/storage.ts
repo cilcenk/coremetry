@@ -17,7 +17,18 @@
 export const STORAGE_KEYS = {
   theme:            'coremetry-theme',
   density:          'coremetry-density',
+  // range — v0.7.124'ten v0.9.936'ya kadar kullanılan localStorage
+  // anahtarı. v0.9.937'de seçilen aralık OTURUM kapsamına taşındı
+  // (lastRange, aşağıda); bu anahtar artık okunmuyor. Girdi listede
+  // KALIYOR ki aynı ad ikinci bir amaç için yeniden kullanılmasın —
+  // eski kurulumlarda hâlâ diskte duran bir değer var.
   range:            'coremetry-range',
+  // lastRange (v0.9.937) — operatörün SON SEÇTİĞİ aralık, sekme
+  // oturumu boyunca. sessionStorage ÇÜNKÜ mutlak (custom:) pencereler
+  // de saklanıyor: v0.8.409'da localStorage'a donan bir custom pencere
+  // haftalar sonra bile her sayfayı geçmişte açıyordu. Oturum kapsamı
+  // o kuyruğu keser — sekme kapanınca kayıt da gider.
+  lastRange:        'cm.lastRange',
   env:              'coremetry-env',
   lang:             'coremetry.lang',
   rum:              'coremetry-rum',
@@ -81,6 +92,35 @@ export function removeRaw(key: string): void {
     localStorage.removeItem(key);
   } catch {
     // Same best-effort contract as setRaw.
+  }
+}
+
+// ── Oturum kapsamlı kayıt (v0.9.937) ────────────────────────────────
+//
+// getRaw/setRaw'ın SEKMEYE bağlı ikizi. Ayrı bir çift olması bilinçli:
+// "kalıcı" ile "bu sekme boyunca" farklı sözleşmelerdir ve karışmaları
+// gerçek bir olaya mal oldu (v0.8.409 — localStorage'a donan mutlak
+// pencere haftalar sonra hâlâ her sayfayı geçmişte açıyordu).
+//
+// Aynı savunmacı duruş: özel mod / iframe politikası / kota hatası bir
+// sayfayı ASLA çökertemez — okuma boşa düşer, yazma sessizce geçer.
+// Test ortamlarında (jsdom'un eski sürümleri) sessionStorage tanımsız
+// olabilir; typeof kontrolü o vakayı da kapsıyor.
+export function getSessionRaw(key: string): string | null {
+  try {
+    if (typeof sessionStorage === 'undefined') return null;
+    return sessionStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function setSessionRaw(key: string, value: string): void {
+  try {
+    if (typeof sessionStorage === 'undefined') return;
+    sessionStorage.setItem(key, value);
+  } catch {
+    /* best-effort */
   }
 }
 

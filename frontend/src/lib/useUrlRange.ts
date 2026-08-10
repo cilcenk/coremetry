@@ -1,8 +1,8 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { TimeRange } from './types';
 import { encodeRange, decodeRange } from './urlState';
-import { getRaw, setRaw } from './storage';
+import { STORAGE_KEYS, getSessionRaw, setSessionRaw } from './storage';
 
 // useUrlRange (v0.7.87) — the SINGLE source of truth for a page's time
 // range: the URL `?range=` param, not component-local state.
@@ -29,40 +29,39 @@ import { getRaw, setRaw } from './storage';
 // the previous PAGE, while the current page's range still lives in its
 // shareable URL.
 //
-// GLOBAL window (v0.7.124 — UX pass #2). A page that loads WITHOUT an
-// explicit `?range=` inherits the last range the operator picked anywhere,
-// persisted in localStorage, so switching pages keeps the window. Precedence:
-//   1. `?range=` in the URL  — wins (shareable links + browser back/forward)
-//   2. localStorage          — cross-page continuity
-//   3. defaultPreset         — first-ever load
-// A fresh pick writes BOTH the URL and localStorage. `effective` stays a
-// stable string so the memo identity only changes when the resolved range
-// actually changes (the v0.5.184 infinite-refetch trap).
-const RANGE_STORE_KEY = 'coremetry-range';
-
-// persistableRange (v0.8.409) — only RELATIVE presets may become the
-// sticky cross-page default. Operator-reported: brushing/zooming a
-// chart pins an ABSOLUTE `custom:from-to` window; persisting that
-// globally froze every subsequent page load (and F5) on a past
-// window — "yeni traceler gelmiyor, cacheten getiriyor sanırım".
-// The absolute window stays in the URL (shareable, survives refresh
-// BY CHOICE on that link), but the operator's global default keeps
-// flowing with now() like Dynatrace's timeframe selector.
-export function persistableRange(enc: string): boolean {
-  return !enc.startsWith('custom:');
-}
+// SEÇİLEN ARALIK SAYFALAR ARASI KALICI (v0.9.937, operatör isteği:
+// "kullanıcı aralık seçtiyse sayfalar arası kalıcı olsun"). Öncelik:
+//   1. `?range=` — URL kazanır (paylaşılabilir link + geri/ileri)
+//   2. oturum kaydı — operatörün BU SEKMEDE seçtiği son aralık
+//   3. defaultPreset — sayfanın kendi varsayılanı
+// URL = tek doğruluk kaynağı sözleşmesi DOKUNULMADI: oturum basamağı
+// yalnız "varsayılana düşme"nin ÖNÜNE girdi. `effective` stabil bir
+// string kalıyor, yani memo kimliği ancak çözülen aralık gerçekten
+// değişince değişir (v0.5.184 sonsuz-refetch tuzağı).
+//
+// ── Neden OTURUM, neden artık custom: de saklanıyor ─────────────────
+// v0.7.124'te bu kayıt localStorage'daydı ve v0.8.409'da operatör
+// bildirdi: bir grafiği brush'lamak mutlak (custom:) pencereyi KALICI
+// yapıyor, sonraki her sayfa açılışı ve F5 geçmiş bir pencerede
+// açılıyordu — "yeni traceler gelmiyor, cacheten getiriyor sanırım".
+// O gün çözüm mutlak pencereleri saklamamaktı; ama bu, operatörün
+// bilerek seçtiği bir pencerenin sayfa değişince kaybolması demekti.
+//
+// Şimdiki çözüm o olayın İKİ kök nedenini de kesiyor:
+//   • KAPSAM: kayıt sekme oturumunda. Sekme kapanınca gider; haftalar
+//     sonra bayat bir mutlak pencere açılamaz.
+//   • GÖRÜNÜRLÜK: kayıttan gelen aralık URL'E DE YAZILIYOR (aşağıda).
+//     v0.8.409'un asıl acısı pencerenin SESSİZ olmasıydı — URL temiz
+//     görünüyor, seçici bir şey söylemiyor, ama sayfa geçmişte. Artık
+//     `?range=custom:…` URL'de duruyor ve seçici onu gösteriyor: donmuş
+//     durum görünür ve tek tıkla geri alınır.
+const RANGE_STORE_KEY = STORAGE_KEYS.lastRange;
 
 function readStoredRange(): string | null {
-  const v = getRaw(RANGE_STORE_KEY);
-  // Self-heal (v0.8.409): installs that stored a frozen absolute
-  // window before this fix would stay stuck forever — treat it as
-  // unset so the defaultPreset takes over.
-  if (v && !persistableRange(v)) return null;
-  return v;
+  return getSessionRaw(RANGE_STORE_KEY);
 }
 function writeStoredRange(enc: string): void {
-  if (!persistableRange(enc)) return;
-  setRaw(RANGE_STORE_KEY, enc);
+  setSessionRaw(RANGE_STORE_KEY, enc);
 }
 
 // storedRangeString — public read of the persisted global range, for pages
@@ -73,6 +72,21 @@ export function storedRangeString(): string | null {
   return readStoredRange();
 }
 
+// rememberRange (v0.9.937) — "operatör bir aralık SEÇTİ" olayının
+// oturum kaydına yazılması, hook'un setRange'i dışından.
+//
+// Neden gerekli: Clusters sayfası grafik-zoom'unu setRange yerine
+// doğrudan setParams ile yazıyor (v0.9.206 — aynı yazımda `?tw=`
+// silinebilsin diye; iki ayrı yazım react-router'da zincirlenmiyor).
+// O yol setRange'i atladığı için kayıt da atlanırdı. Eskiden bu bir
+// SORUN DEĞİLDİ: zoom mutlak pencere üretir, mutlak pencereler de
+// saklanmazdı. v0.9.937 mutlağı da sakladığı için o boşluk artık
+// gerçek — Clusters'ta zoom yapıp başka sayfaya geçen operatör
+// penceresini kaybederdi.
+export function rememberRange(enc: string): void {
+  writeStoredRange(enc);
+}
+
 // pickRangeString — v0.9.855. useUrlRange's precedence chain (URL `?range=` →
 // sticky → default) as a PURE function, so a non-hook caller can resolve the
 // window the operator is currently looking at without duplicating the rule.
@@ -81,13 +95,16 @@ export function storedRangeString(): string | null {
 // hand pivotHref a window, and pivotHref makes the window REQUIRED precisely
 // because "forgot the window" shipped four times. Re-deriving the precedence
 // by hand at each such call site is how the fifth one ships.
+// v0.9.937 — MUTLAK PENCERE ARTIK ELENMİYOR. v0.8.409'dan beri buradaki
+// filtre custom:'u atıyordu çünkü kayıt KALICIYDI; kayıt oturuma
+// taşındığı ve URL'e yazıldığı için (bkz. dosya başındaki gerekçe)
+// operatörün bilerek seçtiği mutlak pencere artık sekme boyunca geçerli
+// bir cevap. Filtreyi burada bırakmak, hook ile bu saf fonksiyonun
+// AYRIŞMASI demek olurdu — ikisi tek zinciri anlatmak zorunda.
 export function pickRangeString(
   urlRaw: string | null, stored: string | null, defaultPreset = '30m',
 ): string {
-  // Mirror readStoredRange's self-heal: an absolute window must never come
-  // back through the sticky channel (v0.8.409).
-  const usableStored = stored && persistableRange(stored) ? stored : null;
-  return urlRaw ?? usableStored ?? defaultPreset;
+  return urlRaw ?? stored ?? defaultPreset;
 }
 
 /** Resolved TimeRange for a non-hook caller. `search` = location.search. */
@@ -96,34 +113,77 @@ export function currentRange(search: string, defaultPreset = '30m'): TimeRange {
   return decodeRange(pickRangeString(raw, readStoredRange(), defaultPreset), { preset: defaultPreset });
 }
 
+// useUrlRange(defaultPreset?) — defaultPreset VERMEK, çağıranın sayfanın
+// penceresine SAHİP olduğunu bildirir.
+//
+// Sahip olan çağıran, oturumdaki aralığı URL'e de yazar (aşağıdaki
+// efekt); sahip olmayan (salt-okur) çağıran YAZMAZ. Ayrım şart, çünkü
+// AppShell'de global mount edilen iki salt-okur tüketici var
+// (CopilotChat, FilterBuilder) ve onlar da yazsaydı:
+//   • aralığı olmayan her sayfanın URL'i (/settings, /admin/*) gereksiz
+//     `?range=` ile kirlenirdi, VE
+//   • daha kötüsü, salt-okur tüketici kendi '30m' varsayılanını yazar,
+//     sayfanın kendi '1h' varsayılanını EZERDİ.
+// Sözleşme kaynak-pinli: useUrlRange.contract.test.ts.
 export function useUrlRange(
-  defaultPreset = '30m',
+  defaultPreset?: string,
 ): [TimeRange, (r: TimeRange | ((prev: TimeRange) => TimeRange)) => void] {
   const [searchParams, setSearchParams] = useSearchParams();
+  const owns = defaultPreset !== undefined;
+  const preset = defaultPreset ?? '30m';
   const raw = searchParams.get('range');
-  const effective = raw ?? readStoredRange() ?? defaultPreset;
+  const stored = readStoredRange();
+  const effective = raw ?? stored ?? preset;
 
   const range = useMemo(
-    () => decodeRange(effective, { preset: defaultPreset }),
-    [effective, defaultPreset],
+    () => decodeRange(effective, { preset }),
+    [effective, preset],
   );
+
+  // v0.9.937 — oturumdaki aralığı URL'E DE YAZ (yalnız sahip çağıran).
+  //
+  // Neden: aralık zaten yukarıda çözülüyor, yani sayfa doğru pencereyi
+  // ÇİZİYOR. Eksik olan tek şey PAYLAŞILABİLİRLİK — operatör sekmede
+  // 6 saati seçip /traces'e geçtiğinde adres çubuğunu kopyalayınca
+  // karşı taraf 30 dakikayı görürdü. Bir de görünürlük: v0.8.409'un
+  // asıl acısı pencerenin URL'de görünmemesiydi.
+  //
+  // DÖNGÜ YOK (sig-guard): yazımdan sonra `raw` dolu olur ve ilk koşul
+  // efekti erkenden bitirir. Yalnız `raw` boşken ve kayıt varken bir
+  // kez koşar.
+  //
+  // YABANCI PARAMLARI KORUMAK İÇİN window.location.search'ten TOHUMLA,
+  // router'ın `prev`inden DEĞİL: ham replaceState ile URL yazan
+  // sayfalarda (Traces/Explore) `prev` bayat bir ALT KÜME olabiliyor ve
+  // updater biçimi o sayfaların paramlarını sessizce düşürürdü.
+  useEffect(() => {
+    if (!owns || raw !== null || !stored) return;
+    const next = new URLSearchParams(window.location.search);
+    if (next.get('range')) return; // başka bir sahip bizden önce yazmış
+    next.set('range', stored);
+    setSearchParams(next, { replace: true });
+  }, [owns, raw, stored, setSearchParams]);
 
   const setRange = useCallback(
     (r: TimeRange | ((prev: TimeRange) => TimeRange)) => {
       setSearchParams(
         prev => {
           const next = new URLSearchParams(prev);
-          const curr = decodeRange(prev.get('range') ?? readStoredRange(), { preset: defaultPreset });
+          const curr = decodeRange(prev.get('range') ?? readStoredRange(), { preset });
           const val = typeof r === 'function' ? r(curr) : r;
           const enc = encodeRange(val);
-          writeStoredRange(enc);   // persist globally → cross-page continuity
-          next.set('range', enc);  // reflect in the URL → shareable + back/forward
+          // v0.9.937 — RELATİF DE MUTLAK DA yazılır. Kayıt oturum
+          // kapsamlı ve URL'de görünür olduğu için mutlak pencereyi
+          // elemek artık gereksiz; elemek, operatörün bilerek yaptığı
+          // seçimi sayfa değişince yutmak olurdu.
+          writeStoredRange(enc);   // oturum boyu süreklilik
+          next.set('range', enc);  // URL → paylaşılabilir + geri/ileri
           return next;
         },
         { replace: true },
       );
     },
-    [setSearchParams, defaultPreset],
+    [setSearchParams, preset],
   );
 
   return [range, setRange];

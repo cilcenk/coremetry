@@ -181,7 +181,7 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
             position: 'absolute', top: '100%', right: 0, marginTop: 4,
             minWidth: 188, background: 'var(--bg2)',
             border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)',
-            boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 60,
+            boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 'var(--z-dropdown)',
           }}
         >
           <PanelMenuItem onClick={() => runAction('explore')}>⤢ Explore</PanelMenuItem>
@@ -266,7 +266,7 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
           aria-label="Metric query"
           onClick={e => e.stopPropagation()}
           style={{
-            position: 'absolute', top: 30, right: 0, zIndex: 70,
+            position: 'absolute', top: 30, right: 0, zIndex: 'var(--z-popover)',
             minWidth: 280, maxWidth: 460,
             background: 'var(--bg2)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius-sm)', boxShadow: 'var(--shadow-pop)',

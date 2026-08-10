@@ -77,7 +77,7 @@ export function FlameGraph({ root, totalWidth = 1100 }: { root: FlameNode; total
             position: 'fixed', left: hover.x + 14, top: hover.y - 10,
             background: 'var(--bg2)', border: '1px solid var(--border)',
             padding: '6px 10px', borderRadius: 6, fontSize: 12,
-            pointerEvents: 'none', zIndex: 100, maxWidth: 480,
+            pointerEvents: 'none', zIndex: 'var(--z-tooltip)', maxWidth: 480,
           }}>
             <div style={{ fontWeight: 600, wordBreak: 'break-all' }}>{hover.node.name}</div>
             {hover.node.file && (

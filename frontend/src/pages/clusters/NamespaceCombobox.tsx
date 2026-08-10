@@ -58,7 +58,7 @@ export function NamespaceCombobox({ namespaces, value, onPick, onClear }: {
       )}
       {open && (
         <div style={{
-          position: 'absolute', left: 0, top: 'calc(100% + 4px)', zIndex: 60,
+          position: 'absolute', left: 0, top: 'calc(100% + 4px)', zIndex: 'var(--z-dropdown)',
           minWidth: 240, maxWidth: 320,
           background: 'var(--bg2)', border: '1px solid var(--border)',
           borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.30)', padding: 6,

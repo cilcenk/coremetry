@@ -1003,7 +1003,7 @@ export function CorePanel({
       // Tam ekran: CSS overlay. Route/DOM taşınmaz — uPlot instance'ı
       // yaşamaya devam eder, ResizeObserver genişliği kendisi yakalar.
       ...(fullscreen ? {
-        position: 'fixed', inset: 12, zIndex: 100,
+        position: 'fixed', inset: 12, zIndex: 'var(--z-modal)',
         background: 'var(--bg0)', padding: 12, overflow: 'auto',
       } : {}),
     }}>
@@ -1020,7 +1020,7 @@ export function CorePanel({
             onClick={() => setMenuOpen(o => !o)} icon="⋯" />
           {menuOpen && (
             <div role="menu" style={{
-              position: 'absolute', right: 0, top: '100%', zIndex: 20,
+              position: 'absolute', right: 0, top: '100%', zIndex: 'var(--z-dropdown)',
               background: 'var(--bg1)', border: '1px solid var(--border)',
               borderRadius: 6, padding: 4, display: 'flex',
               flexDirection: 'column', gap: 2, minWidth: 150,

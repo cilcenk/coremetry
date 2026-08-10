@@ -1091,7 +1091,7 @@ function SharePopover({ traceId }: { traceId: string }) {
           trapped; this is a popover, and Esc/outside-click dismiss it. */}
       {open && (
         <div role="dialog" aria-label="Share this trace" style={{
-          position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 60,
+          position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 'var(--z-popover)',
           width: 380, padding: 12,
           background: 'var(--bg2)', border: '1px solid var(--border)',
           borderRadius: 6, boxShadow: '0 8px 24px rgba(0,0,0,0.30)',

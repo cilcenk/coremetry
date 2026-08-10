@@ -41,16 +41,25 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
       {backdrop && (
         <div onClick={onClose}
           style={{
-            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.35)',
-            zIndex: 30, animation: 'fadeIn 120ms ease-out',
+            position: 'fixed', inset: 0, background: 'var(--backdrop)',
+            zIndex: 'var(--z-drawer)', animation: 'fadeIn 120ms ease-out',
           }} />
       )}
       <div style={{
         position: 'fixed', right: 0, top: 0, bottom: 0,
         width: `min(${width}px, 100vw)`,
         background: 'var(--bg)', borderLeft: '1px solid var(--border)',
-        boxShadow: '-4px 0 24px rgba(0,0,0,0.3)',
-        zIndex: 31, padding: 'var(--sp-7)',
+        boxShadow: 'var(--shadow-pop)',
+        // MK2 (v0.9.911) — irtifa KİPE bağlı, sabit değil.
+        //   backdrop=true  → --z-drawer-panel: çekmece bir özneyi
+        //     İNCELİYOR, sayfanın dropdown'larının üstünde olmalı.
+        //   backdrop=false → --z-nav: CoSRE sohbeti sayfaya EŞLİK
+        //     ediyor. Sohbeti drawer rungına çıkarmak, sohbet açıkken
+        //     topbar'ın TimeRangePicker panelini sohbetin ALTINDA
+        //     bırakırdı — yani sohbetin varlık gerekçesini (açıkken
+        //     sayfayla çalışabilmek) tersine çevirirdi.
+        zIndex: backdrop ? 'var(--z-drawer-panel)' : 'var(--z-nav)',
+        padding: 'var(--sp-7)',
         // Overlay'siz kipte gövdeyi çağıran düzenliyor; modal kipte
         // bugünkü davranış (tek dikey kaydırma) aynen sürüyor.
         ...(bodyStyle ?? { overflowY: 'auto' }),

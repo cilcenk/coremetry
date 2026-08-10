@@ -196,7 +196,7 @@ function AutoSLOModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
   return (
     <div role="dialog" style={{
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)',
-      display: 'grid', placeItems: 'center', zIndex: 50,
+      display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal)',
     }}>
       <div style={{
         background: 'var(--bg1)', border: '1px solid var(--border)',

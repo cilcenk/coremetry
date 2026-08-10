@@ -37,7 +37,7 @@ export function PageLoader({ label }: { label?: string }) {
   return (
     <div role="status" aria-busy="true" aria-label={label ?? 'Loading'}
       style={{
-        position: 'fixed', inset: 0, zIndex: 30,
+        position: 'fixed', inset: 0, zIndex: 'var(--z-app-splash)',
         display: 'grid', placeItems: 'center',
         background: 'var(--bg)',
       }}>

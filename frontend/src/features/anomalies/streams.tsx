@@ -166,7 +166,7 @@ function SnoozeButton({ onMute }: { onMute: (durationSec: number) => void }) {
       {open && (
         <div style={{
           position: 'absolute', top: '100%', right: 0,
-          marginTop: 4, padding: 4, borderRadius: 4, zIndex: 10,
+          marginTop: 4, padding: 4, borderRadius: 4, zIndex: 'var(--z-dropdown)',
           background: 'var(--bg1)', border: '1px solid var(--border)',
           boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
           display: 'flex', flexDirection: 'column', gap: 2,

@@ -326,7 +326,7 @@ function TeamPill({ label, team, title }: {
       </Chip>
       {open && (
         <div style={{
-          position: 'absolute', top: '110%', left: 0, zIndex: 50,
+          position: 'absolute', top: '110%', left: 0, zIndex: 'var(--z-dropdown)',
           minWidth: 220, maxWidth: 320,
           background: 'var(--bg1)', border: '1px solid var(--border)',
           borderRadius: 6, padding: 8, boxShadow: '0 6px 18px rgba(0,0,0,0.35)',

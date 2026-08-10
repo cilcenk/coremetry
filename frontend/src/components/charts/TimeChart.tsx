@@ -11,7 +11,7 @@ import { useChartEngine } from '@/lib/chart/engine';
 import { buildCursorOpts } from '@/lib/chart/cursorOpts';
 import { StatsLegend } from '@/components/chart/StatsLegend';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
-import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
 import { toggleSeriesVisibility, isolateSeriesVisibility, resetSeriesVisibility } from '@/lib/chart/legendVisibility';
 import { drawThresholds, drawTimeRegions, type ChartThreshold, type ChartTimeRegion } from '@/lib/chart/overlays';
@@ -342,7 +342,12 @@ export function TimeChart({
           // the shared model: value desc + fmtSmart units (per-axis left/right
           // unit); was naive in-order kfmt with 0-for-gap. Per-series snapped
           // idx (v0.9.84); a genuine gap now drops out instead of reading "0".
-          const rows = sortedTooltipRows(series.map((s, i) => {
+          // v0.9.944 (D1/Ö23) — SATIR TAVANI. v0.9.750'de CorePanel'e
+          // eklenmişti (operatör: "tooltip grafiği kapatıyor"); v1
+          // preset'leri geride kalmıştı ve 40 pod'lu bir panelde 40
+          // satırlık tooltip grafiği TAMAMEN örtüyordu. ≤8 satırda no-op,
+          // yani dar panellerin çıktısı bayt-bayt aynı.
+          const rows = capTooltipRows(sortedTooltipRows(series.map((s, i) => {
             const si = u.cursor.idxs?.[i + 1] ?? idx;
             return {
               label: s.label, color: colors[i],
@@ -352,7 +357,7 @@ export function TimeChart({
                 : ((u.data[i + 1] as (number | null)[])?.[si] ?? null),
               unit: s.axis === 'right' ? rightUnit : leftUnit,
             };
-          }));
+          })));
           if (rows.length === 0) { tt.style.display = 'none'; return; }
           tt.innerHTML = `<div class="ov-tt-t">${ts}</div>` + rows.map(r =>
             `<div class="ov-tt-r"><span class="ov-lbl"><i class="ov-sw" style="background:${r.color}"></i>${r.label}</span><b>${r.text}</b></div>`,

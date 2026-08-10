@@ -5,6 +5,10 @@
 
 import { describe, it, expect } from 'vitest';
 import { sortedTooltipRows, capTooltipRows, type TooltipItem } from './tooltipModel';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+const SRC_ROOT = join(__dirname, '..', '..');
 
 describe('sortedTooltipRows — ordering', () => {
   it('sorts by value DESC by default (hottest series first)', () => {
@@ -156,5 +160,50 @@ describe('capTooltipRows (v0.9.750)', () => {
   });
   it('max<=0 sınırsız', () => {
     expect(capTooltipRows(mk(30), 0)).toHaveLength(30);
+  });
+});
+
+// v0.9.944 (UX denetimi D1 / Ö23) — SATIR TAVANI HER MOTORDA.
+//
+// Orijinal belirti: v0.9.750'de operatör "tooltip grafiği kapatıyor"
+// dedi ve capTooltipRows CorePanel'e eklendi. Üç kardeş motor (TimeChart,
+// TimeSeriesPanel, OverviewChart) geride kaldı — 40 pod'lu RuntimeCharts
+// panelinde 40 satırlık tooltip grafiği TAMAMEN örtüyordu, yani
+// düzeltilmiş sayılan kusur üç yüzeyde canlıydı.
+//
+// Bu kaynak taraması, o düzeltmenin motorlar arasında bir daha
+// AYRIŞMAMASINI çiviliyor: sortedTooltipRows çağıran her motor
+// capTooltipRows'tan da GEÇMEK ZORUNDA. Yeni bir motor eklenirse test
+// onu da yakalar (dosya listesi değil, DAVRANIŞ taraması).
+describe('satır tavanı — motorlar arası tek sözleşme (v0.9.944)', () => {
+  const ENGINES = [
+    'components/chart/CorePanel.tsx',
+    'components/charts/TimeChart.tsx',
+    'components/viz/TimeSeriesPanel.tsx',
+    'pages/service/charts/OverviewChart.tsx',
+  ];
+
+  it('sortedTooltipRows kullanan HER motor capTooltipRows da kullanır', () => {
+    const missing: string[] = [];
+    for (const rel of ENGINES) {
+      const src = readFileSync(join(SRC_ROOT, rel), 'utf8');
+      if (src.includes('sortedTooltipRows(') && !src.includes('capTooltipRows(')) {
+        missing.push(rel);
+      }
+    }
+    expect(missing,
+      'Bu motorlar sıralıyor ama TAVANLAMIYOR — çok serili panelde tooltip grafiği örter (v0.9.750 operatör bildirimi).')
+      .toEqual([]);
+  });
+
+  it('tavan sarmalayıcı DIŞTA — sıralamadan SONRA kesilmeli', () => {
+    // capTooltipRows(sortedTooltipRows(...)) sırası şart: ters sırada
+    // "+N daha" satırı sıralamaya girer ve NaN değeriyle listeyi bozar,
+    // üstelik kesilen seriler en büyükler olabilirdi.
+    for (const rel of ENGINES) {
+      const src = readFileSync(join(SRC_ROOT, rel), 'utf8');
+      if (!src.includes('capTooltipRows(')) continue;
+      expect(src, `${rel}: tavan sıralamayı SARMALI`).toMatch(/capTooltipRows\(\s*\n?\s*sortedTooltipRows\(/);
+    }
   });
 });

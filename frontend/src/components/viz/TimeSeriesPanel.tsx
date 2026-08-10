@@ -13,7 +13,7 @@ import { xRangePinned, type XPin } from '@/lib/chart/xRange';
 import { stepGapsRefiner, nearestFilledIdx } from '@/lib/chart/gapPolicy';
 import { useChartEngine } from '@/lib/chart/engine';
 import { buildCursorOpts } from '@/lib/chart/cursorOpts';
-import { sortedTooltipRows } from '@/lib/chart/tooltipModel';
+import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinClick, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
 import { toggleSeriesVisibility, isolateSeriesVisibility } from '@/lib/chart/legendVisibility';
 import { drawThresholds, drawTimeRegions, type ChartTimeRegion } from '@/lib/chart/overlays';
@@ -617,7 +617,9 @@ export function TimeSeriesPanel({
             // raw already, so read it straight off u.data. Labels/colours/units
             // are structural (rebuild on change) — safe to close over.
             const rawY = bundleRef.current.ySeries;
-            const rows = sortedTooltipRows(series.map((s, i) => {
+            // v0.9.944 (D1/Ö23) — satır tavanı; gerekçe TimeChart'takiyle
+            // aynı (v0.9.750 CorePanel'de kalmıştı). ≤8 satırda no-op.
+            const rows = capTooltipRows(sortedTooltipRows(series.map((s, i) => {
               // v0.9.84 (madde 4) — dataIdx snap'i seri başına idxs'te; tooltip
               // aynı dolu örneği okur (seyrek seri artık "—" değil).
               const si = u.cursor.idxs?.[i + 1] ?? idx;
@@ -625,7 +627,7 @@ export function TimeSeriesPanel({
                 : stacked ? rawY[i]?.[idx]
                 : (u.data[i + 1] as (number | null)[])?.[si];
               return { label: s.label, color: colors[i], value: v, unit: s.unit ?? anyUnit };
-            }));
+            })));
             if (rows.length === 0) { tip.style.opacity = '0'; return; }
 
             let deployRow = '';

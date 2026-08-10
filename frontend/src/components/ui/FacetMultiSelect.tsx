@@ -72,7 +72,18 @@ export function FacetMultiSelect({ label, options, selected, onToggle, onSolo, o
             const on = selected.has(o.value);
             const lastOn = on && selLabels.length === 1;
             return (
+              // mK9 (v0.9.922) — `role="option"` bir SÖZ: "buraya
+              // odaklanabilirsin, Enter/Space seçer". Satır bugün o sözü
+              // tutmuyordu — ne `tabIndex` ne klavye işleyicisi vardı,
+              // yani liste ekran okuyucuya seçenek listesi olarak
+              // duyuruluyor ama klavyeyle HİÇ kullanılamıyordu. Yanlış
+              // duyurulan bir rol, rolsüz bir div'den kötüdür.
               <div key={o.value} className="fsel-row" role="option" aria-selected={on}
+                tabIndex={lastOn ? -1 : 0}
+                onKeyDown={e => {
+                  if (lastOn) return;
+                  if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onToggle(o.value); }
+                }}
                 onClick={() => { if (!lastOn) onToggle(o.value); }}>
                 <input type="checkbox" readOnly checked={on} tabIndex={-1} />
                 {o.label}

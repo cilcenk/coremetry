@@ -50,6 +50,8 @@ import type { TraceCountResponse } from '@/lib/types';
 import { encodeRange, encodeFilters, decodeFilters, encodeFilterGroup, decodeFilterGroup, buildQuery } from '@/lib/urlState';
 import { parseHavingParam, encodeHavingParam, HAVING_METRICS, HAVING_OPS, type HavingRow, type HavingMetric, type HavingOp } from '@/lib/havingParam';
 import { upsertAttrFilter } from '@/lib/aggDrill';
+import { useAttributeKeys } from '@/lib/useAttributeKeys';
+import { Combobox } from '@/components/Combobox';
 import { mergeTraceExtras, missingExtraKeys } from '@/lib/traceExtrasMerge';
 // v0.9.841 — kolon SIRASI ve varsayılan attr seti tek yerde, saf ve
 // testli (traceColumns.ts). İkisi de karar; mekanik değil.
@@ -191,6 +193,10 @@ function TracesPageInner() {
     return GROUP_OPTIONS.some(o => o.value === v) ? (v as GroupBy) : 'operation';
   });
   const [groupAttr, setGroupAttr] = useState<string>(() => searchParams.get('groupAttr') ?? '');
+  // v0.9.933 (Ö14) — aggregate anahtar kutusunun keşif kaynağı. Bağlam
+  // filtresi VERİLMİYOR: gruplama anahtarı seçilirken operatör henüz
+  // daraltmadı, ve dilim-içi liste burada erken bir kısıtlama olurdu.
+  const { keys: attrKeys } = useAttributeKeys();
   const [aggSort, setAggSort] = useState<AggSort>(() => (searchParams.get('aggSort') as AggSort) || 'count');
   const [aggOrder, setAggOrder] = useState<SortOrder>(() => (searchParams.get('aggOrder') === 'asc' ? 'asc' : 'desc'));
   // v0.8.453 (B2-c) — genel HAVING koşulları. URL-first (?having=,
@@ -990,11 +996,19 @@ function TracesPageInner() {
               <select value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)}>
                 {GROUP_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
               </select>
+              {/* v0.9.933 (UX denetimi Ö14) — anahtar kutusu artık KEŞİF
+                  yapıyor. Çıplak bir <input>tü: operatör tam da "hangi
+                  attribute'a göre gruplasam?" diye sorarken anahtarı
+                  ezberden yazmak zorundaydı, oysa aynı sayfadaki
+                  FilterBuilder yirmi satır ötede o listeyi zaten çekiyordu.
+                  Yanlış yazımın bedeli sessiz: sorgu koşuyor, boş dönüyor
+                  ve aşağıdaki "bu pencerede hiçbir span'de yok" cümlesi
+                  "böyle veri yok" diye okunuyor, "adı farklı" diye değil.
+                  Liste sunucuda 500'e kapalı — eager katalog değil. */}
               {groupBy === 'attr' && (
-                <input placeholder="attribute key (e.g. user.id)" value={groupAttr}
-                  onChange={e => setGroupAttr(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
-                  style={{ width: 200 }} />
+                <Combobox value={groupAttr} onChange={setGroupAttr}
+                  options={attrKeys}
+                  placeholder="attribute key (e.g. user.id)" width={200} />
               )}
               {/* v0.8.453 (B2-c) — genel HAVING: grup metriği eşiği.
                   Post-aggregate (MV fast-path hızını korur); koşullar

@@ -11,6 +11,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ExternalHost, ExternalHostDetail, TimeRange } from '@/lib/types';
+import { serviceHref } from '@/lib/serviceHref';
 
 // /external — third-party API inventory (v0.8.446, SigNoz/Uptrace
 // gap-closure Wave 3 / A1). One row per external destination the
@@ -158,7 +159,7 @@ export default function ExternalPage() {
                         {r.callerNames.slice(0, 3).map((c, i) => (
                           <span key={c}>
                             {i > 0 && ', '}
-                            <Link to={`/service?name=${encodeURIComponent(c)}`}
+                            <Link to={serviceHref(c, { range })}
                               style={{ fontSize: 11 }}>{c}</Link>
                           </span>
                         ))}
@@ -262,7 +263,7 @@ function ExternalHostDrawer({ host, range, onClose }: {
                     {detail.callers.map(c => (
                       <tr key={c.service}>
                         <td>
-                          <Link to={`/service?name=${encodeURIComponent(c.service)}`}
+                          <Link to={serviceHref(c.service, { range })}
                             title={c.topLabels.join('\n')}
                             style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12 }}>
                             {c.service}

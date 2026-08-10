@@ -125,7 +125,9 @@ describe('inboxItemWindow', () => {
 // sitesi doğurdu, çünkü kuralı hatırlatan hiçbir şey yoktu. Bu test o boşluğu
 // kapatır: yeni bir dosya el-yapımı link yazarsa CI kırılır.
 //
-// Kalan ~33 site bu dalgada DEĞİL (bilinçli: mekanik kuyruk, ayrı dalga).
+// v0.9.934: aralığı zaten elinde olan 8 katalog sayfası geçirildi.
+// Kalan site, RANGE'İ KAPSAMINDA OLMAYANLAR — prop geçirmek ya da URL'den
+// okumak gerekiyor, yani mekanik değil; ayrı dilim.
 // Allowlist onları dondurur — küçülebilir, BÜYÜYEMEZ.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -144,20 +146,12 @@ const HANDROLLED_ALLOWLIST = new Set([
   'features/anomalies/streams.tsx',
   'features/dependencies/DetailDrawer.tsx',
   'features/dependencies/panels/shared.tsx',
-  'pages/Clusters.tsx',
   'pages/DatabaseDetail.tsx',
-  'pages/Deploys.tsx',
   'pages/EndpointDetail.tsx',
   'pages/Endpoints.tsx',
   'pages/Events.tsx',
-  'pages/External.tsx',
-  'pages/Hosts.tsx',
   'pages/Incident.tsx',
   'pages/Pod.tsx',
-  'pages/ServiceBacktrace.tsx',
-  'pages/ServiceMap.tsx',
-  'pages/Services.tsx',
-  'pages/SlowQueries.tsx',
   'pages/endpoints/detailSections.tsx',
   'pages/service/EndpointPeekDrawer.tsx',
   'pages/service/OperationsTable.tsx',
@@ -177,6 +171,17 @@ const CONVERTED = [
   'components/RootCausePanel.tsx',
   'components/RootCauseRibbon.tsx',
   'pages/Inbox.tsx',
+  // v0.9.934 — kendi aralığı ELİNDE olan katalog sayfaları. Bunlar için
+  // "olay penceresi" diye bir şey yok; dürüst pencere sayfanın BAKTIĞI
+  // aralık, ve tam o düşüyordu.
+  'pages/Clusters.tsx',
+  'pages/Deploys.tsx',
+  'pages/External.tsx',
+  'pages/Hosts.tsx',
+  'pages/ServiceBacktrace.tsx',
+  'pages/ServiceMap.tsx',
+  'pages/Services.tsx',
+  'pages/SlowQueries.tsx',
 ];
 
 const SRC = join(__dirname, '..');
@@ -219,7 +224,7 @@ describe('kaynak taraması — el-yapımı /service?name= yayılmasın', () => {
     ].join('\n')).toEqual([]);
   });
 
-  it('bu dalgada geçirilen 6 olay-bağlamlı site el-yapımına DÖNMEZ', () => {
+  it('geçirilen siteler el-yapımına DÖNMEZ', () => {
     const hand = handRolledSites();
     for (const f of CONVERTED) {
       expect(hand.has(f), `${f} yeniden el-yapımı link yazıyor — regresyon`).toBe(false);

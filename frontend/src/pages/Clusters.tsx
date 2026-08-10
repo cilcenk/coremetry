@@ -29,6 +29,7 @@ import { pushZoom, popZoom } from '@/lib/chart/zoomHistory';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterDeploymentRow, ClusterAlertRow, ClusterSummary, TimeRange } from '@/lib/types';
+import { serviceHref } from '@/lib/serviceHref';
 
 // /clusters — uzak OpenShift cluster'larının Thanos metrikleri.
 // v0.8.587 redesign (audit: docs/audit/clusters-overview-redesign-
@@ -924,7 +925,7 @@ export default function ClustersPage() {
                               </td>
                               <td onClick={e => e.stopPropagation()}>
                                 {r.service ? (
-                                  <Link to={`/service?name=${encodeURIComponent(r.service)}`}
+                                  <Link to={serviceHref(r.service, { range })}
                                     style={{ fontSize: 11 }}>{r.service}</Link>
                                 ) : (
                                   <span style={{ fontSize: 11, color: 'var(--text3)' }}

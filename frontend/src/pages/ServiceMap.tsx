@@ -14,6 +14,7 @@ import { fmtNum, rangeToSince, timeRangeToNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
 import type { ServiceMap, ServiceMapNode } from '@/lib/types';
+import { serviceHref } from '@/lib/serviceHref';
 
 // Service map: global topology view + a focus mode that
 // narrows to a single service's 1-hop neighbourhood. The
@@ -272,7 +273,7 @@ export default function ServiceMapPage() {
               who want the full hairball back can clear the
               input manually. */}
           {focus && focusNode && (
-            <Link to={`/service?name=${encodeURIComponent(focus)}`}
+            <Link to={serviceHref(focus, { range })}
                   className="sec"
                   style={{
                     fontSize: 12, padding: '3px 10px',

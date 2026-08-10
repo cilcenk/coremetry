@@ -27,6 +27,7 @@ import { getItem, setItem } from '@/lib/storage';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
+import { serviceHref } from '@/lib/serviceHref';
 
 // v0.8.251 — the page's hand-rolled SortKey/NATURAL_DIR/SortTh server-sort
 // system moved into the shared DataTable primitive's serverSort mode. The
@@ -399,7 +400,7 @@ export default function ServicesPage() {
   }, [sorted, sparklines]);
 
   const goToService = (svc: string) =>
-    navigate(`/service?name=${encodeURIComponent(svc)}`);
+    navigate(serviceHref(svc, { range }));
 
   // Per-session hover-prefetch dedupe. Once a service has
   // been hover-prefetched for the current (range) the L1 +
@@ -697,7 +698,7 @@ export default function ServicesPage() {
                             // requests, not 100.
                             prefetchService(s.name);
                           }}
-                          {...rowClickHandlers(`/service?name=${encodeURIComponent(s.name)}`,
+                          {...rowClickHandlers(serviceHref(s.name, { range }),
                                                () => goToService(s.name))}>
                         <td>
                           {/* v0.5.276 — pin star. Click toggles

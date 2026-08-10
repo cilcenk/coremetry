@@ -5,6 +5,42 @@ import { readState } from '@/lib/readState';
 import { Modal, Button, Stack } from '@/components/ui';
 import { api, type MaintenanceWindow } from '@/lib/api';
 import { Field, Row } from './shared';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// v0.9.871 (tutarlılık denetimi MT7) — 30 günlük pencere listesi paylaşılan
+// primitife geçti. Kolon kümesi/sıra/etiket AYNEN korundu.
+//
+// Durum rozetinin mantığı tek yere alındı: hem hücre hem sortValue buradan
+// okuyor. Önceden `active`/`upcoming` satır içinde türetiliyordu ve sıralama
+// diye bir şey yoktu; ikisini ayrı yazmak, rozetin gösterdiğiyle sıralamanın
+// ayrışacağı klasik zemin.
+type WindowStatus = 'disabled' | 'active' | 'upcoming' | 'past';
+
+export function maintenanceStatus(w: MaintenanceWindow, nowNs: number): WindowStatus {
+  if (w.disabled) return 'disabled';
+  if (w.startAt <= nowNs && nowNs <= w.endAt) return 'active';
+  if (w.startAt > nowNs) return 'upcoming';
+  return 'past';
+}
+
+// Aciliyet sırası: şu an susturan pencere en üstte.
+const STATUS_RANK: Record<WindowStatus, number> = { active: 3, upcoming: 2, past: 1, disabled: 0 };
+
+// Kolonlar MODÜL kapsamında: `now` her render'da değişiyor ve kolonları
+// ona bağlamak columnLayoutSig'i her render'da tazeleyip operatörün
+// sürüklediği genişlikleri atardı. `now` yalnız sortValue'nun İÇİNDE,
+// sıralama anında okunuyor.
+const WINDOW_COLS: DataTableColumn<MaintenanceWindow>[] = [
+  { id: 'service',  label: 'Service',  sortValue: w => w.service,        naturalDir: 'asc', width: 180 },
+  { id: 'severity', label: 'Severity', sortValue: w => w.severity,       naturalDir: 'asc', width: 110 },
+  { id: 'starts',   label: 'Starts',   sortValue: w => w.startAt,        width: 175 },
+  { id: 'ends',     label: 'Ends',     sortValue: w => w.endAt,          width: 175 },
+  { id: 'reason',   label: 'Reason',   sortValue: w => w.reason ?? '',   naturalDir: 'asc', flex: true },
+  { id: 'by',       label: 'By',       sortValue: w => w.createdBy ?? '', naturalDir: 'asc', width: 150 },
+  { id: 'status',   label: 'Status',
+    sortValue: w => STATUS_RANK[maintenanceStatus(w, Date.now() * 1e6)], width: 110 },
+];
 
 // ── Maintenance windows tab ────────────────────────────────────────────────
 //
@@ -41,6 +77,10 @@ export function MaintenanceTab() {
   };
 
   const now = Date.now() * 1e6;
+  const dt = useDataTable<MaintenanceWindow>({
+    storageKey: 'settings-maintenance-windows', columns: WINDOW_COLS, rows: items ?? [],
+    initialSort: { id: 'starts', dir: 'desc' },
+  });
   return (
     <div>
       <div style={{ marginBottom: 12, fontSize: 12, color: 'var(--text2)' }}>
@@ -86,16 +126,12 @@ export function MaintenanceTab() {
       )}
       {items && items.length > 0 && (
         <div className="table-wrap">
-          <table>
-            <thead><tr>
-              <th>Service</th><th>Severity</th>
-              <th>Starts</th><th>Ends</th><th>Reason</th>
-              <th>By</th><th>Status</th><th style={{ textAlign: 'right' }}>Actions</th>
-            </tr></thead>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} trailing={[150]} />
+            <DataTableHead dt={dt} trailing={<th style={{ textAlign: 'right' }}>Actions</th>} />
             <tbody>
-              {items.map(w => {
-                const active = !w.disabled && w.startAt <= now && now <= w.endAt;
-                const upcoming = !w.disabled && w.startAt > now;
+              {dt.sortedRows.map(w => {
+                const status = maintenanceStatus(w, now);
                 return (
                   <tr key={w.id}>
                     <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>{w.service}</td>
@@ -105,10 +141,10 @@ export function MaintenanceTab() {
                     <td style={{ fontSize: 12, color: 'var(--text2)' }}>{w.reason || '—'}</td>
                     <td style={{ fontSize: 11, color: 'var(--text3)', fontFamily: 'monospace' }}>{w.createdBy || '—'}</td>
                     <td>
-                      {w.disabled ? <span className="badge b-err" style={{ fontSize: 9 }}>DISABLED</span>
-                        : active   ? <span className="badge b-warn" style={{ fontSize: 9 }}>ACTIVE</span>
-                        : upcoming ? <span className="badge b-info" style={{ fontSize: 9 }}>UPCOMING</span>
-                        :            <span className="badge b-ok" style={{ fontSize: 9 }}>PAST</span>}
+                      {status === 'disabled' ? <span className="badge b-err" style={{ fontSize: 9 }}>DISABLED</span>
+                        : status === 'active'   ? <span className="badge b-warn" style={{ fontSize: 9 }}>ACTIVE</span>
+                        : status === 'upcoming' ? <span className="badge b-info" style={{ fontSize: 9 }}>UPCOMING</span>
+                        :                         <span className="badge b-ok" style={{ fontSize: 9 }}>PAST</span>}
                     </td>
                     <td style={{ textAlign: 'right' }}>
                       {!w.disabled && (

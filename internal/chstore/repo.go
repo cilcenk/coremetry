@@ -1809,7 +1809,23 @@ type TraceFilter struct {
 	// every filter mode. Non-empty Env disqualifies the trace_summary
 	// MV fast-path (the MV has no env dimension — cluster-style
 	// raw-fallback, operator-approved, NO MV changes).
-	Env     string
+	Env string
+	// Cluster narrows to spans whose derived k8s / openshift cluster name
+	// matches exactly (v0.9.943 — UX denetimi B3/Ö5). Same first-class
+	// reasoning as Env: FilterRoot SUPERSEDES Filters, so an appended
+	// cluster leaf would silently vanish under a grouped OR filter.
+	//
+	// The match rides clusterExpr() — the promoted `cluster` column when
+	// the read path resolves it, the 6-key derive otherwise — so /traces
+	// answers the same "which cluster" question /services, /endpoints and
+	// /databases already answer, not a second one.
+	//
+	// H15 GATE: a non-empty Cluster disqualifies the trace_summary MV
+	// fast-path (the MV carries no cluster dimension — the same bounded
+	// raw fallback Env uses, NO MV changes). An UNCONDITIONAL conjunct
+	// would have disqualified /api/traces' cheapest read on EVERY request,
+	// which is why tracesMVEligible tests the empty case explicitly.
+	Cluster string
 	Filters []FilterExpr // advanced filter chips (AND-joined)
 	// FilterRoot is the optional grouped AND/OR builder (v0.8.x trace-query
 	// gap-2). When non-nil it SUPERSEDES Filters: buildGetTracesWhere calls
@@ -1854,6 +1870,23 @@ type TraceFilter struct {
 	CountMode string
 }
 
+// addClusterConjunct — cluster daraltmasının TEK yazım yeri (v0.9.943, B3).
+//
+// İki çağıranı var (liste + toplu görünüm) ve ikisi de AYNI şekli
+// üretmek ZORUNDA: /traces'te sekme değiştirmek soruyu genişletemez.
+// İkinci bir kopya, bu depoda tekrar eden "bir kural iki yerde, zamanla
+// ayrışıyor" sınıfının davetiyesi olurdu.
+//
+// H15: boş cluster HİÇBİR ŞEY eklemez. Bu satır, /api/traces'in
+// trace_summary_5m hızlı yolunu koruyan şeyin ta kendisi
+// (tracesMVEligible boş cluster'da uygunluğu sürdürür).
+func addClusterConjunct(wc *whereClause, clusterExpr, cluster string) {
+	if cluster == "" {
+		return
+	}
+	wc.add(clusterExpr+" = ?", cluster)
+}
+
 // buildGetTracesWhere assembles the WHERE clause for GetTraces from
 // a TraceFilter. Pure function (no Store / no ctx), extracted in
 // v0.5.450 so the regression test for the v0.5.440 fix can assert
@@ -1862,7 +1895,14 @@ type TraceFilter struct {
 // Order of conditions matches the historical inline build:
 // time bounds → service narrowing → trace ID → error flag →
 // duration → free-form FilterExpr[].
-func buildGetTracesWhere(f TraceFilter) whereClause {
+//
+// clusterExpr (v0.9.943 — B3): the SQL expression that yields a span's
+// cluster name. Passed IN rather than derived here because the choice
+// (promoted column vs 6-key derive) belongs to the Store's boot probe
+// (hasClusterCol) and this function must stay pure + ClickHouse-free so
+// the SQL-shape tests can run without a server. Callers pass
+// s.clusterExpr(); tests pass either constant.
+func buildGetTracesWhere(f TraceFilter, clusterExpr string) whereClause {
 	var wc whereClause
 	if !f.From.IsZero() {
 		// v0.5.356 — operator-reported: clicking an operation on
@@ -1967,6 +2007,12 @@ func buildGetTracesWhere(f TraceFilter) whereClause {
 	if f.Env != "" {
 		wc.add("deploy_env = ?", f.Env)
 	}
+	// Cluster narrowing (v0.9.943 — B3/Ö5). Same always-AND placement as
+	// Env, same reason. H15: the conjunct is CONDITIONAL — an empty
+	// Cluster must emit NOTHING, otherwise every /api/traces request
+	// would carry a derive comparison and (via tracesMVEligible) lose the
+	// trace_summary fast path.
+	addClusterConjunct(&wc, clusterExpr, f.Cluster)
 	// Grouped AND/OR builder supersedes the flat Filters when present
 	// (v0.8.x gap-2). A flat-AND FilterRoot routes straight through
 	// ApplyFilters inside ApplyFilterGroup, so the legacy path stays
@@ -2052,6 +2098,12 @@ func tracesMVEligible(f TraceFilter) bool {
 		// trace_summary_5m has no env dimension (cluster precedent —
 		// bounded raw fallback, NO MV changes).
 		f.Env == "" &&
+		// v0.9.943 (B3/H15) — cluster filtresi de MV'yi diskalifiye eder:
+		// trace_summary_5m'de cluster boyutu YOK. KOŞULLU olması işin
+		// KENDİSİ — boş cluster (isteklerin ezici çoğunluğu) hızlı yolda
+		// KALIR; koşulsuz bir conjunct /api/traces'in en pahalı okumasını
+		// HER istekte ham spans'e düşürürdü.
+		f.Cluster == "" &&
 		len(f.Filters) == 0 &&
 		!f.FilterRoot.hasPredicate() &&
 		len(f.RequireServices) == 0 &&
@@ -2175,7 +2227,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 		}
 	}
 
-	wc := buildGetTracesWhere(f)
+	wc := buildGetTracesWhere(f, s.clusterExpr())
 	if f.Limit == 0 {
 		f.Limit = 50
 	}
@@ -3150,7 +3202,11 @@ type AggregateFilter struct {
 	// for the same reason as TraceFilter.Env: it must survive the
 	// FilterRoot-supersedes-Filters rule and the FilterGroup depth cap.
 	// Non-empty disqualifies the trace_summary MV fast-path below.
-	Env     string
+	Env string
+	// Cluster — türetilmiş k8s/openshift cluster adı daraltması
+	// (v0.9.943, B3). Env ile aynı birinci-sınıf gerekçe; boş değer
+	// conjunct ÜRETMEZ ve MV hızlı yolunu diskalifiye ETMEZ.
+	Cluster string
 	Filters []FilterExpr
 	// FilterRoot — grouped AND/OR builder (v0.8.x gap-2). Supersedes Filters
 	// when non-nil; flat-AND is byte-identical to the legacy path, OR /
@@ -3246,7 +3302,8 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	if (f.GroupBy == "service" || f.GroupBy == "operation" || f.GroupBy == "") &&
 		f.GroupAttr == "" && f.Search == "" &&
 		// v0.8.383 — env filter forces the raw path (no env dim in the MV).
-		f.Env == "" &&
+		// v0.9.943 — cluster aynı gerekçeyle (B3/H15); KOŞULLU.
+		f.Env == "" && f.Cluster == "" &&
 		len(f.Filters) == 0 &&
 		!f.FilterRoot.hasPredicate() &&
 		!f.From.IsZero() && !f.To.IsZero() &&
@@ -3289,6 +3346,10 @@ func (s *Store) GetTraceAggregate(ctx context.Context, f AggregateFilter) ([]Agg
 	if f.Env != "" {
 		wc.add("deploy_env = ?", f.Env)
 	}
+	// v0.9.943 (B3) — cluster narrowing. clusterExpr(): terfi edilmiş
+	// kolon varsa o, yoksa 6-anahtar derive — /services, /endpoints ve
+	// /databases ile AYNI soru. BOŞKEN conjunct YOK (H15).
+	addClusterConjunct(&wc, s.clusterExpr(), f.Cluster)
 	if f.FilterRoot != nil {
 		ApplyFilterGroup(&wc, *f.FilterRoot)
 	} else {
@@ -4328,10 +4389,10 @@ func buildMetricCatalogWhere(service, pattern string) whereClause {
 //
 // The two enrichment columns are free riders:
 //
-//   • last_seen — maxMerge(last_seen_state) was ALREADY computed for
+//   - last_seen — maxMerge(last_seen_state) was ALREADY computed for
 //     the HAVING that ages silent metrics out of the picker; it was
 //     just never projected. Reading it costs nothing extra.
-//   • serviceCount — service_name is metric_catalog's FIRST ORDER BY
+//   - serviceCount — service_name is metric_catalog's FIRST ORDER BY
 //     column and every row read here already carries it, so uniqExact
 //     over the existing GROUP BY adds no scan.
 //

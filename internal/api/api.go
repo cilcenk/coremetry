@@ -3844,11 +3844,18 @@ func parseTraceFilter(q url.Values) (chstore.TraceFilter, error) {
 		// v0.8.383 — global env picker (?env=). First-class filter so it
 		// survives the FilterRoot-supersedes-Filters rule; rides the
 		// RawQuery cache key below like every other param.
-		Env:    strings.TrimSpace(q.Get("env")),
-		Sort:   q.Get("sort"),
-		Order:  q.Get("order"),
-		Limit:  parseInt(q.Get("limit"), 50),
-		Offset: parseInt(q.Get("offset"), 0),
+		Env: strings.TrimSpace(q.Get("env")),
+		// v0.9.943 (B3/Ö5) — ?cluster=. /endpoints ve EndpointDetail'in
+		// "Traces →" pivotu bu paramı v0.9.307'den beri YAZIYORDU;
+		// /traces onu okumuyordu, yani cluster=A altında bakılan bir
+		// satırın pivotu TÜM cluster'ların trace'lerini listeliyordu.
+		// Aynı ayrıştırmadan geçtiği için /api/traces/count de aynı
+		// evreni sayar (v0.9.638 sözleşmesi).
+		Cluster: strings.TrimSpace(q.Get("cluster")),
+		Sort:    q.Get("sort"),
+		Order:   q.Get("order"),
+		Limit:   parseInt(q.Get("limit"), 50),
+		Offset:  parseInt(q.Get("offset"), 0),
 	}
 	filters, ferr := parseFiltersAndDSL(q.Get("filters"), q.Get("dsl"))
 	if ferr != nil {
@@ -3969,8 +3976,10 @@ func (s *Server) exportTracesCSV(w http.ResponseWriter, r *http.Request) {
 		AttrKey:  q.Get("attrKey"),
 		AttrVal:  q.Get("attrVal"),
 		// v0.8.383 — ?env= parity with /api/traces so the CSV export
-		// matches exactly what's on screen.
+		// matches exactly what's on screen. v0.9.943: ?cluster= aynı
+		// gerekçeyle — dışa aktarım ekrandaki kapsamı taşımalı.
 		Env:       strings.TrimSpace(q.Get("env")),
+		Cluster:   strings.TrimSpace(q.Get("cluster")),
 		Sort:      q.Get("sort"),
 		Order:     q.Get("order"),
 		Limit:     limit,
@@ -4080,10 +4089,13 @@ func (s *Server) getTraceAggregate(w http.ResponseWriter, r *http.Request) {
 		MinMs:     parseFloat(q.Get("minMs")),
 		MaxMs:     parseFloat(q.Get("maxMs")),
 		// v0.8.383 — global env picker (?env=); rides the RawQuery key.
-		Env:   strings.TrimSpace(q.Get("env")),
-		Sort:  q.Get("sort"),
-		Order: q.Get("order"),
-		Limit: parseInt(q.Get("limit"), 100),
+		Env: strings.TrimSpace(q.Get("env")),
+		// v0.9.943 (B3) — ?cluster=; liste ve toplu görünüm AYNI kapsamı
+		// okumalı, yoksa sekme değiştirmek soruyu sessizce genişletirdi.
+		Cluster: strings.TrimSpace(q.Get("cluster")),
+		Sort:    q.Get("sort"),
+		Order:   q.Get("order"),
+		Limit:   parseInt(q.Get("limit"), 100),
 	}
 	filters, ferr := parseFiltersAndDSL(q.Get("filters"), q.Get("dsl"))
 	if ferr != nil {

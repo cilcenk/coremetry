@@ -54,7 +54,7 @@ func TestTraceFilterEnv_AlwaysAndConjunct(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			wc := buildGetTracesWhere(tc.f)
+			wc := buildGetTracesWhere(tc.f, clusterDeriveExpr)
 			sql := wc.sql()
 			if !strings.Contains(sql, "deploy_env = ?") {
 				t.Fatalf("WHERE must carry the env conjunct; got %q", sql)
@@ -79,7 +79,7 @@ func TestTraceFilterEnv_AlwaysAndConjunct(t *testing.T) {
 
 func TestTraceFilterEnv_EmptyMeansAllEnvironments(t *testing.T) {
 	from := time.Date(2026, 7, 8, 0, 0, 0, 0, time.UTC)
-	wc := buildGetTracesWhere(TraceFilter{From: from, To: from.Add(time.Hour)})
+	wc := buildGetTracesWhere(TraceFilter{From: from, To: from.Add(time.Hour)}, clusterDeriveExpr)
 	if strings.Contains(wc.sql(), "deploy_env") {
 		t.Fatalf("empty Env must add no deploy_env predicate; got %q", wc.sql())
 	}

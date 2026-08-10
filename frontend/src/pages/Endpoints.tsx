@@ -798,10 +798,7 @@ export default function EndpointsPage() {
                             // same place the row does.
                             onClick={() => openEndpointPage(r)}
                             title="Open the endpoint detail page — calls / errors / p99 on a time axis"
-                            style={{
-                              background: 'transparent', border: 0, padding: 0,
-                              cursor: 'pointer', display: 'inline-block',
-                            }}
+                            className="btn-bare"
                           >
                             <Sparkline values={r.sparkline ?? []}
                               width={100} height={22}

@@ -373,6 +373,23 @@ button.ghost-danger:hover:not(:disabled) {
    palette were inventing per file (fontSize 10/11, ad-hoc padding). */
 button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 
+/* `.btn-bare` (v0.9.888) — the honest replacement for `all: unset` on a
+   button that wraps NON-square content: a sparkline, a label fragment.
+   IconButton is the answer for glyphs; this is the answer for
+   "clickable thing that must not look like a button at all".
+
+   The difference from `all: unset` is the whole point: `all: unset`
+   also resets `outline-style` to none, so the global :focus-visible
+   ring never paints and the control is invisible to keyboard users.
+   This class touches only the chrome and leaves focus alone. */
+.btn-bare {
+  background: transparent; border: 0; padding: 0; margin: 0;
+  color: inherit; font: inherit; text-align: inherit;
+  display: inline-flex; align-items: center; cursor: pointer;
+}
+.btn-bare:hover:not(:disabled) { background: transparent; }
+.btn-bare:disabled { opacity: .4; cursor: not-allowed; }
+
 /* ── IconButton (v0.9.887) — square, glyph-only ─────────────────────
    10+ sites hand-rolled this with `all: unset` + inline padding. The
    `all: unset` form silently kills the :focus-visible ring, so none of
@@ -401,6 +418,14 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 /* `bare` is the honest replacement for `all: unset`: no chrome at all,
    but the focus ring and a colour hover survive. */
 .btn-icon.ib-bare:hover:not(:disabled) { color: var(--accent2); }
+/* `ib-accent` (v0.9.888) — glyphs that are "open this" affordances inside
+   a dense row (👁 peek trace, ⌁ namespace trends). They were accent-tinted
+   at REST on purpose: in a wall of monospace log text, the tint is what
+   says "clickable". Dropping to the default muted tone would have been an
+   unrequested legibility regression, so the tone is a class, not 4 inline
+   colours. */
+.btn-icon.ib-accent { color: var(--accent2); }
+.btn-icon.ib-accent:hover:not(:disabled) { color: var(--accent); background: var(--bg2); }
 .btn-icon.active { color: var(--accent2); background: var(--accent-bg); border-color: var(--accent-border); }
 /* `ib-star` — the favourite/pin modifier. The generic `.active` accent
    tint is right for filter-ish toggles (negate, pin-a-column) but WRONG

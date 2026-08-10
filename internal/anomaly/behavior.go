@@ -69,10 +69,6 @@ const (
 	// sınırını aşabilir (10:05'teki 6 dilim 09:35'e uzanır) ve her
 	// dilim KENDİ kovasının baseline'ına karşı puanlanır.
 	behaviorNeighborHours = 1
-	// behaviorMinBaselineSamples — bir kovanın baseline sayılması için
-	// gereken asgari örnek. 48'in dörtte biri. ALTINDA SİNYAL YOK —
-	// yeni/seyrek servis sessiz kalır, uydurma baseline üretilmez.
-	behaviorMinBaselineSamples = 12
 	// behaviorDeployLookback — adayın başlangıcından ne kadar geriye
 	// bakıp deploy arıyoruz. 30 dk: bir rollout'un metriğe yansıması
 	// bu pencereye sığar; daha genişi tesadüfi eşleşme üretir.
@@ -197,8 +193,58 @@ func buildBehaviorBucketsQuery() string {
 		SETTINGS max_execution_time = 25`, howExpr, hoursPerWeek)
 }
 
+// behaviorBucket — tek bir haftanın-saati kovasının baseline malzemesi.
+//
+// İKİ SAYI, İKİ FARKLI SORU (v0.9.957):
+//
+//	len(Values) — "kaç örneğim var" (kıtlık).
+//	Repeats     — "bu saati kaç FARKLI GÜN gördüm" (çeşitlilik).
+//
+// İkincisi olmadan birincisi yanıltıyor: 24 örnek bol görünür ama hepsi
+// iki günden geliyorsa mevsimsel yayılım n=2'den kestiriliyor demektir.
+// Ölçülmüş vaka ve gerekçe chstore.AnomalyBehaviorConfig.MinBucketRepeats
+// yorumunda.
+type behaviorBucket struct {
+	Values  []float64
+	Repeats int
+	// lastDay — Repeats'i sayarken kullanılan iç durum (UTC gün indeksi).
+	// Satırlar zamana göre ARTAN geldiği için gün değişimini saymak
+	// yeterli; küme tutmaya gerek yok.
+	lastDay int64
+}
+
+// behaviorSufficient — kova baseline üretmeye YETERLİ mi? Saf ve tek
+// yerde: kapı hem karar yolunda (evalBehaviorWindow) hem de telemetri
+// yolunda (countScarceBuckets) AYNI ifadeyle sorulmalı, yoksa kart
+// "0 kova atlandı" derken motor sessizce atlar.
+func behaviorSufficient(b behaviorBucket, cfg behaviorConfigView) bool {
+	return len(b.Values) >= cfg.MinSamplesPerBucket && b.Repeats >= cfg.MinBucketRepeats
+}
+
+// countScarceBuckets — baseline'da YETERSİZ kova sayısı. /admin/stats
+// kartının "yetersiz geçmiş: X kova atlandı" satırının kaynağı.
+//
+// Metrikten BAĞIMSIZ: kovanın örnek sayısı ve gün çeşitliliği aynı
+// satırlardan çıkıyor, hangi metriği okuduğumuzdan etkilenmiyor. Bu
+// yüzden tarama servis başına BİR KEZ sayar.
+func countScarceBuckets(baseline map[int]behaviorBucket, cfg behaviorConfigView) int {
+	n := 0
+	for _, b := range baseline {
+		if !behaviorSufficient(b, cfg) {
+			n++
+		}
+	}
+	return n
+}
+
+// behaviorDayIndex — bir bucket'ın UTC gün indeksi. Tekrar sayımının
+// birimi: aynı haftanın-saatinin iki farklı GÜNDE görülmesi iki
+// tekrardır. Tam sayı bölmesi UTC'de güvenli — kova zaten UTC pinli
+// (v0.8.323), yani yaz saati sıçraması yok.
+func behaviorDayIndex(unix int64) int64 { return unix / 86400 }
+
 // splitBehaviorSeries — bir servisin satırlarını baseline (kova →
-// örnekler) ve "şimdi" penceresine ayırır.
+// örnekler + tekrar sayısı) ve "şimdi" penceresine ayırır.
 //
 // KESİM NOKTASI recentCutoff: ondan ESKİ satırlar baseline, YENİ olanlar
 // pencere. Böylece bugünün kendi sapması kendi baseline'ını KİRLETMEZ —
@@ -206,15 +252,22 @@ func buildBehaviorBucketsQuery() string {
 // medyanı kendine doğru çeker ve motor kendi bulduğu şeyi normalleştirir.
 //
 // Saf; satırların zamana göre ARTAN geldiği varsayılır (SQL ORDER BY
-// service_name, t).
-func splitBehaviorSeries(rows []behaviorRow, metric string, recentCutoffUnix int64) (baseline map[int][]float64, recent []behaviorRow) {
-	baseline = make(map[int][]float64)
+// service_name, t) — Repeats sayımı bu sıraya dayanıyor.
+func splitBehaviorSeries(rows []behaviorRow, metric string, recentCutoffUnix int64) (baseline map[int]behaviorBucket, recent []behaviorRow) {
+	baseline = make(map[int]behaviorBucket)
 	for _, r := range rows {
 		if r.Unix >= recentCutoffUnix {
 			recent = append(recent, r)
 			continue
 		}
-		baseline[r.HOW] = append(baseline[r.HOW], behaviorMetricValue(metric, r))
+		b := baseline[r.HOW]
+		day := behaviorDayIndex(r.Unix)
+		if b.Repeats == 0 || day != b.lastDay {
+			b.Repeats++
+			b.lastDay = day
+		}
+		b.Values = append(b.Values, behaviorMetricValue(metric, r))
+		baseline[r.HOW] = b
 	}
 	return baseline, recent
 }
@@ -270,7 +323,7 @@ type behaviorConfigView = chstore.AnomalyBehaviorConfig
 // mı" sorusunu cevaplıyor.
 func evalBehavior(
 	service, metric string,
-	baseline map[int][]float64,
+	baseline map[int]behaviorBucket,
 	recent []behaviorRow,
 	pol metricPolicy,
 	cfg behaviorConfigView,
@@ -302,12 +355,13 @@ func evalBehavior(
 //
 // AÇILMA KOŞULU — hepsi birden:
 //  1. pencerenin her dilimi AYNI yönde ateşliyor (geçici sıçrama reddi),
-//  2. her dilimin kovası behaviorMinBaselineSamples örnek görmüş
-//     (baseline'sız servis SESSİZ — uydurma yok),
+//  2. her dilimin kovası YETERLİ baseline görmüş — hem örnek sayısı
+//     (MinSamplesPerBucket) hem de gün çeşitliliği (MinBucketRepeats);
+//     baseline'sız servis SESSİZ, uydurma yok,
 //  3. SON dilim operatörün anlamlılık tabanlarını geçiyor.
 func evalBehaviorWindow(
 	service, metric string,
-	baseline map[int][]float64,
+	baseline map[int]behaviorBucket,
 	recent []behaviorRow,
 	pol metricPolicy,
 	cfg behaviorConfigView,
@@ -323,14 +377,16 @@ func evalBehaviorWindow(
 	var lastZ, lastRatio, lastMedian, lastValue float64
 	var spans uint64
 	for i, r := range window {
-		samples := baseline[r.HOW]
-		if len(samples) < behaviorMinBaselineSamples {
+		bucket := baseline[r.HOW]
+		if !behaviorSufficient(bucket, cfg) {
 			// DÜRÜSTLÜK: baseline yoksa sinyal de yok. Yeni bir servis
 			// ilk 4 haftasında sessiz kalır; "veri yok" bir anomali
-			// değildir.
+			// değildir. v0.9.957: kapı artık örnek SAYISINA ek olarak
+			// gün ÇEŞİTLİLİĞİNE de bakıyor — 24 örneğin hepsi iki günden
+			// geliyorsa yayılım kestirilemez ve z patlar (ölçülmüş vaka).
 			return behaviorCandidate{}, false
 		}
-		med, rawMAD := medianMAD(samples)
+		med, rawMAD := medianMAD(bucket.Values)
 		mad := effectiveMAD(metric, med, rawMAD, pol.minMAD)
 		v := behaviorMetricValue(metric, r)
 		z := madScale * (v - med) / mad

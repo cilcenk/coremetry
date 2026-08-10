@@ -1960,9 +1960,13 @@ func (s *Server) getSystemStats(w http.ResponseWriter, r *http.Request) {
 			Candidates:     obs.Candidates,
 			LastUnix:       obs.LastUnix,
 			LastDurationMs: obs.LastDurationMs,
-			LastCandidates: obs.LastCandidates,
-			LastServices:   obs.LastServices,
-			LastError:      obs.LastError,
+			// v0.9.957 — bütçe kırılımı + sessizliğin gerekçesi.
+			LastQueryMs:       obs.LastQueryMs,
+			LastWriteMs:       obs.LastWriteMs,
+			LastCandidates:    obs.LastCandidates,
+			LastServices:      obs.LastServices,
+			LastScarceBuckets: obs.LastScarceBuckets,
+			LastError:         obs.LastError,
 		}
 		// v0.8.212 — surface the duplicate-worker HA hazard (Redis configured but
 		// the lock fell back to always-leader Noop). main.go owns the lock state;

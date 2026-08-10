@@ -172,3 +172,65 @@ func TestAnomalyBehaviorRoundTrip(t *testing.T) {
 		t.Errorf("round-trip ayarı değiştirdi: %+v", got)
 	}
 }
+
+// TestNormalizeBehaviorScarcityKnobs — v0.9.957'nin iki yeni vidası.
+//
+// AYRI TEST çünkü ikisinin kelepçe DURUŞU üstteki alanlardan farklı:
+// üstte 0 "motoru sonuna kadar aç" demek ve reddediliyor; burada 0
+// "kapıyı kaldır" demek ve yine reddediliyor, ama üst sınır da anlamlı
+// — MinBucketRepeats pencerede FİİLEN mümkün olandan (28/7 = 4) büyük
+// olursa motor KALICI olarak susar ve bunu hiçbir ekran açıklayamaz.
+func TestNormalizeBehaviorScarcityKnobs(t *testing.T) {
+	d := DefaultAnomalyBehavior()
+	cases := []struct {
+		name        string
+		inSamples   int
+		inRepeats   int
+		wantSamples int
+		wantRepeats int
+	}{
+		{"boş → varsayılan", 0, 0, d.MinSamplesPerBucket, d.MinBucketRepeats},
+		{"geçerli korunur", 24, 4, 24, 4},
+		{"negatif → varsayılan", -5, -1, d.MinSamplesPerBucket, d.MinBucketRepeats},
+		{
+			// 4'ün üstü = "hiç açma": 28 günlük pencerede bir haftanın-saati
+			// en fazla 4 kez tekrar eder.
+			"tekrar penceresi aşıyor → varsayılan", 24, 5, 24, d.MinBucketRepeats,
+		},
+		{"örnek üst sınırı aşıyor → varsayılan", 100000, 3, d.MinSamplesPerBucket, 3},
+		{"alt sınır 1 meşru", 1, 1, 1, 1},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := NormalizeAnomalyBehavior(AnomalyBehaviorConfig{
+				SeasonalZ: 4, RegimeRatio: 1.5, DwellSeasonal: 3, DwellRegime: 6,
+				MaxCandidatesPerTick: 50,
+				MinSamplesPerBucket:  c.inSamples,
+				MinBucketRepeats:     c.inRepeats,
+			})
+			if got.MinSamplesPerBucket != c.wantSamples {
+				t.Errorf("MinSamplesPerBucket = %d, want %d", got.MinSamplesPerBucket, c.wantSamples)
+			}
+			if got.MinBucketRepeats != c.wantRepeats {
+				t.Errorf("MinBucketRepeats = %d, want %d", got.MinBucketRepeats, c.wantRepeats)
+			}
+		})
+	}
+}
+
+// TestBehaviorScarcityDefaultsAreMeasured — varsayılanlar PİNLİ.
+//
+// 12: v0.9.935'in koddaki sabitinin aynısı (vidalaşırken davranış
+// değişmedi). 3: ÖLÇÜLMÜŞ kapı — lokal küme 9 günlük geçmişle her
+// kovada 24 örnek / 2 GÜN taşıyordu, 12'lik örnek kapısını rahat
+// geçiyordu ve dejenere MAD tek tikte 178 aday üretmişti. Bu sayıyı
+// 2'ye düşürmek o fırtınayı geri getirir.
+func TestBehaviorScarcityDefaultsAreMeasured(t *testing.T) {
+	d := DefaultAnomalyBehavior()
+	if d.MinSamplesPerBucket != 12 {
+		t.Errorf("MinSamplesPerBucket = %d, want 12 (v0.9.935 sabitinin aynısı)", d.MinSamplesPerBucket)
+	}
+	if d.MinBucketRepeats != 3 {
+		t.Errorf("MinBucketRepeats = %d, want 3 (ölçülmüş kapı — 2 fırtınayı geri getirir)", d.MinBucketRepeats)
+	}
+}

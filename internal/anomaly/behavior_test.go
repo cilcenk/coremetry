@@ -252,10 +252,10 @@ func TestSplitBehaviorSeries(t *testing.T) {
 	if len(recent) != 2 {
 		t.Fatalf("pencere %d satır, want 2 (kesim dahil)", len(recent))
 	}
-	if got := len(baseline[10]); got != 2 {
+	if got := len(baseline[10].Values); got != 2 {
 		t.Fatalf("baseline %d örnek, want 2", got)
 	}
-	for _, v := range baseline[10] {
+	for _, v := range baseline[10].Values {
 		if v > 5 {
 			t.Errorf("sapma baseline'a sızmış (%.1f%%) — motor kendi bulduğunu normalleştirir", v)
 		}
@@ -267,12 +267,29 @@ func TestSplitBehaviorSeries(t *testing.T) {
 // baselineFor — n örnekli, `val` merkezli, hafif gürültülü bir kova.
 // Gürültü ŞART: sıfır MAD'de effectiveMAD taban devreye girer ve test
 // gerçek dünyayı temsil etmez.
-func baselineFor(how, n int, val float64) map[int][]float64 {
-	out := map[int][]float64{}
+//
+// Repeats VARSAYILAN OLARAK DOLU (v0.9.957): bu yardımcıyı kullanan
+// testlerin konusu kıtlık kapısı DEĞİL, karar mantığı. Kıtlığı sınayan
+// testler baselineWithRepeats kullanır.
+func baselineFor(how, n int, val float64) map[int]behaviorBucket {
+	return baselineWithRepeats(how, n, val, behaviorTestFullRepeats)
+}
+
+// behaviorTestFullRepeats — 28 günlük pencerenin gerçek tekrar sayısı
+// (28/7). "Geçmişi dolu kurulum" demek.
+const behaviorTestFullRepeats = 4
+
+// baselineWithRepeats — n örnek, `repeats` FARKLI günden geldi.
+// v0.9.957'nin kıtlık kapısı iki sayıya birden bakıyor; testlerin
+// ikisini de ayrı ayrı kıstırabilmesi gerek.
+func baselineWithRepeats(how, n int, val float64, repeats int) map[int]behaviorBucket {
+	out := map[int]behaviorBucket{}
+	b := behaviorBucket{Repeats: repeats}
 	for i := 0; i < n; i++ {
 		delta := float64(i%5-2) * 0.02 * val
-		out[how] = append(out[how], val+delta)
+		b.Values = append(b.Values, val+delta)
 	}
+	out[how] = b
 	return out
 }
 
@@ -306,11 +323,17 @@ func TestBehaviorNoBaselineNoSignal(t *testing.T) {
 
 	cases := []struct {
 		name     string
-		baseline map[int][]float64
+		baseline map[int]behaviorBucket
 	}{
-		{"baseline hiç yok (yeni servis)", map[int][]float64{}},
-		{"kova boş (seyrek servis)", map[int][]float64{11: {100, 100, 100}}},
-		{"eşiğin bir altı örnek", baselineFor(10, behaviorMinBaselineSamples-1, 100)},
+		{"baseline hiç yok (yeni servis)", map[int]behaviorBucket{}},
+		{"kova boş (seyrek servis)", map[int]behaviorBucket{
+			11: {Values: []float64{100, 100, 100}, Repeats: 4},
+		}},
+		{"eşiğin bir altı örnek", baselineFor(10, cfg.MinSamplesPerBucket-1, 100)},
+		// v0.9.957 — ÖLÇÜLMÜŞ vaka: örnek sayısı BOL (24) ama hepsi iki
+		// günden geliyor. Eski kapı (yalnız sayı) bunu geçiriyordu ve
+		// dejenere MAD tek tikte 178 aday üretmişti.
+		{"örnek bol, gün çeşitliliği kıt", baselineWithRepeats(10, 24, 100, cfg.MinBucketRepeats-1)},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -321,10 +344,10 @@ func TestBehaviorNoBaselineNoSignal(t *testing.T) {
 	}
 
 	// Eşiğe TAM ulaşınca sinyal gelmeli, yoksa kapı fiilen sonsuza kadar
-	// kapalı kalır ve motor prod'da hiç konuşmaz.
-	ok3 := baselineFor(10, behaviorMinBaselineSamples, 100)
+	// kapalı kalır ve motor prod'da hiç konuşmaz. İKİ eşik de sınırda.
+	ok3 := baselineWithRepeats(10, cfg.MinSamplesPerBucket, 100, cfg.MinBucketRepeats)
 	if _, ok := evalBehavior("svc", "p99_ms", ok3, recent, p99Policy(), cfg); !ok {
-		t.Error("asgari örnek sayısında sinyal ÜRETİLMEDİ — kapı fiilen kapalı")
+		t.Error("asgari örnek+tekrar sayısında sinyal ÜRETİLMEDİ — kapı fiilen kapalı")
 	}
 }
 
@@ -408,10 +431,11 @@ func TestBehaviorSeasonalDeviation(t *testing.T) {
 	cfg := behaviorDefaults()
 	// MAD'i küçük tutmak için gürültüsüz-yakın baseline; effectiveMAD
 	// p99_ms için minMAD=1.0 tabanını uygular.
-	baseline := map[int][]float64{}
+	b := behaviorBucket{Repeats: behaviorTestFullRepeats}
 	for i := 0; i < 48; i++ {
-		baseline[10] = append(baseline[10], 100+float64(i%3))
+		b.Values = append(b.Values, 100+float64(i%3))
 	}
+	baseline := map[int]behaviorBucket{10: b}
 	recent := rowsAt(10, 4, 3000, 0, 130) // 1.3× → rejim eşiği (1.5) ALTINDA
 
 	c, ok := evalBehavior("checkout", "p99_ms", baseline, recent, p99Policy(), cfg)
@@ -493,7 +517,7 @@ func TestBehaviorWindowSpansHourBoundary(t *testing.T) {
 	cfg := behaviorDefaults()
 	// 09 kovası normalde 300ms, 10 kovası normalde 100ms (sabah rampası
 	// tersine: gece yavaş, gündüz hızlı).
-	baseline := map[int][]float64{}
+	baseline := map[int]behaviorBucket{}
 	for k, v := range baselineFor(9, 48, 300) {
 		baseline[k] = v
 	}

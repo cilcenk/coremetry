@@ -61,6 +61,17 @@ export function BehaviorPanel({ behavior }: { behavior: SystemStats['behavior'] 
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
             <KPI label="Son tarama" value={b.lastUnix ? fmtUptime(Math.max(0, Math.floor(Date.now() / 1000) - b.lastUnix)) + ' önce' : '—'} />
+            {/* v0.9.957 — bütçenin KIRILIMI. "Tik yavaş" tek başına ne
+                yapılacağını söylemiyor: yük MV sorgusundaysa vidalar,
+                yazımdaysa toplu yazım hattı sorumludur. Alanlar opsiyonel
+                (eski backend döndürmez) → yoksa karo hiç çizilmez, sıfır
+                göstermek yalan olurdu. */}
+            {b.lastQueryMs !== undefined && (
+              <KPI label="↳ MV sorgusu" value={`${fmtNum(b.lastQueryMs)} ms`} />
+            )}
+            {b.lastWriteMs !== undefined && (
+              <KPI label="↳ Olay yazımı" value={`${fmtNum(b.lastWriteMs)} ms`} />
+            )}
             <KPI label="Son bulgu" value={fmtNum(b.lastCandidates)} />
             <KPI label="Kapsanan servis" value={fmtNum(b.lastServices)} />
             <KPI label="Toplam tarama" value={fmtNum(b.ticks)} />
@@ -71,6 +82,18 @@ export function BehaviorPanel({ behavior }: { behavior: SystemStats['behavior'] 
               fontSize: 11, marginTop: 10, fontFamily: 'ui-monospace, monospace',
               overflowWrap: 'anywhere',
             }}>{b.lastError}</div>
+          )}
+          {/* SESSİZLİĞİN GEREKÇESİ (v0.9.957). Motor 0 bulgu ürettiğinde
+              bunun "her şey normal" mi yoksa "henüz öğrenecek kadar geçmiş
+              yok" mu olduğunu başka hiçbir ekran söyleyemez. */}
+          {!!b.lastScarceBuckets && (
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, lineHeight: 1.5 }}>
+              <b>Yetersiz geçmiş:</b> {fmtNum(b.lastScarceBuckets)} kova atlandı.
+              Bu kovalarda henüz güvenilir bir baseline yok (kova başına örnek ya da
+              farklı gün sayısı eşiğin altında), o yüzden motor onlar için
+              <b> sessiz</b> kalıyor. Kurulum 28 günü doldurdukça kendiliğinden azalır;
+              eşikler Settings &rarr; Anomali &rarr; <b>Davranış değişimi</b>.
+            </div>
           )}
           {slow && !b.lastError && (
             <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, lineHeight: 1.5 }}>

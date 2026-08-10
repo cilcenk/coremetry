@@ -52,13 +52,19 @@ type SystemStats struct {
 // Alan adları internal/anomaly.BehaviorStats ile birebir; ayrı tip
 // çünkü chstore o paketi import edemez (döngü).
 type BehaviorDetectorStats struct {
-	Ticks          int64  `json:"ticks"`
-	Candidates     int64  `json:"candidates"`
-	LastUnix       int64  `json:"lastUnix"`
-	LastDurationMs int64  `json:"lastDurationMs"`
-	LastCandidates int64  `json:"lastCandidates"`
-	LastServices   int64  `json:"lastServices"`
-	LastError      string `json:"lastError,omitempty"`
+	Ticks          int64 `json:"ticks"`
+	Candidates     int64 `json:"candidates"`
+	LastUnix       int64 `json:"lastUnix"`
+	LastDurationMs int64 `json:"lastDurationMs"`
+	// v0.9.957 — bütçenin kırılımı (sorgu / yazım) ve sessizliğin
+	// gerekçesi (yetersiz geçmiş yüzünden atlanan kova). Gerekçeler
+	// internal/anomaly.BehaviorStats'ta.
+	LastQueryMs       int64  `json:"lastQueryMs"`
+	LastWriteMs       int64  `json:"lastWriteMs"`
+	LastCandidates    int64  `json:"lastCandidates"`
+	LastServices      int64  `json:"lastServices"`
+	LastScarceBuckets int64  `json:"lastScarceBuckets"`
+	LastError         string `json:"lastError,omitempty"`
 }
 
 // ExemplarIngest — the two OTLP metric-exemplar ingest totals (cumulative

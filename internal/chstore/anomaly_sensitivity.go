@@ -111,6 +111,38 @@ type AnomalyBehaviorConfig struct {
 	// EN GÜÇLÜ N tanesini geçirir. Kesilenler kaybolmaz, bir sonraki
 	// tikte hâlâ ateşliyorlarsa yine sıraya girerler.
 	MaxCandidatesPerTick int `json:"maxCandidatesPerTick"`
+	// MinSamplesPerBucket — bir kovanın baseline sayılması için gereken
+	// asgari 5-dk örneği (v0.9.957). v0.9.935'te bu kodda sabit 12'ydi;
+	// vidalaştırıldı, DEĞERİ DEĞİŞMEDİ.
+	//
+	// Neden vida: "yeterli geçmiş" filoya bağlı. Sürekli trafik alan bir
+	// API'de saat başına 12 bucket'ın hepsi dolar; günde birkaç kez
+	// koşan bir batch işçisinde 3 tanesi dolar ve o servis 28 gün
+	// beklese de bu eşiği geçemez.
+	MinSamplesPerBucket int `json:"minSamplesPerBucket"`
+	// MinBucketRepeats — bir kovanın baseline sayılması için gereken
+	// asgari FARKLI GÜN sayısı, yani "bu haftanın-saatini kaç kez
+	// gördüm" (v0.9.957).
+	//
+	// ── Neden AYRI bir kapı, MinSamplesPerBucket yetmiyor ────────────
+	// ÖLÇÜLDÜ (lokal, 2026-08-11): service_summary_5m 9 gün taşıyordu
+	// ve her servisin hedef kovasında TAM 24 örnek vardı — yani 12'lik
+	// örnek kapısı rahat geçiliyordu. Ama o 24 örnek YALNIZ İKİ GÜNDEN
+	// geliyordu (aynı saatin iki haftalık tekrarı). Mevsimsel z'nin
+	// ölçtüğü şey haftadan haftaya YAYILIM; iki gözlemden yayılım
+	// kestirilemez. Sonuç: MAD dejenere, z patladı, tek tikte 178 aday
+	// (ezici çoğunluğu "istek hızı mevsimsel sapma ↓", hepsi aynı
+	// kovada). Örnek SAYISI kapısı bunu göremez çünkü sayı yeterliydi;
+	// eksik olan ÇEŞİTLİLİKTİ.
+	//
+	// Bu v0.8.250'nin sınıfı (örnek kıtlığı → baseline'a güvenilemez)
+	// ve oradaki karar burada da geçerli: SESSİZ KALMAK yalan
+	// söylemekten iyidir. 3 = "yayılımdan söz edebilmek için en az üç
+	// gözlem". 28 günlük pencerede 4 tekrar var, yani vida dolu bir
+	// kurulumu susturmuyor; henüz 3 haftası dolmamış bir kurulumu
+	// (ya da lokal 9 günü) susturuyor — ki orada söyleyecek dürüst bir
+	// şey zaten yok.
+	MinBucketRepeats int `json:"minBucketRepeats"`
 }
 
 // IsEnabled — nil-güvenli okuma. Yazılmamış = AÇIK.
@@ -129,6 +161,18 @@ const (
 	behaviorMaxDwell       = 24 // 2 saat; ötesi "hiç açma" demek
 	behaviorMinCandidates  = 1
 	behaviorMaxCandidates  = 5000
+	behaviorMinSamplesLo   = 1
+	behaviorMinSamplesHi   = 576 // 28 gün × 4 tekrar × 12 bucket'ın üstü: ötesi "hiç açma"
+	behaviorMinRepeatsLo   = 1
+	// behaviorMinRepeatsHi — pencerede FİİLEN mümkün olan tekrar sayısı
+	// (28 gün / 7). Üstüne çıkmak motoru KALICI olarak susturur ve bunu
+	// hiçbir ekran açıklayamazdı; kelepçe o sessiz hâli imkânsız kılıyor.
+	behaviorMinRepeatsHi = behaviorBaselineWeeks
+	// behaviorBaselineWeeks — internal/anomaly.behaviorBaselineDays / 7.
+	// BİLİNÇLİ TEKRAR: chstore, anomaly'yi import EDEMEZ (ters yön —
+	// anomaly zaten chstore'u import ediyor), AnomalySensitivityMetrics
+	// ile aynı durum. Pencere değişirse burası da değişmeli.
+	behaviorBaselineWeeks = 4
 )
 
 // DefaultAnomalyBehavior — spec'te onaylanan varsayılanlar
@@ -142,6 +186,11 @@ func DefaultAnomalyBehavior() AnomalyBehaviorConfig {
 		DwellSeasonal:        3, // 15 dk
 		DwellRegime:          6, // 30 dk
 		MaxCandidatesPerTick: 50,
+		// v0.9.957 — 12: v0.9.935'in koddaki sabitinin AYNISI (davranış
+		// değişmiyor, yalnız vidalaşıyor). 3: ölçülmüş kapı; gerekçe
+		// MinBucketRepeats alanının yorumunda.
+		MinSamplesPerBucket: 12,
+		MinBucketRepeats:    3,
 	}
 }
 
@@ -163,6 +212,8 @@ func NormalizeAnomalyBehavior(b AnomalyBehaviorConfig) AnomalyBehaviorConfig {
 		DwellSeasonal:        clampRangeI(b.DwellSeasonal, behaviorMinDwell, behaviorMaxDwell, d.DwellSeasonal),
 		DwellRegime:          clampRangeI(b.DwellRegime, behaviorMinDwell, behaviorMaxDwell, d.DwellRegime),
 		MaxCandidatesPerTick: clampRangeI(b.MaxCandidatesPerTick, behaviorMinCandidates, behaviorMaxCandidates, d.MaxCandidatesPerTick),
+		MinSamplesPerBucket:  clampRangeI(b.MinSamplesPerBucket, behaviorMinSamplesLo, behaviorMinSamplesHi, d.MinSamplesPerBucket),
+		MinBucketRepeats:     clampRangeI(b.MinBucketRepeats, behaviorMinRepeatsLo, behaviorMinRepeatsHi, d.MinBucketRepeats),
 	}
 	return out
 }

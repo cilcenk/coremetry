@@ -147,7 +147,7 @@ export default function RunbooksPage() {
                     <td className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>
                       {tsLong(rb.updatedAt)}
                     </td>
-                    <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <td><div className="cell-actions end">
                       <Button variant="secondary" size="sm"
                         onClick={() => navigate(`/runbook?id=${encodeURIComponent(rb.id)}`)}>
                         Open
@@ -166,6 +166,7 @@ export default function RunbooksPage() {
                           Delete
                         </Button>
                       )}
+                    </div>
                     </td>
                   </tr>
                 ))}

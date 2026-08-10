@@ -2670,6 +2670,18 @@ button.accent.copied {
    glyph-only buttons with accessible names, which is exactly IconButton's
    anatomy. Only the container survives here. */
 .row-actions { display: inline-flex; gap: 2px; margin-left: auto; }
+
+/* `.cell-actions` (v0.9.912, mT5) — hücre İÇİNDEKİ eylem satırı.
+   Neden `<td style="display:flex">` DEĞİL: `display:flex` bir `<td>`ye
+   yazıldığında hücre `table-cell` olmaktan ÇIKAR. Sonuçları sessiz ama
+   gerçek: genişliği kolon algoritmasına katılmaz (kolon yeniden
+   boyutlandırma o hücrede tutmaz), `vertical-align` uygulanmaz ve
+   satır yüksekliği komşu hücrelerle hizasını kaybeder. Tablo "çalışıyor
+   gibi" görünür çünkü içerik yine yan yana dizilir — bozulan şey
+   ÖLÇÜ, görüntü değil. Doğru biçim: `<td>` hücre kalır, esneme İÇERİDEKİ
+   sarmalayıcıya iner. */
+td > .cell-actions { display: flex; gap: var(--sp-3); align-items: center; }
+td > .cell-actions.end { justify-content: flex-end; }
 .mqe-addq { align-self: flex-start; padding: 6px 12px; border: 1px dashed var(--border-strong); border-radius: var(--radius-sm); background: transparent; color: var(--text2); font-size: 12px; cursor: pointer; }
 .mqe-addq:hover { color: var(--accent); border-color: var(--accent); }
 .mqe-code { display: flex; flex-direction: column; gap: 4px; }

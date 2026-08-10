@@ -40,8 +40,8 @@ export default function SLOsPage() {
   const sloCols = useMemo<DataTableColumn<SLORow>[]>(() => [
     { id: 'name',     label: 'Name',        sortValue: o => o.name?.toLowerCase() ?? '',    naturalDir: 'asc', width: 220 },
     { id: 'service',  label: 'Service',     sortValue: o => o.service?.toLowerCase() ?? '', naturalDir: 'asc', width: 150 },
-    { id: 'target',   label: 'Target',      sortValue: o => o.target,                       naturalDir: 'desc', width: 96 },
-    { id: 'sli',      label: `SLI (${windowDays}d)`, sortValue: o => o.status?.sli ?? null,  naturalDir: 'desc', width: 110 },
+    { id: 'target',   label: 'Target',      sortValue: o => o.target,                       naturalDir: 'desc', numeric: true, width: 96 },
+    { id: 'sli',      label: `SLI (${windowDays}d)`, sortValue: o => o.status?.sli ?? null,  naturalDir: 'desc', numeric: true, width: 110 },
     { id: 'budget',   label: 'Budget left', sortValue: o => o.status?.budgetRemaining ?? null, naturalDir: 'desc', width: 130 },
     { id: 'burn',     label: 'Burn rate',   sortValue: o => o.status?.burnRate ?? null,      naturalDir: 'desc', width: 110 },
     { id: 'forecast', label: 'Forecast',    width: 120 },
@@ -136,9 +136,10 @@ export default function SLOsPage() {
                         : <span className="badge b-err">Breached</span>}
                     </td>
                     {isAdmin && (
-                      <td style={{ display: 'flex', gap: 6 }}>
+                      <td><div className="cell-actions">
                         <BurnExplainButton sloId={o.id} />
                         <Button variant="secondary" size="sm" onClick={() => onDelete(o.id)}>Delete</Button>
+                      </div>
                       </td>
                     )}
                   </tr>

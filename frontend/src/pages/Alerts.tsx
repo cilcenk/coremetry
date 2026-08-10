@@ -44,7 +44,7 @@ const ALERT_RULE_COLS: DataTableColumn<AlertRule>[] = [
   // Condition hücresi üç ayrı şekil basıyor (ES watcher / log watcher /
   // metrik); ortak eksen kuralın metriği, gruplamayı o veriyor.
   { id: 'condition', label: 'Condition', sortValue: r => r.metric,                   naturalDir: 'asc', flex: true },
-  { id: 'window',    label: 'Window',    sortValue: r => r.windowSec,                width: 95 },
+  { id: 'window',    label: 'Window',    sortValue: r => r.windowSec,                numeric: true, width: 95 },
   { id: 'severity',  label: 'Severity',  sortValue: r => SEVERITIES.indexOf(r.severity), width: 105 },
   { id: 'enabled',   label: 'Enabled',   sortValue: r => (r.enabled ? 1 : 0),        width: 95 },
   { id: 'type',      label: 'Type',      sortValue: r => alertTypeLabel(r),          naturalDir: 'asc', width: 120 },
@@ -636,7 +636,7 @@ export default function AlertsPage() {
                           ? <span className="badge b-info">BUILT-IN</span>
                           : <span className="badge b-gray">metric</span>}
                     </td>
-                    <td style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                    <td><div className="cell-actions end">
                       {isWatcher && (
                         <a className="sec"
                           href={`/logs?q=${encodeURIComponent(r.logQuery || '')}`}
@@ -660,6 +660,7 @@ export default function AlertsPage() {
                           </Button>
                         </>
                       )}
+                    </div>
                     </td>
                   </tr>
                   );

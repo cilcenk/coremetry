@@ -18,8 +18,8 @@ const PROFILE_COLS: DataTableColumn<ProfileRow>[] = [
   { id: 'time',    label: 'Time',    sortValue: p => p.startTime,        naturalDir: 'desc', width: 170 },
   { id: 'service', label: 'Service', sortValue: p => p.serviceName,      naturalDir: 'asc',  width: 200 },
   { id: 'type',    label: 'Type',    sortValue: p => p.profileType,      naturalDir: 'asc',  width: 110 },
-  { id: 'window',  label: 'Window',  sortValue: p => p.durationMs,       naturalDir: 'desc', width: 110 },
-  { id: 'samples', label: 'Samples', sortValue: p => p.sampleCount,      naturalDir: 'desc', width: 120 },
+  { id: 'window',  label: 'Window',  sortValue: p => p.durationMs,       naturalDir: 'desc', numeric: true, width: 110 },
+  { id: 'samples', label: 'Samples', sortValue: p => p.sampleCount,      naturalDir: 'desc', numeric: true, width: 120 },
   { id: 'host',    label: 'Host',    sortValue: p => p.hostName ?? '',   naturalDir: 'asc',  width: 180 },
 ];
 type HotspotRow = ProfileHotspotsResponse['hotspots'][number];

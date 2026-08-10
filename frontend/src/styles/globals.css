@@ -373,6 +373,45 @@ button.ghost-danger:hover:not(:disabled) {
    palette were inventing per file (fontSize 10/11, ad-hoc padding). */
 button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: 4px; }
 
+/* ── IconButton (v0.9.887) — square, glyph-only ─────────────────────
+   10+ sites hand-rolled this with `all: unset` + inline padding. The
+   `all: unset` form silently kills the :focus-visible ring, so none of
+   them were keyboard-reachable in any visible sense.
+
+   Class names are `ib-*` prefixed rather than reusing `sm`/`sec`: the
+   element-level `button.sm { padding: 3px 9px }` rule (specificity
+   0,1,1) would out-rank a single-class `.btn-icon { padding: 0 }`
+   (0,1,0) and stretch the square back into a rectangle. */
+.btn-icon {
+  display: inline-flex; align-items: center; justify-content: center;
+  padding: 0; flex-shrink: 0;
+  background: transparent; color: var(--text2);
+  border: 1px solid transparent; border-radius: var(--radius-sm);
+  cursor: pointer; line-height: 0;
+  transition: background .15s, color .15s, border-color .15s;
+}
+.btn-icon-glyph { display: inline-flex; align-items: center; justify-content: center; }
+.btn-icon:disabled { opacity: .4; cursor: not-allowed; }
+.btn-icon.ib-xs { width: 20px; height: 20px; font-size: 11px; }
+.btn-icon.ib-sm { width: 24px; height: 24px; font-size: 12px; }
+.btn-icon.ib-md { width: 28px; height: 28px; font-size: 13px; }
+.btn-icon.ib-ghost:hover:not(:disabled) { background: var(--bg2); color: var(--text); }
+.btn-icon.ib-sec { background: var(--bg3); color: var(--text); border-color: var(--border); }
+.btn-icon.ib-sec:hover:not(:disabled) { background: var(--bg2); }
+/* `bare` is the honest replacement for `all: unset`: no chrome at all,
+   but the focus ring and a colour hover survive. */
+.btn-icon.ib-bare:hover:not(:disabled) { color: var(--accent2); }
+.btn-icon.active { color: var(--accent2); background: var(--accent-bg); border-color: var(--accent-border); }
+/* `ib-star` — the favourite/pin modifier. The generic `.active` accent
+   tint is right for filter-ish toggles (negate, pin-a-column) but WRONG
+   here: a starred row is amber in every tool an operator has used, and
+   an accent-tinted star reads as "filtered by", not "favourite". Off
+   state is dimmed rather than hidden so the affordance is discoverable
+   on hover without adding a per-row JS handler. */
+.btn-icon.ib-star { font-size: 14px; color: var(--text3); opacity: .45; }
+.btn-icon.ib-star:hover:not(:disabled) { opacity: 1; color: var(--text2); background: transparent; }
+.btn-icon.ib-star.active { color: var(--warn); opacity: 1; background: transparent; border-color: transparent; }
+
 /* ── Card / panel primitive ─────────────────────────────────────
    The repeated bg1 + border + 8px radius pattern that 30+ inline
    <div style={{...}}> use across the app. .card-tight is the

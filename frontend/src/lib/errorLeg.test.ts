@@ -96,19 +96,25 @@ describe('errorLeg — hata=boş maskesi (tutarlılık denetimi MT1 / UX denetim
     // Kural: idiom yalnız TRI-STATE BİR OKUMA üzerinde hatadır. Buradaki
     // değişkenler okuma değil, istemci tarafında TÜRETİLMİŞ dizilerdir
     // (asla null olamazlar), dolayısıyla `!x` dalı ulaşılamaz.
+    //
+    // ANAHTAR `dosya:DEĞİŞKEN`, `dosya:satır` DEĞİL (v0.9.887'de düzeltildi).
+    // Satır anahtarı bir kez ısırdı: Services.tsx'e TEK bir import satırı
+    // eklenince 357/377 → 358/378 kaydı ve muafiyet bayatlayıp testi alakasız
+    // bir dosyada kırmızıya çevirdi. Muafiyetin GEREKÇESİ zaten satırla değil
+    // değişkenle ilgili ("`sorted` bir useMemo çıktısı, asla null olamaz"),
+    // dolayısıyla doğru anahtar da o. Daralma değil, gerekçeye hizalama.
     const ALLOW = new Set([
       // `sorted` = filtrelenmiş+sıralanmış servis listesi (useMemo çıktısı).
-      // Okuma değil; tri-state'i `svcs` taşıyor ve onun hata dalı :584'te.
-      'pages/Services.tsx:357',
-      'pages/Services.tsx:377',
+      // Okuma değil; tri-state'i `svcs` taşıyor ve onun hata dalı ayrı.
+      'pages/Services.tsx:sorted',
     ]);
     const offenders: string[] = [];
     for (const [file] of CONVERTED) {
       const src = read(file);
       src.split('\n').forEach((line, i) => {
         const code = line.split('//')[0];
-        const at = `${file}:${i + 1}`;
-        if (swallow.test(code) && !ALLOW.has(at)) offenders.push(`${at}: ${line.trim()}`);
+        const m = swallow.exec(code);
+        if (m && !ALLOW.has(`${file}:${m[1]}`)) offenders.push(`${file}:${i + 1}: ${line.trim()}`);
       });
     }
     expect(offenders, `null-yutan guard geri geldi:\n${offenders.join('\n')}`).toEqual([]);

@@ -45,17 +45,17 @@ interface Payload {
 }
 
 const PHASE_COLOUR: Record<string, string> = {
-  hot:    'rgba(220,38,38,0.18)',
-  warm:   'rgba(234,179,8,0.18)',
-  cold:   'rgba(56,189,248,0.18)',
-  frozen: 'rgba(165,180,252,0.22)',
-  delete: 'rgba(120,113,108,0.22)',
+  hot:    'color-mix(in srgb, var(--err) 18%, transparent)',
+  warm:   'color-mix(in srgb, var(--warn) 18%, transparent)',
+  cold:   'color-mix(in srgb, var(--info) 18%, transparent)',
+  frozen: 'color-mix(in srgb, var(--indigo) 22%, transparent)',
+  delete: 'color-mix(in srgb, var(--text3) 22%, transparent)',
 };
 
 const HEALTH_COLOUR: Record<string, string> = {
-  green:  'rgba(46,160,67,0.20)',
-  yellow: 'rgba(234,179,8,0.18)',
-  red:    'rgba(220,38,38,0.22)',
+  green:  'color-mix(in srgb, var(--ok) 20%, transparent)',
+  yellow: 'color-mix(in srgb, var(--warn) 18%, transparent)',
+  red:    'color-mix(in srgb, var(--err) 22%, transparent)',
 };
 
 // Columns for the shared sortable + resizable DataTable (v0.7.54
@@ -121,7 +121,7 @@ function QueryErrorsPanel() {
                   <td className="mono" style={{ fontSize: 11 }}>{fmtClock(e.at)}</td>
                   <td>{e.op}</td>
                   <td className="mono" style={{ textAlign: 'right' }}>
-                    <span className="badge" style={{ background: 'rgba(220,38,38,0.22)' }}>
+                    <span className="badge" style={{ background: 'color-mix(in srgb, var(--err) 22%, transparent)' }}>
                       {e.status || 'net'}
                     </span>
                   </td>

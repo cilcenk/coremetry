@@ -89,8 +89,8 @@ export function CustomRolesTab() {
           marginBottom: 10, padding: '6px 10px', borderRadius: 4,
           fontSize: 13,
           color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--err)',
-          background: msg.kind === 'ok' ? 'rgba(34,197,94,0.08)' : 'rgba(220,38,38,0.08)',
-          border: `1px solid ${msg.kind === 'ok' ? 'rgba(34,197,94,0.3)' : 'rgba(220,38,38,0.3)'}`,
+          background: msg.kind === 'ok' ? 'color-mix(in srgb, var(--ok) 8%, transparent)' : 'color-mix(in srgb, var(--err) 8%, transparent)',
+          border: `1px solid ${msg.kind === 'ok' ? 'color-mix(in srgb, var(--ok) 30%, transparent)' : 'color-mix(in srgb, var(--err) 30%, transparent)'}`,
         }}>{msg.text}</div>
       )}
 
@@ -251,8 +251,8 @@ function RoleEditorModal({ existing, pages, onClose, onSaved }: {
           {error && (
             <div style={{
               color: 'var(--err)', fontSize: 12,
-              padding: '4px 8px', background: 'rgba(220,38,38,0.08)',
-              border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4,
+              padding: '4px 8px', background: 'color-mix(in srgb, var(--err) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--err) 30%, transparent)', borderRadius: 4,
             }}>{error}</div>
           )}
         </Stack>

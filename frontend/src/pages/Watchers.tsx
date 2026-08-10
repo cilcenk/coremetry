@@ -158,7 +158,7 @@ export default function WatchersPage() {
               <div style={{
                 padding: '6px 10px', marginBottom: 8, fontSize: 12,
                 color: 'var(--warn)', border: '1px solid var(--warn)',
-                borderRadius: 6, background: 'rgba(198,144,38,.08)',
+                borderRadius: 6, background: 'color-mix(in srgb, var(--warn) 8%, transparent)',
               }}>
                 ⚠ Summary rollup unavailable — "Last fire" / "Fires (24h)" columns may be stale or empty.
               </div>

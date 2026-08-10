@@ -105,8 +105,8 @@ export function MaintenanceTab() {
         <div style={{
           marginBottom: 10, padding: '6px 10px', borderRadius: 4, fontSize: 12,
           color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--err)',
-          background: msg.kind === 'ok' ? 'rgba(63,185,80,0.10)' : 'rgba(220,38,38,0.08)',
-          border: `1px solid ${msg.kind === 'ok' ? 'rgba(63,185,80,0.35)' : 'rgba(220,38,38,0.3)'}`,
+          background: msg.kind === 'ok' ? 'color-mix(in srgb, var(--ok) 10%, transparent)' : 'color-mix(in srgb, var(--err) 8%, transparent)',
+          border: `1px solid ${msg.kind === 'ok' ? 'color-mix(in srgb, var(--ok) 35%, transparent)' : 'color-mix(in srgb, var(--err) 30%, transparent)'}`,
         }}>{msg.text}</div>
       )}
       {readState(items) === 'loading' && <Spinner />}
@@ -264,8 +264,8 @@ function NewMaintenanceModal({ onClose, onCreated }: {
           {error && (
             <div style={{
               padding: 8, borderRadius: 4, fontSize: 12,
-              color: 'var(--err)', background: 'rgba(220,38,38,0.08)',
-              border: '1px solid rgba(220,38,38,0.3)',
+              color: 'var(--err)', background: 'color-mix(in srgb, var(--err) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--err) 30%, transparent)',
             }}>{error}</div>
           )}
         </Stack>

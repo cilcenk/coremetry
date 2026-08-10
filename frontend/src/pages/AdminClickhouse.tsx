@@ -1059,7 +1059,7 @@ function RollupWizardPanel() {
         <div style={{
           padding: '12px 14px', borderRadius: 6, marginBottom: 12,
           border: `1px solid ${pre.supported ? 'var(--ok)' : 'var(--warn)'}`,
-          background: pre.supported ? 'rgba(34, 197, 94, 0.08)' : 'rgba(250, 204, 21, 0.10)',
+          background: pre.supported ? 'color-mix(in srgb, var(--ok) 8%, transparent)' : 'color-mix(in srgb, var(--warn) 10%, transparent)',
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
             <span className={`badge ${pre.supported ? 'b-ok' : 'b-warn'}`}>
@@ -1167,7 +1167,7 @@ function RollupWizardPanel() {
           {action.kind === 'apply' && !action.res.ok && (
             <div style={{
               marginTop: 10, padding: '10px 12px', borderRadius: 6,
-              border: '1px solid var(--err)', background: 'rgba(239, 68, 68, 0.08)',
+              border: '1px solid var(--err)', background: 'color-mix(in srgb, var(--err) 8%, transparent)',
               fontSize: 12, color: 'var(--text)', lineHeight: 1.55,
             }}>
               <strong style={{ color: 'var(--err)' }}>Kurulum yarıda kesildi.</strong>{' '}
@@ -1400,8 +1400,8 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
     bannerCls === 'ok' ? 'var(--ok)' :
     bannerCls === 'warn' ? 'var(--warn)' : 'var(--accent2)';
   const bannerBg =
-    bannerCls === 'ok' ? 'rgba(34, 197, 94, 0.08)' :
-    bannerCls === 'warn' ? 'rgba(250, 204, 21, 0.10)' : 'rgba(96, 165, 250, 0.08)';
+    bannerCls === 'ok' ? 'color-mix(in srgb, var(--ok) 8%, transparent)' :
+    bannerCls === 'warn' ? 'color-mix(in srgb, var(--warn) 10%, transparent)' : 'color-mix(in srgb, var(--info) 8%, transparent)';
 
   return (
     <div style={{ marginBottom: 24 }}>
@@ -1438,7 +1438,7 @@ function TopologyPanel({ topology: t }: { topology: Topology }) {
                   title="Live system.clusters probe failed this tick — showing the last successful snapshot."
                   style={{
                     marginLeft: 8, padding: '1px 6px', borderRadius: 3,
-                    background: 'rgba(250, 204, 21, 0.18)',
+                    background: 'color-mix(in srgb, var(--warn) 18%, transparent)',
                     color: 'var(--warn)', fontSize: 11, fontWeight: 600,
                   }}>
                   stale: {fmtAge(t.clusterNodesAgeMs ?? 0)}

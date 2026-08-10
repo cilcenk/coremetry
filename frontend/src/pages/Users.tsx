@@ -137,8 +137,8 @@ export default function UsersPage() {
         {actionError && (
           <div style={{
             color: 'var(--err)', fontSize: 13, marginBottom: 10,
-            padding: '6px 10px', background: 'rgba(220,38,38,0.08)',
-            border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4,
+            padding: '6px 10px', background: 'color-mix(in srgb, var(--err) 8%, transparent)',
+            border: '1px solid color-mix(in srgb, var(--err) 30%, transparent)', borderRadius: 4,
           }}>
             {actionError}
           </div>
@@ -186,7 +186,7 @@ export default function UsersPage() {
                           <span style={{
                             display: 'inline-grid', placeItems: 'center',
                             width: 20, height: 20, borderRadius: '50%',
-                            background: 'var(--accent)', color: '#fff',
+                            background: 'var(--accent)', color: 'var(--on-accent)',
                             fontSize: 10, fontWeight: 600, textTransform: 'uppercase',
                             verticalAlign: 'middle', marginRight: 8,
                           }}>{u.email[0]}</span>
@@ -431,8 +431,8 @@ function ErrorBox({ children }: { children: React.ReactNode }) {
   return (
     <div style={{
       color: 'var(--err)', fontSize: 12, marginTop: 6,
-      padding: '6px 10px', background: 'rgba(220,38,38,0.08)',
-      border: '1px solid rgba(220,38,38,0.3)', borderRadius: 4,
+      padding: '6px 10px', background: 'color-mix(in srgb, var(--err) 8%, transparent)',
+      border: '1px solid color-mix(in srgb, var(--err) 30%, transparent)', borderRadius: 4,
     }}>
       {children}
     </div>

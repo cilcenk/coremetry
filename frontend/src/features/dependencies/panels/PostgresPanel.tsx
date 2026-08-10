@@ -12,6 +12,13 @@ import type { DataTableColumn } from '@/lib/dataTable';
 // rollback üretiyor" sorusu boyuta göre sıralı listede kayboluyordu).
 type PGDatabase = PostgresMetrics['databases'][number];
 
+// mT8 (v0.9.907) — motor MARKA rengi, tema token'ı değil: bir PostgreSQL
+// panelinin mavisi temaya göre değişmemeli (Dalga 4 kapsam sınırı bunu
+// bilinçli istisna sayıyor). Sızıntı rengin kendisi DEĞİLDİ; zemin ve
+// kenarlık tint'lerinin ondan TÜREMEYİP ayrı ayrı yazılmış olmasıydı —
+// üç literal, biri değişince diğer ikisi sessizce ayrışıyordu.
+const PG_BRAND = '#5b8fb9';
+
 const PG_DB_COLS: DataTableColumn<PGDatabase>[] = [
   { id: 'name',      label: 'Name',         sortValue: d => d.name,            naturalDir: 'asc', flex: true },
   { id: 'size',      label: 'Size',         sortValue: d => d.sizeBytes,       numeric: true, width: 100 },
@@ -46,11 +53,11 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
   return (
     <div style={{
       marginTop: 6, marginBottom: 14, padding: 12, borderRadius: 6,
-      background: 'rgba(51,103,145,0.05)',
-      border: '1px solid rgba(91,143,185,0.25)',
+      background: `color-mix(in srgb, ${PG_BRAND} 5%, transparent)`,
+      border: `1px solid color-mix(in srgb, ${PG_BRAND} 25%, transparent)`,
     }}>
       <PanelHeader engineLabel="PostgreSQL receiver" instance={instance}
-        status={data?.status} color="#5b8fb9" />
+        status={data?.status} color={PG_BRAND} />
       {data === undefined && <Spinner />}
       {data === null && <PanelErr />}
       {data && (

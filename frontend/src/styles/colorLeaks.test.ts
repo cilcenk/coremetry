@@ -110,6 +110,60 @@ describe('globals.css renk literalleri', () => {
   });
 });
 
+// ── mT8: süpürülmüş TSX yüzeyleri DONMUŞ liste olarak korunuyor ────────
+// Neden tüm depo değil: `DependenciesTable`ın motor marka renkleri,
+// flame/heatmap palet rampaları ve canvas'a `fillStyle` ile basılan
+// renkler BİLİNÇLİ istisna (Dalga 4 kapsam sınırı). Hepsini tarayan bir
+// kural, muafiyet listesi kadar büyük olur ve hiçbir şeyi çivilemez.
+// Bunun yerine: v0.9.907'de temizlenen 15 dosya donduruldu — buralara
+// YENİ bir literal girerse regresyondur.
+const SWEPT = [
+  'pages/Users.tsx', 'pages/AdminSql.tsx', 'pages/settings/PipelineTab.tsx',
+  'pages/settings/MaintenanceTab.tsx', 'pages/settings/RolesTab.tsx',
+  'pages/adminstats/panels.tsx', 'pages/Events.tsx', 'pages/AdminElastic.tsx',
+  'pages/AdminCluster.tsx', 'pages/Watchers.tsx', 'components/RootCausePanel.tsx',
+  'features/dependencies/panels/PostgresPanel.tsx', 'pages/service/TopEndpointsCard.tsx',
+  'pages/AdminClickhouse.tsx', 'pages/settings/ZoomChannelPicker.tsx',
+];
+
+// Dosya-içi muafiyetler, yine GEREKÇEYE göre.
+const SWEPT_ALLOW: Record<string, { literal: string; why: string }[]> = {
+  'features/dependencies/panels/PostgresPanel.tsx': [
+    {
+      literal: '#5b8fb9',
+      why:
+        'PostgreSQL MARKA mavisi (PG_BRAND). Motor kimliği temaya göre ' +
+        'değişmemeli; zemin/kenarlık tint\'leri artık BUNDAN türüyor.',
+    },
+  ],
+};
+
+describe('mT8 — süpürülmüş TSX yüzeyleri temiz kaldı', () => {
+  const SRC = resolve(__dirname, '..');
+  const TSX_LEAK = new RegExp(`(${HEX}|${RGBA}|rgb\\([0-9][0-9\\s,.]*\\))`);
+
+  it.each(SWEPT)('%s', file => {
+    const src = stripComments(readFileSync(resolve(SRC, file), 'utf8'))
+      .split('\n')
+      .map(l => l.replace(/^\s*\/\/.*$/, ''));
+    const allow = SWEPT_ALLOW[file] ?? [];
+    const leaks = src
+      .map((text, i) => ({ line: i + 1, text }))
+      .filter(l => TSX_LEAK.test(l.text))
+      .filter(l => !allow.some(a => l.text.includes(a.literal)));
+    expect(leaks.map(l => `${file}:${l.line} ${l.text.trim().slice(0, 90)}`)).toEqual([]);
+  });
+
+  it('muafiyetler hâlâ CANLI', () => {
+    for (const [file, list] of Object.entries(SWEPT_ALLOW)) {
+      const src = readFileSync(resolve(SRC, file), 'utf8');
+      for (const a of list) {
+        expect(src.includes(a.literal), `${file} → ${a.literal} kayboldu, muafiyeti ÇIKAR`).toBe(true);
+      }
+    }
+  });
+});
+
 describe('mK6 token tanımları', () => {
   // Rol token'ları üç temada da ÇÖZÜLEBİLİR olmalı. --on-accent ve
   // --backdrop bilinçli olarak yalnız :root'ta: değeri üç temada aynı,

@@ -236,8 +236,8 @@ function likelyCause(
   rc: RootCause, service: string,
   bubble: { key: string; values: BubbleUpValue[] } | null,
 ): { text: ReactNode; accent: string; bg: string; border: string } {
-  const deploy = { accent: 'var(--warn)', bg: 'rgba(250,204,21,0.10)', border: 'rgba(250,204,21,0.40)' };
-  const dim = { accent: 'var(--err)', bg: 'rgba(220,38,38,0.08)', border: 'rgba(220,38,38,0.35)' };
+  const deploy = { accent: 'var(--warn)', bg: 'color-mix(in srgb, var(--warn) 10%, transparent)', border: 'color-mix(in srgb, var(--warn) 40%, transparent)' };
+  const dim = { accent: 'var(--err)', bg: 'color-mix(in srgb, var(--err) 8%, transparent)', border: 'color-mix(in srgb, var(--err) 35%, transparent)' };
   const corr = { accent: 'var(--accent2)', bg: 'color-mix(in srgb, var(--accent) 8%, transparent)', border: 'color-mix(in srgb, var(--accent) 35%, transparent)' };
   const local = { accent: 'var(--text3)', bg: 'var(--bg2)', border: 'var(--border)' };
 

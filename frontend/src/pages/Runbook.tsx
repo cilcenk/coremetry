@@ -17,7 +17,7 @@ import { api } from '@/lib/api';
 import { useRunbook, useUpdateRunbook, useDeleteRunbook, useRunbookExecutions, useExecuteRunbook } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { Runbook, RunbookStep, RunbookStepKind, RunbookExecution } from '@/lib/types';
+import type { AuditEntry, Runbook, RunbookStep, RunbookStepKind, RunbookExecution } from '@/lib/types';
 
 // Runbook detail (v0.7.0) — Overview + the Steps editor (the OneUptime
 // "Runbook Steps" surface: kind cards to add, drag-to-reorder, per-step
@@ -256,12 +256,31 @@ function ExecutionsTab({ runbookId }: { runbookId: string }) {
   );
 }
 
+// v0.9.877 (tutarlılık denetimi BT4) — elle yazılmış <thead> paylaşılan
+// primitife taşındı (kardeş ExecutionsTab zaten öyleydi; bu sekme tek
+// istisnaydı). Kolon kümesi, sıra, etiketler ve hücre içerikleri AYNEN
+// korundu; kazanılan sıralama + yeniden boyutlandırma + kalıcı genişlik.
+const AUDIT_COLS: DataTableColumn<AuditEntry>[] = [
+  // Zaman mono ve SOLA hizalı kalıyor (numeric:true başlığı sağa iterdi) —
+  // yalnız sıralanabilirlik ekleniyor.
+  { id: 'time',    label: 'Time',    sortValue: a => a.time,                width: 170 },
+  { id: 'actor',   label: 'Actor',   sortValue: a => a.actorEmail ?? '',    naturalDir: 'asc', width: 220 },
+  { id: 'action',  label: 'Action',  sortValue: a => a.action,              naturalDir: 'asc', width: 180 },
+  { id: 'details', label: 'Details', sortValue: a => a.details ?? '',       naturalDir: 'asc', flex: true },
+];
+
 function AuditTab({ runbookId, isAdmin }: { runbookId: string; isAdmin: boolean }) {
   const q = useQuery({
     queryKey: ['runbook-audit', runbookId],
     queryFn: () => api.auditLog('720h', { targetId: runbookId }),
     enabled: isAdmin,
     staleTime: 30_000,
+  });
+  // Koşulsuz hook — her erken dönüşün (yasak / hata / boş) ÜSTÜNDE kalmalı.
+  // Varsayılan sıra sunucununkiyle birebir: ListAuditLog `ORDER BY time DESC`.
+  const dt = useDataTable<AuditEntry>({
+    storageKey: 'runbook-audit', columns: AUDIT_COLS, rows: q.data ?? [],
+    initialSort: { id: 'time', dir: 'desc' },
   });
   if (!isAdmin) {
     return <Empty icon="🔒" title="Admin only">The change/run audit log (audit_events) is admin-only. The per-run step audit — who ticked each step, when, with what output — is on the Executions tab and visible to everyone.</Empty>;
@@ -284,10 +303,11 @@ function AuditTab({ runbookId, isAdmin }: { runbookId: string; isAdmin: boolean 
   }
   return (
     <div className="table-wrap">
-      <table>
-        <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Details</th></tr></thead>
+      <table style={{ tableLayout: 'fixed', width: '100%' }}>
+        <DataTableColgroup dt={dt} />
+        <DataTableHead dt={dt} />
         <tbody>
-          {rows.map(a => (
+          {dt.sortedRows.map(a => (
             <tr key={a.id}>
               <td className="mono" style={{ fontSize: 11 }}>{tsLong(a.time)}</td>
               <td className="mono">{a.actorEmail || '—'}</td>

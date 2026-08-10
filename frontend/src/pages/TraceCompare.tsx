@@ -5,7 +5,9 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { computeCriticalPath } from '@/lib/criticalPath';
-import { alignTraces } from '@/lib/spanAlign';
+import { alignTraces, type AlignedPair } from '@/lib/spanAlign';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNs } from '@/lib/utils';
 import type { SpanRow, TraceDetailResponse } from '@/lib/types';
@@ -255,6 +257,25 @@ function TraceSide({ label, id, q, otherQ }: {
 // rows, sortable) but at the typical trace size (<1k spans
 // per side) we render straight to DOM. Future: switch to
 // VirtualList if traces routinely exceed 1k spans/side.
+// v0.9.877 (tutarlılık denetimi BT7) — elle yazılmış <thead> paylaşılan
+// primitife taşındı. Kolon kümesi, sıra, etiketler ve hücre içerikleri AYNEN
+// korundu; kazanılan sıralama + yeniden boyutlandırma + kalıcı genişlik.
+// Δ / % / A / B artık numeric: başlıklar da hücreler gibi sağa hizalı
+// (eskiden Δ ve % başlıkları solda, sayıları sağdaydı).
+const DIFF_COLS: DataTableColumn<AlignedPair>[] = [
+  { id: 'delta', label: 'Δ duration', sortValue: p => p.deltaNs,   numeric: true, width: 130 },
+  { id: 'pct',   label: '%',          sortValue: p => p.pctChange, numeric: true, width: 85 },
+  { id: 'path',  label: 'Path',       sortValue: p => p.pathLabel, naturalDir: 'asc', flex: true },
+  // Tek yanı olan satırlarda süre null → sortRows onları direction'dan
+  // bağımsız DİBE atıyor; hücrede basılan "—" ile aynı anlam.
+  { id: 'a',     label: 'A',          sortValue: p => p.a?.duration ?? null, numeric: true, width: 110 },
+  { id: 'b',     label: 'B',          sortValue: p => p.b?.duration ?? null, numeric: true, width: 110 },
+];
+
+// Sabit boş dizi — `?? []` her render'da yeni referans üretip sortedRows
+// memosunu boşuna geçersiz kılardı.
+const NO_PAIRS: AlignedPair[] = [];
+
 function AlignedDiff({ aQ, bQ }: {
   aQ: ReturnType<typeof useQuery<TraceDetailResponse>>;
   bQ: ReturnType<typeof useQuery<TraceDetailResponse>>;
@@ -280,6 +301,15 @@ function AlignedDiff({ aQ, bQ }: {
     );
   }, [a, b]);
 
+  // Koşulsuz hook — erken dönüşlerin ÜSTÜNDE (rules-of-hooks).
+  // initialSort YOK: alignTraces çiftleri MUTLAK Δ'ya göre azalan sıralı
+  // döndürüyor ve bu, görünür hiçbir kolonun tek başına üretebileceği bir
+  // düzen değil (işaretli Δ değil, |Δ|). id:null → satırlar geldiği gibi.
+  const dt = useDataTable<AlignedPair>({
+    storageKey: 'trace-compare-diff', columns: DIFF_COLS,
+    rows: aligned?.pairs ?? NO_PAIRS,
+  });
+
   if (aQ.isLoading || bQ.isLoading) return <Spinner />;
   if (!aligned || aligned.pairs.length === 0) {
     return (
@@ -304,23 +334,22 @@ function AlignedDiff({ aQ, bQ }: {
             ediliyordu. Operatör tıklar, hiçbir şey olmaz, UI'ın bozuk
             olduğunu sanar. Tıkı BAĞLAMIYORUZ (kapsam kararı) — yanlış olan
             vaatti, eksik olan özellik değil. */}
-        <span style={{ marginLeft: 'auto', color: 'var(--text3)' }}>
-          Sorted by absolute Δ desc
-        </span>
+        {/* v0.9.877 (tutarlılık denetimi BT7) — bu ipucu artık yalnız
+            VARSAYILAN düzende basılıyor. Tablo sıralanabilir olduğu an,
+            operatör bir başlığa tıkladıktan sonra sabit duran "Sorted by
+            absolute Δ desc" cümlesi yalan söylerdi. */}
+        {dt.sort.id === null && (
+          <span style={{ marginLeft: 'auto', color: 'var(--text3)' }}>
+            Sorted by absolute Δ desc
+          </span>
+        )}
       </div>
       <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Δ duration</th>
-              <th>%</th>
-              <th>Path</th>
-              <th className="num">A</th>
-              <th className="num">B</th>
-            </tr>
-          </thead>
+        <table style={{ tableLayout: 'fixed', width: '100%' }}>
+          <DataTableColgroup dt={dt} />
+          <DataTableHead dt={dt} />
           <tbody>
-            {aligned.pairs.map(p => {
+            {dt.sortedRows.map(p => {
               const isOnlyA = p.a && !p.b;
               const isOnlyB = !p.a && p.b;
               const delta = p.deltaNs;

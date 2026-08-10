@@ -9,7 +9,6 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
-
 // v0.9.524 — operatör-bildirimli: /inbox'ta her satırda "N in last 5min"
 // yazıyordu ve N, ÖMÜR BOYU toplam occurrence'tı. 28 Haziran'da ilk
 // görülen bir grup, 35 günlük 18.217 occurrence'ının tamamını son 5
@@ -63,9 +62,12 @@ func TestFmtThousands(t *testing.T) {
 // v0.9.525 — ?since= yalnız sabit basamak kabul eder: cache anahtarına
 // giriyor, serbest değer anahtar kardinalitesini patlatır (v0.8.270).
 func TestNormalizeInboxSince(t *testing.T) {
+	// v0.9.954 (F5/Ö13) — "1h" ve "30m" artık GEÇERLİ basamaklar. Eski
+	// tablo "1h": "" bekliyordu, yani Ö13'ün düzelttiği kısıtı zorunlu
+	// kılıyordu; pinin yönü döndü.
 	for in, want := range map[string]string{
-		"2h": "2h", "24h": "24h", "7d": "7d",
-		"": "", "1h": "", "30d": "", "abc": "", "2H": "",
+		"30m": "30m", "1h": "1h", "2h": "2h", "24h": "24h", "7d": "7d",
+		"": "", "30d": "", "abc": "", "2H": "", "17m": "",
 	} {
 		if got := normalizeInboxSince(in); got != want {
 			t.Errorf("normalizeInboxSince(%q) = %q, beklenen %q", in, got, want)
@@ -74,7 +76,7 @@ func TestNormalizeInboxSince(t *testing.T) {
 	// Süre eşlemesi normalizasyonla birebir: normalize edilen her basamak
 	// pozitif süre vermeli, boş sıfır vermeli — ayrışırlarsa filtre
 	// sessizce no-op olur.
-	for _, v := range []string{"2h", "24h", "7d"} {
+	for _, v := range inboxSinceRungs {
 		if inboxSinceDuration(v) <= 0 {
 			t.Errorf("inboxSinceDuration(%q) pozitif olmalı", v)
 		}

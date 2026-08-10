@@ -1518,9 +1518,23 @@ func fmtThousands(n uint64) string {
 
 // normalizeInboxSince — yalnız sabit basamaklar; bilinmeyen değer "".
 // Saf + tablo-testli.
+//
+// v0.9.954 (UX denetimi F5 / Ö13) — en dar basamak 2h'ten 30m'e indi.
+// Inbox "ne oldu?" sorusunun doğal girişi ama "şu 20 dakikada ortaya
+// çıkanlar" KURULAMIYORDU: bir olayın hemen ardından bakan operatör en
+// dar seçenekte bile 2 saatlik gürültüyü birlikte alıyordu.
+//
+// TAM CUSTOM PENCERE BİLİNÇLİ OLARAK YOK: bu değer sunucu cache
+// anahtarına giriyor, serbest bir pencere kardinaliteyi patlatırdı
+// (v0.8.270). Sabit basamak sayısı 3'ten 5'e çıktı, o kadar.
+//
+// İKİ FONKSİYON AYNI KÜMEYİ TANIMAK ZORUNDA — biri tanıyıp öteki
+// tanımazsa filtre "geçerli" sayılır ama süre 0 döner, yani seçenek
+// SESSİZCE "hepsi" gibi davranırdı. Tablo testi ikisini birlikte
+// gezer.
 func normalizeInboxSince(v string) string {
 	switch v {
-	case "2h", "24h", "7d":
+	case "30m", "1h", "2h", "24h", "7d":
 		return v
 	}
 	return ""
@@ -1528,6 +1542,10 @@ func normalizeInboxSince(v string) string {
 
 func inboxSinceDuration(v string) time.Duration {
 	switch v {
+	case "30m":
+		return 30 * time.Minute
+	case "1h":
+		return time.Hour
 	case "2h":
 		return 2 * time.Hour
 	case "24h":
@@ -1537,6 +1555,10 @@ func inboxSinceDuration(v string) time.Duration {
 	}
 	return 0
 }
+
+// inboxSinceRungs — TEK doğruluk kaynağı: hem testin gezdiği küme hem de
+// "iki fonksiyon ayrışmasın" kapısının girdisi. Sıra DAR → GENİŞ.
+var inboxSinceRungs = []string{"30m", "1h", "2h", "24h", "7d"}
 
 // exceptionPriority — satır başına çağrılan sarmalayıcı. Pencereler
 // paket-global atomik config'ten okunur (exception_triage.go); burada CH

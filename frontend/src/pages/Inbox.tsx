@@ -193,8 +193,21 @@ export default function InboxPage() {
   // olmalı (v0.8.270). SON görülme bilerek değil — 35 gündür yanan bir P1
   // "son 2 saat"te de görünürdü ve filtre hiçbir şeyi elemezdi; bu filtre
   // "bu pencerede ORTAYA ÇIKANLAR" sorusunu cevaplıyor.
+  // v0.9.954 (UX denetimi F5 / Ö13) — en dar basamak 2h'ten 30m'e indi.
+  // Inbox "ne oldu?"nun doğal girişi ama "şu 20 dakikada ortaya
+  // çıkanlar" KURULAMIYORDU: bir olayın hemen ardından bakan operatör
+  // en dar seçenekte bile 2 saatlik gürültüyü birlikte alıyordu.
+  //
+  // TAM CUSTOM PENCERE HÂLÂ YOK ve bu bilinçli — değer sunucu cache
+  // anahtarına giriyor, serbest pencere kardinaliteyi patlatırdı
+  // (v0.8.270). Sabit basamak sayısı 3'ten 5'e çıktı, sözleşme aynı.
+  // Küme sunucunun normalizeInboxSince'iyle BİREBİR olmak zorunda:
+  // burada var olup orada olmayan bir değer sessizce "hepsi" gibi
+  // davranırdı.
   const SINCE_OPTS = [
     { v: '',    label: 'First seen: any' },
+    { v: '30m', label: 'Last 30m' },
+    { v: '1h',  label: 'Last 1h' },
     { v: '2h',  label: 'Last 2h' },
     { v: '24h', label: 'Last 24h' },
     { v: '7d',  label: 'Last 7d' },

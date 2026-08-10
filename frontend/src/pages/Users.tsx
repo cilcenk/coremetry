@@ -5,7 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
 import { useAuth } from '@/components/AuthProvider';
-import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
+import { Modal, Field, SelectField, Button, Stack, Chip } from '@/components/ui';
 import { keys, useUsers, useCustomRoles } from '@/lib/queries';
 import { api, type UserRow, type CustomRole } from '@/lib/api';
 import type { Role } from '@/lib/types';
@@ -606,32 +606,17 @@ function TeamEditor({ user, suggestions, onChanged }: {
   if (!editing) {
     if (!user.team) {
       return (
-        <button type="button" onClick={() => setEditing(true)}
-          style={{
-            all: 'unset', cursor: 'pointer',
-            fontSize: 10, color: 'var(--text3)',
-            border: '1px dashed var(--border)', borderRadius: 3,
-            padding: '1px 6px',
-          }}
+        <Chip size="xs" className="ch-dashed" onClick={() => setEditing(true)}
           title="Assign a team">
           + assign team
-        </button>
+        </Chip>
       );
     }
     return (
-      <button type="button" onClick={() => setEditing(true)}
-        style={{
-          all: 'unset', cursor: 'pointer',
-          fontSize: 11, fontWeight: 600,
-          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-          color: 'var(--accent2)',
-          background: 'color-mix(in srgb, var(--accent) 10%, transparent)',
-          border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
-          borderRadius: 3, padding: '1px 8px',
-        }}
+      <Chip size="xs" tone="accent" className="mono" onClick={() => setEditing(true)}
         title="Click to edit team">
         {user.team}
-      </button>
+      </Chip>
     );
   }
 

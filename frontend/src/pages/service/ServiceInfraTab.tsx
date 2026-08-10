@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Card, LinkButton } from '@/components/ui';
+import { Card, LinkButton, Chip } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { MetricArea } from '@/pages/clusters/MetricArea';
 import { servicePodRegex } from '@/pages/clusters/podWorkload';
@@ -186,19 +186,13 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
             r.phase && r.phase !== 'Running' && r.phase !== 'Succeeded').length;
           const active = icluster === c;
           return (
-            <button key={c} type="button"
+            <Chip key={c} active={active}
               onClick={() => setICluster(active ? '' : c)}
-              title={active ? 'Click to clear the cluster filter' : 'Filter to this cluster'}
-              style={{
-                all: 'unset', cursor: 'pointer', display: 'inline-flex',
-                alignItems: 'center', gap: 8, padding: '4px 10px', borderRadius: 14,
-                border: `1px solid ${active ? 'var(--accent)' : 'var(--border)'}`,
-                background: active ? 'var(--accent-soft)' : 'var(--bg2)', fontSize: 12,
-              }}>
+              title={active ? 'Click to clear the cluster filter' : 'Filter to this cluster'}>
               <span className="mono" style={{ fontWeight: 600 }}>{c}</span>
               <span style={{ color: 'var(--text3)' }}>{rs.length} pods · {fmtCores(rs.reduce((a, r) => a + r.cpuCores, 0))} CPU</span>
               {failing > 0 && <span className="badge b-err">{failing} failing</span>}
-            </button>
+            </Chip>
           );
         })}
       </div>

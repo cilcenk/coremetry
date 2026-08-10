@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Spinner } from '@/components/Spinner';
+import { Chip } from '@/components/ui/Chip';
 import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import type { TimeRange, RedisMetrics } from '@/lib/types';
@@ -95,27 +96,18 @@ export function RedisPanel({ instance, range }: { instance: string; range: TimeR
               <SubHeader label={`Keyspaces (${data.keyspaces.length})`} />
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                 {[...data.keyspaces].sort((a, b) => b.keys - a.keys).map(k => (
-                  <button key={k.name} type="button"
+                  <Chip key={k.name} className="mono"
                     onClick={() => setDrill({
                       metric: 'redis.db.keys',
                       label: `Keyspace ${k.name}`,
                       filters: [{ k: 'db', op: '=', v: [k.name] }],
-                    })}
-                    style={{
-                      all: 'unset', cursor: 'pointer',
-                      fontSize: 11, padding: '4px 10px', borderRadius: 3,
-                      background: 'var(--bg3)', color: 'var(--text2)',
-                      fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                      transition: 'background 0.12s',
-                    }}
-                    onMouseEnter={e => (e.currentTarget.style.background = 'var(--bg2)')}
-                    onMouseLeave={e => (e.currentTarget.style.background = 'var(--bg3)')}>
-                    <span style={{ fontWeight: 600, color: 'var(--text)' }}>{k.name}</span>
-                    {' '}<span>{fmtNum(k.keys)} keys</span>
+                    })}>
+                    <span style={{ fontWeight: 600 }}>{k.name}</span>
+                    {' '}<span style={{ color: 'var(--text2)' }}>{fmtNum(k.keys)} keys</span>
                     {k.expires > 0 && (
                       <span style={{ color: 'var(--text3)' }}> · {fmtNum(k.expires)} expires</span>
                     )}
-                  </button>
+                  </Chip>
                 ))}
               </div>
             </div>

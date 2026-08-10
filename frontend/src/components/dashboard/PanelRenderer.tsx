@@ -84,6 +84,7 @@ import { topNStep, topNWindowSec, clampTopNLimit, topNRowValue, topNMoreLabel, t
 import { toCoreViz } from './panelViz';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { encodeFilters } from '@/lib/urlState';
+import { Link } from 'react-router-dom';
 
 // PanelRenderer dispatches on panel.type. Self-contained — fetches its
 // own data, re-fetches when `range` changes. Errors are surfaced inline
@@ -626,9 +627,9 @@ function TopNRow({ row, max, cfg, range }: {
   );
   if (!href) return <div style={{ padding: '5px 0' }}>{body}</div>;
   return (
-    <a href={href} style={{ display: 'block', padding: '5px 0', textDecoration: 'none' }}>
+    <Link to={href} style={{ display: 'block', padding: '5px 0', textDecoration: 'none' }}>
       {body}
-    </a>
+    </Link>
   );
 }
 

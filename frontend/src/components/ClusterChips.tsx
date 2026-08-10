@@ -15,6 +15,8 @@
 // (single-cluster deployments or services without cluster
 // resource attrs).
 
+import { Link } from 'react-router-dom';
+
 export function ClusterChips({ clusters }: { clusters?: string[] }) {
   if (!clusters || clusters.length === 0) return null;
   return (
@@ -23,7 +25,7 @@ export function ClusterChips({ clusters }: { clusters?: string[] }) {
       marginLeft: 6, verticalAlign: 'middle',
     }}>
       {clusters.map(c => (
-        <a key={c} href={`/services?cluster=${encodeURIComponent(c)}`}
+        <Link key={c} to={`/services?cluster=${encodeURIComponent(c)}`}
           title={`Show /services scoped to ${c}`}
           style={{
             fontSize: 10, padding: '1px 6px', borderRadius: 3, fontWeight: 600,
@@ -33,7 +35,7 @@ export function ClusterChips({ clusters }: { clusters?: string[] }) {
             border: '1px solid color-mix(in srgb, var(--accent) 30%, transparent)',
             textDecoration: 'none',
             textTransform: 'uppercase', letterSpacing: '.3px',
-          }}>{c}</a>
+          }}>{c}</Link>
       ))}
     </span>
   );

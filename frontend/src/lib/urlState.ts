@@ -108,3 +108,53 @@ export function buildQuery(entries: Array<[string, string | number | undefined |
   }
   return u.toString();
 }
+
+// rebuildPreserving — v0.9.940 (UX denetimi A7). buildQuery'nin, sorgu
+// dizesini SIFIRDAN kuran efektler için doğru olan biçimi.
+//
+// SORUN: Traces ve Explore URL'i her state yazımında baştan kuruyor. Bu,
+// listede OLMAYAN her parametreyi bir render sonra SİLMEK demek — kim
+// yazmış olursa olsun. Sınıf üç kez doğdu ve her seferinde tek tek
+// yamandı:
+//
+//   • v0.8.383 (K4) — Topbar'ın `?env=`i Traces'te her yerel yazımda
+//     siliniyordu; çözüm: env'i Traces'in listesine EKLEMEK.
+//   • v0.9.878 (K9) — DataTable primitifinin yazdığı `?s_traces-agg`
+//     yazıldığı an siliniyordu; paylaşılan sıralama linki sessizce
+//     kayboluyor, alıcı BAŞLIKTA p99 görüp sunucuda count sıralaması
+//     alıyordu. Çözüm: onu da listeye eklemek.
+//   • Üçüncüsü henüz doğmamıştı ama adayı belliydi: `?ai=` (AI çekmecesi,
+//     v0.9.477). Explore'da bir filtre düzenlemek çekmeceyi KAPATIRDI.
+//
+// Her seferinde çözüm "bir tane daha ekle" oldu; oysa kusur listede
+// değil, listenin TEK OTORİTE sayılmasındaydı. Bu fonksiyon varsayımı
+// tersine çeviriyor: efekt yalnız KENDİ parametrelerine sahiptir,
+// tanımadıklarını olduğu gibi taşır.
+//
+// SAHİPLİK = `entries`te ADI GEÇMEK. Boş değerli bir girdi, o anahtarın
+// SİLİNMESİ demektir (buildQuery semantiği aynen korunuyor) — sahip
+// olduğun bir parametreyi temizleyebilmek şart.
+//
+// SIRA KARARLI ve bu ZORUNLU: iki çağıran da sonucu
+// `window.location.search` ile karşılaştırıp öyle yazıyor. Sahip olunan
+// parametreler `entries` sırasında ÖNCE gelir (yabancı param yokken çıktı
+// buildQuery ile BAYT BAYT aynı — mevcut linkler değişmez), yabancılar
+// prev'deki göreli sıralarıyla sonra. Böylece fonksiyon idempotent: ikinci
+// çağrı aynı dizeyi üretir, iki yazıcı birbirini yeniden sıralamaz.
+export function rebuildPreserving(
+  prev: string,
+  entries: Array<[string, string | number | undefined | null | false]>,
+): string {
+  const owned = new Set(entries.map(([k]) => k));
+  const u = new URLSearchParams();
+  for (const [k, v] of entries) {
+    if (v === undefined || v === null || v === '' || v === false) continue;
+    u.set(k, String(v));
+  }
+  // append (set değil): tekrarlanan yabancı parametreler korunur.
+  for (const [k, v] of new URLSearchParams(prev).entries()) {
+    if (owned.has(k)) continue;
+    u.append(k, v);
+  }
+  return u.toString();
+}

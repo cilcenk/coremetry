@@ -103,10 +103,21 @@ describe('is-fit güvenlik kuralı — GENİŞLİK', () => {
     expect(users.length).toBeGreaterThan(0);
   });
 
-  // Elle yazılmış <thead>'li iki tablo (v0.9.644 pilotları) kolon
-  // genişliği BEYAN ETMİYOR — ölçülemiyorlar, gözle seçildiler. Açıkça
-  // adlandırılıyorlar ki sessizce çoğalmasınlar.
-  const UNMEASURED = ['/pages/Runbooks.tsx', '/pages/settings/ApiTokensTab.tsx'];
+  // v0.9.872 (tutarlılık denetimi BT5 + BT11) — LİSTE BOŞALDI.
+  //
+  // Buradaki iki dosya (v0.9.644 pilotları) elle yazılmış <thead>'lerdi ve
+  // kolon genişliği BEYAN ETMİYORLARDI: ölçülemiyorlardı, gözle seçilmişlerdi.
+  // İkisi de useDataTable'a geçince genişlikleri beyan edildi ve ÖLÇÜME
+  // GİRDİLER — dolayısıyla istisnadan çıkarıldılar.
+  //
+  // Bu adım atlanırsa aşağıdaki "istisna listesi bayatlamamış" testi YANLIŞ
+  // SEBEPLE yeşil kalırdı: o test yalnız dosyaların hâlâ `is-fit` olduğunu
+  // doğruluyor, ÖLÇÜLEMEZ olduğunu değil. Ölçülebilir bir dosya istisnada
+  // kalırsa genişlik bütçesi onu sessizce atlar.
+  //
+  // Liste boş kalsın: yeni bir girdi, "bu tablo ölçülemiyor" demektir ve
+  // gerekçesi yazılmalıdır.
+  const UNMEASURED: string[] = [];
 
   it('ölçülebilir her is-fit tablosu eşiğin ALTINDA', () => {
     const over: string[] = [];

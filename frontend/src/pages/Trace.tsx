@@ -1149,7 +1149,7 @@ function SharePopover({ traceId }: { traceId: string }) {
                   style={{ flex: 1, fontSize: 11, fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }} />
                 <Button variant="secondary" size="sm" onClick={copyPublic}
                   leftIcon={publicCopied ? <IconCheck /> : <IconLink />}
-                  style={{ color: publicCopied ? 'var(--ok)' : undefined }}>
+                  className={publicCopied ? 'is-ok' : undefined}>
                   {publicCopied ? 'Copied' : 'Copy'}
                 </Button>
               </div>

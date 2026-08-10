@@ -17,10 +17,9 @@ export function LangToggle() {
 
   const tip = current === 'tr' ? 'Switch to English' : 'Türkçe\'ye geç';
   return (
-    <button className="theme-toggle" onClick={() => setUserLang(next)}
+    <button className="theme-toggle tt-text" onClick={() => setUserLang(next)}
       aria-label={tip}
-      title={tip}
-      style={{ fontSize: 10, lineHeight: 1, fontWeight: 600, letterSpacing: 0.5 }}>
+      title={tip}>
       {next.toUpperCase()}
     </button>
   );

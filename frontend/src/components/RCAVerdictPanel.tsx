@@ -281,12 +281,12 @@ export function RCAVerdictPanel({ v, exchangeId }: { v: RCAVerdict; exchangeId?:
           <Button
             variant="ghost" size="sm" aria-label="doğru"
             aria-pressed={rated === 1}
-            style={rated === 1 ? { color: 'var(--ok)' } : undefined}
+            className={rated === 1 ? 'is-ok' : undefined}
             onClick={() => rateVerdict(exchangeId!, 1, rated, setRated)}>👍</Button>
           <Button
             variant="ghost" size="sm" aria-label="yanlış"
             aria-pressed={rated === -1}
-            style={rated === -1 ? { color: 'var(--err)' } : undefined}
+            className={rated === -1 ? 'is-err' : undefined}
             onClick={() => rateVerdict(exchangeId!, -1, rated, setRated)}>👎</Button>
           {rated !== undefined && <span>Kaydedildi.</span>}
         </div>

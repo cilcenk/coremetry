@@ -364,6 +364,20 @@ button.lg { padding: 8px 18px; font-size: 14px; }
    inline `color: var(--err)` on top of `.sec`/`.ghost`, in three
    different looks. Tint comes from the token, never a literal rgba. */
 button.ghost-danger { background: transparent; color: var(--err); border: 1px solid transparent; }
+/* ── State tone modifiers (v0.9.903, mB6) ──────────────────────────
+   Five sites painted a transient state (rated 👍, copied ✓, negated
+   filter) with an inline `style={{ color: cond ? 'var(--ok)' : undefined }}`
+   on a <Button>. Inline styles win over EVERY class, so a variant's
+   hover colour was silently dead on those buttons — the state colour
+   stuck through hover and focus.
+
+   Declared after the variant rules on purpose: `button.is-ok` (0,1,1)
+   ties `button.ghost` (0,1,1) and source order decides, so the state
+   must come last to be visible at all. */
+button.is-ok  { color: var(--ok); }
+button.is-err { color: var(--err); }
+button.is-ok:hover:not(:disabled)  { color: var(--ok); background: var(--bg2); }
+button.is-err:hover:not(:disabled) { color: var(--err); background: var(--bg2); }
 button.ghost-danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--err) 12%, transparent);
   border-color: color-mix(in srgb, var(--err) 40%, transparent);
@@ -1755,6 +1769,11 @@ tbody tr.wf-evidence:hover > td { background: color-mix(in srgb, var(--warn) 14%
   transition: background .12s, color .12s, border-color .12s;
 }
 .theme-toggle:hover { background: var(--bg2); color: var(--text); border-color: var(--accent); }
+/* `tt-text` (v0.9.903, mB5) — the one toggle in this slot whose face is a
+   WORD ("TR"/"EN") rather than a glyph. It used to wear `.theme-toggle`
+   for the 28px square and then override the type inline, which is how a
+   shared class quietly becomes three different-looking controls. */
+.theme-toggle.tt-text { font-size: 10px; line-height: 1; font-weight: 600; letter-spacing: .5px; }
 
 /* Density + theme toggle pill group in the topbar */
 .topbar-prefs { display: flex; align-items: center; flex-shrink: 0; }

@@ -795,7 +795,7 @@ function LogsInner() {
                   }}>
                     {f.negated && <b>NOT </b>}{f.key}: {f.value}
                   </span>
-                  <Button variant="ghost" size="sm" style={{ color: f.negated ? 'var(--err)' : undefined }}
+                  <Button variant="ghost" size="sm" className={f.negated ? 'is-err' : undefined}
                     onClick={() => negatePill(i)}
                     title={f.negated ? 'Include (drop the NOT)' : 'Negate — exclude matching logs'}>≠</Button>
                   <Button variant="ghost" size="sm"

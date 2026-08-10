@@ -180,7 +180,8 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
         <div style={{ display: 'flex', gap: 2, marginTop: 2, alignItems: 'center' }}>
           <Button variant="ghost" size="sm" onClick={copy}
             title="Kopyala" aria-label="Cevabı kopyala"
-            style={{ padding: '0 6px', fontSize: 12, color: copied ? 'var(--ok)' : undefined }}>
+            className={copied ? 'is-ok' : undefined}
+        style={{ padding: '0 6px', fontSize: 12 }}>
             {copied ? '✓' : '⧉'}
           </Button>
           {!!turn.exchangeId && onRate && (

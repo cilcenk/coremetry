@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
+import { useSettingsLoad, SettingsLoadError } from './shared';
 import type { TempoAuthType } from '@/lib/types';
 
 // TempoTab — external Grafana Tempo backend (v0.5.208). When
@@ -11,7 +12,6 @@ import type { TempoAuthType } from '@/lib/types';
 // /trace URL the rest of the UI links to. Admin-only — the saved
 // token reads every trace in the operator's Tempo cluster.
 export function TempoTab() {
-  const [loaded, setLoaded] = useState(false);
   const [enabled, setEnabled] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
   const [authType, setAuthType] = useState<TempoAuthType>('none');
@@ -23,8 +23,9 @@ export function TempoTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  useEffect(() => {
-    api.getTempoSettings().then(s => {
+  const { loaded, error: loadErr, retry } = useSettingsLoad(
+    () => api.getTempoSettings(),
+    s => {
       setEnabled(s.enabled);
       setBaseUrl(s.baseUrl || '');
       setAuthType((s.authType || 'none') as TempoAuthType);
@@ -32,9 +33,8 @@ export function TempoTab() {
       setOrgId(s.orgId || '');
       setHasToken(s.hasToken);
       setInsecureSkipVerify(!!s.insecureSkipVerify);
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
-  }, []);
+    },
+  );
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -82,6 +82,7 @@ export function TempoTab() {
     }
   };
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!loaded) return <Spinner />;
 
   const ready = enabled && baseUrl.trim().length > 0;

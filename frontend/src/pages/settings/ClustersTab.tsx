@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useMemo, useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
+import { useSettingsLoad, SettingsLoadError } from './shared';
 import { useClusters } from '@/lib/queries';
 import type { ThanosAuthType, ThanosClusterSnapshot } from '@/lib/types';
 
@@ -47,7 +48,6 @@ const EMPTY_ROW: EditRow = {
 };
 
 export function ClustersTab() {
-  const [loaded, setLoaded] = useState(false);
   const [rows, setRows] = useState<EditRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -62,12 +62,12 @@ export function ClustersTab() {
   const observedQ = useClusters(fromNs, toNs);
   const observed = useMemo(() => new Set(observedQ.data ?? []), [observedQ.data]);
 
-  useEffect(() => {
-    api.getThanosSettings().then(s => {
+  const { loaded, error: loadErr, retry } = useSettingsLoad(
+    () => api.getThanosSettings(),
+    s => {
       setRows((s.clusters ?? []).map(fromSnapshot));
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
-  }, []);
+    },
+  );
 
   const patch = (i: number, p: Partial<EditRow>) =>
     setRows(rs => rs.map((r, j) => (j === i ? { ...r, ...p } : r)));
@@ -94,6 +94,7 @@ export function ClustersTab() {
     }
   };
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!loaded) return <Spinner />;
 
   return (

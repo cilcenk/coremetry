@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
+import { useSettingsLoad, SettingsLoadError } from './shared';
 import type { ESLogstoreInput, ESLogstoreSnapshot } from '@/lib/types';
 
 // ElasticTab — UI-managed logs read backend (v0.8.232,
@@ -12,7 +13,6 @@ import type { ESLogstoreInput, ESLogstoreSnapshot } from '@/lib/types';
 // the live backend. UI-saved config overrides env/YAML (which stays
 // the bootstrap default) and swaps the backend live — no restart.
 export function ElasticTab() {
-  const [loaded, setLoaded] = useState(false);
   const [snap, setSnap] = useState<ESLogstoreSnapshot | null>(null);
 
   const [backend, setBackend] = useState<'clickhouse' | 'elasticsearch'>('clickhouse');
@@ -37,8 +37,9 @@ export function ElasticTab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  useEffect(() => {
-    api.getLogstoreSettings().then(s => {
+  const { loaded, error: loadErr, retry } = useSettingsLoad(
+    () => api.getLogstoreSettings(),
+    s => {
       setSnap(s);
       setBackend(s.backend);
       setAddresses((s.addresses || []).join(', '));
@@ -54,9 +55,8 @@ export function ElasticTab() {
       setFSevTx(s.fields?.severityTx || '');
       setFSevNo(s.fields?.severityNo || '');
       setFEnv(s.fields?.env || '');
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
-  }, []);
+    },
+  );
 
   const buildInput = (): ESLogstoreInput => ({
     backend,
@@ -105,6 +105,7 @@ export function ElasticTab() {
     }
   };
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!loaded) return <Spinner />;
 
   const es = backend === 'elasticsearch';

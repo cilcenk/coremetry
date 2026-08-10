@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
+import { useSettingsLoad, SettingsLoadError } from './shared';
 import type { DevOpsFlavor, DevOpsTestResult } from '@/lib/types';
 
 // DevOpsTab — Azure DevOps Server / TFS bağlantısı (v0.9.829),
@@ -22,7 +23,6 @@ function splitList(s: string): string[] {
 }
 
 export function DevOpsTab() {
-  const [loaded, setLoaded] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
   const [collection, setCollection] = useState('');
   const [project, setProject] = useState('');
@@ -38,8 +38,9 @@ export function DevOpsTab() {
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [test, setTest] = useState<DevOpsTestResult | null>(null);
 
-  useEffect(() => {
-    api.getDevOpsSettings().then(s => {
+  const { loaded, error: loadErr, retry } = useSettingsLoad(
+    () => api.getDevOpsSettings(),
+    s => {
       setBaseUrl(s.baseUrl || '');
       setCollection(s.collection || '');
       setProject(s.project || '');
@@ -50,9 +51,8 @@ export function DevOpsTab() {
       setRepoPrefixes((s.repoPrefixes || []).join(', '));
       setBranchOrder((s.branchOrder || []).join(', '));
       setDetected({ flavor: s.detectedFlavor, apiVersion: s.detectedApiVersion });
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
-  }, []);
+    },
+  );
 
   // PAT boşsa gövdeden tamamen çıkar — sunucu sözleşmesi "boş =
   // saklıyı koru", ama alanı hiç göndermemek niyeti daha net
@@ -103,6 +103,7 @@ export function DevOpsTab() {
     }
   };
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!loaded) return <Spinner />;
 
   const configured = baseUrl.trim().length > 0;

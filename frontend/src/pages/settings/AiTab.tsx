@@ -1,7 +1,8 @@
-import { useEffect, useState, type FormEvent } from 'react';
+import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
+import { useSettingsLoad, SettingsLoadError } from './shared';
 import type { AIProvider } from '@/lib/types';
 import { IconSparkles } from '@/components/icons';
 import { Link } from 'react-router-dom';
@@ -17,7 +18,6 @@ import { Link } from 'react-router-dom';
 //     server exchanges it for a session token and calls
 //     api.githubcopilot.com (OpenAI-compatible).
 export function AITab() {
-  const [loaded, setLoaded] = useState(false);
   const [provider, setProvider] = useState<AIProvider>('anthropic');
   const [model, setModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
@@ -30,17 +30,17 @@ export function AITab() {
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
-  useEffect(() => {
-    api.getAISettings().then(s => {
+  const { loaded, error: loadErr, retry } = useSettingsLoad(
+    () => api.getAISettings(),
+    s => {
       setProvider(s.provider || 'anthropic');
       setModel(s.model || '');
       setBaseUrl(s.baseUrl || '');
       setHasKey(s.hasKey);
       setSkipTls(s.skipTls ?? false);
       setEnabled(s.enabled ?? true);
-      setLoaded(true);
-    }).catch(() => setLoaded(true));
-  }, []);
+    },
+  );
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
@@ -81,6 +81,7 @@ export function AITab() {
     }
   };
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!loaded) return <Spinner />;
 
   // Per-provider hint shown under the key field — explains where to

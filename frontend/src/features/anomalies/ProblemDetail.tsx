@@ -553,8 +553,8 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
         <span className="spacer" />
         <ShareButton copiedLabel="Copied" />
         {isAdmin && problem.status === 'open' && (
-          <Button variant="secondary" size="sm" onClick={() => { void ack(); }} disabled={acking}>
-            {acking ? 'Acknowledging…' : 'Acknowledge'}
+          <Button variant="secondary" size="sm" onClick={() => { void ack(); }} loading={acking}>
+            Acknowledge
           </Button>
         )}
       </div>

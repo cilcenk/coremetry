@@ -68,7 +68,7 @@ export function RetentionTab() {
       <RetentionRow label="Profiles" row={profiles} setRow={setProfiles} />
 
       <div style={{ marginTop: 14, display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Applying…' : 'Apply'}</Button>
+        <Button type="submit" variant="primary" loading={busy}>Apply</Button>
         {msg && (
           <span style={{ fontSize: 12, color: msg.kind === 'ok' ? 'var(--ok)' : 'var(--err)' }}>
             {msg.text}

@@ -118,8 +118,8 @@ export function LogBridgeTab() {
           </div>
         )}
 
-        <Button type="submit" variant="primary" disabled={busy}>
-          {busy ? 'Kaydediliyor…' : 'Kaydet'}
+        <Button type="submit" variant="primary" loading={busy}>
+          Kaydet
         </Button>
       </form>
     </div>

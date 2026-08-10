@@ -190,8 +190,8 @@ export function BrandingTab() {
         )}
 
         <div style={{ display: 'flex', gap: 8, marginTop: 14 }}>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? 'Saving…' : 'Save'}
+          <Button type="submit" variant="primary" loading={busy}>
+            Save
           </Button>
           <Button type="button" variant="danger" onClick={resetAll} disabled={busy}>
             Reset to defaults
@@ -275,8 +275,8 @@ function AnnouncementSection() {
             onChange={e => setA({ ...a, enabled: e.target.checked })} />
           Şerit aktif
         </label>
-        <Button onClick={() => { void save(); }} disabled={busy}>
-          {busy ? 'Kaydediliyor…' : 'Kaydet'}
+        <Button onClick={() => { void save(); }} loading={busy}>
+          Kaydet
         </Button>
         {msg && <span style={{ fontSize: 12, color: 'var(--text2)' }}>{msg}</span>}
       </div>

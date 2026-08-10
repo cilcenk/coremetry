@@ -288,12 +288,12 @@ export function DevOpsTab() {
         )}
 
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button type="button" variant="secondary" disabled={busy || !configured}
-            onClick={runTest}>
-            {busy ? 'Çalışıyor…' : 'Bağlantıyı test et'}
+          <Button type="button" variant="secondary" disabled={!configured}
+            onClick={runTest} loading={busy}>
+            Bağlantıyı test et
           </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
-            {busy ? 'Çalışıyor…' : 'Kaydet'}
+          <Button type="submit" variant="primary" loading={busy}>
+            Kaydet
           </Button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 8 }}>

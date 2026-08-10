@@ -340,8 +340,8 @@ export function CopilotChat() {
                 background: 'var(--bg)', color: 'var(--text)',
                 border: '1px solid var(--border)', borderRadius: 6,
               }} />
-            <Button type="submit" disabled={busy || !input.trim()}>
-              {busy ? '…' : 'Gönder'}
+            <Button type="submit" disabled={!input.trim()} loading={busy}>
+              Gönder
             </Button>
           </form>
         </Drawer>

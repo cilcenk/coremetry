@@ -59,7 +59,7 @@ export function LDAPUserPicker() {
       <form onSubmit={search} style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
         <input value={q} onChange={e => setQ(e.target.value)}
                placeholder="Name, email or username" style={{ flex: 1 }} />
-        <Button type="submit" variant="primary" disabled={busy}>{busy ? 'Searching…' : 'Search'}</Button>
+        <Button type="submit" variant="primary" loading={busy}>Search</Button>
       </form>
       {error && (
         <div style={{ color: 'var(--err)', fontSize: 12, marginBottom: 8 }}>{error}</div>
@@ -120,8 +120,8 @@ export function LDAPUserPicker() {
             </label>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <Button type="button" variant="secondary" onClick={() => setProvisionFor(null)}>Cancel</Button>
-              <Button type="button" variant="primary" onClick={provision} disabled={busy}>
-                {busy ? 'Saving…' : 'Provision'}
+              <Button type="button" variant="primary" onClick={provision} loading={busy}>
+                Provision
               </Button>
             </div>
           </div>

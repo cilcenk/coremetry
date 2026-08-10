@@ -166,9 +166,9 @@ function Inner() {
               </Button>
             )}
             {canEdit && dirty && (
-              <Button variant="secondary" size="sm" disabled={updateRb.isPending}
-                onClick={() => { setErr(null); save().catch(e => setErr(`Save failed: ${e instanceof Error ? e.message : String(e)}`)); }}>
-                {updateRb.isPending ? 'Saving…' : 'Save changes'}
+              <Button variant="secondary" size="sm"
+                onClick={() => { setErr(null); save().catch(e => setErr(`Save failed: ${e instanceof Error ? e.message : String(e)}`)); }} loading={updateRb.isPending}>
+                Save changes
               </Button>
             )}
             {canEdit && (

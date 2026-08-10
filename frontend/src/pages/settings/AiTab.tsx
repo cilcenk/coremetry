@@ -277,8 +277,8 @@ export function AITab() {
               with no key. The last clause keeps the Enable toggle
               actionable on a no-auth-local install. */}
           <Button type="submit" variant="primary"
-                  disabled={busy || (!apiKey && !hasKey && !(provider === 'openai' && !!baseUrl))}>
-            {busy ? 'Saving…' : 'Save'}
+                  disabled={!apiKey && !hasKey && !(provider === 'openai' && !!baseUrl)} loading={busy}>
+            Save
           </Button>
           {hasKey && (
             <Button type="button" variant="danger" onClick={clearKey} disabled={busy}>

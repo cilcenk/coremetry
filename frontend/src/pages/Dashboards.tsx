@@ -199,9 +199,8 @@ export default function DashboardsPage() {
             <>
               <Button onClick={() => setShowNew(true)}>+ New dashboard</Button>
               <Button variant="secondary" onClick={() => fileRef.current?.click()}
-                disabled={importing}
-                title="Import a dashboard from an exported JSON file">
-                {importing ? 'Importing…' : '↑ Import JSON'}
+                title="Import a dashboard from an exported JSON file" loading={importing}>
+                ↑ Import JSON
               </Button>
               <input ref={fileRef} type="file" accept="application/json,.json"
                 style={{ display: 'none' }}

@@ -61,10 +61,10 @@ export function ThresholdField({ value, service, metric, comparator, onChange, o
         <input type="number" value={value}
           onChange={e => onChange(Number(e.target.value))}
           style={{ flex: 1, minWidth: 80 }} />
-        <Button variant="accent" size="sm" onClick={suggest} disabled={busy}
+        <Button variant="accent" size="sm" onClick={suggest}
           title="Suggest threshold from the last 7 days of this metric"
-          style={{ whiteSpace: 'nowrap' }}>
-          {busy ? '…' : '✨ Suggest'}
+          style={{ whiteSpace: 'nowrap' }} loading={busy}>
+          ✨ Suggest
         </Button>
       </div>
       {error && (

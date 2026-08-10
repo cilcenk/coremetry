@@ -82,9 +82,9 @@ export function NLQueryBox({
           placeholder={`Try: "yesterday's slow checkouts" · "5xx from auth-service last hour" · "kafka producer errors today"`}
           disabled={busy}
           style={{ flex: 1, fontSize: 13 }} />
-        <Button size="sm" onClick={run} disabled={busy || !prompt.trim()}
-          style={{ whiteSpace: 'nowrap' }}>
-          {busy ? 'Thinking…' : 'Apply'}
+        <Button size="sm" onClick={run} disabled={!prompt.trim()}
+          style={{ whiteSpace: 'nowrap' }} loading={busy}>
+          Apply
         </Button>
       </div>
       {state.kind === 'ok' && (

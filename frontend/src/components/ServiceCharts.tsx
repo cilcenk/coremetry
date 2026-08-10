@@ -717,10 +717,10 @@ function DeployImpactButton({ service, deploys }: {
 
   return (
     <div style={{ display: 'inline-flex', flexDirection: 'column', gap: 8, alignItems: 'flex-start' }}>
-      <Button variant="accent" size="sm" onClick={run} disabled={busy}
+      <Button variant="accent" size="sm" onClick={run}
         leftIcon={<IconSparkles />}
-        title={`Compare ±10 min around the latest deploy (${latest.version})`}>
-        {busy ? 'Thinking…' : `Explain deploy ${latest.version}`}
+        title={`Compare ±10 min around the latest deploy (${latest.version})`} loading={busy}>
+        {`Explain deploy ${latest.version}`}
       </Button>
       {error && (
         <div style={{

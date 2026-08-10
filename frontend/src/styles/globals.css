@@ -56,6 +56,28 @@
   --accent-border: #2c4a70;  /* accent hairline — selected-row / active border (design --primary-border) */
   --text-faint:    #545d68;  /* 4th text level below --text3 — micro labels, disabled hints (design --text-faint) */
   --shadow-md:     0 6px 20px rgba(0, 0, 0, .45);  /* drawers / popovers, between --shadow-sm and --shadow-pop */
+
+  /* ── mK6 (v0.9.906) — the four leaks that had no token to land on ───────
+     Every one of these was a hex/rgba literal sprinkled through the rule
+     bodies below, which meant the light and redhat themes silently
+     inherited a dark-theme colour. Naming is by ROLE, not by value:
+       --on-accent  glyph/text colour on any SOLID brand-weight fill
+                    (accent, err, brand). Same #fff in all three themes
+                    TODAY — the point is the name, so a future light-accent
+                    theme flips one line instead of hunting seven.
+       --backdrop   the modal/drawer scrim.
+       --fatal      severity above --err. The old literal (#ff6b6b) was a
+                    DARK-theme red: on the white light surface it measured
+                    ~2.8:1, i.e. the single loudest severity in the product
+                    was the least readable one. Light/redhat get a darker
+                    red so "fatal" still outranks "error" visually.
+       --shadow-modal  deeper than --shadow-pop on purpose (a dialog floats
+                    above everything); previously a black literal that
+                    smeared grey mud under light-theme dialogs. */
+  --on-accent:     #ffffff;
+  --backdrop:      rgba(0, 0, 0, .55);
+  --fatal:         #ff6b6b;
+  --shadow-modal:  0 20px 60px rgba(0, 0, 0, .5);
   --radius-sm: 6px;
   --radius:    8px;
   --radius-lg: 12px;
@@ -104,6 +126,12 @@
   --accent-border: #b6e3ff;  /* design --primary-border (light) */
   --text-faint:    #a9b1ba;  /* design --text-faint (light) */
   --shadow-md:     0 4px 16px rgba(20, 30, 45, .08);
+  /* mK6 — see :root for the role of each. --on-accent / --backdrop are
+     deliberately NOT overridden: white-on-solid-blue and a black scrim are
+     correct here too, and an override that restates the inherited value is
+     a future divergence waiting to happen. */
+  --fatal:         #a40e26;
+  --shadow-modal:  0 20px 60px rgba(20, 30, 45, .18);
 
   color-scheme: light;
 }
@@ -152,6 +180,9 @@
   --accent-border: #bee1f4;
   --text-faint:    #8a8d90;
   --shadow-md:     0 4px 16px rgba(21, 21, 21, .10);
+  /* mK6 — PF danger red, darkened one step for the severity above error. */
+  --fatal:         #a30000;
+  --shadow-modal:  0 20px 60px rgba(21, 21, 21, .20);
   /* PatternFly runs squarer than Primer. */
   --radius-sm: 3px;
   --radius:    4px;
@@ -204,7 +235,7 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 #sidebar-header {
   padding: 14px 16px; border-bottom: 1px solid var(--border);
   display: flex; align-items: center; gap: 10px;
-  background: linear-gradient(135deg, rgba(227,6,19,.10) 0%, transparent 100%);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--brand) 10%, transparent) 0%, transparent 100%);
   min-height: 0;
 }
 #sidebar[data-collapsed="true"] #sidebar-header { padding: 14px 0; justify-content: center; }
@@ -227,7 +258,7 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 #nav a .icon { width: 16px; height: 16px; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; color: currentColor; }
 .nav-label { overflow: hidden; text-overflow: ellipsis; }
 .nav-badge {
-  margin-left: auto; background: var(--err); color: #fff;
+  margin-left: auto; background: var(--err); color: var(--on-accent);
   font-size: 10px; font-weight: 700; padding: 1px 6px;
   border-radius: 10px; min-width: 18px; text-align: center;
 }
@@ -312,7 +343,7 @@ input, select {
 input:focus, select:focus { border-color: var(--accent); }
 select option { background: var(--bg2); }
 button {
-  background: var(--accent); color: #fff; border: none;
+  background: var(--accent); color: var(--on-accent); border: none;
   border-radius: 6px; padding: 5px 14px; font-size: 13px; cursor: pointer;
   transition: background .15s; font-family: inherit;
 }
@@ -352,7 +383,7 @@ summary:focus-visible,
 }
 button.sec { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
 button.sec:hover:not(:disabled) { background: var(--bg2); }
-button.danger { background: var(--err); color: #fff; }
+button.danger { background: var(--err); color: var(--on-accent); }
 button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--err) 88%, white); }
 button.ghost { background: transparent; color: var(--text2); border: 1px solid transparent; }
 button.ghost:hover:not(:disabled) { background: var(--bg2); color: var(--text); }
@@ -670,7 +701,7 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
    are theme-controlled, not inline-styled per call site. */
 .modal-backdrop {
   position: fixed; inset: 0; z-index: 100;
-  background: rgba(0, 0, 0, 0.55);
+  background: var(--backdrop);
   display: grid; place-items: center;
   padding: 16px;
 }
@@ -678,7 +709,7 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
   background: var(--bg1);
   border: 1px solid var(--border);
   border-radius: 10px;
-  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow-modal);
   width: 100%;
   max-width: 480px;
   max-height: calc(100vh - 32px);
@@ -1043,7 +1074,7 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* Severity */
 .s-trace { color: var(--text3); } .s-debug { color: var(--text2); } .s-info { color: var(--info); }
-.s-warn { color: var(--warn); } .s-error { color: var(--err); } .s-fatal { color: #ff6b6b; font-weight: 700; }
+.s-warn { color: var(--warn); } .s-error { color: var(--err); } .s-fatal { color: var(--fatal); font-weight: 700; }
 
 /* Pagination */
 .pager { display: flex; gap: 8px; margin-top: 10px; align-items: center; color: var(--text2); font-size: 12px; }
@@ -1474,8 +1505,8 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 }
 .status-row:last-child { border-bottom: none; }
 .status-row:hover { background: var(--bg2); }
-.status-row-degraded { background: rgba(245,159,0,.04); }
-.status-row-outage   { background: rgba(255,82,82,.04); }
+.status-row-degraded { background: color-mix(in srgb, var(--warn) 6%, transparent); }
+.status-row-outage   { background: color-mix(in srgb, var(--err) 6%, transparent); }
 
 /* Span detail panel */
 /* v0.8.112 — viewport-FIXED floating drawer, not an in-flow flex column.
@@ -1554,7 +1585,7 @@ canvas { max-width: 100%; }
 /* v0.8.299 — token, literal değil: redhat temasında (yalnız light override'ı
    olan) #0d1117 literal'i beyaz sayfada simsiyah canvas bırakıyordu. */
 #graph-wrap { background: var(--bg0); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
-[data-theme="light"] #graph-wrap { background: #f4f6fa; }
+[data-theme="light"] #graph-wrap { background: var(--bg1); }
 #graph-svg { display: block; width: 100%; cursor: grab; user-select: none; }
 #graph-svg:active { cursor: grabbing; }
 .graph-node { cursor: pointer; }
@@ -1642,13 +1673,13 @@ canvas { max-width: 100%; }
 
 /* Live tail button (pulsing) */
 .live-on {
-  background: var(--err); color: #fff; border: 0;
+  background: var(--err); color: var(--on-accent); border: 0;
   position: relative; padding-left: 22px;
 }
 .live-on::before {
   content: ''; position: absolute; left: 8px; top: 50%;
   width: 8px; height: 8px; border-radius: 50%;
-  background: #fff; transform: translateY(-50%);
+  background: var(--on-accent); transform: translateY(-50%);
   animation: pulse 1.4s ease-in-out infinite;
 }
 @keyframes pulse {
@@ -1852,7 +1883,7 @@ button.accent.copied {
 }
 .trace-lookup .tl-clear:hover { background: var(--bg3); color: var(--text); }
 .trace-lookup .tl-go {
-  background: var(--accent); color: #fff; border: 0;
+  background: var(--accent); color: var(--on-accent); border: 0;
   padding: 4px 12px; font-size: 12px; font-weight: 600;
   border-radius: 4px; margin-left: 4px; cursor: pointer;
 }
@@ -1910,7 +1941,7 @@ button.accent.copied {
   display: inline-flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
-.fb-chip-x:hover, .btn-chip-x:hover { background: var(--err); color: #fff; }
+.fb-chip-x:hover, .btn-chip-x:hover { background: var(--err); color: var(--on-accent); }
 .fb-add {
   background: transparent; border: 1px dashed var(--border); color: var(--text2);
   padding: 3px 10px; font-size: 12px; cursor: pointer; border-radius: 12px;
@@ -1950,7 +1981,7 @@ button.accent.copied {
   min-width: 100%; max-width: 520px;
   max-height: 280px; overflow-y: auto;
   background: var(--bg2); border: 1px solid var(--border); border-radius: 6px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.30);
+  box-shadow: var(--shadow-pop);
   padding: 4px 0;
 }
 .cb-row {
@@ -1985,7 +2016,7 @@ button.accent.copied {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 50;
   background: var(--bg1); border: 1px solid var(--border); border-radius: 8px;
   padding: 14px; display: flex; flex-direction: column; gap: 10px; min-width: 500px;
-  box-shadow: 0 8px 24px rgba(0,0,0,.4);
+  box-shadow: var(--shadow-pop);
 }
 .trp-body { display: flex; gap: 16px; }
 .trp-section-title {
@@ -2045,12 +2076,12 @@ button.accent.copied {
 .trp-cal-day.out { color: var(--text3); opacity: .55; }
 .trp-cal-day.today { box-shadow: inset 0 0 0 1px var(--accent); }
 .trp-cal-day.inrange { background: var(--accent-soft); border-radius: 0; }
-.trp-cal-day.sel { background: var(--accent); color: #fff; font-weight: 600; }
+.trp-cal-day.sel { background: var(--accent); color: var(--on-accent); font-weight: 600; }
 .trp-cal-day.sel:hover:not(:disabled) { background: var(--accent2); }
 .trp-actions { display: flex; gap: 6px; }
 .trp-recents { display: flex; flex-direction: column; gap: 2px; }
 .trp-error {
-  background: rgba(255,82,82,.08); border: 1px solid rgba(255,82,82,.4);
+  background: color-mix(in srgb, var(--err) 8%, transparent); border: 1px solid color-mix(in srgb, var(--err) 40%, transparent);
   color: var(--err); padding: 6px 8px; border-radius: 4px;
   font-size: 11px;
 }
@@ -2256,7 +2287,7 @@ button.accent.copied {
   align-items: center;
   gap: 8px;
   animation: toastIn 180ms ease-out;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  box-shadow: var(--shadow-md);
   color: var(--text);
   background: var(--bg2);
   border: 1px solid var(--border);
@@ -2513,7 +2544,7 @@ button.accent.copied {
 .mqe-pickname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
 .mqe-unit { font-size: 10px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; background: var(--bg3); padding: 1px 5px; border-radius: 4px; }
 .mqe-caret { color: var(--text3); font-size: 10px; }
-.mqe-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; width: 320px; max-width: 92vw; background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-pop, 0 12px 32px rgba(0,0,0,.4)); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
+.mqe-pop { position: absolute; top: calc(100% + 4px); left: 0; z-index: 40; width: 320px; max-width: 92vw; background: var(--bg1); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow-pop); padding: 8px; display: flex; flex-direction: column; gap: 8px; }
 .mqe-search { width: 100%; }
 .mqe-facets { display: flex; gap: 4px; flex-wrap: wrap; }
 .mqe-facet { padding: 3px 8px; border: 1px solid var(--border); border-radius: 20px; background: var(--bg2); color: var(--text2); font-size: 10.5px; font-weight: 600; cursor: pointer; }

@@ -7,6 +7,8 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { rcaPctText, rcaEngineTone, rcaSatisfactionText } from './ai/rcaQualityView';
 import type { RCAVerdictQuality } from '@/lib/types';
 import { timeRangeToNs, tsLong, fmtNum } from '@/lib/utils';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
 import {
   type AIRateTable, mergeRates, costForCall, fmtCost,
 } from '@/lib/ai-rates';
@@ -35,6 +37,32 @@ export default function AIObservabilityPage() {
   const [status, setStatus] = useState('');
   const [open, setOpen] = useState<AICall | null>(null);
   const [rates, setRates] = useState<AIRateTable>(() => mergeRates(null));
+
+  // v0.9.875 (tutarlılık denetimi BT1) — 200 satırlık AI çağrı listesi.
+  // Duration ve Cost kolonları VARDI ama sıralanamıyordu; "en pahalı /
+  // en yavaş çağrı hangisi" sorusu göz taramasıyla cevaplanıyordu.
+  //
+  // Kolonlar `rates`e memoise: maliyet oranlardan türetiliyor. `rates`
+  // mount başına BİR KEZ ayarlanıyor, yani kimlik kararlı — columnLayoutSig
+  // her render'da tazelenmiyor (operatörün sürüklediği genişlikler durur).
+  const callCols = useMemo<DataTableColumn<AICall>[]>(() => [
+    { id: 'time',     label: 'Time',              sortValue: c => c.createdAt, width: 165 },
+    { id: 'surface',  label: 'Surface',           sortValue: c => c.surface,   naturalDir: 'asc', flex: true },
+    { id: 'model',    label: 'Provider · Model',  sortValue: c => `${c.provider} ${c.model ?? ''}`, naturalDir: 'asc', width: 210 },
+    { id: 'status',   label: 'Status',            sortValue: c => c.status,    naturalDir: 'asc', width: 95 },
+    { id: 'duration', label: 'Duration',          sortValue: c => c.durationMs, numeric: true, width: 105 },
+    { id: 'tokens',   label: 'In / Out tokens',   sortValue: c => c.inputTokens + c.outputTokens, numeric: true, width: 140 },
+    // Oran tablosunda olmayan bir model için costForCall null döner;
+    // sıralamada -1 ile en dibe iner (bilinmeyen maliyet "ucuz" sayılmasın).
+    { id: 'cost',     label: 'Cost',
+      sortValue: c => costForCall(rates, c.model, c.inputTokens, c.outputTokens) ?? -1,
+      numeric: true, width: 100 },
+    { id: 'user',     label: 'User',              sortValue: c => c.userEmail || c.userId || '', naturalDir: 'asc', width: 175 },
+  ], [rates]);
+  const dt = useDataTable<AICall>({
+    storageKey: 'ai-calls', columns: callCols, rows: calls ?? [],
+    initialSort: { id: 'time', dir: 'desc' },
+  });
 
   // Pull operator-set rate overrides; merge over the bundled
   // defaults. Done once per mount — rates change infrequently
@@ -214,19 +242,11 @@ export default function AIObservabilityPage() {
         )}
         {calls && calls.length > 0 && (
           <div className="table-wrap">
-            <table>
-              <thead><tr>
-                <th>Time</th>
-                <th>Surface</th>
-                <th>Provider · Model</th>
-                <th>Status</th>
-                <th className="num">Duration</th>
-                <th className="num">In / Out tokens</th>
-                <th className="num">Cost</th>
-                <th>User</th>
-              </tr></thead>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={dt} />
+              <DataTableHead dt={dt} />
               <tbody>
-                {calls.map(c => {
+                {dt.sortedRows.map(c => {
                   const cost = costForCall(rates, c.model, c.inputTokens, c.outputTokens);
                   return (
                   <tr key={c.id} onClick={() => setOpen(c)}

@@ -8,6 +8,21 @@ import { FlashBox, humanize } from './shared';
 import { ChannelModal } from './ChannelModal';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
+import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import type { DataTableColumn } from '@/lib/dataTable';
+
+// v0.9.875 (tutarlılık denetimi BT16) — bildirim kanalları paylaşılan
+// primitife. Severity sıralaması SEVİYEYE göre (rozet sırası), alfabetik
+// değil: "en gürültülü kanal hangisi" sorusu böyle cevaplanıyor.
+const SEVERITY_RANK: Record<string, number> = { critical: 4, error: 3, warning: 2, info: 1 };
+
+const CHANNEL_COLS: DataTableColumn<NotificationChannel>[] = [
+  { id: 'name',   label: 'Name',                 sortValue: c => c.name, naturalDir: 'asc', width: 190 },
+  { id: 'type',   label: 'Type',                 sortValue: c => c.type, naturalDir: 'asc', width: 130 },
+  { id: 'target', label: 'Recipients / target',  sortValue: c => summarizeChannel(c), naturalDir: 'asc', flex: true },
+  { id: 'sev',    label: 'Min severity',         sortValue: c => SEVERITY_RANK[String(c.minSeverity).toLowerCase()] ?? 0, width: 130 },
+  { id: 'status', label: 'Status',               sortValue: c => (c.enabled ? 1 : 0), width: 100 },
+];
 
 // ── Channels tab ────────────────────────────────────────────────────────────
 
@@ -15,6 +30,11 @@ export function ChannelsTab() {
   const [items, setItems] = useState<NotificationChannel[] | null | undefined>(undefined);
   const [editing, setEditing] = useState<NotificationChannel | 'new' | null>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  const dt = useDataTable<NotificationChannel>({
+    storageKey: 'settings-channels', columns: CHANNEL_COLS, rows: items ?? [],
+    initialSort: { id: 'name', dir: 'asc' },
+  });
 
   const refresh = () => {
     setItems(undefined);
@@ -65,19 +85,11 @@ export function ChannelsTab() {
       )}
       {items && items.length > 0 && (
         <div className="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th>Type</th>
-                <th>Recipients / target</th>
-                <th>Min severity</th>
-                <th>Status</th>
-                <th></th>
-              </tr>
-            </thead>
+          <table style={{ tableLayout: 'fixed', width: '100%' }}>
+            <DataTableColgroup dt={dt} trailing={[210]} />
+            <DataTableHead dt={dt} trailing={<th></th>} />
             <tbody>
-              {items.map(c => (
+              {dt.sortedRows.map(c => (
                 <tr key={c.id}>
                   <td><b>{c.name}</b></td>
                   <td className="mono">{c.type}</td>

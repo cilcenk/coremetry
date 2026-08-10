@@ -1,6 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+
+function walkTsx(dir: string, out: string[] = []): string[] {
+  for (const e of readdirSync(dir)) {
+    const p = join(dir, e);
+    if (statSync(p).isDirectory()) walkTsx(p, out);
+    else if (p.endsWith('.tsx') && !p.endsWith('.test.tsx')) out.push(p);
+  }
+  return out;
+}
 
 // v0.9.697 — YAPIŞKAN BAŞLIK, SATIR İÇİ `position` TARAFINDAN ÖLDÜRÜLMESİN.
 //
@@ -100,11 +109,60 @@ describe('globals.css konum katmanları', () => {
     expect(beats('th.sticky-right', 'thead th')).toBe(true);
   });
 
+  // ── v0.9.873 (tutarlılık denetimi R5 / MT5) — İÇ KAYDIRMALI kap ──────────
+  //
+  // BT8/BT9/BT15 dönüşümünden önce bu üç tablonun başlığı `<thead style={{
+  // position: 'sticky' }}>` ile SATIR İÇİ yapışkandı. DataTableHead
+  // v0.9.697'den beri `position`ı satır içi yazmıyor (yukarıdaki kapı tam da
+  // bunu koruyor), yani primitife geçiş yapışkanlığı SESSİZCE düşürürdü.
+  // Kaybın itirafı DetailDrawer.tsx'in kendi yorumunda duruyordu: "adopting
+  // the shared primitive retires the inner-scroll wrapper (its sticky
+  // <thead> went with the bespoke header)". MT5 tam olarak bu.
+  it('`.table-wrap.is-scroll thead th` sticky', () => {
+    expect(ruleBody(css, '.table-wrap.is-scroll thead th')).toMatch(/position:\s*sticky/);
+  });
+
+  it('is-scroll kuralı taban kuralı YENİYOR', () => {
+    expect(beats('.table-wrap.is-scroll thead th', 'thead th')).toBe(true);
+  });
+
+  // ASIL AYRIM — is-scroll'un `top`u SIFIR olmalı.
+  //
+  // `.is-fit` başlığı sayfanın yapışkan filtre barının altına yapıştırıyor
+  // (`top: var(--controls-h)`). İç kaydırmalı bir kapta kaydırma kabın
+  // İÇİNDE olduğu için o referans yanlış: başlık kabın içinde bar yüksekliği
+  // kadar aşağıda asılı kalır — v0.9.697 olayının birebir tekrarı, bu kez
+  // drawer'ın içinde. İki kuralın AYRI olmasının tek sebebi bu satır.
+  it('is-scroll `top: 0`, is-fit ise --controls-h', () => {
+    expect(ruleBody(css, '.table-wrap.is-scroll thead th')).toMatch(/top:\s*0/);
+    expect(ruleBody(css, '.table-wrap.is-scroll thead th')).not.toMatch(/--controls-h/);
+    expect(ruleBody(css, '.table-wrap.is-fit thead th')).toMatch(/--controls-h/);
+  });
+
   // Tutamak absolute; çapası th. relative de sticky de "konumlanmış"
   // sayıldığı için her iki varyantta da çapa duruyor — düzeltmenin
   // tutamağı kırmadığının çivisi.
   it('resize tutamağı hâlâ absolute', () => {
     expect(ruleBody(css, 'thead th .col-resize-handle')).toMatch(/position:\s*absolute/);
+  });
+});
+
+// R7 — iç kaydırmalı kaplara `is-fit` YASAK (v0.9.697 olayının tekrarı).
+describe('is-fit ve iç kaydırma bir arada olamaz', () => {
+  it('hiçbir `table-wrap is-fit` kabı kendi overflowY: auto\'sunu taşımıyor', () => {
+    const files = walkTsx(SRC);
+    const offenders: string[] = [];
+    for (const p of files) {
+      const raw = readFileSync(p, 'utf8');
+      raw.split('\n').forEach((line, i) => {
+        const code = line.replace(/\/\/.*$/, '');
+        if (code.includes('table-wrap is-fit') && /overflowY:\s*'auto'|maxHeight:/.test(code))
+          offenders.push(`${p.replace(SRC, '')}:${i + 1}: ${line.trim().slice(0, 90)}`);
+      });
+    }
+    expect(offenders,
+      `is-fit + iç kaydırma: başlık yanlış referansa yapışır, is-scroll kullanın:\n${offenders.join('\n')}`,
+    ).toEqual([]);
   });
 });
 

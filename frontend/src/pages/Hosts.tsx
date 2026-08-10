@@ -10,7 +10,16 @@ import { timeRangeToNs, fmtBytes, fmtAgoNs } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { HostRow, HostDetail, TimeRange } from '@/lib/types';
+import type { HostRow, HostDetail, HostServiceRow, TimeRange } from '@/lib/types';
+
+// v0.9.873 (tutarlılık denetimi BT12) — HostDrawer'ın servis tablosu.
+// Yoğun bir host'ta "CPU'yu kim yiyor" sorusu bugün göz taramasıyla
+// cevaplanıyordu; sıralama yoktu.
+const HOST_SVC_COLS: DataTableColumn<HostServiceRow>[] = [
+  { id: 'service', label: 'Service', sortValue: s => s.service,  naturalDir: 'asc', flex: true },
+  { id: 'cpu',     label: 'CPU %',   sortValue: s => s.cpuPct,   numeric: true, width: 100 },
+  { id: 'mem',     label: 'Memory',  sortValue: s => s.memBytes, numeric: true, width: 110 },
+];
 
 // /hosts — host/pod inventory (v0.8.449, SigNoz/Uptrace gap-closure
 // Wave 3 / A4). One row per host_name emitting metrics in the window:
@@ -159,6 +168,11 @@ function HostDrawer({ host, range, onClose }: {
     q.isPending ? undefined : q.isError ? null : q.data;
 
   const trend = detail?.trend ?? [];
+  const svcDt = useDataTable<HostServiceRow>({
+    storageKey: 'host-drawer-services', columns: HOST_SVC_COLS,
+    rows: detail?.services ?? [],
+    initialSort: { id: 'cpu', dir: 'desc' },
+  });
 
   return (
     <Drawer onClose={onClose} header={
@@ -190,16 +204,11 @@ function HostDrawer({ host, range, onClose }: {
               {detail.services.length === 0 ? (
                 <div style={{ fontSize: 12, color: 'var(--text3)' }}>No services in this window.</div>
               ) : (
-                <table style={{ width: '100%', fontSize: 12 }}>
-                  <thead>
-                    <tr style={{ color: 'var(--text3)', fontSize: 11, textAlign: 'left' }}>
-                      <th>Service</th>
-                      <th className="num">CPU %</th>
-                      <th className="num">Memory</th>
-                    </tr>
-                  </thead>
+                <table style={{ width: '100%', fontSize: 12, tableLayout: 'fixed' }}>
+                  <DataTableColgroup dt={svcDt} />
+                  <DataTableHead dt={svcDt} />
                   <tbody>
-                    {detail.services.map(s => (
+                    {svcDt.sortedRows.map(s => (
                       <tr key={s.service}>
                         <td>
                           <Link to={`/service?name=${encodeURIComponent(s.service)}`}

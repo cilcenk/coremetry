@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 import { fmtNum, fmtNs, timeRangeToNs } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
-import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries } from '@/lib/types';
+import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries, DBOpStat } from '@/lib/types';
 import { Stat, statementTracesHref } from './panels/shared';
 import { OraclePanel } from './panels/OraclePanel';
 import { PostgresPanel } from './panels/PostgresPanel';
@@ -121,6 +121,20 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
   // upgrade.
   const allCallers = data.callers ?? [];
   const allTopOps  = data.topOps ?? [];
+  // v0.9.873 (tutarlılık denetimi BT8). Kolon ETİKETİ `kind`e bağlı, bu
+  // yüzden storageKey de türetiliyor (R2 / `deps-callers-${tone}` emsali):
+  // aynı anahtar altında iki farklı kolon kümesi saklanırsa kaydedilen
+  // genişlikler diğer kipe taşar.
+  const topOpsCols = useMemo<DataTableColumn<DBOpStat>[]>(() => [
+    { id: 'statement', label: kind === 'db' ? 'Statement' : 'Operation',
+      sortValue: o => o.statement, naturalDir: 'asc', flex: true },
+    { id: 'count', label: 'Count', sortValue: o => o.count,          numeric: true, width: 110 },
+    { id: 'avg',   label: 'Avg',   sortValue: o => o.avgDurationMs,  numeric: true, width: 110 },
+  ], [kind]);
+  const topOpsDt = useDataTable<DBOpStat>({
+    storageKey: `deps-topops-${kind}`, columns: topOpsCols, rows: allTopOps,
+    initialSort: { id: 'count', dir: 'desc' },
+  });
 
   // Worst-impact callers first — operator's first triage
   // question is "which client is hitting this DB hardest?".
@@ -422,17 +436,18 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
               birebir tutmayabilir.
             </div>
           )}
-          <div className="table-wrap" style={{ maxHeight: 240, overflowY: 'auto' }}>
-            <table>
-              <thead style={{ position: 'sticky', top: 0, background: 'var(--bg1)', zIndex: 1 }}>
-                <tr>
-                  <th>{kind === 'db' ? 'Statement' : 'Operation'}</th>
-                  <th className="num">Count</th>
-                  <th className="num">Avg</th>
-                </tr>
-              </thead>
+          {/* v0.9.873 (tutarlılık denetimi BT8) — yapışkanlık `is-scroll`
+              sınıfına devredildi. Satır içi `<thead style={{position:
+              'sticky'}}>` primitife geçişte KAYBOLURDU (DataTableHead
+              v0.9.697'den beri position'ı satır içi yazmıyor) — bu dosyanın
+              kendi MT5 itirafının tekrarı olurdu. `is-fit` DEĞİL: kaydırma
+              bu kabın İÇİNDE, referans sayfa barı değil. */}
+          <div className="table-wrap is-scroll" style={{ maxHeight: 240, overflowY: 'auto' }}>
+            <table style={{ tableLayout: 'fixed', width: '100%' }}>
+              <DataTableColgroup dt={topOpsDt} />
+              <DataTableHead dt={topOpsDt} />
               <tbody>
-                {allTopOps.map((o, i) => (
+                {topOpsDt.sortedRows.map((o, i) => (
                   <tr key={i}>
                     <td style={{
                       fontFamily: 'ui-monospace, SFMono-Regular, monospace',

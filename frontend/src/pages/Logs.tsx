@@ -1011,7 +1011,7 @@ function LogsInner() {
               title="Filters the rows already loaded into this page — body, service, severity and trace id. It does NOT search the rest of the window; widen the query above for that."
               style={{
                 flex: '0 1 340px', fontSize: 11.5, padding: '3px 8px',
-                background: 'var(--bg0)', color: 'var(--text1)',
+                background: 'var(--bg0)', color: 'var(--text)',
                 border: '1px solid var(--border)', borderRadius: 4,
               }} />
             {narrow.trim() && (

@@ -73,9 +73,14 @@ export function ServiceClusterBreakdown({ service, range }: {
   // v0.9.363 — hata artık sessizce "panel yok"a katlanmıyor: çok-cluster'lı
   // bir serviste sorgu 500'lediğinde panelin YOK OLMASI operatöre "tek
   // cluster'a düştü" diyordu. Tek satırlık dürüst bir çizgi çiziyoruz.
+  // v0.9.868 (tutarlılık denetimi mT9) — bu çizgi `var(--muted)` ile
+  // boyanıyordu ve `--muted` diye bir token YOK (depoda tek kullanım buydu).
+  // Tanımsız custom property sessizce düşer, renk inherit'e kalır: yani
+  // v0.9.363'ün "dürüst çizgisi" gövde metniyle aynı tonda çiziliyor,
+  // ikincil bilgi olduğu okunmuyordu. İkincil ton `--text3`.
   if (q.isError) {
     return (
-      <div style={{ marginBottom: 14, fontSize: 12, color: 'var(--muted)' }}>
+      <div style={{ marginBottom: 14, fontSize: 12, color: 'var(--text3)' }}>
         ⚠ Cluster kırılımı yüklenemedi — panel gizlenmedi, sorgu başarısız.
       </div>
     );

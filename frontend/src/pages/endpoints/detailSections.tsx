@@ -504,7 +504,7 @@ export function WhereTheTimeGoesSection({ refObj, from, to, env, cluster }: {
               <span style={{ color: 'var(--text2)', fontVariantNumeric: 'tabular-nums' }}>
                 p99 {e.p99Ms.toFixed(0)}ms
               </span>
-              <span style={{ color: 'var(--text1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ color: 'var(--text)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
                 {pct.toFixed(0)}%
               </span>
             </div>
@@ -536,7 +536,7 @@ export function WhereTheTimeGoesSection({ refObj, from, to, env, cluster }: {
               <span style={{ color: 'var(--text2)', fontVariantNumeric: 'tabular-nums' }}>
                 {b.calls} calls · p99 {b.p99Ms.toFixed(0)}ms
               </span>
-              <span style={{ color: 'var(--text1)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
+              <span style={{ color: 'var(--text)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>
                 {total > 0 ? ((b.shareMs / total) * 100).toFixed(0) : 0}%
               </span>
             </div>

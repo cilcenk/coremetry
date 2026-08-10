@@ -93,11 +93,20 @@ export function ShapesView({ range, service }: { range: TimeRange; service?: str
     { id: 'exemplar', label: 'Exemplar', width: 120 },
   ], []);
 
+  // v0.9.929 — klavye gezinmesi. v0.9.918'de bilinçli ERTELENMİŞTİ: bu tablo
+  // /traces'in İKİNCİ nav'lı tablosu olarak mount oluyor ve o gün j/k'nın
+  // sahibi "son mount olan"dı, yani onOpen vermek üstteki listenin klavye
+  // gezinmesini çalabilirdi. v0.9.928 arbitrajı (sahip = son etkileşim)
+  // o riski kaldırdı; Enter/o artık tıkın açtığı örnek izi açıyor.
+  //
+  // Örneksiz gruplar (hepsi filtrelenmişse) tıkta da no-op — aynı koşul,
+  // tek yerde: klavyenin tıktan farklı davranması en sinsi tutarsızlık.
   const dt = useDataTable<ShapeRow>({
     storageKey: 'trace-shapes',
     columns: COLS,
     rows: shapes,
     initialSort: { id: 'count', dir: 'desc' },
+    onOpen: (r) => { if (r.exemplar) navigate(`/trace?id=${r.exemplar}`); },
   });
 
   if (rows === undefined) return <Spinner label="Sampling traces to cluster by shape…" />;
@@ -120,10 +129,11 @@ export function ShapesView({ range, service }: { range: TimeRange; service?: str
           <DataTableColgroup dt={dt} />
           <DataTableHead dt={dt} />
           <tbody>
-            {dt.sortedRows.map(r => {
+            {dt.sortedRows.map((r, i) => {
               const errCls = r.errorRate > 5 ? 'b-err' : r.errorRate > 0 ? 'b-warn' : 'b-ok';
               return (
                 <tr key={r.signature}
+                  {...dt.rowProps(i)}
                   onClick={() => r.exemplar && navigate(`/trace?id=${r.exemplar}`)}
                   // v0.9.236 — shapes group a 1000-trace sample by
                   // (service, rootName); at 1000s of services × 10000s of

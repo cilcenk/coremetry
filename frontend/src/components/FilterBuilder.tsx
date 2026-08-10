@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { Combobox } from './Combobox';
 import { Button, Chip } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -109,13 +110,10 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
   // muscle memory. Registered while the editor is mounted; the parent
   // controls mounting via `draft && <DraftEditor>` so this listener
   // only lives during an active edit.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [onCancel]);
+  // v0.9.950 (E2/Ö28) — KATMAN. Editör yalnız aktif düzenleme sırasında
+  // mount, yani `true` doğru koşul; üstünde açılan bir öneri popover'ı
+  // ilk Esc'i alır.
+  useEscLayer(true, onCancel);
 
   // Live value autocomplete. As soon as the operator picks an
   // attribute key, fetch the top-N observed values (server-

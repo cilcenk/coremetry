@@ -28,7 +28,11 @@ describe('Drawer overlay kipi', () => {
   // Overlay yoksa "dışarı tıkla kapat" da yok: sayfayla çalışmak
   // sohbeti kapatmamalı. Esc/✕ her iki kipte de çalışıyor.
   it('kapatma yolları duruyor', () => {
-    expect(drawer).toContain("e.key === 'Escape'");
+    // v0.9.950 (E2/Ö28) — Esc artık KATMAN yığınından geliyor. Eski pin
+    // elle yazılmış document dinleyicisini arıyordu; o dinleyici Ö28'in
+    // kök nedeniydi (bir ⌘K'yı kapatan Esc çekmeceyi de götürüyordu).
+    // Sözleşme AYNI: Esc çekmeceyi kapatır — yalnız çekmece EN ÜSTTEYKEN.
+    expect(drawer).toContain('useEscLayer(true, onClose)');
     expect(drawer).toContain('aria-label="Close"');
   });
 });

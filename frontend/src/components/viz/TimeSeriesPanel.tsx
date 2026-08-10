@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import uPlot from 'uplot';
 import { downsampleXY } from '@/lib/perf/lttb';
 import { fmtSmart, fmtXTicks, seriesColor } from '@/lib/chartFmt';
@@ -218,18 +219,21 @@ export function TimeSeriesPanel({
   // pinRef: pinli veri index'i (null = pin yok). Tetik (TSP): çizim alanına
   // DÜZ TIK — exemplar ◆ isabeti ÖNCELİKLİ (trace açar, pin devreye girmez);
   // ikinci tık/Esc çözer. Dinleyici afterBuild'de (aşağıda), tek kopya.
+  const [pinned, setPinned] = useState(false);
   const pinRef = useRef<number | null>(null);
   const unpinTooltip = () => {
     pinRef.current = null;
+    setPinned(false);
     const tip = containerRef.current?.querySelector('.tsp-tooltip') as HTMLDivElement | null;
     if (tip) clearPinStyle(tip, 'opacity');
   };
-  // Esc → pin çöz.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []); // unpinTooltip yalnız ref'lere dokunur — stable
+  // Esc → pin çöz. v0.9.950 (E2/Ö28) — KATMAN: pin, altındaki sayfa
+  // kısayollarının ÜSTÜNDE ama açık bir menü/modalın ALTINDA. Öncesinde
+  // bağımsız bir document dinleyicisiydi ve menüyü kapatan Esc pinlenmiş
+  // tooltip'i de çözüyordu. `pinned` state aynası bunun için var: katman
+  // yalnız GERÇEKTEN pin varken yığında durmalı, yoksa no-op bir tepe
+  // katmanı alttakinin Esc'ini yerdi.
+  useEscLayer(pinned, unpinTooltip); // unpinTooltip yalnız ref'lere dokunur — stable
 
   // Downsample each series to ≤2000 points BEFORE uPlot (gap-aware), then
   // re-align onto a union x grid. Memoised on series identity so we don't
@@ -797,7 +801,7 @@ export function TimeSeriesPanel({
         detail: ev.detail,
       });
       if (d.action === 'unpin') unpinTooltip();
-      else if (d.action === 'pin' && tip.style.opacity === '1') { pinRef.current = d.idx; applyPinStyle(tip); }
+      else if (d.action === 'pin' && tip.style.opacity === '1') { pinRef.current = d.idx; setPinned(true); applyPinStyle(tip); }
     });
   };
 

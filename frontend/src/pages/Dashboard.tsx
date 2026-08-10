@@ -1,4 +1,5 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
@@ -121,12 +122,10 @@ function Inner() {
 
   // Kiosk'tan ESC ile çıkış (PanelMenu / CorePanel klavye sözleşmesinin
   // aynısı) — sidebar gizliyken görünür ✕ tek çıkış olmasın.
-  useEffect(() => {
-    if (!kiosk) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setKiosk(false); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [kiosk, setKiosk]);
+  // v0.9.950 (E2/Ö28) — KATMAN. Kiosk EN ALTTAKİ katman olmalı: kiosk
+  // içinde açılan bir panel menüsü/modal ilk Esc'i alır, yoksa operatör
+  // menüyü kapatmak isterken tam ekrandan da düşerdi.
+  useEscLayer(kiosk, () => setKiosk(false));
 
   // v0.9.857 (UX denetimi K7) — Trace.tsx ile aynı yarış deseni: cleanup'sız
   // manuel fetch adası. Düşük frekanslı ama aynı sınıf; iki pano arasında
@@ -620,18 +619,16 @@ function PanelMenu({ panel, vars, range, canEdit, onDuplicate, onEdit }: {
 
   // Same keyboard contract CorePanel learned in v0.9.711: promising
   // role="menu" without ESC and outside-click is lying to a screen reader.
+  // v0.9.950 (E2/Ö28) — menü kendi katmanı; kiosk'un ÜSTÜNDE açılırsa ilk
+  // Esc menüyü kapatır (LIFO), kiosk'tan düşürmez.
+  useEscLayer(open, () => setOpen(false));
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     const onDown = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    window.addEventListener('keydown', onKey);
     window.addEventListener('mousedown', onDown);
-    return () => {
-      window.removeEventListener('keydown', onKey);
-      window.removeEventListener('mousedown', onDown);
-    };
+    return () => window.removeEventListener('mousedown', onDown);
   }, [open]);
 
   // A menu with nothing in it is worse than no menu: a viewer on a stat panel

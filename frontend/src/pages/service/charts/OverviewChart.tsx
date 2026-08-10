@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import uPlot from 'uplot';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtXTicks, fmtAxisTick, fmtTooltipTime } from '@/lib/chartFmt';
@@ -102,9 +103,11 @@ export function OverviewChart({
   // pinRef: pinli veri index'i (null = pin yok). Tıkla→tooltip sabitlenir
   // (imleç gezse de kalır, metin seçilebilir), ikinci tık/Esc çözer; karar
   // çekirdeği lib/chart/tooltipPin.ts.
+  const [pinned, setPinned] = useState(false);
   const pinRef = useRef<number | null>(null);
   const unpinTooltip = () => {
     pinRef.current = null;
+    setPinned(false);
     if (ttRef.current) clearPinStyle(ttRef.current, 'display');
   };
   // visRef: lejant görünürlüğü (null = hepsi görünür); legendVis aynı değerin
@@ -131,16 +134,17 @@ export function OverviewChart({
         detail: e.detail,
       });
       if (d.action === 'unpin') unpinTooltip();
-      else if (d.action === 'pin' && tt.style.display !== 'none') { pinRef.current = d.idx; applyPinStyle(tt); }
+      else if (d.action === 'pin' && tt.style.display !== 'none') { pinRef.current = d.idx; setPinned(true); applyPinStyle(tt); }
     });
   };
 
-  // Esc → pin çöz (pinli değilken no-op).
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape' && pinRef.current != null) unpinTooltip(); };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, []); // unpinTooltip yalnız ref'lere dokunur — stable
+  // Esc → pin çöz. v0.9.950 (E2/Ö28) — KATMAN: pin, altındaki sayfa
+  // kısayollarının ÜSTÜNDE ama açık bir menü/modalın ALTINDA. Öncesinde
+  // bağımsız bir document dinleyicisiydi ve menüyü kapatan Esc pinlenmiş
+  // tooltip'i de çözüyordu. `pinned` state aynası bunun için var: katman
+  // yalnız GERÇEKTEN pin varken yığında durmalı, yoksa no-op bir tepe
+  // katmanı alttakinin Esc'ini yerdi.
+  useEscLayer(pinned, unpinTooltip); // unpinTooltip yalnız ref'lere dokunur — stable
 
   // uPlot aligned data (stacked-aware) — memoised on the data inputs + mode.
   // Tooltip reads RAW per-series values, so keep the raw series in a ref too.

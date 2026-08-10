@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { createPortal } from 'react-dom';
 
 // Modal — focus-trap dialog with backdrop click + ESC close.
@@ -46,16 +47,18 @@ export function Modal({
   const dialogRef = useRef<HTMLDivElement>(null);
   const lastFocusRef = useRef<Element | null>(null);
 
+  // v0.9.950 (E2/Ö28) — Esc katmanı; yalnız AÇIKKEN yığında.
+  useEscLayer(open, onClose);
+
   useEffect(() => {
     if (!open) return;
     lastFocusRef.current = document.activeElement;
 
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onClose();
-        return;
-      }
+      // v0.9.950 (E2/Ö28) — Esc BURADA DEĞİL, katman yığınında
+      // (useEscLayer, aşağıda). stopPropagation bir yamaydı: yalnız
+      // BU dinleyiciden SONRA kayıtlı olanları susturuyordu, yani sıra
+      // kayıt sırasına kalmıştı. Katman modeli sırayı açılıştan alır.
       // mK2 (v0.9.924) — Tab hapsi. `aria-modal="true"` bugüne kadar
       // YALAN söylüyordu: rol "arkadaki her şey inert" diye duyuruyordu
       // ama Tab diyaloğun son öğesinden çıkıp altındaki sayfaya

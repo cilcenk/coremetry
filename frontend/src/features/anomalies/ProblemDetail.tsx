@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { ArrowLeft, ArrowDownToLine } from 'lucide-react';
@@ -53,11 +54,9 @@ const STATE_BADGE: Record<ExceptionGroupState, string> = {
 
 // Esc = back — same muscle memory the old drawer had.
 function useEscBack(onBack: () => void) {
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onBack(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onBack]);
+  // v0.9.950 (E2/Ö28) — Esc KATMAN. Detayın ÜSTÜNDE açılan bir modal
+  // (exemplar, paylaşım) Esc'i önce alır; geri gitmek en alttaki iş.
+  useEscLayer(true, onBack);
 }
 
 function Sect({ title, accent, sub, children }: {

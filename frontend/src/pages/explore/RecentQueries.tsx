@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { Button } from '@/components/ui/Button';
 import { historyItemView, type QueryHistoryEntry } from './useQueryHistory';
 
@@ -36,14 +37,11 @@ export function RecentQueries({ history, onApply }: {
     const onDown = (ev: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(ev.target as Node)) setOpen(false);
     };
-    const onKey = (ev: KeyboardEvent) => { if (ev.key === 'Escape') setOpen(false); };
     document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
-    };
+    return () => document.removeEventListener('mousedown', onDown);
   }, [open]);
+  // v0.9.950 (E2/Ö28) — Esc KATMAN (FacetMultiSelect deseni).
+  useEscLayer(open, () => setOpen(false));
 
   // Göreli zaman AÇILIŞTA bir kez donuyor: liste açıkken tik tik güncellemek
   // bir zamanlayıcı + render döngüsü demek olurdu ve "3 dk önce"nin 4'e

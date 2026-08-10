@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import type { TimeRange } from '@/lib/types';
 import { PRESET_SECONDS } from '@/lib/utils';
 import { decodeRange, encodeRange } from '@/lib/urlState';
@@ -68,16 +69,17 @@ export function TimeRangePicker({ value, onChange }: {
   const toMs = useMemo(() => parseDateTime(toInput), [toInput]);
   const cells = useMemo(() => calendarGrid(cal.y, cal.m), [cal]);
 
+  // v0.9.950 (E2/Ö28) — takvim POPOVER'ı kendi katmanı: bir modalın
+  // içinde açılmışsa ilk Esc takvimi kapatır, modalı değil.
+  useEscLayer(open, () => setOpen(false));
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(false);
-    };
+    // v0.9.950 (E2/Ö28) — Esc katmanda (useEscLayer, aşağıda); burada
+    // yalnız dış-tık kaldı.
     document.addEventListener('mousedown', onDoc);
-    document.addEventListener('keydown', onKey);
     // Auto-focus on open. Land on the currently-active preset so
     // ArrowUp/Down + Enter is the fast path; on a custom range fall
     // back to the "From" input so refining the window starts typing
@@ -90,7 +92,6 @@ export function TimeRangePicker({ value, onChange }: {
     }, 0);
     return () => {
       document.removeEventListener('mousedown', onDoc);
-      document.removeEventListener('keydown', onKey);
       clearTimeout(timer);
     };
   }, [open, value.preset]);

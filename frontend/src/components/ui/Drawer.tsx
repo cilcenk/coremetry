@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useEscLayer } from '@/lib/escLayer';
 import { createPortal } from 'react-dom';
 import { X } from 'lucide-react';
 import { Sparkline } from '@/components/Sparkline';
@@ -34,11 +35,11 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
   const panelRef = useRef<HTMLDivElement>(null);
   const lastFocusRef = useRef<Element | null>(null);
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  // v0.9.950 (E2/Ö28) — Esc artık KATMAN. Öncesinde kendi document
+  // dinleyicisiydi ve üstüne bir ⌘K açıldığında ikisi birden ateşliyordu:
+  // paleti Esc'le kapatan operatör çekmeceyi de kaybediyordu. Yığın LIFO,
+  // yani "en son açılan en üstte".
+  useEscLayer(true, onClose);
 
   // mK1 (v0.9.927) — odak taşıma + kaydırma kilidi YALNIZ perde kipinde.
   //

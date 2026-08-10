@@ -463,6 +463,15 @@ export default function ClustersPage() {
   // değişir → gerçek yenilemede memo koşar, render'lar arası sabit.
   const podDataKey = podQs.map(q =>
     (q.data ? `${q.data.cluster}:${q.data.count}:${q.dataUpdatedAt}` : '-')).join('|');
+  // v0.9.959 (UX denetimi G8/Ö22) — sunucu topk(500) tavanına çarpınca
+  // `truncated` gelir ve bu sayfa onu HİÇ okumuyordu: liste tam sanılıyor,
+  // aranan pod kesilen kuyruktaysa "yok" okunuyordu. "Yok" burada
+  // KANITLANAMAZ. Emsal ServicePodsTab şeridi (useServicePods.ts:139).
+  const truncatedClusters = useMemo(
+    () => podQs.map(q => (q.data?.truncated ? q.data.cluster : null))
+      .filter((c): c is string => !!c),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [podDataKey]);
   const rows = useMemo(() => {
     let all = podDatas.flatMap(d => d?.pods ?? []);
     if (nsFilter) all = all.filter(r => r.namespace === nsFilter);
@@ -895,6 +904,15 @@ export default function ClustersPage() {
                   {podErr && (
                     <div style={{ fontSize: 12, color: 'var(--text3)' }}>
                       Pod metrics unavailable — check the cluster entry in Settings.
+                    </div>
+                  )}
+                  {/* v0.9.959 (G8/Ö22) — kesik liste BEYAN edilir. Hem dolu
+                      hem boş listede: dolu listede "hepsi bu değil", boş
+                      listede "yok, kesin değil". */}
+                  {!podErr && !podQs[0]?.isPending && truncatedClusters.length > 0 && (
+                    <div className="badge b-warn" style={{ marginBottom: 8 }}
+                      title={`${truncatedClusters.join(', ')}: sunucu en işlek 500 pod'u döndürdü (topk tavanı) — sakin pod'lar bu listenin dışında kalmış olabilir.`}>
+                      kısmi liste — topk(500)
                     </div>
                   )}
                   {!podErr && !podQs[0]?.isPending && rows.length === 0 && (

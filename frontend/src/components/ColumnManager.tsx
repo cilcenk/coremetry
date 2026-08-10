@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { canAddCustomColumn } from '@/lib/customColumn';
 
 // ColumnManager — "+ Column" affordance shared by trace tables on
 // /traces and /explore. Click opens a Combobox-style picker fed by
@@ -57,6 +58,20 @@ export function ColumnManager({ cols, onAdd }: {
 
   const atLimit = cols.length >= 8;
 
+  // v0.9.870 (tutarlılık denetimi mK3) — Enter ile "Add custom column"
+  // butonunun TEK koşulu. İkisi ayrı yazılsaydı mesajın göründüğü ama
+  // tetikleyicinin çalışmadığı bir aralık kalırdı; kırık vaadin kaynağı
+  // tam olarak buydu.
+  const canAddCustom = canAddCustomColumn({
+    query, keysLoaded: keys !== null, filteredCount: filtered.length,
+  });
+  const addCustom = () => {
+    if (!canAddCustom) return;
+    onAdd(query.trim());
+    setOpen(false);
+    setQuery('');
+  };
+
   return (
     <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
       <button type="button" disabled={atLimit}
@@ -90,6 +105,14 @@ export function ColumnManager({ cols, onAdd }: {
         }}>
           <input autoFocus
             value={query} onChange={e => setQuery(e.target.value)}
+            // v0.9.870 (tutarlılık denetimi mK3) — buradaki eksik onKeyDown
+            // yüzünden panelin kendi "Press Enter to add it as a custom
+            // column." vaadi ÖLÜYDÜ. Escape de bedava geliyor: paneli açıp
+            // vazgeçmenin klavye yolu yoktu.
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); addCustom(); }
+              else if (e.key === 'Escape') { e.preventDefault(); setOpen(false); }
+            }}
             placeholder="Filter attribute keys…"
             style={{ width: '100%', marginBottom: 6, fontSize: 12 }} />
           <div style={{ maxHeight: 280, overflowY: 'auto' }}>
@@ -98,9 +121,14 @@ export function ColumnManager({ cols, onAdd }: {
             )}
             {keys && filtered.length === 0 && (
               <div style={{ padding: 8, fontSize: 11, color: 'var(--text3)', fontStyle: 'italic' }}>
-                {query.trim()
-                  ? `No keys match "${query}". Press Enter to add it as a custom column.`
-                  : 'No more attribute keys to add.'}
+                {/* Vaat, tetikleyiciyle AYNI koşula bağlı: Enter'ın
+                    çalışmayacağı bir durumda "Press Enter" yazmıyoruz
+                    (geçersiz karakterli anahtar, ör. boşluk içeren). */}
+                {!query.trim()
+                  ? 'No more attribute keys to add.'
+                  : canAddCustom
+                    ? `No keys match "${query}". Press Enter to add it as a custom column.`
+                    : `No keys match "${query}". A custom column key may only contain letters, digits, dot, dash or underscore.`}
               </div>
             )}
             {filtered.map(k => (
@@ -117,9 +145,9 @@ export function ColumnManager({ cols, onAdd }: {
               </div>
             ))}
           </div>
-          {query.trim() && keys && filtered.length === 0 && /^[a-zA-Z0-9._-]+$/.test(query.trim()) && (
+          {canAddCustom && (
             <button type="button"
-              onClick={() => { onAdd(query.trim()); setOpen(false); setQuery(''); }}
+              onClick={addCustom}
               style={{
                 width: '100%', marginTop: 4, fontSize: 11,
                 padding: '4px 8px',

@@ -291,7 +291,7 @@ export function FailingTracesSection({ detail }: { detail: EndpointDetail }) {
         </div>
       )}
       {traces && traces.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap is-fit">
           <table style={{ width: '100%', tableLayout: 'fixed' }}>
             <DataTableColgroup dt={dt} />
             <DataTableHead dt={dt} />
@@ -405,7 +405,7 @@ export function SplitSection({ refObj, from, to, env, cluster }: {
         </div>
       )}
       {by && rows.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap is-fit">
           <table style={{ tableLayout: 'fixed', width: '100%' }}>
             <DataTableColgroup dt={dt} />
             <DataTableHead dt={dt} />
@@ -617,7 +617,7 @@ export function CallersSection({ refObj, from, to, env, cluster }: {
         </Empty>
       )}
       {rows.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap is-fit">
           <table style={{ tableLayout: 'fixed', width: '100%' }}>
             <DataTableColgroup dt={dt} />
             <DataTableHead dt={dt} />

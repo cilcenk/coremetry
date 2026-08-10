@@ -467,7 +467,7 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
         </div>
       )}
       {sorted && sorted.length > 0 && (
-        <div className="table-wrap">
+        <div className="table-wrap is-fit">
           <table style={{ tableLayout: 'fixed', width: '100%' }}>
             <DataTableColgroup dt={dt} leading={[28]} trailing={[170, 90]} />
             <DataTableHead dt={dt}

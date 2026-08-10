@@ -265,7 +265,7 @@ function TraceContextCard() {
             </div>
           )}
           {rows.length > 0 && (
-            <div className="table-wrap" style={{ marginTop: 10, maxHeight: 320, overflowY: 'auto' }}>
+            <div className="table-wrap is-scroll" style={{ marginTop: 10, maxHeight: 320, overflowY: 'auto' }}>
               <table style={{ tableLayout: 'fixed', width: '100%' }}>
                 <DataTableColgroup dt={dt} />
                 <DataTableHead dt={dt} />

@@ -175,14 +175,14 @@ export default function AdminCatalogPage() {
         {filtered && filtered.length === 0 && (
           <Empty icon="◇" title="No services match your filter" />
         )}
+        {/* v0.9.917 (MT5) — JSX'e gömülü <style> etiketi kalktı. O hack
+            her render'da belgeye bir stil düğümü basıyordu ve kuralını
+            (z-index: 1) skalanın DIŞINDA bırakıyordu. Ev kuralı
+            `.table-wrap.is-scroll thead th` aynı işi --z-sticky-head
+            rungunda yapıyor. */}
         {filtered && filtered.length > 0 && (
-          <div className="table-wrap catalog-scroll"
+          <div className="table-wrap is-scroll"
                style={{ maxHeight: 'calc(100vh - 220px)', overflowY: 'auto' }}>
-            {/* The catalog scrolls inside a tall max-height container,
-                so its header must stick — the shared DataTableHead
-                renders a plain <thead>, so we re-apply the prior
-                sticky behaviour scoped to this wrapper only. */}
-            <style>{`.catalog-scroll thead th { position: sticky; top: 0; background: var(--bg1); z-index: 1; }`}</style>
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
               <DataTableHead dt={dt} />

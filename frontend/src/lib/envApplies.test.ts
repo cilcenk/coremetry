@@ -55,6 +55,13 @@ const APPLIES = new Set([
   'features/anomalies/AnomaliesPage.tsx',
   'features/anomalies/ProblemsSection.tsx',
   'pages/Databases.tsx',
+  // v0.9.942 (B2/K9) — /explore. Sayfa `env` sözcüğünü hiç tanımıyordu:
+  // picker basılıyor, `?env=` adres çubuğunda duruyor, sorgu TÜM
+  // ortamları okuyordu. Daraltma artık fetch'e giden BuilderState
+  // kopyasına çip olarak enjekte ediliyor (pages/explore/globalScope.ts)
+  // — çip satırında görünmez (silinemez), ama sayfa üstünde "Kapsam:"
+  // rozetiyle GÖRÜNÜR.
+  'pages/Explore.tsx',
   'pages/EndpointDetail.tsx',
   'pages/Endpoints.tsx',
   'pages/Inbox.tsx',

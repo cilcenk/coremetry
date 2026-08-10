@@ -43,6 +43,8 @@ import {
   hasMeaningfulParams, exploreQuerySig, nextExploreKey, type ExploreKeyState,
 } from './explore/exploreRouteKey';
 import { useExploreQueries, useExploreOverlays } from './explore/useExploreQueries';
+import { useUrlEnv } from '@/lib/useUrlEnv';
+import { applyGlobalScope, scopeChips } from './explore/globalScope';
 import { metricsNeedingUnit, useMetricUnits, withMetricUnits } from './explore/metricUnits';
 import { PanelStack, buildPanels } from './explore/PanelStack';
 import { queryToPanel, isPinnable } from './explore/pinToDashboard';
@@ -367,6 +369,23 @@ function ExploreInner({ onSelfWrite }: {
       .catch(() => setServices([]));
   }, [range, hasParams, source, resultMode]);
 
+  // ── Global daraltmalar (UX denetimi B2/K9, v0.9.942) ─────────────────────
+  //
+  // env: Topbar EnvPicker'ın `?env=`i (global, yapışkan). cluster:
+  // EndpointDetail→Explore pivotunun taşıdığı sayfa-yerel `?cluster=`
+  // (pages/endpoints/links.ts). İkisi de bugüne dek adres çubuğunda
+  // DURUYOR ama sorguya GİRMİYORDU — picker'ın VARLIĞI yalan söylüyordu.
+  //
+  // searchParams'tan okunuyor, state'e KOPYALANMIYOR: ikisi de bu sayfanın
+  // sahip olmadığı paramlar (env'in sahibi Topbar, cluster'ın sahibi gelen
+  // link). A7'nin rebuildPreserving'i sayesinde artık silinmiyorlar, o
+  // yüzden URL tek kaynak olarak yeterli.
+  const [env] = useUrlEnv();
+  const clusterScope = searchParams.get('cluster') ?? '';
+  const scoped = useMemo(
+    () => applyGlobalScope(debounced, env, clusterScope),
+    [debounced, env, clusterScope]);
+
   // ── Builder fan-out (react-query; inactive modes pass from=0 → disabled) ──
   const builderActive = hasParams && source === 'spans' && resultMode === 'metric';
   const builderFrom = builderActive && debounced.viz !== 'heatmap' ? exploreRange.from : 0;
@@ -383,11 +402,16 @@ function ExploreInner({ onSelfWrite }: {
     // boş/0 döner ve ikinci fan-out HİÇ koşmaz.
     compareByLetter, compareStepByLetter, compareOffsetNs,
   } = useExploreQueries(
-    debounced,
+    scoped,
     builderFrom,
     exploreRange.to,
   );
   // Phase 3.3 — deploy markers + SLO thresholds for pinned-service queries.
+  //
+  // `debounced`, `scoped` DEĞİL (v0.9.942): bu kanca yalnız pinnedService /
+  // pinnedOperation okuyor ve env/cluster çipleri servis pinini
+  // DEĞİŞTİRMİYOR. Kapsanmış state'i vermek aynı deploy/SLO listesini ikinci
+  // bir memo kimliği altında yeniden hesaplatırdı, tek kazancı olmadan.
   const overlaysByLetter = useExploreOverlays(debounced, builderFrom, exploreRange.to);
   const panels = useMemo(
     () => buildPanels(debounced, {
@@ -662,8 +686,22 @@ function ExploreInner({ onSelfWrite }: {
 
   return (
     <>
-      <Topbar title="Explore" range={range} onRangeChange={setRange} />
+      <Topbar title="Explore" range={range} onRangeChange={setRange} envApplies />
       <div id="content">
+        {/* v0.9.942 (B2) — GÖRÜNÜR KAPSAM. Enjekte edilen çipler bilerek
+            çip satırında değil (silinebilir olsalardı picker'la yalana
+            düşerdi), ama GÖRÜNMEZ de olamazlar: EndpointDetail'in aynı
+            rozeti ("geldiğin liste bu kapsama daraltılmıştı") burada da
+            bulunmalı, yoksa operatör neden az veri gördüğünü bilemez. */}
+        {scopeChips(env, clusterScope).length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 8 }}>
+            Kapsam:{' '}
+            {env && <span className="mono">env={env}</span>}
+            {env && clusterScope && ' · '}
+            {clusterScope && <span className="mono">cluster={clusterScope}</span>}
+            {' '}— bu daraltma her sorguya uygulanıyor.
+          </div>
+        )}
         <div style={{
           background: 'var(--bg2)', border: '1px solid var(--border)',
           borderRadius: 'var(--radius)', marginBottom: 12,

@@ -4,6 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
+import { Button } from '@/components/ui';
 import { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from '@/lib/queries';
 import { timeRangeToNs, tsMinute } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -349,19 +350,20 @@ function AnnotationsTab({ from, to }: { from: number; to: number }) {
                     </td>
                     {canDelete && (
                       <td>
-                        <button
-                          type="button"
+                        <Button
+                          variant="ghost-danger"
+                          size="sm"
                           onClick={() => onDelete(ev.id)}
                           disabled={busyDelete === ev.id}
                           title="Delete this event"
-                          style={{
-                            background: 'transparent', border: '1px solid var(--border)',
-                            color: 'var(--err)', padding: '2px 8px', borderRadius: 4,
-                            cursor: 'pointer', fontSize: 11,
-                          }}
+                          aria-label="Delete this event"
                         >
+                          {/* MB3 (spinner'lı `loading` prop'u) BİLEREK burada
+                              değil — o ailenin 12 çağrı sitesi Dalga 6, tek
+                              commit'te (plan R6). Bu dilim yalnız görünümü
+                              tek sözleşmeye indiriyor. */}
                           {busyDelete === ev.id ? '…' : '✕'}
-                        </button>
+                        </Button>
                       </td>
                     )}
                   </tr>

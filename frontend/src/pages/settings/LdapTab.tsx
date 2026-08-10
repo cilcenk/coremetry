@@ -285,9 +285,10 @@ export function LDAPTab() {
                   </select>
                 </td>
                 <td style={{ padding: 4, textAlign: 'center' }}>
-                  <Button variant="secondary" size="sm"
+                  <Button variant="ghost-danger" size="sm"
                           onClick={() => removeMapping(cfg, setCfg, i)}
-                          style={{ color: 'var(--err)' }}>×</Button>
+                          title="Remove this group mapping"
+                          aria-label="Remove this group mapping">×</Button>
                 </td>
               </tr>
             ))}

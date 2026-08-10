@@ -413,13 +413,10 @@ export default function AlertsPage() {
                           }}>
                           {p.shared ? '◍ ' : '★ '}{p.name}
                         </button>
-                        <button type="button" onClick={() => deletePreset(p.id)}
+                        <Button variant="ghost-danger" size="xs"
+                          onClick={() => deletePreset(p.id)}
                           title="Delete preset"
-                          style={{
-                            background: 'transparent', border: 'none',
-                            padding: '0 6px', color: 'var(--err)',
-                            cursor: 'pointer', fontSize: 12,
-                          }}>×</button>
+                          aria-label={`Delete preset ${p.name}`}>×</Button>
                       </span>
                     ))}
                   </div>

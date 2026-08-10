@@ -1192,9 +1192,8 @@ function SharePopover({ traceId }: { traceId: string }) {
                       {tsRel(s.expiresAt)}
                     </span>
                     {canRevoke && (
-                      <Button variant="secondary" size="sm"
-                        onClick={() => revoke(s.token)}
-                        style={{ color: 'var(--err)' }}>
+                      <Button variant="ghost-danger" size="sm"
+                        onClick={() => revoke(s.token)}>
                         Revoke
                       </Button>
                     )}

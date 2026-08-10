@@ -37,8 +37,13 @@ export { Drawer, DrawerSection, DrawerTrendRow } from './Drawer';
 export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 
-export { Tabs } from './Tabs';
-export type { TabsProps, TabItem } from './Tabs';
+// Tabs — REMOVED v0.9.904. A typed `.tab-strip` wrapper existed here
+// from the design-system push but never gained a single consumer: all
+// 11 `.tab-strip` surfaces write the plain `<div className="tab-strip">`
+// markup directly. Rather than keep an unused primitive alive (and keep
+// paying for its a11y semantics in review — see v0.9.900's dangling
+// `aria-controls`), the file is gone. The CSS pattern itself IS the
+// contract: `.tab-strip` in globals.css stays and is what pages target.
 
 export { Field, SelectField, TextareaField } from './Field';
 export type { FieldProps, SelectFieldProps, TextareaFieldProps } from './Field';

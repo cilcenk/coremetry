@@ -93,6 +93,9 @@ function DashChart({ series, viz = 'line', unit, syncKey, onZoom, onZoomReset, s
 }
 import { LatencyHeatmap } from '../LatencyHeatmap';
 import { histogramResultToHeatmap } from './histogramHeatmap';
+// v0.9.947 (D4/Ö24) — pano heatmap'inin jest kapısı + pivot linki.
+import { heatmapPivotable, heatmapTracesHref } from './heatmapPivot';
+import { HeatmapCellExemplars } from '@/components/HeatmapCellExemplars';
 import { Spinner } from '../Spinner';
 import { effectivePanelStep } from './panelStep';
 import { usePanelWidth } from './usePanelWidth';
@@ -445,6 +448,15 @@ function HeatmapPanel({ cfg, range, refreshTick, height }: {
   const [honesty, setHonesty] = useState<{ skipped: number; rowCapped: boolean }>({ skipped: 0, rowCapped: false });
   const [error, setError] = useState<string | null>(null);
   const { ref, widthPx } = usePanelWidth();
+  // v0.9.947 (D4/Ö24) — jest durumu. Kapı için gerekçe render'da.
+  const pivotable = heatmapPivotable(cfg.unit);
+  const [cellExemplar, setCellExemplar] = useState<{
+    timeNs: number; lowDurMs: number; highDurMs: number; count: number;
+    exemplarTraceId?: string;
+  } | null>(null);
+  const [boxSel, setBoxSel] = useState<{
+    timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!cfg.metricName) { setError('Configure a metric name'); return; }
@@ -481,7 +493,55 @@ function HeatmapPanel({ cfg, range, refreshTick, height }: {
       )}
       {data === undefined ? <PanelLoading height={boxPx} />
         : !data || data.maxCount === 0 ? <PanelEmpty height={boxPx} />
-        : <LatencyHeatmap data={data} height={boxPx} />}
+        : (
+          <>
+            {/* v0.9.947 (UX denetimi D4 / Ö24) — panel artık SALT-OKUNUR
+                DEĞİL. Aynı görselleştirme Service ve Explore'da hem
+                örnek-trace tıkı hem kutu seçimi taşıyordu; panoda hiçbir
+                jest yoktu.
+
+                Jestler KOŞULSUZ bağlanmadı (heatmapPivot.ts): pano paneli
+                bir METRİK HİSTOGRAMI çiziyor, span süresi değil.
+                `jvm_memory_bytes` histogramında bir hücreye tıklayıp
+                "süresi 2–4 ms olan trace'ler" listelemek boş modal değil
+                YANLIŞ modal olurdu. Kapı birimde: yalnız süre birimli
+                histogramlar pivot taşır. */}
+            <LatencyHeatmap data={data} height={boxPx}
+              onCellClick={pivotable ? setCellExemplar : undefined}
+              onBoxSelect={pivotable ? setBoxSel : undefined} />
+            {pivotable && (
+              <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 4 }}>
+                tek hücre = örnek trace · sürükle = zaman × gecikme bandı seç
+              </div>
+            )}
+            {boxSel && (
+              <div style={{
+                display: 'flex', gap: 10, alignItems: 'center', marginTop: 6,
+                border: '1px solid var(--accent)', borderRadius: 'var(--radius)',
+                padding: '4px 10px', fontSize: 12, width: 'fit-content',
+                background: 'var(--bg1)',
+              }}>
+                <b>{boxSel.count.toLocaleString()} örnek</b>
+                <Link to={heatmapTracesHref(boxSel, cfg.service)}
+                  style={{ color: 'var(--accent)', textDecoration: 'none' }}>Traces →</Link>
+                <span onClick={() => setBoxSel(null)}
+                  style={{ cursor: 'pointer', color: 'var(--text3)' }}>✕</span>
+              </div>
+            )}
+            {cellExemplar && (
+              <HeatmapCellExemplars
+                cell={cellExemplar}
+                exemplarTraceId={cellExemplar.exemplarTraceId}
+                // Kova genişliği ızgaranın KENDİSİNDEN; modal aynı
+                // pencereyi arar, tahmin etmez.
+                bucketWidthNs={data.times.length >= 2 ? data.times[1] - data.times[0] : 60 * 1e9}
+                // Panelin kendi kapsamı modale de iner: modal, tıklanan
+                // yüzeyle tutarlı olmak zorunda.
+                filters={cfg.service ? [{ k: 'service.name', op: '=', v: [cfg.service] }] : []}
+                onClose={() => setCellExemplar(null)} />
+            )}
+          </>
+        )}
     </div>
   );
 }

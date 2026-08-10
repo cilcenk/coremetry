@@ -1078,8 +1078,15 @@ function TracesPageInner() {
             </>
           )}
 
+              {/* v0.9.951 (E5/Ö31) — `/` kısayolunun AÇIK hedefi.
+                  İşaretsizken GlobalShortcuts "ilk görünür metin
+                  kutusu"na düşüyor ve bu sayfada o kutu DOM sırasında
+                  "Trace ID…": `/` basan operatör servis aramak isterken
+                  trace-id kutusunda buluyordu kendini. Mekanizma
+                  v0.5.454'te TAM bu vaka için yazılmıştı (yorumu da
+                  öyle diyor) ama işaret hiçbir sayfaya konmamıştı. */}
               <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
-                placeholder="Service…" width={170} onEnter={(v) => apply(v)} />
+                placeholder="Service…" width={170} onEnter={(v) => apply(v)} shortcutSearch />
               <OperationPicker service={draft.service} value={draft.search}
                 onChange={v => setDraft({ ...draft, search: v })}
                 placeholder="Operation…" width={240} onEnter={() => apply()} />

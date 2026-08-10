@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
+import { navHref } from '@/lib/navHref';
 import { api } from '@/lib/api';
 import { operationTracesHref } from '@/lib/pivotHref';
 import { currentRange } from '@/lib/useUrlRange';
@@ -456,7 +457,7 @@ export function CommandPalette() {
         return;
       }
       if (r.to) {
-        navigate(r.to);
+        navigate(navHref(r.to, locationSearch));
         setOpen(false);
       }
     }
@@ -649,7 +650,7 @@ export function CommandPalette() {
                   setTimeout(() => inputRef.current?.focus(), 0);
                   return;
                 }
-                if (r.to) { navigate(r.to); setOpen(false); }
+                if (r.to) { navigate(navHref(r.to, locationSearch)); setOpen(false); }
               }}
               style={{
                 padding: '8px 16px',

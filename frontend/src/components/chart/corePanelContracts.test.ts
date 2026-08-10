@@ -857,3 +857,48 @@ describe('CorePanel eksen + imleç (v0.9.799)', () => {
     expect(src).toMatch(/\.\.\.\(syncKey \? \{ sync: \{ key: syncKey \} \} : \{\}\)/);
   });
 });
+
+// v0.9.945 (UX denetimi D2 / K10) — SYNC AD ALANI SÖZLEŞMESİ.
+//
+// Orijinal belirti: Pod sayfasında JMX grafiğinde gezerken RED
+// kartlarında crosshair ÇIKMIYORDU — v0.9.388'in gemiye aldığını
+// yazdığı davranış tam buydu, yani "düzeltilmiş" bir kusur sessizce
+// canlıydı.
+//
+// Kök neden ÖLÇEK: `-ms` bir MOTOR AD ALANI. uPlot.sync imleci karşı
+// grafiğin ÖLÇEĞİNE VALUE olarak taşır; ms-eksenli (CorePanel) ve
+// saniye-eksenli (OverviewChart/ChartCard) iki motor aynı anahtarı
+// paylaşırsa crosshair 1000× yanlış yere düşer. Pod'un RED kartları
+// ChartCard, JMX kartları MLC idi → iki AYRI grup.
+//
+// Test KESTİRMEYİ de yasaklıyor: `-ms` ekini kaldırmak (iki motoru zorla
+// aynı gruba sokmak) düzeltme DEĞİL, ölçek yalıtımını kırmaktır.
+describe('crosshair sync ad alanı (v0.9.945)', () => {
+  const mlc = readFileSync(resolve(__dirname, '../MultiLineChart.tsx'), 'utf8');
+  const pod = readFileSync(resolve(__dirname, '../../pages/Pod.tsx'), 'utf8');
+
+  it('MLC `-ms` ekini KORUR — ölçek yalıtımı kestirmeyle kaldırılamaz', () => {
+    expect(mlc, 'MLC syncKey ekini kaybetti — saniye eksenli kardeşlerle aynı gruba düşerse crosshair 1000× kayar')
+      .toMatch(/syncKey \? `\$\{syncKey\}-ms` : undefined/);
+  });
+
+  it('Pod CorePanel’i DOĞRUDAN çağırdığı için eki KENDİ yazar', () => {
+    expect(pod).toMatch(/podChartSync = `podjmx:\$\{pod\}-ms`/);
+  });
+
+  it('Pod’un RED kartları artık saniye eksenli motoru KULLANMAZ', () => {
+    // ChartCard → OverviewChart (saniye ekseni). Sayfada kalırsa iki
+    // motor yine iki gruba bölünür ve kusur geri gelir.
+    expect(pod.replace(/\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, ''),
+      'Pod.tsx yeniden ChartCard kullanıyor — RED ve JMX yine ayrı crosshair gruplarında')
+      .not.toMatch(/<ChartCard\b/);
+  });
+
+  it('Pod’un TÜM panelleri tek gruba düşer (RED doğrudan, JMX MLC ekiyle)', () => {
+    const body = pod.replace(/\/\/.*$/gm, '').replace(/\{\/\*[\s\S]*?\*\/\}/g, '');
+    // RED üçlüsü: ek YAZILI değişkeni kullanır.
+    expect((body.match(/syncKey=\{podChartSync\}/g) ?? []).length).toBe(3);
+    // JMX: MLC'ye eksiz verilir (eki bileşen ekler).
+    expect(body).toMatch(/syncKey=\{`podjmx:\$\{pod\}`\}/);
+  });
+});

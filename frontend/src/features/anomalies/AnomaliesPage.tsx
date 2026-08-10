@@ -11,6 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { useServicesMetadata, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, type UserRow } from '@/lib/api';
+import { useUrlEnv } from '@/lib/useUrlEnv';
 import { fmtNum, tsLong } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
@@ -224,6 +225,14 @@ export default function ProblemsPage() {
   // on tab + service filter; couldn't be folded into the shared
   // anomaly hooks above.
   const qc = useQueryClient();
+  // v0.9.941 (UX denetimi B1/K8) — ORTAM SÜZGECİ. Topbar seçicisi bu
+  // sayfada GÖRÜNÜYOR ama uygulanmıyordu (bayrak açıkça kapalıydı):
+  // operatör prod'u seçip int/uat exception'larını listede görmeye devam
+  // ediyordu — seçicinin varlığı yalan söylüyordu. Sunucu env'i üye
+  // servislere çözüp `service IN (…)` ile daraltıyor, yani daraltma
+  // limit/offset'ten ÖNCE ısırıyor (filter-after-LIMIT sınıfına
+  // düşmüyoruz).
+  const [env] = useUrlEnv();
   const refreshExceptionGroups = () => {
     if (dataRef.current && dataRef.current.length) {
       setRefreshing(true);
@@ -233,6 +242,7 @@ export default function ProblemsPage() {
     api.exceptionGroups({
       state: tab, service: service || undefined,
       ownerTeam: ownerTeam || undefined, sreTeam: sreTeam || undefined,
+      env: env || undefined,
       // v0.8.318 — sort + search are server-side across the whole set;
       // the client-side sort of one server page mis-prioritized ("top by
       // occurrences" was really "most-recent 50, reordered").
@@ -269,7 +279,10 @@ export default function ProblemsPage() {
     }
     refreshExceptionGroups();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, service, ownerTeam, sreTeam, page, sortSig, committedSearch, minOcc]);
+    // env (v0.9.941) dep listesinde: Topbar'dan ortam değiştirildiğinde
+    // liste yeniden okunmalı, yoksa süzgeç bir sonraki başka değişikliğe
+    // kadar uygulanmamış görünür.
+  }, [tab, service, ownerTeam, sreTeam, env, page, sortSig, committedSearch, minOcc]);
 
 
   useEffect(() => {
@@ -334,7 +347,7 @@ export default function ProblemsPage() {
   if (detail) {
     return (
       <>
-        <Topbar title="Exceptions" showEnv envApplies={false} />
+        <Topbar title="Exceptions" showEnv envApplies />
         <ProblemDetail
           group={detail}
           isAdmin={isAdmin}
@@ -350,7 +363,7 @@ export default function ProblemsPage() {
   if (excParam && excNotFound) {
     return (
       <>
-        <Topbar title="Exceptions" showEnv envApplies={false} />
+        <Topbar title="Exceptions" showEnv envApplies />
         <div id="content">
           <Empty icon="❓" title="Exception not found">
             Bu exception grubu artık mevcut değil.{' '}
@@ -363,7 +376,7 @@ export default function ProblemsPage() {
   if (excParam && !excNotFound) {
     return (
       <>
-        <Topbar title="Exceptions" showEnv envApplies={false} />
+        <Topbar title="Exceptions" showEnv envApplies />
         <div id="content"><Spinner /></div>
       </>
     );
@@ -379,7 +392,7 @@ export default function ProblemsPage() {
     <>
       {/* v0.9.323 — this list is exception GROUPS; "Problems" now names the
           merged triage queue at /inbox. Same page, same route, honest label. */}
-      {!problemParam && <Topbar title="Exceptions" showEnv envApplies={false} />}
+      {!problemParam && <Topbar title="Exceptions" showEnv envApplies />}
       {/* Hidden (NOT unmounted) while the full-page detail is open — the
           duplicate #content id is inert here: nothing on this route calls
           getElementById('content') (useContentWidth is dashboard-only). */}

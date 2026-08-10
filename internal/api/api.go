@@ -7629,6 +7629,13 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 		MinOccurrences: uint64(parseInt(q.Get("minOccurrences"), 0)),
 	}
 	ownerTeam, sreTeam := q.Get("ownerTeam"), q.Get("sreTeam")
+	// v0.9.941 (UX denetimi B1/K8) — ORTAM SÜZGECİ. /problems Exceptions
+	// sekmesi Topbar'ın `?env=` seçicisini GÖSTERİYOR ama uygulamıyordu
+	// (`envApplies={false}`): operatör prod'u seçip int/uat exception'ları
+	// listede görmeye devam ediyordu. Şema değişikliği GEREKMİYOR — filtre
+	// zaten `Services` alanını taşıyor (takım süzgeci onu kullanıyor) ve
+	// env → servis çözümü EnvMemberServices'te hazır.
+	env := q.Get("env")
 	// v0.8.455 — ana triage yüzeyi (list+count, 2-3 CH sorgusu) artık
 	// serveCached'li: her tab/sort/sayfa değişimi ve eş-zamanlı her
 	// izleyici aynı sorguları tekrarlıyordu ("don't bypass serveCached
@@ -7638,6 +7645,31 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 	// prefix'i anında düşürür — bayatlık operatörce görülmez.
 	key := "exc-groups:" + r.URL.RawQuery
 	s.serveCached(w, r, key, 5*time.Second, func(ctx context.Context) (any, error) {
+		// Ortam kısıtı ÖNCE çözülür ki takım süzgeciyle KESİŞEBİLSİN;
+		// ikisi birden seçiliyse cevap "bu takımın BU ortamdaki
+		// servisleri" olmalı, biri diğerini ezmemeli.
+		//
+		// SOFT-FAIL → KISITSIZ (env haritası hatası): kardeş yüzeylerin
+		// (inbox listesi + rozeti, envScopeProblems) tamamıyla aynı duruş
+		// ve aynı gerekçe — geçici bir CH tökezlemesi ateş eden bir P1'i
+		// SAKLAYAMAMALI. Takım süzgeci bilerek FARKLI davranıyor (hata
+		// döndürür): o operatörün açık bir daraltma isteği, bu ise
+		// sayfa-üstü bir kapsam.
+		var envServices []string
+		envScoped := false
+		if env != "" {
+			if members, err := s.store.EnvMemberServices(ctx, env); err == nil {
+				envServices, envScoped = members, true
+				if envServices == nil {
+					// "Çözüldü ama boş" ≠ "kısıt yok". nil bırakırsak
+					// intersectServices onu "bu eksenden kısıt yok" sayar
+					// (sözleşmesi bu) ve ortam süzgeci SESSİZCE kaybolur.
+					envServices = []string{}
+				}
+			} else {
+				log.Printf("[exception-groups] env %q çözülemedi (kısıtsız devam): %v", env, err)
+			}
+		}
 		if ownerTeam != "" || sreTeam != "" {
 			// Owner/SRE team filter (v0.8.310) — resolve the pick to its
 			// member services and constrain with service IN (…) so it
@@ -7648,6 +7680,9 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 				return nil, err
 			}
 			svcs := servicesForTeam(s.teamAliasesCtx(ctx), mds, ownerTeam, sreTeam)
+			if envScoped {
+				svcs = intersectServices(svcs, envServices)
+			}
 			if len(svcs) == 0 {
 				return map[string]any{
 					"items": []chstore.ExceptionGroup{}, "total": 0,
@@ -7655,6 +7690,19 @@ func (s *Server) listExceptionGroups(w http.ResponseWriter, r *http.Request) {
 				}, nil
 			}
 			f.Services = svcs
+		} else if envScoped {
+			// Exception grupları HER ZAMAN bir servis taşır (span'lerden
+			// türüyorlar), yani inbox'taki "servissiz satır her zaman
+			// sayılır" istisnasının burada karşılığı YOK: katı IN.
+			// Üyesi olmayan bir ortam BOŞ sayfa döndürür, kısıtsız
+			// DEĞİL — takım süzgeciyle aynı sözleşme (v0.8.310).
+			if len(envServices) == 0 {
+				return map[string]any{
+					"items": []chstore.ExceptionGroup{}, "total": 0,
+					"limit": f.Limit, "offset": f.Offset,
+				}, nil
+			}
+			f.Services = envServices
 		}
 		items, err := s.store.ListExceptionGroups(ctx, f)
 		if err != nil {

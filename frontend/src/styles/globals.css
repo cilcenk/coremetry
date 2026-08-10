@@ -2530,10 +2530,16 @@ button.accent.copied {
 .mqe-lbl { font-size: 11px; color: var(--text3); }
 .mqe-gchip { padding: 2px 7px; border: 1px solid var(--border); border-radius: 12px; background: var(--bg2); color: var(--text2); font-size: 10.5px; cursor: pointer; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .mqe-gchip.on { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-.mqe-rowact { display: inline-flex; gap: 2px; margin-left: auto; }
-.mqe-rowact button { all: unset; cursor: pointer; color: var(--text3); padding: 3px 6px; border-radius: 4px; font-size: 13px; }
-.mqe-rowact button:hover:not(:disabled) { color: var(--text); background: var(--bg2); }
-.mqe-rowact button:disabled { opacity: .4; cursor: not-allowed; }
+/* `.row-actions` (v0.9.902, MB8) — was `.mqe-rowact`, renamed because it
+   is not a metric-editor thing: the two sibling query editors (Explore's
+   QueryRow and MetricQueryEditor) carry the SAME ⧉ / × row actions, and
+   only one of them had CSS. The other hand-rolled `all: unset`, so it had
+   no hover and no focus ring.
+
+   The button rules are gone entirely rather than generalised: ⧉ and × are
+   glyph-only buttons with accessible names, which is exactly IconButton's
+   anatomy. Only the container survives here. */
+.row-actions { display: inline-flex; gap: 2px; margin-left: auto; }
 .mqe-addq { align-self: flex-start; padding: 6px 12px; border: 1px dashed var(--border-strong); border-radius: 6px; background: transparent; color: var(--text2); font-size: 12px; cursor: pointer; }
 .mqe-addq:hover { color: var(--accent); border-color: var(--accent); }
 .mqe-code { display: flex; flex-direction: column; gap: 4px; }

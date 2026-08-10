@@ -22,6 +22,7 @@ import { ConditionPreview } from './alerts/ConditionPreview';
 import { NoisyRulesPanel } from './alerts/NoisyRulesPanel';
 import { WatcherImportModal } from './alerts/WatcherImportModal';
 import { QueryError } from '@/components/QueryError';
+import { Link } from 'react-router-dom';
 
 // alertTypeLabel — Type hücresinin bastığı rozet metni. Sıralama accessor'ı
 // buradan okuyor ki kolon GÖRÜNENE göre sıralansın (ham `metric` alanı
@@ -638,12 +639,12 @@ export default function AlertsPage() {
                     </td>
                     <td><div className="cell-actions end">
                       {isWatcher && (
-                        <a className="sec"
-                          href={`/logs?q=${encodeURIComponent(r.logQuery || '')}`}
+                        <Link className="sec"
+                          to={`/logs?q=${encodeURIComponent(r.logQuery || '')}`}
                           title="Open the saved log search in /logs"
                           style={{ textDecoration: 'none' }}>
                           ↗ logs
-                        </a>
+                        </Link>
                       )}
                       {canEdit && (
                         <>

@@ -334,8 +334,8 @@ function AnnotationsTab({ from, to }: { from: number; to: number }) {
                     <td>{ev.label}</td>
                     <td>
                       {ev.service
-                        ? <a href={`/service?name=${encodeURIComponent(ev.service)}`}
-                             style={{ color: 'var(--accent2)' }}>{ev.service}</a>
+                        ? <Link to={`/service?name=${encodeURIComponent(ev.service)}`}
+                             style={{ color: 'var(--accent2)' }}>{ev.service}</Link>
                         : <span style={{ color: 'var(--text3)' }}>—</span>}
                     </td>
                     <td className="mono" style={{ fontSize: 11, color: 'var(--text2)' }}>

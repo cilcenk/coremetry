@@ -4,6 +4,7 @@ import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { AIProvider } from '@/lib/types';
 import { IconSparkles } from '@/components/icons';
+import { Link } from 'react-router-dom';
 
 // AITab — editable AI Copilot configuration. Admin picks a provider,
 // pastes their key, optionally sets a model, hits Save. Server stores
@@ -293,7 +294,7 @@ export function AITab() {
           <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>What it does</h3>
           <ul style={{ fontSize: 13, lineHeight: 1.7, color: 'var(--text)', paddingLeft: 18 }}>
             <li><b><IconSparkles /> Explain this trace</b> — on any trace detail page.</li>
-            <li><b><IconSparkles /></b> column on the <a href="/problems" style={{ color: 'var(--accent2)' }}>Problems</a> page —
+            <li><b><IconSparkles /></b> column on the <Link to="/problems" style={{ color: 'var(--accent2)' }}>Problems</Link> page —
               plain-language meaning + ranked likely causes + first three things to check.</li>
           </ul>
         </div>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Combobox } from './Combobox';
-import { Button } from '@/components/ui';
+import { Button, Chip } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { FilterExpr, FilterOp } from '@/lib/types';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -289,20 +289,12 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
           }}>
             <span style={{ fontSize: 10, color: 'var(--text3)' }}>top in this slice:</span>
             {topHints.map(h => (
-              <button key={h.key} type="button"
+              <Chip key={h.key} size="xs" className="mono"
                 onClick={() => setLocal({ ...local, k: h.key })}
-                style={{
-                  fontSize: 10, padding: '1px 6px', borderRadius: 8,
-                  background: 'var(--bg1)', border: '1px solid var(--border)',
-                  color: 'var(--text)', cursor: 'pointer',
-                  fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-                }}
                 title={`${h.count.toLocaleString()} spans carry this attribute under the active filter set`}>
                 {h.key}
-                <span style={{ marginLeft: 4, color: 'var(--text3)' }}>
-                  {fmtCount(h.count)}
-                </span>
-              </button>
+                <span style={{ color: 'var(--text3)' }}>{fmtCount(h.count)}</span>
+              </Chip>
             ))}
           </div>
         )}

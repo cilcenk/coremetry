@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
 import { Button } from '@/components/ui/Button';
+import { Chip } from '@/components/ui/Chip';
 import type { ServiceMetadata } from '@/lib/types';
 
 // ServiceCatalogPill — Datadog "service catalog" lite. Shows
@@ -314,21 +315,15 @@ function TeamPill({ label, team, title }: {
 
   return (
     <span data-team-pill={team} style={{ position: 'relative', display: 'inline-block' }}>
-      <button type="button" onClick={() => setOpen(o => !o)}
-        title={title}
-        style={{
-          all: 'unset', cursor: 'pointer',
-          padding: '2px 8px', borderRadius: 999,
-          background: 'var(--bg3)', border: '1px solid var(--border)',
-          fontSize: 12, lineHeight: 1.4,
-        }}>
+      <Chip pill onClick={() => setOpen(o => !o)}
+        title={title} aria-expanded={open}>
         <span style={{
           fontSize: 10, textTransform: 'uppercase', color: 'var(--text3)',
           letterSpacing: 0.5, marginRight: 4,
         }}>{label}</span>
         {team}
         <span style={{ color: 'var(--text3)', marginLeft: 4 }}>▾</span>
-      </button>
+      </Chip>
       {open && (
         <div style={{
           position: 'absolute', top: '110%', left: 0, zIndex: 50,

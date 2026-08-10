@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Drawer, DrawerSection } from '@/components/ui/Drawer';
 import { CopilotExplain } from '@/components/CopilotExplain';
 import { Button } from '@/components/ui/Button';
+import { Chip } from '@/components/ui/Chip';
 import { IconSparkles } from '@/components/icons';
 import { aiSubjectSubtitle, aiSubjectTitle, formatAiParam, type AISubject } from '@/lib/aiSubject';
 import { emitAiEvidence, emitAiFocus, scrollToAttr } from './aiEvents';
@@ -210,12 +211,7 @@ function AIDrawerChat({ subject, explainText, spanIds, traceIds }: {
         {showChips && (
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: turns.length ? 8 : 0 }}>
             {chips.map(q => (
-              <button key={q} type="button" onClick={() => submit(q)} disabled={busy}
-                style={{
-                  all: 'unset', cursor: busy ? 'default' : 'pointer', fontSize: 12,
-                  color: 'var(--text)', opacity: busy ? 0.5 : 1,
-                  border: '1px solid var(--border)', borderRadius: 999, padding: '4px 11px',
-                }}>↳ {q}</button>
+              <Chip key={q} pill onClick={() => submit(q)} disabled={busy}>↳ {q}</Chip>
             ))}
           </div>
         )}

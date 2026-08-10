@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
-import { Card, Badge, Stack, Row } from '@/components/ui';
+import { Button, Card, Badge, Stack, Row } from '@/components/ui';
 import { useCardinality, useSystemStats, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { fmtBytes, fmtNum } from '@/lib/utils';
@@ -83,10 +83,10 @@ export default function AdminCardinalityPage() {
             What is eating ClickHouse — top emitters across services, metrics, labels, and stored columns. 5-min server cache.
           </span>
           <span style={{ flex: 1 }} />
-          <button className="sec"
+          <Button variant="secondary"
                   onClick={() => qc.invalidateQueries({ queryKey: keys.admin.cardinality })}>
             Refresh
-          </button>
+          </Button>
         </Row>
 
         {data === undefined && <Spinner />}

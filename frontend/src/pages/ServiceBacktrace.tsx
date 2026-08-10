@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { Button } from '@/components/ui';
 import { useServiceBacktrace } from '@/lib/queries';
 import { fmtNum, tsLong, rangeToSince } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -118,7 +119,7 @@ function BacktraceInner() {
             aria-label="Filter backtrace by service, host, IP, or user-agent"
             value={filter} onChange={e => setFilter(e.target.value)}
             style={{ flex: 1, minWidth: 280 }} />
-          {filter && <button className="sec" onClick={() => setFilter('')}>Clear</button>}
+          {filter && <Button variant="secondary" onClick={() => setFilter('')}>Clear</Button>}
         </div>
 
         {data === undefined && <Spinner />}

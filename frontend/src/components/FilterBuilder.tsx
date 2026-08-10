@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Combobox } from './Combobox';
+import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { FilterExpr, FilterOp } from '@/lib/types';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -336,8 +337,8 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
         )}
       </div>
       <div className="fb-form-actions">
-        <button onClick={submit}>Add</button>
-        <button className="sec" onClick={onCancel}>Cancel</button>
+        <Button onClick={submit}>Add</Button>
+        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
       </div>
     </div>
   );

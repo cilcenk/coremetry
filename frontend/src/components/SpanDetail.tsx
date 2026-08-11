@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
 import type { SpanRow, ProfileRow, SpanHotspotsResponse, LogRow } from '@/lib/types';
@@ -6,6 +6,7 @@ import { tsLong, tsShort, sevName, sevClass, displaySpanName } from '@/lib/utils
 import { api } from '@/lib/api';
 import { getRaw, setRaw } from '@/lib/storage';
 import { logsRangeParam } from '@/lib/logsUrl';
+import { serviceHref } from '@/lib/serviceHref';
 import { IconFlame, IconSparkles } from './icons';
 import { CopyButton } from './CopyButton';
 import { AIExplainButton } from './ai/AIExplainButton';
@@ -91,6 +92,16 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   const logsToBound   = logsTo   ?? (span.endTime   ? span.endTime   + SPAN_LOG_WINDOW_BUFFER_NS : undefined);
   // v0.9.853 — ns→ms `custom:` üretimi tek yerde (lib/logsUrl.ts).
   const logsLinkRange = logsRangeParam(logsFromBound, logsToBound, LOGS_LINK_EXTRA_NS);
+  // Same bounds the trace→logs query already uses: the span's own window
+  // (± buffer), or the trace-anchored one the Trace page threads down.
+  // Memoised so the context value is referentially stable — a fresh object
+  // each render would re-render every Row in the panel.
+  const spanLinkCtx = useMemo(() => ({
+    on: serviceLinks,
+    window: logsFromBound && logsToBound
+      ? { fromNs: logsFromBound, toNs: logsToBound }
+      : undefined,
+  }), [serviceLinks, logsFromBound, logsToBound]);
   const [spanLogs, setSpanLogs] = useState<LogRow[]>([]);
   // v0.9.461 (dürüstlük A5) — zarf düşürülmesin: degraded/hata "log yok"
   // gibi OKUNMASIN (ES brownout'ta emin bir "No logs attached" basılıyordu);
@@ -186,7 +197,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
   useEscLayer(true, onClose);
 
   return (
-    <ServiceLinkCtx.Provider value={serviceLinks}>
+    <ServiceLinkCtx.Provider value={spanLinkCtx}>
     <div id="span-panel" style={{ width: panelW }}>
       <div className="span-panel-resizer"
            title="Drag to resize · double-click to reset"
@@ -477,20 +488,36 @@ function clipMethod(name: string, maxChars = 48): string {
   return '…' + name.slice(name.length - maxChars + 1);
 }
 
-// serviceHref — the attribute keys whose value IS a service identity
+// serviceAttrHref — the attribute keys whose value IS a service identity
 // get a link to that service's page (v0.8.371, operator-requested:
 // "service ismine tıklayınca o service sayfasına gidebilmek").
-function serviceHref(k: string, v: string): string | null {
+//
+// v0.9.966 — renamed off `serviceHref` (it shadowed the shared builder it
+// should have been calling) and now carries the span's window.
+function serviceAttrHref(
+  k: string, v: string, window?: { fromNs: number; toNs: number },
+): string | null {
   if (!v) return null;
   if (k === 'Service' || k === 'service.name' || k === 'peer.service') {
-    return `/service?name=${encodeURIComponent(v)}`;
+    return serviceHref(v, { range: window });
   }
   return null;
 }
 
 // ServiceLinkCtx toggles the links panel-wide without threading a
 // prop through every Section/KV/Row call (v0.8.371).
-const ServiceLinkCtx = createContext(true);
+//
+// v0.9.966 — it now carries the SPAN'S OWN WINDOW as well, for the same
+// reason it carried the toggle: threading it through Section/KV/Row would
+// have touched every row in the panel. The window matters because a span is
+// an EVENT — clicking `peer.service` on a span from 03:14 and landing on
+// that service's sticky "now" page is the K1 failure in its purest form: the
+// operator is looking at a specific millisecond and the destination answers
+// about a different hour.
+const ServiceLinkCtx = createContext<{
+  on: boolean;
+  window?: { fromNs: number; toNs: number };
+}>({ on: true });
 
 function Row({ k, v, mono, pre, copyable }: {
   k: string; v: string; mono?: boolean; pre?: boolean; copyable?: boolean;
@@ -498,8 +525,8 @@ function Row({ k, v, mono, pre, copyable }: {
   const style: React.CSSProperties = {};
   if (mono) style.wordBreak = 'break-all';
   if (pre) style.whiteSpace = 'pre-wrap';
-  const linksOn = useContext(ServiceLinkCtx);
-  const href = linksOn ? serviceHref(k, v) : null;
+  const links = useContext(ServiceLinkCtx);
+  const href = links.on ? serviceAttrHref(k, v, links.window) : null;
   return (
     <tr>
       <td>{k}</td>

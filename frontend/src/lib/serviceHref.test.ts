@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { serviceHref, inboxItemWindow } from './serviceHref';
+import { serviceHref, inboxItemWindow, pointEventWindow, eventLifespanWindow } from './serviceHref';
 import { decodeRange } from './urlState';
 
 // v0.9.860 — UX denetimi K1 + §4.1 sözleşmesi.
@@ -118,6 +118,69 @@ describe('inboxItemWindow', () => {
   });
 });
 
+describe('pointEventWindow', () => {
+  const NS = 1e9;
+  it('bir ANI aralığa açar — inbox öğesiyle AYNI yastık', () => {
+    // Deploy çipi, operatör anotasyonu ve trace-op anomalisi tek damga
+    // taşıyor. Üçü kendi yastığını uydursaydı "aynı an" iki yüzeyde farklı
+    // pencere gösterirdi.
+    const w = pointEventWindow(1000 * NS)!;
+    expect(w).toEqual(inboxItemWindow({ startedAt: 1000 * NS, lastSeen: 1000 * NS }));
+    expect(w.toNs).toBeGreaterThan(w.fromNs);
+  });
+
+  it('damga yoksa undefined — epoch civarına pencere ÇAKMAZ', () => {
+    for (const ts of [undefined, null, 0, -1]) {
+      expect(pointEventWindow(ts as never), String(ts)).toBeUndefined();
+    }
+  });
+});
+
+describe('eventLifespanWindow', () => {
+  const NS = 1e9;
+  const NOW = 5000 * NS;
+
+  it('çözülmüş olay: onset−1h → çözüm+10dk', () => {
+    const w = eventLifespanWindow({ startedAt: 2000 * NS, resolvedAt: 3000 * NS }, NOW)!;
+    expect(w.fromNs).toBe(2000 * NS - 3600 * NS);
+    expect(w.toNs).toBe(3000 * NS + 600 * NS);
+  });
+
+  it('AÇIK olay ŞİMDİye kadar uzar — inboxItemWindow şekli DEĞİL', () => {
+    // Kritik ayrım: inbox öğesinin lastSeen'i gerçek bir gözlem, açık bir
+    // problemin ise sonu YOK. startedAt'i son sayıp onset±40dk pinlemek,
+    // hâlâ yanan bir olayda hiçbir şeyin bozuk olmadığı bir ana bakmaktır.
+    const w = eventLifespanWindow({ startedAt: 2000 * NS }, NOW)!;
+    expect(w.toNs).toBe(NOW + 600 * NS);
+    expect(w.toNs - w.fromNs).toBeGreaterThan(3000 * NS);
+  });
+
+  it('bozuk resolvedAt (onset\'ten önce/eşit) pencereyi TERS çevirmez', () => {
+    for (const resolvedAt of [undefined, 0, 2000 * NS, 1500 * NS]) {
+      const w = eventLifespanWindow({ startedAt: 2000 * NS, resolvedAt }, NOW)!;
+      expect(w.toNs, `resolvedAt=${resolvedAt}`).toBeGreaterThan(w.fromNs);
+    }
+  });
+
+  it('gelecek tarihli onset\'te bile pencere ileri akar', () => {
+    // Saati kaymış bir üretici onset > now üretebilir; end = max(now, start).
+    const w = eventLifespanWindow({ startedAt: NOW + 100 * NS }, NOW)!;
+    expect(w.toNs).toBeGreaterThan(w.fromNs);
+  });
+
+  it('kullanılamaz satırda undefined', () => {
+    for (const ev of [undefined, null, {}, { startedAt: 0 }, { startedAt: -5 }]) {
+      expect(eventLifespanWindow(ev as never, NOW)).toBeUndefined();
+    }
+  });
+
+  it('serviceHref ile birleşince gerçek bir custom pencere üretir', () => {
+    const t0 = 1_700_000_000 * NS;
+    const href = serviceHref('checkout', { range: eventLifespanWindow({ startedAt: t0 }, t0 + 60 * NS) });
+    expect(decodeRange(params(href).get('range'), { preset: '30m' }).preset).toBe('custom');
+  });
+});
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Kaynak taraması — §4.1 kural 3.
 //
@@ -138,19 +201,13 @@ const HANDROLLED_ALLOWLIST = new Set([
   'components/CommandPalette.tsx',
   'components/DependenciesTable.tsx',
   'components/ServiceNeighbors.tsx',
-  'components/SpanDetail.tsx',
   'components/dashboard/PanelRenderer.tsx',
   'components/topology/FocusedNeighborhood.tsx',
-  'features/anomalies/AnomaliesPage.tsx',
-  'features/anomalies/ProblemsSection.tsx',
-  'features/anomalies/streams.tsx',
   'features/dependencies/DetailDrawer.tsx',
   'features/dependencies/panels/shared.tsx',
   'pages/DatabaseDetail.tsx',
   'pages/EndpointDetail.tsx',
   'pages/Endpoints.tsx',
-  'pages/Events.tsx',
-  'pages/Incident.tsx',
   'pages/endpoints/detailSections.tsx',
   'pages/slowqueries/StmtDetailDrawer.tsx',
 ]);
@@ -186,6 +243,16 @@ const CONVERTED = [
   'pages/service/OverviewTables.tsx',
   'pages/service/ServiceClusterBreakdown.tsx',
   'pages/service/ServiceSignalTabs.tsx',
+  // v0.9.966 — OLAY penceresi türeten siteler. Bunların hiçbirinde sayfanın
+  // range'i doğru cevap değildi: satırın kendi zaman damgası var ve taşınması
+  // gereken o. Üç şekil, üç üretici: inboxItemWindow (gözlem aralığı),
+  // pointEventWindow (tek an), eventLifespanWindow (başladı, belki bitmedi).
+  'components/SpanDetail.tsx',
+  'features/anomalies/AnomaliesPage.tsx',
+  'features/anomalies/ProblemsSection.tsx',
+  'features/anomalies/streams.tsx',
+  'pages/Events.tsx',
+  'pages/Incident.tsx',
 ];
 
 const SRC = join(__dirname, '..');

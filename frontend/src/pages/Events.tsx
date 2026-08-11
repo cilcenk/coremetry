@@ -10,6 +10,7 @@ import { timeRangeToNs, tsMinute } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { serviceHref, pointEventWindow } from '@/lib/serviceHref';
 import type { NotificationLogEntry } from '@/lib/types';
 
 // v0.6.15 — Operator events list/delete UI.
@@ -333,8 +334,12 @@ function AnnotationsTab({ from, to }: { from: number; to: number }) {
                     </td>
                     <td>{ev.label}</td>
                     <td>
+                      {/* v0.9.966 — anotasyon TEK bir an; servis sayfası o
+                          anın etrafında açılmalı. Şerit zaten "her grafikte
+                          dikey işaret" diye vaat ediyor, link ise "şimdi"yi
+                          açıyordu. */}
                       {ev.service
-                        ? <Link to={`/service?name=${encodeURIComponent(ev.service)}`}
+                        ? <Link to={serviceHref(ev.service, { range: pointEventWindow(ev.time) })}
                              style={{ color: 'var(--accent2)' }}>{ev.service}</Link>
                         : <span style={{ color: 'var(--text3)' }}>—</span>}
                     </td>

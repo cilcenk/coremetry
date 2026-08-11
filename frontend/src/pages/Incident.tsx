@@ -15,6 +15,7 @@ import { api } from '@/lib/api';
 import { metricQuery } from '@/lib/metricQuery';
 import { tsLong } from '@/lib/utils';
 import type { Incident } from '@/lib/types';
+import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
 import { Button } from '@/components/ui/Button';
 
 export default function IncidentPage() {
@@ -242,8 +243,12 @@ function Inner() {
             <div className="card">
               <div className="ov-card-h"><h3>Linked</h3></div>
               <div className="ov-card-b" style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                {/* v0.9.966 — olayın ömrü (onset−1h → çözüm|şimdi+10m),
+                    problem satırlarıyla aynı üreticiden. Kapanmış bir
+                    incident'ta servis linki "şimdi"yi açıyordu: post-mortem
+                    yazan operatör olayın izini göremiyordu. */}
                 {inc.service ? (
-                  <Link className="ud-pill" to={`/service?name=${encodeURIComponent(inc.service)}`}>
+                  <Link className="ud-pill" to={serviceHref(inc.service, { range: eventLifespanWindow(inc) })}>
                     <Paperclip size={15} strokeWidth={1.75} /><span>Service</span>
                     <span className="mult">{inc.service} →</span>
                   </Link>

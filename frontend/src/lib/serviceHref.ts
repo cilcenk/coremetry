@@ -102,3 +102,50 @@ export function inboxItemWindow(
   const last = item.lastSeen && item.lastSeen > start ? item.lastSeen : start;
   return { fromNs: start - INBOX_LEAD_NS, toNs: last + INBOX_TRAIL_NS };
 }
+
+// pointEventWindow — v0.9.966. A window around an instant.
+//
+// Several rows carry ONE timestamp, not a span: a deploy chip (timeUnixNs), an
+// operator annotation (time), a trace-op / log-pattern anomaly (lastSeenNs).
+// Each of them was about to grow its own pad, which is how two surfaces end up
+// showing "the same moment" over different windows. Same lead-in/trail-out as
+// an inbox item, so an operator who learned one learned all of them.
+export function pointEventWindow(
+  tsNs: number | undefined | null,
+): { fromNs: number; toNs: number } | undefined {
+  return inboxItemWindow(tsNs ? { startedAt: tsNs, lastSeen: tsNs } : undefined);
+}
+
+// eventLifespanWindow — v0.9.966. The window of a thing that STARTED and may
+// or may not have ended: a problem, an incident.
+//
+// This is NOT inboxItemWindow. An inbox item's lastSeen is a real observation,
+// so padding it is enough. An OPEN problem has no end at all — treating
+// startedAt as the end (the inboxItemWindow shape) would pin a 40-minute
+// window around an onset that may be four hours behind us, and the service
+// page would open on a moment where nothing is wrong yet, for an incident that
+// is still burning. So an unresolved item runs to NOW.
+//
+// The bounds are lifted verbatim from ProblemDetail (v0.9.860), which already
+// used exactly these for its logs / traces / service pivots — a one-hour
+// lead-in (you cannot see a regression without the "before") and a ten-minute
+// trail-out (ingest lag plus "did it actually stop"). Extracted rather than
+// re-derived so /problems, /anomalies and /incident cannot drift from the
+// detail page they open into.
+//
+// `nowNs` is an argument, not a call, so the function stays pure and testable.
+const LIFESPAN_LEAD_NS = 60 * 60 * 1e9;   // 1 hour before onset
+const LIFESPAN_TRAIL_NS = 10 * 60 * 1e9;  // 10 min after the end
+
+export function eventLifespanWindow(
+  ev: { startedAt?: number; resolvedAt?: number } | undefined | null,
+  nowNs: number = Date.now() * 1e6,
+): { fromNs: number; toNs: number } | undefined {
+  if (!ev) return undefined;
+  const start = ev.startedAt;
+  if (!start || start <= 0) return undefined;
+  // A resolvedAt at or before onset is a bad row, not a zero-length event —
+  // fall back to "still open" rather than emitting an inverted window.
+  const end = ev.resolvedAt && ev.resolvedAt > start ? ev.resolvedAt : Math.max(nowNs, start);
+  return { fromNs: start - LIFESPAN_LEAD_NS, toNs: end + LIFESPAN_TRAIL_NS };
+}

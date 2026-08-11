@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/Button';
 import { ShareButton } from '@/components/ShareButton';
 import { copyToClipboard } from '@/lib/clipboard';
 import { QueryErrorInline } from '@/components/QueryError';
-import { serviceHref } from '@/lib/serviceHref';
+import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
 import { latencyThresholdMs, slowTracesHref } from '@/features/anomalies/slowTracesHref';
 import { problemWindowNs, topOffenders } from '@/features/anomalies/problemOffenders';
 import { operationTracesHref } from '@/lib/pivotHref';
@@ -614,11 +614,20 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
     }
   };
 
-  const logsFrom = Math.round((problem.startedAt - 60 * 60 * 1e9) / 1e6);
-  const logsTo = Math.round((endNs + 10 * 60 * 1e9) / 1e6);
   // v0.9.860 (UX denetimi K1) — problem penceresi, servis/pod pivotları için
   // (logs/traces linkleriyle AYNI sınırlar; ns cinsinden).
-  const probWindow = { fromNs: problem.startedAt - 60 * 60 * 1e9, toNs: endNs + 10 * 60 * 1e9 };
+  //
+  // v0.9.966 — sınırlar lib/serviceHref.eventLifespanWindow'a çıkarıldı:
+  // /problems listesi, /anomalies akışı ve /incident aynı pencereyi
+  // kuruyordu ve dördü elle senkron tutuluyordu. Detay ile listenin farklı
+  // saate bakması, tam da bu ailenin önlemek için var olduğu hata.
+  // A row with no usable startedAt is broken, not zero-length — the helper
+  // returns undefined rather than pinning a window at the epoch, and the
+  // page falls back to the same shape anchored on the end it does know.
+  const probWindow = eventLifespanWindow(problem)
+    ?? { fromNs: endNs - 60 * 60 * 1e9, toNs: endNs + 10 * 60 * 1e9 };
+  const logsFrom = Math.round(probWindow.fromNs / 1e6);
+  const logsTo = Math.round(probWindow.toNs / 1e6);
   const logsHref = `/logs?q=${encodeURIComponent(`service.name:"${problem.service.replace(/"/g, '\\"')}"`)}&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`;
 
   return (

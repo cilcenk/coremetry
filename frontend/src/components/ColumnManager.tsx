@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { attrKeySince } from '@/lib/attrKeyWindow';
+import { attrKeyWindowParams } from '@/lib/attrKeyWindow';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { api } from '@/lib/api';
 import { canAddCustomColumn } from '@/lib/customColumn';
@@ -31,7 +31,7 @@ export function ColumnManager({ cols, onAdd }: {
     // (basamaklı). Operatör 7 günlük bir pencerede bir attribute'u
     // kolon olarak eklemek isterken, son bir saatte görülmediyse
     // listede bulamıyordu.
-    api.attributeKeys(attrKeySince(range), 500)
+    api.attributeKeys(attrKeyWindowParams(range), 500)
       .then(res => {
         const live = (res ?? []).map(r => r.key);
         const seed = [

@@ -65,3 +65,53 @@ export function attrKeySince(range?: TimeRange | null): GoDuration {
   const { from, to } = timeRangeToNs(range);
   return snapSince(Math.round((to - from) / 1e9));
 }
+
+// ── Mutlak pencere (v0.9.969, UX denetimi Ö15) ───────────────────────────────
+//
+// v0.9.953 pencerenin UZUNLUĞUNU düzeltti; KONUMUNU düzeltemezdi, çünkü
+// `since` yalnız "son N" diyebiliyor. Fırçalanmış (custom) bir pencere bu
+// yüzden ERİŞİLEMEZDİ: dün öğlen 30 dakikalık bir ani yükselişe zoom'layan
+// operatörün anahtar önerileri SON 30 dakikadan geliyordu. Daha dar bir
+// cevap değil — BAŞKA bir cevap, ve sessizce: olayın her yerinde bulunan bir
+// attribute hiç önerilmiyor, bu da "böyle bir attribute yok" diye okunuyor.
+// Ö14c'nin uzunluk için düzelttiği yanlış okumanın aynısı.
+//
+// GÖRELİ preset'ler `since`te KALIYOR ve bu bilinçli: onlar gerçekten
+// now-çapalı, ve `since` sayesinde aynı preset'e bakan bütün operatörler TEK
+// bir 60 sn'lik cache girdisini paylaşıyor. Mutlak forma çevirmek her sekmeye
+// kendi anahtarını verirdi.
+//
+// v0.8.270 disiplini mutlak formda da geçerli — pencere HAM geçmiyor: iki
+// kenar da 5 dakikalık ızgaraya oturuyor (from AŞAĞI, to YUKARI, yani pencere
+// asla DARALMAZ). Fırça 3 piksel oynadığında cache anahtarı değişmiyor;
+// ızgara MV'nin 5m granülüyle de aynı, yani "daha ince" bir cevap zaten yok.
+export const ATTR_KEY_SNAP_NS = 5 * 60 * 1e9;
+
+/** Keşif penceresi: ya now-çapalı `since`, ya mutlak ns sınırları. */
+export type AttrKeyWindow =
+  | { since: GoDuration }
+  | { fromNs: number; toNs: number };
+
+const MAX_ABS_SPAN_NS = 30 * 24 * 3600 * 1e9; // RUNGS tavanıyla aynı
+
+export function attrKeyWindowParams(range?: TimeRange | null): AttrKeyWindow {
+  if (!range) return { since: '1h' };
+  if (range.preset !== 'custom') return { since: attrKeySince(range) };
+  // Bozuk/ters/eksik bir custom aralıkta uydurmak yerine göreli forma dön.
+  // ⚠ fromMs/toMs BURADA kontrol ediliyor, timeRangeToNs'in çıktısında
+  // değil: preset 'custom' ama sınırlar yoksa timeRangeToNs sessizce
+  // "son 24 saat"e düşüyor (PRESET_SECONDS['custom'] yok → 86400 yedeği).
+  // O çıktı > 0 ve artan olduğu için geçerli görünür ve bozuk bir aralığı
+  // paylaşılamayan bir MUTLAK pencereye çevirirdi — yanlış olmayan ama
+  // cache'i asla ısınmayan bir cevap.
+  if (!(range.fromMs && range.toMs)) return { since: attrKeySince(range) };
+  const { from, to } = timeRangeToNs(range);
+  if (!(from > 0) || !(to > from)) return { since: attrKeySince(range) };
+  const toNs = Math.ceil(to / ATTR_KEY_SNAP_NS) * ATTR_KEY_SNAP_NS;
+  let fromNs = Math.floor(from / ATTR_KEY_SNAP_NS) * ATTR_KEY_SNAP_NS;
+  // Tavan: 30 günden geniş bir keşif taraması öneri listesi için milyarlarca
+  // satır demek. Kırpma SONdan değil BAŞtan — operatörün baktığı pencerenin
+  // en yeni ucu her zaman kapsamda kalmalı.
+  if (toNs - fromNs > MAX_ABS_SPAN_NS) fromNs = toNs - MAX_ABS_SPAN_NS;
+  return { fromNs, toNs };
+}

@@ -61,14 +61,16 @@ describe('keşif TEK kaynaktan', () => {
     // v0.9.953 (F3) — hook artık PENCERE de alıyor (ikinci argüman).
     // Pin `useAttributeKeys(value)` idi; sabit-pencere çağrısını zorunlu
     // kılıyordu, yani düzeltilmiş bir kusuru geri isteyecekti.
-    expect(src).toMatch(/useAttributeKeys\(value, attrSince\)/);
+    // v0.9.969 (Ö15) — pencere artık nesne (since | fromNs/toNs); argüman
+    // adı attrSince → attrWindow. Kapı yine "pencere GEÇİLİYOR mu" diyor.
+    expect(src).toMatch(/useAttributeKeys\(value, attrWindow\)/);
     // Kendi fetch'ini geri koyan bir değişiklik iki listeyi ayırırdı.
     expect(src.includes('api.attributeKeys(')).toBe(false);
   });
 
   it('/traces aggregate anahtar kutusu çıplak input DEĞİL', () => {
     const src = read(['pages', 'Traces.tsx']);
-    expect(src).toMatch(/useAttributeKeys\(undefined, attrSince\)/);
+    expect(src).toMatch(/useAttributeKeys\(undefined, attrWindow\)/);
     expect(src).toContain('options={attrKeys}');
     // Eski çıplak hâl geri gelmemeli.
     expect(src.includes('<input placeholder="attribute key')).toBe(false);
@@ -84,6 +86,8 @@ describe('keşif TEK kaynaktan', () => {
     ]) {
       const src = read(p);
       expect(src.includes("attributeKeys('1h'"), `${p.join('/')} hâlâ sabit '1h'`).toBe(false);
+      // v0.9.969 (Ö15) — sabit `{ since: '1h' }` de aynı kusur, yeni kılıkta.
+      expect(src.includes("attributeKeys({ since: '1h' }"), `${p.join('/')} sabit pencere nesnesi`).toBe(false);
     }
   });
 });

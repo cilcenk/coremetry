@@ -458,7 +458,16 @@ export const api = {
   tracesCount: (params: TracesParams, signal?: AbortSignal) =>
     get<TraceCountResponse>(`/api/traces/count?${qs(params)}`, signal),
 
-  attributeKeys: (since: GoDuration = '1h', limit = 500, filters?: string, filterGroup?: string) => {
+  // v0.9.969 (Ö15) — window is now `{ since }` OR `{ fromNs, toNs }`
+  // (lib/attrKeyWindow.attrKeyWindowParams). `since` can only say "the last
+  // N", so a brushed window was unreachable: the client sent its LENGTH and
+  // the server scanned that length ending NOW. Relative presets deliberately
+  // stay on `since` — they ARE now-anchored, and one shared cache key per
+  // preset beats one per tab.
+  attributeKeys: (
+    window: import('./attrKeyWindow').AttrKeyWindow = { since: '1h' },
+    limit = 500, filters?: string, filterGroup?: string,
+  ) => {
     // v0.5.261 — optional filter context. When the operator has
     // active filters in /explore, pass them through so the
     // suggester returns attribute keys with data UNDER those
@@ -466,7 +475,12 @@ export const api = {
     // the old global-scan behaviour.
     // v0.8.x gap-2 — filterGroup (grouped AND/OR) supersedes `filters`
     // server-side when present; additive, default-off.
-    const qsParts = [`since=${since}`, `limit=${limit}`];
+    // Exactly ONE window shape goes on the wire: the server treats a
+    // half-specified absolute window as absent, and sending both would let a
+    // stale `since` decide the answer.
+    const qsParts = 'since' in window
+      ? [`since=${window.since}`, `limit=${limit}`]
+      : [`from=${window.fromNs}`, `to=${window.toNs}`, `limit=${limit}`];
     if (filterGroup) qsParts.push(`filterGroup=${encodeURIComponent(filterGroup)}`);
     else if (filters && filters !== '[]') qsParts.push(`filters=${encodeURIComponent(filters)}`);
     return get<{ scope: 'span' | 'resource'; key: string; count: number }[] | null>(

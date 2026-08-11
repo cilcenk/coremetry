@@ -17,7 +17,7 @@
 // only ever runs inside a useMemo([range]) (the v0.5.184 trap).
 
 import { useEffect, useMemo, useRef, useState, Suspense, Fragment } from 'react';
-import { attrKeySince } from '@/lib/attrKeyWindow';
+import { attrKeyWindowParams } from '@/lib/attrKeyWindow';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
@@ -212,8 +212,8 @@ function TracesPageInner() {
   // operatör son bir saatte görülmemiş bir anahtarı öneride bulamıyordu;
   // ham pencere geçirmek ise sunucunun 60 sn'lik cache'ini hiç ısıtmazdı
   // (v0.8.270).
-  const attrSince = useMemo(() => attrKeySince(range), [range]);
-  const { keys: attrKeys } = useAttributeKeys(undefined, attrSince);
+  const attrWindow = useMemo(() => attrKeyWindowParams(range), [range]);
+  const { keys: attrKeys } = useAttributeKeys(undefined, attrWindow);
   const [aggSort, setAggSort] = useState<AggSort>(() => (searchParams.get('aggSort') as AggSort) || 'count');
   const [aggOrder, setAggOrder] = useState<SortOrder>(() => (searchParams.get('aggOrder') === 'asc' ? 'asc' : 'desc'));
   // v0.8.453 (B2-c) — genel HAVING koşulları. URL-first (?having=,
@@ -589,14 +589,14 @@ function TracesPageInner() {
     const key = groupAttr.trim();
     if (!key || !agg || agg.length > 0) return;
     let cancelled = false;
-    api.attributeKeys(attrSince, 500)
+    api.attributeKeys(attrWindow, 500)
       .then(res => {
         if (cancelled) return;
         setAttrSuggestion(suggestAttrKey(key, (res ?? []).map(r => r.key)));
       })
       .catch(() => { /* öneri saf ek fayda — sessizce vazgeç */ });
     return () => { cancelled = true; };
-  }, [view, groupBy, groupAttr, agg, attrSince]);
+  }, [view, groupBy, groupAttr, agg, attrWindow]);
 
   // ── Aggregate fetch ──────────────────────────────────────────────────────
   const aggRangeNs = useMemo(() => timeRangeToNs(range), [range]);

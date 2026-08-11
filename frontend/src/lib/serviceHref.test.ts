@@ -197,10 +197,12 @@ describe('eventLifespanWindow', () => {
 // Dosyalar `src/` köküne göre. Bir dosyayı serviceHref'e geçirdiğinde buradan
 // SİL — testin ikinci yarısı bayat girdiyi yakalar, böylece liste gerçeği
 // yansıtmayı sürdürür.
-const HANDROLLED_ALLOWLIST = new Set([
-  'components/CommandPalette.tsx',
-  'features/dependencies/panels/shared.tsx',
-]);
+//
+// v0.9.968 — LİSTE BOŞ. Kuyruk (44 site / 25 dosya) v0.9.934 + v0.9.965-968
+// dilimlerinde tamamen kapandı; artık el-yapımı `/service?name=` yazan TEK
+// bir üretim dosyası yok. Boş kalması gereken bir liste: buraya bir satır
+// eklemek "düzeltme" değil, kuralı bir dosya için kapatmaktır.
+const HANDROLLED_ALLOWLIST = new Set<string>([]);
 
 // Bu dalgada geçirilen olay-bağlamlı siteler. Bir daha el-yapımı link
 // yazmaları REGRESYONDUR — allowlist'e eklenerek "düzeltilemez".
@@ -259,6 +261,11 @@ const CONVERTED = [
   'pages/Endpoints.tsx',
   'pages/endpoints/detailSections.tsx',
   'pages/slowqueries/StmtDetailDrawer.tsx',
+  // v0.9.968 — PENCERESİZ bırakılan tek site + panel host linki.
+  // CommandPalette bilerek range yazmıyor: pencere katmanı navHref'te
+  // (v0.9.932), ve o katman göreli preset'i BİLEREK taşımıyor.
+  'components/CommandPalette.tsx',
+  'features/dependencies/panels/shared.tsx',
 ];
 
 const SRC = join(__dirname, '..');

@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
 import type { FilterExpr } from '@/lib/types';
+import { serviceHref } from '@/lib/serviceHref';
 import { metricCatalogueHref } from '@/pages/explore/urlCodec';
 import { Button } from '@/components/ui/Button';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -430,12 +431,14 @@ export function statementTracesHref(statement: string, service?: string): string
 // MySQL / Redis (and now Oracle by copy). status badge +
 // optional secondary chip (Redis role) + instance label on
 // the right. Centralised so all three panels read identically.
-export function PanelHeader({ engineLabel, instance, status, color, extraBadge }: {
+export function PanelHeader({ engineLabel, instance, status, color, extraBadge, range }: {
   engineLabel: string;
   instance: string;
   status: 'up' | 'down' | undefined;
   color: string;
   extraBadge?: string;
+  // v0.9.968 — the panel's window, threaded purely for HostLink.
+  range?: TimeRange;
 }) {
   return (
     <div style={{
@@ -472,7 +475,7 @@ export function PanelHeader({ engineLabel, instance, status, color, extraBadge }
       }}>
         instance: {instance || '(unknown)'}
       </span>
-      {instance && <HostLink instance={instance} />}
+      {instance && <HostLink instance={instance} range={range} />}
     </div>
   );
 }
@@ -481,9 +484,12 @@ export function PanelHeader({ engineLabel, instance, status, color, extraBadge }
 // the host/service infra view (/service?name=…). Degrades
 // gracefully when the instance doesn't resolve to a known
 // service (the Service page shows its own empty state).
-export function HostLink({ instance }: { instance: string }) {
+export function HostLink({ instance, range }: { instance: string; range?: TimeRange }) {
   return (
-    <Link to={`/service?name=${encodeURIComponent(instance)}`}
+    // v0.9.968 — the receiver panel's own window. Its metrics were read
+    // over exactly this range; a host link that opens on the sticky one
+    // shows a different machine-hour than the gauges beside it.
+    <Link to={serviceHref(instance, { range })}
       onClick={e => e.stopPropagation()}
       title="Open this host / service in the infra view"
       style={{

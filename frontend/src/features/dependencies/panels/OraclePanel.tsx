@@ -65,7 +65,7 @@ export function OraclePanel({ instance, range }: { instance: string; range: Time
         }}>
           instance: {instance || '(unknown)'}
         </span>
-        {instance && <HostLink instance={instance} />}
+        {instance && <HostLink instance={instance} range={range} />}
       </div>
 
       {data === undefined && <Spinner />}

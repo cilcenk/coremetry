@@ -29,7 +29,7 @@ export function RedisPanel({ instance, range }: { instance: string; range: TimeR
       background: 'rgba(220,38,38,0.05)',
       border: '1px solid rgba(220,38,38,0.25)',
     }}>
-      <PanelHeader engineLabel="Redis receiver" instance={instance}
+      <PanelHeader engineLabel="Redis receiver" instance={instance} range={range}
         status={data?.status} color="#dc2626"
         extraBadge={data?.role && data.role !== 'unknown' ? data.role : undefined} />
       {data === undefined && <Spinner />}

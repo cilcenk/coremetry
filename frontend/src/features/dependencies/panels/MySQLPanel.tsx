@@ -28,7 +28,7 @@ export function MySQLPanel({ instance, range }: { instance: string; range: TimeR
       background: 'rgba(0,117,143,0.05)',
       border: '1px solid rgba(33,160,160,0.25)',
     }}>
-      <PanelHeader engineLabel="MySQL receiver" instance={instance}
+      <PanelHeader engineLabel="MySQL receiver" instance={instance} range={range}
         status={data?.status} color="#21a0a0" />
       {data === undefined && <Spinner />}
       {data === null && <PanelErr />}

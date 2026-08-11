@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useEscLayer } from '@/lib/escLayer';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { navHref } from '@/lib/navHref';
+import { serviceHref } from '@/lib/serviceHref';
 import { api } from '@/lib/api';
 import { operationTracesHref } from '@/lib/pivotHref';
 import { currentRange } from '@/lib/useUrlRange';
@@ -231,8 +232,15 @@ export function CommandPalette() {
     // one-keystroke jump back to a service the operator is working.
     const pinned = getPinnedServices();
     const recents = getRecentServices().filter(n => !pinned.includes(n));
+    // v0.9.967/968 — PENCERESİZ, bilerek. Palet sonuçları navigate()'e
+    // navHref üzerinden gidiyor (L477/L670) ve pencere KATMANI orada:
+    // navHref yalnız `custom:` (fırçalanmış) aralığı taşır, göreli
+    // preset'i taşımaz — çünkü preset'i URL'e çivilemek paylaşılan linki
+    // "6h" diye dondurur ve alıcının sticky'sini ezerdi (v0.9.932'nin iki
+    // bilinçli sınırı). Burada range yazmak o kararı geri alırdı: navHref
+    // hedefte range varsa DOKUNMUYOR.
     const mkSvc = (name: string, hint: string): Result => ({
-      kind: 'service', label: name, hint, to: `/service?name=${encodeURIComponent(name)}`,
+      kind: 'service', label: name, hint, to: serviceHref(name),
     });
     setPivotSvcs([
       ...pinned.map(n => mkSvc(n, '★ Pinned')),
@@ -258,7 +266,8 @@ export function CommandPalette() {
             kind: 'service' as const,
             label: name,
             hint: 'Service',
-            to: `/service?name=${encodeURIComponent(name)}`,
+            // Penceresiz — yukarıdaki mkSvc yorumu: katman navHref'te.
+            to: serviceHref(name),
           })));
         })
         .catch(() => { if (!cancelled) setServices([]); });

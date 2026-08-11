@@ -13,7 +13,7 @@
 //	   taşıdığı dbName yalnız bir örnek. Koymak soruyu sessizce daraltırdı.
 
 import { describe, it, expect } from 'vitest';
-import { nodeDetailHref, splitDbNodeName } from './nodeDetailHref';
+import { nodeDetailHref, splitDbNodeName, queueDestination } from './nodeDetailHref';
 import type { GraphNode } from '@/lib/types';
 
 function node(p: Partial<GraphNode>): GraphNode {
@@ -72,8 +72,68 @@ describe('nodeDetailHref', () => {
     expect(nodeDetailHref(node({ kind: 'database', name: 'h2', system: 'h2' }))).toBeNull();
   });
 
-  it('kuyruk düğümü → null: /messaging kimliği CLUSTER istiyor, düğüm taşımıyor', () => {
-    expect(nodeDetailHref(node({ kind: 'queue', name: 'kafka:payment.settled', system: 'kafka' })))
-      .toBeNull();
+  // v0.9.972 — bu pin TERSİNE DÖNDÜ ve dönmesi doğru. Eski gerekçe
+  // ("cluster yok → link yok") yanlış sonuca bağlanmıştı: '(default)'
+  // varsaymak YANLIŞ topiğe götürmez, GetMessagingDetail cluster'ı tam
+  // eşitlikle filtrelediği için sessizce BOŞ çekmece açar. Çekmece hâlâ
+  // kurulamaz — ama KATALOG sahip olunan boyutlarla daraltılabilir.
+  it('kuyruk düğümü → /messaging kataloğu, system+destination taşınır', () => {
+    const href = nodeDetailHref(
+      node({ kind: 'queue', name: 'kafka:payment.settled', system: 'kafka' }), { range: '1h' })!;
+    expect(href).toContain('/messaging?');
+    expect(href).toContain('msys=kafka');
+    expect(href).toContain('q=payment.settled');
+    expect(href).toContain('range=1h');
+    // Çekmece kimliği KURULMAZ: cluster/destination paramı yazılmamalı.
+    expect(href).not.toContain('cluster=');
+    expect(href).not.toContain('destination=');
+  });
+
+  it('kuyruk düğümü — `<sys>@<host>` şekli', () => {
+    const href = nodeDetailHref(
+      node({ kind: 'queue', name: 'rabbitmq@broker-1', system: 'rabbitmq' }))!;
+    expect(href).toContain('msys=rabbitmq');
+    expect(href).toContain('q=broker-1');
+  });
+
+  it('kuyruk düğümü — yalnız sistem (`queue:<sys>`) → q YAZILMAZ', () => {
+    // Boş bir filtre filtresiz sayfadan farksızdır ama URL'de
+    // "daralttım" diye durur; yazılmaması dürüstlük.
+    const href = nodeDetailHref(node({ kind: 'queue', name: 'sqs', system: 'sqs' }))!;
+    expect(href).toBe('/messaging?msys=sqs');
+  });
+
+  it('destination URL-ENCODE edilir — nokta/eğik çizgi taşıyan topikler', () => {
+    const href = nodeDetailHref(
+      node({ kind: 'queue', name: 'kafka:orders/v2 eu', system: 'kafka' }))!;
+    expect(href).not.toContain(' ');
+    expect(decodeURIComponent(new URLSearchParams(href.split('?')[1]).get('q')!))
+      .toBe('orders/v2 eu');
+  });
+});
+
+describe('queueDestination — sistemi TÜRETMEZ, ÖNEK olarak soyar', () => {
+  it('iki ayırıcı da kabul', () => {
+    expect(queueDestination('kafka:payment.settled', 'kafka')).toBe('payment.settled');
+    expect(queueDestination('rabbitmq@broker-1', 'rabbitmq')).toBe('broker-1');
+  });
+
+  it('ad == sistem → destination YOK', () => {
+    expect(queueDestination('sqs', 'sqs')).toBe('');
+  });
+
+  it('ad sistemle BAŞLAMIYORSA boş — uydurma destination yerine dar katalog', () => {
+    // Sunucunun sistemi ile ad çelişirse: yalnız sisteme daraltılmış
+    // katalog, hiçbir şey bulmayan bir aramadan iyidir.
+    expect(queueDestination('kafka:payment.settled', 'rabbitmq')).toBe('');
+  });
+
+  it('boş sistem → boş', () => {
+    expect(queueDestination('kafka:payment.settled', '')).toBe('');
+    expect(queueDestination('kafka:payment.settled', '   ')).toBe('');
+  });
+
+  it('destination kendi içinde ayırıcı taşıyabilir — İLK ayırıcıda böl', () => {
+    expect(queueDestination('kafka:tenant:orders', 'kafka')).toBe('tenant:orders');
   });
 });

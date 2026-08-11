@@ -33,12 +33,25 @@
 // olarak taşıyor ("bu instance'taki her veritabanı"), düğümün anlamı da
 // tam olarak bu.
 //
-// ─── Kuyruk düğümleri KAPSAM DIŞI ────────────────────────────────────
-// `/messaging` çekmecesinin kimliği (system, cluster, destination)
-// ÜÇLÜSÜ ve üçü de zorunlu (destinationParam.ts). Topoloji kuyruk düğümü
-// (`queue:kafka:payment.settled`) CLUSTER TAŞIMIYOR. "(default)" diye
-// varsaymak tek-cluster kurulumda çalışır, çok-cluster kurulumda sessizce
-// YANLIŞ topiğe götürürdü — kanıtlanamayan eşleme gönderilmez.
+// ─── Kuyruk düğümleri: KATALOG linki (v0.9.972) ─────────────────────
+// Eskiden burada null vardı ve gerekçesi ŞUYDU: `/messaging` ÇEKMECESİNİN
+// kimliği (system, cluster, destination) üçlüsü, düğüm ise cluster
+// taşımıyor. O gerekçe hâlâ doğru — ama YANLIŞ SONUCA bağlanmıştı.
+//
+// Düzeltilen kısım: "(default)" varsaymak yanlış topiğe GÖTÜRMEZ.
+// GetMessagingDetail cluster'ı TAM EŞİTLİKLE filtreliyor
+// (dependencies.go), yani çok-cluster kurulumda sessizce BOŞ bir çekmece
+// açardı — yanlış cevap değil, cevapsızlık. Yine de gönderilmez.
+//
+// Doğru hamle çekmeceyi zorlamak değil, KATALOĞU sahip olunan boyutlar
+// kadar daraltmak: `/messaging?msys=<system>&q=<destination>`. İkisi de
+// bugün çalışan URL paramları (DependenciesTable onları URL'den okuyor),
+// yani backend/şema değişikliği SIFIR. `databasesFilterHref` (v0.9.964)
+// ile aynı emsal: "satırın kendi boyutları kadar daraltılmış katalog,
+// kendinden emin yanlış bir detay sayfasına yeğdir".
+//
+// Etiket bu yüzden "topiği aç" DEMEZ: katalogda ilk-200 tavanı var
+// (dependencies.go), yani aranan satır listede olmayabilir.
 
 import { databaseDetailHref, type DatabasePageScope } from '@/pages/databases/databaseParam';
 import type { GraphNode } from '@/lib/types';
@@ -59,6 +72,30 @@ export function splitDbNodeName(name: string): { system: string; instance: strin
   const instance = name.slice(at + 1);
   if (!system || !instance) return null;
   return { system, instance };
+}
+
+/**
+ * queueDestination — kuyruk düğümünün DESTINATION parçası.
+ *
+ * Sistemi BURADA TÜRETMİYOR: `system` sunucudan geliyor (servicegraph.go
+ * decodeNodeName, v0.9.972) ve bu fonksiyon yalnızca onu ÖNEK olarak
+ * soyuyor. Ayrım önemli — sistemi istemcide yeniden türetmek, üç yerde
+ * yaşayan bir kuralın dördüncü aynası olurdu.
+ *
+ * Ad sistemle başlamıyorsa '' döner: sunucunun sistemi ile adın
+ * çelişmesi beklenmedik bir hâl ve o hâlde yalnız sisteme daraltılmış
+ * katalog, uydurma bir destination ile hiçbir şey bulmayan bir aramaya
+ * yeğdir (databasesFilterHref'in "olabildiğinden dar > kendinden emin
+ * yanlış" kuralı).
+ */
+export function queueDestination(name: string, system: string): string {
+  const sys = system.trim();
+  if (!sys || name === sys) return '';
+  for (const sep of [':', '@']) {
+    const pfx = sys + sep;
+    if (name.startsWith(pfx)) return name.slice(pfx.length);
+  }
+  return '';
 }
 
 /**
@@ -87,6 +124,22 @@ export function nodeDetailHref(node: GraphNode, scope: DatabasePageScope = {}): 
       { system: parts.system, instance: parts.instance, dbName: '', source: 'spans' },
       scope,
     );
+  }
+  if (node.kind === 'queue') {
+    // v0.9.972 — KATALOG linki (çekmece değil): cluster'ı olmayan bir
+    // düğümden çekmece kimliği kurulamaz, ama sahip olunan boyutlarla
+    // katalog daraltılabilir. Boş system/destination linke YAZILMAZ —
+    // boş bir filtre, filtresiz sayfadan farksızdır ama URL'de "burayı
+    // daralttım" diye durur.
+    const p = new URLSearchParams();
+    const sys = (node.system ?? '').trim();
+    if (sys) p.set('msys', sys);
+    const dest = queueDestination(node.name, sys);
+    if (dest) p.set('q', dest);
+    if (scope.range) p.set('range', scope.range);
+    if (scope.env) p.set('env', scope.env);
+    const qs = p.toString();
+    return qs ? `/messaging?${qs}` : '/messaging';
   }
   return null;
 }

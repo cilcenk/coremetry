@@ -221,7 +221,23 @@ func decodeNodeName(raw string) (name, system string) {
 		}
 		return rest, sys
 	case strings.HasPrefix(raw, "queue:"):
-		return strings.TrimPrefix(raw, "queue:"), ""
+		// v0.9.972 — the system used to be dropped on the floor, so a queue
+		// node reached the client with kind="queue" and system="". That was
+		// the whole reason the topology→/messaging bridge could not be built:
+		// not missing DATA, just an identity the server already had and threw
+		// away. Three name shapes are in the wild and all three are handled
+		// here, on the server, ONCE — re-deriving the system in the client
+		// would make a fourth mirror of a rule that already exists in three
+		// places (aggregator, this decoder, the graph renderer).
+		//   "queue:<sys>:<dest>"  → kafka:payment.settled
+		//   "queue:<sys>@<host>"  → rabbitmq@broker-1
+		//   "queue:<sys>"         → sqs
+		rest := strings.TrimPrefix(raw, "queue:")
+		sys := rest
+		if i := strings.IndexAny(rest, ":@"); i >= 0 {
+			sys = rest[:i]
+		}
+		return rest, sys
 	case strings.HasPrefix(raw, "ext:"):
 		return strings.TrimPrefix(raw, "ext:"), ""
 	default:

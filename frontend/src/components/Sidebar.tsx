@@ -10,7 +10,7 @@ import {
   Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Search, Hash, Eye,
-  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, type LucideIcon,
+  Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, Flag, type LucideIcon,
 } from 'lucide-react';
 import { navHref } from '@/lib/navHref';
 import { useAuth } from './AuthProvider';
@@ -137,9 +137,14 @@ const NAV_GROUPS: NavGroup[] = [
       // (~300 watchers in prod); the Alerts page keeps its chip.
       { href: '/watchers', label: 'nav.watchers', icon: Eye },
       { href: '/slos',     label: 'nav.slos',     icon: Target },
-      // v0.8.517 — /events sidebar'dan gizlendi (operatör: "sadece
-      // gizle"). Rota + sayfa + ⌘K'dan event oluşturma YAŞIYOR;
-      // deploy event'leri collector image-tag'iyle zaten otomatik.
+      // /events görünürlük geçmişi — karar zinciri, silinmiyor:
+      //   v0.8.517: sidebar'dan GİZLENDİ (operatör: "sadece gizle").
+      //     Rota + sayfa + ⌘K'dan event oluşturma o sırada da YAŞIYORDU;
+      //     deploy event'leri collector image-tag'iyle zaten otomatik.
+      //   v0.9.974: GERİ DÖNDÜ (operatör kararı 2026-08-11: "Dönsün",
+      //     UX denetimi G7-M). Yalnız bir GÖRÜNÜRLÜK kararı — rota,
+      //     sayfa ve izinler değişmedi, adminOnly yok.
+      { href: '/events',   label: 'nav.events',   icon: Flag },
     ],
   },
   {

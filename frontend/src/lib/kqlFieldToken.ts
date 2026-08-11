@@ -86,6 +86,44 @@ export function rankFieldNames(fields: string[], prefix: string, limit = 12): st
 }
 
 /**
+ * FieldNameHint — alan-adı listesinin GÜVENİLİRLİĞİ hakkında söylenmesi
+ * gereken şey (v0.9.970, Ö16 ikinci tur).
+ *
+ * `/api/logs/fields` katalogu 500 yolda KIRPIYOR (ES tarafında
+ * `listFieldsMax`; kırpma alfabetik). Kırpıldığında `total` gerçek yol
+ * sayısını dürüstçe söylüyor ve yan paneldeki "Available fields" bunu
+ * "first N of M" diye gösteriyor — ama KUTUNUN açılır listesi
+ * göstermiyordu. Sonuç, Ö16'nın kapatmak için var olduğu yanlış okumanın
+ * ta kendisi: dinamik mapping'de dört haneli alan sayısı rutin
+ * (ListFieldsBounded'ın kendi yorumu), yani `attributes.CHANNEL_CODE`
+ * pekâlâ 500'ün DIŞINDA kalır; operatör `CHANNEL` yazar, hiçbir şey
+ * açılmaz ve bunu "böyle bir alan yok" diye okur. Oysa doğrusu
+ * "katalog o alana kadar uzanmıyor".
+ */
+export type FieldNameHint =
+  | { kind: 'none' }
+  /** Eşleşme VAR ama katalog kırpık — liste tam olmayabilir. */
+  | { kind: 'clipped'; shown: number; total: number }
+  /** Eşleşme YOK ve katalog kırpık — sessizlik yanıltıcı, söylemek ŞART. */
+  | { kind: 'clipped-no-match'; shown: number; total: number };
+
+/**
+ * fieldNameHint — saf karar: açılır liste kataloğun kırpıklığını
+ * söylemeli mi?
+ *
+ * `total` bilinmiyorsa (undefined) hiçbir şey söylenmez — "bilmiyorum"u
+ * "tamam" diye sunmak da, "kırpık" diye sunmak da uydurma olurdu.
+ * `total <= shown` ise katalog TAM; kırpılmamış bir listede uyarı
+ * göstermek operatörü boşuna şüpheye düşürür.
+ */
+export function fieldNameHint(
+  matches: number, shown: number, total?: number,
+): FieldNameHint {
+  if (typeof total !== 'number' || !(total > shown)) return { kind: 'none' };
+  return { kind: matches === 0 ? 'clipped-no-match' : 'clipped', shown, total };
+}
+
+/**
  * applyFieldName — seçilen alanı metne yazar ve ':' EKLER.
  *
  * ':' eklemek süs değil: alan adı tek başına KQL'de serbest metindir,

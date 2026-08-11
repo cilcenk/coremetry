@@ -688,6 +688,12 @@ function LogsInner() {
             // bedeli sessizdi — sıfır satır "böyle log yok" diye
             // okunuyordu, "adı farklı" diye değil.
             fields={fields}
+            // v0.9.970 (Ö16 ikinci tur) — katalog 500'de kırpılıyor ve
+            // kırpma ALFABETİK. Yan panel bunu zaten "first N of M" diye
+            // söylüyordu; kutu söylemiyordu, yani kırpılmış bir alanı
+            // arayan operatör boş liste görüp "böyle alan yok" diye
+            // okuyordu. Aynı state, ek istek YOK.
+            fieldsTotal={fieldsTotal}
             value={draft.search}
             onChange={v => setDraft({ ...draft, search: v })}
             onSubmit={apply}

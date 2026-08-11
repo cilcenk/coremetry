@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '@/lib/api';
-import { detectFieldNameToken, rankFieldNames, applyFieldName } from '@/lib/kqlFieldToken';
+import { detectFieldNameToken, rankFieldNames, applyFieldName, fieldNameHint } from '@/lib/kqlFieldToken';
 
 // KqlSearchInput (v0.5.464) — drop-in replacement for the bare
 // <input> on /logs search. Layers field-aware autocomplete on
@@ -48,6 +48,13 @@ interface KqlSearchInputProps {
   // "elastic api kullanımını çok artırma" şartı korunuyor. Verilmezse
   // davranış bayt-bayt eski hâl (yalnız değer tamamlaması).
   fields?: string[];
+  // v0.9.970 (Ö16 ikinci tur) — mapping'in GERÇEK yol sayısı
+  // (/api/logs/fields `total`). `fields` 500'de kırpıldığında liste
+  // eksiktir ve sessiz kalmak "böyle alan yok" diye okunur; yan panel
+  // bunu zaten "first N of M" diye söylüyordu, kutu söylemiyordu.
+  // Verilmezse hiçbir uyarı çıkmaz — bilinmeyeni "tamam" diye sunmak da
+  // "kırpık" diye sunmak da uydurma olurdu.
+  fieldsTotal?: number;
 }
 
 interface TokenInfo {
@@ -108,6 +115,7 @@ function quoteIfNeeded(v: string): string {
 
 export function KqlSearchInput({
   value, onChange, onSubmit, placeholder, title, width = 380, since, fields,
+  fieldsTotal,
 }: KqlSearchInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [cursor, setCursor] = useState(0);
@@ -126,9 +134,20 @@ export function KqlSearchInput({
   const nameSuggestions = useMemo(
     () => (nameToken && fields?.length ? rankFieldNames(fields, nameToken.prefix) : []),
     [nameToken, fields]);
+  // v0.9.970 (Ö16 ikinci tur) — katalog kırpıksa bunu SÖYLE. Kritik hâl
+  // `clipped-no-match`: operatör bir önek yazdı, hiçbir şey eşleşmedi ve
+  // katalog 500'de kesilmiş. Eskiden liste hiç açılmıyordu, yani sessizlik
+  // "böyle bir alan yok" diye okunuyordu — Ö16'nın kapatmak için var
+  // olduğu yanlış okumanın ta kendisi.
+  const hint = useMemo(
+    () => (nameToken ? fieldNameHint(nameSuggestions.length, fields?.length ?? 0, fieldsTotal)
+      : ({ kind: 'none' } as const)),
+    [nameToken, nameSuggestions.length, fields?.length, fieldsTotal]);
+  // Yalnız-başlık hâli: gösterilecek satır yok ama söylenecek söz VAR.
+  const hintOnly = hint.kind === 'clipped-no-match';
   // Açık liste HANGİ kaynaktan? Değer önerileri ağ turu ister ve
   // gecikmelidir; alan adları elde HAZIR, o yüzden anında açılır.
-  const nameMode = nameSuggestions.length > 0;
+  const nameMode = nameSuggestions.length > 0 || hintOnly;
   const items = nameMode ? nameSuggestions : values;
 
   // v0.9.955 (F4/Ö16) — alan adı listesi AĞ TURU BEKLEMEZ: liste elde
@@ -279,7 +298,7 @@ export function KqlSearchInput({
         spellCheck={false}
         autoComplete="off"
         style={{ width: '100%', paddingLeft: 28 }} />
-      {open && items.length > 0 && (
+      {open && (items.length > 0 || hintOnly) && (
         <div style={{
           position: 'absolute', top: '100%', left: 0,
           width: '100%', minWidth: 260,
@@ -297,8 +316,17 @@ export function KqlSearchInput({
             {/* v0.9.955 (F4/Ö16) — başlık HANGİ soruya cevap verdiğimizi
                 söyler. Alan adı listesi ile değer listesi ekranda aynı
                 görünseydi operatör "field" ile "value"yu karıştırırdı. */}
+            {/* v0.9.970 (Ö16 ikinci tur) — katalog kırpıksa BUNU da söyle.
+                Kırpma alfabetik olduğu için `attributes.CHANNEL_CODE`
+                pekâlâ 500'ün dışında kalabilir; sessiz bir boş liste
+                "böyle alan yok" diye okunurdu, doğrusu "katalog oraya
+                kadar uzanmıyor". */}
             {nameMode
-              ? `alan adı · ${nameSuggestions.length} eşleşme`
+              ? (hint.kind === 'clipped-no-match'
+                ? `bu önekle eşleşme yok · katalog ilk ${hint.shown.toLocaleString()}/${hint.total.toLocaleString()} alan`
+                : hint.kind === 'clipped'
+                  ? `alan adı · ${nameSuggestions.length} eşleşme · katalog ilk ${hint.shown.toLocaleString()}/${hint.total.toLocaleString()} alan`
+                  : `alan adı · ${nameSuggestions.length} eşleşme`)
               : `${token?.field}: ${loading ? '· searching…' : ''}`}
           </div>
           {items.map((v, i) => (

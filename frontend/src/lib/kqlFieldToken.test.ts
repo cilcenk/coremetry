@@ -10,7 +10,7 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { detectFieldNameToken, rankFieldNames, applyFieldName } from './kqlFieldToken';
+import { detectFieldNameToken, rankFieldNames, applyFieldName, fieldNameHint } from './kqlFieldToken';
 
 describe('detectFieldNameToken — konum tespiti', () => {
   it('yazılmakta olan sözcüğü yakalar', () => {
@@ -119,6 +119,38 @@ describe('applyFieldName — ":" EKLER', () => {
   });
 });
 
+// v0.9.970 (Ö16 ikinci tur) — ORİJİNAL BELİRTİ: /api/logs/fields katalogu
+// 500 yolda ALFABETİK olarak kırpılıyor ve dinamik mapping'de dört haneli
+// alan sayısı rutin (ListFieldsBounded'ın kendi yorumu). Kırpılan bir alanı
+// arayan operatör boş liste görüyor, bunu "böyle alan yok" diye okuyordu —
+// v0.9.955'in kapatmak için var olduğu yanlış okumanın aynısı, bir katman
+// yukarıda. Yan panel dürüsttü ("first N of M"), açılır liste değildi.
+describe('fieldNameHint — katalog kırpıklığı dürüstlüğü', () => {
+  const cases: Array<{
+    name: string; matches: number; shown: number; total?: number;
+    want: ReturnType<typeof fieldNameHint>['kind'];
+  }> = [
+    { name: 'total bilinmiyor → sus (uydurma yok)', matches: 0, shown: 500, total: undefined, want: 'none' },
+    { name: 'katalog TAM, eşleşme var → sus', matches: 3, shown: 120, total: 120, want: 'none' },
+    { name: 'katalog TAM, eşleşme yok → sus (gerçekten yok)', matches: 0, shown: 120, total: 120, want: 'none' },
+    { name: 'kırpık + eşleşme var → liste eksik olabilir', matches: 4, shown: 500, total: 4200, want: 'clipped' },
+    { name: 'kırpık + eşleşme YOK → ASIL vaka, söylemek şart', matches: 0, shown: 500, total: 4200, want: 'clipped-no-match' },
+    { name: 'total < shown (tutarsız girdi) → sus', matches: 0, shown: 500, total: 10, want: 'none' },
+    { name: 'total tam sınırda (== shown) → kırpık DEĞİL', matches: 0, shown: 500, total: 500, want: 'none' },
+    { name: 'bir tek alan kırpılmış olsa bile söyle', matches: 0, shown: 500, total: 501, want: 'clipped-no-match' },
+  ];
+  for (const c of cases) {
+    it(c.name, () => {
+      expect(fieldNameHint(c.matches, c.shown, c.total).kind).toBe(c.want);
+    });
+  }
+
+  it('kırpıkken shown/total TAŞINIR — başlık gerçek sayıları basar', () => {
+    const h = fieldNameHint(0, 500, 4200);
+    expect(h).toEqual({ kind: 'clipped-no-match', shown: 500, total: 4200 });
+  });
+});
+
 describe('kablolama — SIFIR ek ES maliyeti (v0.9.955)', () => {
   const SRC = join(__dirname, '..');
   const kql = readFileSync(join(SRC, 'components/KqlSearchInput.tsx'), 'utf8');
@@ -138,5 +170,18 @@ describe('kablolama — SIFIR ek ES maliyeti (v0.9.955)', () => {
 
   it('iki öneri kaynağı ÇAKIŞMAZ — değer token’ı varken ad önerilmez', () => {
     expect(kql).toMatch(/token \? null : detectFieldNameToken\(value, cursor\)/);
+  });
+
+  // v0.9.970 — kırpıklık uyarısının ULAŞILABİLİR olduğunu çivile.
+  it('/logs gerçek `total`ı geçiriyor — kırpıklık uydurulmuyor', () => {
+    expect(logs).toMatch(/fieldsTotal=\{fieldsTotal\}/);
+  });
+
+  it('açılır liste SIFIR satırla da açılabiliyor — yoksa uyarı hiç görünmez', () => {
+    // Kritik vaka (clipped-no-match) tam olarak "gösterilecek satır YOK
+    // ama söylenecek söz VAR" hâli. Guard yeniden `items.length > 0`e
+    // dönerse uyarı sessizce ölür ve kusur geri gelir; klavye guard'ı
+    // ayrı satırda ve bilerek dar kalıyor (boşken seçim yapılamaz).
+    expect(kql).toContain('open && (items.length > 0 || hintOnly)');
   });
 });

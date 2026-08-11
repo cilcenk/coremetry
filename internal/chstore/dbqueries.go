@@ -60,6 +60,23 @@ type DBQueryStat struct {
 	// query running 10k times is a bigger problem than a 500ms
 	// one running once, but the second one beats it on max).
 	TotalMs float64 `json:"totalMs"`
+	// StmtHash — persistent statement identity (v0.8.375, Stage-2 D1):
+	// spans.db_stmt_hash / chstore.DBStmtHash as a DECIMAL STRING, because
+	// a uint64 in JSON silently loses precision past 2^53 in JS and the
+	// statement detail drawer keys on this value (same reason pivot
+	// fingerprints ride URLs as decimal strings). Additive: MV-path rows
+	// carry the stored column, raw-path rows compute it Go-side from the
+	// sample (hash-consistent by the dbstmt.go parity contract); empty
+	// only on pre-D1 cached responses.
+	//
+	// v0.9.963 (UX denetimi G1-b): promoted from SlowQueryRow into the base
+	// struct. The per-service panel (/service Details → DB queries) fills
+	// the same struct from GetTopDBQueries and had NO statement identity,
+	// so its rows could reach /traces but never the statement detail —
+	// the drawer that answers "who else runs this, and is it worse than
+	// last window?". Two structs carrying the same identity under the same
+	// json name is how the two surfaces drift apart.
+	StmtHash string `json:"stmtHash,omitempty"`
 }
 
 // SlowQueryRow extends DBQueryStat with the originating service
@@ -70,15 +87,8 @@ type DBQueryStat struct {
 type SlowQueryRow struct {
 	DBQueryStat
 	Service string `json:"service"`
-	// StmtHash — persistent statement identity (v0.8.375, Stage-2 D1):
-	// spans.db_stmt_hash / chstore.DBStmtHash as a DECIMAL STRING, because
-	// a uint64 in JSON silently loses precision past 2^53 in JS and D2
-	// keys the statement detail view on this value (same reason pivot
-	// fingerprints ride URLs as decimal strings). Additive: MV-path rows
-	// carry the stored column, raw-path rows compute it Go-side from the
-	// sample (hash-consistent by the dbstmt.go parity contract); empty
-	// only on pre-D1 cached responses.
-	StmtHash string `json:"stmtHash,omitempty"`
+	// StmtHash lives on the embedded DBQueryStat since v0.9.963 — both
+	// catalogs key the detail drawer off the same field.
 }
 
 // GetSlowQueriesGlobal — the cross-service slow-query catalog.
@@ -393,6 +403,13 @@ func (s *Store) GetTopDBQueries(
 		// sample statement is a real span, so it never carried
 		// the sentinel.
 		r.Statement = strings.ReplaceAll(r.Statement, placeholder, "?")
+		// v0.9.963 — statement identity on the per-service path too,
+		// computed Go-side from the sample exactly like the raw
+		// slow-queries path. Hash-consistent with the MV's stored
+		// db_stmt_hash by the dbstmt.go parity contract, so a detail
+		// link opened from a service panel resolves the SAME class the
+		// fleet catalog would.
+		r.StmtHash = strconv.FormatUint(DBStmtHash(r.SampleStatement), 10)
 		out = append(out, r)
 	}
 	return out, rows.Err()

@@ -9,6 +9,7 @@ import { encodeFilters } from '@/lib/urlState';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { DBQueryStat, FilterExpr } from '@/lib/types';
 import { tracesPivotHref } from '@/lib/pivotHref';
+import { stmtDetailHref } from '@/pages/slowqueries/stmtParam';
 
 // Database query analyzer — Datadog DBM-style "where is my
 // query time going" view for a single service in a time
@@ -38,8 +39,14 @@ const DBQ_COLS: DataTableColumn<DBQueryStat>[] = [
   { id: 'p99Ms',      label: 'P99',    sortValue: r => r.p99Ms,      numeric: true, width: 80 },
   { id: 'maxMs',      label: 'Max',    sortValue: r => r.maxMs,      numeric: true, width: 80 },
   { id: 'errorCount', label: 'Errors', sortValue: r => r.errorCount, numeric: true, width: 110 },
+  // Two layout-only drill columns (no sortValue → not sortable, still
+  // resizable). Order matters: "Detail" is the deeper answer and sits
+  // closest to the numbers it explains; "Traces" stays rightmost where
+  // operators have clicked it since v0.5.x.
+  { id: 'detail',     label: '',       width: 84 },
   { id: 'traces',     label: '',       width: 90 },
 ];
+const DBQ_COL_COUNT = DBQ_COLS.length;
 
 // Kaç normalleştirilmiş statement gösterilir. Sunucu ağırlığa göre sıralı
 // döndürüyor, yani kırpılan kuyruk EN HAFİF olanlar — ama bu, kırpmanın
@@ -153,6 +160,13 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
                     const expanded = expandedIdx === i;
                     const errPct = r.count > 0 ? (r.errorCount / r.count) * 100 : 0;
                     const errCls = errPct > 5 ? 'b-err' : errPct > 0 ? 'b-warn' : 'b-ok';
+                    // v0.9.963 (G1-b) — null when the row carries no
+                    // stmtHash (pre-D1 cache entry); the cell then renders a
+                    // dash rather than a link that opens an empty drawer.
+                    const detailHref = stmtDetailHref(
+                      { hash: r.stmtHash, system: r.dbSystem },
+                      { fromNs: from, toNs: to },
+                    );
                     return (
                       <Row key={i}>
                         <tr onClick={() => setExpandedIdx(e => e === i ? null : i)}
@@ -184,6 +198,34 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
                               ? <span className={`badge ${errCls}`}>{r.errorCount} ({errPct.toFixed(1)}%)</span>
                               : <span style={{ color: 'var(--text3)' }}>0</span>}
                           </td>
+                          {/* v0.9.963 (UX denetimi G1-b) — statement detail
+                              drill. The panel could reach /traces and
+                              nothing else: "who else runs this statement,
+                              and is it worse than last window?" lived only
+                              behind a row click on the FLEET catalog, so
+                              from your own service you had to recognise
+                              your SQL by eye in a cross-service list to get
+                              one page further. */}
+                          <td onClick={e => e.stopPropagation()}>
+                            {detailHref ? (
+                              <Link to={detailHref}
+                                    className="sec"
+                                    title="Open this statement class in the fleet statement-detail drawer — per-service callers, 5m trend, vs-prior compare, exemplar traces."
+                                    style={{
+                                      display: 'inline-flex', alignItems: 'center', gap: 4,
+                                      fontSize: 11, padding: '2px 8px',
+                                      border: '1px solid var(--border)',
+                                      borderRadius: 4,
+                                      color: 'var(--text)', textDecoration: 'none',
+                                      fontFamily: 'inherit',
+                                    }}>
+                                Detail →
+                              </Link>
+                            ) : (
+                              <span style={{ fontSize: 11, color: 'var(--text3)' }}
+                                    title="No statement identity on this row — the response predates the statement-hash column.">—</span>
+                            )}
+                          </td>
                           {/* Traces drill — link to /traces filtered by
                               service + db.statement LIKE the normalised
                               form. The normalised statement's "?"
@@ -208,7 +250,10 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
                         </tr>
                         {expanded && (
                           <tr>
-                            <td colSpan={10}
+                            {/* Spans every column — derived, not a literal:
+                                the previous hardcoded 10 would have gone
+                                stale the moment a column was added. */}
+                            <td colSpan={DBQ_COL_COUNT}
                                 style={{ background: 'var(--bg0)', padding: '12px 16px' }}>
                               <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 4 }}>
                                 Sample statement (with real literals)

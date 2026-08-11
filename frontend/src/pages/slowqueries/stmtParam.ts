@@ -1,3 +1,5 @@
+import { windowRangeParam } from '@/lib/urlState';
+
 // stmtParam — v0.8.378 (Stage-2 slice D2). Pure URL codec for the
 // /slow-queries statement detail drawer: the `?stmt=` param encodes
 // (hash, optional dbSystem) as `<hash>[|<enc(system)>]` — the
@@ -22,6 +24,40 @@ const HASH_RE = /^[0-9]{1,20}$/; // uint64 max is 20 digits
 
 export function encodeStmtParam(ref: StmtRef): string {
   return ref.hash + (ref.system ? '|' + encodeURIComponent(ref.system) : '');
+}
+
+// stmtDetailHref — v0.9.963 (UX denetimi G1-b). The producer for "open this
+// statement's detail drawer", from anywhere.
+//
+// The drawer is the only surface that answers the second question an operator
+// asks about an expensive statement: WHO ELSE runs it, and is it worse than
+// the previous window? It lives on /slow-queries and is URL-owned (`?stmt=`),
+// so a link is all it takes — but until now the only door was a row click on
+// the fleet catalog itself. From a service's own DB panel the operator could
+// reach /traces and nothing else, i.e. they had to recognise their statement
+// by eye in a fleet-wide list to get one page further.
+//
+// Returns null when the row has no identity (`stmtHash` is optional — a
+// response served from a pre-D1 cache entry omits it, and "0" is the
+// backend's no-statement sentinel). A null result must hide the affordance:
+// a link to `/slow-queries?stmt=undefined` opens the catalog with the drawer
+// silently shut, which reads as "the button is broken".
+//
+// The window is a REQUIRED argument, same contract as tracesPivotHref: the
+// destination resolves its own range from the URL and falls back to the
+// operator's sticky one, so a detail link without it re-asks the question
+// over a different hour and the drawer's trend/compare answer the wrong one.
+export function stmtDetailHref(
+  ref: { hash?: string; system?: string },
+  window: import('@/lib/types').TimeRange | { fromNs: number; toNs: number },
+): string | null {
+  const hash = (ref.hash ?? '').trim();
+  if (!HASH_RE.test(hash) || /^0+$/.test(hash)) return null;
+  const q = new URLSearchParams();
+  q.set('stmt', encodeStmtParam({ hash, system: ref.system ?? '' }));
+  const range = windowRangeParam(window);
+  if (range) q.set('range', range);
+  return `/slow-queries?${q.toString()}`;
 }
 
 // decodeStmtParam parses a raw `?stmt=` value. Returns null for anything

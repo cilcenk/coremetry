@@ -4059,6 +4059,17 @@ export interface DBQueryStat {
   maxMs: number;
   errorCount: number;
   totalMs: number;
+  // stmtHash — persistent statement identity (v0.8.375, Stage-2 D1):
+  // spans.db_stmt_hash as a DECIMAL STRING (a uint64 in a JSON number
+  // loses precision past 2^53). The statement detail drawer keys on it.
+  // Optional: absent on responses served from a pre-D1 cache entry, so
+  // every consumer must degrade to "no detail link", never render a
+  // link to `undefined`.
+  //
+  // v0.9.963 (UX denetimi G1-b) — moved up from SlowQueryRow. The
+  // per-service DB panel fills this same interface and had no identity,
+  // so its rows dead-ended at /traces.
+  stmtHash?: string;
 }
 
 // In-app AI chatbot (v0.6.53). Conversation is ephemeral — held in
@@ -4257,11 +4268,8 @@ export interface RolloutsResult {
 // install?".
 export interface SlowQueryRow extends DBQueryStat {
   service: string;
-  // stmtHash — persistent statement identity (v0.8.375, Stage-2 D1):
-  // spans.db_stmt_hash as a DECIMAL STRING (a uint64 in a JSON number
-  // loses precision past 2^53). D2 keys the statement detail view on it.
-  // Optional: absent on responses served from a pre-D1 cache entry.
-  stmtHash?: string;
+  // stmtHash is inherited from DBQueryStat since v0.9.963 — both catalogs
+  // key the statement detail drawer off the same field.
 }
 
 // DBStmtDetail — v0.8.378 (Stage-2 slice D2). One payload for the

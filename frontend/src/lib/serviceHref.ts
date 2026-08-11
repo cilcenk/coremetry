@@ -1,4 +1,4 @@
-import { encodeRange } from '@/lib/urlState';
+import { windowRangeParam } from '@/lib/urlState';
 import type { TimeRange } from '@/lib/types';
 
 // serviceHref — v0.9.860 (UX denetimi K1 / §4.1). The single builder for a
@@ -53,19 +53,10 @@ function rangeParam(r: NonNullable<ServiceHrefOpts['range']>): string {
   // Already-encoded strings ("6h", "custom:1-2") pass through — several call
   // sites hold the raw URL value rather than a TimeRange.
   if (typeof r === 'string') return r;
-  if ('preset' in r) return encodeRange(r);
-  // Unix ns → ms. Floor/ceil so the window never narrows below what the caller
-  // asked for; a truncated `to` drops the newest bucket, which on an event
-  // window is the part the operator came to see.
-  const fromMs = Math.floor(r.fromNs / 1e6);
-  const toMs = Math.ceil(r.toNs / 1e6);
-  // Mirror decodeRange's acceptance test (urlState.ts). Emitting a token it
-  // would REJECT is worse than emitting nothing: the URL then displays a
-  // confident `custom:` window while the page silently renders the sticky one.
-  // Reachable in practice — an event window's lead-in can push `from` below
-  // the epoch on a degenerate timestamp.
-  if (!(fromMs > 0) || !(toMs > fromMs)) return '';
-  return encodeRange({ preset: 'custom', fromMs, toMs });
+  // v0.9.963 — the ns→ms rounding rule and the decodeRange acceptance test
+  // moved to lib/urlState (windowRangeParam) once a third link builder needed
+  // them. serviceHref.test.ts still pins both behaviours through this call.
+  return windowRangeParam(r);
 }
 
 export function serviceHref(name: string, opts: ServiceHrefOpts = {}): string {

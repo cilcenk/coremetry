@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   databaseDetailHref, parseDatabasePageRef, legacyDatabaseRowTarget,
+  databasesFilterHref,
 } from './databaseParam';
 import { depRowKey } from '@/lib/depsTable';
 
@@ -115,5 +116,65 @@ describe('legacyDatabaseRowTarget', () => {
     expect(legacyDatabaseRowTarget('row=oracle|')).toBeNull();       // wrong arity
     expect(legacyDatabaseRowTarget('row=|||')).toBeNull();           // empty identity
     expect(legacyDatabaseRowTarget('row=oracle||db-1')).toBeNull();  // 3 fields, not 4
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// databasesFilterHref — v0.9.964 (UX denetimi Ö9 / G2, DB yarısı).
+//
+// A DB statement row knows the engine and (representatively) the db.name, but
+// never the instance — statements aggregate across every instance the engine
+// runs on. So the bridge lands on the CATALOGUE, narrowed only as far as the
+// row's own dimensions honestly go. The two traps this pins are both
+// "asserting a narrowing the row does not actually have":
+//   • 'default' is the not-found sentinel on BOTH sides (raw-spans coalesce
+//     and db_summary_5m) — filtering on it renders as a database named
+//     "default";
+//   • dbNameCount > 1 means the grouping FOLDED several databases into one
+//     row, so pinning the representative name silently drops the rest.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('databasesFilterHref', () => {
+  const q = (href: string) => new URLSearchParams(href.slice(href.indexOf('?') + 1));
+
+  it('narrows to engine + database when the row genuinely has one', () => {
+    const p = q(databasesFilterHref({ dbSystem: 'oracle', dbName: 'COREBANK', dbNameCount: 1 }));
+    expect(p.get('dbsys')).toBe('oracle');
+    expect(p.get('dbname')).toBe('COREBANK');
+  });
+
+  it('never pins the "default" sentinel — engine filter still ships', () => {
+    const p = q(databasesFilterHref({ dbSystem: 'postgresql', dbName: 'default', dbNameCount: 1 }));
+    expect(p.get('dbsys')).toBe('postgresql');
+    expect(p.has('dbname')).toBe(false);
+  });
+
+  it('a FOLDED row (dbNameCount > 1) does not pin its representative name', () => {
+    // Pinning it would hide the other databases this same statement ran
+    // against — a narrower answer presented as the whole one.
+    const p = q(databasesFilterHref({ dbSystem: 'oracle', dbName: 'CARDS', dbNameCount: 3 }));
+    expect(p.get('dbsys')).toBe('oracle');
+    expect(p.has('dbname')).toBe(false);
+  });
+
+  it('missing dbNameCount is treated as a single database (raw-path rows)', () => {
+    expect(q(databasesFilterHref({ dbSystem: 'mysql', dbName: 'shop' })).get('dbname')).toBe('shop');
+  });
+
+  it('carries the window and env when given', () => {
+    const p = q(databasesFilterHref({ dbSystem: 'oracle' }, { range: 'custom:100-200', env: 'uat' }));
+    expect(p.get('range')).toBe('custom:100-200');
+    expect(p.get('env')).toBe('uat');
+  });
+
+  it('empty / whitespace dimensions produce a bare catalogue link, never "?"', () => {
+    for (const row of [{}, { dbSystem: '' }, { dbSystem: '   ', dbName: '  ' }]) {
+      expect(databasesFilterHref(row)).toBe('/databases');
+    }
+  });
+
+  it('encodes values that would otherwise break the query string', () => {
+    const p = q(databasesFilterHref({ dbSystem: 'sql server', dbName: 'a&b=c' }));
+    expect(p.get('dbsys')).toBe('sql server');
+    expect(p.get('dbname')).toBe('a&b=c');
   });
 });

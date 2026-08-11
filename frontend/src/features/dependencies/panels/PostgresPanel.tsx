@@ -57,7 +57,7 @@ export function PostgresPanel({ instance, range }: { instance: string; range: Ti
       border: `1px solid color-mix(in srgb, ${PG_BRAND} 25%, transparent)`,
     }}>
       <PanelHeader engineLabel="PostgreSQL receiver" instance={instance}
-        status={data?.status} color={PG_BRAND} />
+        status={data?.status} color={PG_BRAND} range={range} />
       {data === undefined && <Spinner />}
       {data === null && <PanelErr />}
       {data && (

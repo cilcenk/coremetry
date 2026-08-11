@@ -10,6 +10,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import type { OperationSummary, DBQueryStat, TimeRange } from '@/lib/types';
 import { operationTracesHref } from '@/lib/pivotHref';
 import { tracesURL } from '@/components/DBQueriesPanel';
+import { databasesFilterHref } from '@/pages/databases/databaseParam';
 
 // Service Overview tables (v0.7.96) — the compact Operations + Top DB
 // statements pair from the design handoff. Both use the shared
@@ -175,7 +176,20 @@ export function DbCard({ service, range, from, to }: { service: string; range: T
                     onClick={() => navigate(dbHref(r))}>
                   <td>
                     <div className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.sampleStatement || r.statement}>{r.statement}</div>
-                    <div className="ov-st">{r.dbSystem}</div>
+                    {/* v0.9.964 (UX denetimi Ö9 / G2) — engine sub-label is
+                        the bridge into the database catalogue; the row
+                        itself keeps going to /traces (v0.9.960), so the
+                        click has to stop here. */}
+                    <div className="ov-st">
+                      {r.dbSystem ? (
+                        <Link to={databasesFilterHref(r, { range: encodeRange(range) })}
+                          onClick={e => e.stopPropagation()}
+                          title={`Open the database catalogue filtered to ${r.dbSystem}`}
+                          style={{ color: 'inherit', textDecoration: 'none', borderBottom: '1px dotted var(--text3)' }}>
+                          {r.dbSystem}
+                        </Link>
+                      ) : '—'}
+                    </div>
                   </td>
                   <td className="num">{r.count >= 1000 ? `${(r.count / 1000).toFixed(1)}K` : r.count}</td>
                   <td className="num mono">{r.p99Ms.toFixed(0)} ms</td>

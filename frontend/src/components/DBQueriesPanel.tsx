@@ -5,11 +5,12 @@ import { DisclosureButton } from '@/components/ui';
 import { useDataTable, DataTableColgroup, DataTableHead } from './DataTable';
 import { api } from '@/lib/api';
 import { fmtNum } from '@/lib/utils';
-import { encodeFilters } from '@/lib/urlState';
+import { encodeFilters, windowRangeParam } from '@/lib/urlState';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { DBQueryStat, FilterExpr } from '@/lib/types';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { stmtDetailHref } from '@/pages/slowqueries/stmtParam';
+import { databasesFilterHref } from '@/pages/databases/databaseParam';
 
 // Database query analyzer — Datadog DBM-style "where is my
 // query time going" view for a single service in a time
@@ -102,6 +103,11 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
     initialSort: { id: 'totalMs', dir: 'desc' },
   });
 
+  // The panel's own window, as the `range=` token every cross-page link
+  // needs. Computed from PROPS (not now()) — the v0.5.184 render trap is
+  // about timeRangeToNs ticking each render; from/to are stable inputs.
+  const dbRange = windowRangeParam({ fromNs: from, toNs: to });
+
   return (
     <div style={{
       background: 'var(--bg1)', border: '1px solid var(--border)',
@@ -178,14 +184,34 @@ export function DBQueriesPanel({ service, from, to, defaultOpen = false }: {
                               title={r.statement}>
                             {r.statement}
                           </td>
-                          <td>
-                            <span style={{
-                              fontSize: 11, padding: '1px 6px',
-                              background: 'var(--bg3)', borderRadius: 3,
-                              fontFamily: 'monospace',
-                            }}>
-                              {r.dbSystem || '—'}
-                            </span>
+                          {/* v0.9.964 (UX denetimi Ö9 / G2) — the engine
+                              chip is the bridge OUT of the service into the
+                              database catalogue. There was no link at all
+                              from a service to /databases: "which instances
+                              of this engine does my service actually talk
+                              to" meant sidebar → /databases → re-find it by
+                              eye. Narrowed only as far as the row honestly
+                              goes (databasesFilterHref drops the folded /
+                              sentinel db.name). */}
+                          <td onClick={e => e.stopPropagation()}>
+                            {r.dbSystem ? (
+                              <Link to={databasesFilterHref(r, { range: dbRange })}
+                                    title={`Open the database catalogue filtered to ${r.dbSystem}${r.dbName && r.dbName !== 'default' && r.dbNameCount <= 1 ? ` · ${r.dbName}` : ''}`}
+                                    style={{
+                                      fontSize: 11, padding: '1px 6px',
+                                      background: 'var(--bg3)', borderRadius: 3,
+                                      fontFamily: 'monospace',
+                                      color: 'var(--accent2)', textDecoration: 'none',
+                                    }}>
+                                {r.dbSystem}
+                              </Link>
+                            ) : (
+                              <span style={{
+                                fontSize: 11, padding: '1px 6px',
+                                background: 'var(--bg3)', borderRadius: 3,
+                                fontFamily: 'monospace',
+                              }}>—</span>
+                            )}
                           </td>
                           <td className="mono num">{fmtNum(r.count)}</td>
                           <td className="mono num">{fmtMs(r.totalMs)}</td>

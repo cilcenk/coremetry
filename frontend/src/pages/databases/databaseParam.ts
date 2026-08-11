@@ -44,6 +44,42 @@ export function databaseDetailHref(
   return `${DATABASE_PAGE}?${p.toString()}`;
 }
 
+// databasesFilterHref — v0.9.964 (UX denetimi Ö9 / G2, DB yarısı). The
+// producer for "show me this database in the catalogue", from a row that
+// knows the engine and the db.name but NOT the instance.
+//
+// Why not databaseDetailHref: identity there is a TRIPLE (system, instance,
+// dbName) and a DB STATEMENT row has no instance — statements aggregate
+// across every instance the engine runs on. Inventing one would open a
+// silently empty detail page (the v0.9.821 label-as-identity failure). The
+// honest destination is the catalogue, narrowed as far as the row's own
+// dimensions actually go.
+//
+// Two narrowings the row must NOT assert:
+//   • dbName === 'default' — that is the not-found sentinel on both sides
+//     (the raw-spans coalesce AND db_summary_5m), i.e. "these spans carried
+//     no db.name". Filtering on it reads in the UI as a database literally
+//     named "default".
+//   • dbNameCount > 1 — the statement grouping deliberately FOLDS db_name,
+//     so the name on the row is a representative one of several. Pinning it
+//     would drop the other databases the very same statement ran against.
+// In both cases the engine filter still ships: a narrower-than-possible
+// catalogue beats a confidently wrong one.
+export function databasesFilterHref(
+  row: { dbSystem?: string; dbName?: string; dbNameCount?: number },
+  scope: DatabasePageScope = {},
+): string {
+  const p = new URLSearchParams();
+  const sys = (row.dbSystem ?? '').trim();
+  const name = (row.dbName ?? '').trim();
+  if (sys) p.set('dbsys', sys);
+  if (name && name !== 'default' && (row.dbNameCount ?? 1) <= 1) p.set('dbname', name);
+  if (scope.range) p.set('range', scope.range);
+  if (scope.env) p.set('env', scope.env);
+  const qs = p.toString();
+  return qs ? `/databases?${qs}` : '/databases';
+}
+
 /**
  * parseDatabasePageRef — the page's own params back into a ref.
  * system + instance are required; a link missing either renders the

@@ -227,10 +227,12 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
 
   const pinnedNode = pinned ? nb.nodes.find(n => n.id === pinned) : null;
   const hoverNode = pinnedNode ?? (hover ? nb.nodes.find(n => n.id === hover) : null);
-  // v0.9.958 (G3-b) — DB düğümünün detay hedefi. null = adından instance
+  // v0.9.958 (G3-b) — düğümün detay/katalog hedefi. null = kimlik
   // türetilemedi; o hâlde link HİÇ çizilmez (uydurma bir instance ile
   // sorgulamak sessizce boş bir sayfa açardı).
-  const dbHref = hoverNode ? nodeDetailHref(hoverNode, { range: encodeRange(range) }) : null;
+  // v0.9.972 — kuyruk düğümleri de artık bir hedef üretiyor (katalog),
+  // o yüzden ad `dbHref` değil.
+  const detailHref = hoverNode ? nodeDetailHref(hoverNode, { range: encodeRange(range) }) : null;
   const height = Math.round(window.innerHeight * 0.74);
 
   // v0.9.363 — 500, CH max_execution_time timeout'u ve gerçekten komşusuz
@@ -363,12 +365,22 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
               dbName BİLEREK taşınmıyor — düğüm instance düzeyinde
               toplanmış, taşıdığı dbName yalnız bir örnek; linke koymak
               soruyu sessizce daraltırdı. Etiket bu yüzden "instance" der.
-              Kuyruk düğümleri kapsam dışı: `/messaging` kimliği CLUSTER
-              istiyor, topoloji düğümü taşımıyor (nodeDetailHref). */}
-          {hoverNode.kind === 'database' && dbHref && (
+              v0.9.972 — kuyruk düğümü artık KATALOĞA köprülüyor:
+              çekmece kimliği cluster ister ve düğüm taşımaz, ama katalog
+              sahip olunan boyutlarla (msys + q) daraltılabilir. Etiket
+              "topiği aç" DEMEZ — katalogda ilk-200 tavanı var, aranan
+              satır listede olmayabilir. */}
+          {hoverNode.kind === 'database' && detailHref && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <Link to={dbHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+              <Link to={detailHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
                 Open instance →
+              </Link>
+            </span>
+          )}
+          {hoverNode.kind === 'queue' && detailHref && (
+            <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <Link to={detailHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
+                Messaging kataloğunda göster →
               </Link>
             </span>
           )}

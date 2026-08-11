@@ -32,7 +32,13 @@ func sampleEdges() []chstore.ServiceTopologyEdge {
 		sgEdge("payments", "ledger", "service", "grpc", 800, 40, 90),
 		sgEdge("ledger", "gateway", "service", "grpc", 50, 0, 30), // cycle gateway→payments→ledger→gateway
 		sgEdge("payments", "db:postgresql", "db", "db", 1500, 3, 8),
-		sgEdge("payments", "queue:settlements", "queue", "kafka", 200, 0, 5), // broker is first-class
+		// v0.9.972 — was "queue:settlements", which put a TOPIC-shaped name in
+		// the SYSTEM position. The aggregator never emits that: the first
+		// segment is always msg_system (chstore/topology.go
+		// `concat('queue:', msg_system, ':', msg_dest)`, v0.7.31 topic-aware
+		// naming). The old fixture therefore taught the wrong shape and let
+		// decodeNodeName's dropped system look intentional.
+		sgEdge("payments", "queue:kafka:settlements", "queue", "kafka", 200, 0, 5), // broker is first-class
 		sgEdge("orders", "ext:stripe.com", "external", "http", 60, 6, 400),
 	}
 }
@@ -48,7 +54,10 @@ func TestBuildServiceGraph_GlobalDecodesOTelKinds(t *testing.T) {
 	// prefix-decoded names — no "db:"/"queue:" leaking to the client.
 	cases := []struct{ id, wantKind, wantName, wantSystem string }{
 		{"db:postgresql", "database", "postgresql", "postgresql"},
-		{"queue:settlements", "queue", "settlements", ""},
+		// v0.9.972 — system is no longer dropped: it is what the
+		// topology→/messaging catalogue bridge narrows on. Shape coverage
+		// (all three queue spellings) lives in servicegraph_nodename_test.go.
+		{"queue:kafka:settlements", "queue", "kafka:settlements", "kafka"},
 		{"ext:stripe.com", "external", "stripe.com", ""},
 		{"payments", "service", "payments", ""},
 	}
@@ -120,7 +129,7 @@ func TestBuildServiceGraph_NeighborhoodScope(t *testing.T) {
 		ids[n.ID] = true
 	}
 	// payments' neighborhood: gateway (caller), ledger + db + queue (callees).
-	for _, want := range []string{"payments", "gateway", "ledger", "db:postgresql", "queue:settlements"} {
+	for _, want := range []string{"payments", "gateway", "ledger", "db:postgresql", "queue:kafka:settlements"} {
 		if !ids[want] {
 			t.Errorf("neighborhood missing %q", want)
 		}

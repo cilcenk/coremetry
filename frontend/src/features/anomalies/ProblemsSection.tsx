@@ -24,6 +24,7 @@ import EvaluatorStatus from './EvaluatorStatus';
 import { useAuth } from '@/components/AuthProvider';
 import { ClusterChips } from '@/components/ClusterChips';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
+import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
 import { ArrowDownToLine, Users, CornerDownRight } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { IconBell, IconSparkles } from '@/components/icons';
@@ -537,7 +538,14 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                       <td><PriorityBadge p={p.priority} reason={p.priorityReason} /></td>
                       <td><SeverityBadge s={p.severity} /></td>
                       <td>
-                        <Link to={`/service?name=${encodeURIComponent(p.service)}`}
+                        {/* v0.9.966 — problemin ömrü: onset−1h → (çözüm |
+                            şimdi)+10m. Aynı sınırlar ProblemDetail'in
+                            logs/traces/servis pivotlarında; liste ile detay
+                            farklı pencere göstermemeli. AÇIK problemde
+                            pencere ŞİMDİye kadar uzuyor — onset±40dk, hâlâ
+                            yanan bir olayda hiçbir şeyin bozuk olmadığı bir
+                            ana bakmak demekti. */}
+                        <Link to={serviceHref(p.service, { range: eventLifespanWindow(p) })}
                           onClick={e => e.stopPropagation()}
                           style={{ fontWeight: 600 }}>
                           {p.service}

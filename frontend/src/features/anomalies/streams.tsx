@@ -29,6 +29,7 @@ import {
 } from '@/lib/queries';
 import { fmtNum, tsLong } from '@/lib/utils';
 import { AnomalyDetailDrawer } from './AnomalyDetailDrawer';
+import { serviceHref, inboxItemWindow, pointEventWindow, eventLifespanWindow } from '@/lib/serviceHref';
 import type {
   LogPatternAnomaly, TraceOpAnomaly, Problem, AnomalyEvent,
   AnomalySilence,
@@ -134,7 +135,9 @@ function TraceOpsSection({ items, onMute, canEdit }: {
               {canEdit && <SnoozeButton onMute={d => onMute('trace_op', a.operation, a.service, d)} />}
             </Row>
             <div style={{ fontSize: 11, color: 'var(--text2)' }}>
-              <Link to={`/service?name=${encodeURIComponent(a.service)}`}
+              {/* v0.9.966 — satır TEK bir an taşıyor (lastSeenNs), aralık
+                  değil: pointEventWindow o anın etrafını açar. */}
+              <Link to={serviceHref(a.service, { range: pointEventWindow(a.lastSeenNs) })}
                     className="mono" style={{ color: 'var(--text)', textDecoration: 'none' }}>
                 {a.service}
               </Link>
@@ -198,7 +201,7 @@ function MetricSection({ items }: { items: Problem[] | undefined }) {
               </Badge>
               <span style={{ fontWeight: 600, fontSize: 12 }}>{p.metric}</span>
               <span style={{ flex: 1 }} />
-              <Link to={`/service?name=${encodeURIComponent(p.service)}`} style={{ fontSize: 11, color: 'var(--accent2)' }}>
+              <Link to={serviceHref(p.service, { range: eventLifespanWindow(p) })} style={{ fontSize: 11, color: 'var(--accent2)' }}>
                 {p.service} ↗
               </Link>
             </Row>
@@ -495,7 +498,10 @@ function AnomalyTable({ rows, storageKey, rowRefs, highlight, onOpen, title }: {
                 </td>
                 <td style={{ fontWeight: 600 }} title={e.pattern}>{e.pattern}</td>
                 <td>
-                  <Link to={`/service?name=${encodeURIComponent(e.service)}`}
+                  {/* v0.9.966 — anomalinin gözlem aralığı. CLEARED bir
+                      satırda pencere GEÇMİŞTE kalıyor; onsuz link "şimdi"yi
+                      açıp "sorun yok" yanılgısı üretiyordu. */}
+                  <Link to={serviceHref(e.service, { range: inboxItemWindow(e) })}
                         className="mono" style={{ fontSize: 11.5 }}
                         title={e.service || '—'}>
                     {e.service || '—'}
@@ -678,7 +684,7 @@ function DeployChip({ d, service }: {
         color: 'var(--warn)',
       };
   return (
-    <Link to={`/service?name=${encodeURIComponent(service)}#deploys`}
+    <Link to={serviceHref(service, { range: pointEventWindow(d.timeUnixNs), hash: 'deploys' })}
       title={`Service ${service} deployed v${d.version} at ${tsLong(d.timeUnixNs)} — ${ageLabel}. Likely-cause window: ≤ 5 min.`}
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 4,

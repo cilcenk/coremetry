@@ -27,6 +27,7 @@ import { PageControls } from '@/components/ui/PageControls';
 // The ?problem= deep-link host stays HERE too: notification e-mails
 // point at /problems?problem=<id> and that contract is test-locked.
 import { AlertProblemHost } from './ProblemsSection';
+import { serviceHref } from '@/lib/serviceHref';
 import { QueryError, QueryErrorInline } from '@/components/QueryError';
 
 // State buckets shown as tabs along the top of the page.
@@ -564,7 +565,12 @@ export default function ProblemsPage() {
                           </div>
                         </td>
                         <td>
-                          <Link to={`/service?name=${encodeURIComponent(g.service)}`}
+                          {/* v0.9.966 — grubun KENDİ ömrü (firstSeen→
+                              lastSeen). ProblemDetail aynı satır tipi için
+                              zaten bu pencereyi kullanıyor; listeden ve
+                              detaydan açılan servis sayfası aynı zamana
+                              bakmalı. */}
+                          <Link to={serviceHref(g.service, { range: { fromNs: g.firstSeen, toNs: g.lastSeen } })}
                             onClick={e => e.stopPropagation()}
                             style={{ fontFamily: 'monospace', fontSize: 11 }}>
                             {g.service}

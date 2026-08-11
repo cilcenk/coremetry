@@ -22,6 +22,7 @@ import { promQuote } from '@/pages/clusters/promQuote';
 import { podWorkloadName } from '@/pages/clusters/podWorkload';
 import { fmtCores, podPhaseBadge } from '@/pages/clusters/thresholds';
 import { resolvePodCluster } from '@/pages/service/podResolve';
+import { serviceHref } from '@/lib/serviceHref';
 
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
@@ -200,7 +201,11 @@ function PodDetail() {
       <div id="content">
         {/* Geri + kimlik + KPI başlık satırı */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
-          <Link to={service ? `/service?name=${encodeURIComponent(service)}&tab=${backTab}` : '/clusters'} className="sec" style={{
+          {/* v0.9.965 — GERİ linki penceresini taşımıyordu: pod'a özel
+              bir pencereden gelen operatör "← servis" dediğinde başka bir
+              zaman aralığına dönüyordu. Bir geri linkinin bağlamı
+              değiştirmesi, geri linki olmaktan çıkması demek. */}
+          <Link to={service ? serviceHref(service, { range, tab: backTab }) : '/clusters'} className="sec" style={{
             padding: '5px 12px', border: '1px solid var(--border)', borderRadius: 6,
             fontSize: 12, color: 'var(--text)', textDecoration: 'none',
           }}>← {service ? `${service} · ${backLabel}` : 'Clusters'}</Link>

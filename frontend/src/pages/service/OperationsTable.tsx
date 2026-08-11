@@ -9,6 +9,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { encodeFilters, encodeRange, buildQuery } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { serviceHref } from '@/lib/serviceHref';
 import type { TimeRange, OperationSummary, SpanMetricSeries, SpanAgg } from '@/lib/types';
 
 // OperationsTable — per-operation aggregate (count / err / avg / p50 /
@@ -169,7 +170,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
   // link keeps going to Traces (operator-picked, v0.5.317); this is
   // the metrics-shaped sibling.
   const detailsHref = (op: string) =>
-    `/service?name=${encodeURIComponent(service)}&tab=details&op=${encodeURIComponent(op)}&range=${encodeURIComponent(encodeRange(range))}`;
+    serviceHref(service, { range, tab: 'details', params: { op } });
 
   // v0.5.374 — client-side filter. Case-insensitive substring
   // match on the operation name, same idiom as the /endpoints

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { attrKeySince } from '@/lib/attrKeyWindow';
+import { attrKeyWindowParams } from '@/lib/attrKeyWindow';
 import { useEscLayer } from '@/lib/escLayer';
 import { Combobox } from './Combobox';
 import { Button, Chip } from '@/components/ui';
@@ -44,8 +44,8 @@ export function FilterBuilder({ value, onChange, suggestedValues }: {
   // Pencere BASAMAKLI (attrKeyWindow): ham geçirmek sunucunun 60 sn'lik
   // cache anahtarını her dokunuşta ıskalatırdı (v0.8.270).
   const [keyRange] = useUrlRange();
-  const attrSince = useMemo(() => attrKeySince(keyRange), [keyRange]);
-  const { keys: allKeys, observed: observedKeys } = useAttributeKeys(value, attrSince);
+  const attrWindow = useMemo(() => attrKeyWindowParams(keyRange), [keyRange]);
+  const { keys: allKeys, observed: observedKeys } = useAttributeKeys(value, attrWindow);
   // Top-5 hint surfaced under the picker so the operator sees
   // "what's heavy right now" without scrolling the dropdown.
   const topHints = observedKeys.slice(0, 5);

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { attrKeySince } from '@/lib/attrKeyWindow';
+import { attrKeyWindowParams } from '@/lib/attrKeyWindow';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useQuery } from '@tanstack/react-query';
 import { Combobox } from '@/components/Combobox';
@@ -30,10 +30,13 @@ export function SplitByPicker({ value, onChange }: {
   // AMA yasak olan ŞEKLİN kendisi: basamak listesi bir gün incelirse
   // aynı satır sessizce sonsuz refetch'e döner.
   const [range] = useUrlRange();
-  const since = useMemo(() => attrKeySince(range), [range]);
+  const attrWindow = useMemo(() => attrKeyWindowParams(range), [range]);
+  // Sorgu anahtarı pencerenin İMZASI — nesnenin kendisi her render'da yeni
+  // referans olurdu ve React Query onu her seferinde yeni bir sorgu sayardı.
+  const winSig = JSON.stringify(attrWindow);
   const keysQ = useQuery({
-    queryKey: ['attribute-keys', since],
-    queryFn: () => api.attributeKeys(since, 200),
+    queryKey: ['attribute-keys', winSig],
+    queryFn: () => api.attributeKeys(attrWindow, 200),
     staleTime: 60_000,
   });
 

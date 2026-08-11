@@ -15,7 +15,7 @@
 // gömüyordu.
 
 import { useEffect, useMemo, useState } from 'react';
-import type { GoDuration } from './utils';
+import type { AttrKeyWindow } from './attrKeyWindow';
 import { api } from '@/lib/api';
 import type { FilterExpr } from '@/lib/types';
 
@@ -70,12 +70,20 @@ export function scopedKey(r: { scope: string; key: string }): string {
  * @param filters bağlam filtreleri; verilirse anahtarlar O DİLİM altında
  *                veri taşıyanlarla sınırlanır (global top-N değil).
  */
-export function useAttributeKeys(filters?: FilterExpr[], since: GoDuration = '1h'): {
+export function useAttributeKeys(
+  filters?: FilterExpr[],
+  window_: AttrKeyWindow = { since: '1h' },
+): {
   keys: string[];
   observed: ObservedKey[];
 } {
   const [observed, setObserved] = useState<ObservedKey[]>([]);
   const sig = JSON.stringify(filters ?? []);
+  // v0.9.969 — pencere artık bir NESNE (since | fromNs/toNs). Effect'in dep
+  // listesine nesneyi koymak her render'da yeni referans demek olurdu, yani
+  // 200 ms'lik debounce sonsuza dek yeniden kurulur ve istek HİÇ atılmazdı.
+  // Dize imza, filters'ın zaten kullandığı deseni izliyor.
+  const winSig = JSON.stringify(window_);
 
   // v0.9.602 (traces D4) — debounce + yarış koruması. Öncesinde her chip
   // değişimi ANINDA ateşliyordu (anahtar seç → operatör seç → değer yaz =
@@ -90,7 +98,7 @@ export function useAttributeKeys(filters?: FilterExpr[], since: GoDuration = '1h
       // v0.9.953 (F3/Ö14c) — pencere SAYFANIN aralığından, basamaklı.
       // Sabit '1h' iken 7 günlük pencereye bakan operatör son bir saatte
       // görülmemiş bir anahtarı öneride bulamıyordu.
-      api.attributeKeys(since, 500, ctx)
+      api.attributeKeys(JSON.parse(winSig) as AttrKeyWindow, 500, ctx)
         .then(rows => {
           if (cancelled) return;
           setObserved((rows ?? []).map(r => ({ key: scopedKey(r), count: r.count })));
@@ -98,7 +106,7 @@ export function useAttributeKeys(filters?: FilterExpr[], since: GoDuration = '1h
         .catch(() => { if (!cancelled) setObserved([]); });
     }, 200);
     return () => { cancelled = true; window.clearTimeout(t); };
-  }, [sig, since]);
+  }, [sig, winSig]);
 
   const keys = useMemo(() => mergeKeys(observed), [observed]);
   return { keys, observed };

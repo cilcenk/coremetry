@@ -3443,6 +3443,22 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 	if limit > 1000 {
 		limit = 1000
 	}
+	// v0.9.969 (UX denetimi Ö15) — ABSOLUTE window, opt-in.
+	//
+	// `since` can only ever mean "the last N", which makes a brushed window
+	// unreachable: the client could send its LENGTH and the server scanned
+	// that length ending NOW. Zoom into yesterday's 30-minute spike and the
+	// suggester answered about the last 30 minutes — a different question,
+	// answered silently.
+	//
+	// Both bounds or neither: a half-specified window is a client bug, and
+	// guessing the missing edge (now? epoch?) would produce a confident wrong
+	// scan. Falls back to the relative path, which is still the right shape
+	// for a relative preset — that one IS now-anchored, and keeping it on
+	// `since` keeps its 60s cache entry shared across every operator on the
+	// same preset.
+	absFrom, absTo := parseTime(q.Get("from")), parseTime(q.Get("to"))
+	absolute := !absFrom.IsZero() && !absTo.IsZero() && absTo.After(absFrom)
 	// v0.5.261 — context-aware attribute suggester. When the
 	// operator already has a filter set in /explore, the
 	// dropdown should show attribute keys with data UNDER those
@@ -3459,8 +3475,18 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 	rawFilterGroup := q.Get("filterGroup")
 	root := parseFilterGroup(rawFilterGroup)
 
-	key := fmt.Sprintf("attr-keys:since=%s:limit=%d:f=%s:fg=%s",
-		q.Get("since"), limit, rawFilters, rawFilterGroup)
+	// Cache key carries EVERY input that changes the answer. The window is
+	// one key or the other, never both, so a relative and an absolute request
+	// can't collide: `since` is empty on the absolute path (from/to carry it)
+	// and from/to are 0 on the relative path.
+	var keyFrom, keyTo int64
+	keySince := q.Get("since")
+	if absolute {
+		keySince = ""
+		keyFrom, keyTo = absFrom.UnixNano(), absTo.UnixNano()
+	}
+	key := fmt.Sprintf("attr-keys:since=%s:from=%d:to=%d:limit=%d:f=%s:fg=%s",
+		keySince, keyFrom, keyTo, limit, rawFilters, rawFilterGroup)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		// Filter-derived WHERE fragment via the public chstore helper so we
 		// don't reach into the package's internal whereClause type. AND-merged
@@ -3480,13 +3506,22 @@ func (s *Server) getAttributeKeys(w http.ResponseWriter, r *http.Request) {
 		// spans the old full-window arrayJoin timed out (max_execution_time=30
 		// → error → empty), and the Traces "Add column" picker showed "no more
 		// attribute keys to add". The sample makes it O(sample), not O(window).
-		sqlText := attributeKeysSQL(extra, attrKeysSampleRows)
-		// Args layout: span(time, filter-args...), resource(time, filter-args...), limit
-		secs := int64(since.Seconds())
-		args := []any{secs}
-		args = append(args, filterArgs...)
-		args = append(args, secs)
-		args = append(args, filterArgs...)
+		sqlText := attributeKeysSQL(extra, attrKeysSampleRows, absolute)
+		// Args layout: span(time…, filter-args...), resource(time…, filter-args...),
+		// limit. "time…" is one arg on the relative path and two on the
+		// absolute one — the branches must stay symmetric or the positional
+		// binds shift and the second branch silently reads the wrong window.
+		var timeArgs []any
+		if absolute {
+			timeArgs = []any{absFrom, absTo}
+		} else {
+			timeArgs = []any{int64(since.Seconds())}
+		}
+		args := []any{}
+		for range 2 {
+			args = append(args, timeArgs...)
+			args = append(args, filterArgs...)
+		}
 		args = append(args, limit)
 
 		rows, err := s.store.Conn().Query(ctx, sqlText, args...)
@@ -3535,27 +3570,45 @@ const attrValuesSampleRows = 200_000
 // sample-relative — used only to order keys by rough popularity, never as exact
 // usage figures. `extra` is the optional filter fragment, already prefixed with
 // " AND " (empty when no /explore filter is set).
-func attributeKeysSQL(extra string, sampleRows int) string {
+// v0.9.969 (UX denetimi Ö15) — `absolute` switches the time predicate from
+// the now()-anchored duration to explicit bounds.
+//
+// The relative form can only say "the last N", so a BRUSHED window is
+// unreachable by construction: the client could only send the window's
+// LENGTH, and the server then scanned that length ending NOW. An operator
+// who zoomed into a 30-minute spike yesterday got the attribute keys of the
+// last 30 minutes — not a narrower answer, a DIFFERENT one, and silently: a
+// key that exists all over the incident simply is not offered, which reads
+// as "no such attribute" (the exact misreading Ö14c already fixed for
+// window LENGTH).
+//
+// Both union branches take the same shape, so the arg layout stays
+// symmetric: 2 args per branch when absolute, 1 when relative.
+func attributeKeysSQL(extra string, sampleRows int, absolute bool) string {
+	when := "time >= now() - toIntervalSecond(?)"
+	if absolute {
+		when = "time >= ? AND time <= ?"
+	}
 	return fmt.Sprintf(`
 		SELECT scope, k, count() AS c FROM (
 			SELECT 'span' AS scope, arrayJoin(attr_keys) AS k
 			FROM (
 				SELECT attr_keys FROM spans
-				WHERE time >= now() - toIntervalSecond(?)%s
+				WHERE %s%s
 				LIMIT %d
 			)
 			UNION ALL
 			SELECT 'resource' AS scope, arrayJoin(res_keys) AS k
 			FROM (
 				SELECT res_keys FROM spans
-				WHERE time >= now() - toIntervalSecond(?)%s
+				WHERE %s%s
 				LIMIT %d
 			)
 		)
 		GROUP BY scope, k
 		ORDER BY c DESC
 		LIMIT ?
-		SETTINGS max_execution_time = 25`, extra, sampleRows, extra, sampleRows)
+		SETTINGS max_execution_time = 25`, when, extra, sampleRows, when, extra, sampleRows)
 }
 
 // getAttributeValues returns the most-frequent values observed for a

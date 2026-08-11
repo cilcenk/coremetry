@@ -18,6 +18,7 @@ const FAILING_TRACE_COLS: DataTableColumn<EndpointFailingTrace>[] = [
   { id: 'duration', label: 'Duration', sortValue: t => t.durationMs, numeric: true, width: 92 },
 ];
 import { trimHistogram, type EndpointRef } from './endpointParam';
+import { serviceHref } from '@/lib/serviceHref';
 
 // detailSections — the /endpoint page's body (v0.9.839).
 //
@@ -629,7 +630,7 @@ export function CallersSection({ refObj, from, to, env, cluster }: {
                     <td style={{
                       overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                     }} title={r.service}>
-                      <Link to={`/service?name=${encodeURIComponent(r.service)}`}
+                      <Link to={serviceHref(r.service, { range: { fromNs: from, toNs: to } })}
                         className="mono" style={{ fontSize: 11.5 }}>
                         {r.service}
                       </Link>

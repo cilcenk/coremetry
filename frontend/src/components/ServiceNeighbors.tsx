@@ -5,7 +5,8 @@ import { Spinner } from './Spinner';
 import { DisclosureButton } from '@/components/ui';
 import { api } from '@/lib/api';
 import { fmtNum, type GoDuration } from '@/lib/utils';
-import type { NeighborStat } from '@/lib/types';
+import type { NeighborStat, TimeRange } from '@/lib/types';
+import { serviceHref } from '@/lib/serviceHref';
 
 // Service-level upstream / downstream summary derived from sampled
 // trace topology — no peer.service heuristic. Renders as a compact
@@ -16,8 +17,19 @@ import type { NeighborStat } from '@/lib/types';
 // Each chip carries a (×N traces · M calls) badge so the operator
 // reads call frequency at a glance. Panel starts collapsed; the
 // first open lazy-fetches the data, identical to ServiceStructure.
-export function ServiceNeighbors({ service, since = '10m', capped = false, defaultOpen = false }: {
+export function ServiceNeighbors({ service, since = '10m', capped = false, defaultOpen = false, range }: {
   service: string;
+  // v0.9.967 — the PAGE window the operator is reading, carried by every
+  // neighbour chip.
+  //
+  // Deliberately NOT `since`. That is this panel's own sampling window (a
+  // Go duration, default '10m') and '10m' is not a PRESET_SECONDS key —
+  // decodeRange accepts any non-custom string as a preset, so emitting it
+  // would silently land the destination on the 86400s fallback: a link
+  // claiming ten minutes and rendering twenty-four hours. The honest
+  // window for "open this neighbour" is the one the operator is looking
+  // at, which is also the only one that can be a brushed `custom:`.
+  range?: import('@/lib/types').TimeRange;
   since?: GoDuration;
   // v0.9.257 — true when the caller clamped `since` below the operator's
   // selected range (this panel samples raw spans; see NEIGHBORS_CAP_S in
@@ -116,6 +128,7 @@ export function ServiceNeighbors({ service, since = '10m', capped = false, defau
               fontSize: 12, flexWrap: 'wrap',
             }}>
               <Column
+                range={range}
                 label={`Upstream (${upstream.length})`}
                 items={upstream}
                 emptyText="No upstream callers"
@@ -125,6 +138,7 @@ export function ServiceNeighbors({ service, since = '10m', capped = false, defau
               <SelfChip name={service} />
               <Arrow />
               <Column
+                range={range}
                 label={`Downstream (${downstream.length})`}
                 items={downstream}
                 emptyText="No downstream callees"
@@ -138,11 +152,12 @@ export function ServiceNeighbors({ service, since = '10m', capped = false, defau
   );
 }
 
-function Column({ label, items, emptyText, align }: {
+function Column({ label, items, emptyText, align, range }: {
   label: string;
   items: NeighborStat[];
   emptyText: string;
   align: 'left' | 'right';
+  range?: TimeRange;
 }) {
   return (
     <div style={{
@@ -159,16 +174,16 @@ function Column({ label, items, emptyText, align }: {
           {emptyText}
         </span>
       ) : items.map(n => (
-        <Chip key={n.service} stat={n} />
+        <Chip key={n.service} stat={n} range={range} />
       ))}
     </div>
   );
 }
 
-function Chip({ stat }: { stat: NeighborStat }) {
+function Chip({ stat, range }: { stat: NeighborStat; range?: TimeRange }) {
   const color = seriesColor(stat.service);
   return (
-    <Link to={`/service?name=${encodeURIComponent(stat.service)}`}
+    <Link to={serviceHref(stat.service, { range })}
           style={{
             display: 'inline-flex', alignItems: 'center', gap: 8,
             padding: '4px 10px', borderRadius: 6,

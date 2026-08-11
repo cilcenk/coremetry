@@ -17,6 +17,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import { TrendDelta } from '@/components/TrendDelta';
 import { endpointDetailHref, legacyEndpointTarget } from '@/pages/endpoints/endpointParam';
 import { tracesLink } from '@/pages/endpoints/links';
+import { serviceHref } from '@/lib/serviceHref';
 import { parseColsParam, formatColsParam } from '@/pages/endpoints/endpointCols';
 import { ColumnToggle } from '@/pages/endpoints/ColumnToggle';
 import {
@@ -703,7 +704,7 @@ export default function EndpointsPage() {
                             lockstep with ENDPOINT_COLS so the colgroup and
                             body never misalign. */}
                         {visibleCols.has('service') && <td>
-                          <Link to={`/service?name=${encodeURIComponent(r.service)}`}
+                          <Link to={serviceHref(r.service, { range, env })}
                                 style={{ fontFamily: 'monospace', fontSize: 12 }}>
                             {r.service}
                           </Link>
@@ -862,7 +863,7 @@ export default function EndpointsPage() {
                               (?cols= can hide any of the 14). */}
                           <td colSpan={visibleCols.size} style={{ background: 'var(--bg0)', padding: '8px 14px' }}>
                             <DependencyStrip
-                              service={r.service}
+                              service={r.service} range={range}
                               window={dep.since} capped={dep.capped}
                               entry={depsByService[`${r.service}@${dep.since}`]} />
                           </td>
@@ -964,8 +965,16 @@ function StatusBreakdown({ r }: { r: EndpointRow }) {
 //     not the fleet totals "N spans … in the last 1h" claimed they were;
 //   · the per-service cache ignored the window, so the first-expanded range
 //     pinned that service's numbers for the rest of the session.
-function DependencyStrip({ service, window: win, capped, entry }: {
+function DependencyStrip({ service, window: win, capped, entry, range }: {
   service: string;
+  // v0.9.967 — the PAGE window, for the dep pills' service links.
+  //
+  // Deliberately NOT `win`: that is a Go duration string (rangeToSince's
+  // clamped value, e.g. '30m') and several of its values — '10m', '20m' —
+  // are not PRESET_SECONDS keys. decodeRange accepts any non-custom string
+  // as a preset, so emitting one would land the destination on the 86400s
+  // FALLBACK: a link that says 10 minutes and shows 24 hours.
+  range: import('@/lib/types').TimeRange;
   // Effective window actually queried, already clamped — always rendered, so
   // it can never drift from the data the way the old hardcoded "1h" did.
   window: string;
@@ -1012,7 +1021,7 @@ function DependencyStrip({ service, window: win, capped, entry }: {
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
         {top.map((d, i) => (
           <Link key={i}
-            to={`/service?name=${encodeURIComponent(d.service)}`}
+            to={serviceHref(d.service, { range })}
             title={`${service} → ${d.service}\n${fmtNum(d.spanCount)} call${d.spanCount === 1 ? '' : 's'} across ${fmtNum(d.traceCount)} of the ${sampledFrom} sampled traces (last ${win})`}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 6,

@@ -110,6 +110,7 @@ import { topNStep, topNWindowSec, clampTopNLimit, topNRowValue, topNMoreLabel, t
 // çağırır; kopya dallanma v0.9.790'da metric panelini geride bırakmıştı).
 import { toCoreViz } from './panelViz';
 import { tracesPivotHref } from '@/lib/pivotHref';
+import { serviceHref } from '@/lib/serviceHref';
 import { encodeFilters } from '@/lib/urlState';
 import { Link } from 'react-router-dom';
 
@@ -727,7 +728,11 @@ function topNRowHref(cfg: TopNPanelConfig, groupKey: string[], range: TimeRange)
   if (mode === 'none' || groupKey.length === 0) return null;
   if (mode === 'service') {
     if (!groupKey[0]) return null;
-    return `/service?name=${encodeURIComponent(groupKey[0])}`;
+    // v0.9.967 — the window was already in this function's signature, used
+    // by the sibling 'traces' branch two lines down (where pivotHref makes
+    // it mandatory) and simply dropped here. A dashboard is the surface
+    // most likely to be viewed on a brushed window.
+    return serviceHref(groupKey[0], { range });
   }
   const filters = topNRowFilters(cfg.groupBy, groupKey);
   return tracesPivotHref({

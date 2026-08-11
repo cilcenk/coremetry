@@ -10,6 +10,7 @@ import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, SlowQueryRow, DBStmtDetail, DBStmtCaller } from '@/lib/types';
 import { densifyTrend, type StmtRef } from './stmtParam';
+import { serviceHref } from '@/lib/serviceHref';
 
 // StmtDetailDrawer — v0.8.378 (Stage-2 slice D2). Row click on
 // /slow-queries opens this right-side drawer (shell mirrors the
@@ -137,7 +138,7 @@ export function StmtDetailDrawer({ refObj, row, range, onClose }: {
             <>
               <SummarySection detail={detail} compare={compare} />
               <TrendSection detail={detail} />
-              <CallersSection detail={detail} compare={compare} />
+              <CallersSection detail={detail} compare={compare} range={range} />
               <ExemplarsSection detail={detail} />
             </>
           )}
@@ -295,7 +296,12 @@ const CALLER_COLS: DataTableColumn<DBStmtCaller>[] = [
 // CallersSection — which services issue this statement class
 // (service_name is a real dimension in db_statement_summary_5m, so this
 // is a pure MV read). Top 20 by total wall-clock time.
-function CallersSection({ detail, compare }: { detail: DBStmtDetail; compare: boolean }) {
+function CallersSection({ detail, compare, range }: {
+  detail: DBStmtDetail; compare: boolean;
+  // v0.9.967 — the drawer's window. Its whole point is "vs prior"; sending
+  // the operator to a service page on a DIFFERENT window undoes that.
+  range: TimeRange;
+}) {
   const rows = detail.callers ?? [];
   const dt = useDataTable<DBStmtCaller>({
     storageKey: 'dbstmt-callers',
@@ -326,7 +332,7 @@ function CallersSection({ detail, compare }: { detail: DBStmtDetail; compare: bo
                 return (
                   <tr key={c.service}>
                     <td>
-                      <Link to={`/service?name=${encodeURIComponent(c.service)}`}
+                      <Link to={serviceHref(c.service, { range })}
                         className="mono" style={{ fontSize: 11 }}>
                         {c.service}
                       </Link>

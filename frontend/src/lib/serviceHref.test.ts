@@ -199,17 +199,7 @@ describe('eventLifespanWindow', () => {
 // yansıtmayı sürdürür.
 const HANDROLLED_ALLOWLIST = new Set([
   'components/CommandPalette.tsx',
-  'components/DependenciesTable.tsx',
-  'components/ServiceNeighbors.tsx',
-  'components/dashboard/PanelRenderer.tsx',
-  'components/topology/FocusedNeighborhood.tsx',
-  'features/dependencies/DetailDrawer.tsx',
   'features/dependencies/panels/shared.tsx',
-  'pages/DatabaseDetail.tsx',
-  'pages/EndpointDetail.tsx',
-  'pages/Endpoints.tsx',
-  'pages/endpoints/detailSections.tsx',
-  'pages/slowqueries/StmtDetailDrawer.tsx',
 ]);
 
 // Bu dalgada geçirilen olay-bağlamlı siteler. Bir daha el-yapımı link
@@ -253,6 +243,22 @@ const CONVERTED = [
   'features/anomalies/streams.tsx',
   'pages/Events.tsx',
   'pages/Incident.tsx',
+  // v0.9.967 — pencereyi PROP olarak alan / URL'de tutan siteler. İkisi
+  // GÖRÜNÜR bir tuzak taşıyordu: ServiceNeighbors'ın `since`i ve Endpoints
+  // dep şeridinin `window`u Go süre dizgisi ('10m'/'20m') ve bunlar
+  // PRESET_SECONDS anahtarı DEĞİL — decodeRange custom olmayan her dizgeyi
+  // preset kabul ettiğinden, onları range olarak yazmak hedefi 86400s
+  // yedeğine düşürürdü: "10 dakika" diyen, 24 saat gösteren link.
+  'components/DependenciesTable.tsx',
+  'components/ServiceNeighbors.tsx',
+  'components/dashboard/PanelRenderer.tsx',
+  'components/topology/FocusedNeighborhood.tsx',
+  'features/dependencies/DetailDrawer.tsx',
+  'pages/DatabaseDetail.tsx',
+  'pages/EndpointDetail.tsx',
+  'pages/Endpoints.tsx',
+  'pages/endpoints/detailSections.tsx',
+  'pages/slowqueries/StmtDetailDrawer.tsx',
 ];
 
 const SRC = join(__dirname, '..');
@@ -270,16 +276,35 @@ function sourceFiles(dir: string, rel = ''): string[] {
   return out;
 }
 
-/** Files with a hand-rolled `/service?name=` outside comments. */
+/** Files with a hand-rolled `/service?name=` outside comments.
+ *
+ * v0.9.967 — the comment test used to be "line starts with // or *", which
+ * misses the CONTINUATION lines of a block comment that don't happen to be
+ * star-prefixed. FocusedNeighborhood documents the v0.9.958 bug by quoting the
+ * bad URL inside a JSX block comment, and the scanner read that prose as a
+ * live call site — a false positive that can only be "fixed" by deleting the
+ * explanation, which is exactly backwards.
+ *
+ * Entering a block comment REQUIRES the trimmed line to start with the opener
+ * (`/*` or `{/*`). A `/*` appearing mid-line is inside a string or a regex,
+ * and treating it as a comment start would let a real call site hide behind a
+ * literal — the gate must never get looser than the code it guards.
+ */
 function handRolledSites(): Set<string> {
   const hits = new Set<string>();
   for (const rel of sourceFiles(SRC)) {
     const text = readFileSync(join(SRC, rel), 'utf8');
     if (!text.includes('/service?name=')) continue;
-    const live = text.split('\n').some(l => {
+    let inBlock = false;
+    let live = false;
+    for (const l of text.split('\n')) {
       const s = l.trim();
-      return l.includes('/service?name=') && !s.startsWith('//') && !s.startsWith('*');
-    });
+      const opensBlock = !inBlock && (s.startsWith('/*') || s.startsWith('{/*'));
+      const commented = inBlock || opensBlock || s.startsWith('//') || s.startsWith('*');
+      if (!commented && l.includes('/service?name=')) { live = true; break; }
+      if (opensBlock) inBlock = true;
+      if (inBlock && s.includes('*/')) inBlock = false;
+    }
     if (live) hits.add(rel);
   }
   return hits;

@@ -9,6 +9,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { TimeRange, DBDetail, MessagingDetail, SpanMetricSeries, DBOpStat } from '@/lib/types';
 import { Stat, statementTracesHref } from './panels/shared';
+import { serviceHref } from '@/lib/serviceHref';
 import { OraclePanel } from './panels/OraclePanel';
 import { PostgresPanel } from './panels/PostgresPanel';
 import { MySQLPanel } from './panels/MySQLPanel';
@@ -384,18 +385,18 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
             title={`Publishers · ${producers.length} ${producers.length === 1 ? 'row' : 'rows'}`}
             rows={producers}
             emptyMessage="No producer spans for this destination in the window."
-            tone="producer" />
+            tone="producer" range={range} />
           <CallerSection
             title={`Consumers · ${consumers.length} ${consumers.length === 1 ? 'row' : 'rows'}`}
             rows={consumers}
             emptyMessage="No consumer spans for this destination in the window."
-            tone="consumer" />
+            tone="consumer" range={range} />
           {otherClients.length > 0 && (
             <CallerSection
               title={`Other clients · ${otherClients.length}`}
               rows={otherClients}
               emptyMessage=""
-              tone="other" />
+              tone="other" range={range} />
           )}
         </>
       ) : (
@@ -403,7 +404,7 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
           title={`By client (service + pod) · ${callers.length} ${callers.length === 1 ? 'row' : 'rows'}`}
           rows={callers}
           emptyMessage="No callers in this window."
-          tone="db" />
+          tone="db" range={range} />
       )}
 
       {/* Top operations — for DBs the first 80 chars of
@@ -523,11 +524,15 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
 // search filter is preserved and feeds filtered rows into the
 // primitive; sort + column-resize layout persist per-tone.
 
-function CallerSection({ title, rows, emptyMessage, tone }: {
+function CallerSection({ title, rows, emptyMessage, tone, range }: {
   title: string;
   rows: import('@/lib/types').DBCallerBreakdown[];
   emptyMessage: string;
   tone: 'producer' | 'consumer' | 'other' | 'db';
+  // v0.9.967 — the drawer's own window, threaded down purely so the caller
+  // pill can carry it. These rows were COMPUTED over this window; opening
+  // the service on a different one contradicts the numbers just read.
+  range: TimeRange;
 }) {
   type Caller = import('@/lib/types').DBCallerBreakdown;
   const dotColor =
@@ -626,7 +631,7 @@ function CallerSection({ title, rows, emptyMessage, tone }: {
                   <tr key={`${c.service}|${c.pod}|${c.role ?? ''}|${i}`}
                       style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
                     <td>
-                      <Link to={`/service?name=${encodeURIComponent(c.service)}`}
+                      <Link to={serviceHref(c.service, { range })}
                             style={{ fontFamily: 'monospace', fontSize: 12 }}>
                         {c.service}
                       </Link>

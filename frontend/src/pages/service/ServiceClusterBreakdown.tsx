@@ -5,6 +5,7 @@ import { api } from '@/lib/api';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { serviceHref } from '@/lib/serviceHref';
 
 // ServiceClusterBreakdown — sortable RED stats per cluster the
 // service emitted spans from. Renders silently when there's
@@ -139,8 +140,15 @@ export function ServiceClusterBreakdown({ service, range }: {
                         // raporu); sekme ad-tabanlı yedek zincirle her
                         // durumda eşleştirir, ?icluster= çipi hazır gelir.
                         <Link
-                          to={`/service?name=${encodeURIComponent(service)}&tab=infra` +
-                              `&icluster=${encodeURIComponent(c.cluster)}`}
+                          // v0.9.965 — pencere de taşınıyor. Bu link
+                          // range'i DÜŞÜRÜYORDU: özel (fırçalanmış) bir
+                          // pencerede küme kırılımını inceleyen operatör
+                          // "pods →" dediğinde Infrastructure sekmesi
+                          // sticky "şimdi" penceresiyle açılıyor, incelenen
+                          // olay kadraj dışında kalıyordu.
+                          to={serviceHref(service, {
+                            range, tab: 'infra', params: { icluster: c.cluster },
+                          })}
                           style={{ fontSize: 11, color: 'var(--accent2)' }}
                           title={`Pod CPU/memory — ${c.cluster} (Infrastructure tab)`}>
                           pods →

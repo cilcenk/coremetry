@@ -11,6 +11,7 @@ import type { OperationSummary, DBQueryStat, TimeRange } from '@/lib/types';
 import { operationTracesHref } from '@/lib/pivotHref';
 import { tracesURL } from '@/components/DBQueriesPanel';
 import { databasesFilterHref } from '@/pages/databases/databaseParam';
+import { serviceHref } from '@/lib/serviceHref';
 
 // Service Overview tables (v0.7.96) — the compact Operations + Top DB
 // statements pair from the design handoff. Both use the shared
@@ -50,7 +51,6 @@ export function overviewOpHref(service: string, range: TimeRange, op: string): s
 export function OpsCard({ service, range, operations }: {
   service: string; range: TimeRange; operations: OperationSummary[];
 }) {
-  const rangeParam = encodeRange(range);
   const navigate = useNavigate();
   // Drill an operation into /traces (service + name pre-filtered), the same
   // destination the full Operations tab uses. onOpen also lights up j/k/Enter
@@ -72,7 +72,7 @@ export function OpsCard({ service, range, operations }: {
           {/* v0.9.211 — carry &tab=operations. Without it the link resolves
               to the default tab, i.e. straight back to the Overview the
               operator clicked "View all" from. */}
-          <Link className="ov-sub" to={`/service?name=${encodeURIComponent(service)}&range=${rangeParam}&tab=operations`}>
+          <Link className="ov-sub" to={serviceHref(service, { range, tab: 'operations' })}>
             View all {operations.length} →
           </Link>
         </span>
@@ -149,7 +149,7 @@ export function DbCard({ service, range, from, to }: { service: string; range: T
         {rows.length > 0 && (
           <span className="ov-right">
             <Link className="ov-sub"
-              to={`/service?name=${encodeURIComponent(service)}&range=${encodeRange(range)}&tab=details#dtl-db`}>
+              to={serviceHref(service, { range, tab: 'details', hash: 'dtl-db' })}>
               View all {rows.length} →
             </Link>
           </span>

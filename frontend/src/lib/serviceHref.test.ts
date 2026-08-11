@@ -151,14 +151,7 @@ const HANDROLLED_ALLOWLIST = new Set([
   'pages/Endpoints.tsx',
   'pages/Events.tsx',
   'pages/Incident.tsx',
-  'pages/Pod.tsx',
   'pages/endpoints/detailSections.tsx',
-  'pages/service/EndpointPeekDrawer.tsx',
-  'pages/service/OperationsTable.tsx',
-  'pages/service/OverviewTables.tsx',
-  'pages/service/ServiceClusterBreakdown.tsx',
-  'pages/service/ServiceFlow.tsx',
-  'pages/service/ServiceSignalTabs.tsx',
   'pages/slowqueries/StmtDetailDrawer.tsx',
 ]);
 
@@ -182,6 +175,17 @@ const CONVERTED = [
   'pages/ServiceMap.tsx',
   'pages/Services.tsx',
   'pages/SlowQueries.tsx',
+  // v0.9.965 — servis-sayfası ailesi. Beşi pencereyi ZATEN taşıyordu (el
+  // yazımı string, üretici değil); ikisi DÜŞÜRÜYORDU ve bu gerçek bir
+  // kayıptı: ServiceClusterBreakdown'ın "pods →" pivotu ve Pod'un GERİ
+  // linki. Bir geri linkinin pencereyi değiştirmesi, geri linki olmaktan
+  // çıkması demektir.
+  'pages/Pod.tsx',
+  'pages/service/EndpointPeekDrawer.tsx',
+  'pages/service/OperationsTable.tsx',
+  'pages/service/OverviewTables.tsx',
+  'pages/service/ServiceClusterBreakdown.tsx',
+  'pages/service/ServiceSignalTabs.tsx',
 ];
 
 const SRC = join(__dirname, '..');

@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import type { EndpointRow, TimeRange } from '@/lib/types';
 import { encodeRange } from '@/lib/urlState';
 import { encodeEndpointParam } from '@/pages/endpoints/endpointParam';
+import { serviceHref } from '@/lib/serviceHref';
 
 // EndpointPeekDrawer — v0.9.379, redesign D3 (mockup af7419e5).
 // Top endpoints satırına tık = sağdan 380px peek: mini RED üçlüsü +
@@ -121,7 +122,7 @@ export function EndpointPeekDrawer({ service, range, row, onClose }: {
           <Link to={tracesHref} style={{ textDecoration: 'none' }}>
             <Button variant="secondary" size="sm">Traces →</Button>
           </Link>
-          <Link to={`/service?name=${encodeURIComponent(service)}&range=${rangeParam}&tab=operations`} style={{ textDecoration: 'none' }}>
+          <Link to={serviceHref(service, { range, tab: 'operations' })} style={{ textDecoration: 'none' }}>
             <Button variant="secondary" size="sm">Operations&#39;ta aç</Button>
           </Link>
         </div>

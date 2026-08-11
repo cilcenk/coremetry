@@ -14,6 +14,7 @@ import { LogTable } from '@/components/LogTable';
 import { TopologyPillGraph, type PillNode, type PillEdge, type PillLevel } from '@/components/TopologyPillGraph';
 import { FocusedNeighborhood } from '@/components/topology/FocusedNeighborhood';
 import { parseTopologyHops, topologyHopsUrlValue } from './topologyHops';
+import { serviceHref } from '@/lib/serviceHref';
 
 // Service-scoped Logs / Topology tabs — the design's tab strip beyond
 // Overview/Operations/Details. All read-only, all reuse the app-wide
@@ -372,7 +373,7 @@ export function ServiceTopologyTab({ service, range }: { service: string; range:
           errorsOnly={errorsOnly}
           onHops={setHops}
           onErrorsOnly={setErrorsOnly}
-          onRecenter={(s) => navigate(`/service?name=${encodeURIComponent(s)}&tab=topology&range=${rangeParam}`)}
+          onRecenter={(s) => navigate(serviceHref(s, { range, tab: 'topology' }))}
           onClear={() => navigate(`/topology?range=${rangeParam}`)}
         />
       </div>

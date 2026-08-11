@@ -395,6 +395,12 @@ export interface MessagingDetail {
   system: string;
   cluster: string;
   destination: string;
+  // v0.9.973 — cluster GÖNDERİLMEDİ, sunucu "(default)" VARSAYDI.
+  // Cluster yüklemi tam eşitlik olduğu için çok-cluster kurulumda bu
+  // varsayım, canlı bir topic için SIFIRLANMIŞ çekmece üretir — ve
+  // sıfırlanmış çekmece "bu topic boşta" ile ayırt edilemez. Bayrak
+  // ikisini ayırt ettirir. omitempty: yokluğu "varsayım yok" demek.
+  assumedCluster?: boolean;
   spanCount: number;
   errorCount: number;
   errorRate: number;

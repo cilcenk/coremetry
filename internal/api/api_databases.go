@@ -286,25 +286,48 @@ func mergeMessagingPrior(cur, prior []chstore.MessagingInstance) {
 }
 
 // getMessagingDetail is the parallel handler for queues /
-// topics. Takes ?system=&cluster=&destination=&from=&to=. The
-// cluster query param defaults to "(default)" for single-
-// cluster deployments where the SPA hasn't been updated yet —
-// matches the clusterExpr fallback in the store.
+// topics. Takes ?system=&cluster=&destination=&from=&to=.
+//
+// v0.9.973 — the empty-cluster default is no longer SILENT. It used to
+// read "defaults to (default) for single-cluster deployments where the
+// SPA hasn't been updated yet", which understated it: GetMessagingDetail
+// filters cluster by EXACT EQUALITY, so on a multi-cluster install the
+// assumption doesn't pick the wrong topic — it returns a ZEROED drawer
+// for a topic that is very much alive. The operator then reads "no
+// traffic" where the truth is "you didn't say which cluster".
+//
+// Kept as a default rather than a 400 on purpose: the SPA always sends
+// all three fields (destinationParam.ts guards it), so a 400 would only
+// ever break hand-built API calls, and there may be non-SPA consumers.
+// The lie is what gets fixed, not the tolerance — the envelope now
+// carries assumedCluster so the surface can say so.
 func (s *Server) getMessagingDetail(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	system := q.Get("system")
 	dest := q.Get("destination")
 	cluster := q.Get("cluster")
+	assumedCluster := false
 	if cluster == "" {
 		cluster = "(default)"
+		assumedCluster = true
 	}
 	if system == "" {
 		http.Error(w, `{"error":"system required"}`, http.StatusBadRequest)
 		return
 	}
 	from, to := parseFromTo(r, time.Hour)
-	key := fmt.Sprintf("msg-detail:%s:%s:%s:%s", system, cluster, dest, cacheBucket(from, to))
+	// assumedCluster is IN THE KEY: an explicit ?cluster=(default) resolves
+	// to the same cluster string but is NOT an assumption, so the two answers
+	// differ by one field. Sharing a key would let whichever ran first decide
+	// whether the other one admits the guess — the v0.5.187 cross-poisoning
+	// class, one boolean wide.
+	key := fmt.Sprintf("msg-detail:%s:%s:%s:%t:%s", system, cluster, dest, assumedCluster, cacheBucket(from, to))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetMessagingDetail(ctx, system, cluster, dest, from, to)
+		d, err := s.store.GetMessagingDetail(ctx, system, cluster, dest, from, to)
+		if err != nil || d == nil {
+			return d, err
+		}
+		d.AssumedCluster = assumedCluster
+		return d, nil
 	})
 }

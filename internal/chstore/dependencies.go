@@ -495,6 +495,15 @@ type MessagingDetail struct {
 	System      string  `json:"system"`
 	Cluster     string  `json:"cluster"`
 	Destination string  `json:"destination"`
+	// AssumedCluster — v0.9.973. The caller sent NO cluster and the handler
+	// filled in "(default)". Set by the API layer, never by this store: only
+	// the handler knows whether the value was supplied or guessed.
+	//
+	// It matters because the cluster predicate below is EXACT EQUALITY. On a
+	// multi-cluster install the guess yields a zeroed drawer for a topic that
+	// is actually busy, and a zeroed drawer is indistinguishable from "this
+	// topic is idle". The flag lets the surface say which one it is.
+	AssumedCluster bool `json:"assumedCluster,omitempty"`
 	SpanCount   uint64  `json:"spanCount"`
 	ErrorCount  uint64  `json:"errorCount"`
 	ErrorRate   float64 `json:"errorRate"`

@@ -179,8 +179,28 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
   const e2eSeries = e2e?.series ?? [];
   const e2eLagSeries = kindSeries(e2eSeries, p => p.avgMs, 'E2E lag');
 
+  // v0.9.973 — sunucu cluster'ı VARSAYDI (istek cluster taşımıyordu).
+  // Cluster yüklemi TAM EŞİTLİK, yani çok-cluster kurulumda aşağıdaki
+  // her sayı canlı bir topic için sıfır olabilir; sıfırlanmış çekmece
+  // "bu topic boşta" ile ayırt edilemez. Bunu söylemek, sessizce sıfır
+  // göstermekten iyidir.
+  const assumedCluster = kind === 'queue' && 'assumedCluster' in data
+    ? (data as MessagingDetail).assumedCluster === true
+    : false;
+
   return (
     <div>
+      {assumedCluster && (
+        <div style={{
+          marginBottom: 12, padding: '6px 10px', fontSize: 11,
+          color: 'var(--text2)', background: 'var(--bg2)',
+          border: '1px solid var(--border)', borderRadius: 4,
+        }}>
+          Cluster belirtilmedi — <span className="mono">(default)</span> varsayıldı.
+          Çok-cluster bir kurulumda bu topic başka bir cluster'da yaşıyorsa
+          aşağıdaki sayılar boş görünür.
+        </div>
+      )}
       {/* v0.9.257 (operator-reported, second round: "messaging
           sayfasından tracelere ulaşamıyorum bulamıyorum") — v0.9.256
           repaired the link but left it UNFINDABLE. A row click opens

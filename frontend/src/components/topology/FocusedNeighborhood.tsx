@@ -10,6 +10,7 @@ import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
 import { nodeDetailHref } from '@/components/topology/nodeDetailHref';
+import { serviceHref } from '@/lib/serviceHref';
 
 // FocusedNeighborhood — the focused topology graph (service-detail Topology
 // tab). Since v0.8.294 the neighborhood is walked SERVER-side
@@ -341,7 +342,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           )}
           {hoverNode.kind === 'service' && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-              <Link to={`/service?name=${encodeURIComponent(hoverNode.name)}`} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>Open service →</Link>
+              <Link to={serviceHref(hoverNode.name, { range })} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>Open service →</Link>
               {/* v0.9.381 (D5) — kenar pivotunun düğüm hali: odak VE bu
                   komşuyu birlikte İÇEREN trace'ler (Traces'ın mevcut
                   ?services= requireServices filtresi). Etiket bilerek

@@ -22,6 +22,7 @@ import { api } from '@/lib/api';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { dbTracesHref } from '@/lib/pivotHref';
+import { serviceHref } from '@/lib/serviceHref';
 import { fmtNum, timeRangeToNs } from '@/lib/utils';
 import { StmtDetailDrawer } from '@/pages/slowqueries/StmtDetailDrawer';
 import { decodeStmtParam, encodeStmtParam } from '@/pages/slowqueries/stmtParam';
@@ -290,7 +291,7 @@ export default function DatabaseDetailPage() {
               display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(340px, 1fr))',
               gap: 12,
             }}>
-              <CallersCard callers={d.callers ?? []} />
+              <CallersCard callers={d.callers ?? []} range={range} />
 
               {/* TOP STATEMENTS — v0.9.846 moved up into the grid, taking
                   the cell "Waits & locks" used to hold. The operator does
@@ -485,7 +486,12 @@ const CALLER_COLS: DataTableColumn<DBCallerBreakdown>[] = [
 // in v0.9.839. Impact = calls × avg, the Elastic-APM reading the drawer
 // sorted by: a 200ms call made 10k times outweighs a 5s call made
 // twice for cumulative load on the backend.
-function CallersCard({ callers }: { callers: DBCallerBreakdown[] }) {
+function CallersCard({ callers, range }: {
+  callers: DBCallerBreakdown[];
+  // v0.9.967 — the page window, so a caller pill opens the service on the
+  // same slice these impact numbers were computed over.
+  range: import('@/lib/types').TimeRange;
+}) {
   const total = useMemo(
     () => callers.reduce((s, c) => s + c.spanCount * c.avgDurationMs, 0),
     [callers]);
@@ -516,7 +522,7 @@ function CallersCard({ callers }: { callers: DBCallerBreakdown[] }) {
                     style={{ contentVisibility: 'auto', containIntrinsicSize: 'auto 32px' }}>
                     <td style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
                       title={c.service}>
-                      <Link to={`/service?name=${encodeURIComponent(c.service)}`}
+                      <Link to={serviceHref(c.service, { range })}
                         className="mono" style={{ fontSize: 11.5 }}>
                         {c.service}
                       </Link>

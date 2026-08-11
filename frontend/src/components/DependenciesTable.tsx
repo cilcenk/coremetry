@@ -12,6 +12,7 @@ import { msgP99Delta } from '@/lib/msgBalance';
 import { useDataTable, DataTableHead, DataTableColgroup } from './DataTable';
 import { DetailDrawer } from '@/features/dependencies/DetailDrawer';
 import type { DataTableColumn } from '@/lib/dataTable';
+import { serviceHref } from '@/lib/serviceHref';
 import type { TimeRange, DBTrend } from '@/lib/types';
 
 // Row is the shape both /databases and /messaging hand to this
@@ -649,7 +650,7 @@ export function DependenciesTable({
                         ? <span style={{ color: 'var(--text3)' }}>—</span>
                         : r.callers.slice(0, 3).map((c, idx) => (
                             <span key={c}>
-                              <Link to={`/service?name=${encodeURIComponent(c)}`}
+                              <Link to={serviceHref(c, { range })}
                                     style={{ fontFamily: 'monospace' }}>{c}</Link>
                               {idx < Math.min(2, r.callers.length - 1) && <span style={{ color: 'var(--text3)' }}>, </span>}
                             </span>

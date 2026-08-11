@@ -13,6 +13,7 @@ import {
   parseEndpointPageRef, endpointSearchHint, type EndpointRef,
 } from '@/pages/endpoints/endpointParam';
 import { tracesLink, exploreLink } from '@/pages/endpoints/links';
+import { serviceHref } from '@/lib/serviceHref';
 import { MetricTile } from '@/pages/endpoints/MetricTile';
 import { bucketsToSeries } from '@/pages/endpoints/series';
 import {
@@ -139,7 +140,7 @@ export default function EndpointDetailPage() {
             title={refObj.path}>
             {refObj.path}
           </span>
-          <Link to={`/service?name=${encodeURIComponent(refObj.service)}`}
+          <Link to={serviceHref(refObj.service, { range, env })}
             className="mono" style={{ fontSize: 12 }}>
             {refObj.service} →
           </Link>
@@ -165,7 +166,7 @@ export default function EndpointDetailPage() {
               title="Open this route's p99 in Explore — charted from the metric rollups, where you can add dimensions or compare against another query.">
               Explore →
             </Link>
-            <Link to={`/service?name=${encodeURIComponent(refObj.service)}`}>Service →</Link>
+            <Link to={serviceHref(refObj.service, { range, env })}>Service →</Link>
           </span>
         </div>
 

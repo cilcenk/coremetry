@@ -901,7 +901,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           to open the Details tab, moved here v0.8.366 (operator: the
           Details version "daha güzel gösteriyor"); the flat two-column
           Neighbors block it replaces is gone. Full graph on /topology. */}
-      <ServiceNeighbors service={service} since={nb.since} capped={nb.capped} defaultOpen />
+      <ServiceNeighbors service={service} since={nb.since} capped={nb.capped} range={range} defaultOpen />
 
       {/* AI Analizi — auto-sends this service + selected window (v0.8.89). */}
       <AIAnalysisPanel service={service} rangeS={Math.round((to - from) / 1e9)} />

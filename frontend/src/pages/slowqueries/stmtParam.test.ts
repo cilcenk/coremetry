@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { encodeStmtParam, decodeStmtParam, densifyTrend } from './stmtParam';
+import { encodeStmtParam, decodeStmtParam, densifyTrend, stmtDetailHref } from './stmtParam';
 
 // stmtParam.test.ts — v0.8.378 (Stage-2 slice D2). Pins the `?stmt=` URL
 // codec for the /slow-queries statement detail drawer: decimal-string
@@ -83,5 +83,67 @@ describe('densifyTrend', () => {
     const toNs = 90 * 24 * 3600 * 1e9; // 90d at 300s would be 25 920
     const d = densifyTrend([P(0, 1)], fromNs, toNs, 300);
     expect(d.calls).toHaveLength(400);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// stmtDetailHref — v0.9.963 (UX denetimi G1-b).
+//
+// The service DB panel dead-ended at /traces: the statement detail drawer
+// (per-service callers, trend, vs-prior) was reachable only by clicking a row
+// on the FLEET catalog, so an operator looking at their own service had to
+// re-find their SQL by eye in a cross-service list. This builder is the door.
+//
+// Two failure shapes it must not produce:
+//   • a link for a row with no identity — `?stmt=undefined` opens
+//     /slow-queries with the drawer silently shut ("the button is broken");
+//   • a link without a window — the drawer's trend and vs-prior deltas then
+//     answer a different hour than the panel the operator clicked from
+//     (the tracesPivotHref class, v0.9.208/213).
+// ─────────────────────────────────────────────────────────────────────────────
+describe('stmtDetailHref', () => {
+  const q = (href: string) => new URLSearchParams(href.slice(href.indexOf('?') + 1));
+
+  it('carries the identity and the window', () => {
+    const href = stmtDetailHref({ hash: '4242', system: 'postgresql' },
+      { fromNs: 1_700_000_000_000_000_000, toNs: 1_700_000_060_000_000_000 })!;
+    expect(href.startsWith('/slow-queries?')).toBe(true);
+    const p = q(href);
+    expect(decodeStmtParam(p.get('stmt'))).toEqual({ hash: '4242', system: 'postgresql' });
+    expect(p.get('range')).toBe('custom:1700000000000-1700000060000');
+  });
+
+  it('emits a ref the page\'s own decoder accepts — both shapes', () => {
+    for (const system of ['', 'oracle', 'weird|engine']) {
+      const href = stmtDetailHref({ hash: '9', system }, { preset: '6h' })!;
+      expect(decodeStmtParam(q(href).get('stmt')), system).toEqual({ hash: '9', system });
+    }
+  });
+
+  it('a TimeRange preset rides through unchanged', () => {
+    expect(q(stmtDetailHref({ hash: '9' }, { preset: '24h' })!).get('range')).toBe('24h');
+  });
+
+  it('full uint64 precision survives the URL', () => {
+    const href = stmtDetailHref({ hash: '18446744073709551615' }, { preset: '1h' })!;
+    expect(decodeStmtParam(q(href).get('stmt'))!.hash).toBe('18446744073709551615');
+  });
+
+  it('NULL when the row has no usable identity — caller hides the affordance', () => {
+    // undefined = pre-D1 cache entry (stmtHash is optional on DBQueryStat);
+    // '0' = the backend's "no statement" sentinel, never a real class.
+    for (const hash of [undefined, '', '   ', '0', '000', 'abc', '1x', '123456789012345678901']) {
+      expect(stmtDetailHref({ hash }, { preset: '1h' }), String(hash)).toBeNull();
+    }
+  });
+
+  it('a window decodeRange would reject is DROPPED, not written', () => {
+    // Writing it would show a confident `custom:` in the address bar while
+    // the drawer loads the sticky window — the hardest failure to notice.
+    for (const w of [{ fromNs: -1e9, toNs: 5e9 }, { fromNs: 5e9, toNs: 5e9 }, { fromNs: 6e9, toNs: 5e9 }]) {
+      const p = q(stmtDetailHref({ hash: '9' }, w)!);
+      expect(p.has('range'), JSON.stringify(w)).toBe(false);
+      expect(p.get('stmt')).toBe('9'); // …but the identity still ships
+    }
   });
 });

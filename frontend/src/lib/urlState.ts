@@ -13,6 +13,26 @@ export function encodeRange(r: TimeRange): string {
   return r.preset;
 }
 
+// windowRangeParam — v0.9.963. The one place a window becomes a `range=`
+// value, for every cross-page link builder (serviceHref, stmtDetailHref, …).
+//
+// Two rules the builders kept re-deriving:
+//   • ns → ms floors `from` and CEILS `to`, so rounding never NARROWS the
+//     window. A truncated `to` drops the newest bucket, which on an event
+//     window is the part the operator came to see.
+//   • A window decodeRange would REJECT emits '' rather than a token. A
+//     rejected `custom:` renders a confident window in the address bar while
+//     the page silently draws the sticky one — the hardest failure to notice.
+//     Reachable in practice: an event window's lead-in can push `from` below
+//     the epoch on a degenerate timestamp.
+export function windowRangeParam(w: TimeRange | { fromNs: number; toNs: number }): string {
+  if ('preset' in w) return encodeRange(w);
+  const fromMs = Math.floor(w.fromNs / 1e6);
+  const toMs = Math.ceil(w.toNs / 1e6);
+  if (!(fromMs > 0) || !(toMs > fromMs)) return '';
+  return encodeRange({ preset: 'custom', fromMs, toMs });
+}
+
 export function decodeRange(s: string | null | undefined, fallback: TimeRange): TimeRange {
   if (!s) return fallback;
   if (s.startsWith('custom:')) {

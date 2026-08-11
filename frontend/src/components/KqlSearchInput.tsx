@@ -169,7 +169,16 @@ export function KqlSearchInput({
   // (see api.go getLogsFieldValues) absorbs the rapid bursts.
   useEffect(() => {
     if (!token) {
-      setOpen(false);
+      // v0.9.971 — `nameMode` ŞART. Bu iki effect aynı commit'te `open`u
+      // ters yönde yazıyor ve React onları BİLDİRİM SIRASINDA koşturuyor;
+      // koşulsuz `setOpen(false)` bir üstteki ad effect'inin `true`sunu
+      // eziyordu. Belirti: `level:` → `level` (iki noktayı geri silmek)
+      // alan-adı listesini açmıyor, ama sonraki tuşta açılıyordu —
+      // sonraki render'da ad effect'inin bağımlılıkları değişmediği için
+      // liste kapalı kalıyordu. `token` varken `nameMode` daima false
+      // (nameToken ':' görünce çekiliyor), yani bu bağımlılık değer
+      // tamamlamasına FAZLADAN tur ekleyemez.
+      if (!nameMode) setOpen(false);
       setValues([]);
       return;
     }
@@ -190,7 +199,7 @@ export function KqlSearchInput({
       }
     }, 180);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [token?.field, token?.valuePrefix, since]);
+  }, [token?.field, token?.valuePrefix, since, nameMode]);
 
   // v0.9.955 (F4/Ö16) — alan adını yazar ve ':' EKLER. İki nokta süs
   // değil: alan adı tek başına KQL'de SERBEST METİNDİR, yani tamamlama

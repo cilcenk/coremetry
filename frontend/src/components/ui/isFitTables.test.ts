@@ -24,6 +24,14 @@ import { resolve, join } from 'node:path';
 // da taşabilir. O durumda yatay kaydırma sayfaya çıkıyor ve yapışkan
 // filtre barı içerikle yana kayıyor (v0.9.640'ta operatörün bildirdiği
 // sızıntı). Eşiği düşürmek her zaman güvenli taraf.
+// v0.9.980 (dar ekran denetimi D2) — EŞİK ARTIK MASAÜSTÜ-YALNIZ ve bu
+// bilinçli. Yukarıdaki hesabın tamamı ("1440px dizüstü − sidebar −
+// padding") bir MASAÜSTÜ varsayımıdır: 366px'lik bir telefonda 1150px
+// zaten sığmaz, dolayısıyla eşiği düşürmek dar ekranı hiçbir zaman
+// kurtaramazdı. Dar ekran çözümü ayrı ve YAPISAL: `globals.css`in
+// `@media (max-width: 1024px)` katmanı `is-fit`e kaydırma kabını geri
+// veriyor. Bu test artık İKİSİNİ birden çiviliyor — eşik masaüstü için,
+// aşağıdaki assert dar ekran ağı için.
 const FIT_PX = 1150;
 
 const SRC = resolve(__dirname, '../..');
@@ -311,5 +319,18 @@ describe('MK3 — resize tutamağı tek kaynaktan', () => {
   it('DataTable.tsx içinde de tek bir tutamak tanımı var', () => {
     const CLS = 'col-resize' + '-handle';
     expect(dt.split(`className="${CLS}"`).length - 1).toBe(1);
+  });
+
+  // v0.9.980 — DAR EKRAN GÜVENLİK AĞI. Yukarıdaki eşik masaüstünü
+  // koruyor; 31 dosya / ~50 tabloyu telefonda ayakta tutan şey bu CSS
+  // kuralı. Silinirse hiçbir tip/lint/audit kapısı görmez ve tablolar
+  // SESSİZCE sayfayı yatay kaydırmaya döner — yapışkan filtre barı da
+  // içerikle yana kayar (v0.9.640 sızıntısının birebir tekrarı).
+  it('dar ekranda is-fit kaydırma ağı globals.css\'te MEVCUT', () => {
+    const css = readFileSync(resolve(SRC, 'styles/globals.css'), 'utf8');
+    const layer = /@media \(max-width: 1024px\) \{([\s\S]*?)\n\}/.exec(css);
+    expect(layer, '1024px katmanı kayboldu').toBeTruthy();
+    expect(layer![1]).toMatch(/\.table-wrap\.is-fit\s*\{[^}]*overflow-x:\s*auto/);
+    expect(layer![1]).toMatch(/\.table-wrap\.is-fit thead th\s*\{[^}]*top:\s*auto/);
   });
 });

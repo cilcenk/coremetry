@@ -103,7 +103,10 @@ export function EnvPicker({ applies = false }: { applies?: boolean }) {
     'Clear it with ✕ if you want it gone everywhere.';
 
   return (
-    <div className="cb-wrap" style={{ width: 150 }}>
+    // v0.9.980 — genişlik satır içindeydi; `@media` satır içi stili
+    // YENEMEZ, dolayısıyla dar ekranda daraltmak imkânsızdı. Sınıfa
+    // taşındı (globals.css `.env-pick-wrap`), değer aynı 150px.
+    <div className="cb-wrap env-pick-wrap">
       <input
         className="env-picker"
         list={listId}

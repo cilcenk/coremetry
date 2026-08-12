@@ -33,11 +33,11 @@ function z(name: string): number {
 const LADDER = [
   'sticky-cell', 'sticky-head', 'sticky-foot', 'sticky-bar',
   'handle', 'tooltip', 'app-splash', 'nav', 'dropdown', 'popover',
-  'drawer', 'drawer-panel', 'fab', 'modal', 'modal-nested', 'toast', 'debug',
+  'drawer-scrim', 'drawer', 'drawer-panel', 'fab', 'modal', 'modal-nested', 'toast', 'debug',
 ];
 
 describe('MK2 — z merdiveni', () => {
-  it('17 rung tanımlı ve KESİN artan', () => {
+  it('18 rung tanımlı ve KESİN artan', () => {
     const vals = LADDER.map(z);
     expect(vals).toEqual([...vals].sort((a, b) => a - b));
     expect(new Set(vals).size, 'iki rung aynı değerde — beraberlik DOM sırasına kalır').toBe(vals.length);
@@ -60,6 +60,14 @@ describe('MK2 — z merdiveni', () => {
   it('drawer paneli perdesinin TAM üstünde (+1)', () => {
     // Perde ile panel arasına başka bir şeyin girmesi mümkün olmamalı.
     expect(z('drawer-panel')).toBe(z('drawer') + 1);
+  });
+
+  it('mobil menü perdesi drawer\'ın TAM altında (v0.9.980)', () => {
+    // Perde `--z-nav`(40) idi: dropdown/popover/fab onun ÜSTÜNDE kalıyor,
+    // mobil menü açıkken CopilotChat launcher'ı perdeyi deliyordu.
+    expect(z('drawer-scrim')).toBe(z('drawer') - 1);
+    expect(z('drawer-scrim')).toBeGreaterThan(z('popover'));
+    expect(z('drawer-scrim')).toBeGreaterThan(z('dropdown'));
   });
 
   it('iç içe modal dıştakinin üstünde', () => {
@@ -86,7 +94,46 @@ describe('MK2 — z merdiveni', () => {
   });
 });
 
-// ── TSX süpürmesi (v0.9.911) ───────────────────────────────────────────
+// TS/TSX yorum + string soyucusu (v0.9.980).
+//
+// NEDEN ELLE DURUM MAKİNESİ: buradaki eski hâl `/\*[\s\S]*?\*\//g` idi ve
+// bir `//` satır yorumunun İÇİNDE geçen `/*` dizisini blok yorumu
+// başlangıcı sanıyordu. `Sidebar.tsx`teki
+//     // ... the ten former /admin/* pages (stats, clickhouse, elastic,
+// satırı tam olarak bunu yapıyor: `/*` açıyor, dosyada kapanış `*/`
+// olmadığı için süpürme O NOKTADAN SONRASINI GÖRMÜYORDU — ve kapının
+// yakalaması gereken `zIndex: 40` (mobil menü perdesi, M3) 200 satır
+// aşağıdaydı. Kapı v0.9.911'den beri YEŞİL görünüp bir şey aramıyordu.
+//
+// Ölçüldü: aynı yutma deseni üç dosyada daha var (EndpointDetail,
+// AdminAudit, service/Overview) — hepsi bu düzeltmeyle taranır oldu.
+export function stripTsComments(src: string): string {
+  let out = '';
+  let mode: 'code' | 'line' | 'block' | '"' | "'" | '`' = 'code';
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    const n = src[i + 1] ?? '';
+    if (mode === 'code') {
+      if (c === '/' && n === '/') { mode = 'line'; out += '  '; i++; continue; }
+      if (c === '/' && n === '*') { mode = 'block'; out += '  '; i++; continue; }
+      if (c === '"' || c === "'" || c === '`') { mode = c; out += c; continue; }
+      out += c;
+    } else if (mode === 'line') {
+      if (c === '\n') { mode = 'code'; out += '\n'; } else out += ' ';
+    } else if (mode === 'block') {
+      if (c === '*' && n === '/') { mode = 'code'; out += '  '; i++; continue; }
+      out += c === '\n' ? '\n' : ' ';
+    } else {
+      // String içi: kaçış çiftini atla, kapanışta koda dön.
+      if (c === '\\') { out += '  '; i++; continue; }
+      if (c === mode) mode = 'code';
+      out += c;
+    }
+  }
+  return out;
+}
+
+// ── TSX süpürmesi (v0.9.911, soyucu v0.9.980'da düzeltildi) ────────────
 describe('MK2 — TSX\'te çıplak zIndex kalmadı', () => {
   // Mikro bant (≤10) KAPSAM DIŞI, bilinçli: bir grafiğin kendi içindeki
   // ipucu/eksen/rozet sırası bir uygulama katmanı değil. Onları rung'a
@@ -106,9 +153,8 @@ describe('MK2 — TSX\'te çıplak zIndex kalmadı', () => {
   it('uygulama katmanı irtifaları token üzerinden', () => {
     const bad: string[] = [];
     for (const file of walk(SRC)) {
-      const src = readFileSync(file, 'utf8').replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '));
+      const src = stripTsComments(readFileSync(file, 'utf8'));
       src.split('\n').forEach((line, i) => {
-        if (/^\s*\/\//.test(line)) return;
         const m = /zIndex:\s*(\d+)/.exec(line);
         if (m && Number(m[1]) > MICRO_MAX) {
           bad.push(`${file.slice(SRC.length + 1)}:${i + 1} zIndex: ${m[1]}`);

@@ -154,6 +154,7 @@
   --z-nav:         40;   /* sidebar, topbar, span paneli */
   --z-dropdown:    50;
   --z-popover:     55;
+  --z-drawer-scrim: 59;  /* v0.9.980 — mobil menü perdesi; panelin TAM altı */
   --z-drawer:      60;   /* panel = +1 (--z-drawer-panel) */
   --z-drawer-panel: 61;
   --z-fab:         80;
@@ -2173,6 +2174,7 @@ button.accent.copied {
 /* v0.8.383 — global env picker (Topbar, next to the range picker).
    Inherits the base input/select tokens; sized to match .trp-btn so
    the two controls read as one group. */
+.env-pick-wrap { width: 150px; }
 .env-picker { padding: 4px 8px; font-size: 12px; max-width: 180px; flex-shrink: 0; }
 
 /* Time range picker (Grafana-parity panel, 2026-07 redesign):
@@ -2257,72 +2259,6 @@ button.accent.copied {
 .trp-foot {
   border-top: 1px solid var(--border); padding-top: 8px;
   font-size: 10px; color: var(--text3);
-}
-
-/* ── Mobile responsive (< 768px) ──────────────────────────────────────────
-   The sidebar's component code switches to off-canvas drawer mode on
-   small viewports; everything below adjusts page chrome to avoid the
-   hamburger overlap and to make tables/controls survive narrow widths. */
-@media (max-width: 767px) {
-  /* Make room for the hamburger toggle pinned at top-left */
-  #topbar { padding: 10px 12px 10px 56px; }
-
-  /* Tighter content padding so cards don't get clipped */
-  #content { padding: 12px; }
-
-  /* Stack control rows; full-width inputs */
-  .controls { gap: 6px; }
-  .controls input, .controls select { min-width: 0; }
-
-  /* Tables: scroll horizontally rather than blow up the layout */
-  table { font-size: 11px; }
-  thead th, tbody td { padding: 6px 8px; }
-
-  /* Trace detail view: the fixed drawer becomes a bottom sheet on
-     phones — full width, lower half of the screen. */
-  #td-outer { flex-direction: column; }
-  #span-panel {
-    width: 100% !important;
-    max-width: 100vw;
-    left: 0; right: 0; bottom: 0; top: auto;
-    max-height: 55vh;
-    border-radius: var(--radius) var(--radius) 0 0;
-  }
-  .span-panel-resizer { display: none; }
-
-  /* Topbar title room */
-  #topbar h1 { font-size: 13px; }
-
-  /* TimeRangePicker — stack the two panel columns and fit the viewport
-     rather than overflow; the quick rail loses its divider and wraps. */
-  .trp-panel { min-width: 0; width: calc(100vw - 24px); max-width: 500px; }
-  .trp-body { flex-direction: column; }
-  .trp-presets {
-    flex-direction: row; flex-wrap: wrap; max-height: none;
-    border-left: 0; padding-left: 0;
-    border-top: 1px solid var(--border); padding-top: 10px;
-  }
-  .trp-presets .trp-section-title { width: 100%; }
-
-  /* Topbar prefs pill (lang/density/theme) — keep functional parity
-     on phones but reclaim ~25px so the title + range picker can
-     breathe. Drop the visual separator + tighten the gap. */
-  #topbar { gap: 6px; }
-  .topbar-prefs-sep { display: none; }
-}
-
-/* Extreme width — let the topbar wrap onto a second row rather than
-   clip the prefs pill off the right edge. Title + range picker stay
-   on row 1, pill drops to row 2. */
-@media (max-width: 480px) {
-  #topbar { flex-wrap: wrap; row-gap: 6px; }
-  .topbar-prefs { margin-left: auto; }
-}
-
-/* iPhone SE / very narrow viewports */
-@media (max-width: 380px) {
-  #topbar { padding-left: 52px; }
-  #topbar h1 { font-size: 12px; }
 }
 
 /* ── Density mode (compact) ──────────────────────────────────
@@ -2530,11 +2466,7 @@ button.accent.copied {
 /* v0.9.380 (redesign D4) — Details ToC rayı yalnız geniş ekranda;
    dar ekranda içerik tam genişlik kalır, ray sessizce düşer. */
 .dtl-toc { display: none; }
-@media (min-width: 1100px) { .dtl-toc { display: block; } }
-@media (max-width: 1100px) {
-  .ov-kpis, .ov-kpis-4 { grid-template-columns: repeat(2, 1fr); }
-  .ov-charts-3, .ov-cols-2, .dtl-cols { grid-template-columns: 1fr; }
-}
+@media (min-width: 1024px) { .dtl-toc { display: block; } }
 
 /* KPI tile */
 .ov-kpi { padding: 14px 16px 16px; position: relative; overflow: hidden; min-height: 118px; }
@@ -2594,7 +2526,6 @@ button.accent.copied {
    No wires, no center node; pure-CSS hover ring. Values mapped 1:1 from the
    prototype's coremetry.css .nbr-* rules onto the real tokens. */
 .nbr-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
-@media (max-width: 760px) { .nbr-cols { grid-template-columns: 1fr; } }
 .nbr-col { display: flex; flex-direction: column; gap: 9px; }
 .nbr-col-lab { font-size: 11px; letter-spacing: .6px; color: var(--text2); font-weight: 700; text-transform: uppercase; }
 .nbr-col-sub { font-size: 11px; color: var(--text3); margin: -5px 0 4px; }
@@ -2810,7 +2741,6 @@ td > .cell-actions.end { justify-content: flex-end; }
 .mqe-lb-chips { display: flex; flex-wrap: wrap; gap: 4px; max-height: 132px; overflow-y: auto; }
 .mqe-lb-chips .mqe-gchip { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mqe-lb-hint { font-size: 10.5px; color: var(--text3); }
-@media (max-width: 720px) { .mqe-lb-cols { grid-template-columns: minmax(0, 1fr); } }
 .mqe-chart { padding: 12px; }
 .mqe-dash-opt { display: flex; align-items: center; gap: 8px; cursor: pointer; padding: 3px 0; font-size: 13px; }
 /* step 2 — formula rows, per-query colour, panel options */
@@ -3027,3 +2957,138 @@ thead th:hover .th-remove { opacity: 1; }
    operatörün kendi eylemi. */
 [data-kiosk="1"] #sidebar { display: none; }
 [data-kiosk="1"] .announcement-banner { display: none; }
+
+/* ══ DAR EKRAN KATMANI (v0.9.980) ══════════════════════════════════════
+   Dar ekran denetimi DALGA 2. Bu katman dosyanın SONUNDA duruyor ve bu
+   KASITLI: `[data-density="compact"] .controls input { font-size: 11px }`
+   gibi kurallar (0,2,1) bir `@media` bloğunun içindeki `input` (0,0,1)
+   kuralını özgüllükle YENER. Medya sorgusu özgüllük eklemez. Katman
+   yukarıda dursaydı iOS zoom düzeltmesi yoğunluk modu açık her operatörde
+   SESSİZCE etkisiz kalırdı.
+
+   ÜÇ ADLI EŞİK — bu liste TEK KAYNAK'tır (mevcut `--z-*` / `--sp-*`
+   disiplininin aynısı; CSS custom property `@media` içinde kullanılamaz,
+   bu yüzden sayı elle yazılıyor ve `mobileBreakpoints.test.ts` çiviliyor):
+
+     640px   telefon       — tek kolon, tam-ekran katmanlar, off-canvas menü
+    1024px   tablet        — 2 kolon, ikon-only sidebar, tablo kaydırma ağı
+    1280px   küçük laptop  — mevcut masaüstü düzeni (henüz kuralı yok)
+
+   Önceki hâl 6 dağınık eşikti (380/480/720/760/767/1100) ve hiçbiri
+   diğerinden haberdar değildi: `Sidebar.tsx` 768'de off-canvas'a geçerken
+   CSS 767'de hamburger payı veriyordu — tam 768px'te menü açılıyor ama
+   başlık hamburgerin altında kalıyordu. Artık JS eşiği de 640 (MOBILE_BP).
+   ────────────────────────────────────────────────────────────────────── */
+
+/* ── ≤1024px: tablet ───────────────────────────────────────────────── */
+@media (max-width: 1024px) {
+  /* D2.1 — EN GENİŞ TEK KAZANÇ: 31 dosya / ~50 tablo.
+     `.table-wrap.is-fit { overflow: visible }` yapışkan başlık uğruna
+     yatay kaydırma güvenlik ağını KALDIRIYOR. Beyan genişlikleri
+     338–1110px; 366px'lik telefonda hepsi taşıyor ve taşma `#content`e
+     çıkıp yapışkan filtre barını içerikle YANA KAYDIRIYOR (v0.9.640'ta
+     operatörün bildirdiği sızıntının aynısı, telefonda garantili).
+     Dar ekranda yapışkan başlıktan vazgeçip kabı geri veriyoruz.
+
+     `position: relative` — `static` DEĞİL: `thead th`in taban kuralı
+     resize tutamağının (position:absolute) ÇAPASI. `top: auto` da ŞART,
+     aksi hâlde `top: var(--controls-h)` relative bir öğeye uygulanıp
+     başlığı satırların üstüne kaydırır (v0.9.697 olayının birebir
+     tekrarı). */
+  .table-wrap.is-fit { overflow-x: auto; overflow-y: hidden; }
+  .table-wrap.is-fit thead th { position: relative; top: auto; }
+
+  /* D2.8 (üst kademe) — eski 1100px bloğu buraya taşındı. */
+  .ov-kpis, .ov-kpis-4 { grid-template-columns: repeat(2, 1fr); }
+  .ov-charts-3, .ov-cols-2, .dtl-cols { grid-template-columns: 1fr; }
+  .nbr-cols { grid-template-columns: 1fr; }
+  .mqe-lb-cols { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* ── ≤640px: telefon ───────────────────────────────────────────────── */
+@media (max-width: 640px) {
+  /* Kabuk — hamburger payı (Sidebar off-canvas'a bu eşikte geçiyor). */
+  #topbar { padding: 10px 12px 10px 56px; gap: 6px; flex-wrap: wrap; row-gap: 6px; }
+  #content { padding: 12px; }
+
+  /* D2.6 (M2) — topbar bütçesi 390px'te 322px, tüketim ≈434px ve
+     tüketicilerin hepsi `flex-shrink: 0`. Tek ezilebilen eleman `h1`
+     olduğu için SAYFA BAŞLIĞI ellipsis'e gidiyordu. Başlık kendi
+     satırına alınıyor, canlı sayaç (bilgilendirici ama kritik değil)
+     düşüyor, env kutusu daralıyor. */
+  #topbar h1 { flex: 1 0 100%; font-size: 13px; }
+  .live-ticker { display: none; }
+  .env-pick-wrap { width: 108px; }
+  .topbar-prefs { margin-left: auto; }
+  .topbar-prefs-sep { display: none; }
+
+  /* Kontroller + tablo yoğunluğu */
+  .controls { gap: 6px; }
+  .controls input, .controls select { min-width: 0; }
+  table { font-size: 11px; }
+  thead th, tbody td { padding: 6px 8px; }
+
+  /* D2.2 (M1) — iOS OTOMATİK YAKINLAŞTIRMA. Safari, 16px'ten küçük bir
+     alana odaklanınca sayfayı zorla yakınlaştırır ve GERİ ÇIKMAZ:
+     operatör her arama kutusundan sonra elle uzaklaştırmak zorunda.
+     Yoğunluk modları da kapsanıyor — yoksa (0,2,1) özgüllükleriyle bu
+     kuralı yenerler ve düzeltme yalnız varsayılan yoğunlukta çalışır. */
+  input, select, textarea,
+  [data-density] .controls input,
+  [data-density] .controls select { font-size: 16px; }
+
+  /* D2.4 (M5) — dokunma hedefleri. `.ib-xs` 20×20 WCAG 2.5.8'in 24px
+     tabanının bile altında; `[data-density]` daha da küçültüyor.
+     `width/height` beyanları duruyor, `min-*` onları yalnız YUKARI
+     çekiyor — masaüstünde tek satır değişmiyor. */
+  .btn-icon, .btn-icon.ib-xs, .btn-icon.ib-sm, .btn-icon.ib-md {
+    min-width: 36px; min-height: 36px;
+  }
+  button, [data-density] .controls button { padding: 9px 14px; font-size: 14px; }
+  .pager button { min-height: 36px; }
+
+  /* D2.3 (M6) — sekme şeridi kaydırmıyordu: `flex-wrap` da yok
+     `overflow-x` de. `/service` 7 sekmeyle ≈700px istiyor; 366px'te
+     flex-shrink butonları eziyor ve uzun etiket ("Infrastructure")
+     sarıp satır yüksekliğini bozuyordu. 12 yüzey. */
+  .tab-strip { overflow-x: auto; scrollbar-width: none; }
+  .tab-strip::-webkit-scrollbar { display: none; }
+  .tab-strip > button { flex: none; white-space: nowrap; }
+
+  /* D2.8 (M-KPI) — `.ov-kpis` ailesi 1024'te 2 kolona düşüyor ama 1
+     kolona HİÇ düşmüyordu: 390px'te iki ~175px karo içinde 27px değer
+     sıkışıyordu. */
+  .ov-kpis, .ov-kpis-4 { grid-template-columns: 1fr; }
+
+  /* Trace detayı — sabit sağ panel alt tepsiye dönüyor (mevcut, iyi
+     tasarlanmış davranış; eşik 767 → 640 dışında dokunulmadı). */
+  #td-outer { flex-direction: column; }
+  #span-panel {
+    width: 100% !important;
+    max-width: 100vw;
+    left: 0; right: 0; bottom: 0; top: auto;
+    max-height: 55vh;
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+  .span-panel-resizer { display: none; }
+
+  /* Zaman aralığı seçici — panel viewport'a iniyor. D2.7: `.trp-custom`
+     `min-width: 300px` taşıyordu ve mobil blokta SIFIRLANMIYORDU. */
+  .trp-panel { min-width: 0; width: calc(100vw - 24px); max-width: 500px; }
+  .trp-body { flex-direction: column; }
+  .trp-custom { min-width: 0; }
+  .trp-presets {
+    flex-direction: row; flex-wrap: wrap; max-height: none;
+    border-left: 0; padding-left: 0;
+    border-top: 1px solid var(--border); padding-top: 10px;
+  }
+  .trp-presets .trp-section-title { width: 100%; }
+
+  /* D2.5 (M4) — iOS'ta `100vh` araç çubuğunu SAYMAZ: sayfanın alt şeridi
+     (yapışkan pager) çubuğun altında kalır ve tıklanamaz. `dvh` küçük
+     viewport'u takip eder; taban `100vh` beyanları fallback olarak
+     yerinde duruyor (destek yoksa bugünkü davranış). */
+  #app { height: 100dvh; }
+  #td-outer { height: calc(100dvh - 185px); }
+  .pager.is-sticky-bottom { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+}

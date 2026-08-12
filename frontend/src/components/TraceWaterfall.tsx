@@ -3,6 +3,7 @@ import type { SpanRow } from '@/lib/types';
 import { collectSubtreeIds, groupParentOf, clusterBadge } from './traceWaterfall.tree';
 import { resolveResource } from '@/lib/otel/semconv';
 import { fmtNs, displaySpanName } from '@/lib/utils';
+import { nameColWidth, NAME_MIN, NAME_MAX, INDENT_PX } from '@/lib/traceNameCol';
 
 // HH:MM:SS.mmm wall-clock formatter for the waterfall ruler +
 // per-span tooltips. Locked to the browser's local timezone so
@@ -16,9 +17,6 @@ function fmtClock(ns: number): string {
 }
 
 const TICKS = [0, 0.25, 0.5, 0.75, 1];
-const NAME_MIN = 160;
-const NAME_MAX = 800;
-const INDENT_PX = 16;
 // v0.8.536 — clearance an outside duration label needs to render fully.
 // fmtNs tops out around 7 monospace chars ("123.45ms") ≈ 48px at 10px,
 // plus the 4px gap, plus slack. Used to decide which SIDE of the bar the
@@ -377,16 +375,23 @@ export function TraceWaterfall({
     return { rows: out, maxDepth };
   }, [tree, collapsed, groupSimilar]);
 
-  const defaultNameWidth = useMemo(() => {
-    if (containerWidth <= 0) return 380;
-    const target = Math.round((containerWidth - 6) * 0.4);
-    const depthMin = Math.min(320, 220 + maxDepth * INDENT_PX);
-    return Math.max(NAME_MIN, depthMin, Math.min(target, NAME_MAX, containerWidth * 0.65));
-  }, [containerWidth, maxDepth]);
+  // v0.9.983 (denetim B1) — hesap `lib/traceNameCol.ts`e SAF fonksiyon
+  // olarak çıkarıldı ve tablo-güdümlü test aldı. Eski hâlde `depthMin`
+  // konteynerden BAĞIMSIZDI: 366px'lik telefonda derin bir trace'te isim
+  // kolonu 320px alıp bar alanına 46px bırakıyordu, yani span süreleri
+  // ayırt edilemiyordu. Masaüstü davranışı DEĞİŞMEDİ — yeni sınır ancak
+  // konteyner 640px'in altındayken bağlayıcı (testte ispatlı).
+  const defaultNameWidth = useMemo(
+    () => nameColWidth(containerWidth, maxDepth),
+    [containerWidth, maxDepth]);
 
   const colWidth = nameWidth ?? defaultNameWidth;
 
-  const onResizeStart = (e: React.MouseEvent) => {
+  // v0.9.983 (denetim B2) — Pointer Events. Tutamak `onMouseDown`-only
+  // idi: dokunmatik bir cihazda isim kolonu ELLE düzeltilemiyordu, yani
+  // B1'in dar ekran kurtarma yolu da kapalıydı. Pointer olayları fare +
+  // dokunma + kalemi tek API'de topluyor.
+  const onResizeStart = (e: React.PointerEvent) => {
     e.preventDefault();
     dragRef.current = { startX: e.clientX, startW: colWidth };
     document.body.style.cursor = 'col-resize';
@@ -394,7 +399,7 @@ export function TraceWaterfall({
   };
 
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
       if (!dragRef.current) return;
       const w = dragRef.current.startW + (e.clientX - dragRef.current.startX);
       setNameWidth(Math.max(NAME_MIN, Math.min(NAME_MAX, w)));
@@ -405,11 +410,13 @@ export function TraceWaterfall({
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
   }, []);
 
@@ -481,7 +488,7 @@ export function TraceWaterfall({
         <div className="wf-col-name" style={{ width: colWidth }}>Span</div>
         <div className="wf-resizer"
           title="Drag to resize · double-click to auto-fit"
-          onMouseDown={onResizeStart}
+          onPointerDown={onResizeStart}
           onDoubleClick={onResizeDoubleClick} />
         <div className="wf-col-bar">
           {TICKS.map(t => {

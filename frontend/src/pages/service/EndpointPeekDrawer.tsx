@@ -69,8 +69,11 @@ export function EndpointPeekDrawer({ service, range, row, onClose }: {
       <div onClick={onClose} style={{
         position: 'fixed', inset: 0, zIndex: 'var(--z-drawer)', background: 'rgba(0,0,0,.28)',
       }} />
+      {/* v0.9.988 (D6.2) — `min(…, 100vw)`, paylaşılan `Drawer`ın
+          deyiminin aynısı: dar ekranda çekmece tam ekran olur, panelin
+          sol kenarı ekran dışına kaçmaz. Masaüstünde 380px aynen. */}
       <div role="dialog" aria-label={`Endpoint peek: ${row.path}`} style={{
-        position: 'fixed', top: 0, right: 0, bottom: 0, width: 380, zIndex: 'var(--z-drawer-panel)',
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 'min(380px, 100vw)', zIndex: 'var(--z-drawer-panel)',
         background: 'var(--bg1)', borderLeft: '1px solid var(--border)',
         boxShadow: '-16px 0 40px rgba(0,0,0,.35)', padding: '14px 16px',
         overflowY: 'auto',

@@ -87,8 +87,15 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)',
       display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal)',
     }}>
+      {/* v0.9.988 (D6.2) — genişlik artık görüntü alanına KELEPÇELİ.
+          Sabit 720px telefonda (390px) diyaloğun üçte ikisini ekran
+          dışında bırakıyordu ve `place-items:center` onu iki yandan
+          eşit taşırdığı için kapatma affordance'ı da görünmüyordu.
+          `min()` masaüstünde bit bit aynı (720 < 100vw-32), yalnız dar
+          ekranda devreye giriyor — `.modal-dialog`ın CSS'te zaten
+          yaptığının satır içi karşılığı. */}
       <div onClick={e => e.stopPropagation()} style={{
-        width: 720, maxHeight: '80vh', overflow: 'auto',
+        width: 'min(720px, calc(100vw - 32px))', maxHeight: '80vh', overflow: 'auto',
         padding: 20, borderRadius: 8,
         background: 'var(--bg2)', border: '1px solid var(--border)',
       }}>

@@ -92,7 +92,15 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
             zIndex: 'var(--z-drawer)', animation: 'fadeIn 120ms ease-out',
           }} />
       )}
-      <div ref={panelRef} tabIndex={-1} style={{
+      {/* v0.9.988 (D6.3) — `drawer-panel` sınıfı DAR EKRAN kancası.
+          Genişlik zaten `min(width, 100vw)` olduğu için telefonda çekmece
+          fiilen tam ekran; eksik olan iç ölçülerdi. `var(--sp-7)` dolgu
+          390px'lik bir ekranda içeriğe 60px'ten fazla yiyordu ve kapatma
+          butonu 24px'lik bir dokunma hedefiydi (WCAG 2.5.8 tabanının
+          altında). Sınıfın MASAÜSTÜ kuralı YOK — yalnız `@media
+          (max-width: 640px)` bloğunda tanımlı, dolayısıyla geniş ekranda
+          tek piksel değişmiyor. */}
+      <div ref={panelRef} tabIndex={-1} className="drawer-panel" style={{
         position: 'fixed', right: 0, top: 0, bottom: 0,
         width: `min(${width}px, 100vw)`,
         background: 'var(--bg)', borderLeft: '1px solid var(--border)',
@@ -106,7 +114,11 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
         //     bırakırdı — yani sohbetin varlık gerekçesini (açıkken
         //     sayfayla çalışabilmek) tersine çevirirdi.
         zIndex: backdrop ? 'var(--z-drawer-panel)' : 'var(--z-nav)',
-        padding: 'var(--sp-7)',
+        // DOLGU ARTIK SATIR İÇİNDE DEĞİL (v0.9.988, D6.3). Satır içi
+        // stil bir `@media` kuralını HER ZAMAN yener; `padding:
+        // var(--sp-7)` burada kalsaydı dar ekran kuralı sessizce ölürdü —
+        // `gridCollapse.test.ts`in çividiği hata sınıfının aynısı.
+        // Masaüstü değeri `.drawer-panel` taban kuralında, aynı token.
         // Overlay'siz kipte gövdeyi çağıran düzenliyor; modal kipte
         // bugünkü davranış (tek dikey kaydırma) aynen sürüyor.
         ...(bodyStyle ?? { overflowY: 'auto' }),
@@ -114,7 +126,7 @@ export function Drawer({ onClose, header, width = 560, backdrop = true, bodyStyl
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp-4)', marginBottom: 'var(--sp-2)' }}>
           {header}
           <span style={{ flex: 1 }} />
-          <button className="sec" onClick={onClose} aria-label="Close"
+          <button className="sec drawer-close" onClick={onClose} aria-label="Close"
             style={{ padding: 'var(--sp-2) var(--sp-3)', display: 'inline-flex' }}>
             <X size={14} />
           </button>

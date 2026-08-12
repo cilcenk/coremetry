@@ -208,7 +208,8 @@ function ComponentModal({ initial, monitors, onClose, onSaved }: {
   };
   return (
     <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal)' }}>
-      <div onClick={e => e.stopPropagation()} style={{ width: 480, padding: 24, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
+      {/* v0.9.988 (D6.2) — görüntü alanına kelepçeli genişlik. */}
+      <div onClick={e => e.stopPropagation()} style={{ width: 'min(480px, calc(100vw - 32px))', maxHeight: 'calc(100vh - 32px)', overflow: 'auto', padding: 24, borderRadius: 8, background: 'var(--bg2)', border: '1px solid var(--border)' }}>
         <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 14 }}>
           {initial ? `Edit component — ${initial.name}` : 'New component'}
         </div>

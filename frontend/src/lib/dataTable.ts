@@ -61,6 +61,43 @@ export interface DataTableColumn<T> {
   // kazanır ve esneklik biter — beklenen davranış, sürüklenen genişlik
   // her zaman kazanır.
   flex?: boolean;
+  // mobileHide — v0.9.988 (dar ekran denetimi D6). Telefon
+  // genişliğinde (<640px) bu kolon düşer.
+  //
+  // OPT-IN ve VARSAYILAN false. 68 tablo bu primitifi besliyor; bir
+  // "akıllı" varsayılan (ör. "numerik olmayan üçüncü kolondan sonrası
+  // düşsün") masaüstünde kimsenin istemediği kolonları kaybettirirdi.
+  // Kolonun düşüp düşmeyeceği bir ÜRÜN kararıdır, tabloyu tanıyan
+  // sayfa verir.
+  //
+  // KAPSAM SINIRI — bu bayrak `<colgroup>` ve `<thead>`i kapsar
+  // (DataTableColgroup/DataTableHead `visibleColumns`tan okur). GÖVDE
+  // hücrelerini sayfa basıyor: bir kolonu işaretleyen sayfa kendi
+  // `<td>`sini de `dt.visibleColumns`/`dt.narrow` üzerinden atlamak
+  // ZORUNDA, yoksa hücreler bir kolon kayar. Bugün hiçbir kolon
+  // işaretli değil, yani bu sürümde davranış değişikliği YOK — mekanizma
+  // kuruldu, ilk tüketici (log tablosunun kolon alt-kümesi, D5.7'nin
+  // ikinci yarısı) kendi sürümünde gelecek.
+  mobileHide?: boolean;
+}
+
+// visibleColumns — `<colgroup>`/`<thead>`de GERÇEKTEN çizilen kolonlar.
+//
+// İki süzgeç tek yerde: `headerHidden` (sıralanabilir ama çizilmeyen
+// bileşik boyut) ve `mobileHide` (yalnız dar ekranda düşen kolon).
+// Saf ve tablo-güdümlü test edilebilir olması için burada; React
+// yapıştırıcısı components/DataTable.tsx'te.
+//
+// Genişlik-kalıcılığı imzasına (columnLayoutSig) BİLEREK girmiyor:
+// imza "beyan edilen GENİŞLİK niyeti"ni damgalıyor ve bir kolonun dar
+// ekranda düşmesi onun masaüstü genişliğini değiştirmiyor. İmzaya
+// eklemek, hiçbir kolon işaretli olmasa bile her tablonun sürüklenmiş
+// genişliklerini bu sürümde bir kez atardı — bedava regresyon.
+export function visibleColumns<T>(
+  columns: DataTableColumn<T>[],
+  narrow: boolean,
+): DataTableColumn<T>[] {
+  return columns.filter(c => !c.headerHidden && !(narrow && c.mobileHide));
 }
 
 export interface SortState {

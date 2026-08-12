@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
@@ -78,8 +77,7 @@ export default function AdminQueryPage() {
   if (user && user.role !== 'admin') {
     return (
       <>
-        <Topbar title="Query" />
-        <div id="content">
+        <div>
           <Empty icon={<IconLock size={28} />} title="Admin access required">
             The unified query playground is only available to administrators.
           </Empty>
@@ -115,8 +113,7 @@ export default function AdminQueryPage() {
 
   return (
     <>
-      <Topbar title="Query" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <div>
         <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text2)' }}>
           Coremetry's <b>unified query language</b> — Kusto-flavoured pipe shape.
           One syntax across spans + metrics + logs. Tables: <code>spans</code>,{' '}

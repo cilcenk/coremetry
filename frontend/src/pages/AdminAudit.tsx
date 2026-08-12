@@ -1,5 +1,4 @@
 import { useState, useMemo } from 'react';
-import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
@@ -159,8 +158,7 @@ export default function AuditPage() {
   if (!isAdmin) {
     return (
       <>
-        <Topbar title="Audit log" />
-        <div id="content"><Empty icon="◇" title="Admin only">
+        <div><Empty icon="◇" title="Admin only">
           The audit log records every state-changing action by a
           user. Restricted to the admin role.
         </Empty></div>
@@ -170,8 +168,7 @@ export default function AuditPage() {
 
   return (
     <>
-      <Topbar title="Audit log" />
-      <div id="content">
+      <div>
         <PageControls sticky style={{ marginBottom: 8 }}>
           <select value={since} onChange={e => setSince(e.target.value as GoDuration)} aria-label="Time range">
             <option value="1h">Last 1h</option>

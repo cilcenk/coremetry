@@ -1,6 +1,5 @@
 import { useEffect, useState, FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { IconShield } from '@/components/icons';
 import { ServicePicker } from '@/components/ServicePicker';
@@ -28,15 +27,13 @@ export default function StatusPageAdmin() {
   if (!isAdmin) {
     return (
       <>
-        <Topbar title="Status Page" />
-        <div id="content"><Empty icon={<IconShield size={28} />} title="Admin only" /></div>
+        <div><Empty icon={<IconShield size={28} />} title="Admin only" /></div>
       </>
     );
   }
   return (
     <>
-      <Topbar title="Status Page (admin)" />
-      <div id="content">
+      <div>
         <div style={{ display: 'flex', alignItems: 'center', marginBottom: 14 }}>
           <div className="tab-strip" style={{ marginBottom: 0, flex: 1 }}>
             <button onClick={() => setTab('components')}

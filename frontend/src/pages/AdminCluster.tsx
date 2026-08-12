@@ -1,4 +1,3 @@
-import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { useClusterMembers } from '@/lib/queries';
@@ -62,8 +61,7 @@ export default function AdminClusterPage() {
   if (user && user.role !== 'admin') {
     return (
       <>
-        <Topbar title="Cluster" />
-        <div id="content">
+        <div>
           <Empty icon={<IconLock size={28} />} title="Admin access required">
             Cluster membership is only visible to administrators.
           </Empty>
@@ -74,8 +72,7 @@ export default function AdminClusterPage() {
 
   return (
     <>
-      <Topbar title="Cluster" />
-      <div id="content">
+      <div>
         <div style={{ marginBottom: 12, display: 'flex', alignItems: 'baseline', gap: 12 }}>
           <span style={{ fontSize: 12, color: 'var(--text2)', flex: 1 }}>
             Every replica writes a heartbeat to Redis every 10s. Pods that miss

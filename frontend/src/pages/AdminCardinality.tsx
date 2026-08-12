@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react';
-import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { Button, Card, Badge, Stack, Row } from '@/components/ui';
@@ -63,8 +62,7 @@ export default function AdminCardinalityPage() {
   if (user.role !== 'admin') {
     return (
       <>
-        <Topbar title="Cardinality" />
-        <div id="content">
+        <div>
           <Empty icon="◇" title="Admin access required">
             The cardinality report is only available to administrators —
             it surfaces every service / metric / label name in the cluster.
@@ -76,8 +74,7 @@ export default function AdminCardinalityPage() {
 
   return (
     <>
-      <Topbar title="Cardinality" />
-      <div id="content">
+      <div>
         <Row gap={3} style={{ marginBottom: 14, alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: 'var(--text2)' }}>
             What is eating ClickHouse — top emitters across services, metrics, labels, and stored columns. 5-min server cache.

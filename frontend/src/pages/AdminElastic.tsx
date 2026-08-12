@@ -1,5 +1,4 @@
 import { Fragment, useRef, useState } from 'react';
-import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -324,8 +323,7 @@ export default function AdminElasticPage() {
 
   return (
     <>
-      <Topbar title="Admin · Elasticsearch indices" />
-      <div id="content">
+      <div>
         {/* Kibana saved-search interop (v0.5.467) — operator can
             push Coremetry /logs saved_views into Kibana Discover
             as native saved searches, or pull Kibana saved

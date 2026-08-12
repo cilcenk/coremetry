@@ -1164,9 +1164,15 @@ thead th .sort-arrow { margin-left: 4px; opacity: .7; }
 /* Shared column-resize handle (DataTable primitive, v0.7.53). 6px hot zone
    on the th right edge; a faint accent line appears on hover so the operator
    sees the grab target. Matches the .sidebar-resizer / .span-panel-resizer feel. */
+/* v0.9.988 (D6.5) — `touch-action: none` Pointer Events sürüklemesinin
+   ŞARTI, süsü değil. Tutamak bunu bildirmezse tarayıcı ilk parmak
+   hareketinde jesti KAYDIRMA olarak devralır, `pointermove` akışını
+   keser ve `pointercancel` atar: JS tarafı doğru yazılmış olsa bile
+   sürükleme dokunmatik cihazda gerçekleşmez. Tutamak 6px genişliğinde
+   ve satır kaydırmasının dışında olduğu için sayfa kaydırması etkilenmez. */
 thead th .col-resize-handle {
   position: absolute; top: 0; right: 0; width: 6px; height: 100%;
-  cursor: col-resize; user-select: none;
+  cursor: col-resize; user-select: none; touch-action: none;
 }
 thead th .col-resize-handle:hover { background: var(--accent); opacity: .5; }
 tbody tr { border-bottom: 1px solid var(--border); cursor: pointer; transition: background .08s; }
@@ -1669,7 +1675,15 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   display: flex; flex-direction: column;
   box-shadow: var(--shadow-pop);
 }
-.span-panel-resizer { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: var(--z-handle); background: transparent; transition: background .12s; }
+/* .drawer-panel — paylaşılan `Drawer` panelinin dolgusu (v0.9.988, D6.3).
+   Değer Drawer.tsx'te SATIR İÇİNDEYDİ; satır içi stil `@media` kuralını
+   her zaman yendiği için dar ekran daraltması oradan yapılamıyordu.
+   Masaüstü değeri birebir taşındı (`var(--sp-7)`), dar ekran ezmesi
+   `@media (max-width: 640px)` bloğunda. */
+.drawer-panel { padding: var(--sp-7); }
+
+/* touch-action: none — v0.9.988 (D6.5), bkz. .col-resize-handle gerekçesi. */
+.span-panel-resizer { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; z-index: var(--z-handle); background: transparent; transition: background .12s; touch-action: none; }
 .span-panel-resizer:hover { background: var(--accent); opacity: .6; }
 .span-panel-resizer:active { background: var(--accent); }
 #span-panel-head { padding: 10px 14px; border-bottom: 1px solid var(--border); display: flex; align-items: flex-start; justify-content: space-between; position: sticky; top: 0; background: var(--bg1); z-index: var(--z-sticky-bar); }
@@ -3074,6 +3088,15 @@ thead th:hover .th-remove { opacity: 1; }
   }
   button, [data-density] .controls button { padding: 9px 14px; font-size: 14px; }
   .pager button { min-height: 36px; }
+
+  /* D6.3 (v0.9.988) — çekmece dar ekranda TAM EKRAN. Genişliği zaten
+     `min(width, 100vw)` (Drawer.tsx) hallediyordu; eksik olan iç
+     ölçülerdi: `--sp-7` dolgu 390px'lik bir ekranda içerikten 60px+
+     yiyor ve kapatma butonu 24px'lik bir dokunma hedefi kalıyordu.
+     Sınıfın masaüstü kuralı YOK, yalnız burada tanımlı — geniş ekranda
+     tek piksel değişmiyor. */
+  .drawer-panel { padding: var(--sp-5) var(--sp-4); }
+  .drawer-close { min-width: 36px; min-height: 36px; justify-content: center; }
 
   /* D2.3 (M6) — sekme şeridi kaydırmıyordu: `flex-wrap` da yok
      `overflow-x` de. `/service` 7 sekmeyle ≈700px istiyor; 366px'te

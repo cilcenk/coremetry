@@ -520,11 +520,17 @@ function ResultTable({ result }: { result: SQLResult }) {
                 {/* Resize hot-zone on the right edge. stopPropagation
                     on click so a resize drag never triggers a sort. */}
                 <span
-                  onMouseDown={e => dt.startResize(c.id, e)}
+                  onPointerDown={e => dt.startResize(c.id, e)}
                   onClick={e => e.stopPropagation()}
                   title="Drag to resize"
                   style={{
                     position: 'absolute', top: 0, right: 0, width: 6, height: '100%',
+                    // v0.9.988 (D6.5) — Pointer Events + touch-action:none.
+                    // Bu `<span>` paylaşılan `.col-resize-handle` sınıfını
+                    // KULLANMIYOR (kendi mutlak konumunu basıyor), o yüzden
+                    // CSS'teki jest kilidi buraya ulaşmıyor ve satır içinde
+                    // tekrarlanmak zorunda.
+                    touchAction: 'none',
                     cursor: 'col-resize', userSelect: 'none',
                   }} />
               </div>

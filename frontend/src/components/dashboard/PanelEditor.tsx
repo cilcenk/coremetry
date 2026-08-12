@@ -100,8 +100,10 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
       position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
       display: 'grid', placeItems: 'center', zIndex: 'var(--z-modal)',
     }}>
+      {/* v0.9.988 (D6.2) — görüntü alanına kelepçeli genişlik; masaüstü
+          (520 < 100vw-32) değişmiyor. */}
       <div onClick={e => e.stopPropagation()} style={{
-        width: 520, maxHeight: '90vh', overflow: 'auto',
+        width: 'min(520px, calc(100vw - 32px))', maxHeight: '90vh', overflow: 'auto',
         padding: 24, borderRadius: 8,
         background: 'var(--bg2)', border: '1px solid var(--border)',
       }}>

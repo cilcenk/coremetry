@@ -1,13 +1,14 @@
 import {
   useCallback, useEffect, useMemo, useState,
-  type MouseEvent as ReactMouseEvent, type ReactNode, type RefObject,
+  type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useTableNav, type TableNav } from '@/lib/useTableNav';
 import { useShortcuts } from '@/lib/keyboard';
+import { useIsNarrow } from '@/lib/useNarrow';
 import {
   columnLayoutSig, computeSortedRows, formatSortParam, parseSortParam,
-  readPersistedWidths, resolveToggle,
+  readPersistedWidths, resolveToggle, visibleColumns,
   type DataTableColumn, type SortState,
 } from '@/lib/dataTable';
 import { getItem, setItem, dtSortKey, dtWidthKey } from '@/lib/storage';
@@ -43,12 +44,20 @@ export interface DataTable<T> {
   // aynı damgayı `<thead>`e basmak için buradan okuyor.
   storageKey: string;
   columns: DataTableColumn<T>[];
+  // v0.9.988 (D6) — `<colgroup>`/`<thead>`de gerçekten çizilen kolonlar:
+  // `headerHidden` düşmüş, dar ekranda `mobileHide` de düşmüş. Bir
+  // kolonu `mobileHide` işaretleyen sayfa GÖVDE hücresini de buradan
+  // (ya da `narrow`dan) sürmek zorunda — yoksa hücreler kayar.
+  visibleColumns: DataTableColumn<T>[];
+  // Telefon genişliği (<640px, D2'nin eşiğiyle aynı). Gövde hücresini
+  // kolon dizisinden sürmeyen tablolar için ham kanca.
+  narrow: boolean;
   sortedRows: T[];
   sort: SortState;
   toggleSort: (id: string) => void;
   setSort: (s: SortState) => void;
   colWidths: Record<string, number>;
-  startResize: (id: string, e: ReactMouseEvent) => void;
+  startResize: (id: string, e: ReactPointerEvent) => void;
   resetLayout: () => void;
   // Keyboard nav (UX#4). Always present; inert (selected = -1, no key
   // bindings) unless the caller supplied onOpen. Spread `rowProps(i)` on each
@@ -154,23 +163,36 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
     if (next) setSort(next);
   }, [columns, sort, setSort]);
 
-  const startResize = useCallback((id: string, e: ReactMouseEvent) => {
+  // v0.9.988 (D6.5) — Pointer Events. `mousedown`/`mousemove`/`mouseup`
+  // üçlüsü dokunmatik bir cihazda HİÇ ateşlemez (tarayıcı yalnız bir
+  // TAP'in ardından sentetik mouse olayı üretir; sürükleme üretmez).
+  // Yani kolon genişliği 68 tablonun hepsinde telefonda/tablette elle
+  // düzeltilemiyordu — TraceWaterfall'da v0.9.983'te kapatılan boşluğun
+  // paylaşılan katmandaki eşi. Pointer olayları fare + dokunma + kalemi
+  // tek yolla kapsıyor, masaüstü davranışı bit bit aynı kalıyor.
+  //
+  // `pointercancel` de dinleniyor: dokunmada tarayıcı jesti devralırsa
+  // (kaydırma, geri-kaydır) `pointerup` GELMEZ ve dinleyiciler sonsuza
+  // dek asılı kalırdı.
+  const startResize = useCallback((id: string, e: ReactPointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
     const col = columns.find(c => c.id === id);
     const startX = e.clientX;
     const startW = colWidths[id] ?? col?.width ?? DEFAULT_W;
     const min = col?.minWidth ?? DEFAULT_MIN;
-    const onMove = (ev: MouseEvent) => {
+    const onMove = (ev: PointerEvent) => {
       const w = Math.max(min, startW + (ev.clientX - startX));
       setColWidths(s => ({ ...s, [id]: w }));
     };
     const onUp = () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
   }, [columns, colWidths]);
 
   const resetLayout = useCallback(() => setColWidths({}), []);
@@ -207,7 +229,13 @@ export function useDataTable<T>({ storageKey, columns, rows, initialSort, server
     [nav, storageKey],
   );
 
-  return { storageKey, columns, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout, nav, rowProps };
+  // v0.9.988 (D6.1) — dar ekran süzgeci. `narrow` false olduğu sürece
+  // liste bugünkü `!headerHidden` süzgeciyle BİREBİR aynı; hiçbir kolon
+  // `mobileHide` taşımadığı için bu sürümde telefonda da aynı.
+  const narrow = useIsNarrow();
+  const visible = useMemo(() => visibleColumns(columns, narrow), [columns, narrow]);
+
+  return { storageKey, columns, visibleColumns: visible, narrow, sortedRows, sort, toggleSort, setSort, colWidths, startResize, resetLayout, nav, rowProps };
 }
 
 // resolveInitialSort — the precedence the hook restores a sort with, hoisted
@@ -251,8 +279,12 @@ export function resolveInitialSort(
 // tek satır useDataTable kullanan HER tabloyu kapsıyor. Sayfa başına buton
 // eklemek 40 dosyalık bir süpürme olurdu ve yarısı unutulurdu.
 export function ColResizeHandle<T>({ dt, colId }: { dt: DataTable<T>; colId: string }) {
+  // v0.9.988 (D6.5) — `onPointerDown`. `touch-action: none` CSS'te
+  // (`.col-resize-handle`): onsuz tarayıcı ilk parmak hareketinde
+  // jesti KAYDIRMA olarak devralır ve `pointermove`ları kesip
+  // `pointercancel` atar — yani olay dinlense bile sürükleme olmaz.
   return <span className="col-resize-handle"
-    onMouseDown={e => dt.startResize(colId, e)}
+    onPointerDown={e => dt.startResize(colId, e)}
     onDoubleClick={e => { e.stopPropagation(); dt.resetLayout(); }}
     onClick={e => e.stopPropagation()}
     title="Drag to resize · double-click to reset all column widths" />;
@@ -267,7 +299,7 @@ export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<
   return (
     <colgroup>
       {(leading ?? []).map((w, i) => <col key={`lead-${i}`} style={{ width: w }} />)}
-      {dt.columns.filter(c => !c.headerHidden).map(c => {
+      {dt.visibleColumns.map(c => {
         // v0.9.542 — flex kolon SÜRÜKLENMEDİYSE 'auto': table-layout:fixed
         // artan genişliği ona verir, diğerleri kendi genişliğinde kalır.
         // Sürüklendiği an colWidths dolar ve sabit genişliğe döner —
@@ -325,7 +357,7 @@ export function DataTableHead<T>({ dt, leading, trailing, renderLabel }: {
     <thead data-table-id={dt.storageKey}>
       <tr>
         {leading}
-        {dt.columns.filter(c => !c.headerHidden).map(c => {
+        {dt.visibleColumns.map(c => {
           const sortable = !!c.sortValue;
           const active = dt.sort.id === c.id;
           const align = c.align ?? (c.numeric ? 'right' : 'left');

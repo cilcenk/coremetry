@@ -153,7 +153,12 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
     return Number.isFinite(raw) && raw >= PANEL_MIN && raw <= PANEL_MAX ? raw : 340;
   });
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
-  const onResizeStart = (e: React.MouseEvent) => {
+  // v0.9.988 (D6.5) — Pointer Events. Span paneli dokunmatik cihazda
+  // GENİŞLETİLEMİYORDU: `mousedown` bir tap'in ardından sentetik olarak
+  // gelse bile `mousemove` dizisi hiç üretilmiyor. Aynı boşluk
+  // TraceWaterfall'un isim kolonunda v0.9.983'te kapandı; bu, /trace
+  // yolculuğunun ikinci tutamağı.
+  const onResizeStart = (e: React.PointerEvent) => {
     e.preventDefault();
     dragRef.current = { startX: e.clientX, startW: panelW };
     document.body.style.cursor = 'col-resize';
@@ -161,7 +166,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
     document.body.style.userSelect = 'none';
   };
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (e: PointerEvent) => {
       if (!dragRef.current) return;
       // Dragging the LEFT edge — moving the cursor left makes the panel
       // wider (it's pinned to the right side of the trace layout).
@@ -176,11 +181,15 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
       document.body.style.userSelect = '';
       setRaw(PANEL_STORAGE_KEY, String(panelW));
     };
-    window.addEventListener('mousemove', onMove);
-    window.addEventListener('mouseup', onUp);
+    // `pointercancel` şart: dokunmada tarayıcı jesti devralırsa
+    // `pointerup` hiç gelmez ve panel "sürükleniyor" halinde takılırdı.
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
     return () => {
-      window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      window.removeEventListener('pointercancel', onUp);
     };
   }, [panelW]);
   const onResetWidth = () => {
@@ -201,7 +210,7 @@ export function SpanDetail({ span, onClose, logsFrom, logsTo, serviceLinks = tru
     <div id="span-panel" style={{ width: panelW }}>
       <div className="span-panel-resizer"
            title="Drag to resize · double-click to reset"
-           onMouseDown={onResizeStart}
+           onPointerDown={onResizeStart}
            onDoubleClick={onResetWidth} />
       <div id="span-panel-head">
         <div className="ps-title" title={displaySpanName(span) === span.name ? span.name : `raw: ${span.name}`}>

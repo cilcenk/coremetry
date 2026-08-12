@@ -66,6 +66,18 @@ describe('D2 — üç adlı eşik', () => {
     expect(Number(tablet![1])).toBe(1024);
   });
 
+  // v0.9.988 (D6.1) — ikinci JS tüketicisi. `useIsNarrow` bir KOLONUN
+  // dar ekranda düşüp düşmeyeceğine karar veriyor; eşiği CSS'ten
+  // ayrışırsa 640-660px bandında `<colgroup>` bir kolon eksik, CSS ise
+  // hâlâ geniş düzen sanıyor olurdu — hizası kaymış bir tablo, hiçbir
+  // tip/lint kapısının göremeyeceği bir sınıf.
+  it('useNarrow\'ın JS eşiği CSS telefon katmanıyla aynı', () => {
+    const un = readFileSync(join(SRC, 'lib/useNarrow.ts'), 'utf8');
+    const m = /export const NARROW_MAX_PX = (\d+)/.exec(un);
+    expect(m, 'NARROW_MAX_PX kayboldu').toBeTruthy();
+    expect(Number(m![1])).toBe(640);
+  });
+
   // D2.1 — kapının ASIL sebebi. Bu kural silinirse 31 dosya / ~50 tablo
   // telefonda SESSİZCE sayfayı yatay kaydırmaya geri döner ve yapışkan
   // filtre barı içerikle yana kayar (v0.9.640 sızıntısı).

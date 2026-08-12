@@ -320,8 +320,12 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
     return heatmapCursorX(col, PAD_L, gridDims(w).cellW);
   };
 
-  // mousedown starts a box gesture (only when a box-select consumer is wired).
-  const onMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+  // pointerdown starts a box gesture (only when a box-select consumer is
+  // wired). v0.9.988 (D6.5) — `mousedown` idi: dokunmatik cihazda kutu
+  // seçimi HİÇ başlamıyordu, çünkü tarayıcı sürükleme için sentetik mouse
+  // olayı üretmez. `e.button !== 0` kontrolü Pointer olaylarında da geçerli
+  // (dokunmada button 0'dır), yani sağ tık davranışı aynen korunuyor.
+  const onMouseDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     if (!onBoxSelect || e.button !== 0) return;
     const c = cellFromClient(e);
     if (!c) return;
@@ -469,10 +473,20 @@ export function LatencyHeatmap({ data, height = 220, onCellClick, onBoxSelect }:
         </div>
       )}
       <canvas ref={canvasRef}
-              style={{ display: 'block', cursor: onBoxSelect ? 'crosshair' : (onCellClick ? 'pointer' : 'crosshair') }}
-              onMouseMove={onMouseMove}
-              onMouseDown={onMouseDown}
-              onMouseUp={onMouseUp}
+              style={{
+                display: 'block',
+                cursor: onBoxSelect ? 'crosshair' : (onCellClick ? 'pointer' : 'crosshair'),
+                // v0.9.988 (D6.5) — jest kilidi YALNIZ kutu seçimi bağlıyken
+                // ve yalnız YATAY eksende. `none` yazmak dar ekranda ısı
+                // haritasının üstünde sayfayı kaydırılamaz yapardı; `pan-y`
+                // dikey kaydırmayı tarayıcıda bırakıp yatay sürüklemeyi bize
+                // veriyor — kutu seçiminin baskın ekseni zaten zaman (yatay).
+                touchAction: onBoxSelect ? 'pan-y' : undefined,
+              }}
+              onPointerMove={onMouseMove}
+              onPointerDown={onMouseDown}
+              onPointerUp={onMouseUp}
+              onPointerCancel={onMouseUp}
               onClick={onClickCell} />
       {/* Rubber-band rectangle while dragging a box (Phase 4.2). Rendered as
           an absolutely-positioned div over the canvas — same cell math as the

@@ -328,7 +328,7 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
             {kindLabel(hoverNode)} · {hoverNode.kind === 'service' ? 'service.name' : hoverNode.system ? (hoverNode.kind === 'database' ? 'db.system' : 'messaging.system') : hoverNode.kind}
             {hoverNode.kind === 'database' && hoverNode.dbName ? ` · db.name=${hoverNode.dbName}` : ''}
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 6, marginBottom: 8 }}>
+          <div className="grid-3" style={{ display: 'grid', gap: 6, marginBottom: 8 }}>
             {/* v0.9.367 — sayının HANGİ popülasyondan geldiği görünür:
                 ↓ inbound (normal), ↑ outbound = giriş-servis fallback'i;
                 gateway'in ERR'i bağımlılıklarının hatası olabilir. */}

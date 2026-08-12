@@ -413,7 +413,7 @@ export default function AlertsPage() {
                 )}
               </div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+            <div className="grid-3" style={{ display: 'grid', gap: 10 }}>
               <Field label="Name">
                 <input value={draft.name ?? ''}
                   onChange={e => setDraft({ ...draft, name: e.target.value })}
@@ -465,8 +465,8 @@ export default function AlertsPage() {
                   • For — sustained breach gate (Prometheus `for:`)
                   • Min samples — sample-count floor (kills 1/1 = 100%)
                   • Cooldown — post-resolution silence (kills jitter) */}
-            <div style={{ marginTop: 10,
-              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10 }}>
+            <div className="grid-3" style={{ marginTop: 10,
+              display: 'grid', gap: 10 }}>
               <Field label="Sustain (sec) — fires only after breach holds this long">
                 <input type="number" min={0} step={30}
                   value={draft.forSec ?? 0}

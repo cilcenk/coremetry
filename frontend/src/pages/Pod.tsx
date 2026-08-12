@@ -327,7 +327,7 @@ function PodDetail() {
               JVM / JBoss (JMX) · <span className="mono">{pod}</span>
               <span style={{ fontWeight: 400, color: 'var(--text3)' }}> · {jmxMetrics.length} metrics</span>
             </h3>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div className="grid-2" style={{ display: 'grid', gap: 14 }}>
               {jmxMetrics.map((m, i) => {
                 const data = jmxPanelQs[i]?.data?.series;
                 if (!data || data.length === 0) return null;

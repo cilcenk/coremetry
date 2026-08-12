@@ -124,9 +124,8 @@ export function TracePeekDrawer({
       {trace && summary && (
         <>
           {/* Trace summary row */}
-          <div style={{
-            display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)',
-            gap: 10, marginBottom: 12,
+          <div className="grid-4" style={{
+            display: 'grid', gap: 10, marginBottom: 12,
           }}>
             <PeekKPI label="Root op" value={summary.root.name}
               sub={summary.root.serviceName} small />

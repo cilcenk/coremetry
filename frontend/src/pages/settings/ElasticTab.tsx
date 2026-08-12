@@ -178,7 +178,7 @@ export function ElasticTab() {
                 style={{ width: '100%' }} />
             </label>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="grid-2" style={{ display: 'grid', gap: 12 }}>
               <label style={{ display: 'block' }}>
                 <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Username (basic auth)</div>
                 <input value={username} onChange={e => setUsername(e.target.value)}
@@ -194,7 +194,7 @@ export function ElasticTab() {
               </label>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <div className="grid-2" style={{ display: 'grid', gap: 12 }}>
               <label style={{ display: 'block' }}>
                 <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Index pattern</div>
                 <input value={index} onChange={e => setIndex(e.target.value)}
@@ -216,7 +216,7 @@ export function ElasticTab() {
               <summary style={{ fontSize: 12, color: 'var(--text2)', cursor: 'pointer' }}>
                 Document field map (leave empty for OTel/ECS defaults)
               </summary>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 10 }}>
+              <div className="grid-2" style={{ display: 'grid', gap: 12, marginTop: 10 }}>
                 {fieldRow('Timestamp', fTimestamp, setFTimestamp, '@timestamp')}
                 {fieldRow('Message body', fBody, setFBody, 'message')}
                 {fieldRow('Trace ID', fTraceId, setFTraceId, 'trace.id')}

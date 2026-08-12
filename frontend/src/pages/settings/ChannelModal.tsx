@@ -431,8 +431,8 @@ export function ChannelModal({ initial, onClose, onSaved }: {
                   onChange={e => setMatchClusters(e.target.value)}
                   style={{ width: '100%' }} />
               </Field>
-              <div style={{ display: 'grid',
-                            gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+              <div className="grid-2" style={{ display: 'grid',
+                            gap: 8 }}>
                 <Field label="Quiet hours (HH:MM-HH:MM, may cross midnight)">
                   <input value={matchQuietHours}
                     placeholder="22:00-07:00"

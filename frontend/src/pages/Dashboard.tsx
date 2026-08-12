@@ -846,8 +846,8 @@ function DashboardGrid({
               </div>
             )}
             {!isCollapsed && g.panels.length > 0 && (
-              <div style={{
-                display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12,
+              <div className="grid-4" style={{
+                display: 'grid', gap: 12,
                 marginTop: g.rowPanel ? 8 : 0,
               }}>
                 {g.panels.map(p => (

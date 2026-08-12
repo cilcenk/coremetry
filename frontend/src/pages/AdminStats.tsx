@@ -14,7 +14,7 @@ import type {
 } from '@/lib/types';
 import { SectionHeader, KPI, fmtBytes, fmtRate } from './adminstats/shared';
 import { statusHeadline, Banner, ComponentRow, Legend } from './adminstats/StatusSection';
-import { DropsPanel, BehaviorPanel, RedisPanel, ApiCachePanel } from './adminstats/panels';
+import { DropsPanel, BehaviorPanel, RedisPanel, ApiCachePanel, DistributionQueuePanel } from './adminstats/panels';
 
 // Row types for the shared sortable + resizable DataTable adoption.
 type TableStatRow = SystemStats['tables'][number];
@@ -236,6 +236,14 @@ export default function AdminStatsPage() {
 
             {/* ── Ingest data loss ────────────────────────────────── */}
             <DropsPanel drops={data.drops} />
+
+            {/* ── Distributed spool (v0.9.985) ────────────────────────
+                DropsPanel'in HEMEN ALTINDA, bilerek: o kart yazma
+                yolundaki kaybı sayar, bu kart onun GÖREMEDİĞİ kaybı.
+                Dağıtık kipte INSERT diske spool'lanıp "OK" döner, veri
+                sonra iner — gönderici takılırsa yukarıdaki sayaçların
+                hepsi temiz kalır ve veri hiç inmez. Tek düğümde çizilmez. */}
+            <DistributionQueuePanel dq={data.distributionQueue} />
 
             {/* ── Davranış motoru (v0.9.936) ──────────────────────── */}
             <BehaviorPanel behavior={data.behavior} />

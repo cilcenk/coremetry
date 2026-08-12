@@ -108,6 +108,112 @@ export function BehaviorPanel({ behavior }: { behavior: SystemStats['behavior'] 
   );
 }
 
+// DistributionQueuePanel — dağıtık kipte Distributed spool derinliği
+// (v0.9.985).
+//
+// NEDEN KENDİ KARTI: bu, "ingest data loss" kartının GÖREMEDİĞİ kayıptır.
+// Distributed motoru INSERT'i diske spool'layıp hemen OK döner; asıl
+// gönderim arka planda *_local'a olur. O gönderici takıldığında yazma
+// yolundaki her sayaç temiz kalır — 2026-08-12'de lokal küme 3s39d
+// boyunca tek span yazamazken spans_write_failed 0'dı, spans_accepted
+// tırmanıyordu ve /api/health "ok" diyordu. Kayıp yalnız burada görünür.
+//
+// TEK-DÜĞÜM: alan hiç gelmez, kart hiç çizilmez (Distributed tablo yok,
+// spool yok, sorgu bile çalışmadı).
+//
+// ÜÇ HÂL, ÜÇ DÜRÜST CEVAP:
+//   measured=false → "ölçülemedi". SIFIR GÖSTERMEK YALAN OLURDU: düşen
+//     bir probe de files=0 üretir (v0.9.984 fail-open dersi).
+//   derinlik eşik altı → ✓ temiz. Anlık spool normaldir.
+//   derinlik eşik üstü → tablo başına kırılım + CH'nin kendi istisnası.
+//
+// Kartın TREND İDDİASI YOKTUR (yön iki ardışık ölçüm ister; onu
+// /api/health 30 sn'lik nabzıyla yürütür). Burada söylenen tek şey
+// derinliğin ne olduğu — panelin bilmediği bir şeyi iddia etmiyor.
+export function DistributionQueuePanel({ dq }: { dq: SystemStats['distributionQueue'] }) {
+  if (!dq) return null;   // tek düğüm: kavram yok
+  // 100 = backend'deki distributedBacklogFloor. Canlı ölçüm: sağlam
+  // tablolar 0-1 dosya, kilitlenmiş olanlar 12.702 / 26.132.
+  const deep = dq.measured && dq.files >= 100;
+  const rows = (dq.tables ?? []).filter(t => t.files > 0 || t.errorCount > 0 || t.brokenFiles > 0);
+  return (
+    <div style={{
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+      borderRadius: 8, padding: 14, marginBottom: 18,
+    }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: deep || !dq.measured ? 12 : 0 }}>
+        <span style={{ fontSize: 12, fontWeight: 600 }}>Distributed spool</span>
+        <span style={{ fontSize: 11, color: 'var(--text3)' }}>
+          system.distribution_queue · INSERT&apos;in &quot;OK&quot; dönmesi verinin indiği anlamına gelmez
+        </span>
+        <span style={{ flex: 1 }} />
+        {!dq.measured
+          ? <span className="warn" style={{ fontSize: 12, fontWeight: 700 }}>⚠ ölçülemedi</span>
+          : deep
+            ? <span className="err" style={{ fontSize: 12, fontWeight: 700 }}>
+                ⚠ {fmtNum(dq.files)} dosya bekliyor
+              </span>
+            : <span className="ok" style={{ fontSize: 12, fontWeight: 600 }}>✓ birikme yok</span>}
+      </div>
+
+      {/* "Ölçemedim" ≠ "temiz" — sıfırları göstermek yerine nedeni göster. */}
+      {!dq.measured && (
+        <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
+          Spool derinliği okunamadı, yani bu kutu <b>hiçbir şey kanıtlamıyor</b> —
+          birikme olabilir de olmayabilir de.
+          {dq.probeError && (
+            <div className="err" style={{
+              marginTop: 6, fontFamily: 'ui-monospace, monospace', overflowWrap: 'anywhere',
+            }}>{dq.probeError}</div>
+          )}
+        </div>
+      )}
+
+      {dq.measured && deep && (
+        <>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 12 }}>
+            <KPI label="Bekleyen dosya" value={fmtNum(dq.files)} cls="err" />
+            <KPI label="Spool boyutu" value={fmtBytes(dq.bytes)} />
+            <KPI label="Gönderim hatası" value={fmtNum(dq.errorCount)}
+                 sub="sunucu açılışından beri kümülatif" />
+            {dq.brokenFiles > 0 && (
+              <KPI label="Bozuk dosya" value={fmtNum(dq.brokenFiles)} cls="err"
+                   sub="kalıcı olarak kenara kondu — yeniden denenmez" />
+            )}
+          </div>
+          {rows.length > 0 && (
+            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {rows.map(t => (
+                <div key={t.table} style={{ fontSize: 11, lineHeight: 1.5 }}>
+                  <b>{t.table}</b>
+                  <span style={{ color: 'var(--text3)' }}>
+                    {' · '}{fmtNum(t.files)} dosya · {fmtBytes(t.bytes)}
+                    {t.errorCount > 0 && ` · ${fmtNum(t.errorCount)} hata`}
+                    {t.brokenFiles > 0 && ` · ${fmtNum(t.brokenFiles)} bozuk`}
+                  </span>
+                  {t.lastError && (
+                    <div className="err" style={{
+                      fontFamily: 'ui-monospace, monospace', marginTop: 2,
+                      overflowWrap: 'anywhere', fontSize: 10,
+                    }}>{t.lastError}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, lineHeight: 1.5 }}>
+            ClickHouse INSERT&apos;leri kabul edip diske yazıyor ama arka plan göndericisi
+            <code> *_local</code> tablolarına basamıyor. Bu birikme <b>erimiyorsa</b> veri
+            hiç inmiyor demektir — yazma yolundaki sayaçlar (write failed / queue) bu
+            arızayı tanım gereği göremez. Son hata satırı nedeni söyler: <code>241</code>
+            {' '}bellek tavanı, <code>159</code> zaman aşımı.
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // DropsPanel renders the cumulative ingest data-loss counters (since process
 // start). Compact "✓ no loss" when clean; a red per-signal breakdown when any
 // counter is non-zero — queue-full (receiver buffer overflow) vs write-failed

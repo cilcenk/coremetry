@@ -111,11 +111,18 @@ func (s *Server) execSQL(w http.ResponseWriter, r *http.Request) {
 	// Storage-side enforcement: readonly=2 (SELECT-only), 60s
 	// time cap, 10k result rows, plus a memory cap so a runaway
 	// CROSS JOIN doesn't drag the whole server down.
+	//
+	// v0.9.975 — the cap was a hardcoded 4 GB, which on a 2.8 GiB
+	// server is not a cap at all: the runaway CROSS JOIN this comment
+	// describes would exhaust the server-wide budget first and CH's
+	// OvercommitTracker would kill a BYSTANDER query instead. Reads the
+	// boot-resolved effective ceiling so the playground is held to the
+	// same proportion as every other read path.
 	ctx := clickhouse.Context(r.Context(), clickhouse.WithSettings(clickhouse.Settings{
 		"readonly":           2,
 		"max_execution_time": 60,
 		"max_result_rows":    10_000,
-		"max_memory_usage":   uint64(4_000_000_000),
+		"max_memory_usage":   uint64(s.store.EffectiveQueryMemory()),
 		// Safety net: if the operator's query somehow tries
 		// async insert (it can't past readonly=2, but defence
 		// in depth), make sure it won't be silently coalesced.

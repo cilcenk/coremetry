@@ -111,6 +111,16 @@ func (s *Store) collectServerStats(ctx context.Context) []ServerStat {
 
 	out := make([]ServerStat, 0, len(byHost))
 	for _, st := range byHost {
+		// v0.9.975 — the per-query ceiling is a CLIENT-side setting, not
+		// a server one: system.server_settings only knows the profile
+		// default, never what this driver actually sends. Carrying the
+		// boot-resolved pair here is what lets /admin/stats show
+		// "configured X, effective Y" side by side with the server
+		// ceiling that forced it. (Pre-v0.9.975 MaxQueryMemory was
+		// declared but nothing ever populated it — the field rendered as
+		// absent on every install.)
+		st.MaxQueryMemory = uint64(s.EffectiveQueryMemory())
+		st.ConfiguredQueryMemory = uint64(s.ConfiguredQueryMemory())
 		out = append(out, *st)
 	}
 	// Deterministic order so the panel doesn't reshuffle between polls.

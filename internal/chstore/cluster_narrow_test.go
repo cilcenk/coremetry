@@ -98,16 +98,44 @@ func TestEndpointsRawFiltersClusterNarrowing(t *testing.T) {
 // the GROUP BY hash table. The heavy fallback scans now spill to disk
 // instead of dying. Values pinned: 2 GiB spill threshold, 8 GiB
 // per-query ceiling (the topology writer's prod-proven pair).
+//
+// v0.9.975 — those two numbers are now a REQUEST, not a guarantee: on a
+// node whose own max_server_memory_usage is smaller than 8 GiB the
+// ceiling never fired at all. The requested bytes are unchanged
+// wherever the server has room (the fail-open case below, which is what
+// every prod cluster with real RAM sees); on a constrained node the
+// clause carries numbers that can actually fire.
 func TestHeavyScanSpill(t *testing.T) {
+	// Fail-open Store (server ceiling unread) — byte-identical to
+	// v0.8.392.
+	var s Store
+	got := s.heavyScanSpill()
 	for _, want := range []string{
 		"max_bytes_before_external_group_by = 2000000000",
 		"max_memory_usage = 8000000000",
 	} {
-		if !strings.Contains(heavyScanSpill, want) {
-			t.Errorf("heavyScanSpill missing %q\n%s", want, heavyScanSpill)
+		if !strings.Contains(got, want) {
+			t.Errorf("heavyScanSpill missing %q\n%s", want, got)
 		}
 	}
-	if !strings.HasPrefix(heavyScanSpill, ",") {
+	if !strings.HasPrefix(got, ",") {
 		t.Error("heavyScanSpill must start with a comma — it appends to an existing SETTINGS list")
+	}
+
+	// Constrained node (the measured local 2.8 GiB ceiling): both
+	// numbers come down, and the spill stays BELOW the cap so it can
+	// still fire.
+	s.memPlan = resolveQueryMemory(0, 0, 0, 3_006_477_107, 0.6)
+	clamped := s.heavyScanSpill()
+	for _, want := range []string{
+		"max_bytes_before_external_group_by = 751619276",
+		"max_memory_usage = 1803886264",
+	} {
+		if !strings.Contains(clamped, want) {
+			t.Errorf("clamped heavyScanSpill missing %q\n%s", want, clamped)
+		}
+	}
+	if strings.Contains(clamped, "8000000000") {
+		t.Errorf("the 8 GiB ceiling survived onto a 2.8 GiB node — it can never fire\n%s", clamped)
 	}
 }

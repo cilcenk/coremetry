@@ -134,7 +134,7 @@ func (s *Store) sampleEndpointTraces(
 		ORDER BY duration DESC
 		LIMIT ?
 		SETTINGS max_execution_time = 10,
-		         `+s.shardSkipSetting()+heavyScanSpill,
+		         `+s.shardSkipSetting()+s.heavyScanSpill(),
 		append(append([]any{}, wc.args...), endpointDownstreamSample)...)
 	if qerr != nil {
 		return nil, 0, nil, fmt.Errorf("endpoint downstream sample: %w", qerr)
@@ -193,7 +193,7 @@ func (s *Store) walkEndpointEdges(
 		WHERE trace_id IN (%s)
 		  AND time >= ? AND time <= ?
 		SETTINGS max_execution_time = 10,
-		         `+s.shardSkipSetting()+heavyScanSpill,
+		         `+s.shardSkipSetting()+s.heavyScanSpill(),
 		strings.Join(holders, ",")), args...)
 	if err != nil {
 		return nil, fmt.Errorf("endpoint downstream walk: %w", err)

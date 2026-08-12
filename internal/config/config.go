@@ -349,6 +349,17 @@ type CHConfig struct {
 	MaxMemoryUsage          int64 `yaml:"max_memory_usage"`
 	MaxBytesExternalGroupBy int64 `yaml:"max_bytes_external_group_by"`
 	MaxBytesExternalSort    int64 `yaml:"max_bytes_external_sort"`
+
+	// MemFraction (v0.9.975) — the share of the server's OWN ceiling
+	// (max_server_memory_usage) a single query may claim. The limits
+	// above are only a request now: boot reads the server ceiling and
+	// applies min(requested, MemFraction × serverMax), because a
+	// per-query cap larger than the server total never fires — CH hits
+	// its server-wide OvercommitTracker first and that kills a VICTIM,
+	// not the greedy query. 0 = default 0.6; clamped to [0.1, 0.9].
+	// Fail-open when the server ceiling can't be read.
+	//   COREMETRY_CH_MEM_FRACTION
+	MemFraction float64 `yaml:"mem_fraction"`
 }
 
 // Hosts splits Addr on commas and trims surrounding whitespace, so
@@ -372,6 +383,25 @@ func chBytesEnv(key string, dst *int64) {
 	}
 	log.Printf("[config] WARNING: %s=%q geçersiz — bayt cinsinden düz tamsayı bekleniyor "+
 		"(ör. 12000000000; \"12Gi\"/\"12G\" DEĞİL). Yoksayılıyor, mevcut varsayılan korunuyor.", key, v)
+}
+
+// chFractionEnv reads a 0-1 ratio from env into dst (v0.9.975). Same
+// contract as chBytesEnv: WARN rather than silently discard, because an
+// operator reaching for "60" or "60%" instead of "0.6" would otherwise
+// get the default with zero diagnostic. Out-of-band values are NOT
+// rejected here — chstore clamps them to [0.1, 0.9] and logs the
+// effective ratio at boot, so the two logs together tell the story.
+func chFractionEnv(key string, dst *float64) {
+	v := os.Getenv(key)
+	if v == "" {
+		return
+	}
+	if f, err := strconv.ParseFloat(v, 64); err == nil && f > 0 {
+		*dst = f
+		return
+	}
+	log.Printf("[config] WARNING: %s=%q geçersiz — 0 ile 1 arasında ondalık bir oran bekleniyor "+
+		"(ör. 0.6; \"60\"/\"60%%\" DEĞİL). Yoksayılıyor, varsayılan oran korunuyor.", key, v)
 }
 
 type RetentionConfig struct {
@@ -577,6 +607,9 @@ func Load(path string) (*Config, error) {
 	chBytesEnv("COREMETRY_CH_MAX_MEMORY_USAGE", &cfg.ClickHouse.MaxMemoryUsage)
 	chBytesEnv("COREMETRY_CH_MAX_BYTES_EXTERNAL_GROUP_BY", &cfg.ClickHouse.MaxBytesExternalGroupBy)
 	chBytesEnv("COREMETRY_CH_MAX_BYTES_EXTERNAL_SORT", &cfg.ClickHouse.MaxBytesExternalSort)
+	// v0.9.975 — the ratio the three limits above are held under. See
+	// CHConfig.MemFraction / internal/chstore/query_memory.go.
+	chFractionEnv("COREMETRY_CH_MEM_FRACTION", &cfg.ClickHouse.MemFraction)
 	if v := os.Getenv("COREMETRY_HTTP_ADDR"); v != "" {
 		cfg.Listen.HTTP = v
 	}

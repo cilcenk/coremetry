@@ -419,6 +419,20 @@ export default function AdminStatsPage() {
                             {n.maxQueryMemory > 0 && <> · per query {fmtBytes(n.maxQueryMemory)}</>}
                           </div>
                         )}
+
+                        {/* Misconfiguration honesty (v0.9.975). A per-query
+                            cap ABOVE the server's own ceiling never fires:
+                            ClickHouse trips its server-wide OvercommitTracker
+                            first, and that picks a VICTIM by overcommit ratio
+                            rather than killing the greedy query. The symptom
+                            is code-241 on innocent reads, which points nowhere
+                            near the cause — so the panel names it here. */}
+                        {n.configuredQueryMemory > n.maxQueryMemory && n.maxQueryMemory > 0 && (
+                          <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 4 }}
+                            title={`The configured per-query cap (${fmtBytes(n.configuredQueryMemory)}) is larger than this node's own memory ceiling, so it could never take effect — ClickHouse would kill an unrelated query first. Coremetry clamped it to a share of the server ceiling; tune the share with COREMETRY_CH_MEM_FRACTION.`}>
+                            ⚠ per-query cap clamped from {fmtBytes(n.configuredQueryMemory)} — configured above the server ceiling, so it could never fire
+                          </div>
+                        )}
                       </div>
                     );
                   })}

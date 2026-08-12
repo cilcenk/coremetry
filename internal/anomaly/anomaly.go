@@ -227,6 +227,29 @@ func effectiveMAD(metric string, median, mad, minMAD float64) float64 {
 	return mad
 }
 
+// anomalyComparator — anomali YÖNÜNÜ öncelik hesabının anladığı ihlal
+// comparator'ına çevirir (v0.9.978). SAF + tablo testli.
+//
+// Kaynak alan anomalyDecision.direction ve yalnız iki değer taşıyor:
+// "dropped" (z < 0) ve "spiked". Uydurma yok — decideAnomaly'nin
+// döndürdüğü dizgiler.
+//
+//	dropped → "<"  değer düştükçe kötüleşiyor; chstore.computePriority
+//	               oranı ters çevirir (0.001× baseline = 1000× sapma)
+//	spiked  → ">"  değer yükseldikçe kötüleşiyor; oran zaten >1, çevirme
+//	               YOK. Boş bırakmak da aynı hesabı verirdi ama satır o
+//	               zaman "yön bilinmiyor" derdi; burada BİLİNİYOR ve
+//	               kaydı tutmak /problems'ta da doğru cümleyi kurdurur.
+//
+// totalLoss kolu (Value==0 && Threshold>0 → P1) bundan BAĞIMSIZ: trafiği
+// tamamen kesilen servis comparator ne olursa olsun P1 kalır (v0.9.825).
+func anomalyComparator(direction string) string {
+	if direction == "dropped" {
+		return "<"
+	}
+	return ">"
+}
+
 // anomalyDecision is the pure open/severity/direction verdict for one sample.
 type anomalyDecision struct {
 	open      bool
@@ -667,6 +690,12 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 			displayMetric(metric), cur.direction, service, current, unitOf(metric), median, unitOf(metric), z, dwell)
 		if hasOpen {
 			open.Value = current
+			// v0.9.978 — yön her tazelemede YENİDEN yazılır. evalWindow
+			// pencerenin TAMAMI aynı yönde olduğunda açık tutuyor, yani
+			// yön gerçekten değişebilir (uzun süre açık kalan bir problem
+			// sıçramadan çöküşe geçebilir). Eski satırların yönü de bu
+			// dalda dolduğu için düzeltme geçmişe de iniyor.
+			open.Comparator = anomalyComparator(cur.direction)
 			open.Description = desc
 			if err := d.store.UpsertProblem(ctx, *open); err != nil {
 				log.Printf("[anomaly] refresh %s: %v", ruleID, err)
@@ -682,6 +711,15 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 			Metric:      metric,
 			Value:       current,
 			Threshold:   median,
+			// v0.9.978 (operatör kararı) — anomali satırında Threshold bir
+			// İHLAL EŞİĞİ değil, BASELINE MEDYANI. Yani value/threshold
+			// "baseline'ın kaç katı" demek ve DÜŞÜŞ yönlü bir olayda doğal
+			// olarak 1'in altında kalır (trafik baseline'ın binde birine
+			// inince oran 0.001). Yönü satıra yazmak bu aileyi öncelik
+			// hesabında doğru tarafa koyuyor: '<' ile oran ters çevrilir,
+			// trafik çöküşü P1 kalır (v0.9.976 ters-çevirmeyi comparator'a
+			// bağladığında bu aile yanlışlıkla P2'ye düşmüştü).
+			Comparator:  anomalyComparator(cur.direction),
 			Status:      "open",
 			Description: desc,
 			StartedAt:   time.Now().UnixNano(),

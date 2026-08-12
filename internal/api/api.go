@@ -90,10 +90,12 @@ type Server struct {
 	distQueueRefreshing bool
 	// cur/prev — trend İKİ ARDIŞIK ölçümden çıkar; prev yalnız GERÇEKTEN
 	// ölçülmüş bir örnekle döner, düşen bir probe trend tabanını bozmaz.
-	distQueueCur      *chstore.DistributionQueue
-	distQueuePrev     *chstore.DistributionQueue
-	distQueueDegraded bool
-	distQueueDetail   string
+	distQueueCur  *chstore.DistributionQueue
+	distQueuePrev *chstore.DistributionQueue
+	// distQueueState — HİSTEREZİS durumu (v0.9.987). Karar artık iki
+	// ölçümden değil, ÖNCEKİ KARAR + iki ölçümden çıkıyor: durumsuz hâlde
+	// 44.320 → 44.318 (iki dosya) tek başına "degraded → ok" yapıyordu.
+	distQueueState chstore.DistributionState
 	// httpSrv is the live http.Server once Start() runs — kept so main
 	// can Shutdown() it during the ordered v0.8.336 teardown (stop
 	// ACCEPTING before draining consumers; a bare ListenAndServe had no
@@ -10994,9 +10996,9 @@ func (s *Server) distributionBacklog() (*chstore.DistributionQueue, bool, string
 		s.distQueueRefreshing = true
 		go s.refreshDistributionBacklog()
 	}
-	cur, degraded, detail := s.distQueueCur, s.distQueueDegraded, s.distQueueDetail
+	cur, st := s.distQueueCur, s.distQueueState
 	s.distQueueMu.Unlock()
-	return cur, degraded, detail
+	return cur, st.Degraded, st.Detail
 }
 
 // refreshDistributionBacklog — tek uçuşlu arka plan tazeleme.
@@ -11037,9 +11039,18 @@ func (s *Server) refreshDistributionBacklog() {
 		s.distQueuePrev = s.distQueueCur
 	}
 	s.distQueueCur = sample
-	s.distQueueDegraded, s.distQueueDetail = chstore.DistributionVerdict(s.distQueueCur, s.distQueuePrev)
-	if s.distQueueDegraded {
-		log.Printf("[health] Distributed spool degraded: %s", s.distQueueDetail)
+	// Histerezis (v0.9.987): önceki KARAR da girdi. Durumsuz verdict tek
+	// bir örneğin gürültüsüyle çevriliyordu — canlı flap 44.320 → 44.318
+	// (iki dosya) ile "degraded → ok" oldu, üstelik arıza sürerken.
+	was := s.distQueueState.Degraded
+	s.distQueueState = chstore.DistributionVerdict(s.distQueueState, s.distQueueCur, s.distQueuePrev)
+	switch {
+	case s.distQueueState.Degraded:
+		log.Printf("[health] Distributed spool degraded: %s", s.distQueueState.Detail)
+	case was:
+		// Geri dönüş de loglanır: histerezisin ne zaman dolduğu, sinyalin
+		// ne zaman sustuğu kadar önemli bir olay.
+		log.Printf("[health] Distributed spool recovered: %s", s.distQueueState.Detail)
 	}
 }
 

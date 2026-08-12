@@ -9,10 +9,15 @@
   --bg1: #22272e;
   --bg2: #2d333b;
   --bg3: #373e47;
-  /* --bg is an alias for the page-chrome background (matches
-     #topbar / #content / drawer panels). 15+ components used
-     var(--bg) before this alias existed and silently rendered
-     transparent — fix is one-line, no per-component churn. */
+  /* --bg alias. DİKKAT (v0.9.978, arka plan denetimi KN-3): bu yorum
+     v0.9.978'e kadar "#topbar / #content ile eşleşir" diyordu ve İKİSİ
+     DE yanlıştı — `#topbar` `--bg1` boyuyor, `#content` HİÇBİR ŞEY
+     boyamıyor. Daha kötüsü alias'ın kendisi temaya göre anlam
+     değiştiriyor: dark ve light'ta `--bg0` (sayfa zemini), redhat'te
+     `--bg1` (yükseltilmiş yüzey). 43 çağrı noktası (Drawer, AIDrawer,
+     CommandPalette, Markdown …) bu belirsizliği taşıyor.
+     Anlamı SABİTLEME işi D7'nin konusu; burada yalnız yorum gerçeğe
+     çekildi — yanlış yorum bir sonraki refactor'ü yanlış yönlendirir. */
   --bg:  #1c2128;
   --border: #444c56;
   --text: #d5dde5;
@@ -999,8 +1004,13 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
 .fsel-btn:hover { background: var(--bg3); }
 .fsel-btn .fsel-l { color: var(--text3); font-size: 10.5px;
   text-transform: uppercase; letter-spacing: .05em; font-weight: 700; }
+/* v0.9.978 (D1.7) — popover SAYFANIN ÜSTÜNDE yüzüyor, dolayısıyla
+   yükseltilmiş yüzey tokeni alır. `--bg0` sayfa zemininin ta kendisi:
+   redhat'te panel gri sayfanın üstünde gri kalıyordu, onu yalnız
+   kenarlık ayırıyordu. `.mqe-pop` (:2671) zaten `--bg1` kullanıyor —
+   iki popover, iki farklı token (denetim §2.6). */
 .fsel-panel { position: absolute; top: calc(100% + 4px); left: 0; z-index: var(--z-tooltip);
-  background: var(--bg0); border: 1px solid var(--border-strong);
+  background: var(--bg1); border: 1px solid var(--border-strong);
   border-radius: 7px; box-shadow: var(--shadow-pop); padding: 6px 0;
   min-width: 220px; }
 .fsel-row { display: flex; align-items: center; gap: 8px; padding: 5px 12px;
@@ -1048,7 +1058,13 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
 .card-stat .v.ok { color: var(--ok); } .card-stat .v.err { color: var(--err); } .card-stat .v.warn { color: var(--warn); }
 
 /* Table */
-.table-wrap { border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; overflow-y: hidden; }
+/* v0.9.978 (arka plan denetimi D1.1 / KN-1) — `background` BU KURALIN
+   EKSİĞİYDİ, kozmetik bir ekleme değil. Kap yalnız kenarlık çiziyordu,
+   `tbody tr` de şeffaf; ama yapışkan başlık opak olmak ZORUNDA olduğu
+   için `--bg1` alıyor (:is-fit/:is-scroll aşağıda). Sonuç redhat'te
+   beyaz başlık şeridi + gri satırlar oluyordu — tasarım kademesi değil,
+   kaza. 104 çağrı noktası, 13 rotanın TEK yüzeyi. */
+.table-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; overflow-y: hidden; }
 
 /* v0.9.644 — YAPIŞKAN TABLO BAŞLIĞI, tablo başına OPT-IN.
    (denetim bulgusu #10: "sticky tablo başlığı yok VE .table-wrap
@@ -1162,12 +1178,17 @@ tbody td { padding: 9px 12px; max-width: 320px; white-space: nowrap; overflow: h
    precedence the tr itself has today. */
 th.sticky-right, td.sticky-right {
   position: sticky; right: 0; z-index: var(--z-sticky-cell);
-  background: var(--bg0);
+  /* v0.9.978 — D1.1'in ZORUNLU EŞLİKÇİSİ. Sabitlenmiş kolon, altından
+     kayan satırların üstünü örtmek için opak olmak zorunda; o opak
+     değer artık `.table-wrap`ın zemini olmalı. `--bg0` kalsaydı her
+     tabloda sağ kenarda sayfa renginde bir şerit belirirdi. */
+  background: var(--bg1);
   box-shadow: -6px 0 8px -8px rgba(0, 0, 0, .5);
 }
 tbody tr:hover td.sticky-right { background: var(--bg2); }
 tr.row-selected td.sticky-right {
-  background: color-mix(in srgb, var(--accent) 10%, var(--bg0));
+  /* Aynı gerekçe: karışımın TABANI kabın zemini olmalı. */
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg1));
 }
 /* Numeric columns — right-align + tabular figures so digits line up by place value. */
 td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
@@ -1699,8 +1720,7 @@ canvas { max-width: 100%; }
 /* Service Graph */
 /* v0.8.299 — token, literal değil: redhat temasında (yalnız light override'ı
    olan) #0d1117 literal'i beyaz sayfada simsiyah canvas bırakıyordu. */
-#graph-wrap { background: var(--bg0); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
-[data-theme="light"] #graph-wrap { background: var(--bg1); }
+#graph-wrap { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
 #graph-svg { display: block; width: 100%; cursor: grab; user-select: none; }
 #graph-svg:active { cursor: grabbing; }
 .graph-node { cursor: pointer; }
@@ -1709,7 +1729,12 @@ canvas { max-width: 100%; }
 .graph-tooltip { position: fixed; background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 8px 12px; font-size: 12px; pointer-events: none; z-index: var(--z-modal); max-width: 240px; white-space: pre-line; font-family: monospace; }
 
 /* Empty state */
-.empty { text-align: center; padding: 60px 20px; color: var(--text2); }
+/* v0.9.978 (arka plan denetimi D1.5 / K2) — boş ekranın YÜZEYİ yoktu.
+   Liste boşsa `.table-wrap` hiç render edilmiyor, dolayısıyla onun
+   kenarlığı da yok: geriye gri sayfa zemininde ortalanmış bir yazı
+   kalıyordu. Dolu tablo ↔ boş tablo arasında görsel süreklilik sıfırdı.
+   209 çağrı noktası (QueryError dahil, yani HATA ekranları da). */
+.empty { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); text-align: center; padding: 60px 20px; color: var(--text2); }
 .empty .icon { font-size: 36px; margin-bottom: 12px; }
 .empty h3 { font-size: 14px; margin-bottom: 6px; color: var(--text); }
 .empty p { font-size: 12px; }
@@ -1719,7 +1744,19 @@ canvas { max-width: 100%; }
    60px'i bir kartın içinde paneli üç katına çıkarıyor; bu yüzden panel
    içi yüzeyler boş-durum dilini kullanmak yerine elle gri metin
    yazıyordu. Aynı yapı, küçük ölçek. */
-.empty.empty-compact { padding: var(--sp-7) var(--sp-6); }
+/* v0.9.978 (D1.6) — YÜZEYİ GERİ KAPAT. `compact` zaten "bir panelin
+   İÇİNDEYİM" demek; yüzey orada ikinci bir kutu (kart içinde kart)
+   üretirdi. */
+.empty.empty-compact { background: transparent; border: 0; padding: var(--sp-7) var(--sp-6); }
+/* v0.9.978 (D1.6, denetim riski V1) — `compact` bayrağına GÜVENME.
+   209 `<Empty>` çağrısının yalnız 11'i compact geçiyor, ama en az 8'i
+   `.ov-card-b` gibi bir yüzeyin İÇİNDE duruyor. Bayrak opsiyonel
+   olduğu için çift-kutu riski yapısal: kap zaten yüzeyse iç yüzeyi
+   soy. (CSS'te ebeveyn seçici yok; kapların listesi elle tutuluyor —
+   yeni bir yüzey kabı eklendiğinde buraya da eklenmeli.) */
+.card .empty, .card-static .empty, .ov-card-b .empty,
+.table-wrap .empty, .vt-scroll .empty, .modal-dialog .empty,
+#span-panel .empty, #wf-outer .empty { background: transparent; border: 0; }
 .empty.empty-compact .icon { font-size: 20px; margin-bottom: var(--sp-3); }
 .empty.empty-compact h3 { font-size: var(--fs-md); margin-bottom: var(--sp-1); }
 .empty.empty-compact p { font-size: var(--fs-xs); }
@@ -1787,9 +1824,17 @@ canvas { max-width: 100%; }
   cursor: pointer; padding: 0 4px; font-size: 11px;
 }
 .ex-toggle:hover { color: var(--text); }
+/* v0.9.978 (D1.7) — `--bg2`, `--bg1` DEĞİL. Denetim bu kuralı "8 yanlış
+   token" listesine koyup topluca `--bg1` öneriyordu; burada YANLIŞ
+   olurdu: `.ex-stack`ın tek çağrı yeri `SpanDetail.tsx` ve o panel
+   (`#span-panel`) zaten `--bg1`. Blanket `--bg1` stack trace kutusunu
+   panelin içinde GÖRÜNMEZ yapardı. `--bg0` da doğru değildi (sayfa
+   zemini, üstelik light temada `#ffffff` ile panelden AÇIK çıkıyor —
+   merdiven yönü temaya göre dönüyor). Doğru kademe iç-kutu: `--bg2`.
+   Aynı kademeyi `.empty code` ve `.card-tight` de kullanıyor. */
 .ex-stack {
   margin-top: 8px; padding: 8px 10px;
-  background: var(--bg0); border: 1px solid var(--border); border-radius: var(--radius-xs);
+  background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius-xs);
   font-family: monospace; font-size: 11px; line-height: 1.45;
   color: var(--text2); white-space: pre; overflow: auto;
   max-height: 360px; max-width: 100%;
@@ -2534,7 +2579,7 @@ button.accent.copied {
 .ov-flow-cols { display: grid; grid-template-columns: 1fr 1.1fr 1fr; gap: 0; align-items: stretch; }
 .ov-flow-col { display: flex; flex-direction: column; gap: 10px; justify-content: center; padding: 4px 6px; }
 .ov-flow-col .ov-col-lab { font-size: 10.5px; letter-spacing: .7px; color: var(--text3); font-weight: 700; text-transform: uppercase; text-align: center; margin-bottom: 2px; }
-.ov-node { border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); padding: 10px 12px; display: flex; align-items: center; gap: 10px; cursor: pointer; transition: border-color .12s, box-shadow .12s; position: relative; z-index: var(--z-sticky-cell); }
+.ov-node { border: 1px solid var(--border); border-radius: 10px; background: var(--bg1); padding: 10px 12px; display: flex; align-items: center; gap: 10px; cursor: pointer; transition: border-color .12s, box-shadow .12s; position: relative; z-index: var(--z-sticky-cell); }
 .ov-node:hover, .ov-node.hot { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .ov-node.dim { opacity: .4; }
 .ov-node .ov-nm { font-weight: 600; font-size: 12.5px; }
@@ -2553,7 +2598,7 @@ button.accent.copied {
 .nbr-col { display: flex; flex-direction: column; gap: 9px; }
 .nbr-col-lab { font-size: 11px; letter-spacing: .6px; color: var(--text2); font-weight: 700; text-transform: uppercase; }
 .nbr-col-sub { font-size: 11px; color: var(--text3); margin: -5px 0 4px; }
-.nbr-node { border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); padding: 10px 12px; display: flex; align-items: center; gap: 10px; transition: border-color .12s, box-shadow .12s; }
+.nbr-node { border: 1px solid var(--border); border-radius: 10px; background: var(--bg1); padding: 10px 12px; display: flex; align-items: center; gap: 10px; transition: border-color .12s, box-shadow .12s; }
 .nbr-node:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .nbr-node .nbr-id { min-width: 0; }
 .nbr-node .nbr-nm { font-weight: 600; font-size: 12.5px; }
@@ -2568,7 +2613,11 @@ button.accent.copied {
 .rb-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .rb-bar .spacer { flex: 1; }
 .meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
-.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 20px; font-size: 11.5px; color: var(--text2); background: var(--bg0); }
+/* v0.9.978 (D1.7) — `.chip` SAYFA zeminine oturuyor (ProblemDetail
+   `.meta-row`, kart yok), dolayısıyla yükseltilmiş yüzey tokeni doğru.
+   `--bg0` ile çip sayfayla aynı renkteydi; onu yalnız kenarlık
+   ayırıyordu. */
+.chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border: 1px solid var(--border); border-radius: 20px; font-size: 11.5px; color: var(--text2); background: var(--bg1); }
 .chip .k { color: var(--text3); }
 .chip b { color: var(--text); font-weight: 600; }
 .prob { display: flex; gap: 12px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
@@ -2577,7 +2626,11 @@ button.accent.copied {
 .prob .ti { font-weight: 600; font-size: 13px; }
 .prob .de { color: var(--text2); font-size: 12px; margin-top: 2px; }
 .prob .tm { margin-left: auto; color: var(--text3); font-size: 11px; white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-.ud-pill { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg0); font-size: 12.5px; font-weight: 600; text-decoration: none; color: inherit; }
+/* v0.9.978 (D1.7) — `--bg2`, `--bg1` DEĞİL: `.ud-pill`in dört çağrı
+   yerinin ikisi `Incident.tsx`te bir `.card`ın (yani `--bg1`in) İÇİNDE,
+   ikisi DetailDrawer panelinde. Blanket `--bg1` onları kaybederdi.
+   İç-kutu kademesi `--bg2` her üç temada da kaptan ayrışıyor. */
+.ud-pill { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg2); font-size: 12.5px; font-weight: 600; text-decoration: none; color: inherit; }
 .ud-pill:hover { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
 .ud-pill .mult { margin-left: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10.5px; color: var(--text3); font-weight: 500; }
 /* .volbars — compact occurrence/volume histogram (Problem detail occurrences
@@ -2588,7 +2641,7 @@ button.accent.copied {
 .volbars .col i { display: block; border-radius: 1px 1px 0 0; }
 
 /* Instances */
-.ov-inst { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg0); }
+.ov-inst { display: grid; grid-template-columns: 1fr auto auto auto; gap: 12px; align-items: center; padding: 11px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg1); }
 .ov-inst + .ov-inst { margin-top: 9px; }
 .ov-inst .ov-id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
 .ov-mini { text-align: right; min-width: 92px; }
@@ -2622,6 +2675,16 @@ button.accent.copied {
 .topo-node.focus { border: 2px solid var(--accent); background: color-mix(in oklab, var(--accent) 12%, var(--bg1)); padding: 9px 12px; }
 .topo-node.dim { opacity: .32; }
 /* Topology flow graph — dış bağımlılık (db/queue/ext) pill'i kesikli çerçeve */
+/* v0.9.978 (D1.7) — BİLEREK `--bg0`da BIRAKILDI, denetimin "8 yanlış
+   token" listesinde olmasına rağmen. Burada `--bg0` yüzey olarak değil
+   AYIRT EDİCİ olarak kullanılıyor: taban `.topo-node` `--bg1`, `.ext`
+   ondan geri çekilerek "bizim servisimiz değil" diyor. `--bg1` yapmak
+   iç/dış ayrımını yalnız kesikli kenarlığa indirger (görsel kimlik
+   kararı), `--bg2` ise `.topo` tuvalinin kendi rengiyle ÇAKIŞIR.
+   Not: bugünkü hâli light temada ters çalışıyor (`--bg0:#ffffff`
+   tabandan AÇIK) — gerçek bir bulgu, ama düzeltmesi bir tasarım
+   çağrısı. OPERATÖR KARARI bekliyor; `bgZeroIsPageOnly` kapısında
+   gerekçeli muafiyet olarak duruyor. */
 .topo-node.ext { border-style: dashed; background: var(--bg0); }
 .topo-name { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topo-sub { font-size: 9.5px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
@@ -2838,7 +2901,9 @@ td > .cell-actions.end { justify-content: flex-end; }
 /* VirtualTable (v0.8.6 Phase 0) — windowed <table> scroller. The header is a
    real <thead> rendered by DataTableHead; pin it while the body scrolls. The
    scroll container owns the height, so the header sticks to its top edge. */
-.vt-scroll { border: 1px solid var(--border); border-radius: var(--radius); }
+/* v0.9.978 (D1.2) — `.table-wrap` ile aynı boşluk, aynı gerekçe:
+   `thead th` `--bg2` ile opak, gövde şeffaftı. */
+.vt-scroll { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); }
 .vt-scroll > table { border-collapse: collapse; }
 .vt-scroll thead { position: sticky; top: 0; z-index: var(--z-sticky-cell); }
 .vt-scroll thead th { background: var(--bg2); }

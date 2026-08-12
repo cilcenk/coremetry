@@ -371,9 +371,7 @@ func (e *Evaluator) watcherMeasureFailed(ctx context.Context, r chstore.AlertRul
 	if err != nil || open == nil || open.ID == "" {
 		return
 	}
-	resolvedAt := time.Now().UnixNano()
-	open.Status = "resolved"
-	open.ResolvedAt = &resolvedAt
+	chstore.MarkResolved(open, time.Now().UnixNano())
 	open.Description = appendResolveSuffix(open.Description, "watch source broken")
 	if err := e.store.UpsertProblem(ctx, *open); err != nil {
 		log.Printf("[evaluator] watcher %s broken-source resolve: %v", r.ID, err)
@@ -647,10 +645,8 @@ func (e *Evaluator) settleCountAlert(ctx context.Context, r chstore.AlertRule, n
 			log.Printf("[evaluator] refresh %s problem: %v", metric, err)
 		}
 	case !breached && hasOpen:
-		resolvedAt := now.UnixNano()
-		open.Status = "resolved"
-		open.ResolvedAt = &resolvedAt
-		open.Value = value
+		// v0.9.977 — ihlal değeri KORUNUR (metric yolunun ikizi).
+		chstore.MarkResolved(open, now.UnixNano())
 		if err := e.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[evaluator] resolve %s problem: %v", metric, err)
 		} else {

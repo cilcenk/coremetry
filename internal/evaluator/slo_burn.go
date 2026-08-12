@@ -132,10 +132,8 @@ func (e *Evaluator) evaluateSLOBurn(ctx context.Context, slo chstore.SLO, pol bu
 		// to be under-threshold to clear; we already require
 		// that for breached, so a single failed condition is
 		// enough for resolve.
-		now := time.Now().UnixNano()
-		open.Status = "resolved"
-		open.ResolvedAt = &now
-		open.Value = fastRate
+		// v0.9.977 — yanma hızı ihlal anındaki değerinde kalır.
+		chstore.MarkResolved(open, time.Now().UnixNano())
 		_ = e.store.UpsertProblem(ctx, *open)
 		e.countResolved() // v0.9.550 — kalp atışı sayacı
 		log.Printf("[evaluator/slo] PROBLEM RESOLVED: %s %s burn=%.1fx/%.1fx",

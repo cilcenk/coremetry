@@ -297,10 +297,8 @@ func (e *Evaluator) reconcileRuntime(ctx context.Context, r runtimeReconcile) {
 		}
 
 	case !r.open && r.hasOpen:
-		resolvedAt := time.Now().UnixNano()
-		r.existing.Status = "resolved"
-		r.existing.ResolvedAt = &resolvedAt
-		r.existing.Value = r.value
+		// v0.9.977 — ihlal değeri (GC payı / heap) korunur.
+		chstore.MarkResolved(r.existing, time.Now().UnixNano())
 		if err := e.store.UpsertProblem(ctx, *r.existing); err != nil {
 			log.Printf("[evaluator] runtime resolve %s/%s: %v", r.ruleID, r.service, err)
 		} else {
@@ -330,8 +328,7 @@ func (e *Evaluator) drainRetiredHeapProblems(ctx context.Context, snap *chstore.
 			continue
 		}
 		resolved := *p
-		resolved.Status = "resolved"
-		resolved.ResolvedAt = &now
+		chstore.MarkResolved(&resolved, now)
 		// Açıklamaya SEBEBİ yazılır. Aksi hâlde operatör problemin
 		// kendiliğinden düzeldiğini sanardı — oysa kural kaldırıldı,
 		// heap iyileşmedi. İkisi farklı şeyler ve karıştırılmaları

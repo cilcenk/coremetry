@@ -384,6 +384,39 @@ func computePriority(p Problem, nowNs int64, cfg ProblemPriorityConfig) (string,
 	}
 }
 
+// MarkResolved — bir problemi kapatır: Status + ResolvedAt yazılır,
+// İHLAL DEĞERİNE (Value) DOKUNULMAZ.
+//
+// v0.9.977 (operatör-raporlu sahte P1'lerin ikinci yarısı) — altı kapanış
+// yolu (kural, sayım-alarmı, anomali, db kapasitesi, runtime, SLO burn)
+// kapanış anında `open.Value = <toparlanmış değer>` yazıyordu. Sonuçları:
+//
+//  1. İHLAL KAYBOLUYORDU. Satır zaten "resolved" ve ResolvedAt damgalı;
+//     kapanış anındaki değeri Value'ya yazmak, problemin NEDEN açıldığını
+//     anlatan tek sayıyı siliyordu. Post-mortem'de "error_rate 22 idi,
+//     eşik 15" yerine "error_rate 3.9, eşik 15" görünüyordu — yani
+//     problemin hiç ihlal etmediği gibi bir tablo.
+//  2. ÖNCELİK ASİMETRİSİ. Priority okuma anında hesaplanıyor: aynı satır
+//     açılışta P1, kapanışta bambaşka bir basamak oluyordu. v0.9.976
+//     öncesinde bu, ters-çevirme hatasıyla birleşip kapanmış problemleri
+//     SAHTE P1'e çeviriyordu (değer eşiğin altına indiği an oran <1 olur,
+//     çevrilir, "büyük ihlal" sayılırdı).
+//
+// Kapanış anındaki değer için AYRI bir alan AÇILMADI: ResolvedAt zaten
+// var, açıklama metinleri (appendResolveSuffix / anomali desc) toparlanma
+// bilgisini taşıyor ve yeni bir kolon, kimsenin okumadığı bir sayı için
+// şema borcu olurdu.
+//
+// SAF — tablo testli. Problem kapatan HER yol buradan geçmeli (pin:
+// evaluator/resolve_value_test.go).
+func MarkResolved(p *Problem, resolvedAtNs int64) {
+	if p == nil {
+		return
+	}
+	p.Status = "resolved"
+	p.ResolvedAt = &resolvedAtNs
+}
+
 // isBelowRule — comparator "değer DÜŞTÜKÇE kötüleşen" aileden mi?
 //
 // SAF + tablo-testli. Yalnız iki dizgi ters çevirmeyi açar; boşluk

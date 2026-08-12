@@ -211,9 +211,7 @@ func (e *Evaluator) reconcileSharedBurst(ctx context.Context, b chstore.SharedEx
 		}
 
 	case !active && hasOpen:
-		resolvedAt := time.Unix(0, b.LastSeen).UnixNano()
-		existing.Status = "resolved"
-		existing.ResolvedAt = &resolvedAt
+		chstore.MarkResolved(existing, time.Unix(0, b.LastSeen).UnixNano())
 		if err := e.store.UpsertProblem(ctx, *existing); err != nil {
 			log.Printf("[evaluator] paylaşılan patlama kapatılamadı %s: %v", id, err)
 			return

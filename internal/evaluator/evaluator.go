@@ -856,13 +856,18 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 		}
 		// Open a new problem
 		p := chstore.Problem{
-			ID:          newID(),
-			RuleID:      r.ID,
-			RuleName:    r.Name,
-			Severity:    r.Severity,
-			Service:     service,
-			Metric:      r.Metric,
-			Value:       value,
+			ID:       newID(),
+			RuleID:   r.ID,
+			RuleName: r.Name,
+			Severity: r.Severity,
+			Service:  service,
+			Metric:   r.Metric,
+			Value:    value,
+			// v0.9.976 — ihlalin YÖNÜ satıra iniyor. chstore.computePriority
+			// ters-çevirme kolu buna bakıyor: alan yokken eşiğin ALTINDA
+			// kalan her ">" kuralı (error_rate 3.9 / eşik 15) ters çevrilip
+			// "3.8x büyük ihlal" sayılıyor ve SAHTE P1 üretiyordu.
+			Comparator:  r.Comparator,
 			Threshold:   r.Threshold,
 			Status:      "open",
 			Description: describeProblem(r, service, value),

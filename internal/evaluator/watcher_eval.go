@@ -611,13 +611,18 @@ func (e *Evaluator) settleCountAlert(ctx context.Context, r chstore.AlertRule, n
 			}
 		}
 		p := chstore.Problem{
-			ID:          newID(),
-			RuleID:      r.ID,
-			RuleName:    r.Name,
-			Severity:    r.Severity,
-			Service:     "",
-			Metric:      metric,
-			Value:       value,
+			ID:       newID(),
+			RuleID:   r.ID,
+			RuleName: r.Name,
+			Severity: r.Severity,
+			Service:  "",
+			Metric:   metric,
+			Value:    value,
+			// v0.9.976 — sayım-alarmları (log_query + ES watcher) da yönü
+			// taşır: metric yolunun ikizi, aynı ters-çevirme kapısından
+			// geçiyor. Bu ailede comparator tipik olarak ">" (eşikten çok
+			// eşleşme), yani düzeltme burada da sahte P1'i kesiyor.
+			Comparator:  r.Comparator,
 			Threshold:   r.Threshold,
 			Status:      "open",
 			Description: description,

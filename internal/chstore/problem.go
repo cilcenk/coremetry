@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -82,7 +83,22 @@ type Problem struct {
 	Metric    string  `json:"metric"`
 	Value     float64 `json:"value"`
 	Threshold float64 `json:"threshold"`
-	Status    string  `json:"status"` // open | resolved
+	// Comparator (v0.9.976) — ihlali TANIMLAYAN yön, kuralın kendisinden
+	// (AlertRule.Comparator) problem AÇILIRKEN kopyalanır: "<" / "<=" =
+	// değer düştükçe kötüleşen aile (uptime, başarı oranı, sağlıklı pod),
+	// ">" / ">=" = değer yükseldikçe kötüleşen aile (hata oranı, gecikme).
+	//
+	// computePriority'nin ters-çevirme kolu BUNA bakar. Alan yokken kol
+	// "oran 1'in altındaysa ters çevir" diyordu, yani eşiğin ALTINDA kalan
+	// her ">" problemi (3.922 / eşik 15) 3.8× "büyük ihlal" sayılıp P1
+	// oluyordu — problemin gerçekte eşiğe UZAK olduğu durum.
+	//
+	// BOŞ = ters çevirme YOK. Eski satırlar, anomali/monitor/runtime
+	// üreticileri ve elle kurulmuş Problem'ler bu daldan geçer; hepsi ">"
+	// ailesi (değer yükseldikçe kötü) ya da tam-kayıp koluyla (Value 0)
+	// zaten doğru sıralanıyor.
+	Comparator string `json:"comparator,omitempty"`
+	Status     string `json:"status"` // open | resolved
 	// Pod (v0.9.403) — runtime pod denetimlerinde alarmın pod kimliği;
 	// diğer üreticilerde boş. Service GERÇEK servis kalır (v0.9.401).
 	Pod         string `json:"pod,omitempty"`
@@ -259,10 +275,26 @@ func computePriority(p Problem, nowNs int64, cfg ProblemPriorityConfig) (string,
 	ratio := 0.0
 	if p.Threshold != 0 {
 		ratio = p.Value / p.Threshold
-		// For "<" or "<=" rules (e.g. uptime fell below 99%),
-		// the value drops as things get worse — flip the
-		// ratio.
-		if ratio < 1 && ratio > 0 {
+		// v0.9.976 (operatör-raporlu SAHTE P1) — ters çevirme artık
+		// kuralın COMPARATOR'ına bakıyor.
+		//
+		// Kapı `ratio < 1 && ratio > 0` idi ve yorumu "'<' kuralları için"
+		// diyordu, ama kuralın comparator'ı HİÇ okunmuyordu — Problem o
+		// alanı taşımıyordu bile. Sonuç: eşiğin ALTINDA kalan her ">"
+		// problemi ters çevrilip "büyük ihlal" sayılıyordu.
+		//
+		// Canlı vaka: sms-service error_rate 3.922, eşik 15 (">" kuralı).
+		// Oran 0.26 → 1/0.26 = 3.82× → critical + büyük ihlal → P1.
+		// Halbuki değer eşiğin ÜÇTE BİRİ; problem kapanmaya yakın.
+		// Ölçüm (5717 satır / 11 gün): oran kaynaklı critical P1'lerin
+		// 299'u ters çevrilmişti, 60'ı SAF SAPMA (error_rate + db_p99 +
+		// http_p99 — hepsi ">" ailesinden).
+		//
+		// BOŞ comparator'da ÇEVİRMİYORUZ (ölçülmüş karar): bu veride tek
+		// bir "<" kural yok, yani boşta çevirmek yalnız sahte P1 üretir.
+		// Eski satırlar + comparator taşımayan üreticiler (anomali,
+		// monitor, runtime, db kapasitesi, exception) hep ">" ailesi.
+		if isBelowRule(p.Comparator) && ratio < 1 && ratio > 0 {
 			ratio = 1 / ratio
 		}
 		if ratio >= cfg.BigBreachRatio {
@@ -350,6 +382,22 @@ func computePriority(p Problem, nowNs int64, cfg ProblemPriorityConfig) (string,
 	default:
 		return "P3", "warning steady"
 	}
+}
+
+// isBelowRule — comparator "değer DÜŞTÜKÇE kötüleşen" aileden mi?
+//
+// SAF + tablo-testli. Yalnız iki dizgi ters çevirmeyi açar; boşluk
+// toleranslı çünkü comparator operatörün kural formundan geliyor ve
+// " < " gibi bir değer CH'ye aynen yazılabilir. Bilinmeyen/boş değer
+// "hayır" der — v0.9.976'nın merkezi kararı: emin değilsek ÇEVİRMEYİZ,
+// çünkü yanlış çevirme sahte P1 üretiyor, çevirmemek yalnız gerçek bir
+// "<" ihlalini bir basamak aşağı koyuyor.
+func isBelowRule(comparator string) bool {
+	switch strings.TrimSpace(comparator) {
+	case "<", "<=":
+		return true
+	}
+	return false
 }
 
 // trimFloat — eşiği gereksiz sıfırlar olmadan yazar (1 → "1",
@@ -795,6 +843,97 @@ func (s *Store) CountProblems(ctx context.Context, f ProblemFilter) (uint64, err
 	return n, nil
 }
 
+// problemSelectExpr — problems satırının TAM okuma listesi, TEK kaynak.
+//
+// v0.9.976 — yedi okuma yeri (List/Get/FindOpen/FindOpenByID/Snapshot/
+// Stale/SimilarResolved) aynı listeyi elle tekrarlıyordu; comparator'ı
+// yedi yere ayrı ayrı eklemek, birini unutunca SESSİZ bir hata sınıfı
+// açardı: eksik okuyan yol satırı UpsertProblem'e geri verdiğinde
+// (ack, refresh, AI özeti) ReplacingMergeTree bütün-satır replace'i
+// comparator'ı DEFAULT ''e indirir — yani öncelik hesabı sessizce eski
+// hatalı davranışa döner. users.go'daki userSelectExpr/scanUserRow
+// ikilisinin birebir emsali.
+//
+// comparator YALNIZ store kolonu probe ettiyse listede (hasProblemCmpCol):
+// küme kipinde DDL arka plana ERTELENİYOR (v0.9.614), yani yeni binary
+// kolon henüz yokken okuma yapabilir. Koşulsuz bir SELECT orada her
+// problem okumasını "no such column" ile düşürürdü — v0.8.185/186'nın
+// prod'u iki kez kıran sınıfı, bu kez okuma tarafında.
+func (s *Store) problemSelectExpr() string {
+	expr := `id, rule_id, rule_name, severity, service, metric,
+		       value, threshold, status, description, assignee, pod,
+		       toUnixTimestamp64Nano(started_at),
+		       resolved_at,
+		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)`
+	if s.hasProblemCmpCol {
+		expr += `, comparator`
+	}
+	return expr
+}
+
+// scanProblemRow — problemSelectExpr'in ürettiği satırı okur. hasCmp,
+// projeksiyonu kuran bayrakla AYNI olmak zorunda.
+//
+// resolved_at: NULL ve sıfır-zaman ikisi de "çözülmemiş" demek. Eskiden
+// FindOpenProblemByID sıfırı eliyordu, diğerleri elemiyordu; tek yerde
+// birleşince en muhafazakâr davranış (ikisini de ele) kaldı — sıfır
+// zamanlı bir ResolvedAt işaretçisi UI'da 1970 damgası demek olurdu.
+func scanProblemRow(sc interface{ Scan(...any) error }, hasCmp bool) (Problem, error) {
+	var p Problem
+	var resolvedAt *time.Time
+	dst := []any{&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
+		&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description,
+		&p.Assignee, &p.Pod, &p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt}
+	if hasCmp {
+		dst = append(dst, &p.Comparator)
+	}
+	if err := sc.Scan(dst...); err != nil {
+		return Problem{}, err
+	}
+	if resolvedAt != nil && !resolvedAt.IsZero() {
+		ns := resolvedAt.UnixNano()
+		p.ResolvedAt = &ns
+	}
+	return p, nil
+}
+
+// problemInsertCols / problemInsertArgs — problems'e yazan HER yolun tek
+// kolon+değer kaynağı.
+//
+// Neden tek kaynak: bu tabloya yazan iki yol var (UpsertProblem ve
+// UpsertProblemAISummary) ve İKİSİ de tarihte kolon unutup üretim verisi
+// sildi — pod (v0.9.445) ve ai_summary (v0.9.448). ReplacingMergeTree
+// bütün-satır replace yapıyor, yani listede olmayan kolon DEFAULT'a iner.
+// Ayrı listeler tutmak bu sınıfı canlı tutuyordu; problem_aisummary_test
+// pinleri artık bu iki fonksiyonu doğruluyor.
+func problemInsertCols(withComparator bool) string {
+	cols := "id, rule_id, rule_name, severity, service, metric, value, " +
+		"threshold, status, description, assignee, pod, started_at, " +
+		"resolved_at, updated_at, version, ai_summary, ai_summary_at"
+	if withComparator {
+		cols += ", comparator"
+	}
+	return cols
+}
+
+func problemInsertArgs(p Problem, withComparator bool) []any {
+	startedAt := time.Unix(0, p.StartedAt).UTC()
+	var resolvedAt *time.Time
+	if p.ResolvedAt != nil {
+		t := time.Unix(0, *p.ResolvedAt).UTC()
+		resolvedAt = &t
+	}
+	now := time.Now()
+	args := []any{p.ID, p.RuleID, p.RuleName, p.Severity, p.Service, p.Metric,
+		p.Value, p.Threshold, p.Status, p.Description, p.Assignee, p.Pod,
+		startedAt, resolvedAt, now.UTC(), uint64(now.UnixNano()),
+		p.AISummary, time.Unix(0, p.AISummaryAt).UTC()}
+	if withComparator {
+		args = append(args, p.Comparator)
+	}
+	return args
+}
+
 func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, error) {
 	var wc whereClause
 	if f.Status != "" {
@@ -856,11 +995,7 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 	// healthy install — and bails out clearly with a CH error
 	// instead of stacking up doomed requests.
 	rows, err := s.conn.Query(ctx, `
-		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee, pod,
-		       toUnixTimestamp64Nano(started_at),
-		       resolved_at,
-		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+		SELECT `+s.problemSelectExpr()+`
 		FROM problems FINAL `+wc.sql()+`
 		ORDER BY started_at DESC
 		LIMIT ?
@@ -872,16 +1007,9 @@ func (s *Store) ListProblems(ctx context.Context, f ProblemFilter) ([]Problem, e
 
 	var out []Problem
 	for rows.Next() {
-		var p Problem
-		var resolvedAt *time.Time
-		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
-			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
+		p, err := scanProblemRow(rows, s.hasProblemCmpCol)
+		if err != nil {
 			return nil, err
-		}
-		if resolvedAt != nil {
-			ns := resolvedAt.UnixNano()
-			p.ResolvedAt = &ns
 		}
 		out = append(out, p)
 	}
@@ -900,11 +1028,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 		limit = 5
 	}
 	rows, err := s.conn.Query(ctx, `
-		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee, pod,
-		       toUnixTimestamp64Nano(started_at),
-		       resolved_at,
-		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+		SELECT `+s.problemSelectExpr()+`
 		FROM problems FINAL
 		WHERE service = ? AND rule_id = ? AND status = 'resolved'
 		ORDER BY started_at DESC
@@ -915,16 +1039,9 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 	defer rows.Close()
 	var out []Problem
 	for rows.Next() {
-		var p Problem
-		var resolvedAt *time.Time
-		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
-			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
+		p, err := scanProblemRow(rows, s.hasProblemCmpCol)
+		if err != nil {
 			return nil, err
-		}
-		if resolvedAt != nil {
-			ns := resolvedAt.UnixNano()
-			p.ResolvedAt = &ns
 		}
 		out = append(out, p)
 	}
@@ -942,11 +1059,7 @@ func (s *Store) FindSimilarResolvedProblems(ctx context.Context, service, ruleID
 // row doesn't leak into the sweep.
 func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time) ([]Problem, error) {
 	rows, err := s.conn.Query(ctx, `
-		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee, pod,
-		       toUnixTimestamp64Nano(started_at),
-		       resolved_at,
-		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+		SELECT `+s.problemSelectExpr()+`
 		FROM problems FINAL
 		WHERE status IN ('open', 'acknowledged')
 		  AND updated_at < ?
@@ -959,16 +1072,9 @@ func (s *Store) ListStaleOpenProblems(ctx context.Context, staleCutoff time.Time
 	defer rows.Close()
 	var out []Problem
 	for rows.Next() {
-		var p Problem
-		var resolvedAt *time.Time
-		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
-			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
+		p, err := scanProblemRow(rows, s.hasProblemCmpCol)
+		if err != nil {
 			return nil, err
-		}
-		if resolvedAt != nil {
-			ns := resolvedAt.UnixNano()
-			p.ResolvedAt = &ns
 		}
 		out = append(out, p)
 	}
@@ -1077,11 +1183,7 @@ func (o *OpenProblems) Len() int {
 // küçük state tablosunu okuyor. Tick başında tek snapshot + map lookup.
 func (s *Store) OpenProblemsSnapshot(ctx context.Context) (*OpenProblems, error) {
 	rows, err := s.conn.Query(ctx, `
-		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee, pod,
-		       toUnixTimestamp64Nano(started_at),
-		       resolved_at,
-		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+		SELECT `+s.problemSelectExpr()+`
 		FROM problems FINAL
 		WHERE status IN ('open', 'acknowledged')
 		LIMIT 50000
@@ -1092,16 +1194,9 @@ func (s *Store) OpenProblemsSnapshot(ctx context.Context) (*OpenProblems, error)
 	defer rows.Close()
 	out := &OpenProblems{byKey: map[string]*Problem{}, byID: map[string]*Problem{}}
 	for rows.Next() {
-		var p Problem
-		var resolvedAt *time.Time
-		if err := rows.Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
-			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt); err != nil {
+		p, err := scanProblemRow(rows, s.hasProblemCmpCol)
+		if err != nil {
 			return nil, err
-		}
-		if resolvedAt != nil {
-			ns := resolvedAt.UnixNano()
-			p.ResolvedAt = &ns
 		}
 		// `var p Problem` döngü İÇİNDE tanımlı — her iterasyon ayrı
 		// değişken, &p almak güvenli (dışarıda tanımlı olsaydı tüm
@@ -1118,45 +1213,25 @@ func (s *Store) OpenProblemsSnapshot(ctx context.Context) (*OpenProblems, error)
 // (ruleID, service) anahtarı per-pod granülerliği taşıyamaz — pod artık
 // service alanında DEĞİL.
 func (s *Store) FindOpenProblemByID(ctx context.Context, id string) (*Problem, error) {
-	var p Problem
-	var resolvedAt *time.Time
-	err := s.conn.QueryRow(ctx, `
-		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee, pod,
-		       toUnixTimestamp64Nano(started_at),
-		       resolved_at,
-		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+	row := s.conn.QueryRow(ctx, `
+		SELECT `+s.problemSelectExpr()+`
 		FROM problems FINAL
 		WHERE id = ? AND status IN ('open', 'acknowledged')
-		ORDER BY started_at DESC LIMIT 1`, id).
-		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description,
-			&p.Assignee, &p.Pod, &p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
+		ORDER BY started_at DESC LIMIT 1`, id)
+	p, err := scanProblemRow(row, s.hasProblemCmpCol)
 	if err != nil {
 		return nil, err
-	}
-	if resolvedAt != nil && !resolvedAt.IsZero() {
-		ns := resolvedAt.UnixNano()
-		p.ResolvedAt = &ns
 	}
 	return &p, nil
 }
 
 func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*Problem, error) {
-	var p Problem
-	var resolvedAt *time.Time
-	err := s.conn.QueryRow(ctx, `
-		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee, pod,
-		       toUnixTimestamp64Nano(started_at),
-		       resolved_at,
-		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+	row := s.conn.QueryRow(ctx, `
+		SELECT `+s.problemSelectExpr()+`
 		FROM problems FINAL
 		WHERE rule_id = ? AND service = ? AND status IN ('open', 'acknowledged')
-		ORDER BY started_at DESC LIMIT 1`, ruleID, service).
-		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
-			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
+		ORDER BY started_at DESC LIMIT 1`, ruleID, service)
+	p, err := scanProblemRow(row, s.hasProblemCmpCol)
 	if err != nil {
 		// v0.9.446 — "satır yok" hata DEĞİL (nil/nil, user.go emsali):
 		// monitor keep-alive'ı gerçek okuma hatası ile süpürülmüş-satırı
@@ -1167,10 +1242,6 @@ func (s *Store) FindOpenProblem(ctx context.Context, ruleID, service string) (*P
 			return nil, nil
 		}
 		return nil, err
-	}
-	if resolvedAt != nil {
-		ns := resolvedAt.UnixNano()
-		p.ResolvedAt = &ns
 	}
 	return &p, nil
 }
@@ -1273,29 +1344,17 @@ func (s *Store) GetOpenProblemCountsByService(ctx context.Context) (map[string]O
 // yani operatör "not found" yerine ham sürücü hatası görüyordu), ve
 // yeni by-id ucu 404 ile 500'ü ayırt edemezdi.
 func (s *Store) GetProblem(ctx context.Context, id string) (*Problem, error) {
-	var p Problem
-	var resolvedAt *time.Time
-	err := s.conn.QueryRow(ctx, `
-		SELECT id, rule_id, rule_name, severity, service, metric,
-		       value, threshold, status, description, assignee, pod,
-		       toUnixTimestamp64Nano(started_at),
-		       resolved_at,
-		       ai_summary, toUnixTimestamp64Nano(ai_summary_at)
+	row := s.conn.QueryRow(ctx, `
+		SELECT `+s.problemSelectExpr()+`
 		FROM problems FINAL
 		WHERE id = ?
-		LIMIT 1`, id).
-		Scan(&p.ID, &p.RuleID, &p.RuleName, &p.Severity, &p.Service,
-			&p.Metric, &p.Value, &p.Threshold, &p.Status, &p.Description, &p.Assignee, &p.Pod,
-			&p.StartedAt, &resolvedAt, &p.AISummary, &p.AISummaryAt)
+		LIMIT 1`, id)
+	p, err := scanProblemRow(row, s.hasProblemCmpCol)
 	if err != nil {
 		if isNoRows(err) {
 			return nil, nil
 		}
 		return nil, err
-	}
-	if resolvedAt != nil {
-		ns := resolvedAt.UnixNano()
-		p.ResolvedAt = &ns
 	}
 	return &p, nil
 }
@@ -1327,23 +1386,16 @@ func (s *Store) UpsertProblem(ctx context.Context, p Problem) error {
 	// görüp yeniden üretiyordu (AI maliyet döngüsü + sönüp yanan özet).
 	// Her taşıyıcı okuma (FindOpenProblem/Get/List/Snapshot/Stale) iki
 	// alanı zaten Scan ediyor; taze-satır açan siteler için boş = doğru.
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO problems
-		(id, rule_id, rule_name, severity, service, metric, value,
-		 threshold, status, description, assignee, pod, started_at,
-		 resolved_at, updated_at, version, ai_summary, ai_summary_at)`)
+	//
+	// v0.9.976 — liste artık problemInsertCols'ta, TEK kaynak. İki yazma
+	// yolunun ayrı elle-yazılmış listeleri tam olarak yukarıdaki iki
+	// olayın (pod, ai_summary) sebebiydi.
+	batch, err := s.conn.PrepareBatch(ctx,
+		"INSERT INTO problems ("+problemInsertCols(s.hasProblemCmpCol)+")")
 	if err != nil {
 		return err
 	}
-	startedAt := time.Unix(0, p.StartedAt).UTC()
-	var resolvedAt *time.Time
-	if p.ResolvedAt != nil {
-		t := time.Unix(0, *p.ResolvedAt).UTC()
-		resolvedAt = &t
-	}
-	if err := batch.Append(p.ID, p.RuleID, p.RuleName, p.Severity, p.Service,
-		p.Metric, p.Value, p.Threshold, p.Status, p.Description, p.Assignee,
-		p.Pod, startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano()),
-		p.AISummary, time.Unix(0, p.AISummaryAt).UTC()); err != nil {
+	if err := batch.Append(problemInsertArgs(p, s.hasProblemCmpCol)...); err != nil {
 		return fmt.Errorf("append problem: %w", err)
 	}
 	return batch.Send()
@@ -1373,24 +1425,12 @@ func (s *Store) UpsertProblemAISummary(ctx context.Context, problemID, summary s
 	// problemin pod bağlamını siliyordu (runtime problemlerinde P1
 	// satırının hangi pod'a ait olduğu kayboluyor). GetProblem zaten tam
 	// satırı okuyor; taşımamak için hiçbir neden yoktu.
-	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO problems
-		(id, rule_id, rule_name, severity, service, metric, value,
-		 threshold, status, description, assignee, pod, started_at,
-		 resolved_at, updated_at, version, ai_summary, ai_summary_at)`)
+	batch, err := s.conn.PrepareBatch(ctx,
+		"INSERT INTO problems ("+problemInsertCols(s.hasProblemCmpCol)+")")
 	if err != nil {
 		return err
 	}
-	startedAt := time.Unix(0, row.StartedAt).UTC()
-	var resolvedAt *time.Time
-	if row.ResolvedAt != nil {
-		t := time.Unix(0, *row.ResolvedAt).UTC()
-		resolvedAt = &t
-	}
-	summaryAt := time.Unix(0, row.AISummaryAt).UTC()
-	if err := batch.Append(row.ID, row.RuleID, row.RuleName, row.Severity, row.Service,
-		row.Metric, row.Value, row.Threshold, row.Status, row.Description, row.Assignee,
-		row.Pod, startedAt, resolvedAt, time.Now().UTC(), uint64(time.Now().UnixNano()),
-		row.AISummary, summaryAt); err != nil {
+	if err := batch.Append(problemInsertArgs(*row, s.hasProblemCmpCol)...); err != nil {
 		return fmt.Errorf("append problem ai-summary: %w", err)
 	}
 	return batch.Send()

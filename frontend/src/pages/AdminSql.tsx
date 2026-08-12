@@ -226,7 +226,14 @@ export default function SQLPlaygroundPage() {
   return (
     <>
       <Topbar title="SQL playground" />
-      <div id="content" style={{ display: 'flex', gap: 12, height: 'calc(100vh - 80px)' }}>
+      {/* v0.9.981 (D3.2) — `height: 'calc(100vh - 80px)'` idi: depodaki TEK
+          satır-içi `#content` ezmesi. 80px tam-genişlik topbar'a göre elle
+          kalibre edilmişti ve `[data-density]`nin padding değişimine
+          (6/10/20/22px) KÖRDÜ — yoğunluk modu değiştikçe sayfa ya taşıyor
+          ya boşluk bırakıyordu. `#content` zaten `flex:1 + overflow:auto`,
+          yani viewport aritmetiğine hiç gerek yok. `minHeight: 0` flex
+          çocuğunun kendi içeriğinden küçülebilmesi için ŞART. */}
+      <div id="content" style={{ display: 'flex', gap: 12, height: '100%', minHeight: 0 }}>
         {/* Schema sidebar — CH only. The Elasticsearch backend's
             queryable fields are surfaced via /logs page's
             ƒ Fields button; the playground sidebar would just

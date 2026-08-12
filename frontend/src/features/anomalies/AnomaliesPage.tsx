@@ -394,10 +394,17 @@ export default function ProblemsPage() {
       {/* v0.9.323 — this list is exception GROUPS; "Problems" now names the
           merged triage queue at /inbox. Same page, same route, honest label. */}
       {!problemParam && <Topbar title="Exceptions" showEnv envApplies />}
-      {/* Hidden (NOT unmounted) while the full-page detail is open — the
-          duplicate #content id is inert here: nothing on this route calls
-          getElementById('content') (useContentWidth is dashboard-only). */}
-      <div id="content" style={problemParam ? { display: 'none' } : undefined}>
+      {/* Hidden (NOT unmounted) while the full-page detail is open — facet /
+          team / bulk-selection state survives "← Exceptions" / Esc.
+          v0.9.981 (D3.1) — kap artık `id="content"` YERİNE `.page-body`.
+          Eski yorum "duplicate #content id burada inert" diyerek kendi
+          gerekçesini yazıyordu: doğruydu AMA yalnız `useContentWidth`in
+          bugünkü çağrı listesi (Dashboard / ServiceCharts / Explore)
+          sayesinde. Bu sayfaya bir sparkline eklendiği gün
+          `getElementById('content')` GİZLİ düğümü döndürür (clientWidth 0)
+          ve grafik adımı sessizce yanlış hesaplanır. Sınıfa geçmek
+          gerekçeyi çağrı listesine bağımlı olmaktan çıkarıyor. */}
+      <div className="page-body" style={problemParam ? { display: 'none' } : undefined}>
         <TriageCrumb label="Problems" />
         <SavedViewsBar page="problems" />
 

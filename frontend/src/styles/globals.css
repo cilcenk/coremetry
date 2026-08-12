@@ -374,7 +374,17 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 }
 #topbar h1 { font-size: 15px; font-weight: 600; flex: 1; min-width: 0;
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#content { flex: 1; padding: 20px; overflow: auto; }
+/* v0.9.981 (D3.1) — `.page-body`, `#content`in İKİZİ. Neden gerekli:
+   `/inbox?problem=` ve `/problems?problem=` açıkken sayfa liste kabını
+   UNMOUNT ETMİYOR (`display:none` ile saklıyor — facet/seçim/scroll
+   state'i "← Problems"te yerinde dursun diye, bilinçli). Sonuç aynı
+   DOM'da İKİ `id="content"` oluyordu: geçersiz HTML ve
+   `getElementById('content')` İLK düğümü, yani gizli olanı döndürür
+   (clientWidth 0). Bugün zararsız çünkü `useContentWidth`i yalnız
+   Dashboard/ServiceCharts/Explore çağırıyor — ama problem detayına bir
+   sparkline eklendiği gün grafik adımı sessizce yanlış hesaplanır.
+   Gizlenen liste artık id yerine sınıf taşıyor; stil bit bit aynı. */
+#content, .page-body { flex: 1; padding: 20px; overflow: auto; }
 
 /* Controls */
 .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; align-items: center; }
@@ -2292,7 +2302,7 @@ button.accent.copied {
 [data-density="spacious"] .controls input,
 [data-density="spacious"] .controls select,
 [data-density="spacious"] .controls button { padding: 7px 12px; font-size: 13px; }
-[data-density="spacious"] #content { padding: 22px 28px; }
+[data-density="spacious"] #content, [data-density="spacious"] .page-body { padding: 22px 28px; }
 [data-density="spacious"] .wf-row { min-height: 26px; }
 [data-density="spacious"] .wf-bar { height: 14px; }
 
@@ -2304,7 +2314,7 @@ button.accent.copied {
 [data-density="compact"] .controls input,
 [data-density="compact"] .controls select,
 [data-density="compact"] .controls button { padding: 3px 8px; font-size: 11px; }
-[data-density="compact"] #content { padding: 10px 12px; }
+[data-density="compact"] #content, [data-density="compact"] .page-body { padding: 10px 12px; }
 [data-density="compact"] .empty { padding: 24px; }
 [data-density="compact"] .wf-row { min-height: 18px; }
 [data-density="compact"] .wf-bar { height: 11px; }
@@ -2318,7 +2328,7 @@ button.accent.copied {
 [data-density="dense"] .controls input,
 [data-density="dense"] .controls select,
 [data-density="dense"] .controls button { padding: 2px 6px; font-size: 10px; }
-[data-density="dense"] #content { padding: 6px 10px; }
+[data-density="dense"] #content, [data-density="dense"] .page-body { padding: 6px 10px; }
 [data-density="dense"] .empty { padding: 18px; font-size: 11px; }
 [data-density="dense"] .wf-row { min-height: 15px; }
 [data-density="dense"] .wf-bar { height: 9px; }
@@ -3009,7 +3019,7 @@ thead th:hover .th-remove { opacity: 1; }
 @media (max-width: 640px) {
   /* Kabuk — hamburger payı (Sidebar off-canvas'a bu eşikte geçiyor). */
   #topbar { padding: 10px 12px 10px 56px; gap: 6px; flex-wrap: wrap; row-gap: 6px; }
-  #content { padding: 12px; }
+  #content, .page-body { padding: 12px; }
 
   /* D2.6 (M2) — topbar bütçesi 390px'te 322px, tüketim ≈434px ve
      tüketicilerin hepsi `flex-shrink: 0`. Tek ezilebilen eleman `h1`

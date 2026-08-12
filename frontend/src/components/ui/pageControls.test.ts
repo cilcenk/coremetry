@@ -22,10 +22,22 @@ function block(sel: string): string {
 describe('sticky filtre barının dayandığı kabuk', () => {
   // Sticky'nin yapışacağı bir kaydırma portu OLMAK ZORUNDA. #content
   // overflow:auto olmaktan çıkarsa bar sessizce sıradan bir div olur.
+  // v0.9.981 — seçici `#content` idi; D3.1 kabı `#content, .page-body`
+  // ortak kuralına çevirdi (çift `#content` düzeltmesi). Kural aynı,
+  // ADRESİ değişti — test o yüzden GÜNCELLENDİ, gevşetilmedi: ikisinin
+  // de aynı kaydırma portu sözleşmesini taşıdığı ayrıca sınanıyor.
   it('#content kaydırma portu olmayı sürdürüyor', () => {
-    const b = block('#content');
+    const b = block('#content, .page-body');
+    expect(b, '#content kuralı bulunamadı — seçici mi değişti?').not.toBe('');
     expect(b).toMatch(/overflow:\s*auto/);
     expect(b).toMatch(/flex:\s*1/);
+  });
+
+  it('.page-body aynı sözleşmeyi taşıyor (gizlenen liste kabı)', () => {
+    // `/inbox?problem=` ve `/problems?problem=` açıkken liste kabı bu
+    // sınıfı taşıyor ve detay kapandığında GÖRÜNÜR hâle geliyor: aynı
+    // padding/scroll olmazsa sayfa iki farklı yerleşim arasında zıplar.
+    expect(css).toMatch(/#content, \.page-body \{/);
   });
 
   // v0.9.640 — operatör-bildirimli regresyon: YATAY negatif margin blok
@@ -156,11 +168,20 @@ describe('sticky bar #content ağacında', () => {
     expect(users.length).toBeGreaterThan(5);
   });
 
-  it('her sticky bar kendi #content\'inin İÇİNDE', () => {
+  it('her sticky bar kendi kabuk kabının İÇİNDE', () => {
+    // v0.9.981 — `.page-body` de geçerli host. `/problems` (AnomaliesPage)
+    // detay açıkken liste kabını gizli-ama-MOUNT'lu tuttuğu için o kap
+    // id yerine sınıf taşıyor; `PageControls` da `closest('#content,
+    // .page-body')` arıyor. Yalnız `id="content"` aransaydı bu test o
+    // sayfayı YANLIŞ yere işaretlerdi.
+    const HOSTS = ['id="content"', 'className="page-body"'];
     const bad = users
-      .filter(f => !f.src.includes('id="content"')
-        || f.src.indexOf('id="content"') > f.src.indexOf('<PageControls sticky'))
+      .filter(f => {
+        const at = HOSTS.map(h => f.src.indexOf(h)).filter(i => i >= 0);
+        if (at.length === 0) return true;
+        return Math.min(...at) > f.src.indexOf('<PageControls sticky');
+      })
       .map(f => f.p.slice(SRCDIR.length + 1));
-    expect(bad).toEqual([]);
+    expect(bad, 'sticky bar bir kabuk kabının dışında — --controls-h yayınlanmaz').toEqual([]);
   });
 });

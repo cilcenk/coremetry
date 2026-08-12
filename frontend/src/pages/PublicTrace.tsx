@@ -102,7 +102,7 @@ function PublicTraceInner() {
   const logsTrunc = !Array.isArray(logsRaw) && logsRaw.truncated ? logsRaw.total : 0;
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', padding: '20px 24px' }}>
+    <div style={{ minHeight: '100vh', background: 'var(--bg0)', padding: '20px 24px' }}>
       {/* Public page header — minimal product chrome (logo + name)
           plus the share metadata (who minted it + when it expires)
           so the recipient knows what they're looking at. */}

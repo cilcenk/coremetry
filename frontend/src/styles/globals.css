@@ -9,16 +9,29 @@
   --bg1: #22272e;
   --bg2: #2d333b;
   --bg3: #373e47;
-  /* --bg alias. DİKKAT (v0.9.978, arka plan denetimi KN-3): bu yorum
-     v0.9.978'e kadar "#topbar / #content ile eşleşir" diyordu ve İKİSİ
-     DE yanlıştı — `#topbar` `--bg1` boyuyor, `#content` HİÇBİR ŞEY
-     boyamıyor. Daha kötüsü alias'ın kendisi temaya göre anlam
-     değiştiriyor: dark ve light'ta `--bg0` (sayfa zemini), redhat'te
-     `--bg1` (yükseltilmiş yüzey). 43 çağrı noktası (Drawer, AIDrawer,
-     CommandPalette, Markdown …) bu belirsizliği taşıyor.
-     Anlamı SABİTLEME işi D7'nin konusu; burada yalnız yorum gerçeğe
-     çekildi — yanlış yorum bir sonraki refactor'ü yanlış yönlendirir. */
-  --bg:  #1c2128;
+  /* --bg alias = YÜKSELTİLMİŞ YÜZEY, `--bg1` ile aynı değer.
+     Anlamı v0.9.990'da (D7) sabitlendi; `styles/surfaceTokens.test.ts`
+     üç temada da `--bg == --bg1` olduğunu çiviliyor.
+
+     Karar zinciri — silme, sonraki refactor'ü yanlış yönlendirir:
+       · v0.9.978'e kadar yorum "#topbar / #content ile eşleşir" diyordu,
+         İKİSİ DE yanlıştı (`#topbar` `--bg1` boyuyor, `#content` hiçbir
+         şey boyamıyor). v0.9.978 yalnız yorumu gerçeğe çekti.
+       · Asıl bozukluk (denetim KN-3) alias'ın TEMAYA GÖRE ANLAM
+         DEĞİŞTİRMESİYDİ: dark ve light'ta `--bg0` (sayfa zemini),
+         redhat'te `--bg1` (yükseltilmiş yüzey). Aynı satır üç temada
+         üç farklı şey demekti.
+       · Yön neden "yükseltilmiş": 46 çağrı noktasının tamamı
+         yükseltilmiş bir şey — çekmece paneli (`ui/Drawer.tsx`), komut
+         paleti, KQL öneri popover'ı, kod blokları (`Markdown.tsx`),
+         kart içi inset kutular, kart üstündeki form alanları.
+         SAYFA ZEMİNİ olması gereken tek çağrı noktası vardı
+         (`Spinner.tsx` PageLoader) ve o D7'de `--bg0`a taşındı.
+       · Pratikte bu değişiklik dark ve light'ı, redhat'in ZATEN
+         yaptığı şeye yaklaştırır — redhat'te `--bg` bu satırdan önce de
+         `#ffffff` = `--bg1` idi. Yani operatörün varsayılan teması
+         (redhat) tek piksel oynamadı; dark/light ona hizalandı. */
+  --bg:  #22272e;
   --border: #444c56;
   --text: #d5dde5;
   --text2: #909dab;
@@ -179,7 +192,13 @@
   --bg1: #f6f8fa;
   --bg2: #eaeef2;
   --bg3: #d0d7de;
-  --bg:  #ffffff;
+  /* v0.9.990 (D7) — alias `--bg1`e sabitlendi; gerekçe :root'taki blokta.
+     light'ın merdiveni TERS (`--bg1 #f6f8fa` < `--bg0 #ffffff`), yani
+     burada yükseltilmiş yüzey sayfadan KOYU. Bu D7'nin ürettiği bir
+     durum değil: `.card` ve `.modal-dialog` light'ta zaten `--bg1`.
+     Alias'ı `--bg0`da bırakmak çekmeceyi modal'dan FARKLI yapardı.
+     Ters merdivenin kendisi denetimde bilinçli kapsam dışı (§6.1). */
+  --bg:  #f6f8fa;
   --border: #d0d7de;
   --text:  #1f2328;
   --text2: #59636e;
@@ -235,6 +254,9 @@
   --bg1: #ffffff;
   --bg2: #f5f5f5;
   --bg3: #ebebeb;
+  /* v0.9.990 (D7) — DEĞER DEĞİŞMEDİ. redhat alias'ı zaten `--bg1` idi;
+     D7 dark ve light'ı buna hizaladı, tersini değil. Varsayılan tema
+     bu, yani operatörün ekranı bu dalgada bit-bit aynı kaldı. */
   --bg:  #ffffff;
   --border: #d2d2d2;
   --text:  #151515;

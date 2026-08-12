@@ -39,7 +39,16 @@ export function PageLoader({ label }: { label?: string }) {
       style={{
         position: 'fixed', inset: 0, zIndex: 'var(--z-app-splash)',
         display: 'grid', placeItems: 'center',
-        background: 'var(--bg)',
+        // v0.9.990 (D7) — `var(--bg)` DEĞİL `var(--bg0)`. Bu tam-viewport
+        // bir splash; kapladığı şey SAYFA ZEMİNİ, yükseltilmiş bir yüzey
+        // değil. D7 alias'ı yükseltilmiş yüzeye sabitlediği için burada
+        // kalsaydı splash dark'ta `#22272e`, light'ta `#f6f8fa` olur,
+        // yani altındaki `body`den açık/koyu bir dikdörtgen olarak
+        // yüklenme anında göze çarpardı. Üstelik redhat'te bu hata
+        // ZATEN vardı (splash `#ffffff`, body `#f0f0f0`) — bu satır onu
+        // da kapatıyor. Aynı gerekçe public sayfalarda `publicBackground`
+        // kapısıyla çivili (D3).
+        background: 'var(--bg0)',
       }}>
       <div style={{
         display: 'flex', flexDirection: 'column',

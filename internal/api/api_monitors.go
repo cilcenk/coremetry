@@ -203,9 +203,7 @@ func (s *Server) acceptHeartbeat(w http.ResponseWriter, r *http.Request) {
 	// notification would fire because runner rate-limits to state
 	// changes only.
 	if open, err := s.store.FindOpenProblem(r.Context(), "monitor:"+m.ID, m.Name); err == nil && open != nil {
-		open.Status = "resolved"
-		now := time.Now().UnixNano()
-		open.ResolvedAt = &now
+		chstore.MarkResolved(open, time.Now().UnixNano())
 		_ = s.store.UpsertProblem(r.Context(), *open)
 	}
 	writeJSON(w, map[string]string{"status": "ok"})

@@ -720,10 +720,9 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 		// waiting for ALL dwell buckets to align — which left problems stuck open
 		// on gradual recovery / silent sources. The 3-bucket open dwell still
 		// prevents re-open flapping.
-		now := time.Now().UnixNano()
-		open.Status = "resolved"
-		open.ResolvedAt = &now
-		open.Value = current
+		// v0.9.977 — Value (anomali anındaki değer) KORUNUR; toparlanmış
+		// değeri yazmak "hiç sapmamış" gibi bir satır bırakıyordu.
+		chstore.MarkResolved(open, time.Now().UnixNano())
 		if err := d.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[anomaly] resolve %s: %v", ruleID, err)
 			return

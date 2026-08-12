@@ -428,9 +428,7 @@ func (r *Runner) handleStateChange(ctx context.Context, m chstore.Monitor, statu
 		if err != nil || open == nil {
 			return
 		}
-		open.Status = "resolved"
-		now := time.Now().UnixNano()
-		open.ResolvedAt = &now
+		chstore.MarkResolved(open, time.Now().UnixNano())
 		if err := r.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[monitor] resolve problem: %v", err)
 			return

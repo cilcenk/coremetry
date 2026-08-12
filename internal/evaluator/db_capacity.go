@@ -294,10 +294,9 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 		}
 
 	case !open && hasOpen:
-		resolvedAt := time.Now().UnixNano()
-		existing.Status = "resolved"
-		existing.ResolvedAt = &resolvedAt
-		existing.Value = pct
+		// v0.9.977 — kapanışta doluluk oranı EZİLMİYOR: "%%91'e çıkmıştı"
+		// bilgisi kapanmış satırın tek kanıtı.
+		chstore.MarkResolved(existing, time.Now().UnixNano())
 		if err := e.store.UpsertProblem(ctx, *existing); err != nil {
 			log.Printf("[evaluator] db-capacity resolve %s/%s: %v", ruleID, service, err)
 		} else {

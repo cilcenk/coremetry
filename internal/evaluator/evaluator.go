@@ -914,10 +914,12 @@ func (e *Evaluator) evaluateOne(ctx context.Context, r chstore.AlertRule, servic
 
 	case !breached && hasOpen:
 		// Auto-resolve
-		resolvedAt := time.Now().UnixNano()
-		open.Status = "resolved"
-		open.ResolvedAt = &resolvedAt
-		open.Value = value
+		//
+		// v0.9.977 — Value'ya DOKUNULMUYOR. Buraya `open.Value = value`
+		// (toparlanmış değer) yazılıyordu: kapanan satır artık eşiğin
+		// altında göründüğü için hem ihlalin büyüklüğü kayboluyor, hem de
+		// aynı problem açılışta ve kapanışta FARKLI öncelik hesaplıyordu.
+		chstore.MarkResolved(open, time.Now().UnixNano())
 		if err := e.store.UpsertProblem(ctx, *open); err != nil {
 			log.Printf("[evaluator] resolve problem: %v", err)
 		} else {
@@ -1043,9 +1045,7 @@ func (e *Evaluator) sweepStaleProblems(ctx context.Context) {
 	resolved := 0
 	for i := range stale {
 		p := stale[i]
-		resolvedAt := time.Now().UnixNano()
-		p.Status = "resolved"
-		p.ResolvedAt = &resolvedAt
+		chstore.MarkResolved(&p, time.Now().UnixNano())
 		// Mark the resolution reason inline so an operator
 		// auditing /problems sees why this row closed without
 		// a corresponding threshold-crossing event.
@@ -1375,10 +1375,8 @@ func (e *Evaluator) resolveClearedAnomalyPromotions(ctx context.Context, muted m
 		if isMuted {
 			reason = "anomaly muted"
 		}
-		resolvedAt := time.Now().UnixNano()
 		q := *p
-		q.Status = "resolved"
-		q.ResolvedAt = &resolvedAt
+		chstore.MarkResolved(&q, time.Now().UnixNano())
 		q.Description = appendResolveSuffix(q.Description, reason)
 		if err := e.store.UpsertProblem(ctx, q); err != nil {
 			log.Printf("[evaluator] anomaly resolve pass: %s: %v", q.ID, err)

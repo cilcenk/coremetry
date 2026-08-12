@@ -79,7 +79,7 @@ export function PodResourceCharts({ service, cluster, ns, deploy, cFrom, cTo, cl
         Bu serviste OTel dil-runtime metriği (jvm/dotnet/go) yok; CPU, bellek ve
         ağ Thanos'tan geliyor. Lejantta bir pod'a tıkla = izole.
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+      <div className="grid-2" style={{ display: 'grid', gap: 14 }}>
         <MetricArea title={`CPU (cores) · ${suffix}`} labelTrimPrefix={deploy}
           series={cpuQ.data?.series} seriesName="CPU" totalSeries={cpuQ.data?.totalSeries}
           onZoom={onZoom} onZoomReset={onZoomReset} syncKey={`podres:${service}`} />

@@ -614,7 +614,7 @@ export default function ClustersPage() {
                       )}
                       {sum && (
                         <div style={{ display: 'grid', gap: 10 }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+                          <div className="grid-3" style={{ display: 'grid', gap: 6 }}>
                             {([['Nodes', sum.nodes], ['Pods', sum.pods], ['Alerts', alerts]] as const).map(([label, v]) => (
                               <div key={label}>
                                 <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--text3)' }}>{label}</div>
@@ -1114,7 +1114,7 @@ export default function ClustersPage() {
                     toggle; seri yoksa kart gizli. v0.9.49: MetricArea
                     ortak bileşeni (§8 Service sekmesiyle paylaşılır). */}
                 {section === 'overview' && ((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+                  <div className="grid-2" style={{ display: 'grid', gap: 14, marginTop: 14 }}>
                     {/* v0.9.58 — drag-seçim global range'e yazar
                         (Service.tsx emsali; sayfa range'i zaten
                         useUrlRange'ten geliyor). */}

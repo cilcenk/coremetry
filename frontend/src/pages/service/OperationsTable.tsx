@@ -701,9 +701,8 @@ function OperationMetricPanel({
         <Button variant="secondary" size="sm" onClick={onClose}
           style={{ marginLeft: 'auto' }}>kapat</Button>
       </div>
-      <div style={{
-        display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)',
-        gap: 12, marginBottom: 14,
+      <div className="grid-3" style={{
+        display: 'grid', gap: 12, marginBottom: 14,
       }}>
         {order.map(k => tiles[k])}
       </div>

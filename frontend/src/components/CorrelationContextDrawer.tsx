@@ -281,7 +281,7 @@ function TraceLens({ ctx }: { ctx: CorrelationContext; onReAnchor: (a: PivotAnch
         </div>
       ) : (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10, marginBottom: 10 }}>
+          <div className="grid-4" style={{ display: 'grid', gap: 10, marginBottom: 10 }}>
             <KPI label="Root op" value={t.rootName} sub={t.service} small />
             <KPI label="Duration" value={`${t.durationMs.toFixed(0)} ms`} />
             <KPI label="Spans" value={fmtNum(t.spanCount)} sub={`${t.services.length} services`} />

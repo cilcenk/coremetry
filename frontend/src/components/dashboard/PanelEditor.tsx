@@ -126,7 +126,11 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
             style={{ width: '100%' }} />
         </Field>
 
-        <div style={{ display: 'grid', gridTemplateColumns: showHeight ? '1fr 1fr 1fr' : '1fr 1fr', gap: 12 }}>
+        {/* v0.9.989 (D8) — koşullu kolon sayısı satır içi değerden
+            KOŞULLU SINIFA döndü; ikisi de eşit kesirli olduğu için
+            paylaşılan ızgara sınıfları birebir karşılıyor ve dar ekran
+            daraltmasını da beraberinde getiriyor. */}
+        <div className={showHeight ? 'grid-3' : 'grid-2'} style={{ display: 'grid', gap: 12 }}>
           <Field label="Type">
             <select value={panel.type}
               onChange={e => {
@@ -264,7 +268,7 @@ function MetricFields({ cfg, onChange }: {
               onChange={v => update('metricName', v)}
               placeholder="search metrics…" width="100%" />
           </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+          <div className="grid-3" style={{ display: 'grid', gap: 12 }}>
             <Field label="Aggregation">
               <select value={cfg.agg ?? 'avg'} onChange={e => update('agg', e.target.value)}>
                 {METRIC_AGGS.map(a => <option key={a} value={a}>{a}</option>)}
@@ -288,7 +292,7 @@ function MetricFields({ cfg, onChange }: {
           koşulunun DIŞINDA duruyor çünkü MetricPanel'in çizim dalı iki modda
           da aynı: viz'i yalnız builder'a koymak, PromQL'e geçen operatörün
           config'inde okunan ama düzenlenemeyen bir alan bırakırdı. */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      <div className="grid-3" style={{ display: 'grid', gap: 12 }}>
         <Field label="Visualization">
           <select value={cfg.viz ?? 'line'}
             onChange={e => update('viz', e.target.value as MetricPanelConfig['viz'])}>
@@ -319,7 +323,7 @@ function HeatmapFields({ cfg, onChange }: {
           onChange={v => update('metricName', v)}
           placeholder="search histogram metrics…" width="100%" />
       </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      <div className="grid-3" style={{ display: 'grid', gap: 12 }}>
         <Field label="Service (optional)">
           <input value={cfg.service ?? ''}
             onChange={e => update('service', e.target.value)} />
@@ -353,7 +357,7 @@ function PromqlFields({ cfg, onChange }: {
           style={{ width: '100%', fontFamily: 'ui-monospace, SFMono-Regular, monospace', fontSize: 12 }}
           placeholder={'sum by (service.name) (rate(http.server.duration[5m]))'} />
       </Field>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      <div className="grid-3" style={{ display: 'grid', gap: 12 }}>
         <Field label="Viz">
           <select value={cfg.viz ?? 'line'}
             onChange={e => update('viz', e.target.value as PromqlPanelConfig['viz'])}>
@@ -383,7 +387,7 @@ function SpanMetricFields({ cfg, onChange }: {
     onChange({ ...cfg, [k]: v });
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      <div className="grid-3" style={{ display: 'grid', gap: 12 }}>
         <Field label="Aggregation">
           <select value={cfg.agg ?? 'count'} onChange={e => update('agg', e.target.value)}>
             {SPAN_AGGS.map(a => <option key={a} value={a}>{a}</option>)}
@@ -434,7 +438,7 @@ function TopNFields({ cfg, onChange }: {
     onChange({ ...cfg, [k]: v });
   return (
     <>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12 }}>
+      <div className="grid-3" style={{ display: 'grid', gap: 12 }}>
         <Field label="Aggregation">
           <select value={cfg.agg ?? 'p99'} onChange={e => update('agg', e.target.value)}>
             {SPAN_AGGS.map(a => <option key={a} value={a}>{a}</option>)}
@@ -506,7 +510,7 @@ function StatFields({ cfg, onChange }: {
         <MetricFields cfg={cfg.metric ?? { metricName: '' }}
           onChange={c => onChange({ ...cfg, metric: c })} />
       )}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      <div className="grid-2" style={{ display: 'grid', gap: 12 }}>
         <Field label="Unit suffix">
           <input value={cfg.unit ?? ''} placeholder="ms / % / rps"
             onChange={e => onChange({ ...cfg, unit: e.target.value })} />
@@ -561,7 +565,7 @@ function GaugeFields({ cfg, onChange }: {
         <MetricFields cfg={cfg.metric ?? { metricName: '' }}
           onChange={c => onChange({ ...cfg, metric: c })} />
       )}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12 }}>
+      <div className="grid-4" style={{ display: 'grid', gap: 12 }}>
         <Field label="Min">
           <input type="number" value={cfg.min ?? 0}
             onChange={e => onChange({ ...cfg, min: parseFloat(e.target.value || '0') })} />

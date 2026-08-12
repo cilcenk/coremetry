@@ -367,7 +367,7 @@ function Overview({ draft, canEdit, patch }: {
 }) {
   const labelsText = (draft.labels ?? []).join(', ');
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, maxWidth: 1100 }}>
+    <div className="grid-2" style={{ display: 'grid', gap: 16, maxWidth: 1100 }}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <Field label="Title">
           <input value={draft.title} disabled={!canEdit}

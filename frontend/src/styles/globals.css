@@ -2475,6 +2475,31 @@ button.accent.copied {
 .ov-kpis-4 { grid-template-columns: repeat(4, 1fr); }
 .ov-charts-3 { grid-template-columns: repeat(3, 1fr); }
 .ov-cols-2 { grid-template-columns: 1.35fr 1fr; }
+
+/* .grid-2 … .grid-5 — EŞİT KESİRLİ ızgaralar için paylaşılan sınıflar
+   (v0.9.989, arka plan + dar ekran denetimi DALGA 8).
+   ────────────────────────────────────────────────────────────────────
+   Neden bir sınıf ve neden SATIR İÇİ DEĞİL: 32 yerde `style={{
+   gridTemplateColumns: 'repeat(4, 1fr)' }}` yazıyordu. Satır-içi stil
+   bir `@media` kuralını HER ZAMAN yendiği için o ızgaralar dar ekranda
+   daraltılamıyordu — telefonda dört KPI karosu ~85px'e sıkışıp
+   okunamaz oluyordu. `gridCollapse.test.ts`in çividiği hata sınıfının
+   aynısı: değer satır içine dönerse medya sorgusu sessizce ölür.
+
+   Daraltma basamakları `.ov-kpis` ailesinin YERLEŞİK deseniyle birebir
+   aynı (D2.8): 3/4/5 kolon 1024'te 2'ye, hepsi 640'ta 1'e. Yeni bir
+   dar ekran anlayışı icat etmiyor.
+
+   `minmax(0, 1fr)`, `1fr`den ŞU farkla ayrılıyor: `1fr` =
+   `minmax(auto, 1fr)`, yani bir hücrenin min-content genişliği (uzun,
+   bölünemez bir metin) track'i şişirip ızgarayı kabından TAŞIRIYOR.
+   `minmax(0, 1fr)` bunu engelliyor. Normal içerikte masaüstü çıktısı
+   bit bit aynı; farkın göründüğü tek yer zaten BOZUK olan durum. */
+.grid-2, .grid-3, .grid-4, .grid-5 { display: grid; }
+.grid-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.grid-5 { grid-template-columns: repeat(5, minmax(0, 1fr)); }
 /* Service Details tab (v0.8.370) — question-grouped sections in an
    equal 2-col grid + slim uppercase section headers. */
 .dtl-cols { grid-template-columns: 1fr 1fr; }
@@ -3043,6 +3068,9 @@ thead th:hover .th-remove { opacity: 1; }
   /* D2.8 (üst kademe) — eski 1100px bloğu buraya taşındı. */
   .ov-kpis, .ov-kpis-4 { grid-template-columns: repeat(2, 1fr); }
   .ov-charts-3, .ov-cols-2, .dtl-cols { grid-template-columns: 1fr; }
+  /* D8 (v0.9.989) — paylaşılan eşit-kesir ızgaraları, `.ov-kpis`
+     ailesiyle AYNI basamakta: 3+ kolon tablet bandında 2'ye düşüyor. */
+  .grid-3, .grid-4, .grid-5 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .nbr-cols { grid-template-columns: 1fr; }
   .mqe-lb-cols { grid-template-columns: minmax(0, 1fr); }
 }
@@ -3110,6 +3138,10 @@ thead th:hover .th-remove { opacity: 1; }
      kolona HİÇ düşmüyordu: 390px'te iki ~175px karo içinde 27px değer
      sıkışıyordu. */
   .ov-kpis, .ov-kpis-4 { grid-template-columns: 1fr; }
+  /* D8 (v0.9.989) — telefonda TEK kolon. İki ~175px karo içinde bir
+     değeri sıkıştırmak `.ov-kpis`te ölçülmüş bir kusurdu; paylaşılan
+     ızgaralar aynı sonucu almasın diye 2 kolon da burada düşüyor. */
+  .grid-2, .grid-3, .grid-4, .grid-5 { grid-template-columns: minmax(0, 1fr); }
 
   /* Trace detayı — sabit sağ panel alt tepsiye dönüyor (mevcut, iyi
      tasarlanmış davranış; eşik 767 → 640 dışında dokunulmadı). */

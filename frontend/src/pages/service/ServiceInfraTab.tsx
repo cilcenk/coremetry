@@ -222,7 +222,7 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
 
       {/* CPU/Mem area — MetricArea (Clusters ile ortak), By pod toggle. */}
       {((cpuTrendQ.data?.series?.length ?? 0) > 0 || (memTrendQ.data?.series?.length ?? 0) > 0) && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginTop: 14 }}>
+        <div className="grid-2" style={{ display: 'grid', gap: 14, marginTop: 14 }}>
           <div ref={cpuChartRef} style={flashStyle('cpu')}>
             <MetricArea title={`CPU (cores) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`} byLabel="By pod"
               by={cpuByPod} onToggle={setCpuByPod} onZoom={onZoom} onZoomReset={onZoomReset}
@@ -252,7 +252,7 @@ export function ServiceInfraTab({ service, range, onZoom, onZoomReset }: {
               Thanos · router
             </span>
           </h3>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+          <div className="grid-2" style={{ display: 'grid', gap: 14 }}>
             <MetricArea title={`HTTP 2xx (req/s) · ${chartCluster}${clamped ? ' (last 6h)' : ''}`}
               subtitle="haproxy_backend_http_responses_total{code=2xx} · by route"
               series={hap2xxQ.data?.series} seriesName="2xx"

@@ -440,7 +440,7 @@ function PipelineRuleModal({ existing, prefill, onClose, onSaved }: {
               placeholder="e.g. drop frontend health-checks"
               style={{ width: '100%' }} />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+          <div className="grid-2" style={{ display: 'grid', gap: 10 }}>
             <div>
               <label style={{ display: 'block', fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>Action</label>
               <select value={kind} onChange={e => setKind(e.target.value as PipelineRule['kind'])}

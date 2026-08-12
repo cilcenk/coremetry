@@ -89,8 +89,8 @@ export function EndpointPeekDrawer({ service, range, row, onClose }: {
           giriş span&#39;leri · seçili pencere
         </div>
 
-        <div style={{
-          display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 6,
+        <div className="grid-4" style={{
+          display: 'grid', gap: 6,
           fontSize: 11, marginBottom: 12,
         }}>
           <div><div style={{ color: 'var(--text3)', fontSize: 9.5 }}>CALLS</div><span className="mono">{row.calls.toLocaleString()}</span></div>

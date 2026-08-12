@@ -404,7 +404,7 @@ function NewSLOModal({ onClose, onCreated }: {
             required
             value={name}
             onChange={e => setName(e.target.value)} />
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="grid-2" style={{ display: 'grid', gap: 12 }}>
             <div className="field">
               <label className="field-label">Service</label>
               <ServicePicker value={service} onChange={setService} placeholder="…" />
@@ -414,7 +414,7 @@ function NewSLOModal({ onClose, onCreated }: {
               value={operation}
               onChange={e => setOperation(e.target.value)} />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="grid-2" style={{ display: 'grid', gap: 12 }}>
             <SelectField
               label="SLI type"
               value={sliType}
@@ -428,7 +428,7 @@ function NewSLOModal({ onClose, onCreated }: {
               value={windowDays}
               onChange={e => setWindowDays(e.target.value)} />
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div className="grid-2" style={{ display: 'grid', gap: 12 }}>
             <Field
               label="Target %"
               hint="e.g. 99.9"

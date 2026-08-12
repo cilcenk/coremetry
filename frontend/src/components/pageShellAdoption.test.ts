@@ -79,11 +79,9 @@ const FROZEN: Record<string, number> = {
   'features/anomalies/AnomaliesPage.tsx': 2,
   'features/anomalies/AnomalyStreamsPage.tsx': 1,
   'features/anomalies/ProblemDetail.tsx': 2,
-  'features/anomalies/ProblemsSection.tsx': 3,
   'pages/AIObservability.tsx': 1,
   'pages/Alerts.tsx': 1,
   'pages/Clusters.tsx': 1,
-  'pages/Dashboard.tsx': 1,
   'pages/Dashboards.tsx': 1,
   'pages/DatabaseDetail.tsx': 2,
   'pages/Databases.tsx': 1,
@@ -91,7 +89,6 @@ const FROZEN: Record<string, number> = {
   'pages/EndpointDetail.tsx': 2,
   'pages/Endpoints.tsx': 1,
   'pages/Events.tsx': 1,
-  'pages/Explore.tsx': 1,
   'pages/External.tsx': 1,
   'pages/Hosts.tsx': 1,
   'pages/Incident.tsx': 1,
@@ -106,11 +103,7 @@ const FROZEN: Record<string, number> = {
   'pages/Runbook.tsx': 2,
   'pages/RunbookExecution.tsx': 2,
   'pages/Runbooks.tsx': 1,
-  'pages/Service.tsx': 2,
   'pages/ServiceBacktrace.tsx': 2,
-  'pages/ServiceMap.tsx': 1,
-  'pages/Services.tsx': 1,
-  'pages/Settings.tsx': 2,
   'pages/Slos.tsx': 1,
   'pages/SlowQueries.tsx': 1,
   'pages/System.tsx': 1,
@@ -124,7 +117,9 @@ const FROZEN: Record<string, number> = {
 // Tavan RAÇET'i. Yukarıdaki liste tek tek de korunuyor ama bu satır
 // niyeti tek sayıda tutuyor: bir girdi eklemek isteyen bu sayıyı da
 // büyütmek zorunda kalır ve o an diff'te görünür. YALNIZ düşürülebilir.
-const CEILING_FILES = 43;
+//
+// Seyir: 43 (v0.9.991, donduruldu) → 36 (v0.9.992, 7 pilot geçti).
+const CEILING_FILES = 36;
 
 function counts(): Record<string, number> {
   const out: Record<string, number> = {};

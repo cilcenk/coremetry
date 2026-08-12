@@ -34,6 +34,7 @@ import { keys } from '@/lib/queries/keys';
 import type { Service, Problem, OperationSummary, SLORow, TimeRange } from '@/lib/types';
 import { stripMarkdown } from '@/components/Markdown';
 import { QueryError } from '@/components/QueryError';
+import { PageShell } from '@/components/ui/PageShell';
 
 // v0.9.257 — SINCE_MAP deleted: it had no remaining reader here, and the
 // dormant copy is how the divergence spread (pages/service/Overview.tsx
@@ -353,7 +354,7 @@ function ServiceDetailInner() {
     return (
       <>
         <Topbar title="Service" range={range} onRangeChange={setRange} />
-        <div id="content"><Empty icon="⚠" title="Missing service name" /></div>
+        <PageShell><Empty icon="⚠" title="Missing service name" /></PageShell>
       </>
     );
   }
@@ -363,7 +364,7 @@ function ServiceDetailInner() {
   return (
     <>
       <Topbar title={`Service · ${svc}`} range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         {/* Service identity header (design handoff app.jsx .svc-head): big
             status dot + bare service name + runtime badge + health pill. */}
         {/* v0.9.211 — identity row absorbed the catalog pill (was its own
@@ -701,7 +702,7 @@ function ServiceDetailInner() {
             )}
           </div>
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

@@ -59,14 +59,61 @@ describe('D4 — /system/* kabuk hizalaması', () => {
     // test" vakası — soymak artık refleks olmalı.
     const sys = stripComments(readFileSync(join(PAGES, 'System.tsx'), 'utf8'));
     const set = stripComments(readFileSync(join(PAGES, 'Settings.tsx'), 'utf8'));
+    // v0.9.992 — kabuk kabı iki biçimde yazılabiliyor: elle
+    // `<div id="content">` ya da D9 atomu `<PageShell>`. Settings.tsx
+    // pilotlardan biri olarak atoma geçti, System.tsx henüz geçmedi.
+    // Kapının ölçtüğü şey KABIN VARLIĞI, yazılışı değil — aksi hâlde
+    // her pilot göçü bu kapıyı sahte kırmızıya döndürürdü.
+    const shellAt = (src: string) => {
+      const at = ['id="content"', '<PageShell>'].map(h => src.indexOf(h)).filter(i => i >= 0);
+      return at.length ? Math.min(...at) : -1;
+    };
     for (const src of [sys, set]) {
       expect(src).toMatch(/<Topbar title="/);
-      expect(src).toContain('id="content"');
+      expect(shellAt(src), 'kabuk kabı yok — ne id="content" ne <PageShell>').toBeGreaterThanOrEqual(0);
       expect(src).toContain('className="sys-layout"');
     }
-    // Sıra da önemli: Topbar `#content`in DIŞINDA ve ÜSTÜNDE olmalı,
-    // aksi hâlde `#main`in flex çocuğu olmaz ve yine kayar.
-    expect(sys.indexOf('<Topbar')).toBeLessThan(sys.indexOf('id="content"'));
+    // Sıra da önemli: Topbar kabın DIŞINDA ve ÜSTÜNDE olmalı, aksi
+    // hâlde `#main`in flex çocuğu olmaz ve yine kayar.
+    //
+    // v0.9.992 — assert `indexOf('<Topbar') < shellAt()` İDİ ve MUTASYONLA
+    // ÖLÇÜLDÜ Kİ ISIRMIYOR: her iki dosyada da birden fazla `<Topbar` var
+    // (erken-dönüş dalları), `indexOf` İLKİNİ buluyor ve o ilk Topbar zaten
+    // kabın üstünde olduğu için kabın İÇİNE ikinci bir Topbar konsa bile
+    // test yeşil kalıyordu. Doğru ölçüm: HİÇBİR kabın gövdesinde Topbar
+    // olmayacak. Kap gövdesi eşleşen kapanışa kadar derinlik sayarak
+    // çıkarılıyor — `<PageShell>` ve elle yazılmış `<div id="content">`
+    // ikisi de destekleniyor (D9 geçişi sırasında ikisi bir arada yaşıyor).
+    const shellBodies = (src: string): string[] => {
+      const out: string[] = [];
+      for (const [open, close] of [['<PageShell>', '</PageShell>'], ['<div id="content">', '</div>']] as const) {
+        let pos = 0;
+        for (;;) {
+          const i = src.indexOf(open, pos);
+          if (i < 0) break;
+          // Derinlik sayacı: iç içe aynı-tür etiketleri atla.
+          const innerOpen = open === '<PageShell>' ? '<PageShell' : '<div';
+          let depth = 1;
+          let j = i + open.length;
+          while (depth > 0) {
+            const a = src.indexOf(innerOpen, j);
+            const b = src.indexOf(close, j);
+            if (b < 0) { depth = 0; j = src.length; break; }
+            if (a >= 0 && a < b) { depth++; j = a + innerOpen.length; } else { depth--; j = b + close.length; }
+          }
+          out.push(src.slice(i + open.length, j - close.length));
+          pos = j;
+        }
+      }
+      return out;
+    };
+    for (const [name, src] of [['System.tsx', sys], ['Settings.tsx', set]] as const) {
+      expect(shellAt(src), `${name}: kabuk kabı yok`).toBeGreaterThanOrEqual(0);
+      for (const body of shellBodies(src)) {
+        expect(body, `${name}: <Topbar> kabuk kabının İÇİNDE — #main flex çocuğu olmaz, kabuk kayar`)
+          .not.toContain('<Topbar');
+      }
+    }
   });
 
   // Query sekmesi kabuğu yukarı taşırken kaybolabilecek TEK işlevsel

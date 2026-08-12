@@ -28,6 +28,7 @@ import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 // v0.8.251 — the page's hand-rolled SortKey/NATURAL_DIR/SortTh server-sort
 // system moved into the shared DataTable primitive's serverSort mode. The
@@ -457,7 +458,7 @@ export default function ServicesPage() {
   return (
     <>
       <Topbar title="Services" range={range} onRangeChange={setRange} envApplies />
-      <div id="content">
+      <PageShell>
         {data != null && (
           <PageControls sticky>
             <ServicePicker value={serviceFilter} onChange={setServiceFilter}
@@ -796,7 +797,7 @@ export default function ServicesPage() {
             </div>
           </>
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

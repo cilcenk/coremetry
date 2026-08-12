@@ -104,6 +104,49 @@ func TestDistributionVerdict(t *testing.T) {
 			cur:  measured(12702, 1145, spans), prev: measured(12702, 1100),
 			wantDegraded: true, wantDetail: "SABİT",
 		},
+
+		// ── v0.9.986 KAPSAM KİLİDİ ───────────────────────────────────
+		// Fan-out düşünce ölçüm yalnız BU DÜĞÜMÜ kapsar. Küme geneli bir
+		// önceki örnekle kıyaslamak sahte rahatlama üretirdi.
+		{
+			// CANLI SAYILAR: küme geneli 41.274 → yerel 19.020. Kilit
+			// olmasa "drene oluyor" derdi; oysa arıza aynen sürüyordu.
+			name: "küme → yerel daralması 'drene oluyor' SAYILMAZ",
+			cur: func() *DistributionQueue {
+				q := measured(19020, 700, spans)
+				q.Partial = true
+				return q
+			}(),
+			prev:         measured(41274, 1443),
+			wantDegraded: false, wantDetail: "trend henüz ölçülmedi",
+		},
+		{
+			// Ters yön de aynı: yerelden kümeye geçiş sahte BÜYÜME üretir
+			// ve degraded iddia ederdi.
+			name: "yerel → küme genişlemesi sahte BÜYÜME üretmez",
+			cur:  measured(41274, 1443, spans),
+			prev: func() *DistributionQueue {
+				q := measured(19020, 700)
+				q.Partial = true
+				return q
+			}(),
+			wantDegraded: false, wantDetail: "trend henüz ölçülmedi",
+		},
+		{
+			// İki örnek de yerel ise trend GEÇERLİ — kısmi ama tutarlı.
+			name: "iki yerel örnek — trend geçerli, arıza görülür",
+			cur: func() *DistributionQueue {
+				q := measured(19020, 700, spans)
+				q.Partial = true
+				return q
+			}(),
+			prev: func() *DistributionQueue {
+				q := measured(18997, 690)
+				q.Partial = true
+				return q
+			}(),
+			wantDegraded: true, wantDetail: "BÜYÜYOR",
+		},
 	}
 
 	for _, c := range cases {
@@ -208,6 +251,46 @@ func TestDistributionQueueSQLShape(t *testing.T) {
 	// ve bu metin /api/health gövdesine giriyor.
 	if !strings.Contains(q, "substring(argMax(last_exception") {
 		t.Fatalf("last_exception kırpılmamış:\n%s", q)
+	}
+}
+
+// v0.9.986 — fan-out bütçesi ÖLÇÜLEREK 3→10 sn yükseltildi; yerel
+// fallback dalı da aynı kolonları döndürmeli.
+//
+// v0.9.985'in 3 sn'si canlı arızada yetmedi: fan-out sağlıklıya yakınken
+// 646 ms, küme baskı altındayken 2.6 sn, ağır çekişmede 14.3 sn sürüyor
+// ve probe tam da ölçmek istediği anda körleşiyordu.
+func TestDistributionQueueBudgets(t *testing.T) {
+	fanout := distributionQueueSQL("coremetry")
+	if !strings.Contains(fanout, "max_execution_time = 10") {
+		t.Fatalf("fan-out bütçesi 10 sn olmalı (ölçüldü: tepe 2.6 sn):\n%s", fanout)
+	}
+
+	local := distributionQueueLocalSQL()
+	if strings.Contains(local, "clusterAllReplicas") {
+		t.Fatalf("yerel dal fan-out yapmamalı:\n%s", local)
+	}
+	if !strings.Contains(local, "FROM system.distribution_queue") {
+		t.Fatalf("yerel dal doğrudan sistem tablosunu okumalı:\n%s", local)
+	}
+	if !strings.Contains(local, "max_execution_time = 3") {
+		t.Fatalf("yerel bütçe 3 sn olmalı (ölçüldü: 0.2-1.1 sn):\n%s", local)
+	}
+	// İki dal aynı kolonları AYNI SIRADA döndürmeli — tek scan döngüsü
+	// ikisini de okuyor, sıra kayması sessiz veri karışması olurdu.
+	for _, col := range []string{"data_files", "data_compressed_bytes",
+		"broken_data_files", "error_count", "last_exception"} {
+		if !strings.Contains(local, col) {
+			t.Fatalf("yerel dalda %s eksik:\n%s", col, local)
+		}
+	}
+	cut := func(s string) string {
+		i := strings.Index(s, "FROM ")
+		return s[:i]
+	}
+	if cut(fanout) != cut(local) {
+		t.Fatalf("iki dalın SELECT listesi ayrıştı:\n--- fan-out:\n%s\n--- yerel:\n%s",
+			cut(fanout), cut(local))
 	}
 }
 

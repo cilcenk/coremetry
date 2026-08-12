@@ -3932,6 +3932,10 @@ export interface SystemStats {
     // measured=false → ölçüm YAPILAMADI. "Temiz" ile karıştırılmamalı:
     // düşen bir probe de files=0 gösterir (v0.9.984 fail-open dersi).
     measured: boolean;
+    // v0.9.986 — küme geneli okuma düştü, sayılar YALNIZ bu düğümün
+    // spool'u. Yaklaşıklık itiraf edilir; sessiz kırpma "hepsi bu" diye
+    // okunurdu. (Fan-out tam da ölçmek istediğimiz arızada yavaşlıyor.)
+    partial?: boolean;
     probeError?: string;
     files: number;
     bytes: number;

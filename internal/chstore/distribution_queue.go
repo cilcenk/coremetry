@@ -74,6 +74,16 @@ type DistributionQueue struct {
 	// eder ve arıza sırasında tam da ölçemediği için yeşil görünürdü.
 	Measured   bool   `json:"measured"`
 	ProbeError string `json:"probeError,omitempty"`
+	// Partial — küme geneli fan-out DÜŞTÜ, sayılar YALNIZ bu düğümün
+	// spool'u (v0.9.986). Yaklaşıklık İTİRAF EDİLİR (DDLQueueHealth'in
+	// StuckCountApprox emsali): sessiz bir kırpma "hepsi bu" diye okunur.
+	//
+	// Neden gerekli: fan-out tam da ölçmek istediğimiz arızada yavaşlıyor
+	// (ÖLÇÜLDÜ: sağlıklıya yakınken 646 ms medyan, küme baskı altındayken
+	// 2.6 sn, ağır çekişmede 14.3 sn ile bütçeyi aştı). Fallback olmasaydı
+	// sinyal tam ihtiyaç anında körleşirdi — fail-open'ın kendini iptal
+	// etmesinin ta kendisi.
+	Partial bool `json:"partial,omitempty"`
 
 	Tables []DistributionQueueEntry `json:"tables,omitempty"`
 
@@ -100,10 +110,37 @@ func distributionQueueSQL(clusterName string) string {
 	if cn == "" {
 		return ""
 	}
-	// argMax(...) ikinci argümanı: boş istisnalar -1'e itilir ki "en çok
-	// hatalı hedef"in last_exception'ı BOŞSA bile dolu olan bir başkası
-	// seçilsin — aksi hâlde teşhis metni sessizce boş kalırdı.
-	return fmt.Sprintf(`
+	// Bütçe 10 sn (v0.9.986, ÖLÇÜLEREK yükseltildi — v0.9.985'te 3 sn'ydi
+	// ve canlı arızada yetmedi). Ölçüm, aynı arızalı küme: fan-out medyanı
+	// 646 ms; küme baskı altındayken 2.6 sn; ağır çekişmede 14.3 sn.
+	// Sayı uydurulmadı — okuma ZATEN asenkron (kimse beklemiyor) ve
+	// tazeleme aralığı 30 sn, yani 10 sn'lik bir tavan hiçbir isteği
+	// geciktirmeden çekişmeli anların ezici çoğunluğunu kapsar.
+	return fmt.Sprintf(
+		distributionQueueSelect+`
+		FROM clusterAllReplicas('%s', system.distribution_queue)`+
+			distributionQueueTail+`
+		SETTINGS skip_unavailable_shards = 1, max_execution_time = 10`,
+		strings.ReplaceAll(cn, "'", ""))
+}
+
+// distributionQueueLocalSQL — fan-out düştüğünde YALNIZ bu düğümün
+// spool'u. Kısmi ama körlükten iyi: büyüyen bir yerel spool da büyüyen
+// spool'dur ve teşhis (241/159) zaten yerel istisnada.
+//
+// Bütçe 3 sn: yerel okuma bellek-içi (ÖLÇÜLDÜ: 0.2 / 0.4 / 1.1 sn aynı
+// baskı altında). Fan-out'un 10 sn'sinden sonra koşabilmesi için kısa.
+func distributionQueueLocalSQL() string {
+	return distributionQueueSelect + `
+		FROM system.distribution_queue` + distributionQueueTail + `
+		SETTINGS max_execution_time = 3`
+}
+
+// İki dal aynı kolonları aynı sırada döndürmeli — tek scan döngüsü
+// ikisini de okuyor. argMax(...) ikinci argümanı: boş istisnalar -1'e
+// itilir ki "en çok hatalı hedef"in last_exception'ı BOŞSA bile dolu
+// olan bir başkası seçilsin — aksi hâlde teşhis metni sessizce boş kalırdı.
+const distributionQueueSelect = `
 		SELECT table,
 		       toUInt64(sum(data_files))            AS files,
 		       toUInt64(sum(data_compressed_bytes)) AS bytes,
@@ -111,14 +148,12 @@ func distributionQueueSQL(clusterName string) string {
 		       toUInt64(sum(error_count))           AS errs,
 		       substring(argMax(last_exception,
 		           if(empty(last_exception), toInt64(-1), toInt64(error_count))),
-		         1, 200)                            AS last_err
-		FROM clusterAllReplicas('%s', system.distribution_queue)
+		         1, 200)                            AS last_err`
+
+const distributionQueueTail = `
 		GROUP BY table
 		HAVING files > 0 OR broken > 0 OR errs > 0
-		ORDER BY files DESC, table
-		SETTINGS skip_unavailable_shards = 1, max_execution_time = 3`,
-		strings.ReplaceAll(cn, "'", ""))
-}
+		ORDER BY files DESC, table`
 
 // CollectDistributionQueue — tek round-trip spool ölçümü.
 //
@@ -137,18 +172,40 @@ func (s *Store) CollectDistributionQueue(ctx context.Context) *DistributionQueue
 		return nil // tek düğüm: Distributed tablo yok, spool yok, sorgu YOK
 	}
 	out := &DistributionQueue{Generated: time.Now().UnixNano()}
+	if err := s.scanDistributionQueue(ctx, q, out); err == nil {
+		out.Measured = true
+		return out
+	} else {
+		out.ProbeError = err.Error()
+	}
+	// Fan-out düştü — YEREL spool'a düş (v0.9.986). Fan-out tam da
+	// ölçmek istediğimiz arızada yavaşlıyor; fallback olmasaydı sinyal
+	// ihtiyaç anında körleşirdi. Kısmi sonuç Partial ile İTİRAF edilir.
+	local := &DistributionQueue{Generated: out.Generated, Partial: true,
+		ProbeError: "küme geneli okuma düştü, yalnız bu düğüm: " + out.ProbeError}
+	if err := s.scanDistributionQueue(ctx, distributionQueueLocalSQL(), local); err != nil {
+		// İkisi de düştü: "ölçemedim" hâli korunur, sıfır İDDİA EDİLMEZ.
+		out.ProbeError += " · yerel okuma da düştü: " + err.Error()
+		return out
+	}
+	local.Measured = true
+	return local
+}
+
+// scanDistributionQueue — iki dalın ortak okuma döngüsü. Toplamları
+// out'a yazar; hata hâlinde out kısmen dolmuş olabilir, o yüzden
+// çağıran Measured'ı yalnız nil hata için işaretler.
+func (s *Store) scanDistributionQueue(ctx context.Context, q string, out *DistributionQueue) error {
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
-		out.ProbeError = err.Error()
-		return out
+		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var e DistributionQueueEntry
 		if serr := rows.Scan(&e.Table, &e.Files, &e.Bytes,
 			&e.BrokenFiles, &e.ErrorCount, &e.LastError); serr != nil {
-			out.ProbeError = serr.Error()
-			return out
+			return serr
 		}
 		out.Tables = append(out.Tables, e)
 		out.Files += e.Files
@@ -156,12 +213,7 @@ func (s *Store) CollectDistributionQueue(ctx context.Context) *DistributionQueue
 		out.BrokenFiles += e.BrokenFiles
 		out.ErrorCount += e.ErrorCount
 	}
-	if err := rows.Err(); err != nil {
-		out.ProbeError = err.Error()
-		return out
-	}
-	out.Measured = true
-	return out
+	return rows.Err()
 }
 
 // DistributionVerdict — SAF karar: spool sağlık sinyalini bozuyor mu?
@@ -192,8 +244,17 @@ func DistributionVerdict(cur, prev *DistributionQueue) (bool, string) {
 	if w := worstDistributionTable(cur.Tables); w != "" {
 		depth += ", en derini " + w
 	}
+	if cur.Partial {
+		depth += " [yalnız bu düğüm — küme geneli okuma düştü]"
+	}
 	switch {
-	case prev == nil || !prev.Measured:
+	// KAPSAM KİLİDİ (v0.9.986): küme geneli bir ölçümle YALNIZ-BU-DÜĞÜM
+	// ölçümü asla kıyaslanmaz. Canlı sayılarla 41.274 (küme) → 19.020
+	// (yerel) "drene oluyor" diye okunurdu — süregelen bir arızada
+	// SAHTE BİR RAHATLAMA. Farklı kapsam = trend yok, ilk ölçüm gibi
+	// davran. (v0.5.187 ile aynı sınıf hata: kıyaslanamaz iki şeyi
+	// kıyaslamak.)
+	case prev == nil || !prev.Measured || prev.Partial != cur.Partial:
 		// İlk ölçüm: derinlik biliniyor, YÖN bilinmiyor. "degraded" iddia
 		// etmek yerine derinliği bildir — bir sonraki tur trendi getirir.
 		return false, depth + "; trend henüz ölçülmedi."

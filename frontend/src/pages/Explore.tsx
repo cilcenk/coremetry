@@ -60,6 +60,7 @@ import { FormulaRow } from './explore/FormulaRow';
 import { VizRail } from './explore/VizRail';
 import { SplitByPicker } from './explore/SplitByPicker';
 import { Button } from '@/components/ui/Button';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Explore (explore-v2 Phase 2) — the metric result mode is now the
 // multi-query builder: up to four queries A–D (span signals or catalogue
@@ -687,7 +688,7 @@ function ExploreInner({ onSelfWrite }: {
   return (
     <>
       <Topbar title="Explore" range={range} onRangeChange={setRange} envApplies />
-      <div id="content">
+      <PageShell>
         {/* v0.9.942 (B2) — GÖRÜNÜR KAPSAM. Enjekte edilen çipler bilerek
             çip satırında değil (silinebilir olsalardı picker'la yalana
             düşerdi), ama GÖRÜNMEZ de olamazlar: EndpointDetail'in aynı
@@ -1261,7 +1262,7 @@ name ~ checkout`}
           <PinToDashboardModal panel={pinPanel}
             onClose={() => setPinPanel(null)} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

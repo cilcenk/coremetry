@@ -28,6 +28,7 @@ import {
 } from '@/lib/dashboardUrl';
 import { serializeDashboard, suggestedFilename } from '@/lib/dashboardIO';
 import { panelToExploreHref } from '@/pages/explore/panelToExplore';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Wrapper handles the Suspense requirement of useSearchParams() in App
 // Router with static export.
@@ -429,7 +430,7 @@ function Inner() {
           Kiosk'tan çık ✕
         </button>
       )}
-      <div id="content">
+      <PageShell>
         <div className="controls" style={{ marginBottom: 14 }}>
           {editing ? (
             <>
@@ -538,7 +539,7 @@ function Inner() {
             onClose={() => setEditingPanel(null)}
             onDelete={() => deletePanel(editingPanelObj.id)} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

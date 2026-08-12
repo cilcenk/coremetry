@@ -174,7 +174,12 @@ describe('sticky bar #content ağacında', () => {
     // id yerine sınıf taşıyor; `PageControls` da `closest('#content,
     // .page-body')` arıyor. Yalnız `id="content"` aransaydı bu test o
     // sayfayı YANLIŞ yere işaretlerdi.
-    const HOSTS = ['id="content"', 'className="page-body"'];
+    // v0.9.992 — `<PageShell>` de geçerli host. D9 kademeli geçişinde
+    // sayfalar kabı elle yazmayı bırakıp atomu çağırıyor; atom `#content`i
+    // basan tek yer (`components/ui/PageShell.tsx`). Bu satır olmasaydı
+    // geçen her pilot bu kapıyı YANLIŞ yere kırardı — kapı "kabuk kabı"
+    // kavramını ölçüyor, o kavramın YAZILIŞINI değil.
+    const HOSTS = ['id="content"', 'className="page-body"', '<PageShell>'];
     // v0.9.982 — `/system/*` sekme gövdeleri MUAF, gerekçeli: D4'ten beri
     // kabuğu `System.tsx` basıyor (Settings deseni), yani host BAŞKA
     // DOSYADA ve dosya-yerel bir tarama onu göremez. Muafiyet boşluk

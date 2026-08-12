@@ -15,6 +15,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeRange } from '@/lib/urlState';
 import type { ServiceMap, ServiceMapNode } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Service map: global topology view + a focus mode that
 // narrows to a single service's 1-hop neighbourhood. The
@@ -248,7 +249,7 @@ export default function ServiceMapPage() {
   return (
     <>
       <Topbar title="Service map" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{
           display: 'flex', gap: 10, alignItems: 'center',
           marginBottom: 14, flexWrap: 'wrap',
@@ -495,7 +496,7 @@ export default function ServiceMapPage() {
             ? 'Click any node to switch focus · auto-refresh 30 s'
             : 'Click a node to focus on its 1-hop neighbourhood · auto-refresh 30 s'}
         </div>
-      </div>
+      </PageShell>
     </>
   );
 }

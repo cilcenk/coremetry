@@ -36,6 +36,7 @@ import { CustomRolesTab } from './settings/RolesTab';
 import { PipelineTab } from './settings/PipelineTab';
 import { BackupTab } from './settings/BackupTab';
 import { DangerZoneTab } from './settings/DangerZoneTab';
+import { PageShell } from '@/components/ui/PageShell';
 
 interface SettingsTab {
   slug: string;
@@ -87,11 +88,11 @@ export default function SettingsPage() {
     return (
       <>
         <Topbar title="Settings" />
-        <div id="content">
+        <PageShell>
           <Empty icon={<IconLock size={28} />} title="Admin access required">
             System settings are only available to administrators.
           </Empty>
-        </div>
+        </PageShell>
       </>
     );
   }
@@ -106,7 +107,7 @@ export default function SettingsPage() {
   return (
     <>
       <Topbar title="Settings" />
-      <div id="content">
+      <PageShell>
         <div className="sys-layout">
           <nav className="sys-subnav" aria-label="Settings sections">
             <div className="sys-subnav-title">Settings</div>
@@ -123,7 +124,7 @@ export default function SettingsPage() {
             <Body />
           </div>
         </div>
-      </div>
+      </PageShell>
     </>
   );
 }

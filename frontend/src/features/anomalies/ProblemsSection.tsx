@@ -42,6 +42,7 @@ import { AlertProblemDetail } from './ProblemDetail';
 import { withProblemParam } from './problemLink';
 import { findProblemInCaches } from './problemResolve';
 import { RenderedMarkdown, stripMarkdown } from '@/components/Markdown';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Problems-specific severity + priority ordering.
 const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
@@ -735,22 +736,22 @@ export function AlertProblemHost({ id, isAdmin, onBack, backLabel = '← Excepti
           }}
         />
       ) : loading ? (
-        <div id="content"><Spinner /></div>
+        <PageShell><Spinner /></PageShell>
       ) : failed ? (
-        <div id="content">
+        <PageShell>
           <Empty icon="⚠" title="Problem yüklenemedi">
             <Button variant="secondary" size="sm" onClick={() => { void q.refetch(); void byID.refetch(); }}>Tekrar dene</Button>{' '}
             <Button variant="secondary" size="sm" onClick={onBack}>{backLabel}</Button>
           </Empty>
-        </div>
+        </PageShell>
       ) : (
-        <div id="content">
+        <PageShell>
           <Empty icon="❓" title="Problem kaydı yok">
             Bu kimlikle bir problem bulunamadı — kayıt 90 günlük saklama
             penceresini aşmış ya da bağlantı eksik kopyalanmış olabilir.{' '}
             <Button variant="secondary" size="sm" onClick={onBack}>{backLabel}</Button>
           </Empty>
-        </div>
+        </PageShell>
       )}
     </>
   );

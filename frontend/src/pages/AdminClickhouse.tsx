@@ -1,5 +1,4 @@
 import { useRef, useState } from 'react';
-import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -673,8 +672,7 @@ export default function AdminClickhousePage() {
 
   return (
     <>
-      <Topbar title="ClickHouse" />
-      <div id="content">
+      <div>
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
           gap: 12, marginBottom: 18,

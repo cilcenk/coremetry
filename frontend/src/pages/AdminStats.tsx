@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { useSystemStats, useTraceContext, keys } from '@/lib/queries';
@@ -56,7 +55,6 @@ const HISTORY_COLS: DataTableColumn<HistoryRow>[] = [
 //   2. Volume KPIs / 30-day history / live ingest rate.
 //   3. Per-table ClickHouse storage with compression ratio.
 export default function AdminStatsPage() {
-  // Topbar wants a TimeRange even though this page doesn't use it.
   const qc = useQueryClient();
 
   // Health probe — its own poll cycle (30s) so a slow systemStats
@@ -125,8 +123,7 @@ export default function AdminStatsPage() {
 
   return (
     <>
-      <Topbar title="System" />
-      <div id="content">
+      <div>
         {/* ── Live status banner + components ────────────────────── */}
         <SectionHeader title="Live status"
           sub={status?.checkedAt

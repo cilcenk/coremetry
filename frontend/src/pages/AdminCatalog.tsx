@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { useAuth } from '@/components/AuthProvider';
@@ -139,8 +138,7 @@ export default function AdminCatalogPage() {
   if (!isAdmin) {
     return (
       <>
-        <Topbar title="Service catalog" />
-        <div id="content">
+        <div>
           <Empty icon={<IconShield size={28} />} title="Admin access required">
             The service catalog editor is admin-only — same gate as the rest of /admin/*.
           </Empty>
@@ -151,8 +149,7 @@ export default function AdminCatalogPage() {
 
   return (
     <>
-      <Topbar title="Service catalog" />
-      <div id="content">
+      <div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14 }}>
           <input value={search} onChange={e => setSearch(e.target.value)}
             placeholder="Filter by service / owner / SRE team…"

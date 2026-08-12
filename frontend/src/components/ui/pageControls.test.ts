@@ -175,7 +175,16 @@ describe('sticky bar #content ağacında', () => {
     // .page-body')` arıyor. Yalnız `id="content"` aransaydı bu test o
     // sayfayı YANLIŞ yere işaretlerdi.
     const HOSTS = ['id="content"', 'className="page-body"'];
+    // v0.9.982 — `/system/*` sekme gövdeleri MUAF, gerekçeli: D4'ten beri
+    // kabuğu `System.tsx` basıyor (Settings deseni), yani host BAŞKA
+    // DOSYADA ve dosya-yerel bir tarama onu göremez. Muafiyet boşluk
+    // bırakmıyor: `systemShell.test.ts` System.tsx'in `#content` bastığını
+    // ve sekme gövdelerinin BASMADIĞINI ayrıca çiviliyor — ikisi birlikte
+    // aynı garantiyi veriyor. Bu satır bu kapının D4'ü YAKALAMASIYLA
+    // doğdu (AdminAudit tam da burada kırmızıya döndü) — kapı çalıştı.
+    const SHELL_FROM_PARENT = /pages\/Admin[A-Za-z]*\.tsx$/;
     const bad = users
+      .filter(f => !SHELL_FROM_PARENT.test(f.p))
       .filter(f => {
         const at = HOSTS.map(h => f.src.indexOf(h)).filter(i => i >= 0);
         if (at.length === 0) return true;

@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
-import { Topbar } from '@/components/Topbar';
 import { Empty, Spinner } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { VirtualList, Button } from '@/components/ui';
@@ -214,8 +213,7 @@ export default function SQLPlaygroundPage() {
   if (!isAdmin) {
     return (
       <>
-        <Topbar title="SQL playground" />
-        <div id="content"><Empty icon="◇" title="Admin only">
+        <div><Empty icon="◇" title="Admin only">
           The SQL playground gives ad-hoc read-only access to the
           underlying ClickHouse instance. Restricted to admin role.
         </Empty></div>
@@ -225,7 +223,6 @@ export default function SQLPlaygroundPage() {
 
   return (
     <>
-      <Topbar title="SQL playground" />
       {/* v0.9.981 (D3.2) — `height: 'calc(100vh - 80px)'` idi: depodaki TEK
           satır-içi `#content` ezmesi. 80px tam-genişlik topbar'a göre elle
           kalibre edilmişti ve `[data-density]`nin padding değişimine
@@ -233,7 +230,7 @@ export default function SQLPlaygroundPage() {
           ya boşluk bırakıyordu. `#content` zaten `flex:1 + overflow:auto`,
           yani viewport aritmetiğine hiç gerek yok. `minHeight: 0` flex
           çocuğunun kendi içeriğinden küçülebilmesi için ŞART. */}
-      <div id="content" style={{ display: 'flex', gap: 12, height: '100%', minHeight: 0 }}>
+      <div style={{ display: 'flex', gap: 12, height: '100%', minHeight: 0 }}>
         {/* Schema sidebar — CH only. The Elasticsearch backend's
             queryable fields are surfaced via /logs page's
             ƒ Fields button; the playground sidebar would just

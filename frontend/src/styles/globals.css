@@ -2851,7 +2851,14 @@ td > .cell-actions.end { justify-content: flex-end; }
 
 /* System area (v0.8.9) — the consolidated admin shell: a left vertical
    sub-nav + the active sub-page. Tokens only; light+dark via the vars. */
-.sys-layout { display: flex; gap: 18px; align-items: flex-start; }
+/* v0.9.982 (D4) — `min-height: 100%` + `.sys-content` germe. Kabuk yukarı
+   taşınınca (`#content` artık scrollport) `.sys-layout` blok yüksekliğinde
+   kalıyordu; `align-items: flex-start` de sağ kolonu germiyor. Sonuç:
+   `height: 100%` isteyen sekme gövdeleri (SQL Console'un iki panelli
+   düzeni + sanallaştırılmış sonuç ızgarası) AUTO yüksekliğe çöküyordu.
+   `flex-start` subnav'ın gerilmemesi için duruyor — germe yalnız içerik
+   kolonuna, `align-self` ile. */
+.sys-layout { display: flex; gap: 18px; align-items: flex-start; min-height: 100%; }
 .sys-subnav {
   flex: 0 0 188px; position: sticky; top: 12px;
   display: flex; flex-direction: column; gap: 2px;
@@ -2872,7 +2879,7 @@ td > .cell-actions.end { justify-content: flex-end; }
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent); border-left-color: var(--accent); font-weight: 600;
 }
-.sys-content { flex: 1 1 auto; min-width: 0; }
+.sys-content { flex: 1 1 auto; min-width: 0; align-self: stretch; }
 
 /* Topology focused-graph — animated traffic flow on the highlighted edge
    (v0.8.36). Reduced-motion users get a static dashed line, no animation. */

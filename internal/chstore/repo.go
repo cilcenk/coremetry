@@ -407,7 +407,7 @@ func (s *Store) GetServiceClusterMap(ctx context.Context, since time.Duration) (
 		HAVING cluster != ''
 		ORDER BY service_name, cluster
 		LIMIT 50000
-		SETTINGS max_execution_time = 8`+heavyScanSpill, from)
+		SETTINGS max_execution_time = 8`+s.heavyScanSpill(), from)
 	if err != nil {
 		return nil, err
 	}
@@ -724,20 +724,11 @@ func (s *Store) GetServiceClusterBreakdown(
 // v0.8.385 SQL-shape tests can pin the cluster + env conjuncts
 // without a live ClickHouse — the env_filter_test.go pattern.
 
-// heavyScanSpill is appended to the bounded raw-spans GROUP BYs that
-// the cluster/env fallback paths run at prod scale (v0.8.392,
-// operator-reported: /api/services 500'd ~1.3s on busy clusters with
-// the cluster filter — ClickHouse's memory guard (code 241) kills a
-// ballooning GROUP BY hash table long before max_execution_time).
-// External aggregation SPILLS the hash table to disk instead of
-// dying: the spill path is slower, but the page renders. 2 GiB spill
-// threshold + the 8 GiB per-query ceiling the topology writer has
-// run in prod since v0.5.x. Hardcoded on purpose (operator call):
-// tolerate high service counts and many clusters everywhere, no
-// tuning knob. Pinned by TestHeavyScanSpill.
-const heavyScanSpill = ",\n" +
-	"\t\t         max_bytes_before_external_group_by = 2000000000,\n" +
-	"\t\t         max_memory_usage = 8000000000"
+// heavyScanSpill moved to query_memory.go as a Store method
+// (v0.9.975): the 8 GiB ceiling it pinned was LARGER than the whole
+// server budget on a 2.8 GiB node, so it never fired and CH shot a
+// bystander instead. Same requested bytes, now held under a share of
+// the server's own max_server_memory_usage.
 
 // clusterMemberServices resolves a cluster name to the services that
 // ran in it, from the 60s-cached 1h-clamped service→cluster map
@@ -953,7 +944,7 @@ func (s *Store) GetServicesQuery(ctx context.Context, q ServicesQuery) ([]Servic
 		FROM spans `+wc.sql()+`
 		GROUP BY service_name`+havingSQL+`
 		ORDER BY `+servicesSortExpr(sort, dir)+limitClause+`
-		SETTINGS max_execution_time = 20`+heavyScanSpill,
+		SETTINGS max_execution_time = 20`+s.heavyScanSpill(),
 		append(append([]any{apdexT, apdexT, apdexT * 4}, wc.args...), havingArgs...)...)
 	if err != nil {
 		return nil, err
@@ -1418,7 +1409,7 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 		ORDER BY span_count DESC
 		LIMIT 500
 		SETTINGS max_execution_time = 20,
-		         optimize_skip_unused_shards = 0`+heavyScanSpill,
+		         optimize_skip_unused_shards = 0`+s.heavyScanSpill(),
 		append([]any{apdexT, apdexT, apdexT * 4}, wc.args...)...)
 	if err != nil {
 		return nil, err

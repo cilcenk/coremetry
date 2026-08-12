@@ -67,7 +67,7 @@ func (s *Store) WriteServiceCallersBucket(ctx context.Context, bucketStart time.
 		SETTINGS max_execution_time = 180,
 		         join_algorithm = 'grace_hash',
 		         max_bytes_in_join = 4000000000,
-		         max_memory_usage = 8000000000,
+		         `+s.queryMemSetting(heavyScanMemory)+`,
 		         distributed_product_mode = 'global'`,
 		bucketStart.Unix(),
 		uint64(time.Now().UnixNano()),

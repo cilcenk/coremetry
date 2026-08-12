@@ -151,7 +151,7 @@ func (s *Store) sampleEndpointEntrySpans(
 		ORDER BY cityHash64(span_id)
 		LIMIT ?
 		SETTINGS max_execution_time = 10,
-		         `+s.shardSkipSetting()+heavyScanSpill, args...)
+		         `+s.shardSkipSetting()+s.heavyScanSpill(), args...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("endpoint callers sample: %w", err)
 	}
@@ -238,7 +238,7 @@ func (s *Store) resolveEndpointParents(
 		  AND time >= ? AND time <= ?
 		LIMIT ?
 		SETTINGS max_execution_time = 10,
-		         `+s.shardSkipSetting()+heavyScanSpill,
+		         `+s.shardSkipSetting()+s.heavyScanSpill(),
 		strings.Join(tHolders, ","), strings.Join(pHolders, ",")), args...)
 	if err != nil {
 		return nil, fmt.Errorf("endpoint callers parent resolve: %w", err)

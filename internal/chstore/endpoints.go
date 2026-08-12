@@ -585,7 +585,7 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		GROUP BY service_name, path
 		` + endpointsOrderBy(q.Sort, q.Dir) + `
 		LIMIT ?
-		SETTINGS max_execution_time = 15` + heavyScanSpill
+		SETTINGS max_execution_time = 15` + s.heavyScanSpill()
 	rows, err := s.conn.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -913,7 +913,7 @@ func (s *Store) getEndpointsRaw(ctx context.Context, q EndpointsQuery) ([]Endpoi
 		GROUP BY service_name, path
 		` + endpointsOrderBy(q.Sort, q.Dir) + `
 		LIMIT ?
-		SETTINGS max_execution_time = 15` + heavyScanSpill
+		SETTINGS max_execution_time = 15` + s.heavyScanSpill()
 	rows, err := s.conn.Query(ctx, sql, allArgs...)
 	if err != nil {
 		return nil, err

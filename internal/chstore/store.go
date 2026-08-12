@@ -71,6 +71,16 @@ type Store struct {
 	// nil-güvenli: hidrasyondan önceki ilk tik varsayılanları görür.
 	anomalySensitivity atomic.Pointer[AnomalySensitivityConfig]
 
+	// memPlan (v0.9.975) — the per-query memory ceilings actually in
+	// force, proportioned to the server's own max_server_memory_usage at
+	// boot. Every SQL site that used to carry its own `max_memory_usage
+	// = <literal>` reads from here via queryMemory/spillMemory. The zero
+	// value (Store built without New — SQL-shape tests, tooling) has
+	// ServerMax 0 and therefore fails OPEN: every clamp is a no-op and
+	// the rendered SQL is byte-identical to pre-v0.9.975. Rationale and
+	// the measurement that forced it: query_memory.go.
+	memPlan queryMemoryPlan
+
 	conn driver.Conn
 	// ingest is the RoundRobin pool used ONLY for high-volume telemetry
 	// INSERTs — see the two-pool rationale at the clickhouse.Open calls
@@ -436,6 +446,11 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		}
 		log.Printf("[chstore] dağıtık CREATE DATABASE kuyruğa alındı ama veritabanı %q ZATEN VAR — boot sürüyor (kod 159 arka plan uygulamasını anlatır, arıza değil)", cfg.Database)
 	}
+	// v0.9.975 — read the server's OWN memory ceiling while the setup
+	// connection is still open. The per-query caps built into chOpts()
+	// below are meaningless unless they sit UNDER this number; see the
+	// measurement in query_memory.go. Fail-open: 0 = couldn't read.
+	serverMaxMem := probeServerMaxMemory(ctx, setup, cfg.ClusterName)
 	setup.Close()
 
 	// Connect to target database.
@@ -465,25 +480,38 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 	// to the built-ins). On a big external cluster the 4GB default cap
 	// tripped CH code 241 on a fleet-wide aggregation; operators raise
 	// COREMETRY_CH_MAX_MEMORY_USAGE to match node RAM without a rebuild.
-	maxMem := int64(4_000_000_000)
-	if cfg.MaxMemoryUsage > 0 {
-		maxMem = cfg.MaxMemoryUsage
-	}
-	extGroupBy := int64(1_000_000_000)
-	if cfg.MaxBytesExternalGroupBy > 0 {
-		extGroupBy = cfg.MaxBytesExternalGroupBy
-	}
-	extSort := int64(1_000_000_000)
-	if cfg.MaxBytesExternalSort > 0 {
-		extSort = cfg.MaxBytesExternalSort
-	}
+	// v0.9.975 — the configured/default numbers above are only a REQUEST
+	// now. resolveQueryMemory folds them against the server's own
+	// ceiling: cfg still wins when it asks for LESS, but it can no
+	// longer ask for more than the server has (a cap above the server
+	// total never fires — the OvercommitTracker shoots a bystander
+	// instead). Fail-open when serverMaxMem is 0.
+	memPlan := resolveQueryMemory(
+		cfg.MaxMemoryUsage, cfg.MaxBytesExternalGroupBy, cfg.MaxBytesExternalSort,
+		serverMaxMem, cfg.MemFraction)
+	maxMem, extGroupBy, extSort := memPlan.MaxMemory, memPlan.GroupBy, memPlan.Sort
 	// v0.9.185 — surface the EFFECTIVE per-query limits at boot so an
 	// operator can confirm a COREMETRY_CH_MAX_MEMORY_USAGE override
 	// actually took (a rejected value logs a [config] WARNING and this
 	// line still shows the default — the two together make a failed
-	// override unmistakable).
-	log.Printf("[chstore] per-query memory limits: max_memory_usage=%d, external_group_by=%d, external_sort=%d bytes",
-		maxMem, extGroupBy, extSort)
+	// override unmistakable). v0.9.975 adds the server ceiling and the
+	// ratio, so "why is my 12 GB override showing as 1.8 GB" is
+	// answerable from this one line.
+	log.Printf("[chstore] per-query memory limits: max_memory_usage=%d, external_group_by=%d, external_sort=%d bytes "+
+		"(server max_server_memory_usage=%d, fraction=%.2f)",
+		maxMem, extGroupBy, extSort, memPlan.ServerMax, memPlan.Fraction)
+	switch {
+	case memPlan.ServerMax <= 0:
+		log.Printf("[chstore] WARNING: max_server_memory_usage okunamadı — per-query bellek kelepçesi " +
+			"ORANTILANAMADI. Yapılandırılan değerler aynen uygulanıyor; sunucu tavanından BÜYÜKlerse " +
+			"hiç devreye girmez ve kod-241 masum sorguları öldürür (bkz. query_memory.go).")
+	case memPlan.Clamped():
+		log.Printf("[chstore] WARNING: yapılandırılan max_memory_usage=%d, sunucunun kendi tavanı olan "+
+			"%d bayttan BÜYÜK — bu hâliyle ASLA devreye giremezdi (ClickHouse önce sunucu-geneli "+
+			"OvercommitTracker'ı tetikler ve KURBAN seçer). %d bayta kelepçelendi (%.0f%%). "+
+			"Oranı COREMETRY_CH_MEM_FRACTION ile değiştirebilirsiniz.",
+			memPlan.Configured, memPlan.ServerMax, memPlan.MaxMemory, memPlan.Fraction*100)
+	}
 	// chOpts builds a FRESH options struct per call — two pools must not
 	// share the Settings map (the driver retains it).
 	chOpts := func() *clickhouse.Options {
@@ -625,6 +653,9 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		ingest: newTracedConn(ingest, poolIngest),
 		read:   newTracedConn(readConn, poolRead),
 		cfg:    cfg, ret: ret,
+		// v0.9.975 — the SQL sites (topology/backtrace writers, the heavy
+		// raw-spans scans, the SQL playground) clamp against this.
+		memPlan: memPlan,
 	}
 	// v0.5.437 — self-heal pass. Detects HighVolumeTables `_local`
 	// MVs/aggregates that exist in system.tables (engine

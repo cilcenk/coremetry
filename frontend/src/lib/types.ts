@@ -3808,6 +3808,13 @@ export interface SystemStats {
     // number the operator otherwise has to go find on the node.
     maxServerMemory: number;
     maxQueryMemory: number;
+    // configuredQueryMemory (v0.9.975) — the per-query cap BEFORE the
+    // server-ratio clamp. Larger than maxQueryMemory means the
+    // configured value exceeded the node's own ceiling and could never
+    // have fired: CH hits its server-wide OvercommitTracker first, and
+    // that kills a VICTIM query rather than the greedy one. Invisible
+    // until it kills something innocent, so the panel says it out loud.
+    configuredQueryMemory: number;
     // Normalised per core (1.0 = every core saturated). Sampled
     // independently, so the three can sum past 1.0 — show them
     // separately rather than as one clamped total.

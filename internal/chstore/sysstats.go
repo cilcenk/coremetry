@@ -194,6 +194,14 @@ type ServerStat struct {
 	// node; 0 = unlimited.
 	MaxServerMemory uint64 `json:"maxServerMemory"`
 	MaxQueryMemory  uint64 `json:"maxQueryMemory"`
+	// ConfiguredQueryMemory — what the per-query cap was BEFORE the
+	// server-ratio clamp (v0.9.975). Equal to MaxQueryMemory in the
+	// healthy case; LARGER when the configured/default cap exceeded the
+	// node's own ceiling and could therefore never have fired. The UI
+	// compares the two and says so — that misconfiguration is invisible
+	// until it kills an innocent query, because the greedy query is not
+	// the one ClickHouse's OvercommitTracker picks.
+	ConfiguredQueryMemory uint64 `json:"configuredQueryMemory"`
 
 	// ── CPU ─────────────────────────────────────────────────────
 	// Normalised per core, so 1.0 = every core saturated regardless of

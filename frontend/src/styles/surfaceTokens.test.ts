@@ -112,3 +112,82 @@ describe('D1 — yüzey kapları zemin taşır', () => {
     expect(body).toMatch(/background\s*:\s*transparent/);
   });
 });
+
+// ── D7 (v0.9.990) — `--bg` alias'ı YÜKSELTİLMİŞ YÜZEY ───────────────────────
+//
+// Ne çiviliyor: `--bg` her yerde `--bg1` ile AYNI değeri taşır.
+//
+// Neden bu kapı ŞART: alias v0.9.990'a kadar temaya göre anlam
+// değiştiriyordu — dark ve light'ta `--bg0` (sayfa zemini), redhat'te
+// `--bg1` (yükseltilmiş yüzey). 46 çağrı noktası (çekmece paneli, komut
+// paleti, KQL popover'ı, kod blokları, kart içi inset kutular) bu
+// belirsizliği taşıyordu ve HİÇBİR kapı görmüyordu: `undefinedCssRefs`
+// için `--bg` tanımlı, `colorLeaks` için hex literali yok,
+// `bgZeroIsPageOnly` için bildirim `--bg0` içermiyor, tsc CSS'e bakmıyor.
+// Tek belirti "çekmece dark'ta sayfayla aynı renk, redhat'te beyaz" olurdu.
+//
+// Kapının asıl işi bir DRIFT'i yakalamak: biri `--bg1`i ayarlar ve
+// `--bg`yi unutursa alias sessizce yeniden çatallanır. Bu yüzden assert
+// LİTERAL eşitlik üstünde — `--bg: var(--bg1)` yazıp geçmek kapıyı
+// anlamsız (her zaman yeşil) hale getirirdi.
+describe("D7 — --bg alias'ı yükseltilmiş yüzeye sabit", () => {
+  // Bir kural bloğunun gövdesini seçici ADIYLA değil, seçicinin TAM
+  // metniyle bulur (`[data-theme="redhat"] #sidebar` gibi bileşik
+  // seçiciler de kapsama girsin diye).
+  function blocksDeclaring(token: string): { selector: string; body: string }[] {
+    const out: { selector: string; body: string }[] = [];
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(CLEAN)) !== null) {
+      if (new RegExp(`(^|[;{\\s])${token}\\s*:`).test(m[2])) {
+        out.push({ selector: m[1].trim().replace(/\s+/g, ' '), body: m[2] });
+      }
+    }
+    return out;
+  }
+
+  const declOf = (body: string, token: string): string | null => {
+    const m = new RegExp(`(?:^|[;{\\s])${token}\\s*:\\s*([^;]+)`).exec(body);
+    return m ? m[1].trim() : null;
+  };
+
+  // Ana kural. Tema bloğu da olsa kapsanmış bir remap da olsa
+  // (`[data-theme="redhat"] #sidebar` `--bg1`i #151515'e çeviriyor),
+  // `--bg` bildiren her blok kendi `--bg1`ini de bildirmek ve İKİSİNİ
+  // EŞİT tutmak zorunda. Kapsanmış remap'te bu şart, çünkü CSS özel
+  // değişkenleri var() ikamesini BİLDİRİLDİĞİ elemanda çözer: üstteki
+  // `--bg` aşağı miras kalır, alt bloğun `--bg1`ini görmez.
+  it('--bg bildiren her blok --bg1 ile aynı değeri veriyor', () => {
+    const blocks = blocksDeclaring('--bg\\b');
+    expect(blocks.length, '--bg hiç bildirilmiyor — alias silinmişse bu kapı da gitmeli').toBeGreaterThan(0);
+    const bad = blocks
+      .map(b => ({ sel: b.selector, bg: declOf(b.body, '--bg\\b'), bg1: declOf(b.body, '--bg1') }))
+      .filter(x => x.bg1 === null || x.bg !== x.bg1);
+    expect(
+      bad.map(x => `${x.sel} { --bg: ${x.bg}; --bg1: ${x.bg1} }`),
+      'alias çatalladı — 46 yüzey yine temaya göre anlam değiştirir',
+    ).toEqual([]);
+  });
+
+  // Değerleri ADIYLA da çiviliyoruz: yukarıdaki assert ikisini birlikte
+  // kaydırarak da yeşil kalabilir. Bu blok D7'nin ölçülmüş tablosudur.
+  it('üç temanın alias değeri D7 tablosuyla birebir', () => {
+    const theme = (t: string) => t === 'dark'
+      ? /:root\s*\{([\s\S]*?)\n\}/.exec(CLEAN)![1]
+      : new RegExp(`\\[data-theme="${t}"\\]\\s*\\{([\\s\\S]*?)\\n\\}`).exec(CLEAN)![1];
+    // dark #1c2128→#22272e · light #ffffff→#f6f8fa · redhat DEĞİŞMEDİ
+    expect(declOf(theme('dark'), '--bg\\b')).toBe('#22272e');
+    expect(declOf(theme('light'), '--bg\\b')).toBe('#f6f8fa');
+    expect(declOf(theme('redhat'), '--bg\\b')).toBe('#ffffff');
+  });
+
+  // D7'nin tek istisnası. Tam-viewport splash yükseltilmiş bir yüzey
+  // değil, SAYFA ZEMİNİ — alias'ta kalsaydı `body`den farklı renkte bir
+  // dikdörtgen olarak yüklenirdi.
+  it('PageLoader splash sayfa zemininde, alias\'ta değil', () => {
+    const src = readFileSync(resolve(__dirname, '../components/Spinner.tsx'), 'utf8');
+    const loader = /export function PageLoader[\s\S]*?\n\}/.exec(src)![0];
+    expect(loader, 'splash yükseltilmiş yüzeye kaymış').not.toMatch(/background:\s*'var\(--bg\)'/);
+    expect(loader).toMatch(/background:\s*'var\(--bg0\)'/);
+  });
+});

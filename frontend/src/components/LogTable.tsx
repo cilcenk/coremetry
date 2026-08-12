@@ -478,7 +478,13 @@ function LogRow({
       </tr>
       {expanded && (
         <tr>
-          <td colSpan={cols} style={{ background: 'var(--bg0)', padding: '10px 20px' }}>
+          {/* v0.9.990 (D7.2) — `--bg0` → `--bg2`. Açılan belge satırı bir
+              İÇ KUTU: kabı `.table-wrap` (D1'den beri `--bg1`), yani
+              sayfa-zemini tokeni burada üç temada üç ayrı anlam taşıyordu
+              (dark'ta tablodan koyu, light'ta tablodan AÇIK, redhat'te
+              tablodan koyu). `--bg2` uygulamanın "iç kutu / hover"
+              kademesi — `.vt-scroll thead th` ve `.empty code` ile aynı. */}
+          <td colSpan={cols} style={{ background: 'var(--bg2)', padding: '10px 20px' }}>
             {/* Doc viewer tabs (Discover revamp 7/7): Table keeps
                 the classic anatomy (pretty body + kv-tables with
                 ⊕/⊖); JSON is the whole record pretty-printed with

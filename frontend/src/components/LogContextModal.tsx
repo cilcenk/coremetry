@@ -123,9 +123,10 @@ export function LogContextModal({
               const offsetMs = (l.timestamp - pivot.timestamp) / 1e6;
               const sev = (l.severityText || '').toUpperCase();
               return (
-                <div key={l.id} style={{
-                  display: 'grid',
-                  gridTemplateColumns: '60px 50px 110px 1fr 70px',
+                // v0.9.983 (D5.8 / C7) — beş sabit kolon 290px eder ve
+                // 366px'lik ekranda MESAJA 76px kalırdı. Izgara sınıfa
+                // taşındı; masaüstü aynı, <640px'te tek kolon.
+                <div key={l.id} className="lcm-row" style={{
                   gap: 6, padding: '3px 8px',
                   fontSize: 11, fontFamily: 'ui-monospace, monospace',
                   borderBottom: '1px solid var(--bg2)',

@@ -2551,6 +2551,17 @@ button.accent.copied {
    Problem drill-in pages: the action/back bar, meta-chip row, timeline event
    row, and the "linked" pill. Values mapped 1:1 from the prototype's
    coremetry.css onto real tokens. */
+/* v0.9.983 (D5) — problem detayının iki `fr` ızgarası + log bağlam
+   satırı. Değerler ProblemDetail.tsx / LogContextModal.tsx'ten AYNEN
+   taşındı: satır-içi stili medya sorgusu yenemediği için dar ekran
+   çökmesi ancak sınıfla mümkün. Masaüstünde tek piksel değişmiyor. */
+.pd-cols { display: grid; }
+.pd-cols-14 { grid-template-columns: 1.4fr 1fr; gap: 16px; }
+.pd-cols-15 { grid-template-columns: 1.5fr 1fr; gap: 14px; align-items: start; }
+.lcm-row {
+  display: grid; grid-template-columns: 60px 50px 110px 1fr 70px;
+  align-items: baseline;
+}
 .rb-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
 .rb-bar .spacer { flex: 1; }
 .meta-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
@@ -3105,7 +3116,26 @@ thead th:hover .th-remove { opacity: 1; }
      (yapışkan pager) çubuğun altında kalır ve tıklanamaz. `dvh` küçük
      viewport'u takip eder; taban `100vh` beyanları fallback olarak
      yerinde duruyor (destek yoksa bugünkü davranış). */
+  /* D5.1/5.2/5.8 — üç ızgara tek kolona. `1.5fr 1fr` 366px'te 210+140px
+     eder; sol kolonda RootCausePanel + AI özeti, sağda offender listesi. */
+  .pd-cols-14, .pd-cols-15, .lcm-row { grid-template-columns: 1fr; }
+
+  /* D5.6 (B3) — `#td-outer` sabit `calc(100vh - 185px)` idi ve mobilde
+     DEĞİŞMİYORDU: 844px'lik bir viewport'ta şelaleye 659px, span paneli
+     alt tepsi olarak açıldığında (55vh) geriye ~195px, yani DÖRT SATIR
+     kalıyordu. Dar ekranda yükseklik içeriğe bırakılıyor; sayfa zaten
+     `#content` üzerinden kaydırıyor. */
+  #td-outer { height: auto; }
+  /* Panel açıkken alt tepsi (55vh) şelalenin son satırlarını örtüyor.
+     `:has()` panelin VARLIĞINI okuyor — panel yalnız açıkken render
+     ediliyor, dolayısıyla ayrı bir state bayrağına gerek yok. */
+  #td-outer:has(#span-panel) #td-wf { padding-bottom: 57vh; }
+
+  /* D5.7 (C3) — `tbody td { white-space: nowrap }` mobilde her hücreyi
+     tek satıra kilitliyordu: log MESAJI okunmuyordu. Yalnız log
+     tablosunda ve yalnız telefonda sarmaya izin veriliyor. */
+  .logtbl-dense > tbody > tr > td { white-space: normal; word-break: break-word; }
+
   #app { height: 100dvh; }
-  #td-outer { height: calc(100dvh - 185px); }
   .pager.is-sticky-bottom { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
 }

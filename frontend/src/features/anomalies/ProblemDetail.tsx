@@ -506,7 +506,12 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
       {/* Stack trace (left) · Sample traces (right). minWidth:0 on the columns
           so the long Java stack frames don't force the left column past 1.4fr
           (the v0.8.61 ratio fix — stack trace forced into the left column). */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 16 }}>
+      {/* v0.9.983 (D5.2 / A1) — oran satır içiydi ve satır-içi stili
+          `@media` YENEMEZ, dolayısıyla 366px'lik telefonda bu ızgara
+          210px + 140px iki kolona çöküyordu (stack trace 210px'lik bir
+          kolonda monospace). Değerler AYNEN sınıfa taşındı; masaüstü
+          görünümü bit bit aynı, yalnız <640px'te tek kolona iniyor. */}
+      <div className="pd-cols pd-cols-14">
         {/* Stack trace */}
         <div className="card" style={{ minWidth: 0 }}>
           <div className="ov-card-h">
@@ -656,7 +661,10 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
         )}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: 14, alignItems: 'start' }}>
+      {/* v0.9.983 (D5.1 / A2) — aynı gerekçe: bildirim linkinden gelen
+          operatörün telefonda gördüğü İLK ekran bu (RootCausePanel + AI
+          özeti solda, offender listesi sağda). */}
+      <div className="pd-cols pd-cols-15">
         {/* ── Left column ── */}
         <div style={{ minWidth: 0 }}>
           <Sect title="Root cause analysis" accent>

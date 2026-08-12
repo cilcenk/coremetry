@@ -3916,6 +3916,41 @@ export interface SystemStats {
     // üretmiyor olabilir ve başka hiçbir ekran bunu söylemez.
     lastError?: string;
   };
+  // v0.9.985 — dağıtık kipte Distributed tabloların spool derinliği.
+  //
+  // NEDEN VAR: Distributed motoru INSERT'i diske spool'layıp HEMEN OK
+  // döner; asıl gönderim arka planda *_local'a olur. O gönderici
+  // takıldığında uygulama katmanı "yazdım" sanır ve veri hiç inmez —
+  // 2026-08-12'de lokal küme 3s39d boyunca tek span yazamazken
+  // spans_write_failed 0, spans_accepted tırmanıyordu. Cevap yalnız
+  // system.distribution_queue'da.
+  //
+  // OPSİYONEL: tek-düğüm kurulumunda alan HİÇ GELMEZ (orada Distributed
+  // tablo da spool da yok) → panel çizilmez. Eski bir backend de
+  // döndürmez.
+  distributionQueue?: {
+    // measured=false → ölçüm YAPILAMADI. "Temiz" ile karıştırılmamalı:
+    // düşen bir probe de files=0 gösterir (v0.9.984 fail-open dersi).
+    measured: boolean;
+    probeError?: string;
+    files: number;
+    bytes: number;
+    brokenFiles: number;
+    errorCount: number;
+    tables?: {
+      table: string;
+      files: number;
+      bytes: number;
+      // CH'nin gönderemeyip kalıcı olarak kenara koyduğu dosyalar —
+      // bir daha denenmez, yani gerçek veri kaybı.
+      brokenFiles: number;
+      // Sunucu açılışından beri KÜMÜLATİF; tek başına "şu an bozuk"
+      // demek değildir.
+      errorCount: number;
+      lastError?: string;
+    }[];
+    generated: number;
+  };
 }
 
 export interface AggSpanNode {

@@ -79,6 +79,21 @@ type Server struct {
 	svcRuntimes serviceRuntimesCache
 	chPingAt    time.Time
 	chPingOK    bool
+	// distQueue* — /api/health'in Distributed spool sinyali (v0.9.985).
+	// Handler bu kilidi ALIR ama CH'yi BEKLEMEZ: tazeleme ayrı bir
+	// goroutine'de koşar, handler her zaman son bilinen değeri servis
+	// eder. Gerekçe ÖLÇÜLDÜ — probe medyanı arızalı kümede 646 ms (tepe
+	// 1300 ms), /api/health ise 5 saniyede bir dönüyor ve hot-endpoint
+	// bütçesi p99 < 50 ms. Senkron okuma bütçeyi 13 katına çıkarırdı.
+	distQueueMu         sync.Mutex
+	distQueueAt         time.Time
+	distQueueRefreshing bool
+	// cur/prev — trend İKİ ARDIŞIK ölçümden çıkar; prev yalnız GERÇEKTEN
+	// ölçülmüş bir örnekle döner, düşen bir probe trend tabanını bozmaz.
+	distQueueCur      *chstore.DistributionQueue
+	distQueuePrev     *chstore.DistributionQueue
+	distQueueDegraded bool
+	distQueueDetail   string
 	// httpSrv is the live http.Server once Start() runs — kept so main
 	// can Shutdown() it during the ordered v0.8.336 teardown (stop
 	// ACCEPTING before draining consumers; a bare ListenAndServe had no
@@ -10828,7 +10843,14 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		isDegraded(exLen, exCap) ||
 		isDegraded(slLen, slCap)
 	chOK := s.chReachable(r.Context())
-	load, code := healthVerdict(overloaded, degraded, chOK)
+	// v0.9.985 — dağıtık kipte bir INSERT'in "OK" dönmesi verinin İNDİĞİ
+	// anlamına gelmez: Distributed motoru diske spool'layıp hemen OK der.
+	// 2026-08-12'de lokal küme 3s39d boyunca hiç span yazamazken bu
+	// endpoint yemyeşildi (aşağıdaki sayaçların HEPSİ doğruydu — hepsi
+	// yanlış katmanı ölçüyordu). Tek-düğümde dq nil'dir ve hiçbir sorgu
+	// çalışmaz; gövde de o kurulumda bayt-bayt eskisi gibi kalır.
+	dq, spoolDegraded, spoolDetail := s.distributionBacklog()
+	load, code := healthVerdict(overloaded, degraded, spoolDegraded, chOK)
 	body := map[string]interface{}{
 		"status":                  load,
 		"spans_queued":            spansLen,
@@ -10854,7 +10876,7 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		"span_links_capacity":     slCap,
 		"span_links_dropped":      s.ing.SpanLinks.Dropped(),
 		"span_links_write_failed": s.ing.SpanLinks.WriteFailed(),
-		"clickhouse":              map[bool]string{true: "ok", false: "unreachable"}[chOK],
+		"clickhouse":              chStatusLabel(chOK, spoolDegraded),
 		// v0.9.238 — which roles THIS pod actually runs. In distributed mode
 		// the api and ingest Deployments answer the same hostname through
 		// different Services, and until now nothing in the response said
@@ -10868,6 +10890,20 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 			"api":    !s.roleAPIOff,
 		},
 	}
+	// Spool alanları YALNIZ dağıtık kipte eklenir. Tek-düğümde dq nil'dir
+	// (sorgu hiç koşmadı) ve gövde v0.9.984 ile bayt-bayt aynı kalır —
+	// orada spool diye bir kavram yok, sıfır basmak yalan olurdu.
+	if dq != nil {
+		body["distributed_spool_files"] = dq.Files
+		body["distributed_spool_bytes"] = dq.Bytes
+		body["distributed_spool_errors"] = dq.ErrorCount
+		body["distributed_spool_broken_files"] = dq.BrokenFiles
+		// measured=false → "ölçemedim", "temiz" DEĞİL (v0.9.984 dersi).
+		body["distributed_spool_measured"] = dq.Measured
+		if spoolDetail != "" {
+			body["distributed_spool_detail"] = spoolDetail
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if code != http.StatusOK {
 		w.WriteHeader(code)
@@ -10875,20 +10911,126 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(body)
 }
 
-// healthVerdict maps the two pressure signals + CH reachability onto the
+// healthVerdict maps the pressure signals + CH reachability onto the
 // readiness (status, http code) pair (v0.8.339). Pure + table-tested:
 // CH-unreachable is a 503 even with EMPTY queues — the fast-refuse
 // outage keeps queues drained while everything is being discarded.
-func healthVerdict(overloaded, degraded, chOK bool) (string, int) {
+//
+// v0.9.985 — spoolDegraded: dağıtık kipte Distributed spool birikiyor,
+// yani INSERT'ler "OK" dönerken veri *_local'a İNMİYOR.
+//
+// İki bilinçli karar:
+//
+//   - KENDİ etiketi var ("clickhouse-spool-backlog"), genel "degraded"
+//     değil. Bu arıza kuyruk doluluğuyla aynı şey değil ve çaresi de
+//     farklı (ClickHouse tarafı), curl eden operatör bunu ilk satırda
+//     görmeli.
+//   - 503 DEĞİL, 200. 503 pod'u LB'den düşürür; backlog ClickHouse
+//     tarafındadır, pod'u rotasyondan çıkarmak tek bayt kurtarmaz,
+//     üstelik API yarısını da karartır. "degraded stays 200" (v0.8.339)
+//     ile aynı gerekçe: görünür ol, tahliye etme.
+//
+// Sıralama: gerçek erişilemezlik > kuyruk taşması > spool > kuyruk
+// baskısı. Spool, queue-degraded'ın ÜSTÜNDE çünkü %70 dolu bir tampon
+// henüz veri kaybettirmiyor; inmeyen bir spool zaten kaybettiriyor.
+func healthVerdict(overloaded, degraded, spoolDegraded, chOK bool) (string, int) {
 	switch {
 	case !chOK:
 		return "clickhouse-unreachable", http.StatusServiceUnavailable
 	case overloaded:
 		return "overloaded", http.StatusServiceUnavailable
+	case spoolDegraded:
+		return "clickhouse-spool-backlog", http.StatusOK
 	case degraded:
 		return "degraded", http.StatusOK
 	default:
 		return "ok", http.StatusOK
+	}
+}
+
+// chStatusLabel — gövdedeki `clickhouse` alanı. Üç hâl: erişilemez /
+// spool birikiyor / iyi. Pure + tablo-testli.
+//
+// v0.9.985 öncesi bu alan iki hâlliydi ve TCP'ye cevap veren bir
+// ClickHouse her koşulda "ok" derdi — 3.5 saat boyunca hiçbir span'in
+// inmediği küme dâhil.
+func chStatusLabel(chOK, spoolDegraded bool) string {
+	switch {
+	case !chOK:
+		return "unreachable"
+	case spoolDegraded:
+		return "degraded"
+	default:
+		return "ok"
+	}
+}
+
+// distQueueRefreshEvery — spool ölçümleri arasındaki süre; aynı zamanda
+// TREND PENCERESİ (verdict iki ardışık örneği kıyaslar).
+//
+// 30 sn iki yönden de gerekçeli: (a) 5 sn'lik health nabzında ölçüm
+// gürültüden ibaret olurdu — gönderici saniyede dosya alıp verir;
+// 30 sn boyunca sürekli büyüyen bir kuyruk gerçektir. (b) Maliyet:
+// ölçülen 646 ms'lik probe 30 sn'de bir = tek bir CH thread'inin ~%2'si,
+// pod başına. Handler zaten beklemiyor.
+const distQueueRefreshEvery = 30 * time.Second
+
+// distributionBacklog — /api/health'in spool sinyali. ASLA CH beklemez:
+// bayat ise arka planda tazeleme başlatır ve SON BİLİNEN değeri döner.
+//
+// Dönen: (son ölçüm | nil), degraded, kısa neden. nil = tek-düğüm
+// kurulumu ya da henüz hiç ölçüm bitmemiş (pod'un ilk ~1 sn'si) — iki
+// hâlde de sinyal YOKTUR ve health eskisi gibi davranır.
+// ctx ALMAZ: hiçbir CH çağrısını isteğin ömrüne bağlamaz (bkz. refresh).
+func (s *Server) distributionBacklog() (*chstore.DistributionQueue, bool, string) {
+	s.distQueueMu.Lock()
+	stale := time.Since(s.distQueueAt) >= distQueueRefreshEvery
+	if stale && !s.distQueueRefreshing {
+		s.distQueueRefreshing = true
+		go s.refreshDistributionBacklog()
+	}
+	cur, degraded, detail := s.distQueueCur, s.distQueueDegraded, s.distQueueDetail
+	s.distQueueMu.Unlock()
+	return cur, degraded, detail
+}
+
+// refreshDistributionBacklog — tek uçuşlu arka plan tazeleme.
+//
+// İsteğin ctx'i BİLEREK kullanılmıyor: ölçüm istekten uzun yaşar,
+// yoksa curl'ü Ctrl-C'leyen operatör tazelemeyi de iptal ederdi.
+// Kendi bütçesi var — ölçülen tepe 1300 ms'ye karşı 5 sn, tıkanmış bir
+// kümede bile probe'un kendi kendini süresiz asmasını engeller.
+func (s *Server) refreshDistributionBacklog() {
+	// Kopuk goroutine'de panik SÜRECİ öldürür (handler'daki gibi
+	// net/http tarafından toparlanmaz) — readiness ucunun arkasında
+	// böyle bir risk taşınmaz.
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("[health] spool probe panic: %v", rec)
+			s.distQueueMu.Lock()
+			s.distQueueRefreshing = false
+			s.distQueueAt = time.Now()
+			s.distQueueMu.Unlock()
+		}
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	sample := s.store.CollectDistributionQueue(ctx)
+
+	s.distQueueMu.Lock()
+	defer s.distQueueMu.Unlock()
+	s.distQueueRefreshing = false
+	s.distQueueAt = time.Now()
+	// Trend tabanı yalnız GERÇEK ölçümlerle döner: düşen bir probe
+	// (Measured=false) prev'i ezerse trend penceresi sessizce sıfırlanır
+	// ve süregelen bir arıza "ilk ölçüm" gibi görünüp degraded'dan çıkardı.
+	if sample != nil && sample.Measured && s.distQueueCur != nil && s.distQueueCur.Measured {
+		s.distQueuePrev = s.distQueueCur
+	}
+	s.distQueueCur = sample
+	s.distQueueDegraded, s.distQueueDetail = chstore.DistributionVerdict(s.distQueueCur, s.distQueuePrev)
+	if s.distQueueDegraded {
+		log.Printf("[health] Distributed spool degraded: %s", s.distQueueDetail)
 	}
 }
 

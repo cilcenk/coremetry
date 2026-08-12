@@ -46,6 +46,12 @@ type SystemStats struct {
 	// cevabı da yok; sessizce 20 saniyeye çıkmış bir tarama hiçbir
 	// ekranda iz bırakmazdı.
 	Behavior BehaviorDetectorStats `json:"behavior"`
+	// DistributionQueue (v0.9.985) — dağıtık kipte Distributed tabloların
+	// spool derinliği. nil = tek-düğüm kurulumu (sorgu hiç çalışmadı) →
+	// alan JSON'da YOK, panel çizilmez. Neden burada: bir INSERT'in "OK"
+	// dönmesi dağıtık kipte verinin indiği anlamına GELMEZ; bu tablo
+	// olmadan 3.5 saatlik ölü ingest tüm ekranlarda yeşil görünüyordu.
+	DistributionQueue *DistributionQueue `json:"distributionQueue,omitempty"`
 }
 
 // BehaviorDetectorStats — davranış motorunun /admin/stats görüntüsü.
@@ -447,6 +453,13 @@ func (s *Store) GetSystemStats(ctx context.Context) (*SystemStats, error) {
 	// Same LOCAL-table + cluster() treatment as the two blocks above.
 	// Failure is non-fatal: the panel hides, /admin/stats still renders.
 	out.Servers = s.collectServerStats(ctx)
+
+	// ── Distributed spool derinliği (v0.9.985) ──────────────────
+	// Tek-düğümde nil döner ve HİÇBİR sorgu çalışmaz. Dağıtık kipte
+	// bellek-içi sistem tablosundan tek round-trip; bu zarf zaten 60 sn
+	// serveCached'in arkasında. Soft-fail: probe düşerse Measured=false
+	// ile döner (panel "ölçülemedi" der — "temiz" DEMEZ).
+	out.DistributionQueue = s.CollectDistributionQueue(ctx)
 
 	// ── Span / error counts via the 5m aggregate MV ─────────────
 	// countMerge over AggregateFunction state is cheap; partition

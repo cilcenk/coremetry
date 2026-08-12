@@ -1,6 +1,8 @@
 package chstore
 
 import (
+	"context"
+	"errors"
 	"math"
 	"os"
 	"path/filepath"
@@ -255,6 +257,149 @@ func TestZeroValueStoreFailsOpen(t *testing.T) {
 	}
 	if !strings.Contains(s.queryMemSetting(heavyScanMemory), "max_memory_usage = 1803886264") {
 		t.Errorf("queryMemSetting rendered %q", s.queryMemSetting(heavyScanMemory))
+	}
+}
+
+// v0.9.984 — the probe that FEEDS all of the above fell over in prod
+// and took the whole of v0.9.975 with it. Operator's live v0.9.983 boot:
+//
+//	[chstore] max_server_memory_usage okunamadı (code: 159, Timeout
+//	  exceeded: elapsed 5.861160586 seconds, maximum: 5) — fail-open
+//	[chstore] per-query memory limits: max_memory_usage=4000000000 …
+//	  (server max_server_memory_usage=0, fraction=0.60)
+//
+// The read raced the boot DDL storm, blew its 5 s server-side budget,
+// failed open — and the 4 GB default was then applied verbatim on a
+// node whose real ceiling is 3_006_477_107 B, i.e. a cap that can never
+// fire. The release looked shipped and was a no-op twice over.
+//
+// What this pins is the RETRY DECISION, not the timeout number (pinning
+// 15 s would only make the test brittle the day the budget is retuned):
+// a transient first failure must not disarm the clamp, and two failures
+// must land on exactly the old fail-open.
+func TestProbeWithRetry(t *testing.T) {
+	boom := errors.New("code: 159, Timeout exceeded")
+
+	cases := []struct {
+		name      string
+		attempts  int
+		results   []int64
+		errs      []error
+		cancelCtx bool
+		want      int64
+		wantCalls int
+	}{
+		{
+			name:      "ilk denemede başarı — tek çağrı, değer döner",
+			attempts:  probeAttempts,
+			results:   []int64{3_006_477_107},
+			errs:      []error{nil},
+			want:      3_006_477_107,
+			wantCalls: 1,
+		},
+		{
+			// The v0.9.984 case itself.
+			name:      "ilk hata, ikinci başarı — kelepçe KURTARILDI",
+			attempts:  probeAttempts,
+			results:   []int64{0, 3_006_477_107},
+			errs:      []error{boom, nil},
+			want:      3_006_477_107,
+			wantCalls: 2,
+		},
+		{
+			name:      "iki hata — v0.9.975 ile bayt-özdeş fail-open",
+			attempts:  probeAttempts,
+			results:   []int64{0, 0},
+			errs:      []error{boom, boom},
+			want:      0,
+			wantCalls: 2,
+		},
+		{
+			// A negative reading is nonsense, not a ceiling; it must
+			// resolve to fail-open rather than to a clamp of 0 (which
+			// ClickHouse reads as UNLIMITED).
+			name:      "negatif değer — fail-open, yeniden denenmez",
+			attempts:  probeAttempts,
+			results:   []int64{-1},
+			errs:      []error{nil},
+			want:      0,
+			wantCalls: 1,
+		},
+		{
+			name:      "attempts 0 — en az bir kez denenir",
+			attempts:  0,
+			results:   []int64{3_006_477_107},
+			errs:      []error{nil},
+			want:      3_006_477_107,
+			wantCalls: 1,
+		},
+		{
+			// Shutdown during boot must not sit out the backoff.
+			name:      "iptal edilmiş ctx — geri çekilme beklenmez",
+			attempts:  5,
+			results:   []int64{0, 0, 0, 0, 0},
+			errs:      []error{boom, boom, boom, boom, boom},
+			cancelCtx: true,
+			want:      0,
+			wantCalls: 1,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if tc.cancelCtx {
+				cancel()
+			}
+			calls := 0
+			// delay 0: the test pins the retry DECISION, never the wait.
+			got := probeWithRetry(ctx, tc.attempts, 0, func(context.Context) (int64, error) {
+				i := calls
+				calls++
+				if i >= len(tc.errs) {
+					t.Fatalf("probeWithRetry called %d times, only %d outcomes staged", calls, len(tc.errs))
+				}
+				return tc.results[i], tc.errs[i]
+			})
+			if got != tc.want {
+				t.Errorf("probeWithRetry() = %d, want %d", got, tc.want)
+			}
+			if calls != tc.wantCalls {
+				t.Errorf("read called %d times, want %d", calls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+// The probe SQL must carry the RAISED budget on both the single-node
+// and the clusterAllReplicas path — the operator's failure was on the
+// cluster branch, and a fix applied to only one of the two strings
+// would look correct in a single-node test forever.
+//
+// Asserted against the constant, not against a hardcoded 15, so
+// retuning the budget cannot break this test — only dropping the
+// SETTINGS clause or letting the two branches drift can.
+func TestServerMaxMemoryQueryCarriesProbeBudget(t *testing.T) {
+	want := "max_execution_time = " + strconv.Itoa(probeMaxExecSeconds)
+	for _, cluster := range []string{"", "chc"} {
+		q := serverMaxMemoryQuery(cluster)
+		if !strings.Contains(q, want) {
+			t.Errorf("serverMaxMemoryQuery(%q) missing %q:\n%s", cluster, want, q)
+		}
+		if !strings.Contains(q, serverMaxMemorySetting) {
+			t.Errorf("serverMaxMemoryQuery(%q) does not read %s", cluster, serverMaxMemorySetting)
+		}
+	}
+	// The 5 s budget is the value that MEASURABLY lost the race
+	// (elapsed 5.861160586 s). Whatever the budget becomes, it must
+	// leave room over that observation.
+	if probeMaxExecSeconds <= 6 {
+		t.Errorf("probeMaxExecSeconds = %d — the prod failure took 5.86 s; this budget loses that race again",
+			probeMaxExecSeconds)
+	}
+	if !strings.Contains(serverMaxMemoryQuery("chc"), "clusterAllReplicas('chc'") {
+		t.Error("cluster branch must fan out over clusterAllReplicas — the smallest non-zero ceiling wins")
 	}
 }
 

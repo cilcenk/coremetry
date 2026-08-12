@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 )
@@ -141,12 +142,54 @@ func clampSpillMemory(requested, serverMax int64, fraction float64) int64 {
 	return clampQueryMemory(requested, serverMax, f)
 }
 
-// probeServerMaxMemory reads the server's max_server_memory_usage.
-//
-// Runs on the boot SETUP connection, before the main pools exist, so
-// the per-query Settings map can be proportioned before a single query
-// is issued. Never returns an error: 0 means "unknown" and every caller
-// treats that as fail-open.
+// ── Boot probe ──────────────────────────────────────────────────────
+
+// serverMaxMemorySetting — the one server setting the whole clamp hangs
+// off. Named once so the SQL, the retry log and the failure log cannot
+// drift apart.
+const serverMaxMemorySetting = "max_server_memory_usage"
+
+const (
+	// probeMaxExecSeconds — the server-side max_execution_time budget
+	// for the boot probe.
+	//
+	// v0.9.984, MEASURED on the operator's live v0.9.983 boot: 5 s was
+	// NOT enough on a 2-node cluster coming up —
+	//
+	//	[chstore] max_server_memory_usage okunamadı (code: 159,
+	//	  Timeout exceeded: elapsed 5.861160586 seconds, maximum: 5)
+	//
+	// …and because the probe fails open, the whole of v0.9.975 became a
+	// NO-OP on exactly the node it was written for: serverMax fell back
+	// to 0, the 4 GB per-query default was applied verbatim, and that
+	// number sits ABOVE the node's real 3_006_477_107 B (2.80 GiB)
+	// ceiling — so the cap could never fire, which is the original bug.
+	// A fix that silently un-applies itself under load is worse than no
+	// fix, because the boot log then reads like success.
+	//
+	// 15 s is derived from the timeouts already in this package rather
+	// than invented: the read pool's driver ReadTimeout is 30 s
+	// (store.go) and one distributed-DDL round is
+	// ddlTaskTimeoutSeconds = 20 s. 15 s stays under both. The setup
+	// connection this actually runs on leaves ReadTimeout at the driver
+	// default (300 s), so the server-side budget is the binding one.
+	// The cost of the larger budget is bounded and paid once: a single
+	// row out of an in-memory system table, one time per process, at a
+	// point where boot has already spent ~13 s dialling and creating
+	// the database.
+	probeMaxExecSeconds = 15
+
+	// probeAttempts / probeRetryDelay — ONE retry, because the observed
+	// failure was CONTENTION and not incapacity: the same read on the
+	// same credential answers in milliseconds once the node is idle. A
+	// short backoff converts a transient boot-storm loss into a correct
+	// clamp. Two losses still fail open, byte-identical to v0.9.975 —
+	// the retry adds a chance to succeed, never a chance to block boot.
+	probeAttempts   = 2
+	probeRetryDelay = 2 * time.Second
+)
+
+// serverMaxMemoryQuery renders the probe SQL.
 //
 // On a cluster the answer is the SMALLEST non-zero ceiling in the
 // fleet. Heterogeneous nodes exist, and any node may coordinate the
@@ -154,34 +197,90 @@ func clampSpillMemory(requested, serverMax int64, fraction float64) int64 {
 // Zeros are excluded rather than min'd in: one node reporting
 // "unlimited" must not disarm the clamp for the constrained ones. If
 // every node reports 0 the min over an empty set is 0 → fail-open.
-func probeServerMaxMemory(ctx context.Context, conn driver.Conn, clusterName string) int64 {
-	const setting = "max_server_memory_usage"
-	q := `SELECT toInt64OrZero(value)
-	        FROM system.server_settings
-	       WHERE name = '` + setting + `'
-	       LIMIT 1
-	       SETTINGS max_execution_time = 5`
+func serverMaxMemoryQuery(clusterName string) string {
+	budget := strconv.Itoa(probeMaxExecSeconds)
 	if cn := strings.TrimSpace(clusterName); cn != "" {
-		q = `SELECT toInt64(min(v))
+		return `SELECT toInt64(min(v))
 		       FROM (
 		            SELECT toInt64OrZero(value) AS v
 		              FROM clusterAllReplicas('` + cn + `', system.server_settings)
-		             WHERE name = '` + setting + `'
+		             WHERE name = '` + serverMaxMemorySetting + `'
 		             LIMIT 1000
 		       )
 		      WHERE v > 0
-		      SETTINGS max_execution_time = 5`
+		      SETTINGS max_execution_time = ` + budget
 	}
-	var v int64
-	if err := conn.QueryRow(ctx, q).Scan(&v); err != nil {
-		log.Printf("[chstore] %s okunamadı (%v) — per-query bellek kelepçesi ORANTILANMAYACAK, "+
-			"yapılandırılan değerler aynen uygulanacak (fail-open)", setting, err)
-		return 0
+	return `SELECT toInt64OrZero(value)
+	        FROM system.server_settings
+	       WHERE name = '` + serverMaxMemorySetting + `'
+	       LIMIT 1
+	       SETTINGS max_execution_time = ` + budget
+}
+
+// probeServerMaxMemory reads the server's max_server_memory_usage.
+//
+// Runs on the boot SETUP connection, before the main pools exist, so
+// the per-query Settings map can be proportioned before a single query
+// is issued. Never returns an error: 0 means "unknown" and every caller
+// treats that as fail-open.
+func probeServerMaxMemory(ctx context.Context, conn driver.Conn, clusterName string) int64 {
+	q := serverMaxMemoryQuery(clusterName)
+	return probeWithRetry(ctx, probeAttempts, probeRetryDelay, func(ctx context.Context) (int64, error) {
+		var v int64
+		err := conn.QueryRow(ctx, q).Scan(&v)
+		return v, err
+	})
+}
+
+// probeWithRetry runs read up to attempts times, waiting delay between
+// tries, and folds every outcome onto the fail-open contract: a
+// non-negative value on success, 0 on "we could not find out".
+//
+// Split from the SQL so the retry decision itself is table-tested
+// (v0.9.984) — the failure it exists for only reproduces under a real
+// boot storm, which is precisely the condition a test cannot stage.
+// The behaviour pinned is: first success wins and stops early; a
+// transient first failure does NOT disarm the clamp; two failures land
+// on exactly the pre-retry fail-open; a cancelled context stops
+// retrying rather than sleeping out the shutdown.
+func probeWithRetry(ctx context.Context, attempts int, delay time.Duration, read func(context.Context) (int64, error)) int64 {
+	if attempts < 1 {
+		attempts = 1
 	}
-	if v < 0 {
-		return 0
+	var lastErr error
+attemptLoop:
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			// Checked BEFORE the select, not only inside it: with a
+			// zero delay both cases are ready at once and Go picks at
+			// random, so "already cancelled" has to be decided first or
+			// a shutdown gets one extra doomed round-trip.
+			if ctx.Err() != nil {
+				break attemptLoop
+			}
+			select {
+			case <-ctx.Done():
+				break attemptLoop
+			case <-time.After(delay):
+			}
+		}
+		v, err := read(ctx)
+		if err == nil {
+			if v < 0 {
+				return 0
+			}
+			return v
+		}
+		lastErr = err
+		if i < attempts-1 {
+			log.Printf("[chstore] %s okunamadı (%v) — %v sonra bir kez daha denenecek (%d/%d); "+
+				"gözlenen arıza boot sırasındaki ÇEKİŞMEYDİ, yetki değil (v0.9.984)",
+				serverMaxMemorySetting, err, delay, i+1, attempts)
+		}
 	}
-	return v
+	log.Printf("[chstore] %s okunamadı (%v) — per-query bellek kelepçesi ORANTILANMAYACAK, "+
+		"yapılandırılan değerler aynen uygulanacak (fail-open)", serverMaxMemorySetting, lastErr)
+	return 0
 }
 
 // resolveQueryMemory folds the configured/default per-query limits
@@ -252,6 +351,21 @@ func (s *Store) ConfiguredQueryMemory() int64 {
 		return defaultQueryMemory
 	}
 	return s.memPlan.Configured
+}
+
+// QueryMemoryProbeFailed reports that the boot probe never learned the
+// server's own ceiling, so NOTHING was proportioned and the configured
+// per-query numbers are in force verbatim (v0.9.984).
+//
+// This is the state that made v0.9.975 look shipped while being a
+// no-op, and it is invisible from the outside: /system/stats reads
+// max_server_memory_usage live, so the panel happily shows a 2.80 GiB
+// server ceiling next to a 4 GB per-query cap and no warning fires —
+// the clamp-warning only triggers when a clamp actually happened. The
+// flag is what lets the panel say "this was not measured" instead of
+// implying it was measured and found fine.
+func (s *Store) QueryMemoryProbeFailed() bool {
+	return s == nil || s.memPlan.ServerMax <= 0
 }
 
 // queryMemory clamps one SQL site's request. nil/zero-value Stores

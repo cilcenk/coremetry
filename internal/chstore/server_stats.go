@@ -121,6 +121,13 @@ func (s *Store) collectServerStats(ctx context.Context) []ServerStat {
 		// absent on every install.)
 		st.MaxQueryMemory = uint64(s.EffectiveQueryMemory())
 		st.ConfiguredQueryMemory = uint64(s.ConfiguredQueryMemory())
+		// v0.9.984 — and say so when the pair above was never MEASURED.
+		// The boot probe fails open, so a timed-out probe leaves the
+		// configured numbers in force with nothing to compare them
+		// against; the clamp-warning below cannot fire because no clamp
+		// happened. Without this flag the panel shows a 2.80 GiB server
+		// ceiling beside a 4 GB per-query cap and looks healthy.
+		st.QueryMemoryProbeFailed = s.QueryMemoryProbeFailed()
 		out = append(out, *st)
 	}
 	// Deterministic order so the panel doesn't reshuffle between polls.

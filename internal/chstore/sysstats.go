@@ -202,6 +202,15 @@ type ServerStat struct {
 	// until it kills an innocent query, because the greedy query is not
 	// the one ClickHouse's OvercommitTracker picks.
 	ConfiguredQueryMemory uint64 `json:"configuredQueryMemory"`
+	// QueryMemoryProbeFailed — the boot probe could not read
+	// max_server_memory_usage, so NOTHING above was proportioned
+	// (v0.9.984). Distinct from "nothing needed clamping": the
+	// configured cap may sit far above this node's ceiling and still
+	// show no warning, because a clamp that never ran cannot report
+	// one. This is how v0.9.975 spent a release looking applied while
+	// being a no-op — the probe timed out at 5.86 s against a 5 s
+	// budget during the boot DDL storm and fell open silently.
+	QueryMemoryProbeFailed bool `json:"queryMemoryProbeFailed,omitempty"`
 
 	// ── CPU ─────────────────────────────────────────────────────
 	// Normalised per core, so 1.0 = every core saturated regardless of

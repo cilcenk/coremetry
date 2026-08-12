@@ -430,6 +430,25 @@ export default function AdminStatsPage() {
                             ⚠ per-query cap clamped from {fmtBytes(n.configuredQueryMemory)} — configured above the server ceiling, so it could never fire
                           </div>
                         )}
+
+                        {/* Same honesty, one level up (v0.9.984): the
+                            clamp above can only report what it MEASURED.
+                            When the boot probe times out it fails open —
+                            correct, boot must not depend on introspection
+                            — but then the per-query cap is unproportioned
+                            and the warning above stays silent no matter
+                            how wrong the number is. That is exactly how
+                            v0.9.975 shipped and did nothing. Say it. */}
+                        {n.queryMemoryProbeFailed && (
+                          <div style={{ fontSize: 11, color: 'var(--warn)', marginTop: 4 }}
+                            title={`At boot Coremetry could not read this server's max_server_memory_usage (usually a timeout while ClickHouse was busy with startup DDL), so the per-query cap was applied exactly as configured instead of being scaled to a share of the server ceiling. It is not wrong on purpose — it is unverified. Restarting the pod when the cluster is idle normally resolves it; the boot log line starting "[chstore] max_server_memory_usage okunamadı" carries the underlying error.`}>
+                            ⚠ server ceiling unreadable at boot — per-query cap
+                            {' '}({fmtBytes(n.maxQueryMemory)}) was NOT proportioned
+                            {n.maxServerMemory > 0 && n.maxQueryMemory > n.maxServerMemory && (
+                              <> and sits ABOVE this node’s {fmtBytes(n.maxServerMemory)} ceiling, so it cannot fire</>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}

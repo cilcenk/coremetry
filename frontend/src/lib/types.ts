@@ -3815,6 +3815,13 @@ export interface SystemStats {
     // that kills a VICTIM query rather than the greedy one. Invisible
     // until it kills something innocent, so the panel says it out loud.
     configuredQueryMemory: number;
+    // queryMemoryProbeFailed (v0.9.984) — the boot probe never read the
+    // server ceiling, so the per-query numbers were NOT proportioned.
+    // Different from "nothing needed clamping": with no measurement
+    // there is nothing to clamp against, so the clamp warning stays
+    // silent even when the configured cap sits above this node's
+    // ceiling and can therefore never fire.
+    queryMemoryProbeFailed?: boolean;
     // Normalised per core (1.0 = every core saturated). Sampled
     // independently, so the three can sum past 1.0 — show them
     // separately rather than as one clamped total.

@@ -424,6 +424,27 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 			return nil, fmt.Errorf("cluster_name validation: %w", err)
 		}
 	}
+	// v0.9.975 — read the server's OWN memory ceiling while the setup
+	// connection is still open. The per-query caps built into chOpts()
+	// below are meaningless unless they sit UNDER this number; see the
+	// measurement in query_memory.go. Fail-open: 0 = couldn't read.
+	//
+	// v0.9.984 — moved AHEAD of the DDL phase. It used to sit directly
+	// after `CREATE DATABASE … ON CLUSTER`, and on the operator's live
+	// cluster that read timed out at 5.86 s while the distributed DDL it
+	// had just queued was still working through its ~20 s round — which
+	// silently disarmed the whole clamp (fail-open). system.server_settings
+	// needs no database, so this is the quietest moment in boot to ask:
+	// connection up, cluster name validated, nothing queued yet.
+	//
+	// It cannot move any LATER. After migrate() would be the genuinely
+	// idle point, but the clamp is baked into the driver's Settings map
+	// when chOpts() opens the pools below, and migrate() runs ON those
+	// pools — probing afterwards would mean either running every
+	// migration unclamped or reopening both pools, a far bigger change
+	// than this bug warrants.
+	serverMaxMem := probeServerMaxMemory(ctx, setup, cfg.ClusterName)
+
 	// v0.5.420 — operator-reported: "Database coremetry does not
 	// exist" during cluster boot. Root cause: CREATE DATABASE was
 	// emitted without ON CLUSTER, so the database appeared only
@@ -459,11 +480,6 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		}
 		log.Printf("[chstore] dağıtık CREATE DATABASE kuyruğa alındı ama veritabanı %q ZATEN VAR — boot sürüyor (kod 159 arka plan uygulamasını anlatır, arıza değil)", cfg.Database)
 	}
-	// v0.9.975 — read the server's OWN memory ceiling while the setup
-	// connection is still open. The per-query caps built into chOpts()
-	// below are meaningless unless they sit UNDER this number; see the
-	// measurement in query_memory.go. Fail-open: 0 = couldn't read.
-	serverMaxMem := probeServerMaxMemory(ctx, setup, cfg.ClusterName)
 	setup.Close()
 
 	// Connect to target database.

@@ -16,8 +16,13 @@ func TestComputePriorityReasonUsesFlippedRatio(t *testing.T) {
 	now := time.Now().UnixNano()
 	fresh := now - int64(10*time.Minute) // young problem: no stale-critical path
 
+	// v0.9.976 — vaka artık Comparator TAŞIYOR. Ters çevirme o günden beri
+	// kuralın yönüne bağlı: comparator'sız bir 40/99 satırı (ki eski satırlar
+	// ve anomali/monitor üreticileri öyle) ARTIK çevrilmez. Bu testin konusu
+	// çevrilen dalın gerekçe metni olduğu için vakaya "<" eklendi — pin
+	// aynı davranışı tutmaya devam ediyor.
 	t.Run("below-threshold breach reports the flipped magnitude", func(t *testing.T) {
-		p := Problem{Severity: "critical", Value: 40, Threshold: 99, Status: "open", StartedAt: fresh}
+		p := Problem{Severity: "critical", Value: 40, Threshold: 99, Comparator: "<", Status: "open", StartedAt: fresh}
 		pri, reason := computePriority(p, now, DefaultProblemPriority())
 		if pri != "P1" {
 			t.Fatalf("priority = %s, want P1", pri)
@@ -64,21 +69,26 @@ func TestTotalLossIsP1(t *testing.T) {
 		name             string
 		sev              string
 		value, threshold float64
-		wantPri          string
-		wantReason       string
+		// cmp (v0.9.976) — ters çevirme artık kuralın yönüne bağlı. TAM
+		// KAYIP kolu comparator'dan BAĞIMSIZ olduğu için aşağıdaki 0/X
+		// vakaları bilerek comparator'sız: monitor DOWN'ın P1 kalması
+		// (v0.9.825 operatör kararı) yeni kapıdan etkilenmemeli.
+		cmp        string
+		wantPri    string
+		wantReason string
 	}{
 		// FIRTINANIN VAKASI: monitor DOWN, birebir runner.go'daki alanlar.
-		{"monitor DOWN (0/1)", "critical", 0, 1, "P1", "tamamen kayıp"},
-		{"uptime tamamen düştü (0/99)", "critical", 0, 99, "P1", "tamamen kayıp"},
-		{"sağlıklı pod kalmadı (0/3)", "critical", 0, 3, "P1", "tamamen kayıp"},
-		{"warning seviyesinde tam kayıp (0/95)", "warning", 0, 95, "P2", "tamamen kayıp"},
+		{"monitor DOWN (0/1)", "critical", 0, 1, "", "P1", "tamamen kayıp"},
+		{"uptime tamamen düştü (0/99)", "critical", 0, 99, "<", "P1", "tamamen kayıp"},
+		{"sağlıklı pod kalmadı (0/3)", "critical", 0, 3, "", "P1", "tamamen kayıp"},
+		{"warning seviyesinde tam kayıp (0/95)", "warning", 0, 95, "<", "P2", "tamamen kayıp"},
 
 		// KOMŞU DALLAR — düzeltme bunları BOZMAMALI.
-		{"kısmi düşüş hâlâ oranla (40/99)", "critical", 40, 99, "P1", "2.5x"},
-		{"sınırın altında kalan düşüş (60/99)", "critical", 60, 99, "P2", ""},
-		{"eşik sıfır → oran yok", "critical", 0, 0, "P2", ""},
-		{"negatif eşik: sıfır tam kayıp DEĞİL", "critical", 0, -5, "P2", ""},
-		{"yükselen ihlal etkilenmedi (30/10)", "warning", 30, 10, "P2", "3.0x"},
+		{"kısmi düşüş hâlâ oranla (40/99)", "critical", 40, 99, "<", "P1", "2.5x"},
+		{"sınırın altında kalan düşüş (60/99)", "critical", 60, 99, "<", "P2", ""},
+		{"eşik sıfır → oran yok", "critical", 0, 0, "<", "P2", ""},
+		{"negatif eşik: sıfır tam kayıp DEĞİL", "critical", 0, -5, "<", "P2", ""},
+		{"yükselen ihlal etkilenmedi (30/10)", "warning", 30, 10, ">", "P2", "3.0x"},
 	}
 
 	for _, c := range cases {
@@ -86,7 +96,8 @@ func TestTotalLossIsP1(t *testing.T) {
 			p := Problem{
 				Severity: c.sev, Status: "open",
 				Value: c.value, Threshold: c.threshold,
-				StartedAt: fresh,
+				Comparator: c.cmp,
+				StartedAt:  fresh,
 			}
 			pri, reason := computePriority(p, now, DefaultProblemPriority())
 			if pri != c.wantPri {
@@ -232,10 +243,6 @@ func TestBigBreachRatioIsConfigurable(t *testing.T) {
 			"warning", 30, 10, "P3"},
 		{"warning 3.0× varsayılanda P2", DefaultProblemPriority(), "warning", 30, 10, "P2"},
 
-		// "<" ailesi: oran ters çevrilir, vida ÇEVRİLMİŞ orana uygulanır.
-		{"uptime 40/99 (2.5×) kat 4.0'da P2", ProblemPriorityConfig{BigBreachRatio: 4, StaleCriticalHours: 4},
-			"critical", 40, 99, "P2"},
-
 		// TAM KAYIP (v0.9.825) vidaya BAĞLI DEĞİL: 0/X her katta P1.
 		{"tam kayıp kat 10'da bile P1", ProblemPriorityConfig{BigBreachRatio: 10, StaleCriticalHours: 4},
 			"critical", 0, 1, "P1"},
@@ -256,6 +263,22 @@ func TestBigBreachRatioIsConfigurable(t *testing.T) {
 					got, reason, c.want, c.cfg.BigBreachRatio)
 			}
 		})
+	}
+
+	// "<" ailesi: oran ters çevrilir, vida ÇEVRİLMİŞ orana uygulanır.
+	// Tablodan AYRI, çünkü v0.9.976'dan beri comparator şart: yukarıdaki
+	// satırların hiçbiri comparator taşımıyor ve taşımamalı da (hepsi ">"
+	// ailesi). Comparator'sız bir 40/99 vakası "kat 4.0'da P2" sonucunu
+	// DOĞRU SEBEPLE değil, ters çevirme hiç olmadığı için verirdi.
+	uptime := Problem{Severity: "critical", Status: "open", Value: 40, Threshold: 99,
+		Comparator: "<", StartedAt: fresh}
+	if got, reason := computePriority(uptime, now, DefaultProblemPriority()); got != "P1" {
+		t.Errorf("uptime 40/99 (2.5×) varsayılan katta %s (%q); P1 bekleniyordu", got, reason)
+	}
+	tight := ProblemPriorityConfig{BigBreachRatio: 4, StaleCriticalHours: 4}
+	if got, reason := computePriority(uptime, now, tight); got != "P2" {
+		t.Errorf("uptime 40/99 (2.5×) kat 4.0'da %s (%q); P2 bekleniyordu — vida "+
+			"ÇEVRİLMİŞ orana uygulanmalı", got, reason)
 	}
 }
 

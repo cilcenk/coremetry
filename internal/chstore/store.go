@@ -199,6 +199,19 @@ type Store struct {
 	// stays "") and the identity-overlap read falls back to email-only.
 	hasLdapUsernameCol bool
 
+	// hasProblemCmpCol — `problems` tablosunda comparator kolonu var mı
+	// (v0.9.976). hasLdapUsernameCol ile AYNI sınıf: `problems` Coremetry'nin
+	// kendi state tablosu, dış Distributed değil, yani ALTER normal alters
+	// dilimiyle ON CLUSTER iniyor. Probe yine de şart, çünkü küme kipinde
+	// migrate DDL'i ARKA PLANA erteliyor (v0.9.614): kolon henüz inmemişken
+	// koşulsuz `SELECT comparator` her problem okumasını düşürürdü.
+	//
+	// false iken: SELECT ve INSERT kolonu ATLAR, Comparator boş kalır,
+	// computePriority ters çevirme YAPMAZ — yani düşüş yönü GÜVENLİ tarafa
+	// (sahte P1 üretmeyen tarafa). Kolon arka planda inince bir sonraki
+	// boot'ta probe true okur (ddl_defer.go'nun bilinçli sonucu).
+	hasProblemCmpCol bool
+
 	// neighborProvider is the optional 1-hop topology lookup used
 	// by AttachProblemToIncident for rule 3 (cluster a new
 	// problem into an existing incident on a service that calls
@@ -1986,6 +1999,17 @@ func (s *Store) migrate(ctx context.Context) error {
 		// Coremetry-yönetimli cluster'da adaptDDL ON CLUSTER uygular.
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS pod String DEFAULT ''`,
 		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS ai_summary_at DateTime64(9) DEFAULT toDateTime64(0, 9)`,
+		// v0.9.976 — ihlalin YÖNÜ (kuralın comparator'ı) problem satırına
+		// iniyor: öncelik hesabındaki ters-çevirme kolu buna bakacak.
+		// Idempotent, ORDER BY DIŞINDA (kimlik değil, GÖSTERİM/hesap alanı —
+		// dedup anahtarı `id` olarak kalıyor), LowCardinality çünkü evren
+		// dört dizgi. Eski satırlar DEFAULT '' okur = "ters çevirme yok".
+		// `problems` Coremetry'nin kendi state tablosu (monitors/users/
+		// alert_rules ile aynı şekil), dış Distributed wrapper değil —
+		// adaptDDL küme kipinde ON CLUSTER'ı kendisi enjekte eder, spans
+		// sınıfındaki _local tehlikesi yok. hasProblemCmpCol probe'u yine de
+		// SELECT/INSERT listelerini dürüst tutuyor (v0.9.614 erteleme).
+		`ALTER TABLE problems ADD COLUMN IF NOT EXISTS comparator LowCardinality(String) DEFAULT ''`,
 		// v0.9.415 — P1 exception gruplarına proaktif kök-sebep özeti
 		// (ExceptionExplainer, problems ai_summary'nin exception ikizi).
 		`ALTER TABLE exception_groups ADD COLUMN IF NOT EXISTS ai_summary String DEFAULT ''`,
@@ -2415,6 +2439,18 @@ func (s *Store) migrate(ctx context.Context) error {
 	s.hasLdapUsernameCol = luErr == nil
 	if !s.hasLdapUsernameCol {
 		log.Printf("[chstore] `ldap_username` column not present on users (%v) — INSERT/SELECT omit it, LDAP group-sync identity overlap falls back to email-only", luErr)
+	}
+
+	// comparator probe (v0.9.976) — ldap_username ile birebir aynı şekil.
+	// `problems` okuma yolu HER sayfada çalışıyor (inbox, /problems, SSE,
+	// evaluator snapshot), yani kolon henüz inmemişken koşulsuz bir
+	// projeksiyon bütün triyaj yüzeyini karartırdı. false iken SELECT/INSERT
+	// kolonu atlar; öncelik hesabı ters-çevirmesiz (güvenli) tarafta kalır.
+	cmpRows, cmpErr := s.conn.Query(ctx, `SELECT comparator FROM problems LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(cmpRows, cmpErr)
+	s.hasProblemCmpCol = cmpErr == nil
+	if !s.hasProblemCmpCol {
+		log.Printf("[chstore] `comparator` column not present on problems (%v) — INSERT/SELECT omit it; priority ratio-flip stays OFF (safe direction, no false P1s)", cmpErr)
 	}
 
 	// op_group — the normalized operation-shape column (group_id rel A,

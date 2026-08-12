@@ -72,14 +72,14 @@ export default function PublicStatusPage() {
 
   if (data === undefined) {
     return (
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)' }}>
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg0)' }}>
         <Spinner label="Loading status…" />
       </div>
     );
   }
   if (data === null) {
     return (
-      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)' }}>
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg0)' }}>
         <Empty icon="⚠" title="Could not load status">
           The status feed didn't respond. It refreshes automatically — this page will recover on its own once the service is reachable.
         </Empty>
@@ -89,7 +89,7 @@ export default function PublicStatusPage() {
 
   return (
     <div style={{
-      minHeight: '100vh', background: 'var(--bg)',
+      minHeight: '100vh', background: 'var(--bg0)',
       display: 'flex', flexDirection: 'column',
     }}>
       {/* Slim top bar — wordmark on the left, theme toggle on

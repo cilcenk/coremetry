@@ -59,13 +59,17 @@ export function isPathAllowed(pathname: string, allowedPages: string[]): boolean
 }
 
 // AppShell is the layout-route wrapper. React Router renders the
-// active child route inside <Outlet/>. Public pages (login,
-// public-status, public/trace) bypass the sidebar by being
-// registered OUTSIDE this layout in App.tsx — but we keep the
-// isPublicPath check as a defensive belt-and-suspenders so a
-// future route refactor that accidentally puts a public page
-// under this layout still won't render the sidebar to a
-// not-yet-authenticated visitor.
+// active child route inside <Outlet/>.
+//
+// v0.9.981 — YORUM DÜZELTMESİ. Buradaki eski metin public sayfaların
+// "App.tsx'te bu layout'un DIŞINDA kayıtlı" olduğunu, `isPublicPath`
+// kontrolünün ise "yedek kemer" olduğunu söylüyordu. Rota listesi bunu
+// YALANLIYOR: /login, /public-status ve /public/trace üçü de
+// `<Route element={<AppShell/>}>`in İÇİNDE kayıtlı (App.tsx). Yani
+// `isPublicPath` yedek değil, sidebar'ı basmayan TEK VE BİRİNCİL
+// mekanizma — aşağıdaki erken dönüş kaldırılırsa giriş yapmamış bir
+// ziyaretçi sidebar'ı görür. Yanlış yorum bir sonraki refactor'ü
+// "zaten dışarıdalar, bu kontrol gereksiz" diye yanlış yönlendirirdi.
 export function AppShell() {
   const { pathname, search } = useLocation();
   const navigate = useNavigate();

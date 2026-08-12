@@ -540,7 +540,11 @@ export default function InboxPage() {
           (unmount DEĞİL): facet/seçim/scroll state'i "← Problems"te
           yerinde duruyor. /problems'taki v0.8.426/428 deseninin aynısı. */}
       {!problemParam && <Topbar title="Problems" showEnv envApplies />}
-      <div id="content" style={problemParam ? { display: 'none' } : undefined}>
+      {/* v0.9.981 (D3.1) — `id="content"` DEĞİL `.page-body`: detay açıkken
+          bu kap gizli ama MOUNT'lu kalıyor, dolayısıyla id'li olsaydı aynı
+          DOM'da iki `#content` bulunurdu (geçersiz HTML + `getElementById`
+          gizli olanı döndürür). Stil `#content` ile birebir aynı. */}
+      <div className="page-body" style={problemParam ? { display: 'none' } : undefined}>
         {/* v0.9.255 — kayıtlı görünümler. Backend `page`'i serbest string alıyor,
             yani bu tek satır; birleşik triage yüzeyinin /problems'ın yerini
             tutabilmesi için gereken paritenin en ucuz parçası.

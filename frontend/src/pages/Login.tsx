@@ -105,9 +105,20 @@ export default function LoginPage() {
   }, []);
 
   return (
+    // v0.9.981 (D3.4/D3.5) — iki düzeltme aynı kapta:
+    //  · `position: fixed; inset: 0` kaydırma KAÇIŞI bırakmıyordu: SSO
+    //    butonu + hata bandı + bilgi bandı aynı anda görünürken taşan
+    //    kısım telefonda ERİŞİLEMEZ oluyordu. `minHeight: 100dvh` +
+    //    `overflow: auto` aynı ortalamayı verir, taşmayı kaydırılabilir
+    //    bırakır. `100dvh` iOS araç çubuğunu da sayar.
+    //  · Zemin `var(--bg)` idi; redhat temasında `--bg` = `#ffffff`
+    //    ama uygulamanın zemini `--bg0` = `#f0f0f0`. Giriş → uygulama
+    //    geçişinde zemin SIÇRIYORDU (dark ve light'ta ikisi aynı değere
+    //    çözüldüğü için fark edilmemiş).
     <div style={{
-      position: 'fixed', inset: 0, display: 'grid', placeItems: 'center',
-      background: 'var(--bg)',
+      minHeight: '100dvh', display: 'grid', placeItems: 'center',
+      padding: 24, overflow: 'auto',
+      background: 'var(--bg0)',
     }}>
       {/* Theme toggle in the top-right corner — same control the rest of
           the app uses, here so users can flip the theme before signing in. */}
@@ -115,7 +126,9 @@ export default function LoginPage() {
         <ThemeToggle />
       </div>
       <form onSubmit={onSubmit} style={{
-        width: 340, padding: 32, borderRadius: 10,
+        // 340px SABİTTİ: 320px'lik bir viewport'ta form yatay taşıyor ve
+        // fixed kap kaydırma da vermiyordu. Tavan aynı, taban akışkan.
+        width: 'min(340px, 100%)', padding: 32, borderRadius: 10,
         background: 'var(--bg2)', border: '1px solid var(--border)',
         boxShadow: '0 12px 36px rgba(0,0,0,0.25)',
       }}>

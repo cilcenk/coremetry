@@ -67,7 +67,12 @@ export function PageControls({ children, sticky = false, className, style, ...re
   useEffect(() => {
     const el = ref.current;
     if (!el || !sticky) return;
-    const host = el.closest('#content') as HTMLElement | null;
+    // v0.9.981 — `.page-body` de geçerli host: `/problems` ve `/inbox`
+    // detay açıkken liste kabı id yerine sınıf taşıyor (çift `#content`
+    // düzeltmesi). Yalnız `#content` aransaydı o iki sayfada
+    // `--controls-h` HİÇ yayınlanmaz, yapışkan tablo başlığı `top: 0`
+    // fallback'ine düşüp filtre barının ALTINA gizlenirdi.
+    const host = el.closest('#content, .page-body') as HTMLElement | null;
     if (!host) return;
     const apply = () => host.style.setProperty('--controls-h', `${el.offsetHeight}px`);
     apply();

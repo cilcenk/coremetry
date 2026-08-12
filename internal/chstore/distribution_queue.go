@@ -44,6 +44,42 @@ import (
 // 3→5 dosyalık salınımı arıza diye bağırır ve sinyali değersizleştirirdi.
 const distributedBacklogFloor = 100
 
+// distributedBacklogAlarm — MUTLAK TABAN: bu derinliğin üstünde spool
+// TREND NE OLURSA OLSUN arızadır. Yön sorulmaz bile.
+//
+// CANLI FLAP (v0.9.987'nin sebebi, 2026-08-12 16:07, aynı arızalı küme):
+//
+//	16:07:40  degraded  44.320 dosya  "BÜYÜYOR"
+//	16:07:51  ok        44.318 dosya  "drene oluyor"
+//
+// 44 bin dosyalık bir spool'da iki ölçüm arasında İKİ dosya eridi ve saf
+// trend kararı sinyali OK'a çevirdi. Arıza aralıksız sürerken sinyal
+// kendini yalanladı — düzeltmenin amacı olan "dürüst sinyal" tam tersine
+// döndü. Trend tek başına asla yeterli değildi: mutlak derinliğe kör bir
+// yön ölçüsü, 44 bin ile 4 dosyayı aynı sayar.
+//
+// Neden 2000: canlı ölçümde sağlıklı tablolar 0-1 dosyada geziniyor
+// (span_links 1, logs 0, profiles 1); kilitlenmiş olanlar 12.702 /
+// 26.132 / 29.837. İki rejimin arası ÜÇ büyüklük mertebesi. 2000, sessiz
+// eşiğin (100) 20 katı — en vahşi ingest patlamasının bile üstünde — ve
+// gözlenen arızanın 6 kat altında; sayı o boşluğun ortasına kondu.
+// Sağlıklı bir gönderici dosyayı saniyeler içinde boşaltır, yani 2000
+// dosya "yoğun an" değil "gönderici basamıyor" demektir.
+//
+// Trend YOK OLMADI: bu tabanın ALTINDA hâlâ tek karar ölçüsü (aşağıdaki
+// giriş kapısı) ve tabanın üstünde de neden metninde yön bilgisi kalır.
+const distributedBacklogAlarm = 2000
+
+// distributedRecoverSamples — degraded'dan ok'a dönmek için gereken
+// ARDIŞIK iyileşme ölçümü (histerezis).
+//
+// 3 × distQueueRefreshEvery (30 sn) = 90 saniye kesintisiz iyileşme.
+// Tek örnekle geri dönüş YOKTUR, çünkü flap'in kaynağı tam olarak tek
+// bir örneğin tüm kararı taşımasıydı. Asimetri BİLEREK: arızaya giriş
+// tek ölçümle (hızlı uyarı), çıkış üç ölçümle (yavaş rahatlama) olur —
+// yanlış alarmın maliyeti, sessiz veri kaybının maliyetinden düşüktür.
+const distributedRecoverSamples = 3
+
 // DistributionQueueEntry — bir Distributed tablonun spool durumu, küme
 // genelinde toplanmış (her düğüm × her hedef shard tek satıra iner).
 type DistributionQueueEntry struct {
@@ -216,29 +252,72 @@ func (s *Store) scanDistributionQueue(ctx context.Context, q string, out *Distri
 	return rows.Err()
 }
 
+// DistributionState — spool sinyalinin HİSTEREZİS durumu. Saf verdict'in
+// hem girdisi hem çıktısı; çağıran katman (internal/api) taşır.
+//
+// Neden durum gerekiyor (v0.9.987): durumsuz bir karar, her ölçümde
+// sıfırdan hüküm verir ve tek bir örneğin gürültüsü tüm sinyali çevirir.
+// Canlı flap 44.320 → 44.318 (iki dosya) ile "degraded → ok" oldu.
+// Süregelen bir arızada sinyalin kendini yalanlamaması için karar,
+// önceki kararı BİLMEK zorunda.
+type DistributionState struct {
+	// Degraded — sağlık ucunun gördüğü hâl. YAPIŞKAN: bir kez kurulunca
+	// distributedRecoverSamples ardışık iyileşme olmadan düşmez.
+	Degraded bool
+	// Detail — operatöre gösterilen tek satırlık neden. Boş = sinyal yok.
+	Detail string
+	// Recovering — ardışık iyileşme ölçümü sayacı. Arada TEK bir kötü
+	// (ya da ölçülemeyen) örnek sayacı sıfırlar.
+	Recovering int
+}
+
 // DistributionVerdict — SAF karar: spool sağlık sinyalini bozuyor mu?
 //
-// Girdi iki ARDIŞIK ölçüm; dönüş (degraded, kısa neden). Neden trend
-// gerekiyor: `error_count` sunucu açılışından beri kümülatiftir ve
-// AZALMAZ — üç gün önceki tek bir blip'i "şu an bozuk" diye okumak
-// sinyali kalıcı olarak yakardı. Derinlik de tek başına yeterli değil:
-// yoğun bir kümede anlık spool derinliği normaldir. ARIZA = derinliğin
-// EŞİK ÜSTÜNDE ve DÜŞMÜYOR olması.
+// Girdi: önceki karar durumu + iki ardışık ölçüm. Dönüş: yeni durum.
 //
-// nil cur (tek düğüm) ya da Measured=false (probe düştü) → sinyal YOK:
-// iddia edilmeyen bir teşhis, uydurulan bir teşhisten iyidir.
+// Üç katmanlı karar, bu SIRAYLA:
+//
+//  1. MUTLAK TABAN — Files >= distributedBacklogAlarm ise trend'e
+//     BAKILMADAN degraded. 44 bin dosya, iki dosya eridi diye "ok"
+//     olamaz (v0.9.987 flap'inin ta kendisi).
+//  2. HİSTEREZİS — degraded'dan çıkış, tabanın altına inmiş VE ardışık
+//     distributedRecoverSamples ölçüm iyileşmiş olmayı ister.
+//  3. GİRİŞ KAPISI — taban ALTINDA trend hâlâ tek ölçü: `error_count`
+//     sunucu açılışından beri kümülatiftir ve AZALMAZ, yani üç gün
+//     önceki bir blip'i "şu an bozuk" diye okumak sinyali yakardı.
+//
+// nil cur (tek düğüm) → sinyal SIFIRLANIR: o kurulumda spool kavramı yok.
+//
+// Measured=false (probe düştü) → "ÖLÇEMEDİM" hâli. Bu ASLA "ok" DEĞİLDİR:
+// yerleşik bir arızayı temizlemez ve iyileşme SAYILMAZ. Yeni bir arıza da
+// iddia etmez — dürüst etiket gövdedeki `distributed_spool_measured`
+// alanıdır (v0.9.984 fail-open dersi: bir düzeltmenin kendini sessizce
+// iptal edebildiği yer tam olarak burasıdır).
 //
 // BrokenFiles bilerek verdict DIŞINDA: kalıcı ve yapışkan bir sayaçtır,
 // günler önceki 1 bozuk dosya health'i sonsuza dek "degraded" yapardı.
 // Panelde görünür, alarmı sürüklemez.
-func DistributionVerdict(cur, prev *DistributionQueue) (bool, string) {
-	if cur == nil || !cur.Measured {
-		return false, ""
+func DistributionVerdict(st DistributionState, cur, prev *DistributionQueue) DistributionState {
+	if cur == nil {
+		return DistributionState{}
 	}
-	if cur.Files < distributedBacklogFloor {
-		// Boş ya da normal çalkantı — sinyal yok.
-		return false, ""
+	if !cur.Measured {
+		// "Ölçemedim" ≠ "temiz" ve ≠ "iyileşiyor".
+		st.Recovering = 0
+		why := oneLine(cur.ProbeError, 160)
+		if why == "" {
+			why = "bilinmeyen hata"
+		}
+		if st.Degraded {
+			st.Detail = "Spool ÖLÇÜLEMEDİ (" + why +
+				"); son bilinen arıza hâli KORUNUYOR — ölçememek iyileşme değildir."
+		} else {
+			st.Detail = "Spool ölçülemedi (" + why +
+				"); derinlik BİLİNMİYOR — 'temiz' anlamına GELMEZ."
+		}
+		return st
 	}
+
 	depth := fmt.Sprintf("Distributed spool %s dosya (%s)",
 		fmtCount(cur.Files), humanBytes(cur.Bytes))
 	if w := worstDistributionTable(cur.Tables); w != "" {
@@ -247,32 +326,107 @@ func DistributionVerdict(cur, prev *DistributionQueue) (bool, string) {
 	if cur.Partial {
 		depth += " [yalnız bu düğüm — küme geneli okuma düştü]"
 	}
+
+	// ── (1) MUTLAK TABAN: yön ne olursa olsun arıza ──────────────
+	if cur.Files >= distributedBacklogAlarm {
+		st.Degraded = true
+		st.Recovering = 0
+		st.Detail = depth + distributionTrendNote(cur, prev) +
+			". ClickHouse INSERT'i kabul edip diske spool'luyor ama arka plan " +
+			"göndericisi *_local'a basamıyor: uygulama 'yazdım' sanıyor, veri " +
+			"inmiyor." + lastErrorHint(cur.Tables)
+		return st
+	}
+
+	// ── (2) HİSTEREZİS: taban altındayız, çıkış doğrulanır ───────
+	if st.Degraded {
+		if distributionImproving(cur, prev) {
+			st.Recovering++
+		} else {
+			st.Recovering = 0
+		}
+		if st.Recovering < distributedRecoverSamples {
+			st.Detail = depth + fmt.Sprintf("; mutlak tabanın (%s dosya) altına "+
+				"indi ama iyileşme HENÜZ DOĞRULANMADI (%d/%d ardışık ölçüm) — "+
+				"degraded korunuyor.", fmtCount(distributedBacklogAlarm),
+				st.Recovering, distributedRecoverSamples)
+			return st
+		}
+		// Histerezis doldu: sinyal temizlenir ve karar aşağıdaki normal
+		// giriş kapısına düşer (tabanın altındaki trend mantığı).
+		st = DistributionState{}
+	}
+
+	// ── (3) GİRİŞ KAPISI: taban altında trend tek ölçü ───────────
+	if cur.Files < distributedBacklogFloor {
+		// Boş ya da normal çalkantı — sinyal yok.
+		return DistributionState{}
+	}
 	switch {
 	// KAPSAM KİLİDİ (v0.9.986): küme geneli bir ölçümle YALNIZ-BU-DÜĞÜM
 	// ölçümü asla kıyaslanmaz. Canlı sayılarla 41.274 (küme) → 19.020
 	// (yerel) "drene oluyor" diye okunurdu — süregelen bir arızada
 	// SAHTE BİR RAHATLAMA. Farklı kapsam = trend yok, ilk ölçüm gibi
 	// davran. (v0.5.187 ile aynı sınıf hata: kıyaslanamaz iki şeyi
-	// kıyaslamak.)
+	// kıyaslamak.) Mutlak taban üstünde bu kilit zararsızdır — orada
+	// karar zaten trend'e bakmıyor.
 	case prev == nil || !prev.Measured || prev.Partial != cur.Partial:
 		// İlk ölçüm: derinlik biliniyor, YÖN bilinmiyor. "degraded" iddia
 		// etmek yerine derinliği bildir — bir sonraki tur trendi getirir.
-		return false, depth + "; trend henüz ölçülmedi."
+		return DistributionState{Detail: depth + "; trend henüz ölçülmedi."}
 	case cur.Files > prev.Files:
-		return true, depth + fmt.Sprintf("; BÜYÜYOR (%s → %s). ClickHouse "+
-			"INSERT'i kabul edip diske spool'luyor ama arka plan göndericisi "+
-			"*_local'a basamıyor: uygulama 'yazdım' sanıyor, veri inmiyor.",
-			fmtCount(prev.Files), fmtCount(cur.Files)) + lastErrorHint(cur.Tables)
+		return DistributionState{Degraded: true, Detail: depth +
+			fmt.Sprintf("; BÜYÜYOR (%s → %s). ClickHouse INSERT'i kabul edip "+
+				"diske spool'luyor ama arka plan göndericisi *_local'a basamıyor: "+
+				"uygulama 'yazdım' sanıyor, veri inmiyor.",
+				fmtCount(prev.Files), fmtCount(cur.Files)) + lastErrorHint(cur.Tables)}
 	case cur.Files < prev.Files:
-		return false, depth + fmt.Sprintf("; drene oluyor (%s → %s).",
-			fmtCount(prev.Files), fmtCount(cur.Files))
+		return DistributionState{Detail: depth + fmt.Sprintf("; drene oluyor (%s → %s).",
+			fmtCount(prev.Files), fmtCount(cur.Files))}
 	case cur.ErrorCount > 0:
-		return true, depth + fmt.Sprintf("; SABİT (%s) ve gönderim hatası "+
-			"var (%s hata). Kuyruk ne büyüyor ne eriyor — gönderici takılı.",
-			fmtCount(cur.Files), fmtCount(cur.ErrorCount)) + lastErrorHint(cur.Tables)
+		return DistributionState{Degraded: true, Detail: depth +
+			fmt.Sprintf("; SABİT (%s) ve gönderim hatası var (%s hata). Kuyruk ne "+
+				"büyüyor ne eriyor — gönderici takılı.",
+				fmtCount(cur.Files), fmtCount(cur.ErrorCount)) + lastErrorHint(cur.Tables)}
 	default:
-		return false, depth + "; sabit, gönderim hatası yok."
+		return DistributionState{Detail: depth + "; sabit, gönderim hatası yok."}
 	}
+}
+
+// distributionTrendNote — mutlak taban üstündeki karara EKLENEN yön
+// bilgisi. Kararı DEĞİŞTİRMEZ (orada hüküm zaten kesin), yalnız operatöre
+// "eriyor mu" sorusunun cevabını verir. Kıyaslanamaz kapsam → yön yok.
+func distributionTrendNote(cur, prev *DistributionQueue) string {
+	if prev == nil || !prev.Measured || prev.Partial != cur.Partial {
+		return "; MUTLAK TABANIN ÜSTÜNDE (yön henüz ölçülmedi)"
+	}
+	switch {
+	case cur.Files > prev.Files:
+		return fmt.Sprintf("; BÜYÜYOR (%s → %s)", fmtCount(prev.Files), fmtCount(cur.Files))
+	case cur.Files < prev.Files:
+		// Flap'in kaynağı buydu: 44.320 → 44.318 "drene oluyor" sayılıp
+		// sinyali OK'a çeviriyordu. Artık yalnızca bir NOT.
+		return fmt.Sprintf("; azalıyor (%s → %s) ama hâlâ mutlak tabanın (%s dosya) ÜSTÜNDE",
+			fmtCount(prev.Files), fmtCount(cur.Files), fmtCount(distributedBacklogAlarm))
+	default:
+		return fmt.Sprintf("; SABİT (%s)", fmtCount(cur.Files))
+	}
+}
+
+// distributionImproving — bu ölçüm bir İYİLEŞME adımı sayılır mı?
+//
+// Ya sessiz eşiğin altına inmiş, ya da KIYASLANABİLİR bir önceki ölçüme
+// göre küçülmüş olmalı. Kıyaslanamayan (kapsam değişmiş ya da ölçülememiş)
+// önceki örnek iyileşme SAYILMAZ — v0.9.986 kapsam kilidinin histerezis
+// karşılığı: küme→yerel daralması "eriyor" diye okunamaz.
+func distributionImproving(cur, prev *DistributionQueue) bool {
+	if cur.Files < distributedBacklogFloor {
+		return true
+	}
+	if prev == nil || !prev.Measured || prev.Partial != cur.Partial {
+		return false
+	}
+	return cur.Files < prev.Files
 }
 
 // worstDistributionTable — en derin tablonun "ad (N dosya)" özeti.
@@ -303,17 +457,19 @@ func lastErrorHint(tables []DistributionQueueEntry) string {
 	if top.LastError == "" {
 		return ""
 	}
-	msg := top.LastError
-	// Tek satıra indir: bu metin /api/health JSON'una giriyor.
-	msg = strings.Join(strings.Fields(msg), " ")
-	if len(msg) > 160 {
-		// Rune sınırında kes — CH istisnaları UTF-8 taşıyabilir.
-		r := []rune(msg)
-		if len(r) > 160 {
-			msg = string(r[:160]) + "…"
-		}
+	return " Son hata: " + oneLine(top.LastError, 160)
+}
+
+// oneLine — çok satırlı bir CH istisnasını tek satıra indirir ve RUNE
+// sınırında keser. İki şart da zorunlu: bu metin /api/health JSON'una
+// giriyor (satır sonu taşıyamaz) ve CH istisnaları UTF-8 taşıyabilir —
+// bayt sınırında kesmek geçersiz UTF-8 üretirdi.
+func oneLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
 	}
-	return " Son hata: " + msg
+	return s
 }
 
 // fmtCount — 26132 → "26.132" (binlik ayraç). Saf, log/JSON metinleri için.

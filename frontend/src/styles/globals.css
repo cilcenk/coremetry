@@ -3216,3 +3216,16 @@ thead th:hover .th-remove { opacity: 1; }
   #app { height: 100dvh; }
   .pager.is-sticky-bottom { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
 }
+
+/* ── PageShell variant="full" (v0.9.991, denetim DALGA 9) ──────────────────
+   Tam-bleed sayfa gövdesi: dolgu sıfır, kaydırma ÇOCUĞA devredilir
+   (`flex: 1; min-height: 0`). Kapattığı bozukluk `calc(100vh - Npx)`
+   sihirli sayılarıdır (`#td-outer` -185px, `TraceCompare.tsx:234` -220px):
+   o aritmetik `[data-density]` dolgu değişimine (6/10/20/22px) ve ≤640px
+   bloğuna kör.
+
+   YERİ ÖNEMLİ — dosyanın SONUNDA olmak zorunda. `[data-density="…"] #content`
+   kuralları (`:2341/2353/2367`) bu seçiciyle AYNI özgüllükte (1,1,0);
+   kazanan sıralamayla belirlenir. `@media (max-width: 640px)` içindeki
+   `#content` (1,0,0) ise özgüllükle zaten yeniliyor. */
+#content.is-full { padding: 0; overflow: hidden; }

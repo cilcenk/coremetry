@@ -145,6 +145,7 @@ export function DistributionQueuePanel({ dq }: { dq: SystemStats['distributionQu
         <span style={{ fontSize: 12, fontWeight: 600 }}>Distributed spool</span>
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
           system.distribution_queue · INSERT&apos;in &quot;OK&quot; dönmesi verinin indiği anlamına gelmez
+          {dq.partial && ' · yalnız bu düğüm'}
         </span>
         <span style={{ flex: 1 }} />
         {!dq.measured
@@ -199,6 +200,14 @@ export function DistributionQueuePanel({ dq }: { dq: SystemStats['distributionQu
                   )}
                 </div>
               ))}
+            </div>
+          )}
+          {/* Kısmi ölçüm İTİRAF edilir: sessiz bir kırpma "küme geneli
+              toplam bu" diye okunur ve derinliği olduğundan küçük gösterir. */}
+          {dq.partial && (
+            <div className="warn" style={{ fontSize: 11, marginTop: 10, lineHeight: 1.5 }}>
+              Küme geneli okuma düştüğü için bu sayılar <b>yalnız bir düğümün</b> spool&apos;u —
+              gerçek toplam daha yüksek.
             </div>
           )}
           <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 10, lineHeight: 1.5 }}>

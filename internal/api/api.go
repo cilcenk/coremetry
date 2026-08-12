@@ -10900,6 +10900,11 @@ func (s *Server) getHealth(w http.ResponseWriter, r *http.Request) {
 		body["distributed_spool_broken_files"] = dq.BrokenFiles
 		// measured=false → "ölçemedim", "temiz" DEĞİL (v0.9.984 dersi).
 		body["distributed_spool_measured"] = dq.Measured
+		if dq.Partial {
+			// Küme geneli okuma düştü, sayılar yalnız bu düğümün —
+			// yaklaşıklık itiraf edilir, "hepsi bu" diye okunmasın.
+			body["distributed_spool_partial"] = true
+		}
 		if spoolDetail != "" {
 			body["distributed_spool_detail"] = spoolDetail
 		}
@@ -11013,7 +11018,11 @@ func (s *Server) refreshDistributionBacklog() {
 			s.distQueueMu.Unlock()
 		}
 	}()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// 20 sn: CH tarafındaki iki bütçenin (fan-out 10 sn + yerel fallback
+	// 3 sn) ÜSTÜNDE kalmalı, yoksa ctx iptali CH'nin kendi hatasının
+	// önüne geçer ve fallback hiç koşamaz (v0.9.986). Kimse beklemiyor —
+	// bu goroutine isteğin ömrüne bağlı değil.
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	sample := s.store.CollectDistributionQueue(ctx)
 

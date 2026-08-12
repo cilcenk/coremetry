@@ -66,7 +66,11 @@ export function LiveTicker() {
   if (!rates) return null;
 
   return (
-    <div title="Live ingest rate (5s sample) · spans / logs / metrics per second + lifetime span drops"
+    // `live-ticker` (v0.9.980) — CSS kancası. Telefonda topbar bütçesi
+    // 322px, tüketim ≈434px; bu sayaç bilgilendirici ama triage için
+    // kritik değil, bu yüzden <640px'te düşen ilk eleman o.
+    <div className="live-ticker"
+      title="Live ingest rate (5s sample) · spans / logs / metrics per second + lifetime span drops"
       style={{
         display: 'inline-flex', alignItems: 'center', gap: 10,
         padding: '4px 10px', borderRadius: 12,

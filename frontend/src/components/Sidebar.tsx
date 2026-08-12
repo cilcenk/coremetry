@@ -170,7 +170,17 @@ const SIDEBAR_COLLAPSED_KEY = 'coremetry-sidebar-collapsed';
 const COLLAPSED_W = 56;
 const MIN_W = 160;
 const MAX_W = 360;
-const MOBILE_BP = 768;
+// v0.9.980 (dar ekran denetimi D2) — eşikler globals.css'teki "DAR EKRAN
+// KATMANI" ile TEK KAYNAK'tan gelmek zorunda. Eski hâlde JS 768'de
+// off-canvas'a geçiyordu ama CSS hamburger payını 767'de veriyordu: tam
+// 768px'te menü hamburgerle açılıyor, başlık hamburgerin ALTINDA kalıyordu.
+// 640 = --bp-sm (telefon), 1024 = --bp-md (tablet).
+const MOBILE_BP = 640;
+// 640–1024 arası: sidebar off-canvas DEĞİL ama tam genişlik de değil —
+// ikon-only ray. Tablet dikeyde/bölünmüş pencerede 220px'lik menü içerik
+// alanının dörtte birini yiyordu (M7). Kullanıcının KAYITLI tercihi
+// değişmiyor; yalnız o bantta ezliyoruz.
+const TABLET_BP = 1024;
 
 export function Sidebar() {
   const { pathname } = useLocation();
@@ -210,6 +220,7 @@ export function Sidebar() {
   const [width, setWidth] = useState(220);
   const [collapsed, setCollapsed] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [isTablet, setIsTablet] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   // Expanded nav groups — persists to localStorage so the
   // operator's preferred layout sticks across sessions. The
@@ -240,7 +251,11 @@ export function Sidebar() {
   }, []);
   // Track viewport so we can switch to mobile drawer mode below the breakpoint.
   useEffect(() => {
-    const apply = () => setIsMobile(window.innerWidth < MOBILE_BP);
+    const apply = () => {
+      const w = window.innerWidth;
+      setIsMobile(w < MOBILE_BP);
+      setIsTablet(w >= MOBILE_BP && w < TABLET_BP);
+    };
     apply();
     window.addEventListener('resize', apply);
     return () => window.removeEventListener('resize', apply);
@@ -249,7 +264,7 @@ export function Sidebar() {
   // ── Drag-to-resize ────────────────────────────────────────────────────────
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
   const onResizeStart = (e: React.MouseEvent) => {
-    if (collapsed || isMobile) return;
+    if (effCollapsed || isMobile) return;
     e.preventDefault();
     dragRef.current = { startX: e.clientX, startW: width };
     document.body.style.cursor = 'col-resize';
@@ -304,8 +319,12 @@ export function Sidebar() {
   // On mobile: sidebar is an off-canvas overlay (full label expanded), shown
   // only when the user taps the hamburger. On desktop: in-flow column whose
   // width depends on the collapsed flag and the drag-resized width.
-  const showLabels = isMobile || !collapsed;
-  const computedWidth = isMobile ? 240 : (collapsed ? COLLAPSED_W : width);
+  // v0.9.980 (M7) — 640–1024 bandında ray ZORLA ikon-only. Kullanıcının
+  // kayıtlı `collapsed` tercihi DEĞİŞMİYOR (localStorage'a yazılmıyor);
+  // yalnız bu bantta etkisi eziliyor, ≥1024'te tercih aynen geri geliyor.
+  const effCollapsed = collapsed || isTablet;
+  const showLabels = isMobile || !effCollapsed;
+  const computedWidth = isMobile ? 240 : (effCollapsed ? COLLAPSED_W : width);
 
   return (
     <>
@@ -315,13 +334,19 @@ export function Sidebar() {
           onClick={() => setDrawerOpen(true)} />
       )}
       {isMobile && drawerOpen && (
+        // v0.9.980 (dar ekran denetimi M3) — perde `zIndex: 40` idi, yani
+        // `--z-nav`: dropdown(50), popover(55), drawer(60) ve fab(80) onun
+        // ÜSTÜNDE kalıyordu. Somut sonuç: mobil menü açıkken CopilotChat
+        // launcher'ı perdeyi delip menünün üstünde duruyordu. Doğru rung
+        // panelin TAM altı — perde ile panel arasına hiçbir şey giremez.
         <div onClick={() => setDrawerOpen(false)} style={{
-          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 40,
+          position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
+          zIndex: 'var(--z-drawer-scrim)',
         }} />
       )}
 
       <nav id="sidebar"
-        data-collapsed={collapsed && !isMobile ? 'true' : 'false'}
+        data-collapsed={effCollapsed && !isMobile ? 'true' : 'false'}
         data-mobile={isMobile ? 'true' : 'false'}
         data-open={isMobile && drawerOpen ? 'true' : 'false'}
         style={{
@@ -337,11 +362,17 @@ export function Sidebar() {
           <TelescopeIcon size={22} />
           {showLabels && <span className="title"><Wordmark /></span>}
           {!isMobile && (
+            // Tablet bandında düğme DEVRE DIŞI + dürüst ipuçlu, gizli
+            // değil: gizlemek "bu sürümde kayboldu" gibi okunurdu.
+            // EnvPicker'ın `applies=false` deseninin aynısı.
             <IconButton onClick={toggleCollapsed}
-              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              icon={collapsed ? '»' : '«'}
+              disabled={isTablet}
+              aria-label={effCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              icon={effCollapsed ? '»' : '«'}
               variant="secondary" size="md" className="sb-collapse"
-              title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} />
+              title={isTablet
+                ? 'Dar pencerede menü ikon-only kalır — genişletmek için pencereyi 1024px üstüne çıkarın'
+                : (collapsed ? 'Expand sidebar' : 'Collapse sidebar')} />
           )}
         </div>
         <div id="nav">
@@ -485,7 +516,7 @@ export function Sidebar() {
         )}
         {showLabels && health && <div id="nav-footer">{health}</div>}
 
-        {!collapsed && !isMobile && (
+        {!effCollapsed && !isMobile && (
           <div className="sidebar-resizer"
             title="Drag to resize"
             onMouseDown={onResizeStart} />

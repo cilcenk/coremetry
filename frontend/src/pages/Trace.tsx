@@ -31,6 +31,7 @@ import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer'
 // clipboard copies (it alone fell back when writeText rejected). That
 // version is now lib/clipboard, and the two local functions are gone.
 import { copyToClipboard } from '@/lib/clipboard';
+import { PageShell } from '@/components/ui/PageShell';
 
 function TraceDetailInner() {
   const navigate = useNavigate();
@@ -313,7 +314,7 @@ function TraceDetailInner() {
     return (
       <>
         <Topbar title="Trace" range={range} onRangeChange={setRange} />
-        <div id="content"><Empty icon="⚠" title="Missing trace id" /></div>
+        <PageShell><Empty icon="⚠" title="Missing trace id" /></PageShell>
       </>
     );
   }
@@ -334,7 +335,7 @@ function TraceDetailInner() {
   return (
     <>
       <Topbar title="Trace Detail" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ marginBottom: 10, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button variant="secondary" size="sm" onClick={() => navigate(-1)}>← Back</Button>
           <code style={{ fontSize: 11, color: 'var(--text2)', background: 'var(--bg2)', padding: '2px 6px', borderRadius: 4 }}>
@@ -540,7 +541,7 @@ function TraceDetailInner() {
             )}
           </>
         )}
-      </div>
+      </PageShell>
       <CorrelationContextDrawer
         anchor={correlateAnchor}
         onClose={() => setCorrelateAnchor(null)} />

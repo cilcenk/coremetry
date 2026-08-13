@@ -4,6 +4,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { Spinner } from '@/components/Spinner';
 import { Topbar } from '@/components/Topbar';
 import { useUrlRange } from '@/lib/useUrlRange';
+import { PageShell } from '@/components/ui/PageShell';
 
 // System — the consolidated admin area (v0.8.9). The ten former /admin/*
 // pages are re-homed here as tabbed sub-views behind a single left vertical
@@ -92,7 +93,7 @@ export default function System() {
     <>
       <Topbar title="System"
         {...(active.needsRange ? { range, onRangeChange: setRange } : {})} />
-      <div id="content">
+      <PageShell>
         <div className="sys-layout">
           <nav className="sys-subnav" aria-label="System sections">
             <div className="sys-subnav-title">System</div>
@@ -111,7 +112,7 @@ export default function System() {
             </Suspense>
           </div>
         </div>
-      </div>
+      </PageShell>
     </>
   );
 }

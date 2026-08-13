@@ -13,6 +13,7 @@ import { fmtAgoNs, fmtDurShort, tsLong } from '@/lib/utils';
 import { buildWatcherTimeline, summarizeWatcherHistory, type WatcherTimelineEntry } from '@/lib/watcherTimeline';
 import { WatcherImportModal } from './alerts/WatcherImportModal';
 import { PageControls } from '@/components/ui/PageControls';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /watchers (v0.9.196) — dedicated surface for the imported ES
 // Watcher fleet (~300 rules in prod; operator decision 2026-07-23).
@@ -116,7 +117,7 @@ export default function WatchersPage() {
   return (
     <>
       <Topbar title="Watchers" />
-      <div id="content">
+      <PageShell>
         <PageControls sticky style={{ marginBottom: 14 }}>
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>
             Imported ES Watcher definitions, evaluated on their own schedule against the
@@ -223,7 +224,7 @@ export default function WatchersPage() {
         {selected && (
           <WatcherHistoryDrawer watcher={selected} onClose={() => openWatcher(null)} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

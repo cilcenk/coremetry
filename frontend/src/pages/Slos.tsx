@@ -14,6 +14,7 @@ import type { SLIType, SLORow } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
+import { PageShell } from '@/components/ui/PageShell';
 
 // v0.6.44 — sortable columns on /slos. Forecast + 7d trend stay
 // non-sortable because their values are loaded asynchronously per
@@ -65,7 +66,7 @@ export default function SLOsPage() {
   return (
     <>
       <Topbar title="SLOs" />
-      <div id="content">
+      <PageShell>
         <PageControls sticky>
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>
             Service Level Objectives — track availability and latency targets with error-budget burn down.
@@ -160,7 +161,7 @@ export default function SLOsPage() {
             slosQ.refetch();
           }} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

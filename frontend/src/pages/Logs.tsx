@@ -39,6 +39,7 @@ import type { LogFilter } from '@/lib/logFilters';
 import { logsUrlSig, writeLogsParams, readLogsParams } from '@/lib/logsUrl';
 import type { LogsResponse, LogRow, TimeRange } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Share affordance — copies a link to the CURRENT filtered logs view.
 // Logs filters live entirely in the URL querystring (the same mechanism
@@ -611,7 +612,7 @@ function LogsInner() {
           drops every row newer than it from page 1. resetPaging mirrors
           the apply/reset/search/URL-sync handlers. (v0.7.81 fix) */}
       <Topbar title="Logs" range={range} onRangeChange={(r) => { setRange(r); resetPaging(); }} envApplies />
-      <div id="content">
+      <PageShell>
         {/* v0.9.574 (operatör: "Discover'ı TR yazısının altında sağ üstte
             olması gerekiyor") — Kibana derin linki Live-tail satırından
             İÇERİK ALANININ SAĞ ÜSTÜNE taşındı. Orada bir eylem
@@ -1151,7 +1152,7 @@ function LogsInner() {
         )}
           </div>
         </div>
-      </div>
+      </PageShell>
       <CorrelationContextDrawer
         anchor={peekTraceId ? { kind: 'trace', traceId: peekTraceId } : null}
         onClose={() => setPeekTraceId(null)} />

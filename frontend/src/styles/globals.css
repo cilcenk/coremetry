@@ -1729,6 +1729,30 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 #td-outer { display: flex; gap: 10px; min-height: 400px; height: calc(100vh - 185px); }
 #td-wf { flex: 1; overflow: auto; min-width: 0; }
 
+/* Trace COMPARE — sayfa gövdesini dolduran split (v0.9.1000, DALGA 9 kapanışı)
+   ──────────────────────────────────────────────────────────────────────
+   `TraceCompare.tsx` şelale kutusuna `height: calc(100vh - 220px)` yazıyordu:
+   depodaki son satır-içi viewport aritmetiği ve D9 allowlist'inin son
+   girdisi. Sayı elle kalibreydi, `[data-density]`nin dört dolgusuna
+   (6/10/20/22px) ve ≤640px'in 12px'ine KÖRDÜ.
+
+   Yerine geçen zincir tamamen göreli:
+     `#content` (flex:1 + overflow:auto, yüksekliği KESİN)
+       └ `.tc-fill`  min-height:100% + flex kolon
+           ├ kontroller / sekme şeridi   (kendi boyunda)
+           └ `.tc-split` flex:1 + min-height:0   ← kalan yükseklik
+               └ `.tc-side` (ızgara hücresi, stretch)
+                   └ `.tc-wf` flex:1 + min-height:0 + overflow:auto
+
+   `min-height: 100%` (height DEĞİL) bilinçli: "Aligned diff" sekmesi normal
+   akışta kalıyor ve tablo uzadığında kabuk büyüyüp `#content` kaydırmalı.
+   `height: 100%` olsaydı o dal kabından taşardı. */
+.tc-fill { display: flex; flex-direction: column; min-height: 100%; }
+.tc-split { flex: 1; min-height: 0; grid-auto-rows: minmax(0, 1fr); }
+.tc-side { display: flex; flex-direction: column; gap: 8px; min-width: 0; min-height: 0; }
+.tc-wf { flex: 1; min-height: 0; overflow: auto;
+         border: 1px solid var(--border); border-radius: var(--radius-sm); }
+
 /* KV table — fixed layout so the value cell can never push the table
    past its container, pre-wrap so multi-line values (SQL, stack frames,
    process command args) keep their structure, overflow-wrap: anywhere
@@ -3203,6 +3227,16 @@ thead th:hover .th-remove { opacity: 1; }
      kalıyordu. Dar ekranda yükseklik içeriğe bırakılıyor; sayfa zaten
      `#content` üzerinden kaydırıyor. */
   #td-outer { height: auto; }
+
+  /* Trace compare — D5.6 ile AYNI karar. `.grid-2` telefonda tek kolona
+     düştüğü için iki şelale ALT ALTA geliyor; kabuk viewport'a kilitli
+     kalsaydı her birine ~%40 ekran, yani üç-dört satır düşerdi. Yükseklik
+     içeriğe bırakılıyor, sayfa `#content` üzerinden kaydırıyor.
+     İç içe kaydırma (kutu başına `max-height`) BİLEREK seçilmedi:
+     dokunmatik cihazda iç kaydırma ekseni sayfa eksenini yutuyor. */
+  .tc-fill { min-height: 0; }
+  .tc-split { flex: none; grid-auto-rows: auto; }
+
   /* Panel açıkken alt tepsi (55vh) şelalenin son satırlarını örtüyor.
      `:has()` panelin VARLIĞINI okuyor — panel yalnız açıkken render
      ediliyor, dolayısıyla ayrı bir state bayrağına gerek yok. */

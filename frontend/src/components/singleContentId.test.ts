@@ -18,10 +18,14 @@
 // render olmaz. Ayırt etmenin tek kaynak-seviyesi yolu `return`
 // sayısıyla karşılaştırmak.
 //
-// Tam kilit (`id="content"` yalnız `components/ui/PageShell.tsx`te) D9'un
-// konusu; karar 2026-08-12'de verildi (KADEMELİ) ve sayacı
-// `pageShellAdoption.test.ts` tutuyor. Bu kapı o geçiş bitene kadar
-// bugünkü mimariyi koruyor.
+// Tam kilit (`id="content"` yalnız `components/ui/PageShell.tsx`te)
+// v0.9.1000'de YÜRÜRLÜĞE GİRDİ — `pageShellAdoption.test.ts` allowlist'i
+// boşaldı. Bu kapı buna rağmen GEVŞEK kalıyor ve kaldırılmıyor: iki kapı
+// aynı şeyi ölçmüyor. O, kabın nereden BASILDIĞINI kilitliyor; bu, aynı
+// return ağacında KAÇ TANE basıldığını. `<PageShell>` iki kez çağrılırsa
+// yine iki `id="content"` doğar ve o hâlâ geçersiz HTML — erken-dönüş
+// dalları kabı meşru şekilde tekrarladığı için (TraceCompare 2 kap /
+// 3 return) kural "dosya başına tek kap"a sertleştirilemez.
 //
 // v0.9.993 — KAPSAM GENİŞLETİLDİ, kural DEĞİL. D9 geçişi başladığından
 // beri kap iki biçimde yazılabiliyor: elle `<div id="content">` ya da

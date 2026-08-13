@@ -3,14 +3,14 @@
 // Ne çiviliyor: `id="content"` YALNIZ `components/ui/PageShell.tsx`te
 // yazılabilir. Atom geldiğinde elle yazan 43 dosya vardı; aşağıdaki liste
 // o günün DONDURULMUŞ hâlinden arta kalandır ve YALNIZ KÜÇÜLEBİLİR.
-// Seyir: 43 (991) → 36 (992) → 24 (993) → 13 (994) → 2 (995).
+// Seyir: 43 (991) → 36 (992) → 24 (993) → 13 (994) → 2 (995) → 1 (998).
 //
 // Neden bu kapı ŞART: operatör kademeli geçişi seçti (2026-08-12), yani
 // atom geldi ve 43 dosya bir süre elle yazmaya devam etti. Kapısız bir
 // kademeli geçişin tek sonucu vardır — atom kullanılmaz, sayı büyür ve
 // altı ay sonra geçiş "yarım kalmış bir deneme" diye anılır. Bu geçişte
-// öyle OLMADI: liste dört sürümde 43'ten 2'ye indi ve kalan iki dosya
-// gecikme değil, açık ürün sorusu (gerekçeler FROZEN'ın üstünde).
+// öyle OLMADI: liste beş sürümde 43'ten 1'e indi ve kalan tek dosya
+// gecikme değil, açık ürün sorusu (gerekçesi FROZEN'ın üstünde).
 // Kapı iki işi birden yapıyor:
 //   1. BÜYÜMEYİ durduruyor — yeni bir sayfa `<div id="content">` yazarsa
 //      test kırmızıya döner ve doğru cevabı (`<PageShell>`) söyler.
@@ -73,9 +73,8 @@ function stripComments(src: string): string {
 // DONDURULMUŞ liste — dosya → o dosyanın BUGÜNKÜ `id="content"` sayısı.
 // Sayı tavan: aşmak yasak, düşmek serbest, sıfıra inince girdi SİLİNMELİ.
 //
-// v0.9.995 itibarıyla liste MEKANİK olarak boşaldı: kalan iki dosya
-// "henüz sıra gelmedi" değil, GEREKÇELİ ertelemedir. Gerekçeler dosya
-// başına ayrı ve ikisi de ürün kararı bekliyor:
+// v0.9.995 itibarıyla liste MEKANİK olarak boşaldı: kalan girdi "henüz
+// sıra gelmedi" değil, GEREKÇELİ ertelemedir ve ürün kararı bekliyor:
 //
 //   · pages/TraceCompare.tsx — kabın hemen içinde satır içi
 //     `height: calc(100vh - 220px)` var (:234). Bu bir `variant="full"`
@@ -84,17 +83,18 @@ function stripComments(src: string): string {
 //     masaüstünde ÖLÇÜLEBİLİR kayma üretir → mockup-first, operatör
 //     kararı. `default`a geçirmek de mümkün ama o zaman aynı dosya
 //     ikinci kez açılır; tek dokunuş için bekliyor.
-//   · features/anomalies/ProblemDetail.tsx — klasik-düzen ŞERHLİ detay
-//     yüzeyi (exception/problem detayı; iki redesign reddi var). Kapları
-//     ölçüldü ve mekanik: ikisi de çıplak `<div id="content">`, yani
-//     `default` göçü DOM'u değiştirmezdi. Şerh "DOM birebir kalsın"
-//     dediği için yine de operatörün onayına bırakıldı.
 //
-// Yani bu liste artık bir GECİKME sayacı değil, iki açık ürün
-// sorusunun kaydı. Sıfıra indiği gün `singleContentId` tam kilide
-// çevrilebilir ve bu dosya onun yerine geçer.
+// ProblemDetail.tsx v0.9.998'de DÜŞTÜ. Şerh onu tutan şey DEĞİLDİ:
+// klasik-düzen reddi DÜZENE dair (kart sırası, sütun oranı), kap
+// seçimine değil. v0.9.997'de iki kap da ölçüldü — ikisi de niteliksiz
+// `<div id="content">`, tek dönüşlü, erken-dönüş dalı yok; `default`
+// göçünün DOM çıktısı bit bit aynı. Operatör 2026-08-13'te "DOM birebir
+// kalsın" şartıyla onayladı. Ders: "şerhli" bir dosya otomatik olarak
+// dokunulmaz değil — şerhin NEYİ yasakladığına bakılır.
+//
+// Sıfıra indiği gün `singleContentId` tam kilide çevrilebilir ve bu
+// dosya onun yerine geçer.
 const FROZEN: Record<string, number> = {
-  'features/anomalies/ProblemDetail.tsx': 2,
   'pages/TraceCompare.tsx': 2,
 };
 
@@ -105,8 +105,9 @@ const FROZEN: Record<string, number> = {
 // Seyir: 43 (v0.9.991, donduruldu) → 36 (v0.9.992, 7 pilot geçti)
 // → 24 (v0.9.993, 12 düz liste sayfası)
 // → 13 (v0.9.994, 11 detay/erken-dönüş sayfası)
-// → 2 (v0.9.995, kalan mekanik 11 sayfa).
-const CEILING_FILES = 2;
+// → 2 (v0.9.995, kalan mekanik 11 sayfa)
+// → 1 (v0.9.998, ProblemDetail — şerh çözüldü, DOM birebir).
+const CEILING_FILES = 1;
 
 function counts(): Record<string, number> {
   const out: Record<string, number> = {};

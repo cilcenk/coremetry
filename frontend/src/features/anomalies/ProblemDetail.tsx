@@ -20,6 +20,7 @@ import { fmtDurationNs, fmtStartedTs } from './problemTime';
 import { emptySamplesNote } from './exceptionSamples';
 import type { ExceptionGroup, ExceptionGroupState, Problem } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
+import { PageShell } from '@/components/ui/PageShell';
 import { ShareButton } from '@/components/ShareButton';
 import { copyToClipboard } from '@/lib/clipboard';
 import { QueryErrorInline } from '@/components/QueryError';
@@ -390,7 +391,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
   };
 
   return (
-    <div id="content">
+    <PageShell>
       {/* Detail bar */}
       <div className="rb-bar">
         <Button variant="secondary" onClick={onBack} leftIcon={<ArrowLeft size={14} strokeWidth={1.75} />}>
@@ -589,7 +590,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
           </div>
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }
 
@@ -636,7 +637,7 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
   const logsHref = `/logs?q=${encodeURIComponent(`service.name:"${problem.service.replace(/"/g, '\\"')}"`)}&range=${encodeURIComponent(`custom:${logsFrom}-${logsTo}`)}`;
 
   return (
-    <div id="content">
+    <PageShell>
       <div className="rb-bar">
         <Button variant="secondary" onClick={onBack} leftIcon={<ArrowLeft size={14} strokeWidth={1.75} />}>
           Problems
@@ -849,6 +850,6 @@ export function AlertProblemDetail({ problem, isAdmin, onBack, onChanged }: {
           )}
         </div>
       </div>
-    </div>
+    </PageShell>
   );
 }

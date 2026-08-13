@@ -11,10 +11,10 @@
 // çevirdiği için grafik adımı "yanlış ama makul" bir değere düşerdi.
 // Hiçbir test kırmızıya dönmez, hiçbir ekran boş kalmaz.
 //
-// KURAL BİLEREK GEVŞEK (D3 seviyesi): "dosya başına birden fazla
-// `id="content"` olabilir, AMA aynı return ağacında olamaz". 18 dosya
-// erken-dönüş dallarında (`if (loading) return <div id="content">…`)
-// kabı tekrarlıyor ve bu dallar KARŞILIKLI DIŞLAYICI — aynı anda ikisi
+// KURAL BİLEREK GEVŞEK (D3 seviyesi): "dosya başına birden fazla kabuk
+// kabı olabilir, AMA aynı return ağacında olamaz". Onlarca dosya
+// erken-dönüş dallarında (`if (loading) return <PageShell>…`) kabı
+// tekrarlıyor ve bu dallar KARŞILIKLI DIŞLAYICI — aynı anda ikisi
 // render olmaz. Ayırt etmenin tek kaynak-seviyesi yolu `return`
 // sayısıyla karşılaştırmak.
 //

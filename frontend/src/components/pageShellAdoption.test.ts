@@ -1,14 +1,17 @@
 // pageShellAdoption — DALGA 9 kaynak-kapısı (v0.9.991)
 //
 // Ne çiviliyor: `id="content"` YALNIZ `components/ui/PageShell.tsx`te
-// yazılabilir. Bugün elle yazan 43 dosya aşağıda DONDURULDU ve bu liste
-// YALNIZ KÜÇÜLEBİLİR.
+// yazılabilir. Atom geldiğinde elle yazan 43 dosya vardı; aşağıdaki liste
+// o günün DONDURULMUŞ hâlinden arta kalandır ve YALNIZ KÜÇÜLEBİLİR.
+// Seyir: 43 (991) → 36 (992) → 24 (993) → 13 (994) → 2 (995).
 //
 // Neden bu kapı ŞART: operatör kademeli geçişi seçti (2026-08-12), yani
-// atom geldi ama 43 dosya bir süre elle yazmaya devam edecek. Kapısız bir
+// atom geldi ve 43 dosya bir süre elle yazmaya devam etti. Kapısız bir
 // kademeli geçişin tek sonucu vardır — atom kullanılmaz, sayı büyür ve
-// altı ay sonra geçiş "yarım kalmış bir deneme" diye anılır. Kapı iki işi
-// birden yapıyor:
+// altı ay sonra geçiş "yarım kalmış bir deneme" diye anılır. Bu geçişte
+// öyle OLMADI: liste dört sürümde 43'ten 2'ye indi ve kalan iki dosya
+// gecikme değil, açık ürün sorusu (gerekçeler FROZEN'ın üstünde).
+// Kapı iki işi birden yapıyor:
 //   1. BÜYÜMEYİ durduruyor — yeni bir sayfa `<div id="content">` yazarsa
 //      test kırmızıya döner ve doğru cevabı (`<PageShell>`) söyler.
 //   2. İLERLEMEYİ ölçüyor — bir dosya geçtiğinde girdisi ÖLÜR ve test

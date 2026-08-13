@@ -22,6 +22,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import type { MetricInfo } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Metrics — v0.8.x Phase-5 collapse. /metrics is now a CATALOGUE: a
 // server-side-searchable, sortable index of every metric name (name / type /
@@ -243,7 +244,7 @@ export default function MetricsPage() {
   return (
     <>
       <Topbar title="Metrics" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
           <div style={{ fontSize: 12, color: 'var(--text2)' }}>
             Metric catalogue — pick one to open it in Explore.
@@ -409,7 +410,7 @@ export default function MetricsPage() {
               )}
           </>
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

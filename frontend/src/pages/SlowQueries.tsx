@@ -18,6 +18,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import type { SlowQueryRow, TimeRange } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Columns for the shared sortable + resizable DataTable primitive.
 // Default order matches the backend's total-wall-clock sort so the
@@ -163,7 +164,7 @@ export default function SlowQueriesPage() {
   return (
     <>
       <Topbar title="Slow queries" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 12 }}>
           Cross-service slow-query catalog. Sorted by total wall-clock time —
           what's actually worth optimising. Click a row to expand a real
@@ -405,7 +406,7 @@ export default function SlowQueriesPage() {
             onClose={closeStmt}
           />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

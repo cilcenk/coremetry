@@ -70,25 +70,29 @@ function stripComments(src: string): string {
 // DONDURULMUŞ liste — dosya → o dosyanın BUGÜNKÜ `id="content"` sayısı.
 // Sayı tavan: aşmak yasak, düşmek serbest, sıfıra inince girdi SİLİNMELİ.
 //
-// Ortak gerekçe, hepsi için aynı ve tek: bu dosyalar atomdan (v0.9.991)
-// ÖNCE yazıldı ve operatör kararı gereği toplu göç YAPILMADI. Girdinin
-// haklılığı sayının kendisidir — birden büyük olanlar erken-dönüş
-// dallarında kabı tekrarlayan dosyalardır (`if (loading) return
-// <div id="content">…`), ki `singleContentId` onları ayrıca ölçüyor.
+// v0.9.995 itibarıyla liste MEKANİK olarak boşaldı: kalan iki dosya
+// "henüz sıra gelmedi" değil, GEREKÇELİ ertelemedir. Gerekçeler dosya
+// başına ayrı ve ikisi de ürün kararı bekliyor:
+//
+//   · pages/TraceCompare.tsx — kabın hemen içinde satır içi
+//     `height: calc(100vh - 220px)` var (:234). Bu bir `variant="full"`
+//     adayı: doğru göç `default` değil, dolgusu sıfırlanmış kap +
+//     çocukta `flex:1; min-height:0`. Kalibre edilmiş -220px'i atmak
+//     masaüstünde ÖLÇÜLEBİLİR kayma üretir → mockup-first, operatör
+//     kararı. `default`a geçirmek de mümkün ama o zaman aynı dosya
+//     ikinci kez açılır; tek dokunuş için bekliyor.
+//   · features/anomalies/ProblemDetail.tsx — klasik-düzen ŞERHLİ detay
+//     yüzeyi (exception/problem detayı; iki redesign reddi var). Kapları
+//     ölçüldü ve mekanik: ikisi de çıplak `<div id="content">`, yani
+//     `default` göçü DOM'u değiştirmezdi. Şerh "DOM birebir kalsın"
+//     dediği için yine de operatörün onayına bırakıldı.
+//
+// Yani bu liste artık bir GECİKME sayacı değil, iki açık ürün
+// sorusunun kaydı. Sıfıra indiği gün `singleContentId` tam kilide
+// çevrilebilir ve bu dosya onun yerine geçer.
 const FROZEN: Record<string, number> = {
-  'features/anomalies/AnomaliesPage.tsx': 2,
   'features/anomalies/ProblemDetail.tsx': 2,
-  'pages/Logs.tsx': 1,
-  'pages/Metrics.tsx': 1,
-  'pages/Monitors.tsx': 1,
-  'pages/Profiling.tsx': 1,
-  'pages/Slos.tsx': 1,
-  'pages/SlowQueries.tsx': 1,
-  'pages/System.tsx': 1,
-  'pages/Trace.tsx': 2,
   'pages/TraceCompare.tsx': 2,
-  'pages/Traces.tsx': 1,
-  'pages/Watchers.tsx': 1,
 };
 
 // Tavan RAÇET'i. Yukarıdaki liste tek tek de korunuyor ama bu satır
@@ -97,8 +101,9 @@ const FROZEN: Record<string, number> = {
 //
 // Seyir: 43 (v0.9.991, donduruldu) → 36 (v0.9.992, 7 pilot geçti)
 // → 24 (v0.9.993, 12 düz liste sayfası)
-// → 13 (v0.9.994, 11 detay/erken-dönüş sayfası).
-const CEILING_FILES = 13;
+// → 13 (v0.9.994, 11 detay/erken-dönüş sayfası)
+// → 2 (v0.9.995, kalan mekanik 11 sayfa).
+const CEILING_FILES = 2;
 
 function counts(): Record<string, number> {
   const out: Record<string, number> = {};

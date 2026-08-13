@@ -67,6 +67,7 @@ import { ShapesView } from '@/components/traces/ShapesView';
 import { SvcBadge, DurationBar, fmtDur } from '@/components/traces/shared';
 import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
+import { PageShell } from '@/components/ui/PageShell';
 
 // v0.9.304 (operatör) — 'relations' kaldırıldı. Yapısal self-join
 // sorgusu ham spans üzerinde koşuyordu, yani sayfadaki en pahalı okuma
@@ -868,7 +869,7 @@ function TracesPageInner() {
       {/* v0.9.430 — Topbar seçimi out-of-band: hook yığını kendisi
           geçersizleştirir, elle temizlik gerekmez. */}
       <Topbar title="Traces" range={range} onRangeChange={setRange} envApplies />
-      <div id="content">
+      <PageShell>
         {/* v0.9.304 (operatör) — Trace ID araması sayfanın SAĞ ÜSTÜNE,
             zaman aralığı seçicisinin hemen altına taşındı. Filtre satırının
             içinde marginLeft:auto ile duruyordu ve oradaki alanlarla aynı
@@ -1375,7 +1376,7 @@ function TracesPageInner() {
 
         {/* Shapes view. */}
         {view === 'shapes' && <ShapesView range={range} service={filter.service || undefined} />}
-      </div>
+      </PageShell>
     </>
   );
 }

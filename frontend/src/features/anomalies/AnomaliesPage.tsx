@@ -29,6 +29,7 @@ import { PageControls } from '@/components/ui/PageControls';
 import { AlertProblemHost } from './ProblemsSection';
 import { serviceHref } from '@/lib/serviceHref';
 import { QueryError, QueryErrorInline } from '@/components/QueryError';
+import { PageShell } from '@/components/ui/PageShell';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -365,12 +366,12 @@ export default function ProblemsPage() {
     return (
       <>
         <Topbar title="Exceptions" showEnv envApplies />
-        <div id="content">
+        <PageShell>
           <Empty icon="❓" title="Exception not found">
             Bu exception grubu artık mevcut değil.{' '}
             <Button variant="secondary" size="sm" onClick={closeExcDetail}>← Exceptions</Button>
           </Empty>
-        </div>
+        </PageShell>
       </>
     );
   }
@@ -378,7 +379,7 @@ export default function ProblemsPage() {
     return (
       <>
         <Topbar title="Exceptions" showEnv envApplies />
-        <div id="content"><Spinner /></div>
+        <PageShell><Spinner /></PageShell>
       </>
     );
   }

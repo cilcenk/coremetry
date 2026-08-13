@@ -12,6 +12,7 @@ import { tsLong } from '@/lib/utils';
 import type { Monitor, MonitorRow, MonitorStats, MonitorType } from '@/lib/types';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /monitors — synthetic uptime + heartbeat dashboard.
 //
@@ -38,7 +39,7 @@ export default function MonitorsPage() {
   return (
     <>
       <Topbar title="Monitors" />
-      <div id="content">
+      <PageShell>
         {isAdmin && (
           <div className="controls" style={{ marginBottom: 12 }}>
             <Button variant="primary" onClick={() => setShowNew(true)}>+ New monitor</Button>
@@ -84,7 +85,7 @@ export default function MonitorsPage() {
             onClose={() => { setShowNew(false); setEditing(null); }}
             onSaved={() => { setShowNew(false); setEditing(null); }} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

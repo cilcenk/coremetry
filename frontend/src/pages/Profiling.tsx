@@ -12,6 +12,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ProfileRow, ProfileHotspotsResponse, TimeRange } from '@/lib/types';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Columns for the shared sortable + resizable DataTable.
 const PROFILE_COLS: DataTableColumn<ProfileRow>[] = [
@@ -111,7 +112,7 @@ export default function ProfilingPage() {
   return (
     <>
       <Topbar title="Profiling" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div className="controls">
           {/* View tabs — per-profile list (the original page)
               vs aggregated method hotspots across the time
@@ -194,7 +195,7 @@ export default function ProfilingPage() {
         {view === 'hotspots' && (
           <HotspotsPanel service={service} hotspots={hotspots} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

@@ -37,6 +37,7 @@ import type {
 import type {
   DBCallerBreakdown, DBDetail, DBTrend, SlowQueryRow, SpanMetricSeries,
 } from '@/lib/types';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /database — the full-page database detail (v0.9.840).
 //
@@ -153,12 +154,12 @@ export default function DatabaseDetailPage() {
     return (
       <>
         <Topbar title="Database" />
-        <div id="content">
+        <PageShell>
           <Empty icon="⚠" title="No database in this link">
             The URL is missing <code>system</code> or <code>instance</code>.
             {' '}<Link to="/databases">Back to Databases →</Link>
           </Empty>
-        </div>
+        </PageShell>
       </>
     );
   }
@@ -170,7 +171,7 @@ export default function DatabaseDetailPage() {
   return (
     <>
       <Topbar title="Database" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
           <Link to="/databases">Databases</Link> › database detail
         </div>
@@ -398,7 +399,7 @@ export default function DatabaseDetailPage() {
             onClose={closeStmt}
           />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

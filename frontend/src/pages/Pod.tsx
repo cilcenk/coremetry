@@ -23,6 +23,7 @@ import { podWorkloadName } from '@/pages/clusters/podWorkload';
 import { fmtCores, podPhaseBadge } from '@/pages/clusters/thresholds';
 import { resolvePodCluster } from '@/pages/service/podResolve';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
@@ -190,7 +191,7 @@ function PodDetail() {
     return (
       <>
         <Topbar title="Pod" />
-        <div id="content"><Empty icon="—" title="Pod belirtilmedi (pod parametresi gerekli)." /></div>
+        <PageShell><Empty icon="—" title="Pod belirtilmedi (pod parametresi gerekli)." /></PageShell>
       </>
     );
   }
@@ -198,7 +199,7 @@ function PodDetail() {
   return (
     <>
       <Topbar title={`Pod · ${pod}`} range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         {/* Geri + kimlik + KPI başlık satırı */}
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
           {/* v0.9.965 — GERİ linki penceresini taşımıyordu: pod'a özel
@@ -359,7 +360,7 @@ function PodDetail() {
             ]} />
           </Card>
         </div>
-      </div>
+      </PageShell>
     </>
   );
 }

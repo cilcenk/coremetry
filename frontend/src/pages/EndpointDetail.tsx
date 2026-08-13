@@ -20,6 +20,7 @@ import {
   HistogramSection, StatusSection, ExceptionsSection, FailingTracesSection,
   SplitSection, WhereTheTimeGoesSection, CallersSection,
 } from '@/pages/endpoints/detailSections';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /endpoint — the full-page endpoint detail (v0.9.839).
 //
@@ -109,12 +110,12 @@ export default function EndpointDetailPage() {
     return (
       <>
         <Topbar title="Endpoint" />
-        <div id="content">
+        <PageShell>
           <Empty icon="⚠" title="No endpoint in this link">
             The URL is missing <code>service</code> or <code>path</code>.
             {' '}<Link to="/endpoints">Back to Endpoints →</Link>
           </Empty>
-        </div>
+        </PageShell>
       </>
     );
   }
@@ -122,7 +123,7 @@ export default function EndpointDetailPage() {
   return (
     <>
       <Topbar title="Endpoint" range={range} onRangeChange={setRange} envApplies />
-      <div id="content">
+      <PageShell>
         <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 8 }}>
           <Link to="/endpoints">Endpoints</Link> › endpoint detail
         </div>
@@ -243,7 +244,7 @@ export default function EndpointDetailPage() {
           spans only; outbound client spans count under the callee.
           P50/P95/P99 are true window quantiles (tdigest).
         </div>
-      </div>
+      </PageShell>
     </>
   );
 }

@@ -26,6 +26,7 @@ import {
   useEnableRunbook, useDisableRunbook,
 } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Runbooks list (v0.7.0) — operator-authored executable procedures
 // (OneUptime model). This page is the catalogue: title, step count,
@@ -79,7 +80,7 @@ export default function RunbooksPage() {
   return (
     <>
       <Topbar title="Runbooks" />
-      <div id="content">
+      <PageShell>
         <div className="controls" style={{ marginBottom: 14 }}>
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>
             Documented, step-by-step operational procedures. Each runbook is an
@@ -174,7 +175,7 @@ export default function RunbooksPage() {
             </table>
           </div>
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

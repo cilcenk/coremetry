@@ -17,6 +17,7 @@ import { tsLong } from '@/lib/utils';
 import type { Incident } from '@/lib/types';
 import { serviceHref, eventLifespanWindow } from '@/lib/serviceHref';
 import { Button } from '@/components/ui/Button';
+import { PageShell } from '@/components/ui/PageShell';
 
 export default function IncidentPage() {
   return <Suspense fallback={<Spinner />}><Inner /></Suspense>;
@@ -132,7 +133,7 @@ function Inner() {
   return (
     <>
       <Topbar title={`Incident · ${inc.title}`} />
-      <div id="content">
+      <PageShell>
         {/* Detail bar — back · status · severity · (spacer) · actions */}
         <div className="rb-bar">
           <Link to="/incidents" className="sec" style={{
@@ -307,7 +308,7 @@ function Inner() {
             </div>
           </div>
         </div>
-      </div>
+      </PageShell>
     </>
   );
 }

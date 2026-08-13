@@ -7,6 +7,7 @@ import { RenderedMarkdown } from '@/components/Markdown';
 import { useRunbookExecution, useRunbookStepAction, useCancelRunbookExecution } from '@/lib/queries';
 import { tsLong } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Runbook execution runner (v0.7.0) — step through a live run. Manual steps
 // are ticked here (Done / Skip / Fail + note); automated steps
@@ -48,14 +49,14 @@ function Inner() {
     return (
       <>
         <Topbar title="Execution" />
-        <div id="content">
+        <PageShell>
           <div className="controls" style={{ marginBottom: 12 }}>
             <Button variant="secondary" size="sm" onClick={() => navigate('/runbooks')}>← Runbooks</Button>
           </div>
           {!execId
             ? <Empty icon="⚠" title="No execution selected">Open a run from a runbook's Executions tab.</Empty>
             : <Empty icon="⚠" title="Execution not found">This execution may have been removed, or the link is stale. Pick a run from the Runbooks list.</Empty>}
-        </div>
+        </PageShell>
       </>
     );
   }
@@ -76,7 +77,7 @@ function Inner() {
   return (
     <>
       <Topbar title={exec.titleSnapshot || 'Execution'} />
-      <div id="content">
+      <PageShell>
         {err && (
           <div style={{ background: 'var(--bg1)', border: '1px solid var(--err)', color: 'var(--err)', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
             {err} <Button variant="secondary" size="sm" style={{ marginLeft: 8 }} onClick={() => setErr(null)}>dismiss</Button>
@@ -171,7 +172,7 @@ function Inner() {
             </div>
           );
         })}
-      </div>
+      </PageShell>
     </>
   );
 }

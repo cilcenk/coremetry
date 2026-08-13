@@ -15,6 +15,7 @@ import { raceGuard } from '@/lib/raceGuard';
 import { tsLong, fmtNum } from '@/lib/utils';
 import { diffFlame } from '@/lib/flameDiff';
 import type { ProfileDetail, ProfileRow } from '@/lib/types';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /profile renders one profile's flamegraph by default. When
 // the URL carries `?baseline=<id>` we fetch a second profile,
@@ -126,7 +127,7 @@ function ProfileDetailInner() {
   return (
     <>
       <Topbar title="Profile" />
-      <div id="content">
+      <PageShell>
         <div style={{ marginBottom: 12, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Button variant="secondary" onClick={() => navigate(-1)}>← Back</Button>
           {data && (
@@ -259,7 +260,7 @@ function ProfileDetailInner() {
             whole flame. Hidden in baseline-compare mode (diff
             view is the comparison surface there). */}
         {data && data.flame && !baselineId && <MethodHotspots root={data.flame} />}
-      </div>
+      </PageShell>
     </>
   );
 }

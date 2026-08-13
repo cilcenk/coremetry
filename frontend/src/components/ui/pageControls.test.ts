@@ -160,6 +160,12 @@ describe('sticky bar #content ağacında', () => {
     return out;
   };
   const users = walk(SRCDIR)
+    // v0.9.1001 — KAPILAR kapsam dışı. `pageControlsCollapse.test.tsx`
+    // barı kasten kabuksuz mount ediyor (dar ekran dalını ölçmek için
+    // gereken tek şey barın kendisi). Bir test dosyası "sayfa" değil;
+    // kural ürün kodunda aynen duruyor, yalnız ölçülen küme doğru
+    // tanımlanıyor.
+    .filter(p => !p.endsWith('.test.tsx'))
     .map(p => ({ p, src: readFileSync(p, 'utf8') }))
     .filter(f => f.src.includes('<PageControls sticky'));
 

@@ -1,22 +1,24 @@
 // PageShell — sayfa gövdesi kabı (v0.9.991, denetim DALGA 9, KADEMELİ).
 //
-// NE YAPAR: `#content` kabını TEK yerden basar. Bugün 42 sayfa dosyası
-// bunu elle yazıyor (56 çağrı noktası) ve hepsi HARFİ HARFİNE aynı:
-// `<div id="content">`. Nitelik taşıyan tek bir örnek bile yok —
-// ölçüldü, v0.9.991. Yani bu atom bir soyutlama DEĞİL, tekrarlanan bir
-// sabitin tek kaynağa çekilmesi; masaüstünde çıktısı bit bit aynı.
+// NE YAPAR: `#content` kabını TEK yerden basar. Atom yazıldığında 43
+// sayfa dosyası bunu elle yazıyordu (58 çağrı noktası) ve hepsi HARFİ
+// HARFİNE aynıydı: `<div id="content">`. Nitelik taşıyan tek bir örnek
+// bile yoktu — ölçüldü, v0.9.991. Yani bu atom bir soyutlama DEĞİL,
+// tekrarlanan bir sabitin tek kaynağa çekilmesi; çıktısı bit bit aynı.
 //
 // NEDEN ATOM: `id` tekilliğini kaynak seviyesinde garanti etmenin başka
-// yolu yok. `singleContentId` kapısı (v0.9.981) bugün GEVŞEK — "aynı
-// return ağacında iki tane olmasın" diyor, çünkü 18 dosya erken-dönüş
-// dallarında kabı tekrarlıyor. Kap tek bir bileşenden basıldığında o
-// kural TİPE düşer ve kapı gevşek olmak zorunda kalmaz.
+// yolu yok. `singleContentId` kapısı (v0.9.981) hâlâ GEVŞEK — "aynı
+// return ağacında iki tane olmasın" diyor, çünkü erken-dönüş dalları
+// kabı tekrarlıyor. Kap TEK bir bileşenden basıldığında o kural TİPE
+// düşer ve kapı gevşek olmak zorunda kalmaz. Allowlist sıfırlandığı gün
+// `singleContentId` tam kilide çevrilebilir.
 //
 // KADEMELİ GEÇİŞ (operatör kararı 2026-08-12): büyük patlama YOK.
-// Bu sürüm atom + kapı; sonraki sürüm birkaç pilot sayfa. Kalan sayfalar
-// DOKUNULMAZ ve ileride başka bir iş için o dosya açıldığında geçer.
-// `components/pageShellAdoption.test.ts` allowlist'i bu geçişin
-// sayacıdır ve YALNIZ KÜÇÜLEBİLİR.
+// v0.9.991 atom + kapı; 992/993/994/995 dört dalgada 41 dosya / 54 kap.
+// Allowlist 43 → 2. Kalan iki dosya "sıra gelmedi" değil, GEREKÇELİ
+// erteleme (`pageShellAdoption.test.ts` FROZEN yorumunda): TraceCompare
+// bir `variant="full"` adayı, ProblemDetail klasik-düzen şerhli.
+// O allowlist bu geçişin sayacıdır ve YALNIZ KÜÇÜLEBİLİR.
 //
 // NE YAPMAZ — bilinçli:
 //   · Zemin / dolgu / yoğunluk / dar-ekran kurallarını TEKRARLAMAZ.
@@ -38,7 +40,8 @@ export function PageShell({ children, variant = 'default' }: {
   /**
    * `'default'` — kabuk kaydırır, dolgu `globals.css`ten gelir
    * (`#content` `padding: 20px`, yoğunluk ve ≤640px kuralları dahil).
-   * Bugünkü 56 çağrı noktasının TAMAMI budur.
+   * Geçen 54 çağrı noktasının TAMAMI budur; göç bu yüzden DOM'u
+   * hiçbir sayfada değiştirmedi.
    *
    * `'full'` — tam-bleed yüzeyler (topoloji tuvali, heatmap, trace
    * şelalesi, dashboard ızgarası): dolgu sıfırlanır ve kaydırma
@@ -48,10 +51,12 @@ export function PageShell({ children, variant = 'default' }: {
    * -220px): bu aritmetik `[data-density]` dolgu değişimine (6/10/20/22px)
    * ve ≤640px bloğuna KÖR, yani üç yoğunlukta üçü de bir miktar yanlış.
    *
-   * DİKKAT (v0.9.991): `'full'`ün henüz ADOPTE EDEN SAYFASI YOK. Mevcut
-   * tam-bleed sayfaları geçirmek kalibre edilmiş `calc()` değerlerini
-   * atmak demek ve masaüstünde ölçülebilir bir kayma üretir — o yüzden
-   * operatörün gözüne girmeden yapılmıyor (mockup-first).
+   * DİKKAT (v0.9.995'te hâlâ geçerli): `'full'`ün ADOPTE EDEN SAYFASI
+   * YOK. Mevcut tam-bleed sayfaları geçirmek kalibre edilmiş `calc()`
+   * değerlerini atmak demek ve masaüstünde ölçülebilir bir kayma üretir
+   * — o yüzden operatörün gözüne girmeden yapılmıyor (mockup-first).
+   * Sıradaki aday `TraceCompare.tsx` (:234, -220px) ve `/system`
+   * sekmelerindeki `AdminSql` (-80px) / `AdminCatalog` (-220px).
    */
   variant?: 'default' | 'full';
 }) {

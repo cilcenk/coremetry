@@ -13,6 +13,7 @@ import { tsLong, tsMinute, tsRel } from '@/lib/utils';
 import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } from '@/components/DataTable';
 import { USER_COLS } from './usersColumns';
 import { PageControls } from '@/components/ui/PageControls';
+import { PageShell } from '@/components/ui/PageShell';
 
 
 export default function UsersPage() {
@@ -79,11 +80,11 @@ export default function UsersPage() {
     return (
       <>
         <Topbar title="Users" />
-        <div id="content">
+        <PageShell>
           <Empty icon="🔒" title="Admin access required">
             User management is only available to administrators.
           </Empty>
-        </div>
+        </PageShell>
       </>
     );
   }
@@ -102,7 +103,7 @@ export default function UsersPage() {
   return (
     <>
       <Topbar title="Users" />
-      <div id="content">
+      <PageShell>
         <PageControls sticky>
           <Button onClick={() => setShowNew(true)}>+ New user</Button>
           {teamOptions.length > 0 && (
@@ -298,7 +299,7 @@ export default function UsersPage() {
             onDone={() => { setResetFor(null); refresh(); }}
           />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

@@ -18,6 +18,7 @@ import { useRunbook, useUpdateRunbook, useDeleteRunbook, useRunbookExecutions, u
 import { tsLong } from '@/lib/utils';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { AuditEntry, Runbook, RunbookStep, RunbookStepKind, RunbookExecution } from '@/lib/types';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Runbook detail (v0.7.0) — Overview + the Steps editor (the OneUptime
 // "Runbook Steps" surface: kind cards to add, drag-to-reorder, per-step
@@ -84,14 +85,14 @@ function Inner() {
     return (
       <>
         <Topbar title="Runbook" />
-        <div id="content">
+        <PageShell>
           <div className="controls" style={{ marginBottom: 12 }}>
             <Button variant="secondary" size="sm" onClick={() => navigate('/runbooks')}>← Runbooks</Button>
           </div>
           {!id
             ? <Empty icon={<TriangleAlert size={28} strokeWidth={1.5} />} title="No runbook selected">Pick a runbook from the list to view or edit it.</Empty>
             : <Empty icon={<TriangleAlert size={28} strokeWidth={1.5} />} title="Runbook not found">This runbook may have been deleted, or the link is stale. Head back to the Runbooks list.</Empty>}
-        </div>
+        </PageShell>
       </>
     );
   }
@@ -143,7 +144,7 @@ function Inner() {
   return (
     <>
       <Topbar title={draft.title || 'Runbook'} />
-      <div id="content">
+      <PageShell>
         {err && (
           <div style={{ background: 'var(--bg1)', border: '1px solid var(--err)', color: 'var(--err)', borderRadius: 6, padding: '8px 12px', marginBottom: 10, fontSize: 13 }}>
             {err} <Button variant="secondary" size="sm" style={{ marginLeft: 8 }} onClick={() => setErr(null)}>dismiss</Button>
@@ -188,7 +189,7 @@ function Inner() {
         )}
         {tab === 'executions' && <ExecutionsTab runbookId={draft.id} />}
         {tab === 'audit' && <AuditTab runbookId={draft.id} isAdmin={user?.role === 'admin'} />}
-      </div>
+      </PageShell>
     </>
   );
 }

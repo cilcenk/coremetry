@@ -77,28 +77,17 @@ function stripComments(src: string): string {
 // <div id="content">…`), ki `singleContentId` onları ayrıca ölçüyor.
 const FROZEN: Record<string, number> = {
   'features/anomalies/AnomaliesPage.tsx': 2,
-  'features/anomalies/AnomalyStreamsPage.tsx': 1,
   'features/anomalies/ProblemDetail.tsx': 2,
-  'pages/DatabaseDetail.tsx': 2,
-  'pages/EndpointDetail.tsx': 2,
-  'pages/Incident.tsx': 1,
   'pages/Logs.tsx': 1,
   'pages/Metrics.tsx': 1,
   'pages/Monitors.tsx': 1,
-  'pages/Pod.tsx': 2,
-  'pages/Profile.tsx': 1,
   'pages/Profiling.tsx': 1,
-  'pages/Runbook.tsx': 2,
-  'pages/RunbookExecution.tsx': 2,
-  'pages/Runbooks.tsx': 1,
-  'pages/ServiceBacktrace.tsx': 2,
   'pages/Slos.tsx': 1,
   'pages/SlowQueries.tsx': 1,
   'pages/System.tsx': 1,
   'pages/Trace.tsx': 2,
   'pages/TraceCompare.tsx': 2,
   'pages/Traces.tsx': 1,
-  'pages/Users.tsx': 2,
   'pages/Watchers.tsx': 1,
 };
 
@@ -107,8 +96,9 @@ const FROZEN: Record<string, number> = {
 // büyütmek zorunda kalır ve o an diff'te görünür. YALNIZ düşürülebilir.
 //
 // Seyir: 43 (v0.9.991, donduruldu) → 36 (v0.9.992, 7 pilot geçti)
-// → 24 (v0.9.993, 12 düz liste sayfası).
-const CEILING_FILES = 24;
+// → 24 (v0.9.993, 12 düz liste sayfası)
+// → 13 (v0.9.994, 11 detay/erken-dönüş sayfası).
+const CEILING_FILES = 13;
 
 function counts(): Record<string, number> {
   const out: Record<string, number> = {};

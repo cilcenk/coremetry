@@ -13,6 +13,7 @@ import type { CallerRow, TimeRange } from '@/lib/types';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { tracesPivotHref } from '@/lib/pivotHref';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Dynatrace-style "service consumers" / backtrace view. One row per
 // distinct (caller service × pod/instance × client IP × user-agent)
@@ -94,7 +95,7 @@ function BacktraceInner() {
     return (
       <>
         <Topbar title="Backtrace" range={range} onRangeChange={setRange} />
-        <div id="content"><Empty icon="⚠" title="Missing service name" /></div>
+        <PageShell><Empty icon="⚠" title="Missing service name" /></PageShell>
       </>
     );
   }
@@ -102,7 +103,7 @@ function BacktraceInner() {
   return (
     <>
       <Topbar title={`Backtrace · ${svc}`} range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
           <Link to={serviceHref(svc, { range })} className="sec" style={{
             padding: '5px 12px', border: '1px solid var(--border)',
@@ -211,7 +212,7 @@ function BacktraceInner() {
             </table>
           </div>
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

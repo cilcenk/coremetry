@@ -2,6 +2,7 @@ import { Topbar } from '@/components/Topbar';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { TriageCrumb } from '@/components/TriageCrumb';
 import { AnomalyStreams } from './streams';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /anomalies — live early-warning streams. Distinct from /problems
 // (which holds the assignable exception inbox + alert-rule firings).
@@ -12,11 +13,11 @@ export default function AnomalyStreamsPage() {
   return (
     <>
       <Topbar title="Anomalies" />
-      <div id="content">
+      <PageShell>
         <TriageCrumb label="Anomalies" />
         <SavedViewsBar page="anomalies" />
         <AnomalyStreams />
-      </div>
+      </PageShell>
     </>
   );
 }

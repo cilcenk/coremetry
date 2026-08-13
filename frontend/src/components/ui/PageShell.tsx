@@ -55,8 +55,18 @@ export function PageShell({ children, variant = 'default' }: {
    * YOK. Mevcut tam-bleed sayfaları geçirmek kalibre edilmiş `calc()`
    * değerlerini atmak demek ve masaüstünde ölçülebilir bir kayma üretir
    * — o yüzden operatörün gözüne girmeden yapılmıyor (mockup-first).
-   * Sıradaki aday `TraceCompare.tsx` (:234, -220px) ve `/system`
-   * sekmelerindeki `AdminSql` (-80px) / `AdminCatalog` (-220px).
+   *
+   * SIRADAKİ ADAYLAR — v0.9.997'de yeniden ÖLÇÜLDÜ, listeden iki kalem
+   * düştü:
+   *   · `TraceCompare.tsx:234` — `height: calc(100vh - 220px)`, kabın
+   *     hemen içinde. Gerçek `full` adayı.
+   *   · `globals.css:1729` `#td-outer` -185px — yalnız `PublicTrace.tsx`
+   *     render ediyor; public kabuk ayrı iş (`PublicShell` + `full`).
+   *   · `AdminSql.tsx` -80px ARTIK YOK — v0.9.981/D3.2'de kaldırıldı,
+   *     yerinde `height:100%; minHeight:0` var. Denetim metnindeki bu
+   *     kalem BAYAT; koddan doğrulanmadan kuyruğa alınmamalı.
+   *   · `AdminCatalog.tsx:182` -220px bir TABLO `maxHeight`i, sayfa kabı
+   *     değil — `full` göçünün konusu değil, ayrı (ve küçük) bir kalem.
    */
   variant?: 'default' | 'full';
 }) {

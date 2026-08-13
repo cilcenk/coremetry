@@ -52,8 +52,13 @@ export function RetentionTab() {
     }
   };
 
+  // Yüzey kabı — SmtpTab ile aynı gerekçe (denetim D7.4): çıplak form
+  // açık temada sayfa zeminine yapışıyordu. `.card-static` = `.card`ın
+  // etkileşimsiz ikizi. maxWidth 560 → 590: dolgu (14×2) + kenarlık
+  // (1×2) içeriği daraltmasın, alan genişlikleri piksel aynı kalsın.
   return (
-    <form onSubmit={submit} style={{ maxWidth: 560 }}>
+    <div className="card-static" style={{ maxWidth: 590 }}>
+    <form onSubmit={submit}>
       <h2 style={{ fontSize: 14, fontWeight: 600, marginBottom: 6 }}>Data retention</h2>
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Per-signal TTL on the underlying ClickHouse tables. Older data is dropped
@@ -83,6 +88,7 @@ export function RetentionTab() {
         <code> 2d</code> = same thing, <code>30d</code> = last 30 days.
       </p>
     </form>
+    </div>
   );
 }
 

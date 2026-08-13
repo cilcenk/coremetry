@@ -12,6 +12,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { buildDeployTimeline, type TimelineRow } from '@/lib/deploysTimeline';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /deploys (v0.9.435, operatör istegi) — filo Deploys/Rollouts geçmişi:
 // imaj/sürüm değişimleri + pod-churn (rollout/restart, pod adları
@@ -86,7 +87,7 @@ export default function DeploysPage() {
   return (
     <>
       <Topbar title="Deploys" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center', flexWrap: 'wrap' }}>
           <ServicePicker value={draft} onChange={setDraft}
             onEnter={v => setParam('service', v ?? draft)}
@@ -160,7 +161,7 @@ export default function DeploysPage() {
             </table>
           </div>
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

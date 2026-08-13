@@ -16,6 +16,7 @@ import type {
   AICall, AIStats, AICallsTimePoint, TimeRange,
 } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /ai — Coremetry-native AI observability dashboard. The
 // Langfuse-alike: every Copilot Explain call lands as one
@@ -111,7 +112,7 @@ export default function AIObservabilityPage() {
   return (
     <>
       <Topbar title="AI observability" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 12 }}>
           Every CoSRE call lands here — latency, tokens, status,
           per-surface breakdown. Prompt + response samples (≤4KB) are kept
@@ -297,7 +298,7 @@ export default function AIObservabilityPage() {
         <NegativeFeedbackPanel />
 
         {open && <CallDrawer call={open} rates={rates} onClose={() => setOpen(null)} />}
-      </div>
+      </PageShell>
     </>
   );
 }

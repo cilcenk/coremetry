@@ -13,6 +13,7 @@ import { useUrlRange } from '@/lib/useUrlRange';
 import { encodeDestinationParam, decodeDestinationParam } from './messaging/destinationParam';
 import { depRowKey } from '@/lib/depsTable';
 import type { MessagingInstance, MessagingOverview } from '@/lib/types';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /messaging — top-level queue / topic technologies overview.
 // Kafka brokers, RabbitMQ vhosts, IBM MQ queues, NATS subjects,
@@ -156,7 +157,7 @@ export default function MessagingPage() {
   return (
     <>
       <Topbar title="Messaging" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ marginBottom: 14, fontSize: 12, color: 'var(--text2)' }}>
           Every queue / topic the platform's services produced to or consumed from
           in the selected window. Derived from spans with a populated
@@ -225,7 +226,7 @@ export default function MessagingPage() {
               </label>
             } />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

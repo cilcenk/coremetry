@@ -31,6 +31,7 @@ const DB_STMT_COLS: DataTableColumn<SlowQueryRow>[] = [
   { id: 'db',        label: 'DB',     sortValue: r => r.dbName || r.dbSystem, naturalDir: 'asc', width: 130 },
 ];
 import type { DBInstance, DatabasesOverview } from '@/lib/types';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /databases — two distinct panels driven by data origin:
 //
@@ -229,7 +230,7 @@ export default function DatabasesPage() {
   return (
     <>
       <Topbar title="Databases" range={range} onRangeChange={setRange} envApplies />
-      <div id="content">
+      <PageShell>
         <div style={{ display: 'flex', gap: 8, marginBottom: 12, alignItems: 'center' }}>
           <select value={dbsys} onChange={e => setFilter('dbsys', e.target.value)}
             style={{ fontSize: 12, padding: '3px 8px' }}
@@ -457,7 +458,7 @@ export default function DatabasesPage() {
             onClose={closeStmt}
           />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

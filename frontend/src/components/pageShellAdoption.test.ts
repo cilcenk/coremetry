@@ -79,22 +79,10 @@ const FROZEN: Record<string, number> = {
   'features/anomalies/AnomaliesPage.tsx': 2,
   'features/anomalies/AnomalyStreamsPage.tsx': 1,
   'features/anomalies/ProblemDetail.tsx': 2,
-  'pages/AIObservability.tsx': 1,
-  'pages/Alerts.tsx': 1,
-  'pages/Clusters.tsx': 1,
-  'pages/Dashboards.tsx': 1,
   'pages/DatabaseDetail.tsx': 2,
-  'pages/Databases.tsx': 1,
-  'pages/Deploys.tsx': 1,
   'pages/EndpointDetail.tsx': 2,
-  'pages/Endpoints.tsx': 1,
-  'pages/Events.tsx': 1,
-  'pages/External.tsx': 1,
-  'pages/Hosts.tsx': 1,
   'pages/Incident.tsx': 1,
-  'pages/Incidents.tsx': 1,
   'pages/Logs.tsx': 1,
-  'pages/Messaging.tsx': 1,
   'pages/Metrics.tsx': 1,
   'pages/Monitors.tsx': 1,
   'pages/Pod.tsx': 2,
@@ -118,8 +106,9 @@ const FROZEN: Record<string, number> = {
 // niyeti tek sayıda tutuyor: bir girdi eklemek isteyen bu sayıyı da
 // büyütmek zorunda kalır ve o an diff'te görünür. YALNIZ düşürülebilir.
 //
-// Seyir: 43 (v0.9.991, donduruldu) → 36 (v0.9.992, 7 pilot geçti).
-const CEILING_FILES = 36;
+// Seyir: 43 (v0.9.991, donduruldu) → 36 (v0.9.992, 7 pilot geçti)
+// → 24 (v0.9.993, 12 düz liste sayfası).
+const CEILING_FILES = 24;
 
 function counts(): Record<string, number> {
   const out: Record<string, number> = {};

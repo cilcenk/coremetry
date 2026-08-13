@@ -14,6 +14,7 @@ import { toast } from '@/lib/toast';
 import { tsLong, fmtNum } from '@/lib/utils';
 import type { DashboardSummary } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { PageShell } from '@/components/ui/PageShell';
 
 // STAR_PAGE (v0.9.780) — yıldızlar saved_views'te yaşıyor, YENİ ŞEMA YOK
 // (CLAUDE.md: kullanıcı-kaydı state için saved_views). Satır başına
@@ -187,7 +188,7 @@ export default function DashboardsPage() {
   return (
     <>
       <Topbar title="Dashboards" />
-      <div id="content">
+      <PageShell>
         <PageControls sticky>
           <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)}
             placeholder="Filter dashboards…" aria-label="Filter dashboards"
@@ -308,7 +309,7 @@ export default function DashboardsPage() {
             onCreated={(id) => { setShowNew(false); navigate(`/dashboard?id=${id}&edit=1`); }}
           />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

@@ -14,10 +14,11 @@
 // `singleContentId` tam kilide çevrilebilir.
 //
 // KADEMELİ GEÇİŞ (operatör kararı 2026-08-12): büyük patlama YOK.
-// v0.9.991 atom + kapı; 992/993/994/995 dört dalgada 41 dosya / 54 kap.
-// Allowlist 43 → 2. Kalan iki dosya "sıra gelmedi" değil, GEREKÇELİ
-// erteleme (`pageShellAdoption.test.ts` FROZEN yorumunda): TraceCompare
-// bir `variant="full"` adayı, ProblemDetail klasik-düzen şerhli.
+// v0.9.991 atom + kapı; 992/993/994/995 dört dalgada 41 dosya / 54 kap;
+// 998 ProblemDetail (2 kap). Allowlist 43 → 1. Kalan TEK dosya "sıra
+// gelmedi" değil, GEREKÇELİ erteleme (`pageShellAdoption.test.ts` FROZEN
+// yorumunda): TraceCompare bir `variant="full"` adayı ve kalibre edilmiş
+// `calc(100vh - 220px)`ini atmak masaüstünde ölçülebilir kayma üretir.
 // O allowlist bu geçişin sayacıdır ve YALNIZ KÜÇÜLEBİLİR.
 //
 // NE YAPMAZ — bilinçli:

@@ -1,16 +1,18 @@
-// pageShellAdoption — DALGA 9 kaynak-kapısı (v0.9.991)
+// pageShellAdoption — DALGA 9 kaynak-kapısı (v0.9.991), v0.9.1000'den
+// beri TAM KİLİT.
 //
 // Ne çiviliyor: `id="content"` YALNIZ `components/ui/PageShell.tsx`te
 // yazılabilir. Atom geldiğinde elle yazan 43 dosya vardı; aşağıdaki liste
 // o günün DONDURULMUŞ hâlinden arta kalandır ve YALNIZ KÜÇÜLEBİLİR.
-// Seyir: 43 (991) → 36 (992) → 24 (993) → 13 (994) → 2 (995) → 1 (998).
+// Seyir: 43 (991) → 36 (992) → 24 (993) → 13 (994) → 2 (995) → 1 (998)
+// → **0 (v0.9.1000, TraceCompare)**. Liste BOŞ, yani kural artık
+// istisnasız: kabı basan tek yer atom.
 //
 // Neden bu kapı ŞART: operatör kademeli geçişi seçti (2026-08-12), yani
 // atom geldi ve 43 dosya bir süre elle yazmaya devam etti. Kapısız bir
 // kademeli geçişin tek sonucu vardır — atom kullanılmaz, sayı büyür ve
 // altı ay sonra geçiş "yarım kalmış bir deneme" diye anılır. Bu geçişte
-// öyle OLMADI: liste beş sürümde 43'ten 1'e indi ve kalan tek dosya
-// gecikme değil, açık ürün sorusu (gerekçesi FROZEN'ın üstünde).
+// öyle OLMADI: liste altı sürümde 43'ten 0'a indi.
 // Kapı iki işi birden yapıyor:
 //   1. BÜYÜMEYİ durduruyor — yeni bir sayfa `<div id="content">` yazarsa
 //      test kırmızıya döner ve doğru cevabı (`<PageShell>`) söyler.
@@ -23,11 +25,14 @@
 // — `document.getElementById('content')` hata vermez, İLK düğümü döndürür
 // (`useContentWidth` orada 0 okuyup 1200 fallback'ine düşüyordu, v0.9.981).
 //
-// KARDEŞ KAPI: `components/singleContentId.test.ts` bugünkü GEVŞEK kuralı
-// ("aynı return ağacında iki tane olmasın") koruyor. İkisi birlikte
-// çalışıyor: o bugünü güvende tutuyor, bu yarına doğru daraltıyor.
-// Allowlist boşaldığı gün singleContentId TAM KİLİDE çevrilebilir ve bu
-// dosya onun yerine geçer.
+// KARDEŞ KAPI: `components/singleContentId.test.ts`. Ölçüldü (v0.9.1000):
+// o kapı TAM KİLİDE çevrilemez ve çevrilmemeli, çünkü BAŞKA bir soruyu
+// ölçüyor — "aynı return ağacında iki KAP var mı". Literal `id="content"`
+// artık imkânsız (bu dosya kilitledi), ama bir sayfa aynı ağaçta İKİ
+// `<PageShell>` basabilir ve o hâlâ geçersiz HTML. Erken-dönüş dalları
+// kabı meşru şekilde tekrarladığı için (TraceCompare'in kendisi 2 kap /
+// 3 return) kural "dosya başına tek kap"a sertleştirilemez; `return`
+// sayısıyla karşılaştırmak kaynak seviyesinde mümkün olan en sıkı hâli.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join, sep } from 'node:path';
@@ -73,30 +78,25 @@ function stripComments(src: string): string {
 // DONDURULMUŞ liste — dosya → o dosyanın BUGÜNKÜ `id="content"` sayısı.
 // Sayı tavan: aşmak yasak, düşmek serbest, sıfıra inince girdi SİLİNMELİ.
 //
-// v0.9.995 itibarıyla liste MEKANİK olarak boşaldı: kalan girdi "henüz
-// sıra gelmedi" değil, GEREKÇELİ ertelemedir ve ürün kararı bekliyor:
+// **BOŞ (v0.9.1000).** Buraya girdi EKLENMEZ: liste geçişin sayacıydı,
+// geçiş bitti. Yeni bir sayfa kabı elle yazarsa doğru cevap `<PageShell>`
+// kullanmaktır, listeye satır eklemek değil.
 //
-//   · pages/TraceCompare.tsx — kabın hemen içinde satır içi
-//     `height: calc(100vh - 220px)` var (:234). Bu bir `variant="full"`
-//     adayı: doğru göç `default` değil, dolgusu sıfırlanmış kap +
-//     çocukta `flex:1; min-height:0`. Kalibre edilmiş -220px'i atmak
-//     masaüstünde ÖLÇÜLEBİLİR kayma üretir → mockup-first, operatör
-//     kararı. `default`a geçirmek de mümkün ama o zaman aynı dosya
-//     ikinci kez açılır; tek dokunuş için bekliyor.
-//
-// ProblemDetail.tsx v0.9.998'de DÜŞTÜ. Şerh onu tutan şey DEĞİLDİ:
-// klasik-düzen reddi DÜZENE dair (kart sırası, sütun oranı), kap
-// seçimine değil. v0.9.997'de iki kap da ölçüldü — ikisi de niteliksiz
-// `<div id="content">`, tek dönüşlü, erken-dönüş dalı yok; `default`
-// göçünün DOM çıktısı bit bit aynı. Operatör 2026-08-13'te "DOM birebir
-// kalsın" şartıyla onayladı. Ders: "şerhli" bir dosya otomatik olarak
-// dokunulmaz değil — şerhin NEYİ yasakladığına bakılır.
-//
-// Sıfıra indiği gün `singleContentId` tam kilide çevrilebilir ve bu
-// dosya onun yerine geçer.
-const FROZEN: Record<string, number> = {
-  'pages/TraceCompare.tsx': 2,
-};
+// Son iki girdinin düşüş gerekçesi (ikisi de "sıra gelmedi" değildi):
+//   · features/anomalies/ProblemDetail.tsx (v0.9.998) — klasik-düzen
+//     şerhi DÜZENE dairdi (kart sırası, sütun oranı), kap seçimine
+//     değil. İki kap da niteliksiz `<div id="content">` çıktı.
+//   · pages/TraceCompare.tsx (v0.9.1000) — kabın içinde
+//     `height: calc(100vh - 220px)` vardı ve doğru göçün `variant="full"`
+//     olduğu sanılıyordu. ÖLÇÜLDÜ, öyle değil: `full`ün
+//     `overflow: hidden`i "Aligned diff" sekmesini keserdi ve `padding: 0`
+//     dört yoğunluk dolgusunu sayfa içinde yeniden kurmayı gerektirirdi.
+//     Doğru cevap `default` + `min-height: 100%` flex kolonu (`.tc-fill`)
+//     oldu; calc TAMAMEN silindi, kapısı `styles/noViewportArithmetic.test.ts`.
+//     Ders: "bu dosya `full` adayı" bir HİPOTEZDİ; kapıya gerekçe
+//     yazarken hipotezi ölçülmüş olgu gibi kaydetmek geçişi bir sürüm
+//     boyunca yanlış yöne baktırdı.
+const FROZEN: Record<string, number> = {};
 
 // Tavan RAÇET'i. Yukarıdaki liste tek tek de korunuyor ama bu satır
 // niyeti tek sayıda tutuyor: bir girdi eklemek isteyen bu sayıyı da
@@ -106,8 +106,9 @@ const FROZEN: Record<string, number> = {
 // → 24 (v0.9.993, 12 düz liste sayfası)
 // → 13 (v0.9.994, 11 detay/erken-dönüş sayfası)
 // → 2 (v0.9.995, kalan mekanik 11 sayfa)
-// → 1 (v0.9.998, ProblemDetail — şerh çözüldü, DOM birebir).
-const CEILING_FILES = 1;
+// → 1 (v0.9.998, ProblemDetail — şerh çözüldü, DOM birebir)
+// → 0 (v0.9.1000, TraceCompare — calc silindi, kilit tam).
+const CEILING_FILES = 0;
 
 function counts(): Record<string, number> {
   const out: Record<string, number> = {};
@@ -161,6 +162,22 @@ describe('D9 — #content yalnız PageShell\'den, allowlist yalnız küçülür'
       Object.keys(FROZEN).length,
       'allowlist büyümüş — kademeli geçişin yönü tek: aşağı',
     ).toBeLessThanOrEqual(CEILING_FILES);
+  });
+
+  // v0.9.1000 — kilit AÇIKÇA yazılı olsun. Yukarıdaki üç assert boş bir
+  // listeyle sessizce geçer (boş küme üzerinde her şey doğrudur); bu
+  // satır "istisna YOK" hâlini bir iddiaya çeviriyor, yani biri
+  // allowlist'i geri açarsa kırmızıya dönen bir test var.
+  it('allowlist BOŞ — istisnasız tam kilit', () => {
+    expect(Object.keys(FROZEN), 'D9 kapandı; yeni istisna eklenmez').toEqual([]);
+    expect(CEILING_FILES).toBe(0);
+  });
+
+  // Kilidin ANLAMI: atom dışında hiçbir dosyada literal yok. Yukarıdaki
+  // "strays" testi allowlist'e güvendiği için bu, aynı şeyi listeden
+  // BAĞIMSIZ söylüyor.
+  it('depoda `id="content"` yazan tek dosya atom', () => {
+    expect(Object.keys(live).sort()).toEqual([ATOM]);
   });
 });
 

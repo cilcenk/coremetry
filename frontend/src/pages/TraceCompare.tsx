@@ -7,6 +7,7 @@ import { TraceWaterfall } from '@/components/TraceWaterfall';
 import { computeCriticalPath } from '@/lib/criticalPath';
 import { alignTraces, type AlignedPair } from '@/lib/spanAlign';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
+import { PageShell } from '@/components/ui/PageShell';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api } from '@/lib/api';
 import { fmtNs } from '@/lib/utils';
@@ -72,19 +73,39 @@ function Inner() {
     return (
       <>
         <Topbar title="Trace compare" />
-        <div id="content">
+        <PageShell>
           <Empty icon="↔" title="No trace selected">
             Open a trace and click <b>Compare ↔</b> to start a side-by-side comparison.
           </Empty>
-        </div>
+        </PageShell>
       </>
     );
   }
 
+  // v0.9.1000 (denetim DALGA 9, kapanış) — kap `<PageShell>`e geçti ve
+  // şelale kutusunun `height: calc(100vh - 220px)` sihirli sayısı SİLİNDİ.
+  //
+  // VARYANT SEÇİMİ — `default`, `full` DEĞİL. İkisi de ölçüldü:
+  //   · `full` `#content`e `padding: 0; overflow: hidden` basıyor. İki
+  //     sonucu var ve ikisi de bu sayfada yanlış: (1) `overflow: hidden`
+  //     "Aligned diff" sekmesini KESERDİ — o tablo normal akışta kalıyor
+  //     ve sayfa kaydırmasına muhtaç (brief kararı), (2) dolgu sıfırlanınca
+  //     `[data-density]`nin dört değeri (6/10/20/22px) ve ≤640px'in 12px'i
+  //     sayfa İÇİNDE yeniden kurulmak zorunda kalırdı — yani D9'un
+  //     kaldırdığı sihirli sayı sınıfının aynısı, sadece yeri değişmiş.
+  //   · `default` hiçbirini gerektirmiyor: `#content` zaten
+  //     `flex: 1; overflow: auto` ve yüksekliği KESİN. Kabın içine tek bir
+  //     `min-height: 100%` flex kolonu (`.tc-fill`) koymak yetiyor; split
+  //     ızgarası `flex: 1; min-height: 0` ile kalan yüksekliği alıyor,
+  //     şelale kutusu da onun içinde. Yükseklik artık gerçek yerleşimden
+  //     geliyor: yoğunluk değişince dolgu değişiyor, kutu kendiliğinden
+  //     uyuyor. AdminSql'in v0.9.981'de aldığı kararın (`height: 100%;
+  //     minHeight: 0`) aynısı.
   return (
     <>
       <Topbar title="Trace compare" />
-      <div id="content">
+      <PageShell>
+        <div className="tc-fill">
         <div className="controls" style={{ marginBottom: 12, alignItems: 'center' }}>
           <span style={{ fontSize: 12, color: 'var(--text2)' }}>
             Trace A:{' '}
@@ -136,12 +157,13 @@ function Inner() {
               </button>
             </div>
 
+            {/* Split ızgarası: `.grid-2` (D8'in paylaşılan sınıfı) ≤640px'te
+                tek kolona düşüyor — iki 50% kolon 390px'lik bir telefonda
+                şelale için kullanılamaz. `.tc-split` de kalan yüksekliği
+                alan flex satırı. "Aligned diff" sekmesi BİLEREK normal
+                akışta kalıyor: tablo uzadıkça sayfa kaydırır. */}
             {tab === 'split' && (
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: 'minmax(0,1fr) minmax(0,1fr)',
-                gap: 12,
-              }}>
+              <div className="grid-2 tc-split" style={{ gap: 12 }}>
                 <TraceSide label="A" id={a} q={aQ} otherQ={bQ} />
                 <TraceSide label="B" id={b} q={bQ} otherQ={aQ} />
               </div>
@@ -152,7 +174,8 @@ function Inner() {
             )}
           </>
         )}
-      </div>
+        </div>
+      </PageShell>
     </>
   );
 }
@@ -196,7 +219,7 @@ function TraceSide({ label, id, q, otherQ }: {
   const deltaColor = deltaNs > 0 ? 'var(--err)' : deltaNs < 0 ? 'var(--ok)' : 'var(--text3)';
 
   return (
-    <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className="tc-side">
       <div style={{
         background: 'var(--bg1)', border: '1px solid var(--border)',
         borderRadius: 6, padding: 10,
@@ -230,9 +253,14 @@ function TraceSide({ label, id, q, otherQ }: {
           </>
         )}
       </div>
+      {/* v0.9.1000 — `height: calc(100vh - 220px)` SİLİNDİ. O sayı tam
+          genişlikte topbar + kontroller + sekme şeridine göre ELLE
+          kalibre edilmişti ve `[data-density]` dolgusuna (6/10/20/22px)
+          da ≤640px bloğuna da KÖRDÜ: yoğunluk değiştiren operatörde kutu
+          ya taşıyor ya boşluk bırakıyordu. Yükseklik artık `.tc-wf`
+          (`flex: 1; min-height: 0`) ile GERÇEK yerleşimden geliyor. */}
       {q.data && spans.length > 0 && (
-        <div style={{ height: 'calc(100vh - 220px)', overflow: 'auto',
-                       border: '1px solid var(--border)', borderRadius: 6 }}>
+        <div className="tc-wf">
           <TraceWaterfall spans={spans} selectedId={selected} onSelect={setSelected}
                           criticalPathIds={critical?.ids} />
         </div>

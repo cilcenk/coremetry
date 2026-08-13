@@ -7,19 +7,20 @@
 // tekrarlanan bir sabitin tek kaynağa çekilmesi; çıktısı bit bit aynı.
 //
 // NEDEN ATOM: `id` tekilliğini kaynak seviyesinde garanti etmenin başka
-// yolu yok. `singleContentId` kapısı (v0.9.981) hâlâ GEVŞEK — "aynı
-// return ağacında iki tane olmasın" diyor, çünkü erken-dönüş dalları
-// kabı tekrarlıyor. Kap TEK bir bileşenden basıldığında o kural TİPE
-// düşer ve kapı gevşek olmak zorunda kalmaz. Allowlist sıfırlandığı gün
-// `singleContentId` tam kilide çevrilebilir.
+// yolu yok. Literal `id="content"` v0.9.1000'den beri YALNIZ bu dosyada
+// yazılabilir (`pageShellAdoption.test.ts`, allowlist BOŞ).
+// `singleContentId` kapısı (v0.9.981) buna rağmen GEVŞEK kalıyor ve bu
+// artık bir eksik değil, ölçülmüş bir karar: o kapı başka bir soruyu
+// soruyor — "aynı return ağacında iki KAP var mı". Erken-dönüş dalları
+// kabı meşru şekilde tekrarladığı için (`TraceCompare` 2 kap / 3 return)
+// kural "dosya başına tek kap"a sertleştirilemez.
 //
 // KADEMELİ GEÇİŞ (operatör kararı 2026-08-12): büyük patlama YOK.
 // v0.9.991 atom + kapı; 992/993/994/995 dört dalgada 41 dosya / 54 kap;
-// 998 ProblemDetail (2 kap). Allowlist 43 → 1. Kalan TEK dosya "sıra
-// gelmedi" değil, GEREKÇELİ erteleme (`pageShellAdoption.test.ts` FROZEN
-// yorumunda): TraceCompare bir `variant="full"` adayı ve kalibre edilmiş
-// `calc(100vh - 220px)`ini atmak masaüstünde ölçülebilir kayma üretir.
-// O allowlist bu geçişin sayacıdır ve YALNIZ KÜÇÜLEBİLİR.
+// 998 ProblemDetail (2 kap); **1000 TraceCompare (2 kap) — allowlist
+// 43 → 0, geçiş KAPANDI**. Son dosyanın gecikme sebebi "`full` adayı"
+// hipoteziydi; ölçüldüğünde doğru cevabın `default` + sayfa-yerel
+// `min-height:100%` flex kolonu olduğu görüldü (aşağıya bak).
 //
 // NE YAPMAZ — bilinçli:
 //   · Zemin / dolgu / yoğunluk / dar-ekran kurallarını TEKRARLAMAZ.
@@ -52,22 +53,26 @@ export function PageShell({ children, variant = 'default' }: {
    * -220px): bu aritmetik `[data-density]` dolgu değişimine (6/10/20/22px)
    * ve ≤640px bloğuna KÖR, yani üç yoğunlukta üçü de bir miktar yanlış.
    *
-   * DİKKAT (v0.9.995'te hâlâ geçerli): `'full'`ün ADOPTE EDEN SAYFASI
-   * YOK. Mevcut tam-bleed sayfaları geçirmek kalibre edilmiş `calc()`
-   * değerlerini atmak demek ve masaüstünde ölçülebilir bir kayma üretir
-   * — o yüzden operatörün gözüne girmeden yapılmıyor (mockup-first).
+   * DİKKAT (v0.9.1000'de hâlâ geçerli): `'full'`ün ADOPTE EDEN SAYFASI
+   * YOK ve son aday da başka yoldan çözüldü.
    *
-   * SIRADAKİ ADAYLAR — v0.9.997'de yeniden ÖLÇÜLDÜ, listeden iki kalem
-   * düştü:
-   *   · `TraceCompare.tsx:234` — `height: calc(100vh - 220px)`, kabın
-   *     hemen içinde. Gerçek `full` adayı.
-   *   · `globals.css:1729` `#td-outer` -185px — yalnız `PublicTrace.tsx`
-   *     render ediyor; public kabuk ayrı iş (`PublicShell` + `full`).
-   *   · `AdminSql.tsx` -80px ARTIK YOK — v0.9.981/D3.2'de kaldırıldı,
-   *     yerinde `height:100%; minHeight:0` var. Denetim metnindeki bu
-   *     kalem BAYAT; koddan doğrulanmadan kuyruğa alınmamalı.
-   *   · `AdminCatalog.tsx:182` -220px bir TABLO `maxHeight`i, sayfa kabı
-   *     değil — `full` göçünün konusu değil, ayrı (ve küçük) bir kalem.
+   * `TraceCompare.tsx` v0.9.1000'de `default`a geçti — `full`e DEĞİL.
+   * Gerekçe ölçüldü ve genel: `full` iki şey birden yapıyor,
+   * `padding: 0` + `overflow: hidden`. İkincisi sayfada normal akışta
+   * kalan HER bölümü keser (orada "Aligned diff" tablosu), birincisi de
+   * dört yoğunluk dolgusunu (6/10/20/22px) + ≤640px'in 12px'ini sayfa
+   * içinde yeniden kurmayı zorunlu kılar — yani kaldırılan sihirli sayı
+   * sınıfını geri getirir. KURAL: `full` yalnız sayfanın TAMAMI tek bir
+   * tam-bleed tuval olduğunda doğru; yanında akan içerik varsa doğru
+   * cevap `default` + sayfa-yerel `min-height: 100%` flex kolonu
+   * (`.tc-fill` deseni, `globals.css:1732`).
+   *
+   * GERİYE KALAN TEK ADAY: `globals.css:1729` `#td-outer` -185px —
+   * yalnız `PublicTrace.tsx` render ediyor ve o rota kendi kabuğunu
+   * kuruyor (`#content` yok). Yani iş "PageShell göçü" değil, public
+   * kabuk işi. Denetimin saydığı diğer kalemler BAYAT çıktı: `AdminSql`
+   * -80px v0.9.981'de kalktı, `AdminCatalog.tsx:182` bir TABLO
+   * `maxHeight`i (sayfa kabı değil, ve `max-height` sınıfı zaten meşru).
    */
   variant?: 'default' | 'full';
 }) {

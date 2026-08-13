@@ -3141,6 +3141,44 @@ thead th:hover .th-remove { opacity: 1; }
   /* Kontroller + tablo yoğunluğu */
   .controls { gap: 6px; }
   .controls input, .controls select { min-width: 0; }
+
+  /* D6.4 (v0.9.1001) — KATLANIR filtre barı.
+     Sınıfların masaüstü kuralı YOK ve elemanları da yalnız dar ekranda
+     BASILIYOR (`PageControls` → `useIsNarrow`, aynı 640px eşiği): geniş
+     ekranda ne DOM ne piksel değişiyor. */
+  .controls.is-collapsible { flex-wrap: nowrap; }
+  /* `:not(.is-sticky)` ŞART. Panel `position: absolute` ve çapası bar.
+     Sticky bar zaten konumlandırılmış; çıplak bir
+     `.controls.is-collapsible { position: relative }` kuralı AYNI
+     özgüllükte (0,2,0) ve `.controls.is-sticky`den SONRA geldiği için
+     onu ezerdi — bar dar ekranda sessizce yapışkanlığını kaybederdi. */
+  .controls.is-collapsible:not(.is-sticky) { position: relative; }
+  /* Ana yüzeyde kalan tek kontrol boşluğu alsın (tipik: arama kutusu). */
+  .controls.is-collapsible > :first-child { flex: 1 1 auto; min-width: 0; }
+  /* Katlama düğmesi `DisclosureButton anatomy="row"` — glif disiplini
+     oradan geliyor (▸/▾, operatör kararı 2026-08-10). `row` anatomisi
+     11px/2px dolgulu ve `(0,2,0)` özgüllüğüyle bu bloğun `button`
+     kuralını YENİYOR; dokunma hedefi 36px'e burada çekiliyor (D2.4). */
+  .btn-disclose.dsc-row.pc-more {
+    flex: none; white-space: nowrap;
+    min-height: 36px; padding: 6px 12px; font-size: 14px;
+    color: var(--text); background: var(--bg2);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+  }
+  /* Panel HER ZAMAN DOM'da (çocuklar mount kalsın, sayaç kapalıyken de
+     doğru olsun) — görünürlüğü bu sınıf taşıyor. Açıkken bir POPOVER:
+     barın altına konumlanıyor, sayfayı aşağı itmiyor. `--z-dropdown`
+     yapışkan kademelerin (2-5) ve tablo başlığının üstünde. */
+  .pc-panel { display: none; }
+  .pc-panel.is-open {
+    display: flex; flex-direction: column; align-items: stretch; gap: 8px;
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    z-index: var(--z-dropdown);
+    padding: var(--sp-4); max-height: 60vh; overflow: auto;
+    background: var(--bg1); border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm); box-shadow: var(--shadow-pop);
+  }
+  .pc-panel.is-open > * { max-width: 100%; }
   table { font-size: 11px; }
   thead th, tbody td { padding: 6px 8px; }
 

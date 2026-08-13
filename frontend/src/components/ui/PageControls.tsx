@@ -1,5 +1,8 @@
-import { useEffect, useRef } from 'react';
+import { Children, isValidElement, useEffect, useId, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
+import { useIsNarrow } from '@/lib/useNarrow';
+import { useEscLayer } from '@/lib/escLayer';
+import { DisclosureButton } from './DisclosureButton';
 
 // v0.9.639 — liste sayfalarının filtre barı için tek primitif.
 //
@@ -49,8 +52,76 @@ export interface PageControlsProps {
 type PageControlsAllProps = PageControlsProps &
   Omit<HTMLAttributes<HTMLDivElement>, 'style' | 'className' | 'children'>;
 
+// ── D6.4 (v0.9.1001) — ≤640px'te KATLANIR bar ──────────────────────────
+//
+// Sorun ölçüldü: 390px'lik bir telefonda bu barlar üç-dört satıra
+// sarıyor (Services 9 kontrol, Traces 12+). Yapışkan olduğu için o
+// yükseklik ekranın üstünde SABİT duruyor — tablo için ~%40 yer kalıyor,
+// ve `--controls-h` üzerinden yapışkan tablo başlığı da o kadar aşağı
+// itiliyor. Yani düzeltilen bir kusur (bar kaybolmasın) dar ekranda
+// ikinci bir kusura dönüşüyordu (bardan başka bir şey görünmesin).
+//
+// KATLAMA SALT GÖRÜNÜMDÜR: filtrelerin kendisine, URL yazımına,
+// state'e, sıraya DOKUNULMUYOR. Çocuklar HER ZAMAN mount kalıyor —
+// panel kapalıyken `display: none`. Şart koşulan iki şey bunu
+// gerektirdi: (1) kapalıyken de doğru sayabilmek (aşağıda), (2) bir
+// çocuğun yerel state'inin (picker taslağı, açık popover) panel her
+// kapandığında sıfırlanmaması.
+//
+// MASAÜSTÜNDE DOM BİREBİR AYNI: geniş ekranda hiçbir sarmalayıcı,
+// hiçbir düğme basılmıyor — aşağıdaki `narrow` dalı tek `<div
+// className="controls">`e düşüyor. Eşik `useNarrow`'dan geliyor
+// (`NARROW_MAX_PX = 640`), yani CSS telefon katmanıyla AYNI sayı;
+// ayrışmayı `styles/mobileBreakpoints.test.ts` çiviliyor.
+
+// Ana yüzeyde kalacak çocuğu seçen SAF kural. Dışa açık: tablo testi
+// `pageControlsCollapse.test.tsx` bunu doğrudan sürüyor.
+//
+// KURAL: ilk ETKİLEŞİMLİ çocuk. Ölçüldü (14 tüketici, v0.9.1001) —
+// 9'unda o çocuk zaten arama/serbest-metin girdisi ya da picker
+// (Services/Endpoints/Logs/Anomalies/Traces `ServicePicker`,
+// AIObservability/Dashboards/Metrics metin kutusu), kalan 5'inde
+// sayfanın ilk gerçek kontrolü (zaman aralığı select'i, "+ New user").
+//
+// "İlk METİN KUTUSUNU ara, nerede olursa olsun" kuralı DENENDİ ve
+// bırakıldı: Traces'ta o kutu `Trace ID…`, yani barın en sonundaki
+// nokta-atışı alanı — arama kutusu değil. Sırayı bozan bir kural,
+// sırayı koruyan bir kuraldan daha çok şaşırtıyor.
+const HOST_CONTROLS = new Set(['input', 'select', 'textarea', 'button', 'label']);
+
+export function isInteractiveChild(node: ReactNode): boolean {
+  if (!isValidElement(node)) return false;            // metin / sayı düğümü
+  const t = node.type;
+  // Host eleman: yalnız gerçek kontroller. `<div className="segmented">`
+  // ve bilgilendirme `<span>`leri ELENİR — birincisi bir kap, ikincisi
+  // tıklanamaz metin.
+  if (typeof t === 'string') return HOST_CONTROLS.has(t);
+  // Bileşen (picker, Button, Link…). `typeof` ile bakılıyor, ADLA
+  // değil: prod derlemesinde fonksiyon adları küçültücüde değişebilir
+  // ve ada dayanan bir kural yalnız üretimde sessizce yanlış davranırdı.
+  if (typeof t === 'function') return true;
+  // memo/forwardRef sarmalı bileşen ({$$typeof, …}) — o da bileşen.
+  // Fragment `symbol` olduğu için buraya DÜŞMEZ ve elenir: `<>…</>`
+  // koşullu bir GRUP, tek bir kontrol değil.
+  return typeof t === 'object' && t !== null;
+}
+
+export function leadChildIndex(items: ReactNode[]): number {
+  for (let i = 0; i < items.length; i++) if (isInteractiveChild(items[i])) return i;
+  return items.length > 0 ? 0 : -1;   // hiç kontrol yoksa ilk çocuk
+}
+
 export function PageControls({ children, sticky = false, className, style, ...rest }: PageControlsAllProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const panelId = useId();
+  const narrow = useIsNarrow();
+  const [open, setOpen] = useState(false);
+  // Katlananlar arasındaki GERÇEK form kontrolü sayısı — DOM'dan.
+  const [hiddenControls, setHiddenControls] = useState(0);
+
+  const items = useMemo(() => Children.toArray(children), [children]);
+  const lead = leadChildIndex(items);
 
   // v0.9.644 — barın YÜKSEKLİĞİNİ `--controls-h` olarak yayınla.
   //
@@ -84,15 +155,100 @@ export function PageControls({ children, sticky = false, className, style, ...re
     };
   }, [sticky]);
 
+  // SAYAÇ — YALAN SAYAÇ YASAK.
+  //
+  // Sayılan şey: katlananların içindeki `input/select/textarea`, yani
+  // panel açıldığında operatörün gerçekten göreceği FİLTRE ALANLARI.
+  // Bilgilendirme `<span>`leri, "← Database overview" linkleri ve eylem
+  // butonları sayılmıyor.
+  //
+  // Neden "AKTİF filtre" sayılmıyor: çocuklar bu bileşen için opak
+  // `ReactNode`. Aktifliği tahmin etmenin tek yolu heuristik olurdu
+  // (`value !== ''`, `select` ilk seçenekte mi…) ve bu depoda `select`
+  // varsayılanları "All clusters"/"All db names" gibi BOŞ DEĞERLER —
+  // "aktif" ile "varsayılan"ı ayırt etmenin kaynak-seviyesi yolu yok.
+  // Yanlış bir aktiflik sayacı, sayaç olmamasından kötüdür: operatör
+  // "3 filtre açık" okuyup filtresiz bir listeye bakar. Bu yüzden sayı
+  // "arkada N alan var" diyor ve düğmenin `title`ı bunu birebir yazıyor.
+  //
+  // DOM'dan sayılıyor çünkü kaynak sayımı da yalan söylerdi: bir çocuk
+  // (`{cond && <select/>}`) veri gelene kadar HİÇ render edilmiyor —
+  // ör. Endpoints'in cluster select'i. MutationObserver o gecikmeli
+  // gelişleri de yakalıyor.
+  useEffect(() => {
+    const el = panelRef.current;
+    if (!narrow || !el) { setHiddenControls(0); return; }
+    const count = () => setHiddenControls(el.querySelectorAll('input, select, textarea').length);
+    count();
+    const mo = new MutationObserver(count);
+    mo.observe(el, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, [narrow]);
+
+  // Dışarı tık. Dinleyici yalnız açıkken bağlı.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [open]);
+
+  // Ekran genişlerse (cihaz döndürme, masaüstü pencere) katlama YOK
+  // olur; açık kalan state bir sonraki daralmada paneli kendiliğinden
+  // açık gösterirdi.
+  useEffect(() => { if (!narrow) setOpen(false); }, [narrow]);
+
+  // Esc KATMANI (E2/Ö28 disiplini): bar bir çekmecenin içindeyse ilk
+  // Esc paneli kapatır, çekmeceyi değil. Kayıt AÇIKLIĞA bağlı — kapalı
+  // bir panel yığında durup Esc'i yutmamalı.
+  useEscLayer(open, () => setOpen(false));
+
+  const cls = [
+    'controls',
+    sticky ? 'is-sticky' : '',
+    narrow ? 'is-collapsible' : '',
+    className ?? '',
+  ].filter(Boolean).join(' ');
+
+  // Masaüstü dalı: v0.9.1000'e kadarki DOM'un BİREBİR aynısı.
+  if (!narrow) {
+    return (
+      // rest ÖNCE: className/style/ref açıkça sonra yazılıyor ki bir
+      // çağıran onları kazara ezemesin.
+      <div {...rest} ref={ref} className={cls} style={style}>
+        {children}
+      </div>
+    );
+  }
+
+  const restItems = items.filter((_, i) => i !== lead);
+
   return (
-    // rest ÖNCE: className/style/ref açıkça sonra yazılıyor ki bir
-    // çağıran onları kazara ezemesin.
-    <div {...rest} ref={ref} className={[
-      'controls',
-      sticky ? 'is-sticky' : '',
-      className ?? '',
-    ].filter(Boolean).join(' ')} style={style}>
-      {children}
+    <div {...rest} ref={ref} className={cls} style={style}>
+      {lead >= 0 && items[lead]}
+      {restItems.length > 0 && (
+        <DisclosureButton
+          anatomy="row"
+          className="pc-more"
+          expanded={open}
+          aria-controls={panelId}
+          title={hiddenControls > 0
+            ? `${hiddenControls} filtre alanı bu düğmenin arkasında`
+            : 'Kalan kontroller bu düğmenin arkasında'}
+          onClick={() => setOpen(o => !o)}>
+          Filtreler{hiddenControls > 0 ? ` (${hiddenControls})` : ''}
+        </DisclosureButton>
+      )}
+      {/* Panel HER ZAMAN basılıyor (kapalıyken `display: none`):
+          çocuklar mount kalsın ve sayaç kapalıyken de doğru olsun.
+          Sıra korunuyor — filtreler barda hangi sırayla duruyorsa
+          panelde de o sırayla dikey diziliyor. */}
+      <div ref={panelRef} id={panelId} role="group" aria-label="Filtreler"
+        className={open ? 'pc-panel is-open' : 'pc-panel'}>
+        {restItems}
+      </div>
     </div>
   );
 }

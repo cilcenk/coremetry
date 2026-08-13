@@ -54,8 +54,19 @@ export function SMTPTab() {
     }
   };
 
+  // Yüzey kabı (denetim D7.4): bu sekme zemin/kenarlık taşımayan tek
+  // başına bir formdu, yani açık temada sayfa zeminine yapışıyordu —
+  // kardeş sekmelerin (Kibana/Tempo/Elastic/LDAP…) hepsi bir yüzeyin
+  // içinde. `.card-static`, `.card`ın etkileşimsiz ikizi (v0.9.921):
+  // ikinci `.card` tanımı `cursor: pointer` + accent hover taşıyor ve
+  // tıklanmayan bir form kutusu onu devralmamalı.
+  //
+  // maxWidth 640 → 670: kabın dolgusu (14×2) + kenarlığı (1×2) içeriği
+  // 30px daraltırdı; alan genişlikleri PİKSEL AYNI kalsın diye fark
+  // kaba eklendi. Yani bu değişiklik yalnız zemin+kenarlık ekler.
   return (
-    <form onSubmit={save} style={{ maxWidth: 640 }}>
+    <div className="card-static" style={{ maxWidth: 670 }}>
+    <form onSubmit={save}>
       <p style={{ color: 'var(--text2)', fontSize: 13, marginBottom: 16 }}>
         Outbound mail settings used by every email notification channel.
         Changes take effect immediately — no restart needed.
@@ -121,5 +132,6 @@ export function SMTPTab() {
         </div>
       )}
     </form>
+    </div>
   );
 }

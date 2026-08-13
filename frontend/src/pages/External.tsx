@@ -12,6 +12,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ExternalHost, ExternalHostDetail, TimeRange } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /external — third-party API inventory (v0.8.446, SigNoz/Uptrace
 // gap-closure Wave 3 / A1). One row per external destination the
@@ -99,7 +100,7 @@ export default function ExternalPage() {
   return (
     <>
       <Topbar title="External APIs" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 12 }}>
           Third-party dependencies discovered from outbound client spans
           (<code>peer.service</code>, or <code>server.address</code> /{' '}
@@ -176,7 +177,7 @@ export default function ExternalPage() {
         {openHostParam && (
           <ExternalHostDrawer host={openHostParam} range={range} onClose={closeHost} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

@@ -23,6 +23,7 @@ import { NoisyRulesPanel } from './alerts/NoisyRulesPanel';
 import { WatcherImportModal } from './alerts/WatcherImportModal';
 import { QueryError } from '@/components/QueryError';
 import { Link } from 'react-router-dom';
+import { PageShell } from '@/components/ui/PageShell';
 
 // alertTypeLabel — Type hücresinin bastığı rozet metni. Sıralama accessor'ı
 // buradan okuyor ki kolon GÖRÜNENE göre sıralansın (ham `metric` alanı
@@ -293,7 +294,7 @@ export default function AlertsPage() {
   return (
     <>
       <Topbar title="Alert rules" />
-      <div id="content">
+      <PageShell>
         <div className="controls" style={{ marginBottom: 14 }}>
           <span style={{ color: 'var(--text2)', fontSize: 12 }}>
             Evaluator runs every minute. Built-in rules ship pre-configured but
@@ -670,7 +671,7 @@ export default function AlertsPage() {
             </table>
           </div>
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

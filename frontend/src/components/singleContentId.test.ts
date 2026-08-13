@@ -18,9 +18,19 @@
 // render olmaz. Ayırt etmenin tek kaynak-seviyesi yolu `return`
 // sayısıyla karşılaştırmak.
 //
-// Tam kilit (`id="content"` yalnız bir PageShell bileşeninde) D9'un
-// konusu ve D9 KARAR KAPILI — bu kapı o karar verilene kadar
-// bugünkü mimariyi koruyor, ona doğru zorlamıyor.
+// Tam kilit (`id="content"` yalnız `components/ui/PageShell.tsx`te) D9'un
+// konusu; karar 2026-08-12'de verildi (KADEMELİ) ve sayacı
+// `pageShellAdoption.test.ts` tutuyor. Bu kapı o geçiş bitene kadar
+// bugünkü mimariyi koruyor.
+//
+// v0.9.993 — KAPSAM GENİŞLETİLDİ, kural DEĞİL. D9 geçişi başladığından
+// beri kap iki biçimde yazılabiliyor: elle `<div id="content">` ya da
+// `<PageShell>`. Tarama yalnız birinciyi arıyordu, yani GEÇEN her sayfa
+// bu kapının görüş alanından ÇIKIYORDU — v0.9.992'de yedi pilot geçti ve
+// o günden beri onlarda "aynı return ağacında iki kap" kuralı hiç
+// ölçülmüyordu. Boşluk sessizdi: kapı yeşil kalıyor, çünkü ölçecek dosya
+// bulamıyor. Artık iki biçim de sayılıyor ve "tarama bir şey buluyor"
+// assert'i geçişin İLERLEMESİYLE ERİMİYOR (44 dosya, biçimden bağımsız).
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -59,27 +69,35 @@ function stripComments(src: string): string {
   return out;
 }
 
+// Kabuk kabının İKİ yazılışı: elle yazılmış `<div id="content">` ve D9
+// atomu `<PageShell>`. `<PageShell[\s>]` yalnız ÇAĞRI noktalarını yakalar
+// — atomun kendi `export function PageShell(` tanımında `<` yok, import
+// satırında da yok.
+const SHELL = /id="content"|<PageShell[\s>]/g;
+const shellCount = (src: string) => (src.match(SHELL) ?? []).length;
+
 const FILES = walk(SRC)
   .filter(p => !p.endsWith('.test.ts') && !p.endsWith('.test.tsx'))
   .map(p => ({ p: p.slice(SRC.length + 1), src: stripComments(readFileSync(p, 'utf8')) }))
-  .filter(f => f.src.includes('id="content"'));
+  .filter(f => shellCount(f.src) > 0);
 
 describe('D3 — tek #content', () => {
   it('tarama bir şey buluyor', () => {
     expect(FILES.length).toBeGreaterThan(30);
   });
 
-  it('her dosyada #content sayısı return sayısını AŞMIYOR', () => {
+  it('her dosyada kabuk kabı sayısı return sayısını AŞMIYOR', () => {
     // Aşıyorsa en az iki tanesi aynı return ağacındadır → aynı anda
-    // DOM'a girerler.
+    // DOM'a girerler. `<PageShell>` de sayılıyor: atom `#content`i
+    // basan tek yer olduğu için iki `<PageShell>` de iki `#content`tir.
     const bad = FILES
       .map(f => ({
         p: f.p,
-        ids: (f.src.match(/id="content"/g) ?? []).length,
+        ids: shellCount(f.src),
         returns: (f.src.match(/\breturn\s*\(/g) ?? []).length,
       }))
       .filter(f => f.ids > f.returns)
-      .map(f => `${f.p}: ${f.ids} × id="content" / ${f.returns} × return`);
+      .map(f => `${f.p}: ${f.ids} × kabuk kabı / ${f.returns} × return`);
     expect(bad, 'aynı return ağacında iki #content — geçersiz HTML').toEqual([]);
   });
 

@@ -31,6 +31,7 @@ import type { EndpointRow } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { Button } from '@/components/ui/Button';
 import { IconButton } from '@/components/ui/IconButton';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /endpoints — operator-asked v0.5.365. Cross-service inbound
 // RED rollup keyed on http.route (templated) with url.path /
@@ -446,7 +447,7 @@ export default function EndpointsPage() {
   return (
     <>
       <Topbar title="Endpoints" range={range} onRangeChange={setRange} envApplies />
-      <div id="content">
+      <PageShell>
         {/* v0.9.308 (brief N6c) — the page's whole selection already
             lives in the URL: service, search, cluster, limit, compare,
             shape, ?cols=, ?endpoint= and the s_endpoints sort pair.
@@ -908,7 +909,7 @@ export default function EndpointsPage() {
             </div>
           </>
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

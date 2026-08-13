@@ -14,6 +14,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Incident, IncidentStatus } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
+import { PageShell } from '@/components/ui/PageShell';
 
 // Columns for the shared sortable + resizable DataTable. Ongoing
 // incidents (no resolvedAt) sort as longest-duration.
@@ -76,7 +77,7 @@ export default function IncidentsPage() {
   return (
     <>
       <Topbar title="Incidents" />
-      <div id="content">
+      <PageShell>
         <PageControls sticky style={{ marginBottom: 12 }}>
           <select value={statusFilter} onChange={e => setStatusFilter(e.target.value as 'all' | IncidentStatus)}>
             <option value="all">All statuses</option>
@@ -169,7 +170,7 @@ export default function IncidentsPage() {
         {showNew && (
           <NewIncidentModal onClose={() => setShowNew(false)} onCreated={() => setShowNew(false)} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

@@ -30,6 +30,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ClusterPodRow, ClusterNodeRow, ClusterNamespaceRow, ClusterDeploymentRow, ClusterAlertRow, ClusterSummary, TimeRange } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 // /clusters — uzak OpenShift cluster'larının Thanos metrikleri.
 // v0.8.587 redesign (audit: docs/audit/clusters-overview-redesign-
@@ -542,7 +543,7 @@ export default function ClustersPage() {
   return (
     <>
       <Topbar title="Clusters" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         {sourcesQ.isPending && <Spinner />}
         {!sourcesQ.isPending && sources.length === 0 && (
           <Empty icon="◇" title="No remote clusters configured">
@@ -1173,7 +1174,7 @@ export default function ClustersPage() {
           return <NamespaceDrawer cluster={c} namespace={ns} range={range} onClose={closeNsDrawer}
             onZoom={chartZoom} onZoomReset={chartZoomReset} />;
         })()}
-      </div>
+      </PageShell>
     </>
   );
 }

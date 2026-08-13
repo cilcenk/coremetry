@@ -12,6 +12,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { serviceHref, pointEventWindow } from '@/lib/serviceHref';
 import type { NotificationLogEntry } from '@/lib/types';
+import { PageShell } from '@/components/ui/PageShell';
 
 // v0.6.15 — Operator events list/delete UI.
 //
@@ -91,7 +92,7 @@ export default function EventsPage() {
   return (
     <>
       <Topbar title="Events" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div className="tab-strip" style={{ marginBottom: 12 }}>
           <button className={tab === 'notifications' ? 'active' : ''}
             onClick={() => setTab('notifications')}>Notifications</button>
@@ -101,7 +102,7 @@ export default function EventsPage() {
         {tab === 'notifications'
           ? <NotificationsTab from={from} to={to} />
           : <AnnotationsTab from={from} to={to} />}
-      </div>
+      </PageShell>
     </>
   );
 }

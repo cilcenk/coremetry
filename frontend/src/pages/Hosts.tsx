@@ -12,6 +12,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { HostRow, HostDetail, HostServiceRow, TimeRange } from '@/lib/types';
 import { serviceHref } from '@/lib/serviceHref';
+import { PageShell } from '@/components/ui/PageShell';
 
 // v0.9.873 (tutarlılık denetimi BT12) — HostDrawer'ın servis tablosu.
 // Yoğun bir host'ta "CPU'yu kim yiyor" sorusu bugün göz taramasıyla
@@ -79,7 +80,7 @@ export default function HostsPage() {
   return (
     <>
       <Topbar title="Hosts" range={range} onRangeChange={setRange} />
-      <div id="content">
+      <PageShell>
         <div style={{ color: 'var(--text2)', fontSize: 12, marginBottom: 12 }}>
           Every host/pod that emitted metrics in the window — latest CPU and
           memory per <code>host.name</code>. Click a row for the trend and the
@@ -148,7 +149,7 @@ export default function HostsPage() {
         {openHostParam && (
           <HostDrawer host={openHostParam} range={range} onClose={closeHost} />
         )}
-      </div>
+      </PageShell>
     </>
   );
 }

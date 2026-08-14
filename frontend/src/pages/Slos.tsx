@@ -5,7 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { IconSparkles } from '@/components/icons';
-import { Modal, Field, SelectField, Button, Stack } from '@/components/ui';
+import { Button, Field, Modal, SelectField, Stack, useConfirm } from '@/components/ui';
 import { useSLOs, useCreateSLO, useDeleteSLO } from '@/lib/queries';
 import { api } from '@/lib/api';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -22,6 +22,7 @@ import { PageShell } from '@/components/ui/PageShell';
 // the SLORow object doesn't carry the numbers needed to compare.
 
 export default function SLOsPage() {
+  const confirm = useConfirm();
   const { user } = useAuth();
   const [showNew, setShowNew] = useState(false);
   const [showAuto, setShowAuto] = useState(false);
@@ -58,8 +59,13 @@ export default function SLOsPage() {
     initialSort: { id: 'name', dir: 'asc' },
   });
 
-  const onDelete = async (id: string) => {
-    if (!confirm('Delete this SLO?')) return;
+  const onDelete = async (id: string, name: string) => {
+    if (!await confirm({
+      title: 'SLO silinsin mi?',
+      body: <><b>{name}</b> hedefi ve hata bütçesi geçmişi kalıcı olarak silinecek.</>,
+      confirmLabel: 'SLO’yu sil',
+      danger: true,
+    })) return;
     await deleteSLO.mutateAsync(id);
   };
 
@@ -139,7 +145,7 @@ export default function SLOsPage() {
                     {isAdmin && (
                       <td><div className="cell-actions">
                         <BurnExplainButton sloId={o.id} />
-                        <Button variant="secondary" size="sm" onClick={() => onDelete(o.id)}>Delete</Button>
+                        <Button variant="secondary" size="sm" onClick={() => void onDelete(o.id, o.name)}>Delete</Button>
                       </div>
                       </td>
                     )}

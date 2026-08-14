@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect } from 'react';
 import { Routes, Route, Navigate, useParams, useLocation } from 'react-router-dom';
 import { AuthProvider } from './components/AuthProvider';
+import { ConfirmProvider } from './components/ui/ConfirmDialog';
 import { AppShell } from './components/AppShell';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { RouteSkeleton } from './components/ui/RouteSkeleton';
@@ -111,6 +112,12 @@ export default function App() {
   usePrefetchOnHover();
   return (
     <ErrorBoundary>
+    {/* ConfirmProvider (v0.9.1008, M6) — yıkıcı onay diyaloğunun TEK
+        host'u. AuthProvider'ın DIŞINDA: /login ve public yüzeyler de
+        aynı ağaçta ve bir gün onay isterlerse kırılmasınlar; provider
+        kendisi hiçbir şey render etmiyor (yalnız bir context + açıkken
+        bir Modal), yani bedeli sıfır. */}
+    <ConfirmProvider>
     <AuthProvider>
       <PerfMeter />
       <Suspense fallback={<RouteSkeleton />}>
@@ -188,6 +195,7 @@ export default function App() {
         </Routes>
       </Suspense>
     </AuthProvider>
+    </ConfirmProvider>
     </ErrorBoundary>
   );
 }

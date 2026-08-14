@@ -37,6 +37,9 @@ export { Drawer, DrawerSection, DrawerTrendRow } from './Drawer';
 export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 
+export { ConfirmProvider, useConfirm } from './ConfirmDialog';
+export type { ConfirmOptions } from './ConfirmDialog';
+
 export { ActionRow } from './ActionRow';
 export type { ActionRowProps } from './ActionRow';
 

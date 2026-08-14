@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Modal, Button, Stack } from '@/components/ui';
+import { Button, Modal, Stack, useConfirm } from '@/components/ui';
 import { api, type PipelineRule } from '@/lib/api';
 import type { MetricExclusionRule } from '@/lib/types';
 import { Field, FlashBox, humanize } from './shared';
@@ -44,6 +44,7 @@ const SPAN_ROUTE_PREFILL: Partial<PipelineRule> = {
 };
 
 export function PipelineTab() {
+  const confirm = useConfirm();
   const [rules, setRules] = useState<PipelineRule[] | null | undefined>(undefined);
   const [editing, setEditing] = useState<PipelineRule | null>(null);
   const [creating, setCreating] = useState(false);
@@ -74,7 +75,13 @@ export function PipelineTab() {
   };
 
   const remove = async (r: PipelineRule) => {
-    if (!confirm(`Delete pipeline rule "${r.name}"? Records matching this rule will no longer be affected.`)) return;
+    if (!await confirm({
+      title: 'Pipeline kuralı silinsin mi?',
+      body: <><b>{r.name}</b> kuralı kaldırılacak. Bu kuralla eşleşen kayıtlar
+        artık etkilenmeyecek — dışlanan kayıtlar ingest’e girmeye başlar.</>,
+      confirmLabel: 'Kuralı sil',
+      danger: true,
+    })) return;
     try {
       await api.deletePipelineRule(r.id);
       setMsg({ kind: 'ok', text: `Deleted "${r.name}"` });

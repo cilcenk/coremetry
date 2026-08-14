@@ -10,6 +10,7 @@ import {
 } from '@/lib/promqlToken';
 import { timeRangeToNs } from '@/lib/utils';
 import { IconButton } from '@/components/ui';
+import { Combobox } from '@/components/Combobox';
 import { evalExpr, exprRefs } from '@/lib/metricFormula';
 import { TimeSeriesPanel, type TSSeries, type TSMode } from '@/components/viz/TimeSeriesPanel';
 import { lazy, Suspense } from 'react';
@@ -316,9 +317,14 @@ function FilterEditor({ metric, filters, onChange }: {
             {LABEL_KEYS.map(key => <option key={key} value={key}>{key}</option>)}
           </select>
           <span className="mqe-chip-op">=</span>
-          <input list={`mqe-vals-${metric}-${k}`} value={v} autoFocus placeholder="value"
-            onChange={e => setV(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') add(); if (e.key === 'Escape') setAdding(false); }} />
-          <datalist id={`mqe-vals-${metric}-${k}`}>{vals.slice(0, 100).map(x => <option key={x} value={x} />)}</datalist>
+          {/* v0.9.1023 — native <datalist> → ev Combobox'ı. Ölçüler
+              globals.css `.mqe-chip-edit .cb-wrap` altında; çip
+              yüksekliği aynı. onBlurCommit BİLEREK yok: çipin açık bir
+              "Add" düğmesi var ve eski davranış da odaktan çıkışta
+              filtre EKLEMİYORDU. */}
+          <Combobox value={v} onChange={setV} options={vals.slice(0, 100)}
+            placeholder="value" autoFocus
+            onEnter={add} onEscape={() => setAdding(false)} />
           <button type="button" className="mqe-chip-add" onClick={add}>Add</button>
         </span>
       ) : (

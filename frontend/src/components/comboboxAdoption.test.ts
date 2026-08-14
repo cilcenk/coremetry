@@ -13,6 +13,9 @@
 // uygulamaz (datalist teknik olarak erişilebilirdir), jsdom açılır
 // listeyi RENDER ETMEZ, `make audit` JSX'e bakmaz.
 //
+// v0.9.1023 — satır içi düzenleyici İKİLİSİ listeden ÇIKTI (API
+// boşluğu v0.9.1022'de kapandı). Kalan dördü picker kolu.
+//
 // LİSTE DONMUŞ ve yalnız KÜÇÜLÜR. Kalan her dosya için gerekçe kayıtlı,
 // ve gerekçesi olan dosya native listeyi GERÇEKTEN taşımak zorunda:
 // biri dönüştürüp listeden çıkarmayı unutursa kapı bunu söyler. Aksi
@@ -42,6 +45,11 @@ const carries = (src: string) => src.includes(OPEN) || CONSUME.test(src);
 const CONVERTED = [
   'pages/settings/ClustersTab.tsx',
   'pages/settings/ChannelModal.tsx',
+  // v0.9.1023 — SATIR İÇİ düzenleyiciler. v0.9.1020'de "API boşluğu"
+  // gerekçesiyle burada DURULMUŞTU; boşluk v0.9.1022'de kapandı
+  // (autoFocus / disabled / onBlurCommit / onEscape).
+  'pages/Users.tsx',
+  'components/viz/MetricQueryEditor.tsx',
 ];
 
 // ——— Native listeyi taşımaya DEVAM eden dosyalar ————————————
@@ -58,16 +66,6 @@ const STILL_NATIVE: Record<string, string> = {
   'components/OperationPicker.tsx': 'picker kolu — sunucu-taraflı arama, ayrı dilim',
   'components/MetricNamePicker.tsx': 'picker kolu — sunucu-taraflı arama, ayrı dilim',
   'components/EnvPicker.tsx': 'picker kolu — sunucu-taraflı arama, ayrı dilim',
-
-  // API BOŞLUĞU — ikisi de SATIR İÇİ DÜZENLEYİCİ, bağımsız bir alan
-  // değil. Combobox bir ALAN atomu: `autoFocus` ile açılmayı, `disabled`
-  // ile kilitlenmeyi, `onBlur` ile commit etmeyi ve Esc'i ÇAĞIRANA
-  // bildirmeyi desteklemiyor (Esc'i kendi içinde yutup açılır listeyi
-  // kapatıyor). Bu dördü olmadan taşıma davranışı bozar: düzenleme
-  // modundan çıkış yolu kaybolur. Atomu genişletmek picker kolunu da
-  // etkileyen ayrı bir karar — bu yüzden burada DURULDU.
-  'pages/Users.tsx': 'satır içi takım düzenleyici — autoFocus/disabled/onBlur/Esc-iptal Combobox API\'sinde yok',
-  'components/viz/MetricQueryEditor.tsx': 'satır içi filtre çipi — autoFocus + Esc-iptal Combobox API\'sinde yok',
 };
 
 function walk(dir: string, acc: string[] = []): string[] {
@@ -101,12 +99,57 @@ describe('Combobox benimseme — sayfa kolu', () => {
     // `onChange` şart. Bir gün biri "yalnız listeden seç" diye araya
     // doğrulama koyarsa, datalist'ten taşınan davranış sessizce daralır.
     for (const f of CONVERTED) {
-      for (const call of read(f).match(/<Combobox\b[\s\S]{0,300}?\/>/g) ?? []) {
+      const src = read(f);
+      const calls = src.match(/<Combobox\b[\s\S]{0,600}?\/>/g) ?? [];
+      // Pencere PARİTESİ — v0.9.1023'te ölçüldü: eski 300 karakterlik
+      // pencere, Users.tsx'in yeni (uzun, çok satırlı) çağrısını hiç
+      // EŞLEŞTİREMİYORDU. Eşleşme yoksa döngü boş dönüyor ve testler
+      // sessizce hiçbir şey ölçmüyordu — kapı yeşil, kapsam sıfır.
+      // Bu assert kapsamın sayıyla eşleşmesini zorunlu kılıyor, yani
+      // yarın daha uzun bir çağrı yazılırsa kapı SUSMAK yerine düşer.
+      expect(calls.length, `${f}: ${src.match(/<Combobox\b/g)?.length} çağrı var ama ${calls.length} tanesi ölçüldü — pencereyi büyüt`)
+        .toBe(src.match(/<Combobox\b/g)?.length ?? 0);
+      for (const call of calls) {
         expect(call, `${f}: <Combobox> value vermiyor`).toMatch(/\bvalue=/);
         expect(call, `${f}: <Combobox> onChange vermiyor`).toMatch(/\bonChange=/);
         expect(call, `${f}: <Combobox> options vermiyor`).toMatch(/\boptions=/);
       }
     }
+  });
+
+  // ——— Satır içi düzenleyicilerin ÇIKIŞ yolu ————————————————
+  //
+  // Mutasyonla bulundu: `onEscape`i TeamEditor'dan silmek kapıyı
+  // yeşil bırakıyordu. Oysa v0.9.1022'nin tüm gerekçesi buydu — bir
+  // düzenleme MODUna girip çıkamamak, taşımanın bozacağı tek şeydi.
+  // Bağımsız bir alandan farkı: alan hep oradadır, moda girilmez.
+  const INLINE_EDITORS: Record<string, string[]> = {
+    // autoFocus: moda girince odak orada olmalı (tıkla-sonra-tıkla yok).
+    // onEscape: commit ETMEDEN çıkış. onBlurCommit: bu hücrenin
+    // belgelenmiş davranışı "blur'da kaydet".
+    'pages/Users.tsx': ['autoFocus', 'onEscape', 'onBlurCommit'],
+    // Çipin açık bir "Add" düğmesi var; blur'da EKLEMEK eski davranışı
+    // değiştirirdi — onBlurCommit bilerek YOK.
+    'components/viz/MetricQueryEditor.tsx': ['autoFocus', 'onEscape'],
+  };
+
+  it('satır içi düzenleyiciler odak + İPTAL yolunu taşıyor', () => {
+    for (const [f, props] of Object.entries(INLINE_EDITORS)) {
+      expect(CONVERTED, `${f} dönüşenler listesinde değil`).toContain(f);
+      const calls = read(f).match(/<Combobox\b[\s\S]{0,600}?\/>/g) ?? [];
+      expect(calls.length, `${f}: <Combobox> çağrısı bulunamadı`).toBeGreaterThan(0);
+      for (const p of props) {
+        expect(calls.some(c => new RegExp(`\\b${p}[=\\s/}]`).test(c)),
+          `${f}: satır içi düzenleyici ${p} taşımıyor`).toBe(true);
+      }
+    }
+  });
+
+  it('filtre çipi blur’da EKLEMİYOR — eski davranış korunuyor', () => {
+    const calls = read('components/viz/MetricQueryEditor.tsx')
+      .match(/<Combobox\b[\s\S]{0,600}?\/>/g) ?? [];
+    expect(calls.some(c => /\bonBlurCommit/.test(c)),
+      'çip blur’da filtre eklemeye başladı — datalist sürümü bunu yapmıyordu').toBe(false);
   });
 
   // ——— Donmuş liste ————————————————————————————————————————

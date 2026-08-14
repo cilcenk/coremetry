@@ -2353,6 +2353,25 @@ button.accent.copied {
   cursor: default;
 }
 
+/* v0.9.1023 — SATIR İÇİ Combobox düzenleyicileri (tablo hücresi,
+   filtre çipi). Atom bağımsız bir alan için boyutlanmıştır; bir satırın
+   içine girdiğinde satır yüksekliğini BÜYÜTÜR. Ölçüler bu yüzden
+   çağıranın kabına sabitleniyor — eski satır içi `style={{…}}`
+   bloklarının birebir karşılığı, ama artık token katmanında.
+
+   İki-sınıflı yazılış (`.team-edit .cb-wrap input`) BİLEREK: tek
+   sınıflı `.team-edit input`, `.cb-wrap input` ile aynı özgüllükte
+   (0,1,1) olurdu ve hangisinin kazanacağı dosya SIRASINA kalırdı —
+   bir gün biri blokları taşısa satır içi alan sessizce şişerdi. */
+.team-edit .cb-wrap { min-width: 132px; }
+.team-edit .cb-wrap input {
+  font-size: 11px;
+  padding: 2px 22px 2px 6px;
+  font-family: ui-monospace, SFMono-Regular, monospace;
+}
+.mqe-chip-edit .cb-wrap { width: 112px; }
+.mqe-chip-edit .cb-wrap input { width: 100%; padding-right: 20px; }
+
 /* v0.8.383 — global env picker (Topbar, next to the range picker).
    Inherits the base input/select tokens; sized to match .trp-btn so
    the two controls read as one group. */
@@ -3269,6 +3288,17 @@ thead th:hover .th-remove { opacity: 1; }
   /* Kontroller + tablo yoğunluğu */
   .controls { gap: 6px; }
   .controls input, .controls select { min-width: 0; }
+
+  /* v0.9.1023 — satır içi düzenleyiciler ve DOKUNMA HEDEFİ (D2, 36px).
+     Masaüstünde bu alanlar 11px/2px dolgu ile ~19px: fare için doğru,
+     parmak için WCAG 2.5.8'in 24px tabanının bile altında. Kural yalnız
+     BURADA yaşamak zorunda — masaüstünde min-height vermek düzenlenen
+     satırı büyütür ve tablo "redesign" edilmiş gibi zıplar. Dar ekranda
+     satır zaten yüksek, dolayısıyla büyüme görünmez.
+     Dolgu DİKEY büyütüyor (yükseklik min-height'tan geliyor), yani
+     yazı tipi ve yatay ölçüler değişmiyor. */
+  .team-edit .cb-wrap input,
+  .mqe-chip-edit .cb-wrap input { min-height: 36px; }
 
   /* D6.4 (v0.9.1001) — KATLANIR filtre barı.
      Sınıfların masaüstü kuralı YOK ve elemanları da yalnız dar ekranda

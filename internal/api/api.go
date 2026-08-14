@@ -1146,6 +1146,11 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST   /api/copilot/explain-incident/{id}", s.copilotExplainIncident)
 	mux.HandleFunc("POST   /api/copilot/explain-anomaly/{id}", s.copilotExplainAnomaly)
 	mux.HandleFunc("POST   /api/copilot/explain-service", s.copilotExplainServiceHealth)
+	// v0.9.1031 — ServiceCharts AI çekmecesi (onaylı mockup). explain-service
+	// (AI triage) DURUYOR: guided chat'in service-health öznesi onu kullanır.
+	// Bu yüzey grafiklere özgü ve daha geniş kanıt taşır; ai_calls'ta
+	// "explain-charts" olarak AYRI görünür.
+	mux.HandleFunc("POST   /api/copilot/explain-charts", s.copilotExplainCharts)
 	mux.HandleFunc("POST   /api/copilot/runbook/{id}", s.copilotRunbook)
 	mux.HandleFunc("POST   /api/copilot/compare-traces", s.copilotCompareTraces)
 	mux.HandleFunc("POST   /api/copilot/deploy-impact", s.copilotDeployImpact)

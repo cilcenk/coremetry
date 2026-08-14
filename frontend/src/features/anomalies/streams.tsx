@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
-import { Card, Badge, Row, Button, MenuItem } from '@/components/ui';
+import { Badge, Button, Card, MenuItem, Row, useConfirm } from '@/components/ui';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { ClusterChips } from '@/components/ClusterChips';
@@ -41,6 +41,7 @@ import type {
 // Returns a single render block — the consumer wraps it in a Topbar
 // + #content if used as a top-level page.
 export function AnomalyStreams() {
+  const confirm = useConfirm();
   const { user } = useAuth();
   // Editor+ can mute/unmute; viewers see the silence chips and
   // anomaly cards read-only (invariant #7). The backend enforces
@@ -221,6 +222,7 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
   onUnmuteAll: (ids: string[]) => void;
   canEdit: boolean;
 }) {
+  const confirm = useConfirm();
   if (!items || items.length === 0) return null;
   return (
     <div style={{
@@ -237,8 +239,14 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
       </span>
       {canEdit && items.length > 1 && (
         <Button variant="ghost" size="sm"
-          onClick={() => {
-            if (window.confirm(`Unmute all ${items.length} silences?`)) {
+          onClick={async () => {
+            if (await confirm({
+              title: 'Tüm susturmalar kaldırılsın mı?',
+              body: <>Aktif <b>{items.length}</b> susturma kaydı silinecek ve bu
+                anomaliler uyarı akışına GERİ AÇILACAK.</>,
+              confirmLabel: `${items.length} susturmayı kaldır`,
+              danger: true,
+            })) {
               onUnmuteAll(items.map(s => s.id));
             }
           }}

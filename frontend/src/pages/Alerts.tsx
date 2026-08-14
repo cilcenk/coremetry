@@ -90,8 +90,13 @@ export default function AlertsPage() {
     }
     const name = window.prompt('Save preset as:', draft.name || '');
     if (!name) return;
-    const wantShared = isAdmin
-      && window.confirm(`Save "${name}" as a team-shared preset?\n\nOK = visible to everyone in the org\nCancel = personal only`);
+    const wantShared = isAdmin && await confirm({
+      title: 'Preset kimlere görünsün?',
+      body: <><b>{name}</b> preset’i kaydediliyor. <b>Takıma açık</b> seçilirse
+        organizasyondaki herkes görür; <b>yalnız bana</b> seçilirse sadece sen.</>,
+      confirmLabel: 'Takıma açık kaydet',
+      cancelLabel: 'Yalnız bana',
+    });
     try {
       // Strip the per-rule `service` field so the preset is
       // reusable across services. The operator can re-pick a

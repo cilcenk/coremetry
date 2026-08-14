@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { QueryErrorInline } from '@/components/QueryError';
 import { useUpdateAlertRule, useDisableAlertRule } from '@/lib/queries';
 import { api } from '@/lib/api';
@@ -25,6 +25,7 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
   rules: AlertRule[] | undefined;
   onEditFromSuggestion: (draft: Partial<AlertRule>, ruleId: string) => void;
 }) {
+  const confirm = useConfirm();
   // Noisy-rules report (v0.5.131). 24h window by default; server
   // caches the heavy GROUP BY for 5 min so a fleet of operators
   // hitting /alerts at the same time shares one round-trip.
@@ -132,7 +133,14 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
   const disableSelected = async () => {
     if (selected.size === 0) return;
     const ids = Array.from(selected);
-    if (!confirm(`Disable ${ids.length} alert rule${ids.length === 1 ? '' : 's'}?\n\nThey can be re-enabled from the rules list.`)) {
+    if (!await confirm({
+      title: 'Seçili kurallar devre dışı bırakılsın mı?',
+      body: <><b>{ids.length}</b> alert kuralı susturulacak. Bu YUMUŞAK bir
+        kapatma: tanımlar duruyor, aşağıdaki listeden tek tıkla geri
+        açılabilir.</>,
+      confirmLabel: `${ids.length} kuralı kapat`,
+      danger: true,
+    })) {
       return;
     }
     setBulkBusy(true);

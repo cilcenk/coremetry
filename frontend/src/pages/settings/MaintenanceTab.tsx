@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
-import { Modal, Button, Stack } from '@/components/ui';
+import { Button, Modal, Stack, useConfirm } from '@/components/ui';
 import { api, type MaintenanceWindow } from '@/lib/api';
 import { Field, Row } from './shared';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -54,6 +54,7 @@ const WINDOW_COLS: DataTableColumn<MaintenanceWindow>[] = [
 // /incidents pages still show the full timeline.
 
 export function MaintenanceTab() {
+  const confirm = useConfirm();
   const [items, setItems] = useState<MaintenanceWindow[] | null | undefined>(undefined);
   const [showAll, setShowAll] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -68,7 +69,13 @@ export function MaintenanceTab() {
   useEffect(load, [showAll]);
 
   const del = async (id: string) => {
-    if (!confirm('Delete this maintenance window? Alerts will resume firing immediately.')) return;
+    if (!await confirm({
+      title: 'Bakım penceresi silinsin mi?',
+      body: <>Pencere kaldırılacak ve bastırılan uyarılar <b>ANINDA</b>
+        yeniden ateşlemeye başlayacak.</>,
+      confirmLabel: 'Pencereyi sil',
+      danger: true,
+    })) return;
     try {
       await api.deleteMaintenanceWindow(id);
       setMsg({ kind: 'ok', text: 'Window removed' });

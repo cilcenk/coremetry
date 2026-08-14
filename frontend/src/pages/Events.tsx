@@ -4,7 +4,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from '@/lib/queries';
 import { timeRangeToNs, tsMinute } from '@/lib/utils';
 import { useUrlRange } from '@/lib/useUrlRange';
@@ -74,6 +74,7 @@ const KIND_COLOURS: Record<string, string> = {
 //   • Annotations — the original operator-marked event markers.
 // Tab rides ?tab= so links land on the right list.
 export default function EventsPage() {
+  const confirm = useConfirm();
   const [range, setRange] = useUrlRange('24h');
   const [searchParams, setSearchParams] = useSearchParams();
   const tab = searchParams.get('tab') === 'annotations' ? 'annotations' : 'notifications';
@@ -236,6 +237,7 @@ function NotificationsTab({ from, to }: { from: number; to: number }) {
 
 // ── Annotations tab (the original operator-marked events) ───────────
 function AnnotationsTab({ from, to }: { from: number; to: number }) {
+  const confirm = useConfirm();
   const { user } = useAuth();
   const canDelete = user?.role === 'admin' || user?.role === 'editor';
 
@@ -258,7 +260,13 @@ function AnnotationsTab({ from, to }: { from: number; to: number }) {
 
   const onDelete = async (id: string) => {
     if (!canDelete) return;
-    if (!confirm('Delete this event marker?')) return;
+    if (!await confirm({
+      title: 'Olay işareti silinsin mi?',
+      body: <>Bu dağıtım/olay işareti tüm grafiklerin zaman ekseninden
+        kaldırılacak. Korelasyon bağlamı kaybolur.</>,
+      confirmLabel: 'İşareti sil',
+      danger: true,
+    })) return;
     setBusyDelete(id);
     try {
       await deleteEvent.mutateAsync(id);

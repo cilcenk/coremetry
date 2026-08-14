@@ -29,6 +29,7 @@ import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
 import { serviceHref } from '@/lib/serviceHref';
 import { PageShell } from '@/components/ui/PageShell';
+import { Pager } from '@/components/Pager';
 
 // v0.8.251 — the page's hand-rolled SortKey/NATURAL_DIR/SortTh server-sort
 // system moved into the shared DataTable primitive's serverSort mode. The
@@ -530,50 +531,17 @@ export default function ServicesPage() {
                 page. v0.9.345 made that untrue — they are HAVING predicates
                 now, so paging walks the matching services and the warning
                 would itself be the lie. Removed rather than reworded. */}
-            {/* v0.9.281 (operatör: "sayfa sayısı ve NEXT/Last butonları daha
-                belirgin olabilir") — şerit var(--text3)/12px idi ve 23 sayfalık
-                bir listede gezinmenin tek yolu olmasına rağmen gözden kaçıyordu.
-                Düzen ve sıra AYNEN duruyor; yalnız kontrast ve ölçü artıyor. */}
-            <span style={{ color: 'var(--text2)', fontSize: 12, marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
-              <span>
-                <b style={{ color: 'var(--text)' }}>{fmtNum(sorted?.length ?? 0)}</b> shown
-                {total != null ? <> · <b style={{ color: 'var(--text)' }}>{fmtNum(total)}</b> total</> : null}
-              </span>
-              {/* v0.7.44 — First + Last jumps (Last needs the opt-in total;
-                  disabled when unknown, e.g. under a cluster filter). */}
-              <Button variant="secondary" size="sm"
-                disabled={page === 0}
-                onClick={() => setPage(0)}
-                title="First page">
-                ⏮ First
-              </Button>
-              <Button variant="secondary" size="sm"
-                disabled={page === 0}
-                onClick={() => setPage(p => Math.max(0, p - 1))}>
-                ← Prev
-              </Button>
-              <span style={{
-                fontFamily: 'ui-monospace, monospace', fontSize: 12, fontWeight: 700,
-                color: 'var(--text)', background: 'var(--bg2)',
-                border: '1px solid var(--border)', borderRadius: 6, padding: '3px 9px',
-                whiteSpace: 'nowrap',
-              }} title={total != null
-                ? `Page ${page + 1} of ${Math.max(1, Math.ceil(total / PAGE_SIZE))} · ${PAGE_SIZE} per page`
-                : 'Total page count needs the distinct-service count, which a cluster or env filter disables'}>
-                {page + 1}{total != null ? ` / ${Math.max(1, Math.ceil(total / PAGE_SIZE))}` : ''}
-              </span>
-              <Button variant="secondary" size="sm"
-                disabled={!hasMore}
-                onClick={() => setPage(p => p + 1)}>
-                Next →
-              </Button>
-              <Button variant="secondary" size="sm"
-                disabled={total == null || page >= Math.ceil(total / PAGE_SIZE) - 1}
-                onClick={() => { if (total != null) setPage(Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)); }}
-                title={total != null ? `Last page (${Math.max(1, Math.ceil(total / PAGE_SIZE))})` : 'Last page unavailable with a cluster or env filter'}>
-                Last ⏭
-              </Button>
-            </span>
+            {/* v0.9.1015 — SAYFALAMA ŞERİDİ BURADAN ÇIKTI (K1+K2).
+                İki kusuru vardı ve ikincisi ağırdı:
+                (K1) Şerit filtre barının İÇİNDEYDİ, yani tablonun
+                ÜSTÜNDE. Operatör 50 satırı taradıktan sonra "sonraki"yi
+                aramak için yukarı geri dönüyordu.
+                (K2) `PageControls` ≤640px'te katlanıp bir "Filtreler"
+                popover'ına giriyor (v0.9.1001). Yani telefonda sayfalama
+                bir popover'ın ARKASINDA kalıyordu — 23 sayfalık bir
+                listede gezinmenin TEK yolu erişilemez durumdaydı.
+                Şerit artık tablonun altında, yapışkan ve paylaşılan
+                `Pager` sözleşmesinde (v0.9.1014). */}
           </PageControls>
         )}
 
@@ -783,18 +751,26 @@ export default function ServicesPage() {
                 </tbody>
               </table>
             </div>
-            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text3)' }}>
-              {sorted.length} services · sorted by <b style={{ color: 'var(--accent2)' }}>{sortBy}</b> {sortDir}
-              {/* v0.8.385 — empty-state honesty: the sparkline source
-                  (5m summary MV) has no env dimension, so under an env
-                  filter the thumbnails are omitted rather than showing
-                  all-environment shapes next to env-filtered numbers. */}
-              {env && (
-                <span title="Sparklines aggregate across all environments (their materialized view has no env dimension), so they are hidden while an environment filter is active.">
-                  {' '}· env <b style={{ color: 'var(--accent2)' }}>{env}</b> — sparklines hidden (all-environment source)
-                </span>
-              )}
-            </div>
+            {/* v0.9.1015 — paylaşılan sözleşme (v0.9.1014). `count`
+                bu sayfada KOŞULLU ve bu bilinçli: `total` opt-in
+                `?withTotal=1`den geliyor ve bir cluster/env filtresi
+                altında ham yol onu DÖNDÜRMÜYOR (v0.7.44). Sayı varsa
+                KESİN — offset sayfalama gerçek, yani son sayfa hem
+                türetilebilir hem ULAŞILABİLİR. Yoksa 'skip': uydurulmuş
+                bir denominatör basmaktansa gezinmeyi hasMore'a bırakıyoruz.
+                Eski şeritteki "⏮ First" düştü — sayfa girdisine "1" yazıp
+                Enter aynı işi yapıyor ve sözleşme tek bir ileri/geri
+                anatomisi tanımlıyor. */}
+            {total != null ? (
+              <Pager mode="offset" count="exact" total={total}
+                page={page} pageSize={PAGE_SIZE} onPage={setPage}
+                lastReachablePage={Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)}
+                extras={<ServicesPagerExtras shown={sorted.length} sortBy={sortBy} sortDir={sortDir} env={env} />} />
+            ) : (
+              <Pager mode="offset" count="skip"
+                page={page} pageSize={PAGE_SIZE} hasMore={hasMore} onPage={setPage}
+                extras={<ServicesPagerExtras shown={sorted.length} sortBy={sortBy} sortDir={sortDir} env={env} />} />
+            )}
           </>
         )}
       </PageShell>
@@ -896,5 +872,28 @@ function HealthDot({ health, reason, openProblems }: {
           ? '0 0 0 2px color-mix(in srgb, var(--warn) 18%, transparent)'
           : 'none',
       }} />
+  );
+}
+
+// ServicesPagerExtras — eski tablo-altı özet satırı, artık Pager'ın
+// `extras` yuvasında. v0.9.1015'e kadar sayfalama tablonun ÜSTÜNDE
+// (filtre barında) ve özet ALTINDA duruyordu: aynı sorunun iki yarısı
+// ekranın iki ucundaydı. Tek şeritte birleştiler.
+function ServicesPagerExtras({ shown, sortBy, sortDir, env }: {
+  shown: number; sortBy: string; sortDir: string; env: string;
+}) {
+  return (
+    <>
+      {shown} services · sorted by <b style={{ color: 'var(--accent2)' }}>{sortBy}</b> {sortDir}
+      {/* v0.8.385 — empty-state honesty: the sparkline source
+          (5m summary MV) has no env dimension, so under an env
+          filter the thumbnails are omitted rather than showing
+          all-environment shapes next to env-filtered numbers. */}
+      {env && (
+        <span title="Sparklines aggregate across all environments (their materialized view has no env dimension), so they are hidden while an environment filter is active.">
+          {' '}· env <b style={{ color: 'var(--accent2)' }}>{env}</b> — sparklines hidden (all-environment source)
+        </span>
+      )}
+    </>
   );
 }

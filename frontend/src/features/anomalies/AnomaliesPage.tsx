@@ -8,6 +8,7 @@ import { ServicePicker } from '@/components/ServicePicker';
 import { useAuth } from '@/components/AuthProvider';
 import { ChevronRight, ChevronDown } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { Pager } from '@/components/Pager';
 import { useServicesMetadata, keys } from '@/lib/queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, type UserRow } from '@/lib/api';
@@ -635,25 +636,18 @@ export default function ProblemsPage() {
             </table>
           </div>
         )}
+        {/* v0.9.1015 — paylaşılan sözleşme (v0.9.1014). Elle çizilmiş
+            şerit üç yerde ayrışıyordu: sağa yaslıydı (Gutenberg'e göre
+            "ileri" sağda olmalı ama şeridin KENDİSİ ortada/solda
+            başlamalı), yapışkan değildi (50 satırlık bir tabloda Next
+            ekranın dışında kalıyordu) ve İKİ butonu da ikincildi — yani
+            baskın eylem yoktu. Sayı burada KESİN: /api/anomalies grup
+            sayısını tam döndürüyor, tavan yok, dolayısıyla son sayfa hem
+            türetiliyor hem ulaşılabiliyor. */}
         {data && total > PAGE_SIZE && (
-          <div style={{
-            marginTop: 8, display: 'flex', alignItems: 'center', gap: 8,
-            justifyContent: 'flex-end', fontSize: 12,
-          }}>
-            <Button variant="secondary" size="sm"
-              disabled={page === 0}
-              onClick={() => setPage(p => Math.max(0, p - 1))}>
-              ← Prev
-            </Button>
-            <span style={{ color: 'var(--text3)' }}>
-              Page {page + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
-            </span>
-            <Button variant="secondary" size="sm"
-              disabled={(page + 1) * PAGE_SIZE >= total}
-              onClick={() => setPage(p => p + 1)}>
-              Next →
-            </Button>
-          </div>
+          <Pager mode="offset" count="exact" total={total}
+            page={page} pageSize={PAGE_SIZE} onPage={setPage}
+            lastReachablePage={Math.max(0, Math.ceil(total / PAGE_SIZE) - 1)} />
         )}
       </div>
       {problemParam && (

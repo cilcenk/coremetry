@@ -284,3 +284,70 @@ export function readPersistedWidths(
   if (!p.widths || typeof p.widths !== 'object') return {};
   return p.widths as Record<string, number>;
 }
+
+// ── fitColumnWidths — v0.9.1030 ─────────────────────────────────────────
+//
+// Operator-reported: /inbox'ta Assignee tarafında tablo "bozuluyor",
+// sayfa iframe gibi görünüyor. Kök: `.table-wrap.is-fit` masaüstünde
+// `overflow: visible` (D2.1'in yapışkan-başlık kazancı) ve
+// `table-layout:fixed` bir tablo, kolon genişliklerinin TOPLAMI
+// `width:100%`ü aşarsa yine de büyür. Sürüklenen genişlikler px olarak
+// kalıcı olduğundan geniş monitörde kaydedilen düzen dar laptopta
+// toplam > kap eder; taşma is-fit kabında değil `#content`te kaydırma
+// üretir — sol kenar kırpılır, sayfa "iframe" gibi iç-kaydırmalı olur
+// (v0.9.660 Users taşmasının yapısal hâli; o gün gelen çare yalnız
+// reset butonuydu).
+//
+// Sözleşme: kap yatay kaydırMIYORsa (is-fit, masaüstü) beyan+kalıcı px
+// genişlikler kabı AŞAMAZ. Aşan küme, minWidth tabanlarına saygılı
+// oransal küçültmeyle kaba sığdırılır. Sığıyorsa null döner — çağıran
+// beyan edilen genişlikleri AYNEN kullanır (davranış değişmez).
+// Ölçüm yoksa (containerPx ≤ 0: jsdom, ilk mount) null = fail-open.
+
+export interface FitColumnInput {
+  id: string;
+  /** Beyan/kalıcı px; sürüklenmemiş flex kolon için null ('auto'). */
+  px: number | null;
+  /** Küçültme tabanı (resize'ın kullandığı minWidth ?? DEFAULT_MIN). */
+  min: number;
+}
+
+export function fitColumnWidths(
+  cols: FitColumnInput[],
+  fixedExtraPx: number,
+  containerPx: number,
+): Record<string, number> | null {
+  if (!(containerPx > 0)) return null;
+  // 'auto' kolonlar kalan alanı alır ama en az min ister — o payı ayır.
+  const flexMin = cols.reduce((s, c) => s + (c.px == null ? c.min : 0), 0);
+  const avail = containerPx - fixedExtraPx - flexMin;
+  const fixed = cols.filter(c => c.px != null) as (FitColumnInput & { px: number })[];
+  const sum = fixed.reduce((s, c) => s + c.px, 0);
+  if (sum <= avail) return null;
+  // Tabanlar tek başına sığmıyorsa yapılabilecek en iyi şey tabanlar:
+  // taşma sınırlı kalır ve ≤1024 bandında D2'nin kaydırma ağı devreye
+  // girer zaten.
+  const minSum = fixed.reduce((s, c) => s + c.min, 0);
+  const out: Record<string, number> = {};
+  if (minSum >= avail) {
+    for (const c of fixed) out[c.id] = c.min;
+    return out;
+  }
+  // Oransal küçültme, taban kilitlemeli (waterfall): tabana çarpan
+  // kolon kilitlenir, kalan pay kilitsizlere yeniden oranlanır.
+  const locked = new Set<string>();
+  for (;;) {
+    const freePx = fixed.reduce((s, c) => s + (locked.has(c.id) ? 0 : c.px), 0);
+    const target = avail - fixed.reduce((s, c) => s + (locked.has(c.id) ? c.min : 0), 0);
+    const f = target / freePx;
+    let relocked = false;
+    for (const c of fixed) {
+      if (locked.has(c.id)) continue;
+      if (c.px * f < c.min) { locked.add(c.id); relocked = true; }
+    }
+    if (!relocked) {
+      for (const c of fixed) out[c.id] = locked.has(c.id) ? c.min : Math.floor(c.px * f);
+      return out;
+    }
+  }
+}

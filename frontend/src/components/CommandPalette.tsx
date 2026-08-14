@@ -117,6 +117,28 @@ const PAGES: Result[] = [
 
 const TRACE_ID_RE = /^[a-f0-9]{16,32}$/i;
 
+// ——— Görünür kapı kanalı (v0.9.1019, G1) ————————————————————————
+//
+// Palet ⌘K ile açılıyordu ve bu, bilmeyene GÖRÜNMEZ bir özellikti.
+// Topbar'a eklenen görünür arama kutusu aynı motoru açıyor: tek
+// davranış, iki tetik. Kanal modül düzeyinde çünkü tetik (Topbar) ile
+// palet (App kökü) kardeş — aralarında prop geçirmek App'ten aşağı
+// gereksiz bir kablo çekerdi.
+type PaletteOpener = () => void;
+const paletteOpeners = new Set<PaletteOpener>();
+
+/** Görünür kapıdan (Topbar arama kutusu) paleti açar. */
+export function openCommandPalette() {
+  // Birden fazla palet mount edilmiş olsaydı hepsi açılırdı; uygulama
+  // tek mount ediyor (App kökü) ve `Set` bunu zaten idempotent tutuyor.
+  paletteOpeners.forEach(fn => fn());
+}
+
+function subscribeOpenPalette(fn: PaletteOpener): () => void {
+  paletteOpeners.add(fn);
+  return () => { paletteOpeners.delete(fn); };
+}
+
 export function CommandPalette() {
   const navigate = useNavigate();
   // v0.9.855 — pivot href'leri operatörün BAKTIĞI pencereyi taşısın diye
@@ -210,6 +232,19 @@ export function CommandPalette() {
       resetState();
     },
   }], []);
+
+  // v0.9.1019 (G1) — DIŞARIDAN açma kanalı. Topbar'daki görünür arama
+  // kutusu bu paleti açıyor; palet `open` durumunu kendi içinde tuttuğu
+  // için dışarıya tek bir abonelik dikişi gerekiyordu.
+  //
+  // Neden sentetik ⌘K klavye olayı DEĞİL: o, kayıt defterinin
+  // `evenInInputs` / kapsam / Esc-katmanı arbitrajını taklit etmeye
+  // çalışmak olurdu ve taklit ilk kenar vakada ayrışır. Bu dikiş
+  // paletin KENDİ açma yolunu çağırıyor — tek davranış, iki tetik.
+  useEffect(() => subscribeOpenPalette(() => {
+    setOpen(true);
+    resetState();
+  }), []);
 
   // v0.9.950 (E2/Ö28) — Esc KATMAN yığınında.
   //

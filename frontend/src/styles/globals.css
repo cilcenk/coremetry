@@ -396,6 +396,54 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
 }
 #topbar h1 { font-size: 15px; font-weight: 600; flex: 1; min-width: 0;
              overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ——— Global aramanın görünür kapısı (v0.9.1019, G1) ———————————————
+   Mockup: artifact 665d2658 (operatör onayı 2026-08-14).
+
+   Bir arama alanı gibi GÖRÜNÜR ama `<button>`dur — tık paleti açar,
+   yazma paletin kendi girdisinde olur (gerekçe: TopbarSearch.tsx).
+   Bu yüzden taban `button` kuralının dolu accent zeminini burada
+   bütünüyle geri almak gerekiyor; `.tb-search` (0,1,0) taban
+   `button` (0,0,1) kuralını ve telefon katmanının dolgu
+   override'ını özgüllükle yeniyor. */
+.tb-search {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 auto; max-width: 520px; min-width: 0;
+  height: 34px; box-sizing: border-box;
+  /* Zemin `--bg2` — depodaki GERÇEK input yüzeyi (`input, select`
+     aynı token). Mockup burada `--bg0` gösteriyordu ama o bu depoda
+     SAYFA zeminine ayrılmış (bgZeroIsPageOnly kapısı, v0.9.978):
+     topbar `--bg1` üstünde `--bg0` bir "sayfa deliği" olurdu. Kutu
+     zaten bir input gibi okunmalı, dolayısıyla input tokeni doğru
+     cevap — mockup'ın NİYETİ (çukur, girilebilir yüzey) korunuyor. */
+  background: var(--bg2); color: var(--text3);
+  border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 0 10px; font-family: inherit; text-align: left;
+  /* Metin imleci: kutu bir arama alanı gibi OKUNUYOR, imleç de öyle
+     davranmalı — `pointer` burada "bu bir düğme" der ve yanıltır. */
+  cursor: text;
+  transition: border-color .12s, box-shadow .12s, background .12s;
+}
+.tb-search:hover:not(:disabled) { border-color: var(--text3); }
+/* Odak halkası `:focus-visible`ta: klavyeyle gelen görür, fareyle
+   tıklayan görmez (kutu zaten paleti açıp odağı devrediyor). */
+.tb-search:focus-visible {
+  outline: none;
+  background: var(--bg1); border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.tb-search-icon { flex: 0 0 auto; color: var(--text3); }
+.tb-search-ph {
+  flex: 1 1 auto; min-width: 0; font-size: 12.5px; color: var(--text3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tb-search-kbd {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 10px; color: var(--text3);
+  border: 1px solid var(--border); border-radius: var(--radius-xs);
+  padding: 1px 5px; background: var(--bg1);
+}
 /* v0.9.981 (D3.1) — `.page-body`, `#content`in İKİZİ. Neden gerekli:
    `/inbox?problem=` ve `/problems?problem=` açıkken sayfa liste kabını
    UNMOUNT ETMİYOR (`display:none` ile saklıyor — facet/seçim/scroll
@@ -3189,6 +3237,22 @@ thead th:hover .th-remove { opacity: 1; }
 @media (max-width: 640px) {
   /* Kabuk — hamburger payı (Sidebar off-canvas'a bu eşikte geçiyor). */
   #topbar { padding: 10px 12px 10px 56px; gap: 6px; flex-wrap: wrap; row-gap: 6px; }
+
+  /* G2 (v0.9.1019) — telefonda arama KENDİ satırında ve tam genişlik.
+     `flex-basis: 100%` sarmalı zorluyor: başlık üstte, arama hemen
+     altında tam genişlik. Mockup'ın telefon çerçevesindeki davranış.
+
+     Bu dalganın asıl kazancı: paletin 10 rotası telefonda ERİŞİLEBİLİR
+     oluyor. ⌘K bir telefonda basılamaz, yani global arama dar ekranda
+     yalnız "keşfedilemez" değil TAMAMEN ulaşılamazdı (C2).
+
+     44px, D2'nin 36px TABANININ üstünde — taban bir alt sınır, tavan
+     değil; birincil gezinme hedefi için Apple HIG ölçüsü doğru yer. */
+  .tb-search { flex-basis: 100%; max-width: none; height: 44px; }
+  /* İpuçları düşüyor: `/` ve ⌘K'nın ikisi de fiziksel klavye
+     gerektiriyor, yani telefonda öğretecek bir şey yok — yalnız yer
+     yiyorlardı. Davranış değişmiyor. */
+  .tb-search-kbd { display: none; }
   #content, .page-body { padding: 12px; }
 
   /* D2.6 (M2) — topbar bütçesi 390px'te 322px, tüketim ≈434px ve

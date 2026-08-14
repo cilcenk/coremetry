@@ -4,6 +4,7 @@ import { LangToggle } from './LangToggle';
 import { DensityToggle } from './DensityToggle';
 import { ThemeToggle } from './ThemeToggle';
 import { LiveTicker } from './LiveTicker';
+import { TopbarSearch } from './TopbarSearch';
 import type { TimeRange } from '@/lib/types';
 
 // `range` is optional — pages that aren't time-bound (e.g. /users) omit it
@@ -30,6 +31,14 @@ export function Topbar({ title, range, onRangeChange, showEnv, envApplies }: {
   return (
     <div id="topbar">
       <h1>{title}</h1>
+      {/* v0.9.1019 (G1) — global aramanın GÖRÜNÜR kapısı.
+          Öncelik sırası dar topbar'da şu: başlık ezilir (`h1` zaten tek
+          esneyebilen eleman, D2.6), sonra arama kutusunun kısayol
+          ipuçları düşer, sonra yer tutucu metni kısalır. Range/env/live
+          hiç dokunulmuyor — onlar sayfanın SORGUSUNU değiştiriyor,
+          arama yalnız gezinme. Bir operatörün yanlışlıkla pencereyi
+          daraltması, arama kutusunu kaybetmesinden pahalı. */}
+      <TopbarSearch />
       {showEnv && !(range && onRangeChange) && <EnvPicker applies={envApplies} />}
       {range && onRangeChange && (
         <>

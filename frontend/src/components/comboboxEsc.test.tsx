@@ -225,6 +225,74 @@ describe('Combobox — onBlurCommit', () => {
   });
 });
 
+// ─── v0.9.1024 · sunucu-taraflı listeler ──────────────────────────
+describe('Combobox — serverFiltered', () => {
+  // Kaynak taraması "picker prop'u GEÇİYOR mu" sorusunu cevaplıyor;
+  // bu describe "atom prop'a UYUYOR mu" sorusunu. Mutasyon farkı
+  // ortaya çıkardı: atomdaki erken dönüşü silmek hiçbir kapıyı
+  // kızdırmıyordu — yani prop geçilip YOK SAYILABİLİRDİ.
+  it('joker sorguda listeyi BOZMAZ (sunucu ne döndüyse o)', () => {
+    // Gerçek vaka: picker'lar `pay*`, `*pay*`, `p?y` destekliyor ve
+    // sunucu doğru cevabı döndürüyor. İstemci alt-dize süzgeci
+    // "pay*" dizesini "payment-api" İÇİNDE arar, bulamaz, liste
+    // boşalır — özellik yalnız onu kullanan operatör için ölür.
+    act(() => {
+      root.render(
+        <Combobox value="pay*" onChange={() => {}} serverFiltered
+          options={['payment-api', 'payments-worker']} />,
+      );
+    });
+    const input = host.querySelector('input') as HTMLInputElement;
+    focusIn(input);
+    expect(host.textContent).toContain('payment-api');
+    expect(host.textContent).toContain('payments-worker');
+  });
+
+  it('serverFiltered YOKKEN istemci süzgeci hâlâ çalışıyor', () => {
+    // Öncülü canlı tutar: yukarıdaki test, süzgecin varlığını
+    // ölçmeden anlamsız olurdu (her iki hâlde de yeşil geçerdi).
+    act(() => {
+      root.render(
+        <Combobox value="pay*" onChange={() => {}}
+          options={['payment-api', 'payments-worker']} />,
+      );
+    });
+    const input = host.querySelector('input') as HTMLInputElement;
+    focusIn(input);
+    expect(host.textContent).not.toContain('payment-api');
+    expect(host.textContent).toContain('No matches');
+  });
+
+  it('footer kesinti notunu listeye ekler', () => {
+    act(() => {
+      root.render(
+        <Combobox value="" onChange={() => {}} serverFiltered
+          options={['a', 'b']} footer="… +198 more — refine search" />,
+      );
+    });
+    const input = host.querySelector('input') as HTMLInputElement;
+    focusIn(input);
+    expect(host.textContent).toContain('+198 more');
+    // Not satırı TIKLANAMAZ olmalı — seçilebilir bir satır olsaydı
+    // operatör "… +198 more" dizesini servis adı olarak commit ederdi.
+    const rows = Array.from(host.querySelectorAll('[role="option"]'));
+    expect(rows.some(r => r.textContent?.includes('+198 more'))).toBe(false);
+  });
+
+  it('optionMeta satır sonuna etiket basar', () => {
+    act(() => {
+      root.render(
+        <Combobox value="" onChange={() => {}} serverFiltered
+          options={['http.server.duration']}
+          optionMeta={n => n === 'http.server.duration' ? 'ms · histogram' : undefined} />,
+      );
+    });
+    const input = host.querySelector('input') as HTMLInputElement;
+    focusIn(input);
+    expect(host.querySelector('.cb-meta')?.textContent).toBe('ms · histogram');
+  });
+});
+
 describe('Combobox — disabled / autoFocus', () => {
   it('disabled: input kilitli ve odak listeyi AÇMAZ', () => {
     const input = mountHarness({ value: 'alpha', disabled: true });

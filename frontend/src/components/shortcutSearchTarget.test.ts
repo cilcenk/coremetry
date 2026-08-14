@@ -56,18 +56,30 @@ describe('/traces — işaret KONULDU (Ö31 kapandı)', () => {
   });
 });
 
-describe('ServicePicker — opt-in kablosu', () => {
+// v0.9.1024 — KABLO BİR KATMAN AŞAĞI İNDİ. ServicePicker artık kendi
+// <input>'unu çizmiyor; ev Combobox'ını basıyor ve bayrağı ona
+// devrediyor. Kapı bu yüzden İKİ halkayı da ölçmek zorunda:
+// picker → atom (bayrak geçiyor mu) ve atom → DOM (nitelik basılıyor
+// mu). Yalnız eskisini (picker'ın içinde ham nitelik) arasaydı, kapı
+// taşımadan sonra ölçmeyi bırakır ve "yeşil" kalırdı — kapsamın göçte
+// erimesi, bu depoda tekrar eden bir sınıf.
+describe('ServicePicker → Combobox — opt-in kablosu', () => {
   const sp = read('components/ServicePicker.tsx');
+  const cb = read('components/Combobox.tsx');
 
-  it('bayrak input’a data-shortcut-search basar', () => {
-    expect(sp).toMatch(/shortcutSearch \? \{ 'data-shortcut-search': '' \}/);
+  it('picker bayrağı atoma DEVREDİYOR', () => {
+    expect(sp).toMatch(/shortcutSearch=\{shortcutSearch\}/);
   });
 
-  it('bayraksız picker işaret TAŞIMAZ — sayfa başına tek hedef', () => {
+  it('atom bayrağı input’a data-shortcut-search olarak basar', () => {
+    expect(cb).toMatch(/shortcutSearch \? \{ 'data-shortcut-search': '' \}/);
+  });
+
+  it('bayraksız alan işaret TAŞIMAZ — sayfa başına tek hedef', () => {
     // Koşulsuz basmak, bir sayfadaki HER picker'ı hedef yapardı ve
     // querySelectorAll ilkini seçerdi: yine DOM sırası kumarı.
-    expect(sp).not.toMatch(/data-shortcut-search=""/);
-    expect(sp).toMatch(/\.\.\.\(shortcutSearch \?/);
+    expect(cb).not.toMatch(/data-shortcut-search=""/);
+    expect(cb).toMatch(/\.\.\.\(shortcutSearch \?/);
   });
 });
 

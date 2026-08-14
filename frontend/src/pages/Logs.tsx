@@ -17,6 +17,7 @@ import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
+import { Pager } from '@/components/Pager';
 import { ShareButton } from '@/components/ShareButton';
 import { buildKibanaURL, buildKQLFromFilter } from '@/lib/kibanaLink';
 import type { KibanaSettings } from '@/lib/types';
@@ -1128,41 +1129,39 @@ function LogsInner() {
                 IntersectionObserver auto-load can layer on once the
                 behaviour settles (and it would multiply backend
                 queries, which the ES-usage constraint caps). */}
+                {/* v0.9.1016 — paylaşılan sözleşme (v0.9.1014), cursor
+                    kipi. Kip bir görünüm tercihi DEĞİL veri modeli beyanı:
+                    bu sayfa keyset imleçle yürüyor, "sayfa 7'ye git"
+                    ifade edilemez (7'nin imleci ancak 6 çekilerek bilinir)
+                    ve satırlar BİRİKİYOR. v0.8.260'ın Back/Next'i
+                    "Load more" ile değiştirme kararı korunuyor —
+                    sözleşme onu geri almıyor, tarif ediyor.
+                    v0.9.288 — "of 10,000" ES tarafında YALANDI:
+                    track_total_hits 10.000'de duruyor (milyar-belge
+                    ölçeğinde her eşleşmeyi saymak tam da kaçındığın şey),
+                    ES relation "gte" dönüyor. Aynı etiket ClickHouse'ta
+                    gerçek bir count(). Backend hangisi olduğunu söylüyor;
+                    artık "+"yı `count` beyanı basıyor. */}
             {!live && (
-              <div className="row" style={{
-                display: 'flex', alignItems: 'center', gap: 10,
-                marginTop: 10, fontSize: 12, color: 'var(--text3)',
-              }}>
-                {data.nextCursor && (
-                  <Button variant="secondary" size="sm"
-                    onClick={() => { if (data.nextCursor) setCursor(data.nextCursor); }}
-                    title="Fetch the next page and append it below" loading={staticQ.isFetching}>
-                    ↓ Load more
-                  </Button>
-                )}
-                {/* v0.9.288 — "of 10,000" was a lie on the ES backend:
-                    track_total_hits is capped at 10,000 (counting every
-                    matching doc is exactly what you avoid at billion-doc
-                    scale), so ES answers relation "gte" and stops. The
-                    same label from ClickHouse is a real count(). The
-                    backend now says which, and the "+" says it here. */}
-                <span title={staticQ.data?.totalIsLowerBound
-                  ? 'Elasticsearch stops counting at 10,000 matches — the true total is at least this, possibly far more. Narrow the window or the filters for an exact figure.'
-                  : undefined}>
-                  showing {logs.length.toLocaleString()} of {total.toLocaleString()}
-                  {staticQ.data?.totalIsLowerBound ? '+' : ''}
-                </span>
-                {/* v0.9.292 — the accumulation window slid forward. Rows
-                    leaving the top without a word is the silent-loss
-                    class this page keeps producing; say it and say the
-                    remedy. */}
-                {accDropped > 0 && (
-                  <span style={{ color: 'var(--warn)' }}
-                    title={`"Load more" keeps at most ${ACC_CAP.toLocaleString()} rows in the page so it stays responsive. ${accDropped.toLocaleString()} earlier (newer) rows have scrolled out of the buffer — narrow the time range or the filter to see a slice that fits.`}>
-                    · {accDropped.toLocaleString()} earlier rows dropped from the buffer
-                  </span>
-                )}
-              </div>
+                <Pager mode="cursor"
+                  count={staticQ.data?.totalIsLowerBound ? 'capped' : 'exact'}
+                  total={total}
+                  loaded={logs.length}
+                  hasMore={!!data.nextCursor}
+                  onMore={() => { if (data.nextCursor) setCursor(data.nextCursor); }}
+                  loading={staticQ.isFetching}
+                  extras={
+                    /* v0.9.292 — the accumulation window slid forward. Rows
+                       leaving the top without a word is the silent-loss
+                       class this page keeps producing; say it and say the
+                       remedy. */
+                    accDropped > 0 ? (
+                      <span style={{ color: 'var(--warn)' }}
+                        title={`"Load more" keeps at most ${ACC_CAP.toLocaleString()} rows in the page so it stays responsive. ${accDropped.toLocaleString()} earlier (newer) rows have scrolled out of the buffer — narrow the time range or the filter to see a slice that fits.`}>
+                        {accDropped.toLocaleString()} earlier rows dropped from the buffer
+                      </span>
+                    ) : undefined
+                  } />
             )}
           </>
         )}

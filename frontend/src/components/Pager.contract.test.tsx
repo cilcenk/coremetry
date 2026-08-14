@@ -16,7 +16,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
-import { Pager, countLabel, derivedLastPage, type PagerCount } from './Pager';
+import { Pager, countLabel, cursorProgress, derivedLastPage, type PagerCount } from './Pager';
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -100,6 +100,21 @@ describe('Pager — sayının ANLAMI (saf)', () => {
   it('pageSize 0 bölme hatası üretmiyor', () => {
     expect(derivedLastPage('exact', 100, 0)).toBeNull();
   });
+
+  const PROGRESS: Array<{ loaded?: number; count: PagerCount; total?: number; out: string | null }> = [
+    { loaded: 200,  count: 'capped', total: 10000, out: 'showing 200 of 10,000+' },
+    { loaded: 200,  count: 'exact',  total: 10000, out: 'showing 200 of 10,000' },
+    { loaded: 200,  count: 'approx', total: 10000, out: 'showing 200 of ~10,000' },
+    { loaded: 200,  count: 'skip',   total: undefined, out: 'showing 200' },
+    { loaded: undefined, count: 'exact', total: 500, out: '500' },
+    { loaded: undefined, count: 'skip', total: undefined, out: null },
+    { loaded: 0,    count: 'skip',   total: undefined, out: 'showing 0' },
+  ];
+  for (const c of PROGRESS) {
+    it(`ilerleme: loaded=${String(c.loaded)} ${c.count}/${String(c.total)} → ${String(c.out)}`, () => {
+      expect(cursorProgress(c.loaded, c.count, c.total)).toBe(c.out);
+    });
+  }
 });
 
 describe('Pager — offset kipi', () => {
@@ -209,6 +224,22 @@ describe('Pager — cursor kipi', () => {
   it('tavanlı sayı "+" ile beyan ediliyor', () => {
     render(<Pager mode="cursor" count="capped" total={10000} hasMore onMore={() => {}} />);
     expect(document.body.textContent).toContain('10,000+');
+  });
+
+  // v0.9.1016 — ilerleme cümlesi. v0.9.288 olayının çivisi: /logs
+  // "showing 200 of 10,000" basıyordu ve o 10.000 ES'in
+  // track_total_hits TAVANIYDI, gerçek sayı değil.
+  it('ilerleme cümlesi tavanı GİZLEMİYOR', () => {
+    render(<Pager mode="cursor" count="capped" total={10000} loaded={200}
+      hasMore onMore={() => {}} />);
+    expect(document.body.textContent).toContain('showing 200 of 10,000+');
+  });
+
+  it('biten listede ilerleme cümlesi TEKRARLANMIYOR', () => {
+    render(<Pager mode="cursor" count="exact" total={1234} loaded={1234}
+      hasMore={false} onMore={() => {}} />);
+    expect(document.body.textContent).not.toContain('showing');
+    expect(document.body.textContent).toContain('1,234');
   });
 });
 

@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
+import { Pager } from '@/components/Pager';
 import { ServicePicker } from '@/components/ServicePicker';
 import { MetricQueryEditor } from '@/components/viz/MetricQueryEditor';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -393,21 +394,27 @@ export default function MetricsPage() {
                   {/* v0.9.832 — "refine your search" ARTIK TEK SEÇENEK DEĞİL.
                       Sunucu prefix'i sayfa sayfa büyür; tavana (1000)
                       varınca buton kaybolur ve daraltma tavsiyesi kalır. */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 4px', color: 'var(--text3)', fontSize: 11 }}>
-                    {nextLimit !== null && (
-                      <Button variant="secondary" size="sm"
-                        onClick={() => setLimit(nextLimit)}
-                        title={`Fetch the next ${CATALOG_PAGE} catalogue rows`} loading={catalogQ.isFetching}>
-                        ↓ Load more
-                      </Button>
-                    )}
-                    <span>{catalogCountLabel(total, catalog.length)}</span>
-                    {hasMore && nextLimit === null && (
+                  {/* v0.9.1016 — paylaşılan sözleşme (v0.9.1014), cursor
+                      kipi. v0.9.832'nin kararı korunuyor: sunucu prefix'i
+                      sayfa sayfa büyüyor, "refine your search" TEK seçenek
+                      değil. Tavana varınca `hasMore` false'a düşüyor ve
+                      dürüst son `doneLabel` ile daraltma tavsiyesine
+                      dönüyor — buton kaybolduğunda operatör NEDEN
+                      kaybolduğunu okuyor.
+                      Sayı `count`/`loaded` üzerinden atomdan geliyor;
+                      şeritteki `catalogCountLabel` kopyası kalktı (aynı
+                      bilgi başlıkta zaten etiketli hâliyle duruyor). */}
+                  <Pager mode="cursor" count="exact" total={total}
+                    loaded={catalog.length}
+                    hasMore={nextLimit !== null}
+                    onMore={() => { if (nextLimit !== null) setLimit(nextLimit); }}
+                    loading={catalogQ.isFetching}
+                    moreLabel={`↓ Load more`}
+                    doneLabel={hasMore ? (
                       <span style={{ color: 'var(--warn)' }}>
-                        · page cap reached — narrow with search or a service to see the rest
+                        page cap reached — narrow with search or a service to see the rest
                       </span>
-                    )}
-                  </div>
+                    ) : undefined} />
                 </>
               )}
           </>

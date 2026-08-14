@@ -1277,7 +1277,13 @@ function TracesPageInner() {
                 "Next" ekran dışında kalıyordu) ve sayı hem KESİN hem
                 sunulabilir tavanın içindeyse "Last" çiziliyor.
                 Gerekçe + sınır: lib/traceReach.ts */}
-            <Pager page={page} pageSize={50} hasMore={hasMore} onPage={setPage}
+            {/* v0.9.1014 — count="skip": Pager'a total GEÇMİYOR (yukarıdaki
+                v0.9.638 gerekçesi). Sayı `extras` içinde bir ETİKET olarak
+                yaşıyor ve tavanlı olduğunda "+" ile öyle olduğunu söylüyor;
+                gezinme hasMore + lastReachablePage üzerinde. Artık bu bir
+                yorum değil, tipin kendisi: 'skip' `total`ı YASAKLIYOR. */}
+            <Pager mode="offset" count="skip"
+              page={page} pageSize={50} hasMore={hasMore} onPage={setPage}
               stickyBottom
               lastReachablePage={lastReachablePage(countRes?.value, countRes?.atLeast ?? false, 50)}
               extras={

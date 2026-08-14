@@ -1,56 +1,159 @@
 import { useEffect, useState, FormEvent } from 'react';
+import { Button } from './ui/Button';
 
-// Pager — shared "← Prev / page input / Next →" strip used at the
-// bottom of long tables (/traces, /logs, future /metrics views).
+// Pager — depodaki TEK "daha fazla satır nasıl gelir" yüzeyi.
 //
-// Behaviour:
-//   - Page input is 1-based for the user, 0-based for the caller.
-//     Internal state caches the typed value so the user can edit
-//     freely without each keystroke firing a fetch; submit on
-//     Enter (or input blur) commits the new page number.
-//   - When `total` is known we cap the page input at the last page.
-//     When it isn't (skip-count mode on /traces) we trust hasMore
-//     and accept any positive number.
-//   - `extras` slot lets the caller drop "showing N+ · sorted by X"
-//     style metadata in the middle of the strip without losing the
-//     centred Page-input layout.
-export function Pager({
-  page, pageSize, total, hasMore, onPage, extras, stickyBottom, lastReachablePage,
-}: {
+// ——— SÖZLEŞME (v0.9.1014) ————————————————————————————————————
+//
+// v0.9.1013'e kadar atomun tek tüketicisi /traces'ti; diğer beş
+// sayfalama yüzeyi elle çizilmişti ve her biri kendi kararını
+// vermişti — konum (tablo altı / tablo üstü / ortada), vurgu (Next
+// birincil mi ikincil mi), sayının ANLAMI (kesin mi tavanlı mı),
+// commit anı (Enter mı blur mu). Beş yüzey, beş cevap.
+//
+// İki prop ZORUNLU ve ikisi de tip düzeyinde (Button.variant
+// hilesinin aynısı — v0.9.1005): statik tarama tahmin eder, `tsc`
+// ZORLAR.
+//
+//   mode  — 'offset' (← Prev / sayfa girdisi / Next →) ya da
+//           'cursor' (↓ daha fazla yükle, satırlar BİRİKİR).
+//           Bu bir görünüm tercihi değil bir VERİ modeli beyanı:
+//           keyset imleçli bir yüzeyde "sayfa 7'ye git" ifade
+//           edilemez, çünkü 7'nin imleci ancak 6 çekilerek bilinir.
+//
+//   count — `total` sayısının ne DEMEK olduğu. Depodaki en pahalı
+//           sessiz yalan buradaydı: v0.9.288'de "of 10,000" ES'in
+//           `track_total_hits` tavanıydı, gerçek sayı değil; v0.9.638'de
+//           /traces total'ı Pager'a vermeyi BIRAKTI çünkü tavanlı bir
+//           sayı operatörü listenin ULAŞAMAYACAĞI sayfalara yolluyordu.
+//           Artık sayının anlamını beyan etmek zorunlu:
+//             'exact'  — kesin. YALNIZ bunda `total` son sayfayı türetir.
+//             'capped' — tavana dayandı; "N+" basılır, son sayfa TÜRETİLMEZ.
+//             'approx' — yaklaşık; "~N" basılır, son sayfa TÜRETİLMEZ.
+//             'skip'   — sayılmadı. `total` tip düzeyinde YASAK.
+//
+// ——— Konum ve vurgu ——————————————————————————————————————————
+//
+// Şerit tablonun ALTINDA ve yapışkan (`stickyBottom` varsayılan
+// true, v0.9.645: uzun listede "Next" ekranın dışında kalıyordu).
+// Gutenberg diyagonali gereği "ileri" eylemi SAĞDA ve şeritteki TEK
+// vurgulu kontrol o — Prev/Last ikincil. Bu zaten v0.9.645'te
+// alınmış bir karardı, artık sözleşmenin parçası.
+//
+// ——— "Son sayfa" tek anlam ————————————————————————————————————
+//
+// `lastReachablePage` açık kaçış kapısı olarak duruyor: çağıran hem
+// KESİN hem SUNULABİLİR bir son sayfa hesapladığında verir. Tavanlı
+// bir `total`dan asla türetilmez — v0.9.638'in kararı korunuyor,
+// artık `count` ile tip düzeyinde çivili.
+
+export type PagerMode = 'offset' | 'cursor';
+export type PagerCount = 'skip' | 'approx' | 'exact' | 'capped';
+
+// `skip` beyan eden bir yüzey `total` SMUGGLE EDEMEZ. Sayının anlamı
+// ile sayının varlığı tek bir tip kararına bağlanıyor.
+type CountDecl =
+  | { count: 'skip'; total?: never }
+  | { count: 'exact' | 'approx' | 'capped'; total?: number };
+
+interface PagerCommon {
+  extras?: React.ReactNode;
+  stickyBottom?: boolean;
+}
+
+interface OffsetOnly {
+  mode: 'offset';
   page: number;
   pageSize: number;
-  total?: number;
   hasMore?: boolean;
-  // v0.9.645 — sayfanın dibine yapış. Uzun listede "Next" ekranın
-  // dışında kalıyordu (operatör-bildirimli: "next butonu çok
-  // gözükmüyor, daha iyi bir yerde olabilir mi").
-  stickyBottom?: boolean;
-  // v0.9.645 — SON sayfaya atlama, YALNIZ ulaşılabilirse.
-  //
-  // `total`'dan türetilmiyor ve bu bilinçli: v0.9.638'de total'ı
-  // Pager'dan kestik çünkü MV yolunun aşama-1 kimlik bütçesi sınırlı
-  // ve ötesindeki sayfalar SUNULAMIYOR. Çağıran, sayının hem KESİN
-  // hem ulaşılabilir olduğunu doğruladığında bu değeri veriyor;
-  // vermezse Last butonu hiç çizilmiyor.
-  lastReachablePage?: number;
   onPage: (next: number) => void;
-  extras?: React.ReactNode;
-}) {
+  // YALNIZ hem kesin hem ulaşılabilir olduğunda verilir; verilmezse
+  // "Last" hiç çizilmez.
+  lastReachablePage?: number;
+}
+
+interface CursorOnly {
+  mode: 'cursor';
+  hasMore: boolean;
+  onMore: () => void;
+  loading?: boolean;
+  // Birikmiş satır sayısı — dürüst son için ("… yüklendi").
+  loaded?: number;
+  moreLabel?: string;
+  doneLabel?: React.ReactNode;
+}
+
+export type PagerProps = PagerCommon & CountDecl & (OffsetOnly | CursorOnly);
+
+// countLabel — sayının anlamını GÖRÜNÜR kılar. Tavanlı bir sayının
+// yanındaki "+" ve yaklaşık bir sayının önündeki "~" tesadüfi
+// tipografi değil: operatör "12.847 kayıt" ile "en az 12.847 kayıt"
+// arasındaki farkı bilmeden kapasite kararı veremez.
+export function countLabel(count: PagerCount, total: number | undefined): string | null {
+  if (count === 'skip' || total === undefined) return null;
+  const n = total.toLocaleString();
+  if (count === 'capped') return `${n}+`;
+  if (count === 'approx') return `~${n}`;
+  return n;
+}
+
+// derivedLastPage — son sayfayı YALNIZ kesin sayıdan türet.
+//
+// Bu fonksiyon ayrı ve saf, çünkü çivilenmesi gereken kural tam
+// olarak bu: v0.9.638'in olayı "tavanlı total son sayfayı sürdü"
+// idi ve o hata bir bileşenin içinde gömülü kaldığı sürece test
+// edilemezdi.
+export function derivedLastPage(
+  count: PagerCount, total: number | undefined, pageSize: number,
+): number | null {
+  if (count !== 'exact' || total === undefined || pageSize <= 0) return null;
+  return Math.max(0, Math.ceil(total / pageSize) - 1);
+}
+
+export function Pager(props: PagerProps) {
+  const { count, total, extras, stickyBottom = true } = props;
+  const cls = `pager${stickyBottom ? ' is-sticky-bottom' : ''}`;
+  const label = countLabel(count, total);
+
+  if (props.mode === 'cursor') {
+    const { hasMore, onMore, loading, loaded, moreLabel, doneLabel } = props;
+    return (
+      <div className={cls} data-pager-mode="cursor">
+        {hasMore ? (
+          <Button variant="primary" size="sm" onClick={onMore} loading={loading}>
+            {moreLabel ?? '↓ Load more'}
+          </Button>
+        ) : (
+          <span style={{ color: 'var(--text3)' }}>
+            {doneLabel ?? (loaded !== undefined
+              ? `penceredeki tüm eşleşmeler yüklendi (${loaded.toLocaleString()} satır)`
+              : 'tümü yüklendi')}
+          </span>
+        )}
+        {label && <span style={{ color: 'var(--text2)' }}>· {label}</span>}
+        {extras && <span style={{ color: 'var(--text2)' }}>· {extras}</span>}
+      </div>
+    );
+  }
+
+  return <OffsetPager {...props} cls={cls} label={label} />;
+}
+
+function OffsetPager({
+  page, pageSize, hasMore, onPage, lastReachablePage, count, total, extras, cls, label,
+}: PagerCommon & CountDecl & OffsetOnly & { cls: string; label: string | null }) {
   const [draft, setDraft] = useState(String(page + 1));
 
-  // Keep the input synced when the page changes via Prev/Next.
+  // Prev/Next ile sayfa değişince girdi senkron kalsın.
   useEffect(() => { setDraft(String(page + 1)); }, [page]);
 
-  const lastPage = total !== undefined ? Math.max(0, Math.ceil(total / pageSize) - 1) : null;
-  const atEnd = total !== undefined ? (page + 1) * pageSize >= total : !hasMore;
+  const lastPage = derivedLastPage(count, total, pageSize);
+  const atEnd = lastPage !== null ? page >= lastPage : !hasMore;
 
-  const submit = (e?: FormEvent) => {
+  const commit = (e?: FormEvent) => {
     if (e) e.preventDefault();
     const n = parseInt(draft, 10);
-    if (isNaN(n) || n < 1) {
-      setDraft(String(page + 1));
-      return;
-    }
+    if (isNaN(n) || n < 1) { setDraft(String(page + 1)); return; }
     let target = n - 1;
     if (lastPage !== null) target = Math.min(target, lastPage);
     target = Math.max(0, target);
@@ -59,19 +162,27 @@ export function Pager({
   };
 
   return (
-    <div className={`pager${stickyBottom ? ' is-sticky-bottom' : ''}`}>
-      <button className="sec" onClick={() => onPage(Math.max(0, page - 1))} disabled={page === 0}>
+    <div className={cls} data-pager-mode="offset">
+      <Button variant="secondary" size="sm"
+        onClick={() => onPage(Math.max(0, page - 1))} disabled={page === 0}>
         ← Prev
-      </button>
+      </Button>
 
       <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
         <span>Page</span>
-        <form onSubmit={submit} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+        <form onSubmit={commit} style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
           <input value={draft}
             onChange={e => setDraft(e.target.value)}
-            onBlur={() => submit()}
+            // Ö5 (v0.9.1014) — commit YALNIZ Enter'da. Öncesinde `onBlur`
+            // da commit ediyordu ve bu iki şekilde ısırıyordu: (a) yarım
+            // yazılmış bir sayı (operatör "12"yi silip "3" yazacakken
+            // sekmeye bastı) sessizce bir fetch tetikliyordu; (b) Tab ile
+            // şeritte gezinmek sayfa atlatıyordu. Blur artık GERİ ALIR —
+            // "yazdım ama onaylamadım" hâli kaybolmuş sayılır, uydurulmaz.
+            onBlur={() => setDraft(String(page + 1))}
             inputMode="numeric"
             aria-label="Go to page"
+            title="Enter ile git"
             style={{
               width: 56, textAlign: 'center', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace',
               fontVariantNumeric: 'tabular-nums', padding: '3px 6px',
@@ -80,19 +191,22 @@ export function Pager({
             <span style={{ color: 'var(--text3)' }}>/ {lastPage + 1}</span>
           )}
         </form>
+        {/* Tavanlı/yaklaşık sayı son sayfayı SÜRMEZ ama görünür kalır. */}
+        {lastPage === null && label && (
+          <span style={{ color: 'var(--text2)' }}>· {label}</span>
+        )}
         {extras && <span style={{ color: 'var(--text2)' }}>· {extras}</span>}
       </span>
 
-      {/* v0.9.645 — Next artık BİRİNCİL vurgulu: `sec` ile diğer
-          kontrollerden ayrışmıyordu ve uzun listede gözden kaçıyordu. */}
-      <button onClick={() => onPage(page + 1)} disabled={atEnd}>
+      {/* Gutenberg: ileri eylemi SAĞDA ve şeritteki TEK vurgulu kontrol. */}
+      <Button variant="primary" size="sm" onClick={() => onPage(page + 1)} disabled={atEnd}>
         Next →
-      </button>
+      </Button>
       {lastReachablePage !== undefined && lastReachablePage > page && (
-        <button className="sec" onClick={() => onPage(lastReachablePage)}
+        <Button variant="secondary" size="sm" onClick={() => onPage(lastReachablePage)}
           title={`Son sayfaya git (${lastReachablePage + 1})`}>
           Last ⇥
-        </button>
+        </Button>
       )}
     </div>
   );

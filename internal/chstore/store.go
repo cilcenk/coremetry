@@ -212,6 +212,20 @@ type Store struct {
 	// boot'ta probe true okur (ddl_defer.go'nun bilinçli sonucu).
 	hasProblemCmpCol bool
 
+	// hasTopoClusterCol — `topology_edges_5m` üstünde queue düğümünün
+	// messaging cluster'ını taşıyan `cluster` kolonu var mı (v0.9.1025).
+	// hasProblemCmpCol ile aynı sınıf ve aynı iki-boot gerçeği: küme
+	// kipinde migrate DDL'i ertelendiği için kolonu EKLEYEN boot bu
+	// probe'u false okur (v0.9.614 / ddl_defer.go).
+	//
+	// false hâli GÜVENLİ yön olacak şekilde tasarlandı: yazma pass'leri
+	// kolonu INSERT kolon listesinden düşürür (aksi hâlde her topoloji
+	// bucket'ı code 47 ile ölür ve graf tamamen durur), okuma yolu
+	// cluster'ı boş görür ve kuyruk düğümü v0.9.972'nin daraltılmış
+	// KATALOG köprüsünde kalır — yani en kötü hâl "eski davranış",
+	// asla yanlış bir cluster'a açılan çekmece değil.
+	hasTopoClusterCol bool
+
 	// neighborProvider is the optional 1-hop topology lookup used
 	// by AttachProblemToIncident for rule 3 (cluster a new
 	// problem into an existing incident on a service that calls
@@ -1818,6 +1832,25 @@ func (s *Store) migrate(ctx context.Context) error {
 			-- rows stay valid.
 			parent_env      LowCardinality(String) DEFAULT '',
 			child_env       LowCardinality(String) DEFAULT '',
+			-- v0.9.1025 — messaging cluster of a QUEUE node, so the
+			-- topology→/messaging bridge can open the drawer directly
+			-- instead of the narrowed catalogue (v0.9.972). Written by
+			-- the two passes that emit queue nodes (infra/producer +
+			-- async consumer); every other edge keeps DEFAULT ''.
+			--
+			-- NOT in ORDER BY, and — the load-bearing half — NOT in the
+			-- writers' GROUP BY either. Adding it to GROUP BY would make
+			-- ONE aggregation run emit two rows that differ only outside
+			-- the dedup key, and ReplacingMergeTree would then DELETE one
+			-- of them on the FINAL read: calls silently lost. As an
+			-- any()-picked annotation the counts stay exact and only the
+			-- LABEL is arbitrary when one topic name lives on two
+			-- clusters. Measured on the live local cluster before
+			-- shipping: 555 producer queue nodes over 3h, max distinct
+			-- clusters per node = 1, zero collisions. Strict per-cluster
+			-- separation needs an ORDER BY redesign (new table +
+			-- backfill + swap) — deliberately deferred.
+			cluster         LowCardinality(String) DEFAULT '',
 			version         UInt64 DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		PARTITION BY toDate(time_bucket)
@@ -2298,6 +2331,15 @@ func (s *Store) migrate(ctx context.Context) error {
 		// deferred until operator demand justifies the migration.
 		`ALTER TABLE topology_edges_5m ADD COLUMN IF NOT EXISTS parent_env LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE topology_edges_5m ADD COLUMN IF NOT EXISTS child_env  LowCardinality(String) DEFAULT ''`,
+		// v0.9.1025 — queue-node messaging cluster (see the CREATE above
+		// for why it is outside ORDER BY *and* outside the writers'
+		// GROUP BY). Distributed-safe by construction: topology_edges_5m
+		// is registered in highVolumeTables, so adaptDDL rewrites this to
+		// `topology_edges_5m_local ON CLUSTER` AND re-emits it against the
+		// Distributed wrapper (cluster.go step 4, v0.5.362) — without that
+		// second fragment the wrapper keeps its old column list and every
+		// read of `cluster` fails with "no such column".
+		`ALTER TABLE topology_edges_5m ADD COLUMN IF NOT EXISTS cluster    LowCardinality(String) DEFAULT ''`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_kind        kind        TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_db_system   db_system   TYPE set(0)    GRANULARITY 4`,
 		`ALTER TABLE spans ADD INDEX IF NOT EXISTS idx_http_status http_status TYPE minmax    GRANULARITY 4`,
@@ -2467,6 +2509,19 @@ func (s *Store) migrate(ctx context.Context) error {
 	s.hasProblemCmpCol = cmpErr == nil
 	if !s.hasProblemCmpCol {
 		log.Printf("[chstore] `comparator` column not present on problems (%v) — INSERT/SELECT omit it; priority ratio-flip stays OFF (safe direction, no false P1s)", cmpErr)
+	}
+
+	// topology_edges_5m.cluster probe (v0.9.1025) — comparator ile birebir
+	// aynı şekil. Kritik fark: burada probe'un koruduğu şey bir OKUMA değil,
+	// YAZMA. WriteTopologyBucket kolonu koşulsuz INSERT kolon listesine
+	// yazsaydı, kolon inmeden önceki her 5-dk bucket'ı code 47 ile ölür ve
+	// topoloji grafiği tamamen boş kalırdı. false iken pass'ler kolonu
+	// atlar (satırlar DEFAULT '' alır) ve köprü katalog dalında kalır.
+	tcRows, tcErr := s.conn.Query(ctx, `SELECT cluster FROM topology_edges_5m LIMIT 1 SETTINGS max_execution_time = 3`)
+	maybeCloseRows(tcRows, tcErr)
+	s.hasTopoClusterCol = tcErr == nil
+	if !s.hasTopoClusterCol {
+		log.Printf("[chstore] `cluster` column not present on topology_edges_5m (%v) — topology passes omit it; queue nodes keep the narrowed /messaging catalogue link instead of the drawer deep-link", tcErr)
 	}
 
 	// op_group — the normalized operation-shape column (group_id rel A,

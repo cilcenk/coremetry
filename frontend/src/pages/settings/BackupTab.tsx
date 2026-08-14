@@ -160,7 +160,11 @@ export function BackupTab() {
           restore.
         </label>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button variant="primary"
+          {/* v0.9.1006 (M4/O6) — kuru çalıştırma İKİNCİL. Eskiden bu ve
+              "Upload + apply" iki ÖZDEŞ dolu mavi butondu ve hangisinin
+              yazdığı ayırt edilemiyordu; üstelik bu buton varyantını
+              yazmadığı için ihlal kaynakta görünmüyordu (M3). */}
+          <Button variant="secondary"
             disabled={!file}
             onClick={onPreviewDiff}
             title="Dry-run: shows what would be added / overwritten / left alone, no writes." loading={busy}>

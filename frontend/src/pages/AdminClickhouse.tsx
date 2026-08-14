@@ -1121,7 +1121,10 @@ function RollupWizardPanel() {
         </Button>
         {/* Geri Al HER ZAMAN görünür (ön kontrolden bağımsız): bozuk bir
             MV ingest'i düşürürken önce ön kontrol koşturmak gerekmemeli. */}
-        <Button variant="danger" onClick={() => setConfirmKind('rollback')} disabled={busy}
+        {/* v0.9.1006 (M4/O6) — dolu "Kur"un yanında ikinci dolgu yoktu
+            sayılmaz: iki dolu buton yan yanaydı. `ghost-danger` kırmızı
+            dili koruyor, onay basamağı zaten `confirmKind` modalında. */}
+        <Button variant="ghost-danger" onClick={() => setConfirmKind('rollback')} disabled={busy}
                 loading={busyKind === 'rollback'}>
           Geri Al (MV'leri düşür)
         </Button>

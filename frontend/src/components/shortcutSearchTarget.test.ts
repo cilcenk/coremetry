@@ -13,8 +13,9 @@
 // gibi okunuyordu, oysa yalnız bir NİYETTİ.
 
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { stripTsComments } from '../styles/zLayers.test';
 
 const SRC = join(__dirname, '..');
 const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
@@ -67,5 +68,65 @@ describe('ServicePicker — opt-in kablosu', () => {
     // querySelectorAll ilkini seçerdi: yine DOM sırası kumarı.
     expect(sp).not.toMatch(/data-shortcut-search=""/);
     expect(sp).toMatch(/\.\.\.\(shortcutSearch \?/);
+  });
+});
+
+// ─── v0.9.1003 · C3 — `/` sahipliği tek olmalı ────────────────────────
+//
+// ORİJİNAL BELİRTİ (etkileşim denetimi C3): yukarıdaki düzeltme
+// gemideyken bile /traces'te `/` YANLIŞ kutuya iniyordu — bu kez
+// "Min ms" SAYI kutusuna. Yukarıdaki üç describe hepsi YEŞİLDİ:
+// işaret konmuştu, ServicePicker onu basıyordu, çözümleme sırası
+// doğruydu. Kapı, kusuru yapısal olarak göremiyordu çünkü yalnız
+// KAYNAK METNİ kontrol ediyordu, ÇAKIŞMAYI değil.
+//
+// KÖK NEDEN: `useDataTable`, `onOpen` + `searchRef` birlikte
+// verildiğinde İKİNCİ bir `/` bindingi kaydediyor
+// (DataTable.tsx:213). İki kaydın da `scope`u yok, dolayısıyla
+// `navScope.pickOwner` "yığının tepesi = en son kaydolan" diyor:
+// GlobalShortcuts AppShell'de sayfadan ÖNCE mount olduğu için sayfa
+// mount'unda gelen DataTable kaydı DAİMA kazanıyor. Yani bir sayfa
+// hem açık işaret hem `searchRef` taşıyorsa, açık işaret ÖLÜ demektir.
+//
+// Bu yüzden kural bir SAYFA içi çakışma kuralı: aynı dosyada hem
+// `/` işareti (`data-shortcut-search` / `shortcutSearch`) hem de
+// `useDataTable`a giden bir `searchRef` bulunamaz.
+describe('C3 — bir dosyada `/` için TEK sahip', () => {
+  // İki geçerli yazılış da sayılır: `searchRef: ref` (Traces'in eski
+  // hâli) VE kısayol `searchRef,` (Endpoints/Inbox/Dashboards/
+  // OperationsTable bugün böyle yazıyor). Yalnız ilkini arasaydım
+  // kapı, ikinci yazılışa geçen her dosyayı sessizce ölçmeyi bırakırdı.
+  const MARK = /data-shortcut-search|(?<![\w.])shortcutSearch(?![\w])/;
+  const REF = /(?<![\w.])searchRef\s*[,:]/;
+
+  function walk(dir: string, out: string[] = []): string[] {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.name === 'node_modules' || e.name === 'dist') continue;
+      const p = join(dir, e.name);
+      if (e.isDirectory()) walk(p, out);
+      else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) out.push(p);
+    }
+    return out;
+  }
+
+  // Yorumları SOYARAK tara: bu dosyanın kendi düzyazısı, PageControls'un
+  // açıklaması ve Traces'in "bu satır geri gelirse" uyarısı hepsi iki
+  // dizeyi de anıyor. Soymadan yazılmış bir çakışma taraması, kuralı
+  // AÇIKLAYAN her yorumu ihlal sanardı.
+  const files = walk(SRC).map(p => ({ p, src: stripTsComments(readFileSync(p, 'utf8')) }));
+  const marked = files.filter(f => MARK.test(f.src)).map(f => f.p);
+  const refs = files.filter(f => REF.test(f.src)).map(f => f.p);
+
+  it('tarama gerçekten bir şey buluyor', () => {
+    // Sağlık assert'i: iki sinyalden biri sıfıra düşerse kapı kör
+    // koşuyor demektir. Eşikler bugünkü sayıların (8 / 5) altında
+    // tutuldu ki normal dalgalanma testi kırmızıya çevirmesin.
+    expect(marked.length).toBeGreaterThanOrEqual(6);
+    expect(refs.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it('hiçbir dosya hem açık işaret hem searchRef taşımıyor', () => {
+    const both = files.filter(f => MARK.test(f.src) && REF.test(f.src)).map(f => f.p);
+    expect(both, 'searchRef ikinci bir `/` kaydı doğurur ve açık işareti ölü bırakır').toEqual([]);
   });
 });

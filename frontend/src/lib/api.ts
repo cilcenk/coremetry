@@ -1566,6 +1566,14 @@ export const api = {
     request<{ explanation: string }>(
       `/api/copilot/explain-service?service=${encodeURIComponent(service)}&from=${fromNs}&to=${toNs}`,
       { method: 'POST' }),
+  // v0.9.1031 — ServiceCharts AI çekmecesi (onaylı mockup). Anlatımın
+  // YANINDA yapısal sinyaller döner: tablo model metnine bağlı değil,
+  // model kotayı doldursa/saçmalasa bile kanıt DOĞRU kalır.
+  copilotExplainCharts: (service: string, fromNs: number, toNs: number, scope: string) =>
+    request<import('./types').ServiceChartsExplain>(
+      `/api/copilot/explain-charts?service=${encodeURIComponent(service)}`
+      + `&from=${fromNs}&to=${toNs}&scope=${encodeURIComponent(scope)}`,
+      { method: 'POST' }),
   copilotRunbook: (id: string) =>
     request<{ explanation: string; similarCount: number }>(
       `/api/copilot/runbook/${id}`, { method: 'POST' }),

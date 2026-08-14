@@ -21,6 +21,7 @@ func TestProsePromptsAnswerInTurkish(t *testing.T) {
 		"systemIncident":           systemIncident,
 		"systemAnomaly":            systemAnomaly,
 		"systemServiceHealth":      systemServiceHealth,
+		"systemServiceCharts":      systemServiceCharts,
 		"systemRunbook":            systemRunbook,
 		"systemCompareTraces":      systemCompareTraces,
 		"systemDeployImpact":       systemDeployImpact,

@@ -4858,3 +4858,64 @@ export interface BehaviorChangeDetails {
   onsetNs: number;      // kaymanın başlangıcı
   deploy?: { version: string; ageSeconds: number };
 }
+
+// ── ServiceCharts AI çekmecesi (v0.9.1031, onaylı mockup) ──────────────
+// /api/copilot/explain-charts yanıtı. Anlatım (explanation) ile KANIT
+// (signals) AYRI yollardan gelir: sinyaller CH'den deterministik toplanır,
+// yalnız düzyazı LLM'den. Model hata verse bile tablo doğru kalır.
+
+export interface ChartDeploySignal {
+  timeUnixNs: number;
+  /** "deploy" (sürüm değişti) | "restart" (aynı sürüm, pod değişti) */
+  kind: string;
+  versionBefore?: string;
+  versionAfter?: string;
+  podsReplaced: number;
+}
+
+export interface ChartProblemSignal {
+  id: string;
+  title: string;
+  severity: string;
+  priority?: string;
+  startedAt: number;
+  metric?: string;
+  value: number;
+  threshold: number;
+}
+
+export interface ChartAnomalySignal {
+  id: string;
+  kind: string;
+  pattern: string;
+  startedAt: number;
+  peakRatio: number;
+  status: string;
+}
+
+/** Bir operasyonun pencere vs bir-önceki-eş-pencere değişimi. */
+export interface OpDelta {
+  name: string;
+  calls: number;
+  /** cur.p95 / prior.p95 — 1 = değişim yok, 0 = ölçülemedi (asla Infinity). */
+  p95Ratio: number;
+  /** Hata oranı farkı YÜZDE PUANI (backend ErrorRate 0..100 ölçeğinde). */
+  errDeltaPp: number;
+  /** Önceki pencerede hiç görülmemiş operasyon. */
+  isNew?: boolean;
+}
+
+export interface ServiceChartsSignals {
+  deploy?: ChartDeploySignal;
+  problems?: ChartProblemSignal[];
+  anomalies?: ChartAnomalySignal[];
+  opDeltas?: OpDelta[];
+  /** "En kötü N" listesine girmeyen operasyon sayısı ("diğer M: değişim yok"). */
+  otherOps: number;
+}
+
+export interface ServiceChartsExplain {
+  explanation: string;
+  scope: string;
+  signals: ServiceChartsSignals;
+}

@@ -398,3 +398,35 @@ func orDash(s string) string {
 	}
 	return s
 }
+
+// ChartsExplainResult — /api/copilot/explain-charts yanıtı.
+type ChartsExplainResult struct {
+	Explanation string               `json:"explanation"`
+	Scope       string               `json:"scope"`
+	Signals     ServiceChartsSignals `json:"signals"`
+	// Error — ANLATIM üretilemedi (kota/timeout/sağlayıcı hatası). Kanıt
+	// yine döner; alan boşsa anlatım sağlıklıdır.
+	Error string `json:"error,omitempty"`
+}
+
+// buildChartsResult — anlatım sonucu + ölçülmüş kanıt → yanıt.
+//
+// SÖZLEŞME: model çağrısı düşerse istek BAŞARISIZ OLMAZ. Sinyaller
+// (deploy, problem, anomali, op-delta) CH'den deterministik toplandı ve
+// zaten elimizde; anlatım koptu diye onları çöpe atmak, operatöre
+// ölçülmüş veriyi göstermemek demektir. Çekmecenin "kanıt anlatımdan
+// bağımsızdır" vaadi tam olarak burada tutulur — v0.9.482'nin
+// soft-fail dersi (kanıt kurulamazsa anlatıma düş) bu yüzeyde
+// TERSİNE çalışır: anlatım kurulamazsa kanıta düş.
+//
+// Yalnız copilot TAMAMEN kapalıyken 503 dönülür (handler'ın başındaki
+// Active() kapısı) — o zaman gösterilecek bir yüzey de yoktur.
+func buildChartsResult(scope string, sg ServiceChartsSignals, out string, nerr error) *ChartsExplainResult {
+	res := &ChartsExplainResult{Scope: scope, Signals: sg}
+	if nerr != nil {
+		res.Error = nerr.Error()
+		return res
+	}
+	res.Explanation = out
+	return res
+}

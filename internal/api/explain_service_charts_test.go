@@ -333,3 +333,48 @@ func names(ds []OpDelta) []string {
 	}
 	return out
 }
+
+// v0.9.1034 — ANLATIM/KANIT ayrımı. Model çağrısı düştüğünde istek
+// başarısız OLMAMALI: sinyaller CH'den zaten toplandı ve ölçülmüş
+// veridir. Çekmecenin "kanıt anlatımdan bağımsızdır" vaadi buradan
+// gelir; v0.9.1031'de yanıt hata dönüyordu, yani vaat kodda YOKTU.
+func TestBuildChartsResultKeepsEvidenceWhenNarrationFails(t *testing.T) {
+	sg := ServiceChartsSignals{
+		Deploy:   &ChartDeploySignal{TimeUnixNs: 42, Kind: "deploy", VersionAfter: "v2"},
+		OpDeltas: []OpDelta{{Name: "POST /pay", Calls: 900, P95Ratio: 2.9}},
+		OtherOps: 14,
+	}
+
+	t.Run("anlatım düştü → kanıt yine döner", func(t *testing.T) {
+		res := buildChartsResult(chartScopeDur, sg, "", errNarration{})
+		if res.Error == "" {
+			t.Fatal("hata alanı boş — operatör anlatımın neden yok olduğunu göremez")
+		}
+		if res.Explanation != "" {
+			t.Fatalf("hata hâlinde anlatım %q olmalı boş", res.Explanation)
+		}
+		if res.Signals.Deploy == nil || len(res.Signals.OpDeltas) != 1 || res.Signals.OtherOps != 14 {
+			t.Fatalf("kanıt kayboldu: %+v", res.Signals)
+		}
+		if res.Scope != chartScopeDur {
+			t.Fatalf("kapsam kayboldu: %q", res.Scope)
+		}
+	})
+
+	t.Run("anlatım başarılı → hata alanı boş", func(t *testing.T) {
+		res := buildChartsResult(chartScopeAll, sg, "p95 iki katına çıktı.", nil)
+		if res.Error != "" {
+			t.Fatalf("başarılı üretimde hata alanı %q", res.Error)
+		}
+		if res.Explanation == "" {
+			t.Fatal("anlatım kayboldu")
+		}
+		if res.Signals.OtherOps != 14 {
+			t.Fatal("kanıt kayboldu")
+		}
+	})
+}
+
+type errNarration struct{}
+
+func (errNarration) Error() string { return "quota exhausted (429)" }

@@ -108,20 +108,11 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
   // '-ms' soneki motor ad alanı (v0.9.789).
   const drawerSync = `msg-drawer:${system}|${cluster}|${name}-ms`;
 
-  if (data === undefined) return <Spinner />;
-  if (data === null) return (
-    <div style={{ fontSize: 12, color: 'var(--err)' }}>
-      Detail query failed.
-    </div>
-  );
-
-  // Defensive null-coalesce — pre-v0.4.87 the backend returned
-  // null for empty slices (Go nil → JSON null), which crashed
-  // [...data.callers]. The store now emits [] but we keep the
-  // guard in case the cache returns a stale payload across an
-  // upgrade.
-  const allCallers = data.callers ?? [];
-  const allTopOps  = data.topOps ?? [];
+  // ERKEN DÖNÜŞLERDEN ÖNCE (rules-of-hooks): topOps türetmesi ve iki
+  // hook, v0.9.873'ten beri erken dönüşlerin ARKASINDAydı — data
+  // yüklenirken render hook'ları atlıyor, sıra kayıyordu. `data`
+  // burada undefined/null olabilir, o yüzden `?.` + `?? []`.
+  const allTopOps = data?.topOps ?? [];
   // v0.9.873 (tutarlılık denetimi BT8). Kolon ETİKETİ `kind`e bağlı, bu
   // yüzden storageKey de türetiliyor (R2 / `deps-callers-${tone}` emsali):
   // aynı anahtar altında iki farklı kolon kümesi saklanırsa kaydedilen
@@ -136,6 +127,20 @@ export function DetailDrawer({ system, cluster, name, instance, dbName, kind, so
     storageKey: `deps-topops-${kind}`, columns: topOpsCols, rows: allTopOps,
     initialSort: { id: 'count', dir: 'desc' },
   });
+
+  if (data === undefined) return <Spinner />;
+  if (data === null) return (
+    <div style={{ fontSize: 12, color: 'var(--err)' }}>
+      Detail query failed.
+    </div>
+  );
+
+  // Defensive null-coalesce — pre-v0.4.87 the backend returned
+  // null for empty slices (Go nil → JSON null), which crashed
+  // [...data.callers]. The store now emits [] but we keep the
+  // guard in case the cache returns a stale payload across an
+  // upgrade.
+  const allCallers = data.callers ?? [];
 
   // Worst-impact callers first — operator's first triage
   // question is "which client is hitting this DB hardest?".

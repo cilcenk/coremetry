@@ -7,6 +7,7 @@ import { useAuth } from '@/components/AuthProvider';
 import { Button, useConfirm } from '@/components/ui';
 import { useOperatorEvents, useDeleteOperatorEvent, useNotificationLog } from '@/lib/queries';
 import { timeRangeToNs, tsMinute } from '@/lib/utils';
+import { toast } from '@/lib/toast';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -271,7 +272,9 @@ function AnnotationsTab({ from, to }: { from: number; to: number }) {
     try {
       await deleteEvent.mutateAsync(id);
     } catch (e) {
-      alert('Delete failed: ' + (e as Error).message);
+      // v0.9.1010 (O12) — `alert()` üçüncü bir hata diliydi (komşuları
+      // toast.error ve FlashBox) ve tema dışı, escLayer'a görünmez.
+      toast.error('Delete failed: ' + (e as Error).message);
     } finally {
       setBusyDelete(null);
     }

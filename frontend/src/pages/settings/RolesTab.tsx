@@ -123,7 +123,7 @@ export function CustomRolesTab() {
                     <Button variant="secondary" size="sm" onClick={() => setEditing(r)} style={{ marginRight: 6 }}>
                       Edit
                     </Button>
-                    <Button variant="secondary" size="sm" onClick={() => remove(r.name)} disabled={busy === r.name}>
+                    <Button variant="ghost-danger" size="sm" onClick={() => void remove(r.name)} disabled={busy === r.name}>
                       Delete
                     </Button>
                   </td>

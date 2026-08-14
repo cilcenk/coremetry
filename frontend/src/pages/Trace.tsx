@@ -32,6 +32,7 @@ import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer'
 // version is now lib/clipboard, and the two local functions are gone.
 import { copyToClipboard } from '@/lib/clipboard';
 import { PageShell } from '@/components/ui/PageShell';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 function TraceDetailInner() {
   const navigate = useNavigate();
@@ -948,6 +949,7 @@ export default function TraceDetailPage() {
 // page; useful for handing a trace to support, customers, or anyone
 // outside Coremetry without giving them an account.
 function SharePopover({ traceId }: { traceId: string }) {
+  const confirm = useConfirm();
   const { user } = useAuth();
   // v0.8.102 — minting a public link is now open to any authenticated
   // user, viewers included (operator request: viewers hand traces to
@@ -1054,6 +1056,18 @@ function SharePopover({ traceId }: { traceId: string }) {
   };
 
   const revoke = async (token: string) => {
+    // v0.9.1010 (C4) — bu site ONAYSIZDI. Tek tık, sunucuya yazan,
+    // geri alınamayan bir iptal: linki elinde tutan HERKES anında 404
+    // görüyordu ve operatörün geri dönüş yolu yoktu (token yeniden
+    // üretilemez, yenisi başka bir URL'dir).
+    if (!await confirm({
+      title: 'Paylaşım linki iptal edilsin mi?',
+      body: <>…<code>{token.slice(-8)}</code> ile biten link <b>ANINDA</b>
+        geçersiz olacak. Linki elinde tutan herkes 404 görür; bu token
+        geri getirilemez, yeniden paylaşım YENİ bir URL üretir.</>,
+      confirmLabel: 'Linki iptal et',
+      danger: true,
+    })) return;
     try {
       await api.revokeTraceShare(token);
       // If we revoked the one just minted, clear the URL slot
@@ -1193,7 +1207,7 @@ function SharePopover({ traceId }: { traceId: string }) {
                     </span>
                     {canRevoke && (
                       <Button variant="ghost-danger" size="sm"
-                        onClick={() => revoke(s.token)}>
+                        onClick={() => void revoke(s.token)}>
                         Revoke
                       </Button>
                     )}

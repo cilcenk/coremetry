@@ -55,6 +55,14 @@ interface KqlSearchInputProps {
   // Verilmezse hiçbir uyarı çıkmaz — bilinmeyeni "tamam" diye sunmak da
   // "kırpık" diye sunmak da uydurma olurdu.
   fieldsTotal?: number;
+  // v0.9.1003 (etkileşim denetimi O4) — bu kutu sayfanın `/` KISAYOL
+  // hedefi mi? ServicePicker'daki bayrakla AYNI sözleşme: işaretsizken
+  // GlobalShortcuts "ilk görünür metin kutusu" fallback'ine düşüyor ve
+  // /logs'ta o kutu DOM sırasında ServicePicker — yani sayfanın TÜM
+  // kimliği olan KQL araması `/` ile ulaşılamıyordu. Koşullu basılıyor:
+  // koşulsuz olsaydı bir sayfadaki her KQL kutusu hedef olur ve
+  // querySelectorAll yine DOM sırası kumarına dönerdi.
+  shortcutSearch?: boolean;
 }
 
 interface TokenInfo {
@@ -115,7 +123,7 @@ function quoteIfNeeded(v: string): string {
 
 export function KqlSearchInput({
   value, onChange, onSubmit, placeholder, title, width = 380, since, fields,
-  fieldsTotal,
+  fieldsTotal, shortcutSearch,
 }: KqlSearchInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [cursor, setCursor] = useState(0);
@@ -296,6 +304,7 @@ export function KqlSearchInput({
           the app (Kibana-like). Kept for autocomplete + Enter-to-submit. */}
       <input ref={inputRef}
         type="text"
+        {...(shortcutSearch ? { 'data-shortcut-search': '' } : {})}
         value={value}
         onChange={e => { onChange(e.target.value); setCursor(e.target.selectionStart ?? e.target.value.length); }}
         onSelect={onSelect}

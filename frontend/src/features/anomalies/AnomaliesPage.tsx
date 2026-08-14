@@ -426,7 +426,11 @@ export default function ProblemsPage() {
         <PageControls sticky>
           <ServicePicker value={service} onChange={setService}
             placeholder="Service…" width={170} />
+          {/* v0.9.1003 (etkileşim denetimi O4) — `/` sayfanın ASIL
+              aramasına iner. İşaretsizken GlobalShortcuts fallback'i
+              bardaki ilk metin kutusunu (ServicePicker) seçiyordu. */}
           <input value={search} onChange={e => setSearch(e.target.value)}
+            data-shortcut-search
             placeholder="Search type/message…" style={{ width: 260 }} />
           {/* Owner (ug-team) / SRE (sy-team) team filter — plain <select>
               for these small catalog-derived sets (frontend-conventions

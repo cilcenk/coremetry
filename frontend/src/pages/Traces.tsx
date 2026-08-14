@@ -295,7 +295,6 @@ function TracesPageInner() {
   };
   const [viz, setViz] = useState<'volume' | 'latency'>(() => searchParams.get('viz') === 'latency' ? 'latency' : 'volume');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const filterInputRef = useRef<HTMLInputElement>(null);
 
 
   const [data, setData] = useState<TracesResponse | null | undefined>(undefined);
@@ -845,7 +844,16 @@ function TracesPageInner() {
     rows: displayRows,
     initialSort: { id: sort, dir: order },
     onOpen: (t) => openTrace(t),
-    searchRef: filterInputRef,
+    // v0.9.1003 (etkileşim denetimi C3) — `searchRef` BİLEREK verilmiyor.
+    // useDataTable, onOpen + searchRef birlikte geldiğinde İKİNCİ bir `/`
+    // bindingi kaydediyor (DataTable.tsx:213) ve kısayol yığınının tepesi
+    // "en son kaydolan" olduğu için sayfa mount'unda gelen o kayıt,
+    // AppShell'de daha önce mount olan GlobalShortcuts'ı yeniyordu.
+    // Sonuç: v0.9.951'in düzelttiği bug (yanlış kutu) hedefi değiştirerek
+    // yaşıyordu — `/` servis picker'ına değil "Min ms" SAYI kutusuna
+    // iniyordu ve ShortcutsHelp de "Focus filter" diye yanlış vaat
+    // ediyordu. Bu satır geri gelirse ikisi de geri gelir; kapı
+    // components/shortcutSearchTarget.test.ts.
   });
 
   // Sync the shared table's sort → the SERVER query. The header click flips
@@ -1098,7 +1106,7 @@ function TracesPageInner() {
               <OperationPicker service={draft.service} value={draft.search}
                 onChange={v => setDraft({ ...draft, search: v })}
                 placeholder="Operation…" width={240} onEnter={() => apply()} />
-              <input ref={filterInputRef} placeholder="Min ms" value={draft.minMs}
+              <input placeholder="Min ms" value={draft.minMs}
                 onChange={e => setDraft({ ...draft, minMs: e.target.value })} type="number" style={{ width: 72 }} />
               <input placeholder="Max ms" value={draft.maxMs}
                 onChange={e => setDraft({ ...draft, maxMs: e.target.value })} type="number" style={{ width: 72 }} />

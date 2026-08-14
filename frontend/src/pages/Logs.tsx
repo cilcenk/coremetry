@@ -695,6 +695,13 @@ function LogsInner() {
             // arayan operatör boş liste görüp "böyle alan yok" diye
             // okuyordu. Aynı state, ek istek YOK.
             fieldsTotal={fieldsTotal}
+            // v0.9.1003 (etkileşim denetimi O4) — `/` bu kutuya iner.
+            // İşaret konmadan önce GlobalShortcuts'ın fallback'i DOM
+            // sırasına düşüyordu ve bardaki ilk metin kutusu
+            // ServicePicker'dı: /logs'un varlık nedeni olan KQL araması
+            // kısayolla ulaşılamıyordu. Sayfa başına TEK işaret olmalı
+            // (querySelectorAll ilkini seçer).
+            shortcutSearch
             value={draft.search}
             onChange={v => setDraft({ ...draft, search: v })}
             onSubmit={apply}

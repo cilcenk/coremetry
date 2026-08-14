@@ -197,7 +197,14 @@ export default function AIObservabilityPage() {
 
         {/* Filter strip */}
         <PageControls sticky style={{ marginTop: 18, marginBottom: 8 }}>
+          {/* v0.9.1003 (etkileşim denetimi O4) — işaret GERİ kondu.
+              v0.9.669 PageControls'u `data-shortcut-search` için
+              geçirgen yapmıştı ama öznitelik bu dosyaya hiç geri
+              yazılmamıştı: PageControls.tsx:43'ün yorumu bir sözleşme
+              anlatıyordu, kablo takılı değildi. Aynı kök nedenin
+              (shortcutSearchTarget.test.ts başlığı) ikinci tekrarı. */}
           <input type="search" placeholder="Filter by surface…" aria-label="Filter by surface"
+            data-shortcut-search
             value={surface} onChange={e => setSurface(e.target.value)}
             style={{ fontSize: 12, padding: '3px 8px', width: 200 }} />
           <select value={provider} onChange={e => setProvider(e.target.value)}

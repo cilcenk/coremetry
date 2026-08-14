@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react';
+import { Combobox } from '@/components/Combobox';
 import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
@@ -61,6 +62,10 @@ export function ClustersTab() {
   }, []);
   const observedQ = useClusters(fromNs, toNs);
   const observed = useMemo(() => new Set(observedQ.data ?? []), [observedQ.data]);
+  // Same list, array-shaped + sorted — the Combobox suggestion source.
+  // Sorting stays here (not in render) so the array identity is stable
+  // across re-renders and the dropdown's filter memo doesn't rebuild.
+  const observedNames = useMemo(() => [...observed].sort(), [observed]);
 
   const { loaded, error: loadErr, retry } = useSettingsLoad(
     () => api.getThanosSettings(),
@@ -74,6 +79,17 @@ export function ClustersTab() {
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
+    // The name field carried `required` while it was a native <input>.
+    // The Combobox atom renders its own input and takes no `required`
+    // prop, so the invariant moves to the submit path — where it always
+    // belonged for a repeated-row form: the browser bubble points at a
+    // row that may be scrolled out of view and says only "fill this in",
+    // never WHY an empty join key is fatal.
+    const nameless = rows.findIndex(r => !r.name.trim());
+    if (nameless >= 0) {
+      setMsg({ kind: 'err', text: `Cluster #${nameless + 1} has no name — the name is the join key and cannot be empty.` });
+      return;
+    }
     setBusy(true); setMsg(null);
     try {
       const next = await api.putThanosSettings({
@@ -137,9 +153,8 @@ export function ClustersTab() {
                       </span>
                     )}
                   </div>
-                  <input value={r.name} list="observed-clusters" required
-                    onChange={e => patch(i, { name: e.target.value })}
-                    placeholder="prod-ist" style={{ width: '100%' }} />
+                  <Combobox value={r.name} onChange={v => patch(i, { name: v })}
+                    options={observedNames} placeholder="prod-ist" width="100%" />
                 </label>
                 <label style={{ display: 'flex', alignItems: 'center', gap: 6, paddingBottom: 6 }}>
                   <input type="checkbox" checked={r.enabled}
@@ -200,10 +215,6 @@ export function ClustersTab() {
             </div>
           );
         })}
-
-        <datalist id="observed-clusters">
-          {[...observed].sort().map(c => <option key={c} value={c} />)}
-        </datalist>
 
         {msg && (
           <div style={{ marginBottom: 12, fontSize: 12,

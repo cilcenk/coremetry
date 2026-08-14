@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Star } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -99,7 +99,30 @@ export default function ServicesPage() {
   // anymore because a single fetch of 10k+ services stalls the
   // browser and isn't useful in practice.
   const PAGE_SIZE = 50;
-  const [page, setPage] = useState(0);
+  // v0.9.1017 — sayfa URL'de. Öncesinde düz `useState(0)` idi: bir
+  // operatör 12. sayfadaki servisi bulup linki paylaştığında alıcı 1.
+  // sayfayı açıyordu, ve kendi sekmesini yenilemek de yerini
+  // kaybettiriyordu. /traces ve /anomalies bunu zaten yapıyordu; bu
+  // sayfa üçlünün eksik ayağıydı.
+  //
+  // `prev`ten DEĞİL `window.location.search`ten tohumlanıyor — bu
+  // sayfanın kendi paramları (cluster/namespace, satır 127/135) ham
+  // okumayla geliyor ve `useUrlRange` de aynı gerekçeyi taşıyor:
+  // router'ın `prev`i ham yazımlardan sonra BAYAT bir alt küme olabilir
+  // ve yabancı paramları sessizce silerdi.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const page = Math.max(0, parseInt(searchParams.get('page') ?? '0', 10) || 0);
+  const setPage = useCallback((next: number | ((p: number) => number)) => {
+    setSearchParams(() => {
+      const p = new URLSearchParams(window.location.search);
+      const cur = Math.max(0, parseInt(p.get('page') ?? '0', 10) || 0);
+      const v = typeof next === 'function' ? next(cur) : next;
+      // Fonksiyon biçimi URL'deki DEĞERDEN hesaplıyor, closure'daki
+      // `page`ten değil: iki hızlı "Next" tıkı arasında closure bayatlar.
+      if (v > 0) p.set('page', String(v)); else p.delete('page');
+      return p;
+    }, { replace: true });
+  }, [setSearchParams]);
   const [hasMore, setHasMore] = useState(false);
   // v0.7.44 — distinct-service total (opt-in ?withTotal=1) drives the First/Last
   // pager. null when unknown (e.g. cluster filter → raw path returns no total).
@@ -305,7 +328,16 @@ export default function ServicesPage() {
   // Reset to page 0 whenever the search filter, time range,
   // sort, or team / cluster / env filter changes — staying on page 5
   // of an old result set when the operator re-orders is jarring.
-  useEffect(() => { setPage(0); }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99]);
+  // v0.9.1017 — İLK KOŞU ATLANIYOR. Bu efekt her filtre değişiminde
+  // sayfayı sıfırlıyor (doğru), ama mount'ta da koşuyor — sayfa URL'e
+  // taşındıktan sonra bu, gelen `?page=12`yi ilk render'da silerdi.
+  // Yani paylaşılan link kendi kendini bozardı. Sıfırlama artık yalnız
+  // GERÇEK bir değişimde.
+  const filtersMounted = useRef(false);
+  useEffect(() => {
+    if (!filtersMounted.current) { filtersMounted.current = true; return; }
+    setPage(0);
+  }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99, setPage]);
 
   // Pre-fetch the cluster options on first mount and whenever
   // the time range changes. The /api/clusters response is

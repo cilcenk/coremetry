@@ -4918,4 +4918,10 @@ export interface ServiceChartsExplain {
   explanation: string;
   scope: string;
   signals: ServiceChartsSignals;
+  /**
+   * Anlatım üretilemedi (kota/timeout/sağlayıcı hatası). İstek yine de
+   * 200 döner ve `signals` doludur — kanıt anlatımdan bağımsızdır
+   * (v0.9.1034).
+   */
+  error?: string;
 }

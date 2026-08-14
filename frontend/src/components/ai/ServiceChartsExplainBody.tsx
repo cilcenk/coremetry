@@ -105,9 +105,17 @@ function ChartsAnswer({ data, service, fromNs, toNs, busy, onRegenerate }: {
       <DrawerSection title="Ne oldu">
         {data.explanation.trim()
           ? <RenderedMarkdown text={data.explanation} />
-          : <div style={{ fontSize: 12, color: 'var(--text3)' }}>
-              Model boş yanıt döndürdü — aşağıdaki sinyaller yine de ölçülmüş veridir.
-            </div>}
+          : (
+            // v0.9.1034 — anlatım düşse bile istek 200 döner ve KANIT gelir
+            // (backend buildChartsResult). Boş bir panel yerine neden
+            // yazılmadığını söyleyip aşağıdaki ölçülmüş sinyallere yolluyoruz.
+            <div style={{ fontSize: 12, color: 'var(--text3)' }}>
+              {data.error
+                ? `Anlatım üretilemedi (${data.error}).`
+                : 'Model boş yanıt döndürdü.'}
+              {' '}Aşağıdaki sinyaller yine de ölçülmüş veridir.
+            </div>
+          )}
       </DrawerSection>
 
       {hasSignals && (

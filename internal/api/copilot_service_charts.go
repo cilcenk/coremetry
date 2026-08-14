@@ -49,19 +49,10 @@ func (s *Server) copilotExplainCharts(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("explain-charts:%s:%s:%d:%d",
 		url.QueryEscape(service), scope, from.UnixNano(), to.UnixNano())
 
-	type result struct {
-		Explanation string               `json:"explanation"`
-		Scope       string               `json:"scope"`
-		Signals     ServiceChartsSignals `json:"signals"`
-	}
-
 	v, err, _ := s.sf.Do(key, func() (any, error) {
 		in := s.buildServiceChartsInput(r, service, scope, from, to)
-		out, err := s.copilotExplain(r, copilot.SystemPromptServiceCharts(), buildServiceChartsUser(in))
-		if err != nil {
-			return nil, err
-		}
-		return &result{Explanation: out, Scope: scope, Signals: in.Signals}, nil
+		out, nerr := s.copilotExplain(r, copilot.SystemPromptServiceCharts(), buildServiceChartsUser(in))
+		return buildChartsResult(scope, in.Signals, out, nerr), nil
 	})
 	if err != nil {
 		writeErr(w, err)

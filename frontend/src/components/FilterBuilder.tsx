@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { attrKeyWindowParams } from '@/lib/attrKeyWindow';
 import { useEscLayer } from '@/lib/escLayer';
 import { Combobox } from './Combobox';
-import { Button, Chip } from '@/components/ui';
+import { ActionRow, Button, Chip } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { FilterExpr, FilterOp } from '@/lib/types';
 import { useAttributeKeys } from '@/lib/useAttributeKeys';
@@ -258,10 +258,12 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
           </label>
         )}
       </div>
-      <div className="fb-form-actions">
-        <Button variant="primary" onClick={submit}>Add</Button>
-        <Button variant="secondary" onClick={onCancel}>Cancel</Button>
-      </div>
+      {/* v0.9.1007 (M5/O8) — sıra TERSTİ (Add solda, Cancel sağda) ve
+          kapsayıcı `justify-content` bile tanımlamadığı için satır
+          ayrıca sola yaslıydı. ActionRow ikisini de yapıyor. */}
+      <ActionRow
+        secondary={<Button variant="secondary" onClick={onCancel}>Cancel</Button>}
+        confirm={<Button variant="primary" onClick={submit}>Add</Button>} />
     </div>
   );
 }

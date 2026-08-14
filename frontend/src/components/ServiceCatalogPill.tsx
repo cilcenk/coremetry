@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/components/AuthProvider';
 import { Button } from '@/components/ui/Button';
+import { ActionRow } from '@/components/ui/ActionRow';
 import { Chip } from '@/components/ui/Chip';
 import type { ServiceMetadata } from '@/lib/types';
 
@@ -206,13 +207,19 @@ function CatalogEditor({ initial, onSave, onCancel }: {
           links={m.customLinks ?? []}
           onChange={ls => update({ customLinks: ls })} />
       </div>
-      <div style={{ gridColumn: '1 / -1', display: 'flex', gap: 8, marginTop: 4 }}>
-        <Button variant="primary" size="sm" onClick={submit} loading={busy}>
-          Save
-        </Button>
-        <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
-          Cancel
-        </Button>
+      {/* v0.9.1007 (M5/O8) — sıra TERSTİ (Save solda, Cancel sağda). */}
+      <div style={{ gridColumn: '1 / -1' }}>
+        <ActionRow
+          secondary={(
+            <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
+              Cancel
+            </Button>
+          )}
+          confirm={(
+            <Button variant="primary" size="sm" onClick={submit} loading={busy}>
+              Save
+            </Button>
+          )} />
       </div>
     </div>
   );

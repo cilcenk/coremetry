@@ -1,5 +1,5 @@
 import { MetricNamePicker } from '../MetricNamePicker';
-import { Button } from '@/components/ui';
+import { ActionRow, Button } from '@/components/ui';
 import { STEP_OPTIONS } from '@/pages/explore/presets';
 import type {
   Panel, PanelType, PanelWidth, PanelHeight,
@@ -222,12 +222,14 @@ export function PanelEditor({ panel, onChange, onClose, onDelete }: {
           </Field>
         )}
 
-        <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', marginTop: 18 }}>
-          <Button variant="ghost-danger" onClick={onDelete}>
-            Delete panel
-          </Button>
-          <button type="button" onClick={onClose}>Done</button>
-        </div>
+        {/* v0.9.1007 (M5) — elle `space-between` yerine ActionRow'un
+            `destructive` + `confirm` yuvaları; aynı görsel sonuç, ama
+            sıra artık sözleşme. "Done" çıplak bir <button>du (atom
+            baypası): varyantsız ham element `button {}` element-
+            seviyesi kuralına düşüyor, yani DOLU MAVİ oluyordu. */}
+        <ActionRow
+          destructive={<Button variant="ghost-danger" onClick={onDelete}>Delete panel</Button>}
+          confirm={<Button variant="primary" onClick={onClose}>Done</Button>} />
       </div>
     </div>
   );

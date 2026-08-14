@@ -1199,13 +1199,18 @@ function RollupWizardPanel() {
         onClose={() => setConfirmKind(null)}
         title={confirmKind === 'apply' ? 'Rollup DDL uygulansın mı?' : 'MV\'ler düşürülsün mü?'}
         footer={
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          // v0.9.1007 (M5/O8 pürüzü) — sarmalayıcı `<div>` kaldırıldı:
+          // `.modal-footer` (globals.css:862) zaten `display:flex` +
+          // `justify-content:flex-end` + `gap:8` basıyordu, yani bu div
+          // sözleşmenin işini TEKRAR ediyordu. Sözleşmenin
+          // keşfedilebilir olmadığının işaretiydi.
+          <>
             <Button variant="secondary" onClick={() => setConfirmKind(null)}>Vazgeç</Button>
             <Button variant={confirmKind === 'apply' ? 'primary' : 'danger'}
                     onClick={() => confirmKind && runAction(confirmKind)}>
               {confirmKind === 'apply' ? 'Uygula' : 'Geri Al'}
             </Button>
-          </div>
+          </>
         }
       >
         {confirmKind === 'apply' ? (

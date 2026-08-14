@@ -2198,9 +2198,23 @@ button.accent.copied {
   display: flex; flex-direction: column; gap: 3px;
   font-size: 11px; color: var(--text2);
 }
-.fb-form-actions {
-  display: flex; gap: 6px; margin-top: 10px;
+/* ActionRow (v0.9.1007, M5) — form/kart aksiyon satırı. Ölçüleri
+   `.modal-footer` ile AYNI token'lardan alıyor (gap 8, flex-end) ki
+   iki sözleşme görsel olarak ayrışmasın; ayrım yalnız kaptır (modal
+   footer'ı kendi ayırıcı çizgisini ve bg2 şeridini taşır, bu satır
+   formun içinde yaşadığı için taşımaz).
+   `.fb-form-actions` (eski FilterBuilder satırı) buraya toplandı —
+   o kural `justify-content` bile tanımlamıyordu, yani satır sola
+   yaslıydı ve içindeki Add/Cancel de ters sıradaydı. */
+.action-row {
+  display: flex; align-items: center; gap: 8px;
+  justify-content: flex-end;
+  margin-top: 10px;
 }
+.action-row.is-inline { display: inline-flex; margin-top: 0; }
+/* Yıkıcı yuvayı sağ kümeden ayıran esneme öğesi. */
+.action-row-gap { flex: 1 1 auto; }
+.action-row.is-inline .action-row-gap { flex: 0 0 0; }
 
 /* Combobox — input + custom dropdown panel + clear/caret affordance.
    Replaces native <datalist> for filtered/typeahead pickers; this

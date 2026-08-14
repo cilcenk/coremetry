@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Button } from '@/components/ui';
+import { ActionRow, Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { humanize, FlashBox } from './shared';
 import type { PurgeResult } from '@/lib/types';
@@ -90,14 +90,22 @@ export function DangerZoneTab() {
             autoFocus
             style={{ maxWidth: 280, marginBottom: 12, display: 'block' }}
           />
-          <div style={{ display: 'flex', gap: 8 }}>
-            <Button variant="danger" disabled={phrase.trim() !== CONFIRM} onClick={onPurge} loading={busy}>
-              Confirm — delete all telemetry
-            </Button>
-            <Button variant="ghost" disabled={busy} onClick={() => { setArming(false); setPhrase(''); }}>
-              Cancel
-            </Button>
-          </div>
+          {/* v0.9.1007 (M5/O8) — K5 ile K6'nın kesiştiği tek nokta:
+              YIKICI ONAY EN SOLDAYDI, yani kas hafızasının "iptal"
+              beklediği yerde. Type-to-confirm kapısı riski büyük ölçüde
+              emiyordu (bu yüzden kritik değildi) ama sıra yine de
+              tersti. Onay `confirm` yuvasına, iptal soluna geçti. */}
+          <ActionRow
+            secondary={(
+              <Button variant="ghost" disabled={busy} onClick={() => { setArming(false); setPhrase(''); }}>
+                Cancel
+              </Button>
+            )}
+            confirm={(
+              <Button variant="danger" disabled={phrase.trim() !== CONFIRM} onClick={onPurge} loading={busy}>
+                Confirm — delete all telemetry
+              </Button>
+            )} />
         </div>
       )}
 

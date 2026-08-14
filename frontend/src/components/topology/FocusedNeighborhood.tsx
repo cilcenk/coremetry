@@ -9,6 +9,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
 import type { TimeRange, ServiceGraphResponse, GraphNode, GraphEdge, ServiceMap } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 import { nodeDetailHref } from '@/components/topology/nodeDetailHref';
 import { serviceHref } from '@/lib/serviceHref';
 
@@ -321,7 +322,8 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
               <Button variant="secondary" size="sm" onClick={() => onRecenter(hoverNode.name)} style={{ marginLeft: 'auto' }}>Recenter</Button>
             )}
             {pinnedNode && (
-              <Button variant="ghost" size="sm" onClick={() => setPinned(null)}>✕</Button>
+              <IconButton variant="ghost" size="sm" aria-label="Unpin node"
+              title="Unpin" onClick={() => setPinned(null)} icon="✕" />
             )}
           </div>
           <div style={{ fontSize: 10, color: 'var(--text3)', fontFamily: 'ui-monospace, monospace', marginBottom: 6 }}>

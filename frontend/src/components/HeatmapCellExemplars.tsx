@@ -7,6 +7,7 @@ import { fmtSmart } from '@/lib/chartFmt';
 import { fmtClock, tsLong } from '@/lib/utils';
 import type { TraceRow, FilterExpr } from '@/lib/types';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 
 // HeatmapCellExemplars — v0.5.260. Honeycomb-classic "click the
 // slow band → see what traces ran there" workflow. Modal opens
@@ -108,7 +109,8 @@ export function HeatmapCellExemplars({ cell, bucketWidthNs, filters, dsl, exempl
             {fmtClock(cell.timeNs / 1e6)} ·{' '}
             {cell.count.toLocaleString()} spans in cell
           </span>
-          <Button variant="secondary" size="sm" onClick={onClose} title="Close">✕</Button>
+          <IconButton variant="secondary" size="sm" aria-label="Close exemplars"
+            title="Close" onClick={onClose} icon="✕" />
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 14 }}>
           {/* v0.9.869 (tutarlılık denetimi MT3 sınıfı, YENİ bulgu) — eski

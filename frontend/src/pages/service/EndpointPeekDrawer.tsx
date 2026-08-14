@@ -3,6 +3,7 @@ import { useEscLayer } from '@/lib/escLayer';
 import { Link } from 'react-router-dom';
 import { Sparkline } from '@/components/Sparkline';
 import { Button } from '@/components/ui/Button';
+import { IconButton } from '@/components/ui/IconButton';
 import type { EndpointRow, TimeRange } from '@/lib/types';
 import { encodeRange } from '@/lib/urlState';
 import { encodeEndpointParam } from '@/pages/endpoints/endpointParam';
@@ -83,7 +84,12 @@ export function EndpointPeekDrawer({ service, range, row, onClose }: {
             fontWeight: 700, fontSize: 13, overflow: 'hidden',
             textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>{row.path}</span>
-          <Button variant="ghost" size="sm" onClick={onClose} style={{ marginLeft: 'auto' }}>✕</Button>
+          {/* v0.9.1011 (M7e/L7) — glif-only bir <Button>du ve NE `title` NE
+            `aria-label` taşıyordu: ekran okuyucu yalnızca "buton" diyordu.
+            IconButton'da `aria-label` tip düzeyinde zorunlu, yani bu kayıp
+            aynı şekilde bir daha doğamaz. */}
+        <IconButton variant="ghost" size="sm" aria-label="Close endpoint peek"
+          title="Close" onClick={onClose} icon="✕" style={{ marginLeft: 'auto' }} />
         </div>
         <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 10 }}>
           giriş span&#39;leri · seçili pencere

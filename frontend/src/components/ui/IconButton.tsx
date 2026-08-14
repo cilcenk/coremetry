@@ -22,7 +22,16 @@ import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
 // karenin padding:0'ını EZERDİ (özgüllük 0,1,1 > 0,1,0) ve buton
 // dikdörtgene dönerdi.
 
-type Variant = 'secondary' | 'ghost' | 'bare';
+// `danger` (v0.9.1011, etkileşim denetimi M7e / L7) — glif-only YIKICI
+// tetik. Öncesinde bu ailede kırmızı yoktu, dolayısıyla glif-only bir
+// silme yazan `<Button>`a kaçıyordu ve orada `aria-label` TİP DÜZEYİNDE
+// ZORUNLU OLMADIĞI için erişilebilir adını kaybediyordu
+// (EndpointPeekDrawer'ın ✕'i ne `title` ne `aria-label` taşıyordu).
+// Yani eksik bir varyant, bir a11y kaybına dönüşmüştü.
+//
+// Ton `ghost-danger`la aynı gerekçede: satır-içi bir tetik için dolu
+// kırmızı fazla yüksek sesli.
+type Variant = 'secondary' | 'ghost' | 'bare' | 'danger';
 type Size    = 'xs' | 'sm' | 'md';
 
 export interface IconButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
@@ -39,6 +48,7 @@ const variantClass: Record<Variant, string> = {
   secondary: 'ib-sec',
   ghost:     'ib-ghost',
   bare:      'ib-bare',
+  danger:    'ib-danger',
 };
 const sizeClass: Record<Size, string> = {
   xs: 'ib-xs',

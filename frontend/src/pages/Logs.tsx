@@ -702,6 +702,12 @@ function LogsInner() {
             // kısayolla ulaşılamıyordu. Sayfa başına TEK işaret olmalı
             // (querySelectorAll ilkini seçer).
             shortcutSearch
+            // v0.9.1004 (M2/O5) — telefonda YÜZEYDE kalan kontrol bu.
+            // İşaretsizken PageControls'ın "ilk etkileşimli çocuk"
+            // heuristiği ServicePicker'ı seçiyordu ve /logs'un varlık
+            // nedeni olan KQL kutusu "Filtreler(N)" popover'ının
+            // arkasında kalıyordu.
+            data-pc-lead
             value={draft.search}
             onChange={v => setDraft({ ...draft, search: v })}
             onSubmit={apply}

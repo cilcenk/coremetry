@@ -63,6 +63,13 @@ interface KqlSearchInputProps {
   // koşulsuz olsaydı bir sayfadaki her KQL kutusu hedef olur ve
   // querySelectorAll yine DOM sırası kumarına dönerdi.
   shortcutSearch?: boolean;
+  // v0.9.1004 (etkileşim denetimi M2/O5) — dar ekranda katlanan filtre
+  // barında yüzeyde KALACAK kontrol bu mu? PageControls işareti çocuğun
+  // ELEMENT PROPS'undan okuyor; host `<input>`lerde `data-*` zaten
+  // geçerli bir öznitelik, bu kutu ise bir bileşen olduğu için prop
+  // açıkça bildirilmek zorunda. Inputa da basılıyor ki işaret DOM'da
+  // görülebilsin (hata ayıklama + gelecekteki CSS kancası).
+  'data-pc-lead'?: boolean;
 }
 
 interface TokenInfo {
@@ -123,7 +130,7 @@ function quoteIfNeeded(v: string): string {
 
 export function KqlSearchInput({
   value, onChange, onSubmit, placeholder, title, width = 380, since, fields,
-  fieldsTotal, shortcutSearch,
+  fieldsTotal, shortcutSearch, 'data-pc-lead': pcLead,
 }: KqlSearchInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [cursor, setCursor] = useState(0);
@@ -305,6 +312,7 @@ export function KqlSearchInput({
       <input ref={inputRef}
         type="text"
         {...(shortcutSearch ? { 'data-shortcut-search': '' } : {})}
+        {...(pcLead ? { 'data-pc-lead': '' } : {})}
         value={value}
         onChange={e => { onChange(e.target.value); setCursor(e.target.selectionStart ?? e.target.value.length); }}
         onSelect={onSelect}

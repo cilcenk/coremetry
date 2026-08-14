@@ -106,7 +106,37 @@ export function isInteractiveChild(node: ReactNode): boolean {
   return typeof t === 'object' && t !== null;
 }
 
+// v0.9.1004 (etkileşim denetimi M2/O5) — AÇIK lead işareti.
+//
+// Yukarıdaki heuristik "ilk ETKİLEŞİMLİ çocuk" diyor ve 14 tüketicinin
+// 9'unda o çocuk gerçekten bir arama ya da picker. Ama PICKER ≠ SAYFANIN
+// ARAMASI: `/logs`ta ilk etkileşimli çocuk ServicePicker, sayfanın
+// varlık nedeni olan KQL kutusu ise ONUN ARKASINDA — telefonda operatör
+// /logs'u açıp aramak için önce "Filtreler" popover'ını açmak zorunda
+// kalıyordu. Aynı şey `/anomalies` (Search type/message) ve daha hafif
+// biçimde `/endpoints` (Filter by path) için de geçerliydi.
+//
+// NEDEN SAYISAL `leadIndex` DEĞİL: çocuklar koşullu.
+// `{clusters.length > 0 && <select/>}` veri gelene kadar hiç render
+// edilmiyor ve `Children.toArray` false'u ELİYOR — yani doğru indeks
+// veriye göre kayardı. Logs'ta o koşullu select tam da KQL kutusundan
+// ÖNCE duruyor, yani sabit bir sayı boş kümede yanlış çocuğu seçerdi.
+// İşaret çocuğun kendisine yapışıyor, sırasına değil.
+//
+// İşaret ELEMENT PROPS'undan okunuyor, DOM'dan değil: lead seçimi
+// render'dan ÖNCE yapılıyor, o anda DOM yok.
+export function hasLeadMark(node: ReactNode): boolean {
+  if (!isValidElement(node)) return false;
+  const props = node.props as Record<string, unknown> | null | undefined;
+  if (!props) return false;
+  const v = props['data-pc-lead'];
+  return v !== undefined && v !== false && v !== null;
+}
+
 export function leadChildIndex(items: ReactNode[]): number {
+  // İşaretli çocuk KAZANIR. İşaret yoksa davranış bit-bit eski hâl —
+  // geriye uyumlu, 14 tüketicinin 11'i tek satır bile değişmeden kalıyor.
+  for (let i = 0; i < items.length; i++) if (hasLeadMark(items[i])) return i;
   for (let i = 0; i < items.length; i++) if (isInteractiveChild(items[i])) return i;
   return items.length > 0 ? 0 : -1;   // hiç kontrol yoksa ilk çocuk
 }

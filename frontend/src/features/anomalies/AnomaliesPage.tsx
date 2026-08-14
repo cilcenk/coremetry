@@ -429,8 +429,9 @@ export default function ProblemsPage() {
           {/* v0.9.1003 (etkileşim denetimi O4) — `/` sayfanın ASIL
               aramasına iner. İşaretsizken GlobalShortcuts fallback'i
               bardaki ilk metin kutusunu (ServicePicker) seçiyordu. */}
+          {/* v0.9.1004 (M2/O5) — dar ekranda yüzeyde kalan kontrol. */}
           <input value={search} onChange={e => setSearch(e.target.value)}
-            data-shortcut-search
+            data-shortcut-search data-pc-lead
             placeholder="Search type/message…" style={{ width: 260 }} />
           {/* Owner (ug-team) / SRE (sy-team) team filter — plain <select>
               for these small catalog-derived sets (frontend-conventions

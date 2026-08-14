@@ -479,7 +479,10 @@ export default function EndpointsPage() {
         <PageControls sticky>
           <ServicePicker value={service} onChange={setService}
             placeholder="All services…" width={200} />
-          <input ref={searchRef} value={search}
+          {/* v0.9.1004 (M2/O5) — dar ekranda yüzeyde kalan kontrol
+              sayfanın araması olsun; işaretsizken ServicePicker
+              seçiliyor ve yol filtresi popover'ın arkasına düşüyordu. */}
+          <input ref={searchRef} value={search} data-pc-lead
             onChange={e => { setSearch(e.target.value); setSearchParam(e.target.value); }}
             placeholder="Filter by path (substring)…"
             style={{ width: 280, padding: '5px 10px', fontSize: 12,

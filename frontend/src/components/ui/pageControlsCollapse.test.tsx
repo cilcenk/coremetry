@@ -19,7 +19,7 @@ import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { PageControls, leadChildIndex, isInteractiveChild } from './PageControls';
+import { PageControls, leadChildIndex, isInteractiveChild, hasLeadMark } from './PageControls';
 import { topEscLayer, escLayerDepth, __resetEscLayers } from '@/lib/escLayer';
 
 // ── matchMedia sahtesi ────────────────────────────────────────────────
@@ -93,6 +93,34 @@ describe('D6.4 — lead çocuk seçimi (saf, tablo)', () => {
     expect(isInteractiveChild(42)).toBe(false);
     expect(isInteractiveChild(null)).toBe(false);
   });
+
+  // ── M2 (v0.9.1004) — AÇIK işaret ───────────────────────────────────
+  //
+  // Heuristiğin ölçülmüş sınırı: PICKER ≠ SAYFANIN ARAMASI. `/logs`ta
+  // ilk etkileşimli çocuk ServicePicker, sayfanın kimliği olan KQL
+  // kutusu onun arkasında kalıyordu.
+  const MARK_CASES: Array<{ ad: string; kids: React.ReactNode[]; beklenen: number }> = [
+    { ad: 'işaretli çocuk, kendinden ÖNCEKİ kontrolü yener',
+      kids: [<Picker key="a" />, <input key="b" data-pc-lead />], beklenen: 1 },
+    { ad: 'işaret bileşende de okunur (host eleman şartı yok)',
+      kids: [<input key="a" />, <Picker key="b" data-pc-lead />], beklenen: 1 },
+    { ad: 'işaret YOKSA davranış bit-bit eski hâl',
+      kids: [<Picker key="a" />, <input key="b" />], beklenen: 0 },
+    { ad: 'data-pc-lead={false} işaret SAYILMAZ (koşullu işaretleme)',
+      kids: [<Picker key="a" />, <input key="b" data-pc-lead={false} />], beklenen: 0 },
+    { ad: 'iki işaret varsa ilki kazanır — sessiz belirsizlik yok',
+      kids: [<span key="a">x</span>, <input key="b" data-pc-lead />, <input key="c" data-pc-lead />],
+      beklenen: 1 },
+  ];
+  for (const c of MARK_CASES) {
+    it(c.ad, () => { expect(leadChildIndex(c.kids)).toBe(c.beklenen); });
+  }
+
+  it('hasLeadMark element OLMAYAN düğümlerde patlamıyor', () => {
+    expect(hasLeadMark('metin')).toBe(false);
+    expect(hasLeadMark(null)).toBe(false);
+    expect(hasLeadMark(7)).toBe(false);
+  });
 });
 
 // ── Masaüstü: DOM BİREBİR ─────────────────────────────────────────────
@@ -164,6 +192,31 @@ describe('D6.4 — ≤640px\'te katlanıyor', () => {
     );
     expect([...bar().children].map(c => c.tagName)).toEqual(['SELECT', 'BUTTON', 'DIV']);
     expect([...panel()!.children].map(c => c.tagName)).toEqual(['SPAN', 'INPUT']);
+  });
+
+  // M2 (v0.9.1004) — BAĞLANMA testi, saf kural testi değil.
+  //
+  // Bu barın şekli /logs'un birebir şekli: picker ÖNCE, sayfanın asıl
+  // araması SONRA. `hasLeadMark` yalnız tabloda test edilseydi,
+  // `leadChildIndex`in ilk döngüsünü silen bir mutasyon (yani işaretin
+  // hiç okunmaması) tabloyu kırar ama BİLEŞENİN onu kullandığını
+  // ölçmezdi. Burada işaretli çocuğun gerçekten YÜZEYDE kaldığı ve
+  // picker'ın panele indiği görülüyor.
+  it('İŞARETLİ çocuk barda kalıyor, picker panele iniyor (/logs şekli)', () => {
+    render(
+      <PageControls sticky>
+        <Picker />
+        <select aria-label="küme"><option>a</option></select>
+        <input placeholder="Search… (KQL)" data-pc-lead />
+        <input placeholder="Trace ID" />
+      </PageControls>,
+    );
+    expect([...bar().children].map(c => c.tagName)).toEqual(['INPUT', 'BUTTON', 'DIV']);
+    expect((bar().children[0] as HTMLInputElement).placeholder).toBe('Search… (KQL)');
+    // Kalanlar SIRAYI koruyor — işaret yalnız hangisinin yüzeyde
+    // kalacağını değiştiriyor, filtrelerin dizilimini değil.
+    expect([...panel()!.children].map(c => (c as HTMLElement).tagName))
+      .toEqual(['INPUT', 'SELECT', 'INPUT']);
   });
 
   it('sayaç yalnız GERÇEK form alanlarını sayıyor (span/link sayılmaz)', () => {

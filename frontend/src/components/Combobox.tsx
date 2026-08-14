@@ -95,8 +95,17 @@ export function Combobox({
         onEnter?.();
       }
     } else if (e.key === 'Escape') {
-      setOpen(false);
-      setHighlight(-1);
+      // Katman sözleşmesi (v0.9.950 / Ö28, E2 dalgası): bir Esc BİR
+      // katman kapatır. Liste AÇIKKEN Esc'i tüketiyoruz —
+      // keyboard.ts'in escLayer'ı defaultPrevented'a bakar; tüketmezsek
+      // açık Combobox'lı bir Drawer'da tek Esc ikisini birden kapatır
+      // (FilterBuilder bunu yaşıyordu). Liste KAPALIYKEN dokunmuyoruz:
+      // olay katmana akar ve Drawer/Modal normal kapanır.
+      if (open) {
+        e.preventDefault();
+        setOpen(false);
+        setHighlight(-1);
+      }
     } else if (e.key === 'Tab') {
       if (open && highlight >= 0 && highlight < filtered.length) {
         pick(filtered[highlight]);

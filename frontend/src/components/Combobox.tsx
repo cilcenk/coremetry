@@ -18,9 +18,19 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
  *   - Dropdown sizes to its content via CSS (min-width = input
  *     width, max-width capped) so long span names aren't truncated
  *     mid-word.
+ *
+ * v0.9.1022 — ÇIKIŞ SÖZLEŞMESİ (satır içi düzenleyici gereksinimi).
+ * Atom bugüne dek yalnız BAĞIMSIZ bir alan olarak yaşadı: odağı hep
+ * kullanıcı verirdi, kilitlenmezdi, ve alandan ÇIKIŞ yolu yoktu.
+ * Satır içi bir düzenleyici (tabloda bir hücre, bir çip) bunların
+ * dördünü de ister — `autoFocus` ile düzenleme moduna girer,
+ * `disabled` ile kayıt sürerken kilitlenir, `onBlurCommit` ile
+ * odaktan çıkınca yazılanı kaydeder, `onEscape` ile İPTAL eder.
+ * Dördü de opsiyonel: hiçbiri verilmezse davranış birebir eskisi.
  */
 export function Combobox({
   value, onChange, options, placeholder, width, onEnter,
+  autoFocus, disabled, onBlurCommit, onEscape,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -28,6 +38,23 @@ export function Combobox({
   placeholder?: string;
   width?: number | string;
   onEnter?: () => void;
+  // Mount'ta odaklan ve metni SEÇ. Seçmek şart: satır içi düzenleyici
+  // mevcut değerle açılır, operatör yazmaya başlayınca onu değiştirmek
+  // ister — imleci sona koymak "sil sonra yaz" demek olurdu.
+  autoFocus?: boolean;
+  // Kilitli alan: yazılamaz, liste AÇILMAZ. Temizle (✕) düğmesi çalışır
+  // KALIR — atıl/kilitli bir alanda bile bayat bir değeri bırakabilmek
+  // tam olarak orada işe yarar (EnvPicker'ın atıl hâli bunu yaşıyor).
+  disabled?: boolean;
+  // Odaktan çıkışta O ANKİ yazılı değeri verir. Karar çağıranın:
+  // kaydetmek (TeamEditor) ya da eski değere dönmek (EnvPicker).
+  // Listeden seçim BLUR ÜRETMEZ (satırlar mousedown'da preventDefault
+  // eder) — yani bu, "alanı bıraktı" olayının tek yorumu.
+  onBlurCommit?: (value: string) => void;
+  // Liste KAPALIYKEN Esc. Düzenleme modundan iptal-çıkış. Liste
+  // açıkken ÇAĞRILMAZ: v0.9.1021 katman sözleşmesi (bir Esc bir
+  // katman) — ilk Esc listeyi kapatır, ikincisi düzenleyiciden çıkar.
+  onEscape?: () => void;
 }) {
   const id = useId();
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -35,6 +62,11 @@ export function Combobox({
   const listRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState<number>(-1);
+  // Esc ile İPTAL edildi mi? Sonraki blur'un commit ETMEMESİ için.
+  // Tuzak: iptal çoğu çağırıcıda düzenleyiciyi söker ya da odağı
+  // taşır — yani Esc'in hemen ardından bir blur gelir. O blur commit
+  // etseydi "iptal" sessizce KAYDET olurdu (tam tersi).
+  const escapedRef = useRef(false);
 
   // Filtered list — substring match, case-insensitive. Empty query
   // shows the full list so clicking the field reveals all options
@@ -51,6 +83,14 @@ export function Combobox({
   // Reset highlight whenever the filtered set changes — otherwise
   // the index points into a stale list and arrow nav jumps around.
   useEffect(() => { setHighlight(-1); }, [filtered]);
+
+  // Satır içi düzenleyici açılışı: odak + metni seç. Yalnız mount'ta.
+  useEffect(() => {
+    if (!autoFocus || disabled) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Click-outside / Esc close.
   useEffect(() => {
@@ -77,6 +117,10 @@ export function Combobox({
   };
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    // Esc'ten SONRA gelen her tuş iptali geçersiz kılar: çağıran alanı
+    // ayakta bıraktıysa (sökmediyse) operatör yazmaya devam edebilir ve
+    // o oturumun blur'u yeniden commit etmelidir.
+    if (e.key !== 'Escape') escapedRef.current = false;
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       if (!open) setOpen(true);
@@ -105,6 +149,16 @@ export function Combobox({
         e.preventDefault();
         setOpen(false);
         setHighlight(-1);
+      } else if (onEscape) {
+        // Liste kapalı + çağıran bir çıkış yolu verdi → SATIR İÇİ
+        // DÜZENLEYİCİ katmanı. Aynı kural: bunu da tüketiyoruz, yoksa
+        // bir Drawer içindeki düzenleyicide tek Esc ikisini birden
+        // kapatırdı (v0.9.1021'in düzelttiği hatanın aynısı, bir
+        // katman aşağıda). onEscape VERİLMEDİĞİNDE hiçbir şey
+        // yapmıyoruz: olay üst katmana akar — eski davranış birebir.
+        e.preventDefault();
+        escapedRef.current = true;
+        onEscape();
       }
     } else if (e.key === 'Tab') {
       if (open && highlight >= 0 && highlight < filtered.length) {
@@ -122,9 +176,17 @@ export function Combobox({
         id={id}
         value={value}
         placeholder={placeholder}
-        onChange={e => { onChange(e.target.value); setOpen(true); }}
-        onFocus={() => setOpen(true)}
-        onClick={() => setOpen(true)}
+        disabled={disabled}
+        onChange={e => { escapedRef.current = false; onChange(e.target.value); setOpen(true); }}
+        onFocus={() => { if (!disabled) setOpen(true); }}
+        onClick={() => { if (!disabled) setOpen(true); }}
+        onBlur={() => {
+          setOpen(false);
+          setHighlight(-1);
+          // Esc iptalinden sonra gelen blur commit ETMEZ.
+          if (escapedRef.current) { escapedRef.current = false; return; }
+          onBlurCommit?.(value);
+        }}
         onKeyDown={onKeyDown}
         autoComplete="off"
         spellCheck={false}
@@ -135,11 +197,17 @@ export function Combobox({
         <button className="cb-clear" type="button"
           aria-label="Clear"
           title="Clear"
-          onClick={() => { onChange(''); inputRef.current?.focus(); setOpen(true); }}
+          onClick={() => {
+            onChange('');
+            // Kilitliyken odak/açılış YOK — ama temizleme çalışır.
+            if (disabled) return;
+            inputRef.current?.focus();
+            setOpen(true);
+          }}
           onMouseDown={e => e.preventDefault()}>
           ✕
         </button>
-      ) : (
+      ) : disabled ? null : (
         <button className="cb-caret" type="button" tabIndex={-1}
           aria-label={open ? 'Close' : 'Open'}
           onClick={() => { setOpen(o => !o); inputRef.current?.focus(); }}
@@ -148,7 +216,11 @@ export function Combobox({
         </button>
       )}
 
-      {open && filtered.length > 0 && (
+      {/* `disabled` liste render'ını da kapatır: alan AÇIK LİSTEYLE
+          kilitlenebiliyor (TeamEditor Enter'da busy=true yapıyor,
+          alan hâlâ odakta) — o hâlde liste satırın üstünde asılı
+          kalırdı. */}
+      {open && !disabled && filtered.length > 0 && (
         <div ref={listRef} className="cb-list" role="listbox">
           {filtered.map((o, i) => (
             <div
@@ -164,7 +236,7 @@ export function Combobox({
           ))}
         </div>
       )}
-      {open && filtered.length === 0 && value.trim() && (
+      {open && !disabled && filtered.length === 0 && value.trim() && (
         <div className="cb-list">
           <div className="cb-row cb-row-empty">No matches — Enter will use the typed value</div>
         </div>

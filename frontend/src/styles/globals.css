@@ -2107,6 +2107,41 @@ button.accent.copied {
   color: var(--ok);
 }
 
+/* SearchField (v0.9.1012, M8/KN-5) — arama kutusunun TÜR tanımı.
+   `.trace-lookup` ve KqlSearchInput'un gömülü svg'si aynı problemi tek
+   kullanımlık çözmüştü; bu blok onların genelleştirilmiş hâli.
+   DÜZEN DEĞİŞMİYOR: ikon + rozet kutunun İÇİNDE, dolgu üzerinden. */
+.sf-wrap { position: relative; display: inline-flex; align-items: center; }
+.sf-wrap .sf-input { width: 100%; padding-left: 26px; }
+/* Dekoratif ikon — tık inputa düşsün. Bir büyütece tıklayan operatör
+   odak bekler, hiçbir şey olmamasını değil. */
+.sf-icon {
+  position: absolute; left: 7px; color: var(--text3);
+  pointer-events: none;
+}
+.sf-wrap:focus-within .sf-icon { color: var(--text2); }
+/* Kısayol rozeti — ipucu kutuyu KULLANIRKEN değil BULURKEN gerekli,
+   bu yüzden odakta kayboluyor. */
+.sf-hint {
+  position: absolute; right: 7px;
+  font-family: inherit; font-size: var(--fs-2xs); line-height: 1;
+  color: var(--text3); background: var(--bg2);
+  border: 1px solid var(--border); border-radius: var(--radius-xs);
+  padding: 2px 4px; pointer-events: none;
+  transition: opacity .12s;
+}
+.sf-wrap:focus-within .sf-hint { opacity: 0; }
+.sf-clear {
+  position: absolute; right: 5px;
+  background: transparent; border: 0; cursor: pointer;
+  color: var(--text3); font-size: var(--fs-xs); line-height: 1;
+  padding: 2px 4px; border-radius: var(--radius-xs);
+}
+.sf-clear:hover { color: var(--text); background: var(--bg2); }
+/* Native ✕: `type="search"` WebKit'te kendi temizle düğmesini basıyor ve
+   bizimkiyle üst üste gelirdi. Bizimki tema token'larını kullanıyor. */
+.sf-input::-webkit-search-cancel-button { display: none; }
+
 /* Dedicated trace-id lookup (pinned right of the view-toggle row) */
 .trace-lookup {
   display: inline-flex; align-items: center; gap: 0;

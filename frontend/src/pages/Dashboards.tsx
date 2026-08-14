@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
-import { Modal, Field, Button, Stack, IconButton } from '@/components/ui';
+import { Button, Field, IconButton, Modal, SearchField, Stack } from '@/components/ui';
 import { Sparkline } from '@/components/Sparkline';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -190,12 +190,11 @@ export default function DashboardsPage() {
       <Topbar title="Dashboards" />
       <PageShell>
         <PageControls sticky>
-          <input ref={searchRef} value={q} onChange={e => setQ(e.target.value)}
+          {/* v0.9.1012 (M8) — ayrı "Clear" butonu atomun kutu-içi ✕'ine
+              devredildi: temizleme affordance'ı aramanın KENDİSİNDE. */}
+          <SearchField ref={searchRef} value={q} onChange={setQ}
             placeholder="Filter dashboards…" aria-label="Filter dashboards"
-            style={{ width: 220 }} />
-          {q && (
-            <Button variant="secondary" size="sm" onClick={() => setQ('')}>Clear</Button>
-          )}
+            hint="/" width={220} />
           {isAdmin && (
             <>
               <Button variant="primary" onClick={() => setShowNew(true)}>+ New dashboard</Button>

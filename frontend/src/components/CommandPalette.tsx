@@ -652,7 +652,7 @@ export function CommandPalette() {
         <input ref={inputRef}
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search services, endpoints, pages, run an action, or paste a trace id…"
+          placeholder="Search or paste a trace id…"
           style={{
             border: 'none', outline: 'none',
             background: 'transparent', color: 'var(--text)',

@@ -9,7 +9,7 @@ import { TelescopeIcon } from './TelescopeIcon';
 import {
   Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
-  LayoutDashboard, Bell, Target, CircleGauge, Search, Hash, Eye,
+  LayoutDashboard, Bell, Target, CircleGauge, Hash, Eye,
   Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, Flag, type LucideIcon,
 } from 'lucide-react';
 import { navHref } from '@/lib/navHref';

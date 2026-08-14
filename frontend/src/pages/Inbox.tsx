@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Button, Chip } from '@/components/ui';
+import { Button, Chip, SearchField } from '@/components/ui';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Users, Shield } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
@@ -652,11 +652,13 @@ export default function InboxPage() {
               "timeout" or "OOMKilled". Client-side filtering wouldn't
               have worked either — the list is a server-capped top slice,
               so a term present only on row 900 would never arrive. */}
-          <input ref={searchRef} value={searchFilter}
-            onChange={e => setSearchFilter(e.target.value)}
+          <SearchField ref={searchRef} value={searchFilter}
+            onChange={setSearchFilter}
             placeholder="Search service, title, source…"
+            aria-label="Search service, title, source"
+            hint="/"
             title="Case-insensitive substring match across the service, the title and the source label."
-            style={{ fontSize: 12, padding: '4px 8px', minWidth: 220 }} />
+            style={{ minWidth: 220 }} />
           {serviceFilter && (
             <Chip onRemove={() => setServiceFilter('')}
               removeLabel={`Remove the ${serviceFilter} service filter`}

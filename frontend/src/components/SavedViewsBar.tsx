@@ -225,7 +225,7 @@ export function SavedViewsBar({ page, right }: {
               style={{ color: 'rgb(187,128,9)' }}>↺</Button>
           )}
           {(v.ownerId === user?.id || isAdmin) && (
-            <Button variant="ghost" size="sm" onClick={() => remove(v)}
+            <Button variant="ghost-danger" size="sm" onClick={() => void remove(v)}
               title="Delete">×</Button>
           )}
         </span>

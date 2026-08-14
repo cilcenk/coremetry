@@ -680,7 +680,8 @@ export default function AlertsPage() {
                                 Disable
                               </Button>
                             : <Button variant="secondary" size="sm" onClick={() => enable(r.id)}>Enable</Button>}
-                          <Button variant="danger" size="sm" onClick={() => void remove(r.id, r.name)}
+                          <Button variant="ghost-danger" size="sm" loading={deleteRule.isPending}
+                            onClick={() => void remove(r.id, r.name)}
                             title="Remove the rule entirely from ClickHouse">
                             Delete
                           </Button>

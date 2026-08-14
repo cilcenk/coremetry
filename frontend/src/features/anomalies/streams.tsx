@@ -65,10 +65,32 @@ export function AnomalyStreams() {
       kind, pattern, service, durationSec,
     });
   };
-  const onUnmute = async (id: string) => {
+  // v0.9.1010 (C4) — ONAY BURADA, butonun içinde DEĞİL.
+  //
+  // İlk taslakta onay çağrı noktasındaydı (chip'in ×'i) ve kaynak
+  // kapısı bunu yakaladı: `onUnmute` prop olarak geçtiği için yıkıcı
+  // çağrı ile onay AYRI GÖVDELERDE kalıyordu. Bu yalnız bir kapı
+  // detayı değil, gerçek bir kırılganlık: ikinci bir çağıran eklendiği
+  // gün onaysız bir yol doğardı. Onay eylemin YANINDA duruyor.
+  const onUnmute = async (id: string, label: string, service?: string) => {
+    if (!await confirm({
+      title: 'Susturma kaldırılsın mı?',
+      body: <><code>{label}</code>{service ? <> @ <code>{service}</code></> : null}
+        {' '}susturma kaydı silinecek ve bu anomali uyarı akışına
+        GERİ AÇILACAK.</>,
+      confirmLabel: 'Susturmayı kaldır',
+      danger: true,
+    })) return;
     await deleteSilence.mutateAsync(id);
   };
   const onUnmuteAll = async (ids: string[]) => {
+    if (!await confirm({
+      title: 'Tüm susturmalar kaldırılsın mı?',
+      body: <>Aktif <b>{ids.length}</b> susturma kaydı silinecek ve bu
+        anomaliler uyarı akışına GERİ AÇILACAK.</>,
+      confirmLabel: `${ids.length} susturmayı kaldır`,
+      danger: true,
+    })) return;
     await bulkDeleteSilences.mutateAsync(ids);
   };
 
@@ -218,7 +240,7 @@ function MetricSection({ items }: { items: Problem[] | undefined }) {
 
 function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
   items: AnomalySilence[] | undefined;
-  onUnmute: (id: string) => void;
+  onUnmute: (id: string, label: string, service?: string) => void;
   onUnmuteAll: (ids: string[]) => void;
   canEdit: boolean;
 }) {
@@ -238,18 +260,8 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
         </span>
       </span>
       {canEdit && items.length > 1 && (
-        <Button variant="ghost" size="sm"
-          onClick={async () => {
-            if (await confirm({
-              title: 'Tüm susturmalar kaldırılsın mı?',
-              body: <>Aktif <b>{items.length}</b> susturma kaydı silinecek ve bu
-                anomaliler uyarı akışına GERİ AÇILACAK.</>,
-              confirmLabel: `${items.length} susturmayı kaldır`,
-              danger: true,
-            })) {
-              onUnmuteAll(items.map(s => s.id));
-            }
-          }}
+        <Button variant="ghost-danger" size="sm"
+          onClick={() => void onUnmuteAll(items.map(s => s.id))}
           title="Unmute every active silence">
           Unmute all
         </Button>
@@ -268,11 +280,16 @@ function SilencesSection({ items, onUnmute, onUnmuteAll, canEdit }: {
               {s.service && <span style={{ color: 'var(--text3)' }}> @ {s.service}</span>}
             </span>
             <span style={{ color: 'var(--text3)' }}>{remainStr} left</span>
+            {/* v0.9.1010 (C4 + O10) — burası atom BAYPASIYDI: çıplak
+                `<button className="btn-chip-x">`, onaysız, ve
+                `api.deleteAnomalySilence` çağırıyor (susturma kaydı
+                silinir, uyarı akışı geri açılır). */}
             {canEdit && (
-              <button type="button" className="btn-chip-x" onClick={() => onUnmute(s.id)}
-                title="Unmute now" aria-label={`Unmute ${s.pattern}`}>
+              <Button variant="ghost-danger" size="xs"
+                title="Unmute now" aria-label={`Unmute ${s.pattern}`}
+                onClick={() => void onUnmute(s.id, s.pattern, s.service)}>
                 <span aria-hidden="true">×</span>
-              </button>
+              </Button>
             )}
           </span>
         );

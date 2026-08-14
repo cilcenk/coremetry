@@ -145,7 +145,8 @@ export default function SLOsPage() {
                     {isAdmin && (
                       <td><div className="cell-actions">
                         <BurnExplainButton sloId={o.id} />
-                        <Button variant="secondary" size="sm" onClick={() => void onDelete(o.id, o.name)}>Delete</Button>
+                        <Button variant="ghost-danger" size="sm" loading={deleteSLO.isPending}
+                          onClick={() => void onDelete(o.id, o.name)}>Delete</Button>
                       </div>
                       </td>
                     )}

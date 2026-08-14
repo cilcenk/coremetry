@@ -279,7 +279,7 @@ export default function UsersPage() {
                           style={{ marginRight: 6 }}>
                           Reset password
                         </Button>
-                        <Button variant="secondary" onClick={() => onDelete(u)}
+                        <Button variant="ghost-danger" onClick={() => void onDelete(u)}
                           disabled={isMe}
                           title={isMe ? "You can't delete your own account" : 'Disable user'}>
                           Delete

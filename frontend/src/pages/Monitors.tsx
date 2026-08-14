@@ -69,7 +69,7 @@ export default function MonitorsPage() {
         {items && items.length > 0 && (
           <div className="status-grid">
             {items.map(m => (
-              <MonitorCard key={m.id} m={m} isAdmin={isAdmin}
+              <MonitorCard key={m.id} m={m} isAdmin={isAdmin} deleting={deleteMonitor.isPending}
                 onEdit={() => setEditing(m)}
                 onDelete={async () => {
                   if (!await confirm({
@@ -97,11 +97,17 @@ export default function MonitorsPage() {
   );
 }
 
-function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }: {
+function MonitorCard({ m, isAdmin, deleting, onEdit, onDelete, onTimeline, showTimeline }: {
   m: MonitorRow;
   isAdmin: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  // v0.9.1010 (O11) — çift-tık koruması. Mutasyon uçuştayken buton
+  // kilitli: v0.9.882 sekiz yazmayı bu gerekçeyle korumuştu ama kapsamı
+  // ProblemDetail + Incident + AdminQuery idi, yani YIKICI tarafa hiç
+  // değmemişti. İkinci tık ya 404 gösteriyor ya İKİNCİ AUDIT SATIRI
+  // bırakıyordu ("Admin write = audit entry").
+  deleting?: boolean;
   onTimeline: () => void;
   showTimeline: boolean;
 }) {
@@ -179,7 +185,7 @@ function MonitorCard({ m, isAdmin, onEdit, onDelete, onTimeline, showTimeline }:
         {isAdmin && (
           <>
             <Button variant="secondary" size="sm" onClick={onEdit}>Edit</Button>
-            <Button variant="danger" size="sm" onClick={onDelete}>Delete</Button>
+            <Button variant="ghost-danger" size="sm" loading={deleting} onClick={onDelete}>Delete</Button>
           </>
         )}
       </div>

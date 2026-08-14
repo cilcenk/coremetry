@@ -170,7 +170,8 @@ export default function RunbooksPage() {
                             Enable
                           </Button>)}
                       {canEdit && (
-                        <Button variant="danger" size="sm" onClick={() => remove(rb.id, rb.title)}
+                        <Button variant="ghost-danger" size="sm" loading={deleteRb.isPending}
+                          onClick={() => void remove(rb.id, rb.title)}
                           title="Remove the runbook entirely">
                           Delete
                         </Button>

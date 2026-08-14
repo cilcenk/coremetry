@@ -59,7 +59,14 @@ describe('K6 — native confirm() geri gelemez', () => {
   });
 
   it('çıplak confirm( yalnız useConfirm() çağıran dosyalarda', () => {
+    // Test dosyaları kapsam DIŞI ve bu bilinçli: bir test operatöre
+    // diyalog GÖSTERMEZ, ve kardeş kapı `destructiveConfirm.test.ts`
+    // kuralı REGEX LİTERALİ olarak yazmak zorunda (`/confirm\s*\(/`).
+    // Kuralı ifade eden metni ihlal saymak, bu depoda yedi kez ısıran
+    // "kapı kendi düzyazısını kural sanıyor" tuzağının aynısı olurdu.
+    // `window.confirm` yasağı (yukarıda) test dosyalarını da kapsıyor.
     const bad = FILES
+      .filter(f => !/\.test\.tsx?$/.test(f.rel))
       .filter(f => /(?<![\w.])confirm\s*\(/.test(f.src) && !/useConfirm\s*\(/.test(f.src))
       .map(f => f.rel);
     expect(bad, 'hook’suz bir dosyada `confirm(` tanım gereği GLOBALDIR').toEqual([]);

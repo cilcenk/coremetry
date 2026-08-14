@@ -168,7 +168,7 @@ export function PipelineTab() {
                     <Button variant="secondary" size="sm" onClick={() => setEditing(r)} style={{ marginRight: 6 }}>
                       Edit
                     </Button>
-                    <Button variant="secondary" size="sm" onClick={() => remove(r)}>
+                    <Button variant="ghost-danger" size="sm" onClick={() => void remove(r)}>
                       Delete
                     </Button>
                   </td>

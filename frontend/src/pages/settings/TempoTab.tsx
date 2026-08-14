@@ -206,7 +206,7 @@ export function TempoTab() {
             Save
           </Button>
           {hasToken && authType !== 'none' && (
-            <Button type="button" variant="secondary" disabled={busy} onClick={clearToken}>
+            <Button type="button" variant="ghost-danger" disabled={busy} onClick={() => void clearToken()}>
               Disable auth
             </Button>
           )}

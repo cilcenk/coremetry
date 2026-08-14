@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useServicesMetadata } from '@/lib/queries';
 import { teamOptionsCI } from '@/lib/teamOptions';
@@ -217,6 +217,7 @@ export function TeamRoutingTab() {
 // /problems owner/SRE filtreleri bu tablo üzerinden eşleşir. Karşılaştırma
 // büyük/küçük harf + Türkçe İ/ı duyarsızdır; buradaki yazım yalnız gösterim.
 export function TeamAliasesCard() {
+  const confirm = useConfirm();
   const [ta, setTa] = useState<import('@/lib/types').TeamAliases | null | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -269,8 +270,20 @@ export function TeamAliasesCard() {
                 <span className="mono" style={{ fontSize: 12, minWidth: 180 }}>{alias}</span>
                 <span style={{ color: 'var(--text3)' }}>→</span>
                 <span className="mono" style={{ fontSize: 12, flex: 1 }}>{canon}</span>
-                <Button variant="ghost" size="sm" disabled={busy}
-                  onClick={() => {
+                {/* v0.9.1010 (C4 + O10) — burası ONAYSIZ ve `ghost`tu:
+                    tıklama ANINDA persist ediyordu (`void save(next)`),
+                    yani tıkla-ve-gitti. Hem onay hem kırmızı dil geldi. */}
+                <Button variant="ghost-danger" size="sm" disabled={busy}
+                  onClick={async () => {
+                    if (!await confirm({
+                      title: 'Takım eşlemesi silinsin mi?',
+                      body: <><code>{alias}</code> → <code>{canon}</code> eşlemesi
+                        kaldırılacak. Telemetride <code>{alias}</code> yazan
+                        kayıtlar artık kanonik takıma bağlanmaz ve sahipsiz
+                        görünür.</>,
+                      confirmLabel: 'Eşlemeyi sil',
+                      danger: true,
+                    })) return;
                     const next = { ...ta.aliases };
                     delete next[alias];
                     void save(next);

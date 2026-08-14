@@ -184,7 +184,8 @@ function Inner() {
                 Delete) ve ortadaki gerçek ikincil (Save changes)
                 eziliyordu. `ghost-danger` tek dolu birincil bırakıyor. */}
             {canEdit && (
-              <Button variant="ghost-danger" size="sm" onClick={remove}>Delete</Button>
+              <Button variant="ghost-danger" size="sm" loading={deleteRb.isPending}
+                onClick={() => void remove()}>Delete</Button>
             )}
           </span>
         </div>

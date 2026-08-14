@@ -12,6 +12,7 @@ import {
   useUpdateStatusComponent, useDeleteStatusComponent,
   useStatusPageSubscribers, useDeleteStatusSubscriber,
 } from '@/lib/queries';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { tsLong } from '@/lib/utils';
 import type { StatusPageConfig, StatusComponent, StatusSubscriber, MonitorRow } from '@/lib/types';
 
@@ -20,6 +21,7 @@ import type { StatusPageConfig, StatusComponent, StatusSubscriber, MonitorRow } 
 // service), and the email subscriber list.
 
 export default function StatusPageAdmin() {
+  const confirm = useConfirm();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin';
   const [tab, setTab] = useState<'config' | 'components' | 'subs'>('components');
@@ -109,6 +111,7 @@ function ConfigTab() {
 }
 
 function ComponentsTab() {
+  const confirm = useConfirm();
   // undefined = loading, null = fetch failed, [] = loaded-but-empty.
   const itemsQ = useStatusPageComponents();
   const items: StatusComponent[] | null | undefined =
@@ -160,7 +163,14 @@ function ComponentsTab() {
               <div style={{ display: 'flex', gap: 6 }}>
                 <Button variant="secondary" size="sm" onClick={() => setEditing(c)}>Edit</Button>
                 <Button variant="danger" size="sm" onClick={async () => {
-                  if (!confirm(`Remove "${c.name}"?`)) return;
+                  if (!await confirm({
+                    title: 'Durum bileşeni kaldırılsın mı?',
+                    body: <><b>{c.name}</b> bileşeni herkese açık durum
+                      sayfasından kaldırılacak; geçmiş kesinti kayıtları
+                      da onunla birlikte görünmez olur.</>,
+                    confirmLabel: 'Bileşeni kaldır',
+                    danger: true,
+                  })) return;
                   // Mutation auto-invalidates the components list.
                   await deleteComponent.mutateAsync(c.id);
                 }}>Remove</Button>
@@ -256,6 +266,7 @@ function ComponentModal({ initial, monitors, onClose, onSaved }: {
 }
 
 function SubsTab() {
+  const confirm = useConfirm();
   // undefined = loading, null = fetch failed, [] = loaded-but-empty.
   const subsQ = useStatusPageSubscribers();
   const subs: StatusSubscriber[] | null | undefined =
@@ -285,7 +296,13 @@ function SubsTab() {
             <span style={{ color: 'var(--text3)', fontSize: 11 }}>· joined {tsLong(s.createdAt)}</span>
           </div>
           <Button variant="danger" size="sm" onClick={async () => {
-            if (!confirm(`Remove subscriber ${s.email}?`)) return;
+            if (!await confirm({
+              title: 'Abone kaldırılsın mı?',
+              body: <><b>{s.email}</b> durum sayfası bildirimlerini artık
+                almayacak.</>,
+              confirmLabel: 'Aboneyi kaldır',
+              danger: true,
+            })) return;
             // Mutation auto-invalidates the subscriber list.
             await deleteSubscriber.mutateAsync(s.email);
           }}>Remove</Button>

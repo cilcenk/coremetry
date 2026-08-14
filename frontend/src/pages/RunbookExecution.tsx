@@ -8,6 +8,7 @@ import { useRunbookExecution, useRunbookStepAction, useCancelRunbookExecution } 
 import { tsLong } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import { PageShell } from '@/components/ui/PageShell';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 // Runbook execution runner (v0.7.0) — step through a live run. Manual steps
 // are ticked here (Done / Skip / Fail + note); automated steps
@@ -32,6 +33,7 @@ export default function RunbookExecutionPage() {
 }
 
 function Inner() {
+  const confirm = useConfirm();
   const [sp] = useSearchParams();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -98,7 +100,17 @@ function Inner() {
           )}
           {canEdit && !terminal && (
             <Button variant="danger" size="sm" style={{ marginLeft: 'auto' }}
-              onClick={() => { if (confirm('Cancel this execution?')) cancelExec.mutateAsync(execId).catch(e => setErr(e instanceof Error ? e.message : String(e))); }}>
+              onClick={async () => {
+                if (!await confirm({
+                  title: 'Çalıştırma iptal edilsin mi?',
+                  body: <>Bu runbook çalıştırması <b>iptal edildi</b> olarak
+                    kapatılacak. Tamamlanmamış adımlar bir daha
+                    işaretlenemez; geçmiş kayıt denetim için kalır.</>,
+                  confirmLabel: 'Çalıştırmayı iptal et',
+                  danger: true,
+                })) return;
+                cancelExec.mutateAsync(execId).catch(e => setErr(e instanceof Error ? e.message : String(e)));
+              }}>
               Cancel run
             </Button>
           )}

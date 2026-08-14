@@ -7,6 +7,7 @@ import { useShortcuts, type Shortcut } from '@/lib/keyboard';
 import { api } from '@/lib/api';
 import { toast } from '@/lib/toast';
 import type { SavedView } from '@/lib/types';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 // Normalise a URL query string so two semantically-equal forms
 // compare equal: strip leading `?`, parse → sort by key → re-emit.
@@ -38,6 +39,7 @@ export function SavedViewsBar({ page, right }: {
   // they used to sit in was removed as a whole row (operator).
   right?: ReactNode;
 }) {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const location = useLocation();
   const { user } = useAuth();
@@ -140,7 +142,13 @@ export function SavedViewsBar({ page, right }: {
   };
 
   const remove = async (v: SavedView) => {
-    if (!confirm(`Delete saved view "${v.name}"?`)) return;
+    if (!await confirm({
+      title: 'Kayıtlı görünüm silinsin mi?',
+      body: <><b>{v.name}</b> görünümü silinecek. Yalnız kayıtlı filtre
+        bileşimi kaybolur — verinin kendisine dokunulmaz.</>,
+      confirmLabel: 'Görünümü sil',
+      danger: true,
+    })) return;
     try {
       await api.deleteSavedView(v.id);
       api.savedViews(page).then(v => setViews(v ?? []));

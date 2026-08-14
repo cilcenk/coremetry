@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { Field2, FlashBox, Row } from './shared';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
@@ -43,6 +43,7 @@ type SourceRow = {
 };
 
 export function KnowledgeTab() {
+  const confirm = useConfirm();
   const [cfg, setCfg] = useState<import('@/lib/types').RagConfigView | null | undefined>(undefined);
   const [docs, setDocs] = useState<import('@/lib/types').RagDocument[] | null | undefined>(undefined);
   const [apiKey, setApiKey] = useState('');
@@ -333,7 +334,14 @@ export function KnowledgeTab() {
                   <td style={{ textAlign: 'right' }}>
                     <Button variant="danger" size="sm" type="button" disabled={busy}
                       onClick={async () => {
-                        if (!confirm(`${d.docName} silinsin mi?`)) return;
+                        if (!await confirm({
+                          title: 'Belge silinsin mi?',
+                          body: <><b>{d.docName}</b> ve ondan üretilmiş
+                            {' '}{d.chunks} parça bilgi tabanından silinecek;
+                            CoSRE artık bu belgeden alıntı yapamaz.</>,
+                          confirmLabel: 'Belgeyi sil',
+                          danger: true,
+                        })) return;
                         try { await api.deleteRagDocument(d.docId); load(); }
                         catch (e) { setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) }); }
                       }}>

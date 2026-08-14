@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
 import type { AIProvider } from '@/lib/types';
@@ -18,6 +18,7 @@ import { Link } from 'react-router-dom';
 //     server exchanges it for a session token and calls
 //     api.githubcopilot.com (OpenAI-compatible).
 export function AITab() {
+  const confirm = useConfirm();
   const [provider, setProvider] = useState<AIProvider>('anthropic');
   const [model, setModel] = useState('');
   const [baseUrl, setBaseUrl] = useState('');
@@ -65,7 +66,13 @@ export function AITab() {
   };
 
   const clearKey = async () => {
-    if (!confirm('Remove the saved API key? CoSRE buttons will disappear until a new key is set.')) return;
+    if (!await confirm({
+      title: 'Kayıtlı API anahtarı silinsin mi?',
+      body: <>Anahtar sunucudan kaldırılacak ve <b>CoSRE düğmeleri</b> yeni bir
+        anahtar girilene kadar tüm yüzeylerden kaybolacak.</>,
+      confirmLabel: 'Anahtarı sil',
+      danger: true,
+    })) return;
     setBusy(true); setMsg(null);
     try {
       const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled });

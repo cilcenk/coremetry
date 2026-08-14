@@ -7,6 +7,7 @@ import { readState } from '@/lib/readState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { Runbook } from '@/lib/types';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 
 // v0.9.872 (tutarlılık denetimi BT11) — `is-fit` sınıfı vardı, primitif
 // yoktu. Genişlikler beyan edilmediği için isFitTables.test.ts bu tabloyu
@@ -39,6 +40,7 @@ import { PageShell } from '@/components/ui/PageShell';
 // column buttons) so they still SEES state per CLAUDE.md invariant 7.
 
 export default function RunbooksPage() {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const { user } = useAuth();
   const canEdit = user?.role === 'admin' || user?.role === 'editor';
@@ -73,7 +75,13 @@ export default function RunbooksPage() {
   };
 
   const remove = async (id: string, title: string) => {
-    if (!confirm(`Delete runbook "${title}" permanently? This removes the procedure and its definition. Historical executions are kept for audit.`)) return;
+    if (!await confirm({
+      title: 'Runbook silinsin mi?',
+      body: <><b>{title}</b> prosedürü ve tanımı kalıcı olarak silinecek.
+        Geçmiş çalıştırmalar denetim için SAKLANIR.</>,
+      confirmLabel: 'Runbook’u sil',
+      danger: true,
+    })) return;
     await deleteRb.mutateAsync(id);
   };
 

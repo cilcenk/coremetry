@@ -3,7 +3,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useAuth } from '@/components/AuthProvider';
 import { CopyButton } from '@/components/CopyButton';
-import { Modal, Field, SelectField, Button, Stack, Row as UiRow } from '@/components/ui';
+import { Button, Field, Modal, Row as UiRow, SelectField, Stack, useConfirm } from '@/components/ui';
 import {
   useMonitors, useMonitorTimeline,
   useCreateMonitor, useUpdateMonitor, useDeleteMonitor,
@@ -23,6 +23,7 @@ import { PageShell } from '@/components/ui/PageShell';
 //                 the cron job. State flips down when the gap exceeds
 //                 the monitor's `intervalSec` (treated as grace window).
 export default function MonitorsPage() {
+  const confirm = useConfirm();
   const { user } = useAuth();
   const isAdmin = user?.role === 'admin' || user?.role === 'editor';
   const [showNew, setShowNew] = useState(false);
@@ -71,7 +72,13 @@ export default function MonitorsPage() {
               <MonitorCard key={m.id} m={m} isAdmin={isAdmin}
                 onEdit={() => setEditing(m)}
                 onDelete={async () => {
-                  if (!confirm(`Delete monitor "${m.name}"?`)) return;
+                  if (!await confirm({
+                    title: 'Monitör silinsin mi?',
+                    body: <><b>{m.name}</b> monitörü ve geçmiş kontrol sonuçları
+                      silinecek; bu uç nokta artık izlenmeyecek.</>,
+                    confirmLabel: 'Monitörü sil',
+                    danger: true,
+                  })) return;
                   await deleteMonitor.mutateAsync(m.id);
                 }}
                 onTimeline={() => setOpenTimeline(openTimeline === m.id ? null : m.id)}

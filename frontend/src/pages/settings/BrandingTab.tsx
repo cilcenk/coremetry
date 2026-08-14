@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent, type ChangeEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { DEFAULT_BRANDING, invalidateBranding, type BrandingSettings } from '@/lib/branding';
 import { Field, Row, SettingsLoadError, useSettingsLoad } from './shared';
@@ -17,6 +17,7 @@ import { Field, Row, SettingsLoadError, useSettingsLoad } from './shared';
 // enough that the system_settings row stays cheap to fetch on
 // every login page render.
 export function BrandingTab() {
+  const confirm = useConfirm();
   const [b, setB] = useState<BrandingSettings>({});
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -68,7 +69,14 @@ export function BrandingTab() {
   };
 
   const resetAll = async () => {
-    if (!confirm('Reset all branding to the Coremetry defaults? Saved logo + custom strings will be cleared.')) return;
+    if (!await confirm({
+      title: 'Marka ayarları sıfırlansın mı?',
+      body: <>Yüklenmiş logo ve tüm özel metinler (giriş başlığı, buton
+        etiketi, alt bilgi) SİLİNECEK ve Coremetry varsayılanlarına
+        dönülecek. Geri alınamaz.</>,
+      confirmLabel: 'Varsayılanlara dön',
+      danger: true,
+    })) return;
     setBusy(true); setMsg(null);
     try {
       await api.putBranding({});

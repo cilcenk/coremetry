@@ -3,7 +3,7 @@ import { api } from '@/lib/api';
 import { keys } from './keys';
 
 // Admin user management (/users). Mutations on that page are inline
-// api.* calls behind confirm() dialogs; they refresh by invalidating
+// api.* calls behind useConfirm dialogs; they refresh by invalidating
 // keys.users.all, which covers both queries below.
 
 export function useUsers() {

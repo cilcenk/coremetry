@@ -1,6 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
 import type { TempoAuthType } from '@/lib/types';
@@ -12,6 +12,7 @@ import type { TempoAuthType } from '@/lib/types';
 // /trace URL the rest of the UI links to. Admin-only — the saved
 // token reads every trace in the operator's Tempo cluster.
 export function TempoTab() {
+  const confirm = useConfirm();
   const [enabled, setEnabled] = useState(false);
   const [baseUrl, setBaseUrl] = useState('');
   const [authType, setAuthType] = useState<TempoAuthType>('none');
@@ -59,7 +60,13 @@ export function TempoTab() {
   };
 
   const clearToken = async () => {
-    if (!confirm('Remove the saved Tempo token? Lookups will fail with 401 until a new one is set.')) return;
+    if (!await confirm({
+      title: 'Kayıtlı Tempo token’ı silinsin mi?',
+      body: <>Token kaldırılacak; Tempo üzerinden trace aramaları yeni bir
+        token girilene kadar <b>401</b> ile başarısız olacak.</>,
+      confirmLabel: 'Token’ı sil',
+      danger: true,
+    })) return;
     setBusy(true); setMsg(null);
     try {
       // Server contract: empty token = preserve. To explicitly

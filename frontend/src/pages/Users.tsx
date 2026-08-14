@@ -5,7 +5,7 @@ import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
 import { readState } from '@/lib/readState';
 import { useAuth } from '@/components/AuthProvider';
-import { Modal, Field, SelectField, Button, Stack, Chip } from '@/components/ui';
+import { Button, Chip, Field, Modal, SelectField, Stack, useConfirm } from '@/components/ui';
 import { keys, useUsers, useCustomRoles } from '@/lib/queries';
 import { api, type UserRow, type CustomRole } from '@/lib/api';
 import type { Role } from '@/lib/types';
@@ -17,6 +17,7 @@ import { PageShell } from '@/components/ui/PageShell';
 
 
 export default function UsersPage() {
+  const confirm = useConfirm();
   const { user: me } = useAuth();
   const [showNew, setShowNew] = useState(false);
   const [resetFor, setResetFor] = useState<UserRow | null>(null);
@@ -91,7 +92,13 @@ export default function UsersPage() {
 
   const onDelete = async (u: UserRow) => {
     setActionError(null);
-    if (!confirm(`Disable user ${u.email}? They will no longer be able to sign in.`)) return;
+    if (!await confirm({
+      title: 'Kullanıcı devre dışı bırakılsın mı?',
+      body: <><b>{u.email}</b> artık oturum açamayacak. Mevcut oturumları
+        bir sonraki token yenilemesinde düşer.</>,
+      confirmLabel: 'Kullanıcıyı kapat',
+      danger: true,
+    })) return;
     try {
       await api.deleteUser(u.id);
       refresh();
@@ -467,16 +474,24 @@ function RoleEditor({ user, isMe, onChanged }: {
   isMe: boolean;
   onChanged: () => void;
 }) {
+  const confirm = useConfirm();
   const [busy, setBusy] = useState(false);
 
   const apply = async (next: Role) => {
     if (next === user.role) return;
-    const ok = confirm(
-      `Change ${user.email}'s role from ${user.role} to ${next}?` +
-      (next === 'admin' ? '\n\nAdmins can manage users, settings, and every CRUD surface.'
-       : next === 'editor' ? '\n\nEditors can manage dashboards / monitors / alerts but not users or system settings.'
-       : '\n\nViewers are read-only.')
-    );
+    const ok = await confirm({
+      title: 'Rol değiştirilsin mi?',
+      body: <>
+        <b>{user.email}</b> — <code>{user.role}</code> → <code>{next}</code>.
+        {next === 'admin'
+          ? ' Admin kullanıcıları, ayarları ve tüm CRUD yüzeylerini yönetebilir.'
+          : next === 'editor'
+            ? ' Editor pano / monitör / alert yönetebilir; kullanıcılara ve sistem ayarlarına dokunamaz.'
+            : ' Viewer salt-okunurdur.'}
+      </>,
+      confirmLabel: `${next} yap`,
+      danger: next === 'admin',
+    });
     if (!ok) return;
     setBusy(true);
     try {

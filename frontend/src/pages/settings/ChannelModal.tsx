@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { Button } from '@/components/ui';
+import { Combobox } from '@/components/Combobox';
 import { api } from '@/lib/api';
 import type { NotificationChannel, ChannelType } from '@/lib/types';
 import { Field, Row, FlashBox, humanize } from './shared';
@@ -407,23 +408,24 @@ export function ChannelModal({ initial, onClose, onSaved }: {
                   tarafında ChannelMatchRules.SRETeams/OwnerTeams +
                   MatchesProblem); eksik olan GÖRÜNÜRLÜKTÜ: operatör
                   katalogda hangi takım adlarının geçtiğini bilmeden
-                  buraya bir şey yazamıyordu. datalist o adları öneriyor
+                  buraya bir şey yazamıyordu. Alanlar o adları öneriyor
                   — serbest metin olarak kalıyor, çünkü katalog henüz
-                  doldurulmamış bir takım da yazılabilmeli. */}
-              <datalist id="ch-team-options">
-                {teamOptions.map(t => <option key={t} value={t} />)}
-              </datalist>
+                  doldurulmamış bir takım da yazılabilmeli.
+                  v0.9.1020 — öneri kaynağı aynı (`teamOptions`), taşıyıcı
+                  native <select> kardeşi olan öneri listesinden ev
+                  Combobox'ına indi: native liste yalnız Chrome'da klavye
+                  ile gezilebiliyordu, Firefox/Safari'de ok tuşları
+                  listeyi açmıyordu bile. Serbest metin KORUNUYOR —
+                  eşleşme yoksa yazılan değer olduğu gibi kalır. */}
               <Field label="Match SRE teams (comma-separated)">
-                <input value={matchSREs} list="ch-team-options"
-                  placeholder="platform, sre-storefront"
-                  onChange={e => setMatchSREs(e.target.value)}
-                  style={{ width: '100%' }} />
+                <Combobox value={matchSREs} onChange={setMatchSREs}
+                  options={teamOptions}
+                  placeholder="platform, sre-storefront" width="100%" />
               </Field>
               <Field label="Match owner teams (comma-separated)">
-                <input value={matchOwners} list="ch-team-options"
-                  placeholder="payments, ml"
-                  onChange={e => setMatchOwners(e.target.value)}
-                  style={{ width: '100%' }} />
+                <Combobox value={matchOwners} onChange={setMatchOwners}
+                  options={teamOptions}
+                  placeholder="payments, ml" width="100%" />
               </Field>
               <Field label="Match k8s/openshift clusters (comma-separated)">
                 <input value={matchClusters}

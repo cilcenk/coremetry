@@ -249,6 +249,7 @@ export default function AIObservabilityPage() {
           </Empty>
         )}
         {calls && calls.length > 0 && (
+          <>
           <div className="table-wrap">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} />
@@ -287,6 +288,17 @@ export default function AIObservabilityPage() {
               </tbody>
             </table>
           </div>
+            {/* v0.9.1018 — TAVAN BEYANI. Sabit `limit: 200` ekranda hiç
+                geçmiyordu: yoğun bir pencerede tablo sessizce kırpılıyor ve
+                operatör eksik veriyle "AI çağrısı azalmış" diye okuyordu.
+                v0.9.1014'ün `count` sözleşmesiyle aynı dürüstlük kuralı. */}
+            {calls.length >= 200 && (
+              <div className="pager" style={{ color: 'var(--text3)' }}>
+                son 200 çağrı gösteriliyor — tavana dayandı; daha fazlası için
+                pencereyi daraltın
+              </div>
+            )}
+          </>
         )}
 
         {/* v0.9.423 (CoSRE fikir #6) — 👎 madenciliği: hangi soru

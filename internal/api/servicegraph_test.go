@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -441,5 +443,112 @@ func TestNodeKindFromIDMatchesOTel(t *testing.T) {
 				t.Errorf("İKİ KAYNAK AYRIŞTI: önek %q, MV node_kind %q → %q — aynı düğüm iki kind alır", got, c.mvKind, mv)
 			}
 		})
+	}
+}
+
+// v0.9.1029 regresyon testleri — /api/topology yüzeyindeki İKİZ kusur.
+//
+// v0.9.1028 /api/servicegraph'i düzeltti; aynı varsayım
+// internal/api/topology.go'da ÜÇ yerde daha yaşıyordu
+// (getServiceTopology, getFlowTopology, writeServiceDrawIO — hepsi
+// `addNode(e.ParentService, "service", …)`). Orada kusur İKİ belirtiliydi:
+// addNode'un var-olan dalı Kind'ı hiç yeniden değerlendirmiyordu VE ad
+// soyma `kind != "service"` koşuluna bağlıydı, yani kind yanlış geldiğinde
+// display adı da ham `queue:` önekli kalıyordu.
+//
+// CANLIDA DOĞRULANDI (2026-08-14, lokal küme, v0.9.1028 imajı):
+//
+//	GET /api/topology/service?noise=show&broadcast=show&top=300
+//	→ 17 queue-id'li düğüm, 11'i kind:"service",
+//	  name:"queue:kafka:api.usage" (ham önek)
+//
+// Varsayılan çağrı bunu GİZLİYORDU (broadcast collapse + noise filtresi +
+// top=60 kuyruk düğümlerini tamamen eliyordu) — ilk repro denemem bu
+// yüzden boş dönmüştü. Kusuru görmek için filtreleri açmak gerekiyor.
+//
+// Üç site de HTTP handler closure'ı olduğu için doğrudan çağrılamıyor;
+// test bu yüzden iki katmanlı: (1) paylaşılan saf yardımcının karar
+// tablosu, (2) üç sitenin gerçekten onu kullandığını çivileyen kaynak
+// pini. İkincisi olmadan yardımcı doğru olup siteler bağlanmamış olabilir
+// (saf-test ≠ BAĞLANMA).
+func TestNodeIdentityFromID(t *testing.T) {
+	cases := []struct {
+		id           string
+		fallbackKind string
+		wantKind     string
+		wantName     string
+	}{
+		// Bug'ın TAM koşulu: çağıran "service" diyor (parent tarafı hep
+		// öyle der), id ise kuyruk. Önek KAZANMALI.
+		{"queue:kafka:api.usage", "service", "queue", "kafka:api.usage"},
+		{"queue:kafka:payment.settled", "service", "queue", "kafka:payment.settled"},
+		{"queue:rabbitmq@broker-1", "service", "queue", "rabbitmq@broker-1"},
+		{"queue:sqs", "service", "queue", "sqs"},
+		{"db:postgresql@10.0.1.5", "service", "db", "postgresql@10.0.1.5"},
+		{"ext:stripe.com", "service", "external", "stripe.com"},
+		// Child tarafı doğru kind veriyor — sonuç DEĞİŞMEMELİ.
+		{"queue:kafka:api.usage", "queue", "queue", "kafka:api.usage"},
+		{"db:h2", "db", "db", "h2"},
+		// Öneksiz: çağıranın ipucu tek doğru kaynak, ad ham kalır.
+		{"payments", "service", "service", "payments"},
+		{"", "service", "service", ""},
+		// Önek-benzeri servis adları tuzağı.
+		{"database-proxy", "service", "service", "database-proxy"},
+		{"queueing-service", "service", "service", "queueing-service"},
+	}
+	for _, c := range cases {
+		t.Run(c.id+"/"+c.fallbackKind, func(t *testing.T) {
+			kind, name := nodeIdentityFromID(c.id, c.fallbackKind)
+			if kind != c.wantKind {
+				t.Errorf("kind = %q, beklenen %q", kind, c.wantKind)
+			}
+			if name != c.wantName {
+				t.Errorf("name = %q, beklenen %q — ham önek kalırsa düğüm etiketi `queue:kafka:…` diye çizilir", name, c.wantName)
+			}
+			// İKİ BELİRTİ TEK KÖKTEN: önekli bir id için kind de ad da
+			// düzelmeli. Biri düzelip diğeri kalırsa kusurun yarısı yaşar.
+			if _, prefixed := nodeIDPrefixKind(c.id); prefixed {
+				if name == c.id {
+					t.Error("önekli id'de ad soyulmadı")
+				}
+				if kind == c.fallbackKind && c.fallbackKind == "service" {
+					t.Error("önekli id'de kind hâlâ çağıranın ipucunda")
+				}
+			}
+		})
+	}
+}
+
+// TestTopologyAddNodeSitesUseSharedIdentity — BAĞLANMA pini.
+//
+// Saf yardımcının doğru olması yetmez: üç sitenin de ONU kullanması ve
+// hiçbirinin önek listesini elle yazmaması gerekiyor. Elle yazılmış bir
+// dördüncü kopya, iki yüzeyin sessizce ayrışmasının yoludur.
+func TestTopologyAddNodeSitesUseSharedIdentity(t *testing.T) {
+	src, err := os.ReadFile("topology.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Yorumları soy: bu dosyadaki açıklamalar önek dizgelerini ANIYOR,
+	// soyulmazsa "elle yazılmış liste" taraması yorumda patlar.
+	var b strings.Builder
+	for _, line := range strings.Split(string(src), "\n") {
+		if i := strings.Index(line, "//"); i >= 0 {
+			line = line[:i]
+		}
+		b.WriteString(line + "\n")
+	}
+	body := b.String()
+
+	if n := strings.Count(body, "nodeIdentityFromID("); n != 3 {
+		t.Errorf("paylaşılan kimlik türetimi %d sitede kullanılıyor, 3 olmalı (getServiceTopology · getFlowTopology · writeServiceDrawIO)", n)
+	}
+	// Elle yazılmış önek listesi = dördüncü ayna.
+	if strings.Contains(body, `[]string{"db:", "queue:", "ext:"}`) {
+		t.Error("topology.go'da elle yazılmış önek listesi kalmış — nodeIDPrefixes TEK tablo olmalı, yoksa iki yüzey ayrışır")
+	}
+	// Kusurun imzası: adı KIND'a bakarak soymak.
+	if strings.Contains(body, `if kind != "service" {`) {
+		t.Error(`ad soyma yine kind'a bağlı (`+"`"+`if kind != "service"`+"`"+`) — kind yanlış geldiğinde ham önek geri gelir (v0.9.1029)`)
 	}
 }

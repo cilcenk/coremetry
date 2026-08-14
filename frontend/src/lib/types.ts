@@ -139,6 +139,15 @@ export interface GraphNode {
   // v0.9.367 — 'outbound' = giriş-servis fallback'i: enstrümante çağıranı
   // yok, sayılar bağımlılıklarının döndürdükleri. UI etiketi ayırır.
   callsBasis?: 'inbound' | 'outbound';
+  // v0.9.1026 — kuyruk düğümünün messaging cluster'ı (yalnız kind==='queue').
+  // /messaging çekmecesinin kimliği (system, cluster, destination) üçlüsü;
+  // bu alan gelmeden GERÇEK derin link kurulamıyordu.
+  //
+  // undefined/boş MEŞRU bir hâl (kolonun inmediği kurulum, v0.9.1025
+  // öncesi kovalar, kuyruk olmayan düğüm) ve '(default)' diye
+  // TAMAMLANMAMALI: çok-cluster kurulumda uydurma bir cluster çekmeceyi
+  // sessizce BOŞ açar (v0.9.973). O hâlde katalog köprüsü kullanılır.
+  cluster?: string;
 }
 export interface GraphEdge {
   source: string;

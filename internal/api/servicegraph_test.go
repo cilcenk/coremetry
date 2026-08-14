@@ -272,3 +272,70 @@ func TestBuildServiceGraph_CallsBasis(t *testing.T) {
 		t.Errorf("gateway = basis %q calls %d, want inbound/50", got.CallsBasis, got.Calls)
 	}
 }
+
+// v0.9.1026 — kuyruk düğümünün cluster'ı, kenarın HANGİ TARAFINDA
+// olduğuna bakılmaksızın düğüme yerleşmeli.
+//
+// Kuyruk düğümü İKİ farklı pass'ten doğuyor ve iki farklı tarafta
+// duruyor: producer kenarında CHILD (svc → queue:…), consumer kenarında
+// PARENT (queue:… → svc). Tek tarafa bakan bir yerleştirme, grafiğin
+// hangi kenarı önce gördüğüne göre cluster'ı olan/olmayan düğüm üretir
+// — deep-link ARALIKLI çalışır, ki bu hiç çalışmamaktan daha kötü
+// teşhis edilir.
+//
+// Ayrıca: parent tarafı `ensure(..., "service")` ile yaratılıyor (parent
+// daima servis varsayılıyor), yani ayraç node_kind DEĞİL ham id'nin
+// 'queue:' öneki olmak ZORUNDA.
+func TestBuildServiceGraph_QueueClusterFromEitherSide(t *testing.T) {
+	producer := sgEdge("payments", "queue:kafka:settlements", "queue", "kafka", 200, 0, 5)
+	producer.Cluster = "broker-1:9092"
+	// Tüketici kenarı cluster taşımıyor (ör. kolonun inmediği bir kovadan
+	// geldi): taşıyan kenarın verdiği cluster SİLİNMEMELİ.
+	consumer := sgEdge("queue:kafka:settlements", "settlement-worker", "service", "kafka", 190, 0, 7)
+
+	for _, tc := range []struct {
+		name  string
+		edges []chstore.ServiceTopologyEdge
+	}{
+		{"cluster child tarafında", []chstore.ServiceTopologyEdge{producer, consumer}},
+		{"kenar sırası ters", []chstore.ServiceTopologyEdge{consumer, producer}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := buildServiceGraph(tc.edges, "", "global", 0, nil, 60)
+			var q *GraphNode
+			for i := range g.Nodes {
+				if g.Nodes[i].ID == "queue:kafka:settlements" {
+					q = &g.Nodes[i]
+				}
+			}
+			if q == nil {
+				t.Fatal("kuyruk düğümü grafikte yok")
+			}
+			if q.Cluster != "broker-1:9092" {
+				t.Errorf("kuyruk düğümünün cluster'ı %q, beklenen %q — bu alan olmadan derin link kurulamaz",
+					q.Cluster, "broker-1:9092")
+			}
+			// Servis düğümleri cluster TAŞIMAMALI: alan kuyruk kimliğinin
+			// parçası, servisin değil. Sızarsa /messaging linki olmayan bir
+			// yerde "varmış gibi" durur.
+			for _, n := range g.Nodes {
+				if n.ID != "queue:kafka:settlements" && n.Cluster != "" {
+					t.Errorf("servis düğümü %q cluster taşıyor (%q) — alan yalnız kuyruk düğümünün", n.ID, n.Cluster)
+				}
+			}
+		})
+	}
+
+	// Tüketici kenarı cluster taşıyorsa, kuyruk PARENT tarafındayken de
+	// yerleşmeli (asıl regresyon: yalnız child'a bakan bir yerleştirme).
+	t.Run("cluster yalnız consumer kenarında", func(t *testing.T) {
+		c := consumer
+		c.Cluster = "broker-2:9092"
+		g := buildServiceGraph([]chstore.ServiceTopologyEdge{c}, "", "global", 0, nil, 60)
+		for _, n := range g.Nodes {
+			if n.ID == "queue:kafka:settlements" && n.Cluster != "broker-2:9092" {
+				t.Errorf("PARENT tarafındaki kuyruk cluster almadı: %q", n.Cluster)
+			}
+		}
+	})
+}

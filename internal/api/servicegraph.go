@@ -40,6 +40,16 @@ type GraphNode struct {
 	// differently; without this the fallback was silent and a gateway's
 	// health dot read as its own error rate.
 	CallsBasis string `json:"callsBasis,omitempty"`
+	// v0.9.1026 — kuyruk düğümünün messaging cluster'ı. YALNIZ
+	// kind=="queue" düğümlerde dolu olabilir; /messaging çekmecesinin
+	// kimliği (system, cluster, destination) üçlüsü olduğu için bu alan
+	// gelmeden derin link kurulamıyordu (v0.9.972'nin gerçek blokörü).
+	//
+	// Boş kalması meşru üç hâl: kolonun inmediği kurulum/boot
+	// (hasTopoClusterCol false), v0.9.1025 öncesi yazılmış kovalar, ve
+	// kuyruk olmayan düğümler. İstemci bu hâlde daraltılmış KATALOG
+	// köprüsüne düşer; '(default)' varsaymaz.
+	Cluster string `json:"cluster,omitempty"`
 }
 
 // GraphEdge is one directed caller→callee edge carrying RED metrics + protocol.
@@ -404,6 +414,23 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 		}
 		if e.ChildEnv != "" {
 			tgt.Env = e.ChildEnv
+		}
+		// v0.9.1026 — kenarın cluster'ı, o kenardaki KUYRUK düğümüne ait.
+		// Hangi taraf olduğu kenarı üreten pass'e göre değişir: producer
+		// kenarında kuyruk CHILD (svc → queue:…), consumer kenarında
+		// PARENT (queue:… → svc). Ham id'nin 'queue:' öneki tek güvenilir
+		// ayraç — node_kind consumer kenarında parent'ı "service" diye
+		// etiketliyor (ensure() parent'ı daima servis varsayar).
+		//
+		// Boş atanmıyor: aynı düğüme dokunan kenarlardan biri cluster
+		// taşımıyorsa (eski kova), taşıyan bir diğeri onu SİLMESİN.
+		if e.Cluster != "" {
+			if strings.HasPrefix(src.ID, "queue:") {
+				src.Cluster = e.Cluster
+			}
+			if strings.HasPrefix(tgt.ID, "queue:") {
+				tgt.Cluster = e.Cluster
+			}
 		}
 		outCalls[src.ID] += e.Calls
 		outErrs[src.ID] += e.Errors

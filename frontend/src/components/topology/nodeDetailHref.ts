@@ -54,6 +54,12 @@
 // (dependencies.go), yani aranan satır listede olmayabilir.
 
 import { databaseDetailHref, type DatabasePageScope } from '@/pages/databases/databaseParam';
+// v0.9.1026 — çekmece param'ının kodlayıcısı TEK NÜSHADAN geliyor.
+// Elle kurulmuş bir `sys|cluster|dest` dizesi decodeDestinationParam'ın
+// kabul ettiği kaçış kurallarıyla ayrışabilirdi ve ayrışsa çekmece
+// HİÇ AÇILMAZDI — tip hatası vermeyen, sessiz bir kırılma (v0.9.821'in
+// depRowKey dersi, aynı sınıf).
+import { encodeDestinationParam } from '@/pages/messaging/destinationParam';
 import type { GraphNode } from '@/lib/types';
 
 /**
@@ -136,6 +142,26 @@ export function nodeDetailHref(node: GraphNode, scope: DatabasePageScope = {}): 
     if (sys) p.set('msys', sys);
     const dest = queueDestination(node.name, sys);
     if (dest) p.set('q', dest);
+    // v0.9.1026 — ÜÇLÜ TAMAMLANDIYSA GERÇEK DERİN LİNK. v0.9.972'nin
+    // blokörü "cluster yok"tu; artık topology_edges_5m onu taşıyor
+    // (v0.9.1025) ve çekmecenin kimliği (system, cluster, destination)
+    // eksiksiz kurulabiliyor.
+    //
+    // Üçünün de dolu olması ŞART: decodeDestinationParam boş alanlı bir
+    // param'ı reddediyor, yani eksik bir üçlü çekmeceyi açmaz — link
+    // "açılacakmış gibi" durur ve hiçbir şey olmaz. O yüzden kapı üçlü.
+    //
+    // msys+q GERÇEK LİNKTE DE KALIYOR, süs değil: katalog yanıtı çağrı
+    // hacmine göre ilk-200'de kesiliyor ve çekmece SATIR ÜZERİNDE
+    // render ediliyor (DependenciesTable), yani hedef topic tavanın
+    // altında kaldıysa yalnız ?destination= ile hiçbir şey açılmazdı —
+    // sessiz kırılma. Filtre ile: satır varsa liste tam ona daralır ve
+    // çekmece açılır; yoksa operatör boş listeyi + sayfanın kendi
+    // "liste kesildi" uyarısını (v0.9.813) görür. İkisi de DÜRÜST hâl.
+    const cluster = (node.cluster ?? '').trim();
+    if (sys && cluster && dest) {
+      p.set('destination', encodeDestinationParam({ system: sys, cluster, destination: dest }));
+    }
     if (scope.range) p.set('range', scope.range);
     if (scope.env) p.set('env', scope.env);
     const qs = p.toString();

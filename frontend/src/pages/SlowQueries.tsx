@@ -210,6 +210,7 @@ export default function SlowQueriesPage() {
           </Empty>
         )}
         {rows && rows.length > 0 && (
+          <>
           <div className="table-wrap is-fit">
             <table style={{ tableLayout: 'fixed', width: '100%' }}>
               <DataTableColgroup dt={dt} leading={[36]} />
@@ -396,6 +397,21 @@ export default function SlowQueriesPage() {
               </tbody>
             </table>
           </div>
+            {/* v0.9.1018 — TAVAN BEYANI. Bu sayfa sabit `limit: 200` ile
+                çekiyor ve bunu bugüne kadar SÖYLEMİYORDU: 200 satırlık bir
+                tablo, 200'den fazla yavaş sorgusu olan bir sistemde "hepsi
+                bu" gibi okunuyordu. v0.9.1014'ün `count` sözleşmesiyle aynı
+                dürüstlük kuralı — sayı tavana dayandıysa ekran söyler.
+                Sayfalama YOK ve bu bilinçli: en yavaş 200 sorgu zaten
+                kuyruğun ta kendisi; 201.'yi görmek için doğru hamle
+                pencereyi ya da servisi daraltmak. */}
+            {rows.length >= 200 && (
+              <div className="pager" style={{ color: 'var(--text3)' }}>
+                en yavaş 200 sorgu gösteriliyor — tavana dayandı; daha fazlası
+                için pencereyi veya servisi daraltın
+              </div>
+            )}
+          </>
         )}
 
         {stmtRef && (

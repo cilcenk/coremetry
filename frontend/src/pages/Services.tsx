@@ -458,6 +458,25 @@ export default function ServicesPage() {
   const tableNav = useTableNav<Service>(sorted ?? [], {
     pageId: 'services',
     onOpen: (svc) => goToService(svc.name),
+    // v0.9.1018 — klavye sayfa sınırını GEÇİYOR. Öncesinde 50. satırda
+    // `j` sessizce hiçbir şey yapmıyordu, oysa üç satır aşağıda bir
+    // "Next" butonu vardı: klavye yolu fare yolunun yapabildiğini
+    // yapamıyordu. Sayfa döndüğünde odak yeni sayfanın ilk (ileri) /
+    // son (geri) satırına düşüyor.
+    //
+    // false dönmek "sınır YOK" demek ve seçim yerinde kalıyor — son
+    // sayfada j'nin yalancı bir "başa atladım" hareketi yapmasındansa
+    // durması dürüst.
+    onPageBoundary: dir => {
+      if (dir === 'next') {
+        if (!hasMore) return false;
+        setPage(p => p + 1);
+        return true;
+      }
+      if (page === 0) return false;
+      setPage(p => Math.max(0, p - 1));
+      return true;
+    },
   });
 
   // v0.6.55 — sparkline click drills to /explore carrying the

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useShortcuts, type Shortcut } from './keyboard';
 
 // useTableNav adds Vim/Datadog-style row navigation to any
@@ -21,6 +21,35 @@ import { useShortcuts, type Shortcut } from './keyboard';
 // list is shorter than the prior selection, we clamp; when it
 // changes identity, we keep the index (operator's mental
 // "I was on row 5" stays consistent across a refresh).
+
+// navStep — j/k'nın SINIRDA ne yapacağı. Saf ve ayrı, çünkü çivilenmesi
+// gereken karar tam olarak bu: listenin son satırında `j`, sayfalanmış bir
+// yüzeyde "hiçbir şey" DEĞİL "sonraki sayfa" demeli. v0.9.1018'e kadar
+// klavye gezinmesi sayfanın sonunda sessizce duruyordu — operatör 50.
+// satırda j'ye basıp basıp hiçbir şey olmamasını izliyordu, oysa fare ile
+// üç satır aşağıda bir "Next" butonu vardı. Klavye yolu, fare yolunun
+// yapabildiğini yapamıyordu.
+//
+// Sınır YALNIZ gerçekten sınırdayken bildiriliyor: boş listede (count 0)
+// ne hareket var ne sınır — orada j/k'nın sayfa çevirmesi, operatörün
+// göremediği bir veri kümesinde körlemesine gezinmek olurdu.
+export type NavStep =
+  | { kind: 'move'; to: number }
+  | { kind: 'boundary'; dir: 'next' | 'prev' }
+  | { kind: 'none' };
+
+export function navStep(selected: number, count: number, dir: 'down' | 'up'): NavStep {
+  if (count <= 0) return { kind: 'none' };
+  if (dir === 'down') {
+    // Seçim yokken (-1) ilk j ilk satırı seçer, sayfa çevirmez.
+    if (selected < 0) return { kind: 'move', to: 0 };
+    if (selected >= count - 1) return { kind: 'boundary', dir: 'next' };
+    return { kind: 'move', to: selected + 1 };
+  }
+  if (selected < 0) return { kind: 'move', to: 0 };
+  if (selected === 0) return { kind: 'boundary', dir: 'prev' };
+  return { kind: 'move', to: selected - 1 };
+}
 
 export interface TableNav<T> {
   selected: number;
@@ -45,6 +74,12 @@ export function useTableNav<T>(
     // opts out, or when useDataTable wires nav only because an
     // onOpen was supplied). Default true. (v0.7.129)
     enabled?: boolean;
+    // v0.9.1018 — sayfa sınırı. Son satırda `j` / ilk satırda `k`
+    // çağırır. Sayfa GERÇEKTEN değiştiyse true dönmeli; false dönerse
+    // seçim yerinde kalır (son sayfada j hiçbir şey yapmaz — yalancı
+    // bir "ilk satıra atladım" hareketi yapmaktansa durmak dürüst).
+    // Opsiyonel: vermeyen tüm mevcut tablolar bit bit aynı davranır.
+    onPageBoundary?: (dir: 'next' | 'prev') => boolean;
   } = {},
 ): TableNav<T> {
   const [selected, setSelected] = useState(-1);
@@ -76,6 +111,40 @@ export function useTableNav<T>(
     if (sel) sel.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [selected, options.pageId]);
 
+  // v0.9.1018 — sayfa sınırı makinesi.
+  //
+  // Seçim bir REF'ten okunuyor, setState güncelleyicisinden değil: sınır
+  // geçişi bir YAN ETKİ (sayfa değiştirir) ve React güncelleyiciyi iki kez
+  // çağırabilir (StrictMode) — sayfayı iki kez atlatırdı.
+  const selRef = useRef(selected);
+  useEffect(() => { selRef.current = selected; }, [selected]);
+
+  // Sayfa değişince odak yeni sayfanın ilk/son satırına düşer. Ama
+  // UYGULAMA yeni veri GELDİĞİNDE: sayfalar `keepPreviousData` ile
+  // çalışıyor, yani `items` bir süre ESKİ diziyi taşıyor. Referans
+  // değişimini beklemezsek seçimi eski listenin son satırına koyar,
+  // sonra yeni liste gelir ve odak yanlış satırda kalır.
+  const [pendingEdge, setPendingEdge] = useState<null | 'first' | 'last'>(null);
+  const itemsRef = useRef(items);
+  useEffect(() => {
+    if (itemsRef.current === items) return;
+    itemsRef.current = items;
+    if (!pendingEdge) return;
+    setSelected(pendingEdge === 'first' ? 0 : Math.max(0, items.length - 1));
+    setPendingEdge(null);
+  }, [items, pendingEdge]);
+
+  const onBoundary = options.onPageBoundary;
+  const step = (dir: 'down' | 'up') => {
+    const next = navStep(selRef.current, items.length, dir);
+    if (next.kind === 'move') { setSelected(next.to); return; }
+    if (next.kind === 'none') return;
+    // Sınır: sayfa gerçekten döndüyse odağı karşı uca hazırla.
+    if (onBoundary?.(next.dir)) {
+      setPendingEdge(next.dir === 'next' ? 'first' : 'last');
+    }
+  };
+
   const open = options.onOpen;
   // v0.9.928 — HER binding kapsamı taşır. Tek tek yazmak yerine map:
   // sekiz kaydın birinde `scope` unutulursa o tuş arbitrajın dışında
@@ -89,13 +158,13 @@ export function useTableNav<T>(
         keys: 'j',
         label: 'Move selection down',
         group: 'Lists',
-        handler: () => setSelected(s => Math.min(items.length - 1, Math.max(0, s + 1))),
+        handler: () => step('down'),
       },
       {
         keys: 'k',
         label: 'Move selection up',
         group: 'Lists',
-        handler: () => setSelected(s => s <= 0 ? 0 : s - 1),
+        handler: () => step('up'),
       },
       {
         // v0.9.949 (E1/Ö27) — TEK kayıt. Öncesinde hem 'G' hem 'shift+g'

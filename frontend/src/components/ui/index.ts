@@ -37,6 +37,9 @@ export { Drawer, DrawerSection, DrawerTrendRow } from './Drawer';
 export { Modal } from './Modal';
 export type { ModalProps } from './Modal';
 
+export { ActionRow } from './ActionRow';
+export type { ActionRowProps } from './ActionRow';
+
 // Tabs — REMOVED v0.9.904. A typed `.tab-strip` wrapper existed here
 // from the design-system push but never gained a single consumer: all
 // 11 `.tab-strip` surfaces write the plain `<div className="tab-strip">`

@@ -6,6 +6,7 @@ import { IconShield } from '@/components/icons';
 import { api } from '@/lib/api';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import { Button } from '@/components/ui/Button';
+import { ActionRow } from '@/components/ui/ActionRow';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { ServiceMetadata } from '@/lib/types';
 
@@ -298,18 +299,27 @@ function EditRow({ draft, busy, onChange, onSave, onCancel }: {
         <td><Inp v={draft.oncallUrl}  on={v => u({ oncallUrl: v })}  ph="https://pagerduty/..." /></td>
         <td><Inp v={draft.repository} on={v => u({ repository: v })} ph="https://github/..." /></td>
         <td>
-          <span style={{ display: 'inline-flex', gap: 4 }}>
-            <Button variant="accent" size="sm" onClick={aiSuggest} disabled={busy || aiBusy} loading={aiBusy}
-              title="Auto-fill owner / SRE team / description from this service's recent telemetry">
-              ✨ AI
-            </Button>
-            <Button variant="primary" size="sm" onClick={onSave} loading={busy}>
-              Save
-            </Button>
-            <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
-              Cancel
-            </Button>
-          </span>
+          {/* v0.9.1007 (M5/O8) — iptal EN SAĞDAYDI, yani onayın yeri.
+              ActionRow `inline` kipinde: tablo hücresinde `inline-flex`
+              kalıyor, yalnız SIRA sözleşmeye giriyor. */}
+          <ActionRow
+            inline
+            secondary={(
+              <>
+                <Button variant="accent" size="sm" onClick={aiSuggest} disabled={busy || aiBusy} loading={aiBusy}
+                  title="Auto-fill owner / SRE team / description from this service's recent telemetry">
+                  ✨ AI
+                </Button>
+                <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
+                  Cancel
+                </Button>
+              </>
+            )}
+            confirm={(
+              <Button variant="primary" size="sm" onClick={onSave} loading={busy}>
+                Save
+              </Button>
+            )} />
         </td>
       </tr>
       {(aiHint || aiError) && (

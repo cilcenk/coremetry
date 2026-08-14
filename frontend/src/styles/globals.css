@@ -1279,7 +1279,13 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   padding: 10px 0;
   margin-bottom: 0;
 }
-.pager button { padding: 3px 8px; font-size: 12px; }
+/* G0 (v0.9.1013) — masaüstünde de WCAG 2.5.8 tabanının ÜSTÜ.
+   Ölçüm: 12px yazı (satır kutusu ~14,4px) + 3px×2 dolgu + `button`
+   tabanı `border:none` → ~20,4px. 24px'lik minimum hedef boyutunun
+   ALTINDA, yani bu bir masaüstü kusuru; telefon katmanı (36px) onu
+   yalnız dar ekranda örtüyordu. `min-height` dolguyu bozmadan
+   yalnız yukarı çekiyor. */
+.pager button { padding: 3px 8px; font-size: 12px; min-height: 26px; }
 
 /* Waterfall */
 #wf-outer { background: var(--bg1); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; font-size: 12px; }
@@ -3258,6 +3264,24 @@ thead th:hover .th-remove { opacity: 1; }
   }
   button, [data-density] .controls button { padding: 9px 14px; font-size: 14px; }
   .pager button { min-height: 36px; }
+
+  /* G0 (v0.9.1013) — ÖZGÜLLÜK YARIŞI. Bir üstteki satır telefonda her
+     butonu ~35px'e çıkarıyor ama `button` (0,0,1); `button.sm` (0,1,1)
+     ve `button.xs` (0,1,1) onu YENİYOR — `@media` özgüllük eklemez.
+     Sonuç ölçüldü: `size="sm"` butonlar telefonda 11px yazı + 3px
+     dolgu ile ~19px, `xs` ~15px kalıyordu. Yani D2'nin (v0.9.980)
+     36px tabanı, atomun EN ÇOK kullanılan iki boyutunda hiç
+     uygulanmıyordu.
+     Neden pager'lar kurbanı: `.pager button` kuralı YALNIZ Pager
+     atomunun sardığı `.pager` kabını görüyor. Elle çizilmiş dört
+     sayfalama şeridi (AnomaliesPage ← Prev/Next →, Logs "↓ Load
+     more", Metrics kataloğu "↓ Load more", ServiceSignalTabs "200
+     satır daha") `Button size="sm"` kullanıyor ve `.pager` sınıfı
+     TAŞIMIYOR → hiçbiri 36px'i almıyordu.
+     36 (44 değil) bilinçli: D2'nin gerekçesi `touchTargets.test.ts`
+     başlığında — `width/height` beyanları yerinde kalsın diye yalnız
+     `min-height` ekleniyor, masaüstünde tek piksel değişmiyor. */
+  button.sm, button.xs { min-height: 36px; }
 
   /* D6.3 (v0.9.988) — çekmece dar ekranda TAM EKRAN. Genişliği zaten
      `min(width, 100vw)` (Drawer.tsx) hallediyordu; eksik olan iç

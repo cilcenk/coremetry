@@ -20,9 +20,20 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
-const CSS = readFileSync(resolve(__dirname, 'globals.css'), 'utf8');
+const RAW = readFileSync(resolve(__dirname, 'globals.css'), 'utf8');
+
+// v0.9.1013 — YORUMLARI SOY. Bu kapı depodaki tek yorum SOYMAYAN stil
+// testiydi ve tam da bu dosyada patlamaya hazırdı: G0'ın gerekçe bloğu
+// kuralların kendi seçicilerini (`button.sm`, `.pager button`) düz metin
+// olarak ANIYOR. Soyulmadan, bir gün biri kuralı silip yorumu bıraksa
+// kapı YEŞİL kalırdı — yorumu "kural" sanarak. Karakter-karakter
+// boşlukla değiştiriyoruz ki satır numaraları ve ofsetler korunsun
+// (depo idiyomu: colorLeaks/radiusTokens/zLayers aynısını yapıyor).
+const CSS = RAW.replace(/\/\*[\s\S]*?\*\//g, m => m.replace(/[^\n]/g, ' '));
 
 const MIN_TOUCH = 36;
+// WCAG 2.5.8 "Target Size (Minimum)" — 24×24 CSS px. Masaüstü tabanı.
+const WCAG_MIN = 24;
 
 function phoneLayer(): string {
   const m = /@media \(max-width: 640px\) \{([\s\S]*)/.exec(CSS);
@@ -58,6 +69,45 @@ describe('D2 — dokunma hedefleri', () => {
     // Yoğunluk modu kapsanmazsa `[data-density] .controls button` (0,2,1)
     // bu kuralı özgüllükle yener.
     expect(layer).toMatch(/\[data-density\] \.controls button/);
+  });
+
+  // ——— G0 (v0.9.1013) — ÖZGÜLLÜK YARIŞI —————————————————————————
+  //
+  // Bir üstteki iddia `button` (0,0,1) kuralını çiviliyordu ve bu
+  // kapının KÖR NOKTASIYDI: `@media` özgüllük EKLEMEZ, dolayısıyla
+  // `button.sm` (0,1,1) o kuralı yeniyor. Atomun en çok kullanılan iki
+  // boyutu (`sm` ~19px, `xs` ~15px) telefonda 36px tabanını hiç
+  // almıyordu — yani D2 sevk edilmişti ama pratikte uygulanmıyordu.
+  //
+  // Elle çizilmiş dört sayfalama şeridi (AnomaliesPage, Logs "Load
+  // more", Metrics kataloğu, ServiceSignalTabs "200 satır daha")
+  // `Button size="sm"` kullanıyor ve `.pager` sınıfı TAŞIMIYOR →
+  // yukarıdaki `.pager button` iddiası onları hiç görmüyordu.
+  it('atomun sm/xs boyutları telefonda 36px tabanını ALIYOR', () => {
+    const layer = phoneLayer();
+    for (const size of ['sm', 'xs']) {
+      const rule = new RegExp(`button\\.${size}[^{]*\\{([^}]*)\\}`).exec(layer);
+      expect(rule, `button.${size} için <640px min-height override'ı yok — ` +
+        'taban `button` kuralı (0,0,1) bunu YENEMEZ').toBeTruthy();
+      const h = /min-height:\s*(\d+)px/.exec(rule![1]);
+      expect(h, `button.${size} kuralı min-height bildirmiyor`).toBeTruthy();
+      expect(Number(h![1])).toBeGreaterThanOrEqual(MIN_TOUCH);
+    }
+  });
+
+  it('masaüstü .pager button WCAG 24px tabanının ÜSTÜNDE', () => {
+    // Ölçüm: 12px yazı (~14,4px satır kutusu) + 3px×2 dolgu +
+    // `border:none` → ~20,4px. Telefon katmanı (36px) bunu yalnız dar
+    // ekranda örtüyordu, yani kusur masaüstünde YAŞIYORDU.
+    //
+    // Taban kuralı `@media` DIŞINDA aranmalı — telefon override'ı bu
+    // iddiayı yanlışlıkla karşılamasın diye katmandan öncesine bakıyoruz.
+    const base = CSS.slice(0, CSS.indexOf('@media (max-width: 640px)'));
+    const rule = /\.pager button\s*\{([^}]*)\}/.exec(base);
+    expect(rule, 'masaüstü .pager button kuralı kayboldu').toBeTruthy();
+    const h = /min-height:\s*(\d+)px/.exec(rule![1]);
+    expect(h, '.pager button min-height bildirmiyor → ~20px hedef').toBeTruthy();
+    expect(Number(h![1])).toBeGreaterThan(WCAG_MIN);
   });
 
   it('masaüstü ölçüleri DEĞİŞMEDİ (width/height beyanları yerinde)', () => {

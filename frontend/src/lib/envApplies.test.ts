@@ -38,7 +38,13 @@ function tsxFiles(dir: string, rel = ''): string[] {
 
 const topbarPages = tsxFiles(SRC)
   .map(rel => ({ rel, text: readFileSync(join(SRC, rel), 'utf8') }))
-  .filter(f => f.text.includes('<Topbar'));
+  // v0.9.1019 — SÖZCÜK SINIRI şart. Düz `includes('<Topbar')` bir ÖNEK
+  // eşleşmesiydi ve `<TopbarSearch />` eklenir eklenmez Topbar.tsx'in
+  // KENDİSİ "topbar basan sayfa" sayıldı: kapı, bileşenin prop TİPİNİ
+  // (`envApplies?: boolean`) bir sayfa İDDİASI sanıp iki iddiada birden
+  // patladı. Bundan sonra `<Topbar` yalnız ardından boşluk, `/` veya
+  // `>` gelirse sayılıyor — yani gerçek bir JSX kullanımıysa.
+  .filter(f => /<Topbar[\s/>]/.test(f.text));
 
 /** Pages that CLAIM to apply the env filter. `envApplies={false}` is a claim of the opposite. */
 const claimsApplies = (text: string) => /envApplies(?!=\{false\})/.test(text);

@@ -339,3 +339,107 @@ func TestBuildServiceGraph_QueueClusterFromEitherSide(t *testing.T) {
 		}
 	})
 }
+
+// v0.9.1028 regresyon testi — kuyruk düğümünün KIND'ı kenar sırasından
+// BAĞIMSIZ olmalı.
+//
+// Orijinal belirti (v0.9.1026 canlı doğrulamasında bulundu, operatör
+// bildirimi değil): /api/servicegraph 17 kuyruk topic'inin 6'sını
+// `kind:"service"` döndürüyordu — id'leri doğruyken
+// (`queue:kafka:payment.settled`). Kök neden buildServiceGraph'ın
+// `ensure(e.ParentService, "service")` çağrısı: kuyruk düğümü consumer
+// kenarında PARENT tarafında duruyor ve o kenar producer kenarından önce
+// işlenirse düğüm "service" olarak doğuyor; ensure var olanı döndürdüğü
+// için kind bir daha değerlendirilmiyordu.
+//
+// Belirti bir HATA olarak görünmüyordu: düğüm grafikte duruyor, sayıları
+// doğru. Yalnız frontend'de nodeDetailHref servis dalına düşüyor ve
+// `/service?name=queue:kafka:payment.settled` — var olmayan bir sayfa —
+// linkleniyordu.
+//
+// Test SIRAYI iki yönde de veriyor; sıra-bağımlı bir düzeltme (ör.
+// "daha spesifik kind gelirse yükselt") tek yönde geçip diğerinde
+// düşerdi, saf-tesadüf bir yeşil vermesin diye.
+func TestBuildServiceGraph_QueueKindIsOrderIndependent(t *testing.T) {
+	producer := sgEdge("payments", "queue:kafka:payment.settled", "queue", "kafka", 200, 0, 5)
+	// Consumer pass'i parent'a kuyruğu, node_kind'a 'service' yazıyor
+	// (child GERÇEKTEN bir servis) — yalan söyleyen tam olarak bu alan.
+	consumer := sgEdge("queue:kafka:payment.settled", "webhook-dispatcher", "service", "kafka", 190, 0, 7)
+
+	for _, tc := range []struct {
+		name  string
+		edges []chstore.ServiceTopologyEdge
+	}{
+		{"producer önce", []chstore.ServiceTopologyEdge{producer, consumer}},
+		{"consumer ÖNCE — canlıdaki 6 düğümün hâli", []chstore.ServiceTopologyEdge{consumer, producer}},
+		{"yalnız consumer kenarı — kuyruk SADECE parent tarafında", []chstore.ServiceTopologyEdge{consumer}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := buildServiceGraph(tc.edges, "", "global", 0, nil, 60)
+			byID := map[string]GraphNode{}
+			for _, n := range g.Nodes {
+				byID[n.ID] = n
+			}
+			q, ok := byID["queue:kafka:payment.settled"]
+			if !ok {
+				t.Fatal("kuyruk düğümü grafikte yok")
+			}
+			if q.Kind != "queue" {
+				t.Errorf("kind = %q, beklenen \"queue\" — bu düğüm frontend'de servis dalına düşer ve /service?name=queue:… (var olmayan sayfa) linklenir", q.Kind)
+			}
+			// Sistem de önekten çözülmeli; kind düzelip system boş kalsaydı
+			// derin link yine kurulamazdı (üçlü kimlik eksik).
+			if q.System != "kafka" {
+				t.Errorf("system = %q, beklenen \"kafka\"", q.System)
+			}
+			// Karşı yön: gerçek servisler kuyruk sanılmamalı.
+			if n, ok := byID["webhook-dispatcher"]; ok && n.Kind != "service" {
+				t.Errorf("gerçek servis kind = %q, beklenen \"service\"", n.Kind)
+			}
+		})
+	}
+}
+
+// TestNodeKindFromIDMatchesOTel — iki kimlik kaynağının AYNILIK pini.
+//
+// nodeKindFromID (önekten) ve nodeKindToOTel (MV'nin node_kind
+// kolonundan) aynı düğüm için aynı etiketi üretmek ZORUNDA. Ayrışsalar,
+// düğüm hangi taraftan görüldüğüne göre iki farklı kind alırdı — yani
+// v0.9.1028'in kapattığı bug'ın ta kendisi, yalnız başka bir kapıdan.
+func TestNodeKindFromIDMatchesOTel(t *testing.T) {
+	cases := []struct {
+		id       string
+		mvKind   string // aggregator'ın aynı düğüm için yazdığı node_kind
+		wantKind string
+		wantPfx  bool
+	}{
+		{"queue:kafka:payment.settled", "queue", "queue", true},
+		{"queue:rabbitmq@broker-1", "queue", "queue", true},
+		{"queue:sqs", "queue", "queue", true},
+		{"db:postgresql@10.0.1.5", "db", "database", true},
+		{"db:h2", "db", "database", true},
+		{"ext:stripe.com", "external", "external", true},
+		// Öneksiz = düz servis adı: önek KARAR VERMEZ, çağıranın ipucu kalır.
+		{"payments", "service", "service", false},
+		// Tuzak: 'database' ile BAŞLAYAN bir servis adı 'db:' öneki DEĞİL.
+		{"database-proxy", "service", "service", false},
+		{"queueing-service", "service", "service", false},
+	}
+	for _, c := range cases {
+		t.Run(c.id, func(t *testing.T) {
+			got, ok := nodeKindFromID(c.id)
+			if ok != c.wantPfx {
+				t.Fatalf("önek tanıma = %v, beklenen %v", ok, c.wantPfx)
+			}
+			if !ok {
+				return // öneksiz: nodeKindToOTel tek otorite
+			}
+			if got != c.wantKind {
+				t.Errorf("önekten kind = %q, beklenen %q", got, c.wantKind)
+			}
+			if mv := nodeKindToOTel(c.mvKind); mv != got {
+				t.Errorf("İKİ KAYNAK AYRIŞTI: önek %q, MV node_kind %q → %q — aynı düğüm iki kind alır", got, c.mvKind, mv)
+			}
+		})
+	}
+}

@@ -202,6 +202,56 @@ func neighborhoodKeepSet(edges []chstore.ServiceTopologyEdge, focus string, hops
 	return keep
 }
 
+// nodeKindFromID — düğümün kind'ı HAM ID ÖNEKİNDEN (v0.9.1028).
+//
+// ─── Hangi bug'ı kapatıyor ──────────────────────────────────────────
+// Kuyruk düğümü kenarın İKİ tarafında da durabiliyor: producer
+// kenarında CHILD (svc → queue:…), consumer kenarında PARENT
+// (queue:… → svc). buildServiceGraph parent'ı `ensure(…, "service")`
+// ile yaratıyordu ("a parent is always a service") ve ensure var olan
+// düğümü DÖNDÜRÜP kind'ı bir daha değerlendirmiyordu. Sonuç: consumer
+// kenarı producer kenarından ÖNCE işlenen her topic kind="service"
+// olarak donuyordu.
+//
+// Bu yüzden hata SIRA-BAĞIMLIYDI — yani sabit değil, kenar sırasına
+// göre gelip giden bir kimlik. Canlıda ölçüldü (2026-08-14, lokal
+// küme): 17 kuyruk topic'inin 6'sı kind="service" dönüyordu, id'leri
+// doğruyken (`queue:kafka:payment.settled`). O 6 düğüm frontend'de
+// nodeDetailHref'in servis dalına düşüyor ve `/service?name=queue:…`
+// gibi VAR OLMAYAN bir sayfaya link veriyordu — tam da v0.9.958'in
+// kapattığı çıkmazın kuyruk tarafında açık kalmış hâli.
+//
+// ─── Neden ÖNEK, neden "yükseltme" değil ────────────────────────────
+// İki çözüm vardı: (a) ensure daha spesifik bir kind geldiğinde
+// yükseltsin, (b) kimlik ham id'den türesin. (a) "daha spesifik"in
+// sıralamasını tanımlamayı gerektirir (service < queue mi?) ve hatayı
+// SIRA-BAĞIMLI bırakır — yalnız pencereyi daraltır. (b) sırayı
+// tamamen denklemden çıkarır: ilk yaratımda zaten doğru kind'ı verir,
+// dolayısıyla yükseltme yoluna hiç ihtiyaç kalmaz. Ayrıca v0.9.1026'da
+// cluster'ı yerleştirirken AYNI tercihi yapmıştık (node_kind consumer
+// kenarında yalan söylüyor, ham id söylemiyor) — bu commit o tercihi
+// düğümün kimliğinin tamamına genelliyor.
+//
+// Önek AGGREGATOR tarafından yazılıyor (chstore/topology.go: 'db:',
+// 'queue:', 'ext:') ve altyapı düğümleri için TEK otoriter kaynak.
+// Öneksiz id'ler (düz servis adları) çağıranın ipucunu korur.
+//
+// Dönüş değerleri nodeKindToOTel'in ürettikleriyle BİREBİR aynı olmak
+// zorunda — ayrışırlarsa aynı düğüm hangi taraftan görüldüğüne göre iki
+// farklı kind alır ve bug'ın kendisi geri gelir. TestNodeKindFromIDMatchesOTel
+// bunu çiviliyor.
+func nodeKindFromID(id string) (string, bool) {
+	switch {
+	case strings.HasPrefix(id, "queue:"):
+		return "queue", true
+	case strings.HasPrefix(id, "db:"):
+		return "database", true
+	case strings.HasPrefix(id, "ext:"):
+		return "external", true
+	}
+	return "", false
+}
+
 // nodeKindToOTel maps the MV's node_kind to the clean OTel-native kind label.
 func nodeKindToOTel(k string) string {
 	switch k {
@@ -393,6 +443,12 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 	ensure := func(id, kind string) *GraphNode {
 		if n := nodes[id]; n != nil {
 			return n
+		}
+		// v0.9.1028 — ham id öneki çağıranın ipucunu EZER. Böylece
+		// düğümün kind'ı hangi kenarın önce işlendiğinden bağımsız
+		// olur; bkz. nodeKindFromID'deki gerekçe.
+		if k, ok := nodeKindFromID(id); ok {
+			kind = k
 		}
 		name, sys := decodeNodeName(id)
 		n := &GraphNode{ID: id, Name: name, Kind: kind, System: sys}

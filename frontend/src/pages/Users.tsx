@@ -14,6 +14,7 @@ import { useDataTable, DataTableHead, DataTableColgroup, ResetLayoutButton } fro
 import { USER_COLS } from './usersColumns';
 import { PageControls } from '@/components/ui/PageControls';
 import { PageShell } from '@/components/ui/PageShell';
+import { Combobox } from '@/components/Combobox';
 
 
 export default function UsersPage() {
@@ -595,7 +596,6 @@ function TeamEditor({ user, suggestions, onChanged }: {
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(user.team ?? '');
   const [busy, setBusy] = useState(false);
-  const dlId = `team-opts-${user.id}`;
 
   // Keep value in sync if the row's team changes via another
   // path (e.g. refresh after sibling edit).
@@ -638,25 +638,30 @@ function TeamEditor({ user, suggestions, onChanged }: {
   }
 
   return (
-    <>
-      <input value={value}
-        list={dlId}
+    // v0.9.1023 — native <datalist> → ev Combobox'ı. Datalist'in
+    // açılır listesi TARAYICIYA bırakılmış bir sözleşmedir ve
+    // tarayıcılar aynı fikirde değil (Safari'de ok tuşları listeyi
+    // açmıyor bile) — yani "takımı klavyeyle seçebiliyorum" iddiası
+    // operatörün tarayıcısına göre doğru ya da yanlıştı.
+    // Sarmalayıcı span yalnız CSS kancası: ölçüler globals.css'te
+    // `.team-edit .cb-wrap input` altında, satır yüksekliği aynı kalsın
+    // diye (eski satır içi style bloğunun birebir karşılığı).
+    <span className="team-edit">
+      <Combobox
+        value={value}
+        onChange={setValue}
+        options={suggestions}
+        placeholder="team name"
         autoFocus
         disabled={busy}
-        onChange={e => setValue(e.target.value)}
-        onBlur={commit}
-        onKeyDown={e => {
-          if (e.key === 'Enter') commit();
-          if (e.key === 'Escape') { setValue(user.team ?? ''); setEditing(false); }
-        }}
-        placeholder="team name"
-        style={{
-          fontSize: 11, padding: '2px 6px', minWidth: 120,
-          fontFamily: 'ui-monospace, SFMono-Regular, monospace',
-        }} />
-      <datalist id={dlId}>
-        {suggestions.map(t => <option key={t} value={t} />)}
-      </datalist>
-    </>
+        onEnter={commit}
+        // Blur'da commit + Esc'te İPTAL: eski davranışın aynısı, ama
+        // artık atomun sözleşmesi (v0.9.1022). Esc önce değeri geri
+        // alır, sonra düzenleme modundan çıkar — ve atom Esc'ten sonra
+        // gelen blur'un commit etmesini bastırır.
+        onBlurCommit={() => { void commit(); }}
+        onEscape={() => { setValue(user.team ?? ''); setEditing(false); }}
+      />
+    </span>
   );
 }

@@ -463,7 +463,7 @@ function Inner() {
               <AddPanelMenu onAdd={addPanel} />
               <span style={{ marginLeft: 'auto' }} />
               <Button variant="secondary" onClick={cancel}>Cancel</Button>
-              <Button onClick={save} loading={busy}>Save</Button>
+              <Button variant="primary" onClick={save} loading={busy}>Save</Button>
             </>
           ) : (
             <>
@@ -487,7 +487,7 @@ function Inner() {
               {isAdmin && (
                 <>
                   <Button variant="danger" onClick={removeDashboard}>Delete</Button>
-                  <Button onClick={() => setEditing(true)}>Edit</Button>
+                  <Button variant="primary" onClick={() => setEditing(true)}>Edit</Button>
                 </>
               )}
             </>

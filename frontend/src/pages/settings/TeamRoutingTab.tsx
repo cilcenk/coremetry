@@ -202,7 +202,7 @@ export function TeamRoutingTab() {
       </div>
 
       {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
-      <Button type="submit" loading={busy}>Save</Button>
+      <Button variant="primary" type="submit" loading={busy}>Save</Button>
     </form>
     {/* v0.9.427 — takım alias tablosu, routing'in doğal komşusu. */}
     <TeamAliasesCard />
@@ -286,7 +286,7 @@ export function TeamAliasesCard() {
                 placeholder="kanonik ad (örn. SY-Krediler ve Sigorta)" disabled={busy}
                 style={{ flex: 1, padding: '6px 9px', fontSize: 12, background: 'var(--bg)',
                   color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6 }} />
-              <Button type="submit" disabled={busy || !newAlias.trim() || !newCanon.trim()}>Ekle</Button>
+              <Button variant="primary" type="submit" disabled={busy || !newAlias.trim() || !newCanon.trim()}>Ekle</Button>
             </form>
             {msg && <FlashBox kind={msg.kind}>{msg.text}</FlashBox>}
           </>

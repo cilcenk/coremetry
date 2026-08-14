@@ -319,7 +319,7 @@ export function OperationsTable({ service, rows, range, preset, onWiden, normali
                 spans in a short window.
               </div>
               {onWiden && (
-                <Button onClick={onWiden}>
+                <Button variant="primary" onClick={onWiden}>
                   Widen to last 1h
                 </Button>
               )}

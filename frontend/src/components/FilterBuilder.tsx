@@ -259,7 +259,7 @@ function DraftEditor({ draft, onSave, onCancel, suggestedValues, keyOptions, top
         )}
       </div>
       <div className="fb-form-actions">
-        <Button onClick={submit}>Add</Button>
+        <Button variant="primary" onClick={submit}>Add</Button>
         <Button variant="secondary" onClick={onCancel}>Cancel</Button>
       </div>
     </div>

@@ -198,7 +198,7 @@ export default function DashboardsPage() {
           )}
           {isAdmin && (
             <>
-              <Button onClick={() => setShowNew(true)}>+ New dashboard</Button>
+              <Button variant="primary" onClick={() => setShowNew(true)}>+ New dashboard</Button>
               <Button variant="secondary" onClick={() => fileRef.current?.click()}
                 title="Import a dashboard from an exported JSON file" loading={importing}>
                 ↑ Import JSON
@@ -220,7 +220,7 @@ export default function DashboardsPage() {
         {items === null && <Empty icon="⚠" title="Failed to load dashboards" />}
         {items && items.length === 0 && (
           <Empty icon="◫" title="No dashboards yet"
-            action={isAdmin ? <Button onClick={() => setShowNew(true)}>+ New dashboard</Button> : undefined}>
+            action={isAdmin ? <Button variant="primary" onClick={() => setShowNew(true)}>+ New dashboard</Button> : undefined}>
             {isAdmin ? 'Create one to combine metrics, traces and logs into a single view.'
                      : 'Ask an admin to create dashboards.'}
           </Empty>
@@ -366,7 +366,7 @@ function NewDashboardModal({ onClose, onCreated }: {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="new-dashboard-form" loading={busy}>Create</Button>
+          <Button variant="primary" type="submit" form="new-dashboard-form" loading={busy}>Create</Button>
         </>
       }>
       <form id="new-dashboard-form" onSubmit={submit}>

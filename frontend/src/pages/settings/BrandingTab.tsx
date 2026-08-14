@@ -276,7 +276,7 @@ function AnnouncementSection() {
             onChange={e => setA({ ...a, enabled: e.target.checked })} />
           Şerit aktif
         </label>
-        <Button onClick={() => { void save(); }} loading={busy}>
+        <Button variant="primary" onClick={() => { void save(); }} loading={busy}>
           Kaydet
         </Button>
         {msg && <span style={{ fontSize: 12, color: 'var(--text2)' }}>{msg}</span>}

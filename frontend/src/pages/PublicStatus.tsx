@@ -490,7 +490,7 @@ function SubscribeForm() {
           placeholder="you@example.com"
           aria-label="Email address to subscribe"
           style={{ flex: 1 }} />
-        <Button type="submit" loading={busy}>
+        <Button variant="primary" type="submit" loading={busy}>
           Subscribe
         </Button>
       </form>

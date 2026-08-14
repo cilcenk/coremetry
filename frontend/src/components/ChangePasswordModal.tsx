@@ -54,7 +54,7 @@ export function ChangePasswordModal({ onClose }: { onClose: () => void }) {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="change-pw-form" loading={busy}>Update</Button>
+          <Button variant="primary" type="submit" form="change-pw-form" loading={busy}>Update</Button>
         </>
       }>
       <form id="change-pw-form" onSubmit={submit}>

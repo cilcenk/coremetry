@@ -464,7 +464,7 @@ export default function ServicesPage() {
             <ServicePicker value={serviceFilter} onChange={setServiceFilter}
               onEnter={apply}
               placeholder="Filter services…" width={220} />
-            <Button size="sm" onClick={apply}
+            <Button variant="primary" size="sm" onClick={apply}
                     title="Search server-side for matching services">Search</Button>
             <input placeholder="Min spans" aria-label="Minimum spans" value={minSpans} type="number"
               onChange={e => setMinSpans(e.target.value)} style={{ width: 100 }} />

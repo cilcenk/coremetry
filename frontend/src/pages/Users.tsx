@@ -105,7 +105,7 @@ export default function UsersPage() {
       <Topbar title="Users" />
       <PageShell>
         <PageControls sticky>
-          <Button onClick={() => setShowNew(true)}>+ New user</Button>
+          <Button variant="primary" onClick={() => setShowNew(true)}>+ New user</Button>
           {teamOptions.length > 0 && (
             <select value={teamFilter}
               onChange={e => setTeamFilter(e.target.value)}
@@ -335,7 +335,7 @@ function NewUserModal({ onClose, onCreated }: { onClose: () => void; onCreated: 
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="new-user-form" loading={busy}>Create</Button>
+          <Button variant="primary" type="submit" form="new-user-form" loading={busy}>Create</Button>
         </>
       }>
       <form id="new-user-form" onSubmit={submit}>
@@ -404,7 +404,7 @@ function ResetPasswordModal({ user, onClose, onDone }: {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="reset-pw-form" loading={busy}>Set password</Button>
+          <Button variant="primary" type="submit" form="reset-pw-form" loading={busy}>Set password</Button>
         </>
       }>
       <form id="reset-pw-form" onSubmit={submit}>

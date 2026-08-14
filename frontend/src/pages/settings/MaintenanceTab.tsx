@@ -217,7 +217,7 @@ function NewMaintenanceModal({ onClose, onCreated }: {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="new-mw-form" loading={busy}>Create</Button>
+          <Button variant="primary" type="submit" form="new-mw-form" loading={busy}>Create</Button>
         </>
       }>
       <form id="new-mw-form" onSubmit={submit}>

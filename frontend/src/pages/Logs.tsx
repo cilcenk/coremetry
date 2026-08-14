@@ -747,7 +747,7 @@ function LogsInner() {
             title="Show only logs correlated with a trace — every row can pivot to its trace">
             ◆ With trace
           </Button>
-          <Button onClick={apply}>Search</Button>
+          <Button variant="primary" onClick={apply}>Search</Button>
           <Button variant="secondary" onClick={reset}>Reset</Button>
           <ShareButton label="Copy link" copiedLabel="Copied" title={LOG_SHARE_TITLE} />
           <Button variant={live ? 'primary' : 'secondary'}

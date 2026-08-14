@@ -152,7 +152,7 @@ export default function AdminQueryPage() {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') run();
           }} />
         <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-          <Button onClick={run} loading={busy}>
+          <Button variant="primary" onClick={run} loading={busy}>
             Run (⌘+Enter)
           </Button>
           <span style={{ flex: 1 }} />

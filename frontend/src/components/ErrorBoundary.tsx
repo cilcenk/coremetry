@@ -111,7 +111,7 @@ export class ErrorBoundary extends Component<Props, State> {
 {error.name}: {error.message}
         </pre>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button onClick={() => { this.reset(); window.location.reload(); }}>
+          <Button variant="primary" onClick={() => { this.reset(); window.location.reload(); }}>
             Reload page
           </Button>
           <Button variant="secondary"

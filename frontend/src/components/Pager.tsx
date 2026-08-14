@@ -110,6 +110,23 @@ export function derivedLastPage(
   return Math.max(0, Math.ceil(total / pageSize) - 1);
 }
 
+// cursorProgress — birikimli bir listede "neredeyim" cümlesi.
+//
+// Saf ve ayrı, çünkü çivilenmesi gereken DÜRÜSTLÜK burada: v0.9.288'de
+// /logs "showing 200 of 10,000" basıyordu ve o 10.000 ES'in
+// `track_total_hits` tavanıydı — gerçek sayı değil. Tavanlı sayı artık
+// "+" ile geliyor ve bu birleştirme tek yerde yaşıyor, üç yüzeyin
+// kendi cümlesini kurmasına gerek kalmıyor.
+export function cursorProgress(
+  loaded: number | undefined, count: PagerCount, total: number | undefined,
+): string | null {
+  const label = countLabel(count, total);
+  if (loaded !== undefined && label) return `showing ${loaded.toLocaleString()} of ${label}`;
+  if (label) return label;
+  if (loaded !== undefined) return `showing ${loaded.toLocaleString()}`;
+  return null;
+}
+
 export function Pager(props: PagerProps) {
   const { count, total, extras, stickyBottom = true } = props;
   const cls = `pager${stickyBottom ? ' is-sticky-bottom' : ''}`;
@@ -117,20 +134,25 @@ export function Pager(props: PagerProps) {
 
   if (props.mode === 'cursor') {
     const { hasMore, onMore, loading, loaded, moreLabel, doneLabel } = props;
+    const progress = cursorProgress(loaded, count, total);
     return (
       <div className={cls} data-pager-mode="cursor">
         {hasMore ? (
-          <Button variant="primary" size="sm" onClick={onMore} loading={loading}>
-            {moreLabel ?? '↓ Load more'}
-          </Button>
+          <>
+            <Button variant="primary" size="sm" onClick={onMore} loading={loading}>
+              {moreLabel ?? '↓ Load more'}
+            </Button>
+            {progress && <span style={{ color: 'var(--text2)' }}>{progress}</span>}
+          </>
         ) : (
+          // Biten listede ilerleme cümlesi TEKRAR olurdu — dürüst son
+          // sayıyı zaten taşıyor.
           <span style={{ color: 'var(--text3)' }}>
             {doneLabel ?? (loaded !== undefined
               ? `penceredeki tüm eşleşmeler yüklendi (${loaded.toLocaleString()} satır)`
               : 'tümü yüklendi')}
           </span>
         )}
-        {label && <span style={{ color: 'var(--text2)' }}>· {label}</span>}
         {extras && <span style={{ color: 'var(--text2)' }}>· {extras}</span>}
       </div>
     );

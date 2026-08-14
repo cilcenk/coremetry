@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button } from '@/components/ui/Button';
+import { Pager } from '@/components/Pager';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '@/lib/api';
@@ -247,17 +247,21 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
           {/* v0.9.406 — "200 satır daha": kullanıcı-tetiklemeli keyset
               sayfa (otomatik prefetch YOK — ES disiplini). Sayaç üstteki
               başlıkta; burada yalnız eylem + dürüst son. */}
-          <div style={{ textAlign: 'center', margin: '8px 0 2px' }}>
-            {pagingDone ? (
-              <span style={{ fontSize: 11, color: 'var(--text3)' }}>
-                penceredeki tüm eşleşmeler yüklendi ({logs.length} satır)
-              </span>
-            ) : (
-              <Button variant="secondary" size="sm" onClick={loadMore} loading={pagingBusy}>
-                200 satır daha
-              </Button>
-            )}
-          </div>
+          {/* v0.9.1016 — paylaşılan sözleşme (v0.9.1014), cursor kipi.
+              v0.9.406'nın kararı korunuyor: kullanıcı-tetiklemeli keyset
+              sayfa, otomatik prefetch YOK (ES disiplini). Dürüst son
+              cümlesi zaten atomun varsayılanı — bu yüzeyden geldi.
+              `stickyBottom` KAPALI ve gerekçesi ölçülü: bu şerit bir
+              `.card`/`.ov-card-b` İÇİNDE yaşıyor, oysa
+              `.pager.is-sticky-bottom` zemin olarak `--bg0` (SAYFA
+              zemini) basıyor. Kartın içinde sayfa zemininde bir bant
+              delik gibi görünürdü. Sayfa düzeyinde tablo altına oturan
+              diğer dört yüzey (traces/services/logs/metrics) varsayılanı
+              koruyor. */}
+          <Pager mode="cursor" count="skip"
+            hasMore={!pagingDone} onMore={loadMore} loading={pagingBusy}
+            loaded={logs.length} moreLabel="200 satır daha"
+            stickyBottom={false} />
           </>
         )}
       </div>

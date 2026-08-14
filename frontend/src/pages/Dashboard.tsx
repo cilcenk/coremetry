@@ -4,7 +4,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Button, IconButton, MenuItem } from '@/components/ui';
+import { Button, IconButton, MenuItem, useConfirm } from '@/components/ui';
 import { useAuth } from '@/components/AuthProvider';
 import { PanelRenderer, applyVarsToMetric, applyVarsToSpan, type PanelDataOverride } from '@/components/dashboard/PanelRenderer';
 import { PanelEditor, defaultConfig } from '@/components/dashboard/PanelEditor';
@@ -57,6 +57,7 @@ function Inner() {
   // yanında açıklanıyor: türetilmiş değer virgülü yutuyor.
   const [tagsInput, setTagsInput] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const confirm = useConfirm();
   // Resolved values for the dashboard's Grafana-style variables.
   // URL-persisted so reloads + share-links keep the choice.
   // Empty value for a variable means "all" — the renderer drops any
@@ -390,7 +391,13 @@ function Inner() {
     setEditingPanel(null);
   };
   const removeDashboard = async () => {
-    if (!confirm('Delete this dashboard?')) return;
+    if (!await confirm({
+      title: 'Pano silinsin mi?',
+      body: <><b>{doc?.name || id}</b> panosu, panelleri ve değişkenleriyle birlikte
+        kalıcı olarak silinecek. Kaybetmek istemiyorsan önce <b>↓ Export JSON</b> al.</>,
+      confirmLabel: 'Panoyu sil',
+      danger: true,
+    })) return;
     await api.deleteDashboard(id);
     navigate('/dashboards');
   };

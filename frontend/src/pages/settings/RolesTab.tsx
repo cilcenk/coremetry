@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Modal, Button, Stack } from '@/components/ui';
+import { Button, Modal, Stack, useConfirm } from '@/components/ui';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { api, type CustomRole, type AvailablePage } from '@/lib/api';
@@ -29,6 +29,7 @@ const ROLE_COLS: DataTableColumn<CustomRole>[] = [
 // load (default-unchecked, so new features stay hidden until an admin
 // opts them in).
 export function CustomRolesTab() {
+  const confirm = useConfirm();
   const [roles, setRoles] = useState<CustomRole[] | null | undefined>(undefined);
   const [pages, setPages] = useState<AvailablePage[] | null | undefined>(undefined);
   const [editing, setEditing] = useState<CustomRole | null>(null);
@@ -48,7 +49,13 @@ export function CustomRolesTab() {
   useEffect(load, []);
 
   const remove = async (name: string) => {
-    if (!confirm(`Delete custom role "${name}"? Users assigned to this role will fall back to unrestricted viewer.`)) return;
+    if (!await confirm({
+      title: 'Özel rol silinsin mi?',
+      body: <><b>{name}</b> rolü silinecek. Bu role atanmış kullanıcılar
+        <b> kısıtlamasız viewer</b>’a düşer — yani sayfa kısıtları kalkar.</>,
+      confirmLabel: 'Rolü sil',
+      danger: true,
+    })) return;
     setBusy(name);
     setMsg(null);
     try {

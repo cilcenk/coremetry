@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import { copyToClipboard } from '@/lib/clipboard';
 import type { APIToken } from '@/lib/types';
@@ -30,6 +30,7 @@ const TOKEN_COLS: DataTableColumn<APIToken>[] = [
 // prefix durur. Revoke tombstone'dur — kayıt audit izi olarak kalır.
 
 export function ApiTokensTab() {
+  const confirm = useConfirm();
   const [tokens, setTokens] = useState<APIToken[] | null | undefined>(undefined);
   const [name, setName] = useState('');
   const [role, setRole] = useState('viewer');
@@ -150,7 +151,13 @@ export function ApiTokensTab() {
                     {!t.revoked && (
                       <Button variant="danger" size="sm"
                         onClick={async () => {
-                          if (!confirm(`"${t.name}" iptal edilsin mi? Bu token'ı kullanan sistemler ANINDA erişimi kaybeder.`)) return;
+                          if (!await confirm({
+                            title: 'Token iptal edilsin mi?',
+                            body: <><b>{t.name}</b> iptal edilecek. Bu token’ı kullanan
+                              sistemler <b>ANINDA</b> erişimi kaybeder; iptal geri alınamaz.</>,
+                            confirmLabel: 'Token’ı iptal et',
+                            danger: true,
+                          })) return;
                           try { await api.revokeAPIToken(t.id); load(); }
                           catch (e) { setMsg({ kind: 'err', text: e instanceof Error ? e.message : String(e) }); }
                         }}>

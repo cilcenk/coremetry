@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { ServicePicker } from '@/components/ServicePicker';
-import { Button, Chip } from '@/components/ui';
+import { Button, Chip, useConfirm } from '@/components/ui';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
 import { useAuth } from '@/components/AuthProvider';
@@ -110,8 +110,14 @@ export default function AlertsPage() {
       alert('Failed to save preset: ' + (e instanceof Error ? e.message : String(e)));
     }
   };
-  const deletePreset = async (id: string) => {
-    if (!confirm('Delete this preset?')) return;
+  const deletePreset = async (id: string, name: string) => {
+    if (!await confirm({
+      title: 'Hazır ayar silinsin mi?',
+      body: <><b>{name}</b> preset’i silinecek. Bu preset’ten türetilmiş
+        MEVCUT kurallar etkilenmez — yalnız şablon kaybolur.</>,
+      confirmLabel: 'Preset’i sil',
+      danger: true,
+    })) return;
     try {
       await api.deleteSavedView(id);
       reloadPresets();
@@ -182,7 +188,13 @@ export default function AlertsPage() {
       alert('No valid presets found in the file.');
       return;
     }
-    if (!confirm(`Import ${entries.length} preset${entries.length === 1 ? '' : 's'}?`)) {
+    if (!await confirm({
+      title: 'Preset’ler içe aktarılsın mı?',
+      body: <>Dosyadan <b>{entries.length}</b> preset eklenecek. Aynı adlı bir
+        preset varsa sunucu (ad, sayfa) çiftinde tekilleştirir — yani tekrar
+        içe aktarmak kopya üretmez.</>,
+      confirmLabel: `${entries.length} preset’i ekle`,
+    })) {
       return;
     }
     // Parallel create — the server-side endpoint dedups by
@@ -238,6 +250,7 @@ export default function AlertsPage() {
   const createRule = useCreateAlertRule();
   const updateRule = useUpdateAlertRule();
   const deleteRule  = useDeleteAlertRule();
+  const confirm = useConfirm();
   const enableRule  = useEnableAlertRule();
   const disableRule = useDisableAlertRule();
 
@@ -280,8 +293,14 @@ export default function AlertsPage() {
   // removes the row now, per v0.5.175). `disable` is the soft
   // counterpart for the "I want to silence this but keep the
   // definition" case.
-  const remove = async (id: string) => {
-    if (!confirm('Delete this rule permanently? The definition will be removed. Use Disable if you want to silence it without losing the rule.')) return;
+  const remove = async (id: string, name: string) => {
+    if (!await confirm({
+      title: 'Kuralı kalıcı olarak sil?',
+      body: <><b>{name}</b> kuralının tanımı ClickHouse'dan tamamen kaldırılacak; geri
+        alınamaz. Kuralı kaybetmeden susturmak istiyorsan <b>Disable</b> kullan.</>,
+      confirmLabel: 'Kuralı sil',
+      danger: true,
+    })) return;
     await deleteRule.mutateAsync(id);
   };
   const disable = async (id: string) => {
@@ -401,7 +420,7 @@ export default function AlertsPage() {
                       <Chip key={p.id}
                         onClick={() => setDraft({ ...emptyDraft, ...p.draft })}
                         title={`Load preset · ${p.shared ? 'shared with team' : 'personal'}`}
-                        onRemove={() => deletePreset(p.id)}
+                        onRemove={() => void deletePreset(p.id, p.name)}
                         removeLabel={`Delete preset ${p.name}`}>
                         {p.shared ? '◍ ' : '★ '}{p.name}
                       </Chip>
@@ -656,7 +675,7 @@ export default function AlertsPage() {
                                 Disable
                               </Button>
                             : <Button variant="secondary" size="sm" onClick={() => enable(r.id)}>Enable</Button>}
-                          <Button variant="danger" size="sm" onClick={() => remove(r.id)}
+                          <Button variant="danger" size="sm" onClick={() => void remove(r.id, r.name)}
                             title="Remove the rule entirely from ClickHouse">
                             Delete
                           </Button>

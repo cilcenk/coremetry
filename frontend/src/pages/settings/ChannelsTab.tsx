@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { NotificationChannel } from '@/lib/types';
 import { IconBell } from '@/components/icons';
@@ -27,6 +27,7 @@ const CHANNEL_COLS: DataTableColumn<NotificationChannel>[] = [
 // ── Channels tab ────────────────────────────────────────────────────────────
 
 export function ChannelsTab() {
+  const confirm = useConfirm();
   const [items, setItems] = useState<NotificationChannel[] | null | undefined>(undefined);
   const [editing, setEditing] = useState<NotificationChannel | 'new' | null>(null);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
@@ -43,7 +44,13 @@ export function ChannelsTab() {
   useEffect(refresh, []);
 
   const onDelete = async (c: NotificationChannel) => {
-    if (!confirm(`Delete channel "${c.name}"?`)) return;
+    if (!await confirm({
+      title: 'Bildirim kanalı silinsin mi?',
+      body: <><b>{c.name}</b> kanalı silinecek. Bu kanala yönlendirilmiş alert
+        kuralları bildirimlerini SESSİZCE kaybeder.</>,
+      confirmLabel: 'Kanalı sil',
+      danger: true,
+    })) return;
     try { await api.deleteChannel(c.id); refresh(); }
     catch (err) { setMsg({ kind: 'err', text: humanize(err) }); }
   };

@@ -4,6 +4,7 @@ import {
   Hand, Search, Globe, Code, SquareTerminal, Play, GripVertical, X,
   TriangleAlert, ListChecks, type LucideIcon,
 } from 'lucide-react';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { QueryError } from '@/components/QueryError';
@@ -63,6 +64,7 @@ function Inner() {
   const updateRb = useUpdateRunbook();
   const deleteRb = useDeleteRunbook();
   const executeRb = useExecuteRunbook();
+  const confirm = useConfirm();
 
   // Local editable draft, hydrated from the loaded runbook. While dirty
   // we don't re-hydrate so a background refetch can't clobber edits.
@@ -109,7 +111,13 @@ function Inner() {
     setDirty(false);
   };
   const remove = async () => {
-    if (!confirm(`Delete runbook "${draft.title}"? Historical executions are kept for audit.`)) return;
+    if (!await confirm({
+      title: 'Runbook silinsin mi?',
+      body: <><b>{draft.title}</b> prosedürü ve tanımı kalıcı olarak silinecek.
+        Geçmiş çalıştırmalar denetim için SAKLANIR.</>,
+      confirmLabel: 'Runbook’u sil',
+      danger: true,
+    })) return;
     try { await deleteRb.mutateAsync(id); navigate('/runbooks'); }
     catch (e) { setErr(`Delete failed: ${e instanceof Error ? e.message : String(e)}`); }
   };

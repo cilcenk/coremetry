@@ -157,9 +157,21 @@ describe('envApplies — §4.3 (b) dürüstlük sözleşmesi', () => {
     // da buydu. ✕ (temizle) çalışır kalır.
     const picker = readFileSync(join(SRC, 'components/EnvPicker.tsx'), 'utf8');
     expect(picker).toMatch(/disabled=\{!applies\}/);
-    expect(picker).toMatch(/aria-disabled=\{!applies\}/);
+    // v0.9.1024 — `aria-disabled` DÜŞTÜ, sözleşme düşmedi. Picker
+    // native <input> yerine Combobox atomunu basıyor ve atom `disabled`
+    // niteliğini gerçek input'a geçiriyor; native `disabled` zaten
+    // "aria-disabled=true" semantiğini taşır. İkisini birlikte yazmak
+    // ARIA-in-HTML kuralının açıkça uyardığı çift beyandır. Kapı
+    // ölçtüğü ŞEYİ (atıl ama GÖRÜNÜR kontrol) yeni yazılışta ölçmeye
+    // devam ediyor — sayıyı düşürmek yerine kapsamı taşıdık.
+    expect(picker).toMatch(/<Combobox[\s\S]{0,600}?disabled=\{!applies\}/);
     // Atıl hâlde erken return YOK: bileşen yine render eder.
     expect(picker).not.toMatch(/if\s*\(!applies\)\s*return null/);
+    // ✕ (temizle) kilitliyken de çalışmalı — atomun sözleşmesi
+    // (v0.9.1022) ve comboboxEsc.test.tsx'te canlı mount ile çivili.
+    expect(readFileSync(join(SRC, 'components/Combobox.tsx'), 'utf8'),
+      'Combobox kilitli alanda ✕ düğmesini kaldırdı — bayat bir global env her sayfadan bırakılabilmeli')
+      .toMatch(/\{value \? \(/);
   });
 
   it('Topbar varsayılanı opt-in — işaretlenmemiş sayfa "uygulanmıyor" der', () => {

@@ -31,6 +31,8 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 export function Combobox({
   value, onChange, options, placeholder, width, onEnter,
   autoFocus, disabled, onBlurCommit, onEscape,
+  serverFiltered, title, ariaLabel, className, shortcutSearch,
+  footer, optionMeta,
 }: {
   value: string;
   onChange: (v: string) => void;
@@ -55,6 +57,35 @@ export function Combobox({
   // açıkken ÇAĞRILMAZ: v0.9.1021 katman sözleşmesi (bir Esc bir
   // katman) — ilk Esc listeyi kapatır, ikincisi düzenleyiciden çıkar.
   onEscape?: () => void;
+
+  // ——— v0.9.1024 · SUNUCU-TARAFLI picker'lar ———————————————————
+  //
+  // serverFiltered — `options` zaten `value` için SUNUCUDAN gelen
+  // cevap. İstemci tarafında BİR DAHA süzmek iki şeyi bozar:
+  //   1. Joker karakterler. Picker'lar `pay*`, `*pay*`, `p?y`
+  //      destekliyor; alt-dize süzgeci "pay*" dizesini option'ların
+  //      İÇİNDE arar ve HİÇBİRİ eşleşmez — liste boşalır.
+  //   2. Sunucunun sıralaması (ör. env'de yoğunluk sırası) alfabetik
+  //      bir alt kümeye dönüşür.
+  // Yani "kim süzüyor" sorusunun cevabı çağırana bırakılıyor.
+  serverFiltered?: boolean;
+  title?: string;
+  ariaLabel?: string;
+  // Sarmalayıcıya (`.cb-wrap`) eklenir — ölçü/konum kancası.
+  className?: string;
+  // `/` kısayolunun AÇIK hedefi (v0.9.951 / Ö31). Sayfa başına TEK
+  // alan işaretlenmeli: GlobalShortcuts querySelectorAll'ın İLKİNİ
+  // seçer, yani ikinci bir işaret DOM sırası kumarına döner.
+  shortcutSearch?: boolean;
+  // Listenin dibine tıklanamaz bir not satırı. Picker'ların
+  // "… +N more — refine search" kesinti uyarısı buradan geçiyor:
+  // datalist'te bu, `disabled` bir <option> ile taklit ediliyordu
+  // (tarayıcıya göre görünen/görünmeyen bir hile).
+  footer?: React.ReactNode;
+  // Satırın sonuna soluk bir ek etiket (ör. metrik için "ms · gauge").
+  // datalist'in `label` niteliğinin yerini alıyor — o nitelik
+  // Chromium/Firefox'ta görünür, Safari'de HİÇ görünmez.
+  optionMeta?: (option: string) => string | undefined;
 }) {
   const id = useId();
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -75,10 +106,13 @@ export function Combobox({
   // well under this but the cap keeps render cheap on degenerate
   // inputs.
   const filtered = useMemo(() => {
+    // serverFiltered: liste ZATEN cevap — dokunma (joker karakterler
+    // ve sunucu sıralaması bozulur).
+    if (serverFiltered) return options.slice(0, 200);
     const q = value.trim().toLowerCase();
     if (!q) return options.slice(0, 200);
     return options.filter(o => o.toLowerCase().includes(q)).slice(0, 200);
-  }, [value, options]);
+  }, [value, options, serverFiltered]);
 
   // Reset highlight whenever the filtered set changes — otherwise
   // the index points into a stale list and arrow nav jumps around.
@@ -170,13 +204,16 @@ export function Combobox({
   };
 
   return (
-    <div ref={wrapRef} className="cb-wrap" style={{ width }}>
+    <div ref={wrapRef} className={className ? `cb-wrap ${className}` : 'cb-wrap'} style={{ width }}>
       <input
         ref={inputRef}
         id={id}
         value={value}
         placeholder={placeholder}
         disabled={disabled}
+        title={title}
+        aria-label={ariaLabel}
+        {...(shortcutSearch ? { 'data-shortcut-search': '' } : {})}
         onChange={e => { escapedRef.current = false; onChange(e.target.value); setOpen(true); }}
         onFocus={() => { if (!disabled) setOpen(true); }}
         onClick={() => { if (!disabled) setOpen(true); }}
@@ -222,18 +259,23 @@ export function Combobox({
           kalırdı. */}
       {open && !disabled && filtered.length > 0 && (
         <div ref={listRef} className="cb-list" role="listbox">
-          {filtered.map((o, i) => (
-            <div
-              key={o + i}
-              role="option"
-              aria-selected={i === highlight}
-              data-i={i}
-              className={`cb-row${i === highlight ? ' cb-row-on' : ''}${o === value ? ' cb-row-cur' : ''}`}
-              onMouseDown={e => { e.preventDefault(); pick(o); }}
-              onMouseEnter={() => setHighlight(i)}>
-              {renderMatch(o, value)}
-            </div>
-          ))}
+          {filtered.map((o, i) => {
+            const meta = optionMeta?.(o);
+            return (
+              <div
+                key={o + i}
+                role="option"
+                aria-selected={i === highlight}
+                data-i={i}
+                className={`cb-row${i === highlight ? ' cb-row-on' : ''}${o === value ? ' cb-row-cur' : ''}`}
+                onMouseDown={e => { e.preventDefault(); pick(o); }}
+                onMouseEnter={() => setHighlight(i)}>
+                {renderMatch(o, value)}
+                {meta && <span className="cb-meta">{meta}</span>}
+              </div>
+            );
+          })}
+          {footer && <div className="cb-row cb-row-empty cb-foot">{footer}</div>}
         </div>
       )}
       {open && !disabled && filtered.length === 0 && value.trim() && (

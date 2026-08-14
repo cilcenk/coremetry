@@ -1,5 +1,7 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { Combobox } from '@/components/Combobox';
+import { shouldAutoCommit } from '@/components/ServicePicker';
 
 /**
  * OperationPicker — operations-picker counterpart to ServicePicker
@@ -26,7 +28,6 @@ export function OperationPicker({
   width?: number | string;
   onEnter?: (value?: string) => void;
 }) {
-  const listId = useId();
   const [opts, setOpts] = useState<string[]>([]);
   const [total, setTotal] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -51,9 +52,10 @@ export function OperationPicker({
     const prev = lastValueRef.current;
     lastValueRef.current = next;
     onChange(next);
-    const exact = optsRef.current.includes(next);
-    const jumped = Math.abs(next.length - prev.length) > 1 || (next.length > 0 && prev === '');
-    if (exact && jumped && onEnter) {
+    // v0.9.1024 — ServicePicker'ın SAF fonksiyonu. Buradaki kopya da
+    // eski (v0.7.27 öncesi) ifadeydi: ilk tuş vuruşunda ve çok
+    // karakterli SİLME sıçramalarında yanlış commit ediyordu.
+    if (shouldAutoCommit(prev, next, optsRef.current.includes(next)) && onEnter) {
       setTimeout(() => onEnter(next), 0);
     }
   };
@@ -61,37 +63,25 @@ export function OperationPicker({
   const truncated = total > opts.length;
 
   return (
-    <div className="cb-wrap" style={{ width }}>
-      <input
-        list={listId}
-        value={value}
-        placeholder={placeholder}
-        onChange={e => handleChange(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && onEnter?.(undefined)}
-        autoComplete="off"
-        spellCheck={false}
-        title={
-          truncated
-            ? `Showing ${opts.length} of ${total} operations — type to refine. Wildcards: pay*, *pay*, p?y`
-            : 'Type to filter. Wildcards: pay*, *pay*, p?y'
-        }
-      />
-      {value && (
-        <button className="cb-clear" type="button"
-          aria-label="Clear" title="Clear"
-          onClick={() => onChange('')}
-          onMouseDown={e => e.preventDefault()}>
-          ✕
-        </button>
-      )}
-      <datalist id={listId}>
-        {opts.map(o => <option key={o} value={o} />)}
-        {truncated && (
-          <option value="" disabled>
-            … +{total - opts.length} more — refine search
-          </option>
-        )}
-      </datalist>
-    </div>
+    // v0.9.1024 — native <datalist> → ev Combobox'ı. Sunucu arama
+    // katmanı (debounce + /api/operation-names, servis kapsamı) aynen
+    // duruyor; `serverFiltered` joker karakterleri korumak için şart.
+    <Combobox
+      value={value}
+      onChange={handleChange}
+      options={opts}
+      serverFiltered
+      placeholder={placeholder}
+      width={width}
+      onEnter={() => onEnter?.(undefined)}
+      footer={truncated
+        ? `… +${total - opts.length} more — refine search`
+        : undefined}
+      title={
+        truncated
+          ? `Showing ${opts.length} of ${total} operations — type to refine. Wildcards: pay*, *pay*, p?y`
+          : 'Type to filter. Wildcards: pay*, *pay*, p?y'
+      }
+    />
   );
 }

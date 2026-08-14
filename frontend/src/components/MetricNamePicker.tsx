@@ -1,5 +1,7 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
+import { Combobox } from '@/components/Combobox';
+import { shouldAutoCommit } from '@/components/ServicePicker';
 import type { MetricInfo } from '@/lib/types';
 
 /**
@@ -14,9 +16,11 @@ import type { MetricInfo } from '@/lib/types';
  * option is annotated with unit + instrument type, since
  * operators routinely need to know "is this a counter or a
  * gauge, in seconds or milliseconds" before picking. The
- * <datalist> can't render rich rows so we surface the metadata
- * via the input's `title` (and via the optional onPick callback
- * for downstream UI).
+ * v0.9.1024 — bu metadata artık açılır listenin İÇİNDE, satır
+ * sonunda soluk bir etiket olarak görünüyor (`optionMeta`). Eskiden
+ * datalist'in `label` niteliğine bırakılmıştı: Chromium/Firefox
+ * gösteriyor, Safari HİÇ göstermiyordu — yani "birim ve tip
+ * görünüyor" iddiası tarayıcıya göre doğru ya da yanlıştı.
  */
 export function MetricNamePicker({
   service, value, onChange, placeholder, width, onEnter, onPick,
@@ -32,7 +36,6 @@ export function MetricNamePicker({
   // type without a second round-trip. Optional.
   onPick?: (m: MetricInfo) => void;
 }) {
-  const listId = useId();
   const [opts, setOpts] = useState<MetricInfo[]>([]);
   const [total, setTotal] = useState(0);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -58,9 +61,9 @@ export function MetricNamePicker({
     const prev = lastValueRef.current;
     lastValueRef.current = next;
     onChange(next);
+    // v0.9.1024 — ServicePicker'ın saf fonksiyonu (v0.7.27 sözleşmesi).
     const picked = optsRef.current.find(m => m.name === next);
-    const jumped = Math.abs(next.length - prev.length) > 1 || (next.length > 0 && prev === '');
-    if (picked && jumped) {
+    if (shouldAutoCommit(prev, next, !!picked) && picked) {
       if (onPick) setTimeout(() => onPick(picked), 0);
       if (onEnter) setTimeout(() => onEnter(next), 0);
     }
@@ -68,46 +71,36 @@ export function MetricNamePicker({
 
   const truncated = total > opts.length;
 
+  // Render tarafı `opts` DURUMUNU okur, ref'i değil: ref güncellemesi
+  // yeniden render tetiklemez, dolayısıyla ref'ten okunan bir etiket
+  // bir tur geride kalabilirdi (ikisi birlikte yazılıyor ama render
+  // sırasında doğrusu durum).
+  const names = opts.map(o => o.name);
+  const metaOf = (n: string) => {
+    const m = opts.find(x => x.name === n);
+    return m ? [m.unit, m.type].filter(Boolean).join(' · ') || undefined : undefined;
+  };
+
   return (
-    <div className="cb-wrap" style={{ width }}>
-      <input
-        list={listId}
-        value={value}
-        placeholder={placeholder}
-        onChange={e => handleChange(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && onEnter?.(undefined)}
-        autoComplete="off"
-        spellCheck={false}
-        title={
-          truncated
-            ? `Showing ${opts.length} of ${total} metrics — type to refine. Wildcards: http.*, *latency*, p?y`
-            : 'Type to filter. Wildcards: http.*, *latency*, p?y'
-        }
-      />
-      {value && (
-        <button className="cb-clear" type="button"
-          aria-label="Clear" title="Clear"
-          onClick={() => onChange('')}
-          onMouseDown={e => e.preventDefault()}>
-          ✕
-        </button>
-      )}
-      <datalist id={listId}>
-        {opts.map(o => (
-          <option key={o.name} value={o.name}>
-            {/* datalist `label` shows alongside the value in
-                Chromium/Firefox dropdowns. Operators glance at
-                unit + type without having to read every metric
-                name. */}
-            {[o.unit, o.type].filter(Boolean).join(' · ') || undefined}
-          </option>
-        ))}
-        {truncated && (
-          <option value="" disabled>
-            … +{total - opts.length} more — refine search
-          </option>
-        )}
-      </datalist>
-    </div>
+    // v0.9.1024 — native <datalist> → ev Combobox'ı; sunucu arama
+    // katmanı (debounce + /api/metric-names) aynen duruyor.
+    <Combobox
+      value={value}
+      onChange={handleChange}
+      options={names}
+      serverFiltered
+      placeholder={placeholder}
+      width={width}
+      onEnter={() => onEnter?.(undefined)}
+      optionMeta={metaOf}
+      footer={truncated
+        ? `… +${total - opts.length} more — refine search`
+        : undefined}
+      title={
+        truncated
+          ? `Showing ${opts.length} of ${total} metrics — type to refine. Wildcards: http.*, *latency*, p?y`
+          : 'Type to filter. Wildcards: http.*, *latency*, p?y'
+      }
+    />
   );
 }

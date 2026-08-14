@@ -14,13 +14,15 @@
 // listeyi RENDER ETMEZ, `make audit` JSX'e bakmaz.
 //
 // v0.9.1023 — satır içi düzenleyici İKİLİSİ listeden ÇIKTI (API
-// boşluğu v0.9.1022'de kapandı). Kalan dördü picker kolu.
+// boşluğu v0.9.1022'de kapandı).
+// v0.9.1024 — picker ailesi de geçti: LİSTE SIFIRLANDI. Kapı artık
+// bir istisna listesi değil, TAM KİLİT: frontend'de native açılır
+// liste YOK. Yeni bir tane yazmanın maliyeti, gerekçe eklemek değil,
+// kapıyı kırmak.
 //
-// LİSTE DONMUŞ ve yalnız KÜÇÜLÜR. Kalan her dosya için gerekçe kayıtlı,
-// ve gerekçesi olan dosya native listeyi GERÇEKTEN taşımak zorunda:
-// biri dönüştürüp listeden çıkarmayı unutursa kapı bunu söyler. Aksi
-// hâlde liste sessizce bayatlar ve "6 istisna" diye okunan şey aslında
-// 6 ay önce kapanmış bir borç olur.
+// Boş liste kasıtlı olarak SİLİNMEDİ: bir dosya yeniden datalist'e
+// dönerse "listeye ekle" refleksi doğar; buradaki yorum o refleksin
+// karşılığını (yasak, gerekçesi bu) yazılı tutuyor.
 import { describe, it, expect } from 'vitest';
 import { readFileSync, readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
@@ -41,6 +43,36 @@ const CONSUME = /(?<![\w-])list=[{"]/;
 
 const carries = (src: string) => src.includes(OPEN) || CONSUME.test(src);
 
+// comboboxCalls — bir dosyadaki <Combobox …/> çağrılarını TAM olarak
+// çıkarır (süslü parantez derinliği sayarak).
+//
+// Neden düz regex DEĞİL: kapı önce `<Combobox[\s\S]{0,300}?/>` ile
+// yazılmıştı. v0.9.1023'te Users.tsx'in çağrısı 300 karakteri aştı ve
+// regex HİÇ eşleşmedi — döngü boş döndü, testler sessizce hiçbir şey
+// ölçmedi. Pencereyi 600'e çıkardım; v0.9.1024'te ServicePicker'ın
+// çağrısı onu da aştı. Sabit pencere yanlış araç: her büyümede kapı
+// SESSİZCE kör oluyor, kırmızıya dönmüyor. Kapanmamış bir çağrı
+// artık istisna fırlatır — susmaktansa düşsün.
+function comboboxCalls(src: string): string[] {
+  const out: string[] = [];
+  let from = 0;
+  for (;;) {
+    const start = src.indexOf('<Combobox', from);
+    if (start < 0) break;
+    let depth = 0, end = -1;
+    for (let j = start + 9; j < src.length; j++) {
+      const c = src[j];
+      if (c === '{') depth++;
+      else if (c === '}') depth--;
+      else if (c === '/' && src[j + 1] === '>' && depth === 0) { end = j + 2; break; }
+    }
+    if (end < 0) throw new Error('kapanmamış <Combobox> çağrısı — kapı ölçemez');
+    out.push(src.slice(start, end));
+    from = end;
+  }
+  return out;
+}
+
 // ——— Dönüşen SAYFA kolu ———————————————————————————————————
 const CONVERTED = [
   'pages/settings/ClustersTab.tsx',
@@ -50,23 +82,30 @@ const CONVERTED = [
   // (autoFocus / disabled / onBlurCommit / onEscape).
   'pages/Users.tsx',
   'components/viz/MetricQueryEditor.tsx',
+  // v0.9.1024 — PICKER AİLESİ. Sunucu-taraflı arayanlar; `serverFiltered`
+  // ile atomun istemci süzgeci kapalı.
+  'components/ServicePicker.tsx',
+  'components/OperationPicker.tsx',
+  'components/MetricNamePicker.tsx',
+  'components/EnvPicker.tsx',
+];
+
+// Sunucu ARAYAN picker'lar — listeyi sunucu belirler, atom süzmez.
+const SERVER_PICKERS = [
+  'components/ServicePicker.tsx',
+  'components/OperationPicker.tsx',
+  'components/MetricNamePicker.tsx',
+  'components/EnvPicker.tsx',
 ];
 
 // ——— Native listeyi taşımaya DEVAM eden dosyalar ————————————
 //
-// Her satır bir borç DEĞİL — üçü bilinçli kapsam kararı, ikisi ölçülmüş
-// bir API boşluğu.
-const STILL_NATIVE: Record<string, string> = {
-  // PICKER KOLU — ayrı, ölçülü bir dilim. Bu dördü sunucu tarafında
-  // arayan pickerlar: öneri listesi eager bir katalog DEĞİL, her tuşta
-  // yeniden gelen debounced bir sonuç kümesi. Combobox'ın filtresi
-  // istemci tarafında çalıştığı için taşıma mekanik değil davranışsal
-  // bir değişiklik olurdu (kim filtreliyor sorusu yer değiştirir).
-  'components/ServicePicker.tsx': 'picker kolu — sunucu-taraflı arama, ayrı dilim',
-  'components/OperationPicker.tsx': 'picker kolu — sunucu-taraflı arama, ayrı dilim',
-  'components/MetricNamePicker.tsx': 'picker kolu — sunucu-taraflı arama, ayrı dilim',
-  'components/EnvPicker.tsx': 'picker kolu — sunucu-taraflı arama, ayrı dilim',
-};
+// BOŞ. "Kim süzüyor" sorusu v0.9.1024'te `serverFiltered` ile
+// cevaplandı: sunucu-taraflı picker'ların listesi ZATEN cevap, atom
+// ona dokunmuyor. Bu olmadan taşıma joker karakterleri (`pay*`)
+// kırardı — istemci alt-dize süzgeci "pay*" dizesini seçeneklerin
+// İÇİNDE arar ve liste boşalırdı.
+const STILL_NATIVE: Record<string, string> = {};
 
 function walk(dir: string, acc: string[] = []): string[] {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -100,15 +139,11 @@ describe('Combobox benimseme — sayfa kolu', () => {
     // doğrulama koyarsa, datalist'ten taşınan davranış sessizce daralır.
     for (const f of CONVERTED) {
       const src = read(f);
-      const calls = src.match(/<Combobox\b[\s\S]{0,600}?\/>/g) ?? [];
-      // Pencere PARİTESİ — v0.9.1023'te ölçüldü: eski 300 karakterlik
-      // pencere, Users.tsx'in yeni (uzun, çok satırlı) çağrısını hiç
-      // EŞLEŞTİREMİYORDU. Eşleşme yoksa döngü boş dönüyor ve testler
-      // sessizce hiçbir şey ölçmüyordu — kapı yeşil, kapsam sıfır.
-      // Bu assert kapsamın sayıyla eşleşmesini zorunlu kılıyor, yani
-      // yarın daha uzun bir çağrı yazılırsa kapı SUSMAK yerine düşer.
-      expect(calls.length, `${f}: ${src.match(/<Combobox\b/g)?.length} çağrı var ama ${calls.length} tanesi ölçüldü — pencereyi büyüt`)
-        .toBe(src.match(/<Combobox\b/g)?.length ?? 0);
+      const calls = comboboxCalls(src);
+      // Kapsam PARİTESİ: çıkarıcı her `<Combobox` için bir çağrı
+      // döndürmeli. Tutmuyorsa kapı bir çağrıyı ölçmüyor demektir.
+      expect(calls.length, `${f}: çağrı sayısı tutmuyor — kapı bir çağrıyı ölçmüyor`)
+        .toBe((src.match(/<Combobox\b/g) ?? []).length);
       for (const call of calls) {
         expect(call, `${f}: <Combobox> value vermiyor`).toMatch(/\bvalue=/);
         expect(call, `${f}: <Combobox> onChange vermiyor`).toMatch(/\bonChange=/);
@@ -136,7 +171,7 @@ describe('Combobox benimseme — sayfa kolu', () => {
   it('satır içi düzenleyiciler odak + İPTAL yolunu taşıyor', () => {
     for (const [f, props] of Object.entries(INLINE_EDITORS)) {
       expect(CONVERTED, `${f} dönüşenler listesinde değil`).toContain(f);
-      const calls = read(f).match(/<Combobox\b[\s\S]{0,600}?\/>/g) ?? [];
+      const calls = comboboxCalls(read(f));
       expect(calls.length, `${f}: <Combobox> çağrısı bulunamadı`).toBeGreaterThan(0);
       for (const p of props) {
         expect(calls.some(c => new RegExp(`\\b${p}[=\\s/}]`).test(c)),
@@ -146,18 +181,61 @@ describe('Combobox benimseme — sayfa kolu', () => {
   });
 
   it('filtre çipi blur’da EKLEMİYOR — eski davranış korunuyor', () => {
-    const calls = read('components/viz/MetricQueryEditor.tsx')
-      .match(/<Combobox\b[\s\S]{0,600}?\/>/g) ?? [];
+    const calls = comboboxCalls(read('components/viz/MetricQueryEditor.tsx'));
     expect(calls.some(c => /\bonBlurCommit/.test(c)),
       'çip blur’da filtre eklemeye başladı — datalist sürümü bunu yapmıyordu').toBe(false);
   });
 
-  // ——— Donmuş liste ————————————————————————————————————————
-  it('native listeyi taşıyan HER dosya listede', () => {
+  // ——— Sunucu-taraflı picker'lar ————————————————————————————
+  it('sunucu picker’ları istemci süzgecini KAPATIYOR', () => {
+    // En sinsi regresyon burada olurdu ve tsc göremezdi: `serverFiltered`
+    // düşerse atom listeyi `value`ya göre alt-dize süzer. Normal
+    // aramada fark edilmez (sunucu zaten eşleşenleri döndü), ama JOKER
+    // sorguda (`pay*`, `*pay*`, `p?y`) liste TAMAMEN boşalır — çünkü
+    // "pay*" dizesi hiçbir servis adının içinde geçmez. Yani özellik
+    // yalnız onu kullanan operatör için ölür.
+    for (const f of SERVER_PICKERS) {
+      const calls = comboboxCalls(read(f));
+      expect(calls.length, `${f}: <Combobox> çağrısı yok`).toBe(1);
+      expect(calls[0], `${f}: serverFiltered düştü — joker aramalar boş liste döner`)
+        .toMatch(/\bserverFiltered\b/);
+    }
+  });
+
+  it('metrik picker’ı birim/tip etiketini KORUYOR', () => {
+    // datalist'te bu `label` niteliğiydi ve Safari onu HİÇ
+    // göstermiyordu; atomda satır içi etiket olarak her tarayıcıda
+    // görünüyor. Düşerse operatör "counter mı gauge mı, saniye mi
+    // milisaniye mi" sorusunu picker'da cevaplayamaz.
+    expect(read('components/MetricNamePicker.tsx'), 'optionMeta düştü')
+      .toMatch(/\boptionMeta=/);
+  });
+
+  it('kesinti uyarısı KORUNDU — "showing N of M" sessizce düşmedi', () => {
+    // datalist sürümünde bu, `disabled` bir <option> ile taklit
+    // ediliyordu. Kaybolsaydı operatör 200 satırlık bir listeyi TAM
+    // katalog sanardı — 10k servisli bir kurulumda tam olarak yanlış
+    // sonuç.
+    for (const f of SERVER_PICKERS) {
+      expect(read(f), `${f}: kesinti göstergesi (footer) düştü`).toMatch(/\bfooter=/);
+      expect(read(f), `${f}: truncated hesabı düştü`).toMatch(/truncated/);
+    }
+  });
+
+  // ——— TAM KİLİT ————————————————————————————————————————————
+  it('tarama gerçekten bir şey buluyor', () => {
+    // Sağlık assert'i: `walk` bozulursa aşağıdaki kilit BOŞ küme
+    // üzerinden yeşil koşar ve hiçbir şey ölçmez.
+    const all = walk(SRC);
+    expect(all.length).toBeGreaterThan(200);
+    expect(all).toContain('components/Combobox.tsx');
+  });
+
+  it('frontend’de native açılır liste KALMADI', () => {
     const stray = walk(SRC)
       .filter(f => !(f in STILL_NATIVE))
       .filter(f => carries(read(f)));
-    expect(stray, `native öneri listesi listede olmayan dosyalarda: ${stray.join(', ')}`)
+    expect(stray, `native öneri listesi hâlâ var: ${stray.join(', ')}`)
       .toEqual([]);
   });
 

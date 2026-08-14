@@ -2352,6 +2352,17 @@ button.accent.copied {
   font-style: italic;
   cursor: default;
 }
+/* v0.9.1024 — sunucu-taraflı picker'lar için iki satır süsü.
+   `.cb-meta`: satır sonunda birim/tip etiketi (datalist'in `label`
+   niteliğinin yerine — o nitelik Safari'de hiç görünmüyordu).
+   `.cb-foot`: "… +N more — refine search" kesinti notu; tıklanamaz,
+   listeden AYRI okunsun diye üstten çizgili. */
+.cb-meta { margin-left: 10px; color: var(--text3); font-size: 11px; }
+.cb-foot { border-top: 1px solid var(--border); }
+/* Kilitli alan (EnvPicker'ın "env uygulanmıyor" hâli). Eskiden satır
+   içi style'daydı; `@media` satır içini yenemediği için token
+   katmanına indi (v0.9.980 dersinin aynısı). */
+.cb-wrap input:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* v0.9.1023 — SATIR İÇİ Combobox düzenleyicileri (tablo hücresi,
    filtre çipi). Atom bağımsız bir alan için boyutlanmıştır; bir satırın
@@ -2375,8 +2386,11 @@ button.accent.copied {
 /* v0.8.383 — global env picker (Topbar, next to the range picker).
    Inherits the base input/select tokens; sized to match .trp-btn so
    the two controls read as one group. */
-.env-pick-wrap { width: 150px; }
-.env-picker { padding: 4px 8px; font-size: 12px; max-width: 180px; flex-shrink: 0; }
+/* v0.9.1024 — picker ailesi Combobox'a geçti. Ölçüler `.env-picker`
+   sınıfından sarmalayıcı + input'a taşındı; değerler AYNI (sağ dolgu
+   ✕/▾ için 26px'e çıktı, `.cb-wrap input` ile aynı). */
+.env-pick-wrap { width: 150px; flex-shrink: 0; }
+.env-pick-wrap input { padding: 4px 26px 4px 8px; font-size: 12px; }
 
 /* Time range picker (Grafana-parity panel, 2026-07 redesign):
    left column = absolute range (inputs + mini calendar + recents),

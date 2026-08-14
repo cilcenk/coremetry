@@ -36,7 +36,7 @@ const ALLOW: Record<string, string> = {
   '.controls.is-sticky': 'yapışkan filtre barı; altından içerik kayar, sayfa rengi olmalı',
   '.pager.is-sticky-bottom': 'sayfa altı yapışkan pager; aynı gerekçe',
   '.tab-strip.svc-tabs': 'yapışkan sekme şeridi; aynı gerekçe',
-  '.topo-node.ext': 'zemin DEĞİL ayırt edici: taban .topo-node --bg1, .ext ondan geri çekiliyor. --bg1 iç/dış ayrımını siler, --bg2 .topo tuvaliyle çakışır. Düzeltmesi tasarım çağrısı — OPERATÖR KARARI bekliyor (v0.9.978)',
+  '.topo-node.ext': 'zemin DEĞİL ayırt edici: taban .topo-node --bg1, .ext ondan geri çekiliyor. --bg1 iç/dış ayrımını siler, --bg2 .topo tuvaliyle çakışır. OPERATÖR KARARI 2026-08-14: olduğu gibi kalır — KALICI muafiyet',
 };
 
 // `background`/`background-color` bildirimi İÇİNDE `--bg0` geçen her

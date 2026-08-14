@@ -2863,10 +2863,9 @@ button.accent.copied {
    ondan geri çekilerek "bizim servisimiz değil" diyor. `--bg1` yapmak
    iç/dış ayrımını yalnız kesikli kenarlığa indirger (görsel kimlik
    kararı), `--bg2` ise `.topo` tuvalinin kendi rengiyle ÇAKIŞIR.
-   Not: bugünkü hâli light temada ters çalışıyor (`--bg0:#ffffff`
-   tabandan AÇIK) — gerçek bir bulgu, ama düzeltmesi bir tasarım
-   çağrısı. OPERATÖR KARARI bekliyor; `bgZeroIsPageOnly` kapısında
-   gerekçeli muafiyet olarak duruyor. */
+   Not: light temada `--bg0:#ffffff` tabandan AÇIK düşer — biliniyor.
+   OPERATÖR KARARI 2026-08-14: olduğu gibi kalır; `bgZeroIsPageOnly`
+   kapısında KALICI gerekçeli muafiyet. */
 .topo-node.ext { border-style: dashed; background: var(--bg0); }
 .topo-name { font-size: 12px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topo-sub { font-size: 9.5px; color: var(--text3); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }

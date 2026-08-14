@@ -1,5 +1,5 @@
 import {
-  useCallback, useEffect, useMemo, useState,
+  useCallback, useEffect, useMemo, useRef, useState,
   type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject,
 } from 'react';
 import { useSearchParams } from 'react-router-dom';
@@ -7,8 +7,8 @@ import { useTableNav, type TableNav } from '@/lib/useTableNav';
 import { useShortcuts } from '@/lib/keyboard';
 import { useIsNarrow } from '@/lib/useNarrow';
 import {
-  columnLayoutSig, computeSortedRows, formatSortParam, parseSortParam,
-  readPersistedWidths, resolveToggle, visibleColumns,
+  columnLayoutSig, computeSortedRows, fitColumnWidths, formatSortParam,
+  parseSortParam, readPersistedWidths, resolveToggle, visibleColumns,
   type DataTableColumn, type SortState,
 } from '@/lib/dataTable';
 import { getItem, setItem, dtSortKey, dtWidthKey } from '@/lib/storage';
@@ -295,16 +295,53 @@ export function ColResizeHandle<T>({ dt, colId }: { dt: DataTable<T>; colId: str
 // leading non-data columns (expand chevron, checkbox) rendered before the
 // managed columns; `trailing` is the same for non-data columns rendered
 // after them (actions cell, "+ Add column" manager — v0.8.306).
+//
+// v0.9.1030 — kaba-sığdırma. `table-layout:fixed` bir tablo, kolon
+// genişliklerinin toplamı `width:100%`ü aşarsa yine de büyür; is-fit kap
+// masaüstünde `overflow: visible` (D2.1) olduğundan taşma `#content`e
+// çıkıp SAYFAYI yatay kaydırıyordu (operatör: /inbox "iframe gibi").
+// Kap ResizeObserver ile ölçülür; YALNIZ yatay kaydırmayan kapta
+// (getComputedStyle overflowX === 'visible') fitColumnWidths devreye
+// girer. Kaydıran kaplar (is-fit dışı geniş tablolar, ≤1024 D2 bandı)
+// ve ölçümün olmadığı ortamlar (jsdom) beyan genişlikleriyle AYNEN
+// kalır — sığdırma saf çekirdekte, tablo-güdümlü testle.
 export function DataTableColgroup<T>({ dt, leading, trailing }: { dt: DataTable<T>; leading?: number[]; trailing?: number[] }) {
+  const ref = useRef<HTMLTableColElement | null>(null);
+  const [fitPx, setFitPx] = useState(0); // 0 = ölçüm yok / kap kaydırıyor
+  useEffect(() => {
+    const wrap = ref.current?.closest('.table-wrap');
+    if (!wrap || typeof ResizeObserver === 'undefined') return;
+    const measure = () => {
+      const scrolls = getComputedStyle(wrap).overflowX !== 'visible';
+      setFitPx(scrolls ? 0 : wrap.clientWidth);
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(wrap);
+    return () => ro.disconnect();
+  }, []);
+  const fitted = useMemo(() => {
+    if (!fitPx) return null;
+    return fitColumnWidths(
+      dt.visibleColumns.map(c => ({
+        id: c.id,
+        px: dt.colWidths[c.id] ?? (c.flex ? null : c.width ?? DEFAULT_W),
+        min: c.minWidth ?? DEFAULT_MIN,
+      })),
+      (leading ?? []).reduce((s, w) => s + w, 0) + (trailing ?? []).reduce((s, w) => s + w, 0),
+      fitPx,
+    );
+  }, [fitPx, dt.visibleColumns, dt.colWidths, leading, trailing]);
   return (
-    <colgroup>
+    <colgroup ref={ref}>
       {(leading ?? []).map((w, i) => <col key={`lead-${i}`} style={{ width: w }} />)}
       {dt.visibleColumns.map(c => {
         // v0.9.542 — flex kolon SÜRÜKLENMEDİYSE 'auto': table-layout:fixed
         // artan genişliği ona verir, diğerleri kendi genişliğinde kalır.
         // Sürüklendiği an colWidths dolar ve sabit genişliğe döner —
-        // operatörün eli her zaman kazanır.
-        const w = dt.colWidths[c.id] ?? (c.flex ? 'auto' : c.width ?? DEFAULT_W);
+        // operatörün eli her zaman kazanır (kaba SIĞDIĞI sürece).
+        const w = fitted?.[c.id]
+          ?? dt.colWidths[c.id] ?? (c.flex ? 'auto' : c.width ?? DEFAULT_W);
         return <col key={c.id} style={{ width: w }} />;
       })}
       {(trailing ?? []).map((w, i) => <col key={`trail-${i}`} style={{ width: w }} />)}

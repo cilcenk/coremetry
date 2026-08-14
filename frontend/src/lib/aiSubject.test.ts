@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   formatAiParam, parseAiParam, aiSubjectTitle, aiSubjectSubtitle,
-  AI_KINDS, type AISubject,
+  AI_KINDS, CHART_SCOPES, chartScopeLabel, type AISubject,
 } from './aiSubject';
 
 // v0.9.477 — AI-drawer'ın `?ai=` kodeği. Çekmece TEK yüzey olduğundan
@@ -21,6 +21,11 @@ const CASES: Array<{ name: string; subject: AISubject; param: string }> = [
     name: 'service-health',
     subject: { kind: 'service-health', id: 'checkout', fromNs: 1000, toNs: 2000 },
     param: 'service-health:checkout:1000:2000',
+  },
+  {
+    name: 'charts',
+    subject: { kind: 'charts', id: 'checkout', fromNs: 1000, toNs: 2000, scope: 'dur' },
+    param: 'charts:checkout:1000:2000:dur',
   },
 ];
 
@@ -91,5 +96,49 @@ describe('başlık yardımcıları', () => {
       .toBe('checkout-service-long');
     expect(aiSubjectSubtitle({ kind: 'span', id: 'trace-1', spanId: 'span-2' }))
       .toBe('trace-1 · span span-2');
+  });
+});
+
+
+// v0.9.1033 — charts öznesi (ServiceCharts AI çekmecesi, Ⓐ+Ⓑ).
+// service-health ile AYNI pencere doğrulamasını paylaşır ama bir segment
+// daha taşır; arity karışırsa iki özne birbirinin linkini açardı.
+describe('parseAiParam — charts kapsamı', () => {
+  it('her kapsam round-trip eder', () => {
+    for (const scope of CHART_SCOPES) {
+      const s: AISubject = { kind: 'charts', id: 'svc', fromNs: 10, toNs: 20, scope };
+      expect(parseAiParam(formatAiParam(s))).toEqual(s);
+    }
+  });
+
+  it('bilinmeyen kapsam reddedilmez, en genişe düşer (backend ile aynı)', () => {
+    expect(parseAiParam('charts:svc:10:20:garbage')).toEqual(
+      { kind: 'charts', id: 'svc', fromNs: 10, toNs: 20, scope: 'all' });
+  });
+
+  it('eksik kapsam segmenti = service-health arity → reddedilir', () => {
+    // Aksi halde 4 segmentli bir charts linki sessizce parse edilir ve
+    // kapsam UYDURULUR.
+    expect(parseAiParam('charts:svc:10:20')).toBeNull();
+  });
+
+  it('fazladan segment reddedilir', () => {
+    expect(parseAiParam('charts:svc:10:20:dur:extra')).toBeNull();
+  });
+
+  it('ters/sıfır pencere reddedilir (service-health ile aynı kural)', () => {
+    expect(parseAiParam('charts:svc:20:10:dur')).toBeNull();
+    expect(parseAiParam('charts:svc:0:10:dur')).toBeNull();
+  });
+
+  it("':' içeren servis adı ayracı bozmaz", () => {
+    const s: AISubject = { kind: 'charts', id: 'a:b', fromNs: 10, toNs: 20, scope: 'rps' };
+    expect(parseAiParam(formatAiParam(s))).toEqual(s);
+  });
+
+  it('her kapsamın etiketi var ve benzersiz', () => {
+    const labels = CHART_SCOPES.map(chartScopeLabel);
+    expect(labels.every(l => l.length > 0)).toBe(true);
+    expect(new Set(labels).size).toBe(labels.length);
   });
 });

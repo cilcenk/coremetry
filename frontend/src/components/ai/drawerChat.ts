@@ -51,6 +51,7 @@ function subjectRef(s: AISubject): string {
     case 'trace':          return `trace ${s.id}`;
     case 'span':           return `trace ${s.id} · span ${s.spanId}`;
     case 'service-health': return `servis ${s.id}`;
+    case 'charts':         return `servis ${s.id} grafikleri (${s.scope})`;
     case 'exception':      return `exception grubu ${s.id}`;
     case 'problem':        return `problem ${s.id}`;
     case 'incident':       return `incident ${s.id}`;
@@ -82,6 +83,7 @@ export function buildExplainContext(i: {
 export function aiSubjectQuestion(kind: AIKind, id: string): string {
   switch (kind) {
     case 'service-health': return `${id} servisinin sağlığı nasıl?`;
+    case 'charts':         return `${id} grafiklerinde bu pencerede ne oldu?`;
     case 'problem':        return `Bu problemin kök nedeni ne? (problem ${id})`;
     case 'runbook':        return `${id} runbook'unun adımlarını özetle`;
     case 'anomaly':        return `Bu anomaliyi açıkla (${id})`;
@@ -102,7 +104,7 @@ export function aiSubjectQuestion(kind: AIKind, id: string): string {
 // guidedSuggestions ile aynı sözleşme) → çip tıklaması gerçek
 // telemetriye gider, açıklama özetine değil.
 export function drawerFollowups(s: AISubject): string[] {
-  if (s.kind === 'service-health') {
+  if (s.kind === 'service-health' || s.kind === 'charts') {
     return [
       `${s.id} en yavaş trace'ler?`,
       `${s.id} hata logları?`,

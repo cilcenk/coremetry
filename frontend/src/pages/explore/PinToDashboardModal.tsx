@@ -65,7 +65,9 @@ export function PinToDashboardModal({ panel, onClose }: {
   return (
     <Modal open onClose={onClose} title="Pin to dashboard" size="md"
       footer={done ? (
-        <Button variant="primary" onClick={onClose}>Kapat</Button>
+        // v0.9.1006 (M4/O6) — bir KAPATMA sayfanın en davetkâr öğesi
+        // olmamalı; iş zaten bitti, burada birincil bir eylem yok.
+        <Button variant="secondary" onClick={onClose}>Kapat</Button>
       ) : (
         <>
           <Button variant="secondary" onClick={onClose} disabled={busy}>Vazgeç</Button>

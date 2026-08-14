@@ -281,8 +281,10 @@ export function AITab() {
                   disabled={!apiKey && !hasKey && !(provider === 'openai' && !!baseUrl)} loading={busy}>
             Save
           </Button>
+          {/* v0.9.1006 (M4/O6) — dolu Save'in yanında ikinci dolgu
+              olmasın; kırmızı dil `ghost-danger`la korunuyor. */}
           {hasKey && (
-            <Button type="button" variant="danger" onClick={clearKey} disabled={busy}>
+            <Button type="button" variant="ghost-danger" onClick={clearKey} disabled={busy}>
               Remove key
             </Button>
           )}

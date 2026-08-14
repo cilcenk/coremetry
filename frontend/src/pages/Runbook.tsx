@@ -172,8 +172,11 @@ function Inner() {
                 Save changes
               </Button>
             )}
+            {/* v0.9.1006 (M4/O6) — şeridin İKİ ucu doluydu (Run +
+                Delete) ve ortadaki gerçek ikincil (Save changes)
+                eziliyordu. `ghost-danger` tek dolu birincil bırakıyor. */}
             {canEdit && (
-              <Button variant="danger" size="sm" onClick={remove}>Delete</Button>
+              <Button variant="ghost-danger" size="sm" onClick={remove}>Delete</Button>
             )}
           </span>
         </div>

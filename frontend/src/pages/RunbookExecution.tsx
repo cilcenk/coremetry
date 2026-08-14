@@ -164,7 +164,9 @@ function Inner() {
                       style={{ flex: '1 1 220px' }} />
                     <Button variant="primary" size="sm" onClick={() => act(s.stepId, 'complete')} disabled={stepAction.isPending}>✓ Done</Button>
                     <Button variant="secondary" size="sm" onClick={() => act(s.stepId, 'skip')} disabled={stepAction.isPending}>Skip</Button>
-                    <Button variant="danger" size="sm"
+                    {/* v0.9.1006 (M4/O6) — Runbook.tsx ile aynı desen:
+                        şeridin iki ucu dolu, ortadaki Skip eziliyordu. */}
+                    <Button variant="ghost-danger" size="sm"
                       onClick={() => act(s.stepId, 'fail')} disabled={stepAction.isPending}>Fail</Button>
                   </div>
                 )

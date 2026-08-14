@@ -486,8 +486,13 @@ function Inner() {
                 title="Download this dashboard as a portable JSON file">↓ Export JSON</Button>
               {isAdmin && (
                 <>
-                  <Button variant="danger" onClick={removeDashboard}>Delete</Button>
+                  {/* v0.9.1006 (M4/O6 + K5) — iki değişiklik: dolu
+                      kırmızı Delete, dolu mavi Edit'in yanında ikinci bir
+                      ağırlıktı (`ghost-danger`a indi) ve YIKICI OLAN
+                      SOLDAYDI, yani kas hafızasının birincil eylemi
+                      beklediği yerde. Sıra da düzeltildi. */}
                   <Button variant="primary" onClick={() => setEditing(true)}>Edit</Button>
+                  <Button variant="ghost-danger" onClick={removeDashboard}>Delete</Button>
                 </>
               )}
             </>

@@ -184,7 +184,9 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
                 ? 'Working…'
                 : `Apply ${actionableSelectedCount} suggestion${actionableSelectedCount === 1 ? '' : 's'}`}
             </Button>
-            <Button variant="danger" size="sm" onClick={disableSelected}
+            {/* v0.9.1006 (M4/O6) — toplu-eylem şeridinde dolu accent
+                "Apply N"in yanında ikinci dolgu vardı. */}
+            <Button variant="ghost-danger" size="sm" onClick={disableSelected}
               disabled={bulkBusy}
               title="Disable (soft-delete) every selected rule. Re-enable from the list below.">
               Disable {selected.size} rule{selected.size === 1 ? '' : 's'}

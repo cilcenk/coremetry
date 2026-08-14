@@ -194,7 +194,10 @@ export function BrandingTab() {
           <Button type="submit" variant="primary" loading={busy}>
             Save
           </Button>
-          <Button type="button" variant="danger" onClick={resetAll} disabled={busy}>
+          {/* v0.9.1006 (M4/O6) — dolu Save'in yanında dolu kırmızı ikinci
+              bir ağırlık vardı. `ghost-danger` tam bu iş için var
+              (globals.css:517): kırmızı DİLİ taşır, ikinci dolgu değil. */}
+          <Button type="button" variant="ghost-danger" onClick={resetAll} disabled={busy}>
             Reset to defaults
           </Button>
         </div>

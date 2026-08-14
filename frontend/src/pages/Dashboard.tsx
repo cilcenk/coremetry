@@ -852,8 +852,9 @@ function DashboardGrid({
                   <span className="row gap-1" style={{ marginLeft: 8 }} onClick={e => e.stopPropagation()}>
                     <Button variant="secondary" size="sm"
                       onClick={() => g.rowPanel && onEditPanel(g.rowPanel.id)}>Edit</Button>
-                    <Button variant="danger" size="sm" title="Delete row"
-                      onClick={() => g.rowPanel && onDeletePanel(g.rowPanel.id)}>×</Button>
+                    <IconButton variant="danger" size="sm" title="Delete row"
+                      aria-label="Delete row"
+                      onClick={() => g.rowPanel && onDeletePanel(g.rowPanel.id)} icon="×" />
                   </span>
                 )}
               </div>
@@ -943,8 +944,9 @@ function DashboardGrid({
                           <>
                             <Button variant="secondary" size="sm"
                               onClick={() => onEditPanel(p.id)}>Edit</Button>
-                            <Button variant="danger" size="sm" title="Delete panel"
-                              onClick={() => onDeletePanel(p.id)}>×</Button>
+                            <IconButton variant="danger" size="sm" title="Delete panel"
+                              aria-label="Delete panel"
+                              onClick={() => onDeletePanel(p.id)} icon="×" />
                           </>
                         )}
                         <PanelMenu panel={p} vars={vars} range={range} canEdit={canEdit}

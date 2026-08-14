@@ -651,6 +651,15 @@ button.xs { padding: 1px 6px; font-size: 10.5px; border-radius: var(--radius-xs)
    says "clickable". Dropping to the default muted tone would have been an
    unrequested legibility regression, so the tone is a class, not 4 inline
    colours. */
+/* ib-danger (v0.9.1011, M7e/L7) — glif-only yıkıcı tetik. Hover tonu
+   `button.ghost-danger`ınkiyle AYNI formülden (color-mix %12) ki iki
+   yüzey aynı dili konuşsun; `--err-bg` diye bir token YOK ve uydurmak
+   `undefinedCssRefs`i geçse bile üç temada sessizce boş kalırdı. */
+.btn-icon.ib-danger { color: var(--err); }
+.btn-icon.ib-danger:hover:not(:disabled) {
+  color: var(--err);
+  background: color-mix(in srgb, var(--err) 12%, transparent);
+}
 .btn-icon.ib-accent { color: var(--accent2); }
 .btn-icon.ib-accent:hover:not(:disabled) { color: var(--accent); background: var(--bg2); }
 /* `ib-add` / `ib-not` (v0.9.892) — the ⊕ / ⊖ filter pills, MB7.

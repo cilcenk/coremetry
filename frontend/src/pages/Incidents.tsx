@@ -88,7 +88,7 @@ export default function IncidentsPage() {
           <ServicePicker value={serviceFilter} onChange={setServiceFilter}
             placeholder="Filter by service…" width={220} />
           {isAdmin && (
-            <Button onClick={() => setShowNew(true)}>+ Declare incident</Button>
+            <Button variant="primary" onClick={() => setShowNew(true)}>+ Declare incident</Button>
           )}
           <span style={{ color: 'var(--text3)', fontSize: 12, marginLeft: 'auto' }}>
             <b style={{ color: 'var(--err)' }}>{counts.open}</b> open ·
@@ -218,7 +218,7 @@ function NewIncidentModal({ onClose, onCreated }: { onClose: () => void; onCreat
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="new-incident-form" loading={busy}>Declare</Button>
+          <Button variant="primary" type="submit" form="new-incident-form" loading={busy}>Declare</Button>
         </>
       }>
       <form id="new-incident-form" onSubmit={submit} className="stack gap-3">

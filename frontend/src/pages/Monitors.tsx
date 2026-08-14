@@ -300,7 +300,7 @@ function MonitorModal({ initial, onClose, onSaved }: {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="monitor-form" loading={busy}>
+          <Button variant="primary" type="submit" form="monitor-form" loading={busy}>
             {initial ? 'Save' : 'Create'}
           </Button>
         </>

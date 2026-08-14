@@ -303,7 +303,7 @@ function EditRow({ draft, busy, onChange, onSave, onCancel }: {
               title="Auto-fill owner / SRE team / description from this service's recent telemetry">
               ✨ AI
             </Button>
-            <Button size="sm" onClick={onSave} loading={busy}>
+            <Button variant="primary" size="sm" onClick={onSave} loading={busy}>
               Save
             </Button>
             <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>

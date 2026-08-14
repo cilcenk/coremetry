@@ -65,11 +65,11 @@ export function PinToDashboardModal({ panel, onClose }: {
   return (
     <Modal open onClose={onClose} title="Pin to dashboard" size="md"
       footer={done ? (
-        <Button onClick={onClose}>Kapat</Button>
+        <Button variant="primary" onClick={onClose}>Kapat</Button>
       ) : (
         <>
           <Button variant="secondary" onClick={onClose} disabled={busy}>Vazgeç</Button>
-          <Button onClick={() => { void pin(); }} loading={busy}
+          <Button variant="primary" onClick={() => { void pin(); }} loading={busy}
             disabled={busy || (target === 'new' && !newName.trim())}>
             Pinle
           </Button>

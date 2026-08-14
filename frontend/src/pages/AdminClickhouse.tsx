@@ -1115,7 +1115,7 @@ function RollupWizardPanel() {
             ))}
           </select>
         </label>
-        <Button onClick={() => setConfirmKind('apply')} disabled={!canApply}
+        <Button variant="primary" onClick={() => setConfirmKind('apply')} disabled={!canApply}
                 loading={busyKind === 'apply'}>
           Kur
         </Button>
@@ -1302,7 +1302,7 @@ function CHQueryOptimizer() {
         }}
       />
       <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'center' }}>
-        <Button onClick={run} disabled={!query.trim()} loading={busy}>
+        <Button variant="primary" onClick={run} disabled={!query.trim()} loading={busy}>
           Optimize
         </Button>
         {err && <span style={{ color: 'var(--err)', fontSize: 12 }}>{err}</span>}

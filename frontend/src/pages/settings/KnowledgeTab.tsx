@@ -197,7 +197,7 @@ export function KnowledgeTab() {
             (self-signed embedding/wiki endpoints)
           </span>
         </label>
-        <Button onClick={() => { void save(); }} style={{ marginTop: 12 }} loading={busy}>
+        <Button variant="primary" onClick={() => { void save(); }} style={{ marginTop: 12 }} loading={busy}>
           Kaydet
         </Button>
       </Row>

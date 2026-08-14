@@ -268,7 +268,7 @@ export default function LoginPage() {
           </div>
         )}
 
-        <Button type="submit" disabled={busy}
+        <Button variant="primary" type="submit" disabled={busy}
           style={{ width: '100%' }}>
           {busy
             ? t('login.signingIn')

@@ -160,7 +160,7 @@ export function BackupTab() {
           restore.
         </label>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button
+          <Button variant="primary"
             disabled={!file}
             onClick={onPreviewDiff}
             title="Dry-run: shows what would be added / overwritten / left alone, no writes." loading={busy}>

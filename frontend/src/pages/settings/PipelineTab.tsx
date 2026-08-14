@@ -97,7 +97,7 @@ export function PipelineTab() {
           metrics, or whole services you've decided to drop for cost.
           Choose the <b>signal</b> (spans / logs / metrics) each rule scopes to.
         </span>
-        <Button onClick={() => setCreating(true)}>+ New rule</Button>
+        <Button variant="primary" onClick={() => setCreating(true)}>+ New rule</Button>
       </div>
 
       {msg && (
@@ -429,7 +429,7 @@ function PipelineRuleModal({ existing, prefill, onClose, onSaved }: {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="pipeline-form" loading={busy}>Save</Button>
+          <Button variant="primary" type="submit" form="pipeline-form" loading={busy}>Save</Button>
         </>
       }>
       <form id="pipeline-form" onSubmit={submit}>

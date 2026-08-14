@@ -255,7 +255,7 @@ export function SavedViewsBar({ page, right }: {
               Share with team
             </label>
           )}
-          <Button size="sm" onClick={save}>
+          <Button variant="primary" size="sm" onClick={save}>
             Save
           </Button>
         </span>

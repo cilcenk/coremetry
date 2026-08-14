@@ -1136,7 +1136,7 @@ function SharePopover({ traceId }: { traceId: string }) {
             </select>
           </div>
           {!publicURL ? (
-            <Button onClick={generatePublic} loading={busy}
+            <Button variant="primary" onClick={generatePublic} loading={busy}
               leftIcon={<IconLink />}
               style={{ width: '100%', display: 'inline-flex', justifyContent: 'center' }}>
               Generate public link

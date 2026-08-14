@@ -149,7 +149,7 @@ function Inner() {
           <AIExplainButton subject={{ kind: 'incident', id: inc.id }} />
           {isAdmin && inc.status === 'open' && <Button variant="secondary" onClick={ack}
             loading={busy === 'ack'} disabled={busy !== null}>Acknowledge</Button>}
-          {isAdmin && inc.status !== 'resolved' && <Button onClick={resolve}
+          {isAdmin && inc.status !== 'resolved' && <Button variant="primary" onClick={resolve}
             loading={busy === 'resolve'} disabled={busy !== null}>Resolve</Button>}
         </div>
 
@@ -200,7 +200,7 @@ function Inner() {
                   onKeyDown={e => e.key === 'Enter' && submitNote()}
                   placeholder="Add a note (mitigation tried, hypothesis, who's on it)…"
                   style={{ flex: 1 }} />
-                <Button onClick={submitNote} loading={busy === 'note'}
+                <Button variant="primary" onClick={submitNote} loading={busy === 'note'}
                   disabled={!note.trim() || busy !== null}>Add note</Button>
               </div>
             )}
@@ -294,7 +294,7 @@ function Inner() {
                     <div style={{ display: 'flex', gap: 6, marginTop: 6, justifyContent: 'flex-end' }}>
                       <Button variant="secondary" disabled={busy !== null}
                         onClick={() => { setEditingPM(false); setPostmortemDraft(inc.postmortem ?? ''); }}>Cancel</Button>
-                      <Button onClick={savePM} loading={busy === 'pm'} disabled={busy !== null}>Save</Button>
+                      <Button variant="primary" onClick={savePM} loading={busy === 'pm'} disabled={busy !== null}>Save</Button>
                     </div>
                   </div>
                 ) : inc.postmortem ? (

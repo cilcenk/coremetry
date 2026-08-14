@@ -289,7 +289,7 @@ export function TimeRangePicker({ value, onChange }: {
               {error && <div className="trp-error">{t(error)}</div>}
 
               <div className="trp-actions">
-                <Button size="sm" onClick={applyCustom}>{t('trp.applyRange')}</Button>
+                <Button variant="primary" size="sm" onClick={applyCustom}>{t('trp.applyRange')}</Button>
               </div>
 
               {recents.length > 0 && (

@@ -32,7 +32,20 @@ type Variant = 'primary' | 'secondary' | 'danger' | 'ghost' | 'accent'
 type Size    = 'xs' | 'sm' | 'md' | 'lg';
 
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: Variant;
+  // ZORUNLU (v0.9.1005, etkileşim denetimi M3/O7). Eskiden
+  // `variant?: Variant` + `variant = 'primary'` varsayılanıydı ve bu
+  // sessiz bir karar veriyordu: ağırlık BEYAN EDİLMEDİĞİNDE en gürültülü
+  // seçenek düşüyordu. Ölçüldü — 426 çağrının 49'u (%11,5) varyant
+  // yazmıyordu ve hepsi dolu accent oluyordu. En sinsi yanı denetlenemez
+  // olmasıydı: kaynağa bakan yazar `<Button>Preview diff</Button>` görüyor,
+  // "primary" sözcüğünü görmüyor — yan yana iki dolu mavi buton
+  // (BackupTab "Preview diff" + "Upload + apply") kaynakta ihlal gibi
+  // GÖRÜNMÜYORDU.
+  //
+  // Kapı tip sisteminin kendisi: statik tarama tahmin eder, `tsc`
+  // zorlar. K4 ("grup başına tek birincil") için depodaki tek %100
+  // kesin, sıfır yanlış-pozitifli kapı bu.
+  variant: Variant;
   size?: Size;
   loading?: boolean;
   // leftIcon/rightIcon let callers stick a glyph on either side
@@ -57,7 +70,7 @@ const sizeClass: Record<Size, string> = {
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button(
-  { variant = 'primary', size = 'md', loading, leftIcon, rightIcon,
+  { variant, size = 'md', loading, leftIcon, rightIcon,
     className, disabled, children, type = 'button', ...rest },
   ref,
 ) {

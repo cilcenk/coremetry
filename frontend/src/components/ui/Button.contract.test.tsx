@@ -54,18 +54,18 @@ describe('Button — type attribute', () => {
   // submit'tir; atomun varsayılanı ise `button`. Mekanik bir taşımada bu
   // fark, formun Enter'a ve tıka ölü kalması demektir.
   it('defaults to type="button", not the HTML submit default', () => {
-    expect(btn(render(<Button>Go</Button>)).type).toBe('button');
+    expect(btn(render(<Button variant="primary">Go</Button>)).type).toBe('button');
   });
 
   it('honours an explicit type="submit" (the form path must stay reachable)', () => {
-    expect(btn(render(<Button type="submit">Subscribe</Button>)).type).toBe('submit');
+    expect(btn(render(<Button variant="primary" type="submit">Subscribe</Button>)).type).toBe('submit');
   });
 
   it('a submit Button inside a form actually submits it', () => {
     let submitted = 0;
     const el = render(
       <form onSubmit={e => { e.preventDefault(); submitted++; }}>
-        <Button type="submit">Subscribe</Button>
+        <Button variant="primary" type="submit">Subscribe</Button>
       </form>,
     );
     act(() => { btn(el).click(); });
@@ -76,7 +76,7 @@ describe('Button — type attribute', () => {
     let submitted = 0;
     const el = render(
       <form onSubmit={e => { e.preventDefault(); submitted++; }}>
-        <Button>Cancel</Button>
+        <Button variant="primary">Cancel</Button>
       </form>,
     );
     act(() => { btn(el).click(); });
@@ -91,7 +91,33 @@ describe('Button — variant/size class mapping', () => {
   const cls = (node: ReactNode) => btn(render(node)).className;
 
   it('primary + md emit no class at all (the element-level rule paints them)', () => {
-    expect(cls(<Button>x</Button>)).toBe('');
+    expect(cls(<Button variant="primary">x</Button>)).toBe('');
+  });
+
+  // ── M3 (v0.9.1005) — `variant` ZORUNLU, sözleşme değişti ───────────
+  //
+  // Eskiden burada "varsayılan primary" iddiası vardı ve o iddia
+  // KUSURUN KENDİSİYDİ: ağırlık beyan edilmediğinde en gürültülü
+  // seçenek düşüyordu, üstelik kaynağa bakan yazar bunu göremiyordu
+  // (`<Button>Preview diff</Button>` ihlal gibi GÖRÜNMÜYOR). Ölçüm:
+  // 426 çağrının 49'u örtük dolu accent'ti.
+  //
+  // Kapı TİP DÜZEYİNDE ve İKİ YÖNLÜ: aşağıdaki `@ts-expect-error`
+  // bugün bir hatayı bastırıyor. Biri varsayılanı geri koyarsa satır
+  // derlenir, bastırılacak hata kalmaz ve tsc bu kez "unused
+  // '@ts-expect-error' directive" diye KENDİSİ kırılır. Yani kapı
+  // yalnız ihlali değil, kuralın KALDIRILMASINI da yakalıyor —
+  // statik taramanın yapamadığı şey bu.
+  it('variant ZORUNLU — atlamak bir DERLEME hatası', () => {
+    const omitted = (
+      // @ts-expect-error variant zorunlu; bu satır derlenirse varsayılan geri gelmiştir
+      <Button>x</Button>
+    );
+    // Çalışma anı davranışı da yoklanıyor: JS tarafından (tip kapısı
+    // olmayan bir çağrı) varyantsız gelinirse sınıf listesi sessizce
+    // boş kalır — yani eski primary görünümü. Bu bir KAZA değil,
+    // bilinçli yumuşak iniş; tip kapısı zaten önde duruyor.
+    expect(cls(omitted)).toBe('');
   });
 
   it.each([
@@ -105,7 +131,7 @@ describe('Button — variant/size class mapping', () => {
   });
 
   it.each([['xs', 'xs'], ['sm', 'sm'], ['lg', 'lg']] as const)('size=%s → .%s', (size, expected) => {
-    expect(cls(<Button size={size}>x</Button>).split(' ')).toContain(expected);
+    expect(cls(<Button variant="primary" size={size}>x</Button>).split(' ')).toContain(expected);
   });
 
   // v0.9.884. `ghost-danger` tek bir sınıf TOKEN'ı — `.danger`ın soluk bir
@@ -130,7 +156,7 @@ describe('Button — variant/size class mapping', () => {
   });
 
   it('a caller className survives on a primary md button', () => {
-    expect(cls(<Button className="mine">x</Button>)).toBe('mine');
+    expect(cls(<Button variant="primary" className="mine">x</Button>)).toBe('mine');
   });
 });
 
@@ -140,47 +166,47 @@ describe('Button — loading / disabled', () => {
   // Acknowledge butonlarında bugün hiçbir koruma yok, ikinci tık ikinci
   // PUT + ikinci audit girdisi üretiyor.
   it('loading disables the button', () => {
-    expect(btn(render(<Button loading>Save</Button>)).disabled).toBe(true);
+    expect(btn(render(<Button variant="primary" loading>Save</Button>)).disabled).toBe(true);
   });
 
   it('loading sets aria-busy for screen readers', () => {
-    expect(btn(render(<Button loading>Save</Button>)).getAttribute('aria-busy')).toBe('true');
+    expect(btn(render(<Button variant="primary" loading>Save</Button>)).getAttribute('aria-busy')).toBe('true');
   });
 
   it('an idle button carries no aria-busy attribute at all', () => {
-    expect(btn(render(<Button>Save</Button>)).hasAttribute('aria-busy')).toBe(false);
+    expect(btn(render(<Button variant="primary">Save</Button>)).hasAttribute('aria-busy')).toBe(false);
   });
 
   it('a loading button swallows clicks (the double-submit guard)', () => {
     let clicks = 0;
-    const el = render(<Button loading onClick={() => clicks++}>Save</Button>);
+    const el = render(<Button variant="primary" loading onClick={() => clicks++}>Save</Button>);
     act(() => { btn(el).click(); });
     expect(clicks).toBe(0);
   });
 
   it('disabled swallows clicks even without loading', () => {
     let clicks = 0;
-    const el = render(<Button disabled onClick={() => clicks++}>Save</Button>);
+    const el = render(<Button variant="primary" disabled onClick={() => clicks++}>Save</Button>);
     act(() => { btn(el).click(); });
     expect(clicks).toBe(0);
   });
 
   it('an enabled button forwards clicks', () => {
     let clicks = 0;
-    const el = render(<Button onClick={() => clicks++}>Save</Button>);
+    const el = render(<Button variant="primary" onClick={() => clicks++}>Save</Button>);
     act(() => { btn(el).click(); });
     expect(clicks).toBe(1);
   });
 
   it('the label stays readable while loading (spinner is additive)', () => {
-    expect(btn(render(<Button loading>Save</Button>)).textContent).toContain('Save');
+    expect(btn(render(<Button variant="primary" loading>Save</Button>)).textContent).toContain('Save');
   });
 
   // v0.9.884 (R7). Gösterge statik `…`ten `.spinner.sm`e geçti. Bu, KOD
   // DÜZENLENMEDEN ~15 mevcut çağrı sitesinin görünümünü değiştiren bir
   // karar; sözleşmeyi burada çiviliyoruz ki geri kayması sessiz olmasın.
   it('the loading indicator is the sized spinner, not a text glyph', () => {
-    const b = btn(render(<Button loading>Save</Button>));
+    const b = btn(render(<Button variant="primary" loading>Save</Button>));
     const spinner = b.querySelector('.spinner');
     expect(spinner).not.toBeNull();
     expect(spinner!.className).toContain('sm');
@@ -188,7 +214,7 @@ describe('Button — loading / disabled', () => {
   });
 
   it('the spinner is hidden from screen readers (aria-busy already says it)', () => {
-    const spinner = btn(render(<Button loading>Save</Button>)).querySelector('.spinner')!;
+    const spinner = btn(render(<Button variant="primary" loading>Save</Button>)).querySelector('.spinner')!;
     expect(spinner.getAttribute('aria-hidden')).toBe('true');
   });
 });
@@ -198,18 +224,18 @@ describe('Button — icons and passthrough', () => {
   // edilen bazı siteler bu sarmalayıcıya duyarlı (flex:1 span, ::before
   // taşıyan sınıflar) — sarmalayıcının varlığı sözleşmenin parçası.
   it('wraps children in the row/gap layout span', () => {
-    const inner = btn(render(<Button>x</Button>)).firstElementChild;
+    const inner = btn(render(<Button variant="primary">x</Button>)).firstElementChild;
     expect(inner?.className).toBe('row gap-2');
   });
 
   it('renders leftIcon before and rightIcon after the label', () => {
-    const el = render(<Button leftIcon={<i>L</i>} rightIcon={<i>R</i>}>Mid</Button>);
+    const el = render(<Button variant="primary" leftIcon={<i>L</i>} rightIcon={<i>R</i>}>Mid</Button>);
     expect(btn(el).textContent).toBe('LMidR');
   });
 
   it('forwards arbitrary button attributes (title, aria-label, data-*)', () => {
     const b = btn(render(
-      <Button title="tip" aria-label="Zoom out" data-testid="z">x</Button>,
+      <Button variant="primary" title="tip" aria-label="Zoom out" data-testid="z">x</Button>,
     ));
     expect(b.getAttribute('title')).toBe('tip');
     expect(b.getAttribute('aria-label')).toBe('Zoom out');

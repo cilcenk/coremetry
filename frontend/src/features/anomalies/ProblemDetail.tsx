@@ -407,7 +407,7 @@ export function ProblemDetail({ group, isAdmin, onBack, onChanged }: {
               loading={acting === 'acknowledged'} disabled={acting !== null}>Acknowledge</Button>}
             <Button variant="secondary" onClick={() => act('ignored')}
               loading={acting === 'ignored'} disabled={acting !== null}>Ignore</Button>
-            <Button onClick={() => act('resolved')}
+            <Button variant="primary" onClick={() => act('resolved')}
               loading={acting === 'resolved'} disabled={acting !== null}>Resolve</Button>
           </>
         )}

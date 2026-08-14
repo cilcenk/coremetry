@@ -81,7 +81,7 @@ export function CustomRolesTab() {
           pages — e.g. a "readonly-3" that only sees traces, metrics, logs.
           Admin / editor roles are unaffected.
         </span>
-        <Button onClick={() => setCreating(true)}>+ New role</Button>
+        <Button variant="primary" onClick={() => setCreating(true)}>+ New role</Button>
       </div>
 
       {msg && (
@@ -193,7 +193,7 @@ function RoleEditorModal({ existing, pages, onClose, onSaved }: {
       footer={
         <>
           <Button variant="secondary" onClick={onClose}>Cancel</Button>
-          <Button type="submit" form="role-form" loading={busy}>Save</Button>
+          <Button variant="primary" type="submit" form="role-form" loading={busy}>Save</Button>
         </>
       }>
       <form id="role-form" onSubmit={submit}>

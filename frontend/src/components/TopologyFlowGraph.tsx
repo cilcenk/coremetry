@@ -4,6 +4,7 @@ import { ROW_PITCH } from '@/lib/topoLayout';
 import type { ServiceMap, ServiceMapNode, ServiceMapEdge } from '@/lib/types';
 import { isMessagingDep, fmtNum } from '@/lib/utils';
 import { edgeWeights } from '@/lib/edgeWeight';
+import { edgeArrow } from '@/lib/topoArrow';
 import { fitViewport, readableFit, zoomAt, zoomRange, type Viewport } from '@/lib/topoViewport';
 import { depInstanceLabel } from '@/lib/topoLabels';
 import { Button } from '@/components/ui/Button';
@@ -406,13 +407,24 @@ export function TopologyFlowGraph({
           // çift yönlü çizgide ters yönün demeti de raporlanır.
           const fwdBundle = bundled.get(`${e.caller}|${e.callee}`) ?? 0;
           const revBundle = re.reverse ? (bundled.get(`${re.reverse.caller}|${re.reverse.callee}`) ?? 0) : 0;
+          const stroke = e.isNew ? 'var(--ok)' : errorish ? 'var(--err)' : hot ? 'var(--accent)' : 'var(--border-strong)';
+          const opacity = dimmed ? 0.12 : hot ? 0.95 : errorish ? 0.85 : 0.55;
+          // v0.9.1031 — yön oku (operatör isteği). Uca (t=1) konan ok HTML
+          // pilinin ALTINDA kalır (düğümler SVG'nin üstünde); hedefe yakın
+          // t=0.78 kolon boşluğunda görünür ve t=0.5'teki RED chip'iyle
+          // çakışmaz. Çift yönlü kenar kaynak ucunda (t=0.22) ters ok alır.
+          // Boyut kenar kalınlığıyla ölçekli; pointer-events yok (dekor).
+          const arrows = [edgeArrow(a, b, 0.78)];
+          if (re.reverse) arrows.push(edgeArrow(a, b, 0.22, true));
+          const as = 3.2 + 1.6 * (hot ? w + 0.8 : w);
           return (
-            <path key={i}
+            <g key={i}>
+            <path
               d={`M ${a.x} ${a.y} C ${mx} ${a.y}, ${mx} ${b.y}, ${b.x} ${b.y}`}
               fill="none"
-              stroke={e.isNew ? 'var(--ok)' : errorish ? 'var(--err)' : hot ? 'var(--accent)' : 'var(--border-strong)'}
+              stroke={stroke}
               strokeWidth={hot ? w + 0.8 : w}
-              opacity={dimmed ? 0.12 : hot ? 0.95 : errorish ? 0.85 : 0.55}
+              opacity={opacity}
               className="topo-edge-flow"
               style={{ animationDuration: `${(2.8 - 1.8 * t).toFixed(2)}s`, transition: 'opacity 120ms, stroke 120ms, stroke-width 120ms' }}>
               <title>
@@ -424,6 +436,14 @@ export function TopologyFlowGraph({
                   (e.isNew ? '\n[NEW since baseline]' : '')}
               </title>
             </path>
+            {arrows.map((ar, j) => (
+              <path key={`ar-${j}`}
+                d={`M ${-as * 0.9} ${-as * 0.62} L ${as * 0.9} 0 L ${-as * 0.9} ${as * 0.62} Z`}
+                transform={`translate(${ar.x} ${ar.y}) rotate(${ar.angle})`}
+                fill={stroke} opacity={opacity} pointerEvents="none"
+                style={{ transition: 'opacity 120ms, fill 120ms' }} />
+            ))}
+            </g>
           );
         })}
       </svg>

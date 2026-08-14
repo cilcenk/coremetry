@@ -452,8 +452,52 @@ func topoNoiseExcludeSQL(col string) string {
 	  AND positionCaseInsensitive(` + col + `, 'cache_refresh') = 0)`
 }
 
+// topoQueueClusterSQL — kuyruk düğümünün messaging CLUSTER'ı (v0.9.1025).
+//
+// Zincir TÜRETİLMİYOR: dependencies.go'daki `clusterExpr` sabiti AYNEN
+// kullanılıyor, çünkü messaging_summary_5m / messaging_caller_summary_5m
+// MV'leri de tam olarak o zinciri materialize ediyor. Ayrışma SESSİZ bir
+// kırılmadır ve bu özelliğin tam kalbinden vurur: topoloji düğümünden
+// kurulan derin link, /messaging çekmecesinin (system, cluster,
+// destination) üçlüsüyle TAM EŞİTLİKLE eşleşmezse çekmece BOŞ açılır —
+// hata değil, cevapsızlık (v0.9.973'ün teşhis ettiği sınıf).
+// TestTopoQueueClusterMirrorsMessagingMV bu aynılığı çiviler.
+//
+// msg_system guard'ı bir mikro-optimizasyon değil: coalesce dört
+// indexOf() dizi taraması demek ve infra pass'i HER span'i (yalnız
+// messaging olanları değil) satır satır geçiyor. Lokal ölçümde messaging
+// oranı %6,7 — guard olmadan tarama ~15× daha çok satırda koşardı.
+// Guard tüketici pass'inde WHERE sayesinde zaten daima doğru; yine de
+// BİREBİR aynı metin yazılıyor, çünkü iki pass'in "MUST mirror"
+// sözleşmesi ancak metin aynıysa test edilebilir.
+func topoQueueClusterSQL() string {
+	return `if(msg_system != '', ` + clusterExpr + `, '')`
+}
+
 func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) error {
 	end := bucketStart.Add(5 * time.Minute)
+
+	// v0.9.1025 — kuyruk düğümünün cluster'ı, probe'a BAĞLI olarak yazılır.
+	// Koşulsuz yazsaydık kolonun henüz inmediği boot'ta (küme kipinde DDL
+	// ertelemesi, v0.9.614) her bucket code 47 ile ölür ve topoloji grafiği
+	// tamamen boş kalırdı — yani "yeni özellik çalışmıyor" değil, "graf
+	// gitti". Üç parça birlikte açılıp kapanır; ikisi açık biri kapalı hâl
+	// kolon-sayısı uyuşmazlığı demektir.
+	//
+	// Kolon listenin SONUNA ekleniyor: bağlı argümanlar (`?`) SIRAYLA
+	// eşleşiyor ve eklenen ifade hiç placeholder içermiyor, dolayısıyla
+	// mevcut arg sırası olduğu gibi kalıyor.
+	clusterCol, clusterInner, clusterOuter := "", "", ""
+	if s.hasTopoClusterCol {
+		clusterCol = ", cluster"
+		clusterInner = ",\n\t\t\t\t" + topoQueueClusterSQL() + " AS msg_cluster"
+		// any(): parent_env/child_env ile aynı sözleşme. Cluster GROUP BY'a
+		// GİRMEZ — girseydi tek bir aggregation koşusu dedup anahtarı dışında
+		// ayrışan iki satır üretir ve ReplacingMergeTree FINAL okumasında
+		// birini SİLERDİ (calls kaybı). Annotation olarak sayılar tam kalır,
+		// yalnız etiket çok-cluster hâlinde keyfîdir.
+		clusterOuter = ",\n\t\t\tany(msg_cluster) AS cluster"
+	}
 
 	// Cross-service pass — service A → service B via http/rpc.
 	//
@@ -574,7 +618,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			(time_bucket, parent_service, child_node, node_kind,
 			 protocol, top_labels, distinct_labels, calls,
 			 sum_duration_ns, p99_ms, errors,
-			 parent_env, child_env, version)
+			 parent_env, child_env, version`+clusterCol+`)
 		SELECT
 			toDateTime(?, 'UTC') AS time_bucket,
 			parent_service,
@@ -590,7 +634,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt64(countIf(status_code = 'error')) AS errors,
 			any(p_env)           AS parent_env,
 			''                   AS child_env,
-			toUInt64(?)          AS version
+			toUInt64(?)          AS version`+clusterOuter+`
 		FROM (
 			SELECT
 				service_name AS parent_service,
@@ -700,7 +744,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 				) AS label,
 				name,
 				duration,
-				status_code
+				status_code`+clusterInner+`
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 		)
@@ -737,7 +781,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			(time_bucket, parent_service, child_node, node_kind,
 			 protocol, top_labels, distinct_labels, calls,
 			 sum_duration_ns, p99_ms, errors,
-			 parent_env, child_env, version)
+			 parent_env, child_env, version`+clusterCol+`)
 		WITH
 			coalesce(
 				nullIf(peer_service, ''),
@@ -767,7 +811,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			-- Consumer's env (the receiver) — child_env on the
 			-- queue→consumer edge so the operator sees which env
 			-- consumes from a queue when multiple envs share one.
-			` + topoEnvChainSQL("") + ` AS c_env
+			` + topoEnvChainSQL("") + ` AS c_env` + clusterInner + `
 		SELECT
 			toDateTime(?, 'UTC')                                AS time_bucket,
 			queue_source                                        AS parent_service,
@@ -782,7 +826,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			toUInt64(countIf(status_code = 'error'))            AS errors,
 			''                                                  AS parent_env,
 			any(c_env)                                          AS child_env,
-			toUInt64(?)                                         AS version
+			toUInt64(?)                                         AS version`+clusterOuter+`
 		FROM spans
 		WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 		  AND kind = 'consumer'

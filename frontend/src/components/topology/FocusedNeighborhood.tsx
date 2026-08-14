@@ -382,7 +382,16 @@ export function FocusedNeighborhood({ range, focus, hops, errorsOnly, onHops, on
           {hoverNode.kind === 'queue' && detailHref && (
             <span style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <Link to={detailHref} style={{ fontSize: 11, color: 'var(--accent)', textDecoration: 'none' }}>
-                Messaging kataloğunda göster →
+                {/* v0.9.1026 — etiket LİNKİN NE YAPTIĞINI söyler, ne
+                    yapmasını istediğimizi değil. Üçlü tamamsa çekmece
+                    doğrudan açılıyor ("Topiği aç"); cluster yoksa
+                    (kolonun inmediği kurulum / eski kova) v0.9.972'nin
+                    daraltılmış kataloğuna düşüyoruz ve etiket bunu
+                    SÖYLÜYOR — v0.9.973'te alınan dürüstlük kararı,
+                    yalnız yönü tersine çevrilmiş hâliyle korunuyor. */}
+                {detailHref.includes('destination=')
+                  ? 'Topiği aç →'
+                  : 'Messaging kataloğunda göster →'}
               </Link>
             </span>
           )}

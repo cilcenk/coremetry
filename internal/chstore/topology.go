@@ -112,6 +112,18 @@ type ServiceTopologyEdge struct {
 	// the underlying spans.
 	ParentEnv      string   `json:"parentEnv,omitempty"`
 	ChildEnv       string   `json:"childEnv,omitempty"`
+	// v0.9.1026 — kuyruk düğümünün messaging cluster'ı (v0.9.1025'te
+	// yazılmaya başlandı). YALNIZ queue düğümü taşıyan kenarlarda dolu;
+	// hangi TARAFIN kuyruk olduğu kenarı üreten pass'e göre değişir
+	// (producer kenarında CHILD, consumer kenarında PARENT), o yüzden
+	// API katmanı 'queue:' önekine bakarak yerleştiriyor.
+	//
+	// Boş kalması NORMAL ve beklenen bir hâl: kolonun inmediği kurulum,
+	// v0.9.1025 öncesi yazılmış kovalar, ve kuyruk olmayan her kenar.
+	// Tüketicisi bu hâli "cluster bilinmiyor" diye okumalı ve v0.9.972
+	// katalog köprüsüne düşmeli — asla '(default)' VARSAYMAMALI (çok-
+	// cluster kurulumda sessizce boş bir çekmece açardı, v0.9.973).
+	Cluster        string   `json:"cluster,omitempty"`
 	// v0.5.414 — prior-window comparison values for the
 	// what-changed banner. Populated only when the API caller
 	// asks for the compare=prior variant. Frontend derives the
@@ -1156,6 +1168,23 @@ func (s *Store) readServiceTopologyAggFiltered(ctx context.Context, from, to tim
 		args = append(args, toAnySlice(touching)...)
 	}
 	args = append(args, limit)
+	// v0.9.1026 — cluster projeksiyonu probe'a bağlı (hasTopoClusterCol).
+	// Kolonun inmediği boot'ta koşulsuz bir `argMax(cluster, …)` bu
+	// sorguyu code 47 ile düşürürdü — ve bu sorgu /topology'nin TAMAMINI
+	// besliyor, yani graf komple kararırdı. Kapalıyken alan boş kalır ve
+	// köprü v0.9.972 katalog dalına düşer.
+	//
+	// argMax(cluster, if(cluster != '', time_bucket, toDateTime(0))):
+	// pencere içindeki EN GÜNCEL BOŞ OLMAYAN cluster. Düz
+	// argMax(cluster, time_bucket) yanlış olurdu — en yeni kova bir
+	// v0.9.1025 öncesi satırdan ya da cluster yazmayan bir pass'ten
+	// gelirse '' kazanır ve elimizdeki bilgiyi çöpe atardık. Hepsi boşsa
+	// zaten '' dönüyor (doğru cevap: "bilinmiyor").
+	clusterInnerSel, clusterOuterSel := "", ""
+	if s.hasTopoClusterCol {
+		clusterInnerSel = ",\n\t\t\t\targMax(cluster, if(cluster != '', time_bucket, toDateTime(0))) AS cluster"
+		clusterOuterSel = ",\n\t\t\tcluster"
+	}
 	// Subquery: aggregate within groups first, then post-process
 	// the merged label array. Inlining the merged array twice in
 	// the outer SELECT (once for arraySlice, once for length)
@@ -1180,7 +1209,7 @@ func (s *Store) readServiceTopologyAggFiltered(ctx context.Context, from, to tim
 			avg_ms,
 			max_p99_ms,
 			parent_env,
-			child_env
+			child_env`+clusterOuterSel+`
 		FROM (
 			SELECT
 				parent_service,
@@ -1199,7 +1228,7 @@ func (s *Store) readServiceTopologyAggFiltered(ctx context.Context, from, to tim
 				-- buckets; in practice the env is stable per
 				-- (service, day) so the pick is consistent.
 				any(parent_env) AS parent_env,
-				any(child_env)  AS child_env
+				any(child_env)  AS child_env`+clusterInnerSel+`
 			FROM topology_edges_5m FINAL
 			WHERE time_bucket >= toStartOfFiveMinute(toDateTime(?, 'UTC'))
 			  AND time_bucket <  toStartOfFiveMinute(toDateTime(?, 'UTC')) + INTERVAL 5 MINUTE`+touchWhere+`
@@ -1217,10 +1246,17 @@ func (s *Store) readServiceTopologyAggFiltered(ctx context.Context, from, to tim
 	var out []ServiceTopologyEdge
 	for rows.Next() {
 		var e ServiceTopologyEdge
-		if err := rows.Scan(&e.ParentService, &e.ChildNode, &e.NodeKind,
+		// Scan hedefleri projeksiyonla BİRLİKTE açılıp kapanır — kolon
+		// listesi ile hedef sayısı ayrışırsa driver "expected N columns"
+		// ile düşer, yani tek bayrak iki yeri de sürüyor.
+		dest := []any{&e.ParentService, &e.ChildNode, &e.NodeKind,
 			&e.Protocol, &e.TopLabels, &e.DistinctLabels, &e.Calls,
 			&e.Errors, &e.AvgMs, &e.P99Ms,
-			&e.ParentEnv, &e.ChildEnv); err != nil {
+			&e.ParentEnv, &e.ChildEnv}
+		if s.hasTopoClusterCol {
+			dest = append(dest, &e.Cluster)
+		}
+		if err := rows.Scan(dest...); err != nil {
 			return nil, err
 		}
 		if e.Calls > 0 {

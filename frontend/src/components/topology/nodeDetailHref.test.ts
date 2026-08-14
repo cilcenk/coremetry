@@ -14,6 +14,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { nodeDetailHref, splitDbNodeName, queueDestination } from './nodeDetailHref';
+import { encodeDestinationParam, decodeDestinationParam } from '@/pages/messaging/destinationParam';
 import type { GraphNode } from '@/lib/types';
 
 function node(p: Partial<GraphNode>): GraphNode {
@@ -101,6 +102,56 @@ describe('nodeDetailHref', () => {
     // "daralttım" diye durur; yazılmaması dürüstlük.
     const href = nodeDetailHref(node({ kind: 'queue', name: 'sqs', system: 'sqs' }))!;
     expect(href).toBe('/messaging?msys=sqs');
+  });
+
+  // ── v0.9.1026 — cluster geldiğinde GERÇEK derin link ──────────────
+  //
+  // İki dal da çivileniyor, çünkü ikisi de DOĞRU cevaptır ve hangisinin
+  // seçildiği veriye bağlı: üçlü tamamsa çekmece, değilse katalog.
+  // Yanlış dalı seçmek sessizdir — çekmece açılmayan bir link ile boş
+  // açılan bir çekmece arasındaki fark, operatörün gözünde ikisi de
+  // "bir şey olmadı"dır.
+  it('cluster VARSA çekmece derin linki — üçlü kimlik tam', () => {
+    const href = nodeDetailHref(
+      node({ kind: 'queue', name: 'kafka:payment.settled', system: 'kafka', cluster: 'broker-1:9092' }),
+      { range: '1h' })!;
+    const sp = new URLSearchParams(href.split('?')[1]);
+    // Çekmecenin okuduğu codec'in TA KENDİSİ ile karşılaştırılıyor —
+    // elle kurulmuş bir beklenti, kaçış kuralları ayrıştığında testi
+    // değil ürünü haklı çıkarırdı.
+    expect(sp.get('destination')).toBe(
+      encodeDestinationParam({ system: 'kafka', cluster: 'broker-1:9092', destination: 'payment.settled' }),
+    );
+    // decode → encode gidiş-dönüşü: link gerçekten AÇILABİLİR mi.
+    expect(decodeDestinationParam(sp.get('destination'))).toEqual({
+      system: 'kafka', cluster: 'broker-1:9092', destination: 'payment.settled',
+    });
+    // Katalog filtresi derin linkte de KALIYOR: çekmece satır üzerinde
+    // render ediliyor, satır ilk-200 tavanının altındaysa yalnız
+    // ?destination= ile hiçbir şey açılmaz.
+    expect(sp.get('msys')).toBe('kafka');
+    expect(sp.get('q')).toBe('payment.settled');
+    expect(sp.get('range')).toBe('1h');
+  });
+
+  it('cluster YOKSA katalog köprüsü — v0.9.972 davranışı AYNEN', () => {
+    const href = nodeDetailHref(
+      node({ kind: 'queue', name: 'kafka:payment.settled', system: 'kafka' }), { range: '1h' })!;
+    expect(new URLSearchParams(href.split('?')[1]).get('destination')).toBeNull();
+    expect(href).toContain('msys=kafka');
+  });
+
+  it('cluster VAR ama destination YOK → çekmece kurulmaz', () => {
+    // decodeDestinationParam boş alanlı param'ı reddediyor: eksik üçlü
+    // ile kurulan link "açılacakmış gibi" durur ve hiçbir şey yapmaz.
+    const href = nodeDetailHref(node({ kind: 'queue', name: 'sqs', system: 'sqs', cluster: '(default)' }))!;
+    expect(href).toBe('/messaging?msys=sqs');
+  });
+
+  it('boş/whitespace cluster çekmece SAYILMAZ', () => {
+    const href = nodeDetailHref(
+      node({ kind: 'queue', name: 'kafka:orders', system: 'kafka', cluster: '   ' }))!;
+    expect(href).not.toContain('destination=');
   });
 
   it('destination URL-ENCODE edilir — nokta/eğik çizgi taşıyan topikler', () => {

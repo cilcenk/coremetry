@@ -7,6 +7,7 @@ import { IconSparkles } from '@/components/icons';
 import { aiSubjectSubtitle, aiSubjectTitle, formatAiParam, type AISubject } from '@/lib/aiSubject';
 import { emitAiEvidence, emitAiFocus, scrollToAttr } from './aiEvents';
 import { ChatBubble } from './ChatBubble';
+import { ServiceChartsExplainBody } from './ServiceChartsExplainBody';
 import { aiSubjectQuestion, buildExplainContext, drawerFollowups } from './drawerChat';
 import { useAiSubject } from './useAiSubject';
 import { useChatThread } from './useChatThread';
@@ -60,6 +61,26 @@ function AIDrawerBody({ subject, onClose }: { subject: AISubject; onClose: () =>
   const [traceIds, setTraceIds] = useState<string[]>([]);
   // v0.9.479 — açıklamanın metni: çekmece-içi sohbetin BAĞLAMI.
   const [explainText, setExplainText] = useState('');
+
+  // v0.9.1033 — `charts` öznesinin gövdesi AYRI: bu yüzey düz metin
+  // değil, anlatım + YAPISAL sinyal tablosu + pivot linkleri döndürüyor
+  // (onaylı ServiceCharts AI mockup'ı). CopilotExplain yalnız
+  // `{explanation}` çizdiği için ona bir dal EKLENMEDİ — kanıt/anlatım
+  // ayrımı bu bileşenin sözleşmesi. Sohbet bölümü ve `key` ile state
+  // sıfırlama aynen paylaşılıyor: ikinci bir çekmece kabuğu YOK.
+  if (subject.kind === 'charts') {
+    return (
+      <div style={{ paddingTop: 8 }}>
+        <ServiceChartsExplainBody
+          service={subject.id} fromNs={subject.fromNs} toNs={subject.toNs}
+          scope={subject.scope} onAnswer={setExplainText} />
+        {explainText && (
+          <AIDrawerChat subject={subject} explainText={explainText}
+            spanIds={[]} traceIds={[]} />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div style={{ paddingTop: 8 }}>

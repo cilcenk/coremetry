@@ -12,6 +12,7 @@
 //       → "<kind>:<encodeURIComponent(id)>"
 //   span            → "span:<enc(traceId)>:<enc(spanId)>"
 //   service-health  → "service-health:<enc(service)>:<fromNs>:<toNs>"
+//   charts          → "charts:<enc(service)>:<fromNs>:<toNs>:<scope>"
 //
 // id HER ZAMAN encodeURIComponent'ten geçer: servis adı / fingerprint
 // içinde ':' geçse bile ayraç belirsizleşmez (parse ':' üzerinden böler).
@@ -20,13 +21,34 @@ export const AI_PARAM = 'ai';
 
 export const AI_KINDS = [
   'trace', 'span', 'problem', 'incident', 'anomaly',
-  'service-health', 'runbook', 'exception',
+  'service-health', 'runbook', 'exception', 'charts',
 ] as const;
 
 export type AIKind = typeof AI_KINDS[number];
 
+// Grafik kapsamı (v0.9.1033, onaylı ServiceCharts AI mockup'ı):
+// Ⓐ toolbar düğmesi 'all', Ⓑ kart başlığındaki ✨ tek kartın kapsamı.
+// Değerler backend'in normalizeChartScope'u ile BİREBİR aynı
+// (internal/api/explain_service_charts.go) — ayrışırlarsa çekmecedeki
+// çip ile modelin odaklandığı grafik farklı olur.
+export const CHART_SCOPES = ['all', 'rps', 'err', 'dur'] as const;
+export type ChartScope = typeof CHART_SCOPES[number];
+
+const CHART_SCOPE_SET = new Set<string>(CHART_SCOPES);
+
+// Kapsam etiketleri ServiceCharts'ın kart başlıklarıyla aynı sözcükler:
+// çekmecedeki çip, operatörün az önce tıkladığı kartın adını göstermeli.
+export function chartScopeLabel(s: ChartScope): string {
+  switch (s) {
+    case 'rps': return 'RPS by operation';
+    case 'err': return 'Error rate by operation';
+    case 'dur': return 'P99 latency by operation';
+    default:    return 'Tüm RED grafikleri';
+  }
+}
+
 // Basit özneler: tek bir id yeter (backend geri kalanını kendi toplar).
-type SimpleKind = Exclude<AIKind, 'span' | 'service-health'>;
+type SimpleKind = Exclude<AIKind, 'span' | 'service-health' | 'charts'>;
 
 export type AISubject =
   | { kind: SimpleKind; id: string }
@@ -35,7 +57,10 @@ export type AISubject =
   // service-health → id = servis adı; prompt CANLI RED serisini istediği
   // için pencere de linkte taşınır (aksi halde paylaşılan link başka bir
   // pencereyi açıklar).
-  | { kind: 'service-health'; id: string; fromNs: number; toNs: number };
+  | { kind: 'service-health'; id: string; fromNs: number; toNs: number }
+  // charts → id = servis adı; pencere linkte taşınır (service-health ile
+  // aynı gerekçe) + hangi kartın sorulduğu.
+  | { kind: 'charts'; id: string; fromNs: number; toNs: number; scope: ChartScope };
 
 const KIND_SET = new Set<string>(AI_KINDS);
 
@@ -49,6 +74,7 @@ export function formatAiParam(s: AISubject): string {
   const head = `${s.kind}:${encodeURIComponent(s.id)}`;
   if (s.kind === 'span') return `${head}:${encodeURIComponent(s.spanId)}`;
   if (s.kind === 'service-health') return `${head}:${s.fromNs}:${s.toNs}`;
+  if (s.kind === 'charts') return `${head}:${s.fromNs}:${s.toNs}:${s.scope}`;
   return head;
 }
 
@@ -66,14 +92,25 @@ export function parseAiParam(raw: string | null | undefined): AISubject | null {
     if (!spanId) return null;
     return { kind: 'span', id, spanId };
   }
-  if (kind === 'service-health') {
-    if (parts.length !== 4) return null;
+  if (kind === 'service-health' || kind === 'charts') {
+    // charts bir segment daha taşır (kapsam); pencere doğrulaması ORTAK.
+    if (parts.length !== (kind === 'charts' ? 5 : 4)) return null;
     const fromNs = Number(parts[2]);
     const toNs = Number(parts[3]);
     // Pencere hem sonlu hem ARTAN olmalı; ters/sıfır pencere backend'e
     // anlamsız bir sorgu attırır, bunu URL katmanında kes.
     if (!Number.isFinite(fromNs) || !Number.isFinite(toNs)) return null;
     if (fromNs <= 0 || toNs <= fromNs) return null;
+    if (kind === 'charts') {
+      // Kapsam TANIMAZ isek reddetmiyoruz: elle düzenlenmiş bir linkte
+      // çekmeceyi hiç açmamaktansa EN GENİŞ kapsamı açmak doğru davranış
+      // (backend'in normalizeChartScope'u da aynısını yapar). Bu yüzden
+      // parse GEVŞEK, format KANONİK: parse→format bilinmeyen kapsamı
+      // 'all'a sabitler.
+      const raw = parts[4] ?? '';
+      const scope = (CHART_SCOPE_SET.has(raw) ? raw : 'all') as ChartScope;
+      return { kind: 'charts', id, fromNs, toNs, scope };
+    }
     return { kind: 'service-health', id, fromNs, toNs };
   }
   // Basit özneler fazladan segment taşımaz — taşıyorsa bozuk/elle
@@ -93,12 +130,17 @@ export function aiSubjectTitle(s: AISubject): string {
     case 'exception':      return 'Explain root cause';
     case 'runbook':        return 'Runbook AI';
     case 'service-health': return 'AI triage';
+    // Mockup başlığı: çekmece bir GRAFİĞİ anlatıyor, servis sağlığını
+    // triyaj etmiyor — iki yüzey aynı sayfada yaşadığı için ad ayrımı
+    // operatörün hangi cevabı okuduğunu belirler.
+    case 'charts':         return 'AI grafik özeti';
   }
 }
 
 // Başlığın altındaki ikinci satır: hangi nesne (kısaltılmış id / servis).
 export function aiSubjectSubtitle(s: AISubject): string {
   if (s.kind === 'span') return `${short(s.id)} · span ${short(s.spanId)}`;
+  if (s.kind === 'charts') return `${s.id} · ${chartScopeLabel(s.scope)}`;
   return s.kind === 'service-health' ? s.id : short(s.id);
 }
 

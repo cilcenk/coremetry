@@ -503,13 +503,24 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
             healthy". Distinct from per-problem explain because
             the chart may look fine and the answer should say
             so plainly. Self-hides when copilot isn't configured. */}
-        {/* v0.9.477 — cevap sağ AI çekmecesinde. service-health prompt'u
-            CANLI pencereye bağlı olduğundan from/to da linke yazılır:
-            paylaşılan `?ai=service-health:<svc>:<from>:<to>` aynı pencereyi
-            açıklar, "başka bir saati anlatan link" olmaz. */}
+        {/* v0.9.477 — cevap sağ AI çekmecesinde. Prompt CANLI pencereye
+            bağlı olduğundan from/to da linke yazılır: paylaşılan
+            `?ai=charts:<svc>:<from>:<to>:<kapsam>` aynı pencereyi açıklar,
+            "başka bir saati anlatan link" olmaz.
+
+            v0.9.1033 (onaylı mockup, giriş noktası Ⓐ) — özne
+            `service-health` (AI triage) DEĞİL `charts`. İkisi aynı
+            toolbar'da yan yana DURAMAZDI: iki ✨ düğmesi operatöre iki
+            farklı cevap vaat eder ve mockup tek düğme gösteriyor. charts
+            yüzeyi triyajın üstüne çıkıyor — aynı RED verisi + deploy/
+            rollout + op-delta + anomali, üstelik yapısal sinyal tablosu ve
+            pivot linkleriyle. `service-health` öznesi kodekte YAŞIYOR:
+            guided sohbet ve eski paylaşılmış linkler onu kullanmaya
+            devam ediyor. */}
         <AIExplainButton
-          subject={{ kind: 'service-health', id: service, fromNs: from, toNs: to }}
-          label={<><IconSparkles /> <span>AI triage</span></>} />
+          subject={{ kind: 'charts', id: service, fromNs: from, toNs: to, scope: 'all' }}
+          title="Görünen pencerenin tüm RED grafiklerini AI ile özetle"
+          label={<><IconSparkles /> <span>AI özet</span></>} />
         {/* Deploy impact AI — only renders when at least one
             deploy marker landed in the visible window; the
             button targets the LATEST deploy (max timeUnixNs)
@@ -562,7 +573,11 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
             hem şeritte iki kez görünüyordu. Bileşen dosyası ve
             Endpoints/OperationsTable kullanımları DURUYOR (oralarda
             şerit yok henüz) — kolay revert. */}
-        <ChartCard title={rpsTitle}>
+        <ChartCard title={rpsTitle}
+          aside={<AIExplainButton size="xs"
+            subject={{ kind: 'charts', id: service, fromNs: from, toNs: to, scope: 'rps' }}
+            title="Bu kartı AI ile açıkla"
+            label={<IconSparkles />} />}>
           <MetricPanel compact menuOnly title={rpsTitle} metricQuery={rpsMq}>
             <div style={{ position: 'relative' }}>
               <MultiLineChart xRange={xRangeSec} series={rpsSeries ?? []} unit="rps"
@@ -582,7 +597,11 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
             </div>
           </MetricPanel>
         </ChartCard>
-        <ChartCard title={errTitle}>
+        <ChartCard title={errTitle}
+          aside={<AIExplainButton size="xs"
+            subject={{ kind: 'charts', id: service, fromNs: from, toNs: to, scope: 'err' }}
+            title="Bu kartı AI ile açıkla"
+            label={<IconSparkles />} />}>
           <MetricPanel compact menuOnly title={errTitle} metricQuery={errMq}>
             <div style={{ position: 'relative' }}>
               <MultiLineChart xRange={xRangeSec} series={errSeries ?? []} unit="%"
@@ -604,7 +623,11 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
             </div>
           </MetricPanel>
         </ChartCard>
-        <ChartCard title={durTitle}>
+        <ChartCard title={durTitle}
+          aside={<AIExplainButton size="xs"
+            subject={{ kind: 'charts', id: service, fromNs: from, toNs: to, scope: 'dur' }}
+            title="Bu kartı AI ile açıkla"
+            label={<IconSparkles />} />}>
           <MetricPanel compact menuOnly title={durTitle} metricQuery={p99Mq}>
             <div style={{ position: 'relative' }}>
               {/* Madde 4 sweep — scoped band panelinde operatör default'u:
@@ -666,8 +689,14 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
 
 type CompareMode = 'off' | '24h' | '7d' | 'prev';
 
-function ChartCard({ title, children }: {
+function ChartCard({ title, aside, children }: {
   title: string;
+  // v0.9.1033 — başlığın YANINDA küçük bir kontrol (kart kapsamlı ✨).
+  // Sağ UCA değil, başlığın hemen sağına konur: sarmalanan MetricPanel
+  // compact modda ⋯ düğmesini panelin sağ-üstüne MUTLAK konumlandırıyor,
+  // sağ uçtaki bir kontrol dar kartta onun altında kalırdı
+  // (charts/ChartCard.tsx:44'teki aynı ders).
+  aside?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
@@ -680,8 +709,12 @@ function ChartCard({ title, children }: {
         fontSize: 11, fontWeight: 600, color: 'var(--text2)',
         letterSpacing: '0.3px', textTransform: 'uppercase',
         marginBottom: 4,
+        display: 'flex', alignItems: 'center', gap: 6, minWidth: 0,
       }}>
-        {title}
+        <span style={{
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }} title={title}>{title}</span>
+        {aside}
       </div>
       {children}
     </div>

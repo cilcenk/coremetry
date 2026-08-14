@@ -18,7 +18,9 @@ import { useCopilotEnabled } from './useCopilotEnabled';
 export function AIExplainButton({ subject, label, size = 'sm', title, className }: {
   subject: AISubject;
   label?: ReactNode;
-  size?: 'sm' | 'md';
+  // 'xs' (v0.9.1033): kart başlığındaki mini ✨ — ikon-only etiketle
+  // kullanılır, satır yüksekliğini büyütmez.
+  size?: 'xs' | 'sm' | 'md';
   title?: string;
   className?: string;
 }) {

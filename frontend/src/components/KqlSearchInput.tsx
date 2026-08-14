@@ -324,6 +324,11 @@ export function KqlSearchInput({
         spellCheck={false}
         autoComplete="off"
         style={{ width: '100%', paddingLeft: 28 }} />
+      {/* v0.9.1012 (M8/K2) — kısayol rozeti. SearchField atomuyla AYNI
+          CSS sınıfı (`.sf-hint`): odakta kaybolur, tık yutmaz. Kutunun
+          kendisi atoma DÖNÜŞMÜYOR — ref, tuş işleyicileri ve açılır
+          panel bu bileşenin; yalnız görsel sözleşme paylaşılıyor. */}
+      {shortcutSearch && <kbd className="sf-hint">/</kbd>}
       {open && (items.length > 0 || hintOnly) && (
         <div style={{
           position: 'absolute', top: '100%', left: 0,

@@ -18,6 +18,7 @@ import {
   METRIC_FACETS, CATALOG_PAGE, metricGroup, decodeCatalogParams, applyCatalogParams,
   catalogCountLabel, facetCountsComplete, nextCatalogLimit, metricIsStale, type MFacet,
 } from './metricsCatalog';
+import { SearchField } from '@/components/ui/SearchField';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { MetricInfo } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
@@ -269,8 +270,9 @@ export default function MetricsPage() {
         ) : (
           <>
             <PageControls sticky style={{ marginBottom: 10 }}>
-              <input className="field" placeholder="Search metrics…" value={search}
-                onChange={e => setSearch(e.target.value)} style={{ width: 240 }} autoFocus />
+              <SearchField placeholder="Search metrics…" value={search}
+                aria-label="Search metrics"
+                onChange={setSearch} width={240} autoFocus />
               {/* Servis filtresi (v0.9.832) — sunucu-taraflı picker (ev
                   kuralı: asla eager katalog). Backend bunu metric_catalog'un
                   ORDER BY ilk kolonuna basar, yani en ucuz daraltma. */}

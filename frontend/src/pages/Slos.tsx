@@ -415,7 +415,7 @@ function NewSLOModal({ onClose, onCreated }: {
           <div className="grid-2" style={{ display: 'grid', gap: 12 }}>
             <div className="field">
               <label className="field-label">Service</label>
-              <ServicePicker value={service} onChange={setService} placeholder="…" />
+              <ServicePicker value={service} onChange={setService} placeholder="Pick a service…" />
             </div>
             <Field
               label="Operation (optional)"

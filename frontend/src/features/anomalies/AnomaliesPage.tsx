@@ -19,6 +19,7 @@ import type { DataTableColumn } from '@/lib/dataTable';
 import type {
   ExceptionGroup, ExceptionGroupState, ExceptionSample,
 } from '@/lib/types';
+import { SearchField } from '@/components/ui/SearchField';
 import { ProblemDetail } from './ProblemDetail';
 import { withProblemParam, withExcParam } from './problemLink';
 import { emptySamplesNote, type SampleScanEnvelope } from './exceptionSamples';
@@ -430,9 +431,11 @@ export default function ProblemsPage() {
               aramasına iner. İşaretsizken GlobalShortcuts fallback'i
               bardaki ilk metin kutusunu (ServicePicker) seçiyordu. */}
           {/* v0.9.1004 (M2/O5) — dar ekranda yüzeyde kalan kontrol. */}
-          <input value={search} onChange={e => setSearch(e.target.value)}
+          <SearchField value={search} onChange={setSearch}
             data-shortcut-search data-pc-lead
-            placeholder="Search type/message…" style={{ width: 260 }} />
+            aria-label="Search anomaly type or message"
+            hint="/"
+            placeholder="Search type/message…" width={260} />
           {/* Owner (ug-team) / SRE (sy-team) team filter — plain <select>
               for these small catalog-derived sets (frontend-conventions
               §3), resolved server-side so the narrowing is correct across

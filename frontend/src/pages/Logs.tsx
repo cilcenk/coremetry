@@ -702,6 +702,9 @@ function LogsInner() {
             // kısayolla ulaşılamıyordu. Sayfa başına TEK işaret olmalı
             // (querySelectorAll ilkini seçer).
             shortcutSearch
+            // v0.9.1012 (M8/K2) — kısayol ipucu. Depoda `<kbd>` yalnız
+            // ShortcutsHelp'te vardı, yani yalnız kısayolu ZATEN bilenin
+            // gördüğü yerde; 39 arama kutusunun 0'ında ipucu yoktu.
             // v0.9.1004 (M2/O5) — telefonda YÜZEYDE kalan kontrol bu.
             // İşaretsizken PageControls'ın "ilk etkileşimli çocuk"
             // heuristiği ServicePicker'ı seçiyordu ve /logs'un varlık

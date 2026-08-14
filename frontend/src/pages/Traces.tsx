@@ -1102,10 +1102,10 @@ function TracesPageInner() {
                   v0.5.454'te TAM bu vaka için yazılmıştı (yorumu da
                   öyle diyor) ama işaret hiçbir sayfaya konmamıştı. */}
               <ServicePicker value={draft.service} onChange={v => setDraft({ ...draft, service: v })}
-                placeholder="Service…" width={170} onEnter={(v) => apply(v)} shortcutSearch />
+                placeholder="Filter by service…" width={170} onEnter={(v) => apply(v)} shortcutSearch />
               <OperationPicker service={draft.service} value={draft.search}
                 onChange={v => setDraft({ ...draft, search: v })}
-                placeholder="Operation…" width={240} onEnter={() => apply()} />
+                placeholder="Filter by operation…" width={240} onEnter={() => apply()} />
               <input placeholder="Min ms" value={draft.minMs}
                 onChange={e => setDraft({ ...draft, minMs: e.target.value })} type="number" style={{ width: 72 }} />
               <input placeholder="Max ms" value={draft.maxMs}

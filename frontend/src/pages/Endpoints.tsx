@@ -26,6 +26,7 @@ import {
   endpointP99Delta, endpointRowKey, endpointsSourceNote, listedTotals,
   toggleExpanded,
 } from '@/lib/endpointHonesty';
+import { SearchField } from '@/components/ui/SearchField';
 import type { DataTableColumn } from '@/lib/dataTable';
 import type { EndpointRow } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
@@ -478,16 +479,15 @@ export default function EndpointsPage() {
         </div>
         <PageControls sticky>
           <ServicePicker value={service} onChange={setService}
-            placeholder="All services…" width={200} />
+            placeholder="Filter by service…" width={200} />
           {/* v0.9.1004 (M2/O5) — dar ekranda yüzeyde kalan kontrol
               sayfanın araması olsun; işaretsizken ServicePicker
               seçiliyor ve yol filtresi popover'ın arkasına düşüyordu. */}
-          <input ref={searchRef} value={search} data-pc-lead
-            onChange={e => { setSearch(e.target.value); setSearchParam(e.target.value); }}
+          <SearchField ref={searchRef} value={search} data-pc-lead
+            onChange={v => { setSearch(v); setSearchParam(v); }}
             placeholder="Filter by path (substring)…"
-            style={{ width: 280, padding: '5px 10px', fontSize: 12,
-                     background: 'var(--bg)', color: 'var(--text)',
-                     border: '1px solid var(--border)', borderRadius: 4 }} />
+            aria-label="Filter endpoints by path"
+            hint="/" width={280} />
           {/* Cluster filter — same source as the Services page so
               an operator who picked a cluster there sees a
               symmetric set here. Hidden when no cluster signal

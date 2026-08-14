@@ -240,16 +240,59 @@ func neighborhoodKeepSet(edges []chstore.ServiceTopologyEdge, focus string, hops
 // zorunda — ayrışırlarsa aynı düğüm hangi taraftan görüldüğüne göre iki
 // farklı kind alır ve bug'ın kendisi geri gelir. TestNodeKindFromIDMatchesOTel
 // bunu çiviliyor.
-func nodeKindFromID(id string) (string, bool) {
-	switch {
-	case strings.HasPrefix(id, "queue:"):
-		return "queue", true
-	case strings.HasPrefix(id, "db:"):
-		return "database", true
-	case strings.HasPrefix(id, "ext:"):
-		return "external", true
+// nodeIDPrefixes — aggregator'ın yazdığı altyapı önekleri ve karşılık
+// gelen MV node_kind değerleri (chstore/topology.go: 'db:', 'queue:',
+// 'ext:'). TEK TABLO: v0.9.1029'da üç ayrı yerde daha (topology.go'nun
+// üç addNode'u) aynı önek listesi elle yazılmıştı ve o kopyalar KIND'ı
+// hiç türetmiyor, yalnız adı soyuyordu — kusurun yarısı tam olarak
+// oradan geliyordu.
+var nodeIDPrefixes = []struct{ prefix, kind string }{
+	{"db:", "db"},
+	{"queue:", "queue"},
+	{"ext:", "external"},
+}
+
+// nodeIDPrefixKind — ham id önekinin MV sözlüğündeki karşılığı
+// ("db" / "queue" / "external"). Öneksiz id → ("", false).
+func nodeIDPrefixKind(id string) (string, bool) {
+	for _, p := range nodeIDPrefixes {
+		if strings.HasPrefix(id, p.prefix) {
+			return p.kind, true
+		}
 	}
 	return "", false
+}
+
+// nodeIdentityFromID — düğümün KIND'ı ve GÖSTERİM ADI, tek kökten
+// (v0.9.1029).
+//
+// İkisi birlikte dönüyor çünkü ayrı türetildiklerinde ayrışıyorlar:
+// topology.go'nun üç addNode'u adı `kind != "service"` KOŞULUYLA
+// soyuyordu, yani kind yanlış geldiğinde ad da soyulmuyordu ve düğüm
+// TEK kökten İKİ belirti alıyordu — hem `kind:"service"` hem de ham
+// `queue:kafka:api.usage` display adı. Canlıda ölçüldü
+// (2026-08-14, ?noise=show&broadcast=show&top=300): 17 kuyruk
+// düğümünün 11'i her iki belirtiyi de taşıyordu.
+//
+// fallbackKind yalnız ÖNEKSİZ id'ler için kullanılır (düz servis
+// adları) — orada çağıranın ipucu doğru tek kaynaktır.
+func nodeIdentityFromID(id, fallbackKind string) (kind, name string) {
+	for _, p := range nodeIDPrefixes {
+		if strings.HasPrefix(id, p.prefix) {
+			return p.kind, id[len(p.prefix):]
+		}
+	}
+	return fallbackKind, id
+}
+
+func nodeKindFromID(id string) (string, bool) {
+	k, ok := nodeIDPrefixKind(id)
+	if !ok {
+		return "", false
+	}
+	// MV sözlüğünden OTel sözlüğüne ('db' → 'database') — iki yüzey
+	// farklı kelime kullanıyor ama AYNI önek tablosundan besleniyor.
+	return nodeKindToOTel(k), true
 }
 
 // nodeKindToOTel maps the MV's node_kind to the clean OTel-native kind label.
@@ -463,7 +506,12 @@ func buildServiceGraph(edges []chstore.ServiceTopologyEdge, focus, scope string,
 
 	graphEdges := make([]GraphEdge, 0, len(edges))
 	for _, e := range edges {
-		src := ensure(e.ParentService, "service") // a parent is always a service
+		// v0.9.1029 — "service" burada yalnız ÖNEKSİZ id'ler için geçerli
+		// bir varsayılan. Eski yorum ("a parent is always a service")
+		// koşulsuz bir doğru gibi duruyordu ve v0.9.1028'de düzeltilen
+		// bug'ın ta kendisiydi: consumer kenarında parent bir KUYRUK
+		// düğümü. ensure ham id önekini gördüğünde bu ipucunu ezer.
+		src := ensure(e.ParentService, "service")
 		tgt := ensure(e.ChildNode, nodeKindToOTel(e.NodeKind))
 		if e.ParentEnv != "" {
 			src.Env = e.ParentEnv

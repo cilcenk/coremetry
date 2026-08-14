@@ -683,15 +683,13 @@ func (s *Server) getServiceTopology(w http.ResponseWriter, r *http.Request) {
 				nodes[id] = existing
 				return
 			}
-			name := id
-			if kind != "service" {
-				for _, p := range []string{"db:", "queue:", "ext:"} {
-					if strings.HasPrefix(name, p) {
-						name = name[len(p):]
-						break
-					}
-				}
-			}
+			// v0.9.1029 — kind ve ad TEK kökten, ham id önekinden.
+			// Öncesi: kind çağıranın ipucundan geliyordu ve parent
+			// tarafı DAİMA "service" veriyordu; kuyruk düğümü consumer
+			// kenarında parent olduğu için, o kenar önce işlenirse
+			// düğüm "service" olarak donuyordu. Ad soyma da o yanlış
+			// kind'a bağlı olduğundan ham `queue:` öneki de kalıyordu.
+			kind, name := nodeIdentityFromID(id, kind)
 			nodes[id] = ServiceTopologyNode{
 				ID: id, Name: name, Kind: kind,
 				ExtDisplay: extDisp, ExtKind: extKind,
@@ -1074,15 +1072,13 @@ func (s *Server) getFlowTopology(w http.ResponseWriter, r *http.Request) {
 				nodes[id] = existing
 				return
 			}
-			name := id
-			if kind != "service" {
-				for _, p := range []string{"db:", "queue:", "ext:"} {
-					if strings.HasPrefix(name, p) {
-						name = name[len(p):]
-						break
-					}
-				}
-			}
+			// v0.9.1029 — kind ve ad TEK kökten, ham id önekinden.
+			// Öncesi: kind çağıranın ipucundan geliyordu ve parent
+			// tarafı DAİMA "service" veriyordu; kuyruk düğümü consumer
+			// kenarında parent olduğu için, o kenar önce işlenirse
+			// düğüm "service" olarak donuyordu. Ad soyma da o yanlış
+			// kind'a bağlı olduğundan ham `queue:` öneki de kalıyordu.
+			kind, name := nodeIdentityFromID(id, kind)
 			nodes[id] = ServiceTopologyNode{
 				ID: id, Name: name, Kind: kind,
 				ExtDisplay: extDisp, ExtKind: extKind,
@@ -1248,15 +1244,9 @@ func writeServiceDrawIO(w http.ResponseWriter, diagramName, filename string, edg
 		if _, ok := nodes[id]; ok {
 			return
 		}
-		name := id
-		if kind != "service" {
-			for _, p := range []string{"db:", "queue:", "ext:"} {
-				if strings.HasPrefix(name, p) {
-					name = name[len(p):]
-					break
-				}
-			}
-		}
+		// v0.9.1029 — aynı tek-kök türetimi (draw.io dışa aktarımı da
+		// kuyruk düğümünü servis kutusu olarak çiziyordu).
+		kind, name := nodeIdentityFromID(id, kind)
 		nodes[id] = &nodeMeta{ID: id, Name: name, Kind: kind}
 	}
 	for _, e := range edges {

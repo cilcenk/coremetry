@@ -31,6 +31,12 @@ describe('Settings okuma kapısı (v0.9.938)', () => {
       // Yakalanan hatayı doğrudan "yüklendi"ye çeviren her biçim.
       if (/catch\(\s*\(\)\s*=>\s*setLoaded\(true\)/.test(src)) offenders.push(f);
       if (/catch\(\s*\w*\s*=>\s*\{?\s*setLoaded\(true\)/.test(src)) offenders.push(f);
+      // v0.9.1043 — aynı hatanın İKİNCİ yazımı (LdapTab'de yakalandı):
+      // catch'te uydurma boş config basmak (`setCfg(emptyLDAP())`) da
+      // formu "yüklendi" sayar — truthy boş nesne `if (!cfg)` kapısını
+      // geçer, Kaydet aktif kalır ve PUT mevcut satırı ezer (LDAP'ta
+      // üstüne enabled:false → org genelinde sessiz kapanış).
+      if (/catch\(\s*\(?\w*\)?\s*=>\s*set\w+\(\s*empty\w*\(\)\s*\)/.test(src)) offenders.push(f);
     }
     expect(offenders, 'okuma hatasını yutan sekme(ler) — boş form kaydedilirse ' +
       'mevcut ayar ezilir').toEqual([]);
@@ -49,6 +55,18 @@ describe('Settings okuma kapısı (v0.9.938)', () => {
       // sonsuz spinner kazanırdı.
       expect(src.indexOf('if (loadErr)')).toBeLessThan(src.indexOf('if (!loaded)'));
     }
+  });
+
+  it('LdapTab kapıyı çiziyor (v0.9.1043 — dokuzuncu yazım)', () => {
+    // LdapTab sekizliden farklı: loaded bayrağı yok, `if (!cfg)` spinner'ı
+    // var. Kapı yine spinner'ın ÖNÜNDE olmalı — hata hâlinde form da
+    // sonsuz spinner da değil, SettingsLoadError çizilmeli.
+    const src = readFileSync(resolve(DIR, 'LdapTab.tsx'), 'utf8');
+    expect(src, 'LdapTab: useSettingsLoad kullanmıyor').toContain('useSettingsLoad(');
+    expect(src, 'LdapTab: hata dalı çizilmiyor').toMatch(/if \(loadErr\) return <SettingsLoadError/);
+    // Not: düz 'if (!cfg)' araması fix'in kendi yorum satırına takılır;
+    // gerçek render kapısı Spinner dönüşüyle birlikte aranır.
+    expect(src.indexOf('if (loadErr)')).toBeLessThan(src.indexOf('if (!cfg) return <Spinner'));
   });
 
   it('kapı hata hâlinde loaded\'ı true YAPMIYOR', () => {

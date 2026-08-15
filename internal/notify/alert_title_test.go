@@ -62,7 +62,7 @@ func TestEveryChannelFormatCarriesThePriority(t *testing.T) {
 		}
 	})
 	t.Run("e-posta düz metin gövdesi", func(t *testing.T) {
-		body := n.buildEmailBody(p)
+		body := n.buildEmailBody(p, nil)
 		if !strings.Contains(body, "P1") {
 			t.Error("düz metin gövdesinde öncelik yok")
 		}
@@ -73,7 +73,7 @@ func TestEveryChannelFormatCarriesThePriority(t *testing.T) {
 		}
 	})
 	t.Run("e-posta HTML gövdesi", func(t *testing.T) {
-		if !strings.Contains(n.buildEmailHTML(p), "P1") {
+		if !strings.Contains(n.buildEmailHTML(p, nil), "P1") {
 			t.Error("HTML gövdesinde öncelik yok")
 		}
 	})

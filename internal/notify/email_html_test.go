@@ -32,7 +32,7 @@ func TestBuildEmailHTML(t *testing.T) {
 	t.Run("link when PublicURL set", func(t *testing.T) {
 		n := New(nil)
 		n.SetPublicURL("https://cm.local")
-		out := n.buildEmailHTML(testProblem())
+		out := n.buildEmailHTML(testProblem(), nil)
 		if !strings.Contains(out, `href="https://cm.local/problems?problem=p1"`) {
 			t.Fatalf("problem deep link missing:\n%s", out)
 		}
@@ -42,7 +42,7 @@ func TestBuildEmailHTML(t *testing.T) {
 	})
 
 	t.Run("no dangling link when PublicURL unset", func(t *testing.T) {
-		out := New(nil).buildEmailHTML(testProblem())
+		out := New(nil).buildEmailHTML(testProblem(), nil)
 		if strings.Contains(out, "Open in Coremetry") {
 			t.Fatal("CTA rendered without a configured PublicURL")
 		}
@@ -52,7 +52,7 @@ func TestBuildEmailHTML(t *testing.T) {
 		p := testProblem()
 		p.Service = `<script>alert(1)</script>`
 		p.Description = `a & b < c`
-		out := New(nil).buildEmailHTML(p)
+		out := New(nil).buildEmailHTML(p, nil)
 		if strings.Contains(out, "<script>") {
 			t.Fatal("service name not escaped")
 		}
@@ -69,7 +69,7 @@ func TestBuildEmailHTML(t *testing.T) {
 		} {
 			p := testProblem()
 			p.Severity = sev
-			if out := New(nil).buildEmailHTML(p); !strings.Contains(out, color) {
+			if out := New(nil).buildEmailHTML(p, nil); !strings.Contains(out, color) {
 				t.Fatalf("severity %q: color %s missing", sev, color)
 			}
 		}
@@ -77,12 +77,12 @@ func TestBuildEmailHTML(t *testing.T) {
 
 	t.Run("runbook link only when set", func(t *testing.T) {
 		p := testProblem()
-		out := New(nil).buildEmailHTML(p)
+		out := New(nil).buildEmailHTML(p, nil)
 		if strings.Contains(out, "Runbook") {
 			t.Fatal("runbook row rendered without a URL")
 		}
 		p.RunbookURL = "https://wiki/runbook"
-		out = New(nil).buildEmailHTML(p)
+		out = New(nil).buildEmailHTML(p, nil)
 		if !strings.Contains(out, `href="https://wiki/runbook"`) {
 			t.Fatal("runbook link missing")
 		}
@@ -197,7 +197,7 @@ func TestComposeAltEmailHeaderInjection(t *testing.T) {
 func TestBuildEmailHTMLOutlookSafe(t *testing.T) {
 	n := New(nil)
 	n.SetPublicURL("https://coremetry.example")
-	out := n.buildEmailHTML(testProblem())
+	out := n.buildEmailHTML(testProblem(), nil)
 
 	t.Run("no anchor carries padding or background", func(t *testing.T) {
 		// The black-blob class: Word drops padding/radius on <a>, so any

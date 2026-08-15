@@ -328,6 +328,12 @@ export default function ClustersPage() {
     return { from, to, netClamped: false };
     // liveTick: v0.9.43 — live modda pencereyi 60s'de bir ilerletir.
   }, [range, liveTick]);
+  // v0.9.1042 (operator-reported: eksen 3h pencerede 00:00–21:00) —
+  // Overview grafiklerinin x-ekseni sorgu penceresine mıhlanır
+  // (ServiceCharts v0.9.725 paritesi; ns→unix sec).
+  const trendXRange = useMemo(
+    () => ({ from: rangeFrom / 1e9, to: rangeTo / 1e9 }),
+    [rangeFrom, rangeTo]);
   const netTrendQ = useQuery({
     queryKey: ['cluster-net-trend', clusterParam, rangeFrom, rangeTo],
     queryFn: () => api.clusterNetworkTrend(clusterParam, rangeFrom, rangeTo),
@@ -1123,11 +1129,11 @@ export default function ClustersPage() {
                         çift-tık zoom geri-yığını (chartZoomReset). */}
                     <MetricArea title="CPU usage (cores)" byLabel="By node"
                       by={cpuByNode} onToggle={setCpuByNode} onZoom={chartZoom} onZoomReset={chartZoomReset}
-                      syncKey="clusters"
+                      syncKey="clusters" xRange={trendXRange}
                       series={cpuTrendQ.data?.series} seriesName="CPU" />
                     <MetricArea title="Memory usage" byLabel="By node"
                       by={memByNode} onToggle={setMemByNode} onZoom={chartZoom} onZoomReset={chartZoomReset}
-                      syncKey="clusters"
+                      syncKey="clusters" xRange={trendXRange}
                       series={memTrendQ.data?.series} seriesName="Memory" unit="bytes" />
                   </div>
                 )}
@@ -1141,7 +1147,7 @@ export default function ClustersPage() {
                     <MultiLineChart
                       series={netTrendToSeries(netTrendQ.data!.trend!)}
                       unit="bytes" onZoom={chartZoom} onZoomReset={chartZoomReset}
-                      syncKey="clusters"
+                      syncKey="clusters" xRange={trendXRange}
                       height={200} />
                   </Card>
                 )}

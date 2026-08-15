@@ -111,6 +111,9 @@ export function ThanosTrendPanel({ cluster, namespace, pod, row, fromNs, toNs, o
 
   const syncKey = `thanos-trend-${cluster}-${namespace}-${pod ?? ''}`;
   const shownPods = cpuSeries.length;
+  // v0.9.1042 — x-ekseni panelin kendi sorgu penceresine mıhlı
+  // (ServiceCharts v0.9.725 paritesi; ns→unix sec).
+  const xRange = { from: fromNs / 1e9, to: toNs / 1e9 };
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       {!single && totalPods > shownPods && (
@@ -123,13 +126,13 @@ export function ThanosTrendPanel({ cluster, namespace, pod, row, fromNs, toNs, o
       <div>
         <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>CPU (cores)</div>
         <MultiLineChart series={cpuSeries} height={180} syncKey={syncKey} unit="cores"
-          deploys={deployMarkers} onZoom={onZoom} onZoomReset={onZoomReset}
+          deploys={deployMarkers} onZoom={onZoom} onZoomReset={onZoomReset} xRange={xRange}
           thresholds={single ? limitThresholds(row?.cpuLimitCores, row?.cpuRequestCores, 'cores') : undefined} />
       </div>
       <div>
         <div style={{ fontSize: 11, color: 'var(--text2)', marginBottom: 4 }}>Memory (bytes)</div>
         <MultiLineChart series={memSeries} height={180} syncKey={syncKey} unit="bytes"
-          deploys={deployMarkers} onZoom={onZoom} onZoomReset={onZoomReset}
+          deploys={deployMarkers} onZoom={onZoom} onZoomReset={onZoomReset} xRange={xRange}
           thresholds={single ? limitThresholds(row?.memLimitBytes, row?.memRequestBytes, 'bytes') : undefined} />
       </div>
     </div>

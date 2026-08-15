@@ -16,11 +16,12 @@ import (
 // In-app AI chatbot (v0.6.53). An agentic loop that lets the
 // operator ask free-form questions ("why is payment-service slow?",
 // "errors in the last hour") and answers them grounded in their own
-// telemetry. The LLM's function-calling backend is the SAME 7 tools
-// the MCP server exposes (mcptools.ToolList) — list_services,
-// get_service_health, list_problems, list_anomalies, search_logs,
-// get_trace, query_metric — so the chat can read live data without
-// any new query plumbing.
+// telemetry. The LLM's function-calling backend is the SAME tool set
+// the MCP server exposes (mcptools.ToolList — 13 tools as of
+// v0.9.1050: the original 7 plus get_problem_root_cause, render_chart
+// and the four cross-signal pivots) — so the chat can read live data
+// without any new query plumbing. ToolList is the single source; this
+// comment stopped counting so it can't drift again.
 //
 // Transport: POST with the full conversation, response streamed as
 // SSE. v1 is STEP-streaming (operator decision 2026-05-28): we emit

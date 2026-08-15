@@ -1269,6 +1269,7 @@ func (s *Store) migrate(ctx context.Context) error {
 			candidates    String        DEFAULT '[]',  -- JSON-encoded []ScoredCause, best first
 			recent_deploy String        DEFAULT '',    -- JSON-encoded *RecentDeploy or ''
 			deep_evidence String        DEFAULT '' CODEC(ZSTD(3)), -- v0.9.516: JSON DeepEvidence (P1 soruşturma kanıtı + denetim izi)
+			exemplar_trace_id String    DEFAULT '',  -- v0.9.1057: temsilî trace (Faz 1.2)
 			version       UInt64        DEFAULT toUnixTimestamp64Nano(now64(9))
 		) ENGINE = ReplacingMergeTree(version)
 		PARTITION BY toYYYYMM(computed_at)
@@ -1279,6 +1280,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		// tekrarlı metin, sıkışması yüksek. Düşük hacimli state tablosu
 		// (anchor başına bir satır, 30 gün TTL) — spans sınıfı değil.
 		`ALTER TABLE root_cause_hypotheses ADD COLUMN IF NOT EXISTS deep_evidence String DEFAULT '' CODEC(ZSTD(3))`,
+		// v0.9.1057 (Faz 1.2) — aynı v0.9.516 deseni: state tablosuna
+		// boot-ALTER, taze kurulumda no-op.
+		`ALTER TABLE root_cause_hypotheses ADD COLUMN IF NOT EXISTS exemplar_trace_id String DEFAULT ''`,
 
 		`CREATE TABLE IF NOT EXISTS alert_rules (
 			id           String,

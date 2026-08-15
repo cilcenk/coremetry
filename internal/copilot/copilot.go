@@ -2014,7 +2014,13 @@ bir ÇÖZÜM değildir (mitigate olabilir). Topolojide olmayan bir varlığı
 hedef gösterme.
 
 Çıktı YALNIZ JSON olsun. title, summary, remediation.action alanlarını
-TÜRKÇE yaz; kimlikleri (E1, N2) ve enum değerlerini İNGİLİZCE bırak.` + AnswerInTurkish
+TÜRKÇE yaz; kimlikleri (E1, N2) ve enum değerlerini İNGİLİZCE bırak.`
+
+// v0.9.1067 (Faz 3.6 / Q4) — AnswerInTurkish EKİ KALKTI: "Çıktı YALNIZ
+// JSON olsun" cümlesinden SONRA gelen düzyazı dil direktifi kendi
+// kuralıyla çelişiyordu (JSON'a önsöz cümlesi davet eder). Alan dili
+// zaten gövdede açık (üstteki satır); yapıdaki diğer katı-JSON
+// prompt'lar da direktif taşımaz (prompt_language_test pinler).
 
 // SystemPromptRCAVerdict — hakem prompt'u (v0.9.559).
 func SystemPromptRCAVerdict() string { return systemRCAVerdict }

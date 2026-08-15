@@ -27,3 +27,23 @@ export function xRangePinned(
 ): [number, number] {
   return [reqMin, reqMax];
 }
+
+// timeScaleRange — CorePanel'in (ms-eksenli) x-scale range fonksiyonu
+// (v0.9.1042, operator-reported: Clusters eksenleri 3h pencerede
+// 00:00–21:00'a yayılıyordu).
+//
+// Pin varsa: sorgu penceresine mıhlı (v0.9.725 Grafana paritesi; XPin
+// unix SANİYE → uPlot ms). Pin yoksa: veri uçları AYNEN döner. İkinci
+// dal kritik: CorePanel `range: undefined` bıraktığında @grafana/ui
+// zaman eksenine kendi SAYISAL rangeFn'ini kuruyor (pad 0.1 +
+// nice-number yuvarlama — UPlotScaleBuilder.getConfig) ve unix-ms
+// damgalarda eksen veriden saatlerce taşıyordu. "Verilmezse veriden
+// türet" ancak açık bir kimlik fonksiyonuyla gerçek olur.
+export function timeScaleRange(
+  pin: XPin | null | undefined,
+  dataMinMs: number | null,
+  dataMaxMs: number | null,
+): [number | null, number | null] {
+  if (pin) return [pin.from * 1000, pin.to * 1000];
+  return [dataMinMs, dataMaxMs];
+}

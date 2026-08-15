@@ -57,6 +57,7 @@ import {
   stackData, stackBands, seriesDrawOrder, drawPosOf, reorderSeries,
 } from '@/lib/chart/stacking';
 import { bucketWindowNs } from '@/lib/chart/bucketWindow';
+import { timeScaleRange } from '@/lib/chart/xRange';
 import { alignedToCsv } from '@/lib/chart/exportCsv';
 import { sortedTooltipRows, capTooltipRows } from '@/lib/chart/tooltipModel';
 import { decidePinGesture, applyPinStyle, clearPinStyle } from '@/lib/chart/tooltipPin';
@@ -539,8 +540,16 @@ export function CorePanel({
       orientation: ScaleOrientation.Horizontal, direction: ScaleDirection.Right,
       // v0.9.725 — Grafana paritesi: x SORGU aralığına mıhlı (kenar =
       // aralık kenarı). uPlot x ms cinsinden (onZoom /1000 gerekçesi),
-      // xRange sn gelir. Verilmezse eski davranış (veriden türet).
-      range: xRange ? () => [xRange.from * 1000, xRange.to * 1000] as uPlot.Range.MinMax : undefined,
+      // xRange sn gelir.
+      //
+      // v0.9.1042 (operator-reported: Clusters ekseni 3h pencerede
+      // 00:00–21:00) — xRange YOKKEN `undefined` bırakmak "veriden
+      // türet" DEĞİLDİ: @grafana/ui zaman eksenine kendi sayısal
+      // rangeFn'ini kuruyor (pad 0.1 + nice-number yuvarlama) ve eksen
+      // veriden saatlerce taşıyordu. Veri-fit artık açık kimlik
+      // fonksiyonu (timeScaleRange, tablo-testli).
+      range: ((_u, dataMin, dataMax) =>
+        timeScaleRange(xRange, dataMin, dataMax)) as uPlot.Scale['range'],
     });
     b.addScale({
       scaleKey: 'y',

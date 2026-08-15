@@ -1,6 +1,9 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
+// v0.9.1044 — palet lib/eventRegions.ts'e taşındı (tek kaynak): chart-içi
+// bölge yolu (Endpoints karoları) ve bu overlay aynı renkleri paylaşır.
+import { EVENT_KIND_COLOUR as KIND_COLOUR, EVENT_DEFAULT_COLOUR as DEFAULT_COLOUR } from '@/lib/eventRegions';
 
 // EventMarkers (v0.5.478) — vertical markers overlaid on a
 // time-series chart for operator events ("deploy v1.2.3", "config
@@ -36,13 +39,6 @@ interface EventMarkersProps {
   service?: string;
 }
 
-const KIND_COLOUR: Record<string, string> = {
-  deploy:      'rgba(46,160,67,0.65)',
-  config:      'color-mix(in srgb, var(--accent) 65%, transparent)',
-  incident:    'rgba(220,38,38,0.70)',
-  maintenance: 'rgba(217,119,6,0.65)',
-};
-const DEFAULT_COLOUR = 'rgba(160,160,160,0.55)';
 
 export function EventMarkers({ fromNs, toNs, service }: EventMarkersProps) {
   const [events, setEvents] = useState<OperatorEvent[]>([]);

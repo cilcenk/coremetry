@@ -209,6 +209,17 @@ func synthInputForProblem(p chstore.Problem, b EvidenceBundle) correlator.Synthe
 			Ratio:   math.Max(sig.CurrentRatio, sig.PeakRatio),
 		})
 	}
+	// v0.9.1056 (Faz 1.1) — komşu sinyalleri fuser'ın 2.6 tier'ına.
+	for _, ns := range b.NeighborSignals {
+		in.NeighbourSignals = append(in.NeighbourSignals, correlator.NeighbourSignalEvidence{
+			Service:    ns.Event.Service,
+			Kind:       ns.Event.Kind,
+			Pattern:    ns.Event.Pattern,
+			Ratio:      math.Max(ns.Event.CurrentRatio, ns.Event.PeakRatio),
+			Downstream: ns.Direction == "calls",
+			Hops:       ns.Hops,
+		})
+	}
 	return in
 }
 
@@ -258,14 +269,52 @@ func synthInputForAnomaly(ev chstore.AnomalyEvent, in evidenceInputs) correlator
 	// ID != ev.ID excludes the anchor itself (the mirror of the problem
 	// path's op.ID exclusion in buildEvidenceBundle): an anomaly must not
 	// corroborate its own hypothesis.
+	//
+	// v0.9.1056 — komşu sinyalleri de toplanır (buildEvidenceBundle'ın
+	// aynası): 1-hop komşuluk in.adjacency'den, skorlu ≤2-hop şüpheliler
+	// yukarıdaki propagation yürüyüşünden.
+	dir := map[string]string{}
+	for _, e := range in.adjacency {
+		if e.Caller == ev.Service && e.Callee != ev.Service {
+			dir[e.Callee] = "calls"
+		}
+		if e.Callee == ev.Service && e.Caller != ev.Service {
+			if _, ok := dir[e.Caller]; !ok {
+				dir[e.Caller] = "called_by"
+			}
+		}
+	}
+	scored := map[string]correlator.ScoredCause{}
+	for _, sc := range out.Neighbours {
+		scored[sc.Service] = sc
+	}
 	for _, sig := range in.events {
-		if sig.Service != ev.Service || sig.Status != "active" || sig.ID == ev.ID {
+		if sig.Status != "active" || sig.ID == ev.ID {
 			continue
 		}
-		out.Signals = append(out.Signals, correlator.SignalEvidence{
-			Kind:    sig.Kind,
-			Pattern: sig.Pattern,
-			Ratio:   math.Max(sig.CurrentRatio, sig.PeakRatio),
+		if sig.Service == ev.Service {
+			out.Signals = append(out.Signals, correlator.SignalEvidence{
+				Kind:    sig.Kind,
+				Pattern: sig.Pattern,
+				Ratio:   math.Max(sig.CurrentRatio, sig.PeakRatio),
+			})
+			continue
+		}
+		sc, isScored := scored[sig.Service]
+		direction := dir[sig.Service]
+		if direction == "" && !isScored {
+			continue
+		}
+		if direction == "" {
+			direction = "calls"
+		}
+		out.NeighbourSignals = append(out.NeighbourSignals, correlator.NeighbourSignalEvidence{
+			Service:    sig.Service,
+			Kind:       sig.Kind,
+			Pattern:    sig.Pattern,
+			Ratio:      math.Max(sig.CurrentRatio, sig.PeakRatio),
+			Downstream: direction == "calls",
+			Hops:       sc.Hops,
 		})
 	}
 	return out

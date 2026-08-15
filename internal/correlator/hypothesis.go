@@ -85,6 +85,23 @@ const (
 	// (maxHypothesisCandidates, rootcause_prompt.go); emitting more only
 	// buries the other tiers' candidates.
 	signalMaxCandidates = 3
+
+	// ── Komşu-sinyal tier'ı (v0.9.1056, Faz 1.1) ───────────────────────
+	// Topoloji komşusunda AKTİF anomali sinyali (log_pattern/trace_op).
+	// Fusion bunları tikin toplu okumasında ZATEN belleğe alıyordu ve
+	// aynı-servis filtresiyle çöpe atıyordu (K1) — komşunun imza taşıyan
+	// anomalisi, komşunun problem satırından daha erken ve daha teşhis
+	// edici bir kök-neden ipucudur (problem henüz terfi etmemiş olabilir).
+	// Bant [0.28, 0.52] (+log_pattern bonusu ≤0.57): kendi-servis sinyal
+	// bandının hemen altında — kendi semptomuna doğrudan bağlı imza bir
+	// tık önde kalır; kenar hata payı taşıyorsa komşu zaten propagation
+	// tier'ında (≤0.70) ayrıca yarışır. Upstream (called_by) çarpanı 0.6:
+	// yukarı-akış anomalisi genelde KURBANDIR, nadiren neden — ama artık
+	// tamamen kör de değiliz (K1'in upstream yarısı).
+	neighborSignalTierBase      = 0.28
+	neighborSignalRatioSpan     = 0.24
+	neighborSignalUpstreamFactor = 0.6
+	neighborSignalMaxCandidates = 3
 )
 
 // Confidence model weights — the blend of breadth (distinct evidence types) and
@@ -132,6 +149,25 @@ type SynthesisInput struct {
 	// type that carries an error SIGNATURE. Minimal shape on purpose: the
 	// pure fuser takes only what it scores.
 	Signals []SignalEvidence
+	// NeighbourSignals (v0.9.1056, Faz 1.1) — TOPOLOJİ KOMŞULARINDAKİ
+	// aktif anomali sinyalleri. Fusion bunları tikte zaten belleğe
+	// alıyordu ve aynı-servis filtresiyle atıyordu; komşunun imzalı
+	// anomalisi, komşu problem satırı doğmadan önce gelen en erken
+	// kök-neden ipucu. Breadth sayımında AYRI kanal değildir — komşu
+	// kanalına (Neighbours ∪ NeighbourSignals) katlanır ki mevcut
+	// hipotezlerin confidence'ı değişmesin (payda 4 kalır).
+	NeighbourSignals []NeighbourSignalEvidence
+}
+
+// NeighbourSignalEvidence is one active anomaly signal on a topology
+// neighbour of the anchor service.
+type NeighbourSignalEvidence struct {
+	Service    string
+	Kind       string  // "log_pattern" | "trace_op"
+	Pattern    string
+	Ratio      float64 // max(current, peak) over baseline; 0 for new-template
+	Downstream bool    // anchor → neighbour (calls); false = upstream (called_by)
+	Hops       int     // topology distance from the anchor (≥1)
 }
 
 // SignalEvidence is one active anomaly signal on the anchor service.
@@ -139,6 +175,26 @@ type SignalEvidence struct {
 	Kind    string  // "log_pattern" | "trace_op"
 	Pattern string  // pattern name (logs) or operation name (trace ops)
 	Ratio   float64 // max(current, peak) over baseline; 0 for new-template events
+}
+
+// neighbourSignalScore maps one neighbour signal into the [0.28, 0.52]
+// band (+log_pattern bonus), then applies the upstream factor. Pure.
+func neighbourSignalScore(sig NeighbourSignalEvidence) float64 {
+	norm := (sig.Ratio - signalRatioFloor) / (signalRatioSaturate - signalRatioFloor)
+	if norm < 0 {
+		norm = 0
+	}
+	if norm > 1 {
+		norm = 1
+	}
+	score := neighborSignalTierBase + neighborSignalRatioSpan*norm
+	if sig.Kind == "log_pattern" {
+		score += signalLogPatternBonus
+	}
+	if !sig.Downstream {
+		score *= neighborSignalUpstreamFactor
+	}
+	return score
 }
 
 // signalScore maps one signal into the [0.30, 0.60] band. Pure.
@@ -208,8 +264,13 @@ func Synthesize(
 	}
 
 	// Tier 2 — propagation-ranked downstream neighbours. Already best-first.
-	if len(in.Neighbours) > 0 {
+	// Breadth: komşu KANALI tek sayılır (Neighbours ∪ NeighbourSignals) —
+	// v0.9.1056 yeni tier eklerken paydayı (maxEvidenceTypes=4) değiştirmedi,
+	// mevcut hipotez confidence'ları oynamasın diye.
+	if len(in.Neighbours) > 0 || len(in.NeighbourSignals) > 0 {
 		distinctTypes++
+	}
+	if len(in.Neighbours) > 0 {
 		for _, nb := range in.Neighbours {
 			if nb.Service == "" || nb.Score <= 0 {
 				continue
@@ -264,6 +325,61 @@ func Synthesize(
 				Score:   signalScore(sig),
 				Hops:    0,
 				Path:    []string{service},
+				Reason:  reason,
+			})
+		}
+	}
+
+	// Tier 2.6 (v0.9.1056) — komşu servislerdeki aktif anomali sinyalleri.
+	// Kendi-sinyal tier'ıyla aynı determinizm disiplini: skor desc,
+	// Service/Kind/Pattern asc ön-sıralama + tavan. Breadth'e AYRI kanal
+	// olarak SAYILMAZ — komşu kanalına katlanır (aşağıda), payda 4 kalır
+	// ve komşu-sinyalsiz mevcut girdiler bayt-bayt aynı çıktıyı üretir.
+	if len(in.NeighbourSignals) > 0 {
+		sigs := append([]NeighbourSignalEvidence(nil), in.NeighbourSignals...)
+		sort.SliceStable(sigs, func(i, j int) bool {
+			si, sj := neighbourSignalScore(sigs[i]), neighbourSignalScore(sigs[j])
+			if si != sj {
+				return si > sj
+			}
+			if sigs[i].Service != sigs[j].Service {
+				return sigs[i].Service < sigs[j].Service
+			}
+			if sigs[i].Kind != sigs[j].Kind {
+				return sigs[i].Kind < sigs[j].Kind
+			}
+			return sigs[i].Pattern < sigs[j].Pattern
+		})
+		if len(sigs) > neighborSignalMaxCandidates {
+			sigs = sigs[:neighborSignalMaxCandidates]
+		}
+		for _, sig := range sigs {
+			if sig.Service == "" {
+				continue
+			}
+			noun := "anomalous trace operation"
+			if sig.Kind == "log_pattern" {
+				noun = "anomalous log pattern"
+			}
+			rel := "downstream dependency"
+			if !sig.Downstream {
+				rel = "upstream caller"
+			}
+			reason := fmt.Sprintf("%s %q on %s (%s)", noun, sig.Pattern, sig.Service, rel)
+			if sig.Ratio > 0 {
+				reason += fmt.Sprintf(" — %.1fx over baseline", sig.Ratio)
+			} else {
+				reason += " — new, no baseline yet"
+			}
+			hops := sig.Hops
+			if hops < 1 {
+				hops = 1
+			}
+			cands = append(cands, chstore.ScoredCause{
+				Service: sig.Service,
+				Score:   neighbourSignalScore(sig),
+				Hops:    hops,
+				Path:    []string{service, sig.Service},
 				Reason:  reason,
 			})
 		}

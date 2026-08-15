@@ -43,7 +43,10 @@ type EvidenceBundle struct {
 	Signals    []chstore.AnomalyEvent     // active log_pattern / trace_op anomalies on the service
 	Deploy     *chstore.RecentDeployEntry // a deploy of the service just before onset
 	Neighbors  []NeighborProblem          // open problems on direct topology neighbours
-	Confidence int                        // distinct corroborating evidence types present (incl. the trigger)
+	// NeighborSignals (v0.9.1056) — komşulardaki aktif anomaliler;
+	// confidence sayımında Neighbors ile TEK kanal (ölçek /5 sabit).
+	NeighborSignals []NeighborSignal
+	Confidence      int // distinct corroborating evidence types present (incl. the trigger)
 	// Deep (v0.9.510) — P1 soruşturmasının topladığı ek kanıt: pod
 	// doygunluğu, exception grupları, log şablonları, yavaş operasyonlar
 	// + "neye bakıldı" denetim izi. YALNIZ P1 anchor'larında dolu
@@ -60,6 +63,18 @@ type NeighborProblem struct {
 	Direction string  // "calls" (trigger → neighbour) | "called_by" (neighbour → trigger)
 	Score     float64 // propagation score in [0,1] — downstream suspects only; 0 for upstream / no-error edges
 	Hops      int     // topology distance: 1 = direct, 2 = transitive downstream (decayed); 0 = unscored
+}
+
+// NeighborSignal (v0.9.1056, Faz 1.1) — komşu servisteki AKTİF anomali
+// sinyali. Olaylar tikin toplu okumasında zaten bellekteydi ve
+// `ev.Service == p.Service` filtresi komşularınkini çöpe atıyordu (K1):
+// komşunun imza taşıyan anomalisi, komşu problem satırı doğmadan önce
+// gelen en erken kök-neden ipucudur. Ek CH okuması SIFIR.
+type NeighborSignal struct {
+	Event     chstore.AnomalyEvent
+	Direction string  // NeighborProblem ile aynı sözlük
+	Score     float64 // propagation skoru (varsa)
+	Hops      int     // 0 = yalnız 1-hop komşuluktan (skorsuz)
 }
 
 // evidenceInputs is the store-side state fused for an incident. Fetched ONCE
@@ -171,10 +186,47 @@ func buildEvidenceBundle(p chstore.Problem, in evidenceInputs) EvidenceBundle {
 	})
 
 	for _, ev := range in.events {
-		if ev.Service == p.Service && ev.Status == "active" {
-			b.Signals = append(b.Signals, ev)
+		if ev.Status != "active" {
+			continue
 		}
+		if ev.Service == p.Service {
+			b.Signals = append(b.Signals, ev)
+			continue
+		}
+		// v0.9.1056 (K1) — komşunun aktif anomalisi artık atılmıyor:
+		// 1-hop komşu YA DA skorlu (≤2-hop) downstream şüpheli ise
+		// bundle'a girer. Aynı üyelik kuralı NeighborProblem'inki.
+		sc, scored := cause[ev.Service]
+		direction := dir[ev.Service]
+		if direction == "" && !scored {
+			continue
+		}
+		if direction == "" {
+			direction = "calls"
+		}
+		b.NeighborSignals = append(b.NeighborSignals, NeighborSignal{
+			Event: ev, Direction: direction, Score: sc.Score, Hops: sc.Hops,
+		})
 	}
+	// Determinizm: skor desc, hop asc, sonra servis/kind/pattern —
+	// render ve fuser tavanları ilk N'i alır, sıra girdi sırasına
+	// bağlanamaz.
+	sort.SliceStable(b.NeighborSignals, func(i, j int) bool {
+		a, c := b.NeighborSignals[i], b.NeighborSignals[j]
+		if a.Score != c.Score {
+			return a.Score > c.Score
+		}
+		if a.Hops != c.Hops {
+			return a.Hops < c.Hops
+		}
+		if a.Event.Service != c.Event.Service {
+			return a.Event.Service < c.Event.Service
+		}
+		if a.Event.Kind != c.Event.Kind {
+			return a.Event.Kind < c.Event.Kind
+		}
+		return a.Event.Pattern < c.Event.Pattern
+	})
 
 	// Deploy of THIS service whose first-seen lands in the lookback window
 	// before onset — the most recent such is the prime "what changed".
@@ -201,7 +253,10 @@ func buildEvidenceBundle(p chstore.Problem, in evidenceInputs) EvidenceBundle {
 	if b.Deploy != nil {
 		b.Confidence++
 	}
-	if len(b.Neighbors) > 0 {
+	// Komşu kanalı TEK sayılır (problem VEYA sinyal) — v0.9.1056 sinyalleri
+	// eklerken /5 ölçeğini korur; komşu-sinyalsiz eski girdiler aynı sayıyı
+	// üretir.
+	if len(b.Neighbors) > 0 || len(b.NeighborSignals) > 0 {
 		b.Confidence++
 	}
 	return b
@@ -265,4 +320,30 @@ func renderEvidence(sb *strings.Builder, b EvidenceBundle) {
 		}
 		fmt.Fprintf(sb, "- Unhealthy topology neighbours, root-cause-ranked (%d): %s\n", n, strings.Join(parts, "; "))
 	}
+	// v0.9.1056 — komşulardaki aktif anomali sinyalleri: problem satırı
+	// doğmadan önce gelen imzalı ipucu ("payment-db'de connection-reset
+	// log kalıbı 6×" gibi). Sıra bundle'da zaten skor-öncelikli.
+	if n := len(b.NeighborSignals); n > 0 {
+		fmt.Fprintf(sb, "- Active anomalies on topology neighbours (%d):\n", n)
+		for i, ns := range b.NeighborSignals {
+			if i >= maxEvidenceItems {
+				fmt.Fprintf(sb, "  …and %d more\n", n-maxEvidenceItems)
+				break
+			}
+			line := fmt.Sprintf("  · %s (%s): %s %q", ns.Event.Service, ns.Direction, ns.Event.Kind, ns.Event.Pattern)
+			if r := maxRatio(ns.Event); r > 0 {
+				line += fmt.Sprintf(" — %.1fx over baseline", r)
+			}
+			fmt.Fprintln(sb, line)
+		}
+	}
+}
+
+// maxRatio — olayın cari/tepe oranından güçlü olanı (worker'ın
+// SignalEvidence.Ratio kuralının aynısı). Saf.
+func maxRatio(ev chstore.AnomalyEvent) float64 {
+	if ev.CurrentRatio > ev.PeakRatio {
+		return ev.CurrentRatio
+	}
+	return ev.PeakRatio
 }

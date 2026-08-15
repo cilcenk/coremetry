@@ -241,7 +241,7 @@ export const api = {
   // Servis throughput'u METRİKTEN (v0.9.665). `metric` boş bırakılırsa
   // ayardaki ad kullanılıyor; operatör doğru adı ararken her denemede
   // ayar kaydetmek zorunda kalmasın diye sorgudan da geçilebiliyor.
-  serviceMetricThroughput: (svc: string, fromNs: number, toNs: number, metric?: string, mdp?: number, opts?: { breakdown?: 'route'; rateWindow?: number }) =>
+  serviceMetricThroughput: (svc: string, fromNs: number, toNs: number, metric?: string, mdp?: number, opts?: { breakdown?: 'route'; rateWindow?: number; env?: string }) =>
     get<import('./types').ServiceMetricThroughput>(
       `/api/services/${encodeURIComponent(svc)}/metric-throughput?from=${fromNs}&to=${toNs}`
       + (metric ? `&metric=${encodeURIComponent(metric)}` : '')
@@ -250,7 +250,10 @@ export const api = {
       + (mdp ? `&maxDataPoints=${mdp}` : '')
       // v0.9.718 — route kırılımı + PromQL-eşdeğeri rate penceresi.
       + (opts?.breakdown ? `&breakdown=${opts.breakdown}` : '')
-      + (opts?.rateWindow ? `&rateWindow=${opts.rateWindow}` : '')),
+      + (opts?.rateWindow ? `&rateWindow=${opts.rateWindow}` : '')
+      // env (v0.9.1041, env(a)) — deployment.environment conjunct so the
+      // metric-derived Throughput tile+chart narrow with the span RED.
+      + (opts?.env ? `&env=${encodeURIComponent(opts.env)}` : '')),
   // Coremetry meta-observability snapshot — drives /admin/stats.
   systemStats: () =>
     get<import('./types').SystemStats>('/api/admin/system-stats'),
@@ -2044,9 +2047,12 @@ export const api = {
   // the two views don't cross-poison. Default is forward-only: old
   // windows have no op_group yet, so normalized can legitimately be
   // empty (the page renders an honest empty state, not a blank panel).
-  serviceOperations: (svc: string, r: RangeParams, normalized = false, compare = false) =>
+  // env (v0.9.1041, env(a)) — global Topbar picker; forces the raw-spans
+  // path (operation_summary_5m has no deploy_env dim) so the normalized
+  // Operations table narrows with the rest of the page.
+  serviceOperations: (svc: string, r: RangeParams, normalized = false, compare = false, env = '') =>
     get<OperationSummary[] | null>(
-      `/api/services/${encodeURIComponent(svc)}/operations?${qs(r)}${normalized ? '&normalized=1' : ''}${compare ? '&compare=prior' : ''}`),
+      `/api/services/${encodeURIComponent(svc)}/operations?${qs(r)}${normalized ? '&normalized=1' : ''}${compare ? '&compare=prior' : ''}${env ? `&env=${encodeURIComponent(env)}` : ''}`),
   // serviceBundle — single round trip that returns the three
   // panels the Service detail mount needs (KPI summary,
   // recent problems, operations table). Server fans out to
@@ -2057,8 +2063,14 @@ export const api = {
   // recompute". Used as a one-shot rescue when the page detects
   // an empty operations array on a service that clearly has
   // traffic — see Service.tsx auto-refresh path.
-  serviceBundle: (svc: string, r: RangeParams, opts: { refresh?: boolean } = {}) => {
-    const params = opts.refresh ? { ...r, refresh: 1 } : r;
+  serviceBundle: (svc: string, r: RangeParams, opts: { refresh?: boolean; env?: string } = {}) => {
+    // env (v0.9.1041, env(a)) — narrows the service KPI (header dot + tile
+    // fallback) and operations slot to deploy_env via the backend raw path.
+    const params = {
+      ...r,
+      ...(opts.refresh ? { refresh: 1 } : {}),
+      ...(opts.env ? { env: opts.env } : {}),
+    };
     return get<{
       service:    Service | null;
       problems:   import('./types').Problem[] | null;

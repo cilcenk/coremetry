@@ -4,7 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import type { Service, TimeRange, SpanMetricSeries, OperationSummary } from '@/lib/types';
 import { timeRangeToNs, rangeToSince } from '@/lib/utils';
 import { api } from '@/lib/api';
-import { entryLatencyDSL } from '@/lib/entrySpans';
+import { entryLatencyDSL, envDSL } from '@/lib/entrySpans';
 import { panelMaxDataPoints, stepForWidth } from '@/lib/chartStep';
 import { encodeFilters } from '@/lib/urlState';
 import { useServiceDeploys } from '@/lib/queries';
@@ -76,6 +76,12 @@ interface Props {
   onZoomReset?: () => void;
   // v0.9.83 — sorgu penceresi (unix sec): x-ekseni pencereye sabitlenir.
   xRange?: { from: number; to: number } | null;
+  // env(a), v0.9.1041 — global Topbar picker. Narrows BOTH the span RED
+  // (seriesQ/latencyQ DSL) AND the metric-derived Response time
+  // (metricQueryFull filters) + Throughput (serviceMetricThroughput) so
+  // the five headline tiles + three RED charts win env together — never
+  // some env-scoped and some all-env (the ikili-hâl the brief forbids).
+  env?: string;
 }
 
 function vals(s?: SpanMetricSeries[] | null): number[] {
@@ -170,7 +176,7 @@ function KpiTile({ lab, val, unit, accent, spark, delta, goodWhenUp, note, sub }
 
 // ChartCard v0.9.87'de charts/ChartCard.tsx'e taşındı (Runtime paneli de kullanır).
 
-export function ServiceOverview({ service, range, windowNs, info, operations, endpoints = [], onZoom, onZoomReset }: Props) {
+export function ServiceOverview({ service, range, windowNs, info, operations, endpoints = [], onZoom, onZoomReset, env = '' }: Props) {
   // v0.8.480 — üst sayfa pencereyi çözdüyse AYNISI kullanılır: RED
   // prefetch'in RQ anahtarı ancak böyle tutar (timeRangeToNs göreli
   // aralıkta Date.now()'a bağlı, iki ayrı hesap anahtar kaçırır).
@@ -200,11 +206,11 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     // v0.9.844 — motor bayrağı anahtardan ÇIKTI, pencere SABİT: tek mod
     // kaldı. Service.tsx'in prefetch'i AYNI commit'te aynı şekli aldı
     // (ayrı düşerse prefetch ölür — v0.9.723 review bulgusu).
-    queryKey: ['service-overview-red', service, from, to, redMdp],
+    queryKey: ['service-overview-red', service, from, to, redMdp, env],
     queryFn: () => api.spanMetricBatch({
       from, to, maxDataPoints: redMdp,
       rateWindow: 180,
-      dsl: `service.name = "${service.replace(/"/g, '\\"')}"`,
+      dsl: `service.name = "${service.replace(/"/g, '\\"')}"` + envDSL(env),
       aggs: [
         { name: 'rate', agg: 'rate' },
         { name: 'error_rate', agg: 'error_rate' },
@@ -268,18 +274,18 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
     // v0.9.718 — route kırılımı + 180s rate penceresi (Grafana
     // by(http_route) + [3m] referansı).
     // v0.9.844 — bayrak anahtardan çıktı, breakdown='route' sabitlendi.
-    queryKey: ['service-metric-throughput', service, from, to, redMdp],
+    queryKey: ['service-metric-throughput', service, from, to, redMdp, env],
     queryFn: () => api.serviceMetricThroughput(service, from, to, undefined, redMdp,
-      { breakdown: 'route', rateWindow: 180 }),
+      { breakdown: 'route', rateWindow: 180, env: env || undefined }),
     staleTime: 30_000,
   });
 
   const latencyQ = useQuery({
-    queryKey: ['service-overview-entry-red', service, from, to, redMdp],
+    queryKey: ['service-overview-entry-red', service, from, to, redMdp, env],
     queryFn: () => api.spanMetricBatch({
       from, to, maxDataPoints: redMdp,
       rateWindow: 180,
-      dsl: entryLatencyDSL(service),
+      dsl: entryLatencyDSL(service) + envDSL(env),
       aggs: [
         { name: 'rate', agg: 'rate' },
         { name: 'error_rate', agg: 'error_rate' },
@@ -443,11 +449,20 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   const rtStep = useMemo(
     () => stepForWidth(Math.max(1, (to - from) / 1e9), redMdp * 2),
     [from, to, redMdp]);
+  // env(a), v0.9.1041 — the metric Response time panels read metric_points
+  // via /api/metrics/query, whose filter compiler resolves
+  // deployment.environment through metricEnvExpr (coalescing the ≥1.27 and
+  // legacy spellings from res_keys). Adding the conjunct here narrows the
+  // metric avg to one env so the Response time tile+chart agree with the
+  // env-scoped span RED — no schema change.
   const rtFilters = useMemo(
-    () => encodeFilters([{ k: 'service.name', op: '=', v: [service] }]),
-    [service]);
+    () => encodeFilters([
+      { k: 'service.name', op: '=', v: [service] },
+      ...(env ? [{ k: 'deployment.environment', op: '=' as const, v: [env] }] : []),
+    ]),
+    [service, env]);
   const rtAvgQ = useQuery({
-    queryKey: ['service-rt-avg-route', service, metricName, from, to, rtStep],
+    queryKey: ['service-rt-avg-route', service, metricName, from, to, rtStep, env],
     enabled: !!metricName,
     staleTime: 30_000,
     queryFn: ({ signal }) => api.metricQueryFull({
@@ -485,7 +500,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
   // grupsuz sorgulara da uygulanıyor, yani healthcheck route'ları
   // ortalamayı aşağı çekmiyor.
   const rtTotalQ = useQuery({
-    queryKey: ['service-rt-avg-total', service, metricName, from, to, rtStep],
+    queryKey: ['service-rt-avg-total', service, metricName, from, to, rtStep, env],
     enabled: !!metricName,
     staleTime: 30_000,
     queryFn: ({ signal }) => api.metricQueryFull({

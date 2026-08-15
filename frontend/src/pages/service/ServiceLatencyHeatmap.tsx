@@ -23,11 +23,14 @@ import { Link } from 'react-router-dom';
 // ?op= selection): the distribution narrows to that one operation,
 // completing the Grafana/Tempo triple of RED band + latency histogram
 // over the same (service, operation) pair.
-export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly = false }: {
+export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly = false, env = '' }: {
   service: string;
   range: import('@/lib/types').TimeRange;
   operation?: string;
   rootOnly?: boolean;
+  // env(a), v0.9.1041 — global Topbar picker; narrows the distribution to
+  // one deploy_env so it agrees with the env-scoped RED charts above it.
+  env?: string;
 }) {
   const [data, setData] = useState<import('@/lib/types').LatencyHeatmap | null | undefined>(undefined);
   // busy — veri EKRANDA kalırken süren okuma (keep-previous). `data ===
@@ -98,14 +101,14 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
     api.spanHeatmap({
       // v0.9.707 — sabit 60 → genişlik-türevi (40..240).
       from, to, buckets: heatmapBucketCount(1),
-      filters: JSON.stringify(heatmapFilters(service, picked, operation, rootOnly)),
+      filters: JSON.stringify(heatmapFilters(service, picked, operation, rootOnly, env)),
     }, g.signal)
       .then(r => { if (!g.ok()) return; setData(r ?? null); setBusy(false); })
       // İptal de reject eder; guard'sız catch operatörün kendi
       // düzenlemesini "sorgu hatası"na çevirirdi.
       .catch(() => { if (!g.ok()) return; setData(null); setBusy(false); });
     return g.cancel;
-  }, [service, from, to, collapsed, picked, operation, rootOnly]);
+  }, [service, from, to, collapsed, picked, operation, rootOnly, env]);
 
   const toggle = () => {
     const next = !collapsed;

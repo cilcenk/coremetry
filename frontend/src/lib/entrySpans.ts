@@ -45,3 +45,17 @@ export function dslService(service: string): string {
 export function entryLatencyDSL(service: string): string {
   return `${dslService(service)} AND ${ENTRY_SPAN_DSL}`;
 }
+
+/**
+ * env(a), v0.9.1041 — the global Topbar env picker as a DSL conjunct.
+ * Returns `` when env is empty (byte-identical to the pre-env query), else
+ * ` AND deployment.environment = "<env>"`. deployment.environment maps to
+ * the deploy_env spans column (filterexpr.go wellKnown), which forces
+ * spanMetricBatch off the summary/rollup MV fast-paths (none carry
+ * deploy_env) onto the raw-spans path — exactly the fallback dimsFitTiers
+ * already takes. Used by every span-derived Service-detail read so the RED
+ * tiles, charts and heatmap narrow together (no ikili-hâl).
+ */
+export function envDSL(env: string): string {
+  return env ? ` AND deployment.environment = "${env.replace(/"/g, '\\"')}"` : '';
+}

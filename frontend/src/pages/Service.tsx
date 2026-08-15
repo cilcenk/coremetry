@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/Button';
 import { recordServiceVisit, isServicePinned, toggleServicePin } from '@/lib/recentServices';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
+import { envDSL } from '@/lib/entrySpans';
 import { ServiceOverview } from './service/Overview';
 import { ServiceLogsTab, ServiceTopologyTab } from './service/ServiceSignalTabs';
 import { ServiceInfraTab } from './service/ServiceInfraTab';
@@ -64,10 +65,12 @@ function ServiceDetailInner() {
   // implementasyonu) paylaşılan usePageZoomRange hook'una taşındı;
   // davranış sözleşmesi hook başlığında, birebir aynı.
   const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('30m');
-  // v0.9.309 — read-only here, for the Endpoints drill below. A pivot
-  // that drops the global env scope asks a wider question than the
-  // screen it left (the v0.9.306/307 lesson); DrillButton builds a
-  // fresh URL, so anything not passed is lost on navigation.
+  // v0.9.1041 (env(a)) — env is now APPLIED, not just forwarded to the
+  // Endpoints drill: it narrows the bundle (KPI + operations), the Overview
+  // span+metric RED (tiles + charts), ServiceCharts and the latency heatmap
+  // to one deploy_env, so <Topbar envApplies/> is honest. The Endpoints
+  // drill still forwards it too (the v0.9.306/307 "a pivot must ask the
+  // same question" lesson; DrillButton builds a fresh URL).
   const [env] = useUrlEnv();
   const [pinned, setPinned] = useState(false);
   // v0.7.89 — record this service in the recently-viewed MRU (powers
@@ -242,11 +245,14 @@ function ServiceDetailInner() {
     // useQuery'si AYNI commit'te aynı şekli aldı — bayt paritesi ancak
     // ikisi birlikte değişince korunur.
     queryClient.prefetchQuery({
-      queryKey: ['service-overview-red', svc, r.from, r.to, redMdp],
+      // v0.9.1041 — env joins the key + DSL in lockstep with Overview's
+      // seriesQ (parity: a differently-shaped key means the prefetch never
+      // hits and cold load regresses).
+      queryKey: ['service-overview-red', svc, r.from, r.to, redMdp, env],
       queryFn: () => api.spanMetricBatch({
         from: r.from, to: r.to, maxDataPoints: redMdp,
         rateWindow: 180,
-        dsl: `service.name = "${svc.replace(/"/g, '\\"')}"`,
+        dsl: `service.name = "${svc.replace(/"/g, '\\"')}"` + envDSL(env),
         aggs: [
           { name: 'rate', agg: 'rate' },
           { name: 'error_rate', agg: 'error_rate' },
@@ -271,7 +277,7 @@ function ServiceDetailInner() {
         );
       }
     };
-    api.serviceBundle(svc, r)
+    api.serviceBundle(svc, r, { env: env || undefined })
       .then(async (b) => {
         applyBundle(b);
         // v0.5.300 — Operator-reported: at scale (test env) the
@@ -288,7 +294,7 @@ function ServiceDetailInner() {
             && b
             && b.service && b.service.spanCount > 0
             && (!b.operations || b.operations.length === 0)) {
-          const refreshed = await api.serviceBundle(svc, r, { refresh: true })
+          const refreshed = await api.serviceBundle(svc, r, { refresh: true, env: env || undefined })
             .catch(() => null);
           if (refreshed) applyBundle(refreshed);
         }
@@ -309,7 +315,7 @@ function ServiceDetailInner() {
         }
       });
     return () => { cancelled = true; };
-  }, [svc, rangeNs, queryClient, retryNonce]);
+  }, [svc, rangeNs, queryClient, retryNonce, env]);
 
   // v0.6.51 — SLO strip. Separate from the bundle because SLO
   // status moves slowly (window_days horizon) and is service-
@@ -334,8 +340,10 @@ function ServiceDetailInner() {
   // separate entries — no raw/normalized cross-poisoning. uses the
   // memoized rangeNs window so it doesn't tick now() each render.
   const normOpsQ = useQuery({
-    queryKey: keys.services.operations(svc, { from: rangeNs.from ?? 0, to: rangeNs.to ?? 0 }, true),
-    queryFn: () => api.serviceOperations(svc, { from: rangeNs.from ?? 0, to: rangeNs.to ?? 0 }, true),
+    // v0.9.1041 — env joins key + call so the normalized table narrows with
+    // the raw one (bundle ops already carry env via serviceBundle above).
+    queryKey: keys.services.operations(svc, { from: rangeNs.from ?? 0, to: rangeNs.to ?? 0 }, true, false, env),
+    queryFn: () => api.serviceOperations(svc, { from: rangeNs.from ?? 0, to: rangeNs.to ?? 0 }, true, false, env),
     enabled: !!svc && normalized,
     staleTime: 60_000,
   });
@@ -353,7 +361,7 @@ function ServiceDetailInner() {
   if (!svc) {
     return (
       <>
-        <Topbar title="Service" range={range} onRangeChange={setRange} />
+        <Topbar title="Service" range={range} onRangeChange={setRange} envApplies />
         <PageShell><Empty icon="⚠" title="Missing service name" /></PageShell>
       </>
     );
@@ -363,7 +371,7 @@ function ServiceDetailInner() {
 
   return (
     <>
-      <Topbar title={`Service · ${svc}`} range={range} onRangeChange={setRange} />
+      <Topbar title={`Service · ${svc}`} range={range} onRangeChange={setRange} envApplies />
       <PageShell>
         {/* Service identity header (design handoff app.jsx .svc-head): big
             status dot + bare service name + runtime badge + health pill. */}
@@ -547,7 +555,7 @@ function ServiceDetailInner() {
 
             {tab === 'overview' && (
               <ServiceOverview service={svc} range={range} windowNs={rangeNs} info={info} operations={operations}
-                endpoints={endpoints} onZoom={handleZoom} onZoomReset={handleZoomReset} />
+                endpoints={endpoints} onZoom={handleZoom} onZoomReset={handleZoomReset} env={env} />
             )}
             {tab === 'logs' && <ServiceLogsTab service={svc} range={range} windowNs={rangeNs}
               onZoom={handleZoom} onZoomReset={handleZoomReset} />}
@@ -611,7 +619,7 @@ function ServiceDetailInner() {
                     kendi "giriş / tüm span'ler" ayrımı var. */}
                 <ServiceCharts service={svc} range={range} windowNs={rangeNs}
                   opScope={opScope} onOpScopeChange={setOpScope}
-                  problems={problems} rootOnly
+                  problems={problems} rootOnly env={env}
                   onZoom={handleZoom} onZoomReset={handleZoomReset} />
                 {/* v0.9.395 (Faz C-2 Ş2, mockup 52b05851 onaylı) — annotation
                     şeridi PİLOT: üç RED paneli aynı x-eksenini paylaştığı
@@ -633,7 +641,7 @@ function ServiceDetailInner() {
                 <div className="ov-mb">
                   <LazyMount minHeight={360}>
                     <ServiceLatencyHeatmap service={svc} range={range}
-                                           operation={opScope} rootOnly />
+                                           operation={opScope} rootOnly env={env} />
                   </LazyMount>
                 </div>
                 {/* v0.9.141 (operatör) — Structure paneli kaldırıldı; bölüm

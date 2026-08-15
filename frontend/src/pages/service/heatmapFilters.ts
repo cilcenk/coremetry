@@ -13,7 +13,7 @@
 import type { FilterExpr } from '@/lib/types';
 
 export function heatmapFilters(
-  service: string, cluster?: string, operation?: string, rootOnly?: boolean,
+  service: string, cluster?: string, operation?: string, rootOnly?: boolean, env?: string,
 ): FilterExpr[] {
   const f: FilterExpr[] = [{ k: 'service.name', op: '=', v: [service] }];
   // v0.9.364 — Details sekmesindeki panel v0.9.348'den beri rootOnly RED
@@ -31,5 +31,10 @@ export function heatmapFilters(
   // `name` maps to the span-name column in the filter compiler
   // (filterexpr.go) — same predicate the Traces page uses.
   if (operation) f.push({ k: 'name', op: '=', v: [operation] });
+  // env(a), v0.9.1041 — the global Topbar picker. deployment.environment
+  // maps to the deploy_env column (filterexpr.go wellKnown), narrowing the
+  // latency distribution to one environment so it agrees with the RED
+  // charts above it on the Details tab.
+  if (env) f.push({ k: 'deployment.environment', op: '=', v: [env] });
   return f;
 }

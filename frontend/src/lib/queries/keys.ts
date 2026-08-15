@@ -43,8 +43,10 @@ export const keys = {
     // group_id rel C — per-operation aggregate keyed on the normalized
     // flag so the raw and op_group-shape tables cache as two distinct
     // entries (they return different row sets for the same window).
-    operations:  (svc: string, range: { from: number; to: number }, normalized: boolean, compare = false) =>
-                   ['services', 'operations', svc, range, normalized, compare] as const,
+    // env (v0.9.1041, env(a)) — the global picker narrows the row set, so
+    // it joins the key or an env-scoped table cross-poisons the all-env one.
+    operations:  (svc: string, range: { from: number; to: number }, normalized: boolean, compare = false, env = '') =>
+                   ['services', 'operations', svc, range, normalized, compare, env] as const,
     // Operator-curated catalog metadata (owner / SRE team / runbook
     // links) — one map for the whole install, joined locally by the
     // consumers (/services team filters, /admin/catalog editor).

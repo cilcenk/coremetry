@@ -12,6 +12,7 @@ import { api } from '@/lib/api';
 import { useFailureSLO, useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
 import { failureThresholds } from '@/lib/failureSlo';
 import { timeRangeToNs } from '@/lib/utils';
+import { envDSL } from '@/lib/entrySpans';
 import { quantizeWidth, stepForWidth } from '@/lib/chartStep';
 import { useContentWidth } from '@/lib/useContentWidth';
 import { isResolverEligible, serviceRedDescriptors } from '@/lib/resolverEligibility';
@@ -36,9 +37,16 @@ import { QueryError } from '@/components/QueryError';
 // crosshair on the other two — Datadog dashboard convention,
 // turns the three panels into one synchronised view.
 
-export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '', onOpScopeChange, windowNs, problems, rootOnly = false }: {
+export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '', onOpScopeChange, windowNs, problems, rootOnly = false, env = '' }: {
   service: string;
   range: TimeRange;
+  // env(a), v0.9.1041 — global Topbar picker. A non-empty env appends a
+  // deployment.environment conjunct to the RED DSL AND forces the legacy
+  // (spanMetricBatch → raw spans) path: the resolver's Filters are
+  // Record<string,string> over the five rollup dims only, so env there
+  // would silently vanish (the same two-paths-one-predicate trap rootOnly
+  // guards). Empty env = byte-identical to the pre-env behaviour.
+  env?: string;
   // rootOnly (v0.9.348) — narrow the per-operation series to the service's
   // OWN entry points (span kind server/consumer) instead of every span it
   // emits.
@@ -206,6 +214,9 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
         // matches ClickHouse's own 14 server + 8 client split for the same
         // service and window.
         if (rootOnly) dsl += ` AND kind in [server, consumer]`;
+        // env(a) — global env narrow. Forces the raw-spans path (the MV
+        // fast-paths bail on a deploy_env filter), same as dimsFitTiers.
+        dsl += envDSL(env);
         // Batch — one CH pass for rate + error_rate + p99 over the same
         // WHERE. Cold-cache time drops to ~1/3 of a three-call fan-out
         // because the spans scan happens once.
@@ -240,7 +251,11 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
       // Falling back costs one bounded spanMetricBatch call (a single CH pass
       // for all three aggs), which is the path this component used before the
       // resolver existed.
-      const eligible = !rootOnly
+      // env(a) — a non-empty env forces the legacy DSL path for the same
+      // reason rootOnly does: the resolver can't carry deploy_env, so
+      // staying eligible would drop the env narrow on the resolver path
+      // while the DSL path kept it (v0.9.345 two-paths trap).
+      const eligible = !rootOnly && !env
         && isResolverEligible(rpsMq) && isResolverEligible(errMq) && isResolverEligible(p99Mq)
         && (!avgMq || isResolverEligible(avgMq));
       if (!eligible) return viaLegacy();
@@ -260,7 +275,8 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
     },
     // v0.9.348 — rootOnly joins the deps: it changes both the DSL and which
     // path runs, so a stale closure would keep serving the unfiltered series.
-    [service, opScope, rpsMq, errMq, p99Mq, avgMq, effStep, rootOnly],
+    // v0.9.1041 — env joins for the same reason (DSL conjunct + path choice).
+    [service, opScope, rpsMq, errMq, p99Mq, avgMq, effStep, rootOnly, env],
   );
 
   useEffect(() => {

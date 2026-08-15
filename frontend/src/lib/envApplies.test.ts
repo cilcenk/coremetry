@@ -72,6 +72,11 @@ const APPLIES = new Set([
   'pages/Endpoints.tsx',
   'pages/Inbox.tsx',
   'pages/Logs.tsx',
+  // v0.9.1041 (env(a)) — the Service detail page moved out of the
+  // link-only bucket: env now narrows the RED tiles + 3 RED charts +
+  // Operations table + ServiceCharts + latency heatmap (span AND
+  // metric paths). The grafik+karo ikili-hâl lock lives below.
+  'pages/Service.tsx',
   'pages/Services.tsx',
   'pages/Traces.tsx',
 ]);
@@ -79,16 +84,14 @@ const APPLIES = new Set([
 // Env'i OKUYAN ama kendi verisine UYGULAMAYAN sayfalar. Bunlar en kolay
 // yanlış sınıflandırılacak dosyalar, o yüzden gerekçeleriyle yazılı:
 //
-//   • Service.tsx — env'i yalnız /endpoints drill linkine geçirir; sayfanın
-//     kendi bundle'ı (api.serviceBundle) env almaz, yani sayfadaki RED
-//     sayıları TÜM ortamları kapsar.
 //   • DatabaseDetail.tsx — env'i yalnız "geldiğin liste bu env'e daraltılmıştı"
-//     rozetini basmak için okur; detay sorguları env almaz.
+//     rozetini basmak için okur; detay sorguları env almaz. (Service.tsx
+//     env(a)/v0.9.1041 ile APPLIES'a taşındı; DatabaseDetail bilinçli DIŞ:
+//     MV'lerinde deploy_env yok, ayrı MV cerrahisi ister.)
 //
 // Rapor ikisini de "env sayan sayfalar" arasında listeliyordu; kod aksini
 // söylüyor. Bu satırlar o farkı kalıcı kılar.
 const READS_BUT_DOES_NOT_APPLY = new Set([
-  'pages/Service.tsx',
   'pages/DatabaseDetail.tsx',
 ]);
 
@@ -172,6 +175,34 @@ describe('envApplies — §4.3 (b) dürüstlük sözleşmesi', () => {
     expect(readFileSync(join(SRC, 'components/Combobox.tsx'), 'utf8'),
       'Combobox kilitli alanda ✕ düğmesini kaldırdı — bayat bir global env her sayfadan bırakılabilmeli')
       .toMatch(/\{value \? \(/);
+  });
+
+  it('Service env\'i GRAFİK + KARO dahil uygular (env(a) ikili-hâl kilidi)', () => {
+    // v0.9.1041 — env(a). Bu kapının ölçtüğü ikili-hâl: karo+tablo env'li
+    // ama grafik env'siz kalırsa bugünkü dürüst rozetten KÖTÜdür. Overview'un
+    // manşet karoları+grafikleri SPAN türevli (seriesQ/latencyQ DSL) VE
+    // METRİK türevli (Response time=metricQueryFull, Throughput=
+    // serviceMetricThroughput) olduğu için env HER İKİ yola da geçmeli; biri
+    // env'siz kalırsa manşet tile all-env görünürken span RED daralır.
+    const read = (rel: string) => readFileSync(join(SRC, rel), 'utf8');
+    const service = read('pages/Service.tsx');
+    const overview = read('pages/service/Overview.tsx');
+    const charts = read('components/ServiceCharts.tsx');
+
+    // Service.tsx env'i çocuklara ve bundle'a GEÇİRİR.
+    expect(service, 'Service <Topbar envApplies/> vermeli').toMatch(/envApplies/);
+    expect(service, 'ServiceOverview env almalı').toMatch(/<ServiceOverview[\s\S]*?env=\{env\}/);
+    expect(service, 'ServiceCharts env almalı').toMatch(/<ServiceCharts[\s\S]*?env=\{env\}/);
+    expect(service, 'serviceBundle env almalı').toContain('env: env || undefined');
+
+    // Overview: SPAN yolu (envDSL) VE METRİK yolu (serviceMetricThroughput +
+    // rtFilters deployment.environment) — ikisi birden.
+    expect(overview, 'Overview span DSL env taşımalı (envDSL)').toContain('envDSL(env)');
+    expect(overview, 'Overview metrik throughput env almalı').toMatch(/serviceMetricThroughput\([\s\S]*?env: env \|\| undefined/);
+    expect(overview, 'Overview metrik Response time env taşımalı').toContain("k: 'deployment.environment'");
+
+    // ServiceCharts (Details/Performance grafikleri) — DSL env taşır.
+    expect(charts, 'ServiceCharts DSL env taşımalı (envDSL)').toContain('envDSL(env)');
   });
 
   it('Topbar varsayılanı opt-in — işaretlenmemiş sayfa "uygulanmıyor" der', () => {

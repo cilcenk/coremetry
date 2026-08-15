@@ -57,6 +57,32 @@ describe('heatmapFilters wire shape (v0.8.421)', () => {
     expect(heatmapFilters(...args)).toEqual(want);
   });
 
+  // env(a), v0.9.1041 — the global Topbar picker as a deployment.environment
+  // conjunct (→ deploy_env column), so the distribution narrows with the RED
+  // charts above it. Composes after every other conjunct; empty = no-op.
+  const envCases: Array<[
+    name: string,
+    args: [string, string?, string?, boolean?, string?],
+    want: { k: string; op: string; v: string[] }[],
+  ]> = [
+    ['env adds deployment.environment conjunct', ['checkout', undefined, undefined, false, 'uat'], [
+      { k: 'service.name', op: '=', v: ['checkout'] },
+      { k: 'deployment.environment', op: '=', v: ['uat'] },
+    ]],
+    ['env composes with rootOnly + operation', ['checkout', undefined, 'GET /cart', true, 'prep'], [
+      { k: 'service.name', op: '=', v: ['checkout'] },
+      { k: 'kind', op: 'IN', v: ['server', 'consumer'] },
+      { k: 'name', op: '=', v: ['GET /cart'] },
+      { k: 'deployment.environment', op: '=', v: ['prep'] },
+    ]],
+    ['empty env stays deploy_env-free', ['checkout', undefined, undefined, false, ''], [
+      { k: 'service.name', op: '=', v: ['checkout'] },
+    ]],
+  ];
+  it.each(envCases)('%s', (_name, args, want) => {
+    expect(heatmapFilters(...args)).toEqual(want);
+  });
+
   it.each(cases)('%s', (_name, args, want) => {
     expect(heatmapFilters(...args)).toEqual(want);
   });

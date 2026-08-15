@@ -30,14 +30,17 @@
 //     them into MCP isError=true content. No need to format
 //     them here.
 //
-// Tool catalogue (v0.6.5):
+// Tool catalogue (13 tools; sayım v0.9.1050'de düzeltildi — blok
+// v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu):
 //   - list_services
 //   - get_service_health
 //   - list_problems
+//   - get_problem_root_cause (v0.9.160)
 //   - list_anomalies
 //   - search_logs
 //   - get_trace
 //   - query_metric
+//   - render_chart (v0.9.520)
 //
 // Cross-signal pivot tools (v0.8.333, pivots.go):
 //   - get_logs_for_trace
@@ -66,6 +69,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -373,7 +377,10 @@ func getProblemRootCauseTool(d Deps) mcp.Tool {
 					"description": "The Problem id (the 'id' field from list_problems). Required.",
 				},
 			},
-			"required": []any{"problem_id"},
+			// v0.9.1050 — []any → []string: telde aynı ama tools_test'in
+			// additive taraması .([]string) assert ediyor ve bu tool
+			// sessizce atlanıyordu.
+			"required": []string{"problem_id"},
 		},
 		Handler: func(ctx context.Context, raw json.RawMessage) (any, error) {
 			var a getProblemRootCauseArgs
@@ -465,6 +472,8 @@ func getServiceHealthTool(d Deps) mcp.Tool {
 				},
 				"range_s": map[string]any{
 					"type":        "integer",
+					"minimum":     0,
+					"maximum":     604800,
 					"description": "Lookback window seconds. Default 1800.",
 				},
 			},
@@ -534,7 +543,7 @@ func listProblemsTool(d Deps) mcp.Tool {
 					"type":        "string",
 					"description": "Deployment environment filter (e.g. 'int', 'uat', 'prep'). Problems carry no env dimension, so this is SERVICE-scoped: keeps problems whose service emitted spans in that env within the last hour, plus global service-less rules. Empty = all environments.",
 				},
-				"severity": map[string]any{"type": "string", "enum": []string{"", "critical", "warning", "info"}},
+				"severity": map[string]any{"type": "string", "enum": []string{"", "critical", "warning", "info"}, "description": "Severity filter. Empty = all severities."},
 				"priority": map[string]any{"type": "string", "enum": []string{"", "P1", "P2", "P3"}, "description": "Triage tier. P1=handle now."},
 				"limit":    map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "description": "Default 25."},
 			},
@@ -626,12 +635,12 @@ type listAnomaliesArgs struct {
 func listAnomaliesTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "list_anomalies",
-		Description: "List recent anomaly events (log-pattern + trace-op + ML detectors). Anomalies are 'something changed against baseline' notices — not hard alerts. Use this when investigating a service whose RED metrics look normal but the operator suspects a behavior shift.",
+		Description: "List recent anomaly events (log-pattern + trace-op + ML detectors). Anomalies are 'something changed against baseline' notices — not hard alerts. Use this when investigating a service whose RED metrics look normal but the operator suspects a behavior shift. NOTE: the service filter is APPROXIMATE — a wider fleet slice is fetched and post-filtered, so an empty result for one service means 'none in the fetched slice', not a proven zero; do not state 'this service has no anomalies' as certain.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
-				"service": map[string]any{"type": "string"},
-				"range_s": map[string]any{"type": "integer", "description": "Default 3600 (1h)."},
+				"service": map[string]any{"type": "string", "description": "Exact service name. Approximate filter (see tool description). Empty = whole fleet."},
+				"range_s": map[string]any{"type": "integer", "minimum": 0, "maximum": 604800, "description": "Lookback seconds. Default 3600 (1h)."},
 				"limit":   map[string]any{"type": "integer", "minimum": 1, "maximum": 200, "description": "Default 25."},
 			},
 		},
@@ -696,16 +705,16 @@ type searchLogsArgs struct {
 func searchLogsTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "search_logs",
-		Description: "Full-text + structured search across logs. Routes to whichever backend Coremetry is configured for (ClickHouse or Elasticsearch). Use trace_id to pull every log line belonging to one trace. Use severity_min=17 for errors only (OTel severity number; 17=ERROR, 21=FATAL).",
+		Description: "Full-text + structured search across logs. Routes to whichever backend Coremetry is configured for (ClickHouse or Elasticsearch). Use trace_id to pull every log line belonging to one trace. Use severity_min=17 for errors only (OTel severity number; 17=ERROR, 21=FATAL). HONESTY ENVELOPE: the response may carry partial=true (soft timeout / failed shards — rows are a SUBSET of the true answer), shardsFailed>0, totalIsLowerBound=true (total is 'at least', not exact) and envUnapplied=true (an env filter was requested but could not be applied — results are env-UNFILTERED). Never present a partial or env-unfiltered result as complete/narrowed; say so.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"query":        map[string]any{"type": "string", "description": "Free-text or structured query (ES query_string when ES is the backend)."},
-				"service":      map[string]any{"type": "string"},
+				"service":      map[string]any{"type": "string", "description": "Exact service name filter. Empty = all services."},
 				"cluster":      map[string]any{"type": "string", "description": "k8s cluster name from resource attrs."},
 				"trace_id":     map[string]any{"type": "string", "description": "Pull all logs for one trace."},
 				"severity_min": map[string]any{"type": "integer", "minimum": 0, "maximum": 24, "description": "OTel severity number floor. 17=ERROR."},
-				"range_s":      map[string]any{"type": "integer", "description": "Default 1800."},
+				"range_s":      map[string]any{"type": "integer", "minimum": 0, "maximum": 604800, "description": "Lookback seconds. Default 1800."},
 				"limit":        map[string]any{"type": "integer", "minimum": 1, "maximum": 500, "description": "Default 50."},
 			},
 		},
@@ -741,10 +750,53 @@ type getTraceArgs struct {
 	TraceID string `json:"trace_id"`
 }
 
+// getTraceSpanCap — get_trace'in gövde tavanı (v0.9.1050, Faz 0.10).
+// GetTrace LIMIT 50000'e dek span döndürür ve her span attr+resource
+// map'leri + events JSON'u taşır: tek çağrı LLM bağlamını patlatabilir
+// (setteki tek "get_* body bounded" ihlaliydi). 200 span tavanı ≈ makul
+// bağlam; seçim capTraceSpans'te (hata-koruyan — v0.9.414 dersi: düz
+// head-cap derindeki hatayı düşürür).
+const getTraceSpanCap = 200
+
+// capTraceSpans — saf, tablo-testli. len<=max ise aynen döner. Aşınca:
+// ÖNCE tüm hata span'leri (waterfall'ın anlattığı şey), sonra süresi en
+// uzun span'ler; sonuç başlangıç zamanına göre yeniden sıralanır ki
+// kırpılmış şelale kronolojik okunur kalsın.
+func capTraceSpans(spans []chstore.SpanRow, max int) ([]chstore.SpanRow, bool) {
+	if max <= 0 || len(spans) <= max {
+		return spans, false
+	}
+	picked := make([]chstore.SpanRow, 0, max)
+	for _, sp := range spans {
+		if sp.StatusCode == "error" {
+			picked = append(picked, sp)
+			if len(picked) == max {
+				break
+			}
+		}
+	}
+	if len(picked) < max {
+		rest := make([]chstore.SpanRow, 0, len(spans))
+		for _, sp := range spans {
+			if sp.StatusCode != "error" {
+				rest = append(rest, sp)
+			}
+		}
+		sort.SliceStable(rest, func(i, j int) bool { return rest[i].DurationMs > rest[j].DurationMs })
+		need := max - len(picked)
+		if need > len(rest) {
+			need = len(rest)
+		}
+		picked = append(picked, rest[:need]...)
+	}
+	sort.SliceStable(picked, func(i, j int) bool { return picked[i].StartTime < picked[j].StartTime })
+	return picked, true
+}
+
 func getTraceTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_trace",
-		Description: "Fetch every span belonging to one trace ID. Returns the full waterfall: service, operation, duration, error status, parent_span_id. Use after search_logs surfaces a trace ID, or directly from a problem's correlated traces.",
+		Description: "Fetch the spans of one trace ID as a waterfall: service, operation, duration, error status, parent_span_id. Use after search_logs surfaces a trace ID, or directly from a problem's correlated traces. Bounded: at most 200 spans are returned — all ERROR spans are kept first, then the slowest ones; when the trace is larger, truncated=true and total_span_count carries the real size, so never claim to have seen the whole trace while truncated is true.",
 		InputSchema: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
@@ -764,7 +816,12 @@ func getTraceTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
-			return map[string]any{"trace_id": a.TraceID, "spans": spans, "span_count": len(spans)}, nil
+			total := len(spans)
+			capped, truncated := capTraceSpans(spans, getTraceSpanCap)
+			return map[string]any{
+				"trace_id": a.TraceID, "spans": capped, "span_count": len(capped),
+				"total_span_count": total, "truncated": truncated,
+			}, nil
 		},
 	}
 }
@@ -788,10 +845,10 @@ func queryMetricTool(d Deps) mcp.Tool {
 			"type": "object",
 			"properties": map[string]any{
 				"name":        map[string]any{"type": "string", "description": "OTel metric name."},
-				"service":     map[string]any{"type": "string"},
+				"service":     map[string]any{"type": "string", "description": "Exact service name filter. Empty = all services."},
 				"aggregation": map[string]any{"type": "string", "enum": []string{"avg", "sum", "min", "max", "last", "p50", "p95", "p99"}, "description": "Default 'avg'."},
 				"group_by":    map[string]any{"type": "string", "description": "Comma-separated attribute keys (e.g. 'http.route,http.status_code')."},
-				"range_s":     map[string]any{"type": "integer", "description": "Default 1800."},
+				"range_s":     map[string]any{"type": "integer", "minimum": 0, "maximum": 604800, "description": "Lookback seconds. Default 1800."},
 				"step_s":      map[string]any{"type": "integer", "description": "Bucket size seconds. 0 = auto."},
 			},
 			"required": []string{"name"},

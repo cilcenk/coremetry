@@ -123,7 +123,10 @@ func TestGetProblemRootCauseTool(t *testing.T) {
 	if pid["type"] != "string" {
 		t.Fatalf("problem_id type = %v, want string", pid["type"])
 	}
-	req, _ := tool.InputSchema["required"].([]any)
+	// v0.9.1050 — []any → []string: diğer tüm tool'ların kanonik şekli.
+	// Eski []any, additive env taramasının .([]string) assert'inden
+	// sessizce kaçıyordu.
+	req, _ := tool.InputSchema["required"].([]string)
 	found := false
 	for _, r := range req {
 		if r == "problem_id" {

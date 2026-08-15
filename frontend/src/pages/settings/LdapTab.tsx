@@ -4,7 +4,7 @@ import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import type { LDAPConfig, LDAPGroupRoleMapping, Role } from '@/lib/types';
 import { tsLong } from '@/lib/utils';
-import { Row, Field2, SectionTitle, FlashBox } from './shared';
+import { Row, Field2, SectionTitle, FlashBox, useSettingsLoad, SettingsLoadError } from './shared';
 import { LDAPUserPicker } from './LdapUserPicker';
 
 // LDAPTab — enterprise auth configuration. Three sections:
@@ -31,10 +31,19 @@ export function LDAPTab() {
   // value into an empty box, not on top of the placeholder.
   const [pwTouched, setPwTouched] = useState(false);
 
-  useEffect(() => {
-    api.getLDAPSettings().then(c => setCfg(c)).catch(() => setCfg(emptyLDAP()));
-  }, []);
+  // v0.9.1043 — C4'ün dokuzuncu yazımı (ajan bulgusu). Eski catch
+  // `setCfg(emptyLDAP())` yapıyordu: GET hatasında boş-ama-truthy config
+  // `if (!cfg)` kapısını geçiyor, form BOŞ çiziliyor ve Kaydet aktif
+  // kalıyordu. Kaydet bütün satırı değiştirir (ldap.go PutSettings —
+  // yalnız BindPassword korunur) ve `enabled:false` yazar: tek tıkla
+  // host/baseDN/groupRoleMap silinip LDAP org genelinde sessizce
+  // kapanırdı. v0.9.938 kapısının aynısı: hata dalında form hiç çizilmez.
+  const { error: loadErr, retry } = useSettingsLoad(
+    () => api.getLDAPSettings(),
+    c => setCfg(c),
+  );
 
+  if (loadErr) return <SettingsLoadError error={loadErr} onRetry={retry} />;
   if (!cfg) return <Spinner />;
 
   const update = (patch: Partial<LDAPConfig>) => setCfg({ ...cfg, ...patch });
@@ -551,20 +560,6 @@ function GroupSyncStatus() {
       )}
     </div>
   );
-}
-
-function emptyLDAP(): LDAPConfig {
-  return {
-    enabled: false, host: '', port: 636, useTLS: true, startTLS: false,
-    skipVerify: false, caCert: '',
-    bindDN: '', bindPassword: '', baseDN: '',
-    userSearchFilter: '(sAMAccountName={{username}})',
-    userAttribute: 'sAMAccountName', emailAttribute: 'mail',
-    displayAttribute: 'displayName',
-    groupSearchBase: '', groupFilter: '(member={{userDN}})',
-    defaultRole: 'viewer', groupRoleMap: [],
-    groupSync: emptyGroupSync(),
-  };
 }
 
 function emptyGroupSync(): import('@/lib/types').LDAPGroupSyncConfig {

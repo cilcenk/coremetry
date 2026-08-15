@@ -14,16 +14,16 @@ import "testing"
 // equal the key is stable, (c) the window inputs still participate.
 
 func TestSvcOpsCacheKey_NormalizedDistinct(t *testing.T) {
-	raw := svcOpsCacheKey("billing", "1h", "", "", false, false)
-	norm := svcOpsCacheKey("billing", "1h", "", "", true, false)
+	raw := svcOpsCacheKey("billing", "1h", "", "", false, false, "")
+	norm := svcOpsCacheKey("billing", "1h", "", "", true, false, "")
 	if raw == norm {
 		t.Fatalf("normalized not in cache key: raw and normalized collided on %q — raw/normalized cross-poisoning (v0.5.187 class)", raw)
 	}
 }
 
 func TestSvcOpsCacheKey_Stable(t *testing.T) {
-	a := svcOpsCacheKey("billing", "1h", "", "", true, false)
-	b := svcOpsCacheKey("billing", "1h", "", "", true, false)
+	a := svcOpsCacheKey("billing", "1h", "", "", true, false, "")
+	b := svcOpsCacheKey("billing", "1h", "", "", true, false, "")
 	if a != b {
 		t.Fatalf("cache key unstable for identical inputs: %q != %q", a, b)
 	}
@@ -32,12 +32,12 @@ func TestSvcOpsCacheKey_Stable(t *testing.T) {
 func TestSvcOpsCacheKey_WindowInputsParticipate(t *testing.T) {
 	// Every response-changing input must move the key. Hold normalized
 	// constant and vary each window field in turn.
-	base := svcOpsCacheKey("billing", "1h", "", "", true, false)
+	base := svcOpsCacheKey("billing", "1h", "", "", true, false, "")
 	cases := map[string]string{
-		"service": svcOpsCacheKey("orders", "1h", "", "", true, false),
-		"since":   svcOpsCacheKey("billing", "6h", "", "", true, false),
-		"from":    svcOpsCacheKey("billing", "1h", "2026-06-15T00:00:00Z", "", true, false),
-		"to":      svcOpsCacheKey("billing", "1h", "", "2026-06-15T01:00:00Z", true, false),
+		"service": svcOpsCacheKey("orders", "1h", "", "", true, false, ""),
+		"since":   svcOpsCacheKey("billing", "6h", "", "", true, false, ""),
+		"from":    svcOpsCacheKey("billing", "1h", "2026-06-15T00:00:00Z", "", true, false, ""),
+		"to":      svcOpsCacheKey("billing", "1h", "", "2026-06-15T01:00:00Z", true, false, ""),
 	}
 	for field, got := range cases {
 		if got == base {
@@ -49,8 +49,8 @@ func TestSvcOpsCacheKey_WindowInputsParticipate(t *testing.T) {
 // v0.9.60 — compare=prior anahtarda: prior'lu ve prior'suz yanıt
 // farklı gövde; anahtar dışı kalsa çapraz-zehirlenirdi (v0.5.187).
 func TestSvcOpsCacheKeyCompareDistinct(t *testing.T) {
-	plain := svcOpsCacheKey("billing", "1h", "", "", false, false)
-	cmp := svcOpsCacheKey("billing", "1h", "", "", false, true)
+	plain := svcOpsCacheKey("billing", "1h", "", "", false, false, "")
+	cmp := svcOpsCacheKey("billing", "1h", "", "", false, true, "")
 	if plain == cmp {
 		t.Fatalf("compare modu anahtarı ayrıştırmıyor: %q", plain)
 	}

@@ -156,7 +156,10 @@ func (s *Server) buildServiceChartsInput(
 	// elimizle ikinci bir pencere hesaplasaydık o düzeltmeyi kaybederdik.
 	// normalized=false: grafikler ham operasyon adıyla çiziliyor, anlatım
 	// da aynı adları anmalı.
-	if rows, err := s.store.GetOperationSummaryCompared(ctx, service, 0, from, to, false); err == nil {
+	// env "" — the /ai charts-explain subject carries no env (OUT of the
+	// env(a) scope, which is the rendered RED surfaces); op deltas stay
+	// service-wide for the narration.
+	if rows, err := s.store.GetOperationSummaryCompared(ctx, service, 0, from, to, false, ""); err == nil {
 		in.Signals.OpDeltas, in.Signals.OtherOps = selectOpDeltas(rows, 3)
 	}
 	return in

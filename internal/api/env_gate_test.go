@@ -60,6 +60,25 @@ func TestServicesListKey_CarriesEnv(t *testing.T) {
 	}
 }
 
+// v0.9.1039 — env(a): the /service Operations + bundle reads narrow by the
+// global env picker, so their cache keys must hash env or an env-scoped
+// response cross-poisons the all-env one inside the shared TTL (v0.5.187).
+func TestSvcOpsCacheKey_CarriesEnv(t *testing.T) {
+	key := func(env string) string {
+		return svcOpsCacheKey("checkout", "1h", "", "", false, false, env)
+	}
+	uat, prep, all := key("uat"), key("prep"), key("")
+	if uat == prep || uat == all || prep == all {
+		t.Fatalf("distinct envs must produce distinct keys: uat=%q prep=%q all=%q", uat, prep, all)
+	}
+	if !strings.Contains(uat, "env=uat") {
+		t.Fatalf("key must carry the env value; got %q", uat)
+	}
+	if key("uat") != uat {
+		t.Fatal("svcOpsCacheKey must be deterministic")
+	}
+}
+
 func TestEndpointsListKey_CarriesEnv(t *testing.T) {
 	key := func(env string) string {
 		return endpointsListKey("b", "", "", "", env, 500, false, false, "calls", "desc", "http")

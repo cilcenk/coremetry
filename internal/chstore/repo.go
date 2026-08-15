@@ -1236,7 +1236,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 // isimle merge edilmiş (v0.9.60, Endpoints ?compare=prior deseninin
 // operations karşılığı). Prior pencere okuma hatası soft-düşer:
 // current sonuç Prior'suz döner (karşılaştırma görünmez-düşer).
-func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string, since time.Duration, from, to time.Time, normalized bool) ([]OperationSummary, error) {
+func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string, since time.Duration, from, to time.Time, normalized bool, env string) ([]OperationSummary, error) {
 	// Pencereyi BURADA mutlaklaştır ki current ve prior birebir aynı
 	// uzunlukta olsun (GetOperationSummary'nin kendi now()'u iki çağrı
 	// arasında kayardı).
@@ -1250,7 +1250,7 @@ func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string,
 	} else if winEnd.IsZero() {
 		winEnd = time.Now()
 	}
-	cur, err := s.GetOperationSummary(ctx, service, 0, winStart, winEnd, normalized)
+	cur, err := s.GetOperationSummary(ctx, service, 0, winStart, winEnd, normalized, env)
 	if err != nil || len(cur) == 0 {
 		return cur, err
 	}
@@ -1263,7 +1263,7 @@ func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string,
 	// (15dk pencerede ~1/3'e kadar). floor5(ws)-1s: bucket-start
 	// karşılaştırmasında önceki bucket'ta biter.
 	priorEnd := winStart.Truncate(5 * time.Minute).Add(-time.Second)
-	prior, perr := s.GetOperationSummary(ctx, service, 0, winStart.Add(-dur), priorEnd, normalized)
+	prior, perr := s.GetOperationSummary(ctx, service, 0, winStart.Add(-dur), priorEnd, normalized, env)
 	if perr != nil {
 		return cur, nil
 	}
@@ -1290,10 +1290,24 @@ func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string,
 	return cur, nil
 }
 
+// operationsUseMV — /service Operations tablosunun MV hızlı-yol kapısı.
+// operation_summary_5m 5 dakikada bir satır yazar (sub-5m pencere boş
+// okur) ve NE cluster NE deploy_env boyutu taşır — env verildiğinde
+// (cluster'ın v0.8.385'te /services'te yaptığı gibi) MV diskalifiye olur
+// ve okuma ham-spans yoluna (deploy_env = ?) düşer. servicesUseMV
+// (api.go) ile AYNI şekil; saf tutuldu ki operation_env_test.go çivilesin.
+func operationsUseMV(window time.Duration, env string) bool {
+	return window >= 5*time.Minute && env == ""
+}
+
 // GetOperationSummary returns per-operation aggregates for a single
 // service: count, error rate, p50/p95/p99 latency, apdex, plus a
 // fixed-length call-rate sparkline over the same window. Drives the
-// "Operations" table on the service detail page. Rows ordered by span
+// "Operations" table on the service detail page.
+//
+// env (v0.9.1039) — global Topbar picker. Non-empty forces the raw-spans
+// path (operationsUseMV) with a deploy_env conjunct, the same MV-lacks-env
+// trade-off getDatabasesRaw / GetEndpoints (raw) / GetServicesQuery make. Rows ordered by span
 // count desc so the heaviest operations surface first; the front-end
 // applies its own sort if the user clicks a column header.
 //
@@ -1315,7 +1329,7 @@ func (s *Store) GetOperationSummaryCompared(ctx context.Context, service string,
 // OperationSummary.Name field carries the op_group value in that mode, so
 // the scanner, sparkline, and frontend are unchanged. normalized=false is
 // byte-for-byte the pre-rel-B behaviour.
-func (s *Store) GetOperationSummary(ctx context.Context, service string, since time.Duration, from, to time.Time, normalized bool) ([]OperationSummary, error) {
+func (s *Store) GetOperationSummary(ctx context.Context, service string, since time.Duration, from, to time.Time, normalized bool, env string) ([]OperationSummary, error) {
 	// v0.8.186 — when op_group isn't on the spans table (external Distributed
 	// install where the ALTER couldn't reach spans_local), BOTH normalized
 	// branches reference op_group: the MV path reads the now-absent
@@ -1359,7 +1373,7 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	// stores the rescued result so the same operator click
 	// within 60s hits Redis. Logged so the operator can see
 	// which path is serving each request.
-	useMV := winEnd.Sub(winStart) >= 5*time.Minute
+	useMV := operationsUseMV(winEnd.Sub(winStart), env)
 	if useMV {
 		out, err := s.queryOperationsFromMV(ctx, service, winStart, winEnd, normalized)
 		if err != nil {
@@ -1387,6 +1401,13 @@ func (s *Store) GetOperationSummary(ctx context.Context, service string, since t
 	wc.add("time <= ?", winEnd)
 	if service != "" {
 		wc.add("service_name = ?", service)
+	}
+	// v0.9.1039 — global env narrow. deploy_env is a settled spans column
+	// (getDatabasesRaw / GetEndpoints raw use it verbatim); the same
+	// conjunct rides both the aggregate query below AND the sparkline query
+	// (both read wc.args), so raw + normalized modes narrow identically.
+	if env != "" {
+		wc.add("deploy_env = ?", env)
 	}
 	if normalized {
 		rawNameCol = "op_group"

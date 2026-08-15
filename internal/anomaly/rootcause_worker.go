@@ -12,6 +12,14 @@ import (
 	"github.com/cilcenk/coremetry/internal/correlator"
 )
 
+// shouldDeepInvestigate — derin soruşturma kapısı (v0.9.1060, Faz 1.5).
+// Saf + tablo-testli: P1 (kayıp/aşım/yaş — operatör kararı, v0.9.516'dan
+// beri) VEYA deploy-korelasyonlu (fuser'ın en güçlü şüpheli sınıfı;
+// "ne değişti" belliyken kanıtsız kalmak K10'un tarif ettiği boşluktu).
+func shouldDeepInvestigate(isP1, hasDeploy bool) bool {
+	return isP1 || hasDeploy
+}
+
 // enrichDeployImpact — deploy adayı varsa önce/sonra RED kıyasını ölçüp
 // girdiye iliştirir (v0.9.1059, Faz 1.4 / K8). ComputeDeployImpact
 // yazılalı beri hiçbir kök-neden yolu çağırmıyordu — "deploy şüpheli"
@@ -218,9 +226,17 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			// Tek toplama, tek yazma, iki okuyucu: explainer prompt için,
 			// ribbon/denetim sorguları için.
 			//
-			// Maliyet kapısı DEĞİŞMEDİ: yalnız P1 (operatör kararı),
-			// aile başına bir sınırlı okuma.
-			if prio := chstore.EnrichProblemsWithPriority([]chstore.Problem{p}); len(prio) > 0 && prio[0].Priority == "P1" {
+			// Maliyet kapısı v0.9.1060'ta GENİŞLEDİ (Faz 1.5 / K10):
+			// "yalnız P1" → "P1 VEYA deploy-korelasyonlu". Deploy,
+			// fuser'ın EN GÜÇLÜ şüpheli sınıfı (0.80 taban) ama problem
+			// bağımsız olarak 2× aşmadıkça P1 kapısından geçemiyor ve
+			// derin kanıt hiç toplanmıyordu — tam da "ne değişti"nin
+			// belli olduğu vakada. Anchor kümesi zaten yalnız critical
+			// açık problemler + tik batch tavanı; aile başına bir
+			// sınırlı okuma sözleşmesi aynen.
+			prio := chstore.EnrichProblemsWithPriority([]chstore.Problem{p})
+			isP1 := len(prio) > 0 && prio[0].Priority == "P1"
+			if shouldDeepInvestigate(isP1, bundle.Deploy != nil) {
 				if plan := investigationPlan(p); len(plan) > 0 {
 					d := gatherDeepEvidence(ctx, s.store, p, plan, now.Add(-evidenceWindow), now)
 					h.Deep = &d

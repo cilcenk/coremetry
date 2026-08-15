@@ -87,6 +87,8 @@ func exemplarKindForAnomaly(kind string) chstore.ExemplarKind {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
 	case "trace_op":
 		return chstore.ExemplarError
+	case "trace_op_latency": // v0.9.1064 — gecikme sıçraması → en yavaş trace
+		return chstore.ExemplarSlow
 	default: // log_pattern, log_template_new, anything unknown
 		return chstore.ExemplarAny
 	}

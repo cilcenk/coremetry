@@ -73,23 +73,49 @@ type BubbleUpResult struct {
 // predicate that narrows it. We pass them as parallel
 // FilterExpr lists so callers compose the same way they
 // compose other span queries.
+//
+// v0.9.1063 (Faz 2.2 / K3) — İKİ PENCERE. Eski imza tek (from, to)
+// alıyordu: yalnız aynı-pencere alt-küme kıyası (hatalılar vs hepsi)
+// kurulabiliyordu; "anomali penceresinde hangi attribute değeri ÖNCEKİ
+// pencereye göre patladı" sorusu (zaman-kaydırmalı kıyas — gecikme
+// problemlerinin tek dürüst bubbleUp'ı) sorulamıyordu. Aynı pencereyi
+// iki kez geçen çağıran bayt-bayt eski davranışı alır. İki taraf tek
+// dış taramada (birleşim penceresi) countIf ile ayrışır — iki ayrı
+// tarama da yarışlı pencere kenarı da yok.
 func (s *Store) BubbleUp(
 	ctx context.Context,
 	baseline []FilterExpr,
 	selection []FilterExpr,
-	from, to time.Time,
+	baseFrom, baseTo, selFrom, selTo time.Time,
 ) (*BubbleUpResult, error) {
-	// Build the WHERE for baseline (the wider population).
-	wcBase := whereClause{}
-	wcBase.add("time >= ?", from)
-	wcBase.add("time <= ?", to)
-	ApplyFilters(&wcBase, baseline)
+	// Dış tarama: iki pencerenin BİRLEŞİMİ + baseline filtreleri.
+	unionFrom, unionTo := baseFrom, baseTo
+	if selFrom.Before(unionFrom) {
+		unionFrom = selFrom
+	}
+	if selTo.After(unionTo) {
+		unionTo = selTo
+	}
+	wcOuter := whereClause{}
+	wcOuter.add("time >= ?", unionFrom)
+	wcOuter.add("time <= ?", unionTo)
+	ApplyFilters(&wcOuter, baseline)
 
-	// Selection = baseline + extra predicates (AND-joined).
+	// Taraf predicate'leri (countIf içinde koşar; her iki taraf kendi
+	// zaman sınırını taşır — pencereler ayrıksa sızıntı olmaz).
+	selPred := "(time >= ? AND time <= ?)"
+	selPredArgs := []any{selFrom, selTo}
+	if p := selectionPredicate(selection); p != "1" {
+		selPred = "((" + p + ") AND time >= ? AND time <= ?)"
+		selPredArgs = append(selectionPredicateArgs(selection), selFrom, selTo)
+	}
+	const basePred = "(time >= ? AND time <= ?)"
+	basePredArgs := []any{baseFrom, baseTo}
+
+	// Selection tarafının kendi WHERE'i (adım 2 anahtar keşfi).
 	wcSel := whereClause{}
-	wcSel.args = append(wcSel.args, wcBase.args...)
-	wcSel.add("time >= ?", from)
-	wcSel.add("time <= ?", to)
+	wcSel.add("time >= ?", selFrom)
+	wcSel.add("time <= ?", selTo)
 	ApplyFilters(&wcSel, baseline)
 	ApplyFilters(&wcSel, selection)
 
@@ -99,14 +125,13 @@ func (s *Store) BubbleUp(
 	totalsSQL := fmt.Sprintf(`
 		SELECT
 		  countIf(%s) AS sel_total,
-		  count() AS base_total
+		  countIf(%s) AS base_total
 		FROM spans
 		%s
 		SETTINGS max_execution_time = 25`,
-		selectionPredicate(selection), wcBase.sql())
-	if err := s.conn.QueryRow(ctx, totalsSQL,
-		append(selectionPredicateArgs(selection), wcBase.args...)...,
-	).Scan(&selTotal, &baseTotal); err != nil {
+		selPred, basePred, wcOuter.sql())
+	totalsArgs := append(append(append([]any{}, selPredArgs...), basePredArgs...), wcOuter.args...)
+	if err := s.conn.QueryRow(ctx, totalsSQL, totalsArgs...).Scan(&selTotal, &baseTotal); err != nil {
 		return nil, fmt.Errorf("bubbleup totals: %w", err)
 	}
 	if selTotal == 0 || baseTotal == 0 {
@@ -184,11 +209,14 @@ func (s *Store) BubbleUp(
 		Attributes:     []BubbleUpAttribute{},
 	}
 	for _, key := range keys {
+		// v0.9.1063 — iki taraf da kendi pencere predicate'iyle sayılır
+		// (dış tarama birleşim penceresi); aynı-pencere çağıranda base
+		// countIf'i eski count()'la birebir aynı sonucu verir.
 		valSQL := fmt.Sprintf(`
 			SELECT
 			  attr_values[indexOf(attr_keys, ?)] AS v,
 			  countIf(%s) AS sel,
-			  count() AS base
+			  countIf(%s) AS base
 			FROM spans
 			%s
 			AND has(attr_keys, ?)
@@ -197,16 +225,16 @@ func (s *Store) BubbleUp(
 			ORDER BY (toFloat64(sel) / %d) - (toFloat64(base) / %d) DESC
 			LIMIT 6
 			SETTINGS max_execution_time = 15`,
-			selectionPredicate(selection),
-			wcBase.sql(),
+			selPred, basePred,
+			wcOuter.sql(),
 			selTotal, baseTotal,
 		)
-		// argument order: selection-predicate args, then
-		// baseline-WHERE args, then the indexOf key, then
-		// the has(attr_keys) key.
+		// arg sırası: indexOf anahtarı, sel-predicate, base-predicate,
+		// dış WHERE, has() anahtarı.
 		args := []any{key} // for indexOf in SELECT
-		args = append(args, selectionPredicateArgs(selection)...)
-		args = append(args, wcBase.args...)
+		args = append(args, selPredArgs...)
+		args = append(args, basePredArgs...)
+		args = append(args, wcOuter.args...)
 		args = append(args, key) // for has(attr_keys, ?)
 		valRows, err := s.conn.Query(ctx, valSQL, args...)
 		if err != nil {

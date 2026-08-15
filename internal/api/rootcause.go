@@ -178,25 +178,33 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 				out.Exemplar = ex
 			}
 		}()
-		// (d) Dimension bubble-up — only for ERROR problems, where "which
-		// route/host/version concentrates the errors" is well-defined:
-		// selection = erroring spans of the service, baseline = all its spans
-		// in the same window. (Latency "slow" isn't a clean FilterExpr subset;
-		// the exemplar covers that case.)
-		if exemplarKindForMetric(p.Metric) == chstore.ExemplarError {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				baseline := []chstore.FilterExpr{{Key: "service.name", Op: "=", Values: []string{p.Service}}}
+		// (d) Dimension bubble-up. HATA problemlerinde aynı-pencere
+		// alt-küme kıyası (selection = hatalı span'ler — eski davranış
+		// bayt-bayt). v0.9.1063 (Faz 2.2 / K3): GECİKME/diğer ailelerde
+		// artık ZAMAN-KAYDIRMALI kıyas koşar — baseline ÖNCEKİ eş-boy
+		// pencere, selection incident penceresi, filtre iki tarafta aynı
+		// (yalnız servis): "hangi attribute değeri önceki pencereye göre
+		// patladı". "Slow temiz FilterExpr alt-kümesi değil" engeli buydu;
+		// kıyası alt-kümeyle değil pencereyle kurunca ortadan kalkıyor.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			baseline := []chstore.FilterExpr{{Key: "service.name", Op: "=", Values: []string{p.Service}}}
+			if exemplarKindForMetric(p.Metric) == chstore.ExemplarError {
 				selection := []chstore.FilterExpr{
 					{Key: "service.name", Op: "=", Values: []string{p.Service}},
 					{Key: "status_code", Op: "=", Values: []string{"error"}},
 				}
-				if bu, e := s.store.BubbleUp(ctx, baseline, selection, started, end); e == nil {
+				if bu, e := s.store.BubbleUp(ctx, baseline, selection, started, end, started, end); e == nil {
 					out.BubbleUp = bu
 				}
-			}()
-		}
+				return
+			}
+			priorFrom := started.Add(-end.Sub(started))
+			if bu, e := s.store.BubbleUp(ctx, baseline, nil, priorFrom, started, started, end); e == nil {
+				out.BubbleUp = bu
+			}
+		}()
 		wg.Wait()
 		return out, nil
 	})
@@ -308,25 +316,31 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 				out.Exemplar = ex
 			}
 		}()
-		// (d) Dimension bubble-up — only for trace_op anomalies, where the
-		// erroring-span subset of the service is a clean FilterExpr selection
-		// (same shape as getProblemRootCause's error branch). Log anomalies
-		// (log_pattern / log_template_new) aren't a span-status subset, so the
-		// bubble-up is skipped — the exemplar + correlations cover them.
-		if exKind == chstore.ExemplarError {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				baseline := []chstore.FilterExpr{{Key: "service.name", Op: "=", Values: []string{ev.Service}}}
+		// (d) Dimension bubble-up. trace_op anomalilerinde aynı-pencere
+		// hata alt-kümesi (eski davranış bayt-bayt). v0.9.1063 (Faz 2.2):
+		// log anomalileri de artık kapsamda — zaman-kaydırmalı kıyas
+		// (baseline önceki eş-boy pencere) span-status alt-kümesi
+		// istemez; "bu pencerede hangi attribute patladı" sorusuna
+		// log-anchor'da da cevap var.
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			baseline := []chstore.FilterExpr{{Key: "service.name", Op: "=", Values: []string{ev.Service}}}
+			if exKind == chstore.ExemplarError {
 				selection := []chstore.FilterExpr{
 					{Key: "service.name", Op: "=", Values: []string{ev.Service}},
 					{Key: "status_code", Op: "=", Values: []string{"error"}},
 				}
-				if bu, e := s.store.BubbleUp(ctx, baseline, selection, started, end); e == nil {
+				if bu, e := s.store.BubbleUp(ctx, baseline, selection, started, end, started, end); e == nil {
 					out.BubbleUp = bu
 				}
-			}()
-		}
+				return
+			}
+			priorFrom := started.Add(-end.Sub(started))
+			if bu, e := s.store.BubbleUp(ctx, baseline, nil, priorFrom, started, started, end); e == nil {
+				out.BubbleUp = bu
+			}
+		}()
 		wg.Wait()
 		return out, nil
 	})

@@ -1408,7 +1408,11 @@ export const api = {
     request<{ status: string }>(`/api/traces/share/${token}`, { method: 'DELETE' }),
 
   // AI Copilot
-  copilotConfig:         () => get<{ enabled: boolean }>(`/api/copilot/config`),
+  // v0.9.1037 — `model` YALNIZ Copilot aktifken gelir (backend:
+  // copilot.ActiveModel) ve uç kimlik ister, yani anonim /public/*
+  // yüzeyleri bu alanı hiç göremez. baseUrl/apiKey burada YOK ve
+  // olmayacak — o yüzey admin'e özel getAISettings.
+  copilotConfig:         () => get<{ enabled: boolean; model?: string }>(`/api/copilot/config`),
   // v0.6.53 — agentic chatbot stream. POST + SSE (EventSource is
   // GET-only, so we read the fetch body stream and parse SSE frames
   // by hand). onEvent fires per `event:`/`data:` frame; the promise

@@ -656,7 +656,19 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 	// surfaces real off-peak dips. Best-effort: a seasonal read error or too
 	// few same-slot samples falls back to the consecutive window (chooseBaseline
 	// gets a nil seasonal when the batch read errored → consecutive).
-	consecutive := buckets[:split]
+	// v0.9.1052 (Faz 0.4, Q3) — padlenmiş sıfırlar baseline'a giremez.
+	// padTrailingSilence eksik kuyruk kovalarını sıfırla doldurur ki dwell
+	// penceresi "şimdi"yi doğru görsün; ama saatlerce susmuş bir serviste
+	// bu sentetik sıfırlar dwell'i aşıp BASELINE dilimine taşıyordu:
+	// medyan 0'a çekilir, flatMADFloor 1ms'e düşer ve servis geri
+	// döndüğünde normal 200ms ≈ yüzlerce σ okunurdu. rates==0 kuyruğu
+	// "veri yok" imzasıdır (gerçek sıfır trafik de veri yokluğudur —
+	// baseline "servis yaşarken" penceresi olmalı); yalnız KUYRUK koşusu
+	// kırpılır, içerideki gerçek sıfır kovalar veri olarak kalır.
+	consecutive := trimTrailingSilent(buckets[:split], rates)
+	if len(consecutive) < minSamples {
+		return // baseline'ın canlı kısmı karar için çok kısa
+	}
 	baseline := chooseBaseline(seasonal, consecutive, seasonalMinSamples)
 
 	// Modified z-score (median + MAD) instead of mean + population stdev:
@@ -816,6 +828,23 @@ const (
 	// taşımalı ki "istikrarlı akış kesildi" iddiası dürüst olsun.
 	silentMinActiveShare = 0.9
 )
+
+// trimTrailingSilent — baseline diliminin KUYRUĞUNDAKİ veri-yok
+// (rate==0) koşusunu kırpar (v0.9.1052, Q3 — padTrailingSilence
+// sıfırları baseline'a taşmasın). İçerideki sıfırlara DOKUNMAZ:
+// padTrailingSilence yalnız kuyruğu doldurur, içerideki kovalar gerçek
+// veridir. values ile rates aynı seriden geldiği için hizalıdır; yine
+// de savunmacı min-uzunlukla kesilir.
+func trimTrailingSilent(values, rates []float64) []float64 {
+	n := len(values)
+	if len(rates) < n {
+		n = len(rates)
+	}
+	for n > 0 && rates[n-1] == 0 {
+		n--
+	}
+	return values[:n]
+}
 
 // silenceVerdict — saf, tablo-testli. rates = 5dk hacim serisi
 // (padTrailingSilence'tan geçmiş, yani eksik kuyruk kovaları sıfır).
@@ -1172,10 +1201,20 @@ func buildAllSeasonalQuery(vexpr string) string {
 	// least(|sod-target|, 86400-|sod-target|) is the circular (midnight-wrap)
 	// distance in seconds; <= radius keeps the ±neighborBuckets slots of the
 	// matching day class. time_bucket >= cutoff prunes daily partitions first.
+	//
+	// v0.9.1052 (Faz 0.4, Q1) — ÜST SINIR eklendi (`time_bucket < ?`).
+	// Üstsüz hâlde BUGÜNÜN slot penceresi de eşleşiyordu: yani şu an
+	// yargılanan (muhtemelen anomalili) dwell kovaları ve TAMAMLANMAMIŞ
+	// cari kova KENDİ baseline'larına giriyordu — kendini normalleştirme
+	// (davranış motoru bunu recentCutoff ile baştan engelliyor;
+	// v0.8.316'nın ardışık okuma için düzelttiği tamamlanmamış-kova
+	// hatasının mevsimsel ikizi). Üst sınır çağıranda at−(radius+bucket):
+	// bugünün penceresi tamamen dışarıda, dünün aynı slotu içeride.
 	return fmt.Sprintf(`
 		SELECT service_name, toUnixTimestamp(time_bucket) AS t, %[1]s AS v
 		FROM service_summary_5m
 		WHERE time_bucket >= ?
+		  AND time_bucket < ?
 		  AND %[3]s = ?
 		  AND least(abs(%[2]s - ?), 86400 - abs(%[2]s - ?)) <= ?
 		GROUP BY service_name, t
@@ -1211,13 +1250,25 @@ func (d *Detector) fetchAllSeasonal(ctx context.Context, metric string, at time.
 	targetSod := slotSecondsOfDay(at)         // 5-min-aligned centre of the window
 	radius := neighborBuckets * bucketSeconds // ±window half-width in seconds
 	class := dayClass(at)
+	// v0.9.1052 (Q1) — üst sınır: bugünün yargılanan penceresi (slot
+	// ±radius) ve tamamlanmamış cari kova baseline'a giremez; dünün aynı
+	// slotu (24s−radius uzakta) güvenle içeride kalır.
+	upper := at.Add(-time.Duration(radius+bucketSeconds) * time.Second)
 
-	rows, err := d.store.TelemetryReadConn().Query(ctx, buildAllSeasonalQuery(vexpr), cutoff, class, targetSod, targetSod, radius)
+	rows, err := d.store.TelemetryReadConn().Query(ctx, buildAllSeasonalQuery(vexpr), cutoff, upper, class, targetSod, targetSod, radius)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	out := make(map[string][]float64)
+	// v0.9.1052 (Q2) — gün-çeşitliliği. seasonalMinSamples=4 +
+	// neighbor=3 ile 7 aday kova TEK GÜNDE var: iki günlük yeni bir
+	// servis "mevsimsel" baseline'ı tek günün gürültüsünden kurup MAD'i
+	// dejenere ediyordu — davranış motorunun MinBucketRepeats ile
+	// ÖLÇEREK kapattığı sınıfın (v0.9.957, tek tikte 178 aday) ikizi.
+	// Yetersiz çeşitlilikte servis mevsimselden DÜŞER → chooseBaseline
+	// ardışık pencereye iner.
+	daysSeen := make(map[string]map[int64]struct{})
 	for rows.Next() {
 		var svc string
 		var t uint32
@@ -1226,8 +1277,34 @@ func (d *Detector) fetchAllSeasonal(ctx context.Context, metric string, at time.
 			return nil, err
 		}
 		accumulateSeries(out, svc, v)
+		day := int64(t) / 86400
+		if daysSeen[svc] == nil {
+			daysSeen[svc] = map[int64]struct{}{}
+		}
+		daysSeen[svc][day] = struct{}{}
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	pruneSeasonalByDayDiversity(out, daysSeen, seasonalMinDays)
+	return out, nil
+}
+
+// seasonalMinDays — mevsimsel baseline'ın en az kaç FARKLI günden örnek
+// taşıması gerekir (v0.9.1052, Q2). Davranış motorunun yeterlilik
+// kuralıyla aynı sayı (≥3 farklı gün): tek/iki günün örnekleri "mevsim"
+// değil, o günlerin gürültüsüdür.
+const seasonalMinDays = 3
+
+// pruneSeasonalByDayDiversity — saf, tablo-testli: çeşitliliği yetersiz
+// servislerin mevsimsel serisini haritadan düşürür (ardışık pencereye
+// düşüş chooseBaseline'da kendiliğinden olur).
+func pruneSeasonalByDayDiversity(out map[string][]float64, daysSeen map[string]map[int64]struct{}, minDays int) {
+	for svc := range out {
+		if len(daysSeen[svc]) < minDays {
+			delete(out, svc)
+		}
+	}
 }
 
 // chooseBaseline prefers the seasonal same-slot samples when seasonal mode is

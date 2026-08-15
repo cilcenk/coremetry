@@ -414,6 +414,15 @@ func getProblemRootCauseTool(d Deps) mcp.Tool {
 				"recentDeploy": h.RecentDeploy,
 				"computedAt":   h.ComputedAt,
 			}
+			// v0.9.1061 — temsilî trace MCP'ye de iner. v0.9.1057 kolonu
+			// ekledi ama bu handler struct'ı serialize etmiyor, map'i elle
+			// kuruyor — alan burada anılmadıkça DÜŞÜYOR (canlı doğrulama
+			// yakaladı: CH satırında dolu, MCP gövdesinde yok). get_trace
+			// ile zincirlenebilsin diye problem satırının anahtarıyla aynı
+			// adla.
+			if h.ExemplarTraceID != "" {
+				out["exemplarTraceId"] = h.ExemplarTraceID
+			}
 			// v0.9.520 — P1 soruşturmasının (v0.9.510-516) sonucu serbest
 			// tool döngüsüne de açılıyor. Bunsuz tanınmayan sorular
 			// guided'ın gördüğü kanıtı GÖREMİYORDU: aynı problem, chat

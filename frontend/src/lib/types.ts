@@ -736,8 +736,15 @@ export interface RootCause {
   };
   correlations: ChangedService[];   // always present (possibly empty)
   blastRadius?: BlastRadius;
-  bubbleUp?: BubbleUpResult;        // error problems only
+  // v0.9.1063 — hata problemlerinde aynı-pencere hata alt-kümesi;
+  // gecikme/diğer ailelerde ZAMAN-KAYDIRMALI kıyas (baseline = önceki
+  // eş-boy pencere).
+  bubbleUp?: BubbleUpResult;
   exemplar?: SpanExemplar;
+  // v0.9.1066 (Faz 3.1) — sentezleyicinin kalıcı hipotezi tek pakette
+  // (adaylar+gerekçeler, deploy etkisi, temsilî trace, Deep + "neye
+  // bakıldı" izi). Yok = worker henüz sentezlemedi.
+  hypothesis?: RootCauseHypothesis;
 }
 
 // AnomalyRootCause — the anomaly-anchored sibling of RootCause. The
@@ -784,8 +791,38 @@ export interface RootCauseHypothesis {
     version: string;
     timeUnixNs: number;
     ageSeconds: number;
+    // v0.9.1059 — deploy'un önce/sonra RED kıyası (yalnız hipotez yolu).
+    impact?: DeployImpact;
   };
+  // v0.9.1057 — anchor penceresinin temsilî trace'i.
+  exemplarTraceId?: string;
+  // v0.9.1066 — P1/deploy soruşturmasının kanıtı + denetim izi.
+  deep?: DeepEvidence;
   version: number;
+}
+
+// CheckedSignal — "neye bakıldı" denetim izinin bir satırı (mirrors Go
+// chstore.CheckedSignal). found=false bir kanıt DEĞİLDİR: bakıldı ve
+// bulunamadı demektir — UI bu asimetriyi korumak zorunda.
+export interface CheckedSignal {
+  family: string;
+  found: boolean;
+  detail: string;
+  records: number;
+}
+
+// DeepEvidence — P1/deploy soruşturmasının topladığı kanıt paketi
+// (mirrors Go chstore.DeepEvidence; yalnız panelin okuduğu alanlar —
+// aile dizileri büyük ve şimdilik yalnız checked + sayımlar çizilir).
+export interface DeepEvidence {
+  checked?: CheckedSignal[];
+  exceptions?: unknown[];
+  templates?: unknown[];
+  heap?: unknown[];
+  gcPause?: unknown[];
+  slowOps?: unknown[];
+  business?: Record<string, unknown[]>;
+  codeMeaning?: Record<string, string>;
 }
 
 // RootCauseSummary — the COMPACT slice each /anomalies + /problems list row

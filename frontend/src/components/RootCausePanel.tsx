@@ -210,6 +210,34 @@ export function RootCausePanel({ problemId, service, window: win }: {
           </Link>
         </Section>
       )}
+
+      {/* 6. Neye bakıldı (v0.9.1066, Faz 3.1 / K7) — derin soruşturmanın
+          denetim izi. Bugüne dek yalnız LLM prompt'una ve MCP'ye gidiyordu;
+          operatör "hangi sinyale bakıldı, ne bulundu"yu göremiyordu.
+          found=false bir kanıt DEĞİL, "bakıldı ve bulunamadı"dır — asimetri
+          görsel olarak korunur (soluk satır), aday listesine sızmaz. */}
+      {(rc.hypothesis?.deep?.checked?.length ?? 0) > 0 && (
+        <Section title="Neye bakıldı"
+                 subtitle="derin soruşturmanın denetim izi — bakılan her sinyal ailesi">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+            {rc.hypothesis!.deep!.checked!.map((c, i) => (
+              <div key={i} style={{
+                display: 'flex', alignItems: 'baseline', gap: 8, fontSize: 12,
+                color: c.found ? 'var(--text)' : 'var(--text3)',
+              }}>
+                <span style={{ flex: '0 0 14px', color: c.found ? 'var(--ok)' : 'var(--text3)' }}>
+                  {c.found ? '✓' : '—'}
+                </span>
+                <span style={{ flex: '0 0 120px', fontWeight: 600 }}>{c.family}</span>
+                <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      title={c.detail}>
+                  {c.found ? c.detail : 'bakıldı — kayıt bulunamadı'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
     </div>
   );
 }

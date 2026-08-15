@@ -31,6 +31,14 @@ type RootCause struct {
 	BlastRadius  *chstore.BlastRadius     `json:"blastRadius,omitempty"`
 	BubbleUp     *chstore.BubbleUpResult  `json:"bubbleUp,omitempty"`
 	Exemplar     *chstore.Exemplar        `json:"exemplar,omitempty"`
+	// Hypothesis (v0.9.1066, Faz 3.1 / K6+K7) — sentezleyicinin kalıcı
+	// hipotezi TEK pakette: adaylar+gerekçeler, deploy (ölçülmüş
+	// etkisiyle), temsilî trace ve Deep (P1/deploy soruşturması +
+	// "neye bakıldı" denetim izi). Eskiden ÜÇ paralel hat vardı ve
+	// hiçbir yüzey üçünü birlikte göstermiyordu; en zengin otomatik
+	// kanıt (DeepEvidence) operatöre hiç inmiyordu. nil = worker henüz
+	// sentezlemedi (soft-fail).
+	Hypothesis *chstore.RootCauseHypothesis `json:"hypothesis,omitempty"`
 }
 
 // exemplarKindForMetric maps a problem's breached metric to the exemplar trace
@@ -180,6 +188,14 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 				out.Exemplar = ex
 			}
 		}()
+		// (e) Hipotez — kalıcı satırdan tek FINAL okuma (v0.9.1066).
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if h, e := s.store.GetHypothesis(ctx, "problem", p.ID); e == nil && h != nil {
+				out.Hypothesis = h
+			}
+		}()
 		// (d) Dimension bubble-up. HATA problemlerinde aynı-pencere
 		// alt-küme kıyası (selection = hatalı span'ler — eski davranış
 		// bayt-bayt). v0.9.1063 (Faz 2.2 / K3): GECİKME/diğer ailelerde
@@ -316,6 +332,14 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 				Service: ev.Service, Operation: op, From: started, To: end, Kind: exKind,
 			}); e == nil {
 				out.Exemplar = ex
+			}
+		}()
+		// (e) Hipotez — anomali anchor'ının kalıcı satırı (v0.9.1066).
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if h, e := s.store.GetHypothesis(ctx, "anomaly", ev.ID); e == nil && h != nil {
+				out.Hypothesis = h
 			}
 		}()
 		// (d) Dimension bubble-up. trace_op anomalilerinde aynı-pencere

@@ -194,6 +194,79 @@ func (s *Store) RateGauge(
 	return out, rows.Err()
 }
 
+// CapacityTrendPoint — bir (instance[,subkey]) için 5dk-ortalama doluluk
+// noktası (v0.9.1065, Faz 2.4 / G4 — ETA tahmini girdisi).
+type CapacityTrendPoint struct {
+	TSec  int64
+	Usage float64
+}
+
+// capacityTrendKey — UsageTrend haritasının anahtarı. Subkey ayracı
+// US (unit separator): metrik/attr değerlerinde geçmez.
+func capacityTrendKey(instance, subkey string) string {
+	if subkey == "" {
+		return instance
+	}
+	return instance + "\x1f" + subkey
+}
+
+// CapacityTrendKey — evaluator'ın aynı anahtarı kurabilmesi için dışa
+// açık eş (tek kaynak; iki tarafın ayrı birleştirme kuralı türetmesi
+// v0.9.4 iki-kopya sınıfı olurdu).
+func CapacityTrendKey(instance, subkey string) string { return capacityTrendKey(instance, subkey) }
+
+// UsageTrend — bir doluluk gauge'unun (instance[,subkey]) başına 5dk
+// ortalama serisi (v0.9.1065). ETA tahmini için eğim girdisi: yeni
+// tablo yok, metric_points üzerinde zaman-sınırlı + LIMIT'li tek
+// GROUP BY. attrKey boş = boyutsuz check. Sıra zaman artan (regresyon
+// girdisi sıralı ister).
+func (s *Store) UsageTrend(
+	ctx context.Context, usageMetric, attrKey string, window time.Duration,
+) (map[string][]CapacityTrendPoint, error) {
+	now := time.Now()
+	from := now.Add(-window)
+	subExpr := "''"
+	args := []any{}
+	if attrKey != "" {
+		subExpr = "attr_values[indexOf(attr_keys, ?)]"
+		args = append(args, attrKey)
+	}
+	q := `
+		SELECT
+			` + instanceExpr + ` AS inst,
+			` + subExpr + ` AS subkey,
+			toInt64(toUnixTimestamp(toStartOfFiveMinutes(time))) AS tb,
+			avg(value) AS u
+		FROM metric_points
+		WHERE time >= ? AND time <= ?
+		  AND metric = ?
+		GROUP BY inst, subkey, tb
+		ORDER BY inst, subkey, tb
+		LIMIT 20000
+		SETTINGS max_execution_time = 10`
+	args = append(args, from, now, usageMetric)
+	rows, err := s.telemetryReadConn().Query(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]CapacityTrendPoint{}
+	for rows.Next() {
+		var inst, subkey string
+		var tb int64
+		var u float64
+		if err := rows.Scan(&inst, &subkey, &tb, &u); err != nil {
+			continue
+		}
+		if inst == "" {
+			continue
+		}
+		k := capacityTrendKey(inst, subkey)
+		out[k] = append(out[k], CapacityTrendPoint{TSec: tb, Usage: u})
+	}
+	return out, rows.Err()
+}
+
 // metricExists reports whether ANY point for `metric` landed in the
 // window. The defensive Postgres/MySQL/Redis checks only run when their
 // receiver is actually publishing, so an install with no such receiver

@@ -71,7 +71,13 @@ func (s *Server) throughputMetricName(ctx context.Context) string {
 // özet anahtarda olmasaydı kural eklendikten sonra 30 sn boyunca eski
 // (dışlanmamış) seriler servis edilirdi. Kuralsız kurulumda değer sabit
 // "0", yani anahtar kardinalitesi değişmez.
-func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int, mx string) string {
+// v0.9.1039 (env(a) part 2) — env is the LAST arg on both the cache key
+// and the plan. It hashes into the key so an env-scoped response never
+// cross-poisons the all-env one (v0.5.187); the FILTER stays env-free —
+// env is applied as a query-time conjunct by withEnvFilter right before
+// each rate() call, so the resolved binding (stored identity) and the
+// global picker env compose as an additive AND without double-baking.
+func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int, mx, env string) string {
 	// mdp ANAHTARDA (hash-all-inputs, v0.5.187 sınıfı): farklı nokta
 	// bütçeleri farklı adım → farklı sonuç. panelMaxDataPoints kuantalı
 	// (200px kova) olduğu için kardinalite sınırlı (v0.8.270 disiplini).
@@ -81,12 +87,12 @@ func metricThroughputCacheKey(service, metric, jobLabel string, from, to time.Ti
 	// geldi). Sürümsüz anahtar, rolling deploy sırasında eski zarfı yeni
 	// koda servis ederdi: panel 30 sn boyunca birimsiz çizerdi. Zarf
 	// değişimi anahtar sürümü ister — v0.9.443/458 dersi.
-	return fmt.Sprintf("svc-metric-tput:v2:%s:%s:%s:%s:mdp%d:bd%s:rw%d:mx%s", service, metric, jobLabel, cacheBucket(from, to), mdp, breakdown, rateWin, mx)
+	return fmt.Sprintf("svc-metric-tput:v2:%s:%s:%s:%s:mdp%d:bd%s:rw%d:mx%s:env%s", service, metric, jobLabel, cacheBucket(from, to), mdp, breakdown, rateWin, mx, env)
 }
 
-func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int, mx string) (string, chstore.MetricQueryFilter) {
+func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, mdp int, breakdown string, rateWin int, mx, env string) (string, chstore.MetricQueryFilter) {
 	pattern := chstore.JobServiceRegex(service)
-	key := metricThroughputCacheKey(service, metric, jobLabel, from, to, mdp, breakdown, rateWin, mx)
+	key := metricThroughputCacheKey(service, metric, jobLabel, from, to, mdp, breakdown, rateWin, mx, env)
 	return key, chstore.MetricQueryFilter{
 		Name:        metric,
 		Filters:     []chstore.FilterExpr{{Key: jobLabel, Op: "=~", Values: []string{pattern}}},
@@ -104,6 +110,27 @@ func metricThroughputPlan(service, metric, jobLabel string, from, to time.Time, 
 		GroupBy:       breakdownGroupBy(breakdown),
 		RateWindowSec: rateWin,
 	}
+}
+
+// withEnvFilter — global Topbar env picker as an additive AND conjunct on
+// a metric read (v0.9.1039). deployment.environment resolves via the
+// metric filter compiler (metricPointsWellKnown → metricEnvExpr, which
+// coalesces deployment.environment.name ≥1.27 and the older spelling), so
+// NO schema change: the metric_points res_keys carry it verbatim.
+//
+// Composes correctly with the endpoint's own suffix-derived env
+// (serviceNameAttempts): on a suffix-less service (checkout) it is the
+// only env constraint; on a suffix service (bsa-deposit-uat) it is an
+// extra conjunct on top of the suffix env — redundant when they agree,
+// honestly empty when they disagree. Copies the slice so a stored/base
+// filter is never mutated.
+func withEnvFilter(f chstore.MetricQueryFilter, env string) chstore.MetricQueryFilter {
+	if env == "" {
+		return f
+	}
+	f.Filters = append(append([]chstore.FilterExpr(nil), f.Filters...),
+		chstore.FilterExpr{Key: "deployment.environment", Op: "=", Values: []string{env}})
+	return f
 }
 
 // breakdownGroupBy — panelin kırılım seçenekleri. Yalnız bilinen değerler:
@@ -159,10 +186,18 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		rateWin = 600
 	}
 
+	// v0.9.1039 (env(a) part 2) — global Topbar env picker. Applied as an
+	// additive AND conjunct (withEnvFilter) on every rate() below, so the
+	// metric-derived Throughput tile+chart narrow with the span RED. env
+	// hashes the cache AND binding keys (else env-switch serves a stale
+	// binding — operator directive); the conjunct itself is never stored,
+	// only layered at query time.
+	env := strings.TrimSpace(r.URL.Query().Get("env"))
+
 	// mx: dışlama seti özeti — seri QueryMetricRate'ten geliyor ve o yol
 	// artık kuralları uyguluyor.
 	mx := s.store.MetricExclusions().Digest()
-	key := metricThroughputCacheKey(name, metric, jobLabel, from, to, mdp, breakdown, rateWin, mx)
+	key := metricThroughputCacheKey(name, metric, jobLabel, from, to, mdp, breakdown, rateWin, mx, env)
 	pattern := chstore.JobServiceRegex(name)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		out := map[string]any{
@@ -181,7 +216,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// aşağıdaki tam keşfe düş (ve keşif sonunda yeniden yazılır).
 		// ?metric= ile elle ezme keşif ister — bağ atlanır.
 		if metric == "" && jobLabel == "" {
-			if b := s.loadTputBinding(ctx, name); b != nil {
+			if b := s.loadTputBinding(ctx, name, env); b != nil {
 				if b.None {
 					// Negatif bağ: son tanılama zarfını aynen döndür —
 					// metriksiz servis her 30 sn'de keşif koşturmasın.
@@ -202,7 +237,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 					if b.Instrument == "histogram" {
 						rate = s.store.QueryMetricCountRate
 					}
-					if ser, err := rate(ctx, f, "rate"); err == nil && len(ser) > 0 {
+					if ser, err := rate(ctx, withEnvFilter(f, env), "rate"); err == nil && len(ser) > 0 {
 						out["metric"] = b.Metric
 						out["metricExists"] = true
 						out["instrument"] = b.Instrument
@@ -236,7 +271,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 			// ?metric= ezmesi bağa YAZILMAZ (keşif zaten istenmişti).
 			if metric == "" && jobLabel == "" {
 				if diag, err := json.Marshal(out); err == nil {
-					s.storeTputBinding(ctx, name, tputBinding{None: true, Diag: diag})
+					s.storeTputBinding(ctx, name, env, tputBinding{None: true, Diag: diag})
 				}
 			}
 			return out, nil
@@ -277,8 +312,8 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		var candErrs []string
 		for _, lb := range labels {
 			triedLabels = append(triedLabels, lb)
-			_, f := metricThroughputPlan(name, resolved, lb, from, to, mdp, breakdown, rateWin, mx)
-			ser, err := rate(ctx, f, "rate")
+			_, f := metricThroughputPlan(name, resolved, lb, from, to, mdp, breakdown, rateWin, mx, env)
+			ser, err := rate(ctx, withEnvFilter(f, env), "rate")
 			if err != nil {
 				// v0.9.683 — TEK ADAYIN HATASI TÜM CEVABI ÖLDÜRMESİN.
 				//
@@ -301,7 +336,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 				mf := f
 				matched = &mf
 				// v0.9.719 — bağı kalıcıla: sonraki istekler keşifsiz.
-				s.storeTputBinding(ctx, name, tputBinding{
+				s.storeTputBinding(ctx, name, env, tputBinding{
 					Metric: resolved, Instrument: instrument,
 					Kind: "label", Label: lb, Filters: f.Filters,
 					MatchedBy: lb,
@@ -315,7 +350,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		// Prometheus dünyasında kimlik bir etikette; OTLP dünyasında
 		// kaynak özniteliğinden gelen service_name kolonunda.
 		if matched == nil {
-			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to, mdp, breakdown, rateWin, mx)
+			_, base := metricThroughputPlan(name, resolved, chstore.JobLabelDefault, from, to, mdp, breakdown, rateWin, mx, env)
 			// v0.9.678 — KOLON DA İKİ BİÇİM DENİYOR.
 			//
 			// Operatörün sorusu ("Coremetry ingest ederken env kesiyor
@@ -335,7 +370,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 				svcFilter := base
 				svcFilter.Filters = at.Filters
 				svcFilter.Service = at.Service
-				svcSeries, err2 := rate(ctx, svcFilter, "rate")
+				svcSeries, err2 := rate(ctx, withEnvFilter(svcFilter, env), "rate")
 				if err2 != nil {
 					candErrs = append(candErrs, at.Label()+": "+err2.Error())
 					continue
@@ -349,7 +384,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 				out["envAmbiguous"] = at.EnvAmbiguous
 				mf := svcFilter
 				matched = &mf
-				s.storeTputBinding(ctx, name, tputBinding{
+				s.storeTputBinding(ctx, name, env, tputBinding{
 					Metric: resolved, Instrument: instrument,
 					Kind: "svc", Service: at.Service, Filters: at.Filters,
 					EnvAmbiguous: at.EnvAmbiguous, MatchedBy: at.Label(),
@@ -361,7 +396,7 @@ func (s *Server) getServiceMetricThroughput(w http.ResponseWriter, r *http.Reque
 		if matched == nil && metric == "" && jobLabel == "" {
 			// v0.9.719 — kimlik bulunamadı: negatif bağ (10 dk).
 			if diag, err := json.Marshal(out); err == nil {
-				s.storeTputBinding(ctx, name, tputBinding{None: true, Diag: diag})
+				s.storeTputBinding(ctx, name, env, tputBinding{None: true, Diag: diag})
 			}
 		}
 		if len(candErrs) > 0 {
@@ -631,10 +666,18 @@ const (
 	tputBindNegTTL = 10 * time.Minute
 )
 
-func tputBindKey(service string) string { return "cm:tputbind:v1:" + service }
+// v0.9.1039 (env(a) part 2) — env in the binding key. The stored binding
+// holds env-INDEPENDENT identity (metric/instrument/label/service + base
+// filters, never the env conjunct — that is layered at query time by
+// withEnvFilter). The key is still env-scoped so an env switch can never
+// serve a stale binding (operator directive); v2 because the key shape
+// changed (a v1 all-env binding must not be read as an env-scoped one).
+func tputBindKey(service, env string) string {
+	return "cm:tputbind:v2:" + service + ":" + env
+}
 
-func (s *Server) loadTputBinding(ctx context.Context, service string) *tputBinding {
-	raw, ok, err := s.cache.Get(ctx, tputBindKey(service))
+func (s *Server) loadTputBinding(ctx context.Context, service, env string) *tputBinding {
+	raw, ok, err := s.cache.Get(ctx, tputBindKey(service, env))
 	if err != nil || !ok {
 		return nil
 	}
@@ -645,12 +688,12 @@ func (s *Server) loadTputBinding(ctx context.Context, service string) *tputBindi
 	return &b
 }
 
-func (s *Server) storeTputBinding(ctx context.Context, service string, b tputBinding) {
+func (s *Server) storeTputBinding(ctx context.Context, service, env string, b tputBinding) {
 	ttl := tputBindTTL
 	if b.None {
 		ttl = tputBindNegTTL
 	}
 	if raw, err := json.Marshal(b); err == nil {
-		_ = s.cache.Set(ctx, tputBindKey(service), raw, ttl)
+		_ = s.cache.Set(ctx, tputBindKey(service, env), raw, ttl)
 	}
 }

@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 	"os"
+
+	"github.com/cilcenk/coremetry/internal/chstore"
 )
 
 // v0.9.665 — metrik türevli throughput planlayıcısı.
@@ -26,24 +28,24 @@ func planFixture(t *testing.T) (string, time.Time, time.Time) {
 // ve bu sefer operatör YANLIŞ TRAFİK GRAFİĞİ görürdü.
 func TestMetricThroughputCacheKeyCoversEveryInput(t *testing.T) {
 	svc, from, to := planFixture(t)
-	base, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0")
+	base, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0", "")
 
 	cases := map[string]string{
-		"servis":       mustKey(metricThroughputPlan("other-service", "m1", "job", from, to, 600, "", 180, "0")),
-		"metrik adı":   mustKey(metricThroughputPlan(svc, "m2", "job", from, to, 600, "", 180, "0")),
-		"etiket adı":   mustKey(metricThroughputPlan(svc, "m1", "service_job", from, to, 600, "", 180, "0")),
-		"zaman kovası": mustKey(metricThroughputPlan(svc, "m1", "job", from.Add(-48*time.Hour), to, 600, "", 180, "0")),
+		"servis":       mustKey(metricThroughputPlan("other-service", "m1", "job", from, to, 600, "", 180, "0", "")),
+		"metrik adı":   mustKey(metricThroughputPlan(svc, "m2", "job", from, to, 600, "", 180, "0", "")),
+		"etiket adı":   mustKey(metricThroughputPlan(svc, "m1", "service_job", from, to, 600, "", 180, "0", "")),
+		"zaman kovası": mustKey(metricThroughputPlan(svc, "m1", "job", from.Add(-48*time.Hour), to, 600, "", 180, "0", "")),
 		// v0.9.706 — nokta bütçesi de girdi: farklı mdp farklı adım üretir,
 		// anahtardan düşerse 400px'lik panel 1200px'in sonucunu okur.
-		"nokta bütçesi": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 1200, "", 180, "0")),
+		"nokta bütçesi": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 1200, "", 180, "0", "")),
 		// v0.9.718 — kırılım ve pencere de girdi (hash-all-inputs):
-		"kırılım":       mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "route", 180, "0")),
-		"rate penceresi": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 300, "0")),
+		"kırılım":       mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "route", 180, "0", "")),
+		"rate penceresi": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 300, "0", "")),
 		// v0.9.797 — dışlama seti de girdi: kural eklendiğinde sunucu
 		// WHERE'e NOT match ekliyor, yani AYNI sorgu FARKLI seri döndürüyor.
 		// Özet anahtardan düşerse kural eklendikten sonra 30 sn boyunca
 		// dışlanmamış seriler servis edilir (v0.5.187 sınıfı).
-		"dışlama seti": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "deadbeef")),
+		"dışlama seti": mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "deadbeef", "")),
 	}
 	for name, k := range cases {
 		if k == base {
@@ -52,7 +54,7 @@ func TestMetricThroughputCacheKeyCoversEveryInput(t *testing.T) {
 	}
 
 	// Aynı girdi → aynı anahtar (yoksa önbellek hiç isabet etmez).
-	if again, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0"); again != base {
+	if again, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0", ""); again != base {
 		t.Error("aynı girdi farklı anahtar üretti — önbellek asla isabet etmez")
 	}
 }
@@ -71,7 +73,7 @@ func mustKey(k string, _ any) string { return k }
 //     KALMAMALI; panel artık Explore'un avg yolundan besleniyor.
 func TestMetricThroughputCacheKeyIsEnvelopeVersioned(t *testing.T) {
 	svc, from, to := planFixture(t)
-	k, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0")
+	k, _ := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0", "")
 	if !strings.HasPrefix(k, "svc-metric-tput:v2:") {
 		t.Errorf("zarf sürümü anahtarda değil: %q", k)
 	}
@@ -108,7 +110,7 @@ func TestMetricLatencyPathIsGone(t *testing.T) {
 // eşleşmezdi; grafik sessizce boş kalır, sebebi de görünmezdi.
 func TestMetricThroughputFilterUsesRegexOperator(t *testing.T) {
 	svc, from, to := planFixture(t)
-	_, f := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0")
+	_, f := metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0", "")
 
 	if len(f.Filters) != 1 {
 		t.Fatalf("tek filtre bekleniyordu, alınan %d", len(f.Filters))
@@ -133,7 +135,7 @@ func TestMetricThroughputFilterUsesRegexOperator(t *testing.T) {
 // arar ve farklı etiket kullananlarda özellik sessizce çalışmaz.
 func TestMetricThroughputHonoursCustomJobLabel(t *testing.T) {
 	svc, from, to := planFixture(t)
-	_, f := metricThroughputPlan(svc, "m1", "kubernetes_job", from, to, 600, "", 180, "0")
+	_, f := metricThroughputPlan(svc, "m1", "kubernetes_job", from, to, 600, "", 180, "0", "")
 	if f.Filters[0].Key != "kubernetes_job" {
 		t.Errorf("özel etiket adı filtreye geçmedi: %q", f.Filters[0].Key)
 	}
@@ -143,7 +145,7 @@ func TestMetricThroughputHonoursCustomJobLabel(t *testing.T) {
 // başka bir şey ölçer.
 func TestMetricThroughputFilterCarriesWindowAndName(t *testing.T) {
 	svc, from, to := planFixture(t)
-	_, f := metricThroughputPlan(svc, "http_requests_total", "job", from, to, 600, "", 180, "0")
+	_, f := metricThroughputPlan(svc, "http_requests_total", "job", from, to, 600, "", 180, "0", "")
 	if f.Name != "http_requests_total" {
 		t.Errorf("metrik adı: %q", f.Name)
 	}
@@ -154,6 +156,68 @@ func TestMetricThroughputFilterCarriesWindowAndName(t *testing.T) {
 	// toplam trafiği olduğundan küçük gösterirdi.
 	if f.Aggregation != "sum" {
 		t.Errorf("toplama sum olmalı, alınan %q", f.Aggregation)
+	}
+}
+
+// v0.9.1039 (env(a) part 2) — the metric-derived Throughput tile+chart
+// narrow by the global env picker so they don't stay all-env while the
+// span RED narrows (the ikili-hâl the brief forbids). env must hash BOTH
+// the cache key (v0.5.187) AND the binding key (else an env switch serves
+// a stale binding — operator directive), and it is applied as an additive
+// AND conjunct so it composes with the endpoint's suffix-derived env.
+func TestMetricThroughputCacheKeyCarriesEnv(t *testing.T) {
+	svc, from, to := planFixture(t)
+	key := func(env string) string {
+		return mustKey(metricThroughputPlan(svc, "m1", "job", from, to, 600, "", 180, "0", env))
+	}
+	uat, prep, all := key("uat"), key("prep"), key("")
+	if uat == prep || uat == all || prep == all {
+		t.Fatalf("distinct envs must produce distinct keys: uat=%q prep=%q all=%q", uat, prep, all)
+	}
+	if key("uat") != uat {
+		t.Error("cache key unstable for identical env")
+	}
+}
+
+func TestTputBindKeyCarriesEnv(t *testing.T) {
+	uat, prep, all := tputBindKey("svc", "uat"), tputBindKey("svc", "prep"), tputBindKey("svc", "")
+	if uat == prep || uat == all || prep == all {
+		t.Fatalf("binding key must hash env: uat=%q prep=%q all=%q", uat, prep, all)
+	}
+	// v2 shape (an all-env v1 binding must not read as env-scoped).
+	if !strings.HasPrefix(uat, "cm:tputbind:v2:") {
+		t.Errorf("binding key must be v2-versioned: %q", uat)
+	}
+}
+
+// withEnvFilter is the query-time conjunct. Empty env is a strict no-op;
+// a set env APPENDS deployment.environment (never replaces the identity
+// filter) and never mutates the caller's slice (the endpoint reuses a
+// `base` filter across several serviceNameAttempts).
+func TestWithEnvFilter(t *testing.T) {
+	base := chstore.MetricQueryFilter{
+		Name:    "http.server.duration",
+		Filters: []chstore.FilterExpr{{Key: "job", Op: "=~", Values: []string{"^api-gateway$"}}},
+	}
+
+	if got := withEnvFilter(base, ""); len(got.Filters) != 1 {
+		t.Fatalf("empty env must be a no-op, got %d filters", len(got.Filters))
+	}
+
+	out := withEnvFilter(base, "uat")
+	if len(out.Filters) != 2 {
+		t.Fatalf("env must append a conjunct: got %d filters", len(out.Filters))
+	}
+	if len(base.Filters) != 1 {
+		t.Fatal("withEnvFilter mutated the caller's slice — a shared base would leak env across attempts")
+	}
+	env := out.Filters[1]
+	if env.Key != "deployment.environment" || env.Op != "=" || len(env.Values) != 1 || env.Values[0] != "uat" {
+		t.Errorf("unexpected env conjunct: %+v", env)
+	}
+	// The identity filter survives — env is additive, not a replacement.
+	if out.Filters[0].Key != "job" {
+		t.Errorf("identity filter dropped: %+v", out.Filters[0])
 	}
 }
 

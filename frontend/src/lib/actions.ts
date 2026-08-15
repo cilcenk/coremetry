@@ -88,6 +88,29 @@ export type Action = {
 // guaranteed string by the palette UI, so the cast is safe.
 const txt = (v: ParamValue): string => typeof v === 'string' ? v : '';
 
+// savedViewPage — pathname → SavedViewsBar page anahtarı (v0.9.1048,
+// Faz 0.7; tablo-testli). TEK otorite bar mount'larıdır: bir rota
+// burada yoksa o sayfada şerit yok demektir ve kayıt YAZILMAMALIDIR —
+// pathname'den türetme 31 rotada görünmez kayıt üretiyordu, ve
+// /databases/slow-queries "databases/slow-queries" yazarken bar
+// "slowqueries" okuyordu. Yeni bar mount'u ekleyen bu haritaya da
+// satır ekler (savedViewPage.test.ts mount listesiyle karşılaştırır).
+export function savedViewPage(pathname: string): string | null {
+  const MAP: Record<string, string> = {
+    '/traces': 'traces',
+    '/logs': 'logs',
+    '/explore': 'explore',
+    '/inbox': 'inbox',
+    '/endpoints': 'endpoints',
+    '/databases': 'databases',
+    '/databases/slow-queries': 'slowqueries',
+    '/messaging': 'messaging',
+    '/problems': 'problems',
+    '/anomalies': 'anomalies',
+  };
+  return MAP[pathname.replace(/\/+$/, '') || '/'] ?? null;
+}
+
 export const ACTIONS: Action[] = [
   {
     id: 'ack-problem',
@@ -169,10 +192,19 @@ export const ACTIONS: Action[] = [
       // Derive page + queryString from the current URL so the
       // operator gets "save THIS slice" without needing extra
       // params. saved_views table is per-(page,owner).
-      const page = window.location.pathname.replace(/^\//, '') || 'home';
+      //
+      // v0.9.1048 (Faz 0.7) — page anahtarı artık HARİTADAN gelir.
+      // Eskiden pathname'den türetiliyordu: SavedViewsBar'ı olmayan 31
+      // rotada görüntülenemeyen kayıt yazıyordu ve /databases/slow-queries
+      // için "databases/slow-queries" yazarken bar "slowqueries" okuyordu
+      // — "kaydedildi" diyor, kayıt hiçbir yerde görünmüyordu.
+      const page = savedViewPage(window.location.pathname);
+      if (!page) {
+        throw new Error('This page has no saved-views bar — the view would be invisible. Open one of: Traces, Logs, Explore, Inbox, Endpoints, Databases, Slow queries, Messaging, Problems, Anomalies.');
+      }
       const queryString = window.location.search.replace(/^\?/, '');
       await api.createSavedView({ name: trimmed, page, queryString });
-      return `Saved view "${trimmed}" on /${page}`;
+      return `Saved view "${trimmed}" on ${window.location.pathname}`;
     },
   },
   {

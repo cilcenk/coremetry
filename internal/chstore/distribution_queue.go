@@ -376,13 +376,15 @@ func DistributionVerdict(st DistributionState, cur, prev *DistributionQueue) Dis
 		return DistributionState{Detail: depth + "; trend henüz ölçülmedi."}
 	case cur.Files > prev.Files:
 		return DistributionState{Degraded: true, Detail: depth +
-			fmt.Sprintf("; BÜYÜYOR (%s → %s). ClickHouse INSERT'i kabul edip "+
-				"diske spool'luyor ama arka plan göndericisi *_local'a basamıyor: "+
-				"uygulama 'yazdım' sanıyor, veri inmiyor.",
-				fmtCount(prev.Files), fmtCount(cur.Files)) + lastErrorHint(cur.Tables)}
+			fmt.Sprintf("; BÜYÜYOR (%s → %s)", fmtCount(prev.Files), fmtCount(cur.Files)) +
+			distributionDrainNote(cur, prev) +
+			". ClickHouse INSERT'i kabul edip diske spool'luyor ama arka plan " +
+			"göndericisi *_local'a basamıyor: uygulama 'yazdım' sanıyor, veri " +
+			"inmiyor." + lastErrorHint(cur.Tables)}
 	case cur.Files < prev.Files:
-		return DistributionState{Detail: depth + fmt.Sprintf("; drene oluyor (%s → %s).",
-			fmtCount(prev.Files), fmtCount(cur.Files))}
+		return DistributionState{Detail: depth +
+			fmt.Sprintf("; drene oluyor (%s → %s)", fmtCount(prev.Files), fmtCount(cur.Files)) +
+			distributionDrainNote(cur, prev) + "."}
 	case cur.ErrorCount > 0:
 		return DistributionState{Degraded: true, Detail: depth +
 			fmt.Sprintf("; SABİT (%s) ve gönderim hatası var (%s hata). Kuyruk ne "+
@@ -402,15 +404,142 @@ func distributionTrendNote(cur, prev *DistributionQueue) string {
 	}
 	switch {
 	case cur.Files > prev.Files:
-		return fmt.Sprintf("; BÜYÜYOR (%s → %s)", fmtCount(prev.Files), fmtCount(cur.Files))
+		return fmt.Sprintf("; BÜYÜYOR (%s → %s)", fmtCount(prev.Files), fmtCount(cur.Files)) +
+			distributionDrainNote(cur, prev)
 	case cur.Files < prev.Files:
 		// Flap'in kaynağı buydu: 44.320 → 44.318 "drene oluyor" sayılıp
 		// sinyali OK'a çeviriyordu. Artık yalnızca bir NOT.
+		//
+		// v0.9.1038 — ETA tam da BURADA en çok işe yarıyor: "azalıyor"
+		// tek başına rahatlatıcı okunuyordu; "≥2 gün 20 sa" o rahatlamayı
+		// hak edilmiş hâle getiriyor (ya da yıkıyor).
 		return fmt.Sprintf("; azalıyor (%s → %s) ama hâlâ mutlak tabanın (%s dosya) ÜSTÜNDE",
-			fmtCount(prev.Files), fmtCount(cur.Files), fmtCount(distributedBacklogAlarm))
+			fmtCount(prev.Files), fmtCount(cur.Files), fmtCount(distributedBacklogAlarm)) +
+			distributionDrainNote(cur, prev)
 	default:
 		return fmt.Sprintf("; SABİT (%s)", fmtCount(cur.Files))
 	}
+}
+
+// spoolETACeilingDays — bunun ötesindeki bir tahmin sayı olmaktan çıkar.
+//
+// Drenaj hızı sıfıra yaklaştıkça ETA sonsuza gider: 44 bin dosyalık bir
+// spool'da iki ölçüm arasında 1 dosya erimesi "≥14 yıl" gibi teknik
+// olarak doğru ama OKUNMAZ bir sayı üretir. Böyle bir sayı operatöre
+// hiçbir şey söylemez; söylenmesi gereken şey "bu hızla kapanmıyor".
+const spoolETACeilingDays = 99
+
+// distributionDrainNote — kıyaslanabilir iki ardışık ölçümden NET drenaj
+// hızı ve o hızla kalan süre. Boş dönüş = "yön/hız söylenemez".
+//
+// v0.9.1038 — operatörün spool arızasında sorduğu ikinci soru "eriyor mu"
+// DEĞİL (onu v0.9.987 zaten söylüyor), "NE ZAMAN biter". 2026-08-12
+// arızasında bu soru elle hesaplanmıştı: 18.9k dosya × ~5 sn/dosya ≈ 10
+// saat. Aynı aritmetik artık sinyalin kendisinde.
+//
+// KAPSAM KİLİDİ AYNEN (v0.9.986 / [[fallback-must-carry-scope]]): küme
+// geneli bir ölçümle yalnız-bu-düğüm ölçümü kıyaslanmaz. 41.274 (küme)
+// → 19.020 (yerel) farkı "saniyede 2000 dosya eriyor, 10 sn'de biter"
+// gibi tamamen uydurma bir ETA üretirdi — v0.5.187 sınıfı hata.
+//
+// Tek örneklemde ETA YOKTUR: hız iki noktadan çıkar, bir noktadan değil.
+// Bu dal mevcut "yön henüz ölçülmedi" dilini olduğu gibi bırakır.
+//
+// Hız NET'tir (gelen − giden): ölçülen tek şey derinlik farkı. Bu bir
+// eksiklik değil, doğru büyüklük — operatörün sorduğu "kuyruk ne zaman
+// kapanır" sorusunun cevabı net hızdır, brüt gönderim hızı değil.
+func distributionDrainNote(cur, prev *DistributionQueue) string {
+	if cur == nil || prev == nil || !cur.Measured || !prev.Measured ||
+		prev.Partial != cur.Partial {
+		return ""
+	}
+	// Generated iki ölçümün gerçek zaman damgası. Eşit ya da geri giden
+	// bir saat (aynı örnek, saat ayarı) hız üretemez — sessizce boş.
+	elapsed := float64(cur.Generated-prev.Generated) / 1e9
+	if elapsed <= 0 {
+		return ""
+	}
+	// + = eriyor, − = birikiyor. int64'e ÇEVİRMEDEN uint64 çıkarması
+	// yapılamaz: büyüyen kuyrukta prev-cur sarmalanıp devasa bir "erime"
+	// üretirdi.
+	delta := float64(prev.Files) - float64(cur.Files)
+	switch {
+	case delta > 0:
+		if cur.Files == 0 {
+			return "" // zaten boş; "ne zaman biter" sorusu yok
+		}
+		perSec := delta / elapsed
+		return "; bu hızla boşalması ≥" +
+			fmtSpoolETA(float64(cur.Files)/perSec) + " sürer"
+	case delta < 0:
+		return "; birikiyor (" + fmtSpoolRate(-delta/elapsed) + ")"
+	default:
+		return ""
+	}
+}
+
+// fmtSpoolETA — saniye → okunur süre. İKİ birim, daha fazlası değil:
+// "2 gün 20 sa" yeterli, "2 gün 20 sa 13 dk 4 sn" tahminin taşımadığı
+// bir kesinlik iddia eder.
+//
+// Tavanın üstünde SAYI VERMEZ (bkz. spoolETACeilingDays).
+func fmtSpoolETA(sec float64) string {
+	if sec <= 0 {
+		return "0 sn"
+	}
+	if sec >= float64(spoolETACeilingDays)*86400 {
+		return fmt.Sprintf("%d gün (bu hızla pratikte kapanmıyor)", spoolETACeilingDays)
+	}
+	total := int64(sec + 0.5)
+	switch {
+	case total < 60:
+		return fmt.Sprintf("%d sn", total)
+	case total < 3600:
+		m, s := total/60, total%60
+		if s == 0 {
+			return fmt.Sprintf("%d dk", m)
+		}
+		return fmt.Sprintf("%d dk %d sn", m, s)
+	case total < 86400:
+		h, m := total/3600, (total%3600)/60
+		if m == 0 {
+			return fmt.Sprintf("%d sa", h)
+		}
+		return fmt.Sprintf("%d sa %d dk", h, m)
+	default:
+		d, h := total/86400, (total%86400)/3600
+		if h == 0 {
+			return fmt.Sprintf("%d gün", d)
+		}
+		return fmt.Sprintf("%d gün %d sa", d, h)
+	}
+}
+
+// fmtSpoolRate — dosya/saniye → okunur birikme hızı.
+//
+// Birim SEÇİLİR, sabitlenmez: dakikada 0.3 dosya "+0.3 dosya/dk" olarak
+// okunmaz (yuvarlanınca 0 görünür ve "birikmiyor" gibi okunur), saatte
+// 18 dosya olarak okunur. v0.6.36 dersi: değer+birim taşıyan her şablon
+// HER BİRİMİ test etmek zorunda.
+func fmtSpoolRate(perSec float64) string {
+	perMin := perSec * 60
+	if perMin >= 1 {
+		return "+" + trimRate(perMin) + " dosya/dk"
+	}
+	return "+" + trimRate(perSec*3600) + " dosya/sa"
+}
+
+// trimRate — 10 ve üstünde tam sayı, altında tek ondalık. Sağlık
+// metninde "+109.4 dosya/dk"nın ondalığı gürültü, "+0.4"unki bilgi.
+//
+// problem.go'daki trimFloat DEĞİL: o tam kesinliği yazıyor
+// (strconv 'f', -1) çünkü orada sayı bir EŞİK — operatörün girdiği
+// değer aynen görünmeli. Burada sayı bir ÖLÇÜM ve kesinliği sahte.
+func trimRate(v float64) string {
+	if v >= 10 {
+		return fmt.Sprintf("%.0f", v)
+	}
+	return strings.TrimSuffix(fmt.Sprintf("%.1f", v), ".0")
 }
 
 // distributionImproving — bu ölçüm bir İYİLEŞME adımı sayılır mı?

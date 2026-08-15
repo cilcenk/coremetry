@@ -171,4 +171,30 @@ func (r *Recorder) tick(ctx context.Context) {
 			log.Printf("[anomaly-recorder] upsert trace-op %s/%s: %v", a.Service, a.Operation, err)
 		}
 	}
+
+	// ── Operasyon-gecikme anomalileri (v0.9.1064, Faz 2.3 / G5) ──────
+	// trace_ops yalnız hata sayar; bu dedektör p99 sıçramasını yakalar
+	// ("hangi endpoint yavaşladı" bugüne dek cevapsızdı). Ratio = p99
+	// oranı; CurrentCount = cari çağrı hacmi (terfi kapılarının hacim
+	// sezgisiyle uyumlu); Sample = en yavaş cari span'in trace'i.
+	latHits, err := DetectOpLatencyAnomalies(ctx, r.store, r.window)
+	if err != nil {
+		log.Printf("[anomaly-recorder] op latency: %v", err)
+	}
+	for _, a := range latHits {
+		ev := chstore.AnomalyEvent{
+			ID:           chstore.FingerprintAnomaly("trace_op_latency", a.Operation, a.Service),
+			Kind:         "trace_op_latency",
+			Pattern:      a.Operation,
+			Service:      a.Service,
+			StartedAt:    now.UnixNano(),
+			LastSeen:     a.LastSeenNs,
+			CurrentRatio: a.Ratio,
+			CurrentCount: a.CurCalls,
+			Sample:       a.SampleTraceID,
+		}
+		if err := r.store.UpsertAnomalyEvent(ctx, ev); err != nil {
+			log.Printf("[anomaly-recorder] upsert op-latency %s/%s: %v", a.Service, a.Operation, err)
+		}
+	}
 }

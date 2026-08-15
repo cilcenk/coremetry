@@ -45,6 +45,88 @@ const (
 	capacityHysteresisPct = 2.0
 )
 
+// ── ETA tahmini (v0.9.1065, Faz 2.4 / G4) ──────────────────────────────
+// Sabit %90 eşiği gece 3'te patlar; Davis'in en görünür yeteneği "X saat
+// sonra dolacak". Pencere-içi doğrusal regresyon (eğim + R²) mevcut
+// metric_points serisi üstünde — yeni tablo yok. Muhafazakâr kapılar:
+// zayıf uyum (R²<0.6) ya da uzak ufuk (>24h) tahmin ÜRETMEZ; erken-açma
+// yalnız %70+ doluluk ve ≤6h ufukta, warning olarak.
+const (
+	capacityEtaWindow    = 2 * time.Hour
+	capacityEtaMinPoints = 6
+	capacityEtaMinSpanS  = 30 * 60
+	capacityEtaMinR2     = 0.6
+	capacityEtaMaxHours  = 24.0
+	capacityEtaMinPct    = 70.0
+	capacityEtaOpenHours = 6.0
+)
+
+// capacityETA — saf regresyon çekirdeği (tablo-testli). points zaman
+// artan sıralı 5dk-ortalama doluluk; limit pozitif. ok=false: tahmin
+// yok (kısa seri, düşmeyen/duran eğim, zayıf uyum ya da >24h ufuk).
+// ETA, regresyon doğrusunun SON noktadaki değerinden limit'e kalan
+// süredir — cari gürültülü örnek yerine uydurulmuş değer.
+func capacityETA(points []chstore.CapacityTrendPoint, limit float64) (etaHours, r2 float64, ok bool) {
+	n := len(points)
+	if n < capacityEtaMinPoints || limit <= 0 {
+		return 0, 0, false
+	}
+	if points[n-1].TSec-points[0].TSec < capacityEtaMinSpanS {
+		return 0, 0, false
+	}
+	// Doğrusal regresyon (x=saniye, taşmaya karşı ilk noktaya göre).
+	x0 := points[0].TSec
+	var sx, sy, sxx, sxy float64
+	for _, p := range points {
+		x := float64(p.TSec - x0)
+		sx += x
+		sy += p.Usage
+		sxx += x * x
+		sxy += x * p.Usage
+	}
+	fn := float64(n)
+	den := fn*sxx - sx*sx
+	if den == 0 {
+		return 0, 0, false
+	}
+	slope := (fn*sxy - sx*sy) / den // birim/saniye
+	if slope <= 0 {
+		return 0, 0, false
+	}
+	intercept := (sy - slope*sx) / fn
+	// R² = 1 − SSres/SStot.
+	meanY := sy / fn
+	var ssRes, ssTot float64
+	for _, p := range points {
+		x := float64(p.TSec - x0)
+		fit := intercept + slope*x
+		ssRes += (p.Usage - fit) * (p.Usage - fit)
+		ssTot += (p.Usage - meanY) * (p.Usage - meanY)
+	}
+	if ssTot == 0 {
+		return 0, 0, false // düz seri — eğim iddiası kurulamaz
+	}
+	r2 = 1 - ssRes/ssTot
+	if r2 < capacityEtaMinR2 {
+		return 0, r2, false
+	}
+	lastFit := intercept + slope*float64(points[n-1].TSec-x0)
+	if lastFit >= limit {
+		return 0, r2, false // zaten limitte — eşik dalı konuşur
+	}
+	etaHours = (limit - lastFit) / slope / 3600
+	if etaHours > capacityEtaMaxHours {
+		return 0, r2, false
+	}
+	return etaHours, r2, true
+}
+
+// capacityPredictiveOpen — erken-açma kapısı (saf): eşik dalı açmadıysa
+// bile %70+ doluluk ve ≤6h ufukta warning açılır.
+func capacityPredictiveOpen(pct, etaHours float64) bool {
+	return pct >= capacityEtaMinPct && etaHours <= capacityEtaOpenHours
+}
+
 // capacityCheck describes one saturation check: how to read it and how to
 // label the resulting Problem. read() returns the per-instance samples;
 // the evaluator turns each into open/resolve. rate=true means the sample's
@@ -60,6 +142,11 @@ type capacityCheck struct {
 	// Oracle checks — the primary banking-DB integration).
 	probe string
 	read  func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error)
+	// trendMetric/trendAttr (v0.9.1065) — ETA tahmininin okuyacağı
+	// doluluk gauge'u. Boş = tahmin yok (rate check'leri: eğimden dolma
+	// süresi türetilemez).
+	trendMetric string
+	trendAttr   string
 }
 
 // capacityChecks is the full catalogue. The Oracle checks always run (the
@@ -71,17 +158,20 @@ var capacityChecks = []capacityCheck{
 	// Oracle tablespace usage — dimensioned by tablespace_name. The #1
 	// reason an Oracle instance falls over.
 	{id: "oracle-tablespace", label: "tablespace", dbsys: "ORACLE",
+		trendMetric: "oracledb.tablespace_size.usage", trendAttr: "tablespace_name",
 		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
 			return st.DimensionedUsageLimit(ctx,
 				"oracledb.tablespace_size.usage", "oracledb.tablespace_size.limit", "tablespace_name")
 		}},
 	// Oracle sessions usage/limit.
 	{id: "oracle-sessions", label: "sessions", dbsys: "ORACLE",
+		trendMetric: "oracledb.sessions.usage",
 		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
 			return st.UsageLimit(ctx, "oracledb.sessions.usage", "oracledb.sessions.limit")
 		}},
 	// Oracle processes usage/limit.
 	{id: "oracle-processes", label: "processes", dbsys: "ORACLE",
+		trendMetric: "oracledb.processes.usage",
 		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
 			return st.UsageLimit(ctx, "oracledb.processes.usage", "oracledb.processes.limit")
 		}},
@@ -89,11 +179,13 @@ var capacityChecks = []capacityCheck{
 	// ── Defensive (only fire when the receiver is present) ──────────────
 	// Postgres backends / max_connections.
 	{id: "postgres-connections", label: "connections", dbsys: "POSTGRES", probe: "postgresql.backends",
+		trendMetric: "postgresql.backends",
 		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
 			return st.UsageLimit(ctx, "postgresql.backends", "postgresql.connection.max")
 		}},
 	// MySQL connections / max_used_connections.
 	{id: "mysql-connections", label: "connections", dbsys: "MYSQL", probe: "mysql.connection.count",
+		trendMetric: "mysql.connection.count",
 		read: func(ctx context.Context, st *chstore.Store) ([]chstore.CapacitySample, error) {
 			return st.UsageLimit(ctx, "mysql.connection.count", "mysql.max_used_connections")
 		}},
@@ -164,6 +256,16 @@ func capacityReason(c capacityCheck, instance, subkey string, pct float64) strin
 	return b.String()
 }
 
+// capacityReasonETA — capacityReason + tahmin eki (v0.9.1065). Tahmin
+// yoksa çıktı bayt-bayt eski.
+func capacityReasonETA(c capacityCheck, instance, subkey string, pct, etaHours float64, etaOK bool) string {
+	r := capacityReason(c, instance, subkey, pct)
+	if etaOK {
+		r += fmt.Sprintf(" — projected full in ~%.1fh", etaHours)
+	}
+	return r
+}
+
 // capacityRuleID / capacityProblemID build the stable dedup keys. rule_id
 // is per-check; the Problem id additionally carries instance + subkey so a
 // re-fire on the next tick collapses onto the same ReplacingMergeTree row.
@@ -223,8 +325,31 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 			log.Printf("[evaluator] db-capacity read %s: %v", c.id, err)
 			continue
 		}
+		// v0.9.1065 — ETA tahmini: YALNIZ bir örnek %70+'a dayandıysa
+		// trend serisi çekilir (tik başına check başına en çok bir okuma;
+		// sakin filoda sıfır ek maliyet). Rate check'leri tahminsiz.
+		var trend map[string][]chstore.CapacityTrendPoint
+		if c.trendMetric != "" && !c.rate {
+			for _, s := range samples {
+				if s.Limit > 0 && s.Usage/s.Limit*100 >= capacityEtaMinPct {
+					if tr, terr := e.store.UsageTrend(ctx, c.trendMetric, c.trendAttr, capacityEtaWindow); terr == nil {
+						trend = tr
+					} else {
+						log.Printf("[evaluator] db-capacity trend %s: %v", c.id, terr)
+					}
+					break
+				}
+			}
+		}
 		for _, s := range samples {
-			e.reconcileCapacity(ctx, c, s, snap)
+			var etaH float64
+			etaOK := false
+			if trend != nil && s.Limit > 0 {
+				if pts := trend[chstore.CapacityTrendKey(s.Instance, s.Subkey)]; len(pts) > 0 {
+					etaH, _, etaOK = capacityETA(pts, s.Limit)
+				}
+			}
+			e.reconcileCapacity(ctx, c, s, snap, etaH, etaOK)
 		}
 	}
 }
@@ -232,7 +357,7 @@ func (e *Evaluator) evaluateDBCapacity(ctx context.Context) {
 // reconcileCapacity opens / refreshes / resolves the Problem for one
 // sample, mirroring evaluateOne's open/refresh/resolve switch. Dedup is by
 // (rule_id, service) via FindOpenProblem + a stable Problem id.
-func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s chstore.CapacitySample, snap *chstore.OpenProblems) {
+func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s chstore.CapacitySample, snap *chstore.OpenProblems, etaHours float64, etaOK bool) {
 	ruleID := capacityRuleID(c.id)
 	service := capacityService(s.Instance, s.Subkey)
 
@@ -244,6 +369,12 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 	existing := snap.ByID(capacityProblemID(c.id, s.Instance, s.Subkey))
 	hasOpen := existing != nil && existing.ID != ""
 	open, sev, pct := capacityDecision(s.Usage, s.Limit, c.rate, hasOpen)
+	// v0.9.1065 (Faz 2.4) — TAHMİNSEL erken-açma: eşik dalı açmadıysa ama
+	// eğim ≤6h'te dolmayı gösteriyorsa warning aç. Eşik dalı her zaman
+	// kazanır (critical'ı tahmin düşüremez); resolve histerezisi aynen.
+	if !open && etaOK && capacityPredictiveOpen(pct, etaHours) {
+		open, sev = true, "warning"
+	}
 
 	switch {
 	case open && !hasOpen:
@@ -258,7 +389,7 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 			Value:       pct,
 			Threshold:   capacityThreshold(c, sev),
 			Status:      "open",
-			Description: capacityReason(c, s.Instance, s.Subkey, pct),
+			Description: capacityReasonETA(c, s.Instance, s.Subkey, pct, etaHours, etaOK),
 			StartedAt:   now.UnixNano(),
 		}
 		if err := e.store.UpsertProblem(ctx, p); err != nil {
@@ -288,7 +419,7 @@ func (e *Evaluator) reconcileCapacity(ctx context.Context, c capacityCheck, s ch
 		existing.Value = pct
 		existing.Severity = effectiveSeverity(sev, time.Since(time.Unix(0, existing.StartedAt)), e.escalationCfg(ctx))
 		existing.Threshold = capacityThreshold(c, sev)
-		existing.Description = capacityReason(c, s.Instance, s.Subkey, pct)
+		existing.Description = capacityReasonETA(c, s.Instance, s.Subkey, pct, etaHours, etaOK)
 		if err := e.store.UpsertProblem(ctx, *existing); err != nil {
 			log.Printf("[evaluator] db-capacity refresh %s/%s: %v", ruleID, service, err)
 		}

@@ -151,7 +151,9 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 			// zarfını EZER ve JSON `"correlations": null` çıkar; panel
 			// `.correlations.filter` derken çöker (v0.9.836, bubbleUp
 			// ile aynı sınıf).
-			if cs, e := s.store.GetCorrelatedChanges(ctx, started, windowSec, windowSec*4); e == nil && cs != nil {
+			// v0.9.1062 (Faz 2.1) — MV sürümü: pencereler ≥5dk, aggregate
+			// sabit (invariant #3); ham spans taraması tık-yolundan kalktı.
+			if cs, e := s.store.GetCorrelatedChangesMV(ctx, started, windowSec, windowSec*4); e == nil && cs != nil {
 				out.Correlations = cs
 			}
 		}()
@@ -269,7 +271,9 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 			// zarfını EZER ve JSON `"correlations": null` çıkar; panel
 			// `.correlations.filter` derken çöker (v0.9.836, bubbleUp
 			// ile aynı sınıf).
-			if cs, e := s.store.GetCorrelatedChanges(ctx, started, windowSec, windowSec*4); e == nil && cs != nil {
+			// v0.9.1062 (Faz 2.1) — MV sürümü: pencereler ≥5dk, aggregate
+			// sabit (invariant #3); ham spans taraması tık-yolundan kalktı.
+			if cs, e := s.store.GetCorrelatedChangesMV(ctx, started, windowSec, windowSec*4); e == nil && cs != nil {
 				out.Correlations = cs
 			}
 		}()

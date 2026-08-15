@@ -111,62 +111,162 @@ func (s *Store) GetCorrelatedChanges(
 		if err := rows.Scan(&svc, &baseCnt, &curCnt, &baseErr, &curErr, &baseP99, &curP99); err != nil {
 			return nil, err
 		}
-		baseRate := float64(baseCnt) / baseSeconds
-		curRate := float64(curCnt) / curSeconds
-		baseErrRate := safeRate(baseErr, baseCnt)
-		curErrRate := safeRate(curErr, curCnt)
-
-		c := ChangedService{
-			Service:       svc,
-			BaselineRate:  baseRate,
-			CurrentRate:   curRate,
-			BaselineErr:   baseErrRate,
-			CurrentErr:    curErrRate,
-			BaselineP99Ms: baseP99,
-			CurrentP99Ms:  curP99,
-			RateDeltaPct:  pctChange(baseRate, curRate),
-			ErrDeltaPct:   pctChange(baseErrRate, curErrRate),
-			P99DeltaPct:   pctChange(baseP99, curP99),
+		if c, ok := scoreChangedService(svc, baseCnt, curCnt, baseErr, curErr, baseP99, curP99, baseSeconds, curSeconds); ok {
+			out = append(out, c)
 		}
-		// Score: normalise each delta into a "how surprising is
-		// this" magnitude, sum the components.
-		// - Error rate: a 5% absolute jump matters more than a
-		//   5% relative jump, so we use the absolute change.
-		// - Rate: relative pct change with a soft cap (no service
-		//   gets rewarded for going from 0.1 → 1 spans/sec).
-		// - P99: relative pct change.
-		errAbs := math.Abs(curErrRate - baseErrRate) * 100 // points
-		rateAbs := math.Min(200, math.Abs(c.RateDeltaPct))
-		p99Abs := math.Min(200, math.Abs(c.P99DeltaPct))
-		c.Score = errAbs*4 + rateAbs*0.5 + p99Abs*0.5
-
-		// Reasons: render human bullets so the UI is dumb.
-		if errAbs > 1 { // ≥1 percentage point change in error rate
-			c.Reasons = append(c.Reasons,
-				fmtReason("error rate", baseErrRate*100, curErrRate*100, "%", true))
-		}
-		if math.Abs(c.RateDeltaPct) > 25 && (baseCnt+curCnt) > 100 {
-			c.Reasons = append(c.Reasons,
-				fmtReason("rate", baseRate, curRate, "/s", false))
-		}
-		if math.Abs(c.P99DeltaPct) > 25 && (baseCnt+curCnt) > 100 {
-			c.Reasons = append(c.Reasons,
-				fmtReason("P99", baseP99, curP99, "ms", false))
-		}
-		// Skip services with no notable change — they pad the list.
-		if len(c.Reasons) == 0 {
-			continue
-		}
-		out = append(out, c)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
+	return rankChangedServices(out), nil
+}
+
+// scoreChangedService — bir servisin iki-pencere ham sayılarını skorlu
+// ChangedService'e çevirir (v0.9.1062'de saf çıkarıldı: ham-spans ve MV
+// okuyucuları AYNI skorlama/reasons mantığından geçer — iki kopya
+// sürüklenmez; tablo-testli). ok=false: kayda değer değişim yok.
+//
+// Score: normalise each delta into a "how surprising is this"
+// magnitude, sum the components.
+//   - Error rate: a 5% absolute jump matters more than a 5% relative
+//     jump, so we use the absolute change.
+//   - Rate: relative pct change with a soft cap (no service gets
+//     rewarded for going from 0.1 → 1 spans/sec).
+//   - P99: relative pct change.
+func scoreChangedService(
+	svc string,
+	baseCnt, curCnt, baseErr, curErr uint64,
+	baseP99, curP99 float64,
+	baseSeconds, curSeconds float64,
+) (ChangedService, bool) {
+	baseRate := float64(baseCnt) / math.Max(1, baseSeconds)
+	curRate := float64(curCnt) / math.Max(1, curSeconds)
+	baseErrRate := safeRate(baseErr, baseCnt)
+	curErrRate := safeRate(curErr, curCnt)
+
+	c := ChangedService{
+		Service:       svc,
+		BaselineRate:  baseRate,
+		CurrentRate:   curRate,
+		BaselineErr:   baseErrRate,
+		CurrentErr:    curErrRate,
+		BaselineP99Ms: baseP99,
+		CurrentP99Ms:  curP99,
+		RateDeltaPct:  pctChange(baseRate, curRate),
+		ErrDeltaPct:   pctChange(baseErrRate, curErrRate),
+		P99DeltaPct:   pctChange(baseP99, curP99),
+	}
+	errAbs := math.Abs(curErrRate - baseErrRate) * 100 // points
+	rateAbs := math.Min(200, math.Abs(c.RateDeltaPct))
+	p99Abs := math.Min(200, math.Abs(c.P99DeltaPct))
+	c.Score = errAbs*4 + rateAbs*0.5 + p99Abs*0.5
+
+	// Reasons: render human bullets so the UI is dumb.
+	if errAbs > 1 { // ≥1 percentage point change in error rate
+		c.Reasons = append(c.Reasons,
+			fmtReason("error rate", baseErrRate*100, curErrRate*100, "%", true))
+	}
+	if math.Abs(c.RateDeltaPct) > 25 && (baseCnt+curCnt) > 100 {
+		c.Reasons = append(c.Reasons,
+			fmtReason("rate", baseRate, curRate, "/s", false))
+	}
+	if math.Abs(c.P99DeltaPct) > 25 && (baseCnt+curCnt) > 100 {
+		c.Reasons = append(c.Reasons,
+			fmtReason("P99", baseP99, curP99, "ms", false))
+	}
+	// Skip services with no notable change — they pad the list.
+	if len(c.Reasons) == 0 {
+		return ChangedService{}, false
+	}
+	return c, true
+}
+
+// rankChangedServices — skor desc + ilk 20 (saf).
+func rankChangedServices(out []ChangedService) []ChangedService {
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if len(out) > 20 {
 		out = out[:20]
 	}
-	return out, nil
+	return out
+}
+
+// GetCorrelatedChangesMV — GetCorrelatedChanges'in service_summary_5m
+// sürümü (v0.9.1062, Faz 2.1 / K2). Ham okuyucu spans'i tarıyor (LIMIT
+// + 20s cap ile güvenli ama pahalı — tam bu yüzden otomatik sentez
+// hattı onu hiç çağıramıyordu, "ne değişti" yalnız on-demand'de
+// kalıyordu). Pencereler ≥5dk ve aggregate sabit → invariant #3 gereği
+// MV.
+//
+// Kova hizalaması ZORUNLU (pivot-audit dersi): pencere sınırları 5dk
+// grid'e oturtulur, `at`'i içeren kova CARİ tarafa sayılır (kısmi kova
+// baseline'ı kirletmesin). Oran paydaları da hizalanmış saniyeler —
+// yoksa kenar kovası oranı sistematik saptırır. Skorlama/reasons ham
+// okuyucuyla AYNI saf fonksiyondan geçer.
+func (s *Store) GetCorrelatedChangesMV(
+	ctx context.Context, at time.Time, windowSec, baselineSec int,
+) ([]ChangedService, error) {
+	if windowSec <= 0 {
+		windowSec = 600
+	}
+	if baselineSec <= 0 {
+		baselineSec = windowSec * 4
+	}
+	const grid = 5 * time.Minute
+	atB := at.Truncate(grid) // `at` kovası dahil CARİ taraf
+	winTo := at.Add(time.Duration(windowSec) * time.Second)
+	if now := time.Now(); winTo.After(now) {
+		winTo = now
+	}
+	baseFromB := at.Add(-time.Duration(baselineSec) * time.Second).Truncate(grid)
+	if !baseFromB.Before(atB) {
+		baseFromB = atB.Add(-grid)
+	}
+
+	rows, err := s.conn.Query(ctx, `
+		SELECT service_name,
+		       sumIf(cnt, NOT is_cur)  AS base_cnt,
+		       sumIf(cnt, is_cur)      AS cur_cnt,
+		       sumIf(errs, NOT is_cur) AS base_err,
+		       sumIf(errs, is_cur)     AS cur_err,
+		       maxIf(p99, NOT is_cur)  AS base_p99,
+		       maxIf(p99, is_cur)      AS cur_p99
+		FROM (
+			SELECT service_name,
+			       time_bucket >= ? AS is_cur,
+			       countMerge(span_count_state)  AS cnt,
+			       countMerge(error_count_state) AS errs,
+			       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99
+			FROM service_summary_5m
+			WHERE time_bucket >= ? AND time_bucket <= ?
+			GROUP BY service_name, is_cur
+		)
+		GROUP BY service_name
+		HAVING base_cnt + cur_cnt >= 30
+		LIMIT 500
+		SETTINGS max_execution_time = 10`,
+		atB, baseFromB, winTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []ChangedService{}
+	baseSeconds := atB.Sub(baseFromB).Seconds()
+	curSeconds := math.Max(grid.Seconds(), winTo.Sub(atB).Seconds())
+	for rows.Next() {
+		var svc string
+		var baseCnt, curCnt, baseErr, curErr uint64
+		var baseP99, curP99 float64
+		if err := rows.Scan(&svc, &baseCnt, &curCnt, &baseErr, &curErr, &baseP99, &curP99); err != nil {
+			return nil, err
+		}
+		if c, ok := scoreChangedService(svc, baseCnt, curCnt, baseErr, curErr, baseP99, curP99, baseSeconds, curSeconds); ok {
+			out = append(out, c)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return rankChangedServices(out), nil
 }
 
 func safeRate(num, denom uint64) float64 {

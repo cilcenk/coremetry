@@ -2038,6 +2038,13 @@ func (s *Server) getCorrelations(w http.ResponseWriter, r *http.Request) {
 	atBucketed := at.Truncate(time.Minute).Unix()
 	key := fmt.Sprintf("correlate:at=%d:w=%d:b=%d", atBucketed, windowSec, baselineSec)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
+		// v0.9.1062 (Faz 2.1) — pencere ≥5dk ise MV (invariant #3;
+		// evaluator'ın useSummaryMV eşiğiyle aynı mantık); 5dk altı
+		// serbest pencere isteyen çağıran ham yolda kalır (MV 5dk
+		// grid'inde dar pencere tek kovaya yapışır, kıyas anlamsızlaşır).
+		if windowSec >= 300 {
+			return s.store.GetCorrelatedChangesMV(ctx, at, windowSec, baselineSec)
+		}
 		return s.store.GetCorrelatedChanges(ctx, at, windowSec, baselineSec)
 	})
 }

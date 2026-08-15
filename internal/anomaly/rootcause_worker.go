@@ -4,12 +4,40 @@ import (
 	"context"
 	"log"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/cache"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/correlator"
 )
+
+// anchorExemplar — anchor penceresinin temsilî trace'i (v0.9.1057,
+// Faz 1.2). spanmetrics rollup argMax okuması: MV, LIMIT 1, ucuz;
+// tablo yoksa / pencere rollup öncesiyse / örnek yoksa fail-open "".
+// Kind seçimi metrikten: error_rate → hata örneği, gerisi → en yavaş.
+// Pencere [started, now], evidenceWindow'a kıstırılır (worker'ın kendi
+// bakış ufku; sınırsız geçmiş taraması bu yolda da yasak).
+func (s *RootCauseSynthesizer) anchorExemplar(ctx context.Context, service, metric string, startedNs int64, now time.Time) string {
+	from := time.Unix(0, startedNs)
+	if lo := now.Add(-evidenceWindow); from.Before(lo) {
+		from = lo
+	}
+	if !from.Before(now) {
+		from = now.Add(-5 * time.Minute)
+	}
+	kind := chstore.ExemplarSlow
+	if strings.Contains(metric, "error") {
+		kind = chstore.ExemplarError
+	}
+	ex, err := s.store.FindExemplarRollup(ctx, chstore.ExemplarReq{
+		Service: service, From: from, To: now, Kind: kind,
+	})
+	if err != nil || ex == nil {
+		return ""
+	}
+	return ex.TraceID
+}
 
 // RootCauseSynthesizer is the leader-gated background worker that pre-computes
 // + persists a root-cause hypothesis per anchor (rc #2 of the anomaly →
@@ -118,6 +146,15 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 			"anomaly", ev.ID, ev.Service, now.UnixNano(),
 			synthInputForAnomaly(ev, in),
 		)
+		// v0.9.1057 (Faz 1.2 / K5) — temsilî trace hipoteze. trace_op
+		// olayında dedektörün örneği zaten trace id (recorder Sample'a
+		// SampleTraceID yazar); diğerlerinde rollup argMax (MV, ucuz,
+		// fail-open boş).
+		if ev.Kind == "trace_op" && strings.TrimSpace(ev.Sample) != "" {
+			h.ExemplarTraceID = strings.TrimSpace(ev.Sample)
+		} else {
+			h.ExemplarTraceID = s.anchorExemplar(ctx, ev.Service, "", ev.StartedAt, now)
+		}
 		if err := s.store.UpsertHypothesis(ctx, h); err != nil {
 			log.Printf("[rootcause-synth] upsert anomaly %s: %v", ev.ID, err)
 			continue
@@ -146,6 +183,9 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 				"problem", p.ID, p.Service, now.UnixNano(),
 				synthInputForProblem(p, bundle),
 			)
+			// v0.9.1057 (Faz 1.2 / K5) — problemin penceresinden temsilî
+			// trace; metrik hata ailesindeyse hata örneği.
+			h.ExemplarTraceID = s.anchorExemplar(ctx, p.Service, p.Metric, p.StartedAt, now)
 			// v0.9.516 — P1 SORUŞTURMASI ARTIK BURADA. v0.9.510'da
 			// explainer'daydı ama denetim izini KALICI kılmak için
 			// hipotezle aynı satıra yazılması gerekiyordu ve bu satırı

@@ -71,6 +71,12 @@ type RootCauseHypothesis struct {
 	// AYNI teknik: JSON String kolonu — şekil küçük, bütün okunuyor,
 	// alt-alanla sorgulanmıyor.
 	Deep *DeepEvidence `json:"deep,omitempty"`
+	// ExemplarTraceID (v0.9.1057, Faz 1.2 / K5) — anchor penceresinin
+	// temsilî trace'i. trace_op anchor'larında dedektörün örneği
+	// (anomaly_events.sample), diğerlerinde spanmetrics rollup argMax'i
+	// (FindExemplarRollup — MV, ucuz). Boş = bulunamadı; UI/prompt o
+	// zaman bugünküyle aynı.
+	ExemplarTraceID string `json:"exemplarTraceId,omitempty"`
 }
 
 // ScoredCause mirrors correlator.ScoredCause so chstore (the lowest layer) does
@@ -124,7 +130,8 @@ func (s *Store) UpsertHypothesis(ctx context.Context, h RootCauseHypothesis) err
 	}
 	batch, err := s.conn.PrepareBatch(ctx, `INSERT INTO root_cause_hypotheses
 		(anchor_kind, anchor_id, service, computed_at,
-		 top_suspect, top_score, confidence, candidates, recent_deploy, deep_evidence)`)
+		 top_suspect, top_score, confidence, candidates, recent_deploy, deep_evidence,
+		 exemplar_trace_id)`)
 	if err != nil {
 		return err
 	}
@@ -133,6 +140,7 @@ func (s *Store) UpsertHypothesis(ctx context.Context, h RootCauseHypothesis) err
 		time.Unix(0, computedAt),
 		h.TopSuspect, h.TopScore, h.Confidence,
 		string(cands), deploy, deep,
+		h.ExemplarTraceID,
 	); err != nil {
 		return err
 	}
@@ -158,7 +166,7 @@ func (s *Store) GetHypothesis(ctx context.Context, anchorKind, anchorID string) 
 		SELECT anchor_kind, anchor_id, service,
 		       computed_at,
 		       top_suspect, top_score, confidence,
-		       candidates, recent_deploy, deep_evidence, version
+		       candidates, recent_deploy, deep_evidence, exemplar_trace_id, version
 		FROM root_cause_hypotheses FINAL
 		WHERE anchor_kind = ? AND anchor_id = ?
 		LIMIT 1`,
@@ -168,7 +176,7 @@ func (s *Store) GetHypothesis(ctx context.Context, anchorKind, anchorID string) 
 		&h.AnchorKind, &h.AnchorID, &h.Service,
 		&computedAt,
 		&h.TopSuspect, &h.TopScore, &h.Confidence,
-		&candsJSON, &deployJSON, &deepJSON, &h.Version,
+		&candsJSON, &deployJSON, &deepJSON, &h.ExemplarTraceID, &h.Version,
 	); err != nil {
 		// clickhouse-go surfaces an empty result as this exact string (no
 		// typed sentinel) — the same soft no-rows idiom GetAnomalyEvent uses.
@@ -288,7 +296,7 @@ func (s *Store) GetHypotheses(ctx context.Context, anchorKind string, ids []stri
 		SELECT anchor_kind, anchor_id, service,
 		       computed_at,
 		       top_suspect, top_score, confidence,
-		       candidates, recent_deploy, deep_evidence, version
+		       candidates, recent_deploy, deep_evidence, exemplar_trace_id, version
 		FROM root_cause_hypotheses FINAL
 		WHERE anchor_kind = ? AND anchor_id IN (`+strings.Join(holders, ",")+`)`,
 		args...,
@@ -310,7 +318,7 @@ func (s *Store) GetHypotheses(ctx context.Context, anchorKind string, ids []stri
 			&h.AnchorKind, &h.AnchorID, &h.Service,
 			&computedAt,
 			&h.TopSuspect, &h.TopScore, &h.Confidence,
-			&candsJSON, &deployJSON, &deepJSON, &h.Version,
+			&candsJSON, &deployJSON, &deepJSON, &h.ExemplarTraceID, &h.Version,
 		); err != nil {
 			return nil, err
 		}

@@ -5726,7 +5726,9 @@ func (s *Server) spanBubbleUp(w http.ResponseWriter, r *http.Request) {
 		q.Get("filters"), q.Get("dsl"),
 		q.Get("selFilters"), q.Get("selDsl"))
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.BubbleUp(ctx, baseline, selection, from, to)
+		// v0.9.1063 — Explore yolu aynı-pencere alt-küme kıyası (eski
+		// davranış bayt-bayt): iki tarafa da aynı pencere geçer.
+		return s.store.BubbleUp(ctx, baseline, selection, from, to, from, to)
 	})
 }
 

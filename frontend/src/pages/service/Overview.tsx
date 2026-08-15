@@ -7,7 +7,6 @@ import { api } from '@/lib/api';
 import { entryLatencyDSL } from '@/lib/entrySpans';
 import { panelMaxDataPoints, stepForWidth } from '@/lib/chartStep';
 import { encodeFilters } from '@/lib/urlState';
-import { ServiceAnnotationLane } from '@/components/charts/ServiceAnnotationLane';
 import { useServiceDeploys } from '@/lib/queries';
 // ChartLine — throughput memo'sunun taşıyıcı şekli. TİP-ONLY import:
 // ChartCard BİLEŞENİ v0.9.844'te bu sayfadan çıktı (eski motor söküldü),
@@ -866,15 +865,16 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             RED üçlüsü ov-charts-3'ü tam dolduruyor. */}
       </div>
 
-      {/* v0.9.397 (Ş3 yayılım, "sırayla devam") — annotation şeridi
-          Overview'da da: üç RED grafiği aynı x-ekseni paylaşıyor, grid'in
-          altında TEK şerit. Details ile AYNI bileşen + queryKey (sekmeler
-          arası cache paylaşımı). Chart-içi deploy ▼ çizgileri ŞİMDİLİK
-          duruyor — emeklilikleri operatör pilotu canlıda görünce. */}
-      {onZoom && (
-        <ServiceAnnotationLane service={service} fromNs={from} toNs={to}
-          onZoomTo={onZoom} />
-      )}
+      {/* v0.9.1035 (operatör kararı 2026-08-15: "şerit pilot kalksın") —
+          v0.9.397'de buraya yayılan annotation şeridi Overview'dan
+          KALDIRILDI. Pilot canlıda görüldü ve cevap hayır: aynı olaylar
+          zaten chart-İÇİ deploy ▼ çizgileriyle, kendi x-ekseninde ve
+          zoom'la birlikte hareket ederek görünüyor; şerit ikinci bir
+          zaman ekseni + ikinci bir okuma yükü getiriyordu.
+          Chart-içi işaretler HER YERDE kalır — tek desen artık bu.
+          Şerit bileşeni Details sekmesinde YAŞIYOR (pages/Service.tsx),
+          o yüzden dosya/uç silinmedi; oranın kaderi ayrı bir operatör
+          kararı. */}
 
       {/* v0.9.139 — dil-runtime grafikleri (JVM/.NET/Go) Overview'dan "Pods"
           sekmesine taşındı (ServicePodsTab, v0.9.158'de yeniden adlandırıldı).

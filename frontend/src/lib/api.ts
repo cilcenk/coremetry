@@ -27,7 +27,7 @@ import type {
   FilterExpr,
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
-  ExceptionTriageConfig, ProblemPriorityConfig, MetricExclusions, AnomalyTrackedConfig,
+  ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   AnomalySensitivityConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
@@ -941,6 +941,15 @@ export const api = {
     get<ProblemPriorityConfig>(`/api/settings/problem-priority`),
   putProblemPriority: (c: ProblemPriorityConfig) =>
     request<ProblemPriorityConfig>(`/api/settings/problem-priority`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(c),
+    }),
+  // v0.9.1036 — hata-oranı (%) SLO eşiği. GET rol KAPISIZ (kimlikli
+  // herkes): bu bir grafik çizgisi, viewer da görür. PUT admin.
+  getFailureSLO: () =>
+    get<FailureSLOConfig>(`/api/settings/failure-slo`),
+  putFailureSLO: (c: FailureSLOConfig) =>
+    request<FailureSLOConfig>(`/api/settings/failure-slo`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(c),
     }),

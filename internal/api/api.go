@@ -1091,6 +1091,12 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// min-öncelik süzgecini de besliyor (notify/alert_title.go).
 	mux.HandleFunc("GET /api/settings/problem-priority", auth.RequireRole(auth.RoleAdmin, s.getProblemPriority))
 	mux.HandleFunc("PUT /api/settings/problem-priority", auth.RequireRole(auth.RoleAdmin, s.putProblemPriority))
+	// v0.9.1036 — failure-rate (%) SLO eşiği. GET rol KAPISIZ (kimlikli
+	// herkes): bu bir yönetim vidası değil, hata-oranı grafiğindeki
+	// referans ÇİZGİ. Viewer durumu GÖRÜR (invariant 7) — admin'e
+	// kapatmak rolün okunan grafiği değiştirmesi olurdu.
+	mux.HandleFunc("GET /api/settings/failure-slo", s.getFailureSLO)
+	mux.HandleFunc("PUT /api/settings/failure-slo", auth.RequireRole(auth.RoleAdmin, s.putFailureSLO))
 	// v0.9.797 — metrik route dışlamaları. Admin: kural HER operatörün
 	// gördüğü grafiği değiştiriyor (ve dropAtIngest'te veriyi hiç
 	// yazmıyor), yani editor yetkisi yetmez.

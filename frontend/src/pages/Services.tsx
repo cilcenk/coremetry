@@ -24,6 +24,7 @@ import { encodeRange, encodeFilters, buildQuery } from '@/lib/urlState';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { getItem, setItem } from '@/lib/storage';
+import { getPinnedServices, isServicePinned, toggleServicePin } from '@/lib/recentServices';
 import type { Service, SparklineBucket, TimeRange, SpanAgg } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { QueryError } from '@/components/QueryError';
@@ -80,19 +81,28 @@ export default function ServicesPage() {
   // float to the top of the list regardless of sort, then sort
   // applies within both groups. Persists per-browser (per-
   // operator, basically) — no server state needed.
-  const PINNED_KEY = 'coremetry-pinned-services';
+  //
+  // v0.9.1046 (Faz 0.8) — anahtar TEKLEŞTİ. Bu sayfa kendi
+  // 'coremetry-pinned-services' anahtarını yazıyordu; Service detayı +
+  // ⌘K ise recentServices.ts'in 'coremetry.pinnedServices' anahtarını
+  // okuyor. Aynı görünen yıldız iki ayrı depoya gidiyordu: buradan
+  // pinlenen ⌘K'da çıkmıyor, detaydan pinlenen tabloda başa gelmiyordu.
+  // Artık tek kaynak recentServices.ts; eski anahtardaki pinler bir
+  // kez kanonik anahtara taşınır (veri kaybı yok), sonra eski anahtar
+  // silinir.
   const [pinned, setPinned] = useState<Set<string>>(() => {
-    const arr = getItem<string[] | null>(PINNED_KEY, null);
-    return new Set(Array.isArray(arr) ? arr : []);
+    const legacy = getItem<string[] | null>('coremetry-pinned-services', null);
+    if (Array.isArray(legacy) && legacy.length > 0) {
+      for (const name of legacy) {
+        if (typeof name === 'string' && !isServicePinned(name)) toggleServicePin(name);
+      }
+    }
+    try { localStorage.removeItem('coremetry-pinned-services'); } catch { /* private mode */ }
+    return new Set(getPinnedServices());
   });
   const togglePin = (name: string) => {
-    setPinned(prev => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      setItem(PINNED_KEY, [...next]);
-      return next;
-    });
+    toggleServicePin(name);
+    setPinned(new Set(getPinnedServices()));
   };
   // Page-based pagination — 50 services per page, ranked by span
   // count server-side. Prev/Next walk the long tail; no 'Load all'

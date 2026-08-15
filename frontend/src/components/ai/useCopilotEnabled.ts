@@ -8,15 +8,27 @@ import { api } from '@/lib/api';
 // değiştirirse zaten sayfa yenilenir), o yüzden modül düzeyinde
 // cache'leniyor: ilk çağrı bir kez uçar, sonrakiler SENKRON okur —
 // çekmece açılırken "null render" titremesi de böylece kalkar.
-let cached: boolean | null = null;
-let inflight: Promise<boolean> | null = null;
+//
+// v0.9.1037 — cache artık TÜM cevabı tutuyor (yalnız `enabled` bayrağını
+// değil): AI çekmecesinin model çipi aynı cevaptan besleniyor. İkinci bir
+// istek YOK — bir uç, bir fetch, iki okuyucu.
+export interface CopilotConfig {
+  enabled: boolean;
+  /** Yalnız Copilot aktifken gelir; kapalı kurulumda alan hiç yok. */
+  model?: string;
+}
 
-function load(): Promise<boolean> {
+const OFF: CopilotConfig = { enabled: false };
+
+let cached: CopilotConfig | null = null;
+let inflight: Promise<CopilotConfig> | null = null;
+
+function load(): Promise<CopilotConfig> {
   if (cached !== null) return Promise.resolve(cached);
   if (!inflight) {
     inflight = api.copilotConfig()
-      .then(c => { cached = !!c.enabled; return cached; })
-      .catch(() => { cached = false; return false; })
+      .then(c => { cached = { enabled: !!c.enabled, model: c.model }; return cached; })
+      .catch(() => { cached = OFF; return OFF; })
       .finally(() => { inflight = null; });
   }
   return inflight;
@@ -24,17 +36,24 @@ function load(): Promise<boolean> {
 
 // `active=false` iken HİÇ istek atılmaz — kapalı çekmece (ve anonim
 // /public/* sayfaları) boşuna config sormasın.
-export function useCopilotEnabled(active = true): boolean | null {
-  const [enabled, setEnabled] = useState<boolean | null>(() => cached);
+export function useCopilotConfig(active = true): CopilotConfig | null {
+  const [cfg, setCfg] = useState<CopilotConfig | null>(() => cached);
 
   useEffect(() => {
-    if (!active || enabled !== null) return;
+    if (!active || cfg !== null) return;
     let alive = true;
-    void load().then(v => { if (alive) setEnabled(v); });
+    void load().then(v => { if (alive) setCfg(v); });
     return () => { alive = false; };
-  }, [active, enabled]);
+  }, [active, cfg]);
 
-  return active ? enabled : cached;
+  return active ? cfg : cached;
+}
+
+// useCopilotEnabled — çağıranların ezici çoğunluğu yalnız bayrağı
+// istiyor; sözleşme v0.9.477'deki gibi kalıyor (null = henüz bilinmiyor).
+export function useCopilotEnabled(active = true): boolean | null {
+  const cfg = useCopilotConfig(active);
+  return cfg === null ? null : cfg.enabled;
 }
 
 // Testler / hot-reload için: modül cache'ini sıfırla.

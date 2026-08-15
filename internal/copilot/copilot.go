@@ -355,6 +355,27 @@ func (s *Service) Active() bool {
 	return s.provider == ProviderOpenAI && s.baseURL != ""
 }
 
+// ActiveModel returns the configured model id — but ONLY when the
+// Copilot is Active. Kapalı ya da kimliksiz bir kurulumda boş döner.
+//
+// v0.9.1036+ — AI çekmecesinin model çipi bunu okuyor. Ayrı bir metot
+// olmasının nedeni, "yalnız aktifken sızar" kuralının TEK yerde
+// yaşaması: handler'da `if Active() { Snapshot() }` yazmak kuralı
+// çağrı noktasına dağıtırdı ve Snapshot() nil-güvenli DEĞİL (Active()
+// öyle) — s.copilot hiç yapılandırılmamışsa nil'dir.
+//
+// Model adı sır değildir (operatör Helm values'ına yazıyor) ama
+// baseURL/apiKey öyle: bu metot yalnız modeli döndürür, ikisini de
+// taşımaz.
+func (s *Service) ActiveModel() string {
+	if !s.Active() {
+		return ""
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.model
+}
+
 // Explain runs a single Messages/Chat call with the given system +
 // user prompt. Branches on the configured provider. v0.5.162 wraps
 // the dispatch with the AI-observability recorder so every call

@@ -11,7 +11,7 @@ import { ServiceChartsExplainBody } from './ServiceChartsExplainBody';
 import { aiSubjectQuestion, buildExplainContext, drawerFollowups } from './drawerChat';
 import { useAiSubject } from './useAiSubject';
 import { useChatThread } from './useChatThread';
-import { useCopilotEnabled } from './useCopilotEnabled';
+import { useCopilotConfig } from './useCopilotEnabled';
 
 // AIDrawer — uygulamadaki TEK AI açıklama yüzeyi (v0.9.477, onaylı
 // mockup). AppShell'de bir kez mount edilir (CopilotChat / CommandPalette
@@ -26,12 +26,15 @@ export function AIDrawer() {
   const [subject, setSubject] = useAiSubject();
   // Kapalıyken /api/copilot/config'e DOKUNMAZ (anonim /public/* sayfaları
   // dahil hiçbir sayfa boşuna istek atmaz).
-  const enabled = useCopilotEnabled(subject !== null);
+  //
+  // v0.9.1037 — aynı cevaptan model adı da okunuyor (çip için); İKİNCİ
+  // bir istek yok, cache modül düzeyinde ve zaten tüm cevabı tutuyor.
+  const cfg = useCopilotConfig(subject !== null);
   if (!subject) return null;
   // Copilot kapalıyken (veya cevap gelmeden) boş bir kabuk açmak yerine
   // hiç açma — butonlar da zaten görünmüyor, elle yazılmış bir ?ai= linki
   // sessizce yok sayılır.
-  if (enabled !== true) return null;
+  if (cfg?.enabled !== true) return null;
 
   const key = formatAiParam(subject);
   return (
@@ -41,11 +44,35 @@ export function AIDrawer() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700 }}>
             <IconSparkles size={14} /> {aiSubjectTitle(subject)}
           </div>
-          <div className="mono" style={{
-            fontSize: 11, color: 'var(--text3)', marginTop: 2,
-            overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-          }} title={aiSubjectSubtitle(subject)}>
-            {aiSubjectSubtitle(subject)}
+          {/* Meta şeridi: özne + (v0.9.1037) cevabı üreten MODEL.
+              Operatörün ilk sorusu "bunu hangi model yazdı" — cevap
+              Settings'te gömülüydü, açıklamanın yanında değil.
+              YALNIZ model adı yazılır: "yerel" gibi bir konum iddiası
+              YANLIŞ olurdu (prod'da uzak bir uç). Model boşsa (Copilot
+              kapalı / ad yapılandırılmamış) çip HİÇ çizilmez — burada
+              boş bir rozet "bilmiyorum" demenin gürültülü hâli olurdu. */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            marginTop: 2, minWidth: 0,
+          }}>
+            <span className="mono" style={{
+              fontSize: 11, color: 'var(--text3)',
+              overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+            }} title={aiSubjectSubtitle(subject)}>
+              {aiSubjectSubtitle(subject)}
+            </span>
+            {/* `.chip` (statik key/value meta rozeti) — ui/Chip DEĞİL:
+                o atom `onRemove`suz hâlde her zaman bir <button> basar ve
+                tıklanamayan bir rozeti buton yapmak sahte affordance
+                olurdu (Chip.tsx'in kendi kuralı). ProblemDetail/Incident
+                meta satırlarıyla aynı rozet. */}
+            {cfg.model && (
+              <span className="chip" style={{ flexShrink: 0, fontSize: 10.5 }}
+                title="Bu açıklamayı üreten model">
+                <span className="k">model</span>
+                <b className="mono">{cfg.model}</b>
+              </span>
+            )}
           </div>
         </div>
       }>

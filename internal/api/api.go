@@ -8675,8 +8675,33 @@ func (s *Server) putProblemEscalation(w http.ResponseWriter, r *http.Request) {
 // operator flips the "Enable AI Copilot" toggle off even though the
 // creds are still stored. Active() nil-guards internally (s.copilot is
 // nil when no key was ever configured), so no separate nil check.
+//
+// v0.9.1037 — yanıt `model` alanını da taşıyor (AI çekmecesinin model
+// çipi). ÜÇ sınır, üçü de kasıtlı:
+//
+//   - Uç KİMLİK İSTER: auth.SkipPath("/api/copilot/config") false'tur,
+//     yani anonim bir çağıran (public trace / status sayfaları) buradan
+//     hiçbir şey okuyamaz. Model adı bu yüzden "yalnız kimlikli yanıt"
+//     kuralını otomatik sağlar; copilotConfigPublicShapeTest bunu pinler.
+//   - Model YALNIZ Active() iken sızar (copilot.ActiveModel) — kapalı
+//     kurulum boş döner ve çip hiç çizilmez.
+//   - baseURL / apiKey / provider ASLA girmez. Model adı operatörün
+//     Helm values'ında duran bir tanımlayıcı; baseURL bir ADRES,
+//     apiKey bir SIR. Yanıt tipi bu üçünü taşıyamayacak şekilde DAR
+//     yazıldı (getAISettings admin yüzeyi ayrı ve öyle kalıyor).
+type copilotConfigResponse struct {
+	Enabled bool `json:"enabled"`
+	// omitempty: kapalı/modelsiz kurulumda alan hiç görünmez, yani
+	// istemci "boş string mi yoksa yok mu" ayrımını yapmak zorunda
+	// kalmaz — çip yoksa alan da yok.
+	Model string `json:"model,omitempty"`
+}
+
 func (s *Server) copilotConfig(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, map[string]bool{"enabled": s.copilot.Active()})
+	writeJSON(w, copilotConfigResponse{
+		Enabled: s.copilot.Active(),
+		Model:   s.copilot.ActiveModel(),
+	})
 }
 
 // getAISettings returns the current Copilot config minus the actual

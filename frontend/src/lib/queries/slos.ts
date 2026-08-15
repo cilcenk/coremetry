@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import type { SLO, SLORow } from '@/lib/types';
+import type { FailureSLOConfig, SLO, SLORow } from '@/lib/types';
 
 const SLOS_KEY = ['slos'] as const;
 const slosListKey = ['slos', 'list'] as const;
@@ -14,6 +14,22 @@ export function useSLOs() {
     refetchInterval: 60_000,
     // v0.8.462 — 50s < 60s double-fetch aralığı kapandı (v0.4.79 deseni).
     staleTime: 60_000,
+  });
+}
+
+// v0.9.1036 — hata-oranı (%) eşiği blob'u. Bir AYAR, bir zaman serisi
+// değil: refetchInterval YOK (poller bütçesine girmez) ve staleTime 5 dk
+// — operatör Settings'ten değiştirirse zaten kendi sekmesi yenilenir,
+// diğer sekmeler bir sonraki mount'ta yakalar.
+//
+// Hata hâlinde varsayılana düşer, THROW ETMEZ: bir ayar okuması
+// başarısız diye servis grafiği "hata" göstermemeli — çizgi kaybolur,
+// grafik yaşar (blob'un kendisi zaten sunucuda da soft-fail'dir).
+export function useFailureSLO() {
+  return useQuery<FailureSLOConfig>({
+    queryKey: ['settings', 'failure-slo'],
+    queryFn: () => api.getFailureSLO().catch(() => ({ defaultPct: 0 })),
+    staleTime: 300_000,
   });
 }
 

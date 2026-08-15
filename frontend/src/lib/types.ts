@@ -4710,6 +4710,22 @@ export interface ProblemPriorityConfig {
   staleCriticalHours: number;
 }
 
+// v0.9.1036 — failure-rate (%) SLO eşiği (backend:
+// chstore.FailureSLOConfig / system_settings key "failure_slo").
+//
+// Latency SLO'sunun eksik ikizi: hata-oranı grafiğinde yatay bir eşik
+// çizgisi görebilmek bugüne dek o servis için elle bir *availability*
+// SLO'su açmayı gerektiriyordu. Bu blob filo-geneli bir varsayılan (%1)
+// + servis başına override taşıyor. PARALEL ŞEMA DEĞİL: gerçek bir
+// availability SLO'su varsa çizgi ondan gelir ve bu blob konuşmaz —
+// çözümlemenin tek yeri lib/failureSlo.ts.
+export interface FailureSLOConfig {
+  // Filo geneli varsayılan, YÜZDE (1 = %1). 0 = varsayılan çizgi yok.
+  defaultPct: number;
+  // Servis adı → yüzde. Varsayılanı ezer.
+  overrides?: Record<string, number>;
+}
+
 // v0.9.797 — metrik route dışlama kuralı (backend:
 // chstore.MetricExclusionRule / system_settings key "metric_exclusions").
 //

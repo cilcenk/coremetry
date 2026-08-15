@@ -9,7 +9,8 @@ import { TracePeekDrawer } from './TracePeekDrawer';
 import { IconSparkles } from './icons';
 import { Button } from '@/components/ui/Button';
 import { api } from '@/lib/api';
-import { useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
+import { useFailureSLO, useServiceDeploys, useServiceRollouts, useSLOs } from '@/lib/queries';
+import { failureThresholds } from '@/lib/failureSlo';
 import { timeRangeToNs } from '@/lib/utils';
 import { quantizeWidth, stepForWidth } from '@/lib/chartStep';
 import { useContentWidth } from '@/lib/useContentWidth';
@@ -330,8 +331,13 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
   // SLO-derived thresholds for this service. Latency SLOs
   // surface on the P99 panel; availability SLOs surface on
   // the error-rate panel (as the error budget %).
+  //
+  // v0.9.1036 — hata-oranı tarafı artık İKİ BASAMAKLI: burada üretilen
+  // SLO-türevli çizgiler EN ÜST basamak, altında failure_slo blob'u var
+  // (aşağıda). Bu memo'nun çıktısı o yüzden `sloErrorThresholds` —
+  // panele giden nihai değer değil, çözümlemenin girdisi.
   const slosQ = useSLOs();
-  const { latencyThresholds, errorThresholds } = useMemo(() => {
+  const { latencyThresholds, sloErrorThresholds } = useMemo(() => {
     const lat: { value: number; label: string; severity: 'warn' | 'err' }[] = [];
     const err: { value: number; label: string; severity: 'warn' | 'err' }[] = [];
     for (const slo of slosQ.data ?? []) {
@@ -360,9 +366,21 @@ export function ServiceCharts({ service, range, onZoom, onZoomReset, opScope = '
     }
     return {
       latencyThresholds: lat.length > 0 ? lat : undefined,
-      errorThresholds:   err.length > 0 ? err : undefined,
+      sloErrorThresholds: err.length > 0 ? err : undefined,
     };
   }, [slosQ.data, service]);
+
+  // v0.9.1036 — hata-oranı eşiğinin ikinci basamağı: availability SLO'su
+  // OLMAYAN servisler de bir referans çizgisi görür (filo varsayılanı %1
+  // + servis override'ı, system_settings "failure_slo").
+  //
+  // Öncelik ve "SLO varsa blob susar" kuralı failureThresholds'ta —
+  // burada dal YOK, çünkü kuralın testi orada (lib/failureSlo.test.ts) ve
+  // ikinci bir satır-içi kopya sessizce ayrışırdı (v0.9.1024 dersi).
+  const failureSloQ = useFailureSLO();
+  const errorThresholds = useMemo(
+    () => failureThresholds(sloErrorThresholds, failureSloQ.data, service),
+    [sloErrorThresholds, failureSloQ.data, service]);
 
   // Grafana-parite M3 — açık problem pencereleri → chart x-bölgeleri.
   // toSec AÇIK problemde pencere SONUna sabitlenir ('now' her render değişip

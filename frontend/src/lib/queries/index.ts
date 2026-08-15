@@ -52,7 +52,7 @@ export {
   useCreateMonitor, useUpdateMonitor, useDeleteMonitor,
 } from './monitors';
 export {
-  useSLOs, useCreateSLO, useDeleteSLO,
+  useSLOs, useCreateSLO, useDeleteSLO, useFailureSLO,
 } from './slos';
 export { useEventStream } from './eventStream';
 export { useExemplar, useExemplarFetcher } from './spans';

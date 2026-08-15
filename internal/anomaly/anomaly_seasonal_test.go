@@ -91,6 +91,11 @@ func TestSeasonalBaselineSQLShape(t *testing.T) {
 	mustContain := map[string]string{
 		"MV read (not raw spans)": "service_summary_5m",
 		"time-bounded WHERE":      "time_bucket >= ?",
+		// v0.9.1052 (Faz 0.4, Q1) — ÜST SINIR: bugünün yargılanan slot
+		// penceresi ve tamamlanmamış cari kova kendi baseline'ına
+		// giremez (kendini-normalleştirme). Bu satır düşerse mevsimsel
+		// baseline yine kontamine olur.
+		"upper time bound (Q1)": "time_bucket < ?",
 		// v0.8.507 — batched over all services in one pass.
 		"batch grouping": "GROUP BY service_name, t",
 		// v0.8.323 — hour/weekday pinned to UTC on BOTH sides: the Go
@@ -119,9 +124,10 @@ func TestSeasonalBaselineSQLShape(t *testing.T) {
 	if strings.Contains(sql, "service_name = ?") {
 		t.Errorf("batched seasonal SQL must NOT filter by a single service:\n%s", sql)
 	}
-	// Exactly five bind placeholders (cutoff, class, targetSod×2, radius).
-	if n := strings.Count(sql, "?"); n != 5 {
-		t.Errorf("batched seasonal SQL must have 5 bind placeholders, got %d", n)
+	// Exactly six bind placeholders (cutoff, upper, class, targetSod×2,
+	// radius) — v0.9.1052 üst sınırı ekledi.
+	if n := strings.Count(sql, "?"); n != 6 {
+		t.Errorf("batched seasonal SQL must have 6 bind placeholders, got %d", n)
 	}
 }
 

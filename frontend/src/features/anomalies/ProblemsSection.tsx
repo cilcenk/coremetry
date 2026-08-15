@@ -34,6 +34,7 @@ import { api } from '@/lib/api';
 import { fmtFixed, tsLong } from '@/lib/utils';
 import { teamOptionsCI } from '@/lib/teamOptions';
 import { getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
+import { decodeCsvSet, encodeCsvSet } from '@/lib/inboxUrl';
 import { useUrlEnv } from '@/lib/useUrlEnv';
 import { useDataTable, DataTableColgroup, DataTableHead } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -77,6 +78,12 @@ const PROBLEM_COLS: DataTableColumn<Problem>[] = [
 ];
 
 // ProblemsSection — embeds the former /problems page table inline.
+// v0.9.1054 (Faz 0.6) — filtre söz dağarcıkları. decodeCsvSet/encodeCsvSet
+// bu listelere karşı doğrular; URL'e bilinmeyen değer sokulamaz.
+const PROBLEMS_SEV_ALL = ['critical', 'warning', 'info'] as const;
+const PROBLEMS_PRIO_ALL = ['P1', 'P2', 'P3'] as const;
+const PROBLEMS_PRIO_DEFAULT = ['P1', 'P2'] as const;
+
 // Polls via useProblems (30s default), supports status filter +
 // column sort + j/k row nav. Single section per the merged
 // Exceptions page UX.
@@ -84,11 +91,35 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const { user } = useAuth();
   const currentUserEmail = user?.email ?? '';
   const [searchParams, setSearchParams] = useSearchParams();
+  // v0.9.1054 (Faz 0.6) — URL = source of truth, sayfanın TEK ihlali
+  // burasıydı: status/sev/prio localStorage+state'te, owner/sre/cluster
+  // düz state'te yaşıyordu. "Şu P1'lere bak" linki karşı tarafta başka
+  // görünüm açıyordu ve mount'lu SavedViewsBar boş kayıt yazıyordu.
+  // Sözleşme: okuma URL > localStorage tohumu > statik varsayılan;
+  // yazma hem URL'e (replace:true, Inbox setParam deseni) hem
+  // localStorage'a (oturumlar-arası yapışkanlık). Mount'ta URL boşken
+  // tohum varsayılandan farklıysa URL'e yazılır — link her zaman
+  // göründüğünü anlatır.
+  const setParam = (k: string, v: string | null) => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      if (v === null || v === '') p.delete(k); else p.set(k, v);
+      return p;
+    }, { replace: true });
+  };
   // When arriving via ?problem=<id> deep link, broaden the
   // status pivot so the drawer can resolve the row even when
   // it's acknowledged / resolved. Default 'open' otherwise.
-  const [statusFilter, setStatusFilter] = useState<'open' | 'all' | 'resolved'>(
-    searchParams.get('problem') ? 'all' : 'open');
+  const statusFilter: 'open' | 'all' | 'resolved' = (() => {
+    const raw = searchParams.get('status');
+    if (raw === 'open' || raw === 'all' || raw === 'resolved') return raw;
+    return searchParams.get('problem') ? 'all' : 'open';
+  })();
+  const setStatusFilter = (s: 'open' | 'all' | 'resolved') => {
+    // 'open' varsayılandır ve normalde param silinir; ?problem= açıkken
+    // silmek türetilmiş değeri 'all'a düşürürdü — o hâlde açık yazılır.
+    setParam('status', s === 'open' && !searchParams.get('problem') ? null : s);
+  };
   // v0.8.428 (operator-reported): the list stays the CLASSIC sortable
   // table; only the triage surface is the Variant-B full-page detail,
   // driven by ?problem= alone (page-level host reads it; this writes).
@@ -104,65 +135,86 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // them all once they've started fixing.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
-  // Severity filter — multi-select chip row above the table.
-  // Persisted to localStorage so an operator who keeps the
-  // "critical only" filter stays at that scope across page
-  // reloads (typical incident workflow). Default: all three on.
-  const [sevSet, setSevSet] = useState<Set<string>>(() => {
+  // Severity filter — multi-select chip row above the table. URL-backed
+  // (?sev=), localStorage tohumlu ("critical only" tutan operatör
+  // yeniden yüklemede orada kalır). Default: all three on.
+  const sevSeed = useMemo(() => {
     const arr = getItem<string[] | null>(STORAGE_KEYS.problemsSev, null);
-    if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
-    return new Set(['critical', 'warning', 'info']);
-  });
+    return Array.isArray(arr) && arr.length > 0 ? arr : PROBLEMS_SEV_ALL;
+    // Tohum yalnız mount'ta okunur; sonraki yazımlar URL'den akar.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const sevSet = useMemo(
+    () => new Set(decodeCsvSet(searchParams.get('sev'), PROBLEMS_SEV_ALL, sevSeed)),
+    [searchParams, sevSeed]);
   // Priority filter — defaults to P1+P2 so the operator's inbox
-  // surfaces signal first. P3 (steady warnings) is one click
-  // away. Persisted alongside the severity set.
-  const [prioSet, setPrioSet] = useState<Set<string>>(() => {
+  // surfaces signal first. P3 (steady warnings) is one click away.
+  const prioSeed = useMemo(() => {
     const arr = getItem<string[] | null>(STORAGE_KEYS.problemsPrio, null);
-    if (Array.isArray(arr) && arr.length > 0) return new Set(arr);
-    return new Set(['P1', 'P2']);
-  });
-  const togglePrio = (p: string) => {
-    setPrioSet(prev => {
-      const next = new Set(prev);
-      if (next.has(p)) {
-        if (next.size === 1) return prev;
-        next.delete(p);
-      } else {
-        next.add(p);
+    return Array.isArray(arr) && arr.length > 0 ? arr : PROBLEMS_PRIO_DEFAULT;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const prioSet = useMemo(
+    () => new Set(decodeCsvSet(searchParams.get('prio'), PROBLEMS_PRIO_ALL, prioSeed)),
+    [searchParams, prioSeed]);
+  // Mount tohumlama: URL boş ama tohum statik varsayılandan farklıysa
+  // tohum URL'e yazılır — paylaşılan link alıcıda AYNI görünümü açar
+  // (tohum URL'e inmeseydi "kaydedildi/paylaşıldı" görünüm sessizce
+  // alıcının kendi tohumuna düşerdi).
+  useEffect(() => {
+    setSearchParams(prev => {
+      const p = new URLSearchParams(prev);
+      let changed = false;
+      if (!p.has('sev')) {
+        const enc = encodeCsvSet(new Set(sevSeed), PROBLEMS_SEV_ALL, PROBLEMS_SEV_ALL);
+        if (enc) { p.set('sev', enc); changed = true; }
       }
-      setItem(STORAGE_KEYS.problemsPrio, [...next]);
-      return next;
-    });
+      if (!p.has('prio')) {
+        const enc = encodeCsvSet(new Set(prioSeed), PROBLEMS_PRIO_ALL, PROBLEMS_PRIO_DEFAULT);
+        if (enc) { p.set('prio', enc); changed = true; }
+      }
+      return changed ? p : prev;
+    }, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const togglePrio = (p: string) => {
+    const next = new Set(prioSet);
+    if (next.has(p)) {
+      if (next.size === 1) return;
+      next.delete(p);
+    } else {
+      next.add(p);
+    }
+    setItem(STORAGE_KEYS.problemsPrio, [...next]);
+    setParam('prio', encodeCsvSet(next, PROBLEMS_PRIO_ALL, PROBLEMS_PRIO_DEFAULT));
   };
   const toggleSev = (s: string) => {
-    setSevSet(prev => {
-      const next = new Set(prev);
-      if (next.has(s)) {
-        // Don't let the operator clear all three — that
-        // empties the table and looks broken. Last
-        // selected stays on.
-        if (next.size === 1) return prev;
-        next.delete(s);
-      } else {
-        next.add(s);
-      }
-      setItem(STORAGE_KEYS.problemsSev, [...next]);
-      return next;
-    });
+    const next = new Set(sevSet);
+    if (next.has(s)) {
+      // Don't let the operator clear all three — that
+      // empties the table and looks broken. Last
+      // selected stays on.
+      if (next.size === 1) return;
+      next.delete(s);
+    } else {
+      next.add(s);
+    }
+    setItem(STORAGE_KEYS.problemsSev, [...next]);
+    setParam('sev', encodeCsvSet(next, PROBLEMS_SEV_ALL, PROBLEMS_SEV_ALL));
   };
-  // Owner-team / SRE-team filters (v0.8.290) — mirror the Services
-  // page. Plain local state (NOT URL-backed): the page's other
-  // filter axes (status / severity / priority) are all local too, so
-  // URL-backing only these two would diverge; only the triage drawer
-  // (?problem=) is URL-backed here. Empty value = "all", passed to
-  // the server which filters with the same EqualFold / empty-means-
-  // all semantics as /inbox. Options come from the service catalog
-  // (like Services) so the dropdown stays stable when a selection
-  // narrows the server-filtered rows — deriving them from the
-  // already-filtered result would collapse the list to the pick.
-  const [ownerTeam, setOwnerTeam] = useState('');
-  const [sreTeam, setSreTeam] = useState('');
-  const [cluster, setCluster] = useState(''); // v0.9.181 — cluster filtresi (server-side, p.clusters)
+  // Owner-team / SRE-team / cluster filters (v0.8.290 / v0.9.181) —
+  // v0.9.1054'ten beri URL-backed (?owner= / ?sre= / ?cluster=; boş =
+  // "all"). Server aynı EqualFold / empty-means-all semantiğiyle süzer.
+  // Options come from the service catalog (like Services) so the
+  // dropdown stays stable when a selection narrows the server-filtered
+  // rows — deriving them from the already-filtered result would
+  // collapse the list to the pick.
+  const ownerTeam = searchParams.get('owner') ?? '';
+  const setOwnerTeam = (v: string) => setParam('owner', v || null);
+  const sreTeam = searchParams.get('sre') ?? '';
+  const setSreTeam = (v: string) => setParam('sre', v || null);
+  const cluster = searchParams.get('cluster') ?? '';
+  const setCluster = (v: string) => setParam('cluster', v || null);
   const catalogQ = useServicesMetadata();
   // v0.8.330 — case-insensitive team options (see teamOptionsCI).
   const ownerTeamOptions = useMemo(

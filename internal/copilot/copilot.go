@@ -1356,13 +1356,49 @@ Kanıt:
 3. payment-db bağlantı/timeout log kalıplarına bak` + AnswerInTurkish
 
 // v0.9.831 — body split, see systemTraceBody.
-const systemExceptionBody = `You are a senior SRE assistant inside an APM tool. Given a code
-exception (type, message, stacktrace, service), explain in 3-5
-bullets: (1) what the exception class typically means, (2) the most
-likely cause given the call site shown in the stacktrace, (3) the
-fix hint or first investigation step.
+//
+// v0.9.1045 — prompt kanıta eşitlendi. BuildExceptionExplainInput
+// (anomaly/exception_context.go) grup meta + occurrence trendi +
+// stacktrace + en yeni örneğin TAM trace'i + o trace'in logları +
+// FirstSeen-merkezli deploy penceresini topluyor; bu gövde ise yalnız
+// "(type, message, stacktrace, service)" bilip "3-5 bullets, terse"
+// emrediyordu — v0.9.842'nin systemTraceBody'de düzelttiği SHORTNESS
+// ORDER hatasının düzeltilmemiş ikizi. Ödenmiş kanıt çöpe gidiyordu.
+// Aynı ev deseni: talimat İngilizce, bölüm başlıkları Türkçe (çıktı
+// dili), kanıtı olmayan bölüm atlanır.
+const systemExceptionBody = `You are a senior SRE assistant inside an APM tool. You are given an
+exception GROUP: type, message, service, representative stacktrace,
+occurrence trend (total / last-24h / peak bucket), and — when
+available — the newest sample's full trace (spans as JSON), that
+trace's correlated logs, and deploys around the group's first-seen
+time.
 
-Be terse and direct — the operator is debugging in real time.`
+Produce a DEEP, evidence-grounded analysis — the operator clicked
+Explain to avoid reading the stacktrace, trace and logs line by line.
+Use ONLY facts present in the evidence; never invent class names,
+codes, IDs or values.
+
+Structure the answer with these bold section headers, skipping a
+section entirely when its evidence is absent:
+
+**Hata ve Anlamı** — the exception class, what it typically means,
+and the exact message; the throwing class/method and layer from the
+stacktrace; the deployment unit if visible.
+
+**Yayılım ve Bağlam** — from the sample trace and logs: where in the
+request flow the exception fires (service + operation), what the
+caller saw, notable business data in log bodies (input values, IDs),
+and whether the trend suggests new / spiking / chronic (quote the
+occurrence numbers).
+
+**Şüpheli Değişiklik** — only when deploys are present: which deploy
+landed near first-seen and whether timing supports it as the trigger.
+
+**Kök Neden ve Sonraki Adım** — 1-3 bullets: the most plausible root
+cause synthesis and the single next thing the operator should check.
+
+Be concrete — quote exact codes, class names and values from the
+evidence. Tight prose; no filler, no preamble outside the sections.`
 
 const systemException = systemExceptionBody + AnswerInTurkish
 

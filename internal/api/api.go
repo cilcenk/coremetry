@@ -2143,9 +2143,16 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 	if to.IsZero() {
 		to = time.Now()
 	}
+	// v0.9.1039 — global Topbar env picker. Narrows the two span-derived
+	// slots this brief scopes (service KPI → header dot + tile fallback,
+	// operations table) to deploy_env via the raw path. The other slots
+	// (problems / deploys / endpoints) are OUT of the env(a) scope and
+	// stay all-env; env still joins the cache key so the two truths never
+	// cross-poison one bundle entry (v0.5.187 class).
+	env := strings.TrimSpace(q.Get("env"))
 
-	key := fmt.Sprintf("svc-bundle:svc=%s:since=%s:from=%s:to=%s",
-		svc, q.Get("since"), q.Get("from"), q.Get("to"))
+	key := fmt.Sprintf("svc-bundle:svc=%s:since=%s:from=%s:to=%s:env=%s",
+		svc, q.Get("since"), q.Get("from"), q.Get("to"), env)
 	// 60s soft TTL — every slot on this bundle is operator-
 	// curated (catalog, problems, operations summary, deploys)
 	// rather than per-span data; minute-grain freshness is
@@ -2181,10 +2188,25 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			list, err := s.store.GetServicesAggFiltered(ctx, from, to,
-				svc, "spanCount", "desc", 1, 0)
+			// v0.9.1039 — env narrows the service KPI too, so the header
+			// dot + tile fallback agree with the env-scoped RED tiles. The
+			// summary MV carries no deploy_env dim, so a non-empty env takes
+			// the raw-spans path (GetServicesQuery, Env set — the same
+			// servicesUseMV trade-off /api/services makes). NameMatch is a
+			// substring, so the exact-name loop below still selects svc.
+			var list []chstore.ServiceSummary
+			var err error
+			if env != "" {
+				list, err = s.store.GetServicesQuery(ctx, chstore.ServicesQuery{
+					From: from, To: to, NameMatch: svc, Env: env,
+					Sort: "spanCount", Dir: "desc", Limit: 50,
+				})
+			} else {
+				list, err = s.store.GetServicesAggFiltered(ctx, from, to,
+					svc, "spanCount", "desc", 1, 0)
+			}
 			if err != nil {
-				log.Printf("[svc-bundle] services %s: %v", svc, err)
+				log.Printf("[svc-bundle] services %s (env=%q): %v", svc, env, err)
 				return
 			}
 			for i := range list {
@@ -2210,9 +2232,9 @@ func (s *Server) getServiceBundle(w http.ResponseWriter, r *http.Request) {
 
 		go func() {
 			defer wg.Done()
-			ops, err := s.store.GetOperationSummary(ctx, svc, since, from, to, false)
+			ops, err := s.store.GetOperationSummary(ctx, svc, since, from, to, false, env)
 			if err != nil {
-				log.Printf("[svc-bundle] operations %s: %v", svc, err)
+				log.Printf("[svc-bundle] operations %s (env=%q): %v", svc, env, err)
 				return
 			}
 			out.Operations = ops
@@ -8029,9 +8051,9 @@ func (s *Server) svcSpanBreakdown(w http.ResponseWriter, r *http.Request) {
 // pin the normalized-distinctness invariant without a live server.
 // v0.9.60 — compare de anahtarda: prior'lu ve prior'suz yanıt farklı
 // gövdedir; anahtar dışı bırakmak iki modu çapraz-zehirlerdi (v0.5.187).
-func svcOpsCacheKey(svc, since, from, to string, normalized, compare bool) string {
-	return fmt.Sprintf("svc-ops:svc=%s:since=%s:from=%s:to=%s:norm=%t:cmp=%t",
-		svc, since, from, to, normalized, compare)
+func svcOpsCacheKey(svc, since, from, to string, normalized, compare bool, env string) string {
+	return fmt.Sprintf("svc-ops:svc=%s:since=%s:from=%s:to=%s:norm=%t:cmp=%t:env=%s",
+		svc, since, from, to, normalized, compare, env)
 }
 
 func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
@@ -8048,7 +8070,11 @@ func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
 	// v0.9.60 — compare=prior: bir-önceki eş-pencere skalerleri + gölge
 	// serileri (Elastic-parity Operations sekmesi).
 	compare := q.Get("compare") == "prior"
-	key := svcOpsCacheKey(svc, q.Get("since"), q.Get("from"), q.Get("to"), normalized, compare)
+	// v0.9.1039 — global Topbar env picker. Non-empty forces the raw-spans
+	// path (deploy_env conjunct) in GetOperationSummary. MUST hash into the
+	// key: env-scoped and all-env row sets differ (v0.5.187 class).
+	env := strings.TrimSpace(q.Get("env"))
+	key := svcOpsCacheKey(svc, q.Get("since"), q.Get("from"), q.Get("to"), normalized, compare, env)
 	// 30s TTL — operation set changes on deploys (minutes
 	// apart), not seconds. With the SWR tier in cache.go, a
 	// 30s soft TTL still gives 90s of stale-but-usable
@@ -8059,9 +8085,9 @@ func (s *Server) svcOperationSummary(w http.ResponseWriter, r *http.Request) {
 	// would never notice if it was stale.
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		if compare {
-			return s.store.GetOperationSummaryCompared(ctx, svc, since, from, to, normalized)
+			return s.store.GetOperationSummaryCompared(ctx, svc, since, from, to, normalized, env)
 		}
-		return s.store.GetOperationSummary(ctx, svc, since, from, to, normalized)
+		return s.store.GetOperationSummary(ctx, svc, since, from, to, normalized, env)
 	})
 }
 

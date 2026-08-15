@@ -173,7 +173,9 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 			d.Runtime = rt
 
 		case familyOperations:
-			ops, err := store.GetOperationSummary(ctx, p.Service, to.Sub(from), from, to, false)
+			// env "" — anomaly root-cause investigation is env-agnostic
+			// (it explains a Problem's own service across all environments).
+			ops, err := store.GetOperationSummary(ctx, p.Service, to.Sub(from), from, to, false, "")
 			ops = topSlowOps(ops)
 			noteChecked(&d, f, err, len(ops), func() string {
 				return fmt.Sprintf("%d operasyon, en ağırı: %s", len(ops), firstOpName(ops))

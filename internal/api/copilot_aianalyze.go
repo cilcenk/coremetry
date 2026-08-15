@@ -454,7 +454,8 @@ func (s *Server) buildOperationContext(ctx context.Context, service, operation s
 	winSec := span.Seconds()
 	cx := &aiOperationContext{Service: service, Operation: operation, RangeS: int64(winSec)}
 
-	rows, err := s.store.GetOperationSummaryCompared(ctx, service, 0, from, to, false)
+	// env "" — AI analysis explains the whole service, env-agnostic.
+	rows, err := s.store.GetOperationSummaryCompared(ctx, service, 0, from, to, false, "")
 	if err != nil {
 		return cx
 	}

@@ -4,7 +4,8 @@ import { Topbar } from '@/components/Topbar';
 import { Card, LinkButton } from '@/components/ui';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TrendDelta } from '@/components/TrendDelta';
-import { useEndpoints, useEndpointDetail } from '@/lib/queries';
+import { useEndpoints, useEndpointDetail, useOperatorEvents } from '@/lib/queries';
+import { operatorEventsToRegions } from '@/lib/eventRegions';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { usePageZoomRange } from '@/lib/chart/usePageZoomRange';
 import { useUrlEnv } from '@/lib/useUrlEnv';
@@ -59,6 +60,14 @@ export default function EndpointDetailPage() {
   const entry = params.get('entry') === 'rpc' ? 'rpc' : undefined;
   const { range, setRange, handleZoom, handleZoomReset } = usePageZoomRange('1h');
   const { from, to } = useMemo(() => timeRangeToNs(range), [range]);
+  // v0.9.1044 (Ş3 paritesi) — operatör olayları TEK fetch'te; üç RED
+  // karosu aynı chart-içi bölge dizisini paylaşır (eski hâl: karo başına
+  // DOM-overlay EventMarkers = 3 ayrı /api/events isteği).
+  const eventsQ = useOperatorEvents({
+    from, to, service: refObj?.service || undefined, limit: 100,
+  });
+  const eventRegions = useMemo(
+    () => operatorEventsToRegions(eventsQ.data), [eventsQ.data]);
 
   const setCompare = (v: boolean) => setParams(prev => {
     const next = new URLSearchParams(prev);
@@ -177,6 +186,11 @@ export default function EndpointDetailPage() {
         {/* Three RED series — from the row's own sparklines, no extra
             fetch. Absent row ⇒ honest empty tiles, never fabricated
             series (the v0.9.206 rule the modal carried). */}
+        {/* v0.9.1044 (Ş3 paritesi) — operatör olayları artık chart-İÇİ
+            bölge: TEK fetch (aşağıdaki eventsQ), üç karoya aynı regions.
+            Eski hâl karo başına DOM-overlay EventMarkers'tı: 3 ayrı
+            /api/events isteği + grafiğin x-scale'inden habersiz çizgiler
+            (v0.9.396'nın ServiceCharts'ta söktüğü çift-işin ikizi). */}
         <div style={{
           display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
           gap: 12, marginBottom: 12,
@@ -185,7 +199,7 @@ export default function EndpointDetailPage() {
             big={row ? fmtNum(row.calls) : '—'}
             sub={row ? `peak ${fmtNum(Math.max(0, ...(row.sparkline ?? [0])))} / bucket` : 'no row in window'}
             series={series.calls} unit="reqps"
-            service={refObj.service} range={range}
+            range={range} regions={eventRegions}
             emptyLabel={row ? undefined : 'endpoint not in the current window'}
             onZoom={handleZoom} onZoomReset={handleZoomReset} />
           <MetricTile label="Errors" storageKey="errors"
@@ -193,14 +207,14 @@ export default function EndpointDetailPage() {
             sub={row ? `${row.errorRate.toFixed(2)}% rate` : 'no row in window'}
             subCls={row ? (row.errorRate >= 5 ? 'err' : row.errorRate >= 1 ? 'warn' : '') : ''}
             series={series.errors} unit="percent" role="error"
-            service={refObj.service} range={range}
+            range={range} regions={eventRegions}
             emptyLabel={row ? undefined : 'endpoint not in the current window'}
             onZoom={handleZoom} onZoomReset={handleZoomReset} />
           <MetricTile label="P99 latency" storageKey="p99"
             big={row ? `${row.p99Ms.toFixed(0)} ms` : '—'}
             sub={row ? `avg ${row.avgMs.toFixed(0)} ms` : 'no row in window'}
             series={series.p99} unit="ms"
-            service={refObj.service} range={range}
+            range={range} regions={eventRegions}
             emptyLabel={row ? undefined : 'endpoint not in the current window'}
             onZoom={handleZoom} onZoomReset={handleZoomReset} />
         </div>

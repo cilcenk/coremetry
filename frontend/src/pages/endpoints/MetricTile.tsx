@@ -1,7 +1,7 @@
 import { lazy, Suspense, useMemo } from 'react';
 import { Spinner } from '@/components/Spinner';
-import { EventMarkers } from '@/components/EventMarkers';
 import { timeRangeToNs } from '@/lib/utils';
+import type { ChartTimeRegion } from '@/lib/chart/overlays';
 import type { SpanMetricSeries, TimeRange } from '@/lib/types';
 
 // MetricTile — one of the /endpoint page's three RED series cards
@@ -21,19 +21,24 @@ const CorePanelMultiLazy = lazy(() =>
   import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
 export function MetricTile({
-  label, big, sub, subCls, series, unit, role, storageKey, service, range,
-  emptyLabel, onZoom, onZoomReset,
+  label, big, sub, subCls, series, unit, role, storageKey, range,
+  emptyLabel, onZoom, onZoomReset, regions,
 }: {
   label: string; big: string; sub: string; subCls?: string;
   series: SpanMetricSeries[]; unit?: string;
   /** Role comes from the CALLER, never guessed from the label. */
   role?: 'data' | 'error' | 'success' | 'muted';
   storageKey: string;
-  service?: string; range?: TimeRange;
+  range?: TimeRange;
   /** Empty-state override — says WHY there is nothing to draw. */
   emptyLabel?: string;
   onZoom?: (fromUnixSec: number, toUnixSec: number) => void;
   onZoomReset?: () => void;
+  // v0.9.1044 (Ş3 paritesi) — operatör olayları chart-İÇİ bölge olarak
+  // gelir (sayfa TEK fetch atar, eventRegions çevirir). Eski DOM-overlay
+  // EventMarkers söküldü: karo başına ayrı /api/events fetch'i (3 karo =
+  // 3 istek) + grafiğin x-scale'inden habersiz mutlak-konum çizgiler.
+  regions?: ChartTimeRegion[];
 }) {
   const bounds = useMemo(() => {
     if (!range) return null;
@@ -70,16 +75,10 @@ export function MetricTile({
             syncKey="endpoint-detail-ms"
             emptyReason={hasData ? undefined : (emptyLabel ?? 'Bu pencerede veri yok')}
             items={[{ name: label, role: role ?? 'data', series }]}
+            regions={regions}
             onZoom={onZoom}
             onZoomReset={onZoomReset} />
         </Suspense>
-        {bounds && hasData && (
-          <EventMarkers
-            fromNs={bounds.from}
-            toNs={bounds.to}
-            service={service || undefined}
-          />
-        )}
       </div>
     </div>
   );

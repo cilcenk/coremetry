@@ -193,6 +193,11 @@ type RecentDeploy struct {
 	Version    string `json:"version"`
 	TimeUnixNs int64  `json:"timeUnixNs"`
 	AgeSeconds int64  `json:"ageSeconds"`
+	// Impact (v0.9.1059, Faz 1.4) — deploy'un önce/sonra RED kıyası.
+	// YALNIZ kök-neden hipotez yolu doldurur (worker, deploy adayı
+	// varken tek sınırlı okuma); problems listesi enrichment'ı
+	// doldurmaz — omitempty, eski JSON bayt-bayt aynı.
+	Impact *DeployImpact `json:"impact,omitempty"`
 }
 
 // EnrichProblemsWithPriority computes the P1/P2/P3 triage bucket

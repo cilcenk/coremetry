@@ -12,6 +12,23 @@ import (
 	"github.com/cilcenk/coremetry/internal/correlator"
 )
 
+// enrichDeployImpact — deploy adayı varsa önce/sonra RED kıyasını ölçüp
+// girdiye iliştirir (v0.9.1059, Faz 1.4 / K8). ComputeDeployImpact
+// yazılalı beri hiçbir kök-neden yolu çağırmıyordu — "deploy şüpheli"
+// iddiası rakamsız gidiyordu. Tek sınırlı okuma, YALNIZ deploy adayı
+// olan anchor'da (tik başına nadir). İki pencereden biri boşsa
+// iliştirilmez: tek taraflı kıyas "%-100 düzeldi" gibi yalan üretir.
+func (s *RootCauseSynthesizer) enrichDeployImpact(ctx context.Context, service string, in *correlator.SynthesisInput) {
+	if in.Deploy == nil {
+		return
+	}
+	imp, err := s.store.ComputeDeployImpact(ctx, service, in.Deploy.Version, in.Deploy.TimeUnixNs, 0)
+	if err != nil || imp == nil || imp.Before.Count == 0 || imp.After.Count == 0 {
+		return
+	}
+	in.DeployImpact = imp
+}
+
 // anchorExemplar — anchor penceresinin temsilî trace'i (v0.9.1057,
 // Faz 1.2). spanmetrics rollup argMax okuması: MV, LIMIT 1, ucuz;
 // tablo yoksa / pencere rollup öncesiyse / örnek yoksa fail-open "".
@@ -142,9 +159,11 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 		if done >= s.batch {
 			break
 		}
+		synthIn := synthInputForAnomaly(ev, in)
+		s.enrichDeployImpact(ctx, ev.Service, &synthIn) // v0.9.1059
 		h := correlator.Synthesize(
 			"anomaly", ev.ID, ev.Service, now.UnixNano(),
-			synthInputForAnomaly(ev, in),
+			synthIn,
 		)
 		// v0.9.1057 (Faz 1.2 / K5) — temsilî trace hipoteze. trace_op
 		// olayında dedektörün örneği zaten trace id (recorder Sample'a
@@ -179,9 +198,11 @@ func (s *RootCauseSynthesizer) run(ctx context.Context) {
 				break
 			}
 			bundle := buildEvidenceBundle(p, in)
+			synthIn := synthInputForProblem(p, bundle)
+			s.enrichDeployImpact(ctx, p.Service, &synthIn) // v0.9.1059
 			h := correlator.Synthesize(
 				"problem", p.ID, p.Service, now.UnixNano(),
-				synthInputForProblem(p, bundle),
+				synthIn,
 			)
 			// v0.9.1057 (Faz 1.2 / K5) — problemin penceresinden temsilî
 			// trace; metrik hata ailesindeyse hata örneği.

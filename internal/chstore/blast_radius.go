@@ -52,30 +52,33 @@ type BlastRadius struct {
 }
 
 // GetServiceBlastRadius returns the upstream-caller impact
-// summary for `service` over [now - since, now]. Reads
+// summary for `service` over [from, to]. Reads
 // service_callers_5m (FINAL) for the per-bucket aggregates and
 // joins open-problem status in one extra query.
+//
+// v0.9.1047 (Faz 0.1) — imza süreden PENCEREYE döndü. Eskiden
+// `since time.Duration` alıp [now-since, now] kuruyordu; problem
+// kök-neden yolu ise problemin SÜRESİNİ geçiyordu — 3 saat önce
+// çözülmüş 20 dakikalık bir problemin blast radius'u SON 20
+// dakikayı okuyordu. Cascade bayrağı da "şu an açık" yerine
+// "pencere içinde açıktı" sorusuna bakar artık.
 //
 // Top-N cap at 25 callers. At billion-span scale a single
 // service can have hundreds of callers (sidecars, mesh
 // daemons); the UI surfaces the worst-impacted by calls desc
 // + provides a chip-level summary for the long tail.
 func (s *Store) GetServiceBlastRadius(
-	ctx context.Context, service string, since time.Duration,
+	ctx context.Context, service string, from, to time.Time,
 ) (BlastRadius, error) {
+	from, to = blastRadiusWindow(from, to, time.Now())
 	out := BlastRadius{
 		Service:   service,
-		WindowSec: int(since.Seconds()),
+		WindowSec: int(to.Sub(from).Seconds()),
 		Callers:   []BlastRadiusCaller{},
 	}
 	if service == "" {
 		return out, fmt.Errorf("service required")
 	}
-	if since <= 0 {
-		since = time.Hour
-	}
-	now := time.Now()
-	from := now.Add(-since)
 	bucketStart := from.Truncate(5 * time.Minute)
 
 	// Per-caller-service rollup. Aggregate the v0.5.368 MV by
@@ -94,13 +97,13 @@ func (s *Store) GetServiceBlastRadius(
 		ORDER BY calls DESC
 		LIMIT 25
 		SETTINGS max_execution_time = 10`,
-		service, bucketStart, now)
+		service, bucketStart, to)
 	if err != nil {
 		return out, fmt.Errorf("blast-radius callers: %w", err)
 	}
 	defer rows.Close()
 
-	windowSec := since.Seconds()
+	windowSec := to.Sub(from).Seconds()
 	if windowSec < 1 {
 		windowSec = 1
 	}
@@ -122,11 +125,12 @@ func (s *Store) GetServiceBlastRadius(
 	}
 	out.TotalCallers = len(out.Callers)
 
-	// Cascade flag — caller services that ALSO have an open
-	// problem right now. One additional FINAL read against
-	// problems (small table; sub-ms). Index lookup keeps the
-	// inner loop O(callers).
-	openProblems, _ := s.openProblemServices(ctx)
+	// Cascade flag — caller services that ALSO had an open
+	// problem DURING the window (v0.9.1047: previously "open right
+	// now", which lied for resolved problems). One additional FINAL
+	// read against problems (small table; sub-ms). Index lookup
+	// keeps the inner loop O(callers).
+	openProblems, _ := s.openProblemServicesDuring(ctx, from, to)
 	for i := range out.Callers {
 		if _, has := openProblems[out.Callers[i].Service]; has {
 			out.Callers[i].HasOpenProblem = true
@@ -147,16 +151,40 @@ func (s *Store) GetServiceBlastRadius(
 	return out, nil
 }
 
-// openProblemServices returns the set of service names that have
-// at least one open problem RIGHT NOW. Used as a fast lookup for
-// blast-radius cascade flagging. FINAL on the ReplacingMergeTree
-// so resolved/regressed transitions are honoured.
-func (s *Store) openProblemServices(ctx context.Context) (map[string]struct{}, error) {
+// blastRadiusWindow — saf pencere normalizasyonu (v0.9.1047,
+// tablo-testli). Sıfır/ters girişler için güvenli varsayılanlar:
+// to yoksa now, from yoksa/ters ise to-1h. Problem penceresi
+// verildiğinde AYNEN korunur — now'a çapalamak bu fonksiyonun
+// düzelttiği bug'ın kendisiydi.
+func blastRadiusWindow(from, to, now time.Time) (time.Time, time.Time) {
+	if to.IsZero() {
+		to = now
+	}
+	if from.IsZero() || !from.Before(to) {
+		from = to.Add(-time.Hour)
+	}
+	return from, to
+}
+
+// openProblemServicesDuring returns the set of service names that
+// had at least one problem OPEN at any point inside [from, to]:
+// started before the window ends and not resolved before it starts.
+// FINAL on the ReplacingMergeTree so resolved/regressed transitions
+// are honoured. (v0.9.1047 — previously status='open' NOW, which
+// made cascade flags wrong for resolved problems.)
+func (s *Store) openProblemServicesDuring(ctx context.Context, from, to time.Time) (map[string]struct{}, error) {
 	out := map[string]struct{}{}
+	// resolved_at: NULL ve sıfır-zaman İKİSİ DE "çözülmemiş" demek
+	// (problem.go'daki kurulu sözleşme) — sıfır-zamanı pencere-öncesi
+	// çözülmüş saymak açık problemi cascade'den düşürürdü.
 	rows, err := s.conn.Query(ctx, `
 		SELECT DISTINCT service FROM problems FINAL
-		WHERE status = 'open' AND service != ''
-		SETTINGS max_execution_time = 5`)
+		WHERE service != ''
+		  AND started_at <= ?
+		  AND (resolved_at IS NULL
+		       OR toUnixTimestamp64Nano(resolved_at) = 0
+		       OR resolved_at >= ?)
+		SETTINGS max_execution_time = 5`, to, from)
 	if err != nil {
 		return out, err
 	}

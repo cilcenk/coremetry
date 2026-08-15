@@ -159,7 +159,9 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if br, e := s.store.GetServiceBlastRadius(ctx, p.Service, end.Sub(started)); e == nil {
+			// v0.9.1047 (Faz 0.1) — problemin GERÇEK penceresi geçer;
+			// süre geçmek çözülmüş problemde son N dakikayı okutuyordu.
+			if br, e := s.store.GetServiceBlastRadius(ctx, p.Service, started, end); e == nil {
 				out.BlastRadius = &br
 			}
 		}()
@@ -275,7 +277,8 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if br, e := s.store.GetServiceBlastRadius(ctx, ev.Service, end.Sub(started)); e == nil {
+			// v0.9.1047 (Faz 0.1) — olayın gerçek penceresi geçer.
+			if br, e := s.store.GetServiceBlastRadius(ctx, ev.Service, started, end); e == nil {
 				out.BlastRadius = &br
 			}
 		}()

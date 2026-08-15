@@ -133,6 +133,12 @@ type SynthesisInput struct {
 	// worker computes it from (onset - deployTime) / lookback.
 	Deploy        *chstore.RecentDeploy
 	FreshnessFrac float64
+	// DeployImpact (v0.9.1059, Faz 1.4) — deploy'un önce/sonra RED
+	// kıyası (ComputeDeployImpact; worker deploy adayı varken tek
+	// sınırlı okumayla doldurur, iki pencere de trafik taşıyorsa).
+	// nil = ölçüm yok; aday gerekçesi ve RecentDeploy.Impact o zaman
+	// bugünküyle bayt-bayt aynı.
+	DeployImpact *chstore.DeployImpact
 	// Neighbours — the propagation-ranked downstream suspects (best first),
 	// straight from RankRootCausesFromEdges. Score ∈ [0,1] is the error-share,
 	// hop-decayed. Empty when nothing downstream carries error volume.
@@ -175,6 +181,20 @@ type SignalEvidence struct {
 	Kind    string  // "log_pattern" | "trace_op"
 	Pattern string  // pattern name (logs) or operation name (trace ops)
 	Ratio   float64 // max(current, peak) over baseline; 0 for new-template events
+}
+
+// deployImpactSummary — önce/sonra RED kıyasının tek cümlelik, kararlı
+// özeti (v0.9.1059). Saf + tablo-testli: aynı impact aynı baytları
+// üretir. p99 her zaman yazılır; hata oranı yalnız kıpırdadıysa
+// (|Δ| ≥ 0.1 puan) eklenir — "err %0.0→%0.0" gürültüsü basılmaz.
+func deployImpactSummary(imp *chstore.DeployImpact) string {
+	s := fmt.Sprintf("after it p99 %.0f→%.0fms (%+.0f%%)",
+		imp.Before.P99Ms, imp.After.P99Ms, imp.P99DeltaPct)
+	if imp.ErrorRateDeltaPct >= 0.1 || imp.ErrorRateDeltaPct <= -0.1 {
+		s += fmt.Sprintf(", err %.1f%%→%.1f%%",
+			imp.Before.ErrorRate*100, imp.After.ErrorRate*100)
+	}
+	return s
 }
 
 // neighbourSignalScore maps one neighbour signal into the [0.28, 0.52]
@@ -252,14 +272,25 @@ func Synthesize(
 		}
 		score := deployBaseScore + deployFreshnessBonusMax*frac
 		ageMin := in.Deploy.AgeSeconds / 60
-		h.RecentDeploy = in.Deploy
+		reason := fmt.Sprintf("deployed %s %dm before onset — prime 'what changed' suspect",
+			in.Deploy.Version, ageMin)
+		// v0.9.1059 (Faz 1.4 / K8) — ölçülmüş etki gerekçeye iner:
+		// "deploy şüpheli" iddiası artık önce/sonra rakam taşır.
+		// Deterministik: aynı impact aynı cümleyi üretir (tablo-testli).
+		if in.DeployImpact != nil {
+			reason += " — " + deployImpactSummary(in.DeployImpact)
+			d := *in.Deploy
+			d.Impact = in.DeployImpact
+			h.RecentDeploy = &d
+		} else {
+			h.RecentDeploy = in.Deploy
+		}
 		cands = append(cands, chstore.ScoredCause{
 			Service: service, // a deploy of the anchor's OWN service is the suspect
 			Score:   score,
 			Hops:    0,
 			Path:    []string{service},
-			Reason: fmt.Sprintf("deployed %s %dm before onset — prime 'what changed' suspect",
-				in.Deploy.Version, ageMin),
+			Reason:  reason,
 		})
 	}
 

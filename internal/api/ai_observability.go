@@ -221,6 +221,13 @@ func (s *Server) copilotStreamSurface(ctx context.Context, surface, system, user
 // Unknown paths collapse to "other" so the /ai breakdown stays
 // finite.
 func aiSurfaceFromPath(p string) string {
+	// v0.9.1067 (Faz 3.6 / Q8) — /api/copilot/* dışındaki tek AI ucu:
+	// CH sorgu optimizasyonu /api/admin/clickhouse/optimize-query'de
+	// yaşıyor ve /ai'da "other" olarak toplanıyordu — kalite kıyası
+	// yüzeysiz kalıyordu.
+	if strings.HasSuffix(strings.Trim(p, "/"), "admin/clickhouse/optimize-query") {
+		return "ch-optimize"
+	}
 	parts := strings.Split(strings.Trim(p, "/"), "/")
 	if len(parts) < 3 || parts[0] != "api" || parts[1] != "copilot" {
 		return "other"

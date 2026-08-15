@@ -10051,12 +10051,13 @@ func (s *Server) copilotSuggestServiceTags(w http.ResponseWriter, r *http.Reques
 	if len(got.deploys) > 3 {
 		got.deploys = got.deploys[:3]
 	}
-	// Top span operations — direct CH read, cheap because
-	// service_name prefixes the spans primary key.
+	// Top span operations — v0.9.1067 (Faz 3.6 / Q11): MV'den.
+	// Ham spans GROUP BY name invariant #3 ihlaliydi (sınırlıydı ama
+	// operation_summary_5m aynı cevabı önceden toplanmış veriyor).
 	if rows, err := s.store.Conn().Query(r.Context(), `
-		SELECT name, count() AS c
-		FROM spans
-		WHERE service_name = ? AND time >= now() - INTERVAL 24 HOUR
+		SELECT name, countMerge(span_count_state) AS c
+		FROM operation_summary_5m
+		WHERE service_name = ? AND time_bucket >= now() - INTERVAL 24 HOUR
 		GROUP BY name ORDER BY c DESC LIMIT 10
 		SETTINGS max_execution_time = 5`, service); err == nil {
 		defer rows.Close()
@@ -10102,8 +10103,11 @@ func (s *Server) copilotSuggestServiceTags(w http.ResponseWriter, r *http.Reques
 		sb.WriteString("\n")
 	}
 
-	out, err := s.copilotExplain(r,
-		copilot.SystemPromptServiceTags(), sb.String())
+	// v0.9.1067 (Faz 3.6 / Q7) — katı-JSON yüzeyi JSON kipinden geçer
+	// (kardeşleri nl_query/ch_optimize gibi); elle {..} ayıklama
+	// savunma olarak duruyor ama artık nadiren gerekir.
+	out, err := s.copilotExplainJSON(r,
+		copilot.SystemPromptServiceTags(), sb.String(), nil)
 	if err != nil {
 		writeErr(w, err)
 		return

@@ -3919,12 +3919,26 @@ func (s *Server) getOperations(w http.ResponseWriter, r *http.Request) {
 // ayrıştırıcı, bu oturumun on yedi sürümünü doğuran hata sınıfının ta
 // kendisi olurdu: bir kural iki yerde, zamanla ayrışıyor.
 func parseTraceFilter(q url.Values) (chstore.TraceFilter, error) {
+	// v0.9.1055 — pencere VARSAYILANI (1h). from/to gelmeyince filtre
+	// sıfır-zamanla iniyordu ve chstore'un zaman predicate'i koşullu
+	// (repo.go buildTraceWhere `if !f.From.IsZero()`): spans TAM TARAMA
+	// → 25s max_execution_time → 500. UI her zaman pencere yollar, o
+	// yüzden latent kaldı; API-doğrudan/MCP çağıranlar düşüyordu
+	// ("time-bounded WHERE" sert kısıtının açık ucu). Sınırda kapatılır:
+	// to yoksa now, from yoksa to-1h.
+	from, to := parseTime(q.Get("from")), parseTime(q.Get("to"))
+	if to.IsZero() {
+		to = time.Now()
+	}
+	if from.IsZero() {
+		from = to.Add(-time.Hour)
+	}
 	f := chstore.TraceFilter{
 		Service:  q.Get("service"),
 		Search:   q.Get("search"),
 		TraceID:  strings.ToLower(strings.TrimSpace(q.Get("traceId"))),
-		From:     parseTime(q.Get("from")),
-		To:       parseTime(q.Get("to")),
+		From:     from,
+		To:       to,
 		HasError: q.Get("hasError") == "true",
 		RootOnly: q.Get("rootOnly") == "true",
 		// services=A,B,…  — every listed service must appear in the

@@ -308,6 +308,17 @@ func (n *Notifier) problemURL(problemID string) string {
 	return base + "/problems?problem=" + problemID
 }
 
+// traceURL — kanıt trace derin-linki (v0.9.1058). problemURL ile aynı
+// PUBLIC_URL sözleşmesi: taban yoksa boş döner, satır hiç basılmaz.
+func (n *Notifier) traceURL(traceID string) string {
+	base := n.PublicURL()
+	if base == "" || traceID == "" {
+		return ""
+	}
+	// /trace sayfası kimliği ?id= paramından okur (App.tsx rotası).
+	return base + "/trace?id=" + traceID
+}
+
 // SetSMTPCacheTTL lets main.go wire the configurable refresh
 // interval after construction. Zero is treated as "use the
 // 30s default" so unit tests that build a Notifier without
@@ -943,8 +954,15 @@ func (n *Notifier) sendEmail(ctx context.Context, c chstore.NotificationChannel,
 	}
 	// v0.8.493 — multipart/alternative: text/plain fallback (eski gövde
 	// birebir) + text/html. HTML'i gösteremeyen istemci düz metni okur.
+	//
+	// v0.9.1058 (Faz 1.3 / K9) — deterministik hipotez maile iner.
+	// SendProblemAlert anında hipotez genelde henüz yoktur (worker 30s
+	// tikte); ama e-posta yolu critical'da AI özetini ≤45s bekliyor
+	// (v0.9.513 seçenek-A) ve hipotez o pencerede DOLUYOR. Best-effort:
+	// yoksa/zayıfsa hiçbir şey basılmaz, mail biçimi birebir eski.
+	rc := n.hypothesisForMail(ctx, p)
 	msg, err := composeAltEmail(fromHeader, ec.Recipients, subject,
-		n.buildEmailBody(p), n.buildEmailHTML(p))
+		n.buildEmailBody(p, rc), n.buildEmailHTML(p, rc))
 	if err != nil {
 		return fmt.Errorf("compose email: %w", err)
 	}
@@ -1017,7 +1035,36 @@ func composeAltEmail(fromHeader string, to []string, subject, plain, htmlBody st
 	return []byte(msg.String()), nil
 }
 
-func (n *Notifier) buildEmailBody(p chstore.Problem) string {
+// hypothesisForMail — mail gövdesi için deterministik hipotez (v0.9.1058,
+// Faz 1.3). Best-effort + eşikli: hipotez yoksa, şüpheli boşsa ya da
+// güven zayıfsa (< mailHypothesisMinConfidence) nil döner ve mail biçimi
+// birebir eski kalır — zayıf bir tahmini alarm mailine basmak yanlış
+// yönlendirir (dürüstlük ilkesi: emin değilsek susarız).
+func (n *Notifier) hypothesisForMail(ctx context.Context, p chstore.Problem) *chstore.RootCauseHypothesis {
+	rc, err := n.store.GetHypothesis(ctx, "problem", p.ID)
+	if err != nil || rc == nil {
+		return nil
+	}
+	if strings.TrimSpace(rc.TopSuspect) == "" || rc.Confidence < mailHypothesisMinConfidence {
+		return nil
+	}
+	return rc
+}
+
+// mailHypothesisMinConfidence — mail eşiği. Fuser'ın co-firing-yalnız
+// hipotezleri ~0.35'te kalır; deploy'lu/propagation'lı gerçek şüpheliler
+// 0.5+ üretir. Eşik "bir şey bulduk" ile "yazmaya değer" arasındaki çizgi.
+const mailHypothesisMinConfidence = 0.4
+
+// hypothesisReason — en güçlü adayın gerekçe satırı (varsa). Saf.
+func hypothesisReason(rc *chstore.RootCauseHypothesis) string {
+	if rc == nil || len(rc.Candidates) == 0 {
+		return ""
+	}
+	return strings.TrimSpace(rc.Candidates[0].Reason)
+}
+
+func (n *Notifier) buildEmailBody(p chstore.Problem, rc *chstore.RootCauseHypothesis) string {
 	t := time.Unix(0, p.StartedAt).UTC().Format(time.RFC3339)
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s\n\n", p.Description)
@@ -1051,6 +1098,22 @@ func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 	if sum := strings.TrimSpace(p.AISummary); sum != "" {
 		fmt.Fprintf(&b, "\nAI kök-sebep yorumu:\n%s\n", sum)
 	}
+	// v0.9.1058 (Faz 1.3) — deterministik hipotez. AI özetinden AYRI ve
+	// öyle etiketli: bu bir model yorumu değil, ölçülmüş kanıtların
+	// (deploy zamanlaması, hata-payı yayılımı, sinyaller) skorlanmış
+	// birleşimi. rc nil ise hiçbir şey basılmaz — biçim birebir eski.
+	if rc != nil {
+		fmt.Fprintf(&b, "\nOlası kök neden (deterministik): %s — güven %%%.0f\n",
+			rc.TopSuspect, rc.Confidence*100)
+		if reason := hypothesisReason(rc); reason != "" {
+			fmt.Fprintf(&b, "  %s\n", reason)
+		}
+		if rc.ExemplarTraceID != "" {
+			if u := n.traceURL(rc.ExemplarTraceID); u != "" {
+				fmt.Fprintf(&b, "Kanıt trace: %s\n", u)
+			}
+		}
+	}
 	return b.String()
 }
 
@@ -1074,7 +1137,7 @@ func (n *Notifier) buildEmailBody(p chstore.Problem) string {
 // No JS (mail clients never execute it), no external assets. Every
 // dynamic field is HTML-escaped — service/rule/description are
 // operator-shaped free text and must never inject markup.
-func (n *Notifier) buildEmailHTML(p chstore.Problem) string {
+func (n *Notifier) buildEmailHTML(p chstore.Problem, rc *chstore.RootCauseHypothesis) string {
 	esc := html.EscapeString
 	sev := strings.ToUpper(p.Severity)
 	t := time.Unix(0, p.StartedAt).UTC().Format(time.RFC3339)
@@ -1133,6 +1196,23 @@ func (n *Notifier) buildEmailHTML(p chstore.Problem) string {
 			`<div style="` + font + `;font-size:13px;color:#374151;line-height:1.5">` +
 			strings.ReplaceAll(esc(sum), "\n", "<br>") + `</div>` +
 			`</td></tr></table>`)
+	}
+	// v0.9.1058 (Faz 1.3) — deterministik hipotez kutusu. AI kutusuyla
+	// aynı Word-güvenli tablo deseni; mavi kenarlık ölçülmüş-kanıt
+	// vurgusu (AI grisinden ayrışır). rc nil → hiç çizilmez.
+	if rc != nil {
+		b.WriteString(`<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin:16px 0 0"><tr>` +
+			`<td bgcolor="#eff6ff" style="` + font + `;padding:12px 14px;border-left:3px solid #2563eb">` +
+			`<div style="` + font + `;font-size:11px;font-weight:700;color:#1d4ed8;letter-spacing:.5px;padding-bottom:6px">OLASI KÖK NEDEN (DETERMİNİSTİK)</div>` +
+			`<div style="` + font + `;font-size:13px;color:#111827;line-height:1.5"><b>` + esc(rc.TopSuspect) + `</b>` +
+			fmt.Sprintf(` <span style="color:#6b7280">— güven %%%.0f</span>`, rc.Confidence*100))
+		if reason := hypothesisReason(rc); reason != "" {
+			b.WriteString(`<br>` + esc(reason))
+		}
+		if u := n.traceURL(rc.ExemplarTraceID); u != "" {
+			b.WriteString(`<br><a href="` + esc(u) + `" style="color:#2563eb">Kanıt trace →</a>`)
+		}
+		b.WriteString(`</div></td></tr></table>`)
 	}
 	if u := n.problemURL(p.ID); u != "" {
 		// Bulletproof button: padding + bgcolor on the td (Word honours

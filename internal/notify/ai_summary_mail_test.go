@@ -47,11 +47,11 @@ func TestEmailBodiesUnchangedWithoutSummary(t *testing.T) {
 	n := &Notifier{}
 	p := chstore.Problem{Service: "checkout", RuleName: "hata oranı", Severity: "critical"}
 
-	plain := n.buildEmailBody(p)
+	plain := n.buildEmailBody(p, nil)
 	if strings.Contains(plain, "AI") {
 		t.Errorf("özet yokken düz gövdede AI bloğu olmamalı:\n%s", plain)
 	}
-	html := n.buildEmailHTML(p)
+	html := n.buildEmailHTML(p, nil)
 	if strings.Contains(html, "AI KÖK-SEBEP") {
 		t.Error("özet yokken HTML gövdede AI bloğu olmamalı")
 	}
@@ -64,12 +64,12 @@ func TestEmailBodiesCarrySummary(t *testing.T) {
 		AISummary: "Heap %94'e çıktı, GC duraklamaları arttı.",
 	}
 
-	plain := n.buildEmailBody(p)
+	plain := n.buildEmailBody(p, nil)
 	if !strings.Contains(plain, "AI kök-sebep yorumu") || !strings.Contains(plain, "Heap") {
 		t.Errorf("düz gövde özeti taşımalı:\n%s", plain)
 	}
 
-	html := n.buildEmailHTML(p)
+	html := n.buildEmailHTML(p, nil)
 	if !strings.Contains(html, "AI KÖK-SEBEP YORUMU") || !strings.Contains(html, "Heap") {
 		t.Error("HTML gövde özeti taşımalı")
 	}
@@ -88,7 +88,7 @@ func TestHTMLSummaryEscapesThenBreaks(t *testing.T) {
 		Severity:  "critical",
 		AISummary: "birinci satır\nikinci <script>alert(1)</script>",
 	}
-	html := n.buildEmailHTML(p)
+	html := n.buildEmailHTML(p, nil)
 	if strings.Contains(html, "<script>") {
 		t.Error("özet escape edilmemiş — injection açık")
 	}

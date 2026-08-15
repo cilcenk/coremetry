@@ -2873,7 +2873,11 @@ func (s *Server) getServiceBlastRadius(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("service-blast-radius:svc=%s:since=%s", name, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.GetServiceBlastRadius(ctx, name, since)
+		// v0.9.1047 — canlı uç: [now-since, now] davranışı bayt-bayt aynı;
+		// pencere artık çağıran tarafta kurulur (kök-neden yolu problem
+		// penceresini geçer, buradaki "şu an" anlamı değişmedi).
+		now := time.Now()
+		return s.store.GetServiceBlastRadius(ctx, name, now.Add(-since), now)
 	})
 }
 

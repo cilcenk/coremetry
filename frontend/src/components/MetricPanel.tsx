@@ -49,8 +49,7 @@ export interface MetricPanelProps {
   menuOnly?: boolean;
 }
 
-type MenuAction =
-  | 'explore' | 'edit' | 'view' | 'copy' | 'dashboard' | 'alert';
+type MenuAction = 'explore' | 'edit' | 'view' | 'copy';
 
 export function MetricPanel({ title, metricQuery: mq, children, className, style, compact = false, menuOnly = false }: MetricPanelProps) {
   const navigate = useNavigate();
@@ -122,15 +121,12 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
           setTimeout(() => setLinkCopied(false), 1500);
         });
         break;
-      case 'dashboard':
-        // Best-effort: hand the descriptor to /dashboards; full consume (turn
-        // ?m= into a seeded panel) is a later phase.
-        navigate('/dashboards?m=' + encodeMetricQuery(mq));
-        break;
-      case 'alert':
-        // Best-effort: hand the descriptor to /alerts; full consume is later.
-        navigate('/alerts?m=' + encodeMetricQuery(mq));
-        break;
+      // v0.9.1049 (Faz 0.9) — 'dashboard' ve 'alert' kalemleri SÖKÜLDÜ.
+      // İkisi de "best-effort, full consume is later" notuyla /dashboards?m=
+      // ve /alerts?m='e yönlendiriyordu; iki hedef sayfa da ?m='i HİÇ
+      // okumadı — menü vaat edip düşürüyordu (ölü affordance). Gerçek
+      // kablolama (MetricQuery→Panel çevirmeni + Alerts ön-dolum tasarımı)
+      // ayrı bir dilim; o gelmeden menüde yer almazlar.
     }
   };
 
@@ -184,9 +180,6 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
           <PanelMenuItem onClick={() => runAction('edit')}>✎ Edit</PanelMenuItem>
           <PanelMenuItem onClick={() => runAction('view')}>⟨⟩ View query</PanelMenuItem>
           <PanelMenuItem onClick={() => runAction('copy')}>⧉ Copy link</PanelMenuItem>
-          <div style={{ height: 1, background: 'var(--border)', margin: '4px 2px' }} />
-          <PanelMenuItem onClick={() => runAction('dashboard')}>▦ Add to dashboard</PanelMenuItem>
-          <PanelMenuItem onClick={() => runAction('alert')}>◔ Create alert</PanelMenuItem>
         </div>
       )}
     </div>

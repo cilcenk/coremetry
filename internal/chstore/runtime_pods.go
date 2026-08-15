@@ -30,6 +30,12 @@ const runtimePodExpr = `coalesce(
 // tekil spike değil kalıcı durumdur (ForSec eşdeğeri pencereleme ile).
 const runtimeWindow = 10 * time.Minute
 
+// RuntimePodWindow — canlı çağıranların (evaluator JVM dedektörü,
+// copilot pod-sağlık paketi) [now-RuntimePodWindow, now] penceresi
+// kurarken kullandığı dışa açık eş (v0.9.1053 — JVM okumaları pencere
+// parametresi aldı; "şimdi" semantiği artık çağıranda kurulur).
+const RuntimePodWindow = runtimeWindow
+
 // JVMHeapPodUsage returns per-(service, pod) heap saturation samples:
 // Usage = 10-dk ortalaması toplam heap kullanımı (byte), Limit = -Xmx.
 //
@@ -38,9 +44,10 @@ const runtimeWindow = 10 * time.Minute
 // sayısına böler (heap/N gibi görünür); doğrusu her timestamp'te havuzlar
 // ÜZERİNDEN SUM, sonra pencere üzerinden AVG. jvm.memory.limit'i yalnız
 // cap'i tanımlı havuzlar emit eder (G1'de Old Gen = -Xmx); sum ≈ -Xmx.
-func (s *Store) JVMHeapPodUsage(ctx context.Context) ([]CapacitySample, error) {
-	now := time.Now()
-	from := now.Add(-runtimeWindow)
+// v0.9.1053 (Faz 0.2) — pencere PARAMETRE oldu. Sabit now-10dk, P1 derin
+// soruşturmasında "40 dk önceki incident'ın heap'i" diye ŞU ANKİ heap'i
+// kaydediyordu (denetim izi Found:true derken pencere yanlıştı).
+func (s *Store) JVMHeapPodUsage(ctx context.Context, from, to time.Time) ([]CapacitySample, error) {
 	// v0.9.426 (operator-reported, prod: "JVM hatası olmayan podlara
 	// alert") — GC-SONRASI doluluk da okunur: testere-dişi heap'te
 	// used/max ortalaması sağlıklı pod'da bile %85+'a çıkar; gerçek
@@ -69,7 +76,7 @@ func (s *Store) JVMHeapPodUsage(ctx context.Context) ([]CapacitySample, error) {
 		HAVING lim > 0
 		LIMIT 2000
 		SETTINGS max_execution_time = 10`
-	rows, err := s.conn.Query(ctx, q, from, now)
+	rows, err := s.conn.Query(ctx, q, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -94,9 +101,9 @@ func (s *Store) JVMHeapPodUsage(ctx context.Context) ([]CapacitySample, error) {
 // jvm.gc.duration histogram'dır; ingest value kolonu per-export ORTALAMA
 // pause'dur (Sum/Count, convert.go) — avg(value) pencere-ortalama pause
 // verir. HAVING n >= 3: MinSamples tabanı (tek örnekli pencere flapping'i).
-func (s *Store) JVMGCPodPause(ctx context.Context) ([]CapacitySample, error) {
-	now := time.Now()
-	from := now.Add(-runtimeWindow)
+// v0.9.1053 (Faz 0.2) — pencere parametre (JVMHeapPodUsage ile aynı
+// gerekçe).
+func (s *Store) JVMGCPodPause(ctx context.Context, from, to time.Time) ([]CapacitySample, error) {
 	q := `
 		SELECT service_name AS svc, ` + runtimePodExpr + ` AS pod,
 		       avg(value) * 1000 AS pause_ms, count() AS n
@@ -107,7 +114,7 @@ func (s *Store) JVMGCPodPause(ctx context.Context) ([]CapacitySample, error) {
 		HAVING n >= 3
 		LIMIT 2000
 		SETTINGS max_execution_time = 10`
-	rows, err := s.conn.Query(ctx, q, from, now)
+	rows, err := s.conn.Query(ctx, q, from, to)
 	if err != nil {
 		return nil, err
 	}

@@ -122,8 +122,13 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 	for _, f := range plan {
 		switch f {
 		case familyExceptions:
+			// v0.9.1053 (Faz 0.2) — yalnız INCIDENT PENCERESİNDE aktif
+			// gruplar: eski hâl ömür-boyu last_seen sırasıyla ilk 5'i
+			// alıyordu — 40 dk önceki incident'a bugünün grupları
+			// yazılabiliyordu.
 			gs, err := store.ListExceptionGroups(ctx, chstore.ExceptionGroupFilter{
 				Service: p.Service, Limit: deepEvidenceLimit,
+				ActiveFromNs: from.UnixNano(), ActiveToNs: to.UnixNano(),
 			})
 			noteChecked(&d, f, err, len(gs), func() string {
 				return fmt.Sprintf("%d exception grubu, en sık: %s", len(gs), firstExcTitle(gs))
@@ -145,9 +150,14 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 			d.Templates = ts
 
 		case familySaturation:
-			heap, herr := store.JVMHeapPodUsage(ctx)
+			// v0.9.1053 (Faz 0.2) — INCIDENT penceresi. Eski çağrılar sabit
+			// now-10dk okuyordu: 40 dk önce açılmış problemin kanıtına ŞU
+			// ANKİ heap yazılıyor, denetim izi Found:true diyordu — pozitif
+			// tarafta yanlış-kanıt (rca_evidence'ın negatif-kanıt uyarısının
+			// tersi).
+			heap, herr := store.JVMHeapPodUsage(ctx, from, to)
 			heap = samplesForService(heap, p.Service)
-			gc, gerr := store.JVMGCPodPause(ctx)
+			gc, gerr := store.JVMGCPodPause(ctx, from, to)
 			gc = samplesForService(gc, p.Service)
 			err := herr
 			if err == nil {
@@ -159,7 +169,8 @@ func gatherDeepEvidence(ctx context.Context, store *chstore.Store, p chstore.Pro
 			d.Heap, d.GCPause = heap, gc
 
 		case familyRuntime:
-			rt, err := store.GetServiceRuntime(ctx, p.Service)
+			// v0.9.1053 — parmak izi incident penceresinin SONU itibarıyla.
+			rt, err := store.GetServiceRuntime(ctx, p.Service, to)
 			n := 0
 			if rt != nil {
 				n = 1

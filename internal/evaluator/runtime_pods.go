@@ -176,7 +176,9 @@ func (e *Evaluator) evaluateRuntimePods(ctx context.Context) {
 	// getirmek, çözmeye çalıştığımız şikâyetin daha kötüsü olurdu.
 	e.drainRetiredHeapProblems(ctx, snap)
 	if present, err := e.store.MetricExists(ctx, "jvm.gc.duration"); err == nil && present {
-		if samples, err := e.store.JVMGCPodPause(ctx); err != nil {
+		// v0.9.1053 — canlı semantik çağıranda: [now-RuntimePodWindow, now].
+		gcNow := time.Now()
+		if samples, err := e.store.JVMGCPodPause(ctx, gcNow.Add(-chstore.RuntimePodWindow), gcNow); err != nil {
 			log.Printf("[evaluator] runtime jvm-gc read: %v", err)
 		} else {
 			for _, s := range samples {

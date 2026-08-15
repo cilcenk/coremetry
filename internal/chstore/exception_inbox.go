@@ -536,9 +536,15 @@ type ExceptionGroupFilter struct {
 	// exceptionGroupsOrderBy). The inbox is LIMIT/OFFSET paginated, so a
 	// client-side sort of one page silently lied ("top by occurrences"
 	// was really "most-recent 50, reordered").
-	Sort   string
-	Dir    string
-	Limit  int
+	Sort string
+	Dir  string
+	// ActiveFromNs / ActiveToNs (v0.9.1053, Faz 0.2) — pencere ÖRTÜŞME
+	// filtresi (unix ns): grup [from, to] aralığında aktifti (last_seen
+	// >= from AND first_seen <= to). P1 derin soruşturması incident
+	// penceresini geçer; sıfır = filtre yok (mevcut çağıranlar aynen).
+	ActiveFromNs int64
+	ActiveToNs   int64
+	Limit        int
 	Offset int
 	// HTTPErrors (v0.9.443) — sözde-exception ayrımı: error.type
 	// fallback'i (v0.8.494) HTTP durum kodunu ex_type'a yazar; "404" gibi
@@ -578,6 +584,19 @@ func buildExceptionGroupWhere(f ExceptionGroupFilter) whereClause {
 	}
 	if f.MaxOccurrences > 0 {
 		wc.add("occurrences < ?", f.MaxOccurrences)
+	}
+	// v0.9.1053 (Faz 0.2) — pencere ÖRTÜŞME filtresi: grup verilen
+	// aralıkta AKTİFTİ (son görülme aralık başından önce değil, ilk
+	// görülme aralık sonundan sonra değil). P1 derin soruşturması bunu
+	// geçer ki "incident sırasında yaşayan" gruplar kanıta girsin —
+	// eski hâl ömür-boyu son-görülme sırasıyla ilk 5'i alıyordu, yani
+	// 40 dk önceki incident'a bugünün gruplarını yazıyordu. Sıfır = yok
+	// (tüm mevcut çağıranlar bayt-bayt eski davranışta).
+	if f.ActiveFromNs > 0 {
+		wc.add("last_seen >= fromUnixTimestamp64Nano(?)", f.ActiveFromNs)
+	}
+	if f.ActiveToNs > 0 {
+		wc.add("first_seen <= fromUnixTimestamp64Nano(?)", f.ActiveToNs)
 	}
 	if f.Service != "" {
 		wc.add("service = ?", f.Service)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // runtimeAttrCond — "bu span rozet verisi taşıyor" SQL koşulu
@@ -122,9 +123,17 @@ func (s *Store) GetAllServiceRuntimes(ctx context.Context) (map[string]ServiceRu
 // for the keys we want. The query is partition-pruned (time
 // filter), service_name is the primary key prefix, so this is
 // a microsecond CH lookup even at 1B spans/day.
-func (s *Store) GetServiceRuntime(ctx context.Context, service string) (*ServiceRuntime, error) {
+// v0.9.1053 (Faz 0.2) — `asOf` parametresi: parmak izi artık verilen ANA
+// göre okunur (asOf-1h .. asOf). Canlı çağıranlar time.Now() geçer
+// (davranış bayt-bayt eski); P1 derin soruşturması incident penceresinin
+// SONUNU geçer — eski hâl "40 dk önceki incident"e bugünün runtime'ını
+// kaydediyordu (sürüm o aradan değişmiş olabilir).
+func (s *Store) GetServiceRuntime(ctx context.Context, service string, asOf time.Time) (*ServiceRuntime, error) {
 	if service == "" {
 		return nil, nil
+	}
+	if asOf.IsZero() {
+		asOf = time.Now()
 	}
 	// v0.9.45 — attribute-taşıyan EN SON span (düz "son span"
 	// değil): karışık-resource servislerde rozet piyangosunu
@@ -133,11 +142,11 @@ func (s *Store) GetServiceRuntime(ctx context.Context, service string) (*Service
 		SELECT res_keys, res_values
 		FROM spans
 		WHERE service_name = ?
-		  AND time >= now() - INTERVAL 1 HOUR
+		  AND time >= ? AND time <= ?
 		  AND %s
 		ORDER BY time DESC
 		LIMIT 1
-		SETTINGS max_execution_time = 5`, runtimeAttrCond), service)
+		SETTINGS max_execution_time = 5`, runtimeAttrCond), service, asOf.Add(-time.Hour), asOf)
 	var keys []string
 	var values []string
 	if err := row.Scan(&keys, &values); err != nil {

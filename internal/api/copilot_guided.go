@@ -1483,7 +1483,9 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 func (s *Server) guidedPodHealthBundle(ctx context.Context, emit func(string, any), service string, from, to time.Time) (string, string, error) {
 	var b strings.Builder
 	emitGuidedStep(emit, "jvm_heap_usage", "")
-	heap, herr := s.store.JVMHeapPodUsage(ctx)
+	// v0.9.1053 — canlı semantik çağıranda: [now-RuntimePodWindow, now].
+	heapNow := time.Now()
+	heap, herr := s.store.JVMHeapPodUsage(ctx, heapNow.Add(-chstore.RuntimePodWindow), heapNow)
 	if service == "" {
 		if herr != nil {
 			return "", "", herr

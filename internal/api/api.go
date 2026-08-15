@@ -2467,7 +2467,8 @@ func (s *Server) getServiceRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 	key := fmt.Sprintf("service-runtime:svc=%s", name)
 	s.serveCached(w, r, key, 5*time.Minute, func(ctx context.Context) (any, error) {
-		return s.store.GetServiceRuntime(ctx, name)
+		// v0.9.1053 — canlı semantik: şimdiye göre parmak izi.
+		return s.store.GetServiceRuntime(ctx, name, time.Now())
 	})
 }
 
@@ -10014,7 +10015,7 @@ func (s *Server) copilotSuggestServiceTags(w http.ResponseWriter, r *http.Reques
 	}
 	var got sig
 	since := 24 * time.Hour
-	got.runtime, _ = s.store.GetServiceRuntime(r.Context(), service)
+	got.runtime, _ = s.store.GetServiceRuntime(r.Context(), service, time.Now())
 	if m, err := s.store.GetServiceClusterMap(r.Context(), since); err == nil {
 		got.clusters = m[service]
 	}

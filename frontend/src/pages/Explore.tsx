@@ -252,6 +252,11 @@ function ExploreInner({ onSelfWrite }: {
   const [boxSel, setBoxSel] = useState<
     { timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number } | null
   >(null);
+  // v0.9.1113 (Faz 5 BubbleUp keşfedilebilirliği) — tek-tık hata diff'i:
+  // sürükleme öğrenmeden "hatalarda ne farklı?" sorusu. Baseline aynı
+  // (sorgu A), seçim status=error; pencere tam sorgu penceresi. Kutu
+  // seçimi gibi geçici analiz durumu — bilinçli URL dışı (boxSel emsali).
+  const [errDiff, setErrDiff] = useState(false);
 
   const exploreRange = useMemo(() => timeRangeToNs(range), [range]);
   // v0.9.83 — panellerin x-ekseni sorgu penceresine sabit (madde 2).
@@ -1150,9 +1155,50 @@ name ~ checkout`}
                     exemplarTraceId: cell.exemplarTraceId,
                   })}
                   onBoxSelect={setBoxSel} />
-                <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 6 }}>
-                  Tek hücre = örnek trace · sürükle (kutu seç) = BubbleUp
+                <div style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  fontSize: 10, color: 'var(--text3)', marginTop: 6,
+                }}>
+                  <span>Tek hücre = örnek trace · sürükle (kutu seç) = BubbleUp</span>
+                  {/* v0.9.1113 — Honeycomb çekirdek döngüsünün tek-tık kapısı. */}
+                  <Button variant="ghost" size="sm" onClick={() => setErrDiff(v => !v)}
+                    title="Bu penceredeki hatalı span'ları aynı sorgunun tamamıyla kıyasla — hangi attribute'lar hatalarda farklı?">
+                    Hatalarda ne farklı?
+                  </Button>
                 </div>
+                {errDiff && (() => {
+                  const a = debounced.queries.find(produces);
+                  const baseline = a ? effectiveFilters(a) : [];
+                  const baselineDsl = a && a.dsl.trim() ? a.dsl : undefined;
+                  return (
+                    <div style={{ marginTop: 12 }}>
+                      <div style={{
+                        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                        fontSize: 11, color: 'var(--text2)',
+                      }}>
+                        <span>Hata diff'i · status=error vs sorgunun tamamı · tüm pencere</span>
+                        <Button variant="ghost" size="sm" onClick={() => setErrDiff(false)}
+                          title="Hata diff'ini kapat">✕</Button>
+                      </div>
+                      <BubbleUpPanel
+                        baseline={baseline}
+                        baselineDsl={baselineDsl}
+                        selection={[{ k: 'status', op: '=', v: ['error'] }]}
+                        from={exploreRange.from}
+                        to={exploreRange.to}
+                        onApplyFilter={(f) => {
+                          if (a) {
+                            setBuilder(b => ({
+                              ...b,
+                              queries: b.queries.map(q =>
+                                q.letter === a.letter ? { ...q, filters: [...q.filters, f] } : q),
+                            }));
+                          }
+                          setErrDiff(false);
+                        }} />
+                    </div>
+                  );
+                })()}
                 {boxSel && (() => {
                   const a = debounced.queries.find(produces);
                   const baseline = a ? effectiveFilters(a) : [];

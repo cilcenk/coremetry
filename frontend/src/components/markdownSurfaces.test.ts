@@ -108,6 +108,69 @@ describe('AI özeti basan HER yüzey markdown\'ı ele alıyor', () => {
   }
 });
 
+// Faz 0.5 — KAPI ÜÇÜNCÜ KEZ GENİŞLETİLDİ.
+//
+// v0.9.641 CopilotExplain'i, v0.9.696 `aiSummary` basan beş yüzeyi
+// çivilemişti. Ama AI cevabı ÜÇÜNCÜ bir şekilde de basılıyor: sayfaya
+// gömülü "anlat" panelleri kendi yerel `{busy,text,err}` state'lerini
+// tutuyor ve `aiSummary` adını hiç kullanmıyor — yani ikinci kapının
+// sinyali (`.aiSummary`) bunları GÖRMÜYORDU. Üçü de v0.9.1121'de
+// 👍/👎 kazandı, yani yeni bir yüzey ailesi olduğu belliydi; markdown
+// tarafı geride kalmıştı.
+//
+// Bu kapı iki şeyi birden çiviliyor, çünkü kusur ikisinin BİRLEŞİMİ:
+//   1. cevap RenderedMarkdown'dan geçiyor mu (yıldızlar görünmesin),
+//   2. panel kabında `pre-wrap` kalmış mı (Markdown blok üretirken
+//      pre-wrap satır aralarını ikiye katlıyor — v0.9.641'in ikinci
+//      yarısı, tek başına düzeltilirse görüntü yine bozuk).
+//
+// SİNYAL SEÇİMİ: yüzeyler state'i farklı adlandırıyor (`ai` / `aiPat`),
+// bu yüzden erişim ifadesi yüzey başına veriliyor. Şekle değil NİYETE
+// bakılıyor (v0.9.696 dersi): metnin BASILDIĞI satır RenderedMarkdown
+// ile aklanır; test edildiği satır (`x.text ||`, `x.text &&`) zaten
+// basmıyor.
+describe('sayfa-içi AI anlatım panelleri markdown basıyor', () => {
+  const PANELS = [
+    { rel: '../pages/Shift.tsx', access: /\bai\.text\b/, heading: 'AI VARDİYA ANLATIMI' },
+    { rel: '../pages/alerts/NoisyRulesPanel.tsx', access: /\bai\.text\b/, heading: 'AI GÜRÜLTÜ ANLATIMI' },
+    { rel: '../pages/Logs.tsx', access: /\baiPat\.text\b/, heading: 'AI DESEN ANLATIMI' },
+  ];
+
+  // Erişimi AKLAYAN devam işaretleri: metin burada test ediliyor ya da
+  // bir nesne alanına konuyor, EKRANA basılmıyor.
+  //
+  // `}` BİLEREK LİSTEDE DEĞİL: kusurun ta kendisi `{ai.text}` ve o da
+  // `}` ile bitiyor — kapatma parantezini aklayıcı saymak kapıyı tam da
+  // yakalaması gereken şekle karşı KÖR ederdi.
+  const TESTED = /\.text\s*(&&|\|\||\?|,|:)/;
+
+  for (const { rel, access, heading } of PANELS) {
+    const name = rel.split('/').pop();
+
+    it(`${name} — cevabı RenderedMarkdown'dan geçiriyor`, () => {
+      const src = read(rel);
+      expect(src, 'Markdown importu').toContain("from '@/components/Markdown'");
+      const offenders = src.split('\n')
+        .map((text, i) => ({ text: text.trim(), n: i + 1 }))
+        .filter(x => access.test(x.text))
+        .filter(x => !/RenderedMarkdown/.test(x.text))
+        // `{(ai.busy || ai.text || ai.err) && (` — koşul, basım değil.
+        .filter(x => !TESTED.test(x.text));
+      expect(offenders.map(o => `${o.n}: ${o.text}`), 'ham AI metni').toEqual([]);
+    });
+
+    it(`${name} — panel kabında pre-wrap kalmadı`, () => {
+      const src = read(rel);
+      const i = src.indexOf(heading);
+      expect(i, `panel başlığı bulunamadı: ${heading}`).toBeGreaterThan(-1);
+      // Kabın style bloğu başlığın hemen ÜSTÜNDE. Logs.tsx'te sayfanın
+      // BAŞKA yerinde meşru bir pre-wrap var (ham backend hata gövdesi),
+      // o yüzden pencere dar tutuluyor.
+      expect(src.slice(Math.max(0, i - 400), i)).not.toContain('pre-wrap');
+    });
+  }
+});
+
 describe('stripMarkdown', () => {
   // Ekran görüntüsündeki GERÇEK model çıktısı — düzeltmenin hedefi bu.
   const real = '* **Hata Tipi:** `CannotCreateTransactionException`, Spring\'in veritabanı üzerinde';

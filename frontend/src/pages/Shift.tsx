@@ -13,6 +13,7 @@ import { serviceHref } from '@/lib/serviceHref';
 import type { Problem, ChangedService, ExceptionGroup } from '@/lib/types';
 import { PageShell } from '@/components/ui/PageShell';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
+import { RenderedMarkdown } from '@/components/Markdown';
 
 // Shift.tsx — /shift vardiya özeti (v0.9.1072, Faz 3.2; mockup
 // operatör-onaylı). Vardiya devri bugüne dek 4 sayfa gezilerek
@@ -107,18 +108,23 @@ export default function ShiftPage() {
         </Button>
       </div>
 
+      {/* Faz 0.5 — model markdown üretiyor; burası ham basıyordu, yani
+          "kalın" işaretleri ekranda yıldızlarıyla görünüyordu: v0.9.641'in
+          CopilotExplain'de düzelttiği kusurun aynısı, üç yüzey daha.
+          pre-wrap KALKTI — RenderedMarkdown kendi p/ul bloklarını kuruyor,
+          ikisi birlikte satır aralarını ikiye katlıyor. */}
       {(ai.busy || ai.text || ai.err) && (
         <div style={{
           padding: '12px 14px', marginBottom: 16, borderRadius: 6,
           background: 'var(--bg2)', border: '1px solid var(--border)',
-          fontSize: 12.5, lineHeight: 1.55, whiteSpace: 'pre-wrap',
+          fontSize: 12.5, lineHeight: 1.55,
         }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, color: 'var(--text2)', marginBottom: 6 }}>
             AI VARDİYA ANLATIMI
           </div>
           {ai.busy && <Spinner />}
           {ai.err && <span style={{ color: 'var(--err)' }}>{ai.err}</span>}
-          {ai.text}
+          {ai.text && <RenderedMarkdown text={ai.text} />}
           {/* v0.9.1121 (Faz 0.3b) — 👍/👎; kimlik yoksa çizilmez. */}
           <div><AIFeedbackButtons exchangeId={ai.xid} /></div>
         </div>

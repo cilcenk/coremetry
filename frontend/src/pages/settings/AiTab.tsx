@@ -2,8 +2,9 @@ import { useState, type FormEvent } from 'react';
 import { Spinner } from '@/components/Spinner';
 import { Button, useConfirm } from '@/components/ui';
 import { api } from '@/lib/api';
-import { useSettingsLoad, SettingsLoadError } from './shared';
-import type { AIProvider } from '@/lib/types';
+import { useSettingsLoad, SettingsLoadError, Field } from './shared';
+import type { AIProvider, AISettings } from '@/lib/types';
+import { tuningToForm, tuningToWire } from './aiTuning';
 import { IconSparkles } from '@/components/icons';
 import { Link } from 'react-router-dom';
 
@@ -28,8 +29,36 @@ export function AITab() {
   // wf — master on/off toggle, distinct from hasKey. Default true so a
   // fresh / legacy backend (no "enabled" field) renders as enabled.
   const [enabled, setEnabled] = useState(true);
+  // v0.9.1120 (Faz 0.5) — LLM call tuning. Held as STRINGS, not
+  // numbers, and that is the whole design:
+  //
+  // The backend returns OVERRIDES. maxTokens 0 / temperature null /
+  // timeoutS 0 all mean "no override — running the built-in default"
+  // (4096 / 0.2 / 180s). A number-typed state would have to pick some
+  // value for "unset", and every candidate is wrong: 0 renders a
+  // nonsense "0" in the box, and the default renders a value the
+  // operator never chose — which the next Save would then WRITE into
+  // the blob, freezing today's default forever and silently opting
+  // this install out of any future default change.
+  //
+  // '' is the only honest representation of unset, so the inputs are
+  // strings, the defaults appear as PLACEHOLDER text, and blank round-
+  // trips back to 0 / null = reset.
+  const [maxTokens, setMaxTokens] = useState('');
+  const [temperature, setTemperature] = useState('');
+  const [timeoutS, setTimeoutS] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
+
+  // Çeviri aiTuning.ts'te ve TABLO-TESTLİ: "boş kutu = sıfırla"
+  // sözleşmesinin yanlış dalı sessiz ayar donmasına yol açıyor, o
+  // yüzden bileşenin içinde satır içi kalmıyor.
+  const applyTuning = (s: Partial<AISettings>) => {
+    const f = tuningToForm(s);
+    setMaxTokens(f.maxTokens);
+    setTemperature(f.temperature);
+    setTimeoutS(f.timeoutS);
+  };
 
   const { loaded, error: loadErr, retry } = useSettingsLoad(
     () => api.getAISettings(),
@@ -40,17 +69,29 @@ export function AITab() {
       setHasKey(s.hasKey);
       setSkipTls(s.skipTls ?? false);
       setEnabled(s.enabled ?? true);
+      applyTuning(s);
     },
   );
+
+  // tuning — the knob triple EVERY PUT must carry, including the
+  // Remove-key path. The PUT body is a whole-blob replace, so a call
+  // that omits these resets the operator's overrides as a side effect
+  // of an unrelated action ("I removed the key and my timeout went
+  // back to 180s" — invisible until the next slow local generation).
+  const tuning = () => tuningToWire({ maxTokens, temperature, timeoutS });
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls, enabled });
+      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls, enabled, ...tuning() });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
       setEnabled(next.enabled ?? true);
+      // Echo the SERVER's view back: it is the authority on what the
+      // stored override now is, and a rejected/normalised value must
+      // not linger in the box looking saved.
+      applyTuning(next);
       setApiKey('');
       setMsg({
         kind: 'ok',
@@ -75,10 +116,11 @@ export function AITab() {
     })) return;
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled });
+      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled, ...tuning() });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
       setEnabled(next.enabled ?? true);
+      applyTuning(next);
       setApiKey('');
       setMsg({ kind: 'ok', text: 'Key cleared — CoSRE is dormant.' });
     } catch (err) {
@@ -267,6 +309,54 @@ export function AITab() {
           <input value={model} onChange={e => setModel(e.target.value)}
                  placeholder={modelPlaceholder} style={{ width: '100%' }} />
         </label>
+
+        {/* v0.9.1120 (Faz 0.5) — call tuning. Every box is an OVERRIDE:
+            the built-in default lives in the placeholder, so an empty
+            box is not "missing config", it is "use the default". Clear
+            a box + Save = reset that knob. Bounds are enforced
+            server-side (copilot.ValidateTuning) and repeated in the
+            hint so a rejected save is predictable, not a surprise. */}
+        <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text2)',
+                      marginBottom: 8, letterSpacing: 0.2 }}>
+          Call tuning <span style={{ fontWeight: 400, color: 'var(--text3)' }}>
+            — leave a box empty to use the built-in default
+          </span>
+        </div>
+
+        <Field label="Max tokens (optional)">
+          <input type="number" inputMode="numeric" min={256} max={32768} step={256}
+                 value={maxTokens} onChange={e => setMaxTokens(e.target.value)}
+                 placeholder="4096 (default)" style={{ width: '100%' }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+            Completion budget per call. Range <b>256–32768</b>. Too low and
+            explanations get truncated mid-sentence; too high and a chatty
+            model burns quota on every ✨ button.
+          </div>
+        </Field>
+
+        <Field label="Temperature (optional)">
+          <input type="number" inputMode="decimal" min={0} max={2} step={0.1}
+                 value={temperature} onChange={e => setTemperature(e.target.value)}
+                 placeholder="0.2 (default)" style={{ width: '100%' }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+            Range <b>0–2</b>. Low keeps explanations reproducible, which is
+            what an APM wants — two operators reading the same incident
+            should get the same answer. Anthropic caps at 1 and rejects
+            higher; the provider, not Coremetry, enforces that.
+          </div>
+        </Field>
+
+        <Field label="Request timeout (seconds, optional)">
+          <input type="number" inputMode="numeric" min={10} max={600} step={10}
+                 value={timeoutS} onChange={e => setTimeoutS(e.target.value)}
+                 placeholder="180 (default)" style={{ width: '100%' }} />
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+            Range <b>10–600</b>. A local LLM loading a large model cold can
+            need 60s+ for a first generation. Above your reverse proxy /
+            ingress timeout the value is a lie — the hop in front of
+            Coremetry cuts the request first.
+          </div>
+        </Field>
 
         {msg && (
           <div style={{

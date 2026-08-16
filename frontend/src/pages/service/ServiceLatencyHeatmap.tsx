@@ -10,6 +10,8 @@ import { DisclosureButton } from '@/components/ui';
 import { LatencyHeatmap } from '@/components/LatencyHeatmap';
 import { heatmapFilters } from './heatmapFilters';
 import { HeatmapCellExemplars } from '@/components/HeatmapCellExemplars';
+import { BubbleUpPanel } from '@/components/BubbleUpPanel';
+import type { FilterExpr } from '@/lib/types';
 import { Link } from 'react-router-dom';
 
 // ServiceLatencyHeatmap fetches the heatmap for the current
@@ -48,6 +50,11 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
   const [boxSel, setBoxSel] = useState<{
     timeFromNs: number; timeToNs: number; lowDurMs: number; highDurMs: number; count: number;
   } | null>(null);
+  // v0.9.1113 (Faz 5 BubbleUp keşfedilebilirliği) — kutu seçiminin
+  // "Ne farklı?" yarısı. Explore'un Phase 4.2 deseni: baseline =
+  // heatmap'in kendi filtreleri (ekranda çizilenle birebir aynı evren),
+  // seçim = sürüklenen gecikme bandı, pencere = sürüklenen zaman aralığı.
+  const [showDiff, setShowDiff] = useState(false);
   // Collapse state — defaults open. Persisted to localStorage so an operator
   // who'd rather hide the panel doesn't fight it on every reload. Keyed
   // globally (not per-service) so the preference is a one-time setting.
@@ -203,8 +210,28 @@ export function ServiceLatencyHeatmap({ service, range, operation = '', rootOnly
                       {tFmt(boxSel.timeFromNs)}–{tFmt(boxSel.timeToNs)} · {lo}–{hi} ms
                     </span>
                     <Link to={tracesHref} style={{ color: 'var(--accent)', textDecoration: 'none' }}>Traces →</Link>
-                    <span onClick={() => setBoxSel(null)}
+                    <span onClick={() => setShowDiff(v => !v)}
+                      title="Bu banttaki span'ları servisin bu penceredeki tamamıyla kıyasla — hangi attribute'lar farklı?"
+                      style={{ cursor: 'pointer', color: 'var(--accent)' }}>
+                      Ne farklı?
+                    </span>
+                    <span onClick={() => { setBoxSel(null); setShowDiff(false); }}
                       style={{ cursor: 'pointer', color: 'var(--text3)' }}>✕</span>
+                  </div>
+                );
+              })()}
+              {boxSel && showDiff && (() => {
+                const selection: FilterExpr[] = [
+                  { k: 'duration_ms', op: '>=', v: [String(Math.max(0, boxSel.lowDurMs))] },
+                  { k: 'duration_ms', op: '<=', v: [String(boxSel.highDurMs)] },
+                ];
+                return (
+                  <div style={{ marginTop: 10 }}>
+                    <BubbleUpPanel
+                      baseline={heatmapFilters(service, picked, operation, rootOnly, env)}
+                      selection={selection}
+                      from={boxSel.timeFromNs}
+                      to={boxSel.timeToNs} />
                   </div>
                 );
               })()}

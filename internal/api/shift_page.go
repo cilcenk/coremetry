@@ -130,10 +130,11 @@ func (s *Server) explainShift(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, fmt.Errorf("shift bundle: %w", err))
 		return
 	}
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptShiftSummary(), evidence)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"explanation": out, "window": rung})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid, "window": rung})
 }

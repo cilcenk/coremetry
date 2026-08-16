@@ -8856,6 +8856,7 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 // cevaplanıyordu). Prompt bayt-bayt aynıdır — explain_trace_input_test.go
 // pinler. Emsal: anomaly.BuildExceptionExplainInput (v0.9.415).
 func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
+	r, xid := withExchange(r)
 	in, err := s.buildTraceExplainInput(r.Context(), r.PathValue("id"))
 	if errors.Is(err, errExplainTraceNotFound) {
 		http.Error(w, "trace not found", http.StatusNotFound)
@@ -8884,6 +8885,7 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"explanation":     out,
+		"exchangeId":      xid,
 		"evidenceSpanIds": in.Evidence,
 		"code":            codePayload(cc, opts.IncludeCode),
 	})
@@ -8985,12 +8987,13 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 	payload, _ := json.Marshal(compact)
 	user := fmt.Sprintf("Span %s (target) in trace %s — %d spans in context:\n```json\n%s\n```",
 		spanID, traceID, len(compact), string(payload))
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptSpan(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]string{"explanation": out})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
 }
 
 // copilotExplainProblem fetches a Problem and asks the model for a
@@ -9050,12 +9053,13 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 	if p.Service != "" {
 		user += s.serviceCorrelationContext(r.Context(), p.Service, time.Unix(0, p.StartedAt))
 	}
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptProblem(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]string{"explanation": out})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
 }
 
 // serviceCorrelationContext gathers the multi-signal evidence the
@@ -9160,12 +9164,13 @@ func (s *Server) copilotExplainIncident(w http.ResponseWriter, r *http.Request) 
 		"Incident: %s\nService: %s\nSeverity: %s\nStatus: %s\nSummary: %s\nAttached problems (%d):\n%s",
 		inc.Title, inc.Service, inc.Severity, inc.Status, inc.Summary, len(probs), probLines,
 	)
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptIncident(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]string{"explanation": out})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
 }
 
 // copilotExplainAnomaly handles log-pattern / trace-op anomaly
@@ -9219,12 +9224,13 @@ func (s *Server) copilotExplainAnomaly(w http.ResponseWriter, r *http.Request) {
 		user += s.serviceCorrelationContext(r.Context(), ev.Service, started)
 		user += "\n\nZİNCİRİ anlat: anomali → (varsa) tetikleyen deploy → komşu servislere etkisi. Yönü belirt (upstream'den mi geldi, downstream'e mi yayılıyor); kanıt yoksa 'bilinmiyor' de."
 	}
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptAnomaly(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]string{"explanation": out})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
 }
 
 // truncate caps s at n BYTES, cutting on a rune boundary.
@@ -9369,12 +9375,13 @@ func (s *Server) copilotExplainServiceHealth(w http.ResponseWriter, r *http.Requ
 			return "Active problems:\n" + probLines
 		}(),
 	)
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptServiceHealth(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]string{"explanation": out})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
 }
 
 // copilotRunbook generates a numbered, actionable runbook for
@@ -9455,6 +9462,7 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 		sb.WriteString("\nNo past resolved instances of this exact rule on this service — use first-principles reasoning grounded in the metric + service.\n")
 	}
 
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptRunbook(), sb.String())
 	if err != nil {
 		writeErr(w, err)
@@ -9462,6 +9470,7 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"explanation":  out,
+		"exchangeId":   xid,
 		"similarCount": len(similar),
 	})
 }
@@ -9506,13 +9515,14 @@ func (s *Server) copilotCompareTraces(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := buildCompareTracesPrompt(aID, aSpans, bID, bSpans)
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r,
 		copilot.SystemPromptCompareTraces(), user)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]string{"explanation": out})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
 }
 
 // copilotDeployImpact compares before/after windows around a
@@ -9672,6 +9682,7 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r,
 		copilot.SystemPromptDeployImpact(), sb.String())
 	if err != nil {
@@ -9680,6 +9691,7 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"explanation": out,
+		"exchangeId":  xid,
 		"before":      before,
 		"after":       after,
 		"newOps":      newOps,
@@ -9736,6 +9748,7 @@ func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
 	series, _ := s.store.ComputeSLOBurnSeries(r.Context(), *slo, 7)
 	sb.WriteString(sloTrajectoryEvidence(fc, series))
 
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r,
 		copilot.SystemPromptSLOBurn(), sb.String())
 	if err != nil {
@@ -9744,6 +9757,7 @@ func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, map[string]any{
 		"explanation": out,
+		"exchangeId":  xid,
 		"status":      status,
 		"fastBurn":    fastRate,
 		"slowBurn":    slowRate,
@@ -9808,12 +9822,13 @@ func (s *Server) copilotExplainSlowQuery(w http.ResponseWriter, r *http.Request)
 		sb.WriteString(cap(body.SampleStatement, 4000))
 	}
 
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptSlowQuery(), sb.String())
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"explanation": out})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
 }
 
 func maxInt(a, b int) int {

@@ -63,12 +63,13 @@ func (s *Server) explainAlertNoise(w http.ResponseWriter, r *http.Request) {
 		logs = nil
 	}
 	evidence := renderAlertNoiseEvidence(label, rules, logs, lerr == nil)
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptAlertNoise(), evidence)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"explanation": out, "window": label})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid, "window": label})
 }
 
 // alertNoiseLogCap — bildirim dökümü okuma tavanı. Kanıtta tavana

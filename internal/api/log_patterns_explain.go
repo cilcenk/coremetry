@@ -43,12 +43,13 @@ func (s *Server) explainLogPatterns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	evidence := renderLogPatternsEvidence(window, hits, tpls, hitsErr == nil, tplsErr == nil)
+	r, xid := withExchange(r)
 	out, err := s.copilotExplain(r, copilot.SystemPromptLogPatterns(), evidence)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
-	writeJSON(w, map[string]any{"explanation": out, "windowSec": int(window.Seconds())})
+	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid, "windowSec": int(window.Seconds())})
 }
 
 // renderLogPatternsEvidence — kanıt paketi (saf, tablo testli). Model

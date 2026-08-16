@@ -129,3 +129,31 @@ func TestDBStmtExemplarUpgradeDistributedSafety(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.1099 — iyileştirici DDL'i adaptDDL'den GEÇMEMELİ: ifadeler ON
+// CLUSTER'ı zaten taşır; execDDL yüksek-hacim adını görüp hedefi
+// _local'a çevirip İKİNCİ bir ON CLUSTER basıyordu (code 62), CREATE
+// ölüyor, DROP geçiyor ve her boot wrapper'ı silip geri koyamıyordu
+// (Slow Queries UNKNOWN_TABLE — canlı doğrulama, restart kanıtı ajanı).
+func TestDBStmtWrapperHealerBypassesAdaptDDL(t *testing.T) {
+	b, err := os.ReadFile("store.go")
+	if err != nil {
+		t.Fatalf("kaynak okunamadı: %v", err)
+	}
+	src := string(b)
+	i := strings.Index(src, "WRAPPER KOLON KAYMASI iyileştiricisi")
+	if i < 0 {
+		t.Fatal("iyileştirici bloğu bulunamadı")
+	}
+	end := strings.Index(src[i:], "Bayrak her boot'ta VERİDEN")
+	if end < 0 {
+		t.Fatal("blok sonu bulunamadı")
+	}
+	seg := src[i : i+end]
+	if !strings.Contains(seg, "s.conn.Exec(ctx") {
+		t.Error("iyileştirici doğrudan s.conn.Exec kullanmalı")
+	}
+	if strings.Contains(seg, "s.execDDL(") {
+		t.Error("iyileştirici execDDL'den GEÇMEMELİ — adaptDDL çifte ON CLUSTER + _local yeniden adlandırma basar (v0.9.1098 regresyonu)")
+	}
+}

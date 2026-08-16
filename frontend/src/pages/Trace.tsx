@@ -33,6 +33,7 @@ import { CorrelationContextDrawer } from '@/components/CorrelationContextDrawer'
 import { copyToClipboard } from '@/lib/clipboard';
 import { PageShell } from '@/components/ui/PageShell';
 import { useConfirm } from '@/components/ui/ConfirmDialog';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 function TraceDetailInner() {
   const navigate = useNavigate();
@@ -855,6 +856,9 @@ function CompareTracesButton({ aId }: { aId: string }) {
   const [busy, setBusy] = useState(false);
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // v0.9.1121 (Faz 0.3b) — cevabın ai_calls kimliği; 👍/👎 buna asılı.
+  // Her karşılaştırmada sıfırlanır (yeni cevap = yeni kimlik).
+  const [exchangeId, setExchangeId] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     api.copilotConfig().then(c => setEnabled(c.enabled)).catch(() => setEnabled(false));
@@ -871,10 +875,11 @@ function CompareTracesButton({ aId }: { aId: string }) {
       setError('Pick a DIFFERENT trace to compare with.');
       return;
     }
-    setBusy(true); setError(null); setText(null);
+    setBusy(true); setError(null); setText(null); setExchangeId(undefined);
     try {
       const r = await api.copilotCompareTraces(aId, b);
       setText(r.explanation);
+      setExchangeId(r.exchangeId);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Compare failed');
     } finally {
@@ -904,7 +909,7 @@ function CompareTracesButton({ aId }: { aId: string }) {
           Compare
         </Button>
         <Button variant="secondary" size="sm"
-          onClick={() => { setOpen(false); setText(null); setError(null); }}>
+          onClick={() => { setOpen(false); setText(null); setError(null); setExchangeId(undefined); }}>
           Cancel
         </Button>
       </div>
@@ -927,6 +932,8 @@ function CompareTracesButton({ aId }: { aId: string }) {
             <IconSparkles size={11} /> COMPARE
           </div>
           {text}
+          {/* v0.9.1121 (Faz 0.3b) — 👍/👎; kimlik yoksa çizilmez. */}
+          <div><AIFeedbackButtons exchangeId={exchangeId} /></div>
         </div>
       )}
     </div>

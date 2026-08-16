@@ -19,6 +19,7 @@ import type { SlowQueryRow, TimeRange } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { serviceHref } from '@/lib/serviceHref';
 import { PageShell } from '@/components/ui/PageShell';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 // Columns for the shared sortable + resizable DataTable primitive.
 // Default order matches the backend's total-wall-clock sort so the
@@ -43,7 +44,9 @@ const SLOW_COLS: DataTableColumn<SlowQueryRow>[] = [
 // Per-row Copilot explain state — keeps the slow-query table
 // page lean while letting each expanded row hold its own AI
 // answer + loading flag without all rows sharing state.
-type ExplainState = 'idle' | 'busy' | { text: string } | { error: string };
+// v0.9.1121 (Faz 0.3b) — cevap durumu artık ai_calls kimliğini de taşır
+// (👍/👎 buna asılı). omitempty: kimlik gelmezse düğmeler çizilmez.
+type ExplainState = 'idle' | 'busy' | { text: string; exchangeId?: string } | { error: string };
 
 // /databases/slow-queries — global slow-query catalog (v0.5.165).
 // Answers "what query class is burning the most DB time across
@@ -103,7 +106,7 @@ export default function SlowQueriesPage() {
         maxMs:           r.maxMs,
         errorCount:      r.errorCount,
       });
-      setExplains(s => ({ ...s, [key]: { text: resp.explanation } }));
+      setExplains(s => ({ ...s, [key]: { text: resp.explanation, exchangeId: resp.exchangeId } }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setExplains(s => ({ ...s, [key]: { error: msg } }));
@@ -385,6 +388,7 @@ export default function SlowQueriesPage() {
                                     marginBottom: 6, fontWeight: 600,
                                   }}>✨ CoSRE</div>
                                   {ex.text}
+                                  <div><AIFeedbackButtons exchangeId={ex.exchangeId} /></div>
                                 </div>
                               );
                             })()}

@@ -5,6 +5,7 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { useQuery } from '@tanstack/react-query';
 import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
+import { ServiceMapNodeDrawer } from '@/components/ServiceMapNodeDrawer';
 import { getRaw, setRaw, STORAGE_KEYS } from '@/lib/storage';
 import { ServicePicker } from '@/components/ServicePicker';
 import { useServiceMap } from '@/lib/queries';
@@ -100,6 +101,24 @@ export default function ServiceMapPage() {
       return p;
     }, { replace: true });
   };
+  // v0.9.1112 (Faz 5) — düğüm çekmecesi ?node='da yaşar (v0.8.256
+  // drawer-param sınıfı: refresh/Copy link çekmeceyi korur). Odaklı
+  // düğüme İKİNCİ tık açar; başka düğüme tık odak değiştirir.
+  const nodeParam = searchParams.get('node') ?? '';
+  const commitNode = (v: string) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set('node', v); else p.delete('node');
+    return p;
+  }, { replace: true });
+  // v0.9.1112 — kenar p99 Δ kıyası (?compare=prior; /services ve
+  // /endpoints ile aynı param dili). Yalnız MV/odak yolunda anlamlı —
+  // örneklenmiş global görünümde kenar p99'u zaten yok.
+  const compareP99 = searchParams.get('compare') === 'prior';
+  const setCompareP99 = (v: boolean) => setSearchParams(prev => {
+    const p = new URLSearchParams(prev);
+    if (v) p.set('compare', 'prior'); else p.delete('compare');
+    return p;
+  }, { replace: true });
   // Auto-pick a focused service on first load so the operator
   // lands on a useful 1-hop view instead of the full graph (which
   // can look like a hairball on large clusters). Deterministic:
@@ -165,8 +184,8 @@ export default function ServiceMapPage() {
   // the trace-sampled map stays the source for the global view.
   const { from: winFrom, to: winTo } = useMemo(() => timeRangeToNs(range), [range]);
   const focusQ = useQuery({
-    queryKey: ['servicegraph', 'map-focus', focus, winFrom, winTo],
-    queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', from: winFrom, to: winTo }),
+    queryKey: ['servicegraph', 'map-focus', focus, winFrom, winTo, compareP99],
+    queryFn: () => api.serviceGraph({ focus, scope: 'neighborhood', from: winFrom, to: winTo, compare: compareP99 ? 'prior' : undefined }),
     // v0.8.469 — Structure modunda MV-graf sorgusu atılmaz (göstermediğini
     // fetch'leme); Flow'a geçişte tetiklenir.
     enabled: !!focus,
@@ -322,6 +341,20 @@ export default function ServiceMapPage() {
               <option key={p.key} value={p.key}>{p.label}</option>
             ))}
           </select>
+          {/* v0.9.1112 (Faz 5) — kenar p99 Δ'sı: odak görünümünde her
+              kenara önceki pencerenin p99'u gelir, chip Δ% basar.
+              Yapısal Compare'den (diff — yeni/kaybolan) ayrı eksen. */}
+          <label style={{ fontSize: 12, color: 'var(--text2)', display: 'flex',
+                          alignItems: 'center', gap: 5,
+                          cursor: focus ? 'pointer' : 'not-allowed',
+                          opacity: focus ? 1 : 0.5 }}
+            title={focus
+              ? 'Kenar chip\'lerine önceki eş-uzunluk pencereye göre p99 Δ% ekler'
+              : 'Önce bir servise odaklan — kenar p99\'u yalnız odak görünümünde var'}>
+            <input type="checkbox" checked={compareP99} disabled={!focus}
+              onChange={e => setCompareP99(e.target.checked)} />
+            Δ p99
+          </label>
 
           <span style={{ fontSize: 12, color: 'var(--text2)' }}>Samples</span>
           <select value={samples}
@@ -487,15 +520,26 @@ export default function ServiceMapPage() {
             focus={focus || null}
             hoverNode={hoverNode}
             onHoverNode={setHoverNode}
-            onSelectNode={commitFocus}
+            onSelectNode={v => {
+              // v0.9.1112 — odaklı düğüme ikinci tık = detay çekmecesi;
+              // yalnız gerçek servis düğümleri (db/queue/ext sentetik).
+              const real = filtered?.nodes.some(n => n.service === v && !n.kind);
+              if (v === focus && real) commitNode(v);
+              else commitFocus(v);
+            }}
           />
         )}
 
         <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
           {focus
-            ? 'Click any node to switch focus · auto-refresh 30 s'
+            ? 'Click any node to switch focus · click the focused node for details · auto-refresh 30 s'
             : 'Click a node to focus on its 1-hop neighbourhood · auto-refresh 30 s'}
         </div>
+
+        {nodeParam && (
+          <ServiceMapNodeDrawer service={nodeParam} range={range}
+            fromNs={winFrom} toNs={winTo} onClose={() => commitNode('')} />
+        )}
       </PageShell>
     </>
   );

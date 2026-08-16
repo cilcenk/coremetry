@@ -482,11 +482,23 @@ export function TopologyFlowGraph({
         const dimmed = active && (!active.has(e.caller) || !active.has(e.callee));
         if (dimmed || (!labelAlways && !hot)) return null;
         const errPct = (e.errorRate ?? 0) * 100;
+        // v0.9.1112 (Faz 5) — compare=prior'da kenar p99 Δ'sı. Göreli
+        // (%) — /services ve /endpoints p99Delta ile aynı dil. ±%5
+        // altı gürültü sayılır ve basılmaz (TrendDelta eşiğiyle aynı).
+        const dPct = e.priorP99Ms && e.priorP99Ms > 0
+          ? ((e.p99Ms ?? 0) - e.priorP99Ms) / e.priorP99Ms * 100
+          : null;
         return (
           <div key={`chip-${i}`} className={'topo-chip' + (hot ? ' hot' : '')}
             style={{ left: (a.x + b.x) / 2, top: (a.y + b.y) / 2 }}>
             {fmtNum(Math.round(e.rate ?? 0))}/dk · p99 {fmtMs(e.p99Ms)}
             {errPct >= 1 && <span className="chip-err"> · {errPct.toFixed(1)}% err</span>}
+            {dPct != null && Math.abs(dPct) >= 5 && (
+              <span style={{ color: dPct > 0 ? 'var(--err)' : 'var(--ok)' }}
+                title={`p99 önceki pencereye göre ${dPct > 0 ? 'kötüleşti' : 'iyileşti'}`}>
+                {' '}· Δ{dPct > 0 ? '+' : ''}{dPct.toFixed(0)}%
+              </span>
+            )}
           </div>
         );
       })}

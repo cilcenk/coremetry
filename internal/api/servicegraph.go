@@ -63,6 +63,10 @@ type GraphEdge struct {
 	AvgMs     float64 `json:"avgMs"`
 	P99Ms     float64 `json:"p99Ms"`
 	Protocol  string  `json:"protocol,omitempty"` // http | grpc | db | kafka — SpanKind proxy
+	// v0.9.1112 (Faz 5) — ?compare=prior açıkken bir önceki eş-uzunluk
+	// pencerenin kenar p99'u; kenar chip'indeki Δ bundan hesaplanır.
+	// omitempty: kıyas kapalıyken yük değişmez.
+	PriorP99Ms float64 `json:"priorP99Ms,omitempty"`
 }
 
 // ServiceGraphResponse is the compact payload the canonical renderer consumes.
@@ -379,8 +383,13 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 	// map is NEVER uncapped — see serviceGraphTopNClamp. In the cache key.
 	topN := serviceGraphTopNClamp(q.Get("topN"), scope)
 	hidPats := s.topologyHiddenPatterns(r.Context())
-	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:top=%d:hops=%d:hid=%s",
-		focus, scope, from.Unix()/60, to.Unix()/60, topN, hops, hiddenDigest(hidPats))
+	// v0.9.1112 (Faz 5) — önceki-pencere kıyası: kenarlara PriorP99Ms
+	// gelir. İkinci okuma + ikinci build; birleşim normalize edilmiş
+	// (ext-merge sonrası) kenar anahtarında yapılır ki iki pencere aynı
+	// düğüm adlarını konuşsun.
+	compare := q.Get("compare") == "prior"
+	key := fmt.Sprintf("servicegraph:focus=%s:scope=%s:from=%d:to=%d:top=%d:hops=%d:cmp=%v:hid=%s",
+		focus, scope, from.Unix()/60, to.Unix()/60, topN, hops, compare, hiddenDigest(hidPats))
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
 		// v0.9.366 — neighborhood scope'ta okuma odak-kapsamlı: eski yol
 		// tüm filonun calls-DESC ilk 20k kenarını çekip Go'da hop-yürüyordu;
@@ -403,8 +412,43 @@ func (s *Server) getOtelServiceGraph(w http.ResponseWriter, r *http.Request) {
 		dbNames, _ := s.store.DbNamesBySystem(ctx, from, to)
 		g := buildServiceGraph(edges, focus, scope, hops, dbNames, serviceGraphWindowMinutes(from, to))
 		pruneServiceGraphTopN(&g, topN)
+		if compare {
+			// Prior penceresi: aynı uzunluk, tam pencere genişliği kadar
+			// geriye kaydırılmış. Soft-fail — prior okuması düşerse graf
+			// Δ'sız döner, 500 olmaz (endpoints/services emsali).
+			dur := to.Sub(from)
+			pfrom, pto := from.Add(-dur), from
+			var pedges []chstore.ServiceTopologyEdge
+			var perr error
+			if scope == "neighborhood" && focus != "" {
+				pedges, perr = s.store.ReadServiceTopologyAggForFocus(ctx, pfrom, pto, focus, hops, 20000)
+			} else {
+				pedges, perr = s.store.ReadServiceTopologyAgg(ctx, pfrom, pto, 20000)
+			}
+			if perr == nil {
+				pedges = filterHiddenTopologyEdges(pedges, hidPats)
+				pg := buildServiceGraph(pedges, focus, scope, hops, dbNames, serviceGraphWindowMinutes(pfrom, pto))
+				mergePriorGraphEdges(g.Edges, pg.Edges)
+			}
+		}
 		return g, nil
 	})
+}
+
+// mergePriorGraphEdges — prior grafın kenar p99'larını (source,target)
+// anahtarıyla cari kenarlara işler (saf, tablo testli). Prior'da
+// olmayan kenar 0 kalır → omitempty ile düşer → UI chip'e Δ basmaz.
+func mergePriorGraphEdges(cur, prior []GraphEdge) {
+	type ekey struct{ s, t string }
+	idx := make(map[ekey]float64, len(prior))
+	for i := range prior {
+		idx[ekey{prior[i].Source, prior[i].Target}] = prior[i].P99Ms
+	}
+	for i := range cur {
+		if p, ok := idx[ekey{cur[i].Source, cur[i].Target}]; ok {
+			cur[i].PriorP99Ms = p
+		}
+	}
 }
 
 // filterHiddenTopologyEdges drops every edge that touches a hidden

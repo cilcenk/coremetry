@@ -165,6 +165,8 @@ export interface GraphEdge {
   avgMs: number;
   p99Ms: number;
   protocol?: string;   // http | grpc | db | kafka — SpanKind proxy
+  // v0.9.1112 (Faz 5) — ?compare=prior açıkken önceki pencerenin p99'u.
+  priorP99Ms?: number;
 }
 export interface ServiceGraphResponse {
   nodes: GraphNode[];
@@ -3740,6 +3742,9 @@ export interface ServiceMapEdge {
   errorRate?: number; // 0..1
   avgMs?: number;
   p99Ms?: number;
+  // v0.9.1112 (Faz 5) — compare=prior'da önceki pencerenin p99'u
+  // (yalnız MV yolu; adapter taşır). Kenar chip'inde Δ% olarak okunur.
+  priorP99Ms?: number;
 }
 
 export interface ServiceMap {

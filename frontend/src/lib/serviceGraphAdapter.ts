@@ -46,6 +46,9 @@ export function serviceGraphToMap(g: ServiceGraphResponse): ServiceMap {
       errorRate: (e.errorRate ?? 0) / 100,
       avgMs: e.avgMs,
       p99Ms: e.p99Ms,
+      // v0.9.1112 — compare=prior'un kenar Δ'sı; düşürülürse chip asla
+      // çizilmez (v0.8.383 env dersi: sunucuda var, adapterde kaybolur).
+      priorP99Ms: e.priorP99Ms,
     })),
     sampledFrom: 0, // MV-backed — not a trace sample
     totalSpans: (g.nodes ?? []).reduce((a, n) => a + (n.calls || 0), 0),

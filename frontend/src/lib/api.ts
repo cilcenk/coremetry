@@ -359,7 +359,7 @@ export const api = {
   // dependencies server-side so clients stop downloading the global graph.
   // topN (v0.8.295, global only): render budget — the server clamps
   // absent/0/>500 to 500 and reports totalNodes/shownNodes.
-  serviceGraph: (params: { focus?: string; scope?: 'neighborhood' | 'global'; hops?: number; topN?: number; from?: number; to?: number }) =>
+  serviceGraph: (params: { focus?: string; scope?: 'neighborhood' | 'global'; hops?: number; topN?: number; from?: number; to?: number; compare?: 'prior' }) =>
     get<import('./types').ServiceGraphResponse>(`/api/servicegraph?${qs(params)}`),
   // Ops list for a given root service (powers the op picker on
   // the operation deep-dive view).

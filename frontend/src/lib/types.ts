@@ -3974,6 +3974,7 @@ export interface SystemStats {
     // tekrarlayan hata sınıfı — motor bir CH hatasıyla hiç aday
     // üretmiyor olabilir ve başka hiçbir ekran bunu söylemez.
     lastError?: string;
+    lastErrorAtNs?: number; // v0.9.1077 — istisnanın zamanı (yaş etiketi)
   };
   // v0.9.985 — dağıtık kipte Distributed tabloların spool derinliği.
   //
@@ -4011,6 +4012,7 @@ export interface SystemStats {
       // demek değildir.
       errorCount: number;
       lastError?: string;
+      lastErrorAtNs?: number; // v0.9.1077 — istisnanın zamanı (yaş etiketi)
     }[];
     generated: number;
   };

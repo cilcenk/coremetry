@@ -308,6 +308,8 @@ type ESStore struct {
 	// (v0.8.400, es_env_field.go) — one field_caps per envFieldTTL,
 	// never per request.
 	envField esEnvFieldCache
+	// v0.9.1084 — hasTrace exists hedefinin varlık kararı (es_trace_presence.go).
+	tracePresence esTracePresenceCache
 	// NamespaceResolver maps a service name to its namespace for the
 	// {namespace} placeholder in cfg.IndexTemplate (v0.8.231). Wired by
 	// main.go to a TTL-cached chstore.GetServiceNamespaces lookup — the
@@ -1186,8 +1188,8 @@ func (s *ESStore) ExecSQL(ctx context.Context, query string, fetchSize int) (*SQ
 		"fetch_size": fetchSize,
 		// 30s request timeout server-side — the SPA wraps the
 		// fetch with its own 60s AbortController on top.
-		"request_timeout":  "30s",
-		"page_timeout":     "30s",
+		"request_timeout": "30s",
+		"page_timeout":    "30s",
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
@@ -1270,6 +1272,10 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	// discovery, es_env_field.go). envUnapplied is the honest "requested
 	// but not applicable on this backend" flag the Page carries out.
 	f, envUnapplied := s.applyEnvResolution(ctx, f)
+	// v0.9.1084 — hasTrace dürüstlüğü (EnvUnapplied ikizi): filtre
+	// istendi ama mapping'de yapısal trace alanı yoksa sonuç KAÇINILMAZ
+	// boştur; bayrak bunu sayfaya taşır.
+	hasTraceUnapplied := f.HasTrace && !s.traceFieldsPresent(ctx)
 	// v0.8.x — forward-tail mode (live-tail SSE). Deliberately bypasses the
 	// PIT + search_after keyset path below: a forward tail at the live edge
 	// would open a fresh PIT per tick, re-pinning segment readers (the
@@ -1278,6 +1284,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		page, err := s.searchForward(ctx, f)
 		if page != nil {
 			page.EnvUnapplied = envUnapplied
+			page.HasTraceUnapplied = hasTraceUnapplied
 		}
 		return page, err
 	}
@@ -1516,11 +1523,11 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 	}
 
 	var raw struct {
-		esSearchEnvelope // v0.9.288 — timed_out + _shards
+		esSearchEnvelope        // v0.9.288 — timed_out + _shards
 		PitID            string `json:"pit_id"`
 		Hits             struct {
 			Total esTotal `json:"total"`
-			Hits []struct {
+			Hits  []struct {
 				ID     string         `json:"_id"`
 				Source map[string]any `json:"_source"`
 				Fields map[string]any `json:"fields"`
@@ -1591,6 +1598,7 @@ func (s *ESStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		Logs:              out,
 		NextCursor:        next,
 		EnvUnapplied:      envUnapplied,
+		HasTraceUnapplied: hasTraceUnapplied,
 		Partial:           raw.partial(),
 		ShardsFailed:      raw.Shards.Failed,
 		TotalIsLowerBound: raw.Hits.Total.isLowerBound(),
@@ -1719,6 +1727,7 @@ func (s *ESStore) histogramGroupField(groupBy string) string {
 //     connection to the full caller deadline.
 //   - No track_total_hits:false / request_cache, so identical repeats
 //     (redundant volumeQ+LogsHistogram, refocus, polls) recomputed.
+//
 // Fix: min_doc_count:1 (match CH sparseness — visually identical, the
 // stacked builders union present timestamps and fill 0), add the ES
 // soft-timeout, drop track_total_hits, enable request_cache.
@@ -2124,9 +2133,9 @@ func (s *ESStore) CountPatterns(
 	msearchIdx := s.queryIndices(ctx, Filter{From: baseStart, To: now})
 	for _, pat := range pats {
 		header := map[string]any{
-			"index":               msearchIdx,
-			"allow_no_indices":    tru,
-			"ignore_unavailable":  tru,
+			"index":              msearchIdx,
+			"allow_no_indices":   tru,
+			"ignore_unavailable": tru,
 		}
 		hb, _ := json.Marshal(header)
 		ndjson.Write(hb)
@@ -2334,7 +2343,6 @@ func buildPatternTokenQuery(tokens []string, bodyField string) string {
 	}
 	return strings.Join(parts, " OR ")
 }
-
 
 // withKeywordVariants emits both the base field name AND its
 // `.keyword` subfield form for each input, so terms aggregations
@@ -2667,23 +2675,23 @@ var shorthandRe = regexp.MustCompile(
 // differently-shaped field name.
 func (s *ESStore) expandShorthand(q string) string {
 	aliases := map[string][]string{
-		"level":     {s.fields.SeverityTx, "level", "severity", "severity_text", "SeverityText"},
-		"severity":  {s.fields.SeverityTx, "level", "severity", "severity_text", "SeverityText"},
-		"service":   {s.fields.Service, "service.name", "service_name", "serviceName", "ServiceName"},
-		"trace":     {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
-		"trace_id":  {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
-		"traceid":   {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
-		"span":      {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
-		"span_id":   {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
-		"spanid":    {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
-		"message":   {s.fields.Body, "message", "Body", "body", "log.message"},
-		"body":      {s.fields.Body, "message", "Body", "body", "log.message"},
+		"level":      {s.fields.SeverityTx, "level", "severity", "severity_text", "SeverityText"},
+		"severity":   {s.fields.SeverityTx, "level", "severity", "severity_text", "SeverityText"},
+		"service":    {s.fields.Service, "service.name", "service_name", "serviceName", "ServiceName"},
+		"trace":      {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
+		"trace_id":   {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
+		"traceid":    {s.fields.TraceID, "trace.id", "trace_id", "traceId", "TraceId"},
+		"span":       {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
+		"span_id":    {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
+		"spanid":     {s.fields.SpanID, "span.id", "span_id", "spanId", "SpanId"},
+		"message":    {s.fields.Body, "message", "Body", "body", "log.message"},
+		"body":       {s.fields.Body, "message", "Body", "body", "log.message"},
 		"pod":        {"kubernetes.pod.name", "kubernetes.pod_name", "k8s.pod.name", "resource.k8s.pod.name", "pod_name", "pod"},
 		"container":  {"kubernetes.container.name", "kubernetes.container_name", "k8s.container.name", "container.name", "container_name", "container"},
 		"namespace":  {"kubernetes.namespace.name", "kubernetes.namespace_name", "kubernetes.namespace", "k8s.namespace.name", "resource.k8s.namespace.name", "namespace"},
 		"deployment": {"kubernetes.deployment.name", "kubernetes.deployment_name", "k8s.deployment.name", "kubernetes.labels.app", "deployment"},
-		"cluster":   {"openshift.labels.cluster", "openshift.cluster.name", "kubernetes.cluster.name", "k8s.cluster.name", "resource.k8s.cluster.name", "kubernetes.cluster_name", "cluster"},
-		"host":      {"host.name", "host.hostname", "resource.host.name", "hostname", "host"},
+		"cluster":    {"openshift.labels.cluster", "openshift.cluster.name", "kubernetes.cluster.name", "k8s.cluster.name", "resource.k8s.cluster.name", "kubernetes.cluster_name", "cluster"},
+		"host":       {"host.name", "host.hostname", "resource.host.name", "hostname", "host"},
 	}
 	return shorthandRe.ReplaceAllStringFunc(q, func(m string) string {
 		sub := shorthandRe.FindStringSubmatch(m)
@@ -3115,7 +3123,6 @@ func stringToInt64ID(s string) int64 {
 	}
 	return int64(h >> 1)
 }
-
 
 // conventionalLogFields — OpenShift cluster-logging / yaygın uygulama
 // şeması alan adayları. ensureConventionalFields yalnız MAPPING'DE

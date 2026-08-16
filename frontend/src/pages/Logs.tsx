@@ -784,6 +784,21 @@ function LogsInner() {
           </div>
         )}
 
+        {/* v0.9.1084 — HONEST with-trace chip (EnvUnapplied ikizi;
+            operator-reported: prod'ta "with trace" hiç log getirmiyordu).
+            ES mapping'inde yapısal trace-id alanı yoksa exists filtresi
+            hiçbir doc'la eşleşemez — sessiz boş yerine neden söylenir.
+            Trace→log pivotları gövde eşleşmesiyle çalışmaya devam eder;
+            CH backend'i bu bayrağı asla set etmez. */}
+        {!live && filter.hasTrace && !!staticQ.data?.hasTraceUnapplied && (
+          <div style={{ marginBottom: 10 }}>
+            <span className="badge b-warn"
+              title={'The with-trace filter could not be applied on this log source: none of the structural trace-id fields (trace.id, trace_id, traceId, TraceId or a configured override) exist in the index mapping — the trace ids likely live only inside the log message body.\nTrace→log pivots keep working via body match; this filter cannot.\nFix: map a trace-id field in Settings → Elasticsearch → Document field map (if your pipeline emits one).'}>
+              ⚠ “with trace” not applied — this log source has no structural trace-id field
+            </span>
+          </div>
+        )}
+
         {/* v0.9.288 — honesty envelope. Every ES log query carries a 10s
             SOFT timeout, whose whole purpose is that ES returns what it
             computed and says timed_out. Nothing decoded that field, so a

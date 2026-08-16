@@ -1959,6 +1959,7 @@ export interface LogsResponse {
   // results are env-UNFILTERED; /logs renders a warning chip instead of
   // silently implying a narrowed view (v0.8.398 honesty pattern).
   envUnapplied?: boolean;
+  hasTraceUnapplied?: boolean; // v0.9.1084 — ES'te yapısal trace alanı yok, with-trace filtresi uygulanamadı
   // ── Honesty envelope (v0.9.288), ES backend only ────────────────
   // partial — ES hit its 10s SOFT timeout or lost shards, so it
   // returned what it had computed. Every count here is a subset. At

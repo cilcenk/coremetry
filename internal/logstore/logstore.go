@@ -34,8 +34,8 @@ const logsTailMax = LogsTailMax
 // translate as much as they can; what they can't handle they ignore
 // (with a log line).
 type Filter struct {
-	Service     string
-	Cluster     string    // v0.5.471 — k8s/openshift cluster name; empty = any
+	Service string
+	Cluster string // v0.5.471 — k8s/openshift cluster name; empty = any
 	// Env (v0.8.400 — env-separation Phase 4) — the global ?env=
 	// deployment-environment filter. CH backend: bounded res-array
 	// lookup over BOTH semconv spellings (deployment.environment.name
@@ -47,23 +47,23 @@ type Filter struct {
 	Env         string
 	Search      string
 	From, To    time.Time
-	SeverityMin uint8     // OTel severity number ≥ this; 0 = no filter
+	SeverityMin uint8 // OTel severity number ≥ this; 0 = no filter
 	TraceID     string
 	// TraceIDs (v0.5.271) — multi-trace filter for the DQL
 	// cross-signal join. When non-empty, backends should
 	// match ANY trace_id in the list (OR semantics) in
 	// addition to / instead of TraceID. Single-string TraceID
 	// stays primary for the existing /logs page UX.
-	TraceIDs    []string
-	SpanID      string
+	TraceIDs []string
+	SpanID   string
 	// HasTrace (v0.8.406 — operator ask: "sadece trace'i olan loglar")
 	// keeps only records with a non-empty trace correlation, so the
 	// operator can filter /logs to pivotable rows. CH: trace_id != ''.
 	// ES: exists over the four common trace-field spellings (+ the
 	// configured override) — same field fan-out as the TraceID lookup.
-	HasTrace    bool
-	Limit       int
-	Offset      int
+	HasTrace bool
+	Limit    int
+	Offset   int
 	// WantCursor (v0.9.286) — the caller DECLARES it intends to page.
 	//
 	// The ES backend opens a Point-in-Time per uncached search and keeps
@@ -81,7 +81,7 @@ type Filter struct {
 	// and sets this true is asking the cluster to hold segments for
 	// nothing. Both backends honour it, so the contract does not differ
 	// by backend.
-	WantCursor  bool
+	WantCursor bool
 	// Cursor (v0.7.22, SAFE-CORE) — opaque keyset paging token.
 	// When non-empty the backend decodes its OWN format and pages
 	// AFTER the encoded position instead of using Offset. The API
@@ -128,8 +128,8 @@ type Filter struct {
 // surface stays stable across backends.
 type LogRecord struct {
 	ID                 int64             `json:"id"`
-	Timestamp          int64             `json:"timestamp"`     // unix ns
-	Severity           uint8             `json:"severity"`      // OTel SeverityNumber 0..24
+	Timestamp          int64             `json:"timestamp"` // unix ns
+	Severity           uint8             `json:"severity"`  // OTel SeverityNumber 0..24
 	SeverityText       string            `json:"severityText"`
 	Body               string            `json:"body"`
 	ServiceName        string            `json:"serviceName"`
@@ -157,6 +157,12 @@ type Page struct {
 	// view (the v0.8.398 honesty pattern). Never set by the CH backend
 	// (the res-array conjunct always applies).
 	EnvUnapplied bool `json:"envUnapplied,omitempty"`
+	// HasTraceUnapplied (v0.9.1084 — operator-reported: prod'ta
+	// "with trace" hiç log getirmiyor). ES: hasTrace istendi ama
+	// mapping'de yapısal trace-id alanı yok — exists hiçbir doc'la
+	// eşleşemez; sessiz boş yerine dürüst bayrak (EnvUnapplied sınıfı).
+	// CH backend'i asla set etmez (trace_id kolonu hep var).
+	HasTraceUnapplied bool `json:"hasTraceUnapplied,omitempty"`
 	// ── Honesty envelope (v0.9.288) ─────────────────────────────────
 	// Every ES log query carries a SOFT timeout (10s). The entire point
 	// of a soft timeout is that ES returns what it has computed so far

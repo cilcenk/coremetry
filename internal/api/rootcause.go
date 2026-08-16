@@ -68,6 +68,18 @@ type AnomalyRootCause struct {
 	Pattern     string `json:"pattern"`     // log pattern name OR operation name (trace_op)
 }
 
+// rootcauseCacheKey — v0.9.1082 regresyon yüzeyi: anahtar YALNIZ
+// problemin kimliğinden türetilir, saatten ASLA. Saat-türevli bir
+// bileşen (eski end.Truncate(minute)) hesap süresi TTL'e yaklaştığında
+// cache'i ebedi soğuğa düşürür.
+func rootcauseCacheKey(id string, startedNs int64, resolvedNs *int64) string {
+	res := int64(0)
+	if resolvedNs != nil {
+		res = *resolvedNs
+	}
+	return fmt.Sprintf("rootcause:%s:%d:%d", id, startedNs, res)
+}
+
 // boundAnalysisWindow clamps an anchor's [started, end] to the same
 // [10m, 1h] envelope getProblemRootCause uses: ≥10m so a just-fired
 // anchor has comparison context, ≤1h so the bubbleup/exemplar span
@@ -127,19 +139,25 @@ func (s *Server) getProblemRootCause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	started := time.Unix(0, p.StartedAt)
-	end := time.Now()
-	if p.ResolvedAt != nil {
-		end = time.Unix(0, *p.ResolvedAt)
-	}
-	// Bound the analysis window: ≥10m of context so a just-fired problem has
-	// something to compare, ≤1h so the bubbleup/exemplar span scans stay cheap
-	// no matter how long it has been open.
-	started, end = boundAnalysisWindow(started, end)
-	windowSec := int(end.Sub(started).Seconds())
-
-	key := fmt.Sprintf("rootcause:%s:%d", id, end.Truncate(time.Minute).Unix())
+	// v0.9.1082 — anahtar SABİT (id + started + resolved), dakika DEĞİL.
+	// Eski anahtar end.Truncate(minute) taşıyordu; hesap ~40s sürünce her
+	// dakika yeni anahtar = EBEDİ SOĞUK — serveCached'in stale-while-
+	// revalidate mekanizması (v0.8.471) hiç devreye giremiyordu (ölçüm
+	// 2026-08-16: aynı probleme ardışık iki tık 34s + 45s). Tazelik artık
+	// TTL+stale'in işi; pencere (end=now) closure İÇİNDE hesaplanır ki
+	// arka plan tazelemesi donmuş bir end kullanmasın.
+	key := rootcauseCacheKey(id, p.StartedAt, p.ResolvedAt)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		started := time.Unix(0, p.StartedAt)
+		end := time.Now()
+		if p.ResolvedAt != nil {
+			end = time.Unix(0, *p.ResolvedAt)
+		}
+		// Bound the analysis window: ≥10m of context so a just-fired problem has
+		// something to compare, ≤1h so the bubbleup/exemplar span scans stay cheap
+		// no matter how long it has been open.
+		started, end = boundAnalysisWindow(started, end)
+		windowSec := int(end.Sub(started).Seconds())
 		out := RootCause{
 			ProblemID: p.ID, Service: p.Service, Metric: p.Metric,
 			StartedAt:    p.StartedAt,
@@ -258,17 +276,25 @@ func (s *Server) getAnomalyRootCause(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	started := time.Unix(0, ev.StartedAt)
-	end := time.Unix(0, ev.LastSeen)
-	// LastSeen can equal or (on a clock skew) precede StartedAt for a
-	// just-recorded event; boundAnalysisWindow floors the span to 10m from
-	// the start, so the window is always well-formed [started, started+≥10m].
-	started, end = boundAnalysisWindow(started, end)
-	windowSec := int(end.Sub(started).Seconds())
-	exKind := exemplarKindForAnomaly(ev.Kind)
-
-	key := fmt.Sprintf("anomaly-rootcause:%s:%d", id, end.Truncate(time.Minute).Unix())
+	// v0.9.1082 — anahtar SABİT (id + started); problem ucundaki dakika-
+	// anahtarı düzeltmesinin ikizi. Eski anahtar LastSeen dakikasını
+	// taşıyordu: AKTİF anomalide dedektör LastSeen'i her geçişte ilerletir,
+	// anahtar döner, ~40s'lik hesap her tıkta soğuk koşardı. LastSeen artık
+	// closure İÇİNDE taze okunur (arka plan tazelemesi de güncel pencereyi
+	// görsün); okuma düşerse yakalanan satır kullanılır.
+	key := fmt.Sprintf("anomaly-rootcause:%s:%d", id, ev.StartedAt)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
+		if fresh, e := s.store.GetAnomalyEvent(ctx, id, 0); e == nil && fresh != nil {
+			ev = fresh
+		}
+		started := time.Unix(0, ev.StartedAt)
+		end := time.Unix(0, ev.LastSeen)
+		// LastSeen can equal or (on a clock skew) precede StartedAt for a
+		// just-recorded event; boundAnalysisWindow floors the span to 10m from
+		// the start, so the window is always well-formed [started, started+≥10m].
+		started, end = boundAnalysisWindow(started, end)
+		windowSec := int(end.Sub(started).Seconds())
+		exKind := exemplarKindForAnomaly(ev.Kind)
 		out := AnomalyRootCause{
 			RootCause: RootCause{
 				ProblemID:    "", // anomaly-anchored — no parent Problem

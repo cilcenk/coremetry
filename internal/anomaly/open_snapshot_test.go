@@ -53,14 +53,16 @@ func TestSnapshotTakenOncePerScan(t *testing.T) {
 	if n := strings.Count(src, "OpenProblemsSnapshot("); n != 1 {
 		t.Errorf("OpenProblemsSnapshot %d kez çağrılıyor, tam 1 olmalı (scan başına)", n)
 	}
+	// v0.9.1069 (F1.6-R2) — checkOne evaluateAnomaly+applyOutcome olarak
+	// bölündü; pin aynı sözleşmeyi yeni ada karşı korur.
 	iScan := strings.Index(src, "func (d *Detector) scan(")
-	iCheck := strings.Index(src, "func (d *Detector) checkOne(")
+	iApply := strings.Index(src, "func (d *Detector) applyOutcome(")
 	iSnap := strings.Index(src, "OpenProblemsSnapshot(")
-	if iScan < 0 || iCheck < 0 || iSnap < 0 {
+	if iScan < 0 || iApply < 0 || iSnap < 0 {
 		t.Fatal("beklenen fonksiyonlar bulunamadı")
 	}
-	if !(iSnap > iScan && iSnap < iCheck) {
-		t.Error("snapshot scan() İÇİNDE alınmalı — checkOne'a kayarsa N+1 geri gelir")
+	if iSnap < iScan {
+		t.Error("snapshot scan() İÇİNDE alınmalı — uygulama fazına kayarsa N+1 geri gelir")
 	}
 }
 

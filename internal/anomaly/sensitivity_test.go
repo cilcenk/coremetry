@@ -399,9 +399,9 @@ func TestIncidentAttachDefaultsToOn(t *testing.T) {
 // operatör sessizce sayfa almamaya başlar ve bunu kimse fark etmez.
 func TestIncidentAttachIsGatedButNotifyIsNot(t *testing.T) {
 	src := readAnomalySource(t)
-	i := strings.Index(src, "func (d *Detector) checkOne(")
+	i := strings.Index(src, "func (d *Detector) applyOutcome(")
 	if i < 0 {
-		t.Fatal("checkOne bulunamadı — test bayatladı")
+		t.Fatal("applyOutcome bulunamadı — test bayatladı")
 	}
 	body := src[i:]
 	if j := strings.Index(body[1:], "\nfunc "); j >= 0 {
@@ -415,7 +415,7 @@ func TestIncidentAttachIsGatedButNotifyIsNot(t *testing.T) {
 		t.Fatal("incident bağlama kapısı YOK — Settings'teki kutucuk hiçbir şey yapmaz")
 	}
 	if attach < 0 || notify < 0 || upsert < 0 {
-		t.Fatal("checkOne'ın açma dalı tanınamadı — test bayatladı")
+		t.Fatal("applyOutcome'un açma dalı tanınamadı — test bayatladı")
 	}
 	if gate > attach {
 		t.Error("kapı AttachProblemToIncident'tan SONRA — incident yine açılıyor")

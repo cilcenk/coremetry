@@ -554,18 +554,39 @@ func (d *Detector) scan(ctx context.Context) {
 		log.Printf("[anomaly] open-problems snapshot: %v — bu tik açık problem YOK sayılıyor", err)
 	}
 
+	// v0.9.1069 (F1.6-R2) — İKİ FAZ: önce TÜM kararlar toplanır, sonra
+	// uygulanır. Davranış birebir (kararlar zaten tek snapshot'tan ve
+	// birbirinden bağımsızdı); fark, R3'ün açılış kararlarını uygulamadan
+	// ÖNCE kümeleyebilmesi.
+	type pendingApply struct {
+		service, metric string
+		oc              anomalyOutcome
+	}
+	var pending []pendingApply
 	for _, svc := range services {
 		for _, m := range tracked {
 			buckets := seriesFor(bucketsByMetric[m], svc)
 			seasonal := seriesFor(seasonalByMetric[m], svc)
 			rates := seriesFor(ratesByMetric[m], svc)
-			d.checkOne(ctx, svc, m, buckets, seasonal, rates, minSamples, snap, sens)
+			ruleID := "anomaly:" + svc + ":" + m
+			existing := snap.ByKey(ruleID, svc)
+			hasOpen := existing != nil && existing.ID != ""
+			oc := evaluateAnomaly(m, buckets, seasonal, rates, minSamples, hasOpen, sens)
+			if oc.Action == "skip" || oc.Action == "none" {
+				continue
+			}
+			pending = append(pending, pendingApply{service: svc, metric: m, oc: oc})
 		}
+	}
+	for _, pa := range pending {
+		d.applyOutcome(ctx, pa.service, pa.metric, pa.oc, snap, sens)
+	}
+	for _, svc := range services {
 		// v0.9.1051 (Faz 0.3) — servis-sustu kontrolü, servis başına BİR
 		// kez. Hacim serisi metrikten bağımsız (istek sayısı); ilk izlenen
 		// metriğin toplu okumasından gelir, ek sorgu yok. tracked boşsa
 		// (operatör her şeyi kapattıysa) bu kontrol de kapalı — bilinçli:
-		// izleme tamamen kapatılmışken arka kapıdan problem açmayız.
+		// izleme tamamen kapatılmışken arka kapıdan problem açmazız.
 		if len(tracked) > 0 {
 			if rates := seriesFor(ratesByMetric[tracked[0]], svc); len(rates) > 0 {
 				d.checkSilence(ctx, svc, rates, snap, sens)
@@ -635,19 +656,17 @@ func batchSeries(
 // than fetched here per service. A nil/short `buckets` (service absent from the
 // batch, or the metric's batch read errored this tick) is skipped by the
 // enoughHistory guard — identical to the old per-service fetch returning empty.
-func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets, seasonal, rates []float64, seasonalMinSamples int, openSnap *chstore.OpenProblems, cfg chstore.AnomalySensitivityConfig) {
-	// v0.9.1068 (F1.6-R1) — KARAR fazı saf evaluateAnomaly'de
-	// (verdict.go); bu gövde yalnız YAN ETKİLERİ uygular. Davranış
-	// birebir — karar mantığı taşınırken satır satır korundu.
+// applyOutcome — bir kararın YAN ETKİLERİ (v0.9.1069, F1.6-R2:
+// checkOne'ın kalanı). Karar scan'in 1. fazında evaluateAnomaly'den
+// gelir; burada Upsert/notify/incident/log uygulanır.
+func (d *Detector) applyOutcome(ctx context.Context, service, metric string, oc anomalyOutcome, openSnap *chstore.OpenProblems, cfg chstore.AnomalySensitivityConfig) {
 	ruleID := "anomaly:" + service + ":" + metric
 	// v0.9.691 — tik başına TEK snapshot'tan arama (bkz. scan()).
 	open := openSnap.ByKey(ruleID, service)
-	hasOpen := open != nil && open.ID != ""
-
-	oc := evaluateAnomaly(metric, buckets, seasonal, rates, seasonalMinSamples, hasOpen, cfg)
 	if oc.Action == "skip" || oc.Action == "none" {
 		return
 	}
+	hasOpen := open != nil && open.ID != ""
 	current, median, mad, z, dwell := oc.Current, oc.Median, oc.MAD, oc.Z, oc.Dwell
 	action := oc.Action
 	if action == "open" {

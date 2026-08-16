@@ -403,6 +403,17 @@ func (s *Service) ConfigureTuning(maxTokens int, temperature *float64, timeoutS 
 func (s *Service) tuneMaxTokens() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.tuneMaxTokensLocked()
+}
+
+// tuneMaxTokensLocked / tuneTemperatureLocked — lock-free halves,
+// mirroring clientTimeout/clientTimeoutLocked. A caller that already
+// holds s.mu (the provider snapshot, v0.9.112x Faz 1.1) uses these:
+// re-entering an RWMutex for a read deadlocks once a writer is queued.
+// Splitting rather than duplicating the defaulting logic is deliberate
+// — a second copy of "override or default" is exactly how the 1024
+// budget drifted for ~1000 releases (v0.9.1120).
+func (s *Service) tuneMaxTokensLocked() int {
 	if s.maxTokens > 0 {
 		return s.maxTokens
 	}
@@ -416,6 +427,10 @@ func (s *Service) tuneMaxTokens() int {
 func (s *Service) tuneTemperature() (float64, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	return s.tuneTemperatureLocked()
+}
+
+func (s *Service) tuneTemperatureLocked() (float64, bool) {
 	if s.temperature != nil {
 		return *s.temperature, true
 	}
@@ -590,7 +605,17 @@ func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) 
 	case ProviderGitHub:
 		out, inputTokens, outputTokens, err = s.explainGitHubWithUsage(ctx, systemPrompt, userPrompt)
 	case ProviderOpenAI:
-		out, inputTokens, outputTokens, err = s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
+		// FAZ 1.1 CANARY — tek yüzey; 1.2'de tüm explain'ler geçer, bu şart bloğu silinir.
+		//
+		// jsonNone koşulu savunma amaçlı: explain-charts bugün saf
+		// prose (copilotExplain), ama biri onu WithJSONMode'a
+		// sararsa yeni transport response_format'ı sessizce
+		// DÜŞÜRMEZ — eski yola geri döner.
+		if canaryProvider(ctx) && jsonLevelRequested(ctx) == jsonNone {
+			out, inputTokens, outputTokens, err = s.explainViaProvider(ctx, systemPrompt, userPrompt)
+		} else {
+			out, inputTokens, outputTokens, err = s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
+		}
 	default:
 		out, inputTokens, outputTokens, err = s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
 	}

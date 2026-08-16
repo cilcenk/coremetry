@@ -23,8 +23,8 @@ spec:
         - name: go-demo
           image: {{ include "coremetry.image" (dict "imageRoot" .Values.goDemo.image "global" .Values.global "defaultTag" .Chart.AppVersion) | quote }}
           imagePullPolicy: {{ .Values.goDemo.image.pullPolicy }}
-          # go-demo is a synthetic retail-banking traffic generator. Unlike
-          # java-demo it is NOT auto-instrumented — it crafts OTLP/HTTP payloads
+          # go-demo is a synthetic retail-banking traffic generator. It is
+          # NOT auto-instrumented — it crafts OTLP/HTTP payloads
           # itself and emits its own service.name set (mobile-bff, api-gateway,
           # account-service, …) from cmd/demo's internal services map. So there
           # is no OTEL_SERVICE_NAME / OTEL_EXPORTER_* to set; instead the target
@@ -34,7 +34,7 @@ spec:
             # Traces / logs / metrics → the in-cluster collector's OTLP/HTTP
             # port (the binary appends /v1/{traces,logs,metrics}). Falls back to
             # the Coremetry core service's direct OTLP/HTTP when the collector is
-            # disabled, matching java-demo's endpoint selection.
+            # disabled.
             - "-endpoint"
             - {{ if .Values.otelCollector.enabled -}}
                 "http://{{ include "coremetry.fullname" . }}-otelcol:{{ .Values.otelCollector.service.httpPort }}"

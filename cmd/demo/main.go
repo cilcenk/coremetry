@@ -179,7 +179,7 @@ func clusterFor(serviceName string) string {
 // prep). v0.8.383 (env-separation Phase 0c): the demo emits ONLY the
 // current-semconv `deployment.environment.name` key so the new-key
 // ingest path (v0.8.379) is exercised end to end — the legacy
-// `deployment.environment` spelling stays covered by java-demo.
+// `deployment.environment` spelling stays covered by jboss-demo.
 var demoEnvs = []string{"int", "uat", "prep"}
 
 // fnv32 — FNV-1a over a string; same algorithm podIP / clusterFor

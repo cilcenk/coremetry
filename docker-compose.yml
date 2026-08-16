@@ -284,7 +284,7 @@ services:
   # Ingests CPU/memory profiles from app agents (Java, Go, .NET, Ruby, etc.)
   # Coremetry ships its own pprof ingest at /v1/profiles for ad-hoc captures,
   # but Pyroscope is the de-facto standard for *continuous* profiling and has
-  # a far richer flame-graph UI. Run alongside; java-demo's profile-pusher
+  # a far richer flame-graph UI. Run alongside; jboss-demo's profile-pusher
   # below targets it.
   #
   # UI: http://localhost:4040  (no auth in dev)
@@ -300,59 +300,9 @@ services:
     # `docker compose --profile pyroscope up` when you want it.
     profiles: ["pyroscope", "demo"]
 
-  # ── Java demo: zero-code OTel auto-instrumentation ──────────────────────────
-  # Spring Boot app, no OTel imports in source. The javaagent injects all
-  # traces/metrics/logs at JVM startup; async-profiler pushes CPU profiles.
-  java-demo:
-    build:
-      context: ./java-demo
-    container_name: coremetry-java-demo
-    environment:
-      OTEL_SERVICE_NAME: java-demo
-      OTEL_RESOURCE_ATTRIBUTES: "deployment.environment=demo,host.name=java-demo-1,service.version=0.1.0,k8s.cluster.name=prod-eu-west,k8s.namespace.name=demo"
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector:4317"
-      OTEL_EXPORTER_OTLP_PROTOCOL: grpc
-      OTEL_TRACES_EXPORTER: otlp
-      OTEL_METRICS_EXPORTER: otlp
-      OTEL_LOGS_EXPORTER: otlp
-      OTEL_INSTRUMENTATION_LOGBACK_APPENDER_ENABLED: "true"
-      OTEL_INSTRUMENTATION_RUNTIME_TELEMETRY_ENABLED: "true"
-      OTEL_METRIC_EXPORT_INTERVAL: "10000"
-      # W3C Trace Context (https://www.w3.org/TR/trace-context/) is the
-      # default in modern OTel SDKs but pinning it explicitly makes the
-      # propagation contract visible to anyone reading this file. Every
-      # service in the stack must agree on the same propagator(s) for
-      # cross-service spans to chain into one trace — mixing tracecontext
-      # with B3 / Jaeger across services breaks that.
-      OTEL_PROPAGATORS: "tracecontext,baggage"
-      # Pyroscope continuous profiling — agent pushes CPU + alloc
-      # profiles every ~10s. Tagged with service+env so the Pyroscope
-      # UI can group by service. Open http://localhost:4040 to view.
-      PYROSCOPE_APPLICATION_NAME: "java-demo"
-      PYROSCOPE_SERVER_ADDRESS: "http://pyroscope:4040"
-      PYROSCOPE_FORMAT: "jfr"
-      PYROSCOPE_PROFILING_INTERVAL: "10s"
-      PYROSCOPE_LABELS: "service.name=java-demo,deployment.environment=demo"
-      # Profile pusher (sidecar shell script — not OTel)
-      COREMETRY_URL: "http://coremetry:8088"
-      PROFILE_INTERVAL_SEC: "15"
-      PROFILE_WINDOW_SEC: "10"
-      PROFILE_ENGINE: wall   # wallclock sampling — captures all threads, no kernel perms needed
-    ports:
-      - "8080:8080"
-    depends_on:
-      - otel-collector
-      - coremetry
-    restart: unless-stopped
-    # v0.6.3 — opt-in. Operator routes their own telemetry via
-    # external collector (Antigravity / k8s agents); the bundled
-    # demo apps are dev convenience only. `docker compose
-    # --profile demo up` (or --profile java) brings them.
-    profiles: ["demo", "java"]
-
   # ── JBoss demo (WildFly + JFR + OTel javaagent) ─────────────────────────────
-  # Jakarta EE 10 WAR deployed on WildFly. Same auto-instrumentation
-  # pattern as java-demo, swapped onto a JBoss-family runtime so an
+  # Jakarta EE 10 WAR deployed on WildFly. Zero-code OTel javaagent
+  # auto-instrumentation on a JBoss-family runtime so an
   # operator can see what their Undertow / RESTEasy traces look like
   # without standing one up themselves. Three pillars:
   #
@@ -418,7 +368,7 @@ services:
       # Coremetry without burning a laptop.
       JBOSS_DEMO_RPS: "2"
     ports:
-      - "8081:8080"   # JBoss HTTP — avoids clashing with java-demo on 8080
+      - "8081:8080"   # JBoss HTTP
     depends_on:
       - otel-collector
       - coremetry
@@ -439,7 +389,7 @@ services:
     depends_on:
       - otel-collector
     restart: unless-stopped
-    # v0.6.3 — opt-in via profile (see java-demo above).
+    # v0.6.3 — opt-in via profile (demo apps are dev convenience only).
     profiles: ["demo", "go"]
 
 volumes:

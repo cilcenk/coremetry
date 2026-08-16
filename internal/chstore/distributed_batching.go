@@ -23,6 +23,16 @@ import (
 // Bu yüzden geçiş boot'ta ve otomatik — "alterı bir sonraki imageda
 // sen otomatik yap".
 //
+// v0.9.1081 GERÇEKLİK DÜZELTMESİ (canlı doğrulama, lokal CH 24.8):
+//   - Distributed motoru ALTER MODIFY SETTING'i TOPYEKÛN reddediyor
+//     (Code 36) — 1076'nın 4 fallback'i de çalışmıyordu.
+//   - AMA kullanıcı-düzeyi distributed_background_insert_batch 24.8'de
+//     varsayılan 1: gönderici tablo ayarı olmadan da batch'liyor. Geçiş
+//     artık önce ETKİN durumu okur; gerekliyse dener; Code 36'da tek
+//     özet + profil çaresi loglar. Wrapper CREATE şablonlarına SETTINGS
+//     gömmek bilinçli YAPILMADI: dört kritik onarım hattını (repair/
+//     promote/adaptDDL) riske atar, modern CH'de değeri sıfır.
+//
 // Güvenlik sınırları:
 //   - Soft-fail: hiçbir dal boot'u düşürmez (go-dep dersi v0.9.görünümü:
 //     prod crashloop'un en pahalı sınıfı boot-yolu sürprizi).
@@ -94,9 +104,37 @@ func batchingAlters(table, cluster string) []string {
 	return append(out, local+newNames, local+oldNames)
 }
 
-// ensureDistributedBatching — boot geçişi. Distributed tabloları keşfet,
-// batch modu kapalı olanlara sırayla ALTER dene. Tümü soft-fail.
+// effectiveBatchingSQL — kullanıcı-düzeyi (profil) batch ayarı. CH'nin
+// Distributed göndericisi, tablo ayarı YOKSA bu değere düşer; 24.8'de
+// varsayılan zaten 1 (canlı doğrulama 2026-08-16, chc-0). İki ad da
+// okunur: yenisi 23.3+, eskisi alias olarak yaşıyor.
+const effectiveBatchingSQL = `SELECT max(toUInt8(value))
+	FROM system.settings
+	WHERE name IN ('distributed_background_insert_batch',
+	               'distributed_directory_monitor_batch_inserts')
+	SETTINGS max_execution_time = 3`
+
+// isSettingsChangeUnsupported — Code 36: "Cannot alter settings,
+// because table engine doesn't support settings changes" (saf,
+// tablo testli). CH 24.8 Distributed motoru MODIFY SETTING fiilini
+// TOPYEKÛN reddediyor (canlı doğrulama 2026-08-16): ad/kapsam
+// fallback'lerinin hiçbiri işe yaramaz, tablo tablo denemek 30 satır
+// yanıltıcı hata basar. Bu sınıf hatada döngü tek özetle kesilir.
+func isSettingsChangeUnsupported(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "doesn't support settings changes")
+}
+
+// ensureDistributedBatching — boot geçişi. Önce ETKİN durum: profil
+// düzeyi ayar 1 ise (modern CH varsayılanı) tablo ALTER'ı gereksizdir
+// ve hiç denenmez. Değilse tablo tablo denenir; motor MODIFY SETTING
+// desteklemiyorsa (Code 36) tek özet + operatör çaresi loglanır.
+// Tümü soft-fail.
 func (s *Store) ensureDistributedBatching(ctx context.Context) {
+	var effective uint8
+	if err := s.conn.QueryRow(ctx, effectiveBatchingSQL).Scan(&effective); err == nil && effective >= 1 {
+		log.Printf("[chstore] distributed batching profil düzeyinde ZATEN ETKİN (distributed_background_insert_batch=1) — tablo ALTER'ı gereksiz, atlanıyor")
+		return
+	}
 	rows, err := s.conn.Query(ctx, `SELECT name, engine_full FROM system.tables
 		WHERE database = currentDatabase() AND engine = 'Distributed'
 		SETTINGS max_execution_time = 5`)
@@ -130,6 +168,12 @@ func (s *Store) ensureDistributedBatching(ctx context.Context) {
 				break
 			}
 			lastErr = err
+			if isSettingsChangeUnsupported(err) {
+				// Motor fiili reddediyor — kalan ad/kapsam denemeleri de,
+				// kalan TABLOLAR da aynı duvara çarpar. Tek dürüst özet:
+				log.Printf("[chstore] bu CH sürümünde Distributed motoru ALTER MODIFY SETTING desteklemiyor (Code 36) — tablo tablo denenmedi. Kalıcı çare CH tarafında: default profile'a distributed_background_insert_batch=1 ve distributed_background_insert_split_batch_on_failure=1 (users.xml, hot-reload; CH ≥24 varsayılanı zaten 1)")
+				return
+			}
 		}
 		if applied != "" {
 			log.Printf("[chstore] distributed batching açıldı: %s", applied)

@@ -8,6 +8,7 @@
 package chstore
 
 import (
+	"os"
 	"strings"
 	"testing"
 )
@@ -135,3 +136,46 @@ func TestBatchingAlters(t *testing.T) {
 		}
 	})
 }
+
+// ── v0.9.1081 — gerçeklik düzeltmesi ─────────────────────────────────
+//
+// Canlı doğrulama (lokal CH 24.8, 2026-08-16): Distributed motoru ALTER
+// MODIFY SETTING'i topyekûn reddediyor (Code 36) — v0.9.1076'nın dört
+// fallback'i de çalışmıyordu ve 30 tablo × 1 yanıltıcı hata satırı
+// basılıyordu. Kullanıcı-düzeyi ayar ise 24.8'de varsayılan 1.
+
+func TestIsSettingsChangeUnsupported(t *testing.T) {
+	if !isSettingsChangeUnsupported(errStr("code: 36, message: Cannot alter settings, because table engine doesn't support settings changes")) {
+		t.Error("Code 36 metni yakalanmalı")
+	}
+	if isSettingsChangeUnsupported(errStr("code: 36, message: some other bad argument")) {
+		t.Error("başka bir Code 36 bu sınıfa GİRMEZ — metin eşleşmesi şart")
+	}
+	if isSettingsChangeUnsupported(nil) {
+		t.Error("nil hata false olmalı")
+	}
+}
+
+// Kaynak pini: etkin-durum kontrolü ALTER denemelerinden ÖNCE koşmalı
+// ve Code 36 döngüyü TEK özetle kesmeli. Bu ikisi gevşerse ya gereksiz
+// ALTER yağmuru ya 30 satır yanıltıcı hata geri gelir.
+func TestBatchingEffectiveFirstAndCode36Bails(t *testing.T) {
+	b, err := os.ReadFile("distributed_batching.go")
+	if err != nil {
+		t.Fatalf("kaynak okunamadı: %v", err)
+	}
+	src := string(b)
+	effIdx := strings.Index(src, "effectiveBatchingSQL).Scan")
+	altIdx := strings.Index(src, "range targets")
+	if effIdx < 0 || altIdx < 0 || effIdx > altIdx {
+		t.Error("etkin-durum kontrolü ALTER döngüsünden ÖNCE olmalı")
+	}
+	if !strings.Contains(src, "isSettingsChangeUnsupported(err)") ||
+		!strings.Contains(src, "distributed_background_insert_batch=1 ve distributed_background_insert_split_batch_on_failure=1") {
+		t.Error("Code 36 dalı tek özet + profil çaresiyle kesmeli")
+	}
+}
+
+type errStr string
+
+func (e errStr) Error() string { return string(e) }

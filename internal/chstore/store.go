@@ -3762,11 +3762,19 @@ func (s *Store) migrate(ctx context.Context) error {
 				  AND name     = 'slow_exemplar_state'`).Scan(&wrapperHas)
 			if localHas == 1 && wrapperHas == 0 {
 				log.Println("[chstore] db_statement_summary_5m wrapper kolon kayması — _local'da exemplar state var, wrapper'da yok; wrapper yenileniyor")
+				// v0.9.1099 — DOĞRUDAN s.conn.Exec, execDDL DEĞİL (canlı
+				// doğrulamanın yakaladığı 1098 regresyonu): bu iki ifade
+				// ON CLUSTER'ı ZATEN taşıyor; execDDL→adaptDDL yüksek-hacim
+				// tablo adını görüp hedefi _local'a çevirip İKİNCİ bir
+				// ON CLUSTER enjekte ediyordu → CREATE code 62 (syntax) ile
+				// ölüyor, DROP ise geçiyor ve her boot wrapper'ı silip geri
+				// koyamıyordu (Slow Queries UNKNOWN_TABLE). Kardeş onarım
+				// yolu cluster.go'da aynı sebepten conn.Exec kullanır.
 				on := s.onCluster()
-				if err := s.execDDL(ctx,
+				if err := s.conn.Exec(ctx,
 					"DROP TABLE IF EXISTS db_statement_summary_5m"+on+" SYNC"); err != nil {
 					log.Printf("[chstore] wrapper drop düştü (sonraki boot yeniden dener): %v", err)
-				} else if err := s.execDDL(ctx, fmt.Sprintf(
+				} else if err := s.conn.Exec(ctx, fmt.Sprintf(
 					"CREATE TABLE IF NOT EXISTS db_statement_summary_5m%s AS db_statement_summary_5m_local ENGINE = Distributed(`%s`, currentDatabase(), db_statement_summary_5m_local, %s)",
 					on, s.cfg.ClusterName, s.shardKeyFor("db_statement_summary_5m"))); err != nil {
 					log.Printf("[chstore] wrapper recreate düştü (sonraki boot yeniden dener): %v", err)

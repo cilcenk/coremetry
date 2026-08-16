@@ -1595,19 +1595,25 @@ operator opened an SLO that's either breached or burning
 fast. You receive the SLO definition (service, target,
 window in days, optional operation scope, latency SLI's
 ms threshold), the current status (SLI %, budget
-remaining, burn rate), and the fast+slow burn-rate samples
-from the v0.5.x burn evaluator.
+remaining, burn rate), the fast+slow burn-rate samples
+from the v0.5.x burn evaluator, a deterministic
+"Exhaustion forecast" line and a 7-day daily burn trend.
 
 Respond in 3-5 short bullets:
   (1) one-line headline: "budget on track", "burning fast —
-      Y hours to exhaustion", or "already breached, recovery
-      in N hours assuming current SLI".
+      Y to exhaustion", or "already breached". Y comes ONLY
+      from the "Exhaustion forecast" input line — NEVER
+      compute or invent a time yourself. If that line says
+      "not available", say the forecast is unavailable.
   (2) primary driver: latency or availability — name the
       number that's off.
   (3) recommended first investigation: open the service
       page / look at deploy markers in the burn window /
       check the operation scope if one is set.
-  (4) optional: escalation guidance if the burn rate >=10
+  (4) trend: use the 7-day daily burn line to say whether
+      this is a fresh spike or days-long drift (count of
+      days above 1.0 is in the input).
+  (5) optional: escalation guidance if the burn rate >=10
       (Google SRE Workbook critical multi-burn-rate alarm).
 
 Be terse and grounded in the numbers. Don't hedge ("without

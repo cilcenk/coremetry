@@ -9760,6 +9760,13 @@ func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
 	}
 	fmt.Fprintf(&sb, "Fast burn (5 min): rate=%.2f, n=%d\n", fastRate, fastTotal)
 	fmt.Fprintf(&sb, "Slow burn (1 hr):  rate=%.2f, n=%d\n", slowRate, slowTotal)
+	// v0.9.1083 (F3.4) — yörünge artık DETERMİNİSTİK girdide: /forecast
+	// ve /burn-series uçları vardı ama anlatım beslemesi yoktu; prompt
+	// "Y hours to exhaustion" isteyince model Y'yi UYDURUYORDU. Soft-
+	// fail: üretilemezse kanıt bunu açıkça söyler, model de öyle der.
+	fc, _ := s.store.ComputeSLOForecast(r.Context(), *slo, time.Hour)
+	series, _ := s.store.ComputeSLOBurnSeries(r.Context(), *slo, 7)
+	sb.WriteString(sloTrajectoryEvidence(fc, series))
 
 	out, err := s.copilotExplain(r,
 		copilot.SystemPromptSLOBurn(), sb.String())

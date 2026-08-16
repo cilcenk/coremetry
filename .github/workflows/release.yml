@@ -86,50 +86,6 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  java-demo:
-    name: Build + push Java demo image
-    # Optional companion image used by the chart's javaDemo.enabled toggle.
-    # Independent of the main coremetry image so a Java-only change doesn't
-    # rebuild the Go binary, and vice versa.
-    runs-on: ubuntu-latest
-    # Same continue-on-error rationale as the main docker job.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-      - uses: docker/setup-qemu-action@v4
-      - uses: docker/setup-buildx-action@v4
-      - name: Login to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Image metadata
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-java-demo
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=semver,pattern={{major}}
-            # v0.8.390 — operator-reported: the release notes cite the git
-            # tag verbatim (v0.8.389) but semver {{version}} STRIPS the v,
-            # so pulls of the documented tag 404'd. Publish the git-tag
-            # spelling too; both now work.
-            type=ref,event=tag
-            type=raw,value=latest,enable={{is_default_branch}}
-      - name: Build + push
-        uses: docker/build-push-action@v7
-        with:
-          context: ./java-demo
-          platforms: ${{ vars.BUILD_PLATFORMS || 'linux/amd64' }}
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=java-demo
-          cache-to: type=gha,mode=max,scope=java-demo
-
   helm:
     name: Package + publish Helm chart (OCI)
     # Helm chart push doesn't depend on the Docker image

@@ -399,6 +399,14 @@ func (s *Service) ConfigureTuning(maxTokens int, temperature *float64, timeoutS 
 
 // tuneMaxTokens — completion budget for a request body. Override or
 // 4096.
+//
+// FAZ 1.3 sonrası kilit ALAN bu üçlünün (tuneMaxTokens /
+// tuneTemperature / clientTimeout) prod çağıranı kalmadı: her istek
+// callSnapshot'ın TEK RLock'undan geçiyor ve *Locked ikizleri
+// kullanılıyor. Üçlü, efektif değerin ("ezme yoksa varsayılan")
+// dışarıdan okunabilir tek yolu olarak duruyor — tuning_test.go
+// blob→efektif değer zincirini bunlarla pinliyor. Silinirse o pin
+// Service'in içine elle kilit alarak uzanmak zorunda kalırdı.
 func (s *Service) tuneMaxTokens() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

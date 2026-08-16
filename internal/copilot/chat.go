@@ -1,17 +1,11 @@
 package copilot
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"io"
-	"net/http"
-	"strings"
 	"time"
 
-	// aiprov — kurtarma zincirinin tek yazılışı (bkz. stream.go).
+	// aiprov — tek transport (bkz. provider_calls.go'daki görev ayrımı).
 	aiprov "github.com/cilcenk/coremetry/internal/ai/provider"
 )
 
@@ -23,63 +17,39 @@ import (
 // ChatWithTools is provider-neutral at the boundary — the API
 // handler builds a []ChatMessage + []ToolSpec and gets back a
 // ChatTurn (either prose, or a batch of tool calls to execute and
-// feed back). Provider-specific wire encoding lives in the three
-// chat*WithTools branches:
-//   - Anthropic: tools + tool_use/tool_result content blocks
-//   - OpenAI / GitHub: OpenAI tools + tool_calls + role:tool msgs
-// On-prem installs run any of the three, so all three carry the
-// tool-calling path (operator decision 2026-05-28).
+// feed back). On-prem installs run any of the three providers, so all
+// three carry the tool-calling path (operator decision 2026-05-28).
+//
+// FAZ 1.3 (v0.9.1125) — sağlayıcıya özgü TEL KODLAMASI bu dosyadan
+// gitti: gövde/uç/header/çözümleme artık internal/ai/provider/tools.go.
+// Burada kalan: sağlayıcı dallanması, GitHub oturum jetonu takası
+// (DURUM), token kelepçesi ve ai_calls kaydı.
 
-// ToolSpec is the provider-neutral function description handed to
-// the LLM. InputSchema is JSON Schema (draft 2020-12) — the same
-// shape the MCP tools already declare, so the API handler maps
-// mcp.Tool → ToolSpec 1:1.
-type ToolSpec struct {
-	Name        string
-	Description string
-	InputSchema map[string]any
-}
-
-// ToolCall is one function invocation the model requested.
-type ToolCall struct {
-	ID    string          // provider-issued id, echoed back in the result
-	Name  string          // tool name
-	Input json.RawMessage // arguments as JSON
-	// Raw is the COMPLETE tool_call object exactly as the openai-compat
-	// provider returned it (v0.8.373, operator-reported). Gemini's
-	// compat endpoint attaches extra fields (extra_content →
-	// thought_signature) and REJECTS the next turn with 400
-	// INVALID_ARGUMENT when the replayed functionCall lacks them —
-	// rebuilding the object from the trimmed fields above silently
-	// dropped everything unknown. When set, the replay encoder sends
-	// Raw verbatim; ID/Name/Input remain the parsed view for the
-	// executor. Nil for the Anthropic path and legacy messages.
-	Raw json.RawMessage `json:",omitempty"`
-}
-
-// ToolResult is the output of executing a ToolCall, fed back into
-// the next turn so the model can read it.
-type ToolResult struct {
-	CallID  string
-	Name    string
-	Content string // JSON-stringified tool output (or an error string)
-	IsError bool
-}
-
-// ChatMessage is one provider-neutral conversation turn. A user
-// turn carries Text (the question) OR ToolResults (function
-// outputs fed back). An assistant turn carries Text (prose) and/or
-// ToolCalls (functions it wants run).
-type ChatMessage struct {
-	Role        string       // "user" | "assistant"
-	Text        string       `json:",omitempty"`
-	ToolCalls   []ToolCall   `json:",omitempty"`
-	ToolResults []ToolResult `json:",omitempty"`
-}
+// Sağlayıcı-nötr sohbet sözlüğü PROVIDER'da tanımlı; burada TAKMA AD
+// olarak yaşıyor.
+//
+// Neden takma ad, yeniden tanım değil: bu tipler internal/api ve
+// internal/mcptools'ta 20+ yerde `copilot.ChatMessage`,
+// `copilot.ToolSpec`, `copilot.ToolResult` diye geçiyor VE
+// /api/copilot/chat gövdesinin JSON şeklini taşıyorlar. Takma ad Go'da
+// AYNI tiptir: tek satır çağrı yeri değişmedi, tel şekli de değişmedi.
+// Yeniden tanım (iki ayrı struct + dönüştürücü) hem o dosyaları
+// dolaşırdı hem de tam bu fazın kapatmaya çalıştığı "iki yazılış"
+// sınıfını geri açardı.
+type (
+	ToolSpec    = aiprov.ToolSpec
+	ToolCall    = aiprov.ToolCall
+	ToolResult  = aiprov.ToolResult
+	ChatMessage = aiprov.ChatMessage
+)
 
 // ChatTurn is one model response. When ToolCalls is non-empty the
 // caller must execute them and loop; otherwise Text is the final
 // answer.
+//
+// Bilinçli olarak provider.ChatResponse'un takma adı DEĞİL: token
+// alanları burada uint32 (ai_calls sütun tipi), transport'ta int
+// (sunucu ne yollarsa). Dönüşüm clampTokens'tan geçer.
 type ChatTurn struct {
 	Text         string
 	ToolCalls    []ToolCall
@@ -100,7 +70,9 @@ func (s *Service) ChatWithTools(ctx context.Context, system string, msgs []ChatM
 	provider := s.provider
 	s.mu.RUnlock()
 	switch provider {
-	case ProviderGitHub, ProviderOpenAI:
+	case ProviderGitHub:
+		return s.chatGitHubWithTools(ctx, system, msgs, tools)
+	case ProviderOpenAI:
 		return s.chatOpenAIWithTools(ctx, system, msgs, tools)
 	default:
 		return s.chatAnthropicWithTools(ctx, system, msgs, tools)
@@ -146,292 +118,55 @@ func (s *Service) RecordUsage(ctx context.Context, inTok, outTok uint32, status,
 	}(s.recorder, rec)
 }
 
-// ── Anthropic tool-calling ──────────────────────────────────────
+// ─── policy shells ──────────────────────────────────────────────────
+
+// chatRequest — snapshot'ı tool'lu istek şekline çevirir. Ayarlar
+// (bütçe/temperature/model) buffered explain ile TEK kaynaktan gelir:
+// callSnapshot. 1024 paritesi tam da bunun yokluğundan doğmuştu.
+func chatRequest(req aiprov.Request, system string, msgs []ChatMessage, tools []ToolSpec) aiprov.ChatRequest {
+	return aiprov.ChatRequest{
+		Model:       req.Model,
+		MaxTokens:   req.MaxTokens,
+		Temperature: req.Temperature,
+		System:      system,
+		Messages:    msgs,
+		Tools:       tools,
+	}
+}
+
+func chatTurnFrom(r aiprov.ChatResponse) ChatTurn {
+	return ChatTurn{
+		Text:         r.Text,
+		ToolCalls:    r.ToolCalls,
+		InputTokens:  clampTokens(r.InputTokens),
+		OutputTokens: clampTokens(r.OutputTokens),
+	}
+}
 
 func (s *Service) chatAnthropicWithTools(ctx context.Context, system string, msgs []ChatMessage, tools []ToolSpec) (ChatTurn, error) {
-	s.mu.RLock()
-	apiKey, model := s.apiKey, s.model
-	s.mu.RUnlock()
-	if model == "" {
-		model = "claude-sonnet-4-6"
-	}
-
-	apiMsgs := make([]map[string]any, 0, len(msgs))
-	for _, m := range msgs {
-		var blocks []map[string]any
-		if m.Text != "" {
-			blocks = append(blocks, map[string]any{"type": "text", "text": m.Text})
-		}
-		for _, tc := range m.ToolCalls {
-			var input any
-			_ = json.Unmarshal(tc.Input, &input)
-			blocks = append(blocks, map[string]any{
-				"type": "tool_use", "id": tc.ID, "name": tc.Name, "input": input,
-			})
-		}
-		for _, tr := range m.ToolResults {
-			blocks = append(blocks, map[string]any{
-				"type": "tool_result", "tool_use_id": tr.CallID,
-				"content": tr.Content, "is_error": tr.IsError,
-			})
-		}
-		apiMsgs = append(apiMsgs, map[string]any{"role": m.Role, "content": blocks})
-	}
-
-	apiTools := make([]map[string]any, 0, len(tools))
-	for _, t := range tools {
-		apiTools = append(apiTools, map[string]any{
-			"name": t.Name, "description": t.Description, "input_schema": t.InputSchema,
-		})
-	}
-
-	body := map[string]any{
-		"model": model,
-		// v0.8.393 (AI audit A2) — was 1500: the budget Explain already
-		// learned is too small for reasoning models (v0.8.384 lesson,
-		// copilot.go openAICompletionTokens). On qwen3.5-2b the thinking
-		// tokens alone could exhaust 1500 and the answer arrived empty.
-		// v0.9.1120 — the constant became an operator-tunable getter;
-		// temperature added (anthropic bodies carried none, so this path
-		// ran at the provider default ≈1.0 while its openai twin ran 0.2).
-		"max_tokens": s.tuneMaxTokens(), "system": system,
-		"messages": apiMsgs, "tools": apiTools,
-	}
-	if t, ok := s.tuneTemperature(); ok {
-		body["temperature"] = t
-	}
-	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.anthropic.com/v1/messages", bytes.NewReader(raw))
-	if err != nil {
-		return ChatTurn{}, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", apiKey)
-	req.Header.Set("Anthropic-Version", "2023-06-01")
-
-	resp, err := s.httpClient().Do(req)
-	if err != nil {
-		return ChatTurn{}, fmt.Errorf("anthropic chat: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return ChatTurn{}, fmt.Errorf("anthropic %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	var parsed struct {
-		Content []struct {
-			Type  string          `json:"type"`
-			Text  string          `json:"text"`
-			ID    string          `json:"id"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
-		} `json:"content"`
-		Usage struct {
-			InputTokens  uint32 `json:"input_tokens"`
-			OutputTokens uint32 `json:"output_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return ChatTurn{}, fmt.Errorf("decode anthropic chat: %w", err)
-	}
-	turn := ChatTurn{InputTokens: parsed.Usage.InputTokens, OutputTokens: parsed.Usage.OutputTokens}
-	var text strings.Builder
-	for _, c := range parsed.Content {
-		switch c.Type {
-		case "text":
-			text.WriteString(c.Text)
-		case "tool_use":
-			turn.ToolCalls = append(turn.ToolCalls, ToolCall{ID: c.ID, Name: c.Name, Input: c.Input})
-		}
-	}
-	turn.Text = text.String()
-	return turn, nil
+	cfg, req, _, _, _ := s.callSnapshot()
+	resp, err := aiprov.ChatAnthropicTools(ctx, cfg, chatRequest(req, system, msgs, tools))
+	return chatTurnFrom(resp), err
 }
-
-// ── OpenAI / GitHub tool-calling ────────────────────────────────
-// GitHub Copilot speaks the OpenAI chat-completions shape, so the
-// two share this encoder. Only the endpoint + auth headers differ
-// (handled by openAIChatTransport).
 
 func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs []ChatMessage, tools []ToolSpec) (ChatTurn, error) {
-	apiMsgs := []map[string]any{{"role": "system", "content": system}}
-	for _, m := range msgs {
-		if m.Role == "assistant" && len(m.ToolCalls) > 0 {
-			// Replay each tool_call VERBATIM when we captured the
-			// provider's raw object — Gemini's compat endpoint 400s
-			// if its thought_signature (and any future extra field)
-			// is missing (v0.8.373). Reconstruction is only the
-			// fallback for legacy messages without Raw.
-			tcs := make([]any, 0, len(m.ToolCalls))
-			for _, tc := range m.ToolCalls {
-				if len(tc.Raw) > 0 {
-					tcs = append(tcs, json.RawMessage(tc.Raw))
-					continue
-				}
-				tcs = append(tcs, map[string]any{
-					"id": tc.ID, "type": "function",
-					"function": map[string]any{"name": tc.Name, "arguments": string(tc.Input)},
-				})
-			}
-			apiMsgs = append(apiMsgs, map[string]any{
-				"role": "assistant", "content": m.Text, "tool_calls": tcs,
-			})
-			continue
-		}
-		if len(m.ToolResults) > 0 {
-			// OpenAI: each tool result is its own role:tool message.
-			for _, tr := range m.ToolResults {
-				apiMsgs = append(apiMsgs, map[string]any{
-					"role": "tool", "tool_call_id": tr.CallID, "content": tr.Content,
-				})
-			}
-			continue
-		}
-		apiMsgs = append(apiMsgs, map[string]any{"role": m.Role, "content": m.Text})
-	}
-
-	apiTools := make([]map[string]any, 0, len(tools))
-	for _, t := range tools {
-		apiTools = append(apiTools, map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name": t.Name, "description": t.Description, "parameters": t.InputSchema,
-			},
-		})
-	}
-
-	url, hdrs, model, err := s.openAIChatTransport(ctx)
-	if err != nil {
-		return ChatTurn{}, err
-	}
-	body := map[string]any{
-		"model": model,
-		// v0.8.393 (AI audit A2) — 1500 → the shared 4096 budget; see above.
-		// v0.9.1120 — both literals became getters.
-		"max_tokens": s.tuneMaxTokens(),
-		"messages":   apiMsgs, "tools": apiTools,
-	}
-	if t, ok := s.tuneTemperature(); ok {
-		body["temperature"] = t
-	}
-	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return ChatTurn{}, err
-	}
-	for k, v := range hdrs {
-		req.Header.Set(k, v)
-	}
-	resp, err := s.httpClient().Do(req)
-	if err != nil {
-		return ChatTurn{}, fmt.Errorf("openai-compat chat: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return ChatTurn{}, fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-				// Reasoning-model fallbacks (v0.8.384, matching the
-				// Explain path): vLLM ≥0.24 puts the answer in
-				// `reasoning` with content:null; deepseek-r1/Qwen3
-				// style servers use `reasoning_content`.
-				ReasoningContent string `json:"reasoning_content"`
-				Reasoning        string `json:"reasoning"`
-				// Raw objects on purpose (v0.8.373): Gemini's compat
-				// endpoint attaches provider extras (extra_content →
-				// thought_signature) that MUST survive the replay;
-				// each is re-parsed below for the executor's view.
-				ToolCalls []json.RawMessage `json:"tool_calls"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     uint32 `json:"prompt_tokens"`
-			CompletionTokens uint32 `json:"completion_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return ChatTurn{}, fmt.Errorf("decode openai-compat chat: %w", err)
-	}
-	turn := ChatTurn{InputTokens: parsed.Usage.PromptTokens, OutputTokens: parsed.Usage.CompletionTokens}
-	if len(parsed.Choices) == 0 {
-		return turn, errors.New("openai-compat: empty response")
-	}
-	msg := parsed.Choices[0].Message
-	turn.Text = msg.Content
-	// Reasoning-model fallback (v0.8.384): content empty → the answer
-	// lives in reasoning_content / reasoning; strip any leading
-	// <think> block the same way Explain does. Only when there are no
-	// tool calls — a tool-call turn legitimately has empty content.
-	if strings.TrimSpace(turn.Text) == "" && len(msg.ToolCalls) == 0 {
-		if alt := strings.TrimSpace(msg.ReasoningContent); alt != "" {
-			turn.Text = aiprov.StripThinking(alt)
-		} else if alt := strings.TrimSpace(msg.Reasoning); alt != "" {
-			turn.Text = aiprov.StripThinking(alt)
-		}
-	}
-	for _, raw := range msg.ToolCalls {
-		var tc struct {
-			ID       string `json:"id"`
-			Function struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			} `json:"function"`
-		}
-		if err := json.Unmarshal(raw, &tc); err != nil {
-			return ChatTurn{}, fmt.Errorf("decode openai-compat tool_call: %w", err)
-		}
-		args := tc.Function.Arguments
-		if args == "" {
-			args = "{}"
-		}
-		turn.ToolCalls = append(turn.ToolCalls, ToolCall{
-			ID: tc.ID, Name: tc.Function.Name, Input: json.RawMessage(args), Raw: raw,
-		})
-	}
-	return turn, nil
+	cfg, req, _, _, _ := s.callSnapshot()
+	resp, err := aiprov.ChatOpenAITools(ctx, cfg, chatRequest(req, system, msgs, tools))
+	return chatTurnFrom(resp), err
 }
 
-// openAIChatTransport resolves endpoint + headers + model for the
-// OpenAI-compat path, branching real-OpenAI vs GitHub-Copilot
-// (which needs the session-token exchange + integration headers).
-func (s *Service) openAIChatTransport(ctx context.Context) (url string, hdrs map[string]string, model string, err error) {
-	s.mu.RLock()
-	provider, apiKey, base, m := s.provider, s.apiKey, s.baseURL, s.model
-	s.mu.RUnlock()
-	if provider == ProviderGitHub {
-		sessTok, terr := s.githubSessionToken(ctx)
-		if terr != nil {
-			return "", nil, "", terr
-		}
-		if m == "" {
-			m = "gpt-4o"
-		}
-		return "https://api.githubcopilot.com/chat/completions", map[string]string{
-			"Content-Type":            "application/json",
-			"Authorization":           "Bearer " + sessTok,
-			"Editor-Version":          "vscode/1.85.0",
-			"Editor-Plugin-Version":   "copilot-chat/0.12.0",
-			"Copilot-Integration-Id":  "vscode-chat",
-			"User-Agent":              "GithubCopilot/1.155.0",
-		}, m, nil
+// chatGitHubWithTools — Copilot tool-calling. Gövde openai-compat ile
+// aynı; ayrışan tek şey uç + oturum jetonu.
+//
+// Sıra korunuyor: takas ÖNCE, snapshot SONRA (explainGitHub ile aynı
+// gerekçe — takas kendi kilidini alıp jeton yazıyor).
+func (s *Service) chatGitHubWithTools(ctx context.Context, system string, msgs []ChatMessage, tools []ToolSpec) (ChatTurn, error) {
+	sessTok, err := s.githubSessionToken(ctx)
+	if err != nil {
+		return ChatTurn{}, err
 	}
-	if base == "" {
-		base = "https://api.openai.com/v1"
-	}
-	if m == "" {
-		m = "gpt-4o-mini"
-	}
-	h := map[string]string{"Content-Type": "application/json"}
-	if apiKey != "" {
-		h["Authorization"] = "Bearer " + apiKey
-		// Bare api-key twin for vLLM/KServe-style gateways —
-		// same rationale as the Explain path (v0.8.384).
-		h["api-key"] = apiKey
-	}
-	return strings.TrimRight(base, "/") + "/chat/completions", h, m, nil
+	cfg, req, _, _, _ := s.callSnapshot()
+	cfg.APIKey = sessTok
+	resp, err := aiprov.ChatGitHubTools(ctx, cfg, chatRequest(req, system, msgs, tools))
+	return chatTurnFrom(resp), err
 }

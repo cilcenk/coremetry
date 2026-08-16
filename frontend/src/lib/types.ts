@@ -825,6 +825,18 @@ export interface DeepEvidence {
   codeMeaning?: Record<string, string>;
 }
 
+// ShiftSummary — GET /api/shift cevabı (v0.9.1072, Faz 3.2). Üç blok
+// tek okumada; pencere sunucu-rung'lu (8h/12h/24h).
+export interface ShiftSummary {
+  windowSec: number;
+  fromNs: number;
+  toNs: number;
+  problems: Problem[];               // pencerede açılan + çözülen (enriched)
+  worsened: ChangedService[];        // pencere vs önceki eş-boy pencere
+  newExceptions: ExceptionGroup[];   // first_seen pencerede (≤20)
+  newExceptionsTotal: number;        // kesme ifşası
+}
+
 // RootCauseSummary — the COMPACT slice each /anomalies + /problems list row
 // carries (mirrors Go chstore.RootCauseSummary) so the collapsed ribbon renders
 // "Root cause: <suspect> (NN%)" without a per-row fetch. Backend omits it when

@@ -34,6 +34,7 @@ const EN: Catalog = {
   // its key (the route is unchanged) so saved views, notification deep links
   // and dashboard markdown all keep working — only the LABEL moved.
   'nav.inbox':       'Problems',
+  'nav.shift':       'Shift summary',
   'nav.incidents':   'Incidents',
   'nav.problems':    'Exceptions',
   'nav.anomalies':   'Anomalies',
@@ -168,6 +169,7 @@ const TR: Catalog = {
 
   // Sidebar
   'nav.inbox':       'Sorunlar',
+  'nav.shift':       'Vardiya özeti',
   'nav.incidents':   'Olaylar',
   'nav.problems':    'Exception grupları',
   'nav.anomalies':   'Anomaliler',

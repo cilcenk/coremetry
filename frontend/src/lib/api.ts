@@ -1251,6 +1251,13 @@ export const api = {
       `&namespace=${encodeURIComponent(namespace)}`),
   clusterAlerts: (cluster: string) =>
     get<ClusterAlertsResponse>(`/api/clusters/alerts?cluster=${encodeURIComponent(cluster)}`),
+  // v0.9.1072 (Faz 3.2) — /shift vardiya özeti. w sunucu-rung'lu.
+  shiftSummary: (w: string) =>
+    get<import('./types').ShiftSummary>(`/api/shift?w=${encodeURIComponent(w)}`),
+  explainShift: (w: string) =>
+    request<{ explanation: string; window: string }>(
+      `/api/copilot/explain-shift?w=${encodeURIComponent(w)}`, { method: 'POST' }),
+
   clusterResourceTrend: (cluster: string, metric: 'cpu' | 'mem', byNode: boolean, fromNs: number, toNs: number) =>
     get<ClusterResourceTrendResponse>(`/api/clusters/resource-trend?cluster=${encodeURIComponent(cluster)}` +
       `&metric=${metric}&byNode=${byNode ? 1 : 0}&from=${fromNs}&to=${toNs}`),

@@ -484,6 +484,10 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
      yerinde — tüketicisi kalmadı, geri dönüş tek satır. */
   margin-bottom: 14px;
   padding: 10px 0;
+  /* Altındaki içerikle arasına ince bir ayrım — gölge değil çizgi. */
+  border-bottom: 1px solid var(--border);
+}
+
 input, select {
   background: var(--bg2); border: 1px solid var(--border); color: var(--text);
   border-radius: var(--radius-sm); padding: 5px 10px; font-size: 13px; outline: none;

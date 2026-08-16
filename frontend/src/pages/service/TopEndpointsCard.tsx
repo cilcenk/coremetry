@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
-import { EndpointPeekDrawer } from './EndpointPeekDrawer';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import { useEffect } from 'react';
+import { endpointDetailHref } from '@/pages/endpoints/endpointParam';
 import { encodeRange } from '@/lib/urlState';
 import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/DataTable';
 import type { DataTableColumn } from '@/lib/dataTable';
@@ -40,29 +41,35 @@ export function TopEndpointsCard({ service, range, endpoints }: {
   service: string; range: TimeRange; endpoints: EndpointRow[];
 }) {
   const rangeParam = encodeRange(range);
-  // v0.9.379 (D3) — satır tıkı artık peek drawer açar (?ep= URL'de,
-  // replace:true; kopyalanan link aynı drawer'ı açar). Eski doğrudan
-  // /traces davranışı drawer içindeki "Traces →" linki olarak yaşar —
-  // additive, kapatınca hiçbir şey değişmemiş olur.
-  const [params, setParams] = useSearchParams();
-  const openEp = (path: string) => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.set('ep', path);
-    return next;
-  }, { replace: true });
-  const closeEp = () => setParams(prev => {
-    const next = new URLSearchParams(prev);
-    next.delete('ep');
-    return next;
-  }, { replace: true });
+  // v0.9.1086 (operatör isteği): satır tıkı artık DOĞRUDAN /endpoint
+  // detay sayfasına gider — v0.9.379'un peek drawer'ı ("drawer açılıp
+  // tam analiz demek gerekiyor" iki-adımı) kaldırıldı. Sayfanın env/
+  // cluster kapsamı ve range detaya aynen taşınır (v0.9.965 pencere
+  // taşıma sınıfı). Bu liste GİRİŞ span'lerinin ham yollarıdır — sig
+  // (imza-gruplu) DEĞİL.
+  const [params] = useSearchParams();
+  const navigate = useNavigate();
+  const gotoEp = (path: string) => navigate(endpointDetailHref(
+    { service, path, sig: false },
+    {
+      range: rangeParam,
+      env: params.get('env') ?? undefined,
+      cluster: params.get('cluster') ?? undefined,
+    }));
+  // Eski ?ep= derin linkleri (v0.9.379-1085 arası kopyalananlar) drawer
+  // yerine detaya YÖNLENDİRİLİR — legacyEndpointTarget emsali: redirect,
+  // compat shim değil; drawer'ı yazan hiçbir kod kalmadı.
   const epParam = params.get('ep');
-  const peeked = epParam ? endpoints.find(r => r.path === epParam) : undefined;
+  useEffect(() => {
+    if (epParam) gotoEp(epParam);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [epParam]);
   const dt = useDataTable<EndpointRow>({
     storageKey: 'svc-ov-endpoints',
     columns: EP_COLS,
     rows: endpoints,
     initialSort: { id: 'share', dir: 'desc' },
-    onOpen: (r) => openEp(r.path),
+    onOpen: (r) => gotoEp(r.path),
   });
   // Bar ölçeği görünen kümenin maksimumuna göre — pay göreli okunur.
   const maxTime = useMemo(
@@ -91,7 +98,7 @@ export function TopEndpointsCard({ service, range, endpoints }: {
               const share = maxTime > 0 ? totalTimeOf(r) / maxTime : 0;
               return (
                 <tr key={r.path} {...dt.rowProps(i)} style={{ cursor: 'pointer' }}
-                    onClick={() => openEp(r.path)}>
+                    onClick={() => gotoEp(r.path)}>
                   <td><span className="mono" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={r.path}>{r.path}</span></td>
                   <td className="num">{fmtCount(r.calls)}</td>
                   <td className="num"><span className={errBadge(r.errorRate)}>{r.errorRate.toFixed(1)}%</span></td>
@@ -113,9 +120,6 @@ export function TopEndpointsCard({ service, range, endpoints }: {
           </tbody>
         </table>
       </div>
-      {peeked && (
-        <EndpointPeekDrawer service={service} range={range} row={peeked} onClose={closeEp} />
-      )}
     </div>
   );
 }

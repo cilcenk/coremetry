@@ -3717,30 +3717,67 @@ func (s *Store) migrate(ctx context.Context) error {
 	// düşer, akış ileriye dolar; in-place koruma isteyen operatör için
 	// .inner_id ALTER + MODIFY QUERY reçetesi trace_summary_5m notunda.
 	if s.hasDBStmtHashCol {
+		// v0.9.1098 — probe hedefi STORAGE adı (TDigest emsali,
+		// mvStorageName). v0.9.1097 çıplak adı problamıştı; cluster
+		// modunda çıplak ad Distributed WRAPPER'dır ve kolonu asla
+		// kazanmaz → hasEx hep 0 → upgrade HER BOOT yeniden koşup
+		// statement geçmişini siliyordu (canlı doğrulamanın yakaladığı
+		// veri-kaybı sınıfı) ve bayrak hiç true olmuyordu.
 		var hasEx uint8
-		exProbe := `
+		exProbe := fmt.Sprintf(`
 			SELECT count() > 0
 			FROM system.columns
 			WHERE database = currentDatabase()
-			  AND table    = 'db_statement_summary_5m'
-			  AND name     = 'slow_exemplar_state'`
+			  AND table    = '%s'
+			  AND name     = 'slow_exemplar_state'`,
+			s.mvStorageName("db_statement_summary_5m"))
 		if err := s.conn.QueryRow(ctx, exProbe).Scan(&hasEx); err == nil && hasEx == 0 {
 			log.Println("[chstore] upgrading db_statement_summary_5m MV (adding exemplar states) — past 5-min buckets will be dropped")
-			dropTarget := "db_statement_summary_5m"
-			if s.clusterMode() {
-				dropTarget = "db_statement_summary_5m_local"
-			}
-			if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
+			if err := s.dropCombinedMV(ctx, s.mvStorageName("db_statement_summary_5m")); err != nil {
 				return fmt.Errorf("drop old db_statement_summary_5m for upgrade: %w", err)
 			}
 			if err := s.execDDL(ctx, findMV("db_statement_summary_5m")); err != nil {
 				return fmt.Errorf("recreate db_statement_summary_5m with exemplars: %w", err)
 			}
 		}
+		// v0.9.1098 — WRAPPER KOLON KAYMASI iyileştiricisi (upgrade'den
+		// BAĞIMSIZ, her boot): Distributed wrapper kolon listesini CREATE
+		// anında dondurur; _local iki kolon kazanınca wrapper 11 kolonda
+		// kalır ve MV okuması wrapper üzerinden Code 47 ("Unknown
+		// identifier slow_exemplar_state") yer. reconcile yalnız EKSİK
+		// wrapper'ı onarır, kaymayı asla. Upgrade'e bağlamıyoruz çünkü
+		// _local recreate'i deferred-DDL kuyruğuna düşebilir (canlı
+		// doğrulamada görüldü) — o boot'ta wrapper tazelenemez; sonraki
+		// boot'ta upgrade artık koşmaz ama bu iyileştirici kaymayı görüp
+		// kapatır. Soft-fail: wrapper süs değil ama boot'u düşürmeye
+		// değmez; başarısızlık her boot yeniden denenir.
+		if s.clusterMode() {
+			var localHas, wrapperHas uint8
+			_ = s.conn.QueryRow(ctx, exProbe).Scan(&localHas)
+			_ = s.conn.QueryRow(ctx, `
+				SELECT count() > 0
+				FROM system.columns
+				WHERE database = currentDatabase()
+				  AND table    = 'db_statement_summary_5m'
+				  AND name     = 'slow_exemplar_state'`).Scan(&wrapperHas)
+			if localHas == 1 && wrapperHas == 0 {
+				log.Println("[chstore] db_statement_summary_5m wrapper kolon kayması — _local'da exemplar state var, wrapper'da yok; wrapper yenileniyor")
+				on := s.onCluster()
+				if err := s.execDDL(ctx,
+					"DROP TABLE IF EXISTS db_statement_summary_5m"+on+" SYNC"); err != nil {
+					log.Printf("[chstore] wrapper drop düştü (sonraki boot yeniden dener): %v", err)
+				} else if err := s.execDDL(ctx, fmt.Sprintf(
+					"CREATE TABLE IF NOT EXISTS db_statement_summary_5m%s AS db_statement_summary_5m_local ENGINE = Distributed(`%s`, currentDatabase(), db_statement_summary_5m_local, %s)",
+					on, s.cfg.ClusterName, s.shardKeyFor("db_statement_summary_5m"))); err != nil {
+					log.Printf("[chstore] wrapper recreate düştü (sonraki boot yeniden dener): %v", err)
+				}
+			}
+		}
 		// Bayrak her boot'ta VERİDEN: upgrade koştuysa da, in-place
 		// (elle) eklendiyse de aynı yoldan true olur; dış-dağıtık
 		// kurulumda (hasDBStmtHashCol=false) hiç probelanmaz ve okuma
-		// ham fallback'te kalır.
+		// ham fallback'te kalır. Cluster modunda probe STORAGE'ı ölçer;
+		// okuma wrapper'dan geçtiği için kayma iyileştiricisi yukarıda.
 		if err := s.conn.QueryRow(ctx, exProbe).Scan(&hasEx); err == nil {
 			s.hasDBStmtExemplarCols = hasEx == 1
 		}

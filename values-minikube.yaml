@@ -16,7 +16,7 @@
 #     prove the split + leader-lock without 5×1Gi requests.
 #   - resource requests cut hard so the whole stack (CH + Redis +
 #     collector + demo + 3 coremetry) schedules under 6GB.
-#   - javaDemo on, so there's live traffic to look at.
+#   - goDemo on, so there's live traffic to look at.
 #   - logs.backend=clickhouse (chart default) — no Elasticsearch pod.
 
 # Local HA: 3 monolithic replicas (leader-locked workers via Redis). Requires a
@@ -131,24 +131,9 @@ logs:
     addresses: ["http://coremetry-elasticsearch:9200"]
     index: "coremetry-logs*"
 
-javaDemo:
-  # Live traffic generator. The GHCR demo image isn't published for this
-  # tag, so we side-load a locally-built one (`gotrace-java-demo` →
-  # ghcr.io/cilcenk/coremetry-java-demo:local) and never pull. `make
-  # minikube-up` builds + loads it; this flag wires it into the deploy so
-  # the k8s stack shows real spans/metrics/logs end-to-end.
-  enabled: true
-  image:
-    tag: "local"
-    pullPolicy: Never
-  resources:
-    requests: { cpu: 200m, memory: 384Mi }
-    limits:   { cpu: "1",  memory: 1Gi }
-
 # go-demo — the cmd/demo retail-banking traffic generator on k8s (v0.7.18).
 # Side-loaded image (never pull); points its -endpoint at the in-cluster
-# collector so its 20 banking services show up in topology/traces alongside
-# java-demo.
+# collector so its 20 banking services show up in topology/traces.
 goDemo:
   enabled: true
   image:

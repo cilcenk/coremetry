@@ -141,7 +141,7 @@ Full rules in `/frontend-conventions`. The one-liners:
 
 | Domain | Path |
 |---|---|
-| Demo generators (Go synthetic / Java / JBoss) | `cmd/demo/`, `java-demo/`, `jboss-demo/` |
+| Demo generators (Go synthetic / JBoss) | `cmd/demo/`, `jboss-demo/` |
 | OTLP ingest | `internal/otlp/` |
 | CH writes (spans/metrics/logs) | `internal/chstore/` |
 | ES log read backend | `internal/logstore/` |

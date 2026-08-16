@@ -496,27 +496,6 @@ otelCollector:
     logsIndex: "coremetry-logs"              # index/data-stream the logs land in
     apiKey: ""                               # base64 "id:api_key" — when set, the collector writes via the ES ApiKey header (no basic auth); required for a security-enabled ES
 
-# Java demo — Spring Boot e-commerce app with zero-code OTel auto-
-# instrumentation + sidecar profile pusher. Off by default; flip on for
-# a "see traces flow end-to-end" demo install.
-javaDemo:
-  enabled: false
-  image:
-    registry: "ghcr.io"
-    repository: cilcenk/coremetry-java-demo
-    tag: ""               # defaults to .Chart.appVersion
-    pullPolicy: IfNotPresent
-  service:
-    type: ClusterIP
-    port: 8080
-  resources:
-    requests: { cpu: 200m, memory: 512Mi }
-    limits:   { cpu: "1",  memory: 1Gi }
-  # Anything else you want to inject into the pod (e.g. extra OTEL_*
-  # attributes, async-profiler tuning). Standard env vars are wired
-  # automatically — Otel endpoint and the coremetry profile-push URL.
-  extraEnv: []
-
 # Go demo — cmd/demo synthetic retail-banking traffic generator. Emits a full
 # multi-service OTLP/HTTP firehose (traces + logs + metrics + pprof profiles)
 # from its own internal services map (mobile-bff → api-gateway → core-banking),

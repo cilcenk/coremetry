@@ -133,7 +133,7 @@ docker-up: .env-version
 	@echo "$(VERSION)" > VERSION.txt
 	@echo "[make] wrote VERSION=$(VERSION) to .env + VERSION.txt"
 
-# Bring up the demo apps (java-demo + jboss-demo + go-demo).
+# Bring up the demo apps (jboss-demo + go-demo).
 # Separate target so a routine `make docker-up` doesn't pull in
 # the demo containers; operators who want them run this once.
 .PHONY: docker-up-demo
@@ -212,7 +212,7 @@ minikube-up:
 	@echo "[make]   Dashboard: minikube dashboard --url"
 
 # Rebuild + reload ONLY the demo images on a running minikube, after you've
-# improved cmd/demo (go-demo) or java-demo. Mirrors minikube-up's unique-tag
+# improved cmd/demo (go-demo). Mirrors minikube-up's unique-tag
 # discipline: a fresh DEMO_TAG per run sidesteps minikube's stale-image cache
 # (reloading a fixed :local tag silently keeps the old binary on the node).
 # Uses --reuse-values so ONLY the two demo Deployments roll — the coremetry
@@ -230,12 +230,9 @@ minikube-demo:
 	@minikube status >/dev/null 2>&1 || { echo "[make] minikube not running — run 'make minikube-up' first"; exit 1; }
 	@helm status coremetry -n coremetry >/dev/null 2>&1 || { echo "[make] release 'coremetry' not found — run 'make minikube-up' first"; exit 1; }
 	docker build --build-arg VERSION=$(DEMO_TAG) -f cmd/demo/Dockerfile  -t ghcr.io/cilcenk/coremetry-go-demo:$(DEMO_TAG)   .
-	docker build                                  -f java-demo/Dockerfile -t ghcr.io/cilcenk/coremetry-java-demo:$(DEMO_TAG) java-demo
 	minikube image load ghcr.io/cilcenk/coremetry-go-demo:$(DEMO_TAG)
-	minikube image load ghcr.io/cilcenk/coremetry-java-demo:$(DEMO_TAG)
 	helm upgrade coremetry charts/coremetry -n coremetry --reuse-values \
 	  --set goDemo.enabled=true   --set goDemo.image.tag=$(DEMO_TAG)   --set goDemo.image.pullPolicy=Never \
-	  --set javaDemo.enabled=true --set javaDemo.image.tag=$(DEMO_TAG) --set javaDemo.image.pullPolicy=Never \
 	  --wait --timeout 8m
 	@echo "[make] demos updated on minikube → tag $(DEMO_TAG)"
 	@echo "[make]   verify: COREMETRY_URL=http://localhost:8090 make demo-health (after a port-forward)"

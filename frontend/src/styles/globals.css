@@ -3271,10 +3271,8 @@ thead th:hover .th-remove { opacity: 1; }
   /* D2.6 (M2) — topbar bütçesi 390px'te 322px, tüketim ≈434px ve
      tüketicilerin hepsi `flex-shrink: 0`. Tek ezilebilen eleman `h1`
      olduğu için SAYFA BAŞLIĞI ellipsis'e gidiyordu. Başlık kendi
-     satırına alınıyor, canlı sayaç (bilgilendirici ama kritik değil)
-     düşüyor, env kutusu daralıyor. */
+     satırına alınıyor, env kutusu daralıyor. */
   #topbar h1 { flex: 1 0 100%; font-size: 13px; }
-  .live-ticker { display: none; }
   .env-pick-wrap { width: 108px; }
   .topbar-prefs { margin-left: auto; }
   .topbar-prefs-sep { display: none; }

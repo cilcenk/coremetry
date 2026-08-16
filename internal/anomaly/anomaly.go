@@ -636,80 +636,24 @@ func batchSeries(
 // batch, or the metric's batch read errored this tick) is skipped by the
 // enoughHistory guard — identical to the old per-service fetch returning empty.
 func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets, seasonal, rates []float64, seasonalMinSamples int, openSnap *chstore.OpenProblems, cfg chstore.AnomalySensitivityConfig) {
-	// v0.9.826 — eşikler operatörün ayarından; yön ve resolve bandı koddan.
-	pol := policyFor(metric, cfg)
-	dwell := cfg.DwellBuckets
-	if !enoughHistory(len(buckets), dwell) {
-		return // not enough history + a full dwell window yet
-	}
-	// Dwell / M-of-N anti-flap: judge the LAST dwell buckets, not just the most
-	// recent one, so a single transient bucket can't flap a problem open/
-	// closed around the z threshold. The window is derived entirely from the
-	// fetched series → stateless, so a leader handoff loses no streak counter.
-	split := len(buckets) - dwell
-	window := buckets[split:]
-	current := buckets[len(buckets)-1]
-
-	// Baseline = same-time-of-day history (seasonal) when available, else the
-	// 24h-consecutive window. Seasonal kills the diurnal false positives — the
-	// morning ramp looks normal against the same slot on prior days — and
-	// surfaces real off-peak dips. Best-effort: a seasonal read error or too
-	// few same-slot samples falls back to the consecutive window (chooseBaseline
-	// gets a nil seasonal when the batch read errored → consecutive).
-	// v0.9.1052 (Faz 0.4, Q3) — padlenmiş sıfırlar baseline'a giremez.
-	// padTrailingSilence eksik kuyruk kovalarını sıfırla doldurur ki dwell
-	// penceresi "şimdi"yi doğru görsün; ama saatlerce susmuş bir serviste
-	// bu sentetik sıfırlar dwell'i aşıp BASELINE dilimine taşıyordu:
-	// medyan 0'a çekilir, flatMADFloor 1ms'e düşer ve servis geri
-	// döndüğünde normal 200ms ≈ yüzlerce σ okunurdu. rates==0 kuyruğu
-	// "veri yok" imzasıdır (gerçek sıfır trafik de veri yokluğudur —
-	// baseline "servis yaşarken" penceresi olmalı); yalnız KUYRUK koşusu
-	// kırpılır, içerideki gerçek sıfır kovalar veri olarak kalır.
-	consecutive := trimTrailingSilent(buckets[:split], rates)
-	if len(consecutive) < minSamples {
-		return // baseline'ın canlı kısmı karar için çok kısa
-	}
-	baseline := chooseBaseline(seasonal, consecutive, seasonalMinSamples)
-
-	// Modified z-score (median + MAD) instead of mean + population stdev:
-	// both are dragged by their OWN outliers, so a single contaminated
-	// baseline bucket inflates the stdev and masks today's spike. Median +
-	// MAD are outlier-robust; madScale rescales MAD to a normal-dist sigma so
-	// openZ / resolveZ keep their σ meaning.
-	median, rawMAD := medianMAD(baseline)
-	mad := effectiveMAD(metric, median, rawMAD, pol.minMAD)
-	z := madScale * (current - median) / mad
-
+	// v0.9.1068 (F1.6-R1) — KARAR fazı saf evaluateAnomaly'de
+	// (verdict.go); bu gövde yalnız YAN ETKİLERİ uygular. Davranış
+	// birebir — karar mantığı taşınırken satır satır korundu.
 	ruleID := "anomaly:" + service + ":" + metric
 	// v0.9.691 — tik başına TEK snapshot'tan arama (bkz. scan()).
-	// Yerel ad `open` KORUNUYOR: aşağıdaki tüm kullanımlar ona bağlı ve
-	// yeniden adlandırmak gereksiz fark üretirdi.
 	open := openSnap.ByKey(ruleID, service)
 	hasOpen := open != nil && open.ID != ""
 
-	// Open only when ALL dwell buckets fire (same direction); resolve as soon as
-	// the most-recent bucket is back inside the band (v0.8.220 fast-resolve). cur
-	// is the most-recent verdict; the pure anomalyAction decides open/resolve/none.
-	allOpen, _, cur := evalWindow(metric, median, mad, window, pol, cfg.CriticalZ)
-	// v0.9.826 — HACİM KAPISI, yalnız AÇILMAYA.
-	//
-	// Düşük hacimli bir serviste yüzdeler ve kuyruk gecikmeleri
-	// gürültüdür: 20 isteğin 1'i hata %5'tir ama olay değildir; 3 isteğin
-	// p99'u tek bir isteğin süresidir. Bu servisler anomali fabrikası
-	// oluyordu çünkü baseline'ları da aynı ölçüde gürültülü.
-	//
-	// ÇÖZÜLMEYE UYGULANMAZ ve bu bilinçli: susan bir servisin hacmi
-	// sıfıra iner, kapıyı çözülmeye de koysaydık o servisin AÇIK problemi
-	// kapanamaz, ekranda sonsuza dek takılı kalırdı — v0.9.449'un
-	// (donmuş kuyruk) düzelttiği sınıfın aynısını geri getirirdik.
-	if allOpen && !hasEnoughVolume(rates, pol.minBaselineRate) {
-		allOpen = false
+	oc := evaluateAnomaly(metric, buckets, seasonal, rates, seasonalMinSamples, hasOpen, cfg)
+	if oc.Action == "skip" || oc.Action == "none" {
+		return
 	}
-	action := anomalyAction(hasOpen, allOpen, metric, z)
+	current, median, mad, z, dwell := oc.Current, oc.Median, oc.MAD, oc.Z, oc.Dwell
+	action := oc.Action
 	if action == "open" {
-		severity := cur.severity
+		severity := oc.Severity
 		desc := fmt.Sprintf("%s %s on %s — current %.2f%s vs baseline %.2f%s (%.1fσ, sustained %d buckets).",
-			displayMetric(metric), cur.direction, service, current, unitOf(metric), median, unitOf(metric), z, dwell)
+			displayMetric(metric), oc.Direction, service, current, unitOf(metric), median, unitOf(metric), z, dwell)
 		if hasOpen {
 			open.Value = current
 			// v0.9.978 — yön her tazelemede YENİDEN yazılır. evalWindow
@@ -717,7 +661,7 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 			// yön gerçekten değişebilir (uzun süre açık kalan bir problem
 			// sıçramadan çöküşe geçebilir). Eski satırların yönü de bu
 			// dalda dolduğu için düzeltme geçmişe de iniyor.
-			open.Comparator = anomalyComparator(cur.direction)
+			open.Comparator = anomalyComparator(oc.Direction)
 			open.Description = desc
 			if err := d.store.UpsertProblem(ctx, *open); err != nil {
 				log.Printf("[anomaly] refresh %s: %v", ruleID, err)
@@ -741,7 +685,7 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 			// hesabında doğru tarafa koyuyor: '<' ile oran ters çevrilir,
 			// trafik çöküşü P1 kalır (v0.9.976 ters-çevirmeyi comparator'a
 			// bağladığında bu aile yanlışlıkla P2'ye düşmüştü).
-			Comparator:  anomalyComparator(cur.direction),
+			Comparator:  anomalyComparator(oc.Direction),
 			Status:      "open",
 			Description: desc,
 			StartedAt:   time.Now().UnixNano(),
@@ -790,7 +734,7 @@ func (d *Detector) checkOne(ctx context.Context, service, metric string, buckets
 		// kapısı çözülmeye uygulanmaz), ama "recovered" DEĞİL "source
 		// silent" gerekçesiyle; asıl kayıp aynı tikte checkSilence'ın
 		// açtığı critical service_silent problemi olarak görünür kalır.
-		latestHasData := len(rates) > 0 && rates[len(rates)-1] > 0
+		latestHasData := oc.LatestHasData
 		reason := "recovered"
 		if !latestHasData {
 			reason = "source silent"

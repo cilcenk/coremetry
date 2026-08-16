@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,21 +42,21 @@ import (
 // not on every page render.
 
 type BubbleUpAttribute struct {
-	Key string             `json:"key"`
+	Key string `json:"key"`
 	// Top values by score, descending. Capped at 6 per key.
 	Values []BubbleUpValue `json:"values"`
 }
 
 type BubbleUpValue struct {
-	Value           string  `json:"value"`
-	SelectionCount  int64   `json:"selectionCount"`
-	BaselineCount   int64   `json:"baselineCount"`
+	Value          string `json:"value"`
+	SelectionCount int64  `json:"selectionCount"`
+	BaselineCount  int64  `json:"baselineCount"`
 	// Pct = count / total. Frontend renders as bar width.
-	SelectionPct    float64 `json:"selectionPct"`
-	BaselinePct     float64 `json:"baselinePct"`
+	SelectionPct float64 `json:"selectionPct"`
+	BaselinePct  float64 `json:"baselinePct"`
 	// Score = SelectionPct - BaselinePct, in [-1, 1]. Sorted
 	// desc; positive values mean over-represented in selection.
-	Score           float64 `json:"score"`
+	Score float64 `json:"score"`
 }
 
 type BubbleUpResult struct {
@@ -196,10 +197,16 @@ func (s *Store) BubbleUp(
 
 	// Step 3 — for each key, GROUP BY value and count both
 	// sides. We do one query per key to keep ClickHouse
-	// memory-bounded; 30 keys × ~50ms per query = sub-2s
-	// total, well within the 30s execution cap. The
-	// alternative (one giant GROUP BY (k, v)) blows up at
-	// high cardinality.
+	// memory-bounded. The alternative (one giant GROUP BY (k, v))
+	// blows up at high cardinality — o karar duruyor.
+	//
+	// v0.9.1082 — anahtarlar artık SINIRLI PARALEL (6): "30 × ~50ms =
+	// sub-2s" varsayımı sıcak-önbellek varsayımıydı; ölçüm (2026-08-16,
+	// sakin kutu, query_log) anahtar başına medyan 1.3s gösterdi — 10
+	// anahtar ardışıkta tek başına ~13s duvar demek. Eşzamanlılık 6:
+	// sorgu-başına bellek sınırı korunur (6 × tek-anahtar), CH'nin kendi
+	// eşzamanlılık tavanının altında kalır. Sıra korunur: sonuçlar
+	// indeksle yazılır, birleştirme keşif sırasında.
 	// Ana yol da boş dizi ile BAŞLAR: hiçbir attribute
 	// `len(attr.Values) > 0`'ı geçemezse append hiç çalışmaz ve nil
 	// kalırdı — erken dönüşlerle aynı çökme (v0.9.836).
@@ -208,66 +215,32 @@ func (s *Store) BubbleUp(
 		BaselineTotal:  int64(baseTotal),
 		Attributes:     []BubbleUpAttribute{},
 	}
-	for _, key := range keys {
-		// v0.9.1063 — iki taraf da kendi pencere predicate'iyle sayılır
-		// (dış tarama birleşim penceresi); aynı-pencere çağıranda base
-		// countIf'i eski count()'la birebir aynı sonucu verir.
-		valSQL := fmt.Sprintf(`
-			SELECT
-			  attr_values[indexOf(attr_keys, ?)] AS v,
-			  countIf(%s) AS sel,
-			  countIf(%s) AS base
-			FROM spans
-			%s
-			AND has(attr_keys, ?)
-			GROUP BY v
-			HAVING sel + base >= 5
-			ORDER BY (toFloat64(sel) / %d) - (toFloat64(base) / %d) DESC
-			LIMIT 6
-			SETTINGS max_execution_time = 15`,
-			selPred, basePred,
-			wcOuter.sql(),
-			selTotal, baseTotal,
-		)
-		// arg sırası: indexOf anahtarı, sel-predicate, base-predicate,
-		// dış WHERE, has() anahtarı.
-		args := []any{key} // for indexOf in SELECT
-		args = append(args, selPredArgs...)
-		args = append(args, basePredArgs...)
-		args = append(args, wcOuter.args...)
-		args = append(args, key) // for has(attr_keys, ?)
-		valRows, err := s.conn.Query(ctx, valSQL, args...)
-		if err != nil {
-			return nil, fmt.Errorf("bubbleup values for %s: %w", key, err)
-		}
-		var attr BubbleUpAttribute
-		attr.Key = key
-		for valRows.Next() {
-			var v string
-			var sel, base uint64
-			if err := valRows.Scan(&v, &sel, &base); err != nil {
-				valRows.Close()
-				return nil, err
-			}
-			if v == "" {
-				continue
-			}
-			selPct := float64(sel) / float64(selTotal)
-			basePct := float64(base) / float64(baseTotal)
-			attr.Values = append(attr.Values, BubbleUpValue{
-				Value:          v,
-				SelectionCount: int64(sel),
-				BaselineCount:  int64(base),
-				SelectionPct:   selPct,
-				BaselinePct:    basePct,
-				Score:          selPct - basePct,
+	perKey := make([]BubbleUpAttribute, len(keys))
+	perKeyErr := make([]error, len(keys))
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, 6)
+	for ki, key := range keys {
+		wg.Add(1)
+		go func(ki int, key string) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			perKey[ki], perKeyErr[ki] = s.bubbleUpKey(ctx, key, keyQueryInputs{
+				selPred: selPred, basePred: basePred,
+				selPredArgs: selPredArgs, basePredArgs: basePredArgs,
+				wcOuter: wcOuter, selTotal: selTotal, baseTotal: baseTotal,
 			})
+		}(ki, key)
+	}
+	wg.Wait()
+	for ki := range keys {
+		if perKeyErr[ki] != nil {
+			return nil, perKeyErr[ki]
 		}
-		valRows.Close()
 		// Skip keys that produced no usable values (every value
 		// fell under the HAVING threshold or had empty strings).
-		if len(attr.Values) > 0 {
-			out.Attributes = append(out.Attributes, attr)
+		if len(perKey[ki].Values) > 0 {
+			out.Attributes = append(out.Attributes, perKey[ki])
 		}
 	}
 
@@ -294,6 +267,78 @@ func scoreOf(a BubbleUpAttribute) float64 {
 		return 0
 	}
 	return a.Values[0].Score
+}
+
+// keyQueryInputs — bubbleUpKey'in ihtiyaç duyduğu, BubbleUp gövdesinde
+// kurulan sorgu parçaları (v0.9.1082 paralelleştirme çıkarımı).
+type keyQueryInputs struct {
+	selPred, basePred   string
+	selPredArgs         []any
+	basePredArgs        []any
+	wcOuter             whereClause
+	selTotal, baseTotal uint64
+}
+
+// bubbleUpKey — TEK anahtarın değer dağılımı (eski step-3 döngü gövdesi,
+// v0.9.1082'de metoda çıkarıldı; SQL ve semantik bayt-bayt aynı).
+// Paralel çağrılır: yalnız kendi dönüş değerlerine yazar, paylaşılan
+// duruma dokunmaz.
+func (s *Store) bubbleUpKey(ctx context.Context, key string, in keyQueryInputs) (BubbleUpAttribute, error) {
+	var attr BubbleUpAttribute
+	attr.Key = key
+	// v0.9.1063 — iki taraf da kendi pencere predicate'iyle sayılır
+	// (dış tarama birleşim penceresi); aynı-pencere çağıranda base
+	// countIf'i eski count()'la birebir aynı sonucu verir.
+	valSQL := fmt.Sprintf(`
+		SELECT
+		  attr_values[indexOf(attr_keys, ?)] AS v,
+		  countIf(%s) AS sel,
+		  countIf(%s) AS base
+		FROM spans
+		%s
+		AND has(attr_keys, ?)
+		GROUP BY v
+		HAVING sel + base >= 5
+		ORDER BY (toFloat64(sel) / %d) - (toFloat64(base) / %d) DESC
+		LIMIT 6
+		SETTINGS max_execution_time = 15`,
+		in.selPred, in.basePred,
+		in.wcOuter.sql(),
+		in.selTotal, in.baseTotal,
+	)
+	// arg sırası: indexOf anahtarı, sel-predicate, base-predicate,
+	// dış WHERE, has() anahtarı.
+	args := []any{key} // for indexOf in SELECT
+	args = append(args, in.selPredArgs...)
+	args = append(args, in.basePredArgs...)
+	args = append(args, in.wcOuter.args...)
+	args = append(args, key) // for has(attr_keys, ?)
+	valRows, err := s.conn.Query(ctx, valSQL, args...)
+	if err != nil {
+		return attr, fmt.Errorf("bubbleup values for %s: %w", key, err)
+	}
+	defer valRows.Close()
+	for valRows.Next() {
+		var v string
+		var sel, base uint64
+		if err := valRows.Scan(&v, &sel, &base); err != nil {
+			return attr, err
+		}
+		if v == "" {
+			continue
+		}
+		selPct := float64(sel) / float64(in.selTotal)
+		basePct := float64(base) / float64(in.baseTotal)
+		attr.Values = append(attr.Values, BubbleUpValue{
+			Value:          v,
+			SelectionCount: int64(sel),
+			BaselineCount:  int64(base),
+			SelectionPct:   selPct,
+			BaselinePct:    basePct,
+			Score:          selPct - basePct,
+		})
+	}
+	return attr, nil
 }
 
 // selectionPredicate — turns an extra-filter list into a SQL

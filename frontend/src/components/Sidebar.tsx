@@ -7,7 +7,7 @@ import { useT } from '@/lib/i18n';
 import { getRaw, setRaw, getItem, setItem, STORAGE_KEYS } from '@/lib/storage';
 import { TelescopeIcon } from './TelescopeIcon';
 import {
-  Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database,
+  Inbox, TriangleAlert, Boxes, Webhook, Workflow, Database, ClipboardList,
   MessageSquare, ListTree, ChartSpline, ScrollText, Compass, BookText,
   LayoutDashboard, Bell, Target, CircleGauge, Hash, Eye,
   Sparkles, LayoutGrid, FileClock, Terminal, Code, Server, Bug, Flag, type LucideIcon,
@@ -54,6 +54,9 @@ const NAV_GROUPS: NavGroup[] = [
     titleKey: '',
     items: [
       { href: '/inbox',     label: 'nav.inbox',     icon: Inbox },
+      // v0.9.1072 (Faz 3.2) — vardiya devri tek ekran; Inbox'ın hemen
+      // altında, gruplanmamış.
+      { href: '/shift',     label: 'nav.shift',     icon: ClipboardList },
     ],
   },
   // v0.9.323 — triage merge, operator decision. /inbox above is now the ONE

@@ -3,7 +3,6 @@ import { EnvPicker } from './EnvPicker';
 import { LangToggle } from './LangToggle';
 import { DensityToggle } from './DensityToggle';
 import { ThemeToggle } from './ThemeToggle';
-import { LiveTicker } from './LiveTicker';
 import { TopbarSearch } from './TopbarSearch';
 import type { TimeRange } from '@/lib/types';
 
@@ -47,12 +46,6 @@ export function Topbar({ title, range, onRangeChange, showEnv, envApplies }: {
         </>
       )}
       {range && <div className="topbar-prefs-sep" />}
-      {/* v0.5.280 — live ingest ticker. Visceral feedback that
-          spans/logs/metrics are actually flowing; mounts once
-          via Topbar so every page carries it. Hidden until the
-          second sample lands so we don't show a misleading
-          "0 sp/s" on first paint. */}
-      <LiveTicker />
       <div className="topbar-prefs">
         <LangToggle />
         <DensityToggle />

@@ -144,6 +144,10 @@ type Store struct {
 	// ClusterName set (where adaptDDL owns spans_local) this is true
 	// and the path is byte-identical to pre-v0.8.186.
 	hasOpGroupCol bool
+	// v0.9.1077 — system.distribution_queue.last_exception_time probe'u
+	// (süreç ömründe bir kez; distribution_queue.go).
+	distQueueLastAtOnce sync.Once
+	distQueueHasLastAt  bool
 
 	// hasSeriesFpCol records whether metric_points actually carries the
 	// `series_fingerprint` column (v0.8.328, cross-signal pivot). Same

@@ -19,6 +19,7 @@ package chstore
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // measured — Measured=true bir örnek kurar (probe koştu, sonuç okundu).
@@ -420,14 +421,14 @@ func TestWorstDistributionTableIgnoresInputOrder(t *testing.T) {
 // metin BOŞ döner, yani çağıran hiçbir sorgu çalıştırmaz. Dağıtık
 // olmayan kurulumlar için ek maliyet SIFIR ve davranış değişmemiş olur.
 func TestDistributionQueueSQLShape(t *testing.T) {
-	if got := distributionQueueSQL(""); got != "" {
+	if got := distributionQueueSQL("", true); got != "" {
 		t.Fatalf("tek düğümde sorgu ÜRETİLMEMELİ, got %q", got)
 	}
-	if got := distributionQueueSQL("   "); got != "" {
+	if got := distributionQueueSQL("   ", true); got != "" {
 		t.Fatalf("boşluktan ibaret küme adı da tek-düğüm sayılmalı, got %q", got)
 	}
 
-	q := distributionQueueSQL("coremetry")
+	q := distributionQueueSQL("coremetry", true)
 	// clusterAllReplicas ŞART: spool her düğümün KENDİ diskinde durur;
 	// cluster() shard başına tek replika okur ve 2×2'lik bir kümede
 	// spool'un yarısını görünmez yapardı (v0.9.454 ile aynı bulgu).
@@ -466,12 +467,12 @@ func TestDistributionQueueSQLShape(t *testing.T) {
 // 646 ms, küme baskı altındayken 2.6 sn, ağır çekişmede 14.3 sn sürüyor
 // ve probe tam da ölçmek istediği anda körleşiyordu.
 func TestDistributionQueueBudgets(t *testing.T) {
-	fanout := distributionQueueSQL("coremetry")
+	fanout := distributionQueueSQL("coremetry", true)
 	if !strings.Contains(fanout, "max_execution_time = 10") {
 		t.Fatalf("fan-out bütçesi 10 sn olmalı (ölçüldü: tepe 2.6 sn):\n%s", fanout)
 	}
 
-	local := distributionQueueLocalSQL()
+	local := distributionQueueLocalSQL(true)
 	if strings.Contains(local, "clusterAllReplicas") {
 		t.Fatalf("yerel dal fan-out yapmamalı:\n%s", local)
 	}
@@ -501,7 +502,7 @@ func TestDistributionQueueBudgets(t *testing.T) {
 
 // Küme adındaki tek tırnak SQL'i kıramamalı (metin enterpolasyonu).
 func TestDistributionQueueSQLStripsQuote(t *testing.T) {
-	q := distributionQueueSQL("a'b")
+	q := distributionQueueSQL("a'b", true)
 	if strings.Contains(q, "'a'b'") {
 		t.Fatalf("tek tırnak süzülmedi:\n%s", q)
 	}
@@ -521,5 +522,82 @@ func TestFmtCount(t *testing.T) {
 		if got := fmtCount(c.in); got != c.want {
 			t.Fatalf("fmtCount(%d) = %q, want %q", c.in, got, c.want)
 		}
+	}
+}
+
+// ── v0.9.1077 — spool teşhisinde yaş etiketi ─────────────────────────
+//
+// 2026-08-16 prod olayı: 16 gün önceki bir 241 istisnası tarihsiz
+// basılınca CANLI bir bellek krizi sanıldı; operatör yaşamayan arızayı
+// kovaladı. Etiket artık istisnanın yaşını söyler.
+
+// Unit-mixing dersi ([[feedback-unit-mixing-needs-both-branches]]):
+// HER birim dalı ayrı vaka.
+func TestFmtAgeShort(t *testing.T) {
+	cases := []struct {
+		name  string
+		delta time.Duration
+		want  string
+	}{
+		{"taze", 30 * time.Second, "az önce"},
+		{"dakika dalı", 12 * time.Minute, "12 dk"},
+		{"dakika üst sınırı sa'ya devretmez", 89 * time.Minute, "89 dk"},
+		{"saat dalı", 3 * time.Hour, "3 sa"},
+		{"gün dalı", 16*24*time.Hour + 5*time.Hour, "16 gün"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := fmtAgeShort(int64(c.delta)); got != c.want {
+				t.Errorf("fmtAgeShort(%v) = %q, beklenen %q", c.delta, got, c.want)
+			}
+		})
+	}
+}
+
+func TestLastErrorHintAge(t *testing.T) {
+	now := int64(1_000_000_000_000_000_000)
+	sixteenDays := int64(16 * 24 * time.Hour)
+	t.Run("zamanlı istisna yaşıyla basılır", func(t *testing.T) {
+		got := lastErrorHint([]DistributionQueueEntry{{
+			Table: "metric_points", Files: 100,
+			LastError: "Code: 241. DB::Exception: memory limit exceeded",
+			LastErrorAtNs: now - sixteenDays,
+		}}, now)
+		if !strings.Contains(got, "Son hata (16 gün önce):") {
+			t.Errorf("yaş etiketi bekleniyordu: %q", got)
+		}
+	})
+	t.Run("zaman yoksa eski biçim (yaş İDDİA EDİLMEZ)", func(t *testing.T) {
+		got := lastErrorHint([]DistributionQueueEntry{{
+			Table: "metric_points", Files: 100,
+			LastError: "Code: 241. DB::Exception: memory limit exceeded",
+		}}, now)
+		if !strings.Contains(got, " Son hata: ") || strings.Contains(got, "önce)") {
+			t.Errorf("tarihsiz biçim bekleniyordu: %q", got)
+		}
+	})
+	t.Run("nowNs 0 (bilinmiyor) yaş üretmez", func(t *testing.T) {
+		got := lastErrorHint([]DistributionQueueEntry{{
+			Table: "metric_points", Files: 100,
+			LastError: "x", LastErrorAtNs: 5,
+		}}, 0)
+		if strings.Contains(got, "önce)") {
+			t.Errorf("nowNs=0 iken yaş basılmamalı: %q", got)
+		}
+	})
+}
+
+// Eski CH dalı: kolon yokken sorgu sabit toDateTime(0) seçmeli — kolon
+// SAYISI değişmez, scan döngüsü tek kalır, yaş sessizce kapanır.
+func TestDistributionQueueSelectOldCH(t *testing.T) {
+	old := distributionQueueSelect(false)
+	if strings.Contains(old, "last_exception_time") {
+		t.Errorf("hasLastAt=false dalı last_exception_time seçmemeli:\n%s", old)
+	}
+	if !strings.Contains(old, "toDateTime(0)") {
+		t.Errorf("hasLastAt=false dalı sabit toDateTime(0) seçmeli:\n%s", old)
+	}
+	if !strings.Contains(distributionQueueSelect(true), "argMax(last_exception_time,") {
+		t.Errorf("hasLastAt=true dalı zamanı last_err ile AYNI argMax anahtarından seçmeli")
 	}
 }

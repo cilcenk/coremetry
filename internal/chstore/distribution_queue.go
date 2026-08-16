@@ -27,6 +27,7 @@ package chstore
 import (
 	"context"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -97,6 +98,11 @@ type DistributionQueueEntry struct {
 	// LastError — en çok hata almış hedefin son istisnası, 200 karaktere
 	// kırpılmış. Teşhisin tamamı burada: 241 mi (bellek), 159 mu (timeout).
 	LastError string `json:"lastError,omitempty"`
+	// LastErrorAtNs (v0.9.1077) — o istisnanın ZAMANI. 2026-08-16 prod
+	// olayının dersi: 16 gün önceki bir 241, tarihsiz basılınca CANLI bir
+	// bellek krizi sanıldı ve operatör yaşamayan bir arızayı kovaladı.
+	// Eski CH'de (last_exception_time kolonu yok) 0 kalır.
+	LastErrorAtNs int64 `json:"lastErrorAtNs,omitempty"`
 }
 
 // DistributionQueue — tek bir ölçüm (küme geneli).
@@ -141,7 +147,7 @@ type DistributionQueue struct {
 // her shard'dan tek replika okur ve 2×2'lik bir kümede spool'un yarısını
 // görünmez yapardı — system.disks/asynchronous_metrics ile aynı operatör
 // bulgusu (v0.9.454).
-func distributionQueueSQL(clusterName string) string {
+func distributionQueueSQL(clusterName string, hasLastAt bool) string {
 	cn := strings.TrimSpace(clusterName)
 	if cn == "" {
 		return ""
@@ -153,7 +159,7 @@ func distributionQueueSQL(clusterName string) string {
 	// tazeleme aralığı 30 sn, yani 10 sn'lik bir tavan hiçbir isteği
 	// geciktirmeden çekişmeli anların ezici çoğunluğunu kapsar.
 	return fmt.Sprintf(
-		distributionQueueSelect+`
+		distributionQueueSelect(hasLastAt)+`
 		FROM clusterAllReplicas('%s', system.distribution_queue)`+
 			distributionQueueTail+`
 		SETTINGS skip_unavailable_shards = 1, max_execution_time = 10`,
@@ -166,8 +172,8 @@ func distributionQueueSQL(clusterName string) string {
 //
 // Bütçe 3 sn: yerel okuma bellek-içi (ÖLÇÜLDÜ: 0.2 / 0.4 / 1.1 sn aynı
 // baskı altında). Fan-out'un 10 sn'sinden sonra koşabilmesi için kısa.
-func distributionQueueLocalSQL() string {
-	return distributionQueueSelect + `
+func distributionQueueLocalSQL(hasLastAt bool) string {
+	return distributionQueueSelect(hasLastAt) + `
 		FROM system.distribution_queue` + distributionQueueTail + `
 		SETTINGS max_execution_time = 3`
 }
@@ -176,7 +182,18 @@ func distributionQueueLocalSQL() string {
 // ikisini de okuyor. argMax(...) ikinci argümanı: boş istisnalar -1'e
 // itilir ki "en çok hatalı hedef"in last_exception'ı BOŞSA bile dolu
 // olan bir başkası seçilsin — aksi hâlde teşhis metni sessizce boş kalırdı.
-const distributionQueueSelect = `
+// hasLastAt=false: eski CH'de last_exception_time kolonu yok — sabit
+// toDateTime(0) seçilir ki iki sürümde de kolon sayısı ve scan döngüsü
+// aynı kalsın (yaş etiketi sessizce kapanır, sorgu düşmez).
+func distributionQueueSelect(hasLastAt bool) string {
+	lastAt := "toDateTime(0)"
+	if hasLastAt {
+		// argMax anahtarı last_err ile AYNI ifade: zaman, seçilen
+		// istisnanın zamanı olmalı — en derin tablonun değil.
+		lastAt = `argMax(last_exception_time,
+		           if(empty(last_exception), toInt64(-1), toInt64(error_count)))`
+	}
+	return `
 		SELECT table,
 		       toUInt64(sum(data_files))            AS files,
 		       toUInt64(sum(data_compressed_bytes)) AS bytes,
@@ -184,12 +201,32 @@ const distributionQueueSelect = `
 		       toUInt64(sum(error_count))           AS errs,
 		       substring(argMax(last_exception,
 		           if(empty(last_exception), toInt64(-1), toInt64(error_count))),
-		         1, 200)                            AS last_err`
+		         1, 200)                            AS last_err,
+		       ` + lastAt + `                       AS last_err_at`
+}
 
 const distributionQueueTail = `
 		GROUP BY table
 		HAVING files > 0 OR broken > 0 OR errs > 0
 		ORDER BY files DESC, table`
+
+// distributionQueueHasLastAt — system.distribution_queue tablosunda
+// last_exception_time kolonu var mı? (CH ~23.4+). Süreç ömründe BİR kez
+// probelanır; eski CH'de yaş etiketi sessizce kapanır, ölçümün kendisi
+// düşmez. hasOpGroupCol probe'unun deseni (maybeCloseRows dahil —
+// v0.8.185 boot-panic disiplini).
+func (s *Store) distributionQueueHasLastAt(ctx context.Context) bool {
+	s.distQueueLastAtOnce.Do(func() {
+		rows, err := s.conn.Query(ctx,
+			`SELECT last_exception_time FROM system.distribution_queue LIMIT 1 SETTINGS max_execution_time = 3`)
+		maybeCloseRows(rows, err)
+		s.distQueueHasLastAt = err == nil
+		if !s.distQueueHasLastAt {
+			log.Printf("[chstore] system.distribution_queue.last_exception_time yok (eski CH?) — spool teşhisinde yaş etiketi kapalı: %v", err)
+		}
+	})
+	return s.distQueueHasLastAt
+}
 
 // CollectDistributionQueue — tek round-trip spool ölçümü.
 //
@@ -203,7 +240,8 @@ const distributionQueueTail = `
 // bir dönen /api/health için SENKRON çalıştırılamayacak kadar pahalı —
 // çağıran katman (internal/api) asenkron cache'ler.
 func (s *Store) CollectDistributionQueue(ctx context.Context) *DistributionQueue {
-	q := distributionQueueSQL(s.cfg.ClusterName)
+	hasLastAt := s.distributionQueueHasLastAt(ctx)
+	q := distributionQueueSQL(s.cfg.ClusterName, hasLastAt)
 	if q == "" {
 		return nil // tek düğüm: Distributed tablo yok, spool yok, sorgu YOK
 	}
@@ -219,7 +257,7 @@ func (s *Store) CollectDistributionQueue(ctx context.Context) *DistributionQueue
 	// ihtiyaç anında körleşirdi. Kısmi sonuç Partial ile İTİRAF edilir.
 	local := &DistributionQueue{Generated: out.Generated, Partial: true,
 		ProbeError: "küme geneli okuma düştü, yalnız bu düğüm: " + out.ProbeError}
-	if err := s.scanDistributionQueue(ctx, distributionQueueLocalSQL(), local); err != nil {
+	if err := s.scanDistributionQueue(ctx, distributionQueueLocalSQL(hasLastAt), local); err != nil {
 		// İkisi de düştü: "ölçemedim" hâli korunur, sıfır İDDİA EDİLMEZ.
 		out.ProbeError += " · yerel okuma da düştü: " + err.Error()
 		return out
@@ -239,9 +277,15 @@ func (s *Store) scanDistributionQueue(ctx context.Context, q string, out *Distri
 	defer rows.Close()
 	for rows.Next() {
 		var e DistributionQueueEntry
+		var lastAt time.Time
 		if serr := rows.Scan(&e.Table, &e.Files, &e.Bytes,
-			&e.BrokenFiles, &e.ErrorCount, &e.LastError); serr != nil {
+			&e.BrokenFiles, &e.ErrorCount, &e.LastError, &lastAt); serr != nil {
 			return serr
+		}
+		// toDateTime(0) (eski CH dalı) ve "hiç istisna yok" ikisi de
+		// epoch'tur — ikisinde de yaş İDDİA EDİLMEZ.
+		if lastAt.Unix() > 0 {
+			e.LastErrorAtNs = lastAt.UnixNano()
 		}
 		out.Tables = append(out.Tables, e)
 		out.Files += e.Files
@@ -334,7 +378,7 @@ func DistributionVerdict(st DistributionState, cur, prev *DistributionQueue) Dis
 		st.Detail = depth + distributionTrendNote(cur, prev) +
 			". ClickHouse INSERT'i kabul edip diske spool'luyor ama arka plan " +
 			"göndericisi *_local'a basamıyor: uygulama 'yazdım' sanıyor, veri " +
-			"inmiyor." + lastErrorHint(cur.Tables)
+			"inmiyor." + lastErrorHint(cur.Tables, cur.Generated)
 		return st
 	}
 
@@ -380,7 +424,7 @@ func DistributionVerdict(st DistributionState, cur, prev *DistributionQueue) Dis
 			distributionDrainNote(cur, prev) +
 			". ClickHouse INSERT'i kabul edip diske spool'luyor ama arka plan " +
 			"göndericisi *_local'a basamıyor: uygulama 'yazdım' sanıyor, veri " +
-			"inmiyor." + lastErrorHint(cur.Tables)}
+			"inmiyor." + lastErrorHint(cur.Tables, cur.Generated)}
 	case cur.Files < prev.Files:
 		return DistributionState{Detail: depth +
 			fmt.Sprintf("; drene oluyor (%s → %s)", fmtCount(prev.Files), fmtCount(cur.Files)) +
@@ -389,7 +433,7 @@ func DistributionVerdict(st DistributionState, cur, prev *DistributionQueue) Dis
 		return DistributionState{Degraded: true, Detail: depth +
 			fmt.Sprintf("; SABİT (%s) ve gönderim hatası var (%s hata). Kuyruk ne "+
 				"büyüyor ne eriyor — gönderici takılı.",
-				fmtCount(cur.Files), fmtCount(cur.ErrorCount)) + lastErrorHint(cur.Tables)}
+				fmtCount(cur.Files), fmtCount(cur.ErrorCount)) + lastErrorHint(cur.Tables, cur.Generated)}
 	default:
 		return DistributionState{Detail: depth + "; sabit, gönderim hatası yok."}
 	}
@@ -576,7 +620,13 @@ func worstDistributionTable(tables []DistributionQueueEntry) string {
 
 // lastErrorHint — arızalı tablonun son istisnasını neden metnine ekler.
 // Operatörün ilk sorusu "neden inmiyor"; cevabı zaten elimizde.
-func lastErrorHint(tables []DistributionQueueEntry) string {
+//
+// nowNs (v0.9.1077): istisnanın YAŞI da basılır. 2026-08-16 prod olayı:
+// 16 gün önceki bir 241 tarihsiz basılınca canlı bir bellek krizi
+// sanıldı — oysa gönderim günlerdir hatasızdı, sorun saf drenaj hızıydı.
+// Çağıran ölçümün kendi Generated damgasını verir (fonksiyon saf kalır);
+// zaman bilgisi yoksa (eski CH / boş) etiket eskisi gibi tarihsizdir.
+func lastErrorHint(tables []DistributionQueueEntry, nowNs int64) string {
 	var top DistributionQueueEntry
 	for _, t := range tables {
 		if t.Files > top.Files && t.LastError != "" {
@@ -586,7 +636,27 @@ func lastErrorHint(tables []DistributionQueueEntry) string {
 	if top.LastError == "" {
 		return ""
 	}
-	return " Son hata: " + oneLine(top.LastError, 160)
+	age := ""
+	if top.LastErrorAtNs > 0 && nowNs > top.LastErrorAtNs {
+		age = " (" + fmtAgeShort(nowNs-top.LastErrorAtNs) + " önce)"
+	}
+	return " Son hata" + age + ": " + oneLine(top.LastError, 160)
+}
+
+// fmtAgeShort — tek birimli kompakt yaş (saf, HER birim tablo testli —
+// unit-mixing dersi: off-axis dal sessizce bozulur). Sınırlar kaba
+// bilinçli: bu bir teşhis etiketi, kronometre değil.
+func fmtAgeShort(deltaNs int64) string {
+	switch d := time.Duration(deltaNs); {
+	case d < 90*time.Second:
+		return "az önce"
+	case d < 90*time.Minute:
+		return fmt.Sprintf("%d dk", int(d.Minutes()+0.5))
+	case d < 48*time.Hour:
+		return fmt.Sprintf("%d sa", int(d.Hours()+0.5))
+	default:
+		return fmt.Sprintf("%d gün", int(d.Hours()/24+0.5))
+	}
 }
 
 // oneLine — çok satırlı bir CH istisnasını tek satıra indirir ve RUNE

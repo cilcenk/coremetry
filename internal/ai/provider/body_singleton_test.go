@@ -194,6 +194,11 @@ var llmBodyIdioms = []string{
 	`"tool_result"`,
 	`"/chat/completions"`,
 	`api.anthropic.com/v1/messages`,
+	// Faz 1.4 — son bant-dışı LLM istemcisi (rag.embedOnce) kapandı.
+	// Tırnaklı yazılış şart: rag.go yorumları `/v1/embeddings`i düz
+	// metinde anıyor ve tarayıcı yorumları zaten soyuyor, ama uç
+	// birleştirmesi (`… + "/embeddings"`) yalnız bu şekilde ele veriyor.
+	`"/embeddings"`,
 }
 
 // futureLLMBodyIdioms — bugün HİÇBİR YERDE geçmeyen, ama geçtiği gün

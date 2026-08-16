@@ -373,16 +373,10 @@ export const api = {
       `/api/topology/edge/instances?${qs(params)}`),
   topologyDrawIOURL: (params: { root: string; depth?: number; from?: number; to?: number }) =>
     `/api/topology/drawio?${qs(params)}`,
-  // Service-level topology (v0.5.102) — full backend graph with
-  // protocol/method labels + infra nodes. No depth bound; the
-  // service fabric is generally small enough to draw whole.
-  // v0.5.310 — `noise` param: 'show' disables the backend noise
-  // filter (self-edges, infra ops, sub-0.5% volume) and returns
-  // the legacy full graph. Default = filtered.
-  serviceTopology: (params: { from?: number; to?: number; noise?: 'show'; compare?: 'prior'; top?: number; focus?: string; hops?: number; broadcast?: 'show' }) =>
-    get<import('./types').ServiceTopologyResponse>(`/api/topology/service?${qs(params)}`),
-  serviceTopologyDrawIOURL: (params: { from?: number; to?: number }) =>
-    `/api/topology/service/drawio?${qs(params)}`,
+  // v0.9.1114 — serviceTopology + serviceTopologyDrawIOURL istemci
+  // metodları söküldü (tüketicisiz; /service-map v0.8.273'ten beri
+  // /api/servicegraph okuyor). Backend uçları duruyor — MCP/dış
+  // tüketiciler bu dosyanın kapsamı dışında.
   // Per-flow draw.io export (v0.5.145). Same XML shape as the
   // service-level export, restricted to the one flow's traces.
   flowTopologyDrawIOURL: (params: { root_service: string; root_op: string; from?: number; to?: number }) =>

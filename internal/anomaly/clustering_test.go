@@ -1,6 +1,7 @@
 package anomaly
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -86,4 +87,35 @@ func TestDetectAnomalyClusters(t *testing.T) {
 			}
 		}
 	})
+}
+
+// v0.9.1070 (F1.6-R3) — saf yardımcıların pinleri: açıklama determinizmi
+// + kesim dürüstlüğü + severity katlaması.
+func TestClusterDescriptionAndSeverity(t *testing.T) {
+	oc := func(sev, dir string) anomalyOutcome {
+		return anomalyOutcome{Action: "open", Severity: sev, Direction: dir}
+	}
+	cl := anomalyCluster{
+		Source: "payment-db",
+		Members: []openCandidate{
+			{Service: "a", Metric: "error_rate", Outcome: oc("warning", "spiked")},
+			{Service: "b", Metric: "p99_ms", Outcome: oc("critical", "spiked")},
+		},
+	}
+	d := clusterDescription(cl)
+	if !strings.Contains(d, "rooted at payment-db") || !strings.Contains(d, "3 services") {
+		t.Fatalf("açıklama şekli: %q", d)
+	}
+	if !strings.Contains(d, "a (") || !strings.Contains(d, "b (") {
+		t.Fatalf("üyeler eksik: %q", d)
+	}
+	if d2 := clusterDescription(cl); d2 != d {
+		t.Fatal("açıklama deterministik değil")
+	}
+	if got := clusterSeverity(cl.Members, "warning"); got != "critical" {
+		t.Fatalf("üye critical'ı katlanmadı: %q", got)
+	}
+	if got := clusterSeverity([]openCandidate{{Outcome: oc("warning", "spiked")}}, "warning"); got != "warning" {
+		t.Fatalf("hepsi warning'ken severity: %q", got)
+	}
 }

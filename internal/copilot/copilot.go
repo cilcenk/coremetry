@@ -415,7 +415,7 @@ func (s *Service) tuneMaxTokens() int {
 
 // tuneMaxTokensLocked / tuneTemperatureLocked — lock-free halves,
 // mirroring clientTimeout/clientTimeoutLocked. A caller that already
-// holds s.mu (the provider snapshot, v0.9.112x Faz 1.1) uses these:
+// holds s.mu (the provider snapshot, v0.9.1123 Faz 1.1) uses these:
 // re-entering an RWMutex for a read deadlocks once a writer is queued.
 // Splitting rather than duplicating the defaulting logic is deliberate
 // — a second copy of "override or default" is exactly how the 1024
@@ -738,7 +738,7 @@ func truncErr(s string) string {
 
 // ── JSON modu: response_format merdiveni ────────────────────────────────────
 //
-// v0.9.112x (Faz 1.2) — buffered istek ÜRETİCİLERİ artık burada değil,
+// v0.9.1124 (Faz 1.2) — buffered istek ÜRETİCİLERİ artık burada değil,
 // internal/ai/provider'da; Service'te merdivenin DURUM tutan yarısı
 // kaldı: hangi basamak denenir, reddedilince ne olur, karar hangi uç
 // için önbelleklenir. Çağrı yolu provider_calls.go.

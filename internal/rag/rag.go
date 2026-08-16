@@ -10,17 +10,17 @@
 package rag
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cilcenk/coremetry/internal/ai/provider"
 )
 
 const settingsKey = "rag_embedding"
@@ -54,6 +54,10 @@ type Service struct {
 	mu    sync.RWMutex
 	cfg   Config
 	httpc *http.Client
+	// recorder — ai_calls yazıcısı (v0.9.1126, Faz 1.4). Boot'ta bir kez
+	// SetRecorder ile kurulur; nil = kayıt kapalı (testler, minimal
+	// binary). copilot.Service'in aynı seam'i.
+	recorder Recorder
 }
 
 func New() *Service {
@@ -87,6 +91,16 @@ func (s *Service) Configure(c Config) {
 	if s.httpc == nil || prevInsecure != c.InsecureSkipVerify {
 		s.httpc = NewHTTPClient(30*time.Second, c.InsecureSkipVerify)
 	}
+}
+
+// client — canlı http.Client'ın KİLİTLİ okuyucusu. Configure onu
+// TLS bayrağı değişince yeniden kurabiliyor ve StartConfigRefresh o
+// yolu 30 saniyede bir kendi goroutine'inden çağırıyor; alanı çıplak
+// okumak yarış demekti (embedOnce v0.8.438'den beri öyle okuyordu).
+func (s *Service) client() *http.Client {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.httpc
 }
 
 // Ready — SEMANTİK yol (embed): endpoint + model girilmiş ve etkin.
@@ -139,19 +153,6 @@ func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, c Conf
 	return nil
 }
 
-// embedRequest/-Response — OpenAI-uyumlu /v1/embeddings sözleşmesi
-// (vLLM aynı şemayı servis eder).
-type embedRequest struct {
-	Model string   `json:"model"`
-	Input []string `json:"input"`
-}
-type embedResponse struct {
-	Data []struct {
-		Index     int       `json:"index"`
-		Embedding []float32 `json:"embedding"`
-	} `json:"data"`
-}
-
 // embedBatchMax — tek istekte gönderilecek maksimum metin; büyük
 // dokümanlar dilimlenerek gider (endpoint tarafında istek boyu sınırı).
 const embedBatchMax = 64
@@ -177,44 +178,26 @@ func (s *Service) Embed(ctx context.Context, texts []string) ([][]float32, error
 	return out, nil
 }
 
+// embedOnce — TEK HTTP çağrısı = TEK batch = TEK ai_calls satırı.
+//
+// Gövde/başlık/çözümleme v0.9.1126 (Faz 1.4) ile internal/ai/provider'a
+// taşındı; burada kalan yarı yapılandırmanın sahipliği (rag_embedding
+// blob'u, kendi 30s client'ı, kendi TLS-skip'i) ve KAYIT.
 func (s *Service) embedOnce(ctx context.Context, c Config, texts []string) ([][]float32, error) {
-	body, err := json.Marshal(embedRequest{Model: c.Model, Input: texts})
+	started := time.Now()
+	resp, err := provider.DoEmbeddings(ctx, provider.Config{
+		BaseURL:    c.Endpoint,
+		APIKey:     c.APIKey,
+		Model:      c.Model,
+		HTTPClient: s.client(),
+	}, provider.EmbedRequest{Model: c.Model, Inputs: texts})
+	// Hata yolunda da kaydedilir: /ai'da "embedding ucu düştü" hâli
+	// yalnız pod log'unda kalmasın (copilot'un status="error" duruşu).
+	s.recordEmbed(started, c, texts, resp.InputTokens, err)
 	if err != nil {
 		return nil, err
 	}
-	url := strings.TrimRight(c.Endpoint, "/") + "/embeddings"
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if c.APIKey != "" {
-		req.Header.Set("Authorization", "Bearer "+c.APIKey)
-	}
-	resp, err := s.httpc.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("embedding isteği: %w", err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		b, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		return nil, fmt.Errorf("embedding endpoint %d: %s", resp.StatusCode, strings.TrimSpace(string(b)))
-	}
-	var er embedResponse
-	if err := json.NewDecoder(resp.Body).Decode(&er); err != nil {
-		return nil, err
-	}
-	if len(er.Data) != len(texts) {
-		return nil, fmt.Errorf("embedding sayısı uyuşmuyor: %d girdi, %d vektör", len(texts), len(er.Data))
-	}
-	out := make([][]float32, len(texts))
-	for _, d := range er.Data {
-		if d.Index < 0 || d.Index >= len(out) {
-			return nil, fmt.Errorf("embedding index %d aralık dışı", d.Index)
-		}
-		out[d.Index] = d.Embedding
-	}
-	return out, nil
+	return resp.Vectors, nil
 }
 
 // StartConfigRefresh — multi-pod senkronu (copilot deseninin aynısı).

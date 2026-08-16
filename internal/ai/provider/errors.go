@@ -36,4 +36,8 @@ const (
 	labelOpenAI    = "openai-compat"
 	labelAnthropic = "anthropic"
 	labelGitHub    = "github copilot"
+	// labelEmbedding — rag'ın eski cümlesi ("embedding endpoint %d: …",
+	// v0.8.438). Operatör upload hatasında bu metni görüyor; Faz 1.4
+	// gövdeyi taşıdı, metni DEĞİL.
+	labelEmbedding = "embedding endpoint"
 )

@@ -944,6 +944,11 @@ func main() {
 	// operator can see "which Explain button gets clicked, by
 	// whom, with what latency / token cost" in the /ai page.
 	copilotSvc.SetRecorder(aiCallRecorder{store})
+	// v0.9.1126 (Faz 1.4) — embedding çağrıları da /ai'da görünür.
+	// Ayrı adaptör, çünkü rag'ın kaydı copilot'unkinin ANLAMLI alt
+	// kümesi (kullanıcı kimliği ve içerik örneği yok — bkz.
+	// rag.CallRecord).
+	ragSvc.SetRecorder(ragCallRecorder{store})
 
 	// ── LDAP / AD enterprise auth (optional) ─────────────────────────────────
 	ldapSvc := ldap.New()
@@ -1842,6 +1847,32 @@ func (r aiCallRecorder) RecordCall(ctx context.Context, c copilot.CallRecord) {
 	}
 	if err := r.store.InsertAICall(ctx, row); err != nil {
 		log.Printf("[ai-obs] insert call: %v", err)
+	}
+}
+
+// ragCallRecorder — aiCallRecorder'ın embedding ikizi (v0.9.1126,
+// Faz 1.4 / denetim D7). rag.CallRecord copilot'unkinin alt kümesi
+// olduğu için eşleme de kısa: kullanıcı alanları ve içerik örnekleri
+// BİLEREK boş kalır (doküman metni ai_calls'a kopyalanmaz).
+type ragCallRecorder struct {
+	store *chstore.Store
+}
+
+func (r ragCallRecorder) RecordCall(ctx context.Context, c rag.CallRecord) {
+	row := chstore.AICall{
+		CreatedAt:   c.CreatedAt.UnixNano(),
+		Surface:     c.Surface,
+		Provider:    c.Provider,
+		Model:       c.Model,
+		BaseURL:     c.BaseURL,
+		DurationMs:  c.DurationMs,
+		InputTokens: c.InputTokens,
+		Status:      c.Status,
+		ErrorMsg:    c.ErrorMsg,
+		PromptChars: c.PromptChars,
+	}
+	if err := r.store.InsertAICall(ctx, row); err != nil {
+		log.Printf("[ai-obs] insert embed call: %v", err)
 	}
 }
 

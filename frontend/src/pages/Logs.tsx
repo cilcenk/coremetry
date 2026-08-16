@@ -7,6 +7,7 @@ import { Topbar } from '@/components/Topbar';
 import { KqlSearchInput } from '@/components/KqlSearchInput';
 import { SavedViewsBar } from '@/components/SavedViewsBar';
 import { Spinner, Empty } from '@/components/Spinner';
+import { IconSparkles } from '@/components/icons';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Combobox } from '@/components/Combobox';
 import { ServicePicker } from '@/components/ServicePicker';
@@ -160,6 +161,19 @@ function LogsInner() {
     hasTrace: false,
   });
   const [draft, setDraft] = useState(filter);
+  // v0.9.1100 (F3.5) — ✨ desen anlatımı durumu (Shift emsali).
+  const [aiPat, setAiPat] = useState<{ busy: boolean; text: string | null; err: string | null }>({ busy: false, text: null, err: null });
+  const explainPatterns = async () => {
+    setAiPat({ busy: true, text: null, err: null });
+    try {
+      const winSec = from && to ? Math.max(60, Math.round((to - from) / 1e9)) : 1800;
+      const r = await api.explainLogPatterns(winSec);
+      setAiPat({ busy: false, text: r.explanation, err: null });
+    } catch (e) {
+      setAiPat({ busy: false, text: null, err: e instanceof Error ? e.message : 'Anlatım alınamadı' });
+    }
+  };
+
   // Structured field filters (Kibana Discover pill model) — separate
   // from the free-text `search`. Compiled together right before any
   // query goes out (compiledSearch below), so the backend contract
@@ -627,6 +641,13 @@ function LogsInner() {
           <div style={{ flex: 1, minWidth: 0 }}>
             <SavedViewsBar page="logs" />
           </div>
+          {/* v0.9.1100 (F3.5) — ✨ desen anlatımı. Fetch YALNIZ tıkla
+              (ES-maliyet disiplini); pencere sunucuda rung'lanır. */}
+          <Button variant="secondary" size="sm" disabled={aiPat.busy}
+            onClick={explainPatterns}
+            title="Penceredeki yeni/patlayan log desenlerini ve sürekli gürültü şablonlarını AI anlatır">
+            <IconSparkles /> Desenleri anlat
+          </Button>
           {(() => {
             const kql = buildKQLFromFilter({ ...filter, search: compiledSearch });
             const href = buildKibanaURL(kibana, {
@@ -781,6 +802,21 @@ function LogsInner() {
               title={'The env filter could not be applied on this log source: no deployment-environment field was found in the index mapping (self-discovery probed resource.deployment.environment[.name], deployment.environment[.name], labels.deployment_environment, env, environment).\nThe rows below are UNFILTERED — all environments.\nFix: set the Environment field in Settings → Elasticsearch → Document field map.'}>
               ⚠ env “{env}” not applied — this log source has no recognisable environment field
             </span>
+          </div>
+        )}
+
+        {(aiPat.busy || aiPat.text || aiPat.err) && (
+          <div style={{
+            padding: '12px 14px', marginBottom: 10, borderRadius: 6,
+            background: 'var(--bg2)', border: '1px solid var(--border)',
+            fontSize: 12.5, lineHeight: 1.55, whiteSpace: 'pre-wrap',
+          }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, color: 'var(--text2)', marginBottom: 6 }}>
+              AI DESEN ANLATIMI
+            </div>
+            {aiPat.busy && <Spinner />}
+            {aiPat.err && <span style={{ color: 'var(--err)' }}>{aiPat.err}</span>}
+            {aiPat.text}
           </div>
         )}
 

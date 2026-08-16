@@ -4,8 +4,8 @@
 // THE regression this guards is a PARITY BUG that shipped for ~1000
 // releases: the completion budget was lifted 1024 → 4096 for the
 // openai-compat paths (v0.8.138 / v0.8.393) but the lift never reached
-//   - explainAnthropicWithUsage   (copilot.go)
-//   - explainGitHubWithUsage      (copilot.go)
+//   - explainAnthropic            (provider_calls.go)
+//   - explainGitHub               (provider_calls.go)
 //   - streamAnthropicWithUsage    (stream.go)
 //
 // so an operator on Anthropic — the provider most likely to be paid
@@ -307,7 +307,7 @@ func TestRequestBodyTuning_AllProviders(t *testing.T) {
 		run      func(s *Service)
 	}{
 		{"openai explain", ProviderOpenAI, "http://llm.invalid/v1", func(s *Service) {
-			_, _, _, _ = s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+			_, _, _, _ = s.explainOpenAI(context.Background(), "sys", "user")
 		}},
 		{"openai stream", ProviderOpenAI, "http://llm.invalid/v1", func(s *Service) {
 			_, _, _, _ = s.streamOpenAIWithUsage(context.Background(), "sys", "user", nil)
@@ -317,7 +317,7 @@ func TestRequestBodyTuning_AllProviders(t *testing.T) {
 				[]ChatMessage{{Role: "user", Text: "hi"}}, nil)
 		}},
 		{"anthropic explain", ProviderAnthropic, "", func(s *Service) {
-			_, _, _, _ = s.explainAnthropicWithUsage(context.Background(), "sys", "user")
+			_, _, _, _ = s.explainAnthropic(context.Background(), "sys", "user")
 		}},
 		{"anthropic stream", ProviderAnthropic, "", func(s *Service) {
 			_, _, _, _ = s.streamAnthropicWithUsage(context.Background(), "sys", "user", nil)
@@ -327,7 +327,7 @@ func TestRequestBodyTuning_AllProviders(t *testing.T) {
 				[]ChatMessage{{Role: "user", Text: "hi"}}, nil)
 		}},
 		{"github explain", ProviderGitHub, "", func(s *Service) {
-			_, _, _, _ = s.explainGitHubWithUsage(context.Background(), "sys", "user")
+			_, _, _, _ = s.explainGitHub(context.Background(), "sys", "user")
 		}},
 	}
 	tunings := []struct {

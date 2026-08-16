@@ -16,8 +16,9 @@ import (
 //
 // "openai" sağlayıcısı Coremetry'de TÜM OpenAI-compat uçları demek:
 // gerçek OpenAI, vLLM, KServe, Ollama, LM Studio. Gövde ve header
-// şekli copilot.go:explainOpenAIWithUsage'ın birebir aynısıdır —
-// bu dilimde amaç davranış değiştirmek değil, TAŞIMAK.
+// şekli eski copilot.go:explainOpenAIWithUsage'ın birebir aynısıdır —
+// amaç davranış değiştirmek değil, TAŞIMAK (o üretici Faz 1.2'de
+// silindi; bu dosya tek yazılış).
 
 const (
 	// defaultBaseURL — operatör uç vermediyse. baseURL /v1 önekini
@@ -40,17 +41,16 @@ const (
 //
 // Hata semantiği copilot.go'daki ikiziyle aynı tutulmuştur:
 // taşıma hatası "openai-compat call: %w", ≥300 yanıtı
-// "openai-compat %d: <gövde>". Kota kesicisi (429 → 1h pencere)
-// ÇAĞIRANDA kalır: transport döner, Service kaydeder.
+// "openai-compat %d: <gövde>" (HTTPError tipiyle, statü ayıklanabilir).
+// Kota kesicisi (429 → 1h pencere) ve JSON merdiveni ÇAĞIRANDA kalır:
+// transport döner, Service karar verir.
 func DoOpenAI(ctx context.Context, cfg Config, req Request) (Response, error) {
 	if cfg.HTTPClient == nil {
 		return Response{}, errors.New("provider: nil HTTPClient — timeout ve TLS-skip ayarları onun içinde yaşıyor")
 	}
-	if req.JSONLevel != JSONPlain {
-		// Faz 1.1 kapsamı: yalnız prose. Sessizce kısıtsız çağrıya
-		// düşmek, JSON isteyen yüzeyin garantisini haber vermeden
-		// kaybettirirdi.
-		return Response{}, fmt.Errorf("provider: JSONLevel=%d bu dilimde desteklenmiyor (Faz 1.2)", req.JSONLevel)
+	rf, err := responseFormat(req)
+	if err != nil {
+		return Response{}, err
 	}
 
 	base := cfg.BaseURL
@@ -81,6 +81,12 @@ func DoOpenAI(ctx context.Context, cfg Config, req Request) (Response, error) {
 	if req.Temperature != nil {
 		body["temperature"] = *req.Temperature
 	}
+	// v0.9.517/527 — katı JSON isteyen yüzeylerde çözümlemeyi SUNUCUDA
+	// kısıtla. Basamağı Service seçti (yetenek kararları onda); burada
+	// yalnız seçilen basamağın gövde şekli basılır.
+	if rf != nil {
+		body["response_format"] = rf
+	}
 	raw, err := json.Marshal(body)
 	if err != nil {
 		return Response{}, err
@@ -107,9 +113,40 @@ func DoOpenAI(ctx context.Context, cfg Config, req Request) (Response, error) {
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxRespBytes))
 	if resp.StatusCode >= 300 {
-		return Response{}, fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+		return Response{}, &HTTPError{Provider: labelOpenAI, Status: resp.StatusCode, Body: strings.TrimSpace(string(respBody))}
 	}
 	return ParseOpenAIChat(respBody)
+}
+
+// responseFormat, istenen JSON basamağının gövde parçasını üretir.
+// nil = alan hiç gönderilmez (JSONPlain).
+//
+// Saf + tablo testli: merdivenin ÜÇ basamağının tel-üstü şekli
+// v0.9.517/527'den beri sabit ve iki yüzey (nl-to-query, rootcause
+// verdict) şemanın `strict:true` ile gitmesine güveniyor.
+func responseFormat(req Request) (map[string]any, error) {
+	switch req.JSONLevel {
+	case JSONPlain:
+		return nil, nil
+	case JSONObject:
+		return map[string]any{"type": "json_object"}, nil
+	case JSONSchema:
+		if req.JSONSchemaName == "" || len(req.JSONSchema) == 0 {
+			// Şemasız json_schema = kesin 400 + gereksiz yetenek kararı.
+			// Çağıran (Service) bu durumu bir alt basamağa indirmekle
+			// yükümlü; buraya gelmesi programlama hatasıdır.
+			return nil, errors.New("provider: JSONSchema basamağı ad+şema ister (şemasız istek bir alt basamağa indirilmeliydi)")
+		}
+		return map[string]any{
+			"type": "json_schema",
+			"json_schema": map[string]any{
+				"name":   req.JSONSchemaName,
+				"schema": req.JSONSchema,
+				"strict": true,
+			},
+		}, nil
+	}
+	return nil, fmt.Errorf("provider: bilinmeyen JSONLevel=%d", req.JSONLevel)
 }
 
 // ParseOpenAIChat, buffered bir chat.completion gövdesini çözer ve
@@ -148,7 +185,8 @@ func ParseOpenAIChat(respBody []byte) (Response, error) {
 		//
 		// Önek bilerek "[copilot]": EmptyAnswerError metni operatöre
 		// "[copilot] pod log"a bakmasını söylüyor ve o sözleşme bu
-		// paketten eski. Faz 1.3'te eski kopya ölünce önek de taşınır.
+		// paketten eski. Önek DEĞİŞMEZ — hata metni onu adres olarak
+		// veriyor, log satırı başka bir önekle çıksa adres yalan olurdu.
 		log.Printf("[copilot] openai-compat empty answer: finish_reason=%q content_len=%d reasoning_content_len=%d reasoning_len=%d raw=%.500s",
 			parsed.Choices[0].FinishReason, len(msg.Content), len(msg.ReasoningContent), len(msg.Reasoning),
 			strings.TrimSpace(string(respBody)))

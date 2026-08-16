@@ -7,12 +7,16 @@ import (
 
 // salvage.go — "model boş içerik döndürdü" kurtarma zinciri.
 //
-// FAZ 1.1 GEÇİCİ DUPLİKASYON: bu fonksiyonlar copilot.go'daki
-// stripThinking/thinkingContent + parseOpenAIChatResponse zincirinin
-// KOPYASIDIR (taşıma değil). Eski kopyalar diğer 7 üretici hâlâ
-// onları çağırdığı için yaşıyor; Faz 1.2/1.3'te o üreticiler buraya
-// geçince eski kopyalar silinir. İki kopya arasındaki davranış
-// eşitliği internal/copilot/provider_parity_test.go ile pinlidir.
+// FAZ 1.2'den beri TEK YAZILIŞ. Faz 1.1'de burası copilot.go'daki
+// ikizin bilinçli geçici kopyasıydı; denetim (2026-08-16) zincirin ÜÇ
+// kopyasını saymıştı (copilot.go buffered, stream.go SSE, bu paket).
+// Faz 1.2'de copilot.go'daki üreticiler silindi ve stream.go/chat.go
+// buradaki fonksiyonları çağırıyor.
+//
+// Kopya sayısı bir YAPISAL kapıyla korunuyor:
+// salvage_singleton_test.go. Davranış testi ikinci bir kopyayı
+// yakalayamaz — iki kopya bugün aynı şeyi yapar, sonra biri düzeltilir
+// öteki unutulur (1024 bütçesi tam böyle ~1000 sürüm yaşadı).
 //
 // Zincirin geçmişi (v0.8.138 → 155 → 384): yerel reasoning modelleri
 // (Qwen3, deepseek-r1, …) cevabı content'e koymayabilir —

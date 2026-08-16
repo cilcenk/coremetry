@@ -10,6 +10,9 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	// aiprov — kurtarma zincirinin tek yazılışı (bkz. stream.go).
+	aiprov "github.com/cilcenk/coremetry/internal/ai/provider"
 )
 
 // In-app chatbot tool-calling layer (v0.6.53). The single-shot
@@ -366,9 +369,9 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 	// tool calls — a tool-call turn legitimately has empty content.
 	if strings.TrimSpace(turn.Text) == "" && len(msg.ToolCalls) == 0 {
 		if alt := strings.TrimSpace(msg.ReasoningContent); alt != "" {
-			turn.Text = stripThinking(alt)
+			turn.Text = aiprov.StripThinking(alt)
 		} else if alt := strings.TrimSpace(msg.Reasoning); alt != "" {
-			turn.Text = stripThinking(alt)
+			turn.Text = aiprov.StripThinking(alt)
 		}
 	}
 	for _, raw := range msg.ToolCalls {

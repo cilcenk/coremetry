@@ -1,16 +1,16 @@
-// provider_parity_test.go — FAZ 1.1 canary'sinin GÜVENLİK KANITI.
+// provider_parity_test.go — FAZ 1.2'nin GÜVENLİK KANITI.
 //
-// v0.9.112x itibarıyla explain-charts yüzeyi yeni transport'tan
-// (internal/ai/provider) geçiyor, diğer 20 ✨ yüzeyi eski
-// explainOpenAIWithUsage'dan. İki yol AYNI girdide AYNI şeyi
-// üretmezse operatör bunu ancak canlıda, tek bir panelin bozulması
-// olarak görür — bu test o farkı ship'ten önce yakalar.
+// Faz 1.1'de bu dosya iki YOLU birbirine kıyaslıyordu (canary vs eski
+// üretici). Faz 1.2'de eski üreticiler silindi, yani kıyaslanacak
+// ikinci yol yok — pin artık ALTIN GÖVDE: Service.Explain'in üç
+// sağlayıcıda tel üstüne koyduğu gövde + header'lar burada AÇIKÇA
+// yazılı ve birebir karşılaştırılıyor.
 //
-// Pin: aynı Service, aynı prompt, aynı tuning ⇒ (a) tel üstündeki
-// gövde birebir aynı, (b) header'lar aynı, (c) çözümlenmiş metin ve
-// token sayıları aynı. Kaynak-grep değil gövde karşılaştırması:
-// v0.9.1120'nin dersi, aynı sabitin farklı yazılışla geri gelmesini
-// yalnız gövde testi yakalar.
+// Neden altın gövde, kaynak-grep değil: v0.9.1120'nin dersi, aynı
+// sabitin (max_tokens 1024) başka bir yazılışla geri gelmesini yalnız
+// gövde testi yakalar. Silinen üreticiler geri gelemez ama YENİ bir
+// alan sessizce düşebilir — anthropic'in sürüm header'ı düşerse o yol
+// TAMAMEN kırılır ve bunu ancak canlıda görürüz.
 package copilot
 
 import (
@@ -20,18 +20,22 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 )
 
-// parityRT — her isteğin gövdesini + seçili header'larını kaydeder ve
-// sabit bir yanıt döndürür.
+// parityRT — her isteğin gövdesini + header'larını kaydeder ve HOST'a
+// göre sağlayıcı-şekilli bir 200 döndürür (github jeton takası dahil).
 type parityRT struct {
+	reqs    []*http.Request
 	bodies  []map[string]any
 	headers []http.Header
-	body    string
+	status  int
+	body    string // boşsa host'a göre varsayılan
 }
 
 func (p *parityRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	p.reqs = append(p.reqs, req)
 	if req.Body != nil {
 		raw, _ := io.ReadAll(req.Body)
 		var m map[string]any
@@ -40,12 +44,24 @@ func (p *parityRT) RoundTrip(req *http.Request) (*http.Response, error) {
 		}
 	}
 	p.headers = append(p.headers, req.Header.Clone())
-	body := p.body
-	if body == "" {
+
+	status, body := p.status, p.body
+	if status == 0 {
+		status = 200
+	}
+	switch {
+	case strings.Contains(req.URL.Host, "api.github.com"):
+		// Jeton takası her zaman başarılı — testin konusu explain
+		// gövdesi, takasın hata yolu değil.
+		status, body = 200, `{"token":"tid=sess-tok","expires_at":99999999999}`
+	case body != "":
+	case strings.Contains(req.URL.Host, "api.anthropic.com"):
+		body = `{"content":[{"type":"text","text":"panel açıklaması"}],"usage":{"input_tokens":41,"output_tokens":17}}`
+	default:
 		body = `{"choices":[{"message":{"content":"<think>düşünce</think>panel açıklaması"},"finish_reason":"stop"}],"usage":{"prompt_tokens":41,"completion_tokens":17}}`
 	}
 	return &http.Response{
-		StatusCode: 200,
+		StatusCode: status,
 		Header:     http.Header{"Content-Type": []string{"application/json"}},
 		Body:       io.NopCloser(bytes.NewReader([]byte(body))),
 		Request:    req,
@@ -53,12 +69,13 @@ func (p *parityRT) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // newParityService — gerçek kurucu + Configure, enjekte edilmiş
-// transport. httptest yerine RoundTripper: gövdeyi ham hâlde ve
-// header'larıyla birlikte görmek istiyoruz.
-func newParityService(t *testing.T, mt int, temp *float64) (*Service, *parityRT) {
+// transport. httptest yerine RoundTripper: anthropic ve github yolları
+// API host'unu SABİT tutuyor (bilinçli — bkz. provider/anthropic.go) ve
+// bir test sunucusuna yönlendirilemez.
+func newParityService(t *testing.T, prov, baseURL string, mt int, temp *float64) (*Service, *parityRT) {
 	t.Helper()
-	s := New(ProviderOpenAI, "sk-canary", "model-x")
-	s.Configure(ProviderOpenAI, "sk-canary", "model-x", "http://llm.invalid/v1", false, true)
+	s := New(prov, "sk-test", "model-x")
+	s.Configure(prov, "sk-test", "model-x", baseURL, false, true)
 	s.ConfigureTuning(mt, temp, 0)
 	rt := &parityRT{}
 	s.mu.Lock()
@@ -67,178 +84,382 @@ func newParityService(t *testing.T, mt int, temp *float64) (*Service, *parityRT)
 	return s, rt
 }
 
-// TestExplainCanaryParity_OpenAI — canary yüzeyi (explain-charts,
-// YENİ transport) ile herhangi bir başka yüzey (explain-service, ESKİ
-// üretici) aynı çağrıda ayırt edilemez olmalı.
-func TestExplainCanaryParity_OpenAI(t *testing.T) {
-	f := func(v float64) *float64 { return &v }
-	tunings := []struct {
-		name string
-		mt   int
-		temp *float64
-	}{
-		{"varsayılan tuning", 0, nil},
-		{"operatör ezmesi", 8192, f(0.9)},
-		{"deterministik (temperature 0)", 0, f(0)},
+// jsonRoundTrip — beklenen gövdeyi JSON'dan geçirir ki sayılar
+// float64'e dönsün ve DeepEqual gerçek gövdeyle aynı tipte kıyaslansın.
+func jsonRoundTrip(t *testing.T, v any) map[string]any {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
 	}
-	const sys, usr = "sistem promptu", "kullanıcı promptu"
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	return m
+}
 
-	for _, tn := range tunings {
-		t.Run(tn.name, func(t *testing.T) {
-			canaryS, canaryRT := newParityService(t, tn.mt, tn.temp)
-			legacyS, legacyRT := newParityService(t, tn.mt, tn.temp)
+const paritySys, parityUsr = "sistem promptu", "kullanıcı promptu"
 
-			canaryCtx := WithMeta(context.Background(), CallMeta{Surface: canarySurface, UserID: "u1"})
-			legacyCtx := WithMeta(context.Background(), CallMeta{Surface: "explain-service", UserID: "u1"})
+// ─── altın gövde: openai-compat ─────────────────────────────────────
 
-			// Kontrol: canary koşulu gerçekten ayrışıyor mu? Bu
-			// olmadan test iki kez ESKİ yolu koşup "parite var"
-			// diyebilirdi (yeşil-ama-etkisiz mutasyon sınıfı).
-			if !canaryProvider(canaryCtx) {
-				t.Fatal("canaryProvider(explain-charts) = false — canary hiç kurulmamış")
+func TestExplainWireBody_OpenAI(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	tests := []struct {
+		name     string
+		mt       int
+		temp     *float64
+		wantTok  int
+		wantTemp float64
+	}{
+		{"varsayılan tuning", 0, nil, 4096, 0.2},
+		{"operatör ezmesi", 8192, f(0.9), 8192, 0.9},
+		{"deterministik (temperature 0)", 0, f(0), 4096, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, rt := newParityService(t, ProviderOpenAI, "http://llm.invalid/v1", tc.mt, tc.temp)
+			out, err := s.Explain(WithMeta(context.Background(), CallMeta{Surface: "explain-charts"}), paritySys, parityUsr)
+			if err != nil {
+				t.Fatalf("Explain: %v", err)
 			}
-			if canaryProvider(legacyCtx) {
-				t.Fatal("canaryProvider(explain-service) = true — canary tek yüzeyle sınırlı değil")
+			// Kurtarma zinciri: <think> soyulmuş hâli.
+			if out != "panel açıklaması" {
+				t.Errorf("metin = %q, want %q", out, "panel açıklaması")
 			}
-
-			canaryOut, canaryErr := canaryS.Explain(canaryCtx, sys, usr)
-			legacyOut, legacyErr := legacyS.Explain(legacyCtx, sys, usr)
-
-			if canaryErr != nil || legacyErr != nil {
-				t.Fatalf("hata: canary=%v legacy=%v", canaryErr, legacyErr)
+			if len(rt.bodies) != 1 {
+				t.Fatalf("istek sayısı %d, want 1", len(rt.bodies))
 			}
-			// (c) çözümlenmiş metin — <think> soyulmuş hâliyle.
-			if canaryOut != legacyOut {
-				t.Errorf("metin ayrıştı:\ncanary=%q\nlegacy=%q", canaryOut, legacyOut)
+			want := jsonRoundTrip(t, map[string]any{
+				"model":       "model-x",
+				"max_tokens":  tc.wantTok,
+				"temperature": tc.wantTemp,
+				"messages": []map[string]any{
+					{"role": "system", "content": paritySys},
+					{"role": "user", "content": parityUsr},
+				},
+			})
+			if !reflect.DeepEqual(rt.bodies[0], want) {
+				g, _ := json.Marshal(rt.bodies[0])
+				w, _ := json.Marshal(want)
+				t.Errorf("gövde ayrıştı:\n got %s\nwant %s", g, w)
 			}
-			if canaryOut != "panel açıklaması" {
-				t.Errorf("kurtarma zinciri uygulanmamış: %q", canaryOut)
+			if got := rt.reqs[0].URL.String(); got != "http://llm.invalid/v1/chat/completions" {
+				t.Errorf("URL = %s", got)
 			}
-
-			// (a) tel üstündeki gövde.
-			if len(canaryRT.bodies) != 1 || len(legacyRT.bodies) != 1 {
-				t.Fatalf("istek sayısı: canary=%d legacy=%d, ikisi de 1 olmalı",
-					len(canaryRT.bodies), len(legacyRT.bodies))
-			}
-			if !reflect.DeepEqual(canaryRT.bodies[0], legacyRT.bodies[0]) {
-				cj, _ := json.Marshal(canaryRT.bodies[0])
-				lj, _ := json.Marshal(legacyRT.bodies[0])
-				t.Errorf("gövde ayrıştı:\ncanary=%s\nlegacy=%s", cj, lj)
-			}
-
-			// (b) header'lar — özellikle v0.8.384 api-key ikizi.
-			for _, h := range []string{"Content-Type", "Authorization", "api-key"} {
-				c, l := canaryRT.headers[0].Get(h), legacyRT.headers[0].Get(h)
-				if c != l {
-					t.Errorf("%s ayrıştı: canary=%q legacy=%q", h, c, l)
+			// v0.8.384 api-key ikizi: Bearer'ı anlamayan self-hosted
+			// geçitler bununla doğruluyor.
+			for h, want := range map[string]string{
+				"Content-Type":  "application/json",
+				"Authorization": "Bearer sk-test",
+				"api-key":       "sk-test",
+			} {
+				if got := rt.headers[0].Get(h); got != want {
+					t.Errorf("%s = %q, want %q", h, got, want)
 				}
-			}
-			if got := canaryRT.headers[0].Get("api-key"); got != "sk-canary" {
-				t.Errorf("api-key ikizi kayıp: %q", got)
 			}
 		})
 	}
 }
 
-// TestExplainCanaryParity_Errors — hata yolu da ayrışmamalı. Kota
-// kesicisi (noteProviderError → isQuotaErr) hata METNİNDE " 429"
-// arıyor: yeni transport farklı bir cümle kursaydı kesici sessizce
-// silahsız kalırdı (v0.9.200 mekanizması).
-func TestExplainCanaryParity_Errors(t *testing.T) {
-	newFailing := func(status int, body string) *Service {
-		s := New(ProviderOpenAI, "sk-canary", "model-x")
-		s.Configure(ProviderOpenAI, "sk-canary", "model-x", "http://llm.invalid/v1", false, true)
-		rt := &statusRT{status: status, body: body}
-		s.mu.Lock()
-		s.cli = &http.Client{Transport: rt}
-		s.mu.Unlock()
-		return s
-	}
-	cases := []struct {
-		name   string
-		status int
-		body   string
+// ─── altın gövde: anthropic ─────────────────────────────────────────
+
+// TestExplainWireBody_Anthropic — temperature'ın VARLIĞI burada yeni
+// (v0.9.1120): bu yol ~1000 sürüm boyunca hiç temperature göndermedi ve
+// sabit 1024 max_tokens'la gitti. Alan gövdeden düşerse aynı soru
+// sağlayıcıya göre farklı yanıtlanmaya geri döner.
+func TestExplainWireBody_Anthropic(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	tests := []struct {
+		name     string
+		mt       int
+		temp     *float64
+		wantTok  int
+		wantTemp float64
 	}{
-		{"429 kota", 429, `{"error":"rate limit exceeded"}`},
-		{"500 geçici", 500, `upstream boom`},
-		{"200 ama boş içerik + length", 200, `{"choices":[{"message":{"content":""},"finish_reason":"length"}]}`},
-		{"200 ama tamamen boş", 200, `{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`},
+		{"varsayılan tuning", 0, nil, 4096, 0.2},
+		{"operatör ezmesi", 8192, f(0.9), 8192, 0.9},
+		{"deterministik (temperature 0)", 0, f(0), 4096, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, rt := newParityService(t, ProviderAnthropic, "", tc.mt, tc.temp)
+			out, err := s.Explain(WithMeta(context.Background(), CallMeta{Surface: "explain-trace"}), paritySys, parityUsr)
+			if err != nil {
+				t.Fatalf("Explain: %v", err)
+			}
+			if out != "panel açıklaması" {
+				t.Errorf("metin = %q", out)
+			}
+			if len(rt.bodies) != 1 {
+				t.Fatalf("istek sayısı %d, want 1", len(rt.bodies))
+			}
+			want := jsonRoundTrip(t, map[string]any{
+				"model":       "model-x",
+				"max_tokens":  tc.wantTok,
+				"temperature": tc.wantTemp,
+				"system":      paritySys,
+				"messages": []map[string]any{
+					{"role": "user", "content": parityUsr},
+				},
+			})
+			if !reflect.DeepEqual(rt.bodies[0], want) {
+				g, _ := json.Marshal(rt.bodies[0])
+				w, _ := json.Marshal(want)
+				t.Errorf("gövde ayrıştı:\n got %s\nwant %s", g, w)
+			}
+			if got := rt.reqs[0].URL.String(); got != "https://api.anthropic.com/v1/messages" {
+				t.Errorf("URL = %s — anthropic ucu SABİT, baseURL okunmaz", got)
+			}
+			// Anthropic-Version zorunlu: eksikse API 400 döner, yani bu
+			// header düşerse anthropic yolu tamamen kırılır.
+			for h, want := range map[string]string{
+				"Content-Type":      "application/json",
+				"X-Api-Key":         "sk-test",
+				"Anthropic-Version": "2023-06-01",
+			} {
+				if got := rt.headers[0].Get(h); got != want {
+					t.Errorf("%s = %q, want %q", h, got, want)
+				}
+			}
+			// openai-compat'ın header'ları buraya SIZMAMALI.
+			if got := rt.headers[0].Get("Authorization"); got != "" {
+				t.Errorf("anthropic isteğinde Authorization = %q, olmamalı", got)
+			}
+		})
+	}
+}
+
+// ─── altın gövde: github copilot ────────────────────────────────────
+
+// TestExplainWireBody_GitHub — iki adımlı çağrı: (1) OAuth jetonu →
+// oturum jetonu takası (DURUM, Service'te kaldı), (2) explain POST'u
+// ÇÖZÜLMÜŞ jetonla. Bearer'da operatörün OAuth jetonu görünürse takas
+// atlanmış demektir.
+func TestExplainWireBody_GitHub(t *testing.T) {
+	f := func(v float64) *float64 { return &v }
+	tests := []struct {
+		name     string
+		mt       int
+		temp     *float64
+		wantTok  int
+		wantTemp float64
+	}{
+		{"varsayılan tuning", 0, nil, 4096, 0.2},
+		{"operatör ezmesi", 8192, f(0.9), 8192, 0.9},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s, rt := newParityService(t, ProviderGitHub, "", tc.mt, tc.temp)
+			out, err := s.Explain(WithMeta(context.Background(), CallMeta{Surface: "explain-problem"}), paritySys, parityUsr)
+			if err != nil {
+				t.Fatalf("Explain: %v", err)
+			}
+			// Copilot yolunda kurtarma zinciri YOK — içerik olduğu gibi
+			// döner (taşınan davranış, bkz. provider/github.go).
+			if out != "<think>düşünce</think>panel açıklaması" {
+				t.Errorf("metin = %q — github yolunda salvage uygulanmamalı", out)
+			}
+			if len(rt.reqs) != 2 {
+				t.Fatalf("istek sayısı %d, want 2 (takas + explain)", len(rt.reqs))
+			}
+			if h := rt.reqs[0].URL.Host; h != "api.github.com" {
+				t.Errorf("ilk istek %s, önce jeton takası olmalı", h)
+			}
+			if got := rt.reqs[1].URL.String(); got != "https://api.githubcopilot.com/chat/completions" {
+				t.Errorf("explain URL = %s", got)
+			}
+			if len(rt.bodies) != 1 {
+				t.Fatalf("gövdeli istek sayısı %d, want 1 (takas GET)", len(rt.bodies))
+			}
+			want := jsonRoundTrip(t, map[string]any{
+				"model":       "model-x",
+				"max_tokens":  tc.wantTok,
+				"temperature": tc.wantTemp,
+				"messages": []map[string]any{
+					{"role": "system", "content": paritySys},
+					{"role": "user", "content": parityUsr},
+				},
+			})
+			if !reflect.DeepEqual(rt.bodies[0], want) {
+				g, _ := json.Marshal(rt.bodies[0])
+				w, _ := json.Marshal(want)
+				t.Errorf("gövde ayrıştı:\n got %s\nwant %s", g, w)
+			}
+			// Entegrasyon header'ları kapı bekçisi: eksik olan 403 alır.
+			for h, want := range map[string]string{
+				"Content-Type":           "application/json",
+				"Authorization":          "Bearer tid=sess-tok",
+				"Editor-Version":         "vscode/1.85.0",
+				"Editor-Plugin-Version":  "copilot-chat/0.12.0",
+				"Copilot-Integration-Id": "vscode-chat",
+				"User-Agent":             "GithubCopilot/1.155.0",
+			} {
+				if got := rt.headers[1].Get(h); got != want {
+					t.Errorf("%s = %q, want %q", h, got, want)
+				}
+			}
+		})
+	}
+}
+
+// ─── hata semantiği + kota kesicisi ─────────────────────────────────
+
+// TestExplainErrorSemantics_AllProviders — hata METNİ sözleşmedir.
+// Kota kesicisi (noteProviderError → isQuotaErr) mesajda " 429"
+// arıyor: transport farklı bir cümle kursaydı kesici sessizce silahsız
+// kalırdı (v0.9.200 mekanizması).
+func TestExplainErrorSemantics_AllProviders(t *testing.T) {
+	cases := []struct {
+		name     string
+		prov     string
+		baseURL  string
+		status   int
+		body     string
+		wantErr  string
+		wantQuot bool
+	}{
+		{"openai 429", ProviderOpenAI, "http://llm.invalid/v1", 429, `{"error":"rate limit exceeded"}`,
+			`openai-compat 429: {"error":"rate limit exceeded"}`, true},
+		{"openai 500", ProviderOpenAI, "http://llm.invalid/v1", 500, `upstream boom`,
+			`openai-compat 500: upstream boom`, false},
+		{"anthropic 429", ProviderAnthropic, "", 429, `{"type":"error","error":{"type":"rate_limit_error"}}`,
+			`anthropic 429: {"type":"error","error":{"type":"rate_limit_error"}}`, true},
+		{"anthropic 529 aşırı yük", ProviderAnthropic, "", 529, `overloaded`,
+			`anthropic 529: overloaded`, false},
+		{"github 429", ProviderGitHub, "", 429, `{"error":"quota exceeded"}`,
+			`github copilot 429: {"error":"quota exceeded"}`, true},
+		{"github 403 header reddi", ProviderGitHub, "", 403, `access denied`,
+			`github copilot 403: access denied`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			canaryS, legacyS := newFailing(tc.status, tc.body), newFailing(tc.status, tc.body)
-			_, cErr := canaryS.Explain(WithMeta(context.Background(), CallMeta{Surface: canarySurface}), "s", "u")
-			_, lErr := legacyS.Explain(WithMeta(context.Background(), CallMeta{Surface: "explain-service"}), "s", "u")
-			if cErr == nil || lErr == nil {
-				t.Fatalf("ikisi de hata vermeliydi: canary=%v legacy=%v", cErr, lErr)
+			s, rt := newParityService(t, tc.prov, tc.baseURL, 0, nil)
+			rt.status, rt.body = tc.status, tc.body
+			_, err := s.Explain(WithMeta(context.Background(), CallMeta{Surface: "explain-service"}), "s", "u")
+			if err == nil {
+				t.Fatal("hata bekleniyordu")
 			}
-			if cErr.Error() != lErr.Error() {
-				t.Fatalf("hata metni ayrıştı:\ncanary=%q\nlegacy=%q", cErr.Error(), lErr.Error())
+			if err.Error() != tc.wantErr {
+				t.Fatalf("hata metni:\n got %q\nwant %q", err.Error(), tc.wantErr)
 			}
-			// Kota kesici iki yolda da AYNI kararı vermeli.
-			if canaryS.QuotaBackoffActive() != legacyS.QuotaBackoffActive() {
-				t.Errorf("kota kesici ayrıştı: canary=%v legacy=%v",
-					canaryS.QuotaBackoffActive(), legacyS.QuotaBackoffActive())
-			}
-			if tc.status == 429 && !canaryS.QuotaBackoffActive() {
-				t.Error("429 canary yolunda kota kesicisini kurmadı")
+			if got := s.QuotaBackoffActive(); got != tc.wantQuot {
+				t.Errorf("kota kesici = %v, want %v", got, tc.wantQuot)
 			}
 		})
 	}
 }
 
-// statusRT — sabit statü + gövde döndüren minimal transport.
-type statusRT struct {
-	status int
-	body   string
-}
-
-func (s *statusRT) RoundTrip(req *http.Request) (*http.Response, error) {
-	return &http.Response{
-		StatusCode: s.status,
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-		Body:       io.NopCloser(bytes.NewReader([]byte(s.body))),
-		Request:    req,
-	}, nil
-}
-
-// TestCanaryStaysOnOneSurface — canary'nin KAPSAMI. Faz 1.1 sözü
-// "tek yüzey"; bu test o sözü yüzey listesi üzerinden pinler. Faz
-// 1.2'de kapsam genişlerken bu test de bilinçli olarak güncellenir
-// (kapsam sessizce kaymasın diye burada duruyor).
-func TestCanaryStaysOnOneSurface(t *testing.T) {
-	surfaces := []string{
-		"explain-trace", "explain-span", "explain-problem", "explain-incident",
-		"explain-anomaly", "explain-service", "explain-shift", "explain-alert-noise",
-		"explain-log-patterns", "runbook", "compare-traces", "deploy-impact",
-		"explain-slo", "explain-slow-query", "explain-exception", "rootcause-verdict",
-		"problem-auto-explain", "exception-auto-explain", "chat-guided", "",
+// TestExplainEmptyAnswerParity — boş yanıt teşhisleri de sözleşme:
+// operatöre EYLEM söylüyorlar ("raise max_tokens", "[copilot] pod log").
+func TestExplainEmptyAnswerParity(t *testing.T) {
+	cases := []struct {
+		name, body, wantErr string
+	}{
+		{"length ⇒ bütçe teşhisi",
+			`{"choices":[{"message":{"content":""},"finish_reason":"length"}]}`,
+			"model returned no answer — token budget exhausted by reasoning; raise max_tokens or disable thinking (e.g. Qwen3 /no_think)"},
+		{"tamamen boş ⇒ genel teşhis",
+			`{"choices":[{"message":{"content":""},"finish_reason":"stop"}]}`,
+			"openai-compat: model returned empty content — no answer in content/reasoning. Check the model name + endpoint; a reasoning model may need /no_think. See the [copilot] pod log for the raw response"},
+		{"choices yok",
+			`{"choices":[]}`,
+			"openai-compat: empty response"},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, rt := newParityService(t, ProviderOpenAI, "http://llm.invalid/v1", 0, nil)
+			rt.body = tc.body
+			_, err := s.Explain(context.Background(), "s", "u")
+			if err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("hata:\n got %v\nwant %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// ─── kapsam: yüzey ayrımı KALMADI ───────────────────────────────────
+
+// TestProviderPathCoversEverySurface — Faz 1.1'in kapsam kapısının
+// GÜNCELLENMİŞ hâli. O test "yalnız explain-charts yeni yoldan geçsin"
+// diyordu; Faz 1.2'de kapsam TÜM yüzeyler, yani sözleşme tersine
+// döndü: hiçbir yüzey farklı bir gövde üretmemeli.
+//
+// Kapı burada duruyor ki kapsam sessizce daralmasın — biri yeniden
+// yüzey-şartlı bir dal koyarsa (canary'nin geri gelmesi) gövdeler
+// ayrışır ve bu test patlar.
+func TestProviderPathCoversEverySurface(t *testing.T) {
+	surfaces := []string{
+		"explain-charts", "explain-trace", "explain-span", "explain-problem",
+		"explain-incident", "explain-anomaly", "explain-service", "explain-shift",
+		"explain-alert-noise", "explain-log-patterns", "runbook", "compare-traces",
+		"deploy-impact", "explain-slo", "explain-slow-query", "explain-exception",
+		"rootcause-verdict", "problem-auto-explain", "exception-auto-explain",
+		"chat-guided", "",
+	}
+	var first map[string]any
 	for _, sf := range surfaces {
-		if canaryProvider(WithMeta(context.Background(), CallMeta{Surface: sf})) {
-			t.Errorf("surface %q canary'ye girdi — Faz 1.1 kapsamı yalnız %q", sf, canarySurface)
+		s, rt := newParityService(t, ProviderOpenAI, "http://llm.invalid/v1", 0, nil)
+		if _, err := s.Explain(WithMeta(context.Background(), CallMeta{Surface: sf}), paritySys, parityUsr); err != nil {
+			t.Fatalf("surface %q: %v", sf, err)
+		}
+		if len(rt.bodies) != 1 {
+			t.Fatalf("surface %q: istek sayısı %d, want 1", sf, len(rt.bodies))
+		}
+		if first == nil {
+			first = rt.bodies[0]
+			continue
+		}
+		if !reflect.DeepEqual(rt.bodies[0], first) {
+			g, _ := json.Marshal(rt.bodies[0])
+			w, _ := json.Marshal(first)
+			t.Errorf("surface %q gövdesi ayrıştı — yüzey-şartlı dal geri gelmiş:\n got %s\nwant %s", sf, g, w)
 		}
 	}
-	if !canaryProvider(WithMeta(context.Background(), CallMeta{Surface: canarySurface})) {
-		t.Errorf("surface %q canary'ye girmedi", canarySurface)
-	}
 }
 
-// TestCanaryRespectsJSONMode — savunma koşulu. explain-charts bugün
-// saf prose; biri onu WithJSONMode/WithJSONSchema'ya sararsa yeni
-// transport (Faz 1.1'de JSON basamağını desteklemiyor) devreye
-// GİRMEMELİ. Aksi hâlde kısıt sessizce düşerdi.
-func TestCanaryRespectsJSONMode(t *testing.T) {
-	s, rt := newParityService(t, 0, nil)
-	ctx := WithJSONMode(WithMeta(context.Background(), CallMeta{Surface: canarySurface}))
+// TestJSONModeReachesProvider — Faz 1.1'de bu testin sözleşmesi
+// TERSİYDİ: JSON isteyen çağrı yeni transport'a GİRMEMELİ idi (o dilim
+// response_format'ı taşımıyordu). Faz 1.2'de merdiven taşındı, yani
+// artık aynı çağrı yeni yoldan geçmeli VE kısıtı taşımalı.
+func TestJSONModeReachesProvider(t *testing.T) {
+	s, rt := newParityService(t, ProviderOpenAI, "http://llm.invalid/v1", 0, nil)
+	rt.body = `{"choices":[{"message":{"content":"{\"a\":1}"},"finish_reason":"stop"}]}`
+	ctx := WithJSONMode(WithMeta(context.Background(), CallMeta{Surface: "explain-charts"}))
 	if _, err := s.Explain(ctx, "s", "u"); err != nil {
 		t.Fatalf("Explain: %v", err)
 	}
 	if len(rt.bodies) != 1 {
 		t.Fatalf("istek sayısı %d, want 1", len(rt.bodies))
 	}
-	// Eski yol response_format ekler; yeni yol bu dilimde ekleyemez.
-	if _, ok := rt.bodies[0]["response_format"]; !ok {
-		t.Error("JSON modu istenen çağrı canary'ye kaçtı — response_format kayboldu")
+	rf, ok := rt.bodies[0]["response_format"].(map[string]any)
+	if !ok {
+		t.Fatalf("response_format kayboldu: %v", rt.bodies[0])
+	}
+	if rf["type"] != "json_object" {
+		t.Errorf("response_format.type = %v, want json_object", rf["type"])
+	}
+}
+
+// TestJSONModeNotSentToAnthropic — anthropic ve github yollarına
+// response_format bugüne kadar HİÇ gönderilmedi; taşıma davranış
+// değiştirmez. Bir yüzey WithJSONMode ile gelirse kısıtsız çağrı
+// yapılır (hata DEĞİL) — aksi hâlde JSON isteyen 4 yüzey anthropic
+// kurulumlarında tamamen kırılırdı.
+func TestJSONModeNotSentToAnthropic(t *testing.T) {
+	for _, prov := range []string{ProviderAnthropic, ProviderGitHub} {
+		t.Run(prov, func(t *testing.T) {
+			s, rt := newParityService(t, prov, "", 0, nil)
+			ctx := WithJSONSchema(context.Background(), "test", map[string]any{"type": "object"})
+			if _, err := s.Explain(ctx, "s", "u"); err != nil {
+				t.Fatalf("JSON isteyen çağrı %s üzerinde kırıldı: %v", prov, err)
+			}
+			if len(rt.bodies) != 1 {
+				t.Fatalf("istek sayısı %d, want 1", len(rt.bodies))
+			}
+			if _, has := rt.bodies[0]["response_format"]; has {
+				t.Errorf("%s gövdesine response_format girdi — bu API'de yok", prov)
+			}
+		})
 	}
 }

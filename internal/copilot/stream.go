@@ -44,6 +44,12 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	// aiprov — kurtarma zincirinin (v0.8.384) TEK yazılışı Faz 1.2'de
+	// internal/ai/provider'a taşındı. Takma ad, bu dosyadaki
+	// `provider, model, baseURL := s.provider, …` yerel değişkeninin
+	// paket adını gölgelememesi için.
+	aiprov "github.com/cilcenk/coremetry/internal/ai/provider"
 )
 
 // StreamText runs a single system+user narration call, streaming
@@ -76,7 +82,7 @@ func (s *Service) StreamText(ctx context.Context, systemPrompt, userPrompt strin
 	case ProviderGitHub:
 		// No streaming twin this slice (see the package comment) —
 		// buffered call, zero deltas, same answer contract.
-		out, inputTokens, outputTokens, err = s.explainGitHubWithUsage(ctx, systemPrompt, userPrompt)
+		out, inputTokens, outputTokens, err = s.explainGitHub(ctx, systemPrompt, userPrompt)
 	default: // anthropic
 		out, inputTokens, outputTokens, err = s.streamAnthropicWithUsage(ctx, systemPrompt, userPrompt, onDelta)
 	}
@@ -301,12 +307,12 @@ func (a *openAIStreamAccum) gate(d string) string {
 // think block with no tail): the whole salvaged answer goes out as
 // one final delta.
 func (a *openAIStreamAccum) finishOpenAI() (final, trailing string, err error) {
-	final = stripThinking(a.content.String())
+	final = aiprov.StripThinking(a.content.String())
 	if final == "" {
-		final = stripThinking(a.reasoning.String())
+		final = aiprov.StripThinking(a.reasoning.String())
 	}
 	if final == "" {
-		final = thinkingContent(a.content.String())
+		final = aiprov.ThinkingContent(a.content.String())
 	}
 	if final == "" {
 		if a.finish == "length" {
@@ -401,7 +407,7 @@ func (a *anthropicStreamAccum) finishAnthropic() (final, trailing string, err er
 	final = strings.TrimSpace(a.content.String())
 	if final == "" {
 		// Thinking-only stream — same salvage posture as openai-compat.
-		final = stripThinking(strings.TrimSpace(a.reasoning.String()))
+		final = aiprov.StripThinking(strings.TrimSpace(a.reasoning.String()))
 	}
 	if final == "" {
 		return "", "", errors.New("anthropic stream: empty response")
@@ -426,7 +432,7 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 	}
 	if s.streamKnownUnsupported(ProviderOpenAI, base, model) {
 		// Known-unsupported endpoint: no re-probe, straight buffered.
-		return s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainOpenAI(ctx, systemPrompt, userPrompt)
 	}
 	url := strings.TrimRight(base, "/") + "/chat/completions"
 	// v0.9.1120 — budget + temperature are operator-tunable getters now.
@@ -464,7 +470,7 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 		// fails there too and surfaces normally); not cached — could
 		// be transient.
 		log.Printf("[copilot] stream unsupported, buffered fallback (openai-compat connect: %v)", err)
-		return s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainOpenAI(ctx, systemPrompt, userPrompt)
 	}
 	defer resp.Body.Close()
 
@@ -473,16 +479,16 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 		s.markStreamUnsupported(ProviderOpenAI, base, model)
 		log.Printf("[copilot] stream unsupported, buffered fallback (openai-compat 200 %s — parsing one-shot body, verdict cached)", resp.Header.Get("Content-Type"))
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return parseOpenAIChatResponse(respBody)
+		return parseBufferedOpenAI(respBody)
 	case verdictFallbackCache:
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		s.markStreamUnsupported(ProviderOpenAI, base, model)
 		log.Printf("[copilot] stream unsupported, buffered fallback (openai-compat %d: %.200s — verdict cached)", resp.StatusCode, strings.TrimSpace(string(respBody)))
-		return s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainOpenAI(ctx, systemPrompt, userPrompt)
 	case verdictFallbackOnce:
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		log.Printf("[copilot] stream unsupported, buffered fallback (openai-compat %d transient: %.200s)", resp.StatusCode, strings.TrimSpace(string(respBody)))
-		return s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainOpenAI(ctx, systemPrompt, userPrompt)
 	}
 
 	// verdictStream — consume it.
@@ -497,7 +503,7 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 		// EOF / instant error) — that's still first-byte territory:
 		// one buffered retry, no verdict cached.
 		log.Printf("[copilot] stream unsupported, buffered fallback (openai-compat empty stream, read err: %v)", scanErr)
-		return s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainOpenAI(ctx, systemPrompt, userPrompt)
 	}
 	if scanErr != nil {
 		// Mid-stream break AFTER data flowed — no fallback (deltas
@@ -526,7 +532,7 @@ func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, us
 	// baseURL is not consulted by the anthropic provider (fixed API
 	// host) — key on the empty string so the verdict stays coherent.
 	if s.streamKnownUnsupported(ProviderAnthropic, "", model) {
-		return s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainAnthropic(ctx, systemPrompt, userPrompt)
 	}
 	// v0.9.1120 — third and last site of the 1024 parity bug: the
 	// STREAMING anthropic path. Worst of the three, because streaming is
@@ -558,7 +564,7 @@ func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, us
 	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		log.Printf("[copilot] stream unsupported, buffered fallback (anthropic connect: %v)", err)
-		return s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainAnthropic(ctx, systemPrompt, userPrompt)
 	}
 	defer resp.Body.Close()
 
@@ -567,16 +573,16 @@ func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, us
 		s.markStreamUnsupported(ProviderAnthropic, "", model)
 		log.Printf("[copilot] stream unsupported, buffered fallback (anthropic 200 %s — parsing one-shot body, verdict cached)", resp.Header.Get("Content-Type"))
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-		return parseAnthropicResponse(respBody)
+		return parseBufferedAnthropic(respBody)
 	case verdictFallbackCache:
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		s.markStreamUnsupported(ProviderAnthropic, "", model)
 		log.Printf("[copilot] stream unsupported, buffered fallback (anthropic %d: %.200s — verdict cached)", resp.StatusCode, strings.TrimSpace(string(respBody)))
-		return s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainAnthropic(ctx, systemPrompt, userPrompt)
 	case verdictFallbackOnce:
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		log.Printf("[copilot] stream unsupported, buffered fallback (anthropic %d transient: %.200s)", resp.StatusCode, strings.TrimSpace(string(respBody)))
-		return s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainAnthropic(ctx, systemPrompt, userPrompt)
 	}
 
 	acc := &anthropicStreamAccum{}
@@ -587,7 +593,7 @@ func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, us
 	})
 	if !acc.sawData {
 		log.Printf("[copilot] stream unsupported, buffered fallback (anthropic empty stream, read err: %v)", scanErr)
-		return s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
+		return s.explainAnthropic(ctx, systemPrompt, userPrompt)
 	}
 	if scanErr != nil {
 		return "", acc.inTokens, acc.outTokens, fmt.Errorf("anthropic stream read: %w", scanErr)

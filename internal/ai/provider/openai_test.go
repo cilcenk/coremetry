@@ -405,17 +405,105 @@ func TestDoOpenAI_ErrorSemantics(t *testing.T) {
 		}
 	})
 
-	t.Run("JSONLevel>0 bu dilimde açıkça reddedilir", func(t *testing.T) {
-		rt := &captureRT{}
+	t.Run("≥300 HTTPError tipiyle döner (merdivenin statü girdisi)", func(t *testing.T) {
+		rt := &captureRT{status: 400, body: `{"error":"unknown field response_format"}`}
 		cfg := base
 		cfg.HTTPClient = newCaptureClient(rt)
-		jr := req
-		jr.JSONLevel = JSONObject
-		if _, err := DoOpenAI(context.Background(), cfg, jr); err == nil {
-			t.Fatal("JSONLevel desteklenmiyorken hata bekleniyordu")
+		_, err := DoOpenAI(context.Background(), cfg, req)
+		var he *HTTPError
+		if !errors.As(err, &he) {
+			t.Fatalf("hata %T, want *HTTPError — Service statüyü metinden ayıklamak zorunda kalır", err)
 		}
-		if len(rt.reqs) != 0 {
-			t.Fatalf("desteklenmeyen basamakta yine de istek gitti (%d) — sessiz kısıt kaybı", len(rt.reqs))
+		if he.Status != 400 || he.Provider != labelOpenAI {
+			t.Errorf("HTTPError = %+v, want {openai-compat 400 …}", he)
 		}
 	})
+}
+
+// ─── JSON merdiveni: gövde şekilleri ────────────────────────────────
+
+// TestDoOpenAI_ResponseFormatLadder — merdivenin ÜÇ basamağının tel
+// üstündeki şekli (v0.9.517/527). Basamağı Service seçer; burada
+// pinlenen, seçilen basamağın gövdeye NASIL bindiği.
+func TestDoOpenAI_ResponseFormatLadder(t *testing.T) {
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           map[string]any{"ozet": map[string]any{"type": "string"}},
+		"required":             []any{"ozet"},
+		"additionalProperties": false,
+	}
+	t.Run("JSONPlain ⇒ alan hiç yok", func(t *testing.T) {
+		got := ladderBody(t, Request{JSONLevel: JSONPlain, System: "s", User: "u"})
+		if _, has := got["response_format"]; has {
+			t.Errorf("prose çağrısına response_format girdi: %v", got["response_format"])
+		}
+	})
+	t.Run("JSONObject ⇒ {\"type\":\"json_object\"}", func(t *testing.T) {
+		got := ladderBody(t, Request{JSONLevel: JSONObject, System: "s", User: "u"})
+		rf, _ := got["response_format"].(map[string]any)
+		if rf == nil || rf["type"] != "json_object" || len(rf) != 1 {
+			t.Errorf("response_format = %v, want {type:json_object}", got["response_format"])
+		}
+	})
+	t.Run("JSONSchema ⇒ name+schema+strict", func(t *testing.T) {
+		got := ladderBody(t, Request{JSONLevel: JSONSchema, JSONSchemaName: "nl-to-query",
+			JSONSchema: schema, System: "s", User: "u"})
+		rf, _ := got["response_format"].(map[string]any)
+		if rf == nil || rf["type"] != "json_schema" {
+			t.Fatalf("response_format = %v", got["response_format"])
+		}
+		js, _ := rf["json_schema"].(map[string]any)
+		if js == nil {
+			t.Fatal("json_schema gövdesi yok")
+		}
+		if js["name"] != "nl-to-query" {
+			t.Errorf("name = %v, want nl-to-query", js["name"])
+		}
+		// strict:true olmadan şema yalnız bir ÖNERİ olur — enum kazancı
+		// (v0.9.527'nin asıl gerekçesi) sessizce kaybolurdu.
+		if js["strict"] != true {
+			t.Errorf("strict = %v, want true", js["strict"])
+		}
+		if _, ok := js["schema"].(map[string]any); !ok {
+			t.Error("schema gövdesi taşınmamış")
+		}
+	})
+
+	// Fail-closed: geçersiz basamak ya da şemasız json_schema İSTEK
+	// GÖNDERMEDEN hata döner. Sessizce kısıtsız çağrıya düşmek, isteyen
+	// yüzeyin garantisini haber vermeden kaybettirirdi.
+	bad := []struct {
+		name string
+		req  Request
+	}{
+		{"şemasız JSONSchema", Request{JSONLevel: JSONSchema, System: "s", User: "u"}},
+		{"adsız JSONSchema", Request{JSONLevel: JSONSchema, JSONSchema: schema, System: "s", User: "u"}},
+		{"bilinmeyen basamak", Request{JSONLevel: 7, System: "s", User: "u"}},
+		{"negatif basamak", Request{JSONLevel: -1, System: "s", User: "u"}},
+	}
+	for _, tc := range bad {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &captureRT{}
+			cfg := Config{BaseURL: "http://llm.invalid/v1", APIKey: "k", Model: "m", HTTPClient: newCaptureClient(rt)}
+			if _, err := DoOpenAI(context.Background(), cfg, tc.req); err == nil {
+				t.Fatal("hata bekleniyordu")
+			}
+			if len(rt.reqs) != 0 {
+				t.Fatalf("geçersiz basamakta yine de istek gitti (%d) — sessiz kısıt kaybı", len(rt.reqs))
+			}
+		})
+	}
+}
+
+func ladderBody(t *testing.T, req Request) map[string]any {
+	t.Helper()
+	rt := &captureRT{}
+	cfg := Config{BaseURL: "http://llm.invalid/v1", APIKey: "k", Model: "m", HTTPClient: newCaptureClient(rt)}
+	if _, err := DoOpenAI(context.Background(), cfg, req); err != nil {
+		t.Fatalf("DoOpenAI: %v", err)
+	}
+	if len(rt.bodies) != 1 {
+		t.Fatalf("captured %d bodies, want 1", len(rt.bodies))
+	}
+	return rt.bodies[0]
 }

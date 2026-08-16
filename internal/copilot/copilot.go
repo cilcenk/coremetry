@@ -22,7 +22,6 @@
 package copilot
 
 import (
-	"bytes"
 	"context"
 	"crypto/tls"
 	"encoding/json"
@@ -601,23 +600,16 @@ func (s *Service) Explain(ctx context.Context, systemPrompt, userPrompt string) 
 		inputTokens  uint32
 		outputTokens uint32
 	)
+	// FAZ 1.2 — üç dal da internal/ai/provider'dan geçiyor; yüzey
+	// ayrımı YOK (Faz 1.1'in tek-yüzey canary'si ve üç eski üretici
+	// birlikte silindi). Gövdeleri kuran kod provider_calls.go'da.
 	switch provider {
 	case ProviderGitHub:
-		out, inputTokens, outputTokens, err = s.explainGitHubWithUsage(ctx, systemPrompt, userPrompt)
+		out, inputTokens, outputTokens, err = s.explainGitHub(ctx, systemPrompt, userPrompt)
 	case ProviderOpenAI:
-		// FAZ 1.1 CANARY — tek yüzey; 1.2'de tüm explain'ler geçer, bu şart bloğu silinir.
-		//
-		// jsonNone koşulu savunma amaçlı: explain-charts bugün saf
-		// prose (copilotExplain), ama biri onu WithJSONMode'a
-		// sararsa yeni transport response_format'ı sessizce
-		// DÜŞÜRMEZ — eski yola geri döner.
-		if canaryProvider(ctx) && jsonLevelRequested(ctx) == jsonNone {
-			out, inputTokens, outputTokens, err = s.explainViaProvider(ctx, systemPrompt, userPrompt)
-		} else {
-			out, inputTokens, outputTokens, err = s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
-		}
+		out, inputTokens, outputTokens, err = s.explainOpenAI(ctx, systemPrompt, userPrompt)
 	default:
-		out, inputTokens, outputTokens, err = s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
+		out, inputTokens, outputTokens, err = s.explainAnthropic(ctx, systemPrompt, userPrompt)
 	}
 
 	s.recordNarration(ctx, started, provider, model, baseURL, systemPrompt, userPrompt, out, inputTokens, outputTokens, err)
@@ -736,21 +728,13 @@ func truncErr(s string) string {
 	return s
 }
 
-// ── OpenAI-compatible (real OpenAI + Ollama / LM Studio / vLLM …) ───────────
+// ── JSON modu: response_format merdiveni ────────────────────────────────────
 //
-// Ships a plain /v1/chat/completions request. Auth header is omitted
-// when apiKey is empty so local endpoints that don't gate on it
-// (Ollama default) just work — every gateway that DOES gate ignores
-// a missing header and answers with a clean 401, which we surface.
-//
-// baseURL must include the /v1 prefix (or whatever the local endpoint
-// uses) — e.g. http://ollama:11434/v1. We append /chat/completions.
+// v0.9.112x (Faz 1.2) — buffered istek ÜRETİCİLERİ artık burada değil,
+// internal/ai/provider'da; Service'te merdivenin DURUM tutan yarısı
+// kaldı: hangi basamak denenir, reddedilince ne olur, karar hangi uç
+// için önbelleklenir. Çağrı yolu provider_calls.go.
 
-// explainOpenAIWithUsage runs the OpenAI-compat call and parses
-// the `usage` field for the AI observability recorder. Some
-// local endpoints (older Ollama, vLLM) omit usage; those return
-// 0 tokens and the recorder writes the row anyway with what it
-// has (the latency + status are still useful).
 // openAICompletionTokens caps the OpenAI-compatible completion budget.
 // Reasoning models (Qwen3, deepseek-r1, …) spend tokens on a thinking phase
 // before emitting the answer; at 1024 they often finished mid-thought
@@ -898,350 +882,14 @@ func (s *Service) markLevelUnsupported(lvl jsonLevel, provider, baseURL, model s
 	}
 }
 
-func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
-	s.mu.RLock()
-	apiKey, model, base := s.apiKey, s.model, s.baseURL
-	s.mu.RUnlock()
-	if base == "" {
-		base = "https://api.openai.com/v1"
-	}
-	if model == "" {
-		// Reasonable default; operator typically overrides per
-		// endpoint (`llama3.1`, `qwen2.5-coder`, `gpt-4o-mini`, …).
-		model = "gpt-4o-mini"
-	}
-	url := strings.TrimRight(base, "/") + "/chat/completions"
-	body := map[string]any{
-		"model":      model,
-		"max_tokens": s.tuneMaxTokens(),
-		"messages": []map[string]any{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
-	}
-	if t, ok := s.tuneTemperature(); ok {
-		body["temperature"] = t
-	}
-	// v0.9.517/527 — katı JSON isteyen yüzeylerde çözümlemeyi sunucuda
-	// kısıtla. İstenen basamak, o uç için ÖNCEDEN reddedilmiş
-	// basamaklara göre aşağı çekilir; hiç yoklanmamışsa istenen
-	// basamakla denenir ve sonuç aşağıda öğrenilir.
-	lvl := jsonLevelRequested(ctx)
-	spec, hasSpec := jsonSchemaFrom(ctx)
-	if lvl >= jsonSchema && (!hasSpec || s.jsonSchemaBlocked(s.provider, base, model)) {
-		lvl = jsonObject
-	}
-	if lvl >= jsonObject && s.jsonModeBlocked(s.provider, base, model) {
-		lvl = jsonNone
-	}
-	switch lvl {
-	case jsonSchema:
-		body["response_format"] = map[string]any{
-			"type": "json_schema",
-			"json_schema": map[string]any{
-				"name":   spec.Name,
-				"schema": spec.Schema,
-				"strict": true,
-			},
-		}
-	case jsonObject:
-		body["response_format"] = map[string]any{"type": "json_object"}
-	}
-	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
-	if err != nil {
-		return "", 0, 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if apiKey != "" {
-		req.Header.Set("Authorization", "Bearer "+apiKey)
-		// Some self-hosted gateways (vLLM behind KServe/route
-		// auth, Azure-style proxies) authenticate on a bare
-		// `api-key` header instead of Bearer (v0.8.384,
-		// operator's air-gapped test LLM). Sending both is
-		// harmless — servers read the one they know.
-		req.Header.Set("api-key", apiKey)
-	}
-	resp, err := s.httpClient().Do(req)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("openai-compat call: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		err := fmt.Errorf("openai-compat %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-		// JSON modu denenmişken reddedildiyse: uç bunu desteklemiyor
-		// OLABİLİR. Kısıtsız BİR KEZ yeniden dene — yoksa özellik,
-		// desteklemeyen her kurulumda Explain'i tamamen kırardı.
-		//
-		// v0.9.526 — kararı yalnız "bu parametreyi anlamadım" ailesinde
-		// ver, HERHANGİ bir ≥300'de değil (aşağıya bak), ve yalnız
-		// kısıtsız deneme GERÇEKTEN başarırsa kaydet. Kanıta dayalı:
-		// bağlamı taşan bir 400 iki yolda da patlar, o yüzden karar
-		// yazılmaz; response_format'ı reddeden bir 400 kısıtsız geçer,
-		// karar yazılır.
-		if lvl > jsonNone && jsonModeVerdictStatus(resp.StatusCode) {
-			// Bir ALT basamakla yeniden dene. Basamak basamak iner:
-			// json_schema → json_object → kısıtsız. Her çerçeve kendi
-			// basamağının kararını yalnız alttaki gerçekten başarırsa
-			// yazar, o yüzden iki basamak birden reddeden bir uçta iki
-			// karar da doğru şekilde kaydedilir.
-			out, pt, ct, rerr := s.explainOpenAIWithUsage(context.WithValue(ctx, jsonModeKey{}, lvl-1), systemPrompt, userPrompt)
-			if rerr != nil {
-				// Alt basamak da patladı → hata bu basamakla ilgili
-				// değildi. Yeteneği kapatma; çağıranın gerçekten yaptığı
-				// isteğin hatasını döndür.
-				log.Printf("[copilot] %d hatası %s basamağından bağımsız (alt basamak da başarısız) — yetenek açık bırakıldı", resp.StatusCode, lvl)
-				return "", 0, 0, err
-			}
-			s.markLevelUnsupported(lvl, s.provider, base, model)
-			log.Printf("[copilot] response_format %s reddedildi (%d) — bu uç için kapatıldı, %s ile yanıt alındı", lvl, resp.StatusCode, lvl-1)
-			return out, pt, ct, nil
-		}
-		return "", 0, 0, err
-	}
-	return parseOpenAIChatResponse(respBody)
-}
-
-// parseOpenAIChatResponse decodes a buffered (non-streaming) OpenAI-
-// compat chat.completion body and applies the v0.8.384 answer-salvage
-// chain. Extracted from explainOpenAIWithUsage (v0.8.404) so the
-// streaming path can reuse it verbatim when a server answers a
-// stream:true request with a one-shot JSON body (200 + non-SSE
-// content-type — parsing the body we already have beats double-billing
-// a buffered retry).
-func parseOpenAIChatResponse(respBody []byte) (string, uint32, uint32, error) {
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"` // deepseek-r1 / Qwen3 style
-				Reasoning        string `json:"reasoning"`         // some servers use this name
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     uint32 `json:"prompt_tokens"`
-			CompletionTokens uint32 `json:"completion_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", 0, 0, fmt.Errorf("decode openai-compat response: %w", err)
-	}
-	if len(parsed.Choices) == 0 {
-		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
-			errors.New("openai-compat: empty response")
-	}
-	msg := parsed.Choices[0].Message
-	// Pull the answer from wherever the model put it, in priority order:
-	//   1. content after the final </think> (the normal case),
-	//   2. a dedicated reasoning field (reasoning_content / reasoning),
-	//   3. as a last resort, the reasoning text INSIDE the <think> block — some
-	//      reasoning models (Qwen3, deepseek-r1, …) emit ONLY a think block with
-	//      no post-</think> answer; the reasoning usually IS the explanation, so
-	//      salvaging it beats failing the request.
-	out := stripThinking(msg.Content)
-	if out == "" {
-		out = stripThinking(msg.ReasoningContent)
-	}
-	if out == "" {
-		out = stripThinking(msg.Reasoning)
-	}
-	if out == "" {
-		out = thinkingContent(msg.Content)
-	}
-	if out == "" {
-		// Genuinely nothing usable. Log the raw shape so the operator can see
-		// what their local model actually returned (wrong model name/endpoint,
-		// a non-standard schema, or a model that emits no content at all).
-		log.Printf("[copilot] openai-compat empty answer: finish_reason=%q content_len=%d reasoning_content_len=%d reasoning_len=%d raw=%.500s",
-			parsed.Choices[0].FinishReason, len(msg.Content), len(msg.ReasoningContent), len(msg.Reasoning),
-			strings.TrimSpace(string(respBody)))
-		if parsed.Choices[0].FinishReason == "length" {
-			return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
-				errors.New("model returned no answer — token budget exhausted by reasoning; raise max_tokens or disable thinking (e.g. Qwen3 /no_think)")
-		}
-		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
-			errors.New("openai-compat: model returned empty content — no answer in content/reasoning. Check the model name + endpoint; a reasoning model may need /no_think. See the [copilot] pod log for the raw response")
-	}
-	return out, parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, nil
-}
-
-// thinkingContent returns the text INSIDE the first <think>…</think> block,
-// trimmed — the reasoning a model produced before its (here, missing) answer.
-// Last-resort salvage when stripThinking leaves nothing after the close tag.
-func thinkingContent(s string) string {
-	open := strings.Index(s, "<think>")
-	if open == -1 {
-		return ""
-	}
-	rest := s[open+len("<think>"):]
-	if c := strings.Index(rest, "</think>"); c != -1 {
-		rest = rest[:c]
-	}
-	return strings.TrimSpace(rest)
-}
-
-// stripThinking removes a leading chain-of-thought block emitted by some
-// local reasoning models (Qwen3, deepseek-r1, …) that inline it as
-// <think>…</think> in the content field. Keeps only what follows the
-// final </think>. No-op when absent.
-func stripThinking(s string) string {
-	if i := strings.LastIndex(s, "</think>"); i != -1 {
-		s = s[i+len("</think>"):]
-	}
-	return strings.TrimSpace(s)
-}
-
-// ── Anthropic ───────────────────────────────────────────────────────────────
-
-func (s *Service) explainAnthropicWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
-	s.mu.RLock()
-	apiKey, model := s.apiKey, s.model
-	s.mu.RUnlock()
-	if model == "" {
-		model = "claude-sonnet-4-6"
-	}
-	// v0.9.1120 — was a hard 1024 with NO temperature. The 1024 was a
-	// parity bug (openai-compat got 4096 in v0.8.138/393; this path was
-	// never updated) that truncated long explanations on the ONE
-	// provider an operator is most likely to pay per-token for.
-	body := map[string]any{
-		"model":      model,
-		"max_tokens": s.tuneMaxTokens(),
-		"system":     systemPrompt,
-		"messages": []map[string]any{
-			{"role": "user", "content": userPrompt},
-		},
-	}
-	if t, ok := s.tuneTemperature(); ok {
-		body["temperature"] = t
-	}
-	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.anthropic.com/v1/messages", bytes.NewReader(raw))
-	if err != nil {
-		return "", 0, 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-API-Key", apiKey)
-	req.Header.Set("Anthropic-Version", "2023-06-01")
-
-	resp, err := s.httpClient().Do(req)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("anthropic call: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return "", 0, 0, fmt.Errorf("anthropic %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	return parseAnthropicResponse(respBody)
-}
-
-// parseAnthropicResponse decodes a buffered (non-streaming) Messages
-// body. Extracted from explainAnthropicWithUsage (v0.8.404) so the
-// streaming path can parse a one-shot JSON answer to a stream:true
-// request (proxy that strips the flag) without a second billed call.
-func parseAnthropicResponse(respBody []byte) (string, uint32, uint32, error) {
-	var parsed struct {
-		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
-		} `json:"content"`
-		Usage struct {
-			InputTokens  uint32 `json:"input_tokens"`
-			OutputTokens uint32 `json:"output_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", 0, 0, fmt.Errorf("decode anthropic response: %w", err)
-	}
-	var out strings.Builder
-	for _, c := range parsed.Content {
-		if c.Type == "text" {
-			out.WriteString(c.Text)
-		}
-	}
-	return out.String(), parsed.Usage.InputTokens, parsed.Usage.OutputTokens, nil
-}
-
-// ── GitHub Copilot ──────────────────────────────────────────────────────────
+// ── GitHub Copilot: oturum jetonu takası ────────────────────────────────────
 //
-// Two-step call:
-//   1. Exchange the user's GitHub OAuth token (apiKey, ghu_…) for a
-//      short-lived Copilot session token via copilot_internal/v2/token.
-//      We cache it until ~30s before its server-stated expiry.
-//   2. POST OpenAI-compat chat/completions to api.githubcopilot.com
-//      with that session token as Bearer + the integration headers
-//      Copilot's edge expects.
-
-func (s *Service) explainGitHubWithUsage(ctx context.Context, systemPrompt, userPrompt string) (string, uint32, uint32, error) {
-	sessTok, err := s.githubSessionToken(ctx)
-	if err != nil {
-		return "", 0, 0, err
-	}
-	s.mu.RLock()
-	model := s.model
-	s.mu.RUnlock()
-	if model == "" {
-		model = "gpt-4o"
-	}
-	// v0.9.1120 — same 1024 parity bug as the anthropic path.
-	body := map[string]any{
-		"model":      model,
-		"max_tokens": s.tuneMaxTokens(),
-		"messages": []map[string]any{
-			{"role": "system", "content": systemPrompt},
-			{"role": "user", "content": userPrompt},
-		},
-	}
-	if t, ok := s.tuneTemperature(); ok {
-		body["temperature"] = t
-	}
-	raw, _ := json.Marshal(body)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		"https://api.githubcopilot.com/chat/completions", bytes.NewReader(raw))
-	if err != nil {
-		return "", 0, 0, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+sessTok)
-	req.Header.Set("Editor-Version", "vscode/1.85.0")
-	req.Header.Set("Editor-Plugin-Version", "copilot-chat/0.12.0")
-	req.Header.Set("Copilot-Integration-Id", "vscode-chat")
-	req.Header.Set("User-Agent", "GithubCopilot/1.155.0")
-
-	resp, err := s.httpClient().Do(req)
-	if err != nil {
-		return "", 0, 0, fmt.Errorf("github copilot call: %w", err)
-	}
-	defer resp.Body.Close()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode >= 300 {
-		return "", 0, 0, fmt.Errorf("github copilot %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
-	}
-	var parsed struct {
-		Choices []struct {
-			Message struct {
-				Content string `json:"content"`
-			} `json:"message"`
-		} `json:"choices"`
-		Usage struct {
-			PromptTokens     uint32 `json:"prompt_tokens"`
-			CompletionTokens uint32 `json:"completion_tokens"`
-		} `json:"usage"`
-	}
-	if err := json.Unmarshal(respBody, &parsed); err != nil {
-		return "", 0, 0, fmt.Errorf("decode github copilot response: %w", err)
-	}
-	if len(parsed.Choices) == 0 {
-		return "", parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens,
-			errors.New("github copilot: empty response")
-	}
-	return parsed.Choices[0].Message.Content,
-		parsed.Usage.PromptTokens, parsed.Usage.CompletionTokens, nil
-}
+// İki adımlı çağrının DURUM tutan yarısı burada kaldı: operatörün
+// GitHub OAuth jetonunu (apiKey, ghu_…) copilot_internal/v2/token
+// üzerinden kısa ömürlü bir oturum jetonuyla takas eder ve sunucunun
+// bildirdiği son kullanmadan ~30s öncesine kadar önbellekte tutar.
+// İkinci adım (api.githubcopilot.com'a POST) internal/ai/provider'da
+// (DoGitHub); çözülmüş jeton oraya Config.APIKey ile gider.
 
 // githubSessionToken returns a valid Copilot session token, refreshing
 // from api.github.com when the cached one is missing or near expiry.

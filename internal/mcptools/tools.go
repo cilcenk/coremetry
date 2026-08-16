@@ -30,7 +30,7 @@
 //     them into MCP isError=true content. No need to format
 //     them here.
 //
-// Tool catalogue (15 tools; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (16 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu):
 //   - list_services
 //   - get_service_health
@@ -42,6 +42,7 @@
 //   - search_traces (v0.9.1087 — id'siz giriş, zincirin ilk halkası)
 //   - list_slo_status (v0.9.1089 — durum + deterministik yörünge)
 //   - query_metric
+//   - list_metric_names (v0.9.1090 — query_metric'in eşi)
 //   - render_chart (v0.9.520)
 //
 // Cross-signal pivot tools (v0.8.333, pivots.go):
@@ -115,6 +116,8 @@ func ToolList(d Deps) []mcp.Tool {
 		// v0.9.1089 (Faz 4) — SLO durum+yörünge; tükenme uydurması biter.
 		listSLOStatusTool(d),
 		queryMetricTool(d),
+		// v0.9.1090 (Faz 4) — query_metric'in eşi: ad uydurmayı bitirir.
+		listMetricNamesTool(d),
 		// v0.8.333 — cross-signal pivot tools (pivots.go, pivot Phase 4):
 		// trace↔log↔metric moves at MCP/copilot parity with the UI.
 		getLogsForTraceTool(d),

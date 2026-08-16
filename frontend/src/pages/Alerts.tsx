@@ -7,7 +7,7 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { useAuth } from '@/components/AuthProvider';
 import {
-  useAlertRules,
+  useAlertRules, useAlertRuleProblemCounts,
   useCreateAlertRule, useUpdateAlertRule,
   useDeleteAlertRule, useEnableAlertRule, useDisableAlertRule,
 } from '@/lib/queries';
@@ -40,7 +40,11 @@ function alertTypeLabel(r: AlertRule): string {
 // korundu; kazanılan sıralama + yeniden boyutlandırma + kalıcı genişlik.
 // Severity metin değil SIRA'ya göre sıralanıyor (info < warning < critical);
 // alfabetik sıra critical'ı info'nun üstüne koyup ciddiyeti tersine çevirirdi.
-const ALERT_RULE_COLS: DataTableColumn<AlertRule>[] = [
+// v0.9.1109 (Faz 5) — satır, kuralın ürettiği AÇIK problem sayısını
+// taşır; alarm→veri yolu (satırdan Inbox'a) buradan açılır.
+type AlertRuleRow = AlertRule & { openProblems: number };
+
+const ALERT_RULE_COLS: DataTableColumn<AlertRuleRow>[] = [
   { id: 'name',      label: 'Name',      sortValue: r => r.name,                     naturalDir: 'asc', width: 220 },
   { id: 'service',   label: 'Service',   sortValue: r => r.service ?? '',            naturalDir: 'asc', width: 160 },
   // Condition hücresi üç ayrı şekil basıyor (ES watcher / log watcher /
@@ -48,6 +52,7 @@ const ALERT_RULE_COLS: DataTableColumn<AlertRule>[] = [
   { id: 'condition', label: 'Condition', sortValue: r => r.metric,                   naturalDir: 'asc', flex: true },
   { id: 'window',    label: 'Window',    sortValue: r => r.windowSec,                numeric: true, width: 95 },
   { id: 'severity',  label: 'Severity',  sortValue: r => SEVERITIES.indexOf(r.severity), width: 105 },
+  { id: 'problems',  label: 'Open problems', sortValue: r => r.openProblems,         numeric: true, width: 125 },
   { id: 'enabled',   label: 'Enabled',   sortValue: r => (r.enabled ? 1 : 0),        width: 95 },
   { id: 'type',      label: 'Type',      sortValue: r => alertTypeLabel(r),          naturalDir: 'asc', width: 120 },
 ];
@@ -246,11 +251,15 @@ export default function AlertsPage() {
   // ve created_at bu tabloda GÖRÜNÜR bir kolon değil; bir varsayılan sıra
   // uydurmak, denetimin dokunmaması gereken satır düzenini sessizce
   // değiştirirdi. id:null → satırlar sunucudan geldiği gibi kalıyor.
-  const dt = useDataTable<AlertRule>({
+  // v0.9.1109 — kural başına açık problem sayısı; hata/boşta {} =
+  // rozet görünmez, tablo asla bloklanmaz (soft dependency).
+  const problemCounts = useAlertRuleProblemCounts().data ?? {};
+  const dt = useDataTable<AlertRuleRow>({
     // 'alert-rules' ALINMIŞ — tarihsel bir isimle /problems tablosuna ait
     // (ProblemsSection.tsx); aynı anahtarı kullanmak iki tablonun sırasını
     // ve `s_alert-rules` URL paramını birbirine bağlardı.
-    storageKey: 'alert-rules-list', columns: ALERT_RULE_COLS, rows: rules ?? [],
+    storageKey: 'alert-rules-list', columns: ALERT_RULE_COLS,
+    rows: (rules ?? []).map(r => ({ ...r, openProblems: problemCounts[r.id] ?? 0 })),
   });
   const createRule = useCreateAlertRule();
   const updateRule = useUpdateAlertRule();
@@ -650,6 +659,16 @@ export default function AlertsPage() {
                     </td>
                     <td>{r.windowSec / 60} min</td>
                     <td><SeverityBadge s={r.severity} /></td>
+                    <td>
+                      {r.openProblems > 0
+                        ? <Link className="badge b-err"
+                            to={`/inbox?q=${encodeURIComponent(r.name)}`}
+                            title={`${r.openProblems} açık problem bu kuraldan — Inbox'ta aç`}
+                            style={{ textDecoration: 'none' }}>
+                            {r.openProblems} open
+                          </Link>
+                        : <span style={{ color: 'var(--text3)' }}>—</span>}
+                    </td>
                     <td>{r.enabled
                       ? <span className="badge b-ok">ON</span>
                       : <span className="badge b-gray">OFF</span>}</td>

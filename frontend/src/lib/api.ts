@@ -2272,6 +2272,8 @@ export const api = {
     request<void>(`/api/dashboards/${id}`, { method: 'DELETE' }),
 
   alertRules: () => get<AlertRule[] | null>('/api/alert-rules'),
+  // v0.9.1109 — /alerts satır rozeti: kural başına açık problem sayısı.
+  problemRuleCounts: () => get<{ counts: Record<string, number> } | null>('/api/problems/rule-counts'),
   alertBaseline: (params: { service?: string; metric: string; comparator?: string }) => {
     const qs = new URLSearchParams();
     if (params.service)    qs.set('service',    params.service);

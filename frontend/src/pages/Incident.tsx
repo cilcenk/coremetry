@@ -270,7 +270,13 @@ function Inner() {
                 {problems.length === 0
                   ? <div style={{ color: 'var(--text3)', fontSize: 12 }}>No problems attached.</div>
                   : problems.map(pid => (
-                      <div key={pid} className="mono" style={{ fontSize: 11, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4, marginBottom: 4 }}>{pid}</div>
+                      // v0.9.1109 (Faz 5) — id artık Inbox çekmecesine
+                      // derin link; öncesi çıkmaz sokak düz metindi.
+                      <Link key={pid} to={`/inbox?problem=${encodeURIComponent(pid)}`}
+                        className="mono" title="Inbox'ta aç"
+                        style={{ display: 'block', fontSize: 11, padding: '4px 8px', background: 'var(--bg2)', borderRadius: 4, marginBottom: 4, color: 'var(--accent2)', textDecoration: 'none' }}>
+                        {pid}
+                      </Link>
                     ))}
               </div>
             </div>

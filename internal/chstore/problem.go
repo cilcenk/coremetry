@@ -814,6 +814,34 @@ type ProblemFilter struct {
 // FINAL on the spans is the same as the list path so the merged
 // dedup result is what counts; using a plain count() would
 // double-count rows mid-merge.
+// CountOpenProblemsByRule — /alerts satırındaki "açık problem N"
+// rozeti (v0.9.1109, Faz 5 "alarm→veri yolu"). Kural başına açık
+// problem sayısı; problems state tablosu küçük, tek FINAL tarama.
+// Kurala eşleşmeyen rule_id'ler (anomaly:*, boş) haritada durur ama
+// UI yalnız kendi kural id'lerini okur — fazlalık zararsız.
+func (s *Store) CountOpenProblemsByRule(ctx context.Context) (map[string]uint64, error) {
+	rows, err := s.conn.Query(ctx, `SELECT rule_id, count() AS n
+		FROM problems FINAL
+		WHERE status = 'open'
+		GROUP BY rule_id
+		LIMIT 5000
+		SETTINGS max_execution_time = 10`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make(map[string]uint64)
+	for rows.Next() {
+		var id string
+		var n uint64
+		if err := rows.Scan(&id, &n); err != nil {
+			return nil, err
+		}
+		out[id] = n
+	}
+	return out, rows.Err()
+}
+
 // CountProblemsNotInStatuses — inbox rozetinin "hâlâ insan bekleyen" toplamı.
 // v0.9.322: izin listesi yerine DIŞLAMA — liste tarafındaki Go süzgeciyle
 // birebir aynı sınıflandırma, yoksa rozet ve liste ayrışıyor.

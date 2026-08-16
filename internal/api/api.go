@@ -1157,6 +1157,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// Bu yüzey grafiklere özgü ve daha geniş kanıt taşır; ai_calls'ta
 	// "explain-charts" olarak AYRI görünür.
 	mux.HandleFunc("POST   /api/copilot/explain-charts", s.copilotExplainCharts)
+	mux.HandleFunc("POST   /api/copilot/explain-shift", s.explainShift)  // v0.9.1071 — /shift ✨
+	mux.HandleFunc("GET    /api/shift", s.getShiftSummary)               // v0.9.1071 — vardiya özeti
 	mux.HandleFunc("POST   /api/copilot/runbook/{id}", s.copilotRunbook)
 	mux.HandleFunc("POST   /api/copilot/compare-traces", s.copilotCompareTraces)
 	mux.HandleFunc("POST   /api/copilot/deploy-impact", s.copilotDeployImpact)

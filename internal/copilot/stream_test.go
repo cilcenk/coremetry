@@ -1,6 +1,7 @@
 package copilot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,235 +14,22 @@ import (
 
 // v0.8.404 — token streaming for the guided narration call with a
 // transparent runtime fallback (vLLM stream support unverified — the
-// code adapts, never assumes). These tests pin:
-//   1. the pure SSE chunk parser (content deltas, the vLLM
-//      reasoning-delta shape, inline <think> gating, [DONE], malformed
-//      line skip, usage extraction from the final chunk),
-//   2. the fallback decision table (status / content-type cases),
-//   3. the per-(provider,baseURL,model) verdict cache incl. its
-//      reset-on-Configure contract,
-//   4. StreamText end-to-end against httptest servers: real SSE
-//      streaming, a 400-on-stream:true endpoint (buffered retry ONCE +
-//      cached verdict), and a 200+JSON endpoint that ignores the flag
-//      (body parsed one-shot, no double-billed retry).
-
-// feedAll pushes raw SSE lines through the accumulator, collecting the
-// live deltas exactly as StreamText's scan loop would.
-func feedAll(a *openAIStreamAccum, lines []string) []string {
-	var deltas []string
-	for _, l := range lines {
-		if d := a.feed(l); d != "" {
-			deltas = append(deltas, d)
-		}
-	}
-	return deltas
-}
-
-func TestOpenAIStreamAccumContentDeltas(t *testing.T) {
-	a := &openAIStreamAccum{}
-	deltas := feedAll(a, []string{
-		`event: chunk`, // framing line — ignored
-		``,             // blank separator — ignored
-		`: keepalive comment`,
-		`data: {"choices":[{"delta":{"role":"assistant"}}]}`,
-		`data: {"choices":[{"delta":{"content":"Hel"}}]}`,
-		`data: not-json at all`, // malformed — skipped, never aborts
-		`data: {"choices":[{"delta":{"content":"lo "}}]}`,
-		`data: {"choices":[{"delta":{"content":"world"},"finish_reason":"stop"}]}`,
-		`data: {"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":7}}`, // include_usage final chunk
-		`data: [DONE]`,
-	})
-	if got := strings.Join(deltas, "|"); got != "Hel|lo |world" {
-		t.Fatalf("deltas = %q; want Hel|lo |world", got)
-	}
-	if !a.done || !a.sawData {
-		t.Fatalf("done=%v sawData=%v; want both true", a.done, a.sawData)
-	}
-	if a.inTokens != 42 || a.outTokens != 7 {
-		t.Fatalf("usage = (%d,%d); want (42,7) from the final chunk", a.inTokens, a.outTokens)
-	}
-	final, trailing, err := a.finishOpenAI()
-	if err != nil {
-		t.Fatalf("finish: %v", err)
-	}
-	if final != "Hello world" || trailing != "" {
-		t.Fatalf("final=%q trailing=%q; want \"Hello world\" and no trailing (content streamed live)", final, trailing)
-	}
-}
-
-func TestOpenAIStreamAccumReasoningOnlyStream(t *testing.T) {
-	// The vLLM --reasoning-parser shape: every token in
-	// delta.reasoning_content (or delta.reasoning), content never set.
-	// NOTHING streams live; finish emits the salvaged answer as ONE
-	// trailing delta — the v0.8.384 fallback, streamed.
-	for _, field := range []string{"reasoning_content", "reasoning"} {
-		t.Run(field, func(t *testing.T) {
-			a := &openAIStreamAccum{}
-			deltas := feedAll(a, []string{
-				fmt.Sprintf(`data: {"choices":[{"delta":{"%s":"Merhaba! "}}]}`, field),
-				fmt.Sprintf(`data: {"choices":[{"delta":{"%s":"Sorun payment-service."}}]}`, field),
-				`data: [DONE]`,
-			})
-			if len(deltas) != 0 {
-				t.Fatalf("reasoning must buffer silently; streamed %q", deltas)
-			}
-			final, trailing, err := a.finishOpenAI()
-			if err != nil {
-				t.Fatalf("finish: %v", err)
-			}
-			want := "Merhaba! Sorun payment-service."
-			if final != want || trailing != want {
-				t.Fatalf("final=%q trailing=%q; want both %q (one final delta)", final, trailing, want)
-			}
-		})
-	}
-}
-
-func TestOpenAIStreamAccumInlineThinkGate(t *testing.T) {
-	// A reasoning model WITHOUT a server-side parser inlines
-	// <think>…</think> in content — the chain-of-thought must not
-	// stream, the post-think answer must.
-	a := &openAIStreamAccum{}
-	deltas := feedAll(a, []string{
-		`data: {"choices":[{"delta":{"content":"<th"}}]}`, // ambiguous prefix — held
-		`data: {"choices":[{"delta":{"content":"ink>let me ponder"}}]}`,
-		`data: {"choices":[{"delta":{"content":" the trace</think>The "}}]}`,
-		`data: {"choices":[{"delta":{"content":"answer."}}]}`,
-		`data: [DONE]`,
-	})
-	if got := strings.Join(deltas, "|"); got != "The |answer." {
-		t.Fatalf("deltas = %q; want the post-think tail only", got)
-	}
-	final, trailing, err := a.finishOpenAI()
-	if err != nil {
-		t.Fatalf("finish: %v", err)
-	}
-	if final != "The answer." || trailing != "" {
-		t.Fatalf("final=%q trailing=%q; want \"The answer.\" with no trailing", final, trailing)
-	}
-}
-
-func TestOpenAIStreamAccumNonThinkPrefixFlushes(t *testing.T) {
-	// "<p..." disambiguates as NOT <think> — the held prefix flushes.
-	a := &openAIStreamAccum{}
-	deltas := feedAll(a, []string{
-		`data: {"choices":[{"delta":{"content":"<"}}]}`, // held (could become <think>)
-		`data: {"choices":[{"delta":{"content":"p99 rose"}}]}`,
-		`data: [DONE]`,
-	})
-	if got := strings.Join(deltas, "|"); got != "<p99 rose" {
-		t.Fatalf("deltas = %q; want the flushed \"<p99 rose\"", got)
-	}
-}
-
-func TestOpenAIStreamAccumThinkOnlySalvage(t *testing.T) {
-	// Only a think block, no tail → nothing streams; finish salvages
-	// the inside-think text as the one trailing delta.
-	a := &openAIStreamAccum{}
-	deltas := feedAll(a, []string{
-		`data: {"choices":[{"delta":{"content":"<think>The checkout span holds an Oracle row lock."}}]}`,
-		`data: {"choices":[{"delta":{"content":"</think>"}}]}`,
-		`data: [DONE]`,
-	})
-	if len(deltas) != 0 {
-		t.Fatalf("think-only content must not stream; got %q", deltas)
-	}
-	final, trailing, err := a.finishOpenAI()
-	if err != nil {
-		t.Fatalf("finish: %v", err)
-	}
-	want := "The checkout span holds an Oracle row lock."
-	if final != want || trailing != want {
-		t.Fatalf("final=%q trailing=%q; want the salvaged reasoning as one delta", final, trailing)
-	}
-}
-
-func TestOpenAIStreamAccumLengthBudgetError(t *testing.T) {
-	a := &openAIStreamAccum{}
-	feedAll(a, []string{
-		`data: {"choices":[{"delta":{"reasoning_content":""},"finish_reason":"length"}]}`,
-		`data: [DONE]`,
-	})
-	_, _, err := a.finishOpenAI()
-	if err == nil {
-		t.Fatal("expected the token-budget error for an empty length-terminated stream")
-	}
-	if !strings.Contains(strings.ToLower(err.Error()), "budget") && !strings.Contains(err.Error(), "max_tokens") {
-		t.Fatalf("error %q should mention the token budget / max_tokens", err.Error())
-	}
-}
-
-func TestAnthropicStreamAccum(t *testing.T) {
-	a := &anthropicStreamAccum{}
-	var deltas []string
-	for _, l := range []string{
-		`event: message_start`,
-		`data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}`,
-		`data: {"type":"ping"}`,
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"hmm"}}`, // buffered
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Sorun "}}`,
-		`data: not json`, // skipped
-		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"redis."}}`,
-		`data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":15}}`,
-		`data: {"type":"message_stop"}`,
-	} {
-		if d := a.feed(l); d != "" {
-			deltas = append(deltas, d)
-		}
-	}
-	if got := strings.Join(deltas, "|"); got != "Sorun |redis." {
-		t.Fatalf("deltas = %q; want text_delta content only (thinking buffered)", got)
-	}
-	if a.inTokens != 25 || a.outTokens != 15 {
-		t.Fatalf("usage = (%d,%d); want (25,15)", a.inTokens, a.outTokens)
-	}
-	final, trailing, err := a.finishAnthropic()
-	if err != nil || final != "Sorun redis." || trailing != "" {
-		t.Fatalf("finish = (%q,%q,%v); want (\"Sorun redis.\",\"\",nil)", final, trailing, err)
-	}
-}
-
-func TestAnthropicStreamAccumErrorEvent(t *testing.T) {
-	a := &anthropicStreamAccum{}
-	a.feed(`data: {"type":"error","error":{"type":"overloaded_error","message":"Overloaded"}}`)
-	if _, _, err := a.finishAnthropic(); err == nil || !strings.Contains(err.Error(), "Overloaded") {
-		t.Fatalf("err = %v; want the stream error surfaced", err)
-	}
-}
-
-// ─── Fallback decision table ────────────────────────────────────────
-
-func TestClassifyStreamResponse(t *testing.T) {
-	cases := []struct {
-		name   string
-		status int
-		ct     string
-		want   streamVerdict
-	}{
-		{"200 SSE streams", 200, "text/event-stream", verdictStream},
-		{"200 SSE with charset streams", 200, "text/event-stream; charset=utf-8", verdictStream},
-		{"200 JSON = server ignored stream:true, parse one-shot", 200, "application/json", verdictParseBuffered},
-		{"200 no content-type = parse one-shot", 200, "", verdictParseBuffered},
-		{"400 = deterministic rejection, cache", 400, "application/json", verdictFallbackCache},
-		{"404 = wrong route, cache", 404, "text/plain", verdictFallbackCache},
-		{"405 = method rejected, cache", 405, "", verdictFallbackCache},
-		{"415 = media type rejected, cache", 415, "", verdictFallbackCache},
-		{"422 = body rejected, cache", 422, "application/json", verdictFallbackCache},
-		{"501 = not implemented, cache", 501, "", verdictFallbackCache},
-		{"401 auth = fallback once, never cache", 401, "application/json", verdictFallbackOnce},
-		{"403 = fallback once, never cache", 403, "", verdictFallbackOnce},
-		{"429 quota (Gemini) = fallback once, never cache", 429, "application/json", verdictFallbackOnce},
-		{"500 = transient, fallback once", 500, "", verdictFallbackOnce},
-		{"503 = transient, fallback once", 503, "text/html", verdictFallbackOnce},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := classifyStreamResponse(c.status, c.ct); got != c.want {
-				t.Fatalf("classifyStreamResponse(%d, %q) = %v; want %v", c.status, c.ct, got, c.want)
-			}
-		})
-	}
-}
+// code adapts, never assumes).
+//
+// FAZ 1.3 (v0.9.1125) — bu dosya artık YALNIZ POLİTİKAYI test ediyor:
+// karar önbelleği ve StreamText'in uçtan uca geri düşüşü. Saf katman
+// (SSE biriktiricileri + karar tablosu) internal/ai/provider'a taşındı
+// ve testleri de oraya gitti (provider/stream_test.go) — kapsam
+// bölündü, DÜŞMEDİ.
+//
+// Burada kalanlar:
+//  1. (provider,baseURL,model) karar önbelleği + Configure'da sıfırlama,
+//  2. StreamText uçtan uca: gerçek SSE akışı, stream:true'ya 400 dönen
+//     uç (BİR buffered tekrar + kararın önbelleğe yazılması), bayrağı
+//     yutup 200+JSON dönen geçit (tek atış çözümlenir, ÇİFT FATURA yok),
+//     anında EOF (bir kez düş, karar YAZMA),
+//  3. anthropic yolunun aynı politikası (sabit uç olduğu için enjekte
+//     edilmiş taşımayla).
 
 // ─── Verdict cache + reset-on-Configure ─────────────────────────────
 
@@ -348,6 +136,19 @@ func TestStreamTextOpenAIFallbackOn400CachesVerdict(t *testing.T) {
 	if len(reqBodies) != 2 || !requestWantsStream(t, reqBodies[0]) || requestWantsStream(t, reqBodies[1]) {
 		t.Fatalf("want probe(stream:true)+retry(buffered); got %d requests", len(reqBodies))
 	}
+	// Geri düşülen çağrı Explain'in TA KENDİSİ olmalı: aynı gövde
+	// şekli, aynı bütçe. (Faz 1.3 sonrası ikisi de provider'ın tek
+	// yazılışından çıkıyor; bu, o zincirin kopmadığının pini.)
+	var buffered map[string]any
+	if err := json.Unmarshal(reqBodies[1], &buffered); err != nil {
+		t.Fatalf("buffered body: %v", err)
+	}
+	if _, has := buffered["stream_options"]; has {
+		t.Fatalf("buffered tekrar akış alanlarını taşıyor: %v", buffered)
+	}
+	if buffered["max_tokens"] != float64(4096) {
+		t.Fatalf("buffered tekrarın bütçesi = %v; want 4096", buffered["max_tokens"])
+	}
 
 	// Call 2: the verdict is cached — NO re-probe, one buffered call.
 	out, err = s.StreamText(context.Background(), "sys", "user", nil)
@@ -423,5 +224,121 @@ func TestStreamTextOpenAIImmediateEOFFallsBackOnce(t *testing.T) {
 	}
 	if nStream != 2 {
 		t.Fatalf("second call must re-probe the stream; nStream=%d", nStream)
+	}
+}
+
+// ─── Anthropic policy (fixed host ⇒ injected transport) ─────────────
+
+// anthropicStreamRT — stream:true isteğine ne döneceğini vakadan vakaya
+// değiştiren taşıma. Anthropic ucu SABİT olduğu için httptest yerine
+// s.cli'ye enjekte ediliyor (parityRT ile aynı teknik).
+type anthropicStreamRT struct {
+	streamStatus int    // stream:true isteğine dönülecek statü (0 = 200)
+	streamCT     string // ve content-type
+	streamBody   string
+	nStream      int
+	nBuffered    int
+}
+
+func (a *anthropicStreamRT) RoundTrip(req *http.Request) (*http.Response, error) {
+	raw, _ := io.ReadAll(req.Body)
+	var m map[string]any
+	_ = json.Unmarshal(raw, &m)
+	wantsStream, _ := m["stream"].(bool)
+	resp := func(status int, ct, body string) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: status,
+			Header:     http.Header{"Content-Type": []string{ct}},
+			Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+			Request:    req,
+		}, nil
+	}
+	if wantsStream {
+		a.nStream++
+		st := a.streamStatus
+		if st == 0 {
+			st = 200
+		}
+		return resp(st, a.streamCT, a.streamBody)
+	}
+	a.nBuffered++
+	return resp(200, "application/json",
+		`{"content":[{"type":"text","text":"buffered cevap"}],"usage":{"input_tokens":3,"output_tokens":2}}`)
+}
+
+func newAnthropicService(t *testing.T, rt http.RoundTripper) *Service {
+	t.Helper()
+	s := New("anthropic", "sk-ant", "claude-x")
+	s.Configure("anthropic", "sk-ant", "claude-x", "", false, true)
+	s.mu.Lock()
+	s.cli = &http.Client{Transport: rt}
+	s.mu.Unlock()
+	return s
+}
+
+func TestStreamTextAnthropicSSE(t *testing.T) {
+	rt := &anthropicStreamRT{streamCT: "text/event-stream", streamBody: strings.Join([]string{
+		`data: {"type":"message_start","message":{"usage":{"input_tokens":25}}}`,
+		`data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"gizli"}}`,
+		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Sorun "}}`,
+		`data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"redis."}}`,
+		`data: {"type":"message_delta","usage":{"output_tokens":15}}`,
+		"",
+	}, "\n\n")}
+	s := newAnthropicService(t, rt)
+
+	var deltas []string
+	out, err := s.StreamText(context.Background(), "sys", "user", func(d string) { deltas = append(deltas, d) })
+	if err != nil {
+		t.Fatalf("StreamText: %v", err)
+	}
+	if out != "Sorun redis." || strings.Join(deltas, "|") != "Sorun |redis." {
+		t.Fatalf("out=%q deltas=%v; düşünce bloğu akmamalı, metin akmalı", out, deltas)
+	}
+	if rt.nStream != 1 || rt.nBuffered != 0 {
+		t.Fatalf("istek sayısı stream=%d buffered=%d; want 1+0", rt.nStream, rt.nBuffered)
+	}
+}
+
+func TestStreamTextAnthropicFallbackOn400CachesVerdict(t *testing.T) {
+	rt := &anthropicStreamRT{streamStatus: 400, streamCT: "application/json",
+		streamBody: `{"type":"error","error":{"message":"stream unsupported"}}`}
+	s := newAnthropicService(t, rt)
+
+	out, err := s.StreamText(context.Background(), "sys", "user", nil)
+	if err != nil || out != "buffered cevap" {
+		t.Fatalf("out=%q err=%v; want the buffered rescue", out, err)
+	}
+	if rt.nStream != 1 || rt.nBuffered != 1 {
+		t.Fatalf("istek sayısı stream=%d buffered=%d; want probe+retry", rt.nStream, rt.nBuffered)
+	}
+	// Anahtar boş baseURL ile yazılır (anthropic ucu sabittir).
+	if !s.streamKnownUnsupported(ProviderAnthropic, "", "claude-x") {
+		t.Fatal("400 kesin reddi — karar önbelleğe yazılmalıydı")
+	}
+	// İkinci çağrı yoklamayı ATLAR.
+	if _, err := s.StreamText(context.Background(), "sys", "user", nil); err != nil {
+		t.Fatalf("ikinci çağrı: %v", err)
+	}
+	if rt.nStream != 1 || rt.nBuffered != 2 {
+		t.Fatalf("önbellekli karar yoklamayı atlamalı: stream=%d buffered=%d", rt.nStream, rt.nBuffered)
+	}
+}
+
+func TestStreamTextAnthropic200JSONParsedOneShot(t *testing.T) {
+	// Bayrağı yutup tek atış JSON dönen bir vekil: gövde ZATEN cevap.
+	rt := &anthropicStreamRT{streamCT: "application/json",
+		streamBody: `{"content":[{"type":"text","text":"tek atış"}],"usage":{"input_tokens":4,"output_tokens":2}}`}
+	s := newAnthropicService(t, rt)
+
+	out, err := s.StreamText(context.Background(), "sys", "user", nil)
+	if err != nil || out != "tek atış" {
+		t.Fatalf("out=%q err=%v; want the one-shot body parsed", out, err)
+	}
+	if rt.nStream != 1 || rt.nBuffered != 0 {
+		t.Fatalf("200+JSON ikinci faturalı çağrı YAPMAMALI: stream=%d buffered=%d", rt.nStream, rt.nBuffered)
+	}
+	if !s.streamKnownUnsupported(ProviderAnthropic, "", "claude-x") {
+		t.Fatal("200+JSON kesin — karar önbelleğe yazılmalıydı")
 	}
 }

@@ -12,6 +12,7 @@ import { tsLong, fmtFixed } from '@/lib/utils';
 import { serviceHref } from '@/lib/serviceHref';
 import type { Problem, ChangedService, ExceptionGroup } from '@/lib/types';
 import { PageShell } from '@/components/ui/PageShell';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 // Shift.tsx — /shift vardiya özeti (v0.9.1072, Faz 3.2; mockup
 // operatör-onaylı). Vardiya devri bugüne dek 4 sayfa gezilerek
@@ -70,12 +71,13 @@ export default function ShiftPage() {
 
   // ✨ tek-atış anlatım — inline panel (SlowQueries emsali). Fetch yalnız
   // tıkla (ES/LLM maliyet disiplini: hiçbir şey önceden istenmez).
-  const [ai, setAi] = useState<{ busy: boolean; text: string | null; err: string | null }>({ busy: false, text: null, err: null });
+  // v0.9.1121 (Faz 0.3b) — xid: cevabın ai_calls kimliği; 👍/👎 buna asılı.
+  const [ai, setAi] = useState<{ busy: boolean; text: string | null; err: string | null; xid?: string }>({ busy: false, text: null, err: null });
   const explain = async () => {
     setAi({ busy: true, text: null, err: null });
     try {
       const r = await api.explainShift(w);
-      setAi({ busy: false, text: r.explanation, err: null });
+      setAi({ busy: false, text: r.explanation, err: null, xid: r.exchangeId });
     } catch (e) {
       setAi({ busy: false, text: null, err: e instanceof Error ? e.message : 'Anlatım alınamadı' });
     }
@@ -117,6 +119,8 @@ export default function ShiftPage() {
           {ai.busy && <Spinner />}
           {ai.err && <span style={{ color: 'var(--err)' }}>{ai.err}</span>}
           {ai.text}
+          {/* v0.9.1121 (Faz 0.3b) — 👍/👎; kimlik yoksa çizilmez. */}
+          <div><AIFeedbackButtons exchangeId={ai.xid} /></div>
         </div>
       )}
 

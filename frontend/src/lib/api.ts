@@ -831,7 +831,7 @@ export const api = {
     avgMs: number; p95Ms: number; p99Ms: number; maxMs: number;
     errorCount: number;
   }) =>
-    request<{ explanation: string }>(`/api/copilot/explain-slow-query`, {
+    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/explain-slow-query`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
@@ -1262,16 +1262,16 @@ export const api = {
   shiftSummary: (w: string) =>
     get<import('./types').ShiftSummary>(`/api/shift?w=${encodeURIComponent(w)}`),
   explainShift: (w: string) =>
-    request<{ explanation: string; window: string }>(
+    request<{ explanation: string; exchangeId?: string; window: string }>(
       `/api/copilot/explain-shift?w=${encodeURIComponent(w)}`, { method: 'POST' }),
   // v0.9.1080 (F3.3) — alert gürültüsü tek-atış anlatımı (admin).
   explainAlertNoise: () =>
-    request<{ explanation: string; window: string }>(
+    request<{ explanation: string; exchangeId?: string; window: string }>(
       '/api/copilot/explain-alert-noise?since=24h', { method: 'POST' }),
   // v0.9.1100 (F3.5) — log desen/şablon anlatımı; pencere sunucuda
   // rung'lanır (v0.8.270 disiplini).
   explainLogPatterns: (windowSec: number) =>
-    request<{ explanation: string; windowSec: number }>(
+    request<{ explanation: string; exchangeId?: string; windowSec: number }>(
       `/api/copilot/explain-log-patterns?window=${windowSec}s`, { method: 'POST' }),
 
   clusterResourceTrend: (cluster: string, metric: 'cpu' | 'mem', byNode: boolean, fromNs: number, toNs: number) =>
@@ -1579,30 +1579,36 @@ export const api = {
 
   // v0.9.831 — includeCode: opsiyonel gövde. Verilmediğinde istek
   // GÖVDESİZ gider, yani bugünkü davranış bayt-bayt korunur.
+  //
+  // v0.9.1119 (Faz 0.3) — `exchangeId`: tek-atış cevabın ai_calls
+  // kimliği. omitempty; AIFeedbackButtons yoksa hiç çizilmez. Aynı alan
+  // aşağıdaki BÜTÜN prose explain uçlarında var — explain-charts HARİÇ
+  // (yanıtı sunucu-cache'li; cache'li gövdedeki kimlik ikinci
+  // kullanıcının oyunu başkasının çağrısına yazardı).
   copilotExplainTrace:   (id: string, includeCode?: boolean) =>
-    request<{ explanation: string; evidenceSpanIds?: string[]; code?: import('./types').AICodeContext }>(
+    request<{ explanation: string; exchangeId?: string; evidenceSpanIds?: string[]; code?: import('./types').AICodeContext }>(
       `/api/copilot/explain-trace/${id}`, explainInit(includeCode)),
   // Per-span explain (v0.5.144). Backend pulls target span +
   // parent + children + error siblings for a focused prompt.
   copilotExplainSpan:    (traceId: string, spanId: string) =>
-    request<{ explanation: string }>(
+    request<{ explanation: string; exchangeId?: string }>(
       `/api/copilot/explain-span/${encodeURIComponent(traceId)}?span=${encodeURIComponent(spanId)}`,
       { method: 'POST' }),
   copilotExplainProblem: (id: string) =>
-    request<{ explanation: string }>(`/api/copilot/explain-problem/${id}`, { method: 'POST' }),
+    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/explain-problem/${id}`, { method: 'POST' }),
   // v0.9.414 — exception grubu kök-sebep: backend örnek trace + trace
   // loglarını + deploy penceresini otomatik toplar; kanıt trace/span
   // id'leri deterministik döner (UI örnek satırlarını kutular).
   copilotExplainException: (fingerprint: string, includeCode?: boolean) =>
-    request<{ explanation: string; evidenceTraceIds?: string[]; evidenceSpanIds?: string[];
+    request<{ explanation: string; exchangeId?: string; evidenceTraceIds?: string[]; evidenceSpanIds?: string[];
               code?: import('./types').AICodeContext }>(
       `/api/copilot/explain-exception/${encodeURIComponent(fingerprint)}`, explainInit(includeCode)),
   copilotExplainIncident: (id: string) =>
-    request<{ explanation: string }>(`/api/copilot/explain-incident/${id}`, { method: 'POST' }),
+    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/explain-incident/${id}`, { method: 'POST' }),
   copilotExplainAnomaly: (id: string) =>
-    request<{ explanation: string }>(`/api/copilot/explain-anomaly/${id}`, { method: 'POST' }),
+    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/explain-anomaly/${id}`, { method: 'POST' }),
   copilotExplainServiceHealth: (service: string, fromNs: number, toNs: number) =>
-    request<{ explanation: string }>(
+    request<{ explanation: string; exchangeId?: string }>(
       `/api/copilot/explain-service?service=${encodeURIComponent(service)}&from=${fromNs}&to=${toNs}`,
       { method: 'POST' }),
   // v0.9.1031 — ServiceCharts AI çekmecesi (onaylı mockup). Anlatımın
@@ -1614,10 +1620,10 @@ export const api = {
       + `&from=${fromNs}&to=${toNs}&scope=${encodeURIComponent(scope)}`,
       { method: 'POST' }),
   copilotRunbook: (id: string) =>
-    request<{ explanation: string; similarCount: number }>(
+    request<{ explanation: string; exchangeId?: string; similarCount: number }>(
       `/api/copilot/runbook/${id}`, { method: 'POST' }),
   copilotCompareTraces: (aId: string, bId: string) =>
-    request<{ explanation: string }>(`/api/copilot/compare-traces`, {
+    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/compare-traces`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ aId, bId }),
@@ -1678,6 +1684,7 @@ export const api = {
   copilotExplainSLO: (id: string) =>
     request<{
       explanation: string;
+      exchangeId?: string;
       status: import('./types').SLOStatus | null;
       fastBurn: number;
       slowBurn: number;
@@ -1688,6 +1695,7 @@ export const api = {
   }) =>
     request<{
       explanation: string;
+      exchangeId?: string;
       before: { count: number; rps: number; errorRate: number; p99Ms: number; avgMs: number };
       after:  { count: number; rps: number; errorRate: number; p99Ms: number; avgMs: number };
       newOps: string[];

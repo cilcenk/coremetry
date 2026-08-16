@@ -9,6 +9,7 @@ import type { AIKind } from '@/lib/aiSubject';
 import type { AICodeContext } from '@/lib/types';
 import { IconSparkles } from './icons';
 import { RenderedMarkdown } from '@/components/Markdown';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 // CopilotExplain — drop-in Explain button that calls the
 // CoSRE (copilot) endpoint for the given subject and renders the
@@ -77,6 +78,10 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   const [text, setText] = useState<string | null>(null);
   const [meta, setMeta] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // v0.9.1121 (Faz 0.3b) — cevabın ai_calls kimliği; 👍/👎 buna asılı.
+  // Her çalıştırmada SIFIRLANIR: "Yeniden sor" yeni bir kimlik üretir ve
+  // eski cevabın oyu yeni cevabın üstünde kalamaz.
+  const [exchangeId, setExchangeId] = useState<string | undefined>(undefined);
   // v0.9.409 (operatör isteği): buton ilk kullanıma kadar nabız atar —
   // gözden kaçıyordu. İlk tıklama kalıcı susturur (bu mount için).
   const [used, setUsed] = useState(false);
@@ -105,11 +110,13 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
   const run = async (withCode = includeCode) => {
     setUsed(true);
     setBusy(true); setError(null); setText(null); setMeta(null); setCode(null);
+    setExchangeId(undefined);
     onAnswer?.(''); // "Yeniden sor" bayat bağlamı taşımasın
     try {
       if (kind === 'runbook') {
         const r = await api.copilotRunbook(id);
         applyText(r.explanation);
+        setExchangeId(r.exchangeId);
         // Surface the "based on N past resolutions" hint so the
         // operator knows whether the steps are grounded in
         // real history or first-principles.
@@ -134,6 +141,7 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
                 : kind === 'anomaly'        ? await api.copilotExplainAnomaly(id)
                 :                             await api.copilotExplainServiceHealth(id, fromNs ?? 0, toNs ?? 0);
         applyText(r.explanation);
+        setExchangeId(r.exchangeId);
       }
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Explain failed');
@@ -272,6 +280,9 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               ))}
             </div>
           )}
+          {/* v0.9.1121 (Faz 0.3b) — 👍/👎. Kimlik gelmediyse (eski gövde,
+              cache'li yüzey) HİÇ çizilmez; bileşenin kendi kapısı. */}
+          <AIFeedbackButtons exchangeId={exchangeId} />
           {/* v0.9.479 — çekmecede (auto) bu link ÇİZİLMEZ: sohbet aynı
               çekmecenin içinde, ekrandaki açıklamayı bağlam alarak açılır
               (AIDrawer). Satır-içi yüzeylerde köprü aynen duruyor. */}

@@ -4,6 +4,7 @@ import { api } from '@/lib/api';
 import { useServiceRollouts7d } from '@/lib/queries/services';
 import { fmtNum, fmtAgoNs } from '@/lib/utils';
 import type { Rollout, DeployImpact } from '@/lib/types';
+import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
 
 // Per-row Copilot explain state (v0.5.192). Keyed by rollout
 // timestamp so each row remembers its own answer + loading flag
@@ -11,7 +12,9 @@ import type { Rollout, DeployImpact } from '@/lib/types';
 type ExplainState =
   | { kind: 'idle' }
   | { kind: 'busy' }
-  | { kind: 'ok'; text: string }
+  // v0.9.1121 (Faz 0.3b) — exchangeId: cevabın ai_calls kimliği, 👍/👎
+  // buna asılı. omitempty; gelmezse düğmeler hiç çizilmez.
+  | { kind: 'ok'; text: string; exchangeId?: string }
   | { kind: 'err'; msg: string };
 
 // DeployHistoryPanel — "Recent rollouts" panel on the service detail
@@ -67,7 +70,7 @@ export function DeployHistoryPanel({ service, onZoomWindow }: {
         deployTimeNs: row.timeUnixNs,
         windowSec: 600,
       });
-      setExplains(s => ({ ...s, [key]: { kind: 'ok', text: r.explanation } }));
+      setExplains(s => ({ ...s, [key]: { kind: 'ok', text: r.explanation, exchangeId: r.exchangeId } }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       setExplains(s => ({ ...s, [key]: { kind: 'err', msg } }));
@@ -207,6 +210,7 @@ export function DeployHistoryPanel({ service, onZoomWindow }: {
                               marginBottom: 6, fontWeight: 600,
                             }}>✨ CoSRE</div>
                             {st.text}
+                            <div><AIFeedbackButtons exchangeId={st.exchangeId} /></div>
                           </div>
                         )}
                       </div>

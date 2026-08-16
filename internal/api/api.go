@@ -820,6 +820,8 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET    /api/services/{name}/span-breakdown", s.svcSpanBreakdown)
 	mux.HandleFunc("GET    /api/problems", s.listProblems)
 	mux.HandleFunc("GET    /api/problems/count", s.countProblems)
+	// v0.9.1109 — /alerts satır rozeti: kural başına açık problem.
+	mux.HandleFunc("GET    /api/problems/rule-counts", s.countProblemsByRule)
 	// v0.9.550 — evaluator kalp atışı. /api/problems ile AYNI yetki
 	// duruşu (rol kapısı yok): boş bir Problems sayfasının "sorun yok"
 	// mu yoksa "evaluator ölü" mü olduğunu görmek her rolün hakkı.
@@ -10205,6 +10207,22 @@ func (s *Server) countProblems(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		return map[string]any{"count": n}, nil
+	})
+}
+
+// countProblemsByRule — /alerts satır rozeti: kural başına açık
+// problem sayısı (v0.9.1109, Faz 5 "alarm→veri yolu bugün çıkmaz
+// sokak"). Girdisi yok; sabit anahtar hash-all-inputs kuralını
+// boşlukta sağlar. TTL 15s — countProblems'la aynı gerekçe (SWR
+// sert penceresi 45s, 30-60s'lik sayfa poll'unun üstünde kalır;
+// ack/resolve cacheInvalidatePrefix("problems") ile taze düşer).
+func (s *Server) countProblemsByRule(w http.ResponseWriter, r *http.Request) {
+	s.serveCached(w, r, "problems-rule-counts", 15*time.Second, func(ctx context.Context) (any, error) {
+		m, err := s.store.CountOpenProblemsByRule(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"counts": m}, nil
 	})
 }
 

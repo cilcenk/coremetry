@@ -17,6 +17,18 @@ export function useAlertRules() {
   });
 }
 
+// Kural başına açık problem sayısı — /alerts "Open problems" kolonu
+// (v0.9.1109). Sunucu 15s TTL'li; 30s poll rozetle aynı tazelikte,
+// RQ gizli sekmede zaten duraklatır.
+export function useAlertRuleProblemCounts() {
+  return useQuery<Record<string, number>>({
+    queryKey: ['alerts', 'rule-problem-counts'],
+    queryFn: async () => (await api.problemRuleCounts())?.counts ?? {},
+    staleTime: 15_000,
+    refetchInterval: 30_000,
+  });
+}
+
 function useAlertMutation<T>(fn: (input: T) => Promise<unknown>) {
   const qc = useQueryClient();
   return useMutation({

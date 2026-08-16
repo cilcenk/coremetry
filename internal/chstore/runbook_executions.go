@@ -17,7 +17,7 @@ type RunbookExecution struct {
 	TitleSnapshot string      `json:"titleSnapshot"`
 	Status        string      `json:"status"`
 	StartedBy     string      `json:"startedBy,omitempty"`
-	StartedAt     int64       `json:"startedAt"`            // unix ns
+	StartedAt     int64       `json:"startedAt"`             // unix ns
 	CompletedAt   int64       `json:"completedAt,omitempty"` // unix ns; 0 = running
 	ProblemID     string      `json:"problemId,omitempty"`
 	StepStates    []StepState `json:"stepStates"`

@@ -192,16 +192,16 @@ type OperationSummary struct {
 	// bir-önceki-eş-pencerenin skalerleri + calls/errors gölge serileri.
 	// HasPrior 0-değer belirsizliğini çözer (yeni operasyon ≠ sıfırlı
 	// eski operasyon) — TrendDelta'nın NEW rozeti buna bakar.
-	HasPrior             bool      `json:"hasPrior,omitempty"`
-	PriorSpanCount       uint64    `json:"priorSpanCount,omitempty"`
-	PriorErrorCount      uint64    `json:"priorErrorCount,omitempty"`
-	PriorErrorRate       float64   `json:"priorErrorRate,omitempty"`
-	PriorAvgMs           float64   `json:"priorAvgDurationMs,omitempty"`
-	PriorP50Ms           float64   `json:"priorP50DurationMs,omitempty"`
-	PriorP95Ms           float64   `json:"priorP95DurationMs,omitempty"`
-	PriorP99Ms           float64   `json:"priorP99DurationMs,omitempty"`
-	PriorSparkline       []uint64  `json:"priorSparkline,omitempty"`
-	PriorErrorsSparkline []uint64  `json:"priorErrorsSparkline,omitempty"`
+	HasPrior             bool     `json:"hasPrior,omitempty"`
+	PriorSpanCount       uint64   `json:"priorSpanCount,omitempty"`
+	PriorErrorCount      uint64   `json:"priorErrorCount,omitempty"`
+	PriorErrorRate       float64  `json:"priorErrorRate,omitempty"`
+	PriorAvgMs           float64  `json:"priorAvgDurationMs,omitempty"`
+	PriorP50Ms           float64  `json:"priorP50DurationMs,omitempty"`
+	PriorP95Ms           float64  `json:"priorP95DurationMs,omitempty"`
+	PriorP99Ms           float64  `json:"priorP99DurationMs,omitempty"`
+	PriorSparkline       []uint64 `json:"priorSparkline,omitempty"`
+	PriorErrorsSparkline []uint64 `json:"priorErrorsSparkline,omitempty"`
 }
 
 type ServiceSummary struct {
@@ -225,19 +225,19 @@ type ServiceSummary struct {
 	// critical flips the badge immediately. The HealthReason
 	// string explains the rule that fired so the operator
 	// can argue with the verdict.
-	Health         string `json:"health,omitempty"`         // "" | "green" | "yellow" | "red"
-	HealthReason   string `json:"healthReason,omitempty"`   // short string e.g. "1 open critical"
-	OpenProblems   int    `json:"openProblems,omitempty"`   // count of all open problems on this service
+	Health       string `json:"health,omitempty"`       // "" | "green" | "yellow" | "red"
+	HealthReason string `json:"healthReason,omitempty"` // short string e.g. "1 open critical"
+	OpenProblems int    `json:"openProblems,omitempty"` // count of all open problems on this service
 }
 
 // ── Exception aggregate (Errors page) ────────────────────────────────────────
 
 type ExceptionRow struct {
-	Type         string `json:"type"`
-	Message      string `json:"message"`
-	Service      string `json:"service"`
-	Count        uint64 `json:"count"`
-	LastSeen     int64  `json:"lastSeen"`
+	Type          string `json:"type"`
+	Message       string `json:"message"`
+	Service       string `json:"service"`
+	Count         uint64 `json:"count"`
+	LastSeen      int64  `json:"lastSeen"`
 	SampleTraceID string `json:"sampleTraceId"`
 	SampleSpanID  string `json:"sampleSpanId"`
 }
@@ -258,28 +258,28 @@ type TraceRow struct {
 }
 
 type SpanRow struct {
-	TraceID            string                 `json:"traceId"`
-	SpanID             string                 `json:"spanId"`
-	ParentSpanID       string                 `json:"parentSpanId"`
-	Name               string                 `json:"name"`
-	Kind               string                 `json:"kind"`
-	ServiceName        string                 `json:"serviceName"`
-	HostName           string                 `json:"hostName"`
-	StartTime          int64                  `json:"startTime"`
-	EndTime            int64                  `json:"endTime"`
-	DurationMs         float64                `json:"durationMs"`
-	StatusCode         string                 `json:"statusCode"`
-	StatusMessage      string                 `json:"statusMessage"`
-	Attributes         map[string]string      `json:"attributes"`
-	ResourceAttributes map[string]string      `json:"resourceAttributes"`
-	Events             interface{}            `json:"events"`
-	ScopeName          string                 `json:"scopeName"`
-	DBSystem           string                 `json:"dbSystem,omitempty"`
-	DBStatement        string                 `json:"dbStatement,omitempty"`
-	HTTPMethod         string                 `json:"httpMethod,omitempty"`
-	HTTPRoute          string                 `json:"httpRoute,omitempty"`
-	HTTPStatus         uint16                 `json:"httpStatus,omitempty"`
-	PeerService        string                 `json:"peerService,omitempty"`
+	TraceID            string            `json:"traceId"`
+	SpanID             string            `json:"spanId"`
+	ParentSpanID       string            `json:"parentSpanId"`
+	Name               string            `json:"name"`
+	Kind               string            `json:"kind"`
+	ServiceName        string            `json:"serviceName"`
+	HostName           string            `json:"hostName"`
+	StartTime          int64             `json:"startTime"`
+	EndTime            int64             `json:"endTime"`
+	DurationMs         float64           `json:"durationMs"`
+	StatusCode         string            `json:"statusCode"`
+	StatusMessage      string            `json:"statusMessage"`
+	Attributes         map[string]string `json:"attributes"`
+	ResourceAttributes map[string]string `json:"resourceAttributes"`
+	Events             interface{}       `json:"events"`
+	ScopeName          string            `json:"scopeName"`
+	DBSystem           string            `json:"dbSystem,omitempty"`
+	DBStatement        string            `json:"dbStatement,omitempty"`
+	HTTPMethod         string            `json:"httpMethod,omitempty"`
+	HTTPRoute          string            `json:"httpRoute,omitempty"`
+	HTTPStatus         uint16            `json:"httpStatus,omitempty"`
+	PeerService        string            `json:"peerService,omitempty"`
 }
 
 type LogRow struct {
@@ -366,9 +366,9 @@ type FlameNode struct {
 // AggregateRow is one bucket in the trace aggregate view (group-by operation
 // or service). Counts are number of distinct traces (not spans).
 type AggregateRow struct {
-	GroupKey   string  `json:"groupKey"`
-	GroupExtra string  `json:"groupExtra,omitempty"` // e.g. service name when grouping by operation
-	TraceCount uint64  `json:"traceCount"`
+	GroupKey   string `json:"groupKey"`
+	GroupExtra string `json:"groupExtra,omitempty"` // e.g. service name when grouping by operation
+	TraceCount uint64 `json:"traceCount"`
 	// WithRawAvailable — count of TraceCount trace_ids that still
 	// have raw spans in the window. trace_summary_5m holds 90 days
 	// while raw spans hold 30 (or whatever retention.spans is set

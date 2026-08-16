@@ -15,12 +15,12 @@ import (
 // schemas, no breakage when filters evolve.
 type SavedView struct {
 	ID          string `json:"id"`
-	OwnerID     string `json:"ownerId"`     // user.id; "" = team-shared
+	OwnerID     string `json:"ownerId"` // user.id; "" = team-shared
 	Name        string `json:"name"`
 	Page        string `json:"page"`        // "traces" | "logs" | "anomalies" | "metrics" | …
 	QueryString string `json:"queryString"` // ?key=val&… (no leading ?)
 	Pinned      bool   `json:"pinned"`
-	CreatedAt   int64  `json:"createdAt"`   // unix ns
+	CreatedAt   int64  `json:"createdAt"` // unix ns
 }
 
 // savedViewsInsertCols is the explicit INSERT column list for saved_views. It

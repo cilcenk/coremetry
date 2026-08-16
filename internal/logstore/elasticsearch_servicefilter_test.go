@@ -54,22 +54,22 @@ func TestServiceFilterTriesBothFieldShapes(t *testing.T) {
 
 func TestIndexKnown(t *testing.T) {
 	names := []string{
-		"app-checkout.prod",                        // plain index
-		"app-facex-bpm-int-000079",                 // rollover child
-		"app-orders.prod-2026.07.03",               // dated child
+		"app-checkout.prod",                         // plain index
+		"app-facex-bpm-int-000079",                  // rollover child
+		"app-orders.prod-2026.07.03",                // dated child
 		".ds-app-identityhub-int-2026.06.24-000391", // data-stream backing
 	}
 	cases := []struct {
 		resolved string
 		want     bool
 	}{
-		{"app-checkout.prod", true},        // exact
-		{"app-facex-bpm-int", true},        // rollover parent
-		{"app-orders.prod", true},          // dated parent
-		{"app-identityhub-int", true},      // data-stream name via .ds- backing
-		{"app-checkout.uat", false},        // wrong namespace
-		{"app-identityhub", false},         // prefix of a LONGER stream name must NOT match…
-		{"app-facex", false},               // …same (app-facex-bpm-int is a different stream)
+		{"app-checkout.prod", true},   // exact
+		{"app-facex-bpm-int", true},   // rollover parent
+		{"app-orders.prod", true},     // dated parent
+		{"app-identityhub-int", true}, // data-stream name via .ds- backing
+		{"app-checkout.uat", false},   // wrong namespace
+		{"app-identityhub", false},    // prefix of a LONGER stream name must NOT match…
+		{"app-facex", false},          // …same (app-facex-bpm-int is a different stream)
 	}
 	for _, c := range cases {
 		if got := indexKnown(names, c.resolved); got != c.want {

@@ -22,30 +22,30 @@ import (
 // the operator reads "847 commits/sec" not the raw monotonic
 // counter pg exposes.
 type PostgresMetrics struct {
-	Instance       string             `json:"instance"`
-	Status         string             `json:"status"` // up / down
-	WindowSeconds  float64            `json:"windowSeconds"`
-	Backends       PGGaugeWithCap     `json:"backends"` // current connections + max_connections
-	CommitsPS      float64            `json:"commitsPerSec"`
-	RollbacksPS    float64            `json:"rollbacksPerSec"`
-	DeadlocksPS    float64            `json:"deadlocksPerSec"`
-	BlocksReadPS   float64            `json:"blocksReadPerSec"`
-	BlocksHitPS    float64            `json:"blocksHitPerSec"`
-	CacheHitPct    float64            `json:"cacheHitPct"` // derived: hit/(hit+read)
-	TempFilesPS    float64            `json:"tempFilesPerSec"`
-	TempBytesPS    float64            `json:"tempBytesPerSec"`
-	WALAgeSec      float64            `json:"walAgeSec"`
-	WALLagBytes    float64            `json:"walLagBytes"`
-	ReplDelaySec   float64            `json:"replicationDelaySec"`
-	BgwriterPS     PGBgwriter         `json:"bgwriter"`
-	Databases      []PGDatabase       `json:"databases"`
-	Locks          []PGLockEntry      `json:"locks"`
+	Instance      string         `json:"instance"`
+	Status        string         `json:"status"` // up / down
+	WindowSeconds float64        `json:"windowSeconds"`
+	Backends      PGGaugeWithCap `json:"backends"` // current connections + max_connections
+	CommitsPS     float64        `json:"commitsPerSec"`
+	RollbacksPS   float64        `json:"rollbacksPerSec"`
+	DeadlocksPS   float64        `json:"deadlocksPerSec"`
+	BlocksReadPS  float64        `json:"blocksReadPerSec"`
+	BlocksHitPS   float64        `json:"blocksHitPerSec"`
+	CacheHitPct   float64        `json:"cacheHitPct"` // derived: hit/(hit+read)
+	TempFilesPS   float64        `json:"tempFilesPerSec"`
+	TempBytesPS   float64        `json:"tempBytesPerSec"`
+	WALAgeSec     float64        `json:"walAgeSec"`
+	WALLagBytes   float64        `json:"walLagBytes"`
+	ReplDelaySec  float64        `json:"replicationDelaySec"`
+	BgwriterPS    PGBgwriter     `json:"bgwriter"`
+	Databases     []PGDatabase   `json:"databases"`
+	Locks         []PGLockEntry  `json:"locks"`
 	// TopSQL — engine-authoritative heaviest statements from
 	// pg_stat_statements (receiver-side parity with Oracle's
 	// V$SQL TopSQL). Empty when the operator hasn't enabled the
 	// pg_stat_statements scrape — the panel renders an empty
 	// state, same no-fake-data policy as the rest of the panel.
-	TopSQL         []DBTopSQL         `json:"topSQL"`
+	TopSQL []DBTopSQL `json:"topSQL"`
 }
 
 // PGGaugeWithCap is the (usage, limit) pair pattern shared with

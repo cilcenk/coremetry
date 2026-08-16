@@ -545,7 +545,7 @@ type ExceptionGroupFilter struct {
 	ActiveFromNs int64
 	ActiveToNs   int64
 	Limit        int
-	Offset int
+	Offset       int
 	// HTTPErrors (v0.9.443) — sözde-exception ayrımı: error.type
 	// fallback'i (v0.8.494) HTTP durum kodunu ex_type'a yazar; "404" gibi
 	// çıplak 3-haneli tipler gerçek exception değil beklenen istemci

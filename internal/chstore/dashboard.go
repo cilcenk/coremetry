@@ -16,14 +16,14 @@ import (
 // fields before fetching. See frontend/src/lib/types.ts for the canonical
 // shape.
 type Dashboard struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
 	// `omitempty` so the lightweight ListDashboards response doesn't
 	// emit null fields the SPA isn't expecting (panels/variables are
 	// only fetched on the single-dashboard endpoint).
-	Panels      json.RawMessage `json:"panels,omitempty"`
-	Variables   json.RawMessage `json:"variables,omitempty"`
+	Panels    json.RawMessage `json:"panels,omitempty"`
+	Variables json.RawMessage `json:"variables,omitempty"`
 	// Tags (v0.9.780) — panoya ait, PAYLAŞILAN serbest-metin etiketler
 	// (["prod","ödeme"]). Yıldızın aksine kullanıcı-başı değil: bir
 	// panonun ne olduğu herkes için aynı şey.
@@ -31,9 +31,9 @@ type Dashboard struct {
 	// panels/variables'ın aksine LİSTE yanıtında da dönüyor — /dashboards
 	// tablosu etiket kolonunu gösteriyor ve etiketler tanımı gereği
 	// küçük (panel gövdesi gibi kilobaytlar değil).
-	Tags        json.RawMessage `json:"tags,omitempty"`
-	CreatedAt   int64           `json:"createdAt"`     // unix ns
-	UpdatedAt   int64           `json:"updatedAt"`     // unix ns
+	Tags      json.RawMessage `json:"tags,omitempty"`
+	CreatedAt int64           `json:"createdAt"` // unix ns
+	UpdatedAt int64           `json:"updatedAt"` // unix ns
 }
 
 func (s *Store) ListDashboards(ctx context.Context) ([]Dashboard, error) {

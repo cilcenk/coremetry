@@ -15,16 +15,16 @@ import (
 // runaway prompt can't blow up the row size.
 type AICall struct {
 	ID             string `json:"id"`
-	CreatedAt      int64  `json:"createdAt"`      // unix ns
-	Surface        string `json:"surface"`        // explain-span, explain-slo, …
+	CreatedAt      int64  `json:"createdAt"`            // unix ns
+	Surface        string `json:"surface"`              // explain-span, explain-slo, …
 	ExchangeID     string `json:"exchangeId,omitempty"` // v0.8.399 — feedback correlation key ('' pre-v0.8.399 / non-chat)
-	Provider       string `json:"provider"`       // openai | anthropic | github
+	Provider       string `json:"provider"`             // openai | anthropic | github
 	Model          string `json:"model"`
 	BaseURL        string `json:"baseUrl,omitempty"`
 	DurationMs     uint32 `json:"durationMs"`
 	InputTokens    uint32 `json:"inputTokens"`
 	OutputTokens   uint32 `json:"outputTokens"`
-	Status         string `json:"status"`         // ok | error
+	Status         string `json:"status"` // ok | error
 	ErrorMsg       string `json:"errorMsg,omitempty"`
 	PromptChars    uint32 `json:"promptChars"`
 	ResponseChars  uint32 `json:"responseChars"`
@@ -171,23 +171,23 @@ func (s *Store) GetAICall(ctx context.Context, id string) (*AICall, error) {
 // window so the page loads with KPIs visible before the table
 // data streams in.
 type AIStats struct {
-	TotalCalls    uint64  `json:"totalCalls"`
-	OkCalls       uint64  `json:"okCalls"`
-	ErrorCalls    uint64  `json:"errorCalls"`
-	ErrorRate     float64 `json:"errorRate"`     // 0..1
-	AvgDurationMs float64 `json:"avgDurationMs"`
-	P50DurationMs float64 `json:"p50DurationMs"`
-	P99DurationMs float64 `json:"p99DurationMs"`
-	InputTokens   uint64  `json:"inputTokens"`
-	OutputTokens  uint64  `json:"outputTokens"`
-	DistinctUsers uint64  `json:"distinctUsers"`
-	BySurface     []AISurfaceStat `json:"bySurface"`
+	TotalCalls    uint64           `json:"totalCalls"`
+	OkCalls       uint64           `json:"okCalls"`
+	ErrorCalls    uint64           `json:"errorCalls"`
+	ErrorRate     float64          `json:"errorRate"` // 0..1
+	AvgDurationMs float64          `json:"avgDurationMs"`
+	P50DurationMs float64          `json:"p50DurationMs"`
+	P99DurationMs float64          `json:"p99DurationMs"`
+	InputTokens   uint64           `json:"inputTokens"`
+	OutputTokens  uint64           `json:"outputTokens"`
+	DistinctUsers uint64           `json:"distinctUsers"`
+	BySurface     []AISurfaceStat  `json:"bySurface"`
 	ByProvider    []AIProviderStat `json:"byProvider"`
 }
 
 type AISurfaceStat struct {
-	Surface   string `json:"surface"`
-	Calls     uint64 `json:"calls"`
+	Surface   string  `json:"surface"`
+	Calls     uint64  `json:"calls"`
 	ErrorRate float64 `json:"errorRate"`
 	AvgMs     float64 `json:"avgMs"`
 	// v0.8.399 — operator thumbs up/down quality signal, merged in
@@ -317,12 +317,12 @@ func (s *Store) ComputeAIStats(ctx context.Context, from, to time.Time) (*AIStat
 // for v1 we default to 5-minute buckets and let the renderer
 // re-bin if it wants coarser resolution.
 type AICallsTimePoint struct {
-	Time        int64   `json:"time"`        // unix ns, bucket start
-	Calls       uint64  `json:"calls"`
-	Errors      uint64  `json:"errors"`
-	AvgMs       float64 `json:"avgMs"`
-	InputTokens uint64  `json:"inputTokens"`
-	OutputTokens uint64 `json:"outputTokens"`
+	Time         int64   `json:"time"` // unix ns, bucket start
+	Calls        uint64  `json:"calls"`
+	Errors       uint64  `json:"errors"`
+	AvgMs        float64 `json:"avgMs"`
+	InputTokens  uint64  `json:"inputTokens"`
+	OutputTokens uint64  `json:"outputTokens"`
 }
 
 func (s *Store) AICallsTimeseries(ctx context.Context, from, to time.Time, bucketSec int) ([]AICallsTimePoint, error) {

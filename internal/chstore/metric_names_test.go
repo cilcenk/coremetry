@@ -95,10 +95,10 @@ func TestBuildMetricNamesWhere(t *testing.T) {
 // builder's wildcard semantics staying identical to the raw path's.
 func TestBuildMetricCatalogWhere(t *testing.T) {
 	cases := []struct {
-		name           string
-		service, patt  string
-		wantSubs       []string
-		wantArgs       []any
+		name          string
+		service, patt string
+		wantSubs      []string
+		wantArgs      []any
 	}{
 		{"bare pattern = substring", "", "http", []string{"metric ILIKE ?"}, []any{"%http%"}},
 		{"star wildcard honoured", "", "http*", []string{"metric ILIKE ?"}, []any{"http%"}},

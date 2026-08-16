@@ -240,12 +240,12 @@ func registerPrompts(srv *mcp.Server, d Deps) {
 				return nil, err
 			}
 			user, err := jsonText(map[string]any{
-				"service":      args["service"],
-				"version":      args["version"],
-				"deploy_time":  deployT.UTC().Format(time.RFC3339),
-				"window_s":     win,
-				"before":       firstOrNil(befRows),
-				"after":        firstOrNil(aftRows),
+				"service":     args["service"],
+				"version":     args["version"],
+				"deploy_time": deployT.UTC().Format(time.RFC3339),
+				"window_s":    win,
+				"before":      firstOrNil(befRows),
+				"after":       firstOrNil(aftRows),
 			})
 			if err != nil {
 				return nil, err
@@ -281,10 +281,10 @@ func diffTraces(a, b []chstore.SpanRow) map[string]any {
 	aOps := opLatencies(a)
 	bOps := opLatencies(b)
 	type deltaRow struct {
-		Op        string  `json:"op"`
-		ADurMs    float64 `json:"a_ms"`
-		BDurMs    float64 `json:"b_ms"`
-		DeltaMs   float64 `json:"delta_ms"`
+		Op      string  `json:"op"`
+		ADurMs  float64 `json:"a_ms"`
+		BDurMs  float64 `json:"b_ms"`
+		DeltaMs float64 `json:"delta_ms"`
 	}
 	var shared []deltaRow
 	for op, aMs := range aOps {
@@ -303,11 +303,11 @@ func diffTraces(a, b []chstore.SpanRow) map[string]any {
 		shared = shared[:10]
 	}
 	return map[string]any{
-		"top_op_deltas":       shared,
-		"services_only_in_a":  serviceSetDiff(a, b),
-		"services_only_in_b":  serviceSetDiff(b, a),
-		"errors_in_a":         countErrors(a),
-		"errors_in_b":         countErrors(b),
+		"top_op_deltas":      shared,
+		"services_only_in_a": serviceSetDiff(a, b),
+		"services_only_in_b": serviceSetDiff(b, a),
+		"errors_in_a":        countErrors(a),
+		"errors_in_b":        countErrors(b),
 	}
 }
 
@@ -393,4 +393,3 @@ func pair(system, user string) []mcp.PromptMessage {
 		{Role: "user", Content: mcp.PromptContent{Type: "text", Text: user}},
 	}
 }
-

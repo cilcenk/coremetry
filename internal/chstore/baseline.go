@@ -23,15 +23,15 @@ import (
 //	request_rate  → requests per second
 //	error_count   → absolute count per window (5 min default)
 type MetricBaseline struct {
-	Metric        string  `json:"metric"`
-	Service       string  `json:"service,omitempty"` // empty = all services
-	P50           float64 `json:"p50"`
-	P95           float64 `json:"p95"`
-	P99           float64 `json:"p99"`
-	Max           float64 `json:"max"`
-	Mean          float64 `json:"mean"`
-	SampleCount   int64   `json:"sampleCount"` // # of spans / minutes scanned
-	WindowSec     int64   `json:"windowSec"`   // lookback the percentiles were computed over
+	Metric      string  `json:"metric"`
+	Service     string  `json:"service,omitempty"` // empty = all services
+	P50         float64 `json:"p50"`
+	P95         float64 `json:"p95"`
+	P99         float64 `json:"p99"`
+	Max         float64 `json:"max"`
+	Mean        float64 `json:"mean"`
+	SampleCount int64   `json:"sampleCount"` // # of spans / minutes scanned
+	WindowSec   int64   `json:"windowSec"`   // lookback the percentiles were computed over
 }
 
 // GetMetricBaseline runs the right percentile query for the

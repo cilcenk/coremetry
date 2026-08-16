@@ -46,8 +46,8 @@ func (s *Store) PutSetting(ctx context.Context, key string, value []byte) error 
 type NotificationChannel struct {
 	ID          string          `json:"id"`
 	Name        string          `json:"name"`
-	Type        string          `json:"type"`        // email | slack | webhook
-	Config      json.RawMessage `json:"config"`      // type-specific
+	Type        string          `json:"type"`   // email | slack | webhook
+	Config      json.RawMessage `json:"config"` // type-specific
 	Enabled     bool            `json:"enabled"`
 	MinSeverity string          `json:"minSeverity"` // info | warning | critical
 	// MatchRules — routing predicates. Empty / zero-value
@@ -55,34 +55,34 @@ type NotificationChannel struct {
 	// stays a catch-all. Populated arrays AND together: a
 	// channel only fires when its services / sreTeams /
 	// ownerTeams ALL match the problem's service catalog.
-	MatchRules  ChannelMatchRules `json:"matchRules,omitempty"`
-	CreatedAt   int64           `json:"createdAt"`   // unix ns
+	MatchRules ChannelMatchRules `json:"matchRules,omitempty"`
+	CreatedAt  int64             `json:"createdAt"` // unix ns
 }
 
 // ChannelMatchRules — small predicate set that gates
 // delivery per channel. Each list is "OR within, AND between
 // lists":
-//   • services    = []string of literal service names
-//   • sreTeams    = []string of catalog SRE team names
-//   • ownerTeams  = []string of catalog product owner team names
-//   • clusters    = []string of k8s/openshift cluster names —
+//   - services    = []string of literal service names
+//   - sreTeams    = []string of catalog SRE team names
+//   - ownerTeams  = []string of catalog product owner team names
+//   - clusters    = []string of k8s/openshift cluster names —
 //     matches against the problem's enriched cluster list
 //     (typically populated by EnrichProblemsWithClusters
 //     before the channel fan-out)
-//   • quietHours  = "HH:MM-HH:MM" window during which the
+//   - quietHours  = "HH:MM-HH:MM" window during which the
 //     channel does NOT fire. Empty = always-on. The window
 //     may cross midnight (e.g. "22:00-07:00"); evaluated in
 //     QuietHoursTz which defaults to UTC.
-//   • quietHoursTz = IANA timezone for quietHours (e.g.
+//   - quietHoursTz = IANA timezone for quietHours (e.g.
 //     "Europe/Istanbul"). Empty = UTC.
 //
 // Common operator patterns this supports:
-//   • "Pager rota only for prod-eu-west during business hrs":
+//   - "Pager rota only for prod-eu-west during business hrs":
 //     clusters=[prod-eu-west], quietHours="00:00-08:00",
 //     quietHoursTz="Europe/Istanbul"
-//   • "Staging channel — staging cluster only":
+//   - "Staging channel — staging cluster only":
 //     clusters=[prod-staging]
-//   • "Weekend on-call inbox":
+//   - "Weekend on-call inbox":
 //     ownerTeams=[payments], quietHours empty
 //   - minPriority = "P1" | "P2" | "P3" (boş = hepsi). Kanal YALNIZ bu
 //     triyaj basamağında ya da ÜSTÜNDE olan problemleri alır (v0.9.828):

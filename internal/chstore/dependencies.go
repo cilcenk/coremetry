@@ -492,9 +492,9 @@ func (s *Store) GetDatabaseDetail(
 // carry a SQL-equivalent; the operation (send / receive /
 // process) plus the destination already discriminates work.
 type MessagingDetail struct {
-	System      string  `json:"system"`
-	Cluster     string  `json:"cluster"`
-	Destination string  `json:"destination"`
+	System      string `json:"system"`
+	Cluster     string `json:"cluster"`
+	Destination string `json:"destination"`
 	// AssumedCluster — v0.9.973. The caller sent NO cluster and the handler
 	// filled in "(default)". Set by the API layer, never by this store: only
 	// the handler knows whether the value was supplied or guessed.
@@ -503,11 +503,11 @@ type MessagingDetail struct {
 	// multi-cluster install the guess yields a zeroed drawer for a topic that
 	// is actually busy, and a zeroed drawer is indistinguishable from "this
 	// topic is idle". The flag lets the surface say which one it is.
-	AssumedCluster bool `json:"assumedCluster,omitempty"`
-	SpanCount   uint64  `json:"spanCount"`
-	ErrorCount  uint64  `json:"errorCount"`
-	ErrorRate   float64 `json:"errorRate"`
-	AvgMs       float64 `json:"avgDurationMs"`
+	AssumedCluster bool    `json:"assumedCluster,omitempty"`
+	SpanCount      uint64  `json:"spanCount"`
+	ErrorCount     uint64  `json:"errorCount"`
+	ErrorRate      float64 `json:"errorRate"`
+	AvgMs          float64 `json:"avgDurationMs"`
 	// v0.9.263 — same merge as P99, indices 1 and 2. No extra scan.
 	P50Ms   float64             `json:"p50DurationMs"`
 	P95Ms   float64             `json:"p95DurationMs"`
@@ -746,7 +746,7 @@ func (s *Store) GetMessagingDetail(
 // argIfNeeded returns []any{arg} when the predicate contains a
 // "?" placeholder, otherwise nil. Lets the detail queries share
 // one SQL string between "instance = ?" and the special
-// "(peer_service = ” OR IS NULL)" no-arg branch.
+// "(peer_service = '' OR IS NULL)" no-arg branch.
 func argIfNeeded(predicate string, arg string) []any {
 	if strings.Contains(predicate, "?") {
 		return []any{arg}

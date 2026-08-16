@@ -31,19 +31,23 @@
       "Bash(minikube config get *)",
       "Bash(docker images *)",
       "Bash(docker inspect *)",
-      "Bash(docker ps *)"
+      "Bash(docker ps *)",
+      "Bash(python3 -c ' *)"
     ]
   },
-"hooks": {
-  "PostToolUse": [
-    {
-      "matcher": "Edit|Write|MultiEdit",
-      "hooks": [
-        { "type": "command", "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-check.sh\"" }
-      ]
-    }
-  ]
-},
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/.claude/hooks/post-edit-check.sh\""
+          }
+        ]
+      }
+    ]
+  },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
   }

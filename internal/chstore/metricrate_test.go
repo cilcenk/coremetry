@@ -14,10 +14,10 @@ func fp(v float64) *float64 { return &v }
 
 func TestResetSafeDelta(t *testing.T) {
 	cases := []struct{ prev, cur, want float64 }{
-		{100, 110, 10},   // düz artış
-		{100, 100, 0},    // sabit
-		{120, 5, 5},      // reset (cur<prev) → post-reset değer
-		{0, 42, 42},      // sıfırdan
+		{100, 110, 10}, // düz artış
+		{100, 100, 0},  // sabit
+		{120, 5, 5},    // reset (cur<prev) → post-reset değer
+		{0, 42, 42},    // sıfırdan
 	}
 	for _, c := range cases {
 		if got := resetSafeDelta(c.prev, c.cur); got != c.want {

@@ -300,7 +300,7 @@ func servicesSortExpr(sort, dir string) string {
 // attr (per-operation overrides). We coalesce across all six
 // permutations, resource-first since that's the stable case.
 //
-// Returns ” when no signal is present — callers comparing
+// Returns '' when no signal is present — callers comparing
 // against an empty string skip the row, which is the right
 // behaviour (no-cluster rows belong only in the "All
 // clusters" view).
@@ -317,7 +317,7 @@ const clusterDeriveExpr = `coalesce(
 // clusterColExpr — promoted `cluster` MATERIALIZED kolonunu OKUR, başka
 // bir şey yapmaz.
 //
-// v0.9.692 (perf taraması #3) — ESKİ HÂLİ `coalesce(nullIf(cluster,”),
+// v0.9.692 (perf taraması #3) — ESKİ HÂLİ `coalesce(nullIf(cluster,''),
 // clusterDeriveExpr)` idi ve gerekçesi YANLIŞTI. Yorum şöyle diyordu:
 // "CH short-circuits coalesce, so new parts never pay the indexOf()
 // scan". Kısa devre SATIR YÜRÜTMESİNİ atlar, KOLON OKUMASINI değil:
@@ -1042,7 +1042,7 @@ const latSparkCap = 150
 // normalized op_group shape (group_id rel B) instead of
 // operation_summary_5m keyed by the raw operation name; op_group is
 // aliased back to the OperationSummary.Name field so the read path,
-// scanner, and frontend render identically. The ungrouped ” bucket
+// scanner, and frontend render identically. The ungrouped '' bucket
 // (old/pre-Release-A spans) is excluded so the normalized list stays
 // clean. When normalized is false the behaviour is byte-for-byte the
 // pre-rel-B path.
@@ -1325,7 +1325,7 @@ func operationsUseMV(window time.Duration, env string) bool {
 // normalized=true groups the operations by op_group (the normalized
 // operation-shape column; group_id rel B) instead of the raw operation
 // name — both the MV path (operation_group_summary_5m) and the raw-spans
-// fallback group by op_group and exclude the ungrouped ” bucket. The
+// fallback group by op_group and exclude the ungrouped '' bucket. The
 // OperationSummary.Name field carries the op_group value in that mode, so
 // the scanner, sparkline, and frontend are unchanged. normalized=false is
 // byte-for-byte the pre-rel-B behaviour.
@@ -2137,7 +2137,7 @@ func traceCountSettings(useHLL bool) string {
 // searchHaystack is the per-span text the free-text trace search scans:
 // operation name + HTTP method + route + every span-attr value, space-joined
 // into one string so the operator's words match whichever field carries them.
-// arrayStringConcat on an empty attr_values returns ” (concat is NULL-safe).
+// arrayStringConcat on an empty attr_values returns '' (concat is NULL-safe).
 const searchHaystack = `concat(name, ' ', http_method, ' ', http_route, ' ', arrayStringConcat(attr_values, ' '))`
 
 // searchPredicate builds the per-span free-text match for a query string plus
@@ -2438,7 +2438,7 @@ func (s *Store) GetTraces(ctx context.Context, f TraceFilter) ([]TraceRow, uint6
 // v0.5.351 — root_name/root_svc fallback. When the WHERE
 // filter (service / name search) excludes the real root
 // span (because it lives in a different service or has a
-// different name), anyIf(parent_id=”) returns empty and
+// different name), anyIf(parent_id='') returns empty and
 // the trace row renders blank. Fall back to ANY span's
 // name/service so the operator at least sees a label — the
 // trace detail view still shows the full trace on click.
@@ -2641,7 +2641,7 @@ const traceExtrasChunkIDs = 5000
 
 // TraceExtras fetches the requested attribute keys for an EXPLICIT trace-id
 // set within [from, to] (+slack) and returns them keyed by trace id. Every
-// requested key is present in each returned trace's map (” when absent) so
+// requested key is present in each returned trace's map ('' when absent) so
 // callers can distinguish "fetched, empty" from "not fetched". Id sets past
 // traceExtrasChunkIDs run as sequential chunked queries (export path).
 //
@@ -3969,7 +3969,7 @@ const logsMaxLimit = 1000
 // Dilim-5-class migration this raw-fallback slice deliberately avoids)
 // and WITHOUT the namespace fallbacks (a logs row with neither key is
 // honestly env-less, not namespace-approximated). indexOf() returns 0
-// for a missing key and arr[0] is ” in CH, so absent keys coalesce
+// for a missing key and arr[0] is '' in CH, so absent keys coalesce
 // cleanly. Pinned by TestLogsEnvChainSQL (repo_logs_env_test.go).
 const logsEnvChainSQL = `coalesce(
 			nullIf(res_values[indexOf(res_keys, 'deployment.environment.name')], ''),
@@ -3983,11 +3983,11 @@ const logsEnvChainSQL = `coalesce(
 // stable keyset tiebreak with no stored column / migration.
 //
 // v0.7.23 (SAFE-CORE) — the prior tiebreak was `span_id` (String
-// DEFAULT ”). But (time, span_id) is NOT a total order on the logs
-// table: most log lines are emitted OUTSIDE a span (span_id=”) and
+// DEFAULT ''). But (time, span_id) is NOT a total order on the logs
+// table: most log lines are emitted OUTSIDE a span (span_id='') and
 // DateTime64(9) timestamps collide at billions/day. A page boundary
-// landing inside a run of (t0,”) rows dropped every remaining
-// (t0,”) row on the next page, because `time = t0 AND span_id < ”`
+// landing inside a run of (t0,'') rows dropped every remaining
+// (t0,'') row on the next page, because `time = t0 AND span_id < ''`
 // matches nothing. cityHash64 over the line's identifying columns is
 // effectively unique among same-time rows (64-bit collision ≈ 2^-64),
 // restoring a provable total order on (time, rowKey).
@@ -4083,7 +4083,7 @@ func DecodeLogsCursor(tok string) (LogsCursor, bool) {
 // unique among same-time rows) means the boundary row itself is
 // neither re-returned (dup) nor skipped (drop), and a run of same-time
 // rows can no longer collapse to a single comparable value the way
-// `span_id < ”` did before v0.7.23. Returns ("", nil) when the cursor
+// `span_id < ''` did before v0.7.23. Returns ("", nil) when the cursor
 // is empty so the first page applies no keyset. Pure function for
 // table-driven testing (CLAUDE.md #11).
 func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
@@ -4122,10 +4122,10 @@ func logsKeysetPredicate(c LogsCursor, hasCursor bool) (string, []interface{}) {
 //   - STABLE sort: ORDER BY time DESC, <rowKey> DESC, where rowKey is
 //     a deterministic cityHash64 over the line's identifying columns
 //     (logsRowKeyExpr). v0.7.23 (SAFE-CORE) replaced the span_id
-//     tiebreak: span_id is String DEFAULT ” and most log lines are
+//     tiebreak: span_id is String DEFAULT '' and most log lines are
 //     emitted outside a span, so (time, span_id) was not a total
-//     order — a page boundary inside a run of (t0,”) rows dropped
-//     every remaining (t0,”) row on the next page. The hash makes
+//     order — a page boundary inside a run of (t0,'') rows dropped
+//     every remaining (t0,'') row on the next page. The hash makes
 //     (time, rowKey) a provable total order, so no boundary
 //     drop/dup.
 //   - Keyset cursor paging: when f.Cursor decodes, page strictly

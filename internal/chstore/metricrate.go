@@ -189,7 +189,7 @@ func metricSeriesKeyExpr(hasFp bool) string {
 }
 
 // metricTemporality — metriğin OTLP aggregation temporality'sini probe'lar
-// ('cumulative' | 'delta' | ”). Boş/bilinmeyen → çağıran cumulative sayar
+// ('cumulative' | 'delta' | ''). Boş/bilinmeyen → çağıran cumulative sayar
 // (OTLP default). Bounded (max_execution_time=3, time-pruned).
 func (s *Store) metricTemporality(ctx context.Context, name, service string) string {
 	return s.metricTemporalityFiltered(ctx, name, service, nil)

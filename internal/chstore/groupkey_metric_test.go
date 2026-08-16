@@ -10,7 +10,7 @@ import (
 // http.method is a datapoint-attr array lookup, not a nonexistent column.
 func TestGroupKeyExprMetric(t *testing.T) {
 	cases := []struct {
-		key    string
+		key     string
 		subExpr string // must appear
 		notCol  string // must NOT appear (spans column)
 	}{

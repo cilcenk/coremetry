@@ -27,17 +27,17 @@ import "strings"
 type externalKind string
 
 const (
-	extPayments     externalKind = "payments"
-	extMessaging    externalKind = "messaging"
-	extEmail        externalKind = "email"
-	extAuth         externalKind = "auth"
-	extCDN          externalKind = "cdn"
+	extPayments      externalKind = "payments"
+	extMessaging     externalKind = "messaging"
+	extEmail         externalKind = "email"
+	extAuth          externalKind = "auth"
+	extCDN           externalKind = "cdn"
 	extObservability externalKind = "observability"
-	extCloud        externalKind = "cloud"
-	extAI           externalKind = "ai"
-	extSearch       externalKind = "search"
-	extPushNotif    externalKind = "push"
-	extSMS          externalKind = "sms"
+	extCloud         externalKind = "cloud"
+	extAI            externalKind = "ai"
+	extSearch        externalKind = "search"
+	extPushNotif     externalKind = "push"
+	extSMS           externalKind = "sms"
 )
 
 // extPattern is one row of the catalogue. Substrings tested

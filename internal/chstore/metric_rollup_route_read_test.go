@@ -214,13 +214,13 @@ func TestMetricRollupRoutePlan(t *testing.T) {
 			wantOK: false,
 		},
 		{
-			name: "metrik adı boş RET",
-			f:    mut(func(f *MetricQueryFilter) { f.Name = "" }),
+			name:       "metrik adı boş RET",
+			f:          mut(func(f *MetricQueryFilter) { f.Name = "" }),
 			instrument: "gauge", wantOK: false,
 		},
 		{
-			name: "servis boş RET (terfi de kurtaramadıysa ham)",
-			f:    mut(func(f *MetricQueryFilter) { f.Service = "" }),
+			name:       "servis boş RET (terfi de kurtaramadıysa ham)",
+			f:          mut(func(f *MetricQueryFilter) { f.Service = "" }),
 			instrument: "gauge", wantOK: false,
 		},
 		{

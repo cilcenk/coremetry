@@ -425,14 +425,14 @@ var endpointSplitDims = map[string]string{
 	"deployment.environment": "deploy_env",
 	// Current semconv spelling (≥1.27) — same typed column (v0.8.379).
 	"deployment.environment.name": "deploy_env",
-	"host.name":              "host_name",
-	"http.method":            "http_method",
-	"http.status_code":       "if(http_status = 0, '', toString(http_status))",
-	"status_code":            "status_code",
-	"span.kind":              "kind",
-	"peer.service":           "peer_service",
-	"k8s.pod.name":           "res_values[indexOf(res_keys, 'k8s.pod.name')]",
-	"service.version":        "res_values[indexOf(res_keys, 'service.version')]",
+	"host.name":                   "host_name",
+	"http.method":                 "http_method",
+	"http.status_code":            "if(http_status = 0, '', toString(http_status))",
+	"status_code":                 "status_code",
+	"span.kind":                   "kind",
+	"peer.service":                "peer_service",
+	"k8s.pod.name":                "res_values[indexOf(res_keys, 'k8s.pod.name')]",
+	"service.version":             "res_values[indexOf(res_keys, 'service.version')]",
 }
 
 // EndpointSplitDims returns the whitelisted split-by ids, sorted —

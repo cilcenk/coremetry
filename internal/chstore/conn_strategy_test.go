@@ -98,8 +98,8 @@ func TestTelemetryReadConnCallSurface(t *testing.T) {
 		// span'leri + ebeveynlerinin service_name'i). endpoints_detail.go
 		// ile aynı kaynak, aynı havuz.
 		"endpoints_callers.go": true, // spans
-		"business_dims.go":    true, // spans — kanal/fonksiyon kodu kırılımı (v0.9.511)
-		"trace_count.go":      true, // trace_summary_5m / trace_service_index_5m — tavanlı sayım (v0.9.638)
+		"business_dims.go":     true, // spans — kanal/fonksiyon kodu kırılımı (v0.9.511)
+		"trace_count.go":       true, // trace_summary_5m / trace_service_index_5m — tavanlı sayım (v0.9.638)
 		// v0.9.814 — SAF telemetri: iki FROM'u messaging_summary_5m ve
 		// messaging_caller_summary_5m (ikisi de AggregatingMergeTree
 		// telemetri MV'si, state tablosu DEĞİL). dependencies.go'daki

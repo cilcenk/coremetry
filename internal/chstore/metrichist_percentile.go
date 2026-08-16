@@ -22,7 +22,7 @@ import (
 //     PromQL `histogram_quantile(p, sum by (le, <labels>)(…))`.
 
 // metricInstrument — metriğin OTLP instrument tipini probe'lar
-// ('gauge'|'sum'|'histogram'|'exp_histogram'|”). histogram_quantile routing'i
+// ('gauge'|'sum'|'histogram'|'exp_histogram'|''). histogram_quantile routing'i
 // için. Pencere = sorgunun kendi [from,to]'su: 24s'lik bir histogram son 10dk'da
 // susmuş olsa bile doğru route'a düşer (sabit 10dk boş dönüp value-quantile'a
 // kaymaz). any() ilk satırda kısa devre + max_execution_time=3 = ucuz.

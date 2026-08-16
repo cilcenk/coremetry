@@ -57,8 +57,8 @@ func HasPersistedESSettings(ctx context.Context, store ESSettingsStore) bool {
 // Status 401/403 → ulaşıldı, kimlik reddedildi.
 // Diğer HTTP → ulaşıldı, başka bir yapılandırma sorunu.
 type ESPingError struct {
-	Status    int      // 0 = ağa hiç ulaşılamadı
-	AuthMode  string   // "api-key" | "basic" | "none"
+	Status    int    // 0 = ağa hiç ulaşılamadı
+	AuthMode  string // "api-key" | "basic" | "none"
 	Addresses []string
 	Body      string // ES'in yanıt gövdesi (varsa)
 	Err       error  // taşınan ağ hatası (varsa)

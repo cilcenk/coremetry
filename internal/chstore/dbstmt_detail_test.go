@@ -92,8 +92,8 @@ func TestDBStmtDetailMVSQLShapes(t *testing.T) {
 
 // TestDBStmtDetailWhereOptionalFilters pins that the optional dims stay
 // OUT of the predicate when unset — a stray empty-string equality would
-// silently match nothing (db_system is never ” in the MV: its source
-// filter is db_stmt_hash != 0 ⊂ db_system != ”).
+// silently match nothing (db_system is never '' in the MV: its source
+// filter is db_stmt_hash != 0 ⊂ db_system != '').
 func TestDBStmtDetailWhereOptionalFilters(t *testing.T) {
 	q := DBStmtDetailQuery{
 		Hash: 42,

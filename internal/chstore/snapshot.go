@@ -15,8 +15,8 @@ type TraceSnapshot struct {
 	Token     string `json:"token"`
 	TraceID   string `json:"traceId"`
 	CreatedBy string `json:"createdBy,omitempty"`
-	CreatedAt int64  `json:"createdAt"`           // unix ns
-	ExpiresAt int64  `json:"expiresAt"`           // unix ns
+	CreatedAt int64  `json:"createdAt"` // unix ns
+	ExpiresAt int64  `json:"expiresAt"` // unix ns
 	// LogsJSON — the trace's log lines captured AT SHARE TIME
 	// (v0.8.252), pre-marshalled JSON array. The public viewer serves
 	// this frozen copy: no live logstore query on the anonymous route,

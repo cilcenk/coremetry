@@ -37,11 +37,11 @@ type DBQueryStat struct {
 	// changing row identity would change the row COUNT of a daily triage
 	// table — so the name shown is a representative one, and a count above 1
 	// is surfaced rather than hidden behind an arbitrary any().
-	DBName          string `json:"dbName"`
-	DBNameCount     uint64 `json:"dbNameCount"`
+	DBName      string `json:"dbName"`
+	DBNameCount uint64 `json:"dbNameCount"`
 	// Span counts + latency stats for the bucket.
-	Count      int     `json:"count"`
-	AvgMs      float64 `json:"avgMs"`
+	Count int     `json:"count"`
+	AvgMs float64 `json:"avgMs"`
 	// v0.9.264 — P50 answers "is this query slow for everyone, or is it a
 	// tail problem?", which avg alone can't (avg is dragged by the tail).
 	//
@@ -321,15 +321,15 @@ func (s *Store) getSlowQueriesGlobalMV(
 //
 // The two replaceRegexpAll passes:
 //
-//   1. Replace single-quoted string literals with "?". A
-//      bracketed character class with negation handles
-//      embedded apostrophes badly, but the simple form covers
-//      the vast majority of ORM-emitted SQL — and pathological
-//      cases just produce an extra normalisation cluster
-//      rather than an incorrect result.
-//   2. Replace integer / decimal numeric literals with "?".
-//      Boundary anchors (\\b) prevent munging column names
-//      that happen to end in digits ("col1" stays intact).
+//  1. Replace single-quoted string literals with "?". A
+//     bracketed character class with negation handles
+//     embedded apostrophes badly, but the simple form covers
+//     the vast majority of ORM-emitted SQL — and pathological
+//     cases just produce an extra normalisation cluster
+//     rather than an incorrect result.
+//  2. Replace integer / decimal numeric literals with "?".
+//     Boundary anchors (\\b) prevent munging column names
+//     that happen to end in digits ("col1" stays intact).
 //
 // IN-list collapse and parameter-binding placeholders ($1 / ?N)
 // are left as-is — they're not literals, they're already

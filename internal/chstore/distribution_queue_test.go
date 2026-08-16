@@ -193,10 +193,10 @@ func TestDistributionVerdict(t *testing.T) {
 			// KURAL 3: "ölçemedim" iyileşme SAYILMAZ ve yerleşik arızayı
 			// TEMİZLEMEZ. Bu olmadan, probe'un düştüğü her tur sayacı
 			// ilerletir ve arıza 90 sn'de kendini "iyileşti" ilan ederdi.
-			name: "histerezis — ölçülemeyen örnek arızayı temizlemez",
-			in:   DistributionState{Degraded: true, Recovering: 2},
-			cur:  &DistributionQueue{Measured: false, ProbeError: "context deadline exceeded"},
-			prev: measured(44320, 1505),
+			name:         "histerezis — ölçülemeyen örnek arızayı temizlemez",
+			in:           DistributionState{Degraded: true, Recovering: 2},
+			cur:          &DistributionQueue{Measured: false, ProbeError: "context deadline exceeded"},
+			prev:         measured(44320, 1505),
 			wantDegraded: true, wantRecovering: 0, wantDetail: "son bilinen arıza hâli KORUNUYOR",
 		},
 		{
@@ -560,7 +560,7 @@ func TestLastErrorHintAge(t *testing.T) {
 	t.Run("zamanlı istisna yaşıyla basılır", func(t *testing.T) {
 		got := lastErrorHint([]DistributionQueueEntry{{
 			Table: "metric_points", Files: 100,
-			LastError: "Code: 241. DB::Exception: memory limit exceeded",
+			LastError:     "Code: 241. DB::Exception: memory limit exceeded",
 			LastErrorAtNs: now - sixteenDays,
 		}}, now)
 		if !strings.Contains(got, "Son hata (16 gün önce):") {

@@ -10,13 +10,13 @@ import (
 // tuning report — operators looking to silence prod alert spam
 // scan this list to find the loudest rules and tighten them.
 type NoisyRule struct {
-	RuleID         string  `json:"ruleId"`
-	RuleName       string  `json:"ruleName"`
-	Severity       string  `json:"severity"`
-	OpenCount      uint64  `json:"openCount"`
-	MedianDurSec   float64 `json:"medianDurSec"`
-	LastFiredNs    int64   `json:"lastFiredNs"`
-	TotalDurSec    float64 `json:"totalDurSec"`
+	RuleID       string  `json:"ruleId"`
+	RuleName     string  `json:"ruleName"`
+	Severity     string  `json:"severity"`
+	OpenCount    uint64  `json:"openCount"`
+	MedianDurSec float64 `json:"medianDurSec"`
+	LastFiredNs  int64   `json:"lastFiredNs"`
+	TotalDurSec  float64 `json:"totalDurSec"`
 }
 
 // NoisyRules returns rules ranked by problem-open count over

@@ -12,8 +12,9 @@ import (
 // (code 241, operator-reported prod OOM); quantilesTDigestState is ~4.3 KiB/row
 // and parallel-safe. This test pins both halves of the contract so a future
 // edit can't silently regress to the reservoir aggregate:
-//   1. NO MV DDL emits the reservoir `quantilesState(` into duration_q_state.
-//   2. The TDigest form IS present.
+//  1. NO MV DDL emits the reservoir `quantilesState(` into duration_q_state.
+//  2. The TDigest form IS present.
+//
 // Verified live on CH 24.8: migration probe flips reservoir→TDigest, p99 within
 // 0.15% of the reservoir, full-parallelism read fits where the reservoir OOM'd.
 func TestMVDDLUsesTDigestState(t *testing.T) {

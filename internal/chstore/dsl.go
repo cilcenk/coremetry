@@ -136,12 +136,18 @@ func parseDSLLine(line string) (FilterExpr, error) {
 
 func normalizeDSLOp(op string) string {
 	switch op {
-	case "~":          return "LIKE"
-	case "!~":         return "NOT LIKE"
-	case "in":         return "IN"
-	case "not in":     return "NOT IN"
-	case "exists":     return "EXISTS"
-	case "not exists": return "NOT EXISTS"
+	case "~":
+		return "LIKE"
+	case "!~":
+		return "NOT LIKE"
+	case "in":
+		return "IN"
+	case "not in":
+		return "NOT IN"
+	case "exists":
+		return "EXISTS"
+	case "not exists":
+		return "NOT EXISTS"
 	}
 	return strings.ToUpper(op)
 }
@@ -156,7 +162,9 @@ func unquote(s string) string {
 // parseDurationToMs accepts "500ms", "1.5s", "2m", or a plain number (treated
 // as ms). Anything unparseable comes back unchanged so the caller can reject it.
 func parseDurationToMs(s string) string {
-	if s == "" { return s }
+	if s == "" {
+		return s
+	}
 	if d, err := time.ParseDuration(s); err == nil {
 		return strconv.FormatFloat(float64(d)/float64(time.Millisecond), 'f', -1, 64)
 	}
@@ -173,7 +181,9 @@ func splitOutsideQuotes(s string, sep byte) []string {
 		c := s[i]
 		switch {
 		case inQ != 0:
-			if c == inQ { inQ = 0 }
+			if c == inQ {
+				inQ = 0
+			}
 		case c == '"' || c == '\'':
 			inQ = c
 		case c == sep:

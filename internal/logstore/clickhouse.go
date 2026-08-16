@@ -37,11 +37,11 @@ func (s *CHStore) Search(ctx context.Context, f Filter) (*Page, error) {
 		SpanID:      f.SpanID,
 		HasTrace:    f.HasTrace, // v0.8.406 — trace-only filter
 
-		Limit:       f.Limit,
-		Offset:      f.Offset,
-		Cursor:      f.Cursor, // v0.7.22 — opaque CH keyset token round-trip
-		Ascending:   f.Ascending, // v0.7.83 — oldest-first for Context "after"
-		SinceNs:     f.SinceNs,   // v0.8.x — forward-tail (live-tail SSE)
+		Limit:     f.Limit,
+		Offset:    f.Offset,
+		Cursor:    f.Cursor,    // v0.7.22 — opaque CH keyset token round-trip
+		Ascending: f.Ascending, // v0.7.83 — oldest-first for Context "after"
+		SinceNs:   f.SinceNs,   // v0.8.x — forward-tail (live-tail SSE)
 	})
 	if err != nil {
 		return nil, err
@@ -152,6 +152,7 @@ const chLogsAttrLookupExpr = `coalesce(
 //     DEBUG*, TRACE*; any other non-empty text → OTHER.
 //   - text empty: OTel severity_number ranges — ERROR 17-24,
 //     WARN 13-16, INFO 9-12, DEBUG 5-8, TRACE 1-4; 0/>24 → OTHER.
+//
 // Shape-tested in clickhouse_severity_band_test.go.
 const chSeverityBandExpr = `multiIf(
 		startsWith(upper(severity_text), 'FATAL') OR startsWith(upper(severity_text), 'ERR'), 'ERROR',
@@ -669,4 +670,3 @@ func (s *CHStore) TraceContextDiagnostics(ctx context.Context) (*TraceContextRep
 	}
 	return rep, nil
 }
-

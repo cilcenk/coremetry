@@ -110,7 +110,7 @@ func TestBuildQueryUsesKeywordForExactFilters(t *testing.T) {
 	// invariant this test pins is: every bare term rides with its
 	// exists-guard; the .keyword term stays primary.
 	cases := []struct {
-		name      string
+		name        string
 		keywordTerm string
 		guard       string
 	}{

@@ -24,10 +24,10 @@ func decodeBody(t *testing.T, b []byte) map[string]any {
 
 func TestInjectRawSearchGuards(t *testing.T) {
 	tests := []struct {
-		name     string
-		body     string
-		cap      int
-		check    func(t *testing.T, m map[string]any, raw []byte)
+		name  string
+		body  string
+		cap   int
+		check func(t *testing.T, m map[string]any, raw []byte)
 	}{
 		{
 			name: "guards injected into a bare query",

@@ -6,14 +6,14 @@
 // Kök neden ÜÇ ayrı katman ve her biri tek başına düzeltilirse ya işe
 // yaramaz ya da YANLIŞ sonuç verir:
 //
-//	1. Kolon ifadesi BÜYÜK harf okuyordu:
-//	   MATERIALIZED attr_values[indexOf(attr_keys, 'CHANNEL_CODE')]
-//	   Prod ise KÜÇÜK harf yazıyor ('channel_code' — operatör ölçümü,
-//	   10 dakikada 2.67M span). Yani kolon v0.9.198'den beri HEP BOŞTU.
-//	2. Yönlendirme haritası da BÜYÜK harf anahtarlıydı ve arama tam
-//	   eşleşme (repo.go traceExtrasProjection / business_dims.go) —
-//	   küçük harf anahtar hiç eşleşmiyordu.
-//	3. Filtre yolu (filterexpr.go) haritaya HİÇ bakmıyordu.
+//  1. Kolon ifadesi BÜYÜK harf okuyordu:
+//     MATERIALIZED attr_values[indexOf(attr_keys, 'CHANNEL_CODE')]
+//     Prod ise KÜÇÜK harf yazıyor ('channel_code' — operatör ölçümü,
+//     10 dakikada 2.67M span). Yani kolon v0.9.198'den beri HEP BOŞTU.
+//  2. Yönlendirme haritası da BÜYÜK harf anahtarlıydı ve arama tam
+//     eşleşme (repo.go traceExtrasProjection / business_dims.go) —
+//     küçük harf anahtar hiç eşleşmiyordu.
+//  3. Filtre yolu (filterexpr.go) haritaya HİÇ bakmıyordu.
 //
 // Bu dosya (1) ve (2)'yi kapatıyor; (3) ayrı bir dilim, çünkü kolon
 // doğru dolmadan filtreyi oraya yönlendirmek BOŞ sonuç verir.

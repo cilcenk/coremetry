@@ -40,7 +40,7 @@ type EndpointRow struct {
 	// CTE approximated window p99 as max(per-bucket p99)) plus
 	// req/min throughput (calls / window minutes) so the operator
 	// compares endpoints across window widths.
-	P50Ms     float64 `json:"p50Ms"`
+	P50Ms float64 `json:"p50Ms"`
 	// P90Ms (v0.9.305) — the percentile between "typical" and "tail".
 	// The MV already produced it; only the raw path's quantile family
 	// had to be widened to expose it.
@@ -62,7 +62,7 @@ type EndpointRow struct {
 	// Kind (v0.9.313, brief N1) — the entry span's kind on the RPC tab
 	// ("server" for gRPC, "consumer" for a queue). Empty on the HTTP
 	// tab, where the kind is implied by the route.
-	Kind string `json:"kind,omitempty"`
+	Kind         string `json:"kind,omitempty"`
 	SlowTraceID  string `json:"slowTraceId,omitempty"`
 	ErrorTraceID string `json:"errorTraceId,omitempty"`
 	// v0.5.370 — call-rate sparkline (≤ SparklineBuckets slots across
@@ -98,10 +98,10 @@ type EndpointRow struct {
 	// Frontend derives the % delta arrows + colour. Zero when
 	// the (service, path) didn't exist in the prior window — UI
 	// renders these as "NEW" instead of "+∞%".
-	PriorCalls   uint64  `json:"priorCalls,omitempty"`
-	PriorErrors  uint64  `json:"priorErrors,omitempty"`
-	PriorAvgMs   float64 `json:"priorAvgMs,omitempty"`
-	PriorP99Ms   float64 `json:"priorP99Ms,omitempty"`
+	PriorCalls  uint64  `json:"priorCalls,omitempty"`
+	PriorErrors uint64  `json:"priorErrors,omitempty"`
+	PriorAvgMs  float64 `json:"priorAvgMs,omitempty"`
+	PriorP99Ms  float64 `json:"priorP99Ms,omitempty"`
 }
 
 // opSig* are the read-time ID-collapsing regexes for the Endpoints
@@ -172,10 +172,10 @@ const (
 // the arg list outgrew a flat signature when server-side sort +
 // the MV/raw dispatch landed.
 type EndpointsQuery struct {
-	From, To    time.Time
-	Service     string
-	Search      string
-	Cluster     string
+	From, To time.Time
+	Service  string
+	Search   string
+	Cluster  string
 	// Env narrows to spans.deploy_env — the global Topbar env picker
 	// (v0.8.385, env-separation Phase 2). Like Cluster it forces the
 	// raw-spans path: spanmetrics_1m carries no env dimension and the

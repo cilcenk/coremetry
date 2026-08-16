@@ -49,7 +49,7 @@ import (
 // host clock skew can put a consumer start before the producer end, and a
 // negative "latency" reads as a bug, not as skew.
 type MsgE2E struct {
-	Count    uint64        `json:"count"`              // correlated produce→consume pairs in window
+	Count    uint64        `json:"count"` // correlated produce→consume pairs in window
 	P50Ms    float64       `json:"p50Ms"`
 	P95Ms    float64       `json:"p95Ms"`
 	P99Ms    float64       `json:"p99Ms"`

@@ -25,14 +25,14 @@ const runtimeAttrCond = `(has(res_keys, 'telemetry.sdk.language') OR has(res_key
 // frontend renders whatever is non-empty in priority order:
 // language + runtime version > runtime name > SDK version.
 type ServiceRuntime struct {
-	Language        string `json:"language,omitempty"`        // telemetry.sdk.language: "go", "java", "dotnet", "nodejs", "python"
-	SDKVersion      string `json:"sdkVersion,omitempty"`      // telemetry.sdk.version
-	RuntimeName     string `json:"runtimeName,omitempty"`     // process.runtime.name: "OpenJDK Runtime Environment", "go", ".NET"
-	RuntimeVersion  string `json:"runtimeVersion,omitempty"`  // process.runtime.version: "21.0.1+12", "go1.22.5", "8.0.4"
-	RuntimeDesc     string `json:"runtimeDesc,omitempty"`     // process.runtime.description: full free-text
-	Host            string `json:"host,omitempty"`            // host.name (last seen)
-	OS              string `json:"os,omitempty"`              // os.type
-	Service         string `json:"service"`                   // pass-through
+	Language       string `json:"language,omitempty"`       // telemetry.sdk.language: "go", "java", "dotnet", "nodejs", "python"
+	SDKVersion     string `json:"sdkVersion,omitempty"`     // telemetry.sdk.version
+	RuntimeName    string `json:"runtimeName,omitempty"`    // process.runtime.name: "OpenJDK Runtime Environment", "go", ".NET"
+	RuntimeVersion string `json:"runtimeVersion,omitempty"` // process.runtime.version: "21.0.1+12", "go1.22.5", "8.0.4"
+	RuntimeDesc    string `json:"runtimeDesc,omitempty"`    // process.runtime.description: full free-text
+	Host           string `json:"host,omitempty"`           // host.name (last seen)
+	OS             string `json:"os,omitempty"`             // os.type
+	Service        string `json:"service"`                  // pass-through
 }
 
 // GetAllServiceRuntimes returns the technology fingerprint
@@ -100,13 +100,13 @@ func (s *Store) GetAllServiceRuntimes(ctx context.Context) (map[string]ServiceRu
 			}
 			return ""
 		}
-		rt.Language       = pick("telemetry.sdk.language")
-		rt.SDKVersion     = pick("telemetry.sdk.version")
-		rt.RuntimeName    = pick("process.runtime.name")
+		rt.Language = pick("telemetry.sdk.language")
+		rt.SDKVersion = pick("telemetry.sdk.version")
+		rt.RuntimeName = pick("process.runtime.name")
 		rt.RuntimeVersion = pick("process.runtime.version")
-		rt.RuntimeDesc    = pick("process.runtime.description")
-		rt.Host           = pick("host.name")
-		rt.OS             = pick("os.type")
+		rt.RuntimeDesc = pick("process.runtime.description")
+		rt.Host = pick("host.name")
+		rt.OS = pick("os.type")
 		out[name] = rt
 	}
 	return out, rows.Err()
@@ -164,12 +164,12 @@ func (s *Store) GetServiceRuntime(ctx context.Context, service string, asOf time
 		}
 		return ""
 	}
-	out.Language       = pick("telemetry.sdk.language")
-	out.SDKVersion     = pick("telemetry.sdk.version")
-	out.RuntimeName    = pick("process.runtime.name")
+	out.Language = pick("telemetry.sdk.language")
+	out.SDKVersion = pick("telemetry.sdk.version")
+	out.RuntimeName = pick("process.runtime.name")
 	out.RuntimeVersion = pick("process.runtime.version")
-	out.RuntimeDesc    = pick("process.runtime.description")
-	out.Host           = pick("host.name")
-	out.OS             = pick("os.type")
+	out.RuntimeDesc = pick("process.runtime.description")
+	out.Host = pick("host.name")
+	out.OS = pick("os.type")
 	return out, nil
 }

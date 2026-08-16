@@ -19,7 +19,7 @@ import (
 type APIToken struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	Role      string `json:"role"` // admin | editor | viewer
+	Role      string `json:"role"`   // admin | editor | viewer
 	Prefix    string `json:"prefix"` // cmk_ab12… (ilk 10 kr) — listede tanıma için
 	TokenHash string `json:"-"`
 	CreatedBy string `json:"createdBy"`

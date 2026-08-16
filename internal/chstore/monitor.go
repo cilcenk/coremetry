@@ -39,12 +39,12 @@ import (
 type Monitor struct {
 	ID             string `json:"id"`
 	Name           string `json:"name"`
-	Type           string `json:"type"`            // http | tcp | ssl-cert | keyword | heartbeat
-	URL            string `json:"url,omitempty"`   // http + keyword
+	Type           string `json:"type"`          // http | tcp | ssl-cert | keyword | heartbeat
+	URL            string `json:"url,omitempty"` // http + keyword
 	Method         string `json:"method,omitempty"`
 	ExpectedStatus uint16 `json:"expectedStatus,omitempty"`
 	TimeoutSec     uint16 `json:"timeoutSec,omitempty"`
-	IntervalSec    uint32 `json:"intervalSec"`     // active probe interval OR heartbeat grace window
+	IntervalSec    uint32 `json:"intervalSec"` // active probe interval OR heartbeat grace window
 	Enabled        bool   `json:"enabled"`
 	HeartbeatToken string `json:"heartbeatToken,omitempty"`
 	Target         string `json:"target,omitempty"`        // tcp + ssl-cert (host:port)
@@ -56,8 +56,8 @@ type Monitor struct {
 
 type MonitorResult struct {
 	MonitorID string `json:"monitorId"`
-	Time      int64  `json:"time"`        // unix ns
-	Status    string `json:"status"`      // up | down | degraded
+	Time      int64  `json:"time"`   // unix ns
+	Status    string `json:"status"` // up | down | degraded
 	LatencyMs int64  `json:"latencyMs"`
 	HTTPCode  uint16 `json:"httpCode,omitempty"`
 	Message   string `json:"message,omitempty"`
@@ -240,11 +240,11 @@ func (s *Store) LastMonitorStatus(ctx context.Context) (map[string]MonitorResult
 // latency over the same windows. Computed in a single CH query so a
 // big fleet of monitors doesn't fan out into N round-trips.
 type MonitorStats struct {
-	Uptime1h        float64 `json:"uptime1h"`        // 0..100
-	Uptime24h       float64 `json:"uptime24h"`       // 0..100
+	Uptime1h        float64 `json:"uptime1h"`  // 0..100
+	Uptime24h       float64 `json:"uptime24h"` // 0..100
 	AvgLatencyMs1h  int64   `json:"avgLatencyMs1h"`
 	AvgLatencyMs24h int64   `json:"avgLatencyMs24h"`
-	Probes24h       int64   `json:"probes24h"`       // sample size for 24h numbers
+	Probes24h       int64   `json:"probes24h"` // sample size for 24h numbers
 }
 
 // MonitorStatsAll returns the rollup for every monitor that has at
@@ -275,8 +275,8 @@ func (s *Store) MonitorStatsAll(ctx context.Context) (map[string]MonitorStats, e
 	out := map[string]MonitorStats{}
 	for rows.Next() {
 		var (
-			id                              string
-			p1, u1, p24, u24, lat1, lat24   int64
+			id                            string
+			p1, u1, p24, u24, lat1, lat24 int64
 		)
 		if err := rows.Scan(&id, &p1, &u1, &p24, &u24, &lat1, &lat24); err != nil {
 			return nil, err

@@ -94,7 +94,7 @@ func exFragments(hasCols bool) exFrag {
 }
 
 type ExceptionFilter struct {
-	Service  string
+	Service string
 	// Services — ÇOKLU servis kapsamı (v0.9.650). Bir TAKIMIN tüm
 	// servislerini tek sorguda taramak için: takım başına N ayrı
 	// GetExceptions çağrısı, servis sayısıyla doğrusal büyüyen bir

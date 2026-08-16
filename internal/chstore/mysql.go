@@ -21,17 +21,17 @@ import (
 //     → index efficiency proxy
 //   - Replica delay (seconds behind master) → replication health
 type MySQLMetrics struct {
-	Instance       string         `json:"instance"`
-	Status         string         `json:"status"`
-	WindowSeconds  float64        `json:"windowSeconds"`
-	Threads        MySQLThreads   `json:"threads"`
-	Connections    PGGaugeWithCap `json:"connections"`
-	QuestionsPS    float64        `json:"questionsPerSec"`
-	SlowQueriesPS  float64        `json:"slowQueriesPerSec"`
-	RowLockWaitsPS float64        `json:"rowLockWaitsPerSec"`
-	RowLockTimeSec float64        `json:"rowLockTimeSec"`
-	TmpDiskPS      float64        `json:"tmpDiskTablesPerSec"`
-	OpenedTblPS    float64        `json:"openedTablesPerSec"`
+	Instance       string          `json:"instance"`
+	Status         string          `json:"status"`
+	WindowSeconds  float64         `json:"windowSeconds"`
+	Threads        MySQLThreads    `json:"threads"`
+	Connections    PGGaugeWithCap  `json:"connections"`
+	QuestionsPS    float64         `json:"questionsPerSec"`
+	SlowQueriesPS  float64         `json:"slowQueriesPerSec"`
+	RowLockWaitsPS float64         `json:"rowLockWaitsPerSec"`
+	RowLockTimeSec float64         `json:"rowLockTimeSec"`
+	TmpDiskPS      float64         `json:"tmpDiskTablesPerSec"`
+	OpenedTblPS    float64         `json:"openedTablesPerSec"`
 	BufferPool     MySQLBufferPool `json:"bufferPool"`
 	HandlersPS     MySQLHandlers   `json:"handlers"`
 	RowOpsPS       MySQLRowOps     `json:"rowOps"`
@@ -41,7 +41,7 @@ type MySQLMetrics struct {
 	// receiver-side parity with Oracle's V$SQL TopSQL. Empty when
 	// the operator hasn't enabled the performance_schema statement
 	// scrape — panel renders an empty state.
-	TopSQL         []DBTopSQL      `json:"topSQL"`
+	TopSQL []DBTopSQL `json:"topSQL"`
 }
 
 // MySQLThreads — running vs connected says how many of the
@@ -56,12 +56,12 @@ type MySQLThreads struct {
 // is the "how dirty is the cache" signal; usage_pct shows
 // whether the operator should grow innodb_buffer_pool_size.
 type MySQLBufferPool struct {
-	PagesData    float64 `json:"pagesData"`
-	PagesDirty   float64 `json:"pagesDirty"`
-	PagesFree    float64 `json:"pagesFree"`
-	PagesTotal   float64 `json:"pagesTotal"`
-	UsagePct     float64 `json:"usagePct"`
-	DirtyPct     float64 `json:"dirtyPct"`
+	PagesData  float64 `json:"pagesData"`
+	PagesDirty float64 `json:"pagesDirty"`
+	PagesFree  float64 `json:"pagesFree"`
+	PagesTotal float64 `json:"pagesTotal"`
+	UsagePct   float64 `json:"usagePct"`
+	DirtyPct   float64 `json:"dirtyPct"`
 }
 
 // MySQLHandlers — read_first / read_key are index-driven;

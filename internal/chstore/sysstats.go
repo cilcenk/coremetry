@@ -16,15 +16,15 @@ import (
 // scans for distinct service / operation counts. Designed to stay
 // sub-second even at 40M traces / day.
 type SystemStats struct {
-	Snapshot  SystemSnapshot `json:"snapshot"`
-	Tables    []TableStat    `json:"tables"`
+	Snapshot SystemSnapshot `json:"snapshot"`
+	Tables   []TableStat    `json:"tables"`
 	// Disks (v0.9.289, operator ask) — the CAPACITY of the volumes
 	// ClickHouse writes to, which is a different question from Tables
 	// above. Tables says how much room Coremetry's data occupies;
 	// Disks says how much room is left. Retention settings are only
 	// meaningful against the second one, and until now the operator had
 	// to ssh to the node to find it.
-	Disks     []DiskStat     `json:"disks"`
+	Disks []DiskStat `json:"disks"`
 	// Servers (v0.9.290, operator ask) — live memory/CPU pressure per
 	// ClickHouse node, alongside the disk capacity above.
 	Servers   []ServerStat   `json:"servers"`
@@ -137,6 +137,7 @@ type SystemHealth struct {
 //     (producer outran the CH writer — backpressure overflow).
 //   - WriteFailed: the ClickHouse insert errored and the batch was dropped,
 //     not retried (silent loss the flusher only logged before v0.8.x).
+//
 // Populated by the API getSystemStats handler from the live consumers;
 // GetSystemStats (CH-only) leaves it zero so chstore keeps no otlp dependency.
 type IngestDrops struct {
@@ -302,14 +303,14 @@ func (d DiskStat) UsedPct() float64 {
 }
 
 type TableStat struct {
-	Table            string `json:"table"`
-	Rows             uint64 `json:"rows"`
-	BytesOnDisk      uint64 `json:"bytesOnDisk"`
-	CompressedBytes  uint64 `json:"compressedBytes"`
+	Table             string `json:"table"`
+	Rows              uint64 `json:"rows"`
+	BytesOnDisk       uint64 `json:"bytesOnDisk"`
+	CompressedBytes   uint64 `json:"compressedBytes"`
 	UncompressedBytes uint64 `json:"uncompressedBytes"`
-	Parts            uint32 `json:"parts"`
-	OldestNs         int64  `json:"oldestNs"`
-	NewestNs         int64  `json:"newestNs"`
+	Parts             uint32 `json:"parts"`
+	OldestNs          int64  `json:"oldestNs"`
+	NewestNs          int64  `json:"newestNs"`
 }
 
 // DayStat is one bucket in the 30-day history chart. Spans / errors

@@ -29,10 +29,10 @@ import (
 //     compression. ColumnA can be 10x more rows than ColumnB but
 //     compress 50x better — only system.columns tells the truth.
 type CardinalityReport struct {
-	Services   []TopRow      `json:"services"`   // top services by 24h span count
-	Metrics    []TopRow      `json:"metrics"`    // top metrics by 24h point count
-	AttrKeys   []AttrKeyRow  `json:"attrKeys"`   // top attribute keys by cardinality
-	Columns    []ColumnRow   `json:"columns"`    // top columns by compressed bytes
+	Services    []TopRow     `json:"services"` // top services by 24h span count
+	Metrics     []TopRow     `json:"metrics"`  // top metrics by 24h point count
+	AttrKeys    []AttrKeyRow `json:"attrKeys"` // top attribute keys by cardinality
+	Columns     []ColumnRow  `json:"columns"`  // top columns by compressed bytes
 	GeneratedAt int64        `json:"generatedAt"`
 }
 
@@ -52,11 +52,11 @@ type AttrKeyRow struct {
 }
 
 type ColumnRow struct {
-	Table            string `json:"table"`
-	Column           string `json:"column"`
-	CompressedBytes  uint64 `json:"compressedBytes"`
-	UncompressedBytes uint64 `json:"uncompressedBytes"`
-	CompressionRatio float64 `json:"compressionRatio"`
+	Table             string  `json:"table"`
+	Column            string  `json:"column"`
+	CompressedBytes   uint64  `json:"compressedBytes"`
+	UncompressedBytes uint64  `json:"uncompressedBytes"`
+	CompressionRatio  float64 `json:"compressionRatio"`
 }
 
 // GetCardinality runs four bounded queries serially. The HTTP

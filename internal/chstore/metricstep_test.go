@@ -14,10 +14,10 @@ func TestMetricAutoStepPx(t *testing.T) {
 	span := func(d time.Duration) (time.Time, time.Time) { return base, base.Add(d) }
 
 	tests := []struct {
-		name    string
-		dur     time.Duration
-		maxDP   int
-		want    int
+		name  string
+		dur   time.Duration
+		maxDP int
+		want  int
 	}{
 		// px unknown → fixed ladder (metricAutoStep, pre-F1 behavior)
 		{"px0 → ladder 1h=30s", time.Hour, 0, 30},

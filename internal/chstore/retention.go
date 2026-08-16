@@ -175,7 +175,7 @@ func (s *Store) SetRetention(ctx context.Context, sp RetentionSpec, actor string
 // So the exemplar COLUMNS get a column-level TTL riding retention.spans
 // while the row TTL keeps the aggregate history. Verified on CH 24.8: a row
 // past the column TTL but inside the row TTL keeps countMerge/quantiles and
-// returns ” for the exemplar.
+// returns '' for the exemplar.
 //
 // The shorter tiers (10s → 2d, 1s → 6h) can't produce a dead link today —
 // they expire before spans — but they're listed anyway: the column TTL is a

@@ -123,8 +123,8 @@ func TestTraceExtrasBounds_AndSlack(t *testing.T) {
 	t0 := time.Date(2026, 7, 20, 9, 0, 0, 0, time.UTC)
 	rows := []TraceRow{
 		{TraceID: "a", StartTime: t0.Add(10 * time.Minute).UnixNano(), DurationMs: 250},
-		{TraceID: "b", StartTime: t0.UnixNano(), DurationMs: 1000},                                   // earliest start
-		{TraceID: "c", StartTime: t0.Add(5 * time.Minute).UnixNano(), DurationMs: 20 * 60 * 1000},   // latest end (25m)
+		{TraceID: "b", StartTime: t0.UnixNano(), DurationMs: 1000},                                // earliest start
+		{TraceID: "c", StartTime: t0.Add(5 * time.Minute).UnixNano(), DurationMs: 20 * 60 * 1000}, // latest end (25m)
 	}
 	from, to := traceExtrasBounds(rows)
 	if !from.Equal(t0) {

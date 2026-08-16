@@ -13,13 +13,13 @@ import (
 // derived entirely from metric_points grouped by host_name. No raw-spans
 // scan — invariant #3 stays intact (metric_points is small vs spans).
 type ServiceInstance struct {
-	ID       string  `json:"id"`        // host_name (pod identity)
-	Zone     string  `json:"zone"`      // cloud.availability_zone / k8s zone res-attr, "" if absent
-	CPUPct   float64 `json:"cpuPct"`    // 0-100 (utilization fraction × 100)
-	MemBytes float64 `json:"memBytes"`  // latest RSS / used bytes
-	MemPct   float64 `json:"memPct"`    // 0-100 when a memory limit is reported, else 0
-	Up       bool    `json:"up"`        // saw a sample within the freshness window
-	LastSeen int64   `json:"lastSeen"`  // unix ns of the most recent sample
+	ID       string  `json:"id"`       // host_name (pod identity)
+	Zone     string  `json:"zone"`     // cloud.availability_zone / k8s zone res-attr, "" if absent
+	CPUPct   float64 `json:"cpuPct"`   // 0-100 (utilization fraction × 100)
+	MemBytes float64 `json:"memBytes"` // latest RSS / used bytes
+	MemPct   float64 `json:"memPct"`   // 0-100 when a memory limit is reported, else 0
+	Up       bool    `json:"up"`       // saw a sample within the freshness window
+	LastSeen int64   `json:"lastSeen"` // unix ns of the most recent sample
 }
 
 // Per-pod source candidates — fraction-based CPU utilisation (×100 = %),

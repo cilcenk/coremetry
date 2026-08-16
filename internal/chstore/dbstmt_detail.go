@@ -33,6 +33,7 @@ package chstore
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 )
 
@@ -325,6 +326,23 @@ func (s *Store) DBStmtExemplars(ctx context.Context, q DBStmtDetailQuery) (slowT
 	if !s.hasDBStmtHashCol {
 		return "", "", nil
 	}
+	// v0.9.1097 (0.5 Alternatif-B) — MV-önce: statement class'ı servisler
+	// arası olduğundan ham tarama service_name predicate'i koyamıyor (PK
+	// prefix yok; audit §5.3: 1B span/gün'de 24h ≈ 22s). MV iki soruyu
+	// tek küçük sorguda cevaplar. Boş cevap ham fallback'e DÜŞER: upgrade
+	// öncesi kovalar state taşımıyor olabilir — "MV'de yok"u "hiç yok"
+	// sanmak yanlış negatif üretirdi.
+	if s.hasDBStmtExemplarCols {
+		if slow, errTid, mvErr := s.dbStmtExemplarsFromMV(ctx, q); mvErr == nil && (slow != "" || errTid != "") {
+			return slow, errTid, nil
+		} else if mvErr != nil {
+			log.Printf("[chstore] dbstmt exemplar MV okuması düştü, ham fallback: %v", mvErr)
+		}
+	}
+	// Ham fallback pencere KELEPÇELİ (v0.9.1097): exemplar süstür, trend
+	// 90 güne dek pencere taşıyabilir — kelepçesiz ham tarama audit'in
+	// timeout-"veri yok" sınıfının ta kendisiydi.
+	q.From, q.To = clampExemplarWindow(q.From, q.To)
 	for _, target := range []struct {
 		errorOnly bool
 		dst       *string
@@ -348,4 +366,42 @@ func (s *Store) DBStmtExemplars(ctx context.Context, q DBStmtDetailQuery) (slowT
 		}
 	}
 	return slowTraceID, errorTraceID, nil
+}
+
+// dbStmtExemplarMVSQL — MV okuma metni (saf, shape-testli). Finalizer
+// ÇİFTLERİ sözleşmenin parçası: argMaxState↔argMaxMerge,
+// argMaxIfState↔argMaxIfMerge (endpoints_detail emsali; yanlış eş
+// sessizce boş döner).
+const dbStmtExemplarMVSQL = `
+		SELECT argMaxMerge(slow_exemplar_state)    AS slow_tid,
+		       argMaxIfMerge(error_exemplar_state) AS err_tid
+		FROM db_statement_summary_5m
+		WHERE stmt_hash = ?
+		  AND time_bucket >= toStartOfInterval(?, INTERVAL 5 MINUTE)
+		  AND time_bucket <= ?
+		SETTINGS max_execution_time = 10`
+
+func (s *Store) dbStmtExemplarsFromMV(ctx context.Context, q DBStmtDetailQuery) (slowTraceID, errorTraceID string, err error) {
+	sql := dbStmtExemplarMVSQL
+	args := []any{q.Hash, q.From, q.To}
+	if q.DBSystem != "" {
+		sql = strings.Replace(sql, "WHERE stmt_hash = ?", "WHERE db_system = ? AND stmt_hash = ?", 1)
+		args = append([]any{q.DBSystem}, args...)
+	}
+	if err := s.telemetryReadConn().QueryRow(ctx, sql, args...).Scan(&slowTraceID, &errorTraceID); err != nil && !isNoRows(err) {
+		return "", "", err
+	}
+	return slowTraceID, errorTraceID, nil
+}
+
+// clampExemplarWindow — ham exemplar taramasının pencere tavanı (saf,
+// tablo testli): 24 saatten geniş istekte From, To-24h'a çekilir.
+// Trend/istatistik pencereleri ETKİLENMEZ — yalnız ham exemplar okuması.
+const exemplarRawWindowMax = 24 * time.Hour
+
+func clampExemplarWindow(from, to time.Time) (time.Time, time.Time) {
+	if to.Sub(from) > exemplarRawWindowMax {
+		return to.Add(-exemplarRawWindowMax), to
+	}
+	return from, to
 }

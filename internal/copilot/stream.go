@@ -429,11 +429,11 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 		return s.explainOpenAIWithUsage(ctx, systemPrompt, userPrompt)
 	}
 	url := strings.TrimRight(base, "/") + "/chat/completions"
+	// v0.9.1120 — budget + temperature are operator-tunable getters now.
 	body := map[string]any{
-		"model":       model,
-		"max_tokens":  openAICompletionTokens,
-		"temperature": 0.2,
-		"stream":      true,
+		"model":      model,
+		"max_tokens": s.tuneMaxTokens(),
+		"stream":     true,
 		// Usage arrives in the final chunk. vLLM + OpenAI + Gemini's
 		// compat layer honour include_usage; a server that rejects it
 		// lands in the same 400→buffered fallback as one rejecting
@@ -443,6 +443,9 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
+	}
+	if t, ok := s.tuneTemperature(); ok {
+		body["temperature"] = t
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
@@ -455,7 +458,7 @@ func (s *Service) streamOpenAIWithUsage(ctx context.Context, systemPrompt, userP
 		req.Header.Set("Authorization", "Bearer "+apiKey)
 		req.Header.Set("api-key", apiKey) // v0.8.384 gateway shape
 	}
-	resp, err := s.cli.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		// CONNECT failure. Retry once buffered (a truly dead endpoint
 		// fails there too and surfaces normally); not cached — could
@@ -525,14 +528,21 @@ func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, us
 	if s.streamKnownUnsupported(ProviderAnthropic, "", model) {
 		return s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)
 	}
+	// v0.9.1120 — third and last site of the 1024 parity bug: the
+	// STREAMING anthropic path. Worst of the three, because streaming is
+	// exactly where a long answer is expected and a truncated one is
+	// least visible (the text just stops).
 	body := map[string]any{
 		"model":      model,
-		"max_tokens": 1024,
+		"max_tokens": s.tuneMaxTokens(),
 		"system":     systemPrompt,
 		"stream":     true,
 		"messages": []map[string]any{
 			{"role": "user", "content": userPrompt},
 		},
+	}
+	if t, ok := s.tuneTemperature(); ok {
+		body["temperature"] = t
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -545,7 +555,7 @@ func (s *Service) streamAnthropicWithUsage(ctx context.Context, systemPrompt, us
 	req.Header.Set("X-API-Key", apiKey)
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 
-	resp, err := s.cli.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		log.Printf("[copilot] stream unsupported, buffered fallback (anthropic connect: %v)", err)
 		return s.explainAnthropicWithUsage(ctx, systemPrompt, userPrompt)

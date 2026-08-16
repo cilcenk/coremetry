@@ -132,8 +132,11 @@ func TestSavePersisted_EnabledRoundTrip(t *testing.T) {
 			saver := New("anthropic", "", "")
 			// Save creds + the toggle. Note creds stay non-empty even
 			// when disabled — that's the whole feature.
+			// v0.9.1120 — the trailing (maxTokens, temperature, timeoutS)
+			// are the tuning knobs; 0/nil = "use the defaults", which is
+			// what this test wants (it is about `enabled`, not tuning).
 			if err := saver.SavePersisted(context.Background(), store,
-				"anthropic", "sk-ant-roundtrip", "claude-sonnet-4-6", "", false, enabled); err != nil {
+				"anthropic", "sk-ant-roundtrip", "claude-sonnet-4-6", "", false, enabled, 0, nil, 0); err != nil {
 				t.Fatalf("SavePersisted: %v", err)
 			}
 

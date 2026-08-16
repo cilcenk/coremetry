@@ -96,15 +96,30 @@ export function KibanaTab() {
         </SettingRow>
 
         <SettingRow
-          label={<>Data view id <span style={{ color: 'var(--text3)' }}>(optional)</span></>}
+          label={<>Data view ID <span style={{ color: 'var(--text3)' }}>(optional)</span></>}
           hint={<>
-            Pins the Discover panel to a specific index pattern. Empty =
-            Kibana picks the default, fine for most single-pattern installs.
+            The Kibana data view <b>ID (UUID)</b> — find it in Kibana →
+            Stack Management → Data Views (the id in the URL), or in the
+            fallback toast Kibana shows. An index <i>pattern</i> like{' '}
+            <code>app-*</code> is NOT accepted by Kibana 8 here: Discover
+            then warns &quot;not a configured data view ID&quot; on every
+            open and falls back to the default view. Empty = Kibana picks
+            the default (fine for single-pattern installs).
           </>}>
           <input value={dataView}
             onChange={e => setDataView(e.target.value)}
-            placeholder="e.g. logs-*  or  the data-view UUID"
+            placeholder="e.g. 8b9b3260-019d-11ec-a24c-8d8ee9abad6f"
             style={{ width: '100%' }} />
+          {/* v0.9.1093 (operatör foto): desen girilmişse toast'ın SEBEBİNİ
+              kaynağında söyle — kaydetmeyi engelleme (Kibana 7 kurulumları
+              deseni tolere edebiliyor), yalnız uyar. */}
+          {dataView.includes('*') && (
+            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--warn)' }}>
+              ⚠ Bu bir index deseni görünüyor — Kibana 8 burada data view
+              ID (UUID) bekler; Discover her açılışta &quot;not a configured
+              data view ID&quot; uyarısı basıp varsayılana düşer.
+            </div>
+          )}
         </SettingRow>
 
         {msg && (

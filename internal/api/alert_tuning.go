@@ -57,41 +57,10 @@ func (s *Server) alertTuningNoisyRules(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("alert-tuning-noisy:since=%s:limit=%d",
 		since.String(), limit)
 	s.serveCached(w, r, key, 5*time.Minute, func(ctx context.Context) (any, error) {
-		rules, err := s.store.NoisyRules(ctx, from, to, limit)
+		out, err := s.noisyRulesWithSuggestions(ctx, from, to, limit)
 		if err != nil {
 			return nil, err
 		}
-		// Fetch the rule list once to surface current knob values
-		// + scope the suggestion to "this rule already has X set?"
-		allRules, err := s.store.ListAlertRules(ctx)
-		if err != nil {
-			return nil, err
-		}
-		byID := make(map[string]chstore.AlertRule, len(allRules))
-		for _, ar := range allRules {
-			byID[ar.ID] = ar
-		}
-		out := make([]NoisyRuleWithSuggestion, 0, len(rules))
-		for _, n := range rules {
-			row := NoisyRuleWithSuggestion{NoisyRule: n}
-			if cur, ok := byID[n.RuleID]; ok {
-				row.CurrentFor = cur.ForSec
-				row.CurrentMin = cur.MinSamples
-				row.CurrentCD = cur.CooldownSec
-			}
-			row.Suggestion, row.SuggestedFor, row.SuggestedMin, row.SuggestedCD =
-				deriveSuggestion(n, byID[n.RuleID])
-			out = append(out, row)
-		}
-		// Stable ordering — count desc already from query, but
-		// when counts tie we want a deterministic name order so
-		// the response is byte-stable across calls.
-		sort.SliceStable(out, func(i, j int) bool {
-			if out[i].OpenCount != out[j].OpenCount {
-				return out[i].OpenCount > out[j].OpenCount
-			}
-			return out[i].RuleName < out[j].RuleName
-		})
 		return map[string]any{
 			"rules":   out,
 			"from":    from.UnixNano(),
@@ -99,6 +68,48 @@ func (s *Server) alertTuningNoisyRules(w http.ResponseWriter, r *http.Request) {
 			"sinceSec": int64(since.Seconds()),
 		}, nil
 	})
+}
+
+// noisyRulesWithSuggestions — tuning raporunun ortak çekirdeği
+// (v0.9.1079'da handler gövdesinden çıkarıldı; explain-alert-noise da
+// aynı paketi kullanır). Davranış bire bir aynı.
+func (s *Server) noisyRulesWithSuggestions(ctx context.Context, from, to time.Time, limit int) ([]NoisyRuleWithSuggestion, error) {
+	rules, err := s.store.NoisyRules(ctx, from, to, limit)
+	if err != nil {
+		return nil, err
+	}
+	// Fetch the rule list once to surface current knob values
+	// + scope the suggestion to "this rule already has X set?"
+	allRules, err := s.store.ListAlertRules(ctx)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]chstore.AlertRule, len(allRules))
+	for _, ar := range allRules {
+		byID[ar.ID] = ar
+	}
+	out := make([]NoisyRuleWithSuggestion, 0, len(rules))
+	for _, n := range rules {
+		row := NoisyRuleWithSuggestion{NoisyRule: n}
+		if cur, ok := byID[n.RuleID]; ok {
+			row.CurrentFor = cur.ForSec
+			row.CurrentMin = cur.MinSamples
+			row.CurrentCD = cur.CooldownSec
+		}
+		row.Suggestion, row.SuggestedFor, row.SuggestedMin, row.SuggestedCD =
+			deriveSuggestion(n, byID[n.RuleID])
+		out = append(out, row)
+	}
+	// Stable ordering — count desc already from query, but
+	// when counts tie we want a deterministic name order so
+	// the response is byte-stable across calls.
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].OpenCount != out[j].OpenCount {
+			return out[i].OpenCount > out[j].OpenCount
+		}
+		return out[i].RuleName < out[j].RuleName
+	})
+	return out, nil
 }
 
 // deriveSuggestion picks the highest-value dampener heuristic

@@ -181,6 +181,9 @@ type Store struct {
 	// v0.8.186 class) and routes GetSlowQueriesGlobal between the MV read
 	// and the raw-spans fallback.
 	hasDBStmtHashCol bool
+	// v0.9.1097 — db_statement_summary_5m exemplar state kolonları var mı?
+	// (0.5 Alternatif-B; okuma MV-önce, yoksa ham fallback.)
+	hasDBStmtExemplarCols bool
 
 	// hasExCols records whether spans carries the v0.8.566 exception
 	// MATERIALIZED columns (ex_match/ex_type/ex_msg/ex_stack). False on an
@@ -3181,7 +3184,9 @@ func (s *Store) migrate(ctx context.Context) error {
 		   countIfState(status_code = 'error')           AS error_count_state,
 		   sumState(duration)                            AS duration_sum_state,
 		   quantilesTDigestState(0.5, 0.95, 0.99)(duration)  AS duration_q_state,
-		   maxState(duration)                            AS duration_max_state
+		   maxState(duration)                            AS duration_max_state,
+		   argMaxState(trace_id, duration)               AS slow_exemplar_state,
+		   argMaxIfState(trace_id, duration, status_code = 'error') AS error_exemplar_state
 		 FROM spans
 		 WHERE db_stmt_hash != 0
 		 GROUP BY db_system, db_name, service_name, stmt_hash, time_bucket`,
@@ -3697,6 +3702,47 @@ func (s *Store) migrate(ctx context.Context) error {
 			if err := s.execDDL(ctx, findMV(table)); err != nil {
 				return fmt.Errorf("recreate %s with db_name: %w", table, err)
 			}
+		}
+	}
+
+	// v0.9.1097 (0.5 Alternatif-B, exemplar-pivot unification audit) —
+	// db_statement_summary_5m gained MV-embedded exemplar states
+	// (argMax slow + argMaxIf error). Sebep yapısal: statement class'ı
+	// SERVİSLER ARASI olduğundan ham exemplar taraması service_name
+	// predicate'i koyamıyor → PK prefix yok → 1B span/gün ölçeğinde
+	// 24h penceresi ~22s (audit §5.3, timeout "veri yok" gibi
+	// görünüyordu). MV okuma iki soruyu (slow+error) tek küçük sorguda
+	// cevaplar. Aynı drop+recreate şekli (apdex/db_name emsali; CH,
+	// MaterializedView'a ADD COLUMN desteklemez) — geçmiş 5dk kovaları
+	// düşer, akış ileriye dolar; in-place koruma isteyen operatör için
+	// .inner_id ALTER + MODIFY QUERY reçetesi trace_summary_5m notunda.
+	if s.hasDBStmtHashCol {
+		var hasEx uint8
+		exProbe := `
+			SELECT count() > 0
+			FROM system.columns
+			WHERE database = currentDatabase()
+			  AND table    = 'db_statement_summary_5m'
+			  AND name     = 'slow_exemplar_state'`
+		if err := s.conn.QueryRow(ctx, exProbe).Scan(&hasEx); err == nil && hasEx == 0 {
+			log.Println("[chstore] upgrading db_statement_summary_5m MV (adding exemplar states) — past 5-min buckets will be dropped")
+			dropTarget := "db_statement_summary_5m"
+			if s.clusterMode() {
+				dropTarget = "db_statement_summary_5m_local"
+			}
+			if err := s.dropCombinedMV(ctx, dropTarget); err != nil {
+				return fmt.Errorf("drop old db_statement_summary_5m for upgrade: %w", err)
+			}
+			if err := s.execDDL(ctx, findMV("db_statement_summary_5m")); err != nil {
+				return fmt.Errorf("recreate db_statement_summary_5m with exemplars: %w", err)
+			}
+		}
+		// Bayrak her boot'ta VERİDEN: upgrade koştuysa da, in-place
+		// (elle) eklendiyse de aynı yoldan true olur; dış-dağıtık
+		// kurulumda (hasDBStmtHashCol=false) hiç probelanmaz ve okuma
+		// ham fallback'te kalır.
+		if err := s.conn.QueryRow(ctx, exProbe).Scan(&hasEx); err == nil {
+			s.hasDBStmtExemplarCols = hasEx == 1
 		}
 	}
 

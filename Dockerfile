@@ -44,6 +44,13 @@ FROM clickhouse/clickhouse-server:24.8-alpine AS chclient
 
 # ── Stage 3: minimal runtime base ─────────────────────────────────────────────
 FROM alpine:3.20 AS runtime-base
+# v0.9.1116 (operatör isteği) — konteyner locale'i VARSAYILAN UTF-8.
+# Go'nun stdout baytları zaten UTF-8 (v0.9.1115'te doğrulandı: c4 b1);
+# bu env, logları okuyan/aktaran araçların (konsol görüntüleyici, log
+# pipeline'ı) locale'siz konteynerde Latin-1 varsayımına düşüp Türkçe
+# karakterleri mojibake'e çevirmesini keser. Deployment'a env geçmek
+# gerekmez — imaj varsayılanı.
+ENV LANG=C.UTF-8 LC_ALL=C.UTF-8
 # Re-declare VERSION inside this stage — Docker ARGs are
 # scoped per-stage, so the value passed into stage 2 isn't
 # visible here without this line.

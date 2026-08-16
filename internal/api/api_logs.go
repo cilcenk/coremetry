@@ -283,12 +283,52 @@ func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
 // transport düzeyinde). Liste artık gövdeyle POST eder; GET aynen
 // kalır (derin linkler, curl, eski istemciler).
 func (s *Server) postLogsSearch(w http.ResponseWriter, r *http.Request) {
-	var body map[string]any
-	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
-		http.Error(w, "invalid body", http.StatusBadRequest)
+	vals, err := decodeLogsBody(r.Body)
+	if err != nil {
+		// Teşhis edilebilir 400 (v0.9.1096): prod'da ilk sürümün jenerik
+		// "invalid body"si hangi dalın öldüğünü söylemiyordu.
+		log.Printf("[logs] POST body decode düştü: %v", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.serveLogsSearch(w, r, logsBodyToValues(body))
+	s.serveLogsSearch(w, r, vals)
+}
+
+// logsBodyLimit — v0.9.1096: 64KB → 1MB. İlk sürümün 64KB'ı kendi
+// bug'ımızdı: prod ES'te PIT id'si (yüzlerce shard'lı app-* deseni)
+// on-KB'larca olur; 2. sayfanın gövdesi sınırı aşınca LimitReader
+// JSON'u ORTADAN kesiyor, decode düşüyor ve Load more 400 "invalid
+// body" yiyordu — GET'in URL-sınırı ölümünün POST'taki ikizi. 1MB
+// cursor için cömert, DoS için hâlâ tavan.
+const logsBodyLimit = 1 << 20
+
+// decodeLogsBody — gövde → url.Values (io.Reader alır, tablo testli).
+// Boş gövde ile kesik/bozuk JSON ayrı mesajlar taşır: ikisinin teşhisi
+// farklı (biri proxy/istemci sorunu, öteki boyut sınırı).
+func decodeLogsBody(rd io.Reader) (url.Values, error) {
+	lr := &countingReader{r: io.LimitReader(rd, logsBodyLimit)}
+	var body map[string]any
+	if err := json.NewDecoder(lr).Decode(&body); err != nil {
+		if lr.n == 0 {
+			return nil, fmt.Errorf("empty request body")
+		}
+		if lr.n >= logsBodyLimit {
+			return nil, fmt.Errorf("request body exceeds %d bytes", logsBodyLimit)
+		}
+		return nil, fmt.Errorf("invalid JSON body (%d bytes read): %v", lr.n, err)
+	}
+	return logsBodyToValues(body), nil
+}
+
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // logsBodyToValues — POST gövdesini GET'in url.Values sözleşmesine

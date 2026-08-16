@@ -160,7 +160,7 @@ never re-declare in components. PascalCase types, camelCase props,
 
 ## Demo realism
 
-The three demo workloads share one load model (diurnal curve,
+The demo workloads (Go + JBoss) share one load model (diurnal curve,
 incidents, log-normal latency, correlated errors, real histogram
 buckets, saturation metrics) — details in
 [docs/DEMO-REALISM.md](docs/DEMO-REALISM.md). **Rule:** any new demo

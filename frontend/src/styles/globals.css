@@ -477,30 +477,13 @@ code, pre, .mono { font-family: monospace; font-size: 12px; }
    kaydırma konteyneri KURMUYOR — operatörün "sayfa başına tek scroll
    ekseni" kuralı korunuyor. */
 .controls.is-sticky {
-  position: sticky;
-  top: 0;
-  z-index: var(--z-sticky-bar);
-  background: var(--bg0);
-  /* v0.9.640 — operatör-bildirimli: "Endpoints tablosunda çok kolon
-     olduğu için içerik sızıyor".
-
-     v0.9.639'da `margin: -20px -20px 14px` vardı. Blok elemanda YATAY
-     negatif margin genişliği 40px ARTIRIYOR; kolon sayısı fazla bir
-     tabloda #content'te yatay kaydırma doğuyor ve içerik barın yanından
-     sızıyor. Regresyonu ben soktum.
-
-     Yatay taşırma zaten GEREKSİZDİ: alttan kayan içerik de barla aynı
-     content-box genişliğinde, yani bar onu tam kapatıyor. Padding
-     bölgesinde içerik yok — kapatılacak bir şey de yok.
-
-     Dikey taşırma da kalktı: top:0 ile bar #content'in üst kenarına
-     yapışıyor, negatif margin'e gerek yok. */
+  /* v0.9.1078 — OPERATÖR KARARI (2026-08-16): yüzen şeritler kaldırıldı.
+     "Header'da service barının oynaması görünen alanı kapatıyor." Bar
+     artık İÇERİKLE BİRLİKTE KAYAR; position:sticky/top/z-index/opak
+     zemin bu kararla söküldü. Sınıf adı ve JS (--controls-h yayını)
+     yerinde — tüketicisi kalmadı, geri dönüş tek satır. */
   margin-bottom: 14px;
   padding: 10px 0;
-  /* Altından geçen içerikle arasına ince bir ayrım — gölge değil çizgi,
-     çünkü gölge tema geçişlerinde iki paletle de uyumlu değil. */
-  border-bottom: 1px solid var(--border);
-}
 input, select {
   background: var(--bg2); border: 1px solid var(--border); color: var(--text);
   border-radius: var(--radius-sm); padding: 5px 10px; font-size: 13px; outline: none;
@@ -1184,17 +1167,15 @@ button.btn-chip-label:hover { background: transparent; color: var(--accent2); }
 
    Başlık, yapışkan filtre barının ALTINA yapışıyor (--controls-h,
    PageControls yayınlıyor). Bar yoksa değişken tanımsız ve fallback 0. */
-.table-wrap.is-fit { overflow: visible; }
-.table-wrap.is-fit thead th {
-  position: sticky;
-  top: var(--controls-h, 0px);
-  z-index: var(--z-sticky-head);
-  /* Opak zemin şart: satırlar altından geçiyor. thead'in kendi
-     border-bottom'ı sticky'de kaybolabildiği için box-shadow ile
-     çiziliyor (yaygın tarayıcı davranışı). */
-  background: var(--bg1);
-  box-shadow: inset 0 -1px 0 var(--border);
-}
+/* v0.9.1078 — OPERATÖR KARARI (2026-08-16): is-fit'in iki kuralı da
+   söküldü. `overflow: visible` kaçışı yatay taşmayı #content'e
+   sızdırıyordu (Endpoints'te sayfa-dibi yatay çubuk) ve yapışkan
+   başlık "görünen alanı kapatan" yüzen şeritlerdendi. Artık .table-wrap
+   varsayılanı geçerli: yatay kaydırma TABLONUN KENDİ kabında, başlık
+   akışta. Sınıf adı 20+ dosyada duruyor ve bilinçli olarak DOM'da
+   bırakıldı — davranışı yok, geri dönüş bu bloğu geri yazmak.
+   (≤640px bloğundaki eski is-fit geri-dönüş kuralları artık masaüstüyle
+   aynı sonucu veriyor; zararsız, yerinde bırakıldı.) */
 /* .table-wrap.is-scroll — v0.9.873 (tutarlılık denetimi R5 / MT5).
 
    İÇ KAYDIRMALI kap için yapışkan başlık. `.is-fit`ten AYRI olmasının
@@ -1318,15 +1299,11 @@ td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
 
    Yapışkan filtre barıyla çakışmıyor: o top:0, bu bottom:0.
    Opak zemin + üst çizgi şart — satırlar altından geçiyor. */
-.pager.is-sticky-bottom {
-  position: sticky;
-  bottom: 0;
-  z-index: var(--z-sticky-foot);
-  background: var(--bg0);
-  border-top: 1px solid var(--border);
-  padding: 10px 0;
-  margin-bottom: 0;
-}
+/* v0.9.1078 — `.pager.is-sticky-bottom` KURALI SÖKÜLDÜ (operatör kararı
+   2026-08-16, yüzen şeritler). v0.9.645'in "next butonu görünmüyor"
+   çözümü dibe yapışmaktı; operatör 2026-08-16'da yüzen şeridi istemedi —
+   pager artık akışta, listenin sonunda. Prop ve sınıf Pager.tsx'ten de
+   kaldırıldı. */
 /* G0 (v0.9.1013) — masaüstünde de WCAG 2.5.8 tabanının ÜSTÜ.
    Ölçüm: 12px yazı (satır kutusu ~14,4px) + 3px×2 dolgu + `button`
    tabanı `border:none` → ~20,4px. 24px'lik minimum hedef boyutunun
@@ -3475,7 +3452,12 @@ thead th:hover .th-remove { opacity: 1; }
   .logtbl-dense > tbody > tr > td { white-space: normal; word-break: break-word; }
 
   #app { height: 100dvh; }
-  .pager.is-sticky-bottom { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+
+  /* v0.9.1078 — pager artık AKIŞTA (yüzen şerit söküldü) ama listenin
+     sonundaki son etkileşimli şerit hâlâ o: iOS home göstergesinin
+     altında kalmasın. Eski kural yapışkan varyanttaydı; garanti akış
+     hâline taşındı. */
+  .pager { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
 }
 
 /* ── PageShell variant="full" (v0.9.991, denetim DALGA 9) ──────────────────

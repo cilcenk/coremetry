@@ -95,14 +95,16 @@ describe('globals.css konum katmanları', () => {
     expect(ruleBody(css, 'thead th')).toMatch(/position:\s*relative/);
   });
 
-  it('`.table-wrap.is-fit thead th` sticky', () => {
-    expect(ruleBody(css, '.table-wrap.is-fit thead th')).toMatch(/position:\s*sticky/);
-  });
-
-  // BU TESTİN VAR OLMA SEBEBİ: hata bir özgüllük/katman hatasıydı.
-  // Taban kural yapışkan kuralı ezerse başlık yine kaymaz-ama-yapışmaz olur.
-  it('is-fit kuralı taban kuralı YENİYOR', () => {
-    expect(beats('.table-wrap.is-fit thead th', 'thead th')).toBe(true);
+  // v0.9.1078 — OPERATÖR KARARI (2026-08-16): sayfa-düzeyi yapışkan
+  // başlık söküldü ("yüzen şeritler güzel gelmiyor"). Kural artık
+  // YOK olmalı; birinin "geçici olarak" geri yazmasına karşı çivili.
+  // (İç kaydırmalı `.is-scroll` drawer varyantı BİLİNÇLİ yerinde —
+  // sınırlı bir panelin içinde kalıyor, sayfada yüzmüyor.)
+  it('`.table-wrap.is-fit thead th` yapışkan DEĞİL (v0.9.1078)', () => {
+    // Masaüstü sticky kuralı silindi; ≤640px bloğunda aynı seçicinin
+    // eski geri-dönüş kuralı (position:relative) duruyor — o yüzden
+    // "kural yok" değil "sticky değil" çivileniyor.
+    expect(ruleBody(css, '.table-wrap.is-fit thead th')).not.toMatch(/position:\s*sticky/);
   });
 
   it('sticky-right kuralı taban kuralı YENİYOR', () => {
@@ -133,10 +135,9 @@ describe('globals.css konum katmanları', () => {
   // İÇİNDE olduğu için o referans yanlış: başlık kabın içinde bar yüksekliği
   // kadar aşağıda asılı kalır — v0.9.697 olayının birebir tekrarı, bu kez
   // drawer'ın içinde. İki kuralın AYRI olmasının tek sebebi bu satır.
-  it('is-scroll `top: 0`, is-fit ise --controls-h', () => {
+  it('is-scroll `top: 0` — referansı kendi kabı', () => {
     expect(ruleBody(css, '.table-wrap.is-scroll thead th')).toMatch(/top:\s*0/);
     expect(ruleBody(css, '.table-wrap.is-scroll thead th')).not.toMatch(/--controls-h/);
-    expect(ruleBody(css, '.table-wrap.is-fit thead th')).toMatch(/--controls-h/);
   });
 
   // Tutamak absolute; çapası th. relative de sticky de "konumlanmış"
@@ -147,24 +148,8 @@ describe('globals.css konum katmanları', () => {
   });
 });
 
-// R7 — iç kaydırmalı kaplara `is-fit` YASAK (v0.9.697 olayının tekrarı).
-describe('is-fit ve iç kaydırma bir arada olamaz', () => {
-  it('hiçbir `table-wrap is-fit` kabı kendi overflowY: auto\'sunu taşımıyor', () => {
-    const files = walkTsx(SRC);
-    const offenders: string[] = [];
-    for (const p of files) {
-      const raw = readFileSync(p, 'utf8');
-      raw.split('\n').forEach((line, i) => {
-        const code = line.replace(/\/\/.*$/, '');
-        if (code.includes('table-wrap is-fit') && /overflowY:\s*'auto'|maxHeight:/.test(code))
-          offenders.push(`${p.replace(SRC, '')}:${i + 1}: ${line.trim().slice(0, 90)}`);
-      });
-    }
-    expect(offenders,
-      `is-fit + iç kaydırma: başlık yanlış referansa yapışır, is-scroll kullanın:\n${offenders.join('\n')}`,
-    ).toEqual([]);
-  });
-});
+// R7 kapısı (is-fit + iç kaydırma yasağı) v0.9.1078'de KALDIRILDI:
+// is-fit'in davranışı sökülünce yasakladığı kombinasyon anlamını yitirdi.
 
 describe('özgüllük yardımcısı kendi kendini doğruluyor', () => {
   it('sınıf sayısı eleman sayısını yener', () => {

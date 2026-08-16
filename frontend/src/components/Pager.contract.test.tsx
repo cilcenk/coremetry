@@ -244,13 +244,12 @@ describe('Pager — cursor kipi', () => {
 });
 
 describe('Pager — konum', () => {
-  it('yapışkan alt şerit VARSAYILAN', () => {
+  // v0.9.1078 — OPERATÖR KARARI (2026-08-16): yüzen şeritler kalktı.
+  // v0.9.645'in yapışkan alt şeridi ve `stickyBottom` prop'u söküldü;
+  // şerit her zaman akışta. Bu test birinin "geçici olarak" geri
+  // açmasına karşı: sınıf asla basılmamalı.
+  it('şerit AKIŞTA — is-sticky-bottom asla basılmıyor', () => {
     render(<Pager mode="cursor" count="skip" hasMore onMore={() => {}} />);
-    expect(document.querySelector('.pager')!.className).toContain('is-sticky-bottom');
-  });
-
-  it('çağıran açıkça kapatabilir', () => {
-    render(<Pager mode="cursor" count="skip" hasMore onMore={() => {}} stickyBottom={false} />);
     expect(document.querySelector('.pager')!.className).not.toContain('is-sticky-bottom');
   });
 });

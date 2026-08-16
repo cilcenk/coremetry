@@ -51,16 +51,16 @@ describe('sticky filtre barının dayandığı kabuk', () => {
     expect(s).not.toMatch(/width:/);
   });
 
-  it('scrollport üst kenarına yapışıyor', () => {
-    expect(block('.controls.is-sticky')).toMatch(/top:\s*0/);
-  });
-
-  it('sticky sınıfı gerçekten sticky ve opak', () => {
+  // v0.9.1078 — OPERATÖR KARARI (2026-08-16): "header'da service
+  // barının oynaması görünen alanı kapatıyor." Bar artık YÜZMÜYOR:
+  // position:sticky/top/z-index söküldü, bar içerikle kayar. Bu test
+  // birinin sticky'yi "geçici olarak" geri açmasına karşı çivili —
+  // v0.9.639'un denetim bulgusu (#5) bu kararla bilinçli geri alındı.
+  it('bar YÜZMÜYOR — sticky konum söküldü (v0.9.1078)', () => {
     const s = block('.controls.is-sticky');
-    expect(s).toMatch(/position:\s*sticky/);
-    expect(s).toMatch(/z-index/);
-    // Opak zemin şart: altından kayan içerik barın içinden görünürdü.
-    expect(s).toMatch(/background:\s*var\(--bg0\)/);
+    expect(s).not.toMatch(/position:\s*sticky/);
+    expect(s).not.toMatch(/top:\s*0/);
+    expect(s).not.toMatch(/z-index/);
   });
 
   // İÇ ÇERÇEVE YASAK (operatör kuralı: "sayfa başına tek scroll ekseni").
@@ -84,32 +84,21 @@ describe('opt-in olma sözleşmesi', () => {
   });
 });
 
-// v0.9.644 — yapışkan tablo BAŞLIĞI (denetim bulgusu #10, etki 5/5).
-//
-// Engel: `.table-wrap`'ın overflow-x:auto'su onu kaydırma konteyneri
-// yapıyor, thead'in sticky'si o konteynere yapışıyor ama konteyner
-// dikey kaydırmadığı için etkisiz. `.is-fit` konteyneri kaldırıyor.
-describe('yapışkan tablo başlığı', () => {
-  it('is-fit kaydırma konteynerini kaldırıyor', () => {
-    expect(block('.table-wrap.is-fit')).toMatch(/overflow:\s*visible/);
+// v0.9.1078 — v0.9.644'ün yapışkan tablo başlığı OPERATÖR KARARIYLA
+// söküldü (2026-08-16, yüzen şeritler). is-fit'in `overflow: visible`
+// kaçışı da gitti: o kaçış yatay taşmayı #content'e sızdırıyordu
+// (Endpoints'te sayfa-dibi yatay çubuk — operatör-bildirimli). Artık
+// her tablo kendi kabında kayar, başlık akışta.
+describe('tablo başlığı akışta (v0.9.1078 geri-dönüşü)', () => {
+  it('is-fit artık kaydırma konteynerini KALDIRMIYOR', () => {
+    expect(block('.table-wrap.is-fit')).not.toMatch(/overflow:\s*visible/);
   });
 
-  it('başlık yapışkan ve opak', () => {
-    const b = block('.table-wrap.is-fit thead th');
-    expect(b).toMatch(/position:\s*sticky/);
-    expect(b).toMatch(/background:/);
+  it('başlık yapışkan DEĞİL', () => {
+    expect(block('.table-wrap.is-fit thead th')).not.toMatch(/position:\s*sticky/);
   });
 
-  // İKİ ÖZELLİK BİRLİKTE ÇALIŞMALI: ikisi de top:0 olsaydı üst üste
-  // binerlerdi. Başlık barın ALTINA yapışıyor.
-  it('başlık, yapışkan filtre barının ALTINA yapışıyor', () => {
-    expect(block('.table-wrap.is-fit thead th')).toContain('top: var(--controls-h, 0px)');
-  });
-
-  // Varsayılan DEĞİŞMEMELİ: geniş tabloda is-fit, yatay kaydırmayı
-  // #content'e taşır ve v0.9.640'ta düzeltilen bar sızıntısını geri
-  // getirir. Yanlış sınıflandırmanın bedeli asimetrik.
-  it('varsayılan .table-wrap hâlâ kendi kaydırma konteyneri', () => {
+  it('varsayılan .table-wrap kendi kaydırma konteyneri — yatay taşma tabloda kalır', () => {
     const b = block('.table-wrap');
     expect(b).toMatch(/overflow-x:\s*auto/);
   });

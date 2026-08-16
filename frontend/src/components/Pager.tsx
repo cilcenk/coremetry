@@ -34,11 +34,12 @@ import { Button } from './ui/Button';
 //
 // ——— Konum ve vurgu ——————————————————————————————————————————
 //
-// Şerit tablonun ALTINDA ve yapışkan (`stickyBottom` varsayılan
-// true, v0.9.645: uzun listede "Next" ekranın dışında kalıyordu).
-// Gutenberg diyagonali gereği "ileri" eylemi SAĞDA ve şeritteki TEK
-// vurgulu kontrol o — Prev/Last ikincil. Bu zaten v0.9.645'te
-// alınmış bir karardı, artık sözleşmenin parçası.
+// Şerit tablonun ALTINDA ve AKIŞTA. v0.9.645 onu dibe yapıştırmıştı
+// ("Next ekranın dışında kalıyordu"); v0.9.1078'de OPERATÖR KARARIYLA
+// (2026-08-16, "yüzen şeritler güzel gelmiyor") yapışkanlık ve
+// `stickyBottom` prop'u tamamen söküldü — şerit listenin sonunda
+// oturur. Gutenberg diyagonali gereği "ileri" eylemi SAĞDA ve
+// şeritteki TEK vurgulu kontrol o — Prev/Last ikincil.
 //
 // ——— "Son sayfa" tek anlam ————————————————————————————————————
 //
@@ -58,7 +59,6 @@ type CountDecl =
 
 interface PagerCommon {
   extras?: React.ReactNode;
-  stickyBottom?: boolean;
 }
 
 interface OffsetOnly {
@@ -128,8 +128,8 @@ export function cursorProgress(
 }
 
 export function Pager(props: PagerProps) {
-  const { count, total, extras, stickyBottom = true } = props;
-  const cls = `pager${stickyBottom ? ' is-sticky-bottom' : ''}`;
+  const { count, total, extras } = props;
+  const cls = 'pager';
   const label = countLabel(count, total);
 
   if (props.mode === 'cursor') {

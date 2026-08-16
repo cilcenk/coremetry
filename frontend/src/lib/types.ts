@@ -1050,6 +1050,19 @@ export interface AISettings {
   // hides AI affordances, 503s AI endpoints) WITHOUT clearing the
   // stored key. Backend defaults a missing field to true.
   enabled?: boolean;
+  // v0.9.1120 (Faz 0.4) — LLM call tuning. THESE ARE OVERRIDES, NOT
+  // EFFECTIVE VALUES. 0 / null means "no override — running the
+  // built-in default" (4096 tokens / 0.2 / 180s). The form must
+  // render those defaults as PLACEHOLDER text and never as values:
+  // echoing an effective value back into the input would make the
+  // next Save freeze today's default into the stored blob, and a
+  // future default change would silently not reach this install.
+  maxTokens?: number;
+  // Temperature is number|null (Go *float64) rather than an
+  // omitempty number because 0 is a LEGAL temperature — only null
+  // can mean "unset".
+  temperature?: number | null;
+  timeoutS?: number;
 }
 export interface AISettingsInput {
   provider: AIProvider;
@@ -1060,6 +1073,12 @@ export interface AISettingsInput {
   // wf — see AISettings.enabled. Always sent by the Settings form;
   // omitting it defaults to true on the backend (*bool nil⇒true).
   enabled?: boolean;
+  // See AISettings — sending 0 / null RESETS the knob to the built-in
+  // default. An empty input in the form must send exactly that, not
+  // the default number.
+  maxTokens?: number;
+  temperature?: number | null;
+  timeoutS?: number;
 }
 
 // External Tempo backend (v0.5.208) — fallback for trace-by-id

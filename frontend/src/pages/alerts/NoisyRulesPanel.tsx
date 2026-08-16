@@ -8,6 +8,7 @@ import { api } from '@/lib/api';
 import { tsLong } from '@/lib/utils';
 import type { AlertRule, NoisyRule } from '@/lib/types';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
+import { RenderedMarkdown } from '@/components/Markdown';
 
 // NoisyRulesPanel — surfaces rules that have opened problems most
 // often in the last 24h with a one-click "Apply" affordance that
@@ -222,18 +223,21 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
           </span>
         )}
       </div>
+      {/* Faz 0.5 — ham metin yerine markdown. Bkz. Shift.tsx'teki aynı
+          düzeltme; pre-wrap kalkıyor çünkü RenderedMarkdown kendi blok
+          düzenini kuruyor. */}
       {(ai.busy || ai.text || ai.err) && (
         <div style={{
           padding: '10px 12px', marginBottom: 10, borderRadius: 6,
           background: 'var(--bg2)', border: '1px solid var(--border)',
-          fontSize: 12.5, lineHeight: 1.55, whiteSpace: 'pre-wrap',
+          fontSize: 12.5, lineHeight: 1.55,
         }}>
           <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, color: 'var(--text2)', marginBottom: 6 }}>
             AI GÜRÜLTÜ ANLATIMI
           </div>
           {ai.busy && <Spinner />}
           {ai.err && <span style={{ color: 'var(--err)' }}>{ai.err}</span>}
-          {ai.text}
+          {ai.text && <RenderedMarkdown text={ai.text} />}
           {/* v0.9.1121 (Faz 0.3b) — 👍/👎; kimlik yoksa çizilmez. */}
           <div><AIFeedbackButtons exchangeId={ai.xid} /></div>
         </div>

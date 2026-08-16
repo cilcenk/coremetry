@@ -27,7 +27,10 @@ func TestProsePromptsAnswerInTurkish(t *testing.T) {
 		"systemDeployImpact":       systemDeployImpact,
 		"systemSLOBurn":            systemSLOBurn,
 		"systemSlowQuery":          systemSlowQuery,
-		"systemRootCauseNarration": systemRootCauseNarration,
+		// Faz 0.5 — `systemRootCauseNarration` buradan ÇIKTI çünkü
+		// prompt'un kendisi silindi (v0.9.559'dan beri sıfır tüketici).
+		// Bu harita ölü prompt'u da çiviliyordu: dil kapısı geçtiği
+		// için prompt "canlı" görünüyordu.
 		// v0.9.831 — kod bağlamlı ikizler. Ek, direktifin ÖNÜNE
 		// giriyor; direktif her iki varyantta da SON cümle kalmalı.
 		"systemTraceCode":     systemTraceCode,

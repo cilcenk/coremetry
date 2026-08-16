@@ -18,6 +18,7 @@ import { LogContextModal } from '@/components/LogContextModal';
 import { LogsHistogram } from '@/components/LogsHistogram';
 import { LogFieldsPanel } from '@/components/LogFieldsPanel';
 import { Button } from '@/components/ui/Button';
+import { RenderedMarkdown } from '@/components/Markdown';
 import { Pager } from '@/components/Pager';
 import { ShareButton } from '@/components/ShareButton';
 import { buildKibanaURL, buildKQLFromFilter } from '@/lib/kibanaLink';
@@ -807,18 +808,22 @@ function LogsInner() {
           </div>
         )}
 
+        {/* Faz 0.5 — ham metin yerine markdown. Bkz. Shift.tsx'teki aynı
+            düzeltme; pre-wrap kalkıyor çünkü RenderedMarkdown kendi blok
+            düzenini kuruyor. AŞAĞIDAKİ "Query failed" hata kutusundaki
+            pre-wrap KALIYOR: o AI metni değil, ham backend hata gövdesi. */}
         {(aiPat.busy || aiPat.text || aiPat.err) && (
           <div style={{
             padding: '12px 14px', marginBottom: 10, borderRadius: 6,
             background: 'var(--bg2)', border: '1px solid var(--border)',
-            fontSize: 12.5, lineHeight: 1.55, whiteSpace: 'pre-wrap',
+            fontSize: 12.5, lineHeight: 1.55,
           }}>
             <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, color: 'var(--text2)', marginBottom: 6 }}>
               AI DESEN ANLATIMI
             </div>
             {aiPat.busy && <Spinner />}
             {aiPat.err && <span style={{ color: 'var(--err)' }}>{aiPat.err}</span>}
-            {aiPat.text}
+            {aiPat.text && <RenderedMarkdown text={aiPat.text} />}
             {/* v0.9.1121 (Faz 0.3b) — 👍/👎; kimlik yoksa çizilmez. */}
             <div><AIFeedbackButtons exchangeId={aiPat.xid} /></div>
           </div>

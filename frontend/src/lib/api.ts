@@ -1195,6 +1195,12 @@ export const api = {
       method: 'PUT',
       body: JSON.stringify(b),
     }),
+  // GET/PUT both carry the v0.9.1120 tuning knobs (maxTokens /
+  // temperature / timeoutS) as OVERRIDES: 0 / null on the wire means
+  // "reset to the built-in default", which is also what an older
+  // client that omits the fields sends. The PUT body is whole-blob —
+  // every caller must carry the current knob values forward or the
+  // save silently unsets them.
   getAISettings: () => get<AISettings>(`/api/settings/ai`),
   putAISettings: (s: AISettingsInput) =>
     request<AISettings>(`/api/settings/ai`, {

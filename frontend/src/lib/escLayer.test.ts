@@ -127,7 +127,6 @@ describe('göç bütünlüğü (v0.9.950)', () => {
     'pages/Messaging.tsx',
     'pages/Trace.tsx',
     'pages/explore/RecentQueries.tsx',
-    'pages/service/EndpointPeekDrawer.tsx',
   ];
   const SRC = join(__dirname, '..');
 

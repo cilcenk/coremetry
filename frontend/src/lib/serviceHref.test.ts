@@ -230,7 +230,6 @@ const CONVERTED = [
   // linki. Bir geri linkinin pencereyi değiştirmesi, geri linki olmaktan
   // çıkması demektir.
   'pages/Pod.tsx',
-  'pages/service/EndpointPeekDrawer.tsx',
   'pages/service/OperationsTable.tsx',
   'pages/service/OverviewTables.tsx',
   'pages/service/ServiceClusterBreakdown.tsx',

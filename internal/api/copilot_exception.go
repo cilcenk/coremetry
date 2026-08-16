@@ -19,6 +19,7 @@ import (
 // attribution) → v0.9.408 kanıt sözleşmesiyle cevap. Cache yok:
 // interaktif explain her tıkta taze; kayıt ai_calls'ta.
 func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request) {
+	r, xid := withExchange(r)
 	g, err := s.store.GetExceptionGroup(r.Context(), r.PathValue("fp"))
 	if err != nil {
 		writeErr(w, err)
@@ -50,6 +51,7 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, map[string]any{
 		"explanation":      out,
+		"exchangeId":       xid,
 		"evidenceTraceIds": in.EvTraces,
 		"evidenceSpanIds":  in.EvSpans,
 		"code":             codePayload(cc, opts.IncludeCode),

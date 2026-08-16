@@ -103,8 +103,25 @@ func (s *Server) copilotExplain(r *http.Request, system, user string) (string, e
 		Surface:   surface,
 		UserID:    uid,
 		UserEmail: email,
+		// v0.9.1119 (Faz 0.3) — v0.9.593'ün JSON varyantına getirdiği
+		// taşıma buraya da: çağıran ctx'e exchange kimliği koyduysa
+		// (withExchange) ai_calls satırına biner ve tek-atış prose
+		// yüzeyleri de oylanabilir olur. Bu satırın YOKLUĞU, 15
+		// yüzeyin 👍/👎 alamamasının tek sebebiydi.
+		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
 	})
 	return s.copilot.Explain(ctx, system, user)
+}
+
+// withExchange — tek-atış ✨ yüzeyinin geri bildirim rayı (v0.9.1119,
+// Faz 0.3). İsteğe taze bir exchange kimliği iliştirir; sarmalayıcılar
+// ctx'teki kimliği ai_calls'a taşır, handler AYNI kimliği yanıtına
+// koyar ("exchangeId") → FE 👍/👎'ı postAIFeedback'e bağlar (v0.8.399
+// rayı). Kimlik minting'i chat ile aynı üreticiden (newRandID).
+func withExchange(r *http.Request) (*http.Request, string) {
+	xid := newRandID(16)
+	return r.WithContext(copilot.WithMeta(r.Context(),
+		copilot.CallMeta{ExchangeID: xid})), xid
 }
 
 // copilotExplainMasked (v0.9.831) — copilotExplain'in, ai_calls

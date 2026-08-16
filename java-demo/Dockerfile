@@ -1,5 +1,5 @@
 # ── Stage 1: Maven build ─────────────────────────────────────────────────────
-FROM maven:3.9-eclipse-temurin-17 AS builder
+FROM maven:3.9-eclipse-temurin-25 AS builder
 WORKDIR /build
 COPY pom.xml .
 RUN mvn -B dependency:go-offline
@@ -8,7 +8,7 @@ RUN mvn -B -DskipTests package && \
     cp target/*.jar /demo.jar
 
 # ── Stage 2: runtime ─────────────────────────────────────────────────────────
-FROM eclipse-temurin:17-jre-jammy
+FROM eclipse-temurin:25-jre-jammy
 
 ARG TARGETARCH
 ARG OTEL_AGENT_VERSION=2.10.0

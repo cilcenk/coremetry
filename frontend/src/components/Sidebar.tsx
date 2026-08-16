@@ -50,17 +50,6 @@ const NAV_GROUPS: NavGroup[] = [
   // human", so it shouldn't sit inside the Triage group with
   // the per-source drill-down pages. Empty titleKey suppresses
   // the heading.
-  {
-    titleKey: '',
-    items: [
-      // v0.9.1074 (operatör isteği) — üst gruplanmamış alanda artık
-      // yalnız Vardiya özeti; Problems (/inbox) TRIAGE grubuna İLK
-      // sıra olarak indi ("Problems Triage üstündeydi, altına al, ilk
-      // sırada olsun"). v0.5.214'ün 'Inbox en üstte' kararı bu istekle
-      // güncellendi.
-      { href: '/shift',     label: 'nav.shift',     icon: ClipboardList },
-    ],
-  },
   // v0.9.323 — triage merge, operator decision. /inbox above is now the ONE
   // queue: it aggregates Problems + Exception groups + Anomaly events +
   // Incidents, is SSE-live (v0.9.317), searches the candidate set rather than
@@ -163,6 +152,12 @@ const NAV_GROUPS: NavGroup[] = [
       // sidebar carries ONE "System" entry. AI stays a sibling (not a System tab).
       { href: '/system', label: 'nav.system', icon: CircleGauge },
       { href: '/ai',     label: 'nav.ai',     icon: Sparkles, adminOnly: true },
+      // v0.9.1088 (operatör isteği): "shift summary şimdilik menüde
+      // gözükmesin, adminler görebilsin sadece System altında."
+      // v0.9.1072'de üst gruplanmamış alana konmuştu; sayfa/rota
+      // değişmedi (sadeleştirme v489-499 emsali: menüden gizle, kod
+      // yaşasın).
+      { href: '/shift',  label: 'nav.shift',  icon: ClipboardList, adminOnly: true },
     ],
   },
   {

@@ -74,10 +74,10 @@ func TestExceptionErrorTypeFragments(t *testing.T) {
 // expressions read $[0] — the FIRST array element, not the first EXCEPTION
 // event. Instrumentations that emit a retry/log event before the exception
 // (the java.net client libs among them) matched exMatchPred via the LIKE
-// but yielded empty type/msg/stack, so real exceptions landed in an ”
+// but yielded empty type/msg/stack, so real exceptions landed in an ''
 // group. All extraction now goes through exFirstEvent (arrayFirst by event
 // name); the behaviour pair was proven live before shipping:
-// second-position exception → old ” / new java.net.UnknownHostException,
+// second-position exception → old '' / new java.net.UnknownHostException,
 // first-position → identical on both.
 func TestExFragmentsFirstEvent(t *testing.T) {
 	for name, frag := range map[string]string{

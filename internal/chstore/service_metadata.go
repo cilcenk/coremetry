@@ -269,8 +269,6 @@ type ServiceTeams struct {
 	SRETeam   string
 }
 
-
-
 // mergeTeams applies derived teams. The deriver OWNS a field while it's empty
 // OR still equals the value it last auto-wrote (owner_team_auto / sre_team_auto);
 // a human edit (value != auto) pins the field so the deriver leaves it. When
@@ -340,9 +338,6 @@ func (s *Store) populateTeams(ctx context.Context, derived map[string]ServiceTea
 	}
 	return updated, nil
 }
-
-
-
 
 // derivePodIdentitySQL — v0.9.531 pod-adı yedeği için ham malzeme:
 // servis başına gözlemlenen pod kimlikleri + satır sayıları. Kimlik
@@ -471,7 +466,6 @@ func deploymentsFromPodCounts(pods map[string]map[string]uint64) map[string]stri
 	}
 	return out
 }
-
 
 // mergeDeployment — mergeNamespace'in birebir sahiplik sözleşmesi.
 func mergeDeployment(md ServiceMetadata, dep string) (ServiceMetadata, bool) {

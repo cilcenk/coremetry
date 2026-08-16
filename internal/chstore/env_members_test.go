@@ -166,7 +166,7 @@ func TestEnvEnumWindow(t *testing.T) {
 	if got := envEnumWindow(deepFrom, to, ""); !got.Equal(to.Add(-time.Hour)) {
 		t.Fatalf("unsearched clamp: got %v, want to-1h", got)
 	}
-	if got := envEnumWindow(deepFrom, to, "release"); !got.Equal(to.Add(-24*time.Hour)) {
+	if got := envEnumWindow(deepFrom, to, "release"); !got.Equal(to.Add(-24 * time.Hour)) {
 		t.Fatalf("searched clamp: got %v, want to-24h", got)
 	}
 	// A window narrower than the clamp is respected as-is.

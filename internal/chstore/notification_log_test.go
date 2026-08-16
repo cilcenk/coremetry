@@ -82,12 +82,12 @@ func TestBuildNotificationLogRelatedQuery_Bounds(t *testing.T) {
 	sql, args := buildNotificationLogRelatedQuery(ids, since, 100)
 
 	mustContain := []string{
-		"sent_at >= ?",             // time bound on the ORDER BY prefix
-		"related_id IN (?,?,?)",    // one placeholder per id, no subquery
-		"ORDER BY sent_at DESC",    // newest-first
-		"LIMIT ?",                  // bounded row count
-		"max_execution_time",       // wall-clock cap
-		"FROM notification_log",    // plain MergeTree
+		"sent_at >= ?",          // time bound on the ORDER BY prefix
+		"related_id IN (?,?,?)", // one placeholder per id, no subquery
+		"ORDER BY sent_at DESC", // newest-first
+		"LIMIT ?",               // bounded row count
+		"max_execution_time",    // wall-clock cap
+		"FROM notification_log", // plain MergeTree
 	}
 	for _, frag := range mustContain {
 		if !strings.Contains(sql, frag) {
@@ -137,12 +137,12 @@ func TestBuildNotificationLogRelatedQuery_LimitClamp(t *testing.T) {
 // the ReplacingMergeTree problems table, and the watcher-only scope.
 func TestWatcherSummarySQL_Bounds(t *testing.T) {
 	mustContain := []string{
-		"FROM problems FINAL",       // ReplacingMergeTree state read
-		"metric = 'watcher'",        // watcher problems only
-		"GROUP BY rule_id",          // one row per rule
-		"countIf(started_at >= ?)",  // trailing-24h fire count is bind-bounded
-		"LIMIT 2000",                // bounded group count
-		"max_execution_time",        // wall-clock cap
+		"FROM problems FINAL",      // ReplacingMergeTree state read
+		"metric = 'watcher'",       // watcher problems only
+		"GROUP BY rule_id",         // one row per rule
+		"countIf(started_at >= ?)", // trailing-24h fire count is bind-bounded
+		"LIMIT 2000",               // bounded group count
+		"max_execution_time",       // wall-clock cap
 		// Granular-sparklines sweep (M4): hourly fire distribution is a
 		// 24-slot elementwise sum — aggregate-only (no schema change),
 		// with the same since bound guarding the intDiv slot projection.

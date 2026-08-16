@@ -8,10 +8,12 @@
 // gece yarısı elle yapıştırması gerekiyor olmasıydı.
 //
 // OTOMATİK DEĞİL — ve bu bilinçli. Boot'ta ASLA koşmaz:
-//   · MV kurmak ingest yoluna yazar; bozuk bir MV write_failed üretir ve
-//     ingest'i düşürür (v0.8.185/186 sınıfı). Bunun kararı operatörün.
-//   · ON CLUSTER DDL dağıtık kuyruğa girer; rolling deploy sırasında
-//     N pod'un aynı DDL'i yarıştırması kuyruğu tıkar (v0.9.613 vakası).
+//
+//	· MV kurmak ingest yoluna yazar; bozuk bir MV write_failed üretir ve
+//	  ingest'i düşürür (v0.8.185/186 sınıfı). Bunun kararı operatörün.
+//	· ON CLUSTER DDL dağıtık kuyruğa girer; rolling deploy sırasında
+//	  N pod'un aynı DDL'i yarıştırması kuyruğu tıkar (v0.9.613 vakası).
+//
 // Bu yüzden tek giriş noktası admin'in tıkladığı buton.
 //
 // Kapsam DIŞI: tek-düğüm kurulumlar. DDL dosyaları `ON CLUSTER` +

@@ -11,16 +11,16 @@ import (
 // representing a state-changing action by a user. Read by the
 // /admin/audit page.
 type AuditEntry struct {
-	ID          string `json:"id"`
-	Time        int64  `json:"time"` // unix ns
-	ActorID     string `json:"actorId"`
-	ActorEmail  string `json:"actorEmail"`
-	ActorRole   string `json:"actorRole"`
-	Action      string `json:"action"`     // e.g. "alert_rule.update"
-	TargetKind  string `json:"targetKind"` // e.g. "alert_rule"
-	TargetID    string `json:"targetId"`
-	IP          string `json:"ip"`
-	Details     string `json:"details"`    // JSON or freeform
+	ID         string `json:"id"`
+	Time       int64  `json:"time"` // unix ns
+	ActorID    string `json:"actorId"`
+	ActorEmail string `json:"actorEmail"`
+	ActorRole  string `json:"actorRole"`
+	Action     string `json:"action"`     // e.g. "alert_rule.update"
+	TargetKind string `json:"targetKind"` // e.g. "alert_rule"
+	TargetID   string `json:"targetId"`
+	IP         string `json:"ip"`
+	Details    string `json:"details"` // JSON or freeform
 }
 
 // AppendAuditBatch writes N entries in a single CH INSERT. ID

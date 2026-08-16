@@ -19,13 +19,13 @@ import "context"
 // payload the UI uses to explain the missing-spans case. All
 // fields come from the trace_summary_5m MV's *Merge() finalisers.
 type TraceAggregateStub struct {
-	RootService  string  `json:"rootService"`
-	RootName     string  `json:"rootName"`
-	StartTimeNs  int64   `json:"startTimeNs"`   // earliest span start in MV
-	EndTimeNs    int64   `json:"endTimeNs"`     // latest span end in MV
-	SpanCount    uint64  `json:"spanCount"`
-	ErrorCount   uint64  `json:"errorCount"`
-	DurationMs   float64 `json:"durationMs"`
+	RootService string  `json:"rootService"`
+	RootName    string  `json:"rootName"`
+	StartTimeNs int64   `json:"startTimeNs"` // earliest span start in MV
+	EndTimeNs   int64   `json:"endTimeNs"`   // latest span end in MV
+	SpanCount   uint64  `json:"spanCount"`
+	ErrorCount  uint64  `json:"errorCount"`
+	DurationMs  float64 `json:"durationMs"`
 }
 
 // GetTraceAggregateStub returns (stub, true) when the trace_id

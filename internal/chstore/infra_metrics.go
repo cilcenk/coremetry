@@ -12,9 +12,9 @@ import (
 // a flat Points array per metric, no labels — one bucket per
 // (service, metric, time-bucket). The frontend renders sparklines.
 type InfraMetricSeries struct {
-	Metric string  `json:"metric"`     // canonical key, e.g. "cpu" / "memory" / "rps"
-	Source string  `json:"source"`     // raw OTel metric name, e.g. "process.runtime.cpu.utilization"
-	Unit   string  `json:"unit"`       // "%", "bytes", "/s", …
+	Metric string  `json:"metric"` // canonical key, e.g. "cpu" / "memory" / "rps"
+	Source string  `json:"source"` // raw OTel metric name, e.g. "process.runtime.cpu.utilization"
+	Unit   string  `json:"unit"`   // "%", "bytes", "/s", …
 	Points []Point `json:"points"`
 }
 
@@ -142,9 +142,9 @@ func (s *Store) GetInfraMetrics(ctx context.Context, service string, since, buck
 	bySource := map[string][]Point{}
 	for rows.Next() {
 		var (
-			m  string
-			b  time.Time
-			v  float64
+			m string
+			b time.Time
+			v float64
 		)
 		if err := rows.Scan(&m, &b, &v); err != nil {
 			return nil, err

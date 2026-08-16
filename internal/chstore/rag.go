@@ -22,15 +22,15 @@ import (
 type RagChunk struct {
 	// SourceHash (v0.8.442) — url kaynağında sayfa içeriğinin sha256'sı;
 	// senkron diff'i "hash değişmediyse yeniden embed etme" bununla yapar.
-	SourceHash string `json:"-"`
-	DocID      string            `json:"docId"`
-	DocName    string            `json:"docName"`
-	Source     string            `json:"source"` // upload | url
-	SourceRef  string            `json:"sourceRef,omitempty"` // url kaynağında sayfa adresi
-	UploadedBy string            `json:"uploadedBy,omitempty"`
-	ChunkIdx   uint32            `json:"chunkIdx"`
-	Content    string            `json:"content"`
-	Embedding  []float32         `json:"-"`
+	SourceHash string    `json:"-"`
+	DocID      string    `json:"docId"`
+	DocName    string    `json:"docName"`
+	Source     string    `json:"source"`              // upload | url
+	SourceRef  string    `json:"sourceRef,omitempty"` // url kaynağında sayfa adresi
+	UploadedBy string    `json:"uploadedBy,omitempty"`
+	ChunkIdx   uint32    `json:"chunkIdx"`
+	Content    string    `json:"content"`
+	Embedding  []float32 `json:"-"`
 }
 
 // RagDocument — liste görünümü (GROUP BY projeksiyonu).

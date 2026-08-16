@@ -13,11 +13,11 @@ import (
 // pixel = one (time, latency) cell, not an aggregated line.
 //
 // Bucket grid:
-//   • Time axis  — N buckets across the requested window
-//                  (caller picks N; default 60).
-//   • Latency axis — log10(ms) with sub-decade granularity
-//                    (4 sub-bins per decade by default → 7
-//                    decades = 28 bins covering 0.1ms → 1Ms).
+//   - Time axis  — N buckets across the requested window
+//     (caller picks N; default 60).
+//   - Latency axis — log10(ms) with sub-decade granularity
+//     (4 sub-bins per decade by default → 7
+//     decades = 28 bins covering 0.1ms → 1Ms).
 //
 // The wire format avoids a sparse map: we send Times[],
 // DurationBins[], and Counts[][] (rows × cols) so the frontend
@@ -133,8 +133,8 @@ func (s *Store) latencyHeatmapWhere(
 	// any realistic span). Honeycomb uses 4-6 sub-bins
 	// depending on zoom; 4 reads as "smooth-but-distinct".
 	const subBins = 4
-	const minLogMs = -1 // 0.1 ms
-	const maxLogMs = 6  // 1 Ms
+	const minLogMs = -1                               // 0.1 ms
+	const maxLogMs = 6                                // 1 Ms
 	const totalBins = (maxLogMs - minLogMs) * subBins // 28
 
 	// Time bucket size in seconds — pick to fit the requested

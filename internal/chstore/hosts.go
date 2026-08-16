@@ -302,9 +302,9 @@ func sumHostTrend(samples []hostTrendSample) []HostTrendPoint {
 	}
 
 	type carry struct {
-		cpu, mem           float64
-		cpuSeen, memSeen   int64 // minute of the last real sample
-		hasCPU, hasMem     bool
+		cpu, mem         float64
+		cpuSeen, memSeen int64 // minute of the last real sample
+		hasCPU, hasMem   bool
 	}
 	state := map[string]*carry{}
 	out := make([]HostTrendPoint, 0, hi-lo+1)

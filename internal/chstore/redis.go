@@ -19,36 +19,36 @@ import (
 //   - Persistence: changes_since_last_save → durability risk
 //   - Role (master/replica) → topology awareness
 type RedisMetrics struct {
-	Instance       string         `json:"instance"`
-	Status         string         `json:"status"`
-	Role           string         `json:"role"` // master / replica / unknown
-	WindowSeconds  float64        `json:"windowSeconds"`
-	UptimeSec      float64        `json:"uptimeSec"`
-	Clients        RedisClients   `json:"clients"`
-	Memory         RedisMemory    `json:"memory"`
-	CommandsPS     float64        `json:"commandsPerSec"`
-	NetInputBPS    float64        `json:"netInputBytesPerSec"`
-	NetOutputBPS   float64        `json:"netOutputBytesPerSec"`
-	KeyspaceHitsPS float64        `json:"keyspaceHitsPerSec"`
-	KeyspaceMissPS float64        `json:"keyspaceMissesPerSec"`
-	HitRatePct     float64        `json:"hitRatePct"`
-	EvictedPS      float64        `json:"keysEvictedPerSec"`
-	ExpiredPS      float64        `json:"keysExpiredPerSec"`
-	ReplLagBytes   float64        `json:"replicationLagBytes"`
-	ChangesSince   float64        `json:"changesSinceLastSave"`
-	SlowlogEntries float64        `json:"slowlogEntries"`
-	ConnRefusedPS  float64        `json:"connectionsRejectedPerSec"`
-	Keyspaces      []RedisDB      `json:"keyspaces"`
+	Instance       string       `json:"instance"`
+	Status         string       `json:"status"`
+	Role           string       `json:"role"` // master / replica / unknown
+	WindowSeconds  float64      `json:"windowSeconds"`
+	UptimeSec      float64      `json:"uptimeSec"`
+	Clients        RedisClients `json:"clients"`
+	Memory         RedisMemory  `json:"memory"`
+	CommandsPS     float64      `json:"commandsPerSec"`
+	NetInputBPS    float64      `json:"netInputBytesPerSec"`
+	NetOutputBPS   float64      `json:"netOutputBytesPerSec"`
+	KeyspaceHitsPS float64      `json:"keyspaceHitsPerSec"`
+	KeyspaceMissPS float64      `json:"keyspaceMissesPerSec"`
+	HitRatePct     float64      `json:"hitRatePct"`
+	EvictedPS      float64      `json:"keysEvictedPerSec"`
+	ExpiredPS      float64      `json:"keysExpiredPerSec"`
+	ReplLagBytes   float64      `json:"replicationLagBytes"`
+	ChangesSince   float64      `json:"changesSinceLastSave"`
+	SlowlogEntries float64      `json:"slowlogEntries"`
+	ConnRefusedPS  float64      `json:"connectionsRejectedPerSec"`
+	Keyspaces      []RedisDB    `json:"keyspaces"`
 }
 
 // RedisClients — total + blocked. Blocked clients are stuck on
 // BLPOP / BRPOP / XREAD etc. — operationally useful to spot
 // long queues vs healthy waiting consumers.
 type RedisClients struct {
-	Connected     float64 `json:"connected"`
-	Blocked       float64 `json:"blocked"`
-	MaxInputBuf   float64 `json:"maxInputBufferBytes"`
-	MaxOutputBuf  float64 `json:"maxOutputBufferBytes"`
+	Connected    float64 `json:"connected"`
+	Blocked      float64 `json:"blocked"`
+	MaxInputBuf  float64 `json:"maxInputBufferBytes"`
+	MaxOutputBuf float64 `json:"maxOutputBufferBytes"`
 }
 
 // RedisMemory — used vs max gives saturation %. Fragmentation
@@ -56,13 +56,13 @@ type RedisClients struct {
 // to-recover territory. RSS is what Linux sees; used is what
 // Redis allocated.
 type RedisMemory struct {
-	UsedBytes         float64 `json:"usedBytes"`
-	RSSBytes          float64 `json:"rssBytes"`
-	PeakBytes         float64 `json:"peakBytes"`
-	MaxBytes          float64 `json:"maxBytes"`
+	UsedBytes          float64 `json:"usedBytes"`
+	RSSBytes           float64 `json:"rssBytes"`
+	PeakBytes          float64 `json:"peakBytes"`
+	MaxBytes           float64 `json:"maxBytes"`
 	FragmentationRatio float64 `json:"fragmentationRatio"`
-	LuaBytes          float64 `json:"luaBytes"`
-	UsagePct          float64 `json:"usagePct"`
+	LuaBytes           float64 `json:"luaBytes"`
+	UsagePct           float64 `json:"usagePct"`
 }
 
 // RedisDB — per-keyspace (db0 / db1 / …) key counts and expire

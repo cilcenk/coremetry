@@ -7,8 +7,8 @@ import "testing"
 // alias çözümü; boş tablo = eski case-insensitive davranış.
 func TestTeamAliases(t *testing.T) {
 	ta := TeamAliases{Aliases: map[string]string{
-		"dijitalsy":  "SY-Dijital Bankacılık",
-		"avengersy":  "SY-Krediler ve Sigorta",
+		"dijitalsy":              "SY-Dijital Bankacılık",
+		"avengersy":              "SY-Krediler ve Sigorta",
 		"SY-KREDİLER VE SİGORTA": "SY-Krediler ve Sigorta", // kendi-kendine alias zararsız
 	}}
 

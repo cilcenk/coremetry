@@ -38,11 +38,11 @@ type RepeatedSpanRow struct {
 // "peer.service"] for chatty RPC, ["http.route"] for endpoint
 // fan-out.
 type RepeatedSpanFilter struct {
-	Filters     []FilterExpr
-	GroupBy     []string
-	MinRepeats  int
-	From, To    time.Time
-	Limit       int
+	Filters    []FilterExpr
+	GroupBy    []string
+	MinRepeats int
+	From, To   time.Time
+	Limit      int
 }
 
 // QueryRepeatedSpans runs one GROUP BY (trace_id, <groupBy>)

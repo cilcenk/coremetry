@@ -29,7 +29,7 @@ import (
 
 // BusinessSlice — bir iş boyutu değerinin pencere içindeki ağırlığı.
 type BusinessSlice struct {
-	Value  string  `json:"value"`  // ham kod (CHANNEL_CODE değeri gibi)
+	Value  string  `json:"value"` // ham kod (CHANNEL_CODE değeri gibi)
 	Calls  uint64  `json:"calls"`
 	Errors uint64  `json:"errors"`
 	ErrPct float64 `json:"errPct"`

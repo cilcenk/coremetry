@@ -31,21 +31,21 @@ type ServiceMapNode struct {
 	// …); "queue" = messaging.system synthesised dependency
 	// (kafka / rabbitmq / …); "external" = peer.service'd HTTP
 	// endpoint that isn't an OTel service.
-	Kind      string `json:"kind,omitempty"`
+	Kind string `json:"kind,omitempty"`
 	// DBSystem / Subkind carries the underlying type so the UI
 	// can show "redis" or "postgresql" rather than just "db".
-	Subkind   string `json:"subkind,omitempty"`
+	Subkind string `json:"subkind,omitempty"`
 	// DbName (v0.8.297) — dominant db.name for this node's db.system
 	// (db_summary_5m via DbNamesBySystem), best-effort read-time
 	// enrichment: the pill shows WHICH database ("COREBANK"), not just
 	// the engine ("oracle"). db nodes only; empty when the system
 	// never reports db.name.
-	DbName    string `json:"dbName,omitempty"`
+	DbName string `json:"dbName,omitempty"`
 	// IsNew is set by GetServiceMapWithDiff when this node didn't
 	// appear in the baseline window (e.g. yesterday's same slot).
 	// Frontend pulses these green so a freshly-deployed service or
 	// newly-discovered dependency stands out at a glance.
-	IsNew     bool   `json:"isNew,omitempty"`
+	IsNew bool `json:"isNew,omitempty"`
 	// Cluster — the k8s/openshift cluster this service ran in
 	// during the sampled window. Populated server-side via
 	// GetServiceClusterMap as a read-time enrichment so the
@@ -56,7 +56,7 @@ type ServiceMapNode struct {
 	// renders these with a distinct chip so an operator
 	// scanning a topology hairball still spots the boundary
 	// crossings.
-	Cluster   string `json:"cluster,omitempty"`
+	Cluster string `json:"cluster,omitempty"`
 }
 
 // ServiceMapEdge is a directed call: caller → callee. Weight =
@@ -75,7 +75,7 @@ type ServiceMapEdge struct {
 	// a feature deploy that wired up a previously-decoupled service
 	// or a regression where a code path started talking to an
 	// unintended dependency.
-	IsNew      bool   `json:"isNew,omitempty"`
+	IsNew bool `json:"isNew,omitempty"`
 }
 
 // ServiceMap is the wire format returned to the frontend.
@@ -86,19 +86,19 @@ type ServiceMapEdge struct {
 // but have stopped appearing in the current window. Useful for
 // catching "we silently dropped a downstream call" regressions.
 type ServiceMap struct {
-	Nodes         []ServiceMapNode `json:"nodes"`
-	Edges         []ServiceMapEdge `json:"edges"`
-	RemovedNodes  []ServiceMapNode `json:"removedNodes,omitempty"`
-	RemovedEdges  []ServiceMapEdge `json:"removedEdges,omitempty"`
-	SampledFrom   int              `json:"sampledFrom"`  // traces actually inspected
-	TotalSpans    int              `json:"totalSpans"`   // span count across them
-	BaselineAgo   string           `json:"baselineAgo,omitempty"` // e.g. "24h" — echoed for UI labelling
+	Nodes        []ServiceMapNode `json:"nodes"`
+	Edges        []ServiceMapEdge `json:"edges"`
+	RemovedNodes []ServiceMapNode `json:"removedNodes,omitempty"`
+	RemovedEdges []ServiceMapEdge `json:"removedEdges,omitempty"`
+	SampledFrom  int              `json:"sampledFrom"`           // traces actually inspected
+	TotalSpans   int              `json:"totalSpans"`            // span count across them
+	BaselineAgo  string           `json:"baselineAgo,omitempty"` // e.g. "24h" — echoed for UI labelling
 	// TotalNodes / ShownNodes (v0.8.215) — set by pruneServiceMapTopN. When the
 	// overview top-N cap trims a large graph, ShownNodes < TotalNodes and the UI
 	// shows "showing X of Y services" so the operator knows the map is pruned,
 	// not the whole truth.
-	TotalNodes    int              `json:"totalNodes"`
-	ShownNodes    int              `json:"shownNodes"`
+	TotalNodes int `json:"totalNodes"`
+	ShownNodes int `json:"shownNodes"`
 }
 
 // pruneServiceMapTopN bounds the overview graph to the topN heaviest nodes so a
@@ -362,20 +362,20 @@ func (s *Store) getServiceMapAt(
 	defer rows.Close()
 
 	type spanInfo struct {
-		parent     string
-		svc        string
-		errSp      bool
-		dbSystem   string // populated → infrastructure dep edge
-		peerSvc    string // populated → external dep edge
-		kind       string // span kind (client/server/producer/…)
+		parent   string
+		svc      string
+		errSp    bool
+		dbSystem string // populated → infrastructure dep edge
+		peerSvc  string // populated → external dep edge
+		kind     string // span kind (client/server/producer/…)
 	}
 	byTrace := map[string]map[string]spanInfo{}
 	nodeSpan := map[string]int{}
-	nodeErr  := map[string]int{}
+	nodeErr := map[string]int{}
 	// Track Kind/Subkind of each node so the frontend can render
 	// real services and dep nodes differently. Real services
 	// keep Kind="" — only synthesised dep nodes carry a Kind.
-	nodeKind    := map[string]string{}
+	nodeKind := map[string]string{}
 	nodeSubkind := map[string]string{}
 	totalSpans := 0
 	for rows.Next() {
@@ -407,7 +407,7 @@ func (s *Store) getServiceMapAt(
 
 	type edgeKey struct{ caller, callee string }
 	edgeSpan := map[edgeKey]int{}
-	edgeErr  := map[edgeKey]int{}
+	edgeErr := map[edgeKey]int{}
 	edgeTraces := map[edgeKey]map[string]struct{}{}
 
 	// Helper: ensure a synthetic dep node exists in the

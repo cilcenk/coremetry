@@ -31,9 +31,9 @@ import (
 // derived from the schema config the Store was constructed with.
 
 type retentionTable struct {
-	tableName    string
-	settingsKey  string // system_settings key for the override
-	defaultDays  int
+	tableName   string
+	settingsKey string // system_settings key for the override
+	defaultDays int
 }
 
 // EnforceRetention drops every active partition older than the
@@ -43,18 +43,18 @@ type retentionTable struct {
 // the server log.
 func (s *Store) EnforceRetention(ctx context.Context) error {
 	tables := []retentionTable{
-		{"spans",         "retention.spans",    s.ret.SpansDays},
-		{"logs",          "retention.logs",     s.ret.LogsDays},
-		{"metric_points", "retention.metrics",  s.ret.MetricsDays},
-		{"profiles",      "retention.profiles", s.ret.SpansDays}, // profiles share spans default
+		{"spans", "retention.spans", s.ret.SpansDays},
+		{"logs", "retention.logs", s.ret.LogsDays},
+		{"metric_points", "retention.metrics", s.ret.MetricsDays},
+		{"profiles", "retention.profiles", s.ret.SpansDays}, // profiles share spans default
 		// v0.8.328 — exemplars ride the SPANS horizon (key AND default): an
 		// exemplar outliving its trace is a dead link. Mirrors the
 		// SetRetention plan entry.
-		{"exemplars",     "retention.spans",    s.ret.SpansDays},
+		{"exemplars", "retention.spans", s.ret.SpansDays},
 		// v0.8.329 — span links (both directions) ride the SPANS horizon
 		// too: a link outliving its spans is a dead edge either way it's
 		// traversed. Mirrors the SetRetention plan entries.
-		{"span_links",         "retention.spans", s.ret.SpansDays},
+		{"span_links", "retention.spans", s.ret.SpansDays},
 		{"span_links_reverse", "retention.spans", s.ret.SpansDays},
 	}
 	overrides, _ := s.GetRetention(ctx)

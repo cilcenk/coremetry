@@ -20,22 +20,22 @@ import (
 // SREs read the deltas in the columns rather than the score —
 // the score's job is just to rank.
 type ChangedService struct {
-	Service        string  `json:"service"`
-	BaselineRate   float64 `json:"baselineRate"`   // spans/sec, baseline window
-	CurrentRate    float64 `json:"currentRate"`    // spans/sec, current window
-	RateDeltaPct   float64 `json:"rateDeltaPct"`
-	BaselineErr    float64 `json:"baselineErrorRate"` // 0..1
-	CurrentErr     float64 `json:"currentErrorRate"`
-	ErrDeltaPct    float64 `json:"errDeltaPct"`
-	BaselineP99Ms  float64 `json:"baselineP99Ms"`
-	CurrentP99Ms   float64 `json:"currentP99Ms"`
-	P99DeltaPct    float64 `json:"p99DeltaPct"`
-	Score          float64 `json:"score"`
+	Service       string  `json:"service"`
+	BaselineRate  float64 `json:"baselineRate"` // spans/sec, baseline window
+	CurrentRate   float64 `json:"currentRate"`  // spans/sec, current window
+	RateDeltaPct  float64 `json:"rateDeltaPct"`
+	BaselineErr   float64 `json:"baselineErrorRate"` // 0..1
+	CurrentErr    float64 `json:"currentErrorRate"`
+	ErrDeltaPct   float64 `json:"errDeltaPct"`
+	BaselineP99Ms float64 `json:"baselineP99Ms"`
+	CurrentP99Ms  float64 `json:"currentP99Ms"`
+	P99DeltaPct   float64 `json:"p99DeltaPct"`
+	Score         float64 `json:"score"`
 	// Reasons is the human-readable bullet form: each entry is a
 	// short sentence the frontend renders verbatim. Saves the UI
 	// from re-implementing the formatting logic and keeps the
 	// "why did this surface?" answer co-located with the data.
-	Reasons        []string `json:"reasons"`
+	Reasons []string `json:"reasons"`
 }
 
 // GetCorrelatedChanges runs one ClickHouse pass that pivots span
@@ -91,12 +91,12 @@ func (s *Store) GetCorrelatedChanges(
 		LIMIT 500
 		SETTINGS max_execution_time = 20`,
 		baseFrom, baseTo, // base_cnt
-		winFrom, winTo,   // cur_cnt
+		winFrom, winTo, // cur_cnt
 		baseFrom, baseTo, // base_err
-		winFrom, winTo,   // cur_err
+		winFrom, winTo, // cur_err
 		baseFrom, baseTo, // base_p99
-		winFrom, winTo,   // cur_p99
-		baseFrom, winTo)  // outer WHERE
+		winFrom, winTo, // cur_p99
+		baseFrom, winTo) // outer WHERE
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +156,7 @@ func scoreChangedService(
 		ErrDeltaPct:   pctChange(baseErrRate, curErrRate),
 		P99DeltaPct:   pctChange(baseP99, curP99),
 	}
-	errAbs := math.Abs(curErrRate - baseErrRate) * 100 // points
+	errAbs := math.Abs(curErrRate-baseErrRate) * 100 // points
 	rateAbs := math.Min(200, math.Abs(c.RateDeltaPct))
 	p99Abs := math.Min(200, math.Abs(c.P99DeltaPct))
 	c.Score = errAbs*4 + rateAbs*0.5 + p99Abs*0.5

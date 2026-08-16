@@ -231,8 +231,8 @@ func TestNarrowIndicesDataStream(t *testing.T) {
 				".ds-other-2026.07.25-000001",
 				".ds-other-2026.07.26-000002",
 			},
-			from:   d("2026-07-26T09:00:00Z"),
-			to:     d("2026-07-26T09:10:00Z"),
+			from: d("2026-07-26T09:00:00Z"),
+			to:   d("2026-07-26T09:10:00Z"),
 			want: []string{
 				"app-meta", "app-2026.07.26",
 				".ds-other-2026.07.25-000001", ".ds-other-2026.07.26-000002",

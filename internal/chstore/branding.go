@@ -27,14 +27,14 @@ type BrandingSettings struct {
 	FooterText        string `json:"footerText,omitempty"`
 	// LogoDataURI is a "data:image/png;base64,..." string. Empty
 	// → the UI renders the built-in Telescope mark.
-	LogoDataURI       string `json:"logoDataUri,omitempty"`
+	LogoDataURI string `json:"logoDataUri,omitempty"`
 	// PrimaryColor overrides the --accent CSS var when set.
 	// Optional; empty keeps the bundled theme.
-	PrimaryColor      string `json:"primaryColor,omitempty"`
+	PrimaryColor string `json:"primaryColor,omitempty"`
 	// Language: "en" (default) or "tr". Drives the i18n catalog
 	// the SPA uses to render sidebar labels, page titles, common
 	// buttons, login strings, and empty/error states.
-	Language          string `json:"language,omitempty"`
+	Language string `json:"language,omitempty"`
 }
 
 const brandingKey = "branding"

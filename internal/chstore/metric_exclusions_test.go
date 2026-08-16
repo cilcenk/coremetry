@@ -105,12 +105,12 @@ func TestDropAtIngestHonoursCheckbox(t *testing.T) {
 		metric, route string
 		want          bool
 	}{
-		{"http.server.duration", "/health/checkStartup", true},  // işaretli + ankorsuz ön ek
-		{"http.server.duration", "/metrics", false},             // işaretsiz kural düşürmez
-		{"http.server.duration", "/api/orders", false},          // eşleşme yok
-		{"jvm.gc.duration", "/probe/live", true},                // '*' kuralı her metriğe
-		{"jvm.gc.duration", "/health/checkStartup", false},      // tam adlı kural başka metriğe geçmez
-		{"http.server.duration", "", false},                     // route'suz datapoint KALIR
+		{"http.server.duration", "/health/checkStartup", true}, // işaretli + ankorsuz ön ek
+		{"http.server.duration", "/metrics", false},            // işaretsiz kural düşürmez
+		{"http.server.duration", "/api/orders", false},         // eşleşme yok
+		{"jvm.gc.duration", "/probe/live", true},               // '*' kuralı her metriğe
+		{"jvm.gc.duration", "/health/checkStartup", false},     // tam adlı kural başka metriğe geçmez
+		{"http.server.duration", "", false},                    // route'suz datapoint KALIR
 	}
 	for _, tc := range tests {
 		if got := c.DropAtIngest(tc.metric, tc.route); got != tc.want {

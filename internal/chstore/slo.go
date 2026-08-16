@@ -19,23 +19,23 @@ type SLO struct {
 	Name        string  `json:"name"`
 	Service     string  `json:"service"`
 	SLIType     string  `json:"sliType"`
-	Target      float64 `json:"target"`        // 0..1, e.g. 0.99
-	WindowDays  uint16  `json:"windowDays"`    // rolling window
-	ThresholdMs float64 `json:"thresholdMs"`   // latency only
-	Operation   string  `json:"operation"`     // optional span-name filter
-	CreatedAt   int64   `json:"createdAt"`     // unix ns
+	Target      float64 `json:"target"`      // 0..1, e.g. 0.99
+	WindowDays  uint16  `json:"windowDays"`  // rolling window
+	ThresholdMs float64 `json:"thresholdMs"` // latency only
+	Operation   string  `json:"operation"`   // optional span-name filter
+	CreatedAt   int64   `json:"createdAt"`   // unix ns
 }
 
 // SLOStatus is the computed runtime state of an SLO. Burn rate > 1 means
 // the budget is being consumed faster than its replenishment rate.
 type SLOStatus struct {
-	Total           uint64  `json:"total"`            // events in window
-	Good            uint64  `json:"good"`             // satisfying events
-	Bad             uint64  `json:"bad"`              // total - good
-	SLI             float64 `json:"sli"`              // good/total, 0..1
-	BudgetRemaining float64 `json:"budgetRemaining"`  // 0..1, share of error budget left
-	BurnRate        float64 `json:"burnRate"`         // current_error_rate / (1 - target)
-	Healthy         bool    `json:"healthy"`          // SLI >= target
+	Total           uint64  `json:"total"`           // events in window
+	Good            uint64  `json:"good"`            // satisfying events
+	Bad             uint64  `json:"bad"`             // total - good
+	SLI             float64 `json:"sli"`             // good/total, 0..1
+	BudgetRemaining float64 `json:"budgetRemaining"` // 0..1, share of error budget left
+	BurnRate        float64 `json:"burnRate"`        // current_error_rate / (1 - target)
+	Healthy         bool    `json:"healthy"`         // SLI >= target
 }
 
 func (s *Store) ListSLOs(ctx context.Context) ([]SLO, error) {
@@ -202,7 +202,7 @@ func (s *Store) ComputeSLOStatus(ctx context.Context, o SLO) (*SLOStatus, error)
 // SLOStatus.BurnRate, just over the day instead of the SLO's
 // rolling window.
 type BurnPoint struct {
-	Time     int64   `json:"time"`     // unix ns, bucket start
+	Time     int64   `json:"time"` // unix ns, bucket start
 	Total    uint64  `json:"total"`
 	Good     uint64  `json:"good"`
 	BurnRate float64 `json:"burnRate"` // >1 = eating budget faster than allowed
@@ -285,7 +285,7 @@ func (s *Store) ComputeSLOBurnSeries(ctx context.Context, o SLO, days int) ([]Bu
 			return nil, err
 		}
 		bp := BurnPoint{
-			Time: bucket.UnixNano(),
+			Time:  bucket.UnixNano(),
 			Total: total, Good: good,
 		}
 		if total > 0 && budget > 0 {
@@ -309,18 +309,18 @@ func (s *Store) ComputeSLOBurnSeries(ctx context.Context, o SLO, days int) ([]Bu
 //
 // At BurnRate > 1 the math is:
 //
-//   hoursToExhaust = budgetRemaining × (windowDays × 24) / burnRate
+//	hoursToExhaust = budgetRemaining × (windowDays × 24) / burnRate
 //
 // rounded down. When that value ≤ 24h, WillBreachWithin24h is
 // flagged so the /slos page can promote the row to the operator's
 // attention without an actual alert wired up yet.
 type SLOForecast struct {
-	BurnRate            float64 `json:"burnRate"`             // short-window burn rate
-	BurnWindowSec       int     `json:"burnWindowSec"`        // window the rate was measured over
-	BudgetRemaining     float64 `json:"budgetRemaining"`      // 0..1 — copied from status
-	HoursToExhaust      float64 `json:"hoursToExhaust"`       // projected; 0 when SafeBurn
-	WillBreachWithin24h bool    `json:"willBreachWithin24h"`  // operator-attention flag
-	SafeBurn            bool    `json:"safeBurn"`             // burnRate ≤ 1, no forecast needed
+	BurnRate            float64 `json:"burnRate"`            // short-window burn rate
+	BurnWindowSec       int     `json:"burnWindowSec"`       // window the rate was measured over
+	BudgetRemaining     float64 `json:"budgetRemaining"`     // 0..1 — copied from status
+	HoursToExhaust      float64 `json:"hoursToExhaust"`      // projected; 0 when SafeBurn
+	WillBreachWithin24h bool    `json:"willBreachWithin24h"` // operator-attention flag
+	SafeBurn            bool    `json:"safeBurn"`            // burnRate ≤ 1, no forecast needed
 }
 
 // projectBurnHours is the pure-math half of ComputeSLOForecast,

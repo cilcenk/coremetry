@@ -325,6 +325,7 @@ func (s *Store) EnrichAnomaliesWithDeploys(ctx context.Context, events []Anomaly
 	}
 	return events
 }
+
 // CalleesOf returns services that `service` calls (outgoing dependency view).
 func (s *Store) CalleesOf(ctx context.Context, service string, since time.Duration) ([]ServiceEdgeStats, error) {
 	cutoff := time.Now().Add(-since)

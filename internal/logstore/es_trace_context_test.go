@@ -133,10 +133,10 @@ func TestPickServiceAggField(t *testing.T) {
 		"svc.pure":                 {Types: []string{"keyword"}, Aggregatable: true},
 	}
 	cases := []struct{ in, want string }{
-		{"svc.pure", "svc.pure"},                        // bare aggregatable wins
+		{"svc.pure", "svc.pure"},                         // bare aggregatable wins
 		{"svc.keyword.only", "svc.keyword.only.keyword"}, // text field → .keyword subfield
-		{"svc.unmapped", "svc.unmapped"},                // absent → harmless bare fallback
-		{"already.keyword", "already.keyword"},          // never double-append
+		{"svc.unmapped", "svc.unmapped"},                 // absent → harmless bare fallback
+		{"already.keyword", "already.keyword"},           // never double-append
 	}
 	for _, tc := range cases {
 		if got := pickServiceAggField(tc.in, caps); got != tc.want {

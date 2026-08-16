@@ -23,27 +23,27 @@ func TestShouldAutoResolveStale(t *testing.T) {
 	fourteenDayThreshold := 14 * 24 * time.Hour
 
 	cases := []struct {
-		name        string
-		state       string
-		lastSeenNs  int64
-		staleAfter  time.Duration
-		want        bool
+		name       string
+		state      string
+		lastSeenNs int64
+		staleAfter time.Duration
+		want       bool
 	}{
 		// Eligible-state × age combinations.
-		{"new & old enough",          ExStateNew,          fifteenDaysAgo, fourteenDayThreshold, true},
+		{"new & old enough", ExStateNew, fifteenDaysAgo, fourteenDayThreshold, true},
 		{"acknowledged & old enough", ExStateAcknowledged, fifteenDaysAgo, fourteenDayThreshold, true},
-		{"regressed & old enough",    ExStateRegressed,    fifteenDaysAgo, fourteenDayThreshold, true},
+		{"regressed & old enough", ExStateRegressed, fifteenDaysAgo, fourteenDayThreshold, true},
 		// State filter — already-resolved + ignored stay put.
 		{"already resolved → skip", ExStateResolved, fifteenDaysAgo, fourteenDayThreshold, false},
-		{"ignored → skip",          ExStateIgnored,  fifteenDaysAgo, fourteenDayThreshold, false},
+		{"ignored → skip", ExStateIgnored, fifteenDaysAgo, fourteenDayThreshold, false},
 		// Age filter — recent groups stay open.
 		{"new but recent (1 day < 14 day)", ExStateNew, dayAgo, fourteenDayThreshold, false},
 		{"new at exactly threshold (1 day ≥ 1 day)", ExStateNew, dayAgo, oneDayThreshold, true},
 		// Pathological inputs.
-		{"zero threshold → never sweep",      ExStateNew, fifteenDaysAgo, 0,                   false},
-		{"negative threshold → never sweep",  ExStateNew, fifteenDaysAgo, -time.Hour,          false},
-		{"empty state → never sweep",         "",         fifteenDaysAgo, fourteenDayThreshold, false},
-		{"garbage state → never sweep",       "garbage",  fifteenDaysAgo, fourteenDayThreshold, false},
+		{"zero threshold → never sweep", ExStateNew, fifteenDaysAgo, 0, false},
+		{"negative threshold → never sweep", ExStateNew, fifteenDaysAgo, -time.Hour, false},
+		{"empty state → never sweep", "", fifteenDaysAgo, fourteenDayThreshold, false},
+		{"garbage state → never sweep", "garbage", fifteenDaysAgo, fourteenDayThreshold, false},
 	}
 
 	for _, tc := range cases {
@@ -67,9 +67,9 @@ func TestShouldRegress(t *testing.T) {
 	resolvedAt := time.Date(2026, 6, 9, 12, 0, 0, 0, time.UTC).UnixNano()
 	ra := &resolvedAt
 	grace := 15 * time.Minute
-	within := resolvedAt + (5 * time.Minute).Nanoseconds()  // in-grace recurrence
-	past := resolvedAt + (20 * time.Minute).Nanoseconds()   // still firing past grace
-	before := resolvedAt - (5 * time.Minute).Nanoseconds()  // last occurrence pre-resolve
+	within := resolvedAt + (5 * time.Minute).Nanoseconds() // in-grace recurrence
+	past := resolvedAt + (20 * time.Minute).Nanoseconds()  // still firing past grace
+	before := resolvedAt - (5 * time.Minute).Nanoseconds() // last occurrence pre-resolve
 
 	cases := []struct {
 		name       string

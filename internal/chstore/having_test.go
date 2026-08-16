@@ -31,7 +31,7 @@ func TestCompileHaving(t *testing.T) {
 			wantSQL: " AND error_rate > ? AND p95_ms > ?", wantN: 2,
 		},
 		{
-			name:    "tüm metrikler geçerli",
+			name: "tüm metrikler geçerli",
 			in: []HavingExpr{
 				{Metric: "count", Op: ">=", Value: 10},
 				{Metric: "perMin", Op: "<", Value: 100},

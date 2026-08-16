@@ -1,8 +1,8 @@
 package chstore
 
 import (
-	"testing"
 	"strings"
+	"testing"
 )
 
 // TestMergeTeams pins the auto-derive ownership rule (v0.8.95 fill, v0.8.100
@@ -180,8 +180,8 @@ func TestDeploymentFromPodName(t *testing.T) {
 func TestDeploymentsFromPodCounts(t *testing.T) {
 	got := deploymentsFromPodCounts(map[string]map[string]uint64{
 		"mobile-loans-bff-prod": {
-			"mobile-loans-bff-6b8f49b9d5-8hrtj": 900,
-			"mobile-loans-bff-6b8f49b9d5-vdp54": 850,
+			"mobile-loans-bff-6b8f49b9d5-8hrtj":          900,
+			"mobile-loans-bff-6b8f49b9d5-vdp54":          850,
 			"mobile-loans-bff-oneagent-7d98d8b99d-m6r8f": 40,
 		},
 		"uuid-only-svc": {

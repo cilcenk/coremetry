@@ -16,7 +16,7 @@ import (
 //   - "*"             → global silence (everything)
 //   - "<exact name>"  → single-service silence
 //   - "name*"         → prefix match (e.g. "payment*"
-//                       covers payment-api, payment-worker, …)
+//     covers payment-api, payment-worker, …)
 //
 // Severity filter:
 //   - "*"             → all severities

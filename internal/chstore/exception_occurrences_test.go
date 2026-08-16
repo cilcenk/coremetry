@@ -152,7 +152,7 @@ func TestFillOccurrenceBuckets_RungInvariants(t *testing.T) {
 		fromNs := base + 123*sec // deliberately unaligned to the rung
 		toNs := fromNs + stepNs*40 + 7*sec
 		// Seed a count in the middle bucket so we can prove it's preserved.
-		midBucket := ((fromNs+stepNs*20)/stepNs)*stepNs
+		midBucket := ((fromNs + stepNs*20) / stepNs) * stepNs
 		out := fillOccurrenceBuckets(fromNs, toNs, stepSec, map[int64]uint64{midBucket: 9})
 		if len(out) == 0 {
 			t.Fatalf("step=%ds: empty series", stepSec)

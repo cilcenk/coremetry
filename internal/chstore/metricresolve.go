@@ -121,10 +121,11 @@ func tierDimColumn(key string) (col string, ok bool) {
 
 // Span-metrik okuma çözünürlük sınırları (v0.9.27, second-resolution
 // audit R1 + operatör kararı "10 saniye demiştik"):
-//   minMetricStepSec — ClickHouse span-metrik TABANI 10s. Bu, Thanos
-//     range-query'lerinin 15s tabanından AYRI bir dünya (o
-//     internal/thanos/stepForWindow); karıştırılmaz.
-//   maxMetricPoints — seri başına nokta tavanı (grafik + CH bütçesi).
+//
+//	minMetricStepSec — ClickHouse span-metrik TABANI 10s. Bu, Thanos
+//	  range-query'lerinin 15s tabanından AYRI bir dünya (o
+//	  internal/thanos/stepForWindow); karıştırılmaz.
+//	maxMetricPoints — seri başına nokta tavanı (grafik + CH bütçesi).
 const (
 	minMetricStepSec = 10
 	maxMetricPoints  = 720

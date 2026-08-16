@@ -14,19 +14,19 @@ import (
 // is recent; the "cleared" status is derived in the query layer
 // from last_seen freshness so we don't need a separate sweep.
 type AnomalyEvent struct {
-	ID            string  `json:"id"`
-	Kind          string  `json:"kind"`     // "log_pattern" | "trace_op"
-	Pattern       string  `json:"pattern"`  // pattern name (logs) or operation name (trace ops)
-	Service       string  `json:"service"`
-	StartedAt     int64   `json:"startedAt"`     // unix ns — first observation
-	LastSeen      int64   `json:"lastSeen"`      // unix ns — most recent observation
-	PeakRatio     float64 `json:"peakRatio"`     // worst ratio seen during the event
-	CurrentRatio  float64 `json:"currentRatio"`  // ratio at last_seen
-	CurrentCount  uint64  `json:"currentCount"`
-	Sample        string  `json:"sample"`
+	ID           string  `json:"id"`
+	Kind         string  `json:"kind"`    // "log_pattern" | "trace_op"
+	Pattern      string  `json:"pattern"` // pattern name (logs) or operation name (trace ops)
+	Service      string  `json:"service"`
+	StartedAt    int64   `json:"startedAt"`    // unix ns — first observation
+	LastSeen     int64   `json:"lastSeen"`     // unix ns — most recent observation
+	PeakRatio    float64 `json:"peakRatio"`    // worst ratio seen during the event
+	CurrentRatio float64 `json:"currentRatio"` // ratio at last_seen
+	CurrentCount uint64  `json:"currentCount"`
+	Sample       string  `json:"sample"`
 	// Status is computed in the query, not stored. "active" while
 	// last_seen >= now() - 10m, otherwise "cleared".
-	Status        string `json:"status"`
+	Status string `json:"status"`
 	// Clusters — k8s/openshift cluster names the anomaly's
 	// service was active in around the time of detection.
 	// Enriched at read time (no schema migration); empty for
@@ -252,7 +252,7 @@ func (s *Store) GetAnomalyEvent(ctx context.Context, id string, activeAge time.D
 // last_seen >= … so a 24h window returns both currently-active
 // events and ones that cleared up to 24h ago.
 type ListAnomalyEventsFilter struct {
-	SinceNs   int64   // unix ns; 0 = last 24h default
+	SinceNs   int64         // unix ns; 0 = last 24h default
 	ActiveAge time.Duration // last_seen freshness for "active" status; 0 = 10m default
 	Limit     int
 	// Services (v0.9.353) constrains rows to this service set IN SQL, so the

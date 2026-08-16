@@ -15,18 +15,18 @@ import (
 // the response from.
 
 type Incident struct {
-	ID         string  `json:"id"`
-	Title      string  `json:"title"`
-	Severity   string  `json:"severity"`     // info | warning | critical
-	Status     string  `json:"status"`       // open | acknowledged | resolved
-	Service    string  `json:"service,omitempty"`
-	Summary    string  `json:"summary,omitempty"`
-	Assignee   string  `json:"assignee,omitempty"`
-	Postmortem string  `json:"postmortem,omitempty"`
-	StartedAt  int64   `json:"startedAt"`
-	AckAt      *int64  `json:"ackAt,omitempty"`
-	ResolvedAt *int64  `json:"resolvedAt,omitempty"`
-	UpdatedAt  int64   `json:"updatedAt"`
+	ID         string `json:"id"`
+	Title      string `json:"title"`
+	Severity   string `json:"severity"` // info | warning | critical
+	Status     string `json:"status"`   // open | acknowledged | resolved
+	Service    string `json:"service,omitempty"`
+	Summary    string `json:"summary,omitempty"`
+	Assignee   string `json:"assignee,omitempty"`
+	Postmortem string `json:"postmortem,omitempty"`
+	StartedAt  int64  `json:"startedAt"`
+	AckAt      *int64 `json:"ackAt,omitempty"`
+	ResolvedAt *int64 `json:"resolvedAt,omitempty"`
+	UpdatedAt  int64  `json:"updatedAt"`
 	// Clusters — same pattern as Problem.Clusters: enriched
 	// at read time from recent span activity for the
 	// incident's primary service. Empty when the service
@@ -37,8 +37,8 @@ type Incident struct {
 
 type IncidentEvent struct {
 	IncidentID string `json:"incidentId"`
-	Time       int64  `json:"time"`         // unix ns
-	Kind       string `json:"kind"`         // created | ack | resolved | note | problem_attached | problem_resolved
+	Time       int64  `json:"time"` // unix ns
+	Kind       string `json:"kind"` // created | ack | resolved | note | problem_attached | problem_resolved
 	Actor      string `json:"actor,omitempty"`
 	Body       string `json:"body,omitempty"`
 	RefID      string `json:"refId,omitempty"`
@@ -48,8 +48,8 @@ type IncidentFilter struct {
 	// ID narrows to exactly one incident (v0.9.332). Exists so GetIncident
 	// can ask the database for the row it wants instead of paging the newest
 	// N and scanning in Go — see the comment there.
-	ID       string
-	Status   string
+	ID     string
+	Status string
 	// Services (v0.9.353) — strict service allowlist, in SQL. Same contract
 	// as the anomaly filter: nil = no constraint, EMPTY = match nothing.
 	// STRICT IN: under a team filter a service-less (global) incident does
@@ -63,9 +63,9 @@ type IncidentFilter struct {
 	// newest 1000), ORDER BY started_at DESC LIMIT 300 returned almost
 	// nothing open and the inbox list disagreed with its own badge — 2 vs 29.
 	NotStatuses []string
-	Service  string
-	Severity string
-	Limit    int
+	Service     string
+	Severity    string
+	Limit       int
 }
 
 func (s *Store) ListIncidents(ctx context.Context, f IncidentFilter) ([]Incident, error) {

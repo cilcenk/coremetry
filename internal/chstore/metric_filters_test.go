@@ -11,10 +11,10 @@ import (
 // ApplyMetricFilters reroutes those keys to the array-lookup forms.
 func TestApplyMetricFiltersReroutesSpansColumns(t *testing.T) {
 	cases := []struct {
-		name     string
-		f        FilterExpr
-		wantSub  string   // fragment that MUST appear
-		banSubs  []string // fragments that must NOT appear
+		name    string
+		f       FilterExpr
+		wantSub string   // fragment that MUST appear
+		banSubs []string // fragments that must NOT appear
 	}{
 		{"env → resource lookup",
 			FilterExpr{Key: "deployment.environment", Op: "=", Values: []string{"uat"}},

@@ -31,24 +31,24 @@ import (
 // propagating up the call graph.
 type BlastRadiusCaller struct {
 	Service        string  `json:"service"`
-	Calls          uint64  `json:"calls"`           // total invocations in window
+	Calls          uint64  `json:"calls"` // total invocations in window
 	Errors         uint64  `json:"errors"`
-	RPS            float64 `json:"rps"`             // calls / window seconds
-	ErrorRate      float64 `json:"errorRate"`       // percent
-	HasOpenProblem bool    `json:"hasOpenProblem"`  // cascade indicator
+	RPS            float64 `json:"rps"`            // calls / window seconds
+	ErrorRate      float64 `json:"errorRate"`      // percent
+	HasOpenProblem bool    `json:"hasOpenProblem"` // cascade indicator
 }
 
 // BlastRadius bundles the per-caller list with a summary so the
 // frontend chip can render "↘ N svcs · M rps" without summing
 // client-side.
 type BlastRadius struct {
-	Service           string              `json:"service"`           // inspected service
+	Service           string              `json:"service"` // inspected service
 	WindowSec         int                 `json:"windowSec"`
 	TotalCallers      int                 `json:"totalCallers"`
-	CascadingCallers  int                 `json:"cascadingCallers"`  // count of callers WITH their own open problem
+	CascadingCallers  int                 `json:"cascadingCallers"` // count of callers WITH their own open problem
 	TotalRPS          float64             `json:"totalRps"`
 	TotalErrorsPerSec float64             `json:"totalErrorsPerSec"`
-	Callers           []BlastRadiusCaller `json:"callers"`           // sorted by calls desc
+	Callers           []BlastRadiusCaller `json:"callers"` // sorted by calls desc
 }
 
 // GetServiceBlastRadius returns the upstream-caller impact

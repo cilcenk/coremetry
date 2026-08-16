@@ -40,7 +40,7 @@ func (s *Store) GetTopologyEdges(ctx context.Context, from, to time.Time, limit 
 		WHERE c.time >= ? AND c.time <= ?
 		  AND p.time >= ? AND p.time <= ?
 		  AND c.parent_id != ''
-		  AND ` + topoNoiseExcludeSQL("c.name") + `
+		  AND `+topoNoiseExcludeSQL("c.name")+`
 		GROUP BY parent_service, parent_op, child_service, child_op
 		ORDER BY calls DESC
 		LIMIT ?
@@ -89,10 +89,10 @@ type ServiceTopologyEdge struct {
 	// the read path so the operator reads "is this edge
 	// breaking?" directly off the graph rather than having to
 	// click into the dependent service.
-	Errors         uint64   `json:"errors"`
-	ErrorRate      float64  `json:"errorRate"` // (errors / calls) * 100
-	AvgMs          float64  `json:"avgMs"`   // window-wide avg ms (sum/calls)
-	P99Ms          float64  `json:"p99Ms"`   // conservative window p99
+	Errors    uint64  `json:"errors"`
+	ErrorRate float64 `json:"errorRate"` // (errors / calls) * 100
+	AvgMs     float64 `json:"avgMs"`     // window-wide avg ms (sum/calls)
+	P99Ms     float64 `json:"p99Ms"`     // conservative window p99
 	// v0.5.409 — known external SaaS / cloud annotation. When
 	// NodeKind == "external" and the peer host matches the
 	// external_catalogue, these carry the human-friendly display
@@ -100,8 +100,8 @@ type ServiceTopologyEdge struct {
 	// frontend can render a colored badge. Empty when the peer
 	// isn't in the catalogue — UI falls back to the raw
 	// `ext:<peer>` label.
-	ExtDisplay     string   `json:"extDisplay,omitempty"`
-	ExtKind        string   `json:"extKind,omitempty"`
+	ExtDisplay string `json:"extDisplay,omitempty"`
+	ExtKind    string `json:"extKind,omitempty"`
 	// v0.5.410 — environment annotation per side. Resolved at
 	// aggregation time from deployment.environment /
 	// service.namespace / k8s.namespace.name resource attrs.
@@ -110,8 +110,8 @@ type ServiceTopologyEdge struct {
 	// ORDER BY); a strict per-env split needs a table rebuild
 	// and is deferred. Empty when no env attr was present on
 	// the underlying spans.
-	ParentEnv      string   `json:"parentEnv,omitempty"`
-	ChildEnv       string   `json:"childEnv,omitempty"`
+	ParentEnv string `json:"parentEnv,omitempty"`
+	ChildEnv  string `json:"childEnv,omitempty"`
 	// v0.9.1026 — kuyruk düğümünün messaging cluster'ı (v0.9.1025'te
 	// yazılmaya başlandı). YALNIZ queue düğümü taşıyan kenarlarda dolu;
 	// hangi TARAFIN kuyruk olduğu kenarı üreten pass'e göre değişir
@@ -123,15 +123,15 @@ type ServiceTopologyEdge struct {
 	// Tüketicisi bu hâli "cluster bilinmiyor" diye okumalı ve v0.9.972
 	// katalog köprüsüne düşmeli — asla '(default)' VARSAYMAMALI (çok-
 	// cluster kurulumda sessizce boş bir çekmece açardı, v0.9.973).
-	Cluster        string   `json:"cluster,omitempty"`
+	Cluster string `json:"cluster,omitempty"`
 	// v0.5.414 — prior-window comparison values for the
 	// what-changed banner. Populated only when the API caller
 	// asks for the compare=prior variant. Frontend derives the
 	// delta + surfaces edges whose errorRate or p99 jumped ≥2×.
-	PriorCalls     uint64   `json:"priorCalls,omitempty"`
-	PriorErrors   uint64   `json:"priorErrors,omitempty"`
-	PriorAvgMs    float64  `json:"priorAvgMs,omitempty"`
-	PriorP99Ms    float64  `json:"priorP99Ms,omitempty"`
+	PriorCalls  uint64  `json:"priorCalls,omitempty"`
+	PriorErrors uint64  `json:"priorErrors,omitempty"`
+	PriorAvgMs  float64 `json:"priorAvgMs,omitempty"`
+	PriorP99Ms  float64 `json:"priorP99Ms,omitempty"`
 }
 
 // RootFlow describes one business-level entry point: the root
@@ -554,7 +554,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			-- knew the legacy key and missed
 			-- deployment.environment.name emitters entirely. The new
 			-- spelling is also added for pre-v0.8.379 rows.
-			` + topoEnvChainSQL("c.") + ` AS c_env
+			`+topoEnvChainSQL("c.")+` AS c_env
 		SELECT
 			toDateTime(?, 'UTC') AS time_bucket,
 			p.service_name        AS parent_service,
@@ -579,7 +579,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		FROM spans AS c
 		GLOBAL INNER JOIN (
 			SELECT trace_id, span_id, service_name,
-			       ` + topoEnvChainSQL("") + ` AS env
+			       `+topoEnvChainSQL("")+` AS env
 			FROM spans
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 		) AS p
@@ -587,7 +587,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')
 		  AND c.parent_id != ''
 		  AND p.service_name != c.service_name
-		  AND ` + topoNoiseExcludeSQL("c.name") + `
+		  AND `+topoNoiseExcludeSQL("c.name")+`
 		GROUP BY parent_service, child_node, protocol
 		SETTINGS max_execution_time = 180,
 		         join_algorithm = 'grace_hash',
@@ -673,7 +673,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 				-- child_env stays empty for infra targets — db/queue/
 				-- external nodes don't inherit the caller's env (they
 				-- ARE cross-env infra).
-				` + topoEnvChainSQL("") + ` AS p_env,
+				`+topoEnvChainSQL("")+` AS p_env,
 				-- v0.7.31 — messaging.destination (topic) so each Kafka topic is a
 				-- DISTINCT queue node (queue:<system>:<topic>) instead of every
 				-- topic on a broker collapsing into one queue:<system> hairball.
@@ -761,8 +761,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			WHERE time >= toDateTime(?, 'UTC') AND time < toDateTime(?, 'UTC')
 		)
 		WHERE child != ''
-		  AND ` + topoNoiseExcludeSQL("name") + `
-		  AND ` + topoNoiseExcludeSQL("msg_dest") + `
+		  AND `+topoNoiseExcludeSQL("name")+`
+		  AND `+topoNoiseExcludeSQL("msg_dest")+`
 		GROUP BY parent_service, child, proto, kind_out
 		SETTINGS max_execution_time = 120,
 		         distributed_product_mode = 'global'`,
@@ -823,7 +823,7 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 			-- Consumer's env (the receiver) — child_env on the
 			-- queue→consumer edge so the operator sees which env
 			-- consumes from a queue when multiple envs share one.
-			` + topoEnvChainSQL("") + ` AS c_env` + clusterInner + `
+			`+topoEnvChainSQL("")+` AS c_env`+clusterInner+`
 		SELECT
 			toDateTime(?, 'UTC')                                AS time_bucket,
 			queue_source                                        AS parent_service,
@@ -844,8 +844,8 @@ func (s *Store) WriteTopologyBucket(ctx context.Context, bucketStart time.Time) 
 		  AND kind = 'consumer'
 		  AND msg_system != ''
 		  AND queue_source != ''
-		  AND ` + topoNoiseExcludeSQL("name") + `
-		  AND ` + topoNoiseExcludeSQL("msg_dest") + `
+		  AND `+topoNoiseExcludeSQL("name")+`
+		  AND `+topoNoiseExcludeSQL("msg_dest")+`
 		GROUP BY parent_service, child_node
 		SETTINGS max_execution_time = 60,
 		         distributed_product_mode = 'global'`,
@@ -884,7 +884,7 @@ func (s *Store) WriteTopologyOpBucket(ctx context.Context, bucketStart time.Time
 			ON p.trace_id = c.trace_id AND p.span_id = c.parent_id
 		WHERE c.time >= toDateTime(?, 'UTC') AND c.time < toDateTime(?, 'UTC')
 		  AND c.parent_id != ''
-		  AND ` + topoNoiseExcludeSQL("c.name") + `
+		  AND `+topoNoiseExcludeSQL("c.name")+`
 		GROUP BY parent_service, parent_op, child_service, child_op
 		SETTINGS max_execution_time = 180,
 		         join_algorithm = 'grace_hash',
@@ -1362,15 +1362,15 @@ func (s *Store) ReadServiceTopologyAggForFocus(ctx context.Context, from, to tim
 // GetServiceTopologyEdges returns service-pair interactions with
 // protocol classification + a top label set per strand.
 //
-//   1. Cross-service pass (parent_service != child_service) joins
-//      spans on (trace_id, parent_id). Grouped by (parent, child,
-//      protocol) so HTTP-only and gRPC-only edges between the
-//      same pair render separately.
+//  1. Cross-service pass (parent_service != child_service) joins
+//     spans on (trace_id, parent_id). Grouped by (parent, child,
+//     protocol) so HTTP-only and gRPC-only edges between the
+//     same pair render separately.
 //
-//   2. Infra pass synthesises destination nodes from db_system /
-//      msg_system / peer_service for leaf-ish client spans, so
-//      databases / queues / external APIs render as nodes the
-//      same way real services do.
+//  2. Infra pass synthesises destination nodes from db_system /
+//     msg_system / peer_service for leaf-ish client spans, so
+//     databases / queues / external APIs render as nodes the
+//     same way real services do.
 //
 // Both passes use topK(5)(label) for the per-edge top labels and
 // uniqExact(label) for the global distinct count. argMax with a

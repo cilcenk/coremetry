@@ -73,11 +73,11 @@ func TestZnodeSweepScope(t *testing.T) {
 // silently regress.
 func TestZkSweepEnabled(t *testing.T) {
 	cases := map[string]bool{
-		"":                            false, // unset → defaults to the shared prefix
-		"/clickhouse/tables":          false, // the shared default
-		"/clickhouse/tables/":         false, // trailing slash normalised
-		"/clickhouse/tables/coremetry": true, // dedicated → safe
-		"/ch/coremetry":               true,
+		"":                             false, // unset → defaults to the shared prefix
+		"/clickhouse/tables":           false, // the shared default
+		"/clickhouse/tables/":          false, // trailing slash normalised
+		"/clickhouse/tables/coremetry": true,  // dedicated → safe
+		"/ch/coremetry":                true,
 	}
 	for path, want := range cases {
 		if got := zkSweepEnabled(path); got != want {

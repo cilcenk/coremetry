@@ -68,11 +68,11 @@ func TestAggToSQL_RejectsUnknown(t *testing.T) {
 // to spanMetricTopN by the SAME area metric (sum of abs(point value)) the
 // frontend ranks by, so the kept set is a superset of anything displayed and
 // the wire payload is bounded. This pins:
-//   1. no-op below the cap (returns the input untouched, total == len),
-//   2. the cap keeps exactly N and reports the true pre-trim total,
-//   3. the kept set is the HIGHEST-area series (so it's a superset of the
-//      frontend's top-≤N selection — displayed lines stay identical),
-//   4. boundary (== cap) is NOT trimmed.
+//  1. no-op below the cap (returns the input untouched, total == len),
+//  2. the cap keeps exactly N and reports the true pre-trim total,
+//  3. the kept set is the HIGHEST-area series (so it's a superset of the
+//     frontend's top-≤N selection — displayed lines stay identical),
+//  4. boundary (== cap) is NOT trimmed.
 func mkSeries(key string, vals ...float64) SpanMetricSeries {
 	pts := make([]SpanMetricPoint, len(vals))
 	for i, v := range vals {

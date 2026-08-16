@@ -22,7 +22,7 @@ import (
 // panics via the embedded nil interface if touched (these reads must only
 // ever go through Search).
 type stubStore struct {
-	Store             // embed the interface: unused methods panic if called
+	Store   // embed the interface: unused methods panic if called
 	backend string
 	got     Filter
 	calls   int

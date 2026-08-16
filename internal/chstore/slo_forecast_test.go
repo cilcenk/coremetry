@@ -17,33 +17,33 @@ package chstore
 import "testing"
 
 func TestProjectBurnHours(t *testing.T) {
-	const windowHours30d = 30.0 * 24.0  // 720
+	const windowHours30d = 30.0 * 24.0 // 720
 
 	cases := []struct {
-		name              string
-		budgetRemaining   float64
-		windowHours       float64
-		rate              float64
-		wantHours         float64  // 0 if SafeBurn or already breached
-		wantSafe          bool
-		wantWithin24h     bool
+		name            string
+		budgetRemaining float64
+		windowHours     float64
+		rate            float64
+		wantHours       float64 // 0 if SafeBurn or already breached
+		wantSafe        bool
+		wantWithin24h   bool
 	}{
 		// Safe band — burning at or below replenishment.
-		{"rate 0 (no errors)",      0.5, windowHours30d, 0.0, 0, true, false},
-		{"rate 0.5 (slow burn)",    0.5, windowHours30d, 0.5, 0, true, false},
+		{"rate 0 (no errors)", 0.5, windowHours30d, 0.0, 0, true, false},
+		{"rate 0.5 (slow burn)", 0.5, windowHours30d, 0.5, 0, true, false},
 		{"rate 1.0 exactly (stable)", 0.5, windowHours30d, 1.0, 0, true, false},
 		// Burning above replenishment.
-		{"rate 2x, half budget left",   0.5, windowHours30d, 2.0, 180.0, false, false},  // 0.5×720/2 = 180h ≈ 7.5d
-		{"rate 10x, half budget left",  0.5, windowHours30d, 10.0, 36.0, false, false},  // boundary case >24h
-		{"rate 10x, 10% budget left",   0.1, windowHours30d, 10.0, 7.2, false, true},    // <24h, flag
-		{"rate 100x, half budget left", 0.5, windowHours30d, 100.0, 3.6, false, true},   // hot fire
+		{"rate 2x, half budget left", 0.5, windowHours30d, 2.0, 180.0, false, false},  // 0.5×720/2 = 180h ≈ 7.5d
+		{"rate 10x, half budget left", 0.5, windowHours30d, 10.0, 36.0, false, false}, // boundary case >24h
+		{"rate 10x, 10% budget left", 0.1, windowHours30d, 10.0, 7.2, false, true},    // <24h, flag
+		{"rate 100x, half budget left", 0.5, windowHours30d, 100.0, 3.6, false, true}, // hot fire
 		// Already breached — flag immediately regardless of rate.
-		{"budget exhausted, any rate",   0.0, windowHours30d, 5.0,  0, false, true},
-		{"budget negative (rounding)", -0.01, windowHours30d, 5.0,  0, false, true},
+		{"budget exhausted, any rate", 0.0, windowHours30d, 5.0, 0, false, true},
+		{"budget negative (rounding)", -0.01, windowHours30d, 5.0, 0, false, true},
 		// Exactly-24h boundary — "≤ 24" predicate is inclusive.
-		{"hours exactly = 24",          24.0/720.0, windowHours30d, 1.0, 0, true, false}, // rate=1 → safe path
+		{"hours exactly = 24", 24.0 / 720.0, windowHours30d, 1.0, 0, true, false}, // rate=1 → safe path
 		// 7-day window math.
-		{"7d window, rate 2, half budget", 0.5, 7.0*24.0, 2.0, 42.0, false, false},
+		{"7d window, rate 2, half budget", 0.5, 7.0 * 24.0, 2.0, 42.0, false, false},
 	}
 
 	for _, tc := range cases {

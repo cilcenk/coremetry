@@ -66,8 +66,8 @@ func TestResolveEnvFieldFromCaps(t *testing.T) {
 			wantName: "deployment.environment.name", wantOK: true,
 		},
 		{
-			name: "text-only field is SKIPPED (term would match nothing)",
-			caps: map[string]traceFieldCap{"deployment.environment.name": txt},
+			name:     "text-only field is SKIPPED (term would match nothing)",
+			caps:     map[string]traceFieldCap{"deployment.environment.name": txt},
 			wantName: "", wantOK: false,
 		},
 		{
@@ -83,7 +83,7 @@ func TestResolveEnvFieldFromCaps(t *testing.T) {
 			caps: map[string]traceFieldCap{
 				"resource.deployment.environment.name": kw,
 				"deployment.environment.name":          kw,
-				"env":                                   kw,
+				"env":                                  kw,
 			},
 			wantName: "resource.deployment.environment.name", wantOK: true,
 		},
@@ -104,8 +104,8 @@ func TestResolveEnvFieldFromCaps(t *testing.T) {
 			wantName: "environment", wantOK: true,
 		},
 		{
-			name: "bare custom shapes resolve last",
-			caps: map[string]traceFieldCap{"env": kw},
+			name:     "bare custom shapes resolve last",
+			caps:     map[string]traceFieldCap{"env": kw},
 			wantName: "env", wantOK: true,
 		},
 	}

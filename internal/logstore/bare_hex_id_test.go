@@ -11,11 +11,11 @@ func TestIsBareHexID(t *testing.T) {
 		q    string
 		want bool
 	}{
-		{"4bf92f3577b34da6a3ce929d0e0e4736", true},   // 32-hex trace
-		{"00f067aa0ba902b7", true},                    // 16-hex span
+		{"4bf92f3577b34da6a3ce929d0e0e4736", true},     // 32-hex trace
+		{"00f067aa0ba902b7", true},                     // 16-hex span
 		{"  4BF92F3577B34DA6A3CE929D0E0E4736  ", true}, // boşluk + büyük harf
-		{"4bf92f3577b34da6a3ce929d0e0e473", false},   // 31 hane
-		{"4bf92f3577b34da6a3ce929d0e0e4736a", false},  // 33 hane
+		{"4bf92f3577b34da6a3ce929d0e0e473", false},     // 31 hane
+		{"4bf92f3577b34da6a3ce929d0e0e4736a", false},   // 33 hane
 		{"connection refused", false},
 		{"4bf92f35-77b3-4da6-a3ce-929d0e0e4736", false}, // tireli UUID — serbest metin kalır
 		{"", false},

@@ -15,13 +15,13 @@ import (
 // no joins are needed at query time.
 type AnomalySilence struct {
 	ID          string `json:"id"`
-	Fingerprint string `json:"fingerprint"`     // matches AnomalyEvent.ID
-	Kind        string `json:"kind"`            // log_pattern | trace_op
+	Fingerprint string `json:"fingerprint"` // matches AnomalyEvent.ID
+	Kind        string `json:"kind"`        // log_pattern | trace_op
 	Pattern     string `json:"pattern"`
 	Service     string `json:"service"`
-	CreatedBy   string `json:"createdBy"`       // user email
-	CreatedAt   int64  `json:"createdAt"`       // unix ns
-	UntilAt     int64  `json:"untilAt"`         // unix ns; <=0 = no expiry
+	CreatedBy   string `json:"createdBy"` // user email
+	CreatedAt   int64  `json:"createdAt"` // unix ns
+	UntilAt     int64  `json:"untilAt"`   // unix ns; <=0 = no expiry
 	Reason      string `json:"reason"`
 	// Active is filled at query time: true while now < until_at.
 	Active bool `json:"active"`

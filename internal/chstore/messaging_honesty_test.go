@@ -125,12 +125,12 @@ func TestMessagingMVReadsAlign(t *testing.T) {
 // clickhouse-go onu *int64'e ÇEVİREMEZ ("converting UInt32 to *int64 is
 // unsupported"). İki messaging okuması bu tipi int64 bağlıyordu:
 //
-//   · dependencies.go drawer serisi — Scan hatası `continue` ile
-//     yutuluyordu, yani seri HER ZAMAN boş döndü ve drawer'ın
-//     produce/consume sparkline'ları v0.8.364'ten beri HİÇ çizilmedi;
-//   · messaging_e2e.go — hata döndürülüyordu ama çağıran E2E'yi
-//     best-effort okuyor, yani uçtan uca gecikme bloğu v0.8.372'den beri
-//     HİÇ çizilmedi.
+//	· dependencies.go drawer serisi — Scan hatası `continue` ile
+//	  yutuluyordu, yani seri HER ZAMAN boş döndü ve drawer'ın
+//	  produce/consume sparkline'ları v0.8.364'ten beri HİÇ çizilmedi;
+//	· messaging_e2e.go — hata döndürülüyordu ama çağıran E2E'yi
+//	  best-effort okuyor, yani uçtan uca gecikme bloğu v0.8.372'den beri
+//	  HİÇ çizilmedi.
 //
 // İkisi de SESSİZDİ: hata yok, log yok, boş-durum yok. Yalnız olmayan
 // bir grafik. Canlı kanıt (v0.9.816 dağıtımı, 878 span'lik pencere):

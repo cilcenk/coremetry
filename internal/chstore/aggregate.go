@@ -41,13 +41,13 @@ const traceFetchPad = time.Hour
 // JSON shape mirrors what the SPA's AggregatedStructure component
 // expects.
 type AggSpanNode struct {
-	Service    string         `json:"service"`
-	Operation  string         `json:"operation"`
-	Kind       string         `json:"kind,omitempty"`
-	Count      int            `json:"count"`
-	AvgMs      float64        `json:"avgMs"`
-	MaxMs      float64        `json:"maxMs"`
-	ErrorCount int            `json:"errorCount"`
+	Service    string  `json:"service"`
+	Operation  string  `json:"operation"`
+	Kind       string  `json:"kind,omitempty"`
+	Count      int     `json:"count"`
+	AvgMs      float64 `json:"avgMs"`
+	MaxMs      float64 `json:"maxMs"`
+	ErrorCount int     `json:"errorCount"`
 	// AvgStartMs is the mean offset (in ms) from the trace's
 	// earliest span — drives the bar's left edge in the renderer
 	// so the visual chronology survives aggregation.
@@ -129,25 +129,26 @@ func (s *Store) GetSpansForTraces(ctx context.Context, traceIDs []string, from, 
 //
 // `internalOnly` controls how the DFS walks descendants of each
 // focused-service entry point:
-//   • false (default) — follow every child regardless of service.
+//   - false (default) — follow every child regardless of service.
 //     This produces a CROSS-SERVICE flame showing "what the
 //     focused service does, including the downstream RPC /
 //     queue / DB hops it calls into". Downstream service
 //     frames are coloured distinctly so the operator can tell
 //     where the time leaves the local process.
-//   • true — clip the walk at any non-focused service. Produces
+//   - true — clip the walk at any non-focused service. Produces
 //     a SERVICE-ONLY flame: "where does this service spend its
 //     own time, ignoring how long the things it calls took".
 //     Useful when investigating a perf regression that's
 //     internal to the service rather than downstream.
 //
 // Returns:
-//   roots        — top-level nodes (multiple if sampled traces
-//                  have different root spans; chronological order
-//                  by avg start time).
-//   totalSpans   — span count across the sampled traces (for the
-//                  "X spans used" header).
-//   sampledFrom  — trace count actually inspected.
+//
+//	roots        — top-level nodes (multiple if sampled traces
+//	               have different root spans; chronological order
+//	               by avg start time).
+//	totalSpans   — span count across the sampled traces (for the
+//	               "X spans used" header).
+//	sampledFrom  — trace count actually inspected.
 func (s *Store) AggregateServiceStructure(
 	ctx context.Context, service string, since time.Duration, sampleCount int,
 	internalOnly bool,

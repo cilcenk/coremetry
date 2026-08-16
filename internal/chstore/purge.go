@@ -9,9 +9,9 @@ import (
 
 // PurgeResult reports the outcome of a telemetry purge.
 type PurgeResult struct {
-	TablesPurged []string `json:"tablesPurged"`        // truncated successfully
-	Skipped      []string `json:"skipped,omitempty"`   // absent on this install (e.g. op_group MV)
-	Errors       []string `json:"errors,omitempty"`    // per-table failures (best-effort: purge continues)
+	TablesPurged []string `json:"tablesPurged"`      // truncated successfully
+	Skipped      []string `json:"skipped,omitempty"` // absent on this install (e.g. op_group MV)
+	Errors       []string `json:"errors,omitempty"`  // per-table failures (best-effort: purge continues)
 }
 
 // telemetryPurgeTables is the EXPLICIT allowlist of observability-DATA tables
@@ -81,6 +81,7 @@ var configPreserveTables = []string{
 //   - Distributed wrapper        → TRUNCATE the `<name>_local` shard table
 //     ON CLUSTER (cluster derived from the engine def, or cfg.ClusterName);
 //     if the local is itself an MV, its inner is truncated.
+//
 // Carries the volume-guard overrides (max_table_size_to_drop /
 // max_partition_size_to_drop = 0) so a huge spans table truncates regardless of
 // accumulated size — same guard dropCombinedMV uses.

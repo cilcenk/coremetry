@@ -24,12 +24,12 @@ import (
 // missed deploy event later) is why we keep them separate.
 type Event struct {
 	ID        string `json:"id"`
-	Kind      string `json:"kind"`     // deploy | config | incident | maintenance | custom
+	Kind      string `json:"kind"` // deploy | config | incident | maintenance | custom
 	Label     string `json:"label"`
-	Time      int64  `json:"time"`     // unix ns; when it happened
-	Service   string `json:"service"`  // optional service scope ("" = global)
-	Link      string `json:"link"`     // optional URL
-	Owner     string `json:"owner"`    // creator email
+	Time      int64  `json:"time"`    // unix ns; when it happened
+	Service   string `json:"service"` // optional service scope ("" = global)
+	Link      string `json:"link"`    // optional URL
+	Owner     string `json:"owner"`   // creator email
 	CreatedAt int64  `json:"createdAt"`
 }
 

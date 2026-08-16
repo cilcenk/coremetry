@@ -29,9 +29,9 @@ type StatusComponent struct {
 }
 
 type StatusSubscriber struct {
-	ID            string `json:"id"`
-	Email         string `json:"email"`
-	Verified      bool   `json:"verified"`
+	ID       string `json:"id"`
+	Email    string `json:"email"`
+	Verified bool   `json:"verified"`
 	// Token is only populated on the read path internally —
 	// never round-trips to the admin UI. The public confirm
 	// link is the only consumer.

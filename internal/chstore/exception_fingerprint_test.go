@@ -23,9 +23,9 @@ func azureAuthMsg(reqID, tISO, date string) string {
 
 func TestFingerprintMergesDynamicIDVariants(t *testing.T) {
 	cases := []struct {
-		name   string
-		a, b   string
-		merge  bool
+		name  string
+		a, b  string
+		merge bool
 	}{
 		{
 			"Azure auth şekli — RequestId+Time+Date farkı birleşir",

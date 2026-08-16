@@ -24,47 +24,47 @@ import (
 // reads "37k logical reads/sec" rather than the raw
 // monotonic counter that Oracle exposes.
 type OracleMetrics struct {
-	Instance       string             `json:"instance"`
-	Synthetic      bool               `json:"synthetic"`
-	WindowSeconds  float64            `json:"windowSeconds"`
+	Instance      string  `json:"instance"`
+	Synthetic     bool    `json:"synthetic"`
+	WindowSeconds float64 `json:"windowSeconds"`
 	// Status — "up" when any oracledb.* metric_points exist in
 	// the window; "down" otherwise. Mirrors the Oracle Grafana
 	// dashboard's database-alive indicator (its `oracledb_up`
 	// stat panel) — the first thing an SRE looks at when paged.
-	Status         string             `json:"status"`
-	Sessions       OracleSessions     `json:"sessions"`
-	Processes      OracleGaugeWithCap `json:"processes"`
-	CPUTimeSec     float64            `json:"cpuTimeSec"`
-	PGAMemoryBytes float64            `json:"pgaMemoryBytes"`
-	SGAMemoryBytes float64            `json:"sgaMemoryBytes"` // shared global area
-	LogicalReadsPS float64            `json:"logicalReadsPerSec"`
-	PhysicalReadsPS float64           `json:"physicalReadsPerSec"`
-	CacheHitPct    float64            `json:"cacheHitPct"`
-	HardParsesPS   float64            `json:"hardParsesPerSec"`
-	ParseCallsPS   float64            `json:"parseCallsPerSec"`
-	ExecutionsPS   float64            `json:"executionsPerSec"`
-	UserCommitsPS  float64            `json:"userCommitsPerSec"`
-	RollbacksPS    float64            `json:"userRollbacksPerSec"`
-	TransactionsPS float64            `json:"transactionsPerSec"`
+	Status          string             `json:"status"`
+	Sessions        OracleSessions     `json:"sessions"`
+	Processes       OracleGaugeWithCap `json:"processes"`
+	CPUTimeSec      float64            `json:"cpuTimeSec"`
+	PGAMemoryBytes  float64            `json:"pgaMemoryBytes"`
+	SGAMemoryBytes  float64            `json:"sgaMemoryBytes"` // shared global area
+	LogicalReadsPS  float64            `json:"logicalReadsPerSec"`
+	PhysicalReadsPS float64            `json:"physicalReadsPerSec"`
+	CacheHitPct     float64            `json:"cacheHitPct"`
+	HardParsesPS    float64            `json:"hardParsesPerSec"`
+	ParseCallsPS    float64            `json:"parseCallsPerSec"`
+	ExecutionsPS    float64            `json:"executionsPerSec"`
+	UserCommitsPS   float64            `json:"userCommitsPerSec"`
+	RollbacksPS     float64            `json:"userRollbacksPerSec"`
+	TransactionsPS  float64            `json:"transactionsPerSec"`
 	// Row-lock waits per second. Concurrency wait class subset —
 	// the canonical Oracle "is something blocked behind a long
 	// transaction" indicator. Surfaced as its own KPI because
 	// SREs page off this independently of the broader wait-class
 	// distribution.
-	RowLockWaitsPS float64            `json:"rowLockWaitsPerSec"`
+	RowLockWaitsPS float64 `json:"rowLockWaitsPerSec"`
 	// Top wait classes over the window, descending by accumulated
 	// time. Mirrors the Grafana "System Wait Classes" panel which
 	// breaks down where the DB is actually spending its time.
 	// SREs read this as the answer to "the DB is slow — slow at
 	// what?" (network? user_io? commit?).
-	WaitClasses    []OracleWaitClass  `json:"waitClasses"`
+	WaitClasses []OracleWaitClass `json:"waitClasses"`
 	// Top SQL by total elapsed seconds in the window. Mirrors
 	// Grafana's `oracledb_top_sql_elapsed` panel — the heaviest
 	// statements in the DB's own measurement, complementary to
 	// our span-derived db_statement top list (which only sees
 	// what the application traced).
-	TopSQL         []OracleSQL        `json:"topSQL"`
-	Tablespaces    []OracleTablespace `json:"tablespaces"`
+	TopSQL      []OracleSQL        `json:"topSQL"`
+	Tablespaces []OracleTablespace `json:"tablespaces"`
 }
 
 // OracleSessions extends the basic gauge with an active/inactive
@@ -94,9 +94,9 @@ type OracleWaitClass struct {
 // to decide whether a slow statement is slow because it runs
 // constantly or because each run is heavy.
 type OracleSQL struct {
-	SQL         string  `json:"sql"`
-	ElapsedSec  float64 `json:"elapsedSec"`
-	Executions  uint64  `json:"executions"`
+	SQL          string  `json:"sql"`
+	ElapsedSec   float64 `json:"elapsedSec"`
+	Executions   uint64  `json:"executions"`
 	AvgElapsedMs float64 `json:"avgElapsedMs"`
 }
 

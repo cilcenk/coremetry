@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"math"
 	"strings"
 	"time"
 )
@@ -285,7 +286,14 @@ func (s *Store) ComputeDeployImpact(
 		return nil, fmt.Errorf("compute deploy impact: %w", err)
 	}
 	mkStats := func(c, e uint64, p99, avg float64) DeployImpactStats {
-		st := DeployImpactStats{Count: c, P99Ms: p99, AvgMs: avg}
+		// v0.9.1095 (MCP smoke'un yakaladığı bug) — boş taraf penceresi:
+		// quantileIf/avgIf boş kümede NaN döndürür; Go'nun json.Marshal'ı
+		// NaN yazamaz ve Impact taşıyan TÜM cevap gövdesi "unsupported
+		// value: NaN" ile düşer (get_deploy_diff'te göründü; Impact'i
+		// gömen her API cevabı aynı sınıfta). NaN/Inf burada, kaynağında
+		// sıfırlanır — delta hesapları zaten >0 kapılı, 0 tabanı "kıyas
+		// yok" anlamını korur (Count=0 zaten yanında taşınıyor).
+		st := DeployImpactStats{Count: c, P99Ms: nanToZero(p99), AvgMs: nanToZero(avg)}
 		if c > 0 {
 			st.ErrorRate = float64(e) / float64(c)
 			st.RPS = float64(c) / float64(windowSec)
@@ -310,6 +318,16 @@ func (s *Store) ComputeDeployImpact(
 	}
 	out.ErrorRateDeltaPct = (after.ErrorRate - before.ErrorRate) * 100
 	return out, nil
+}
+
+// nanToZero — JSON-taşınabilirlik kapısı (saf, tablo testli):
+// NaN/±Inf → 0. encoding/json bu değerleri YAZAMAZ; tek kaçak float
+// tüm cevabı düşürür.
+func nanToZero(f float64) float64 {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0
+	}
+	return f
 }
 
 // deployLookback (v0.9.205) — bir sürümün pencere İÇİNDE mi başladığını

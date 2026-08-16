@@ -1,10 +1,12 @@
 package chstore
 
 import (
+	"encoding/json"
+	"math"
+	"os"
 	"strings"
 	"testing"
 	"time"
-	"os"
 )
 
 // v0.9.205 — Operator-reported: image-tag'siz bir serviste (zincir
@@ -45,12 +47,12 @@ func TestPodTemplateHash(t *testing.T) {
 	}{
 		{"web-fund-bff-85786bbdb5-6t4x4", "85786bbdb5"},
 		{"web-fund-bff-85786bbdb5-wtdbw", "85786bbdb5"},
-		{"app-5-abc12", "5"},          // DeploymentConfig: deploy numarası
-		{"web-fund-bff-0", ""},        // StatefulSet ordinal: son segment 5 kr değil
-		{"vm-host-01", ""},            // host adı şekli
-		{"a29474161", ""},             // instance.id ilk-8 (tiresiz)
-		{"x-y", ""},                   // segment yetersiz
-		{"svc-ABCDE-fghij", ""},       // hash büyük harf → k8s şekli değil
+		{"app-5-abc12", "5"},    // DeploymentConfig: deploy numarası
+		{"web-fund-bff-0", ""},  // StatefulSet ordinal: son segment 5 kr değil
+		{"vm-host-01", ""},      // host adı şekli
+		{"a29474161", ""},       // instance.id ilk-8 (tiresiz)
+		{"x-y", ""},             // segment yetersiz
+		{"svc-ABCDE-fghij", ""}, // hash büyük harf → k8s şekli değil
 	}
 	for _, tc := range cases {
 		if got := podTemplateHash(tc.pod); got != tc.want {
@@ -71,8 +73,8 @@ func TestAnalyzeRolloutsFlickerSuppressed(t *testing.T) {
 		res := analyzeRollouts("svc", []rolloutBucket{
 			mk(0, []string{pa, pb}, "1.0"),
 			mk(5, []string{pa, pb}, "1.0"),
-			mk(10, []string{pa}, "1.0"),  // pb sustu
-			mk(15, []string{pa}, "1.0"),  // hâlâ sessiz (smoothing aşıldı)
+			mk(10, []string{pa}, "1.0"),     // pb sustu
+			mk(15, []string{pa}, "1.0"),     // hâlâ sessiz (smoothing aşıldı)
 			mk(20, []string{pa, pc}, "1.0"), // pc konuştu, pb yok → +1/-1
 			mk(25, []string{pa, pc}, "1.0"),
 		})
@@ -157,4 +159,31 @@ func TestDeployWindowJudgmentLookback(t *testing.T) {
 	if !strings.Contains(src[i:], "Query(ctx, sql, from, scanFrom, to, from.UnixNano(), limit)") {
 		t.Error("bind sırası bozuk — countIf(from), WHERE(scanFrom,to), HAVING(from) sırası şart")
 	}
+}
+
+// v0.9.1095 regresyonu — MCP smoke'un yakaladığı bug: boş taraf
+// penceresinde quantileIf/avgIf NaN döndürür, json.Marshal "unsupported
+// value: NaN" ile Impact taşıyan TÜM cevabı düşürürdü. Kapı kaynakta.
+func TestNanToZero(t *testing.T) {
+	cases := []struct {
+		in   float64
+		want float64
+	}{
+		{math.NaN(), 0},
+		{math.Inf(1), 0},
+		{math.Inf(-1), 0},
+		{42.5, 42.5},
+		{0, 0},
+	}
+	for _, c := range cases {
+		if got := nanToZero(c.in); got != c.want {
+			t.Errorf("nanToZero(%v) = %v, beklenen %v", c.in, got, c.want)
+		}
+	}
+	// Asıl sözleşme: sanitize edilmiş Impact her zaman marshal edilebilir.
+	b, err := json.Marshal(DeployImpactStats{P99Ms: nanToZero(math.NaN()), AvgMs: nanToZero(math.Inf(1))})
+	if err != nil {
+		t.Fatalf("sanitize sonrası marshal düşmemeli: %v", err)
+	}
+	_ = b
 }

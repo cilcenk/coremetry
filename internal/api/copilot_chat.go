@@ -92,10 +92,6 @@ type chatRequest struct {
 // streams progress + the final answer. One ai_calls row is written
 // per exchange (summing per-round token usage) via RecordUsage.
 func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
-	if s.copilot == nil || !s.copilot.Active() {
-		http.Error(w, `{"error":"AI copilot not available (disabled or not configured)"}`, http.StatusServiceUnavailable)
-		return
-	}
 	var req chatRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)

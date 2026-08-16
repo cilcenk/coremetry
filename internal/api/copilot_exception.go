@@ -19,10 +19,6 @@ import (
 // attribution) → v0.9.408 kanıt sözleşmesiyle cevap. Cache yok:
 // interaktif explain her tıkta taze; kayıt ai_calls'ta.
 func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	g, err := s.store.GetExceptionGroup(r.Context(), r.PathValue("fp"))
 	if err != nil {
 		writeErr(w, err)

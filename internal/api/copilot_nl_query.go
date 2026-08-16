@@ -127,10 +127,6 @@ var allowedPresets = map[string]bool{
 }
 
 func (s *Server) copilotNLToQuery(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, `{"error":"AI Copilot not configured"}`, http.StatusServiceUnavailable)
-		return
-	}
 	var body struct {
 		Prompt string `json:"prompt"`
 	}

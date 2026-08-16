@@ -30,10 +30,6 @@ import (
 // singleflight ile tek LLM çağrısına iner. Prefetch sorguları MV'ye
 // dayanıyor ve zaman-sınırlı; ayrı serveCached sarmalamaya gerek yok.
 func (s *Server) copilotExplainCharts(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	q := r.URL.Query()
 	service := strings.TrimSpace(q.Get("service"))
 	if service == "" {

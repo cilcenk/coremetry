@@ -25,6 +25,28 @@ import (
 //   - GET /api/{problems,anomalies}/{id}/rootcause/explain — kendi
 //     domain bloklarında (problem/anomali) yaşıyorlar; LLM kullanan
 //     ama domain'e ait uçlar.
+
+// requireCopilot — LLM isteyen her ucun 503 ön-kapısı, TEK yerde
+// (v0.9.1118, Faz 0.2). Bu blok daha önce 20 handler'a kopyalanmıştı
+// ve v0.9.1071/1080/1101 üç ayrı kopya-regresyonuydu (kapısız yeni uç
+// 500 dönüyor, FE "sunucu arızası" sanıyor — oysa AI'nın
+// yapılandırılmamış olması arıza değil). Middleware ile sınıf ölür:
+// yeni uç ai_routes.go'da sarılmadan kayıt OLAMAZ (ai_routes_test.go
+// kaynak-pini). Mesaj şekli JSON — üç dolaşımdaki varyant teke indi;
+// FE zaten status koduna bakıyor (aiErrorHint 503 = "yapılandırılmamış").
+//
+// Rol gate'iyle sıra: rol ÖNCE (sarımın DIŞINDA) — yetkisiz kullanıcı
+// 403 alır, kurulumun AI yapılandırma durumunu 503'ten öğrenemez.
+func (s *Server) requireCopilot(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.copilot == nil || !s.copilot.Active() {
+			http.Error(w, `{"error":"AI copilot not available (disabled or not configured)"}`, http.StatusServiceUnavailable)
+			return
+		}
+		h(w, r)
+	}
+}
+
 func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	// ── AI gözlemlenebilirliği (/ai sayfası) — admin-gated okumalar ──
 	mux.HandleFunc("GET /api/ai/calls", auth.RequireRole(auth.RoleAdmin, s.listAICalls))
@@ -56,35 +78,35 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET    /api/copilot/config", s.copilotConfig)
 	// v0.6.53 — in-app agentic chatbot. SSE stream; any authenticated
 	// user (the telemetry tools it calls are all read-only).
-	mux.HandleFunc("POST   /api/copilot/chat", s.copilotChat)
+	mux.HandleFunc("POST   /api/copilot/chat", s.requireCopilot(s.copilotChat))
 	// v0.8.75 — autonomous agentic root-cause analysis (same loop + tools,
 	// kicked off on a subject service/problem rather than user-driven).
-	mux.HandleFunc("POST   /api/copilot/analyze-service", s.copilotAnalyzeService)
-	mux.HandleFunc("POST   /api/copilot/explain-trace/{id}", s.copilotExplainTrace)
+	mux.HandleFunc("POST   /api/copilot/analyze-service", s.requireCopilot(s.copilotAnalyzeService))
+	mux.HandleFunc("POST   /api/copilot/explain-trace/{id}", s.requireCopilot(s.copilotExplainTrace))
 	// v0.5.255 — natural-language → DSL filter converter. /explore
 	// gets a "✦ Natural language" input that feeds this endpoint.
-	mux.HandleFunc("POST   /api/copilot/nl-to-query", s.copilotNLToQuery)
-	mux.HandleFunc("POST   /api/copilot/explain-span/{traceId}", s.copilotExplainSpan)
-	mux.HandleFunc("POST   /api/copilot/explain-problem/{id}", s.copilotExplainProblem)
-	mux.HandleFunc("POST   /api/copilot/explain-incident/{id}", s.copilotExplainIncident)
-	mux.HandleFunc("POST   /api/copilot/explain-anomaly/{id}", s.copilotExplainAnomaly)
-	mux.HandleFunc("POST   /api/copilot/explain-service", s.copilotExplainServiceHealth)
+	mux.HandleFunc("POST   /api/copilot/nl-to-query", s.requireCopilot(s.copilotNLToQuery))
+	mux.HandleFunc("POST   /api/copilot/explain-span/{traceId}", s.requireCopilot(s.copilotExplainSpan))
+	mux.HandleFunc("POST   /api/copilot/explain-problem/{id}", s.requireCopilot(s.copilotExplainProblem))
+	mux.HandleFunc("POST   /api/copilot/explain-incident/{id}", s.requireCopilot(s.copilotExplainIncident))
+	mux.HandleFunc("POST   /api/copilot/explain-anomaly/{id}", s.requireCopilot(s.copilotExplainAnomaly))
+	mux.HandleFunc("POST   /api/copilot/explain-service", s.requireCopilot(s.copilotExplainServiceHealth))
 	// v0.9.1031 — ServiceCharts AI çekmecesi (onaylı mockup). explain-service
 	// (AI triage) DURUYOR: guided chat'in service-health öznesi onu kullanır.
 	// Bu yüzey grafiklere özgü ve daha geniş kanıt taşır; ai_calls'ta
 	// "explain-charts" olarak AYRI görünür.
-	mux.HandleFunc("POST   /api/copilot/explain-charts", s.copilotExplainCharts)
-	mux.HandleFunc("POST   /api/copilot/explain-shift", s.explainShift)  // v0.9.1071 — /shift ✨
-	mux.HandleFunc("POST   /api/copilot/explain-alert-noise", s.explainAlertNoise) // v0.9.1080 — F3.3 gürültü anlatıcısı ✨
-	mux.HandleFunc("POST   /api/copilot/explain-log-patterns", s.explainLogPatterns) // v0.9.1100 — F3.5 desen anlatıcısı ✨
-	mux.HandleFunc("POST   /api/copilot/runbook/{id}", s.copilotRunbook)
-	mux.HandleFunc("POST   /api/copilot/compare-traces", s.copilotCompareTraces)
-	mux.HandleFunc("POST   /api/copilot/deploy-impact", s.copilotDeployImpact)
-	mux.HandleFunc("POST   /api/copilot/explain-slo/{id}", s.copilotExplainSLO)
-	mux.HandleFunc("POST   /api/copilot/explain-slow-query", s.copilotExplainSlowQuery)
+	mux.HandleFunc("POST   /api/copilot/explain-charts", s.requireCopilot(s.copilotExplainCharts))
+	mux.HandleFunc("POST   /api/copilot/explain-shift", s.requireCopilot(s.explainShift))  // v0.9.1071 — /shift ✨
+	mux.HandleFunc("POST   /api/copilot/explain-alert-noise", s.requireCopilot(s.explainAlertNoise)) // v0.9.1080 — F3.3 gürültü anlatıcısı ✨
+	mux.HandleFunc("POST   /api/copilot/explain-log-patterns", s.requireCopilot(s.explainLogPatterns)) // v0.9.1100 — F3.5 desen anlatıcısı ✨
+	mux.HandleFunc("POST   /api/copilot/runbook/{id}", s.requireCopilot(s.copilotRunbook))
+	mux.HandleFunc("POST   /api/copilot/compare-traces", s.requireCopilot(s.copilotCompareTraces))
+	mux.HandleFunc("POST   /api/copilot/deploy-impact", s.requireCopilot(s.copilotDeployImpact))
+	mux.HandleFunc("POST   /api/copilot/explain-slo/{id}", s.requireCopilot(s.copilotExplainSLO))
+	mux.HandleFunc("POST   /api/copilot/explain-slow-query", s.requireCopilot(s.copilotExplainSlowQuery))
 	// v0.9.414 (operatör istegi) — exception grubu kök-sebep: örnek
 	// trace + trace logları + deploy penceresi otomatik prefetch'lenir,
 	// kanıt trace/span'leri deterministik döner (copilot_exception.go).
-	mux.HandleFunc("POST   /api/copilot/explain-exception/{fp}", s.copilotExplainException)
-	mux.HandleFunc("POST   /api/copilot/suggest-service-tags", auth.RequireAnyRole(editorRoles, s.copilotSuggestServiceTags))
+	mux.HandleFunc("POST   /api/copilot/explain-exception/{fp}", s.requireCopilot(s.copilotExplainException))
+	mux.HandleFunc("POST   /api/copilot/suggest-service-tags", auth.RequireAnyRole(editorRoles, s.requireCopilot(s.copilotSuggestServiceTags)))
 }

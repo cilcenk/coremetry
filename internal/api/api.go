@@ -735,6 +735,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/traces/share/{token}", auth.RequireAnyRole(editorRoles, s.revokeTraceSnapshot))
 	mux.HandleFunc("GET  /api/public/trace/{token}", s.getPublicTrace)
 	mux.HandleFunc("GET /api/logs", s.getLogs)
+	// v0.9.1094 — Load more transport fix: ES PIT cursor'ı URL sınırını
+	// aşabilir; liste POST gövdesiyle de sorulabilir (GET aynen durur).
+	mux.HandleFunc("POST /api/logs/search", s.postLogsSearch)
 	mux.HandleFunc("GET /api/logs/stream", s.streamLogs) // v0.8.x — live-tail SSE
 	mux.HandleFunc("GET /api/logs/timeseries", s.getLogsTimeseries)
 	mux.HandleFunc("GET /api/logs/fields", s.getLogsFields)

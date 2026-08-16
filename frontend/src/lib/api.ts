@@ -554,7 +554,17 @@ export const api = {
   traceLinks: (id: string) =>
     get<TraceLinks>(`/api/traces/${encodeURIComponent(id)}/links`),
 
-  logs:      (params: LogsParams, signal?: AbortSignal) => get<LogsResponse>(`/api/logs?${qs(params)}`, signal),
+  // v0.9.1094 — liste POST gövdesiyle: ES keyset cursor'ı (PIT id)
+  // KB'larca olabilir; GET URL'si prod ingress sınırını aşıp "Failed to
+  // fetch" ile ölüyordu (Load more'un ilk sayfada değil 2. sayfada
+  // patlamasının sebebi). Gövde, qs() ile aynı param adlarını taşır.
+  logs:      (params: LogsParams, signal?: AbortSignal) =>
+    request<LogsResponse>('/api/logs/search', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+      signal,
+    }),
 
   metricNames: (service: string)     => get<MetricInfo[] | null>(`/api/metrics/names${service ? '?service=' + encodeURIComponent(service) : ''}`),
   // v0.9.464 (dürüstlük A12) — zarf {points, truncated}: nokta tavanı

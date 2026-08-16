@@ -8780,13 +8780,23 @@ func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 	// (creds stored). The Settings form binds the checkbox to enabled
 	// and shows the "key stored" indicator off hasKey independently.
 	provider, model, baseURL, hasKey, skipTLS, enabled := s.copilot.Snapshot()
+	// v0.9.1120 (Faz 0.4) — LLM call tuning. These are OVERRIDES, not
+	// effective values: 0 / null means "no override, running the
+	// built-in default" (4096 / 0.2 / 180s). The form renders the
+	// default as placeholder text off exactly that signal, so opening
+	// Settings and saving doesn't silently freeze today's defaults into
+	// the stored blob.
+	maxTokens, temperature, timeoutS := s.copilot.TuningSnapshot()
 	writeJSON(w, map[string]any{
-		"provider": provider,
-		"model":    model,
-		"baseUrl":  baseURL,
-		"hasKey":   hasKey,
-		"skipTls":  skipTLS,
-		"enabled":  enabled,
+		"provider":    provider,
+		"model":       model,
+		"baseUrl":     baseURL,
+		"hasKey":      hasKey,
+		"skipTls":     skipTLS,
+		"enabled":     enabled,
+		"maxTokens":   maxTokens,
+		"temperature": temperature,
+		"timeoutS":    timeoutS,
 	})
 }
 
@@ -8807,6 +8817,14 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		// send the field (nil) defaults to enabled=true and can't
 		// accidentally disable AI. The Settings UI always sends it.
 		Enabled *bool `json:"enabled"`
+		// v0.9.1120 (Faz 0.4) — LLM call tuning. Omitted / 0 / null =
+		// "use the built-in default", which is what an older client that
+		// knows nothing about these fields sends, so it cannot clamp the
+		// budget by accident. Temperature is a POINTER for the same
+		// reason it is one in the blob: 0 is a valid temperature.
+		MaxTokens   int      `json:"maxTokens"`
+		Temperature *float64 `json:"temperature"`
+		TimeoutS    int      `json:"timeoutS"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -8819,28 +8837,44 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "provider must be 'anthropic', 'github' or 'openai'", http.StatusBadRequest)
 		return
 	}
+	// Bounds live next to the defaults in internal/copilot (pure +
+	// table-tested) rather than being spelled out here — one place to
+	// read "what is a legal knob value".
+	if err := copilot.ValidateTuning(in.MaxTokens, in.Temperature, in.TimeoutS); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	enabled := in.Enabled == nil || *in.Enabled
-	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled); err != nil {
+	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled, in.MaxTokens, in.Temperature, in.TimeoutS); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.publishConfigReload(r.Context(), "ai")
 	provider, model, baseURL, hasKey, skipTLS, enabledNow := s.copilot.Snapshot()
+	maxTokensNow, temperatureNow, timeoutSNow := s.copilot.TuningSnapshot()
 	// apiKey itself never enters audit_log; hasKey is the only
 	// secret-adjacent bit and it's already part of the public GET.
 	// wf — enabled recorded so the audit trail shows the operator
 	// flipping AI off/on (the disable-without-clearing-creds action).
+	// v0.9.1120 — the tuning knobs join details (same entry kind /
+	// resource / id): "why did every explanation get truncated last
+	// Tuesday" has to be answerable from audit_log, and maxTokens is
+	// exactly the knob that would do it.
 	details, _ := json.Marshal(map[string]any{
 		"provider": provider, "model": model, "baseUrl": baseURL, "hasKey": hasKey, "skipTls": skipTLS, "enabled": enabledNow,
+		"maxTokens": maxTokensNow, "temperature": temperatureNow, "timeoutS": timeoutSNow,
 	})
 	s.audit(r, "settings.ai.update", "settings", "ai", string(details))
 	writeJSON(w, map[string]any{
-		"provider": provider,
-		"model":    model,
-		"baseUrl":  baseURL,
-		"hasKey":   hasKey,
-		"skipTls":  skipTLS,
-		"enabled":  enabledNow,
+		"provider":    provider,
+		"model":       model,
+		"baseUrl":     baseURL,
+		"hasKey":      hasKey,
+		"skipTls":     skipTLS,
+		"enabled":     enabledNow,
+		"maxTokens":   maxTokensNow,
+		"temperature": temperatureNow,
+		"timeoutS":    timeoutSNow,
 	})
 }
 

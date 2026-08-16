@@ -188,8 +188,14 @@ func (s *Service) chatAnthropicWithTools(ctx context.Context, system string, msg
 		// learned is too small for reasoning models (v0.8.384 lesson,
 		// copilot.go openAICompletionTokens). On qwen3.5-2b the thinking
 		// tokens alone could exhaust 1500 and the answer arrived empty.
-		"max_tokens": openAICompletionTokens, "system": system,
+		// v0.9.1120 — the constant became an operator-tunable getter;
+		// temperature added (anthropic bodies carried none, so this path
+		// ran at the provider default ≈1.0 while its openai twin ran 0.2).
+		"max_tokens": s.tuneMaxTokens(), "system": system,
 		"messages": apiMsgs, "tools": apiTools,
+	}
+	if t, ok := s.tuneTemperature(); ok {
+		body["temperature"] = t
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -201,7 +207,7 @@ func (s *Service) chatAnthropicWithTools(ctx context.Context, system string, msg
 	req.Header.Set("X-API-Key", apiKey)
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 
-	resp, err := s.cli.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return ChatTurn{}, fmt.Errorf("anthropic chat: %w", err)
 	}
@@ -299,8 +305,12 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 	body := map[string]any{
 		"model": model,
 		// v0.8.393 (AI audit A2) — 1500 → the shared 4096 budget; see above.
-		"max_tokens": openAICompletionTokens, "temperature": 0.2,
-		"messages": apiMsgs, "tools": apiTools,
+		// v0.9.1120 — both literals became getters.
+		"max_tokens": s.tuneMaxTokens(),
+		"messages":   apiMsgs, "tools": apiTools,
+	}
+	if t, ok := s.tuneTemperature(); ok {
+		body["temperature"] = t
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(raw))
@@ -310,7 +320,7 @@ func (s *Service) chatOpenAIWithTools(ctx context.Context, system string, msgs [
 	for k, v := range hdrs {
 		req.Header.Set(k, v)
 	}
-	resp, err := s.cli.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return ChatTurn{}, fmt.Errorf("openai-compat chat: %w", err)
 	}

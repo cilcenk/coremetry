@@ -83,6 +83,33 @@ type Service struct {
 	// "enabled" field decodes as enabled (the *bool nil⇒true rule).
 	enabled bool
 
+	// ── LLM call tuning (v0.9.1120, Faz 0.4) ───────────────────────
+	//
+	// Operator-configurable knobs that used to be hard-coded literals
+	// scattered across eight request builders. All three are
+	// "unset ⇒ use the default" (0 / nil), so a legacy `ai_copilot`
+	// blob that predates the fields keeps today's behaviour. Read via
+	// tuneMaxTokens / tuneTemperature / clientTimeout — never
+	// directly, so the default lives in exactly one place.
+	//
+	// The literals they replaced were INCONSISTENT: max_tokens was
+	// 4096 on the openai-compat paths but still 1024 on anthropic
+	// explain, github explain and anthropic stream (the v0.8.138 /
+	// v0.8.393 budget lift never reached them), and temperature was
+	// 0.2 on openai/github but ABSENT from every anthropic body
+	// (provider default ~1.0). Both gaps close here.
+	maxTokens int
+	// temperature is a POINTER for the same reason `enabled` is:
+	// 0 is a VALID temperature (fully deterministic), so a plain
+	// float64 could not distinguish "operator asked for 0" from
+	// "operator said nothing". nil ⇒ default.
+	temperature *float64
+	// timeoutS overrides the http.Client timeout. Changing it REBUILDS
+	// the client (see rebuildClientLocked) — an http.Client's Timeout
+	// is read at request start, but the shared client is swapped
+	// wholesale so in-flight calls keep the deadline they started with.
+	timeoutS int
+
 	// GitHub session token cache. We exchange ghu_ → session token
 	// once and reuse until ~30s before the server-stated expiry.
 	ghSessTok string
@@ -113,6 +140,14 @@ type Service struct {
 	jsonSchemaUnsupported map[string]bool
 
 	cli *http.Client
+	// cliSkipTLS records which skipTLS value the LIVE client was built
+	// with. Before v0.9.1120 the rebuild condition compared the
+	// incoming argument against s.skipTLS, which only worked because
+	// Configure was the single writer. Now that ConfigureTuning can
+	// also rebuild, the client's own provenance has to be tracked —
+	// otherwise a tuning-only change would silently rebuild the client
+	// with the wrong TLS mode.
+	cliSkipTLS bool
 
 	// recorder is the AI-observability sink (v0.5.162). Set once at
 	// startup via SetRecorder. Nil = recording disabled (tests, or
@@ -241,7 +276,9 @@ func New(provider, apiKey, model string) *Service {
 		// timeout (180s) matches the cold-load worst case.
 		// v0.5.360 — transport built via buildCopilotHTTPClient so
 		// the TLS-skip flag has a single creation site.
-		cli: buildCopilotHTTPClient(false),
+		// v0.9.1120 — timeout is a parameter now; a fresh Service has no
+		// override so it gets defaultTimeout (the same 180s).
+		cli: buildCopilotHTTPClient(false, defaultTimeout),
 	}
 }
 
@@ -266,11 +303,13 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS, en
 	if s.provider != provider || s.apiKey != apiKey {
 		s.ghSessTok, s.ghSessExp = "", time.Time{}
 	}
-	if s.cli == nil || s.skipTLS != skipTLS {
-		s.cli = buildCopilotHTTPClient(skipTLS)
-	}
 	s.provider, s.apiKey, s.model, s.baseURL, s.skipTLS = provider, apiKey, model, baseURL, skipTLS
 	s.enabled = enabled
+	// v0.9.1120 — the rebuild decision moved into rebuildClientLocked
+	// so BOTH inputs (skipTLS, timeout) are compared in one place. It
+	// runs AFTER s.skipTLS is assigned: the helper compares the live
+	// fields against the live client, not against arguments.
+	s.rebuildClientLocked()
 	// v0.8.404 — the streaming-support verdicts were probed against
 	// the OLD endpoint config; a swap must re-probe.
 	s.streamUnsupported = nil
@@ -278,18 +317,168 @@ func (s *Service) Configure(provider, apiKey, model, baseURL string, skipTLS, en
 	s.jsonSchemaUnsupported = nil
 }
 
+// ── LLM call tuning ─────────────────────────────────────────────────────────
+//
+// v0.9.1120 (Faz 0.4) — the three knobs every provider body needs.
+// Defaults live HERE and nowhere else; the request builders call the
+// getters so a change is one edit, and an operator override is one
+// settings blob field.
+
+const (
+	// defaultMaxTokens — the completion budget every provider gets
+	// unless the operator overrides it. Aliases openAICompletionTokens
+	// (4096) because that constant already carries the reasoning-model
+	// rationale; the point of the alias is that anthropic and github
+	// now share it instead of their own 1024.
+	defaultMaxTokens = openAICompletionTokens
+	// defaultTemperature — 0.2 was already the openai/github literal.
+	// Applying it to anthropic too is a deliberate BEHAVIOUR CHANGE
+	// (provider default ≈1.0 → 0.2): an APM explanation should be
+	// reproducible, not creative.
+	defaultTemperature = 0.2
+	// defaultTimeout — local LLMs (Ollama loading a 70B model,
+	// llama.cpp on CPU) can take 60+ seconds for a first generation.
+	defaultTimeout = 180 * time.Second
+)
+
+// Accepted override ranges. Guard rails, not opinions — they exist so
+// a typo can't burn a quota or wedge a request, and every value inside
+// them is the operator's call.
+const (
+	// Below ~256 tokens no explanation fits (the prompts alone budget
+	// for structured output); above 32768 no model Coremetry targets
+	// accepts the value and a stray zero would be expensive.
+	minMaxTokens = 256
+	maxMaxTokens = 32768
+	// 0..2 is the openai-compat range. Anthropic caps at 1 and 400s
+	// above it — we let the PROVIDER reject that rather than guessing
+	// here which provider the operator is pointed at, because the knob
+	// is stored once and the provider can change under it.
+	minTemperature = 0.0
+	maxTemperature = 2.0
+	// Under 10s a local-LLM cold load (Ollama pulling a 70B into RAM)
+	// can't finish; over 600s the request outlives every reverse proxy
+	// and ingress in front of Coremetry, so the timeout would be a lie.
+	minTimeoutS = 10
+	maxTimeoutS = 600
+)
+
+// ValidateTuning checks operator-supplied knob values. Zero / nil means
+// "use the default" for each field INDEPENDENTLY and is always valid —
+// that is how an older client (and the Reset button) says "unset".
+// Pure so the settings handler stays a thin shell over a tested rule.
+func ValidateTuning(maxTokens int, temperature *float64, timeoutS int) error {
+	if maxTokens != 0 && (maxTokens < minMaxTokens || maxTokens > maxMaxTokens) {
+		return fmt.Errorf("maxTokens must be 0 (default) or between %d and %d", minMaxTokens, maxMaxTokens)
+	}
+	if temperature != nil && (*temperature < minTemperature || *temperature > maxTemperature) {
+		return fmt.Errorf("temperature must be omitted (default) or between %g and %g", minTemperature, maxTemperature)
+	}
+	if timeoutS != 0 && (timeoutS < minTimeoutS || timeoutS > maxTimeoutS) {
+		return fmt.Errorf("timeoutS must be 0 (default) or between %d and %d", minTimeoutS, maxTimeoutS)
+	}
+	return nil
+}
+
+// ConfigureTuning applies the LLM call knobs. Deliberately SEPARATE
+// from Configure: the credential path has six callers' worth of
+// history and a settled signature, and the two are set from the same
+// blob anyway (LoadPersisted calls both). Zero / nil means "use the
+// default" for each field independently.
+func (s *Service) ConfigureTuning(maxTokens int, temperature *float64, timeoutS int) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.maxTokens, s.temperature, s.timeoutS = maxTokens, temperature, timeoutS
+	// A timeout change must reach the shared client — otherwise the
+	// setting is accepted, echoed back by GET, and quietly not applied
+	// (the fail-open-silently-unapplies class).
+	s.rebuildClientLocked()
+}
+
+// tuneMaxTokens — completion budget for a request body. Override or
+// 4096.
+func (s *Service) tuneMaxTokens() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.maxTokens > 0 {
+		return s.maxTokens
+	}
+	return defaultMaxTokens
+}
+
+// tuneTemperature — (value, include). The bool exists so a future
+// "send no temperature at all" (some endpoints reject it alongside
+// reasoning modes) is expressible without touching seven call sites;
+// today it is always true.
+func (s *Service) tuneTemperature() (float64, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.temperature != nil {
+		return *s.temperature, true
+	}
+	return defaultTemperature, true
+}
+
+// clientTimeout — http.Client timeout. Override or 180s.
+func (s *Service) clientTimeout() time.Duration {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.clientTimeoutLocked()
+}
+
+// clientTimeoutLocked is the lock-free half — callers already holding
+// s.mu (Configure, ConfigureTuning) use this to avoid re-entering an
+// RWMutex, which deadlocks when a writer is queued.
+func (s *Service) clientTimeoutLocked() time.Duration {
+	if s.timeoutS > 0 {
+		return time.Duration(s.timeoutS) * time.Second
+	}
+	return defaultTimeout
+}
+
+// rebuildClientLocked swaps the shared http.Client when either input
+// it bakes in — TLS-skip or timeout — no longer matches the live
+// config. Caller must hold s.mu for writing. Cheap and idempotent:
+// with nothing changed it does nothing, so both Configure and
+// ConfigureTuning can call it unconditionally.
+func (s *Service) rebuildClientLocked() {
+	want := s.clientTimeoutLocked()
+	if s.cli != nil && s.cli.Timeout == want && s.cliSkipTLS == s.skipTLS {
+		return
+	}
+	s.cli = buildCopilotHTTPClient(s.skipTLS, want)
+	s.cliSkipTLS = s.skipTLS
+}
+
+// httpClient is the read side of s.cli. Every request path goes
+// through it: rebuildClientLocked WRITES the field under the lock, so
+// a bare `s.cli.Do(...)` would be a data race against a config
+// refresh (StartConfigRefresh re-applies the blob every 30s).
+func (s *Service) httpClient() *http.Client {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cli
+}
+
 // buildCopilotHTTPClient — mirrors the Tempo / LDAP pattern. When
 // skipTLS is true the transport runs with InsecureSkipVerify;
 // useful for self-hosted LLMs behind an enterprise-CA that Go's
-// default trust store doesn't know about. 180s timeout matches
-// the local-LLM cold-load worst case (Ollama loading a 70B model).
-func buildCopilotHTTPClient(skipTLS bool) *http.Client {
+// default trust store doesn't know about. The timeout defaults to
+// 180s (local-LLM cold-load worst case, Ollama loading a 70B model)
+// and is operator-tunable since v0.9.1120.
+func buildCopilotHTTPClient(skipTLS bool, timeout time.Duration) *http.Client {
 	tr := http.DefaultTransport.(*http.Transport).Clone()
 	if skipTLS {
 		tr.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 	}
+	if timeout <= 0 {
+		timeout = defaultTimeout
+	}
 	return &http.Client{
-		Timeout:   180 * time.Second,
+		Timeout:   timeout,
 		Transport: tr,
 	}
 }
@@ -698,13 +887,15 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 	}
 	url := strings.TrimRight(base, "/") + "/chat/completions"
 	body := map[string]any{
-		"model":       model,
-		"max_tokens":  openAICompletionTokens,
-		"temperature": 0.2,
+		"model":      model,
+		"max_tokens": s.tuneMaxTokens(),
 		"messages": []map[string]any{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
+	}
+	if t, ok := s.tuneTemperature(); ok {
+		body["temperature"] = t
 	}
 	// v0.9.517/527 — katı JSON isteyen yüzeylerde çözümlemeyi sunucuda
 	// kısıtla. İstenen basamak, o uç için ÖNCEDEN reddedilmiş
@@ -746,7 +937,7 @@ func (s *Service) explainOpenAIWithUsage(ctx context.Context, systemPrompt, user
 		// harmless — servers read the one they know.
 		req.Header.Set("api-key", apiKey)
 	}
-	resp, err := s.cli.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("openai-compat call: %w", err)
 	}
@@ -886,13 +1077,20 @@ func (s *Service) explainAnthropicWithUsage(ctx context.Context, systemPrompt, u
 	if model == "" {
 		model = "claude-sonnet-4-6"
 	}
+	// v0.9.1120 — was a hard 1024 with NO temperature. The 1024 was a
+	// parity bug (openai-compat got 4096 in v0.8.138/393; this path was
+	// never updated) that truncated long explanations on the ONE
+	// provider an operator is most likely to pay per-token for.
 	body := map[string]any{
 		"model":      model,
-		"max_tokens": 1024,
+		"max_tokens": s.tuneMaxTokens(),
 		"system":     systemPrompt,
 		"messages": []map[string]any{
 			{"role": "user", "content": userPrompt},
 		},
+	}
+	if t, ok := s.tuneTemperature(); ok {
+		body["temperature"] = t
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -904,7 +1102,7 @@ func (s *Service) explainAnthropicWithUsage(ctx context.Context, systemPrompt, u
 	req.Header.Set("X-API-Key", apiKey)
 	req.Header.Set("Anthropic-Version", "2023-06-01")
 
-	resp, err := s.cli.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("anthropic call: %w", err)
 	}
@@ -964,14 +1162,17 @@ func (s *Service) explainGitHubWithUsage(ctx context.Context, systemPrompt, user
 	if model == "" {
 		model = "gpt-4o"
 	}
+	// v0.9.1120 — same 1024 parity bug as the anthropic path.
 	body := map[string]any{
-		"model":       model,
-		"max_tokens":  1024,
-		"temperature": 0.2,
+		"model":      model,
+		"max_tokens": s.tuneMaxTokens(),
 		"messages": []map[string]any{
 			{"role": "system", "content": systemPrompt},
 			{"role": "user", "content": userPrompt},
 		},
+	}
+	if t, ok := s.tuneTemperature(); ok {
+		body["temperature"] = t
 	}
 	raw, _ := json.Marshal(body)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
@@ -986,7 +1187,7 @@ func (s *Service) explainGitHubWithUsage(ctx context.Context, systemPrompt, user
 	req.Header.Set("Copilot-Integration-Id", "vscode-chat")
 	req.Header.Set("User-Agent", "GithubCopilot/1.155.0")
 
-	resp, err := s.cli.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return "", 0, 0, fmt.Errorf("github copilot call: %w", err)
 	}
@@ -1041,7 +1242,7 @@ func (s *Service) githubSessionToken(ctx context.Context) (string, error) {
 	req.Header.Set("Editor-Plugin-Version", "copilot-chat/0.12.0")
 	req.Header.Set("User-Agent", "GithubCopilot/1.155.0")
 
-	resp, err := s.cli.Do(req)
+	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		return "", fmt.Errorf("github token exchange: %w", err)
 	}
@@ -1094,6 +1295,16 @@ type persisted struct {
 	// false and silently disable AI for every existing install on
 	// upgrade. omitempty keeps the JSON clean when nil.
 	Enabled *bool `json:"enabled,omitempty"`
+	// v0.9.1120 (Faz 0.4) — LLM call tuning. All three follow the
+	// Enabled idiom: a blob written before these fields existed decodes
+	// to the zero value, and the zero value MEANS "use the default", so
+	// every existing install keeps today's behaviour on upgrade.
+	// Temperature is a pointer because 0 is a legitimate setting;
+	// MaxTokens/TimeoutS can use omitempty ints because 0 tokens and a
+	// 0s timeout are both meaningless, so 0 is free to mean "unset".
+	MaxTokens   int      `json:"maxTokens,omitempty"`
+	Temperature *float64 `json:"temperature,omitempty"`
+	TimeoutS    int      `json:"timeoutS,omitempty"`
 }
 
 // SettingsStore is the small slice of *chstore.Store we need —
@@ -1124,6 +1335,11 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	// "enabled":false from the Settings toggle disables it.
 	enabled := p.Enabled == nil || *p.Enabled
 	s.Configure(p.Provider, p.APIKey, p.Model, p.BaseURL, p.SkipTLS, enabled)
+	// v0.9.1120 — tuning rides the SAME load, so the 30s
+	// StartConfigRefresh poll propagates a knob change across pods
+	// exactly like a credential change. A legacy blob leaves all three
+	// at zero, which the getters read as "default".
+	s.ConfigureTuning(p.MaxTokens, p.Temperature, p.TimeoutS)
 	return nil
 }
 
@@ -1158,8 +1374,17 @@ func (s *Service) StartConfigRefresh(ctx context.Context, store SettingsStore, i
 // explicit; once SavePersisted has run the blob always carries the
 // field. The disable-without-clearing-creds path is just enabled=false
 // with the apiKey left untouched.
-func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS, enabled bool) error {
-	raw, err := json.Marshal(persisted{Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL, SkipTLS: skipTLS, Enabled: &enabled})
+// v0.9.1120 — maxTokens/temperature/timeoutS join the blob. They are
+// parameters rather than a read-modify-write of the stored blob on
+// purpose: the Settings form PUTs the whole AI config, so a two-step
+// write would open a lost-update window between two pods. 0 / nil for
+// any of them persists as "absent" (omitempty) = use the default.
+func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS, enabled bool, maxTokens int, temperature *float64, timeoutS int) error {
+	raw, err := json.Marshal(persisted{
+		Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL,
+		SkipTLS: skipTLS, Enabled: &enabled,
+		MaxTokens: maxTokens, Temperature: temperature, TimeoutS: timeoutS,
+	})
 	if err != nil {
 		return err
 	}
@@ -1167,7 +1392,20 @@ func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provid
 		return err
 	}
 	s.Configure(provider, apiKey, model, baseURL, skipTLS, enabled)
+	s.ConfigureTuning(maxTokens, temperature, timeoutS)
 	return nil
+}
+
+// TuningSnapshot returns the operator OVERRIDES, not the effective
+// values: 0 / nil means "no override, running the default". The
+// Settings GET echoes exactly this so the form can render the default
+// as placeholder text instead of pinning it as an explicit value —
+// otherwise merely opening and saving Settings would freeze today's
+// defaults into the blob forever.
+func (s *Service) TuningSnapshot() (maxTokens int, temperature *float64, timeoutS int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.maxTokens, s.temperature, s.timeoutS
 }
 
 // ── Prompt helpers (pre-baked so handlers don't have to compose) ────────────

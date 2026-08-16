@@ -749,6 +749,10 @@ func New(cfg config.CHConfig, ret config.RetentionConfig) (*Store, error) {
 		// operator can fix manually.
 		log.Printf("[chstore] reconcile distributed wrappers: %v", err)
 	}
+	// v0.9.1076 — Distributed göndericide batch modu (2026-08-16 prod
+	// spool olayı; gerekçe distributed_batching.go başlığında).
+	// Soft-fail; tek-düğüm kurulumda Distributed tablo yok → no-op.
+	s.ensureDistributedBatching(ctx)
 	// v0.9.614 — ertelenenler arka plana. finishDeferredDDL bayrağı
 	// listeden ÖNCE temizler: yürütücü aynı execDDL'den geçiyor,
 	// bayrak açık kalsaydı her ifade yeniden birikir ve hiçbir şey

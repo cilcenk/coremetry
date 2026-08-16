@@ -15,17 +15,18 @@ import {
 //    ORDER BY.
 
 describe('SERVICE_COLS — server-sort column contract', () => {
-  it('keeps the exact pre-migration ?sort= keys', () => {
+  it('keeps the exact pre-migration ?sort= keys (+ p99Delta, v0.9.1111)', () => {
     expect(SERVICE_COLS.map(c => c.id))
-      .toEqual(['name', 'spanCount', 'errorRate', 'avg', 'p99', 'apdex']);
+      .toEqual(['name', 'spanCount', 'errorRate', 'avg', 'p99', 'p99Delta', 'apdex']);
   });
   it('keeps the pre-migration natural directions (NATURAL_DIR parity)', () => {
     // name alphabetical asc; apdex asc (worst services first); the
-    // volume/latency columns default desc (biggest first).
+    // volume/latency columns default desc (biggest first); p99Delta
+    // desc = the most-worsened service first (v0.9.1111).
     const dirs = Object.fromEntries(SERVICE_COLS.map(c => [c.id, c.naturalDir ?? 'desc']));
     expect(dirs).toEqual({
       name: 'asc', spanCount: 'desc', errorRate: 'desc',
-      avg: 'desc', p99: 'desc', apdex: 'asc',
+      avg: 'desc', p99: 'desc', p99Delta: 'desc', apdex: 'asc',
     });
   });
   it('marks every column click-sortable (sortValue present) so DataTableHead renders the arrows', () => {

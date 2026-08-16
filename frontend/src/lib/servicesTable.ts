@@ -27,6 +27,12 @@ export const SERVICE_COLS: DataTableColumn<Service>[] = [
   { id: 'errorRate', label: 'Error rate', width: 130, align: 'right', sortValue: s => s.errorRate },
   { id: 'avg',       label: 'Avg',        width: 120, align: 'right', sortValue: s => s.avgDurationMs },
   { id: 'p99',       label: 'P99',        width: 120, align: 'right', sortValue: s => s.p99DurationMs },
+  // v0.9.1111 (Faz 5 "en çok kötüleşenler") — önceki pencereye göre göreli
+  // p99 değişimi. Sıralama SUNUCUDA (sort=p99Delta aday-havuzu deseni;
+  // backend compare'i zorlar); sortValue yalnız kolonu tıklanabilir kılar.
+  // naturalDir desc = en çok kötüleşen önce.
+  { id: 'p99Delta',  label: 'P99 Δ',      width: 110, align: 'right',
+    sortValue: s => (s.priorP99Ms ?? 0) > 0 ? (s.p99DurationMs - (s.priorP99Ms as number)) / (s.priorP99Ms as number) : -Infinity },
   { id: 'apdex',     label: 'Apdex',      width: 100, align: 'right', sortValue: s => s.apdex, naturalDir: 'asc' },
 ];
 

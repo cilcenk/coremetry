@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { TrendDelta } from '@/components/TrendDelta';
 import { Star } from 'lucide-react';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -230,6 +231,16 @@ export default function ServicesPage() {
   // Sanitized ?sort/&dir pair for the fetch below — a stale persisted id
   // (old column schema, hand-edited URL) never reaches the backend ORDER BY.
   const { sort: sortBy, dir: sortDir } = sanitizeServicesSort(dt.sort);
+  // v0.9.1111 (Faz 5) — önceki-pencere kıyası. URL'den okunur
+  // (?compare=prior, paylaşılan link aynı görünümü açar); p99Delta
+  // sıralaması kıyası zorunlu kılar (sunucu da zorlar), o yüzden
+  // checkbox o sıradayken kilitli-açık görünür.
+  const compare = searchParams.get('compare') === 'prior' || sortBy === 'p99Delta';
+  const setCompare = (v: boolean) => setSearchParams(prev => {
+    const next = new URLSearchParams(prev);
+    if (v) next.set('compare', 'prior'); else next.delete('compare');
+    return next;
+  }, { replace: true });
 
   // First-page fetch fires on mount. The v0.5.64 lazy-load gate
   // was removed in v0.5.72 because operators wanted the same
@@ -246,7 +257,7 @@ export default function ServicesPage() {
     // leaving them out would mean flipping "Errors only" changed nothing but
     // the local second pass, i.e. exactly the page-scoped behaviour this
     // release removes.
-    const sig = JSON.stringify([committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99]);
+    const sig = JSON.stringify([committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99, compare]);
     if (page !== 0 && fetchSigRef.current !== null && fetchSigRef.current !== sig) {
       // Sayfa-dışı bir girdi değişti ama page hâlâ eski: reset effect'i
       // birazdan page=0 yapacak; bu turdaki fetch boşa gider — atla.
@@ -299,6 +310,7 @@ export default function ServicesPage() {
       // erroring services sat on page 7. Paging now walks the MATCHING
       // services.
       errorsOnly: errorsOnly ? '1' : undefined,
+      compare: compare ? 'prior' as const : undefined,
       minSpans: minSpans ? Number(minSpans) : undefined,
       minP99: minP99 ? Number(minP99) : undefined,
       cluster: cluster || undefined,
@@ -333,7 +345,7 @@ export default function ServicesPage() {
       setLoadErr(e instanceof Error ? e.message : String(e));
     });
     return () => { cancelled = true; };
-  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99, retryNonce]);
+  }, [range, page, committedFilter, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99, compare, retryNonce]);
 
   // Reset to page 0 whenever the search filter, time range,
   // sort, or team / cluster / env filter changes — staying on page 5
@@ -347,7 +359,7 @@ export default function ServicesPage() {
   useEffect(() => {
     if (!filtersMounted.current) { filtersMounted.current = true; return; }
     setPage(0);
-  }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99, setPage]);
+  }, [committedFilter, range, sortBy, sortDir, ownerTeam, sreTeam, cluster, env, namespace, errorsOnly, minSpans, minP99, compare, setPage]);
 
   // Pre-fetch the cluster options on first mount and whenever
   // the time range changes. The /api/clusters response is
@@ -587,6 +599,18 @@ export default function ServicesPage() {
                 onChange={e => setErrorsOnly(e.target.checked)} />
               Errors only
             </label>
+            {/* v0.9.1111 (Faz 5) — önceki-pencere kıyası: her satıra
+                Prior* değerleri gelir, P99 Δ kolonu dolar. P99 Δ
+                sıralaması kıyası zorunlu kılar → o sırada kilitli. */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 5,
+                            color: 'var(--text2)', cursor: 'pointer' }}
+              title={sortBy === 'p99Delta'
+                ? 'P99 Δ sıralaması önceki-pencere kıyasını zorunlu kılar'
+                : 'Her satıra önceki eş-uzunluk pencerenin değerlerini getirir'}>
+              <input type="checkbox" checked={compare} disabled={sortBy === 'p99Delta'}
+                onChange={e => setCompare(e.target.checked)} />
+              Δ prior
+            </label>
             <Button variant="secondary" onClick={reset}>Reset</Button>
             {/* v0.9.344 warned that these three only narrowed the visible
                 page. v0.9.345 made that untrue — they are HAVING predicates
@@ -696,6 +720,8 @@ export default function ServicesPage() {
                                    title="Worst-service P99 in each bucket"
                                    onClick={() => goToExplore('', 'p99')} />
                       </td>
+                      {/* P99 Δ — sayfa-toplamı satırında anlamsız, boş. */}
+                      <td />
                       <td className="mono" style={{ textAlign: 'right' }}>
                         <ApdexBadge value={agg.apdex} />
                       </td>
@@ -802,6 +828,12 @@ export default function ServicesPage() {
                                      color="var(--warn)"
                                      title={`P99 latency (ms) for ${s.name}`}
                                      onClick={() => goToExplore(s.name, 'p99')} />
+                        </td>
+                        <td className="mono" style={{ textAlign: 'right' }}>
+                          {compare
+                            ? <TrendDelta cur={s.p99DurationMs} prior={s.priorP99Ms} kind="lowerBetter" />
+                            : <span style={{ color: 'var(--text3)' }}
+                                title="Önceki pencereyle kıyas için Δ prior'u aç ya da bu kolonu sırala">—</span>}
                         </td>
                         <td className="mono" style={{ textAlign: 'right' }}>
                           <ApdexBadge value={s.apdex} />

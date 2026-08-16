@@ -1747,6 +1747,21 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// BY mapping; everything else falls back to span-count desc.
 	sort := strings.TrimSpace(q.Get("sort"))
 	dir := strings.TrimSpace(q.Get("dir"))
+	// v0.9.1111 (Faz 5 "en çok kötüleşenler") — opsiyonel önceki-pencere
+	// kıyası. compare=prior, aynı uzunluktaki bir önceki pencereyi
+	// SAYFANIN servis adlarıyla (ServiceIn) okuyup Prior* alanlarını
+	// doldurur — endpoints'in liste-vs-liste birleşiminden kesin:
+	// sayfadaki her satır prior değerini alır, sıralama kayması satır
+	// düşürmez. sort=p99Delta aday-havuzu desenini kullanır (endpoints
+	// v0.9.761 emsali) ve compare'i zorlar (delta prior'suz tanımsız);
+	// havuz filo-geneli sıralandığından offset'li bir "delta sayfası"
+	// dürüst kurulamaz → offset 0'a, hasMore false'a sabitlenir.
+	compare := q.Get("compare") == "prior"
+	deltaSort := sort == "p99Delta"
+	if deltaSort {
+		compare = true
+		offset = 0
+	}
 	// Optional team filters — narrow the listing to services
 	// whose service_metadata row matches the requested owner
 	// or SRE team. Resolved here against the catalog so the
@@ -1815,7 +1830,7 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 	// two operators on different filters must not share one cached page —
 	// the v0.5.187 cross-poisoning shape.
 	key := servicesListKey(useMV, limit, offset, bucket, nameMatch, sort, dir, ownerTeam, sreTeam, cluster, env, namespace, withTotal) +
-		fmt.Sprintf(":err=%v:minSpans=%d:minP99=%g", display.ErrorsOnly, display.MinSpans, display.MinP99Ms)
+		fmt.Sprintf(":err=%v:minSpans=%d:minP99=%g:cmp=%v", display.ErrorsOnly, display.MinSpans, display.MinP99Ms, compare)
 	// 30s cache. The 5m-MV-backed query is already sub-second on
 	// 10k+ services, but 30s collapses every page-flip and tab
 	// switch in a session into one CH round-trip per (page,
@@ -1858,6 +1873,13 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		// separate count(DISTINCT) — at 10k+ services a count is
 		// the slowest part of the page.
 		probeLimit := limit + 1
+		baseSort, baseDir := sort, dir
+		if deltaSort {
+			// Aday havuzu: en çok trafik alan ilk N; delta bu evren
+			// içinde hesaplanıp sıralanır. Evren notu UI'da.
+			probeLimit = servicesDeltaPool(limit)
+			baseSort, baseDir = "spanCount", "desc"
+		}
 		// v0.8.532 — the v0.8.530 errgroup parallelization was reverted
 		// to serial: running the list + open-problem counts + total
 		// concurrently tripled the per-recompute CH connection footprint
@@ -1871,11 +1893,11 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 		var rows []chstore.ServiceSummary
 		var err error
 		if useMV {
-			rows, err = s.store.GetServicesAggFiltered2(ctx, from, to, nameMatch, serviceIn, sort, dir, probeLimit, offset, display)
+			rows, err = s.store.GetServicesAggFiltered2(ctx, from, to, nameMatch, serviceIn, baseSort, baseDir, probeLimit, offset, display)
 		} else {
 			rows, err = s.store.GetServicesQuery(ctx, chstore.ServicesQuery{
 				Since: since, From: from, To: to, NameMatch: nameMatch, ServiceIn: serviceIn,
-				Sort: sort, Dir: dir, Limit: probeLimit, Offset: offset,
+				Sort: baseSort, Dir: baseDir, Limit: probeLimit, Offset: offset,
 				Cluster: cluster, Env: env, Display: display,
 			})
 		}
@@ -1883,8 +1905,38 @@ func (s *Server) getServices(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 		hasMore := len(rows) > limit
-		if hasMore {
+		if deltaSort {
+			// Havuz limit'ten büyük; kesme delta sıralamasından SONRA.
+			hasMore = false
+		} else if hasMore {
 			rows = rows[:limit]
+		}
+		// v0.9.1111 — prior penceresi, sayfadaki (deltaSort'ta havuzdaki)
+		// adlara sabitlenmiş ikinci okuma. Düşerse trend'siz dönülür —
+		// 500 değil (endpoints'in soft-fail sözleşmesi).
+		if compare && len(rows) > 0 {
+			names := make([]string, len(rows))
+			for i := range rows {
+				names[i] = rows[i].Name
+			}
+			dur := to.Sub(from)
+			pfrom, pto := from.Add(-dur), from
+			var priorRows []chstore.ServiceSummary
+			var perr error
+			if useMV {
+				priorRows, perr = s.store.GetServicesAggFiltered2(ctx, pfrom, pto, "", names, "spanCount", "desc", len(names), 0, chstore.ServiceDisplayFilters{})
+			} else {
+				priorRows, perr = s.store.GetServicesQuery(ctx, chstore.ServicesQuery{
+					Since: since, From: pfrom, To: pto, ServiceIn: names,
+					Limit: len(names), Cluster: cluster, Env: env,
+				})
+			}
+			if perr == nil {
+				mergePriorServices(rows, priorRows)
+			}
+		}
+		if deltaSort {
+			rows = sortServicesByP99Delta(rows, limit)
 		}
 		// v0.5.274 — auto-score health per service from errorRate +
 		// open-problem counts. Single FINAL scan bounded by status=open.

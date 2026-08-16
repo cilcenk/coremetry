@@ -53,9 +53,11 @@ const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: '',
     items: [
-      { href: '/inbox',     label: 'nav.inbox',     icon: Inbox },
-      // v0.9.1072 (Faz 3.2) — vardiya devri tek ekran; Inbox'ın hemen
-      // altında, gruplanmamış.
+      // v0.9.1074 (operatör isteği) — üst gruplanmamış alanda artık
+      // yalnız Vardiya özeti; Problems (/inbox) TRIAGE grubuna İLK
+      // sıra olarak indi ("Problems Triage üstündeydi, altına al, ilk
+      // sırada olsun"). v0.5.214'ün 'Inbox en üstte' kararı bu istekle
+      // güncellendi.
       { href: '/shift',     label: 'nav.shift',     icon: ClipboardList },
     ],
   },
@@ -84,6 +86,8 @@ const NAV_GROUPS: NavGroup[] = [
   {
     titleKey: 'navGroup.triage',
     items: [
+      // v0.9.1074 — Problems grubun ilk kalemi (operatör isteği).
+      { href: '/inbox',     label: 'nav.inbox',     icon: Inbox },
       { href: '/problems',  label: 'nav.problems',  icon: Bug },
       { href: '/incidents', label: 'nav.incidents', icon: TriangleAlert },
     ],

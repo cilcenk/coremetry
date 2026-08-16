@@ -144,15 +144,49 @@ func TestBatchingAlters(t *testing.T) {
 // fallback'i de çalışmıyordu ve 30 tablo × 1 yanıltıcı hata satırı
 // basılıyordu. Kullanıcı-düzeyi ayar ise 24.8'de varsayılan 1.
 
+// v0.9.1102 — Operator-reported (2026-08-16, prod, CH 26.2.4.23):
+// 26.x Distributed motoru MODIFY SETTING'i Code 36 yerine Code 48
+// (NOT_IMPLEMENTED) ve BAŞKA bir metinle reddediyor. 1081'in dedektörü
+// yalnız 24.8 metnini tanıyınca erken-çıkış hiç ateşlemedi ve boot her
+// Distributed tabloya 4 mahkûm ALTER atıp prod'a hata span'ları bastı
+// (trace_summary_1d üzerinde görüldü). İki kılık da yakalanmalı.
 func TestIsSettingsChangeUnsupported(t *testing.T) {
-	if !isSettingsChangeUnsupported(errStr("code: 36, message: Cannot alter settings, because table engine doesn't support settings changes")) {
-		t.Error("Code 36 metni yakalanmalı")
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{
+			"Code 36 (CH 24.8) metni yakalanmalı",
+			errStr("code: 36, message: Cannot alter settings, because table engine doesn't support settings changes"),
+			true,
+		},
+		{
+			// v0.9.1102 — prod span'ındaki VERBATIM metin.
+			"Code 48 (CH 26.2) metni yakalanmalı",
+			errStr("code: 48, message: There was an error on [172.31.240.28:9000]: Code: 48. DB::Exception: Alter of type 'MODIFY_SETTING' is not supported by storage Distributed. (NOT_IMPLEMENTED) (version 26.2.4.23 (official build))"),
+			true,
+		},
+		{
+			"başka bir Code 36 bu sınıfa GİRMEZ — metin eşleşmesi şart",
+			errStr("code: 36, message: some other bad argument"),
+			false,
+		},
+		{
+			// MODIFY_SETTING geçmeyen bir Code 48 (ör. Method write is
+			// not supported by storage X) bu sınıfa girmez.
+			"başka bir Code 48 bu sınıfa GİRMEZ",
+			errStr("code: 48, message: Method write is not supported by storage Merge (NOT_IMPLEMENTED)"),
+			false,
+		},
+		{"nil hata false olmalı", nil, false},
 	}
-	if isSettingsChangeUnsupported(errStr("code: 36, message: some other bad argument")) {
-		t.Error("başka bir Code 36 bu sınıfa GİRMEZ — metin eşleşmesi şart")
-	}
-	if isSettingsChangeUnsupported(nil) {
-		t.Error("nil hata false olmalı")
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := isSettingsChangeUnsupported(c.err); got != c.want {
+				t.Errorf("isSettingsChangeUnsupported(%v) = %v, beklenen %v", c.err, got, c.want)
+			}
+		})
 	}
 }
 

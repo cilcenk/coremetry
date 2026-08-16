@@ -114,14 +114,25 @@ const effectiveBatchingSQL = `SELECT max(toUInt8(value))
 	               'distributed_directory_monitor_batch_inserts')
 	SETTINGS max_execution_time = 3`
 
-// isSettingsChangeUnsupported — Code 36: "Cannot alter settings,
-// because table engine doesn't support settings changes" (saf,
-// tablo testli). CH 24.8 Distributed motoru MODIFY SETTING fiilini
-// TOPYEKÛN reddediyor (canlı doğrulama 2026-08-16): ad/kapsam
-// fallback'lerinin hiçbiri işe yaramaz, tablo tablo denemek 30 satır
-// yanıltıcı hata basar. Bu sınıf hatada döngü tek özetle kesilir.
+// isSettingsChangeUnsupported — Distributed motoru MODIFY SETTING
+// fiilini TOPYEKÛN reddediyor; sürüme göre İKİ ayrı kılıkta (saf,
+// tablo testli):
+//   - Code 36 (CH 24.8, canlı doğrulama 2026-08-16): "Cannot alter
+//     settings, because table engine doesn't support settings changes"
+//   - Code 48 (CH 26.2, prod error span'ı 2026-08-16 / v0.9.1102):
+//     "Alter of type 'MODIFY_SETTING' is not supported by storage
+//     Distributed. (NOT_IMPLEMENTED)"
+// Ad/kapsam fallback'lerinin hiçbiri işe yaramaz, tablo tablo denemek
+// 30 satır yanıltıcı hata basar. Bu sınıf hatada döngü tek özetle
+// kesilir.
 func isSettingsChangeUnsupported(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "doesn't support settings changes")
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "doesn't support settings changes") ||
+		(strings.Contains(msg, "MODIFY_SETTING") &&
+			strings.Contains(msg, "is not supported by storage"))
 }
 
 // ensureDistributedBatching — boot geçişi. Önce ETKİN durum: profil
@@ -171,7 +182,7 @@ func (s *Store) ensureDistributedBatching(ctx context.Context) {
 			if isSettingsChangeUnsupported(err) {
 				// Motor fiili reddediyor — kalan ad/kapsam denemeleri de,
 				// kalan TABLOLAR da aynı duvara çarpar. Tek dürüst özet:
-				log.Printf("[chstore] bu CH sürümünde Distributed motoru ALTER MODIFY SETTING desteklemiyor (Code 36) — tablo tablo denenmedi. Kalıcı çare CH tarafında: default profile'a distributed_background_insert_batch=1 ve distributed_background_insert_split_batch_on_failure=1 (users.xml, hot-reload; CH ≥24 varsayılanı zaten 1)")
+				log.Printf("[chstore] bu CH sürümünde Distributed motoru ALTER MODIFY SETTING desteklemiyor (Code 36/48) — tablo tablo denenmedi. Kalıcı çare CH tarafında: default profile'a distributed_background_insert_batch=1 ve distributed_background_insert_split_batch_on_failure=1 (users.xml, hot-reload; CH ≥24 varsayılanı zaten 1)")
 				return
 			}
 		}

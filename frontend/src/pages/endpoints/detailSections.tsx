@@ -363,7 +363,14 @@ const SPLIT_COLS: DataTableColumn<EndpointSplitValue>[] = [
 export function SplitSection({ refObj, from, to, env, cluster }: {
   refObj: EndpointRef; from: number; to: number; env?: string; cluster?: string;
 }) {
-  const [by, setBy] = useState('');
+  // v0.9.1085 (operatör isteği): "break down by kısmında
+  // deployment.environment varsa default o kalsın" — boyut listede
+  // olduğu sürece sayfa onunla açılır (tek sınırlı split sorgusu peşin
+  // koşar; tembel-fetch diğer seçimler için aynen durur). Liste değişir
+  // de boyut düşerse varsayılan sessizce eski "seçilmedi"ye döner.
+  const [by, setBy] = useState<string>(
+    (ENDPOINT_SPLIT_DIMS as readonly string[]).includes('deployment.environment')
+      ? 'deployment.environment' : '');
   const splitQ = useEndpointSplit(by ? {
     service: refObj.service, path: refObj.path, by, from, to,
     ...(refObj.sig ? { sig: '1' as const } : {}),

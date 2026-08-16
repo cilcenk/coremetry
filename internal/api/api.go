@@ -578,7 +578,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// SystemPromptCHQueryOptimize template that knows the MV
 	// catalogue + the hard-constraint checklist. Returns
 	// {optimized, explanation}.
-	mux.HandleFunc("POST /api/admin/clickhouse/optimize-query", auth.RequireRole(auth.RoleAdmin, s.copilotOptimizeCHQuery))
+	mux.HandleFunc("POST /api/admin/clickhouse/optimize-query", auth.RequireRole(auth.RoleAdmin, s.requireCopilot(s.copilotOptimizeCHQuery)))
 	// v0.9.494 — koordinatör dağılımı: hangi CH node'u kaç sorgunun
 	// giriş noktası oldu (is_initial_query üzerinden, clusterAllReplicas
 	// fan-out'uyla). Okuma havuzu dilimlerinin öncesi/sonrası kabul
@@ -8856,10 +8856,6 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 // cevaplanıyordu). Prompt bayt-bayt aynıdır — explain_trace_input_test.go
 // pinler. Emsal: anomaly.BuildExceptionExplainInput (v0.9.415).
 func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	in, err := s.buildTraceExplainInput(r.Context(), r.PathValue("id"))
 	if errors.Is(err, errExplainTraceNotFound) {
 		http.Error(w, "trace not found", http.StatusNotFound)
@@ -8900,10 +8896,6 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 // configured backend — Anthropic, OpenAI, or a local LLM via
 // OpenAI-compatible base URL (Ollama / vLLM / LM Studio).
 func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	traceID := r.PathValue("traceId")
 	spanID := strings.TrimSpace(r.URL.Query().Get("span"))
 	if spanID == "" {
@@ -9005,10 +8997,6 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 // likely-cause + first-action summary. Useful on a fresh page during
 // an incident.
 func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	id := r.PathValue("id")
 	// v0.9.343 — ask for the row, don't page the newest 1000 and scan.
 	//
@@ -9131,10 +9119,6 @@ func topNeighborNames(ns []chstore.NeighborStat, n int) string {
 // explain-problem because incidents bundle multiple firings —
 // the LLM needs the wider scope to call escalation correctly.
 func (s *Server) copilotExplainIncident(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	id := r.PathValue("id")
 	inc, err := s.store.GetIncident(r.Context(), id)
 	if err != nil {
@@ -9190,10 +9174,6 @@ func (s *Server) copilotExplainIncident(w http.ResponseWriter, r *http.Request) 
 // operator decide whether to act, not assume something is
 // broken.
 func (s *Server) copilotExplainAnomaly(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	id := r.PathValue("id")
 	// v0.9.343 — ask for the row, don't page 30 days and scan.
 	//
@@ -9275,10 +9255,6 @@ func truncate(s string, n int) string {
 // (which fires on a specific alert) because the chart may
 // look fine and the answer should say so plainly.
 func (s *Server) copilotExplainServiceHealth(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	q := r.URL.Query()
 	service := strings.TrimSpace(q.Get("service"))
 	if service == "" {
@@ -9414,10 +9390,6 @@ func (s *Server) copilotExplainServiceHealth(w http.ResponseWriter, r *http.Requ
 // Caps at 8 past instances to keep the prompt bounded — the
 // most-recent 8 carry the freshest pattern.
 func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	id := r.PathValue("id")
 	// v0.9.343 — ask for the row, don't page the newest 1000 and scan.
 	//
@@ -9507,10 +9479,6 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 //   - Both traces identical (same ID typed twice) → still
 //     valid; the model will say "essentially the same".
 func (s *Server) copilotCompareTraces(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	var body struct {
 		AID string `json:"aId"`
 		BID string `json:"bId"`
@@ -9566,10 +9534,6 @@ func (s *Server) copilotCompareTraces(w http.ResponseWriter, r *http.Request) {
 // numbers as a small chip row so the operator can
 // fact-check the model.
 func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	var body struct {
 		Service      string `json:"service"`
 		Version      string `json:"version"`
@@ -9729,10 +9693,6 @@ func (s *Server) copilotDeployImpact(w http.ResponseWriter, r *http.Request) {
 // model whether the budget is on track, burning fast, or
 // already breached.
 func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	id := r.PathValue("id")
 	slo, err := s.store.GetSLO(r.Context(), id)
 	if err != nil || slo == nil {
@@ -9800,10 +9760,6 @@ func (s *Server) copilotExplainSLO(w http.ResponseWriter, r *http.Request) {
 // data on the row) so the handler is a thin shaper — no
 // re-query of the spans table needed.
 func (s *Server) copilotExplainSlowQuery(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	var body struct {
 		Service         string  `json:"service"`
 		Statement       string  `json:"statement"`
@@ -10033,10 +9989,6 @@ func abs(f float64) float64 {
 //     "no suggestions available" rather than poisoning the
 //     form with non-JSON garbage.
 func (s *Server) copilotSuggestServiceTags(w http.ResponseWriter, r *http.Request) {
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
 	service := strings.TrimSpace(r.URL.Query().Get("service"))
 	if service == "" {
 		http.Error(w, "service required", http.StatusBadRequest)

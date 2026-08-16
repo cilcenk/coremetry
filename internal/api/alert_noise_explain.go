@@ -42,13 +42,7 @@ func alertNoiseWindow(raw string) (time.Duration, string) {
 // explainAlertNoise — POST /api/copilot/explain-alert-noise?since=24h.
 // Admin-only: tuning verisiyle aynı kapı (alertTuningNoisyRules).
 func (s *Server) explainAlertNoise(w http.ResponseWriter, r *http.Request) {
-	// v0.9.1101 — kardeş copilot yüzeyleriyle hizalı 503 ön-kapısı
-	// (canlı probun bulgusu: kapısız uç 500 dönüyor ve FE "sunucu
-	// hatası" sanıyor; AI-yapılandırılmamış hâli bir arıza değil).
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
+	// 503 ön-kapısı ROUTE'ta: requireCopilot (ai_routes.go, v0.9.1118).
 	claims := auth.FromContext(r.Context())
 	if claims == nil || claims.Role != auth.RoleAdmin {
 		http.Error(w, "admin only", http.StatusForbidden)

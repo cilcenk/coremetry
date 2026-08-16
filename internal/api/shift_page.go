@@ -121,13 +121,7 @@ func (s *Server) getShiftSummary(w http.ResponseWriter, r *http.Request) {
 // prompt'u. FAB'a doğru cümleyi yazma şartı kalkıyor — sayfadaki ✨
 // düğmesi buraya gelir. copilotExplain sarmalayıcısı /ai atıfını yazar.
 func (s *Server) explainShift(w http.ResponseWriter, r *http.Request) {
-	// v0.9.1101 — kardeş copilot yüzeyleriyle hizalı 503 ön-kapısı
-	// (canlı probun bulgusu: kapısız uç 500 dönüyor ve FE "sunucu
-	// hatası" sanıyor; AI-yapılandırılmamış hâli bir arıza değil).
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
+	// 503 ön-kapısı ROUTE'ta: requireCopilot (ai_routes.go, v0.9.1118).
 	rung, dur := shiftWindow(r.URL.Query().Get("w"))
 	to := time.Now()
 	from := to.Add(-dur)

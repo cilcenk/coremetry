@@ -29,13 +29,7 @@ const (
 )
 
 func (s *Server) explainLogPatterns(w http.ResponseWriter, r *http.Request) {
-	// v0.9.1101 — kardeş copilot yüzeyleriyle hizalı 503 ön-kapısı
-	// (canlı probun bulgusu: kapısız uç 500 dönüyor ve FE "sunucu
-	// hatası" sanıyor; AI-yapılandırılmamış hâli bir arıza değil).
-	if !s.copilot.Active() {
-		http.Error(w, "AI copilot not available (disabled or not configured)", http.StatusServiceUnavailable)
-		return
-	}
+	// 503 ön-kapısı ROUTE'ta: requireCopilot (ai_routes.go, v0.9.1118).
 	window := snapAnomalyWindow(parseDuration(r.URL.Query().Get("window"), 30*time.Minute))
 
 	hits, hitsErr := anomaly.DetectLogPatterns(r.Context(), s.logs, window)

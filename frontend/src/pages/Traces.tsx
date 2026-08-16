@@ -1284,7 +1284,6 @@ function TracesPageInner() {
                 yorum değil, tipin kendisi: 'skip' `total`ı YASAKLIYOR. */}
             <Pager mode="offset" count="skip"
               page={page} pageSize={50} hasMore={hasMore} onPage={setPage}
-              stickyBottom
               lastReachablePage={lastReachablePage(countRes?.value, countRes?.atLeast ?? false, 50)}
               extras={
                 <>

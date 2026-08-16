@@ -33,8 +33,9 @@ function stripComments(src: string): string {
 // ÇIKARILMALI.
 const ALLOW: Record<string, string> = {
   'body': 'sayfa zemininin TANIMI — tek meşru kaynak',
-  '.controls.is-sticky': 'yapışkan filtre barı; altından içerik kayar, sayfa rengi olmalı',
-  '.pager.is-sticky-bottom': 'sayfa altı yapışkan pager; aynı gerekçe',
+  // v0.9.1078 — `.controls.is-sticky` ve `.pager.is-sticky-bottom`
+  // muafiyetleri kaldırıldı: yüzen şeritler operatör kararıyla söküldü,
+  // iki kural da artık --bg0 basmıyor (biri zemin bildirmiyor, diğeri yok).
   '.tab-strip.svc-tabs': 'yapışkan sekme şeridi; aynı gerekçe',
   '.topo-node.ext': 'zemin DEĞİL ayırt edici: taban .topo-node --bg1, .ext ondan geri çekiliyor. --bg1 iç/dış ayrımını siler, --bg2 .topo tuvaliyle çakışır. OPERATÖR KARARI 2026-08-14: olduğu gibi kalır — KALICI muafiyet',
 };

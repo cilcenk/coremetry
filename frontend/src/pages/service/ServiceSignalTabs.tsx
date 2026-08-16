@@ -251,17 +251,12 @@ export function ServiceLogsTab({ service, range, windowNs, onZoom, onZoomReset }
               v0.9.406'nın kararı korunuyor: kullanıcı-tetiklemeli keyset
               sayfa, otomatik prefetch YOK (ES disiplini). Dürüst son
               cümlesi zaten atomun varsayılanı — bu yüzeyden geldi.
-              `stickyBottom` KAPALI ve gerekçesi ölçülü: bu şerit bir
-              `.card`/`.ov-card-b` İÇİNDE yaşıyor, oysa
-              `.pager.is-sticky-bottom` zemin olarak `--bg0` (SAYFA
-              zemini) basıyor. Kartın içinde sayfa zemininde bir bant
-              delik gibi görünürdü. Sayfa düzeyinde tablo altına oturan
-              diğer dört yüzey (traces/services/logs/metrics) varsayılanı
-              koruyor. */}
+              (v0.9.1078: `stickyBottom` prop'u atomdan tamamen söküldü —
+              yüzen şeritler operatör kararıyla kalktı; buradaki eski
+              "kart içinde kapalı" istisnası artık genel kural.) */}
           <Pager mode="cursor" count="skip"
             hasMore={!pagingDone} onMore={loadMore} loading={pagingBusy}
-            loaded={logs.length} moreLabel="200 satır daha"
-            stickyBottom={false} />
+            loaded={logs.length} moreLabel="200 satır daha" />
           </>
         )}
       </div>

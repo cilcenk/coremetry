@@ -88,3 +88,44 @@ func TestDBStmtExemplarMVSourcePins(t *testing.T) {
 		t.Error("exemplar upgrade bloğu hasDBStmtHashCol kapısıyla var olmalı")
 	}
 }
+
+// ── v0.9.1098 — canlı doğrulamanın yakaladığı iki dağıtık-yol bug'ı ──
+//
+// Bug 1 (her restart'ta veri kaybı): v0.9.1097 probe'u ÇIPLAK adı
+// ölçüyordu; cluster modunda çıplak ad Distributed wrapper'dır ve
+// kolonu asla kazanmaz → upgrade her boot yeniden koşup statement
+// geçmişini siliyordu. Probe artık mvStorageName (TDigest emsali).
+//
+// Bug 2: wrapper kolon listesini CREATE anında dondurur; _local iki
+// kolon kazanınca okuma wrapper'dan Code 47 yiyordu. Upgrade'den
+// BAĞIMSIZ drift-iyileştirici her boot kaymayı kapatır (deferred-DDL
+// yarışına dayanıklı; soft-fail).
+func TestDBStmtExemplarUpgradeDistributedSafety(t *testing.T) {
+	b, err := os.ReadFile("store.go")
+	if err != nil {
+		t.Fatalf("kaynak okunamadı: %v", err)
+	}
+	src := string(b)
+	i := strings.Index(src, "v0.9.1098 — probe hedefi STORAGE adı")
+	if i < 0 {
+		t.Fatal("1098 probe bloğu bulunamadı")
+	}
+	seg := src[i : i+4200]
+	if !strings.Contains(seg, `s.mvStorageName("db_statement_summary_5m")`) {
+		t.Error("probe STORAGE adını ölçmeli (çıplak ad = wrapper = her boot yeniden upgrade)")
+	}
+	if strings.Contains(seg, `AND table    = 'db_statement_summary_5m'
+			  AND name     = 'slow_exemplar_state'`) &&
+		!strings.Contains(seg, "wrapperHas") {
+		t.Error("çıplak-ad probe'u yalnız drift-iyileştiricinin wrapper ölçümünde olabilir")
+	}
+	for _, must := range []string{
+		"WRAPPER KOLON KAYMASI iyileştiricisi",
+		"localHas == 1 && wrapperHas == 0",
+		"AS db_statement_summary_5m_local ENGINE = Distributed",
+	} {
+		if !strings.Contains(seg, must) {
+			t.Errorf("drift-iyileştirici parçası eksik: %s", must)
+		}
+	}
+}

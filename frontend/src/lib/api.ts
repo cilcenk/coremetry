@@ -1271,6 +1271,11 @@ export const api = {
   explainAlertNoise: () =>
     request<{ explanation: string; window: string }>(
       '/api/copilot/explain-alert-noise?since=24h', { method: 'POST' }),
+  // v0.9.1100 (F3.5) — log desen/şablon anlatımı; pencere sunucuda
+  // rung'lanır (v0.8.270 disiplini).
+  explainLogPatterns: (windowSec: number) =>
+    request<{ explanation: string; windowSec: number }>(
+      `/api/copilot/explain-log-patterns?window=${windowSec}s`, { method: 'POST' }),
 
   clusterResourceTrend: (cluster: string, metric: 'cpu' | 'mem', byNode: boolean, fromNs: number, toNs: number) =>
     get<ClusterResourceTrendResponse>(`/api/clusters/resource-trend?cluster=${encodeURIComponent(cluster)}` +

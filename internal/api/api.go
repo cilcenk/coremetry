@@ -1162,6 +1162,7 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST   /api/copilot/explain-charts", s.copilotExplainCharts)
 	mux.HandleFunc("POST   /api/copilot/explain-shift", s.explainShift)  // v0.9.1071 — /shift ✨
 	mux.HandleFunc("POST   /api/copilot/explain-alert-noise", s.explainAlertNoise) // v0.9.1080 — F3.3 gürültü anlatıcısı ✨
+	mux.HandleFunc("POST   /api/copilot/explain-log-patterns", s.explainLogPatterns) // v0.9.1100 — F3.5 desen anlatıcısı ✨
 	mux.HandleFunc("GET    /api/shift", s.getShiftSummary)               // v0.9.1071 — vardiya özeti
 	mux.HandleFunc("POST   /api/copilot/runbook/{id}", s.copilotRunbook)
 	mux.HandleFunc("POST   /api/copilot/compare-traces", s.copilotCompareTraces)

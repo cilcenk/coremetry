@@ -15,15 +15,8 @@ import {
 } from '@/lib/topoFold';
 
 // TopologyFlowGraph — prototipteki "pill düğüm + akış animasyonlu
-// bezier kenar" topoloji görünümü. ServiceMapGraph ile AYNI props
-// sözleşmesi, bu yüzden ServiceMap.tsx'te tek satırlık import
-// değişikliğiyle yer değiştirir:
-//
-//   - import { ServiceMapGraph } from '@/components/ServiceMapGraph';
-//   + import { TopologyFlowGraph } from '@/components/TopologyFlowGraph';
-//   ...
-//   - <ServiceMapGraph data={filtered} ... />
-//   + <TopologyFlowGraph data={filtered} ... />
+// bezier kenar" topoloji görünümü. (Öncülü ServiceMapGraph'ın props
+// sözleşmesini devraldı; o bileşen v0.9.1114'te söküldü.)
 //
 // Görsel dil — prototipten birebir:
 //   • Düğümler HTML pill'leri (.topo-node): sağlık noktası + isim +

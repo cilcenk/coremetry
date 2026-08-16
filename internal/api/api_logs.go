@@ -12,8 +12,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -268,7 +270,50 @@ func logsSearchKey(f logstore.Filter, fromRaw, toRaw string) string {
 }
 
 func (s *Server) getLogs(w http.ResponseWriter, r *http.Request) {
-	q := r.URL.Query()
+	s.serveLogsSearch(w, r, r.URL.Query())
+}
+
+// postLogsSearch — v0.9.1094 (operator-reported, prod): "Load more →
+// Query failed / Failed to fetch". Kök neden transport: ES arka ucunun
+// keyset cursor'ı base64(PIT id + search_after) taşır ve PIT id'leri
+// KB'larca olur; GET'te URL, prod ingress'inin istek-satırı sınırını
+// aşınca bağlantı ağ katmanında resetlenir — tarayıcı "Failed to
+// fetch" der, ilk sayfa (cursor'sız) hep çalışır. Lokal CH cursor'ı
+// minik olduğundan sınıf lokalde görünmezdi (CH-vs-ES ayrışması,
+// transport düzeyinde). Liste artık gövdeyle POST eder; GET aynen
+// kalır (derin linkler, curl, eski istemciler).
+func (s *Server) postLogsSearch(w http.ResponseWriter, r *http.Request) {
+	var body map[string]any
+	if err := json.NewDecoder(io.LimitReader(r.Body, 64<<10)).Decode(&body); err != nil {
+		http.Error(w, "invalid body", http.StatusBadRequest)
+		return
+	}
+	s.serveLogsSearch(w, r, logsBodyToValues(body))
+}
+
+// logsBodyToValues — POST gövdesini GET'in url.Values sözleşmesine
+// çevirir (saf, tablo testli). Yalnız düz tipler: string olduğu gibi,
+// bool "1"/atlama (parseBoolParam sözleşmesi), sayı ondalıksız metin.
+// İç içe değerler bilerek ATLANIR — GET'te ifade edilemeyen hiçbir şey
+// POST'tan sızmasın (iki transport tek anlamda kalır).
+func logsBodyToValues(body map[string]any) url.Values {
+	vals := url.Values{}
+	for k, v := range body {
+		switch t := v.(type) {
+		case string:
+			vals.Set(k, t)
+		case bool:
+			if t {
+				vals.Set(k, "1")
+			}
+		case float64:
+			vals.Set(k, strconv.FormatFloat(t, 'f', -1, 64))
+		}
+	}
+	return vals
+}
+
+func (s *Server) serveLogsSearch(w http.ResponseWriter, r *http.Request, q url.Values) {
 	sev, _ := strconv.Atoi(q.Get("severity"))
 	f := logstore.Filter{
 		Service:     q.Get("service"),

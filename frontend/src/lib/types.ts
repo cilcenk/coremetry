@@ -14,6 +14,12 @@ export interface Service {
   health?: 'green' | 'yellow' | 'red';
   healthReason?: string;
   openProblems?: number;
+  // v0.9.1111 (Faz 5) — ?compare=prior açıkken bir önceki eş-uzunluk
+  // pencerenin değerleri; kıyas kapalıyken backend alanları hiç yazmaz.
+  priorSpanCount?: number;
+  priorErrorRate?: number;
+  priorAvgMs?: number;
+  priorP99Ms?: number;
 }
 
 // Topology view (v0.5.100) — operation-level call graph rooted at

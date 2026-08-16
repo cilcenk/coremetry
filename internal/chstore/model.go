@@ -228,6 +228,13 @@ type ServiceSummary struct {
 	Health       string `json:"health,omitempty"`       // "" | "green" | "yellow" | "red"
 	HealthReason string `json:"healthReason,omitempty"` // short string e.g. "1 open critical"
 	OpenProblems int    `json:"openProblems,omitempty"` // count of all open problems on this service
+	// v0.9.1111 (Faz 5 "en çok kötüleşenler") — compare=prior açıkken
+	// bir önceki eş-uzunluk pencerenin değerleri. omitempty: kıyas
+	// kapalıyken varsayılan /api/services yükü bayt bayt aynı kalır.
+	PriorSpanCount uint64  `json:"priorSpanCount,omitempty"`
+	PriorErrorRate float64 `json:"priorErrorRate,omitempty"`
+	PriorAvgMs     float64 `json:"priorAvgMs,omitempty"`
+	PriorP99Ms     float64 `json:"priorP99Ms,omitempty"`
 }
 
 // ── Exception aggregate (Errors page) ────────────────────────────────────────

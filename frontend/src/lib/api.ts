@@ -198,6 +198,9 @@ export const api = {
     errorsOnly?: '1';
     minSpans?: number;
     minP99?: number;
+    // v0.9.1111 — önceki eş-uzunluk pencereyle kıyas; sort=p99Delta
+    // sunucuda compare'i zaten zorlar, param yine de açık gönderilir.
+    compare?: 'prior';
   } = {}) =>
     get<{
       services: Service[];

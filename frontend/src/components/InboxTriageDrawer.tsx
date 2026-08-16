@@ -19,6 +19,7 @@ import {
 } from '@/lib/inboxDrawer';
 import type { InboxItem, ExceptionGroupState } from '@/lib/types';
 import { serviceHref, inboxItemWindow } from '@/lib/serviceHref';
+import { tracesPivotHref } from '@/lib/pivotHref';
 
 // InboxTriageDrawer — v0.8.292 (Option B slice 3): the /inbox row-click opens
 // this right-side drawer so the operator triages WITHOUT leaving the inbox,
@@ -93,6 +94,11 @@ function DrawerBody({ item, onClose, onOpenSource }: {
   onOpenSource: (it: InboxItem) => void;
 }) {
   const rc = rootCauseAnchor(item);
+  // v0.9.1110 (Faz 5) — kuyruktan çıkmadan triyaj: öğenin kendi penceresi
+  // (başlık linkiyle AYNI inboxItemWindow) Logs + hatalı-trace pivotlarına
+  // biner. Pencere çözülemiyorsa (bozuk satır) linkler hiç basılmaz —
+  // epoch-0'a çivilenmiş boş sayfadan iyi (serviceHref sözleşmesi).
+  const w = inboxItemWindow(item);
 
   return (
     <>
@@ -133,6 +139,23 @@ function DrawerBody({ item, onClose, onOpenSource }: {
               color: 'var(--text2)', maxHeight: 160, overflowY: 'auto',
             }} title={item.exception.message}>{item.exception.message}</pre>
           )}
+        </div>
+      )}
+
+      {item.service && w && (
+        <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+          {/* Logs: service= + custom range (CorrelationContextDrawer emsali;
+              floor/ceil pencereyi asla daraltmaz). */}
+          <Link className="sec" style={{ textDecoration: 'none' }}
+            to={`/logs?service=${encodeURIComponent(item.service)}&range=custom:${Math.floor(w.fromNs / 1e6)}-${Math.ceil(w.toNs / 1e6)}`}
+            title="Bu pencerede servisin logları">
+            Logs
+          </Link>
+          <Link className="sec" style={{ textDecoration: 'none' }}
+            to={tracesPivotHref({ window: w, service: item.service, hasError: true })}
+            title="Bu pencerede servisin hatalı trace'leri">
+            Error traces
+          </Link>
         </div>
       )}
 

@@ -128,8 +128,10 @@ export default function ShiftPage() {
       )}
       {q.data && (
         <>
-          <Section title={`Pencerede açılan problemler (${problems.length})`}
-            sub="kapananlar soluk — gece ne oldu, ne kendi kendine düzeldi">
+          <Section title={`Pencerede açılan problemler (${q.data.problemsTotal})`}
+            sub={q.data.problemsTotal > problems.length
+              ? `en yeni ${problems.length} gösteriliyor — kapananlar soluk`
+              : 'kapananlar soluk — gece ne oldu, ne kendi kendine düzeldi'}>
             {problems.length === 0
               ? <Empty icon="✓" title="Pencerede problem açılmadı">Sakin bir vardiya.</Empty>
               : (

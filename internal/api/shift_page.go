@@ -48,8 +48,12 @@ type ShiftSummary struct {
 	Worsened []chstore.ChangedService `json:"worsened"`
 	// NewExceptions — first_seen pencerede olan gruplar (en fazla 20;
 	// kesme truncated ile İFŞA edilir).
-	NewExceptions       []chstore.ExceptionGroup `json:"newExceptions"`
-	NewExceptionsTotal  int                      `json:"newExceptionsTotal"`
+	NewExceptions      []chstore.ExceptionGroup `json:"newExceptions"`
+	NewExceptionsTotal int                      `json:"newExceptionsTotal"`
+	// ProblemsTotal (v0.9.1073) — kesme İFŞASI: canlı doğrulama üç
+	// pencerede de problems=100 (cap) yakaladı; sessiz kesme "hepsini
+	// gördüm" diye okunur (no-silent-caps).
+	ProblemsTotal int `json:"problemsTotal"`
 }
 
 // getShiftSummary — GET /api/shift?w=8h|12h|24h. Viewer-görünür salt
@@ -73,6 +77,7 @@ func (s *Server) getShiftSummary(w http.ResponseWriter, r *http.Request) {
 		if probs, err := s.store.ListProblemWindowEvents(ctx, "", from, to); err == nil {
 			probs = s.enrichProblemsForRead(ctx, probs)
 			sort.SliceStable(probs, func(i, j int) bool { return probs[i].StartedAt > probs[j].StartedAt })
+			out.ProblemsTotal = len(probs)
 			if len(probs) > 100 {
 				probs = probs[:100]
 			}

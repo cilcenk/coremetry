@@ -835,6 +835,7 @@ export interface ShiftSummary {
   worsened: ChangedService[];        // pencere vs önceki eş-boy pencere
   newExceptions: ExceptionGroup[];   // first_seen pencerede (≤20)
   newExceptionsTotal: number;        // kesme ifşası
+  problemsTotal: number;             // v0.9.1073 — kesme ifşası (≤100 gösterilir)
 }
 
 // RootCauseSummary — the COMPACT slice each /anomalies + /problems list row

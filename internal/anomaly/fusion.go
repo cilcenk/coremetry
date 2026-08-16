@@ -295,10 +295,11 @@ func renderEvidence(sb *strings.Builder, b EvidenceBundle) {
 			}
 			line := fmt.Sprintf("  · %s: %s", ev.Kind, ev.Pattern)
 			if s := strings.TrimSpace(ev.Sample); s != "" {
-				if len(s) > 120 {
-					s = s[:120] + "…"
-				}
-				line += " — " + s
+				// v0.9.1115 — s[:120] bayt kesimi Türkçe örnek satırını çok
+				// baytlı karakterin ortasından bölüyordu (geçersiz UTF-8 →
+				// prompt'a bozuk bayt; shared_exception.go:80'in rune-doğru
+				// ikizi). Saf yardımcı, tablo testli.
+				line += " — " + truncSampleRunes(s, 120)
 			}
 			fmt.Fprintln(sb, line)
 		}
@@ -346,4 +347,15 @@ func maxRatio(ev chstore.AnomalyEvent) float64 {
 		return ev.CurrentRatio
 	}
 	return ev.PeakRatio
+}
+
+// truncSampleRunes — kanıt örneği kırpması, RUNE-doğru (v0.9.1115,
+// tablo testli). Bayt kesimi (s[:n]) çok baytlı karakteri ortadan
+// bölüp geçersiz UTF-8 üretir — prod'da bu sınıf self-telemetri
+// trace batch'ini düşürdü (traced_conn.truncStmt kardeş fix'i).
+func truncSampleRunes(s string, max int) string {
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
 }

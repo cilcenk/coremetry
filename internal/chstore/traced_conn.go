@@ -81,12 +81,20 @@ const (
 // operator needs to grep across traces.
 const maxStmtBytes = 1024
 
+// truncStmt — v0.9.1115 (operator-reported, prod): bayt kesimi çok
+// baytlı karakterin ortasına denk gelince db.statement GEÇERSİZ UTF-8
+// taşıyor ve protobuf marshal TÜM trace batch'ini düşürüyordu
+// ("traces export: … string field contains invalid UTF-8" —
+// v0.9.586'nın koruduğu hata-mesajı yolunun kardeşi; SQL'e gömülen
+// filo verisi/Türkçe desenler 1024. baytın üstünde kesilince
+// tetikleniyor). Kesimden sarkan baytlar atılır; kaynak zaten
+// bozuksa SafeAttr temizler (geçerli string'de bedava).
 func truncStmt(s string) string {
 	s = strings.TrimSpace(s)
-	if len(s) <= maxStmtBytes {
-		return s
+	if len(s) > maxStmtBytes {
+		s = strings.ToValidUTF8(s[:maxStmtBytes], "") + "…"
 	}
-	return s[:maxStmtBytes] + "…"
+	return selfobs.SafeAttr(s)
 }
 
 // chErrorIsBenignCancel reports whether a ClickHouse call error is a

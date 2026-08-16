@@ -221,7 +221,12 @@ func (e *SyncEngine) Sync(ctx context.Context) (*Snapshot, error) {
 
 	for _, ref := range refs {
 		_, gspan := tr.Start(ctx, "ldap.search.users")
-		gspan.SetAttributes(attribute.String("group_cn", ref.CN), attribute.String("group_dn", ref.DN))
+		// v0.9.1115 — AD grup adları/DN'leri Türkçe karakter taşıyabilir;
+		// bozuk bayt tek span'la kalmaz, tüm export batch'ini düşürür
+		// (truncStmt kardeş fix'i). SafeAttr geçerli string'de bedava.
+		gspan.SetAttributes(
+			attribute.String("group_cn", selfobs.SafeAttr(ref.CN)),
+			attribute.String("group_dn", selfobs.SafeAttr(ref.DN)))
 		members, err := membersOfGroup(searcher, cfg, ref.DN)
 		if err != nil {
 			gspan.End()

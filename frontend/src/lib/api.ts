@@ -1257,6 +1257,10 @@ export const api = {
   explainShift: (w: string) =>
     request<{ explanation: string; window: string }>(
       `/api/copilot/explain-shift?w=${encodeURIComponent(w)}`, { method: 'POST' }),
+  // v0.9.1080 (F3.3) — alert gürültüsü tek-atış anlatımı (admin).
+  explainAlertNoise: () =>
+    request<{ explanation: string; window: string }>(
+      '/api/copilot/explain-alert-noise?since=24h', { method: 'POST' }),
 
   clusterResourceTrend: (cluster: string, metric: 'cpu' | 'mem', byNode: boolean, fromNs: number, toNs: number) =>
     get<ClusterResourceTrendResponse>(`/api/clusters/resource-trend?cluster=${encodeURIComponent(cluster)}` +

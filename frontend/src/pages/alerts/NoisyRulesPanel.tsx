@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Button, useConfirm } from '@/components/ui';
+import { Spinner } from '@/components/Spinner';
+import { IconSparkles } from '@/components/icons';
 import { QueryErrorInline } from '@/components/QueryError';
 import { useUpdateAlertRule, useDisableAlertRule } from '@/lib/queries';
 import { api } from '@/lib/api';
@@ -40,6 +42,18 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
   // and clicking Apply → save → close for each one is annoying.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  // v0.9.1080 (F3.3) — ✨ tek-atış gürültü anlatımı. Fetch yalnız
+  // tıklamayla (LLM maliyet disiplini); panel Shift emsali.
+  const [ai, setAi] = useState<{ busy: boolean; text: string | null; err: string | null }>({ busy: false, text: null, err: null });
+  const explainNoise = async () => {
+    setAi({ busy: true, text: null, err: null });
+    try {
+      const r = await api.explainAlertNoise();
+      setAi({ busy: false, text: r.explanation, err: null });
+    } catch (e) {
+      setAi({ busy: false, text: null, err: e instanceof Error ? e.message : 'Anlatım alınamadı' });
+    }
+  };
   const updateRule = useUpdateAlertRule();
   const disableRule = useDisableAlertRule();
   // Tek okuma yolu — hem ilk yükleme hem Retry buradan geçer, böylece hata
@@ -181,6 +195,10 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
         <span style={{ fontSize: 11, color: 'var(--text3)' }}>
           {noisy.length} rule{noisy.length === 1 ? '' : 's'} could be tightened
         </span>
+        <Button variant="secondary" size="sm" onClick={explainNoise} disabled={ai.busy}
+          title="Son 24 saatin gürültü paketini AI anlatır: baskın desen + önce sıkılacak vida">
+          <IconSparkles /> Gürültüyü anlat
+        </Button>
         {selected.size > 0 && (
           <span style={{ marginLeft: 'auto', display: 'inline-flex', gap: 6 }}>
             <Button variant="primary" size="sm" onClick={applySelected}
@@ -202,6 +220,20 @@ export function NoisyRulesPanel({ rules, onEditFromSuggestion }: {
           </span>
         )}
       </div>
+      {(ai.busy || ai.text || ai.err) && (
+        <div style={{
+          padding: '10px 12px', marginBottom: 10, borderRadius: 6,
+          background: 'var(--bg2)', border: '1px solid var(--border)',
+          fontSize: 12.5, lineHeight: 1.55, whiteSpace: 'pre-wrap',
+        }}>
+          <div style={{ fontSize: 10.5, fontWeight: 700, letterSpacing: 0.4, color: 'var(--text2)', marginBottom: 6 }}>
+            AI GÜRÜLTÜ ANLATIMI
+          </div>
+          {ai.busy && <Spinner />}
+          {ai.err && <span style={{ color: 'var(--err)' }}>{ai.err}</span>}
+          {ai.text}
+        </div>
+      )}
       <div className="table-wrap">
         <table>
           <thead><tr>

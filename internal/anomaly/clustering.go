@@ -1,7 +1,11 @@
 package anomaly
 
 import (
+	"context"
+	"log"
 	"sort"
+	"strings"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/correlator"
@@ -32,6 +36,86 @@ type anomalyCluster struct {
 	Source      string
 	SourceScore float64 // suçlayanların kaynak-skorları toplamı (rapor için)
 	Members     []openCandidate
+}
+
+// clusterRulePrefix / clusterProblemID — kararlı dedup anahtarları
+// (capacityProblemID deseni): kaynak başına TEK satır, tazelemeler
+// ReplacingMergeTree'de aynı satıra biner.
+const clusterRulePrefix = "anomaly-cluster:"
+
+func clusterProblemID(source string) string { return clusterRulePrefix + source }
+
+// clusterSeverity — üyelerin en yükseği (saf). Kaynağın kendi adayı da
+// Members dışında olduğundan kaynak-severity'si çağıranda katılır.
+func clusterSeverity(members []openCandidate, sourceSeverity string) string {
+	if sourceSeverity == "critical" {
+		return "critical"
+	}
+	for _, m := range members {
+		if m.Outcome.Severity == "critical" {
+			return "critical"
+		}
+	}
+	return "warning"
+}
+
+// clusterDescription — deterministik, operatör-okur açıklama (saf,
+// tablo-testli). Üye listesi 10'da kesilir; kesim DÜRÜSTÇE yazılır.
+func clusterDescription(cl anomalyCluster) string {
+	seen := map[string]bool{}
+	var parts []string
+	for _, m := range cl.Members {
+		label := m.Service + " (" + displayMetric(m.Metric) + " " + m.Outcome.Direction + ")"
+		if seen[label] {
+			continue
+		}
+		seen[label] = true
+		parts = append(parts, label)
+	}
+	shown := parts
+	extra := 0
+	if len(shown) > 10 {
+		extra = len(shown) - 10
+		shown = shown[:10]
+	}
+	d := "Correlated incident rooted at " + cl.Source + " — " +
+		itoaClusters(len(seen)+1) + " services degraded together (propagation-linked): " +
+		joinComma(shown)
+	if extra > 0 {
+		d += ", +" + itoaClusters(extra) + " more"
+	}
+	d += ". Member anomalies were folded into this problem instead of opening individually."
+	return d
+}
+
+func joinComma(parts []string) string {
+	out := ""
+	for i, p := range parts {
+		if i > 0 {
+			out += ", "
+		}
+		out += p
+	}
+	return out
+}
+
+func itoaClusters(v int) string {
+	if v == 0 {
+		return "0"
+	}
+	neg := v < 0
+	if neg {
+		v = -v
+	}
+	var b []byte
+	for v > 0 {
+		b = append([]byte{byte('0' + v%10)}, b...)
+		v /= 10
+	}
+	if neg {
+		return "-" + string(b)
+	}
+	return string(b)
 }
 
 // detectAnomalyClusters — saf, tablo-testli. Kural:
@@ -146,4 +230,89 @@ func detectAnomalyClusters(cands []openCandidate, weightedAdj []chstore.ServiceE
 		out = append(out, anomalyCluster{Source: sc.source, SourceScore: sc.score, Members: members})
 	}
 	return out
+}
+
+// ── R3: yan etkiler (v0.9.1070) ────────────────────────────────────────
+
+// applyClusters — tespit edilen kümeleri Problem'e çevirir; bastırılan
+// servis kümesini döndürür (bu tikin TAZE bireysel açılışları atlanır —
+// önceden açık problemler DOKUNULMAZ, tazeleme/çözülme normal akar).
+// Spec kararları: kaynak başına TEK problem + TEK bildirim; yaşam
+// döngüsü kaynak sinyaline bağlı (resolveStaleClusters).
+func (d *Detector) applyClusters(ctx context.Context, clusters []anomalyCluster, snap *chstore.OpenProblems, cfg chstore.AnomalySensitivityConfig, sourceSeverity map[string]string) map[string]bool {
+	suppressed := map[string]bool{}
+	for _, cl := range clusters {
+		id := clusterProblemID(cl.Source)
+		suppressed[cl.Source] = true
+		for _, m := range cl.Members {
+			suppressed[m.Service] = true
+		}
+		desc := clusterDescription(cl)
+		sev := clusterSeverity(cl.Members, sourceSeverity[cl.Source])
+		memberSvc := map[string]bool{}
+		for _, m := range cl.Members {
+			memberSvc[m.Service] = true
+		}
+		if existing := snap.ByID(id); existing != nil && existing.ID != "" {
+			existing.Description = desc
+			existing.Value = float64(len(memberSvc) + 1)
+			existing.Severity = sev
+			if err := d.store.UpsertProblem(ctx, *existing); err != nil {
+				log.Printf("[anomaly] cluster refresh %s: %v", id, err)
+			}
+			continue
+		}
+		p := chstore.Problem{
+			ID:          id,
+			RuleID:      clusterRulePrefix + cl.Source,
+			RuleName:    "Anomaly cluster · " + cl.Source,
+			Severity:    sev,
+			Service:     cl.Source,
+			Metric:      "cluster",
+			Value:       float64(len(memberSvc) + 1),
+			Threshold:   float64(clusterMinMembers),
+			Comparator:  ">",
+			Status:      "open",
+			Description: desc,
+			StartedAt:   time.Now().UnixNano(),
+		}
+		if err := d.store.UpsertProblem(ctx, p); err != nil {
+			log.Printf("[anomaly] cluster open %s: %v", id, err)
+			continue
+		}
+		log.Printf("[anomaly] CLUSTER OPENED %s — %d services (score %.2f)",
+			cl.Source, len(memberSvc)+1, cl.SourceScore)
+		if cfg.AttachesToIncident() {
+			if _, err := d.store.AttachProblemToIncident(ctx, p); err != nil {
+				log.Printf("[anomaly] cluster incident attach: %v", err)
+			}
+		}
+		if d.notifier != nil {
+			go d.notifier.SendProblemAlert(context.Background(), p)
+		}
+	}
+	return suppressed
+}
+
+// resolveStaleClusters — kaynak sinyaliyle yaşam (spec kararı a):
+// kaynak serviste bu tik hiçbir metrik "open" kararı taşımıyorsa küme
+// problemi çözülür. Üyeler hâlâ kötüyse sonraki tiklerde bastırma
+// kalkmış olur ve kendi problemlerini açarlar — kaynak iyileşti,
+// kalan dertler kendi satırlarında dürüstçe yaşar.
+func (d *Detector) resolveStaleClusters(ctx context.Context, snap *chstore.OpenProblems, openServices map[string]bool) {
+	for _, p := range snap.All() {
+		if !strings.HasPrefix(p.RuleID, clusterRulePrefix) {
+			continue
+		}
+		if openServices[p.Service] {
+			continue // kaynak hâlâ anomalili — küme yaşıyor
+		}
+		cp := *p
+		chstore.MarkResolved(&cp, time.Now().UnixNano())
+		if err := d.store.UpsertProblem(ctx, cp); err != nil {
+			log.Printf("[anomaly] cluster resolve %s: %v", p.ID, err)
+			continue
+		}
+		log.Printf("[anomaly] CLUSTER RESOLVED %s (source recovered)", p.Service)
+	}
 }

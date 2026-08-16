@@ -578,7 +578,46 @@ func (d *Detector) scan(ctx context.Context) {
 			pending = append(pending, pendingApply{service: svc, metric: m, oc: oc})
 		}
 	}
+	// v0.9.1070 (F1.6-R3) — FAZ 1.5: kümeleme. Yalnız TAZE açılışlar
+	// (önceden açık problemi olmayan) aday olur; yeterli aday yoksa ya
+	// da komşuluk okuması düşerse kümeleme SESSİZCE atlanır ve herkes
+	// bireysel açılır — soft-fail, mevcut davranış korunur.
+	openSvc := map[string]bool{}
+	sourceSeverity := map[string]string{}
+	var freshOpens []openCandidate
 	for _, pa := range pending {
+		if pa.oc.Action != "open" {
+			continue
+		}
+		openSvc[pa.service] = true
+		if pa.oc.Severity == "critical" || sourceSeverity[pa.service] == "" {
+			sourceSeverity[pa.service] = pa.oc.Severity
+		}
+		if ex := snap.ByKey("anomaly:"+pa.service+":"+pa.metric, pa.service); ex == nil || ex.ID == "" {
+			freshOpens = append(freshOpens, openCandidate{Service: pa.service, Metric: pa.metric, Outcome: pa.oc})
+		}
+	}
+	suppressed := map[string]bool{}
+	if len(freshOpens) >= clusterMinMembers {
+		if adj, aerr := d.store.GetServiceAdjacencyWeighted(ctx, evidenceWindow); aerr == nil {
+			if clusters := detectAnomalyClusters(freshOpens, adj, clusterMinMembers); len(clusters) > 0 {
+				suppressed = d.applyClusters(ctx, clusters, snap, sens, sourceSeverity)
+			}
+		} else {
+			log.Printf("[anomaly] cluster adjacency okuması: %v — bu tik kümeleme yok", aerr)
+		}
+	}
+	// Kaynak-sinyal yaşam döngüsü: kaynağı toparlanmış kümeler kapanır.
+	d.resolveStaleClusters(ctx, snap, openSvc)
+	for _, pa := range pending {
+		// Bastırma yalnız TAZE açılışlara: kümelenen servislerin yeni
+		// bireysel problemi açılmaz; önceden açık satırların tazeleme/
+		// çözülmesi normal akar.
+		if pa.oc.Action == "open" && suppressed[pa.service] {
+			if ex := snap.ByKey("anomaly:"+pa.service+":"+pa.metric, pa.service); ex == nil || ex.ID == "" {
+				continue
+			}
+		}
 		d.applyOutcome(ctx, pa.service, pa.metric, pa.oc, snap, sens)
 	}
 	for _, svc := range services {

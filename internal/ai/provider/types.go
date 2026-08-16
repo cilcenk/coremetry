@@ -8,22 +8,32 @@
 // anthropic/github yollarında eksik kaldı (v0.9.1120). Tek transport
 // o sınıfı kapatır.
 //
-// Bu dilim YALNIZ openai-compat + buffered (stream'siz) + JSON'suz
-// (prose) yolu taşır ve TEK yüzeyde canary edilir: explain-charts.
-// Diğer yüzeyler eski koddan geçmeye devam eder — geri dönüş tek
-// şart bloğunun silinmesi.
+// FAZ 1.2 — kapsam ÜÇ sağlayıcının BUFFERED explain yolunun tamamı:
+// DoOpenAI (JSON merdiveni dahil) + DoAnthropic + DoGitHub. Eski
+// buffered üreticiler (explain*WithUsage) silindi; artık tek yazılış
+// var. Stream (stream:true) ve tool-calling (chat.go) üreticileri
+// bilinçli olarak DIŞARIDA — onlar sonraki dilimde taşınır; bu dilimde
+// yalnız salvage/parse zincirini buradan çağırırlar, yani kurtarma
+// mantığı da tek yerde.
 //
 // Tasarım kuralı: provider DURUM TUTMAZ. Config bir SNAPSHOT olarak
 // dışarıdan gelir; canlı yapılandırmanın (kilit, 30s refresh, TLS-skip,
-// timeout) sahibi copilot.Service'tir ve öyle kalır.
+// timeout, GitHub oturum jetonu, JSON-yetenek kararları) sahibi
+// copilot.Service'tir ve öyle kalır. Merdiven de öyle: hangi basamağın
+// DENENECEĞİ ve reddedilince ne yapılacağı Service'in kararı, gövdeye
+// hangi response_format'ın basılacağı buranın işi.
 package provider
 
 import "net/http"
 
-// JSON zorlama basamakları. Bu dilimde YALNIZ JSONPlain uygulanır;
-// üst basamaklar (Faz 1.2'de gelir) DoOpenAI'da açık hata döndürür —
-// sessizce kısıtsız çağrıya düşmek, isteyen yüzeyin garantisini
-// haber vermeden kaybettirirdi (fail-open-silently-unapplies sınıfı).
+// JSON zorlama basamakları. DoOpenAI üçünü de basar; hangi basamağın
+// deneneceğine ve reddedilince bir alta inileceğine copilot.Service
+// karar verir (yetenek kararları uç-başına önbellekli, yani DURUM).
+//
+// Basamak sınırın DIŞINDAysa ya da JSONSchema şemasız gelirse DoOpenAI
+// açık hata döndürür: sessizce kısıtsız çağrıya düşmek, isteyen yüzeyin
+// garantisini haber vermeden kaybettirirdi (fail-open-silently-unapplies
+// sınıfı).
 const (
 	JSONPlain  = 0 // response_format yok
 	JSONObject = 1 // {"type":"json_object"}
@@ -45,9 +55,19 @@ type Request struct {
 	Temperature *float64
 	System      string
 	User        string
-	// JSONLevel — JSONPlain | JSONObject | JSONSchema. Bu dilimde
-	// yalnız JSONPlain desteklenir.
+	// JSONLevel — JSONPlain | JSONObject | JSONSchema. Yalnız
+	// openai-compat yolunda uygulanır: anthropic ve github uçlarına
+	// response_format bugüne kadar hiç gönderilmedi ve bu dilim
+	// DAVRANIŞ TAŞIYOR, değiştirmiyor. O iki taşıyıcı JSONPlain
+	// dışındaki basamağı açık hatayla reddeder ki "uyguladım" sanılmasın.
 	JSONLevel int
+	// JSONSchemaName / JSONSchema — yalnız JSONLevel==JSONSchema'da
+	// okunur ve İKİSİ de zorunludur. Boş şemayla json_schema göndermek
+	// 400 alır ve o uç için GEREKSİZ bir yetenek kararı yazdırırdı
+	// (v0.9.527); Service şemasız isteği zaten bir alt basamağa indirir,
+	// buradaki denetim o sözleşmenin ikinci kilidi.
+	JSONSchemaName string
+	JSONSchema     map[string]any
 }
 
 // Response — çözümlenmiş yanıt. Token sayıları `usage` alanından

@@ -97,7 +97,7 @@ func TestJSONModeDemotesOnBadRequestWhenPlainRetrySucceeds(t *testing.T) {
 	s, calls, done := jsonModeProbeServer(t, http.StatusBadRequest, http.StatusOK)
 	defer done()
 
-	out, _, _, err := s.explainOpenAIWithUsage(WithJSONMode(context.Background()), "sys", "user")
+	out, _, _, err := s.explainOpenAI(WithJSONMode(context.Background()), "sys", "user")
 	if err != nil {
 		t.Fatalf("kısıtsız deneme başarılıyken hata dönmemeli: %v", err)
 	}
@@ -113,7 +113,7 @@ func TestJSONModeDemotesOnBadRequestWhenPlainRetrySucceeds(t *testing.T) {
 
 	// İkinci çağrı artık hiç response_format göndermemeli → tek istek.
 	atomic.StoreInt32(calls, 0)
-	if _, _, _, err := s.explainOpenAIWithUsage(WithJSONMode(context.Background()), "sys", "user"); err != nil {
+	if _, _, _, err := s.explainOpenAI(WithJSONMode(context.Background()), "sys", "user"); err != nil {
 		t.Fatalf("karar önbelleklendikten sonra hata olmamalı: %v", err)
 	}
 	if n := atomic.LoadInt32(calls); n != 1 {
@@ -134,7 +134,7 @@ func TestJSONModeSurvivesTransientErrors(t *testing.T) {
 	} {
 		s, calls, done := jsonModeProbeServer(t, code, http.StatusOK)
 
-		_, _, _, err := s.explainOpenAIWithUsage(WithJSONMode(context.Background()), "sys", "user")
+		_, _, _, err := s.explainOpenAI(WithJSONMode(context.Background()), "sys", "user")
 		if err == nil {
 			t.Errorf("%d: hata dönmeli — geçici hata sessizce yutulmamalı", code)
 		}
@@ -155,7 +155,7 @@ func TestJSONModeKeepsCapabilityWhenPlainRetryAlsoFails(t *testing.T) {
 	s, calls, done := jsonModeProbeServer(t, http.StatusBadRequest, http.StatusBadRequest)
 	defer done()
 
-	_, _, _, err := s.explainOpenAIWithUsage(WithJSONMode(context.Background()), "sys", "user")
+	_, _, _, err := s.explainOpenAI(WithJSONMode(context.Background()), "sys", "user")
 	if err == nil {
 		t.Fatal("iki deneme de patlarken hata dönmeli")
 	}
@@ -221,7 +221,7 @@ func TestJSONSchemaDemotesOneRungOnly(t *testing.T) {
 	defer done()
 
 	ctx := WithJSONSchema(context.Background(), "test", testSchema)
-	out, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user")
+	out, _, _, err := s.explainOpenAI(ctx, "sys", "user")
 	if err != nil {
 		t.Fatalf("json_object çalışırken hata dönmemeli: %v", err)
 	}
@@ -240,7 +240,7 @@ func TestJSONSchemaDemotesOneRungOnly(t *testing.T) {
 
 	// Sonraki çağrı doğrudan json_object ile gitmeli.
 	*seen = nil
-	if _, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user"); err != nil {
+	if _, _, _, err := s.explainOpenAI(ctx, "sys", "user"); err != nil {
 		t.Fatalf("beklenmeyen hata: %v", err)
 	}
 	if want := []jsonLevel{jsonObject}; !sameLevels(*seen, want) {
@@ -255,7 +255,7 @@ func TestJSONLadderFallsAllTheWayDown(t *testing.T) {
 	defer done()
 
 	ctx := WithJSONSchema(context.Background(), "test", testSchema)
-	if _, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user"); err != nil {
+	if _, _, _, err := s.explainOpenAI(ctx, "sys", "user"); err != nil {
 		t.Fatalf("kısıtsız çalışırken hata dönmemeli: %v", err)
 	}
 	if want := []jsonLevel{jsonSchema, jsonObject, jsonNone}; !sameLevels(*seen, want) {
@@ -270,7 +270,7 @@ func TestJSONLadderFallsAllTheWayDown(t *testing.T) {
 
 	// Artık tek istek, kısıtsız.
 	*seen = nil
-	_, _, _, _ = s.explainOpenAIWithUsage(ctx, "sys", "user")
+	_, _, _, _ = s.explainOpenAI(ctx, "sys", "user")
 	if want := []jsonLevel{jsonNone}; !sameLevels(*seen, want) {
 		t.Errorf("iki karar da önbellekli olmalı — %v, beklenen %v", *seen, want)
 	}
@@ -284,7 +284,7 @@ func TestJSONSchemaWithoutSpecFallsBackToObject(t *testing.T) {
 	defer done()
 
 	ctx := context.WithValue(context.Background(), jsonModeKey{}, jsonSchema)
-	if _, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user"); err != nil {
+	if _, _, _, err := s.explainOpenAI(ctx, "sys", "user"); err != nil {
 		t.Fatalf("beklenmeyen hata: %v", err)
 	}
 	if want := []jsonLevel{jsonObject}; !sameLevels(*seen, want) {
@@ -309,7 +309,7 @@ func TestJSONSchemaBodyShape(t *testing.T) {
 	s.Configure("openai", "", "test-model", srv.URL, false, true)
 
 	ctx := WithJSONSchema(context.Background(), "nl-to-query", testSchema)
-	if _, _, _, err := s.explainOpenAIWithUsage(ctx, "sys", "user"); err != nil {
+	if _, _, _, err := s.explainOpenAI(ctx, "sys", "user"); err != nil {
 		t.Fatalf("beklenmeyen hata: %v", err)
 	}
 	if got["type"] != "json_schema" {
@@ -358,7 +358,7 @@ func TestNoJSONModeSendsNoResponseFormat(t *testing.T) {
 	s := New("openai", "", "test-model")
 	s.Configure("openai", "", "test-model", srv.URL, false, true)
 
-	if _, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user"); err != nil {
+	if _, _, _, err := s.explainOpenAI(context.Background(), "sys", "user"); err != nil {
 		t.Fatalf("beklenmeyen hata: %v", err)
 	}
 	if sawFormat {

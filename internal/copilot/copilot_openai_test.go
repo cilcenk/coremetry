@@ -15,8 +15,10 @@ import (
 // often filled mid-thought (finish_reason "length", empty content). The empty
 // explanation was then swallowed by the frontend's `{text && …}` guard, so the
 // user saw neither answer nor error. These tests pin the fix end-to-end on the
-// real explainOpenAIWithUsage (white-box, httptest-backed — New/Configure as in
-// production, not mocked).
+// real explain path (white-box, httptest-backed — New/Configure as in
+// production, not mocked). Faz 1.2'den beri o yol s.explainOpenAI →
+// internal/ai/provider.DoOpenAI; testler UÇTAN UCA kaldı, yani taşıma
+// zincirin herhangi bir halkasını düşürseydi burada patlardı.
 
 // newOpenAITestService wires a Service at an httptest server returning the given
 // OpenAI-compatible JSON body, using the real constructor + Configure.
@@ -31,30 +33,18 @@ func newOpenAITestService(t *testing.T, responseBody string) (*Service, func()) 
 	return s, srv.Close
 }
 
-func TestStripThinking(t *testing.T) {
-	cases := []struct{ name, in, want string }{
-		{"no think block", "plain answer", "plain answer"},
-		{"leading think stripped", "<think>reasoning here</think>the answer", "the answer"},
-		{"surrounding whitespace trimmed", "  <think>x</think>   spaced   ", "spaced"},
-		{"only thinking yields empty", "<think>all thinking</think>", ""},
-		{"empty input", "", ""},
-		{"keeps content after the final close", "<think>a</think>mid<think>b</think>final", "final"},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := stripThinking(c.in); got != c.want {
-				t.Fatalf("stripThinking(%q) = %q; want %q", c.in, got, c.want)
-			}
-		})
-	}
-}
+// NOT: TestStripThinking Faz 1.2'de bu dosyadan kalktı — fonksiyonun
+// kendisi internal/ai/provider'a taşındı ve tablosu orada
+// TestStripThinkingAndThinkingContent olarak (ThinkingContent ile
+// birlikte, aynı vakalarla) yaşıyor. Buradaki testler artık zinciri
+// UÇTAN UCA, gerçek Explain yolundan doğruluyor — asıl değeri de o.
 
 func TestExplainOpenAIReasoningContentFallback(t *testing.T) {
 	// content empty, answer lives in reasoning_content.
 	body := `{"choices":[{"message":{"content":"","reasoning_content":"answer from reasoning field"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":7}}`
 	s, done := newOpenAITestService(t, body)
 	defer done()
-	out, pt, ct, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	out, pt, ct, err := s.explainOpenAI(context.Background(), "sys", "user")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -71,7 +61,7 @@ func TestExplainOpenAIStripsThinkBlock(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"<think>pondering the trace</think>real answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":4}}`
 	s, done := newOpenAITestService(t, body)
 	defer done()
-	out, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	out, _, _, err := s.explainOpenAI(context.Background(), "sys", "user")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -85,7 +75,7 @@ func TestExplainOpenAILengthBudgetError(t *testing.T) {
 	body := `{"choices":[{"message":{"content":""},"finish_reason":"length"}],"usage":{"prompt_tokens":9,"completion_tokens":4096}}`
 	s, done := newOpenAITestService(t, body)
 	defer done()
-	out, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	out, _, _, err := s.explainOpenAI(context.Background(), "sys", "user")
 	if err == nil {
 		t.Fatalf("expected an error for empty content + finish_reason length; got out=%q", out)
 	}
@@ -100,7 +90,7 @@ func TestExplainOpenAINormalContent(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"plain answer"},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":22}}`
 	s, done := newOpenAITestService(t, body)
 	defer done()
-	out, pt, ct, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	out, pt, ct, err := s.explainOpenAI(context.Background(), "sys", "user")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -121,7 +111,7 @@ func TestExplainOpenAISalvagesThinkOnlyContent(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"<think>The checkout span is slow due to an Oracle row lock.</think>"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":4}}`
 	s, done := newOpenAITestService(t, body)
 	defer done()
-	out, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	out, _, _, err := s.explainOpenAI(context.Background(), "sys", "user")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +125,7 @@ func TestExplainOpenAIReasoningFieldFallback(t *testing.T) {
 	body := `{"choices":[{"message":{"content":"","reasoning":"answer from the reasoning field"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5,"completion_tokens":7}}`
 	s, done := newOpenAITestService(t, body)
 	defer done()
-	out, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	out, _, _, err := s.explainOpenAI(context.Background(), "sys", "user")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -149,7 +139,7 @@ func TestExplainOpenAITrulyEmptyStillErrors(t *testing.T) {
 	body := `{"choices":[{"message":{"content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":0}}`
 	s, done := newOpenAITestService(t, body)
 	defer done()
-	out, _, _, err := s.explainOpenAIWithUsage(context.Background(), "sys", "user")
+	out, _, _, err := s.explainOpenAI(context.Background(), "sys", "user")
 	if err == nil {
 		t.Fatalf("expected an error for genuinely empty content; got out=%q", out)
 	}

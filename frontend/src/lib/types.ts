@@ -4309,6 +4309,69 @@ export interface AIExplainStreamAnswer {
   exchangeId?: string;
 }
 
+// ── Gömülü insight kartı (v0.9.1130, AI Faz 2.2) ─────────────────────
+//
+// internal/ai/insight/contract.go'nun AYNASI. Sunucu sözleşmesinin tek
+// fikri tipte de duruyor: kanıt DÖRT dik yoldan gelir ve prose'un boş
+// olması bir HATA DEĞİL (AI kapalı / kota / model hatası). Kart o hâlde
+// de tam değerli çizilir — bu yüzden `prose` ile `signals`/`links` ayrı
+// alanlar, biri diğerinden türetilemez.
+//
+// WIRE ALANLARI `string`, birleşimler AYRI export: `kind`/`severity`
+// tel üstünden geliyor ve bir gün sunucu YENİ bir tür eklerse
+// `InsightSignalKind` birleşimi o gövdeyi tip hatası yapardı — düzeltmesi
+// de `as` olurdu (yasak). Wire gevşek, TÜKETİM dar: insightTone bilinmeyen
+// şiddeti nötre düşürür, yani tanımadığımız bir değer yanlış RENK yerine
+// hiç renk almaz.
+export type InsightKind = 'exception' | 'problem';
+
+/** Şiddet — '' (alan hiç gelmemiş) GEÇERLİ ve "nötr bilgi" demek. */
+export type InsightSeverity = 'ok' | 'warn' | 'err';
+
+/** Sinyal türü — FE'nin görsel dili için kapalı küme (contract.go). */
+export type InsightSignalKind =
+  | 'deploy' | 'problem' | 'opdelta' | 'blast' | 'exception' | 'generic';
+
+// Signal.Value bir DİZE ve kart onu OLDUĞU GİBİ çizer: birim/biçim
+// kararı sunucuda verilmiş (mutlak saat yasağı dahil — sunucu UTC basar,
+// sayfa tarayıcı saatini basar, iki damga yan yana çelişir).
+export interface InsightSignal {
+  kind: string;
+  label: string;
+  value: string;
+  severity?: string;
+}
+
+/** Sunucu-üretimi derin link. FE yalnız Label+Href çizer, href KURMAZ. */
+export interface InsightLink {
+  label: string;
+  href: string;
+}
+
+export interface InsightChartSpec {
+  title: string;
+  service: string;
+  operation?: string;
+  agg: string;
+  rangeS: number;
+}
+
+export interface InsightResponse {
+  /** Modelin anlatısı. Boş olabilir — bkz. aiOff. */
+  prose: string;
+  /** DAİMA dizi (sunucu Normalize eder); istemci de null'a karşı korur. */
+  signals: InsightSignal[];
+  links: InsightLink[];
+  charts?: InsightChartSpec[];
+  /** Bu CEVABIN ai_calls kimliği; 👍/👎 buna asılı. AI kapalıyken BOŞ. */
+  exchangeId?: string;
+  /** "AI yapılandırılmamış" — 503 değil, 200 + bayrak (cevabın kalanı geçerli). */
+  aiOff?: boolean;
+  /** Deterministik yarının kırpıldığı işareti (çipler tavana takıldı). */
+  truncated?: boolean;
+  model?: string;
+}
+
 // RAG doküman katalog satırı + config görünümü (v0.8.438).
 export interface RagDocument {
   docId: string;

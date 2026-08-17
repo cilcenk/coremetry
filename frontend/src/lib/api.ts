@@ -28,6 +28,7 @@ import type {
   ESQueryError, ESLogstoreSnapshot, ESLogstoreInput,
   OtlpExemplar, TraceLinks, TraceCountResponse, CorrelationLinkSettings,
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
+  InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
   AnomalySensitivityConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
 // readSSE — `event:`/`data:` çerçeve okuyucusu. v0.9.1127'de bu dosyanın
@@ -160,6 +161,127 @@ async function explainStream<T>(path: string, init: RequestInit, opts: ExplainSt
 function explainCall<T>(path: string, init: RequestInit, opts?: ExplainStreamOpts): Promise<T> {
   if (!opts?.onDelta) return request<T>(path, opts?.signal ? { ...init, signal: opts.signal } : init);
   return explainStream<T>(path, init, opts);
+}
+
+/** Gömülü insight kartının akan çağrısının kancaları (v0.9.1130, Faz 2.2). */
+export interface InsightStreamOpts {
+  /**
+   * Deterministik yarı — akan kipte İLK çerçeve, prose'tan ÖNCE. Kartın
+   * bütün fikri bu: sinyaller ve pivotlar modeli BEKLEMEZ.
+   */
+  onSignals?: (r: InsightResponse) => void;
+  /** Anlatı token'ları. */
+  onDelta?: (text: string) => void;
+  /** "↺ Yeniden üret" uçuştaki akışı iptal eder. */
+  signal?: AbortSignal;
+}
+
+// insightFrame — SSE çerçevesi / buffered gövde → InsightResponse.
+//
+// GÜVEN SINIRI burada: `JSON.parse` bilinmeyen bir şekil döndürüyor ve
+// alanlar TEK yerde daraltılmalı. Diziler için fallback ŞART: sunucu
+// Normalize() ile null göndermiyor ama eski bir sürüm ya da bir proxy
+// gövdesi `null` bırakırsa kartın `.map`'i çökerdi — v0.9.836 (rootcause
+// correlations) tam olarak bu sınıftı ve orada da "backend garanti ediyor"
+// diye korunmamıştı.
+function insightFrame(f: Record<string, unknown>): InsightResponse {
+  const arr = <T,>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
+  const str = (v: unknown): string => (typeof v === 'string' ? v : '');
+  const opt = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+  const out: InsightResponse = {
+    prose: str(f.prose),
+    signals: arr<InsightSignal>(f.signals),
+    links: arr<InsightLink>(f.links),
+    exchangeId: opt(f.exchangeId),
+    aiOff: f.aiOff === true,
+    truncated: f.truncated === true,
+    model: opt(f.model),
+  };
+  const charts = arr<InsightChartSpec>(f.charts);
+  if (charts.length) out.charts = charts;
+  return out;
+}
+
+/**
+ * insightStream — kart cevabının AKAN çağrısı.
+ *
+ * Çerçeve sırası sunucunun deliverInsight'ıyla aynı:
+ *   `signals` → `delta`* → `answer` → `done`   (AI kapalıysa: signals → done)
+ *
+ * explainStream'in ÜÇ sessiz geri düşüşü burada da aynen geçerli
+ * (düz JSON gövdesi · SSE ama sıfır delta · `error` çerçevesi) ve
+ * DÖRDÜNCÜSÜ eklendi: **cevapsız kapanan akış AI KAPALIYKEN normaldir**.
+ * O yolda `answer` çerçevesi HİÇ düşmez (sunucu LLM'e hiç gitmez), yani
+ * explainStream'in "cevapsız kapandı" hatası burada YANLIŞ olurdu —
+ * `aiOff` bayrağı taşıyan bir signals çerçevesi geçerli, tam bir cevaptır.
+ * AI AÇIKken cevapsız kapanış hâlâ hata: biriken delta'ları "nihai cevap"
+ * gibi göstermek, yarım bir anlatıyı tam sanmak demek olurdu.
+ */
+async function insightStream(path: string, opts: InsightStreamOpts): Promise<InsightResponse> {
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch(API_BASE + path + sep + 'stream=1', {
+    credentials: 'include', signal: opts.signal,
+  });
+  if (r.status === 401) {
+    onUnauthorized?.();
+    throw new UnauthorizedError(await r.text().catch(() => 'unauthorized'));
+  }
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+
+  const ct = r.headers.get('content-type') ?? '';
+  if (!r.body || !ct.includes('text/event-stream')) {
+    // (1) Sunucu buffered cevap verdi — gövde ZATEN tam cevap (prose
+    // dahil). `onSignals` BİLEREK çağrılmaz: burada "sinyaller önce
+    // geldi" diye bir şey yok, hepsi aynı anda geldi ve iki kez
+    // bildirmek o yalanı söylemek olurdu.
+    return insightFrame((await r.json()) as Record<string, unknown>);
+  }
+
+  // Toplayıcı bir NESNE, üç ayrı `let` değil: değerler geri-çağrının
+  // içinde atanıyor ve TS o atamaları görmediği için düz değişkenler
+  // akıştan sonra `null`a daralıyor (sonra da `never`). Alan erişimi bu
+  // daraltmayı taşımaz — şekil, tip sistemine uymak için seçildi.
+  const acc: {
+    base: InsightResponse | null;
+    answer: { text: string; exchangeId?: string } | null;
+    failed: string | null;
+  } = { base: null, answer: null, failed: null };
+
+  await readSSE(r.body, f => {
+    if (f.kind === 'signals') {
+      acc.base = insightFrame(f);
+      opts.onSignals?.(acc.base);
+      return;
+    }
+    if (f.kind === 'delta') {
+      const t = f.text;
+      if (typeof t === 'string' && t) opts.onDelta?.(t);
+      return;
+    }
+    if (f.kind === 'answer') {
+      acc.answer = {
+        text: typeof f.text === 'string' ? f.text : '',
+        exchangeId: typeof f.exchangeId === 'string' && f.exchangeId ? f.exchangeId : undefined,
+      };
+      return;
+    }
+    if (f.kind === 'error') acc.failed = typeof f.error === 'string' ? f.error : 'insight failed';
+  });
+  if (acc.failed) throw new Error(acc.failed);
+
+  // Sinyaller GELDİYSE kart onlarla tam: hata yolunda bile çağıran
+  // (InsightCard) ekrandaki deterministik yarıyı KORUR, yalnız anlatı
+  // yuvasına hatayı yazar.
+  if (acc.answer) {
+    const merged = acc.base ?? insightFrame({});
+    return {
+      ...merged,
+      prose: acc.answer.text,
+      exchangeId: acc.answer.exchangeId ?? merged.exchangeId,
+    };
+  }
+  if (acc.base?.aiOff) return acc.base;
+  throw new Error(acc.base ? 'AI akışı cevapsız kapandı' : 'insight akışı boş kapandı');
 }
 
 // v0.8.413 — heavy, deliberate admin actions (telemetry purge) may
@@ -1696,6 +1818,25 @@ export const api = {
       `/api/copilot/explain-charts?service=${encodeURIComponent(service)}`
       + `&from=${fromNs}&to=${toNs}&scope=${encodeURIComponent(scope)}`,
       { method: 'POST' }),
+  // v0.9.1130 (AI Faz 2.2) — gömülü insight kartı.
+  //
+  // GET, POST DEĞİL: uç yalnız OKUYOR (deterministik projeksiyon +
+  // opsiyonel anlatı) ve kendi namespace'inde yaşıyor (/api/insight/…);
+  // /api/copilot/ altındaki "her şey LLM ister" kuralı istisnasız kalsın
+  // diye — gerekçe internal/api/insight.go dosya başında.
+  //
+  // Kanca VERİLMEZSE buffered gövde (tek JSON, prose dahil); verilirse
+  // `?stream=1` ve sinyaller İLK çerçevede. Uç başına kip dalı yok.
+  insight: async (kind: InsightKind, id: string, opts?: InsightStreamOpts): Promise<InsightResponse> => {
+    const path = `/api/insight/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
+    if (!opts?.onSignals && !opts?.onDelta) {
+      // Kancasız yol da insightFrame'den GEÇER: iki kipin biri normalize
+      // edip öteki etmezse `signals: null` taşıyan bir gövde yalnız
+      // buffered çağıranı çökertir — sessiz, kipe bağlı bir hata sınıfı.
+      return insightFrame((await get<Record<string, unknown>>(path, opts?.signal)) ?? {});
+    }
+    return insightStream(path, opts);
+  },
   copilotRunbook: (id: string, opts?: ExplainStreamOpts) =>
     explainCall<{ explanation: string; exchangeId?: string; similarCount: number }>(
       `/api/copilot/runbook/${id}`, { method: 'POST' }, opts),

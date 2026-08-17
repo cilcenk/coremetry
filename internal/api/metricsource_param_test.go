@@ -517,3 +517,17 @@ func isUpstream(err error) bool {
 	writeErr(rec, err)
 	return rec.Code == 502
 }
+
+// v0.9.1152 — isim paramı eksik /api/metrics/query 400 döner, 502 değil.
+// 1150 canlı doğrulama bulgusu: store'un "metric name required" hatası VM
+// yolunda errUpstream'e sarılıp 502 görünüyordu — istemci hatasına
+// "backend bozuk" demek operatörü sağlıklı VM'yi kontrol etmeye gönderir.
+func TestQueryMetricMissingNameIs400(t *testing.T) {
+	s := &Server{}
+	req := httptest.NewRequest("GET", "/api/metrics/query?agg=avg", nil)
+	w := httptest.NewRecorder()
+	s.queryMetric(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("code = %d, beklenen 400; gövde: %s", w.Code, w.Body.String())
+	}
+}

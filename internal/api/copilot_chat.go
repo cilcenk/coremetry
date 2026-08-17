@@ -169,7 +169,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// v0.9.482 — özne (context.subject) doluysa aynı yol ilgili explain'in
 	// HAM KANITINI da yeniden kurup anlatıma katar; kanıt çekilemezse
 	// v0.9.479'un metin-tabanlı anlatımı aynen sürer (soft-fail).
-	if handled, dok := s.copilotChatDrawer(ctx, emit, req.Messages, req.Context.Explain, req.Context.Subject); handled {
+	if handled, dok := s.copilotChatDrawer(ctx, emit, req.Messages, req.Context.Explain, req.Context.Subject, req.Context.Service); handled {
 		emit("done", map[string]bool{"ok": dok})
 		return
 	}
@@ -178,7 +178,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	// eşleşmediyse ve soru yüklü dokümanlara yeterince benziyorsa
 	// (skor tabanı) tek narration çağrısıyla kaynak atıflı cevap.
 	// Sıra bilinçli: telemetri şekilleri > dokümanlar > serbest döngü.
-	if handled, rok := s.ragChatAnswer(ctx, emit, req.Messages); handled {
+	if handled, rok := s.ragChatAnswer(ctx, emit, req.Messages, req.Context.Service); handled {
 		emit("done", map[string]bool{"ok": rok})
 		return
 	}

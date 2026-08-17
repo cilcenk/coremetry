@@ -381,7 +381,7 @@ func drawerNarrationUser(question, explain string, msgs []copilot.ChatMessage, e
 // v0.9.482: subject (frontend `?ai=` kodeği) doluysa ilgili explain'in
 // kanıt paketi yeniden kurulur ve anlatıma girer. Kanıt YOKSA/çekilemezse
 // akış v0.9.479'daki metin-tabanlı anlatımdır — soft-fail.
-func (s *Server) copilotChatDrawer(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, explain, subject string) (handled, ok bool) {
+func (s *Server) copilotChatDrawer(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, explain, subject, ctxService string) (handled, ok bool) {
 	ex := clampDrawerExplain(explain)
 	question := strings.TrimSpace(lastUserText(msgs))
 	if ex == "" || question == "" {
@@ -412,9 +412,14 @@ func (s *Server) copilotChatDrawer(ctx context.Context, emit func(string, any), 
 	}
 	// Deterministik kaynak dipnotu — guided yoldaki "Kaynak: …" ile aynı
 	// sözleşme; modele bırakılmaz.
+	// v0.9.1140 (operator-reported): log-köprüsü çipleri yalnız guided
+	// + serbest döngüde vardı — drawer cevabındaki request_id LINKSİZ
+	// kalıyordu (CoSRE id'yi buluyor, Settings şablonu doğru, hat yok).
+	// ctxService ortam şablonunu seçer (-int/-uat/-prep eki).
 	emit("answer", map[string]any{
 		"text":       strings.TrimSpace(raw) + drawerSourceNote(evidenceKind),
 		"exchangeId": copilot.MetaFromContext(ctx).ExchangeID,
+		"links":      s.answerRequestIDLinks(ctx, raw, ctxService),
 	})
 	return true, true
 }

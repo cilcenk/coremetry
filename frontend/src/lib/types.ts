@@ -4285,6 +4285,31 @@ export interface ChatTurn extends ChatMessage {
   links?: ChatAnswerLink[];
 }
 
+// AiConversationSummary (v0.9.1139, AI Faz 4.1) — FAB çekmecesindeki
+// "Geçmiş" listesinin bir satırı. MESAJ GÖVDESİ TAŞIMAZ: `messages`
+// bir SAYI. Gövdeyi listeye koymak 50 threadlik arşivi her çekmece
+// açılışında tele bindirirdi.
+//
+// Kalıcılık saved_views(page='ai-chat') satırlarında yaşıyor — yeni
+// tablo yok (invariant #5, operatör onayı A1).
+export interface AiConversationSummary {
+  id: string;
+  title: string;
+  updatedAt: number; // unix ns (tsRel)
+  messages: number;  // mesaj SAYISI
+  subject?: string;
+}
+
+// AiConversation (v0.9.1139) — tekil okuma + kaydetme yanıtı; turların
+// kendisini taşır. `id` SUNUCU tarafından basılır, istemci devralır.
+export interface AiConversation {
+  id: string;
+  title: string;
+  updatedAt: number;
+  subject?: string;
+  messages: ChatMessage[];
+}
+
 export type ChatStreamEvent =
   | { kind: 'step'; tool: string; args: string }
   | { kind: 'delta'; text: string }

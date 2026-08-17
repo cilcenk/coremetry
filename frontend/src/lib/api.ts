@@ -1094,6 +1094,31 @@ export const api = {
       body: JSON.stringify(rates),
     }),
 
+  // AI konuşma arşivi (v0.9.1139, Faz 4.1) — gövde
+  // saved_views(page='ai-chat') blob'unda; rol kapısı yok (kişisel
+  // durum) ve requireCopilot ARKASINDA DEĞİL: AI kapalıyken de geçmiş
+  // okunur/silinir (internal/api/ai_conversations.go).
+  aiConversations: () =>
+    get<import('./types').AiConversationSummary[]>(`/api/ai/conversations`),
+  aiConversation: (id: string) =>
+    get<import('./types').AiConversation>(
+      `/api/ai/conversations/${encodeURIComponent(id)}`),
+  // Kimlik SUNUCU tarafından basılır: ilk kaydetmede `id` gönderilmez,
+  // yanıttaki id sonraki yazımlarda taşınır. Başlık gönderilmezse
+  // sunucu ilk kullanıcı mesajından türetir (ve sonraki kaydetmelerde
+  // DEĞİŞTİRMEZ).
+  saveAiConversation: (body: {
+    id?: string; title?: string; subject?: string;
+    messages: import('./types').ChatMessage[];
+  }) =>
+    request<import('./types').AiConversation>(`/api/ai/conversations`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  deleteAiConversation: (id: string) =>
+    request<void>(`/api/ai/conversations/${encodeURIComponent(id)}`,
+      { method: 'DELETE' }),
+
   // Saved views (per-user named filter combos).
   savedViews: (page: string) =>
     get<import('./types').SavedView[]>(`/api/views?page=${encodeURIComponent(page)}`),

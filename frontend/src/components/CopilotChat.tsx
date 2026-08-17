@@ -4,14 +4,17 @@ import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Chip } from '@/components/ui/Chip';
 import { Drawer } from '@/components/ui/Drawer';
+import { useConfirm } from '@/components/ui/ConfirmDialog';
 import { useOpenCriticalCount, useProblems } from '@/lib/queries';
 import { useAuth } from '@/components/AuthProvider';
 import { useUrlRange } from '@/lib/useUrlRange';
-import { timeRangeToNs } from '@/lib/utils';
+import { timeRangeToNs, tsRel } from '@/lib/utils';
 import { contextStarter } from '@/lib/chatContext';
+import { Empty, Spinner } from './Spinner';
 import { ChatBubble } from './ai/ChatBubble';
 import { useChatThread } from './ai/useChatThread';
 import { greetHello, greetStatus } from './ai/greeting';
+import type { AiConversationSummary } from '@/lib/types';
 
 // CopilotChat (v0.6.53, v0.9.163 interaktif) — global in-app AI assistant.
 // Sağ-alt animasyonlu sparkline logo (operatör seçimi B) bir drawer açar;
@@ -146,9 +149,64 @@ export function CopilotChat() {
     return s > 0 ? s : undefined;
   }, [range]);
 
-  const { turns, busy, send, rate, clear, last, showFollowups } = useChatThread({
-    service: currentService, operation: currentOp, rangeS, trace: currentTrace,
-  });
+  // persist: true — KALICILIK YALNIZ BURADA (v0.9.1139, Faz 4.1).
+  // AI çekmecesindeki özne sohbeti efemer kalıyor; gerekçe
+  // useChatThread'in dosya başında.
+  const { turns, busy, send, rate, clear, load, conversationId, last, showFollowups } =
+    useChatThread({
+      service: currentService, operation: currentOp, rangeS, trace: currentTrace,
+      persist: true,
+    });
+
+  // ── Geçmiş (v0.9.1139) ──
+  // Liste YALNIZ çekmece açılışında çekiliyor (ev kuralı: aç-üzerine
+  // getir, prefetch yok, poll yok). Bu oturumda başlatılan bir konuşma
+  // listede bir SONRAKİ açılışta görünür — bunun için ekstra istek
+  // atmak, maliyet disiplininin karşılığını vermiyor.
+  const confirm = useConfirm();
+  const [showHistory, setShowHistory] = useState(false);
+  const [threads, setThreads] = useState<AiConversationSummary[] | undefined>(undefined);
+  const [histErr, setHistErr] = useState('');
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    setThreads(undefined);
+    setHistErr('');
+    api.aiConversations()
+      .then(t => { if (alive) setThreads(t ?? []); })
+      .catch(e => {
+        if (alive) { setThreads([]); setHistErr(e instanceof Error ? e.message : String(e)); }
+      });
+    return () => { alive = false; };
+  }, [open]);
+
+  const openThread = async (id: string) => {
+    try {
+      await load(id);
+      setShowHistory(false);
+    } catch (e) {
+      setHistErr(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const removeThread = async (t: AiConversationSummary) => {
+    if (!await confirm({
+      title: 'Konuşma silinsin mi?',
+      body: <><b>{t.title}</b> konuşması kalıcı olarak silinecek. Yalnız
+        sohbet kaydı gider — telemetri verisine dokunulmaz.</>,
+      confirmLabel: 'Konuşmayı sil',
+      danger: true,
+    })) return;
+    try {
+      await api.deleteAiConversation(t.id);
+      setThreads(prev => (prev ?? []).filter(x => x.id !== t.id));
+      // Ekrandaki konuşma silinen thread ise, kabuk artık ölü bir
+      // kimliğe yazmaya devam etmemeli: yeni konuşma hâline dönüyoruz.
+      if (conversationId === t.id) clear();
+    } catch (e) {
+      setHistErr(e instanceof Error ? e.message : String(e));
+    }
+  };
 
   // Karşılamanın canlı yarısı (v0.9.528). `enabled` ÜÇ koşulu birden
   // taşır: copilot açık, pencere açık, ve henüz konuşma başlamamış —
@@ -242,12 +300,18 @@ export function CopilotChat() {
               <AiMark size={18} />
               <span style={{ fontWeight: 600, fontSize: 13 }}>CoSRE</span>
               <span style={{ flex: 1 }} />
+              {/* v0.9.1139 — konuşma arşivi. Menü değil bir BÖLÜM:
+                  çekmece zaten sağ kenarda ve ikinci bir uçan katman
+                  (dropdown) sohbetin üstüne binerdi. */}
+              <Button variant="ghost" size="sm" onClick={() => setShowHistory(h => !h)}
+                aria-expanded={showHistory}
+                title="Konuşma geçmişi">🕘 Geçmiş</Button>
               <Button variant="ghost" size="sm" onClick={() => setExpanded(e => !e)}
                 title={expanded ? 'Daralt' : 'Genişlet'}>
                 {expanded ? '⊟' : '⤢'}</Button>
               {turns.length > 0 && (
                 <Button variant="secondary" size="sm" onClick={clear}
-                  title="Konuşmayı temizle">Temizle</Button>
+                  title="Konuşmayı temizle ve yeni konuşma başlat">Temizle</Button>
               )}
             </div>
           }>
@@ -260,6 +324,73 @@ export function CopilotChat() {
               padding: '5px 14px', borderBottom: '1px solid var(--border)',
             }}>
               📍 <b className="mono" style={{ color: 'var(--accent2)' }}>{currentService}</b> · sorular bu servise scope'lanır
+            </div>
+          )}
+
+          {/* Geçmiş bölümü (v0.9.1139) — başlık + son etkinlik + mesaj
+              sayısı. Satıra tıklamak konuşmayı YÜKLER; satır sonundaki
+              quiet-destructive düğme onaydan sonra siler. Yükleniyor /
+              hata / boş üç hâlin hepsi çizilir (ev kuralı: boş panel yok). */}
+          {showHistory && (
+            <div style={{
+              borderBottom: '1px solid var(--border)', background: 'var(--bg1)',
+              maxHeight: 240, overflowY: 'auto',
+            }}>
+              <div style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '6px 10px 6px 14px',
+              }}>
+                <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text2)' }}>
+                  Geçmiş
+                </span>
+                <span style={{ flex: 1 }} />
+                <Button variant="secondary" size="xs"
+                  onClick={() => { clear(); setShowHistory(false); }}
+                  title="Ekranı boşalt, yeni bir konuşma başlat">+ Yeni konuşma</Button>
+              </div>
+              {threads === undefined && (
+                <div style={{ padding: '4px 14px 10px' }}>
+                  <Spinner label="Konuşmalar yükleniyor…" />
+                </div>
+              )}
+              {histErr && (
+                <div style={{ padding: '0 14px 8px' }}>
+                  <span className="badge b-err" title={histErr}>Geçmiş okunamadı</span>
+                </div>
+              )}
+              {threads?.length === 0 && !histErr && (
+                <Empty icon="🕘" compact title="Kayıtlı konuşma yok">
+                  Bir soru sorduğunda konuşma otomatik saklanır.
+                </Empty>
+              )}
+              {threads?.map(t => (
+                <div key={t.id} style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  padding: '0 8px 0 14px',
+                  background: t.id === conversationId ? 'var(--accent-soft)' : undefined,
+                }}>
+                  <Button variant="ghost" size="sm"
+                    onClick={() => void openThread(t.id)}
+                    title={t.title}
+                    style={{
+                      flex: 1, minWidth: 0, justifyContent: 'flex-start',
+                      textAlign: 'left',
+                    }}>
+                    <span style={{
+                      display: 'block', maxWidth: '100%',
+                      overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                    }}>{t.title}</span>
+                  </Button>
+                  <span style={{ fontSize: 10, color: 'var(--text3)', whiteSpace: 'nowrap' }}
+                    title={`${t.messages} mesaj`}>
+                    {tsRel(t.updatedAt)} · {t.messages}
+                  </span>
+                  <Button variant="ghost-danger" size="xs"
+                    onClick={() => void removeThread(t)}
+                    aria-label={`${t.title} konuşmasını sil`}
+                    title="Konuşmayı sil">✕</Button>
+                </div>
+              ))}
             </div>
           )}
 

@@ -114,8 +114,8 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	// Bu yüzey grafiklere özgü ve daha geniş kanıt taşır; ai_calls'ta
 	// "explain-charts" olarak AYRI görünür.
 	mux.HandleFunc("POST   /api/copilot/explain-charts", s.requireCopilot(s.copilotExplainCharts))
-	mux.HandleFunc("POST   /api/copilot/explain-shift", s.requireCopilot(s.explainShift))  // v0.9.1071 — /shift ✨
-	mux.HandleFunc("POST   /api/copilot/explain-alert-noise", s.requireCopilot(s.explainAlertNoise)) // v0.9.1080 — F3.3 gürültü anlatıcısı ✨
+	mux.HandleFunc("POST   /api/copilot/explain-shift", s.requireCopilot(s.explainShift))              // v0.9.1071 — /shift ✨
+	mux.HandleFunc("POST   /api/copilot/explain-alert-noise", s.requireCopilot(s.explainAlertNoise))   // v0.9.1080 — F3.3 gürültü anlatıcısı ✨
 	mux.HandleFunc("POST   /api/copilot/explain-log-patterns", s.requireCopilot(s.explainLogPatterns)) // v0.9.1100 — F3.5 desen anlatıcısı ✨
 	mux.HandleFunc("POST   /api/copilot/runbook/{id}", s.requireCopilot(s.copilotRunbook))
 	mux.HandleFunc("POST   /api/copilot/compare-traces", s.requireCopilot(s.copilotCompareTraces))
@@ -127,6 +127,22 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	// kanıt trace/span'leri deterministik döner (copilot_exception.go).
 	mux.HandleFunc("POST   /api/copilot/explain-exception/{fp}", s.requireCopilot(s.copilotExplainException))
 	mux.HandleFunc("POST   /api/copilot/suggest-service-tags", auth.RequireAnyRole(editorRoles, s.requireCopilot(s.copilotSuggestServiceTags)))
+
+	// ── Konuşma kalıcılığı (Faz 4.1, v0.9.1139) ──
+	//
+	// KİŞİSEL durum: rol kapısı yok (viewer da kendi sohbetini saklar) ve
+	// requireCopilot ile SARILMIYOR — geçmişi okumak/silmek LLM istemez,
+	// AI kapatıldığında arşiv kaybolmuş görünmemeli (insight route'unun
+	// aynı gerekçesi). TestAIConversationRoutesNotCopilotGated pinler.
+	//
+	// /api/copilot/ DEĞİL /api/ai/ altında: "/api/copilot/ altındaki her
+	// şey LLM ister" kuralı istisnasız kalsın (Faz 2.1 kararının aynısı).
+	// Gövde saved_views(page='ai-chat') blob'u — invariant #5, yeni şema
+	// yok (A1 operatör onayı). Detaylar: ai_conversations.go dosya başı.
+	mux.HandleFunc("GET    /api/ai/conversations", s.listAIConversations)
+	mux.HandleFunc("POST   /api/ai/conversations", s.upsertAIConversation)
+	mux.HandleFunc("GET    /api/ai/conversations/{id}", s.getAIConversation)
+	mux.HandleFunc("DELETE /api/ai/conversations/{id}", s.deleteAIConversation)
 
 	// ── Insight kartları (Faz 2.1, v0.9.1129) ──
 	//

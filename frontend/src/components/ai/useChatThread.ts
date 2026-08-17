@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import type { ChatMessage, ChatTurn } from '@/lib/types';
 import { rateTurn } from './ChatBubble';
+import {
+  PERSIST_DEBOUNCE_MS, hasCompletedExchange, persistMessages, restoreTurns,
+} from './chatPersist';
 
 // useChatThread — sohbet turlarının state'i + gönderme döngüsü
 // (v0.9.479). CopilotChat.tsx'in içinden çıkarıldı; AI çekmecesindeki
@@ -9,8 +12,22 @@ import { rateTurn } from './ChatBubble';
 // Yüzeyler yalnız KABUKTA ayrışır: global pencere sağ-alt FAB + kendi
 // drawer'ı, çekmece sohbeti ise açıklamanın altındaki bölüm.
 //
-// Konuşma efemer (sunucuda satır yok): her gönderimde tüm geçmiş
-// /api/copilot/chat'e postlanır, SSE tüketilir.
+// Her gönderimde tüm geçmiş /api/copilot/chat'e postlanır, SSE tüketilir.
+//
+// v0.9.1139 (Faz 4.1) — konuşma artık `persist: true` ile KALICI:
+// tamamlanan her alışverişten sonra saved_views(page='ai-chat') satırına
+// yazılır (POST /api/ai/conversations). Kimliği SUNUCU basar, istemci
+// yanıttan devralır ve sonraki yazımlarda taşır.
+//
+// Kalıcılık YALNIZ global CoSRE penceresinin özelliği. AI çekmecesindeki
+// özne-kapsamlı sohbet BİLİNÇLİ EFEMER kalıyor: o sohbet bir açıklamanın
+// devamı, kendi başına bir konuşma değil — özne değişince (çekmece
+// remount) bugün de sıfırlanıyor ve arşivde onlarca "NPE fp-abc123"
+// kabuğu birikmesi listeyi işe yaramaz kılardı. Sınır burada: `persist`
+// bayrağını AIDrawer'a açmak bir ÜRÜN kararıdır, bir iyileştirme değil.
+//
+// Kaydetme HİÇBİR ZAMAN gönderme yolunu bloklamaz: ateşle-ve-unut,
+// hatası yutulur (sonraki tur zaten tüm geçmişi yeniden yazacak).
 
 export interface ChatThreadOpts {
   // Context-awareness (v0.9.164/184) — bulunulan sayfanın servisi ve
@@ -39,6 +56,9 @@ export interface ChatThreadOpts {
   // trace (v0.9.537) — EKRANDAKİ trace ID'si (/trace?id=). "bu trace
   // neden yavaş" gibi ID'siz sorular sunucuda buna oturur.
   trace?: string;
+  // persist (v0.9.1139) — konuşma sunucuda saklansın mı. Global CoSRE
+  // penceresi true; AI çekmecesi bilinçle KAPALI (gerekçe dosya başında).
+  persist?: boolean;
 }
 
 export function useChatThread(opts: ChatThreadOpts = {}) {
@@ -53,8 +73,43 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
   turnsRef.current = turns;
   const busyRef = useRef(false);
   const abortRef = useRef<AbortController | null>(null);
+  // Kalıcılık (v0.9.1139). conversationId state OLARAK da tutuluyor ki
+  // kabuk "kayıtlı thread" bilgisini çizebilsin; yazım yolu ref'i okur
+  // (bayat closure yok).
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const convIdRef = useRef<string | null>(null);
+  const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => () => abortRef.current?.abort(), []);
+  useEffect(() => () => {
+    abortRef.current?.abort();
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+  }, []);
+
+  // schedulePersist — ATEŞLE VE UNUT. `send` bunu await ETMEZ ve
+  // etmemeli: kaydetme, cevabın gösterilmesiyle ya da sıradaki soruyla
+  // aynı yolda değil. Hata sessiz yutuluyor — sonraki tur tüm geçmişi
+  // yeniden yazacağı için kayıp kendini onarır; bir toast, çalışan
+  // sohbetin ortasında yanlış alarm olurdu.
+  const schedulePersist = useCallback(() => {
+    if (!optsRef.current.persist) return;
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      saveTimerRef.current = null;
+      const snapshot = turnsRef.current;
+      if (!hasCompletedExchange(snapshot)) return;
+      void api.saveAiConversation({
+        id: convIdRef.current ?? undefined,
+        subject: optsRef.current.subject || undefined,
+        messages: persistMessages(snapshot),
+      }).then(c => {
+        // Kimliği SUNUCU basar. Aynı thread'e yazmaya devam etmek için
+        // yanıttan devralıyoruz — silinmiş bir thread'e yazım sunucuda
+        // YENİ kimlikle açılır ve o kimlik de buradan devralınır.
+        convIdRef.current = c.id;
+        setConversationId(c.id);
+      }).catch(() => { /* sessiz — sonraki tur yeniden dener */ });
+    }, PERSIST_DEBOUNCE_MS);
+  }, []);
 
   const send = useCallback(async (text: string) => {
     const q = text.trim();
@@ -99,18 +154,50 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
       busyRef.current = false;
       setBusy(false);
       abortRef.current = null;
+      // TEK tetikleyici: bir alışveriş bitti (cevap ya da hata). Hata
+      // turu persistMessages'ta düşer, yani hatalı bir tur arşivi
+      // kirletmez ama ondan ÖNCEKİ turlar korunur.
+      schedulePersist();
     }
-  }, []);
+  }, [schedulePersist]);
 
   const rate = useCallback((idx: number, verdict: 1 | -1) => {
     rateTurn(turnsRef.current, idx, verdict, setTurns);
   }, []);
 
-  const clear = useCallback(() => setTurns([]), []);
+  // clear = YENİ KONUŞMA (v0.9.1139'da anlamı genişledi). Turların
+  // yanında kalıcı kimlik de düşer: aksi hâlde "Temizle" sonrası ilk
+  // yazım, arşivdeki dolu thread'in ÜSTÜNE boş/yeni bir gövde yazardı.
+  // Bekleyen bir kaydetme de iptal edilir (o zamanlayıcı silinmiş
+  // turları yazmak üzereydi).
+  const clear = useCallback(() => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    setTurns([]);
+    convIdRef.current = null;
+    setConversationId(null);
+  }, []);
+
+  // load — arşivden bir thread'i ekrana getirir. Akış sürerken
+  // yüklemiyoruz: yarı yazılmış bir cevabın üstüne başka bir konuşmayı
+  // basmak, gelen SSE parçalarının yanlış thread'e yapışması demekti.
+  const load = useCallback(async (id: string) => {
+    if (busyRef.current) return;
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+      saveTimerRef.current = null;
+    }
+    const c = await api.aiConversation(id);
+    setTurns(restoreTurns(c.messages));
+    convIdRef.current = c.id;
+    setConversationId(c.id);
+  }, []);
 
   // Takip çipleri yalnız son tur TAMAMLANMIŞ bir asistan cevabıysa görünür.
   const last = turns[turns.length - 1];
   const showFollowups = !busy && !!last && last.role === 'assistant' && !last.pending && !last.error && !!last.text;
 
-  return { turns, busy, send, rate, clear, last, showFollowups };
+  return { turns, busy, send, rate, clear, load, conversationId, last, showFollowups };
 }

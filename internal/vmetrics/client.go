@@ -8,6 +8,9 @@
 // QUERY surfaces (catalogue + picker, Explore, dashboard metric panels,
 // MCP query_metric, label values, attribute keys) read from VM instead.
 //
+// The query dialect is MetricsQL (a PromQL superset) — see promql.go for
+// the two VictoriaMetrics-specific behaviours the translation relies on.
+//
 // Scope discipline — Faz 1 deliberately leaves in ClickHouse:
 //
 //   - everything SPAN-derived (services, operations, topology, traces,
@@ -16,7 +19,10 @@
 //     capacity). They are wired to specific metric names + CH columns
 //     and each needs its own translation; a partial rewrite would make
 //     some panels read VM and others CH on the same page.
-//   - histograms and the PromQL proxy (Faz 2).
+//   - histograms and the PromQL proxy (Faz 2). v0.9.1154 (Faz 1.5) closed
+//     the aggregation gap that mattered day one — last / rate / increase
+//     now translate — but p50/p95/p99 still need the bucket series, so
+//     they stay refused WITH a message that names Faz 2.
 //
 // There is NO silent fallback to ClickHouse. If the operator enabled VM
 // and VM is unreachable, the endpoint fails with VM's error. A fallback

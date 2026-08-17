@@ -11991,7 +11991,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		return
 	}
 	// v0.9.1150 — "bu istek bu backend'de İFADE EDİLEMİYOR" (reddedilen
-	// bir agg, PromQL karşılığı olmayan bir filtre operatörü) 400'dür,
+	// bir agg, MetricsQL karşılığı olmayan bir filtre operatörü) 400'dür,
 	// 502 değil. Ayrım bir TEŞHİS: 502, "VictoriaMetrics'iniz bozuk"
 	// der ve operatörü tamamen sağlıklı bir cluster'ı kontrol etmeye
 	// yollar. Loglanmaz — istemci hatası, sunucu arızası değil.

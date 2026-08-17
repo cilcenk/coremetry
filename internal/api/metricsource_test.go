@@ -173,10 +173,18 @@ func TestUntranslatableQueryIs400Not502(t *testing.T) {
 	v := vmMetricSource{vmetrics.New()}
 	v.svc.Configure(vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428"})
 
-	// agg=last is refused by the translator BEFORE any HTTP happens, so
-	// this needs no live VM.
+	// agg=p99 is refused by the translator BEFORE any HTTP happens, so this
+	// needs no live VM.
+	//
+	// v0.9.1154 — this case used to be agg=last, which now TRANSLATES (Faz
+	// 1.5). The premise going stale was invisible in the assertions: the
+	// query simply reached HTTP, failed to dial vm:8428 and came back tagged
+	// errUpstream, so the test's own errUpstream guard is what caught it.
+	// The histogram percentile is the refusal that survives Faz 1.5, and it
+	// is also the one operators actually meet — metricTemplates.ts hands p99
+	// to every histogram family it recognises.
 	_, err := v.QueryMetric(context.Background(), chstore.MetricQueryFilter{
-		Name: "jvm.memory.used", Aggregation: "last",
+		Name: "http.server.request.duration", Aggregation: "p99",
 	})
 	if err == nil {
 		t.Fatal("want a refusal for an unsupported aggregation")
@@ -195,15 +203,19 @@ func TestUntranslatableQueryIs400Not502(t *testing.T) {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 	// The message must name the supported set so the operator can fix it
-	// without reading the source.
+	// without reading the source, and — for the percentile — say WHERE the
+	// missing piece lives, or "unsupported" reads as "never".
 	body := rec.Body.String()
-	for _, want := range []string{"last", "avg", "sum", "min", "max", "count"} {
+	for _, want := range []string{
+		"avg", "sum", "min", "max", "count", "last", "rate", "increase",
+		"histogram", "Faz 2",
+	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("error body does not mention %q: %s", want, body)
 		}
 	}
 
-	// A filter operator with no PromQL matcher takes the same path.
+	// A filter operator with no MetricsQL matcher takes the same path.
 	_, err = v.QueryMetric(context.Background(), chstore.MetricQueryFilter{
 		Name:    "m",
 		Filters: []chstore.FilterExpr{{Key: "n", Op: ">", Values: []string{"5"}}},

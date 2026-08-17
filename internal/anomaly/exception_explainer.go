@@ -73,6 +73,11 @@ func (e *ExceptionExplainer) Start(ctx context.Context) {
 }
 
 func (e *ExceptionExplainer) tickIfLeader(ctx context.Context) {
+	// v0.9.1138 — otomatik açıklama vidası (Settings→AI). Kapalıyken
+	// yalnız BU worker susar; tıklamalı ✨ yüzeyleri etkilenmez.
+	if !e.copilot.AutoExplainEnabled() {
+		return
+	}
 	if !e.copilot.Active() {
 		return
 	}

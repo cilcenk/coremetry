@@ -8808,6 +8808,7 @@ func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 	// Settings and saving doesn't silently freeze today's defaults into
 	// the stored blob.
 	maxTokens, temperature, timeoutS := s.copilot.TuningSnapshot()
+	autoExplain := s.copilot.AutoExplainEnabled()
 	writeJSON(w, map[string]any{
 		"provider":    provider,
 		"model":       model,
@@ -8818,6 +8819,7 @@ func (s *Server) getAISettings(w http.ResponseWriter, r *http.Request) {
 		"maxTokens":   maxTokens,
 		"temperature": temperature,
 		"timeoutS":    timeoutS,
+		"autoExplain": autoExplain,
 	})
 }
 
@@ -8846,6 +8848,10 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		MaxTokens   int      `json:"maxTokens"`
 		Temperature *float64 `json:"temperature"`
 		TimeoutS    int      `json:"timeoutS"`
+		// v0.9.1138 — arka plan otomatik açıklayıcı vidası. *bool,
+		// Enabled idyomu: alanı bilmeyen eski istemci nil gönderir ve
+		// nil⇒açık — kazara kapatamaz.
+		AutoExplain *bool `json:"autoExplain"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -8866,7 +8872,7 @@ func (s *Server) putAISettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabled := in.Enabled == nil || *in.Enabled
-	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled, in.MaxTokens, in.Temperature, in.TimeoutS); err != nil {
+	if err := s.copilot.SavePersisted(r.Context(), s.store, in.Provider, in.APIKey, in.Model, in.BaseURL, in.SkipTLS, enabled, in.MaxTokens, in.Temperature, in.TimeoutS, in.AutoExplain); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

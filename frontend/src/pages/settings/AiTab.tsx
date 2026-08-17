@@ -29,6 +29,8 @@ export function AITab() {
   // wf — master on/off toggle, distinct from hasKey. Default true so a
   // fresh / legacy backend (no "enabled" field) renders as enabled.
   const [enabled, setEnabled] = useState(true);
+  // v0.9.1138 — arka plan otomatik açıklayıcı vidası (nil⇒açık).
+  const [autoExplain, setAutoExplain] = useState(true);
   // v0.9.1120 (Faz 0.5) — LLM call tuning. Held as STRINGS, not
   // numbers, and that is the whole design:
   //
@@ -69,6 +71,7 @@ export function AITab() {
       setHasKey(s.hasKey);
       setSkipTls(s.skipTls ?? false);
       setEnabled(s.enabled ?? true);
+      setAutoExplain(s.autoExplain ?? true);
       applyTuning(s);
     },
   );
@@ -84,7 +87,7 @@ export function AITab() {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls, enabled, ...tuning() });
+      const next = await api.putAISettings({ provider, apiKey, model, baseUrl, skipTls, enabled, autoExplain, ...tuning() });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
       setEnabled(next.enabled ?? true);
@@ -116,7 +119,7 @@ export function AITab() {
     })) return;
     setBusy(true); setMsg(null);
     try {
-      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled, ...tuning() });
+      const next = await api.putAISettings({ provider, apiKey: '', model, baseUrl, skipTls, enabled, autoExplain, ...tuning() });
       setHasKey(next.hasKey);
       setSkipTls(next.skipTls ?? false);
       setEnabled(next.enabled ?? true);
@@ -229,6 +232,27 @@ export function AITab() {
               without removing the stored key — the background
               problem-explainer stops, the ✨ Explain buttons hide,
               and AI endpoints return 503. Re-check + Save to resume.
+            </div>
+          </div>
+        </label>
+
+        {/* v0.9.1138 — otomatik açıklayıcı vidası. Master açıkken bile
+            arka plan worker'ları (problem/exception auto-explain)
+            ayrı kapatılabilir: ücretli sağlayıcıda AI'yı açmak anında
+            otomatik LLM harcaması başlatıyordu (canlı kanıt bulgusu).
+            Tıklamalı ✨ yüzeyleri bu vidadan ETKİLENMEZ. */}
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8,
+                        marginBottom: 12, fontSize: 12, color: 'var(--text2)' }}>
+          <input type="checkbox" checked={autoExplain}
+                 onChange={e => setAutoExplain(e.target.checked)}
+                 style={{ marginTop: 2 }} />
+          <div>
+            <div>Otomatik açıklamalar</div>
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2, lineHeight: 1.5 }}>
+              Arka plan worker'ları açık problem ve exception'lara
+              kendiliğinden özet üretir (Inbox'taki pasif ✨ satırları).
+              Kapatınca yalnız bu otomatik harcama durur; ✨ Explain
+              düğmeleri ve chat çalışmaya devam eder.
             </div>
           </div>
         </label>

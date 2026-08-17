@@ -24,6 +24,7 @@ package api
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"regexp"

@@ -4,6 +4,9 @@ import (
 	"context"
 	"regexp"
 	"strings"
+	"time"
+
+	"github.com/cilcenk/coremetry/internal/reqid"
 )
 
 // request_id_links.go — CoSRE SOHBET cevabındaki request_id'leri log
@@ -78,7 +81,11 @@ func extractRequestIDCandidates(text string) []string {
 // yoksa/geçersizse nil — kırık link, link yokluğundan kötü (v0.9.655
 // ilkesi). Etiket ortamı söylüyor (yine v0.9.655: operatör test/prod
 // kaydına baktığını bilmeli).
-func requestIDLinks(text, service string, tpls correlationTemplates) []guidedAnswerLink {
+//
+// loc (v0.9.1142) — kimliğin gömülü zamanını okumak için saat dilimi;
+// nil = varsayılan. Şablon zaman yer tutucusu taşımıyorsa hiçbir etkisi
+// yok (üretilen link bayt-bayt eskisi).
+func requestIDLinks(text, service string, tpls correlationTemplates, loc *time.Location) []guidedAnswerLink {
 	if len(tpls) == 0 {
 		return nil
 	}
@@ -92,19 +99,93 @@ func requestIDLinks(text, service string, tpls correlationTemplates) []guidedAns
 	}
 	var out []guidedAnswerLink
 	for _, id := range extractRequestIDCandidates(text) {
-		short := id
-		if len(short) > 14 {
-			short = short[:12] + "…"
+		if link, ok := requestIDLink(id, tpl, env, loc); ok {
+			out = append(out, link)
 		}
-		out = append(out, guidedAnswerLink{
-			Label: "Log (" + env + ") · " + short,
-			Href:  buildCorrelationLink(tpl, id),
-		})
 	}
 	return out
 }
 
+// requestIDLink — tek kimlik → çip (v0.9.1142).
+//
+// Kimlik YAPILANDIRILMIŞ biçime uyuyorsa (internal/reqid) linkin zaman
+// yer tutucuları kimliğin İÇİNDEKİ damgadan doldurulur: operatörün log
+// arayüzü doğru aralıkta açılır. Uymuyorsa davranış aynen v0.9.709'un
+// davranışı — şablonda zaman yer tutucusu yoksa hiçbir fark yok.
+func requestIDLink(id, tpl, env string, loc *time.Location) (guidedAnswerLink, bool) {
+	var from, to time.Time
+	if parsed, ok := reqid.Parse(id, loc); ok {
+		from, to = parsed.Window()
+	}
+	href := buildCorrelationLinkAt(tpl, id, from, to)
+	if href == "" {
+		return guidedAnswerLink{}, false
+	}
+	short := id
+	if len(short) > 14 {
+		short = short[:12] + "…"
+	}
+	return guidedAnswerLink{Label: "Log (" + env + ") · " + short, Href: href}, true
+}
+
 // answerRequestIDLinks — handler yarısı: ayarı okur, saf yarıya verir.
+//
+// Şablon yoksa saat dilimi ayarı HİÇ okunmuyor: köprü yapılandırılmamış
+// kurulumlarda (varsayılan) ek bir settings point-read'i ödemeyelim.
 func (s *Server) answerRequestIDLinks(ctx context.Context, text, service string) []guidedAnswerLink {
-	return requestIDLinks(text, service, s.correlationLinkTemplates(ctx))
+	tpls := s.correlationLinkTemplates(ctx)
+	if len(tpls) == 0 {
+		return nil
+	}
+	return requestIDLinks(text, service, tpls, reqid.Location(s.reqidTZSetting(ctx)))
+}
+
+// knownRequestIDLinks — BİLİNEN bir kimlik için köprü çipi (v0.9.1142).
+//
+// answerRequestIDLinks cevap METNİNDEN kimlik avlıyor ve bu her cevap
+// biçiminde çalışması için bilinçli bir tercihti. Ama yapılandırılmış
+// kimlik rotasında (guidedRequestID) kimliği SUNUCU zaten biliyor:
+// modelin onu cevapta tekrar etmesini beklemek gereksiz kırılganlık.
+// İki kaynak çakışırsa href'e göre tekilleşiyor (dedupLinksByHref).
+func (s *Server) knownRequestIDLinks(ctx context.Context, id, service string) []guidedAnswerLink {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil
+	}
+	tpls := s.correlationLinkTemplates(ctx)
+	if len(tpls) == 0 {
+		return nil
+	}
+	tpl := templateForService(service, tpls)
+	if !validCorrelationTemplate(tpl) {
+		return nil
+	}
+	env := envFromServiceName(service)
+	if env == "" {
+		env = "prod"
+	}
+	link, ok := requestIDLink(id, tpl, env, reqid.Location(s.reqidTZSetting(ctx)))
+	if !ok {
+		return nil
+	}
+	return []guidedAnswerLink{link}
+}
+
+// dedupLinksByHref — aynı href'i iki kez çizmeyelim (v0.9.1142). SAF.
+// Sıra korunur: ilk görülen kazanır, yani rotadan gelen deterministik
+// çipler metinden avlananların önünde kalır.
+func dedupLinksByHref(in []guidedAnswerLink) []guidedAnswerLink {
+	if len(in) < 2 {
+		return in
+	}
+	seen := make(map[string]bool, len(in))
+	out := make([]guidedAnswerLink, 0, len(in))
+	for _, l := range in {
+		if seen[l.Href] {
+			continue
+		}
+		seen[l.Href] = true
+		out = append(out, l)
+	}
+	return out
 }

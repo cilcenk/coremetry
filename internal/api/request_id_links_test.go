@@ -81,7 +81,7 @@ func TestRequestIDLinks(t *testing.T) {
 	text := "Request ID:\n" + rid
 
 	t.Run("prod servis → default şablon, etiket ortamı söyler", func(t *testing.T) {
-		links := requestIDLinks(text, "bsa-creditcard-ccmanagement-prod", tpls)
+		links := requestIDLinks(text, "bsa-creditcard-ccmanagement-prod", tpls, nil)
 		if len(links) != 1 {
 			t.Fatalf("link sayısı %d", len(links))
 		}
@@ -94,14 +94,14 @@ func TestRequestIDLinks(t *testing.T) {
 	})
 
 	t.Run("-uat soneki uat şablonuna gider", func(t *testing.T) {
-		links := requestIDLinks(text, "bsa-chatbot-uat", tpls)
+		links := requestIDLinks(text, "bsa-chatbot-uat", tpls, nil)
 		if len(links) != 1 || !strings.Contains(links[0].Href, "logs-uat.example.com") {
 			t.Fatalf("uat yönlendirmesi: %+v", links)
 		}
 	})
 
 	t.Run("şablon yoksa LINK YOK — kırık link yokluktan kötü", func(t *testing.T) {
-		if got := requestIDLinks(text, "svc", nil); got != nil {
+		if got := requestIDLinks(text, "svc", nil, nil); got != nil {
 			t.Fatalf("şablonsuz link üretildi: %+v", got)
 		}
 	})

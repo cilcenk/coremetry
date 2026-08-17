@@ -655,10 +655,13 @@ export const api = {
   // gövdesinde döner.
   getCorrelationLink: () =>
     get<CorrelationLinkSettings>('/api/settings/correlation-link'),
-  putCorrelationLink: (templates: Record<string, string>) =>
-    request<{ templates: Record<string, string> }>('/api/settings/correlation-link', {
+  // v0.9.1142 — reqidTz OPSİYONEL 2. arg: GÖNDERİLMEZSE backend saklı
+  // değere DOKUNMAZ (işaretçi semantiği). Boş string göndermek "varsayılana
+  // dön" demek, yani ekran alanını temizlemek ayarı sıfırlar.
+  putCorrelationLink: (templates: Record<string, string>, reqidTz?: string) =>
+    request<{ templates: Record<string, string>; reqidTz?: string }>('/api/settings/correlation-link', {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ templates }),
+      body: JSON.stringify(reqidTz === undefined ? { templates } : { templates, reqidTz }),
     }),
 
   tracesCount: (params: TracesParams, signal?: AbortSignal) =>

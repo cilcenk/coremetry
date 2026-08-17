@@ -69,7 +69,11 @@ func TestDiscoveryToolsRegistered(t *testing.T) {
 // sınıfın aynısı, ters yönde.
 func TestCatalogueToolsDeclareNoRangeArg(t *testing.T) {
 	tools := ToolList(Deps{})
-	for _, name := range []string{"list_operations", "list_environments"} {
+	// v0.9.1142 — find_trace_by_request_id de bu kümede: penceresi
+	// kimliğin İÇİNDEKİ damgadan geliyor, yani range_s ya yok sayılırdı
+	// ya da modeli kimliğin zaten söylediği pencereyi tahmin etmeye
+	// davet ederdi.
+	for _, name := range []string{"list_operations", "list_environments", "find_trace_by_request_id"} {
 		tool := toolByName(t, tools, name)
 		if _, ok := schemaProps(t, tool)["range_s"]; ok {
 			t.Errorf("%s: range_s property kazandı ama okuması pencere ALMIYOR — ya kaldır ya okumayı pencerele", name)
@@ -528,6 +532,8 @@ func TestDiscoveryToolsGroupedNearConsumers(t *testing.T) {
 		{"list_operations", "list_metric_names"}, // katalog ikizi
 		{"find_trace_by_span", "search_traces"},  // trace id'ye iki giriş
 		{"list_deploys", "get_deploy_diff"},      // sürümü BULMANIN yolu
+		// v0.9.1142 — yapıştırılan kimlik ailesi yan yana dursun.
+		{"find_trace_by_request_id", "find_trace_by_span"},
 	}
 	for _, p := range pairs {
 		di, dok := pos[p.discovery]
@@ -539,7 +545,7 @@ func TestDiscoveryToolsGroupedNearConsumers(t *testing.T) {
 			t.Errorf("%s, %s'ten %d sıra uzakta — keşif tool'u tüketicisinin yanında dursun", p.discovery, p.consumer, diff)
 		}
 	}
-	if len(tools) != 24 {
+	if len(tools) != 25 {
 		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayım yorumunu ve "+
 			"api/mcp_authz_test.go'daki duruş notunu da güncelle", len(tools))
 	}

@@ -115,6 +115,10 @@ func TestEnvArgAdditive(t *testing.T) {
 		// eklenirse bu tarama değil TestCatalogueToolsDeclareNoRangeArg
 		// komşuluğundaki şema testleri konuşur.
 		"list_operations", "list_deploys", "find_trace_by_span",
+		// v0.9.1142 — find_trace_by_request_id: kimlik-çapalı nokta
+		// araması VE okuması logstore.Search (search_logs gibi env
+		// uygulayamıyor). İki bağımsız sebep, aynı sonuç.
+		"find_trace_by_request_id",
 	}
 	for _, name := range envBlind {
 		tool := toolByName(t, tools, name)

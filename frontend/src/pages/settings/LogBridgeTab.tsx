@@ -29,6 +29,10 @@ const ENV_ROWS: { key: string; label: string; hint: string }[] = [
 export function LogBridgeTab() {
   const [tpls, setTpls] = useState<Record<string, string>>({});
   const [placeholder, setPlaceholder] = useState('{value}');
+  // v0.9.1142 — opsiyonel zaman yer tutucuları + kimliğin saat dilimi.
+  const [timePh, setTimePh] = useState<string[]>([]);
+  const [tz, setTz] = useState('');
+  const [tzDefault, setTzDefault] = useState('');
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
 
@@ -37,6 +41,9 @@ export function LogBridgeTab() {
     s => {
       setTpls(s.templates ?? {});
       if (s.placeholder) setPlaceholder(s.placeholder);
+      setTimePh(s.timePlaceholders ?? []);
+      setTz(s.reqidTz ?? '');
+      setTzDefault(s.reqidTzDefault ?? '');
     },
   );
 
@@ -44,12 +51,15 @@ export function LogBridgeTab() {
     e.preventDefault();
     setBusy(true); setMsg(null);
     try {
-      const r = await api.putCorrelationLink(tpls);
+      // tz HER ZAMAN gönderiliyor: alanı boşaltmak "varsayılana dön"
+      // demek olsun (backend işaretçiyi görmezse saklı değere dokunmaz).
+      const r = await api.putCorrelationLink(tpls, tz);
       const n = Object.keys(r.templates ?? {}).length;
       setMsg({ kind: 'ok', text: n > 0
         ? `Kaydedildi — ${n} ortam yapılandırıldı.`
         : 'Kaydedildi — köprü kapalı, link çizilmeyecek.' });
       setTpls(r.templates ?? {});
+      setTz(r.reqidTz ?? '');
     } catch (err) {
       // Backend hangi ortamın hatalı olduğunu gövdede söylüyor; olduğu
       // gibi gösteriyoruz — "geçersiz şablon" tek başına yetersiz.
@@ -110,6 +120,34 @@ export function LogBridgeTab() {
           Boş bırakılan ortam kapalıdır. Bir ortamın şablonu yoksa prod
           şablonuna düşülür; o da yoksa link çizilmez.
         </div>
+
+        {/* v0.9.1142 — yapılandırılmış request kimliği kendi tarih+saatini
+            taşıyor; şablona zaman yer tutucusu koyulursa link doğru
+            aralıkta açılır. Liste sunucudan geliyor. */}
+        {timePh.length > 0 && (
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginBottom: 12 }}>
+            Opsiyonel zaman yer tutucuları:{' '}
+            {timePh.map((p, i) => (
+              <span key={p}>{i > 0 && ' · '}<code>{p}</code></span>
+            ))}
+            . Yapılandırılmış request kimliği (sabit yapılı, içinde tarih+saat
+            olan numara) çözülebiliyorsa bunlar kimliğin damgası ±10dk ile
+            doldurulur; çözülemezse son 1 saatle. <code>{'{from}'}</code>/
+            <code>{'{to}'}</code> ISO-8601 (ofsetli),{' '}
+            <code>{'{from_ms}'}</code>/<code>{'{to_ms}'}</code> epoch
+            milisaniyedir.
+          </div>
+        )}
+
+        <SettingRow
+          label="Kimlik saat dilimi"
+          hint={`Request kimliğinin İÇİNDEKİ saatin dilimi (IANA adı). Boş = ${tzDefault || 'varsayılan'}. Yanlış dilim ±10dk'lık arama penceresini tamamen ıskalar.`}>
+          <input
+            value={tz}
+            onChange={e => setTz(e.target.value)}
+            placeholder={tzDefault}
+            style={{ width: '100%' }} />
+        </SettingRow>
 
         {msg && (
           <div style={{ marginBottom: 12, fontSize: 12,

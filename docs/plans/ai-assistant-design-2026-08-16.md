@@ -581,7 +581,7 @@ provider golden testleri yeşil.
 
 | Dilim | Kapsam |
 |---|---|
-| 2.1 | `internal/ai/insight` sözleşmesi + `POST /api/copilot/insight/{kind}` (SSE; Signals deterministik ilk frame'de, prose delta'yla) |
+| 2.1 | `internal/ai/insight` sözleşmesi + `GET /api/insight/{kind}/{id}?stream=1` (SSE; Signals deterministik İLK frame — copilot namespace DIŞI: AI kapalıyken de tam cevap, requireCopilot pin'i istisnasız kalır; v0.9.1129 kararı) |
 | 2.2 | FE `InsightCard` bileşeni: collapsed sıfır-fetch → expand'de sinyaller anında + prose stream; feedback + "Chat'te devam et" köprüsü; `?ai=` codec genişler |
 | 2.3 | Yuva 1-2: exception satırı kartı + problem/alert satırı kartı (RootCauseRibbon ile birleşik görünüm — iki ayrı şerit DEĞİL, ribbon insight sözleşmesini tüketir) |
 | 2.4 | Yuva 3-4: log paneli ("Desenleri anlat" karta evrilir) + slow-span (SlowQueries inline'ı karta evrilir) |

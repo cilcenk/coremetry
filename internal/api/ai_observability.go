@@ -268,6 +268,18 @@ func aiSurfaceFromPath(p string) string {
 		return "ch-optimize"
 	}
 	parts := strings.Split(strings.Trim(p, "/"), "/")
+	// v0.9.1129 (Faz 2.1) — insight kartı /api/copilot/ DIŞINDA yaşıyor
+	// (AI kapalıyken de cevap veren tek uç; gerekçe insight.go). Yüzey
+	// etiketi yine path'ten türüyor, ama tür WHITELIST'li: /ai kırılımı
+	// sonlu kalmalı. Bilinmeyen tür route'ta 404 olur, yani buraya
+	// normalde hiç düşmez — ikinci kapı ucuz ve kalıcı.
+	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "insight" {
+		switch parts[2] {
+		case "exception", "problem":
+			return "insight-" + parts[2]
+		}
+		return "other"
+	}
 	if len(parts) < 3 || parts[0] != "api" || parts[1] != "copilot" {
 		return "other"
 	}

@@ -42,6 +42,58 @@ type ExceptionExplainInput struct {
 	// stack'i, kod çekici BAŞKA bir stack'i görebilir — sessizce
 	// yanlış dosya. User bayt-bayt eskisidir.
 	Stack string
+
+	// ── v0.9.1129 (AI Faz 2.1) — insight kartının YAPISAL yarısı ──
+	//
+	// Kart, prose'dan bağımsız deterministik sinyaller çiziyor
+	// (internal/ai/insight). O sinyaller prompt'un GÖRDÜĞÜ veriden
+	// türemek ZORUNDA: ikinci bir okuma, kartta "deploy v5" yazarken
+	// modelin v4'ten bahsettiği bir hâl üretebilir. Stack/LogsBlock
+	// alanlarının gerekçesiyle aynı — burada seçim yapılıyor, o yüzden
+	// seçilen şey ham olarak da taşınıyor.
+	//
+	// Hepsi opsiyonel: veri yoksa nil/boş, kart o satırı çizmez.
+	TraceID string          // örnek hata trace'i (kartın "Örnek trace" çipi)
+	Trend   *ExceptionTrend // occurrence özeti (User içindeki trend satırının kaynağı)
+	Deploys []NearbyDeploy  // deployBlock'un YAPISAL hâli (yön bayraklı)
+}
+
+// ExceptionTrend — occurrence serisinin sıkıştırılmış hâli (v0.9.1129).
+// Eskiden yalnız prompt satırı olarak vardı; kart aynı sayıları
+// göstereceği için sayılar tek yerde hesaplanıp iki yere veriliyor.
+type ExceptionTrend struct {
+	Total    uint64
+	Last24   uint64
+	Peak     uint64
+	PeakAtNs int64
+	Buckets  int
+}
+
+// SummarizeExceptionOccurrences — occurrence noktalarından trend özeti.
+// SAF (nowNs parametre — time.Now() okuyan bir özetleyici test
+// edilemez). Tablo-testli.
+func SummarizeExceptionOccurrences(occ []chstore.OccurrencePoint, nowNs int64) ExceptionTrend {
+	t := ExceptionTrend{Buckets: len(occ)}
+	cut := nowNs - int64(24*time.Hour)
+	for _, p := range occ {
+		t.Total += p.Count
+		if p.Time >= cut {
+			t.Last24 += p.Count
+		}
+		if p.Count > t.Peak {
+			t.Peak, t.PeakAtNs = p.Count, p.Time
+		}
+	}
+	return t
+}
+
+// PromptLine — trendin prompt'a giren satırı. v0.9.1129 öncesindeki
+// fmt.Sprintf ile BAYT BAYT aynı: refactor prompt'u değiştirmemeli,
+// yoksa altın-örnek testleri ve modelin okuduğu şekil birlikte kayar.
+func (t ExceptionTrend) PromptLine() string {
+	return fmt.Sprintf("toplam=%d son24h=%d tepe=%d@%s bucket=%d",
+		t.Total, t.Last24, t.Peak,
+		time.Unix(0, t.PeakAtNs).UTC().Format("2006-01-02 15:04"), t.Buckets)
 }
 
 // BuildExceptionExplainInput — grup meta + occurrence trendi + temsilî
@@ -53,21 +105,10 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 	samples := sres.Samples
 
 	trend := ""
+	var trendRef *ExceptionTrend
 	if occ, oerr := store.GetExceptionOccurrences(ctx, g.Fingerprint); oerr == nil && len(occ) > 0 {
-		var total, last24, peak uint64
-		var peakAt int64
-		cut := time.Now().Add(-24 * time.Hour).UnixNano()
-		for _, p := range occ {
-			total += p.Count
-			if p.Time >= cut {
-				last24 += p.Count
-			}
-			if p.Count > peak {
-				peak, peakAt = p.Count, p.Time
-			}
-		}
-		trend = fmt.Sprintf("toplam=%d son24h=%d tepe=%d@%s bucket=%d",
-			total, last24, peak, time.Unix(0, peakAt).UTC().Format("2006-01-02 15:04"), len(occ))
+		t := SummarizeExceptionOccurrences(occ, time.Now().UnixNano())
+		trend, trendRef = t.PromptLine(), &t
 	}
 
 	// En yeni trace'li örnek → tam trace + kanıt (error span'ler GARANTİLİ
@@ -187,11 +228,15 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 	// Deploy penceresi — FirstSeen'e YAKINLIĞA göre seçim + önce/sonra
 	// açık etiket (v0.9.414 verify bulguları).
 	deployBlock := ""
+	var nearby []NearbyDeploy
 	if g.Service != "" {
 		dFrom := time.Unix(0, g.FirstSeen).Add(-6 * time.Hour)
 		dTo := time.Unix(0, g.LastSeen)
 		if deps, derr := store.GetServiceDeploys(ctx, g.Service, dFrom, dTo); derr == nil && len(deps) > 0 {
-			if parts := PickDeploysAroundStart(deps, g.FirstSeen); len(parts) > 0 {
+			// TEK seçim, iki gösterim: prompt satırları ve kartın yapısal
+			// adayları AYNI listeden türer (v0.9.1129).
+			nearby = PickDeploysAroundStartRefs(deps, g.FirstSeen)
+			if parts := renderNearbyDeploys(nearby); len(parts) > 0 {
 				deployBlock = "\n\nAynı servisin yakın DEPLOY'ları: " + fmt.Sprintf("%v", parts) +
 					"\nGrubun başlangıcı bir deploy'un hemen SONRASINA denk geliyorsa o deploy'u kök neden adayı olarak öne al."
 			}
@@ -212,7 +257,23 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 		EvSpans:   evSpans,
 		LogsBlock: logsBlock,
 		Stack:     stack,
+		TraceID:   traceID,
+		Trend:     trendRef,
+		Deploys:   nearby,
 	}
+}
+
+// NearbyDeploy — grubun başlangıcı çevresinde SEÇİLMİŞ deploy
+// (v0.9.1129). OffsetSec MUTLAK uzaklık; yön ayrı bayrak.
+//
+// Yönü işaretle kodlamak yanlış olurdu: sub-saniyelik bir "sonra"
+// deploy'u ns→sn kırpmasında 0'a düşer ve 0'ın işareti YOK. Seçimi
+// yapan yer yönü BİLİYOR — tahmine bırakmıyoruz.
+// (insight.DeployCandidate aynı şekil; dönüşüm internal/api'de.)
+type NearbyDeploy struct {
+	Version   string
+	OffsetSec int64
+	After     bool // true = grubun başlangıcından SONRA → kök neden OLAMAZ
 }
 
 // PickDeploysAroundStart — GetServiceDeploys ASC döner; FirstSeen
@@ -220,7 +281,16 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 // Saf — exception_context_test.go: düz "son 5" kesimi uzun ömürlü
 // gruplarda asıl adayı (başlangıçtan hemen önceki deploy) düşürüyordu,
 // negatif "önce" ise LLM'e yanlış kanıt oluyordu (v0.9.414 bulguları).
+//
+// v0.9.1129: seçim PickDeploysAroundStartRefs'e, biçimleme
+// renderNearbyDeploys'a ayrıldı; bu sarmalayıcı prompt satırlarını
+// BAYT BAYT eskisi gibi üretir (mevcut testler tam metni pinliyor).
 func PickDeploysAroundStart(deps []chstore.Deploy, firstSeen int64) []string {
+	return renderNearbyDeploys(PickDeploysAroundStartRefs(deps, firstSeen))
+}
+
+// PickDeploysAroundStartRefs — seçim yarısı: yön + mutlak uzaklık.
+func PickDeploysAroundStartRefs(deps []chstore.Deploy, firstSeen int64) []NearbyDeploy {
 	split := len(deps)
 	for i, d := range deps {
 		if d.TimeUnixNs > firstSeen {
@@ -235,14 +305,31 @@ func PickDeploysAroundStart(deps []chstore.Deploy, firstSeen int64) []string {
 	if len(after) > 2 {
 		after = after[:2]
 	}
-	parts := make([]string, 0, len(before)+len(after))
+	out := make([]NearbyDeploy, 0, len(before)+len(after))
 	for _, d := range before {
-		rel := (firstSeen - d.TimeUnixNs) / int64(time.Minute)
-		parts = append(parts, fmt.Sprintf("%s (grubun başlangıcından %d dk ÖNCE)", d.Version, rel))
+		out = append(out, NearbyDeploy{
+			Version: d.Version, OffsetSec: (firstSeen - d.TimeUnixNs) / int64(time.Second)})
 	}
 	for _, d := range after {
-		rel := (d.TimeUnixNs - firstSeen) / int64(time.Minute)
-		parts = append(parts, fmt.Sprintf("%s (grubun başlangıcından %d dk SONRA — kök neden OLAMAZ, olsa olsa etki/çözüm denemesi)", d.Version, rel))
+		out = append(out, NearbyDeploy{
+			Version: d.Version, OffsetSec: (d.TimeUnixNs - firstSeen) / int64(time.Second),
+			After: true})
+	}
+	return out
+}
+
+// renderNearbyDeploys — biçimleme yarısı. Dakika kırpması iç içe taban
+// bölmesi (sn → dk) ile eski tek-adım (ns → dk) bölmesiyle AYNI sonucu
+// verir; exception_context_test.go tam metinleri pinliyor.
+func renderNearbyDeploys(nd []NearbyDeploy) []string {
+	parts := make([]string, 0, len(nd))
+	for _, d := range nd {
+		mins := d.OffsetSec / 60
+		if d.After {
+			parts = append(parts, fmt.Sprintf("%s (grubun başlangıcından %d dk SONRA — kök neden OLAMAZ, olsa olsa etki/çözüm denemesi)", d.Version, mins))
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s (grubun başlangıcından %d dk ÖNCE)", d.Version, mins))
 	}
 	return parts
 }

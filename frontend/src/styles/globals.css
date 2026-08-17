@@ -3185,6 +3185,79 @@ thead th:hover .th-remove { opacity: 1; }
 .cm-ai-fab:hover { transform: scale(1.08); }
 @media (prefers-reduced-motion: reduce) { .cm-ai-spark, .cm-ai-cursor { animation: none; } .cm-ai-spark { stroke-dashoffset: 0; } }
 
+/* ── Sohbet balonu markdown blokları (v0.9.1148, AI Faz 4.2) ─────────
+   ChatBubble artık tabloyu GERÇEK tablo, ``` fence'ini kod bloğu olarak
+   çiziyor (chatMarkdown.ts blokları). Balonun kendisi 13px/pre-wrap bir
+   kutu, yani genel tablo kuralları burada olduğu gibi geçerli DEĞİL:
+
+   1. `tbody td` global kuralı `white-space: nowrap` + `max-width: 320px`
+      + `text-overflow: ellipsis` taşıyor. LLM hücreleri cümle uzunluğunda
+      olabiliyor ve o kural onları SESSİZCE kırpardı — depoda adı olan
+      bir sınıf (docs/INCIDENTS.md, table-layout). Burada sarma açık,
+      kırpma yok.
+   2. `tbody tr { cursor: pointer }` yanlış sinyal: bu satırların tıklama
+      hedefi yok.
+   3. Başlıklarda `text-transform: uppercase` KAPALI. Sebebi süs değil
+      ANLAM: model başlığa birim yazıyor ("p95 (ms)") ve büyütmek onu
+      "P95 (MS)" yapıyor — birim adı büyük harfte başka bir şeydir.
+   Kaydırma kabı paylaşılan `.table-wrap` (yatay taşma tablonun KENDİ
+   kabında; sayfa gövdesi asla yana kaymaz). */
+.cm-md-tw { margin: 6px 0; max-width: 100%; }
+/* width:auto + min-width:100% — global `table { width: 100% }` bir çok
+   kolonlu tabloyu balonun 85% genişliğine SIKIŞTIRIR ve hücreler harf
+   harf sarar. Burada tablo içeriği kadar büyüyor, fazlası `.table-wrap`ın
+   yatay kaydırıcısına gidiyor. */
+.cm-md-table { font-size: 12px; width: auto; min-width: 100%; }
+.cm-md-table thead th {
+  padding: 5px 8px; font-size: 10.5px; text-transform: none; letter-spacing: 0;
+  white-space: nowrap;
+}
+.cm-md-table tbody tr { cursor: default; }
+.cm-md-table tbody tr:hover { background: transparent; }
+.cm-md-table tbody td {
+  padding: 5px 8px; max-width: none;
+  white-space: normal; overflow: visible; text-overflow: clip;
+  overflow-wrap: anywhere; vertical-align: top;
+}
+.cm-md-table td.ta-c, .cm-md-table th.ta-c { text-align: center; }
+
+/* Kod bloğu: başlık şeridi (dil etiketi + kopyala) + gövde. Gövde KENDİ
+   yatay kaydırıcısına sahip — uzun bir SQL satırı balonu genişletmemeli. */
+.cm-md-code {
+  margin: 6px 0; background: var(--bg1); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); overflow: hidden;
+}
+.cm-md-code-h {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; padding: 1px 4px 1px 8px; background: var(--bg2);
+  border-bottom: 1px solid var(--border); min-height: 20px;
+}
+.cm-md-code-lang {
+  font: 600 9.5px ui-monospace, SFMono-Regular, Menlo, monospace;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--text3);
+}
+.cm-md-code pre {
+  margin: 0; padding: 7px 9px; overflow-x: auto;
+  font: 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre; color: var(--text);
+}
+/* Kod bloğu durum etiketi: "yazılıyor…" (akıyor) / "kesildi" (çit hiç
+   kapanmadı). Kopyala butonunun YOKLUĞUNU açıklıyor. */
+.cm-md-code-st {
+  margin-left: auto; font-size: 9.5px; font-style: italic; color: var(--text3);
+}
+/* Akış sürerken grafik bekleme satırı (ham JSON dökmenin yerine). */
+.cm-md-wait { color: var(--text3); font-style: italic; }
+
+/* Başlık + liste: balon içinde 4. kademeden başlıyor (sayfa başlık
+   hiyerarşisini ele geçirmemek için h4/h5/h6). */
+.cm-md-h { margin: 8px 0 3px; font-weight: 700; line-height: 1.35; }
+.cm-md-h1 { font-size: 14px; }
+.cm-md-h2 { font-size: 13px; }
+.cm-md-h3 { font-size: 12.5px; color: var(--text2); }
+.cm-md-list { margin: 4px 0; padding-left: 20px; }
+.cm-md-list li { margin: 1px 0; }
+
 /* ── TV / kiosk modu (v0.9.779) ──────────────────────────────────────
    ?kiosk=1 → AppShell kök elemana data-kiosk="1" yazar. Kural sadece
    KROM'u siliyor: sol menü ve duyuru şeridi gider, #main zaten flex:1

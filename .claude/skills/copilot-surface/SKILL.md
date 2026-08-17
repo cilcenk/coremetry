@@ -6,7 +6,7 @@ description: Add a new AI Copilot "✨ Explain" surface to Coremetry — system 
 # /copilot-surface — add a new AI explain surface
 
 Each "✨ Explain X" button in Coremetry follows a well-trodden
-pattern (see `internal/copilot/copilot.go` bottom for prior art:
+pattern (see `internal/copilot/prompts.go` for prior art:
 SystemPromptTrace, SystemPromptSpan, SystemPromptSLOBurn,
 SystemPromptSlowQuery, etc.). This skill walks the agent through
 the 5 files to touch + the conventions to follow.
@@ -26,8 +26,12 @@ If omitted, ask the user. Don't invent a surface name.
 
 ## Conventions (from CLAUDE.md)
 
-- AI Copilot system prompts live in `internal/copilot/copilot.go`
-  bottom, exported as `SystemPromptX() string`.
+- AI Copilot system prompts live in `internal/copilot/prompts.go`
+  (v0.9.1128 / Faz 1.6 — ALL of them, including the chat tiers that
+  used to sit in `internal/api`), exported as `SystemPromptX() string`.
+  A structural gate (`prompt_language_test.go`) fails the build if a
+  prompt const is declared in `internal/api` or an accessor is added
+  without registering it in `promptRegistry()`.
 - All Copilot endpoints go through `s.copilotExplain(r, ...)`
   wrapper so the /ai surface attribution stays accurate.
   Never call `s.copilot.Explain` directly — that bypasses the
@@ -38,10 +42,10 @@ If omitted, ask the user. Don't invent a surface name.
 
 ## Files to touch (5)
 
-### 1. `internal/copilot/copilot.go`
+### 1. `internal/copilot/prompts.go`
 
-Add the system prompt at the bottom, following the existing
-shape:
+Add the system prompt here (never in `internal/api`), following the
+existing shape:
 
 ```go
 // systemX — operator hits "✨ Explain" on <surface>. Prompt
@@ -63,6 +67,12 @@ were shown. Don't hedge.`
 
 func SystemPromptX() string { return systemX }
 ```
+
+Then register it in `promptRegistry()` + `promptTexts()`
+(`internal/copilot/prompt_language_test.go`) with its class —
+`classDirective` for prose (must end with `AnswerInTurkish`),
+`classTurkishNative` for Turkish-written instructions,
+`classStructured` for machine-parsed output (no language directive).
 
 Patterns to copy:
 - Lead with "You are a senior X assistant inside an APM tool."

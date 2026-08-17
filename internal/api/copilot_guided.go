@@ -851,22 +851,6 @@ func fmtAgoTR(seconds int64) string {
 	}
 }
 
-// ─── Narration prompt (Turkish-native, analyze-service posture) ─────
-
-// guidedChatPrompt frames the single narration call. Turkish-native
-// instructions (the 2B lesson from copilot_aianalyze.go: English
-// instructions + Turkish answers is a code-switching tax on a small
-// model). Prose output — the chat panel renders text, not JSON.
-const guidedChatPrompt = `Sen Coremetry'nin gözlemlenebilirlik asistanısın. Sana operatörün sorusu ve
-sunucunun canlı telemetriden topladığı ÖZET VERİ bloğu verilir.
-
-KURALLAR:
-- SADECE verilen veriye dayan. Veride olmayan servis adı, sayı veya trace ID UYDURMA.
-- Önce sorunun cevabını 1-2 cümlede ver, sonra kanıt olan somut sayıları sırala.
-- latency, span, p99, timeout, deploy, trace gibi teknik terimleri ÇEVİRME.
-- Veri boş veya yetersizse bunu açıkça söyle; tahmin yürütme.
-- Kısa ve taranabilir yaz: madde işaretleri kullan, 8 maddeyi geçme.` + copilot.AnswerInTurkish
-
 // ─── Entry point (called from copilotChat before the tool loop) ─────
 
 // copilotChatGuided tries the guided path for the last user message.
@@ -1037,7 +1021,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	user := guidedNarrationUser(question, evidence, explain)
 	// v0.9.528 Faz 2 — kiminle konuşulduğu prompt'un başına girer
 	// (ctx'ten; ön-söz boşsa metin bayt-bayt eskisi).
-	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", withAddressee(addresseeFromCtx(ctx), guidedChatPrompt), user, func(delta string) {
+	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", withAddressee(addresseeFromCtx(ctx), copilot.SystemPromptGuidedChat()), user, func(delta string) {
 		emit("delta", map[string]string{"text": delta})
 	})
 	if exErr != nil {
@@ -1779,7 +1763,7 @@ func (s *Server) guidedSlowTracesBundle(ctx context.Context, emit func(string, a
 //
 // Bulunamayan trace HATA DEĞİL dürüst kanıttır: yol serbest döngüye
 // düşerse operatör yine cevapsız kalırdı; model "bulunamadı + olası
-// nedenler" kanıtını anlatır (guidedChatPrompt uydurmayı yasaklar).
+// nedenler" kanıtını anlatır (guided prompt uydurmayı yasaklar).
 func (s *Server) guidedTraceBundle(ctx context.Context, emit func(string, any), traceID string) (string, string, error) {
 	emitGuidedStep(emit, "trace", `{"id":"`+traceID+`"}`)
 	in, err := s.buildTraceExplainInput(ctx, traceID)

@@ -299,12 +299,6 @@ func ragDocID(name string) string {
 
 // ── Chat entegrasyonu ───────────────────────────────────────────────
 
-// ragSystemPrompt — 2B hedefe uygun kısa, katı talimat: yalnız verilen
-// bağlamdan cevapla; bağlamda yoksa uydurma.
-const ragSystemPrompt = `Sen Coremetry'nin doküman asistanısın. SADECE sana verilen BAĞLAM parçalarındaki bilgiyle, Türkçe ve öz cevap ver. Cevap bağlamda yoksa "Yüklü dokümanlarda bu bilgi yok." de — asla tahmin etme, asla bağlam dışı bilgi ekleme.
-
-DOSYA ADI ANMA. Bağlam parçaları numaralıdır ama dosya/doküman ADI sana verilmez ve cevapta da geçmemeli — "X dokümanına göre", "şu dosyada yazıyor" gibi ifadeler KULLANMA. Bilgiyi doğrudan söyle; kaynağın nereden geldiğini arayüz zaten gösteriyor.`
-
 // ragChatAnswer — guided telemetri router'ı eşleşmediğinde, serbest
 // tool döngüsünden önce denenen doküman yolu. handled=false → RAG
 // kapalı / doküman yok / soru dokümanlarla ilgisiz (skor tabanı) —
@@ -368,7 +362,7 @@ func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs
 	}
 
 	user := "SORU: " + question + "\n\nBAĞLAM:\n" + b.String()
-	raw, exErr := s.copilotStreamSurface(ctx, "rag-chat", ragSystemPrompt, user, func(delta string) {
+	raw, exErr := s.copilotStreamSurface(ctx, "rag-chat", copilot.SystemPromptRAGChat(), user, func(delta string) {
 		emit("delta", map[string]string{"text": delta})
 	})
 	if exErr != nil {

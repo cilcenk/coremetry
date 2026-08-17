@@ -20,6 +20,7 @@ import (
 	"testing"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/copilot"
 )
 
 func shownCtx() *aiServiceContext {
@@ -170,7 +171,7 @@ func TestFewShotMatchesTheRealSnapshotShape(t *testing.T) {
 			len(shapes), rendered)
 	}
 	for _, shape := range shapes {
-		if !strings.Contains(serviceAnalysisPrompt, shape) {
+		if !strings.Contains(copilot.SystemPromptServiceAnalysis(), shape) {
 			t.Errorf("few-shot ÖRNEK GİRDİ'si %q satır türünü içermiyor.\n\n"+
 				"Küçük model gösterilen örneği taklit eder; örnekte olmayan "+
 				"satır türü cevaba da yansımaz. Veri prompt'a gider, cevaba "+
@@ -183,11 +184,11 @@ func TestFewShotMatchesTheRealSnapshotShape(t *testing.T) {
 // göstermeli. Girdide olup çıktıda olmayan bir sinyal, modele
 // "bunu kullanma" demenin örtük yoludur.
 func TestFewShotOutputCarriesConcreteIdentifiers(t *testing.T) {
-	i := strings.Index(serviceAnalysisPrompt, "ÖRNEK ÇIKTI:")
+	i := strings.Index(copilot.SystemPromptServiceAnalysis(), "ÖRNEK ÇIKTI:")
 	if i < 0 {
 		t.Fatal("ÖRNEK ÇIKTI bölümü bulunamadı — test bayatladı")
 	}
-	out := serviceAnalysisPrompt[i:]
+	out := copilot.SystemPromptServiceAnalysis()[i:]
 	for _, want := range []string{"mobile-app", "request_id"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("örnek ÇIKTI %q taşımıyor — girdide gösterilip çıktıda "+
@@ -201,11 +202,11 @@ func TestFewShotOutputCarriesConcreteIdentifiers(t *testing.T) {
 // Yalnız örnekle öğretmek zayıf: örnek tek bir vakayı gösterir,
 // KURALLAR bloğu her vakayı bağlar.
 func TestPromptAsksForConcreteIdentifiers(t *testing.T) {
-	i := strings.Index(serviceAnalysisPrompt, "ÖRNEK GİRDİ:")
+	i := strings.Index(copilot.SystemPromptServiceAnalysis(), "ÖRNEK GİRDİ:")
 	if i < 0 {
 		t.Fatal("ÖRNEK GİRDİ bulunamadı — test bayatladı")
 	}
-	rules := serviceAnalysisPrompt[:i]
+	rules := copilot.SystemPromptServiceAnalysis()[:i]
 	for _, want := range []string{"KIRILIM", "AYNEN geçir", "UYDURMA"} {
 		if !strings.Contains(rules, want) {
 			t.Errorf("KURALLAR bloğunda %q yok — yalnız örnekle öğretmek zayıf, "+

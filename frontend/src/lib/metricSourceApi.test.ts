@@ -37,6 +37,13 @@ const seamCalls: Array<[string, () => Promise<unknown>]> = [
   ['dashboardData (bundle POST)', () => api.dashboardData({
     from: 1, to: 2, requests: [{ id: 'p1', type: 'metric', name: 'm' }],
   })],
+  // v0.9.1157 — VM Faz 2 brought these two through the seam. They moved
+  // here FROM the "outside the seam" test below, which is the whole change:
+  // the inverse assertion held them out for three releases on purpose.
+  ['metricHistogram (heatmap)', () => api.metricHistogram({
+    name: 'http.server.duration', from: 1, to: 2,
+  })],
+  ['metricPromql (raw query)', () => api.metricPromql({ query: 'up', from: 1, to: 2 })],
 ];
 
 describe('api.ts forwards ?metricsrc= (v0.9.1151)', () => {
@@ -81,15 +88,18 @@ describe('api.ts forwards ?metricsrc= (v0.9.1151)', () => {
   });
 
   it('does NOT stamp endpoints outside the seam', async () => {
-    // histogram + promql are VM Faz 2: the handlers ignore the param, so
-    // sending it would imply coverage that does not exist and let an
-    // operator read a ClickHouse chart as VictoriaMetrics data.
+    // The inverse half, so "stamp everything metric-shaped" cannot creep
+    // in: an endpoint whose handler ignores the param would imply coverage
+    // that does not exist and let an operator read a ClickHouse chart as
+    // VictoriaMetrics data.
+    //
+    // v0.9.1157 — histogram + promql LEFT this list (the seam now covers
+    // them). What remains is /api/metrics, the raw metric_points reader:
+    // it has no VM translation at all, so a stamp there would be a lie.
     pinPage('?metricsrc=vm');
     const urls = captureFetch();
-    await api.metricHistogram({ name: 'http.server.duration', from: 1, to: 2 });
-    await api.metricPromql({ query: 'up', from: 1, to: 2 });
     await api.metrics({ name: 'm', from: 1, to: 2 });
-    expect(urls).toHaveLength(3);
+    expect(urls).toHaveLength(1);
     for (const u of urls) expect(u).not.toContain('metricsrc');
   });
 

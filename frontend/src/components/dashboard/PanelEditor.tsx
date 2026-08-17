@@ -28,7 +28,11 @@ const TYPE_LABELS: Record<PanelType, string> = {
   // Reuses the LatencyHeatmap viz + /api/metrics/histogram (the F3 machine).
   heatmap:    'Heatmap (latency density)',
   // v0.9.117 (F4) — a chart driven by a raw PromQL query.
-  promql:     'PromQL query',
+  // v0.9.1157 — "/ MetricsQL": on a VictoriaMetrics install the query goes
+  // to VM VERBATIM (no pre-validating parser), so MetricsQL extensions
+  // work. Label text only — the field, the endpoint and the ClickHouse
+  // path are unchanged.
+  promql:     'PromQL / MetricsQL query',
   // v0.9.781 — ranked bars over the whole window (Datadog "Top List").
   topn:       'Top-N bar',
   markdown:   'Markdown / notes',
@@ -253,10 +257,10 @@ function MetricFields({ cfg, onChange }: {
         <button type="button" className={!promqlMode ? 'active' : ''}
           onClick={() => update('promql', undefined)}>Builder</button>
         <button type="button" className={promqlMode ? 'active' : ''}
-          onClick={() => { if (cfg.promql === undefined) update('promql', ''); }}>PromQL</button>
+          onClick={() => { if (cfg.promql === undefined) update('promql', ''); }}>PromQL / MetricsQL</button>
       </div>
       {promqlMode ? (
-        <Field label="PromQL query">
+        <Field label="PromQL / MetricsQL query">
           <textarea value={cfg.promql ?? ''} spellCheck={false}
             onChange={e => update('promql', e.target.value)}
             rows={3}
@@ -352,7 +356,7 @@ function PromqlFields({ cfg, onChange }: {
     onChange({ ...cfg, [k]: v });
   return (
     <>
-      <Field label="PromQL query">
+      <Field label="PromQL / MetricsQL query">
         <textarea value={cfg.query ?? ''} spellCheck={false}
           onChange={e => update('query', e.target.value)}
           rows={3}

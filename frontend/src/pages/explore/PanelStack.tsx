@@ -227,6 +227,10 @@ export interface PanelInputs {
   // no-splitBy queries; [] everywhere else).
   otlpExemplarsByLetter?: Record<string, OtlpExemplar[]>;
   cappedByLetter?: Record<string, boolean>;
+  // v0.9.1157 (VM Faz 2) — letter → SUNUCUNUN "bu neden boş" cümlesi.
+  // Yalnız VictoriaMetrics + yüzdelik birleşiminde dolu gelir; her yerde
+  // undefined ve panel varsayılan cümlesini kullanır.
+  noteByLetter?: Record<string, string | undefined>;
   // v0.9.809 — letter → o sorgunun GERÇEK bucket çözünürlüğü (saniye,
   // 0 = bilinmiyor). Formül paneli + hayalet kapısı okur: farklı
   // çözünürlükteki serileri birleştirmek sessiz bir ölçek hatasıdır
@@ -247,7 +251,7 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
   const {
     byLetter, from = 0, errorByLetter = {}, exemplarsByLetter = {},
     overlaysByLetter = {}, totalByLetter = {}, otlpExemplarsByLetter = {},
-    cappedByLetter = {}, stepByLetter = {},
+    cappedByLetter = {}, noteByLetter = {}, stepByLetter = {},
     compareByLetter = {}, compareStepByLetter = {}, compareOffsetNs = 0,
   } = inputs;
   // active === false → nothing was ever requested. Every producing query is
@@ -354,8 +358,15 @@ export function buildPanels(state: BuilderState, inputs: PanelInputs): PanelData
       stepByLetter[q.letter] ?? 0, compareStepByLetter[q.letter] ?? 0, compareOffsetNs);
     out.push({
       ...base, state: 'ready',
+      // v0.9.1157 — SUNUCUNUN sebebi varsayılan cümlenin YERİNE geçer.
+      // Varsayılan ("aralığı genişlet veya filtreleri azalt") bir tavsiye,
+      // ve VictoriaMetrics'te bulunamayan bir `_bucket` serisi için YANLIŞ
+      // tavsiye: pencere ne kadar genişlerse genişlesin o seri yok, filtre
+      // azaltmak da getirmez. Operatörü ölçmediği bir şeyi ölçmeye
+      // göndermek, boş panelden daha pahalı.
       emptyReason: shownSeries.length === 0
-        ? 'Bu pencerede veri yok — aralığı genişlet veya filtreleri azalt'
+        ? (noteByLetter[q.letter]
+          ?? 'Bu pencerede veri yok — aralığı genişlet veya filtreleri azalt')
         : undefined,
       series: shownSeries,
       more: Math.max(0, total - shown),

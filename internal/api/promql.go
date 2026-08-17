@@ -8,8 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/cilcenk/coremetry/internal/promql"
 )
 
 // maxPromQLQueryLen caps the raw query length before parsing (review CRITICAL,
@@ -19,10 +17,10 @@ const maxPromQLQueryLen = 8192
 
 // queryPromQL backs GET /api/metrics/promql?query=&from=&to=&step=&maxDataPoints=
 // — an industry-standard PromQL range query over the OTel metric store
-// (F4). Parses + evaluates via internal/promql: the HYBRID model — leaf
-// selectors + rate/increase/histogram_quantile push down to the bounded
-// chstore machinery (F1-F3: LIMIT + max_execution_time + time-bounded WHERE,
-// distributed-safe); aggregations / binary ops land in later phases.
+// (F4). On the ClickHouse path it parses + evaluates via internal/promql: the
+// HYBRID model — leaf selectors + rate/increase/histogram_quantile push down to
+// the bounded chstore machinery (F1-F3: LIMIT + max_execution_time +
+// time-bounded WHERE, distributed-safe).
 //
 // Returns the same SpanMetricSeries[] shape the UI charts already consume.
 // Auth: viewer+ via the global GET middleware (like /api/metrics/query — a
@@ -33,6 +31,22 @@ const maxPromQLQueryLen = 8192
 // PERFORMANCE (operator hard constraint): the evaluator rejects a too-deep or
 // nameless query BEFORE any CH round trip, reuses the bounded leaf fetches, and
 // caps the result series count — no unbounded selector, no full-catalogue scan.
+//
+// v0.9.1157 (VM Faz 2) — SEAM'e girdi, ve bu uçta seam'in İKİ YARISI
+// BİLİNÇLİ OLARAK FARKLI DAVRANIR:
+//
+//	ClickHouse → ValidatePromQL parse eder. Değerlendirici bir PromQL ALT
+//	  KÜMESİ uyguluyor; ifade edemediğini önceden reddetmek operatöre
+//	  parser'ın kendi metniyle temiz bir 400 verir.
+//	VictoriaMetrics → ValidatePromQL nil döner. VM'nin dili MetricsQL, yani
+//	  PromQL'in ÜST KÜMESİ: `WITH(…)`, subquery, `keep_metric_names`,
+//	  `rollup_rate` bizim parser'ımızın reddedeceği ama vmui'de çalışan
+//	  sorgular. Sorguyu koşacak motordan daha katı olmak, operatöre
+//	  "korkuluk" değil "bozuk uç" gibi görünür — sorgu dizesi OLDUĞU GİBİ
+//	  VM'e gider ve sözdizimi hatasını VM'in kendi cevabı bildirir.
+//
+// Bizde KALAN sınır UZUNLUK: iki backend için de burada uygulanıyor, çünkü
+// megabaytlık bir dizeyi ne biz parse etmek ne VM'e yollamak isteriz.
 func (s *Server) queryPromQL(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	query := strings.TrimSpace(q.Get("query"))
@@ -47,11 +61,20 @@ func (s *Server) queryPromQL(w http.ResponseWriter, r *http.Request) {
 		writePromQLError(w, http.StatusBadRequest, "query too long")
 		return
 	}
-	// Parse up front so a SYNTAX error is a clean 400 (the common user error),
-	// not the 500 that serveCached's writeErr would emit for a bubbled error.
-	expr, perr := promql.Parse(query)
-	if perr != nil {
-		writePromQLError(w, http.StatusBadRequest, perr.Error())
+	// v0.9.1157 — src anahtarda VE okumada. Aynı zarf şekli iki farklı
+	// motordan üretilebiliyor; işaret olmadan bir deneme isteği (ya da
+	// Settings toggle'ı) 30 sn boyunca öteki backend'in SAYILARINI servis
+	// ederdi (v0.5.187 sınıfı, girdisi bir sorgu parametresi olan hâli).
+	src, srcErr := s.metricSourceFor(r)
+	if srcErr != nil {
+		writeErr(w, srcErr)
+		return
+	}
+	// Sözdizimi kapısı — CACHE'TEN ÖNCE, kaynağın kendi diline göre. CH
+	// yolunda bu, v0.9.1157 öncesi buradaki promql.Parse + 400'ün ta
+	// kendisi (aynı statü, aynı {"error":…} zarfı); VM yolunda no-op.
+	if verr := src.ValidatePromQL(query); verr != nil {
+		writeErr(w, verr)
 		return
 	}
 
@@ -72,15 +95,10 @@ func (s *Server) queryPromQL(w http.ResponseWriter, r *http.Request) {
 		from = to.Add(-1 * time.Hour)
 	}
 
-	key := fmt.Sprintf("promql:q=%s:step=%d:mdp=%d:from=%d:to=%d",
-		query, step, maxDP, from.Unix()/60, to.Unix()/60)
+	key := fmt.Sprintf("promql:src=%s:q=%s:step=%d:mdp=%d:from=%d:to=%d",
+		src.Name(), query, step, maxDP, from.Unix()/60, to.Unix()/60)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return promql.Eval(ctx, s.store, expr, promql.EvalOptions{
-			FromNs:        from.UnixNano(),
-			ToNs:          to.UnixNano(),
-			Step:          step,
-			MaxDataPoints: maxDP,
-		})
+		return src.QueryPromQLRange(ctx, query, from, to, step, maxDP)
 	})
 }
 

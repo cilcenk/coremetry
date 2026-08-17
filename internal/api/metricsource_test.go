@@ -42,8 +42,13 @@ import (
 // and an exemption list is the thing that quietly grows. api.go is where
 // every operator-facing metric handler lives, which makes it the precise
 // boundary.
+// v0.9.1157 — QueryMetricHistogram joined the list when the heatmap joined
+// the seam. Adding the METHOD to this slice is the half that keeps the gate
+// honest: without it, a future handler could reintroduce the direct call and
+// the only signal would be a heatmap reading ClickHouse on a VM install.
 var metricStoreMethods = []string{
 	"QueryMetric",
+	"QueryMetricHistogram",
 	"ListMetricNames",
 	"GetMetricNames",
 	"MetricLabelValues",
@@ -66,6 +71,7 @@ func TestMetricHandlersGoThroughTheSourceSeam(t *testing.T) {
 		"func (s *Server) queryMetric",
 		"func (s *Server) getMetricLabelValues",
 		"func (s *Server) getMetricAttrKeys",
+		"func (s *Server) getMetricHistogram", // v0.9.1157
 	} {
 		if !strings.Contains(src, marker) {
 			t.Fatalf("comment stripping ate real code — %q is missing, so this scan proves nothing", marker)
@@ -95,9 +101,10 @@ func TestMetricCacheKeysCarryTheBackendMarker(t *testing.T) {
 	keyPrefixes := []string{
 		"metric-names:v3:src=",    // legacy bare-array shape
 		"metric-names:v3:src=%s",  // {names,total,hasMore} envelope
-		"metric-query:v3:src=%s",  // Explore / dashboards / MQE
+		"metric-query:v4:src=%s",  // Explore / dashboards / MQE
 		"metric-labels:src=%s",    // filter value suggestions
 		"metric-attr-keys:src=%s", // filter key suggestions
+		"metric-hist:src=%s",      // v0.9.1157 — the heatmap
 	}
 	for _, p := range keyPrefixes {
 		if !strings.Contains(src, p) {
@@ -108,11 +115,50 @@ func TestMetricCacheKeysCarryTheBackendMarker(t *testing.T) {
 
 	// And the inverse: no metric key may exist WITHOUT src=. Catches a new
 	// key added by copy-pasting a pre-v0.9.1150 line.
-	badKey := regexp.MustCompile(`"metric-(names|query|labels|attr-keys)[^"]*"`)
+	badKey := regexp.MustCompile(`"metric-(names|query|labels|attr-keys|hist)[^"]*"`)
 	for _, m := range badKey.FindAllString(src, -1) {
 		if !strings.Contains(m, "src=") {
 			t.Errorf("metric cache key %s has no backend marker", m)
 		}
+	}
+
+	// The seventh key lives in promql.go. Same rule, separate file — see
+	// TestMetricHandlersResolveSourcePerRequest for why the scans stay
+	// file-scoped rather than package-wide.
+	praw, err := os.ReadFile("promql.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	psrc := stripGoComments(string(praw))
+	const promKeyPrefix = `"promql:src=%s:q=`
+	if !strings.Contains(psrc, promKeyPrefix) {
+		t.Errorf("no %s cache key in promql.go — /api/metrics/promql answers the "+
+			"SAME body shape from two engines, so without the marker a ?metricsrc=vm trial is "+
+			"served ClickHouse numbers for a full TTL (v0.5.187 with a query param as the input)",
+			promKeyPrefix)
+	}
+}
+
+// v0.9.1157 — the /api/metrics/query envelope grew a `note` field, so the key
+// moved to v4. The version digit is pinned SEPARATELY from the src= marker
+// above because the two protect different failures and only one of them is
+// visible: src= stops a trial reading the default backend's body, while the
+// version digit stops a ROLLING DEPLOY serving an old pod's note-less body —
+// which renders as the silent empty chart the note exists to prevent
+// (v0.9.443/458 lesson).
+func TestMetricQueryKeyVersionMatchesTheEnvelope(t *testing.T) {
+	raw, err := os.ReadFile("api.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := stripGoComments(string(raw))
+	if strings.Contains(src, "metric-query:v3:") {
+		t.Error("metric-query key is still v3 while the envelope carries `note` — a rolling " +
+			"deploy would serve note-less bodies for a full TTL")
+	}
+	if !strings.Contains(src, `out["note"] = note`) {
+		t.Fatal("queryMetric no longer attaches the note — if the field was removed on purpose, " +
+			"drop this test WITH it; leaving the key at v4 and the field gone is the drift this catches")
 	}
 }
 
@@ -173,18 +219,28 @@ func TestUntranslatableQueryIs400Not502(t *testing.T) {
 	v := vmMetricSource{vmetrics.New()}
 	v.svc.Configure(vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428"})
 
-	// agg=p99 is refused by the translator BEFORE any HTTP happens, so this
+	// agg=p90 is refused by the translator BEFORE any HTTP happens, so this
 	// needs no live VM.
 	//
-	// v0.9.1154 — this case used to be agg=last, which now TRANSLATES (Faz
-	// 1.5). The premise going stale was invisible in the assertions: the
-	// query simply reached HTTP, failed to dial vm:8428 and came back tagged
-	// errUpstream, so the test's own errUpstream guard is what caught it.
-	// The histogram percentile is the refusal that survives Faz 1.5, and it
-	// is also the one operators actually meet — metricTemplates.ts hands p99
-	// to every histogram family it recognises.
+	// THIS TEST'S SUBJECT HAS NOW GONE STALE TWICE, and the pattern is worth
+	// naming because the next release will do it again:
+	//
+	//	v0.9.1154 — the case was agg=last, which Faz 1.5 taught the
+	//	  translator. v0.9.1157 — it was agg=p99, which Faz 2 taught it.
+	//
+	// Neither staleness showed up as a failed ASSERTION about aggregations.
+	// The translated query simply reached HTTP, failed to dial vm:8428 and
+	// came back tagged errUpstream — so the errUpstream guard below is the
+	// thing that caught both, and it is the assertion to keep no matter which
+	// aggregation this test names.
+	//
+	// p90 is the durable choice rather than another real aggregation:
+	// Coremetry's builder cannot produce it and the ClickHouse sibling does
+	// not implement it, so there is no roadmap on which it starts
+	// translating. A refusal test should name something that is refused on
+	// PURPOSE, not something merely unimplemented yet.
 	_, err := v.QueryMetric(context.Background(), chstore.MetricQueryFilter{
-		Name: "http.server.request.duration", Aggregation: "p99",
+		Name: "http.server.request.duration", Aggregation: "p90",
 	})
 	if err == nil {
 		t.Fatal("want a refusal for an unsupported aggregation")
@@ -203,16 +259,24 @@ func TestUntranslatableQueryIs400Not502(t *testing.T) {
 		t.Fatalf("status = %d, want 400", rec.Code)
 	}
 	// The message must name the supported set so the operator can fix it
-	// without reading the source, and — for the percentile — say WHERE the
-	// missing piece lives, or "unsupported" reads as "never".
+	// without reading the source. The percentiles are IN that set as of
+	// v0.9.1157, which makes this list the operator-visible proof that Faz 2
+	// landed — a translation that worked but kept advertising percentiles as
+	// unsupported would send them back to ClickHouse for no reason.
 	body := rec.Body.String()
 	for _, want := range []string{
 		"avg", "sum", "min", "max", "count", "last", "rate", "increase",
-		"histogram", "Faz 2",
+		"p50", "p95", "p99",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("error body does not mention %q: %s", want, body)
 		}
+	}
+	// And the inverse: the old "Faz 2" pointer must be GONE. Left in place it
+	// would tell an operator whose percentile now works that the feature is
+	// still coming.
+	if strings.Contains(body, "Faz 2") {
+		t.Fatalf("refusal still defers percentiles to Faz 2, which shipped in v0.9.1157: %s", body)
 	}
 
 	// A filter operator with no MetricsQL matcher takes the same path.

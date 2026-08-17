@@ -19,10 +19,17 @@
 //     capacity). They are wired to specific metric names + CH columns
 //     and each needs its own translation; a partial rewrite would make
 //     some panels read VM and others CH on the same page.
-//   - histograms and the PromQL proxy (Faz 2). v0.9.1154 (Faz 1.5) closed
-//     the aggregation gap that mattered day one — last / rate / increase
-//     now translate — but p50/p95/p99 still need the bucket series, so
-//     they stay refused WITH a message that names Faz 2.
+//
+// Faz 2 (v0.9.1157) closed the last two operator-facing gaps, so the list
+// above is now the WHOLE exclusion set:
+//
+//   - p50/p95/p99 translate to histogram_quantile over the `_bucket`
+//     series (promql.go),
+//   - GET /api/metrics/histogram builds its heatmap from
+//     `sum by (le) (increase(…))` (histogram.go),
+//   - GET /api/metrics/promql forwards the operator's query VERBATIM —
+//     MetricsQL extensions included, since pre-validating with Coremetry's
+//     PromQL-subset parser would reject queries VM runs happily.
 //
 // There is NO silent fallback to ClickHouse. If the operator enabled VM
 // and VM is unreachable, the endpoint fails with VM's error. A fallback
@@ -342,13 +349,39 @@ func (s *Service) ListMetricNames(ctx context.Context, service, pattern string, 
 // QueryMetric runs the multi-series time-bucketed query behind Explore,
 // the dashboard "metric" panels and MCP query_metric.
 //
+// Signature-identical to chstore.Store's — the seam invariant. The NOTE
+// variant below carries the extra half; this wrapper drops it so callers
+// that cannot render a note (MCP, the evaluator) are unaffected.
+func (s *Service) QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
+	out, _, err := s.QueryMetricNoted(ctx, f)
+	return out, err
+}
+
+// QueryMetricNoted is QueryMetric plus an OPERATOR-FACING NOTE explaining an
+// empty result (v0.9.1157, Faz 2).
+//
+// It is a separate method rather than a wider QueryMetric because
+// QueryMetric's signature is load-bearing: the API seam is an interface both
+// this and *chstore.Store satisfy, and matching them is what turns future
+// drift into a compile error. So the note rides an OPTIONAL capability the
+// HTTP layer type-asserts for (internal/api's metricNoteSource) and the
+// ClickHouse source simply does not implement — it has nothing to explain,
+// because its bucket layout is in the row rather than in a guessed name.
+//
+// The note fires for exactly one case: a PERCENTILE that returned zero
+// series. Scoped that tightly on purpose. An empty gauge query is honestly
+// empty and we know nothing the operator does not; a percentile queried
+// `<name>_bucket`, a series they never typed and cannot see, so "no data",
+// "not a histogram" and "your write path names buckets differently" all
+// render as one blank chart with three different fixes.
+//
 // The window is normalized HERE the same way the CH path normalizes it
 // (zero To → now, zero From → 24h back) so an unbounded call cannot
 // become an unbounded VM query.
-func (s *Service) QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error) {
+func (s *Service) QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, string, error) {
 	cfg, err := s.ready()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	now := time.Now()
 	if f.To.IsZero() {
@@ -359,7 +392,7 @@ func (s *Service) QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) 
 	}
 	q, err := buildPromQL(f)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	step := promStep(f.From, f.To, f.StepSeconds, f.MaxDataPoints)
 	params := url.Values{
@@ -370,7 +403,7 @@ func (s *Service) QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) 
 	}
 	series, err := promapi.QuerySeries(ctx, s.request("/api/v1/query_range", params, cfg))
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	out := make([]chstore.SpanMetricSeries, 0, len(series))
 	for _, sr := range series {
@@ -390,7 +423,15 @@ func (s *Service) QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) 
 		}
 		out = append(out, row)
 	}
-	return out, nil
+	// The note is attached only on the empty PERCENTILE outcome — see the
+	// header. Everything else returns "" and the envelope carries no note
+	// field at all.
+	if len(out) == 0 {
+		if _, isPercentile := promPercentile(f.Aggregation); isPercentile {
+			return out, emptyBucketNote(f.Name), nil
+		}
+	}
+	return out, "", nil
 }
 
 // MetricLabelValues answers the filter-value suggestion list.

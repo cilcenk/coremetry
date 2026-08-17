@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { buildPanels, buildGhostSeries, IDLE_HINT, type PanelInputs } from './PanelStack';
 import { blankQuery, defaultBuilderState, seriesGroupLabel, type BuilderState } from './model';
 import type { SpanMetricSeries } from '@/lib/types';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 // v0.9.804 regression — buildPanels had exactly ONE branch for "no data":
 //
@@ -86,6 +88,41 @@ describe('buildPanels — dört durum', () => {
     {
       name: 'aktif + seri → ready, gerekçe yok',
       inputs: { byLetter: { A: [series('x')] }, from: ACTIVE_FROM },
+      wantState: 'ready',
+      wantEmptyReason: undefined,
+    },
+    // v0.9.1157 (VM Faz 2) — SUNUCUNUN sebebi varsayılan cümlenin YERİNE
+    // geçer. Varsayılan bir TAVSİYE ("aralığı genişlet veya filtreleri
+    // azalt") ve VictoriaMetrics'te bulunamayan bir `_bucket` serisi için
+    // yanlış tavsiye: pencere ne kadar genişlerse genişlesin o seri yok.
+    // Operatörü ölçmediği bir şeyi ölçmeye göndermek, boş panelden pahalı.
+    {
+      name: 'boş sonuç + sunucu notu → not, varsayılan cümlenin YERİNE geçer',
+      inputs: {
+        byLetter: { A: [] }, from: ACTIVE_FROM,
+        noteByLetter: { A: 'm_bucket serisi bulunamadı — metrik histogram olmayabilir' },
+      },
+      wantState: 'ready',
+      wantEmptyReason: 'm_bucket serisi bulunamadı — metrik histogram olmayabilir',
+    },
+    {
+      name: 'not YOKSA varsayılan cümle korunur (CH kurulumundaki hâl)',
+      inputs: {
+        byLetter: { A: [] }, from: ACTIVE_FROM,
+        noteByLetter: { A: undefined },
+      },
+      wantState: 'ready',
+      wantEmptyReason: 'Bu pencerede veri yok — aralığı genişlet veya filtreleri azalt',
+    },
+    {
+      // Not DOLU ama seri VAR: gerekçe hiç basılmaz. Sunucu boş-olmayan bir
+      // sonuçla not göndermiyor, ama gönderse panel onu "veri yok" diye
+      // göstermemeli — emptyReason yalnızca çizim alanı BOŞKEN bir şey der.
+      name: 'seri varken not gerekçeye DÖNÜŞMEZ',
+      inputs: {
+        byLetter: { A: [series('x')] }, from: ACTIVE_FROM,
+        noteByLetter: { A: 'bir not' },
+      },
       wantState: 'ready',
       wantEmptyReason: undefined,
     },
@@ -409,5 +446,45 @@ describe('buildPanels — hayalet eşlemesi ve FORMÜL MUAFİYETİ', () => {
     }));
     expect(withCmp[0].series).toEqual(without[0].series);
     expect(withCmp[0].more).toBe(without[0].more);
+  });
+});
+
+// ── The note's delivery chain (v0.9.1157, VM Faz 2) ────────────────────────
+//
+// buildPanels' own tests above prove the note is USED once it arrives. They
+// cannot prove it ARRIVES: the hook that fetches it (useExploreQueries) reads
+// React Query results and has no pure surface to call. A mutation check
+// confirmed the gap — deleting the forwarding line left every explore test
+// green, which is the exact failure this chain is prone to (three layers,
+// each with a passing test, one missing link between them).
+//
+// So the forwarding half is scanned from SOURCE. Mechanical, and precise about
+// the one thing that goes wrong.
+describe("the server's empty-reason reaches buildPanels (v0.9.1157)", () => {
+  const hook = readFileSync(resolve(__dirname, 'useExploreQueries.ts'), 'utf8');
+
+  it('the metric fetch branch forwards the response note', () => {
+    // Vacuous-pass guard first: if the branch was renamed, the assertions
+    // below would scan text that no longer describes the fetch.
+    expect(hook, 'api.metricQueryFull branch not found — update this scan, do not delete it')
+      .toContain('api.metricQueryFull(');
+    expect(hook, 'the metric branch drops r.note, so a VictoriaMetrics percentile with no ' +
+      '_bucket series renders as "widen the range" — advice that cannot work')
+      .toContain('note: r?.note');
+  });
+
+  it('the per-letter map is built and returned', () => {
+    expect(hook).toContain('noteByLetter[q.letter] = r.data?.note');
+    // Returned from the hook, or buildPanels never sees it.
+    expect(hook).toMatch(/return \{[^}]*noteByLetter/s);
+  });
+
+  it('Explore.tsx passes it into buildPanels', () => {
+    const page = readFileSync(resolve(__dirname, '..', 'Explore.tsx'), 'utf8');
+    // Destructured from the hook AND handed to buildPanels — two separate
+    // places, and dropping either one is silent.
+    expect((page.match(/noteByLetter/g) ?? []).length,
+      'noteByLetter must appear in the hook destructure, the buildPanels input and the memo deps')
+      .toBeGreaterThanOrEqual(3);
   });
 });

@@ -401,7 +401,7 @@ function ExploreInner({ onSelfWrite }: {
   // single-service catalogue-metric queries; clicks ride the same
   // onExemplarClick → CorrelationContextDrawer path as the span-derived ones.
   const {
-    byLetter, totalByLetter, cappedByLetter, stepByLetter,
+    byLetter, totalByLetter, cappedByLetter, noteByLetter, stepByLetter,
     exemplarsByLetter, otlpExemplarsByLetter,
     anyLoading, errorByLetter,
     // v0.9.824 — önceki dönem (hayalet). Karşılaştırma kapalıyken üçü de
@@ -428,11 +428,11 @@ function ExploreInner({ onSelfWrite }: {
       from: builderFrom,
       errorByLetter,
       exemplarsByLetter, overlaysByLetter, totalByLetter,
-      otlpExemplarsByLetter, cappedByLetter, stepByLetter,
+      otlpExemplarsByLetter, cappedByLetter, noteByLetter, stepByLetter,
       compareByLetter, compareStepByLetter, compareOffsetNs,
     }),
     [debounced, byLetter, builderFrom, errorByLetter, exemplarsByLetter,
-     overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter,
+     overlaysByLetter, totalByLetter, otlpExemplarsByLetter, cappedByLetter, noteByLetter,
      stepByLetter, compareByLetter, compareStepByLetter, compareOffsetNs],
   );
   // Harf başına hata bandı — panellerin İÇİNDEKİ mesajın üstünde, sayfa

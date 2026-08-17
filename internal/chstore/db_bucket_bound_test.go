@@ -182,7 +182,7 @@ func TestDBReadsExcludeUpperBucket(t *testing.T) {
 	}
 }
 
-// v0.9.1157 — AYNI sınıfın kalan TÜM üyeleri. v0.9.823 /databases'in üç
+// v0.9.1156 — AYNI sınıfın kalan TÜM üyeleri. v0.9.823 /databases'in üç
 // okumasını düzeltmişti ama taraması dardı; v0.9.1147 messaging genel
 // bakışının taşmasını İLAN etti. Bu dilim dokuz kalıntıyı kapatıyor:
 // getMessaging (genel bakış + kind-split), GetMessagingTrends,
@@ -203,7 +203,7 @@ func TestNoInclusiveUpperBucketBoundInDepReads(t *testing.T) {
 		src := string(b)
 		if n := strings.Count(src, "time_bucket <= ?"); n > 0 {
 			t.Errorf("%s: %d adet `time_bucket <= ?` — üst kova sınırı `< ?` olmalı "+
-				"(v0.9.823/v0.9.1157 sınıfı; tam to'daki kova pencerenin dışındadır)", file, n)
+				"(v0.9.823/v0.9.1156 sınıfı; tam to'daki kova pencerenin dışındadır)", file, n)
 		}
 	}
 }

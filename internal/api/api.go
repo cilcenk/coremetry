@@ -4753,11 +4753,20 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, srcErr)
 		return
 	}
-	key := fmt.Sprintf("metric-query:v3:src=%s:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d:mx=%s",
+	// v0.9.1157 → v4: zarfa `note` eklendi (VM yolunda BOŞ dönen bir
+	// yüzdeliğin SEBEBİ). Alan `omitempty` — CH gövdesi bayt-bayt eski —
+	// ama anahtar yine de bumplanır: rolling deploy'da eski pod'un
+	// yazdığı notsuz gövde 30 sn boyunca servis edilirse operatör tam da
+	// bu özelliğin engellemek için var olduğu şeyi görür, sessiz boş
+	// grafiği (v0.9.443/458 dersi).
+	key := fmt.Sprintf("metric-query:v4:src=%s:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d:mx=%s",
 		src.Name(), name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60,
 		s.store.MetricExclusions().Digest())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		series, qerr := src.QueryMetric(ctx, chstore.MetricQueryFilter{
+		// queryMetricNoted, kaynağın açıklayabildiği durumda notu da
+		// getirir (metricNoteSource); CH kaynağı bu yeteneği taşımıyor ve
+		// "" döner — yani bu satır CH davranışını değiştirmez.
+		series, note, qerr := queryMetricNoted(ctx, src, chstore.MetricQueryFilter{
 			Name:          name,
 			Service:       svc,
 			Instance:      inst,
@@ -4773,10 +4782,16 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 		if qerr != nil {
 			return nil, qerr
 		}
-		return map[string]any{
+		out := map[string]any{
 			"series":     series,
 			"rowsCapped": chstore.SeriesRowsCapped(series),
-		}, nil
+		}
+		// Yalnız DOLU notta alan eklenir: boş bir "note":"" her gövdeyi
+		// büyütür ve arayüzde "not var mı" kontrolünü değersizleştirir.
+		if note != "" {
+			out["note"] = note
+		}
+		return out, nil
 	})
 }
 
@@ -4785,6 +4800,14 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 // every result-affecting input — the window is bucketed to the minute so
 // concurrent polls share a round-trip, and the full filter string is in the
 // key (no length-only collapse, cf. v0.5.187).
+//
+// v0.9.1157 (VM Faz 2) — SEAM'e girdi. ClickHouse yolu aynı
+// MetricQueryFilter'ı aynı store metoduna veriyor (chMetricSource sadece
+// delegasyon), yani SQL ve gövde şekli değişmedi; değişen tek şey, VM
+// açıkken/`?metricsrc=vm` ile bu ucun `sum by (le) (increase(<ad>_bucket))`
+// üzerinden aynı zarfı kurabilmesi. Uçlardan biri seam'de kalıp öteki
+// kalmasaydı, aynı sayfadaki çizgi grafiği VM'den, ısı haritası
+// ClickHouse'tan okuyacaktı — iki store, tek panel.
 func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	step, _ := strconv.Atoi(q.Get("step"))
@@ -4793,14 +4816,35 @@ func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
 	filtersRaw := q.Get("filters")
 	from := parseTime(q.Get("from"))
 	to := parseTime(q.Get("to"))
+	// v0.9.1157 — isim yokluğu İSTEMCİ hatasıdır (kardeş queryMetric'in
+	// v0.9.1152 düzeltmesinin ta kendisi): store katmanının "metric name
+	// required" hatası VM yolunda errUpstream sarmalına girip 502
+	// görünürdü ve operatörü sapasağlam bir VictoriaMetrics'i kontrol
+	// etmeye yollardı. CH yolunda bu 500 → 400 demek; bilinçli, çünkü
+	// eksik zorunlu parametre hiçbir yolda sunucu arızası değil.
+	if strings.TrimSpace(name) == "" {
+		writeErr(w, fmt.Errorf("%w: name (metrik adı) parametresi zorunlu", errBadRequest))
+		return
+	}
+	// v0.9.1157 — src anahtarda (bkz. getMetricNames'in gerekçesi):
+	// gövde ŞEKLİ iki store'da aynı, SAYILAR farklı. İşaret olmadan
+	// Settings toggle'ı ya da `?metricsrc=` denemesi 30 sn boyunca öteki
+	// backend'in ısı haritasını servis eder (v0.5.187 sınıfı). Anahtar
+	// dizesinin kendisi de değiştiği için eski gövdeler zaten erişilemez —
+	// zarfa eklenen `note` alanı için ayrı bir sürüm damgası gerekmiyor.
+	src, srcErr := s.metricSourceFor(r)
+	if srcErr != nil {
+		writeErr(w, srcErr)
+		return
+	}
 	// mx: dışlama seti özeti — ısı haritası da NOT match'li WHERE'den
 	// okuyor (metrichist.go), yani aynı çapraz-zehirlenme kapısı burada da
 	// açıktı.
-	key := fmt.Sprintf("metric-hist:name=%s:svc=%s:step=%d:f=%s:from=%d:to=%d:mx=%s",
-		name, svc, step, filtersRaw, from.Unix()/60, to.Unix()/60,
+	key := fmt.Sprintf("metric-hist:src=%s:name=%s:svc=%s:step=%d:f=%s:from=%d:to=%d:mx=%s",
+		src.Name(), name, svc, step, filtersRaw, from.Unix()/60, to.Unix()/60,
 		s.store.MetricExclusions().Digest())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.QueryMetricHistogram(ctx, chstore.MetricQueryFilter{
+		return src.QueryMetricHistogram(ctx, chstore.MetricQueryFilter{
 			Name:        name,
 			Service:     svc,
 			Filters:     parseFilters(filtersRaw),
@@ -5717,6 +5761,16 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 		// endpoint'lerin v0.9.458 zarfını atlıyordu.
 		RowsCapped bool   `json:"rowsCapped,omitempty"`
 		Error      string `json:"error,omitempty"`
+		// Note (v0.9.1157, VM Faz 2) — bu slot neden BOŞ döndü. Tekil
+		// handler'ın zarfıyla aynı alan, aynı gerekçeyle: VM yolunda bir
+		// yüzdelik, operatörün yazmadığı `<ad>_bucket` serisini sorguyor.
+		//
+		// Bundle'a da eklendi çünkü aşağıdaki v0.9.566 yorumu tam olarak
+		// bunun için duruyor: bu dal kardeş handler'dan bir kez ayrıştı ve
+		// sonucu sessizce yanlış sayı oldu. Notu tekil uca koyup burada
+		// atlamak, aynı yüzdeliğin Explore'da SEBEBİYLE, dashboard
+		// panelinde SESSİZCE boş görünmesi demekti.
+		Note string `json:"note,omitempty"`
 	}
 	out := make(map[string]*slot, len(body.Requests))
 	var mu sync.Mutex
@@ -5732,6 +5786,7 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer wg.Done()
 			var series []chstore.SpanMetricSeries
+			var note string
 			var err error
 			switch req.Type {
 			case "metric":
@@ -5743,7 +5798,10 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 				// bir kez daha ayrışırsa (v0.9.566: filtreler burada
 				// SQL'e hiç inmiyordu) aynı dashboard'daki iki panel
 				// farklı STORE'dan okur ve hiçbir şey bunu söylemez.
-				series, err = metricSrc.QueryMetric(r.Context(), chstore.MetricQueryFilter{
+				// v0.9.1157 — queryMetricNoted: notu taşıyabilen kaynakta
+				// (VM) getirir, ClickHouse'ta "" döner. Tekil handler'la
+				// AYNI çağrı, çünkü ayrışma bu dalın bilinen bug sınıfı.
+				series, note, err = queryMetricNoted(r.Context(), metricSrc, chstore.MetricQueryFilter{
 					Name:        req.Name,
 					Service:     req.Service,
 					Aggregation: req.Agg,
@@ -5791,6 +5849,10 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 			} else {
 				out[req.ID].RowsCapped = chstore.SeriesRowsCapped(series)
 				out[req.ID].Series = series
+				// Yalnız "metric" dalı not üretebiliyor; ötekiler note'u
+				// hiç dokunmadığı için "" kalır ve alan omitempty ile
+				// gövdeden düşer.
+				out[req.ID].Note = note
 			}
 			mu.Unlock()
 		}()

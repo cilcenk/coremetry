@@ -4596,7 +4596,7 @@ func snapshotLogsJSON(logs []*logstore.LogRecord, max int, total int64) string {
 // (just calling /api/metrics/names?service=X) still receive a
 // plain MetricInfo[] body — no breaking change for the existing
 // /metrics page until it migrates to the new picker.
-// v0.9.1150 — okuma artık s.metricSource() seam'inden geçiyor (CH ya da
+// v0.9.1150 — okuma artık metrik kaynak seam'inden geçiyor (CH ya da
 // VictoriaMetrics) ve `src` cache anahtarının parçası. Backend işareti
 // anahtarda OLMASAYDI operatör Settings'ten VM'yi açtığı an, TTL boyunca
 // (60s / 30s) eski CH gövdeleri servis edilirdi ve tazelemeyi farklı
@@ -4612,7 +4612,15 @@ func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 	pattern := strings.TrimSpace(q.Get("q"))
 	limit := parseInt(q.Get("limit"), 0)
 	offset := parseInt(q.Get("offset"), 0)
-	src := s.metricSource()
+	// v0.9.1151 — ?metricsrc=vm|ch bu İSTEK için backend'i seçer (deneme
+	// modu, metricsource.go). Param yoksa davranış bayt-bayt v0.9.1150:
+	// karar Settings'ten çıkar. Çözümleme cache anahtarından ÖNCE, çünkü
+	// dönen kaynak hem anahtarı hem okumayı besliyor.
+	src, err := s.metricSourceFor(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	// Old shape — no pagination params → return MetricInfo[]
 	// like pre-v0.5.181 callers expect.
 	//
@@ -4727,7 +4735,12 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	// toggle'ı 30 saniye boyunca eski backend'in SAYILARINI servis eder.
 	// Şekil aynı, sayılar farklı — v0.9.776 anahtar-bump'ının tam olarak
 	// bu gerekçesi.
-	src := s.metricSource()
+	// v0.9.1151 — ?metricsrc= deneme modu: seçim istek başına olabilir.
+	src, srcErr := s.metricSourceFor(r)
+	if srcErr != nil {
+		writeErr(w, srcErr)
+		return
+	}
 	key := fmt.Sprintf("metric-query:v3:src=%s:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d:mx=%s",
 		src.Name(), name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60,
 		s.store.MetricExclusions().Digest())
@@ -4807,7 +4820,12 @@ func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {
 	}
 	metric, lkey := q.Get("metric"), q.Get("key")
 	// v0.9.1150 — src anahtarda (bkz. getMetricNames'in gerekçesi).
-	src := s.metricSource()
+	// v0.9.1151 — ?metricsrc= deneme modu.
+	src, err := s.metricSourceFor(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	key := fmt.Sprintf("metric-labels:src=%s:m=%s:k=%s:since=%s", src.Name(), metric, lkey, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		return src.MetricLabelValues(ctx, metric, lkey, since)
@@ -4831,7 +4849,12 @@ func (s *Server) getMetricAttrKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	metric, service := q.Get("metric"), q.Get("service")
 	// v0.9.1150 — src anahtarda (bkz. getMetricNames'in gerekçesi).
-	src := s.metricSource()
+	// v0.9.1151 — ?metricsrc= deneme modu.
+	src, err := s.metricSourceFor(r)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
 	key := fmt.Sprintf("metric-attr-keys:src=%s:m=%s:svc=%s:since=%s", src.Name(), metric, service, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		return src.MetricAttrKeys(ctx, metric, service, since)
@@ -5625,6 +5648,22 @@ func spanMetricBatchKey(fromNs, toNs int64, step, maxDataPoints, rateWindow int,
 //	{ "p1": { "series": [...], "error": null },
 //	  "p2": { "series": [...], "error": "..." } }
 func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
+	// v0.9.1151 — backend seçimi bundle'ın BAŞINDA, gövdeyi okumadan
+	// ÖNCE. İki sebep: (a) geçersiz bir ?metricsrc= 50 panellik gövdeyi
+	// ayrıştırmadan reddedilir, (b) seçim bundle başına TEK kalır — 50
+	// panelin yarısı CH yarısı VM'den okunmuş bir dashboard, ayarın tam
+	// ortasında değiştiği tek bir istekte üretilebilirdi ve hangi panelin
+	// nereden geldiği ekranda görünmezdi.
+	//
+	// POST olduğu için param SORGU DİZESİNDE taşınıyor (gövdede değil):
+	// istemci tarafında tek merkezî yardımcı (lib/metricSource.ts) hem
+	// GET hem POST uçlarına aynı işareti basıyor, ve sayfanın URL'si
+	// zaten kaynak-of-truth.
+	metricSrc, srcErr := s.metricSourceFor(r)
+	if srcErr != nil {
+		writeErr(w, srcErr)
+		return
+	}
 	var body struct {
 		From     int64 `json:"from"`
 		To       int64 `json:"to"`
@@ -5671,11 +5710,8 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
-	// v0.9.1150 — backend seçimi bundle'ın BAŞINDA bir kez yapılır, panel
-	// başına değil: 50 panelin yarısı CH yarısı VM'den okunmuş bir
-	// dashboard, ayarın tam ortasında değiştiği tek bir istekte
-	// üretilebilirdi ve hangi panelin nereden geldiği görünmezdi.
-	metricSrc := s.metricSource()
+	// metricSrc (v0.9.1150) handler'ın en başında bir kez çözülüyor —
+	// gerekçesi ve v0.9.1151'in istek-başı override'ı orada.
 
 	for _, req := range body.Requests {
 		req := req

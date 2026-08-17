@@ -195,10 +195,11 @@ func (s *Service) CurrentSettings() Settings {
 	return s.cfg
 }
 
-// Configured reports whether VM should serve the metric read surfaces.
-// This is the ONE predicate the API's source selector reads — enabled
-// with an empty URL is not configured, so a half-filled form cannot
-// route reads at a backend that cannot answer.
+// Configured reports whether VM should serve the metric read surfaces BY
+// DEFAULT. This is the predicate the API's source selector reads for a
+// request that expresses no preference — enabled with an empty URL is not
+// configured, so a half-filled form cannot route reads at a backend that
+// cannot answer.
 func (s *Service) Configured() bool {
 	if s == nil {
 		return false
@@ -206,6 +207,31 @@ func (s *Service) Configured() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.cfg.Enabled && strings.TrimSpace(s.cfg.BaseURL) != ""
+}
+
+// Available reports whether VM CAN be read at all — a base URL exists,
+// regardless of the Enabled toggle (v0.9.1151, deneme modu).
+//
+// The two predicates answer DIFFERENT questions and the split is the
+// whole feature:
+//
+//	Configured() → "VM is the default for every metric read" (the
+//	               Settings toggle the operator flips for the install)
+//	Available()  → "a single ?metricsrc=vm request can reach VM" (the
+//	               per-request trial gate)
+//
+// Trial mode exists because metric NAMES differ between the two backends
+// (VM sanitises dots to underscores). An operator has to see one real
+// chart from VM before committing the whole install to it, and flipping
+// the global toggle to find out would move every panel, picker and
+// dashboard of every user at once.
+func (s *Service) Available() bool {
+	if s == nil {
+		return false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.cfg.BaseURL) != ""
 }
 
 // request builds a promapi.Request from the live config.
@@ -221,16 +247,26 @@ func (s *Service) request(path string, params url.Values, cfg Settings) promapi.
 	}
 }
 
-// ready returns the config for a read, or an error when VM is not
-// configured. Callers reach this only when the API already selected VM,
-// so hitting it means a config change raced the request — an error, not
-// a fallback.
+// ready returns the config for a read, or an error when VM cannot be
+// reached at all. Callers get here only after the API's source selector
+// already chose VM, so a failure means the config changed under the
+// request — an error, not a fallback.
+//
+// v0.9.1151 — the Enabled check moved OUT of this predicate. Enabled now
+// means exactly one thing, "VM is the DEFAULT backend", and that decision
+// belongs to the API's selector (metricsource.go), which is also the only
+// place that can see the per-request ?metricsrc= override. Keeping the
+// check here too would have made trial mode fail with "not configured"
+// while the operator was staring at a filled-in base URL — the routing
+// authority and the reachability predicate would have disagreed. What
+// this function guards is the thing it can actually answer: is there a
+// URL to call.
 func (s *Service) ready() (Settings, error) {
 	if s == nil {
 		return Settings{}, fmt.Errorf("victoriametrics backend not available")
 	}
 	cfg := s.CurrentSettings()
-	if !cfg.Enabled || strings.TrimSpace(cfg.BaseURL) == "" {
+	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return Settings{}, fmt.Errorf("victoriametrics backend is not configured")
 	}
 	return cfg, nil

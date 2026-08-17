@@ -14,6 +14,7 @@ import { useDebouncedValue } from '@/lib/perf/useDebouncedValue';
 import { api } from '@/lib/api';
 import { useUrlRange } from '@/lib/useUrlRange';
 import { classifyMetric } from '@/lib/metricTemplates';
+import { METRIC_SOURCE_LABELS, METRIC_SOURCE_PARAM, parseMetricSource } from '@/lib/metricSource';
 import { metricCatalogueHref } from './explore/urlCodec';
 import { fmtAgoNs, tsLong } from '@/lib/utils';
 import {
@@ -71,6 +72,12 @@ export default function MetricsPage() {
   const editorParam = searchParams.get('editor');
   const editor = metricsViewFromParam(editorParam) === 'editor';
   const legacyMetric = searchParams.get('metric') ?? '';
+
+  // trialSource — v0.9.1151 deneme modu. searchParams üzerinden okunuyor
+  // (window.location DEĞİL) ki router navigasyonunda rozet birlikte
+  // güncellensin; ayrıştırma api.ts'in kullandığı AYNI saf fonksiyonda,
+  // yani "geçerli param" tanımı iki yerde ayrışamaz.
+  const trialSource = parseMetricSource(searchParams.toString());
 
   // v0.9.832 — aralık artık URL'in kendisinde (ev kuralı: her operatör
   // seçimi paylaşılabilir). Eskiden useState idi: gelen `?range=` bir
@@ -265,6 +272,23 @@ export default function MetricsPage() {
             <Badge tone="info"
               title="Bu liste dış VictoriaMetrics kurulumundan okundu (Settings → Metrik backend’i). Birim / tür / son görülme kolonları boştur: VM bu alanları bildirmez.">
               VictoriaMetrics
+            </Badge>
+          )}
+          {/* DENEME MODU ROZETİ (v0.9.1151). Yukarıdaki kaynak rozeti,
+              VM'in kurulum GENELİNDE varsayılan olduğu hâl ile tek bir
+              URL param'ının onu bu sayfaya sabitlediği hâlde AYNI şeyi
+              yazıyor. Operatör ikisini karıştırırsa migrasyonu bitirdiğini
+              sanabilir; bu rozet farkı söylüyor.
+
+              Param'dan okunuyor (searchParams → saf parseMetricSource),
+              cevaptan değil: cevap yalnız "hangi store yanıtladı"yı
+              bilir, "bu sayfaya elle sabitlendi mi"yi bilmez. Ayrıca
+              ?metricsrc=ch yönünde (VM varsayılanken CH'ye kaçış) kaynak
+              rozeti HİÇ basılmıyor — o hâli görünür kılan tek şey bu. */}
+          {trialSource && (
+            <Badge tone="warning"
+              title={`Bu sayfanın metrik istekleri ?${METRIC_SOURCE_PARAM}=${trialSource} ile ${METRIC_SOURCE_LABELS[trialSource]} üzerine sabitlendi — kurulum genelindeki ayar DEĞİŞMEDİ. URL'den param'ı silmek varsayılan backend'e döner.`}>
+              deneme modu: {METRIC_SOURCE_LABELS[trialSource]}
             </Badge>
           )}
           <div style={{ flex: 1 }} />

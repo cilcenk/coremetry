@@ -43,6 +43,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
@@ -160,13 +162,137 @@ func (v vmMetricSource) MetricAttrKeys(ctx context.Context, metric, service stri
 	return out, upstream(err)
 }
 
-// metricSource picks the backend for THIS request. Cheap (one RWMutex
-// read behind Configured) so handlers call it inline; the returned value
-// is used for BOTH the cache key and the read, which is what makes them
-// impossible to disagree.
+// metricSource picks the backend from SETTINGS alone — the default when a
+// request expresses no preference. Cheap (one RWMutex read behind
+// Configured) so handlers call it inline; the returned value is used for
+// BOTH the cache key and the read, which is what makes them impossible to
+// disagree.
+//
+// HTTP handlers must call metricSourceFor(r) instead, so the per-request
+// ?metricsrc= trial override applies. This function stays exported-in-
+// package for the settings-driven callers that have no request:
+// mcpDeps().
 func (s *Server) metricSource() metricSource {
 	if s.vmetrics != nil && s.vmetrics.Configured() {
 		return vmMetricSource{s.vmetrics}
 	}
 	return chMetricSource{s.store}
+}
+
+// ── Per-request source override (v0.9.1151, deneme modu) ────────────────────
+//
+// `?metricsrc=vm|ch` picks the backend for ONE request. The operator asked
+// for it because metric NAMES differ between the two stores (VM sanitises
+// `jvm.memory.used` to `jvm_memory_used`), so "does VM actually answer my
+// dashboards" cannot be settled by reading Settings — it needs one real
+// chart. The global toggle is the wrong instrument for that question: it
+// moves every panel, picker and dashboard of every logged-in user at once,
+// and moves them back just as loudly.
+//
+// Precedent: the old-engine escape hatch that carried the chart-engine
+// migration (retired v0.9.844 — a frontend gate now bans that flag's NAME
+// from the tree, so it is described here rather than named). Same posture,
+// deliberately — a URL param, no UI that writes it, no persistence. An
+// operator types it; nothing in the product hands it out. That is what
+// keeps it a probe rather than a second, invisible configuration surface
+// that some page could get stuck in.
+//
+// Two asymmetries worth naming, because both were choices:
+//
+//   - `metricsrc=vm` does NOT require Enabled. Requiring it would make
+//     the param useless — trying VM before committing to it is the entire
+//     point. It DOES require a base URL, because without one there is
+//     nothing to call.
+//   - `metricsrc=ch` is always valid, even with VM as the default. The
+//     escape hatch has to work in both directions or an operator who
+//     turned VM on and hit a gap has no way to check the same chart
+//     against ClickHouse.
+//
+// There is still NO silent fallback. `metricsrc=vm` against an
+// unconfigured VM is a 400 that names the Settings page, never a quiet
+// ClickHouse read — the reason is the same one metricsource.go's header
+// gives for refusing VM→CH fallback: the numbers would differ and nothing
+// on screen could say so.
+const metricSourceParam = "metricsrc"
+
+// metricSourceParamValues is the accepted set, in the order the error
+// message lists them.
+var metricSourceParamValues = []string{metricSourceVM, metricSourceCH}
+
+// resolveMetricSourceParam is the pure half of the override, kept
+// separate so every branch is table-testable without a Server, a request
+// or a live VM.
+//
+// raw is the verbatim query value; vmAvailable is
+// vmetrics.Service.Available() (a base URL exists — Enabled NOT required).
+// Returns "" for "the request has no opinion, use the Settings default".
+func resolveMetricSourceParam(raw string, vmAvailable bool) (string, error) {
+	switch v := strings.TrimSpace(raw); v {
+	case "":
+		return "", nil
+	case metricSourceCH:
+		// Always honoured. See the asymmetry note above.
+		return metricSourceCH, nil
+	case metricSourceVM:
+		if !vmAvailable {
+			// 400, not 502: nothing upstream was contacted, and there is
+			// no host to blame. The message carries the fix, because the
+			// operator typing this param by hand has no other feedback
+			// channel.
+			return "", fmt.Errorf("%w: %s=vm — VictoriaMetrics yapılandırılmamış (Settings → Metrik backend'i: bir base URL girin)",
+				errBadRequest, metricSourceParam)
+		}
+		return metricSourceVM, nil
+	default:
+		// Echo the value back CLAMPED. A typo is the common case and
+		// seeing it is most of the diagnosis; an unbounded echo of
+		// attacker-controlled input into a shared error path is not
+		// something to hand out even when the JSON encoder escapes it.
+		return "", fmt.Errorf("%w: %s=%q geçersiz — beklenen %s",
+			errBadRequest, metricSourceParam, clampParamValue(raw, 32),
+			strings.Join(quoteEach(metricSourceParamValues), " veya "))
+	}
+}
+
+// clampParamValue truncates by RUNE, not byte: cutting a byte slice mid
+// rune yields a replacement char in the JSON body and, worse, makes the
+// echoed value differ from what the operator typed for reasons they
+// cannot see.
+func clampParamValue(v string, max int) string {
+	r := []rune(v)
+	if len(r) <= max {
+		return v
+	}
+	return string(r[:max]) + "…"
+}
+
+func quoteEach(vals []string) []string {
+	out := make([]string, len(vals))
+	for i, v := range vals {
+		out[i] = `"` + v + `"`
+	}
+	return out
+}
+
+// metricSourceFor resolves the backend for one HTTP request: the
+// ?metricsrc= override when present, the Settings default otherwise.
+//
+// Handlers MUST use this rather than metricSource() — and must use its
+// return value for the CACHE KEY as well as the read. The key already
+// carries src=<name>; because the name comes from the same value the read
+// goes to, a trial request can never land on the default backend's cached
+// body (v0.5.187 class).
+func (s *Server) metricSourceFor(r *http.Request) (metricSource, error) {
+	want, err := resolveMetricSourceParam(r.URL.Query().Get(metricSourceParam), s.vmetrics.Available())
+	if err != nil {
+		return nil, err
+	}
+	switch want {
+	case metricSourceVM:
+		return vmMetricSource{s.vmetrics}, nil
+	case metricSourceCH:
+		return chMetricSource{s.store}, nil
+	default:
+		return s.metricSource(), nil
+	}
 }

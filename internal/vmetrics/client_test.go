@@ -76,9 +76,14 @@ func snapshotJSON(t *testing.T, snap Snapshot) string {
 	return string(b)
 }
 
-// Configured is the ONE predicate the API's source selector reads. A
+// Configured is the predicate the API's source selector reads for a
+// request that expresses no preference — "VM is the DEFAULT backend". A
 // half-filled form (enabled, no URL) must NOT route metric reads at VM —
 // there is no fallback, so it would 502 every metric surface.
+//
+// v0.9.1151 — it is no longer the ONLY predicate: Available() answers the
+// per-request `?metricsrc=vm` trial gate (base URL, Enabled irrelevant).
+// See TestAvailableIsTheTrialGate in trial_test.go for the split.
 func TestConfigured(t *testing.T) {
 	tests := []struct {
 		name string

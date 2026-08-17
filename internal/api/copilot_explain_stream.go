@@ -102,13 +102,8 @@ func explainAnswerFrame(text, xid string, extra map[string]any) map[string]any {
 	return m
 }
 
-// deliverExplain — bir explain cevabının TEK çıkışı.
-//
-// Buffered kip (bayraksız istek, ya da akışı desteklemeyen bir
-// ResponseWriter): bugünkü davranış — üret, hata varsa writeErr, yoksa
-// writeJSON.
-//
-// Akan kip: delta* → answer → done.
+// sseEmitter — SSE çerçeve yazıcısı, TEK yazılış (v0.9.1129'da
+// deliverExplain'in içinden çıkarıldı; ikinci tüketici insight kartı).
 //
 // BAŞLIKLAR TEMBEL yazılıyor ve bu bilinçli: ilk çerçeve düşene kadar
 // yanıt gövdesine tek bayt gitmez, dolayısıyla üretim İLK BAYTTAN ÖNCE
@@ -117,9 +112,52 @@ func explainAnswerFrame(text, xid string, extra map[string]any) map[string]any {
 // içinde gizlenmiş bir hata, FE'nin retry/uyarı davranışını sessizce
 // değiştirirdi. Akış BAŞLADIKTAN sonraki hata artık statü koduyla
 // anlatılamaz; orada `error` + `done{ok:false}` çerçevesi düşer.
+//
+// newSSEEmitter ok=false döner: writer Flush edemiyorsa (ara katman /
+// proxy sarımı) çağıran buffered yola DÜŞMEK zorunda — asla flush
+// edilmeyen yarım bir SSE gövdesi istemciyi asar.
+type sseEmitter struct {
+	w       http.ResponseWriter
+	flusher http.Flusher
+	started bool
+}
+
+func newSSEEmitter(w http.ResponseWriter) (*sseEmitter, bool) {
+	f, ok := w.(http.Flusher)
+	if !ok {
+		return nil, false
+	}
+	return &sseEmitter{w: w, flusher: f}, true
+}
+
+func (e *sseEmitter) emit(event string, payload any) {
+	if !e.started {
+		e.w.Header().Set("Content-Type", "text/event-stream")
+		e.w.Header().Set("Cache-Control", "no-cache")
+		e.w.Header().Set("Connection", "keep-alive")
+		e.w.Header().Set("X-Accel-Buffering", "no")
+		e.started = true
+	}
+	b, _ := json.Marshal(payload)
+	fmt.Fprintf(e.w, "event: %s\ndata: %s\n\n", event, b)
+	e.flusher.Flush()
+}
+
+// wroteAnything — ilk çerçeve düştü mü? Hata yolunun "gerçek HTTP
+// hatası mı, error çerçevesi mi" kararı buna bakar.
+func (e *sseEmitter) wroteAnything() bool { return e.started }
+
+// deliverExplain — bir explain cevabının TEK çıkışı.
+//
+// Buffered kip (bayraksız istek, ya da akışı desteklemeyen bir
+// ResponseWriter): bugünkü davranış — üret, hata varsa writeErr, yoksa
+// writeJSON.
+//
+// Akan kip: delta* → answer → done. Başlık/flush disiplini
+// sseEmitter'da (yukarı).
 func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid string, extra map[string]any, run explainRun) {
-	flusher, canFlush := w.(http.Flusher)
-	if !explainWantsStream(r) || !canFlush {
+	em, canStream := newSSEEmitter(w)
+	if !explainWantsStream(r) || !canStream {
 		out, err := run(nil)
 		if err != nil {
 			writeErr(w, err)
@@ -129,35 +167,21 @@ func (s *Server) deliverExplain(w http.ResponseWriter, r *http.Request, xid stri
 		return
 	}
 
-	started := false
-	emit := func(event string, payload any) {
-		if !started {
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.Header().Set("Cache-Control", "no-cache")
-			w.Header().Set("Connection", "keep-alive")
-			w.Header().Set("X-Accel-Buffering", "no")
-			started = true
-		}
-		b, _ := json.Marshal(payload)
-		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, b)
-		flusher.Flush()
-	}
-
 	out, err := run(func(d string) {
 		if d == "" {
 			return
 		}
-		emit("delta", map[string]string{"text": d})
+		em.emit("delta", map[string]string{"text": d})
 	})
 	if err != nil {
-		if !started {
+		if !em.wroteAnything() {
 			writeErr(w, err)
 			return
 		}
-		emit("error", map[string]string{"error": err.Error()})
-		emit("done", map[string]bool{"ok": false})
+		em.emit("error", map[string]string{"error": err.Error()})
+		em.emit("done", map[string]bool{"ok": false})
 		return
 	}
-	emit("answer", explainAnswerFrame(out, xid, extra))
-	emit("done", map[string]bool{"ok": true})
+	em.emit("answer", explainAnswerFrame(out, xid, extra))
+	em.emit("done", map[string]bool{"ok": true})
 }

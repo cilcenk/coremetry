@@ -1,0 +1,362 @@
+package api
+
+import (
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/cilcenk/coremetry/internal/ai/insight"
+	"github.com/cilcenk/coremetry/internal/anomaly"
+	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/copilot"
+)
+
+// insight.go — gömülü insight kartının sunucu ucu (AI Assistant Faz 2.1,
+// v0.9.1129; docs/plans/ai-assistant-design-2026-08-16.md §2.3 + onaylı
+// mockup).
+//
+//	GET /api/insight/{kind}/{id}[?stream=1]
+//
+// Bu dosya KOMPOZİSYON KÖKÜ: chstore okumaları burada, saf projeksiyon
+// internal/ai/insight'ta, prompt'un sistem yarısı internal/copilot'ta.
+// Üçü ayrı çünkü kartın sözleşmesi "deterministik yarı LLM'siz de
+// doğru" — o yarıyı test edebilmek için store'suz olması gerekiyor.
+//
+// ── NEDEN /api/copilot/ DEĞİL (namespace kararı) ────────────────────
+//
+// Bu, AI KAPALIYKEN de anlamlı cevap veren TEK AI-komşusu uç. Sinyaller
+// ve linkler deterministik; prose opsiyonel bir katman. requireCopilot
+// (ai_routes.go) 503 döndürür — bu uçta 503 YANLIŞ cevap olurdu: kart
+// yapılandırılmamış kurulumda da tam değerli çizilmeli.
+//
+// /api/copilot/ altına GET olarak koymak iki kötü seçenek doğuruyordu:
+//
+//  1. requireCopilot ile sar → AI-off yarısı ölür (mockup sözleşmesi
+//     kırılır);
+//  2. sarmadan koy → ai_routes_test.go'nun kaynak-pini yalnız
+//     `POST /api/copilot/` satırlarını tarıyor, yani "copilot
+//     namespace'inde kapısız uç" diye GÖRÜNMEZ bir ikinci sınıf doğar.
+//     v0.9.1071/1080/1101 tam olarak "kapısız yeni uç" sınıfıydı;
+//     testin göremediği bir istisna açmak o sınıfı geri getirirdi.
+//
+// Üçüncü yol seçildi: uç KENDİ namespace'inde (/api/insight/) yaşıyor,
+// böylece "/api/copilot/ altındaki her şey LLM ister" kuralı İSTİSNASIZ
+// kalıyor. Karşılığında yeni bir pin eklendi
+// (TestInsightRouteNotCopilotGated): bu route requireCopilot ile
+// sarılırsa test kırmızı yanar — yani gelecekte biri "eksik kapı"
+// sanıp sarmaya kalkarsa gerekçeyi okumak zorunda kalır.
+//
+// ai_calls yüzey etiketi: aiSurfaceFromPath path'ten
+// "insight-exception" / "insight-problem" türetir (whitelist'li, /ai
+// kırılımı sonlu kalsın).
+//
+// ── Yetki ───────────────────────────────────────────────────────────
+//
+// Kartın projelediği veri (problem, exception grubu) bugün viewer'a
+// AÇIK; kart o veriyi yeniden çerçeveliyor, yeni bir şey sızdırmıyor.
+// Dolayısıyla rol kapısı YOK (kimlik kapısı auth middleware'inde,
+// SkipPath'te değil). Yazma yok → audit yok.
+//
+// ── Önbellek ────────────────────────────────────────────────────────
+//
+// s.serveCached YOK ve bu bilinçli: (a) SSE gövdesi önbelleklenemez,
+// (b) uç yalnız kart AÇILDIĞINDA ateşlenir (collapsed hâl worker'ın
+// pasif özetini gösterir, sıfır fetch), (c) tüm explain yüzeylerinin
+// sözleşmesi "her tıkta taze". Kanıt okumaları bounded: exception
+// yolunda BuildExceptionExplainInput'un bugünkü tık maliyeti, problem
+// yolunda rootcause fan-out'unun ALT KÜMESİ (4 okuma, paralel,
+// soft-fail). FE tarafı ES-maliyet disiplinini staleTime ile 2.2'de
+// kuruyor.
+
+// getInsight — tür ayrıştırıcı. Bilinmeyen tür 404: LLM'e ulaşmadan,
+// ai_calls yüzeyi kirlenmeden.
+func (s *Server) getInsight(w http.ResponseWriter, r *http.Request) {
+	kind := strings.TrimSpace(r.PathValue("kind"))
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "insight id required", http.StatusBadRequest)
+		return
+	}
+	if !insight.KnownKind(kind) {
+		http.Error(w, "unknown insight kind", http.StatusNotFound)
+		return
+	}
+	switch kind {
+	case insight.KindException:
+		s.insightException(w, r, id)
+	case insight.KindProblem:
+		s.insightProblem(w, r, id)
+	}
+}
+
+// ── exception türü ──────────────────────────────────────────────────
+
+// insightException — id = exception grubunun fingerprint'i.
+//
+// Kanıt: anomaly.BuildExceptionExplainInput — copilotExplainException'ın
+// ve proaktif ExceptionExplainer işçisinin kullandığı AYNI kurucu. İkinci
+// bir prefetch yazmadık; kart o girdinin yapısal yarısını (v0.9.1129'da
+// eklenen TraceID/Trend/Deploys) projeliyor.
+func (s *Server) insightException(w http.ResponseWriter, r *http.Request, fp string) {
+	g, err := s.store.GetExceptionGroup(r.Context(), fp)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if g == nil {
+		http.Error(w, "exception group not found", http.StatusNotFound)
+		return
+	}
+	in := anomaly.BuildExceptionExplainInput(r.Context(), s.store, s.logs, g)
+	ev := exceptionEvidence(g, in, time.Now().UnixNano())
+
+	resp := insight.Response{Charts: insight.ExceptionCharts(ev), Links: insight.ExceptionLinks(ev)}
+	resp.Signals, resp.Truncated = insight.ExceptionSignals(ev)
+	s.deliverInsight(w, r, resp, copilot.SystemPromptException(), in.User)
+}
+
+// exceptionEvidence — chstore/anomaly → saf kanıt dönüşümü. SAF
+// (nowNs parametre) ki testte sabit bir "şimdi" ile pinlenebilsin.
+func exceptionEvidence(g *chstore.ExceptionGroup, in anomaly.ExceptionExplainInput, nowNs int64) insight.ExceptionEvidence {
+	ev := insight.ExceptionEvidence{
+		Fingerprint: g.Fingerprint,
+		Type:        g.Type,
+		Service:     g.Service,
+		State:       g.State,
+		Occurrences: g.Occurrences,
+		FirstSeenNs: g.FirstSeen,
+		LastSeenNs:  g.LastSeen,
+		TraceID:     in.TraceID,
+		NowNs:       nowNs,
+	}
+	if t := in.Trend; t != nil {
+		ev.Last24, ev.PeakCount = t.Last24, t.Peak
+		// Trend toplamı occurrence kovalarından gelir ve grubun
+		// sayacından SAPABİLİR (kovalar (service,type) çözünürlüğünde —
+		// GetExceptionOccurrences'ın kendi dürüstlük notu). Grubun
+		// kendi sayacı otoritedir; trend yalnız kırılımı verir.
+		if ev.Occurrences == 0 {
+			ev.Occurrences = t.Total
+		}
+	}
+	for _, d := range in.Deploys {
+		ev.Deploys = append(ev.Deploys, insight.DeployCandidate{
+			Version: d.Version, OffsetSec: d.OffsetSec, After: d.After})
+	}
+	return ev
+}
+
+// ── problem türü ────────────────────────────────────────────────────
+
+// insightProblem — id = problem id.
+//
+// Kanıt: rootcause.go'nun ÇAĞIRDIĞI store metotlarının alt kümesi —
+// deploy zenginleştirmesi, kalıcı hipotez, blast radius. Pencere aynı
+// boundAnalysisWindow zarfı ([10dk, 1h]) ki kartın linkleri
+// /rootcause panelinin gösterdiği pencereyle ÇELİŞMESİN.
+//
+// Bilinçli DIŞARIDA: GetCorrelatedChangesMV / BubbleUp / FindExemplar.
+// Korelasyon listesinin karta giren yüzü hipotezin Candidates'ı
+// (worker zaten hesaplamış, okuma bedava); bubble-up ve exemplar
+// /rootcause panelinin işi — kart onları tekrar hesaplayıp tık başına
+// iki okuma daha ödemez.
+func (s *Server) insightProblem(w http.ResponseWriter, r *http.Request, id string) {
+	p, err := s.store.GetProblem(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	if p == nil {
+		http.Error(w, "problem not found", http.StatusNotFound)
+		return
+	}
+
+	// Saat BİR kez okunuyor: pencere sonu ile sinyallerin "şimdi"si
+	// aynı an olmalı, yoksa "açık · 4sa" satırı pencereden birkaç ms
+	// sapar ve iki damga arasındaki fark açıklanamaz hâle gelir.
+	now := time.Now()
+	started := time.Unix(0, p.StartedAt)
+	end := now
+	if p.ResolvedAt != nil {
+		end = time.Unix(0, *p.ResolvedAt)
+	}
+	started, end = boundAnalysisWindow(started, end)
+
+	// Deploy + hipotez + blast PARALEL, her biri soft-fail: eksik bir
+	// kanıt satırı kartı düşürmez (rootcause fan-out'unun sözleşmesi).
+	// Goroutine'ler AYRIK değişkenlere yazıyor ve okuma wg.Wait()
+	// sonrasında — kilide gerek yok (rootcause.go'nun aynı gerekçesi).
+	var (
+		wg    sync.WaitGroup
+		hyp   *chstore.RootCauseHypothesis
+		blast *chstore.BlastRadius
+	)
+	enriched := *p
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		if enr := s.store.EnrichProblemsWithDeploys(r.Context(), []chstore.Problem{*p}, 30*time.Minute); len(enr) == 1 {
+			enriched = enr[0]
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if h, e := s.store.GetHypothesis(r.Context(), "problem", p.ID); e == nil && h != nil {
+			hyp = h
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if br, e := s.store.GetServiceBlastRadius(r.Context(), p.Service, started, end); e == nil {
+			blast = &br
+		}
+	}()
+	wg.Wait()
+
+	ev := problemEvidence(&enriched, hyp, blast, started.UnixNano(), end.UnixNano(), now.UnixNano())
+	resp := insight.Response{Charts: insight.ProblemCharts(ev), Links: insight.ProblemLinks(ev)}
+	resp.Signals, resp.Truncated = insight.ProblemSignals(ev)
+	s.deliverInsight(w, r, resp,
+		copilot.SystemPromptProblem(),
+		insight.ProblemPromptUser(ev, anomaly.HypothesisPromptBlockTR(hyp)))
+}
+
+// problemEvidence — chstore → saf kanıt dönüşümü. SAF; hypothesis /
+// blast nil olabilir.
+func problemEvidence(p *chstore.Problem, hyp *chstore.RootCauseHypothesis,
+	blast *chstore.BlastRadius, fromNs, toNs, nowNs int64) insight.ProblemEvidence {
+	ev := insight.ProblemEvidence{
+		ID: p.ID, Service: p.Service, Metric: p.Metric,
+		Severity: p.Severity, Priority: p.Priority, PriorityReason: p.PriorityReason,
+		Comparator: p.Comparator, Status: p.Status,
+		Value: p.Value, Threshold: p.Threshold,
+		StartedNs: p.StartedAt, FromNs: fromNs, ToNs: toNs, NowNs: nowNs,
+	}
+	if p.ResolvedAt != nil {
+		ev.ResolvedNs = *p.ResolvedAt
+	}
+	// Deploy: problems zenginleştirmesi ÖNCE, hipotezin deploy'u SONRA —
+	// hipotez yolu ölçülmüş etkiyi (Impact) taşıyan TEK yol (v0.9.1059),
+	// o yüzden varsa o kazanır.
+	dep := p.RecentDeploy
+	if hyp != nil && hyp.RecentDeploy != nil {
+		dep = hyp.RecentDeploy
+	}
+	if dep != nil && strings.TrimSpace(dep.Version) != "" {
+		d := insight.DeployRef{Version: dep.Version, AgeSec: dep.AgeSeconds}
+		if im := dep.Impact; im != nil {
+			d.HasImpact = true
+			d.P99DeltaPct = im.P99DeltaPct
+			d.ErrDeltaPP = im.ErrorRateDeltaPct
+		}
+		ev.Deploy = &d
+	}
+	if hyp != nil && strings.TrimSpace(hyp.TopSuspect) != "" {
+		h := insight.HypothesisRef{TopSuspect: hyp.TopSuspect, Confidence: hyp.Confidence}
+		for _, c := range hyp.Candidates {
+			if c.Service == "" || c.Service == hyp.TopSuspect {
+				continue
+			}
+			h.Candidates = append(h.Candidates, c.Service)
+		}
+		// Others = top suspect DIŞINDAKİ aday sayısı. Kart listeyi
+		// kırparken "+N"i bundan türetiyor; hipotezin tam sayısını
+		// (suspect dahil) vermek N'i bir fazla gösterirdi.
+		h.Others = len(h.Candidates)
+		ev.Hyp = &h
+		// DeepEvidence'ın en yavaş operasyonu: worker zaten hesapladı ve
+		// bugüne kadar HİÇBİR yüzeyde görünmüyordu (tasarım §1.6).
+		if hyp.Deep != nil && len(hyp.Deep.SlowOps) > 0 {
+			op := hyp.Deep.SlowOps[0]
+			ev.SlowOp = &insight.OpRef{Name: op.Name, P95Ms: op.P95Ms, ErrorRate: op.ErrorRate}
+		}
+	}
+	if blast != nil {
+		b := insight.BlastRef{
+			TotalCallers: blast.TotalCallers, CascadingCallers: blast.CascadingCallers,
+		}
+		for _, c := range blast.Callers {
+			if c.Service != "" {
+				b.TopCallers = append(b.TopCallers, c.Service)
+			}
+		}
+		ev.Blast = &b
+	}
+	return ev
+}
+
+// ── teslim ──────────────────────────────────────────────────────────
+
+// deliverInsight — kart cevabının TEK çıkışı. deliverExplain'in
+// kardeşi; SSE yazıcısı ORTAK (sseEmitter), ikinci bir yazıcı yok.
+//
+// Çerçeve sırası (akan kip):
+//
+//	signals{Response, prose:""}  ← DETERMİNİSTİK yarı, İLK
+//	delta{text}*                 ← prose token token (AI aktifse)
+//	answer{text, exchangeId}
+//	done{ok}
+//
+// AI kapalı/yapılandırılmamışsa: signals → done{ok:true}. LLM'e çağrı
+// YAPILMAZ (testte sahte sağlayıcının hiç çağrılmadığı assert edilir),
+// cevap AIOff=true taşır ve exchangeId BOŞ kalır (oylanacak model
+// cevabı yok).
+//
+// deliverExplain'den BİLİNÇLİ sapma: orada ilk bayt üretimden SONRA
+// yazılır, böylece üretim hatası gerçek bir HTTP hatası olabiliyor.
+// Burada `signals` ÖNCE düşüyor — kartın tabanı prose'u beklemez, zaten
+// bütün fikir bu. Bedeli, akan kipte LLM hatasının artık statü koduyla
+// değil `error` çerçevesiyle anlatılması. Buffered kip explain
+// sözleşmesini korur (hata = HTTP hatası).
+func (s *Server) deliverInsight(w http.ResponseWriter, r *http.Request,
+	resp insight.Response, system, user string) {
+	resp.Normalize()
+
+	// AI kapısı BURADA, response ŞEKLİ olarak — 503 olarak DEĞİL
+	// (namespace gerekçesi dosya başında). copilotReady tek yazılış:
+	// ai_routes.go'daki requireCopilot da onu kullanır.
+	var run explainRun
+	if s.copilotReady() {
+		r2, xid := withExchange(r)
+		r = r2
+		resp.ExchangeID = xid
+		resp.Model = s.copilot.ActiveModel()
+		run = s.explainPrompt(r, system, user)
+	} else {
+		resp.AIOff = true
+	}
+
+	em, canStream := newSSEEmitter(w)
+	if !explainWantsStream(r) || !canStream {
+		if run != nil {
+			out, err := run(nil)
+			if err != nil {
+				writeErr(w, err)
+				return
+			}
+			resp.Prose = out
+		}
+		writeJSON(w, resp)
+		return
+	}
+
+	em.emit("signals", resp.WithoutProse())
+	if run == nil {
+		em.emit("done", map[string]bool{"ok": true})
+		return
+	}
+	out, err := run(func(d string) {
+		if d == "" {
+			return
+		}
+		em.emit("delta", map[string]string{"text": d})
+	})
+	if err != nil {
+		em.emit("error", map[string]string{"error": err.Error()})
+		em.emit("done", map[string]bool{"ok": false})
+		return
+	}
+	em.emit("answer", explainAnswerFrame(out, resp.ExchangeID, nil))
+	em.emit("done", map[string]bool{"ok": true})
+}

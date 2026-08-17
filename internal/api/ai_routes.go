@@ -39,12 +39,30 @@ import (
 // 403 alır, kurulumun AI yapılandırma durumunu 503'ten öğrenemez.
 func (s *Server) requireCopilot(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.copilot == nil || !s.copilot.Active() {
+		if !s.copilotReady() {
 			http.Error(w, `{"error":"AI copilot not available (disabled or not configured)"}`, http.StatusServiceUnavailable)
 			return
 		}
 		h(w, r)
 	}
+}
+
+// copilotReady — "LLM çağrılabilir mi" sorusunun TEK yazılışı
+// (v0.9.1129). Active() zaten nil-güvenli, ama nil kontrolünü de burada
+// tutuyoruz ki çağıranlar iki koşulu hatırlamak zorunda kalmasın.
+//
+// İki meşru tüketici var ve ikisi FARKLI şey yapıyor:
+//   - requireCopilot (yukarı): hazır değilse 503 — LLM'siz anlamsız uçlar;
+//   - deliverInsight (insight.go): hazır değilse prose'u ATLAR ve
+//     cevabı AIOff bayrağıyla döner — kartın deterministik yarısı
+//     LLM'den bağımsız.
+//
+// Handler-içi üçüncü bir kapı YASAK; ai_routes_test.go
+// (TestNoInlineCopilotGates) İKİ yazılışı da (`!s.copilot.Active()` ve
+// `s.copilotReady()`) tarıyor — bir kapıyı yeni bir isim altında
+// kopyalamak testi atlatmasın.
+func (s *Server) copilotReady() bool {
+	return s.copilot != nil && s.copilot.Active()
 }
 
 func (s *Server) registerAIRoutes(mux *http.ServeMux) {
@@ -109,4 +127,18 @@ func (s *Server) registerAIRoutes(mux *http.ServeMux) {
 	// kanıt trace/span'leri deterministik döner (copilot_exception.go).
 	mux.HandleFunc("POST   /api/copilot/explain-exception/{fp}", s.requireCopilot(s.copilotExplainException))
 	mux.HandleFunc("POST   /api/copilot/suggest-service-tags", auth.RequireAnyRole(editorRoles, s.requireCopilot(s.copilotSuggestServiceTags)))
+
+	// ── Insight kartları (Faz 2.1, v0.9.1129) ──
+	//
+	// requireCopilot İLE SARILMIYOR ve bu KASITLI — gerekçenin tamamı
+	// insight.go'nun dosya başındaki "NEDEN /api/copilot/ DEĞİL"
+	// bölümünde. Özeti: kart AI kapalıyken de tam değerli (sinyaller +
+	// linkler deterministik), dolayısıyla 503 yanlış cevap olurdu;
+	// namespace ayrı ki "/api/copilot/ altındaki her şey LLM ister"
+	// kuralı istisnasız kalsın. TestInsightRouteNotCopilotGated bu
+	// kararı pinler — sarmak testi kırmızı yakar.
+	//
+	// GET: okuma. Akan varyant `?stream=1` ile (explain'le aynı bayrak).
+	// Rol kapısı yok: projelediği veri (problem/exception) viewer'a açık.
+	mux.HandleFunc("GET    /api/insight/{kind}/{id}", s.getInsight)
 }

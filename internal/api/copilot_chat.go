@@ -185,7 +185,18 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 
 	// Build the tool set once (closures over the live store + logs)
 	// and the LLM-facing specs from the same list.
-	tools := mcptools.ToolList(mcptools.Deps{Store: s.store, LogStore: s.logs})
+	//
+	// v0.9.1136 (AI Faz 3.1) — rol filtresi: MinRole'ü çağıranın
+	// rolünü AŞAN tool ne LİSTELENİR ne de ÇAĞRILABİLİR. Gizlemek
+	// reddetmekten iyidir (reddedilen tool bir tur + bağlam harcar),
+	// ama yalnız gizlemek yetmez: serbest döngü ismi byName'den
+	// çözüyor, yani filtre İKİ map'e de uygulanır — model adı
+	// tahmin etse bile "unknown tool" alır.
+	role := ""
+	if c != nil {
+		role = c.Role
+	}
+	tools := toolsForRole(mcptools.ToolList(mcptools.Deps{Store: s.store, LogStore: s.logs}), role)
 	byName := make(map[string]func(context.Context, json.RawMessage) (any, error), len(tools))
 	specs := make([]copilot.ToolSpec, 0, len(tools))
 	for _, t := range tools {

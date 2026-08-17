@@ -115,7 +115,7 @@ func TestStreamableToolCallAndGate(t *testing.T) {
 		t.Fatalf("kapısız çağrı geçmeliydi: %v", out)
 	}
 	// Kapı RED: -32000, tool handler HİÇ koşmaz.
-	srv.SetToolCallGate(func(_ context.Context, tool string) error {
+	srv.SetCallGate(func(_ context.Context, _ GateCall) error {
 		return errors.New("rate limited: test")
 	})
 	_, out = postStreamable(t, ts, rpc("tools/call", 4,

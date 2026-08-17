@@ -27,8 +27,15 @@ import (
 //
 // Payload is slim: each row gives the palette enough to render
 // (label) and the silence-create handler enough to act
-// (id/fingerprint, kind, service, pattern). Editor-gated to
-// match createAnomalySilence's permission shape.
+// (id/fingerprint, kind, service, pattern).
+//
+// v0.9.1136 (A7) — viewer-readable. Eskiden createAnomalySilence'ın
+// kapısını AYNALIYORDU (editor), ama silence YAZMASI zaten kendi
+// başına editor-kapılı ve aynı satırlar /api/anomalies/events +
+// MCP list_anomalies'ten kapısız görünüyordu: okuma kapısı hiçbir
+// şey korumuyor, yalnız viewer'ın Cmd-K paletini bozuyordu
+// (invariant #7: viewer state'i GÖRÜR). Gerekçe api.go'daki route
+// satırında.
 func (s *Server) listActiveAnomalies(w http.ResponseWriter, r *http.Request) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	limit := parseInt(r.URL.Query().Get("limit"), 20)

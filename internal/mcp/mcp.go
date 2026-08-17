@@ -27,10 +27,31 @@
 // Auth: the HTTP handlers in this package are wrapped by the same
 // auth middleware as /api/*. Browser sessions work via the JWT
 // cookie; programmatic clients (Claude Desktop, internal LLMs)
-// obtain a token via POST /api/auth/login then carry it in the
-// Authorization: Bearer header. This avoids inventing a separate
-// API key system — viewer/editor/admin roles apply to MCP calls
-// exactly as they do to REST.
+// carry either a JWT (POST /api/auth/login) or a cmk_ service token
+// in the Authorization: Bearer header. So every MCP call arrives
+// authenticated with the SAME Claims a REST call would carry.
+//
+// Roles, precisely (v0.9.1136 — AI Faz 3.1): the middleware proves
+// WHO, but this package has no route table to hang auth.RequireRole
+// off — one HTTP endpoint fronts every method. So authorization is
+// per-REGISTRY-ENTRY metadata plus one gate:
+//
+//	Tool/Resource/ResourceTemplate/Prompt.MinRole — "" means
+//	"any authenticated identity" (the viewer floor); "editor" /
+//	"admin" raise it.
+//
+//	CallGate (SetCallGate, implemented in api/mcp_gate.go) is
+//	consulted before EVERY tools/call, resources/read and
+//	prompts/get, and receives the resolved MinRole. It answers the
+//	role question first, then the rate question.
+//
+// Before v0.9.1136 this comment claimed "roles apply to MCP exactly
+// as they do to REST". That was FALSE: the gate read only the
+// identity (for rate limiting) and never the role, and
+// resources/read + prompts/get bypassed the gate entirely — so a
+// viewer token reached data a REST viewer was refused
+// (GET /api/anomalies/active). The mechanism above is what makes
+// the sentence true; keep them in sync.
 //
 // Transport choice: this implementation uses the original
 // HTTP+SSE transport (MCP spec 2024-11-05). Newer Streamable-HTTP
@@ -48,6 +69,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -123,6 +145,11 @@ const (
 	// tool-use döngüleri bunu sonuç olarak görür, bekleyip yeniden
 	// dener.
 	ErrRateLimited = -32000
+	// ErrForbidden (v0.9.1136) — kapının ROL reddi. Rate reddinden
+	// AYRI kod: rate "bekle, sonra tekrar dene", rol "bu kimlikle
+	// asla" demek. İkisini tek kodda birleştirmek modeli sonsuz
+	// yeniden-denemeye iter (ve istemci UI'ı 429 gibi gösterir).
+	ErrForbidden = -32001
 	// MCP-defined application errors live in the
 	// -32099..-32000 server-error band. ErrToolNotFound is
 	// the only one we need at v0.6.4; tools/resources/prompts
@@ -214,6 +241,18 @@ type Tool struct {
 	Description string
 	InputSchema map[string]any
 	Handler     ToolHandler
+	// MinRole (v0.9.1136) — en düşük rol; "" = viewer tabanı, yani
+	// kimliği doğrulanmış HERKES. Alan yalnız METADATA'dır: zorlama
+	// CallGate'te (api/mcp_gate.go). Tek kayıt defteri iki tüketiciyi
+	// birden besler (MCP dispatch + in-app sohbet spec listesi), yani
+	// burada yazılan kural iki yolda da geçerlidir — sohbet tarafı
+	// aşan tool'u LİSTELEMEZ (gizlemek > reddetmek: reddedilen tool
+	// bir tur harcar), MCP tarafı ÇAĞIRTMAZ.
+	//
+	// REST eşi editor/admin ise buraya da onu yaz — sapma bug'dır
+	// (v0.9.1136 A7: /api/anomalies/active editor'dı, list_anomalies
+	// kapısızdı; REST viewer'a indi, sapma sıfırlandı).
+	MinRole string
 }
 
 // ToolHandler runs one tools/call invocation. Returns a value
@@ -242,6 +281,10 @@ type Resource struct {
 	// request context; the URI is passed through unchanged so
 	// the same Reader can serve a template family.
 	Reader ResourceReader
+	// MinRole — Tool.MinRole ile aynı sözleşme. Resource'lar
+	// v0.9.1136'ya dek kapının TAMAMEN dışındaydı: aynı veriyi
+	// döndüren bir tool gate'liyken URI yan kapısı serbestti.
+	MinRole string
 }
 
 // ResourceTemplate is a URI pattern with {placeholder} segments.
@@ -255,6 +298,9 @@ type ResourceTemplate struct {
 	Description string
 	MimeType    string
 	Reader      ResourceReader
+	// MinRole — Tool.MinRole ile aynı sözleşme; kapı eşleşen
+	// ŞABLONUN değerini kullanır (concrete URI'nin değil).
+	MinRole string
 }
 
 // ResourceReader is the function signature both concrete and
@@ -281,6 +327,11 @@ type Prompt struct {
 	Description string
 	Arguments   []PromptArgument
 	Renderer    PromptRenderer
+	// MinRole — Tool.MinRole ile aynı sözleşme. Prompt renderer'ları
+	// chstore'dan VERİ çeker (in-app ✨ Explain ile aynı gövde), yani
+	// prompts/get bir okuma yoludur, salt şablon dağıtımı değil —
+	// v0.9.1136'ya dek kapısızdı.
+	MinRole string
 }
 
 // PromptArgument describes one input slot for prompts/get. Type
@@ -352,23 +403,78 @@ type Server struct {
 	// resources — boot-time populated, immutable.
 	prompts map[string]Prompt
 
-	// gate (v0.9.14) — opsiyonel tools/call kapısı. Paket
-	// auth-agnostik kalır: kimlik/limit bilgisi api katmanında,
-	// buraya yalnız "geçir/RED" fonksiyonu iner. nil = kapısız.
-	gate ToolCallGate
+	// gate (v0.9.14; v0.9.1136'da rol+yürütme yollarına genişledi) —
+	// opsiyonel çağrı kapısı. Paket auth-agnostik kalır: kimlik/limit
+	// bilgisi api katmanında, buraya yalnız "geçir/RED" fonksiyonu
+	// iner. nil = kapısız.
+	gate CallGate
 }
 
-// ToolCallGate — tools/call öncesi çağrılır; hata dönerse çağrı
-// JSON-RPC -32000 ile reddedilir (HTTP 429 DEĞİL: istemci
-// kütüphaneleri JSON-RPC hatasını LLM'e tool sonucu olarak gösterir,
-// model bekleyip devam edebilir). initialize/tools/list/prompts
-// kapı dışıdır (ucuz keşif).
-type ToolCallGate func(ctx context.Context, tool string) error
+// GateCall — kapıya inen çağrının tanımı. Kind kapının hata metnini
+// doğru isimlendirmesi için ("tool" | "resource" | "prompt"), Name
+// tool adı / resource URI / prompt adı, MinRole ise kayıt defterinden
+// ÇÖZÜLMÜŞ eşiktir ("" = viewer tabanı).
+//
+// Neden struct: v0.9.14'te imza (ctx, tool string) idi ve rol
+// bilgisini taşımıyordu. Üç alanı struct'a almak, bir sonraki
+// genişlemenin (ör. arg boyutu) yine imza kırmasını engeller.
+type GateCall struct {
+	Kind    string
+	Name    string
+	MinRole string
+}
 
-// SetToolCallGate wires the optional rate-limit gate. Boot'ta bir
-// kez çağrılır (api.SetMCP), sonrasında değişmez.
-func (s *Server) SetToolCallGate(g ToolCallGate) {
+// CallGate — tools/call, resources/read ve prompts/get öncesi
+// çağrılır; hata dönerse çağrı JSON-RPC hatasıyla reddedilir (HTTP
+// 429/403 DEĞİL: istemci kütüphaneleri JSON-RPC hatasını LLM'e sonuç
+// olarak gösterir, model okuyup davranışını değiştirebilir). Rol
+// reddi Denied ile sarılırsa -32001, sarılmazsa -32000 döner.
+//
+// initialize/ping/*-list kapı dışıdır (ucuz keşif, veri okumaz).
+// MinRole ÇÖZÜMÜ bu pakette yapılır — kayıt defterinin sahibi
+// burasıdır; api katmanı registry'ye uzanmak zorunda kalmaz.
+type CallGate func(ctx context.Context, c GateCall) error
+
+// SetCallGate wires the optional gate. Boot'ta bir kez çağrılır
+// (api.SetMCP), sonrasında değişmez.
+func (s *Server) SetCallGate(g CallGate) {
 	s.gate = g
+}
+
+// deniedError — rol reddinin taşıyıcısı. Kapı implementasyonu
+// mcp.Denied(...) ile sarar, dispatcher ErrForbidden'a çevirir.
+type deniedError struct{ msg string }
+
+func (e deniedError) Error() string { return e.msg }
+
+// Denied — kapı implementasyonunun "rol yetersiz" reddi. Metin LLM'e
+// gider, o yüzden gereken rolü ADIYLA söylemesi beklenir.
+func Denied(format string, a ...any) error {
+	return deniedError{msg: fmt.Sprintf(format, a...)}
+}
+
+func isDenied(err error) bool {
+	var d deniedError
+	return errors.As(err, &d)
+}
+
+// runGate — kapıyı çalıştırır; RED ise hazır JSON-RPC hata yanıtı,
+// aksi halde nil döner. Üç dispatch yolu da (tool/resource/prompt)
+// bunu kullanır: kapının yalnız bir kez yazılması, "yeni yol geldi,
+// kapı takılmayı unuttu" sınıfını (v0.9.1136 öncesi resources/prompts
+// bypass'ı) tek noktaya indirir.
+func (s *Server) runGate(ctx context.Context, c GateCall, id json.RawMessage) *Response {
+	if s.gate == nil {
+		return nil
+	}
+	if err := s.gate(ctx, c); err != nil {
+		code := ErrRateLimited
+		if isDenied(err) {
+			code = ErrForbidden
+		}
+		return errorResp(id, code, err.Error())
+	}
+	return nil
 }
 
 // session is the per-client connection state. The outbound
@@ -925,13 +1031,11 @@ func (s *Server) handleToolsCall(ctx context.Context, req *Request) *Response {
 	if !ok {
 		return errorResp(req.ID, ErrMethodNotFound, fmt.Sprintf("tool not found: %s", p.Name))
 	}
-	// v0.9.14 — rate-limit kapısı (varsa) tool çözümünden SONRA,
-	// handler'dan ÖNCE: bilinmeyen tool -32601 kalır, gate yalnız
-	// gerçek çağrıları sayar.
-	if s.gate != nil {
-		if err := s.gate(ctx, p.Name); err != nil {
-			return errorResp(req.ID, ErrRateLimited, err.Error())
-		}
+	// v0.9.14 — kapı (varsa) tool çözümünden SONRA, handler'dan ÖNCE:
+	// bilinmeyen tool -32601 kalır, gate yalnız gerçek çağrıları sayar.
+	// v0.9.1136 — çözülmüş MinRole de kapıya iner; rol reddi -32001.
+	if resp := s.runGate(ctx, GateCall{Kind: "tool", Name: p.Name, MinRole: tool.MinRole}, req.ID); resp != nil {
+		return resp
 	}
 
 	out, err := tool.Handler(ctx, p.Arguments)
@@ -1049,24 +1153,32 @@ func (s *Server) handleResourcesRead(ctx context.Context, req *Request) *Respons
 	}
 
 	s.mu.RLock()
-	if r, ok := s.resources[p.URI]; ok {
-		reader := r.Reader
-		mime := r.MimeType
-		s.mu.RUnlock()
-		text, err := reader(ctx, p.URI)
-		if err != nil {
-			return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
-		}
-		return successResp(req.ID, map[string]any{
-			"contents": []resourceContent{{URI: p.URI, MimeType: mime, Text: text}},
-		})
-	}
+	res, static := s.resources[p.URI]
 	// Templates by prefix+suffix match. On the order of 10 templates
 	// expected, not 10000, so the O(n) scan is fine.
 	tmpls := append([]ResourceTemplate(nil), s.resourceTemplates...)
 	s.mu.RUnlock()
+
+	if static {
+		// v0.9.1136 — kapı, çözümden SONRA: bilinmeyen URI -32601
+		// kalır, kapı yalnız gerçek okumaları görür (tools/call ile
+		// aynı sıra).
+		if resp := s.runGate(ctx, GateCall{Kind: "resource", Name: p.URI, MinRole: res.MinRole}, req.ID); resp != nil {
+			return resp
+		}
+		text, err := res.Reader(ctx, p.URI)
+		if err != nil {
+			return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
+		}
+		return successResp(req.ID, map[string]any{
+			"contents": []resourceContent{{URI: p.URI, MimeType: res.MimeType, Text: text}},
+		})
+	}
 	for _, rt := range tmpls {
 		if uriMatches(rt.URITemplate, p.URI) {
+			if resp := s.runGate(ctx, GateCall{Kind: "resource", Name: p.URI, MinRole: rt.MinRole}, req.ID); resp != nil {
+				return resp
+			}
 			text, err := rt.Reader(ctx, p.URI)
 			if err != nil {
 				return errorResp(req.ID, ErrInternal, "read resource: "+err.Error())
@@ -1205,6 +1317,12 @@ func (s *Server) handlePromptsGet(ctx context.Context, req *Request) *Response {
 	s.mu.RUnlock()
 	if !ok {
 		return errorResp(req.ID, ErrMethodNotFound, fmt.Sprintf("prompt not found: %s", p.Name))
+	}
+	// v0.9.1136 — kapı çözümden hemen sonra, arg doğrulamasından ÖNCE:
+	// yetki soru sırasında validasyondan önce gelir (yoksa yetkisiz
+	// istemci "hangi arg eksik" bilgisini kapı ardından sızdırabilir).
+	if resp := s.runGate(ctx, GateCall{Kind: "prompt", Name: p.Name, MinRole: prompt.MinRole}, req.ID); resp != nil {
+		return resp
 	}
 	if p.Arguments == nil {
 		p.Arguments = map[string]string{}

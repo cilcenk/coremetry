@@ -194,8 +194,16 @@ type Server struct {
 	// clients (Claude Desktop, Anthropic API tool-calling,
 	// internal copilots). nil-safe: routes are only registered
 	// when SetMCP is called from main(). HTTP+SSE transport on
-	// /api/mcp/sse + /api/mcp/messages; auth via the existing
-	// JWT middleware so role-based access carries into MCP.
+	// /api/mcp/sse + /api/mcp/messages, Streamable-HTTP on
+	// /api/mcp; auth via the existing JWT/cmk_ middleware.
+	//
+	// Rol taşıması (v0.9.1136): middleware yalnız KİMLİĞİ taşır —
+	// MCP'nin tek uç noktası var, dolayısıyla auth.RequireRole
+	// takılacak bir route tablosu yok. Rol zorlaması mcpCallGate'te
+	// (mcp_gate.go) mcp.Tool/Resource/Prompt.MinRole'e karşı yapılır.
+	// Bu satır v0.9.1136'ya dek "role-based access carries into MCP"
+	// diyordu; kapı rolü HİÇ okumuyordu — yorum yanlıştı, mekanizma
+	// artık var.
 	mcp *mcp.Server
 
 	// Demo deployments only — when true, /api/auth/config returns
@@ -338,10 +346,13 @@ func (s *Server) SetAutocomplete(a *acache.Store) {
 func (s *Server) SetMCP(m *mcp.Server) {
 	s.mcp = m
 	if m != nil {
-		// v0.9.14 — tools/call kapısı: kimlik başına 60/dk
-		// (mcp_gate.go). Paket auth-agnostik kalır; kimliği api
-		// katmanı context'ten okur.
-		m.SetToolCallGate(s.mcpToolGate)
+		// v0.9.14 — çağrı kapısı: kimlik başına 60/dk (mcp_gate.go).
+		// v0.9.1136 — aynı kapı artık ROL de kontrol ediyor (mcp.Tool/
+		// Resource/Prompt.MinRole) ve tools/call'ın yanı sıra
+		// resources/read + prompts/get yollarını da kapsıyor. Paket
+		// auth-agnostik kalır; kimliği api katmanı context'ten okur,
+		// MinRole çözümünü mcp paketi (registry sahibi) yapar.
+		m.SetCallGate(s.mcpCallGate)
 	}
 }
 
@@ -939,9 +950,19 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	// — no collision (audit CHECK 7).
 	mux.HandleFunc("GET /api/anomalies/{id}/rootcause/explain", s.getAnomalyRootCauseExplain)
 	// Cmd-K palette autocomplete for the "silence anomaly" action
-	// (v0.5.459). Editor-gated since the only useful next step is
-	// creating a silence, and that's editor-gated too.
-	mux.HandleFunc("GET /api/anomalies/active", auth.RequireAnyRole(editorRoles, s.listActiveAnomalies))
+	// (v0.5.459). v0.9.1136 (AI Faz 3.1, A7) — editor kapısı KALDIRILDI,
+	// viewer okuyabiliyor. Üç gerekçe, hepsi doğrulandı:
+	//   1. invariant #7 — viewer state'i GÖRÜR, yazmaz;
+	//   2. tek anlamlı sonraki adım olan silence YAZMASI ayrı ve kendi
+	//      başına editor-kapılı (aşağıdaki POST/DELETE/bulk-delete) —
+	//      okumayı da kapamak hiçbir şey korumuyordu;
+	//   3. AYNI satırlar zaten kapısız iki yoldan görünüyordu:
+	//      GET /api/anomalies/events ve MCP list_anomalies (ikisi de
+	//      ListAnomalyEvents okur). Yani kapı yalnız Cmd-K paletini
+	//      viewer'a bozuyordu, veriyi gizlemiyordu.
+	// Böylece REST↔MCP sapma tablosu SIFIRA indi: list_anomalies
+	// MinRole "" kalır (mcptools/tools.go).
+	mux.HandleFunc("GET /api/anomalies/active", s.listActiveAnomalies)
 	// Anomaly silencing — editor+ can mute/unmute (invariant #7:
 	// viewer = read-only everywhere). A silence suppresses a signal
 	// for EVERY operator, so it's a state mutation, not a personal

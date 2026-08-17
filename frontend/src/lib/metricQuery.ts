@@ -1,4 +1,5 @@
 import type { TimeRange } from './types';
+import { withMetricSource } from './metricSource';
 
 // metricQuery.ts — "Every metric is a doorway." The canonical typed
 // descriptor that every metric panel/KPI carries and the Metric Explorer
@@ -122,8 +123,12 @@ export function describeMetricQuery(mq: MetricQuery): string {
 // metricExploreHref is the canonical "open this metric in the explorer" link.
 // The reusable panel affordance + every click-to-explore uses it; the Explorer
 // route decodes ?m= back into its builder.
+// v0.9.1161 — deneme modu (?metricsrc=vm) derin linkte de taşınır: panel
+// VM verisi gösterirken tıkla-Explore'un CH'de açılması, operatörün "aynı
+// metriğin eski hâli"ne bakması demekti (operator-reported). withMetricSource
+// param yokken bayt-aynı döner.
 export function metricExploreHref(mq: MetricQuery): string {
-  return `/explore?m=${encodeMetricQuery(mq)}`;
+  return withMetricSource(`/explore?m=${encodeMetricQuery(mq)}`);
 }
 
 function base64urlEncode(s: string): string {

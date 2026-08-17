@@ -4703,6 +4703,14 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 		maxDP = 4000
 	}
 	name := q.Get("name")
+	// v0.9.1152 — isim yokluğu İSTEMCİ hatasıdır: store katmanının
+	// "metric name required" hatası VM yolunda errUpstream sarmalına
+	// girip 502 görünüyordu (1150 canlı doğrulama bulgusu) — operatörü
+	// sağlıklı VM'yi kontrol etmeye gönderir. Kaynağa hiç inmeden 400.
+	if strings.TrimSpace(name) == "" {
+		http.Error(w, "name (metrik adı) parametresi zorunlu", http.StatusBadRequest)
+		return
+	}
 	svc := q.Get("service")
 	agg := q.Get("agg")
 	groupByRaw := q.Get("groupBy")

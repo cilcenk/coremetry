@@ -6,7 +6,7 @@ docs/plans/ai-assistant-design-2026-08-16.md §K7)
 
 ## 1. Token üret
 
-Settings → API Tokens → **New token**, rol: **viewer** (19 tool'un
+Settings → API Tokens → **New token**, rol: **viewer** (24 tool'un
 tamamı salt-okunur ve hepsi viewer seviyesinde — editor/admin
 GEREKMEZ). `cmk_…` değeri yalnız oluşturma anında görünür; kasaya
 koy. İptal: aynı ekrandan Revoke (anında, cache invalidation'lı).
@@ -32,7 +32,9 @@ Rol zorlaması nerede: her tool/resource/prompt kaydı bir `MinRole`
 taşır (`internal/mcp`), kapı (`internal/api/mcp_gate.go`) çağrı
 öncesi token rolüyle karşılaştırır. Yetersizse JSON-RPC **-32001** ve
 gereken rolü söyleyen okunur bir metin döner (model boşuna yeniden
-denemez). Bugün 19 tool'un tamamı `MinRole=""` (viewer tabanı).
+denemez). Bugün 24 tool'un tamamı `MinRole=""` (viewer tabanı; v0.9.1141'ta
+beş keşif tool'u eklendi — list_operations / list_environments /
+list_clusters / list_deploys / find_trace_by_span).
 
 ## 2. Bağlan
 

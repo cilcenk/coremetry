@@ -22,7 +22,11 @@
 import { describe, it, expect, vi, beforeAll, afterEach } from 'vitest';
 import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { MemoryRouter } from 'react-router-dom';
 import { spanSeriesToFrames } from '@/lib/chart/dataFrame';
+import type { PanelMenuAction } from '@/lib/chart/panelMenu';
+import { MetricPanel } from '@/components/MetricPanel';
+import { metricQuery } from '@/lib/metricQuery';
 
 // jsdom'da window.matchMedia YOK ve uPlot onu MODÜL YÜKLENİRKEN çağırıyor
 // (setPxRatio, uPlot.cjs.js:80) — yani import zincirinden önce durmalı.
@@ -405,5 +409,155 @@ describe('CorePanel çubuk tabanı sıfır (v0.9.811)', () => {
       data={{ state: 'ready', frames: TWO_SERIES }} />);
     const lo = Number(yRange(el, 'neg').split(',')[0]);
     expect(lo).toBeLessThan(-40); // veri minimumunun ALTINDA, 0'da değil
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v0.9.1163 — PANEL BAŞINA TEK ⋯ (operatör-raporlu, ekran görüntülü).
+//
+// Belirti: servis Overview'ının üç grafik panelinde İKİ ⋯ vardı. Dış
+// sarmalayıcı (MetricPanel, compact modda sağ-üste mutlak) kapı eylemlerini,
+// içteki CorePanel kendi başlık satırında panel eylemlerini taşıyordu.
+//
+// Neden MOUNT testi: kusur bir SAYIdır — aynı köşedeki tetik sayısı. Kaynak
+// taraması iki bileşenin ayrı ayrı bir kebap çizdiğini görür ama İKİSİNİN
+// AYNI AĞAÇTA olduğunu göremez; tam bu yüzden 69 sürüm boyunca kimse
+// yakalamadı. Sayaç `aria-haspopup="menu"` üzerinden: iki tetiğin de
+// taşıdığı tek ortak nitelik ve bir dropdown tetiğinin TANIMI.
+// ---------------------------------------------------------------------------
+const kebabs = (el: HTMLElement) =>
+  Array.from(el.querySelectorAll('button[aria-haspopup="menu"]'));
+
+const rowLabels = (el: HTMLElement) =>
+  Array.from(el.querySelectorAll('[role="menuitem"]')).map(n => n.textContent);
+
+function openMenu(el: HTMLElement, i = 0) {
+  const t = kebabs(el)[i];
+  expect(t, 'kebap tetiği bulunamadı').toBeDefined();
+  act(() => { t.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+}
+
+function clickRow(el: HTMLElement, label: string) {
+  const row = Array.from(el.querySelectorAll('[role="menuitem"]'))
+    .find(n => n.textContent === label) as HTMLButtonElement | undefined;
+  expect(row, `menü satırı yok: ${label}`).toBeDefined();
+  act(() => { row!.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+}
+
+describe('CorePanel menuExtra (v0.9.1163)', () => {
+  const ready = { state: 'ready', frames: TWO_SERIES } as const;
+
+  it('devredilen satırlar YERLİLERİN ÜSTÜNDE, aralarında ayraç', () => {
+    const extra: PanelMenuAction[] = [
+      { key: 'a', label: '⤢ Kapı A', onClick: () => {} },
+      { key: 'b', label: '⧉ Kapı B', onClick: () => {} },
+    ];
+    const el = render(
+      <CorePanel title="L" storageKey="me-order" queryText="q" logScaleToggle
+        menuExtra={extra} data={ready} />);
+    openMenu(el);
+    // Sıra SÖZLEŞME: sarmalayıcının vaadi "bu panel bir kapıdır", yani ⋯
+    // önce kapıyı açar; panelin yerlileri altta.
+    expect(rowLabels(el)).toEqual([
+      '⤢ Kapı A', '⧉ Kapı B',
+      'Tam ekran', 'CSV indir', 'Sorguyu göster', 'Log ölçek',
+    ]);
+    expect(el.querySelectorAll('[role="separator"]').length).toBe(1);
+  });
+
+  it('menuExtra YOKKEN ayraç çizilmez (tek aile, bölünecek şey yok)', () => {
+    const el = render(
+      <CorePanel title="L" storageKey="me-none" queryText="q" data={ready} />);
+    openMenu(el);
+    expect(el.querySelectorAll('[role="separator"]').length).toBe(0);
+    expect(rowLabels(el)).toEqual(['Tam ekran', 'CSV indir', 'Sorguyu göster']);
+  });
+
+  it('BB10 borcu kapandı: menüdeki HER satır role="menuitem" taşır', () => {
+    // Yerliler v0.9.1163\'den önce elle kurulmuş <Button> idi; role="menu"
+    // vaat edip satırlarına menuitem vermeyen bir menü ekran okuyucuya menü
+    // OLARAK tanıtılmaz (v0.9.890/BB10\'un kendi gerekçesi).
+    const el = render(
+      <CorePanel title="L" storageKey="me-a11y" queryText="q" logScaleToggle
+        menuExtra={[{ key: 'a', label: 'A', onClick: () => {} }]} data={ready} />);
+    openMenu(el);
+    const menu = el.querySelector('[role="menu"]')!;
+    const buttons = Array.from(menu.querySelectorAll('button'));
+    expect(buttons.length).toBe(5);
+    for (const b of buttons) expect(b.getAttribute('role')).toBe('menuitem');
+  });
+
+  it('tık eylemi çalıştırır ve menüyü KAPATIR', () => {
+    let n = 0;
+    const el = render(
+      <CorePanel title="L" storageKey="me-click" data={ready}
+        menuExtra={[{ key: 'a', label: 'A', onClick: () => { n++; } }]} />);
+    openMenu(el);
+    clickRow(el, 'A');
+    expect(n).toBe(1);
+    expect(el.querySelector('[role="menu"]'), 'menü açık kaldı').toBeNull();
+  });
+
+  it('keepOpen satırı menüyü AÇIK bırakır (yerinde geri bildirim)', () => {
+    let n = 0;
+    const el = render(
+      <CorePanel title="L" storageKey="me-keep" data={ready}
+        menuExtra={[{ key: 'a', label: 'A', keepOpen: true, onClick: () => { n++; } }]} />);
+    openMenu(el);
+    clickRow(el, 'A');
+    expect(n).toBe(1);
+    expect(el.querySelector('[role="menu"]'), 'keepOpen menüyü kapattı').not.toBeNull();
+  });
+
+  it('disabled satır basılı ve tık YUTULUR', () => {
+    let n = 0;
+    const el = render(
+      <CorePanel title="L" storageKey="me-dis" data={ready}
+        menuExtra={[{ key: 'a', label: 'A', disabled: true, onClick: () => { n++; } }]} />);
+    openMenu(el);
+    const row = el.querySelector('[role="menuitem"]') as HTMLButtonElement;
+    expect(row.disabled).toBe(true);
+    act(() => { row.dispatchEvent(new MouseEvent('click', { bubbles: true })); });
+    expect(n).toBe(0);
+  });
+
+  // ── KUSURUN KENDİSİ ────────────────────────────────────────────────────
+  it('🔴 MetricPanel devrederken ağaçta TEK ⋯ kalır (çift kebap)', () => {
+    const mq = metricQuery({ metric: 'calls_total', agg: 'rate' });
+    const el = render(
+      <MemoryRouter>
+        <MetricPanel compact menuOnly suppressMenu title="Response time" metricQuery={mq}>
+          {(doorway) => (
+            <CorePanel title="Response time" storageKey="me-single" queryText="q"
+              menuExtra={doorway} data={ready} />
+          )}
+        </MetricPanel>
+      </MemoryRouter>);
+
+    // Kusur buydu: 2.
+    expect(kebabs(el).length, 'panelde birden fazla ⋯ tetiği').toBe(1);
+
+    openMenu(el);
+    // TEK listede İKİ aile: kapı eylemleri üstte, panel eylemleri altta.
+    expect(rowLabels(el)).toEqual([
+      '⤢ Explore', '✎ Edit', '⟨⟩ View query', '⧉ Copy link',
+      'Tam ekran', 'CSV indir', 'Sorguyu göster',
+    ]);
+    expect(el.querySelectorAll('[role="menu"]').length, 'iki dropdown açıldı').toBe(1);
+  });
+
+  it('bastırılmayan MetricPanel kebabını KORUR (KPI karoları bu yolda)', () => {
+    const mq = metricQuery({ metric: 'calls_total', agg: 'rate' });
+    const el = render(
+      <MemoryRouter>
+        <MetricPanel compact menuOnly title="KPI" metricQuery={mq}>
+          <div>karo</div>
+        </MetricPanel>
+      </MemoryRouter>);
+    expect(kebabs(el).length).toBe(1);
+    openMenu(el);
+    expect(rowLabels(el)).toEqual([
+      '⤢ Explore', '✎ Edit', '⟨⟩ View query', '⧉ Copy link',
+    ]);
   });
 });

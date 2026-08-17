@@ -11,25 +11,29 @@ import {
   metricExploreHref,
   type MetricQuery,
 } from '@/lib/metricQuery';
+import type { PanelMenuAction } from '@/lib/chart/panelMenu';
 
 // MetricPanel — "every metric is a doorway." The ONE reusable affordance every
 // metric panel/KPI opts into so there are zero per-page click handlers: a panel
 // hands its MetricQuery descriptor, the wrapper turns it into the deep-link
-// menu (Explore / Edit / View query / Copy link / Add to dashboard / Create
-// alert). The same object that draws the chart is the object the explorer
-// re-opens (see lib/metricQuery.ts). Grafana-grade unobtrusive: a hover cursor
-// + the ⋮ overflow button only appearing on hover; the chart itself is NOT
-// restyled — children render verbatim.
+// menu (Explore / Edit / View query / Copy link). The same object that draws
+// the chart is the object the explorer re-opens (see lib/metricQuery.ts).
+// Grafana-grade unobtrusive: a hover cursor + the ⋯ overflow button only
+// appearing on hover; the chart itself is NOT restyled — children render
+// verbatim.
 //
 // Interactions:
 //   • header title click / body click  → Explore (metricExploreHref)
-//   • ⋮ menu                            → all six actions, all driven by `mq`
+//   • ⋯ menu                            → the four actions, all driven by `mq`
 //   • keyboard `e` while hovered/focused → Explore
+//
+// v0.9.1163 — sarmalanan içerik KENDİ ⋯'ünü taşıyorsa (CorePanel) bu
+// sarmalayıcı kebabını bastırıp eylemlerini ona DEVREDER: panel başına tek
+// tetik, tek dropdown. Bkz. `suppressMenu` + lib/chart/panelMenu.ts.
 
-export interface MetricPanelProps {
+export interface MetricPanelBaseProps {
   title: string;
   metricQuery: MetricQuery;
-  children: ReactNode;
   // className/style pass through to the outer wrapper so a caller can size it
   // inside a grid without MetricPanel imposing layout.
   className?: string;
@@ -49,9 +53,32 @@ export interface MetricPanelProps {
   menuOnly?: boolean;
 }
 
+// v0.9.1163 (operatör-raporlu: "servis Overview panellerinde çift ⋯") —
+// MENÜYÜ DEVRETME. Sarmalanan içerik KENDİ ⋯'ünü taşıyan bir panelse
+// (CorePanel: tam ekran / CSV / sorguyu göster / log) iki tetik aynı köşede
+// üst üste geliyordu. `suppressMenu` bu sarmalayıcının kebabını kaldırır ve
+// dört kapı eylemini içteki panele devreder.
+//
+// API GEREKÇESİ — neden çıplak bir boolean DEĞİL: bastırmak, eylemleri
+// başka bir yere BAĞLAMADAN yapılabilseydi affordance sessizce ÖLÜRDÜ
+// (bu depoda tekrar eden sınıf: "ölü affordance", "yarım kablo
+// bırakmıyoruz"). Bu yüzden tip ayrık birleşim: `suppressMenu` FONKSİYON
+// çocuk zorunlu kılıyor ve fonksiyon eylemleri ELİNE veriyor —
+// bastırıp devretmeyi unutan bir çağrı derlenmez. Kapı tsc'nin kendisi,
+// kırılgan bir kaynak taraması değil.
+//
+// Bastırılmayan çağrılar (KPI karoları, ServiceCharts kartları) bayt bayt
+// aynı kalır: kendi hover ⋯'lerini çizmeye devam ederler.
+export type MetricPanelProps = MetricPanelBaseProps & (
+  | { suppressMenu?: false; children: ReactNode }
+  | { suppressMenu: true; children: (actions: PanelMenuAction[]) => ReactNode }
+);
+
 type MenuAction = 'explore' | 'edit' | 'view' | 'copy';
 
-export function MetricPanel({ title, metricQuery: mq, children, className, style, compact = false, menuOnly = false }: MetricPanelProps) {
+export function MetricPanel(props: MetricPanelProps) {
+  const { title, metricQuery: mq, className, style, compact = false, menuOnly = false } = props;
+  const suppressMenu = props.suppressMenu === true;
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
   const [viewOpen, setViewOpen] = useState(false);
@@ -93,8 +120,11 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
     explore();
   };
 
+  // v0.9.1163 — menüyü artık runAction KAPATMIYOR: kapanış kararı satır
+  // sözleşmesine (PanelMenuAction.keepOpen) taşındı, çünkü aynı dört eylem
+  // İKİ dropdown'da basılabiliyor (buradaki kendi menümüz + devredildiğinde
+  // panelin menüsü) ve iki yerde iki farklı kapanış kuralı bir gün ayrışırdı.
   const runAction = (a: MenuAction) => {
-    setMenuOpen(false);
     switch (a) {
       case 'explore':
         navigate(href);
@@ -115,6 +145,11 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
         // the operator pasted nothing into their runbook. Now it flashes
         // only on a real copy, and the shared helper adds the textarea
         // fallback this surface never had.
+        // v0.9.1163 — "flash" artık ayrı bir çip değil, SATIRIN KENDİ
+        // etiketi ('⧉ Copied') ve o satır menüyü açık bırakıyor. Eski çip
+        // mutlak konumluydu (top:6/right:6) ve devredilmiş modda panelin
+        // başlık satırındaki ⋯'ün TAM ÜSTÜNE düşüyordu. Tek kanal, iki
+        // modda da görünür; v0.8.550'nin kuralı aynen: yalnız gerçek kopya.
         void copyToClipboard(window.location.origin + href).then(ok => {
           if (!ok) return;
           setLinkCopied(true);
@@ -141,6 +176,28 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
     e.preventDefault();
     explore();
   };
+
+  // v0.9.1163 — DÖRT EYLEM TEK LİSTEDE tanımlı. Öncesinde satırlar JSX'te
+  // elle yazılıydı; devretme gelince aynı dördü ikinci kez (şekil olarak)
+  // yazmak gerekirdi ve iki liste bir gün ayrışırdı. Artık tek kaynak: hem
+  // bizim dropdown'ımız hem devredilen panel BU diziyi basıyor.
+  //
+  // Explore adresi `href` = metricExploreHref(mq) — yani v0.9.1161'in
+  // withMetricSource sarması (?metricsrc=vm deneme modunun derin linkte
+  // taşınması) devredilen satıra da BEDAVA geliyor; ikinci bir adres kurma
+  // yolu doğmadığı için bozulması da imkânsız.
+  const actions: PanelMenuAction[] = [
+    { key: 'explore', label: '⤢ Explore', onClick: () => runAction('explore') },
+    { key: 'edit', label: '✎ Edit', onClick: () => runAction('edit') },
+    { key: 'view', label: '⟨⟩ View query', onClick: () => runAction('view') },
+    {
+      key: 'copy',
+      label: linkCopied ? '⧉ Copied' : '⧉ Copy link',
+      onClick: () => runAction('copy'),
+      // Geri bildirim satırın kendisinde okunuyor → menü açık kalmalı.
+      keepOpen: true,
+    },
+  ];
 
   // The ⋮ overflow button + its dropdown. Shared by both layouts (header vs
   // compact overlay) so the menu reads identically; only the positioning of the
@@ -176,10 +233,12 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
             boxShadow: 'var(--shadow-pop)', padding: 4, zIndex: 'var(--z-dropdown)',
           }}
         >
-          <PanelMenuItem onClick={() => runAction('explore')}>⤢ Explore</PanelMenuItem>
-          <PanelMenuItem onClick={() => runAction('edit')}>✎ Edit</PanelMenuItem>
-          <PanelMenuItem onClick={() => runAction('view')}>⟨⟩ View query</PanelMenuItem>
-          <PanelMenuItem onClick={() => runAction('copy')}>⧉ Copy link</PanelMenuItem>
+          {actions.map(a => (
+            <PanelMenuItem key={a.key}
+              onClick={() => { if (!a.keepOpen) setMenuOpen(false); a.onClick(); }}>
+              {a.label}
+            </PanelMenuItem>
+          ))}
         </div>
       )}
     </div>
@@ -220,32 +279,34 @@ export function MetricPanel({ title, metricQuery: mq, children, className, style
             {title}
           </button>
           <span style={{ flex: 1 }} />
-          {linkCopied && (
-            <span style={{ fontSize: 11, color: 'var(--ok)' }}>Copied</span>
-          )}
-          {overflow}
+          {!suppressMenu && overflow}
         </div>
       )}
 
       {/* Compact overlay ⋮ — floats top-right OVER the panel so the wrapped
-          tile/chart keeps its own layout (no title row pushes it down). */}
-      {compact && (
+          tile/chart keeps its own layout (no title row pushes it down).
+          v0.9.1163 — devredilmiş modda BU KATMAN HİÇ ÇİZİLMEZ: tetik de,
+          eski "Copied" çipi de panelin başlık satırındaki ⋯ ile aynı köşeye
+          düşüyordu. Boş bir mutlak katman bırakmak da doğru olmazdı —
+          görünmez bir kutu, üstüne düştüğü kontrolün tıkını yutabilir. */}
+      {compact && !suppressMenu && (
         <div style={{ position: 'absolute', top: 6, right: 6, zIndex: 4, display: 'flex', alignItems: 'center', gap: 6 }}>
-          {linkCopied && (
-            <span style={{ fontSize: 11, color: 'var(--ok)' }}>Copied</span>
-          )}
           {overflow}
         </div>
       )}
 
       {/* Body — the chart/stat, rendered verbatim. Clicking it also Explores;
-          children stop propagation themselves if they have own click targets. */}
+          children stop propagation themselves if they have own click targets.
+          v0.9.1163 — devredilmiş modda çocuk bir FONKSİYON: dört kapı eylemi
+          eline verilir, o da sardığı panele menuExtra olarak geçirir. Dal
+          `props` üzerinden yazılı (yıkımdan sonra değil) ki TS ayrık birleşimi
+          daraltsın — `as` ile zorlamaya gerek yok. */}
       <div
         onClick={menuOnly ? undefined : onBodyClick}
         style={{ cursor: menuOnly ? 'default' : 'pointer' }}
         title={menuOnly ? undefined : 'Open in Explore (press e)'}
       >
-        {children}
+        {props.suppressMenu ? props.children(actions) : props.children}
       </div>
 
       {/* View-query popover — read-only PromQL-style projection + Copy. */}

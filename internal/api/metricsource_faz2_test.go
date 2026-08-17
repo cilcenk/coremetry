@@ -458,3 +458,19 @@ var _ = func() bool {
 	} = vmMetricSource{}
 	return true
 }()
+
+// v0.9.1158 — CH değerlendiricisinin sorgu-şekli hataları 400 sınıfına
+// sarılır (1157 canlı doğrulama bulgusu: range_last CH'de 500 dönüyordu;
+// 1152/1155 sınıfının promql yolu). Önek sözleşmesini iki yönden pinler:
+// "promql:" önekli hata errBadRequest'e sarılır, öneksiz (store) hata
+// olduğu gibi kalır.
+func TestPromQLEvalQueryShapeErrorsAreBadRequest(t *testing.T) {
+	shape := errors.New("promql: function \"range_last\" is not supported yet")
+	if wrapped := classifyPromQLEvalErr(shape); !errors.Is(wrapped, errBadRequest) {
+		t.Fatalf("sorgu-şekli hatası errBadRequest'e sarılmadı: %v", wrapped)
+	}
+	store := errors.New("clickhouse: read timeout")
+	if wrapped := classifyPromQLEvalErr(store); errors.Is(wrapped, errBadRequest) {
+		t.Fatalf("store hatası yanlışlıkla 400 sınıfına girdi: %v", wrapped)
+	}
+}

@@ -98,8 +98,30 @@ func (s *Server) queryPromQL(w http.ResponseWriter, r *http.Request) {
 	key := fmt.Sprintf("promql:src=%s:q=%s:step=%d:mdp=%d:from=%d:to=%d",
 		src.Name(), query, step, maxDP, from.Unix()/60, to.Unix()/60)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		return src.QueryPromQLRange(ctx, query, from, to, step, maxDP)
+		res, err := src.QueryPromQLRange(ctx, query, from, to, step, maxDP)
+		// v0.9.1158 — CH değerlendiricisinin SORGU-ŞEKLİ hataları
+		// ("promql:" önekli: desteklenmeyen fonksiyon, subquery, seri
+		// tavanı, yanlış argüman) istemci hatasıdır; sarmasız hâli 500
+		// görünüyordu (1157 canlı doğrulama bulgusu — 1152/1155
+		// sınıfının promql yolu). Önek sözleşmesi: internal/promql'in
+		// TÜM kendi hataları "promql:" ile başlar, store'dan yükselen
+		// okuma hataları başlamaz ve 500/502 sınıfında kalır.
+		if err != nil {
+			return nil, classifyPromQLEvalErr(err)
+		}
+		return res, nil
 	})
+}
+
+// classifyPromQLEvalErr — değerlendirici hatasının sınıfı. Önek
+// sözleşmesi: internal/promql'in TÜM kendi hataları "promql:" ile
+// başlar (sorgu şekli — istemci hatası, 400); store'dan yükselen okuma
+// hataları başlamaz ve 500/502 sınıfında kalır. Saf; tablo-testli.
+func classifyPromQLEvalErr(err error) error {
+	if strings.HasPrefix(err.Error(), "promql:") {
+		return fmt.Errorf("%w: %v", errBadRequest, err)
+	}
+	return err
 }
 
 func writePromQLError(w http.ResponseWriter, status int, msg string) {

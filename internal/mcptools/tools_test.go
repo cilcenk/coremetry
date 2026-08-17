@@ -119,6 +119,20 @@ func TestEnvArgAdditive(t *testing.T) {
 		// araması VE okuması logstore.Search (search_logs gibi env
 		// uygulayamıyor). İki bağımsız sebep, aynı sonuç.
 		"find_trace_by_request_id",
+		// v0.9.1146 (Faz 3.3) — analiz tool'ları, yine tool BAŞINA ve üçü
+		// FARKLI sebeple env'siz:
+		//   - get_topology: topology_edges_5m'de parent_env/child_env VAR
+		//     ama GÖSTERİM amaçlı; env ORDER BY'da olmadığı için aynı adlı
+		//     servis ortamlar arasında dedup'ta BİRLEŞİYOR (v0.5.410) —
+		//     okuma süzemez, arg uygulanamayacak bir filtre vaat ederdi.
+		//     Annotation kenar satırında ifşa ediliyor, filtre olarak değil.
+		//   - get_blast_radius: service_callers_5m'de env KOLONU yok.
+		//   - get_log_histogram: logstore.Filter.Env var ama ES'te alan
+		//     keşfi düşerse filtre sessizce uygulanmıyor ve Histogram'ın
+		//     dönüş şekli ([]LogSeries) "uygulanmadı" bayrağını TAŞIYAMIYOR
+		//     (v0.9.288'de partial de aynı yüzden taşınamadı). Burada bir
+		//     env arg'ı = rapor edilemeyen yarım destek.
+		"get_topology", "get_blast_radius", "get_log_histogram",
 	}
 	for _, name := range envBlind {
 		tool := toolByName(t, tools, name)

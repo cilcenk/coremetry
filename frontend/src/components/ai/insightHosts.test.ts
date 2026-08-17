@@ -47,38 +47,18 @@ function element(src: string, tag: string): string {
   return src.slice(i, j + 2);
 }
 
-describe('exception satırı — yuva bağlı (AnomaliesPage)', () => {
+describe('exception satırı — yuva KALDIRILDI (AnomaliesPage)', () => {
   const src = read('features/anomalies/AnomaliesPage.tsx');
 
-  it('yuvanın üç birimi de import edilmiş ve kanca DOĞRU türle çağrılmış', () => {
-    expect(src).toContain("from '@/components/ai/insightRow'");
-    expect(src).toMatch(/useInsightRow\('exception'\)/);
-    expect(src).toContain('<InsightRowChip');
-    expect(src).toContain('<InsightRowSlot');
-  });
-
-  it('çip satırın KENDİ kimliğini taşıyor (fingerprint)', () => {
-    expect(element(src, 'InsightRowChip')).toContain('insight.toggle(g.fingerprint)');
-    expect(element(src, 'InsightRowChip')).toContain('insight.openId === g.fingerprint');
-  });
-
-  it('kart KOŞULLU çizilir — kapalı satır sıfır istek', () => {
-    // Yuva ile aynı satırda ya da hemen öncesinde bir açıklık kapısı
-    // olmalı; koşulsuz bir yuva her satırda LLM çağrısı demek.
-    const i = src.indexOf('<InsightRowSlot');
-    const gate = src.slice(Math.max(0, i - 200), i);
-    expect(gate, 'InsightRowSlot koşulsuz çiziliyor').toMatch(
-      /insight\.openId === g\.fingerprint &&/);
-  });
-
-  it('yuva doğru kind + kapatma yolu ile kuruluyor', () => {
-    const el = element(src, 'InsightRowSlot');
-    expect(el).toContain('kind="exception"');
-    expect(el).toContain('id={g.fingerprint}');
-    expect(el).toContain('onClose={insight.close}');
-    // colSpan admin sütununu SAYAR: yanlış sayı kartı tablonun dışına
-    // taşırır (tableLayout:fixed + colgroup).
-    expect(el).toMatch(/colSpan=\{isAdmin \? 9 : 8\}/);
+  // v0.9.1149 — operatör kararı (2026-08-17): exception satırındaki
+  // "▸ Ne oldu?" çipi kötü görünüyordu ve detaya girince Explain zaten
+  // var. Bu kapı eskisinin TERSİ: çip/yuva sessizce GERİ GELMESİN.
+  // Problems (ProblemsSection) ve desen (streams) yuvaları bilinçli
+  // olarak DURUYOR — aşağıdaki describe'lar onları pinlemeye devam eder.
+  it('insight çipi/yuvası bu listede YOK', () => {
+    expect(src).not.toContain('<InsightRowChip');
+    expect(src).not.toContain('<InsightRowSlot');
+    expect(src).not.toMatch(/useInsightRow\('exception'\)/);
   });
 
   it('worker-yazımı pasif özet satırda ÇİZİLİYOR (sıfır fetch)', () => {

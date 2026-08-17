@@ -32,8 +32,6 @@ import { AlertProblemHost } from './ProblemsSection';
 import { serviceHref } from '@/lib/serviceHref';
 import { QueryError, QueryErrorInline } from '@/components/QueryError';
 import { PageShell } from '@/components/ui/PageShell';
-// v0.9.1133 (AI Faz 2.3) — satır-altı insight kartının yuvası.
-import { useInsightRow, InsightRowChip, InsightRowSlot } from '@/components/ai/insightRow';
 import { stripMarkdown } from '@/components/Markdown';
 import { IconSparkles } from '@/components/icons';
 
@@ -201,14 +199,11 @@ export default function ProblemsPage() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [excParam, data]);
-  // v0.9.1133 (AI Faz 2.3) — "▸ Ne oldu?" kartının açık satırı, `?insight=`
-  // üzerinden. `?exc=` (tam sayfa detay) ile ÇAKIŞMIYOR: bu eksen satırı
-  // yerinde bırakıp altına kanıt açar, o eksen listeyi bırakıp detaya
-  // geçer. Satır tıkı hâlâ detaya gider — çip kendi tık hedefi.
-  // v0.9.1137 (Faz 2.4) — kanca artık TÜR alıyor: `?insight=` değeri
-  // `<kind>:<id>` taşıyor, böylece dört host tek paramı çakışmadan
-  // paylaşıyor (yabancı türün değeri bu sayfada kart AÇMAZ).
-  const insight = useInsightRow('exception');
+  // v0.9.1149 — "▸ Ne oldu?" çipi + satır-altı insight yuvası bu
+  // listeden KALDIRILDI (operatör kararı 2026-08-17: detaya girince
+  // Explain zaten var, satırdaki buton kötü görünüyordu; v0.9.1133'te
+  // gelmişti). Worker-yazımı pasif aiSummary satırı KALIYOR — o buton
+  // değil, sıfır-fetch metin. Problems/desen yuvalarına dokunulmadı.
   const openExcDetail = (g: ExceptionGroup) => {
     setDetail(g);
     setExcNotFound(false);
@@ -585,17 +580,6 @@ export default function ProblemsPage() {
                                 &lt;1h
                               </span>
                             )}
-                            {/* v0.9.1133 (AI Faz 2.3) — insight çipi, satırın
-                                BAŞLIK satırının sağ ucunda (mockup: sağa
-                                yaslı). Kendi şeridinde durması her satıra bir
-                                satır yükseklik eklerdi ve çipin bedeli
-                                "kapalıyken sıfır" olmak zorunda: tablo
-                                yoğunluğu bu sayfada hard kısıt (>100 satır
-                                listesi). Çip zaten var olan başlık satırının
-                                boşluğuna oturuyor. */}
-                            <span style={{ flex: 1 }} />
-                            <InsightRowChip open={insight.openId === g.fingerprint}
-                              onToggle={() => insight.toggle(g.fingerprint)} />
                           </div>
                           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text3)',
                                         maxWidth: 480, overflow: 'hidden',
@@ -674,17 +658,6 @@ export default function ProblemsPage() {
                             <SamplesPanel fingerprint={g.fingerprint} occurrences={Number(g.occurrences)} />
                           </td>
                         </tr>
-                      )}
-                      {/* v0.9.1133 (AI Faz 2.3) — kart YALNIZ açık satırda
-                          mount olur (kapalı satır sıfır istek), kapanınca
-                          unmount edilir ve uçuştaki akış kesilir. Caret'in
-                          örnek-gözü (yukarıdaki satır) ayrı affordance
-                          olarak KALIYOR: o grubun ham occurrence'ları, bu
-                          ise sinyal + anlatı — biri ötekinin özeti değil,
-                          çelişebilecek iki sıralama da değil. */}
-                      {insight.openId === g.fingerprint && (
-                        <InsightRowSlot kind="exception" id={g.fingerprint}
-                          colSpan={isAdmin ? 9 : 8} onClose={insight.close} />
                       )}
                     </Fragment>
                   );

@@ -30,6 +30,19 @@
 //     them into MCP isError=true content. No need to format
 //     them here.
 //
+//   - Yetki (v0.9.1136, AI Faz 3.1): her tool mcp.Tool.MinRole
+//     taşır ve BUGÜN 19'unun tamamı "" (viewer tabanı) — hepsi
+//     salt-okunur ve hepsinin REST eşi viewer'a açık. Tek sapma
+//     list_anomalies↔GET /api/anomalies/active idi (REST editor,
+//     tool kapısız); A7 kararıyla REST viewer'a indi, tool ""
+//     kaldı — sapma sıfır.
+//     YENİ TOOL EKLERKEN: REST eşinin kapısına bak. auth.RequireRole
+//     /RequireAnyRole ile sarılıysa MinRole'ü aynı role AYARLA;
+//     yazma tool'u eklenirse (bu tasarımda yok) MinRole en az
+//     "editor" + audit satırı şart. Zorlama api/mcp_gate.go'daki
+//     kapıdadır; buradaki alan tek gerçek kaynak olduğu için MCP
+//     dispatch'i ve in-app sohbet spec listesi ayrışamaz.
+//
 // Tool catalogue (19 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu):
 //   - list_services
@@ -253,7 +266,7 @@ func registerResources(srv *mcp.Server, d Deps) {
 	srv.RegisterResourceTemplate(mcp.ResourceTemplate{
 		URITemplate: traceTpl,
 		Name:        "Trace detail",
-		Description: "All spans for one trace ID — full waterfall.",
+		Description: "Spans for one trace ID as a waterfall. Bounded exactly like the get_trace tool: at most 200 spans (all ERROR spans first, then the slowest); truncated=true + total_span_count carry the real size when the trace is larger.",
 		MimeType:    "application/json",
 		Reader: func(ctx context.Context, uri string) (string, error) {
 			tid := mcp.ExtractURITemplateValue(traceTpl, uri)
@@ -264,11 +277,11 @@ func registerResources(srv *mcp.Server, d Deps) {
 			if err != nil {
 				return "", err
 			}
-			return marshalJSON(map[string]any{
-				"trace_id":   tid,
-				"spans":      spans,
-				"span_count": len(spans),
-			})
+			// v0.9.1136 — get_trace ile AYNI gövde üreticisi: bu
+			// resource GetTrace'i tavansız döndürüyordu (50k span'e
+			// dek), yani tool 200'de kapılıyken URI yan kapısı model
+			// bağlamını patlatabiliyordu.
+			return marshalJSON(traceBodyPayload(tid, spans))
 		},
 	})
 }
@@ -820,6 +833,22 @@ func capTraceSpans(spans []chstore.SpanRow, max int) ([]chstore.SpanRow, bool) {
 	return picked, true
 }
 
+// traceBodyPayload — get_trace tool'unun VE coremetry://trace/{id}
+// resource'unun ortak gövde üreticisi (v0.9.1136). Tek üretici =
+// iki yol tavanda/alan adlarında asla ayrışmaz; resource'un tavansız
+// kaldığı yan kapı bu yüzden vardı.
+func traceBodyPayload(traceID string, spans []chstore.SpanRow) map[string]any {
+	total := len(spans)
+	capped, truncated := capTraceSpans(spans, getTraceSpanCap)
+	return map[string]any{
+		"trace_id":         traceID,
+		"spans":            capped,
+		"span_count":       len(capped),
+		"total_span_count": total,
+		"truncated":        truncated,
+	}
+}
+
 func getTraceTool(d Deps) mcp.Tool {
 	return mcp.Tool{
 		Name:        "get_trace",
@@ -843,12 +872,7 @@ func getTraceTool(d Deps) mcp.Tool {
 			if err != nil {
 				return nil, err
 			}
-			total := len(spans)
-			capped, truncated := capTraceSpans(spans, getTraceSpanCap)
-			return map[string]any{
-				"trace_id": a.TraceID, "spans": capped, "span_count": len(capped),
-				"total_span_count": total, "truncated": truncated,
-			}, nil
+			return traceBodyPayload(a.TraceID, spans), nil
 		},
 	}
 }

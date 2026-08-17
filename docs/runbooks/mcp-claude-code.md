@@ -1,13 +1,38 @@
 # Runbook — Coremetry MCP'yi Claude Code/Desktop'a bağlama
 
-(v0.9.14; tasarım: docs/audit/mcp-claude-code-production-audit.md)
+(v0.9.14, yetki katmanı v0.9.1136; tasarım:
+docs/audit/mcp-claude-code-production-audit.md +
+docs/plans/ai-assistant-design-2026-08-16.md §K7)
 
 ## 1. Token üret
 
-Settings → API Tokens → **New token**, rol: **viewer** (11 tool'un
-tamamı salt-okunur — editor/admin gerekmez). `cmk_…` değeri yalnız
-oluşturma anında görünür; kasaya koy. İptal: aynı ekrandan Revoke
-(anında, cache invalidation'lı).
+Settings → API Tokens → **New token**, rol: **viewer** (19 tool'un
+tamamı salt-okunur ve hepsi viewer seviyesinde — editor/admin
+GEREKMEZ). `cmk_…` değeri yalnız oluşturma anında görünür; kasaya
+koy. İptal: aynı ekrandan Revoke (anında, cache invalidation'lı).
+
+### Token = rol, kullanıcı DEĞİL (bilinçli sınır)
+
+`cmk_` token'ı bir kullanıcıya bağlı değildir; **kendi rolünü**
+taşır (`Claims.Role` = token'ın rolü, `Claims.UserID` =
+`token:<id>`). Sonuçları:
+
+- **Yetki tamamen token'ın rolüdür.** Token'ı kim kullanıyorsa o rolle
+  konuşur; kişi-bazlı kısıtlama YOK. Tek-kiracılı ürün duruşuyla
+  tutarlı: kişiselleştirme değil, iptal edilebilir kimlik hedeflenir.
+- **Rate bütçesi token başınadır** (aşağıdaki 60/dk). İki ajanı
+  ayırmak istiyorsan iki token üret.
+- **İzleme/denetim token adı üzerinden yapılır** (`token:<ad>`), kişi
+  üzerinden değil. Ekip başına ayrı token üretmek en pratik ayrım.
+- **Sıkma gerektiğinde**: en düşük rolle üret (viewer yeter), gerekmeyince
+  Revoke et. Rol yükseltmek için yeni token üret — token'ın rolü
+  sonradan değiştirilmez.
+
+Rol zorlaması nerede: her tool/resource/prompt kaydı bir `MinRole`
+taşır (`internal/mcp`), kapı (`internal/api/mcp_gate.go`) çağrı
+öncesi token rolüyle karşılaştırır. Yetersizse JSON-RPC **-32001** ve
+gereken rolü söyleyen okunur bir metin döner (model boşuna yeniden
+denemez). Bugün 19 tool'un tamamı `MinRole=""` (viewer tabanı).
 
 ## 2. Bağlan
 
@@ -46,10 +71,15 @@ yolu da test edilmiş olur).
 
 ## 4. Limitler ve davranış
 
-- **Rate limit:** kimlik (token) başına **60 tools/call/dk**; aşımda
-  LLM'e JSON-RPC hatası olarak "rate limited … retry in Ns" döner —
-  model bekleyip devam eder (bağlantı kopmaz, 429 yok).
-  `initialize`/`tools/list`/`prompts/*` limitsiz.
+- **Rate limit:** kimlik (token) başına **60 çağrı/dk**; aşımda LLM'e
+  JSON-RPC **-32000** olarak "rate limited … retry in Ns" döner — model
+  bekleyip devam eder (bağlantı kopmaz, 429 yok). v0.9.1136'dan beri
+  bütçe `tools/call` + `resources/read` + `prompts/get` toplamıdır
+  (üçü de aynı chstore okumalarını yapıyor; eskiden yalnız
+  `tools/call` sayılıyordu). `initialize`/`ping`/`*/list` limitsiz —
+  veri okumazlar.
+- **Rol reddi (-32001) bütçeyi TÜKETMEZ** ve "bekle" demez: metin
+  gereken rolü söyler, model istemeden yeniden denemez.
 - Streamable-HTTP tamamen stateless: her POST bağımsız — LB hangi
   pod'a düşürürse düşürsün çalışır. SSE yolunda ise session pod-lokal:
   çok-pod'da `service.sessionAffinity: ClientIP` (chart v0.6.21) ya da
@@ -62,6 +92,8 @@ yolu da test edilmiş olur).
 | Belirti | Neden / çözüm |
 |---|---|
 | 401 | Token süresi/yanlış değer — Settings'ten yeni token |
+| JSON-RPC -32001 "requires the … role" | Token'ın rolü o tool/resource/prompt için yetersiz. Token rolü sonradan değişmez: doğru rolle YENİ token üret, eskisini Revoke et |
+| -32001 "unrecognized MinRole" | Kayıt defterinde yazım hatası (Coremetry bug'ı) — kapı bilinçli olarak KAPALI yönde davranır; sürümü not edip bildir |
 | `/mcp` "failed to connect" (http) | URL `/api/mcp` mi (sse path'i değil)? Proxy POST gövdesini kesiyor mu? |
 | SSE bağlanıyor, çağrılar "unknown session" | Çok-pod + afinite yok → Streamable-HTTP'ye geç (kalıcı çözüm) |
 | Sık "rate limited" | Ajan tool-loop'ta — sorguyu daraltın; limit kimlik başına, ikinci token ayrı bütçe demektir |

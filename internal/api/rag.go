@@ -303,7 +303,7 @@ func ragDocID(name string) string {
 // tool döngüsünden önce denenen doküman yolu. handled=false → RAG
 // kapalı / doküman yok / soru dokümanlarla ilgisiz (skor tabanı) —
 // akış aynen devam eder.
-func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage) (handled, ok bool) {
+func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs []copilot.ChatMessage, ctxService string) (handled, ok bool) {
 	if s.rag == nil {
 		return false, false
 	}
@@ -373,6 +373,9 @@ func (s *Server) ragChatAnswer(ctx context.Context, emit func(string, any), msgs
 		"text":       strings.TrimSpace(raw),
 		"exchangeId": copilot.MetaFromContext(ctx).ExchangeID,
 		"sources":    sources,
+		// v0.9.1140 — dört cevap kademesinin dördü de köprüyü çağırır
+		// (kaynak-pin testi kilitler).
+		"links": s.answerRequestIDLinks(ctx, raw, ctxService),
 	})
 	return true, true
 }

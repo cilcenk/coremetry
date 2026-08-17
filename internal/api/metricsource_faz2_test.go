@@ -347,9 +347,14 @@ func TestQueryMetricBodyCarriesThePercentileNote(t *testing.T) {
 		cache: &fakeCache{}, l1: newL1Cache(8), stats: newCacheStats(),
 	}
 
+	// `service=` is load-bearing since v0.9.1164: an unfiltered percentile is
+	// refused before it reaches VM, so without a scope this test would assert
+	// the note against a 400. A real percentile panel carries a service, and
+	// keeping the guard live here means the whole HTTP stack is exercised with
+	// it ON.
 	w := httptest.NewRecorder()
 	s.queryMetric(w, httptest.NewRequest("GET",
-		"/api/metrics/query?metricsrc=vm&name=jvm.memory.used&agg=p99", nil))
+		"/api/metrics/query?metricsrc=vm&name=jvm.memory.used&agg=p99&service=checkout", nil))
 	if w.Code != http.StatusOK {
 		t.Fatalf("code = %d, body: %s", w.Code, w.Body.String())
 	}
@@ -396,9 +401,13 @@ func TestQueryMetricBodyOmitsTheNoteForOrdinaryEmptyResults(t *testing.T) {
 		store: &chstore.Store{}, vmetrics: vm,
 		cache: &fakeCache{}, l1: newL1Cache(8), stats: newCacheStats(),
 	}
+	// Both requests carry `service=` (v0.9.1164): the second one is an avg over
+	// a histogram-family name, which the bucket-scan guard refuses unscoped.
+	// They are kept symmetric so the pair differs only in the NAME, which is
+	// the variable this test is about.
 	w := httptest.NewRecorder()
 	s.queryMetric(w, httptest.NewRequest("GET",
-		"/api/metrics/query?metricsrc=vm&name=http_requests_total&agg=avg", nil))
+		"/api/metrics/query?metricsrc=vm&name=http_requests_total&agg=avg&service=checkout", nil))
 	if strings.Contains(w.Body.String(), `"note"`) {
 		t.Fatalf("an ordinary empty result attached a note: %s", w.Body.String())
 	}
@@ -408,7 +417,7 @@ func TestQueryMetricBodyOmitsTheNoteForOrdinaryEmptyResults(t *testing.T) {
 	// entirely.
 	w2 := httptest.NewRecorder()
 	s.queryMetric(w2, httptest.NewRequest("GET",
-		"/api/metrics/query?metricsrc=vm&name=jvm.memory.used&agg=avg", nil))
+		"/api/metrics/query?metricsrc=vm&name=jvm.memory.used&agg=avg&service=checkout", nil))
 	if !strings.Contains(w2.Body.String(), `"note"`) {
 		t.Fatalf("a multi-spelling empty result carries no note: %s", w2.Body.String())
 	}

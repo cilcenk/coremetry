@@ -437,7 +437,11 @@ func TestRejectedParamNeverTouchesTheCache(t *testing.T) {
 
 // The bundle endpoint takes the same param, on the QUERY STRING of a POST.
 func TestDashboardBundleHonoursTheParam(t *testing.T) {
-	body := `{"from":0,"to":1,"requests":[{"id":"p1","type":"metric","name":"m"}]}`
+	// `service` is load-bearing since v0.9.1164: without it the panel's default
+	// avg over a histogram-family name is refused by the bucket-scan guard, and
+	// the slot error would then name the GUARD instead of the dial failure this
+	// test uses as proof the read went to VictoriaMetrics.
+	body := `{"from":0,"to":1,"requests":[{"id":"p1","type":"metric","name":"m","service":"checkout"}]}`
 
 	// Invalid param → 400 before the 50-panel body is even decoded.
 	s := &Server{store: &chstore.Store{}}

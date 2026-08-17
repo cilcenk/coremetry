@@ -1128,12 +1128,23 @@ export interface TempoSettingsInput {
 // No basic auth: VM itself has none, and bearer covers the vmauth /
 // ingress-JWT deployments operators actually run.
 export type VMAuthType = '' | 'none' | 'bearer';
+//
+// The two v0.9.1164 knobs shape QUERIES rather than the connection:
+//
+//	rateWindowFloorS — overrides the 300s rate/last lookbehind floor. 0 (or
+//	  absent, since the backend omits it) = "use the default". Never applies
+//	  to increase() or the histogram heatmap: those windows are totals, and
+//	  widening a total multiplies the number.
+//	allowUnfilteredPercentiles — lifts the bucket-scan guard. ABSENT/false is
+//	  the PROTECTED state, so an old snapshot shape reads as guarded.
 export interface VMSnapshot {
   enabled: boolean;
   baseUrl: string;
   authType?: VMAuthType;
   hasToken: boolean;
   insecureSkipVerify?: boolean;
+  rateWindowFloorS?: number;
+  allowUnfilteredPercentiles?: boolean;
 }
 export interface VMSettingsInput {
   enabled: boolean;
@@ -1141,6 +1152,12 @@ export interface VMSettingsInput {
   authType?: VMAuthType;
   token?: string;
   insecureSkipVerify?: boolean;
+  // Sent on every PUT, unlike `token`: 0 and false are MEANINGFUL values
+  // here ("default floor", "guard on"), so there is no preserve-on-empty
+  // rule to respect — omitting them would silently reset, which is exactly
+  // what the string-state form prevents (see vmForm.ts).
+  rateWindowFloorS?: number;
+  allowUnfilteredPercentiles?: boolean;
 }
 // A failed probe answers HTTP 200 with ok:false — a connection failure is
 // a successful ANSWER to "is this URL right?", not a request error.

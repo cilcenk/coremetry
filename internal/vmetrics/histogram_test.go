@@ -395,7 +395,7 @@ func TestBuildHistogramPromQL(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, step, err := buildHistogramPromQL(tc.f)
+			got, step, err := buildHistogramTranslate(tc.f)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -433,7 +433,7 @@ func TestBuildHistogramPromQLRefusals(t *testing.T) {
 		"engine scoping":             eng,
 		"LIKE-class filter operator": bad,
 	} {
-		if _, _, err := buildHistogramPromQL(f); err == nil {
+		if _, _, err := buildHistogramTranslate(f); err == nil {
 			t.Errorf("%s: want a refusal", name)
 		} else if !errors.Is(err, ErrUnsupported) {
 			t.Errorf("%s: refusal not tagged ErrUnsupported: %v", name, err)
@@ -443,7 +443,7 @@ func TestBuildHistogramPromQLRefusals(t *testing.T) {
 	// An empty name is a CLIENT error, not an untranslatable query — the API
 	// gate answers 400 before this is reached, and the message must not
 	// pretend VictoriaMetrics refused something.
-	if _, _, err := buildHistogramPromQL(chstore.MetricQueryFilter{}); err == nil {
+	if _, _, err := buildHistogramTranslate(chstore.MetricQueryFilter{}); err == nil {
 		t.Error("want an error for an empty metric name")
 	} else if errors.Is(err, ErrUnsupported) {
 		t.Errorf("a missing name is tagged ErrUnsupported: %v", err)
@@ -788,7 +788,12 @@ func TestQueryMetricHistogramWireContract(t *testing.T) {
 	defer srv.Close()
 
 	s := New()
-	s.Configure(Settings{BaseURL: srv.URL})
+	// AllowUnfilteredPercentiles: the fixtures below are deliberately
+	// filter-less because this test pins the NOTE / the ERROR ENVELOPE, not
+	// the v0.9.1164 bucket-scan guard. Adding a service matcher to each call
+	// would change the query strings the assertions below pin. The guard's own
+	// live-path coverage is TestGuardReachesTheServiceLayer.
+	s.Configure(Settings{BaseURL: srv.URL, AllowUnfilteredPercentiles: true})
 	from := time.Unix(1_700_000_000, 0)
 
 	out, err := s.QueryMetricHistogram(context.Background(), chstore.MetricQueryFilter{
@@ -827,7 +832,12 @@ func TestQueryMetricHistogramSurfacesVMErrors(t *testing.T) {
 	defer srv.Close()
 
 	s := New()
-	s.Configure(Settings{BaseURL: srv.URL})
+	// AllowUnfilteredPercentiles: the fixtures below are deliberately
+	// filter-less because this test pins the NOTE / the ERROR ENVELOPE, not
+	// the v0.9.1164 bucket-scan guard. Adding a service matcher to each call
+	// would change the query strings the assertions below pin. The guard's own
+	// live-path coverage is TestGuardReachesTheServiceLayer.
+	s.Configure(Settings{BaseURL: srv.URL, AllowUnfilteredPercentiles: true})
 	from := time.Unix(1_700_000_000, 0)
 	_, err := s.QueryMetricHistogram(context.Background(), chstore.MetricQueryFilter{
 		Name: "m", From: from, To: from.Add(time.Hour),
@@ -866,7 +876,12 @@ func TestQueryPromQLRangeForwardsMetricsQLVerbatim(t *testing.T) {
 			defer srv.Close()
 
 			s := New()
-			s.Configure(Settings{BaseURL: srv.URL})
+			// AllowUnfilteredPercentiles: the fixtures below are deliberately
+			// filter-less because this test pins the NOTE / the ERROR ENVELOPE, not
+			// the v0.9.1164 bucket-scan guard. Adding a service matcher to each call
+			// would change the query strings the assertions below pin. The guard's own
+			// live-path coverage is TestGuardReachesTheServiceLayer.
+			s.Configure(Settings{BaseURL: srv.URL, AllowUnfilteredPercentiles: true})
 			from := time.Unix(1_700_000_000, 0)
 			if _, err := s.QueryPromQLRange(context.Background(), q, from, from.Add(time.Hour), 60, 0); err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -890,7 +905,12 @@ func TestQueryPromQLRangeShapeMapping(t *testing.T) {
 	defer srv.Close()
 
 	s := New()
-	s.Configure(Settings{BaseURL: srv.URL})
+	// AllowUnfilteredPercentiles: the fixtures below are deliberately
+	// filter-less because this test pins the NOTE / the ERROR ENVELOPE, not
+	// the v0.9.1164 bucket-scan guard. Adding a service matcher to each call
+	// would change the query strings the assertions below pin. The guard's own
+	// live-path coverage is TestGuardReachesTheServiceLayer.
+	s.Configure(Settings{BaseURL: srv.URL, AllowUnfilteredPercentiles: true})
 	from := time.Unix(1_700_000_000, 0)
 	out, err := s.QueryPromQLRange(context.Background(), "m", from, from.Add(time.Hour), 60, 0)
 	if err != nil {
@@ -954,7 +974,12 @@ func TestQueryMetricNotedAttachesThePercentileNote(t *testing.T) {
 	defer srv.Close()
 
 	s := New()
-	s.Configure(Settings{BaseURL: srv.URL})
+	// AllowUnfilteredPercentiles: the fixtures below are deliberately
+	// filter-less because this test pins the NOTE / the ERROR ENVELOPE, not
+	// the v0.9.1164 bucket-scan guard. Adding a service matcher to each call
+	// would change the query strings the assertions below pin. The guard's own
+	// live-path coverage is TestGuardReachesTheServiceLayer.
+	s.Configure(Settings{BaseURL: srv.URL, AllowUnfilteredPercentiles: true})
 	from := time.Unix(1_700_000_000, 0)
 	ctx := context.Background()
 
@@ -1061,7 +1086,12 @@ func TestQueryMetricNotedSilentWhenBucketsExist(t *testing.T) {
 	defer srv.Close()
 
 	s := New()
-	s.Configure(Settings{BaseURL: srv.URL})
+	// AllowUnfilteredPercentiles: the fixtures below are deliberately
+	// filter-less because this test pins the NOTE / the ERROR ENVELOPE, not
+	// the v0.9.1164 bucket-scan guard. Adding a service matcher to each call
+	// would change the query strings the assertions below pin. The guard's own
+	// live-path coverage is TestGuardReachesTheServiceLayer.
+	s.Configure(Settings{BaseURL: srv.URL, AllowUnfilteredPercentiles: true})
 	from := time.Unix(1_700_000_000, 0)
 	series, note, err := s.QueryMetricNoted(context.Background(), chstore.MetricQueryFilter{
 		Name: "http.server.request.duration", Aggregation: "p99",

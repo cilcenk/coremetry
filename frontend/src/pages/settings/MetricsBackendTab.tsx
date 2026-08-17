@@ -3,6 +3,7 @@ import { Spinner } from '@/components/Spinner';
 import { Button } from '@/components/ui';
 import { api } from '@/lib/api';
 import { useSettingsLoad, SettingsLoadError } from './shared';
+import { vmFloorToForm, vmFloorToWire } from './vmForm';
 import type { VMAuthType, VMSettingsInput, VMTestResult } from '@/lib/types';
 
 // MetricsBackendTab — external VictoriaMetrics READ backend (v0.9.1150,
@@ -26,6 +27,10 @@ export function MetricsBackendTab() {
   const [token, setToken] = useState('');
   const [hasToken, setHasToken] = useState(false);
   const [insecureSkipVerify, setInsecureSkipVerify] = useState(false);
+  // DİZİ state, sayı değil — '' tek dürüst "üstüne yazma yok" gösterimi.
+  // Çeviri vmForm.ts'te ve tablo-testli; gerekçesi orada.
+  const [rateWindowFloor, setRateWindowFloor] = useState('');
+  const [allowUnfilteredPercentiles, setAllowUnfilteredPercentiles] = useState(false);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null);
   const [test, setTest] = useState<VMTestResult | null>(null);
@@ -38,6 +43,8 @@ export function MetricsBackendTab() {
       setAuthType((s.authType || 'none') as VMAuthType);
       setHasToken(s.hasToken);
       setInsecureSkipVerify(!!s.insecureSkipVerify);
+      setRateWindowFloor(vmFloorToForm(s.rateWindowFloorS));
+      setAllowUnfilteredPercentiles(!!s.allowUnfilteredPercentiles);
     },
   );
 
@@ -45,6 +52,10 @@ export function MetricsBackendTab() {
     enabled, baseUrl, authType,
     token, // empty preserved on the server side
     insecureSkipVerify,
+    // Bu ikisinde "boş = sakla" kuralı YOK: 0 ve false burada anlamlı
+    // değerler ("varsayılan taban", "koruma açık"), token'ın tersine.
+    rateWindowFloorS: vmFloorToWire(rateWindowFloor),
+    allowUnfilteredPercentiles,
   });
 
   const save = async (e: FormEvent) => {
@@ -54,6 +65,11 @@ export function MetricsBackendTab() {
       const next = await api.putVMSettings(buildInput());
       setHasToken(next.hasToken);
       setToken('');
+      // Sunucu NE SAKLADIĞININ tek yetkilisi: dönen snapshot'tan yeniden
+      // tohumla. Aralık dışı bir değer 400 atar (buraya hiç gelmez) ve kutu
+      // operatörün yazdığını hata mesajıyla birlikte tutar — doğru olan bu.
+      setRateWindowFloor(vmFloorToForm(next.rateWindowFloorS));
+      setAllowUnfilteredPercentiles(!!next.allowUnfilteredPercentiles);
       setMsg({
         kind: 'ok',
         text: next.enabled
@@ -117,13 +133,13 @@ export function MetricsBackendTab() {
         <b style={{ color: 'var(--text)' }}>Neyi kapsar:</b> metrik kataloğu ve
         adı seçiciler, Explore, dashboard <code>metric</code> panelleri, filtre
         anahtarı/değeri önerileri, MCP <code>query_metric</code> ve{' '}
-        <code>list_metric_names</code>.
+        <code>list_metric_names</code>. Histogram ısı haritaları,
+        yüzdelikler (p50/p95/p99) ve PromQL vekili de dahil (Faz 2).
         <br />
         <b style={{ color: 'var(--text)' }}>Neyi kapsamaz (ClickHouse’ta kalır):</b>{' '}
         span türevli her şey (servisler, operasyonlar, topoloji, trace’ler,
         exception’lar) ve sabit adlı iç okuyucular — hosts, altyapı, JVM
-        panelleri, veritabanı kapasitesi. Histogram ısı haritaları ve PromQL
-        vekili Faz 2.
+        panelleri, veritabanı kapasitesi.
         <br />
         <b style={{ color: 'var(--text)' }}>Yedeğe düşmez:</b> VM açık ve
         erişilemez durumdaysa metrik uçları <b>502</b> ile VM’nin kendi
@@ -189,6 +205,64 @@ export function MetricsBackendTab() {
             </span>
           </span>
         </label>
+
+        {/* SORGU AYARLARI — bağlantı değil, gönderilen ifadenin ŞEKLİ.
+            Ayrı bir bölüm, çünkü ikisi de "VM'e nasıl bağlanılır"
+            sorusuna değil "VM'e ne sorulur" sorusuna cevap veriyor ve
+            biri (koruma) kapatıldığında etkisi tüm kurulumda görülür. */}
+        <div style={{
+          marginTop: 4, marginBottom: 12, paddingTop: 12,
+          borderTop: '1px solid var(--border)',
+        }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 10 }}>Sorgu ayarları</div>
+
+          <label style={{ display: 'block', marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--text2)', marginBottom: 4 }}>
+              Rate penceresi tabanı (s)
+            </div>
+            <input value={rateWindowFloor}
+              onChange={e => setRateWindowFloor(e.target.value)}
+              inputMode="numeric"
+              placeholder="300 (varsayılan)"
+              style={{ width: '100%' }} />
+            <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4, lineHeight: 1.5 }}>
+              <code>rate</code> ve <code>last</code> çevirilerinin en dar
+              lookbehind penceresi. VM, yazılmamış bir pencereyi{' '}
+              <code>max(step, scrape_interval)</code>’a genişletir; Coremetry
+              pencereyi hep açıkça yazdığı için o genişletme bize kalıyor ve
+              scrape aralığı VM’den okunamıyor — bu taban onun yerine geçer.
+              Export aralığı bilinen bir kurulumda 300s gereğinden geniş
+              olabilir (her rate grafiğinden beş dakikalık detayı düzler).
+              Boş bırakın = varsayılan; aksi hâlde <b>10–3600</b> sn.
+              <br />
+              <b style={{ color: 'var(--text2)' }}>Etkilemediği yerler:</b>{' '}
+              <code>increase</code> ve histogram ısı haritası. Onların
+              penceresi bir TOPLAM: genişletmek grafik hâlâ “bir kova” derken
+              sayıyı katlar.
+            </div>
+          </label>
+
+          <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, marginBottom: 4 }}>
+            <input type="checkbox" checked={allowUnfilteredPercentiles}
+              onChange={e => setAllowUnfilteredPercentiles(e.target.checked)}
+              style={{ marginTop: 3 }} />
+            <span style={{ fontSize: 13 }}>
+              Filtresiz yüzdeliklere izin ver
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3, lineHeight: 1.5 }}>
+                Varsayılan olarak <b>kapalı</b>: yüzdelik (p50/p95/p99),
+                histogram ısı haritası ve histogram ailesindeki{' '}
+                <code>avg</code> sorguları <b>ne servis ne de etiket filtresi</b>{' '}
+                taşıdığında <b>400</b> ile reddedilir — böyle bir sorgu kova
+                serilerinin tamamını taratır ve milyonlarca serili bir VM’de
+                paylaşılan <code>vmselect</code>’i herkes için yavaşlatır.
+                Reddedilen sorgu ekranda ne yapılacağını söyler. Açmak eski
+                davranışa döner; <code>rate</code>/<code>increase</code>{' '}
+                zaten korumaya girmez (kolları <code>_count</code> okur, kova
+                değil).
+              </div>
+            </span>
+          </label>
+        </div>
 
         {test && (
           <div style={{

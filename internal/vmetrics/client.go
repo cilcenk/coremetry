@@ -286,6 +286,22 @@ func (s *Service) Available() bool {
 	return strings.TrimSpace(s.cfg.BaseURL) != ""
 }
 
+// ResolvedRateWindowFloor — cache anahtarı için ÇÖZÜLMÜŞ taban
+// (v0.9.1165). Persisted değer değil: 0 ve 300 aynı davranıştır, aynı
+// tag'i üretmeli ki gereksiz cache kaçırması olmasın. Neden anahtarda:
+// taban sorgunun EMİTTED penceresini değiştirir ama istek bayt-aynıdır —
+// ayar PUT'undan sonraki TTL boyunca eski tabanın gövdesi servis edilir
+// (v0.5.187 sınıfının ayar-girdili hâli; 1164 canlı probu tam bunu
+// "kablo kopuk" olarak gösterdi — kopuk olan kablo değil ANAHTARDI).
+func (s *Service) ResolvedRateWindowFloor() int {
+	if s == nil {
+		return resolveRateWindowFloor(0)
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return resolveRateWindowFloor(s.cfg.RateWindowFloorS)
+}
+
 // request builds a promapi.Request from the live config.
 func (s *Service) request(path string, params url.Values, cfg Settings) promapi.Request {
 	return promapi.Request{

@@ -123,9 +123,16 @@ const (
 //	     entry holds the 0-series body that finding reported, and it is the
 //	     throughput half of a chart whose latency half already works — the most
 //	     confusing possible state to leave a panel in for a full TTL.
-func metricNameRuleTag(src metricSource) string {
+//	n2:rwf=N — v0.9.1165, rate pencere tabanı anahtara girdi. 1164'ün
+//	     canlı probu taban 60↔600 arasında BAYT-AYNI gövde gösterdi ve
+//	     "kablo kopuk" dedi; kopuk olan kablo değil anahtardı — taban
+//	     emitted pencereyi değiştirir ama istek bayt-aynıdır, ayar
+//	     PUT'undan sonraki TTL boyunca eski tabanın gövdesi servis
+//	     ediliyordu. ÇÖZÜLMÜŞ taban yazılır (0 ve 300 aynı davranış =
+//	     aynı anahtar, gereksiz soğuk okuma yok).
+func (s *Server) metricNameRuleTag(src metricSource) string {
 	if src != nil && src.Name() == metricSourceVM {
-		return ":n2"
+		return fmt.Sprintf(":n2:rwf=%d", s.vmetrics.ResolvedRateWindowFloor())
 	}
 	return ""
 }

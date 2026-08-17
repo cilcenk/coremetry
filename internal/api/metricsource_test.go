@@ -374,26 +374,38 @@ var _ = []metricSource{chMetricSource{}, vmMetricSource{}}
 // (v0.8.456). Stamping them would buy nothing and charge a scan wave to a prod
 // ClickHouse.
 func TestMetricNameRuleTagIsVMOnly(t *testing.T) {
-	// v0.9.1160 — n1 → n2: rate/increase/avg gained their `or` histogram arms,
-	// so a byte-identical request resolves to different series. A warm n1 entry
-	// holds the 0-series body the live check reported.
-	if got := metricNameRuleTag(vmMetricSource{}); got != ":n2" {
-		t.Fatalf("VM source tag = %q, want %q", got, ":n2")
+	// v0.9.1160 — n1 → n2: rate/increase/avg gained their `or` histogram arms.
+	// v0.9.1165 — tag artık ÇÖZÜLMÜŞ rate tabanını da taşır (rwf=N): 1164'ün
+	// canlı probu taban 60↔600 arasında bayt-aynı gövde gösterdi — kopuk olan
+	// kablo değil anahtardı; taban emitted pencereyi değiştirir ama istek
+	// bayt-aynıdır, PUT sonrası TTL boyunca eski tabanın gövdesi servis
+	// ediliyordu. vmetrics servisi bağlı değilken çözülmüş taban = 300.
+	srv := &Server{}
+	if got := srv.metricNameRuleTag(vmMetricSource{}); got != ":n2:rwf=300" {
+		t.Fatalf("VM source tag = %q, want %q", got, ":n2:rwf=300")
 	}
-	if got := metricNameRuleTag(chMetricSource{}); got != "" {
+	if got := srv.metricNameRuleTag(chMetricSource{}); got != "" {
 		t.Fatalf("CH source tag = %q, want empty — a ClickHouse key must stay byte-identical", got)
 	}
 	// nil receiver: a partially wired Server must not panic inside a cache-key
 	// format string, and "no tag" is the CH-shaped, zero-cost direction.
-	if got := metricNameRuleTag(nil); got != "" {
+	if got := srv.metricNameRuleTag(nil); got != "" {
 		t.Fatalf("nil source tag = %q, want empty", got)
 	}
 	// The tag must be a KEY SEGMENT, not free text: it lands between a prefix
 	// and `:src=`, so a value without the leading separator would fuse into the
 	// prefix and make `metric-hist` collide with `metric-histn1`-shaped keys
 	// from a future rule bump.
-	if !strings.HasPrefix(metricNameRuleTag(vmMetricSource{}), ":") {
+	if !strings.HasPrefix(srv.metricNameRuleTag(vmMetricSource{}), ":") {
 		t.Fatal("the tag must open with ':' or it fuses into the key prefix")
+	}
+	// AYIRT EDİCİ vaka — 1164 probunun yakaladığı senaryo: taban değişince
+	// anahtar da değişmeli ki PUT sonrası sorgu eski gövdeye düşmesin.
+	vm := vmetrics.New()
+	vm.Configure(vmetrics.Settings{BaseURL: "http://vm:8428", RateWindowFloorS: 600})
+	srv2 := &Server{vmetrics: vm}
+	if got := srv2.metricNameRuleTag(vmMetricSource{}); got != ":n2:rwf=600" {
+		t.Fatalf("taban 600 iken tag = %q, want %q", got, ":n2:rwf=600")
 	}
 }
 

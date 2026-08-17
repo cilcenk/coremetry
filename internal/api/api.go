@@ -4763,7 +4763,7 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	// (aday alternation'ı), istek ise bayt-aynı. Damga YALNIZ VM anahtarına
 	// giriyor; CH gövdesi etkilenmediği için onun anahtarı da değişmiyor.
 	key := fmt.Sprintf("metric-query:v4%s:src=%s:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d:mx=%s",
-		metricNameRuleTag(src),
+		s.metricNameRuleTag(src),
 		src.Name(), name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60,
 		s.store.MetricExclusions().Digest())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
@@ -4847,7 +4847,7 @@ func (s *Server) getMetricHistogram(w http.ResponseWriter, r *http.Request) {
 	// v0.9.1159 — aday alternation'ı ısı haritasının kova adını da değiştirdi
 	// (bkz. metricNameRuleTag); damga yalnız VM tarafına.
 	key := fmt.Sprintf("metric-hist%s:src=%s:name=%s:svc=%s:step=%d:f=%s:from=%d:to=%d:mx=%s",
-		metricNameRuleTag(src),
+		s.metricNameRuleTag(src),
 		src.Name(), name, svc, step, filtersRaw, from.Unix()/60, to.Unix()/60,
 		s.store.MetricExclusions().Digest())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
@@ -4893,7 +4893,7 @@ func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {
 	// VM'de dönen liste değişti; damga yalnız VM tarafına (CH'nin DISTINCT
 	// taraması bu anahtarın var olma sebebi, boşuna ısıtılmaz).
 	key := fmt.Sprintf("metric-labels%s:src=%s:m=%s:k=%s:since=%s",
-		metricNameRuleTag(src), src.Name(), metric, lkey, since)
+		s.metricNameRuleTag(src), src.Name(), metric, lkey, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		return src.MetricLabelValues(ctx, metric, lkey, since)
 	})
@@ -4924,7 +4924,7 @@ func (s *Server) getMetricAttrKeys(w http.ResponseWriter, r *http.Request) {
 	}
 	// v0.9.1159 — aynı gerekçe getMetricLabelValues'takiyle.
 	key := fmt.Sprintf("metric-attr-keys%s:src=%s:m=%s:svc=%s:since=%s",
-		metricNameRuleTag(src), src.Name(), metric, service, since)
+		s.metricNameRuleTag(src), src.Name(), metric, service, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
 		return src.MetricAttrKeys(ctx, metric, service, since)
 	})

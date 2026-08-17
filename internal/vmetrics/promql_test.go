@@ -125,38 +125,38 @@ func TestBuildPromQLPercentileShapes(t *testing.T) {
 		{
 			name: "p99, no group-by — le is STILL the by-clause",
 			f:    chstore.MetricQueryFilter{Name: "http.server.request.duration", Aggregation: "p99"},
-			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="http.server.request.duration_bucket"}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le) (rate({` + mcHTTPDurBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "p50 renders φ as 0.5, not 0.500000",
 			f:    chstore.MetricQueryFilter{Name: "m", Aggregation: "p50"},
-			want: `histogram_quantile(0.5, sum by (le) (rate({__name__="m_bucket"}[` + w + `])))`,
+			want: `histogram_quantile(0.5, sum by (le) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "p95",
 			f:    chstore.MetricQueryFilter{Name: "m", Aggregation: "p95"},
-			want: `histogram_quantile(0.95, sum by (le) (rate({__name__="m_bucket"}[` + w + `])))`,
+			want: `histogram_quantile(0.95, sum by (le) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "group-by joins le, le FIRST",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p99", GroupBy: []string{"pod"},
 			},
-			want: `histogram_quantile(0.99, sum by (le, pod) (rate({__name__="m_bucket"}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le, pod) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "two group-by keys, dotted one sanitized",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p95", GroupBy: []string{"pod", "host.name"},
 			},
-			want: `histogram_quantile(0.95, sum by (le, pod, host_name) (rate({__name__="m_bucket"}[` + w + `])))`,
+			want: `histogram_quantile(0.95, sum by (le, pod, host_name) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "an explicit le group-by is deduped, not printed twice",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p99", GroupBy: []string{"le", "pod"},
 			},
-			want: `histogram_quantile(0.99, sum by (le, pod) (rate({__name__="m_bucket"}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le, pod) (rate({` + mcMBucket + `}[` + w + `])))`,
 		},
 		{
 			name: "already-suffixed name is NOT double-suffixed",
@@ -176,21 +176,21 @@ func TestBuildPromQLPercentileShapes(t *testing.T) {
 				Name: "m", Aggregation: "p99", Service: "cart",
 				Filters: []chstore.FilterExpr{{Key: "http.route", Op: "=", Values: []string{"/api"}}},
 			},
-			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="m_bucket", service_name="cart", http_route="/api"}[` + w + `])))`,
+			want: `histogram_quantile(0.99, sum by (le) (rate({` + mcMBucket + `, service_name="cart", http_route="/api"}[` + w + `])))`,
 		},
 		{
 			name: "explicit step drives the rate window, unfloored when > floor",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p99", StepSeconds: 600,
 			},
-			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="m_bucket"}[600s])))`,
+			want: `histogram_quantile(0.99, sum by (le) (rate({` + mcMBucket + `}[600s])))`,
 		},
 		{
 			name: "an explicit rate window wins over the floor",
 			f: chstore.MetricQueryFilter{
 				Name: "m", Aggregation: "p99", StepSeconds: 60, RateWindowSec: 180,
 			},
-			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="m_bucket"}[180s])))`,
+			want: `histogram_quantile(0.99, sum by (le) (rate({` + mcMBucket + `}[180s])))`,
 		},
 	}
 	for _, tc := range tests {
@@ -261,23 +261,39 @@ func TestBucketMetricName(t *testing.T) {
 }
 
 // The empty-percentile note has one job: turn a blank chart into a diagnosis.
-// It must name the series that was actually queried, because that name is the
-// one thing the operator cannot see anywhere on screen.
+// It must name the series that were actually queried, because those names are
+// the one thing the operator cannot see anywhere on screen.
+//
+// v0.9.1159 — it lists EVERY candidate. Once the selector became an
+// alternation, naming one spelling stopped being the whole truth, and the
+// list is also the only on-screen evidence that the Prometheus-unit
+// spellings were tried at all: without it, an operator staring at an empty
+// p99 has no way to tell this release from the one before it.
 func TestEmptyBucketNote(t *testing.T) {
-	note := emptyBucketNote("http.server.request.duration")
+	cands := nameCandidates("http.server.request.duration", "p99")
+	note := emptyBucketNote(cands)
 	for _, want := range []string{
-		"http.server.request.duration_bucket", // the resolved selector
-		"_bucket",                             // what to look for in VM
-		"le",                                  // and how a bucket series is shaped
+		"http.server.request.duration_bucket",         // the verbatim spelling
+		"http_server_request_duration_seconds_bucket", // the OTel-Prometheus one
+		"_bucket", // what to look for in VM
+		"le",      // and how a bucket series is shaped
 	} {
 		if !strings.Contains(note, want) {
 			t.Fatalf("note does not mention %q: %s", want, note)
 		}
 	}
+	// EVERY candidate, not a sample: an operator who sees four of six tried
+	// spellings cannot tell whether the two missing ones were skipped or just
+	// unprinted, and the whole point of the note is to end that guessing.
+	for _, c := range cands {
+		if !strings.Contains(note, c) {
+			t.Fatalf("note omits candidate %q: %s", c, note)
+		}
+	}
 	// The suffix rule is shared with the query, so an already-suffixed name
 	// must not be doubled in the note either — an operator told to look for
 	// `x_bucket_bucket` would conclude their write path is broken.
-	if n := emptyBucketNote("x_bucket"); strings.Contains(n, "x_bucket_bucket") {
+	if n := emptyBucketNote(nameCandidates("x_bucket", "p99")); strings.Contains(n, "x_bucket_bucket") {
 		t.Fatalf("note double-suffixed the name: %s", n)
 	}
 }
@@ -310,9 +326,9 @@ func TestBuildPromQLAggregationGroupByMatrix(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
-				want := a.op + `({__name__="jvm.memory.used"})`
+				want := a.op + `({` + mcJVM + `})`
 				if g.by != "" {
-					want = a.op + ` by (` + g.by + `) ({__name__="jvm.memory.used"})`
+					want = a.op + ` by (` + g.by + `) ({` + mcJVM + `})`
 				}
 				if got != want {
 					t.Fatalf("got  %s\nwant %s", got, want)
@@ -345,19 +361,19 @@ func TestBuildPromQLRollupShapes(t *testing.T) {
 			// exact, one real member when it is not (see buildPromQL).
 			name: "last, no group-by",
 			f:    mk(chstore.MetricQueryFilter{Name: "jvm.memory.used", Aggregation: "last", StepSeconds: 60}),
-			want: `max(last_over_time({__name__="jvm.memory.used"}[300s]))`,
+			want: `max(last_over_time({` + mcJVM + `}[300s]))`,
 		},
 		{
 			name: "last, one group-by",
 			f: mk(chstore.MetricQueryFilter{Name: "jvm.memory.used", Aggregation: "last",
 				StepSeconds: 60, GroupBy: []string{"host.name"}}),
-			want: `max by (host_name) (last_over_time({__name__="jvm.memory.used"}[300s]))`,
+			want: `max by (host_name) (last_over_time({` + mcJVM + `}[300s]))`,
 		},
 		{
 			name: "last, two dotted group-bys, step above the floor",
 			f: mk(chstore.MetricQueryFilter{Name: "jvm.memory.used", Aggregation: "last",
 				StepSeconds: 900, GroupBy: []string{"host.name", "jvm.memory.pool.name"}}),
-			want: `max by (host_name, jvm_memory_pool_name) (last_over_time({__name__="jvm.memory.used"}[900s]))`,
+			want: `max by (host_name, jvm_memory_pool_name) (last_over_time({` + mcJVM + `}[900s]))`,
 		},
 		{
 			// The rollup wraps the FULL selector: service + filters live
@@ -368,74 +384,74 @@ func TestBuildPromQLRollupShapes(t *testing.T) {
 			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "last", Service: "api",
 				StepSeconds: 60, GroupBy: []string{"pod"},
 				Filters: []chstore.FilterExpr{{Key: "jvm.memory.type", Op: "=", Values: []string{"heap"}}}}),
-			want: `max by (pod) (last_over_time({__name__="m", service_name="api", jvm_memory_type="heap"}[300s]))`,
+			want: `max by (pod) (last_over_time({` + mcM + `, service_name="api", jvm_memory_type="heap"}[300s]))`,
 		},
 		{
 			// RateWindowSec is a RATE window; it must not bend `last`.
 			name: "last ignores RateWindowSec",
 			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "last",
 				StepSeconds: 60, RateWindowSec: 180}),
-			want: `max(last_over_time({__name__="m"}[300s]))`,
+			want: `max(last_over_time({` + mcM + `}[300s]))`,
 		},
 		{
 			// sum(rate(...)), not avg — the CH path re-aggregates per-series
 			// rates with a sum and names this idiom as its semantics.
 			name: "rate, no group-by, floored",
 			f:    mk(chstore.MetricQueryFilter{Name: "http.server.requests", Aggregation: "rate", StepSeconds: 60}),
-			want: `sum(rate({__name__="http.server.requests"}[300s]))`,
+			want: `sum(rate({` + mcHTTPReq + `}[300s]))`,
 		},
 		{
 			name: "rate, group-by",
 			f: mk(chstore.MetricQueryFilter{Name: "http.server.requests", Aggregation: "rate",
 				StepSeconds: 60, GroupBy: []string{"http.route"}}),
-			want: `sum by (http_route) (rate({__name__="http.server.requests"}[300s]))`,
+			want: `sum by (http_route) (rate({` + mcHTTPReq + `}[300s]))`,
 		},
 		{
 			name: "rate, step above the floor keeps the step",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600}),
-			want: `sum(rate({__name__="m"}[600s]))`,
+			want: `sum(rate({` + mcM + `}[600s]))`,
 		},
 		{
 			// The operator's Grafana reference is [3m]. An explicit window
 			// wins and is NOT promoted to the 5m floor.
 			name: "rate honours an explicit RateWindowSec below the floor",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 60, RateWindowSec: 180}),
-			want: `sum(rate({__name__="m"}[180s]))`,
+			want: `sum(rate({` + mcM + `}[180s]))`,
 		},
 		{
 			name: "rate honours an explicit RateWindowSec above the floor",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600, RateWindowSec: 900}),
-			want: `sum(rate({__name__="m"}[900s]))`,
+			want: `sum(rate({` + mcM + `}[900s]))`,
 		},
 		{
 			// <= step means "unexpressed" (the CH sibling's own rule), so
 			// the floor still applies.
 			name: "rate ignores a RateWindowSec below the step",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 60, RateWindowSec: 30}),
-			want: `sum(rate({__name__="m"}[300s]))`,
+			want: `sum(rate({` + mcM + `}[300s]))`,
 		},
 		{
 			// increase is a window TOTAL — flooring it would quadruple the
 			// number while the chart still says one bucket (v0.6.36 class).
 			name: "increase is NOT floored",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 60}),
-			want: `sum(increase({__name__="m"}[60s]))`,
+			want: `sum(increase({` + mcM + `}[60s]))`,
 		},
 		{
 			name: "increase at a sub-minute step stays at the step",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 12}),
-			want: `sum(increase({__name__="m"}[12s]))`,
+			want: `sum(increase({` + mcM + `}[12s]))`,
 		},
 		{
 			name: "increase, group-by, explicit window",
 			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 60,
 				RateWindowSec: 180, GroupBy: []string{"error.type"}}),
-			want: `sum by (error_type) (increase({__name__="m"}[180s]))`,
+			want: `sum by (error_type) (increase({` + mcM + `}[180s]))`,
 		},
 		{
 			name: "case and padding are normalized like the set-aggregations",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: " RATE ", StepSeconds: 600}),
-			want: `sum(rate({__name__="m"}[600s]))`,
+			want: `sum(rate({` + mcM + `}[600s]))`,
 		},
 		{
 			// A group-by that sanitizes to nothing falls back to the
@@ -443,7 +459,7 @@ func TestBuildPromQLRollupShapes(t *testing.T) {
 			name: "group-by that sanitizes away collapses to the ungrouped form",
 			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600,
 				GroupBy: []string{"  "}}),
-			want: `sum(rate({__name__="m"}[600s]))`,
+			want: `sum(rate({` + mcM + `}[600s]))`,
 		},
 	}
 	for _, tc := range tests {
@@ -630,27 +646,51 @@ func TestBuildPromQLSelector(t *testing.T) {
 		wantErr string
 	}{
 		{
-			// The metric name is NEVER translated: whichever spelling the
-			// catalogue handed us is the spelling VM has. __name__ selector
-			// form is what makes a dotted name expressible at all.
-			name: "dotted metric name goes through verbatim",
+			// v0.9.1159 — the metric name is still never REPLACED, but it is
+			// now ACCOMPANIED: the verbatim spelling leads the alternation and
+			// the OTel-Prometheus forms follow it. Before this release the
+			// selector was `__name__="http.server.request.duration"` alone,
+			// which is why every panel in the operator's install was empty —
+			// their VM holds `http_server_request_duration_seconds*`.
+			name: "dotted metric name leads the candidate alternation",
 			f:    chstore.MetricQueryFilter{Name: "http.server.request.duration"},
-			want: `avg({__name__="http.server.request.duration"})`,
+			want: `avg({` + mcHTTPDur + `})`,
 		},
 		{
-			name: "underscored metric name also verbatim",
+			name: "underscored metric name gets the unit spellings too",
 			f:    chstore.MetricQueryFilter{Name: "http_server_request_duration"},
-			want: `avg({__name__="http_server_request_duration"})`,
+			want: `avg({` + mcHTTPDurUnderscore + `})`,
+		},
+		{
+			// SINGLE-CANDIDATE REGRESSION. A name that already carries
+			// Prometheus naming needs no guessing, so it must render the `=`
+			// form this file pinned before v0.9.1159 — byte for byte. The
+			// candidate machinery is not allowed to change a query it had
+			// nothing to add to (the upstream cache key and VM's query log
+			// both read this text).
+			name: "an already-named metric keeps the pre-candidate = form",
+			f:    chstore.MetricQueryFilter{Name: "http_server_request_duration_seconds_bucket"},
+			want: `avg({__name__="http_server_request_duration_seconds_bucket"})`,
+		},
+		{
+			// The same, with the rest of the selector still riding alongside:
+			// one candidate changes the NAME matcher's form and nothing else.
+			name: "single candidate with service and filters",
+			f: chstore.MetricQueryFilter{
+				Name: "http_requests_total", Service: "cart",
+				Filters: []chstore.FilterExpr{{Key: "http.route", Op: "=", Values: []string{"/api"}}},
+			},
+			want: `avg({__name__="http_requests_total", service_name="cart", http_route="/api"})`,
 		},
 		{
 			name: "service becomes service_name",
 			f:    chstore.MetricQueryFilter{Name: "m", Service: "api-gateway"},
-			want: `avg({__name__="m", service_name="api-gateway"})`,
+			want: `avg({` + mcM + `, service_name="api-gateway"})`,
 		},
 		{
 			name: "quotes in a value are escaped",
 			f:    chstore.MetricQueryFilter{Name: `m"x`, Service: `a\b`},
-			want: `avg({__name__="m\"x", service_name="a\\b"})`,
+			want: `avg({` + mcQuoted + `, service_name="a\\b"})`,
 		},
 		{
 			name:    "empty metric name",
@@ -810,7 +850,7 @@ func TestBuildPromQLFilterOrderPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := `avg({__name__="m", service_name="svc", a="1", b="2"})`
+	want := `avg({` + mcM + `, service_name="svc", a="1", b="2"})`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

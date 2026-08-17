@@ -31,12 +31,14 @@ package vmetrics
 //
 // Three rules run through the whole file:
 //
-//  1. The METRIC NAME is never translated. OTLP names may live in VM as
-//     `jvm.memory.used` or as `jvm_memory_used` depending on how the
-//     operator's write path sanitized them, and we cannot know which —
-//     so we send whatever the catalogue gave us, verbatim. That forces
-//     the `{__name__="…"}` selector form (a bare `jvm.memory.used{}` is
-//     not valid MetricsQL), which happens to work for BOTH spellings.
+//  1. The METRIC NAME is never REPLACED — but since v0.9.1159 it is
+//     ACCOMPANIED. OTLP names live in VM as `jvm.memory.used`, as
+//     `jvm_memory_used`, or as `jvm_memory_used_bytes` depending on how the
+//     operator's write path named them, and we cannot know which — so we
+//     send every spelling the OTel→Prometheus convention could have
+//     produced and let the DATA decide which one answers (names.go). That
+//     forces the `{__name__=…}` selector form (a bare `jvm.memory.used{}`
+//     is not valid MetricsQL), which happens to work for EVERY spelling.
 //     LABEL names are a different story: the grammar has no way to
 //     express a dotted label name at all, so those must be sanitized.
 //
@@ -409,14 +411,11 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 	}
 
 	// v0.9.1157 — a percentile reads the BUCKET series, not the metric the
-	// operator named. Swapped here rather than in promAggregator so the
-	// name rule has exactly one home (bucketMetricName) and the aggregator
+	// operator named. v0.9.1159 — and either way it reads a LIST of candidate
+	// spellings rather than one (names.go). Resolved here rather than in
+	// promAggregator so the name rule has exactly one home and the aggregator
 	// stays a pure label→shape map.
-	selName := name
-	if agg.Quantile > 0 {
-		selName = bucketMetricName(name)
-	}
-	matchers := []string{"__name__=" + quotePromString(selName)}
+	matchers := []string{nameMatcher(nameCandidates(name, f.Aggregation))}
 	if svc := strings.TrimSpace(f.Service); svc != "" {
 		matchers = append(matchers, serviceLabel()+"="+quotePromString(svc))
 	}
@@ -530,16 +529,24 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 // render as the same blank chart, and the operator's next move depends on
 // which one it was.
 //
-// Pure, and it recomputes the bucket name from the SAME function the query
-// used rather than taking it as an argument — the promStep precedent in this
-// file: a note free to name a different series than the query asked for is
-// the version that can lie.
-func emptyBucketNote(metric string) string {
-	return fmt.Sprintf("%s serisi bulunamadı — yüzdelikler histogram kova serisini "+
-		"(…%s + le etiketi) okur. Bu metrik histogram olmayabilir, pencerede veri "+
-		"olmayabilir, ya da write yolu kovaları başka bir adla yazıyor olabilir "+
-		"(VictoriaMetrics'te metrik adını …%s ile arayın).",
-		bucketMetricName(metric), bucketSuffix, bucketSuffix)
+// v0.9.1159 — it now LISTS the spellings that were tried. Once the selector
+// became a candidate alternation, "…_bucket bulunamadı" stopped being the
+// whole truth: the query asked for up to six names, none of which the
+// operator typed, and the useful next move depends on which ones were missed.
+// Seeing the list is also the only way they can tell that the Prometheus-unit
+// spellings WERE attempted — otherwise the fix they would reach for
+// (v0.9.1159 itself) looks unshipped.
+//
+// Pure, and it takes the EXACT list the query used rather than a metric name
+// to re-derive one from: a note free to name a different series than the
+// query asked for is the version that can lie (the assembleHistogram
+// precedent).
+func emptyBucketNote(candidates []string) string {
+	return fmt.Sprintf("Kova serisi bulunamadı — yüzdelikler histogram kova serisini "+
+		"(…%s + le etiketi) okur. Denenen yazımlar: %s. Bu metrik histogram olmayabilir, "+
+		"pencerede veri olmayabilir, ya da write yolu kovaları başka bir adla yazıyor "+
+		"olabilir (VictoriaMetrics'te metrik adını …%s ile arayın).",
+		bucketSuffix, strings.Join(candidates, ", "), bucketSuffix)
 }
 
 // promStep resolves the query_range step in seconds.

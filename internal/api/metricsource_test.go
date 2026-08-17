@@ -98,13 +98,20 @@ func TestMetricCacheKeysCarryTheBackendMarker(t *testing.T) {
 	}
 	src := stripGoComments(string(raw))
 
+	// v0.9.1159 — four of these gained a `%s` between the prefix and `:src=`:
+	// metricNameRuleTag, the VM-only candidate-rule stamp. The prefixes are
+	// UPDATED rather than shortened to `metric-query:` — dropping the `src=%s`
+	// tail would leave the gate matching a key with no backend marker at all,
+	// which is the whole failure it exists to catch. The lesson is the
+	// recurring one: when an atom gains a second spelling, widen the gate's
+	// scope, never relax its assertion.
 	keyPrefixes := []string{
-		"metric-names:v3:src=",    // legacy bare-array shape
-		"metric-names:v3:src=%s",  // {names,total,hasMore} envelope
-		"metric-query:v4:src=%s",  // Explore / dashboards / MQE
-		"metric-labels:src=%s",    // filter value suggestions
-		"metric-attr-keys:src=%s", // filter key suggestions
-		"metric-hist:src=%s",      // v0.9.1157 — the heatmap
+		"metric-names:v3:src=",      // legacy bare-array shape
+		"metric-names:v3:src=%s",    // {names,total,hasMore} envelope
+		"metric-query:v4%s:src=%s",  // Explore / dashboards / MQE
+		"metric-labels%s:src=%s",    // filter value suggestions
+		"metric-attr-keys%s:src=%s", // filter key suggestions
+		"metric-hist%s:src=%s",      // v0.9.1157 — the heatmap
 	}
 	for _, p := range keyPrefixes {
 		if !strings.Contains(src, p) {
@@ -120,6 +127,24 @@ func TestMetricCacheKeysCarryTheBackendMarker(t *testing.T) {
 		if !strings.Contains(m, "src=") {
 			t.Errorf("metric cache key %s has no backend marker", m)
 		}
+	}
+
+	// v0.9.1159 — the four keys whose ANSWER depends on the VM metric-name
+	// candidate rules must carry the stamp, and it must be applied through the
+	// shared helper. A key that spells its own `:n1` inline would drift the
+	// day the rules change again; a key that forgets it entirely serves the
+	// pre-fix EMPTY body for a full TTL right after the deploy that fixed it.
+	for _, tagged := range []string{
+		"metric-query:v4%s", "metric-hist%s", "metric-labels%s", "metric-attr-keys%s",
+	} {
+		if !strings.Contains(src, tagged) {
+			t.Errorf("cache key %q lost its metricNameRuleTag slot — a warm pre-v0.9.1159 "+
+				"entry would keep serving the empty body the candidate rules exist to fix", tagged)
+		}
+	}
+	if n := strings.Count(src, "metricNameRuleTag(src)"); n != 4 {
+		t.Errorf("metricNameRuleTag applied at %d call sites in api.go, want 4 "+
+			"(query, heatmap, label values, attr keys)", n)
 	}
 
 	// The seventh key lives in promql.go. Same rule, separate file — see
@@ -336,6 +361,38 @@ func TestVMSourceTagsEveryError(t *testing.T) {
 // vmetrics drifts on a signature this line fails to build, which is the
 // entire reason the two method sets were made identical.
 var _ = []metricSource{chMetricSource{}, vmMetricSource{}}
+
+// v0.9.1159 — the candidate-rule stamp is VM-ONLY, and both halves matter.
+//
+// Present on VM: the metric-name candidates changed WHICH series a byte-
+// identical request resolves to, so a warm entry from before the deploy keeps
+// answering empty for its whole TTL — 30s on the query/heatmap keys, 60s on
+// the two discovery keys — which is precisely the symptom the release fixes.
+//
+// Absent on CH: this release cannot change a ClickHouse answer, and the two
+// discovery keys exist to keep a DISTINCT metric_points scan off the hot path
+// (v0.8.456). Stamping them would buy nothing and charge a scan wave to a prod
+// ClickHouse.
+func TestMetricNameRuleTagIsVMOnly(t *testing.T) {
+	if got := metricNameRuleTag(vmMetricSource{}); got != ":n1" {
+		t.Fatalf("VM source tag = %q, want %q", got, ":n1")
+	}
+	if got := metricNameRuleTag(chMetricSource{}); got != "" {
+		t.Fatalf("CH source tag = %q, want empty — a ClickHouse key must stay byte-identical", got)
+	}
+	// nil receiver: a partially wired Server must not panic inside a cache-key
+	// format string, and "no tag" is the CH-shaped, zero-cost direction.
+	if got := metricNameRuleTag(nil); got != "" {
+		t.Fatalf("nil source tag = %q, want empty", got)
+	}
+	// The tag must be a KEY SEGMENT, not free text: it lands between a prefix
+	// and `:src=`, so a value without the leading separator would fuse into the
+	// prefix and make `metric-hist` collide with `metric-histn1`-shaped keys
+	// from a future rule bump.
+	if !strings.HasPrefix(metricNameRuleTag(vmMetricSource{}), ":") {
+		t.Fatal("the tag must open with ':' or it fuses into the key prefix")
+	}
+}
 
 func TestSourceNamesAreStable(t *testing.T) {
 	// These strings ride in cache keys AND in the /api/metrics/names

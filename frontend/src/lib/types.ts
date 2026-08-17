@@ -1063,6 +1063,10 @@ export interface AISettings {
   // can mean "unset".
   temperature?: number | null;
   timeoutS?: number;
+  // v0.9.1138 — arka plan otomatik açıklayıcılar (problem/exception
+  // worker'ları). Kapatmak yalnız OTOMATİK LLM harcamasını durdurur;
+  // tıklamalı ✨ yüzeyleri etkilenmez. Eksik alan = açık.
+  autoExplain?: boolean;
 }
 export interface AISettingsInput {
   provider: AIProvider;
@@ -1079,6 +1083,8 @@ export interface AISettingsInput {
   maxTokens?: number;
   temperature?: number | null;
   timeoutS?: number;
+  // v0.9.1138 — bkz. AISettings.autoExplain; form her zaman gönderir.
+  autoExplain?: boolean;
 }
 
 // External Tempo backend (v0.5.208) — fallback for trace-by-id

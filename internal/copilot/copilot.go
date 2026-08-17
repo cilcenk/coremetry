@@ -114,6 +114,8 @@ type Service struct {
 	// is read at request start, but the shared client is swapped
 	// wholesale so in-flight calls keep the deadline they started with.
 	timeoutS int
+	// autoExplain — v0.9.1138 (bkz. SetAutoExplain). nil ⇒ açık.
+	autoExplain *bool
 
 	// GitHub session token cache. We exchange ghu_ → session token
 	// once and reuse until ~30s before the server-stated expiry.
@@ -992,6 +994,10 @@ type persisted struct {
 	MaxTokens   int      `json:"maxTokens,omitempty"`
 	Temperature *float64 `json:"temperature,omitempty"`
 	TimeoutS    int      `json:"timeoutS,omitempty"`
+	// v0.9.1138 — arka plan otomatik açıklayıcılar (problem/exception
+	// worker'ları). *bool, Enabled idyomu: eski blob nil çözülür ve
+	// nil⇒AÇIK — mevcut kurulumların davranışı upgrade'de değişmez.
+	AutoExplain *bool `json:"autoExplain,omitempty"`
 }
 
 // SettingsStore is the small slice of *chstore.Store we need —
@@ -1027,7 +1033,27 @@ func (s *Service) LoadPersisted(ctx context.Context, store SettingsStore) error 
 	// exactly like a credential change. A legacy blob leaves all three
 	// at zero, which the getters read as "default".
 	s.ConfigureTuning(p.MaxTokens, p.Temperature, p.TimeoutS)
+	s.SetAutoExplain(p.AutoExplain)
 	return nil
+}
+
+// SetAutoExplain / AutoExplainEnabled — v0.9.1138. Arka plan
+// açıklayıcı worker'larının (problem-auto-explain /
+// exception-auto-explain) aç/kapa vidası. nil ⇒ AÇIK (varsayılan
+// davranış değişmedi); kapatmak yalnız OTOMATİK harcamayı durdurur,
+// tıklamalı ✨ yüzeyleri etkilemez. Deploy-kanıtı bulgusu: AI'yı
+// açmak anında worker çağrıları ateşliyor — ücretli sağlayıcıda
+// operatör bunu bilinçli seçebilmeli.
+func (s *Service) SetAutoExplain(v *bool) {
+	s.mu.Lock()
+	s.autoExplain = v
+	s.mu.Unlock()
+}
+
+func (s *Service) AutoExplainEnabled() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.autoExplain == nil || *s.autoExplain
 }
 
 // StartConfigRefresh — v0.5.324. Background poll: keeps the
@@ -1066,11 +1092,12 @@ func (s *Service) StartConfigRefresh(ctx context.Context, store SettingsStore, i
 // purpose: the Settings form PUTs the whole AI config, so a two-step
 // write would open a lost-update window between two pods. 0 / nil for
 // any of them persists as "absent" (omitempty) = use the default.
-func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS, enabled bool, maxTokens int, temperature *float64, timeoutS int) error {
+func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provider, apiKey, model, baseURL string, skipTLS, enabled bool, maxTokens int, temperature *float64, timeoutS int, autoExplain *bool) error {
 	raw, err := json.Marshal(persisted{
 		Provider: provider, APIKey: apiKey, Model: model, BaseURL: baseURL,
 		SkipTLS: skipTLS, Enabled: &enabled,
 		MaxTokens: maxTokens, Temperature: temperature, TimeoutS: timeoutS,
+		AutoExplain: autoExplain,
 	})
 	if err != nil {
 		return err
@@ -1080,6 +1107,7 @@ func (s *Service) SavePersisted(ctx context.Context, store SettingsStore, provid
 	}
 	s.Configure(provider, apiKey, model, baseURL, skipTLS, enabled)
 	s.ConfigureTuning(maxTokens, temperature, timeoutS)
+	s.SetAutoExplain(autoExplain)
 	return nil
 }
 

@@ -299,3 +299,26 @@ func extractParamInt(t *testing.T, url, prefix string) int64 {
 	}
 	return n
 }
+
+// v0.9.1144 — operator-reported: şablona uymayan kimlik-benzeri token
+// ("kY1d" sınıfı sürprizler, bozuk kopyalama) RAG doküman katmanına
+// düşüp "yüklü dokümanlarda bu bilgi yok" diyordu. Gevşek eş de
+// guidedRequestID'ye gider; bundle "biçim çözülemedi" der ama doküman
+// QA'sı ASLA devreye girmez. (Parser'ın kendisi de gevşedi — alnum
+// AltKod artık STRICT yoldan geçiyor; buradaki fikstür ay=13 ile
+// bilerek parse-geçmez.)
+func TestLooseRequestIDRoutesToGuided(t *testing.T) {
+	loose := "ABCD0010599310513000000004220261317093440812086" // ay=13: parse geçmez
+	route := routeGuidedIntent("bu isteğe ne oldu "+loose, nil, nil, nil, "")
+	if route.Intent != guidedRequestID || route.RequestID != loose {
+		t.Fatalf("gevşek kimlik guided'a gitmedi: %+v", route)
+	}
+	if !hasGuidedSignal(normalizeGuidedMsg(loose)) {
+		t.Fatal("gevşek kimlik sinyal sayılmıyor — dal hiç çalışmaz")
+	}
+	// Çözümlenebilir sinyal (16-hex span) gevşek bloba tercih edilir.
+	route = routeGuidedIntent("span "+testSpanHex+" blob "+loose, nil, nil, nil, "")
+	if route.Intent != guidedSpanByID {
+		t.Fatalf("span kazanmalıydı: %+v", route)
+	}
+}

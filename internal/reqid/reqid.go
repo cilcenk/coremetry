@@ -27,7 +27,7 @@ import (
 
 // Segment ofsetleri — biçim SABİT genişlikli, ayırıcı yok:
 //
-//	[FonksiyonKodu 7 alnum][Kanal 6 rakam][AltKod 4 rakam]
+//	[FonksiyonKodu 7 alnum][Kanal 6 rakam][AltKod 4 alnum]
 //	[MüşteriNo 10 rakam][Tarih 8 YYYYMMDD][Zaman 9 HHMMSSsss]
 //	[Sequence/Salt: değişken uzunlukta rakam kuyruğu]
 //
@@ -136,9 +136,16 @@ func Parse(token string, loc *time.Location) (ID, bool) {
 	if !allAlnum(fn) {
 		return ID{}, false
 	}
-	// Fonksiyon kodu dışındaki HER segment yalnız rakam.
-	rest := token[offChannel:]
-	if !allDigits(rest) {
+	// v0.9.1144 — segment segment doğrulama. İlk sürüm fonksiyon kodu
+	// dışındaki her şeyi rakam sanıyordu; operatörün prod kimliğinde
+	// AltKod alfanümerik çıktı (harf+rakam karışık) ve parse düşünce
+	// mesaj RAG doküman katmanına düşüyordu (operator-reported).
+	// Kanal/Müşteri/Tarih/Zaman/Salt iki gerçek örnekte de saf rakam —
+	// onları GEVŞETME: her gevşeme yanlış-pozitif yüzeyini büyütür.
+	if !allDigits(token[offChannel:offSubCode]) ||
+		!allAlnum(token[offSubCode:offCustomer]) ||
+		!allDigits(token[offCustomer:offSalt]) ||
+		!allDigits(token[offSalt:]) {
 		return ID{}, false
 	}
 	date := token[offDate:offTime]
@@ -207,6 +214,48 @@ func FindToken(text string) (string, bool) {
 		i = j
 	}
 	return "", false
+}
+
+// looseMinDigits — FindLooseToken'ın rakam tabanı. Şablonun rakam-şartlı
+// pozisyonları (kanal 6 + müşteri 10 + tarih 8 + zaman 9) = 33; harf
+// taşıyabilen yalnız fonksiyon kodu + alt kod. 47-64 karakterlik, ≥33
+// rakamlı bir alnum bloğu serbest metinde kimlik dışında pratikte oluşmaz.
+const looseMinDigits = 33
+
+// FindLooseToken — v0.9.1144. Kimliğe BENZEYEN ama şablona (henüz)
+// uymayan token: uzunluk aralığı tutuyor, rakam ağırlığı tutuyor, ama
+// Parse geçmiyor (sürpriz bir segment sınıfı, bozuk kopyalama, gelecekte
+// değişen şablon). Amaç yönlendirme dürüstlüğü: böyle bir token taşıyan
+// mesaj doküman-QA katmanına DÜŞMEMELİ — guided "biçim çözülemedi" der
+// ve köprü linkini yine üretir. Bu fonksiyon çözümleme İDDİA ETMEZ;
+// çağıran Parse'ın düştüğünü bilerek kullanır.
+func FindLooseToken(text string) (string, bool) {
+	n := len(text)
+	for i := 0; i < n; {
+		if !isAlnumByte(text[i]) {
+			i++
+			continue
+		}
+		j := i
+		for j < n && isAlnumByte(text[j]) {
+			j++
+		}
+		if run := text[i:j]; len(run) >= MinLen && len(run) <= MaxLen && digitCount(run) >= looseMinDigits {
+			return run, true
+		}
+		i = j
+	}
+	return "", false
+}
+
+func digitCount(s string) int {
+	c := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] >= '0' && s[i] <= '9' {
+			c++
+		}
+	}
+	return c
 }
 
 // Find — FindToken + Parse (loc ile). Metinden doğrudan çözümlenmiş

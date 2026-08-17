@@ -233,10 +233,12 @@ func drawerSuppressesGuided(explain string, route guidedRoute, question string) 
 	// öznedir: operatör çekmecedeki açıklamayı değil TAM O İSTEĞİ soruyor
 	// ve kimliğin çözümü (log → trace) yalnız guided yolda var.
 	//
-	// NOT: aynı muafiyet route.TraceID/SpanID için YOK — bu, v0.9.479'dan
-	// beri süregelen davranış ve bu dilimin kapsamı dışında bilinçli
-	// bırakıldı (aynı sınıf bir boşluk gibi görünüyor; ayrı bir karar).
-	if route.RequestID != "" {
+	// v0.9.1145 — aynı muafiyet TraceID/SpanID'ye de: v0.9.479'dan beri
+	// çekmece açıkken yapıştırılan 32/16-hex kimlik guided'a girmiyordu,
+	// oysa yapıştırılan kimlik sınıfının TAMAMI (request/trace/span)
+	// çekmecedeki konudan daha somut bir öznedir ve çözümü yalnız
+	// guided'da var.
+	if route.RequestID != "" || route.TraceID != "" || route.SpanID != "" {
 		return false
 	}
 	return !wantsFleetScope(guidedTokens(normalizeGuidedMsg(question)))

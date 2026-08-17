@@ -143,6 +143,20 @@ func TestDrawerSuppressesGuided(t *testing.T) {
 			name:    "İngilizce filo kapsamı → guided kalır",
 			explain: ex, route: guidedRoute{Intent: guidedProblems}, question: "all services affected?", want: false,
 		},
+		// v0.9.1145 — yapıştırılan kimlik sınıfının TAMAMI muaf:
+		// v0.9.479'dan beri çekmece açıkken 32/16-hex yapıştırma
+		// guided'a girmiyordu (request-ID muafiyeti 1142'de gelmişti,
+		// bu iki kardeş açıktı).
+		{
+			name:    "trace id yapıştırma → guided kalır",
+			explain: ex, route: guidedRoute{Intent: guidedTraceByID, TraceID: "4bf92f3577b34da6a3ce929d0e0e4736"},
+			question: "bu trace neden yavaş?", want: false,
+		},
+		{
+			name:    "span id yapıştırma → guided kalır",
+			explain: ex, route: guidedRoute{Intent: guidedSpanByID, SpanID: "00f067aa0ba902b7"},
+			question: "bu span ne?", want: false,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -88,7 +88,8 @@ func TestRequestIDLinks(t *testing.T) {
 		if !strings.Contains(links[0].Href, "logs.example.com") || !strings.Contains(links[0].Href, rid) {
 			t.Fatalf("href: %q", links[0].Href)
 		}
-		if !strings.HasPrefix(links[0].Label, "Log (prod)") {
+		// v0.9.1143 — etiket kurumun tanıdığı adla "Logizleme (Prod)".
+		if !strings.HasPrefix(links[0].Label, "Logizleme (Prod)") {
 			t.Fatalf("etiket ortamı söylemiyor: %q", links[0].Label)
 		}
 	})

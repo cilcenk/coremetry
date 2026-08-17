@@ -161,8 +161,11 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
             // <Link>'e verilemez: router onu path sanıp uygulama içinde
             // gezinir ve link kırılır. Dış href <a target=_blank>.
             /^https?:/i.test(l.href) ? (
+              // v0.9.1143 — dış çip (Logizleme köprüsü) kanıta atlama
+              // yolu; operatör isteğiyle iç çiplerden belirgin büyük.
               <a key={i} href={l.href} target="_blank" rel="noopener noreferrer"
-                className="badge b-info" style={{ textDecoration: 'none', fontSize: 10 }}>
+                className="badge b-info"
+                style={{ textDecoration: 'none', fontSize: 12, padding: '3px 8px' }}>
                 🔗 {l.label}
               </a>
             ) : (

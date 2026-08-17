@@ -58,11 +58,13 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/promapi"
 )
 
 // ErrUnsupported marks a query Coremetry cannot EXPRESS against VM — a
@@ -98,7 +100,21 @@ const (
 
 // promSupportedAggs is the operator-facing list, shared by both refusal
 // messages so they can never drift out of sync with each other.
-const promSupportedAggs = "avg, sum, min, max, count, last, rate, increase"
+//
+// v0.9.1157 — p50/p95/p99 joined it (Faz 2). The string is what a refusal
+// message prints, so the percentiles being IN it is the operator-visible
+// half of "histograms translate now".
+const promSupportedAggs = "avg, sum, min, max, count, last, rate, increase, p50, p95, p99"
+
+// bucketSuffix — the series suffix every OTLP→Prometheus write path gives
+// an explicit histogram's per-bucket counter.
+const bucketSuffix = "_bucket"
+
+// labelLE — the bucket upper-bound label. Prometheus/MetricsQL spell it
+// `le` ("less than or equal"), and `histogram_quantile` CONSUMES it: the
+// aggregation feeding the function must group by it or the function has no
+// distribution to read.
+const labelLE = "le"
 
 // promAgg is the SHAPE a Coremetry aggregation compiles to: an optional
 // rollup function wrapped around the selector, then a set-aggregation over
@@ -110,6 +126,15 @@ const promSupportedAggs = "avg, sum, min, max, count, last, rate, increase"
 type promAgg struct {
 	Op     string // avg | sum | min | max | count — the set-aggregation
 	Rollup string // "" = none, the selector is aggregated directly
+	// Quantile > 0 → the whole shape is wrapped in histogram_quantile and
+	// the SELECTOR NAME becomes the `_bucket` series (v0.9.1157, Faz 2):
+	//
+	//	histogram_quantile(0.99, sum by (le) (rate({__name__="x_bucket"}[Ws])))
+	//
+	// Zero means "not a percentile". A float rather than a bool + value
+	// pair because φ is the only thing the branch needs and 0 is not a
+	// percentile Coremetry offers — p50 is the smallest.
+	Quantile float64
 }
 
 // promAggregator maps a Coremetry aggregation label to its MetricsQL shape.
@@ -134,13 +159,32 @@ type promAgg struct {
 //   - increase → sum(increase(sel[W])), the same idiom over the window
 //     TOTAL instead of the per-second rate.
 //
-// p50/p95/p99 stay refused, and NOT because nobody got to them: a
-// percentile is not an operator swap at all. It needs the histogram BUCKET
-// series (histogram_quantile over …_bucket / le), and choosing between that
-// and a value-quantile needs the instrument type, which VM does not report
-// (see ListMetricNames). Histograms are Faz 2 scope. The message says so
-// out loud, because a bare "unsupported" reads as "never" and sends the
-// operator hunting for a workaround that does not exist.
+// v0.9.1157 (Faz 2) adds p50/p95/p99. Faz 1/1.5 refused them, and the
+// stated reason was right for the time: a percentile is not an operator
+// swap, it needs the histogram BUCKET series. That is exactly what this
+// release supplies —
+//
+//	histogram_quantile(φ, sum by (le) (rate({__name__="<name>_bucket"}[W])))
+//
+// — the canonical idiom, in both dialects.
+//
+// The old refusal also named a SECOND obstacle: choosing between a bucket
+// quantile and a value-quantile needs the instrument type, which VM does not
+// report. That one is answered by committing rather than by detecting. This
+// translation is UNCONDITIONALLY the bucket form; when the metric turns out
+// not to be a histogram, the `_bucket` selector matches nothing and the
+// result is EMPTY, not wrong. An empty answer with a note that names the
+// series we looked for (see QueryMetricNoted) is a diagnosis the operator
+// can act on. Guessing a value-quantile from a heuristic would be the other
+// kind of answer — plausible, unverifiable, and off by however much the
+// distribution is skewed (the v0.9.566 class).
+//
+// The rollup is `rate`, matching every Grafana dashboard and the Prometheus
+// docs. `increase` would give the same φ (histogram_quantile reads bucket
+// RATIOS, so any positive rescaling of every bucket leaves the answer
+// unchanged), so the choice is entirely about which expression an operator
+// recognises in VM's query log. The heatmap path picks the other one, and
+// for a reason that is NOT cosmetic — see buildHistogramPromQL.
 func promAggregator(agg string) (promAgg, error) {
 	switch strings.ToLower(strings.TrimSpace(agg)) {
 	case "", "avg":
@@ -159,13 +203,68 @@ func promAggregator(agg string) (promAgg, error) {
 		return promAgg{Op: "sum", Rollup: rollupRate}, nil
 	case "increase":
 		return promAgg{Op: "sum", Rollup: rollupIncrease}, nil
-	case "p50", "p95", "p99":
-		return promAgg{}, fmt.Errorf("percentile aggregation %q is %w here: it needs the histogram "+
-			"bucket series (histogram_quantile over …_bucket), which is Faz 2 — supported today: %s",
-			agg, ErrUnsupported, promSupportedAggs)
+	}
+	if q, ok := promPercentile(agg); ok {
+		return promAgg{Op: "sum", Rollup: rollupRate, Quantile: q}, nil
 	}
 	return promAgg{}, fmt.Errorf("aggregation %q is %w (supported: %s)",
 		agg, ErrUnsupported, promSupportedAggs)
+}
+
+// promPercentile maps a Coremetry percentile label to φ.
+//
+// The THREE labels are the whole set on purpose: they are what
+// MetricQueryFilter.Aggregation can carry and what the CH sibling
+// implements, so accepting `p90` here would translate a query the builder
+// cannot produce and the other backend cannot answer.
+func promPercentile(agg string) (float64, bool) {
+	switch strings.ToLower(strings.TrimSpace(agg)) {
+	case "p50":
+		return 0.50, true
+	case "p95":
+		return 0.95, true
+	case "p99":
+		return 0.99, true
+	}
+	return 0, false
+}
+
+// bucketMetricName applies the `_bucket` naming rule.
+//
+// Rule 1 still holds — the operator's name is not TRANSLATED, only
+// SUFFIXED. Whichever spelling their write path produced
+// (`http.server.request.duration` or `http_server_request_duration`), the
+// bucket series is that same string plus `_bucket`, because the suffix is
+// appended by the OTLP→Prometheus conversion AFTER any name sanitisation.
+//
+// An already-suffixed name is left alone. The catalogue in VM mode lists
+// RAW VM series names (ListMetricNames reads /label/__name__/values), so
+// `http_server_request_duration_bucket` is a row an operator can click, and
+// `…_bucket_bucket` would match nothing while looking like a typo they made.
+//
+// What this deliberately does NOT do is strip `_sum` / `_count`. Those are
+// sibling series of the same histogram, so "did you mean the buckets?" is a
+// reasonable guess — but it is a GUESS, and a wrong one silently answers a
+// question the operator did not ask. Left alone, `x_count` + p99 asks for
+// `x_count_bucket`, finds nothing, and returns the empty-with-a-note shape
+// that says which series was missing. The operator then picks the right row.
+func bucketMetricName(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" || strings.HasSuffix(name, bucketSuffix) {
+		return name
+	}
+	return name + bucketSuffix
+}
+
+// formatQuantile renders φ for the expression.
+//
+// 'g' with -1 precision gives the shortest exact round-trip: 0.5, 0.95,
+// 0.99 — never "0.500000". The expression text rides in the API cache key
+// only indirectly (the key carries `agg=p99`), but it DOES ride in VM's
+// query log, where a stable spelling is what makes two polls of one panel
+// recognisable as the same query.
+func formatQuantile(q float64) string {
+	return strconv.FormatFloat(q, 'g', -1, 64)
 }
 
 var promLabelInvalid = regexp.MustCompile(`[^a-zA-Z0-9_]`)
@@ -309,7 +408,15 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 		return "", err
 	}
 
-	matchers := []string{"__name__=" + quotePromString(name)}
+	// v0.9.1157 — a percentile reads the BUCKET series, not the metric the
+	// operator named. Swapped here rather than in promAggregator so the
+	// name rule has exactly one home (bucketMetricName) and the aggregator
+	// stays a pure label→shape map.
+	selName := name
+	if agg.Quantile > 0 {
+		selName = bucketMetricName(name)
+	}
+	matchers := []string{"__name__=" + quotePromString(selName)}
 	if svc := strings.TrimSpace(f.Service); svc != "" {
 		matchers = append(matchers, serviceLabel()+"="+quotePromString(svc))
 	}
@@ -369,12 +476,7 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 	//   - never a FABRICATION. sum/avg would report a number no series ever
 	//     measured, off from the CH backend by the group's cardinality:
 	//     plausible, wrong, unquestioned — the v0.9.566 class.
-	if len(f.GroupBy) == 0 {
-		// No group-by → one series aggregated across everything, which is
-		// what the CH path's `GROUP BY bucket` alone produces.
-		return agg.Op + "(" + vec + ")", nil
-	}
-	labels := make([]string, 0, len(f.GroupBy))
+	labels := make([]string, 0, len(f.GroupBy)+1)
 	for _, g := range f.GroupBy {
 		l := promLabel(g)
 		if l == "" {
@@ -382,10 +484,62 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 		}
 		labels = append(labels, l)
 	}
+
+	// PERCENTILES ALWAYS CARRY A BY-CLAUSE, and `le` always comes first.
+	//
+	// `le` is not one of the operator's grouping dimensions — it is the
+	// function's INPUT. histogram_quantile reads the distribution out of the
+	// `le`-labelled members of each group, so an aggregation that dropped
+	// `le` would hand the function a single collapsed number and the result
+	// would be NaN, not a percentile. That is why this branch cannot reuse
+	// the "no group-by → bare op(vec)" shape below.
+	//
+	// First rather than last purely so the expression reads the way the
+	// Prometheus documentation writes it; MetricsQL does not care about the
+	// order. A caller who literally asked to group by `le` is deduped — a
+	// repeated label inside by() is accepted by VM but the intent is already
+	// covered, and printing it twice would make two polls of the same panel
+	// look like different queries in VM's log.
+	if agg.Quantile > 0 {
+		by := make([]string, 0, len(labels)+1)
+		by = append(by, labelLE)
+		for _, l := range labels {
+			if l != labelLE {
+				by = append(by, l)
+			}
+		}
+		return "histogram_quantile(" + formatQuantile(agg.Quantile) + ", " +
+			agg.Op + " by (" + strings.Join(by, ", ") + ") (" + vec + "))", nil
+	}
+
 	if len(labels) == 0 {
+		// No group-by → one series aggregated across everything, which is
+		// what the CH path's `GROUP BY bucket` alone produces.
 		return agg.Op + "(" + vec + ")", nil
 	}
 	return agg.Op + " by (" + strings.Join(labels, ", ") + ") (" + vec + ")", nil
+}
+
+// emptyBucketNote explains a percentile that came back with ZERO series.
+//
+// It exists because that outcome is AMBIGUOUS in a way no other empty result
+// is. Every other query asks VM for a series the operator picked from the
+// catalogue; a percentile asks for `<name>_bucket`, a name they never typed
+// and cannot see on screen. So "no data in this window", "this metric is not
+// a histogram" and "your write path spelled the buckets differently" all
+// render as the same blank chart, and the operator's next move depends on
+// which one it was.
+//
+// Pure, and it recomputes the bucket name from the SAME function the query
+// used rather than taking it as an argument — the promStep precedent in this
+// file: a note free to name a different series than the query asked for is
+// the version that can lie.
+func emptyBucketNote(metric string) string {
+	return fmt.Sprintf("%s serisi bulunamadı — yüzdelikler histogram kova serisini "+
+		"(…%s + le etiketi) okur. Bu metrik histogram olmayabilir, pencerede veri "+
+		"olmayabilir, ya da write yolu kovaları başka bir adla yazıyor olabilir "+
+		"(VictoriaMetrics'te metrik adını …%s ile arayın).",
+		bucketMetricName(metric), bucketSuffix, bucketSuffix)
 }
 
 // promStep resolves the query_range step in seconds.
@@ -515,6 +669,207 @@ func seriesGroupKey(groupBy []string, labels map[string]string) []string {
 	out := make([]string, 0, len(groupBy))
 	for _, g := range groupBy {
 		out = append(out, labels[promLabel(g)])
+	}
+	return out
+}
+
+// labelSetGroupKey names a series the RAW-QUERY proxy returned
+// (v0.9.1157, Faz 2 — GET /api/metrics/promql on the VM path).
+//
+// This path has no requested group-by to position a tuple against: the
+// operator wrote an arbitrary MetricsQL expression and VM answered with
+// whatever label set survived it. So the identity has to come from the
+// LABELS THEMSELVES, and every property below is about making that identity
+// STABLE across polls, because SpanMetricSeries.GroupKey is what the
+// frontend derives a line's colour, legend text and compare-ghost match
+// from (seriesGroupLabel):
+//
+//   - one element per label, `k="v"`, so the legend reads the way
+//     Prometheus writes a series and a value containing "|" (the
+//     frontend's tuple separator) cannot forge an extra dimension;
+//   - keys SORTED, because Go map iteration is randomised per range — an
+//     unsorted tuple would relabel and recolour every line on every poll;
+//   - `__name__` sorts first for free ('_' < any letter in ASCII), which
+//     happens to put the metric name at the head of the legend the way an
+//     operator would write it.
+//
+// An empty label set yields nil, matching the CH evaluator's own shape for
+// a result with no grouping (scalarSeries: GroupKey nil).
+func labelSetGroupKey(labels map[string]string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, k+"="+quotePromString(labels[k]))
+	}
+	return out
+}
+
+// ── Histogram bucket layout (v0.9.1157, Faz 2) ──────────────────────────────
+//
+// THE TWO AXES OF "CUMULATIVE", AND WHY ONLY ONE OF THEM IS TEMPORALITY.
+//
+// chstore.HistogramSeries — the shape /api/metrics/histogram returns and the
+// frontend heatmap consumes (histogramHeatmap.ts) — wants, per time bucket, a
+// vector of PER-BUCKET observation counts: counts[i] = observations that fell
+// in (bounds[i-1], bounds[i]], with counts[N] the +Inf overflow. A Prometheus
+// `_bucket` series is cumulative in BOTH directions, and each needs a
+// different fix:
+//
+//  1. OVER TIME, each `<name>_bucket{le=…}` series is a monotonically
+//     increasing counter since process start. VM undoes this for us:
+//     `increase(…[step])` is a reset-protected window delta. It happens
+//     upstream, so nothing here does temporality arithmetic — which is also
+//     why the OTLP delta-vs-cumulative question never reaches this file. VM's
+//     write path already resolved it when it materialised the counters.
+//  2. ACROSS le, `le="0.1"` counts everything ≤ 0.1 — an inclusive PREFIX SUM.
+//     This is not temporality at all and no rollup function undoes it; it is
+//     what makes histogram_quantile possible. So the differencing below is
+//     unconditional: subtract each bucket's prefix sum from the previous
+//     bound's. Skipping it would put ~the whole population in the top bucket
+//     and paint the heatmap as one bright band at the tail — a picture that
+//     looks like a latency crisis.
+//
+// Both pieces are pure and table-tested (histogram_test.go) because both are
+// silent when wrong: axis 2 mis-differenced yields a plausible heatmap, and
+// the percentiles computed off it (PercentileFromBuckets) stay finite.
+
+// bucketLayout turns a set of `le` label values into the read model's bucket
+// layout.
+//
+// Returns the finite upper bounds ASCENDING + DEDUPED (len N, becoming
+// HistogramSeries.Bounds), and slot[i] = the index in the (N+1)-wide counts
+// vector that input i contributes to. `+Inf` maps to slot N — the overflow
+// position — and is never a bound, because it is not a number the y-axis can
+// place.
+//
+// THREE input properties are handled rather than assumed, and each has a real
+// source:
+//
+//   - ARBITRARY ORDER. VM returns series in whatever order vmselect merged
+//     them; there is no ordering guarantee on a query_range result.
+//   - DUPLICATES. Our own `sum by (le)` cannot produce two series with the
+//     same le, but a caller pointing this at a recording rule or a federated
+//     view can. Two inputs sharing an le share a slot, and their counts ADD —
+//     the same semantics the sum would have had.
+//   - MISSING / UNPARSEABLE le. This is an ERROR, not a skip. A dropped
+//     bucket does not empty the chart, it shifts every percentile and moves
+//     mass into a neighbouring band — wrong-but-plausible, the v0.9.566 class.
+//     The message names the offending value because the common cause is
+//     recognisable on sight: a series with no `le` at all is usually not a
+//     histogram bucket (VictoriaMetrics' own native histograms label buckets
+//     `vmrange`, not `le`).
+func bucketLayout(les []string) (bounds []float64, slot []int, err error) {
+	if len(les) == 0 {
+		return nil, nil, nil
+	}
+	parsed := make([]float64, len(les))
+	for i, raw := range les {
+		v, ok := leBound(raw)
+		if !ok {
+			return nil, nil, fmt.Errorf("histogram bucket series carries an unusable %q label %q — "+
+				"this series is %w as a histogram bucket (a bucket series must label every member "+
+				"with a numeric le, or +Inf for the overflow bucket)",
+				labelLE, promapi.FirstN(raw, 40), ErrUnsupported)
+		}
+		parsed[i] = v
+	}
+	// Distinct finite bounds, ascending. sort.Float64s puts +Inf last, but
+	// +Inf is filtered out before sorting so the slice is finite by
+	// construction — a bound the frontend can position on an axis.
+	seen := make(map[float64]struct{}, len(parsed))
+	for _, v := range parsed {
+		if math.IsInf(v, 1) {
+			continue
+		}
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		bounds = append(bounds, v)
+	}
+	sort.Float64s(bounds)
+	index := make(map[float64]int, len(bounds))
+	for i, b := range bounds {
+		index[b] = i
+	}
+	slot = make([]int, len(parsed))
+	for i, v := range parsed {
+		if math.IsInf(v, 1) {
+			// The overflow bucket sits one past the last finite bound. With
+			// no finite bounds at all this is slot 0, and the caller treats
+			// an empty `bounds` as "no usable layout" before it gets here.
+			slot[i] = len(bounds)
+			continue
+		}
+		slot[i] = index[v]
+	}
+	return bounds, slot, nil
+}
+
+// leBound parses one `le` label value into a bucket upper bound.
+//
+// Prometheus writes the overflow bucket's bound as `+Inf`; VM has emitted
+// `Inf` and `inf` across versions, and a remote-write producer may send
+// either, so all spellings are accepted. ParseFloat handles them natively —
+// including `-Inf` and `NaN`, which is exactly why they are rejected
+// explicitly below: a NaN bound cannot be ordered, and a negative-infinity
+// bound would sort ahead of every real bucket and swallow the whole
+// distribution into slot 0.
+func leBound(v string) (float64, bool) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, false
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0, false
+	}
+	if math.IsNaN(f) || math.IsInf(f, -1) {
+		return 0, false
+	}
+	return f, true
+}
+
+// deCumulateLE turns one time bucket's le-CUMULATIVE counts into PER-BUCKET
+// counts (axis 2 above). cum is indexed by bucket slot: cum[i] = observations
+// with value ≤ bounds[i], and cum[N] = the total including the +Inf overflow.
+//
+// Two guards, both of which change the answer rather than merely tidying it:
+//
+//   - A NEGATIVE difference is clamped to zero. It means the prefix sums are
+//     not monotonic, which happens when a bucket series churned mid-window
+//     (a pod restart lands one member's increase on a different grid slot
+//     than its neighbour's). A negative COUNT has no meaning, and uint64
+//     would wrap it into ~1.8e19 — a single cell that saturates the entire
+//     heatmap's colour scale and makes every real value read as zero.
+//   - The running reference only ever moves UP (`if c > prev`). Given
+//     cum = [10, 8, 20] the alternative — carrying 8 forward — yields
+//     10 + 0 + 12 = 22 observations from a histogram whose own total says 20.
+//     Keeping the monotonic reference yields 10 + 0 + 10 = 20: the dip is
+//     absorbed where it happened instead of being redistributed into the
+//     tail, and the totals still agree with cum[N], which is what the
+//     percentile estimator normalises against.
+//
+// Rounding is at the boundary and nowhere else: `increase()` over an integer
+// counter is integral in principle, but it arrives as a float64 that has been
+// through JSON, so 49.999999999999996 must become 50 rather than 49.
+func deCumulateLE(cum []float64) []uint64 {
+	out := make([]uint64, len(cum))
+	prev := 0.0
+	for i, c := range cum {
+		if d := c - prev; d > 0 {
+			out[i] = uint64(math.Round(d))
+		}
+		if c > prev {
+			prev = c
+		}
 	}
 	return out
 }

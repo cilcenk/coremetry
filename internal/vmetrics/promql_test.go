@@ -52,6 +52,15 @@ func TestPromAggregator(t *testing.T) {
 		"rate":     {Op: "sum", Rollup: "rate"},
 		"Rate":     {Op: "sum", Rollup: "rate"},
 		"increase": {Op: "sum", Rollup: "increase"},
+		// v0.9.1157 (Faz 2) — the percentiles translate. The rollup is rate
+		// and the set-aggregation is sum, because histogram_quantile reads
+		// `sum by (le) (rate(<bucket>[W]))`; the φ rides in Quantile and is
+		// what makes the shape a quantile rather than a plain sum.
+		"p50":   {Op: "sum", Rollup: "rate", Quantile: 0.50},
+		"p95":   {Op: "sum", Rollup: "rate", Quantile: 0.95},
+		"p99":   {Op: "sum", Rollup: "rate", Quantile: 0.99},
+		"P99":   {Op: "sum", Rollup: "rate", Quantile: 0.99},
+		" p95 ": {Op: "sum", Rollup: "rate", Quantile: 0.95},
 	}
 	for in, want := range ok {
 		got, err := promAggregator(in)
@@ -62,9 +71,13 @@ func TestPromAggregator(t *testing.T) {
 			t.Fatalf("promAggregator(%q) = %+v, want %+v", in, got, want)
 		}
 	}
-	// Refused. The percentiles need the histogram bucket series (Faz 2);
-	// the rest are simply not aggregations Coremetry has.
-	for _, in := range []string{"p50", "p95", "p99", "p90", "median", "nonsense"} {
+	// Refused: aggregations Coremetry does not have. p90 is the interesting
+	// one — it LOOKS like the three above and is refused anyway, because
+	// MetricQueryFilter.Aggregation cannot carry it and the ClickHouse
+	// sibling does not implement it. Translating a percentile the builder
+	// cannot produce would make VM answer a query the other backend
+	// silently could not.
+	for _, in := range []string{"p90", "p999", "median", "quantile", "nonsense"} {
 		_, err := promAggregator(in)
 		if err == nil {
 			t.Fatalf("promAggregator(%q): want error, got nil", in)
@@ -81,33 +94,191 @@ func TestPromAggregator(t *testing.T) {
 	}
 }
 
-// The percentile refusal has to POINT SOMEWHERE. "unsupported" alone reads
-// as "never", and the operator's next move is to hunt for a workaround that
-// does not exist — the templates hand p99 to every histogram family
-// (metricTemplates.ts), so this is the message they will actually meet.
-func TestPercentileRefusalNamesFaz2(t *testing.T) {
-	for _, agg := range []string{"p50", "p95", "p99"} {
-		_, err := buildPromQL(chstore.MetricQueryFilter{
-			Name: "http.server.request.duration", Aggregation: agg,
+// ── Percentiles (v0.9.1157, Faz 2) ─────────────────────────────────────────
+
+// The φ × group-by × name-suffix matrix, pinned as LITERAL expressions.
+//
+// Exhaustive rather than sampled for the reason this file's header gives
+// about the aggregation matrix (the v0.6.36 two-axis lesson): one untested
+// combination here is a silently WRONG LATENCY NUMBER, which is the single
+// figure an operator escalates on. Three things can go wrong quietly and each
+// axis exists to catch one:
+//
+//	φ            — a mis-rendered 0.95 charts p50 under a "p95" legend.
+//	`le` in by() — dropped, histogram_quantile has no distribution to read
+//	               and returns NaN; present but LAST, and the expression
+//	               drifts from the documented idiom for no reason.
+//	_bucket      — appended twice matches nothing (empty chart); not appended
+//	               at all queries the sum/count series and yields a number
+//	               that is not a percentile of anything.
+func TestBuildPromQLPercentileShapes(t *testing.T) {
+	// Window floor: no explicit step → promStep's 300 buckets over the
+	// default 24h window is 288s, which promRollupWindow floors to 300 for
+	// rate. Literal, not derived — a test that asked the implementation what
+	// the window should be would pass while both were wrong.
+	const w = "300s"
+	tests := []struct {
+		name string
+		f    chstore.MetricQueryFilter
+		want string
+	}{
+		{
+			name: "p99, no group-by — le is STILL the by-clause",
+			f:    chstore.MetricQueryFilter{Name: "http.server.request.duration", Aggregation: "p99"},
+			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="http.server.request.duration_bucket"}[` + w + `])))`,
+		},
+		{
+			name: "p50 renders φ as 0.5, not 0.500000",
+			f:    chstore.MetricQueryFilter{Name: "m", Aggregation: "p50"},
+			want: `histogram_quantile(0.5, sum by (le) (rate({__name__="m_bucket"}[` + w + `])))`,
+		},
+		{
+			name: "p95",
+			f:    chstore.MetricQueryFilter{Name: "m", Aggregation: "p95"},
+			want: `histogram_quantile(0.95, sum by (le) (rate({__name__="m_bucket"}[` + w + `])))`,
+		},
+		{
+			name: "group-by joins le, le FIRST",
+			f: chstore.MetricQueryFilter{
+				Name: "m", Aggregation: "p99", GroupBy: []string{"pod"},
+			},
+			want: `histogram_quantile(0.99, sum by (le, pod) (rate({__name__="m_bucket"}[` + w + `])))`,
+		},
+		{
+			name: "two group-by keys, dotted one sanitized",
+			f: chstore.MetricQueryFilter{
+				Name: "m", Aggregation: "p95", GroupBy: []string{"pod", "host.name"},
+			},
+			want: `histogram_quantile(0.95, sum by (le, pod, host_name) (rate({__name__="m_bucket"}[` + w + `])))`,
+		},
+		{
+			name: "an explicit le group-by is deduped, not printed twice",
+			f: chstore.MetricQueryFilter{
+				Name: "m", Aggregation: "p99", GroupBy: []string{"le", "pod"},
+			},
+			want: `histogram_quantile(0.99, sum by (le, pod) (rate({__name__="m_bucket"}[` + w + `])))`,
+		},
+		{
+			name: "already-suffixed name is NOT double-suffixed",
+			f: chstore.MetricQueryFilter{
+				Name: "http_server_request_duration_bucket", Aggregation: "p99",
+			},
+			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="http_server_request_duration_bucket"}[` + w + `])))`,
+		},
+		{
+			name: "_sum is left alone — the suffix rule never GUESSES a sibling",
+			f:    chstore.MetricQueryFilter{Name: "m_sum", Aggregation: "p99"},
+			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="m_sum_bucket"}[` + w + `])))`,
+		},
+		{
+			name: "service + filters land on the BUCKET selector",
+			f: chstore.MetricQueryFilter{
+				Name: "m", Aggregation: "p99", Service: "cart",
+				Filters: []chstore.FilterExpr{{Key: "http.route", Op: "=", Values: []string{"/api"}}},
+			},
+			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="m_bucket", service_name="cart", http_route="/api"}[` + w + `])))`,
+		},
+		{
+			name: "explicit step drives the rate window, unfloored when > floor",
+			f: chstore.MetricQueryFilter{
+				Name: "m", Aggregation: "p99", StepSeconds: 600,
+			},
+			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="m_bucket"}[600s])))`,
+		},
+		{
+			name: "an explicit rate window wins over the floor",
+			f: chstore.MetricQueryFilter{
+				Name: "m", Aggregation: "p99", StepSeconds: 60, RateWindowSec: 180,
+			},
+			want: `histogram_quantile(0.99, sum by (le) (rate({__name__="m_bucket"}[180s])))`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := buildPromQL(tc.f)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got  %s\nwant %s", got, tc.want)
+			}
 		})
-		if err == nil {
-			t.Fatalf("agg=%s: want a refusal", agg)
+	}
+}
+
+// The former refusal must be GONE from the operator-facing text too. A
+// translation that works while the message still says "Faz 2" would send an
+// operator whose percentile now charts back to ClickHouse for nothing.
+func TestPercentileNoLongerDeferredToFaz2(t *testing.T) {
+	if strings.Contains(promSupportedAggs, "p99") == false {
+		t.Fatal("promSupportedAggs does not list p99 — every refusal message prints this string, " +
+			"so the percentiles being absent from it advertises Faz 2 as unshipped")
+	}
+	_, err := promAggregator("nonsense")
+	if err == nil {
+		t.Fatal("want a refusal")
+	}
+	if strings.Contains(err.Error(), "Faz 2") {
+		t.Fatalf("a refusal still defers to Faz 2, which shipped in v0.9.1157: %v", err)
+	}
+	// And the percentiles no longer error at all.
+	for _, agg := range []string{"p50", "p95", "p99"} {
+		if _, err := promAggregator(agg); err != nil {
+			t.Fatalf("agg=%s still refused: %v", agg, err)
 		}
-		msg := err.Error()
-		for _, want := range []string{"Faz 2", "histogram", "bucket", agg} {
-			if !strings.Contains(msg, want) {
-				t.Fatalf("agg=%s: refusal does not mention %q: %s", agg, want, msg)
-			}
+	}
+	_ = errors.Is // keep the import meaningful if the block above changes
+}
+
+// bucketMetricName is the naming RULE, tested apart from the expressions
+// because it is the piece an operator meets as "empty chart" when it is
+// wrong — never as an error.
+func TestBucketMetricName(t *testing.T) {
+	cases := map[string]string{
+		// Dots kept: rule 1 — the name is not translated, only suffixed. VM
+		// holds whichever spelling the write path produced, and the suffix is
+		// appended after any sanitisation on that side too.
+		"http.server.request.duration": "http.server.request.duration_bucket",
+		"http_server_request_duration": "http_server_request_duration_bucket",
+		// Idempotent: the VM catalogue lists raw series names, so
+		// `…_bucket` is a row an operator can click.
+		"m_bucket": "m_bucket",
+		// Siblings are NOT rewritten — a guess that silently answers a
+		// different question is worse than an empty result with a note.
+		"m_sum":   "m_sum_bucket",
+		"m_count": "m_count_bucket",
+		// Whitespace trimmed; empty stays empty so the caller's own
+		// "name required" check is the one that fires.
+		"  m  ": "m_bucket",
+		"":      "",
+		"   ":   "",
+	}
+	for in, want := range cases {
+		if got := bucketMetricName(in); got != want {
+			t.Errorf("bucketMetricName(%q) = %q, want %q", in, got, want)
 		}
-		// It must not still advertise last/rate/increase as missing.
-		for _, nowSupported := range []string{"last", "rate", "increase"} {
-			if !strings.Contains(msg, nowSupported) {
-				t.Fatalf("agg=%s: supported set lost %q: %s", agg, nowSupported, msg)
-			}
+	}
+}
+
+// The empty-percentile note has one job: turn a blank chart into a diagnosis.
+// It must name the series that was actually queried, because that name is the
+// one thing the operator cannot see anywhere on screen.
+func TestEmptyBucketNote(t *testing.T) {
+	note := emptyBucketNote("http.server.request.duration")
+	for _, want := range []string{
+		"http.server.request.duration_bucket", // the resolved selector
+		"_bucket",                             // what to look for in VM
+		"le",                                  // and how a bucket series is shaped
+	} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("note does not mention %q: %s", want, note)
 		}
-		if !errors.Is(err, ErrUnsupported) {
-			t.Fatalf("agg=%s: not tagged ErrUnsupported: %v", agg, err)
-		}
+	}
+	// The suffix rule is shared with the query, so an already-suffixed name
+	// must not be doubled in the note either — an operator told to look for
+	// `x_bucket_bucket` would conclude their write path is broken.
+	if n := emptyBucketNote("x_bucket"); strings.Contains(n, "x_bucket_bucket") {
+		t.Fatalf("note double-suffixed the name: %s", n)
 	}
 }
 

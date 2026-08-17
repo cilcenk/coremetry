@@ -29,8 +29,21 @@ package api
 //     the throughput probe in service_metric_throughput.go, the DQL
 //     evaluator in dql.go) each hard-code metric names and CH-side column
 //     behaviour. Routing them piecemeal would put two backends behind one
-//     page;
-//   - histograms + the PromQL proxy are Faz 2.
+//     page.
+//
+// v0.9.1157 (Faz 2) brought the last two operator-driven metric surfaces
+// through the seam: GET /api/metrics/histogram and GET /api/metrics/promql.
+// They joined LATE and separately because neither is a signature copy of a
+// chstore method the way the Faz 1 four are:
+//
+//   - the histogram IS chstore-shaped (QueryMetricHistogram), so it is a
+//     plain seam method and the compile-time identity argument applies
+//     unchanged;
+//   - the PromQL proxy is NOT. Its ClickHouse half is internal/promql's
+//     evaluator over the store, not a store method, so the seam declares
+//     its own signature and each adapter owns its dialect. That is also
+//     where the deliberate asymmetry lives: CH pre-parses (ValidatePromQL),
+//     VM does not, because MetricsQL is a superset our parser would reject.
 //
 // There is NO fallback from VM to CH. If the operator turned VM on and VM
 // is down, the endpoint fails with VM's error (502 at the handler). A
@@ -48,6 +61,7 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/promql"
 	"github.com/cilcenk/coremetry/internal/vmetrics"
 )
 
@@ -92,6 +106,70 @@ type metricSource interface {
 	QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error)
 	MetricLabelValues(ctx context.Context, metric, key string, since time.Duration) ([]string, error)
 	MetricAttrKeys(ctx context.Context, metric, service string, since time.Duration) ([]string, error)
+
+	// QueryMetricHistogram — the time × bucket heatmap behind
+	// /api/metrics/histogram (v0.9.1157, Faz 2). Signature copied from
+	// *chstore.Store like the four above.
+	QueryMetricHistogram(ctx context.Context, f chstore.MetricQueryFilter) (*chstore.HistogramSeries, error)
+
+	// ValidatePromQL is the PRE-CACHE syntax gate for /api/metrics/promql,
+	// and the two implementations deliberately disagree.
+	//
+	// ClickHouse parses: internal/promql implements a PromQL SUBSET and can
+	// only answer what it can push into CH, so rejecting early gives the
+	// operator a clean 400 with the parser's own message before a cache slot
+	// or a round trip is spent. VictoriaMetrics returns nil — MetricsQL is a
+	// PromQL SUPERSET, so our parser would 400 `WITH(…)`, subqueries and
+	// `keep_metric_names`: queries that run fine in vmui. An operator whose
+	// working query fails only inside Coremetry reads that as a broken
+	// endpoint.
+	//
+	// A seam method rather than a `src.Name() == "ch"` branch in the handler
+	// so both behaviours are compile-required and the VM side's "nil is the
+	// answer" reasoning lives next to the code that returns it.
+	ValidatePromQL(query string) error
+
+	// QueryPromQLRange runs an operator-written range query.
+	//
+	// Explicit parameters instead of an options struct because there is no
+	// shared type to reach for: the CH side's is internal/promql.EvalOptions
+	// (its evaluator's own knobs) and importing that into vmetrics would make
+	// the VictoriaMetrics reader depend on the ClickHouse evaluator for a
+	// bag of ints.
+	QueryPromQLRange(ctx context.Context, query string, from, to time.Time, stepSeconds, maxDataPoints int) ([]chstore.SpanMetricSeries, error)
+}
+
+// metricNoteSource is an OPTIONAL seam capability: a backend that can EXPLAIN
+// an empty result implements it, and the handler type-asserts (v0.9.1157).
+//
+// Optional rather than part of metricSource above because only one backend
+// has anything to say. VictoriaMetrics answers a percentile by querying
+// `<name>_bucket` — a series name the operator never typed and cannot see —
+// so an empty chart there conflates "no data in this window", "this metric is
+// not a histogram" and "your write path spells buckets differently", three
+// situations with three different fixes. ClickHouse reads the bucket layout
+// out of the row itself, guesses no names, and therefore has no note to add;
+// forcing it to implement a method that always returns "" would be ceremony
+// that implies a symmetry the two backends do not have.
+//
+// Stateless by construction — the note is a RETURN VALUE, not a field on the
+// source. A `LastNote()` accessor would have been the shorter diff and would
+// have raced between two concurrent requests through the same *Service,
+// attaching one panel's note to another panel's body.
+type metricNoteSource interface {
+	QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, string, error)
+}
+
+// queryMetricNoted is the one call site of that capability: the note when the
+// backend can produce one, "" otherwise. Handlers use this instead of
+// src.QueryMetric so a source that GAINS the capability starts being heard
+// without touching the handler.
+func queryMetricNoted(ctx context.Context, src metricSource, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, string, error) {
+	if n, ok := src.(metricNoteSource); ok {
+		return n.QueryMetricNoted(ctx, f)
+	}
+	series, err := src.QueryMetric(ctx, f)
+	return series, "", err
 }
 
 // chMetricSource is the default: the ClickHouse warm store. Pure
@@ -115,6 +193,41 @@ func (c chMetricSource) MetricLabelValues(ctx context.Context, metric, key strin
 
 func (c chMetricSource) MetricAttrKeys(ctx context.Context, metric, service string, since time.Duration) ([]string, error) {
 	return c.store.MetricAttrKeys(ctx, metric, service, since)
+}
+
+func (c chMetricSource) QueryMetricHistogram(ctx context.Context, f chstore.MetricQueryFilter) (*chstore.HistogramSeries, error) {
+	return c.store.QueryMetricHistogram(ctx, f)
+}
+
+// ValidatePromQL — the ClickHouse half parses. See the interface's comment for
+// why the VM half does not.
+//
+// The error is tagged errBadRequest so writeErr answers 400 with the parser's
+// own text. This is where the pre-v0.9.1157 handler's up-front
+// promql.Parse + writePromQLError(400) moved to; both produce a 400 with the
+// same {"error": …} envelope, and keeping it BEFORE the cache lookup means a
+// syntax error still never occupies a cache slot.
+func (chMetricSource) ValidatePromQL(query string) error {
+	if _, err := promql.Parse(query); err != nil {
+		return fmt.Errorf("%w: %w", errBadRequest, err)
+	}
+	return nil
+}
+
+// QueryPromQLRange — parse + evaluate against the bounded chstore machinery.
+//
+// EvalString rather than Parse+Eval so the two arguments the handler cares
+// about (query, window) are the only things threaded through; the AST is an
+// internal of the evaluator. It reparses what ValidatePromQL already parsed,
+// which costs microseconds on a query the handler caps at 8KB and buys the
+// seam a string-only signature — the shape the VM side needs.
+func (c chMetricSource) QueryPromQLRange(ctx context.Context, query string, from, to time.Time, stepSeconds, maxDataPoints int) ([]chstore.SpanMetricSeries, error) {
+	return promql.EvalString(ctx, c.store, query, promql.EvalOptions{
+		FromNs:        from.UnixNano(),
+		ToNs:          to.UnixNano(),
+		Step:          stepSeconds,
+		MaxDataPoints: maxDataPoints,
+	})
 }
 
 // vmMetricSource wraps the external VictoriaMetrics reader. The method
@@ -160,6 +273,39 @@ func (v vmMetricSource) MetricLabelValues(ctx context.Context, metric, key strin
 func (v vmMetricSource) MetricAttrKeys(ctx context.Context, metric, service string, since time.Duration) ([]string, error) {
 	out, err := v.svc.MetricAttrKeys(ctx, metric, service, since)
 	return out, upstream(err)
+}
+
+func (v vmMetricSource) QueryMetricHistogram(ctx context.Context, f chstore.MetricQueryFilter) (*chstore.HistogramSeries, error) {
+	out, err := v.svc.QueryMetricHistogram(ctx, f)
+	return out, upstream(err)
+}
+
+// ValidatePromQL returns nil ON PURPOSE — no pre-validation on the VM path.
+//
+// VictoriaMetrics speaks MetricsQL, a PromQL SUPERSET. Coremetry's parser
+// implements a subset of the SUBSET dialect, so running it here would 400
+// `WITH(…)` templates, subqueries, `keep_metric_names`, `rollup_rate` — every
+// one a query that works in vmui. Being stricter than the engine that will run
+// the query reads to the operator as a broken endpoint, not as a guardrail.
+//
+// A malformed query is not unchecked, it is checked by the RIGHT authority: VM
+// answers status != success and promapi surfaces its message verbatim, which
+// is a better diagnosis than ours because it comes from the actual evaluator.
+// The bound that stays ours is LENGTH, enforced in the handler for both
+// backends.
+func (vmMetricSource) ValidatePromQL(string) error { return nil }
+
+func (v vmMetricSource) QueryPromQLRange(ctx context.Context, query string, from, to time.Time, stepSeconds, maxDataPoints int) ([]chstore.SpanMetricSeries, error) {
+	out, err := v.svc.QueryPromQLRange(ctx, query, from, to, stepSeconds, maxDataPoints)
+	return out, upstream(err)
+}
+
+// QueryMetricNoted satisfies the OPTIONAL metricNoteSource capability — the
+// VM source is its only implementer. Same upstream() tagging as every other
+// method: an untagged error 500s and reads as a Coremetry bug.
+func (v vmMetricSource) QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, string, error) {
+	out, note, err := v.svc.QueryMetricNoted(ctx, f)
+	return out, note, upstream(err)
 }
 
 // metricSource picks the backend from SETTINGS alone — the default when a

@@ -23,6 +23,15 @@ type HistogramSeries struct {
 	// ORDER BY t ASC + LIMIT pencerenin SAĞ kenarını keser; heatmap
 	// "trafik düştü" gibi okunmasın diye UI bunu söyler.
 	RowCapped bool `json:"rowCapped,omitempty"`
+	// Note (v0.9.1157, VM Faz 2) — bu ısı haritası neden BOŞ döndü.
+	//
+	// Yalnız VictoriaMetrics yolu doldurur ve yalnız BOŞ sonuçta: orada
+	// sorgu, operatörün YAZMADIĞI bir seri adına gider (`<ad>_bucket`),
+	// yani "veri yok" ile "bu metrik histogram değil" birbirinden
+	// ayrılamaz. ClickHouse yolu bunu HİÇ set etmez — orada kova
+	// düzeni satırın kendisinde, tahmin edilen bir ad yok — ve
+	// `omitempty` sayesinde CH gövdesi bayt-bayt eskisi kalır.
+	Note string `json:"note,omitempty"`
 }
 
 // maxHistogramBuckets bounds the Go-side time-bucket allocation in the
@@ -326,6 +335,23 @@ func percentileFromBuckets(bounds []float64, counts []uint64, p float64) float64
 		return lo + (hi-lo)*frac
 	}
 	return bounds[len(bounds)-1]
+}
+
+// PercentileFromBuckets is the EXPORTED wrapper over the estimator above
+// (v0.9.1157, VM Faz 2).
+//
+// It exists so the VictoriaMetrics heatmap path (internal/vmetrics) can
+// estimate p50/p95/p99 from ITS assembled bucket vectors with the SAME
+// arithmetic the ClickHouse path uses, rather than carrying a second copy.
+// A second copy is the thing to avoid here specifically: the two backends
+// answer the same panel, so a divergence in the interpolation would show up
+// as "VictoriaMetrics reports a different p99" and be read as a data
+// problem rather than as two implementations of one formula.
+//
+// Thin on purpose — no behaviour of its own, so there is nothing here that
+// can drift from the unexported original.
+func PercentileFromBuckets(bounds []float64, counts []uint64, p float64) float64 {
+	return percentileFromBuckets(bounds, counts, p)
 }
 
 // bucketDeltas converts a per-series, time-ordered set of bucket-count

@@ -2265,6 +2265,33 @@ export interface SpanMetricResult {
   rowsCapped?: boolean;
 }
 
+// MetricQueryResult — /api/metrics/query zarfı (v0.9.458 {series, rowsCapped},
+// v0.9.1157 + note).
+//
+// KARDEŞİNDEN AYRI bir tip, çünkü ayrı bir uç: SpanMetricResult span-türevli
+// /api/spans/metric'i tanımlıyor ve `totalSeries` (top-N kırpması) taşıyor,
+// bu uçta ise öyle bir kırpma HİÇ yaşanmıyor. Tek tip yapmak, olmayan bir
+// alanı olabilir gibi göstermek olurdu.
+//
+// Adlandırılmış olmasının sebebi tip disiplini: şekil api.ts'te iki metotta
+// satır içi duruyordu ve v0.9.1157'nın `note` alanı onu ÜÇ yere kopyalamak
+// demekti (bundle dahil). types.ts tek kaynak.
+export interface MetricQueryResult {
+  series: SpanMetricSeries[];
+  // v0.9.458 — 50k satır tavanı doldu (alfabetik kesim).
+  rowsCapped?: boolean;
+  // v0.9.1157 (VM Faz 2) — sonuç neden BOŞ döndü.
+  //
+  // Yalnız VictoriaMetrics yolu ve yalnız YÜZDELİK sorgularda dolu olur:
+  // orada p50/p95/p99, operatörün yazmadığı `<ad>_bucket` serisine gider,
+  // yani boş bir grafik "pencerede veri yok", "bu metrik histogram değil"
+  // ve "write yolu kovaları başka adla yazıyor" hâllerini ayırt edilemez
+  // kılıyor — üçünün düzeltmesi farklı. Sıradan boş sonuçlarda BİLEREK
+  // yok: orada bizim operatörden fazla bildiğimiz bir şey olmadığı için
+  // not, her sessiz metriğin üstünde gürültü olurdu.
+  note?: string;
+}
+
 // v0.8.53 ("every metric is a doorway" D4) — result of server-side descriptor
 // resolution (/api/metrics/resolve). `tier` reports which store served it
 // (1s|10s|1m for spanmetrics, trace_summary_5m for tracemetrics, spans for the
@@ -2454,6 +2481,14 @@ export interface HistogramResult {
   // v0.9.473 (dürüstlük A13) — 200k satır tavanı doldu: pencerenin SAĞ
   // kenarı kesik olabilir ("trafik düştü" yanılsaması).
   rowCapped?: boolean;
+  // v0.9.1157 (VM Faz 2) — ısı haritası neden BOŞ döndü.
+  //
+  // Yalnız VictoriaMetrics yolu doldurur: orada sorgu, operatörün
+  // YAZMADIĞI bir seri adına gidiyor (`<ad>_bucket`), yani boş bir panel
+  // "pencerede veri yok" ile "bu metrik histogram değil"i ayırt
+  // edilemez kılıyor. ClickHouse yolu hiç set etmez (kova düzeni satırın
+  // kendisinde), o yüzden alan bir CH kurulumunda hiç görünmez.
+  note?: string;
 }
 
 // ── Alerts & Problems ───────────────────────────────────────────────────────

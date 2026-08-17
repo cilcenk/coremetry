@@ -695,7 +695,7 @@ function AddPanelMenu({ onAdd }: { onAdd: (t: PanelType) => void }) {
     stat: 'Stat (single value)',
     gauge: 'Gauge',
     heatmap: 'Heatmap (latency density)',
-    promql: 'PromQL query',
+    promql: 'PromQL / MetricsQL query',
     topn: 'Top-N bar',
     markdown: 'Markdown / notes',
   };

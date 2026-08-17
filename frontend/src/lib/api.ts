@@ -4,6 +4,7 @@ import type {
   LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricNameSearchResult,
   MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
+  MetricQueryResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, EndpointCallersResponse, ServiceAttrsResponse,
   AlertRule, Problem, EvaluatorHealth, WatcherImportResult, WatcherSummaryEntry, WatcherHistory,
@@ -2123,7 +2124,11 @@ export const api = {
       filters?: string; dsl?: string;
     }>;
   }) =>
-    request<Record<string, { series?: SpanMetricSeries[] | null; rowsCapped?: boolean; error?: string }>>(
+    // v0.9.1157 — `note`: tekil /api/metrics/query zarfıyla AYNI alan. Bu
+    // dalın kardeş handler'dan ayrışması bilinen bir bug sınıfı (v0.9.566),
+    // o yüzden notu orada koyup burada atlamak, aynı yüzdeliğin Explore'da
+    // SEBEBİYLE, dashboard panelinde SESSİZCE boş görünmesi olurdu.
+    request<Record<string, { series?: SpanMetricSeries[] | null; rowsCapped?: boolean; note?: string; error?: string }>>(
       // v0.9.1151 — deneme modu POST'ta da geçerli. İşaret SORGU
       // DİZESİNDE taşınıyor, gövdede değil: aynı merkezî yardımcı hem GET
       // hem POST uçlarını damgalıyor ve sunucu tarafında tek bir
@@ -2281,7 +2286,7 @@ export const api = {
   // kaçış-yolu metrik çağrılarının da girdiği yer, yani dashboard
   // bundle'ını atlayan paneller de deneme modunu izler.
   metricQuery: (params: MetricQueryParams) =>
-    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(withMetricSource(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`))
+    get<MetricQueryResult | null>(withMetricSource(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`))
       .then(r => (r ? r.series : null)),
   // v0.9.774 — opsiyonel signal: Service Overview'un RT paneli RQ v5
   // semantiğiyle ({ signal } destructure) çağırıyor, aralık/servis
@@ -2289,16 +2294,24 @@ export const api = {
   // uyar (CanceledError) — hata DEĞİL, çağıranın kendi eylemi.
   // Mevcut çağıranlar (Explore, PanelRenderer) argümansız kalır.
   metricQueryFull: (params: MetricQueryParams, signal?: AbortSignal) =>
-    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(withMetricSource(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`), signal),
+    get<MetricQueryResult | null>(withMetricSource(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`), signal),
   // v0.6.56 — explicit-histogram heatmap + percentile bands. Reuses
   // MetricQueryParams (agg/groupBy ignored server-side for histograms).
+  // v0.9.1157 — withMetricSource: bu uç VM Faz 2'de seam'e girdi. Stamp
+  // ŞART, süs değil: aynı sayfada çizgi grafiği VM'den okurken ısı
+  // haritası ClickHouse'tan okursa operatör iki store'un sayısını tek
+  // panelde karşılaştırıyor olur ve bunu hiçbir şey söylemez.
   metricHistogram: (params: MetricQueryParams) =>
-    get<HistogramResult | null>(`/api/metrics/histogram?${qs(params)}`),
+    get<HistogramResult | null>(withMetricSource(`/api/metrics/histogram?${qs(params)}`)),
   // v0.9.116 (F4 Phase 5) — PromQL range query. Returns the same
   // SpanMetricSeries[] shape as metricQuery; a 400 body carries the parse
   // error, other errors bubble the eval message.
+  // v0.9.1157 — withMetricSource + MetricsQL: VM yolunda sorgu dizesi
+  // OLDUĞU GİBİ VM'e gider (ön-doğrulama parser'ı yok), yani MetricsQL
+  // uzantıları da geçer. CH yolunda internal/promql'in PromQL alt kümesi
+  // hâlâ ön-parse ediyor ve sözdizimi hatası temiz bir 400 dönüyor.
   metricPromql: (params: { query: string; from?: number; to?: number; step?: number; maxDataPoints?: number }) =>
-    get<SpanMetricSeries[] | null>(`/api/metrics/promql?${qs({ maxDataPoints: 1500, ...params })}`),
+    get<SpanMetricSeries[] | null>(withMetricSource(`/api/metrics/promql?${qs({ maxDataPoints: 1500, ...params })}`)),
   // v0.8.356 — sort/dir: server-side global ordering (whitelisted
   // backend-side; ORDER BY runs before the LIMIT so "top by p95" is
   // the true global top-N, not the top-N-by-calls page reordered).

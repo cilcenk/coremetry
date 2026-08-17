@@ -145,20 +145,25 @@ describe('currentMetricSource (v0.9.1151)', () => {
 describe('lib/api.ts stamps every seam endpoint (v0.9.1151)', () => {
   const src = readFileSync(resolve(__dirname, 'api.ts'), 'utf8');
 
-  // The four metric endpoints behind the backend source seam
-  // (internal/api/metricsource.go) plus the dashboards bundle, whose
+  // Every metric endpoint behind the backend source seam
+  // (internal/api/metricsource.go), plus the dashboards bundle whose
   // "metric" branch reads through the same seam.
   //
-  // Deliberately NOT listed: /api/metrics/histogram and
-  // /api/metrics/promql (VM Faz 2 — not behind the seam yet, so stamping
-  // them would send a param the server ignores and imply coverage that
-  // does not exist), /api/metrics (raw points), /api/metrics/resolve (the
-  // doorway resolver reads ClickHouse directly, outside the seam).
+  // v0.9.1157 — histogram + promql JOINED the list (VM Faz 2). They were
+  // in the negative list below for three releases and the inverse
+  // assertion held them there on purpose; widening the seam is what makes
+  // stamping them correct rather than decorative.
+  //
+  // Still deliberately NOT listed: /api/metrics (raw points) and
+  // /api/metrics/resolve (the doorway resolver reads ClickHouse directly,
+  // outside the seam).
   const seamPaths = [
     '/api/metrics/names',
     '/api/metrics/query',
     '/api/metrics/labels',
     '/api/metrics/attr-keys',
+    '/api/metrics/histogram',
+    '/api/metrics/promql',
     '/api/dashboards/data',
   ];
 
@@ -192,14 +197,18 @@ describe('lib/api.ts stamps every seam endpoint (v0.9.1151)', () => {
       'default backend while the operator believed it was reading the other one').toEqual([]);
   });
 
-  it('the histogram / promql endpoints are deliberately NOT stamped', () => {
+  it('the non-seam endpoints are deliberately NOT stamped', () => {
     // The inverse assertion, so "stamp everything metric-shaped" cannot
-    // creep in unreviewed. These endpoints do not go through the backend
-    // seam yet (VM Faz 2); stamping them would send a param the handler
-    // ignores, and the operator would read a chart as VictoriaMetrics data
-    // when it came from ClickHouse — the exact confusion the trial badge
-    // exists to prevent.
-    for (const p of ['/api/metrics/histogram', '/api/metrics/promql', '/api/metrics/resolve']) {
+    // creep in unreviewed. A stamped endpoint whose handler does not read
+    // the source seam sends a param the server ignores, and the operator
+    // reads the chart as VictoriaMetrics data when it came from ClickHouse
+    // — the exact confusion the trial badge exists to prevent.
+    //
+    // v0.9.1157 — histogram + promql LEFT this list when the seam widened
+    // to cover them. /api/metrics/resolve stays: the doorway resolver
+    // reads ClickHouse rollup tiers directly and has no VM translation, so
+    // stamping it would claim coverage that does not exist.
+    for (const p of ['/api/metrics/resolve']) {
       for (const m of literals.filter(x => x[1] === p)) {
         const before = src.slice(Math.max(0, m.index! - 60), m.index!);
         expect(before.includes('withMetricSource('),
@@ -207,5 +216,15 @@ describe('lib/api.ts stamps every seam endpoint (v0.9.1151)', () => {
           'either widen the seam (backend) or drop the stamp').toBe(false);
       }
     }
+  });
+
+  it('finds the non-seam call sites too — the inverse must not be vacuous', () => {
+    // Without this, deleting api.ts's /api/metrics/resolve call (or a regex
+    // drift) would make the assertion above iterate an empty set and pass
+    // while proving nothing — the v0.9.982 lesson, applied to the negative
+    // half of the same gate.
+    expect(literals.filter(m => m[1] === '/api/metrics/resolve').length,
+      'no /api/metrics/resolve literal found — the inverse assertion scans nothing')
+      .toBeGreaterThan(0);
   });
 });

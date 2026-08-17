@@ -26,6 +26,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"regexp"
 	"strings"
@@ -333,6 +334,27 @@ func TestTrialRequestUsesTheTrialBackendsCacheKey(t *testing.T) {
 				s.getMetricAttrKeys(httptest.NewRecorder(), httptest.NewRequest("GET", url, nil))
 			},
 		},
+		// v0.9.1157 (Faz 2) — the last two surfaces. They matter MORE than
+		// the four above for the poisoning property, because they are the
+		// only ones whose ClickHouse and VictoriaMetrics answers are built by
+		// entirely different arithmetic (bucket differencing vs a CH GROUP
+		// BY; two different query languages), so a shared key would serve
+		// numbers from the other engine rather than a differently-sampled
+		// version of the same ones.
+		{
+			name: "histogram",
+			path: "/api/metrics/histogram?name=http.server.request.duration&step=60",
+			call: func(s *Server, url string) {
+				s.getMetricHistogram(httptest.NewRecorder(), httptest.NewRequest("GET", url, nil))
+			},
+		},
+		{
+			name: "promql",
+			path: "/api/metrics/promql?query=" + url.QueryEscape(`sum(rate(m[5m]))`),
+			call: func(s *Server, u string) {
+				s.queryPromQL(httptest.NewRecorder(), httptest.NewRequest("GET", u, nil))
+			},
+		},
 	}
 
 	for _, tc := range cases {
@@ -466,6 +488,8 @@ func TestMetricHandlersResolveSourcePerRequest(t *testing.T) {
 		"func (s *Server) getMetricLabelValues",
 		"func (s *Server) getMetricAttrKeys",
 		"func (s *Server) dashboardsData",
+		// v0.9.1157 — Faz 2 brought the histogram in.
+		"func (s *Server) getMetricHistogram",
 	} {
 		if !strings.Contains(src, marker) {
 			t.Fatalf("comment stripping ate real code — %q is missing, so this scan proves nothing", marker)
@@ -478,11 +502,17 @@ func TestMetricHandlersResolveSourcePerRequest(t *testing.T) {
 			loc[0], metricSourceParam)
 	}
 
-	// And the positive half: five resolution sites, one per surface. A
-	// dropped call would show up as a lower count.
-	if got := len(regexp.MustCompile(`s\.metricSourceFor\(r\)`).FindAllString(src, -1)); got != 5 {
-		t.Errorf("found %d s.metricSourceFor(r) call sites in api.go, want 5 "+
-			"(names, query, labels, attr-keys, dashboards bundle)", got)
+	// And the positive half: one resolution site per surface. A dropped call
+	// would show up as a lower count.
+	//
+	// v0.9.1157 — 5 → 6 (the histogram heatmap joined the seam). The count is
+	// the thing that makes this gate bite: /api/metrics/histogram read
+	// s.store directly for three releases while every OTHER metric surface
+	// honoured ?metricsrc=, and nothing failed — the page rendered, from the
+	// wrong store.
+	if got := len(regexp.MustCompile(`s\.metricSourceFor\(r\)`).FindAllString(src, -1)); got != 6 {
+		t.Errorf("found %d s.metricSourceFor(r) call sites in api.go, want 6 "+
+			"(names, query, labels, attr-keys, dashboards bundle, histogram)", got)
 	}
 
 	// Every resolution must be error-checked. An ignored error would pair
@@ -493,6 +523,28 @@ func TestMetricHandlersResolveSourcePerRequest(t *testing.T) {
 		if !strings.Contains(m, "writeErr") {
 			t.Errorf("a metricSourceFor(r) call is not followed by writeErr within 160 chars:\n%s", m)
 		}
+	}
+
+	// promql.go holds the SEVENTH surface. Scanned separately rather than by
+	// widening the file list, because the two scans above are deliberately
+	// api.go-scoped (metricsource_test.go's header explains why: the
+	// legitimate direct-store callers live in other files and an exemption
+	// list is the thing that quietly grows).
+	praw, err := os.ReadFile("promql.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	psrc := stripGoComments(string(praw))
+	if !strings.Contains(psrc, "func (s *Server) queryPromQL") {
+		t.Fatal("comment stripping ate promql.go's handler — this scan proves nothing")
+	}
+	if !strings.Contains(psrc, "s.metricSourceFor(r)") {
+		t.Error("promql.go's queryPromQL does not resolve the source per request — " +
+			"?metricsrc=vm would be accepted and then silently answered from ClickHouse")
+	}
+	if strings.Contains(psrc, "promql.Eval") || strings.Contains(psrc, "promql.Parse") {
+		t.Error("promql.go still calls internal/promql directly — the CH evaluator must be " +
+			"reached through chMetricSource, or a VM-pinned request lands on the ClickHouse path")
 	}
 }
 

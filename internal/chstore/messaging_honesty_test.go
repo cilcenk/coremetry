@@ -74,7 +74,7 @@ func TestMsgTopCallersLimitBy(t *testing.T) {
 	}
 	// Üç sınırın üçü de yerinde mi (CH okuma disiplini).
 	for _, must := range []string{
-		// v0.9.1157 — üst sınır < oldu (tam to kovası pencere dışı).
+		// v0.9.1156 — üst sınır < oldu (tam to kovası pencere dışı).
 		"WHERE time_bucket >= ? AND time_bucket < ?",
 		"max_execution_time",
 	} {

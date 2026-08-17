@@ -43,6 +43,8 @@ export interface ExploreQueriesResult {
   // "+N more" instead of inferring it from the (already-capped) series count.
   totalByLetter: Record<string, number | undefined>;
   cappedByLetter: Record<string, boolean>;
+  // v0.9.1157 — sunucunun boş-sonuç açıklaması, harf başına.
+  noteByLetter: Record<string, string | undefined>;
   // v0.9.809 — letter → o sorgunun GERÇEK bucket çözünürlüğü (saniye).
   // Sunucu söylediyse onun sözü (resolver zarfı `stepSeconds`), yoksa gelen
   // ızgaradan ölçüm (stepAlign.resolveStepSec). 0 = bilinmiyor. Formül
@@ -94,6 +96,14 @@ interface QueryData {
   // zarfı taşıyor; öteki iki yol step'ini beş ayrı dönüş dalında ayrı
   // hesaplıyor ve dışarı vermiyor, orada ızgaradan ölçülür.
   stepSeconds?: number;
+  // v0.9.1157 (VM Faz 2) — SUNUCUNUN söylediği "sonuç neden boş".
+  //
+  // Yalnız metrik yolu ve yalnız VictoriaMetrics backend'i doldurur: orada
+  // bir yüzdelik, operatörün yazmadığı `<ad>_bucket` serisine gider. Panelin
+  // varsayılan boş cümlesi ("aralığı genişlet veya filtreleri azalt") o
+  // durumda YANLIŞ TAVSİYE — pencere ne kadar genişlerse genişlesin o seri
+  // yok. Bu alan geldiğinde cümlenin yerini alır (bkz. PanelStack).
+  note?: string;
 }
 
 // exploreQueryFn — ONE producing query's fetch, for an ARBITRARY window.
@@ -167,7 +177,10 @@ function exploreQueryFn(
             filters: filters.length ? encodeFilters(filters) : undefined,
             from, to,
             step: effStep,
-          }, signal).then(r => ({ series: r?.series ?? [], exemplars: [], rowsCapped: r?.rowsCapped }));
+          }, signal).then(r => ({
+            series: r?.series ?? [], exemplars: [],
+            rowsCapped: r?.rowsCapped, note: r?.note,
+          }));
 }
 
 // GHOST_SIG — hayalet fetch'in cache anahtarına eklenen ayraç.
@@ -310,6 +323,7 @@ export function useExploreQueries(
     const compareStepByLetter: Record<string, number> = {};
     const totalByLetter: Record<string, number | undefined> = {};
     const cappedByLetter: Record<string, boolean> = {};
+    const noteByLetter: Record<string, string | undefined> = {};
     const stepByLetter: Record<string, number> = {};
     const exemplarsByLetter: Record<string, MetricExemplar[]> = {};
     const otlpExemplarsByLetter: Record<string, OtlpExemplar[]> = {};
@@ -332,6 +346,7 @@ export function useExploreQueries(
       // doesn't report one — resolver / metric queries are never trimmed.
       totalByLetter[q.letter] = series === undefined ? undefined : (r.data?.totalSeries ?? series.length);
       cappedByLetter[q.letter] = r.data?.rowsCapped ?? false;
+      noteByLetter[q.letter] = r.data?.note || undefined;
       // v0.9.809 — sunucunun sözü > ölçüm. Ölçüm bir tahmin değil: dönen
       // bucket ızgarasının kendisi (stepAlign.measureStepSec gerekçesi).
       stepByLetter[q.letter] = resolveStepSec(r.data?.stepSeconds, series);
@@ -348,7 +363,7 @@ export function useExploreQueries(
       }
     });
     return {
-      byLetter, totalByLetter, cappedByLetter, stepByLetter,
+      byLetter, totalByLetter, cappedByLetter, noteByLetter, stepByLetter,
       exemplarsByLetter, otlpExemplarsByLetter, anyLoading, errorByLetter,
       compareByLetter, compareStepByLetter, compareOffsetNs: offsetNs,
     };

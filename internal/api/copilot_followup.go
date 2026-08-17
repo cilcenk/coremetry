@@ -219,10 +219,15 @@ func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
 		}
 		return nil
 	case guidedLogErrors:
+		// v0.9.1130 — param adı `severity` (logsUrl.ts:58 okuyucusu).
+		// Eski ad /logs'un HİÇ okumadığı bir paramdı → çip "error
+		// logları" vaat edip tüm seviyeleri açıyordu (K4 ölü-param
+		// sınıfı; kaynak-pin testi yasak adı adıyla arar, o yüzden
+		// burada anılmıyor).
 		if svc != "" {
-			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&minSev=17"}}
+			return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?service=" + svcQ + "&severity=17"}}
 		}
-		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?minSev=17"}}
+		return []guidedAnswerLink{{Label: "Loglar (error)", Href: "/logs?severity=17"}}
 	case guidedFamilyHealth:
 		return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
 	case guidedMyServices:

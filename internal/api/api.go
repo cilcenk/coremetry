@@ -4707,8 +4707,12 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	// "metric name required" hatası VM yolunda errUpstream sarmalına
 	// girip 502 görünüyordu (1150 canlı doğrulama bulgusu) — operatörü
 	// sağlıklı VM'yi kontrol etmeye gönderir. Kaynağa hiç inmeden 400.
+	// v0.9.1155 — gövde JSON zarfına geçti: bu yüzeydeki diğer hatalar
+	// (çevrilemeyen agg 400'ü, VM-down 502'si) writeErr'in {"error":…}
+	// zarfını kullanıyor; düz metin, hata gövdesini JSON parse eden
+	// istemciyi boğuyordu (1153 doğrulama notu).
 	if strings.TrimSpace(name) == "" {
-		http.Error(w, "name (metrik adı) parametresi zorunlu", http.StatusBadRequest)
+		writeErr(w, fmt.Errorf("%w: name (metrik adı) parametresi zorunlu", errBadRequest))
 		return
 	}
 	svc := q.Get("service")

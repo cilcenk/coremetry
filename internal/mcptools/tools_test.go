@@ -101,6 +101,20 @@ func TestEnvArgAdditive(t *testing.T) {
 		// has no env conjunct; an env property here would promise a
 		// filter the chart can't apply.
 		"render_chart",
+		// v0.9.1141 (Faz 3.2) — keşif tool'ları, tool BAŞINA gözden
+		// geçirildi (küme üyeliği mekanik değil):
+		//   - list_operations: okuması operation_summary_5m ve o MV'de
+		//     deploy_env YOK (operationsUseMV env'i görünce MV'yi
+		//     diskalifiye eder, operation_env_test.go) → env arg'ı
+		//     uygulanamayacak bir filtre vaat ederdi.
+		//   - list_deploys: deploy işaretçileri env boyutu taşımıyor
+		//     (guidedDeployBundle bunu kanıtta açıkça söyler).
+		//   - find_trace_by_span: id-çapalı nokta araması.
+		// list_environments/list_clusters bilinçli olarak BU LİSTEDE DEĞİL:
+		// onlar env/cluster boyutunun KENDİSİNİ listeler; oraya env arg'ı
+		// eklenirse bu tarama değil TestCatalogueToolsDeclareNoRangeArg
+		// komşuluğundaki şema testleri konuşur.
+		"list_operations", "list_deploys", "find_trace_by_span",
 	}
 	for _, name := range envBlind {
 		tool := toolByName(t, tools, name)

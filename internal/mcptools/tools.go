@@ -31,7 +31,7 @@
 //     them here.
 //
 //   - Yetki (v0.9.1136, AI Faz 3.1): her tool mcp.Tool.MinRole
-//     taşır ve BUGÜN 19'unun tamamı "" (viewer tabanı) — hepsi
+//     taşır ve BUGÜN 24'ünün tamamı "" (viewer tabanı) — hepsi
 //     salt-okunur ve hepsinin REST eşi viewer'a açık. Tek sapma
 //     list_anomalies↔GET /api/anomalies/active idi (REST editor,
 //     tool kapısız); A7 kararıyla REST viewer'a indi, tool ""
@@ -43,8 +43,9 @@
 //     kapıdadır; buradaki alan tek gerçek kaynak olduğu için MCP
 //     dispatch'i ve in-app sohbet spec listesi ayrışamaz.
 //
-// Tool catalogue (19 tools; sayım v0.9.1050'de düzeltildi — blok
-// v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu):
+// Tool catalogue (24 tools; sayım v0.9.1050'de düzeltildi — blok
+// v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
+// v0.9.1141'ta beş keşif tool'uyla 19 → 24):
 //   - list_services
 //   - get_service_health
 //   - list_problems
@@ -60,6 +61,15 @@
 //   - get_correlated_changes (v0.9.1092 — MV'li "başka ne değişti")
 //   - get_deploy_diff (v0.9.1092 — deploy önce/sonra RED kıyası)
 //   - render_chart (v0.9.520)
+//
+// Keşif tool'ları (v0.9.1141, AI Faz 3.2 — discovery.go). Hepsi bir
+// ARG'ın eşi: arg'ı kabul edip listesini vermeyen tool = kimlik
+// uydurmaya davet (v0.9.1087-1092 dalgasının aynı gerekçesi):
+//   - list_operations (render_chart'ın `operation` arg'ı; katalog, pencere YOK)
+//   - list_environments (list_services/get_service_health/list_problems `env`)
+//   - list_clusters (search_logs'un `cluster` arg'ı; 1h sabit pencere)
+//   - list_deploys ("dün gece ne çıktı" + get_deploy_diff'e sürüm)
+//   - find_trace_by_span (yapıştırılan 16-hex span id → trace id)
 //
 // Cross-signal pivot tools (v0.8.333, pivots.go):
 //   - get_logs_for_trace
@@ -82,6 +92,13 @@
 // carry no env path yet (env-separation Phase 4 pending) and
 // get_trace/pivot tools are id-anchored point lookups — no silent
 // half-support.
+//
+// v0.9.1141 — keşif tool'larında env kararı tool başına gözden geçirildi:
+// list_environments/list_clusters env boyutunun KENDİSİNİ listeler (arg
+// alamaz); list_operations'ın okuması operation_summary_5m'dir ve o MV'de
+// deploy_env YOK (operationsUseMV env'i görünce MV'yi diskalifiye eder) →
+// env arg'ı yok; list_deploys'un deploy işaretçileri env taşımıyor;
+// find_trace_by_span id-çapalı. Gerekçeler discovery.go başlığında.
 package mcptools
 
 import (
@@ -122,24 +139,42 @@ func ToolList(d Deps) []mcp.Tool {
 	return []mcp.Tool{
 		listServicesTool(d),
 		getServiceHealthTool(d),
+		// v0.9.1141 (Faz 3.2) — yukarıdaki üçlünün + list_problems'in
+		// `env` arg'ının keşif eşi; hemen yanında duruyor ki model
+		// katalogda arg'ı görünce listesini de görsün.
+		listEnvironmentsTool(d),
 		listProblemsTool(d),
 		getProblemRootCauseTool(d),
 		listAnomaliesTool(d),
 		searchLogsTool(d),
+		// v0.9.1141 (Faz 3.2) — search_logs'un `cluster` arg'ının eşi;
+		// env keşfi list_services üçlüsünün yanında, cluster keşfi TEK
+		// tüketicisinin yanında duruyor.
+		listClustersTool(d),
 		getTraceTool(d),
 		// v0.9.1087 (Faz 4) — id'siz giriş: trace ID'yi BULMANIN yolu.
 		searchTracesTool(d),
+		// v0.9.1141 (Faz 3.2) — trace ID'ye İKİNCİ giriş: yapıştırılan
+		// çıplak span id. in-app guided yolda (v0.9.548) çalışıyordu,
+		// MCP'de karşılığı yoktu.
+		findTraceBySpanTool(d),
 		// v0.9.1089 (Faz 4) — SLO durum+yörünge; tükenme uydurması biter.
 		listSLOStatusTool(d),
 		queryMetricTool(d),
 		// v0.9.1090 (Faz 4) — query_metric'in eşi: ad uydurmayı bitirir.
 		listMetricNamesTool(d),
+		// v0.9.1141 (Faz 3.2) — katalog ikizi: render_chart'ın
+		// `operation` arg'ının (ve "hangi endpoint'ler var" sorusunun) eşi.
+		listOperationsTool(d),
 		// v0.9.1091 (Faz 4) — parmak-izine gruplu istisnalar.
 		listExceptionGroupsTool(d),
 		// v0.9.1092 (Faz 4) — "o anda başka ne değişti" (MV okuması).
 		getCorrelatedChangesTool(d),
 		// v0.9.1092 (Faz 4) — deploy önce/sonra RED kıyası.
 		getDeployDiffTool(d),
+		// v0.9.1141 (Faz 3.2) — get_deploy_diff'in eşi: sürümü tool
+		// kendisi seçiyordu, model "dün gece ne çıktı"yı soramıyordu.
+		listDeploysTool(d),
 		// v0.8.333 — cross-signal pivot tools (pivots.go, pivot Phase 4):
 		// trace↔log↔metric moves at MCP/copilot parity with the UI.
 		getLogsForTraceTool(d),

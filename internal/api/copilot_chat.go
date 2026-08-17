@@ -17,9 +17,9 @@ import (
 // operator ask free-form questions ("why is payment-service slow?",
 // "errors in the last hour") and answers them grounded in their own
 // telemetry. The LLM's function-calling backend is the SAME tool set
-// the MCP server exposes (mcptools.ToolList — 13 tools as of
-// v0.9.1050: the original 7 plus get_problem_root_cause, render_chart
-// and the four cross-signal pivots) — so the chat can read live data
+// the MCP server exposes (mcptools.ToolList — TEK kayıt defteri;
+// güncel sayı ve katalog orada yaşar, burada sayı tutmuyoruz: iki kez
+// bayatladı v0.9.1141'e gelene dek) — so the chat can read live data
 // without any new query plumbing. ToolList is the single source; this
 // comment stopped counting so it can't drift again.
 //
@@ -33,9 +33,11 @@ import (
 // is a different beast (see internal/copilot/stream.go header).
 //
 // Conversation is EPHEMERAL — the frontend holds history in
-// component state and sends it whole each turn; nothing persists
-// server-side (no saved_views row). Auth: any authenticated user —
-// all 7 tools are read-only, so a viewer chatting is safe.
+// component state and sends it whole each turn; BU handler hiçbir şey
+// kalıcılaştırmaz — konuşma kalıcılığı v0.9.1139'dan beri AYRI uçta
+// (ai_conversations.go, istemci-güdümlü upsert). Auth: any
+// authenticated user — tool'lar read-only + MinRole süzgeçli
+// (v0.9.1136), so a viewer chatting is safe.
 
 const (
 	chatMaxToolRounds = 5  // guardrail: cap the agentic loop so a model can't fan tool calls forever

@@ -545,8 +545,12 @@ func TestDiscoveryToolsGroupedNearConsumers(t *testing.T) {
 			t.Errorf("%s, %s'ten %d sıra uzakta — keşif tool'u tüketicisinin yanında dursun", p.discovery, p.consumer, diff)
 		}
 	}
-	if len(tools) != 25 {
-		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayım yorumunu ve "+
-			"api/mcp_authz_test.go'daki duruş notunu da güncelle", len(tools))
+	// v0.9.1146 — 25 → 28 (analysis.go: get_topology / get_blast_radius /
+	// get_log_histogram). Sayı ÜÇ yerde daha yazılı ve üçü de bu testle
+	// birlikte güncellenir; aksi hâlde katalog büyürken doküman ve duruş
+	// notu sessizce bayatlar.
+	if len(tools) != 28 {
+		t.Errorf("katalog %d tool — sayı değiştiyse tools.go başlığındaki sayım yorumunu, "+
+			"api/mcp_authz_test.go'daki duruş notunu ve docs/runbooks/mcp-claude-code.md'yi de güncelle", len(tools))
 	}
 }

@@ -43,10 +43,10 @@
 //     kapıdadır; buradaki alan tek gerçek kaynak olduğu için MCP
 //     dispatch'i ve in-app sohbet spec listesi ayrışamaz.
 //
-// Tool catalogue (25 tools; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (28 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
 // v0.9.1141'ta beş keşif tool'uyla 19 → 24; v0.9.1142'de
-// find_trace_by_request_id ile 25):
+// find_trace_by_request_id ile 25; v0.9.1146'da üç analiz tool'uyla 28):
 //   - list_services
 //   - get_service_health
 //   - list_problems
@@ -75,6 +75,14 @@
 // Yapıştırılan KURUMSAL kimlik (v0.9.1142, find_trace_by_request_id.go):
 //   - find_trace_by_request_id (sabit yapılı istek numarası → trace id;
 //     pencere kimliğin İÇİNDEKİ damgadan gelir, o yüzden range_s YOK)
+//
+// Analiz tool'ları (v0.9.1146, AI Faz 3.3 — analysis.go). Bunlar bir
+// ARG'ın değil bir SORUNUN eşi: model üçüne de cevap üretemiyordu ve
+// üçü de olay anlatısının merkezinde. Hepsi mevcut okuyucuyu köprüler
+// (yeni SQL yok):
+//   - get_topology ("yukarımda/aşağımda ne var" — topology_edges_5m MV)
+//   - get_blast_radius ("bu bozulursa kim bozulur" — service_callers_5m)
+//   - get_log_histogram ("log hacmi zamanla nasıl" — severity kırılımı)
 //
 // Cross-signal pivot tools (v0.8.333, pivots.go):
 //   - get_logs_for_trace
@@ -144,6 +152,12 @@ func ToolList(d Deps) []mcp.Tool {
 	return []mcp.Tool{
 		listServicesTool(d),
 		getServiceHealthTool(d),
+		// v0.9.1146 (Faz 3.3) — servis kazısının iki YAPISAL sorusu, tek
+		// servisin RED'inin hemen ardında: grafiğin kendisi ve yukarı-akış
+		// etkisi. İkisi yan yana çünkü iş bölümleri birbirine referans
+		// veriyor (downstream get_topology'de, upstream burada).
+		getTopologyTool(d),
+		getBlastRadiusTool(d),
 		// v0.9.1141 (Faz 3.2) — yukarıdaki üçlünün + list_problems'in
 		// `env` arg'ının keşif eşi; hemen yanında duruyor ki model
 		// katalogda arg'ı görünce listesini de görsün.
@@ -156,6 +170,9 @@ func ToolList(d Deps) []mcp.Tool {
 		// env keşfi list_services üçlüsünün yanında, cluster keşfi TEK
 		// tüketicisinin yanında duruyor.
 		listClustersTool(d),
+		// v0.9.1146 (Faz 3.3) — search_logs SATIR döndürür, bu ŞEKİL:
+		// "hata ne zaman başladı" sorusu log ailesinin içinde dursun.
+		getLogHistogramTool(d),
 		getTraceTool(d),
 		// v0.9.1087 (Faz 4) — id'siz giriş: trace ID'yi BULMANIN yolu.
 		searchTracesTool(d),

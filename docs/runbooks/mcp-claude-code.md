@@ -6,7 +6,7 @@ docs/plans/ai-assistant-design-2026-08-16.md §K7)
 
 ## 1. Token üret
 
-Settings → API Tokens → **New token**, rol: **viewer** (25 tool'un
+Settings → API Tokens → **New token**, rol: **viewer** (28 tool'un
 tamamı salt-okunur ve hepsi viewer seviyesinde — editor/admin
 GEREKMEZ). `cmk_…` değeri yalnız oluşturma anında görünür; kasaya
 koy. İptal: aynı ekrandan Revoke (anında, cache invalidation'lı).
@@ -32,11 +32,13 @@ Rol zorlaması nerede: her tool/resource/prompt kaydı bir `MinRole`
 taşır (`internal/mcp`), kapı (`internal/api/mcp_gate.go`) çağrı
 öncesi token rolüyle karşılaştırır. Yetersizse JSON-RPC **-32001** ve
 gereken rolü söyleyen okunur bir metin döner (model boşuna yeniden
-denemez). Bugün 25 tool'un tamamı `MinRole=""` (viewer tabanı; v0.9.1141'ta
+denemez). Bugün 28 tool'un tamamı `MinRole=""` (viewer tabanı; v0.9.1141'ta
 beş keşif tool'u eklendi — list_operations / list_environments /
 list_clusters / list_deploys / find_trace_by_span; v0.9.1142'de
 find_trace_by_request_id — yapılandırılmış kurumsal istek numarası →
-trace, penceresi kimliğin İÇİNDEKİ damgadan gelir).
+trace, penceresi kimliğin İÇİNDEKİ damgadan gelir; v0.9.1146'da üç analiz
+tool'u — get_topology / get_blast_radius / get_log_histogram, üçü de
+mevcut MV/logstore okumasını köprüler).
 
 ## 2. Bağlan
 
@@ -67,6 +69,9 @@ yolu da test edilmiş olur).
 |---|---|
 | "Şu an ne sağlıksız?" girişi | `list_services`, `list_problems`, `list_anomalies` |
 | Servis kazısı | `get_service_health` |
+| "Yukarımda/aşağımda ne var" · servis grafiği | `get_topology` (odaklı: upstream/downstream; boş `service` = filo kenarları; 1 hop) |
+| "Bu bozulursa kim bozulur" · etki cümlesi | `get_blast_radius` (YUKARI-akış çağıranlar + cascade bayrağı; aşağı-akış get_topology'de) |
+| "Hata ne zaman başladı" · log hacmi şekli | `get_log_histogram` (severity bantlı kovalar; satırlar için `search_logs`) |
 | İz → log/metrik pivotları | `get_trace`, `get_logs_for_trace`, `get_metrics_for_span` |
 | Metrik sorgusu / histogram ucu | `query_metric`, `get_exemplar_traces` |
 | Async zincir takibi | `get_linked_traces` |

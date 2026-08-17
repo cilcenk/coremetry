@@ -42,18 +42,33 @@ describe('Settings okuma kapısı (v0.9.938)', () => {
       'mevcut ayar ezilir').toEqual([]);
   });
 
-  it('dönüştürülen sekiz sekme kapıyı GERÇEKTEN çiziyor', () => {
+  it('useSettingsLoad kullanan HER sekme kapıyı GERÇEKTEN çiziyor', () => {
     // useSettingsLoad'ı çağırıp hata dalını çizmemek, kapıyı kurup
     // kapısız bırakmak olurdu: loaded false kalır, sekme SONSUZ spinner
     // gösterirdi — sessizce daha da kötü bir hâl.
-    for (const f of ['AiTab.tsx', 'BrandingTab.tsx', 'ClustersTab.tsx', 'DevOpsTab.tsx',
-      'ElasticTab.tsx', 'KibanaTab.tsx', 'LogBridgeTab.tsx', 'TempoTab.tsx']) {
+    // v0.9.1150 — liste artık TÜRETİLİYOR, elle sayılmıyor. Sabit
+    // sekizli, yeni bir sekme (MetricsBackendTab) kapıyı doğru kursa bile
+    // ONU ÖLÇMÜYORDU: kapı kapsamı göç sırasında sessizce erir ve
+    // "yeşil" cevabı yalnızca eski dosyalar hakkında olur. Kapsamı
+    // daraltmak yerine, kapıyı KULLANAN her dosyayı ölçüyoruz.
+    const gated = tabs.filter(f =>
+      readFileSync(resolve(DIR, f), 'utf8').includes('useSettingsLoad('));
+    // Zemin: türetme bir gün sıfır dosya bulursa test yeşil kalıp hiçbir
+    // şey korumazdı (yukarıdaki `tabs.length` pininin aynı gerekçesi).
+    expect(gated.length, 'useSettingsLoad kullanan sekme bulunamadı').toBeGreaterThanOrEqual(10);
+    for (const f of gated) {
       const src = readFileSync(resolve(DIR, f), 'utf8');
-      expect(src, `${f}: useSettingsLoad kullanmıyor`).toContain('useSettingsLoad(');
       expect(src, `${f}: hata dalı çizilmiyor`).toMatch(/if \(loadErr\) return <SettingsLoadError/);
       // Kapı, spinner'ın ÖNÜNDE olmalı: sonrasında olsaydı hata hâlinde
-      // sonsuz spinner kazanırdı.
-      expect(src.indexOf('if (loadErr)')).toBeLessThan(src.indexOf('if (!loaded)'));
+      // sonsuz spinner kazanırdı. İki yazılış var — `loaded` bayraklı
+      // sekizli ve LdapTab'in `!cfg` biçimi (v0.9.1043).
+      const spinnerGate = src.includes('if (!loaded)')
+        ? src.indexOf('if (!loaded)')
+        : src.indexOf('if (!cfg) return <Spinner');
+      expect(spinnerGate, `${f}: spinner kapısı bulunamadı`).toBeGreaterThan(-1);
+      expect(src.indexOf('if (loadErr)'),
+        `${f}: hata kapısı spinner'dan SONRA — hata hâlinde sonsuz spinner`)
+        .toBeLessThan(spinnerGate);
     }
   });
 

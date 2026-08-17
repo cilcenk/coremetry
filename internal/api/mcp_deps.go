@@ -22,7 +22,14 @@ package api
 import "github.com/cilcenk/coremetry/internal/mcptools"
 
 // mcpDeps — tool kataloğunun ve ortak veri katmanının kapandığı
-// handle'lar. Ucuz: yalnız iki işaretçi kopyalar, her çağrıda kurulabilir.
+// handle'lar. Ucuz: yalnız üç işaretçi kopyalar, her çağrıda kurulabilir.
+//
+// v0.9.1150 — Metrics: metrik okuma ROUTER'ı (CH ya da VictoriaMetrics).
+// Bu TEK kurucunun varlık sebebinin somut örneği: query_metric ile
+// list_metric_names farklı yerlerden kurulsaydı biri VM'den ad alıp
+// öbürü CH'ye sorabilirdi. mcptools tarafındaki nil-fallback CH'dir,
+// yani buradaki atamayı unutmak operatörün seçimini SESSİZCE iptal
+// eder — mcp_deps_test.go tam olarak bunu ısırıyor.
 func (s *Server) mcpDeps() mcptools.Deps {
-	return mcptools.Deps{Store: s.store, LogStore: s.logs}
+	return mcptools.Deps{Store: s.store, LogStore: s.logs, Metrics: s.metricSource()}
 }

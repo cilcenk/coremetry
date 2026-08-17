@@ -48,6 +48,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/tempo"
 	"github.com/cilcenk/coremetry/internal/thanos"
 	"github.com/cilcenk/coremetry/internal/topology"
+	"github.com/cilcenk/coremetry/internal/vmetrics"
 )
 
 //go:embed all:frontend/dist
@@ -996,6 +997,21 @@ func main() {
 		log.Printf("[thanos] load persisted config: %v", err)
 	}
 	go thanosSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	// v0.9.1150 — dış VictoriaMetrics OKUMA backend'i (tempo/thanos
+	// simetriği): blob'u boot'ta yükle + 30s multi-pod senkron poll'u.
+	// Kapalıyken (varsayılan) metrik yüzeyleri ClickHouse'tan okumaya
+	// devam eder — Configured() tek karar noktası.
+	vmSvc := vmetrics.New()
+	if err := vmSvc.LoadPersisted(ctx, store); err != nil {
+		log.Printf("[vmetrics] load persisted config: %v", err)
+	}
+	go vmSvc.StartConfigRefresh(ctx, store, 30*time.Second)
+	if vmSvc.Configured() {
+		v := vmSvc.Snapshot()
+		log.Printf("[vmetrics] metric read backend enabled (baseUrl=%s authType=%s) — "+
+			"metric discovery/query surfaces now read VictoriaMetrics, not ClickHouse",
+			v.BaseURL, v.AuthType)
+	}
 	// v0.9.829 — Azure DevOps Server / TFS bağlantısı (tempo/thanos
 	// simetriği). BİLİNÇLİ DAR: yalnız ayar + kimlik + bağlantı
 	// testi; repo eşleme ve kod-inceleme sonraki dilim, bu yüzden
@@ -1151,6 +1167,7 @@ func main() {
 	srv.SetBackgroundConfig(cfg.Background)
 	srv.SetTempo(tempoSvc)
 	srv.SetThanos(thanosSvc)
+	srv.SetVMetrics(vmSvc)
 	srv.SetDevOps(devopsSvc)
 	// Cross-pod L1 cache invalidation (v0.5.337). Subscribes
 	// to the Redis pub/sub channel so a putBranding /

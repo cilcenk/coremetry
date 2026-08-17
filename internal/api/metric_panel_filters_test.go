@@ -28,9 +28,19 @@ func TestDashboardBundleMetricBranchPassesFilters(t *testing.T) {
 	src := string(b)
 
 	// Toplu yolun metric dalını bul: QueryMetric + MetricQueryFilter.
-	i := strings.Index(src, "s.store.QueryMetric(r.Context(), chstore.MetricQueryFilter{")
+	//
+	// v0.9.1150 — çapa `s.store.QueryMetric` idi; okuma metrik kaynağı
+	// SEAM'ine taşındığı (metricsource.go, CH ya da VictoriaMetrics) için
+	// artık `metricSrc.QueryMetric`. Kapının SÖZLEŞMESİ değişmedi — dal
+	// hâlâ req.Filters'ı geçirmek zorunda — ama çapası değişti. Sayıyı
+	// düşürmek ya da testi silmek yerine çapa GÜNCELLENDİ: bayat bir çapa
+	// t.Fatal ile bağırıyor, ki doğru davranış bu (sessizce sıfır dosya
+	// tarayıp yeşil kalmak korumanın görüntüsü olurdu).
+	const anchor = "metricSrc.QueryMetric(r.Context(), chstore.MetricQueryFilter{"
+	i := strings.Index(src, anchor)
 	if i < 0 {
-		t.Fatal("dashboard bundle metric dalı bulunamadı")
+		t.Fatalf("dashboard bundle metric dalı bulunamadı (çapa: %q) — dal yeniden "+
+			"yazıldıysa çapayı güncelle, testi silme", anchor)
 	}
 	body := src[i:]
 	if end := strings.Index(body, "})"); end > 0 {

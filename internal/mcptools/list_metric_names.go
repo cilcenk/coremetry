@@ -57,7 +57,11 @@ func listMetricNamesTool(d Deps) mcp.Tool {
 				}
 			}
 			limit := clampLimit(a.Limit, 100, 500)
-			names, total, err := d.Store.ListMetricNames(ctx, a.Service, a.Pattern, limit, 0)
+			// v0.9.1150 — metrik okuma ROUTER'ından (CH ya da VM). Katalog
+			// ve query_metric AYNI kaynaktan okumak ZORUNDA: model buradan
+			// aldığı adı query_metric'e verir, iki uç ayrı store'a bakarsa
+			// ad var ama seri boş çıkar ve model kendi hatası sanır.
+			names, total, err := d.metrics().ListMetricNames(ctx, a.Service, a.Pattern, limit, 0)
 			if err != nil {
 				return nil, err
 			}

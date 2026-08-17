@@ -48,6 +48,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/sse"
 	"github.com/cilcenk/coremetry/internal/tempo"
 	"github.com/cilcenk/coremetry/internal/thanos"
+	"github.com/cilcenk/coremetry/internal/vmetrics"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 )
@@ -164,6 +165,15 @@ type Server struct {
 	// /clusters yüzeyi + Settings → Clusters. nil ya da boş liste →
 	// rotalar 404/boş snapshot döner.
 	thanos *thanos.Service
+
+	// vmetrics — dış VictoriaMetrics OKUMA backend'i (v0.9.1150, Faz 1).
+	// Configured() true olduğunda metrik keşif/sorgu yüzeyleri
+	// (katalog+picker, Explore, dashboard "metric" panelleri, MCP
+	// query_metric, etiket değerleri, attr anahtarları) CH yerine VM'den
+	// beslenir; kapalıyken CH yolu bayt-bayt aynıdır. Span türevli her
+	// şey ve sabit-adlı iç okuyucular CH'de KALIR (metricsource.go
+	// başlığındaki kapsam listesi). nil-safe.
+	vmetrics *vmetrics.Service
 
 	// devops — Azure DevOps Server / TFS bağlantısı (v0.9.829).
 	// ŞİMDİLİK YALNIZ BAĞLANTI: ayar + kimlik + erişilebilirlik
@@ -315,6 +325,15 @@ func (s *Server) SetTempo(t *tempo.Service) {
 // any cluster.
 func (s *Server) SetThanos(t *thanos.Service) {
 	s.thanos = t
+}
+
+// SetVMetrics wires the external VictoriaMetrics read backend
+// (v0.9.1150). Always called from main() with a non-nil service —
+// Configured() reports whether the operator enabled it AND gave it a
+// URL, and that predicate alone decides which store answers the metric
+// surfaces (metricsource.go).
+func (s *Server) SetVMetrics(v *vmetrics.Service) {
+	s.vmetrics = v
 }
 
 // SetDevOps wires the Azure DevOps / TFS connection client
@@ -1113,6 +1132,9 @@ func (s *Server) registerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/settings/metric-exclusions", auth.RequireRole(auth.RoleAdmin, s.getMetricExclusions))
 	mux.HandleFunc("PUT /api/settings/metric-exclusions", auth.RequireRole(auth.RoleAdmin, s.putMetricExclusions))
 	// GET/PUT /api/settings/ai → ai_routes.go (v0.9.1117).
+	// GET/PUT/test /api/settings/victoria-metrics → vmetrics_routes.go
+	// (v0.9.1150).
+	s.registerVMetricsRoutes(mux)
 	// External Tempo backend — admin-only because the token grants
 	// read access to every trace in the operator's Tempo cluster.
 	mux.HandleFunc("GET /api/settings/tempo", auth.RequireRole(auth.RoleAdmin, s.getTempoSettings))
@@ -4574,12 +4596,23 @@ func snapshotLogsJSON(logs []*logstore.LogRecord, max int, total int64) string {
 // (just calling /api/metrics/names?service=X) still receive a
 // plain MetricInfo[] body — no breaking change for the existing
 // /metrics page until it migrates to the new picker.
+// v0.9.1150 — okuma artık s.metricSource() seam'inden geçiyor (CH ya da
+// VictoriaMetrics) ve `src` cache anahtarının parçası. Backend işareti
+// anahtarda OLMASAYDI operatör Settings'ten VM'yi açtığı an, TTL boyunca
+// (60s / 30s) eski CH gövdeleri servis edilirdi ve tazelemeyi farklı
+// anlarda yapan iki pod aynı katalogda farklı liste gösterirdi — v0.5.187
+// çapraz-zehirlenme sınıfının aynısı, bu kez girdi bir AYAR.
+//
+// Zarf da `source` taşıyor: katalog sayfası rozeti bunu okur, ayrı bir
+// /api/settings çağrısı YAPMAZ (viewer o ucu göremez, ve iki istek
+// arasında ayar değişirse rozet gövdeye yalan söylerdi).
 func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	svc := q.Get("service")
 	pattern := strings.TrimSpace(q.Get("q"))
 	limit := parseInt(q.Get("limit"), 0)
 	offset := parseInt(q.Get("offset"), 0)
+	src := s.metricSource()
 	// Old shape — no pagination params → return MetricInfo[]
 	// like pre-v0.5.181 callers expect.
 	//
@@ -4589,17 +4622,22 @@ func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 	// EKSİK döner ve arayüz "Son veri: —" gösterip sanki metrik
 	// susmuş gibi yalan söyler. Zarf değişti = anahtar değişti.
 	if pattern == "" && limit == 0 && offset == 0 {
-		s.serveCached(w, r, "metric-names:v2:svc="+svc, 60*time.Second, func(ctx context.Context) (any, error) {
-			return s.store.GetMetricNames(ctx, svc)
+		s.serveCached(w, r, "metric-names:v3:src="+src.Name()+":svc="+svc, 60*time.Second, func(ctx context.Context) (any, error) {
+			// GetMetricNames, ListMetricNames(svc, "", 0, 0)'ın ta kendisi
+			// (repo.go:4342) — seam'de ayrı bir metot tutmamak için doğrudan
+			// o çağrı yapılıyor. CH tarafında SQL bayt-bayt aynı.
+			names, _, err := src.ListMetricNames(ctx, svc, "", 0, 0)
+			return names, err
 		})
 		return
 	}
 	if limit > 1000 {
 		limit = 1000
 	}
-	key := fmt.Sprintf("metric-names:v2:svc=%s:q=%s:limit=%d:offset=%d", svc, pattern, limit, offset)
+	key := fmt.Sprintf("metric-names:v3:src=%s:svc=%s:q=%s:limit=%d:offset=%d",
+		src.Name(), svc, pattern, limit, offset)
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		names, total, err := s.store.ListMetricNames(ctx, svc, pattern, limit, offset)
+		names, total, err := src.ListMetricNames(ctx, svc, pattern, limit, offset)
 		if err != nil {
 			return nil, err
 		}
@@ -4607,6 +4645,9 @@ func (s *Server) getMetricNames(w http.ResponseWriter, r *http.Request) {
 			"names":   names,
 			"total":   total,
 			"hasMore": offset+len(names) < total,
+			// source: hangi store cevapladı. Gövdeyle BİRLİKTE gidiyor,
+			// yani rozet her zaman ekrandaki satırların kaynağını gösterir.
+			"source": src.Name(),
 		}, nil
 	})
 }
@@ -4681,11 +4722,17 @@ func (s *Server) queryMetric(w http.ResponseWriter, r *http.Request) {
 	// iki pod aynı panelde farklı sayı gösterirdi. Özet SIRADAN BAĞIMSIZ
 	// FNV (v0.5.187 kuralı: len() değil, tüm girdiler); kural yokken sabit
 	// "0" — kuralsız kurulumda anahtar kardinalitesi artmaz.
-	key := fmt.Sprintf("metric-query:v3:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d:mx=%s",
-		name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60,
+	// v0.9.1150 — `src` (ch|vm) anahtarın parçası. Bu uç aynı gövde
+	// şeklini İKİ farklı store'dan üretebiliyor; işaret olmadan Settings
+	// toggle'ı 30 saniye boyunca eski backend'in SAYILARINI servis eder.
+	// Şekil aynı, sayılar farklı — v0.9.776 anahtar-bump'ının tam olarak
+	// bu gerekçesi.
+	src := s.metricSource()
+	key := fmt.Sprintf("metric-query:v3:src=%s:name=%s:svc=%s:agg=%s:step=%d:mdp=%d:gb=%s:f=%s:inst=%s:eng=%s:from=%d:to=%d:mx=%s",
+		src.Name(), name, svc, agg, step, maxDP, groupByRaw, filtersRaw, inst, engine, from.Unix()/60, to.Unix()/60,
 		s.store.MetricExclusions().Digest())
 	s.serveCached(w, r, key, 30*time.Second, func(ctx context.Context) (any, error) {
-		series, qerr := s.store.QueryMetric(ctx, chstore.MetricQueryFilter{
+		series, qerr := src.QueryMetric(ctx, chstore.MetricQueryFilter{
 			Name:          name,
 			Service:       svc,
 			Instance:      inst,
@@ -4759,9 +4806,11 @@ func (s *Server) getMetricLabelValues(w http.ResponseWriter, r *http.Request) {
 		since = 7 * 24 * time.Hour
 	}
 	metric, lkey := q.Get("metric"), q.Get("key")
-	key := fmt.Sprintf("metric-labels:m=%s:k=%s:since=%s", metric, lkey, since)
+	// v0.9.1150 — src anahtarda (bkz. getMetricNames'in gerekçesi).
+	src := s.metricSource()
+	key := fmt.Sprintf("metric-labels:src=%s:m=%s:k=%s:since=%s", src.Name(), metric, lkey, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.MetricLabelValues(ctx, metric, lkey, since)
+		return src.MetricLabelValues(ctx, metric, lkey, since)
 	})
 }
 
@@ -4781,9 +4830,11 @@ func (s *Server) getMetricAttrKeys(w http.ResponseWriter, r *http.Request) {
 		since = 7 * 24 * time.Hour
 	}
 	metric, service := q.Get("metric"), q.Get("service")
-	key := fmt.Sprintf("metric-attr-keys:m=%s:svc=%s:since=%s", metric, service, since)
+	// v0.9.1150 — src anahtarda (bkz. getMetricNames'in gerekçesi).
+	src := s.metricSource()
+	key := fmt.Sprintf("metric-attr-keys:src=%s:m=%s:svc=%s:since=%s", src.Name(), metric, service, since)
 	s.serveCached(w, r, key, 60*time.Second, func(ctx context.Context) (any, error) {
-		return s.store.MetricAttrKeys(ctx, metric, service, since)
+		return src.MetricAttrKeys(ctx, metric, service, since)
 	})
 }
 
@@ -5620,6 +5671,12 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 	var mu sync.Mutex
 	var wg sync.WaitGroup
 
+	// v0.9.1150 — backend seçimi bundle'ın BAŞINDA bir kez yapılır, panel
+	// başına değil: 50 panelin yarısı CH yarısı VM'den okunmuş bir
+	// dashboard, ayarın tam ortasında değiştiği tek bir istekte
+	// üretilebilirdi ve hangi panelin nereden geldiği görünmezdi.
+	metricSrc := s.metricSource()
+
 	for _, req := range body.Requests {
 		req := req
 		out[req.ID] = &slot{}
@@ -5632,7 +5689,13 @@ func (s *Server) dashboardsData(w http.ResponseWriter, r *http.Request) {
 			case "metric":
 				// metric_points read — same shape the
 				// /api/metrics/query handler builds.
-				series, err = s.store.QueryMetric(r.Context(), chstore.MetricQueryFilter{
+				//
+				// v0.9.1150 — metricSrc (CH ya da VictoriaMetrics).
+				// Seam'den geçmesi ZORUNLU: bu dal kardeş handler'dan
+				// bir kez daha ayrışırsa (v0.9.566: filtreler burada
+				// SQL'e hiç inmiyordu) aynı dashboard'daki iki panel
+				// farklı STORE'dan okur ve hiçbir şey bunu söylemez.
+				series, err = metricSrc.QueryMetric(r.Context(), chstore.MetricQueryFilter{
 					Name:        req.Name,
 					Service:     req.Service,
 					Aggregation: req.Agg,
@@ -11866,6 +11929,31 @@ func writeErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errNotFound) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	// v0.9.1150 — DIŞ okuma backend'inin hatası 500 DEĞİLDİR. VM açıkken
+	// erişilemezse bu Coremetry arızası değil, operatörün seçtiği
+	// upstream'in cevabıdır: 502 + VM'nin kendi metni ("connection
+	// refused" / "401" / "unknown label"). Sessiz CH fallback'i YOK —
+	// kaynak hakkında yalan söylemek yerine dürüst hata dönüyoruz.
+	// 500 olarak kalsaydı coremetry-api'nin öz-gözlem error_rate'ini de
+	// şişirip kendi anomali dedektörünü tetiklerdi (v0.7.13 dersi).
+	if errors.Is(err, errUpstream) {
+		log.Printf("[api] upstream error: %v", err)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		return
+	}
+	// v0.9.1150 — "bu istek bu backend'de İFADE EDİLEMİYOR" (reddedilen
+	// bir agg, PromQL karşılığı olmayan bir filtre operatörü) 400'dür,
+	// 502 değil. Ayrım bir TEŞHİS: 502, "VictoriaMetrics'iniz bozuk"
+	// der ve operatörü tamamen sağlıklı bir cluster'ı kontrol etmeye
+	// yollar. Loglanmaz — istemci hatası, sunucu arızası değil.
+	if errors.Is(err, errBadRequest) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
 		json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}

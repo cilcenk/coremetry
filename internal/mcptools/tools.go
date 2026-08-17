@@ -144,6 +144,43 @@ import (
 type Deps struct {
 	Store    *chstore.Store
 	LogStore logstore.Store
+	// Metrics — v0.9.1150. The METRIC read router (ClickHouse or an
+	// external VictoriaMetrics), for the two tools whose reads the
+	// operator can repoint from Settings: query_metric and
+	// list_metric_names.
+	//
+	// A narrow OPTIONAL field rather than turning Store into an
+	// interface: ~30 other tools read *chstore.Store for span-derived
+	// data that has no VM equivalent and never will, so widening Store
+	// would be a large mechanical change that buys nothing. See
+	// MetricSource for the nil contract.
+	Metrics MetricSource
+}
+
+// MetricSource is the metric-read half of Deps, satisfied by
+// *chstore.Store itself AND by internal/api's backend router. Declared
+// HERE so the import direction stays api → mcptools (mcptools must never
+// import api; that cycle is why /topology's hidden-pattern matcher could
+// not move — see analysis.go).
+type MetricSource interface {
+	ListMetricNames(ctx context.Context, service, pattern string, limit, offset int) ([]chstore.MetricInfo, int, error)
+	QueryMetric(ctx context.Context, f chstore.MetricQueryFilter) ([]chstore.SpanMetricSeries, error)
+}
+
+// metrics returns the metric read source, falling back to Store.
+//
+// The fallback is safe because *chstore.Store IS the default backend —
+// a nil Metrics yields byte-identical reads to pre-v0.9.1150, which is
+// what test setups and any direct Deps construction want. It is NOT a
+// fail-open that could silently un-apply the operator's choice: the API
+// has exactly one Deps constructor (mcp_deps.go) and it always sets
+// Metrics, pinned by a test there. If a second construction site ever
+// appears, that test is the thing that has to be argued with.
+func (d Deps) metrics() MetricSource {
+	if d.Metrics != nil {
+		return d.Metrics
+	}
+	return d.Store
 }
 
 // Register installs every v0.6.5/v0.6.6 tool and resource on
@@ -1009,7 +1046,8 @@ func queryMetricTool(d Deps) mcp.Tool {
 					groups = append(groups, p)
 				}
 			}
-			series, err := d.Store.QueryMetric(ctx, chstore.MetricQueryFilter{
+			// v0.9.1150 — metrik okuma ROUTER'ından (CH ya da VM).
+			series, err := d.metrics().QueryMetric(ctx, chstore.MetricQueryFilter{
 				Name:        a.Name,
 				Service:     a.Service,
 				Aggregation: agg,

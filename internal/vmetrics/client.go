@@ -427,11 +427,27 @@ func (s *Service) QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFil
 	// header. Everything else returns "" and the envelope carries no note
 	// field at all.
 	if len(out) == 0 {
+		// Recomputed from the same pure function buildPromQL used, so a note
+		// cannot name a spelling the query did not try (the promStep precedent:
+		// pure + same inputs, therefore incapable of drifting).
+		cands := nameCandidates(f.Name, f.Aggregation)
 		if _, isPercentile := promPercentile(f.Aggregation); isPercentile {
-			// Recomputed from the same pure function buildPromQL used, so the
-			// note cannot name a spelling the query did not try (the promStep
-			// precedent: pure + same inputs, therefore incapable of drifting).
-			return out, emptyBucketNote(nameCandidates(f.Name, f.Aggregation)), nil
+			return out, emptyBucketNote(cands), nil
+		}
+		// v0.9.1160 — every OTHER aggregation earns a note too, on ONE
+		// condition: the translation guessed more than one spelling. The live
+		// check of v0.9.1159 called the silent empty out by name, and the
+		// aggregations it hits hardest are the ones with no histogram arm
+		// (min/max/sum/count/last), where an OTLP histogram is empty BY DESIGN
+		// and only the note can say so.
+		//
+		// `len(cands) > 1` is the whole gate, and it is the honest line: with a
+		// single candidate nothing was guessed, the operator asked for exactly
+		// one series by name, and an empty answer means the series was empty.
+		// A note there would be noise on every quiet gauge — which is why
+		// v0.9.1159 scoped notes to percentiles in the first place.
+		if len(cands) > 1 {
+			return out, emptyNameNote(cands), nil
 		}
 	}
 	return out, "", nil

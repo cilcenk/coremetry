@@ -90,8 +90,60 @@ const (
 		`http_server_requests_total|http_server_requests_seconds_total|` +
 		`http_server_requests_milliseconds_total|http_server_requests_bytes_total)$"`
 
+	// The `_count` arm of the same name (v0.9.1160).
+	mcHTTPReqCount = `__name__=~"^(http\\.server\\.requests_count|` +
+		`http_server_requests_count|http_server_requests_seconds_count|` +
+		`http_server_requests_milliseconds_count|http_server_requests_bytes_count|` +
+		`http_server_requests_ratio_count)$"`
+
+	// The two arms for the operator's metric — the `avg by (route)` panel that
+	// was empty in prod resolves through these.
+	mcHTTPDurSum = `__name__=~"^(http\\.server\\.request\\.duration_sum|` +
+		`http_server_request_duration_sum|http_server_request_duration_seconds_sum|` +
+		`http_server_request_duration_milliseconds_sum|` +
+		`http_server_request_duration_bytes_sum|` +
+		`http_server_request_duration_ratio_sum)$"`
+	mcHTTPDurCount = `__name__=~"^(http\\.server\\.request\\.duration_count|` +
+		`http_server_request_duration_count|` +
+		`http_server_request_duration_seconds_count|` +
+		`http_server_request_duration_milliseconds_count|` +
+		`http_server_request_duration_bytes_count|` +
+		`http_server_request_duration_ratio_count)$"`
+
+	mcJVMSum = `__name__=~"^(jvm\\.memory\\.used_sum|jvm_memory_used_sum|` +
+		`jvm_memory_used_seconds_sum|jvm_memory_used_milliseconds_sum|` +
+		`jvm_memory_used_bytes_sum|jvm_memory_used_ratio_sum)$"`
+	mcJVMCount = `__name__=~"^(jvm\\.memory\\.used_count|jvm_memory_used_count|` +
+		`jvm_memory_used_seconds_count|jvm_memory_used_milliseconds_count|` +
+		`jvm_memory_used_bytes_count|jvm_memory_used_ratio_count)$"`
+
+	mcHTTPDurUnderscoreSum = `__name__=~"^(http_server_request_duration_sum|` +
+		`http_server_request_duration_seconds_sum|` +
+		`http_server_request_duration_milliseconds_sum|` +
+		`http_server_request_duration_bytes_sum|` +
+		`http_server_request_duration_ratio_sum)$"`
+	mcHTTPDurUnderscoreCount = `__name__=~"^(http_server_request_duration_count|` +
+		`http_server_request_duration_seconds_count|` +
+		`http_server_request_duration_milliseconds_count|` +
+		`http_server_request_duration_bytes_count|` +
+		`http_server_request_duration_ratio_count)$"`
+
+	mcQuotedSum = `__name__=~"^(m\"x_sum|m_x_sum|m_x_seconds_sum|` +
+		`m_x_milliseconds_sum|m_x_bytes_sum|m_x_ratio_sum)$"`
+	mcQuotedCount = `__name__=~"^(m\"x_count|m_x_count|m_x_seconds_count|` +
+		`m_x_milliseconds_count|m_x_bytes_count|m_x_ratio_count)$"`
+
 	mcM = `__name__=~"^(m|m_seconds|m_milliseconds|m_bytes|m_ratio|m_total|` +
 		`m_seconds_total|m_milliseconds_total|m_bytes_total)$"`
+
+	// v0.9.1160 — the HISTOGRAM-PART matchers. Separate `or` arms, not extra
+	// members of the list above: an alternation sums its members, `or` picks the
+	// left arm per group. Unit-first composition, and no `_total` members — a
+	// histogram is never a monotonic sum.
+	mcMCount = `__name__=~"^(m_count|m_seconds_count|m_milliseconds_count|` +
+		`m_bytes_count|m_ratio_count)$"`
+	mcMSum = `__name__=~"^(m_sum|m_seconds_sum|m_milliseconds_sum|` +
+		`m_bytes_sum|m_ratio_sum)$"`
 
 	mcMBucket = `__name__=~"^(m_bucket|m_seconds_bucket|m_milliseconds_bucket|` +
 		`m_bytes_bucket|m_ratio_bucket)$"`
@@ -113,18 +165,49 @@ func TestSelectorConstantsMatchTheImplementation(t *testing.T) {
 	cases := []struct {
 		name, agg, want string
 	}{
-		{"http.server.request.duration", "avg", mcHTTPDur},
+		{"http.server.request.duration", "max", mcHTTPDur},
 		{"http.server.request.duration", "p99", mcHTTPDurBucket},
-		{"http_server_request_duration", "avg", mcHTTPDurUnderscore},
+		{"http_server_request_duration", "max", mcHTTPDurUnderscore},
 		{"jvm.memory.used", "last", mcJVM},
-		{"http.server.requests", "rate", mcHTTPReq},
-		{"m", "avg", mcM},
+		{"m", "max", mcM},
 		{"m", "p50", mcMBucket},
-		{`m"x`, "avg", mcQuoted},
+		{`m"x`, "max", mcQuoted},
+		{"http.server.requests", "max", mcHTTPReq},
+		// last is NOT a counter rollup and gets no histogram arm:
+		// last_over_time over a `_count` series returns the cumulative total
+		// since process start, which is not what anyone means by "the last
+		// value".
+		{"m", "last", mcM},
 	}
 	for _, tc := range cases {
 		if got := nameMatcher(nameCandidates(tc.name, tc.agg)); got != tc.want {
 			t.Fatalf("nameMatcher(%q, %q) =\n  %s\nconstant says\n  %s", tc.name, tc.agg, got, tc.want)
+		}
+	}
+
+	// v0.9.1160 — and the per-ARM matchers, which is what buildPromQL composes
+	// with `or`. Pinned separately from the union above because the union is
+	// only ever used for the empty-result NOTE; getting it right while an arm
+	// is wrong would be a note that names spellings the query never sent.
+	armCases := []struct {
+		name, want string
+		build      func(string) []string
+	}{
+		{"m", mcMCount, countNameCandidates},
+		{"m", mcMSum, sumNameCandidates},
+		{"http.server.requests", mcHTTPReqCount, countNameCandidates},
+		{"http.server.request.duration", mcHTTPDurCount, countNameCandidates},
+		{"http.server.request.duration", mcHTTPDurSum, sumNameCandidates},
+		{"http_server_request_duration", mcHTTPDurUnderscoreCount, countNameCandidates},
+		{"http_server_request_duration", mcHTTPDurUnderscoreSum, sumNameCandidates},
+		{"jvm.memory.used", mcJVMCount, countNameCandidates},
+		{"jvm.memory.used", mcJVMSum, sumNameCandidates},
+		{`m"x`, mcQuotedCount, countNameCandidates},
+		{`m"x`, mcQuotedSum, sumNameCandidates},
+	}
+	for _, tc := range armCases {
+		if got := nameMatcher(tc.build(tc.name)); got != tc.want {
+			t.Fatalf("arm matcher for %q =\n  %s\nconstant says\n  %s", tc.name, got, tc.want)
 		}
 	}
 }
@@ -174,9 +257,9 @@ func TestNameCandidates(t *testing.T) {
 			// somebody actually asked for, and the pre-cutover family in
 			// their install still answers to it), then the sanitised form,
 			// then the unit suffixes. The third member is the live series.
-			name: "dotted OTLP name, plain aggregation",
+			name: "base spellings (max — no histogram arm)",
 			in:   "http.server.request.duration",
-			agg:  "avg",
+			agg:  "max",
 			want: []string{
 				"http.server.request.duration",
 				"http_server_request_duration",
@@ -217,7 +300,7 @@ func TestNameCandidates(t *testing.T) {
 			// the same string twice.
 			name: "underscored name dedupes verbatim against sanitised",
 			in:   "m",
-			agg:  "",
+			agg:  "max",
 			want: []string{
 				"m", "m_seconds", "m_milliseconds", "m_bytes", "m_ratio",
 				"m_total", "m_seconds_total", "m_milliseconds_total", "m_bytes_total",
@@ -238,13 +321,13 @@ func TestNameCandidates(t *testing.T) {
 			// and alternating them sums two unrelated series into one line.
 			name: "no _total is guessed on top of a unit suffix",
 			in:   "process_cpu_seconds",
-			agg:  "rate",
+			agg:  "max",
 			want: []string{"process_cpu_seconds"},
 		},
 		{
 			name: "a _total name is exact too",
 			in:   "http_requests_total",
-			agg:  "increase",
+			agg:  "avg",
 			want: []string{"http_requests_total"},
 		},
 		{
@@ -275,7 +358,7 @@ func TestNameCandidates(t *testing.T) {
 			// downstream.
 			name: "unsanitary characters keep both spellings",
 			in:   `m"x`,
-			agg:  "avg",
+			agg:  "max",
 			want: []string{
 				`m"x`, "m_x", "m_x_seconds", "m_x_milliseconds", "m_x_bytes",
 				"m_x_ratio", "m_x_total", "m_x_seconds_total",
@@ -298,12 +381,9 @@ func TestNameCandidates(t *testing.T) {
 			want: nil,
 		},
 		{
-			// Every non-percentile aggregation shares one policy: the
-			// instrument class the name has to match does not change between
-			// avg and rate.
-			name: "rate takes the same plain spellings as avg",
+			name: "min takes the plain spellings and NO histogram parts",
 			in:   "http.server.requests",
-			agg:  "rate",
+			agg:  "min",
 			want: []string{
 				"http.server.requests",
 				"http_server_requests",
@@ -316,6 +396,121 @@ func TestNameCandidates(t *testing.T) {
 				"http_server_requests_milliseconds_total",
 				"http_server_requests_bytes_total",
 			},
+		},
+
+		// ── v0.9.1160: the histogram-aware aggregations ─────────────────────
+		//
+		// Operator-verified gap, twice. `rate` on the dotted OTLP name returned
+		// 200 with ZERO series, and so did the service page's "Response time ·
+		// avg (by route)" panel — in VM an OTLP histogram has no base series, so
+		// its throughput is `<name>_count` and its mean is `_sum`/`_count`.
+		//
+		// nameCandidates returns the UNION of the arms buildPromQL composes with
+		// `or`, because that union is what the empty-result note lists. The arm
+		// MATCHERS are pinned separately in
+		// TestSelectorConstantsMatchTheImplementation, and the `or` SHAPE in
+		// TestOrCompositionShapes.
+		{
+			// THE FIRST REPORTED CASE. Base list, then the `_count` derivatives
+			// with unit-first composition. Member 13 is the one every Grafana
+			// dashboard rates.
+			name: "rate on the dotted OTLP name reaches the _count series",
+			in:   "http.server.request.duration",
+			agg:  "rate",
+			want: []string{
+				"http.server.request.duration",
+				"http_server_request_duration",
+				"http_server_request_duration_seconds",
+				"http_server_request_duration_milliseconds",
+				"http_server_request_duration_bytes",
+				"http_server_request_duration_ratio",
+				"http_server_request_duration_total",
+				"http_server_request_duration_seconds_total",
+				"http_server_request_duration_milliseconds_total",
+				"http_server_request_duration_bytes_total",
+				"http.server.request.duration_count",
+				"http_server_request_duration_count",
+				"http_server_request_duration_seconds_count", // ← the live one
+				"http_server_request_duration_milliseconds_count",
+				"http_server_request_duration_bytes_count",
+				"http_server_request_duration_ratio_count",
+			},
+		},
+		{
+			// THE SECOND REPORTED SPELLING: the clean unit-suffixed base, which
+			// the skip set otherwise takes as exact. It still earns a `_count`
+			// arm, because THIS is the name whose base does not exist while
+			// `…_seconds_count` does. mayHaveHistogramParts lets a `_seconds`
+			// suffix through for exactly this reason.
+			name: "rate on a unit-suffixed base still reaches its _count arm",
+			in:   "http_server_request_duration_seconds",
+			agg:  "rate",
+			want: []string{
+				"http_server_request_duration_seconds",
+				"http_server_request_duration_seconds_count",
+			},
+		},
+		{
+			name: "increase behaves exactly like rate",
+			in:   "http_server_request_duration_seconds",
+			agg:  "increase",
+			want: []string{
+				"http_server_request_duration_seconds",
+				"http_server_request_duration_seconds_count",
+			},
+		},
+		{
+			// THE SECOND REPORTED CASE — the avg panel. `_sum` comes before
+			// `_count` because that is the order the ratio arm divides them, and
+			// the note reads in the same order the expression does.
+			name: "avg reaches BOTH histogram parts",
+			in:   "http_server_request_duration_seconds",
+			agg:  "avg",
+			want: []string{
+				"http_server_request_duration_seconds",
+				"http_server_request_duration_seconds_sum",
+				"http_server_request_duration_seconds_count",
+			},
+		},
+		{
+			// An omitted aggregation IS avg (promAggregator's default), and the
+			// service page's route panel sends exactly that. If the gate keyed
+			// on the literal "avg" only, the reported panel would still be
+			// empty while every test using the explicit label passed.
+			name: "an EMPTY aggregation is avg and reaches both parts",
+			in:   "http_server_request_duration_seconds",
+			agg:  "",
+			want: []string{
+				"http_server_request_duration_seconds",
+				"http_server_request_duration_seconds_sum",
+				"http_server_request_duration_seconds_count",
+			},
+		},
+		{
+			// IDEMPOTENCE: a `_count` row picked straight off VM's catalogue is
+			// not doubled into `…_count_count`, and stays a SINGLE candidate —
+			// so it keeps the `=` selector form.
+			name: "rate on an already-_count name is idempotent and single-arm",
+			in:   "http_server_request_duration_seconds_count",
+			agg:  "rate",
+			want: []string{"http_server_request_duration_seconds_count"},
+		},
+		{
+			// A real `_total` counter is UNCHANGED from v0.9.1159: monotonic
+			// sums have no histogram siblings, so no `_count` is guessed and the
+			// single-candidate path is preserved.
+			name: "rate on a _total counter stays the single exact path (no arm)",
+			in:   "http_requests_total",
+			agg:  "increase",
+			want: []string{"http_requests_total"},
+		},
+		{
+			// `last` is NOT a counter rollup. last_over_time over a `_count`
+			// series is the cumulative total since process start.
+			name: "last gets no histogram arm at all",
+			in:   "http_server_request_duration_seconds",
+			agg:  "last",
+			want: []string{"http_server_request_duration_seconds"},
 		},
 	}
 	for _, tc := range tests {
@@ -357,6 +552,95 @@ func TestNameCandidatesPercentilesAllUseBuckets(t *testing.T) {
 			}
 		}
 	}
+}
+
+// THE AGGREGATION GATE (v0.9.1160). The histogram parts must reach avg, rate
+// and increase — and NOTHING ELSE.
+//
+// Both directions fail silently and differently, which is why both are asserted:
+//
+//	leaked into min/max/sum/count/last → the query resolves to a SAMPLE COUNT
+//	  (or, for last, a cumulative total since process start) where the operator
+//	  asked for the measurement. Large, plausible, wrong, under a latency
+//	  legend: the v0.9.566 class.
+//	missing from avg/rate/increase → the reported bugs return: a permanently
+//	  blank throughput line and an empty "Response time · avg (by route)" panel
+//	  beside a working latency chart.
+func TestHistogramPartsReachOnlyTheHistogramAwareAggs(t *testing.T) {
+	const histogramMetric = "http.server.request.duration"
+	const countSpelling = "http_server_request_duration_seconds_count"
+	const sumSpelling = "http_server_request_duration_seconds_sum"
+
+	// rate / increase: the `_count` arm, and NOT the `_sum` one — throughput is
+	// a count of observations, not a total of their values.
+	for _, agg := range []string{"rate", "increase", "RATE", " increase "} {
+		cands := nameCandidates(histogramMetric, agg)
+		if !containsString(cands, countSpelling) {
+			t.Fatalf("agg=%q cannot reach %s — an OTLP histogram has no base series in VM, "+
+				"so its throughput panel stays permanently empty", agg, countSpelling)
+		}
+		if containsString(cands, sumSpelling) {
+			t.Fatalf("agg=%q reached %s — rate over the value TOTAL is not throughput", agg, sumSpelling)
+		}
+		if !isCounterRollup(agg) || isMeanAgg(agg) {
+			t.Fatalf("predicates disagree for %q", agg)
+		}
+	}
+
+	// avg: BOTH parts, because its histogram form is the ratio.
+	for _, agg := range []string{"", "avg", "AVG", " avg "} {
+		cands := nameCandidates(histogramMetric, agg)
+		for _, want := range []string{sumSpelling, countSpelling} {
+			if !containsString(cands, want) {
+				t.Fatalf("agg=%q cannot reach %s — the service page's avg-by-route panel "+
+					"stays empty on a histogram metric", agg, want)
+			}
+		}
+		if !isMeanAgg(agg) || isCounterRollup(agg) {
+			t.Fatalf("predicates disagree for %q", agg)
+		}
+	}
+
+	// Everything else: no histogram part at all.
+	for _, agg := range []string{"min", "max", "sum", "count", "last", "MAX", " last "} {
+		for _, c := range nameCandidates(histogramMetric, agg) {
+			if strings.HasSuffix(c, "_count") || strings.HasSuffix(c, "_sum") {
+				t.Fatalf("agg=%q leaked the histogram part %q — it would chart a sample count "+
+					"as though it were the measurement", agg, c)
+			}
+		}
+		if isCounterRollup(agg) || isMeanAgg(agg) {
+			t.Fatalf("predicates disagree for %q", agg)
+		}
+	}
+
+	// A percentile keeps the BUCKET branch: the guessing rules must not merge,
+	// or a p99 would read its distribution off a count series.
+	for _, agg := range []string{"p50", "p95", "p99"} {
+		if isCounterRollup(agg) || isMeanAgg(agg) {
+			t.Fatalf("agg=%q read as throughput/mean — percentiles carry Rollup==rate but "+
+				"are neither", agg)
+		}
+		for _, c := range nameCandidates(histogramMetric, agg) {
+			if !strings.HasSuffix(c, "_bucket") {
+				t.Fatalf("agg=%q candidate %q left the bucket branch", agg, c)
+			}
+		}
+	}
+
+	// An unknown aggregation guesses nothing: buildPromQL is about to refuse it.
+	if isCounterRollup("nonsense") || isMeanAgg("nonsense") {
+		t.Fatal("an unsupported aggregation must not be read as a counter rollup or a mean")
+	}
+}
+
+func containsString(hay []string, needle string) bool {
+	for _, h := range hay {
+		if h == needle {
+			return true
+		}
+	}
+	return false
 }
 
 // Candidates must never repeat. A duplicate is not cosmetic: VM accepts it,

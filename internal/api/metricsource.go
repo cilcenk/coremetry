@@ -115,11 +115,17 @@ const (
 // answer is the wrong trade; the tag is empty for CH, so its keys are
 // byte-identical to yesterday's.
 //
-// Bump `n1` whenever the candidate rules in internal/vmetrics/names.go change
-// what a name resolves to.
+// Bump the digit whenever the candidate rules in internal/vmetrics/names.go
+// change what a name resolves to.
+//
+//	n1 — v0.9.1159, the original candidate alternation.
+//	n2 — v0.9.1160, rate/increase gained the `…_count` derivatives. A warm n1
+//	     entry holds the 0-series body that finding reported, and it is the
+//	     throughput half of a chart whose latency half already works — the most
+//	     confusing possible state to leave a panel in for a full TTL.
 func metricNameRuleTag(src metricSource) string {
 	if src != nil && src.Name() == metricSourceVM {
-		return ":n1"
+		return ":n2"
 	}
 	return ""
 }

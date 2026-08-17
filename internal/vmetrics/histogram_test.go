@@ -995,18 +995,45 @@ func TestQueryMetricNotedAttachesThePercentileNote(t *testing.T) {
 		t.Fatalf("the percentile query is not using an alternation selector: %s", gotQuery)
 	}
 
-	// A non-percentile empty result carries NO note. Scoped that tightly on
-	// purpose: an empty gauge query is honestly empty and we know nothing the
-	// operator does not, so a note there would be noise on every quiet metric.
-	for _, agg := range []string{"", "avg", "sum", "last", "rate"} {
+	// v0.9.1160 — EVERY aggregation that guessed spellings now explains its
+	// empty. The live check of v0.9.1159 named the silent empty as the problem,
+	// and the aggregations it hits hardest are the ones with no histogram arm:
+	// on an OTLP histogram, min/max/sum/count/last are empty BY DESIGN and only
+	// the note can say so — and say what to use instead.
+	for _, agg := range []string{"", "avg", "sum", "min", "max", "count", "last", "rate", "increase"} {
 		_, note, err := s.QueryMetricNoted(ctx, chstore.MetricQueryFilter{
 			Name: "jvm.memory.used", Aggregation: agg, From: from, To: from.Add(time.Hour),
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
+		if note == "" {
+			t.Fatalf("agg=%q left an empty result unexplained — the query asked for spellings "+
+				"the operator never typed", agg)
+		}
+		// It names what was tried, and it names the way out for the
+		// aggregations that cannot read a histogram.
+		if !strings.Contains(note, "jvm_memory_used_bytes") {
+			t.Fatalf("agg=%q note does not list the tried spellings: %s", agg, note)
+		}
+		if !strings.Contains(note, "avg") || !strings.Contains(note, "p95") {
+			t.Fatalf("agg=%q note does not name the aggregations that CAN read a histogram: %s",
+				agg, note)
+		}
+	}
+
+	// The one case that stays silent: a SINGLE candidate. Nothing was guessed —
+	// the operator named one series and it was empty — so a note would be noise
+	// on every quiet gauge, which is why v0.9.1159 scoped notes at all.
+	for _, agg := range []string{"", "avg", "max", "rate"} {
+		_, note, err := s.QueryMetricNoted(ctx, chstore.MetricQueryFilter{
+			Name: "http_requests_total", Aggregation: agg, From: from, To: from.Add(time.Hour),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
 		if note != "" {
-			t.Fatalf("agg=%q attached a note to an ordinary empty result: %s", agg, note)
+			t.Fatalf("agg=%q noted an exact single-candidate name: %s", agg, note)
 		}
 	}
 

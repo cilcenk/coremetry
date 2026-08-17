@@ -299,10 +299,21 @@ func TestEmptyBucketNote(t *testing.T) {
 }
 
 // Full aggregation × group-by matrix.
+//
+// v0.9.1160 — avg (and its `""` spelling) left this shape: it now carries the
+// observation-weighted histogram arm. min/max/sum/count are UNCHANGED and that
+// is deliberate, not an oversight — `min(…_seconds_count)` would report a
+// sample count under a latency legend (v0.9.566). The `mean` column below is
+// what encodes the split, so a change that gave every aggregation a histogram
+// arm fails on four rows at once.
 func TestBuildPromQLAggregationGroupByMatrix(t *testing.T) {
-	aggs := []struct{ in, op string }{
-		{"", "avg"}, {"avg", "avg"}, {"sum", "sum"},
-		{"min", "min"}, {"max", "max"}, {"count", "count"},
+	aggs := []struct {
+		in, op string
+		mean   bool // avg → base arm OR rate(_sum)/rate(_count)
+	}{
+		{in: "", op: "avg", mean: true}, {in: "avg", op: "avg", mean: true},
+		{in: "sum", op: "sum"}, {in: "min", op: "min"},
+		{in: "max", op: "max"}, {in: "count", op: "count"},
 	}
 	groupBys := []struct {
 		name string
@@ -326,9 +337,20 @@ func TestBuildPromQLAggregationGroupByMatrix(t *testing.T) {
 				if err != nil {
 					t.Fatalf("unexpected error: %v", err)
 				}
-				want := a.op + `({` + mcJVM + `})`
+				// The two by-clause spellings differ in more than the label
+				// list: ungrouped is `avg(…)`, grouped is `avg by (pod) (…)`
+				// with a space. Written out here rather than composed from the
+				// implementation's helper, so a lost space is a failure.
+				open := `(`
 				if g.by != "" {
-					want = a.op + ` by (` + g.by + `) ({` + mcJVM + `})`
+					open = ` by (` + g.by + `) (`
+				}
+				want := a.op + open + `{` + mcJVM + `})`
+				if a.mean {
+					// No From/To → promStep resolves 1s, which promRollupWindow
+					// floors to the 300s rate floor. Literal, not derived.
+					want += ` or (sum` + open + `rate({` + mcJVMSum + `}[300s]))` +
+						` / sum` + open + `rate({` + mcJVMCount + `}[300s])))`
 				}
 				if got != want {
 					t.Fatalf("got  %s\nwant %s", got, want)
@@ -398,60 +420,60 @@ func TestBuildPromQLRollupShapes(t *testing.T) {
 			// rates with a sum and names this idiom as its semantics.
 			name: "rate, no group-by, floored",
 			f:    mk(chstore.MetricQueryFilter{Name: "http.server.requests", Aggregation: "rate", StepSeconds: 60}),
-			want: `sum(rate({` + mcHTTPReq + `}[300s]))`,
+			want: `sum(rate({` + mcHTTPReq + `}[300s])) or sum(rate({` + mcHTTPReqCount + `}[300s]))`,
 		},
 		{
 			name: "rate, group-by",
 			f: mk(chstore.MetricQueryFilter{Name: "http.server.requests", Aggregation: "rate",
 				StepSeconds: 60, GroupBy: []string{"http.route"}}),
-			want: `sum by (http_route) (rate({` + mcHTTPReq + `}[300s]))`,
+			want: `sum by (http_route) (rate({` + mcHTTPReq + `}[300s])) or sum by (http_route) (rate({` + mcHTTPReqCount + `}[300s]))`,
 		},
 		{
 			name: "rate, step above the floor keeps the step",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600}),
-			want: `sum(rate({` + mcM + `}[600s]))`,
+			want: `sum(rate({` + mcM + `}[600s])) or sum(rate({` + mcMCount + `}[600s]))`,
 		},
 		{
 			// The operator's Grafana reference is [3m]. An explicit window
 			// wins and is NOT promoted to the 5m floor.
 			name: "rate honours an explicit RateWindowSec below the floor",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 60, RateWindowSec: 180}),
-			want: `sum(rate({` + mcM + `}[180s]))`,
+			want: `sum(rate({` + mcM + `}[180s])) or sum(rate({` + mcMCount + `}[180s]))`,
 		},
 		{
 			name: "rate honours an explicit RateWindowSec above the floor",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600, RateWindowSec: 900}),
-			want: `sum(rate({` + mcM + `}[900s]))`,
+			want: `sum(rate({` + mcM + `}[900s])) or sum(rate({` + mcMCount + `}[900s]))`,
 		},
 		{
 			// <= step means "unexpressed" (the CH sibling's own rule), so
 			// the floor still applies.
 			name: "rate ignores a RateWindowSec below the step",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 60, RateWindowSec: 30}),
-			want: `sum(rate({` + mcM + `}[300s]))`,
+			want: `sum(rate({` + mcM + `}[300s])) or sum(rate({` + mcMCount + `}[300s]))`,
 		},
 		{
 			// increase is a window TOTAL — flooring it would quadruple the
 			// number while the chart still says one bucket (v0.6.36 class).
 			name: "increase is NOT floored",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 60}),
-			want: `sum(increase({` + mcM + `}[60s]))`,
+			want: `sum(increase({` + mcM + `}[60s])) or sum(increase({` + mcMCount + `}[60s]))`,
 		},
 		{
 			name: "increase at a sub-minute step stays at the step",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 12}),
-			want: `sum(increase({` + mcM + `}[12s]))`,
+			want: `sum(increase({` + mcM + `}[12s])) or sum(increase({` + mcMCount + `}[12s]))`,
 		},
 		{
 			name: "increase, group-by, explicit window",
 			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 60,
 				RateWindowSec: 180, GroupBy: []string{"error.type"}}),
-			want: `sum by (error_type) (increase({` + mcM + `}[180s]))`,
+			want: `sum by (error_type) (increase({` + mcM + `}[180s])) or sum by (error_type) (increase({` + mcMCount + `}[180s]))`,
 		},
 		{
 			name: "case and padding are normalized like the set-aggregations",
 			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: " RATE ", StepSeconds: 600}),
-			want: `sum(rate({` + mcM + `}[600s]))`,
+			want: `sum(rate({` + mcM + `}[600s])) or sum(rate({` + mcMCount + `}[600s]))`,
 		},
 		{
 			// A group-by that sanitizes to nothing falls back to the
@@ -459,7 +481,7 @@ func TestBuildPromQLRollupShapes(t *testing.T) {
 			name: "group-by that sanitizes away collapses to the ungrouped form",
 			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600,
 				GroupBy: []string{"  "}}),
-			want: `sum(rate({` + mcM + `}[600s]))`,
+			want: `sum(rate({` + mcM + `}[600s])) or sum(rate({` + mcMCount + `}[600s]))`,
 		},
 	}
 	for _, tc := range tests {
@@ -479,6 +501,198 @@ func TestBuildPromQLRollupShapes(t *testing.T) {
 // crept in with the rollup rewrite. A stray window would change avg from
 // "the value at this bucket" to "the average of the last 5 minutes" on
 // every existing panel, with nothing on screen saying so.
+// ── `or` composition (v0.9.1160) ───────────────────────────────────────────
+//
+// The two reported prod failures were both "200 with zero series" on an
+// OTLP-named metric, because in VM an OTLP histogram has no base series. The fix
+// composes a second arm with MetricsQL `or`, and the FULL expressions are pinned
+// here — every other test in this file uses the constants, so this is the one
+// place the whole shape is legible at once.
+//
+// Four properties, each of which fails silently if broken:
+//
+//	ARM ORDER      — `or` takes the LEFT arm per group. Base first means a real
+//	                 counter or gauge always beats the guessed histogram arm;
+//	                 swapped, a metric with both families would report its
+//	                 histogram estimate and hide the exact series.
+//	BOTH ARMS      — drop the right one and the reported bug is back; drop the
+//	                 left and every plain gauge starts answering from a
+//	                 nonexistent `_sum`/`_count` pair.
+//	GROUPING       — the by-clause must be on EVERY arm. An arm that lost it
+//	                 produces one ungrouped series, and `or` would fill that
+//	                 single series into every group the other arm did not cover.
+//	RATIO, NOT SUM — avg's histogram arm divides; a `+` there would report the
+//	                 total observed value as a mean.
+func TestOrCompositionShapes(t *testing.T) {
+	from := time.Unix(1700000000, 0)
+	to := from.Add(time.Hour)
+	tests := []struct {
+		name string
+		f    chstore.MetricQueryFilter
+		want string
+	}{
+		{
+			// THE FIRST REPORTED CASE, ungrouped.
+			name: "rate — base arm OR count arm",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "rate",
+				From: from, To: to, StepSeconds: 600,
+			},
+			want: `sum(rate({` + mcHTTPDur + `}[600s]))` +
+				` or sum(rate({` + mcHTTPDurCount + `}[600s]))`,
+		},
+		{
+			name: "rate, grouped — the by-clause is on BOTH arms",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "rate",
+				GroupBy: []string{"http.route"}, From: from, To: to, StepSeconds: 600,
+			},
+			want: `sum by (http_route) (rate({` + mcHTTPDur + `}[600s]))` +
+				` or sum by (http_route) (rate({` + mcHTTPDurCount + `}[600s]))`,
+		},
+		{
+			name: "increase — same composition, its own rollup",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "increase",
+				From: from, To: to, StepSeconds: 600,
+			},
+			want: `sum(increase({` + mcHTTPDur + `}[600s]))` +
+				` or sum(increase({` + mcHTTPDurCount + `}[600s]))`,
+		},
+		{
+			name: "increase, grouped",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "increase",
+				GroupBy: []string{"http.route"}, From: from, To: to, StepSeconds: 600,
+			},
+			want: `sum by (http_route) (increase({` + mcHTTPDur + `}[600s]))` +
+				` or sum by (http_route) (increase({` + mcHTTPDurCount + `}[600s]))`,
+		},
+		{
+			// THE SECOND REPORTED CASE — the service page's "Response time ·
+			// avg (by route)" panel, verbatim. The left arm is a bare instant
+			// selector (so a gauge behaves exactly as before v0.9.1160); the
+			// right is the observation-weighted mean, which is the same
+			// semantics the ClickHouse sibling computes (v0.9.776).
+			name: "avg, grouped — gauge arm OR rate(_sum)/rate(_count)",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "avg",
+				GroupBy: []string{"http.route"}, From: from, To: to, StepSeconds: 600,
+			},
+			want: `avg by (http_route) ({` + mcHTTPDur + `})` +
+				` or (sum by (http_route) (rate({` + mcHTTPDurSum + `}[600s]))` +
+				` / sum by (http_route) (rate({` + mcHTTPDurCount + `}[600s])))`,
+		},
+		{
+			name: "avg, ungrouped",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "avg",
+				From: from, To: to, StepSeconds: 600,
+			},
+			want: `avg({` + mcHTTPDur + `})` +
+				` or (sum(rate({` + mcHTTPDurSum + `}[600s]))` +
+				` / sum(rate({` + mcHTTPDurCount + `}[600s])))`,
+		},
+		{
+			// An OMITTED aggregation is avg, and that is what the reported panel
+			// sends. A gate keyed on the literal "avg" would leave the bug live
+			// while every explicit-label test passed.
+			name: "an empty aggregation composes the mean arms too",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration",
+				From: from, To: to, StepSeconds: 600,
+			},
+			want: `avg({` + mcHTTPDur + `})` +
+				` or (sum(rate({` + mcHTTPDurSum + `}[600s]))` +
+				` / sum(rate({` + mcHTTPDurCount + `}[600s])))`,
+		},
+		{
+			// Service + filters ride on EVERY arm. An arm that lost the filter
+			// would answer about one route with data from all of them, and `or`
+			// would let it fill in wherever the filtered arm was empty — the
+			// v0.9.566 shape with a fallback attached.
+			name: "service and filters are repeated on every arm",
+			f: chstore.MetricQueryFilter{
+				Name: "http.server.request.duration", Aggregation: "rate", Service: "cart",
+				Filters: []chstore.FilterExpr{{Key: "http.route", Op: "=", Values: []string{"/api"}}},
+				From:    from, To: to, StepSeconds: 600,
+			},
+			want: `sum(rate({` + mcHTTPDur + `, service_name="cart", http_route="/api"}[600s]))` +
+				` or sum(rate({` + mcHTTPDurCount + `, service_name="cart", http_route="/api"}[600s]))`,
+		},
+
+		// ── SINGLE-ARM REGRESSIONS: byte-identical to pre-v0.9.1160 ─────────
+		{
+			// A `_total` name is a monotonic SUM: no histogram siblings exist,
+			// so no arm is composed and the expression is exactly what shipped
+			// before. Without this gate every `avg(x_total)` panel would grow a
+			// ratio over two names nothing emits.
+			name: "avg on a _total counter stays ONE arm",
+			f: chstore.MetricQueryFilter{
+				Name: "http_requests_total", From: from, To: to, StepSeconds: 600,
+			},
+			want: `avg({__name__="http_requests_total"})`,
+		},
+		{
+			name: "rate on a _total counter stays ONE arm",
+			f: chstore.MetricQueryFilter{
+				Name: "http_requests_total", Aggregation: "rate",
+				From: from, To: to, StepSeconds: 600,
+			},
+			want: `sum(rate({__name__="http_requests_total"}[600s]))`,
+		},
+		{
+			// An explicitly-picked histogram part: the operator chose this row
+			// off VM's catalogue, so guessing siblings for it is the refusal
+			// bucketMetricName documents.
+			name: "avg on a _count row the operator picked stays ONE arm",
+			f: chstore.MetricQueryFilter{
+				Name: "http_server_request_duration_seconds_count",
+				From: from, To: to, StepSeconds: 600,
+			},
+			want: `avg({__name__="http_server_request_duration_seconds_count"})`,
+		},
+		{
+			// min/max/sum/count/last NEVER compose an arm, even on a name whose
+			// histogram parts exist. `min(…_seconds_count)` reports a sample
+			// count under a latency legend (v0.9.566).
+			name: "min composes no arm on a histogram-shaped name",
+			f: chstore.MetricQueryFilter{
+				Name: "http_server_request_duration_seconds", Aggregation: "min",
+				From: from, To: to, StepSeconds: 600,
+			},
+			want: `min({__name__="http_server_request_duration_seconds"})`,
+		},
+		{
+			name: "last composes no arm either",
+			f: chstore.MetricQueryFilter{
+				Name: "http_server_request_duration_seconds", Aggregation: "last",
+				From: from, To: to, StepSeconds: 600,
+			},
+			want: `max(last_over_time({__name__="http_server_request_duration_seconds"}[600s]))`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := buildPromQL(tc.f)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got\n  %s\nwant\n  %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// A set-aggregation reads an INSTANT vector: no `[Ws]` window anywhere.
+//
+// v0.9.1160 — avg is the exception now, and only in its histogram arm. Its LEFT
+// arm is still a bare instant selector (that is what makes a gauge behave
+// exactly as before), while the right arm is a ratio of two rates and therefore
+// windowed by construction. The split is asserted rather than the window being
+// merely tolerated: an avg whose left arm grew a window would silently turn
+// every gauge panel into a 5-minute smoothing.
 func TestSetAggregationsCarryNoWindow(t *testing.T) {
 	for _, agg := range []string{"", "avg", "sum", "min", "max", "count"} {
 		got, err := buildPromQL(chstore.MetricQueryFilter{
@@ -488,8 +702,21 @@ func TestSetAggregationsCarryNoWindow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("agg=%q: %v", agg, err)
 		}
-		if strings.Contains(got, "[") {
-			t.Fatalf("agg=%q rendered a range vector: %s", agg, got)
+		left := got
+		if i := strings.Index(got, " or "); i >= 0 {
+			left = got[:i]
+		}
+		if strings.Contains(left, "[") {
+			t.Fatalf("agg=%q rendered a range vector in its BASE arm: %s", agg, got)
+		}
+		if isMeanAgg(agg) {
+			// And the histogram arm must be there, windowed. Without it the
+			// reported avg-by-route panel stays empty.
+			if !strings.Contains(got, " or (sum") || !strings.Contains(got, "[300s])") {
+				t.Fatalf("agg=%q lost its windowed histogram arm: %s", agg, got)
+			}
+		} else if strings.Contains(got, " or ") {
+			t.Fatalf("agg=%q grew an `or` arm — only avg/rate/increase may: %s", agg, got)
 		}
 	}
 }
@@ -653,13 +880,13 @@ func TestBuildPromQLSelector(t *testing.T) {
 			// which is why every panel in the operator's install was empty —
 			// their VM holds `http_server_request_duration_seconds*`.
 			name: "dotted metric name leads the candidate alternation",
-			f:    chstore.MetricQueryFilter{Name: "http.server.request.duration"},
-			want: `avg({` + mcHTTPDur + `})`,
+			f:    chstore.MetricQueryFilter{Name: "http.server.request.duration", Aggregation: "max"},
+			want: `max({` + mcHTTPDur + `})`,
 		},
 		{
 			name: "underscored metric name gets the unit spellings too",
-			f:    chstore.MetricQueryFilter{Name: "http_server_request_duration"},
-			want: `avg({` + mcHTTPDurUnderscore + `})`,
+			f:    chstore.MetricQueryFilter{Name: "http_server_request_duration", Aggregation: "max"},
+			want: `max({` + mcHTTPDurUnderscore + `})`,
 		},
 		{
 			// SINGLE-CANDIDATE REGRESSION. A name that already carries
@@ -684,13 +911,13 @@ func TestBuildPromQLSelector(t *testing.T) {
 		},
 		{
 			name: "service becomes service_name",
-			f:    chstore.MetricQueryFilter{Name: "m", Service: "api-gateway"},
-			want: `avg({` + mcM + `, service_name="api-gateway"})`,
+			f:    chstore.MetricQueryFilter{Name: "m", Service: "api-gateway", Aggregation: "max"},
+			want: `max({` + mcM + `, service_name="api-gateway"})`,
 		},
 		{
 			name: "quotes in a value are escaped",
-			f:    chstore.MetricQueryFilter{Name: `m"x`, Service: `a\b`},
-			want: `avg({` + mcQuoted + `, service_name="a\\b"})`,
+			f:    chstore.MetricQueryFilter{Name: `m"x`, Service: `a\b`, Aggregation: "max"},
+			want: `max({` + mcQuoted + `, service_name="a\\b"})`,
 		},
 		{
 			name:    "empty metric name",
@@ -840,8 +1067,9 @@ func TestBuildPromQLRefusedFilterFailsTheQuery(t *testing.T) {
 
 func TestBuildPromQLFilterOrderPreserved(t *testing.T) {
 	got, err := buildPromQL(chstore.MetricQueryFilter{
-		Name:    "m",
-		Service: "svc",
+		Name:        "m",
+		Service:     "svc",
+		Aggregation: "max",
 		Filters: []chstore.FilterExpr{
 			{Key: "a", Op: "=", Values: []string{"1"}},
 			{Key: "b", Op: "=", Values: []string{"2"}},
@@ -850,7 +1078,7 @@ func TestBuildPromQLFilterOrderPreserved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := `avg({` + mcM + `, service_name="svc", a="1", b="2"})`
+	want := `max({` + mcM + `, service_name="svc", a="1", b="2"})`
 	if got != want {
 		t.Fatalf("got  %s\nwant %s", got, want)
 	}

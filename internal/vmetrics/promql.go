@@ -251,11 +251,22 @@ func promPercentile(agg string) (float64, bool) {
 // `x_count_bucket`, finds nothing, and returns the empty-with-a-note shape
 // that says which series was missing. The operator then picks the right row.
 func bucketMetricName(name string) string {
+	return histogramPartName(name, bucketSuffix)
+}
+
+// histogramPartName is the rule above, generalised over the part suffix
+// (v0.9.1160, when `_sum` and `_count` joined `_bucket` as series the
+// translation has to name).
+//
+// bucketMetricName stays as the named entry point because the `_bucket` rule is
+// referenced by name all over this package and its incident history; this is
+// the same rule with the suffix lifted out, not a second one.
+func histogramPartName(name, part string) string {
 	name = strings.TrimSpace(name)
-	if name == "" || strings.HasSuffix(name, bucketSuffix) {
+	if name == "" || strings.HasSuffix(name, part) {
 		return name
 	}
-	return name + bucketSuffix
+	return name + part
 }
 
 // formatQuantile renders φ for the expression.
@@ -412,37 +423,38 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 
 	// v0.9.1157 — a percentile reads the BUCKET series, not the metric the
 	// operator named. v0.9.1159 — and either way it reads a LIST of candidate
-	// spellings rather than one (names.go). Resolved here rather than in
+	// spellings rather than one (names.go). v0.9.1160 — and a query may read
+	// SEVERAL series families, one per `or` arm, so the selector is built per
+	// candidate list rather than once. Resolved here rather than in
 	// promAggregator so the name rule has exactly one home and the aggregator
 	// stays a pure label→shape map.
-	matchers := []string{nameMatcher(nameCandidates(name, f.Aggregation))}
+	extra := make([]string, 0, len(f.Filters)+1)
 	if svc := strings.TrimSpace(f.Service); svc != "" {
-		matchers = append(matchers, serviceLabel()+"="+quotePromString(svc))
+		extra = append(extra, serviceLabel()+"="+quotePromString(svc))
 	}
 	for _, fe := range f.Filters {
 		m, err := promMatcher(fe)
 		if err != nil {
 			return "", err
 		}
-		matchers = append(matchers, m)
+		extra = append(extra, m)
 	}
-	sel := "{" + strings.Join(matchers, ", ") + "}"
+	// Every arm carries the SAME service + filter matchers. Sharing them is not
+	// tidiness: an arm that lost a filter would answer the operator's question
+	// about one route with data from all of them, and `or` would let that arm
+	// fill in wherever the correctly-filtered arm was empty — the v0.9.566 shape
+	// with a fallback attached.
+	sel := func(cands []string) string {
+		return "{" + strings.Join(append([]string{nameMatcher(cands)}, extra...), ", ") + "}"
+	}
 
-	// Rollup-shaped aggregations (last / rate / increase) wrap the selector
-	// in a range-vector function before the set-aggregation runs.
-	//
 	// The window is resolved from the SAME promStep call the client uses for
 	// the query_range `step` param, over the same already-normalized filter.
 	// It is recomputed here rather than threaded in as an argument BECAUSE
 	// promStep is pure: same inputs, same number, so the expression and the
 	// step param cannot drift. Passing it in would be the version that can
 	// drift — a caller free to send one number and render another.
-	vec := sel
-	if agg.Rollup != "" {
-		w := promRollupWindow(agg.Rollup,
-			promStep(f.From, f.To, f.StepSeconds, f.MaxDataPoints), f.RateWindowSec)
-		vec = agg.Rollup + "(" + sel + "[" + strconv.Itoa(w) + "s])"
-	}
+	step := promStep(f.From, f.To, f.StepSeconds, f.MaxDataPoints)
 
 	// GROUP COLLAPSE — and why `last` is wrapped in max().
 	//
@@ -507,16 +519,110 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 				by = append(by, l)
 			}
 		}
+		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec)
+		vec := agg.Rollup + "(" + sel(bucketNameCandidates(name)) + "[" + strconv.Itoa(w) + "s])"
 		return "histogram_quantile(" + formatQuantile(agg.Quantile) + ", " +
 			agg.Op + " by (" + strings.Join(by, ", ") + ") (" + vec + "))", nil
 	}
 
+	base := plainNameCandidates(name)
+
+	// ── `or` COMPOSITION FOR THE HISTOGRAM FAMILIES (v0.9.1160) ─────────────
+	//
+	// In VM an OTLP histogram has NO base series — only `_bucket`, `_sum` and
+	// `_count`. So `rate(http.server.request.duration)` and
+	// `avg(http.server.request.duration) by (http.route)` both resolved to
+	// nothing, which is what the operator saw in prod: a working latency chart
+	// beside a permanently blank throughput one, and an empty "Response time ·
+	// avg (by route)" panel on the service page.
+	//
+	// The fix is MetricsQL `or`, not a wider alternation, and the difference is
+	// the whole design:
+	//
+	//	`a or b` is a set UNION with LEFT PRECEDENCE PER GROUP. Where the left
+	//	arm produces a series, that series wins; groups present only in the right
+	//	arm are filled from the right. So a real base series (a plain counter, a
+	//	gauge) always beats the guessed histogram arm, and the histogram arm only
+	//	speaks where the base was silent.
+	//
+	// An alternation would instead SUM the two families, which is how the first
+	// cut of this release would have double-counted a metric that has both `x`
+	// and `x_count`. `or` makes that impossible: it is probe-free
+	// self-selection with a deterministic tiebreak, so nothing has to know in
+	// advance which family the operator's write path produced.
+	//
+	// The arms are gated by mayHaveHistogramParts, so a `_total` counter or an
+	// explicitly-picked `_bucket`/`_sum`/`_count` row renders EXACTLY the
+	// single-arm expression it did before v0.9.1160 — byte for byte.
+	if agg.Rollup == rollupRate || agg.Rollup == rollupIncrease {
+		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec)
+		rollup := func(cands []string) string {
+			return agg.Rollup + "(" + sel(cands) + "[" + strconv.Itoa(w) + "s])"
+		}
+		left := aggregateExpr(agg.Op, labels, rollup(base))
+		if !mayHaveHistogramParts(name) {
+			return left, nil
+		}
+		// The histogram's throughput IS its `_count` counter — the same
+		// expression every Grafana dashboard rates.
+		return left + " or " + aggregateExpr(agg.Op, labels, rollup(countNameCandidates(name))), nil
+	}
+
+	if agg.Op == "avg" && agg.Rollup == "" {
+		left := aggregateExpr("avg", labels, sel(base))
+		if !mayHaveHistogramParts(name) {
+			return left, nil
+		}
+		// OBSERVATION-WEIGHTED MEAN, and the weighting is the point. A
+		// histogram's mean is rate(_sum) / rate(_count): the total observed
+		// value over the number of observations. That is the same semantics the
+		// ClickHouse sibling computes (v0.9.776), so the two backends agree on
+		// "avg latency" by construction rather than by luck — an unweighted
+		// average of per-series means would drift from CH by however unevenly
+		// traffic was spread across the group.
+		//
+		// A rate() on both halves rather than the raw counters because the
+		// counters are cumulative since process start: their ratio would be the
+		// all-time mean, which barely moves and hides every incident. The window
+		// is the rate window (floored), since both halves ARE rates.
+		w := promRollupWindow(rollupRate, step, f.RateWindowSec)
+		ratePart := func(cands []string) string {
+			return aggregateExpr("sum", labels,
+				rollupRate+"("+sel(cands)+"["+strconv.Itoa(w)+"s])")
+		}
+		return left + " or (" + ratePart(sumNameCandidates(name)) +
+			" / " + ratePart(countNameCandidates(name)) + ")", nil
+	}
+
+	// min / max / sum / count / last — ONE arm, unchanged.
+	//
+	// Deliberately NOT given a histogram arm: `min(…_seconds_count)` reports a
+	// sample COUNT where the operator asked for a measurement, and
+	// `last_over_time(…_seconds_count)` returns the cumulative total since
+	// process start. Both are large, plausible and wrong under a latency legend
+	// (v0.9.566). They return honestly empty for a histogram family and the note
+	// names every spelling that was tried, which is a diagnosis the operator can
+	// act on — switch the aggregation to avg, or to p95.
+	vec := sel(base)
+	if agg.Rollup != "" {
+		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec)
+		vec = agg.Rollup + "(" + vec + "[" + strconv.Itoa(w) + "s])"
+	}
+	return aggregateExpr(agg.Op, labels, vec), nil
+}
+
+// aggregateExpr wraps a vector in a set-aggregation, with or without a
+// by-clause. Extracted in v0.9.1160 because an `or` composition renders the
+// same shape two or three times and a hand-repeated `op + " by (" + …` is
+// exactly where an arm loses its grouping — which `or` would then paper over by
+// filling the ungrouped arm's single series into every group.
+func aggregateExpr(op string, labels []string, vec string) string {
 	if len(labels) == 0 {
 		// No group-by → one series aggregated across everything, which is
 		// what the CH path's `GROUP BY bucket` alone produces.
-		return agg.Op + "(" + vec + ")", nil
+		return op + "(" + vec + ")"
 	}
-	return agg.Op + " by (" + strings.Join(labels, ", ") + ") (" + vec + ")", nil
+	return op + " by (" + strings.Join(labels, ", ") + ") (" + vec + ")"
 }
 
 // emptyBucketNote explains a percentile that came back with ZERO series.
@@ -547,6 +653,30 @@ func emptyBucketNote(candidates []string) string {
 		"pencerede veri olmayabilir, ya da write yolu kovaları başka bir adla yazıyor "+
 		"olabilir (VictoriaMetrics'te metrik adını …%s ile arayın).",
 		bucketSuffix, strings.Join(candidates, ", "), bucketSuffix)
+}
+
+// emptyNameNote explains a NON-percentile query that came back with ZERO series
+// after the translation guessed more than one spelling (v0.9.1160).
+//
+// It exists for the case the live check of v0.9.1159 called out by name: a
+// silent empty. The candidates are names the operator never typed and cannot see
+// anywhere on screen, so "no data in this window", "this metric is spelled
+// differently" and "this aggregation cannot read this metric's shape" all render
+// as one blank chart with three different fixes.
+//
+// The last clause is the one that earns its length. min/max/sum/count/last are
+// deliberately given NO histogram arm (see buildPromQL), so on an OTLP histogram
+// they are empty BY DESIGN — and without being told, an operator reads that as a
+// broken backend rather than as "ask for avg or p95 instead". Naming the fix is
+// the difference between a diagnosis and a dead end.
+func emptyNameNote(candidates []string) string {
+	return fmt.Sprintf("Seri bulunamadı — denenen yazımlar: %s. Metrik bu pencerede hiç "+
+		"örnek almamış olabilir, ya da write yolu onu başka bir adla yazıyor olabilir. "+
+		"OTLP histogramlarında TABAN seri yoktur (yalnız …%s / …%s / …%s): avg, rate ve "+
+		"increase bu parçaları otomatik dener, min/max/sum/count/last denemez — "+
+		"histogram bir metrikte bu toplamaları avg ya da p95 ile değiştirin.",
+		strings.Join(candidates, ", "),
+		bucketSuffix, histogramSumSuffix, histogramCountSuffix)
 }
 
 // promStep resolves the query_range step in seconds.

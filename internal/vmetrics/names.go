@@ -119,9 +119,12 @@ var promNamedSuffixes = []string{
 	counterSuffix, bucketSuffix, "_sum", "_count",
 }
 
-// histogramCountSuffix stands in for the whole histogram family during LABEL
-// discovery — see discoveryNameCandidates.
-const histogramCountSuffix = "_count"
+// The two non-bucket histogram parts. `_count` also stands in for the whole
+// family during LABEL discovery — see discoveryNameCandidates.
+const (
+	histogramCountSuffix = "_count"
+	histogramSumSuffix   = "_sum"
+)
 
 var promMetricNameInvalid = regexp.MustCompile(`[^a-zA-Z0-9_:]`)
 
@@ -264,15 +267,79 @@ func bucketNameCandidates(name string) []string {
 // nameCandidates is the aggregation-aware façade: it answers "which series
 // names could satisfy THIS query?".
 //
-// The percentile branch reads the bucket series, so it gets the bucket
-// spellings — derived from the same promPercentile map promAggregator uses,
-// so the name rule and the query SHAPE can never disagree about whether a
-// request is a percentile.
+// It returns the UNION of every arm buildPromQL composes for that aggregation,
+// which makes it the right source for the empty-result note: the operator sees
+// every spelling that was actually attempted, not just the first arm's.
+//
+// FOUR shapes, all gated off the SAME map promAggregator uses so the name rule
+// and the query shape cannot disagree about what kind of request this is:
+//
+//	percentile      → the histogram BUCKET spellings.
+//	rate / increase → base ∪ `_count` (throughput lives on `_count` for a
+//	                  histogram, which has no base series in VM).
+//	avg             → base ∪ `_sum` ∪ `_count` (the observation-weighted mean).
+//	min/max/sum/count/last → base only.
+//
+// The last line is a REFUSAL, not an omission, and it is the v0.9.566 guard:
+// `min(…_seconds_count)` would report a SAMPLE COUNT where the operator asked
+// for a measurement, and `last_over_time(…_seconds_count)` returns the
+// cumulative total since process start. Both are large, plausible, wrong
+// numbers under a latency legend. Those aggregations come back honestly empty
+// for a histogram metric and earn a note that lists what was tried, which is a
+// diagnosis rather than a fabrication.
 func nameCandidates(name, agg string) []string {
 	if _, isPercentile := promPercentile(agg); isPercentile {
 		return bucketNameCandidates(name)
 	}
-	return plainNameCandidates(name)
+	out := plainNameCandidates(name)
+	if !mayHaveHistogramParts(name) {
+		return out
+	}
+	if isMeanAgg(agg) {
+		out = append(out, sumNameCandidates(name)...)
+	}
+	if isMeanAgg(agg) || isCounterRollup(agg) {
+		out = append(out, countNameCandidates(name)...)
+	}
+	return out
+}
+
+// isCounterRollup reports whether an aggregation reads a monotonic COUNTER over
+// a range vector — rate or increase, and nothing else.
+//
+// Derived from promAggregator rather than matching the labels itself, so the
+// set can never drift from the translation: a fourth counter rollup added to
+// that switch is picked up here for free, and `last` stays excluded because its
+// rollup is last_over_time. The `Quantile == 0` guard matters even though the
+// percentile branch runs first — percentiles ALSO carry Rollup == rate, and a
+// future caller reaching this predicate directly must not read them as
+// throughput.
+//
+// An unknown aggregation returns false: buildPromQL is about to refuse it
+// anyway, and a name rule that guessed candidates for a query that will 400 is
+// work with no reader.
+func isCounterRollup(agg string) bool {
+	a, err := promAggregator(agg)
+	if err != nil {
+		return false
+	}
+	return a.Quantile == 0 && (a.Rollup == rollupRate || a.Rollup == rollupIncrease)
+}
+
+// isMeanAgg reports whether an aggregation asks for a MEAN — the only shape
+// whose histogram form is a ratio of two range vectors rather than one series
+// under a different name.
+//
+// Same derivation discipline as isCounterRollup. Note the empty label counts:
+// `""` is avg (promAggregator's default), so a filter that omits the
+// aggregation entirely still reaches the histogram arm — which is what the
+// service page's route panel sends.
+func isMeanAgg(agg string) bool {
+	a, err := promAggregator(agg)
+	if err != nil {
+		return false
+	}
+	return a.Quantile == 0 && a.Rollup == "" && a.Op == "avg"
 }
 
 // discoveryNameCandidates — the spellings for LABEL discovery
@@ -295,13 +362,103 @@ func nameCandidates(name, agg string) []string {
 //     key — the histogram's own internal dimension, presented as if it were
 //     one of their attributes.
 func discoveryNameCandidates(name string) []string {
-	base := plainNameCandidates(name)
+	return withCountSiblings(plainNameCandidates(name))
+}
+
+// ── Histogram-part spellings (v0.9.1160) ────────────────────────────────────
+//
+// THE GAP THESE CLOSE, measured against a real VM with both families seeded:
+// v0.9.1159 fixed the percentiles and the attribute keys, and left two panels
+// permanently blank on an OTLP-named install —
+//
+//	rate/increase  → 200 with ZERO series, on the dotted name AND on the clean
+//	                 `http_server_request_duration_seconds` base.
+//	avg by (route) → the service page's "Response time · avg (by route)", same
+//	                 200-with-nothing.
+//
+// One cause: in VM an OTLP histogram has NO BASE SERIES. Only `_bucket`, `_sum`
+// and `_count` exist. So a histogram's throughput is `rate(<name>_count)` and
+// its mean is `rate(<name>_sum) / rate(<name>_count)` — the expressions every
+// Grafana dashboard writes, and (for the mean) the same observation-weighted
+// semantics the ClickHouse sibling computes (v0.9.776).
+//
+// COMPOSITION is unit-FIRST, the part suffix LAST, the same order as the bucket
+// rule and for the same reason: `…_seconds_count` is the real spelling,
+// `…_count_seconds` is not a thing. And `_total` is excluded from the base
+// (nameSpellings(name, false)) because a histogram is never a monotonic sum.
+//
+// WHY THESE ARE SEPARATE LISTS RATHER THAN MEMBERS OF ONE ALTERNATION. The
+// first cut of v0.9.1160 folded `_count` into the rate candidates, which works
+// but pays a real cost: an alternation SUMS its members, so a metric where both
+// `x` and `x_count` exist would have been double-counted. buildPromQL composes
+// the arms with MetricsQL `or` instead — left arm wins per group, right arm only
+// fills groups the left one did not produce. That is probe-free self-selection
+// with no summing, so the "both exist" cost is gone: a real base series always
+// beats the guessed histogram arm.
+func countNameCandidates(name string) []string {
+	return histogramPartCandidates(name, histogramCountSuffix)
+}
+
+func sumNameCandidates(name string) []string {
+	return histogramPartCandidates(name, histogramSumSuffix)
+}
+
+func histogramPartCandidates(name, part string) []string {
+	base := nameSpellings(name, false)
+	out := make([]string, 0, len(base))
+	for _, c := range base {
+		p := histogramPartName(c, part)
+		dup := false
+		for _, existing := range out {
+			if existing == p {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// mayHaveHistogramParts reports whether a name COULD have `_sum` / `_count`
+// siblings — the gate on whether buildPromQL adds the histogram arm at all.
+//
+// Two suffix classes are excluded and each keeps a pre-v0.9.1160 expression
+// byte-identical, which is the point:
+//
+//   - `_total` marks a monotonic SUM. It has no histogram siblings, so
+//     `http_requests_total_sum` is a name nothing emits. Without this gate,
+//     `avg(http_requests_total)` would grow a ratio arm over two nonexistent
+//     series — noise in every operator's query log for no possible hit.
+//   - `_bucket` / `_sum` / `_count` mean the operator already PICKED a part off
+//     VM's catalogue. Guessing siblings for a name they chose deliberately is
+//     bucketMetricName's documented refusal, applied here.
+//
+// A `_seconds` / `_bytes` unit suffix is NOT excluded: that is exactly the
+// second reported case (`http_server_request_duration_seconds`), where the base
+// does not exist and `…_seconds_sum` / `…_seconds_count` do.
+func mayHaveHistogramParts(name string) bool {
+	return !hasAnySuffix(promMetricName(name),
+		[]string{counterSuffix, bucketSuffix, histogramSumSuffix, histogramCountSuffix})
+}
+
+// withCountSiblings appends the `_count` derivative of each candidate — the
+// UNION form, used by LABEL DISCOVERY only.
+//
+// Discovery genuinely wants a union rather than `or` arms: it is asking "which
+// attribute keys exist anywhere in this family?", and `_bucket`/`_sum`/`_count`
+// carry identical attribute sets, so summing is not a concept that applies. The
+// QUERY paths use `or` composition instead, because there the members carry
+// VALUES and a union would add them.
+func withCountSiblings(base []string) []string {
 	out := make([]string, 0, len(base)*2)
 	out = append(out, base...)
 	for _, c := range base {
 		if hasAnySuffix(c, []string{bucketSuffix, "_sum", histogramCountSuffix}) {
-			// Already a histogram part: its own labels are what discovery
-			// wants, and `x_count_count` is not a series.
+			// Already a histogram part: `x_count_count` is not a series, and a
+			// `_bucket`/`_sum` row the operator picked is what they meant.
 			continue
 		}
 		if strings.HasSuffix(c, counterSuffix) {

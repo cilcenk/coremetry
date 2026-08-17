@@ -375,6 +375,15 @@ func TestQueryMetricBodyCarriesThePercentileNote(t *testing.T) {
 // And the inverse: an ordinary empty result carries NO note field at all, so
 // the frontend's `note ? … : default` check stays meaningful. A `"note":""`
 // on every quiet metric would make the field worthless.
+//
+// v0.9.1160 — "ordinary" narrowed, and the metric here changed with it. Notes
+// now fire whenever the translation GUESSED more than one spelling (which
+// `jvm.memory.used` does), because that is the empty an operator cannot explain
+// from the screen. `http_requests_total` is the case that stays genuinely
+// silent: it is Prometheus-named and `_total`-suffixed, so it resolves to
+// exactly one series with no arms composed — nothing was guessed, and an empty
+// answer means the series was empty. The envelope property is unchanged; only
+// the example that exercises it moved.
 func TestQueryMetricBodyOmitsTheNoteForOrdinaryEmptyResults(t *testing.T) {
 	vmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[]}}`))
@@ -389,9 +398,19 @@ func TestQueryMetricBodyOmitsTheNoteForOrdinaryEmptyResults(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	s.queryMetric(w, httptest.NewRequest("GET",
-		"/api/metrics/query?metricsrc=vm&name=jvm.memory.used&agg=avg", nil))
+		"/api/metrics/query?metricsrc=vm&name=http_requests_total&agg=avg", nil))
 	if strings.Contains(w.Body.String(), `"note"`) {
 		t.Fatalf("an ordinary empty result attached a note: %s", w.Body.String())
+	}
+
+	// The other half of the same guarantee: a GUESSED name DOES carry the field,
+	// so this test cannot be satisfied by an envelope that dropped `note`
+	// entirely.
+	w2 := httptest.NewRecorder()
+	s.queryMetric(w2, httptest.NewRequest("GET",
+		"/api/metrics/query?metricsrc=vm&name=jvm.memory.used&agg=avg", nil))
+	if !strings.Contains(w2.Body.String(), `"note"`) {
+		t.Fatalf("a multi-spelling empty result carries no note: %s", w2.Body.String())
 	}
 }
 

@@ -374,8 +374,11 @@ var _ = []metricSource{chMetricSource{}, vmMetricSource{}}
 // (v0.8.456). Stamping them would buy nothing and charge a scan wave to a prod
 // ClickHouse.
 func TestMetricNameRuleTagIsVMOnly(t *testing.T) {
-	if got := metricNameRuleTag(vmMetricSource{}); got != ":n1" {
-		t.Fatalf("VM source tag = %q, want %q", got, ":n1")
+	// v0.9.1160 — n1 → n2: rate/increase/avg gained their `or` histogram arms,
+	// so a byte-identical request resolves to different series. A warm n1 entry
+	// holds the 0-series body the live check reported.
+	if got := metricNameRuleTag(vmMetricSource{}); got != ":n2" {
+		t.Fatalf("VM source tag = %q, want %q", got, ":n2")
 	}
 	if got := metricNameRuleTag(chMetricSource{}); got != "" {
 		t.Fatalf("CH source tag = %q, want empty — a ClickHouse key must stay byte-identical", got)

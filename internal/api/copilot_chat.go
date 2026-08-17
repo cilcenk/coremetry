@@ -198,7 +198,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	if c != nil {
 		role = c.Role
 	}
-	tools := toolsForRole(mcptools.ToolList(mcptools.Deps{Store: s.store, LogStore: s.logs}), role)
+	tools := toolsForRole(mcptools.ToolList(s.mcpDeps()), role)
 	byName := make(map[string]func(context.Context, json.RawMessage) (any, error), len(tools))
 	specs := make([]copilot.ToolSpec, 0, len(tools))
 	for _, t := range tools {

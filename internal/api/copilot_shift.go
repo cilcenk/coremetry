@@ -8,7 +8,41 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/mcptools"
 )
+
+// guidedShiftProblemRows — vardiya bloğundaki problem satırı tavanı.
+// Gösterim kararı: sayaçlar (açıldı/çözüldü/hâlâ açık) her zaman TÜM
+// pencereyi anlatır, kesilen yalnız satır listesidir.
+const guidedShiftProblemRows = 12
+
+// renderShiftProblemsTR — SAF: pencere olayları → vardiya özetinin
+// PROBLEMLER bloğu. Metin bayt-bayt v0.9.416'nın hâli; tek ekleme, okuma
+// 500 satır tavanına dayandığında düşen alt-sınır uyarısı (eski hâl
+// sayaçları kesin gibi gösteriyordu).
+func renderShiftProblemsTR(data mcptools.ProblemWindowData, to time.Time) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nPROBLEMLER: %d açıldı, %d çözüldü, %d hâlâ açık.\n",
+		data.Opened, data.Resolved, data.StillOpen)
+	if data.StoreCapped {
+		fmt.Fprintf(&b, "(okuma %d satır tavanına dayandı — sayılar ALT SINIR)\n", data.StoreRowLimit)
+	}
+	if len(data.Rows) > 0 {
+		if data.Truncated {
+			fmt.Fprintf(&b, "(en yeni %d satır gösteriliyor, toplam %d)\n", len(data.Rows), data.Total)
+		}
+		for _, p := range data.Rows {
+			state := p.Status
+			if p.ResolvedAtNs > 0 {
+				state = fmt.Sprintf("çözüldü %s önce", fmtAgoTR((to.UnixNano()-p.ResolvedAtNs)/1e9))
+			}
+			fmt.Fprintf(&b, "- [%s/%s] %s · %s · %s (açılış: %s önce)\n",
+				p.Priority, p.Severity, p.Service, p.RuleName, state,
+				fmtAgoTR((to.UnixNano()-p.StartedAtNs)/1e9))
+		}
+	}
+	return b.String()
+}
 
 // copilot_shift.go — vardiya özeti bundle'ı (v0.9.416, CoSRE fikir #2).
 // "Dün gece neler oldu?" tek cevapta: pencere içinde açılan/çözülen
@@ -26,40 +60,17 @@ func (s *Server) guidedShiftSummaryBundle(ctx context.Context, emit func(string,
 		fmtAgoTR(rangeS), from.UTC().Format("15:04"), to.UTC().Format("15:04"), scope)
 
 	// ── Problemler: pencerede açılan + çözülen (v0.9.394 pencere sorgusu) ─
+	//
+	// v0.9.1147 (AI Faz 3.4) — okuma + zenginleştirme + sınıflama ortak
+	// katmanda (mcptools.ReadProblemWindowEvents); list_problem_window_events
+	// tool'u AYNI şekli döndürüyor. Zincir orada sabit: pencere okuması →
+	// deploy ÖNCE, öncelik SONRA (v0.9.553) → yapısal veri.
 	emitGuidedStep(emit, "problem_window_events", "")
-	probs, perr := s.store.ListProblemWindowEvents(ctx, service, from, to)
+	pw, perr := mcptools.ReadProblemWindowEvents(ctx, s.mcpDeps(), service, from, to, guidedShiftProblemRows)
 	if perr != nil {
 		return "", "", perr
 	}
-	opened, resolved, stillOpen := 0, 0, 0
-	for _, p := range probs {
-		if p.StartedAt >= from.UnixNano() {
-			opened++
-		}
-		if p.ResolvedAt != nil && *p.ResolvedAt >= from.UnixNano() {
-			resolved++
-		} else if p.Status == "open" || p.Status == "acknowledged" {
-			stillOpen++
-		}
-	}
-	fmt.Fprintf(&b, "\nPROBLEMLER: %d açıldı, %d çözüldü, %d hâlâ açık.\n", opened, resolved, stillOpen)
-	if len(probs) > 0 {
-		probs = s.enrichProblemsForRead(ctx, probs) // v0.9.553 — deploy+öncelik, sırası sabit
-		sort.SliceStable(probs, func(i, j int) bool { return probs[i].StartedAt > probs[j].StartedAt })
-		if len(probs) > 12 {
-			fmt.Fprintf(&b, "(en yeni 12 satır gösteriliyor, toplam %d)\n", len(probs))
-			probs = probs[:12]
-		}
-		for _, p := range probs {
-			state := p.Status
-			if p.ResolvedAt != nil {
-				state = fmt.Sprintf("çözüldü %s önce", fmtAgoTR((to.UnixNano()-*p.ResolvedAt)/1e9))
-			}
-			fmt.Fprintf(&b, "- [%s/%s] %s · %s · %s (açılış: %s önce)\n",
-				p.Priority, p.Severity, p.Service, p.RuleName, state,
-				fmtAgoTR((to.UnixNano()-p.StartedAt)/1e9))
-		}
-	}
+	b.WriteString(renderShiftProblemsTR(pw, to))
 
 	// ── Anomali olayları (v0.9.394 FromNs/ToNs penceresi) ────────────────
 	emitGuidedStep(emit, "anomaly_window_events", "")

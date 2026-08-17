@@ -15,6 +15,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -30,6 +31,12 @@ type vmSettingsInput struct {
 	AuthType           string `json:"authType"`
 	Token              string `json:"token"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify"`
+	// v0.9.1164 — the two query-shaping knobs. Both are plain values with no
+	// preserve-on-empty rule: 0 and false are MEANINGFUL here ("use the
+	// default floor", "keep the guard on"), which is the opposite of the
+	// token's contract and the reason they are not folded into it.
+	RateWindowFloorS           int  `json:"rateWindowFloorS"`
+	AllowUnfilteredPercentiles bool `json:"allowUnfilteredPercentiles"`
 }
 
 // mergeVMSettings validates the input and folds it over the CURRENT full
@@ -50,12 +57,30 @@ func mergeVMSettings(in vmSettingsInput, cur vmetrics.Settings) (vmetrics.Settin
 	default:
 		return vmetrics.Settings{}, "authType must be one of: none, bearer"
 	}
+	// v0.9.1164 — the floor is REJECTED rather than clamped, and the predicate
+	// is vmetrics' own so the form can never accept a value the query layer
+	// would then ignore (resolveRateWindowFloor falls back to the default for
+	// anything out of bounds). Clamping here would be the worse failure: the
+	// operator types 5, the chart uses 10, and nothing ever says so.
+	//
+	// The message quotes the BOUNDS from vmetrics and deliberately does not
+	// print the default value: that number would be a third copy of a constant
+	// that already lives in vmetrics and on the form's placeholder, and the one
+	// thing worse than an unhelpful message is a message confidently naming a
+	// default the engine stopped using.
+	if !vmetrics.ValidRateWindowFloor(in.RateWindowFloorS) {
+		return vmetrics.Settings{}, fmt.Sprintf(
+			"rateWindowFloorS must be 0 (use the built-in default) or between %d and %d seconds",
+			vmetrics.MinRateWindowFloorSec, vmetrics.MaxRateWindowFloorSec)
+	}
 	cfg := vmetrics.Settings{
-		Enabled:            in.Enabled,
-		BaseURL:            in.BaseURL,
-		AuthType:           in.AuthType,
-		Token:              in.Token,
-		InsecureSkipVerify: in.InsecureSkipVerify,
+		Enabled:                    in.Enabled,
+		BaseURL:                    in.BaseURL,
+		AuthType:                   in.AuthType,
+		Token:                      in.Token,
+		InsecureSkipVerify:         in.InsecureSkipVerify,
+		RateWindowFloorS:           in.RateWindowFloorS,
+		AllowUnfilteredPercentiles: in.AllowUnfilteredPercentiles,
 	}
 	if cfg.Token == "" {
 		cfg.Token = cur.Token
@@ -112,6 +137,13 @@ func (s *Server) putVMSettings(w http.ResponseWriter, r *http.Request) {
 		"authType":           snap.AuthType,
 		"hasToken":           snap.HasToken,
 		"insecureSkipVerify": snap.InsecureSkipVerify,
+		// v0.9.1164 — both knobs are audited, and the guard one is the reason
+		// this list had to grow rather than stay a connection summary. Lifting
+		// the bucket-scan guard is the kind of change that shows up later as
+		// "vmselect fell over on Tuesday", and the audit entry is the only place
+		// that can answer who lifted it and when.
+		"rateWindowFloorS":           snap.RateWindowFloorS,
+		"allowUnfilteredPercentiles": snap.AllowUnfilteredPercentiles,
 	})
 	// Action name follows the external-backend siblings
 	// (settings.tempo.update / settings.thanos.update /

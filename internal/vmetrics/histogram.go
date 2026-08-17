@@ -86,7 +86,7 @@ func (s *Service) QueryMetricHistogram(ctx context.Context, f chstore.MetricQuer
 	if f.From.IsZero() {
 		f.From = f.To.Add(-24 * time.Hour)
 	}
-	q, step, err := buildHistogramPromQL(f)
+	q, step, err := buildHistogramPromQL(f, promOptions(cfg))
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +134,16 @@ func (s *Service) QueryMetricHistogram(ctx context.Context, f chstore.MetricQuer
 // same as the percentile path: an operator whose write path applies OTel
 // Prometheus naming has `…_seconds_bucket`, not `…_bucket`, and the heatmap
 // was blank for exactly that reason.
-func buildHistogramPromQL(f chstore.MetricQueryFilter) (string, int, error) {
+//
+// v0.9.1164 — `opts` arrives for the BUCKET-SCAN GUARD only. The rate-window
+// floor cannot reach this expression even in principle: the rollup is
+// increase(), the floor is deliberately never applied to increase() (see
+// promRollupWindow), and this window is `step` by construction because it has
+// to TILE. An operator who raises the floor to smooth their rate charts must
+// not find every heatmap cell's sample count multiplied — so this path reads
+// the guard field of opts and nothing else, which is the shape that makes the
+// exemption impossible to lose in a refactor.
+func buildHistogramPromQL(f chstore.MetricQueryFilter, opts promOpts) (string, int, error) {
 	cands := bucketNameCandidates(f.Name)
 	if len(cands) == 0 {
 		return "", 0, fmt.Errorf("metric name required")
@@ -147,19 +156,31 @@ func buildHistogramPromQL(f chstore.MetricQueryFilter) (string, int, error) {
 		return "", 0, fmt.Errorf("database instance/engine scoping is %w "+
 			"(this drill reads ClickHouse-side receiver attributes)", ErrUnsupported)
 	}
-	matchers := []string{nameMatcher(cands)}
+	// `extra` is built SEPARATELY from the name matcher — the same shape
+	// buildPromQL uses — so the guard can count the narrowing matchers without
+	// an index offset into the combined slice. `len(matchers)-1` would have
+	// worked today and broken silently the first time anything else was
+	// prepended.
+	extra := make([]string, 0, len(f.Filters)+1)
 	if svc := strings.TrimSpace(f.Service); svc != "" {
-		matchers = append(matchers, serviceLabel()+"="+quotePromString(svc))
+		extra = append(extra, serviceLabel()+"="+quotePromString(svc))
 	}
 	for _, fe := range f.Filters {
 		m, err := promMatcher(fe)
 		if err != nil {
 			return "", 0, err
 		}
-		matchers = append(matchers, m)
+		extra = append(extra, m)
+	}
+	// Guarded UNCONDITIONALLY: this selector is always the `_bucket` family, so
+	// unlike the avg branch in buildPromQL there is no cheap shape to exempt.
+	// Checked after the filters translate, so an unexpressible filter still
+	// reports its own (more specific) refusal first.
+	if err := guardBucketScan(classHeatmap, len(extra), opts.AllowUnfilteredPercentiles); err != nil {
+		return "", 0, err
 	}
 	step := histogramStep(f.From, f.To, f.StepSeconds, f.MaxDataPoints)
-	sel := "{" + strings.Join(matchers, ", ") + "}"
+	sel := "{" + strings.Join(append([]string{nameMatcher(cands)}, extra...), ", ") + "}"
 	return fmt.Sprintf("sum by (%s) (%s(%s[%ds]))", labelLE, rollupIncrease, sel, step), step, nil
 }
 

@@ -93,6 +93,85 @@ func TestMergeVMSettings(t *testing.T) {
 			in:      vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", AuthType: "oauth2"},
 			wantBad: "authType must be one of: none, bearer",
 		},
+
+		// ── v0.9.1164: the two query-shaping knobs ──────────────────────────
+		//
+		// Unlike the token these have NO preserve-on-empty rule: 0 and false
+		// are meaningful ("default floor", "guard on"), so they must land in
+		// the config exactly as submitted. A preserve rule here would make the
+		// guard impossible to switch back ON from the form.
+		{
+			name: "rate window floor carries",
+			in:   vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: 60},
+			cur:  stored,
+			want: vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428", Token: "stored-token", RateWindowFloorS: 60},
+		},
+		{
+			name: "zero floor is the unset sentinel, not a rejection",
+			in:   vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: 0},
+			want: vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428"},
+		},
+		{
+			name: "a stored floor is REPLACED by zero, never preserved",
+			in:   vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428"},
+			cur:  vmetrics.Settings{RateWindowFloorS: 600},
+			want: vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428"},
+		},
+		{
+			name: "the lower bound is accepted",
+			in:   vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: vmetrics.MinRateWindowFloorSec},
+			want: vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: vmetrics.MinRateWindowFloorSec},
+		},
+		{
+			name: "the upper bound is accepted",
+			in:   vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: vmetrics.MaxRateWindowFloorSec},
+			want: vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: vmetrics.MaxRateWindowFloorSec},
+		},
+		{
+			// REJECTED, not clamped. resolveRateWindowFloor would ignore an
+			// out-of-bounds value and use the default, so accepting it here
+			// would show the operator their number in Settings while the chart
+			// used another — with nothing on screen connecting the two.
+			name:    "a floor below the bound is rejected",
+			in:      vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: 9},
+			wantBad: "rateWindowFloorS must be 0",
+		},
+		{
+			name:    "a floor above the bound is rejected",
+			in:      vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: 3601},
+			wantBad: "rateWindowFloorS must be 0",
+		},
+		{
+			name:    "a negative floor is rejected",
+			in:      vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: -60},
+			wantBad: "rateWindowFloorS must be 0",
+		},
+		{
+			name:    "the rejection names the bounds so the operator can fix it",
+			in:      vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", RateWindowFloorS: 5},
+			wantBad: "between 10 and 3600 seconds",
+		},
+		{
+			name: "the guard can be lifted",
+			in:   vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", AllowUnfilteredPercentiles: true},
+			want: vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428", AllowUnfilteredPercentiles: true},
+		},
+		{
+			// The direction that matters: a form that cannot switch the guard
+			// back on is a one-way door.
+			name: "and put back — false is submitted, not inherited",
+			in:   vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428"},
+			cur:  vmetrics.Settings{AllowUnfilteredPercentiles: true},
+			want: vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428"},
+		},
+		{
+			name: "both knobs together, with the token preserved",
+			in: vmSettingsInput{Enabled: true, BaseURL: "http://vm:8428", AuthType: "bearer",
+				RateWindowFloorS: 30, AllowUnfilteredPercentiles: true},
+			cur: stored,
+			want: vmetrics.Settings{Enabled: true, BaseURL: "http://vm:8428", AuthType: "bearer",
+				Token: "stored-token", RateWindowFloorS: 30, AllowUnfilteredPercentiles: true},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

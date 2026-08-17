@@ -74,6 +74,20 @@ type Settings struct {
 	// logstore) so the frontend form and the audit details read the same
 	// across all of them.
 	InsecureSkipVerify bool `json:"insecureSkipVerify,omitempty"`
+	// RateWindowFloorS overrides the 300s rate/last lookbehind floor
+	// (v0.9.1164). 0 = unset, use promLookbehindFloorSec; otherwise
+	// [10, 3600] — validated on PUT, re-checked on read
+	// (resolveRateWindowFloor) so a hand-edited blob cannot emit a window
+	// nobody chose. The floor never reaches increase() or the heatmap; see
+	// promRollupWindow.
+	RateWindowFloorS int `json:"rateWindowFloorS,omitempty"`
+	// AllowUnfilteredPercentiles lifts the bucket-scan guard
+	// (v0.9.1164). The DEFAULT — false, the zero value — is the PROTECTED
+	// state, which is the direction that matters: a fresh install, a
+	// missing blob and a partially-written blob all land on "guarded", so
+	// the protection can only be removed by an explicit admin decision
+	// that lands in audit_log. See guardBucketScan for the decision table.
+	AllowUnfilteredPercentiles bool `json:"allowUnfilteredPercentiles,omitempty"`
 }
 
 // Snapshot is what GET /api/settings/victoria-metrics returns: Settings
@@ -84,6 +98,12 @@ type Snapshot struct {
 	AuthType           string `json:"authType,omitempty"`
 	HasToken           bool   `json:"hasToken"`
 	InsecureSkipVerify bool   `json:"insecureSkipVerify,omitempty"`
+	// Both v0.9.1164 knobs round-trip in full: neither is secret-adjacent,
+	// and the form has to be able to show the operator the floor they set
+	// (an input that cannot read its own stored value re-submits a blank on
+	// every unrelated save — the aiTuning failure class).
+	RateWindowFloorS           int  `json:"rateWindowFloorS,omitempty"`
+	AllowUnfilteredPercentiles bool `json:"allowUnfilteredPercentiles,omitempty"`
 }
 
 // Service is the per-process VM client. Config is swapped under an
@@ -188,11 +208,30 @@ func (s *Service) Snapshot() Snapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return Snapshot{
-		Enabled:            s.cfg.Enabled,
-		BaseURL:            s.cfg.BaseURL,
-		AuthType:           s.cfg.AuthType,
-		HasToken:           s.cfg.Token != "",
-		InsecureSkipVerify: s.cfg.InsecureSkipVerify,
+		Enabled:                    s.cfg.Enabled,
+		BaseURL:                    s.cfg.BaseURL,
+		AuthType:                   s.cfg.AuthType,
+		HasToken:                   s.cfg.Token != "",
+		InsecureSkipVerify:         s.cfg.InsecureSkipVerify,
+		RateWindowFloorS:           s.cfg.RateWindowFloorS,
+		AllowUnfilteredPercentiles: s.cfg.AllowUnfilteredPercentiles,
+	}
+}
+
+// promOptions lifts the query-shaping knobs out of a config SNAPSHOT
+// (v0.9.1164).
+//
+// It takes the cfg the caller already got from ready() rather than reading
+// s.cfg again, and that is the whole reason it is a free function on Settings'
+// shape instead of a method that re-locks. A second read could observe a
+// different config than the one the rest of the query was built from — an
+// admin PUT landing between the two would produce an expression whose window
+// and whose guard decision came from different configurations. One snapshot in,
+// one set of options out.
+func promOptions(cfg Settings) promOpts {
+	return promOpts{
+		RateWindowFloorS:           cfg.RateWindowFloorS,
+		AllowUnfilteredPercentiles: cfg.AllowUnfilteredPercentiles,
 	}
 }
 
@@ -390,7 +429,7 @@ func (s *Service) QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFil
 	if f.From.IsZero() {
 		f.From = f.To.Add(-24 * time.Hour)
 	}
-	q, err := buildPromQL(f)
+	q, err := buildPromQL(f, promOptions(cfg))
 	if err != nil {
 		return nil, "", err
 	}

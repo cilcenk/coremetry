@@ -195,7 +195,7 @@ func TestBuildPromQLPercentileShapes(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildPromQL(tc.f)
+			got, err := buildTranslate(tc.f)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -329,7 +329,7 @@ func TestBuildPromQLAggregationGroupByMatrix(t *testing.T) {
 	for _, a := range aggs {
 		for _, g := range groupBys {
 			t.Run(a.in+"/"+g.name, func(t *testing.T) {
-				got, err := buildPromQL(chstore.MetricQueryFilter{
+				got, err := buildTranslate(chstore.MetricQueryFilter{
 					Name:        "jvm.memory.used",
 					Aggregation: a.in,
 					GroupBy:     g.in,
@@ -486,7 +486,7 @@ func TestBuildPromQLRollupShapes(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildPromQL(tc.f)
+			got, err := buildTranslate(tc.f)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -674,7 +674,7 @@ func TestOrCompositionShapes(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildPromQL(tc.f)
+			got, err := buildTranslate(tc.f)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -695,7 +695,7 @@ func TestOrCompositionShapes(t *testing.T) {
 // every gauge panel into a 5-minute smoothing.
 func TestSetAggregationsCarryNoWindow(t *testing.T) {
 	for _, agg := range []string{"", "avg", "sum", "min", "max", "count"} {
-		got, err := buildPromQL(chstore.MetricQueryFilter{
+		got, err := buildTranslate(chstore.MetricQueryFilter{
 			Name: "m", Aggregation: agg, StepSeconds: 60,
 			From: time.Unix(1700000000, 0), To: time.Unix(1700003600, 0),
 		})
@@ -726,7 +726,7 @@ func TestSetAggregationsCarryNoWindow(t *testing.T) {
 // v0.9.566 class comes back.
 func TestRollupStillRefusesAnInexpressibleFilter(t *testing.T) {
 	for _, agg := range []string{"last", "rate", "increase"} {
-		_, err := buildPromQL(chstore.MetricQueryFilter{
+		_, err := buildTranslate(chstore.MetricQueryFilter{
 			Name: "m", Aggregation: agg, StepSeconds: 60,
 			Filters: []chstore.FilterExpr{{Key: "n", Op: ">", Values: []string{"5"}}},
 		})
@@ -781,7 +781,7 @@ func TestPromRollupWindow(t *testing.T) {
 	for _, tc := range tests {
 		name := tc.rollup + "/step=" + strconv.Itoa(tc.step) + "/win=" + strconv.Itoa(tc.rateWin)
 		t.Run(name, func(t *testing.T) {
-			got := promRollupWindow(tc.rollup, tc.step, tc.rateWin)
+			got := promRollupWindow(tc.rollup, tc.step, tc.rateWin, 0)
 			if got != tc.want {
 				t.Fatalf("promRollupWindow(%q, step=%d, win=%d) = %d, want %d (%s)",
 					tc.rollup, tc.step, tc.rateWin, got, tc.want, tc.why)
@@ -842,7 +842,7 @@ func TestRollupWindowFollowsTheResolvedStep(t *testing.T) {
 				Name: "m", Aggregation: tc.agg, From: from, To: to,
 				StepSeconds: tc.step, MaxDataPoints: tc.maxDP, RateWindowSec: tc.rateWin,
 			}
-			expr, err := buildPromQL(f)
+			expr, err := buildTranslate(f)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -857,7 +857,7 @@ func TestRollupWindowFollowsTheResolvedStep(t *testing.T) {
 			// And the same number the client would derive from the step it
 			// actually sends — the two must not be able to disagree.
 			step := promStep(f.From, f.To, f.StepSeconds, f.MaxDataPoints)
-			if want := promRollupWindow(tc.rollup, step, tc.rateWin); got != want {
+			if want := promRollupWindow(tc.rollup, step, tc.rateWin, 0); got != want {
 				t.Fatalf("window %ds drifted from promRollupWindow(step=%d) = %ds",
 					got, step, want)
 			}
@@ -941,7 +941,7 @@ func TestBuildPromQLSelector(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := buildPromQL(tc.f)
+			got, err := buildTranslate(tc.f)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("want error containing %q, got %v (%q)", tc.wantErr, err, got)
@@ -1053,7 +1053,7 @@ func TestPromMatcher(t *testing.T) {
 // A refused filter must fail the WHOLE query, not get skipped on the way
 // into the selector.
 func TestBuildPromQLRefusedFilterFailsTheQuery(t *testing.T) {
-	_, err := buildPromQL(chstore.MetricQueryFilter{
+	_, err := buildTranslate(chstore.MetricQueryFilter{
 		Name: "m",
 		Filters: []chstore.FilterExpr{
 			{Key: "pod", Op: "=", Values: []string{"api-1"}},
@@ -1066,7 +1066,7 @@ func TestBuildPromQLRefusedFilterFailsTheQuery(t *testing.T) {
 }
 
 func TestBuildPromQLFilterOrderPreserved(t *testing.T) {
-	got, err := buildPromQL(chstore.MetricQueryFilter{
+	got, err := buildTranslate(chstore.MetricQueryFilter{
 		Name:        "m",
 		Service:     "svc",
 		Aggregation: "max",

@@ -278,15 +278,26 @@ func (vmMetricSource) Name() string { return metricSourceVM }
 // than four inline wraps: a new method added without the tag would 500
 // and read as a Coremetry bug.
 //
-// Two outcomes, and picking the right one is the operator's diagnosis:
+// Three outcomes, and picking the right one is the operator's diagnosis:
 //   - vmetrics.ErrUnsupported → 400. VM is fine; the QUERY does not
 //     translate (aggregation / filter operator / instance scoping).
+//   - vmetrics.ErrUnfilteredBuckets → 400 (v0.9.1164). VM is fine and the
+//     query translates; this install refuses to SEND it unfiltered. The
+//     message carries the fix and the Settings off-switch, so the one thing
+//     that must not happen is a 502 — that would point the operator at a
+//     healthy cluster and hide a checkbox they own.
 //   - anything else → 502. Transport, auth, or VM's own query error.
+//
+// Both 400 sentinels are listed EXPLICITLY rather than collapsed into a
+// "not a transport error" catch-all: the default has to stay 502, so that a
+// future error type added without a decision here is loud (a Coremetry bug
+// reported as one) instead of being quietly reclassified as the operator's
+// fault.
 func upstream(err error) error {
 	if err == nil {
 		return nil
 	}
-	if errors.Is(err, vmetrics.ErrUnsupported) {
+	if errors.Is(err, vmetrics.ErrUnsupported) || errors.Is(err, vmetrics.ErrUnfilteredBuckets) {
 		return fmt.Errorf("%w: %w", errBadRequest, err)
 	}
 	return fmt.Errorf("%w: %w", errUpstream, err)

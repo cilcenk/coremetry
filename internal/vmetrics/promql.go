@@ -80,6 +80,24 @@ import (
 // cluster that is fine — a wrong diagnosis is worse than a blunt one.
 var ErrUnsupported = errors.New("unsupported by the VictoriaMetrics backend")
 
+// ErrUnfilteredBuckets marks a query Coremetry CAN express but REFUSES to
+// send, because on a large VM install it would scan the whole bucket family
+// (v0.9.1164).
+//
+// Deliberately a SECOND sentinel rather than a reuse of ErrUnsupported, and
+// the difference is the operator's next move. ErrUnsupported means "this
+// query has no MetricsQL form" — nothing they change in Settings will make
+// it work, they have to ask a different question. This one means "this
+// query is fine and this install has it switched off": the fix is either a
+// filter or a checkbox, and the message names both. Folding the two into
+// one sentinel would make the checkbox undiscoverable, since the refusal
+// would read as a permanent limitation of the backend.
+//
+// Both map to 400 (internal/api/metricsource.go, upstream) — a refusal is a
+// statement about the REQUEST, and a 502 here would send the operator to
+// check a VictoriaMetrics that is perfectly healthy.
+var ErrUnfilteredBuckets = errors.New("unfiltered bucket-family query refused by the VictoriaMetrics guard")
+
 // maxPromPoints mirrors the points-per-timeseries ceiling Prometheus and
 // VictoriaMetrics both enforce on query_range. Hitting it is a 4xx, so
 // the step is widened until the window fits rather than letting the
@@ -117,6 +135,33 @@ const bucketSuffix = "_bucket"
 // aggregation feeding the function must group by it or the function has no
 // distribution to read.
 const labelLE = "le"
+
+// promOpts carries the SETTINGS-derived knobs the translation needs
+// (v0.9.1164). It exists so promql.go can stay what its header claims:
+// pure, a function of its arguments, table-testable without a live VM.
+//
+// The alternative was a package-level var the Service writes on Configure().
+// That would have been two lines shorter and would have broken rule 3 in the
+// worst possible way — the expression would depend on when an admin last
+// pressed Save, so a table test could pass while a live poll rendered a
+// different window, and the cache key upstream (metric-query:v3) would stop
+// describing the query it keys. Settings are READ at the calling layer
+// (client.go / histogram.go, from the one cfg snapshot ready() returned) and
+// DESCEND as an argument; nothing under here reaches for live state.
+//
+// The zero value is the SHIPPED DEFAULT for both fields — a caller that
+// forgets to fill it in gets the pre-v0.9.1164 behaviour (300s floor, guard
+// ON), never a silently loosened one.
+type promOpts struct {
+	// RateWindowFloorS is the persisted override, NOT the resolved floor:
+	// 0 means "use promLookbehindFloorSec". The resolution lives in exactly
+	// one place (resolveRateWindowFloor, called from promRollupWindow) so a
+	// caller cannot skip it and accidentally emit `[0s]`.
+	RateWindowFloorS int
+	// AllowUnfilteredPercentiles opts OUT of the bucket-scan guard. False —
+	// the zero value — is the PROTECTED state; see guardBucketScan.
+	AllowUnfilteredPercentiles bool
+}
 
 // promAgg is the SHAPE a Coremetry aggregation compiles to: an optional
 // rollup function wrapped around the selector, then a set-aggregation over
@@ -390,6 +435,100 @@ func promMatcher(fe chstore.FilterExpr) (string, error) {
 		"EXISTS, NOT EXISTS)", fe.Op, ErrUnsupported)
 }
 
+// ── The unfiltered-bucket-scan guard (v0.9.1164) ────────────────────────────
+//
+// WHY A GUARD AND NOT A FASTER QUERY. The operator's production VM carries
+// ~12M active series and grew +281% in a day. At that size a selector whose
+// ONLY matcher is the metric name is not a slow query, it is an unbounded
+// one: `{__name__=~"a|b|c|d|e|f"}` is a regex over the whole name index, and
+// for the bucket family every matching attribute set fans out again by `le`.
+// Nothing downstream can shrink that — the by-clause groups AFTER the scan,
+// the step only changes how many times VM runs it, and Coremetry's own
+// max_execution_time equivalent does not exist on this path (VM's server-side
+// limits are the operator's to set, and we cannot read them).
+//
+// So the honest options were: send it and let a shared vmselect degrade for
+// everyone, or refuse with an actionable message. The refusal is a 400 with
+// the class, the fix and the off-switch written out, which is the shape the
+// package already uses for every other "we could guess, so we say what we
+// looked for instead" case (emptyBucketNote, emptyNameNote).
+//
+// WHICH CLASSES ARE IN — operator decision, 2026-08-18:
+//
+//	percentile p50/p95/p99  → ALWAYS guarded. The branch reads
+//	                          `<name>_bucket` unconditionally, so the `le`
+//	                          fan-out is there even when the operator picked
+//	                          an explicitly-suffixed row.
+//	histogram heatmap       → ALWAYS guarded. Same `_bucket` selector, and
+//	                          it additionally materialises a time × le grid
+//	                          in Go (maxHistogramLEBuckets is the backstop
+//	                          for cardinality, not for scan cost).
+//	avg with no rollup      → guarded ONLY when the name may carry histogram
+//	                          parts, i.e. exactly when the `or` composition
+//	                          adds the `_sum`/`_count` ratio arm. A plain
+//	                          gauge avg is one selector over one family and
+//	                          stays free — guarding it would break the most
+//	                          ordinary chart on the install to protect
+//	                          against a cost it does not have.
+//
+// AND WHICH ARE DELIBERATELY OUT: rate / increase. Their histogram arm reads
+// `_count`, which is ONE series per attribute set — the same cardinality as
+// the gauge arm beside it, no `le` multiplication. The asymmetry with avg is
+// real and was decided rather than derived (avg is in by operator call; its
+// arm is `_sum`/`_count` too), so it is pinned by a test that asserts an
+// unfiltered rate on a histogram name still PASSES. A future reader who
+// notices the inconsistency should find it recorded here, not fix it silently.
+//
+// The raw MetricsQL proxy (QueryPromQLRange) is out for a structural reason,
+// not a cost one: nothing on that path parses the operator's query, and that
+// is the feature (see its header). A guard there would need the parser the
+// package refuses to run.
+
+// unfilteredBucketMsg builds the refusal.
+//
+// It names three things because a refusal with any of them missing is a dead
+// end: WHICH query class was refused (the operator has several panels open
+// and cannot tell which one 400'd), WHAT to add (service or label filter),
+// and WHERE the off-switch is (requirement: the message states the guard in
+// force and how to lift it). The Settings path is spelled exactly as the tab
+// and checkbox read on screen, so it can be followed by search rather than by
+// guesswork.
+func unfilteredBucketMsg(class string) string {
+	return fmt.Sprintf("%s sorgusu servis ya da etiket filtresi olmadan bu VictoriaMetrics "+
+		"kurulumunda tüm kova serilerini taratır — sorguya bir servis ya da etiket filtresi "+
+		"ekleyin. Devredeki koruma: “Filtresiz yüzdeliklere izin ver” KAPALI "+
+		"(Settings → Metrik okuma backend’i); korumayı oradan açarak bu sorguyu "+
+		"olduğu gibi çalıştırabilirsiniz.", class)
+}
+
+// Query-class labels the refusal prints. Constants because the decision table
+// test asserts on them and a typo would otherwise be a silently different
+// message rather than a compile error (the promRollupWindow precedent).
+const (
+	classPercentile = "Yüzdelik (p50/p95/p99)"
+	classHeatmap    = "Histogram ısı haritası"
+	classAvgFamily  = "Histogram ailesinde avg"
+)
+
+// guardBucketScan refuses an unscoped bucket-family query.
+//
+// `narrowers` is the COUNT of matchers that actually landed in the selector
+// besides the name — service plus every translated filter. Counting the
+// rendered matchers rather than the request fields is the load-bearing part:
+// it measures what VM will receive, so a filter that failed to translate
+// cannot be counted as scope (it 400s on its own first), and a future field
+// that adds a matcher is covered without touching this function.
+//
+// GroupBy is deliberately NOT scope. A by-clause aggregates after the scan;
+// counting it would let `by (le)` — which every percentile carries — satisfy
+// the guard and disable it everywhere.
+func guardBucketScan(class string, narrowers int, allow bool) error {
+	if allow || narrowers > 0 {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrUnfilteredBuckets, unfilteredBucketMsg(class))
+}
+
 func regexAlternation(vals []string) string {
 	quoted := make([]string, len(vals))
 	for i, v := range vals {
@@ -402,7 +541,11 @@ func regexAlternation(vals []string) string {
 
 // buildPromQL renders the whole query expression for a MetricQueryFilter.
 // Pure — table-tested in promql_test.go.
-func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
+//
+// `opts` carries the two settings-derived knobs (v0.9.1164). They arrive as an
+// argument rather than being read here so this stays a pure function of the
+// REQUEST plus the CONFIG SNAPSHOT the caller already holds — see promOpts.
+func buildPromQL(f chstore.MetricQueryFilter, opts promOpts) (string, error) {
 	name := strings.TrimSpace(f.Name)
 	if name == "" {
 		return "", fmt.Errorf("metric name required")
@@ -512,6 +655,13 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 	// covered, and printing it twice would make two polls of the same panel
 	// look like different queries in VM's log.
 	if agg.Quantile > 0 {
+		// v0.9.1164 — the guard sits BEFORE the expression is rendered, and
+		// `len(extra)` is the whole test: `extra` holds the service matcher plus
+		// every translated filter, so zero means the selector would go to VM with
+		// nothing but the name alternation on it.
+		if err := guardBucketScan(classPercentile, len(extra), opts.AllowUnfilteredPercentiles); err != nil {
+			return "", err
+		}
 		by := make([]string, 0, len(labels)+1)
 		by = append(by, labelLE)
 		for _, l := range labels {
@@ -519,7 +669,7 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 				by = append(by, l)
 			}
 		}
-		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec)
+		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec, opts.RateWindowFloorS)
 		vec := agg.Rollup + "(" + sel(bucketNameCandidates(name)) + "[" + strconv.Itoa(w) + "s])"
 		return "histogram_quantile(" + formatQuantile(agg.Quantile) + ", " +
 			agg.Op + " by (" + strings.Join(by, ", ") + ") (" + vec + "))", nil
@@ -554,8 +704,14 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 	// The arms are gated by mayHaveHistogramParts, so a `_total` counter or an
 	// explicitly-picked `_bucket`/`_sum`/`_count` row renders EXACTLY the
 	// single-arm expression it did before v0.9.1160 — byte for byte.
+	//
+	// NOT guarded by the bucket-scan check (v0.9.1164): this arm reads
+	// `_count`, one series per attribute set — the same cardinality as the
+	// gauge arm beside it, with no `le` fan-out. See the guard's header for the
+	// full in/out table and why the asymmetry with avg is recorded rather than
+	// smoothed over.
 	if agg.Rollup == rollupRate || agg.Rollup == rollupIncrease {
-		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec)
+		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec, opts.RateWindowFloorS)
 		rollup := func(cands []string) string {
 			return agg.Rollup + "(" + sel(cands) + "[" + strconv.Itoa(w) + "s])"
 		}
@@ -571,7 +727,15 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 	if agg.Op == "avg" && agg.Rollup == "" {
 		left := aggregateExpr("avg", labels, sel(base))
 		if !mayHaveHistogramParts(name) {
+			// PLAIN GAUGE avg — one arm, one family, no guard (v0.9.1164). This
+			// early return is also WHY the guard is checked below rather than at
+			// the top of the branch: the protected shape and the free shape are
+			// separated by exactly this predicate, and the operator's decision was
+			// scoped to "the name carries histogram-part candidates".
 			return left, nil
+		}
+		if err := guardBucketScan(classAvgFamily, len(extra), opts.AllowUnfilteredPercentiles); err != nil {
+			return "", err
 		}
 		// OBSERVATION-WEIGHTED MEAN, and the weighting is the point. A
 		// histogram's mean is rate(_sum) / rate(_count): the total observed
@@ -585,7 +749,7 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 		// counters are cumulative since process start: their ratio would be the
 		// all-time mean, which barely moves and hides every incident. The window
 		// is the rate window (floored), since both halves ARE rates.
-		w := promRollupWindow(rollupRate, step, f.RateWindowSec)
+		w := promRollupWindow(rollupRate, step, f.RateWindowSec, opts.RateWindowFloorS)
 		ratePart := func(cands []string) string {
 			return aggregateExpr("sum", labels,
 				rollupRate+"("+sel(cands)+"["+strconv.Itoa(w)+"s])")
@@ -605,7 +769,7 @@ func buildPromQL(f chstore.MetricQueryFilter) (string, error) {
 	// act on — switch the aggregation to avg, or to p95.
 	vec := sel(base)
 	if agg.Rollup != "" {
-		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec)
+		w := promRollupWindow(agg.Rollup, step, f.RateWindowSec, opts.RateWindowFloorS)
 		vec = agg.Rollup + "(" + vec + "[" + strconv.Itoa(w) + "s])"
 	}
 	return aggregateExpr(agg.Op, labels, vec), nil
@@ -741,6 +905,58 @@ func ceilDiv(a, b int) int {
 // clamp lives in the window.
 const promLookbehindFloorSec = 300
 
+// The bounds an OPERATOR-SET floor must satisfy (v0.9.1164). The setting
+// exists because 5m is a substitute for a number VM will not tell us (see
+// above), and a substitute is exactly the kind of constant an install with a
+// known export interval should be able to correct: a 10s-scrape Prometheus
+// federation wants ~30s here, not 300s, and the 5m default is currently
+// smoothing five minutes of detail out of every rate chart on that install.
+//
+//	10s floor  — below the finest OTLP export interval anyone runs, and a
+//	             window under ~10s makes rate() dependent on scrape jitter.
+//	3600s ceiling — an hour is already wider than any panel's step at the
+//	             ranges Coremetry offers; past it the "floor" would BE the
+//	             window on every chart, which is a different feature (and
+//	             one the caller-supplied RateWindowSec already provides
+//	             per-query).
+//
+// 0 stays the sentinel for "unset — use the default". A separate `null`
+// spelling would only add a second way to say the same thing to the JSON
+// blob, and the frontend already renders 0 as an empty box (the aiTuning
+// contract).
+// Exported because the PUT validator lives in internal/api and must reject
+// exactly what the reader would ignore. The bounds having ONE spelling is the
+// point: a second copy in the handler is how a value gets accepted by the form
+// and then silently dropped by the query — the operator sees their number
+// saved in Settings and the old window in the chart, with nothing on screen
+// connecting the two.
+const (
+	MinRateWindowFloorSec = 10
+	MaxRateWindowFloorSec = 3600
+)
+
+// ValidRateWindowFloor reports whether a persisted/submitted floor is
+// acceptable: unset (0), or inside the bounds. Shared by the PUT validator
+// (which 400s on false) and by resolveRateWindowFloor.
+func ValidRateWindowFloor(v int) bool {
+	return v == 0 || (v >= MinRateWindowFloorSec && v <= MaxRateWindowFloorSec)
+}
+
+// resolveRateWindowFloor maps the persisted setting to the floor to apply.
+//
+// An out-of-bounds value falls back to the DEFAULT rather than being clamped.
+// The PUT gate makes it unreachable through the UI, so the only way to get
+// here is a hand-edited system_settings blob — and for that case the default
+// is the honest answer ("your value was not accepted"), where clamping would
+// silently answer with a third number the operator never typed and cannot see
+// anywhere.
+func resolveRateWindowFloor(v int) int {
+	if v == 0 || !ValidRateWindowFloor(v) {
+		return promLookbehindFloorSec
+	}
+	return v
+}
+
 // promRollupWindow resolves the `[W]` lookbehind for a rollup translation.
 //
 // The three rollups deliberately do NOT share one rule, and the asymmetry is
@@ -771,7 +987,23 @@ const promLookbehindFloorSec = 300
 // (rollingRate returns its input untouched when windowSec <= stepSec).
 // RateWindowSec never reaches last_over_time — it is a RATE window, and
 // bending `last` with it would be a second meaning for one field.
-func promRollupWindow(rollup string, stepSeconds, rateWindowSec int) int {
+//
+// v0.9.1164 — the floor is now a PARAMETER (`floorS`, the raw persisted
+// setting; 0 = default). Three properties of that plumbing are load-bearing:
+//
+//   - the value is resolved HERE, once, so a caller who passes the zero value
+//     gets 300s rather than a floor of 0 that would silently delete the
+//     widening. The unsafe direction is unreachable by omission.
+//   - `increase` is untouched by it. The floor multiplies a window TOTAL, and
+//     an operator raising the floor to smooth their rate charts must not
+//     silently quadruple every increase() number — the v0.6.36 unit-scale
+//     class, which is why the setting cannot reach this rollup at all. The
+//     heatmap path shares the same exemption for the same reason and does not
+//     even take the option (buildHistogramPromQL).
+//   - the function stays pure. Same arguments, same window; the expression and
+//     the cache key upstream cannot drift apart because an admin pressed Save
+//     between two polls of one panel.
+func promRollupWindow(rollup string, stepSeconds, rateWindowSec, floorS int) int {
 	step := stepSeconds
 	if step < 1 {
 		// Mirrors promStep's floor: [0s] is a VM error.
@@ -783,8 +1015,8 @@ func promRollupWindow(rollup string, stepSeconds, rateWindowSec int) int {
 		}
 	}
 	if rollup == rollupRate || rollup == rollupLast {
-		if step < promLookbehindFloorSec {
-			return promLookbehindFloorSec
+		if floor := resolveRateWindowFloor(floorS); step < floor {
+			return floor
 		}
 	}
 	return step

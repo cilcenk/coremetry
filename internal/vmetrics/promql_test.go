@@ -1,23 +1,34 @@
 package vmetrics
 
 // v0.9.1150 — VictoriaMetrics read backend, Faz 1.
+// v0.9.1154 — Faz 1.5: last / rate / increase translation + the rollup
+// lookbehind rules.
 //
-// The PromQL translation is the whole correctness surface of this
+// The MetricsQL translation is the whole correctness surface of this
 // backend: everything past it is HTTP. The aggregation × group-by matrix
 // is exhaustive on purpose (the value+unit lesson from v0.6.36 applied to
 // a different two-axis template: one untested combination is a silently
-// wrong chart, not a crash).
+// wrong chart, not a crash). Faz 1.5 adds a THIRD axis with the same
+// lesson attached — the lookbehind window — and the three rollups
+// deliberately do not share one rule, so every (rollup, step, rateWindow)
+// branch is exercised rather than sampled.
 //
-// Two properties are pinned harder than the rest because breaking either
-// produces a WRONG NUMBER rather than an error:
+// Three properties are pinned harder than the rest because breaking any of
+// them produces a WRONG NUMBER rather than an error:
 //
 //   - an inexpressible filter must ERROR, never vanish (v0.9.566: a
 //     dropped jvm.memory.type="heap" charted heap+non-heap AS "heap"),
 //   - GroupKey order must follow the REQUESTED order, not VM's map
-//     iteration, or series get relabelled between polls.
+//     iteration, or series get relabelled between polls,
+//   - the window written INTO the expression must be the one derived from
+//     the step the client sends (rule 3 in promql.go): a window resolved
+//     from a different step is a rate over a period nothing on screen
+//     names.
 
 import (
 	"errors"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -26,15 +37,21 @@ import (
 )
 
 func TestPromAggregator(t *testing.T) {
-	ok := map[string]string{
-		"":      "avg",
-		"avg":   "avg",
-		"AVG":   "avg",
-		" avg ": "avg",
-		"sum":   "sum",
-		"min":   "min",
-		"max":   "max",
-		"count": "count",
+	ok := map[string]promAgg{
+		"":         {Op: "avg"},
+		"avg":      {Op: "avg"},
+		"AVG":      {Op: "avg"},
+		" avg ":    {Op: "avg"},
+		"sum":      {Op: "sum"},
+		"min":      {Op: "min"},
+		"max":      {Op: "max"},
+		"count":    {Op: "count"},
+		"last":     {Op: "max", Rollup: "last_over_time"},
+		"LAST":     {Op: "max", Rollup: "last_over_time"},
+		" last ":   {Op: "max", Rollup: "last_over_time"},
+		"rate":     {Op: "sum", Rollup: "rate"},
+		"Rate":     {Op: "sum", Rollup: "rate"},
+		"increase": {Op: "sum", Rollup: "increase"},
 	}
 	for in, want := range ok {
 		got, err := promAggregator(in)
@@ -42,14 +59,54 @@ func TestPromAggregator(t *testing.T) {
 			t.Fatalf("promAggregator(%q): unexpected error %v", in, err)
 		}
 		if got != want {
-			t.Fatalf("promAggregator(%q) = %q, want %q", in, got, want)
+			t.Fatalf("promAggregator(%q) = %+v, want %+v", in, got, want)
 		}
 	}
-	// Refused — each would need real work to be CORRECT, and a plausible
-	// wrong answer is the failure mode we are avoiding.
-	for _, in := range []string{"rate", "increase", "last", "p50", "p95", "p99", "median", "nonsense"} {
-		if _, err := promAggregator(in); err == nil {
+	// Refused. The percentiles need the histogram bucket series (Faz 2);
+	// the rest are simply not aggregations Coremetry has.
+	for _, in := range []string{"p50", "p95", "p99", "p90", "median", "nonsense"} {
+		_, err := promAggregator(in)
+		if err == nil {
 			t.Fatalf("promAggregator(%q): want error, got nil", in)
+		}
+		if !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("promAggregator(%q) refusal not tagged ErrUnsupported — the API would 502 and "+
+				"blame a healthy VictoriaMetrics: %v", in, err)
+		}
+		// Every refusal names the supported set, so the operator can fix
+		// the query without reading the source.
+		if !strings.Contains(err.Error(), promSupportedAggs) {
+			t.Fatalf("promAggregator(%q) message does not list the supported set: %v", in, err)
+		}
+	}
+}
+
+// The percentile refusal has to POINT SOMEWHERE. "unsupported" alone reads
+// as "never", and the operator's next move is to hunt for a workaround that
+// does not exist — the templates hand p99 to every histogram family
+// (metricTemplates.ts), so this is the message they will actually meet.
+func TestPercentileRefusalNamesFaz2(t *testing.T) {
+	for _, agg := range []string{"p50", "p95", "p99"} {
+		_, err := buildPromQL(chstore.MetricQueryFilter{
+			Name: "http.server.request.duration", Aggregation: agg,
+		})
+		if err == nil {
+			t.Fatalf("agg=%s: want a refusal", agg)
+		}
+		msg := err.Error()
+		for _, want := range []string{"Faz 2", "histogram", "bucket", agg} {
+			if !strings.Contains(msg, want) {
+				t.Fatalf("agg=%s: refusal does not mention %q: %s", agg, want, msg)
+			}
+		}
+		// It must not still advertise last/rate/increase as missing.
+		for _, nowSupported := range []string{"last", "rate", "increase"} {
+			if !strings.Contains(msg, nowSupported) {
+				t.Fatalf("agg=%s: supported set lost %q: %s", agg, nowSupported, msg)
+			}
+		}
+		if !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("agg=%s: not tagged ErrUnsupported: %v", agg, err)
 		}
 	}
 }
@@ -91,6 +148,306 @@ func TestBuildPromQLAggregationGroupByMatrix(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+// Faz 1.5 rollup shapes (v0.9.1154). Windows are pinned as LITERAL strings
+// rather than derived from promRollupWindow — a test that asked the
+// implementation what the window should be would pass while both were
+// wrong. The interesting axes: which set-aggregation wraps which rollup,
+// that the rollup wraps the WHOLE selector (matchers inside the brackets),
+// and that the floor applies per rollup rather than uniformly.
+func TestBuildPromQLRollupShapes(t *testing.T) {
+	from := time.Unix(1700000000, 0)
+	to := from.Add(time.Hour)
+	mk := func(f chstore.MetricQueryFilter) chstore.MetricQueryFilter {
+		f.From, f.To = from, to
+		return f
+	}
+	tests := []struct {
+		name string
+		f    chstore.MetricQueryFilter
+		want string
+	}{
+		{
+			// last collapses with max() — identity when the grouping is
+			// exact, one real member when it is not (see buildPromQL).
+			name: "last, no group-by",
+			f:    mk(chstore.MetricQueryFilter{Name: "jvm.memory.used", Aggregation: "last", StepSeconds: 60}),
+			want: `max(last_over_time({__name__="jvm.memory.used"}[300s]))`,
+		},
+		{
+			name: "last, one group-by",
+			f: mk(chstore.MetricQueryFilter{Name: "jvm.memory.used", Aggregation: "last",
+				StepSeconds: 60, GroupBy: []string{"host.name"}}),
+			want: `max by (host_name) (last_over_time({__name__="jvm.memory.used"}[300s]))`,
+		},
+		{
+			name: "last, two dotted group-bys, step above the floor",
+			f: mk(chstore.MetricQueryFilter{Name: "jvm.memory.used", Aggregation: "last",
+				StepSeconds: 900, GroupBy: []string{"host.name", "jvm.memory.pool.name"}}),
+			want: `max by (host_name, jvm_memory_pool_name) (last_over_time({__name__="jvm.memory.used"}[900s]))`,
+		},
+		{
+			// The rollup wraps the FULL selector: service + filters live
+			// INSIDE the brackets. Outside, the range vector would be the
+			// unfiltered metric and the filters would apply to the rollup's
+			// result — silently the v0.9.566 shape again.
+			name: "last with service + filter",
+			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "last", Service: "api",
+				StepSeconds: 60, GroupBy: []string{"pod"},
+				Filters: []chstore.FilterExpr{{Key: "jvm.memory.type", Op: "=", Values: []string{"heap"}}}}),
+			want: `max by (pod) (last_over_time({__name__="m", service_name="api", jvm_memory_type="heap"}[300s]))`,
+		},
+		{
+			// RateWindowSec is a RATE window; it must not bend `last`.
+			name: "last ignores RateWindowSec",
+			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "last",
+				StepSeconds: 60, RateWindowSec: 180}),
+			want: `max(last_over_time({__name__="m"}[300s]))`,
+		},
+		{
+			// sum(rate(...)), not avg — the CH path re-aggregates per-series
+			// rates with a sum and names this idiom as its semantics.
+			name: "rate, no group-by, floored",
+			f:    mk(chstore.MetricQueryFilter{Name: "http.server.requests", Aggregation: "rate", StepSeconds: 60}),
+			want: `sum(rate({__name__="http.server.requests"}[300s]))`,
+		},
+		{
+			name: "rate, group-by",
+			f: mk(chstore.MetricQueryFilter{Name: "http.server.requests", Aggregation: "rate",
+				StepSeconds: 60, GroupBy: []string{"http.route"}}),
+			want: `sum by (http_route) (rate({__name__="http.server.requests"}[300s]))`,
+		},
+		{
+			name: "rate, step above the floor keeps the step",
+			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600}),
+			want: `sum(rate({__name__="m"}[600s]))`,
+		},
+		{
+			// The operator's Grafana reference is [3m]. An explicit window
+			// wins and is NOT promoted to the 5m floor.
+			name: "rate honours an explicit RateWindowSec below the floor",
+			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 60, RateWindowSec: 180}),
+			want: `sum(rate({__name__="m"}[180s]))`,
+		},
+		{
+			name: "rate honours an explicit RateWindowSec above the floor",
+			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600, RateWindowSec: 900}),
+			want: `sum(rate({__name__="m"}[900s]))`,
+		},
+		{
+			// <= step means "unexpressed" (the CH sibling's own rule), so
+			// the floor still applies.
+			name: "rate ignores a RateWindowSec below the step",
+			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 60, RateWindowSec: 30}),
+			want: `sum(rate({__name__="m"}[300s]))`,
+		},
+		{
+			// increase is a window TOTAL — flooring it would quadruple the
+			// number while the chart still says one bucket (v0.6.36 class).
+			name: "increase is NOT floored",
+			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 60}),
+			want: `sum(increase({__name__="m"}[60s]))`,
+		},
+		{
+			name: "increase at a sub-minute step stays at the step",
+			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 12}),
+			want: `sum(increase({__name__="m"}[12s]))`,
+		},
+		{
+			name: "increase, group-by, explicit window",
+			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "increase", StepSeconds: 60,
+				RateWindowSec: 180, GroupBy: []string{"error.type"}}),
+			want: `sum by (error_type) (increase({__name__="m"}[180s]))`,
+		},
+		{
+			name: "case and padding are normalized like the set-aggregations",
+			f:    mk(chstore.MetricQueryFilter{Name: "m", Aggregation: " RATE ", StepSeconds: 600}),
+			want: `sum(rate({__name__="m"}[600s]))`,
+		},
+		{
+			// A group-by that sanitizes to nothing falls back to the
+			// ungrouped form — same rule the Faz 1 aggregations follow.
+			name: "group-by that sanitizes away collapses to the ungrouped form",
+			f: mk(chstore.MetricQueryFilter{Name: "m", Aggregation: "rate", StepSeconds: 600,
+				GroupBy: []string{"  "}}),
+			want: `sum(rate({__name__="m"}[600s]))`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := buildPromQL(tc.f)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("got  %s\nwant %s", got, tc.want)
+			}
+		})
+	}
+}
+
+// The Faz 1 set-aggregations must stay a BARE selector — no range vector
+// crept in with the rollup rewrite. A stray window would change avg from
+// "the value at this bucket" to "the average of the last 5 minutes" on
+// every existing panel, with nothing on screen saying so.
+func TestSetAggregationsCarryNoWindow(t *testing.T) {
+	for _, agg := range []string{"", "avg", "sum", "min", "max", "count"} {
+		got, err := buildPromQL(chstore.MetricQueryFilter{
+			Name: "m", Aggregation: agg, StepSeconds: 60,
+			From: time.Unix(1700000000, 0), To: time.Unix(1700003600, 0),
+		})
+		if err != nil {
+			t.Fatalf("agg=%q: %v", agg, err)
+		}
+		if strings.Contains(got, "[") {
+			t.Fatalf("agg=%q rendered a range vector: %s", agg, got)
+		}
+	}
+}
+
+// A refused FILTER must still fail a rollup-shaped query. The rollup path
+// is a second code path through the same selector, which is exactly how the
+// v0.9.566 class comes back.
+func TestRollupStillRefusesAnInexpressibleFilter(t *testing.T) {
+	for _, agg := range []string{"last", "rate", "increase"} {
+		_, err := buildPromQL(chstore.MetricQueryFilter{
+			Name: "m", Aggregation: agg, StepSeconds: 60,
+			Filters: []chstore.FilterExpr{{Key: "n", Op: ">", Values: []string{"5"}}},
+		})
+		if err == nil {
+			t.Fatalf("agg=%s: an inexpressible filter was silently dropped", agg)
+		}
+		if !errors.Is(err, ErrUnsupported) {
+			t.Fatalf("agg=%s: filter refusal not tagged ErrUnsupported: %v", agg, err)
+		}
+	}
+}
+
+// promRollupWindow — the whole (rollup × step × caller window) matrix. The
+// three rollups do not share a rule, so a change that "simplifies" them
+// into one has to break a row here.
+func TestPromRollupWindow(t *testing.T) {
+	tests := []struct {
+		rollup  string
+		step    int
+		rateWin int
+		want    int
+		why     string
+	}{
+		// rate: floored, honours an explicit window.
+		{rollupRate, 12, 0, 300, "sub-export step widened to the staleness floor"},
+		{rollupRate, 60, 0, 300, "still under the floor"},
+		{rollupRate, 300, 0, 300, "exactly the floor"},
+		{rollupRate, 600, 0, 600, "above the floor → the step wins"},
+		{rollupRate, 60, 180, 180, "explicit window wins, unfloored"},
+		{rollupRate, 60, 30, 300, "window <= step is unexpressed → floor"},
+		{rollupRate, 60, 60, 300, "window == step is unexpressed → floor"},
+		{rollupRate, 600, 900, 900, "explicit window above the step"},
+		{rollupRate, 0, 0, 300, "degenerate step still legal"},
+		{rollupRate, -5, 0, 300, "negative step still legal"},
+
+		// last_over_time: floored, but RateWindowSec never reaches it.
+		{rollupLast, 12, 0, 300, "gauge chart stays dense at a sub-export step"},
+		{rollupLast, 300, 0, 300, "exactly the floor"},
+		{rollupLast, 900, 0, 900, "wide step → bucket-last, like CH's argMax"},
+		{rollupLast, 60, 180, 300, "RateWindowSec is a RATE window, not a lookback"},
+		{rollupLast, 900, 3600, 900, "…even when it is wider than the step"},
+		{rollupLast, 0, 0, 300, "degenerate step still legal"},
+
+		// increase: never floored — the window IS the reported quantity.
+		{rollupIncrease, 12, 0, 12, "flooring would multiply the number by 25"},
+		{rollupIncrease, 60, 0, 60, "one bucket"},
+		{rollupIncrease, 600, 0, 600, "one bucket"},
+		{rollupIncrease, 60, 180, 180, "explicit window wins"},
+		{rollupIncrease, 60, 30, 60, "window <= step is unexpressed"},
+		{rollupIncrease, 0, 0, 1, "degenerate step floors at 1s, not at 300s"},
+	}
+	for _, tc := range tests {
+		name := tc.rollup + "/step=" + strconv.Itoa(tc.step) + "/win=" + strconv.Itoa(tc.rateWin)
+		t.Run(name, func(t *testing.T) {
+			got := promRollupWindow(tc.rollup, tc.step, tc.rateWin)
+			if got != tc.want {
+				t.Fatalf("promRollupWindow(%q, step=%d, win=%d) = %d, want %d (%s)",
+					tc.rollup, tc.step, tc.rateWin, got, tc.want, tc.why)
+			}
+			if got < 1 {
+				t.Fatalf("window must never be < 1s ([0s] is a VM error), got %d", got)
+			}
+		})
+	}
+}
+
+var promWindowRe = regexp.MustCompile(`\[(\d+)s\]`)
+
+// Rule 3: the window in the EXPRESSION is derived from the same resolved
+// step the client sends as query_range's `step` param. The step the caller
+// ASKED for is not that number — promStep widens it past the points ceiling
+// and invents it entirely when the caller sent none — so a translation that
+// read f.StepSeconds directly would render a rate over a period nothing on
+// screen names, and only on wide windows.
+func TestRollupWindowFollowsTheResolvedStep(t *testing.T) {
+	from := time.Unix(1700000000, 0)
+	tests := []struct {
+		name     string
+		rangeSec int
+		agg      string
+		rollup   string
+		step     int
+		maxDP    int
+		rateWin  int
+		want     int
+	}{
+		{name: "auto step, 1h window", rangeSec: 3600, agg: "increase", rollup: rollupIncrease, want: 12},
+		{name: "pixel-adaptive step", rangeSec: 3600, agg: "increase", rollup: rollupIncrease, maxDP: 400, want: 9},
+		{
+			// 30d at step=10 is 259200 points; promStep widens to 236. The
+			// window must follow the WIDENED step.
+			name: "step widened past the points ceiling", rangeSec: 30 * 24 * 3600,
+			agg: "increase", rollup: rollupIncrease, step: 10, want: 236,
+		},
+		{
+			// Same request as a rate: 236 is still under the floor.
+			name: "widened step then floored", rangeSec: 30 * 24 * 3600,
+			agg: "rate", rollup: rollupRate, step: 10, want: 300,
+		},
+		{
+			name: "wide auto step needs no floor", rangeSec: 30 * 24 * 3600,
+			agg: "last", rollup: rollupLast, want: 8640,
+		},
+		{
+			name: "explicit caller window on a widened step", rangeSec: 30 * 24 * 3600,
+			agg: "rate", rollup: rollupRate, step: 10, rateWin: 3600, want: 3600,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			to := from.Add(time.Duration(tc.rangeSec) * time.Second)
+			f := chstore.MetricQueryFilter{
+				Name: "m", Aggregation: tc.agg, From: from, To: to,
+				StepSeconds: tc.step, MaxDataPoints: tc.maxDP, RateWindowSec: tc.rateWin,
+			}
+			expr, err := buildPromQL(f)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			m := promWindowRe.FindStringSubmatch(expr)
+			if m == nil {
+				t.Fatalf("no [Ns] window in %s", expr)
+			}
+			got, _ := strconv.Atoi(m[1])
+			if got != tc.want {
+				t.Fatalf("window = %ds, want %ds (expr %s)", got, tc.want, expr)
+			}
+			// And the same number the client would derive from the step it
+			// actually sends — the two must not be able to disagree.
+			step := promStep(f.From, f.To, f.StepSeconds, f.MaxDataPoints)
+			if want := promRollupWindow(tc.rollup, step, tc.rateWin); got != want {
+				t.Fatalf("window %ds drifted from promRollupWindow(step=%d) = %ds",
+					got, step, want)
+			}
+		})
 	}
 }
 

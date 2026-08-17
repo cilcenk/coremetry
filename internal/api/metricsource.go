@@ -64,8 +64,8 @@ import (
 var errUpstream = errors.New("upstream metrics backend")
 
 // errBadRequest marks a request Coremetry cannot EXPRESS against the
-// selected backend (a refused aggregation, a filter operator with no
-// PromQL equivalent). 400, not 502.
+// selected backend (a histogram percentile, a filter operator with no
+// MetricsQL equivalent). 400, not 502.
 //
 // The distinction is a diagnosis, not pedantry: 502 says "your
 // VictoriaMetrics is broken" and sends the operator to check a cluster

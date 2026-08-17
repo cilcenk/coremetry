@@ -415,3 +415,20 @@ describe('?q= codec — cmp (v0.9.824)', () => {
     expect(b).toEqual({ ...a, c: '24h' });
   });
 });
+
+// v0.9.1162 — operatör talimatı: varsayılan seri kırpması YOK. Top N
+// seçilmediyse tavana (TOP_N_MAX=50) dek tüm seriler çizilir; eski
+// varsayılan (10) yalnız araç çubuğu seçeneği. Bu pin varsayılanın
+// sessizce 10'a geri dönmesini yakalar.
+describe('effectiveTopN varsayılanı (v0.9.1162)', () => {
+  it('seçilmemişken tavan: tüm seriler', async () => {
+    const { effectiveTopN, TOP_N_MAX } = await import('./model');
+    expect(effectiveTopN(undefined)).toBe(TOP_N_MAX);
+    expect(effectiveTopN(0)).toBe(TOP_N_MAX);
+  });
+  it('açık seçim aynen ve tavan klampı yaşıyor', async () => {
+    const { effectiveTopN, TOP_N_MAX } = await import('./model');
+    expect(effectiveTopN(10)).toBe(10);
+    expect(effectiveTopN(999)).toBe(TOP_N_MAX);
+  });
+});

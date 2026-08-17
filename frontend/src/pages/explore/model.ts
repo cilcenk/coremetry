@@ -119,19 +119,21 @@ export function compareLabel(cmp: ExploreCompare | undefined): string {
 export const MAX_QUERIES = 4;
 export const QUERY_LETTERS = ['A', 'B', 'C', 'D'];
 
-// Default per-panel client-side series cap (plan perf guard: 4 panels × ≤10
-// series stays inside the uPlot budget). Biggest-by-area series win. The
-// operator can override via the toolbar "Top N" control (state.topN); this is
-// the fallback when unset. Hard ceiling stays at TOP_N_MAX to protect uPlot.
+// v0.9.1162 (operatör talimatı: "kırpmasın hepsini göstersin") —
+// VARSAYILAN artık sessizce 10'a kırpmıyor: Top N seçilmediyse tavana
+// (TOP_N_MAX) dek TÜM seriler çizilir; "+N daha" yalnız 50'yi aşan
+// gerçek patlamalarda görünür. Sert tavan uPlot bütçesini korumaya
+// devam ediyor; daraltmak isteyen operatör araç çubuğundaki Top N
+// seçicisini kullanır. PANEL_SERIES_CAP artık yalnız o seçicinin
+// "10" seçeneğinin adı — varsayılan DEĞİL.
 export const PANEL_SERIES_CAP = 10;
 export const TOP_N_MAX = 50;
 export const TOP_N_OPTIONS = [5, 10, 20, 50];
 
-// effectiveTopN — the operator's chosen cap, clamped to [1, TOP_N_MAX]; falls
-// back to PANEL_SERIES_CAP when unset. One place so PanelStack + any future
-// consumer agree.
+// effectiveTopN — the operator's chosen cap, clamped to [1, TOP_N_MAX];
+// unset = show everything up to the hard ceiling (v0.9.1162).
 export function effectiveTopN(topN?: number): number {
-  if (!topN || topN <= 0) return PANEL_SERIES_CAP;
+  if (!topN || topN <= 0) return TOP_N_MAX;
   return Math.min(topN, TOP_N_MAX);
 }
 

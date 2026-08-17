@@ -26,13 +26,53 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/cilcenk/coremetry/internal/chstore"
+	"github.com/cilcenk/coremetry/internal/reqid"
 )
 
 // correlationLinkPlaceholder — şablonda değerin geçeceği yer.
 const correlationLinkPlaceholder = "{value}"
+
+// Zaman yer tutucuları (v0.9.1142) — OPSİYONEL.
+//
+// Neden geldiler: yapılandırılmış request kimliği kendi TARİH+SAATİNİ
+// taşıyor (internal/reqid). Kurumsal log arayüzleri neredeyse her zaman
+// bir zaman aralığı istiyor ve o aralık girilmediğinde ya çok geniş
+// arıyor ya hiç bulmuyor. Kimliği çözebiliyorsak linki de pencereleyelim.
+//
+// İKİ AİLE, çünkü hangi biçimi istediği log sistemine göre değişiyor ve
+// TAHMİN ETMEK yanlış link üretir: ISO-8601 (ofsetli, yani belirsizlik
+// yok) ve epoch milisaniye. Operatör hangisini koyarsa o dolar.
+//
+// {value} ZORUNLU kalır; bunların hiçbiri şart değil. Şablonda yoklarsa
+// üretilen link bayt-bayt eskisidir (regresyon yok).
+const (
+	corrPlaceholderFrom   = "{from}"
+	corrPlaceholderTo     = "{to}"
+	corrPlaceholderFromMs = "{from_ms}"
+	corrPlaceholderToMs   = "{to_ms}"
+)
+
+// corrTimePlaceholders — FE'ye ipucu olarak dönen liste (tek kaynak).
+var corrTimePlaceholders = []string{
+	corrPlaceholderFrom, corrPlaceholderTo, corrPlaceholderFromMs, corrPlaceholderToMs,
+}
+
+// corrBridgeFallbackLookback — kimlik ÇÖZÜLEMEDİĞİNDE zaman yer
+// tutucularına yazılan pencerenin geriye bakışı.
+//
+// Kimliğin damgasını okuyamadığımız hâlde (eski/serbest biçimli id'ler,
+// v0.9.709 yolu) elimizdeki tek çapa ŞİMDİ. Bu bilinçli bir SAPMA ve
+// operatöre görünür: link yine çalışır, yalnız aralık dar değil.
+const corrBridgeFallbackLookback = time.Hour
+
+// corrBridgeForwardPad — pencerenin üst kenarına eklenen küçük pay
+// (ingest gecikmesi / saat kayması).
+const corrBridgeForwardPad = time.Minute
 
 // correlationLinkSettingKey — system_settings anahtarı.
 const correlationLinkSettingKey = "correlation.link_template"
@@ -98,16 +138,22 @@ func validCorrelationTemplate(tpl string) bool {
 	if tpl == "" || !strings.Contains(tpl, correlationLinkPlaceholder) {
 		return false
 	}
-	// Yer tutucuyu ayrıştırmadan ÖNCE zararsız bir değerle doldur:
-	// "{value}" ham hâliyle bazı ayrıştırıcıları şaşırtabiliyor.
-	u, err := url.Parse(strings.ReplaceAll(tpl, correlationLinkPlaceholder, "x"))
+	// Yer tutucuları ayrıştırmadan ÖNCE zararsız bir değerle doldur:
+	// "{value}" ham hâliyle bazı ayrıştırıcıları şaşırtabiliyor. v0.9.1142 —
+	// zaman yer tutucuları da doldurulmalı, yoksa onları taşıyan geçerli
+	// bir şablon ayrıştırıcıya ham süslü parantezle giderdi.
+	filled := strings.ReplaceAll(tpl, correlationLinkPlaceholder, "x")
+	for _, p := range corrTimePlaceholders {
+		filled = strings.ReplaceAll(filled, p, "x")
+	}
+	u, err := url.Parse(filled)
 	if err != nil {
 		return false
 	}
 	return (u.Scheme == "http" || u.Scheme == "https") && u.Host != ""
 }
 
-// buildCorrelationLink — şablon + değer → URL.
+// buildCorrelationLink — şablon + değer → URL. Pencere bilinmiyor.
 //
 // Değer QUERY-ENCODE ediliyor: request_id'ler kurum formatında geliyor
 // ve içinde &, #, boşluk bulunabilir. Ham yapıştırma linki bozar ya da
@@ -115,11 +161,51 @@ func validCorrelationTemplate(tpl string) bool {
 //
 // SAF (tablo testli). Şablon geçersizse "" döner — çağıran çizmez.
 func buildCorrelationLink(tpl, value string) string {
+	return buildCorrelationLinkAt(tpl, value, time.Time{}, time.Time{})
+}
+
+// buildCorrelationLinkAt — şablon + değer + PENCERE → URL (v0.9.1142).
+//
+// from/to sıfırsa pencere ŞİMDİye çapalanır (corrBridgeFallbackLookback):
+// şablonda zaman yer tutucusu varsa onları çözümsüz bırakmak linki
+// KIRARDI, ve kırık link yokluktan kötüdür (v0.9.655 ilkesi).
+//
+// Zaman yer tutucusu taşımayan şablonlarda çıktı bayt-bayt eskisidir —
+// bu, v0.9.709 davranışının regresyonsuz kalmasının garantisi.
+//
+// SAF (tablo testli).
+func buildCorrelationLinkAt(tpl, value string, from, to time.Time) string {
 	value = strings.TrimSpace(value)
 	if value == "" || !validCorrelationTemplate(tpl) {
 		return ""
 	}
-	return strings.ReplaceAll(strings.TrimSpace(tpl), correlationLinkPlaceholder, url.QueryEscape(value))
+	tpl = strings.TrimSpace(tpl)
+	out := strings.ReplaceAll(tpl, correlationLinkPlaceholder, url.QueryEscape(value))
+	if !corrTemplateHasTime(tpl) {
+		return out
+	}
+	if from.IsZero() || to.IsZero() || !to.After(from) {
+		now := time.Now()
+		from, to = now.Add(-corrBridgeFallbackLookback), now.Add(corrBridgeForwardPad)
+	}
+	// ISO ofsetli: log sistemi hangi saat diliminde okuduğunu tahmin
+	// etmek zorunda kalmasın. ms: zaman dilimi kavramı olmayan arayüzler.
+	return strings.NewReplacer(
+		corrPlaceholderFrom, url.QueryEscape(from.Format(time.RFC3339)),
+		corrPlaceholderTo, url.QueryEscape(to.Format(time.RFC3339)),
+		corrPlaceholderFromMs, strconv.FormatInt(from.UnixMilli(), 10),
+		corrPlaceholderToMs, strconv.FormatInt(to.UnixMilli(), 10),
+	).Replace(out)
+}
+
+// corrTemplateHasTime — şablon zaman yer tutucusu taşıyor mu? SAF.
+func corrTemplateHasTime(tpl string) bool {
+	for _, p := range corrTimePlaceholders {
+		if strings.Contains(tpl, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // correlationLinks — örneklerden tıklanabilir köprüler.
@@ -196,11 +282,28 @@ func (s *Server) correlationLinkTemplates(ctx context.Context) correlationTempla
 
 // ── Admin ayarı ─────────────────────────────────────────────────────────────
 
+// reqidTZSetting — yapılandırılmış request kimliğinin saat dilimi ayarı.
+// AYRI system_settings anahtarı (bkz. reqid/settings.go gerekçesi): şablon
+// blob'u düz bir map ve ona alan eklemek şablonları kaybetme riski.
+func (s *Server) reqidTZSetting(ctx context.Context) string {
+	b, err := s.store.GetSetting(ctx, reqid.SettingKey)
+	if err != nil {
+		return ""
+	}
+	return reqid.DecodeSettings(b).TZ
+}
+
 func (s *Server) getCorrelationLinkSetting(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"templates":   s.correlationLinkTemplates(r.Context()),
 		"placeholder": correlationLinkPlaceholder,
 		"envs":        append([]string{"default"}, correlationEnvSuffixes...),
+		// v0.9.1142 — opsiyonel zaman yer tutucuları + kimliğin saat
+		// dilimi. Liste SUNUCUDAN geliyor ki FE ipucu metni ile gerçek
+		// çözümleyici ayrışmasın.
+		"timePlaceholders": corrTimePlaceholders,
+		"reqidTz":          s.reqidTZSetting(r.Context()),
+		"reqidTzDefault":   reqid.DefaultTZ,
 	})
 }
 
@@ -215,10 +318,37 @@ func (s *Server) getCorrelationLinkSetting(w http.ResponseWriter, r *http.Reques
 func (s *Server) putCorrelationLinkSetting(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Templates correlationTemplates `json:"templates"`
+		// ReqidTz (v0.9.1142) — İŞARETÇİ ve bu bilinçli: alanı GÖNDERMEYEN
+		// bir çağıran (curl, eski frontend) saklı tz'yi SİLMEMELİ. nil =
+		// dokunma, "" = varsayılana dön, değer = ayarla.
+		ReqidTz *string `json:"reqidTz"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
+	}
+	// Saat dilimi ÖNCE doğrulanıyor: geçersiz bir tz ile şablonları
+	// kaydedip yarım başarı döndürmek en kötü sonuç olurdu.
+	tzChanged := ""
+	if body.ReqidTz != nil {
+		tz := strings.TrimSpace(*body.ReqidTz)
+		if tz != "" {
+			if _, err := time.LoadLocation(tz); err != nil {
+				http.Error(w, "geçersiz saat dilimi: "+tz+" (IANA adı bekleniyor, ör. "+reqid.DefaultTZ+")",
+					http.StatusBadRequest)
+				return
+			}
+		}
+		tzb, _ := json.Marshal(reqid.Settings{TZ: tz})
+		if err := s.store.PutSetting(r.Context(), reqid.SettingKey, tzb); err != nil {
+			writeErr(w, err)
+			return
+		}
+		if tz == "" {
+			tzChanged = "; reqidTz: varsayılan"
+		} else {
+			tzChanged = "; reqidTz: " + tz
+		}
 	}
 	allowed := map[string]bool{"default": true}
 	for _, e := range correlationEnvSuffixes {
@@ -255,6 +385,9 @@ func (s *Server) putCorrelationLinkSetting(w http.ResponseWriter, r *http.Reques
 		envs = append(envs, e)
 	}
 	s.audit(r, "settings.update", "correlation-link", correlationLinkSettingKey,
-		"configured: "+strings.Join(envs, ","))
-	writeJSON(w, map[string]any{"templates": clean})
+		"configured: "+strings.Join(envs, ",")+tzChanged)
+	writeJSON(w, map[string]any{
+		"templates": clean,
+		"reqidTz":   s.reqidTZSetting(r.Context()),
+	})
 }

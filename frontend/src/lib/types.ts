@@ -4871,6 +4871,14 @@ export interface CorrelationLinkSettings {
   templates: Record<string, string>;
   placeholder: string;
   envs: string[];
+  // v0.9.1142 — OPSİYONEL zaman yer tutucuları ({from}/{to}/{from_ms}/
+  // {to_ms}). Liste SUNUCUDAN geliyor ki ekrandaki ipucu ile gerçek
+  // çözümleyici ayrışmasın (placeholder ile aynı doktrin).
+  timePlaceholders?: string[];
+  // reqidTz — yapılandırılmış request kimliğinin İÇİNDEKİ zamanın saat
+  // dilimi (IANA adı). Boş = reqidTzDefault.
+  reqidTz?: string;
+  reqidTzDefault?: string;
 }
 
 // v0.9.775 — exception triyaj basamağının pencereleri (backend:

@@ -16,6 +16,7 @@ import (
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
 	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/reqid"
 )
 
 // Guided chat mode (v0.8.397 — AI audit A3, Davis-CoPilot-style).
@@ -119,6 +120,20 @@ const (
 	// guidedSpanByID — v0.9.548. Çıplak 16-hex SPAN id'si. Trace'i
 	// aranır, bulununca aynı trace kanıt paketi kullanılır.
 	guidedSpanByID guidedIntent = "span_by_id"
+
+	// guidedRequestID — v0.9.1142 (operatör istegi). Kurumun kendi
+	// YAPILANDIRILMIŞ istek numarası: sabit genişlikli tek bir string ve
+	// İÇİNDE işlemin tarihi+saati yazılı (internal/reqid).
+	//
+	// Neden kendi rotası: operatörün elinde olan kimlik bu — trace/span
+	// id değil. Bugüne kadar böyle bir kimlik hiçbir intent'e uymuyordu,
+	// yani soru ya RAG doküman yoluna ya kırılgan serbest tool-loop'a
+	// düşüyordu (v0.9.537'nin trace-ID'siyle aynı kaza sınıfı).
+	//
+	// Zincir: kimlik → gömülü zaman → o pencerede log araması →
+	// eşleşen kaydın trace_id'si → v0.9.537'nin trace kanıt paketi.
+	// İkinci bir montaj YOK.
+	guidedRequestID guidedIntent = "request_id"
 )
 
 type guidedRoute struct {
@@ -161,6 +176,18 @@ type guidedRoute struct {
 	TraceID string
 	// SpanID (v0.9.548) — guidedSpanByID rotasının öznesi (16-hex).
 	SpanID string
+	// RequestID (v0.9.1142) — guidedRequestID rotasının öznesi: kurumsal
+	// yapılandırılmış istek numarası, ORİJİNAL harf kasasıyla (log araması
+	// keyword alanlarında harfe duyarlı olabilir).
+	RequestID string
+	// ReqWindowFromMs / ReqWindowToMs (v0.9.1142) — kimliğin damgasından
+	// türeyen arama penceresi, epoch MİLİSANİYE. Rotanın ÇIKTISI
+	// (TeamServices emsali): bundle dolduruyor, guidedAnswerLinks /logs
+	// derin linkini bundan kuruyor. ms çünkü /logs'un okuduğu tek mutlak
+	// pencere token'ı `range=custom:<fromMs>-<toMs>` (logsUrl.ts) —
+	// ns yazan çip ÖLÜ paramdı (v0.9.853 K3 dersi).
+	ReqWindowFromMs int64
+	ReqWindowToMs   int64
 }
 
 // normalizeGuidedMsg lowercases for matching. Go's ToLower maps the
@@ -353,7 +380,21 @@ func hasGuidedSignal(msg string) bool {
 		// ekrandaki trace'e bağlamdan gitmek için, ctxTrace çözümü
 		// dispatch'te).
 		extractTraceID(msg) != "" || extractSpanID(msg) != "" ||
-		tokenHasPrefix(toks, "trace") || tokenHasPrefix(toks, "span")
+		tokenHasPrefix(toks, "trace") || tokenHasPrefix(toks, "span") ||
+		// v0.9.1142 — yapıştırılan kurumsal request kimliği hiçbir guided
+		// KELİME taşımıyor ("şu isteğe ne oldu: ABCD…"), o yüzden sinyal
+		// listesine kendisi giriyor; aksi hâlde sıfır-maliyet kapısı
+		// mesajı serbest döngüye bırakırdı.
+		hasStructuredRequestID(msg)
+}
+
+// hasStructuredRequestID — mesaj yapılandırılmış bir kurumsal istek
+// numarası taşıyor mu (internal/reqid). Tespit harfe duyarsız, o yüzden
+// normalize edilmiş metinle çalışır; ARAMADA kullanılacak token router'da
+// `raw`dan alınır.
+func hasStructuredRequestID(msg string) bool {
+	_, ok := reqid.FindToken(msg)
+	return ok
 }
 
 // hasWhySignal (v0.9.514) — NEDENSELLİK soran şekiller. Türkçe ekler
@@ -770,6 +811,19 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	// dokümanlarda bu bilgi yok" cevabı alıyordu (operator-reported).
 	if id := extractTraceID(msg); id != "" {
 		return guidedRoute{Intent: guidedTraceByID, TraceID: id}
+	}
+	// v0.9.1142 — YAPILANDIRILMIŞ kurumsal request kimliği. SIRA: açık bir
+	// trace ID'si (yukarıda) hâlâ en doğrudan çapa — o varsa log araması
+	// yapmadan trace'e gidilir. Bu kontrol 16-hex span'den ÖNCE, çünkü
+	// kimlik daha spesifik bir sinyal: uzunluk + sabit ofsetlerde geçerli
+	// bir takvim tarihi taşıyor, yani şeklin kendisi doğrulanıyor.
+	//
+	// `raw` üzerinden (normalize edilmiş msg DEĞİL): harf kasası aramada
+	// kullanılacak, ES keyword alanlarında eşleşme harfe duyarlı olabilir.
+	// Hex çakışması yok — kimlik en az 47 karakter, \b sınırlı 32/16-hex
+	// örüntüleri o uzunlukta bir alnum bloğunun içinde eşleşemez.
+	if tok, ok := reqid.FindToken(raw); ok {
+		return guidedRoute{Intent: guidedRequestID, RequestID: tok}
 	}
 	// v0.9.548 — 16-hex SPAN id'si. SIRA önemli: 32-hex önce denendi,
 	// yani bir trace ID'nin içindeki 16'lık dizi buraya düşemez.
@@ -1221,6 +1275,11 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedTraceBundle(ctx, emit, route.TraceID)
 	case guidedSpanByID:
 		evidence, sources, err = s.guidedSpanBundle(ctx, emit, route.SpanID, from, to)
+	case guidedRequestID:
+		// Pencere ROTADAN gelmiyor: kimliğin İÇİNDEKİ damgadan türüyor,
+		// yani sohbetin from/to'su bilinçli olarak geçilmiyor. Bundle
+		// çözdüğü trace'i ve pencereyi rotaya YAZAR (derin linkler için).
+		evidence, sources, err = s.guidedRequestIDBundle(ctx, emit, &route)
 	}
 	if err != nil {
 		// Prefetch failed hard → let the free loop try; its tools may
@@ -1260,18 +1319,24 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// "chat-guided" ai_calls row, so the UI's thumbs up/down joins
 	// back to it exactly like the free tool loop's answers.
 	answer := strings.TrimSpace(raw) + "\n\nKaynak: " + sources
+	// v0.9.419 — rotadan türetilen deterministik derin linkler; frontend
+	// çip olarak çizer (eski frontend'ler yok sayar).
+	links := guidedAnswerLinks(route)
+	// v0.9.1142 — yapılandırılmış request-ID rotasında köprü çipi
+	// ROTADAN da kurulur: kimliği sunucu biliyor, modelin onu cevapta
+	// tekrar etmesini beklemek gereksiz kırılganlık. Metinden avlanan
+	// kopyayla çakışırsa href'e göre tekilleşir.
+	links = append(links, s.knownRequestIDLinks(ctx, route.RequestID, ctxService)...)
+	// v0.9.709 — rota çiplerine cevap metnindeki request_id log
+	// köprüsü çipleri eklenir (operatör-bildirimi: CoSRE id'yi
+	// buluyor ama linklemiyordu).
+	links = append(links, s.answerRequestIDLinks(ctx, answer, ctxService)...)
 	// v0.9.411 — konuya-duyarlı takip önerileri (guidedSuggestions,
 	// copilot_followup.go). Eski frontend'ler alanı yok sayar.
 	emit("answer", map[string]any{
 		"text": answer, "exchangeId": copilot.MetaFromContext(ctx).ExchangeID,
 		"suggestions": guidedSuggestions(route),
-		// v0.9.419 — rotadan türetilen deterministik derin linkler;
-		// frontend çip olarak çizer (eski frontend'ler yok sayar).
-		// v0.9.709 — rota çiplerine cevap metnindeki request_id log
-		// köprüsü çipleri eklenir (operatör-bildirimi: CoSRE id'yi
-		// buluyor ama linklemiyordu).
-		"links": append(guidedAnswerLinks(route),
-			s.answerRequestIDLinks(ctx, answer, ctxService)...),
+		"links":       dedupLinksByHref(links),
 	})
 	return true, true
 }
@@ -2266,6 +2331,102 @@ func (s *Server) guidedSpanBundle(ctx context.Context, emit func(string, any), s
 	return ev, fmt.Sprintf("span %s → trace %s kanıtı", spanID, traceID), nil
 }
 
+// guidedRequestIDBundle — v0.9.1142. YAPILANDIRILMIŞ kurumsal istek
+// numarasının kanıt paketi.
+//
+// Zincirin tamamı: kimlik → gömülü tarih+saat (yerel banka saati) →
+// o pencerede TEK log araması → eşleşen kaydın trace_id'si →
+// v0.9.537'nin trace kanıt paketi (buildTraceExplainInput). Montaj
+// guidedSpanBundle'ın AYNISI, çünkü ikisi de aynı şeyi yapıyor: elde
+// olan kimliği trace'e çevirip mevcut anlatıyı beslemek.
+//
+// PENCERE NEDEN SOHBETİN ARALIĞI DEĞİL: kimlik kendi damgasını taşıyor.
+// Sohbetin 30dk'lık varsayılanı dün öğlen üretilmiş bir kimliği asla
+// bulamazdı; ±10dk'lık dar pencere ise hem doğru hem ucuz (ES 10B
+// doc/gün — pencere maliyetin TEK sınırı). Tz belirsizliğini pencereyi
+// genişleterek çözmüyoruz: locu doğru kullanıyoruz (reqid.Location).
+//
+// Bulunamamak HATA DEĞİL dürüst kanıttır: cevap ARANAN PENCEREYİ ve
+// ARANAN YERİ söyler, halüsinasyon yasaktır (guided prompt zaten
+// uydurmayı yasaklıyor, kanıt da açıkça talimat veriyor).
+func (s *Server) guidedRequestIDBundle(ctx context.Context, emit func(string, any), route *guidedRoute) (string, string, error) {
+	loc := reqid.Location(s.reqidTZSetting(ctx))
+	id, ok := reqid.Parse(route.RequestID, loc)
+	if !ok {
+		// Router aynı ayrıştırıcıyla yönlendirdiği için buraya normalde
+		// düşülmez; düşülürse kanıt dürüst kalır (panik/uydurma yok).
+		return fmt.Sprintf("Request ID %s yapılandırılmış biçime uymadı, gömülü zaman okunamadı. "+
+			"Kullanıcıya bunu söyle ve kimliği log arayüzünde aramasını öner; veri UYDURMA.",
+			route.RequestID), "request_id (biçim çözülemedi)", nil
+	}
+	from, to := id.Window()
+	route.ReqWindowFromMs = from.UnixMilli()
+	route.ReqWindowToMs = to.UnixMilli()
+
+	emitGuidedStep(emit, "parse_request_id", fmt.Sprintf(`{"time":%q,"tz":%q}`, reqid.FmtLocal(id.TS), id.TS.Location().String()))
+	emitGuidedStep(emit, "search_logs", fmt.Sprintf(`{"request_id":%q,"from":%q,"to":%q}`,
+		id.Raw, reqid.FmtLocal(from), reqid.FmtLocal(to)))
+	res, err := reqid.Resolve(ctx, s.logs, id)
+	if err != nil {
+		return "", "", err
+	}
+
+	backend := "log"
+	if s.logs != nil {
+		backend = s.logs.Backend()
+	}
+	// Kimliğin kendisi kanıtın BAŞINDA: model hangi işlemi anlattığını
+	// (kanal, müşteri, saat) söyleyebilsin.
+	head := fmt.Sprintf("SORULAN REQUEST ID: %s\n"+
+		"Kimlikten okunan: işlem zamanı %s · fonksiyon %s · kanal %s · alt kod %s · müşteri no %s\n"+
+		"Aranan pencere: %s → %s (kimliğin damgası ±10dk), aranan yer: LOG kayıtları (%s backend).\n",
+		id.Raw, reqid.FmtLocal(id.TS), id.FuncCode, id.Channel, id.SubCode, id.CustomerNo,
+		reqid.FmtLocal(from), reqid.FmtLocal(to), backend)
+	if res.Partial {
+		head += "UYARI: log backend'i KISMİ cevap döndürdü (soft timeout / eksik shard) — " +
+			"aşağıdaki sonuç gerçek cevabın alt kümesi olabilir.\n"
+	}
+
+	if res.TraceID == "" {
+		ev := head + fmt.Sprintf(
+			"\nBu pencerede bu kimliği taşıyan, trace bağlamı olan bir log kaydı BULUNAMADI "+
+				"(eşleşen log satırı: %d).\n"+
+				"Olası nedenler: kimlik eksik/yanlış kopyalandı; kimliği loglayan bileşen trace "+
+				"üretmiyor; kimlik log GÖVDESİNDE değil yapısal bir alanda duruyor (serbest metin "+
+				"araması gövdeyi tarar); ya da kayıtlar retention penceresinin dışına düştü.\n"+
+				"Kullanıcıya BUNU ve aranan pencereyi söyle; trace/span/süre UYDURMA. "+
+				"Varsa dış log köprüsü linkini kullanmasını öner.", res.MatchedLogs)
+		return ev, fmt.Sprintf("request_id → log araması (%s → %s, bulunamadı)",
+			reqid.FmtLocal(from), reqid.FmtLocal(to)), nil
+	}
+
+	route.TraceID = res.TraceID
+	// Servis rotanın ÇIKTISI (TeamServices emsali): takip çipleri ve derin
+	// linkler böylece somut bir servise oturuyor — operatör "peki bu
+	// servisin hata logları?" diye devam edebilsin.
+	route.Service = res.Service
+	in, terr := s.buildTraceExplainInput(ctx, res.TraceID)
+	if errors.Is(terr, errExplainTraceNotFound) {
+		ev := head + fmt.Sprintf("\nKimlik trace %s ile eşleşti (log servisi: %s) ama trace'in "+
+			"span'leri okunamadı (retention ya da kısmi yazım). Kullanıcıya bunu söyle; UYDURMA.",
+			res.TraceID, res.Service)
+		return ev, "request_id → trace (span'ler okunamadı)", nil
+	}
+	if terr != nil {
+		return "", "", terr
+	}
+	ev := head + fmt.Sprintf("\nEşleşen log kaydı: servis %s · trace %s · span %s (eşleşen satır: %d).\n",
+		res.Service, res.TraceID, res.SpanID, res.MatchedLogs)
+	if res.DistinctTraces > 1 {
+		// Aynı kimlik yeniden deneme / asenkron devam yüzünden birden çok
+		// trace'e dokunmuş olabilir; tek trace gibi anlatmak yanlış olurdu.
+		ev += fmt.Sprintf("NOT: bu pencerede kimliği taşıyan %d FARKLI trace var; "+
+			"aşağıdaki en yenisi. Bunu söyle.\n", res.DistinctTraces)
+	}
+	ev += "\n" + in.User
+	return ev, fmt.Sprintf("request_id → log araması → trace %s kanıtı", res.TraceID), nil
+}
+
 // guidedDeployRef unifies the two deploy reads (global
 // RecentDeployEntry vs per-service Deploy) for the renderer.
 type guidedDeployRef struct {
@@ -2630,7 +2791,10 @@ func hasDemonstrativeTrace(msg string) bool {
 // uyuyor).
 func guidedNarrationPrompt(intent guidedIntent) string {
 	switch intent {
-	case guidedTraceByID, guidedSpanByID:
+	// v0.9.1142 — request_id rotasının kanıtı da (çözüldüğünde) trace
+	// paketidir; anlatıcı aynı olmalı, yoksa aynı kanıt iki kapıdan iki
+	// farklı derinlikte anlatılırdı (v0.9.1131'in tam olarak bu kazası).
+	case guidedTraceByID, guidedSpanByID, guidedRequestID:
 		return copilot.SystemPromptTrace()
 	}
 	return copilot.SystemPromptGuidedChat()

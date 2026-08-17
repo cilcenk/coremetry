@@ -43,6 +43,48 @@ describe('ekran ↔ backend eşleşmesi', () => {
   });
 });
 
+// v0.9.1142 — yapılandırılmış request kimliği → trace dilimi. Şablona
+// OPSİYONEL zaman yer tutucuları geldi ve kimliğin saat dilimi ayarlanır
+// oldu. İkisi de "iki yerde tanımlanıp ayrışma" sınıfına aday.
+describe('zaman yer tutucuları + kimlik saat dilimi', () => {
+  const apiTs = readFileSync(resolve(__dirname, '../../lib/api.ts'), 'utf8');
+  const reqidGo = readFileSync(
+    resolve(__dirname, '../../../../internal/reqid/reqid.go'), 'utf8');
+
+  it('yer tutucu listesi backend yanıtından okunuyor', () => {
+    expect(tab).toContain('timePlaceholders');
+    expect(go).toContain('corrTimePlaceholders');
+    expect(go).toContain('"timePlaceholders": corrTimePlaceholders');
+  });
+
+  it('dört yer tutucu Go tarafında tanımlı', () => {
+    for (const p of ['{from}', '{to}', '{from_ms}', '{to_ms}']) {
+      expect(go, `${p} backend'de yok`).toContain(`"${p}"`);
+    }
+  });
+
+  // Varsayılan saat dilimi TEK kaynakta (reqid.DefaultTZ) ve ekrana
+  // sunucudan geliyor. Ekrana sabit yazılırsa operatör tz'yi değiştirdiğinde
+  // ipucu metni yalan söyler.
+  it('varsayılan saat dilimi ekrana sabit YAZILMIYOR', () => {
+    expect(reqidGo).toContain('DefaultTZ = "Europe/Istanbul"');
+    expect(tab).not.toContain('Europe/Istanbul');
+    expect(tab).toContain('reqidTzDefault');
+  });
+
+  it('saat dilimi alanı kaydediliyor', () => {
+    expect(tab).toContain('api.putCorrelationLink(tpls, tz)');
+    expect(tab).toContain('setTz(');
+  });
+
+  // İşaretçi semantiği: tz göndermeyen çağıran (curl / eski ekran) saklı
+  // değeri SİLMEMELİ.
+  it('tz gönderilmezse gövdeye yazılmıyor, backend işaretçi bekliyor', () => {
+    expect(apiTs).toContain('reqidTz === undefined');
+    expect(go).toContain('ReqidTz *string');
+  });
+});
+
 describe('ekran davranışı', () => {
   it('boş ortam kapalı sayılıyor ve bu söyleniyor', () => {
     expect(tab).toContain('Boş bırakılan ortam kapalıdır');

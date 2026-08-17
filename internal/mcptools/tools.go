@@ -43,9 +43,10 @@
 //     kapıdadır; buradaki alan tek gerçek kaynak olduğu için MCP
 //     dispatch'i ve in-app sohbet spec listesi ayrışamaz.
 //
-// Tool catalogue (24 tools; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (25 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
-// v0.9.1141'ta beş keşif tool'uyla 19 → 24):
+// v0.9.1141'ta beş keşif tool'uyla 19 → 24; v0.9.1142'de
+// find_trace_by_request_id ile 25):
 //   - list_services
 //   - get_service_health
 //   - list_problems
@@ -70,6 +71,10 @@
 //   - list_clusters (search_logs'un `cluster` arg'ı; 1h sabit pencere)
 //   - list_deploys ("dün gece ne çıktı" + get_deploy_diff'e sürüm)
 //   - find_trace_by_span (yapıştırılan 16-hex span id → trace id)
+//
+// Yapıştırılan KURUMSAL kimlik (v0.9.1142, find_trace_by_request_id.go):
+//   - find_trace_by_request_id (sabit yapılı istek numarası → trace id;
+//     pencere kimliğin İÇİNDEKİ damgadan gelir, o yüzden range_s YOK)
 //
 // Cross-signal pivot tools (v0.8.333, pivots.go):
 //   - get_logs_for_trace
@@ -158,6 +163,10 @@ func ToolList(d Deps) []mcp.Tool {
 		// çıplak span id. in-app guided yolda (v0.9.548) çalışıyordu,
 		// MCP'de karşılığı yoktu.
 		findTraceBySpanTool(d),
+		// v0.9.1142 — trace ID'ye ÜÇÜNCÜ giriş: operatörün kurumsal
+		// YAPILANDIRILMIŞ request kimliği. Elde olan kimlik bir span/trace
+		// id değil; pencereyi kimliğin kendi damgası veriyor.
+		findTraceByRequestIDTool(d),
 		// v0.9.1089 (Faz 4) — SLO durum+yörünge; tükenme uydurması biter.
 		listSLOStatusTool(d),
 		queryMetricTool(d),

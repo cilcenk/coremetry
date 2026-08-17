@@ -190,7 +190,7 @@ func TestMCPCallGateMissingClaimsDenied(t *testing.T) {
 // Spec filtresi — property: süzülmüş kümede rolü AŞAN hiçbir tool
 // kalmaz; admin her şeyi görür; viewer tam olarak MinRole>"" olanları
 // kaybeder. Gerçek kayıt defteri + sentetik editor/admin tool'la
-// koşar (bugün 24 tool'un tamamı "" olduğu için sentetik olmadan
+// koşar (bugün 25 tool'un tamamı "" olduğu için sentetik olmadan
 // property boş yere yeşil kalırdı).
 func TestToolsForRoleFiltersByMinRole(t *testing.T) {
 	registry := append(mcptools.ToolList(mcptools.Deps{}),
@@ -233,7 +233,7 @@ func TestToolsForRoleFiltersByMinRole(t *testing.T) {
 	}
 }
 
-// Bugünkü duruş: 24 tool'un tamamı MinRole "" (salt-okunur + REST eşi
+// Bugünkü duruş: 25 tool'un tamamı MinRole "" (salt-okunur + REST eşi
 // viewer'a açık). Bir tool'a MinRole eklendiğinde bu test bilinçli
 // olarak kırmızı yanar — REST eşinin kapısıyla eşleştiğini doğrula ve
 // listeyi güncelle (mcptools/tools.go başlığındaki sözleşme).

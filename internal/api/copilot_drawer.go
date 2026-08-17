@@ -229,6 +229,16 @@ func drawerSuppressesGuided(explain string, route guidedRoute, question string) 
 	if route.Team != "" {
 		return false
 	}
+	// v0.9.1142 — YAPIŞTIRILMIŞ yapılandırılmış request kimliği en somut
+	// öznedir: operatör çekmecedeki açıklamayı değil TAM O İSTEĞİ soruyor
+	// ve kimliğin çözümü (log → trace) yalnız guided yolda var.
+	//
+	// NOT: aynı muafiyet route.TraceID/SpanID için YOK — bu, v0.9.479'dan
+	// beri süregelen davranış ve bu dilimin kapsamı dışında bilinçli
+	// bırakıldı (aynı sınıf bir boşluk gibi görünüyor; ayrı bir karar).
+	if route.RequestID != "" {
+		return false
+	}
 	return !wantsFleetScope(guidedTokens(normalizeGuidedMsg(question)))
 }
 

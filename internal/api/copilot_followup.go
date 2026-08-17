@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -196,6 +197,15 @@ func guidedSuggestions(route guidedRoute) []string {
 		return []string{"Açık problemler?", "Takımımın servisleri nasıl?"}
 	case guidedShiftSummary:
 		return []string{"Açık problemler?", "En yavaş trace'ler?", "Takımımın servisleri nasıl?"}
+	// v0.9.1142 — kimlik çözüldüyse doğal adım O SERVİSE inmek. Servis
+	// rotaya bundle tarafından yazılıyor (log kaydının servisi); yazılmadıysa
+	// (kimlik bulunamadı) jenerik çip vermiyoruz — cevabın konusu tek bir
+	// istek, filo geneli bir öneri konuyu dağıtırdı.
+	case guidedRequestID:
+		if svc != "" {
+			return []string{svc + " sağlığı nasıl?", svc + " hata logları?", svc + " en yavaş trace'ler?"}
+		}
+		return nil
 	case guidedDBHealth:
 		return []string{"En yavaş trace'ler?", "Açık problemler?", "Son 1 saatteki log hataları?"}
 	case guidedMessagingHealth:
@@ -290,6 +300,37 @@ func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
 		links := []guidedAnswerLink{{Label: "Inbox", Href: "/inbox"}, {Label: "Problemler", Href: "/problems"}}
 		if svc != "" {
 			links = append(links, guidedAnswerLink{Label: svc + " · Overview", Href: "/service?name=" + svcQ})
+		}
+		return links
+	// v0.9.1142 — yapılandırılmış request kimliği rotası.
+	//
+	// Trace çözüldüyse asıl gidilecek yer trace detayı (/trace?id=).
+	// Yanına loglar: `q` + `range=custom:<fromMs>-<toMs>` /logs'un
+	// GERÇEKTEN okuduğu iki param (logsUrl.ts readLogsParams +
+	// logsRangeParam) — ÖLÜ-PARAM DENETİMİ yapıldı, K4 sınıfı (v0.9.1130)
+	// tekrar etmesin. Pencere kimliğin damgasından geliyor, yani çip
+	// operatörü tam o ana götürür; bundle doldurmadıysa (çözülemedi)
+	// pencere param'ı hiç YAZILMAZ — yanlış aralıklı bir link,
+	// linksizlikten kötü.
+	case guidedRequestID:
+		var links []guidedAnswerLink
+		if route.TraceID != "" {
+			links = append(links, guidedAnswerLink{
+				Label: "Trace", Href: "/trace?id=" + url.QueryEscape(route.TraceID),
+			})
+		}
+		if svc != "" {
+			links = append(links, guidedAnswerLink{
+				Label: svc + " · Overview", Href: "/service?name=" + svcQ,
+			})
+		}
+		if route.RequestID != "" && route.ReqWindowFromMs > 0 && route.ReqWindowToMs > route.ReqWindowFromMs {
+			links = append(links, guidedAnswerLink{
+				Label: "Loglar (istek penceresi)",
+				Href: "/logs?q=" + url.QueryEscape(route.RequestID) +
+					"&range=custom:" + strconv.FormatInt(route.ReqWindowFromMs, 10) +
+					"-" + strconv.FormatInt(route.ReqWindowToMs, 10),
+			})
 		}
 		return links
 	case guidedDBHealth:

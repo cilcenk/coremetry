@@ -228,3 +228,26 @@ describe('lib/api.ts stamps every seam endpoint (v0.9.1151)', () => {
       .toBeGreaterThan(0);
   });
 });
+
+// v0.9.1161 — deneme modu derin linklerde de taşınır (operator-reported:
+// panel VM gösterirken tıkla-Explore CH'de açılıyordu). Bu dosya node
+// ortamında koşar (window yok) — davranış withMetricSource'un kendi
+// testlerinde; buradaki kapı KABLOLAMA: iki kanonik href üreticisi de
+// withMetricSource'tan geçmek zorunda ("saf test ≠ bağlanma" dersi).
+describe('explore derin linkleri metricsrc kablolaması', () => {
+  const read = (rel: string) =>
+    readFileSync(resolve(__dirname, rel), 'utf8');
+
+  it('metricExploreHref withMetricSource ile sarılı', () => {
+    const src = read('./metricQuery.ts');
+    const fn = src.slice(src.indexOf('export function metricExploreHref'));
+    expect(fn.slice(0, fn.indexOf('}'))).toContain('withMetricSource(');
+  });
+
+  it('metricCatalogueHref withMetricSource ile sarılı', () => {
+    const src = read('../pages/explore/urlCodec.ts');
+    const i = src.indexOf('export function metricCatalogueHref');
+    const fn = src.slice(i, src.indexOf('\n}', i));
+    expect(fn).toContain('withMetricSource(');
+  });
+});

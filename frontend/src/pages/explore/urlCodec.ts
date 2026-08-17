@@ -16,6 +16,7 @@
 
 import { decodeFilters, encodeRange, isFlatAndGroup } from '@/lib/urlState';
 import { decodeMetricQuery, type MetricQuery } from '@/lib/metricQuery';
+import { withMetricSource } from '@/lib/metricSource';
 import type { FilterExpr, FilterGroup } from '@/lib/types';
 import {
   type BuilderState, type BuilderQuery, type ExploreViz, type QuerySource,
@@ -84,7 +85,10 @@ export function metricCatalogueHref(
     ...(opts?.splitBy?.length ? { splitBy: opts.splitBy } : {}),
   };
   const state: BuilderState = { queries: [q], formula: '', viz: 'line', step: 0 };
-  return `/explore?q=${encodeURIComponent(encodeBuilder(state))}`;
+  // v0.9.1161 — deneme modu (?metricsrc=vm) katalog/panel derin linkinde
+  // de taşınır (operator-reported: panel VM gösterirken tıkla-Explore
+  // CH'de açılıyordu). Param yokken bayt-aynı.
+  return withMetricSource(`/explore?q=${encodeURIComponent(encodeBuilder(state))}`);
 }
 
 // servicePivotHref — canonical /explore deep-link for the cross-signal pivot

@@ -43,10 +43,11 @@
 //     kapıdadır; buradaki alan tek gerçek kaynak olduğu için MCP
 //     dispatch'i ve in-app sohbet spec listesi ayrışamaz.
 //
-// Tool catalogue (28 tools; sayım v0.9.1050'de düzeltildi — blok
+// Tool catalogue (32 tools; sayım v0.9.1050'de düzeltildi — blok
 // v0.6.5'te kalmıştı, get_problem_root_cause/render_chart sayılmıyordu;
 // v0.9.1141'ta beş keşif tool'uyla 19 → 24; v0.9.1142'de
-// find_trace_by_request_id ile 25; v0.9.1146'da üç analiz tool'uyla 28):
+// find_trace_by_request_id ile 25; v0.9.1146'da üç analiz tool'uyla 28;
+// v0.9.1147'de dört guided-parite tool'uyla 32):
 //   - list_services
 //   - get_service_health
 //   - list_problems
@@ -83,6 +84,16 @@
 //   - get_topology ("yukarımda/aşağımda ne var" — topology_edges_5m MV)
 //   - get_blast_radius ("bu bozulursa kim bozulur" — service_callers_5m)
 //   - get_log_histogram ("log hacmi zamanla nasıl" — severity kırılımı)
+//
+// Guided-parite tool'ları (v0.9.1147, AI Faz 3.4 — guided_parity.go). D6:
+// guided router 16 intent tanıyordu ve yedisinin MCP karşılığı YOKTU.
+// Dördü indi ve guided AYNI veri katmanını çağırıyor (ReadX → yapısal
+// veri; tool JSON'a, guided Türkçe metne çeviriyor — okumanın ikinci
+// kopyası kalmadı):
+//   - get_db_health ("hangi db yavaş" — db_summary_5m)
+//   - get_messaging_health ("kuyruk tarafı nasıl" — messaging_summary_5m)
+//   - get_pod_health ("hangi pod'un heap'i dolu" — OTel runtime)
+//   - list_problem_window_events ("dün gece neler oldu" — açılan+ÇÖZÜLEN)
 //
 // Cross-signal pivot tools (v0.8.333, pivots.go):
 //   - get_logs_for_trace
@@ -152,17 +163,31 @@ func ToolList(d Deps) []mcp.Tool {
 	return []mcp.Tool{
 		listServicesTool(d),
 		getServiceHealthTool(d),
+		// v0.9.1147 (Faz 3.4) — servis RED'inin hemen ardındaki ALTYAPI
+		// sorusu: "trafik tamam, pod'lar ne durumda". Guided'da zaten
+		// service_health'in komşusuydu (aynı soru dizisi).
+		getPodHealthTool(d),
 		// v0.9.1146 (Faz 3.3) — servis kazısının iki YAPISAL sorusu, tek
 		// servisin RED'inin hemen ardında: grafiğin kendisi ve yukarı-akış
 		// etkisi. İkisi yan yana çünkü iş bölümleri birbirine referans
 		// veriyor (downstream get_topology'de, upstream burada).
 		getTopologyTool(d),
 		getBlastRadiusTool(d),
+		// v0.9.1147 (Faz 3.4) — topolojinin database/queue DÜĞÜMLERİNİN
+		// sağlık ikizleri, grafın hemen ardında: model kenarı görüp
+		// "peki o db nasıl" diye sorduğunda cevabı yanında bulsun.
+		getDBHealthTool(d),
+		getMessagingHealthTool(d),
 		// v0.9.1141 (Faz 3.2) — yukarıdaki üçlünün + list_problems'in
 		// `env` arg'ının keşif eşi; hemen yanında duruyor ki model
 		// katalogda arg'ı görünce listesini de görsün.
 		listEnvironmentsTool(d),
 		listProblemsTool(d),
+		// v0.9.1147 (Faz 3.4) — list_problems'in ZAMAN ikizi: o ŞU ANKİ
+		// kümeyi verir (varsayılan status=open), bu pencerede açılan VE
+		// çözülenleri. Yan yana durmaları şart, yoksa model kapanmış bir
+		// olayı "yok" sanır (vardiya sorusunun sessiz yanlış cevabı).
+		listProblemWindowEventsTool(d),
 		getProblemRootCauseTool(d),
 		listAnomaliesTool(d),
 		searchLogsTool(d),
@@ -266,7 +291,7 @@ func registerResources(srv *mcp.Server, d Deps) {
 			// yalnız started_at DESC geliyordu. Yani açıklama yanlıştı
 			// ve modeli yanlış bilgilendiriyordu. Artık zincir koşuyor
 			// ve sıralama gerçekten önceliğe göre.
-			rows = d.Store.EnrichProblemsForRead(ctx, rows, 30*time.Minute)
+			rows = d.Store.EnrichProblemsForRead(ctx, rows, mcpDeployLookback)
 			rows = chstore.SortProblemsByPriority(rows)
 			// v0.8.394 — attach the persisted root-cause hypothesis summary
 			// (one batched read, soft-fails to unenriched rows).
@@ -699,7 +724,7 @@ func listProblemsTool(d Deps) mcp.Tool {
 			// Operatörün "P1 alertleri karıştırıyor" şikâyetinin en
 			// doğrudan kolu buydu: uydurulan tier hiçbir yüzeyle
 			// eşleşmiyor, çünkü hiçbir yerden gelmiyor.
-			rows = d.Store.EnrichProblemsForRead(ctx, rows, 30*time.Minute)
+			rows = d.Store.EnrichProblemsForRead(ctx, rows, mcpDeployLookback)
 			// priority argümanı SQL'de UYGULANMAZ (öncelik okuma anı
 			// hesabı, CH satırında yok — problem.go:594-605). Daraltma
 			// Go'da yapılmazsa argüman sessizce yok sayılır.

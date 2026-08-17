@@ -22,7 +22,7 @@ import { serviceHref } from '@/lib/serviceHref';
 // an anomaly id → anomalyRootCause. Both return the shared RootCause shape (the
 // anomaly variant just adds anchor fields), so the expanded body renders one way.
 export function RootCauseRibbon({
-  anchor, id, summary, defaultOpen, window: win,
+  anchor, id, summary, defaultOpen, window: win, suppressed, onExpandRequest, trailing,
 }: {
   anchor: 'problem' | 'anomaly';
   id: string;
@@ -33,6 +33,27 @@ export function RootCauseRibbon({
   // otomatik genişler: fetch drawer-open anıyla eş (ES-cost disiplini
   // aynen — liste hâlâ lazy, prefetch yok), triage bir tık kısalır.
   defaultOpen?: boolean;
+  // v0.9.1133 (AI Faz 2.3) — ŞERİT BİRLEŞMESİ. Aynı satırda "▸ Ne oldu?"
+  // insight kartı açıkken bu şeridin gövdesi de açılmamalı: ikisi de aynı
+  // olayın kanıtını gösteriyor (deploy, aday servisler, exemplar) ve iki
+  // ayrı sıralama üst üste okunduğunda operatör hangisinin doğru olduğunu
+  // TAHMİN etmek zorunda kalır — v0.9.306'nın "iki çelişen liste" sınıfı.
+  //
+  // `suppressed` yalnız GÖVDEYİ gizler, çipi AYNEN bırakır (collapsed çip
+  // sıfır-fetch, satırın kalıcı özeti — onu da gizlemek satırdan bilgi
+  // silerdi). Çipe basmak ÖLÜ TIK olmasın diye `onExpandRequest` var:
+  // host o çağrıyı alınca kartı kapatır, aynı tıkta bu gövde açılır. Yani
+  // kural "kart açıkken şerit kapalı" değil, "aynı anda TEK kanıt yüzeyi".
+  suppressed?: boolean;
+  onExpandRequest?: () => void;
+  // `trailing` — çipin YANINA giren komşu affordance (bugün "▸ Ne oldu?").
+  // Neden prop, neden host'ta kardeş bir öğe DEĞİL: kardeş yazımda şerit
+  // ile çip aynı flex satırının iki öğesi olurdu ve şerit GENİŞLEDİĞİNDE
+  // gövdesi o öğenin içinde büyüdüğü için satır sığmaz, çip bir alt
+  // satıra — açılan panelin ALTINA — kayardı. Yani operatörün az önce
+  // tıkladığı düğme yer değiştirirdi. Prop hâlinde şerit tek satırı
+  // kendisi kuruyor, gövde HER ZAMAN o satırın altında kalıyor.
+  trailing?: React.ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   // undefined = not fetched yet, null = fetch failed/empty, object = loaded.
@@ -51,11 +72,23 @@ export function RootCauseRibbon({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [defaultOpen, id]);
 
+  // Gövdenin GERÇEK görünürlüğü: kendi açıklığı VE bastırılmamış olması.
+  // `open` state'i korunuyor — kart kapandığında şerit operatörün
+  // bıraktığı hâle döner (kart açmak, şeridi kalıcı olarak kapatmaz).
+  const showBody = open && !suppressed;
+
   const onToggle = () => {
-    const next = !open;
+    // Karar GÖRÜNEN hâle göre: bastırılmışken `!open` "kapat" derdi ama
+    // ekranda kapalı görünen bir şeridi kapatmak ölü tıktır.
+    const next = !showBody;
     setOpen(next);
-    // Lazy first fetch — only when expanding, and only once.
-    if (next) fetchOnce();
+    if (next) {
+      // Aynı satırdaki insight kartı varsa host onu kapatır — iki kanıt
+      // yüzeyi aynı anda açık kalmaz.
+      onExpandRequest?.();
+      // Lazy first fetch — only when expanding, and only once.
+      fetchOnce();
+    }
   };
 
   const conf = summary?.confidence ?? 0;
@@ -63,7 +96,10 @@ export function RootCauseRibbon({
 
   return (
     <div style={{ marginTop: 4 }}>
-      {/* Collapsed chip — pure render from the list summary. */}
+      {/* Collapsed chip — pure render from the list summary. Kendi flex
+          SATIRINDA: komşu affordance (`trailing`) buraya girer, gövde
+          ise her zaman satırın ALTINDA kalır. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', minWidth: 0 }}>
       <button
         type="button"
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
@@ -101,11 +137,13 @@ export function RootCauseRibbon({
             no clear cause yet
           </span>
         )}
-        <span style={{ color: 'var(--text3)', transition: 'transform .12s', transform: open ? 'rotate(90deg)' : 'none' }}>▸</span>
+        <span style={{ color: 'var(--text3)', transition: 'transform .12s', transform: showBody ? 'rotate(90deg)' : 'none' }}>▸</span>
       </button>
+      {trailing}
+      </div>
 
       {/* Expanded panel — the full fan-out, fetched on first open. */}
-      {open && (
+      {showBody && (
         <div
           onClick={(e) => e.stopPropagation()}
           style={{

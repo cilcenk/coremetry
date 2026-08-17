@@ -16,7 +16,7 @@
 // Imported by its module path (NOT the features/anomalies barrel):
 // the barrel re-exports AnomaliesPage, which would drag the whole
 // Exceptions page into the /inbox chunk.
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
@@ -44,6 +44,9 @@ import { withProblemParam } from './problemLink';
 import { findProblemInCaches } from './problemResolve';
 import { RenderedMarkdown, stripMarkdown } from '@/components/Markdown';
 import { PageShell } from '@/components/ui/PageShell';
+// v0.9.1133 (AI Faz 2.3) — satır-altı insight kartının yuvası; şerit
+// RootCauseRibbon ile BİRLEŞİK (iki ayrı kanıt yüzeyi değil).
+import { useInsightRow, InsightRowChip, InsightRowSlot } from '@/components/ai/insightRow';
 
 // Problems-specific severity + priority ordering.
 const SEV_RANK: Record<string, number> = { critical: 3, warning: 2, info: 1 };
@@ -128,6 +131,10 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   const openDetail = (id: string | null) => {
     setSearchParams(prev => withProblemParam(prev, id), { replace: true });
   };
+  // v0.9.1133 (AI Faz 2.3) — açık insight kartı (`?insight=<problem id>`).
+  // `?problem=` tam sayfa detayı açtığı için ondan AYRI bir eksen: satır
+  // yerinde kalır, kanıt altında açılır, "Triage ▶" gezinmesi bozulmaz.
+  const insight = useInsightRow();
   // Bulk-select state (v0.5.83). Operators can multi-select
   // problems and acknowledge them in one POST — typical
   // workflow during a fan-out incident where 20 alerts fire
@@ -555,8 +562,13 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
               {sorted.map((p, i) => {
                 const isAnomaly = p.ruleId?.startsWith('anomaly:');
                 return (
-                  <tr key={p.id}
-                      {...dt.rowProps(i)}
+                  // v0.9.1133 — key FRAGMENT'te: satır artık iki `<tr>`
+                  // döndürebiliyor (satır + açık insight kartı). Keyless bir
+                  // `<>` reconcile'ı yanlış eşleştirir ve sıralama
+                  // değiştiğinde açık kart BAŞKA bir satırın altında kalır
+                  // (MT4, brokenAffordances kapısı).
+                  <Fragment key={p.id}>
+                  <tr {...dt.rowProps(i)}
                       onClick={() => openDetail(p.id)}
                       onKeyDown={(e) => {
                         // Keyboard accessibility — Enter/Space opens the same
@@ -685,8 +697,26 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                             fetch); expand reads the full /rootcause fan-out.
                             The chip's own stopPropagation keeps the row's
                             navigate-on-click intact. */}
+                        {/* v0.9.1133 (AI Faz 2.3) — TEK ŞERİT: kök-neden çipi
+                            ve "▸ Ne oldu?" yan yana, ŞERİDİN KENDİ satırında
+                            (`trailing`) — kardeş öğe olarak koyulsa şerit
+                            genişlediğinde çip panelin altına kayardı.
+                            Collapsed kök-neden çipi AYNEN duruyor (sıfır
+                            fetch, satırın kalıcı özeti); kart açıkken
+                            şeridin GÖVDESİ bastırılıyor (`suppressed`) —
+                            ikisi de aynı olayın kanıtını gösteriyor ve üst
+                            üste açık iki sıralama operatörü "hangisi doğru"
+                            tahminine zorlar (v0.9.306 sınıfı). Şeride basmak
+                            ölü tık DEĞİL: `onExpandRequest` kartı kapatır,
+                            aynı tıkta gövde açılır. */}
                         <div style={{ marginTop: p.aiSummary ? 6 : 2 }}>
-                          <RootCauseRibbon anchor="problem" id={p.id} summary={p.rootCause} />
+                          <RootCauseRibbon anchor="problem" id={p.id} summary={p.rootCause}
+                            suppressed={insight.openId === p.id}
+                            onExpandRequest={insight.close}
+                            trailing={
+                              <InsightRowChip open={insight.openId === p.id}
+                                onToggle={() => insight.toggle(p.id)} />
+                            } />
                         </div>
                       </td>
                       <td className="mono">{tsLong(p.startedAt)}</td>
@@ -713,6 +743,14 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
                         </Button>
                       </td>
                     </tr>
+                  {/* Kart YALNIZ açık satırda mount olur; kapanınca unmount
+                      edilir ve uçuştaki SSE akışı kesilir. Kolon sayısı:
+                      1 (seçim) + 8 (PROBLEM_COLS) + 2 (Assignee/Triage). */}
+                  {insight.openId === p.id && (
+                    <InsightRowSlot kind="problem" id={p.id}
+                      colSpan={11} onClose={insight.close} />
+                  )}
+                  </Fragment>
                 );
               })}
             </tbody>

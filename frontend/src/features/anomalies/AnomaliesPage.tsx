@@ -32,6 +32,10 @@ import { AlertProblemHost } from './ProblemsSection';
 import { serviceHref } from '@/lib/serviceHref';
 import { QueryError, QueryErrorInline } from '@/components/QueryError';
 import { PageShell } from '@/components/ui/PageShell';
+// v0.9.1133 (AI Faz 2.3) — satır-altı insight kartının yuvası.
+import { useInsightRow, InsightRowChip, InsightRowSlot } from '@/components/ai/insightRow';
+import { stripMarkdown } from '@/components/Markdown';
+import { IconSparkles } from '@/components/icons';
 
 // State buckets shown as tabs along the top of the page.
 const TABS: { key: string; label: string; hint: string }[] = [
@@ -197,6 +201,11 @@ export default function ProblemsPage() {
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [excParam, data]);
+  // v0.9.1133 (AI Faz 2.3) — "▸ Ne oldu?" kartının açık satırı, `?insight=`
+  // üzerinden. `?exc=` (tam sayfa detay) ile ÇAKIŞMIYOR: bu eksen satırı
+  // yerinde bırakıp altına kanıt açar, o eksen listeyi bırakıp detaya
+  // geçer. Satır tıkı hâlâ detaya gider — çip kendi tık hedefi.
+  const insight = useInsightRow();
   const openExcDetail = (g: ExceptionGroup) => {
     setDetail(g);
     setExcNotFound(false);
@@ -573,6 +582,17 @@ export default function ProblemsPage() {
                                 &lt;1h
                               </span>
                             )}
+                            {/* v0.9.1133 (AI Faz 2.3) — insight çipi, satırın
+                                BAŞLIK satırının sağ ucunda (mockup: sağa
+                                yaslı). Kendi şeridinde durması her satıra bir
+                                satır yükseklik eklerdi ve çipin bedeli
+                                "kapalıyken sıfır" olmak zorunda: tablo
+                                yoğunluğu bu sayfada hard kısıt (>100 satır
+                                listesi). Çip zaten var olan başlık satırının
+                                boşluğuna oturuyor. */}
+                            <span style={{ flex: 1 }} />
+                            <InsightRowChip open={insight.openId === g.fingerprint}
+                              onToggle={() => insight.toggle(g.fingerprint)} />
                           </div>
                           <div className="mono" style={{ fontSize: 10.5, color: 'var(--text3)',
                                         maxWidth: 480, overflow: 'hidden',
@@ -580,6 +600,29 @@ export default function ProblemsPage() {
                                title={g.message}>
                             {g.message || '—'}
                           </div>
+                          {/* v0.9.1133 (AI Faz 2.3) — PASİF özet satırı.
+                              ExceptionExplainer'ın arka planda yazdığı
+                              `aiSummary` (v0.9.415) bu listenin payload'ında
+                              ZATEN geliyordu (ListExceptionGroups ai_summary'yi
+                              seçiyor) ama hiçbir yerde çizilmiyordu — yalnız
+                              detay sayfası gösteriyordu. Sıfır fetch, sıfır
+                              LLM: satır ne yazılmışsa onu okur. Özet YOKSA
+                              hiçbir şey çizilmez (uydurma bir cümle yerine
+                              sessizlik); yalnız çip durur.
+                              stripMarkdown ŞART: model `**kalın**` üretiyor ve
+                              tek satırlık kırpılmış bir yüzeyde yıldızlar
+                              ekrana dökülür (v0.9.641/696 sınıfı). */}
+                          {g.aiSummary && (
+                            <div style={{
+                              display: 'flex', alignItems: 'baseline', gap: 5, marginTop: 3,
+                              fontSize: 10.5, color: 'var(--text2)', maxWidth: 480, minWidth: 0,
+                            }} title={stripMarkdown(g.aiSummary)}>
+                              <IconSparkles size={10} />
+                              <span style={{
+                                overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}>{stripMarkdown(g.aiSummary)}</span>
+                            </div>
+                          )}
                         </td>
                         <td>
                           {/* v0.9.966 — grubun KENDİ ömrü (firstSeen→
@@ -628,6 +671,17 @@ export default function ProblemsPage() {
                             <SamplesPanel fingerprint={g.fingerprint} occurrences={Number(g.occurrences)} />
                           </td>
                         </tr>
+                      )}
+                      {/* v0.9.1133 (AI Faz 2.3) — kart YALNIZ açık satırda
+                          mount olur (kapalı satır sıfır istek), kapanınca
+                          unmount edilir ve uçuştaki akış kesilir. Caret'in
+                          örnek-gözü (yukarıdaki satır) ayrı affordance
+                          olarak KALIYOR: o grubun ham occurrence'ları, bu
+                          ise sinyal + anlatı — biri ötekinin özeti değil,
+                          çelişebilecek iki sıralama da değil. */}
+                      {insight.openId === g.fingerprint && (
+                        <InsightRowSlot kind="exception" id={g.fingerprint}
+                          colSpan={isAdmin ? 9 : 8} onClose={insight.close} />
                       )}
                     </Fragment>
                   );

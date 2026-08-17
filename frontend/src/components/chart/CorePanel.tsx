@@ -68,7 +68,8 @@ import { getItem, setItem, legendCollapseKey } from '@/lib/storage';
 import { useThemeTick } from '@/lib/useThemeTick';
 import { fmtSmart } from '@/lib/chartFmt';
 import { Spinner, Empty } from '@/components/Spinner';
-import { Button } from '@/components/ui';
+import { Button, MenuItem } from '@/components/ui';
+import type { PanelMenuAction } from '@/lib/chart/panelMenu';
 
 // bucketWindowAt (v0.9.789) — sayfa koordinatındaki bir tıkı, tıklanan
 // bucket'ın ns penceresine çevirir. Çizim alanı DIŞINDA (eksen şeridi,
@@ -171,6 +172,16 @@ export interface CorePanelProps {
   // Log ölçek kullanıcıya AÇILSIN mı (menüde toggle). logScale prop'u
   // başlangıç değeri; toggle panel-yerel state'e biner.
   logScaleToggle?: boolean;
+  // v0.9.1163 (operatör-raporlu: "panellerde çift ⋯") — DEVREDİLEN menü
+  // satırları. Paneli SARAN bir kabuk (MetricPanel'in "her metrik bir
+  // kapıdır" affordance'ı) kendi kebabını bastırıp eylemlerini buraya
+  // verir; panelin ⋯'ü onları listesinin BAŞINA, ayraçla, kendi satır
+  // atomuyla basar. Sözleşme + gerekçeler: lib/chart/panelMenu.ts.
+  //
+  // Bir ÇİZİM girdisi DEĞİL: hiçbir config bağımlılık dizisine girmez
+  // (v0.9.704 destroy/recreate dersi) — her render'da yeni bir dizi
+  // kimliği gelmesi uPlot'a dokunmaz.
+  menuExtra?: PanelMenuAction[];
   // v0.9.737 tek-tık büyütme → v0.9.742 (operatör tercihi): tık artık
   // ÇAĞIRANIN verdiği eyleme gider (ör. Metrics sayfasına navigasyon);
   // tam ekran menüde duruyor. Drag-zoom ve çift-tık (zoom reset) ile
@@ -247,7 +258,7 @@ export function CorePanel({
   thresholds, regions, bands, queryText, logScaleToggle, connectNulls,
   defaultHidden, xRange, headerExtra, note, onExpandClick, exemplars, onExemplarClick,
   onBucketClick, hiddenNames, hideLegend, onCursorTime, dashed, viz = 'line',
-  focusedLabel,
+  focusedLabel, menuExtra,
 }: CorePanelProps) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -1025,7 +1036,18 @@ export function CorePanel({
           <span className="badge b-warn" title={data.partial}>kısmi</span>
         )}
         {headerExtra && <span style={{ marginLeft: 'auto' }}>{headerExtra}</span>}
-        {/* FAZ 2D — panel menüsü: tam ekran / CSV / sorguyu göster / log. */}
+        {/* FAZ 2D — panel menüsü: tam ekran / CSV / sorguyu göster / log.
+            v0.9.1163 (operatör-raporlu) — PANEL BAŞINA TEK ⋯. Saran kabuğun
+            kapı eylemleri menuExtra ile buraya iner; artık ikinci bir tetik
+            YOK. Satırlar paylaşılan MenuItem atomundan basılıyor: bu dört
+            satır elle kurulmuş <Button variant="secondary"> idi ve v0.9.890'ın
+            BB10 dalgası (dört dropdown kopyasını MenuItem'a çeviren) bu
+            beşincisini atlamıştı. Devredilenler MenuItem'ken yerliler Button
+            kalsaydı tek listede iki dropdown dialekti okunurdu — ve
+            `role="menu"` içindeki satırlar `role="menuitem"` taşımadığı için
+            menü ekran okuyucuya menü OLARAK tanıtılmıyordu (BB10'un kendi
+            gerekçesi). minWidth 150 → 188: Dashboard PanelMenu ve MetricPanel
+            dropdown'larıyla aynı ölçü, ve devredilen etiketler daha uzun. */}
         <span ref={menuRef} style={{ marginLeft: headerExtra ? 0 : 'auto', position: 'relative' }}>
           <IconButton variant="secondary" size="xs"
             aria-label="Panel menüsü" aria-haspopup="menu" aria-expanded={menuOpen}
@@ -1035,24 +1057,38 @@ export function CorePanel({
               position: 'absolute', right: 0, top: '100%', zIndex: 'var(--z-dropdown)',
               background: 'var(--bg1)', border: '1px solid var(--border)',
               borderRadius: 6, padding: 4, display: 'flex',
-              flexDirection: 'column', gap: 2, minWidth: 150,
+              flexDirection: 'column', gap: 2, minWidth: 188,
             }}>
-              <Button variant="secondary" onClick={() => { setFullscreen(f => !f); setMenuOpen(false); }}>
+              {/* DEVREDİLEN aile ÜSTTE: sarmalayıcının vaadi "bu panel bir
+                  kapıdır", yani ⋯ önce kapıyı açar. Kapanış kararı BURADA
+                  (keepOpen sözleşmesi) — çağıran menuOpen'a erişemez. */}
+              {(menuExtra ?? []).map(a => (
+                <MenuItem key={a.key} disabled={a.disabled}
+                  onClick={() => { if (!a.keepOpen) setMenuOpen(false); a.onClick(); }}>
+                  {a.label}
+                </MenuItem>
+              ))}
+              {!!menuExtra?.length && (
+                <div role="separator" style={{
+                  height: 1, background: 'var(--border)', margin: '2px 0',
+                }} />
+              )}
+              <MenuItem onClick={() => { setFullscreen(f => !f); setMenuOpen(false); }}>
                 {fullscreen ? 'Tam ekrandan çık' : 'Tam ekran'}
-              </Button>
-              <Button variant="secondary" disabled={data.state !== 'ready'}
+              </MenuItem>
+              <MenuItem disabled={data.state !== 'ready'}
                 onClick={() => { downloadCsv(); setMenuOpen(false); }}>
                 CSV indir
-              </Button>
+              </MenuItem>
               {queryText && (
-                <Button variant="secondary" onClick={() => { setShowQuery(q => !q); setMenuOpen(false); }}>
+                <MenuItem onClick={() => { setShowQuery(q => !q); setMenuOpen(false); }}>
                   Sorguyu göster
-                </Button>
+                </MenuItem>
               )}
               {logScaleToggle && (
-                <Button variant="secondary" onClick={() => setLogLocal(l => !l)}>
+                <MenuItem onClick={() => setLogLocal(l => !l)}>
                   {effLog ? '✓ ' : ''}Log ölçek
-                </Button>
+                </MenuItem>
               )}
             </div>
           )}

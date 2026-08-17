@@ -716,7 +716,12 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           bozuk/zıplıyor" diye yaşıyordu. Doorway hover ⋮ ve `e` kısayoluyla
           erişilebilir kalıyor; KPI karoları gövde-tıklamasını koruyor. */}
       <div className="ov-grid ov-charts-3 ov-mb">
-        <MetricPanel compact menuOnly title="Response time" metricQuery={mkMetricResponseTime()}>
+        {/* v0.9.1163 (operatör-raporlu: "çift ⋯") — suppressMenu + fonksiyon
+            çocuk: kapı eylemleri (⤢/✎/⟨⟩/⧉) panelin KENDİ ⋯ menüsüne
+            menuExtra ile iniyor. Tipi ayrık birleşim tutuyor: bastırıp
+            devretmeyi unutan bir çağrı derlenmez (MetricPanel gerekçesi). */}
+        <MetricPanel compact menuOnly suppressMenu title="Response time" metricQuery={mkMetricResponseTime()}>
+          {(doorway) => (<>
           {/* v0.9.484 — TEK kart, iki görünüm. Başlık/kapsam tooltip'i
               (v0.9.483) ve deploy ▼ / eşik / zoom / sync kablolaması ikisinde
               de AYNI; değişen yalnız çizgiler, durum ve lejant anahtarı.
@@ -747,6 +752,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
                 // çizgi açıyor, operatör "eskiden route grafiğini
                 // gösteriyordu" diyordu. Throughput paneli (:723) doğru
                 // deseni zaten taşıyordu.
+                menuExtra={doorway}
                 storageKey="ov-response-time-metric-v2" height={200} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
                 loading={metricTputQ.isLoading || rtAvgQ.isLoading}
                 // Birim SUNUCUDAN gelen OTLP birimine göre; tanınmazsa
@@ -788,8 +794,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
               olarak yaşadığı için kod duruyordu, bugün o kapı da yok.
               Kuyruk görünürlüğü kaybolmadı: span P99 üstteki karonun
               ikincil satırında (v0.9.798). */}
+          </>)}
         </MetricPanel>
-        <MetricPanel compact menuOnly title="Throughput" metricQuery={mkThroughput('line')}>
+        <MetricPanel compact menuOnly suppressMenu title="Throughput" metricQuery={mkThroughput('line')}>
+          {(doorway) => (<>
           {/* v0.9.253 — status ve seri artık ENTRY sorgusundan. Kart üstündeki
               KPI giriş span'lerini sayarken altındaki grafiğin tüm span'leri
               çizmesi, aynı kartta iki farklı servisi üst üste koymak olurdu. */}
@@ -800,6 +808,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             <Suspense key="tput-metric-v2-main" fallback={<Spinner />}>
               <CorePanelMultiLazy
                 title={`Throughput · metrik (${metricTputQ.data?.metric ?? ''})`}
+                menuExtra={doorway}
                 storageKey="ov-throughput-metric-v2"
                 loading={metricTputQ.isLoading}
                 height={200} xRange={xRange} onExpandClick={() => navigate(metricsHref({ by: 'http.route' }))}
@@ -850,9 +859,10 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
           {metricTputQ.data && metricTputEmpty && (
             <MetricThroughputNote d={metricTputQ.data} />
           )}
+          </>)}
         </MetricPanel>
-        <MetricPanel compact menuOnly title="Failure rate" metricQuery={mkFailureRate('line')}>
-          {(
+        <MetricPanel compact menuOnly suppressMenu title="Failure rate" metricQuery={mkFailureRate('line')}>
+          {(doorway) => (
             /* v0.9.739 (operatör netleştirmesi): GRAFİK 736'daki birleşik
                OK+Errors (req/s) — v0.9.738 grafiği değiştirerek yanlış
                okumuştu; istenen yalnız BAŞLIKTI. "Failure rate · trace"
@@ -864,6 +874,7 @@ export function ServiceOverview({ service, range, windowNs, info, operations, en
             <Suspense key="failure-rate-v2" fallback={<Spinner />}>
               <CorePanelMultiLazy
                 title={scopedChartTitle('Failure rate · trace', usingAllSpans)}
+                menuExtra={doorway}
                 storageKey="ov-throughput-failure-v2" height={200} unit="reqps" xRange={xRange}
                 loading={latStatus === 'loading'}
                 items={[

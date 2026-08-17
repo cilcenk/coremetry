@@ -186,19 +186,52 @@ func TestStripGoComments(t *testing.T) {
 //     tutar ya da gevşetilmesine yol açar.
 //   - Uçlar TAM URL: `api.anthropic.com` tek başına
 //     chstore/external_catalogue.go'daki alan-adı kataloğuyla çakışırdı.
-var llmBodyIdioms = []string{
-	`"stream"`,         // stream:true bayrağı
-	`"stream_options"`, // include_usage — düşerse usage sessizce 0'lanır
-	`"tool_calls"`,
-	`"tool_use"`,
-	`"tool_result"`,
-	`"/chat/completions"`,
-	`api.anthropic.com/v1/messages`,
+// llmBodyIdiom — bir deyimi ele veren YAZILIŞLAR. Çoğunun tek yazılışı
+// var; `stream` bayrağının iki yazılışı olabilir (map anahtarı ya da
+// struct etiketi) ve çıplak `"stream"` araması bir HTTP SORGU
+// PARAMETRESİ okuyan alakasız dosyaya da çarpıyordu (v0.9.1127, Faz 1.5:
+// explain uçlarının `?stream=1` bayrağı — LLM gövdesi değil).
+//
+// Sinyal daraltıldı, kapı GEVŞETİLMEDİ: iki gövde yazılışı da ölçülüyor
+// ve TestLLMBodyIdiomSpellingsBite ikisini de mutasyonla pinliyor. Bu,
+// yukarıdaki yorumun `"tools"`/`"messages"` için verdiği kararın aynısı —
+// alakasız çakışma kapıyı ya kırmızı tutar ya da gevşetilmesine yol açar,
+// doğru cevap deyimi keskinleştirmektir.
+type llmBodyIdiom struct {
+	label     string
+	spellings []string
+}
+
+func oneSpelling(s string) llmBodyIdiom { return llmBodyIdiom{label: s, spellings: []string{s}} }
+
+var llmBodyIdioms = []llmBodyIdiom{
+	// stream:true bayrağı — ÜÇ yazılış: map literali (`"stream":`), map
+	// indeksleme (`m["stream"] = true`) ve struct etiketi. Üçü de gövde
+	// kurar; biri atlanırsa kapının kapsamı sessizce daralır.
+	{label: `"stream" (gövde bayrağı)`, spellings: []string{
+		`"stream":`, `"stream"]`, `json:"stream"`, "json:\"stream,",
+	}},
+	oneSpelling(`"stream_options"`), // include_usage — düşerse usage sessizce 0'lanır
+	oneSpelling(`"tool_calls"`),
+	oneSpelling(`"tool_use"`),
+	oneSpelling(`"tool_result"`),
+	oneSpelling(`"/chat/completions"`),
+	oneSpelling(`api.anthropic.com/v1/messages`),
 	// Faz 1.4 — son bant-dışı LLM istemcisi (rag.embedOnce) kapandı.
 	// Tırnaklı yazılış şart: rag.go yorumları `/v1/embeddings`i düz
 	// metinde anıyor ve tarayıcı yorumları zaten soyuyor, ama uç
 	// birleştirmesi (`… + "/embeddings"`) yalnız bu şekilde ele veriyor.
-	`"/embeddings"`,
+	oneSpelling(`"/embeddings"`),
+}
+
+// containsAny — deyimin yazılışlarından HERHANGİ biri geçiyor mu?
+func containsAny(src string, spellings []string) bool {
+	for _, sp := range spellings {
+		if strings.Contains(src, sp) {
+			return true
+		}
+	}
+	return false
 }
 
 // futureLLMBodyIdioms — bugün HİÇBİR YERDE geçmeyen, ama geçtiği gün
@@ -219,7 +252,7 @@ func TestLLMRequestBodiesLiveOnlyInProvider(t *testing.T) {
 	for _, idiom := range llmBodyIdioms {
 		var inProvider, outside []string
 		for path, src := range files {
-			if !strings.Contains(stripGoComments(src), idiom) {
+			if !containsAny(stripGoComments(src), idiom.spellings) {
 				continue
 			}
 			if strings.Contains(path, providerDir) {
@@ -232,10 +265,34 @@ func TestLLMRequestBodiesLiveOnlyInProvider(t *testing.T) {
 		// (alan adı değişmiş, yazılış kaymış) ve kapı "dışarıda 0 hit"
 		// diye SESSİZCE yeşil yanardı — ölçmediği için.
 		if len(inProvider) == 0 {
-			t.Errorf("%s deyimi internal/ai/provider'da HİÇ geçmiyor — kapı anahtarı bayat, bu satır hiçbir şey ölçmüyor", idiom)
+			t.Errorf("%s deyimi internal/ai/provider'da HİÇ geçmiyor — kapı anahtarı bayat, bu satır hiçbir şey ölçmüyor", idiom.label)
 		}
 		if len(outside) > 0 {
-			t.Errorf("%s deyimi provider DIŞINDA kuruluyor: %v — LLM istek gövdeleri tek yazılış olmalı (Faz 1.3)", idiom, outside)
+			t.Errorf("%s deyimi provider DIŞINDA kuruluyor: %v — LLM istek gövdeleri tek yazılış olmalı (Faz 1.3)", idiom.label, outside)
+		}
+	}
+
+	// Kapı bugün gerçekten ısırıyor mu? Deyimlerin provider'daki tabanı
+	// yukarıda ölçülüyor; burada DIŞARIDA bir gövde kurulsa yakalanır mı
+	// sorusunu sentetik kaynakla soruyoruz. Yazılış daraltmasının
+	// (v0.9.1127) kapının kapsamını düşürmediğinin pini bu.
+	for _, tc := range []struct {
+		name string
+		src  string
+		want bool
+	}{
+		{"map anahtarı", "body := map[string]any{\n\"stream\": true,\n}\n", true},
+		{"map indekslemesi", "body[\"stream\"] = true\n", true},
+		{"struct etiketi", "type req struct{ Stream bool `json:\"stream\"` }\n", true},
+		{"struct etiketi + omitempty", "type req struct{ Stream bool `json:\"stream,omitempty\"` }\n", true},
+		// HTTP sorgu parametresi bir LLM gövdesi DEĞİL — v0.9.1127'de
+		// explain uçlarına gelen `?stream=1` bayrağı bu yüzden serbest.
+		{"sorgu parametresi okuması", "v := r.URL.Query().Get(\"stream\")\n", false},
+		{"yorumda geçen kelime", "// stream:true bayrağı\n", false},
+	} {
+		got := containsAny(stripGoComments(tc.src), llmBodyIdioms[0].spellings)
+		if got != tc.want {
+			t.Errorf("stream deyimi / %s: eşleşme=%v, beklenen %v", tc.name, got, tc.want)
 		}
 	}
 

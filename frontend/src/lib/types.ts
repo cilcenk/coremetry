@@ -4289,6 +4289,26 @@ export type ChatStreamEvent =
   | { kind: 'error'; error: string }
   | { kind: 'done'; ok: boolean };
 
+// AIStreamFrame (v0.9.1127, Faz 1.5) — bir SSE çerçevesinin HAM şekli:
+// `kind` (event: satırı) + çözümlenmiş data gövdesi. ChatStreamEvent bu
+// akışın SOHBET yüzeyindeki daraltılmış hâli; tek-atış ✨ Explain aynı
+// taşımayı BAŞKA alanlarla (evidenceSpanIds, code, similarCount…)
+// kullandığı için ayrıştırıcı katman dar birleşim yerine bu açık şekli
+// konuşur ve tüketici kendi daraltmasını yapar.
+export interface AIStreamFrame {
+  kind: string;
+  [k: string]: unknown;
+}
+
+// AIExplainStreamAnswer (v0.9.1127) — akan ✨ Explain'in çözülmüş cevabı.
+// `answer` çerçevesindeki `text` burada `explanation` olur: buffered
+// gövdenin alan adı odur ve iki kip arasında çağıranın hiçbir dalı
+// olmamalı.
+export interface AIExplainStreamAnswer {
+  explanation: string;
+  exchangeId?: string;
+}
+
 // RAG doküman katalog satırı + config görünümü (v0.8.438).
 export interface RagDocument {
   docId: string;

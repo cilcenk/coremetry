@@ -93,24 +93,46 @@ func (s *Server) putAIRates(w http.ResponseWriter, r *http.Request) {
 // rest of the handler — surface is derived from the request path
 // and the auth claims live in ctx via the auth middleware.
 func (s *Server) copilotExplain(r *http.Request, system, user string) (string, error) {
-	surface := aiSurfaceFromPath(r.URL.Path)
+	return s.copilot.Explain(explainCallCtx(r), system, user)
+}
+
+// copilotExplainStream (v0.9.1127, Faz 1.5) — copilotExplain'in AKAN
+// ikizi. Aynı atıf sözleşmesi (surface path'ten, kullanıcı claims'ten,
+// ctx'teki ExchangeID taşınır → tek ai_calls satırı); tek fark cevabın
+// token token onDelta'dan geçmesi.
+//
+// TEK yazılış BİLİNÇLİ: meta kurulumu copilotExplain ile ortak
+// explainCallCtx'ten geliyor. İki ayrı yazılış olsaydı, v0.9.593'ün
+// düzelttiği "ExchangeID sessizce düşüyor" hatası akan yolda yeniden
+// doğardı — o hata tam olarak "aynı karar iki yerde yazılmıştı" hatasıydı.
+//
+// StreamText, akıyamayan uçta ŞEFFAF biçimde buffered çağrıya düşer
+// (sıfır delta + tam metin), yani çağıran her iki durumda da aynı
+// "cevap metni doğrunun kaynağıdır" sözleşmesini korur.
+func (s *Server) copilotExplainStream(r *http.Request, system, user string, onDelta func(string)) (string, error) {
+	return s.copilot.StreamText(explainCallCtx(r), system, user, onDelta)
+}
+
+// explainCallCtx — tek-atış ✨ çağrısının atıf bağlamı: surface (istek
+// path'inden), kullanıcı kimliği (auth claims) ve çağıranın ctx'e koyduğu
+// exchange kimliği.
+//
+// v0.9.1119 (Faz 0.3) — v0.9.593'ün JSON varyantına getirdiği taşıma
+// buraya da: çağıran ctx'e exchange kimliği koyduysa (withExchange)
+// ai_calls satırına biner ve tek-atış prose yüzeyleri de oylanabilir
+// olur. O satırın YOKLUĞU, 15 yüzeyin 👍/👎 alamamasının tek sebebiydi.
+func explainCallCtx(r *http.Request) context.Context {
 	c := auth.FromContext(r.Context())
 	uid, email := "", ""
 	if c != nil {
 		uid, email = c.UserID, c.Email
 	}
-	ctx := copilot.WithMeta(r.Context(), copilot.CallMeta{
-		Surface:   surface,
-		UserID:    uid,
-		UserEmail: email,
-		// v0.9.1119 (Faz 0.3) — v0.9.593'ün JSON varyantına getirdiği
-		// taşıma buraya da: çağıran ctx'e exchange kimliği koyduysa
-		// (withExchange) ai_calls satırına biner ve tek-atış prose
-		// yüzeyleri de oylanabilir olur. Bu satırın YOKLUĞU, 15
-		// yüzeyin 👍/👎 alamamasının tek sebebiydi.
+	return copilot.WithMeta(r.Context(), copilot.CallMeta{
+		Surface:    aiSurfaceFromPath(r.URL.Path),
+		UserID:     uid,
+		UserEmail:  email,
 		ExchangeID: copilot.MetaFromContext(r.Context()).ExchangeID,
 	})
-	return s.copilot.Explain(ctx, system, user)
 }
 
 // withExchange — tek-atış ✨ yüzeyinin geri bildirim rayı (v0.9.1119,

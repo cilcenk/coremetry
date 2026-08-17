@@ -30,6 +30,10 @@ import type {
   ExceptionTriageConfig, ProblemPriorityConfig, FailureSLOConfig, MetricExclusions, AnomalyTrackedConfig,
   AnomalySensitivityConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
+// readSSE — `event:`/`data:` çerçeve okuyucusu. v0.9.1127'de bu dosyanın
+// içinden (copilotChat'in gövdesinden) çıkarıldı: ikinci tüketici (akan
+// ✨ Explain) gelince gömülü ayrıştırıcı ikinci kopya demekti.
+import { readSSE } from './sse';
 // GoDuration — every `since` below is forwarded to Go's time.ParseDuration,
 // which has no day unit; see the type's comment in utils.ts.
 import type { GoDuration } from './utils';
@@ -76,6 +80,86 @@ function explainInit(includeCode?: boolean): RequestInit {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ includeCode: true }),
   };
+}
+
+/** Akan ✨ Explain'in çağıran tarafındaki isteğe bağlı kancaları. */
+export interface ExplainStreamOpts {
+  /** Verilirse istek `?stream=1` ile gider ve token'lar buradan akar. */
+  onDelta?: (text: string) => void;
+  /** "Yeniden sor" uçuştaki akışı iptal eder. */
+  signal?: AbortSignal;
+}
+
+/**
+ * explainStream — tek-atış ✨ Explain uçlarının AKAN çağrısı (v0.9.1127,
+ * Faz 1.5).
+ *
+ * ÜÇ GERİ DÜŞÜŞ YOLU var ve üçü de sessiz olmak ZORUNDA — operatör
+ * cevabını alır, taşımanın hangi yoldan geldiğini bilmez:
+ *
+ *  1. Sunucu SSE yerine düz JSON döndü. StreamText sözleşmesi bunu açıkça
+ *     mümkün kılıyor: akıyamayan bir uçta (vLLM'in bazı build'leri)
+ *     sunucu şeffaf biçimde buffered çağrıya düşer. `?stream=1` bir
+ *     TALEP, garanti değil — gövdenin content-type'ına bakılır, isteğe
+ *     bakılmaz.
+ *  2. SSE ama sıfır delta. Aynı sebep, sunucu tarafında bir kademe
+ *     yukarıda; `answer` çerçevesi tam metni taşır ve cevap tek seferde
+ *     görünür.
+ *  3. `error` çerçevesi. Akış başladıktan sonraki hata statü koduyla
+ *     anlatılamaz; burada Error'a çevrilir ve çağıran hiç fark etmez.
+ *
+ * Cevabın kaynağı HER ZAMAN `answer` çerçevesidir, biriken delta'lar
+ * değil: model reasoning bloğu üretip cevabı sonda toparlarsa delta
+ * toplamı eksik kalır. Delta'lar yalnız ilerleme gösterimi.
+ */
+async function explainStream<T>(path: string, init: RequestInit, opts: ExplainStreamOpts): Promise<T> {
+  const sep = path.includes('?') ? '&' : '?';
+  const r = await fetch(API_BASE + path + sep + 'stream=1', {
+    credentials: 'include', ...init, signal: opts.signal,
+  });
+  if (r.status === 401) {
+    onUnauthorized?.();
+    throw new UnauthorizedError(await r.text().catch(() => 'unauthorized'));
+  }
+  if (!r.ok) throw new Error(`HTTP ${r.status}: ${await r.text()}`);
+
+  const ct = r.headers.get('content-type') ?? '';
+  if (!r.body || !ct.includes('text/event-stream')) {
+    // (1) Sunucu buffered cevap verdi — gövde ZATEN tam cevap.
+    return await (r.json() as Promise<T>);
+  }
+
+  let answer: T | null = null;
+  let failed: string | null = null;
+  await readSSE(r.body, f => {
+    if (f.kind === 'delta') {
+      const t = f.text;
+      if (typeof t === 'string' && t) opts.onDelta?.(t);
+      return;
+    }
+    if (f.kind === 'answer') {
+      // `answer` çerçevesi metni `text` alanında taşır (chat/drawer ile
+      // aynı şekil); buffered gövdenin alan adı `explanation`. Tek şekle
+      // indiriliyor ki çağıranın kip dalı OLMASIN.
+      const { kind: _kind, text, ...extra } = f;
+      answer = { explanation: typeof text === 'string' ? text : '', ...extra } as T;
+      return;
+    }
+    if (f.kind === 'error') failed = typeof f.error === 'string' ? f.error : 'explain failed';
+  });
+  if (failed) throw new Error(failed);
+  if (answer === null) throw new Error('AI akışı cevapsız kapandı');
+  return answer;
+}
+
+/**
+ * explainCall — bir ✨ Explain ucunun TEK giriş noktası. `onDelta` yoksa
+ * bugünkü buffered `request()` yolu (bayt bayt aynı), varsa akan yol.
+ * Uç başına kip dalı YAZILMAZ: sekiz çağrı da bu tek fonksiyondan geçer.
+ */
+function explainCall<T>(path: string, init: RequestInit, opts?: ExplainStreamOpts): Promise<T> {
+  if (!opts?.onDelta) return request<T>(path, opts?.signal ? { ...init, signal: opts.signal } : init);
+  return explainStream<T>(path, init, opts);
 }
 
 // v0.8.413 — heavy, deliberate admin actions (telemetry purge) may
@@ -1547,31 +1631,10 @@ export const api = {
     if (!r.ok || !r.body) {
       throw new Error(`chat failed: ${r.status}`);
     }
-    const reader = r.body.getReader();
-    const decoder = new TextDecoder();
-    let buf = '';
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      buf += decoder.decode(value, { stream: true });
-      // SSE frames are separated by a blank line.
-      let sep: number;
-      while ((sep = buf.indexOf('\n\n')) !== -1) {
-        const frame = buf.slice(0, sep);
-        buf = buf.slice(sep + 2);
-        let event = 'message';
-        let data = '';
-        for (const line of frame.split('\n')) {
-          if (line.startsWith('event:')) event = line.slice(6).trim();
-          else if (line.startsWith('data:')) data += line.slice(5).trim();
-        }
-        if (!data) continue;
-        try {
-          const payload = JSON.parse(data);
-          onEvent({ kind: event, ...payload } as import('./types').ChatStreamEvent);
-        } catch { /* ignore malformed frame */ }
-      }
-    }
+    // v0.9.1127 — çerçeve ayrıştırma lib/sse.ts'e taşındı; akan ✨ Explain
+    // AYNI okuyucuyu kullanıyor. Davranış birebir (tampon + boş-satır
+    // sınırı + bozuk çerçeveyi atlama), yalnız yazılış tek.
+    await readSSE<import('./types').ChatStreamEvent>(r.body, onEvent);
   },
   // analyzeService (v0.8.85) — per-service single-shot AI analysis. The server
   // summarises RED + baseline + top errors + deploys + neighbours and the
@@ -1591,32 +1654,40 @@ export const api = {
   // aşağıdaki BÜTÜN prose explain uçlarında var — explain-charts HARİÇ
   // (yanıtı sunucu-cache'li; cache'li gövdedeki kimlik ikinci
   // kullanıcının oyunu başkasının çağrısına yazardı).
-  copilotExplainTrace:   (id: string, includeCode?: boolean) =>
-    request<{ explanation: string; exchangeId?: string; evidenceSpanIds?: string[]; code?: import('./types').AICodeContext }>(
-      `/api/copilot/explain-trace/${id}`, explainInit(includeCode)),
+  //
+  // v0.9.1127 (Faz 1.5) — sekizi de opsiyonel `opts.onDelta` alıyor:
+  // verilince istek `?stream=1` ile gider ve cevap token token akar.
+  // VERİLMEYİNCE gövde de davranış da bayt bayt eskisi — akan kip bir
+  // TALEP, sözleşme değişikliği değil.
+  copilotExplainTrace:   (id: string, includeCode?: boolean, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string; evidenceSpanIds?: string[]; code?: import('./types').AICodeContext }>(
+      `/api/copilot/explain-trace/${id}`, explainInit(includeCode), opts),
   // Per-span explain (v0.5.144). Backend pulls target span +
   // parent + children + error siblings for a focused prompt.
-  copilotExplainSpan:    (traceId: string, spanId: string) =>
-    request<{ explanation: string; exchangeId?: string }>(
+  copilotExplainSpan:    (traceId: string, spanId: string, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string }>(
       `/api/copilot/explain-span/${encodeURIComponent(traceId)}?span=${encodeURIComponent(spanId)}`,
-      { method: 'POST' }),
-  copilotExplainProblem: (id: string) =>
-    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/explain-problem/${id}`, { method: 'POST' }),
+      { method: 'POST' }, opts),
+  copilotExplainProblem: (id: string, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string }>(
+      `/api/copilot/explain-problem/${id}`, { method: 'POST' }, opts),
   // v0.9.414 — exception grubu kök-sebep: backend örnek trace + trace
   // loglarını + deploy penceresini otomatik toplar; kanıt trace/span
   // id'leri deterministik döner (UI örnek satırlarını kutular).
-  copilotExplainException: (fingerprint: string, includeCode?: boolean) =>
-    request<{ explanation: string; exchangeId?: string; evidenceTraceIds?: string[]; evidenceSpanIds?: string[];
-              code?: import('./types').AICodeContext }>(
-      `/api/copilot/explain-exception/${encodeURIComponent(fingerprint)}`, explainInit(includeCode)),
-  copilotExplainIncident: (id: string) =>
-    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/explain-incident/${id}`, { method: 'POST' }),
-  copilotExplainAnomaly: (id: string) =>
-    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/explain-anomaly/${id}`, { method: 'POST' }),
-  copilotExplainServiceHealth: (service: string, fromNs: number, toNs: number) =>
-    request<{ explanation: string; exchangeId?: string }>(
+  copilotExplainException: (fingerprint: string, includeCode?: boolean, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string; evidenceTraceIds?: string[]; evidenceSpanIds?: string[];
+                  code?: import('./types').AICodeContext }>(
+      `/api/copilot/explain-exception/${encodeURIComponent(fingerprint)}`, explainInit(includeCode), opts),
+  copilotExplainIncident: (id: string, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string }>(
+      `/api/copilot/explain-incident/${id}`, { method: 'POST' }, opts),
+  copilotExplainAnomaly: (id: string, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string }>(
+      `/api/copilot/explain-anomaly/${id}`, { method: 'POST' }, opts),
+  copilotExplainServiceHealth: (service: string, fromNs: number, toNs: number, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string }>(
       `/api/copilot/explain-service?service=${encodeURIComponent(service)}&from=${fromNs}&to=${toNs}`,
-      { method: 'POST' }),
+      { method: 'POST' }, opts),
   // v0.9.1031 — ServiceCharts AI çekmecesi (onaylı mockup). Anlatımın
   // YANINDA yapısal sinyaller döner: tablo model metnine bağlı değil,
   // model kotayı doldursa/saçmalasa bile kanıt DOĞRU kalır.
@@ -1625,9 +1696,9 @@ export const api = {
       `/api/copilot/explain-charts?service=${encodeURIComponent(service)}`
       + `&from=${fromNs}&to=${toNs}&scope=${encodeURIComponent(scope)}`,
       { method: 'POST' }),
-  copilotRunbook: (id: string) =>
-    request<{ explanation: string; exchangeId?: string; similarCount: number }>(
-      `/api/copilot/runbook/${id}`, { method: 'POST' }),
+  copilotRunbook: (id: string, opts?: ExplainStreamOpts) =>
+    explainCall<{ explanation: string; exchangeId?: string; similarCount: number }>(
+      `/api/copilot/runbook/${id}`, { method: 'POST' }, opts),
   copilotCompareTraces: (aId: string, bId: string) =>
     request<{ explanation: string; exchangeId?: string }>(`/api/copilot/compare-traces`, {
       method: 'POST',

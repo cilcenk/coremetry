@@ -148,8 +148,20 @@ export default function ServicesPage() {
   // and applied as a service_name IN (...) allowlist on the
   // backend so the filter is correct across pages, not just
   // the visible 50.
-  const [ownerTeam, setOwnerTeam] = useState('');
-  const [sreTeam, setSreTeam] = useState('');
+  // v0.9.1135 — ?ownerTeam=/?sreTeam= tek-yön URL init'i (cluster/
+  // namespace emsalinin aynısı, aşağıda). v0.9.1134'ün bulgusu: bu iki
+  // filtre sunucuya gidiyordu ama URL'den HİÇ okunmuyordu — takım-
+  // filtreli derin link ölü-param sınıfıydı (guided chat'in takım
+  // linki bu yüzden düz /services basıyor; owner/SRE tarafı katalogda
+  // işaretlenince o link de filtreli terfi edecek).
+  const [ownerTeam, setOwnerTeam] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    return p.get('ownerTeam') ?? '';
+  });
+  const [sreTeam, setSreTeam] = useState(() => {
+    const p = new URLSearchParams(window.location.search);
+    return p.get('sreTeam') ?? '';
+  });
   // Cluster filter — narrows the list to services whose spans
   // emitted from the selected k8s / openshift cluster. Resolved
   // server-side via the resource/attr coalesce chain. Banks

@@ -1021,7 +1021,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	user := guidedNarrationUser(question, evidence, explain)
 	// v0.9.528 Faz 2 — kiminle konuşulduğu prompt'un başına girer
 	// (ctx'ten; ön-söz boşsa metin bayt-bayt eskisi).
-	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", withAddressee(addresseeFromCtx(ctx), copilot.SystemPromptGuidedChat()), user, func(delta string) {
+	raw, exErr := s.copilotStreamSurface(ctx, "chat-guided", withAddressee(addresseeFromCtx(ctx), guidedNarrationPrompt(route.Intent)), user, func(delta string) {
 		emit("delta", map[string]string{"text": delta})
 	})
 	if exErr != nil {
@@ -2170,4 +2170,24 @@ func hasDemonstrativeTrace(msg string) bool {
 		}
 	}
 	return false
+}
+
+// guidedNarrationPrompt — intent'e göre anlatım sistem prompt'u (saf,
+// tablo testli; v0.9.1131, operatör-raporlu).
+//
+// Rapor: "✨ Explain trace ile chat'e 'bu trace'i açıkla' demek farklı
+// davranıyor; Explain daha iyi." Kanıt paketi v0.9.537'den beri AYNI
+// (guidedTraceBundle → buildTraceExplainInput), fark yalnız
+// anlatıcıdaydı: guided yol HER intent'i jenerik sohbet prompt'uyla
+// anlatıyordu; ✨ Explain ise v0.9.842'nin 3-bölümlü derin trace
+// prompt'unu kullanıyor. Trace/span intent'leri artık explain'in
+// prompt'unu birebir kullanır — iki kapı, aynı kanıt, AYNI anlatı.
+// Diğer intent'ler sohbet formatında kalır (tablo+takip akışına o
+// uyuyor).
+func guidedNarrationPrompt(intent guidedIntent) string {
+	switch intent {
+	case guidedTraceByID, guidedSpanByID:
+		return copilot.SystemPromptTrace()
+	}
+	return copilot.SystemPromptGuidedChat()
 }

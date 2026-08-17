@@ -1114,6 +1114,41 @@ export interface TempoSettingsInput {
   insecureSkipVerify?: boolean;
 }
 
+// External VictoriaMetrics READ backend (v0.9.1150, Faz 1). When
+// enabled, the metric discovery/query surfaces (catalogue + picker,
+// Explore, dashboard metric panels, MCP query_metric, label values,
+// attribute keys) read VM over its Prometheus-compatible API instead of
+// ClickHouse. Span-derived surfaces and the fixed-name internal readers
+// (hosts / infra / JVM / db capacity) stay on ClickHouse.
+//
+// Tempo secret contract: the token never round-trips (hasToken is the
+// stored indicator) and an empty `token` on PUT preserves the stored one,
+// so toggling Enabled does not require retyping it.
+//
+// No basic auth: VM itself has none, and bearer covers the vmauth /
+// ingress-JWT deployments operators actually run.
+export type VMAuthType = '' | 'none' | 'bearer';
+export interface VMSnapshot {
+  enabled: boolean;
+  baseUrl: string;
+  authType?: VMAuthType;
+  hasToken: boolean;
+  insecureSkipVerify?: boolean;
+}
+export interface VMSettingsInput {
+  enabled: boolean;
+  baseUrl: string;
+  authType?: VMAuthType;
+  token?: string;
+  insecureSkipVerify?: boolean;
+}
+// A failed probe answers HTTP 200 with ok:false — a connection failure is
+// a successful ANSWER to "is this URL right?", not a request error.
+export interface VMTestResult {
+  ok: boolean;
+  error?: string;
+}
+
 // Azure DevOps Server / TFS connection (v0.9.829). Tempo secret
 // contract: the PAT never round-trips (hasPat is the stored
 // indicator), and an empty `pat` on submit preserves the stored one.
@@ -2056,6 +2091,30 @@ export interface MetricInfo {
   // açıkken tanım gereği 1'dir (satır ZATEN o çift), o yüzden kolon
   // servis seçiliyken gizlenir.
   serviceCount?: number;
+}
+
+/**
+ * MetricSourceKind — hangi store cevapladı (v0.9.1150).
+ * 'ch' = ClickHouse (varsayılan), 'vm' = dış VictoriaMetrics.
+ */
+export type MetricSourceKind = 'ch' | 'vm';
+
+/**
+ * /api/metrics/names'in sayfalı zarfı (q veya limit/offset verildiğinde).
+ *
+ * `source` gövdeyle BİRLİKTE geliyor — katalog rozeti bunu okur, ayrı bir
+ * /api/settings çağrısı YAPMAZ: o uç admin-only (viewer rozeti hiç
+ * göremezdi) ve iki istek arasında ayar değişirse rozet ekrandaki
+ * satırların kaynağı hakkında yalan söylerdi.
+ *
+ * `?:` — v0.9.1150 öncesi bir sunucuya bakan arayüz alanı görmez ve
+ * rozeti hiç basmaz (yanlış "ClickHouse" yazmaz).
+ */
+export interface MetricNameSearchResult {
+  names: MetricInfo[];
+  total: number;
+  hasMore: boolean;
+  source?: MetricSourceKind;
 }
 
 export interface MetricPoint {

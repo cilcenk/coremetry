@@ -22,6 +22,7 @@ import { MaintenanceTab } from './settings/MaintenanceTab';
 import { AITab } from './settings/AiTab';
 import { KnowledgeTab } from './settings/KnowledgeTab';
 import { TempoTab } from './settings/TempoTab';
+import { MetricsBackendTab } from './settings/MetricsBackendTab';
 import { DevOpsTab } from './settings/DevOpsTab';
 import { ClustersTab } from './settings/ClustersTab';
 import { ElasticTab } from './settings/ElasticTab';
@@ -57,6 +58,10 @@ const TABS: SettingsTab[] = [
   // ayrıldı (operatör onaylı sadeleştirme #5); davranış birebir aynı.
   { slug: 'knowledge',   label: 'Knowledge (RAG)',       Comp: KnowledgeTab },
   { slug: 'tempo',       label: 'Tempo backend',         Comp: TempoTab },
+  // v0.9.1150 — dış VictoriaMetrics OKUMA backend'i. Tempo'nun yanına:
+  // aynı sınıf (dış veri kaynağı + token + TLS), ve ikisi de "bu sinyali
+  // nereden okuyoruz" sorusunun cevabı.
+  { slug: 'metrics-backend', label: 'Metrik backend’i',  Comp: MetricsBackendTab },
   { slug: 'clusters',    label: 'Remote clusters',       Comp: ClustersTab },
   { slug: 'elastic',     label: 'Elasticsearch logs',    Comp: ElasticTab },
   { slug: 'kibana',      label: 'Kibana link',           Comp: KibanaTab },

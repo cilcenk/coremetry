@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { Button } from '@/components/ui/Button';
+import { Badge } from '@/components/ui/Badge';
 import { Pager } from '@/components/Pager';
 import { ServicePicker } from '@/components/ServicePicker';
 import { MetricQueryEditor } from '@/components/viz/MetricQueryEditor';
@@ -251,6 +252,21 @@ export default function MetricsPage() {
           <div style={{ fontSize: 12, color: 'var(--text2)' }}>
             Metric catalogue — pick one to open it in Explore.
           </div>
+          {/* KAYNAK ROZETİ (v0.9.1150). Yalnız VM aktifken görünür —
+              varsayılan ClickHouse için rozet basmak her kuruluma kalıcı
+              gürültü eklerdi. `source` katalog CEVABINDAN okunuyor, ayrı
+              bir /api/settings çağrısından değil: o uç admin-only (viewer
+              rozeti hiç göremezdi) ve iki istek arasında ayar değişirse
+              rozet ekrandaki satırların kaynağı hakkında yalan söylerdi.
+
+              Alan yoksa (v0.9.1150 öncesi sunucu) rozet hiç basılmaz —
+              yanlışlıkla "ClickHouse" demez. */}
+          {catalogQ.data?.source === 'vm' && (
+            <Badge tone="info"
+              title="Bu liste dış VictoriaMetrics kurulumundan okundu (Settings → Metrik backend’i). Birim / tür / son görülme kolonları boştur: VM bu alanları bildirmez.">
+              VictoriaMetrics
+            </Badge>
+          )}
           <div style={{ flex: 1 }} />
           <Button variant={editor ? 'primary' : 'secondary'} size="sm"
             onClick={() => {

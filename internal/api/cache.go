@@ -506,6 +506,17 @@ func (s *Server) reloadConfigOnSignal(ctx context.Context, svc string) {
 				log.Printf("[cache] config-reload rag: %v", err)
 			}
 		}
+	// v0.9.1150 — VictoriaMetrics okuma backend'i. Case uçla AYNI
+	// sürümde: bu ayarın gecikmesi ötekilerden daha pahalı, çünkü
+	// hangi STORE'un cevap verdiğini belirliyor — dinleyicisiz bir
+	// publish, peer pod'ların 30 saniye boyunca farklı bir backend'den
+	// cevap vermesi demek olurdu.
+	case "victoria-metrics":
+		if s.vmetrics != nil {
+			if err := s.vmetrics.LoadPersisted(ctx, s.store); err != nil {
+				log.Printf("[cache] config-reload victoria-metrics: %v", err)
+			}
+		}
 	// v0.9.829 — Azure DevOps / TFS bağlantısı. Case'i uçla AYNI
 	// sürümde ekliyoruz: v0.9.237'de thanos'un publish'i dinleyicisiz
 	// kaldığı için peer pod'lar 30s poll'u beklemişti.

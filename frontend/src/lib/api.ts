@@ -1,7 +1,8 @@
 import type {
   PurgeResult,
   Service, ServiceEdge, TracesResponse, TracesExtrasResponse, TraceDetailResponse,
-  LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricPoint, HealthInfo, SortColumn, SortOrder,
+  LogsResponse, LogFieldStats, NotificationLogEntry, MetricInfo, MetricNameSearchResult,
+  MetricPoint, HealthInfo, SortColumn, SortOrder,
   ProfileRow, ProfileDetail, ProfileHotspotsResponse, SpanHotspotsResponse, AggregateRow, SpanMetricSeries, SpanMetricResult, HistogramResult,
   MetricResolveResult,
   SpanMetricsServicesResponse, EndpointRow, EndpointsListResponse, EndpointDetail, EndpointSplitResponse, EndpointDownstream, EndpointCallersResponse, ServiceAttrsResponse,
@@ -18,6 +19,7 @@ import type {
   RetentionSpec,
   AISettings, AISettingsInput,
   TempoSnapshot, TempoSettingsInput,
+  VMSnapshot, VMSettingsInput, VMTestResult,
   DevOpsSnapshot, DevOpsSettingsInput, DevOpsTestResult,
   ThanosSnapshot, ThanosSettingsInput, ClusterPodsResponse, ClusterPodDetail,
   ClusterNodesResponse, ClusterSummary, ClusterNamespacesResponse,
@@ -637,8 +639,10 @@ export const api = {
   // {names: MetricInfo[], total, hasMore} for the
   // MetricNamePicker. The legacy api.metricNames() (no extra
   // params) still returns the old MetricInfo[] shape.
+  // v0.9.1150 — zarf artık `source` da taşıyor (ch|vm); tip
+  // lib/types.ts'te (MetricNameSearchResult).
   metricNamesSearch: (service: string, q?: string, limit = 200, offset = 0) =>
-    get<{ names: MetricInfo[]; total: number; hasMore: boolean }>(
+    get<MetricNameSearchResult>(
       `/api/metrics/names?${qs({ service, q, limit, offset })}`),
   // Distinct attribute keys observed on recent spans — drives the
   // FilterBuilder autocomplete so custom attrs (function_code etc.)
@@ -1447,6 +1451,27 @@ export const api = {
   putTempoSettings: (s: TempoSettingsInput) =>
     request<TempoSnapshot>(`/api/settings/tempo`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+
+  // External VictoriaMetrics READ backend (v0.9.1150, admin). Tempo
+  // contract: GET is masked (hasToken), PUT's empty `token` preserves the
+  // stored one. The test endpoint probes the SUBMITTED form without
+  // saving and answers 200 with {ok:false,error} on a failed connection —
+  // a failed probe is a successful answer to the operator's question.
+  //
+  // The Metrics page does NOT call these to render its source badge: the
+  // badge reads `source` off the /api/metrics/names body, so a viewer
+  // (who gets 403 here) still sees which store answered.
+  getVMSettings: () => get<VMSnapshot>(`/api/settings/victoria-metrics`),
+  putVMSettings: (s: VMSettingsInput) =>
+    request<VMSnapshot>(`/api/settings/victoria-metrics`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(s),
+    }),
+  testVMSettings: (s: VMSettingsInput) =>
+    request<VMTestResult>(`/api/settings/victoria-metrics/test`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(s),
     }),
 

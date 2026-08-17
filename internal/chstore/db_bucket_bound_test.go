@@ -181,3 +181,60 @@ func TestDBReadsExcludeUpperBucket(t *testing.T) {
 		}
 	}
 }
+
+// v0.9.1157 — AYNI sınıfın kalan TÜM üyeleri. v0.9.823 /databases'in üç
+// okumasını düzeltmişti ama taraması dardı; v0.9.1147 messaging genel
+// bakışının taşmasını İLAN etti. Bu dilim dokuz kalıntıyı kapatıyor:
+// getMessaging (genel bakış + kind-split), GetMessagingTrends,
+// GetMessagingDetail (3 okuma), discoverReceiverInstances,
+// DbNamesBySystem, GetDatabaseDetail (2 okuma).
+//
+// Tek tek gövde ayıklamak yerine DOSYA-GENELİ kapı: bu iki dosyada 5m
+// MV kova penceresi soran HİÇBİR sorgu `<= ?` üst sınırı taşıyamaz.
+// (`<= to`, başlangıcı tam to olan kovayı alır; o kova [to, to+5dk)
+// aralığını kapsar — istenen pencerenin tamamen dışında.) Yeni bir
+// `<=` girerse bu test adıyla yakalar.
+func TestNoInclusiveUpperBucketBoundInDepReads(t *testing.T) {
+	for _, file := range []string{"dependencies.go", "db_trends.go"} {
+		b, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatalf("%s okunamadı: %v", file, err)
+		}
+		src := string(b)
+		if n := strings.Count(src, "time_bucket <= ?"); n > 0 {
+			t.Errorf("%s: %d adet `time_bucket <= ?` — üst kova sınırı `< ?` olmalı "+
+				"(v0.9.823/v0.9.1157 sınıfı; tam to'daki kova pencerenin dışındadır)", file, n)
+		}
+	}
+}
+
+// Davranış tarafı: temsilci okuma (getMessaging genel bakışı) 823'ün
+// tablosundan geçer — `to` etiketli kova PENCEREYE AİT DEĞİL.
+func TestMessagingOverviewExcludesUpperBucket(t *testing.T) {
+	from := time.Date(2026, 8, 17, 10, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 8, 17, 11, 0, 0, 0, time.UTC)
+	msgSrc := funcSource(t, "dependencies.go", "func (s *Store) getMessaging(")
+	splitAt := strings.Index(msgSrc, "messaging_caller_summary_5m")
+	if splitAt < 0 {
+		t.Fatal("getMessaging içinde kind-split sorgusu bulunamadı — yapı değiştiyse testi güncelle")
+	}
+	op := upperBoundOp(t, "getMessaging (genel bakış)", msgSrc[:splitAt])
+	cases := []struct {
+		name   string
+		bucket time.Time
+		want   bool
+	}{
+		{"ilk kova içeride", from, true},
+		{"son tam kova içeride", to.Add(-5 * time.Minute), true},
+		{"tam to'daki kova DIŞARIDA", to, false},
+		{"to sonrası kova dışarıda", to.Add(5 * time.Minute), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := admitsBucket(op, c.bucket, from, to); got != c.want {
+				t.Errorf("`time_bucket %s ?` ile %v kovası alındı=%v, beklenen %v",
+					op, c.bucket.Format("15:04"), got, c.want)
+			}
+		})
+	}
+}

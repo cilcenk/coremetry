@@ -372,7 +372,7 @@ func (s *Store) GetDatabaseDetail(
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		  AND db_system = ? AND instance = ?`+mvNameSQL+`
 		SETTINGS max_execution_time = 8`,
 		aggArgs...)
@@ -400,7 +400,7 @@ func (s *Store) GetDatabaseDetail(
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM db_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		  AND db_system = ? AND instance = ?`+mvNameSQL+`
 		GROUP BY service_name, pod
 		ORDER BY countMerge(span_count_state) DESC
@@ -591,7 +591,7 @@ func (s *Store) GetMessagingDetail(
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		  AND msg_system = ? AND cluster = ? AND destination = ?
 		SETTINGS max_execution_time = 8`,
 		bucketStart, to, system, cluster, destination)
@@ -622,7 +622,7 @@ func (s *Store) GetMessagingDetail(
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		  AND msg_system = ? AND cluster = ? AND destination = ?
 		GROUP BY service_name, pod, role
 		ORDER BY countMerge(span_count_state) DESC
@@ -668,7 +668,7 @@ func (s *Store) GetMessagingDetail(
 		       kind,
 		       countMerge(span_count_state) AS c
 		FROM messaging_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		  AND msg_system = ? AND cluster = ? AND destination = ?
 		  AND kind IN ('producer', 'consumer')
 		GROUP BY t, kind
@@ -1324,7 +1324,7 @@ var msgTopCallersSQL = `
 	       service_name,
 	       countMerge(span_count_state) AS c
 	FROM messaging_caller_summary_5m
-	WHERE time_bucket >= ? AND time_bucket <= ?
+	WHERE time_bucket >= ? AND time_bucket < ?
 	GROUP BY msg_system, cluster, destination, service_name
 	ORDER BY c DESC
 	LIMIT ` + strconv.Itoa(msgTopCallersPerDest) + ` BY msg_system, cluster, destination
@@ -1429,7 +1429,7 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		GROUP BY msg_system, cluster, destination
 		ORDER BY span_count DESC
 		LIMIT `+strconv.Itoa(msgOverviewRowLimit)+`
@@ -1487,7 +1487,7 @@ func (s *Store) getMessaging(ctx context.Context, from, to time.Time, includeCal
 		       countMerge(error_count_state) AS e,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms
 		FROM messaging_caller_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		  AND kind IN ('producer', 'consumer')
 		GROUP BY msg_system, cluster, destination, kind
 		ORDER BY c DESC

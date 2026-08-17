@@ -234,7 +234,7 @@ func (s *Store) DbNamesBySystem(ctx context.Context, from, to time.Time) (map[st
 	rows, err := s.conn.Query(ctx, `
 		SELECT db_system, db_name, countMerge(span_count_state) AS calls
 		FROM db_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		  AND db_name != '' AND db_name != 'default'
 		GROUP BY db_system, db_name
 		ORDER BY db_system, calls DESC
@@ -289,7 +289,7 @@ func (s *Store) GetMessagingTrends(ctx context.Context, from, to time.Time) ([]D
 		       countMerge(error_count_state)                                           AS error_count,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM messaging_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		GROUP BY msg_system, cluster, destination, time_bucket
 		ORDER BY msg_system, cluster, destination, time_bucket
 		LIMIT 200000

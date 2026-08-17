@@ -171,6 +171,36 @@ describe('sayfa-içi AI anlatım panelleri markdown basıyor', () => {
   }
 });
 
+// Faz 2.2 — KAPI DÖRDÜNCÜ AİLEYİ ALDI: gömülü insight kartı.
+//
+// Kart AI metnini DÖRDÜNCÜ bir yazılışla basıyor: ne `aiSummary` (2. kapı),
+// ne `{busy,text,err}` (3. kapı) — kendi `prose` state'i. Yani iki mevcut
+// kapının SİNYALİ de bu dosyayı GÖRMÜYORDU. "Kapı kapsamı göçte erir"
+// dersinin aynısı: atom ikinci bir yazılış doğurunca eski kapı yeni
+// dosyaları ölçmeyi bırakır, ama sayı yeşil kaldığı için kimse fark etmez.
+//
+// Burada offender-tarama yerine DOĞRUDAN iddia var: bu dosyada `prose`
+// geçen satırların çoğu atama/koşul (setProse, prose === null), yani şekil
+// taraması yanlış-pozitif üretirdi (v0.9.696'nın ilk yazımının hatası).
+// Basımın TEK yolu var ve o pinlenebilir.
+describe('InsightCard anlatıyı markdown\'dan geçiriyor', () => {
+  const src = read('./ai/InsightCard.tsx');
+
+  it('RenderedMarkdown kullanıyor', () => {
+    expect(src).toContain('<RenderedMarkdown text={prose} />');
+  });
+
+  it('çıplak {prose} basımı yok', () => {
+    expect(src).not.toMatch(/^\s*\{prose\}\s*$/m);
+  });
+
+  // Markdown zaten <p>/<ul>/<h*> üretiyor; pre-wrap eklenirse satır
+  // aralıkları ikiye katlanır (v0.9.641'in ikinci yarısı).
+  it('kartta pre-wrap yok', () => {
+    expect(src).not.toContain('pre-wrap');
+  });
+});
+
 describe('stripMarkdown', () => {
   // Ekran görüntüsündeki GERÇEK model çıktısı — düzeltmenin hedefi bu.
   const real = '* **Hata Tipi:** `CannotCreateTransactionException`, Spring\'in veritabanı üzerinde';

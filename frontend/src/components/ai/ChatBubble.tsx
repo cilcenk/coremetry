@@ -5,6 +5,7 @@ import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
 import type { ChatTurn } from '@/lib/types';
 import { CosreChart, type CosreChartSpec } from '@/components/CosreChart';
+import { parseChatBlocks, type ChatBlock } from './chatMarkdown';
 
 // ChatBubble — bir sohbet turunun ÇİZİMİ. v0.9.479'da CopilotChat.tsx'ten
 // buraya taşındı: AI çekmecesi içindeki sohbet (AIDrawer) aynı balonu
@@ -27,34 +28,169 @@ export function mdLite(raw: string): string {
     .replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
 }
 
-// renderMessage (v0.9.183) — asistan metnini ```chart {json}``` bloklarına göre
-// böler: metin parçaları mdLite ile, chart blokları canlı <CosreChart> ile
-// çizilir. Blok, backend guided-health tarafından DETERMİNİSTİK üretilir (LLM
-// biçimlemesine güvenmeyiz — gemma4 küçük model). Akış sürerken kapanmamış bir
-// blok JSON.parse'ı fail eder → o tur düz metin görünür, blok tamamlanınca
-// grafiğe döner (kademeli). Bozuk/eksik spec sessizce atlanır (asla crash).
-export function renderMessage(text: string) {
-  const re = /```chart\s*([\s\S]*?)```/g;
+// MdInline — satır içi işaretlemenin TEK basım noktası (v0.9.1148).
+//
+// XSS DİSİPLİNİ: dosyada dangerouslySetInnerHTML'in TEK yeri burası ve
+// beslediği tek şey mdLite (yani escapeHTML'den GEÇMİŞ) dizesi. Faz 4.2
+// öncesi aynı çağrı ÜÇ yerde yazılıydı; tablo hücreleri + başlık +
+// liste maddeleri eklenince altı olacaktı. Yeni yüzey açmak yerine
+// mevcut disiplin tek bileşende toplandı: bundan sonra "chat HTML'i
+// nereden basıyor" sorusunun tek cevabı var, ve kapı testi bunu sayıyor.
+function MdInline({ text }: { text: string }) {
+  return <span dangerouslySetInnerHTML={{ __html: mdLite(text) }} />;
+}
+
+// CodeBlock (v0.9.1148) — ``` fence'inin çizimi. Gövde React ÇOCUĞU
+// olarak basılıyor, mdLite'tan GEÇMİYOR: kod literaldir (React kendi
+// kaçışını yapar) ve `**` ya da `` ` `` içeren bir SQL parçası
+// biçimlenmemeli.
+//
+// Kopyala butonu yalnız çit KAPANDIYSA görünür: yarım bir bloğu
+// kopyalatmak, operatörün sessizce eksik bir komut çalıştırması demek.
+// Butonun YOKLUĞU tek başına sessiz bir sinyal olurdu, o yüzden başlık
+// şeridi durumu YAZIYOR: akarken "yazılıyor…", akış bitmiş ama çit hiç
+// kapanmamışsa "kesildi" (Faz 1.5'in truncation sözlüğü). İkinci hâlde
+// "yazılıyor" demek yalan olurdu.
+function CodeBlock({ lang, code, open, streaming }: {
+  lang: string; code: string; open: boolean; streaming: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard?.writeText(code).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    }).catch(() => {});
+  };
+  return (
+    <div className="cm-md-code">
+      <div className="cm-md-code-h">
+        <span className="cm-md-code-lang">{lang || 'kod'}</span>
+        {open && <span className="cm-md-code-st">{streaming ? 'yazılıyor…' : 'kesildi'}</span>}
+        {!open && (
+          <Button variant="ghost" size="sm" onClick={copy}
+            title="Kodu kopyala" aria-label="Kod bloğunu kopyala"
+            className={copied ? 'is-ok' : undefined}
+            style={{ padding: '0 6px', fontSize: 12 }}>
+            {copied ? '✓' : '⧉'}
+          </Button>
+        )}
+      </div>
+      <pre>{code}</pre>
+    </div>
+  );
+}
+
+// MdTable (v0.9.1148) — markdown tablosu GERÇEK tablo.
+//
+// useDataTable YOK ve bu bilinçli: primitif tipli bir COLS dizisi
+// (sortValue/numeric) istiyor, buradaki kolonlar ise modelin o cevapta
+// uydurduğu başlıklar — sıralama/yeniden boyutlandırma anlamsız,
+// storageKey'i olmayan bir tablo layout'u da kalıcılaştırılamaz. Görsel
+// dil yine paylaşılıyor: kaydırma kabı `.table-wrap` (yatay taşma
+// TABLONUN kabında kalır, sayfa gövdesi yana kaymaz — v0.9.1078 dersi),
+// hizalama `.num` (sağ + tabular-nums), gerisi `.cm-md-table` remap'i.
+function MdTable({ block }: { block: Extract<ChatBlock, { kind: 'table' }> }) {
+  const cls = (i: number) => (block.align[i] === 'right' ? 'num' : block.align[i] === 'center' ? 'ta-c' : undefined);
+  // 100+ satır kuralı (ev kısıtı) BURADA DA geçerli: tool sonucu geniş
+  // dönerse model 200 satırlık bir tablo yazabiliyor ve balon o zaman
+  // sayfanın en pahalı düğümü olur. Sanallaştırma yanlış araç (satır
+  // yüksekliği içerikle değişiyor, kaydırma da sayfada), content-visibility
+  // ise bedelsiz: görünmeyen satır layout'a girmez.
+  const heavy = block.rows.length > 100;
+  const rowStyle = heavy
+    ? { contentVisibility: 'auto' as const, containIntrinsicSize: '26px' }
+    : undefined;
+  return (
+    <div className="table-wrap cm-md-tw">
+      <table className="cm-md-table">
+        <thead>
+          <tr>{block.head.map((h, i) => <th key={i} className={cls(i)}><MdInline text={h} /></th>)}</tr>
+        </thead>
+        <tbody>
+          {block.rows.map((r, k) => (
+            <tr key={k} style={rowStyle}>
+              {r.map((c, i) => <td key={i} className={cls(i)}><MdInline text={c} /></td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const H_TAG = { 1: 'h4', 2: 'h5', 3: 'h6' } as const;
+
+// renderMessage (v0.9.183, Faz 4.2'de blok çözücüye geçti) — asistan
+// metnini çizer: düz metin koşuları mdLite ile (SATIR İÇİ span, balonun
+// pre-wrap'ı ve akış imlecinin metne YAPIŞIK durması bu yüzden bozulmaz),
+// tablo/fence/başlık/liste blok öğeleriyle, ```chart``` blokları canlı
+// <CosreChart> ile.
+//
+// `streaming` = tur akıyor (turn.pending). Çözücüye geçiyor çünkü yarım
+// satır kararı orada (chatMarkdown.ts). Chart bloğunun akış davranışı:
+//   akıyor + kapanmamış → "grafik hazırlanıyor" satırı. Eskiden ham JSON
+//     düzyazı olarak akıyordu (mdLite yolu) — operatöre gösterilecek bir
+//     şey değil.
+//   bitti + kapanmamış (yanıt KESİLDİ) → kod bloğu. İçeriği yutmak,
+//     kesildiğini göstermekten kötü.
+//   kapandı + geçerli spec → grafik. Kapandı + bozuk → atlanır
+//     (v0.9.183 kararı, aynen korundu: deterministik üreticinin bozuk
+//     çıktısı operatörün sorunu değil).
+export function renderMessage(text: string, streaming = false) {
+  const blocks = parseChatBlocks(text, streaming);
   const out: ReactNode[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let i = 0;
-  while ((m = re.exec(text)) !== null) {
-    if (m.index > last) {
-      out.push(<span key={i++} dangerouslySetInnerHTML={{ __html: mdLite(text.slice(last, m.index)) }} />);
-    }
-    try {
-      const spec = JSON.parse(m[1].trim()) as CosreChartSpec;
-      if (spec && typeof spec.service === 'string' && typeof spec.agg === 'string') {
-        out.push(<CosreChart key={i++} spec={spec} />);
+  blocks.forEach((b, i) => {
+    switch (b.kind) {
+      case 'text':
+        out.push(<MdInline key={i} text={b.text} />);
+        break;
+      case 'heading': {
+        // h1-h3 DEĞİL: balon sayfanın içinde bir kutu, başlık hiyerarşisini
+        // ele geçirmemeli (ekran okuyucu için sayfa özeti bozulur).
+        const H = H_TAG[b.level];
+        out.push(<H key={i} className={`cm-md-h cm-md-h${b.level}`}><MdInline text={b.text} /></H>);
+        break;
       }
-    } catch { /* kapanmamış/bozuk blok — atla (akış sürüyor olabilir) */ }
-    last = re.lastIndex;
-  }
-  if (last < text.length) {
-    out.push(<span key={i++} dangerouslySetInnerHTML={{ __html: mdLite(text.slice(last)) }} />);
-  }
-  return out.length ? <>{out}</> : <span dangerouslySetInnerHTML={{ __html: mdLite(text) }} />;
+      case 'list': {
+        const L = b.ordered ? 'ol' : 'ul';
+        out.push(
+          <L key={i} className="cm-md-list">
+            {b.items.map((it, k) => <li key={k}><MdInline text={it} /></li>)}
+          </L>
+        );
+        break;
+      }
+      case 'code': {
+        if (b.lang === 'chart') {
+          if (b.open) {
+            if (streaming) {
+              out.push(<span key={i} className="cm-md-wait">grafik hazırlanıyor…</span>);
+              break;
+            }
+          } else {
+            try {
+              const spec = JSON.parse(b.code.trim()) as CosreChartSpec;
+              if (spec && typeof spec.service === 'string' && typeof spec.agg === 'string') {
+                out.push(<CosreChart key={i} spec={spec} />);
+              }
+            } catch { /* bozuk spec — atla (asla crash) */ }
+            break;
+          }
+        }
+        out.push(<CodeBlock key={i} lang={b.lang} code={b.code} open={b.open} streaming={streaming} />);
+        break;
+      }
+      case 'table':
+        out.push(<MdTable key={i} block={b} />);
+        break;
+    }
+  });
+  // Yedek dal İÇERİK YOKLUĞUNA bakıyor, ÇIKTI yokluğuna değil. Fark
+  // gerçek: bozuk bir chart bloğu bilinçli olarak ATLANIYOR ve o hâlde
+  // `out` boş kalır — `out.length`e bakan bir koşul o an balonun HAM
+  // markdown'ını (çitler dahil) ekrana dökerdi. Yedek yalnız "hiç blok
+  // çıkmadı" (boş/yalnız-boşluk metin) hâli için var.
+  return blocks.length === 0 ? <MdInline text={text} /> : <>{out}</>;
 }
 
 // rateTurn — 👍/👎 POST'u. İyimser güncelleme + hata hâlinde geri alma;
@@ -95,6 +231,14 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
   const done = !isUser && !turn.pending && !turn.error && !!turn.text;
   return (
     <div style={{ alignSelf: isUser ? 'flex-end' : 'flex-start', maxWidth: '85%' }}>
+      {/* pre-wrap BURADA KALIYOR ve bu, diğer AI yüzeylerinin tersi
+          (orada Markdown blok üretince pre-wrap satır aralığını ikiye
+          katlıyordu — v0.9.641/696). Fark şu: balonun düz metin koşuları
+          bilinçli olarak SATIR İÇİ span (blok değil), çünkü akış imleci
+          metne yapışık durmak zorunda ve kullanıcı balonu da ham metin.
+          Satır sonlarını taşıyan tek şey pre-wrap; kaldırılırsa çok
+          satırlı cevap tek paragrafa yapışır. Blok öğeler (tablo/kod/
+          başlık/liste) kendi margin'lerini `.cm-md-*` üzerinden alıyor. */}
       <div onClick={onBodyClick} style={{
         padding: '8px 11px', borderRadius: 10, fontSize: 13, lineHeight: 1.5,
         whiteSpace: 'pre-wrap', wordBreak: 'break-word',
@@ -119,10 +263,17 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
         ) : isUser ? (
           turn.text
         ) : turn.text ? (
-          // Asistan metni: hafif markdown (escape'li) + gömülü canlı grafikler
-          // (```chart``` blokları) + akış sürüyorsa imleç.
+          // Asistan metni: hafif markdown (escape'li) + tablo/fence/başlık/
+          // liste blokları (v0.9.1148) + gömülü canlı grafikler (```chart```)
+          // + akış sürüyorsa imleç.
+          //
+          // `turn.pending` çözücüye GEÇİYOR: yarım tablo satırı / kapanmamış
+          // çit kararı ona bağlı (chatMarkdown.ts). Bayrağı bağlamayı unutmak
+          // testten geçen ama ekranda titreyen bir render verirdi — bu yüzden
+          // ChatBubble.render.test.tsx bunu pending=true/false çiftiyle
+          // çalışma zamanında ölçüyor ("saf test ≠ BAĞLANMA" dersi).
           <>
-            {renderMessage(turn.text)}
+            {renderMessage(turn.text, turn.pending)}
             {turn.pending && <span className="cm-ai-cursor" />}
           </>
         ) : turn.pending ? (

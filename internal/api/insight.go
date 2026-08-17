@@ -87,6 +87,10 @@ func (s *Server) getInsight(w http.ResponseWriter, r *http.Request) {
 		s.insightException(w, r, id)
 	case insight.KindProblem:
 		s.insightProblem(w, r, id)
+	case insight.KindLogPattern:
+		s.insightLogPattern(w, r, id)
+	case insight.KindSlowQuery:
+		s.insightSlowQuery(w, r, id)
 	}
 }
 
@@ -283,6 +287,216 @@ func problemEvidence(p *chstore.Problem, hyp *chstore.RootCauseHypothesis,
 		}
 		ev.Blast = &b
 	}
+	return ev
+}
+
+// ── log-pattern türü (v0.9.1137, Faz 2.4) ───────────────────────────
+
+// insightLogPattern — id = küratörlü desenin ADI ("Out of memory").
+// Kimlik gerekçesi contract.go'da.
+//
+// Kanıt: anomaly.DetectLogPatterns — /api/anomalies/log-patterns'ın ve
+// "Desenleri anlat" panelinin kullandığı AYNI okuma (tek batched
+// _msearch / tek CH match+tokenbf turu). Kart o listeden KENDİ satırını
+// seçiyor; ikinci bir sorgu şekli YOK.
+//
+// PENCERE — varsayılan 5dk ve bu bir seçim: satırların geldiği uç
+// (useLogPatternAnomalies → /api/anomalies/log-patterns, param'sız)
+// 5dk varsayılanıyla koşuyor. Kart 30dk'ya açılsa AYNI adı taşıyan ama
+// BAŞKA sayıları olan bir olayı anlatırdı — operatör satırda "1.240",
+// kartta "7.900" görürdü. ?window= verilirse snapAnomalyWindow'un
+// rung'larına oturur (v0.8.270: ES anahtar kardinalitesi tavanlı).
+//
+// Maliyet: kart AÇILDIĞINDA bir okuma. Panel anlatıcısının (v0.9.1100)
+// tık başına maliyetiyle AYNI sınıf; poll yok, prefetch yok.
+func (s *Server) insightLogPattern(w http.ResponseWriter, r *http.Request, name string) {
+	window := snapAnomalyWindow(parseDuration(r.URL.Query().Get("window"), 5*time.Minute))
+	hits, err := anomaly.DetectLogPatterns(r.Context(), s.logs, window)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	idx := -1
+	for i := range hits {
+		if hits[i].Pattern == name {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		// 404 ve mesaj AÇIK: "bulunamadı" değil "bu pencerede artık
+		// tetiklenmiyor". Desen kataloğu sabit, tetikleme değil — kartı
+		// paylaşılan bir linkten açan operatör farkı bilmeli.
+		http.Error(w, "log pattern is not firing in this window", http.StatusNotFound)
+		return
+	}
+	ev := logPatternEvidence(hits[idx], window, time.Now().UnixNano())
+	resp := insight.Response{Links: insight.LogPatternLinks(ev)}
+	resp.Signals, resp.Truncated = insight.LogPatternSignals(ev)
+	s.deliverInsight(w, r, resp,
+		copilot.SystemPromptLogPatterns(), insight.LogPatternPromptUser(ev))
+}
+
+// logPatternEvidence — detektör çıktısı → saf kanıt. SAF (nowNs
+// parametre).
+func logPatternEvidence(a anomaly.LogPatternAnomaly, window time.Duration, nowNs int64) insight.LogPatternEvidence {
+	ev := insight.LogPatternEvidence{
+		Pattern: a.Pattern, Kind: a.Kind,
+		CurrentCount: a.CurrentCount, BaselineCount: a.BaselineCount,
+		Ratio: a.Ratio, Service: a.Service, Sample: a.Sample,
+		Tokens: a.Tokens, LastSeenNs: a.LastSeenNs,
+		WindowSec: int64(window / time.Second), NowNs: nowNs,
+	}
+	for _, ts := range a.TopServices {
+		ev.TopServices = append(ev.TopServices,
+			insight.PatternServiceRef{Service: ts.Service, Count: ts.Count})
+	}
+	return ev
+}
+
+// ── slow-query türü (v0.9.1137, Faz 2.4) ────────────────────────────
+
+// insightStmtWindowDefault / min / max — yavaş sorgu kartının penceresi.
+// Alt kenar MV'nin 5dk tanesi (daha darı yeni bir kova bile içermez),
+// üst kenar 7g (chart bandının tavanıyla aynı sayı). Varsayılan 1sa =
+// katalog sayfasının varsayılan aralığı.
+const (
+	insightStmtWindowDefault = time.Hour
+	insightStmtWindowMin     = 5 * time.Minute
+	insightStmtWindowMax     = 7 * 24 * time.Hour
+)
+
+// boundInsightStmtWindow — pencere kelepçesi. SAF, tablo-testli: birim
+// karıştırma sınıfının (v0.6.36) kuralı gereği HER birim ("300s", "5m",
+// "1h", "168h") testte. Go'nun time.ParseDuration'ı "7d" TANIMAZ —
+// gün penceresi saat olarak yazılır, yoksa parseDuration sessizce
+// varsayılana düşer (bu depoda iki kez oldu).
+func boundInsightStmtWindow(d time.Duration) time.Duration {
+	if d < insightStmtWindowMin {
+		return insightStmtWindowMin
+	}
+	if d > insightStmtWindowMax {
+		return insightStmtWindowMax
+	}
+	return d
+}
+
+// insightSlowQuery — id = `?stmt=` kodeği ("<hash>[|<system>]").
+//
+// Kanıt: db_statement_summary_5m MV'si — /api/databases/statements/
+// detail'in KULLANDIĞI okuyucuların alt kümesi (özet + çağıran kırılımı
+// + MV-gömülü exemplar, v0.9.1097). Ham `spans` taraması YOK.
+//
+// Bilinçli DIŞARIDA: trend serisi (GetDBStmtTrend) ve prior-pencere
+// karşılaştırması. Trend kartta ÇİZİLEMİYOR (charts[] FE'de henüz
+// çizilmiyor — CosreChart penceresini "şimdi"ye çakıyor, InsightCard.tsx
+// gerekçesi) ve prior okuması MV maliyetini İKİYE katlıyor; ikisi de
+// çekmecenin işi (o zaten bu sayfada bir tık uzakta ve kart ona link
+// veriyor).
+func (s *Server) insightSlowQuery(w http.ResponseWriter, r *http.Request, id string) {
+	ref, ok := insight.ParseStmtRef(id)
+	if !ok {
+		http.Error(w, "slow-query id must be <stmtHash>[|<dbSystem>] "+
+			"(decimal, non-zero — SlowQueryRow.stmtHash)", http.StatusBadRequest)
+		return
+	}
+	window := boundInsightStmtWindow(parseDuration(r.URL.Query().Get("window"),
+		insightStmtWindowDefault))
+	now := time.Now()
+	from := now.Add(-window)
+	q := chstore.DBStmtDetailQuery{
+		Hash: ref.Hash, DBSystem: ref.System, From: from, To: now,
+	}
+
+	// Üç okuma PARALEL, her biri soft-fail (dbstmt_detail.go'nun aynı
+	// bölüm-toleransı). Goroutine'ler AYRIK değişkenlere yazıyor ve okuma
+	// wg.Wait() sonrasında — kilide gerek yok.
+	var (
+		wg              sync.WaitGroup
+		sum             *chstore.DBStmtSummary
+		callers         []chstore.DBStmtCaller
+		slowTID, errTID string
+	)
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		if v, err := s.store.GetDBStmtSummary(r.Context(), q); err == nil {
+			sum = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if v, err := s.store.GetDBStmtCallers(r.Context(), q, insightStmtCallerLimit); err == nil {
+			callers = v
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		if a, b, err := s.store.DBStmtExemplars(r.Context(), q); err == nil {
+			slowTID, errTID = a, b
+		}
+	}()
+	wg.Wait()
+
+	if sum == nil {
+		// Özet yoksa sınıfın bu pencerede HİÇ satırı yok (GROUP BY'sız
+		// toplamda cnt==0 = "bulunamadı" sinyali). Çağıran/exemplar da
+		// boş olur; kanıtsız bir kart çizdirmek yerine 404.
+		http.Error(w, "slow query class has no rows in this window", http.StatusNotFound)
+		return
+	}
+
+	ev := slowQueryEvidence(ref, sum, callers, slowTID, errTID,
+		from.UnixNano(), now.UnixNano(), now.UnixNano())
+	resp := insight.Response{Links: insight.SlowQueryLinks(ev)}
+	resp.Signals, resp.Truncated = insight.SlowQuerySignals(ev)
+	s.deliverInsight(w, r, resp,
+		copilot.SystemPromptSlowQuery(), insight.SlowQueryPromptUser(ev))
+}
+
+// insightStmtCallerLimit — çağıran okumasının tavanı. Kart üç ad
+// gösteriyor (maxListedNames); tavan biraz daha yüksek ki "+N" GERÇEK
+// bir fazlalığı göstersin, ve tavana dayanmak Truncated'ı kaldırsın.
+// Çekmece 20 okuyor — kart onun beşte biriyle yetiniyor.
+const insightStmtCallerLimit = 6
+
+// slowQueryEvidence — chstore → saf kanıt dönüşümü. SAF.
+func slowQueryEvidence(ref insight.StmtRef, sum *chstore.DBStmtSummary,
+	callers []chstore.DBStmtCaller, slowTID, errTID string,
+	fromNs, toNs, nowNs int64) insight.SlowQueryEvidence {
+
+	ev := insight.SlowQueryEvidence{
+		StmtParam:    ref.Param,
+		SlowTraceID:  slowTID,
+		ErrorTraceID: errTID,
+		FromNs:       fromNs, ToNs: toNs, NowNs: nowNs,
+	}
+	if sum != nil {
+		// Görünüm formu ÖZETİN kendi bucket örneğinden türüyor
+		// (NormalizeDBStatement) — çekmecenin yaptığının aynısı, yani
+		// kart ile çekmece aynı metni gösterir ve ikisi de hash'le
+		// tutarlıdır (dbstmt.go parite sözleşmesi).
+		ev.Statement = chstore.NormalizeDBStatement(sum.SampleStatement)
+		ev.Sample = sum.SampleStatement
+		ev.DBSystem, ev.DBName = sum.DBSystem, sum.DBName
+		ev.Calls, ev.Errors = sum.Calls, sum.Errors
+		ev.TotalMs, ev.AvgMs = sum.TotalMs, sum.AvgMs
+		ev.P95Ms, ev.P99Ms, ev.MaxMs = sum.P95Ms, sum.P99Ms, sum.MaxMs
+	}
+	// db_system kimlikte yoksa (motorlar arası katlanmış id) özetin
+	// kendi değeri kullanılır; ref'teki varsa o otoritedir.
+	if ref.System != "" {
+		ev.DBSystem = ref.System
+	}
+	for _, c := range callers {
+		if strings.TrimSpace(c.Service) == "" {
+			continue
+		}
+		ev.Callers = append(ev.Callers, insight.CallerRef{
+			Service: c.Service, Calls: c.Calls, P95Ms: c.P95Ms, TotalMs: c.TotalMs,
+		})
+	}
+	ev.CallersCapped = len(callers) >= insightStmtCallerLimit
 	return ev
 }
 

@@ -5,7 +5,9 @@ import { Topbar } from '@/components/Topbar';
 import { Spinner, Empty } from '@/components/Spinner';
 import { TableSkeleton } from '@/components/Skeleton';
 import { Button } from '@/components/ui';
-import { api } from '@/lib/api';
+// `api` importu KALKTI (v0.9.1137): sayfanın tek doğrudan çağrısı
+// api.copilotExplainSlowQuery'ydi ve o insight kartına devredildi. Satır
+// verisi useSlowQueries üzerinden (React Query) geliyor.
 import { useSlowQueries } from '@/lib/queries';
 import { timeRangeToNs, fmtNum } from '@/lib/utils';
 import { encodeFilters } from '@/lib/urlState';
@@ -19,7 +21,9 @@ import type { SlowQueryRow, TimeRange } from '@/lib/types';
 import { PageControls } from '@/components/ui/PageControls';
 import { serviceHref } from '@/lib/serviceHref';
 import { PageShell } from '@/components/ui/PageShell';
-import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
+// v0.9.1137 (AI Faz 2.4) — satır-içi ✨ Explain yerine insight kartı.
+// AIFeedbackButtons importu KALKTI: 👍/👎 artık kartın altbilgisinde.
+import { useInsightRow, InsightRowChip, InsightRowSlot } from '@/components/ai/insightRow';
 
 // Columns for the shared sortable + resizable DataTable primitive.
 // Default order matches the backend's total-wall-clock sort so the
@@ -41,12 +45,23 @@ const SLOW_COLS: DataTableColumn<SlowQueryRow>[] = [
   { id: 'errorCount', label: 'Errors',     sortValue: r => r.errorCount, numeric: true, width: 90 },
 ];
 
-// Per-row Copilot explain state — keeps the slow-query table
-// page lean while letting each expanded row hold its own AI
-// answer + loading flag without all rows sharing state.
-// v0.9.1121 (Faz 0.3b) — cevap durumu artık ai_calls kimliğini de taşır
-// (👍/👎 buna asılı). omitempty: kimlik gelmezse düğmeler çizilmez.
-type ExplainState = 'idle' | 'busy' | { text: string; exchangeId?: string } | { error: string };
+// v0.9.1137 (AI Faz 2.4) — SATIR-İÇİ ✨ EXPLAIN SÖKÜLDÜ.
+//
+// Buradaki `ExplainState` makinesi (idle/busy/text/error) + askCopilot +
+// api.copilotExplainSlowQuery çağrısı, insight kartıyla DEĞİŞTİRİLDİ:
+// kart aynı sistem prompt'unu (SystemPromptSlowQuery) kullanıyor ama
+// kanıtı da sunucu topluyor, üstüne akan anlatı + deterministik sinyaller
+// + sunucu-üretimi pivotlar + 👍/👎 getiriyor. Yani kartın kapsamı eski
+// panelin ÜST KÜMESİ; iki AI yüzeyini aynı satırda tutmak (v0.9.306
+// sınıfı) gereksiz olurdu.
+//
+// SESSİZ BİR KUSURU DA GÖTÜRDÜ: eski panel cevabı `pre-wrap` ile HAM
+// basıyordu, yani modelin `**kalın**` işaretleri ekranda yıldız olarak
+// görünüyordu (v0.9.641 → 696 → Faz 0.5'te üç kez düzeltilen sınıf).
+// Bu dosya markdownSurfaces kapısının ÜÇ ailesinin de dışındaydı
+// (ne `aiSummary`, ne `{busy,text,err}` adlandırması, ne kart) — yani
+// kusur ölçülmüyordu. Kart RenderedMarkdown'dan geçiyor ve kapıya
+// (InsightCard ailesi) DAHİL.
 
 // /databases/slow-queries — global slow-query catalog (v0.5.165).
 // Answers "what query class is burning the most DB time across
@@ -86,32 +101,17 @@ export default function SlowQueriesPage() {
   const rows: SlowQueryRow[] | null | undefined =
     rowsQ.isPending ? undefined : rowsQ.isError ? null : rowsQ.data ?? [];
   const [expanded, setExpanded] = useState<string | null>(null);
-  // Per-row explain state — keyed on the same "service::stmt"
-  // composite the expand toggle uses. Resets implicitly when
-  // the operator changes range/filter (rows refetch → keys go
-  // stale → no orphan rendering risk).
-  const [explains, setExplains] = useState<Record<string, ExplainState>>({});
-  const askCopilot = async (key: string, r: SlowQueryRow) => {
-    setExplains(s => ({ ...s, [key]: 'busy' }));
-    try {
-      const resp = await api.copilotExplainSlowQuery({
-        service:         r.service,
-        statement:       r.statement,
-        sampleStatement: r.sampleStatement,
-        dbSystem:        r.dbSystem,
-        count:           r.count,
-        avgMs:           r.avgMs,
-        p95Ms:           r.p95Ms,
-        p99Ms:           r.p99Ms,
-        maxMs:           r.maxMs,
-        errorCount:      r.errorCount,
-      });
-      setExplains(s => ({ ...s, [key]: { text: resp.explanation, exchangeId: resp.exchangeId } }));
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setExplains(s => ({ ...s, [key]: { error: msg } }));
-    }
-  };
+  // v0.9.1137 (AI Faz 2.4) — dördüncü insight yuvası. Açık kart ADRESTE
+  // (`?insight=slow-query:<hash>[|<system>]`), yani paylaşılan link aynı
+  // sınıfın kartını açar. Kimlik satırın KENDİ kimliği: `?stmt=`
+  // çekmecesinin kodeği (encodeStmtParam) — üçüncü bir yazılış yok.
+  const insight = useInsightRow('slow-query');
+  // Kartın kanıt penceresi = SAYFANIN penceresi. `from/to` zaten memoize
+  // (timeRangeToNs bare çağrısı v0.5.184 sınıfı), buradaki türetme de
+  // aynı memo'ya asılıyor: kart 1sa varsayılanına düşerse 6sa'lık bir
+  // sayfada satırdakinden BAŞKA sayı gösterirdi.
+  const windowSec = useMemo(
+    () => Math.max(60, Math.round((to - from) / 1e9)), [from, to]);
 
   const systems = rows
     ? Array.from(new Set(rows.map(r => r.dbSystem).filter(Boolean))).sort()
@@ -222,6 +222,15 @@ export default function SlowQueriesPage() {
                 {dt.sortedRows.map(r => {
                   const key = `${r.service}::${r.statement}`;
                   const isExpanded = expanded === key;
+                  // insightId — kartın öznesi: ifade SINIFININ kalıcı kimliği,
+                  // satırın (service, statement) çiftinden TÜRETİLMİŞ `key`
+                  // DEĞİL. Aynı sınıfı çekmeceye açan kodeğin aynısı
+                  // (encodeStmtParam) ve `system` de aynı şekilde SAYFA
+                  // FİLTRESİ ('' = motorlar arası katlanmış, katalogun
+                  // varsayılanı) — kart ile çekmece aynı kapsamı anlatsın.
+                  const insightId = r.stmtHash
+                    ? encodeStmtParam({ hash: r.stmtHash, system: dbSystem })
+                    : null;
                   const totalSec = r.totalMs / 1000;
                   const totalLabel = totalSec >= 60
                     ? `${(totalSec / 60).toFixed(1)} min`
@@ -343,57 +352,34 @@ export default function SlowQueriesPage() {
                               </Link>
                               <span>Max: {r.maxMs.toFixed(0)} ms · P95: {r.p95Ms.toFixed(0)} ms · P50: {r.p50Ms.toFixed(0)} ms</span>
                               <span style={{ flex: 1 }} />
-                              {(() => {
-                                const ex = explains[key] ?? 'idle';
-                                if (ex === 'busy') {
-                                  return <span style={{ color: 'var(--text3)' }}>✨ Thinking…</span>;
-                                }
-                                return (
-                                  <Button variant="accent" size="sm"
-                                    onClick={() => askCopilot(key, r)}
-                                    title="Ask CoSRE for the likely cause + one concrete remediation">
-                                    ✨ {ex === 'idle' ? 'Explain' : 'Re-ask'} CoSRE
-                                  </Button>
-                                );
-                              })()}
+                              {/* v0.9.1137 (AI Faz 2.4) — eski ✨ Explain/Re-ask
+                                  düğmesinin YERİNDE insight çipi. Aynı yer
+                                  bilinçli: operatörün kas hafızası orada ve
+                                  örnek ifadeyi görmek ile "bunu anlat" demek
+                                  aynı bağlamda kalıyor.
+                                  `insightId` YOKSA çip HİÇ çizilmez — pre-D1
+                                  bir önbellek girdisinden gelen satırın kalıcı
+                                  kimliği yok, ve kimliksiz bir kart açmak
+                                  sunucuya 400 attırırdı (stmtDetailHref'in
+                                  null dönüşüyle aynı disiplin). */}
+                              {insightId && (
+                                <InsightRowChip open={insight.openId === insightId}
+                                  onToggle={() => insight.toggle(insightId)}
+                                  title="Bu sorgu sınıfı için sinyalleri topla ve neden yavaş olduğunu anlat (AI)" />
+                              )}
                             </div>
-                            {(() => {
-                              const ex = explains[key];
-                              if (!ex || ex === 'idle' || ex === 'busy') return null;
-                              if ('error' in ex) {
-                                return (
-                                  <div style={{
-                                    marginTop: 10, padding: 8,
-                                    background: 'rgba(255,82,82,0.08)',
-                                    border: '1px solid rgba(255,82,82,0.3)',
-                                    borderRadius: 4, fontSize: 12,
-                                    color: 'var(--err)',
-                                  }}>
-                                    Explain failed: {ex.error}
-                                  </div>
-                                );
-                              }
-                              return (
-                                <div style={{
-                                  marginTop: 10, padding: 10,
-                                  background: 'var(--bg)',
-                                  border: '1px solid var(--border)',
-                                  borderRadius: 4, fontSize: 12,
-                                  lineHeight: 1.55,
-                                  whiteSpace: 'pre-wrap',
-                                }}>
-                                  <div style={{
-                                    fontSize: 10, color: 'var(--accent2)',
-                                    textTransform: 'uppercase', letterSpacing: 0.4,
-                                    marginBottom: 6, fontWeight: 600,
-                                  }}>✨ CoSRE</div>
-                                  {ex.text}
-                                  <div><AIFeedbackButtons exchangeId={ex.exchangeId} /></div>
-                                </div>
-                              );
-                            })()}
                           </td>
                         </tr>
+                      )}
+                      {/* Kart, örnek satırının ALTINDA ve KENDİ `<tr>`sinde.
+                          Koşulu YALNIZ `openId`: örnek satırı kapatmak kartı
+                          düşürmez, çünkü kartın öznesi ifade SINIFI — ve
+                          paylaşılan bir `?insight=` linki satır genişletilmemiş
+                          olsa da kartı açmalı. */}
+                      {insightId && insight.openId === insightId && (
+                        <InsightRowSlot kind="slow-query" id={insightId}
+                          colSpan={11} windowSec={windowSec}
+                          onClose={insight.close} />
                       )}
                     </Fragment>
                   );

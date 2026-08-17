@@ -183,6 +183,138 @@ func ProblemLinks(ev ProblemEvidence) []Link {
 	return out
 }
 
+// ── log-pattern linkleri (v0.9.1137, Faz 2.4) ───────────────────────
+
+// PatternLogWindow — desenin OLAY penceresi: son görülmenin 30dk öncesi
+// → 10dk sonrası. patternLogWindow (streams.tsx, v0.9.862) ile AYNI
+// formül: aynı desen için satırın "logs ↗" çipi ile kartın pivotu farklı
+// pencere açarsa operatör iki farklı cevap görür.
+//
+// Saf; damga yoksa (0,0) döner ve pencere isteyen linkler üretilmez.
+func PatternLogWindow(lastSeenNs int64) (fromNs, toNs int64) {
+	if lastSeenNs <= 0 {
+		return 0, 0
+	}
+	const min = int64(60 * 1e9)
+	from, to := lastSeenNs-30*min, lastSeenNs+10*min
+	if from <= 0 || to <= from {
+		return 0, 0
+	}
+	return from, to
+}
+
+// PatternKQL — desenin /logs sorgusu.
+//
+// PARAM DOĞRULAMASI (ölü-param disiplini, v0.9.1130 sınıfı): /logs
+// okuyucusu readLogsParams (frontend/src/lib/logsUrl.ts) YALNIZ
+// service · cluster · q · severity · traceId · spanId · hasTrace ·
+// filters · cols okur, pencere de `range`ten. `pattern=` ya da
+// `tokens=` diye bir param YOK — yazsak sessizce düşer ve hedef sayfa
+// FİLTRESİZ açılır.
+//
+// Servis de `q`ya giriyor, `service=`ye DEĞİL: v0.5.311'de
+// operatör-bildirimli karar ("servis picker'da ön-seçili gelmesin,
+// KQL'e girsin") — kardeş üretici logsLinkForPattern bugün aynen bunu
+// yapıyor. İki üretici aynı çipi çiziyor; ayrışmaları operatörün
+// "aynı link neden farklı" sorusudur.
+func PatternKQL(service string, tokens []string) string {
+	var clauses []string
+	if s := strings.TrimSpace(service); s != "" {
+		clauses = append(clauses, `service.name:"`+strings.ReplaceAll(s, `"`, `\"`)+`"`)
+	}
+	quoted := make([]string, 0, len(tokens))
+	for _, t := range tokens {
+		if strings.TrimSpace(t) == "" {
+			continue
+		}
+		quoted = append(quoted, `"`+strings.ReplaceAll(t, `"`, `\"`)+`"`)
+	}
+	switch len(quoted) {
+	case 0:
+	case 1:
+		clauses = append(clauses, quoted[0])
+	default:
+		clauses = append(clauses, "("+strings.Join(quoted, " OR ")+")")
+	}
+	return strings.Join(clauses, " AND ")
+}
+
+// LogPatternLinks — desen kartının çipleri, sıra sabit.
+func LogPatternLinks(ev LogPatternEvidence) []Link {
+	from, to := PatternLogWindow(ev.LastSeenNs)
+	rng := RangeParam(from, to)
+	var out []Link
+
+	// Loglar — desenin GERÇEK satırlarına inen tek link. Pencere ZORUNLU:
+	// penceresiz açılan /logs yapışkan aralığa düşer ve boş liste
+	// "böyle log yok" diye okunur (v0.9.862'nin düzelttiği tam bu).
+	if q := PatternKQL(ev.Service, ev.Tokens); q != "" && rng != "" {
+		out = append(out, Link{Label: "Loglar (desen)",
+			Href: href("/logs", kv{"q", q}, kv{"range", rng})})
+	}
+	if svc := strings.TrimSpace(ev.Service); svc != "" {
+		if rng != "" {
+			out = append(out, Link{Label: "Servis",
+				Href: href("/service", kv{"name", svc}, kv{"range", rng})})
+			out = append(out, Link{Label: "Hatalı trace'ler",
+				Href: href("/traces", kv{"service", svc}, kv{"hasError", "true"},
+					kv{"rootOnly", "false"}, kv{"range", rng})})
+		}
+	}
+	return out
+}
+
+// ── slow-query linkleri (v0.9.1137, Faz 2.4) ────────────────────────
+
+// SlowQueryLinks — yavaş sorgu kartının çipleri, sıra sabit.
+//
+// PARAM DOĞRULAMASI:
+//   - /slow-queries → `stmt` (decodeStmtParam, SlowQueries.tsx:133) +
+//     `range` (useUrlRange). İfade çekmecesinin TEK kapısı bu; aynı
+//     şekli stmtDetailHref (stmtParam.ts, v0.9.963) da üretiyor.
+//   - /databases → `dbsys` + `dbname` (Databases.tsx:80-81) + `range`.
+//   - /trace → `id`; pencere OKUMAZ (nokta nesnesi, links.go üst notu).
+//
+// /database (TEKİL, detay sayfası) BİLİNÇLİ YOK: oradaki kimlik bir
+// ÜÇLÜ (system, instance, dbName) ve bir ifade sınıfının instance'ı
+// yoktur — sınıf motorun bütün instance'larına yayılır. Uydurma bir
+// instance sessizce BOŞ bir detay sayfası açar (v0.9.821'in
+// "etiketi kimlik sanmak" arızası). databasesFilterHref (v0.9.964) bu
+// kararı frontend'de zaten vermiş; sunucu tarafı aynı kararı tekrarlıyor.
+//
+// dbname da yazılmıyor: gruplama db_name'i KATLIYOR, yani özetten gelen
+// ad temsili olabilir (katalog satırının "+N"i) ve 'default' MV'nin
+// "db.name yoktu" nöbetçisi. Katalogda motor filtresi kalıyor:
+// olabileceğinden dar bir katalog, kendinden emin ama yanlış olandan iyidir.
+func SlowQueryLinks(ev SlowQueryEvidence) []Link {
+	rng := RangeParam(ev.FromNs, ev.ToNs)
+	var out []Link
+
+	if p := strings.TrimSpace(ev.StmtParam); p != "" && rng != "" {
+		out = append(out, Link{Label: "İfade detayı",
+			Href: href("/slow-queries", kv{"stmt", p}, kv{"range", rng})})
+	}
+	if tid := strings.TrimSpace(ev.SlowTraceID); tid != "" {
+		out = append(out, Link{Label: "En yavaş örnek trace",
+			Href: href("/trace", kv{"id", tid})})
+	}
+	if tid := strings.TrimSpace(ev.ErrorTraceID); tid != "" {
+		out = append(out, Link{Label: "Hatalı örnek trace",
+			Href: href("/trace", kv{"id", tid})})
+	}
+	if len(ev.Callers) > 0 && rng != "" {
+		if svc := strings.TrimSpace(ev.Callers[0].Service); svc != "" {
+			out = append(out, Link{Label: "Çağıran: " + svc,
+				Href: href("/service", kv{"name", svc}, kv{"range", rng})})
+		}
+	}
+	if sys := strings.TrimSpace(ev.DBSystem); sys != "" {
+		out = append(out, Link{Label: "Veritabanı kataloğu",
+			Href: href("/databases", kv{"dbsys", sys}, kv{"range", rng})})
+	}
+	return out
+}
+
 // ── küçük yardımcılar ───────────────────────────────────────────────
 
 type kv struct{ k, v string }

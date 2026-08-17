@@ -4323,7 +4323,12 @@ export interface AIExplainStreamAnswer {
 // de `as` olurdu (yasak). Wire gevşek, TÜKETİM dar: insightTone bilinmeyen
 // şiddeti nötre düşürür, yani tanımadığımız bir değer yanlış RENK yerine
 // hiç renk almaz.
-export type InsightKind = 'exception' | 'problem';
+// v0.9.1137 (Faz 2.4) — dört yuva. Değerler internal/ai/insight/
+// contract.go'nun Kinds() listesiyle BİREBİR; sunucu bilinmeyen türe 404
+// veriyor, yani buradaki bir yazım hatası "kart hiç açılmıyor" olarak
+// görünür. Runtime kümesi + derleyici kapısı:
+// components/ai/insightRow.tsx KIND_GATE.
+export type InsightKind = 'exception' | 'problem' | 'log-pattern' | 'slow-query';
 
 /** Şiddet — '' (alan hiç gelmemiş) GEÇERLİ ve "nötr bilgi" demek. */
 export type InsightSeverity = 'ok' | 'warn' | 'err';

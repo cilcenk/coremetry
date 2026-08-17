@@ -343,6 +343,288 @@ func ProblemSignals(ev ProblemEvidence) (out []Signal, truncated bool) {
 	return out, truncated
 }
 
+// ── log-pattern kanıtı (v0.9.1137, Faz 2.4) ─────────────────────────
+
+// PatternServiceRef — desenin bir servisteki payı (logstore'un
+// PatternServiceHit projeksiyonu).
+type PatternServiceRef struct {
+	Service string
+	Count   uint64
+}
+
+// LogPatternEvidence — küratörlü log deseni kartının deterministik
+// girdisi. TAMAMI anomaly.DetectLogPatterns'ın ZATEN döndürdüğü
+// alanlardan gelir: kart için ikinci bir ES sorgusu YOK (operatörün
+// duran kısıtı "elastice çok sorgu yükü oluşturma sakın").
+//
+// ŞİDDET KARIŞIMI (severity mix) BİLİNÇLİ YOK: detektörün okuması
+// (logstore.CountPatterns) severity boyutu döndürmüyor, dolayısıyla
+// karışımı göstermek YENİ bir sorgu şekli isterdi. Olmayan bir kırılımı
+// tahminle doldurmak yerine hiç göstermiyoruz.
+type LogPatternEvidence struct {
+	Pattern string
+	// Kind — "new" | "spike". Kartın rengi buradan: FE'nin desen
+	// kartındaki rozet dili (streams.tsx: NEW=warning, SPIKE=danger)
+	// ile AYNI eşleme, yoksa aynı olay iki yüzeyde iki renk olur.
+	Kind          string
+	CurrentCount  uint64
+	BaselineCount uint64 // pencere-eşdeğerine normalize edilmiş taban
+	Ratio         float64
+	Service       string // pencerede en çok basan servis
+	Sample        string
+	TopServices   []PatternServiceRef
+	// Tokens — desenin gövde alt dizeleri (küratörlü patterns[] listesi).
+	// SİNYAL değil, LİNK malzemesi: /logs sorgusu bunlardan kuruluyor
+	// (PatternKQL). Kanıt yapısında durması bilinçli — linki üreten yer
+	// kanıtı üreten yerle aynı olsun (v0.9.831'in "iki yerde seçim" tuzağı).
+	Tokens     []string
+	LastSeenNs int64
+	// WindowSec — sayımların penceresi. Sinyal olarak BASILIYOR çünkü
+	// "1.240" tek başına birimsiz bir sayı: hangi pencerede 1.240?
+	WindowSec int64
+	NowNs     int64
+}
+
+// LogPatternSignals — desenin deterministik satırları, sıra sabit.
+func LogPatternSignals(ev LogPatternEvidence) (out []Signal, truncated bool) {
+	add := func(kind, label, value, sev string) {
+		if strings.TrimSpace(value) == "" {
+			return
+		}
+		out = append(out, Signal{Kind: kind, Label: label, Value: value, Severity: sev})
+	}
+
+	// Durum — triyajın ilk sorusu: bu desen YENİ mi, yoksa bilinen bir
+	// desenin patlaması mı? İkisi FARKLI kanıt (detektörün kendi ayrımı:
+	// tabansız "new" yalnız sayıya, "spike" orana dayanır).
+	switch strings.ToLower(strings.TrimSpace(ev.Kind)) {
+	case "new":
+		add(SignalLog, "Durum", "YENİ — bu pencerede ilk kez göründü", SevWarn)
+	case "spike":
+		v := "PATLAMA"
+		if finite(ev.Ratio) && ev.Ratio > 0 {
+			v += " ×" + fmtF(ev.Ratio)
+		}
+		add(SignalLog, "Durum", v, SevErr)
+	}
+
+	if ev.WindowSec > 0 {
+		add(SignalGeneric, "Pencere", "son "+FmtDurTR(ev.WindowSec), "")
+	}
+
+	// Hacim — şiddet YOK: rengi Durum satırı taşıyor. İki satırın da
+	// kırmızı olması operatöre iki ayrı kötü haber gibi okunur.
+	vol := "şimdi " + fmtNum(ev.CurrentCount)
+	if ev.BaselineCount > 0 {
+		vol += " · taban " + fmtNum(ev.BaselineCount)
+	} else if ev.CurrentCount > 0 {
+		vol += " · taban yok (yeni)"
+	}
+	add(SignalLog, "Hacim", vol, "")
+
+	add(SignalGeneric, "Baskın servis", ev.Service, "")
+
+	// Etkilenen servisler — liste-şekilli, tavana takılırsa Truncated.
+	entries := make([]string, 0, len(ev.TopServices))
+	for _, ts := range ev.TopServices {
+		if strings.TrimSpace(ts.Service) == "" {
+			continue
+		}
+		entries = append(entries, ts.Service+" ("+fmtNum(ts.Count)+")")
+	}
+	if len(entries) > 1 {
+		names, cut := capNames(entries, len(entries))
+		v := strings.Join(names, ", ")
+		if cut > 0 {
+			v += fmt.Sprintf(" +%d", cut)
+			truncated = true
+		}
+		add(SignalLog, "Etkilenen servisler", v, "")
+	}
+
+	// Son görülme — BAĞIL (mutlak saat yasağı); tazelik eşikleri
+	// exception kartıyla AYNI, iki kart aynı sayfada yan yana açılabiliyor.
+	if ev.LastSeenNs > 0 && ev.NowNs >= ev.LastSeenNs {
+		age := (ev.NowNs - ev.LastSeenNs) / 1e9
+		sev := ""
+		switch {
+		case age <= 15*60:
+			sev = SevErr
+		case age <= 6*3600:
+			sev = SevWarn
+		}
+		add(SignalGeneric, "Son görülme", FmtDurTR(age)+" önce", sev)
+	}
+
+	add(SignalLog, "Örnek satır", oneLine(ev.Sample, 160), "")
+	return out, truncated
+}
+
+// ── slow-query kanıtı (v0.9.1137, Faz 2.4) ──────────────────────────
+
+// CallerRef — ifade sınıfını çağıran bir servis (db_statement_summary_5m
+// MV'sinin servis kırılımı).
+type CallerRef struct {
+	Service string
+	Calls   uint64
+	P95Ms   float64
+	TotalMs float64
+}
+
+// SlowQueryEvidence — yavaş sorgu sınıfı kartının deterministik girdisi.
+// Kaynak: db_statement_summary_5m MV'si (özet + çağıran kırılımı) +
+// MV-gömülü exemplar (v0.9.1097). HAM spans taraması YOK.
+type SlowQueryEvidence struct {
+	// StmtParam — `?stmt=` kodeği ("<hash>[|<system>]"); linkler bunu
+	// AYNEN taşır ki kart ile çekmece AYNI sınıfı açsın.
+	StmtParam string
+	Statement string // '?'-normalize görünüm formu
+	Sample    string // literalli gerçek örnek (yalnız prompt'a girer)
+	DBSystem  string
+	DBName    string
+	Calls     uint64
+	Errors    uint64
+	TotalMs   float64
+	AvgMs     float64
+	P95Ms     float64
+	P99Ms     float64
+	MaxMs     float64
+	Callers   []CallerRef
+	// CallersCapped — çağıran okuması TAVANA dayandı (okuma limiti).
+	// Ayrı bir bayrak çünkü kırpma İKİ yerde oluyor: okuma limitinde ve
+	// gösterim tavanında; ikisini tek sayıya karıştırmak "+N"i yalan yapar.
+	CallersCapped bool
+	SlowTraceID   string
+	ErrorTraceID  string
+	FromNs, ToNs  int64
+	NowNs         int64
+}
+
+// SlowQuerySignals — yavaş sorgunun deterministik satırları, sıra sabit.
+func SlowQuerySignals(ev SlowQueryEvidence) (out []Signal, truncated bool) {
+	add := func(kind, label, value, sev string) {
+		if strings.TrimSpace(value) == "" {
+			return
+		}
+		out = append(out, Signal{Kind: kind, Label: label, Value: value, Severity: sev})
+	}
+
+	// Gecikme — şiddet p99'dan, katalog tablosunun p99Color eşikleriyle
+	// AYNI (>1000ms kırmızı, >200ms sarı). Aynı satır iki yüzeyde farklı
+	// renk olmasın.
+	if ev.P95Ms > 0 || ev.P99Ms > 0 || ev.MaxMs > 0 {
+		v := "p95 " + fmtMs(ev.P95Ms) + " · p99 " + fmtMs(ev.P99Ms)
+		if ev.MaxMs > 0 {
+			v += " · maks " + fmtMs(ev.MaxMs)
+		}
+		sev := ""
+		switch {
+		case ev.P99Ms > 1000:
+			sev = SevErr
+		case ev.P99Ms > 200:
+			sev = SevWarn
+		}
+		add(SignalDB, "Gecikme", v, sev)
+	}
+
+	// Hacim — katalogun sıralama ölçütü toplam duvar saati; kart da onu
+	// öne alıyor ("düzeltmeye değen" sorgu bu).
+	if ev.Calls > 0 {
+		v := fmtNum(ev.Calls) + " çağrı · toplam " + fmtMs(ev.TotalMs)
+		if ev.AvgMs > 0 {
+			v += " · ort " + fmtMs(ev.AvgMs)
+		}
+		add(SignalDB, "Hacim", v, "")
+	}
+
+	if ev.Errors > 0 {
+		v := fmtNum(ev.Errors) + " hata"
+		if ev.Calls > 0 {
+			v += fmt.Sprintf(" (%%%.1f)", float64(ev.Errors)*100/float64(ev.Calls))
+		}
+		add(SignalDB, "Hata", v, SevErr)
+	}
+
+	// Motor — db_name gruplamada KATLANIYOR (katalog satırının "+N"i tam
+	// bunu söylüyor), yani buradaki ad sınıfın TEK veritabanı olmak
+	// zorunda değil. 'default' MV'nin "db.name yoktu" nöbetçisi: bir
+	// veritabanı adı gibi basmak yanlış olur.
+	if sys := strings.TrimSpace(ev.DBSystem); sys != "" {
+		v := sys
+		if n := strings.TrimSpace(ev.DBName); n != "" && n != "default" {
+			v += " · " + n
+		}
+		add(SignalDB, "Motor", v, "")
+	}
+
+	if len(ev.Callers) > 0 {
+		c := ev.Callers[0]
+		v := c.Service
+		if c.Calls > 0 {
+			v += " · " + fmtNum(c.Calls) + " çağrı"
+		}
+		if c.P95Ms > 0 {
+			v += " · p95 " + fmtMs(c.P95Ms)
+		}
+		add(SignalDB, "En çok çağıran", v, "")
+	}
+	if len(ev.Callers) > 1 {
+		names := make([]string, 0, len(ev.Callers))
+		for _, c := range ev.Callers {
+			if strings.TrimSpace(c.Service) != "" {
+				names = append(names, c.Service)
+			}
+		}
+		kept, cut := capNames(names, len(names))
+		v := fmt.Sprintf("%d servis: %s", len(names), strings.Join(kept, ", "))
+		if cut > 0 {
+			v += fmt.Sprintf(" +%d", cut)
+			truncated = true
+		}
+		add(SignalDB, "Çağıranlar", v, "")
+	}
+	if ev.CallersCapped {
+		truncated = true
+	}
+
+	add(SignalDB, "İfade", oneLine(ev.Statement, 200), "")
+	return out, truncated
+}
+
+// ── biçim yardımcıları ──────────────────────────────────────────────
+
+// fmtMs — milisaniye → okunur süre. Her BİRİM ayrı dalda ve hepsi
+// tablo-testli (v0.6.36 birim-karıştırma kuralı: değer+birim üreten
+// şablon HER birimi testler). 1000ms altı ms, 60sn altı sn, üstü dk.
+func fmtMs(ms float64) string {
+	if !finite(ms) || ms < 0 {
+		return "—"
+	}
+	switch {
+	case ms < 1000:
+		return fmt.Sprintf("%.0fms", ms)
+	case ms < 60_000:
+		return fmt.Sprintf("%.1fsn", ms/1000)
+	default:
+		return fmt.Sprintf("%.1fdk", ms/60_000)
+	}
+}
+
+// oneLine — çok satırlı örneği tek satıra indirip RUNE sınırında keser.
+// Bayt kesmesi geçersiz UTF-8 üretir ve o dize hem panele hem PROMPT'a
+// gider (anomaly.truncateSample bugün bayt kesiyor — kart onu tekrar
+// etmiyor).
+func oneLine(s string, max int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if max <= 0 {
+		return s
+	}
+	if r := []rune(s); len(r) > max {
+		return string(r[:max]) + "…"
+	}
+	return s
+}
+
 // capNames — ad listesini maxListedNames'e kırpar ve KAÇ tane
 // gizlendiğini döndürür. total, kırpmadan ÖNCEKİ gerçek sayı (çağıran
 // zaten tavanlı bir liste tutuyorsa total onu aşabilir).

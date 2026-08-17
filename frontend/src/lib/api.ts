@@ -33,6 +33,13 @@ import type {
   InsightKind, InsightResponse, InsightSignal, InsightLink, InsightChartSpec,
   AnomalySensitivityConfig } from './types';
 import { encodeMetricQuery, type MetricQuery } from './metricQuery';
+// withMetricSource — v0.9.1151 deneme modu. Sayfa URL'sindeki
+// ?metricsrc=vm|ch işaretini metrik uçlarının sorgu dizesine basar. TEK
+// yardımcı, çünkü yarısı param'lı yarısı param'sız bir sayfa (ör. grafik
+// VM'den, picker CH'den) adları bir backend'den alıp öbürüne sorar: boş
+// seri, ve operatör "VM'de veri yok" sonucuna varır. Gerekçenin tamamı
+// lib/metricSource.ts başlığında.
+import { withMetricSource } from './metricSource';
 // readSSE — `event:`/`data:` çerçeve okuyucusu. v0.9.1127'de bu dosyanın
 // içinden (copilotChat'in gövdesinden) çıkarıldı: ikinci tüketici (akan
 // ✨ Explain) gelince gömülü ayrıştırıcı ikinci kopya demekti.
@@ -641,9 +648,12 @@ export const api = {
   // params) still returns the old MetricInfo[] shape.
   // v0.9.1150 — zarf artık `source` da taşıyor (ch|vm); tip
   // lib/types.ts'te (MetricNameSearchResult).
+  // v0.9.1151 — withMetricSource: ?metricsrc= deneme modu. Rozet
+  // cevaptaki `source`'u okuduğu için param'lı istekte otomatik doğruyu
+  // gösterir.
   metricNamesSearch: (service: string, q?: string, limit = 200, offset = 0) =>
-    get<MetricNameSearchResult>(
-      `/api/metrics/names?${qs({ service, q, limit, offset })}`),
+    get<MetricNameSearchResult>(withMetricSource(
+      `/api/metrics/names?${qs({ service, q, limit, offset })}`)),
   // Distinct attribute keys observed on recent spans — drives the
   // FilterBuilder autocomplete so custom attrs (function_code etc.)
   // surface as suggestions in addition to the hardcoded list.
@@ -776,7 +786,7 @@ export const api = {
       signal,
     }),
 
-  metricNames: (service: string)     => get<MetricInfo[] | null>(`/api/metrics/names${service ? '?service=' + encodeURIComponent(service) : ''}`),
+  metricNames: (service: string)     => get<MetricInfo[] | null>(withMetricSource(`/api/metrics/names${service ? '?service=' + encodeURIComponent(service) : ''}`)),
   // v0.9.464 (dürüstlük A12) — zarf {points, truncated}: nokta tavanı
   // dolduğunda pencerenin SON kısmı döner ve UI bunu söyler.
   metrics:     (params: MetricsParams) => get<{ points: MetricPoint[]; truncated: boolean } | null>(`/api/metrics?${qs(params)}`),
@@ -2114,7 +2124,11 @@ export const api = {
     }>;
   }) =>
     request<Record<string, { series?: SpanMetricSeries[] | null; rowsCapped?: boolean; error?: string }>>(
-      `/api/dashboards/data`, {
+      // v0.9.1151 — deneme modu POST'ta da geçerli. İşaret SORGU
+      // DİZESİNDE taşınıyor, gövdede değil: aynı merkezî yardımcı hem GET
+      // hem POST uçlarını damgalıyor ve sunucu tarafında tek bir
+      // metricSourceFor(r) beşini de çözüyor.
+      withMetricSource(`/api/dashboards/data`), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2263,8 +2277,11 @@ export const api = {
   // v0.9.458 — endpoint artık {series, rowsCapped} zarfı döner; bu metot
   // .series'i açar ki 6 eski tüketici SpanMetricSeries[] üzerinde kalsın.
   // Dürüstlük şeridi gerekenler metricQueryFull kullanır.
+  // v0.9.1151 — withMetricSource: bu iki metot PanelRenderer'ın
+  // kaçış-yolu metrik çağrılarının da girdiği yer, yani dashboard
+  // bundle'ını atlayan paneller de deneme modunu izler.
   metricQuery: (params: MetricQueryParams) =>
-    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`)
+    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(withMetricSource(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`))
       .then(r => (r ? r.series : null)),
   // v0.9.774 — opsiyonel signal: Service Overview'un RT paneli RQ v5
   // semantiğiyle ({ signal } destructure) çağırıyor, aralık/servis
@@ -2272,7 +2289,7 @@ export const api = {
   // uyar (CanceledError) — hata DEĞİL, çağıranın kendi eylemi.
   // Mevcut çağıranlar (Explore, PanelRenderer) argümansız kalır.
   metricQueryFull: (params: MetricQueryParams, signal?: AbortSignal) =>
-    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`, signal),
+    get<{ series: SpanMetricSeries[]; rowsCapped?: boolean } | null>(withMetricSource(`/api/metrics/query?${qs({ maxDataPoints: 1500, ...params })}`), signal),
   // v0.6.56 — explicit-histogram heatmap + percentile bands. Reuses
   // MetricQueryParams (agg/groupBy ignored server-side for histograms).
   metricHistogram: (params: MetricQueryParams) =>
@@ -2335,12 +2352,12 @@ export const api = {
     return get<SpanMetricsServicesResponse>(`/api/spanmetrics/services?${params.toString()}`);
   },
   metricLabels: (metric: string, key: string, since: GoDuration = '24h') =>
-    get<string[] | null>(`/api/metrics/labels?metric=${encodeURIComponent(metric)}&key=${encodeURIComponent(key)}&since=${since}`),
+    get<string[] | null>(withMetricSource(`/api/metrics/labels?metric=${encodeURIComponent(metric)}&key=${encodeURIComponent(key)}&since=${since}`)),
   // v0.9.771 — metricLabels'in anahtar yarısı: bir metrikte GÖRÜLMÜŞ datapoint
   // attribute anahtarları. PromQL editöründe `{` yazınca ne yazılabileceğini
   // sunucudan öğrenmek için (sabit LABEL_KEYS listesi tahmin, bu ölçüm).
   metricAttrKeys: (metric: string, service = '', since: GoDuration = '24h') =>
-    get<string[] | null>(`/api/metrics/attr-keys?metric=${encodeURIComponent(metric)}&service=${encodeURIComponent(service)}&since=${since}`),
+    get<string[] | null>(withMetricSource(`/api/metrics/attr-keys?metric=${encodeURIComponent(metric)}&service=${encodeURIComponent(service)}&since=${since}`)),
 
   profiles:        (params: ProfilesParams) => get<ProfileRow[] | null>(`/api/profiles?${qs(params)}`),
   profile:         (id: string, signal?: AbortSignal) => get<ProfileDetail>(`/api/profiles/${id}`, signal),

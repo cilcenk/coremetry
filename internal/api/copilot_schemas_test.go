@@ -3,6 +3,8 @@ package api
 import (
 	"encoding/json"
 	"testing"
+
+	"github.com/cilcenk/coremetry/internal/copilot"
 )
 
 // v0.9.527 — şema enum'ları sunucunun doğruladığı kümeden TÜRETİLMELİ.
@@ -156,11 +158,12 @@ func TestSortedKeysDeterministic(t *testing.T) {
 }
 
 // serviceAnalysis'in guven enum'u prompt'un dayattığı kümeyle aynı
-// olmalı (copilot_aianalyze.go:47). Ayrışırsa model şemanın izin verdiği
+// olmalı (copilot.SystemPromptServiceAnalysis, v0.9.1128'den beri
+// internal/copilot/prompts.go). Ayrışırsa model şemanın izin verdiği
 // ama prompt'un tanımadığı bir değer üretir.
 func TestServiceAnalysisGuvenMatchesPrompt(t *testing.T) {
 	for _, v := range serviceAnalysisGuven {
-		if !contains(serviceAnalysisPrompt, `"`+v+`"`) {
+		if !contains(copilot.SystemPromptServiceAnalysis(), `"`+v+`"`) {
 			t.Errorf("guven değeri %q prompt'ta geçmiyor — şema ile prompt ayrışmış", v)
 		}
 	}

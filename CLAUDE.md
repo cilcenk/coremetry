@@ -150,7 +150,7 @@ Full rules in `/frontend-conventions`. The one-liners:
 | Alert evaluator / anomaly / templater | `internal/evaluator/`, `internal/anomaly/`, `internal/templater/` |
 | Notifications | `internal/notify/` |
 | Auth (local + LDAP + OIDC) | `internal/auth/`, `internal/ldap/` |
-| Copilot (system prompts at BOTTOM of copilot.go) | `internal/copilot/` |
+| Copilot (ALL system prompts: `internal/copilot/prompts.go`) | `internal/copilot/` |
 | Topology correlator / CH migrations | `internal/topology/`, `internal/chmigrate/` |
 | Frontend pages / components / types+client / routes / sidebar | `frontend/src/pages/`, `components/`, `lib/{types,api}.ts`, `App.tsx`, `components/Sidebar.tsx` |
 

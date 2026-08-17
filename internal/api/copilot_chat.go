@@ -42,12 +42,6 @@ const (
 	chatMaxMessages   = 40 // cap conversation length fed back to the LLM (token budget)
 )
 
-// chatSystemPrompt frames the assistant as a Coremetry-native SRE
-// copilot and tells it the tools are its only source of truth so it
-// doesn't hallucinate service names / metrics.
-const chatSystemPrompt = `You are Coremetry's in-app observability assistant. You help operators investigate their own telemetry: services, traces, logs, metrics, problems, and anomalies.
-
-Use the provided tools to ground EVERY factual claim in live data — never invent service names, error rates, or trace IDs. When a question needs data, call a tool; when you have enough, answer concisely. Prefer specific numbers ("p99 was 2,130ms", "23 traces") over vague prose. Time windows: tools take range_s (seconds back from now); default to 1800 (30m) unless the operator says otherwise. If a tool returns nothing, say so plainly rather than guessing. Keep answers short and scannable — lead with the answer, then the supporting evidence. When the operator asks to SEE a chart or a visual trend would help, call render_chart — the UI draws it live; never draw ASCII charts or describe individual data points.` + copilot.AnswerInTurkish
 
 type chatRequest struct {
 	Messages []copilot.ChatMessage `json:"messages"`
@@ -224,7 +218,7 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	var finalText string
 	// v0.9.528 Faz 2 — serbest döngünün sistem prompt'u da kiminle
 	// konuşulduğunu taşır. Ön-söz boşsa sabitin aynısı.
-	loopPrompt := withAddressee(addressee, chatSystemPrompt)
+	loopPrompt := withAddressee(addressee, copilot.SystemPromptChat())
 
 	for round := 0; round < chatMaxToolRounds; round++ {
 		turn, err := s.copilot.ChatWithTools(ctx, loopPrompt, conv, specs)

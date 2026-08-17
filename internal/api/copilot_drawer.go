@@ -229,7 +229,8 @@ func drawerSuppressesGuided(explain string, route guidedRoute, question string) 
 // guidedNarrationUser — guided narration çağrısının user bloğu.
 // explain BOŞKEN üretilen metin v0.9.478'dekiyle bayt-bayt aynıdır
 // (regresyon testi bunu pinler); doluyken açıklama ek bir blok olarak
-// eklenir — guidedChatPrompt'un "SADECE verilen veriye dayan" kuralı
+// eklenir — guided prompt'un (copilot.SystemPromptGuidedChat)
+// "SADECE verilen veriye dayan" kuralı
 // böylece açıklamayı da kapsar. Saf; tablo-testli.
 func guidedNarrationUser(question, evidence, explain string) string {
 	base := "SORU: " + question + "\n\nVERİ:\n" + evidence
@@ -307,27 +308,6 @@ func drawerSourceNote(evidenceKind string) string {
 	}
 	return "\n\nKaynak: ekrandaki AI açıklaması"
 }
-
-// drawerChatPrompt — explain-grounded yolun sistem promptu. Türkçe-
-// native (2B dersi: İngilizce talimat + Türkçe cevap küçük modelde
-// kod-değiştirme vergisi). Guided promptuyla aynı posture, tek farkla:
-// veri bloğu sunucu prefetch'i değil, operatörün okuduğu açıklama +
-// (v0.9.482) o açıklamanın dayandığı HAM KANIT'tır.
-const drawerChatPrompt = `Sen Coremetry'nin gözlemlenebilirlik asistanısın. Operatör ekranda bir AI
-açıklaması okudu ve AYNI KONU üzerine takip sorusu soruyor.
-
-KURALLAR:
-- SADECE sana verilen AÇIKLAMA, HAM KANIT ve KONUŞMA bloklarına dayan. Yeni servis
-  adı, sayı, trace ID ya da metrik UYDURMA.
-- Soru açıklamada geçmeyen bir ayrıntıya (log satırı, exception mesajı, span adı,
-  süre) dairse cevabı HAM KANIT bloğunda ara — log gövdeleri ve stacktrace'ler
-  oradadır. Alıntı yaparken satırı kısalt, uydurma.
-- Önce sorunun cevabını 1-2 cümlede ver, sonra somut kanıtı (sayı, id, servis adı,
-  log satırı) göster.
-- Ne açıklamada ne de HAM KANIT'ta cevap YOKSA bunu açıkça söyle ve operatöre hangi
-  sayfaya bakması gerektiğini öner; tahmin yürütme.
-- latency, span, p99, timeout, deploy, trace gibi teknik terimleri ÇEVİRME.
-- Kısa ve taranabilir yaz: madde işaretleri kullan, 8 maddeyi geçme.` + copilot.AnswerInTurkish
 
 // drawerHistoryBlock — çekmece içinde sorulmuş önceki turların kompakt
 // dökümü (aktif soru HARİÇ; boş metinli tool-result turları atlanır).
@@ -416,7 +396,7 @@ func (s *Server) copilotChatDrawer(ctx context.Context, emit func(string, any), 
 		}
 	}
 
-	raw, err := s.copilotStreamSurface(ctx, "chat-drawer", drawerChatPrompt,
+	raw, err := s.copilotStreamSurface(ctx, "chat-drawer", copilot.SystemPromptDrawerChat(),
 		drawerNarrationUser(question, ex, msgs, evidence), func(delta string) {
 			emit("delta", map[string]string{"text": delta})
 		})

@@ -548,13 +548,19 @@ type TeamAliases struct {
 	Aliases map[string]string `json:"aliases"`
 }
 
-// normTeamName — takım adı karşılaştırma anahtarı. İki Türkçe I tuzağı
+// NormTeamName — takım adı karşılaştırma anahtarı. İki Türkçe I tuzağı
 // birden: (1) Go'nun ToLower'ı 'İ'yi "i"+U+0307 yapar → combining dot
 // atılır; (2) ASCII 'I', Türkçede 'ı'ya inmeliyken Go 'i' verir
 // ("BANKACILIK"→"bankacilik" ama "Bankacılık"→"bankacılık") → noktalı/
 // noktasız i TEK forma katlanır. Yalnız eşleşme anahtarıdır; gösterim
 // orijinal yazımı korur.
-func normTeamName(s string) string {
+//
+// v0.9.1134 — DIŞA AÇIK. Guided chat'in takım-adı çıkarıcısı
+// (extractTeamEntity, internal/api/copilot_guided.go) mesajı ve katalog
+// takım adlarını AYNI kuralla katlamak zorunda; kuralı orada yeniden
+// yazmak "bir kural iki yere bölünüp zamanla ayrışıyor" hata sınıfıydı.
+// Tek yazım kalsın diye export edildi.
+func NormTeamName(s string) string {
 	n := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(s)), "̇", "")
 	return strings.ReplaceAll(n, "ı", "i")
 }
@@ -563,13 +569,13 @@ func normTeamName(s string) string {
 // normali, yoksa kendi normali. Tek seviyedir (alias'ın alias'ı yok —
 // tablo zaten kanonik hedefe yazılır).
 func (ta TeamAliases) CanonTeam(name string) string {
-	n := normTeamName(name)
+	n := NormTeamName(name)
 	if n == "" {
 		return ""
 	}
 	for k, v := range ta.Aliases {
-		if normTeamName(k) == n {
-			return normTeamName(v)
+		if NormTeamName(k) == n {
+			return NormTeamName(v)
 		}
 	}
 	return n

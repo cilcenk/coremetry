@@ -29,6 +29,9 @@ func TestGuidedNarrationPromptPerIntent(t *testing.T) {
 		{guidedServiceHealth, chatSys},
 		{guidedRootCause, chatSys},
 		{guidedShiftSummary, chatSys},
+		// v0.9.1134 — takım listesi de SOHBET anlatıcısında kalır: kanıt
+		// bloğu RED tablosu, trace'in 3-bölümlü akış anlatısı değil.
+		{guidedTeamServices, chatSys},
 	}
 	for _, c := range cases {
 		t.Run(string(c.intent), func(t *testing.T) {

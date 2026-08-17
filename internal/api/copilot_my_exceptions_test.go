@@ -16,7 +16,7 @@ import "testing"
 
 func routeOf(t *testing.T, q string) guidedRoute {
 	t.Helper()
-	return routeGuidedIntent(q, nil, nil, "")
+	return routeGuidedIntent(q, nil, nil, nil, "")
 }
 
 func TestTeamExceptionQuestionRoutesToExceptions(t *testing.T) {

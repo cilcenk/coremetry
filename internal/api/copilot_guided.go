@@ -73,6 +73,16 @@ const (
 	// sreTeam'iyle eşlenir; kimlik CallMeta'dan (ctx) okunur.
 	guidedMyServices guidedIntent = "my_services"
 	guidedMyProblems guidedIntent = "my_problems"
+	// guidedTeamServices (v0.9.1134, operatör istegi) — ADI GEÇEN bir
+	// takımın servisleri, EN ÇOK HATA ALAN önce. my_services'in iyelik
+	// olmayan ikizi: kimlik yerine mesajdaki takım adı özneyi verir.
+	//
+	// Asıl işi "hangi takım?" diyaloğunu kapatmak: takımı bilinmeyen
+	// kullanıcıya canlı takım listesi ÇİP olarak sunulur, çipe tıklamak
+	// ÇIPLAK bir takım adı gönderir ve o mesaj buraya yönlenir. Sunucuda
+	// konuşma durumu YOK — akış yalnızca çıplak takım adının kendi
+	// başına yönlenebilir olması sayesinde çalışıyor.
+	guidedTeamServices guidedIntent = "team_services"
 	// v0.9.650 (operatör: "Takımıma ait servislerin hataları
 	// (Exceptions) neler?") — Problem ve Exception AYRI yüzeyler:
 	// Problem bir alarm kuralının açtığı kayıt, Exception ise
@@ -136,6 +146,17 @@ type guidedRoute struct {
 	// (svc + " hata logları?" vb.) ZATEN vardı — eksik olan tek halka,
 	// çiplere hangi servislerin yazılacağıydı.
 	TeamServices []string
+	// Team (v0.9.1134) — guidedTeamServices rotasının ÖZNESİ: mesajda
+	// adı geçen canlı takım (extractTeamEntity). TeamServices'in tersi
+	// yönü — bu rotanın GİRDİSİ, çıktısı değil.
+	Team string
+	// TeamOptions (v0.9.1134) — "hangi takım?" diyaloğunda operatöre
+	// SUNULACAK canlı takım adları (servis sayısına göre en büyükler).
+	// Rotanın çıktısı: guidedMyTeamBundle takımsız kullanıcıda dolduruyor,
+	// guidedSuggestions çipe çeviriyor. Çipin metni ÇIPLAK takım adıdır —
+	// tıklandığında guidedTeamServices'e yönlenir, yani diyalog sunucuda
+	// durum tutmadan kapanır.
+	TeamOptions []string
 	// TraceID (v0.9.537) — guidedTraceByID rotasının öznesi (32-hex).
 	TraceID string
 	// SpanID (v0.9.548) — guidedSpanByID rotasının öznesi (16-hex).
@@ -535,6 +556,177 @@ func extractEnvEntity(msg string, envs []string) string {
 	return best
 }
 
+// ─── Takım varlığı (v0.9.1134) ──────────────────────────────────────
+
+// extractTeamEntity — mesajdaki takım adını CANLI takım kataloğuna karşı
+// çözer (asla tahmin değil; teamCatalogue = service_metadata'nın boş
+// olmayan ownerTeam+sreTeam değerleri). extractEnvEntity'nin ikizi:
+// sınırlı (bounded) tam-ad eşleşmesi, en UZUN kazanır ("SY-Dijital
+// Bankacılık", "dijitalsy" alt-adını gölgeler).
+//
+// KATLAMA: iki taraf da chstore.NormTeamName'den geçer — takım adları
+// Türkçe yazılıyor ve iki I tuzağı burada da geçerli ("Bankacılık" vs
+// "BANKACILIK"). Katlama i/ı'yı tek forma indirdiği için hem katalog adı
+// hem mesaj ASCII'ye iner; sınır denetimi (indexBounded) o yüzden çalışır.
+//
+// ÇIPLAK takım adı da eşleşir ("avengersy") — "hangi takım?" sorusuna
+// verilen cevap turu tam olarak bu şekildedir ve akışın tek dayanağıdır.
+//
+// 3 karakterden kısa ve stopword olan takım adları BİLEREK atlanır: iki
+// harflik bir takım adı ("sy") rastgele metnin içinde sınırlı eşleşme
+// yakalayıp tüm sohbeti kaçırırdı — deterministic beats clever.
+func extractTeamEntity(msg string, teams []string) string {
+	folded := chstore.NormTeamName(msg)
+	best := ""
+	bestLen := 0
+	for _, t := range teams {
+		ft := chstore.NormTeamName(t)
+		if len(ft) < 3 || guidedStopwords[ft] || len(ft) <= bestLen {
+			continue
+		}
+		if indexBounded(folded, ft) >= 0 {
+			best, bestLen = t, len(ft)
+		}
+	}
+	return best
+}
+
+// isBareTeamAsk — mesaj SADECE takım adından mı oluşuyor ("avengersy",
+// "Avengersy?"). "hangi takım?" çipine tıklayan operatörün ürettiği tur
+// budur; router'da takım dalının tek başına açılmasını haklı kılan sinyal.
+// Ad çıkarıldıktan sonra kalanın harf/rakam taşımaması yeterli — noktalama
+// ve boşluk serbest.
+func isBareTeamAsk(msg, team string) bool {
+	if team == "" {
+		return false
+	}
+	folded := chstore.NormTeamName(msg)
+	ft := chstore.NormTeamName(team)
+	i := indexBounded(folded, ft)
+	if i < 0 {
+		return false
+	}
+	rest := folded[:i] + folded[i+len(ft):]
+	for _, r := range rest {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// hasTeamWord — "takım/ekip/team" kökü. İyelik hâlleri de bu öneke girer
+// ("takımımın") ama router'da hasTeamSelfSignal HER ZAMAN önce gelir, yani
+// iyelik soruları buraya hiç düşmez.
+func hasTeamWord(tokens []string) bool {
+	return tokenHasPrefix(tokens, "takım", "takim", "ekip", "ekib", "team")
+}
+
+// hasServiceListWord — "servis/service" kökü; adı geçen takımın SERVİS
+// listesini isteyen şekiller ("avengersy servisleri").
+func hasServiceListWord(tokens []string) bool {
+	return tokenHasPrefix(tokens, "servis", "service")
+}
+
+// mayNameTeam — copilotChatGuided'ın katalog okumasını ÇIPLAK takım adı
+// için de göze alıp almayacağı ucuz kapı (saf).
+//
+// Neden gerekli: hasGuidedSignal'da takım adı diye bir sinyal YOKTUR ve
+// olamaz (adlar canlı katalogdan gelir). "hangi takım?" çipine basan
+// operatörün mesajı ("avengersy") hiçbir guided kelimesi taşımaz, yani
+// hızlı-çıkış onu serbest tool döngüsüne atardı — çipin vaadi tam orada
+// kırılırdı.
+//
+// Kapı kısa VE ad-şekilli mesajlarla sınırlı; ödediği bedel üç adet
+// 60sn-cache'li katalog okumasıdır. Uzun cümleler zaten guided sinyaliyle
+// gelir, taşımıyorsa serbest döngü doğru yerdir.
+func mayNameTeam(norm string) bool {
+	if utf8.RuneCountInString(strings.TrimSpace(norm)) > 40 {
+		return false
+	}
+	toks := guidedTokens(norm)
+	if len(toks) == 0 || len(toks) > 5 {
+		return false
+	}
+	for _, t := range toks {
+		if utf8.RuneCountInString(t) >= 3 {
+			return true
+		}
+	}
+	return false
+}
+
+// teamCatalogue (v0.9.1134) — CANLI takım kataloğu: service_metadata'nın
+// boş olmayan ownerTeam + sreTeam değerleri, SERVİS SAYISINA göre azalan
+// (eşitlikte ada göre artan — deterministik sıra, map iterasyonu sızmaz).
+//
+// Sıra iki işi birden yapıyor: "hangi takım?" çipleri en büyük takımlarla
+// başlar (operatörün takımı büyük olasılıkla ilk 8'de), extractTeamEntity
+// ise sıradan bağımsız (en uzun ad kazanır).
+//
+// Tekilleştirme CanonTeam üzerinden — alias tablosu ve Türkçe katlama
+// dahil, yani "avengerSY"/"Avengersy" TEK takımdır (v0.8.330'un
+// /services tarafında yaptığı işin sunucu ikizi). Gösterilen yazımı
+// betterTeamDisplay seçer (deterministik).
+// betterTeamDisplay — aynı takımın iki yazımı arasında gösterilecek olanı
+// seçer. Kural: KANONİK yazım (normali kendi kanonuna eşit olan, yani
+// alias tablosunun HEDEF tarafı) her zaman kazanır; ikisi de kanonik ya
+// da ikisi de alias ise alfabetik küçük olan. Alias yazımının çipe
+// düşmesi operatörü şaşırtırdı — katalogda başka bir ad görüyor.
+//
+// "İlk görülen" kuralı KULLANILMAZ: map iterasyon sırası rastgeledir,
+// aynı soru iki farklı çip metni üretirdi.
+func betterTeamDisplay(cand, cur, canon string) bool {
+	candCanon := chstore.NormTeamName(cand) == canon
+	curCanon := chstore.NormTeamName(cur) == canon
+	if candCanon != curCanon {
+		return candCanon
+	}
+	return cand < cur
+}
+
+func teamCatalogue(ta chstore.TeamAliases, mds map[string]chstore.ServiceMetadata) []string {
+	type entry struct {
+		display string
+		n       int
+	}
+	byCanon := map[string]*entry{}
+	for _, md := range mds {
+		seen := map[string]bool{} // aynı servis owner=sre ise İKİ kez saymasın
+		for _, name := range []string{md.OwnerTeam, md.SRETeam} {
+			c := ta.CanonTeam(name)
+			if c == "" || seen[c] {
+				continue
+			}
+			seen[c] = true
+			disp := strings.TrimSpace(name)
+			if e, ok := byCanon[c]; ok {
+				e.n++
+				if betterTeamDisplay(disp, e.display, c) {
+					e.display = disp
+				}
+				continue
+			}
+			byCanon[c] = &entry{display: disp, n: 1}
+		}
+	}
+	out := make([]entry, 0, len(byCanon))
+	for _, e := range byCanon {
+		out = append(out, *e)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].n != out[j].n {
+			return out[i].n > out[j].n
+		}
+		return out[i].display < out[j].display
+	})
+	names := make([]string, 0, len(out))
+	for _, e := range out {
+		names = append(names, e.display)
+	}
+	return names
+}
+
 // extractServiceEntities (v0.9.422, CoSRE fikir #7) — mesajda sınırlı
 // (bounded) tam-ad olarak geçen TÜM canlı servisler. extractServiceEntity
 // en uzun TEK eşleşmeyi döner; kıyas soruları ("checkout-service ile
@@ -567,7 +759,9 @@ func hasCompareSignal(toks []string) bool {
 // routeGuidedIntent is THE router: normalized keyword matching over
 // the five shapes, most-specific first. Pure — table-tested in
 // copilot_guided_test.go with Turkish + English variants.
-func routeGuidedIntent(raw string, services, envs []string, ctxService string) guidedRoute {
+// teams (v0.9.1134) — canlı takım kataloğu (teamCatalogue); nil = takım
+// farkındalığı kapalı, o hâlde davranış bayt-bayt eskisidir.
+func routeGuidedIntent(raw string, services, envs, teams []string, ctxService string) guidedRoute {
 	msg := normalizeGuidedMsg(raw)
 	toks := guidedTokens(msg)
 	// v0.9.537 — açık 32-hex trace ID'si EN GÜÇLÜ sinyaldir ve her şeyi
@@ -584,6 +778,7 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 	}
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)
+	team := extractTeamEntity(msg, teams)
 	// v0.9.422 (CoSRE fikir #7) — çoklu tam-ad kıyası: soru 2+ canlı
 	// servisi ADIYLA anıyor ve sağlık/hata/kıyas şekliyse familyHealth
 	// yan-yana RED karşılaştırması zaten işi yapar. Tek-ad çözümü
@@ -632,6 +827,30 @@ func routeGuidedIntent(raw string, services, envs []string, ctxService string) g
 			return guidedRoute{Intent: guidedMyProblems, Env: env}
 		}
 		return guidedRoute{Intent: guidedMyServices, Env: env}
+	// v0.9.1134 — ADI GEÇEN takım, iyelik dallarından HEMEN SONRA ve
+	// servis-adı dallarından ÖNCE.
+	//
+	// Neden buraya: (1) iyelik ("takımımın servisleri") kimlikten çözülür
+	// ve mesajda ad taşımaz — o dal önce kalmalı, yoksa "benim takımım
+	// avengersy" gibi bir cümlede ad, kimliği ezerdi. (2) Servis
+	// dallarından önce, çünkü bir takım SERVİSLE AYNI ADI taşıyabilir
+	// ("payments" hem takım hem servis) ve o durumda çıplak ad
+	// gölgelenirse "hangi takım?" diyaloğu ÇALIŞMAZ: operatörün tıkladığı
+	// çip sessizce servis sağlığına giderdi. Aynı gerekçe hasTeamSelfSignal
+	// için v0.9.375'te de verilmişti (kapsam kelimesi sessizce düşmesin).
+	//
+	// Gölgeleme bedeli bilerek KAPI ile sınırlandı — takım dalı yalnız üç
+	// hâlde açılır:
+	//   a) mesaj SADECE takım adı (çip turu),
+	//   b) takım/ekip kelimesi de var ("payments takımının servisleri"),
+	//   c) servis çözülmedi VE liste/sağlık/hata şekli var
+	//      ("avengersy servisleri nasıl").
+	// (c)'deki `svc == ""` şartı sayesinde "payments neden yavaş" gibi
+	// SERVİS soruları takıma kaçmaz; ada ek bir sinyal gerekmesi de
+	// "payments hataları" sorusunu servis tarafında bırakır.
+	case team != "" && (isBareTeamAsk(msg, team) || hasTeamWord(toks) ||
+		(svc == "" && (hasServiceListWord(toks) || hasHealthSignal(toks) || hasErrorSignal(toks)))):
+		return guidedRoute{Intent: guidedTeamServices, Team: team, Env: env}
 	// v0.9.514 — kök-neden, spesifik sinyallerden ÖNCE. "neden checkout
 	// yavaşladı" hem why hem slow sinyali taşır; slow yolu kazanırsa soru
 	// "yavaş mı"ya çöker ve NEDENSELLİK sessizce düşer. Servis şart:
@@ -874,11 +1093,15 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	// applyFollowUpContext'te (copilot_followup.go).
 	prior := priorUserTexts(msgs)
 	followCue := len(prior) > 0 && isFollowUpCue(norm)
-	if !hasGuidedSignal(norm) && !followCue {
+	// v0.9.1134 — ÇIPLAK takım adı hiçbir guided kelime taşımaz ("hangi
+	// takım?" çipinin gönderdiği tur), o yüzden kısa + ad-şekilli mesajlar
+	// da katalog okumasını hak eder (mayNameTeam; üç okuma da 60sn cache'li).
+	if !hasGuidedSignal(norm) && !followCue && !mayNameTeam(norm) {
 		return false, false // zero-cost fast path: no catalogue read
 	}
 	svcNames, envNames := s.guidedServiceNames(ctx), s.guidedEnvNames(ctx)
-	route := routeGuidedIntent(question, svcNames, envNames, ctxService)
+	teamNames := s.guidedTeamNames(ctx)
+	route := routeGuidedIntent(question, svcNames, envNames, teamNames, ctxService)
 	// v0.9.537 — "bu trace" / "ekrandaki trace" İD'siz sorulduğunda
 	// ekrandaki trace'e otur: operatör /trace sayfasında, adres zaten
 	// özneyi taşıyor. Mesajdaki AÇIK 32-hex her zaman kazanır
@@ -917,7 +1140,7 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 	}
 	followBase := "" // devralınan temel mesaj (operasyon çözümü için)
 	if followCue {
-		if nr, nrange, base, changed := applyFollowUpContext(route, question, prior, svcNames, envNames); changed {
+		if nr, nrange, base, changed := applyFollowUpContext(route, question, prior, svcNames, envNames, teamNames); changed {
 			route, rangeS, followBase = nr, nrange, base
 			scope := string(route.Intent)
 			if route.Service != "" {
@@ -984,6 +1207,8 @@ func (s *Server) copilotChatGuided(ctx context.Context, emit func(string, any), 
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "problems", &route, from, to, rangeS)
 	case guidedMyExceptions:
 		evidence, sources, err = s.guidedMyTeamBundle(ctx, emit, "exceptions", &route, from, to, rangeS)
+	case guidedTeamServices:
+		evidence, sources, err = s.guidedTeamServicesBundle(ctx, emit, &route, from, to, rangeS)
 	case guidedPodHealth:
 		evidence, sources, err = s.guidedPodHealthBundle(ctx, emit, route.Service, from, to)
 	case guidedShiftSummary:
@@ -1093,6 +1318,34 @@ func (s *Server) guidedEnvNames(ctx context.Context) []string {
 	if err != nil {
 		return nil
 	}
+	if b, merr := json.Marshal(names); merr == nil {
+		_ = s.cache.Set(ctx, key, b, 60*time.Second)
+	}
+	return names
+}
+
+// guidedTeamNames (v0.9.1134) — canlı takım kataloğu, guidedServiceNames'in
+// takım ikizi: Redis'te 60sn, yani sohbet trafiği replika başına dakikada
+// en fazla bir türetme ödüyor.
+//
+// Maliyet notu: kaynak okuma ListServiceMetadata ve o ZATEN süreç-içi 30sn
+// cache'li + yazma-tarafı invalidasyonlu (v0.8.359). Redis katmanı asıl
+// olarak takım sayımı + sıralamayı (teamCatalogue) ve alias point-read'ini
+// (teamAliasesCtx) her mesajda yeniden yapmamak için var. Hata → nil:
+// router takım-kör koşar, yani v0.9.1134 öncesi davranış.
+func (s *Server) guidedTeamNames(ctx context.Context) []string {
+	const key = "copilot:guided:teamnames"
+	if b, ok, _ := s.cache.Get(ctx, key); ok && len(b) > 0 {
+		var names []string
+		if json.Unmarshal(b, &names) == nil {
+			return names
+		}
+	}
+	mds, err := s.store.ListServiceMetadata(ctx)
+	if err != nil {
+		return nil
+	}
+	names := teamCatalogue(s.teamAliasesCtx(ctx), mds)
 	if b, merr := json.Marshal(names); merr == nil {
 		_ = s.cache.Set(ctx, key, b, 60*time.Second)
 	}
@@ -1317,6 +1570,12 @@ func (s *Server) guidedOperationHealthBundle(ctx context.Context, emit func(stri
 	return b.String(), src, nil
 }
 
+// maxTeamServices — takım-kapsamlı MV okumasının IN listesi tavanı.
+// Üstü okunmaz ve kanıt bunu SÖYLER. v0.9.1134'te fonksiyon içinden
+// dosya kapsamına çıkarıldı: guidedTeamServicesBundle da aynı tavana
+// uymalı, iki ayrı sayı zamanla ayrışırdı.
+const maxTeamServices = 100
+
 // servicesForUserTeam (v0.9.375) — kullanıcının takımına ait servisler:
 // ownerTeam VEYA sreTeam eşleşmesi (case-insensitive). Inbox'ın
 // servicesForTeam'inden farkı: orada owner ve SRE ayrı süzgeçler (AND),
@@ -1357,8 +1616,11 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 	env := route.Env
 	meta := copilot.MetaFromContext(ctx)
 	if meta.UserID == "" {
-		return "Oturum kimliği yok (auth kapalı olabilir) — takım-kapsamlı soru yanıtlanamıyor. Kullanıcıya söyle: belirli bir servis adıyla sorabilir.\n",
-			"kullanıcı kimliği", nil
+		// v0.9.1134 — eskiden burada ÇIKMAZ vardı ("yanıtlanamıyor").
+		// Artık takımı SORUYORUZ ve canlı takım listesini çip olarak
+		// sunuyoruz; operatör tıklayınca guidedTeamServices devralıyor.
+		return s.guidedAskTeamEvidence(ctx, route,
+			"Oturum kimliği yok (auth kapalı ya da token kullanıcıya bağlı değil), bu yüzden kullanıcının takımını KENDİM okuyamıyorum.\n")
 	}
 	emitGuidedStep(emit, "resolve_user_team", "")
 	u, uerr := s.store.GetUserByID(ctx, meta.UserID)
@@ -1366,8 +1628,8 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		return "", "", fmt.Errorf("user lookup: %w", uerr)
 	}
 	if u.Team == "" {
-		return fmt.Sprintf("Kullanıcının (%s) hesabına takım atanmamış. Kullanıcıya söyle: admin Settings → Users'tan Team alanını doldurursa \"takımımın servisleri\" çalışır.\n", u.Email),
-			"users tablosu (takım atanmamış)", nil
+		return s.guidedAskTeamEvidence(ctx, route,
+			fmt.Sprintf("Kullanıcının (%s) hesabına takım atanmamış (admin Settings → Users → Team alanı bunu kalıcı çözer).\n", u.Email))
 	}
 	mds, merr := s.store.ListServiceMetadata(ctx)
 	if merr != nil {
@@ -1378,9 +1640,6 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		return fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). Kullanıcıya söyle: katalogda takım ataması yapılmalı.\n", u.Team),
 			fmt.Sprintf("servis kataloğu (takım: %s)", u.Team), nil
 	}
-	// Sınır: aile MV okuması IN listesiyle çalışır; 100 servis üstü
-	// takımda en fazla 100'ü okunur ve kanıt bunu SÖYLER.
-	const maxTeamServices = 100
 	trimmed := 0
 	if len(svcs) > maxTeamServices {
 		trimmed = len(svcs) - maxTeamServices
@@ -1456,6 +1715,191 @@ func (s *Server) guidedMyTeamBundle(ctx context.Context, emit func(string, any),
 		return "", "", err
 	}
 	return header + evidence, fmt.Sprintf("takım: %s — %s", u.Team, src), nil
+}
+
+// guidedTeamAskMax — "hangi takım?" turunda sunulan çip sayısı. 8, çip
+// şeridinin tek satırda okunabildiği üst sınır; katalog sırası servis
+// sayısına göre azalan olduğu için operatörün takımı büyük olasılıkla
+// içinde. Liste dışında bir takımı YAZABİLECEĞİ de kanıtta söyleniyor —
+// çipler bir menü değil, kısayol.
+const guidedTeamAskMax = 8
+
+// guidedAskTeamEvidence (v0.9.1134, operatör istegi: "takım bilinmiyorsa
+// KULLANICIYA SOR") — takım-kapsamlı bir soru kimliğe oturmadığında
+// üretilen kanıt. İki degrade dalının (kimlik yok / takım atanmamış)
+// ORTAK gövdesi; ikisi de eskiden çıkmaz cümleyle bitiyordu.
+//
+// Akışın mekaniği: buradaki takım adları route.TeamOptions'a yazılır,
+// guidedSuggestions onları ÇIPLAK metin çipine çevirir, çipe tıklamak o
+// metni yeni bir kullanıcı mesajı olarak gönderir ve router çıplak takım
+// adını guidedTeamServices'e yönlendirir. Sunucuda konuşma durumu YOK —
+// tek dayanak "çıplak takım adı kendi başına yönlenebilir" olması.
+func (s *Server) guidedAskTeamEvidence(ctx context.Context, route *guidedRoute, why string) (string, string, error) {
+	opts := s.guidedTeamNames(ctx)
+	if len(opts) > guidedTeamAskMax {
+		opts = opts[:guidedTeamAskMax]
+	}
+	route.TeamOptions = opts
+	var b strings.Builder
+	b.WriteString(why)
+	if len(opts) == 0 {
+		b.WriteString("Servis kataloğunda hiç takım ataması da yok (ownerTeam/sreTeam boş). " +
+			"Kullanıcıya söyle: şimdilik belirli bir SERVİS adıyla sorabilir; kalıcı çözüm Service Catalog'da takım atamak.\n")
+		return b.String(), "kullanıcı kimliği + servis kataloğu (takım ataması yok)", nil
+	}
+	b.WriteString("KULLANICIYA SOR: hangi takımda çalışıyor? Takım adını söylediğinde o takımın servislerini " +
+		"EN ÇOK HATA ALAN önce sıralayıp getireceğim.\n")
+	fmt.Fprintf(&b, "Katalogdaki en büyük takımlar (%d): %s\n", len(opts), strings.Join(opts, ", "))
+	b.WriteString("Bu adlar cevabın altında ÇİP olarak da duruyor — tıklaması yeter; listede yoksa adı yazabileceğini de söyle.\n")
+	b.WriteString("KURAL: takım adı UYDURMA, yalnız yukarıdaki listeyi say.\n")
+	return b.String(), "servis kataloğu takım listesi (takım sorusu)", nil
+}
+
+// teamServicesMaxRows — kanıtta listelenen servis satırı tavanı. Üstü
+// "… ve N servis daha" satırıyla DÜRÜSTÇE söylenir; 15, küçük modelin
+// (gemma4) anlatıda kaybetmeden sayabildiği üst sınır.
+const teamServicesMaxRows = 15
+
+// sortServicesByErrorRate (v0.9.1134, operatör istegi: "en çok hata alan /
+// error rate yüksek olanlara göre sırala") — ORAN birincil, SAYI eşitlik
+// bozucu.
+//
+// guidedFamilyHealthBundle'ın sırası bilerek FARKLI (sayı birincil): orada
+// soru "hangisinde hata var", yani mutlak hacim. Takım listesinde operatör
+// açıkça ORANI istedi — 10 istekte 5 hata alan servis, 1M istekte 100 hata
+// alandan daha kötüdür. Üçüncü anahtar ad: eşit oran+sayıda sıra
+// deterministik kalsın (aynı soru iki farklı liste üretmesin).
+func sortServicesByErrorRate(rows []chstore.ServiceSummary) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].ErrorRate != rows[j].ErrorRate {
+			return rows[i].ErrorRate > rows[j].ErrorRate
+		}
+		if rows[i].ErrorCount != rows[j].ErrorCount {
+			return rows[i].ErrorCount > rows[j].ErrorCount
+		}
+		return rows[i].Name < rows[j].Name
+	})
+}
+
+// renderTeamServicesEvidenceTR — takım servis listesinin kanıt bloğu
+// (saf; tablo-testli). rows ZATEN sıralı gelmeli (sortServicesByErrorRate).
+// readSvcs = MV'ye sorulan servis sayısı, trimmed = tavana takılıp hiç
+// sorulmayanlar. Üç dürüstlük satırı: tavana takılanlar, satır tavanı,
+// pencerede hiç span üretmeyenler.
+func renderTeamServicesEvidenceTR(team string, rows []chstore.ServiceSummary, readSvcs, trimmed int, rangeS int64, env string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Takım: %s — %d servis (Service Catalog ownerTeam/sreTeam eşleşmesi).\n", team, readSvcs+trimmed)
+	if trimmed > 0 {
+		fmt.Fprintf(&b, "Not: ilk %d servis okundu, %d servis dışarıda kaldı.\n", maxTeamServices, trimmed)
+	}
+	if env != "" {
+		fmt.Fprintf(&b, "Not: RED değerleri tüm ortamların toplamı; %q ortam daraltması bu listede UYGULANMADI.\n", env)
+	}
+	if len(rows) == 0 {
+		b.WriteString("Bu pencerede takımın hiçbir servisinden span verisi yok — hata oranı okunamıyor.\n")
+		return b.String()
+	}
+	fmt.Fprintf(&b, "Servisler HATA ORANINA göre azalan (son %s, eşitlikte hata sayısı):\n", fmtAgoTR(rangeS))
+	for i, r := range rows {
+		if i >= teamServicesMaxRows {
+			fmt.Fprintf(&b, "… ve %d servis daha (hepsinin hata oranı daha düşük).\n", len(rows)-teamServicesMaxRows)
+			break
+		}
+		fmt.Fprintf(&b, "- %s: hata oranı %%%.2f (%d hata), p99=%.0fms, %d span\n",
+			r.Name, r.ErrorRate, r.ErrorCount, r.P99Ms, r.SpanCount)
+	}
+	if silent := readSvcs - len(rows); silent > 0 {
+		fmt.Fprintf(&b, "Not: takımın %d servisi bu pencerede hiç span üretmedi (listede yok, sessiz olabilir).\n", silent)
+	}
+	// YÖNLENDİRME kuralı (operatörün asıl istegi "kullanıcıyı ilgili
+	// servise yönlendir"): liste tek başına bir cevap değil. Model en
+	// kötü servisi ADIYLA söylemeli, yoksa 15 satırlık tablo operatöre
+	// karar bırakır. Hata yoksa bunu da açıkça söylemeli — "en kötü"
+	// diye temiz bir servisi işaretlemek yanlış alarm olurdu.
+	b.WriteString("KURAL: cevaba EN KÖTÜ servisi adıyla ve sayısıyla başla, sonra kısa sıralamayı ver. " +
+		"Hiçbir serviste hata yoksa bunu AÇIKÇA söyle ve kimseyi işaretleme. " +
+		"Son cümlede o servise nasıl inebileceğini söyle (servis sayfası / trace'leri) — " +
+		"cevabın altındaki çipler ve linkler zaten oraya gidiyor. Listede olmayan servis adı UYDURMA.\n")
+	return b.String()
+}
+
+// guidedTeamServicesBundle (v0.9.1134, operatör istegi) — ADI GEÇEN
+// takımın servisleri, en çok hata alan önce.
+//
+// Okuma yolu my_services ile AYNI: takım→servis eşlemesi katalogdan
+// (servicesForUserTeam, alias farkındalıklı), RED tek MV okumasından
+// (GetServicesAggFilteredIn — servis başına fan-out YOK). Ayrışan tek şey
+// sıralama: operatör oranı istedi (sortServicesByErrorRate).
+func (s *Server) guidedTeamServicesBundle(ctx context.Context, emit func(string, any), route *guidedRoute, from, to time.Time, rangeS int64) (string, string, error) {
+	team := route.Team
+	if team == "" {
+		return "", "", errors.New("team_services: takım adı boş")
+	}
+	emitGuidedStep(emit, "resolve_team_services", `{"team":`+jsonStr(team)+`}`)
+	mds, merr := s.store.ListServiceMetadata(ctx)
+	if merr != nil {
+		return "", "", merr
+	}
+	svcs := servicesForUserTeam(s.teamAliasesCtx(ctx), mds, team)
+	if len(svcs) == 0 {
+		return fmt.Sprintf("%q takımı hiçbir serviste ownerTeam/sreTeam olarak geçmiyor (Service Catalog). "+
+			"Kullanıcıya söyle: katalogda takım ataması yapılmalı ya da başka bir takım adı denemeli.\n", team),
+			fmt.Sprintf("servis kataloğu (takım: %s)", team), nil
+	}
+	trimmed := 0
+	if len(svcs) > maxTeamServices {
+		trimmed = len(svcs) - maxTeamServices
+		svcs = svcs[:maxTeamServices]
+	}
+	emitGuidedStep(emit, "team_services_red", fmt.Sprintf(`{"team":%s,"services":%d}`, jsonStr(team), len(svcs)))
+	rows, err := s.store.GetServicesAggFilteredIn(ctx, from, to, "", svcs, "", "", len(svcs), 0)
+	if err != nil {
+		return "", "", err
+	}
+	sortServicesByErrorRate(rows)
+	// v0.9.651 emsali — çözülen liste rotaya yazılıyor; çipler ve derin
+	// linkler buradan besleniyor. SIRA hata oranına göre, yani
+	// TeamServices[0] = EN KÖTÜ servis (link/çip metni ona bakıyor).
+	names := make([]string, 0, teamServicesMaxRows)
+	for i, r := range rows {
+		if i >= teamServicesMaxRows {
+			break
+		}
+		names = append(names, r.Name)
+	}
+	if len(names) == 0 {
+		// Pencerede hiç veri yok: çipler yine de takımın servislerini
+		// adlandırsın (alfabetik) — boş çip şeridi operatörü çıkmaza sokar.
+		for i, sv := range svcs {
+			if i >= teamServicesMaxRows {
+				break
+			}
+			names = append(names, sv)
+		}
+	}
+	route.TeamServices = names
+	b := strings.Builder{}
+	b.WriteString(renderTeamServicesEvidenceTR(team, rows, len(svcs), trimmed, rangeS, route.Env))
+	// En kötü servisin canlı error_rate kartı (aile bundle'ının emsali).
+	if len(rows) > 0 && rows[0].ErrorCount > 0 {
+		b.WriteString(chartFence(guidedChartSpec{
+			Title: rows[0].Name + " · error_rate", Service: rows[0].Name,
+			Agg: "error_rate", RangeS: rangeS,
+		}))
+	}
+	src := fmt.Sprintf("takım: %s (%d servis) — servis RED'i tek MV okuması, hata oranına göre sıralı (son %s)",
+		team, len(svcs)+trimmed, fmtAgoTR(rangeS))
+	return b.String(), src, nil
+}
+
+// jsonStr — step-event args'ında ad kaçışı. fmt %q strconv.Quote'tur ve
+// kontrol karakterli bir adda geçersiz JSON üretir (v0.9.187 dersi).
+func jsonStr(s string) string {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return `""`
+	}
+	return string(b)
 }
 
 // guidedPodHealthBundle (v0.9.376, operatör istegi — SRE perspektifi):

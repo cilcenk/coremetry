@@ -223,6 +223,12 @@ func drawerSuppressesGuided(explain string, route guidedRoute, question string) 
 	if route.Service != "" || len(route.Family) > 0 {
 		return false
 	}
+	// v0.9.1134 — ADI GEÇEN takım da SOMUT bir öznedir: operatör
+	// "avengersy takımının servisleri" diye sorduğunda çekmecedeki
+	// konu değil o takım kastediliyor, guided gerçek RED'i getirsin.
+	if route.Team != "" {
+		return false
+	}
 	return !wantsFleetScope(guidedTokens(normalizeGuidedMsg(question)))
 }
 

@@ -49,8 +49,8 @@ func TestApplyFollowUpContext(t *testing.T) {
 			guidedNone, "", 0, false},
 	}
 	for _, c := range cases {
-		route := routeGuidedIntent(c.question, fuServices, fuEnvs, "")
-		got, rng, _, chg := applyFollowUpContext(route, c.question, c.prior, fuServices, fuEnvs)
+		route := routeGuidedIntent(c.question, fuServices, fuEnvs, nil, "")
+		got, rng, _, chg := applyFollowUpContext(route, c.question, c.prior, fuServices, fuEnvs, nil)
 		if chg != c.wantChg {
 			t.Errorf("%s: changed=%v, want %v", c.name, chg, c.wantChg)
 			continue
@@ -70,11 +70,11 @@ func TestApplyFollowUpContext(t *testing.T) {
 func TestApplyFollowUpContextFill(t *testing.T) {
 	prior := []string{"payments son 2 saatte nasıl?"}
 
-	route := routeGuidedIntent("peki hata logları?", fuServices, fuEnvs, "")
+	route := routeGuidedIntent("peki hata logları?", fuServices, fuEnvs, nil, "")
 	if route.Intent != guidedLogErrors || route.Service != "" {
 		t.Fatalf("ön-koşul bozuk: %+v", route)
 	}
-	got, rng, base, chg := applyFollowUpContext(route, "peki hata logları?", prior, fuServices, fuEnvs)
+	got, rng, base, chg := applyFollowUpContext(route, "peki hata logları?", prior, fuServices, fuEnvs, nil)
 	if !chg || got.Service != "payments" || got.Intent != guidedLogErrors {
 		t.Errorf("fill: %+v changed=%v, want payments/log_errors", got, chg)
 	}
@@ -87,8 +87,8 @@ func TestApplyFollowUpContextFill(t *testing.T) {
 	}
 
 	// Filo kaçışı: "tüm" doldurmayı iptal eder, rota olduğu gibi kalır.
-	fleet := routeGuidedIntent("peki tüm serviste problemler?", fuServices, fuEnvs, "")
-	_, _, _, chg2 := applyFollowUpContext(fleet, "peki tüm serviste problemler?", prior, fuServices, fuEnvs)
+	fleet := routeGuidedIntent("peki tüm serviste problemler?", fuServices, fuEnvs, nil, "")
+	_, _, _, chg2 := applyFollowUpContext(fleet, "peki tüm serviste problemler?", prior, fuServices, fuEnvs, nil)
 	if chg2 {
 		t.Errorf("filo kaçışı: 'tüm' içeren soru önceki servisle doldurulmamalı")
 	}
@@ -158,7 +158,7 @@ func TestGuidedSuggestionsRoute(t *testing.T) {
 			t.Errorf("rota %s/%s: öneri boş", r.Intent, r.Service)
 		}
 		for _, q := range sugg {
-			if got := routeGuidedIntent(q, fuServices, fuEnvs, ""); got.Intent == guidedNone {
+			if got := routeGuidedIntent(q, fuServices, fuEnvs, nil, ""); got.Intent == guidedNone {
 				t.Errorf("öneri %q yönlenemiyor (rota %s) — serbest döngüye düşer", q, r.Intent)
 			}
 		}

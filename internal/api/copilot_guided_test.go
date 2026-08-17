@@ -158,7 +158,7 @@ func TestRouteGuidedIntent(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := routeGuidedIntent(tc.msg, guidedTestServices, guidedTestEnvs, "")
+			got := routeGuidedIntent(tc.msg, guidedTestServices, guidedTestEnvs, nil, "")
 			if got.Intent != tc.intent {
 				t.Fatalf("intent: got %q want %q (msg %q)", got.Intent, tc.intent, tc.msg)
 			}
@@ -555,7 +555,7 @@ func TestRouteGuidedIntentContext(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := routeGuidedIntent(tc.msg, guidedTestServices, guidedTestEnvs, tc.ctx)
+			got := routeGuidedIntent(tc.msg, guidedTestServices, guidedTestEnvs, nil, tc.ctx)
 			if got.Intent != tc.intent {
 				t.Fatalf("intent: got %q want %q", got.Intent, tc.intent)
 			}
@@ -639,17 +639,17 @@ func TestExtractServiceFamily(t *testing.T) {
 // servis adı aileden ÖNCE kazanır; sayfa-context aile sorusunu ezmez.
 func TestRouteGuidedIntentFamily(t *testing.T) {
 	services := []string{"mobile-overview-bff-prod", "mobile-loan-bff-prod", "checkout-service"}
-	got := routeGuidedIntent("mobile bff'lerde hangisinde hata var", services, nil, "")
+	got := routeGuidedIntent("mobile bff'lerde hangisinde hata var", services, nil, nil, "")
 	if got.Intent != guidedFamilyHealth || len(got.Family) != 2 {
 		t.Fatalf("family route: got intent=%q family=%v", got.Intent, got.Family)
 	}
 	// Açık tek servis adı → service_health, aile değil.
-	got = routeGuidedIntent("mobile-loan-bff-prod hataları", services, nil, "")
+	got = routeGuidedIntent("mobile-loan-bff-prod hataları", services, nil, nil, "")
 	if got.Intent != guidedServiceHealth || got.Service != "mobile-loan-bff-prod" {
 		t.Fatalf("explicit name must win: got intent=%q service=%q", got.Intent, got.Service)
 	}
 	// Sayfa-context (checkout) aile sorusunu checkout'a DARALTMAZ.
-	got = routeGuidedIntent("mobile bff'lerde hangisinde hata var", services, nil, "checkout-service")
+	got = routeGuidedIntent("mobile bff'lerde hangisinde hata var", services, nil, nil, "checkout-service")
 	if got.Intent != guidedFamilyHealth {
 		t.Fatalf("ctx must not override family ask: got intent=%q service=%q", got.Intent, got.Service)
 	}
@@ -735,7 +735,7 @@ func TestRouteGuidedIntentRootCause(t *testing.T) {
 		{"checkout kaynak kullanımı nasıl", guidedServiceHealth},
 	}
 	for _, c := range cases {
-		got := routeGuidedIntent(c.msg, services, nil, "")
+		got := routeGuidedIntent(c.msg, services, nil, nil, "")
 		if got.Intent != c.want {
 			t.Errorf("route(%q) = %q, beklenen %q", c.msg, got.Intent, c.want)
 		}
@@ -745,7 +745,7 @@ func TestRouteGuidedIntentRootCause(t *testing.T) {
 // Servis çözülmezse kök-neden yoluna GİRMEZ — hipotez bir anchor'a
 // bağlıdır, servissiz soru filo-geneli problems yoluna düşmeli.
 func TestRootCauseNeedsService(t *testing.T) {
-	got := routeGuidedIntent("neden bu kadar çok hata alıyoruz", []string{"checkout"}, nil, "")
+	got := routeGuidedIntent("neden bu kadar çok hata alıyoruz", []string{"checkout"}, nil, nil, "")
 	if got.Intent == guidedRootCause {
 		t.Errorf("servissiz soru rootcause'a gitmemeli, got %q", got.Intent)
 	}
@@ -755,7 +755,7 @@ func TestRootCauseNeedsService(t *testing.T) {
 // bağlanmalı — CoSRE'nin sayfa-farkındalığı (v0.9.164) kök-nedende de
 // çalışmalı.
 func TestRootCauseUsesPageContext(t *testing.T) {
-	got := routeGuidedIntent("neden yavaş?", []string{"checkout"}, nil, "checkout")
+	got := routeGuidedIntent("neden yavaş?", []string{"checkout"}, nil, nil, "checkout")
 	if got.Intent != guidedRootCause || got.Service != "checkout" {
 		t.Errorf("sayfa bağlamı kullanılmalı, got intent=%q service=%q", got.Intent, got.Service)
 	}
@@ -801,7 +801,7 @@ func TestRouteGuidedIntentTraceIDWins(t *testing.T) {
 		"checkout " + id + " problemleri", // servis adı + problem sinyali + id
 		"en yavaş trace'ler " + id,        // slow-trace sinyali + id
 	} {
-		r := routeGuidedIntent(q, svcs, nil, "")
+		r := routeGuidedIntent(q, svcs, nil, nil, "")
 		if r.Intent != guidedTraceByID {
 			t.Errorf("%q → intent %q, beklenen trace_by_id", q, r.Intent)
 		}
@@ -815,10 +815,10 @@ func TestRouteGuidedIntentTraceIDWins(t *testing.T) {
 // slow-trace/servis rotalarını çalmamalı.
 func TestRouteGuidedIntentTraceWordDoesNotHijack(t *testing.T) {
 	svcs := []string{"checkout"}
-	if r := routeGuidedIntent("en yavaş trace'ler hangileri?", svcs, nil, ""); r.Intent != guidedSlowTraces {
+	if r := routeGuidedIntent("en yavaş trace'ler hangileri?", svcs, nil, nil, ""); r.Intent != guidedSlowTraces {
 		t.Errorf("slow-trace rotası bozuldu: %q", r.Intent)
 	}
-	if r := routeGuidedIntent("checkout nasıl?", svcs, nil, ""); r.Intent != guidedServiceHealth {
+	if r := routeGuidedIntent("checkout nasıl?", svcs, nil, nil, ""); r.Intent != guidedServiceHealth {
 		t.Errorf("servis sağlığı rotası bozuldu: %q", r.Intent)
 	}
 }
@@ -872,12 +872,12 @@ func TestExtractSpanID(t *testing.T) {
 func TestRouteGuidedIntentTraceBeatsSpan(t *testing.T) {
 	const trace = "07544915dcf643aead8a61070780e6f7"
 	const span = "8a61070780e6f7ab"
-	if r := routeGuidedIntent(trace, nil, nil, ""); r.Intent != guidedTraceByID {
+	if r := routeGuidedIntent(trace, nil, nil, nil, ""); r.Intent != guidedTraceByID {
 		t.Errorf("32-hex trace rotasına gitmeli, got %q", r.Intent)
 	}
 	// İkisi birden geçiyorsa TRACE kazanır (daha spesifik özne).
 	both := "trace " + trace + " span " + span
-	r := routeGuidedIntent(both, nil, nil, "")
+	r := routeGuidedIntent(both, nil, nil, nil, "")
 	if r.Intent != guidedTraceByID || r.TraceID != trace {
 		t.Errorf("ikisi varken trace kazanmalı, got %q/%q", r.Intent, r.TraceID)
 	}
@@ -886,7 +886,7 @@ func TestRouteGuidedIntentTraceBeatsSpan(t *testing.T) {
 func TestRouteGuidedIntentSpanID(t *testing.T) {
 	const span = "8a61070780e6f7ab"
 	for _, q := range []string{span, "bu span " + span, span + " neden hata verdi"} {
-		r := routeGuidedIntent(q, []string{"checkout"}, nil, "")
+		r := routeGuidedIntent(q, []string{"checkout"}, nil, nil, "")
 		if r.Intent != guidedSpanByID {
 			t.Errorf("%q → intent %q, beklenen span_by_id", q, r.Intent)
 		}
@@ -899,10 +899,10 @@ func TestRouteGuidedIntentSpanID(t *testing.T) {
 // "span" sözcüğü tek başına mevcut rotaları ÇALMAMALI.
 func TestSpanWordDoesNotHijack(t *testing.T) {
 	svcs := []string{"checkout"}
-	if r := routeGuidedIntent("en yavaş trace'ler hangileri?", svcs, nil, ""); r.Intent != guidedSlowTraces {
+	if r := routeGuidedIntent("en yavaş trace'ler hangileri?", svcs, nil, nil, ""); r.Intent != guidedSlowTraces {
 		t.Errorf("slow-trace rotası bozuldu: %q", r.Intent)
 	}
-	if r := routeGuidedIntent("checkout nasıl?", svcs, nil, ""); r.Intent != guidedServiceHealth {
+	if r := routeGuidedIntent("checkout nasıl?", svcs, nil, nil, ""); r.Intent != guidedServiceHealth {
 		t.Errorf("servis sağlığı rotası bozuldu: %q", r.Intent)
 	}
 }
@@ -926,7 +926,7 @@ func TestQueueWordNeedsBacklogWord(t *testing.T) {
 		"kuyrukta bekleyen mesaj sayısı",
 	}
 	for _, q := range messaging {
-		if got := routeGuidedIntent(q, guidedTestServices, guidedTestEnvs, ""); got.Intent != guidedMessagingHealth {
+		if got := routeGuidedIntent(q, guidedTestServices, guidedTestEnvs, nil, ""); got.Intent != guidedMessagingHealth {
 			t.Errorf("%q → %q, messaging_health bekleniyordu — birikme sözcüğü "+
 				"belirsizliği kaldırıyor", q, got.Intent)
 		}
@@ -934,7 +934,7 @@ func TestQueueWordNeedsBacklogWord(t *testing.T) {
 	// Çıplak "kuyruk" messaging'e GİTMEMELİ: operatörün iş listesi.
 	notMessaging := []string{"kuyruk", "kuyrukta ne var", "kuyruğu göster"}
 	for _, q := range notMessaging {
-		if got := routeGuidedIntent(q, guidedTestServices, guidedTestEnvs, ""); got.Intent == guidedMessagingHealth {
+		if got := routeGuidedIntent(q, guidedTestServices, guidedTestEnvs, nil, ""); got.Intent == guidedMessagingHealth {
 			t.Errorf("%q messaging_health'e gitti — 'kuyruk' operatörün iş "+
 				"listesi sözcüğü, tek başına Kafka'ya devredilemez", q)
 		}

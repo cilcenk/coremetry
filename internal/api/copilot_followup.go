@@ -100,6 +100,15 @@ var followUpFillable = map[guidedIntent]bool{
 // düşürmez. Deterministik; LLM'e sorulmaz.
 func guidedSuggestions(route guidedRoute) []string {
 	svc := route.Service
+	// v0.9.1134 — "hangi takım?" turu HER ŞEYDEN önce: bundle takım
+	// listesini rotaya yazdıysa (kimlik/takım çözülemedi) çipler o
+	// takımların ÇIPLAK adları olur. Çipe tıklamak o adı yeni bir mesaj
+	// olarak gönderir ve router çıplak adı guidedTeamServices'e yönlendirir
+	// — diyalog sunucuda durum tutmadan kapanıyor. Intent'e bakılmaz:
+	// my_services/my_problems/my_exceptions üçü de aynı degrade'i paylaşıyor.
+	if len(route.TeamOptions) > 0 {
+		return route.TeamOptions
+	}
 	switch route.Intent {
 	case guidedServiceHealth:
 		return []string{
@@ -162,6 +171,20 @@ func guidedSuggestions(route guidedRoute) []string {
 		return []string{"Takımımın açık problemleri?", "En yavaş trace'ler?"}
 	case guidedMyProblems:
 		return []string{"Takımımın servisleri nasıl?", "Takımımın exception'ları?", "En yavaş trace'ler?"}
+	// v0.9.1134 — takım listesinden sonraki doğal adım EN KÖTÜ servise
+	// inmek. TeamServices hata oranına göre sıralı geliyor, yani [0] en
+	// kötü; my_services'in v0.9.651 dersini izliyor (jenerik çip operatörü
+	// bir servis SEÇEMEZ hâlde bırakıyordu).
+	case guidedTeamServices:
+		if len(route.TeamServices) > 0 {
+			worst := route.TeamServices[0]
+			out := []string{worst + " sağlığı nasıl?", worst + " problemleri?", worst + " en yavaş trace'ler?"}
+			if len(route.TeamServices) > 1 {
+				out = append(out, route.TeamServices[1]+" sağlığı nasıl?")
+			}
+			return out
+		}
+		return []string{"Açık problemler?", "En yavaş trace'ler?"}
 	// v0.9.650 — exception cevabından sonraki doğal adımlar: aynı takımın
 	// açık PROBLEM'leri (farklı yüzey, aynı kapsam) ve servis sağlığı.
 	case guidedMyExceptions:
@@ -234,6 +257,27 @@ func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
 		return []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
 	case guidedMyProblems:
 		return []guidedAnswerLink{{Label: "Problemler", Href: "/problems"}}
+	// v0.9.1134 — takım cevabının derin linkleri.
+	//
+	// ÖLÜ-PARAM DENETİMİ (K4 sınıfı, v0.9.1130'un dersi): api istemcisi
+	// takım süzgecini SUNUCUYA gönderiyor ama /services sayfası o iki
+	// alanı URL'den OKUMUYOR — Services.tsx'te ikisi de `useState('')`,
+	// searchParams yalnız page/compare/cluster/namespace için okunuyor.
+	// Takım param'lı bir çip filtreli liste VAAT EDİP filtresiz listeyi
+	// açardı; link o yüzden DÜZ /services ve daraltma yerine EN KÖTÜ
+	// servisin kendi sayfası veriliyor (asıl gidilecek yer orası).
+	// Sayfa URL okumasını kazanırsa (frontend işi) link yükseltilebilir.
+	// Yasak param adları burada YAZILMIYOR — kaynak-pin testi onları
+	// adıyla arıyor (copilot_team_services_test.go).
+	case guidedTeamServices:
+		links := []guidedAnswerLink{{Label: "Servisler", Href: "/services"}}
+		if len(route.TeamServices) > 0 {
+			worst := route.TeamServices[0]
+			links = append(links, guidedAnswerLink{
+				Label: worst + " · Overview", Href: "/service?name=" + url.QueryEscape(worst),
+			})
+		}
+		return links
 	case guidedMyExceptions:
 		// Exceptions sekmesi Inbox'ta tür süzgeciyle açılıyor.
 		return []guidedAnswerLink{{Label: "Exceptions", Href: "/inbox?kind=exception"}}
@@ -260,7 +304,10 @@ func guidedAnswerLinks(route guidedRoute) []guidedAnswerLink {
 // kendi rotası (guidedNone olabilir). Dönenler: yeni rota, rangeS,
 // devralınan temel mesaj (operasyon çözümü için) ve değişiklik bayrağı.
 // changed=false → çağıran kendi route/rangeS'iyle devam eder.
-func applyFollowUpContext(route guidedRoute, question string, prior []string, services, envs []string) (guidedRoute, int64, string, bool) {
+// teams (v0.9.1134) — canlı takım kataloğu; önceki turun yeniden
+// yönlendirilmesinde takım rotası da tanınsın diye taşınıyor ("avengersy
+// takımı" → "peki son 24 saatte?").
+func applyFollowUpContext(route guidedRoute, question string, prior []string, services, envs, teams []string) (guidedRoute, int64, string, bool) {
 	msg := normalizeGuidedMsg(question)
 	if !isFollowUpCue(msg) || len(prior) == 0 {
 		return route, 0, "", false
@@ -298,7 +345,7 @@ func applyFollowUpContext(route guidedRoute, question string, prior []string, se
 		return route, 0, "", false
 	}
 	for _, p := range prior {
-		pr := routeGuidedIntent(p, services, envs, "")
+		pr := routeGuidedIntent(p, services, envs, teams, "")
 		if pr.Intent == guidedNone {
 			continue
 		}

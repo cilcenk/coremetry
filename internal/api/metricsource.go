@@ -93,6 +93,37 @@ const (
 	metricSourceVM = "vm"
 )
 
+// metricNameRuleTag stamps the VM metric-NAME candidate rule into a cache key,
+// and does it for the VM source ONLY (v0.9.1159).
+//
+// Why a stamp at all: v0.9.1159 changed which SERIES a VM query resolves to
+// (OTLP `http.server.request.duration` now also matches VM's
+// `http_server_request_duration_seconds_bucket`). The request is byte-identical
+// and so is the key, so a warm Redis entry written before the deploy keeps
+// serving the EMPTY body for its full TTL — 30s on the query and heatmap keys,
+// 60s on the two discovery keys. Thirty seconds of the exact symptom this
+// release fixes is worse than it sounds: the operator's first look after the
+// deploy is the one that decides whether they believe it shipped (the v0.9.1157
+// precedent bumped `metric-query:v4` for the same reason, and v0.9.443/458
+// taught it).
+//
+// Why NOT a plain version bump on the shared key: these keys serve BOTH
+// backends. A bare bump would also cold-read every ClickHouse entry, whose body
+// this release does not touch — and the CH cold read behind the two discovery
+// keys is the DISTINCT metric_points scan they were cached to avoid (v0.8.456).
+// Paying a scan wave on a prod ClickHouse for a change that cannot affect its
+// answer is the wrong trade; the tag is empty for CH, so its keys are
+// byte-identical to yesterday's.
+//
+// Bump `n1` whenever the candidate rules in internal/vmetrics/names.go change
+// what a name resolves to.
+func metricNameRuleTag(src metricSource) string {
+	if src != nil && src.Name() == metricSourceVM {
+		return ":n1"
+	}
+	return ""
+}
+
 type metricSource interface {
 	// Name is the backend marker. It goes in the CACHE KEY of every
 	// metric endpoint and in the /api/metrics/names response so the

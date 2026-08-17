@@ -100,7 +100,7 @@ func (s *Service) QueryMetricHistogram(ctx context.Context, f chstore.MetricQuer
 	if err != nil {
 		return nil, err
 	}
-	return assembleHistogram(series, bucketMetricName(f.Name), f.From, f.To, step)
+	return assembleHistogram(series, bucketNameCandidates(f.Name), f.From, f.To, step)
 }
 
 // buildHistogramPromQL renders the heatmap's bucket query and the step it was
@@ -130,9 +130,13 @@ func (s *Service) QueryMetricHistogram(ctx context.Context, f chstore.MetricQuer
 // floor exists for gauges and rates, where widening only smooths; widening an
 // increase() multiplies the number while the chart still says one bucket
 // (promRollupWindow's own reasoning, and VM's default for increase is `step`).
+// v0.9.1159 — the selector is a candidate ALTERNATION (bucketNameCandidates),
+// same as the percentile path: an operator whose write path applies OTel
+// Prometheus naming has `…_seconds_bucket`, not `…_bucket`, and the heatmap
+// was blank for exactly that reason.
 func buildHistogramPromQL(f chstore.MetricQueryFilter) (string, int, error) {
-	name := bucketMetricName(f.Name)
-	if name == "" {
+	cands := bucketNameCandidates(f.Name)
+	if len(cands) == 0 {
 		return "", 0, fmt.Errorf("metric name required")
 	}
 	// Same refusal as buildPromQL, same reason: DB instance/engine scoping
@@ -143,7 +147,7 @@ func buildHistogramPromQL(f chstore.MetricQueryFilter) (string, int, error) {
 		return "", 0, fmt.Errorf("database instance/engine scoping is %w "+
 			"(this drill reads ClickHouse-side receiver attributes)", ErrUnsupported)
 	}
-	matchers := []string{"__name__=" + quotePromString(name)}
+	matchers := []string{nameMatcher(cands)}
 	if svc := strings.TrimSpace(f.Service); svc != "" {
 		matchers = append(matchers, serviceLabel()+"="+quotePromString(svc))
 	}
@@ -185,9 +189,10 @@ func histogramStep(from, to time.Time, stepSeconds, maxDataPoints int) int {
 // assembleHistogram maps VM's `sum by (le) (increase(…))` matrix into
 // chstore.HistogramSeries. Pure — table-tested in histogram_test.go.
 //
-// bucketName is only used to write the empty-result note, and it is passed in
-// rather than recomputed so the note can never name a series other than the
-// one the query actually asked for.
+// bucketCandidates is only used to write the empty-result note, and it is
+// passed in rather than recomputed so the note can never name a series other
+// than the one the query actually asked for. Since v0.9.1159 it is the full
+// candidate LIST, because the query is an alternation over all of them.
 //
 // The GRID is built from (from, step) rather than from the timestamps VM
 // returned, so Times is a deterministic function of the request — two polls
@@ -202,12 +207,12 @@ func histogramStep(from, to time.Time, stepSeconds, maxDataPoints int) int {
 // ~200ns of float64 error in `ts * 1e9` at epoch-nanosecond magnitude.
 // Truncating that would push a boundary sample into the PREVIOUS slot and
 // shift the whole heatmap one cell left.
-func assembleHistogram(series []promapi.Series, bucketName string, from, to time.Time, stepSec int) (*chstore.HistogramSeries, error) {
+func assembleHistogram(series []promapi.Series, bucketCandidates []string, from, to time.Time, stepSec int) (*chstore.HistogramSeries, error) {
 	if len(series) == 0 {
 		// Honest empty. Same reasoning as the percentile note: the query went
 		// to a series name the operator never typed, so a blank heatmap on
 		// its own cannot distinguish "no data" from "not a histogram".
-		return &chstore.HistogramSeries{Note: emptyBucketNote(bucketName)}, nil
+		return &chstore.HistogramSeries{Note: emptyBucketNote(bucketCandidates)}, nil
 	}
 	if len(series) > maxHistogramLEBuckets {
 		return nil, fmt.Errorf("histogram has %d le buckets (cap %d) — %w at this cardinality; "+
@@ -227,7 +232,7 @@ func assembleHistogram(series []promapi.Series, bucketName string, from, to time
 		// under it. There is no y-axis to draw, so this is the empty shape —
 		// not a one-row heatmap that would imply every observation exceeded a
 		// bound nothing on screen names.
-		return &chstore.HistogramSeries{Note: emptyBucketNote(bucketName)}, nil
+		return &chstore.HistogramSeries{Note: emptyBucketNote(bucketCandidates)}, nil
 	}
 
 	fromNs := from.UnixNano()

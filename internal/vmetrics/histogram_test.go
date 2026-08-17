@@ -338,7 +338,7 @@ func TestBuildHistogramPromQL(t *testing.T) {
 			},
 			// 3600s / 300 buckets = 12s. Deliberately NOT 300s: proof the
 			// rate floor does not apply here.
-			want:     `sum by (le) (increase({__name__="http.server.request.duration_bucket"}[12s]))`,
+			want:     `sum by (le) (increase({` + mcHTTPDurBucket + `}[12s]))`,
 			wantStep: 12,
 		},
 		{
@@ -346,11 +346,15 @@ func TestBuildHistogramPromQL(t *testing.T) {
 			f: chstore.MetricQueryFilter{
 				Name: "m", From: from, To: from.Add(time.Hour), StepSeconds: 60,
 			},
-			want:     `sum by (le) (increase({__name__="m_bucket"}[60s]))`,
+			want:     `sum by (le) (increase({` + mcMBucket + `}[60s]))`,
 			wantStep: 60,
 		},
 		{
-			name: "already-suffixed name is not doubled",
+			// v0.9.1159: and this is the SINGLE-CANDIDATE path. A name that
+			// already ends in `_bucket` came from VM's own catalogue, so it is
+			// taken as exact — no unit guesses, and the `=` selector form the
+			// pre-candidate releases used, byte for byte.
+			name: "already-suffixed name is not doubled, and needs no alternation",
 			f: chstore.MetricQueryFilter{
 				Name: "m_bucket", From: from, To: from.Add(time.Hour), StepSeconds: 60,
 			},
@@ -362,7 +366,7 @@ func TestBuildHistogramPromQL(t *testing.T) {
 			f: chstore.MetricQueryFilter{
 				Name: "m", Service: "cart", From: from, To: from.Add(time.Hour), StepSeconds: 60,
 			},
-			want:     `sum by (le) (increase({__name__="m_bucket", service_name="cart"}[60s]))`,
+			want:     `sum by (le) (increase({` + mcMBucket + `, service_name="cart"}[60s]))`,
 			wantStep: 60,
 		},
 		{
@@ -374,7 +378,7 @@ func TestBuildHistogramPromQL(t *testing.T) {
 					{Key: "pod", Op: "IN", Values: []string{"a", "b"}},
 				},
 			},
-			want: `sum by (le) (increase({__name__="m_bucket", http_route="/api/cart", ` +
+			want: `sum by (le) (increase({` + mcMBucket + `, http_route="/api/cart", ` +
 				`pod=~"a|b"}[60s]))`,
 			wantStep: 60,
 		},
@@ -385,7 +389,7 @@ func TestBuildHistogramPromQL(t *testing.T) {
 			f: chstore.MetricQueryFilter{
 				Name: "m", From: from, To: from.Add(time.Hour), MaxDataPoints: 60,
 			},
-			want:     `sum by (le) (increase({__name__="m_bucket"}[60s]))`,
+			want:     `sum by (le) (increase({` + mcMBucket + `}[60s]))`,
 			wantStep: 60,
 		},
 	}
@@ -506,7 +510,7 @@ func TestAssembleHistogram(t *testing.T) {
 		vmLESeries("0.1", [2]float64{t0, 10}, [2]float64{t1, 20}),
 		vmLESeries("0.5", [2]float64{t0, 30}, [2]float64{t1, 45}),
 		vmLESeries("+Inf", [2]float64{t0, 32}, [2]float64{t1, 50}),
-	}, "m_bucket", from, to, 60)
+	}, []string{"m_bucket"}, from, to, 60)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -567,11 +571,11 @@ func TestAssembleHistogramIsOrderIndependent(t *testing.T) {
 	}
 	shuffled := []promapi.Series{ascending[2], ascending[0], ascending[1]}
 
-	a, err := assembleHistogram(ascending, "m_bucket", from, to, 60)
+	a, err := assembleHistogram(ascending, []string{"m_bucket"}, from, to, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := assembleHistogram(shuffled, "m_bucket", from, to, 60)
+	b, err := assembleHistogram(shuffled, []string{"m_bucket"}, from, to, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -599,7 +603,7 @@ func TestAssembleHistogramAddsDuplicateLE(t *testing.T) {
 		vmLESeries("0.1", [2]float64{t0, 4}),
 		vmLESeries("0.1", [2]float64{t0, 6}),
 		vmLESeries("+Inf", [2]float64{t0, 10}),
-	}, "m_bucket", from, to, 60)
+	}, []string{"m_bucket"}, from, to, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,7 +618,7 @@ func TestAssembleHistogramAddsDuplicateLE(t *testing.T) {
 // metric is not a histogram".
 func TestAssembleHistogramEmptyCarriesTheNote(t *testing.T) {
 	from := time.Unix(1_700_000_000, 0)
-	got, err := assembleHistogram(nil, "http.server.request.duration_bucket", from, from.Add(time.Hour), 60)
+	got, err := assembleHistogram(nil, []string{"http.server.request.duration_bucket"}, from, from.Add(time.Hour), 60)
 	if err != nil {
 		t.Fatalf("an empty result must not be an error: %v", err)
 	}
@@ -641,7 +645,7 @@ func TestAssembleHistogramInfOnlyIsEmptyWithNote(t *testing.T) {
 	from := time.Unix(1_700_000_000, 0)
 	got, err := assembleHistogram([]promapi.Series{
 		vmLESeries("+Inf", [2]float64{float64(from.Unix()), 99}),
-	}, "m_bucket", from, from.Add(time.Hour), 60)
+	}, []string{"m_bucket"}, from, from.Add(time.Hour), 60)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -669,7 +673,7 @@ func TestAssembleHistogramRoundsToTheAlignedSlot(t *testing.T) {
 			[2]float64{float64(from.Unix()), 1},
 			[2]float64{float64(from.Unix()) + 60 - 1e-7, 2},
 			[2]float64{float64(from.Unix()) + 120 + 1e-7, 3}),
-	}, "m_bucket", from, to, 60)
+	}, []string{"m_bucket"}, from, to, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -698,7 +702,7 @@ func TestAssembleHistogramDropsOutOfWindowPoints(t *testing.T) {
 			[2]float64{t0, 5},
 			[2]float64{t0 + 600, 999}), // after
 		vmLESeries("+Inf", [2]float64{t0, 5}),
-	}, "m_bucket", from, to, 60)
+	}, []string{"m_bucket"}, from, to, 60)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -716,7 +720,7 @@ func TestAssembleHistogramRefusesUnboundedBucketCardinality(t *testing.T) {
 	for i := range series {
 		series[i] = vmLESeries(strconv.Itoa(i), [2]float64{float64(from.Unix()), 1})
 	}
-	_, err := assembleHistogram(series, "m_bucket", from, from.Add(time.Hour), 60)
+	_, err := assembleHistogram(series, []string{"m_bucket"}, from, from.Add(time.Hour), 60)
 	if err == nil {
 		t.Fatal("want a refusal past the bucket cap")
 	}
@@ -797,7 +801,7 @@ func TestQueryMetricHistogramWireContract(t *testing.T) {
 	if gotPath != "/api/v1/query_range" {
 		t.Fatalf("path = %q", gotPath)
 	}
-	want := `sum by (le) (increase({__name__="http.server.request.duration_bucket", service_name="cart"}[60s]))`
+	want := `sum by (le) (increase({` + mcHTTPDurBucket + `, service_name="cart"}[60s]))`
 	if gotQuery != want {
 		t.Fatalf("query =\n  %s\nwant\n  %s", gotQuery, want)
 	}
@@ -942,7 +946,9 @@ func TestFaz2ReadsRefuseUnconfigured(t *testing.T) {
 
 // The empty-percentile note travels through the READ, not just the formatter.
 func TestQueryMetricNotedAttachesThePercentileNote(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var gotQuery string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query().Get("query")
 		_, _ = w.Write([]byte(`{"status":"success","data":{"resultType":"matrix","result":[]}}`))
 	}))
 	defer srv.Close()
@@ -964,6 +970,29 @@ func TestQueryMetricNotedAttachesThePercentileNote(t *testing.T) {
 	}
 	if !strings.Contains(note, "jvm.memory.used_bucket") {
 		t.Fatalf("note does not name the series queried: %s", note)
+	}
+	// v0.9.1159 — and it lists the OTel-Prometheus spellings that were tried
+	// alongside it. Without this an operator staring at an empty p99 has no
+	// on-screen way to tell this release from the one before it, and would go
+	// looking for a fix that already shipped.
+	for _, want := range []string{
+		"jvm_memory_used_bucket",
+		"jvm_memory_used_seconds_bucket",
+		"jvm_memory_used_bytes_bucket",
+	} {
+		if !strings.Contains(note, want) {
+			t.Fatalf("note omits the tried spelling %q: %s", want, note)
+		}
+	}
+	// The QUERY carried the same alternation. Pinned at the wire because the
+	// note is derived from a RECOMPUTED candidate list: if the two ever came
+	// from different rules, the note would name spellings the query never
+	// asked for — a confident lie instead of a blank chart.
+	if !strings.Contains(gotQuery, "jvm_memory_used_seconds_bucket") {
+		t.Fatalf("the percentile query did not carry the candidate alternation: %s", gotQuery)
+	}
+	if !strings.Contains(gotQuery, `__name__=~`) {
+		t.Fatalf("the percentile query is not using an alternation selector: %s", gotQuery)
 	}
 
 	// A non-percentile empty result carries NO note. Scoped that tightly on

@@ -428,7 +428,10 @@ func (s *Service) QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFil
 	// field at all.
 	if len(out) == 0 {
 		if _, isPercentile := promPercentile(f.Aggregation); isPercentile {
-			return out, emptyBucketNote(f.Name), nil
+			// Recomputed from the same pure function buildPromQL used, so the
+			// note cannot name a spelling the query did not try (the promStep
+			// precedent: pure + same inputs, therefore incapable of drifting).
+			return out, emptyBucketNote(nameCandidates(f.Name, f.Aggregation)), nil
 		}
 	}
 	return out, "", nil
@@ -437,6 +440,13 @@ func (s *Service) QueryMetricNoted(ctx context.Context, f chstore.MetricQueryFil
 // MetricLabelValues answers the filter-value suggestion list.
 // Capped at the same 200 the CH sibling uses so the picker behaves
 // identically on both backends.
+//
+// v0.9.1159 — the `match[]` scope is a candidate ALTERNATION
+// (discoveryNameCandidates). Label discovery had the same spelling bug as the
+// query path, plus one that bites harder: a histogram metric has no base
+// series in VM, so the suggestion list came back empty for exactly the metric
+// the operator was trying to filter, and an empty picker asserts "no such
+// values" rather than "wrong name".
 func (s *Service) MetricLabelValues(ctx context.Context, metric, key string, since time.Duration) ([]string, error) {
 	if metric == "" || key == "" {
 		return nil, nil
@@ -453,7 +463,7 @@ func (s *Service) MetricLabelValues(ctx context.Context, metric, key string, sin
 	params := url.Values{
 		"start":   {promTime(now.Add(-since))},
 		"end":     {promTime(now)},
-		"match[]": {"{__name__=" + quotePromString(metric) + "}"},
+		"match[]": {"{" + nameMatcher(discoveryNameCandidates(metric)) + "}"},
 	}
 	vals, err := promapi.QueryStrings(ctx, s.request("/api/v1/label/"+url.PathEscape(label)+"/values", params, cfg))
 	if err != nil {
@@ -471,6 +481,12 @@ func (s *Service) MetricLabelValues(ctx context.Context, metric, key string, sin
 // __name__ is dropped: it is not an attribute key, and the CH sibling
 // (which reads the attr_keys array) never returns it. Leaving it in would
 // offer the operator a filter key that duplicates the metric selector.
+//
+// v0.9.1159 — same candidate alternation as MetricLabelValues, and the reason
+// discoveryNameCandidates stands the histogram family up on `_count` rather
+// than `_bucket` lands HERE: `le` is a label on the bucket series, so a
+// `_bucket` scope would hand the operator the histogram's own internal
+// dimension as if it were one of their attributes.
 func (s *Service) MetricAttrKeys(ctx context.Context, metric, service string, since time.Duration) ([]string, error) {
 	if metric == "" {
 		return nil, nil
@@ -479,7 +495,7 @@ func (s *Service) MetricAttrKeys(ctx context.Context, metric, service string, si
 	if err != nil {
 		return nil, err
 	}
-	matchers := []string{"__name__=" + quotePromString(metric)}
+	matchers := []string{nameMatcher(discoveryNameCandidates(metric))}
 	if svc := strings.TrimSpace(service); svc != "" {
 		matchers = append(matchers, serviceLabel()+"="+quotePromString(svc))
 	}

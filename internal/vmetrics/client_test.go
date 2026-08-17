@@ -9,6 +9,8 @@ package vmetrics
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -201,6 +203,89 @@ func TestReadyRefusesUnconfigured(t *testing.T) {
 	}
 	if _, err := s.MetricAttrKeys(ctx, "m", "", time.Hour); err == nil {
 		t.Fatal("MetricAttrKeys must error when unconfigured")
+	}
+}
+
+// ── Label discovery scope (v0.9.1159) ──────────────────────────────────────
+//
+// WIRE-level, not pure. discoveryNameCandidates is already table-tested in
+// names_test.go; what these pin is the BINDING, which is the half that was
+// broken: the candidate list can be perfect and the filter picker still empty
+// if MetricLabelValues keeps building its own `__name__=` selector. This is
+// the "pure test ≠ wiring" lesson applied to a Go seam.
+//
+// An empty picker is a worse failure than an empty chart, because it does not
+// read as "wrong name" — it reads as "this metric has no attributes".
+func TestMetricLabelValuesScopesTheCandidateAlternation(t *testing.T) {
+	var gotMatch, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMatch = r.URL.Query().Get("match[]")
+		_, _ = w.Write([]byte(`{"status":"success","data":["api-1"]}`))
+	}))
+	defer srv.Close()
+
+	s := New()
+	s.Configure(Settings{BaseURL: srv.URL})
+	if _, err := s.MetricLabelValues(context.Background(),
+		"http.server.request.duration", "pod", time.Hour); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/api/v1/label/pod/values" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	assertDiscoveryScope(t, gotMatch)
+}
+
+func TestMetricAttrKeysScopesTheCandidateAlternation(t *testing.T) {
+	var gotMatch string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMatch = r.URL.Query().Get("match[]")
+		_, _ = w.Write([]byte(`{"status":"success","data":["pod","__name__"]}`))
+	}))
+	defer srv.Close()
+
+	s := New()
+	s.Configure(Settings{BaseURL: srv.URL})
+	keys, err := s.MetricAttrKeys(context.Background(),
+		"http.server.request.duration", "cart", time.Hour)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	assertDiscoveryScope(t, gotMatch)
+	// The service matcher still rides alongside the name alternation — the
+	// candidate change replaces ONE matcher, not the selector.
+	if !strings.Contains(gotMatch, `service_name="cart"`) {
+		t.Fatalf("service scope lost from match[]: %s", gotMatch)
+	}
+	// __name__ is still dropped from the ANSWER: it is not an attribute key.
+	for _, k := range keys {
+		if k == "__name__" {
+			t.Fatal("__name__ offered as an attribute key")
+		}
+	}
+}
+
+// The four properties, hand-written so a revert to `__name__="<name>"` fails
+// on the first two rather than passing on a technicality.
+func assertDiscoveryScope(t *testing.T, match string) {
+	t.Helper()
+	if !strings.HasPrefix(match, `{__name__=~"^(`) {
+		t.Fatalf("match[] is not a candidate alternation: %s", match)
+	}
+	// The spelling the operator's live install actually holds. `_count` stands
+	// in for the whole histogram family.
+	if !strings.Contains(match, "http_server_request_duration_seconds_count") {
+		t.Fatalf("match[] misses the OTel-Prometheus histogram spelling: %s", match)
+	}
+	// And the verbatim one, regex-escaped, still leads.
+	if !strings.Contains(match, `http\\.server\\.request\\.duration`) {
+		t.Fatalf("match[] lost the verbatim spelling (or its escaping): %s", match)
+	}
+	// `le` lives on the bucket series. Scoping discovery there would offer the
+	// histogram's own internal dimension as one of the operator's attributes.
+	if strings.Contains(match, "_bucket") {
+		t.Fatalf("discovery scoped the bucket series — le becomes a filter key: %s", match)
 	}
 }
 

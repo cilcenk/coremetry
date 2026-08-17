@@ -5,8 +5,9 @@ import { Button } from '@/components/ui/Button';
 import { Spinner, Empty } from '@/components/Spinner';
 import { RenderedMarkdown } from '@/components/Markdown';
 import { AIFeedbackButtons } from '@/components/ai/AIFeedbackButtons';
-import { aiSubjectQuestion } from '@/components/ai/drawerChat';
-import { insightHasEvidence, insightHrefInternal, insightTone } from '@/lib/insightCard';
+import {
+  insightHasEvidence, insightHrefInternal, insightQuestion, insightTone,
+} from '@/lib/insightCard';
 import type { InsightKind, InsightResponse, InsightSignal } from '@/lib/types';
 
 // InsightCard — gömülü bağlamsal açıklama kartı (v0.9.1130, AI Faz 2.2;
@@ -60,9 +61,18 @@ import type { InsightKind, InsightResponse, InsightSignal } from '@/lib/types';
 // YANINDA alakasız bir pencere çizmek olurdu — v0.9.208 sınıfının
 // (pencere düşüren pivot) grafik hâli. CosreChart mutlak pencere alana
 // dek spec'ler tipte taşınıyor, çizilmiyor.
-export function InsightCard({ kind, id, onClose }: {
+export function InsightCard({ kind, id, windowSec, onClose }: {
   kind: InsightKind;
   id: string;
+  /**
+   * Kanıt penceresi, SANİYE (v0.9.1137, Faz 2.4). Yalnız pencereye bağlı
+   * türler geçirir — `slow-query` sayfanın aralığını taşımak ZORUNDA
+   * (çağrı sayısı ve p95 pencere-kapsamlı, yani 1sa varsayılanı 6sa'lık
+   * bir sayfada satırdakinden BAŞKA sayı gösterirdi). `log-pattern`
+   * bilerek geçirmiyor: satırların geldiği uç 5dk varsayılanıyla koşuyor.
+   * Sunucu değeri rung'lar/kelepçeler; verilmezse tür varsayılanı geçerli.
+   */
+  windowSec?: number;
   onClose?: () => void;
 }) {
   // Deterministik yarı — `signals` çerçevesi (ya da buffered gövde).
@@ -92,6 +102,7 @@ export function InsightCard({ kind, id, onClose }: {
       try {
         const r = await api.insight(kind, id, {
           signal: ac.signal,
+          windowSec,
           onSignals: setBase,
           onDelta: d => setProse(p => (p ?? '') + d),
         });
@@ -119,26 +130,37 @@ export function InsightCard({ kind, id, onClose }: {
   // Özne başına TEK üretim. Ref, re-render'da (ve StrictMode'un çift
   // efekt çağrısında) ikinci bir LLM çağrısını engeller; kind/id gerçekten
   // değişirse yeni özne için bir kez daha çalışır.
+  //
+  // v0.9.1137 — `windowSec` de ÖZNENİN parçası: farklı bir pencere farklı
+  // bir sorudur. Operatör kart açıkken aralığı değiştirirse satırlar
+  // yeniden çekiliyor, kart da yeniden üretiliyor — yoksa kart, artık
+  // ekranda olmayan bir pencerenin sayılarını anlatmaya devam ederdi
+  // (satırda 12.345, kartta 4.100 → hangisi doğru?). Bedeli bilinçli:
+  // aralık değişimi nadirdir ve kartı YANLIŞ tutmak daha pahalı.
   const ranRef = useRef('');
   useEffect(() => {
-    const key = `${kind}:${id}`;
+    const key = `${kind}:${id}:${windowSec ?? ''}`;
     if (ranRef.current === key) return;
     ranRef.current = key;
     void run();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, id]);
+  }, [kind, id, windowSec]);
 
   // Unmount: uçuştaki akışı kes. Satır kapandıktan sonra açık kalan bir
   // SSE bağlantısı, kimsenin okumadığı token'ları akıtmaya devam eder.
   useEffect(() => () => abortRef.current?.abort(), []);
 
   // Sohbet köprüsü — mevcut `coremetry:ai-ask` olayı (v0.9.165 emsali):
-  // kart CopilotChat'i import etmez, chat de kartı bilmez. Kart kind'ları
-  // ('exception' | 'problem') AIKind'ın alt kümesi olduğundan soru üreteci
-  // de paylaşılıyor; ikinci bir soru şablonu yazılmadı.
+  // kart CopilotChat'i import etmez, chat de kartı bilmez.
+  //
+  // v0.9.1137 (Faz 2.4) — soru üreteci `insightQuestion`a taşındı. 2.2/2.3'te
+  // kart kind'ları ('exception' | 'problem') AIKind'ın ALT KÜMESİYDİ ve
+  // aiSubjectQuestion doğrudan çağrılabiliyordu; iki yeni yuva o ilişkiyi
+  // kırdı ve aiSubjectQuestion'ın `default` dalı bilinmeyen türü "Bu
+  // trace'i açıkla" yapıyor. Tüketici switch gerekçesi lib/insightCard.ts'te.
   const askInChat = () =>
     window.dispatchEvent(new CustomEvent('coremetry:ai-ask', {
-      detail: { question: aiSubjectQuestion(kind, id) },
+      detail: { question: insightQuestion(kind, id) },
     }));
 
   // İlk çerçeveden ÖNCE patlayan istek (404, 503, ağ): çizecek kanıt yok.

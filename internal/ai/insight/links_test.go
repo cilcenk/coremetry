@@ -2,6 +2,7 @@ package insight
 
 import (
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 )
@@ -351,5 +352,272 @@ func TestExceptionChartsUseEventWindow(t *testing.T) {
 	}
 	if got := ExceptionCharts(ExceptionEvidence{Service: ""}); got != nil {
 		t.Errorf("servissiz chart üretildi: %+v", got)
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// v0.9.1137 (Faz 2.4) — log-pattern + slow-query linkleri.
+// ════════════════════════════════════════════════════════════════════
+
+func TestPatternLogWindow(t *testing.T) {
+	now := int64(1_700_000_000) * sec
+	for _, tc := range []struct {
+		name     string
+		last     int64
+		wantFrom int64
+		wantTo   int64
+	}{
+		{name: "son görülme etrafında -30dk/+10dk", last: now,
+			wantFrom: now - 30*60*sec, wantTo: now + 10*60*sec},
+		{name: "damgasız", last: 0, wantFrom: 0, wantTo: 0},
+		{name: "negatif damga", last: -1, wantFrom: 0, wantTo: 0},
+		// 30dk'dan gençsе alt kenar negatife düşer → pencere üretilmez.
+		{name: "epoch'a çok yakın damga", last: 5 * 60 * sec, wantFrom: 0, wantTo: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			from, to := PatternLogWindow(tc.last)
+			if from != tc.wantFrom || to != tc.wantTo {
+				t.Errorf("(%d,%d); want (%d,%d)", from, to, tc.wantFrom, tc.wantTo)
+			}
+		})
+	}
+}
+
+// TestPatternLogWindowMatchesFrontendSpelling — KAYNAK PİNİ. Aynı desen
+// için satırın "logs ↗" çipi (patternLogWindow, streams.tsx v0.9.862) ve
+// kartın "Loglar (desen)" pivotu AYNI pencereyi açmalı; ayrışırlarsa
+// operatör aynı olay için iki farklı sayı görür.
+func TestPatternLogWindowMatchesFrontendSpelling(t *testing.T) {
+	const src = "../../../frontend/src/features/anomalies/streams.tsx"
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("%s okunamadı (patternLogWindow taşındıysa pini yeniden konumlandır): %v", src, err)
+	}
+	body := string(b)
+	i := strings.Index(body, "export function patternLogWindow(")
+	if i < 0 {
+		t.Fatal("patternLogWindow bulunamadı — pini yeniden konumlandır")
+	}
+	block := body[i:]
+	if j := strings.Index(block, "\n}\n"); j > 0 {
+		block = block[:j]
+	}
+	// Aynı iki kenar: 30 dk geri, 10 dk ileri.
+	for _, want := range []string{"30 * 60 * 1e9", "10 * 60 * 1e9"} {
+		if !strings.Contains(block, want) {
+			t.Errorf("frontend penceresi %q taşımıyor — PatternLogWindow ile ayrıştı:\n%s", want, block)
+		}
+	}
+}
+
+func TestPatternKQL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		service string
+		tokens  []string
+		want    string
+	}{
+		{name: "servis + tek token", service: "checkout", tokens: []string{"oomkilled"},
+			want: `service.name:"checkout" AND "oomkilled"`},
+		{name: "servis + çok token OR'lanır", service: "checkout",
+			tokens: []string{"no space left", "disk full", "enospc"},
+			want:   `service.name:"checkout" AND ("no space left" OR "disk full" OR "enospc")`},
+		{name: "servissiz yalnız tokenlar", tokens: []string{"deadlock"}, want: `"deadlock"`},
+		{name: "tokensuz yalnız servis", service: "web", want: `service.name:"web"`},
+		{name: "ikisi de yok", want: ""},
+		// Alıntı kaçışı: bir servis adı ya da token içinde " geçerse KQL
+		// bozulur ve /logs sorgusu sessizce başka bir şey arar.
+		{name: "alıntı kaçışı", service: `we"b`, tokens: []string{`a"b`},
+			want: `service.name:"we\"b" AND "a\"b"`},
+		{name: "boş token süzülür", service: "web", tokens: []string{"", "  ", "x"},
+			want: `service.name:"web" AND "x"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := PatternKQL(tc.service, tc.tokens); got != tc.want {
+				t.Errorf("PatternKQL = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLogPatternLinks(t *testing.T) {
+	now := int64(1_700_000_000) * sec
+	ev := LogPatternEvidence{
+		Pattern: "Out of memory", Kind: "spike", Service: "checkout svc",
+		Tokens:     []string{"oomkilled", "out of memory"},
+		LastSeenNs: now, NowNs: now, WindowSec: 300,
+	}
+	links := LogPatternLinks(ev)
+	assertLinksCarryWindow(t, links)
+
+	var labels []string
+	for _, l := range links {
+		labels = append(labels, l.Label)
+	}
+	wantOrder := []string{"Loglar (desen)", "Servis", "Hatalı trace'ler"}
+	if strings.Join(labels, "|") != strings.Join(wantOrder, "|") {
+		t.Errorf("link sırası = %v; want %v", labels, wantOrder)
+	}
+
+	lg, _ := hrefOf(links, "Loglar (desen)")
+	u, err := url.Parse(lg)
+	if err != nil {
+		t.Fatalf("%q ayrıştırılamadı: %v", lg, err)
+	}
+	// Param adı `q` — readLogsParams'ın okuduğu tek serbest arama alanı.
+	if q := u.Query().Get("q"); !strings.Contains(q, `service.name:"checkout svc"`) ||
+		!strings.Contains(q, "oomkilled") {
+		t.Errorf("log linki KQL taşımıyor: %q", q)
+	}
+	// ÖLÜ PARAM DİSİPLİNİ: /logs'un okumadığı hiçbir anahtar yazılmaz.
+	for _, dead := range []string{"pattern", "tokens", "regex", "search", "minSev"} {
+		if u.Query().Has(dead) {
+			t.Errorf("log linki ölü `%s` paramı taşıyor: %s", dead, lg)
+		}
+	}
+}
+
+func TestLogPatternLinksWithoutWindowProducesNothingWindowBearing(t *testing.T) {
+	// Damgasız desen: pencere kurulamaz → pencere isteyen link ÜRETİLMEZ,
+	// ve bu desen için pencere-çapasız hedef de YOK (desen bir kimlik
+	// sayfasına sahip değil) → hiç link olmaz. Kırık pencereli bir link,
+	// link yokluğundan kötü (v0.9.655).
+	ev := LogPatternEvidence{Pattern: "Disk full", Service: "web", Tokens: []string{"enospc"}}
+	if links := LogPatternLinks(ev); len(links) != 0 {
+		t.Errorf("penceresiz kurulumda link üretildi: %+v", links)
+	}
+}
+
+func TestSlowQueryLinks(t *testing.T) {
+	now := int64(1_700_000_000) * sec
+	ev := SlowQueryEvidence{
+		StmtParam: "12345|oracle", Statement: "SELECT * FROM T WHERE ID = ?",
+		DBSystem: "oracle", DBName: "COREBANK",
+		Calls: 100, P95Ms: 900,
+		Callers:      []CallerRef{{Service: "payments api", Calls: 80}, {Service: "web"}},
+		SlowTraceID:  "slow1",
+		ErrorTraceID: "err1",
+		FromNs:       now - 3600*sec, ToNs: now, NowNs: now,
+	}
+	links := SlowQueryLinks(ev)
+	assertLinksCarryWindow(t, links)
+
+	var labels []string
+	for _, l := range links {
+		labels = append(labels, l.Label)
+	}
+	wantOrder := []string{"İfade detayı", "En yavaş örnek trace", "Hatalı örnek trace",
+		"Çağıran: payments api", "Veritabanı kataloğu"}
+	if strings.Join(labels, "|") != strings.Join(wantOrder, "|") {
+		t.Errorf("link sırası = %v; want %v", labels, wantOrder)
+	}
+
+	// İfade detayı — `stmt` paramı `|` ile KODLANMIŞ olmalı (%7C); iki kez
+	// kodlanırsa (%257C) FE kodeği tanımaz.
+	det, _ := hrefOf(links, "İfade detayı")
+	if !strings.Contains(det, "stmt=12345%7Coracle") {
+		t.Errorf("stmt paramı = %s; `12345%%7Coracle` bekleniyordu", det)
+	}
+	if strings.Contains(det, "%257C") {
+		t.Errorf("stmt paramı ÇİFT kodlanmış: %s", det)
+	}
+	u, _ := url.Parse(det)
+	if u.Path != "/slow-queries" {
+		t.Errorf("ifade detayı yolu = %q; /slow-queries (decodeStmtParam okuyan sayfa)", u.Path)
+	}
+
+	// Katalog linki motor filtresi taşır ama db ADI TAŞIMAZ: gruplama
+	// db_name'i katlıyor, ad temsili olabilir (v0.9.964 kuralı).
+	cat, _ := hrefOf(links, "Veritabanı kataloğu")
+	cu, _ := url.Parse(cat)
+	if cu.Query().Get("dbsys") != "oracle" {
+		t.Errorf("katalog linki dbsys taşımıyor: %s", cat)
+	}
+	if cu.Query().Has("dbname") {
+		t.Errorf("katalog linki dbname yazdı (katlanmış boyut): %s", cat)
+	}
+	// /database (TEKİL) HİÇ üretilmez: kimlik üçlüsünün instance'ı yok.
+	for _, l := range links {
+		if strings.HasPrefix(l.Href, "/database?") {
+			t.Errorf("tekil /database linki üretildi (instance uydurulmuş olurdu): %s", l.Href)
+		}
+	}
+	// Trace linkleri nokta nesnesi — pencere taşımaz, id taşır.
+	if h, _ := hrefOf(links, "En yavaş örnek trace"); h != "/trace?id=slow1" {
+		t.Errorf("yavaş exemplar linki = %s", h)
+	}
+	if h, _ := hrefOf(links, "Hatalı örnek trace"); h != "/trace?id=err1" {
+		t.Errorf("hatalı exemplar linki = %s", h)
+	}
+}
+
+func TestSlowQueryLinksSparse(t *testing.T) {
+	now := int64(1_700_000_000) * sec
+	// Exemplar yok, çağıran yok, pencere var → yalnız ifade detayı + katalog.
+	ev := SlowQueryEvidence{StmtParam: "77", DBSystem: "postgresql",
+		FromNs: now - 900*sec, ToNs: now, NowNs: now}
+	links := SlowQueryLinks(ev)
+	if len(links) != 2 {
+		t.Fatalf("seyrek kanıtta linkler = %+v", links)
+	}
+	// Penceresiz: ifade detayı da düşer (hedef pencereyi çözüyor), katalog
+	// range'siz kalır ama motor filtresi hâlâ anlamlı.
+	ev2 := SlowQueryEvidence{StmtParam: "77", DBSystem: "postgresql"}
+	links2 := SlowQueryLinks(ev2)
+	if len(links2) != 1 || links2[0].Label != "Veritabanı kataloğu" {
+		t.Errorf("penceresiz kurulumda linkler = %+v", links2)
+	}
+}
+
+// TestLinkParamsAreActuallyReadByTheTargetPages — ÖLÜ-PARAM KAPISI.
+//
+// Sunucu-üretimi bir link yalnız hedef sayfa o anahtarı OKUYORSA çalışır.
+// Bu deponun tekrar eden hata sınıfı tam bu: yazılan ama okunmayan param
+// (v0.9.1130 sınıfı; /logs'a `?from&to` yazan Trace düğmesi v0.9.853).
+// Kapı hedef sayfaların KAYNAĞINI okuyor — isim değişirse kırmızı yanar.
+func TestLinkParamsAreActuallyReadByTheTargetPages(t *testing.T) {
+	for _, tc := range []struct {
+		src    string
+		reads  []string
+		absent []string
+		note   string
+	}{
+		{
+			src:   "../../../frontend/src/lib/logsUrl.ts",
+			reads: []string{`p.get('q')`, `p.get('severity')`, `p.get('service')`},
+			// `pattern` /logs'ta OKUNMUYOR: kart onu yazmıyor, kapı da
+			// bir gün yazılmasını engelliyor.
+			absent: []string{`p.get('pattern')`},
+			note:   "/logs okuyucusu readLogsParams",
+		},
+		{
+			src:   "../../../frontend/src/pages/SlowQueries.tsx",
+			reads: []string{`decodeStmtParam(params.get('stmt'))`, `useUrlRange(`},
+			note:  "/slow-queries `?stmt=` + aralık okuyucusu",
+		},
+		{
+			src:   "../../../frontend/src/pages/Databases.tsx",
+			reads: []string{`sp.get('dbsys')`, `sp.get('dbname')`},
+			note:  "/databases filtre okuyucusu",
+		},
+	} {
+		t.Run(tc.src, func(t *testing.T) {
+			b, err := os.ReadFile(tc.src)
+			if err != nil {
+				t.Fatalf("%s okunamadı (sayfa taşındıysa pini yeniden konumlandır): %v", tc.src, err)
+			}
+			body := string(b)
+			for _, want := range tc.reads {
+				if !strings.Contains(body, want) {
+					t.Errorf("%s (%s) artık %q okumuyor — kart linki ÖLÜ param taşıyor olabilir",
+						tc.src, tc.note, want)
+				}
+			}
+			for _, no := range tc.absent {
+				if strings.Contains(body, no) {
+					t.Errorf("%s artık %q okuyor — link üreticisi güncellenebilir", tc.src, no)
+				}
+			}
+		})
 	}
 }

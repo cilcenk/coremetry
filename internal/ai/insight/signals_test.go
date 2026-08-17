@@ -5,6 +5,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // signals_test.go — v0.9.1129 (AI Faz 2.1).
@@ -423,5 +424,310 @@ func TestFmtF(t *testing.T) {
 		if got := fmtF(tc.in); got != tc.want {
 			t.Errorf("fmtF(%v) = %q; want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+// ════════════════════════════════════════════════════════════════════
+// v0.9.1137 (Faz 2.4) — log-pattern + slow-query projeksiyonları.
+// ════════════════════════════════════════════════════════════════════
+
+func TestLogPatternSignals(t *testing.T) {
+	now := int64(1_700_000_000) * 1e9
+
+	cases := []struct {
+		name      string
+		ev        LogPatternEvidence
+		wantLabel map[string]string
+		wantSev   map[string]string
+		absent    []string
+		wantTrunc bool
+	}{
+		{
+			name: "patlama: oran, hacim, servis kırılımı",
+			ev: LogPatternEvidence{
+				Pattern: "Out of memory", Kind: "spike",
+				CurrentCount: 1240, BaselineCount: 320, Ratio: 3.875,
+				Service: "checkout", WindowSec: 300,
+				TopServices: []PatternServiceRef{
+					{Service: "checkout", Count: 900}, {Service: "web", Count: 340},
+				},
+				Sample:     "java.lang.OutOfMemoryError: Java heap  space\n\tat com.x.Y",
+				LastSeenNs: now - 120*1e9, NowNs: now,
+			},
+			wantLabel: map[string]string{
+				"Durum":               "PATLAMA ×3.88",
+				"Pencere":             "son 5dk",
+				"Hacim":               "şimdi 1.240 · taban 320",
+				"Baskın servis":       "checkout",
+				"Etkilenen servisler": "checkout (900), web (340)",
+				"Son görülme":         "2dk önce",
+				// Örnek satır TEK satıra indirilmiş ve boşluklar tekilleşmiş.
+				"Örnek satır": "java.lang.OutOfMemoryError: Java heap space at com.x.Y",
+			},
+			wantSev: map[string]string{
+				"Durum": SevErr, "Hacim": "", "Son görülme": SevErr,
+			},
+		},
+		{
+			name: "yeni desen: taban YOK, oran iddiası da yok",
+			ev: LogPatternEvidence{
+				Pattern: "Disk full", Kind: "new", CurrentCount: 42,
+				Service: "worker", WindowSec: 900,
+				LastSeenNs: now - 3*3600*1e9, NowNs: now,
+			},
+			wantLabel: map[string]string{
+				"Durum":       "YENİ — bu pencerede ilk kez göründü",
+				"Pencere":     "son 15dk",
+				"Hacim":       "şimdi 42 · taban yok (yeni)",
+				"Son görülme": "3sa önce",
+			},
+			wantSev: map[string]string{"Durum": SevWarn, "Son görülme": SevWarn},
+			// Tek servisli kırılım LİSTE satırı üretmez (Baskın servis zaten söylüyor).
+			absent: []string{"Etkilenen servisler", "Örnek satır"},
+		},
+		{
+			name: "servis kırılımı tavana takılır → Truncated",
+			ev: LogPatternEvidence{
+				Pattern: "Auth failures", Kind: "spike", Ratio: 5,
+				CurrentCount: 500, BaselineCount: 100, WindowSec: 60,
+				TopServices: []PatternServiceRef{
+					{Service: "a", Count: 5}, {Service: "b", Count: 4},
+					{Service: "c", Count: 3}, {Service: "d", Count: 2},
+					{Service: "e", Count: 1},
+				},
+				NowNs: now,
+			},
+			wantLabel: map[string]string{
+				"Pencere":             "son 1dk",
+				"Etkilenen servisler": "a (5), b (4), c (3) +2",
+			},
+			wantTrunc: true,
+		},
+		{
+			name:   "boş kanıt çökmez, satır da uydurmaz",
+			ev:     LogPatternEvidence{Pattern: "X", NowNs: now},
+			absent: []string{"Durum", "Pencere", "Baskın servis", "Son görülme", "Örnek satır"},
+			// Hacim satırı 0 sayıyla da yazılır (sıfır bir CEVAP).
+			wantLabel: map[string]string{"Hacim": "şimdi 0"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, trunc := LogPatternSignals(tc.ev)
+			for label, want := range tc.wantLabel {
+				s, ok := sigByLabel(got, label)
+				if !ok {
+					t.Errorf("%q satırı yok: %+v", label, got)
+					continue
+				}
+				if s.Value != want {
+					t.Errorf("%q = %q; want %q", label, s.Value, want)
+				}
+			}
+			for label, want := range tc.wantSev {
+				s, _ := sigByLabel(got, label)
+				if s.Severity != want {
+					t.Errorf("%q şiddeti = %q; want %q", label, s.Severity, want)
+				}
+			}
+			for _, label := range tc.absent {
+				if _, ok := sigByLabel(got, label); ok {
+					t.Errorf("%q satırı üretilmemeliydi", label)
+				}
+			}
+			if trunc != tc.wantTrunc {
+				t.Errorf("truncated = %v; want %v", trunc, tc.wantTrunc)
+			}
+			// MUTLAK SAAT YASAĞI: hiçbir değer tarih damgası taşımaz.
+			for _, s := range got {
+				if strings.Contains(s.Value, "2023-") || strings.Contains(s.Value, "T00:") {
+					t.Errorf("%q mutlak saat taşıyor: %q", s.Label, s.Value)
+				}
+			}
+		})
+	}
+}
+
+// Şiddet karışımı YOK ve kart onu UYDURMUYOR: projeksiyonda "severity"
+// diye bir satır olmaması bilinçli (detektörün okuması o boyutu
+// döndürmüyor; göstermek YENİ bir sorgu şekli isterdi).
+func TestLogPatternSignalsHasNoSeverityMix(t *testing.T) {
+	got, _ := LogPatternSignals(LogPatternEvidence{
+		Pattern: "X", Kind: "spike", CurrentCount: 10, BaselineCount: 2, Ratio: 5})
+	for _, s := range got {
+		if strings.Contains(strings.ToLower(s.Label), "seviye") ||
+			strings.Contains(strings.ToLower(s.Label), "severity") {
+			t.Errorf("olmayan bir kırılım gösteriliyor: %+v", s)
+		}
+	}
+}
+
+func TestSlowQuerySignals(t *testing.T) {
+	now := int64(1_700_000_000) * 1e9
+
+	cases := []struct {
+		name      string
+		ev        SlowQueryEvidence
+		wantLabel map[string]string
+		wantSev   map[string]string
+		absent    []string
+		wantTrunc bool
+	}{
+		{
+			name: "yavaş sınıf: p99 kırmızı, çağıran kırılımı",
+			ev: SlowQueryEvidence{
+				StmtParam: "12345|oracle",
+				Statement: "SELECT  *\nFROM T WHERE ID = ?",
+				DBSystem:  "oracle", DBName: "COREBANK",
+				Calls: 12345, Errors: 82,
+				TotalMs: 41_200, AvgMs: 3.3, P95Ms: 842, P99Ms: 1240, MaxMs: 3100,
+				Callers: []CallerRef{
+					{Service: "payments-api", Calls: 8100, P95Ms: 902, TotalMs: 30_000},
+					{Service: "web", Calls: 4245, P95Ms: 400, TotalMs: 11_200},
+				},
+				FromNs: now - 3600*1e9, ToNs: now, NowNs: now,
+			},
+			wantLabel: map[string]string{
+				"Gecikme":       "p95 842ms · p99 1.2sn · maks 3.1sn",
+				"Hacim":         "12.345 çağrı · toplam 41.2sn · ort 3ms",
+				"Hata":          "82 hata (%0.7)",
+				"Motor":         "oracle · COREBANK",
+				"En çok çağıran": "payments-api · 8.100 çağrı · p95 902ms",
+				"Çağıranlar":    "2 servis: payments-api, web",
+				"İfade":         "SELECT * FROM T WHERE ID = ?",
+			},
+			wantSev: map[string]string{"Gecikme": SevErr, "Hata": SevErr, "Hacim": ""},
+		},
+		{
+			name: "sağlıklı sınıf: hata satırı YOK, p99 sarı",
+			ev: SlowQueryEvidence{
+				StmtParam: "9", Statement: "UPDATE T SET A = ?",
+				DBSystem: "postgresql", DBName: "default",
+				Calls: 40, TotalMs: 12_000, AvgMs: 300, P95Ms: 280, P99Ms: 420,
+				FromNs: now - 900*1e9, ToNs: now, NowNs: now,
+			},
+			wantLabel: map[string]string{
+				"Gecikme": "p95 280ms · p99 420ms",
+				// 'default' MV nöbetçisi — veritabanı adı gibi BASILMAZ.
+				"Motor": "postgresql",
+				"Hacim": "40 çağrı · toplam 12.0sn · ort 300ms",
+			},
+			wantSev: map[string]string{"Gecikme": SevWarn},
+			absent:  []string{"Hata", "En çok çağıran", "Çağıranlar"},
+		},
+		{
+			name: "çağıran okuması TAVANA dayandı → Truncated",
+			ev: SlowQueryEvidence{
+				StmtParam: "5", Statement: "SELECT 1", DBSystem: "mysql",
+				Calls: 10, P95Ms: 10, P99Ms: 20,
+				Callers: []CallerRef{
+					{Service: "a"}, {Service: "b"}, {Service: "c"},
+					{Service: "d"}, {Service: "e"}, {Service: "f"},
+				},
+				CallersCapped: true,
+				FromNs:        now - 900*1e9, ToNs: now, NowNs: now,
+			},
+			wantLabel: map[string]string{"Çağıranlar": "6 servis: a, b, c +3"},
+			wantTrunc: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, trunc := SlowQuerySignals(tc.ev)
+			for label, want := range tc.wantLabel {
+				s, ok := sigByLabel(got, label)
+				if !ok {
+					t.Errorf("%q satırı yok: %+v", label, got)
+					continue
+				}
+				if s.Value != want {
+					t.Errorf("%q = %q; want %q", label, s.Value, want)
+				}
+			}
+			for label, want := range tc.wantSev {
+				s, _ := sigByLabel(got, label)
+				if s.Severity != want {
+					t.Errorf("%q şiddeti = %q; want %q", label, s.Severity, want)
+				}
+			}
+			for _, label := range tc.absent {
+				if _, ok := sigByLabel(got, label); ok {
+					t.Errorf("%q satırı üretilmemeliydi", label)
+				}
+			}
+			if trunc != tc.wantTrunc {
+				t.Errorf("truncated = %v; want %v", trunc, tc.wantTrunc)
+			}
+		})
+	}
+}
+
+// Sonsuz/NaN değerler DİZEYE gömülü basılmaz (writeJSON'un sanitizeFloats'ı
+// bunları göremez — v0.9.1132'nin dersi).
+func TestSlowQuerySignalsNeverPrintInfinity(t *testing.T) {
+	inf, nan := math.Inf(1), math.NaN()
+	got, _ := SlowQuerySignals(SlowQueryEvidence{
+		StmtParam: "1", Statement: "SELECT 1", DBSystem: "oracle",
+		Calls: 10, Errors: 1, TotalMs: inf, AvgMs: nan, P95Ms: inf, P99Ms: nan, MaxMs: inf,
+		Callers: []CallerRef{{Service: "a", Calls: 1, P95Ms: inf}},
+	})
+	for _, s := range got {
+		for _, bad := range []string{"Inf", "NaN", "+Inf"} {
+			if strings.Contains(s.Value, bad) {
+				t.Errorf("%q değeri %s taşıyor: %q", s.Label, bad, s.Value)
+			}
+		}
+	}
+	// Satır KAYBOLMAZ: ölçülemeyen parça "—" olur, sayılabilen kalır.
+	if s, ok := sigByLabel(got, "Hacim"); !ok || !strings.Contains(s.Value, "10 çağrı") {
+		t.Errorf("hacim satırı = %+v; çağrı sayısı korunmalı", s)
+	}
+}
+
+// fmtMs — HER BİRİM dalı tabloda (v0.6.36 kuralı: değer+birim üreten
+// şablon her birimi testler). Eşik değerleri de: 999/1000 ve 59999/60000.
+func TestFmtMsEveryUnit(t *testing.T) {
+	for _, tc := range []struct {
+		in   float64
+		want string
+	}{
+		{0, "0ms"}, {0.4, "0ms"}, {1, "1ms"}, {842, "842ms"}, {999, "999ms"},
+		{999.6, "1000ms"}, // %.0f yuvarlaması dalı DEĞİŞTİRMEZ (< 1000 testi ham değerde)
+		{1000, "1.0sn"}, {1240, "1.2sn"}, {41_200, "41.2sn"}, {59_999, "60.0sn"},
+		{60_000, "1.0dk"}, {138_000, "2.3dk"}, {3_600_000, "60.0dk"},
+		{-1, "—"},
+	} {
+		if got := fmtMs(tc.in); got != tc.want {
+			t.Errorf("fmtMs(%v) = %q; want %q", tc.in, got, tc.want)
+		}
+	}
+	if got := fmtMs(math.Inf(1)); got != "—" {
+		t.Errorf("fmtMs(+Inf) = %q", got)
+	}
+	if got := fmtMs(math.NaN()); got != "—" {
+		t.Errorf("fmtMs(NaN) = %q", got)
+	}
+}
+
+// oneLine — RUNE sınırında keser. Bayt kesmesi geçersiz UTF-8 üretir ve o
+// dize hem panele hem PROMPT'a gider (anomaly.truncateSample bayt kesiyor;
+// kart o tuzağı tekrarlamıyor).
+func TestOneLineIsRuneSafe(t *testing.T) {
+	in := "çğüşiö" + strings.Repeat("ı", 20)
+	got := oneLine(in, 8)
+	if !utf8.ValidString(got) {
+		t.Errorf("geçersiz UTF-8 üretildi: %q", got)
+	}
+	if r := []rune(got); len(r) != 9 { // 8 + "…"
+		t.Errorf("rune sayısı = %d; want 9 (%q)", len(r), got)
+	}
+	// Satır sonları ve tekrarlı boşluklar tekilleşir.
+	if got := oneLine("a\n\tb   c", 0); got != "a b c" {
+		t.Errorf("oneLine boşluk normalizasyonu = %q", got)
+	}
+	if got := oneLine("kısa", 100); got != "kısa" {
+		t.Errorf("tavan altında kesildi: %q", got)
 	}
 }

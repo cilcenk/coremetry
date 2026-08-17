@@ -1,4 +1,5 @@
-import type { InsightResponse } from './types';
+import { aiSubjectQuestion } from '@/components/ai/drawerChat';
+import type { InsightKind, InsightResponse } from './types';
 
 // insightCard — gömülü insight kartının SAF yardımcıları (v0.9.1130,
 // AI Faz 2.2; docs/plans/ai-assistant-design-2026-08-16.md §2.3).
@@ -50,4 +51,36 @@ export function insightHrefInternal(href: string): boolean {
 export function insightHasEvidence(r: InsightResponse | null): boolean {
   if (!r) return false;
   return r.signals.length > 0 || r.links.length > 0 || r.prose.trim() !== '';
+}
+
+/**
+ * insightQuestion — kartın "💬 Chat'te devam et" köprüsünün seed
+ * sorusu (v0.9.1137, Faz 2.4).
+ *
+ * 2.3'e kadar kart doğrudan `aiSubjectQuestion(kind, id)` çağırıyordu:
+ * iki kart türü (`exception`/`problem`) AIKind'ın alt kümesiydi. 2.4'te
+ * bu ilişki KIRILDI — `log-pattern` ve `slow-query` çekmece türü DEĞİL
+ * (çekmecenin explain zinciri onları bilmiyor). aiSubjectQuestion'ın
+ * `default` dalı bilinmeyen türü "Bu trace'i açıkla" yapıyor, yani
+ * derleyici zorlamasa bir desen kartı sohbete TRACE sorusu yollardı:
+ * sessiz, tip-doğru ve tamamen yanlış (CopilotExplain'in kind zincirinin
+ * aynı tuzağı — InsightCard.tsx başındaki not).
+ *
+ * Bu yüzden switch TÜKETİCİ ve `default`SIZ: beşinci bir tür eklenirse
+ * tsc kırılır, sessizce yanlış soru üretilmez.
+ */
+export function insightQuestion(kind: InsightKind, id: string): string {
+  switch (kind) {
+    case 'exception':
+    case 'problem':
+      // Bu ikisi AIKind ile ÖRTÜŞÜYOR — tek kaynak orada kalsın
+      // (aynı özne için sohbet ve kart aynı soruyu sormalı).
+      return aiSubjectQuestion(kind, id);
+    case 'log-pattern':
+      return `"${id}" log deseni bu pencerede neden arttı, ne yapmalıyım?`;
+    case 'slow-query':
+      // id bir hash — modele göstermenin değeri yok; soru sınıfın
+      // KENDİSİNE dair (kanıt zaten explain bağlamında gidiyor).
+      return 'Bu yavaş sorgu sınıfı neden yavaş, en yüksek etkili düzeltme ne?';
+  }
 }

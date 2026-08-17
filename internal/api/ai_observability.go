@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/cilcenk/coremetry/internal/ai/insight"
 	"github.com/cilcenk/coremetry/internal/auth"
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/copilot"
@@ -273,9 +274,14 @@ func aiSurfaceFromPath(p string) string {
 	// etiketi yine path'ten türüyor, ama tür WHITELIST'li: /ai kırılımı
 	// sonlu kalmalı. Bilinmeyen tür route'ta 404 olur, yani buraya
 	// normalde hiç düşmez — ikinci kapı ucuz ve kalıcı.
+	//
+	// v0.9.1137 (Faz 2.4) — whitelist artık insight.KnownKind'dan TÜRÜYOR,
+	// elle yazılmış bir switch'ten değil. Sebep somut: 2.4'te iki tür
+	// eklendi ve elle yazılmış liste onları görmeseydi iki yeni yüzey
+	// sessizce "other"a düşerdi (v0.9.1067'nin ta kendisi — ölçülemeyen
+	// maliyet). Tek kaynak = route'un tanıdığı küme.
 	if len(parts) >= 3 && parts[0] == "api" && parts[1] == "insight" {
-		switch parts[2] {
-		case "exception", "problem":
+		if insight.KnownKind(parts[2]) {
 			return "insight-" + parts[2]
 		}
 		return "other"

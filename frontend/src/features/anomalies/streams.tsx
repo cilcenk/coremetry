@@ -9,7 +9,7 @@
 // signal clears) — the operator scans them rather than triages
 // them. For triage, see the assignable exception inbox on /problems.
 
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { Check, ChevronRight, ChevronDown, ArrowDownToLine } from 'lucide-react';
@@ -18,6 +18,8 @@ import { useDataTable, DataTableHead, DataTableColgroup } from '@/components/Dat
 import type { DataTableColumn } from '@/lib/dataTable';
 import { ClusterChips } from '@/components/ClusterChips';
 import { AIExplainButton } from '@/components/ai/AIExplainButton';
+// v0.9.1137 (AI Faz 2.4) — log deseni kartının yuvası (ızgara varyantı).
+import { useInsightRow, InsightRowChip, InsightGridSlot } from '@/components/ai/insightRow';
 import { RootCauseRibbon } from '@/components/RootCauseRibbon';
 import { useAuth } from '@/components/AuthProvider';
 import { api } from '@/lib/api';
@@ -563,11 +565,28 @@ function AnomalyTable({ rows, storageKey, rowRefs, highlight, onOpen, title }: {
   );
 }
 
+// LogPatternsSection — v0.9.1137 (AI Faz 2.4) itibarıyla üçüncü insight
+// yuvası: her desen kartı "▸ Ne oldu?" çipi taşıyor ve kart TAM GENİŞLİKTE
+// hemen altına açılıyor (InsightGridSlot — bu bölüm bir tablo değil, kart
+// ızgarası; gerekçe insightRow.tsx).
+//
+// TASARIM DOKÜMANI /logs DİYORDU, YUVA BURADA. Dokümanın 2.4 satırı "log
+// paneli" diyor ama /logs'ta desen LİSTESİ YOK: LogPatternStrip v0.8.35'te
+// operatör kararıyla KALDIRILDI (declutter + ES maliyeti) ve o sayfada
+// bugün yalnız panel-düzeyi "✨ Desenleri anlat" özeti var — o özet
+// YERİNDE KALIYOR (kaldırmak kararı geri almak olurdu). Desen SATIRLARI
+// bu sayfada yaşıyor, dolayısıyla satır-kartı da burada.
+//
+// Ek kazanç: liste ZATEN çekilmiş (useLogPatternAnomalies, 60s poll), yani
+// çipin bedeli kapalıyken SIFIR ve kart açılınca sunucu aynı detektör
+// okumasını 5dk penceresiyle tekrar ediyor — satırla AYNI pencere.
 function LogPatternsSection({ items, onMute, canEdit }: {
   items: LogPatternAnomaly[] | undefined;
   onMute: (kind: string, pattern: string, service: string, durationSec: number) => void;
   canEdit: boolean;
 }) {
+  // Kanca KOŞULSUZ çağrılıyor (hooks kuralı): erken dönüşler aşağıda.
+  const insight = useInsightRow('log-pattern');
   if (items === undefined) return null;
   if (items.length === 0) return null;
   return (
@@ -581,8 +600,14 @@ function LogPatternsSection({ items, onMute, canEdit }: {
         </span>
       </Row>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))', gap: 10 }}>
-        {items.map((a, i) => (
-          <Card key={i} density="tight"
+        {items.map(a => (
+          // v0.9.1137 — key artık DİZİN DEĞİL, desen ADI. Liste her
+          // pollde orana göre YENİDEN SIRALANIYOR (DetectLogPatterns sort'u);
+          // dizin key'i ile açık kart sıralama değişince BAŞKA bir desenin
+          // altında kalırdı (MT4 sınıfı, v0.9.869). Ad küratörlü listede
+          // tekil, yani kararlı bir kimlik.
+          <Fragment key={a.pattern}>
+          <Card density="tight"
                 style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
             <Row gap={2} style={{ minWidth: 0 }}>
               {a.kind === 'new'
@@ -607,6 +632,14 @@ function LogPatternsSection({ items, onMute, canEdit }: {
                     title="Open /logs filtered to this pattern + service">
                 logs ↗
               </Link>
+              {/* v0.9.1137 (Faz 2.4) — insight çipi kartın BAŞLIK satırında,
+                  mevcut affordance'ların yanında: kendi şeridinde durması
+                  her desen kartına bir satır yükseklik eklerdi ve bu bölüm
+                  ızgarada yoğun duruyor. Çip KENDİ tık hedefi (çipin
+                  stopPropagation'ı InsightRowChip'te). */}
+              <InsightRowChip open={insight.openId === a.pattern}
+                onToggle={() => insight.toggle(a.pattern)}
+                title="Bu desen için ilişkili sinyalleri topla ve ne olduğunu anlat (AI)" />
               {canEdit && <SnoozeButton onMute={d => onMute('log_pattern', a.pattern, a.service, d)} />}
             </Row>
             <div style={{ fontSize: 11, color: 'var(--text2)' }}>
@@ -625,6 +658,14 @@ function LogPatternsSection({ items, onMute, canEdit }: {
               </div>
             )}
           </Card>
+          {/* Kart KOŞULLU: kapalı desen SIFIR istek (mount = tek üretim).
+              Izgara çocuğu olarak tam genişlik alıyor, yani tıklanan
+              kartın hemen ALTINDA açılıyor. */}
+          {insight.openId === a.pattern && (
+            <InsightGridSlot kind="log-pattern" id={a.pattern}
+              onClose={insight.close} />
+          )}
+          </Fragment>
         ))}
       </div>
     </Card>

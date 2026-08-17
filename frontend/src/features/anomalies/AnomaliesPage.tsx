@@ -205,7 +205,10 @@ export default function ProblemsPage() {
   // üzerinden. `?exc=` (tam sayfa detay) ile ÇAKIŞMIYOR: bu eksen satırı
   // yerinde bırakıp altına kanıt açar, o eksen listeyi bırakıp detaya
   // geçer. Satır tıkı hâlâ detaya gider — çip kendi tık hedefi.
-  const insight = useInsightRow();
+  // v0.9.1137 (Faz 2.4) — kanca artık TÜR alıyor: `?insight=` değeri
+  // `<kind>:<id>` taşıyor, böylece dört host tek paramı çakışmadan
+  // paylaşıyor (yabancı türün değeri bu sayfada kart AÇMAZ).
+  const insight = useInsightRow('exception');
   const openExcDetail = (g: ExceptionGroup) => {
     setDetail(g);
     setExcNotFound(false);

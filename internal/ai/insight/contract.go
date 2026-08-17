@@ -35,16 +35,43 @@ import (
 // ── kart türleri ────────────────────────────────────────────────────
 
 // Faz 2.1'in yuvaları: exception grubu (id = fingerprint) ve problem
-// (id = problem id). Log paneli + slow-span 2.4'te aynı sözleşmeye
-// biner — o yüzden tür bir ENUM, handler başına ayrı uç değil.
+// (id = problem id). Log deseni + yavaş sorgu 2.4'te aynı sözleşmeye
+// bindi — o yüzden tür bir ENUM, handler başına ayrı uç değil.
+//
+// KİMLİK KARARLARI (v0.9.1137, Faz 2.4) — her ikisi de "satırın KENDİ
+// taşıdığı kimlik", türetilmiş bir şey değil:
+//
+//	KindLogPattern — id = küratörlü desenin ADI ("Out of memory").
+//	  LogPatternAnomaly'nin id alanı YOK; adı ise detektörün
+//	  patterns[] listesinin anahtarı (internal/anomaly/log_patterns.go)
+//	  ve susturma parmak izinin orta alanı (FingerprintAnomaly
+//	  "log_pattern|<pattern>|<service>"). Yani kimlik olarak ZATEN
+//	  kullanılıyor. Drain şablonlarının (log_templates.ID) hash'i AYRI
+//	  bir aile: "Desenleri anlat" paneli ikisini birden anlatıyor ama
+//	  operatörün TIKLADIĞI satır küratörlü desen — şablon hash'ini
+//	  kimlik yapmak, olmayan bir satırı adreslemek olurdu.
+//	  Servis kimliğe GİRMEZ: kartın servisi "bu pencerede en çok basan"
+//	  servistir, pencereyle DEĞİŞİR — kimliğe koymak aynı deseni iki
+//	  pencerede iki farklı kart yapardı.
+//
+//	KindSlowQuery — id = `?stmt=` kodeğinin ta kendisi:
+//	  "<stmtHash>[|<dbSystem>]". stmtHash v0.8.375'in ingest-zamanı
+//	  parmak izi (pencereler arası KALICI), dbSystem ise katalog
+//	  sayfasının kapsamı; ikisi birlikte /slow-queries çekmecesinin
+//	  URL kimliği (stmtParam.ts encodeStmtParam) ve detay ucunun
+//	  (hash, system) argüman çifti. Üçüncü bir yazılış üretmedik.
 const (
-	KindException = "exception"
-	KindProblem   = "problem"
+	KindException  = "exception"
+	KindProblem    = "problem"
+	KindLogPattern = "log-pattern"
+	KindSlowQuery  = "slow-query"
 )
 
 // Kinds — route'un tanıdığı tür listesi. Sıra sabit: /ai yüzey
 // kırılımı ve testler bu listeden türer.
-func Kinds() []string { return []string{KindException, KindProblem} }
+func Kinds() []string {
+	return []string{KindException, KindProblem, KindLogPattern, KindSlowQuery}
+}
 
 // KnownKind — bilinmeyen tür 404 olur ve LLM'e HİÇ ulaşmaz. Bu, ai_calls
 // yüzey etiketinin sonlu kalmasının da kapısı (aiSurfaceFromPath aynı
@@ -69,6 +96,12 @@ const (
 	SignalBlast     = "blast"
 	SignalException = "exception"
 	SignalGeneric   = "generic"
+	// v0.9.1137 (Faz 2.4) — iki yeni yuvanın kendi aileleri. Kapalı küme
+	// GENİŞLEDİ, esnetilmedi: FE'nin InsightSignalKind birleşimi bu
+	// listeyle 1:1 (types.ts) ve bugün hiçbiri BOYANMIYOR — küme
+	// gelecekteki ikon dili için var (InsightCard.tsx gerekçesi).
+	SignalLog = "log"
+	SignalDB  = "db"
 )
 
 // Şiddet — boş DEĞER GEÇERLİ ve anlamlı: "nötr bilgi" (servis adı,

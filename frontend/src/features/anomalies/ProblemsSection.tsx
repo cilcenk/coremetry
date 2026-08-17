@@ -134,7 +134,8 @@ export function ProblemsSection({ serviceFilter }: { serviceFilter: string }) {
   // v0.9.1133 (AI Faz 2.3) — açık insight kartı (`?insight=<problem id>`).
   // `?problem=` tam sayfa detayı açtığı için ondan AYRI bir eksen: satır
   // yerinde kalır, kanıt altında açılır, "Triage ▶" gezinmesi bozulmaz.
-  const insight = useInsightRow();
+  // v0.9.1137 (Faz 2.4) — tür önekli `?insight=` (bkz. insightRow.tsx).
+  const insight = useInsightRow('problem');
   // Bulk-select state (v0.5.83). Operators can multi-select
   // problems and acknowledge them in one POST — typical
   // workflow during a fan-out incident where 20 alerts fire

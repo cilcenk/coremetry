@@ -1028,19 +1028,16 @@ export const api = {
     get<import('./types').DeployHistoryRow[]>(
       `/api/services/${encodeURIComponent(service)}/deploy-history?${qs({ limit, windowSec, lookbackHours })}`),
 
-  // Slow-query AI explain (v0.5.171). Body matches the row
-  // shape so the backend doesn't have to re-query CH — frontend
-  // already has stats + sample on hand.
-  copilotExplainSlowQuery: (body: {
-    service: string; statement: string; sampleStatement: string;
-    dbSystem: string; count: number;
-    avgMs: number; p95Ms: number; p99Ms: number; maxMs: number;
-    errorCount: number;
-  }) =>
-    request<{ explanation: string; exchangeId?: string }>(`/api/copilot/explain-slow-query`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+  // copilotExplainSlowQuery KALDIRILDI — v0.9.1137 (AI Faz 2.4).
+  //
+  // /slow-queries satırının satır-içi ✨ Explain'i insight kartına
+  // evrildi (`?insight=slow-query:<hash>`): aynı sistem prompt'u
+  // (SystemPromptSlowQuery) sunucuda çalışıyor ama artık kanıtı da
+  // SUNUCU topluyor (MV özeti + çağıran kırılımı + exemplar), yani
+  // istemcinin satır alanlarını POST etmesine gerek yok. Üstüne akan
+  // anlatı, deterministik sinyaller, sunucu-üretimi pivotlar ve 👍/👎.
+  // Shim BIRAKILMADI (ev kuralı); /api/copilot/explain-slow-query ucu
+  // yerinde duruyor ama artık frontend tüketicisi YOK.
 
   // Global slow-query catalog (v0.5.165). One row per
   // (service, normalised statement) ordered by total wall-clock
@@ -1827,8 +1824,21 @@ export const api = {
   //
   // Kanca VERİLMEZSE buffered gövde (tek JSON, prose dahil); verilirse
   // `?stream=1` ve sinyaller İLK çerçevede. Uç başına kip dalı yok.
-  insight: async (kind: InsightKind, id: string, opts?: InsightStreamOpts): Promise<InsightResponse> => {
-    const path = `/api/insight/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
+  //
+  // v0.9.1137 (Faz 2.4) — `windowSec` opsiyonel pencere. YALNIZ pencereye
+  // bağlı türler geçiriyor: `slow-query` sayfanın aralığını taşımalı (p95 /
+  // çağrı sayısı pencere-kapsamlı). `log-pattern` BİLEREK geçirmiyor —
+  // satırların geldiği uç (/api/anomalies/log-patterns) param'sız, yani
+  // 5dk varsayılanıyla koşuyor; kart başka bir pencere isterse satırda ve
+  // kartta FARKLI sayılar görünür. Sunucu değeri rung'lar/kelepçeler.
+  insight: async (
+    kind: InsightKind, id: string,
+    opts?: InsightStreamOpts & { windowSec?: number },
+  ): Promise<InsightResponse> => {
+    let path = `/api/insight/${encodeURIComponent(kind)}/${encodeURIComponent(id)}`;
+    if (opts?.windowSec && opts.windowSec > 0) {
+      path += `?window=${Math.round(opts.windowSec)}s`;
+    }
     if (!opts?.onSignals && !opts?.onDelta) {
       // Kancasız yol da insightFrame'den GEÇER: iki kipin biri normalize
       // edip öteki etmezse `signals: null` taşıyan bir gövde yalnız

@@ -27,7 +27,8 @@ import { act } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { MemoryRouter, useLocation } from 'react-router-dom';
 import {
-  INSIGHT_PARAM, insightParams, useInsightRow, InsightRowChip, InsightRowSlot,
+  INSIGHT_PARAM, INSIGHT_KINDS, formatInsightParam, parseInsightParam,
+  insightParams, useInsightRow, InsightRowChip, InsightRowSlot, InsightGridSlot,
 } from './insightRow';
 import { escLayerDepth, topEscLayer, __resetEscLayers } from '@/lib/escLayer';
 
@@ -38,13 +39,14 @@ const seen = vi.hoisted(() => ({ mounts: [] as string[], unmounts: [] as string[
 vi.mock('@/components/ai/InsightCard', async () => {
   const { useEffect } = await import('react');
   return {
-    InsightCard: ({ kind, id, onClose }: {
-      kind: string; id: string; onClose?: () => void;
+    InsightCard: ({ kind, id, windowSec, onClose }: {
+      kind: string; id: string; windowSec?: number; onClose?: () => void;
     }) => {
       useEffect(() => {
-        seen.mounts.push(`${kind}:${id}`);
-        return () => { seen.unmounts.push(`${kind}:${id}`); };
-      }, [kind, id]);
+        const tag = windowSec ? `${kind}:${id}@${windowSec}` : `${kind}:${id}`;
+        seen.mounts.push(tag);
+        return () => { seen.unmounts.push(tag); };
+      }, [kind, id, windowSec]);
       return (
         <div data-card={`${kind}:${id}`}>
           KART {kind}:{id}
@@ -76,8 +78,10 @@ const chips = () => Array.from(host.querySelectorAll('button'))
  * Host — iki gerçek host'un satır anatomisi: satır tıkı navigasyon,
  * çip kendi hedefi, kart satırın ALTINDA ve KOŞULLU.
  */
-function Host({ ids }: { ids: string[] }) {
-  const insight = useInsightRow();
+function Host({ ids, kind = 'exception' }: {
+  ids: string[]; kind?: 'exception' | 'problem' | 'log-pattern' | 'slow-query';
+}) {
+  const insight = useInsightRow(kind);
   return (
     <>
       <UrlProbe />
@@ -93,7 +97,7 @@ function Host({ ids }: { ids: string[] }) {
               </td>
             </tr>
             {insight.openId === id && (
-              <InsightRowSlot kind="exception" id={id} colSpan={1}
+              <InsightRowSlot kind={kind} id={id} colSpan={1}
                 onClose={insight.close} />
             )}
           </Fragment>
@@ -103,11 +107,14 @@ function Host({ ids }: { ids: string[] }) {
   );
 }
 
-async function mount(entry = '/exceptions', ids = ['fp1', 'fp2']) {
+async function mount(
+  entry = '/exceptions', ids = ['fp1', 'fp2'],
+  kind: 'exception' | 'problem' | 'log-pattern' | 'slow-query' = 'exception',
+) {
   await act(async () => {
     root.render(
       <MemoryRouter initialEntries={[entry]}>
-        <Host ids={ids} />
+        <Host ids={ids} kind={kind} />
       </MemoryRouter>,
     );
   });
@@ -135,15 +142,15 @@ afterEach(() => {
 describe('insightParams — saf kodek', () => {
   it('yabancı parametreleri KORUR', () => {
     const out = insightParams(
-      new URLSearchParams('tab=open&service=payment'), '', 'fp1');
-    expect(out.get(INSIGHT_PARAM)).toBe('fp1');
+      new URLSearchParams('tab=open&service=payment'), '', 'exception:fp1');
+    expect(out.get(INSIGHT_PARAM)).toBe('exception:fp1');
     expect(out.get('tab')).toBe('open');
     expect(out.get('service')).toBe('payment');
   });
 
   it('null = parametre SİLİNİR, gerisi durur', () => {
     const out = insightParams(
-      new URLSearchParams('insight=fp1&tab=open'), '', null);
+      new URLSearchParams('insight=exception:fp1&tab=open'), '', null);
     expect(out.has(INSIGHT_PARAM)).toBe(false);
     expect(out.get('tab')).toBe('open');
   });
@@ -153,15 +160,15 @@ describe('insightParams — saf kodek', () => {
     // konumu o anahtarları hiç görmemiş olabiliyor. prev'i tek otorite
     // saymak, operatörün seçili span'ini adresten silerdi.
     const out = insightParams(
-      new URLSearchParams('tab=open'), '?tab=open&span=abc123&range=6h', 'fp1');
+      new URLSearchParams('tab=open'), '?tab=open&span=abc123&range=6h', 'exception:fp1');
     expect(out.get('span')).toBe('abc123');
     expect(out.get('range')).toBe('6h');
-    expect(out.get(INSIGHT_PARAM)).toBe('fp1');
+    expect(out.get(INSIGHT_PARAM)).toBe('exception:fp1');
   });
 
   it('prev\'de olup canlıda olmayan anahtar EKLENİR (iki yönlü birleşim)', () => {
     const out = insightParams(
-      new URLSearchParams('owner=sy-team'), '?range=6h', 'p1');
+      new URLSearchParams('owner=sy-team'), '?range=6h', 'problem:p1');
     expect(out.get('owner')).toBe('sy-team');
     expect(out.get('range')).toBe('6h');
   });
@@ -188,7 +195,9 @@ describe('çip — kendi tık hedefi', () => {
 
     expect(cards()).toEqual(['exception:fp1']);
     expect(seen.mounts).toEqual(['exception:fp1']);
-    expect(url()).toContain(`${INSIGHT_PARAM}=fp1`);
+    // Adres KANONİK değeri taşıyor: `<kind>:<enc(id)>` (URLSearchParams
+    // ':' karakterini %3A olarak kodlar).
+    expect(url()).toContain(`${INSIGHT_PARAM}=exception%3Afp1`);
     expect(chips()[0].getAttribute('aria-expanded')).toBe('true');
     // Kart, kendi satırının HEMEN ardından geliyor.
     const rows = Array.from(host.querySelectorAll('tr'));
@@ -244,20 +253,20 @@ describe('çip — kendi tık hedefi', () => {
 
 describe('adres = tek kaynak', () => {
   it('paylaşılan `?insight=` linki kartı AÇIK mount eder', async () => {
-    await mount('/exceptions?tab=open&insight=fp2');
+    await mount('/exceptions?tab=open&insight=exception:fp2');
     expect(cards()).toEqual(['exception:fp2']);
     expect(seen.mounts).toEqual(['exception:fp2']);
   });
 
   it('kapanış yabancı parametreleri KORUR', async () => {
-    await mount('/exceptions?tab=open&insight=fp2');
+    await mount('/exceptions?tab=open&insight=exception:fp2');
     await click(chips()[1]);
     expect(url()).toContain('tab=open');
     expect(url()).not.toContain(INSIGHT_PARAM);
   });
 
   it('URL\'deki bilinmeyen kimlik hiçbir kart açmaz (satırlar sağlam)', async () => {
-    await mount('/exceptions?insight=silinmis-fp');
+    await mount('/exceptions?insight=exception:silinmis-fp');
     expect(cards()).toEqual([]);
     expect(chips()).toHaveLength(2);
   });
@@ -279,5 +288,192 @@ describe('Esc — katman yığını', () => {
     await act(async () => { topEscLayer()!(); });
     expect(cards()).toEqual([]);
     expect(url()).not.toContain(INSIGHT_PARAM);
+  });
+});
+
+// ════════════════════════════════════════════════════════════════════
+// v0.9.1137 (AI Faz 2.4) — tür önekli param + ızgara yuvası.
+// ════════════════════════════════════════════════════════════════════
+
+describe('tür kodeği — saf', () => {
+  it('format → parse round-trip (boşluk, `|`, `:` içeren id\'ler)', () => {
+    for (const [kind, id] of [
+      ['exception', 'fp/1+2'],
+      ['problem', 'svc:error_rate:1700000000'],
+      ['log-pattern', 'Oracle errors (ORA-)'],
+      ['slow-query', '12345|oracle'],
+    ] as const) {
+      const raw = formatInsightParam(kind, id);
+      expect(parseInsightParam(raw)).toEqual({ kind, id });
+    }
+  });
+
+  it('id İÇİNDEKİ ayraç belirsizlik yaratmaz (ilk `:` bölüyor)', () => {
+    // Problem id'leri ':' taşıyabiliyor; naif bir split(':') id'yi keserdi.
+    const raw = formatInsightParam('problem', 'a:b:c');
+    expect(parseInsightParam(raw)?.id).toBe('a:b:c');
+  });
+
+  it('bilinmeyen tür, boş id ve bozuk kaçış → null', () => {
+    for (const raw of [
+      null, undefined, '', 'exception', 'exception:', ':fp1',
+      'foo:bar', 'toString:x', 'log_pattern:x', 'Exception:fp1',
+    ]) {
+      expect(parseInsightParam(raw), String(raw)).toBeNull();
+    }
+  });
+
+  it('tür kümesi sunucunun tanıdığı DÖRT türü kapsıyor', () => {
+    // Kaynak: internal/ai/insight/contract.go Kinds(). Bir tür eklenip
+    // burası güncellenmezse KIND_GATE tsc'yi kırar; bu iddia listenin
+    // SIRASINI değil KAPSAMINI çiviliyor.
+    expect([...INSIGHT_KINDS].sort()).toEqual(
+      ['exception', 'log-pattern', 'problem', 'slow-query']);
+  });
+});
+
+describe('tür çakışması — dört host tek paramı paylaşıyor', () => {
+  it('YABANCI türün değeri kart AÇMAZ (kopyala-yapıştır güvenliği)', async () => {
+    // /inbox'tan kopyalanmış bir adres (`problem:p-42`) exception host'una
+    // yapıştırıldı: kart açılmamalı, satırlar sağlam kalmalı ve hiçbir
+    // istek gitmemeli. Öncesinde (çıplak id) host bunu KENDİ kimliği
+    // sanıp "p-42" için üretim tetiklerdi.
+    await mount('/exceptions?insight=problem:p-42', ['fp1', 'fp2']);
+    expect(cards()).toEqual([]);
+    expect(seen.mounts).toEqual([]);
+    expect(chips()).toHaveLength(2);
+    // Esc katmanı da kirlenmemeli: yabancı bir değer için katman
+    // kaydetmek Esc'i "hiçbir şey yapmıyor" hâline sokardı.
+    expect(escLayerDepth()).toBe(0);
+  });
+
+  // NOT: iki mount tek `it` içinde YAPILMAZ — MemoryRouter
+  // `initialEntries`i yalnız ilk mount'ta okur, ikinci render aynı
+  // history'yi sürdürür ve test kendi kurgusunu ölçmüş olur.
+  it('aynı id farklı TÜRde açılmaz (id uzayları kesişebilir)', async () => {
+    await mount('/anomalies?insight=slow-query:fp1', ['fp1'], 'log-pattern');
+    expect(cards()).toEqual([]);
+  });
+
+  it('aynı id KENDİ türünde açılır', async () => {
+    await mount('/anomalies?insight=log-pattern:fp1', ['fp1'], 'log-pattern');
+    expect(cards()).toEqual(['log-pattern:fp1']);
+  });
+
+  it('host kendi türünü YAZAR (adres türü taşır)', async () => {
+    await mount('/databases/slow-queries', ['12345|oracle'], 'slow-query');
+    await click(chips()[0]);
+    expect(url()).toContain('insight=slow-query%3A12345%7Coracle');
+    expect(cards()).toEqual(['slow-query:12345|oracle']);
+  });
+
+  it('yabancı değer üstüne yazılır, yabancı PARAMLAR korunur', async () => {
+    await mount('/anomalies?tab=open&insight=problem:p-42', ['Disk full'], 'log-pattern');
+    await click(chips()[0]);
+    expect(url()).toContain('tab=open');
+    expect(url()).toContain('insight=log-pattern%3ADisk+full');
+    expect(cards()).toEqual(['log-pattern:Disk full']);
+  });
+});
+
+describe('InsightGridSlot — tablo OLMAYAN host', () => {
+  /** GridHost — /anomalies'in desen ızgarasının anatomisi. */
+  function GridHost({ ids }: { ids: string[] }) {
+    const insight = useInsightRow('log-pattern');
+    return (
+      <>
+        <UrlProbe />
+        <div data-grid style={{ display: 'grid' }}>
+          {ids.map(id => (
+            <Fragment key={id}>
+              <div data-card-shell={id}>
+                <InsightRowChip open={insight.openId === id}
+                  onToggle={() => insight.toggle(id)} />
+              </div>
+              {insight.openId === id && (
+                <InsightGridSlot kind="log-pattern" id={id} onClose={insight.close} />
+              )}
+            </Fragment>
+          ))}
+        </div>
+      </>
+    );
+  }
+
+  const mountGrid = async (entry = '/anomalies') => {
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={[entry]}>
+          <GridHost ids={['Out of memory', 'Disk full']} />
+        </MemoryRouter>,
+      );
+    });
+  };
+
+  it('kart TAM GENİŞLİK alıyor ve kendi kabuğunun ARDINDA duruyor', async () => {
+    await mountGrid();
+    await click(chips()[0]);
+
+    const slot = host.querySelector('[data-insight-row]') as HTMLElement;
+    expect(slot).not.toBeNull();
+    // `<tr>` DEĞİL: ızgarada satır bağlamı yok (geçersiz HTML, yalnız
+    // çalışma zamanında uyarı verirdi).
+    expect(slot.tagName).toBe('DIV');
+    expect(slot.style.gridColumn).toBe('1 / -1');
+    // Uzun ifade/örnek satırının ızgarayı taşırmaması için şart.
+    expect(slot.style.minWidth).toBe('0px');
+
+    const grid = host.querySelector('[data-grid]')!;
+    const kids = Array.from(grid.children);
+    expect(kids[0].getAttribute('data-card-shell')).toBe('Out of memory');
+    expect(kids[1].getAttribute('data-insight-row')).toBe('Out of memory');
+  });
+
+  it('ızgara host\'unda da TEK kart açık ve kapanınca unmount', async () => {
+    await mountGrid();
+    await click(chips()[0]);
+    await click(chips()[1]);
+    expect(cards()).toEqual(['log-pattern:Disk full']);
+    expect(seen.unmounts).toEqual(['log-pattern:Out of memory']);
+    await click(chips()[1]);
+    expect(cards()).toEqual([]);
+    expect(url()).not.toContain(INSIGHT_PARAM);
+  });
+});
+
+describe('pencere yuvadan karta geçiyor', () => {
+  function WindowHost({ windowSec }: { windowSec?: number }) {
+    const insight = useInsightRow('slow-query');
+    return (
+      <>
+        <UrlProbe />
+        <table><tbody>
+          <tr>
+            <td>
+              <InsightRowChip open={insight.openId === '7'}
+                onToggle={() => insight.toggle('7')} />
+            </td>
+          </tr>
+          {insight.openId === '7' && (
+            <InsightRowSlot kind="slow-query" id="7" colSpan={1}
+              windowSec={windowSec} onClose={insight.close} />
+          )}
+        </tbody></table>
+      </>
+    );
+  }
+
+  it('windowSec karta ULAŞIYOR — sayfa aralığı kanıt penceresi olur', async () => {
+    await act(async () => {
+      root.render(
+        <MemoryRouter initialEntries={['/databases/slow-queries']}>
+          <WindowHost windowSec={21600} />
+        </MemoryRouter>,
+      );
+    });
+    await click(chips()[0]);
+    // Yuva pencereyi düşürürse kart sunucunun 1sa varsayılanına düşer ve
+    // 6sa'lık bir sayfada satırdan BAŞKA sayı gösterir.
+    expect(seen.mounts).toEqual(['slow-query:7@21600']);
   });
 });

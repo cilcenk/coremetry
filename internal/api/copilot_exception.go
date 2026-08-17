@@ -37,23 +37,19 @@ func (s *Server) copilotExplainException(w http.ResponseWriter, r *http.Request)
 	// ödenecek bir maliyet değil. İşaretlendiğinde de fail-open —
 	// kod gelmezse açıklama yine üretilir, cc.Reason yanıtta döner.
 	var cc devops.CodeContext
-	var out string
+	run := s.explainPrompt(r, copilot.SystemPromptException(), in.User)
 	if opts.IncludeCode {
 		cc = s.buildCodeContext(r.Context(), g.Service, in.Stack)
-		out, err = s.copilotExplainCode(r,
-			copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), in.User, cc)
-	} else {
-		out, err = s.copilotExplain(r, copilot.SystemPromptException(), in.User)
+		run = explainPromptBuffered(func() (string, error) {
+			return s.copilotExplainCode(r,
+				copilot.SystemPromptException(), copilot.SystemPromptExceptionWithCode(), in.User, cc)
+		})
 	}
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{
-		"explanation":      out,
-		"exchangeId":       xid,
+	// v0.9.1127 (Faz 1.5) — cevabın çıkışı tek yerden: `?stream=1` ise
+	// SSE (delta→answer→done), değilse bugünkü gövde bayt bayt.
+	s.deliverExplain(w, r, xid, map[string]any{
 		"evidenceTraceIds": in.EvTraces,
 		"evidenceSpanIds":  in.EvSpans,
 		"code":             codePayload(cc, opts.IncludeCode),
-	})
+	}, run)
 }

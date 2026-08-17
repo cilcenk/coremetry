@@ -8905,24 +8905,19 @@ func (s *Server) copilotExplainTrace(w http.ResponseWriter, r *http.Request) {
 	// SERVİSİN deposunda aranır (bkz. traceExplainInput.StackService).
 	opts := decodeExplainOptions(r)
 	var cc devops.CodeContext
-	var out string
+	run := s.explainPrompt(r, copilot.SystemPromptTrace(), in.User)
 	if opts.IncludeCode {
 		cc = s.buildCodeContext(r.Context(), in.StackService, in.Stack)
-		out, err = s.copilotExplainCode(r,
-			copilot.SystemPromptTrace(), copilot.SystemPromptTraceWithCode(), in.User, cc)
-	} else {
-		out, err = s.copilotExplain(r, copilot.SystemPromptTrace(), in.User)
+		run = explainPromptBuffered(func() (string, error) {
+			return s.copilotExplainCode(r,
+				copilot.SystemPromptTrace(), copilot.SystemPromptTraceWithCode(), in.User, cc)
+		})
 	}
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{
-		"explanation":     out,
-		"exchangeId":      xid,
+	// v0.9.1127 (Faz 1.5) — cevabın çıkışı tek yerden (deliverExplain).
+	s.deliverExplain(w, r, xid, map[string]any{
 		"evidenceSpanIds": in.Evidence,
 		"code":            codePayload(cc, opts.IncludeCode),
-	})
+	}, run)
 }
 
 // copilotExplainSpan focuses the LLM on ONE span instead of the
@@ -9022,12 +9017,7 @@ func (s *Server) copilotExplainSpan(w http.ResponseWriter, r *http.Request) {
 	user := fmt.Sprintf("Span %s (target) in trace %s — %d spans in context:\n```json\n%s\n```",
 		spanID, traceID, len(compact), string(payload))
 	r, xid := withExchange(r)
-	out, err := s.copilotExplain(r, copilot.SystemPromptSpan(), user)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
+	s.deliverExplain(w, r, xid, nil, s.explainPrompt(r, copilot.SystemPromptSpan(), user))
 }
 
 // copilotExplainProblem fetches a Problem and asks the model for a
@@ -9088,12 +9078,7 @@ func (s *Server) copilotExplainProblem(w http.ResponseWriter, r *http.Request) {
 		user += s.serviceCorrelationContext(r.Context(), p.Service, time.Unix(0, p.StartedAt))
 	}
 	r, xid := withExchange(r)
-	out, err := s.copilotExplain(r, copilot.SystemPromptProblem(), user)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
+	s.deliverExplain(w, r, xid, nil, s.explainPrompt(r, copilot.SystemPromptProblem(), user))
 }
 
 // serviceCorrelationContext gathers the multi-signal evidence the
@@ -9199,12 +9184,7 @@ func (s *Server) copilotExplainIncident(w http.ResponseWriter, r *http.Request) 
 		inc.Title, inc.Service, inc.Severity, inc.Status, inc.Summary, len(probs), probLines,
 	)
 	r, xid := withExchange(r)
-	out, err := s.copilotExplain(r, copilot.SystemPromptIncident(), user)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
+	s.deliverExplain(w, r, xid, nil, s.explainPrompt(r, copilot.SystemPromptIncident(), user))
 }
 
 // copilotExplainAnomaly handles log-pattern / trace-op anomaly
@@ -9259,12 +9239,7 @@ func (s *Server) copilotExplainAnomaly(w http.ResponseWriter, r *http.Request) {
 		user += "\n\nZİNCİRİ anlat: anomali → (varsa) tetikleyen deploy → komşu servislere etkisi. Yönü belirt (upstream'den mi geldi, downstream'e mi yayılıyor); kanıt yoksa 'bilinmiyor' de."
 	}
 	r, xid := withExchange(r)
-	out, err := s.copilotExplain(r, copilot.SystemPromptAnomaly(), user)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
+	s.deliverExplain(w, r, xid, nil, s.explainPrompt(r, copilot.SystemPromptAnomaly(), user))
 }
 
 // truncate caps s at n BYTES, cutting on a rune boundary.
@@ -9410,12 +9385,7 @@ func (s *Server) copilotExplainServiceHealth(w http.ResponseWriter, r *http.Requ
 		}(),
 	)
 	r, xid := withExchange(r)
-	out, err := s.copilotExplain(r, copilot.SystemPromptServiceHealth(), user)
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{"explanation": out, "exchangeId": xid})
+	s.deliverExplain(w, r, xid, nil, s.explainPrompt(r, copilot.SystemPromptServiceHealth(), user))
 }
 
 // copilotRunbook generates a numbered, actionable runbook for
@@ -9497,16 +9467,9 @@ func (s *Server) copilotRunbook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r, xid := withExchange(r)
-	out, err := s.copilotExplain(r, copilot.SystemPromptRunbook(), sb.String())
-	if err != nil {
-		writeErr(w, err)
-		return
-	}
-	writeJSON(w, map[string]any{
-		"explanation":  out,
-		"exchangeId":   xid,
-		"similarCount": len(similar),
-	})
+	s.deliverExplain(w, r, xid,
+		map[string]any{"similarCount": len(similar)},
+		s.explainPrompt(r, copilot.SystemPromptRunbook(), sb.String()))
 }
 
 // copilotCompareTraces takes two trace IDs, computes a

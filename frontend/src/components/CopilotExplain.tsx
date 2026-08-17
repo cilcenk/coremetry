@@ -103,18 +103,43 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
     onAnswer?.(raw);
   };
 
+  // v0.9.1127 (Faz 1.5) — akan cevap. `?stream=1` ile giden istek
+  // token'ları onDelta'dan verir; panel onları BİRİKTİREREK çizer.
+  //
+  // Nihai metin YİNE `answer` çerçevesinden gelir ve biriken metni EZER
+  // (applyText). Delta toplamı cevaba eşit OLMAYABİLİR: model reasoning
+  // üretip cevabı sonda toparladığında sunucu düşünce bloğunu akıtmaz ve
+  // kurtarılmış cevabı tek parça yollar. Delta'lar ilerleme gösterimi,
+  // doğrunun kaynağı değil.
+  //
+  // Sunucu şeffaf biçimde buffered'a düşerse (akıyamayan uç) sıfır delta
+  // gelir ve cevap tek seferde görünür — bu bileşende ayrı bir dal YOK.
+  const abortRef = useRef<AbortController | null>(null);
+  const streamOpts = (ac: AbortController) => ({
+    onDelta: (d: string) => setText(prev => (prev ?? '') + d),
+    signal: ac.signal,
+  });
+
   // withCode parametresi state yerine ARGÜMAN: checkbox onChange'inden
   // hemen sonra run() çağrıldığında setState henüz uygulanmamış olur ve
   // istek eski değerle gider (React batching). Operatör kutuyu
   // işaretler, kodsuz cevap alır, nedenini göremez.
   const run = async (withCode = includeCode) => {
+    // "Yeniden sor" uçuştaki akışı KESER. Kesilmezse eski akışın
+    // delta'ları yeni cevabın üstüne yazmaya devam eder ve panelde iki
+    // cevap iç içe geçer.
+    abortRef.current?.abort();
+    const ac = new AbortController();
+    abortRef.current = ac;
+    const opts = streamOpts(ac);
+
     setUsed(true);
     setBusy(true); setError(null); setText(null); setMeta(null); setCode(null);
     setExchangeId(undefined);
     onAnswer?.(''); // "Yeniden sor" bayat bağlamı taşımasın
     try {
       if (kind === 'runbook') {
-        const r = await api.copilotRunbook(id);
+        const r = await api.copilotRunbook(id, opts);
         applyText(r.explanation);
         setExchangeId(r.exchangeId);
         // Surface the "based on N past resolutions" hint so the
@@ -124,31 +149,43 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           ? `Based on ${r.similarCount} past resolved instance${r.similarCount === 1 ? '' : 's'} of this rule on this service.`
           : `No past resolutions found — first-principles only.`);
       } else {
-        const r = kind === 'trace'          ? await api.copilotExplainTrace(id, withCode).then(rr => {
+        const r = kind === 'trace'          ? await api.copilotExplainTrace(id, withCode, opts).then(rr => {
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
                                                   setCode(rr.code ?? null);
                                                   return rr;
                                                 })
-                : kind === 'exception'      ? await api.copilotExplainException(id, withCode).then(rr => {
+                : kind === 'exception'      ? await api.copilotExplainException(id, withCode, opts).then(rr => {
                                                   if (rr.evidenceSpanIds?.length) onEvidence?.(rr.evidenceSpanIds);
                                                   if (rr.evidenceTraceIds?.length) onEvidenceTraces?.(rr.evidenceTraceIds);
                                                   setCode(rr.code ?? null);
                                                   return rr;
                                                 })
-                : kind === 'span'           ? await api.copilotExplainSpan(id, spanId ?? '')
-                : kind === 'problem'        ? await api.copilotExplainProblem(id)
-                : kind === 'incident'       ? await api.copilotExplainIncident(id)
-                : kind === 'anomaly'        ? await api.copilotExplainAnomaly(id)
-                :                             await api.copilotExplainServiceHealth(id, fromNs ?? 0, toNs ?? 0);
+                : kind === 'span'           ? await api.copilotExplainSpan(id, spanId ?? '', opts)
+                : kind === 'problem'        ? await api.copilotExplainProblem(id, opts)
+                : kind === 'incident'       ? await api.copilotExplainIncident(id, opts)
+                : kind === 'anomaly'        ? await api.copilotExplainAnomaly(id, opts)
+                :                             await api.copilotExplainServiceHealth(id, fromNs ?? 0, toNs ?? 0, opts);
         applyText(r.explanation);
         setExchangeId(r.exchangeId);
       }
     } catch (e: unknown) {
+      // İptal HATA DEĞİL: "Yeniden sor" kendi öncülünü keser, bileşen
+      // unmount olurken de akış kesilir. Kullanıcının kendi eylemini
+      // kırmızı bir kutu olarak göstermek yanlış (api.ts'in CanceledError
+      // disiplini, v0.9.603).
+      if (ac.signal.aborted) return;
       setError(e instanceof Error ? e.message : 'Explain failed');
     } finally {
-      setBusy(false);
+      // Yalnız GÜNCEL akış spinner'ı kapatır — iptal edilmiş eski çağrı
+      // yeni akışın "düşünüyor" durumunu düşüremez.
+      if (abortRef.current === ac) setBusy(false);
     }
   };
+
+  // Unmount: uçuştaki akışı kes. Çekmece kapanınca sunucuya doğru açık
+  // kalan bir SSE bağlantısı, kimsenin okumadığı token'ları akıtmaya
+  // devam eder.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   // Explain→chat köprüsü (v0.9.165): açıklamayı okuduktan sonra tek tıkla
   // global CoSRE penceresinde devam et — konuya uygun bir soruyla açılır.
@@ -200,7 +237,12 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
           <span>Kodu da incele</span>
         </label>
       )}
-      {auto && busy && <Spinner label={includeCode ? 'CoSRE kodu okuyor…' : 'CoSRE düşünüyor…'} />}
+      {/* v0.9.1127 — Spinner yalnız İLK token'a kadar. Token'lar akmaya
+          başladıktan sonra ilerlemeyi metnin kendisi gösteriyor; ikisini
+          birlikte çizmek "hem bekliyor hem yazıyor" gibi okunur. */}
+      {auto && busy && text === null && (
+        <Spinner label={includeCode ? 'CoSRE kodu okuyor…' : 'CoSRE düşünüyor…'} />
+      )}
       {showButton && (
         <Button variant="accent" size="sm" onClick={() => void run()} disabled={busy}
           className={used || auto ? undefined : 'ai-attn'}>
@@ -262,6 +304,11 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
               whiteSpace:'pre-wrap' KALKTI: Markdown kendi blok düzenini
               kuruyor, ikisi birlikte satır aralarını ikiye katlıyordu. */}
           <RenderedMarkdown text={text} />
+          {/* v0.9.1127 — akan cevabın imleci (ChatBubble'ın `.cm-ai-cursor`
+              atomu). Cevap BİTMEDEN de metin görünür olduğu için, bittiğini
+              gösteren bir işaret gerekiyor: imleçsiz akan metin yarıda
+              kesilmiş bir cevaptan ayırt edilemez. */}
+          {busy && <span className="cm-ai-cursor" />}
           {/* Kaynak satırı: hangi depo/branş okundu, hangi dosyalar.
               Depo çözümü bir TAHMİN olabilir (konvansiyon) — cevabın
               yanlış dosyaya dayandığından şüphelenen operatör bunu

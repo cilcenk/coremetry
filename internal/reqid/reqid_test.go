@@ -88,7 +88,9 @@ func TestParseStructuredRequestID(t *testing.T) {
 			synth("ABCD-01", sChan, sSub, sCust, sDate, sTime, sSalt)},
 		{"kanal kodunda harf (yalnız rakam)",
 			synth(sFunc, "05993A", sSub, sCust, sDate, sTime, sSalt)},
-		{"alt kodda harf", synth(sFunc, sChan, "051A", sCust, sDate, sTime, sSalt)},
+		// "alt kodda harf" v0.9.1142'de geçersiz sayılıyordu — YANLIŞ
+		// varsayımdı (operatör prod kimliği alfanümerik AltKod taşıyor,
+		// v0.9.1144). Kabul tarafı TestParseAlnumSubCode'da.
 		{"müşteri no'da harf", synth(sFunc, sChan, sSub, "00000000X2", sDate, sTime, sSalt)},
 		{"salt kuyruğunda harf — alfanümerik kuyruk kabul edilmez",
 			synth(sFunc, sChan, sSub, sCust, sDate, sTime, "08A")},
@@ -227,5 +229,52 @@ func TestFind(t *testing.T) {
 	}
 	if _, ok := Find("hiç kimlik yok", loc); ok {
 		t.Fatal("kimliksiz metinde çözümleme üretildi")
+	}
+}
+
+// v0.9.1144 — operator-reported: prod kimliğinde AltKod alfanümerik
+// çıktı ("kY1d" benzeri) ve rakam-şartlı ilk parser'da mesaj RAG
+// doküman katmanına düşüyordu. AltKod gevşedi; kalan rakam segmentleri
+// GEVŞEMEDİ — bu test ikisini birden pinler.
+func TestParseAlnumSubCode(t *testing.T) {
+	id, ok := Parse(synth(sFunc, sChan, "kX2d", sCust, sDate, sTime, sSalt), time.UTC)
+	if !ok {
+		t.Fatal("alfanümerik AltKod parse edilmeli")
+	}
+	if id.SubCode != "kX2d" {
+		t.Fatalf("SubCode = %q (harf kasası korunmalı)", id.SubCode)
+	}
+	for name, tok := range map[string]string{
+		"kanalda harf":   synth(sFunc, "05a931", sSub, sCust, sDate, sTime, sSalt),
+		"müşteride harf": synth(sFunc, sChan, sSub, "00000000x2", sDate, sTime, sSalt),
+		"saltta harf":    synth(sFunc, sChan, sSub, sCust, sDate, sTime, "08z"),
+	} {
+		if _, ok := Parse(tok, time.UTC); ok {
+			t.Fatalf("%s: parse edilmemeliydi", name)
+		}
+	}
+}
+
+// v0.9.1144 — FindLooseToken: kimliğe benzeyen ama Parse geçmeyen token
+// yönlendirme sinyali sayılır (RAG'a düşmesin); rakam tabanı (33) ve
+// uzunluk aralığı yanlış pozitifleri eler.
+func TestFindLooseToken(t *testing.T) {
+	badMonth := synth(sFunc, sChan, sSub, sCust, "20261317", sTime, sSalt)
+	if _, ok := Parse(badMonth, time.UTC); ok {
+		t.Fatal("fikstür bozuk: ay=13 parse edilmemeli")
+	}
+	if tok, ok := FindLooseToken("şu isteğe ne oldu: " + badMonth + " ?"); !ok || tok != badMonth {
+		t.Fatalf("gevşek eş bulunmalıydı: %q %v", tok, ok)
+	}
+	letterHeavy := "AAAAAAAAAAAAAAAAAAAA" + "111111111111111111111111111" // 20 harf + 27 rakam = 47
+	for name, text := range map[string]string{
+		"harf ağırlıklı 47'lik": letterHeavy,
+		"kısa rakam dizisi":     "hata kodu 12345 geldi",
+		"32-hex trace":          "4bf92f3577b34da6a3ce929d0e0e4736",
+		"düz cümle":             "bugün deploy oldu mu",
+	} {
+		if tok, ok := FindLooseToken(text); ok {
+			t.Fatalf("%s: yanlış pozitif %q", name, tok)
+		}
 	}
 }

@@ -393,7 +393,13 @@ func hasGuidedSignal(msg string) bool {
 // normalize edilmiş metinle çalışır; ARAMADA kullanılacak token router'da
 // `raw`dan alınır.
 func hasStructuredRequestID(msg string) bool {
-	_, ok := reqid.FindToken(msg)
+	if _, ok := reqid.FindToken(msg); ok {
+		return true
+	}
+	// v0.9.1144 — gevşek eş de sinyaldir: parse edilemeyen kimlik-benzeri
+	// token'ın RAG'a/serbest döngüye düşmemesi router'daki gevşek dalla
+	// AYNI koşula bağlı; sinyal kapısı daha dar kalırsa dal hiç çalışmaz.
+	_, ok := reqid.FindLooseToken(msg)
 	return ok
 }
 
@@ -829,6 +835,17 @@ func routeGuidedIntent(raw string, services, envs, teams []string, ctxService st
 	// yani bir trace ID'nin içindeki 16'lık dizi buraya düşemez.
 	if id := extractSpanID(msg); id != "" {
 		return guidedRoute{Intent: guidedSpanByID, SpanID: id}
+	}
+	// v0.9.1144 — kimliğe BENZEYEN ama şablona uymayan token. Operatör
+	// prod raporu: AltKod'u alfanümerik gerçek kimlik ilk şablonda parse
+	// olmayınca mesaj RAG doküman katmanına düşüp "yüklü dokümanlarda bu
+	// bilgi yok" diyordu (aynı hastalığın v0.9.537'deki trace-ID hâli).
+	// Şablon yine sürpriz yaparsa davranış dürüst kalsın: bundle "biçim
+	// çözülemedi" der, köprü linki yine çıkar — doküman QA'sına düşmez.
+	// SIRA: çözümlenebilir sinyallerin (trace/kimlik/span) HEPSİNDEN
+	// sonra — mesajta hem span id hem bozuk blob varsa span kazanır.
+	if tok, ok := reqid.FindLooseToken(raw); ok {
+		return guidedRoute{Intent: guidedRequestID, RequestID: tok}
 	}
 	svc := extractServiceEntity(msg, services, envs)
 	env := extractEnvEntity(msg, envs)

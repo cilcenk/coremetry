@@ -53,12 +53,20 @@ type DBStmtDetailQuery struct {
 // dbStmtDetailWhere builds the shared MV predicate. The window start
 // snaps DOWN to the MV's 5-minute grid (the getSlowQueriesGlobalMV /
 // GetDBTrends trick) so a rolling window covers whole buckets instead of
-// half-clipping the first one.
+// half-clipping the first one; the end is DIŞLAYICI.
+//
+// v0.9.1167 — üst sınır `<=` idi (v0.9.823/1156 sınıfı). Üç okuma da bu
+// yüklemi paylaşıyor (summary/trend/callers), dolayısıyla tek satır üç
+// yüzeyi birden kirletiyordu. En sinsi zararı ?compare=prior'da veriyordu:
+// API önceki pencereyi (From-dur, From) olarak kuruyor ve `<= From` ile
+// ŞİMDİKİ pencerenin İLK kovası önceki pencereye de giriyordu — iki
+// pencere bir kova örtüşüyor, yani delta'nın "önce" tarafı "şimdi"nin
+// trafiğini sayıyordu. Örtüşme testi: dbstmt_bucket_bound_test.go.
 func dbStmtDetailWhere(q DBStmtDetailQuery) whereClause {
 	var wc whereClause
 	wc.add("stmt_hash = ?", q.Hash)
 	wc.add("time_bucket >= ?", q.From.Truncate(5*time.Minute))
-	wc.add("time_bucket <= ?", q.To)
+	wc.add("time_bucket < ?", q.To)
 	if q.DBSystem != "" {
 		wc.add("db_system = ?", q.DBSystem)
 	}
@@ -372,13 +380,19 @@ func (s *Store) DBStmtExemplars(ctx context.Context, q DBStmtDetailQuery) (slowT
 // ÇİFTLERİ sözleşmenin parçası: argMaxState↔argMaxMerge,
 // argMaxIfState↔argMaxIfMerge (endpoints_detail emsali; yanlış eş
 // sessizce boş döner).
+//
+// v0.9.1167 — üst sınır `<=`den `<`e döndü. Burada zarar sayı değil
+// KİMLİK: argMax pencere dışındaki bir kovadan gelen trace'i "en yavaş"
+// seçebiliyordu, yani çekmecedeki derin link operatörün baktığı pencereye
+// AİT OLMAYAN bir trace'i açıyordu — istatistikler bir pencereyi,
+// örnek trace başka bir pencereyi anlatıyordu.
 const dbStmtExemplarMVSQL = `
 		SELECT argMaxMerge(slow_exemplar_state)    AS slow_tid,
 		       argMaxIfMerge(error_exemplar_state) AS err_tid
 		FROM db_statement_summary_5m
 		WHERE stmt_hash = ?
 		  AND time_bucket >= toStartOfInterval(?, INTERVAL 5 MINUTE)
-		  AND time_bucket <= ?
+		  AND time_bucket < ?
 		SETTINGS max_execution_time = 10`
 
 func (s *Store) dbStmtExemplarsFromMV(ctx context.Context, q DBStmtDetailQuery) (slowTraceID, errorTraceID string, err error) {

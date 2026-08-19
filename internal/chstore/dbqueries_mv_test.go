@@ -22,7 +22,9 @@ import (
 func TestSlowQueriesGlobalMVSQL(t *testing.T) {
 	var wc whereClause
 	wc.add("time_bucket >= ?", nil)
-	wc.add("time_bucket <= ?", nil)
+	// v0.9.1167 — üst sınır DIŞLAYICI. Bu satır önce `<=` idi ve testin
+	// kendisi hatalı sınırı çiviliyordu; aşağıdaki `want` listesi de öyle.
+	wc.add("time_bucket < ?", nil)
 	wc.add("db_system = ?", "postgresql")
 	sql := slowQueriesGlobalMVSQL(wc.sql())
 
@@ -34,7 +36,7 @@ func TestSlowQueriesGlobalMVSQL(t *testing.T) {
 		// Reads the MV, not raw spans (the MV-bypass invariant).
 		"FROM db_statement_summary_5m",
 		// Bounds discipline: time-bounded WHERE + LIMIT + execution cap.
-		"time_bucket >= ?", "time_bucket <= ?", "LIMIT ?", "max_execution_time = 25",
+		"time_bucket >= ?", "time_bucket < ?", "LIMIT ?", "max_execution_time = 25",
 		// The optional system filter itself.
 		"db_system = ?",
 		// Correct finalisers for the MV's aggregate states — countMerge on

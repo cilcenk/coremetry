@@ -264,7 +264,13 @@ func (s *Store) getSlowQueriesGlobalMV(
 	bucketStart := from.Truncate(5 * time.Minute)
 	var wc whereClause
 	wc.add("time_bucket >= ?", bucketStart)
-	wc.add("time_bucket <= ?", to)
+	// Üst sınır DIŞLAYICI (v0.9.1167, v0.9.823/1156 sınıfı). `<= to`
+	// başlangıcı tam `to` olan kovayı da alır; o kova [to, to+5dk)
+	// aralığını kapsar, yani pencerenin TAMAMEN dışındadır — satır
+	// toplamlarına beş dakikalık yabancı trafik binerdi (count, error
+	// oranı, avg/p95 hepsi). Fark yalnız `to` kova sınırına tam otururken
+	// görünür, bu yüzden "bazen bir kova fazla" gibi davranıp gizlenir.
+	wc.add("time_bucket < ?", to)
 	if dbSystem != "" {
 		wc.add("db_system = ?", dbSystem)
 	}

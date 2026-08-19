@@ -35,7 +35,9 @@ func TestDBStmtDetailMVSQLShapes(t *testing.T) {
 		// MV-first invariant + identity + bounds discipline.
 		"FROM db_statement_summary_5m",
 		"stmt_hash = ?",
-		"time_bucket >= ?", "time_bucket <= ?",
+		// v0.9.1167 — üst sınır DIŞLAYICI (v0.9.823/1156 sınıfı). Bu
+		// satır `<=` iken test hatalı sınırı çiviliyordu.
+		"time_bucket >= ?", "time_bucket < ?",
 		"db_system = ?", "db_name = ?",
 		"max_execution_time = 10",
 		// Correct finalisers for the MV's aggregate states — a countMerge

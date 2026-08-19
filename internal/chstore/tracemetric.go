@@ -108,7 +108,16 @@ func (s *Store) resolveTraceMetric(ctx context.Context, q MetricResolveQuery, st
 	// columns the inner subquery produces.
 	outerConds := []string{}
 	var args []any
-	args = append(args, q.From, q.To) // inner subquery's time bounds come first in SQL text
+	// v0.9.1185 — iç sorgu TOPLAMA yapıyor (GROUP BY trace_id; dur_ns
+	// min/max merge'inden çıkıyor), dolayısıyla üst sınır seçim değil
+	// toplama penceresi. `trace_id IN (…)` kısıtı YOK — tüm pencere
+	// taranıyor — o yüzden slack pencere genişliğiyle kelepçeli.
+	//
+	// Not: bu site ilk spec'te "kova başına seri" diye sınıflandırılmıştı
+	// ve YANLIŞTI; dış sorgu start_time'a göre kovalıyor ama içerideki
+	// süre trace'in tamamından hesaplanıyor. Sınırı `< to`da bırakmak,
+	// pencere sonunda başlayan her trace'in süresini budardı.
+	args = append(args, q.From, aggWindowEnd(q.From, q.To, false)) // inner subquery's time bounds come first in SQL text
 	for k, v := range q.Filters {
 		col, ok := traceDimColumn(k)
 		if !ok {
@@ -140,7 +149,7 @@ func (s *Store) resolveTraceMetric(ctx context.Context, q MetricResolveQuery, st
 		    (maxMerge(trace_end_state) - toUnixTimestamp64Nano(minMerge(trace_start_state))) AS dur_ns,
 		    countIfMerge(error_count_state)   AS err_spans
 		FROM trace_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		GROUP BY trace_id`
 
 	sql := fmt.Sprintf(`

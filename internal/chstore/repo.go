@@ -2789,7 +2789,7 @@ func traceStage1LightSQL(f TraceFilter, having []string) (string, bool) {
 	return `
 		SELECT trace_id
 		FROM trace_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		GROUP BY trace_id` + havingSQL + `
 		ORDER BY ` + sortExpr + ` ` + order + `
 		LIMIT ?
@@ -2934,7 +2934,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		rows1, err := s.telemetryReadConn().Query(ctx, `
 			SELECT trace_id
 			FROM trace_service_index_5m
-			WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
+			WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
 			GROUP BY trace_id
 			ORDER BY maxMerge(last_seen_state) DESC
 			LIMIT ?
@@ -3159,7 +3159,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 	if serviceSubquery {
 		traceIDClause = `trace_id IN (
 			SELECT trace_id FROM trace_service_index_5m
-			WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
+			WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
 			GROUP BY trace_id
 		) AND `
 		idArgs = []any{f.Service, f.From, f.To}
@@ -3179,7 +3179,7 @@ func (s *Store) getTracesFromMV(ctx context.Context, f TraceFilter) ([]TraceRow,
 		       toUInt8(countMerge(error_count_state) > 0)                  AS has_error,
 		       min(time_bucket)                                            AS first_bucket
 		FROM trace_summary_5m
-		WHERE ` + traceIDClause + `time_bucket >= ? AND time_bucket <= ?
+		WHERE ` + traceIDClause + `time_bucket >= ? AND time_bucket < ?
 		GROUP BY trace_id` + havingSQL + `
 		ORDER BY ` + sortExpr + ` ` + order + `
 		LIMIT ? OFFSET ?
@@ -3620,12 +3620,23 @@ func (s *Store) getTraceAggregateFromMV(ctx context.Context, f AggregateFilter) 
 	// operation, so "service=fraud-service" surfaces "POST
 	// /checkout (frontend)" as the root that pulled fraud-service
 	// in — exactly the call-pattern view the operator needs.
-	innerWhere := "WHERE time_bucket >= ? AND time_bucket <= ?"
-	innerArgs := []any{f.From, f.To}
+	// v0.9.1185 — İKİ pencere, iki rol. İç sorgu GROUP BY trace_id yapıyor
+	// (TOPLAMA) → tavan slack'li; içindeki servis-indeksi alt sorgusu
+	// "hangi trace'ler" diyor (SEÇİM) → tavan `< f.To`, slacksiz. Aynı
+	// sınırı ikisine de vermek, ya seçim penceresini kaydırırdı ya da
+	// sınırı aşan trace'in süresini budardı.
+	//
+	// bounded, servis filtresine bağlı: filtre varsa iç sorgu
+	// `trace_id IN (…)` ile kısıtlı ve slack ~bedava; filtresizken tüm
+	// pencere GROUP BY ediliyor ve aggWindowEnd slack'i pencere
+	// genişliğiyle kelepçeliyor (15dk pencerede 1sa slack 5× tarama
+	// olurdu).
+	innerWhere := "WHERE time_bucket >= ? AND time_bucket < ?"
+	innerArgs := []any{f.From, aggWindowEnd(f.From, f.To, f.Service != "")}
 	if f.Service != "" {
 		innerWhere += ` AND trace_id IN (
 		    SELECT DISTINCT trace_id FROM trace_service_index_5m
-		    WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
+		    WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
 		)`
 		innerArgs = append(innerArgs, f.Service, f.From, f.To)
 	}

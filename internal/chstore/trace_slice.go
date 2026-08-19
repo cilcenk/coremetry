@@ -107,7 +107,7 @@ func (s *Store) traceSliceScanSQL(order string, errorsOnly bool) string {
 	return `
 		SELECT trace_id, time_bucket
 		FROM trace_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?` + errFilter + `
+		WHERE time_bucket >= ? AND time_bucket < ?` + errFilter + `
 		ORDER BY time_bucket ` + dir + `
 		LIMIT ?
 		SETTINGS max_execution_time = 10,
@@ -252,10 +252,31 @@ func (s *Store) runTraceStage2(
 		}
 	}
 
+	// v0.9.1185 — TOPLAMA tavanı, seçim tavanından slack kadar geniş.
+	//
+	// Seçim (stage 1 + sayım) `< f.To` diyor: pencerede BAŞLAMAMIŞ bir
+	// trace listeye girmemeli. Ama stage 2 aynı sınırla toplarsa, sınırı
+	// AŞAN bir trace'in kuyruk kovaları düşer ve dur_ms / span_count
+	// eksik çıkar — yukarıdaki floor tehlikesinin ayna görüntüsü.
+	//
+	// Neden burada floor'un DETECT mekanizması mirror EDİLMEDİ: iki yön
+	// simetrik değil. Floor'u DARALTMAK bir optimizasyon (recency slice)
+	// ve yanlış sayı ÜRETEBİLİR (trace'in kendi satırlarının bir kısmı
+	// düşer), o yüzden kanıt ister. Tavanı GENİŞLETMEK ise yalnız aynı
+	// trace'in KENDİ satırlarını ekler — GROUP BY trace_id, gelen her satır
+	// zaten o trace'in. Fazla genişletmek yanlış sayı üretemez, yalnız
+	// biraz daha geniş tarar. Kanıt gerektiren asimetrik taraf floor.
+	//
+	// bounded: idArgs doluysa sorgu `trace_id IN (…)` ile kısıtlı, yani
+	// slack yeni trace getirmez ve maliyeti ~sıfır. Boşsa tüm pencere
+	// GROUP BY ediliyor ve slack doğrudan taranan kovaya biner —
+	// aggWindowEnd orada pencere genişliğiyle kelepçeler.
+	aggTo := aggWindowEnd(f.From, f.To, len(idArgs) > 0)
+
 	narrowed := 0
 	for attempt := 0; ; attempt++ {
 		args := append([]any{}, idArgs...)
-		args = append(args, from, f.To, pageLimit, f.Offset)
+		args = append(args, from, aggTo, pageLimit, f.Offset)
 		rows, err := s.conn.Query(ctx, stage2, args...)
 		if err != nil {
 			return nil, false, fmt.Errorf("stage2: %w", err)

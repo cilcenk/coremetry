@@ -87,11 +87,15 @@ func traceCountPlan(f TraceFilter) (source string, preds []string, args []any, r
 	if f.Service != "" {
 		// Liste de bu evreni kullanıyor (trace_service_index_5m aşama-1).
 		return "trace_service_index_5m",
-			[]string{"service_name = ?", "time_bucket >= ?", "time_bucket <= ?"},
+			[]string{"service_name = ?", "time_bucket >= ?", "time_bucket < ?"},
 			[]any{f.Service, f.From, f.To}, ""
 	}
 
-	preds = []string{"time_bucket >= ?", "time_bucket <= ?"}
+	// v0.9.1185 — ÜYELİK sınırı: sayım "hangi trace'ler bu pencerede"
+	// sorusunu cevaplıyor, dolayısıyla listeyle AYNI `< to`. Toplama
+	// penceresinin slack'i buraya girmez; girerse sayım, listenin
+	// döndürmediği trace'leri sayardı.
+	preds = []string{"time_bucket >= ?", "time_bucket < ?"}
 	args = []any{f.From, f.To}
 	if f.HasError {
 		preds = append(preds, "finalizeAggregation(error_count_state) > 0")

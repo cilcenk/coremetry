@@ -501,7 +501,22 @@ func (s *Store) GetEndpointsMV(ctx context.Context, q EndpointsQuery) ([]Endpoin
 		pathProj = opSigWrap(dimCol)
 	}
 
-	where := "time_bucket >= ? AND time_bucket <= ?" + entryWhere
+	// Üst sınır DIŞLAYICI (v0.9.1170). `<= q.To`, başlangıcı tam q.To olan
+	// kovayı alır; o kova [q.To, +grain) taşır — pencereden sıfır veri.
+	// Bunun İKİNCİ bir belirtisi var ve daha sinsi: fazla kova per_bucket
+	// CTE'sine girip `sum(bv)` toplamına (calls/errors/quantiles ve
+	// dolayısıyla ReqPerMin) katılıyor, ama sparkline'lar `range(0, nBuckets)`
+	// ile örüldüğü için b = nBuckets olan o satır seriye HİÇ girmiyordu.
+	// Aynı sorgudan iki farklı cevap: satırda "1.200 çağrı", altındaki
+	// sparkline daha azını topluyor. Tetikleyici windowSec'in slot genişliğinin
+	// tam katı olması, yani hizalı pencereler.
+	//
+	// endpoint_exemplar_window_test.go'daki ToLeftRaw pini bu zararı zaten
+	// tarif ediyordu ("ceiling To would pull in a bucket lying wholly past
+	// the window") ama yalnız To'yu YUVARLAMAYI yasaklamıştı; `<=` operatörü
+	// hizalı bir To'da aynı kovayı yine içeri alıyordu. Bu değişiklik o
+	// niyeti tamamlıyor, çelişmiyor.
+	where := "time_bucket >= ? AND time_bucket < ?" + entryWhere
 	// Placeholder order follows appearance in the SQL text: the
 	// signature-regex args (inside pathProj, when present) and the
 	// intDiv bucket args sit in the SELECT list, BEFORE the WHERE.

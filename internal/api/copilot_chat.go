@@ -229,6 +229,10 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 	var totalIn, totalOut uint32
 	var lastErr error
 	var finalText string
+	// v0.9.1181 (Faz 4.3) — ⚙ çipi ile onun "veriyi göster" bloğunu eşleyen
+	// sayaç. İstek boyunca tekil olmalı: çipler tur döngüsü boyunca birikiyor,
+	// tur-içi indeks ikinci turda çakışırdı.
+	stepN := 0
 	// v0.9.528 Faz 2 — serbest döngünün sistem prompt'u da kiminle
 	// konuşulduğunu taşır. Ön-söz boşsa sabitin aynısı.
 	loopPrompt := withAddressee(addressee, copilot.SystemPromptChat())
@@ -260,12 +264,23 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 		})
 		results := make([]copilot.ToolResult, 0, len(turn.ToolCalls))
 		for _, tc := range turn.ToolCalls {
-			emit("step", map[string]string{"tool": tc.Name, "args": string(tc.Input)})
+			// v0.9.1181 (Faz 4.3) — çipin kimliği. `step` tool ÇALIŞMADAN
+			// önce çıkar (ilerleme geri bildirimi), sonuç ise çalıştıktan
+			// sonra ayrı bir olayla; ikisini bu sayı eşler. Tur içindeki
+			// indeks YETMEZ, çünkü çipler turlar boyunca birikiyor —
+			// sayaç istek boyunca tekil.
+			stepN++
+			emit("step", map[string]any{"i": stepN, "tool": tc.Name, "args": string(tc.Input)})
 			h, found := byName[tc.Name]
 			if !found {
+				msg := fmt.Sprintf("unknown tool %q", tc.Name)
+				emit("step-result", map[string]any{
+					"i": stepN, "tool": tc.Name, "ok": false,
+					"preview": msg, "truncated": false, "bytes": len(msg),
+				})
 				results = append(results, copilot.ToolResult{
 					CallID: tc.ID, Name: tc.Name, IsError: true,
-					Content: fmt.Sprintf("unknown tool %q", tc.Name),
+					Content: msg,
 				})
 				continue
 			}
@@ -286,6 +301,16 @@ func (s *Server) copilotChat(w http.ResponseWriter, r *http.Request) {
 			} else {
 				tr.Content = out
 			}
+			// Kanıt tele biner: modelin GÖRDÜĞÜ metnin ta kendisi, kırpılmışsa
+			// kırpıldığı SÖYLENEREK. Özet göndermek daha ucuz olurdu ama
+			// özetlenmiş kanıt kanıt değildir — operatörün sınayacağı şey
+			// modelin okuduğu şey olmalı. `bytes` kırpılmamış gerçek boy,
+			// yani "ne kadarını görmüyorum" cevaplanabilir.
+			preview, truncated := clipStepPreview(tr.Content)
+			emit("step-result", map[string]any{
+				"i": stepN, "tool": tc.Name, "ok": !tr.IsError,
+				"preview": preview, "truncated": truncated, "bytes": len(tr.Content),
+			})
 			results = append(results, tr)
 		}
 		conv = append(conv, copilot.ChatMessage{Role: "user", ToolResults: results})

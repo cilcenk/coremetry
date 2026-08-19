@@ -136,7 +136,29 @@ export function useChatThread(opts: ChatThreadOpts = {}) {
     try {
       await api.copilotChat(history, (e) => {
         if (e.kind === 'step') {
-          patchLast(t => ({ ...t, steps: [...(t.steps ?? []), e.tool] }));
+          // v0.9.1181 (Faz 4.3) — etiket ile detay AYRI birikiyor. Detay
+          // burada `preview`siz açılıyor: çip tool çalışmadan ÖNCE
+          // görünmeli (ilerleme geri bildirimi), veri sonra doluyor.
+          patchLast(t => ({
+            ...t,
+            steps: [...(t.steps ?? []), e.tool],
+            stepDetails: e.i == null
+              ? t.stepDetails
+              : [...(t.stepDetails ?? []), { i: e.i, tool: e.tool, args: e.args }],
+          }));
+        } else if (e.kind === 'step-result') {
+          // Sonuç, `i` ile kendi çipine yazılır. Eşleşme bulunamazsa
+          // SESSİZCE düşer — eski bir sunucuya karşı akan bir FE'de
+          // (rolling deploy) `step` olayı `i` taşımaz ve o çip detaysız,
+          // yani tıklanamaz kalır: eksik affordance, kırık affordance'tan
+          // iyidir.
+          patchLast(t => ({
+            ...t,
+            stepDetails: (t.stepDetails ?? []).map(d =>
+              d.i === e.i
+                ? { ...d, ok: e.ok, preview: e.preview, truncated: e.truncated, bytes: e.bytes }
+                : d),
+          }));
         } else if (e.kind === 'delta') {
           patchLast(t => ({ ...t, text: (t.text ?? '') + e.text }));
         } else if (e.kind === 'answer') {

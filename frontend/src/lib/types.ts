@@ -4384,6 +4384,13 @@ export interface ChatAnswerLink { label: string; href: string }
 // (AIDrawer) — bu yüzden bileşen dosyasında değil burada yaşar.
 export interface ChatTurn extends ChatMessage {
   steps?: string[];
+  // v0.9.1181 (Faz 4.3) — çiplerin arkasındaki kanıt. `steps` (etiketler)
+  // AYRI kalıyor ve bilerek: arşivden geri yüklenen turlar detay taşımaz
+  // (chatPersist yalnız {role,text} saklar), dolayısıyla çip TIKLANABİLİR
+  // olup olmadığını bu alanın varlığından öğrenir. Tek diziye katsaydım
+  // geri yüklenen bir konuşmada boş bir "veriyi göster" affordance'ı
+  // kalırdı — ölü affordance (v0.9.592 dersi).
+  stepDetails?: ChatStepDetail[];
   pending?: boolean;
   error?: string;
   exchangeId?: string;
@@ -4421,8 +4428,28 @@ export interface AiConversation {
   messages: ChatMessage[];
 }
 
+// ChatStepDetail (v0.9.1181, AI Faz 4.3) — bir ⚙ çipinin arkasındaki KANIT.
+//
+// `preview` modelin GÖRDÜĞÜ tool çıktısının ta kendisidir (uydurulmuş bir
+// özet değil — özetlenmiş kanıt, kanıt değildir), 4 KB tavanıyla kırpılmış.
+// `truncated` kırpmayı İLAN eder ve `bytes` kırpılmamış gerçek boyu verir,
+// yani "ne kadarını görmüyorum" cevaplanabilir kalır.
+//
+// `i`, `step` ile `step-result` olaylarını eşler; istek boyunca tekildir
+// (çipler tur döngüsü boyunca birikiyor, tur-içi indeks çakışırdı).
+export interface ChatStepDetail {
+  i: number;
+  tool: string;
+  args?: string;
+  ok?: boolean;
+  preview?: string;
+  truncated?: boolean;
+  bytes?: number;
+}
+
 export type ChatStreamEvent =
-  | { kind: 'step'; tool: string; args: string }
+  | { kind: 'step'; i?: number; tool: string; args: string }
+  | { kind: 'step-result'; i: number; tool: string; ok: boolean; preview: string; truncated: boolean; bytes: number }
   | { kind: 'delta'; text: string }
   // suggestions (v0.9.411) — guided cevabın rotasından türetilen
   // konuya-duyarlı takip önerileri; yoksa frontend statik listesine düşer.

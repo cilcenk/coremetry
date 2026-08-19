@@ -413,7 +413,12 @@ func (s *Store) tryServiceMVFastPath(ctx context.Context, f SpanMetricFilter) ([
 	}
 	var whereClauses []string
 	args := []any{f.From, f.To}
-	whereClauses = append(whereClauses, "time_bucket >= ?", "time_bucket <= ?")
+	// Üst sınır DIŞLAYICI (v0.9.1174, v0.9.1173 ile aynı fantom-nokta
+	// gerekçesi): `to` step'e ve MV grenine oturduğunda çıktı kovası
+	// toStartOfInterval(to, step) YALNIZ `to` etiketli kovadan beslenir ve
+	// o kova [to, +5dk) taşır — serinin son noktası tamamen pencere dışı
+	// veriden örülürdü.
+	whereClauses = append(whereClauses, "time_bucket >= ?", "time_bucket < ?")
 	if serviceFilter != "" {
 		whereClauses = append(whereClauses, "service_name = ?")
 		args = append(args, serviceFilter)
@@ -609,7 +614,9 @@ func (s *Store) tryOperationMVFastPath(ctx context.Context, f SpanMetricFilter) 
 
 	groupSelect := plan.groupSelect
 
-	whereClauses := []string{"time_bucket >= ?", "time_bucket <= ?"}
+	// v0.9.1174 — üst sınır DIŞLAYICI (fantom son nokta; bkz. yukarıdaki
+	// mvSpanMetric yorumu ve summary.go alignBucketStart doc bloğu).
+	whereClauses := []string{"time_bucket >= ?", "time_bucket < ?"}
 	args := []any{f.From, f.To}
 	if serviceFilter != "" {
 		whereClauses = append(whereClauses, "service_name = ?")
@@ -744,7 +751,9 @@ func (s *Store) tryOperationMVFastPathMulti(ctx context.Context, f SpanMetricBat
 		selectParts = append(selectParts, fmt.Sprintf("%s AS v%d", e, i))
 	}
 
-	whereClauses := []string{"time_bucket >= ?", "time_bucket <= ?"}
+	// v0.9.1174 — üst sınır DIŞLAYICI (fantom son nokta; bkz. yukarıdaki
+	// mvSpanMetric yorumu ve summary.go alignBucketStart doc bloğu).
+	whereClauses := []string{"time_bucket >= ?", "time_bucket < ?"}
 	args := []any{f.From, f.To}
 	if serviceFilter != "" {
 		whereClauses = append(whereClauses, "service_name = ?")

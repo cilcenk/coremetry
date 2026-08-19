@@ -759,7 +759,7 @@ const serviceVersionMVSQL = `
 	       countMerge(span_count_state)                      AS span_count
 	FROM service_version_5m
 	WHERE service_name = ?
-	  AND time_bucket >= ? AND time_bucket <= ?
+	  AND time_bucket >= ? AND time_bucket < ?
 	GROUP BY version
 	HAVING version != ''
 	   AND first_seen_ns >= ?
@@ -911,6 +911,19 @@ const deployJudgmentLookback = 24 * time.Hour
 // first_seen > to ile dönebilir, 24h ufku da ≤5dk kayar. first_seen
 // DEĞERİ minMerge ile kesindir (v0.9.250); bulanık olan zaten keyfi 24h
 // hüküm ufkudur — kabul edilen yaklaşıklıklar (v0.9.493 verify).
+//
+// v0.9.1172 — bu notun BİR YARISI kabul edilmiş bir yaklaşıklık değil, düpedüz
+// fazla kovaydı ve bedavaya kalkıyor. Üst sınır `<=`ten `<`e döndü: `to` tam
+// kova sınırına oturduğunda `<= to` başlangıcı tam to olan kovayı alıyordu,
+// yani pencereden SONRA doğan bir sürüm (first_seen ∈ [to, to+5dk)) HAVING'in
+// alt kapısını geçip "bu pencerede dağıtıldı" diye listeleniyor, span_count'un
+// sumIf'i de o kovayı sayıyordu.
+//
+// Notun AYAKTA kalan yarısı: hizalanmamış bir `to`'da (11:02) to'yu İÇEREN kova
+// (11:00) hâlâ alınır ve içinde 11:01'de doğan bir sürüm first_seen > to ile
+// dönebilir. O gerçekten kova granülaritesinin bedeli; from'u içeren kovanın
+// tamamen sayılması ve 24h ufkunun ≤5dk kayması da öyle. Değişen tek şey,
+// granülariteyle GEREKÇELENDİRİLEMEYEN fazladan bir kovanın kalkması.
 const deploysWindowMVSQL = `
 	SELECT
 	  service_name,
@@ -919,7 +932,7 @@ const deploysWindowMVSQL = `
 	  toUInt64(sumIf(finalizeAggregation(span_count_state),
 	                 time_bucket >= toStartOfInterval(?, INTERVAL 5 MINUTE))) AS span_count
 	FROM service_version_5m
-	WHERE time_bucket >= ? AND time_bucket <= ?
+	WHERE time_bucket >= ? AND time_bucket < ?
 	GROUP BY service_name, version
 	HAVING version != ''
 	   AND first_seen >= ?

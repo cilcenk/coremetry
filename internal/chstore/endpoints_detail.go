@@ -364,6 +364,13 @@ func endpointExemplarArgs(q EndpointDetailQuery) (pathProj string, args []any) {
 	return pathProj, args
 }
 
+// v0.9.1170 — üst sınır `<`. Burada zarar SAYI değil KİMLİK: argMax,
+// pencerenin tamamen dışındaki bir kovadan gelen trace'i "en yavaş" seçip
+// çekmeceye koyabiliyordu, yani istatistikler bir pencereyi, örnek trace
+// başka bir pencereyi anlatıyordu (dbstmt exemplar'ıyla aynı sınıf,
+// v0.9.1167). ToLeftRaw pini To'yu yuvarlamamayı zaten şart koşuyordu; bu
+// operatör değişikliği onun niyetini tamamlıyor.
+//
 // EndpointExemplars resolves the slow + error exemplar trace_ids for
 // one endpoint off the spanmetrics_1m argMax states — MV-first and
 // endpoint-precise: the MV carries http_route as a dimension, which
@@ -380,7 +387,7 @@ func (s *Store) EndpointExemplars(ctx context.Context, q EndpointDetailQuery) (s
 		SELECT argMaxMerge(slow_exemplar_state)    AS slow_tid,
 		       argMaxIfMerge(error_exemplar_state) AS err_tid
 		FROM `+s.spanmetricsSourceFor("spanmetrics_1m")+`
-		WHERE time_bucket >= ? AND time_bucket <= ?
+		WHERE time_bucket >= ? AND time_bucket < ?
 		  AND kind NOT IN ('client', 'producer')
 		  AND service_name = ?
 		  AND `+pathProj+` = ?

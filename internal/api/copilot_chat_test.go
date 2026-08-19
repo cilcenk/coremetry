@@ -23,13 +23,13 @@ func TestChatChartBlock(t *testing.T) {
 			name:     "service-level spec",
 			in:       `{"ok":true,"spec":{"service":"checkout","agg":"error_rate","rangeS":1800},"note":"x"}`,
 			wantJSON: `{"title":"checkout · error_rate","service":"checkout","agg":"error_rate","rangeS":1800}`,
-			wantKey:  "checkout\x00\x00error_rate",
+			wantKey:  "checkout\x00\x00error_rate\x00",
 		},
 		{
 			name:     "operation-scoped spec titles by operation",
 			in:       `{"ok":true,"spec":{"service":"checkout","operation":"GET /orders/:id","agg":"p99","rangeS":3600}}`,
 			wantJSON: `{"title":"GET /orders/:id · p99","service":"checkout","operation":"GET /orders/:id","agg":"p99","rangeS":3600}`,
-			wantKey:  "checkout\x00GET /orders/:id\x00p99",
+			wantKey:  "checkout\x00GET /orders/:id\x00p99\x00",
 		},
 		{
 			name: "ok:false (unknown service) → no block",

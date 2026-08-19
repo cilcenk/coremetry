@@ -396,7 +396,7 @@ func TestFetchCodeEndToEnd(t *testing.T) {
 		"\tat java.base/java.util.Optional.orElseThrow(Optional.java:403)\n"
 
 	frames := stackparse.ParseJava(stack)
-	cc := svc.FetchCode(context.Background(), "core-service", frames)
+	cc := svc.FetchCode(context.Background(), "core-service", "", frames)
 
 	if cc.Reason != "" && cc.Empty() {
 		t.Fatalf("kod çekilemedi: %s", cc.Reason)
@@ -452,7 +452,7 @@ func TestFetchCodeEndToEnd(t *testing.T) {
 
 	// (g) ağaç cache'i: ikinci çağrı yeni listeleme yapmaz
 	treeHits := f.hits["tree"]
-	_ = svc.FetchCode(context.Background(), "core-service", frames)
+	_ = svc.FetchCode(context.Background(), "core-service", "", frames)
 	if f.hits["tree"] != treeHits {
 		t.Errorf("ağaç yeniden listelendi (%d → %d) — 10 dk cache tutmuyor",
 			treeHits, f.hits["tree"])
@@ -512,7 +512,7 @@ func TestFetchCodeFailOpen(t *testing.T) {
 			}
 			svc := New()
 			svc.Configure(cfg)
-			cc := svc.FetchCode(context.Background(), tt.repo, tt.frames)
+			cc := svc.FetchCode(context.Background(), tt.repo, "", tt.frames)
 			if !cc.Empty() {
 				t.Fatalf("kod dönmemeliydi: %+v", cc.Windows)
 			}
@@ -535,7 +535,7 @@ func TestFetchCodeSanitizesPATInReason(t *testing.T) {
 		PAT: "sup3rsecret", Flavor: FlavorServer,
 	})
 	frames := stackparse.ParseJava("\tat com.example.a.A.b(A.java:1)\n")
-	cc := svc.FetchCode(context.Background(), "repo", frames)
+	cc := svc.FetchCode(context.Background(), "repo", "", frames)
 	if strings.Contains(cc.Reason, "sup3rsecret") {
 		t.Fatalf("PAT fail-open mesajına sızdı: %s", cc.Reason)
 	}
@@ -552,7 +552,7 @@ func TestFetchCodeFallsBackToDefaultBranch(t *testing.T) {
 
 	svc := New()
 	svc.Configure(f.settings())
-	cc := svc.FetchCode(context.Background(), "core-service",
+	cc := svc.FetchCode(context.Background(), "core-service", "",
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 	if cc.Branch != "master" {
 		t.Fatalf("Branch=%q, deponun varsayılanı (master) beklenirdi — reason=%q", cc.Branch, cc.Reason)
@@ -574,7 +574,7 @@ func TestFetchCodeRespectsBranchOrderSetting(t *testing.T) {
 	cfg.BranchOrder = []string{"master", "release"}
 	svc := New()
 	svc.Configure(cfg)
-	cc := svc.FetchCode(context.Background(), "core-service",
+	cc := svc.FetchCode(context.Background(), "core-service", "",
 		stackparse.ParseJava("\tat com.example.a.A.b(A.java:12)\n"))
 	if cc.Branch != "master" {
 		t.Fatalf("Branch=%q, ayardaki sıra (master önce) uygulanmadı", cc.Branch)

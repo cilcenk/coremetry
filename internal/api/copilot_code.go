@@ -72,7 +72,10 @@ func (s *Server) buildCodeContext(ctx context.Context, service, stack string) de
 		}
 		return devops.CodeContext{Reason: reason, Source: res.Source}
 	}
-	cc := s.devops.FetchCode(ctx, res.Repo, stackparse.ParseJava(stack))
+	// v0.9.1183 — res.Project, servis adının eşleşen önekinden türetilen
+	// proje ÖNERİSİ (bsa-… → BSA). FetchCode onu yalnız ayardaki Project
+	// boşken kullanır.
+	cc := s.devops.FetchCode(ctx, res.Repo, res.Project, stackparse.ParseJava(stack))
 	cc.Source = res.Source
 	return cc
 }

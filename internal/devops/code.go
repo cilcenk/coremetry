@@ -154,7 +154,10 @@ func (c *codeCache) put(key string, paths []string) {
 // repo boşsa ya da bağlantı yapılandırılmamışsa boş + Reason döner;
 // HATA DÖNDÜRMEZ (fail-open sözleşmesi — imzada error yok ki çağıran
 // yanlışlıkla açıklamayı düşürmesin).
-func (s *Service) FetchCode(ctx context.Context, repo string, frames []stackparse.Frame) CodeContext {
+// projectHint (v0.9.1183) — servis önekinden türetilen proje ÖNERİSİ;
+// ayardaki açık Project boşsa kullanılır. Operatör isteği: "service_name
+// başında bsa- yazıyorsa direkt project BSA olduğunu anlasın."
+func (s *Service) FetchCode(ctx context.Context, repo, projectHint string, frames []stackparse.Frame) CodeContext {
 	out := CodeContext{Repo: repo}
 	if s == nil {
 		return CodeContext{Reason: "DevOps istemcisi yok"}
@@ -166,9 +169,19 @@ func (s *Service) FetchCode(ctx context.Context, repo string, frames []stackpars
 	if strings.TrimSpace(cfg.BaseURL) == "" {
 		return CodeContext{Repo: repo, Reason: "DevOps bağlantısı yapılandırılmamış (Ayarlar → Kod entegrasyonu)"}
 	}
-	if strings.TrimSpace(cfg.Project) == "" {
+	// v0.9.1183 — proje ayarda boşsa servis önekinden TÜRETİLİR
+	// (bsa-… → BSA). Açık ayar HER ZAMAN kazanır: türetme bir tahmin,
+	// operatörün yazdığı ad bir karar (ResolveRepo'daki pin sözleşmesinin
+	// aynısı). Önceden burası kesin bir duvardı ve kurulumun kendi
+	// adlandırma sözleşmesi zaten cevabı taşırken operatörden aynı bilgiyi
+	// ikinci kez istiyordu.
+	cfg.Project = strings.TrimSpace(cfg.Project)
+	if cfg.Project == "" {
+		cfg.Project = strings.TrimSpace(projectHint)
+	}
+	if cfg.Project == "" {
 		// Depo ADIYLA çağırıyoruz; ada göre çözüm proje kapsamı ister.
-		return CodeContext{Repo: repo, Reason: "DevOps ayarında Project boş — depo adıyla arama proje kapsamı gerektirir"}
+		return CodeContext{Repo: repo, Reason: "DevOps ayarında Project boş ve servis adı bilinen bir önekle başlamıyor — Project'i doldurun ya da servis önekini Ayarlar → Kod entegrasyonu'na ekleyin"}
 	}
 	targets := stackparse.AppFrames(frames, codeFrameLimit)
 	if len(targets) == 0 {
@@ -187,7 +200,13 @@ func (s *Service) FetchCode(ctx context.Context, repo string, frames []stackpars
 		return CodeContext{Repo: repo, Branch: branch, Reason: sanitize(err.Error(), cfg)}
 	}
 	if len(paths) == 0 {
-		return CodeContext{Repo: repo, Branch: branch, Reason: "depo ağacı boş döndü"}
+		// v0.9.1183 — NE DENENDİĞİ yazılıyor. Proje artık türetilebiliyor
+		// (bsa-… → BSA) ve türetme bir tahmin; "depo ağacı boş döndü"
+		// tek başına operatöre yanlış tahmini göstermez, oysa hatanın en
+		// olası sebebi tam olarak yanlış proje/depo adıdır (ör. gerçek depo
+		// farklı harf yazımında). Katalogdaki Repository pini bunu ezer.
+		return CodeContext{Repo: repo, Branch: branch,
+			Reason: "depo ağacı boş döndü (proje " + cfg.Project + ", depo " + repo + ", branş " + branch + ")"}
 	}
 
 	var windows []CodeWindow

@@ -168,8 +168,19 @@ export function DevOpsTab() {
           </div>
           <input value={project}
             onChange={e => setProject(e.target.value)}
-            placeholder="boş bırakılırsa yalnız koleksiyon doğrulanır"
+            placeholder="boş bırakılırsa servis önekinden türetilir (bsa- → BSA)"
             style={{ width: '100%' }} />
+          {/* v0.9.1183 — boş Project'in ARTIK iki anlamı var ve ikisi de
+              burada yazılı olmalı: bağlantı testi hâlâ yalnız koleksiyonu
+              doğrular, ama kod çekimi artık servis önekinden proje türetiyor.
+              Yazılmazsa operatör türetmenin varlığını hiç öğrenemez —
+              tam da bu alan boş kaldığı için kod bağlamı sessizce
+              çalışmıyordu. */}
+          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+            Bağlantı testi boşken yalnız koleksiyonu doğrular. <b>Kod çekiminde</b> boş
+            bırakılırsa proje, servis adının eşleşen önekinden türetilir
+            (<code>bsa-…</code> → <code>BSA</code>). Buraya yazılan değer türetmeyi ezer.
+          </div>
         </label>
 
         <label style={{ display: 'block', marginBottom: 12 }}>

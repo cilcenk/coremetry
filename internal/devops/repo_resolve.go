@@ -67,6 +67,33 @@ type RepoResolution struct {
 	Repo   string
 	Source string
 	Reason string
+	// Project (v0.9.1183, operatör isteği: "service_name başında bsa-
+	// yazıyorsa direkt project BSA olduğunu anlasın") — servis adının
+	// EŞLEŞEN önekinden türetilen DevOps proje adı.
+	//
+	// Yalnız bir ÖNERİ: ayardaki açık Project her zaman kazanır. Önek
+	// zaten "bu servis şu projeye ait" bilgisini taşıyor (kurulumun kendi
+	// adlandırma sözleşmesi), o yüzden aynı bilgiyi ikinci bir alana daha
+	// yazdırmak gereksiz bir el işiydi — ve boş bırakıldığında kod
+	// bağlamı sessizce hiç çalışmıyordu.
+	Project string
+}
+
+// projectFromPrefix — eşleşen servis önekinden proje adı.
+// "bsa-" → "BSA". SAF.
+//
+// Kural: ayraçları (- _ . /) at, BÜYÜK harfe çevir. Büyük harf, Azure
+// DevOps proje adlarının yaygın yazımı ve sunucu proje adını URL'de
+// harf-duyarsız çözüyor; yani yanlış tahminin bedeli, doğru tahminin
+// kazancından küçük. Yine de bir TAHMİN — ayardaki açık Project bunu
+// ezer ve hata mesajı hangi projenin denendiğini SÖYLER, ki operatör
+// tahmini görebilsin.
+func projectFromPrefix(prefix string) string {
+	p := strings.Trim(strings.TrimSpace(prefix), "-_./")
+	if p == "" {
+		return ""
+	}
+	return strings.ToUpper(p)
 }
 
 // ResolveRepo — servis adı + service_metadata.repository → depo adı.
@@ -91,12 +118,18 @@ func ResolveRepo(service, metaRepository string, cfg ResolveConfig) RepoResoluti
 	}
 
 	name := svc
+	project := ""
 	for _, p := range cfg.RepoPrefixes {
 		p = strings.TrimSpace(p)
 		// Adın TAMAMI önekse soymayız — boş depo adı üretmek yerine
 		// "eşleşmedi" demek dürüst.
 		if p != "" && len(name) > len(p) && strings.HasPrefix(name, p) {
 			name = name[len(p):]
+			// v0.9.1183 — EŞLEŞEN önek proje adını da söyler. Hangi önekin
+			// tuttuğu yalnız burada biliniyor; çağırana taşımazsak bilgi
+			// bu döngüde kaybolur ve operatör aynı şeyi bir kez daha,
+			// elle yazmak zorunda kalır.
+			project = projectFromPrefix(p)
 			break
 		}
 	}
@@ -106,7 +139,7 @@ func ResolveRepo(service, metaRepository string, cfg ResolveConfig) RepoResoluti
 		return RepoResolution{Source: RepoSourceNone,
 			Reason: "servis adı konvansiyona uymuyor: " + svc}
 	}
-	return RepoResolution{Repo: name, Source: RepoSourceConvention}
+	return RepoResolution{Repo: name, Source: RepoSourceConvention, Project: project}
 }
 
 // stripEnvSuffix — chstore.StripEnvSuffix'in aynadaki ikizi.

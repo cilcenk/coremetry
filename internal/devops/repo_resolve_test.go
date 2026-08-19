@@ -226,3 +226,108 @@ func TestEnvSuffixesMirrorChstore(t *testing.T) {
 		}
 	}
 }
+
+// ── v0.9.1183 — servis önekinden PROJE türetme ─────────────────────────
+//
+// Operatör isteği: "service_name başında bsa- yazıyorsa direkt project BSA
+// olduğunu anlasın."
+//
+// Bağlam: kod bağlamı, Project ayarı boş olduğu için hiç çalışmıyordu
+// ("DevOps ayarında Project boş"). Oysa kurulumun kendi adlandırma
+// sözleşmesi cevabı ZATEN taşıyor — önek eşleşmesi hangi projede
+// olduğumuzu söylüyor. Aynı bilgiyi operatörden ikinci kez istemek
+// gereksiz bir el işiydi.
+//
+// Türetme bir TAHMİN: ayardaki açık Project her zaman kazanır (FetchCode
+// sırası) ve buradaki testler yalnız ÖNERİYİ ölçer.
+func TestResolveRepoProjectFromPrefix(t *testing.T) {
+	cases := []struct {
+		name        string
+		service     string
+		prefixes    []string
+		wantRepo    string
+		wantProject string
+	}{
+		{
+			"varsayılan önek → BSA",
+			"bsa-cashmanagement-cashflow-prod", nil,
+			"cashmanagement-cashflow", "BSA",
+		},
+		{
+			"ortam eki proje türetmesini etkilemez",
+			"bsa-payments-core-int", nil,
+			"payments-core", "BSA",
+		},
+		{
+			"ortam eki yoksa da çalışır",
+			"bsa-payments-core", nil,
+			"payments-core", "BSA",
+		},
+		{
+			"özel önek kendi projesini söyler",
+			"acme_billing-api-prod", []string{"acme_"},
+			"billing-api", "ACME",
+		},
+		{
+			// Önek eşleşmezse proje ÖNERİLMEZ. Uydurma bir proje adı
+			// göndermek, sunucuda sessiz bir 404'e dönüşürdü.
+			//
+			// Depo adında ortam eki YİNE de soyulur: ek soyma önekten
+			// BAĞIMSIZ bir kural (ayar ekranının kendi ifadesi: "ortam eki
+			// her hâlükârda soyulur"). Türeyen tek şey proje.
+			"önek eşleşmiyor → proje önerisi YOK, ek yine soyulur",
+			"standalone-service-prod", nil,
+			"standalone-service", "",
+		},
+		{
+			"birden çok önek: EŞLEŞEN kazanır",
+			"ops-gateway-prod", []string{"bsa-", "ops-"},
+			"gateway", "OPS",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ResolveRepo(c.service, "", ResolveConfig{RepoPrefixes: c.prefixes})
+			if got.Repo != c.wantRepo {
+				t.Errorf("Repo=%q, istenen %q", got.Repo, c.wantRepo)
+			}
+			if got.Project != c.wantProject {
+				t.Errorf("Project=%q, istenen %q", got.Project, c.wantProject)
+			}
+		})
+	}
+}
+
+// TestResolveRepoPinCarriesNoProject — elle pin proje ÖNERMEZ.
+//
+// Pin, konvansiyonu atlar; atlanan konvansiyondan proje türetmek, kullanıcı
+// başka bir projedeki bir depoyu pinlediğinde onu yanlış projede aratırdı.
+// Ayardaki açık Project bu durumda tek doğru kaynaktır.
+func TestResolveRepoPinCarriesNoProject(t *testing.T) {
+	got := ResolveRepo("bsa-payments-core-prod", "https://tfs.example.com/DefaultCollection/OTHER/_git/payments-core", ResolveConfig{})
+	if got.Source != RepoSourcePin {
+		t.Fatalf("Source=%q, pin bekleniyordu", got.Source)
+	}
+	if got.Project != "" {
+		t.Errorf("pin yolunda Project=%q — konvansiyon atlanmışken proje "+
+			"türetmek başka projedeki bir depoyu yanlış yerde aratır", got.Project)
+	}
+}
+
+func TestProjectFromPrefix(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"bsa-", "BSA"},
+		{"bsa", "BSA"},
+		{"acme_", "ACME"},
+		{"team.x.", "TEAM.X"},
+		{"  ops-  ", "OPS"},
+		{"-", ""},
+		{"", ""},
+		{"   ", ""},
+	}
+	for _, c := range cases {
+		if got := projectFromPrefix(c.in); got != c.want {
+			t.Errorf("projectFromPrefix(%q) = %q, istenen %q", c.in, got, c.want)
+		}
+	}
+}

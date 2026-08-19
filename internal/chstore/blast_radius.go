@@ -79,6 +79,12 @@ func (s *Store) GetServiceBlastRadius(
 	if service == "" {
 		return out, fmt.Errorf("service required")
 	}
+	// v0.9.1171 — üst sınır DIŞLAYICI. Burada normalizasyon da bağlı:
+	// WindowSec yukarıda (to - from)'dan hesaplanıyor, yani `<= to` ile
+	// sayaç pencereden GENİŞ bir aralığı toplarken payda dar kalıyordu —
+	// çağrı/sn oranı beş dakikalık yabancı trafik kadar şişik çıkıyordu.
+	// Kardeş okuma backtrace.go aynı MV'yi okur; ikisinin sınırı
+	// AYRIŞAMAZ (topology_bucket_bound_test.go kapısı).
 	bucketStart := from.Truncate(5 * time.Minute)
 
 	// Per-caller-service rollup. Aggregate the v0.5.368 MV by
@@ -91,7 +97,7 @@ func (s *Store) GetServiceBlastRadius(
 		FROM service_callers_5m FINAL
 		WHERE service = ?
 		  AND time_bucket >= ?
-		  AND time_bucket <= ?
+		  AND time_bucket < ?
 		  AND caller_service != ''
 		GROUP BY caller_service
 		ORDER BY calls DESC

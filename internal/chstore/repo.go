@@ -1702,6 +1702,13 @@ func (s *Store) GetServiceGraphTopN(ctx context.Context, service string, since t
 	// Bucket-align the lower bound (same idiom as the other
 	// *_5m readers) so a 13:03 winStart catches the 13:00
 	// bucket that contains 13:00-13:05 of source spans.
+	//
+	// v0.9.1171 — üst sınır DIŞLAYICI, alt sınırın simetriği DEĞİL:
+	// startTime'ı İÇEREN kova pencere verisi taşır (almamak kayıp),
+	// endTime ETİKETLİ kova [endTime, +5dk) taşır — pencereden sıfır veri.
+	// Kenar ağırlıkları grafiğin kalınlıklarını sürdüğü için fazla kova
+	// topolojiyi sessizce yeniden ölçekliyordu. Gerekçe: summary.go
+	// alignBucketStart doc bloğu.
 	bucketStart := startTime.Truncate(5 * time.Minute)
 
 	svcWhere := ""
@@ -1723,7 +1730,7 @@ func (s *Store) GetServiceGraphTopN(ctx context.Context, service string, since t
 		       sum(errors) * 100.0 / nullIf(sum(calls), 0) AS error_rate,
 		       sum(sum_duration_ns) / nullIf(sum(calls), 0) / 1e6 AS avg_ms
 		FROM topology_edges_5m FINAL
-		WHERE time_bucket >= ? AND time_bucket <= ?` + svcWhere + `
+		WHERE time_bucket >= ? AND time_bucket < ?` + svcWhere + `
 		  AND parent_service != child_node
 		GROUP BY parent_service, child_node
 		ORDER BY call_count DESC

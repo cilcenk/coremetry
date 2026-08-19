@@ -10,6 +10,7 @@ import (
 
 	"github.com/cilcenk/coremetry/internal/chstore"
 	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/stackparse"
 )
 
 // exception_context.go — exception kök-sebep girdi kurucusu (v0.9.415).
@@ -211,11 +212,20 @@ func BuildExceptionExplainInput(ctx context.Context, store *chstore.Store, logs 
 				if len(ll) >= 12 {
 					break
 				}
-				e := liteLog{Sev: lg.SeverityText, Svc: lg.ServiceName, Body: truncRunes(lg.Body, 500)}
-				if lg.Attributes != nil {
-					e.ExType = lg.Attributes["exception.type"]
-					e.Stack = truncRunes(lg.Attributes["exception.stacktrace"], 900)
+				// v0.9.1182 — kardeş yolla AYNI çözücü. Burası da tek yazıma
+				// (`exception.stacktrace`) bakıyordu; ECS kurulumlarında alan
+				// `error.stack_trace` ve Java'nın yaygın deseninde stack
+				// gövdenin içinde. Trace-explain tarafını düzeltip burayı
+				// bırakmak, aynı bug'ın bilinen bir kopyasını bilerek yerinde
+				// bırakmak olurdu.
+				stackText, stackFromBody := stackparse.FromLog(lg.Attributes, lg.Body)
+				bodyForPrompt := lg.Body
+				if stackFromBody {
+					bodyForPrompt = stackparse.MessageHead(lg.Body)
 				}
+				e := liteLog{Sev: lg.SeverityText, Svc: lg.ServiceName, Body: truncRunes(bodyForPrompt, 500)}
+				e.ExType = lg.Attributes["exception.type"] // nil map okuması güvenli
+				e.Stack = truncRunes(stackText, 900)
 				ll = append(ll, e)
 			}
 			if lp, e := json.Marshal(ll); e == nil {

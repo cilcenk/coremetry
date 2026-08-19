@@ -15,12 +15,22 @@ import { useCopilotEnabled } from './useCopilotEnabled';
 //   • copilot kapalıysa buton HİÇ görünmez (eski self-hide davranışı),
 //   • ilk kullanıma dek nabız atar (v0.9.409, operatör isteği),
 //   • Button atomu + variant="accent" (tek tasarım dili).
-export function AIExplainButton({ subject, label, size = 'sm', title, className }: {
+export function AIExplainButton({ subject, label, size, emphasis = 'normal', title, className }: {
   subject: AISubject;
   label?: ReactNode;
   // 'xs' (v0.9.1033): kart başlığındaki mini ✨ — ikon-only etiketle
   // kullanılır, satır yüksekliğini büyütmez.
   size?: 'xs' | 'sm' | 'md';
+  // emphasis (v0.9.1166, operatör: "Explain trace butonu daha belirgin
+  // olsun"). Ağırlık ARTIK ÇAĞRI YERİNDE beyan edilir, çünkü tek bir
+  // varsayılan iki farklı işi taşıyamıyordu: kart başlığındaki ✨ satır
+  // yüksekliğini büyütmemeli, sayfanın TEK ana eylemi ise göze çarpmalı.
+  // Serbest `variant` prop'u AÇMIYORUZ — her yüzey kendi ağırlığını
+  // seçerse atomun varlık nedeni (tek affordance görünümü) biter; iki
+  // isimli basamak denetlenebilir kalır.
+  //   normal → accent + sm (tüm mevcut çağrılar; davranış değişmedi)
+  //   strong → primary + md (dolu aksan; grubun tek birincili olmalı)
+  emphasis?: 'normal' | 'strong';
   title?: string;
   className?: string;
 }) {
@@ -35,8 +45,10 @@ export function AIExplainButton({ subject, label, size = 'sm', title, className 
   const open = ai !== null && formatAiParam(ai) === key;
   const quiet = used || open;
 
+  const strong = emphasis === 'strong';
   return (
-    <Button variant="accent" size={size}
+    <Button variant={strong ? 'primary' : 'accent'}
+      size={size ?? (strong ? 'md' : 'sm')}
       aria-expanded={open}
       title={title ?? 'AI açıklamasını sağ çekmecede aç'}
       className={[quiet ? undefined : 'ai-attn', className].filter(Boolean).join(' ') || undefined}

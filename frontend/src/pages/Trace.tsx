@@ -486,7 +486,12 @@ function TraceDetailInner() {
               {/* v0.9.477 — satır-içi panel yerine tek sağ-kenar AI
                   çekmecesi (?ai=trace:<id>); kanıt span'leri window
                   köprüsüyle gelip waterfall'ı kutulamaya devam ediyor. */}
-              <AIExplainButton subject={{ kind: 'trace', id }}
+              {/* v0.9.1166 (operatör) — sayfanın TEK ana eylemi: dolu
+                  aksan + md. Yanındaki "Compare with…" ikincil kalır, yani
+                  K4 (grup başına tek birincil) korunur; compare formu
+                  açıldığında kendi `Compare` submit'i alt SATIRA sarılır
+                  (width:100%), form-içi birincil ayrı bir gruptur. */}
+              <AIExplainButton subject={{ kind: 'trace', id }} emphasis="strong"
                 label={<><IconSparkles /> <span style={{ marginLeft: 6 }}>Explain this trace</span></>} />
               <CompareTracesButton aId={id} />
             </div>

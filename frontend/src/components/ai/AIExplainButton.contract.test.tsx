@@ -113,6 +113,32 @@ describe('AIExplainButton — `?ai=` gidiş-dönüşü', () => {
     expect(p.get('tab')).toBe('details'); // kapanış da yabancı paramı korur
   });
 
+  // v0.9.1166 — ağırlık basamakları. Sınıf adları globals.css'in
+  // sözleşmesi: `accent`+`sm` = tint chip, sınıfsız (=primary) + md ölçek
+  // sınıfı YOK = dolu aksan. Kaynak taramasıyla ölçülemez, çünkü ikisi de
+  // aynı JSX'ten çıkıyor; regresyon "strong sessizce accent'e döndü"
+  // şeklinde gelir ve gözle fark edilmesi zordur.
+  it('varsayılan ağırlık accent + sm (mevcut çağrılar değişmedi)', async () => {
+    await mount('/service/x', <AIExplainButton subject={CHARTS_SUBJECT} />);
+    const cls = button()!.className.split(/\s+/);
+    expect(cls).toContain('accent');
+    expect(cls).toContain('sm');
+  });
+
+  it('emphasis="strong" dolu birincil + md üretir', async () => {
+    await mount('/trace/abc', <AIExplainButton subject={CHARTS_SUBJECT} emphasis="strong" />);
+    const cls = button()!.className.split(/\s+/);
+    expect(cls).not.toContain('accent');
+    expect(cls).not.toContain('sm');
+    expect(cls).not.toContain('xs');
+    expect(cls).not.toContain('lg');
+  });
+
+  it('açık `size` emphasis\'i ezer (kart başlığındaki mini ✨ korunur)', async () => {
+    await mount('/service/x', <AIExplainButton subject={CHARTS_SUBJECT} size="xs" />);
+    expect(button()!.className.split(/\s+/)).toContain('xs');
+  });
+
   it('Ⓐ (kapsam all) ile Ⓑ (kart kapsamı) FARKLI adres üretir', async () => {
     await mount('/service/x',
       <AIExplainButton subject={{ ...CHARTS_SUBJECT, scope: 'all' }} />);

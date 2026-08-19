@@ -608,13 +608,14 @@ sayısı 0.
 
 | Dilim | Kapsam |
 |---|---|
-| ~~4.1~~ | ~~Konuşma kalıcılığı: `saved_views(page='ai-chat')` blob~~ — **DÜŞTÜ** (A1 = hayır, operatör 2026-08-19). Sohbet oturum-ömürlü kalır; sayfa yenilemesi konuşmayı siler ve bu KABUL EDİLEN davranıştır. Yeniden açmadan önce aşağıdaki A1 kaydını oku. |
+| 4.1 | Konuşma kalıcılığı: `saved_views(page='ai-chat')` blob (başlık + son 40 mesaj + subject); thread listesi FAB menüsünde. **GEMİDE — v0.9.1139 (2026-08-17).** ⚠️ Operatör 2026-08-19'da "konuşmaların kalıcı olmasına gerek yok" dedi; KALDIRMA kararı açık, aşağıdaki A1 kaydına bak. |
 | 4.2 | ChatBubble `table` fence + başlık/liste (RenderedMarkdown alt-kümesi) |
 | 4.3 | Tool sonucu görünürlüğü: ⚙ çipi tıklanınca "veriyi göster" açılır bloğu (JSON→tablo; truncated işaretleri görünür) |
 | 4.4 | Chart spec genişlemesi: `operation/groupBy/from-to`; `CosreChart` → `corePanelEntry` (zoom/legend/cursor-sync bedava) |
 | 4.5 | `assemble` chat geçmişi bütçesini devralır (K3) |
 
-**Kabul:** ~~sayfa yenilemede konuşma yaşar~~ (A1 = hayır, 4.1 düştü); model tablo
+**Kabul:** sayfa yenilemede konuşma yaşar (4.1 gemide, v0.9.1139 — ama
+kaldırılması gündemde, A1'e bak); model tablo
 istediğinde tablo render olur; tool sonucu denetlenebilir.
 
 ### Faz 5 — KB + öğrenme döngüsü (~5-6 release)
@@ -691,14 +692,29 @@ kuralının otomasyonu).
 
 ### Açık sorular (onayla birlikte yanıt bekliyor)
 
-- **A1 — Konuşma kalıcılığı isteniyor mu? → YANITLANDI: HAYIR**
-  (operatör, 2026-08-19: "Konuşmaların kalıcı olmasına gerek yok
-  bence"). Sohbet oturum-ömürlü kalır; **Faz 4.1 düştü.**
-  Reddedilen öneri kayıt için duruyor: `saved_views(page='ai-chat')`
-  blob'u (invariant #5'e uygun, yeni şema yok, son-40-mesaj sınırı).
-  Bunu yeniden açmak yeni bir operatör kararı ister — "kullanıcı
-  ister" varsayımıyla geri getirme. Yeni `ai_conversations` tablosu
-  zaten yalnız invariant istisnası kararıyla mümkündü.
+- **A1 — Konuşma kalıcılığı isteniyor mu?** İKİ KEZ yanıtlandı ve
+  yanıtlar ters yönde — sırası önemli:
+  1. **2026-08-17: EVET.** `saved_views(page='ai-chat')` blob'u
+     (invariant #5'e uygun, yeni şema yok, son-40-mesaj sınırı).
+     **Faz 4.1 v0.9.1139'da GEMİYE GİRDİ:**
+     `internal/api/ai_conversations.go` (4 route: list/upsert/get/
+     delete), FE `chatPersist.ts` + `useChatThread.ts`, FAB'da
+     "Geçmiş" menüsü, 64KB shrink-to-fit.
+  2. **2026-08-19: "kalıcı olmasına gerek yok bence."** Bu bir
+     TERCİH beyanı ve özellik ZATEN CANLI; dolayısıyla açık olan
+     soru "yapılsın mı" değil, **KALDIRILSIN MI**. Karar operatörde.
+     Kaldırılırsa kapsam ~780 satır + 4 route + FAB girdisi ve
+     CLAUDE.md'nin "özellik kaldırırken geri-uyum shim'i ekleme"
+     kuralı geçerli; eski `saved_views(page='ai-chat')` satırları
+     için temizlik kararı ayrıca gerekir.
+
+  ⚠️ **Bu bölümün kendisi 2026-08-19'a kadar (1) numaralı kararı
+  YANSITMIYORDU** — plan "A1 onayına bağlı" derken özellik iki
+  gündür canlıydı. Bayat plan yüzünden operatöre yanlışlıkla
+  yapılmamış bir iş gibi sunuldu. Ders: bir fazın durumunu plandan
+  değil `git log`dan / koddan doğrula (aynı ders
+  [[project-perf-proposals-stale]] ve [[project-quality-bar-progress]]
+  kayıtlarında da var).
 - **A2 — Insight kartlarının otomatikliği:** hep fetch-on-click mi
   (önerim; LLM maliyet disiplini), yoksa P1 problem satırında
   otomatik açılsın mı? (Auto-explain worker'ları zaten pasif özet

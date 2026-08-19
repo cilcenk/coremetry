@@ -1071,6 +1071,19 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 	// Fix: align winStart down to the bucket boundary in the
 	// WHERE so any bucket whose 5-min slot OVERLAPS the window
 	// is included.
+	//
+	// v0.9.1169 — ÜST sınır ise DIŞLAYICI (`< winEnd`), ve bu alt sınırın
+	// simetriği değil: winStart'ı İÇEREN kova pencere verisi taşır, `winEnd`
+	// ETİKETLİ kova [winEnd, +5dk) taşır — pencereden sıfır veri. Sınıfın
+	// gerekçesi summary.go alignBucketStart doc bloğunda (v0.9.823 → 1156 →
+	// 1167 → 1168).
+	//
+	// Burada İKİNCİ bir belirti daha vardı ve daha keskindi: fazla kova
+	// birinci geçişin satır toplamına giriyor, ama sparkline'da
+	// bidx = intDiv(winEnd-bucketStart, bucketSec) = nBuckets çıkıyor ve
+	// aşağıdaki `int(bidx) < nBuckets` kapısına takılıp SESSİZCE düşüyordu.
+	// Yani satırdaki "1.200 çağrı" ile sparkline'ın topladığı sayı
+	// ayrışıyordu — aynı sorgu çiftinden iki farklı cevap.
 	bucketStart := winStart.Truncate(5 * time.Minute)
 	// First pass: aggregate rollup per name across the window.
 	// nameCol/mvTable/opFilter are server-side constants (never user
@@ -1090,7 +1103,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		         + countMerge(apdex_tolerating_state) / 2)
 		         / nullIf(countMerge(span_count_state), 0)             AS apdex
 		FROM `+mvTable+`
-		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
+		WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?`+opFilter+`
 		GROUP BY `+nameCol+`
 		ORDER BY span_count DESC
 		LIMIT 500
@@ -1156,7 +1169,7 @@ func (s *Store) queryOperationsFromMV(ctx context.Context, service string, winSt
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95,
 		       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99
 		FROM `+mvTable+`
-		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?`+opFilter+`
+		WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?`+opFilter+`
 		GROUP BY `+nameCol+`, bidx
 		SETTINGS max_execution_time = 25,
 		         `+s.shardSkipSetting()+`, `+mvQuantileMemSettings,

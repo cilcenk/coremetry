@@ -235,10 +235,66 @@ function fallbackForType(type: string): { agg: MetricTemplate['agg']; descriptio
 // Classify a metric and return its template, or null if neither
 // the regex registry nor the OTel-type fallback applies (rare —
 // usually means the backend didn't report a type).
+// v0.9.1180 — Prometheus yazımlarını OTel adına geri çeviren aday üretici.
+//
+// Kayıt defteri OTel semconv adlarına (noktalı) göre yazıldı, ama
+// VictoriaMetrics backend'inde katalog Prometheus-adlı geliyor: prod'un canlı
+// ailesi `http_server_request_duration_seconds_bucket`. Hiçbir regex bunu
+// tutmuyordu, yani VM modunda operatör ana HTTP gecikme metriğini seçtiğinde
+// p99 varsayılanı, route/status kırılımı ve 1s eşiği HİÇ gelmiyordu — sessizce
+// type-fallback'e düşüyordu.
+//
+// On beş regex'i tek tek genişletmek yerine ADI normalleştiriyoruz: tek yer,
+// ve HTTP dışındaki bütün aileleri (db/rpc/messaging/jvm/system) aynı anda
+// kurtarıyor.
+//
+// Sıra önemli — ham ad ÖNCE denenir. Kayıt defterinde zaten Prometheus
+// yazımları var (`cpu_percent`, `kafka_lag`, `hikaricp`); normalleştirilmiş
+// aday onları ezmemeli.
+const PROM_PART_SUFFIXES = ['_bucket', '_sum', '_count', '_total'];
+const PROM_UNIT_SUFFIXES = ['_seconds', '_milliseconds', '_bytes', '_ratio'];
+
+export function metricNameCandidates(name: string): string[] {
+  const out = [name];
+  let base = name;
+  for (const s of PROM_PART_SUFFIXES) {
+    if (base.endsWith(s)) { base = base.slice(0, -s.length); break; }
+  }
+  for (const s of PROM_UNIT_SUFFIXES) {
+    if (base.endsWith(s)) { base = base.slice(0, -s.length); break; }
+  }
+  if (base && base !== name) out.push(base);
+  // Noktalı biçim: kayıt defterinin ANA dili bu.
+  if (base.includes('_')) {
+    const dotted = base.replace(/_/g, '.');
+    if (dotted !== base) out.push(dotted);
+  }
+  return out;
+}
+
 export function classifyMetric(info: MetricInfo): MetricTemplate | null {
   if (!info?.name) return null;
-  const hit = TEMPLATES.find(t => t.match.test(info.name));
-  if (hit) return hit;
+  let hit: MetricTemplate | undefined;
+  for (const cand of metricNameCandidates(info.name)) {
+    hit = TEMPLATES.find(t => t.match.test(cand));
+    if (hit) break;
+  }
+  if (hit) {
+    // v0.9.1180 — BEYAN EDİLEN birim şablonun tahminini yener.
+    //
+    // Şablonun `unit`'i bir GÖSTERİM İPUCU ("HTTP gecikmesi genelde ms
+    // gelir"); metriğin kendi birimi ise VERİ. VM'de birim adın içinde
+    // (`_seconds`) ve backend onu artık taşıyor — bu satır olmadan yukarıdaki
+    // eşleşme düzeltmesi ZARARLI olurdu: 0.25 saniyelik bir p99'a "ms"
+    // damgalayıp "0.25ms" diye yazardı, bin kat yanlış. Yani iki değişiklik
+    // ayrılamaz.
+    //
+    // Not: bir metrik değerleriyle uyuşmayan bir birim beyan ediyorsa bu
+    // artık GÖRÜNÜR bir hata olur. Doğrusu da budur — şablonun ipucuyla
+    // örtmek, backend'in yanlışını sessizce taşımak demekti.
+    if (info.unit && info.unit !== hit.unit) return { ...hit, unit: info.unit };
+    return hit;
+  }
   const fb = fallbackForType(info.type);
   if (!fb.agg) return null;
   return {

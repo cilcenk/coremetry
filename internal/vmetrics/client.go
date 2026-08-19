@@ -396,7 +396,12 @@ func (s *Service) ListMetricNames(ctx context.Context, service, pattern string, 
 	names, total := pageNames(all, pattern, limit, offset, unlimited)
 	out := make([]chstore.MetricInfo, 0, len(names))
 	for _, n := range names {
-		out = append(out, chstore.MetricInfo{Name: n})
+		// v0.9.1180 — birim ve tip ADIN İÇİNDEN. Prometheus dünyasında
+		// sözleşme budur ve VM'in kataloğu başka bir yerde taşımıyor; boş
+		// bırakmak paneli birimsiz ("0.25" — saniye mi ms mi?) ve
+		// şablonsuz bırakıyordu.
+		unit, typ := describeMetricName(n)
+		out = append(out, chstore.MetricInfo{Name: n, Unit: unit, Type: typ})
 	}
 	return out, total, nil
 }

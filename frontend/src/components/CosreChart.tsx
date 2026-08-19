@@ -1,77 +1,101 @@
+import { lazy, Suspense } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { ChartCard } from '@/pages/service/charts/ChartCard';
+import { Spinner } from '@/components/Spinner';
+import type { CorePanelMultiItem } from '@/components/chart/corePanelEntry';
+import { cosreChartDSL, cosreChartItems, COSRE_SERIES_CAP } from './cosreChartSpec';
 
-// CosreChart (v0.9.183) — CoSRE sohbetinde GERÇEK-veri grafik. Copilot yanıtı
-// ```chart {json}``` bloğu emit eder (guided service-health deterministik
-// üretir); bu bileşen spanMetricBatch ile CANLI telemetriyi çekip mevcut uPlot
-// ChartCard motoruyla çizer — LLM grafiği çizmez, sadece SPEC'i üretir.
-export interface CosreChartSpec {
-  title?: string;
-  service: string;
-  // operation (v0.9.184) — verilirse grafik tek span-name'e daralır
-  // (DSL: name = "..."). Boşsa servis-geneli. Backend guided-operation
-  // bundle bunu doldurur.
-  operation?: string;
-  agg: 'rate' | 'error_rate' | 'p50' | 'p95' | 'p99';
-  unit?: string;
-  rangeS?: number; // pencere (saniye); default 1800 (30 dk)
-}
+// CosreChart — sohbete gömülen CANLI grafik (```chart``` çiti).
+//
+// v0.9.1186 (AI Faz 4.4) — iki değişiklik, biri diğerini gerektiriyor:
+//
+//   1. SPEC genişledi: `groupBy` (tek anahtar kırılım) + mutlak pencere
+//      (fromNs/toNs). Kırılım N seri demek.
+//   2. MOTOR değişti: ChartCard (tek çizgi) → CorePanel. Kırılım tek-çizgi
+//      bir kartta çizilemezdi; ve geçişle birlikte zoom, lejant, imleç
+//      senkronu ve exemplar altyapısı BEDAVA geldi — uygulamanın geri
+//      kalanı zaten o motorda (v0.9.743+).
+//
+// Lazy import zorunlu: CorePanel @grafana/data'ya bağlı ve statik bağlamak
+// vendor'ı 35 KB'dan 1 MB'a çıkarıyor (corePanelEntry.tsx'in ölçümü).
+// Sohbet balonu her sayfada mount olabildiği için burada bedeli ödemek
+// bütün uygulamayı şişirirdi.
+const CorePanelMulti = lazy(() =>
+  import('@/components/chart/corePanelEntry').then(m => ({ default: m.CorePanelMulti })));
 
-const AGG_META: Record<string, { field?: string; unit: string; color: string; label: string; mode: 'line' | 'area' }> = {
-  rate:       { unit: ' req/s', color: 'var(--accent)', label: 'req/s',  mode: 'line' },
-  error_rate: { unit: '%',      color: 'var(--err)',    label: 'errors', mode: 'area' },
-  p50:        { field: 'duration_ms', unit: ' ms', color: 'var(--purple)', label: 'P50', mode: 'line' },
-  p95:        { field: 'duration_ms', unit: ' ms', color: 'var(--orange)', label: 'P95', mode: 'line' },
-  p99:        { field: 'duration_ms', unit: ' ms', color: 'var(--err)',    label: 'P99', mode: 'line' },
-};
+export type { CosreChartSpec } from './cosreChartSpec';
+import type { CosreChartSpec } from './cosreChartSpec';
 
 export function CosreChart({ spec }: { spec: CosreChartSpec }) {
   const rangeS = spec.rangeS && spec.rangeS > 0 ? spec.rangeS : 1800;
-  const meta = AGG_META[spec.agg] ?? AGG_META.rate;
+  // Mutlak pencere doluysa RangeS'i EZER. Guided/insight yolları olayın
+  // penceresini zaten biliyor; "son 30dk" onların cevabını kaydırırdı.
+  const absolute = !!(spec.fromNs && spec.toNs && spec.toNs > spec.fromNs);
+  const groupBy = spec.groupBy ?? '';
+
   const q = useQuery({
-    queryKey: ['cosre-chart', spec.service, spec.operation ?? '', spec.agg, rangeS],
+    // Anahtar HER girdiyi taşır (v0.5.187 sınıfı): kırılım ya da mutlak
+    // pencere anahtara girmezse iki farklı kart aynı cache satırını okur.
+    queryKey: ['cosre-chart', spec.service, spec.operation ?? '', spec.agg,
+      rangeS, groupBy, absolute ? spec.fromNs : 0, absolute ? spec.toNs : 0],
     queryFn: () => {
-      // Canlı "son rangeS" penceresi (ns). Overview ile aynı spanMetricBatch yolu.
-      const to = Date.now() * 1e6;
-      const from = to - rangeS * 1e9;
-      // operation verilirse DSL'e span-name conjunct'ı ekle (name kolonu,
-      // http.route DEĞİL — dsl_test.go:61 ile doğrulandı).
-      let dsl = `service.name = "${spec.service.replace(/"/g, '\\"')}"`;
-      // operation'ı yalnız TEMİZ bir string ise ekle (v0.9.187): newline/
-      // kontrol karakteri DSL'i (ParseDSL \n ile böler) bozar, string
-      // olmayan bir değer .replace'te patlar — bozuksa servis-geneli çiz.
-      const op =
-        typeof spec.operation === 'string' &&
-        spec.operation !== '' &&
-        ![...spec.operation].some((c) => c.charCodeAt(0) < 32)
-          ? spec.operation
-          : '';
-      if (op) {
-        dsl += ` AND name = "${op.replace(/"/g, '\\"')}"`;
-      }
+      const to = absolute ? spec.toNs! : Date.now() * 1e6;
+      const from = absolute ? spec.fromNs! : to - rangeS * 1e9;
       return api.spanMetricBatch({
-        from, to, dsl,
+        from, to,
+        dsl: cosreChartDSL(spec),
+        ...(groupBy ? { groupBy: [groupBy] } : {}),
         // v0.9.391 — sohbet içi ~560px kart; sabit küçük bütçe yeterli.
         maxDataPoints: 300,
-        aggs: [{ name: 'v', agg: spec.agg, field: meta.field }],
+        aggs: [{ name: 'v', agg: spec.agg, field: AGG_FIELD[spec.agg] }],
       });
     },
     select: d => d.series,
     enabled: !!spec.service,
     staleTime: 30_000,
   });
-  const status: 'loading' | 'error' | 'ready' = q.isLoading ? 'loading' : q.isError ? 'error' : 'ready';
-  const series = q.data?.v ?? [];
+
+  const { items, unit, truncated, total } = cosreChartItems(spec, q.data?.v ?? []);
+
   return (
     <div style={{ margin: '10px 0', maxWidth: 560 }}>
-      <ChartCard
-        title={spec.title ?? `${spec.operation || spec.service} · ${meta.label}`}
-        unit={spec.unit ?? meta.unit}
-        mode={meta.mode}
-        status={status}
-        lines={[{ series, color: meta.color, label: meta.label }]}
-      />
+      <Suspense fallback={<Spinner />}>
+        <CorePanelMulti
+          title={spec.title ?? defaultTitle(spec)}
+          height={180}
+          // storageKey lejant katlanma durumunun kimliği. Spec'in
+          // KAPSAMINDAN türetiliyor, sohbet turundan değil: aynı grafiği
+          // ikinci kez soran operatör lejantı yeniden katlamak zorunda
+          // kalmasın, farklı bir kırılım ise kendi durumunu taşısın.
+          storageKey={`cosre-chart:${spec.service}:${spec.operation ?? ''}:${spec.agg}:${groupBy}`}
+          loading={q.isLoading}
+          error={q.isError ? 'Grafik verisi alınamadı' : undefined}
+          items={items}
+          unit={spec.unit ?? unit}
+        />
+      </Suspense>
+      {/* Kırpma İLAN EDİLİR. Sessizce ilk N'i çizmek, operatöre "evren bu"
+          dedirtir — kırılımın amacı tam da hangi değerin farklı olduğunu
+          görmekken. (Aynı dürüstlük kuralı: RowsCapped, v0.9.809.) */}
+      {truncated && (
+        <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
+          {total} seriden ilk {COSRE_SERIES_CAP}'i çizildi (en yüksek değerliler)
+        </div>
+      )}
     </div>
   );
 }
+
+// AGG_FIELD — gecikme yüzdelikleri bir ALAN üstünde hesaplanır; sayım
+// sınıfı aggler alansız. cosreChartSpec.ts'teki AGG_META'nın alan yarısı.
+const AGG_FIELD: Record<string, string | undefined> = {
+  rate: undefined, error_rate: undefined,
+  p50: 'duration_ms', p95: 'duration_ms', p99: 'duration_ms',
+};
+
+function defaultTitle(spec: CosreChartSpec): string {
+  const base = spec.operation || spec.service;
+  return spec.groupBy ? `${base} · ${spec.agg} · ${spec.groupBy}` : `${base} · ${spec.agg}`;
+}
+
+export type { CorePanelMultiItem };

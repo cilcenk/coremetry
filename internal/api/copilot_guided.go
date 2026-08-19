@@ -2055,6 +2055,19 @@ type guidedChartSpec struct {
 	Operation string `json:"operation,omitempty"`
 	Agg       string `json:"agg"`
 	RangeS    int64  `json:"rangeS"`
+	// v0.9.1186 (Faz 4.4) — kırılım. TEK anahtar, çünkü sohbet balonundaki
+	// ~560px'lik bir kartta iki anahtarlı kırılım seri sayısını çarpar ve
+	// okunmaz bir spagetti üretir; kırılım tam da okunabilirlik için var.
+	GroupBy string `json:"groupBy,omitempty"`
+	// FromNs/ToNs — MUTLAK pencere (unix ns). Doluysa RangeS'i ezer.
+	//
+	// Neden yalnız SUNUCU doldurur (tool'da yok): küçük modele epoch
+	// nanosaniye hesaplatmak, [[project-copilot-runtime]]'ın "prefetch+
+	// narrate, aritmetik yaptırma" doktrininin tersi. Guided/insight
+	// yolları pencereyi ZATEN biliyor (problemin/olayın penceresi) —
+	// bilen taraf yazsın, modelden istemeyelim.
+	FromNs int64 `json:"fromNs,omitempty"`
+	ToNs   int64 `json:"toNs,omitempty"`
 }
 
 func chartFence(spec guidedChartSpec) string {

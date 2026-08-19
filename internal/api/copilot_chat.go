@@ -380,6 +380,7 @@ func chatChartBlock(out string) (block, key string) {
 			Operation string `json:"operation"`
 			Agg       string `json:"agg"`
 			RangeS    int64  `json:"rangeS"`
+			GroupBy   string `json:"groupBy"`
 		} `json:"spec"`
 	}
 	if err := json.Unmarshal([]byte(out), &rc); err != nil || !rc.OK || rc.Spec.Service == "" || rc.Spec.Agg == "" {
@@ -389,14 +390,23 @@ func chatChartBlock(out string) (block, key string) {
 	if rc.Spec.Operation != "" {
 		titleBase = rc.Spec.Operation
 	}
+	title := titleBase + " · " + rc.Spec.Agg
+	if rc.Spec.GroupBy != "" {
+		title += " · " + rc.Spec.GroupBy
+	}
 	fence := chartFence(guidedChartSpec{
-		Title:     titleBase + " · " + rc.Spec.Agg,
+		Title:     title,
 		Service:   rc.Spec.Service,
 		Operation: rc.Spec.Operation,
 		Agg:       rc.Spec.Agg,
 		RangeS:    rc.Spec.RangeS,
+		GroupBy:   rc.Spec.GroupBy,
 	})
-	return fence, rc.Spec.Service + "\x00" + rc.Spec.Operation + "\x00" + rc.Spec.Agg
+	// v0.9.1186 — kırılım DEDUP anahtarına girdi. Girmeseydi aynı servis+
+	// agg'ın kırılımlı ve kırılımsız hâli "aynı kart" sayılır, ikincisi
+	// sessizce düşerdi — oysa model ikisini bilerek isteyebilir ("toplamı
+	// göster, sonra endpoint kırılımını").
+	return fence, rc.Spec.Service + "\x00" + rc.Spec.Operation + "\x00" + rc.Spec.Agg + "\x00" + rc.Spec.GroupBy
 }
 
 // lastUserText pulls the most recent user-typed message for the

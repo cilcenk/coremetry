@@ -1088,6 +1088,22 @@ type renderChartArgs struct {
 	Operation string `json:"operation,omitempty"`
 	Metric    string `json:"metric,omitempty"`
 	RangeS    int    `json:"range_s,omitempty"`
+	// v0.9.1186 (Faz 4.4) — kırılım anahtarı. TEK anahtar ve KISA bir
+	// beyaz liste: sohbet balonundaki ~560px kartta iki anahtarlı kırılım
+	// seri sayısını çarpar, kırılım ise tam da okunabilirlik için var.
+	GroupBy string `json:"group_by,omitempty"`
+}
+
+// renderChartGroupKeys — kırılım beyaz listesi.
+//
+// Motor (chstore.groupKeyExpr) çok daha fazlasını anlıyor (resource.*,
+// span.*, op_group…) ama BURASI bir sohbet kartı: listeyi geniş tutmak,
+// modele okunmaz bir kırılım seçme fırsatı vermek olurdu. Beşi de "bu
+// grafikte NEDEN farklı davranıyor" sorusunun gerçek cevapları:
+// hangi endpoint, hangi operasyon, hangi span türü, ok/hata, hangi komşu.
+var renderChartGroupKeys = map[string]bool{
+	"http.route": true, "name": true, "kind": true,
+	"status": true, "peer": true,
 }
 
 // normalizeRenderChart applies the metric default + whitelist and the
@@ -1107,6 +1123,15 @@ func normalizeRenderChart(a renderChartArgs) (norm renderChartArgs, errMsg strin
 	}
 	if a.RangeS > 7*86400 {
 		a.RangeS = 7 * 86400
+	}
+	// v0.9.1186 — kırılım: boş serbest, tanınmayan REDDEDİLİR.
+	//
+	// Sessizce yok saymak (metric'in aksine, ki o da reddediyor) modelin
+	// istediği kırılımı çizmeden "çizdim" demek olurdu ve operatör kartı
+	// kırılımlı sanıp okurdu. Hata mesajı geçerli listeyi sayar ki model
+	// kendini düzeltebilsin.
+	if a.GroupBy != "" && !renderChartGroupKeys[a.GroupBy] {
+		return a, fmt.Sprintf("unknown group_by %q — must be one of http.route, name, kind, status, peer", a.GroupBy)
 	}
 	return a, ""
 }
@@ -1136,6 +1161,11 @@ func renderChartTool(d Deps) mcp.Tool {
 					"minimum":     0,
 					"maximum":     604800,
 					"description": "Chart window in seconds. Default 1800 (30min), max 604800 (7d).",
+				},
+				"group_by": map[string]any{
+					"type":        "string",
+					"enum":        []string{"http.route", "name", "kind", "status", "peer"},
+					"description": "Optional breakdown: draw ONE line per distinct value instead of a single total. Use it when the question is 'which one is different' — http.route (which endpoint), name (which operation), kind (server/client/producer/consumer), status (ok vs error), peer (which downstream). Omit for a single total line.",
 				},
 			},
 			"required": []string{"service"},
@@ -1180,6 +1210,9 @@ func renderChartTool(d Deps) mcp.Tool {
 			spec := map[string]any{"service": a.Service, "agg": a.Metric, "rangeS": a.RangeS}
 			if a.Operation != "" {
 				spec["operation"] = a.Operation
+			}
+			if a.GroupBy != "" {
+				spec["groupBy"] = a.GroupBy
 			}
 			return map[string]any{
 				"ok":   true,

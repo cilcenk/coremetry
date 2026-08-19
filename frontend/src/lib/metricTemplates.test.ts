@@ -82,3 +82,67 @@ describe('classifyMetric — runtime levels must not be summed', () => {
     expect(classifyMetric(m('process.requests.total', 'sum'))?.agg).toBe('sum');
   });
 });
+
+// ── v0.9.1180 — VictoriaMetrics / Prometheus yazımları ────────────────────
+//
+// Kayıt defteri OTel semconv adlarına (noktalı) göre yazıldı; VM backend'inde
+// katalog Prometheus-adlı geliyor. Prod'un canlı ailesi (operatör ekranı,
+// 2026-08-17) `http_server_request_duration_seconds_*` ve hiçbir regex bunu
+// tutmuyordu: operatör ana HTTP gecikme metriğini seçtiğinde p99 varsayılanı,
+// route/status kırılımı ve 1s eşiği HİÇ gelmiyor, sessizce type-fallback'e
+// düşüyordu.
+//
+// İkinci yarısı ayrılamaz: eşleşmeyi düzeltip birimi taşımamak ZARARLI olurdu
+// — şablonun `unit: 'ms'` ipucu saniyelik p99'a damgalanır ve 0.25 s "0.25ms"
+// diye okunurdu. Backend artık birimi addan türetiyor (v0.9.1180
+// describeMetricName); burada onun şablonu YENDİĞİ pinleniyor.
+describe('classifyMetric — Prometheus yazımları (VM backend)', () => {
+  it('prod ailesi HTTP gecikme şablonunu bulur', () => {
+    const t = classifyMetric(m('http_server_request_duration_seconds_bucket', 'histogram', 's'));
+    expect(t?.id).toBe('HTTP server latency');
+    expect(t?.agg).toBe('p99');
+    expect(t?.groupBy).toContain('http.route');
+  });
+
+  it('histogramın üç parçası da aynı şablona düşer', () => {
+    for (const suffix of ['_bucket', '_sum', '_count']) {
+      const t = classifyMetric(m(`http_server_request_duration_seconds${suffix}`, 'histogram', 's'));
+      expect(t?.id).toBe('HTTP server latency');
+    }
+  });
+
+  it('BEYAN EDİLEN birim şablonun ipucunu yener', () => {
+    // Şablon 'ms' öneriyor; seri saniye. Bu satır olmadan 0.25 s "0.25ms".
+    const t = classifyMetric(m('http_server_request_duration_seconds_bucket', 'histogram', 's'));
+    expect(t?.unit).toBe('s');
+  });
+
+  it('birim beyan edilmezse şablonun ipucu korunur', () => {
+    const t = classifyMetric(m('http.server.request.duration', 'histogram'));
+    expect(t?.unit).toBe('ms');
+  });
+
+  it('HTTP dışındaki aileler de kurtulur — tek normalleştirici', () => {
+    expect(classifyMetric(m('db_client_operation_duration_seconds_bucket', 'histogram', 's'))?.id)
+      .toBe('DB query latency');
+    expect(classifyMetric(m('rpc_server_duration_seconds_bucket', 'histogram', 's'))?.id)
+      .toBe('RPC latency');
+  });
+
+  it('ham ad ÖNCE denenir — kayıt defterindeki Prometheus yazımları ezilmez', () => {
+    // `cpu_percent` kayıt defterinde ham hâliyle var; normalleştirilmiş aday
+    // (`cpu.percent`) onu ezmemeli.
+    expect(classifyMetric(m('cpu_percent', 'gauge'))?.id).toBe('CPU utilisation');
+  });
+
+  it('noktalı OTel adları aynen çalışmaya devam eder', () => {
+    expect(classifyMetric(m('http.server.request.duration', 'histogram'))?.id)
+      .toBe('HTTP server latency');
+  });
+
+  it('_total soyulur ama uydurma eşleşme üretmez', () => {
+    // `http_requests_total` zaten ham hâliyle Request counter'a düşüyordu;
+    // normalleştirme onu bozmamalı.
+    expect(classifyMetric(m('http_requests_total', 'sum'))?.id).toBe('Request counter');
+  });
+});

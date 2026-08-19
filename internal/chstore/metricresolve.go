@@ -414,7 +414,14 @@ func (s *Store) ResolveMetricQuery(ctx context.Context, q MetricResolveQuery) (M
 	}
 
 	// WHERE: time bounds on the indexed bucket + equality dim filters.
-	conds := []string{"time_bucket >= ?", "time_bucket <= ?"}
+	// v0.9.1173 — üst sınır DIŞLAYICI. Seride belirti bir FANTOM NOKTA:
+	// `to` hem step'e hem MV grenine oturduğunda çıktı kovası
+	// toStartOfInterval(to, step) YALNIZ `to` etiketli MV kovasından
+	// beslenir, o da [to, to+gren) taşır — yani grafiğin sağ ucundaki son
+	// nokta tamamen pencere DIŞI veriden örülüyordu. `to` hizasızken
+	// (tipik "şimdi") iki operatör aynı sonucu verir, yani cari kısmi kova
+	// kaybolmaz. Sınıf gerekçesi: summary.go alignBucketStart doc bloğu.
+	conds := []string{"time_bucket >= ?", "time_bucket < ?"}
 	args := []any{q.From, q.To}
 	for k, v := range q.Filters {
 		col, _ := tierDimColumn(k)
@@ -597,7 +604,14 @@ func (s *Store) resolveBand(ctx context.Context, q MetricResolveQuery, step int)
 		}
 		groupSelect = "[" + strings.Join(cols, ", ") + "]"
 	}
-	conds := []string{"time_bucket >= ?", "time_bucket <= ?"}
+	// v0.9.1173 — üst sınır DIŞLAYICI. Seride belirti bir FANTOM NOKTA:
+	// `to` hem step'e hem MV grenine oturduğunda çıktı kovası
+	// toStartOfInterval(to, step) YALNIZ `to` etiketli MV kovasından
+	// beslenir, o da [to, to+gren) taşır — yani grafiğin sağ ucundaki son
+	// nokta tamamen pencere DIŞI veriden örülüyordu. `to` hizasızken
+	// (tipik "şimdi") iki operatör aynı sonucu verir, yani cari kısmi kova
+	// kaybolmaz. Sınıf gerekçesi: summary.go alignBucketStart doc bloğu.
+	conds := []string{"time_bucket >= ?", "time_bucket < ?"}
 	args := []any{q.From, q.To}
 	for k, v := range q.Filters {
 		col, _ := tierDimColumn(k)

@@ -92,6 +92,13 @@ func (s *Store) FindExemplarRollup(ctx context.Context, req ExemplarReq) (*Exemp
 		return nil, fmt.Errorf("from/to are required")
 	}
 
+	// v0.9.1173 — kova üst sınırı DIŞLAYICI. Bu okumada zarar SAYI değil
+	// KİMLİK, dbstmt (v0.9.1167) ve endpoint (v0.9.1170) exemplar'larıyla
+	// aynı sınıf: argMax, [To, +1dk) kovasından — yani pencerenin tamamen
+	// dışından — gelen bir trace'i "en yavaş" seçip döndürebiliyordu.
+	// Exemplar bir İDDİADIR ("bu pencerenin temsilcisi bu trace"), ve
+	// pencere dışı bir temsilci sessizce yanlış bir iddiadır.
+	//
 	// Pick the exemplar-state finalizer per kind. Throughput ("any") has no
 	// representative span — the slow state is the most useful stand-in (the
 	// loudest trace in the window) but the caller labels that join weak.
@@ -108,7 +115,7 @@ func (s *Store) FindExemplarRollup(ctx context.Context, req ExemplarReq) (*Exemp
 	sql := fmt.Sprintf(`
 		SELECT %s AS trace_id
 		FROM %s
-		WHERE service_name = ? AND time_bucket >= ? AND time_bucket <= ?
+		WHERE service_name = ? AND time_bucket >= ? AND time_bucket < ?
 		LIMIT 1
 		SETTINGS max_execution_time = 10`, traceExpr, s.spanmetricsSourceFor("spanmetrics_1m"))
 

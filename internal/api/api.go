@@ -5120,11 +5120,19 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 		// one MV bucket — coalesce handles it).
 		if wantSparkline {
 			const sparkBuckets = 30
-			bucketNs := (to.UnixNano() - from.UnixNano()) / int64(sparkBuckets)
-			if bucketNs <= 0 {
-				bucketNs = 1
-			}
-			sparkArgs := []any{from.UnixNano(), bucketNs, bucketStart, to}
+			// v0.9.1176 — bin ORİJİNİ artık `from` değil `bucketStart`, yani
+			// WHERE'in alt sınırıyla AYNI an. Öncesi karışıktı: sorgu
+			// bucketStart'tan okuyor, binleme ham from'dan sayıyordu. from
+			// hizasızken bucketStart'taki kova b = -1 üretip
+			// `range(0, sparkBuckets)` dışında kalıyor, sparkline'dan
+			// düşüyordu — ama Stage-1'in `calls` toplamına giriyordu. Satır
+			// "1.200 çağrı" derken sparkline daha azını topluyordu; v0.9.1169/
+			// 1170'te üst uçta düzeltilen ayrışmanın ALT UÇ ikizi.
+			//
+			// Genişlik de aynı ana göre ölçülür ((to - bucketStart)/N), yoksa
+			// binler pencereyi tam örtmez ve bu sefer SON kova taşardı.
+			originNs, bucketNs := sparkBinPlan(bucketStart, to, sparkBuckets)
+			sparkArgs := []any{originNs, bucketNs, bucketStart, to}
 			sparkArgs = append(sparkArgs, svcArgs...)
 			sparkArgs = append(sparkArgs, sparkBuckets)
 			sparkRows, serr := s.store.Conn().Query(ctx, `

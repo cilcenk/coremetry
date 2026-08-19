@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/cilcenk/coremetry/internal/logstore"
+	"github.com/cilcenk/coremetry/internal/stackparse"
 )
 
 // explain_trace_input.go — trace explain'in KANIT paketi kurucusu
@@ -147,9 +148,28 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 				if len(ll) >= 15 {
 					break
 				}
-				e := liteLog{Sev: lg.SeverityText, Svc: lg.ServiceName, Body: truncate(lg.Body, 600)}
-				if lg.Attributes != nil {
-					e.ExType = lg.Attributes["exception.type"]
+				// v0.9.1182 (operatör-bildirimli) — stack ARANIR, tek bir
+				// anahtardan okunmaz. Eskiden yalnız `exception.stacktrace`
+				// bakılıyordu; ECS kurulumlarında alan `error.stack_trace` ve
+				// Java'nın en yaygın deseninde stack ayrı bir alanda DEĞİL,
+				// mesajın arkasında. İkisinde de kod çekici "stacktrace yok"
+				// diyordu ve model stack'i 600 baytlık gövde bütçesinin içinden
+				// yarım okuyordu ("metot ismi tam görünmüyor" notu buydu).
+				stackText, stackFromBody := stackparse.FromLog(lg.Attributes, lg.Body)
+				bodyForPrompt := lg.Body
+				if stackFromBody {
+					// Frame'ler artık stack alanında ve orada bütçe daha büyük;
+					// gövdeye yalnız mesaj başı kalır, aynı baytı iki kez
+					// ödemeyelim.
+					bodyForPrompt = stackparse.MessageHead(lg.Body)
+				}
+				e := liteLog{Sev: lg.SeverityText, Svc: lg.ServiceName, Body: truncate(bodyForPrompt, 600)}
+				e.ExType = lg.Attributes["exception.type"] // nil map okuması güvenli
+				// v0.9.1182 — stack ataması artık `lg.Attributes != nil`
+				// koşulunun DIŞINDA. Gövdeden gelen bir stack, özniteliksiz bir
+				// kayıtta da geçerlidir ve eski yerleşim onu sessizce yutardı:
+				// tam olarak bu bug'ın (stack gövdede) en saf hâli.
+				if strings.TrimSpace(stackText) != "" {
 					// v0.9.842 — the FIRST log carrying a stacktrace gets a
 					// bigger budget (1500 vs 900). Because the sort above is
 					// severity-first, that log is the trace's most serious
@@ -162,19 +182,17 @@ func (s *Server) buildTraceExplainInput(ctx context.Context, id string) (traceEx
 					// 900 so the prompt budget does not grow with every
 					// duplicate of the same failure.
 					stackLimit := 900
-					if rawStack == "" && strings.TrimSpace(lg.Attributes["exception.stacktrace"]) != "" {
+					if rawStack == "" {
 						stackLimit = 1500
 					}
-					e.Stack = truncate(lg.Attributes["exception.stacktrace"], stackLimit)
+					e.Stack = truncate(stackText, stackLimit)
 					// v0.9.831 — kod çekici için HAM stack (prompt'a giren
 					// 900-byte kesilmiş kopya değil): frame'ler dosya+satır
 					// taşıyor ve kesik bir satır konumlandırılamaz. İlk
 					// stack'li log kazanır; sıralama severity-öncelikli
 					// olduğu için bu, trace'in EN CİDDİ hatası.
 					if rawStack == "" {
-						if st := lg.Attributes["exception.stacktrace"]; strings.TrimSpace(st) != "" {
-							rawStack, stackService = st, lg.ServiceName
-						}
+						rawStack, stackService = stackText, lg.ServiceName
 					}
 				}
 				ll = append(ll, e)

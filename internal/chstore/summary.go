@@ -402,7 +402,7 @@ func (s *Store) CountServicesAgg(ctx context.Context, from, to time.Time, nameMa
 	err := s.telemetryReadConn().QueryRow(ctx, `
 		SELECT toUInt64(uniqExact(service_name))
 		FROM service_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?`+nameClause+`
+		WHERE time_bucket >= ? AND time_bucket < ?`+nameClause+`
 		SETTINGS max_execution_time = 25`,
 		args...).Scan(&n)
 	if err != nil {
@@ -494,7 +494,7 @@ func (s *Store) GetServicesAggFiltered2(ctx context.Context, from, to time.Time,
 		       (countIfMerge(apdex_satisfied_state) + countIfMerge(apdex_tolerating_state) / 2)
 		         / nullIf(spans, 0)                                                     AS apdex
 		FROM service_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?`+nameClause+`
+		WHERE time_bucket >= ? AND time_bucket < ?`+nameClause+`
 		GROUP BY service_name`+aggHaving+`
 		ORDER BY `+servicesAggSortExpr(sort, dir)+limitClause+`
 		SETTINGS max_execution_time = 25, `+mvQuantileMemSettings,
@@ -562,7 +562,7 @@ func (s *Store) GetServiceSummary5mFor(ctx context.Context, services []string, f
 		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM service_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?`+svcFilter+`
+		WHERE time_bucket >= ? AND time_bucket < ?`+svcFilter+`
 		GROUP BY service_name, time_bucket
 		ORDER BY service_name, time_bucket
 		SETTINGS max_execution_time = 25`, args...)
@@ -613,7 +613,7 @@ func (s *Store) GetServiceSummary5m(ctx context.Context, service string, from, t
 		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 2) / 1e6 AS p95_ms,
 		  arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99_ms
 		FROM service_summary_5m
-		WHERE time_bucket >= ? AND time_bucket <= ?`+svcFilter+`
+		WHERE time_bucket >= ? AND time_bucket < ?`+svcFilter+`
 		GROUP BY service_name, time_bucket
 		ORDER BY service_name, time_bucket`, args...)
 	if err != nil {
@@ -660,6 +660,26 @@ const mvBucketWidth = 5 * time.Minute
 // Bu bilinçli — MV'nin greninden ince bir soruya dürüst cevap yok ve
 // eksik göstermek fazla göstermekten kötü: biri olayı gizler, diğeri
 // biraz komşu veri katar.
+//
+// ── ÜST SINIR (v0.9.1168) ──
+// Alt sınırın simetriği DEĞİL: üst sınır `< to`, `<= to` değil. Yukarıdaki
+// "fazla göstermek daha iyi" takası burada GEÇERSİZ, çünkü iki kova farklı
+// şeyler taşıyor:
+//
+//	from'u İÇEREN kova   → pencere verisi + biraz komşu (almamak veri kaybı)
+//	`to` ETİKETLİ kova   → [to, to+5dk), yani pencereden SIFIR veri
+//
+// `<= to` ikinci kovayı alır: kazanç yok, beş dakikalık tamamen yabancı
+// trafik var. `< to` ise pencereden hiçbir şey kaybetmez — son alınan kova
+// [to-5dk, to) ve tamamı pencere içinde. Hizalanmamış bir `to`'da (örn.
+// 11:02) iki operatör AYNI sonucu verir, fark yalnız `to` tam kova
+// sınırına otururken çıkar; sınıfın v0.9.823→1156→1167 boyunca dört kez
+// yeniden bulunmasının sebebi bu — hatalı sınır çoğu pencerede doğru
+// görünüyor.
+//
+// Kardeş okumalar aynı sözleşmede: anomaly.go / behavior.go (`<` zaten),
+// dependencies.go + db_trends.go (v0.9.1156), dbqueries.go +
+// dbstmt_detail.go (v0.9.1167). Kapı: summary_bucket_bound_test.go.
 func alignBucketStart(t time.Time) time.Time {
 	return t.Truncate(mvBucketWidth)
 }

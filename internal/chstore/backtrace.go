@@ -105,7 +105,7 @@ func serviceCallersAggSQL(limit int) string {
 		FROM service_callers_5m FINAL
 		WHERE service = ?
 		  AND time_bucket >= ?
-		  AND time_bucket <= ?
+		  AND time_bucket < ?
 		GROUP BY caller_service, caller_host, caller_instance,
 		         client_address, user_agent
 		ORDER BY c_calls DESC

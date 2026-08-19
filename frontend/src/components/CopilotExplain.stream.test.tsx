@@ -189,3 +189,62 @@ describe('CopilotExplain — Yeniden sor', () => {
     expect(cursor()).not.toBeNull(); // yeni akış hâlâ sürüyor
   });
 });
+
+// ── v0.9.1184 — "Kodu da incele" kutusunun GÖRÜNÜRLÜĞÜ ─────────────────
+//
+// Operatör: "Kodu incele checkboxı da çok küçük daha belirgin olabilir."
+// 11px'lik çıplak bir etiketti; oysa bu bir KARAR — cevabın koda bakıp
+// bakmayacağını belirliyor.
+//
+// Neden gerçek mount: iddia "sınıf adı doğru yazıldı" değil, İŞARETLİ
+// DURUMUN GÖRÜNÜR OLMASI. Aktif tonu taşıyan sınıf, işaret değiştiğinde
+// DOM'da da değişmeli — kutunun içine bakmadan durumu okuyabilmenin tek
+// karşılığı bu. Sınıfı statik yazmak (hep `active`, ya da hiç) tsc'yi
+// memnun eder ve ekranda durumu sessizce yalanlar.
+describe('CopilotExplain — "Kodu da incele" kutusu (v0.9.1184)', () => {
+  const chip = () => host.querySelector<HTMLButtonElement>('button.btn-chip');
+
+  it('yalnız kod okunabilen türlerde çıkar', async () => {
+    fakeExplain();
+    await mount(<CopilotExplain kind="problem" id="p1" />);
+    expect(chip()).toBeNull();
+  });
+
+  it('trace türünde deponun chip sözlüğüyle çizilir', async () => {
+    fakeExplain();
+    await mount(<CopilotExplain kind="trace" id="t1" />);
+    const c = chip();
+    expect(c).toBeTruthy();
+    expect(c!.className).toContain('ch-sm');
+    expect(c!.textContent).toContain('Kodu da incele');
+    // Varsayılan KAPALI (v0.9.831 sözleşmesi) → aktif ton YOK.
+    expect(c!.className).not.toContain('active');
+  });
+
+  it('işaretlenince aktif tonu alır, kaldırılınca bırakır', async () => {
+    fakeExplain();
+    await mount(<CopilotExplain kind="trace" id="t1" />);
+    const box = chip()!;
+
+    await act(async () => { box.click(); });
+    expect(chip()!.className).toContain('active');
+
+    await act(async () => { box.click(); });
+    expect(chip()!.className).not.toContain('active');
+  });
+
+  it('durum ÜÇ işaretle birden söylenir (ton · glif · aria-pressed)', async () => {
+    // Üçü de aynı anda doğru olmalı: renk körü bir operatör glifi okur,
+    // ekran okuyucu aria-pressed'ı, geri kalan herkes tonu. Biri sessizce
+    // düşerse geriye kalanlar hatayı örter — bu yüzden tek testte.
+    fakeExplain();
+    await mount(<CopilotExplain kind="trace" id="t1" />);
+    expect(chip()!.getAttribute('aria-pressed')).toBe('false');
+    expect(chip()!.textContent).toContain('☐');
+
+    await act(async () => { chip()!.click(); });
+    expect(chip()!.getAttribute('aria-pressed')).toBe('true');
+    expect(chip()!.textContent).toContain('☑');
+    expect(chip()!.className).toContain('active');
+  });
+});

@@ -211,6 +211,13 @@ func (s *Store) GetCorrelatedChangesMV(
 	if baselineSec <= 0 {
 		baselineSec = windowSec * 4
 	}
+	// v0.9.1172 — üst sınır DIŞLAYICI. Buradaki `is_cur` bölmesi TEK taramada
+	// yapıldığı için pencereler ÖRTÜŞMÜYORDU (dbstmt'in v0.9.1167 hatası
+	// burada yok), ama oran normalizasyonu bozuluyordu: aşağıdaki curSeconds
+	// (winTo - atB) paydayı pencere genişliğinden alırken `<= winTo` sayacı
+	// [winTo, +5dk) kovasından da topluyordu. Cari taraf beş dakikalık yabancı
+	// trafik kadar şişip "trafik sıçraması" diye korele değişiklik üretebiliyordu
+	// — yani hatanın belirtisi YANLIŞ BİR BULGU, eksik bir sayı değil.
 	const grid = 5 * time.Minute
 	atB := at.Truncate(grid) // `at` kovası dahil CARİ taraf
 	winTo := at.Add(time.Duration(windowSec) * time.Second)
@@ -237,7 +244,7 @@ func (s *Store) GetCorrelatedChangesMV(
 			       countMerge(error_count_state) AS errs,
 			       arrayElement(quantilesTDigestMerge(0.5, 0.95, 0.99)(duration_q_state), 3) / 1e6 AS p99
 			FROM service_summary_5m
-			WHERE time_bucket >= ? AND time_bucket <= ?
+			WHERE time_bucket >= ? AND time_bucket < ?
 			GROUP BY service_name, is_cur
 		)
 		GROUP BY service_name

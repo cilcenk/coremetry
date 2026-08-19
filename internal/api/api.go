@@ -5045,13 +5045,30 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 		// time_bucket is 5-min aligned so we bucket-down the
 		// `from` to include the bucket overlapping the window
 		// (same alignment as service_summary_5m reads).
+		//
+		// v0.9.1175 — bu bloktaki DÖRT okumanın da üst sınırı `<=`ten `<`e
+		// döndü (v0.9.823→1174 sınıfı): `to` kova sınırına oturduğunda
+		// `<= to` başlangıcı tam to olan kovayı alıyordu ve o kova
+		// [to, +5dk) taşır, yani pencereden sıfır veri. Dört okuma da
+		// AYNI (bucketStart, to) çiftiyle koşar; ayrışmaları satır sayısı,
+		// süre ve yüzdelikleri farklı pencerelerden okumak demekti.
+		//
+		// AÇIK KALAN, AYRI BİR AYRIŞMA (bilinçli olarak bu dilimde değil):
+		// Stage-2 sparkline bin ORİJİNİ `from` (ham), WHERE ise
+		// `bucketStart` (hizalı). from hizasızken bucketStart'taki kova
+		// b = -1 üretir, `range(0, sparkBuckets)` dışında kalır ve
+		// sparkline'dan düşer — ama Stage-1'in `calls` toplamına girer.
+		// Yani satır ile sparkline ALT uçta hâlâ ayrışabiliyor. Düzeltmesi
+		// orijini de bucketStart'a almak ve bucketNs'i (to - bucketStart)'tan
+		// hesaplamak; bu sparkline'ın x eksenini ≤5dk kaydırdığı için
+		// çalışma-zamanı doğrulaması olmadan gönderilmedi.
 		bucketStart := from.Truncate(5 * time.Minute)
 		topRows, err := s.store.Conn().Query(ctx, `
 			SELECT service_name,
 			       sumMerge(calls_state)  AS calls,
 			       sumMerge(errors_state) AS errors
 			FROM spanmetrics_calls_5m
-			WHERE time_bucket >= ? AND time_bucket <= ?
+			WHERE time_bucket >= ? AND time_bucket < ?
 			GROUP BY service_name
 			ORDER BY calls DESC
 			LIMIT ?
@@ -5116,7 +5133,7 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 				         intDiv(toUnixTimestamp(time_bucket) * 1000000000 - ?, ?) AS b,
 				         sumMerge(calls_state)                       AS bv
 				  FROM spanmetrics_calls_5m
-				  WHERE time_bucket >= ? AND time_bucket <= ?
+				  WHERE time_bucket >= ? AND time_bucket < ?
 				    AND service_name IN (`+holders+`)
 				  GROUP BY service_name, b
 				)
@@ -5163,7 +5180,7 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 				       sumMerge(sum_state) / nullIf(sumMerge(count_state), 0) AS avg_s,
 				       maxMerge(max_state)                                    AS max_s
 				FROM spanmetrics_duration_5m
-				WHERE time_bucket >= ? AND time_bucket <= ?
+				WHERE time_bucket >= ? AND time_bucket < ?
 				  AND service_name IN (`+holders+`)
 				GROUP BY service_name
 				SETTINGS max_execution_time = 8`, durArgs...)
@@ -5210,7 +5227,7 @@ func (s *Server) getSpanMetricsByService(w http.ResponseWriter, r *http.Request)
 				       anyMerge(bounds_state)    AS bounds,
 				       sumMapMerge(counts_state) AS counts_map
 				FROM spanmetrics_hist_5m
-				WHERE time_bucket >= ? AND time_bucket <= ?
+				WHERE time_bucket >= ? AND time_bucket < ?
 				  AND service_name IN (`+holders+`)
 				GROUP BY service_name
 				SETTINGS max_execution_time = 8`, qArgs...)

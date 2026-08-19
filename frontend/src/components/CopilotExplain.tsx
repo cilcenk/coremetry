@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { api } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
+import { Chip } from '@/components/ui/Chip';
 import { LinkButton } from '@/components/ui/LinkButton';
 import { Spinner } from '@/components/Spinner';
 import { useCopilotEnabled } from '@/components/ai/useCopilotEnabled';
@@ -222,20 +223,33 @@ export function CopilotExplain({ kind, id, label, fromNs, toNs, spanId, auto, on
       alignItems: 'flex-start', maxWidth: '100%',
     }}>
       {codeCapable && (
-        <label style={{
-          display: 'inline-flex', alignItems: 'center', gap: 6,
-          fontSize: 11, color: 'var(--text2)', cursor: busy ? 'default' : 'pointer',
-        }} title="Stack trace'teki uygulama satırlarının kaynak kodunu da modele ver (Ayarlar → Kod entegrasyonu gerekir)">
-          <input type="checkbox" checked={includeCode} disabled={busy}
-            onChange={e => {
-              const next = e.target.checked;
-              setIncludeCode(next);
-              // Kutuyu değiştirmek isteği YENİDEN çalıştırır — aksi
-              // halde ekrandaki cevap kutunun durumuyla çelişirdi.
-              if (text !== null || error !== null || auto) void run(next);
-            }} />
+        // v0.9.1184 (operatör: "Kodu incele checkboxı da çok küçük daha
+        // belirgin olabilir") — 11px'lik çıplak etiket dipnot gibi
+        // okunuyordu, oysa bu bir KARAR: cevabın koda bakıp bakmayacağını
+        // belirliyor ve yanındaki accent butonla aynı satırda yaşıyor.
+        //
+        // Yeni bir görünüm icat etmedim; deponun `.btn-chip` sözlüğüne
+        // normalize ettim (`ch-sm` + işaretliyken `active`). Kazancı iki
+        // katlı: kutu artık bir kontrol gibi çerçeveli, ve İŞARETLİ durum
+        // uygulamanın her yerindeki "açık" durumuyla AYNI aksan tonunu
+        // kullanıyor — durumu okumak için kutucuğun içine bakmak gerekmiyor.
+        <Chip size="sm" active={includeCode} disabled={busy}
+          title="Stack trace'teki uygulama satırlarının kaynak kodunu da modele ver (Ayarlar → Kod entegrasyonu gerekir)"
+          onClick={() => {
+            const next = !includeCode;
+            setIncludeCode(next);
+            // Kutuyu değiştirmek isteği YENİDEN çalıştırır — aksi
+            // halde ekrandaki cevap kutunun durumuyla çelişirdi.
+            if (text !== null || error !== null || auto) void run(next);
+          }}>
+          {/* Durum ÜÇ kez söyleniyor ve hiçbiri yeni CSS istemiyor: glif,
+              çipin aksan tonu ve atomun bastığı aria-pressed. Yerel
+              <input type=checkbox> yerine glif, çünkü atom bir <button> ve
+              buton içine form kontrolü koymak sahte bir affordance olurdu —
+              tık zaten butonun. */}
+          <span aria-hidden="true">{includeCode ? '☑' : '☐'}</span>
           <span>Kodu da incele</span>
-        </label>
+        </Chip>
       )}
       {/* v0.9.1127 — Spinner yalnız İLK token'a kadar. Token'lar akmaya
           başladıktan sonra ilerlemeyi metnin kendisi gösteriyor; ikisini

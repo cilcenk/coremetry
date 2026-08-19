@@ -608,14 +608,13 @@ sayısı 0.
 
 | Dilim | Kapsam |
 |---|---|
-| 4.1 | Konuşma kalıcılığı: `saved_views(page='ai-chat')` blob (başlık + son 40 mesaj + subject); thread listesi FAB menüsünde. **GEMİDE — v0.9.1139 (2026-08-17).** ⚠️ Operatör 2026-08-19'da "konuşmaların kalıcı olmasına gerek yok" dedi; KALDIRMA kararı açık, aşağıdaki A1 kaydına bak. |
+| 4.1 | Konuşma kalıcılığı: `saved_views(page='ai-chat')` blob (başlık + son 40 mesaj + subject); thread listesi FAB menüsünde. **GEMİDE — v0.9.1139 (2026-08-17), KALIYOR** (operatör 2026-08-19 teyidi). |
 | 4.2 | ChatBubble `table` fence + başlık/liste (RenderedMarkdown alt-kümesi) |
 | 4.3 | Tool sonucu görünürlüğü: ⚙ çipi tıklanınca "veriyi göster" açılır bloğu (JSON→tablo; truncated işaretleri görünür) |
 | 4.4 | Chart spec genişlemesi: `operation/groupBy/from-to`; `CosreChart` → `corePanelEntry` (zoom/legend/cursor-sync bedava) |
 | 4.5 | `assemble` chat geçmişi bütçesini devralır (K3) |
 
-**Kabul:** sayfa yenilemede konuşma yaşar (4.1 gemide, v0.9.1139 — ama
-kaldırılması gündemde, A1'e bak); model tablo
+**Kabul:** sayfa yenilemede konuşma yaşar (4.1 gemide, v0.9.1139); model tablo
 istediğinde tablo render olur; tool sonucu denetlenebilir.
 
 ### Faz 5 — KB + öğrenme döngüsü (~5-6 release)
@@ -700,13 +699,12 @@ kuralının otomasyonu).
      `internal/api/ai_conversations.go` (4 route: list/upsert/get/
      delete), FE `chatPersist.ts` + `useChatThread.ts`, FAB'da
      "Geçmiş" menüsü, 64KB shrink-to-fit.
-  2. **2026-08-19: "kalıcı olmasına gerek yok bence."** Bu bir
-     TERCİH beyanı ve özellik ZATEN CANLI; dolayısıyla açık olan
-     soru "yapılsın mı" değil, **KALDIRILSIN MI**. Karar operatörde.
-     Kaldırılırsa kapsam ~780 satır + 4 route + FAB girdisi ve
-     CLAUDE.md'nin "özellik kaldırırken geri-uyum shim'i ekleme"
-     kuralı geçerli; eski `saved_views(page='ai-chat')` satırları
-     için temizlik kararı ayrıca gerekir.
+  2. **2026-08-19: "kalıcı olmasına gerek yok bence"** — ama bu,
+     özelliğin zaten canlı olduğu bilinmeden söylenmişti (bayat plan
+     yüzünden yapılmamış bir iş gibi sunulmuştu). Durum netleşince
+     operatör aynı gün **"Konuşma kalıcılığı olsun hadi"** dedi.
+     **NİHAİ: EVET, özellik KALIYOR.** Kaldırma gündemden düştü;
+     yeniden açmak yeni bir karar ister.
 
   ⚠️ **Bu bölümün kendisi 2026-08-19'a kadar (1) numaralı kararı
   YANSITMIYORDU** — plan "A1 onayına bağlı" derken özellik iki

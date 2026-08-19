@@ -95,10 +95,10 @@ func (s *Store) GetExternalHosts(ctx context.Context, from, to time.Time) ([]Ext
 		       arraySlice(arrayDistinct(arrayFlatten(groupArray(top_labels))), 1, 8) AS labels
 		FROM topology_edges_5m FINAL
 		WHERE node_kind = 'external'
-		  AND time_bucket >= ? AND time_bucket <= ?
+		  AND time_bucket >= ? AND time_bucket < ?
 		  AND substring(child_node, 5) GLOBAL NOT IN (
 			SELECT DISTINCT service_name FROM service_summary_5m
-			WHERE time_bucket >= ? AND time_bucket <= ?
+			WHERE time_bucket >= ? AND time_bucket < ?
 		  )
 		GROUP BY child_node
 		ORDER BY total_calls DESC
@@ -156,10 +156,10 @@ func (s *Store) GetExternalHostDetail(ctx context.Context, host string, from, to
 		FROM topology_edges_5m FINAL
 		WHERE node_kind = 'external'
 		  AND child_node = concat('ext:', ?)
-		  AND time_bucket >= ? AND time_bucket <= ?
+		  AND time_bucket >= ? AND time_bucket < ?
 		  AND ? GLOBAL NOT IN (
 			SELECT DISTINCT service_name FROM service_summary_5m
-			WHERE time_bucket >= ? AND time_bucket <= ?
+			WHERE time_bucket >= ? AND time_bucket < ?
 		  )
 		GROUP BY parent_service
 		ORDER BY total_calls DESC
@@ -201,10 +201,10 @@ func (s *Store) GetExternalHostDetail(ctx context.Context, host string, from, to
 		FROM topology_edges_5m FINAL
 		WHERE node_kind = 'external'
 		  AND child_node = concat('ext:', ?)
-		  AND time_bucket >= ? AND time_bucket <= ?
+		  AND time_bucket >= ? AND time_bucket < ?
 		  AND ? GLOBAL NOT IN (
 			SELECT DISTINCT service_name FROM service_summary_5m
-			WHERE time_bucket >= ? AND time_bucket <= ?
+			WHERE time_bucket >= ? AND time_bucket < ?
 		  )
 		GROUP BY time_bucket
 		ORDER BY time_bucket ASC

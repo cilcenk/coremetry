@@ -392,3 +392,84 @@ describe('markdown yolu TEK', () => {
     expect(src).toContain('<pre>{code}</pre>');
   });
 });
+
+// ── v0.9.1181 (AI Faz 4.3) — ⚙ çipinin arkasındaki KANIT ────────────────
+//
+// Saf testle ölçülemeyen üç şey var; stepPreview.test.ts çözücüyü zaten
+// çiviliyor, buradakiler BAĞLANMA:
+//
+//   (1) çip yalnız DETAY VARSA düğmeye dönüşür. Arşivden geri yüklenen
+//       konuşmalar ve eski bir sunucuya karşı akan FE detay taşımaz;
+//       orada tıklanabilir görünen ama boş açılan bir çip ölü affordance
+//       olurdu (v0.9.592 dersi). Bu ayrım yalnız DOM'da görülür — tipte
+//       ikisi de ChatTurn;
+//   (2) tık gerçekten veriyi açıyor mu (state → render bağı);
+//   (3) KIRPMA İLAN EDİLİYOR mu. Sessiz kırpma, operatörün eksik kanıta
+//       tam kanıt sanıp bakması demek — bu dilimin varlık sebebinin tersi.
+describe('ChatBubble — tool kanıtı (Faz 4.3)', () => {
+  const withSteps = (over: Partial<ChatTurn>): ChatTurn =>
+    asst('bakıyorum', { steps: ['get_topology'], ...over });
+
+  it('detay YOKSA çip düz etiket kalır (tıklanamaz)', async () => {
+    await mount(withSteps({}));
+    expect(text()).toContain('⚙ get_topology');
+    expect(qa('button').some(b => (b.textContent ?? '').includes('get_topology'))).toBe(false);
+  });
+
+  it('detay geldiyse çip düğme olur ve tık veriyi açar', async () => {
+    await mount(withSteps({
+      stepDetails: [{ i: 1, tool: 'get_topology', ok: true, preview: '[{"service":"api","calls":12}]' }],
+    }));
+    const chip = qa('button').find(b => (b.textContent ?? '').includes('get_topology')) as HTMLButtonElement;
+    expect(chip).toBeTruthy();
+    expect(chip.getAttribute('aria-expanded')).toBe('false');
+    // Kapalıyken veri DOM'da olmamalı — "gizli ama yüklü" değil.
+    expect(text()).not.toContain('calls');
+
+    await act(async () => { chip.click(); });
+    expect(chip.getAttribute('aria-expanded')).toBe('true');
+    expect(q('table.cm-md-table')).toBeTruthy();
+    expect(text()).toContain('calls');
+    expect(text()).toContain('api');
+
+    // İkinci tık kapatır.
+    await act(async () => { chip.click(); });
+    expect(q('table.cm-md-table')).toBeNull();
+  });
+
+  it('kırpma İLAN EDİLİR', async () => {
+    await mount(withSteps({
+      stepDetails: [{
+        i: 1, tool: 'get_topology', ok: true,
+        preview: '[{"service":"api","cal', truncated: true, bytes: 128000,
+      }],
+    }));
+    const chip = qa('button').find(b => (b.textContent ?? '').includes('get_topology')) as HTMLButtonElement;
+    await act(async () => { chip.click(); });
+    expect(text()).toContain('kırpıldı');
+    // Gerçek boy görünür olmalı ki "ne kadarını görmüyorum" cevaplanabilsin.
+    expect(text()).toContain('125.0 KB');
+    // Yarım JSON tabloya ZORLANMAZ, ham gider.
+    expect(q('table.cm-md-table')).toBeNull();
+  });
+
+  it('hata dönen tool çipte işaretlenir', async () => {
+    await mount(withSteps({
+      stepDetails: [{ i: 1, tool: 'get_topology', ok: false, preview: 'error: upstream 502' }],
+    }));
+    const chip = qa('button').find(b => (b.textContent ?? '').includes('get_topology')) as HTMLButtonElement;
+    expect(chip.textContent).toContain('⚠');
+    await act(async () => { chip.click(); });
+    expect(text()).toContain('upstream 502');
+  });
+
+  it('detay dizisi çiplerden KISAYSA patlamaz (rolling deploy)', async () => {
+    // Eski sunucu `step` olayında `i` göndermez → ikinci çipin detayı yok.
+    await mount(asst('bakıyorum', {
+      steps: ['get_topology', 'get_blast_radius'],
+      stepDetails: [{ i: 1, tool: 'get_topology', ok: true, preview: '[]' }],
+    }));
+    expect(text()).toContain('get_blast_radius');
+    expect(qa('button').filter(b => (b.textContent ?? '').includes('get_')).length).toBe(1);
+  });
+});

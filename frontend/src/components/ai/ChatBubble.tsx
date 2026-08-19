@@ -3,9 +3,10 @@ import { Link, useNavigate } from 'react-router-dom';
 import { api } from '@/lib/api';
 import { escapeHTML } from '@/lib/utils';
 import { Button } from '@/components/ui/Button';
-import type { ChatTurn } from '@/lib/types';
+import type { ChatTurn, ChatStepDetail } from '@/lib/types';
 import { CosreChart, type CosreChartSpec } from '@/components/CosreChart';
 import { parseChatBlocks, type ChatBlock } from './chatMarkdown';
+import { parseStepPreview, fmtPreviewBytes } from './stepPreview';
 
 // ChatBubble — bir sohbet turunun ÇİZİMİ. v0.9.479'da CopilotChat.tsx'ten
 // buraya taşındı: AI çekmecesi içindeki sohbet (AIDrawer) aynı balonu
@@ -209,6 +210,106 @@ export function rateTurn(
   });
 }
 
+// ToolChips — ⚙ ilerleme çipleri + tıklayınca açılan KANIT bloğu
+// (v0.9.1181, AI Faz 4.3).
+//
+// Neden gerekliydi: çip yalnız tool ADINI gösteriyordu. Model "topolojiye
+// baktım, şu servis suçlu" dediğinde operatörün o iddiayı sınayacak hiçbir
+// şeyi yoktu — veriyi gördü mü, ne gördü, kırpıldı mı, hepsi görünmezdi.
+// Bir APM'de "modele güven" kabul edilebilir bir cevap değil.
+//
+// Çip yalnız DETAY VARSA düğmeye dönüşür. Arşivden geri yüklenen konuşmalar
+// detay taşımaz (chatPersist yalnız {role,text} saklar) ve eski bir sunucuya
+// karşı akan FE de taşımaz; ikisinde de çip eskisi gibi düz bir etiket kalır.
+// Boş açılan bir "veriyi göster" ölü affordance olurdu (v0.9.592 dersi).
+function ToolChips({ steps, details, hasText }: {
+  steps: string[];
+  details?: ChatStepDetail[];
+  hasText: boolean;
+}) {
+  const [openIdx, setOpenIdx] = useState<number | null>(null);
+  // Çip sırası ile detay sırası aynı: ikisi de `step` olayında birlikte
+  // büyüyor. Yine de indeksle DEĞİL, dizideki konumla eşliyoruz ve detayın
+  // varlığını ayrıca kontrol ediyoruz — kısa detay dizisi (rolling deploy)
+  // patlamamalı.
+  const detailAt = (i: number) => details?.[i];
+  const open = openIdx == null ? undefined : detailAt(openIdx);
+  return (
+    <div style={{ marginBottom: hasText ? 6 : 0 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+        {steps.map((s, i) => {
+          const d = detailAt(i);
+          const ready = !!d && d.preview !== undefined;
+          const isOpen = openIdx === i;
+          const chipStyle: React.CSSProperties = {
+            fontSize: 10, fontFamily: 'ui-monospace, monospace',
+            padding: '1px 6px', borderRadius: 8,
+            background: isOpen ? 'var(--accent-bg)' : 'var(--bg3)',
+            color: isOpen ? 'var(--accent2)' : 'var(--text3)',
+            border: '1px solid transparent',
+          };
+          if (!ready) return <span key={i} style={chipStyle}>⚙ {s}</span>;
+          return (
+            <button key={i} type="button"
+              onClick={() => setOpenIdx(isOpen ? null : i)}
+              aria-expanded={isOpen}
+              title={d?.ok === false ? 'Tool hata döndürdü — veriyi göster' : 'Bu adımın verisini göster'}
+              style={{ ...chipStyle, cursor: 'pointer' }}>
+              ⚙ {s} {d?.ok === false ? '⚠' : ''}{isOpen ? '▾' : '▸'}
+            </button>
+          );
+        })}
+      </div>
+      {open && <ToolEvidence d={open} />}
+    </div>
+  );
+}
+
+// ToolEvidence — açılan blok. Modelin GÖRDÜĞÜ metnin kendisi; kırpma
+// İLAN EDİLİR (sessiz kırpma, eksik kanıta tam kanıt sanıp bakmak demek).
+function ToolEvidence({ d }: { d: ChatStepDetail }) {
+  const view = parseStepPreview(d.preview ?? '', d.truncated);
+  return (
+    <div style={{
+      marginTop: 6, padding: '6px 8px', borderRadius: 6,
+      background: 'var(--bg1)', border: '1px solid var(--border)',
+      fontSize: 11, whiteSpace: 'normal',
+    }}>
+      {d.args && d.args !== '{}' && (
+        <div className="mono" style={{ fontSize: 10, color: 'var(--text3)', marginBottom: 4, wordBreak: 'break-all' }}>
+          {d.tool}({d.args})
+        </div>
+      )}
+      {d.truncated && (
+        <div className="badge b-warn" style={{ marginBottom: 4 }}>
+          kırpıldı · {fmtPreviewBytes(d.bytes ?? 0)} içinden ilk {fmtPreviewBytes(4096)}
+        </div>
+      )}
+      {view.kind === 'table' ? (
+        // Kanıt bakışı, veri sayfası DEĞİL — bu yüzden useDataTable yok
+        // (sıralama/yeniden boyutlandırma/kalıcı genişlik burada anlamsız).
+        // Görünüm dili sohbetin markdown tablosuyla aynı: .cm-md-table.
+        <div className="cm-md-tw" style={{ overflowX: 'auto' }}>
+          <table className="cm-md-table">
+            <thead><tr>{view.cols.map(c => <th key={c}>{c}</th>)}</tr></thead>
+            <tbody>
+              {view.rows.map((r, i) => (
+                <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <pre className="mono" style={{
+          margin: 0, maxHeight: 220, overflow: 'auto',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+          fontSize: 10, color: 'var(--text2)',
+        }}>{view.text || '(boş)'}</pre>
+      )}
+    </div>
+  );
+}
+
 export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | -1) => void }) {
   const isUser = turn.role === 'user';
   const navigate = useNavigate();
@@ -246,17 +347,10 @@ export function ChatBubble({ turn, onRate }: { turn: ChatTurn; onRate?: (v: 1 | 
         color: isUser ? '#fff' : 'var(--text)',
         border: isUser ? 'none' : '1px solid var(--border)',
       }}>
-        {/* Tool-call progress chips (assistant only) */}
+        {/* Tool-call progress chips (assistant only). v0.9.1181 (Faz 4.3):
+            veri gelmişse çip TIKLANABİLİR ve altında kanıt bloğu açılır. */}
         {!isUser && turn.steps && turn.steps.length > 0 && (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, marginBottom: turn.text ? 6 : 0 }}>
-            {turn.steps.map((s, i) => (
-              <span key={i} style={{
-                fontSize: 10, fontFamily: 'ui-monospace, monospace',
-                padding: '1px 6px', borderRadius: 8,
-                background: 'var(--bg3)', color: 'var(--text3)',
-              }}>⚙ {s}</span>
-            ))}
-          </div>
+          <ToolChips steps={turn.steps} details={turn.stepDetails} hasText={!!turn.text} />
         )}
         {turn.error ? (
           <span style={{ color: isUser ? '#fff' : 'var(--err)' }}>⚠ {turn.error}</span>

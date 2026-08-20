@@ -119,15 +119,28 @@ func (s *Server) putExceptionTriage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "staleResolveHours must be between 1 and 720", http.StatusBadRequest)
 		return
 	}
+	// v0.9.1188 — patlama kapıları. Üst sınırlar cömert ama SONSUZ DEĞİL:
+	// 100.000/dk'lık bir eşik kapıyı fiilen kapatır ve merdivenin üst ucunu
+	// sessizce yok ederdi; reddetmek, operatöre ne yaptığını söylemenin yolu.
+	if c.BurstMinRate < 1 || c.BurstMinRate > 100000 {
+		http.Error(w, "burstMinRate must be between 1 and 100000", http.StatusBadRequest)
+		return
+	}
+	if c.BurstMinTotal < 1 || c.BurstMinTotal > 10000000 {
+		http.Error(w, "burstMinTotal must be between 1 and 10000000", http.StatusBadRequest)
+		return
+	}
 	if err := s.store.SaveExceptionTriage(r.Context(), c); err != nil {
 		writeErr(w, err)
 		return
 	}
 	setExceptionTriage(c)
 	s.audit(r, "settings.update", "exception_triage", "exception_triage",
-		fmt.Sprintf(`{"p1FreshHours":%d,"p2SameDayHours":%d,"staleResolveHours":%d}`,
-			c.P1FreshHours, c.P2SameDayHours, c.StaleResolveHours))
-	log.Printf("[settings] exception_triage: P1 ≤%dsa · P2 ≤%dsa · stale %dsa",
-		c.P1FreshHours, c.P2SameDayHours, c.StaleResolveHours)
+		fmt.Sprintf(`{"p1FreshHours":%d,"p2SameDayHours":%d,"staleResolveHours":%d,"burstMinRate":%.0f,"burstMinTotal":%d}`,
+			c.P1FreshHours, c.P2SameDayHours, c.StaleResolveHours,
+			c.BurstMinRate, c.BurstMinTotal))
+	log.Printf("[settings] exception_triage: P1 ≤%dsa · P2 ≤%dsa · stale %dsa · patlama ≥%.0f/dk & ≥%d",
+		c.P1FreshHours, c.P2SameDayHours, c.StaleResolveHours,
+		c.BurstMinRate, c.BurstMinTotal)
 	writeJSON(w, chstore.NormalizeExceptionTriage(c))
 }

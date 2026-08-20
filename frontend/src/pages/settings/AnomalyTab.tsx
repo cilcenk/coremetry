@@ -803,6 +803,34 @@ function ExceptionTriageSection() {
               </div>
             </Field>
 
+            {/* v0.9.1188 — PATLAMA kapıları. Pencerelerin ÖNÜNDE duruyorlar
+                ve sırası bilinçli: bir grup önce "patlama mı" diye ölçülüyor,
+                sonra "ne kadar taze" diye. Operatör-bildirimli dördüncü vaka
+                tam da burada takılmıştı (180,5/dk, gömülü kapı 200/dk). */}
+            <Field label="Patlama eşiği (olay/dakika)">
+              <input type="number" min={1} max={100000} step={10}
+                value={cfg.burstMinRate}
+                onChange={e => setCfg({ ...cfg, burstMinRate: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Bir grup, kendi ömrü boyunca dakikada bu kadar olay üretiyorsa
+                &laquo;patlama&raquo; sayılır ve aşağıdaki pencerelerden geçer.
+                Varsayılan 100/dk (saniyede ~1,7) &mdash; sağlıklı bir servisin
+                tekrarlayan uyarısı tipik olarak bunun altında kalır. Eşiği
+                yükseltmek P1/P2 selini keser, düşürmek daha çok grubu yukarı taşır.
+              </div>
+            </Field>
+
+            <Field label="Patlama taban hacmi (olay)">
+              <input type="number" min={1} max={10000000} step={100}
+                value={cfg.burstMinTotal}
+                onChange={e => setCfg({ ...cfg, burstMinTotal: Number(e.target.value) })} />
+              <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>
+                Hız ne olursa olsun gereken toplam olay. Hız tek başına yetmez:
+                5 saniyede 20 olay da 240/dk eder ama patlama değildir.
+                Varsayılan 1000.
+              </div>
+            </Field>
+
             <Field label="P2 aynı-gün penceresi (saat)">
               <input type="number" min={cfg.p1FreshHours} max={720} step={1}
                 value={cfg.p2SameDayHours}

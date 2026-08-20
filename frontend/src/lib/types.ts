@@ -5037,6 +5037,12 @@ export interface ExceptionTriageConfig {
   // Yeni olay görmeyen açık/ack'li bir grubun kendiliğinden resolved'a
   // geçmesi için gereken sessizlik (saat).
   staleResolveHours: number;
+  // v0.9.1188 — PATLAMA kapıları. Öncesi kodda gömülüydü (200/dk, 1000) ve
+  // bu sınıfın DÖRDÜNCÜ bildirimi tam oradan geldi: 2.374 olay / 13dk =
+  // 180,5/dk kapıyı %10 farkla kaçırdı. Pencereleri ayarlanabilir yapıp
+  // eşiği gömülü bırakmak duvarı kaldırmadı, yerini değiştirdi.
+  burstMinRate: number;
+  burstMinTotal: number;
 }
 
 // v0.9.838 — ALERT PROBLEMİ öncelik merdiveninin vidaları (backend:

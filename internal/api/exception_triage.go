@@ -130,17 +130,21 @@ func (s *Server) putExceptionTriage(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "burstMinTotal must be between 1 and 10000000", http.StatusBadRequest)
 		return
 	}
+	if c.P1MinOccurrences < 1 || c.P1MinOccurrences > 10000000 {
+		http.Error(w, "p1MinOccurrences must be between 1 and 10000000", http.StatusBadRequest)
+		return
+	}
 	if err := s.store.SaveExceptionTriage(r.Context(), c); err != nil {
 		writeErr(w, err)
 		return
 	}
 	setExceptionTriage(c)
 	s.audit(r, "settings.update", "exception_triage", "exception_triage",
-		fmt.Sprintf(`{"p1FreshHours":%d,"p2SameDayHours":%d,"staleResolveHours":%d,"burstMinRate":%.0f,"burstMinTotal":%d}`,
+		fmt.Sprintf(`{"p1FreshHours":%d,"p2SameDayHours":%d,"staleResolveHours":%d,"burstMinRate":%.0f,"burstMinTotal":%d,"p1MinOccurrences":%d}`,
 			c.P1FreshHours, c.P2SameDayHours, c.StaleResolveHours,
-			c.BurstMinRate, c.BurstMinTotal))
-	log.Printf("[settings] exception_triage: P1 ≤%dsa · P2 ≤%dsa · stale %dsa · patlama ≥%.0f/dk & ≥%d",
+			c.BurstMinRate, c.BurstMinTotal, c.P1MinOccurrences))
+	log.Printf("[settings] exception_triage: P1 ≤%dsa · P2 ≤%dsa · stale %dsa · patlama ≥%.0f/dk & ≥%d · P1 hacim ≥%d",
 		c.P1FreshHours, c.P2SameDayHours, c.StaleResolveHours,
-		c.BurstMinRate, c.BurstMinTotal)
+		c.BurstMinRate, c.BurstMinTotal, c.P1MinOccurrences)
 	writeJSON(w, chstore.NormalizeExceptionTriage(c))
 }
